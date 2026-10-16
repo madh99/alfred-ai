@@ -14230,10 +14230,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         // v1362 — Befund-Bezug, „bisher kein Problem" und „nicht stummschaltbar" für den Abschluss-Dialog der App
         const { befundSchluesselAus, nieStummschaltbar } = await import('./vorgaenge/regeln.js');
         const keinProblem = await repo.keinProblemJeSchluessel(owner).catch(() => new Map<string, number>());
-        const offene = u.offene.map(v => {
+        // v1480 — je offenem Vorgang die ausführbare Aktion (Anzeige vor dem Ausführen) und ob er zurückgestellt ist
+        const { ausfuehrbarerVorschlag, vorschlagKurz } = await import('./vorgaenge/vorschlag.js');
+        const offene = await Promise.all(u.offene.map(async v => {
           const s = befundSchluesselAus(v.dedupeKey);
-          return s ? { ...v, befund: s, nieStumm: nieStummschaltbar(s), keinProblemBisher: keinProblem.get(v.dedupeKey!) ?? 0 } : v;
-        });
+          const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, v.id).catch(() => []), n => this.skillRegistry.has(n));
+          const vorschlag = vs ? { ausfuehrbar: vs.ausfuehrbar, text: vorschlagKurz(vs), ...(vs.ausfuehrbar ? {} : { grund: vs.grund }) } : undefined;
+          const basis = { ...v, ...(vorschlag ? { vorschlag } : {}) };
+          return s ? { ...basis, befund: s, nieStumm: nieStummschaltbar(s), keinProblemBisher: keinProblem.get(v.dedupeKey!) ?? 0 } : basis;
+        }));
         return { ...u, offene, schritte: await repo.schritte(owner, 14, 150) };
       });
       // v1186 — Entscheidung des Owners aus der Kachel (erledigt/verworfen)
@@ -15677,6 +15682,39 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1353 — native Ansichten der Desktop-App (Aufgaben, Erinnerungen, Gedächtnis, Vorgänge); nur für Geräte des Owners. */
+  /**
+   * v1480 — vorgeschlagene Aktion eines Vorgangs im Namen des Owners ausführen (sein Klick in der App ist die Bestätigung).
+   * Ausgeführt wird nur die zuletzt im Ausführungsgedächtnis vorgeschlagene Aktion, ohne Platzhalter; Ergebnis als Schritt,
+   * Erfolg schließt den Vorgang („vom Owner ausgeführt“), Fehlschlag lässt ihn mit Fehlertext warten.
+   */
+  private async vorgangVomOwnerAusfuehren(owner: string, id: string): Promise<{ titel: string; erfolg: boolean; text: string } | null> {
+    if (!this.database || !this.skillSandbox) throw new Error('Ausführen nicht verfügbar');
+    const { VorgaengeRepository } = await import('@alfred/storage');
+    const repo = new VorgaengeRepository(this.database.getAdapter());
+    const v = await repo.hole(owner, id);
+    if (!v) return null;
+    if (v.status !== 'offen' && v.status !== 'wartet') throw new Error(`Vorgang ist ${v.status}`);
+    const { ausfuehrbarerVorschlag } = await import('./vorgaenge/vorschlag.js');
+    const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, id), n => this.skillRegistry.has(n));
+    if (!vs) throw new Error('Zu diesem Vorgang gibt es keine vorgeschlagene Aktion');
+    if (!vs.ausfuehrbar) throw new Error(vs.grund);
+    const skill = this.skillRegistry.get(vs.skill)!;
+    const ownerPlattformId = this.config.security?.ownerUserId ?? '';
+    const { buildSkillContext } = await import('./context-factory.js');
+    const { context } = await buildSkillContext(this.userRepo, { userId: ownerPlattformId, platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as Platform, chatId: ownerPlattformId });
+    let erfolg = false; let text = '';
+    try {
+      const r = await this.skillSandbox.execute(skill, vs.params, context);
+      erfolg = !!r.success; text = (r.display ?? (r.success ? JSON.stringify(r.data ?? {}) : r.error ?? 'unbekannt')).slice(0, 300);
+    } catch (err) { text = (err as Error).message.slice(0, 300); }
+    await repo.schritt({ vorgangId: id, userId: owner, art: erfolg ? 'ausgefuehrt' : 'fehlgeschlagen', skill: vs.skill, aktion: vs.aktion, params: vs.params, beschreibung: `vom Owner ausgeführt (App): ${vs.beschreibung}`.slice(0, 500), ergebnis: text, autonomie: 'bestaetigen', quelle: 'owner' });
+    if (erfolg) await repo.setzeStatus(owner, id, 'erledigt', `vom Owner ausgeführt: ${text}`.slice(0, 500));
+    else await repo.setzeStatus(owner, id, 'wartet', `Ausführen fehlgeschlagen: ${text}`.slice(0, 500), 'Owner: Aktion schlug fehl — prüfen');
+    this.logger.info({ id, skill: vs.skill, aktion: vs.aktion, erfolg }, 'v1480 Vorgang vom Owner ausgeführt');
+    void this.aktualisiereLage();
+    return { titel: v.titel, erfolg, text };
+  }
+
   async ownerAnsichten(geraetId: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichten | undefined> {
     const owner = this.ownerMasterUserId;
     if (!owner || !this.todoRepo || !this.reminderRepo || !this.database || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -15693,6 +15731,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       vorgangHolen: async (u, id) => { const v = await new VorgaengeRepository(db).hole(u, id); return v ? { titel: v.titel, dedupeKey: v.dedupeKey, status: v.status } : null; },
       vorgangAbschliessen: async (u, id, e) => { const v = await new VorgaengeRepository(db).abschliessen(u, id, e); if (v) void this.aktualisiereLage(); return v ? { titel: v.titel, ergebnis: v.ergebnis } : null; },
       keinProblemAnzahl: async (u, k) => (await new VorgaengeRepository(db).keinProblemJeSchluessel(u)).get(k) ?? 0,
+      // v1480 — Ausführen und Später aus der App
+      vorgangAusfuehren: (u, id) => this.vorgangVomOwnerAusfuehren(u, id),
+      vorgangZurueckstellen: async (u, id, bis) => { const v = await new VorgaengeRepository(db).zurueckstellen(u, id, bis); if (v) void this.aktualisiereLage(); return v ? { titel: v.titel, zurueckBis: v.zurueckBis } : null; },
       regeln: this.regelnRepo ? {
         liste: () => this.regelnRepo!.liste(owner),
         anlegen: async (e) => { const r = await this.regelnRepo!.anlegen(owner, e); void this.aktualisiereLage(); return r; },

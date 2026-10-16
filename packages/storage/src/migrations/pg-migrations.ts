@@ -2300,4 +2300,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS stand_gruppe TEXT', []);
     },
   },
+  {
+    version: 146,
+    description: 'v1480 — vorgaenge.zurueck_bis: vom Owner zurückgestellt bis (App „Später“; Frist würde den Vorgang verwerfen) (PG-Spiegel zu SQLite v142).',
+    async up(db) {
+      await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS zurueck_bis TEXT', []);
+    },
+  },
 ];

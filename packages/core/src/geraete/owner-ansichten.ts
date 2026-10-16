@@ -52,6 +52,9 @@ export interface OwnerAnsichtenDeps {
   vorgangHolen?: (userId: string, id: string) => Promise<{ titel: string; dedupeKey?: string; status: string } | null>;
   vorgangAbschliessen?: (userId: string, id: string, e: { art: ErgebnisArtZ; ursache?: string; massnahme?: string; entscheidung?: string; text?: string }) => Promise<{ titel: string; ergebnis?: string } | null>;
   keinProblemAnzahl?: (userId: string, dedupeKey: string) => Promise<number>;
+  /** v1480 — vorgeschlagene Aktion eines Vorgangs ausführen (Klick des Owners = Bestätigung) bzw. zurückstellen */
+  vorgangAusfuehren?: (userId: string, id: string) => Promise<{ titel: string; erfolg: boolean; text: string } | null>;
+  vorgangZurueckstellen?: (userId: string, id: string, bis: string | null) => Promise<{ titel: string; zurueckBis?: string } | null>;
   regeln?: RegelnDeps;
   /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
   befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
@@ -324,6 +327,27 @@ export class OwnerAnsichten {
     }
     this.d.protokoll?.('Vorgang abgeschlossen', { id, art, kuenftig, titel: fertig.titel.slice(0, 80), ergebnis: fertig.ergebnis?.slice(0, 160) });
     return { titel: fertig.titel, ergebnis: fertig.ergebnis, regel, vorschlag };
+  }
+
+  /** v1480 — „Ausführen“ aus der App: die zuletzt vorgeschlagene Aktion des Vorgangs (Prüfung im Aufrufer). */
+  async vorgangAusfuehren(id: string): Promise<{ titel: string; erfolg: boolean; text: string } | null> {
+    if (!this.d.vorgangAusfuehren) throw new Error('Ausführen nicht verfügbar');
+    const r = await this.d.vorgangAusfuehren(this.d.owner, id);
+    if (r) this.d.protokoll?.('Vorgang ausgeführt', { id, erfolg: r.erfolg, titel: r.titel.slice(0, 80), text: r.text.slice(0, 160) });
+    return r;
+  }
+
+  /** v1480 — „Später“: stunden (3, 24, 72, 168), „morgen“ (08:00 lokal) oder „zurueck“ (wieder aufnehmen). */
+  async vorgangSpaeter(id: string, body: Record<string, unknown>): Promise<{ titel: string; zurueckBis?: string } | null> {
+    if (!this.d.vorgangZurueckstellen) throw new Error('Zurückstellen nicht verfügbar');
+    const jetzt = this.d.jetzt?.() ?? new Date();
+    let bis: string | null;
+    if (body.bis === 'zurueck') bis = null;
+    else if (body.bis === 'morgen') { const m = new Date(jetzt); m.setDate(m.getDate() + 1); m.setHours(8, 0, 0, 0); bis = m.toISOString(); }
+    else { const h = Number(body.stunden); if (![3, 24, 72, 168].includes(h)) throw new Error('stunden: 3 | 24 | 72 | 168, bis: morgen | zurueck'); bis = new Date(jetzt.getTime() + h * 3_600_000).toISOString(); }
+    const r = await this.d.vorgangZurueckstellen(this.d.owner, id, bis);
+    if (r) this.d.protokoll?.('Vorgang zurückgestellt', { id, bis, titel: r.titel.slice(0, 80) });
+    return r;
   }
 
   /** v1362 — Regeln für die App: Vorschläge von Alfred und aktive Regeln (abgelaufene markiert). */

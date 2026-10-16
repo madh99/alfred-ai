@@ -8,7 +8,9 @@ import 'vorgaenge.dart'; // 1.9.0 A4
 /// Meilenstein 3 — Kacheln nativ (Owner-Entscheidung 08.10. „nativ"): Lage, Befunde, Vorgänge und Geräte aus den
 /// JSON-Routen, die das Gerätetoken lesen darf (`/api/lebenszeichen`, `/api/vorgaenge`). Kein Webview, kein API-Token.
 class Kacheln extends StatefulWidget {
-  const Kacheln({super.key, required this.server, this.aufHinweis, this.aufMeldung, this.aufNachfragen, this.aufBefunde});
+  const Kacheln({super.key, required this.server, this.aufHinweis, this.aufMeldung, this.aufNachfragen, this.aufBefunde, this.aufVorgaenge});
+  /// 1.34.0 — Sprung in die Ansicht „Vorgänge" (alle offenen)
+  final VoidCallback? aufVorgaenge;
   /// 1.12.0 — Sprung in die Ansicht „Befunde" (mit Quellenfilter)
   final void Function(String? quelle)? aufBefunde;
   final Server server;
@@ -90,7 +92,7 @@ class _KachelnState extends State<Kacheln> {
           Text('${v['titel'] ?? ''}', style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
           Text('${v['status'] ?? ''} · ${v['naechsterSchritt'] ?? ''}${v['frist'] != null ? ' · bis ${_datum('${v['frist']}')}' : ''}', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         ]))),
-        if (offene.length > 12) Text('… +${offene.length - 12} weitere', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        if (offene.length > 12) InkWell(onTap: widget.aufVorgaenge, child: Text('… +${offene.length - 12} weitere — alle anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary))), // 1.34.0
       ])),
       _kachel(theme, 'Geräte (${geraete.where((g) => g['online'] == true).length}/${geraete.length} online)', Icons.devices, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (final g in geraete) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [

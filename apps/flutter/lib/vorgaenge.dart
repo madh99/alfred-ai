@@ -48,6 +48,57 @@ Map<String, dynamic> abschlussKoerper({required String art, String? ursache, Str
       'kuenftig': {'art': kuenftig, if (kuenftig == 'stumm') 'tage': tage},
     };
 
+/// 1.34.0 — „Ausführen": die von Alfred vorgeschlagene Aktion (Server v1480) — erst die Aktion zeigen, dann nach Ja ausführen.
+/// Liefert true, wenn ausgeführt wurde (Aufrufer lädt neu).
+Future<bool> vorgangAusfuehren(BuildContext context, {required Map<String, dynamic> v, required JsonAbruf json, required void Function(String) aufMeldung}) async {
+  final vs = v['vorschlag'] as Map<String, dynamic>?;
+  if (vs == null || vs['ausfuehrbar'] != true) return false;
+  final ja = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+        title: const Text('Vorschlag ausführen?'),
+        content: SizedBox(width: 520, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${v['titel'] ?? ''}', style: Theme.of(ctx).textTheme.titleSmall),
+          const SizedBox(height: 10),
+          Text('Alfred führt genau diese Aktion aus:', style: Theme.of(ctx).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Container(width: double.infinity, padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Theme.of(ctx).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+              child: SelectableText('${vs['text'] ?? ''}', style: Theme.of(ctx).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'))),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          FilledButton.icon(onPressed: () => Navigator.pop(ctx, true), icon: const Icon(Icons.play_arrow, size: 16), label: const Text('Ausführen')),
+        ],
+      ));
+  if (ja != true) return false;
+  try {
+    final r = await json('/api/geraete/vorgaenge/${v['id']}', methode: 'POST', koerper: {'aktion': 'ausfuehren'});
+    aufMeldung(r['erfolg'] == true ? '▶️ Ausgeführt: ${v['titel'] ?? ''} — ${r['text'] ?? ''}' : '⚠️ Ausführen fehlgeschlagen: ${v['titel'] ?? ''} — ${r['text'] ?? ''}');
+    return true;
+  } catch (e) {
+    aufMeldung('⚠️ Nicht ausgeführt: $e');
+    return false;
+  }
+}
+
+/// 1.34.0 — „Später" (Server v1480): zurückstellen, ohne Frist und Status zu ändern. Wahl: 3, morgen, 72, 168, zurueck.
+const spaeterWahl = <String, String>{'3': 'In 3 Stunden', 'morgen': 'Morgen früh', '72': 'In 3 Tagen', '168': 'In einer Woche'};
+Future<bool> vorgangSpaeter(String id, String wahl, {required JsonAbruf json, required void Function(String) aufMeldung, String titel = ''}) async {
+  try {
+    final koerper = <String, dynamic>{'aktion': 'spaeter', if (wahl == 'morgen' || wahl == 'zurueck') 'bis': wahl else 'stunden': int.parse(wahl)};
+    await json('/api/geraete/vorgaenge/$id', methode: 'POST', koerper: koerper);
+    aufMeldung(wahl == 'zurueck' ? '↩️ Wieder aufgenommen: $titel' : '⏰ Zurückgestellt: $titel (${spaeterWahl[wahl] ?? wahl})');
+    return true;
+  } catch (e) {
+    aufMeldung('⏰ Nicht zurückgestellt: $e');
+    return false;
+  }
+}
+
+/// Zurückgestellt bis (lokal) oder null, wenn nicht oder nicht mehr zurückgestellt.
+DateTime? zurueckBis(Map<String, dynamic> v, DateTime jetzt) {
+  final b = DateTime.tryParse('${v['zurueckBis'] ?? ''}')?.toLocal();
+  return b != null && b.isAfter(jetzt) ? b : null;
+}
+
 /// Dialog öffnen. Liefert true, wenn abgeschlossen wurde (Aufrufer lädt neu).
 Future<bool> zeigeVorgang(BuildContext context, {required Map<String, dynamic> v, required List<dynamic>? schritte, required JsonAbruf json, required void Function(String) aufMeldung, void Function(String text)? aufNachfragen}) async {
   final r = await showDialog<bool>(context: context, builder: (ctx) => _VorgangDialog(v: v, schritte: schritteVon('${v['id']}', schritte), json: json, aufMeldung: aufMeldung, aufNachfragen: aufNachfragen));
@@ -118,6 +169,8 @@ class _VorgangDialogState extends State<_VorgangDialog> {
         feld('Frist', v['frist'] == null ? null : _zeit('${v['frist']}')),
         feld('Warum?', v['begruendung']),
         feld('Ergebnis', v['ergebnis']),
+        // 1.34.0 — vorgeschlagene Aktion (ausführbar oder mit Grund, warum nicht)
+        feld((v['vorschlag'] as Map<String, dynamic>?)?['ausfuehrbar'] == false ? 'Vorgeschlagene Aktion (nicht ausführbar)' : 'Vorgeschlagene Aktion', (v['vorschlag'] as Map<String, dynamic>?)?['text']),
         if (widget.schritte.isNotEmpty) ...[
           Text('Letzte Schritte', style: theme.textTheme.labelSmall?.copyWith(color: dim)),
           for (final s in widget.schritte.take(8)) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${_zeit('${s['zeit']}')} · ${s['art'] ?? ''} — ${s['beschreibung'] ?? ''}${s['ergebnis'] != null ? ' → ${s['ergebnis']}' : ''}', style: theme.textTheme.bodySmall, maxLines: 3, overflow: TextOverflow.ellipsis)),
@@ -149,6 +202,14 @@ class _VorgangDialogState extends State<_VorgangDialog> {
       ]))),
       actions: [
         if (widget.aufNachfragen != null) TextButton.icon(onPressed: sendet ? null : () { Navigator.pop(context, false); widget.aufNachfragen!('Wie steht es um „${v['titel'] ?? ''}“?'); }, icon: const Icon(Icons.reply_outlined, size: 16), label: const Text('Nachfragen')),
+        // 1.34.0 — Später und Ausführen (Server v1480)
+        if (offen) PopupMenuButton<String>(
+          tooltip: 'Später: zurückstellen', enabled: !sendet,
+          onSelected: (w) async { if (await vorgangSpaeter('${v['id']}', w, json: widget.json, aufMeldung: widget.aufMeldung, titel: '${v['titel'] ?? ''}') && context.mounted) Navigator.pop(context, true); },
+          itemBuilder: (_) => [for (final e in spaeterWahl.entries) PopupMenuItem(value: e.key, child: Text(e.value))],
+          child: const Padding(padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.schedule, size: 16), SizedBox(width: 6), Text('Später')])),
+        ),
+        if (offen && (v['vorschlag'] as Map<String, dynamic>?)?['ausfuehrbar'] == true) FilledButton.tonalIcon(onPressed: sendet ? null : () async { if (await vorgangAusfuehren(context, v: v, json: widget.json, aufMeldung: widget.aufMeldung) && context.mounted) Navigator.pop(context, true); }, icon: const Icon(Icons.play_arrow, size: 16), label: const Text('Ausführen…')),
         TextButton(onPressed: sendet ? null : () => Navigator.pop(context, false), child: Text(offen ? 'Abbrechen' : 'Schließen')),
         if (offen) FilledButton.icon(onPressed: sendet || art == null ? null : abschliessen, icon: const Icon(Icons.check, size: 16), label: const Text('Abschließen')),
       ],

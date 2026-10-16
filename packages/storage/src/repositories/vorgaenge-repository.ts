@@ -50,6 +50,8 @@ export interface Vorgang {
   ursache?: string;
   massnahme?: string;
   entscheidung?: string;
+  /** v1480 — vom Owner zurückgestellt bis (App „Später“) */
+  zurueckBis?: string;
   erstellt: string;
   aktualisiert: string;
 }
@@ -329,6 +331,24 @@ export class VorgaengeRepository {
     return { zusammengelegt, gruppen };
   }
 
+  /** v1480 — „Später“ aus der App: zurückstellen bis (null = wieder aufnehmen). Ändert weder Status noch Frist. */
+  async zurueckstellen(userId: string, id: string, bis: string | null): Promise<Vorgang | null> {
+    const r = await this.db.execute('UPDATE vorgaenge SET zurueck_bis = ?, aktualisiert = ? WHERE user_id = ? AND id = ? AND status IN (\'offen\', \'wartet\')', [bis, new Date().toISOString(), userId, id]);
+    return (r.changes ?? 0) > 0 ? this.hole(userId, id) : null;
+  }
+
+  /** v1480 — Schritte eines Vorgangs, neueste zuerst (für die ausführbare Aktion). */
+  async schritteVon(userId: string, vorgangId: string, limit = 30): Promise<VorgangSchritt[]> {
+    const rows = await this.db.query('SELECT * FROM vorgang_schritte WHERE user_id = ? AND vorgang_id = ? ORDER BY zeit DESC LIMIT ?', [userId, vorgangId, limit]) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string, vorgangId: (r.vorgang_id as string | null) ?? undefined, userId: r.user_id as string, zeit: r.zeit as string,
+      art: r.art as SchrittArt, skill: (r.skill as string | null) ?? undefined, aktion: (r.aktion as string | null) ?? undefined,
+      params: typeof r.params === 'string' && r.params ? safeJson(r.params) : undefined,
+      beschreibung: r.beschreibung as string, ergebnis: (r.ergebnis as string | null) ?? undefined,
+      autonomie: (r.autonomie as Autonomie | null) ?? undefined, quelle: r.quelle as string,
+    }));
+  }
+
   async offene(userId: string, limit = 50): Promise<Vorgang[]> {
     const rows = await this.db.query(`SELECT * FROM vorgaenge WHERE user_id = ? AND status IN ('offen', 'wartet') ORDER BY aktualisiert DESC LIMIT ?`, [userId, limit]) as Record<string, unknown>[];
     return rows.map(r => this.map(r));
@@ -376,6 +396,7 @@ export class VorgaengeRepository {
       ursache: (r.ursache as string | null) ?? undefined, massnahme: (r.massnahme as string | null) ?? undefined,
       entscheidung: (r.entscheidung as string | null) ?? undefined,
       dedupeKey: (r.dedupe_key as string | null) ?? undefined, erstellt: r.erstellt as string, aktualisiert: r.aktualisiert as string,
+      zurueckBis: (r.zurueck_bis as string | null) ?? undefined,
     };
   }
 }

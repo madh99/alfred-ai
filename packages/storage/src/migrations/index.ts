@@ -2993,4 +2993,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE scheduled_actions ADD COLUMN stand_gruppe TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 142,
+    description: 'v1480 — vorgaenge.zurueck_bis: vom Owner zurückgestellt bis (SQLite-Spiegel zu PG v146).',
+    up(db) {
+      try { db.exec('ALTER TABLE vorgaenge ADD COLUMN zurueck_bis TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

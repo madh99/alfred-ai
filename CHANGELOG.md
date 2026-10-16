@@ -55,6 +55,21 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1480] - 2026-10-16
+
+### Added — Auf alle offenen Vorgänge reagieren (App 1.34.0)
+
+Owner 16.10.: „Man hat nirgends die Möglichkeit, auf alle offenen Vorgänge zu reagieren.“ Die Kachel zeigte höchstens 12, die Seitenleiste 8 Vorgänge, eine eigene Ansicht fehlte. Der Dialog kannte nur „Abschließen“. Alfred-Vorgänge mit „ausführen“ blieben offen, weil der Denk-Durchlauf dieselbe Aktion stündlich neu vorschlug, ohne sie auszuführen. „Wartet“-Vorgänge hingen an Bestätigungen, die nach drei Stunden abliefen.
+
+- **Ausführen:** `POST /api/geraete/vorgaenge/:id {aktion: ausfuehren}` führt die zuletzt im Ausführungsgedächtnis vorgeschlagene Aktion im Namen des Owners aus. Der Klick des Owners ist die Bestätigung. Vorschläge mit Platzhalter (z. B. `<id-aus-liste>`) oder ohne vorhandenes Werkzeug sind nicht ausführbar. Das Ergebnis wird als Schritt gespeichert. Erfolg schließt den Vorgang, ein Fehlschlag lässt ihn mit Fehlertext warten.
+- **Später:** `{aktion: spaeter, stunden | bis: morgen | zurueck}` stellt einen Vorgang zurück, ohne Status oder Frist zu ändern. Eine Frist würde den Vorgang beim Ablauf verwerfen. Neues Feld `vorgaenge.zurueck_bis` (Migration PG 146 / SQLite 142).
+- **Vorschlag in der Liste:** Die Vorgangsliste liefert je offenem Vorgang die vorgeschlagene Aktion als Kurztext und ob sie ausführbar ist.
+- **App 1.34.0:**
+  - Neue Ansicht „Vorgänge“ mit allen offenen Vorgängen, gruppiert in „Für dich“, „Bei Alfred“ und „Zurückgestellt“, dazu die in den letzten 7 Tagen abgeschlossenen.
+  - Je Vorgang gibt es Ausführen (mit Anzeige der Aktion vor dem Ja), Später, Abschließen und Nachfragen. Ähnliche Vorgänge sind als mögliche Dubletten markiert.
+  - Der Detail-Dialog zeigt die vorgeschlagene Aktion und hat ebenfalls Ausführen und Später.
+  - Erreichbar über die Symbolleiste (mit Zähler), die Seitenleiste („Alle N anzeigen“), die Befehlspalette und den Link „+N weitere“ in der Lage-Kachel.
+
 ## [0.19.0-jarvis.1479] - 2026-10-16
 
 ### Security — WMI-Start ohne eingebettete Werte

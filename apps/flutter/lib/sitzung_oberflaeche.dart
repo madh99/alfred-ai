@@ -18,6 +18,7 @@ extension _Oberflaeche on _SitzungState {
         const SizedBox(height: 10),
         knopf(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => _neu(() => ansicht = Ansicht.chat)),
         knopf(Icons.dashboard_outlined, Icons.dashboard, 'Lage: Befunde, Vorgänge, Geräte', ansicht == Ansicht.kacheln, server == null ? null : () => _neu(() { ansicht = Ansicht.kacheln; kachelnOffen = true; })),
+        knopf(Icons.assignment_outlined, Icons.assignment, vorgaenge.isEmpty ? 'Vorgänge' : '${vorgaenge.length} offene Vorgänge', ansicht == Ansicht.vorgaenge, server == null ? null : () => _neu(() => ansicht = Ansicht.vorgaenge), zaehler: vorgaenge.length), // 1.34.0
         knopf(Icons.lightbulb_outline, Icons.lightbulb, hinweiseOffen == 0 ? 'Hinweise' : '$hinweiseOffen offene Hinweise', ansicht == Ansicht.hinweise, server == null ? null : () => _neu(() => ansicht = Ansicht.hinweise), zaehler: hinweiseOffen), // 1.4.0
         knopf(Icons.checklist, Icons.checklist_rtl, aufgabenFaelligZahl == 0 ? 'Aufgaben & Erinnerungen' : '$aufgabenFaelligZahl Aufgabe(n) heute oder überfällig', ansicht == Ansicht.aufgaben, server == null ? null : () => _neu(() => ansicht = Ansicht.aufgaben), zaehler: aufgabenFaelligZahl), // 1.9.0 A1
         knopf(Icons.psychology_outlined, Icons.psychology, 'Gedächtnis: was Alfred über dich weiß', ansicht == Ansicht.gedaechtnis, server == null ? null : () => _neu(() => ansicht = Ansicht.gedaechtnis)), // 1.9.0 A3
@@ -67,6 +68,7 @@ extension _Oberflaeche on _SitzungState {
           ],
           abschnitt('Vorgänge${vorgaenge.isEmpty ? '' : ' (${vorgaenge.length})'}'),
           if (vorgaenge.isEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('Keine offenen Vorgänge.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+          if (vorgaenge.length > 8) ListTile(dense: true, leading: const Icon(Icons.more_horiz, size: 18), title: Text('Alle ${vorgaenge.length} anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)), onTap: () => _neu(() => ansicht = Ansicht.vorgaenge)), // 1.34.0
           for (final v in vorgaenge.take(8)) ListTile(dense: true, leading: const Icon(Icons.assignment_outlined, size: 18), title: Text('${v['titel'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${v['status'] ?? ''}${v['naechsterSchritt'] != null ? ' · ${v['naechsterSchritt']}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _vorgangOeffnen(v)), // 1.9.0 A4 — Details und Entscheidung statt nur Nachfrage
           if (letzte.isNotEmpty) abschnitt('Letzte'),
           for (final e in letzte) ListTile(dense: true, leading: const Icon(Icons.history, size: 18), title: Text(e.text.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () { eingabe.text = e.text; fokus.requestFocus(); _neu(() => ansicht = Ansicht.chat); }),

@@ -253,6 +253,8 @@ export interface GeraetOwnerAnsichten {
   projekt?(id: string): Promise<unknown | null>;
   projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<unknown>; // v1426 extra, v1439 deploy
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
+  vorgangAusfuehren?(id: string): Promise<unknown | null>; // v1480
+  vorgangSpaeter?(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1480
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
   beobachter?(): Promise<unknown>; // v1429 R4a
@@ -6969,6 +6971,9 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }
       if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf, { deploy: body.deploy, konventionen: body.konventionen })); return; } // v1426 konventionen
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
+      // v1480 — Ausführen (vorgeschlagene Aktion) und Später (zurückstellen)
+      if (bereich === 'vorgaenge' && id && m === 'POST' && body.aktion === 'ausfuehren' && a.vorgangAusfuehren) { const v = await a.vorgangAusfuehren(id); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
+      if (bereich === 'vorgaenge' && id && m === 'POST' && body.aktion === 'spaeter' && a.vorgangSpaeter) { const v = await a.vorgangSpaeter(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'beobachter' && !id && m === 'GET' && a.beobachter) { antwort(200, await a.beobachter()); return; } // v1429
       if (bereich === 'beobachter' && !id && m === 'POST' && a.beobachterAnlegen) { antwort(200, await a.beobachterAnlegen(body)); return; }
