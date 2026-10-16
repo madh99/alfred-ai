@@ -85,6 +85,8 @@ export interface OwnerAnsichtenDeps {
     loeschen?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1458 — Schalter „automatisch zusammenführen“ */
     mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1486 F5 — Einrichtung: ok:<schritt> („passt so“), pruefung_vorschlag (nur lesend am Gerät), pruefung_setzen (befehle) */
+    einrichtung?: (id: string, was: string, befehle?: string[]) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1426 — Konventionen ändern (Teil-Änderung, Felder siehe projekt/konventionen.ts) */
     konventionen?: (id: string, aenderung: unknown) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1439 — Deploy: aktion ziel | ziel_entfernen | deploy | rollback (Ziel, Deploy und Rollback mit Bestätigung) */
@@ -200,7 +202,7 @@ export class OwnerAnsichten {
   /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
   async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
-  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<{ success: boolean; display?: string; error?: string }> {
+  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
     if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
     // v1443 B15 — Umgebungen aus der App (nur bekannte Felder; Werte kommen nie unmaskiert zurück)
     if (typeof aktion === 'string' && /^env_(liste|setzen|loeschen|kopieren|erkennen)$/.test(aktion)) {
@@ -247,6 +249,13 @@ export class OwnerAnsichten {
       if (!this.d.projekte.loeschen) return { success: false, error: 'nicht verfügbar' };
       this.d.protokoll?.('Projekt löschen angefragt', { projekt: id });
       return this.d.projekte.loeschen(id);
+    }
+    if (aktion === 'einrichtung') { // v1486 F5
+      if (!this.d.projekte.einrichtung || typeof text !== 'string' || !/^(ok:(repo|pruefung|mr|regeln|protokoll)|pruefung_vorschlag|pruefung_setzen)$/.test(text)) return { success: false, error: 'text muss ok:<schritt>, pruefung_vorschlag oder pruefung_setzen sein' };
+      const roh = (extra?.deploy && typeof extra.deploy === 'object' ? extra.deploy : {}) as Record<string, unknown>;
+      const befehle = Array.isArray(roh.befehle) ? roh.befehle.filter((b): b is string => typeof b === 'string').map(b => b.trim()).filter(Boolean) : undefined;
+      if (text !== 'pruefung_vorschlag') this.d.protokoll?.('Projekt Einrichtung', { projekt: id, was: text });
+      return this.d.projekte.einrichtung(id, text, befehle);
     }
     if (aktion === 'mr_auto') { // v1458 — text „an“ oder „aus“
       if (!this.d.projekte.mrAuto || (text !== 'an' && text !== 'aus')) return { success: false, error: 'text muss an oder aus sein' };

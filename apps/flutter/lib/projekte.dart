@@ -6,6 +6,7 @@ library;
 
 import 'dart:async';
 import 'projekt_dev.dart'; // 1.30.0 v1460
+import 'projekt_einrichtung.dart'; // 1.37.0 v1486
 
 import 'package:flutter/material.dart';
 
@@ -444,6 +445,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
         Text('📟 ${j['geraet'] ?? ''} · ${j['pfad'] ?? ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text('Abnahme: ${befehle.isEmpty ? 'keine — Alfred fragt nach jeder Etappe' : befehle.join(' ; ')}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text('${laeufe.length} ${laeufe.length == 1 ? 'Lauf' : 'Läufe'} · ${usd(kosten)}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ProjektEinrichtung(id: widget.id, json: widget.json, einrichtung: j['einrichtung'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.37.0 v1486
         // 1.18.0 — Schalter je Projekt: Auftrag und Bericht jeder Etappe mit committen (v1425)
         SwitchListTile(key: const Key('projekt-protokoll'), contentPadding: EdgeInsets.zero, dense: true, value: protokollAn(j), onChanged: plant ? null : protokollSetzen,
           title: const Text('Protokoll im Projekt'),

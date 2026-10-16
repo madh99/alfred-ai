@@ -15827,7 +15827,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const repo = this.projectRepo;
     const skill = this.projectAgentSkillRef;
     if (!repo || !skill || !this.satellitProjekte) return undefined;
-    const { laufAnzeige } = await import('./projekt/akten-projekte.js');
+    const { laufAnzeige, einrichtungStand } = await import('./projekt/akten-projekte.js');
     const { aktenZustand } = await import('./projekt/akten.js');
     const laeufe = (id: string) => this.satellitProjekte?.laeufeDerAkte(id) ?? [];
     const ctx = (chatId: string) => ({ userId: owner, masterUserId: owner, platform: 'api', chatId }) as never;
@@ -15840,7 +15840,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), dev: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), dev: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p), einrichtung: einrichtungStand(p) }; // v1439 deploy, v1486 F5 einrichtung
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15857,6 +15857,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
+      einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1486 F5
       loeschen: async (id: string) => this.projektEndgueltigLoeschen(id), // v1457
     };
   }
@@ -16133,6 +16134,43 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   /** v1455 — Schalter „Merge Requests“ je Projekt (App, Web, Gespräch): Tag merge-requests; gilt ab dem nächsten Lauf. */
   /** v1458 — Schalter „automatisch zusammenführen“ je Projekt (nur mit Merge Requests an wirksam); Standard aus = nach dem Ja des Owners. */
+  /**
+   * v1486 F5 — Einrichtung aus der App: „passt so“ je Schritt, Prüfbefehle aus dem Projekt vorschlagen lassen (nur lesend am Gerät,
+   * Satellit ≥ 1485) und übernehmen (gelten ab dem nächsten Lauf; der laufende fragt nach seiner Etappe selbst).
+   */
+  private async geraeteProjektEinrichtung(id: string, was: string, befehle?: string[]): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const { ProjektAktenUeberProjekte, EINRICHTUNG_SCHRITTE } = await import('./projekt/akten-projekte.js');
+    const p = await repo.getById(o, id).catch(() => null);
+    if (!p?.geraetId || !p.cwd) return { success: false, error: 'kein Geräte-Projekt' };
+    const akten = new ProjektAktenUeberProjekte(repo);
+    if (was.startsWith('ok:')) {
+      const k = was.slice(3) as typeof EINRICHTUNG_SCHRITTE[number];
+      if (!EINRICHTUNG_SCHRITTE.includes(k)) return { success: false, error: 'unbekannter Schritt' };
+      await akten.einrichtungOk(o, id, k);
+      this.logger.info({ projekt: id, schritt: k }, 'v1486 Einrichtung: passt so');
+      return { success: true, display: 'Gespeichert.' };
+    }
+    if (was === 'pruefung_vorschlag') {
+      const g = this.geraeteGateway?.geraetNachName(p.geraetId);
+      if (!g) return { success: false, error: `${p.geraet ?? 'Gerät'} nicht verbunden` };
+      if (!g.aktionen.includes('pruefung_erkennen')) return { success: false, error: `Satellit auf ${p.geraet ?? 'dem Gerät'} zu alt (Update ≥ 1485)` };
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'pruefung_erkennen', { projekt: p.cwd }, 60_000);
+      if (!r.success) return { success: false, error: r.error ?? 'Erkennung fehlgeschlagen' };
+      this.logger.info({ projekt: id, ...(r.data as object) }, 'v1486 Einrichtung: Prüfbefehle vorgeschlagen');
+      return { success: true, display: r.display, data: r.data };
+    }
+    if (was === 'pruefung_setzen') {
+      const neu = [...new Set((befehle ?? []).filter(b => b.length < 200 && !/[\r\n\0]/.test(b)))].slice(0, 6);
+      if (!neu.length) return { success: false, error: 'befehle fehlen' };
+      await akten.aendern(o, id, { pruefBefehle: neu });
+      this.logger.info({ projekt: id, befehle: neu }, 'v1486 Einrichtung: Prüfbefehle übernommen');
+      return { success: true, display: `Prüfbefehle: ${neu.join(' · ')} — gelten ab dem nächsten Lauf.` };
+    }
+    return { success: false, error: 'unbekannte Einrichtung' };
+  }
+
   private async geraeteProjektMrAuto(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
     const o = this.ownerMasterUserId; const repo = this.projectRepo;
     if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
@@ -16267,6 +16305,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
           const id = await zuordnen(s);
           if (id && aktenRepo) await aktenRepo.sitzung(id, s, s.start).catch((err: Error) => this.logger.warn({ err: err.message, lauf: s.id }, 'v1399 Projekt-Sitzung nicht angelegt'));
           const f = projektFaden(id); if (f) await this.ownerFadenUmbenennen(f, `🔨 ${s.akteName ?? 'Projekt'}`).catch(() => false); // v1419 G3
+          // v1486 F5 — offene Einrichtung einmal je Lauf im Projektfaden nennen (hält nichts auf)
+          if (f && id && this.projectRepo) {
+            const o = owner(); const p = o ? await this.projectRepo.getById(o, id).catch(() => null) : null;
+            const { einrichtungStand, einrichtungHinweis } = await import('./projekt/akten-projekte.js');
+            const h = p ? einrichtungHinweis(einrichtungStand(p)) : undefined;
+            if (h) await this.meldeInFaden(f, h).catch(() => undefined);
+          }
           return id;
         },
         beruehren: async (s) => { if (!aktenRepo || !s.akteId) return; await aktenRepo.sitzung(s.akteId, s, s.start, Date.now()).catch(() => undefined); await this.projectRepo?.touch(s.akteId).catch(() => undefined); },

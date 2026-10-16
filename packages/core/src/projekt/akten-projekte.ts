@@ -21,6 +21,40 @@ export interface ProjektAkte {
   mergeRequestsAuto: boolean;
 }
 
+/**
+ * v1486 F5 — Einrichtung eines Geräte-Projekts (Owner 16.10.: Onboarding wie empfohlen, ohne Kostengrenze — eine Grenze gibt es
+ * auf Wunsch schon). Der Stand ergibt sich aus den vorhandenen Einstellungen; was der Owner bewusst so lässt, markiert „passt so“
+ * (Tag eingerichtet:<schritt>). Nichts davon hält einen Lauf auf.
+ */
+export const EINRICHTUNG_SCHRITTE = ['repo', 'pruefung', 'mr', 'regeln', 'protokoll'] as const;
+export type EinrichtungSchritt = typeof EINRICHTUNG_SCHRITTE[number];
+export const einrichtungTag = (k: EinrichtungSchritt) => `eingerichtet:${k}`;
+export interface EinrichtungStand { schritte: Array<{ schritt: EinrichtungSchritt; titel: string; erledigt: boolean; stand: string }>; erledigt: number; gesamt: number }
+
+export function einrichtungStand(p: { repoUrl?: string | null; tags?: string[] | null; conventions?: object | null; pruefBefehle?: string[] | null }): EinrichtungStand {
+  const t = p.tags ?? [];
+  const ok = (k: EinrichtungSchritt) => t.includes(einrichtungTag(k));
+  const befehle = p.pruefBefehle ?? [];
+  const regeln = Object.keys(p.conventions ?? {}).length > 0;
+  const mr = t.includes('merge-requests');
+  const protokollAus = t.includes('protokoll-aus');
+  const schritte: EinrichtungStand['schritte'] = [
+    { schritt: 'repo', titel: 'Repository', erledigt: !!p.repoUrl || ok('repo'), stand: p.repoUrl ? p.repoUrl : ok('repo') ? 'keins (nur lokal)' : 'offen: neu anlegen, vorhandenes eintragen oder keins' },
+    { schritt: 'pruefung', titel: 'Prüfbefehle', erledigt: befehle.length > 0 || ok('pruefung'), stand: befehle.length ? befehle.join(' · ') : ok('pruefung') ? 'keine (du nimmst jede Etappe selbst ab)' : 'offen: Vorschlag aus dem Projekt holen' },
+    { schritt: 'mr', titel: 'Merge Requests', erledigt: mr || ok('mr'), stand: mr ? `an${t.includes('mr-auto-merge') ? ', automatisch zusammenführen' : ', Zusammenführen nach deinem Ja'}` : ok('mr') ? 'aus (direkt auf dem Zweig)' : 'offen: an oder aus' },
+    { schritt: 'regeln', titel: 'Projektregeln', erledigt: regeln || ok('regeln'), stand: regeln ? 'festgelegt' : ok('regeln') ? 'keine eigenen' : 'offen: CHANGELOG, Commits, README' },
+    { schritt: 'protokoll', titel: 'Protokoll im Repository', erledigt: protokollAus || ok('protokoll'), stand: protokollAus ? 'aus (nur lokal)' : ok('protokoll') ? 'an' : 'offen: an (Standard) oder aus' },
+  ];
+  return { schritte, erledigt: schritte.filter(s => s.erledigt).length, gesamt: schritte.length };
+}
+
+/** v1486 F5 — eine Zeile für den Projektfaden; undefined, wenn alles eingerichtet ist. */
+export function einrichtungHinweis(e: EinrichtungStand): string | undefined {
+  const offen = e.schritte.filter(s => !s.erledigt);
+  if (!offen.length) return undefined;
+  return `🧭 Einrichtung ${e.erledigt}/${e.gesamt} — offen: ${offen.map(s => s.titel).join(' · ')}. Festlegen in der App unter Projekte → Einrichtung (der Lauf läuft trotzdem).`;
+}
+
 export function akteAusProjekt(p: Project): ProjektAkte {
   return {
     id: p.id, userId: p.userId, name: p.name, geraetId: p.geraetId ?? '', geraet: p.geraet ?? '', pfad: p.cwd ?? '',
@@ -82,8 +116,8 @@ export class ProjektAktenUeberProjekte {
   async setzeProtokoll(userId: string, id: string, an: boolean): Promise<boolean> {
     const p = await this.repo.getById(userId, id);
     if (!p?.geraetId) return false;
-    const tags = (p.tags ?? []).filter(t => t !== 'protokoll-aus');
-    await this.repo.update(userId, id, { tags: an ? tags : [...tags, 'protokoll-aus'] });
+    const tags = (p.tags ?? []).filter(t => t !== 'protokoll-aus' && t !== einrichtungTag('protokoll'));
+    await this.repo.update(userId, id, { tags: [...(an ? tags : [...tags, 'protokoll-aus']), einrichtungTag('protokoll')] }); // v1486 F5 — bewusst gesetzt
     return true;
   }
 
@@ -91,8 +125,17 @@ export class ProjektAktenUeberProjekte {
   async setzeMergeRequests(userId: string, id: string, an: boolean, tag: 'merge-requests' | 'mr-auto-merge' = 'merge-requests'): Promise<boolean> {
     const p = await this.repo.getById(userId, id);
     if (!p?.geraetId) return false;
-    const tags = (p.tags ?? []).filter(t => t !== tag);
-    await this.repo.update(userId, id, { tags: an ? [...tags, tag] : tags });
+    const tags = (p.tags ?? []).filter(t => t !== tag && t !== einrichtungTag('mr'));
+    await this.repo.update(userId, id, { tags: [...(an ? [...tags, tag] : tags), einrichtungTag('mr')] }); // v1486 F5 — bewusst gesetzt
+    return true;
+  }
+
+  /** v1486 F5 — Einrichtungsschritt „passt so“ (bleibt, wie er ist). Liefert false, wenn das Projekt fehlt. */
+  async einrichtungOk(userId: string, id: string, schritt: EinrichtungSchritt): Promise<boolean> {
+    const p = await this.repo.getById(userId, id);
+    if (!p?.geraetId) return false;
+    const tag = einrichtungTag(schritt);
+    if (!(p.tags ?? []).includes(tag)) await this.repo.update(userId, id, { tags: [...(p.tags ?? []), tag] });
     return true;
   }
 

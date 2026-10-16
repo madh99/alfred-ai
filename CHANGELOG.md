@@ -55,6 +55,26 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1486] - 2026-10-16
+
+### Added — Geräte-Projekte: Einrichtung (App 1.37.0)
+
+Repository, Prüfbefehle, Merge Requests, Projektregeln und Protokoll ließen sich bisher einzeln an verschiedenen Stellen der Projektansicht setzen. Nirgends war zu sehen, was für ein Projekt noch nicht entschieden war. Bei „Heizölpreis Österreich“ fehlten deshalb Prüfbefehle und Push, ohne dass es auffiel.
+
+- **Einrichtungsstand je Projekt** (`einrichtung` in der Projekt-Antwort): fünf Schritte, die sich aus den vorhandenen Einstellungen ergeben.
+  - Ein Schritt gilt als erledigt, wenn er gesetzt ist: Repository eingetragen, Prüfbefehle vorhanden, Merge Requests an, eigene Regeln, Protokoll aus.
+  - Oder wenn der Owner ihn bewusst so lässt („passt so“).
+  - Die Schalter für Merge Requests und Protokoll markieren den Schritt beim Umschalten als entschieden.
+  - Eine Kostengrenze gehört bewusst nicht dazu.
+- **Aktion `einrichtung`** (App-Route `POST /api/geraete/projekte/:id`):
+  - `ok:<schritt>` = passt so.
+  - `pruefung_vorschlag` holt den Vorschlag des Satelliten (v1485, nur lesend).
+  - `pruefung_setzen` übernimmt ihn in die Projektakte, gültig ab dem nächsten Lauf.
+- **App:** Karte „Einrichtung n/m“ oben in der Projektansicht.
+  - Je offenem Schritt gibt es die passenden Knöpfe: Keins (nur lokal), Vorschlag holen und Übernehmen oder Keine, Merge Requests an/aus, Keine eigenen Regeln, Protokoll an/aus. Repository und Regeln verweisen auf ihre Bereiche.
+  - Ist alles eingerichtet, verschwindet die Karte.
+- **Projektfaden:** Nach der Planfreigabe nennt eine Zeile die offenen Schritte. Der Lauf startet trotzdem, die Einrichtung ist nie Voraussetzung.
+
 ## [0.19.0-jarvis.1485] - 2026-10-16
 
 ### Added — Geräte-Projekte: Prüfbefehle aus dem Projekt vorschlagen
