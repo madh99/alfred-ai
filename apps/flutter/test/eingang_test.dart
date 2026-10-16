@@ -6,6 +6,16 @@ import 'package:alfred_app/modell.dart';
 
 // 1.36.0 — Eingang: Dringlichkeits-Reihenfolge und was hineingehört
 void main() {
+  test('1.39.0 Hinweis-Anzeige: ohne Nummer und Fettung, abgeschnittener Titel nicht doppelt', () {
+    final a = hinweisAnzeige('Hinweis: Auto-Freigabe niedrig — Die Akzeptanzrate liegt bei 13 % (itsm 26', '5. **Hinweis: Auto-Freigabe niedrig** — Die Akzeptanzrate liegt bei 13 % (itsm 26 %, email 11 %).');
+    expect(a.titel, 'Hinweis: Auto-Freigabe niedrig — Die Akzeptanzrate liegt bei 13 % (itsm 26 %, email 11 %).');
+    expect(a.text, isNull);
+    final b = hinweisAnzeige('Batterie wechseln', 'Temp Terrasse meldet **5 %**.');
+    expect((b.titel, b.text), ('Batterie wechseln', 'Temp Terrasse meldet 5 %.'));
+    expect(hinweisAnzeige('', '3. **Nur Text**').titel, 'Nur Text');
+    expect(hinweisAnzeige('Gleich', 'Gleich').text, isNull);
+  });
+
   final jetzt = DateTime(2026, 10, 16, 12);
   final vorgaenge = <Map<String, dynamic>>[
     {'id': 'v-alfred', 'titel': 'Erinnerung setzen', 'status': 'offen', 'besitzer': 'alfred'},

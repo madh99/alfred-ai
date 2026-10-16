@@ -38,6 +38,18 @@ export function aufgabeFaellig(a: AufgabeZeile, jetzt: Date): boolean {
 }
 
 /** Hinweis offen = pending oder snoozed (wie Hinweis.offen in der App) */
+/**
+ * v1488 — Hinweis für die Anzeige (Sichtprüfung 16.10.: „5. **Hinweis: …**“ roh und der Titel doppelt): ohne Listennummer und
+ * Markdown-Fettung; ist der Titel nur der abgeschnittene Anfang des Texts, zeigt die Zeile den Text allein.
+ */
+export function hinweisAnzeige(titel: string, text: string): { titel: string; text?: string } {
+  const glatt = (s: string) => s.replace(/\*\*|__/g, '').replace(/^\s*\d+\.\s+/, '').trim();
+  const ti = glatt(titel), te = glatt(text);
+  if (!ti) return { titel: te };
+  if (!te || te === ti) return { titel: ti };
+  return te.startsWith(ti) ? { titel: te } : { titel: ti, text: te };
+}
+
 export function hinweisOffen(h: HinweisZeile): boolean { return h.status === 'pending' || h.status === 'snoozed'; }
 
 function zurueckgestellt(v: VorgangDto, jetzt: Date): boolean {
@@ -59,7 +71,7 @@ export function eingangEintraege(p: { bestaetigungen: PendingConfirmationItem[];
     ...p.bestaetigungen.map((b): EingangEintrag => ({ art: 'bestaetigung', id: b.id, titel: b.description, text: b.skillName, zeit: datum(b.createdAt), rang: 0, roh: b })),
     ...vorgaengeFuerDich(p.vorgaenge, p.jetzt).map((v): EingangEintrag => ({ art: 'vorgang', id: v.id, titel: v.titel, text: v.naechsterSchritt, zeit: datum(v.frist ?? v.erstellt), rang: v.status === 'wartet' ? 1 : 3, roh: v })),
     ...p.aufgaben.filter(a => aufgabeFaellig(a, p.jetzt)).map((a): EingangEintrag => ({ art: 'aufgabe', id: a.id, titel: a.titel, text: aufgabenGruppe(a, p.jetzt), zeit: datum(a.faellig), rang: 2, roh: a })),
-    ...p.hinweise.filter(hinweisOffen).map((h): EingangEintrag => ({ art: 'hinweis', id: h.id, titel: h.titel || h.text, text: h.titel ? h.text : undefined, zeit: datum(h.zeit), rang: h.dringlichkeit === 'urgent' ? 1 : 4, roh: h })),
+    ...p.hinweise.filter(hinweisOffen).map((h): EingangEintrag => ({ art: 'hinweis', id: h.id, ...hinweisAnzeige(h.titel, h.text), zeit: datum(h.zeit), rang: h.dringlichkeit === 'urgent' ? 1 : 4, roh: h })),
   ];
   return aus.sort((a, b) => {
     if (a.rang !== b.rang) return a.rang - b.rang;

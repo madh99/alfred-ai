@@ -26,6 +26,16 @@ class EingangEintrag {
 
 /// Alles, was eine Reaktion braucht, in Dringlichkeits-Reihenfolge: Bestätigungen · wartende Vorgänge · überfällige/heutige
 /// Aufgaben · Vorgänge bei dir · Hinweise (neueste zuerst). Vorgänge bei Alfred und zurückgestellte gehören nicht hierher.
+/// 1.39.0 — Hinweis für die Anzeige: ohne Listennummer und Markdown-Fettung; ist der Titel nur der abgeschnittene Anfang
+/// des Texts, zeigt die Zeile den Text allein (vorher „5. **Hinweis: …**“ roh und der Titel doppelt).
+({String titel, String? text}) hinweisAnzeige(String titel, String text) {
+  String glatt(String s) => s.replaceAll(RegExp(r'\*\*|__'), '').replaceFirst(RegExp(r'^\s*\d+\.\s+'), '').trim();
+  final ti = glatt(titel), te = glatt(text);
+  if (ti.isEmpty) return (titel: te, text: null);
+  if (te.isEmpty || te == ti) return (titel: ti, text: null);
+  return te.startsWith(ti) ? (titel: te, text: null) : (titel: ti, text: te);
+}
+
 List<EingangEintrag> eingangEintraege({required List<Bestaetigung> bestaetigungen, required List<Map<String, dynamic>> vorgaenge, required List<Aufgabe> aufgaben, required List<Hinweis> hinweise, required DateTime jetzt}) {
   final aus = <EingangEintrag>[
     for (final b in bestaetigungen) EingangEintrag(EingangArt.bestaetigung, b.id, b.text, zeit: b.seit, rang: 0, roh: b),
@@ -33,7 +43,8 @@ List<EingangEintrag> eingangEintraege({required List<Bestaetigung> bestaetigunge
       EingangEintrag(EingangArt.vorgang, '${v['id']}', '${v['titel'] ?? ''}', text: v['naechsterSchritt'] as String?, zeit: DateTime.tryParse('${v['frist'] ?? v['erstellt'] ?? ''}')?.toLocal(), rang: v['status'] == 'wartet' ? 1 : 3, roh: v),
     for (final a in aufgaben.where((a) => !a.erledigt && const ['Überfällig', 'Heute'].contains(aufgabenGruppe(a, jetzt))))
       EingangEintrag(EingangArt.aufgabe, a.id, a.titel, text: aufgabenGruppe(a, jetzt), zeit: a.faellig, rang: 2, roh: a),
-    for (final h in hinweise.where((h) => h.offen)) EingangEintrag(EingangArt.hinweis, h.id, h.titel.isEmpty ? h.text : h.titel, text: h.titel.isEmpty ? null : h.text, zeit: h.zeit, rang: h.dringlichkeit == 'urgent' ? 1 : 4, roh: h),
+    for (final h in hinweise.where((h) => h.offen))
+      for (final z in [hinweisAnzeige(h.titel, h.text)]) EingangEintrag(EingangArt.hinweis, h.id, z.titel, text: z.text, zeit: h.zeit, rang: h.dringlichkeit == 'urgent' ? 1 : 4, roh: h),
   ];
   aus.sort((a, b) {
     final r = a.rang.compareTo(b.rang);

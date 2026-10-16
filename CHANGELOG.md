@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1488] - 2026-10-16
+
+### Fixed — Eingang: Hinweise ohne Markdown-Reste und ohne doppelten Titel (App 1.39.0)
+
+Bei der Sichtprüfung der Web-App stand im Eingang „5. **Hinweis: …**“ samt Listennummer und Sternchen, und darüber der gleiche Anfang noch einmal als Titel. Die App zeigte es genauso.
+
+- Listennummer und Markdown-Fettung fallen weg.
+- Ist der Titel nur der abgeschnittene Anfang des Texts, zeigt die Zeile den Text allein.
+- Gilt in Web-App und App gleich (`hinweisAnzeige`).
+
 ## [0.19.0-jarvis.1487] - 2026-10-16
 
 ### Added — Web-App: Vorgänge, Befunde, Lage, Eingang und Einrichtung wie in der App (App 1.38.0)
