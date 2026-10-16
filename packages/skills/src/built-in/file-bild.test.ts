@@ -40,6 +40,19 @@ describe('v1470 Datei-Werkzeug: Bilder fürs Modell', () => {
     expect(r.display!.indexOf('b.png')).toBeLessThan(r.display!.indexOf('a.png'));
   });
 
+  it('v1474 alter Schlüssel unter Plattform-Kennung → eigene Master-UUID; lokale Pfade bleiben', async () => {
+    const { eigenerSchluessel } = await import('./file.js');
+    const M = 'f165df7a-8689-49b6-9318-41839913846f';
+    expect(eigenerSchluessel('5060785419/2026-07-07T12-35-10-261Z_a.png', M)).toBe(`${M}/2026-07-07T12-35-10-261Z_a.png`);
+    expect(eigenerSchluessel('geraet_7d9f6a58-52c2-4874-90b3-9208cab00724/x.svg', M)).toBe(`${M}/x.svg`);
+    expect(eigenerSchluessel(`${M}/x.svg`, M)).toBe(`${M}/x.svg`);
+    expect(eigenerSchluessel('data/bild.png', M)).toBe('data/bild.png');
+    let gelesen = '';
+    const store = { read: async (k: string) => { gelesen = k; return PNG; } };
+    await new FileSkill().execute({ action: 'read_store', path: '5060785419/a.png' }, { userId: '5060785419', masterUserId: M, fileStore: store } as unknown as SkillContext);
+    expect(gelesen).toBe(`${M}/a.png`);
+  });
+
   it('read: lokales Bild ebenso', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1470-'));
     const p = path.join(dir, 'bild.png');

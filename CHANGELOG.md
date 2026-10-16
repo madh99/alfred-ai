@@ -55,6 +55,13 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1474] - 2026-10-16
+
+### Fixed — Alte Dateischlüssel und beim Namen genannte Werkzeuge
+
+- **Alte Schlüssel:** 82 Dateien des Owners lagen unter Plattform-Kennungen (Telegram, PC, MacBook). Sie wurden am 16.10. unter die Master-UUID umgezogen. `read_store`, `send` und `delete_store` bilden alte Schlüssel aus früheren Nachrichten auf denselben Dateinamen unter der eigenen Master-UUID ab. Lokale Pfade bleiben unverändert.
+- **Genannte Werkzeuge:** Nennt eine Nachricht ein Werkzeug beim Namen (z. B. `code_sandbox`, „Code-Sandbox“), ist es immer in der Auswahl. Realfall 16.10.: „Erzeuge mit code_sandbox … eine Ausgabedatei“ traf keine Kategorie, und Alfred meldete das Werkzeug als nicht verfügbar.
+
 ## [0.19.0-jarvis.1473] - 2026-10-16
 
 ### Fixed — Dateiablage unter der Owner-Identität (Sandbox, eingehende Dokumente, OneDrive)

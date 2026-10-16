@@ -32,6 +32,16 @@ describe('v1472 Werkzeugwahl: zuletzt benutzte Werkzeuge bleiben', () => {
     expect(mit.metas.map(m => m.name)).toContain('image_generate');
   });
 
+  it('v1474 beim Namen genannte Werkzeuge sind dabei (Realfall code_sandbox / Ausgabedatei)', async () => {
+    const { genannteWerkzeuge } = await import('../skill-filter.js');
+    const alle = [...ALLE, meta('code_sandbox', 'automation'), meta('file', 'files')];
+    expect(genannteWerkzeuge('Erzeuge mit code_sandbox (python) eine Ausgabedatei', alle)).toEqual(['code_sandbox']);
+    expect(genannteWerkzeuge('nimm die Code-Sandbox', alle)).toEqual(['code_sandbox']);
+    expect(genannteWerkzeuge('mein_code_sandboxer', alle)).toEqual([]);
+    const w = werkzeugeFuerNachricht('Erzeuge mit code_sandbox (python) eine Ausgabedatei probe.txt', [], alle);
+    expect(w.metas.map(m => m.name)).toContain('code_sandbox');
+  });
+
   it('Icon/Logo/Entwurf/Design treffen Medien', () => {
     const verf = new Set(['core', 'media', 'productivity', 'information', 'automation', 'files'] as const);
     for (const t of ['mach ein neues Icon', 'Logo für die Firma', 'entwirf mir was', 'ein Design-Vorschlag', 'zeichne einen Hund']) {

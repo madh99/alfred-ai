@@ -150,9 +150,24 @@ export function zuletztBenutzteWerkzeuge(verlauf: Array<{ role: string; toolCall
   return namen;
 }
 
+/**
+ * v1474 — Realfall 16.10.: „Erzeuge mit code_sandbox … lies sie mit read_store“ traf keine Kategorie (vor „sandbox“ steht ein
+ * Unterstrich, „Ausgabedatei“ beginnt nicht mit „datei“), Alfred sagte „stehen mir nicht zur Verfügung“. Nennt die Nachricht
+ * ein Werkzeug beim Namen (code_sandbox, code-sandbox, „code sandbox“), ist es dabei. Namen unter 4 Zeichen zählen nicht.
+ */
+export function genannteWerkzeuge(text: string, alle: Array<Pick<SkillMetadata, 'name'>>): string[] {
+  const t = (text ?? '').toLowerCase();
+  if (!t) return [];
+  return alle.filter(m => m.name.length >= 4 && !istGeraeteSkill(m)).filter(m => {
+    const muster = m.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/_/g, '[ _-]');
+    return new RegExp(`(^|[^\\p{L}\\p{N}_])${muster}(?![\\p{L}\\p{N}_])`, 'u').test(t);
+  }).map(m => m.name);
+}
+
 export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[], benutzt: string[] = []): { metas: T[]; grund: WerkzeugwahlGrund } {
   const r0 = werkzeugeOhneAkten(text, verlauf, alle);
-  const fehlend = benutzt.map(n => alle.find(m => m.name === n)).filter((m): m is T => !!m && !r0.metas.includes(m)); // v1472
+  const namen = [...benutzt, ...genannteWerkzeuge(text, alle)]; // v1472 benutzt, v1474 beim Namen genannt
+  const fehlend = [...new Set(namen)].map(n => alle.find(m => m.name === n)).filter((m): m is T => !!m && !r0.metas.includes(m));
   const r = fehlend.length ? { metas: [...r0.metas, ...fehlend], grund: r0.grund } : r0;
   if (!projektNamenMuster?.test(text) || r.metas.some(m => m.name === 'project_agent')) return r;
   const pa = alle.find(m => m.name === 'project_agent');

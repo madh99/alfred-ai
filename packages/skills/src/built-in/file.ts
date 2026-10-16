@@ -5,6 +5,19 @@ import { Skill } from '../skill.js';
 
 const MAX_READ_SIZE = 500_000; // 500KB
 const MAX_SEND_SIZE = 50_000_000; // 50MB
+
+/**
+ * v1474 — Dateien des Owners lagen früher unter Plattform-Kennungen (Telegram-ID, `geraet_<id>`, UUID eines Logins) und wurden
+ * am 16.10. unter die Master-UUID umgezogen. Ältere Nachrichten nennen noch die alten Schlüssel: Ein Schlüssel mit fremdem
+ * Kennungs-Präfix wird auf denselben Dateinamen unter der eigenen Master-UUID abgebildet (nur im eigenen Bereich).
+ */
+const KENNUNG = /^(\d{5,}|geraet_[0-9a-f-]{36}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+export function eigenerSchluessel(key: string, master: string | undefined): string {
+  const i = key.indexOf('/');
+  if (!master || i <= 0) return key;
+  const praefix = key.slice(0, i);
+  return praefix !== master && KENNUNG.test(praefix) ? `${master}/${key.slice(i + 1)}` : key;
+}
 /** v1470 — Bilder bis zu dieser Größe gibt read/read_store dem Modell zum Ansehen (verkleinert wird in der Pipeline). */
 const MAX_BILD_SIZE = 25 * 1024 * 1024;
 const BILD_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
@@ -142,7 +155,9 @@ export class FileSkill extends Skill {
     _context: SkillContext,
   ): Promise<SkillResult> {
     const action = input.action as string;
-    const rawPath = input.path as string;
+    const pfadRoh = input.path as string;
+    // v1474 — alte Schlüssel unter Plattform-Kennungen → eigene Master-UUID
+    const rawPath = typeof pfadRoh === 'string' && ['read_store', 'delete_store', 'send'].includes(action) ? eigenerSchluessel(pfadRoh, _context.masterUserId) : pfadRoh;
     const content = input.content as string | undefined;
     const destination = input.destination as string | undefined;
 
