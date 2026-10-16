@@ -1465,7 +1465,7 @@ export class MessagePipeline {
       }
 
       // Build user message with attachments (images, transcribed audio)
-      const userContent = await this.buildUserContent(message, onProgress);
+      const userContent = await this.buildUserContent(message, onProgress, masterUserId); // v1473 — Ablage unter der Master-UUID
       allMessages.push({ role: 'user', content: userContent });
 
       // Estimate tokens consumed by tool definitions (skill schemas)
@@ -2824,6 +2824,7 @@ export class MessagePipeline {
   private async buildUserContent(
     message: NormalizedMessage,
     onProgress?: ProgressCallback,
+    ablageUserId?: string,
   ): Promise<string | LLMContentBlock[]> {
     const attachments = message.attachments?.filter(a => a.data) ?? [];
 
@@ -2889,7 +2890,8 @@ export class MessagePipeline {
         }
       } else if ((attachment.type === 'document' || attachment.type === 'video' || attachment.type === 'other') && attachment.data) {
         // Save file to inbox and tell the LLM about it
-        const savedPath = await this.saveToInbox(attachment, message.userId);
+        // v1473 — Dokumente unter der Master-UUID ablegen (vorher Plattform-ID, z. B. Telegram-Chat: read_store/send des Owners fanden sie nicht)
+        const savedPath = await this.saveToInbox(attachment, ablageUserId ?? message.userId);
         if (savedPath) {
           const isTextFile = this.isTextMimeType(attachment.mimeType);
           const storageBackend = this.fileStore?.backend ?? 'local';

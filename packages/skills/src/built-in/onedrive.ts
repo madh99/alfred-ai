@@ -491,7 +491,7 @@ export class OneDriveSkill extends Skill {
 
     if (input.fileStoreKey) {
       if (!context.fileStore) return { success: false, error: 'FileStore nicht verfügbar.' };
-      body = await context.fileStore.read(input.fileStoreKey as string, context.alfredUserId);
+      body = await context.fileStore.read(input.fileStoreKey as string, context.masterUserId ?? context.alfredUserId); // v1473 — Uploads liegen unter der Master-UUID
     } else if (input.content) {
       body = input.content as string;
     } else {
@@ -754,7 +754,7 @@ export class OneDriveSkill extends Skill {
     }
 
     // Save to FileStore as temp
-    const userId = context.alfredUserId || 'system';
+    const userId = context.masterUserId || context.alfredUserId || 'system'; // v1473 — Master-UUID wie read_store
     const saved = await context.fileStore.save(userId, item.name, buffer);
 
     return {

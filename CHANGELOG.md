@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1473] - 2026-10-16
+
+### Fixed — Dateiablage unter der Owner-Identität (Sandbox, eingehende Dokumente, OneDrive)
+
+Realfall 16.10.: Ein in der App-Sitzung per Code-Sandbox erzeugtes Icon lag unter `geraet_<id>/…`. `read_store` schlug fehl, und in der Dateiliste des Owners tauchte es nicht auf.
+
+- Ausgabedateien der Code-Sandbox werden unter der Master-UUID gespeichert statt unter der Plattform-Kennung der Sitzung.
+- Eingehende Dokumente, Videos und andere Dateien (Telegram & Co.) landen ebenfalls unter der Master-UUID statt unter der Chat-ID.
+- OneDrive liest Uploads und legt Dateien unter der Master-UUID ab statt unter der internen Benutzerkennung.
+
 ## [0.19.0-jarvis.1472] - 2026-10-16
 
 ### Fixed — Werkzeugwahl: benutzte Werkzeuge bleiben verfügbar

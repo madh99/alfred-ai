@@ -88,7 +88,8 @@ export class CodeExecutionSkill extends Skill {
     if (context.fileStore && attachments && attachments.length > 0) {
       for (const att of attachments) {
         try {
-          const stored = await context.fileStore.save(context.userId, att.fileName, att.data);
+          // v1473 — unter der Master-UUID (Realfall 16.10.: Icon aus der App-Sitzung lag unter „geraet_<id>/…“, read_store und list_store fanden es nicht)
+          const stored = await context.fileStore.save(context.masterUserId ?? context.userId, att.fileName, att.data);
           fileStoreKeys.push(stored.key);
         } catch { /* best-effort — files are still sent as attachments */ }
       }
