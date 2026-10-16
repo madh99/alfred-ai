@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1478] - 2026-10-16
+
+### Fixed — Windows: Claude-Aufträge überleben einen Neustart des Satelliten
+
+Probe auf der Office-VM, 16.10.: Ein Claude-Code-Auftrag starb bei einem Neustart des Satelliten nach 19 s mit („fehler“). Unter Windows liegt ein Kindprozess im Job-Objekt seines Elternprozesses und wird mit ihm beendet. Unter Linux und macOS läuft er abgekoppelt weiter.
+
+- Unter Windows startet der Satellit Claude Code über WMI (`Win32_Process.Create`, unsichtbares Fenster) außerhalb seiner eigenen Prozesskette.
+- Ein kleiner Starter im Auftragsordner leitet die Ausgabe ins Protokoll und schreibt den Exit-Code. Das Ende erkennt der Satellit über die Lebendprüfung, nach einem Neustart über den Wächter für Auftragsenden. Abbrechen beendet weiterhin den ganzen Prozessbaum.
+- Ist WMI nicht verfügbar, gilt der bisherige Start. Die Update-Sperre während laufender Aufträge (1459) bleibt.
+
 ## [0.19.0-jarvis.1477] - 2026-10-16
 
 ### Fixed — Prüfläufe kippen nicht mehr an einzelnen fehlenden Inseraten

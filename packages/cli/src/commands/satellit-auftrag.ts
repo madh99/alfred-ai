@@ -38,6 +38,38 @@ export function claudePfad(env: NodeJS.ProcessEnv = process.env, home = os.homed
 
 export function claudeVerfuegbar(): boolean { return !!claudePfad(); }
 
+/**
+ * v1478 — Starter für Aufträge außerhalb des Satelliten (Windows): liest start.json, startet den Befehl mit Ausgabe ins Protokoll,
+ * schreibt den Exit-Code nach exit.json. Bewusst ohne Abhängigkeiten — er läuft als eigene Datei im Auftragsordner.
+ */
+export const STARTER_JS = [
+  "const fs = require('fs'); const { spawn } = require('child_process');",
+  "const s = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));",
+  "const fd = fs.openSync(s.log, 'a');",
+  "const k = spawn(s.befehl, s.args, { cwd: s.cwd, stdio: ['ignore', fd, fd], windowsHide: true, env: { ...process.env, ...s.env } });",
+  "k.on('error', (e) => { try { fs.appendFileSync(s.log, '\\nStart fehlgeschlagen: ' + e.message + '\\n'); } catch {} fs.writeFileSync(s.exitDatei, JSON.stringify({ exit: null, fehler: e.message })); process.exit(1); });",
+  "k.on('exit', (c) => { fs.writeFileSync(s.exitDatei, JSON.stringify({ exit: c })); process.exit(0); });",
+  '',
+].join('\n');
+
+/** PowerShell-Befehl für WMI Win32_Process.Create (unsichtbares Fenster); Ausgabe „<ReturnValue> <ProcessId>“. */
+export function wmiStartBefehl(kommandozeile: string, cwd: string): string {
+  const q = (s: string) => s.replace(/'/g, "''");
+  return `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${q(kommandozeile)}'; CurrentDirectory='${q(cwd)}'; ProcessStartupInformation=$si}; "$($r.ReturnValue) $($r.ProcessId)"`;
+}
+
+function starteAusserhalbWindows(o: { befehl: string; args: string[]; cwd: string; log: string; ordner: string; env: Record<string, string> }): number | undefined {
+  try {
+    const startJson = path.join(o.ordner, 'start.json');
+    const starter = path.join(o.ordner, 'starter.cjs');
+    writeFileSync(startJson, JSON.stringify({ befehl: o.befehl, args: o.args, cwd: o.cwd, log: o.log, env: o.env, exitDatei: path.join(o.ordner, 'exit.json') }));
+    writeFileSync(starter, STARTER_JS);
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', wmiStartBefehl(`"${process.execPath}" "${starter}" "${startJson}"`, o.cwd)], { windowsHide: true, timeout: 30_000 }).toString();
+    const m = /(\d+)\s+(\d+)\s*$/.exec(out.trim());
+    return m && m[1] === '0' && Number(m[2]) > 0 ? Number(m[2]) : undefined;
+  } catch { return undefined; }
+}
+
 export function neueAuftragId(now = new Date()): string {
   const z = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
   return `${z}-${Math.random().toString(36).slice(2, 6)}`;
@@ -78,7 +110,7 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean; sudoSperre?: boolean; protokoll?: ProtokollAngabe; /** v1432 — Folgefrage: Claude-Code-Sitzung fortsetzen (nur mit nurLesen) */ sitzung?: string }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; ohneWmi?: boolean; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean; sudoSperre?: boolean; protokoll?: ProtokollAngabe; /** v1432 — Folgefrage: Claude-Code-Sitzung fortsetzen (nur mit nurLesen) */ sitzung?: string }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
@@ -103,10 +135,45 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
   // Befehl bremste die Etappe) — Projekt-Einstellungen gelten weiter; optional Kostengrenze je Auftrag
   const args = argumenteFuer({ prompt: opts.nurLesen ? fragePrompt(opts.auftrag, opts.projekt) : auftragPrompt(auftragDatei, opts.projekt), nurLesen: !!opts.nurLesen, maxKostenUsd: opts.maxKostenUsd, sudoSperre: opts.sudoSperre, ...(opts.nurLesen && opts.sitzung ? { sitzung: opts.sitzung } : {}) });
-  const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
-  const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … ${args.slice(2).join(' ')}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) };
+  const befehl = istCmd ? 'cmd.exe' : claude;
+  const befehlArgs = istCmd ? ['/c', claude, ...args] : args;
+  const zusatzEnv = { CLAUDE_CODE_NO_UPDATE_CHECK: '1' };
+  const metaVon = (pid: number | undefined): AuftragMeta => ({ id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … ${args.slice(2).join(' ')}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) });
+  const abschliessen = (meta: AuftragMeta, code: number | null) => {
+    let protokoll = '';
+    try { protokoll = readFileSync(logPfad(id, opts.home), 'utf8'); } catch { /* leer */ }
+    const erg = parseErgebnis(protokoll);
+    // v1382 — abgebrochen bleibt abgebrochen (auftragAbbrechen schreibt den Status vor dem Prozessende)
+    const abgebrochen = ladeMeta(id, opts.home)?.status === 'abgebrochen';
+    const m: AuftragMeta = { ...meta, status: abgebrochen ? 'abgebrochen' : code === 0 && !erg.fehler ? 'fertig' : 'fehler', ende: ladeMeta(id, opts.home)?.ende ?? new Date().toISOString(), exit: code };
+    speichereMeta(m, opts.home);
+    opts.beiEnde?.(m, erg);
+  };
+  // v1478 — Windows: Claude Code außerhalb der Prozesskette des Satelliten starten (WMI Win32_Process.Create). Ein Kind des Satelliten
+  // liegt in dessen Job-Objekt und starb bei jedem Satelliten-Neustart mit (Realfall-Probe Office-VM 16.10.: Auftrag nach 19 s „fehler“).
+  // Ein kleiner Starter leitet die Ausgabe ins Protokoll und schreibt den Exit-Code; Ende über Lebendprüfung, nach einem Neustart über den Wächter.
+  if (process.platform === 'win32' && !opts.ohneWmi && !process.env.VITEST) {
+    const exitDatei = path.join(ordner, 'exit.json');
+    const pid = starteAusserhalbWindows({ befehl, args: befehlArgs, cwd: opts.projekt, log: logPfad(id, opts.home), ordner, env: zusatzEnv });
+    if (pid) {
+      const meta = metaVon(pid);
+      speichereMeta(meta, opts.home);
+      const takt = setInterval(() => {
+        if (laeuft(pid)) return;
+        clearInterval(takt);
+        let code: number | null = null;
+        try { const e = JSON.parse(readFileSync(exitDatei, 'utf8')) as { exit?: number | null }; code = typeof e.exit === 'number' ? e.exit : null; } catch { /* Starter ohne Exit-Datei beendet */ }
+        abschliessen(meta, code);
+      }, 2000);
+      takt.unref?.();
+      return meta;
+    }
+    // WMI nicht verfügbar → bisheriger Start (stirbt bei einem Satelliten-Neustart mit; das Selbst-Update wartet ohnehin, v1459)
+  }
+  const log = openSync(logPfad(id, opts.home), 'a');
+  const kind = spawn(befehl, befehlArgs, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, ...zusatzEnv } });
+  const meta = metaVon(kind.pid);
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
@@ -116,14 +183,7 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   });
   kind.on('exit', (code) => {
     try { closeSync(log); } catch { /* schon zu */ }
-    let protokoll = '';
-    try { protokoll = readFileSync(logPfad(id, opts.home), 'utf8'); } catch { /* leer */ }
-    const erg = parseErgebnis(protokoll);
-    // v1382 — abgebrochen bleibt abgebrochen (auftragAbbrechen schreibt den Status vor dem Prozessende)
-    const abgebrochen = ladeMeta(id, opts.home)?.status === 'abgebrochen';
-    const m: AuftragMeta = { ...meta, status: abgebrochen ? 'abgebrochen' : code === 0 && !erg.fehler ? 'fertig' : 'fehler', ende: ladeMeta(id, opts.home)?.ende ?? new Date().toISOString(), exit: code };
-    speichereMeta(m, opts.home);
-    opts.beiEnde?.(m, erg);
+    abschliessen(meta, code);
   });
   kind.unref();
   return meta;
