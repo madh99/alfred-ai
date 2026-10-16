@@ -8,6 +8,7 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'Chat', icon: Icons.chat_bubble_outline, stichworte: 'gesprach unterhaltung', aktion: (_) => zeige(Ansicht.chat)),
       Befehl(titel: 'Lage', untertitel: 'Befunde, Vorgänge, Geräte', icon: Icons.dashboard_outlined, stichworte: 'kacheln dashboard befunde vorgange gerate', aktion: (_) => zeige(Ansicht.kacheln)),
       Befehl(titel: 'Hinweise', untertitel: hinweiseOffen == 0 ? null : '$hinweiseOffen offen', icon: Icons.lightbulb_outline, stichworte: 'insights', aktion: (_) => zeige(Ansicht.hinweise)),
+      Befehl(titel: 'Eingang', untertitel: 'alles, was dich braucht', icon: Icons.inbox_outlined, stichworte: 'inbox offen erledigen bestaetigungen', aktion: (_) => zeige(Ansicht.eingang)), // 1.36.0
       Befehl(titel: 'Vorgänge', untertitel: vorgaenge.isEmpty ? 'alle offenen Vorgänge' : '${vorgaenge.length} offen', icon: Icons.assignment_outlined, stichworte: 'vorgang aufgaben entscheiden ausfuehren spaeter', aktion: (_) => zeige(Ansicht.vorgaenge)), // 1.34.0
       Befehl(titel: 'Aufgaben & Erinnerungen', untertitel: aufgabenFaelligZahl == 0 ? null : '$aufgabenFaelligZahl heute oder überfällig', icon: Icons.checklist, stichworte: 'todo todos erinnerung reminder', aktion: (_) => zeige(Ansicht.aufgaben)),
       Befehl(titel: 'Gedächtnis', untertitel: 'was Alfred über dich weiß', icon: Icons.psychology_outlined, stichworte: 'memory erinnerungen wissen fakten', aktion: (_) => zeige(Ansicht.gedaechtnis)),

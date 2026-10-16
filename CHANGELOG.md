@@ -55,6 +55,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1482] - 2026-10-16
+
+### Changed — App 1.36.0: Navigation, Erscheinungsbild, Eingang
+
+Owner 16.10.: „Ich finde die App insgesamt sehr plump in der UI.“ Die App hatte 15 unbeschriftete Symbolknöpfe, das Material-Standard-Theme mit einem Kreis „A“ als Logo, fünf getrennte Orte für „das will Aufmerksamkeit“, eine Lage als Rohtext und Rohwörter wie „offen · ausführen“.
+
+- **Navigation:**
+  - Beschriftete Leiste mit Gruppen: Chat · Eingang (Eingang, Vorgänge, Hinweise, Aufgaben, Bestätigungen) · Haus & Systeme (Lage, Befunde, Beobachter) · Arbeit (Projekte) · Wissen (Gedächtnis, Suche, Anhänge) · unten Befehle und Einstellungen.
+  - Zähler je Eintrag. Die Leiste lässt sich auf Symbole einklappen, die Wahl wird gespeichert. Das App-Icon ersetzt das „A“.
+  - Die Gesprächs-Seitenleiste erscheint nur noch im Chat.
+- **Erscheinungsbild:**
+  - Farben aus dem App-Icon: Blau als Hauptfarbe, Cyan als Akzent, Violett als dritte Farbe. Leicht bläuliche Flächen, Karten mit weicher Kontur und größeren Rundungen, klare Schrift-Hierarchie, hell und dunkel.
+  - Die Lage zeigt Zeilen mit fettem Stichwort, ohne die Anweisungszeile fürs Modell. Die Vorgänge-Kachel zeigt Zustands-Chips („wartet auf dich“, „bei dir“, „bei Alfred“) und einen Link „alle anzeigen“.
+- **Eingang (neu):**
+  - Eine Liste für alles, was den Owner braucht: offene Bestätigungen (Ja/Nein), Vorgänge für ihn (Ausführen, Öffnen, Später), heute fällige und überfällige Aufgaben (Erledigt) und offene Hinweise (Gelesen, Nützlich, Nicht nützlich, Nachfragen).
+  - Das Dringendste steht oben. Es gibt Filter je Art und „Alle Hinweise gelesen“. Der Zähler in der Navigation ist die Summe davon.
+  - Der Eingang nutzt nur bestehende Server-Routen.
+
 ## [0.19.0-jarvis.1481] - 2026-10-16
 
 ### Added — Befunde: Einzelheiten und Aktionen, Lage als Markdown (App 1.35.0)

@@ -26,6 +26,7 @@ import 'beobachter.dart'; // 1.20.0
 import 'projekte.dart'; // 1.15.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'vorgaenge_ansicht.dart'; // 1.34.0
+import 'eingang.dart'; // 1.36.0
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -160,6 +161,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// Chat mittig mit Datumstrennern, Eingabekarte mit Stufenwahl.
   Ansicht ansicht = Ansicht.chat;
   bool seitenleisteOffen = seitenleisteGespeichert();
+  bool navBreit = navBreitGespeichert(); // 1.36.0
   String? tierWahl; // null = Automatisch, sonst fast/default/strong
   List<Map<String, dynamic>> vorgaenge = [];
   List<dynamic>? vorgangSchritte; // 1.9.0 — Schritte für den Vorgangs-Dialog
@@ -411,11 +413,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     return Scaffold(
       body: Row(children: [
         _leiste(theme),
-        if (seitenleisteOffen) _seitenleiste(theme),
+        if (seitenleisteOffen && ansicht == Ansicht.chat) _seitenleiste(theme), // 1.36.0 — Gespräche nur im Chat
         const VerticalDivider(width: 1),
         Expanded(child: switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
           Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen, aufVorgaenge: () => setState(() => ansicht = Ansicht.vorgaenge), aufBefunde: (q) => setState(() { befundeFilter = q; ansicht = Ansicht.befunde; })),
+          Ansicht.eingang => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Eingang(json: server!.json, bestaetigungen: List.of(offen), aufEntscheiden: _entscheide, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen, aufGeaendert: () { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }), // 1.36.0
           Ansicht.vorgaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : VorgaengeAnsicht(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen, aufGeaendert: _vorgaengeLaden), // 1.34.0
           Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
           Ansicht.gedaechtnis => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Gedaechtnis(json: server!.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t))), // 1.9.0 A3

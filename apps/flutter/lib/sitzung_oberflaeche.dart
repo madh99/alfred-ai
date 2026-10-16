@@ -2,35 +2,68 @@ part of 'main.dart';
 
 /// C1 (11.10.) — aus main.dart ausgelagert, Verhalten unverändert: Oberfläche: Symbolleiste, Seitenleiste, Chat, Eingabe, Einstellungen, Einträge.
 extension _Oberflaeche on _SitzungState {
-  /// Schmale Symbolleiste links: Chat, Lage (Kacheln), Bestätigungen (mit Zähler), unten Einstellungen.
+  /// 1.36.0 — Navigation mit Beschriftung und Gruppen (Owner 16.10.: „sehr plump in der UI"; vorher 15 unbeschriftete Symbole):
+  /// Chat · Eingang (Vorgänge, Hinweise, Aufgaben, Bestätigungen) · Haus & Systeme (Lage, Befunde, Beobachter) · Arbeit (Projekte) ·
+  /// Wissen (Gedächtnis, Suche, Anhänge) · unten Befehle und Einstellungen. Breit (mit Text) oder schmal (nur Symbole), gemerkt.
   Widget _leiste(ThemeData theme) {
-    Widget knopf(IconData icon, IconData aktivIcon, String tip, bool aktiv, VoidCallback? auf, {int zaehler = 0}) {
-      final i = Icon(aktiv ? aktivIcon : icon);
-      final b = aktiv ? IconButton.filledTonal(tooltip: tip, onPressed: auf, icon: i) : IconButton(tooltip: tip, onPressed: auf, icon: i);
-      return Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: zaehler > 0 ? Badge.count(count: zaehler, child: b) : b);
+    final cs = theme.colorScheme;
+    final breit = navBreit;
+    final ohneServer = server == null;
+    Widget eintrag(IconData icon, IconData aktivIcon, String text, bool aktiv, VoidCallback? auf, {int zaehler = 0, String? tip}) {
+      final farbe = auf == null ? cs.onSurfaceVariant.withValues(alpha: 0.45) : aktiv ? cs.onPrimaryContainer : cs.onSurfaceVariant;
+      final symbol = Icon(aktiv ? aktivIcon : icon, size: 20, color: farbe);
+      final inhalt = breit
+          ? Row(children: [
+              symbol, const SizedBox(width: 12),
+              Expanded(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(color: farbe, fontWeight: aktiv ? FontWeight.w600 : FontWeight.w500))),
+              if (zaehler > 0) Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1), decoration: BoxDecoration(color: aktiv ? cs.primary : cs.secondaryContainer, borderRadius: BorderRadius.circular(10)),
+                  child: Text('$zaehler', style: theme.textTheme.labelSmall?.copyWith(color: aktiv ? cs.onPrimary : cs.onSecondaryContainer, fontWeight: FontWeight.w700))),
+            ])
+          : Center(child: zaehler > 0 ? Badge.count(count: zaehler, backgroundColor: cs.secondary, child: symbol) : symbol);
+      return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1), child: Tooltip(message: breit ? (tip ?? '') : (tip ?? text), child: Material(
+        color: aktiv ? cs.primaryContainer : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(borderRadius: BorderRadius.circular(10), onTap: auf, child: SizedBox(height: 38, child: Padding(padding: EdgeInsets.symmetric(horizontal: breit ? 12 : 0), child: inhalt))),
+      )));
     }
+    Widget gruppe(String name) => breit
+        ? Padding(padding: const EdgeInsets.fromLTRB(22, 14, 12, 4), child: Text(name.toUpperCase(), style: theme.textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant, letterSpacing: 0.8, fontWeight: FontWeight.w600)))
+        : Padding(padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8), child: Divider(height: 1, color: cs.outlineVariant));
+    void zu(Ansicht a, [void Function()? dazu]) => _neu(() { dazu?.call(); ansicht = a; });
     return Container(
-      width: 60,
-      color: theme.colorScheme.surfaceContainerLow,
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      width: breit ? 224 : 68,
+      decoration: BoxDecoration(color: cs.surfaceContainerLow, border: Border(right: BorderSide(color: cs.outlineVariant))),
       child: Column(children: [
-        Tooltip(message: 'Alfred', child: CircleAvatar(radius: 16, backgroundColor: theme.colorScheme.primary, child: Text('A', style: TextStyle(color: theme.colorScheme.onPrimary, fontWeight: FontWeight.bold)))),
-        const SizedBox(height: 10),
-        knopf(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => _neu(() => ansicht = Ansicht.chat)),
-        knopf(Icons.dashboard_outlined, Icons.dashboard, 'Lage: Befunde, Vorgänge, Geräte', ansicht == Ansicht.kacheln, server == null ? null : () => _neu(() { ansicht = Ansicht.kacheln; kachelnOffen = true; })),
-        knopf(Icons.assignment_outlined, Icons.assignment, vorgaenge.isEmpty ? 'Vorgänge' : '${vorgaenge.length} offene Vorgänge', ansicht == Ansicht.vorgaenge, server == null ? null : () => _neu(() => ansicht = Ansicht.vorgaenge), zaehler: vorgaenge.length), // 1.34.0
-        knopf(Icons.lightbulb_outline, Icons.lightbulb, hinweiseOffen == 0 ? 'Hinweise' : '$hinweiseOffen offene Hinweise', ansicht == Ansicht.hinweise, server == null ? null : () => _neu(() => ansicht = Ansicht.hinweise), zaehler: hinweiseOffen), // 1.4.0
-        knopf(Icons.checklist, Icons.checklist_rtl, aufgabenFaelligZahl == 0 ? 'Aufgaben & Erinnerungen' : '$aufgabenFaelligZahl Aufgabe(n) heute oder überfällig', ansicht == Ansicht.aufgaben, server == null ? null : () => _neu(() => ansicht = Ansicht.aufgaben), zaehler: aufgabenFaelligZahl), // 1.9.0 A1
-        knopf(Icons.psychology_outlined, Icons.psychology, 'Gedächtnis: was Alfred über dich weiß', ansicht == Ansicht.gedaechtnis, server == null ? null : () => _neu(() => ansicht = Ansicht.gedaechtnis)), // 1.9.0 A3
-        knopf(Icons.report_problem_outlined, Icons.report_problem, 'Befunde: was Alfred als auffällig führt (Haus-Check u. a.)', ansicht == Ansicht.befunde, server == null ? null : () => _neu(() { befundeFilter = null; ansicht = Ansicht.befunde; })), // 1.12.0
-        knopf(Icons.construction_outlined, Icons.construction, 'Projekte auf Geräten', ansicht == Ansicht.projekte, server == null ? null : () => _neu(() => ansicht = Ansicht.projekte)), // 1.15.0
-        knopf(Icons.visibility_outlined, Icons.visibility, 'Beobachter', ansicht == Ansicht.beobachter, server == null ? null : () => _neu(() => ansicht = Ansicht.beobachter)), // 1.20.0
-        knopf(Icons.keyboard_command_key, Icons.keyboard_command_key, 'Befehle (Strg+K)', false, () => _paletteOeffnen()), // 1.10.0 B1
-        knopf(Icons.search, Icons.manage_search, 'Suche im Verlauf', ansicht == Ansicht.suche, server == null ? null : () => _neu(() => ansicht = Ansicht.suche)), // 1.5.0
-        knopf(Icons.photo_library_outlined, Icons.photo_library, 'Anhänge: Fotos und Dateien', ansicht == Ansicht.anhaenge, server == null ? null : () => _neu(() => ansicht = Ansicht.anhaenge)), // 1.5.0
-        knopf(Icons.notifications_none, Icons.notifications, offen.isEmpty ? 'Keine offenen Bestätigungen' : '${offen.length} offene Bestätigung(en)', false, () => _neu(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), zaehler: offen.length),
-        const Spacer(),
-        knopf(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => _neu(() => ansicht = Ansicht.einstellungen)),
+        Padding(padding: EdgeInsets.fromLTRB(breit ? 18 : 0, 14, breit ? 8 : 0, 6), child: Row(mainAxisAlignment: breit ? MainAxisAlignment.start : MainAxisAlignment.center, children: [
+          ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.asset('assets/alfred.png', width: 30, height: 30, filterQuality: FilterQuality.medium)),
+          if (breit) ...[const SizedBox(width: 10), Expanded(child: Text('Alfred', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)))],
+        ])),
+        Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 6), children: [
+          const SizedBox(height: 4),
+          eintrag(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => zu(Ansicht.chat)),
+          gruppe('Eingang'),
+          eintrag(Icons.inbox_outlined, Icons.inbox, 'Eingang', ansicht == Ansicht.eingang, ohneServer ? null : () => zu(Ansicht.eingang), zaehler: eingangZahl(bestaetigungen: offen.length, vorgaenge: vorgaenge, aufgabenFaellig: aufgabenFaelligZahl, hinweiseOffen: hinweiseOffen, jetzt: DateTime.now()), tip: 'Alles, was dich braucht — das Dringendste zuerst'), // 1.36.0
+          eintrag(Icons.assignment_outlined, Icons.assignment, 'Vorgänge', ansicht == Ansicht.vorgaenge, ohneServer ? null : () => zu(Ansicht.vorgaenge), zaehler: vorgaenge.length, tip: 'Offene Vorgänge: entscheiden, ausführen, später'), // 1.34.0
+          eintrag(Icons.lightbulb_outline, Icons.lightbulb, 'Hinweise', ansicht == Ansicht.hinweise, ohneServer ? null : () => zu(Ansicht.hinweise), zaehler: hinweiseOffen), // 1.4.0
+          eintrag(Icons.checklist, Icons.checklist_rtl, 'Aufgaben', ansicht == Ansicht.aufgaben, ohneServer ? null : () => zu(Ansicht.aufgaben), zaehler: aufgabenFaelligZahl, tip: 'Aufgaben & Erinnerungen'), // 1.9.0 A1
+          eintrag(Icons.notifications_none, Icons.notifications, 'Bestätigungen', false, () => _neu(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), zaehler: offen.length, tip: offen.isEmpty ? 'Keine offenen Bestätigungen' : '${offen.length} offene Bestätigung(en) — in der Seitenleiste'),
+          gruppe('Haus & Systeme'),
+          eintrag(Icons.dashboard_outlined, Icons.dashboard, 'Lage', ansicht == Ansicht.kacheln, ohneServer ? null : () => zu(Ansicht.kacheln, () => kachelnOffen = true), tip: 'Lage: Befunde, Vorgänge, Geräte'),
+          eintrag(Icons.report_problem_outlined, Icons.report_problem, 'Befunde', ansicht == Ansicht.befunde, ohneServer ? null : () => zu(Ansicht.befunde, () => befundeFilter = null), tip: 'Was Alfred als auffällig führt (Haus-Check u. a.)'), // 1.12.0
+          eintrag(Icons.visibility_outlined, Icons.visibility, 'Beobachter', ansicht == Ansicht.beobachter, ohneServer ? null : () => zu(Ansicht.beobachter)), // 1.20.0
+          gruppe('Arbeit'),
+          eintrag(Icons.construction_outlined, Icons.construction, 'Projekte', ansicht == Ansicht.projekte, ohneServer ? null : () => zu(Ansicht.projekte), tip: 'Projekte auf Geräten'), // 1.15.0
+          gruppe('Wissen'),
+          eintrag(Icons.psychology_outlined, Icons.psychology, 'Gedächtnis', ansicht == Ansicht.gedaechtnis, ohneServer ? null : () => zu(Ansicht.gedaechtnis), tip: 'Was Alfred über dich weiß'), // 1.9.0 A3
+          eintrag(Icons.search, Icons.manage_search, 'Suche', ansicht == Ansicht.suche, ohneServer ? null : () => zu(Ansicht.suche), tip: 'Suche im Verlauf'), // 1.5.0
+          eintrag(Icons.photo_library_outlined, Icons.photo_library, 'Anhänge', ansicht == Ansicht.anhaenge, ohneServer ? null : () => zu(Ansicht.anhaenge), tip: 'Fotos und Dateien'), // 1.5.0
+        ])),
+        Divider(height: 1, color: cs.outlineVariant),
+        const SizedBox(height: 6),
+        eintrag(Icons.keyboard_command_key, Icons.keyboard_command_key, 'Befehle', false, () => _paletteOeffnen(), tip: 'Befehle (Strg+K)'), // 1.10.0 B1
+        eintrag(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => zu(Ansicht.einstellungen)),
+        eintrag(breit ? Icons.keyboard_double_arrow_left : Icons.keyboard_double_arrow_right, Icons.keyboard_double_arrow_left, breit ? 'Einklappen' : 'Ausklappen', false, () { _neu(() => navBreit = !navBreit); navBreitSpeichern(navBreit); }),
+        const SizedBox(height: 8),
       ]),
     );
   }
@@ -48,7 +81,7 @@ extension _Oberflaeche on _SitzungState {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(padding: const EdgeInsets.fromLTRB(16, 12, 6, 0), child: Row(children: [
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Alfred', style: theme.textTheme.titleMedium),
+            Text('Gespräche', style: theme.textTheme.titleMedium), // 1.36.0 — „Alfred" steht schon in der Navigation
             Text(geraet, style: theme.textTheme.bodySmall?.copyWith(color: dim), overflow: TextOverflow.ellipsis),
           ])),
           IconButton(tooltip: 'Seitenleiste einklappen', onPressed: () { _neu(() => seitenleisteOffen = false); seitenleisteSpeichern(false); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),

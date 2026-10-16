@@ -3,9 +3,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'befunde.dart'; // 1.35.0
-import 'markdown.dart'; // 1.35.0
 import 'server.dart';
 import 'vorgaenge.dart'; // 1.9.0 A4
+
+/// 1.36.0 — Lage zeilenweise: „Stichwort: Text" (Stichwort fett), ohne die Anweisungszeile fürs Modell („Hinweis: Das ist der belegte Stand …").
+List<({String? stichwort, String text})> lageZeilen(String lage) {
+  final aus = <({String? stichwort, String text})>[];
+  for (final roh in lage.split('\n')) {
+    final z = roh.trim();
+    if (z.isEmpty || z.startsWith('###') || z.startsWith('Hinweis: Das ist der belegte Stand')) continue;
+    final i = z.indexOf(': ');
+    if (i > 0 && i <= 40) { aus.add((stichwort: z.substring(0, i), text: z.substring(i + 2))); } else { aus.add((stichwort: null, text: z)); }
+  }
+  return aus;
+}
 
 /// Meilenstein 3 — Kacheln nativ (Owner-Entscheidung 08.10. „nativ"): Lage, Befunde, Vorgänge und Geräte aus den
 /// JSON-Routen, die das Gerätetoken lesen darf (`/api/lebenszeichen`, `/api/vorgaenge`). Kein Webview, kein API-Token.
@@ -83,7 +94,7 @@ class _KachelnState extends State<Kacheln> {
     final offene = ((vorgaenge?['offene'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
     final breit = MediaQuery.of(context).size.width >= 900;
     final kacheln = <Widget>[
-      _kachel(theme, 'Lage', Icons.radar, child: AlfredText(lage.replaceFirst(RegExp(r'^###\s*[^\n]*\n'), '')), fuss: stand == null ? null : 'Stand ${_zeit(stand!)}${kosten != null ? ' · heute ${_kosten(kosten)}' : ''}'), // 1.35.0 — Markdown statt Rohtext (Überschrift steht im Kachelkopf)
+      _kachel(theme, 'Lage', Icons.radar, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final z in lageZeilen(lage)) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text.rich(TextSpan(children: [if (z.stichwort != null) TextSpan(text: '${z.stichwort}  ', style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700, color: theme.colorScheme.primary)), TextSpan(text: z.text)]), style: theme.textTheme.bodySmall?.copyWith(height: 1.35)))]), fuss: stand == null ? null : 'Stand ${_zeit(stand!)}${kosten != null ? ' · heute ${_kosten(kosten)}' : ''}'), // 1.35.0 — Markdown statt Rohtext (Überschrift steht im Kachelkopf)
       _kachel(theme, 'Befunde (${alleBefunde.length})', Icons.report_problem_outlined, child: alleBefunde.isEmpty ? const Text('Keine offenen Befunde.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (hausCheck > 0) InkWell(onTap: widget.aufBefunde == null ? null : () => widget.aufBefunde!('haus-check'), child: Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• [Haus-Check] $hausCheck Punkte — öffnen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)))),
         // 1.35.0 — Befunde anklickbar: Einzelheiten und Aktionen (nicht mehr melden, Vorgang daraus, Nachfragen)
@@ -99,11 +110,13 @@ class _KachelnState extends State<Kacheln> {
         if (befunde.length > 12) InkWell(onTap: widget.aufBefunde == null ? null : () => widget.aufBefunde!(null), child: Text('… +${befunde.length - 12} weitere — alle anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary))),
       ])),
       _kachel(theme, 'Vorgänge (${offene.length})', Icons.assignment_outlined, child: offene.isEmpty ? const Text('Keine offenen Vorgänge.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        for (final v in offene.take(12)) InkWell(onTap: () => _vorgang(v), child: Padding(padding: const EdgeInsets.only(bottom: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.9.0 A4 — Klick: Details, Entscheidung
-          Text('${v['titel'] ?? ''}', style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
-          Text('${v['status'] ?? ''} · ${v['naechsterSchritt'] ?? ''}${v['frist'] != null ? ' · bis ${_datum('${v['frist']}')}' : ''}', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        // 1.36.0 — Zustand als Chip wie in der Ansicht „Vorgänge"; Klick: Details und Entscheidung (1.9.0 A4)
+        for (final v in offene.take(8)) InkWell(borderRadius: BorderRadius.circular(6), onTap: () => _vorgang(v), child: Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Text('${v['titel'] ?? ''}', style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 8),
+          _zustandChip(theme, v),
         ]))),
-        if (offene.length > 12) InkWell(onTap: widget.aufVorgaenge, child: Text('… +${offene.length - 12} weitere — alle anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary))), // 1.34.0
+        Padding(padding: const EdgeInsets.only(top: 4), child: InkWell(onTap: widget.aufVorgaenge, child: Text(offene.length > 8 ? '… +${offene.length - 8} weitere — alle anzeigen' : 'Alle anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)))), // 1.34.0
       ])),
       _kachel(theme, 'Geräte (${geraete.where((g) => g['online'] == true).length}/${geraete.length} online)', Icons.devices, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (final g in geraete) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [
@@ -129,6 +142,12 @@ class _KachelnState extends State<Kacheln> {
         ],
       ),
     );
+  }
+
+  Widget _zustandChip(ThemeData t, Map<String, dynamic> v) {
+    final (text, farbe) = v['status'] == 'wartet' ? ('wartet auf dich', Colors.amber.shade700) : v['besitzer'] == 'user' ? ('bei dir', t.colorScheme.primary) : ('bei Alfred', t.colorScheme.tertiary);
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1), decoration: BoxDecoration(color: farbe.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(10)),
+        child: Text(text, style: t.textTheme.labelSmall?.copyWith(color: farbe, fontWeight: FontWeight.w600)));
   }
 
   Widget _kachel(ThemeData theme, String titel, IconData icon, {required Widget child, String? fuss}) {
