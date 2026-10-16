@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1477] - 2026-10-16
+
+### Fixed — Prüfläufe kippen nicht mehr an einzelnen fehlenden Inseraten
+
+Realfall 16.10. 09:00: Die geplante Mac-Prüfung lieferte zweimal nur „Kurz zum Stand …“ ohne Stand-Block. Ein abgelaufenes willhaben-Inserat warf „advertDetails not found“. Ein zweites Inserat scheiterte vorübergehend mit derselben Meldung. Die Abbruchsperre wertete das als „gleicher Fehler 2×“ und beendete die ganze Prüfung.
+
+- **willhaben:** Ein abgelaufenes Inserat (Weiterleitung auf die Suche mit `fromExpiredAdId`) ergibt den Status „nicht mehr abrufbar“ statt eines Fehlers, wie bisher schon bei HTTP 404/410.
+- **Abbruchsperre:** Die Werkzeugschleife bricht nur noch ab, wenn derselbe Aufruf mit denselben Eingaben wiederholt mit demselben Fehler scheitert. Gleiche Meldungen bei verschiedenen Eingaben zählen nicht mehr.
+
 ## [0.19.0-jarvis.1476] - 2026-10-16
 
 ### Changed — Neues App-Icon; App 1.33.0: Gespräch bleibt beim Neuverbinden

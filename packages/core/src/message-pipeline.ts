@@ -1731,7 +1731,7 @@ export class MessagePipeline {
         accumulatedToolResults.push(...ohneBilder(toolResultBlocks)); // v1268 — Bildblöcke nicht in die Historie
 
         // Detect repeated identical errors: build a signature from error results
-        const errorSignature = this.buildErrorSignature(toolResultBlocks);
+        const errorSignature = this.buildErrorSignature(toolResultBlocks, response.toolCalls);
         if (errorSignature) {
           if (errorSignature === lastErrorSignature) {
             consecutiveErrors++;
@@ -2073,14 +2073,23 @@ export class MessagePipeline {
    * Build a signature string from error tool_result blocks.
    * Returns empty string if no errors (= all tools succeeded).
    */
-  private buildErrorSignature(toolResultBlocks: LLMContentBlock[]): string {
+  /**
+   * v1477 — Signatur = Werkzeug + Eingabe + Fehler. Vorher nur der Fehlertext: Realfall 16.10. 09:00 — zwei verschiedene Inserate
+   * mit derselben Parser-Meldung galten als „gleicher Fehler 2×“, die Schleife brach ab, der Prüflauf lieferte keinen Stand.
+   * Abgebrochen wird nur noch, wenn derselbe Aufruf mit denselben Eingaben wiederholt scheitert.
+   */
+  private buildErrorSignature(toolResultBlocks: LLMContentBlock[], toolCalls?: Array<{ id: string; name: string; input?: unknown }>): string {
+    const aufrufe = new Map((toolCalls ?? []).map(tc => [tc.id, tc]));
     const errors: string[] = [];
     for (const block of toolResultBlocks) {
       if (block.type === 'tool_result' && block.is_error) {
-        errors.push(block.content);
+        const tc = aufrufe.get(block.tool_use_id);
+        let eingabe = '';
+        try { eingabe = tc ? JSON.stringify(tc.input ?? {}).slice(0, 300) : ''; } catch { /* nicht serialisierbar */ }
+        errors.push(tc ? `${tc.name}(${eingabe}): ${block.content}` : block.content);
       }
     }
-    return errors.length > 0 ? errors.join('|') : '';
+    return errors.length > 0 ? errors.sort().join('|') : '';
   }
 
   /**

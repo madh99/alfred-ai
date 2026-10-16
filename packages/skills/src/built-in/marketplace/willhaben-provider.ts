@@ -51,7 +51,11 @@ export class WillhabenProvider extends MarketplaceProvider {
       redirect: 'follow',
     });
     // v1459 — gelöschtes Inserat: kein Fehler, sondern ein Status (die Prüfung braucht „nicht mehr abrufbar“ als Ergebnis)
-    if (res.status === 404 || res.status === 410) return { id, title: '', price: null, currency: 'EUR', url, imageUrls: [], description: '', attributes: {}, platform: 'willhaben', status: 'nicht mehr abrufbar', statusGrund: `HTTP ${res.status}` };
+    const weg = (grund: string): MarketplaceListingDetail => ({ id, title: '', price: null, currency: 'EUR', url, imageUrls: [], description: '', attributes: {}, platform: 'willhaben', status: 'nicht mehr abrufbar', statusGrund: grund });
+    if (res.status === 404 || res.status === 410) return weg(`HTTP ${res.status}`);
+    // v1477 — abgelaufenes Inserat: willhaben leitet mit 200 auf eine Kategorie-Suche um (`?fromExpiredAdId=<id>`) statt 404
+    // (Realfall 16.10. 09:00: „advertDetails not found“ kippte den ganzen Prüflauf)
+    if (/[?&]fromExpiredAdId=/.test(res.url)) return weg('abgelaufen (Weiterleitung auf die Suche)');
     if (!res.ok) throw new Error(`willhaben detail HTTP ${res.status}`);
 
     const html = await res.text();
@@ -63,6 +67,7 @@ export class WillhabenProvider extends MarketplaceProvider {
     catch { throw new Error('willhaben detail: __NEXT_DATA__ contains invalid JSON'); }
     // Detail pages use "advertDetails" (plural), NOT "advertDetail"
     const ad = nextData?.props?.pageProps?.advertDetails;
+    if (!ad && nextData?.props?.pageProps?.fromExpiredAdId) return weg('abgelaufen (Weiterleitung auf die Suche)'); // v1477
     if (!ad) throw new Error('willhaben detail: advertDetails not found in page data');
 
     // Flat attributes (PRICE, DESCRIPTION, LOCATION/ADDRESS_*, etc.)
