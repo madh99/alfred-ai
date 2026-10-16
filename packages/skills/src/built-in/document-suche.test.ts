@@ -34,7 +34,7 @@ describe('v1475 Dokumentsuche', () => {
 
   it('store_key-Ingest liest mit der Master-UUID und bildet alte Schlüssel ab', async () => {
     const read = vi.fn(async () => Buffer.from('x'));
-    const ingest = vi.fn(async () => ({ documentId: 'neu', chunkCount: 1 }));
+    const ingest = vi.fn(async (_u: string, _p: string, _f: string, _m: string, _d?: Buffer) => ({ documentId: 'neu', chunkCount: 1 }));
     const skill = new DocumentSkill(repo as never, { ingest } as never, { semanticSearch: vi.fn() });
     const r = await skill.execute({ action: 'ingest', store_key: '5060785419/2026-06-06T13-42-14-587Z_plan.md' }, { ...ctx, fileStore: { read } } as unknown as SkillContext);
     expect(r.success).toBe(true);
