@@ -55,6 +55,28 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1492] - 2026-10-17
+
+### Fixed — Keine Serien von Erinnerungen und Vorgängen mehr zum selben Gegenstand
+
+Realfall 10.–17.10.: Für den Sensor „Temp Terrasse“ entstanden 13 Vorgänge und 3 Erinnerungen, für die easyname-Domain 6 Vorgänge und 4 Erinnerungen, jedes Mal mit anderem Wortlaut und wandernder Frist.
+
+Ursachen, belegt aus 30 Tagen Daten:
+- Schlug das Modell „Erinnerung setzen“ vor, legte Alfred sie an und schloss den Vorgang sofort. Im nächsten Pass entstanden beide neu.
+- Die Erinnerungs-Prüfung („mindestens 3 gemeinsame Wörter“, an Leerzeichen getrennt, ausgelöste nur 24 h) erkannte in 30 Tagen keine einzige der 95 Erinnerungen als Dublette.
+- Vorgänge aus vorgeschlagenen Aktionen wurden, anders als die aus Insights (v1222, v1428), nicht gegen offene Vorgänge geprüft.
+- Wurde eine Aktion übersprungen, weil die Erinnerung schon bestand, blieb ihr Vorgang „offen, ausführen“ (Realfall: zwei easyname-Vorgänge seit 14./15.10.).
+
+Änderungen:
+- **Erinnerungen (neue Erkennung):**
+  - Gegenstands-Erkennung aus v1428 (Wortstämme und Anker) mit harten Gegenproben. Andere Domain (der Registrar zählt nicht), andere Ticket- oder Rechnungsnummer, anderer Monat, anderer Zustand (offline ≠ Temperatur ≠ Batterie) oder konkret ≠ allgemein bedeuten einen anderen Gegenstand.
+  - Sammel-Erinnerungen („1) … 2) …“) sperren keine einzelne. Der neue Text muss mindestens zur Hälfte abgedeckt sein.
+  - Geprüft werden alle offenen und die in den letzten 72 h ausgelösten Erinnerungen.
+  - Kalibriert an allen 95 Erinnerungen vom 16.09. bis 17.10.: 32 Dubletten erkannt, alle von Hand bestätigt, kein anderer Gegenstand zusammengelegt. Im Zweifel wird wie bisher erinnert.
+- **Erinnerung besteht bereits:** Für die Aktion entsteht kein Vorgang. Stammt der Vorgang aus einem früheren Weg, wird er „verworfen: Erinnerung besteht bereits …“.
+- **Aktion gehört zu einem offenen Vorgang** (auch einem aus einem Befund): Sie wird dort ein Schritt statt eines neuen Vorgangs. Dieser Vorgang wird durch die Aktion nie geschlossen oder umgestellt. Dieselbe Prüfung, kalibriert an 103 Aktions-Vorgängen: 20 zugeordnet, alle zum selben Gegenstand.
+- Die Aktion selbst läuft in allen Fällen wie bisher. Geändert hat sich nur, wo sie im Vorgang landet.
+
 ## [0.19.0-jarvis.1491] - 2026-10-16
 
 ### Fixed — Geräte-Aufträge: Projektordner auch unter anderem Namen (`cwd`, `ordner` …)

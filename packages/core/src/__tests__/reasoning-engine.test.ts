@@ -204,6 +204,55 @@ describe('ReasoningEngine', () => {
     engine.stop();
   });
 
+  // v1492 — Realfall 10.–17.10.: „Erinnerung setzen“ wurde je Pass ein neuer Vorgang und eine neue Erinnerung
+  it('v1492 Aktion zu offenem Vorgang: Schritt statt neuer Vorgang; Erinnerung besteht → kein neuer, eigener Vorgang verworfen', async () => {
+    const { engine } = createEngine();
+    const repo = {
+      offene: vi.fn().mockResolvedValue([{ id: 'befund-1', titel: 'Temp Terrasse Batterie: 0 % leer → Batterie tauschen', status: 'offen' }]),
+      anlegen: vi.fn().mockImplementation(async (v: { titel: string }) => ({ id: 'neu-1', titel: v.titel, erstellt: 'x', aktualisiert: 'x' })),
+      schritt: vi.fn().mockResolvedValue(undefined),
+      setzeStatus: vi.fn().mockResolvedValue(undefined),
+    };
+    engine.setVorgaengeRepo(repo as never);
+    const e = engine as unknown as { legeVorgaengeAn: (a: unknown[]) => Promise<Map<unknown, string>>; angehaengteVorgaenge?: Set<string> };
+    const aktion = { type: 'execute_skill', skillName: 'reminder', description: "Erinnerung: Batterie Sensor 'Temp Terrasse' wechseln", skillParams: { action: 'set', message: "Batterie Sensor 'Temp Terrasse' wechseln" } };
+    const ids = await e.legeVorgaengeAn([aktion]);
+    expect(repo.anlegen).not.toHaveBeenCalled();
+    expect(ids.get(aktion)).toBe('befund-1');
+    expect(e.angehaengteVorgaenge?.has('befund-1')).toBe(true);
+    expect(repo.schritt).toHaveBeenCalledWith(expect.objectContaining({ vorgangId: 'befund-1', art: 'vorgeschlagen' }));
+
+    // anderer Gegenstand → eigener Vorgang wie bisher
+    const domain = { type: 'execute_skill', skillName: 'reminder', description: 'Erinnerung: Domains noahhabel.com/.at bei easyname verlängern', skillParams: { action: 'set', message: 'Domains noahhabel.com/.at bei easyname verlängern' } };
+    const ids2 = await e.legeVorgaengeAn([domain]);
+    expect(repo.anlegen).toHaveBeenCalledTimes(1);
+    expect(ids2.get(domain)).toBe('neu-1');
+  });
+
+  it('v1492 Erinnerung besteht bereits: beim Anlegen entsteht gar kein Vorgang (kein Rauschen je Pass)', async () => {
+    const { engine } = createEngine();
+    const repo = { offene: vi.fn().mockResolvedValue([]), anlegen: vi.fn(), schritt: vi.fn(), setzeStatus: vi.fn() };
+    engine.setVorgaengeRepo(repo as never);
+    (engine as unknown as { adapter: unknown }).adapter = { query: vi.fn().mockResolvedValue([{ id: 'r1', message: "Batterie des Sensors 'Temp Terrasse' wechseln (Stand 0 %)" }]) };
+    const aktion = { type: 'execute_skill', skillName: 'reminder', description: 'Erinnerung setzen', skillParams: { action: 'set', message: "Batterie Sensor 'Temp Terrasse' wechseln — Frist 20.10." } };
+    const ids = await (engine as unknown as { legeVorgaengeAn: (a: unknown[]) => Promise<Map<unknown, string>> }).legeVorgaengeAn([aktion]);
+    expect(repo.anlegen).not.toHaveBeenCalled();
+    expect(ids.size).toBe(0);
+  });
+
+  it('v1492 Erinnerung besteht bereits (neue Erkennung): übersprungen, eigener Vorgang verworfen statt „offen, ausführen“', async () => {
+    const { engine } = createEngine();
+    const repo = { offene: vi.fn().mockResolvedValue([]), anlegen: vi.fn(), schritt: vi.fn().mockResolvedValue(undefined), setzeStatus: vi.fn().mockResolvedValue(undefined) };
+    engine.setVorgaengeRepo(repo as never);
+    const db = { query: vi.fn().mockResolvedValue([{ id: 'r1', message: 'Domains noahhabel.com/.at bei easyname verlängern – Frist 18.10. 10:00', trigger_at: '2026-10-18T08:00:00Z' }]), execute: vi.fn(), queryOne: vi.fn() };
+    (engine as unknown as { adapter: unknown }).adapter = db;
+    const e = engine as unknown as { processActions: (a: unknown[]) => Promise<void>; aktuelleVorgangIds?: Map<unknown, string> };
+    const aktion = { type: 'execute_skill', skillName: 'reminder', description: 'Erinnerung: Domain noahhabel.com bei easyname verlängern', skillParams: { action: 'set', message: 'Domain noahhabel.com bei easyname verlängern – Frist 20.10. 20:30' } };
+    e.aktuelleVorgangIds = new Map([[aktion, 'eigen-1']]);
+    await e.processActions([aktion]);
+    expect(repo.setzeStatus).toHaveBeenCalledWith(expect.anything(), 'eigen-1', 'verworfen', expect.stringContaining('Erinnerung besteht bereits'));
+  });
+
   it('should NOT send message when LLM returns KEINE_INSIGHTS', async () => {
     vi.setSystemTime(new Date('2026-03-11T11:59:00'));
     const { engine, adapter } = createEngine({ llmResponse: 'KEINE_INSIGHTS' });

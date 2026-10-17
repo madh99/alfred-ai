@@ -23,6 +23,7 @@ import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { entferneWiederholungen, istMetaText, ohneMetaVorsatz, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360, v1365
 import { AUSGELASSEN_MARKER, trenneAusgelassen } from './insights/ausgelassen.js'; // v1489
+import { gleicheErinnerung, gleicherGegenstand } from './vorgaenge/erinnerung-dublette.js'; // v1492
 import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
 import { istSicherheitsText } from './vorgaenge/regeln.js'; // v1368
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
@@ -583,6 +584,22 @@ export class ReasoningEngine {
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1180 Insight→Vorgang fehlgeschlagen'); }
   }
 
+  /** v1492 — gibt es schon eine Erinnerung zum selben Gegenstand (offen oder in den letzten 72 h ausgelöst)? */
+  private async bestehendeErinnerung(nachricht: string): Promise<{ id: string; text: string } | null> {
+    if (!this.adapter || !nachricht.trim()) return null;
+    try {
+      if (!this.resolvedOwnerUserId) {
+        try { const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId); this.resolvedOwnerUserId = user.masterUserId ?? user.id ?? this.defaultChatId; } catch { this.resolvedOwnerUserId = this.defaultChatId; }
+      }
+      const cutoff = new Date(Date.now() - 72 * 60 * 60_000).toISOString();
+      const rows = await this.adapter.query(
+        'SELECT id, message FROM reminders WHERE (fired = 0 OR (fired = 1 AND trigger_at > ?)) AND (user_id = ? OR chat_id = ?)',
+        [cutoff, this.resolvedOwnerUserId, this.defaultChatId],
+      ) as Array<{ id: string; message: string }>;
+      return gleicheErinnerung(nachricht, rows.map(x => ({ id: String(x.id), text: String(x.message) })));
+    } catch { return null; }
+  }
+
   /** v1179 — Aktionen mit Handlungsimplikation werden Vorgänge (dedupliziert über Skill+Beschreibung). */
   private async legeVorgaengeAn(actions: ProposedAction[]): Promise<Map<ProposedAction, string>> {
     const ids = new Map<ProposedAction, string>();
@@ -591,7 +608,25 @@ export class ReasoningEngine {
       const { klassifiziereAktion } = await import('./vorgaenge/autonomie.js');
       const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
+      // v1492 — Realfall 10.–17.10.: „Erinnerung setzen“ wurde je Pass ein neuer Vorgang (Temp Terrasse 7×, easyname 6×), weil dieser
+      // Weg — anders als Insights (v1222/v1428) — nicht gegen offene Vorgänge prüfte. Gehört die Aktion zu einem offenen Vorgang, wird sie
+      // dort ein Schritt; dieser Vorgang wird durch die Aktion nie geschlossen (er kann ein Befund sein, den eine Erinnerung nicht löst).
+      const offen = (await this.vorgaengeRepo.offene(userId, 100).catch(() => [])).map(v => ({ id: v.id, text: v.titel }));
+      this.angehaengteVorgaenge = new Set();
       for (const a of actions.slice(0, 5)) {
+        // v1492 — die Erinnerung gibt es schon: die Aktion wird gleich übersprungen, ein Vorgang dafür wäre nur Rauschen
+        if (a.skillName === 'reminder' && typeof a.skillParams?.message === 'string') {
+          const besteht = await this.bestehendeErinnerung(a.skillParams.message);
+          if (besteht) { this.logger.info({ aktion: a.description.slice(0, 120), erinnerung: besteht.id }, 'v1492 Erinnerung besteht bereits — kein Vorgang'); continue; }
+        }
+        const gleich = gleicherGegenstand(a.description, offen);
+        if (gleich) {
+          ids.set(a, gleich.id); this.angehaengteVorgaenge.add(gleich.id);
+          this.kennzahlen.zaehle('vorgaengeZuVorgang');
+          this.logger.info({ aktion: a.description.slice(0, 120), vorgang: gleich.id, vorhanden: gleich.text.slice(0, 80) }, 'v1492 Aktion gehört zu offenem Vorgang — Schritt statt neuer Vorgang');
+          await this.vorgaengeRepo.schritt({ vorgangId: gleich.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, quelle: 'reasoning' }).catch(() => undefined);
+          continue;
+        }
         // v1214 — Fakten-Gegenprobe auch für vorgeschlagene Aktionen (Realfall „BMW OAuth-Flow neu starten")
         const widerspruch = widersprichtWeltmodell(a.description, (k) => this.collector.sektionsInhalt(k));
         if (widerspruch) {
@@ -609,6 +644,7 @@ export class ReasoningEngine {
           begruendung: kurzBegruendung(this.aktuelleBegruendung), // v1201
         });
         ids.set(a, v.id);
+        offen.push({ id: v.id, text: v.titel }); // v1492 — spätere Aktionen desselben Passes hängen sich an
         await this.vorgaengeRepo.schritt({ vorgangId: v.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, autonomie, quelle: 'reasoning' });
       }
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1179 Vorgang nicht angelegt'); }
@@ -2425,6 +2461,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   }
 
   private aktuelleVorgangIds?: Map<ProposedAction, string>;
+  /** v1492 — Vorgänge, an die Aktionen dieses Passes nur angehängt sind (werden durch die Aktion nicht geschlossen) */
+  private angehaengteVorgaenge?: Set<string>;
   private async processActions(actions: ProposedAction[]): Promise<void> {
     if (actions.length === 0) return;
 
@@ -2504,27 +2542,15 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       // Skip reminder if an active (unfired OR recently fired) reminder with similar topic exists
       if (action.skillName === 'reminder' && action.skillParams?.message) {
         try {
-          if (!this.resolvedOwnerUserId) {
-            try {
-              const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId);
-              this.resolvedOwnerUserId = user.masterUserId ?? user.id ?? this.defaultChatId;
-            } catch { this.resolvedOwnerUserId = this.defaultChatId; }
-          }
-          const uid = this.resolvedOwnerUserId;
-          const recentCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-          const existingReminders = await this.adapter?.query(
-            "SELECT message FROM reminders WHERE (fired = 0 OR (fired = 1 AND trigger_at > ?)) AND (user_id = ? OR chat_id = ?)",
-            [recentCutoff, uid, this.defaultChatId],
-          ) as Array<{ message: string }> | undefined;
-          if (existingReminders) {
-            const actionWords = new Set(String(action.skillParams.message).toLowerCase().split(/\s+/).filter(w => w.length >= 4));
-            const alreadyExists = existingReminders.some(r => {
-              const rWords = r.message.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
-              const shared = rWords.filter(w => actionWords.has(w)).length;
-              return shared >= 3; // ≥3 shared keywords = same topic
-            });
-            if (alreadyExists) {
-              this.logger.info({ action: action.description }, 'Reasoning: reminder already exists, skipping');
+          // v1492 — offene Erinnerungen und in den letzten 72 h ausgelöste; Vergleich über den Gegenstand statt „≥ 3 gemeinsame Wörter“
+          // (die alte Regel erkannte in 30 Tagen keine einzige der 95 Erinnerungen als Dublette — Satzzeichen, 24-h-Fenster)
+          {
+            const gleich = await this.bestehendeErinnerung(String(action.skillParams.message));
+            if (gleich) {
+              this.logger.info({ action: action.description, erinnerung: gleich.id, vorhanden: gleich.text.slice(0, 120) }, 'Reasoning: reminder already exists, skipping');
+              await this.protokolliereSchritt(action, 'uebersprungen', `Erinnerung besteht bereits: „${gleich.text.slice(0, 120)}“`, this.aktuelleVorgangIds?.get(action));
+              // v1492 — der eigene Vorgang bleibt nicht „offen, ausführen“ (Realfall: zwei easyname-Vorgänge seit 14./15.10.)
+              { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', `Erinnerung besteht bereits: „${gleich.text.slice(0, 120)}“`).catch(() => undefined); }
               continue;
             }
           }
@@ -2572,7 +2598,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             this.logger.info({ skillName: action.skillName, rate }, 'Reasoning: action skipped (low acceptance rate)');
             await this.protokolliereSchritt(action, 'uebersprungen', `Akzeptanzrate ${Math.round(rate * 100)} %`, this.aktuelleVorgangIds?.get(action));
             // v1216 — ein übersprungener Vorgang bleibt nicht „offen, ausführen" (Realfall: fünfmal neu vorgeschlagen, fünfmal übersprungen)
-            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', `Übersprungen: Akzeptanzrate ${Math.round(rate * 100)} % für ${action.skillName}`).catch(() => undefined); }
+            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', `Übersprungen: Akzeptanzrate ${Math.round(rate * 100)} % für ${action.skillName}`).catch(() => undefined); }
             continue;
           }
         }
@@ -2665,7 +2691,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             this.logger.warn({ action: action.description, skillName: action.skillName, klasse }, 'v1180 Aktion blockiert — Autonomie-Klasse nie');
             await this.protokolliereSchritt(action, 'blockiert', 'Autonomie-Klasse nie: nur manuell durch den Owner', this.aktuelleVorgangIds?.get(action));
             const vid = this.aktuelleVorgangIds?.get(action);
-            if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'blockiert (Autonomie: nie)').catch(() => undefined);
+            if (vid && this.vorgaengeRepo && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'blockiert (Autonomie: nie)').catch(() => undefined);
             continue;
           }
           const vorher = executeDirectly;
@@ -2680,7 +2706,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           if (gate === 'reject') {
             this.logger.info({ action: action.description, gate: 'reject' }, 'Reasoning: knowledge gate rejected action');
             await this.protokolliereSchritt(action, 'uebersprungen', 'Knowledge-Gate: Ziel unbekannt', this.aktuelleVorgangIds?.get(action));
-            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'Übersprungen: Knowledge-Gate — Ziel unbekannt').catch(() => undefined); } // v1216
+            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'Übersprungen: Knowledge-Gate — Ziel unbekannt').catch(() => undefined); } // v1216
             continue;
           }
           if (gate === 'confirm') {
@@ -2755,11 +2781,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           await this.protokolliereSchritt(action, result.success ? 'ausgefuehrt' : 'fehlgeschlagen', result.success ? (ruecknahme ? `Rücknahme: ${ruecknahme}` : undefined) : String(result.error ?? '').slice(0, 300), this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action));
           if (this.vorgaengeRepo && result.success) {
             const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
-            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', `automatisch ausgeführt${ruecknahme ? ` — Rücknahme: ${ruecknahme}` : ''}`).catch(() => undefined);
+            if (vid && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', `automatisch ausgeführt${ruecknahme ? ` — Rücknahme: ${ruecknahme}` : ''}`).catch(() => undefined);
           } else if (this.vorgaengeRepo && !result.success) {
             // v1216 — Fehlschlag sichtbar machen: „wartet" mit Fehlertext statt ewig „offen, ausführen"
             const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
-            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet', `Fehlgeschlagen: ${String(result.error ?? 'unbekannt').slice(0, 200)}`, 'Owner: Aktion schlug fehl — prüfen, anpassen oder verwerfen').catch(() => undefined);
+            if (vid && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet', `Fehlgeschlagen: ${String(result.error ?? 'unbekannt').slice(0, 200)}`, 'Owner: Aktion schlug fehl — prüfen, anpassen oder verwerfen').catch(() => undefined);
           }
           continue;
         }
@@ -2822,7 +2848,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         await this.markActionProposed(action);
         this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action enqueued for confirmation');
         await this.protokolliereSchritt(action, 'zur_bestaetigung', undefined, this.aktuelleVorgangIds?.get(action));
-        if (this.vorgaengeRepo) { const vid = this.aktuelleVorgangIds?.get(action); if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet').catch(() => undefined); }
+        if (this.vorgaengeRepo) { const vid = this.aktuelleVorgangIds?.get(action); if (vid && !this.angehaengteVorgaenge?.has(vid)) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet').catch(() => undefined); }
       } catch (err) {
         this.logger.error({ err, action: action.description }, 'Reasoning: failed to process action');
       }
