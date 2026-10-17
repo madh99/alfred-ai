@@ -55,6 +55,21 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1493] - 2026-10-17
+
+### Fixed — Windows-Satellit mit Office wurde abgewiesen und trennte sich immer wieder
+
+Die Office-VM war seit dem 16.10. meist nur wenige Minuten verbunden. Neu verbunden hat sie sich erst, wenn jemand dort „alfred sitzung“ startete.
+
+- Mit dem Update meldete der Satellit dort mehr als 60 Aktionen: die allgemeinen plus 5× Outlook und 2× Excel.
+- Der Server wies ihn deshalb ab („Aktionen fehlen oder zu viele“, Code 4004). Der Starter fiel auf die alte Version zurück, diese versuchte das Update erneut, und nach 50 Neustarts je Stunde gab er auf.
+- Im Server-Log stand dabei nur „Verbindung geschlossen“.
+- Dieselbe Ursache gab es schon am 13.10. (v1416, Grenze 40 → 60).
+
+- **Grenze 100** statt 60. Alle Aktionen, die ein Satellit melden kann, sind derzeit 61.
+- **Test im Satelliten:** Alle Aktionen, die `baueManifest` auf irgendeinem Gerät melden kann, müssen mit 10 Luft unter der Server-Grenze bleiben. Eine neue Aktion, die das sprengt, fällt beim Bauen auf, nicht erst am Gerät.
+- **Ablehnung im Server-Log:** Gerät, Grund, Zahl der Aktionen, Version und Plattform (Logzeile „v1493 Gerät abgewiesen (Manifest)“).
+
 ## [0.19.0-jarvis.1492] - 2026-10-17
 
 ### Fixed — Keine Serien von Erinnerungen und Vorgängen mehr zum selben Gegenstand

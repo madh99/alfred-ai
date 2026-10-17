@@ -224,7 +224,12 @@ export class GeraeteGateway {
       return undefined;
     }
     const gepr = pruefeManifest(hallo.manifest);
-    if (!gepr.ok) { this.sende(ws, { typ: 'fehler', grund: gepr.grund }); ws.close(4004, 'Manifest'); return undefined; }
+    if (!gepr.ok) {
+      // v1493 — vorher still: im Server-Log stand nur „Verbindung geschlossen“ (Realfall Office-VM 17.10.)
+      const m = hallo.manifest as { aktionen?: unknown[]; version?: string; plattform?: string } | undefined;
+      this.deps.logger.warn({ remote, geraetId: hallo.geraetId, name: eintrag.name, grund: gepr.grund, aktionen: Array.isArray(m?.aktionen) ? m!.aktionen.length : undefined, version: m?.version, plattform: m?.plattform }, 'v1493 Gerät abgewiesen (Manifest)');
+      this.sende(ws, { typ: 'fehler', grund: gepr.grund }); ws.close(4004, 'Manifest'); return undefined;
+    }
     const alt = this.verbindungen.get(eintrag.id);
     if (alt) this.trenne(alt, 'neue Verbindung desselben Geräts');
     const skillName = geraetSkillName(eintrag.name);

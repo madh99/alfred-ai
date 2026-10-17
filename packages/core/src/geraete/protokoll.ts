@@ -13,7 +13,10 @@ export const PULS_TIMEOUT_MS = 90_000;
 export const AKTION_TIMEOUT_MS = 60_000;
 export const SHELL_TIMEOUT_MS = 10 * 60_000;
 /** v1416 — Realfall 13.10. 02:08: der Windows-Satellit (Office-Aktionen + projekt_lesen/projekt_frage/installieren) lag über 40 und wurde abgewiesen. */
-export const MANIFEST_MAX_AKTIONEN = 60;
+// v1493 — Realfall 17.10.: zum zweiten Mal (nach 13.10.) — die Office-VM meldete mit 1492 über 60 Aktionen, der Dienst wurde
+// still abgewiesen, fiel auf die alte Version zurück, versuchte wieder das Update … und gab nach 50 Neustarts auf. Jetzt mit Luft;
+// ein Test im Satelliten prüft, dass alle Aktionen, die baueManifest melden kann, unter dieser Grenze bleiben.
+export const MANIFEST_MAX_AKTIONEN = 100;
 
 const PLATTFORMEN: GeraetPlattform[] = ['windows', 'macos', 'linux', 'android', 'ios', 'raspberry'];
 const AUTONOMIEN = new Set(['auto', 'bestaetigen', 'nie']);
