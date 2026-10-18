@@ -144,7 +144,7 @@ Build in einer GitHub-Actions-Matrix (macOS-, Windows-, Ubuntu-Läufer). Die CLI
 2. **Sprache in der Sitzung.** Push-to-Talk, Wiedergabe. Beweis: Sprachfrage im Terminal, gesprochene Antwort, Dauer unter 8 s.
 3. **Sinne und Weltmodell.** Leerlauf, Fenster, Akku, Zone. Beweis: Lage zeigt „PC aktiv seit 08:10", Warum nennt „Owner am PC" als Zustellgrund, Befund „Handy seit 3 h getrennt".
 4. **Electron-Fenster.** Tray, Tastenkürzel, Benachrichtigungen, Notarisierung und Trusted Signing. Beweis: signierte Installer auf Windows und macOS, Auto-Update.
-5. **Android-App, dann iOS.** Chat, Talk, Push, Standortzonen, Teilen-Ziel. Beweis: Meldung mit Grund als Push unterwegs, Sprachantwort von unterwegs, Zone „unterwegs" im Weltmodell.
+5. **Android-App, dann iOS** (Owner 18.10.: iPhone zuerst, Umsetzung siehe §20). Chat, Talk, Push, Standortzonen, Teilen-Ziel. Beweis: Meldung mit Grund als Push unterwegs, Sprachantwort von unterwegs, Zone „unterwegs" im Weltmodell.
 6. **Linux-Pakete, Raumgerät, Streaming-Sprache.**
 
 Jede Phase ist eine Folge kleiner Releases mit Audit, wie bei Jarvis.
@@ -400,3 +400,112 @@ Beweis 09.10. 22:31 (Ubuntu-VM, Gerätesitzung): Vorhaben „Terminal öffnen, `
 **Beweis 10.10. 00:23–00:27 (Ubuntu-VM, Server/Satelliten .1342):** Auftrag „Hallo Alfred" aus der VM-Gerätesitzung (Bestätigung per API-Approve), Satellit-Log `Aktion auftrag_starten`, `claude -p` als abgekoppelter Prozess (PID 255618), Status fertig nach 130 s Wartezeit (Exit 0, Dauer 190 s laut JSON), Projekt enthält package.json, index.js, README.md, `npm start` druckt „Hallo von Alfred!" und die Uhrzeit; Abruf über Alfred (`auftrag_ergebnis`) liefert Zusammenfassung, Dauer 3:14 min, Kosten 0,22 $. Beobachtung: Claude Code fand im Projektordner eine `CLAUDE.md`-Vorgabe des Owners („keine Dateien ins Hauptverzeichnis") und erklärte die Abweichung — der Auftragstext gewinnt.
 
 **Nächste Stufen (nicht freigegeben):** Vertrauensstufe „projekt <Pfad> bis <Zeit>" (Shell/Dateien ohne Einzelbestätigung im Projektordner, Installationen), Leseaktion „installiert?", Beobachter für Outlook/Benachrichtigungen (Jarvis Schicht 2).
+
+
+## 20. Phase 5 — Handy-Apps: Umsetzung (Entwurf 18.10.2026, KEINE Freigabe)
+
+Owner 18.10.: „können wir nun auch eine iOS- und Android-App machen“. Grundlage sind §10, §11 und §14 (Flutter als eine Codebasis, das Handy spricht direkt mit dem Gehirn, unterwegs WireGuard). Dieser Abschnitt legt fest, wie es gebaut wird. Umgesetzt wird erst nach Freigabe.
+
+### 20.1 Entscheidungen des Owners (18.10.2026)
+
+1. **iPhone zuerst**, Android danach (abweichend von §12 Phase 5 „Android, dann iOS“).
+2. **WireGuard auf der Dream Machine ist eingerichtet.** Der Server bleibt intern, das Handy erreicht ihn unterwegs über das VPN.
+3. **Push enthält Titel und Grund, keine Details.** Den Inhalt lädt die App beim Öffnen über die verschlüsselte Verbindung. Kein Expo: Expo ist React Native und mit Flutter nicht nutzbar. Gebaut wird lokal am Mac, nicht in der Cloud.
+4. **Verteilung: TestFlight (iPhone) und Play-Testkanal (Android).** Die Konten sind vorhanden.
+5. **Zertifikat-Pinning wird für die Handys vorgezogen** (Punkt 1 der Sicherheits-Merkliste vom 17.10.). Die Punkte 2 und 3 (signierte Befehle, mTLS) bleiben für nach der Jarvis-Spec.
+
+### 20.2 Ausgangslage (belegt 18.10.)
+
+- **Kopplung gibt es schon.** `POST /api/geraete/pairing-code` (Owner, Code 8-stellig, 5 min) und `POST /api/geraete/pair` mit `code`, `name` und `manifest`. Die Antwort ist `id` + `token` (`gateway.ts` `paare`, Drossel v1225). Die Plattformen `ios` und `android` stehen schon in `GeraetPlattform`.
+- **Ein Manifest ohne Aktionen ist erlaubt** (`pruefeManifest`: Liste darf leer sein). Das Handy bietet anfangs keine Aktionen an.
+- **Die Desktop-App bekommt Server und Token vom Satelliten über IPC** (`ipc.dart` `konfig`, `modell.dart` `Konfig`). Chat, Bestätigungen und Ansichten laufen danach direkt per HTTPS mit dem Gerätetoken (`server.dart`, Routen in `sitzung-pfade.ts`). Das Handy hat keinen Satelliten und braucht dieselbe `Konfig` aus eigener Kopplung.
+- **Nur auf dem Desktop gibt es** window_manager, tray_manager, hotkey_manager, local_notifier, desktop_drop und die IPC. Auch auf dem Handy gehen record (PCM16/WAV 16 kHz), audioplayers (spielt eine lokale Datei, `DeviceFileSource`, also keine HTTPS-URL), path_provider, crypto, package_info_plus und onnxruntime. Es gibt 18 Plattform-Abfragen (`Platform.is…`).
+- **Server-Zertifikat:** selbst signiert (`CN=Alfred AI`), gültig bis **23.03.2027**. Alle Geräte laufen heute mit `insecure` (keine Prüfung).
+- **Weltmodell:** `normalzustaende/geraete.ts` meldet jedes Gerät nach 3 h ohne Verbindung als auffällig (`geraet:<name>:getrennt`). Für ein Handy ist „nicht verbunden“ der Normalfall.
+- **Werkzeuge:** Der Mac (192.168.1.146) hat Xcode 26.6, den iOS-26.5-Simulator, das Android-SDK 36, Flutter 3.47.7 und eine Entwicklersignatur. Am PC fehlt das Android-SDK. Gebaut wird also am Mac, über das vorhandene Fernbuild (`release/macos-fern.sh`, Dienst in der angemeldeten Sitzung).
+- **Push gibt es nicht** (weder APNs noch FCM im Code).
+
+### 20.3 Aufbau
+
+```
+iPhone-App (Flutter, dieselbe Codebasis)
+  ├─ Kopplung: QR oder Code → /api/geraete/pair → Token + Zertifikat-Fingerabdruck im Schlüsselbund
+  ├─ App im Vordergrund: WSS /api/geraete/ws (Manifest ohne Aktionen) für Ereignisse,
+  │   HTTPS mit Gerätetoken für Chat (SSE), Fäden, Eingang, Vorgänge, Aufgaben, Bestätigungen
+  └─ App im Hintergrund: keine Verbindung; Push (APNs) weckt mit Titel + Grund + Verweis
+Gehirn (.92)
+  ├─ Push-Token je Gerät (neue Spalte), Route /api/geraete/push
+  ├─ Push-Sender APNs (HTTP/2 + JWT ES256 aus .p8, Node-eigenes http2/crypto, keine neue Abhängigkeit)
+  └─ Zustellung: Push als weiterer Weg neben Telegram (siehe 20.6)
+```
+
+### 20.4 App (Flutter)
+
+- **Plattform-Weiche:** Eine Datei `plattform.dart` (`istHandy`, `istDesktop`). Fenster, Tray, Tastenkürzel, Desktop-Benachrichtigung, Drag & Drop und IPC werden nur auf dem Desktop gestartet. Die übrigen 18 Plattform-Abfragen werden geprüft und ergänzt.
+- **Kopplung (neue Ansicht, nur Handy):**
+  - Die Web-Kachel „Geräte“ zeigt den Code als QR mit Inhalt `{server, code, fingerabdruck}`. Code und Server-Adresse lassen sich auch von Hand eingeben.
+  - Die App öffnet die TLS-Verbindung, berechnet den SHA-256 des Server-Zertifikats und zeigt die ersten 4 Blöcke. Beim QR wird automatisch verglichen. Danach koppelt sie mit `plattform: 'ios'`, dem Namen (z. B. „iPhone Markus“) und einem leeren Manifest.
+  - Token, Server, Geräte-ID und Fingerabdruck werden im iOS-Schlüsselbund bzw. Android-Keystore gespeichert (`flutter_secure_storage`), nie in einer Datei.
+- **Pinning:** `HttpClient.badCertificateCallback` und die WSS-Verbindung nehmen nur das Zertifikat mit dem gemerkten Fingerabdruck an, `insecure` entfällt auf dem Handy. Der Zertifikatswechsel (fällig bis 23.03.2027) läuft angekündigt: Der Server meldet den nächsten Fingerabdruck über die schon geprüfte Verbindung (`willkommen` bekommt `naechstesZertifikat`), die App merkt ihn sich. Eine fremde Antwort bricht mit Klartext ab: „Server-Zertifikat unbekannt — neu koppeln“.
+- **Oberfläche:**
+  - Unter 700 px Breite wird die Seitenleiste zur Schublade (Menü oben links), der Chat nimmt die volle Breite.
+  - Die Ansichten bleiben dieselben: Chat mit Fäden (anheften, archivieren), Eingang, Vorgänge, Aufgaben, Hinweise, Bestätigungen.
+  - Die Eingabe bekommt Sprechen (gedrückt halten). Das Aktivierungswort gibt es auf dem Handy nicht: Ohne Dauer-Mikrofon im Hintergrund hält iOS es nicht.
+- **iOS-Erlaubnisse** in `Info.plist`: Mikrofon (`NSMicrophoneUsageDescription`) und lokales Netzwerk (`NSLocalNetworkUsageDescription`, für 192.168.1.92 im WLAN). Push über Capability und Erlaubnisdialog beim ersten Start nach der Kopplung. Kamera und Standort erst mit den späteren Fähigkeiten.
+- **Ereignisse:** Solange die App vorne ist, hält sie die WSS-Verbindung wie der Satellit (`hallo` mit Token, Manifest ohne Aktionen, Herzschlag). Sie wird beim Wechsel in den Hintergrund geschlossen und beim Zurückkommen neu geöffnet. Danach gleicht die App ab (vorhandener 45-s-Abgleich v1494 und `_gespraechNachladen`).
+- **Update:** Über TestFlight bzw. Play. Die App-eigene Update-Prüfung (`/api/app/update`) ist auf dem Handy aus.
+- **Bundle-ID:** `at.alfred.app` wie macOS (dieselbe App-ID im Apple-Konto, für iOS freigeschaltet). Version aus `pubspec.yaml`, Build-Nummer fortlaufend.
+
+### 20.5 Server
+
+1. **Handy ohne Werkzeug:** Ein Gerät ohne Aktionen bekommt keinen `geraet_<name>`-Skill (heute registriert `registriereSkill` ihn immer). Das Modell sieht kein leeres Werkzeug.
+2. **Weltmodell:** Für `ios` und `android` ist „getrennt“ normal. Kein `geraet:<name>:getrennt`. Die Zeile lautet „zuletzt verbunden vor …“, Akku nur bei Verbindung.
+3. **Push-Token:** Neue Spalten in der Geräte-Tabelle: `push_art` (`apns`, später `fcm`) und `push_token`, dazu `apns_umgebung` (`sandbox` für Xcode-Builds, `production` für TestFlight). Route `POST /api/geraete/push` `{art, token, umgebung}` mit Gerätetoken, aufgenommen in `sitzung-pfade.ts`. Beim Widerruf werden sie gelöscht.
+4. **APNs-Sender** (`geraete/push-apns.ts`): HTTP/2 an `api.push.apple.com` bzw. `api.sandbox.push.apple.com`, JWT ES256 aus dem .p8-Schlüssel (Key-ID, Team-ID), Token 50 min zwischengespeichert. Nutzlast: `alert.title`, `alert.body` (Grund, höchstens 120 Zeichen, keine Werte und keine Namen aus dem Inhalt), `thread-id` = Faden, eigener Schlüssel `alfred: {art, id, faden}`. Antwort 410 (Token ungültig) löscht den Token. Jeder Versand steht mit Ergebnis und Dauer im Log (`v15xx Push`).
+5. **Schlüssel:** `.p8`, Key-ID und Team-ID nur auf dem Server: Key-ID und Team-ID in der `.env`, die .p8-Datei unter `/root/alfred/data/geheim/` mit Rechten 600. Nie im Repo, nie im Log.
+6. **Kopplungs-QR in der Web-Kachel „Geräte“:** Code, Server-Adresse und Fingerabdruck des laufenden Zertifikats. Der Fingerabdruck steht auch als Text da, zum Vergleich.
+
+### 20.6 Was als Push kommt
+
+- **Bestätigungen**, die auf den Owner warten (Titel „Bestätigung nötig“, Grund = Aktion in Kurzform). Antippen öffnet die Bestätigungen.
+- **Meldungen**, die die Zustellung (`entscheideZustellung`) an den Owner schickt: Titel = Art (Hinweis, Vorgang, Befund), Text = Grund ohne Details.
+- **Antwort fertig**, wenn die App während einer laufenden Antwort in den Hintergrund ging.
+- **Regel:** Ist das Handy gerade per WSS verbunden (App vorne), gibt es keinen Push, die App zeigt es selbst. Ruhefenster und Dringlichkeit gelten wie bei Telegram.
+- **Offen (Owner):** Push zusätzlich zu Telegram oder statt Telegram, solange ein Handy gekoppelt ist. Empfehlung: zusätzlich, mit Schalter „Telegram stumm, wenn Push zugestellt“ (wie `/spiegel`).
+
+### 20.7 Etappen mit Live-Beweis
+
+| Etappe | Inhalt | Beweis |
+|---|---|---|
+| **H1** iPhone im Heimnetz | Plattform-Weiche, Kopplung mit QR und Pinning, Schlüsselbund, schmale Oberfläche, Chat, Fäden, Eingang, Vorgänge, Aufgaben, Bestätigungen, Sprechen und Vorlesen, WSS im Vordergrund; Server 20.5 Punkte 1, 2 und 6; Build und TestFlight-Upload über das Mac-Fernbuild | erst im Simulator (Screenshots per `simctl`), dann auf dem iPhone über TestFlight: koppeln (Log „Gerät gekoppelt“, plattform ios), Frage stellen, Bestätigung antippen, Faden archivieren; falsches Zertifikat → Abbruch mit Klartext |
+| **H2** Push | 20.5 Punkte 3 bis 5, 20.6; Erlaubnisdialog, Token-Meldung, Antippen öffnet Faden oder Bestätigung | App geschlossen → Bestätigung und Hinweis kommen als Push (Log mit APNs 200), Antippen öffnet die richtige Stelle; App vorne → kein Push |
+| **H3** unterwegs | WireGuard auf dem iPhone (On-Demand, außer im Heim-WLAN), Erreichbarkeit 192.168.1.92:3420 über das VPN, Pinning auch unterwegs | Frage über Mobilfunk, Antwort mit Vorlesen; Push kommt ohne VPN (läuft über Apple) |
+| **H4** Android | dieselbe App, Android-Erlaubnisse, Keystore, Play-Testkanal (Build am Mac, `flutter build appbundle`, Upload-Schlüssel), Push über FCM HTTP v1 oder UnifiedPush (Owner-Entscheidung) | wie H1 bis H3 auf einem Android-Gerät |
+
+Jede Etappe ist eine Folge kleiner Releases (Server-Version + App-Version) mit Audit wie bisher. Die Desktop-Apps bauen weiter aus derselben Codebasis. Jede Etappe prüft, dass Windows, macOS und Linux unverändert laufen.
+
+### 20.8 Was der Owner vorher liefert
+
+- **Für H1:** App-ID `at.alfred.app` im Apple-Konto für iOS freischalten, App in App Store Connect anlegen, sich selbst als internen TestFlight-Tester eintragen. Dazu ein App-Store-Connect-API-Schlüssel (Issuer-ID, Key-ID, .p8) für den Upload vom Mac, oder Upload von Hand mit Transporter.
+- **Für H2:** APNs-Schlüssel (.p8) mit Key-ID und Team-ID (T28LD8TF6X laut Developer ID).
+- **Für H3:** WireGuard-Profil für das iPhone von der Dream Machine (QR in UniFi).
+- **Für H4:** Play-Console-App, Upload-Schlüssel (wird am Mac erzeugt, Sicherung beim Owner), bei FCM ein Firebase-Projekt (nur Cloud Messaging).
+
+### 20.9 Offene Owner-Entscheidungen
+
+1. **Push und Telegram:** zusätzlich, oder Telegram stumm, wenn Push zugestellt (20.6). Empfehlung: zusätzlich, mit Schalter.
+2. **Name des Geräts beim Koppeln:** frei eingeben oder Vorschlag „iPhone <Vorname>“. Empfehlung: Vorschlag, änderbar.
+3. **Android-Push (für H4):** FCM (zuverlässig, über Google) oder UnifiedPush mit eigenem ntfy (ohne Google, nur über WireGuard erreichbar). Empfehlung: FCM.
+4. **Pinning auch für die Desktop-Satelliten** im selben Zug (gleiche Logik, `insecure` entfällt dann überall). Empfehlung: ja, als eigener Release nach H1, damit der Zertifikatswechsel 2027 für alle Geräte gleich läuft.
+
+### 20.10 Risiken
+
+- **iOS-Hintergrund:** Ohne geöffnete App gibt es keine Verbindung und kein Mikrofon. Das ist gewollt (§13). Push ist der einzige Weckweg.
+- **Lokales Netzwerk unter iOS:** Wird der Erlaubnisdialog abgelehnt, ist der Server im WLAN nicht erreichbar. Die App erklärt das und verweist auf die Einstellungen.
+- **Zertifikatswechsel 2027:** Ohne Ankündigung (20.4) müsste jedes Gerät neu gekoppelt werden. Die Ankündigung wird mit H1 gebaut, nicht erst kurz vor März 2027.
+- **TestFlight-Builds laufen nach 90 Tagen ab.** Die App weist 14 Tage vorher darauf hin. Neue Builds kommen ohnehin mit jedem App-Release.
+- **Push-Inhalt:** Bewusst ohne Details, weil die Nachricht über Apple bzw. Google läuft (Owner-Entscheidung 3).
+
+### 20.11 Nicht Teil von Phase 5 (später, eigene Freigabe)
+
+Teilen an Alfred, Standortzonen im Weltmodell, Kamera und Foto, Kalender und Kontakte lesen, Kurzbefehle und Siri, Schnelleinstellung (Android), Lage auf dem Sperrbildschirm, signierte Befehle und mTLS (Merkliste 2 und 3).
