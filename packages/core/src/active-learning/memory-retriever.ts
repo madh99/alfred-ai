@@ -17,6 +17,20 @@ export interface RetrievedMemory {
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 const LN2 = Math.LN2;
 
+/**
+ * v1496 — Altersfaktor mit Boden: frische Erinnerungen bleiben klar vorn, alte fallen höchstens auf 30 %.
+ * Vorher ging der Faktor gegen 0: die Jahresübersicht der Stromrechnungen (82 Tage) kam auf 15 % und fiel
+ * unter die Mindestgrenze, obwohl sie die passendste Erinnerung war. Das Alter steht seit v1216 im Prompt,
+ * das Modell sieht also selbst, wie alt etwas ist.
+ */
+export const ALTERS_BODEN = 0.3;
+export function altersFaktor(updatedAt: string | undefined, jetzt = Date.now()): number {
+  const t = updatedAt ? new Date(updatedAt).getTime() : NaN;
+  if (!Number.isFinite(t)) return 1;
+  const ageMs = Math.max(0, jetzt - t);
+  return ALTERS_BODEN + (1 - ALTERS_BODEN) * Math.exp((-LN2 * ageMs) / HALF_LIFE_MS);
+}
+
 // Weight distribution
 const KEYWORD_WEIGHT = 0.3;
 const SEMANTIC_WEIGHT = 0.7;
@@ -134,14 +148,16 @@ export class MemoryRetriever {
       if (hasSemanticSearch) {
         for (const sr of semanticResults) {
           const mem = sr.memory;
+          // v1496 — Alter und Verlässlichkeit gelten auch hier. Vorher zählte der semantische Anteil ohne
+          // Abzug, sobald die Stichwortsuche dieselbe Erinnerung fand (103 Tage alt → 0,50), sonst mit vollem Abzug.
+          const semanticScore = this.applyBoosts(sr.score * SEMANTIC_WEIGHT, mem);
           const existing = scored.get(mem.key);
           if (existing) {
             // Merge: add semantic score to existing keyword score
-            existing.score += sr.score * SEMANTIC_WEIGHT;
+            existing.score += semanticScore;
             existing.memory.score = existing.score;
             continue;
           }
-          const semanticScore = this.applyBoosts(sr.score * SEMANTIC_WEIGHT, mem);
           scored.set(mem.key, {
             memory: {
               key: mem.key,
@@ -211,11 +227,8 @@ export class MemoryRetriever {
       // Confidence boost: score *= (0.5 + 0.5 * confidence)
       score *= 0.5 + 0.5 * memory.confidence;
 
-      // Temporal decay: exponential decay with 30-day half-life
-      const updatedAt = new Date(memory.updatedAt).getTime();
-      const ageMs = Date.now() - updatedAt;
-      const decay = Math.exp((-LN2 * ageMs) / HALF_LIFE_MS);
-      score *= decay;
+      // Temporal decay: 30-day half-life, Boden 0,3 (v1496)
+      score *= altersFaktor(memory.updatedAt);
     }
 
     return score;

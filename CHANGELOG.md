@@ -55,6 +55,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1496] - 2026-10-18
+
+### Fixed — Ältere Erinnerungen verschwinden nicht mehr allein wegen ihres Alters
+
+Nach v1495 fand die Strom-Frage nur passende Erinnerungen, aber nur Juli bis September. Die Jahresübersicht war 82 Tage alt und hatte von allen Erinnerungen die höchste Ähnlichkeit (0,81). Der Altersabzug (Halbierung alle 30 Tage, bis gegen null) ließ ihr nur 15 %, damit kam sie auf 0,084 und lag unter der Mindestgrenze 0,1.
+
+Der Abzug wirkte zudem uneinheitlich. Fand die Stichwortsuche dieselbe Erinnerung auch, zählte ihr semantischer Anteil ohne Abzug. So kam „Hausbatterie kritisch“ nach 103 Tagen auf 0,50, über der frischen Meldung „behoben“.
+
+- **Altersfaktor mit Boden:** 0,3 + 0,7 · 0,5^(Tage/30). Frisch 1,0, nach 30 Tagen 0,65, nie unter 0,3. Das Alter steht seit v1216 bei jeder Erinnerung im Prompt.
+- **Einheitlich:** Derselbe Faktor gilt für den Stichwort- und den semantischen Anteil und in den Ersatzwegen der Pipeline.
+- Nachbau mit dem echten Code an sechs Fragen:
+  - **Strom:** Jahresübersicht, Jänner, Februar, April, Mai und Juli kommen in den Prompt.
+  - **Hausbatterie:** Der alte Zustand „kritisch“ sinkt von 0,50 auf 0,20, die Meldung „behoben“ steht oben.
+  - **Preis:** Es kommen mehr ältere Einträge in die Auswahl (8–10 von 15 älter als 60 Tage), jeder mit seinem Alter.
+- **Daten (ohne Version):** Die aktiven Rechnungs-Aufgaben „aWATTar Rechnung Check 22:00 v2“ und „(Mail-Ereignis)“ pflegen jetzt auch die Jahresübersicht `awattar_invoice_summary_YYYY` mit. Sie enthält alle Monate, die Summe per Rechner, den Trend sowie offene Forderungen und Mahnungen. Fehlt darin ein bereits verarbeiteter Monat, wird sie auch ohne neue Rechnung aktualisiert. Bisher stand sie seit 28.07. auf Juni.
+- 4 Tests.
+
 ## [0.19.0-jarvis.1495] - 2026-10-18
 
 ### Fixed — Semantische Suche: alle Embeddings waren leer, gesammeltes Wissen erreichte die Antwort nicht

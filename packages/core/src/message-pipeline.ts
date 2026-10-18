@@ -23,6 +23,7 @@ import type { SpeechTranscriber } from './speech-transcriber.js';
 import type { EmbeddingService } from './embedding-service.js';
 import type { ActiveLearningService } from './active-learning/active-learning-service.js';
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
+import { altersFaktor } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, zuletztBenutzteWerkzeuge, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300, v1472
 import { geraetSkillName } from './geraete/protokoll.js'; // v1421
@@ -816,11 +817,9 @@ export class MessagePipeline {
           // Apply temporal decay to fallback results (MemoryRetriever does this internally, fallback paths don't)
           if (mem && mem.length > 0) {
             const now = Date.now();
-            const HALF_LIFE = 30 * 24 * 60 * 60_000;
             mem = mem
               .map(m => {
-                const age = now - new Date((m as any).updatedAt ?? (m as any).createdAt ?? now).getTime();
-                const decay = Math.exp((-Math.LN2 * Math.max(0, age)) / HALF_LIFE);
+                const decay = altersFaktor((m as any).updatedAt ?? (m as any).createdAt, now); // v1496 — wie im MemoryRetriever
                 const conf = (m as any).confidence ?? 1;
                 return { ...m, score: (m.score ?? 1) * conf * decay };
               })
