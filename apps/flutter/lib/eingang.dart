@@ -11,6 +11,8 @@ import 'hinweise.dart' show Hinweis;
 import 'modell.dart' show Bestaetigung;
 import 'vorgaenge.dart';
 import 'vorgaenge_ansicht.dart' show vorgangGruppen;
+import 'abgleich.dart'; // 1.40.0
+import 'dart:async';
 
 enum EingangArt { bestaetigung, vorgang, aufgabe, hinweis }
 
@@ -84,11 +86,20 @@ class _EingangState extends State<Eingang> {
   bool geladen = false;
   String? fehler;
   EingangArt? filter;
+  List<String> inzwischen = []; // 1.40.0
+  Timer? _takt;
 
   @override
-  void initState() { super.initState(); laden(); }
+  void initState() { super.initState(); laden(); _takt = Timer.periodic(abgleichTakt, (_) => laden(abgleich: true)); }
 
-  Future<void> laden() async {
+  @override
+  void dispose() { _takt?.cancel(); super.dispose(); }
+
+  /// Vorgänge, Aufgaben und Hinweise dieser Ansicht (Bestätigungen kommen von außen) als Kennung → Titel
+  Map<String, String> _stand() => {for (final x in eingangEintraege(bestaetigungen: const [], vorgaenge: vorgaenge, aufgaben: aufgaben, hinweise: hinweise, jetzt: DateTime.now())) '${x.art.name}:${x.id}': x.titel};
+
+  Future<void> laden({bool abgleich = false}) async {
+    final vorher = abgleich && geladen ? _stand() : const <String, String>{};
     final fehlerTeile = <String>[];
     Future<Map<String, dynamic>?> hole(String p) async { try { return await widget.json(p); } catch (e) { fehlerTeile.add('$p: $e'); return null; } }
     final r = await Future.wait([hole('/api/vorgaenge'), hole('/api/geraete/aufgaben'), hole('/api/geraete/hinweise')]);
@@ -97,6 +108,7 @@ class _EingangState extends State<Eingang> {
       if (r[0] != null) { vorgaenge = ((r[0]!['offene'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList(); schritte = r[0]!['schritte'] as List<dynamic>?; }
       if (r[1] != null) aufgaben = ((r[1]!['aufgaben'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Aufgabe.new).toList();
       if (r[2] != null) hinweise = ((r[2]!['hinweise'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Hinweis.new).toList();
+      if (vorher.isNotEmpty && fehlerTeile.isEmpty) inzwischen = mitNeuen(inzwischen, verschwunden(vorher, _stand().keys).map((t) => t.length > 80 ? '${t.substring(0, 79)}…' : t).toList()); // 1.40.0
       geladen = true;
       fehler = fehlerTeile.isEmpty ? null : fehlerTeile.join(' · ');
     });
@@ -177,6 +189,7 @@ class _EingangState extends State<Eingang> {
     final sichtbar = filter == null ? alle : alle.where((e) => e.art == filter).toList();
     int anzahl(EingangArt a) => alle.where((e) => e.art == a).length;
     return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: Column(children: [
+      if (inzwischen.isNotEmpty) AbgleichHinweis(texte: inzwischen, schliessen: () => setState(() => inzwischen = [])), // 1.40.0
       Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Text('Eingang', style: t.textTheme.headlineSmall),

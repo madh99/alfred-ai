@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 
 import 'aufgaben.dart' show JsonAbruf;
 import 'vorgaenge.dart';
+import 'abgleich.dart'; // 1.40.0
+import 'dart:async';
 
 /// Gruppen der offenen Vorgänge. Zurückgestellte zuerst aussortiert; „für dich" = wartet oder beim Owner.
 ({List<Map<String, dynamic>> fuerDich, List<Map<String, dynamic>> beiAlfred, List<Map<String, dynamic>> zurueck}) vorgangGruppen(List<Map<String, dynamic>> offene, DateTime jetzt) {
@@ -58,22 +60,36 @@ class _VorgaengeAnsichtState extends State<VorgaengeAnsicht> {
   List<dynamic>? schritte;
   String? fehler;
   bool zurueckZeigen = false, erledigtZeigen = false;
+  List<String> inzwischen = []; // 1.40.0
+  Timer? _takt;
 
   @override
-  void initState() { super.initState(); laden(); }
+  void initState() { super.initState(); laden(); _takt = Timer.periodic(abgleichTakt, (_) => laden(abgleich: true)); }
 
-  Future<void> laden() async {
+  @override
+  void dispose() { _takt?.cancel(); super.dispose(); }
+
+  /// [abgleich]: regelmäßiges Nachfragen — was dabei aus den offenen verschwindet, wird genannt (mit Ergebnis vom Server)
+  Future<void> laden({bool abgleich = false}) async {
     try {
       final j = await widget.json('/api/vorgaenge');
       if (!mounted) return;
+      final vorher = {for (final x in offene ?? const <Map<String, dynamic>>[]) '${x['id']}': '${x['titel'] ?? ''}'};
       setState(() {
         offene = ((j['offene'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList();
         abgeschlossen = ((j['abgeschlossene'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList();
+        if (abgleich) {
+          final ergebnis = {for (final x in abgeschlossen) '${x['id']}': '${x['ergebnis'] ?? x['status'] ?? ''}'};
+          final weg = verschwunden({for (final e in vorher.entries) e.key: e.key}, offene!.map((x) => '${x['id']}'));
+          inzwischen = mitNeuen(inzwischen, [for (final id in weg) '${_kurz(vorher[id]!, 70)}${ergebnis[id]?.isNotEmpty == true ? ' — ${_kurz(ergebnis[id]!, 60)}' : ''}']);
+        }
         schritte = j['schritte'] as List<dynamic>?;
         fehler = null;
       });
     } catch (e) { if (mounted) setState(() => fehler = '$e'); }
   }
+
+  static String _kurz(String s, int n) => s.length > n ? '${s.substring(0, n - 1)}…' : s;
 
   Future<void> _nach(bool geaendert) async { if (geaendert) { await laden(); widget.aufGeaendert?.call(); } }
 
@@ -152,6 +168,7 @@ class _VorgaengeAnsichtState extends State<VorgaengeAnsicht> {
           Text('$n', style: t.textTheme.titleMedium?.copyWith(color: dim)),
         ]));
     return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: Column(children: [
+      if (inzwischen.isNotEmpty) AbgleichHinweis(texte: inzwischen, schliessen: () => setState(() => inzwischen = [])), // 1.40.0
       Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Text('Vorgänge', style: t.textTheme.headlineSmall),

@@ -7,6 +7,8 @@ library;
 import 'package:flutter/material.dart';
 
 import 'aufgaben.dart' show JsonAbruf;
+import 'abgleich.dart'; // 1.40.0
+import 'dart:async';
 
 class Befund {
   Befund(Map<String, dynamic> j)
@@ -150,8 +152,14 @@ class _BefundeState extends State<Befunde> {
   bool erledigteZeigen = false;
   final ganz = <String>{};
 
+  List<String> inzwischen = []; // 1.40.0
+  Timer? _takt;
+
   @override
-  void initState() { super.initState(); quelle = widget.anfang; laden(); }
+  void initState() { super.initState(); quelle = widget.anfang; laden(); _takt = Timer.periodic(abgleichTakt, (_) => laden(abgleich: true)); }
+
+  @override
+  void dispose() { _takt?.cancel(); super.dispose(); }
 
   Future<void> _regelnLaden() async {
     try {
@@ -169,12 +177,13 @@ class _BefundeState extends State<Befunde> {
     } catch (e) { widget.aufMeldung?.call('📏 Nicht geändert: $e'); }
   }
 
-  Future<void> laden() async {
+  Future<void> laden({bool abgleich = false}) async {
     try {
       final j = await widget.json('/api/geraete/befunde');
       List<Befund> liste(String k) => ((j[k] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Befund.new).toList();
       if (!mounted) return;
-      setState(() { offen = liste('offen'); erledigt = liste('erledigt'); fehler = null; });
+      final vorher = {for (final x in offen ?? const <Befund>[]) x.id: '${x.titel.length > 80 ? '${x.titel.substring(0, 79)}…' : x.titel} — von selbst erledigt'};
+      setState(() { offen = liste('offen'); erledigt = liste('erledigt'); fehler = null; if (abgleich) inzwischen = mitNeuen(inzwischen, verschwunden(vorher, offen!.map((x) => x.id))); });
       await _regelnLaden();
     } catch (e) { if (mounted) setState(() => fehler = '$e'); }
   }
@@ -226,6 +235,7 @@ class _BefundeState extends State<Befunde> {
     final quellen = quellenReihenfolge([...(o ?? []), ...erledigt]);
 
     return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: Column(children: [
+      if (inzwischen.isNotEmpty) AbgleichHinweis(texte: inzwischen, schliessen: () => setState(() => inzwischen = [])), // 1.40.0
       Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Text('Befunde', style: theme.textTheme.headlineSmall),

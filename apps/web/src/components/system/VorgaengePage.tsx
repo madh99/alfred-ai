@@ -11,6 +11,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
+import { ABGLEICH_MS, AbgleichHinweis, kurz, mitNeuen, verschwundeneIds } from '@/components/abgleich/Abgleich'; // v1494
 import type { VorgaengeStatus, VorgangDto, VorgangSchrittDto } from '@/lib/alfred-client';
 import {
   AusfuehrenDialog, SpaeterMenue, VorgangDetail, chatLink, datum, knopfAusfuehren, knopfNeutral, knopfPrimaer, zurueckBis,
@@ -93,11 +94,24 @@ export function VorgaengePage() {
   const [schritteZeigen, setSchritteZeigen] = useState(false);
   const [busy, setBusy] = useState(false);
   const deepLinkErledigt = useRef(false);
+  // v1494 — Abgleich: was zwischen zwei Abfragen anderswo erledigt wurde, nennen statt stumm verschwinden lassen
+  const vorherRef = useRef<Map<string, string> | null>(null);
+  const [inzwischen, setInzwischen] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (abgleich?: unknown) => {
     setLoading(true);
     try {
       const d = await client.fetchVorgaenge();
+      if (d) {
+        const jetzt = new Map(d.offene.map(x => [x.id, x.titel] as [string, string]));
+        const vorher = vorherRef.current;
+        if (abgleich === true && vorher) {
+          const ergebnis = new Map(d.abgeschlossene.map(x => [x.id, x.ergebnis ?? x.status] as [string, string]));
+          const weg = verschwundeneIds(vorher, jetzt.keys());
+          if (weg.length) setInzwischen(alt => mitNeuen(alt, weg.map(id => `${kurz(vorher.get(id) ?? id, 70)}${ergebnis.get(id) ? ` — ${kurz(ergebnis.get(id)!, 60)}` : ''}`)));
+        }
+        vorherRef.current = jetzt;
+      }
       setData(d);
       setError(d ? null : 'Keine Daten (Endpoint nicht verfügbar)');
     } catch (err) {
@@ -109,7 +123,7 @@ export function VorgaengePage() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 60_000);
+    const t = setInterval(() => load(true), ABGLEICH_MS);
     return () => clearInterval(t);
   }, [load]);
 
@@ -202,11 +216,12 @@ export function VorgaengePage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      <div className="mb-3"><AbgleichHinweis texte={inzwischen} onSchliessen={() => setInzwischen([])} /></div>
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold text-gray-200">🗂️ Vorgänge</h1>
         {data && <span className="text-sm text-gray-500">{offene.length} offen</span>}
         <div className="flex-1" />
-        <button onClick={load} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
+        <button onClick={() => load()} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
       </div>
       <div className="text-xs text-gray-500 mt-1">Was gerade läuft oder eine Entscheidung braucht. Ausführen führt genau die Aktion aus, die Alfred vorgeschlagen hat.</div>
 

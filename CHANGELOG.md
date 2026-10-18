@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1494] - 2026-10-18
+
+### Fixed — Vorgänge, Eingang und Befunde zeigen keinen veralteten Stand mehr (App 1.40.0, Web)
+
+Owner 18.10.: „Proxmox test-ubuntu war noch offen, bevor ich die Hausbatterie geschlossen habe, danach nicht mehr.“ Der Server hatte den Vorgang um 11:00:17 von selbst erledigt, weil der Befund verschwunden war. Die offene Ansicht lud aber nur beim Öffnen und nach eigenen Aktionen. Erst der Klick um 11:03 holte den neuen Stand, und es sah aus, als wären mehrere Vorgänge mit geschlossen worden.
+
+- **App und Web:** Vorgänge, Eingang und Befunde gleichen ihre Liste alle 45 Sekunden ab, solange sie offen sind.
+- Was zwischendurch anderswo erledigt wurde (Befund weg, in App oder Telegram entschieden), verschwindet nicht stumm. Oben steht „Inzwischen erledigt“, bei Vorgängen mit dem Ergebnis vom Server (z. B. „von selbst erledigt: im Weltmodell nicht mehr auffällig“). Die Zeile lässt sich ausblenden.
+- Eigene Aktionen laden wie bisher sofort neu, ohne diese Zeile.
+
 ## [0.19.0-jarvis.1493] - 2026-10-17
 
 ### Fixed — Windows-Satellit mit Office wurde abgewiesen und trennte sich immer wieder

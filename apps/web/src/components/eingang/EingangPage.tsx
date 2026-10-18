@@ -5,9 +5,10 @@
  * in einer Liste, das Dringendste zuerst. Keine eigene Server-Route — dieselben Aktionen wie in den Einzelansichten.
  * Owner-Quellen (/api/owner/*) liefern für andere Nutzer 403 → kurzer Hinweis, der Rest wird trotzdem gezeigt.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
+import { ABGLEICH_MS, AbgleichHinweis, kurz, mitNeuen, verschwundeneIds } from '@/components/abgleich/Abgleich'; // v1494
 import type { AufgabeZeile, HinweisZeile, PendingConfirmationItem, VorgangDto } from '@/lib/alfred-client';
 import { ART_EINZELN, ART_NAME, ARTEN, eingangEintraege, hinweisOffen, type EingangArt, type EingangEintrag } from './eingang-logik';
 
@@ -48,7 +49,11 @@ export function EingangPage() {
     if (a && (ARTEN as string[]).includes(a)) setFilter(a as EingangArt);
   }, []);
 
-  const laden = useCallback(async () => {
+  // v1494 — Abgleich wie in der App 1.40.0
+  const vorherRef = useRef<Map<string, string> | null>(null);
+  const [inzwischen, setInzwischen] = useState<string[]>([]);
+
+  const laden = useCallback(async (abgleich?: unknown) => {
     if (!client) return;
     const teile: string[] = [];
     const hole = async <T,>(name: string, f: () => Promise<T>): Promise<T | null> => {
@@ -64,11 +69,17 @@ export function EingangPage() {
     if (v) setVorgaenge(v.offene);
     if (a) setAufgaben(a.aufgaben ?? []);
     if (h) setHinweise(h.hinweise ?? []);
+    if (b && v && a && h) {
+      const jetzt = new Map(eingangEintraege({ bestaetigungen: b.filter(x => x.status === 'pending'), vorgaenge: v.offene, aufgaben: a.aufgaben ?? [], hinweise: h.hinweise ?? [], jetzt: new Date() }).map(x => [`${x.art}:${x.id}`, x.titel] as [string, string]));
+      const vorher = vorherRef.current;
+      if (abgleich === true && vorher) { const weg = verschwundeneIds(vorher, jetzt.keys()); if (weg.length) setInzwischen(alt => mitNeuen(alt, weg.map(k => kurz(vorher.get(k) ?? k, 80)))); }
+      vorherRef.current = jetzt;
+    }
     setFehler(teile.length ? teile.join(' · ') : null);
     setGeladen(true);
   }, [client]);
 
-  useEffect(() => { laden(); }, [laden]);
+  useEffect(() => { laden(); const t = setInterval(() => laden(true), ABGLEICH_MS); return () => clearInterval(t); }, [laden]);
 
   const alle = useMemo(() => eingangEintraege({ bestaetigungen, vorgaenge, aufgaben, hinweise, jetzt: new Date() }), [bestaetigungen, vorgaenge, aufgaben, hinweise]);
   const sichtbar = filter ? alle.filter(e => e.art === filter) : alle;
@@ -183,6 +194,7 @@ export function EingangPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-4">
+      <AbgleichHinweis texte={inzwischen} onSchliessen={() => setInzwischen([])} />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold text-gray-200">📥 Eingang</h1>
         {geladen && <span className="text-sm text-gray-500">{alle.length} {alle.length === 1 ? 'braucht' : 'brauchen'} dich</span>}
@@ -190,7 +202,7 @@ export function EingangPage() {
         {anzahl('hinweis') > 0 && (
           <button onClick={alleGelesen} disabled={busy === 'alle'} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-400 hover:text-gray-200 disabled:opacity-40">✓✓ Alle Hinweise gelesen</button>
         )}
-        <button onClick={laden} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
+        <button onClick={() => laden()} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
       </div>
       <p className="text-xs text-gray-500 -mt-2">Bestätigungen, Vorgänge für dich, fällige Aufgaben und neue Hinweise — das Dringendste zuerst.</p>
 

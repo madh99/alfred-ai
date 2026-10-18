@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
+import { ABGLEICH_MS, AbgleichHinweis, kurz, mitNeuen, verschwundeneIds } from '@/components/abgleich/Abgleich'; // v1494
 import type { BefundZeile, RegelZeile } from '@/lib/alfred-client';
 
 const BASE = '/alfred';
@@ -150,9 +151,17 @@ export function BefundePage() {
     } catch { /* älterer Server ohne Regeln — Abschnitt bleibt leer */ }
   }, [client]);
 
-  const laden = useCallback(async () => {
+  // v1494 — Abgleich wie in der App 1.40.0
+  const vorherRef = useRef<Map<string, string> | null>(null);
+  const [inzwischen, setInzwischen] = useState<string[]>([]);
+
+  const laden = useCallback(async (abgleich?: unknown) => {
     try {
       const r = await client.fetchBefunde();
+      const jetzt = new Map((r.offen ?? []).map(x => [x.id, x.titel] as [string, string]));
+      const vorher = vorherRef.current;
+      if (abgleich === true && vorher) { const weg = verschwundeneIds(vorher, jetzt.keys()); if (weg.length) setInzwischen(alt => mitNeuen(alt, weg.map(id => `${kurz(vorher.get(id) ?? id, 80)} — von selbst erledigt`))); }
+      vorherRef.current = jetzt;
       setOffen(r.offen ?? []);
       setErledigt(r.erledigt ?? []);
       setFehler(null);
@@ -162,7 +171,7 @@ export function BefundePage() {
     }
   }, [client, regelnLaden]);
 
-  useEffect(() => { laden(); }, [laden]);
+  useEffect(() => { laden(); const t = setInterval(() => laden(true), ABGLEICH_MS); return () => clearInterval(t); }, [laden]);
 
   // Ziel-Befund einmal anspringen, sobald geladen (erledigte ggf. aufklappen)
   useEffect(() => {
@@ -219,9 +228,10 @@ export function BefundePage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-4">
+      <AbgleichHinweis texte={inzwischen} onSchliessen={() => setInzwischen([])} />
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-gray-200">⚠️ Befunde {offen && <span className="text-sm font-normal text-gray-500 ml-2">{o.length} offen</span>}</h1>
-        <button onClick={laden} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
+        <button onClick={() => laden()} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Aktualisieren</button>
       </div>
       <div className="text-xs text-gray-500">Was Alfred als auffällig führt. Befunde erledigen sich von selbst, sobald die Ursache weg ist.</div>
 
