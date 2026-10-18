@@ -420,7 +420,10 @@ Owner 18.10.: „können wir nun auch eine iOS- und Android-App machen“. Grund
 - **Ein Manifest ohne Aktionen ist erlaubt** (`pruefeManifest`: Liste darf leer sein). Das Handy bietet anfangs keine Aktionen an.
 - **Die Desktop-App bekommt Server und Token vom Satelliten über IPC** (`ipc.dart` `konfig`, `modell.dart` `Konfig`). Chat, Bestätigungen und Ansichten laufen danach direkt per HTTPS mit dem Gerätetoken (`server.dart`, Routen in `sitzung-pfade.ts`). Das Handy hat keinen Satelliten und braucht dieselbe `Konfig` aus eigener Kopplung.
 - **Nur auf dem Desktop gibt es** window_manager, tray_manager, hotkey_manager, local_notifier, desktop_drop und die IPC. Auch auf dem Handy gehen record (PCM16/WAV 16 kHz), audioplayers (spielt eine lokale Datei, `DeviceFileSource`, also keine HTTPS-URL), path_provider, crypto, package_info_plus und onnxruntime. Es gibt 18 Plattform-Abfragen (`Platform.is…`).
-- **Server-Zertifikat:** selbst signiert (`CN=Alfred AI`), gültig bis **23.03.2027**. Alle Geräte laufen heute mit `insecure` (keine Prüfung).
+- **Server-Zertifikat:** selbst signiert (`CN=Alfred AI`), gültig bis **23.03.2027**. Alle Geräte laufen heute mit `insecure` (keine Prüfung). Gemessen am 18.10. auf .92:
+  - Fingerabdruck des Zertifikats: `7C:79:C1:6F:…:2F:9D:B0:61` (SHA-256).
+  - Fingerabdruck des Schlüssels (SPKI, SHA-256): `75ed3a0b…b4fe63c5`.
+- **Zweiter Knoten .93:** seit Mai heruntergefahren und seither weder aktualisiert noch nachgezogen (Owner 18.10.). Sein Zertifikat ließ sich deshalb nicht vergleichen.
 - **Weltmodell:** `normalzustaende/geraete.ts` meldet jedes Gerät nach 3 h ohne Verbindung als auffällig (`geraet:<name>:getrennt`). Für ein Handy ist „nicht verbunden“ der Normalfall.
 - **Werkzeuge:** Der Mac (192.168.1.146) hat Xcode 26.6, den iOS-26.5-Simulator, das Android-SDK 36, Flutter 3.47.7 und eine Entwicklersignatur. Am PC fehlt das Android-SDK. Gebaut wird also am Mac, über das vorhandene Fernbuild (`release/macos-fern.sh`, Dienst in der angemeldeten Sitzung).
 - **Push gibt es nicht** (weder APNs noch FCM im Code).
@@ -446,7 +449,14 @@ Gehirn (.92)
   - Die Web-Kachel „Geräte“ zeigt den Code als QR mit Inhalt `{server, code, fingerabdruck}`. Code und Server-Adresse lassen sich auch von Hand eingeben.
   - Die App öffnet die TLS-Verbindung, berechnet den SHA-256 des Server-Zertifikats und zeigt die ersten 4 Blöcke. Beim QR wird automatisch verglichen. Danach koppelt sie mit `plattform: 'ios'`, dem Namen (z. B. „iPhone Markus“) und einem leeren Manifest.
   - Token, Server, Geräte-ID und Fingerabdruck werden im iOS-Schlüsselbund bzw. Android-Keystore gespeichert (`flutter_secure_storage`), nie in einer Datei.
-- **Pinning:** `HttpClient.badCertificateCallback` und die WSS-Verbindung nehmen nur das Zertifikat mit dem gemerkten Fingerabdruck an, `insecure` entfällt auf dem Handy. Der Zertifikatswechsel (fällig bis 23.03.2027) läuft angekündigt: Der Server meldet den nächsten Fingerabdruck über die schon geprüfte Verbindung (`willkommen` bekommt `naechstesZertifikat`), die App merkt ihn sich. Eine fremde Antwort bricht mit Klartext ab: „Server-Zertifikat unbekannt — neu koppeln“.
+- **Pinning auf den Schlüssel (SPKI), nicht auf das Zertifikat** (ergänzt 18.10.):
+  - Gemerkt wird der SHA-256 des öffentlichen Schlüssels.
+  - `HttpClient.badCertificateCallback` und die WSS-Verbindung nehmen nur ein Zertifikat mit diesem Schlüssel an. `insecure` entfällt auf dem Handy.
+  - Wird das Zertifikat mit **demselben Schlüssel** verlängert (Verlängerung vor dem 23.03.2027), bleibt jedes Gerät ohne Zutun verbunden.
+  - Ein **neuer Schlüssel** (Neuinstallation, verlorener Schlüssel) wird angekündigt: Der Server meldet den nächsten Schlüssel-Fingerabdruck über die schon geprüfte Verbindung (`willkommen` bekommt `naechsterSchluessel`), die App merkt ihn sich als zweiten erlaubten Schlüssel. Ohne Ankündigung bleibt nur Neukoppeln.
+  - Eine fremde Antwort bricht mit Klartext ab: „Server-Zertifikat unbekannt — neu koppeln“.
+  - Die App kann mehrere erlaubte Schlüssel halten, für Ankündigung und zweiten Knoten (20.10). Nur die beim Koppeln oder über die geprüfte Verbindung gemeldeten zählen.
+- **Schlüssel des Servers sichern:** Zertifikat und privater Schlüssel (TLS-Pfad des Servers) gehören in die Sicherung. Wer den Server neu aufsetzt und sie wiederherstellt, behält alle Kopplungen. Mit H1 wird geprüft, wo sie heute liegen und ob die Sicherung sie erfasst.
 - **Oberfläche:**
   - Unter 700 px Breite wird die Seitenleiste zur Schublade (Menü oben links), der Chat nimmt die volle Breite.
   - Die Ansichten bleiben dieselben: Chat mit Fäden (anheften, archivieren), Eingang, Vorgänge, Aufgaben, Hinweise, Bestätigungen.
@@ -486,8 +496,14 @@ Jede Etappe ist eine Folge kleiner Releases (Server-Version + App-Version) mit A
 
 ### 20.8 Was der Owner vorher liefert
 
-- **Für H1:** App-ID `at.alfred.app` im Apple-Konto für iOS freischalten, App in App Store Connect anlegen, sich selbst als internen TestFlight-Tester eintragen. Dazu ein App-Store-Connect-API-Schlüssel (Issuer-ID, Key-ID, .p8) für den Upload vom Mac, oder Upload von Hand mit Transporter.
-- **Für H2:** APNs-Schlüssel (.p8) mit Key-ID und Team-ID (T28LD8TF6X laut Developer ID).
+- **Für H1** (Team T28LD8TF6X, wie die Mac-Signatur):
+  1. **App-ID:** developer.apple.com → Certificates, Identifiers & Profiles → Identifiers: `at.alfred.app` öffnen oder als „Explicit“ neu anlegen, Capability **Push Notifications** anhaken.
+  2. **App anlegen:** appstoreconnect.apple.com → Apps → „+“ → iOS, Deutsch, Bundle-ID `at.alfred.app`, SKU z. B. `alfred-ios`. Der Name muss im ganzen App Store einmalig sein, auch ohne Veröffentlichung; „Alfred“ ist vermutlich vergeben, also z. B. „Alfred Lokalkraft“. Auf dem iPhone kann trotzdem „Alfred“ unter dem Symbol stehen.
+  3. **TestFlight:** interne Gruppe anlegen, sich selbst eintragen.
+  4. **Upload-Schlüssel:** App Store Connect → Benutzer und Zugriff → Integrationen → App Store Connect API → Team-Schlüssel, Rolle App-Manager. Die .p8 lässt sich nur einmal herunterladen. Key-ID und Issuer-ID notieren. Die Datei legt der Owner am Mac nach `~/.appstoreconnect/private_keys/`, nicht in den Download-Ordner.
+  5. **Xcode am Mac:** Einstellungen → Accounts → Apple-ID hinzufügen, damit Xcode das iOS-Verteilungszertifikat selbst anlegt. Am Mac gibt es bisher nur die Signatur der Mac-App.
+- **Für H2:** developer.apple.com → Keys → „+“ → „Alfred Push“, APNs anhaken. Die .p8 lässt sich nur einmal herunterladen, Key-ID notieren. Der Owner kopiert die Datei per `scp` nach `/tmp` auf .92, Ablage mit Rechten 600 übernimmt der Umsetzer.
+- **Im Chat stehen nur IDs** (Key-IDs, Issuer-ID, App-Name), nie der Inhalt einer .p8.
 - **Für H3:** WireGuard-Profil für das iPhone von der Dream Machine (QR in UniFi).
 - **Für H4:** Play-Console-App, Upload-Schlüssel (wird am Mac erzeugt, Sicherung beim Owner), bei FCM ein Firebase-Projekt (nur Cloud Messaging).
 
@@ -496,13 +512,15 @@ Jede Etappe ist eine Folge kleiner Releases (Server-Version + App-Version) mit A
 1. **Push und Telegram:** zusätzlich, oder Telegram stumm, wenn Push zugestellt (20.6). Empfehlung: zusätzlich, mit Schalter.
 2. **Name des Geräts beim Koppeln:** frei eingeben oder Vorschlag „iPhone <Vorname>“. Empfehlung: Vorschlag, änderbar.
 3. **Android-Push (für H4):** FCM (zuverlässig, über Google) oder UnifiedPush mit eigenem ntfy (ohne Google, nur über WireGuard erreichbar). Empfehlung: FCM.
-4. **Pinning auch für die Desktop-Satelliten** im selben Zug (gleiche Logik, `insecure` entfällt dann überall). Empfehlung: ja, als eigener Release nach H1, damit der Zertifikatswechsel 2027 für alle Geräte gleich läuft.
+4. **Pinning auch für die Desktop-Satelliten** im selben Zug (gleiche Logik: Schlüssel-Pinning, `insecure` entfällt dann überall). Empfehlung: ja, als eigener Release nach H1, damit der Zertifikatswechsel 2027 für alle Geräte gleich läuft. Die gekoppelten Satelliten übernehmen den Schlüssel einmalig beim nächsten Start über die bestehende Verbindung. Danach gilt nur noch er.
 
 ### 20.10 Risiken
 
 - **iOS-Hintergrund:** Ohne geöffnete App gibt es keine Verbindung und kein Mikrofon. Das ist gewollt (§13). Push ist der einzige Weckweg.
 - **Lokales Netzwerk unter iOS:** Wird der Erlaubnisdialog abgelehnt, ist der Server im WLAN nicht erreichbar. Die App erklärt das und verweist auf die Einstellungen.
-- **Zertifikatswechsel 2027:** Ohne Ankündigung (20.4) müsste jedes Gerät neu gekoppelt werden. Die Ankündigung wird mit H1 gebaut, nicht erst kurz vor März 2027.
+- **Zertifikatswechsel 2027:** Mit Schlüssel-Pinning (20.4) reicht es, vor dem 23.03.2027 mit demselben Schlüssel zu verlängern; kein Gerät merkt etwas. Ein neuer Schlüssel braucht die Ankündigung, sonst müsste jedes Gerät neu gekoppelt werden. Beides wird mit H1 gebaut, nicht erst kurz vor März 2027.
+- **Zweiter Knoten .93:** Er ist seit Mai aus und nicht nachgezogen. Läuft er später wieder als Ausweichknoten, muss er **dasselbe Zertifikat mit demselben Schlüssel** zeigen wie .92. Sonst lehnen alle gepinnten Geräte ihn bei einem Ausfall ab. Das ist eine Bedingung für das Wiedereinschalten von .93 und steht in dessen Nachzieh-Liste. Die Alternative, beide Schlüssel zu merken, ist nur zweite Wahl, weil dann zwei private Schlüssel zu schützen sind.
+- **Später ein Proxy vor dem Server** (z. B. NPM): Er zeigt sein eigenes Zertifikat. Dann wird dessen Schlüssel gemerkt, oder der Proxy reicht TLS unverändert durch.
 - **TestFlight-Builds laufen nach 90 Tagen ab.** Die App weist 14 Tage vorher darauf hin. Neue Builds kommen ohnehin mit jedem App-Release.
 - **Push-Inhalt:** Bewusst ohne Details, weil die Nachricht über Apple bzw. Google läuft (Owner-Entscheidung 3).
 
