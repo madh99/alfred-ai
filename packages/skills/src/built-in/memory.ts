@@ -377,6 +377,7 @@ export class MemorySkill extends Skill {
     const results: { key: string; value: string; category: string; score: number }[] = [];
     for (const uid of allUserIds(context)) {
       for (const r of await this.embeddingService.semanticSearch(uid, query, 10)) {
+        if (r.category !== 'memory') continue; // v1495 — offene Punkte, Dokumente, Social-Items sind keine Memories
         if (!seen.has(r.key)) {
           seen.add(r.key);
           results.push(r);

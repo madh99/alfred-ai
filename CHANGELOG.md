@@ -55,6 +55,26 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1495] - 2026-10-18
+
+### Fixed — Semantische Suche: alle Embeddings waren leer, gesammeltes Wissen erreichte die Antwort nicht
+
+Owner 18.10.: Auf „wie viel haben wir heuer für Strom bezahlt?“ durchsuchte Alfred E-Mails, PDFs und Mahnungen (bis etwa 12 $ je Lauf). Die Rechnungen Jänner bis September sammelt er aber selbst und hat sie im Gedächtnis. Unter den 15 Erinnerungen für die Antwort waren Gamescom, Wakeword und ein Ticket, keine einzige Rechnung.
+
+- **Ursache 1, Nullvektoren:** Für Embeddings fordert das openai-SDK ohne Formatangabe base64 an und dekodiert die Antwort. Mistral liefert trotzdem ein Zahlen-Array (1 024 Werte), daraus wurden 256 Nullen. Alle 4 360 gespeicherten Embeddings seit dem 30.03. waren leer. Jeder Abstand war damit ungültig, die Treffer kamen in zufälliger Reihenfolge.
+- **Ursache 2, Ähnlichkeit immer 1,0:** Beim Auslesen der pgvector-Treffer ging der Abstand verloren. Jeder Treffer galt als perfekt.
+- **Ursache 3, verwaiste und fremde Treffer:** Die Suche nach Erinnerungen lieferte alle Quellarten (offene Punkte, Social-Items) und riet den Schlüssel aus dem Text. Treffer ohne Erinnerung zählten ohne Altersabzug als Typ „general“ und belegten alle 5 Plätze dieses Typs. Die Rechnungen, ebenfalls „general“, fielen heraus.
+- **Ursache 4, Füllwörter:** Die Stichwortsuche zählte „du“, „der“, „wie“ als Treffer, auch als Wortteil. Bei der Strom-Frage gab es 1 658 Kandidaten, die Rechnungsübersicht stand auf Rang 280.
+
+Änderungen:
+- Embeddings werden ausdrücklich als Zahlen-Array angefordert. Ein Vektor ohne Inhalt wird weder gespeichert noch gesucht, die erste Abweisung steht im Log.
+- Der Abstand bleibt beim Auslesen erhalten. Die Ähnlichkeit ist jetzt 1 − Abstand.
+- Die Erinnerungssuche fragt nur Memory-Embeddings ab und löst sie über die Memory-ID auf, mit dem aktuellen Inhalt. Treffer ohne Erinnerung und interne Einträge fallen weg. `memory.semantic_search` liefert nur noch Erinnerungen.
+- Die Stichwortsuche lässt Füllwörter und Satzzeichen weg. Besteht eine Anfrage nur aus Füllwörtern, sucht sie wie bisher.
+- **Reparatur beim Start:** Eine Probe beim Anbieter liefert die echte Dimension. Gelöscht werden Einträge mit anderer Dimension, Nullvektoren und Memory-Embeddings ohne Erinnerung. Die pgvector-Spalte wird von 256 auf die echte Dimension gebracht. Ohne gültige Probe wird nichts gelöscht.
+- **Nachberechnung:** Jede Erinnerung ohne Embedding wird im Hintergrund eingebettet. Bisher hatten 1 586 von 2 354 Erinnerungen nie eines. Dokumente holt der Start nach (v1475), Wissens-Entitäten die nächtliche Wartung, offene Punkte und Social-Items ihre Abgleiche bei Bedarf.
+- Messung mit echten Mistral-Vektoren für die Strom-Frage: Rechnungen 0,79–0,81, zufällige Erinnerungen 0,56–0,79 (Median 0,68).
+
 ## [0.19.0-jarvis.1494] - 2026-10-18
 
 ### Fixed — Vorgänge, Eingang und Befunde zeigen keinen veralteten Stand mehr (App 1.40.0, Web)

@@ -49,6 +49,37 @@ export interface MemoryEntry {
   sourceEventRefs?: string[] | null;
 }
 
+/**
+ * v1495 — Füllwörter tragen nichts zur Stichwortsuche bei. Sie passten per LIKE als Wortteil auf fast jeden Text
+ * („du" in „Produkt", „der" überall) und bestimmten die Reihenfolge: Realfall 18.10. Strom-Frage — 1 658
+ * Kandidaten, die Rechnungsübersicht auf Rang 280.
+ */
+const STOPPWOERTER = new Set([
+  // Deutsch
+  'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'mir', 'mich', 'dir', 'dich', 'uns', 'euch', 'ihm', 'ihn', 'ihnen',
+  'mein', 'meine', 'dein', 'deine', 'sein', 'seine', 'unser', 'unsere',
+  'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einen', 'einem', 'einer', 'eines',
+  'und', 'oder', 'aber', 'als', 'auch', 'auf', 'aus', 'bei', 'bis', 'da', 'dass', 'daß', 'denn', 'doch', 'für',
+  'hat', 'habe', 'haben', 'hast', 'hatte', 'hatten', 'ist', 'bin', 'bist', 'sind', 'war', 'waren', 'wird', 'werden', 'wurde', 'wurden',
+  'kann', 'kannst', 'können', 'könnte', 'könntest', 'soll', 'sollte', 'will', 'willst', 'muss', 'musst',
+  'mit', 'nach', 'nicht', 'noch', 'nur', 'ob', 'schon', 'sich', 'so', 'um', 'von', 'vom', 'vor', 'zu', 'zum', 'zur',
+  'über', 'im', 'in', 'an', 'am', 'ja', 'nein', 'mal', 'bitte', 'sagen', 'sag', 'weißt', 'gibt',
+  'was', 'wann', 'wie', 'wo', 'wer', 'wen', 'wem', 'wieso', 'warum', 'weshalb', 'welche', 'welcher', 'welches', 'wieviel', 'wieviele', 'viel', 'viele',
+  // Englisch
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'on', 'for', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had',
+  'do', 'does', 'did', 'can', 'could', 'you', 'me', 'my', 'we', 'our', 'it', 'this', 'that', 'with', 'what', 'when',
+  'where', 'who', 'how', 'please', 'tell',
+]);
+
+/** v1495 — Suchbegriffe einer Anfrage: klein, ohne Satzzeichen am Rand, ohne Füllwörter (mind. 2 Zeichen). */
+export function suchBegriffe(query: string): string[] {
+  const alle = query.toLowerCase().split(/\s+/)
+    .map(t => t.replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, ''))
+    .filter(t => t.length >= 2);
+  const inhalt = alle.filter(t => !STOPPWOERTER.has(t));
+  return [...new Set(inhalt.length > 0 ? inhalt : alle)]; // nur Füllwörter → wie bisher suchen
+}
+
 export class MemoryRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
@@ -193,7 +224,7 @@ export class MemoryRepository {
    * terms match (in key or value), weighted by inverse document frequency.
    */
   async keywordSearch(userId: string, query: string, limit = 20): Promise<MemoryEntry[]> {
-    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+    const terms = suchBegriffe(query);
     if (terms.length === 0) return [];
 
     // Build a WHERE clause that matches any term
@@ -245,6 +276,16 @@ export class MemoryRepository {
       [userId, cutoff, maxConfidence, 'rule'],
     ) as Record<string, unknown>[];
 
+    return rows.map(row => this.mapRow(row));
+  }
+
+  /** v1495 — Memories zu IDs (z. B. Quelle eines Embeddings); fehlende IDs fehlen im Ergebnis. */
+  async getByIds(ids: string[]): Promise<MemoryEntry[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.adapter.query(
+      `SELECT * FROM memories WHERE id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    ) as Record<string, unknown>[];
     return rows.map(row => this.mapRow(row));
   }
 

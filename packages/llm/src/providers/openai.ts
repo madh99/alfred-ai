@@ -243,11 +243,15 @@ export class OpenAIProvider extends LLMProvider {
     try {
       const embeddingModel = this.config.model ?? 'text-embedding-3-small';
       // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
+      // v1495 — Format ausdrücklich „float": Ohne Angabe fordert das SDK base64 an und dekodiert die Antwort.
+      // Mistral liefert trotzdem ein Zahlen-Array → das SDK machte daraus 256 Nullen (alle Embeddings seit 30.03.).
       const response = await withPrematureCloseRetry(() => this.client.embeddings.create({
         model: embeddingModel,
         input: text,
+        encoding_format: 'float',
       }));
       const data = response.data[0];
+      if (!Array.isArray(data?.embedding)) return undefined;
       return {
         embedding: data.embedding,
         model: embeddingModel,

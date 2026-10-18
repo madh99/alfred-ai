@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import { istInterneMemory } from './interne-memories.js';
 import type { MemoryRepository, MemoryEntry } from '@alfred/storage';
-import type { EmbeddingService, SemanticSearchResult } from '../embedding-service.js';
+import type { EmbeddingService } from '../embedding-service.js';
 
 export interface RetrievedMemory {
   key: string;
@@ -70,19 +70,27 @@ export class MemoryRetriever {
       }
 
       // 2. Semantic search across all user IDs (only if embeddings available)
-      let semanticResults: SemanticSearchResult[] = [];
+      // v1495 — nur Memory-Embeddings, aufgelöst über die Quell-ID (Memory-ID) mit dem aktuellen Inhalt.
+      // Vorher kamen alle Quellarten (offene Punkte, Social-Items) als „Memory" zurück, der Schlüssel wurde aus
+      // dem Text geraten, und Treffer ohne Memory zählten mit 0,7 ohne Altersabzug als Typ „general" —
+      // Realfall 18.10.: sie belegten alle 5 general-Plätze, die Stromrechnungen fielen heraus.
+      const semanticResults: Array<{ memory: MemoryEntry; score: number }> = [];
       let hasSemanticSearch = false;
       if (this.embeddingService) {
         try {
-          const semanticSeen = new Set<string>();
+          const treffer: Array<{ sourceId: string; score: number }> = [];
+          const gesehen = new Set<string>();
           for (const uid of userIds) {
-            for (const r of await this.embeddingService.semanticSearch(uid, query, 30)) {
-              if (istInterneMemory(r.key)) continue; // v1216
-              if (!semanticSeen.has(r.key)) {
-                semanticSeen.add(r.key);
-                semanticResults.push(r);
-              }
+            for (const r of await this.embeddingService.semanticSearchByType(uid, query, 'memory', 30, 0)) {
+              if (!gesehen.has(r.sourceId)) { gesehen.add(r.sourceId); treffer.push(r); }
             }
+          }
+          const memories = new Map((await this.memoryRepo.getByIds(treffer.map(t => t.sourceId))).map(m => [m.id, m]));
+          for (const t of treffer) {
+            const memory = memories.get(t.sourceId);
+            if (!memory) continue; // verwaistes Embedding
+            if (istInterneMemory(memory.key)) continue; // v1216
+            semanticResults.push({ memory, score: t.score });
           }
           hasSemanticSearch = semanticResults.length > 0;
         } catch (err) {
@@ -125,38 +133,27 @@ export class MemoryRetriever {
       // Score semantic results
       if (hasSemanticSearch) {
         for (const sr of semanticResults) {
-          const semanticScore = sr.score * SEMANTIC_WEIGHT;
-
-          // Find matching memory entry for metadata
-          const existing = scored.get(sr.key);
+          const mem = sr.memory;
+          const existing = scored.get(mem.key);
           if (existing) {
             // Merge: add semantic score to existing keyword score
-            existing.score += semanticScore;
+            existing.score += sr.score * SEMANTIC_WEIGHT;
             existing.memory.score = existing.score;
-          } else {
-            // Semantic-only result: try to find the memory for metadata
-            const memEntry = await this.memoryRepo.recall(userId, sr.key);
-            const combined = this.applyBoosts(
-              semanticScore,
-              memEntry || undefined,
-            );
-
-            scored.set(sr.key, {
-              memory: {
-                key: sr.key,
-                value: sr.value,
-                category: sr.category,
-                type: memEntry?.type || 'general',
-                score: combined,
-                updatedAt: memEntry?.updatedAt, // v1216
-              },
-              score: combined,
-            });
-
-            if (memEntry) {
-              await this.memoryRepo.recordAccess(memEntry.id);
-            }
+            continue;
           }
+          const semanticScore = this.applyBoosts(sr.score * SEMANTIC_WEIGHT, mem);
+          scored.set(mem.key, {
+            memory: {
+              key: mem.key,
+              value: mem.value,
+              category: mem.category,
+              type: mem.type,
+              score: semanticScore,
+              updatedAt: mem.updatedAt, // v1216
+            },
+            score: semanticScore,
+          });
+          await this.memoryRepo.recordAccess(mem.id);
         }
       }
 

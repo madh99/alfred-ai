@@ -11,6 +11,8 @@ export interface EmbeddingEntry {
   model: string;
   dimensions: number;
   createdAt: string;
+  /** v1495 — Kosinus-Abstand aus vectorSearch (pgvector); fehlt bei anderen Abfragen. */
+  distance?: number;
 }
 
 export interface StoreEmbeddingInput {
@@ -169,6 +171,62 @@ export class EmbeddingRepository {
     return row ? (row.model as string) : null;
   }
 
+  /** v1495 — Einträge, deren Dimension nicht zur Probe des Anbieters passt (z. B. 256 Nullen statt 1 024 Werte). */
+  async loescheAndereDimension(dimension: number): Promise<number> {
+    const r = await this.adapter.execute('DELETE FROM embeddings WHERE dimensions <> ?', [dimension]);
+    return r.changes;
+  }
+
+  /** v1495 — Nullvektoren (alle Bytes 0) tragen keine Bedeutung; jeder Abstand zu ihnen ist NaN. */
+  async loescheNullvektoren(): Promise<number> {
+    const sql = this.adapter.type === 'postgres'
+      ? "DELETE FROM embeddings WHERE embedding = decode(repeat('00', octet_length(embedding)), 'hex')"
+      : 'DELETE FROM embeddings WHERE embedding = zeroblob(length(embedding))';
+    const r = await this.adapter.execute(sql, []);
+    return r.changes;
+  }
+
+  /** v1495 — Memory-Embeddings, deren Memory es nicht mehr gibt (Quelle = Memory-ID). */
+  async loescheVerwaisteMemoryEmbeddings(): Promise<number> {
+    const r = await this.adapter.execute(
+      "DELETE FROM embeddings WHERE source_type = 'memory' AND NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = embeddings.source_id)",
+      [],
+    );
+    return r.changes;
+  }
+
+  /**
+   * v1495 — pgvector-Spalte auf die echte Dimension bringen. Sie wurde beim ersten Suchlauf mit der Länge
+   * des damaligen Abfragevektors angelegt (256); echte Vektoren passten danach nicht mehr hinein.
+   * Neu angelegt wird sie nur, wenn die Dimension abweicht; vorhandene Einträge füllt vectorSearch nach.
+   */
+  async vektorSpalteAnpassen(dimension: number): Promise<boolean> {
+    if (this.adapter.type !== 'postgres') return false;
+    try {
+      const row = await this.adapter.queryOne(
+        "SELECT atttypmod FROM pg_attribute WHERE attrelid = 'embeddings'::regclass AND attname = 'embedding_vec' AND NOT attisdropped",
+        [],
+      ) as Record<string, unknown> | undefined;
+      if (row && Number(row.atttypmod) === dimension) { this.pgvectorAvailable = true; return false; }
+      await this.adapter.execute('CREATE EXTENSION IF NOT EXISTS vector', []);
+      if (row) await this.adapter.execute('ALTER TABLE embeddings DROP COLUMN embedding_vec', []);
+      await this.adapter.execute(`ALTER TABLE embeddings ADD COLUMN embedding_vec vector(${Math.trunc(dimension)})`, []);
+      this.pgvectorAvailable = true; // neue Einträge schreiben den Vektor sofort mit
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** v1495 — Memories ohne Embedding (Quelle = Memory-ID), für die Nachberechnung beim Start. */
+  async listMemoriesOhneEmbedding(limit = 5000): Promise<Array<{ id: string; userId: string; key: string; value: string }>> {
+    const rows = await this.adapter.query(
+      "SELECT m.id, m.user_id, m.key, m.value FROM memories m WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.source_type = 'memory' AND e.source_id = m.id) ORDER BY m.updated_at DESC LIMIT ?",
+      [limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => ({ id: r.id as string, userId: r.user_id as string, key: r.key as string, value: r.value as string }));
+  }
+
   async deleteAll(): Promise<number> {
     const result = await this.adapter.execute('DELETE FROM embeddings', []);
     return result.changes;
@@ -189,6 +247,8 @@ export class EmbeddingRepository {
       model: row.model as string,
       dimensions: row.dimensions as number,
       createdAt: row.created_at as string,
+      // v1495 — vorher verworfen: jeder pgvector-Treffer bekam dadurch die Ähnlichkeit 1,0
+      ...(row.distance != null ? { distance: Number(row.distance) } : {}),
     };
   }
 }

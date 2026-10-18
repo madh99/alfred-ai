@@ -88,6 +88,7 @@ import { ConfirmationQueue } from './confirmation-queue.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
 import { FeedbackService } from './feedback/feedback-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
+import { istInterneMemory } from './active-learning/interne-memories.js';
 import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 import { PatternAnalyzer } from './active-learning/pattern-analyzer.js';
 import { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
@@ -935,6 +936,28 @@ export class Alfred {
         }
       } catch (err) {
         this.logger.error({ err }, 'Embedding model consistency check failed');
+      }
+      // v1495 — defekte Embeddings entfernen (Nullvektoren, falsche Dimension, verwaist), danach jede Memory
+      // ohne Embedding nachberechnen. Dokumente holt v1475 unten nach, KG-Entitäten die Wartung, offene Punkte lazy.
+      try {
+        const rep = await embeddingService.defekteEntfernen();
+        if (rep) {
+          this.logger.info(rep, 'v1495 Embeddings geprüft');
+          setTimeout(() => {
+            void (async () => {
+              const offen = (await embeddingRepo.listMemoriesOhneEmbedding()).filter(m => !istInterneMemory(m.key));
+              let nachgeholt = 0; let fehler = 0; let folgeFehler = 0;
+              for (const m of offen) {
+                const id = await embeddingService.embedAndStore(m.userId, `${m.key}: ${m.value}`, 'memory', m.id);
+                if (id) { nachgeholt++; folgeFehler = 0; } else { fehler++; folgeFehler++; }
+                if (folgeFehler >= 20) break; // Anbieter nicht erreichbar — der nächste Start macht weiter
+              }
+              this.logger.info({ offen: offen.length, nachgeholt, fehler }, 'v1495 Memory-Embeddings nachberechnet');
+            })().catch(err => this.logger.warn({ err }, 'v1495 Memory-Embeddings nachberechnen fehlgeschlagen'));
+          }, 5000);
+        }
+      } catch (err) {
+        this.logger.warn({ err }, 'v1495 Embedding-Prüfung fehlgeschlagen');
       }
     }
 

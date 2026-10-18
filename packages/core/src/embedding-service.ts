@@ -34,7 +34,7 @@ export class EmbeddingService {
     const hit = this.abfrageCache.get(key);
     if (hit && jetzt - hit.at < EmbeddingService.ABFRAGE_CACHE_MS) { this.abfrageTreffer++; return hit.embedding; }
     const r = await this.llm.embed(query);
-    if (!r) return undefined;
+    if (!r || !this.gueltig(r.embedding)) return undefined;
     this.abfrageFehltreffer++;
     this.abfrageCache.set(key, { at: jetzt, embedding: r.embedding });
     if (this.abfrageCache.size > EmbeddingService.ABFRAGE_CACHE_MAX) {
@@ -79,6 +79,7 @@ export class EmbeddingService {
     try {
       const result = await this.llm.embed(content);
       if (!result) return undefined;
+      if (!this.gueltig(result.embedding)) return undefined;
 
       const entry = await this.embeddingRepo.store({
         userId,
@@ -187,6 +188,49 @@ export class EmbeddingService {
       this.logger.error({ err }, 'Semantic search failed');
       return [];
     }
+  }
+
+  /**
+   * v1495 — Ein Vektor ohne Länge trägt keine Bedeutung: jeder Abstand wird NaN, die Suche liefert Zufall.
+   * Realfall 18.10.: alle 4 360 Embeddings waren Nullvektoren (SDK-Dekodierung), ohne dass es jemand merkte.
+   * Solche Vektoren werden weder gespeichert noch gesucht; die erste Abweisung je Prozess steht im Log.
+   */
+  private nullvektorGemeldet = false;
+  private gueltig(vektor: unknown): vektor is number[] {
+    let summe = 0;
+    if (Array.isArray(vektor)) for (const x of vektor) summe += typeof x === 'number' ? x * x : NaN;
+    const ok = Array.isArray(vektor) && vektor.length > 0 && Number.isFinite(summe) && summe > 1e-12;
+    if (!ok && !this.nullvektorGemeldet) {
+      this.nullvektorGemeldet = true;
+      this.logger.warn({ laenge: Array.isArray(vektor) ? vektor.length : undefined }, 'v1495 Embedding ohne Inhalt (Nullvektor) verworfen');
+    }
+    return ok;
+  }
+
+  /**
+   * v1495 — Defekte Embeddings beim Start entfernen. Eine Probe beim Anbieter liefert die echte Dimension;
+   * verworfen werden Einträge mit anderer Dimension, Nullvektoren (PG) und Memory-Embeddings ohne Memory.
+   * Die pgvector-Spalte wird auf die echte Dimension gebracht. Nachberechnet wird danach über die
+   * vorhandenen Wege (Memories hier im Start, Dokumente v1475, KG-Wartung, offene Punkte lazy).
+   * Ohne gültige Probe wird nichts gelöscht.
+   */
+  async defekteEntfernen(): Promise<{ dimension: number; andereDimension: number; nullvektoren: number; verwaist: number; spalteNeu: boolean } | undefined> {
+    if (!this.llm.supportsEmbeddings()) return undefined;
+    // Start nicht aufhalten, wenn der Anbieter hängt
+    const probe = await Promise.race([
+      this.llm.embed('Probe').catch(() => undefined),
+      new Promise<undefined>(r => setTimeout(() => r(undefined), 15_000).unref?.()),
+    ]);
+    if (!probe || !this.gueltig(probe.embedding)) {
+      this.logger.warn('v1495 Embedding-Probe ohne gültigen Vektor — keine Reparatur');
+      return undefined;
+    }
+    const dimension = probe.embedding.length;
+    const andereDimension = await this.embeddingRepo.loescheAndereDimension(dimension);
+    const nullvektoren = await this.embeddingRepo.loescheNullvektoren();
+    const verwaist = await this.embeddingRepo.loescheVerwaisteMemoryEmbeddings();
+    const spalteNeu = await this.embeddingRepo.vektorSpalteAnpassen(dimension);
+    return { dimension, andereDimension, nullvektoren, verwaist, spalteNeu };
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
