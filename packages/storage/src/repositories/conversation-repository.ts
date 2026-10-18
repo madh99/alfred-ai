@@ -99,6 +99,8 @@ export class ConversationRepository {
       INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at, herkunft, anhaenge)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [message.id, message.conversationId, message.role, message.content, message.toolCalls ?? null, message.createdAt, message.herkunft ?? null, message.anhaenge ?? null]);
+    // v1497 — wer in einen archivierten Faden schreibt, holt ihn zurück in die Liste (Owner-Entscheidung 18.10.)
+    if (role === 'user') await this.adapter.execute('UPDATE conversations SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL', [conversationId]);
 
     return message;
   }
@@ -173,13 +175,17 @@ export class ConversationRepository {
   }
 
   /** v644 — Update conversation custom_label / pinned_at. */
-  async updateLifecycle(id: string, updates: { customLabel?: string | null; pinned?: boolean }): Promise<void> {
+  async updateLifecycle(id: string, updates: { customLabel?: string | null; pinned?: boolean; archived?: boolean }): Promise<void> {
     const sets: string[] = [];
     const params: unknown[] = [];
     if ('customLabel' in updates) { sets.push('custom_label = ?'); params.push(updates.customLabel ?? null); }
     if ('pinned' in updates) {
       sets.push('pinned_at = ?');
       params.push(updates.pinned ? new Date().toISOString() : null);
+    }
+    if ('archived' in updates) { // v1497
+      sets.push('archived_at = ?');
+      params.push(updates.archived ? new Date().toISOString() : null);
     }
     if (sets.length === 0) return;
     params.push(id);
@@ -191,18 +197,21 @@ export class ConversationRepository {
    * v1328 — Gesprächsfäden einer Gerätesitzung: alle Chats mit Präfix (z. B. `sitzung:<geraetId>`), neueste zuerst,
    * mit erster Benutzerfrage als Titel-Vorschlag und Nachrichtenzahl. Nur nicht gelöschte.
    */
-  async listByChatPrefix(platform: Platform, prefix: string, limit = 50): Promise<Array<{ id: string; chatId: string; updatedAt: string; customLabel?: string; erste?: string; anzahl: number }>> {
+  async listByChatPrefix(platform: Platform, prefix: string, limit = 50, opts?: { archiviert?: boolean }): Promise<Array<{ id: string; chatId: string; updatedAt: string; customLabel?: string; erste?: string; anzahl: number; pinnedAt?: string; archivedAt?: string }>> {
     const like = prefix.replace(/[%_\\]/g, '\\$&') + '%';
+    // v1497 — ohne Angabe wie bisher alle; archiviert:false nur aktive (angeheftete zuerst), archiviert:true nur archivierte
+    const archivFilter = opts?.archiviert === undefined ? '' : opts.archiviert ? ' AND c.archived_at IS NOT NULL' : ' AND c.archived_at IS NULL';
+    const ordnung = opts?.archiviert === false ? 'CASE WHEN c.pinned_at IS NULL THEN 1 ELSE 0 END, c.pinned_at DESC, c.updated_at DESC' : 'c.updated_at DESC';
     const rows = await this.adapter.query(`
-      SELECT c.id, c.chat_id, c.updated_at, c.custom_label,
+      SELECT c.id, c.chat_id, c.updated_at, c.custom_label, c.pinned_at, c.archived_at,
         (SELECT m.content FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user' ORDER BY m.created_at ASC, m.id ASC LIMIT 1) AS erste,
         (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id) AS anzahl
       FROM conversations c
-      WHERE c.platform = ? AND c.chat_id LIKE ? ESCAPE '\\' AND c.deleted_at IS NULL
-      ORDER BY c.updated_at DESC
+      WHERE c.platform = ? AND c.chat_id LIKE ? ESCAPE '\\' AND c.deleted_at IS NULL${archivFilter}
+      ORDER BY ${ordnung}
       LIMIT ?
     `, [platform, like, limit]) as Array<Record<string, unknown>>;
-    return rows.map(r => ({ id: String(r.id), chatId: String(r.chat_id), updatedAt: String(r.updated_at), customLabel: r.custom_label ? String(r.custom_label) : undefined, erste: r.erste ? String(r.erste) : undefined, anzahl: Number(r.anzahl ?? 0) }));
+    return rows.map(r => ({ id: String(r.id), chatId: String(r.chat_id), updatedAt: String(r.updated_at), customLabel: r.custom_label ? String(r.custom_label) : undefined, erste: r.erste ? String(r.erste) : undefined, anzahl: Number(r.anzahl ?? 0), pinnedAt: r.pinned_at ? String(r.pinned_at) : undefined, archivedAt: r.archived_at ? String(r.archived_at) : undefined }));
   }
 
   /** v1336 — Nachrichtenzahl eines Gesprächs (Hauptgespräch in der Fäden-Liste). */

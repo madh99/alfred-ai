@@ -3000,4 +3000,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE vorgaenge ADD COLUMN zurueck_bis TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 143,
+    description: 'v1497 — conversations.archived_at: Gesprächsfäden archivieren (SQLite-Spiegel zu PG v147).',
+    up(db) {
+      try { db.exec('ALTER TABLE conversations ADD COLUMN archived_at TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

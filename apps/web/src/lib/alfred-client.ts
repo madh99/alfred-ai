@@ -189,7 +189,7 @@ export class AlfredClient {
   }
 
   // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (faden null) und Fäden, Verlauf je Faden, Löschen
-  async fetchGespraeche(): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>> {
+  async fetchGespraeche(): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; angeheftet?: boolean; archiviert?: boolean }>> {
     const res = await fetch(`${this.baseUrl}/api/gespraeche`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) throw new Error(`Gespräche: ${res.status}`);
     return (await res.json()).faeden ?? [];
@@ -204,6 +204,12 @@ export class AlfredClient {
 
   async renameGespraech(faden: string, titel: string): Promise<boolean> { // v1335
     const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, body: JSON.stringify({ titel }) });
+    return res.ok;
+  }
+
+  /** v1497 — Faden anheften/lösen, archivieren/zurückholen. */
+  async setzeGespraech(faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, body: JSON.stringify(aenderung) });
     return res.ok;
   }
 

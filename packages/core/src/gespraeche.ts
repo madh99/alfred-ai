@@ -146,7 +146,11 @@ export function spiegelBefehl(text: string, store: FadenStore): string {
   return `Spiegelung ist ${store.spiegelung ? 'an' : 'aus'}. /spiegel an · /spiegel aus`;
 }
 
-export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }
+/** archiv = frühere Gerätesitzung (nur lesen); angeheftet/archiviert (v1497) = Zustand eines Owner-Fadens. */
+export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean }
+
+/** v1497 — Anheften und Archivieren eines Fadens. */
+export interface FadenAenderung { angeheftet?: boolean; archiviert?: boolean }
 
 /** v1335 — Abhängigkeiten der Faden-Befehle und der Pipeline (ein Typ für beide Seiten). */
 export interface FadenDeps {
@@ -154,17 +158,19 @@ export interface FadenDeps {
   liste: () => Promise<FadenEintrag[]>;
   loeschen: (faden: string) => Promise<boolean>;
   umbenennen?: (faden: string, titel: string) => Promise<boolean>;
+  setzen?: (faden: string, aenderung: FadenAenderung) => Promise<boolean>; // v1497
   geraetName: (geraetId: string) => string | undefined;
 }
 
 /**
- * Befehl `/faden` (Telegram und jeder andere Kanal): Liste, Wechsel, neu, haupt, löschen. Liefert die Antwort als Text.
+ * Befehl `/faden` (Telegram und jeder andere Kanal): Liste, Wechsel, neu, haupt, löschen, anheften/lösen, archiv/zurück (v1497).
+ * Liefert die Antwort als Text.
  */
 export async function fadenBefehl(
   text: string,
   platform: Platform,
   chatId: string,
-  deps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; umbenennen?: (faden: string, titel: string) => Promise<boolean> },
+  deps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; umbenennen?: (faden: string, titel: string) => Promise<boolean>; setzen?: (faden: string, aenderung: FadenAenderung) => Promise<boolean> },
 ): Promise<string> {
   const arg = text.replace(/^\/faden\b/i, '').trim();
   const [wort, ...rest] = arg.split(/\s+/);
@@ -179,10 +185,37 @@ export async function fadenBefehl(
     return ok ? `Faden ${f} heißt jetzt „${titel.slice(0, 80)}“.` : `Faden ${f} nicht gefunden.`;
   }
   const zeit = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+  const zeile = (f: FadenEintrag, i: number) => `${f.faden === aktiv ? '▶' : ' '} ${i + 1}. ${f.angeheftet ? '📌 ' : ''}${f.faden ? f.faden : 'Hauptgespräch'} — ${f.titel || '(leer)'} · ${zeit(f.zeit)} · ${f.anzahl}`;
+  const sichtbar = async () => (await deps.liste()).filter(f => !f.archiv && !f.archiviert);
   if (!wort || wort === 'liste') {
-    const l = (await deps.liste()).filter(f => !f.archiv);
-    const zeilen = l.map((f, i) => `${f.faden === aktiv ? '▶' : ' '} ${i + 1}. ${f.faden ? f.faden : 'Hauptgespräch'} — ${f.titel || '(leer)'} · ${zeit(f.zeit)} · ${f.anzahl}`);
-    return `Gespräche (▶ = aktiv hier):\n${zeilen.join('\n')}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden name <Kennung> <Titel> · /faden löschen <Kennung>`;
+    const alle = await deps.liste();
+    const l = alle.filter(f => !f.archiv && !f.archiviert);
+    const archiviert = alle.filter(f => f.archiviert).length;
+    return `Gespräche (▶ = aktiv hier, 📌 = angeheftet):\n${l.map(zeile).join('\n')}${archiviert ? `\n\nArchiviert: ${archiviert} — /faden archiv zeigt sie.` : ''}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden name <Kennung> <Titel> · /faden anheften|lösen <Nr|Kennung> · /faden archiv [<Nr|Kennung>] · /faden zurück <Kennung> · /faden löschen <Kennung>`;
+  }
+  // v1497 — anheften, lösen, archivieren, zurückholen (ohne Angabe: der aktive Faden)
+  if (['anheften', 'lösen', 'loesen', 'archiv', 'archivieren', 'zurück', 'zurueck'].includes(wort)) {
+    if (wort === 'archiv' && rest.length === 0) {
+      const a = (await deps.liste()).filter(f => f.archiviert);
+      return a.length
+        ? `Archivierte Gespräche:\n${a.map((f, i) => `  ${i + 1}. ${f.faden} — ${f.titel || '(leer)'} · ${zeit(f.zeit)} · ${f.anzahl}`).join('\n')}\n\n/faden <Kennung> öffnen (Schreiben holt ihn zurück) · /faden zurück <Kennung>`
+        : 'Keine archivierten Gespräche.';
+    }
+    if (!deps.setzen) return 'Das geht hier nicht.';
+    // Nummern beziehen sich bei „zurück“ auf die Archivliste, sonst auf die sichtbare Liste
+    const l = wort.startsWith('zur') ? (await deps.liste()).filter(x => x.archiviert) : await sichtbar();
+    const nr = Number(rest[0]);
+    const f = Number.isInteger(nr) && nr >= 1 && nr <= l.length ? l[nr - 1].faden : (rest[0] ?? aktiv ?? null);
+    if (!f || !FADEN_RE.test(f)) return 'Das Hauptgespräch lässt sich weder anheften noch archivieren. /faden zeigt die Liste.';
+    const aenderung: FadenAenderung = wort === 'anheften' ? { angeheftet: true }
+      : wort.startsWith('l') ? { angeheftet: false }
+        : wort.startsWith('arch') ? { archiviert: true } : { archiviert: false };
+    if (!(await deps.setzen(f, aenderung))) return `Faden ${f} nicht gefunden.`;
+    const warAktiv = aktiv === f;
+    if (aenderung.archiviert && warAktiv) deps.store.setze(platform, chatId, null);
+    if (aenderung.angeheftet === true) return `Faden ${f} angeheftet.`;
+    if (aenderung.angeheftet === false) return `Faden ${f} gelöst.`;
+    return aenderung.archiviert ? `Faden ${f} archiviert.${warAktiv ? ' Du bist zurück im Hauptgespräch.' : ''}` : `Faden ${f} ist zurück in der Liste.`;
   }
   if (wort === 'haupt') { deps.store.setze(platform, chatId, null); return 'Zurück im Hauptgespräch.'; }
   if (wort === 'neu') {
@@ -198,10 +231,11 @@ export async function fadenBefehl(
     if (ok && aktiv === f) deps.store.setze(platform, chatId, null);
     return ok ? `Faden ${f} gelöscht.` : `Faden ${f} nicht gefunden.`;
   }
-  // Wechsel über Nummer oder Kennung
-  const l = (await deps.liste()).filter(f => !f.archiv);
+  // Wechsel über Nummer (sichtbare Liste) oder Kennung (auch archivierte — Schreiben holt sie zurück, v1497)
+  const alle = (await deps.liste()).filter(f => !f.archiv);
+  const l = alle.filter(f => !f.archiviert);
   const nr = Number(wort);
-  const ziel = Number.isInteger(nr) && nr >= 1 && nr <= l.length ? l[nr - 1] : l.find(f => f.faden === wort);
+  const ziel = Number.isInteger(nr) && nr >= 1 && nr <= l.length ? l[nr - 1] : alle.find(f => f.faden === wort);
   if (!ziel) return `Kein Faden „${wort}“. /faden zeigt die Liste.`;
   deps.store.setze(platform, chatId, ziel.faden);
   return ziel.faden ? `Weiter im Faden ${ziel.faden} — ${ziel.titel || '(leer)'}.` : 'Zurück im Hauptgespräch.';

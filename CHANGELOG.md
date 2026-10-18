@@ -55,6 +55,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1497] - 2026-10-18
+
+### Added — Gespräche anheften und archivieren, alle Fäden sichtbar (App 1.41.0, Web, Telegram)
+
+Owner 18.10.: In der App fehlten Gesprächsfäden, und neben Löschen sollte es Anheften und Archivieren geben. Von 14 Fäden zeigte die App fest die neuesten 12 (der 14.10. und der 11.10. fehlten), das Web 12 einschließlich Hauptgespräch. Einen Knopf „Weitere“ gab es nicht.
+
+- **Anheften:** Der Faden steht immer oben, unter dem Hauptgespräch. Dafür wird die vorhandene Spalte `pinned_at` (v644) genutzt.
+- **Archivieren:** Neue Spalte `archived_at`. Der Faden verschwindet aus der Liste, bleibt aber lesbar und fortsetzbar und für Alfred durchsuchbar. Wer in einen archivierten Faden schreibt, holt ihn zurück in die Liste. Archivieren löst das Anheften.
+- **Löschen mit Rückgängig:** Der Faden verschwindet sofort und wird erst nach 8 Sekunden wirklich gelöscht. Wird die App in dieser Zeit geschlossen, gilt das Löschen als bestätigt. Gelöschte Gespräche bleiben wie bisher in Alfreds Verlaufssuche (Owner-Entscheidung).
+- **App und Web:**
+  - Seitenleiste: Hauptgespräch, Angeheftete, die neuesten 12 mit „Weitere (n)“. Ab 13 Fäden gibt es ein Filterfeld nach Titel.
+  - Darunter „Archiv (n)“ zum Aufklappen. Die früheren Gerätesitzungen heißen jetzt „Frühere Sitzungen“ statt „Archiv“.
+  - In der App hat jeder Faden ein Menü: Anheften/Lösen, Umbenennen, Archivieren/Zurückholen, Löschen.
+- **Telegram:** `/faden anheften|lösen <Nr|Kennung>`, `/faden archiv` (Liste), `/faden archiv <Nr|Kennung>`, `/faden zurück <Nr|Kennung>`. Die Liste zeigt 📌 und die Zahl der archivierten Fäden. Ein archivierter Faden bleibt per Kennung erreichbar.
+- **Server:** Die Fadenliste liefert die Merkmale `angeheftet` und `archiviert` (bis 200 je Gruppe). PATCH `/api/geraete/faeden/:f` und `/api/gespraeche/:f` nehmen neben `titel` auch `angeheftet` und `archiviert` an. Das Hauptgespräch lässt sich weder anheften noch archivieren.
+- Migration PG v147 und SQLite v143.
+- Tests: 7 für `/faden`, 3 für den PATCH-Körper, 5 in der App.
+
 ## [0.19.0-jarvis.1496] - 2026-10-18
 
 ### Fixed — Ältere Erinnerungen verschwinden nicht mehr allein wegen ihres Alters

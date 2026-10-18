@@ -424,13 +424,15 @@ export class HttpAdapter extends MessagingAdapter {
   // v627 — Conversation-History API (WebUI viewer)
   /** v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche. */
   private gespraecheFn?: {
-    liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
+    liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean }>>;
     verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean }>>;
     loeschen: (faden: string) => Promise<boolean>;
     /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
     istOwner: (webUserId: string) => Promise<boolean>;
     /** v1335 — Faden umbenennen. */
     umbenennen?: (faden: string, titel: string) => Promise<boolean>;
+    /** v1497 — Faden anheften/lösen, archivieren/zurückholen. */
+    setzen?: (faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }) => Promise<boolean>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
 
@@ -1078,6 +1080,7 @@ export class HttpAdapter extends MessagingAdapter {
     spiegelung?(geraetId: string, setzen?: boolean): Promise<boolean | undefined>;
     /** v1335 — Faden umbenennen (nur Geräte des Owners). */
     fadenUmbenennen?(geraetId: string, faden: string, titel: string): Promise<boolean>;
+    fadenSetzen?(geraetId: string, faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }): Promise<boolean>; // v1497
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
@@ -3010,10 +3013,13 @@ export class HttpAdapter extends MessagingAdapter {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faden: istFaden(faden) ? faden : null, nachrichten })); return;
     }
     const faden = url.pathname.split('/').pop() ?? '';
-    if (art === 'umbenennen') { // v1335
-      let titel = '';
-      try { const j = JSON.parse((await this.readBody(req)) || '{}') as { titel?: unknown }; titel = typeof j.titel === 'string' ? j.titel.trim().slice(0, 80) : ''; } catch { titel = ''; }
-      const ok = istFaden(faden) && titel && this.gespraecheFn.umbenennen ? await this.gespraecheFn.umbenennen(faden, titel) : false;
+    if (art === 'umbenennen') { // v1335, v1497 auch angeheftet/archiviert
+      const a = fadenAenderungLesen(await this.readBody(req).catch(() => ''));
+      if (!istFaden(faden) || !a) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'titel, angeheftet oder archiviert nötig' })); return; }
+      const fn = this.gespraecheFn;
+      let ok = true;
+      if (a.titel) ok = fn.umbenennen ? await fn.umbenennen(faden, a.titel) : false;
+      if (ok && a.aenderung) ok = fn.setzen ? await fn.setzen(faden, a.aenderung) : false;
       res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); return;
     }
     const ok = istFaden(faden) ? await this.gespraecheFn.loeschen(faden) : false;
@@ -7041,10 +7047,13 @@ export class HttpAdapter extends MessagingAdapter {
     const geraet = this.geraetIdentitaet.get(req);
     if (!geraet || !this.geraeteCallbacks?.fadenUmbenennen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const faden = url.pathname.split('/').pop() ?? '';
-    let titel = '';
-    try { const j = JSON.parse((await this.readBody(req)) || '{}') as { titel?: unknown }; titel = typeof j.titel === 'string' ? j.titel.trim().slice(0, 80) : ''; } catch { titel = ''; }
-    if (!istFaden(faden) || !titel) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'faden und titel nötig' })); return; }
-    const ok = await this.geraeteCallbacks.fadenUmbenennen(geraet.geraetId, faden, titel);
+    // v1497 — neben dem Titel auch angeheftet/archiviert
+    const a = fadenAenderungLesen(await this.readBody(req).catch(() => ''));
+    if (!istFaden(faden) || !a) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'faden und titel, angeheftet oder archiviert nötig' })); return; }
+    const cb = this.geraeteCallbacks;
+    let ok = true;
+    if (a.titel) ok = await cb.fadenUmbenennen!(geraet.geraetId, faden, a.titel);
+    if (ok && a.aenderung) ok = cb.fadenSetzen ? await cb.fadenSetzen(geraet.geraetId, faden, a.aenderung) : false;
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok }));
   }
@@ -7097,3 +7106,20 @@ export class HttpAdapter extends MessagingAdapter {
 
 /** v1399 — Unterrouten, die für Geräte-Projekte erlaubt sind (nur Projekt-Daten, nichts im Projektordner auf dem Server). */
 const GERAETE_PROJEKT_ERLAUBT = new Set(['chat-history', 'open-items', 'decisions', 'health-log', 'work-stats', 'chat-actions', 'geraet', 'environments']); // v1443 B15 — Umgebungen sind Daten am Server
+
+/**
+ * v1497 — PATCH-Körper eines Fadens: {"titel"?: string, "angeheftet"?: boolean, "archiviert"?: boolean}.
+ * Liefert undefined, wenn nichts Gültiges darin steht.
+ */
+export function fadenAenderungLesen(body: string): { titel?: string; aenderung?: { angeheftet?: boolean; archiviert?: boolean } } | undefined {
+  let j: Record<string, unknown>;
+  try { j = JSON.parse(body || '{}') as Record<string, unknown>; } catch { return undefined; }
+  if (!j || typeof j !== 'object') return undefined;
+  const titel = typeof j.titel === 'string' && j.titel.trim() ? j.titel.trim().slice(0, 80) : undefined;
+  const aenderung: { angeheftet?: boolean; archiviert?: boolean } = {};
+  if (typeof j.angeheftet === 'boolean') aenderung.angeheftet = j.angeheftet;
+  if (typeof j.archiviert === 'boolean') aenderung.archiviert = j.archiviert;
+  const mitAenderung = Object.keys(aenderung).length > 0;
+  if (!titel && !mitAenderung) return undefined;
+  return { ...(titel ? { titel } : {}), ...(mitAenderung ? { aenderung } : {}) };
+}

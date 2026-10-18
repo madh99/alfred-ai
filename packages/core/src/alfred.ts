@@ -7257,7 +7257,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       });
       this.pipeline.setGespraeche(
         this.gespraechsOptionen(),
-        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), umbenennen: (f, t) => this.ownerFadenUmbenennen(f, t), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
+        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), umbenennen: (f, t) => this.ownerFadenUmbenennen(f, t), setzen: (f, a) => this.ownerFadenSetzen(f, a), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
         (e) => {
           const n = this.geraeteGateway?.sendeAnAlle({ typ: 'gespraech', faden: e.faden, von: e.von.chatId }) ?? 0;
           this.logger.debug({ faden: e.faden, von: e.von.chatId, geraete: n }, 'v1330 Gespräch geändert');
@@ -8973,6 +8973,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
+            setzen: (faden: string, a: { angeheftet?: boolean; archiviert?: boolean }) => this.ownerFadenSetzen(faden, a), // v1497
             // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
             istOwner: async (webUserId: string) => {
               if (!this.ownerMasterUserId) return false;
@@ -14146,6 +14147,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             });
           },
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
+          fadenSetzen: async (geraetId: string, faden: string, a: { angeheftet?: boolean; archiviert?: boolean }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenSetzen(faden, a) : false, // v1497
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -15621,9 +15623,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const haupt = hauptgespraech(this.gespraechsOptionen());
     const h = await this.conversationRepo.findByPlatformChat(haupt.platform, haupt.chatId);
     aus.push({ faden: null, titel: 'Hauptgespräch', zeit: h?.updatedAt ?? new Date(0).toISOString(), anzahl: h ? await this.conversationRepo.countMessages(h.id) : 0 }); // v1336 Zahl statt 0
-    for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 60)) {
+    // v1497 — aktive Fäden (angeheftete zuerst), danach die archivierten mit Kennzeichen
+    for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 200, { archiviert: false })) {
       if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
-      aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl });
+      aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl, ...(c.pinnedAt ? { angeheftet: true } : {}) });
+    }
+    for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 200, { archiviert: true })) {
+      if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
+      aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl, archiviert: true });
     }
     if (geraetId) {
       for (const c of await this.conversationRepo.listByChatPrefix('api', `sitzung:${geraetId}`, 20)) {
@@ -16262,6 +16269,25 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       c = await this.conversationRepo.create(k.platform, k.chatId, this.ownerMasterUserId);
     }
     await this.conversationRepo.updateLifecycle(c.id, { customLabel: titel.trim().slice(0, 80) });
+    return true;
+  }
+
+  /**
+   * v1497 — Faden anheften/lösen, archivieren/zurückholen (Owner-Freigabe 18.10.). Archivieren löst das Anheften;
+   * Schreiben in einen archivierten Faden holt ihn zurück (ConversationRepository.addMessage).
+   */
+  async ownerFadenSetzen(faden: string, aenderung: import('./gespraeche.js').FadenAenderung): Promise<boolean> {
+    if (!this.conversationRepo) return false;
+    const { fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
+    if (!FADEN_RE.test(faden)) return false;
+    const c = await this.conversationRepo.findByPlatformChat(fadenSchluessel(faden).platform, fadenSchluessel(faden).chatId);
+    if (!c || c.deletedAt) return false;
+    const u: { pinned?: boolean; archived?: boolean } = {};
+    if (aenderung.angeheftet !== undefined) u.pinned = aenderung.angeheftet;
+    if (aenderung.archiviert !== undefined) { u.archived = aenderung.archiviert; if (aenderung.archiviert) u.pinned = false; }
+    if (Object.keys(u).length === 0) return false;
+    await this.conversationRepo.updateLifecycle(c.id, u);
+    this.logger.info({ faden, ...aenderung }, 'v1497 Faden geändert');
     return true;
   }
 

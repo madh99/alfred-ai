@@ -27,6 +27,7 @@ import 'projekte.dart'; // 1.15.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'vorgaenge_ansicht.dart'; // 1.34.0
 import 'eingang.dart'; // 1.36.0
+import 'faden_liste.dart'; // 1.41.0
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -303,6 +304,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     vorgaengeTakt?.cancel();
     erinnerungTakt?.cancel(); // 1.9.0
     trayTakt?.cancel(); // 1.10.0
+    // 1.41.0 — Löschen, dessen Rückgängig-Frist noch läuft, gilt beim Schließen als bestätigt
+    for (final e in loeschenAusstehend.entries) { e.value.cancel(); server?.json('/api/geraete/faeden/${e.key}', methode: 'DELETE').catchError((_) => <String, dynamic>{}); }
     for (final s in _signale) { s.cancel(); }
     hoerClient?.schluss();
     ipc.stop();
@@ -438,6 +441,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   List<Map<String, dynamic>> faeden = [];
 
   String? archiv; // 1.2.1 — geöffnete alte Kanal-Sitzung (nur lesen)
+  bool alleFaeden = false; // 1.41.0 — „Weitere“ aufgeklappt
+  bool archivOffen = false; // 1.41.0 — Abschnitt „Archiv“ aufgeklappt
+  String fadenFilter = ''; // 1.41.0 — Filter nach Titel (ab mehr als 12 Fäden)
+  final Map<String, Timer> loeschenAusstehend = {}; // 1.41.0 — Löschen mit Rückgängig (8 s)
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
 

@@ -39,6 +39,7 @@ extension _Gespraeche on _SitzungState {
     await _holeVerlauf();
     if (!warteschlange.leer) Future.microtask(_nachsenden); // 1.8.0
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
+    if (faden != null && faeden.any((x) => x['faden'] == faden && x['archiviert'] == true)) _zeile(Eintrag(Art.hinweis, 'Archiviertes Gespräch — wenn du hier schreibst, kommt es zurück in die Liste.')); // 1.41.0
     fokus.requestFocus();
   }
 
@@ -101,13 +102,60 @@ extension _Gespraeche on _SitzungState {
   }
 
 
-  Future<void> _fadenLoeschen(String faden) async {
+  /// 1.41.0 — Löschen mit Rückgängig (Owner-Entscheidung 18.10.): sofort ausblenden, erst nach 8 s wirklich löschen.
+  Future<void> _fadenLoeschen(String faden, String titel) async {
+    final s = server; if (s == null) return;
+    loeschenAusstehend.remove(faden)?.cancel();
+    if (s.faden == faden) await _fadenWechseln(null);
+    _neu(() => loeschenAusstehend[faden] = Timer(const Duration(seconds: 8), () => _fadenEndgueltigLoeschen(faden)));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text('Gelöscht: $titel'),
+      action: SnackBarAction(label: 'Rückgängig', onPressed: () { loeschenAusstehend.remove(faden)?.cancel(); _neu(() {}); }),
+      persist: false, // wie 1.12.1: Meldung mit Knopf verschwindet von selbst
+      duration: const Duration(seconds: 8),
+    ));
+  }
+
+  Future<void> _fadenEndgueltigLoeschen(String faden) async {
     final s = server; if (s == null) return;
     try {
       await s.json('/api/geraete/faeden/$faden', methode: 'DELETE');
-      if (s.faden == faden) await _fadenWechseln(null);
       await _faedenLaden();
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht gelöscht: $e')); }
+    if (mounted) _neu(() => loeschenAusstehend.remove(faden));
+  }
+
+  /// 1.41.0 — anheften/lösen, archivieren/zurückholen. Archivieren des offenen Fadens führt ins Hauptgespräch.
+  Future<void> _fadenSetzen(String faden, Map<String, dynamic> aenderung) async {
+    final s = server; if (s == null) return;
+    try {
+      await s.json('/api/geraete/faeden/$faden', methode: 'PATCH', koerper: aenderung);
+      if (aenderung['archiviert'] == true && s.faden == faden) await _fadenWechseln(null);
+      await _faedenLaden();
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht geändert: $e')); }
+  }
+
+  /// 1.41.0 — Menü je Faden: Anheften, Umbenennen, Archivieren, Löschen.
+  Widget _fadenMenue(Map<String, dynamic> f) {
+    final id = '${f['faden']}'; final titel = fadenTitelText(f);
+    final archiviert = f['archiviert'] == true; final angeheftet = f['angeheftet'] == true;
+    return PopupMenuButton<String>(
+      tooltip: 'Mehr', iconSize: 18, padding: EdgeInsets.zero,
+      onSelected: (w) {
+        switch (w) {
+          case 'anheften': _fadenSetzen(id, {'angeheftet': !angeheftet});
+          case 'umbenennen': _fadenUmbenennen(id, '${f['titel'] ?? ''}');
+          case 'archiv': _fadenSetzen(id, {'archiviert': !archiviert});
+          case 'loeschen': _fadenLoeschen(id, titel);
+        }
+      },
+      itemBuilder: (_) => [
+        if (!archiviert) PopupMenuItem(value: 'anheften', child: ListTile(dense: true, leading: Icon(angeheftet ? Icons.push_pin : Icons.push_pin_outlined, size: 18), title: Text(angeheftet ? 'Lösen' : 'Anheften'))),
+        const PopupMenuItem(value: 'umbenennen', child: ListTile(dense: true, leading: Icon(Icons.edit_outlined, size: 18), title: Text('Umbenennen'))),
+        PopupMenuItem(value: 'archiv', child: ListTile(dense: true, leading: Icon(archiviert ? Icons.unarchive_outlined : Icons.archive_outlined, size: 18), title: Text(archiviert ? 'Zurückholen' : 'Archivieren'))),
+        const PopupMenuItem(value: 'loeschen', child: ListTile(dense: true, leading: Icon(Icons.delete_outline, size: 18), title: Text('Löschen'))),
+      ],
+    );
   }
 
 

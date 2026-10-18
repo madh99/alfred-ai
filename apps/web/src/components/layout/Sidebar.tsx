@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
 import { eingangEintraege, hinweisOffen, vorgaengeFuerDich } from '@/components/eingang/eingang-logik';
+import { fadenGruppen, fadenTitel, type FadenEintrag } from './faden-liste'; // v1497
 
 const BASE = '/alfred';
 
@@ -64,12 +65,16 @@ export function Sidebar() {
   const [chats, setChats] = useState<ConvItem[]>([]);
   const [usage, setUsage] = useState<{ tokens?: number; costUsd?: number; calls?: number }>({});
   // v1330 — Gespräche des Owners kanalunabhängig (Hauptgespräch + Fäden), dieselben wie in Telegram und den Apps
-  const [faeden, setFaeden] = useState<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>>([]);
+  const [faeden, setFaeden] = useState<FadenEintrag[]>([]);
+  // v1497 — Weitere, Archiv, Filter, Löschen mit Rückgängig (8 s)
+  const [alleFaeden, setAlleFaeden] = useState(false);
+  const [archivOffen, setArchivOffen] = useState(false);
+  const [fadenFilter, setFadenFilter] = useState('');
+  const [geloescht, setGeloescht] = useState<{ faden: string; titel: string } | null>(null);
+  const loeschTimer = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const aktiverFaden = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('faden') : null;
-  useEffect(() => {
-    if (!client) return;
-    client.fetchGespraeche().then(setFaeden).catch(() => setFaeden([]));
-  }, [client]);
+  function faedenLaden() { if (client) client.fetchGespraeche().then(setFaeden).catch(() => setFaeden([])); }
+  useEffect(() => { faedenLaden(); }, [client]); // eslint-disable-line react-hooks/exhaustive-deps
   function neuerFaden() {
     const id = Date.now().toString(36);
     try { localStorage.removeItem('alfred-chat-messages'); } catch {}
@@ -81,12 +86,48 @@ export function Sidebar() {
     if (!titel) return;
     try { if (await client.renameGespraech(f, titel.slice(0, 80))) setFaeden(prev => prev.map(x => x.faden === f ? { ...x, titel: titel.slice(0, 80) } : x)); } catch {}
   }
-  async function fadenLoeschen(f: string) {
-    if (!client || !confirm('Gespräch löschen?')) return;
-    try { await client.deleteGespraech(f); } catch {}
-    setFaeden(prev => prev.filter(x => x.faden !== f));
-    if (aktiverFaden === f) window.location.href = `${BASE}/chat/`;
+  // v1497 — Löschen mit Rückgängig (Owner-Entscheidung 18.10.): sofort ausblenden, erst nach 8 s wirklich löschen
+  function fadenLoeschen(f: string, titel: string) {
+    if (!client) return;
+    clearTimeout(loeschTimer.current.get(f));
+    loeschTimer.current.set(f, setTimeout(async () => {
+      loeschTimer.current.delete(f);
+      try { await client.deleteGespraech(f); } catch {}
+      setGeloescht(g => (g?.faden === f ? null : g));
+      faedenLaden();
+      if (aktiverFaden === f) window.location.href = `${BASE}/chat/`;
+    }, 8000));
+    setGeloescht({ faden: f, titel });
   }
+  function loeschenRueckgaengig() {
+    if (!geloescht) return;
+    clearTimeout(loeschTimer.current.get(geloescht.faden));
+    loeschTimer.current.delete(geloescht.faden);
+    setGeloescht(null);
+  }
+  async function fadenSetzen(f: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }) {
+    if (!client) return;
+    try { await client.setzeGespraech(f, aenderung); } catch {}
+    faedenLaden();
+    if (aenderung.archiviert && aktiverFaden === f) window.location.href = `${BASE}/chat/`;
+  }
+  const gruppen = fadenGruppen(faeden, { alle: alleFaeden, filter: fadenFilter, ausgeblendet: new Set([...loeschTimer.current.keys(), ...(geloescht ? [geloescht.faden] : [])]) });
+  const fadenZeile = (f: FadenEintrag, symbol: string) => (
+    <div key={f.faden ?? 'haupt'} className={clsx('group flex items-center gap-2 px-3 py-1 rounded-lg', (f.faden ?? null) === (aktiverFaden ?? null) && isActive(`${BASE}/chat`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}>
+      <a href={f.faden ? `${BASE}/chat/?faden=${encodeURIComponent(f.faden)}` : `${BASE}/chat/`} className="flex-1 min-w-0 flex items-center gap-2">
+        <span className="text-xs">{symbol}</span>
+        <span className="truncate text-xs" title={f.titel}>{f.faden ? fadenTitel(f) : 'Hauptgespräch'}</span>
+      </a>
+      {f.faden && (
+        <>
+          {!f.archiviert && <button onClick={() => fadenSetzen(f.faden!, { angeheftet: !f.angeheftet })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-amber-400 text-xs" title={f.angeheftet ? 'Lösen' : 'Anheften'}>{f.angeheftet ? '📍' : '📌'}</button>}
+          <button onClick={() => fadenUmbenennen(f.faden!, f.titel)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Umbenennen">✎</button>
+          <button onClick={() => fadenSetzen(f.faden!, { archiviert: !f.archiviert })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title={f.archiviert ? 'Zurückholen' : 'Archivieren'}>{f.archiviert ? '↩' : '🗄'}</button>
+          <button onClick={() => fadenLoeschen(f.faden!, fadenTitel(f))} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
+        </>
+      )}
+    </div>
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -298,20 +339,26 @@ export function Sidebar() {
         {faeden.length > 0 && (
           <div className="pt-1">
             <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500">Gespräche</div>
-            {faeden.slice(0, 12).map(f => (
-              <div key={f.faden ?? 'haupt'} className={clsx('group flex items-center gap-2 px-3 py-1 rounded-lg', (f.faden ?? null) === (aktiverFaden ?? null) && isActive(`${BASE}/chat`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}>
-                <a href={f.faden ? `${BASE}/chat/?faden=${encodeURIComponent(f.faden)}` : `${BASE}/chat/`} className="flex-1 min-w-0 flex items-center gap-2">
-                  <span className="text-xs">{f.faden ? '🧵' : '🏠'}</span>
-                  <span className="truncate text-xs" title={f.titel}>{f.faden ? (f.titel || `Gespräch ${f.faden}`) : 'Hauptgespräch'}</span>
-                </a>
-                {f.faden && (
-                  <>
-                    <button onClick={() => fadenUmbenennen(f.faden!, f.titel)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Umbenennen">✎</button>
-                    <button onClick={() => fadenLoeschen(f.faden!)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
-                  </>
-                )}
+            {gruppen.haupt && fadenZeile(gruppen.haupt, '🏠')}
+            {gruppen.angeheftet.map(f => fadenZeile(f, '📌'))}
+            {gruppen.gespraeche.map(f => fadenZeile(f, '🧵'))}
+            {gruppen.weitere > 0 && <button onClick={() => setAlleFaeden(true)} className="w-full text-left px-3 py-1 text-xs text-blue-400 hover:underline">Weitere ({gruppen.weitere})</button>}
+            {alleFaeden && !fadenFilter && gruppen.filterSinnvoll && <button onClick={() => setAlleFaeden(false)} className="w-full text-left px-3 py-1 text-xs text-gray-500 hover:underline">Weniger anzeigen</button>}
+            {(gruppen.filterSinnvoll || fadenFilter) && (
+              <input value={fadenFilter} onChange={e => setFadenFilter(e.target.value)} placeholder="Gespräche filtern" className="mx-3 my-1 w-[calc(100%-1.5rem)] rounded bg-[#1a1a1a] border border-[#2a2a2a] px-2 py-1 text-xs text-gray-300" />
+            )}
+            {gruppen.archiviert.length > 0 && (
+              <>
+                <button onClick={() => setArchivOffen(o => !o)} className="w-full text-left px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500 hover:text-gray-300">{archivOffen ? '▾' : '▸'} Archiv ({gruppen.archiviert.length})</button>
+                {(archivOffen || fadenFilter) && gruppen.archiviert.map(f => fadenZeile(f, '🗄'))}
+              </>
+            )}
+            {geloescht && (
+              <div className="mx-3 my-1 flex items-center gap-2 rounded bg-[#1a1a1a] px-2 py-1 text-xs text-gray-300">
+                <span className="truncate flex-1">Gelöscht: {geloescht.titel}</span>
+                <button onClick={loeschenRueckgaengig} className="text-blue-400 hover:underline">Rückgängig</button>
               </div>
-            ))}
+            )}
           </div>
         )}
         <a

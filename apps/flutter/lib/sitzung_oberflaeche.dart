@@ -75,6 +75,14 @@ extension _Oberflaeche on _SitzungState {
     final geraet = konfig?.name ?? satellit?.name ?? '…';
     final letzte = verlauf.where((e) => e.art == Art.du && e.text.trim().isNotEmpty).toList().reversed.take(8).toList();
     Widget abschnitt(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text(t, style: theme.textTheme.labelMedium?.copyWith(color: dim)));
+    final gruppen = fadenGruppen(faeden, alle: alleFaeden, filter: fadenFilter, ausgeblendet: loeschenAusstehend.keys.toSet()); // 1.41.0
+    Widget fadenZeile(Map<String, dynamic> f, IconData symbol, {bool angeheftet = false}) => ListTile(
+      dense: true, selected: server?.faden == f['faden'],
+      leading: Icon(symbol, size: 18, color: angeheftet ? theme.colorScheme.primary : null),
+      title: Text(fadenTitelText(f), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+      subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+      trailing: _fadenMenue(f),
+      onTap: () => _fadenWechseln('${f['faden']}'));
     return Container(
       width: 270,
       color: theme.colorScheme.surfaceContainerLow,
@@ -90,14 +98,26 @@ extension _Oberflaeche on _SitzungState {
         Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
           abschnitt('Gespräche'),
           ListTile(dense: true, selected: server?.faden == null, leading: const Icon(Icons.forum_outlined, size: 18), title: Text('Hauptgespräch', style: theme.textTheme.bodySmall), onTap: () => _fadenWechseln(null)),
-          for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(tooltip: 'Umbenennen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenUmbenennen('${f['faden']}', '${f['titel'] ?? ''}'), icon: const Icon(Icons.edit_outlined)), IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline))]), onTap: () => _fadenWechseln('${f['faden']}')),
+          // 1.41.0 (v1497) — angeheftete oben, dann die neuesten 12 mit „Weitere“, Filter ab 13 Fäden; Archiv getrennt
+          for (final f in gruppen.angeheftet) fadenZeile(f, Icons.push_pin, angeheftet: true),
+          for (final f in gruppen.gespraeche) fadenZeile(f, Icons.chat_bubble_outline),
+          if (gruppen.weitere > 0) ListTile(dense: true, leading: const Icon(Icons.expand_more, size: 18), title: Text('Weitere (${gruppen.weitere})', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)), onTap: () => _neu(() => alleFaeden = true)),
+          if (alleFaeden && gruppen.filterSinnvoll && fadenFilter.isEmpty) ListTile(dense: true, leading: const Icon(Icons.expand_less, size: 18), title: Text('Weniger anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: dim)), onTap: () => _neu(() => alleFaeden = false)),
+          if (gruppen.filterSinnvoll || fadenFilter.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 4), child: TextField(
+            decoration: InputDecoration(isDense: true, prefixIcon: const Icon(Icons.search, size: 18), hintText: 'Gespräche filtern', border: const OutlineInputBorder(),
+              suffixIcon: fadenFilter.isEmpty ? null : IconButton(tooltip: 'Filter löschen', iconSize: 16, onPressed: () => _neu(() => fadenFilter = ''), icon: const Icon(Icons.close))),
+            style: theme.textTheme.bodySmall, onChanged: (v) => _neu(() => fadenFilter = v))),
           if (offen.isNotEmpty) ...[
             abschnitt('Bestätigungen (${offen.length})'),
             for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => _neu(() => ansicht = Ansicht.chat)),
           ],
-          if (faeden.any((x) => x['archiv'] != null)) ...[
-            abschnitt('Archiv (frühere Sitzungen)'),
-            for (final f in faeden.where((x) => x['archiv'] != null).take(6)) ListTile(dense: true, selected: archiv == f['archiv'], leading: const Icon(Icons.inventory_2_outlined, size: 18), title: Text('${f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${_fadenZeit('${f['zeit'] ?? ''}')} · ${f['anzahl']} Nachrichten', style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _archivOeffnen('${f['archiv']}')),
+          if (gruppen.archiviert.isNotEmpty) ...[
+            ListTile(dense: true, leading: Icon(archivOffen ? Icons.expand_less : Icons.expand_more, size: 18), title: Text('Archiv (${gruppen.archiviert.length})', style: theme.textTheme.labelMedium?.copyWith(color: dim)), onTap: () => _neu(() => archivOffen = !archivOffen)),
+            if (archivOffen || fadenFilter.isNotEmpty) for (final f in gruppen.archiviert) fadenZeile(f, Icons.archive_outlined),
+          ],
+          if (gruppen.sitzungen.isNotEmpty) ...[
+            abschnitt('Frühere Sitzungen'), // 1.41.0 — hieß „Archiv (frühere Sitzungen)“
+            for (final f in gruppen.sitzungen.take(6)) ListTile(dense: true, selected: archiv == f['archiv'], leading: const Icon(Icons.inventory_2_outlined, size: 18), title: Text('${f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${_fadenZeit('${f['zeit'] ?? ''}')} · ${f['anzahl']} Nachrichten', style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _archivOeffnen('${f['archiv']}')),
           ],
           abschnitt('Vorgänge${vorgaenge.isEmpty ? '' : ' (${vorgaenge.length})'}'),
           if (vorgaenge.isEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('Keine offenen Vorgänge.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),

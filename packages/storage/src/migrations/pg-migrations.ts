@@ -2307,4 +2307,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS zurueck_bis TEXT', []);
     },
   },
+  {
+    version: 147,
+    description: 'v1497 — conversations.archived_at: Gesprächsfäden archivieren (aus der Liste, weiter lesbar und durchsuchbar) (PG-Spiegel zu SQLite v143).',
+    async up(db) {
+      await db.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived_at TEXT', []);
+    },
+  },
 ];
