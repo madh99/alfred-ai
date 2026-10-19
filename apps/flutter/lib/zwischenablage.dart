@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'handy_system.dart'; // 1.54.2
 
 /// 1.6.0 — Bild aus der Zwischenablage als Anhang (Owner-Freigabe 11.10., Punkt 3): Strg+V (macOS ⌘V) in der Eingabe legt
 /// ein kopiertes Bild (Bildschirmfoto, Bild aus dem Browser) als PNG ab und hängt es an — Text wird wie gewohnt eingefügt.
 /// Ohne Plugin über die Bordmittel: Windows PowerShell (System.Windows.Forms, STA), macOS AppleScript («class PNGf»),
 /// Linux wl-paste (Wayland) bzw. xclip (X11). null = kein Bild in der Zwischenablage.
 Future<File?> bildAusZwischenablage({Directory? ziel}) async {
+  if (Platform.isIOS) { final p = await zwischenablageBildPfad(); return p == null ? null : File(p); } // 1.54.2 — iOS über den eigenen Kanal
   final dir = ziel ?? Directory.systemTemp;
   final stempel = DateTime.now();
   String zz(int x) => x.toString().padLeft(2, '0');

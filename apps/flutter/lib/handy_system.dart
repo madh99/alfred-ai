@@ -86,3 +86,16 @@ Future<String> dateiAblegen(String? ordner, String name, Uint8List daten) async 
   if (neu is Uint8List) ablageOrdnerSpeichern([for (final x in ablageOrdnerGespeichert()) x.name == o.name ? (name: x.name, bookmark: base64Encode(neu)) : x]); // veraltete Freigabe erneuert
   return '${o.name}/${r?['name'] ?? dateiname}';
 }
+
+// ── 1.54.2 — Fotos und Bilder ins Chat (Owner 20.10.: Plus-Menü nur Dateien, Einfügen ging nicht) ──
+
+/// Fotos aus der Mediathek (mehrere); Pfade der JPEG-Dateien, leer = abgebrochen.
+Future<List<String>> fotosWaehlen() async => ((await _kanal.invokeMethod<List<Object?>>('fotosWaehlen')) ?? const []).whereType<String>().toList();
+
+/// Foto mit der Kamera aufnehmen.
+Future<List<String>> kameraFoto() async => ((await _kanal.invokeMethod<List<Object?>>('kamera')) ?? const []).whereType<String>().toList();
+
+/// Bild aus der Zwischenablage als JPEG-Datei, null = kein Bild.
+Future<String?> zwischenablageBildPfad() async {
+  try { return await _kanal.invokeMethod<String>('zwischenablageBild'); } on MissingPluginException { return null; }
+}

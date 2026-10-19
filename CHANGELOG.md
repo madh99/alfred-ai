@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — iPhone: Einstellungen wurden nie gespeichert; Fotos und Einfügen im Chat (App 1.54.2)
+
+Owner-Test 20.10. (Build 94): „Ordnerfreigabe fehlgeschlagen – Einstellungsdatei nicht schreibbar“. Server-Log 00:38:55 zeigte den Pfad `./Library/Application Support/alfred/app.json`: Im iOS-App-Prozess ist `HOME` nicht gesetzt, der Pfad war relativ und nie beschreibbar. Damit gingen auf dem iPhone alle lokalen Einstellungen verloren (Ordnerfreigaben, automatisch vorlesen, Erscheinungsbild) und der Anhang-Zwischenspeicher blieb leer. Jetzt fragt die App beim Start den echten Ordner beim System ab.
+
+- **Plus-Menü auf dem iPhone:** Fotos aus der Mediathek (bis 10, ohne Mediathek-Erlaubnis), Foto aufnehmen, Datei, Einfügen aus der Zwischenablage. Fotos gehen als JPEG.
+- **Bild einfügen:** Langes Drücken im Eingabefeld bietet neben „Einsetzen“ auch „Bild einfügen“; ein kopiertes Foto wird Anhang.
+
 ### Added — Dateien aufs iPhone ablegen (v1521, App 1.54.1)
 
 Owner 19.10.: „am PC sagen können: lege die Datei am iPhone unter Downloads ab“ — mit „Alfred“ als Standard, mehreren freigegebenen Ordnern und ohne Rückfrage.

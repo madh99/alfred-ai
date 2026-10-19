@@ -367,6 +367,11 @@ extension _Oberflaeche on _SitzungState {
           child: TextField(
             controller: eingabe,
             focusNode: fokus,
+            // 1.54.2 — Handy: im Kontextmenü auch „Bild einfügen“ (das Feld selbst setzt nur Text ein)
+            contextMenuBuilder: istHandy ? (c, st) => AdaptiveTextSelectionToolbar.buttonItems(anchors: st.contextMenuAnchors, buttonItems: [
+              ...st.contextMenuButtonItems,
+              ContextMenuButtonItem(label: 'Bild einfügen', onPressed: () { ContextMenuController.removeAny(); _bildEinfuegen(); }),
+            ]) : null,
             autofocus: true,
             enabled: !antwortet,
             minLines: 1,
@@ -431,12 +436,45 @@ extension _Oberflaeche on _SitzungState {
 
 
   Future<void> _anhangWaehlen() async {
+    if (istHandy) { await _handyAnhangMenue(); return; } // 1.54.2
     try {
       final dateien = await openFiles();
       if (dateien.isNotEmpty) _dateienAbgelegt(dateien.map((x) => x.path).toList());
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Dateiauswahl: $e')); }
   }
 
+
+  /// 1.54.2 — Handy: Plus-Menü mit Foto aus der Mediathek, Kamera, Datei und Einfügen aus der Zwischenablage.
+  Future<void> _handyAnhangMenue() async {
+    final wahl = await showModalBottomSheet<String>(context: context, showDragHandle: true, builder: (c) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      ListTile(key: const Key('anhang-fotos'), leading: const Icon(Icons.photo_library_outlined), title: const Text('Fotos'), onTap: () => Navigator.pop(c, 'fotos')),
+      ListTile(key: const Key('anhang-kamera'), leading: const Icon(Icons.photo_camera_outlined), title: const Text('Foto aufnehmen'), onTap: () => Navigator.pop(c, 'kamera')),
+      ListTile(key: const Key('anhang-datei'), leading: const Icon(Icons.insert_drive_file_outlined), title: const Text('Datei'), onTap: () => Navigator.pop(c, 'datei')),
+      ListTile(key: const Key('anhang-einfuegen'), leading: const Icon(Icons.content_paste), title: const Text('Aus Zwischenablage einfügen'), onTap: () => Navigator.pop(c, 'einfuegen')),
+    ])));
+    try {
+      switch (wahl) {
+        case 'fotos': final p = await fotosWaehlen(); if (p.isNotEmpty) _dateienAbgelegt(p);
+        case 'kamera': final p = await kameraFoto(); if (p.isNotEmpty) _dateienAbgelegt(p);
+        case 'datei': final d = await openFiles(); if (d.isNotEmpty) _dateienAbgelegt(d.map((x) => x.path).toList());
+        case 'einfuegen': await _handyEinfuegen();
+      }
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Anhang: ${'$e'.replaceFirst('Exception: ', '')}')); }
+  }
+
+  /// 1.54.2 — Einfügen am Handy: Bild wird Anhang, sonst kommt Text ins Eingabefeld.
+  Future<void> _handyEinfuegen() async {
+    final bild = await bildAusZwischenablage();
+    if (bild != null) { _dateienAbgelegt([bild.path]); _neu(() => fluechtig = '📎 Bild aus der Zwischenablage angehängt'); return; }
+    final t = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    if (t == null || t.isEmpty) { _neu(() => fluechtig = 'Zwischenablage ist leer'); return; }
+    final sel = eingabe.selection;
+    final alt = eingabe.text;
+    final pos = sel.isValid ? sel.start : alt.length, ende = sel.isValid ? sel.end : alt.length;
+    eingabe.text = alt.replaceRange(pos, ende, t);
+    eingabe.selection = TextSelection.collapsed(offset: pos + t.length);
+    fokus.requestFocus();
+  }
 
   /// Einstellungen: Farbschema, Vorlesen, Seitenleiste, Tastenkürzel, Version und Update.
   Widget _einstellungen(ThemeData theme) {

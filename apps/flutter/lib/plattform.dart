@@ -14,9 +14,16 @@ String get handyPlattform => Platform.isIOS ? 'ios' : 'android';
 /// 1.54.1 — Ordner für App-Daten (Einstellungen, Anhänge). Desktop: ~/.alfred wie bisher. iOS: im App-Container sind nur
 /// Library, Documents und tmp für App-Daten vorgesehen; ~/.alfred läge auf der obersten Ebene des Containers.
 /// Daher Library/Application Support/alfred (nicht in der Dateien-App sichtbar, nicht vom System geleert).
+///
+/// 1.54.2 — Realfall Owner-Test 20.10. 00:38: im iOS-App-Prozess ist HOME nicht gesetzt, der Pfad wurde relativ
+/// („./Library/Application Support/alfred/app.json“) und war nie beschreibbar — Einstellungen und Ordnerfreigaben gingen
+/// verloren. Darum setzt main() auf dem Handy den echten Ordner (getApplicationSupportDirectory) vor allem anderen.
+String? _handyDatenOrdner;
+void handyDatenOrdnerSetzen(String pfad) => _handyDatenOrdner = pfad;
+
 String alfredDatenOrdner() {
-  final heim = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
   final t = Platform.pathSeparator;
-  if (Platform.isIOS) return '$heim${t}Library${t}Application Support${t}alfred';
+  if (istHandy && _handyDatenOrdner != null) return '$_handyDatenOrdner${t}alfred';
+  final heim = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
   return '$heim$t.alfred';
 }

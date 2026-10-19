@@ -92,6 +92,10 @@ Future<void> main(List<String> args) async {
   // Phase 5 H1 — Beweisläufe im iOS-Simulator: Startwerte aus einer einmaligen Datei im Datenordner der App
   // (`simctl get_app_container … data`/Documents/alfred-start.json, {"koppeln": "...", "sende": "..."}); simctl reicht unter iOS
   // weder Argumente noch Umgebung an Dart weiter. Nur in Debug-Builds, die Datei wird sofort gelöscht.
+  if (istHandy) { // 1.54.2 — echter Datenordner vor dem ersten Lesen der Einstellungen (HOME fehlt im iOS-Prozess)
+    WidgetsFlutterBinding.ensureInitialized();
+    try { handyDatenOrdnerSetzen((await getApplicationSupportDirectory()).path); } catch (_) {}
+  }
   if (istHandy && kDebugMode) {
     WidgetsFlutterBinding.ensureInitialized(); // path_provider braucht die Bindung
     try {

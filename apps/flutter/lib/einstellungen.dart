@@ -16,11 +16,6 @@ String _pfad() => '${alfredDatenOrdner()}${Platform.pathSeparator}app.json'; // 
 Map<String, dynamic> _lesen() {
   try {
     final f = File(_pfad());
-    if (!f.existsSync() && Platform.isIOS) { // 1.54.1 — einmalig vom alten Ort übernehmen, falls dort schon etwas lag
-      final heim = Platform.environment['HOME'] ?? '.';
-      final alt = File('$heim${Platform.pathSeparator}.alfred${Platform.pathSeparator}app.json');
-      if (alt.existsSync()) { f.parent.createSync(recursive: true); alt.copySync(f.path); }
-    }
     if (!f.existsSync()) return {};
     final j = jsonDecode(f.readAsStringSync());
     return j is Map<String, dynamic> ? j : {};

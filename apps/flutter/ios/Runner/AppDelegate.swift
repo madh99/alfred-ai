@@ -1,6 +1,7 @@
 import AVFoundation
 import Flutter
 import Network
+import PhotosUI
 import UniformTypeIdentifiers
 import Security
 import UIKit
@@ -17,6 +18,8 @@ import UserNotifications
   private var netzZuletzt: String?
   /// 1.54.1 — offene Ordnerwahl (hält den Delegaten, bis der Owner gewählt oder abgebrochen hat)
   private var ordnerWahl: OrdnerWahl?
+  /// 1.54.2 — offene Foto-/Kamerawahl
+  private var fotoWahl: FotoWahl?
 
   override func application(
     _ application: UIApplication,
@@ -148,6 +151,31 @@ import UserNotifications
             picker.allowsMultipleSelection = false
             self?.obersteAnsicht()?.present(picker, animated: true)
           }
+        case "fotosWaehlen":
+          // 1.54.2 — Fotos aus der Mediathek (PHPicker, ohne Mediathek-Erlaubnis), als JPEG im tmp-Ordner
+          DispatchQueue.main.async {
+            var konf = PHPickerConfiguration()
+            konf.filter = .images
+            konf.selectionLimit = 10
+            let picker = PHPickerViewController(configuration: konf)
+            let wahl = FotoWahl { pfade in self?.fotoWahl = nil; ergebnis(pfade) }
+            self?.fotoWahl = wahl
+            picker.delegate = wahl
+            self?.obersteAnsicht()?.present(picker, animated: true)
+          }
+        case "kamera":
+          DispatchQueue.main.async {
+            guard UIImagePickerController.isSourceTypeAvailable(.camera) else { ergebnis(FlutterError(code: "kamera", message: "Keine Kamera verfügbar", details: nil)); return }
+            let picker = UIImagePickerController()
+            picker.sourceType = .camera
+            let wahl = FotoWahl { pfade in self?.fotoWahl = nil; ergebnis(pfade) }
+            self?.fotoWahl = wahl
+            picker.delegate = wahl
+            self?.obersteAnsicht()?.present(picker, animated: true)
+          }
+        case "zwischenablageBild":
+          // 1.54.2 — Bild aus der Zwischenablage (iOS fragt beim Einsetzen aus einer anderen App selbst nach)
+          if UIPasteboard.general.hasImages, let bild = UIPasteboard.general.image, let pfad = Foto.speichere(bild, nr: 0, art: "eingefuegt") { ergebnis(pfad) } else { ergebnis(nil) }
         case "ordnerSchreiben":
           // 1.54.1 — Datei in einen freigegebenen Ordner; nie überschreiben („Name (1).pdf“)
           guard let b = args["bookmark"] as? FlutterStandardTypedData, let name = args["name"] as? String, let daten = args["daten"] as? FlutterStandardTypedData else { ergebnis(FlutterError(code: "args", message: "bookmark, name, daten", details: nil)); return }
@@ -197,6 +225,44 @@ final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
   init(fertig: @escaping (URL?) -> Void) { self.fertig = fertig }
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { fertig(urls.first) }
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { fertig(nil) }
+}
+
+/// 1.54.2 — Fotos aus Mediathek oder Kamera; Ergebnis: Pfade der JPEG-Dateien im tmp-Ordner (leer = abgebrochen)
+final class FotoWahl: NSObject, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+  let fertig: ([String]) -> Void
+  init(fertig: @escaping ([String]) -> Void) { self.fertig = fertig }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    if results.isEmpty { fertig([]); return }
+    let gruppe = DispatchGroup(), sperre = NSLock()
+    var pfade = [String?](repeating: nil, count: results.count)
+    for (i, r) in results.enumerated() where r.itemProvider.canLoadObject(ofClass: UIImage.self) {
+      gruppe.enter()
+      r.itemProvider.loadObject(ofClass: UIImage.self) { obj, _ in
+        let pfad = (obj as? UIImage).flatMap { Foto.speichere($0, nr: i, art: "foto") }
+        sperre.lock(); pfade[i] = pfad; sperre.unlock()
+        gruppe.leave()
+      }
+    }
+    gruppe.notify(queue: .main) { self.fertig(pfade.compactMap { $0 }) }
+  }
+
+  func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+    picker.dismiss(animated: true)
+    if let bild = info[.originalImage] as? UIImage, let pfad = Foto.speichere(bild, nr: 0, art: "kamera") { fertig([pfad]) } else { fertig([]) }
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { picker.dismiss(animated: true); fertig([]) }
+}
+
+enum Foto {
+  static func speichere(_ bild: UIImage, nr: Int, art: String) -> String? {
+    guard let daten = bild.jpegData(compressionQuality: 0.85) else { return nil }
+    let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(art)-\(f.string(from: Date()))-\(nr + 1).jpg")
+    do { try daten.write(to: url); return url.path } catch { return nil }
+  }
 }
 
 /// 1.54.1 — Schreiben in einen freigegebenen Ordner (Sicherheits-Bookmark), koordiniert (iCloud Drive), nie überschreiben
