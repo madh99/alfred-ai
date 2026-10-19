@@ -1,14 +1,48 @@
 import Flutter
 import Security
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  /// Phase 5 H2 — Kanal zu lib/handy_push.dart; Ziel einer angetippten Mitteilung, bis Dart es abholt
+  private var pushKanal: FlutterMethodChannel?
+  private var pushZiel: [String: Any]?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    UNUserNotificationCenter.current().delegate = self
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // Phase 5 H2 — APNs-Token an Dart (Server: /api/geraete/push); Debug-Builds laufen gegen die Sandbox, TestFlight gegen production
+  override func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+    #if DEBUG
+    let umgebung = "sandbox"
+    #else
+    let umgebung = "production"
+    #endif
+    pushKanal?.invokeMethod("token", arguments: ["token": hex, "umgebung": umgebung])
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  // App vorne: der Server schickt dann ohnehin keinen Push; kommt einer im Übergang, wird er trotzdem angezeigt
+  override func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                       withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    completionHandler([.banner, .sound, .list])
+  }
+
+  // Antippen: eigener Schlüssel `alfred` {art, id, faden} → Dart öffnet die Stelle (auch nach Kaltstart über „startZiel“)
+  override func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                       withCompletionHandler completionHandler: @escaping () -> Void) {
+    if let ziel = response.notification.request.content.userInfo["alfred"] as? [String: Any] {
+      pushZiel = ziel
+      pushKanal?.invokeMethod("geoeffnet", arguments: ziel)
+    }
+    completionHandler()
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -25,6 +59,37 @@ import UIKit
         case "loeschen": ergebnis(Schluesselbund.loeschen(schluessel))
         default: ergebnis(FlutterMethodNotImplemented)
         }
+      }
+    }
+    // Phase 5 H2 — Mitteilungen: Erlaubnis + Anmeldung, Ziel nach Kaltstart
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredPush") {
+      let kanal = FlutterMethodChannel(name: "alfred/push", binaryMessenger: registrar.messenger())
+      pushKanal = kanal
+      kanal.setMethodCallHandler { [weak self] aufruf, ergebnis in
+        switch aufruf.method {
+        case "anmelden":
+          UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { erlaubt, _ in
+            DispatchQueue.main.async {
+              if erlaubt { UIApplication.shared.registerForRemoteNotifications() }
+              ergebnis(erlaubt)
+            }
+          }
+        case "startZiel":
+          ergebnis(self?.pushZiel)
+          self?.pushZiel = nil
+        default: ergebnis(FlutterMethodNotImplemented)
+        }
+      }
+    }
+    // 1.52.1 — Links aus Antworten über das System öffnen (Safari, Mail …); die Desktop-Wege (open, xdg-open) gibt es auf iOS nicht
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredSystem") {
+      let kanal = FlutterMethodChannel(name: "alfred/system", binaryMessenger: registrar.messenger())
+      kanal.setMethodCallHandler { aufruf, ergebnis in
+        guard aufruf.method == "oeffnen", let text = (aufruf.arguments as? [String: Any])?["url"] as? String,
+              let url = URL(string: text), ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else {
+          ergebnis(false); return
+        }
+        UIApplication.shared.open(url) { ok in ergebnis(ok) }
       }
     }
   }

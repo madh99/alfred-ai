@@ -64,7 +64,7 @@ extension _Oberflaeche on _SitzungState {
         Divider(height: 1, color: cs.outlineVariant),
         const SizedBox(height: 6),
         _kontoKnopf(theme, breit), // 1.47.0 D5 — Kontomenü (Einstellungen, Befehle, Hilfe, Kosten, Geräte, Update)
-        eintrag(breit ? Icons.keyboard_double_arrow_left : Icons.keyboard_double_arrow_right, Icons.keyboard_double_arrow_left, breit ? 'Einklappen' : 'Ausklappen', false, () { _neu(() => navBreit = !navBreit); navBreitSpeichern(navBreit); }),
+        if (istDesktop) eintrag(breit ? Icons.keyboard_double_arrow_left : Icons.keyboard_double_arrow_right, Icons.keyboard_double_arrow_left, breit ? 'Einklappen' : 'Ausklappen', false, () { _neu(() => navBreit = !navBreit); navBreitSpeichern(navBreit); }), // 1.52.1 — nur Desktop; in der Handy-Schublade fest eingeklappt
         const SizedBox(height: 8),
       ]),
     );
@@ -250,7 +250,7 @@ extension _Oberflaeche on _SitzungState {
           : Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: ListView.builder(
               controller: scroll,
               reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
-              padding: EdgeInsets.fromLTRB(archiv == null && leistenEintraege(verlauf).length >= 3 ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
+              padding: EdgeInsets.fromLTRB(_mitVerlaufsleiste ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
               itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
               itemBuilder: (context, ri) {
                 if (ri == verlauf.length) { // 1.6.0 — ganz oben: ältere Nachrichten
@@ -268,7 +268,7 @@ extension _Oberflaeche on _SitzungState {
                 return KeyedSubtree(key: _ankerVon(e), child: neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w); // 1.45.0 D4 Sprungziel
               },
             ))),
-      ), if (archiv == null && leistenEintraege(verlauf).length >= 3) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
+      ), if (_mitVerlaufsleiste) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
         if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _bestaetigungen(theme))),
       if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _arbeitsLeiste(theme))), // 1.11.0
@@ -454,6 +454,7 @@ extension _Oberflaeche on _SitzungState {
       ])),
       karte('Gespräche', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.2.3 — Spiegel-Schalter (Owner-Freigabe 09.10., Standard aus)
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Spiegelung nach Telegram'), subtitle: Text(spiegelung == null ? 'Stand wird geladen …' : 'Fragen und Antworten aus App, Web und Terminal erscheinen auch im Telegram-Chat', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: spiegelung ?? false, onChanged: spiegelung == null ? null : (v) => _spiegelungSetzen(v)),
+        if (istHandy) SwitchListTile(key: const Key('telegram-stumm'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Telegram stumm, wenn Mitteilung zugestellt'), subtitle: Text(telegramStumm == null ? 'Stand wird geladen …' : 'Hinweise und Bestätigungen kommen dann nur aufs Handy, solange die Mitteilung ankam', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: telegramStumm ?? false, onChanged: telegramStumm == null ? null : (v) => _telegramStummSetzen(v)), // 1.53.0 H2
         Text('Alfred kennt den Verlauf aus allen Kanälen immer. In Telegram zeigt „/verlauf" die letzten Nachrichten, „/spiegel an" schaltet dasselbe wie dieser Schalter.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       ])),
       karte('Verbindung', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -534,6 +535,9 @@ extension _Oberflaeche on _SitzungState {
     if (s == null || k == null) return null;
     return s.datei(k, d.name);
   }
+
+  /// 1.52.1 — Verlaufsleiste nur am Desktop: sie lebt von Maus und Darüberfahren, am Finger ist der 28-px-Rand kaum zu treffen.
+  bool get _mitVerlaufsleiste => istDesktop && archiv == null && leistenEintraege(verlauf).length >= 3;
 
   /// Phase 5 H1 — Dateien ins Fenster ziehen gibt es nur auf dem Desktop.
   Widget _ablage(Widget kind) => istDesktop ? DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: kind) : kind;

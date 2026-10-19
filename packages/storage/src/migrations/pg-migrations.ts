@@ -2347,4 +2347,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
         )`, []);
     },
   },
+  {
+    version: 150,
+    description: 'v1518 Phase 5 H2 — geraete.push_art/push_token/apns_umgebung: Push-Weg je Handy (APNs, später FCM) (PG-Spiegel zu SQLite v146).',
+    async up(db) {
+      await db.execute('ALTER TABLE geraete ADD COLUMN IF NOT EXISTS push_art TEXT', []);
+      await db.execute('ALTER TABLE geraete ADD COLUMN IF NOT EXISTS push_token TEXT', []);
+      await db.execute('ALTER TABLE geraete ADD COLUMN IF NOT EXISTS apns_umgebung TEXT', []);
+    },
+  },
 ];

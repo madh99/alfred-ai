@@ -446,6 +446,8 @@ export class Alfred {
   private regelnRepo?: import('@alfred/storage').RegelnRepository;
   /** v1224 — Geräte-Gateway (Satelliten). */
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
+  /** v1518 Phase 5 H2 — Push an die Handys des Owners (APNs) */
+  private pushDienst?: import('./geraete/push-dienst.js').PushDienst;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
   private hoerRelais?: import('./geraete/hoeren.js').HoerRelais;
   /** v1258 — Releases für das Satelliten-Autoupdate. */
@@ -13981,6 +13983,31 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1518 Phase 5 H2 (Spec Geräte §20.5/§20.6) — Push: Key-ID und Team-ID aus der .env, Schlüssel in data/geheim (600)
+        try {
+          const { PushDienst } = await import('./geraete/push-dienst.js');
+          const { ApnsSender } = await import('./geraete/push-apns.js');
+          const keyId = process.env.ALFRED_APNS_KEY_ID?.trim(); const teamId = process.env.ALFRED_APNS_TEAM_ID?.trim();
+          const schluesselPfad = process.env.ALFRED_APNS_KEY_PATH?.trim() || (keyId ? path.resolve(process.cwd(), 'data', 'geheim', `AuthKey_${keyId}.p8`) : '');
+          const apns = keyId && teamId && schluesselPfad && fs.existsSync(schluesselPfad)
+            ? new ApnsSender({ schluesselPfad, keyId, teamId, bundleId: process.env.ALFRED_APNS_BUNDLE_ID?.trim() || 'at.alfred.app' }) : undefined;
+          const push = new PushDienst({
+            repo: new GeraeteRepository(dbG), apns, istVerbunden: (id) => gw.verbundeneIds().includes(id),
+            ownerUserId: () => this.ownerMasterUserId ?? this.tryOwner(), logger: this.logger.child({ component: 'push' }),
+            einstellungenDatei: path.resolve(process.cwd(), 'data', 'push-einstellungen.json'),
+          });
+          this.pushDienst = push;
+          const stummNach = (r: { zugestellt: number }) => r.zugestellt > 0 && push.einstellungen().telegramStumm;
+          // Bestätigungen an den Owner: Titel „Bestätigung nötig“, Grund = Aktion in Kurzform (keine Werte aus dem Inhalt)
+          this.confirmationQueue?.setPushVorChat(async (b) => {
+            if (b.chatId !== this.config.security?.ownerUserId) return false;
+            const aktion = typeof b.skillParams.action === 'string' ? ` · ${b.skillParams.action}` : '';
+            return stummNach(await push.anOwner({ titel: 'Bestätigung nötig', text: `${b.skillName}${aktion}`, art: 'bestaetigung', id: b.id }));
+          });
+          // Hinweise, die die Zustellung (entscheideZustellung) jetzt schickt: nur die Anzahl
+          this.reasoningEngine?.setPushHinweise(async (n) => stummNach(await push.anOwner({ titel: 'Hinweis', text: n === 1 ? '1 neuer Hinweis' : `${n} neue Hinweise`, art: 'hinweis' })));
+          this.logger.info({ bereit: push.bereit, keyId: keyId ?? null, teamId: teamId ?? null, schluessel: apns ? 'vorhanden' : 'fehlt', telegramStumm: push.einstellungen().telegramStumm }, 'v1518 Push bereit');
+        } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1518 Push nicht verfügbar'); }
         // v1429 R4a — Beobachter am Satelliten (Regeln am Server, Wirkungen deterministisch)
         try { await this.beobachterAufbauen(gw, vorgaengeG); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1429 Beobachter nicht verfügbar'); }
         // v1387 (R2) — Projekt-Agent mit Ausführungsziel Satellit (der Server-Runner bleibt unverändert)
@@ -14077,7 +14104,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
-          nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string) => gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) }), // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang; v1328 Faden
+          nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string) => {
+            const ok = gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) });
+            // v1518 H2 — App ging während der Antwort in den Hintergrund: „Antwort fertig“ als Push an dieses Handy
+            if (!ok && !anhang && text) void this.pushDienst?.antwortFertig(geraetId, faden).catch(() => false);
+            return ok;
+          }, // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang; v1328 Faden
           // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
           // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (Telegram-Zeile) und `owner:faden:<f>`,
           // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
@@ -14145,6 +14177,20 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
           // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
           // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          // v1518 H2 — Push-Token des Handys melden; Schalter „Telegram stumm, wenn Push zugestellt“ (nur Owner-Geräte)
+          push: async (geraetId: string, body?: Record<string, unknown>) => {
+            const p = this.pushDienst;
+            if (!p) return { status: 503, antwort: { error: 'Push nicht verfügbar' } };
+            if (!body) return { status: 200, antwort: { bereit: p.bereit, ...p.einstellungen() } };
+            if ('telegramStumm' in body) {
+              if (!(await this.geraetGehoertOwner(geraetId))) return { status: 403, antwort: { error: 'nur Geräte des Owners' } };
+              return { status: 200, antwort: { bereit: p.bereit, ...p.setzeEinstellungen({ telegramStumm: body.telegramStumm === true }) } };
+            }
+            const eintrag = await new GeraeteRepository(dbG).hole(geraetId);
+            if (!eintrag || eintrag.status !== 'aktiv') return { status: 404, antwort: { ok: false, grund: 'Gerät unbekannt' } };
+            const r = await p.merkeToken({ id: geraetId, plattform: eintrag.plattform }, body);
+            return { status: r.ok ? 200 : 400, antwort: r };
+          },
           konto: async (geraetId: string) => {
             if (!this.usageRepo || !(await this.geraetGehoertOwner(geraetId))) return undefined;
             const { kontoKosten } = await import('./konto.js');

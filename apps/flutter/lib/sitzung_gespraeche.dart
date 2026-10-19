@@ -69,6 +69,18 @@ extension _Gespraeche on _SitzungState {
   }
 
 
+  /// 1.53.0 Phase 5 H2 — Schalter „Telegram stumm, wenn Push zugestellt“ (Owner 19.10.: Push zusätzlich, Standard aus).
+  Future<void> _telegramStummLaden() async {
+    final s = server; if (s == null) return;
+    try { final j = await s.json('/api/geraete/push'); if (mounted) _neu(() => telegramStumm = j['telegramStumm'] == true); } catch (_) { /* alter Server */ }
+  }
+
+  Future<void> _telegramStummSetzen(bool an) async {
+    final s = server; if (s == null) return;
+    try { final j = await s.json('/api/geraete/push', methode: 'POST', koerper: {'telegramStumm': an}); _neu(() => telegramStumm = j['telegramStumm'] == true); }
+    catch (e) { _zeile(Eintrag(Art.hinweis, 'Schalter nicht gesetzt: $e')); }
+  }
+
   Future<void> _spiegelungSetzen(bool an) async {
     final s = server; if (s == null) return;
     try { final j = await s.json('/api/geraete/spiegelung', methode: 'POST', koerper: {'an': an}); _neu(() => spiegelung = j['an'] == true); _zeile(Eintrag(Art.hinweis, 'Spiegelung nach Telegram: ${j['an'] == true ? 'an' : 'aus'}')); }

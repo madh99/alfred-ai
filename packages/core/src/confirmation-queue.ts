@@ -153,6 +153,10 @@ export class ConfirmationQueue {
   private readonly neuHoerer: Array<(b: { id: string; chatId: string; platform: string; description: string; source: string; skillName: string; createdAt: string; expiresAt: string }) => void> = [];
   beiNeu(cb: (typeof this.neuHoerer)[number]): void { this.neuHoerer.push(cb); }
 
+  /** v1518 Phase 5 H2 — Push an die Handys vor der Chat-Nachricht; `true` = Telegram stumm (Schalter an und Push zugestellt). */
+  private pushVorChat?: (b: { id: string; chatId: string; skillName: string; skillParams: Record<string, unknown> }) => Promise<boolean>;
+  setPushVorChat(fn: NonNullable<ConfirmationQueue['pushVorChat']>): void { this.pushVorChat = fn; }
+
   setFeedbackService(service: FeedbackService): void {
     this.feedbackService = service;
   }
@@ -237,7 +241,10 @@ export class ConfirmationQueue {
       try { h({ id: confirmation.id, chatId: opts.chatId, platform: opts.platform, description: opts.description, source: opts.source, skillName: opts.skillName, createdAt: new Date().toISOString(), expiresAt }); } catch { /* Hörer dürfen nichts brechen */ }
     }
 
-    const adapter = this.adapters.get(opts.platform as Platform);
+    let stumm = false;
+    try { stumm = (await this.pushVorChat?.({ id: confirmation.id, chatId: opts.chatId, skillName: opts.skillName, skillParams: opts.skillParams })) === true; }
+    catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1518 Push zur Bestätigung fehlgeschlagen'); }
+    const adapter = stumm ? undefined : this.adapters.get(opts.platform as Platform);
     if (adapter) {
       const confirmId = confirmation.id;
       const msg = `\u2753 Best\u00E4tigung erforderlich:\n${opts.description}\n\nAntworte "ja" oder "nein".`;

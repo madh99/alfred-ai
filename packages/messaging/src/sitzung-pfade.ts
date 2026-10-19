@@ -28,6 +28,7 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/(suche|anhaenge)$/, // v1350 — Suche im Verlauf, Übersicht der Anhänge
   /^\/api\/geraete\/stufen$/, // v1510 D6b — Stufen mit Modell und Gründlichkeit
   /^\/api\/geraete\/konto$/, // v1506 D5 — Kontomenü (Kosten, Geräte); nur Owner-Geräte
+  /^\/api\/geraete\/push$/, // v1518 H2 — Push-Token des Handys, Schalter „Telegram stumm“
   /^\/api\/geraete\/datei$/, // v1505 — eigene hochgeladene Datei (Vorschau im Verlauf), Schlüssel als ?key=
   /^\/api\/geraete\/meldung$/, // v1351 — Fehlermeldungen der Desktop-App ins Server-Log
   /^\/api\/geraete\/abbrechen$/, // v1352 — laufende Antwort der eigenen Sitzung abbrechen

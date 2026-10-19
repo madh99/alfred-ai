@@ -24,6 +24,10 @@ echo "2/3 Archiv (unsigniert)"
 xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -destination generic/platform=iOS \
   -archivePath build/Alfred.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 
+# Phase 5 H2 — das unsignierte Archiv trägt keine Entitlements; ad hoc signieren (ohne Schlüsselbund), damit der Export das
+# Push-Recht (aps-environment) übernimmt und in production umsetzt
+codesign --force --sign - --entitlements ios/Runner/Runner.entitlements build/Alfred.xcarchive/Products/Applications/Runner.app >> "$LOG" 2>&1
+
 cat > build/ExportOptions.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -37,7 +41,16 @@ cat > build/ExportOptions.plist <<'PLIST'
 </dict></plist>
 PLIST
 
-echo "3/3 Export (Cloud-Signatur) + Upload zu App Store Connect"
+# Vorprüfung: lokal exportieren und nachsehen, dass Push (aps-environment production) im signierten Paket steht
+sed 's#<string>upload</string>#<string>export</string>#' build/ExportOptions.plist > build/ExportOptions-pruef.plist
+echo "3a Export lokal (Prüfung der Entitlements)"
+xcodebuild -exportArchive -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions-pruef.plist   -exportPath build/ipa-pruef "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
+rm -rf build/ipa-pruef/x && mkdir -p build/ipa-pruef/x && unzip -q -o build/ipa-pruef/*.ipa -d build/ipa-pruef/x
+APS="$(codesign -d --entitlements - --xml build/ipa-pruef/x/Payload/Runner.app 2>/dev/null | plutil -extract aps-environment raw -o - - 2>/dev/null || true)"
+echo "aps-environment: ${APS:-fehlt}"
+[ "$APS" = "production" ] || { echo "Push-Recht fehlt im Paket — kein Upload"; exit 1; }
+
+echo "3b Export (Cloud-Signatur) + Upload zu App Store Connect"
 xcodebuild -exportArchive -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist \
   -exportPath build/ipa "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 grep -E "Upload succeeded|EXPORT SUCCEEDED|Uploaded" "$LOG" | tail -3

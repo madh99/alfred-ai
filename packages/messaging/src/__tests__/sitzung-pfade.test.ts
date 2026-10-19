@@ -65,6 +65,7 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/anhang/../config')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/datei')).toBe(true); // v1505
     expect(istSitzungsPfad('/api/geraete/konto')).toBe(true); // v1506
+    expect(istSitzungsPfad('/api/geraete/push')).toBe(true); // v1518 H2
     expect(istSitzungsPfad('/api/geraete/stufen')).toBe(true); // v1510
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/bewertung')).toBe(true); // v1510
     expect(istSitzungsPfad('/api/geraete/datei/x')).toBe(false);

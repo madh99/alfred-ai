@@ -3040,4 +3040,11 @@ export const MIGRATIONS: Migration[] = [
         )`);
     },
   },
+  {
+    version: 146,
+    description: 'v1518 Phase 5 H2 — geraete.push_art/push_token/apns_umgebung: Push-Weg je Handy (SQLite-Spiegel zu PG v150).',
+    up(db) {
+      for (const spalte of ['push_art', 'push_token', 'apns_umgebung']) { try { db.exec(`ALTER TABLE geraete ADD COLUMN ${spalte} TEXT`); } catch { /* exists */ } }
+    },
+  },
 ];

@@ -1087,6 +1087,8 @@ export class HttpAdapter extends MessagingAdapter {
     datei?(geraetId: string, key: string): Promise<{ daten: Buffer; name: string; mime: string } | undefined>;
     /** v1506 D5 — Kontomenü der App (Kosten, Herkunft, Budget nur als Anzeige, Geräte); undefined = kein Owner-Gerät. */
     konto?(geraetId: string): Promise<unknown | undefined>;
+    /** v1518 Phase 5 H2 — Push: GET Stand, POST {art, token, umgebung} (Token-Meldung) oder {telegramStumm} (Schalter, nur Owner-Geräte) */
+    push?(geraetId: string, body?: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -2083,6 +2085,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (/^\/api\/geraete\/anhang\/[0-9a-f]{32}$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
+    } else if (url.pathname === '/api/geraete/push' && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraetPush(req, res).catch(err => this.safeError(res, err)); // v1518 H2
     } else if (url.pathname === '/api/geraete/konto' && req.method === 'GET') {
       this.handleGeraetKonto(req, res).catch(err => this.safeError(res, err)); // v1506 D5
     } else if (url.pathname === '/api/geraete/datei' && req.method === 'GET') {
@@ -6946,6 +6950,20 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1506 D5 — Kontomenü der App: Kosten mit Herkunft, Tagesbudget (nur Anzeige), verbundene Geräte. */
+  /** v1518 Phase 5 H2 (Spec Geräte §20.5 Punkt 3) — Push-Token des Handys und Schalter „Telegram stumm“; nur mit Gerätetoken. */
+  private async handleGeraetPush(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.push) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    let body: Record<string, unknown> | undefined;
+    if (req.method === 'POST') {
+      try { body = JSON.parse(await this.readBody(req)) as Record<string, unknown>; } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, grund: 'kein JSON' })); return; }
+    }
+    const r = await this.geraeteCallbacks.push(geraet.geraetId, body);
+    res.writeHead(r.status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r.antwort));
+  }
+
   private async handleGeraetKonto(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     const geraet = this.geraetIdentitaet.get(req);

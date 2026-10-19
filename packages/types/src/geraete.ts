@@ -64,6 +64,14 @@ export type GeraetNachricht =
   | GeraetBeobachtung | GeraetBeobachten;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
+/** Phase 5 H2 (Spec Geräte §20.5 Punkt 3) — Push-Weg eines Handys: APNs (iOS), später FCM (Android). */
+export interface GeraetPush {
+  art: 'apns' | 'fcm';
+  token: string;
+  /** nur APNs: `sandbox` für Xcode-/Debug-Builds, `production` für TestFlight und App Store */
+  umgebung?: 'sandbox' | 'production';
+}
+
 export interface GeraetEintrag {
   id: string;
   userId: string;

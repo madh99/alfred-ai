@@ -69,6 +69,7 @@ bool linkErlaubt(String url) => RegExp(r'^(https?://|mailto:)', caseSensitive: f
 Future<void> oeffneLink(String url) async {
   if (!linkErlaubt(url)) return;
   try {
+    if (Platform.isIOS || Platform.isAndroid) { await const MethodChannel('alfred/system').invokeMethod('oeffnen', {'url': url}); return; } // 1.52.1 — Handy: über das System (Safari, Mail …)
     if (Platform.isWindows) { await Process.start('rundll32', ['url.dll,FileProtocolHandler', url], mode: ProcessStartMode.detached); }
     else if (Platform.isMacOS) { await Process.start('open', [url], mode: ProcessStartMode.detached); }
     else { await Process.start('xdg-open', [url], mode: ProcessStartMode.detached); }

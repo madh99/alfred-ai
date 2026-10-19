@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Mitteilungen aufs iPhone, Stufe H2 (v1518, App 1.53.0)
+
+Phase 5 H2 nach Spec Geräte §20.5/§20.6 (Owner 19.10.: „h2 push freigegeben“). Ist die App geschlossen oder im Hintergrund, kommen Bestätigungen, Hinweise und fertige Antworten als Mitteilung.
+
+- **Was kommt:** „Bestätigung nötig“ mit der Aktion in Kurzform; „Hinweis“ mit der Anzahl, wenn die Zustellung Hinweise jetzt schickt; „Antwort fertig“, wenn die App während einer Antwort in den Hintergrund ging (höchstens eine je Minute). Keine Inhalte und keine Namen, weil die Mitteilung über Apple läuft.
+- **Wann nicht:** Ist die App vorne (verbunden), gibt es keinen Push — sie zeigt es selbst.
+- **Antippen** öffnet die Bestätigungen, die Sammlung „Hinweise“ oder das Gespräch der Antwort, auch nach einem Kaltstart.
+- **Server:** APNs-Sender über HTTP/2 mit JWT (ES256) aus dem Schlüssel unter `data/geheim/`, Key-ID und Team-ID in der `.env` (`ALFRED_APNS_KEY_ID`, `ALFRED_APNS_TEAM_ID`); keine neue Abhängigkeit. Push-Token je Gerät (neue Spalten, beim Entkoppeln gelöscht), Route `/api/geraete/push`. Antwortet Apple mit 410, wird der Token gelöscht. Jeder Versand steht mit Ergebnis und Dauer im Log („v1518 Push“), ohne Token und Inhalt.
+- **Schalter „Telegram stumm, wenn Mitteilung zugestellt“** in den Einstellungen der Handy-App, Standard aus (Owner-Entscheidung: zusätzlich zu Telegram).
+- **App:** Erlaubnisdialog beim ersten Verbinden, Token-Meldung nach jedem Verbinden; eigener Kanal zu iOS statt Plugin, die Desktop-Builds bleiben unberührt. Das TestFlight-Skript prüft vor dem Upload, dass das Push-Recht im signierten Paket steht.
+
+### Fixed — Handy-App: Links, Ausklappen, Verlaufsleiste (App 1.53.0)
+
+Owner-Test 19.10. am iPhone: Links in Antworten ließen sich nicht öffnen (die Desktop-Wege gibt es auf iOS nicht, jetzt über das System), der Knopf „Ausklappen“ in der Schublade wirkte nicht (dort fest eingeklappt, Knopf entfällt), die Verlaufsleiste am linken Rand war am Finger kaum zu treffen (auf dem Handy ausgeblendet, Lesezeichen weiter an jeder Nachricht). Außerdem meldet die App ihre Version jetzt auch beim Koppeln.
+
 ### Added — Alfred-App für das iPhone, Stufe H1 (v1517, App 1.52.0)
 
 Phase 5 H1 nach Spec Geräte §20 (Owner 19.10.: „H1 freigegeben, mit Simulator beginnen“). Die Desktop-App läuft jetzt auch auf iOS, vorerst im Simulator; TestFlight folgt.

@@ -20,6 +20,7 @@ import 'aktivierungswort.dart'; // 1.3.0
 import 'plattform.dart'; // Phase 5 H1
 import 'handy_verbindung.dart'; // Phase 5 H1
 import 'kopplung.dart'; // Phase 5 H1
+import 'handy_push.dart'; // Phase 5 H2
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -231,6 +232,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Timer? abfrage;
   int benachrichtigungNr = 0;
   late final AppVerbindung ipc; // Phase 5 H1 — Desktop: IPC zum Satelliten, Handy: direkt (handy_verbindung.dart)
+  /// Phase 5 H2 — Push auf dem Handy (null am Desktop); Token wird nach jedem Verbinden gemeldet
+  HandyPush? push;
+  bool _pushStartGeprueft = false;
   final HotKey tastenkuerzel = HotKey(key: PhysicalKeyboardKey.space, modifiers: [HotKeyModifier.control, HotKeyModifier.alt], scope: HotKeyScope.system);
 
   @override
@@ -248,6 +252,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     } else {
       sichtbar = true; // Handy: App vorne = sichtbar (Hintergrund trennt die Verbindung)
     }
+    if (istHandy) push = HandyPush(aufToken: _pushTokenMelden, aufGeoeffnet: _pushOeffnen); // Phase 5 H2
     ipc = _verbindung(
       aufStatus: (s) {
         final wieder = s.verbunden && satellit?.verbunden != true; // 1.6.0 — nach Wiederverbinden verpasste Bestätigungen holen
@@ -255,6 +260,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); } // Phase 5 H2
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -336,6 +342,32 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (istDesktop) return IpcVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, aufZustand: aufZustand);
     return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion,
       aufZustand: (z) { if (z.contains('neu koppeln')) { setState(() { konfig = null; server = null; }); } aufZustand(z); });
+  }
+
+  /// Phase 5 H2 — Erlaubnis (nur beim ersten Mal ein Dialog) und Anmeldung; iOS liefert das Token dann über den Kanal.
+  /// Beim ersten Verbinden nach einem Start durch Antippen einer Mitteilung wird deren Ziel geöffnet.
+  Future<void> _pushAnmelden() async {
+    final p = push; if (p == null) return;
+    await p.anmelden();
+    if (_pushStartGeprueft) return;
+    _pushStartGeprueft = true;
+    final z = await p.startZiel();
+    if (z != null) _pushOeffnen(z);
+  }
+
+  Future<void> _pushTokenMelden(String token, String umgebung) async {
+    final s = server; if (s == null) return; // nach dem Verbinden meldet _pushAnmelden erneut
+    try { await s.json('/api/geraete/push', methode: 'POST', koerper: {'art': 'apns', 'token': token, 'umgebung': umgebung}); }
+    catch (e) { _zeile(Eintrag(Art.hinweis, 'Mitteilungen: Anmeldung am Server fehlgeschlagen ($e)')); }
+  }
+
+  /// Angetippte Mitteilung: Bestätigung → Chat mit den offenen Bestätigungen, Hinweis → Sammlung, Antwort → ihr Gespräch.
+  void _pushOeffnen(PushZiel z) {
+    switch (z.art) {
+      case 'bestaetigung': _neu(() => ansicht = Ansicht.chat); _holeBestaetigungen();
+      case 'hinweis': _neu(() => ansicht = Ansicht.hinweise);
+      case 'antwort': if (server != null && server!.faden != z.faden) { _fadenWechseln(z.faden); } else { _neu(() => ansicht = Ansicht.chat); }
+    }
   }
 
   /// Phase 5 H1 — Handy ohne Kopplung: Kopplungsansicht statt Chat.
@@ -553,6 +585,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final Map<String, (String, String)> seitenChats = {}; // 1.43.0 — Hauptfaden (oder „haupt“) → (Faden, Titel) des Seiten-Chats
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
+  bool? telegramStumm; // 1.53.0 H2 — „Telegram stumm, wenn Push zugestellt“ (nur Handy; null = noch nicht geladen)
 
 }
 
