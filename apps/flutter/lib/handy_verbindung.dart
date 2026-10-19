@@ -161,7 +161,7 @@ class HandyVerbindung implements AppVerbindung {
       final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 6)); // 1.54.0 H3 — Mobilfunk: nicht lange hängen
       if (!_laeuft || !_vorne) { ws.close(); return; }
       _ws = ws;
-      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': handyAktionen, 'sinne': const ['akku', 'netz', 'audio', 'fokus', 'system']}});
+      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': handyAktionen, 'sinne': const ['akku', 'netz', 'audio', 'system']}});
       _puls = Timer.periodic(const Duration(seconds: 30), (_) => _sende({'typ': 'puls'}));
       _sinneTakt?.cancel(); _sinneTakt = Timer.periodic(const Duration(seconds: 60), (_) => _sinneSenden()); // 1.54.0 — solange die App offen ist
       ws.listen((raw) => _nachricht('$raw'), onDone: () => _getrennt(ws), onError: (_) => _getrennt(ws), cancelOnError: true);
@@ -186,12 +186,12 @@ class HandyVerbindung implements AppVerbindung {
   }
 
   /// 1.54.0 — Sinne des Handys, nur solange die App offen ist: Owner in der App (Leerlauf 0), Akku, Netzweg, Audio-Ausgang,
-  /// Fokus, Modell, System, Speicher (als „Laufwerk“, damit „Speicher fast voll“ wie am Desktop greift).
+  /// Modell, System, Speicher (als „Laufwerk“, damit „Speicher fast voll“ wie am Desktop greift).
   Future<void> _sinneSenden() async {
     if (_ws == null) return;
     final z = await handyZustand();
     final werte = <String, Object?>{'leerlaufSek': 0};
-    for (final k in ['akkuProzent', 'akkuLaedt', 'netz', 'audio', 'fokus', 'modell', 'system']) { if (z[k] != null) werte[k] = z[k]; }
+    for (final k in ['akkuProzent', 'akkuLaedt', 'netz', 'audio', 'modell', 'system']) { if (z[k] != null) werte[k] = z[k]; }
     final frei = z['speicherFreiGb'], gesamt = z['speicherGesamtGb'];
     if (frei is num && gesamt is num && gesamt > 0) werte['laufwerke'] = [{'name': 'Speicher', 'freiGb': frei.round(), 'gesamtGb': gesamt.round()}];
     _sende({'typ': 'sinne', 'werte': werte});

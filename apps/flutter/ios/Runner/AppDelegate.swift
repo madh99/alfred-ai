@@ -1,6 +1,5 @@
 import AVFoundation
 import Flutter
-import Intents
 import Network
 import Security
 import UIKit
@@ -132,7 +131,8 @@ import UserNotifications
 }
 
 extension AppDelegate {
-  /// 1.54.0 — Zustand für die Sinne (nur solange die App offen ist): Akku, Netzweg, Audio-Ausgang, Fokus, Modell, System, Speicher
+  /// 1.54.0 — Zustand für die Sinne (nur solange die App offen ist): Akku, Netzweg, Audio-Ausgang, Modell, System, Speicher.
+  /// Den Fokus-Status lässt Apple nur Kommunikations-Apps lesen; iOS filtert im Fokus selbst, Dringendes kommt zeitkritisch durch.
   func systemZustand() -> [String: Any] {
     var z: [String: Any] = [:]
     let geraet = UIDevice.current
@@ -147,11 +147,6 @@ extension AppDelegate {
     case .some(.carAudio): z["audio"] = "auto"
     case .some(.airPlay): z["audio"] = "airplay"
     default: z["audio"] = "lautsprecher"
-    }
-    if #available(iOS 15.0, *) {
-      let fokus = INFocusStatusCenter.default
-      if fokus.authorizationStatus == .notDetermined { fokus.requestAuthorization { _ in } }
-      else if fokus.authorizationStatus == .authorized, let an = fokus.focusStatus.isFocused { z["fokus"] = an }
     }
     var info = utsname(); uname(&info)
     let kennung = withUnsafePointer(to: &info.machine) { $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) } }

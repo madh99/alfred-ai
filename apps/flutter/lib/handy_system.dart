@@ -1,6 +1,6 @@
 /// 1.54.0 (Owner 19.10., Paket „Handy als Gerät“) — Systemzugriffe des Handys über den eigenen Kanal `alfred/system`
 /// (AppDelegate.swift): Text in die Zwischenablage (vertraulich: nur dieses Gerät, verfällt nach 2 min) und der Zustand für
-/// die Sinne — Akku, Netzweg, Audio-Ausgang, Fokus, Modell, System, Speicher. Am Desktop gibt es den Kanal nicht.
+/// die Sinne — Akku, Netzweg, Audio-Ausgang, Modell, System, Speicher. Am Desktop gibt es den Kanal nicht.
 library;
 
 import 'package:flutter/services.dart';

@@ -57,7 +57,7 @@ describe('GeraeteGateway — Handy-Werkzeug ohne Verbindung', () => {
 
 describe('Manifest der Handy-App (lib/handy_verbindung.dart handyAktionen)', () => {
   it('wird angenommen: zwischenablage_setzen auto mit text und vertraulich, Sinne', () => {
-    const r = pruefeManifest({ protokoll: 1, plattform: 'ios', hostname: 'iPhone', satellitVersion: 'app-1.54.0', sinne: ['akku', 'netz', 'audio', 'fokus', 'system'],
+    const r = pruefeManifest({ protokoll: 1, plattform: 'ios', hostname: 'iPhone', satellitVersion: 'app-1.54.0', sinne: ['akku', 'netz', 'audio', 'system'],
       aktionen: [{ name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Handys („kopier mir das aufs Handy“). Ist die App im Hintergrund, kommt eine Mitteilung „Zum Kopieren antippen“.', autonomie: 'auto',
         parameter: { text: { type: 'string', description: 'Text' }, vertraulich: { type: 'boolean', description: 'true bei Passwort/Token: bleibt auf diesem Gerät, verfällt nach 2 min' } } }] });
     expect(r.ok).toBe(true);
