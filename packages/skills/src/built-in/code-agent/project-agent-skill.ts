@@ -324,7 +324,7 @@ export interface SatellitProjektHandler {
   /** v1426 — Konventionen des Projekts lesen/ändern (CHANGELOG, README, Commits, eigene Regeln) */
   konventionen?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
-  frage?: (ref: string, frage: string, context: SkillContext, anhaenge?: unknown) => Promise<SkillResult>;
+  frage?: (ref: string, frage: string, context: SkillContext, anhaenge?: unknown, budgetUsd?: number) => Promise<SkillResult>; // v1498 budgetUsd nur auf Wunsch
   /** v1434 B13 — Projekt von GitLab (o. ä.) aufs Gerät holen */
   holen?: (input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
   /** v1437 B14 — Deploy-Ziel, Deploy und Rollback (beide immer mit Bestätigung) */
@@ -444,7 +444,7 @@ Actions:
           cwd: { type: 'string', description: 'Working directory for the project (for start)' },
           // v1387 (R2) — Ausführungsziel Satellit
           geraet: { type: 'string', description: 'Nur wenn das Projekt auf einem GERÄT des Owners gebaut werden soll (z. B. "Ubuntu-VM"): Name des gekoppelten Geräts. Dann ist cwd ein Verzeichnis auf diesem Gerät (freigegeben, mit Schreibrecht), Claude Code baut dort Etappe für Etappe, buildCommands/testCommands sind die Abnahme je Etappe. Leer = Server (bisheriges Verhalten).' },
-          budget_usd: { type: 'number', description: 'Nur mit geraet und nur wenn der Owner ein Budget nennt: Kostengrenze in USD — ohne Angabe keine Grenze' },
+          budget_usd: { type: 'number', description: 'Nur wenn der Owner ein Budget nennt (beim start mit geraet oder bei projekt_frage): Kostengrenze in USD — ohne Angabe keine Grenze' },
           max_stunden: { type: 'number', description: 'Nur mit geraet und nur wenn der Owner eine Zeitgrenze nennt: Stunden — ohne Angabe keine Grenze' },
           freigabe: { type: 'string', description: 'Nur intern (Bestätigung des Owners) — nie selbst setzen' },
           // v1398 — Projektakten
@@ -560,7 +560,7 @@ Actions:
       if (action === 'projekt_dev') return this.satellit.dev ? this.satellit.dev(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1460
       if (action === 'projekt_mr_zusammenfuehren') return this.satellit.mrZusammenfuehren ? this.satellit.mrZusammenfuehren(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1458 — nur aus der Bestätigung
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
-      if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
+      if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge, typeof input.budget_usd === 'number' ? input.budget_usd : undefined) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
       return this.satellit.akte!(ref);
     }
     if (satId.startsWith('sat-') || action === 'satellit_antwort' || action === 'satellit_weiter') {

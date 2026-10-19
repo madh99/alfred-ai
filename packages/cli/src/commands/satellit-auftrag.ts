@@ -200,7 +200,7 @@ export function statusAusProtokoll(log: string): 'fertig' | 'fehler' {
 }
 
 /** Stand: läuft noch?, Dauer, letzte Protokollzeilen. */
-export function auftragStand(id: string, home?: string, zeilen = 15): { meta: AuftragMeta; laeuft: boolean; dauerS: number; letzteZeilen: string } {
+export function auftragStand(id: string, home?: string, zeilen = 15): { meta: AuftragMeta; laeuft: boolean; dauerS: number; letzteZeilen: string; werkzeuge: number } {
   const meta = ladeMeta(id, home);
   if (!meta) throw new Error(`Auftrag ${id} unbekannt`);
   const aktiv = meta.status === 'laeuft' && laeuft(meta.pid);
@@ -212,7 +212,7 @@ export function auftragStand(id: string, home?: string, zeilen = 15): { meta: Au
   const fort = fortschrittAus(log, zeilen);
   const letzte = fort.schritte.length ? `${fort.werkzeuge} Werkzeugschritte bisher, zuletzt:\n${fort.schritte.join('\n')}` : log.split('\n').filter(z => z.trim()).slice(-zeilen).map(z => z.length > 300 ? `${z.slice(0, 300)}…` : z).join('\n');
   const ende = meta.ende ? new Date(meta.ende).getTime() : Date.now();
-  return { meta, laeuft: aktiv, dauerS: Math.round((ende - new Date(meta.start).getTime()) / 1000), letzteZeilen: letzte };
+  return { meta, laeuft: aktiv, dauerS: Math.round((ende - new Date(meta.start).getTime()) / 1000), letzteZeilen: letzte, werkzeuge: fort.werkzeuge };
 }
 
 export function auftragErgebnis(id: string, home?: string): { meta: AuftragMeta; ergebnis: AuftragErgebnis } {

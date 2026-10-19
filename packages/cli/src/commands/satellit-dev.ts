@@ -149,12 +149,12 @@ export function pruefBefehleErkennen(dir: string): { befehle: string[]; quelle?:
   return { befehle: [], hinweise: ['nichts Eindeutiges gefunden (package.json, Cargo.toml, go.mod, pytest)'] };
 }
 
-/** Rückfall: Claude Code nur lesend (Plan-Modus, ohne Schreib-/Shell-Werkzeuge, höchstens 0,30 $), Antwort als eine JSON-Zeile. */
+/** Rückfall: Claude Code nur lesend (Plan-Modus, ohne Schreib-/Shell-Werkzeuge; v1498 ohne feste Kostengrenze), Antwort als eine JSON-Zeile. */
 export function startErkennenClaude(dir: string, timeoutMs = 180_000): Promise<Erkennung> {
   const claude = claudePfad();
   if (!claude) return Promise.resolve({ gefunden: false, hinweise: ['Claude Code fehlt auf diesem Gerät'] });
   const prompt = `Ermittle nur lesend, wie das Projekt im Verzeichnis ${dir} lokal gestartet wird. Ändere nichts. Antworte am Ende mit genau einer JSON-Zeile: {"dienst": true, "start": "<Befehl im Projektordner>", "port": <Port>, "pruefung": "<Pfad, der mit Status 2xx antwortet>"} — oder {"dienst": false}, wenn es kein Dienst ist (Bibliothek, Kommandozeilenwerkzeug, Desktop-App). Lies nie .env (Geheimnisse); .env.example ja.`;
-  const args = argumenteFuer({ prompt, nurLesen: true, maxKostenUsd: 0.3 });
+  const args = argumenteFuer({ prompt, nurLesen: true });
   const istCmd = /\.cmd$/i.test(claude);
   return new Promise((resolve) => {
     let aus = '';

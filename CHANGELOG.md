@@ -55,6 +55,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1498] - 2026-10-19
+
+### Fixed — Fragen zum Projekt brechen nicht mehr an einer festen Kostengrenze ab
+
+Owner 19.10. 09:08: „Admin-UI und Admin-CLI für das Projekt durchdenken und vorschlagen“. Alfred stellte die Frage an Claude Code auf der Ubuntu-VM. Nach 2 Minuten kam „Ich lasse Claude Code nachsehen“, um 09:10 dann nur „keine Antwort … error_max_budget_usd“.
+
+Ursache: Die Frage zum Projekt lief mit einer festen Grenze von 0,50 $ (v1432, 13.10.). Diese widerspricht der Owner-Regel vom 16.10., dass Claude-Code-Läufe keine Standard-Grenze haben, und wurde danach nicht zurückgebaut. Die Frage setzte eine frühere Sitzung fort und las viel Verlauf (610 000 Tokens aus dem Cache). Claude Code prüft die Grenze nur zwischen zwei Schritten: Er brach nach 0,95 $ ab und lieferte nichts zurück.
+
+- **Keine feste Grenze mehr:** weder bei der Frage zum Projekt noch beim Erkennen des Startbefehls (bisher 0,30 $). Die Kosten werden wie bisher gemeldet. Eine Grenze gibt es nur, wenn der Owner eine nennt (`budget_usd`, wie beim Projektstart, höchstens 50 $).
+- **Zwischenstand nach 2 Minuten:** „Claude Code auf … arbeitet noch (seit 2 min, 14 Schritte bisher). Die Antwort kommt hier, sobald sie da ist; die Kosten stehen dann dabei.“ Einen laufenden Betrag gibt Claude Code unterwegs nicht verlässlich aus: Im Realfall ergaben die Zwischenzeilen 138 Ausgabe-Tokens, das Ende 16 470. Deshalb werden Schritte und Laufzeit gezeigt statt geschätzter Kosten.
+- **Titel in den Worten des Owners:** Die Rückmeldung nennt die Frage so, wie der Owner sie gestellt hat, nicht die umformulierte Fassung des Modells („Der Owner wünscht ausdrücklich …“). Neues Feld `anfrageText` im Werkzeug-Kontext. Ältere Satelliten bekommen den Titel beim Nachliefern vom Server.
+- 3 Tests.
+
 ## [0.19.0-jarvis.1497] - 2026-10-18
 
 ### Added — Gespräche anheften und archivieren, alle Fäden sichtbar (App 1.41.0, Web, Telegram)

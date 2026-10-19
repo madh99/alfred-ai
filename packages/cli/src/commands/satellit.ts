@@ -188,6 +188,16 @@ export function entkoppleLokal(): string[] {
 const PROJEKT_ERSATZ = ['cwd', 'ordner', 'projektordner', 'arbeitsverzeichnis', 'workdir', 'working_directory'];
 
 /** v1318 — erster nicht-leerer String unter mehreren Parameternamen (das Modell schreibt „pfad", „ziel", „datei" statt „path"). */
+/**
+ * v1498 — Frage zum Projekt: keine feste Kostengrenze mehr (Owner-Regel 16.10., Realfall 19.10.: Abbruch nach 0,95 $
+ * ohne Antwort). Eine Grenze gibt es nur, wenn der Owner eine nennt (budget_usd, höchstens 50). Titel = Frage des Owners.
+ */
+export function frageOptionen(params: Record<string, unknown>, frage: string): { titel: string; budget?: number } {
+  const budget = typeof params.budget_usd === 'number' && params.budget_usd > 0 ? Math.min(params.budget_usd, 50) : undefined;
+  const titel = String(params.titel ?? '').trim() || frage;
+  return budget ? { titel, budget } : { titel };
+}
+
 export function pfadVon(params: Record<string, unknown>, ...namen: string[]): string {
   for (const n of namen) { const v = params[n]; if (typeof v === 'string' && v.trim()) return v.trim(); }
   return '';
@@ -483,8 +493,9 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
       try {
         const sitzung = typeof params.sitzung === 'string' && /^[0-9a-f-]{8,64}$/i.test(params.sitzung) ? params.sitzung : undefined; // v1432 — Folgefrage
-        const m = auftragStartenMitFortschritt({ projekt, auftrag: frage, titel: `Frage: ${kurzTitel(frage, 70)}`, nurLesen: true, maxKostenUsd: 0.5, ...(sitzung ? { sitzung } : {}), beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
-        return { success: true, data: { id: m.id, projekt: m.projekt }, display: `Frage an Claude Code auf ${k.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
+        const { titel, budget } = frageOptionen(params, frage); // v1498
+        const m = auftragStartenMitFortschritt({ projekt, auftrag: frage, titel: `Frage: ${kurzTitel(titel, 70)}`, nurLesen: true, ...(budget ? { maxKostenUsd: budget } : {}), ...(sitzung ? { sitzung } : {}), beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
+        return { success: true, data: { id: m.id, projekt: m.projekt }, display: `Frage an Claude Code auf ${k.name} gestellt (nur lesend${budget ? `, höchstens ${budget.toFixed(2).replace('.', ',')} $` : ''}). Die Antwort kommt, sobald Claude Code fertig ist.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     // v1398 — Projekte sichtbar und fortsetzbar: Bestand lesen (nur lesend, nur freigegebene Verzeichnisse)
@@ -509,7 +520,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!id) return { success: false, error: 'id fehlt' };
       try {
         const s = auftragStand(id);
-        return { success: true, data: { id, status: s.meta.status, laeuft: s.laeuft, dauerS: s.dauerS, titel: s.meta.titel, projekt: s.meta.projekt }, display: `${formatiereMeta(s.meta)}${s.laeuft ? ' (läuft)' : ''}\n\nLetzte Protokollzeilen:\n${s.letzteZeilen || '(noch keine Ausgabe)'}` };
+        return { success: true, data: { id, status: s.meta.status, laeuft: s.laeuft, dauerS: s.dauerS, titel: s.meta.titel, projekt: s.meta.projekt, werkzeuge: s.werkzeuge /* v1498 */ }, display: `${formatiereMeta(s.meta)}${s.laeuft ? ' (läuft)' : ''}\n\nLetzte Protokollzeilen:\n${s.letzteZeilen || '(noch keine Ausgabe)'}` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'auftrag_ergebnis': {

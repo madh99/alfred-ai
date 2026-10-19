@@ -1710,7 +1710,7 @@ export class MessagePipeline {
         // Execute tool calls in parallel
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
-          { ...baseContext, conversationId: conversation.id, timezone: resolvedTimezone },
+          { ...baseContext, conversationId: conversation.id, timezone: resolvedTimezone, anfrageText: message.text }, // v1498 anfrageText
           onProgress,
           chatActionRecorder,
         );
