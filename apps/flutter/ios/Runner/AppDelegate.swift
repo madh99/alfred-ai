@@ -111,6 +111,11 @@ import UserNotifications
         }
       }
       netzWaechter.start(queue: DispatchQueue(label: "at.alfred.netz"))
+      // 1.54.3 — Audio-Ausgang gewechselt (AirPods, Auto …): sofort an Dart, damit das Vorlese-Symbol stimmt
+      NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        guard let self = self else { return }
+        self.netzKanal?.invokeMethod("audio", arguments: ["audio": self.systemZustand()["audio"] ?? "lautsprecher"])
+      }
     }
     // 1.52.1 — Links aus Antworten über das System öffnen (Safari, Mail …); die Desktop-Wege (open, xdg-open) gibt es auf iOS nicht
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredSystem") {

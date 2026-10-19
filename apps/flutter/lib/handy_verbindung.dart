@@ -97,7 +97,7 @@ Future<Kopplung> koppeln({required String server, required String code, required
 }
 
 class HandyVerbindung implements AppVerbindung {
-  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, Schluesselbund? speicher})
+  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, this.aufAudio, Schluesselbund? speicher})
       : _speicher = speicher ?? const GeraeteSchluesselbund();
 
   final void Function(SatellitStatus) aufStatus;
@@ -106,6 +106,8 @@ class HandyVerbindung implements AppVerbindung {
   final void Function(Konfig) aufKonfig;
   /// 1.54.0 — kurzer Hinweis im Verlauf (z. B. „in die Zwischenablage gelegt“)
   final void Function(String)? aufHinweis;
+  /// 1.54.3 — Audio-Ausgang (kopfhoerer, bluetooth, auto, lautsprecher …)
+  final void Function(String)? aufAudio;
   final void Function(String) aufZustand;
   final String Function() version;
   final Schluesselbund _speicher;
@@ -126,7 +128,11 @@ class HandyVerbindung implements AppVerbindung {
   @override
   Future<void> start() async {
     _laeuft = true;
-    _netz.setMethodCallHandler((c) async { if (c.method == 'geaendert') jetztVerbinden(); return null; }); // 1.54.0 H3
+    _netz.setMethodCallHandler((c) async { // 1.54.0 H3 Netzwechsel; 1.54.3 Audio-Ausgang
+      if (c.method == 'geaendert') jetztVerbinden();
+      if (c.method == 'audio' && c.arguments is Map) { aufAudio?.call('${(c.arguments as Map)['audio']}'); _sinneSenden(); }
+      return null;
+    });
     _leben ??= AppLifecycleListener(
       onResume: () { _vorne = true; _verbinde(); },
       onInactive: () {},

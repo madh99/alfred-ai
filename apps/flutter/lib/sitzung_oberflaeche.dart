@@ -234,7 +234,8 @@ extension _Oberflaeche on _SitzungState {
         if (archiv == null) IconButton(key: const Key('seiten-chat-knopf'), tooltip: seitenChatOffen ? 'Seiten-Chat schließen (Strg+Alt+S)' : 'Seiten-Chat (Strg+Alt+S)', onPressed: _seitenChatUmschalten, icon: Icon(Icons.vertical_split_outlined, size: 20, color: seitenChatOffen ? theme.colorScheme.primary : null)),
         if (archiv == null) _kopfMenue(),
         if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
-        IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off, size: 20)),
+        IconButton(key: const Key('vorlesen-knopf'), tooltip: stimme ? 'Antworten vorlesen: an' : vorlesenAutomatisch ? 'Vorlesen automatisch (${audioAusgang == 'auto' ? 'im Auto' : 'Kopfhörer'})' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme),
+          icon: Icon(stimme ? Icons.volume_up : vorlesenAutomatisch ? (audioAusgang == 'auto' ? Icons.directions_car : Icons.headphones) : Icons.volume_off, size: 20, color: !stimme && vorlesenAutomatisch ? Colors.green : null)), // 1.54.3 — grün, wenn automatisch vorgelesen wird
         const SizedBox(width: 8),
       ])),
       const Divider(height: 1),
