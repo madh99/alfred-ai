@@ -279,6 +279,8 @@ extension _Senden on _SitzungState {
   /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
   Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit, Wartend? nachsenden}) async {
     letzteAktivitaet = DateTime.now(); // 1.8.0
+    // 1.54.0 — Handy mit Kopfhörer, Bluetooth-Audio oder im Auto: auch getippte Fragen werden vorgelesen (Schalter, Standard an)
+    if (!sprechen && istHandy && autoVorlesen && vorleseAusgaenge.contains((await handyZustand())['audio'])) sprechen = true;
     var t = (text ?? eingabe.text).trim();
     final s = server;
     final mitAnhang = text == null && anhaenge.isNotEmpty;

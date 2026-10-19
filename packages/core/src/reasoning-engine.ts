@@ -885,8 +885,8 @@ ${this.buildTopicInstructions()}`;
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1203 Meldung nicht in Unterhaltung abgelegt'); }
   }
   /** v1518 Phase 5 H2 — Push zu sofort zugestellten Hinweisen; Rückgabe `true` = Telegram-Nachricht auslassen. */
-  private pushHinweise?: (anzahl: number) => Promise<boolean>;
-  setPushHinweise(fn: (anzahl: number) => Promise<boolean>): void { this.pushHinweise = fn; }
+  private pushHinweise?: (anzahl: number, dringlichkeit?: string) => Promise<boolean>;
+  setPushHinweise(fn: (anzahl: number, dringlichkeit?: string) => Promise<boolean>): void { this.pushHinweise = fn; }
   /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal an den Scheduler. */
   setAnwesenheitsQuelle(fn: () => import('./delivery-scheduler.js').Anwesenheit | undefined): void { this.deliveryScheduler?.setAnwesenheitsQuelle(fn); }
   /** v1507 D5 — Kostenherkunft „hintergrund:reasoning-ereignis“. */
@@ -2432,7 +2432,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     if (message) {
       // v1518 Phase 5 H2 — Push an die Handys (ohne Inhalt: nur Anzahl); `true` = Telegram stumm (Schalter an, Push zugestellt)
       let stumm = false;
-      try { stumm = (await this.pushHinweise?.(Math.max(1, gezeigt))) === true; } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1518 Push zu Hinweisen fehlgeschlagen'); }
+      try { stumm = (await this.pushHinweise?.(Math.max(1, gezeigt), urgency)) === true; } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1518 Push zu Hinweisen fehlgeschlagen'); }
       const adapter = this.adapters.get(this.defaultPlatform);
       if (adapter) {
         if (!stumm) await adapter.sendMessage(this.defaultChatId, message, tastatur);

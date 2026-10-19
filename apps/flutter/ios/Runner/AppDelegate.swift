@@ -1,4 +1,6 @@
+import AVFoundation
 import Flutter
+import Intents
 import Network
 import Security
 import UIKit
@@ -108,14 +110,59 @@ import UserNotifications
     // 1.52.1 — Links aus Antworten über das System öffnen (Safari, Mail …); die Desktop-Wege (open, xdg-open) gibt es auf iOS nicht
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredSystem") {
       let kanal = FlutterMethodChannel(name: "alfred/system", binaryMessenger: registrar.messenger())
-      kanal.setMethodCallHandler { aufruf, ergebnis in
-        guard aufruf.method == "oeffnen", let text = (aufruf.arguments as? [String: Any])?["url"] as? String,
-              let url = URL(string: text), ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else {
-          ergebnis(false); return
+      kanal.setMethodCallHandler { [weak self] aufruf, ergebnis in
+        let args = aufruf.arguments as? [String: Any] ?? [:]
+        switch aufruf.method {
+        case "oeffnen":
+          guard let text = args["url"] as? String, let url = URL(string: text), ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { ergebnis(false); return }
+          UIApplication.shared.open(url) { ok in ergebnis(ok) }
+        case "kopieren":
+          // 1.54.0 — vertraulich: nicht über die universelle Zwischenablage teilen, nach 2 min weg
+          guard let text = args["text"] as? String else { ergebnis(false); return }
+          let optionen: [UIPasteboard.OptionsKey: Any] = (args["vertraulich"] as? Bool ?? false) ? [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)] : [:]
+          UIPasteboard.general.setItems([["public.utf8-plain-text": text]], options: optionen)
+          ergebnis(true)
+        case "zustand":
+          ergebnis(self?.systemZustand())
+        default: ergebnis(FlutterMethodNotImplemented)
         }
-        UIApplication.shared.open(url) { ok in ergebnis(ok) }
       }
     }
+  }
+}
+
+extension AppDelegate {
+  /// 1.54.0 — Zustand für die Sinne (nur solange die App offen ist): Akku, Netzweg, Audio-Ausgang, Fokus, Modell, System, Speicher
+  func systemZustand() -> [String: Any] {
+    var z: [String: Any] = [:]
+    let geraet = UIDevice.current
+    geraet.isBatteryMonitoringEnabled = true
+    if geraet.batteryLevel >= 0 { z["akkuProzent"] = Int((geraet.batteryLevel * 100).rounded()) }
+    z["akkuLaedt"] = geraet.batteryState == .charging || geraet.batteryState == .full
+    if let netz = netzZuletzt { z["netz"] = netz }
+    let ausgang = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
+    switch ausgang {
+    case .some(.headphones): z["audio"] = "kopfhoerer"
+    case .some(.bluetoothA2DP), .some(.bluetoothLE), .some(.bluetoothHFP): z["audio"] = "bluetooth"
+    case .some(.carAudio): z["audio"] = "auto"
+    case .some(.airPlay): z["audio"] = "airplay"
+    default: z["audio"] = "lautsprecher"
+    }
+    if #available(iOS 15.0, *) {
+      let fokus = INFocusStatusCenter.default
+      if fokus.authorizationStatus == .notDetermined { fokus.requestAuthorization { _ in } }
+      else if fokus.authorizationStatus == .authorized, let an = fokus.focusStatus.isFocused { z["fokus"] = an }
+    }
+    var info = utsname(); uname(&info)
+    let kennung = withUnsafePointer(to: &info.machine) { $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) } }
+    let modell = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? kennung
+    z["modell"] = "\(geraet.model) (\(modell))"
+    z["system"] = "\(geraet.systemName) \(geraet.systemVersion)"
+    if let werte = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]) {
+      if let frei = werte.volumeAvailableCapacityForImportantUsage { z["speicherFreiGb"] = Double(frei) / 1_000_000_000 }
+      if let gesamt = werte.volumeTotalCapacity { z["speicherGesamtGb"] = Double(gesamt) / 1_000_000_000 }
+    }
+    return z
   }
 }
 

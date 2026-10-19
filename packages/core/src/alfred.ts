@@ -13898,7 +13898,25 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { GeraeteRepository, VorgaengeRepository: VRepoG } = await import('@alfred/storage');
         const dbG = this.database.getAdapter();
         const vorgaengeG = new VRepoG(dbG);
+        const { HandyAblage } = await import('./geraete/handy-ablage.js'); // v1520
+        const handyAblage = new HandyAblage();
         const gw = new GeraeteGateway({
+          // v1520 — Handy im Hintergrund: Zwischenablage über Ablage + Push „Zum Kopieren antippen“ (Inhalt nie im Push)
+          offlineAktion: (g, aktion, params) => {
+            if (aktion !== 'zwischenablage_setzen') return undefined;
+            return (async () => {
+              const start = Date.now();
+              const text = typeof params.text === 'string' ? params.text : '';
+              if (!text.trim()) return { success: false, error: 'Kein Text angegeben', dauerMs: 0 };
+              if (text.length > 20_000) return { success: false, error: 'Text zu lang für die Zwischenablage (höchstens 20 000 Zeichen)', dauerMs: 0 };
+              const e = handyAblage.lege(g.id, text, params.vertraulich === true);
+              const zugestellt = await this.pushDienst?.anGeraet(g.id, { titel: 'Alfred', text: 'Zum Kopieren antippen', art: 'zwischenablage', id: e.id }).catch(() => false);
+              this.logger.info({ geraet: g.name, zeichen: text.length, vertraulich: e.vertraulich, push: !!zugestellt }, 'v1520 Zwischenablage abgelegt (Handy im Hintergrund)');
+              return { success: true, dauerMs: Date.now() - start, display: zugestellt
+                ? `Liegt bereit für ${g.name}: Mitteilung „Zum Kopieren antippen“ ist zugestellt — antippen kopiert den Text.`
+                : `Liegt bereit für ${g.name}; die Mitteilung kam nicht an — beim nächsten Öffnen der App erscheint „Alfred hat etwas zum Kopieren“.` };
+            })();
+          },
           // v1415 — wartende Projekt-Etappen starten, sobald das Gerät wieder da ist (kurz warten, bis die Aktionen registriert sind)
           beiFortschritt: (f) => this.projektLive(f), // v1418 G2
           beiBeobachtung: (geraetId, ereignisse) => { void this.beobachterDienst?.verarbeite(geraetId, ereignisse).catch((err: Error) => this.logger.warn({ err: err.message }, 'v1429 Beobachtungen nicht verarbeitet')); },
@@ -14005,7 +14023,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             return stummNach(await push.anOwner({ titel: 'Bestätigung nötig', text: `${b.skillName}${aktion}`, art: 'bestaetigung', id: b.id }));
           });
           // Hinweise, die die Zustellung (entscheideZustellung) jetzt schickt: nur die Anzahl
-          this.reasoningEngine?.setPushHinweise(async (n) => stummNach(await push.anOwner({ titel: 'Hinweis', text: n === 1 ? '1 neuer Hinweis' : `${n} neue Hinweise`, art: 'hinweis' })));
+          // v1520 — nur Dringendes ist „zeitkritisch“ und dringt durch einen Fokus; alles andere respektiert ihn
+          this.reasoningEngine?.setPushHinweise(async (n, dringlichkeit) => stummNach(await push.anOwner({ titel: dringlichkeit === 'urgent' ? 'Dringender Hinweis' : 'Hinweis', text: n === 1 ? '1 neuer Hinweis' : `${n} neue Hinweise`, art: 'hinweis', stufe: dringlichkeit === 'urgent' ? 'time-sensitive' : 'active' })));
+          void gw.handyWerkzeugeAnmelden().catch((err: Error) => this.logger.warn({ err: err.message }, 'v1520 Handy-Werkzeuge nicht angemeldet'));
           this.logger.info({ bereit: push.bereit, keyId: keyId ?? null, teamId: teamId ?? null, schluessel: apns ? 'vorhanden' : 'fehlt', telegramStumm: push.einstellungen().telegramStumm }, 'v1518 Push bereit');
         } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1518 Push nicht verfügbar'); }
         // v1429 R4a — Beobachter am Satelliten (Regeln am Server, Wirkungen deterministisch)
@@ -14175,6 +14195,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
           // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
           // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          // v1520 — Zwischenablage abholen (Handy nach Push oder beim Öffnen): GET = offene Einträge, DELETE <id> = abgeholt
+          ablage: async (geraetId: string, id?: string) => {
+            if (id) return { status: handyAblage.erledige(geraetId, id) ? 200 : 404, antwort: { ok: true } };
+            return { status: 200, antwort: { eintraege: handyAblage.offene(geraetId).map(e => ({ id: e.id, text: e.text, vertraulich: e.vertraulich, zeit: new Date(e.zeit).toISOString() })) } };
+          },
           // v1519 H2 — Antwort fertig: Push nur, wenn die App nicht mehr verbunden ist (entscheidet der Push-Dienst)
           antwortFertig: (geraetId: string, faden?: string) => { void this.pushDienst?.antwortFertig(geraetId, faden).catch(() => false); },
           // v1518 H2 — Push-Token des Handys melden; Schalter „Telegram stumm, wenn Push zugestellt“ (nur Owner-Geräte)

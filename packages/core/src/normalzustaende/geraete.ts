@@ -12,7 +12,12 @@ export interface GeraetSinne {
   /** v1239 — System: Laufzeit seit Start, RAM, CPU, GPU, Laufwerke */
   uptimeSek?: number; ramGesamtMb?: number; ramFreiMb?: number; cpuProzent?: number; gpuProzent?: number;
   laufwerke?: Array<{ name: string; gesamtGb: number; freiGb: number }>;
+  /** v1520 — Handy (nur solange die App offen ist): Netzweg, Audio-Ausgang, Fokus, Modell und System */
+  netz?: string; audio?: string; fokus?: boolean; modell?: string; system?: string;
 }
+/** v1520 — Klartext für Netzweg und Audio-Ausgang des Handys */
+const NETZ_TEXT: Record<string, string> = { wlan: 'WLAN', mobil: 'Mobilfunk', vpn: 'VPN', keins: 'kein Netz' };
+const AUDIO_TEXT: Record<string, string> = { kopfhoerer: 'Kopfhörer', bluetooth: 'Bluetooth-Audio', auto: 'im Auto (CarPlay/Auto-Audio)', lautsprecher: 'Lautsprecher' };
 /** v1239 — Laufwerk unter diesem Anteil frei ist auffällig. */
 export const LAUFWERK_KNAPP_ANTEIL = 0.1;
 export interface GeraetZustand {
@@ -63,7 +68,7 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       const s = frisch ? g.sinne : undefined;
       if (s?.leerlaufSek !== undefined) {
         if (s.leerlaufSek < AKTIV_LEERLAUF_SEK) {
-          teile.push(`aktiv (Leerlauf ${formatiereDauerKurz(s.leerlaufSek * 1000)})`);
+          teile.push(HANDY_PLATTFORMEN.has(g.plattform) ? 'in der App' : `aktiv (Leerlauf ${formatiereDauerKurz(s.leerlaufSek * 1000)})`); // v1520
           if (!aktiv || s.leerlaufSek < aktiv.leerlaufSek) aktiv = { name: g.name, leerlaufSek: s.leerlaufSek };
         } else {
           teile.push(`im Leerlauf seit ${formatiereDauerKurz(s.leerlaufSek * 1000)}`);
@@ -72,8 +77,15 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       } else {
         teile.push(g.verbundenSeit ? `online seit ${formatiereDauerKurz(jetzt - Date.parse(g.verbundenSeit))}` : 'online');
       }
+      // v1520 — Handy: in der App (Owner schaut aufs Handy), Netzweg, Audio, Fokus
+      if (HANDY_PLATTFORMEN.has(g.plattform) && s) {
+        if (s.netz) teile.push(s.netz.split('+').map(t => NETZ_TEXT[t] ?? t).join(' + '));
+        if (s.audio && s.audio !== 'lautsprecher') teile.push(AUDIO_TEXT[s.audio] ?? s.audio);
+        if (s.fokus === true) teile.push('Fokus an');
+      }
       if (s?.akkuProzent !== undefined) {
-        const niedrig = s.akkuProzent <= AKKU_NIEDRIG_PROZENT && !s.akkuLaedt;
+        // v1520 — Handy: Akku nur Anzeige (gemessen nur bei offener App; ein Befund daraus wäre Zufall)
+        const niedrig = s.akkuProzent <= AKKU_NIEDRIG_PROZENT && !s.akkuLaedt && !HANDY_PLATTFORMEN.has(g.plattform);
         if (niedrig) { warn = true; auffaellig.push(`geraet:${g.name}:akku`); }
         teile.push(`Akku ${s.akkuProzent} %${s.akkuLaedt ? ' (lädt)' : niedrig ? ' (nicht am Netz)' : ''}`);
       }
@@ -84,6 +96,8 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       const s = g.sinne;
       const sys: string[] = [];
       let warnSys = false;
+      if (s?.modell) sys.push(s.modell); // v1520 — Handy: Modell und System
+      if (s?.system) sys.push(s.system);
       if (s?.uptimeSek !== undefined) sys.push(`läuft seit ${formatiereDauerKurz(s.uptimeSek * 1000)} (Start ${new Date(jetzt - s.uptimeSek * 1000).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})`);
       if (s?.cpuProzent !== undefined) sys.push(`CPU ${s.cpuProzent} %`);
       if (s?.gpuProzent !== undefined) sys.push(`GPU ${s.gpuProzent} %`);

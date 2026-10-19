@@ -5,5 +5,10 @@
 	<!-- Phase 5 H2 — Mitteilungen über APNs; beim App-Store-Export setzt Xcode „production“ -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- 1.54.0 — Fokus-Status lesen; nur Dringendes als zeitkritische Mitteilung durch einen Fokus -->
+	<key>com.apple.developer.focus-status</key>
+	<true/>
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 </dict>
 </plist>

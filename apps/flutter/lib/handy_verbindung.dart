@@ -11,6 +11,7 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'schluesselbund.dart';
+import 'handy_system.dart';
 
 import 'ipc.dart';
 import 'modell.dart';
@@ -50,6 +51,13 @@ class Kopplung {
   } catch (_) { return null; }
 }
 
+/// 1.54.0 — Aktionen, die das Handy anbietet (Spec Autonomie: „auto“, harmlos). Ist die App im Hintergrund, nimmt der Server
+/// sie an und stellt sie per Mitteilung zu (Ablage + „Zum Kopieren antippen“).
+const handyAktionen = [
+  {'name': 'zwischenablage_setzen', 'beschreibung': 'Legt Text in die Zwischenablage dieses Handys („kopier mir das aufs Handy“). Ist die App im Hintergrund, kommt eine Mitteilung „Zum Kopieren antippen“.', 'autonomie': 'auto',
+   'parameter': {'text': {'type': 'string', 'description': 'Text'}, 'vertraulich': {'type': 'boolean', 'description': 'true bei Passwort/Token: bleibt auf diesem Gerät, verfällt nach 2 min'}}},
+];
+
 /// 1.54.0 H3 — Server über keinen Weg erreichbar (außerhalb des Heim-WLANs ohne VPN).
 const serverUnerreichbar = 'Server nicht erreichbar — außerhalb des Heim-WLANs das VPN einschalten';
 
@@ -81,13 +89,15 @@ Future<Kopplung> koppeln({required String server, required String code, required
 }
 
 class HandyVerbindung implements AppVerbindung {
-  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, Schluesselbund? speicher})
+  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, Schluesselbund? speicher})
       : _speicher = speicher ?? const GeraeteSchluesselbund();
 
   final void Function(SatellitStatus) aufStatus;
   final void Function(String art, String text, DateTime zeit, Anhang? anhang, String? faden) aufEreignis;
   final void Function(Bestaetigung) aufBestaetigung;
   final void Function(Konfig) aufKonfig;
+  /// 1.54.0 — kurzer Hinweis im Verlauf (z. B. „in die Zwischenablage gelegt“)
+  final void Function(String)? aufHinweis;
   final void Function(String) aufZustand;
   final String Function() version;
   final Schluesselbund _speicher;
@@ -95,7 +105,7 @@ class HandyVerbindung implements AppVerbindung {
 
   Kopplung? kopplung;
   WebSocket? _ws;
-  Timer? _puls, _spaeter;
+  Timer? _puls, _spaeter, _sinneTakt;
   static const _netz = MethodChannel('alfred/netz');
   bool _laeuft = false, _vorne = true, _verbunden = false;
   AppLifecycleListener? _leben;
@@ -128,7 +138,7 @@ class HandyVerbindung implements AppVerbindung {
   void stop() { _laeuft = false; _verbunden = false; _trenne(); _leben?.dispose(); _leben = null; } // beim Abbau keine Statusmeldung mehr (Oberfläche ist weg)
 
   void _trenne() {
-    _puls?.cancel(); _puls = null; _spaeter?.cancel();
+    _puls?.cancel(); _puls = null; _spaeter?.cancel(); _sinneTakt?.cancel(); _sinneTakt = null;
     final ws = _ws; _ws = null;
     try { ws?.close(); } catch (_) {}
     if (_verbunden) { _verbunden = false; _status(false); }
@@ -151,8 +161,9 @@ class HandyVerbindung implements AppVerbindung {
       final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 6)); // 1.54.0 H3 — Mobilfunk: nicht lange hängen
       if (!_laeuft || !_vorne) { ws.close(); return; }
       _ws = ws;
-      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': <Object>[], 'sinne': <Object>[]}});
+      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': handyAktionen, 'sinne': const ['akku', 'netz', 'audio', 'fokus', 'system']}});
       _puls = Timer.periodic(const Duration(seconds: 30), (_) => _sende({'typ': 'puls'}));
+      _sinneTakt?.cancel(); _sinneTakt = Timer.periodic(const Duration(seconds: 60), (_) => _sinneSenden()); // 1.54.0 — solange die App offen ist
       ws.listen((raw) => _nachricht('$raw'), onDone: () => _getrennt(ws), onError: (_) => _getrennt(ws), cancelOnError: true);
       aufZustand('verbunden mit dem Gehirn');
     } on HandshakeException {
@@ -169,8 +180,37 @@ class HandyVerbindung implements AppVerbindung {
   void _getrennt(WebSocket ws) {
     if (_ws != ws) return;
     _ws = null; _puls?.cancel(); _puls = null;
+    _sinneTakt?.cancel(); _sinneTakt = null;
     if (_verbunden) { _verbunden = false; _status(false); }
     if (_laeuft && _vorne) _spaeterVerbinden(_rueckzug);
+  }
+
+  /// 1.54.0 — Sinne des Handys, nur solange die App offen ist: Owner in der App (Leerlauf 0), Akku, Netzweg, Audio-Ausgang,
+  /// Fokus, Modell, System, Speicher (als „Laufwerk“, damit „Speicher fast voll“ wie am Desktop greift).
+  Future<void> _sinneSenden() async {
+    if (_ws == null) return;
+    final z = await handyZustand();
+    final werte = <String, Object?>{'leerlaufSek': 0};
+    for (final k in ['akkuProzent', 'akkuLaedt', 'netz', 'audio', 'fokus', 'modell', 'system']) { if (z[k] != null) werte[k] = z[k]; }
+    final frei = z['speicherFreiGb'], gesamt = z['speicherGesamtGb'];
+    if (frei is num && gesamt is num && gesamt > 0) werte['laufwerke'] = [{'name': 'Speicher', 'freiGb': frei.round(), 'gesamtGb': gesamt.round()}];
+    _sende({'typ': 'sinne', 'werte': werte});
+  }
+
+  /// 1.54.0 — Aktion vom Gehirn ausführen und das Ergebnis im Format des Satelliten melden.
+  Future<void> _aktion(Map<String, dynamic> n) async {
+    final id = '${n['id'] ?? ''}'; final start = DateTime.now();
+    final params = n['params'] is Map ? Map<String, dynamic>.from(n['params'] as Map) : <String, dynamic>{};
+    Map<String, Object?> ergebnis;
+    if (n['aktion'] == 'zwischenablage_setzen' && params['text'] is String && (params['text'] as String).isNotEmpty) {
+      final vertraulich = params['vertraulich'] == true;
+      final ok = await handyKopieren(params['text'] as String, vertraulich: vertraulich);
+      ergebnis = ok ? {'success': true, 'display': 'Liegt in der Zwischenablage von ${kopplung?.name ?? 'diesem Handy'}${vertraulich ? ' (nur dieses Gerät, verfällt nach 2 min)' : ''}.'} : {'success': false, 'error': 'Zwischenablage nicht gesetzt'};
+      if (ok) aufHinweis?.call('📋 Alfred hat ${vertraulich ? 'vertraulichen ' : ''}Text in die Zwischenablage gelegt.');
+    } else {
+      ergebnis = {'success': false, 'error': 'Aktion auf dem Handy unbekannt: ${n['aktion']}'};
+    }
+    _sende({'typ': 'aktion_ergebnis', 'id': id, 'zeit': DateTime.now().toUtc().toIso8601String(), 'version': 1, ...ergebnis, 'dauerMs': DateTime.now().difference(start).inMilliseconds});
   }
 
   /// 1.54.0 H3 — Netzwechsel (iOS-Netzwächter) oder Knopf „Erneut verbinden“: alte Verbindung sofort trennen, Wartezeit
@@ -198,12 +238,15 @@ class HandyVerbindung implements AppVerbindung {
       case 'willkommen':
         _verbunden = true; _rueckzug = 2;
         _status(true, n['serverVersion'] as String?);
+        _sinneSenden(); // 1.54.0 — gleich beim Verbinden: Owner ist in der App
         // §20.4 — angekündigter nächster Schlüssel kommt nur über diese schon geprüfte Verbindung
         final naechster = (n['naechsterSchluessel'] as String?)?.toLowerCase();
         final k = kopplung;
         if (k != null && naechster != null && RegExp(r'^[0-9a-f]{64}$').hasMatch(naechster) && !k.schluessel.contains(naechster)) {
           await speichere(Kopplung(server: k.server, geraetId: k.geraetId, token: k.token, name: k.name, schluessel: [...k.schluessel, naechster]));
         }
+      case 'aktion': // 1.54.0 — Aktionen des Handys (heute: zwischenablage_setzen)
+        await _aktion(n);
       case 'bestaetigung':
         final b = n['bestaetigung'];
         if (b is Map<String, dynamic>) aufBestaetigung(Bestaetigung(id: '${b['id']}', text: '${b['description'] ?? ''}', quelle: b['source'] as String?, seit: DateTime.tryParse('${b['createdAt'] ?? ''}')));

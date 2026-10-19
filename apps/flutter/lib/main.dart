@@ -22,6 +22,7 @@ import 'handy_verbindung.dart'; // Phase 5 H1
 import 'kopplung.dart'; // Phase 5 H1
 import 'handy_push.dart'; // Phase 5 H2
 import 'halte_knopf.dart'; // 1.53.0+91
+import 'handy_system.dart'; // 1.54.0
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -265,7 +266,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
-        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); } // Phase 5 H2
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); } // Phase 5 H2; 1.54.0 Ablage
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -345,7 +346,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// Phase 5 H1 — Desktop hängt am Satelliten (IPC), das Handy verbindet sich selbst (gleiche Rückrufe).
   AppVerbindung _verbindung({required void Function(SatellitStatus) aufStatus, required void Function(String, String, DateTime, Anhang?, String?) aufEreignis, required void Function(Bestaetigung) aufBestaetigung, required void Function(Konfig) aufKonfig, required void Function(String) aufZustand}) {
     if (istDesktop) return IpcVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, aufZustand: aufZustand);
-    return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion,
+    return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)),
       aufZustand: (z) { if (z.contains('neu koppeln')) { setState(() { konfig = null; server = null; }); } aufZustand(z); });
   }
 
@@ -360,6 +361,27 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (z != null) _pushOeffnen(z);
   }
 
+  /// 1.54.0 — Ablage vom Server holen. Nach dem Antippen der Mitteilung wird genau dieser Eintrag kopiert; beim Öffnen ohne
+  /// Antippen erscheint nur der Hinweis „Alfred hat etwas zum Kopieren“ (die Zwischenablage wird nie ungefragt überschrieben).
+  Future<void> _ablageHolen({String? kopiereId}) async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/ablage');
+      final l = ((j['eintraege'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+      final ziel = kopiereId == null ? null : l.where((e) => e['id'] == kopiereId).firstOrNull;
+      if (ziel != null) { await _ablageKopieren(ziel); return; }
+      if (mounted) _neu(() => ablageOffen = l);
+    } catch (_) { /* alter Server oder getrennt */ }
+  }
+
+  Future<void> _ablageKopieren(Map<String, dynamic> e) async {
+    final ok = await handyKopieren('${e['text'] ?? ''}', vertraulich: e['vertraulich'] == true);
+    if (!ok) { _zeile(Eintrag(Art.fehler, 'Zwischenablage nicht gesetzt')); return; }
+    try { await server?.json('/api/geraete/ablage/${e['id']}', methode: 'DELETE'); } catch (_) {}
+    _neu(() => ablageOffen = ablageOffen.where((x) => x['id'] != e['id']).toList());
+    _zeile(Eintrag(Art.hinweis, '📋 In die Zwischenablage kopiert${e['vertraulich'] == true ? ' (nur dieses Gerät, verfällt nach 2 min)' : ''}.'));
+  }
+
   Future<void> _pushTokenMelden(String token, String umgebung) async {
     final s = server; if (s == null) return; // nach dem Verbinden meldet _pushAnmelden erneut
     try { await s.json('/api/geraete/push', methode: 'POST', koerper: {'art': 'apns', 'token': token, 'umgebung': umgebung}); }
@@ -372,6 +394,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       case 'bestaetigung': _neu(() => ansicht = Ansicht.chat); _holeBestaetigungen();
       case 'hinweis': _neu(() => ansicht = Ansicht.hinweise);
       case 'antwort': if (server != null && server!.faden != z.faden) { _fadenWechseln(z.faden); } else { _neu(() => ansicht = Ansicht.chat); }
+      case 'zwischenablage': _ablageHolen(kopiereId: z.id); // 1.54.0 — Antippen kopiert genau diesen Text
     }
   }
 
@@ -573,6 +596,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             TextButton(onPressed: () => (ipc as HandyVerbindung).jetztVerbinden(pause: Duration.zero), child: const Text('Erneut')),
           ]),
         )),
+        // 1.54.0 — Ablage: Alfred wollte etwas in die Zwischenablage legen, während die App im Hintergrund war
+        if (ablageOffen.isNotEmpty) Material(key: const Key('ablage-hinweis'), color: theme.colorScheme.primaryContainer, child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+          child: Row(children: [
+            Icon(Icons.content_paste, size: 18, color: theme.colorScheme.onPrimaryContainer),
+            const SizedBox(width: 10),
+            Expanded(child: Text(ablageOffen.length == 1 ? 'Alfred hat etwas zum Kopieren' : 'Alfred hat ${ablageOffen.length} Texte zum Kopieren (neuester zuerst)', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer))),
+            TextButton(onPressed: () => _ablageKopieren(ablageOffen.first), child: const Text('Kopieren')),
+          ]),
+        )),
         Expanded(child: inhalt),
       ])),
     );
@@ -603,6 +636,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
   bool? telegramStumm; // 1.53.0 H2 — „Telegram stumm, wenn Push zugestellt“ (nur Handy; null = noch nicht geladen)
+  /// 1.54.0 — Texte, die Alfred in die Zwischenablage legen wollte, während die App im Hintergrund war
+  List<Map<String, dynamic>> ablageOffen = const [];
+  bool autoVorlesen = autoVorlesenGespeichert(); // 1.54.0 — bei Kopfhörer/Bluetooth/Auto Antworten vorlesen (Standard an)
 
 }
 

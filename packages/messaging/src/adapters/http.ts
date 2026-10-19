@@ -1091,6 +1091,8 @@ export class HttpAdapter extends MessagingAdapter {
     push?(geraetId: string, body?: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
     /** v1519 H2 — Antwort einer Gerätesitzung fertig (Push, wenn die App nicht mehr vorne ist) */
     antwortFertig?(geraetId: string, faden?: string): void;
+    /** v1520 — Zwischenablage-Ablage des Handys: ohne id Liste, mit id abgeholt */
+    ablage?(geraetId: string, id?: string): Promise<{ status: number; antwort: unknown }>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -2091,6 +2093,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (/^\/api\/geraete\/anhang\/[0-9a-f]{32}$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
+    } else if (url.pathname === '/api/geraete/ablage' && req.method === 'GET' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}$/.test(url.pathname) && req.method === 'DELETE') {
+      this.handleGeraetAblage(req, res, url).catch(err => this.safeError(res, err)); // v1520
     } else if (url.pathname === '/api/geraete/push' && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetPush(req, res).catch(err => this.safeError(res, err)); // v1518 H2
     } else if (url.pathname === '/api/geraete/konto' && req.method === 'GET') {
@@ -6956,6 +6960,17 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1506 D5 — Kontomenü der App: Kosten mit Herkunft, Tagesbudget (nur Anzeige), verbundene Geräte. */
+  /** v1520 — Zwischenablage-Ablage des Handys abholen; nur mit Gerätetoken, nur die eigenen Einträge. */
+  private async handleGeraetAblage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.ablage) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const id = req.method === 'DELETE' ? url.pathname.split('/').pop() : undefined;
+    const r = await this.geraeteCallbacks.ablage(geraet.geraetId, id);
+    res.writeHead(r.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(r.antwort));
+  }
+
   /** v1518 Phase 5 H2 (Spec Geräte §20.5 Punkt 3) — Push-Token des Handys und Schalter „Telegram stumm“; nur mit Gerätetoken. */
   private async handleGeraetPush(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;

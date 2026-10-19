@@ -61,6 +61,18 @@ export class PushDienst {
    * „Antwort fertig“ an genau das Handy, dessen Sitzung gefragt hat (App ging während der Antwort in den Hintergrund).
    * Höchstens ein Push je Gerät und Minute — eine Antwort kann aus mehreren Zeilen bestehen.
    */
+  /** v1520 — an genau ein Handy (z. B. Zwischenablage); nicht, wenn es verbunden ist. */
+  async anGeraet(geraetId: string, n: ApnsNutzlast): Promise<boolean> {
+    const apns = this.deps.apns; const owner = this.deps.ownerUserId();
+    if (!apns || !owner || this.deps.istVerbunden(geraetId)) return false;
+    const g = (await this.deps.repo.mitPush(owner).catch(() => [])).find(x => x.id === geraetId && x.push.art === 'apns');
+    if (!g) return false;
+    const r = await apns.sende(g.push.token, g.push.umgebung ?? 'production', n);
+    this.deps.logger.info({ geraet: g.name, art: n.art, status: r.status, grund: r.grund, dauerMs: r.dauerMs, umgebung: g.push.umgebung }, r.ok ? 'v1518 Push zugestellt' : 'v1518 Push fehlgeschlagen');
+    if (r.tokenUngueltig) await this.deps.repo.setzePush(g.id, undefined).catch(() => undefined);
+    return r.ok;
+  }
+
   async antwortFertig(geraetId: string, faden?: string, jetzt = Date.now()): Promise<boolean> {
     const apns = this.deps.apns; const owner = this.deps.ownerUserId();
     if (!apns || !owner) return false;

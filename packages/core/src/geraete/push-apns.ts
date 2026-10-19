@@ -15,7 +15,9 @@ export interface ApnsNutzlast {
   /** Gesprächsfaden: gruppiert die Mitteilungen auf dem iPhone (thread-id) und öffnet beim Antippen den Faden */
   faden?: string;
   /** eigener Schlüssel `alfred` — die App öffnet damit die richtige Stelle */
-  art: 'bestaetigung' | 'hinweis' | 'antwort';
+  art: 'bestaetigung' | 'hinweis' | 'antwort' | 'zwischenablage';
+  /** iOS-Dringlichkeit: `time-sensitive` dringt durch einen Fokus (nur Dringendes), `passive` ohne Ton */
+  stufe?: 'passive' | 'active' | 'time-sensitive';
   id?: string;
 }
 
@@ -43,7 +45,7 @@ export function apnsJwt(schluesselPem: string, keyId: string, teamId: string, je
 export function apnsKoerper(n: ApnsNutzlast): string {
   const kurz = (t: string, max: number) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > max ? `${s.slice(0, max - 1)}…` : s; };
   return JSON.stringify({
-    aps: { alert: { title: kurz(n.titel, 60), body: kurz(n.text, PUSH_TEXT_MAX) }, sound: 'default', ...(n.faden ? { 'thread-id': n.faden } : {}) },
+    aps: { alert: { title: kurz(n.titel, 60), body: kurz(n.text, PUSH_TEXT_MAX) }, ...(n.stufe === 'passive' ? {} : { sound: 'default' }), 'interruption-level': n.stufe ?? 'active', ...(n.faden ? { 'thread-id': n.faden } : {}) },
     alfred: { art: n.art, ...(n.id ? { id: n.id } : {}), ...(n.faden ? { faden: n.faden } : {}) },
   });
 }

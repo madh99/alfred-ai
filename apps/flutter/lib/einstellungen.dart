@@ -56,6 +56,10 @@ void gesehenSpeichern(DateTime t) { final j = _lesen(); j['gesehen'] = t.toUtc()
 bool stillUpdateGespeichert() => _lesen()['stillUpdate'] != false;
 void stillUpdateSpeichern(bool an) { final j = _lesen(); j['stillUpdate'] = an; _schreiben(j); }
 
+/// 1.54.0 — Handy: Antworten automatisch vorlesen, wenn Kopfhörer, Bluetooth-Audio oder Auto verbunden sind (Standard an).
+bool autoVorlesenGespeichert() => _lesen()['autoVorlesen'] != false;
+void autoVorlesenSpeichern(bool an) { final j = _lesen(); j['autoVorlesen'] = an; _schreiben(j); }
+
 /// 1.36.0 — Navigation breit (mit Beschriftung) oder schmal (nur Symbole); Standard breit.
 bool navBreitGespeichert() => _lesen()['navBreit'] != false;
 void navBreitSpeichern(bool breit) { final j = _lesen(); j['navBreit'] = breit; _schreiben(j); }

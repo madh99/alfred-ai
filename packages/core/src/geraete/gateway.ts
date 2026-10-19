@@ -51,7 +51,15 @@ export interface GeraeteGatewayDeps {
   beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: import('./auftrag-herkunft.js').Herkunft }) => Promise<void>;
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
+  /**
+   * v1520 — Handy im Hintergrund (nicht verbunden): Aktionen, die auch dann sinnvoll sind (Zwischenablage), nimmt der Server
+   * an und stellt sie per Push zu. `undefined` = für diese Aktion kein Weg ohne Verbindung.
+   */
+  offlineAktion?: (g: GeraetEintrag, aktion: string, params: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }> | undefined;
 }
+
+/** v1520 — Handys: im Hintergrund getrennt, ihr Werkzeug bleibt trotzdem angemeldet (Aktionen laufen dann über offlineAktion). */
+const HANDY = new Set(['ios', 'android']);
 
 interface Verbindung {
   eintrag: GeraetEintrag;
@@ -91,6 +99,28 @@ export class GeraeteGateway {
     this.gemeldeteEnden = new Map(); // v1490
     this.vorhaben = new VorhabenFreigaben(() => this.deps.now?.() ?? Date.now(), this.deps.vorhabenDatei ? vorhabenDateiSpeicher(this.deps.vorhabenDatei) : undefined); // v1240
     this.transfers = new Transfers(this.deps.transferOrdner ?? path.join(os.tmpdir(), 'alfred-transfers'), () => this.deps.now?.() ?? Date.now()); // v1249
+  }
+
+  /** v1520 — Einträge der Handys, deren Werkzeug ohne Verbindung angemeldet ist */
+  private ohneVerbindung = new Map<string, GeraetEintrag>();
+  private widerrufen = new Set<string>();
+
+  /**
+   * v1520 — Werkzeuge der Handys mit Aktionen anmelden, auch wenn sie gerade nicht verbunden sind (nach dem Serverstart
+   * kämen sie sonst erst mit dem nächsten Öffnen der App). Nur mit offlineAktion — ohne Weg ohne Verbindung wäre das Werkzeug leer.
+   */
+  async handyWerkzeugeAnmelden(): Promise<number> {
+    const owner = this.deps.ownerUserId();
+    if (!owner || !this.deps.offlineAktion) return 0;
+    let n = 0;
+    for (const e of await this.deps.repo.liste(owner)) {
+      if (e.status !== 'aktiv' || !HANDY.has(e.plattform) || e.manifest.aktionen.length === 0 || this.verbindungen.has(e.id)) continue;
+      this.ohneVerbindung.set(e.id, e);
+      this.registriereSkill({ eintrag: e, ws: undefined as unknown as WebSocket, skillName: geraetSkillName(e.name), zuletztPuls: 0, verbundenSeit: '', offen: new Map() });
+      n++;
+    }
+    if (n) this.deps.logger.info({ handys: n }, 'v1520 Handy-Werkzeuge ohne Verbindung angemeldet');
+    return n;
   }
 
   start(): void {
@@ -188,6 +218,10 @@ export class GeraeteGateway {
     const userId = this.deps.ownerUserId();
     if (!userId) return false;
     const ok = await this.deps.repo.widerrufe(userId, id);
+    // v1520 — ein widerrufenes Handy behält kein Werkzeug ohne Verbindung
+    if (ok) this.widerrufen.add(id);
+    const off = this.ohneVerbindung.get(id);
+    if (off) { this.ohneVerbindung.delete(id); const n = geraetSkillName(off.name); if (this.deps.skillRegistry.has(n) && !this.verbindungen.has(id)) this.deps.skillRegistry.unregister(n); }
     const v = this.verbindungen.get(id);
     if (v) { this.sende(v.ws, { typ: 'abgemeldet', grund: 'Token widerrufen' }); try { v.ws.close(4001, 'widerrufen'); } catch { /* */ } }
     return ok;
@@ -235,6 +269,7 @@ export class GeraeteGateway {
     const skillName = geraetSkillName(eintrag.name);
     const verbindung: Verbindung = { eintrag: { ...eintrag, manifest: gepr.manifest }, ws, skillName, zuletztPuls: Date.now(), verbundenSeit: new Date().toISOString(), offen: new Map() };
     this.verbindungen.set(eintrag.id, verbindung);
+    this.ohneVerbindung.delete(eintrag.id); // v1520
     await this.deps.repo.setzeZuletztGesehen(eintrag.id, gepr.manifest).catch(() => undefined);
     this.registriereSkill(verbindung);
     this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName, releaseKey: this.deps.releaseKey?.() }); // v1258
@@ -289,7 +324,10 @@ export class GeraeteGateway {
     if (this.verbindungen.get(v.eintrag.id) === v) this.verbindungen.delete(v.eintrag.id);
     for (const [id, o] of v.offen) { clearTimeout(o.timer); o.resolve({ typ: 'aktion_ergebnis', id, zeit: new Date().toISOString(), version: 1, success: false, error: `Gerät getrennt (${grund})`, dauerMs: 0 }); }
     v.offen.clear();
-    if (this.deps.skillRegistry.has(v.skillName) && !this.verbindungen.has(v.eintrag.id)) this.deps.skillRegistry.unregister(v.skillName);
+    // v1520 — Handy mit Aktionen: Werkzeug bleibt (App im Hintergrund ist sein Normalzustand), Aktionen gehen dann über offlineAktion
+    const bleibt = HANDY.has(v.eintrag.plattform) && v.eintrag.manifest.aktionen.length > 0 && !!this.deps.offlineAktion && !this.widerrufen.has(v.eintrag.id);
+    if (bleibt) this.ohneVerbindung.set(v.eintrag.id, v.eintrag);
+    else if (this.deps.skillRegistry.has(v.skillName) && !this.verbindungen.has(v.eintrag.id)) this.deps.skillRegistry.unregister(v.skillName);
     try { v.ws.close(); } catch { /* */ }
     this.deps.logger.info({ geraetId: v.eintrag.id, name: v.eintrag.name, grund }, 'v1224 Gerät getrennt');
   }
@@ -354,7 +392,11 @@ export class GeraeteGateway {
 
   sendeAktion(geraetId: string, aktion: string, params: Record<string, unknown>, timeoutMs = AKTION_TIMEOUT_MS): Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }> {
     const v = this.verbindungen.get(geraetId);
-    if (!v) return Promise.resolve({ success: false, error: 'Gerät nicht verbunden', dauerMs: 0 });
+    if (!v) {
+      const e = this.ohneVerbindung.get(geraetId);
+      const ersatz = e ? this.deps.offlineAktion?.(e, aktion, params) : undefined;
+      return ersatz ?? Promise.resolve({ success: false, error: e ? `${e.name} ist gerade nicht verbunden (App im Hintergrund) — diese Aktion geht nur mit offener App` : 'Gerät nicht verbunden', dauerMs: 0 });
+    }
     const id = randomUUID();
     const start = Date.now();
     return new Promise((resolve) => {

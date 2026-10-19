@@ -45,6 +45,18 @@ describe('deuteGeraete', () => {
   });
 });
 
+describe('deuteGeraete — Handy (v1520)', () => {
+  it('in der App: Netz, Audio, Fokus, Akku nur Anzeige, Modell und System in der Systemzeile', () => {
+    const d = deuteGeraete({ jetzt: JETZT, geraete: [
+      { name: 'iPhone', plattform: 'ios', online: true, sinneZeit: iso(0.5), sinne: { leerlaufSek: 0, netz: 'mobil+vpn', audio: 'kopfhoerer', fokus: true, akkuProzent: 9, akkuLaedt: false, modell: 'iPhone 17 Pro Max', system: 'iOS 26.1', laufwerke: [{ name: 'Speicher', gesamtGb: 256, freiGb: 80 }] } },
+    ] })!;
+    expect(d.zeilen[0]).toBe('iPhone (ios): in der App, Mobilfunk + VPN, Kopfhörer, Fokus an, Akku 9 %');
+    expect(d.zeilen[1]).toBe('↳ iPhone System: iPhone 17 Pro Max · iOS 26.1 · Speicher 80 GB frei von 256');
+    expect(d.auffaellig).toEqual([]);
+    expect(d.aktiv).toEqual({ name: 'iPhone', leerlaufSek: 0 });
+  });
+});
+
 describe('entscheideZustellung — Owner am Gerät', () => {
   const basis = { urgency: 'normal' as const, chatAktiv: false, imRuhefenster: false, profilErlaubt: false, profilText: 'Profil: QUIET', now: JETZT.getTime() };
   it('liefert, wenn der Owner gerade am Gerät ist — nicht im Ruhefenster, nicht bei niedriger Dringlichkeit', () => {
