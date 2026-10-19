@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Herkunft der Kosten: Projektleitung als Hintergrund (v1511)
+
+Durchsicht „Sonstiges“ 19.10.: Zwei Opus-Aufrufe (0,04 $) nach Etappenenden des Finanz-Backends (11:39 und 12:06 UTC) liefen ohne Zweck. Die Projektleitung (Plan erstellen, Etappe bewerten, Ereignisse der Geräte) verbucht jetzt als `hintergrund:projekte`, auf jedem Weg (Auftragsende, Freigabe, Fortsetzen).
+
+Verbleibend unter „Sonstiges“: Embedding-Aufrufe (19.10.: 55 Aufrufe, zusammen 0,0004 $), zum Teil die einmalige Nachberechnung beim Start.
+
 ### Added — App: Antwort-Menü mit Bewertung und Stufen-Anzeige (v1510, App 1.50.0, App-Spec §11.3 D6a/D6b)
 
 Owner-Freigabe 19.10. (D6c „Nur vorschlagen“ entfällt).

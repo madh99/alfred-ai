@@ -13,7 +13,7 @@ import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
-import { aktuellerKostenZweck } from './kosten-zweck.js'; // v1506 D5
+import { aktuellerKostenZweck, mitKostenZweck } from './kosten-zweck.js'; // v1506 D5, v1511
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
@@ -13942,7 +13942,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
           // v1382 (R1) — Claude-Code-Auftrag beendet: Meldung ohne Modell in die Sitzung des Starts, Owner-Chat als Kopie.
           // Die Ausgabe von Claude Code steht nur als gekennzeichneter Datenblock darin und geht an kein Modell.
-          beiEreignis: async ({ geraet, ereignis, herkunft }) => {
+          // v1511 — Kostenherkunft: die Projektleitung nach einem Auftragsende (Abnahme, nächste Etappe; starke Stufe) lief ohne
+          // Zweck und landete unter „sonstiges“ (live 19.10. 11:39/12:06 UTC) → hintergrund:projekte
+          beiEreignis: ({ geraet, ereignis, herkunft }) => mitKostenZweck('hintergrund:projekte', async () => {
             if (ereignis.art !== 'auftrag') return;
             // v1506 D5 — Kosten des Claude-Code-Laufs auf dem Gerät (nicht in llm_usage) mit Herkunft „claude-code“
             // v1508 — als Agent claude-code, Modell = Gerät (Kosten je Gerät im Kontomenü)
@@ -13957,7 +13959,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const text = auftragMeldung(geraet, ereignis);
             const zugestellt = await this.meldeOhneModell(text, herkunft);
             this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status, dauerS: ereignis.dauerS, kosten: ereignis.kosten, dateien: ereignis.dateienAnzahl ?? 0, herkunft: herkunft?.chatId, zugestellt }, 'v1382 Auftragsende gemeldet');
-          },
+          }),
           // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
           // durch die Pipeline (wie geplante Aufgaben), Antwort und Screenshots zurück in den Owner-Chat.
           nachFreigabe: async (v) => {
@@ -16588,7 +16590,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const projektFaden = (akteId?: string): string | undefined => (akteId && /^[0-9a-f]{8}/.test(akteId) ? `projekt-${akteId.slice(0, 8)}` : undefined);
     const projekte = new SatellitProjekte({
       // v1398 — Weiterarbeit: Bestand als Daten an das Ziel, frühere Läufe und Commits über die vorhandenen Blöcke des Planers
-      planen: async (ziel, k) => (await createProjectPlan(k?.bestand ? `${ziel}\n\n${k.bestand}` : ziel, this.llmProvider, k?.vorherige, k?.commits)).phases,
+      // v1511 — Kostenherkunft der Projektleitung (Plan, Abnahme) auf jedem Weg: hintergrund:projekte
+      planen: async (ziel, k) => (await mitKostenZweck('hintergrund:projekte', () => createProjectPlan(k?.bestand ? `${ziel}\n\n${k.bestand}` : ziel, this.llmProvider, k?.vorherige, k?.commits))).phases,
       // v1399 — jeder Lauf ist eine Projekt-Sitzung (Typ geraet): angelegt mit der Freigabe, zusammengefasst beim Ende
       akte: {
         zuordnen: async (s) => {
@@ -16607,7 +16610,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         },
         beruehren: async (s) => { if (!aktenRepo || !s.akteId) return; await aktenRepo.sitzung(s.akteId, s, s.start, Date.now()).catch(() => undefined); await this.projectRepo?.touch(s.akteId).catch(() => undefined); },
       },
-      bewerten: async (i) => assessPlanProgress(this.llmProvider, i) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
+      bewerten: async (i) => mitKostenZweck('hintergrund:projekte', () => assessPlanProgress(this.llmProvider, i)) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
       anwenden: (rest, n, m) => applyMutation(rest, n, m as never).newRemaining,
       aktion: (geraetId, aktion, params, timeoutMs) => gw.sendeAktion(geraetId, aktion, params, timeoutMs),
       frage: async (s, text, nonce) => {
