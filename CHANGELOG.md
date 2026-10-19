@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Code-Agenten nicht im API-Tagesbudget (App 1.49.1)
+
+Owner 19.10.: Claude Code, Codex und Mistral Vibe laufen über ihre eigenen CLIs, nicht über die API. Sie zählen weiter zu Heute, Woche und Monat, aber nicht zum Tagesbudget.
+
+- **Tagesbudget:** Der Balken heißt jetzt „API-Tagesbudget“ und rechnet nur die API-Kosten des Tages. Vorher zählte er die Code-Agenten mit (19.10.: 87,94 statt 2,19 $ von 10 $).
+- **Aufteilung:** Unter den Summen steht „Heute: API … · Code-Agenten …“.
+- **Herkunft:** „API heute nach Herkunft“ zeigt nur API-Herkünfte. Die Agenten stehen in ihrem eigenen Block „Code-Agenten (CLI, nicht im API-Budget)“.
+- Der Kostenwächter des Servers (v1205) rechnete schon bisher nur mit den API-Kosten.
+
 ### Added — Kontomenü: „läuft gerade“ je Gerät, Claude-Code-Kosten für Oktober nachgetragen (v1509, App 1.49.0)
 
 Owner 19.10. (Screenshot Ubuntu-VM, „hier läuft gerade ein Claude-Code-Projekt“): Das Gerät zeigte 0,00 $, weil Claude Code seine Kosten erst am Ende eines Laufs meldet und die Erfassung erst seit v1506 läuft.

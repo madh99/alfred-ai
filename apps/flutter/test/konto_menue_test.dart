@@ -6,7 +6,7 @@ import 'package:alfred_app/konto_menue.dart';
 /// 1.48.0 (v1508) — Code-Agenten getrennt, Geräte aufklappbar.
 void main() {
   final antwort = <String, dynamic>{
-    'heute': 5.6, 'woche': 20.25, 'monat': 55, 'tagesbudgetUsd': 4,
+    'heute': 5.6, 'woche': 20.25, 'monat': 55, 'tagesbudgetUsd': 4, 'llm': {'heute': 2.1, 'woche': 16.75, 'monat': 49.5},
     'agenten': [
       {'agent': 'claude-code', 'heute': 3, 'woche': 3, 'monat': 5},
       {'agent': 'codex', 'heute': 0.5, 'woche': 0.5, 'monat': 0.5},
@@ -50,9 +50,14 @@ void main() {
     await t.pumpWidget(menue(gerufen));
     expect(find.text('20,25 \$'), findsOneWidget);
     expect(find.text('55,00 \$'), findsOneWidget);
-    expect(find.text('Tagesbudget: 5,60 \$ von 4,00 \$'), findsOneWidget);
+    // 1.49.1 — nur API-Kosten im Budget (2,10 von 4,00), Agenten getrennt ausgewiesen
+    expect(find.text('API-Tagesbudget: 2,10 \$ von 4,00 \$'), findsOneWidget);
+    expect(find.text('Heute: API 2,10 \$ · Code-Agenten 3,50 \$'), findsOneWidget);
+    expect(find.text('API heute nach Herkunft'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('konto-agent-codex')), matching: find.text('Codex')), findsOneWidget);
+    expect(find.text('Codex'), findsOneWidget); // nicht zusätzlich unter der API-Herkunft
     final balken = t.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator));
-    expect(balken.value, 1.0);
+    expect(balken.value, closeTo(0.525, 0.001));
     expect(balken.color, Theme.of(t.element(find.byType(KontoMenue))).colorScheme.primary); // keine Warnfarbe
     expect(find.byKey(const Key('konto-agent-claude-code')), findsOneWidget);
     expect(find.byKey(const Key('konto-agent-codex')), findsOneWidget);

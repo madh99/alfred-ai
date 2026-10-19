@@ -3,13 +3,17 @@
 /// keine Warnfarbe); kein Guthaben. Dazu Geräte, Einstellungen, Hilfe, Versionen und Update.
 /// 1.48.0 (v1508) — Code-Agenten getrennt (Claude Code, Codex, Mistral Vibe); Geräte je Eintrag aufklappbar mit Details.
 /// 1.49.0 (v1509) — „Läuft gerade“ je Gerät: Projekt mit Etappe, Beginn und Kosten bisher; einzelne Claude-Code-Aufträge.
+/// 1.49.1 — Owner 19.10.: Code-Agenten laufen über ihre CLIs, nicht über die API. Sie zählen zu Heute/Woche/Monat, aber
+/// nicht zum Tagesbudget; „Heute nach Herkunft“ zeigt nur API-Kosten, die Agenten stehen in ihrem eigenen Block.
 library;
 
 import 'package:flutter/material.dart';
 
 class KontoKosten {
-  const KontoKosten({required this.heute, required this.woche, required this.monat, this.agenten = const [], this.tagesbudget, this.herkunftHeute = const [], this.hintergrundMonat = const [], this.teuerstesModell, this.teuerstesModellKosten});
+  const KontoKosten({required this.heute, required this.woche, required this.monat, this.apiHeute, this.agenten = const [], this.tagesbudget, this.herkunftHeute = const [], this.hintergrundMonat = const [], this.teuerstesModell, this.teuerstesModellKosten});
   final double heute, woche, monat;
+  /// API-Kosten heute (ohne Code-Agenten) — Grundlage des Tagesbudgets; null bei älterem Server
+  final double? apiHeute;
   /// (Agent, heute, Monat)
   final List<(String, double, double)> agenten;
   final double? tagesbudget;
@@ -25,6 +29,7 @@ class KontoKosten {
     final tm = k['teuerstesModell'] as Map<String, dynamic>?;
     return KontoKosten(
       heute: _z(k['heute']), woche: _z(k['woche']), monat: _z(k['monat']),
+      apiHeute: (k['llm'] as Map<String, dynamic>?)?['heute'] is num ? ((k['llm'] as Map<String, dynamic>)['heute'] as num).toDouble() : null,
       agenten: [for (final a in (k['agenten'] as List? ?? const [])) ('${(a as Map)['agent']}', _z(a['heute']), _z(a['monat']))],
       tagesbudget: k['tagesbudgetUsd'] is num ? (k['tagesbudgetUsd'] as num).toDouble() : null,
       herkunftHeute: [for (final h in (k['herkunftHeute'] as List? ?? const [])) ('${(h as Map)['herkunft']}', _z(h['kosten']))],
@@ -147,19 +152,21 @@ class KontoMenue extends StatelessWidget {
             Text(kostenText(v), key: Key('konto-$n'), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
           ])),
         ])),
+        if (k.apiHeute != null) Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Text('Heute: API ${kostenText(k.apiHeute!)} · Code-Agenten ${kostenText((k.heute - k.apiHeute!).clamp(0, double.infinity).toDouble())}', key: const Key('konto-aufteilung'), style: klein)),
+        // nur API-Kosten zählen zum Tagesbudget (Code-Agenten laufen über ihre CLIs)
         if (k.tagesbudget != null) Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Tagesbudget: ${kostenText(k.heute)} von ${kostenText(k.tagesbudget!)}', key: const Key('konto-budget'), style: klein),
+          Text('API-Tagesbudget: ${kostenText(k.apiHeute ?? k.heute)} von ${kostenText(k.tagesbudget!)}', key: const Key('konto-budget'), style: klein),
           const SizedBox(height: 4),
           // nur Anzeige: gleiche Farbe auch über dem Budget (keine Grenze, keine Warnung)
-          ClipRRect(borderRadius: BorderRadius.circular(2), child: LinearProgressIndicator(value: (k.heute / k.tagesbudget!).clamp(0.0, 1.0), minHeight: 4, color: cs.primary, backgroundColor: cs.surfaceContainerHighest)),
+          ClipRRect(borderRadius: BorderRadius.circular(2), child: LinearProgressIndicator(value: ((k.apiHeute ?? k.heute) / k.tagesbudget!).clamp(0.0, 1.0), minHeight: 4, color: cs.primary, backgroundColor: cs.surfaceContainerHighest)),
         ])),
-        if (k.herkunftHeute.isNotEmpty) ...[
-          Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 2), child: Text('Heute nach Herkunft', style: klein)),
-          for (final (h, v) in k.herkunftHeute) zeile(herkunftName(h), kostenText(v)),
+        if (k.herkunftHeute.any((h) => !h.$1.startsWith('agent:'))) ...[
+          Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 2), child: Text('API heute nach Herkunft', style: klein)),
+          for (final (h, v) in k.herkunftHeute.where((h) => !h.$1.startsWith('agent:'))) zeile(herkunftName(h), kostenText(v)),
         ],
         if (k.agenten.isNotEmpty) ...[
           Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 2), child: Row(children: [
-            Expanded(child: Text('Code-Agenten', style: klein)), SizedBox(width: 70, child: Text('heute', textAlign: TextAlign.right, style: klein)), SizedBox(width: 70, child: Text('Monat', textAlign: TextAlign.right, style: klein)),
+            Expanded(child: Text('Code-Agenten (CLI, nicht im API-Budget)', style: klein)), SizedBox(width: 70, child: Text('heute', textAlign: TextAlign.right, style: klein)), SizedBox(width: 70, child: Text('Monat', textAlign: TextAlign.right, style: klein)),
           ])),
           for (final (a, h, m) in k.agenten) Padding(key: Key('konto-agent-$a'), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), child: Row(children: [
             Expanded(child: Text(agentName(a), style: theme.textTheme.bodySmall)),
