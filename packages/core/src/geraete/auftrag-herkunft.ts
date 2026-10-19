@@ -38,6 +38,16 @@ export class AuftragHerkunft {
     return { chatId: e.chatId, platform: e.platform, userId: e.userId, ...(e.frage ? { frage: e.frage } : {}) };
   }
 
+  /** v1509 — noch nicht beendete Aufträge eines Geräts (Kontomenü „läuft gerade“), jüngster zuerst, höchstens [maxAlterMs] alt
+   *  (ein Ende, das nie gemeldet wurde, soll nicht tagelang als laufend erscheinen). */
+  laufend(geraetId: string, maxAlterMs = 12 * 3_600_000): Array<{ auftragId: string; seit: number; frage?: string }> {
+    const grenze = this.now() - maxAlterMs;
+    return [...this.eintraege.entries()]
+      .filter(([k, e]) => k.startsWith(`${geraetId}:`) && e.seit >= grenze)
+      .map(([k, e]) => ({ auftragId: k.slice(geraetId.length + 1), seit: e.seit, ...(e.frage ? { frage: e.frage.name } : {}) }))
+      .sort((a, b) => b.seit - a.seit);
+  }
+
   private sichere(): void {
     if (!this.datei) return;
     try { mkdirSync(dirname(this.datei), { recursive: true }); writeFileSync(this.datei, JSON.stringify(Object.fromEntries(this.eintraege)), { mode: 0o600 }); } catch { /* Ablage optional */ }

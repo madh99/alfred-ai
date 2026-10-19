@@ -14149,6 +14149,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, gekoppelt: g.erstellt,
               rechte: g.scopes ?? [], aktionen: (g.manifest?.aktionen ?? []).length, sinne: g.manifest?.sinne ?? [],
               claudeCodeMonat: kosten.geraeteMonat[g.name] ?? 0,
+              laeuft: this.kontoLaeuft(gw, g.id),
             })).sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
             return { kosten, geraete };
           },
@@ -15853,6 +15854,26 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * merken (Projektansicht App/Web) und an die Owner-Geräte als „arbeit" (Projekt) weiterreichen — die App zeigt ihn in der
    * Leiste „Alfred arbeitet". Nur App/Web (Owner-Entscheidung), nichts im Gespräch gespeichert.
    */
+  /** v1509 — was auf einem Gerät gerade läuft (Kontomenü, Owner 19.10.): Satelliten-Projekte mit Etappe und Kosten bisher,
+   *  dazu einzelne Claude-Code-Aufträge, die keinem Projekt gehören. Kosten eines Laufs kommen erst mit seinem Ende. */
+  private kontoLaeuft(gw: { laufendeAuftraege(id: string): Array<{ auftragId: string; seit: number; frage?: string }> }, geraetId: string): Array<Record<string, unknown>> {
+    const projekte = (this.satellitProjekte?.liste() ?? []).filter(s => s.geraetId === geraetId && s.status === 'laeuft');
+    const projektAuftraege = new Set(projekte.map(s => s.auftragId).filter(Boolean));
+    const live = (id: string) => this.projektLiveStand.get(id);
+    return [
+      ...projekte.map(s => ({
+        art: 'projekt', titel: s.akteName ?? s.projekt, ...(s.akteId ? { akteId: s.akteId } : {}),
+        etappe: s.nr, etappen: s.plan.length, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}),
+        ...(s.etappeStart ? { seit: new Date(s.etappeStart).toISOString() } : {}),
+        kostenBisher: Math.round(s.kostenUsd * 100) / 100,
+        ...(live(s.id)?.schritte?.length ? { schritt: String(live(s.id)!.schritte.at(-1)).slice(0, 120) } : {}),
+      })),
+      ...gw.laufendeAuftraege(geraetId).filter(a => !projektAuftraege.has(a.auftragId)).map(a => ({
+        art: a.frage ? 'frage' : 'auftrag', titel: a.frage ?? 'Claude-Code-Auftrag', seit: new Date(a.seit).toISOString(),
+      })),
+    ];
+  }
+
   private projektLive(f: { geraetId: string; geraet: string; auftragId: string; schritte: string[]; werkzeuge: number }): void {
     const s = this.satellitProjekte?.liste().find(x => x.auftragId === f.auftragId && x.status === 'laeuft');
     if (!s) return;

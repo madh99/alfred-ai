@@ -206,6 +206,7 @@ extension _Oberflaeche on _SitzungState {
           aufKuerzel: () => schliessenUnd(_kuerzelZeigen),
           updateText: update != null ? 'Update ${update!.version} installieren' : 'Nach Update suchen',
           aufUpdate: () => schliessenUnd(() { if (update != null) { _updateInstallieren(); } else { _updatePruefen(); } }),
+          aufProjekt: (id) => schliessenUnd(() => _neu(() { projekteAnfang = id; ansicht = Ansicht.projekte; })), // 1.49.0
         )))))),
     );
   }

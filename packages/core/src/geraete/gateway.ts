@@ -340,6 +340,8 @@ export class GeraeteGateway {
 
   /** v1404 — Herkunft eines vom Gehirn direkt gestarteten Auftrags (Frage zum Projekt): die Ende-Meldung geht in die fragende Sitzung. */
   merkeAuftragHerkunft(geraetId: string, auftragId: string, h: import('./auftrag-herkunft.js').Herkunft): void { this.auftraege.merke(geraetId, auftragId, h); }
+  /** v1509 — laufende Claude-Code-Aufträge eines Geräts (Kontomenü). */
+  laufendeAuftraege(geraetId: string): Array<{ auftragId: string; seit: number; frage?: string }> { return this.auftraege.laufend(geraetId); }
 
   /** v1387 — verbundenes Gerät nach Name (ohne Groß-/Kleinschreibung) oder ID. */
   geraetNachName(name: string): { id: string; name: string; aktionen: string[] } | undefined {

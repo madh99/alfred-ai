@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Kontomenü: „läuft gerade“ je Gerät, Claude-Code-Kosten für Oktober nachgetragen (v1509, App 1.49.0)
+
+Owner 19.10. (Screenshot Ubuntu-VM, „hier läuft gerade ein Claude-Code-Projekt“): Das Gerät zeigte 0,00 $, weil Claude Code seine Kosten erst am Ende eines Laufs meldet und die Erfassung erst seit v1506 läuft.
+
+- **Läuft gerade:**
+  - Jedes Gerät zeigt seine laufenden Claude-Code-Läufe, zugeklappt als „Claude Code läuft“.
+  - Ein Satelliten-Projekt erscheint mit Etappe, Beginn, letztem Schritt und Projektkosten bisher, mit dem Hinweis, dass die laufende Etappe am Ende verbucht wird. Ein Klick öffnet das Projekt.
+  - Einzelne Aufträge und Fragen zum Projekt erscheinen mit Beginn; noch nicht beendete Aufträge höchstens zwölf Stunden lang.
+- **Nachtrag Oktober:**
+  - Neues Skript `scripts/nachtrag-agent-kosten.mjs` (Probelauf als Standard, `--schreiben` bucht).
+  - Es bucht die Kosten aus den Projektdateien (je Etappe) und aus den Logzeilen einzelner Aufträge als `agent:claude-code` mit Gerät. Das Datum ist das Ende des letzten Auftrags der Etappe laut Log.
+  - Gebucht wird nur, was vor dem Start der Erfassung (v1506) endete. Ein zweiter Lauf für denselben Monat bricht ab (Tabelle `nachtraege`).
+  - Ausgeführt am 19.10.: 166 Buchungen, 371,89 $ (Ubuntu-VM 370,76 $, PC-madh 0,92 $, Office-VM 0,21 $).
+  - Gegenprobe: 125 von 126 Etappen nachgetragen. Die übrige (10,49 $) endete nach dem Erfassungsbeginn und war schon live gebucht.
+
 ### Changed — Kontomenü: Code-Agenten getrennt, Geräte aufklappbar (v1508, App 1.48.0)
 
 Owner 19.10.: Die Zeile „Claude Code“ trennen in Claude Code, Codex und Mistral, unter den Geräten Details je Gerät.

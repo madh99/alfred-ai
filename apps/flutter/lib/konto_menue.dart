@@ -2,6 +2,7 @@
 /// Kosten heute/Woche/Monat mit Herkunft, teuerstem Modell und Code-Agenten; Tagesbudget nur als Anzeige (keine Grenze,
 /// keine Warnfarbe); kein Guthaben. Dazu Geräte, Einstellungen, Hilfe, Versionen und Update.
 /// 1.48.0 (v1508) — Code-Agenten getrennt (Claude Code, Codex, Mistral Vibe); Geräte je Eintrag aufklappbar mit Details.
+/// 1.49.0 (v1509) — „Läuft gerade“ je Gerät: Projekt mit Etappe, Beginn und Kosten bisher; einzelne Claude-Code-Aufträge.
 library;
 
 import 'package:flutter/material.dart';
@@ -33,9 +34,36 @@ class KontoKosten {
   }
 }
 
+/// v1509 — ein laufender Claude-Code-Lauf auf einem Gerät (Projekt-Etappe, Auftrag oder Frage zum Projekt).
+class KontoLauf {
+  const KontoLauf({required this.art, required this.titel, this.akteId, this.etappe, this.etappen, this.fix, this.seit, this.kostenBisher, this.schritt});
+  final String art, titel;
+  final String? akteId, schritt;
+  final int? etappe, etappen, fix;
+  final DateTime? seit;
+  final double? kostenBisher;
+
+  static KontoLauf aus(Map<String, dynamic> l) => KontoLauf(
+    art: '${l['art'] ?? 'auftrag'}', titel: '${l['titel'] ?? 'Claude-Code-Auftrag'}', akteId: l['akteId'] as String?,
+    etappe: (l['etappe'] as num?)?.toInt(), etappen: (l['etappen'] as num?)?.toInt(), fix: (l['fix'] as num?)?.toInt(),
+    seit: l['seit'] is String ? DateTime.tryParse(l['seit'] as String)?.toLocal() : null,
+    kostenBisher: l['kostenBisher'] is num ? (l['kostenBisher'] as num).toDouble() : null, schritt: l['schritt'] as String?,
+  );
+
+  /// „Projekt Finanz-Backend · Etappe 6/8 seit 12:51“
+  String get zeile {
+    final uhr = seit == null ? '' : ' seit ${seit!.hour.toString().padLeft(2, '0')}:${seit!.minute.toString().padLeft(2, '0')}';
+    return switch (art) {
+      'projekt' => 'Projekt $titel · Etappe ${etappe ?? '?'}/${etappen ?? '?'}${fix != null ? ' (Fix $fix)' : ''}$uhr',
+      'frage' => 'Frage zum Projekt $titel$uhr',
+      _ => '$titel$uhr',
+    };
+  }
+}
+
 /// Gekoppeltes Gerät mit Details (v1508, `geraete` aus `/api/geraete/konto`).
 class KontoGeraet {
-  const KontoGeraet({required this.name, required this.plattform, required this.online, this.hostname, this.satellitVersion, this.verbundenSeit, this.zuletztGesehen, this.gekoppelt, this.rechte = const [], this.aktionen = 0, this.sinne = const [], this.claudeCodeMonat = 0});
+  const KontoGeraet({required this.name, required this.plattform, required this.online, this.hostname, this.satellitVersion, this.verbundenSeit, this.zuletztGesehen, this.gekoppelt, this.rechte = const [], this.aktionen = 0, this.sinne = const [], this.claudeCodeMonat = 0, this.laeuft = const []});
   final String name, plattform;
   final bool online;
   final String? hostname, satellitVersion;
@@ -43,6 +71,7 @@ class KontoGeraet {
   final List<String> rechte, sinne;
   final int aktionen;
   final double claudeCodeMonat;
+  final List<KontoLauf> laeuft;
 
   static KontoGeraet aus(Map<String, dynamic> g) {
     DateTime? zeit(Object? v) => v is String ? DateTime.tryParse(v)?.toLocal() : null;
@@ -52,6 +81,7 @@ class KontoGeraet {
       verbundenSeit: zeit(g['verbundenSeit']), zuletztGesehen: zeit(g['zuletztGesehen']), gekoppelt: zeit(g['gekoppelt']),
       rechte: [for (final r in (g['rechte'] as List? ?? const [])) '$r'], sinne: [for (final s in (g['sinne'] as List? ?? const [])) '$s'],
       aktionen: (g['aktionen'] as num?)?.toInt() ?? 0, claudeCodeMonat: KontoKosten._z(g['claudeCodeMonat']),
+      laeuft: [for (final l in (g['laeuft'] as List? ?? const [])) KontoLauf.aus(l as Map<String, dynamic>)],
     );
   }
 }
@@ -73,7 +103,7 @@ String _zeitText(DateTime? t) {
 const _plattformNamen = {'windows': 'Windows', 'macos': 'macOS', 'linux': 'Linux'};
 
 class KontoMenue extends StatelessWidget {
-  const KontoMenue({super.key, required this.geraet, required this.verbunden, required this.versionen, this.kosten, this.fehler, this.geraete = const [], required this.aufEinstellungen, required this.aufBefehle, required this.aufKuerzel, required this.updateText, required this.aufUpdate});
+  const KontoMenue({super.key, required this.geraet, required this.verbunden, required this.versionen, this.kosten, this.fehler, this.geraete = const [], required this.aufEinstellungen, required this.aufBefehle, required this.aufKuerzel, required this.updateText, required this.aufUpdate, this.aufProjekt});
   final String geraet;
   final bool verbunden;
   /// z. B. „App 1.48.0 · Satellit … · Alfred …“
@@ -83,6 +113,8 @@ class KontoMenue extends StatelessWidget {
   final List<KontoGeraet> geraete;
   final VoidCallback aufEinstellungen, aufBefehle, aufKuerzel, aufUpdate;
   final String updateText;
+  /// v1509 — Klick auf ein laufendes Projekt: Projektansicht (Kennung der Akte, falls bekannt)
+  final void Function(String? akteId)? aufProjekt;
 
   @override
   Widget build(BuildContext context) {
@@ -167,9 +199,23 @@ class KontoMenue extends StatelessWidget {
       tilePadding: const EdgeInsets.symmetric(horizontal: 16), childrenPadding: const EdgeInsets.fromLTRB(34, 0, 16, 8),
       leading: Icon(Icons.circle, size: 9, color: g.online ? Colors.green : cs.outline),
       title: Text(g.name, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${_plattformNamen[g.plattform] ?? g.plattform} · ${g.online ? 'verbunden' : 'offline'}', style: klein),
+      subtitle: Text('${_plattformNamen[g.plattform] ?? g.plattform} · ${g.online ? 'verbunden' : 'offline'}${g.laeuft.isEmpty ? '' : ' · ${g.laeuft.length == 1 ? 'Claude Code läuft' : '${g.laeuft.length} Läufe'}'}', style: klein),
       expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // v1509 — laufende Claude-Code-Läufe zuerst (Kosten eines Laufs kommen erst mit seinem Ende)
+        for (final l in g.laeuft) Padding(padding: const EdgeInsets.only(bottom: 6), child: Material(color: cs.secondaryContainer.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(8), child: InkWell(
+          key: Key('konto-lauf-${g.name}-${l.titel}'), borderRadius: BorderRadius.circular(8),
+          onTap: l.art == 'auftrag' || aufProjekt == null ? null : () => aufProjekt!(l.akteId),
+          child: Padding(padding: const EdgeInsets.fromLTRB(8, 6, 8, 6), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(padding: const EdgeInsets.only(top: 2), child: SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.6, color: cs.primary))),
+            const SizedBox(width: 8),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(l.zeile, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+              if (l.schritt != null) Text(l.schritt!, maxLines: 1, overflow: TextOverflow.ellipsis, style: klein),
+              if (l.kostenBisher != null) Text('Projekt bisher ${kostenText(l.kostenBisher!)} · laufende Etappe wird am Ende verbucht', style: klein),
+            ])),
+          ])),
+        ))),
         if (g.hostname != null) detail('Hostname', g.hostname!),
         if (g.satellitVersion != null) detail('Satellit', g.satellitVersion!),
         g.online ? detail('Verbunden seit', _zeitText(g.verbundenSeit)) : detail('Zuletzt gesehen', _zeitText(g.zuletztGesehen)),

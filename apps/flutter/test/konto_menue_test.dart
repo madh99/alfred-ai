@@ -85,6 +85,25 @@ void main() {
     expect(find.text('Zuletzt gesehen'), findsOneWidget);
   });
 
+  testWidgets('v1509 läuft gerade: Projekt mit Etappe und Kosten bisher, Klick öffnet die Projektansicht', (t) async {
+    t.view.physicalSize = const Size(900, 1600); t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final vm = KontoGeraet.aus({'name': 'Ubuntu-VM', 'plattform': 'linux', 'online': true, 'laeuft': [
+      {'art': 'projekt', 'titel': 'Finanz-Backend', 'akteId': 'akte-1', 'etappe': 7, 'etappen': 8, 'seit': DateTime(2026, 10, 19, 13, 39).toUtc().toIso8601String(), 'kostenBisher': 82.4, 'schritt': 'npm test'},
+    ]});
+    String? geoeffnet;
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: KontoMenue(geraet: 'X', verbunden: true, versionen: '', geraete: [vm],
+      aufEinstellungen: () {}, aufBefehle: () {}, aufKuerzel: () {}, updateText: 'Nach Update suchen', aufUpdate: () {}, aufProjekt: (id) => geoeffnet = id))));
+    expect(find.text('Linux · verbunden · Claude Code läuft'), findsOneWidget);
+    await t.tap(find.byKey(const Key('konto-geraet-Ubuntu-VM')));
+    await t.pump(); await t.pump(const Duration(milliseconds: 400)); // Aufklappen; der Ladekreis dreht endlos (kein pumpAndSettle)
+    expect(find.text('Projekt Finanz-Backend · Etappe 7/8 seit 13:39'), findsOneWidget);
+    expect(find.text('npm test'), findsOneWidget);
+    expect(find.text('Projekt bisher 82,40 \$ · laufende Etappe wird am Ende verbucht'), findsOneWidget);
+    await t.tap(find.text('Projekt Finanz-Backend · Etappe 7/8 seit 13:39'));
+    expect(geoeffnet, 'akte-1');
+  });
+
   testWidgets('ohne Daten: Ladehinweis bzw. Fehlertext, ohne Budget keine Budgetzeile', (t) async {
     Widget leer({String? fehler}) => MaterialApp(home: Scaffold(body: KontoMenue(geraet: 'X', verbunden: false, versionen: '', fehler: fehler,
       aufEinstellungen: () {}, aufBefehle: () {}, aufKuerzel: () {}, updateText: 'Nach Update suchen', aufUpdate: () {})));
