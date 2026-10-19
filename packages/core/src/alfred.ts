@@ -8975,6 +8975,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
             setzen: (faden: string, a: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => this.ownerFadenSetzen(faden, a), // v1497, v1499 projekt
             projekte: () => this.ownerProjekteKurz(), // v1499
+            abzweigen: (quelle: string | null, bis?: string) => this.ownerFadenAbzweigen(quelle, bis), // v1500
             // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
             istOwner: async (webUserId: string) => {
               if (!this.ownerMasterUserId) return false;
@@ -14150,6 +14151,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
           fadenSetzen: async (geraetId: string, faden: string, a: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenSetzen(faden, a) : false, // v1497, v1499 projekt
           fadenProjekte: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerProjekteKurz() : undefined, // v1499
+          fadenAbzweigen: async (geraetId: string, quelle: string | null, bis?: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAbzweigen(quelle, bis) : undefined, // v1500
+          fadenAufgabe: async (geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAufgabe(faden, a) : { ok: false, text: 'nur Geräte des Owners' }, // v1500
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -16307,6 +16310,45 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     await this.conversationRepo.updateLifecycle(c.id, { projectId: projektId });
     this.logger.info({ faden, projekt: projektId }, 'v1499 Faden dem Projekt zugeordnet');
     return true;
+  }
+
+  /**
+   * v1500 (D2) — Faden abzweigen: neuer Owner-Faden mit dem Verlauf bis einschließlich `bis` (ohne: alles), Titel „↳ <Quelle>“,
+   * gleiches Projekt wie die Quelle (Projektfaden → sein Projekt). quelle null = Hauptgespräch.
+   */
+  async ownerFadenAbzweigen(quelle: string | null, bis?: string): Promise<{ faden: string; titel: string; kopiert: number } | undefined> {
+    if (!this.conversationRepo || !this.ownerMasterUserId) return undefined;
+    const { fadenSchluessel, hauptgespraech, FADEN_RE, neuerFadenId, projektDesFadens } = await import('./gespraeche.js');
+    if (quelle !== null && !FADEN_RE.test(quelle)) return undefined;
+    const k = quelle === null ? hauptgespraech(this.gespraechsOptionen()) : fadenSchluessel(quelle);
+    const q = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
+    if (!q || q.deletedAt) return undefined;
+    const faden = neuerFadenId();
+    const ziel = fadenSchluessel(faden);
+    const r = await this.conversationRepo.abzweigen(q.id, ziel.chatId, this.ownerMasterUserId, bis);
+    const alt = quelle === null ? 'Hauptgespräch' : (q.customLabel?.trim() || (await this.ownerFaeden()).find(f => f.faden === quelle)?.titel || 'Gespräch');
+    const titel = `↳ ${alt.replace(/^🔨\s*/, '')}`.slice(0, 80);
+    const projekt = quelle === null ? undefined : projektDesFadens(quelle, q.projectId, await this.ownerProjekteKurz());
+    await this.conversationRepo.updateLifecycle(r.id, { customLabel: titel, ...(projekt ? { projectId: projekt.id } : {}) });
+    this.logger.info({ quelle: quelle ?? 'haupt', faden, bis: bis ?? null, kopiert: r.kopiert, projekt: projekt?.id ?? null }, 'v1500 Faden abgezweigt');
+    return { faden, titel, kopiert: r.kopiert };
+  }
+
+  /**
+   * v1500 (D2) — Geplante Aufgabe aus einem Faden: über den Skill scheduled_task, mit der Chat-Kennung des Fadens; die
+   * Zustellung in den Faden (v1447/v1459) übernimmt der Planer. faden null = Hauptgespräch (Zustellung wie bisher).
+   */
+  async ownerFadenAufgabe(faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }): Promise<{ ok: boolean; text: string }> {
+    const owner = this.ownerMasterUserId;
+    const skill = this.skillRegistry?.get('scheduled_task');
+    if (!owner || !skill) return { ok: false, text: 'Geplante Aufgaben sind nicht verfügbar.' };
+    const { fadenSchluessel, hauptgespraech, FADEN_RE } = await import('./gespraeche.js');
+    if (faden !== null && !FADEN_RE.test(faden)) return { ok: false, text: 'Faden ungültig.' };
+    const k = faden === null ? hauptgespraech(this.gespraechsOptionen()) : fadenSchluessel(faden);
+    const r = await skill.execute({ action: 'create', name: a.name, schedule_type: a.art, schedule_value: a.wert, prompt_template: a.auftrag },
+      { userId: owner, masterUserId: owner, platform: k.platform, chatId: k.chatId, conversationId: '' } as never);
+    this.logger.info({ faden: faden ?? 'haupt', name: a.name, art: a.art, wert: a.wert, ok: r.success }, 'v1500 Geplante Aufgabe aus Faden');
+    return { ok: !!r.success, text: r.success ? (r.display ?? 'Geplant.') : (r.error ?? 'Nicht geplant.') };
   }
 
   async ownerFadenSetzen(faden: string, aenderung: import('./gespraeche.js').FadenAenderung): Promise<boolean> {

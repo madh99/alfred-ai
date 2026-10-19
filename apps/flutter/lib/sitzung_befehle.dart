@@ -21,8 +21,17 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'Einstellungen', icon: Icons.settings_outlined, stichworte: 'optionen', aktion: (_) => zeige(Ansicht.einstellungen)),
       Befehl(titel: 'Neuer Chat', icon: Icons.add_comment_outlined, stichworte: 'faden gesprach neu', aktion: (_) { zeige(Ansicht.chat); _neuerChat(); }),
       Befehl(titel: 'Gespräch: Hauptgespräch', icon: Icons.forum_outlined, stichworte: 'faden', aktion: (_) { zeige(Ansicht.chat); _fadenWechseln(null); }),
-      for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null).take(20))
+      for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null && x['archiviert'] != true)) // 1.43.0 alle aktiven Fäden
         Befehl(titel: 'Gespräch: ${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', untertitel: _fadenZeit('${f['zeit'] ?? ''}'), icon: Icons.chat_bubble_outline, stichworte: 'faden', aktion: (_) { zeige(Ansicht.chat); _fadenWechseln('${f['faden']}'); }),
+      // 1.43.0 D2 — Projekte, Aktionen zum offenen Gespräch, Tastenkürzel
+      for (final p in projekteKurz) Befehl(titel: 'Projekt: ${p['name']}', icon: Icons.folder_outlined, stichworte: 'projekt ordner', aktion: (_) => _neu(() { projekteAnfang = '${p['id']}'; ansicht = Ansicht.projekte; })),
+      Befehl(titel: 'Seiten-Chat ein/aus', untertitel: 'Strg+Alt+S', icon: Icons.vertical_split_outlined, stichworte: 'zwischenfrage nebenbei', aktion: (_) => _seitenChatUmschalten()),
+      Befehl(titel: 'Gespräch abzweigen', untertitel: 'neuer Faden mit dem bisherigen Verlauf', icon: Icons.call_split, stichworte: 'fork kopie verzweigen', aktion: (_) { zeige(Ansicht.chat); _fadenAbzweigen(server?.faden); }),
+      Befehl(titel: 'Geplante Aufgabe aus diesem Gespräch', icon: Icons.schedule, stichworte: 'planen regelmaessig taeglich', aktion: (_) { zeige(Ansicht.chat); _aufgabeAusFaden(server?.faden); }),
+      Befehl(titel: 'Gespräch kopieren (Markdown)', icon: Icons.copy_all_outlined, stichworte: 'zwischenablage', aktion: (_) => _fadenKopieren(server?.faden)),
+      Befehl(titel: 'Gespräch exportieren (.md)', icon: Icons.download_outlined, stichworte: 'speichern datei markdown', aktion: (_) => _fadenExportieren(server?.faden)),
+      Befehl(titel: 'Gespräch im Browser öffnen', icon: Icons.open_in_browser, stichworte: 'web', aktion: (_) => _fadenImBrowser(server?.faden)),
+      Befehl(titel: 'Tastenkürzel', icon: Icons.keyboard_outlined, stichworte: 'hilfe shortcuts tasten', aktion: (_) => _kuerzelZeigen()),
       Befehl(titel: 'Schnellfrage', untertitel: 'Strg+Alt+A', icon: Icons.bolt_outlined, aktion: (_) => _schnellfrageOeffnen()),
       Befehl(titel: hoeren ? 'Zuhören beenden' : 'Zuhören starten', untertitel: 'Aktivierungswort', icon: hoeren ? Icons.hearing_disabled : Icons.hearing, stichworte: 'mikrofon horen', aktion: (_) => _hoerenUmschalten()),
       Befehl(titel: stimme ? 'Antworten vorlesen: aus' : 'Antworten vorlesen: an', icon: stimme ? Icons.volume_off : Icons.volume_up, stichworte: 'stimme sprache ton', aktion: (_) => _neu(() => stimme = !stimme)),
@@ -38,6 +47,15 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'An Alfred senden:', icon: Icons.send, mitText: true, aktion: (t) { if (t.isEmpty) return; zeige(Ansicht.chat); eingabe.text = t; _senden(); }),
     ];
   }
+
+  /// 1.43.0 D2 — Liste aller Tastenkürzel (Hilfe).
+  Future<void> _kuerzelZeigen() => showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+    title: const Text('Tastenkürzel'),
+    content: SizedBox(width: 440, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      for (final (k, was) in appKuerzel) Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Row(children: [SizedBox(width: 170, child: Text(Platform.isMacOS ? k.replaceAll('Strg', '⌘') : k, style: const TextStyle(fontWeight: FontWeight.w600))), Expanded(child: Text(was))])),
+    ])),
+    actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Schließen'))],
+  ));
 
   Future<void> _paletteOeffnen() async {
     if (paletteOffen || schnell || !mounted) return;

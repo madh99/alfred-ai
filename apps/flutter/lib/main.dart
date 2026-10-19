@@ -27,6 +27,8 @@ import 'projekte.dart'; // 1.15.0
 import 'vorgaenge_ansicht.dart'; // 1.34.0
 import 'eingang.dart'; // 1.36.0
 import 'faden_liste.dart'; // 1.41.0
+import 'faden_aktionen.dart'; // 1.43.0 D2
+import 'seiten_chat.dart'; // 1.43.0 D2
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -331,6 +333,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (schnell && ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.escape) { _schnellfrageSchliessen(); return true; }
     // 1.10.0 B1 — Strg+K (macOS ⌘K) öffnet die Befehlspalette
     if (!schnell && ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.keyK && (HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed) && !HardwareKeyboard.instance.isAltPressed) { _paletteOeffnen(); return true; }
+    if (!schnell && ev is KeyDownEvent) return _kuerzel(ev.logicalKey); // 1.43.0 D2
     return false;
   }
 
@@ -432,6 +435,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
         }),
+        // 1.43.0 D2 — Seiten-Chat neben dem Hauptchat (eigener Faden, eigene Verbindung)
+        if (seitenChatOffen && ansicht == Ansicht.chat && konfig != null && seitenChats[server?.faden ?? 'haupt'] != null) ...[
+          const VerticalDivider(width: 1),
+          SizedBox(width: 380, child: SeitenChat(
+            key: ValueKey(seitenChats[server?.faden ?? 'haupt']!.$1), konfig: konfig!,
+            faden: seitenChats[server?.faden ?? 'haupt']!.$1, titel: seitenChats[server?.faden ?? 'haupt']!.$2,
+            aufSchliessen: () => _neu(() => seitenChatOffen = false),
+            aufAlsHauptchat: () { final f = seitenChats[server?.faden ?? 'haupt']!.$1; _neu(() => seitenChatOffen = false); _fadenWechseln(f); },
+            aufGeaendert: _faedenLaden)),
+        ],
       ]),
     );
   }
@@ -448,6 +461,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool projekteZu = false; // 1.42.0 — Abschnitt „Projekte“ eingeklappt
   final Set<String> projekteGeschlossen = {}; // 1.42.0 — eingeklappte Projektordner
   final Set<String> projekteAlleFaeden = {}; // 1.42.0 — Projekte mit aufgeklapptem „Weitere“
+  bool seitenChatOffen = false; // 1.43.0 D2 — Seiten-Chat rechts
+  final Map<String, (String, String)> seitenChats = {}; // 1.43.0 — Hauptfaden (oder „haupt“) → (Faden, Titel) des Seiten-Chats
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
 

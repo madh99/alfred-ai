@@ -55,6 +55,32 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1500] - 2026-10-19
+
+### Added — Kopfzeile mit Menü, Tastenkürzel, Abzweigen, Seiten-Chat, geplante Aufgabe aus dem Faden (App 1.43.0, Web; App-Spec §11 D2)
+
+- **Kopfzeile des Gesprächs:** Ordner-Symbol bei Fäden eines Projekts (Projektname im Tooltip). Rechts gibt es den Knopf „Seiten-Chat“ und „…“ mit:
+  - Umbenennen, Anheften/Lösen, Neuer Seiten-Chat.
+  - Abzweigen, Geplante Aufgabe hinzufügen ….
+  - Gespräch kopieren (Markdown), Letzte Antwort kopieren, Exportieren (.md in den Download-Ordner), Im Browser öffnen.
+  - Einem Projekt zuordnen / Aus Projekt lösen, Archivieren, Löschen (mit Rückgängig).
+  - Im Hauptgespräch nur die passenden Einträge.
+- **Tastenkürzel** (macOS mit ⌘), nur ohne offenen Dialog:
+  - Strg+N neuer Chat, Strg+B Seitenleiste, Strg+, Einstellungen.
+  - Strg+Alt+R umbenennen, Strg+Alt+P anheften, Strg+Alt+S Seiten-Chat, Strg+Umschalt+A archivieren.
+  - Die Befehlspalette (Strg+K, seit 1.10.0) kennt jetzt alle aktiven Fäden (vorher 20), die Projekte, die neuen Aktionen und „Tastenkürzel“ mit der Liste aller Kürzel.
+- **Abzweigen:** aus dem Menü (ganzer Verlauf) oder an jeder Nachricht „Ab hier abzweigen“ (Verlauf bis zu dieser Nachricht). Es entsteht ein neuer Faden „↳ <Titel>“ im selben Projekt; die Quelle bleibt unverändert und ist am neuen Gespräch vermerkt.
+- **Seiten-Chat:** rechts ein schmaler zweiter Chat für eine Zwischenfrage, ohne den Hauptchat zu verlassen. Er ist ein eigener Faden „Neben: <Titel>“, im selben Projekt, mit eigener Verbindung. Er lässt sich schließen, wieder öffnen und im Hauptbereich weiterführen.
+- **Geplante Aufgabe hinzufügen:**
+  - Dialog mit Name, Auftrag (Vorschlag: deine letzte Frage im Faden) und Zeitplan (täglich, wöchentlich, einmalig).
+  - Angelegt wird über den vorhandenen Skill, mit der Kennung des Fadens. Das Ergebnis jedes Laufs kommt in diesen Faden (Zustellung v1447/v1459).
+- **Web:** ⎇ Abzweigen und ⤓ Exportieren (.md) an jeder Fadenzeile.
+- **Server:**
+  - `POST /api/geraete/faeden/:f/abzweigen` und `…/aufgabe` (`haupt` = Hauptgespräch), `POST /api/gespraeche/:f/abzweigen` (Web, nur Owner).
+  - `ConversationRepository.abzweigen` kopiert den Verlauf bis zu einem Zeitpunkt samt Herkunft und Anhängen.
+- **Seitenleiste:** Projektfäden zeigen das 🔨 nur noch im Titel, nicht zusätzlich als Symbol.
+- Tests: 4 App, 6 Pfade. Abzweigen an einem echten Faden mit Zurückrollen geprüft: 28 Nachrichten ganz, 15 bis zur Mitte, Quelle vermerkt.
+
 ## [0.19.0-jarvis.1499] - 2026-10-19
 
 ### Added — Projekte in der Seitenleiste, Fäden unter ihrem Projekt (App 1.42.0, Web, Telegram; App-Spec §11 D1)

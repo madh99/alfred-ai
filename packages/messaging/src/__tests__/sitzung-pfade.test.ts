@@ -84,3 +84,15 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/memories')).toBe(false);
   });
 });
+
+// v1500 (D2) — Abzweigen und geplante Aufgabe aus einem Faden: nur diese Unterpfade, nichts anderes unter faeden/<f>/
+describe('v1500 Faden-Aktionen der Sitzung', () => {
+  it('abzweigen und aufgabe erlaubt, andere Unterpfade nicht', () => {
+    expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/abzweigen')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/haupt/aufgabe')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/loeschen')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/abzweigen/x')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/faeden/MVC/abzweigen')).toBe(false);
+  });
+});

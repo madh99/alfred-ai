@@ -435,6 +435,8 @@ export class HttpAdapter extends MessagingAdapter {
     setzen?: (faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => Promise<boolean>;
     /** v1499 — aktive Projekte für Seitenleiste und Zuordnen-Dialog. */
     projekte?: () => Promise<Array<{ id: string; name: string; aktualisiert: string; geraet?: string }>>;
+    /** v1500 — Faden abzweigen (quelle null = Hauptgespräch), Verlauf bis einschließlich `bis`. */
+    abzweigen?: (quelle: string | null, bis?: string) => Promise<{ faden: string; titel: string; kopiert: number } | undefined>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
 
@@ -1084,6 +1086,8 @@ export class HttpAdapter extends MessagingAdapter {
     fadenUmbenennen?(geraetId: string, faden: string, titel: string): Promise<boolean>;
     fadenSetzen?(geraetId: string, faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }): Promise<boolean>; // v1497, v1499 projekt
     fadenProjekte?(geraetId: string): Promise<Array<{ id: string; name: string; aktualisiert: string; geraet?: string }> | undefined>; // v1499
+    fadenAbzweigen?(geraetId: string, quelle: string | null, bis?: string): Promise<{ faden: string; titel: string; kopiert: number } | undefined>; // v1500
+    fadenAufgabe?(geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }): Promise<{ ok: boolean; text: string }>; // v1500
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
@@ -1477,6 +1481,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGespraeche(req, res, url, 'liste').catch(err => this.safeError(res, err)); // v1330
     } else if (url.pathname === '/api/gespraeche/verlauf' && req.method === 'GET') {
       this.handleGespraeche(req, res, url, 'verlauf').catch(err => this.safeError(res, err)); // v1330
+    } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}\/abzweigen$/.test(url.pathname) && req.method === 'POST') {
+      this.handleGespraecheAbzweigen(req, res, url).catch(err => this.safeError(res, err)); // v1500 D2
     } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
       this.handleGespraeche(req, res, url, 'loeschen').catch(err => this.safeError(res, err)); // v1330
     } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'PATCH') {
@@ -2069,6 +2075,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetSucheAnhaenge(req, res, url).catch(err => this.safeError(res, err)); // v1350
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
+    } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/(abzweigen|aufgabe)$/.test(url.pathname) && req.method === 'POST') {
+      this.handleGeraetFadenAktion(req, res, url).catch(err => this.safeError(res, err)); // v1500 D2
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
       this.handleGeraetFadenLoeschen(req, res, url).catch(err => this.safeError(res, err)); // v1328
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'PATCH') {
@@ -7044,6 +7052,45 @@ export class HttpAdapter extends MessagingAdapter {
     const a = await this.geraeteCallbacks?.ownerAnsichten?.(WEB_OWNER_QUELLE);
     if (!a) { antwort(503, { error: 'nicht verfügbar' }); return; }
     await this.ownerAnsichtBedienen(a, bereich ?? '', id, m, body, url, antwort);
+  }
+
+  /**
+   * v1500 (D2) — Faden-Aktionen der App: POST …/abzweigen {bis?} (neuer Faden mit dem Verlauf bis dahin) und
+   * POST …/aufgabe {name, auftrag, art: cron|once, wert} (geplante Aufgabe, Ergebnis in diesen Faden). Kennung `haupt` = Hauptgespräch.
+   */
+  private async handleGeraetFadenAktion(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const teile = url.pathname.split('/');
+    const aktion = teile.pop() ?? '';
+    const id = teile.pop() ?? '';
+    const faden = id === 'haupt' ? null : id;
+    let j: Record<string, unknown> = {};
+    try { j = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { j = {}; }
+    if (aktion === 'abzweigen') {
+      if (!this.geraeteCallbacks?.fadenAbzweigen) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nicht verfügbar' })); return; }
+      const bis = typeof j.bis === 'string' && j.bis.length <= 40 && !Number.isNaN(Date.parse(j.bis)) ? j.bis : undefined;
+      const r = await this.geraeteCallbacks.fadenAbzweigen(geraet.geraetId, faden, bis);
+      res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'Faden nicht gefunden' })); return;
+    }
+    if (!this.geraeteCallbacks?.fadenAufgabe) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nicht verfügbar' })); return; }
+    const a = { name: String(j.name ?? '').trim().slice(0, 80), auftrag: String(j.auftrag ?? '').trim().slice(0, 4000), art: String(j.art ?? ''), wert: String(j.wert ?? '').trim().slice(0, 60) };
+    if (!a.name || !a.auftrag || !['cron', 'once'].includes(a.art) || !a.wert) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'name, auftrag, art (cron|once) und wert nötig' })); return; }
+    const r = await this.geraeteCallbacks.fadenAufgabe(geraet.geraetId, faden, a);
+    res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r));
+  }
+
+  /** v1500 (D2) — Web: Faden des Owners abzweigen (POST /api/gespraeche/:f/abzweigen {bis?}). */
+  private async handleGespraecheAbzweigen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.gespraecheFn?.abzweigen) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
+    const id = url.pathname.split('/').slice(-2)[0] ?? '';
+    let bis: string | undefined;
+    try { const j = JSON.parse((await this.readBody(req)) || '{}') as { bis?: unknown }; if (typeof j.bis === 'string' && !Number.isNaN(Date.parse(j.bis))) bis = j.bis; } catch { /* ohne Grenze */ }
+    const r = await this.gespraecheFn.abzweigen(id === 'haupt' ? null : id, bis);
+    res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'Faden nicht gefunden' }));
   }
 
   /** v1335 — Faden umbenennen: PATCH {"titel": "…"} */

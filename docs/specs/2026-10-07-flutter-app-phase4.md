@@ -208,7 +208,7 @@ Owner 19.10. mit Screenshots der Codex-App. Seitenleiste: Projektfäden und Gesp
 - **Herkunft:** Projektläufe merken `herkunft` (chatId des Starts) in `satellit-projekt.ts`. Bestehende Projekte lassen sich also nachträglich ihrem Herkunftsfaden zuordnen.
 - **Verknüpfung:** `conversations.project_id` existiert, bisher nur für `project:<id>`-Chats genutzt.
 - **Schon da:** Stufen-Wahl (Gründlichkeit), Bearbeiten, Erneut senden, Kopieren, Vorlesen, Antworten, eingeklappte lange Nachrichten.
-- **Fehlt:** Tastenkürzel in der App (nur Esc in der Schnellfrage), Kostenanzeige, Abzweigen für Owner-Fäden. Abzweigen gibt es serverseitig nur für Web-Chats (v644 `branchAtMessage`).
+- **Fehlt:** weitere Tastenkürzel, Kostenanzeige, Abzweigen für Owner-Fäden. Abzweigen gibt es serverseitig nur für Web-Chats (v644 `branchAtMessage`). *(Korrektur 19.10. bei D2: Die Befehlspalette mit Strg+K gibt es seit App 1.10.0; D2 baut darauf auf.)*
 
 ### 11.2 Entscheidungen des Owners (19.10., „wie empfohlen“)
 

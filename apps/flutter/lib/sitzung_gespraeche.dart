@@ -136,6 +136,180 @@ extension _Gespraeche on _SitzungState {
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht geändert: $e')); }
   }
 
+  /// 1.43.0 D2 — Eintrag des offenen Fadens aus der Liste (null im Hauptgespräch).
+  Map<String, dynamic>? _offenerFaden() {
+    final f = server?.faden;
+    if (f == null) return null;
+    return faeden.where((x) => x['faden'] == f).firstOrNull ?? {'faden': f, 'titel': ''};
+  }
+
+  /// 1.43.0 D2 — Tastenkürzel (globaler Handler; nur, wenn kein Dialog offen ist). true = verbraucht.
+  bool _kuerzel(LogicalKeyboardKey k) {
+    final hw = HardwareKeyboard.instance;
+    final strg = hw.isControlPressed || hw.isMetaPressed;
+    if (!strg || !mounted || ModalRoute.of(context)?.isCurrent == false) return false;
+    final alt = hw.isAltPressed, umschalt = hw.isShiftPressed;
+    final f = _offenerFaden();
+    if (!alt && !umschalt && k == LogicalKeyboardKey.keyN) { _neu(() => ansicht = Ansicht.chat); _neuerChat(); return true; }
+    if (!alt && !umschalt && k == LogicalKeyboardKey.keyB) { _neu(() => seitenleisteOffen = !seitenleisteOffen); seitenleisteSpeichern(seitenleisteOffen); return true; }
+    if (!alt && !umschalt && k == LogicalKeyboardKey.comma) { _neu(() => ansicht = Ansicht.einstellungen); return true; }
+    if (alt && !umschalt && k == LogicalKeyboardKey.keyS) { _seitenChatUmschalten(); return true; }
+    if (alt && !umschalt && k == LogicalKeyboardKey.keyR && f != null) { _fadenUmbenennen('${f['faden']}', '${f['titel'] ?? ''}'); return true; }
+    if (alt && !umschalt && k == LogicalKeyboardKey.keyP && f != null) { _fadenSetzen('${f['faden']}', {'angeheftet': f['angeheftet'] != true}); return true; }
+    if (!alt && umschalt && k == LogicalKeyboardKey.keyA && f != null) { _fadenSetzen('${f['faden']}', {'archiviert': f['archiviert'] != true}); return true; }
+    return false;
+  }
+
+  /// 1.43.0 D2 — Abzweigen: neuer Faden mit dem Verlauf bis [bis] (ohne: alles), danach dorthin wechseln.
+  Future<void> _fadenAbzweigen(String? faden, {DateTime? bis}) async {
+    final s = server; if (s == null) return;
+    try {
+      final r = await s.json('/api/geraete/faeden/${faden ?? 'haupt'}/abzweigen', methode: 'POST', koerper: {if (bis != null) 'bis': bis.toUtc().toIso8601String()});
+      await _faedenLaden();
+      await _fadenWechseln('${r['faden']}');
+      _zeile(Eintrag(Art.hinweis, 'Abgezweigt: ${r['kopiert']} Nachrichten übernommen — hier geht es getrennt weiter.'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Nicht abgezweigt: $e')); }
+  }
+
+  /// 1.43.0 D2 — ganzer Faden als Markdown (Kopieren, Exportieren).
+  Future<(String, String)?> _fadenMarkdown(String? faden) async {
+    final s = server; if (s == null) return null;
+    final j = await s.json('/api/geraete/verlauf?limit=200${faden == null ? '' : '&faden=${Uri.encodeQueryComponent(faden)}'}');
+    final titel = _fadenTitel(faden);
+    return (titel, fadenAlsMarkdown(titel, (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()));
+  }
+
+  Future<void> _fadenKopieren(String? faden) async {
+    try { final m = await _fadenMarkdown(faden); if (m == null) return; await Clipboard.setData(ClipboardData(text: m.$2)); _neu(() => fluechtig = 'Gespräch als Markdown kopiert'); }
+    catch (e) { _zeile(Eintrag(Art.fehler, 'Nicht kopiert: $e')); }
+  }
+
+  void _letzteAntwortKopieren() {
+    final a = verlauf.lastWhere((e) => e.art == Art.alfred && e.text.trim().isNotEmpty, orElse: () => Eintrag(Art.hinweis, ''));
+    if (a.text.isEmpty) { _zeile(Eintrag(Art.hinweis, 'Noch keine Antwort in diesem Gespräch.')); return; }
+    Clipboard.setData(ClipboardData(text: a.text)); _neu(() => fluechtig = 'letzte Antwort kopiert');
+  }
+
+  Future<void> _fadenExportieren(String? faden) async {
+    try {
+      final m = await _fadenMarkdown(faden); if (m == null) return;
+      final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+      final datei = File('${dir.path}${Platform.pathSeparator}${exportDateiname(m.$1, DateTime.now())}');
+      await datei.writeAsString(m.$2);
+      _zeile(Eintrag(Art.hinweis, '💾 exportiert: ${datei.path}'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Nicht exportiert: $e')); }
+  }
+
+  void _fadenImBrowser(String? faden) {
+    final k = konfig; if (k == null) return;
+    oeffneLink('${k.server}/alfred/chat/${faden == null ? '' : '?faden=${Uri.encodeQueryComponent(faden)}'}');
+  }
+
+  /// 1.43.0 D2 — Seiten-Chat zum offenen Faden ein/aus; beim ersten Öffnen eigener Faden „Neben: <Titel>“ (gleiches Projekt).
+  Future<void> _seitenChatUmschalten() async {
+    if (seitenChatOffen) { _neu(() => seitenChatOffen = false); return; }
+    final s = server; if (s == null) return;
+    final schluessel = s.faden ?? 'haupt';
+    if (seitenChats[schluessel] == null) {
+      final id = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
+      final titel = 'Neben: ${_fadenTitel(s.faden).replaceAll(RegExp(r'^🔨\s*'), '')}';
+      try {
+        await s.json('/api/geraete/faeden/$id', methode: 'PATCH', koerper: {'titel': titel.length > 80 ? titel.substring(0, 80) : titel});
+        final projekt = _offenerFaden()?['projekt'];
+        if (projekt is Map && projekt['id'] != null) await s.json('/api/geraete/faeden/$id', methode: 'PATCH', koerper: {'projekt': '${projekt['id']}'});
+      } catch (_) { /* Titel ist Komfort; der Faden entsteht spätestens mit der ersten Frage */ }
+      seitenChats[schluessel] = (id, titel);
+      _faedenLaden();
+    }
+    _neu(() { seitenChatOffen = true; ansicht = Ansicht.chat; });
+  }
+
+  /// 1.43.0 D2 — geplante Aufgabe aus dem Faden; das Ergebnis jedes Laufs kommt in diesen Faden.
+  Future<void> _aufgabeAusFaden(String? faden) async {
+    final s = server; if (s == null) return;
+    final letzte = verlauf.lastWhere((e) => e.art == Art.du && e.text.trim().isNotEmpty, orElse: () => Eintrag(Art.du, '')).text;
+    final name = TextEditingController(text: _fadenTitel(faden).replaceAll(RegExp(r'^🔨\s*'), ''));
+    final auftrag = TextEditingController(text: letzte);
+    final uhrzeit = TextEditingController(text: '08:00');
+    var rhythmus = 'taeglich'; var tag = DateTime.monday; DateTime? datum;
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
+      title: const Text('Geplante Aufgabe hinzufügen'),
+      content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        TextField(controller: name, decoration: const InputDecoration(labelText: 'Name')),
+        const SizedBox(height: 8),
+        TextField(controller: auftrag, minLines: 2, maxLines: 6, decoration: const InputDecoration(labelText: 'Was Alfred jedes Mal tun soll')),
+        const SizedBox(height: 12),
+        Row(children: [
+          DropdownButton<String>(value: rhythmus, items: const [DropdownMenuItem(value: 'taeglich', child: Text('täglich')), DropdownMenuItem(value: 'woechentlich', child: Text('wöchentlich')), DropdownMenuItem(value: 'einmalig', child: Text('einmalig'))], onChanged: (v) => setD(() => rhythmus = v ?? rhythmus)),
+          const SizedBox(width: 12),
+          if (rhythmus == 'woechentlich') DropdownButton<int>(value: tag, items: [for (var i = 1; i <= 7; i++) DropdownMenuItem(value: i, child: Text(const ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][i - 1]))], onChanged: (v) => setD(() => tag = v ?? tag)),
+          if (rhythmus == 'einmalig') TextButton(onPressed: () async { final d = await showDatePicker(context: ctx, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)), initialDate: datum ?? DateTime.now()); if (d != null) setD(() => datum = d); }, child: Text(datum == null ? 'Datum wählen' : '${datum!.day}.${datum!.month}.${datum!.year}')),
+          const SizedBox(width: 12),
+          SizedBox(width: 80, child: TextField(controller: uhrzeit, decoration: const InputDecoration(labelText: 'Uhrzeit'))),
+        ]),
+        const SizedBox(height: 8),
+        Text('Das Ergebnis jedes Laufs kommt in dieses Gespräch.', style: Theme.of(ctx).textTheme.bodySmall),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Abbrechen')), FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Planen'))],
+    )));
+    if (ok != true) return;
+    final plan = zeitplanAus(rhythmus: rhythmus, uhrzeit: uhrzeit.text, wochentag: tag, datum: datum);
+    if (plan == null || name.text.trim().isEmpty || auftrag.text.trim().isEmpty) { _zeile(Eintrag(Art.fehler, 'Nicht geplant: Name, Auftrag, Uhrzeit (HH:MM) und bei „einmalig“ ein Datum angeben.')); return; }
+    try {
+      final r = await s.json('/api/geraete/faeden/${faden ?? 'haupt'}/aufgabe', methode: 'POST', koerper: {'name': name.text.trim(), 'auftrag': auftrag.text.trim(), 'art': plan.art, 'wert': plan.wert});
+      _zeile(Eintrag(r['ok'] == true ? Art.hinweis : Art.fehler, '⏰ ${r['text'] ?? ''}'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Nicht geplant: $e')); }
+  }
+
+  /// 1.43.0 D2 — Menü „…“ der Kopfzeile: alle Aktionen zum offenen Gespräch.
+  Widget _kopfMenue() {
+    final f = _offenerFaden();
+    final id = f == null ? null : '${f['faden']}';
+    final angeheftet = f?['angeheftet'] == true, archiviert = f?['archiviert'] == true;
+    PopupMenuItem<String> e(String w, IconData i, String t, [String? k]) => PopupMenuItem(value: w, child: ListTile(dense: true, leading: Icon(i, size: 18), title: Text(t), trailing: k == null ? null : Text(k, style: const TextStyle(fontSize: 11))));
+    return PopupMenuButton<String>(
+      key: const Key('kopf-menue'), tooltip: 'Mehr zu diesem Gespräch', icon: const Icon(Icons.more_horiz, size: 20),
+      onSelected: (w) {
+        switch (w) {
+          case 'umbenennen': _fadenUmbenennen(id!, '${f!['titel'] ?? ''}');
+          case 'anheften': _fadenSetzen(id!, {'angeheftet': !angeheftet});
+          case 'seiten': _seitenChatUmschalten();
+          case 'abzweigen': _fadenAbzweigen(id);
+          case 'aufgabe': _aufgabeAusFaden(id);
+          case 'kopieren': _fadenKopieren(id);
+          case 'letzte': _letzteAntwortKopieren();
+          case 'export': _fadenExportieren(id);
+          case 'browser': _fadenImBrowser(id);
+          case 'projekt': _fadenProjektWaehlen(id!);
+          case 'projekt_loesen': _fadenSetzen(id!, {'projekt': null});
+          case 'archiv': _fadenSetzen(id!, {'archiviert': !archiviert});
+          case 'loeschen': _fadenLoeschen(id!, fadenTitelText(f!));
+        }
+      },
+      itemBuilder: (_) => [
+        if (f != null) e('umbenennen', Icons.edit_outlined, 'Umbenennen', 'Strg+Alt+R'),
+        if (f != null && !archiviert) e('anheften', angeheftet ? Icons.push_pin : Icons.push_pin_outlined, angeheftet ? 'Lösen' : 'Anheften', 'Strg+Alt+P'),
+        e('seiten', Icons.vertical_split_outlined, seitenChatOffen ? 'Seiten-Chat schließen' : 'Neuer Seiten-Chat', 'Strg+Alt+S'),
+        e('abzweigen', Icons.call_split, 'Abzweigen'),
+        e('aufgabe', Icons.schedule, 'Geplante Aufgabe hinzufügen …'),
+        const PopupMenuDivider(),
+        e('kopieren', Icons.copy_all_outlined, 'Gespräch kopieren (Markdown)'),
+        e('letzte', Icons.content_copy, 'Letzte Antwort kopieren'),
+        e('export', Icons.download_outlined, 'Exportieren (.md)'),
+        e('browser', Icons.open_in_browser, 'Im Browser öffnen'),
+        if (f != null && !archiviert && !istProjektFaden(f)) ...[
+          const PopupMenuDivider(),
+          fadenProjektId(f) == null ? e('projekt', Icons.drive_file_move_outlined, 'Einem Projekt zuordnen …') : e('projekt_loesen', Icons.drive_file_move_rtl_outlined, 'Aus Projekt lösen'),
+        ],
+        if (f != null) ...[
+          const PopupMenuDivider(),
+          e('archiv', archiviert ? Icons.unarchive_outlined : Icons.archive_outlined, archiviert ? 'Zurückholen' : 'Archivieren', 'Strg+Umschalt+A'),
+          e('loeschen', Icons.delete_outline, 'Löschen'),
+        ],
+      ],
+    );
+  }
+
   /// 1.42.0 D1 — Faden einem Projekt zuordnen (Auswahl der aktiven Projekte) oder lösen.
   Future<void> _fadenProjektWaehlen(String faden) async {
     if (projekteKurz.isEmpty) { _zeile(Eintrag(Art.hinweis, 'Es gibt noch kein aktives Projekt.')); return; }
@@ -158,6 +332,8 @@ extension _Gespraeche on _SitzungState {
           case 'umbenennen': _fadenUmbenennen(id, '${f['titel'] ?? ''}');
           case 'archiv': _fadenSetzen(id, {'archiviert': !archiviert});
           case 'projekt': _fadenProjektWaehlen(id); // 1.42.0 D1
+          case 'abzweigen': _fadenAbzweigen(id); // 1.43.0 D2
+          case 'export': _fadenExportieren(id);
           case 'projekt_loesen': _fadenSetzen(id, {'projekt': null});
           case 'loeschen': _fadenLoeschen(id, titel);
         }
@@ -165,6 +341,8 @@ extension _Gespraeche on _SitzungState {
       itemBuilder: (_) => [
         if (!archiviert) PopupMenuItem(value: 'anheften', child: ListTile(dense: true, leading: Icon(angeheftet ? Icons.push_pin : Icons.push_pin_outlined, size: 18), title: Text(angeheftet ? 'Lösen' : 'Anheften'))),
         const PopupMenuItem(value: 'umbenennen', child: ListTile(dense: true, leading: Icon(Icons.edit_outlined, size: 18), title: Text('Umbenennen'))),
+        const PopupMenuItem(value: 'abzweigen', child: ListTile(dense: true, leading: Icon(Icons.call_split, size: 18), title: Text('Abzweigen'))), // 1.43.0 D2
+        const PopupMenuItem(value: 'export', child: ListTile(dense: true, leading: Icon(Icons.download_outlined, size: 18), title: Text('Exportieren (.md)'))),
         if (!archiviert && !istProjektFaden(f)) fadenProjektId(f) == null
             ? const PopupMenuItem(value: 'projekt', child: ListTile(dense: true, leading: Icon(Icons.drive_file_move_outlined, size: 18), title: Text('Einem Projekt zuordnen …')))
             : const PopupMenuItem(value: 'projekt_loesen', child: ListTile(dense: true, leading: Icon(Icons.drive_file_move_rtl_outlined, size: 18), title: Text('Aus Projekt lösen'))),

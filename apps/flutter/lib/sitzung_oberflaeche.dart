@@ -110,7 +110,7 @@ extension _Oberflaeche on _SitzungState {
                 title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
                 onTap: () => _neu(() { projekteAnfang = p.id; ansicht = Ansicht.projekte; })),
               if (!projekteGeschlossen.contains(p.id)) ...[
-                for (final f in p.faeden) Padding(padding: const EdgeInsets.only(left: 18), child: fadenZeile(f, istProjektFaden(f) ? Icons.construction : Icons.chat_bubble_outline)),
+                for (final f in p.faeden) Padding(padding: const EdgeInsets.only(left: 18), child: fadenZeile(f, Icons.chat_bubble_outline)), // 1.43.0 — 🔨 steht schon im Titel des Projektfadens
                 if (p.weitere > 0) Padding(padding: const EdgeInsets.only(left: 18), child: ListTile(dense: true, leading: const Icon(Icons.expand_more, size: 18), title: Text('Weitere (${p.weitere})', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)), onTap: () => _neu(() => projekteAlleFaeden.add(p.id)))),
               ],
             ],
@@ -163,8 +163,12 @@ extension _Oberflaeche on _SitzungState {
         if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { _neu(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         const SizedBox(width: 12),
         // 1.17.2 — Owner 13.10.: welches Gespräch gerade offen ist, steht über dem Chat (Gerät dahinter, gedämpft)
+        // 1.43.0 D2 — Ordner-Symbol bei Fäden eines Projekts (Projektname im Tooltip)
+        if (_offenerFaden() != null && fadenProjektId(_offenerFaden()!) != null) Padding(padding: const EdgeInsets.only(right: 6), child: Tooltip(message: 'Projekt: ${(_offenerFaden()!['projekt'] as Map)['name']}', child: Icon(Icons.folder_outlined, size: 18, color: dim))),
         Flexible(child: Text.rich(TextSpan(children: [TextSpan(text: _kopfTitel()), TextSpan(text: '  ·  $geraet', style: TextStyle(color: dim))]), key: const Key('chat-kopf'), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall)),
         const Spacer(),
+        if (archiv == null) IconButton(key: const Key('seiten-chat-knopf'), tooltip: seitenChatOffen ? 'Seiten-Chat schließen (Strg+Alt+S)' : 'Seiten-Chat (Strg+Alt+S)', onPressed: _seitenChatUmschalten, icon: Icon(Icons.vertical_split_outlined, size: 20, color: seitenChatOffen ? theme.colorScheme.primary : null)),
+        if (archiv == null) _kopfMenue(),
         if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
         IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off, size: 20)),
         const SizedBox(width: 8),
@@ -457,6 +461,7 @@ extension _Oberflaeche on _SitzungState {
           if (e.text.isNotEmpty) Row(children: [
             IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); _neu(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Vorlesen', onPressed: () => _sprichKurz(e.text), icon: Icon(Icons.volume_up_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            if (archiv == null) IconButton(tooltip: 'Ab hier abzweigen (neues Gespräch mit dem Verlauf bis hier)', onPressed: () => _fadenAbzweigen(server?.faden, bis: e.zeit), icon: Icon(Icons.call_split, size: 16, color: dim), visualDensity: VisualDensity.compact), // 1.43.0 D2
             IconButton(tooltip: 'Darauf antworten (Alfred weiß dann, worauf du dich beziehst)', onPressed: () { _neu(() => bezug = e); fokus.requestFocus(); }, icon: Icon(Icons.reply_outlined, size: 16, color: bezug == e ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact), // 1.2.2
           ]),
         ]))));

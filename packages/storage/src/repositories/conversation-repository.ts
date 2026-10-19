@@ -250,6 +250,29 @@ export class ConversationRepository {
    * has a fresh chat_id (web-fork-<uuid>) so the runtime doesn't auto-attach to the
    * old chat-thread. Returns the new conversation id.
    */
+  /**
+   * v1500 (D2) — Owner-Faden abzweigen: neues Gespräch mit dem Verlauf bis einschließlich `bisIso` (ohne Angabe: alles).
+   * Kopiert Rolle, Inhalt, Werkzeugzeilen, Herkunft und Anhänge mit ihren Zeitpunkten; vermerkt die Quelle.
+   */
+  async abzweigen(sourceConversationId: string, newChatId: string, userId: string, bisIso?: string): Promise<{ id: string; kopiert: number }> {
+    const source = await this.findById(sourceConversationId);
+    if (!source) throw new Error('source conversation not found');
+    const neu = await this.create(source.platform, newChatId, userId);
+    await this.adapter.execute('UPDATE conversations SET branched_from_conversation_id = ? WHERE id = ?', [sourceConversationId, neu.id]);
+    const rows = await this.adapter.query('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC', [sourceConversationId]) as Array<Record<string, unknown>>;
+    const grenze = bisIso ? Date.parse(bisIso) : NaN;
+    let kopiert = 0;
+    for (const m of rows) {
+      if (!Number.isNaN(grenze) && Date.parse(String(m.created_at)) > grenze) break;
+      await this.adapter.execute(
+        'INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at, herkunft, anhaenge) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [crypto.randomUUID(), neu.id, m.role as string, m.content as string, (m.tool_calls as string | null) ?? null, m.created_at as string, (m.herkunft as string | null) ?? null, (m.anhaenge as string | null) ?? null],
+      );
+      kopiert++;
+    }
+    return { id: neu.id, kopiert };
+  }
+
   async branchAtMessage(sourceConversationId: string, atMessageId: string, opts: { userId: string; newChatId?: string }): Promise<string> {
     const source = await this.findById(sourceConversationId);
     if (!source) throw new Error('source conversation not found');

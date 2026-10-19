@@ -221,6 +221,12 @@ export class AlfredClient {
     return res.ok;
   }
 
+  /** v1500 (D2) — Faden abzweigen: neuer Faden mit dem Verlauf (bis `bis`, sonst alles). */
+  async abzweigeGespraech(faden: string | null, bis?: string): Promise<{ faden: string; titel: string; kopiert: number } | null> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden ?? 'haupt')}/abzweigen`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, body: JSON.stringify(bis ? { bis } : {}) });
+    return res.ok ? res.json() : null;
+  }
+
   async deleteGespraech(faden: string): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'DELETE', headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     return res.ok;

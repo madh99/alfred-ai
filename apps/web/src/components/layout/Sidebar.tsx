@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
 import { eingangEintraege, hinweisOffen, vorgaengeFuerDich } from '@/components/eingang/eingang-logik';
-import { fadenGruppen, fadenTitel, istProjektFaden, type FadenEintrag, type ProjektKurz } from './faden-liste'; // v1497, v1499
+import { fadenGruppen, fadenTitel, istProjektFaden, fadenAlsMarkdown, type FadenEintrag, type ProjektKurz } from './faden-liste'; // v1497, v1499, v1500
 
 const BASE = '/alfred';
 
@@ -108,6 +108,21 @@ export function Sidebar() {
     loeschTimer.current.delete(geloescht.faden);
     setGeloescht(null);
   }
+  // v1500 (D2) — abzweigen (neuer Faden mit dem Verlauf) und als Markdown exportieren
+  async function fadenAbzweigen(f: FadenEintrag) {
+    if (!client) return;
+    const r = await client.abzweigeGespraech(f.faden).catch(() => null);
+    if (r) window.location.href = `${BASE}/chat/?faden=${encodeURIComponent(r.faden)}`;
+  }
+  async function fadenExportieren(f: FadenEintrag) {
+    if (!client) return;
+    const n = await client.fetchGespraechVerlauf(f.faden, 500).catch(() => []);
+    const titel = f.faden ? fadenTitel(f) : 'Hauptgespräch';
+    const url = URL.createObjectURL(new Blob([fadenAlsMarkdown(titel, n)], { type: 'text/markdown;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `${titel.replace(/[🔨↳]/gu, '').replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'Gespräch'} ${new Date().toISOString().slice(0, 10)}.md`;
+    a.click(); URL.revokeObjectURL(url);
+  }
   // v1499 (D1) — Faden einem Projekt zuordnen (Auswahl per Nummer) oder lösen
   function fadenProjekt(f: FadenEintrag) {
     if (!f.faden) return;
@@ -133,6 +148,8 @@ export function Sidebar() {
       {f.faden && (
         <>
           {!f.archiviert && <button onClick={() => fadenSetzen(f.faden!, { angeheftet: !f.angeheftet })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-amber-400 text-xs" title={f.angeheftet ? 'Lösen' : 'Anheften'}>{f.angeheftet ? '📍' : '📌'}</button>}
+          <button onClick={() => fadenAbzweigen(f)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Abzweigen (neuer Faden mit dem Verlauf)">⎇</button>
+          <button onClick={() => fadenExportieren(f)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Exportieren (.md)">⤓</button>
           <button onClick={() => fadenUmbenennen(f.faden!, f.titel)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Umbenennen">✎</button>
           {!f.archiviert && !istProjektFaden(f) && <button onClick={() => fadenProjekt(f)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title={f.projekt ? `Aus Projekt „${f.projekt.name}“ lösen` : 'Einem Projekt zuordnen'}>{f.projekt ? '📤' : '📁'}</button>}
           <button onClick={() => fadenSetzen(f.faden!, { archiviert: !f.archiviert })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title={f.archiviert ? 'Zurückholen' : 'Archivieren'}>{f.archiviert ? '↩' : '🗄'}</button>

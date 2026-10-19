@@ -57,3 +57,15 @@ export function fadenGruppen(faeden: FadenEintrag[], opts: { alle?: boolean; fil
     filterSinnvoll: ohneProjekt.length > SICHTBARE_FAEDEN,
   };
 }
+
+/** v1500 (D2) — Faden als Markdown (Export), gleiche Form wie die App (lib/faden_aktionen.dart). */
+export function fadenAlsMarkdown(titel: string, nachrichten: Array<{ rolle: string; text: string; zeit?: string }>): string {
+  let md = `# ${titel}\n`;
+  for (const m of nachrichten) {
+    if ((m.rolle !== 'user' && m.rolle !== 'assistant') || !m.text?.trim()) continue;
+    const z = m.zeit ? new Date(m.zeit) : null;
+    const wann = z && !Number.isNaN(z.getTime()) ? ` · ${z.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '';
+    md += `\n**${m.rolle === 'user' ? 'Du' : 'Alfred'}**${wann}\n\n${m.text.trim()}\n`;
+  }
+  return md;
+}
