@@ -574,7 +574,7 @@ extension _Oberflaeche on _SitzungState {
 
   Future<void> _anhangSpeichern(Anhang a) async {
     try {
-      if (istHandy) { _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${await dateiAblegen(null, a.name, a.bytes)}')); return; } // 1.54.4 — Ordner „Alfred“ (Dateien-App)
+      if (istHandy) { _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${await dateiAblegen(null, a.name, Uint8List.fromList(a.bytes))}')); return; } // 1.54.4 — Ordner „Alfred“ (Dateien-App)
       final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
       final f = await _anhangAblegen(a, dir);
       _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${f.path}'));
