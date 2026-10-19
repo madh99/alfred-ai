@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Alfred</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Alfred liest mit der Kamera den Kopplungs-QR von der Seite „Geräte“.</string>
 	<key>NSMicrophoneUsageDescription</key>
