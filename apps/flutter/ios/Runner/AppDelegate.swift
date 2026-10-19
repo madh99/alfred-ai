@@ -1,6 +1,7 @@
 import AVFoundation
 import Flutter
 import Network
+import UniformTypeIdentifiers
 import Security
 import UIKit
 import UserNotifications
@@ -14,6 +15,8 @@ import UserNotifications
   private let netzWaechter = NWPathMonitor()
   private var netzKanal: FlutterMethodChannel?
   private var netzZuletzt: String?
+  /// 1.54.1 — offene Ordnerwahl (hält den Delegaten, bis der Owner gewählt oder abgebrochen hat)
+  private var ordnerWahl: OrdnerWahl?
 
   override func application(
     _ application: UIApplication,
@@ -123,6 +126,30 @@ import UserNotifications
           ergebnis(true)
         case "zustand":
           ergebnis(self?.systemZustand())
+        case "ordnerWaehlen":
+          // 1.54.1 — Owner gibt einen Ordner frei (Downloads, iCloud Drive …); iOS liefert eine dauerhafte Freigabe (Bookmark)
+          DispatchQueue.main.async {
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder])
+            let wahl = OrdnerWahl { url in
+              self?.ordnerWahl = nil
+              guard let url = url else { ergebnis(nil); return }
+              let zugriff = url.startAccessingSecurityScopedResource()
+              defer { if zugriff { url.stopAccessingSecurityScopedResource() } }
+              do {
+                let b = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+                ergebnis(["name": url.lastPathComponent, "bookmark": FlutterStandardTypedData(bytes: b)])
+              } catch { ergebnis(FlutterError(code: "bookmark", message: error.localizedDescription, details: nil)) }
+            }
+            self?.ordnerWahl = wahl
+            picker.delegate = wahl
+            picker.allowsMultipleSelection = false
+            self?.obersteAnsicht()?.present(picker, animated: true)
+          }
+        case "ordnerSchreiben":
+          // 1.54.1 — Datei in einen freigegebenen Ordner; nie überschreiben („Name (1).pdf“)
+          guard let b = args["bookmark"] as? FlutterStandardTypedData, let name = args["name"] as? String, let daten = args["daten"] as? FlutterStandardTypedData else { ergebnis(FlutterError(code: "args", message: "bookmark, name, daten", details: nil)); return }
+          do { ergebnis(try Ordner.schreibe(bookmark: b.data, name: name, daten: daten.data)) }
+          catch { ergebnis(FlutterError(code: "schreiben", message: error.localizedDescription, details: nil)) }
         default: ergebnis(FlutterMethodNotImplemented)
         }
       }
@@ -158,6 +185,54 @@ extension AppDelegate {
       if let gesamt = werte.volumeTotalCapacity { z["speicherGesamtGb"] = Double(gesamt) / 1_000_000_000 }
     }
     return z
+  }
+}
+
+/// 1.54.1 — Ordnerwahl über das Dateien-Fenster von iOS
+final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
+  let fertig: (URL?) -> Void
+  init(fertig: @escaping (URL?) -> Void) { self.fertig = fertig }
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { fertig(urls.first) }
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { fertig(nil) }
+}
+
+/// 1.54.1 — Schreiben in einen freigegebenen Ordner (Sicherheits-Bookmark), koordiniert (iCloud Drive), nie überschreiben
+enum Ordner {
+  static func eindeutig(_ ordner: URL, _ name: String) -> URL {
+    let fm = FileManager.default
+    var ziel = ordner.appendingPathComponent(name)
+    if !fm.fileExists(atPath: ziel.path) { return ziel }
+    let basis = (name as NSString).deletingPathExtension, endung = (name as NSString).pathExtension
+    var n = 1
+    repeat { ziel = ordner.appendingPathComponent(endung.isEmpty ? "\(basis) (\(n))" : "\(basis) (\(n)).\(endung)"); n += 1 } while fm.fileExists(atPath: ziel.path) && n < 1000
+    return ziel
+  }
+
+  static func schreibe(bookmark: Data, name: String, daten: Data) throws -> [String: Any] {
+    var veraltet = false
+    let ordner = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &veraltet)
+    let zugriff = ordner.startAccessingSecurityScopedResource()
+    defer { if zugriff { ordner.stopAccessingSecurityScopedResource() } }
+    let ziel = eindeutig(ordner, name)
+    var koordFehler: NSError?
+    var schreibFehler: Error?
+    NSFileCoordinator().coordinate(writingItemAt: ziel, options: [], error: &koordFehler) { z in
+      do { try daten.write(to: z, options: .withoutOverwriting) } catch { schreibFehler = error }
+    }
+    if let f = koordFehler ?? schreibFehler { throw f }
+    var antwort: [String: Any] = ["name": ziel.lastPathComponent]
+    if veraltet, let neu = try? ordner.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) { antwort["bookmark"] = FlutterStandardTypedData(bytes: neu) }
+    return antwort
+  }
+}
+
+extension AppDelegate {
+  /// oberste sichtbare Ansicht (für die Ordnerwahl)
+  func obersteAnsicht() -> UIViewController? {
+    let fenster = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows.first { $0.isKeyWindow } }.first
+    var vc = fenster?.rootViewController
+    while let weiter = vc?.presentedViewController { vc = weiter }
+    return vc
   }
 }
 

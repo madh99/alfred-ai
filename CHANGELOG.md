@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Dateien aufs iPhone ablegen (v1521, App 1.54.1)
+
+Owner 19.10.: „am PC sagen können: lege die Datei am iPhone unter Downloads ab“ — mit „Alfred“ als Standard, mehreren freigegebenen Ordnern und ohne Rückfrage.
+
+- **Aktion `datei_ablegen` auf dem iPhone** (Autonomie „auto“): Alfred legt eine Datei aus dem Dateispeicher ab, im Ordner **„Alfred“** (Dateien-App: Auf meinem iPhone → Alfred) oder in einem **freigegebenen Ordner**. Überschreibt nie, ein gleicher Name bekommt „(1)“. Bis 8 MB direkt über die Verbindung, darüber blockweise, Prüfsumme immer.
+- **Ordner freigeben** in den Einstellungen der App (iOS-Dateien-Fenster; Downloads, iCloud Drive, beliebig viele). Die Ordnerliste steht im Werkzeug, Alfred kennt also die Ziele.
+- **App im Hintergrund:** Der Server merkt sich nur den Verweis, Mitteilung „Datei bereit – antippen speichert“ (ohne Dateinamen). Beim Antippen oder nächsten Öffnen speichert die App die Datei ohne Rückfrage und meldet „📥 Downloads/rechnung.pdf gespeichert“.
+- Am Desktop bleibt `datei_ablegen` bei „bestätigen“ (dort könnte eine abgelegte Datei Teil einer Befehlskette werden, Befund v1413).
+
+### Fixed — Handy-App: Einstellungen und Anhänge im beschreibbaren Ordner (App 1.54.1)
+
+Die App legte Einstellungen und zwischengespeicherte Anhänge unter `~/.alfred` ab. Auf iOS ist das die oberste Ebene des App-Containers, für App-Daten sind dort nur Library, Documents und tmp vorgesehen. Jetzt `Library/Application Support/alfred`; am Desktop unverändert.
+
 ### Added — Handy als Gerät: Zwischenablage, Sinne, automatisch vorlesen (v1520, App 1.54.0)
 
 Owner 19.10.: Zwischenablage „richtig und vollumfänglich mit Nachricht bei App im Hintergrund“, Sinne mit Geräteangaben, nicht nachfragen, automatisches Vorlesen als Standard mit Schalter, Fokus.

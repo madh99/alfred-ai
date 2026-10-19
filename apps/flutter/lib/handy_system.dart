@@ -3,7 +3,13 @@
 /// die Sinne — Akku, Netzweg, Audio-Ausgang, Modell, System, Speicher. Am Desktop gibt es den Kanal nicht.
 library;
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'einstellungen.dart';
 
 const _kanal = MethodChannel('alfred/system');
 
@@ -22,3 +28,56 @@ Future<Map<String, dynamic>> handyZustand() async {
 
 /// Audio-Ausgänge, bei denen Antworten automatisch vorgelesen werden (Kopfhörer, Bluetooth, Auto).
 const vorleseAusgaenge = {'kopfhoerer', 'bluetooth', 'auto'};
+
+// ── 1.54.1 — Dateien von Alfred ablegen (Owner 19.10.: „Alfred“ als Standard, mehrere freigegebene Ordner, ohne Rückfrage) ──
+
+/// Standardordner: der Dokumente-Ordner der App, in der Dateien-App unter „Auf meinem iPhone → Alfred“.
+const alfredOrdner = 'Alfred';
+
+/// Namen aller Ziele für das Manifest: „Alfred“ zuerst, dann die freigegebenen.
+List<String> ablageOrdnerNamen() => [alfredOrdner, for (final o in ablageOrdnerGespeichert()) o.name];
+
+/// Ordner freigeben (iOS-Dateien-Fenster). null = abgebrochen. Gleichnamige ersetzt die alte Freigabe.
+Future<String?> ordnerFreigeben() async {
+  final r = await _kanal.invokeMethod<Map<Object?, Object?>>('ordnerWaehlen');
+  if (r == null || r['name'] is! String || r['bookmark'] is! Uint8List) return null;
+  final name = r['name'] as String;
+  final neu = [for (final o in ablageOrdnerGespeichert()) if (o.name.toLowerCase() != name.toLowerCase()) o, (name: name, bookmark: base64Encode(r['bookmark'] as Uint8List))];
+  ablageOrdnerSpeichern(neu);
+  return name;
+}
+
+void ordnerEntfernen(String name) => ablageOrdnerSpeichern([for (final o in ablageOrdnerGespeichert()) if (o.name != name) o]);
+
+/// `name` ohne Pfadanteile, ohne Steuerzeichen; nie leer.
+String sichererName(String name) {
+  final n = name.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'[\x00-\x1f:*?"<>|]'), '_').trim();
+  return n.isEmpty || n == '.' || n == '..' ? 'datei' : n;
+}
+
+/// Freier Name im Ordner: „x.pdf“, sonst „x (1).pdf“, „x (2).pdf“ …
+String freierName(String name, bool Function(String) belegt) {
+  if (!belegt(name)) return name;
+  final punkt = name.lastIndexOf('.');
+  final basis = punkt > 0 ? name.substring(0, punkt) : name, endung = punkt > 0 ? name.substring(punkt) : '';
+  for (var n = 1; n < 1000; n++) { final k = '$basis ($n)$endung'; if (!belegt(k)) return k; }
+  return '$basis (${DateTime.now().millisecondsSinceEpoch})$endung';
+}
+
+/// Datei ablegen; Ergebnis „Ordner/Name“. Unbekannter Ordner → Fehler mit der Liste der freigegebenen.
+Future<String> dateiAblegen(String? ordner, String name, Uint8List daten) async {
+  final dateiname = sichererName(name);
+  final ziel = (ordner ?? '').trim();
+  if (ziel.isEmpty || ziel.toLowerCase() == alfredOrdner.toLowerCase()) {
+    final dir = await getApplicationDocumentsDirectory();
+    final frei = freierName(dateiname, (n) => File('${dir.path}/$n').existsSync());
+    await File('${dir.path}/$frei').writeAsBytes(daten, flush: true);
+    return '$alfredOrdner/$frei';
+  }
+  final o = ablageOrdnerGespeichert().where((x) => x.name.toLowerCase() == ziel.toLowerCase()).firstOrNull;
+  if (o == null) throw Exception('Ordner „$ziel“ ist nicht freigegeben. Freigegeben: ${ablageOrdnerNamen().join(', ')}');
+  final r = await _kanal.invokeMethod<Map<Object?, Object?>>('ordnerSchreiben', {'bookmark': base64Decode(o.bookmark), 'name': dateiname, 'daten': daten});
+  final neu = r?['bookmark'];
+  if (neu is Uint8List) ablageOrdnerSpeichern([for (final x in ablageOrdnerGespeichert()) x.name == o.name ? (name: x.name, bookmark: base64Encode(neu)) : x]); // veraltete Freigabe erneuert
+  return '${o.name}/${r?['name'] ?? dateiname}';
+}

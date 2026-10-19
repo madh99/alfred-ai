@@ -15,7 +15,7 @@ export interface ApnsNutzlast {
   /** Gesprächsfaden: gruppiert die Mitteilungen auf dem iPhone (thread-id) und öffnet beim Antippen den Faden */
   faden?: string;
   /** eigener Schlüssel `alfred` — die App öffnet damit die richtige Stelle */
-  art: 'bestaetigung' | 'hinweis' | 'antwort' | 'zwischenablage';
+  art: 'bestaetigung' | 'hinweis' | 'antwort' | 'zwischenablage' | 'datei';
   /** iOS-Dringlichkeit: `time-sensitive` dringt durch einen Fokus (nur Dringendes), `passive` ohne Ton */
   stufe?: 'passive' | 'active' | 'time-sensitive';
   id?: string;

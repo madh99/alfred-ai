@@ -69,6 +69,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/ablage')).toBe(true); // v1520
     expect(istSitzungsPfad('/api/geraete/ablage/0b6f1e2a-1c3d-4e5f-8a9b-0c1d2e3f4a5b')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/ablage/../x')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/ablage/0b6f1e2a-1c3d-4e5f-8a9b-0c1d2e3f4a5b/datei')).toBe(true); // v1521
+    expect(istSitzungsPfad('/api/geraete/ablage/0b6f1e2a-1c3d-4e5f-8a9b-0c1d2e3f4a5b/x')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/stufen')).toBe(true); // v1510
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/bewertung')).toBe(true); // v1510
     expect(istSitzungsPfad('/api/geraete/datei/x')).toBe(false);

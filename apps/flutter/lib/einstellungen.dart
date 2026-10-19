@@ -2,19 +2,22 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'plattform.dart'; // 1.54.1
 
 /// 1.1.0 (Redesign Stufe 1) — Einstellungen der App, die der Server nicht kennt: Farbschema (System/Hell/Dunkel),
 /// Seitenleiste. Liegt als kleine JSON-Datei neben der Satelliten-Konfiguration (~/.alfred/app.json).
 final themeModus = ValueNotifier<ThemeMode>(ThemeMode.system);
 
-String _pfad() {
-  final heim = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
-  return '$heim${Platform.pathSeparator}.alfred${Platform.pathSeparator}app.json';
-}
+String _pfad() => '${alfredDatenOrdner()}${Platform.pathSeparator}app.json'; // 1.54.1 — Handy: beschreibbarer Ordner
 
 Map<String, dynamic> _lesen() {
   try {
     final f = File(_pfad());
+    if (!f.existsSync() && Platform.isIOS) { // 1.54.1 — einmalig vom alten Ort übernehmen, falls dort schon etwas lag
+      final heim = Platform.environment['HOME'] ?? '.';
+      final alt = File('$heim${Platform.pathSeparator}.alfred${Platform.pathSeparator}app.json');
+      if (alt.existsSync()) { f.parent.createSync(recursive: true); alt.copySync(f.path); }
+    }
     if (!f.existsSync()) return {};
     final j = jsonDecode(f.readAsStringSync());
     return j is Map<String, dynamic> ? j : {};
@@ -59,6 +62,14 @@ void stillUpdateSpeichern(bool an) { final j = _lesen(); j['stillUpdate'] = an; 
 /// 1.54.0 — Handy: Antworten automatisch vorlesen, wenn Kopfhörer, Bluetooth-Audio oder Auto verbunden sind (Standard an).
 bool autoVorlesenGespeichert() => _lesen()['autoVorlesen'] != false;
 void autoVorlesenSpeichern(bool an) { final j = _lesen(); j['autoVorlesen'] = an; _schreiben(j); }
+
+/// 1.54.1 — Handy: freigegebene Ordner für Dateien von Alfred (Name + iOS-Bookmark, Base64). „Alfred“ ist immer da (Standard).
+List<({String name, String bookmark})> ablageOrdnerGespeichert() {
+  final l = _lesen()['ablageOrdner'];
+  if (l is! List) return const [];
+  return [for (final e in l) if (e is Map && e['name'] is String && e['bookmark'] is String) (name: e['name'] as String, bookmark: e['bookmark'] as String)];
+}
+void ablageOrdnerSpeichern(List<({String name, String bookmark})> ordner) { final j = _lesen(); j['ablageOrdner'] = [for (final o in ordner) {'name': o.name, 'bookmark': o.bookmark}]; _schreiben(j); }
 
 /// 1.36.0 — Navigation breit (mit Beschriftung) oder schmal (nur Symbole); Standard breit.
 bool navBreitGespeichert() => _lesen()['navBreit'] != false;

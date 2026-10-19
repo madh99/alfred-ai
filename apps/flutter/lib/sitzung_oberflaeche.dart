@@ -458,6 +458,16 @@ extension _Oberflaeche on _SitzungState {
       ])),
       karte('Gespräche', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.2.3 — Spiegel-Schalter (Owner-Freigabe 09.10., Standard aus)
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Spiegelung nach Telegram'), subtitle: Text(spiegelung == null ? 'Stand wird geladen …' : 'Fragen und Antworten aus App, Web und Terminal erscheinen auch im Telegram-Chat', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: spiegelung ?? false, onChanged: spiegelung == null ? null : (v) => _spiegelungSetzen(v)),
+        if (istHandy) ...[ // 1.54.1 — Ordner für Dateien von Alfred
+          const SizedBox(height: 8),
+          Text('Ordner für Dateien von Alfred', style: theme.textTheme.titleSmall),
+          Text('„Alfred“ ist der Standard (Dateien-App: Auf meinem iPhone → Alfred). Weitere Ordner hier freigeben, z. B. Downloads.', style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.folder_special_outlined, size: 20), title: const Text('Alfred'), subtitle: const Text('Standard')),
+          for (final o in ablageOrdnerGespeichert()) ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.folder_outlined, size: 20), title: Text(o.name),
+            trailing: IconButton(tooltip: 'Freigabe entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () { ordnerEntfernen(o.name); _neu(() {}); (ipc as HandyVerbindung).jetztVerbinden(); })),
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(key: const Key('ordner-freigeben'), icon: const Icon(Icons.create_new_folder_outlined, size: 18), label: const Text('Ordner freigeben'),
+            onPressed: () async { final n = await ordnerFreigeben(); if (n == null) return; _neu(() {}); _zeile(Eintrag(Art.hinweis, '📁 Ordner „$n“ freigegeben')); (ipc as HandyVerbindung).jetztVerbinden(); })),
+        ],
         if (istHandy) SwitchListTile(key: const Key('auto-vorlesen'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Automatisch vorlesen'), subtitle: Text('Mit Kopfhörern, Bluetooth-Audio oder im Auto werden Antworten auch auf getippte Fragen vorgelesen', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: autoVorlesen, onChanged: (v) { _neu(() => autoVorlesen = v); autoVorlesenSpeichern(v); }), // 1.54.0
         if (istHandy) SwitchListTile(key: const Key('telegram-stumm'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Telegram stumm, wenn Mitteilung zugestellt'), subtitle: Text(telegramStumm == null ? 'Stand wird geladen …' : 'Hinweise und Bestätigungen kommen dann nur aufs Handy, solange die Mitteilung ankam', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: telegramStumm ?? false, onChanged: telegramStumm == null ? null : (v) => _telegramStummSetzen(v)), // 1.53.0 H2
         Text('Alfred kennt den Verlauf aus allen Kanälen immer. In Telegram zeigt „/verlauf" die letzten Nachrichten, „/spiegel an" schaltet dasselbe wie dieser Schalter.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),

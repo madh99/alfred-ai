@@ -7,6 +7,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart' show sha256;
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -53,10 +56,15 @@ class Kopplung {
 
 /// 1.54.0 — Aktionen, die das Handy anbietet (Spec Autonomie: „auto“, harmlos). Ist die App im Hintergrund, nimmt der Server
 /// sie an und stellt sie per Mitteilung zu (Ablage + „Zum Kopieren antippen“).
-const handyAktionen = [
+List<Map<String, Object>> handyAktionen(List<String> ordner) => [
   {'name': 'zwischenablage_setzen', 'beschreibung': 'Legt Text in die Zwischenablage dieses Handys („kopier mir das aufs Handy“). Ist die App im Hintergrund, kommt eine Mitteilung „Zum Kopieren antippen“.', 'autonomie': 'auto',
    'parameter': {'text': {'type': 'string', 'description': 'Text'}, 'vertraulich': {'type': 'boolean', 'description': 'true bei Passwort/Token: bleibt auf diesem Gerät, verfällt nach 2 min'}}},
+  // 1.54.1 — Datei aufs Handy (Owner 19.10.: ohne Rückfrage; „Alfred“ ist Standard, weitere Ordner gibt der Owner frei)
+  {'name': 'datei_ablegen', 'beschreibung': _kurz('Legt eine Datei vom Server auf diesem Handy ab (quelle = FileStore-key), überschreibt nie. ordner: ${ordner.join(', ')} (Standard ${ordner.first}). App im Hintergrund: Mitteilung, gespeichert beim Öffnen.', 300), 'autonomie': 'auto',
+   'parameter': {'quelle': {'type': 'string', 'description': 'FileStore-Schlüssel oder Serverpfad'}, 'ordner': {'type': 'string', 'description': 'Zielordner: ${ordner.join(' | ')}'}, 'name': {'type': 'string', 'description': 'Dateiname (optional)'}}},
 ];
+
+String _kurz(String t, int n) => t.length <= n ? t : '${t.substring(0, n - 1)}…';
 
 /// 1.54.0 H3 — Server über keinen Weg erreichbar (außerhalb des Heim-WLANs ohne VPN).
 const serverUnerreichbar = 'Server nicht erreichbar — außerhalb des Heim-WLANs das VPN einschalten';
@@ -161,7 +169,7 @@ class HandyVerbindung implements AppVerbindung {
       final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 6)); // 1.54.0 H3 — Mobilfunk: nicht lange hängen
       if (!_laeuft || !_vorne) { ws.close(); return; }
       _ws = ws;
-      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': handyAktionen, 'sinne': const ['akku', 'netz', 'audio', 'system']}});
+      _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': handyAktionen(ablageOrdnerNamen()), 'sinne': const ['akku', 'netz', 'audio', 'system']}});
       _puls = Timer.periodic(const Duration(seconds: 30), (_) => _sende({'typ': 'puls'}));
       _sinneTakt?.cancel(); _sinneTakt = Timer.periodic(const Duration(seconds: 60), (_) => _sinneSenden()); // 1.54.0 — solange die App offen ist
       ws.listen((raw) => _nachricht('$raw'), onDone: () => _getrennt(ws), onError: (_) => _getrennt(ws), cancelOnError: true);
@@ -197,6 +205,39 @@ class HandyVerbindung implements AppVerbindung {
     _sende({'typ': 'sinne', 'werte': werte});
   }
 
+  /// 1.54.1 — Inhalt für datei_ablegen: bis 8 MB direkt in der Nachricht, darüber blockweise vom Server (wie der Satellit,
+  /// Range-Abruf mit Wiederholung); Prüfsumme immer.
+  Future<Uint8List> _dateiInhalt(Map<String, dynamic> p) async {
+    Uint8List? daten;
+    if (p['inhaltBase64'] is String) daten = base64Decode(p['inhaltBase64'] as String);
+    final k = kopplung;
+    if (daten == null && p['downloadId'] is String && k != null) {
+      final groesse = (p['groesse'] as num?)?.toInt() ?? 0, block = (p['blockGroesse'] as num?)?.toInt() ?? 4 * 1024 * 1024;
+      if (groesse <= 0 || groesse > 50 * 1024 * 1024) throw Exception('Größe fehlt oder zu groß');
+      final c = clientFuer(k.konfig);
+      final b = BytesBuilder(copy: false);
+      var fehler = 0;
+      try {
+        while (b.length < groesse) {
+          try {
+            final req = await c.getUrl(Uri.parse('${k.server}/api/geraete/dateien/${p['downloadId']}'));
+            req.headers.set('Authorization', 'Bearer ${k.token}');
+            req.headers.set('Range', 'bytes=${b.length}-${min(b.length + block, groesse) - 1}');
+            final res = await req.close();
+            if (res.statusCode != 206) { await res.drain<void>(); throw Exception('HTTP ${res.statusCode}'); }
+            final vorher = b.length;
+            await for (final t in res) { b.add(t); }
+            if (b.length == vorher) throw Exception('leerer Block');
+          } catch (e) { if (++fehler > 5) rethrow; await Future<void>.delayed(Duration(seconds: fehler)); }
+        }
+      } finally { c.close(); }
+      daten = b.takeBytes();
+    }
+    if (daten == null) throw Exception('Kein Inhalt vom Server erhalten');
+    if (p['sha256'] is String && sha256.convert(daten).toString() != p['sha256']) throw Exception('Prüfsumme stimmt nicht');
+    return daten;
+  }
+
   /// 1.54.0 — Aktion vom Gehirn ausführen und das Ergebnis im Format des Satelliten melden.
   Future<void> _aktion(Map<String, dynamic> n) async {
     final id = '${n['id'] ?? ''}'; final start = DateTime.now();
@@ -207,6 +248,16 @@ class HandyVerbindung implements AppVerbindung {
       final ok = await handyKopieren(params['text'] as String, vertraulich: vertraulich);
       ergebnis = ok ? {'success': true, 'display': 'Liegt in der Zwischenablage von ${kopplung?.name ?? 'diesem Handy'}${vertraulich ? ' (nur dieses Gerät, verfällt nach 2 min)' : ''}.'} : {'success': false, 'error': 'Zwischenablage nicht gesetzt'};
       if (ok) aufHinweis?.call('📋 Alfred hat ${vertraulich ? 'vertraulichen ' : ''}Text in die Zwischenablage gelegt.');
+    } else if (n['aktion'] == 'datei_ablegen') {
+      try {
+        final daten = await _dateiInhalt(params);
+        final name = params['name'] is String && (params['name'] as String).trim().isNotEmpty ? params['name'] as String : '${params['dateiName'] ?? 'datei'}';
+        final wo = await dateiAblegen(params['ordner'] as String?, name, daten);
+        ergebnis = {'success': true, 'display': 'Auf ${kopplung?.name ?? 'dem Handy'} gespeichert: $wo (${daten.length} B)'};
+        aufHinweis?.call('📥 $wo gespeichert');
+      } catch (e) {
+        ergebnis = {'success': false, 'error': '$e'.replaceFirst('Exception: ', '')};
+      }
     } else {
       ergebnis = {'success': false, 'error': 'Aktion auf dem Handy unbekannt: ${n['aktion']}'};
     }

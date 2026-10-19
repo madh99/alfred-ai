@@ -101,6 +101,11 @@ export class GeraeteGateway {
     this.transfers = new Transfers(this.deps.transferOrdner ?? path.join(os.tmpdir(), 'alfred-transfers'), () => this.deps.now?.() ?? Date.now()); // v1249
   }
 
+  /** v1521 — Datei aus dem Dateispeicher laden (Ablage des Handys holt sie später ab). */
+  async ladeDatei(quelle: string): Promise<{ name: string; data: Buffer } | undefined> {
+    return this.deps.dateien ? await this.deps.dateien.lade(quelle).catch(() => undefined) : undefined;
+  }
+
   /** v1520 — Einträge der Handys, deren Werkzeug ohne Verbindung angemeldet ist */
   private ohneVerbindung = new Map<string, GeraetEintrag>();
   private widerrufen = new Set<string>();

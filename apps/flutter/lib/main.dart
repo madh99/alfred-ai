@@ -367,11 +367,26 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final s = server; if (s == null) return;
     try {
       final j = await s.json('/api/geraete/ablage');
-      final l = ((j['eintraege'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+      final alle = ((j['eintraege'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+      // 1.54.1 — Dateien kommen ohne Rückfrage dazu (überschreiben nie): gleich speichern, ältere zuerst
+      for (final d in alle.where((e) => e['art'] == 'datei').toList().reversed) { await _ablageDateiSpeichern(d); }
+      final l = alle.where((e) => e['art'] != 'datei').toList();
       final ziel = kopiereId == null ? null : l.where((e) => e['id'] == kopiereId).firstOrNull;
       if (ziel != null) { await _ablageKopieren(ziel); return; }
       if (mounted) _neu(() => ablageOffen = l);
     } catch (_) { /* alter Server oder getrennt */ }
+  }
+
+  Future<void> _ablageDateiSpeichern(Map<String, dynamic> e) async {
+    final s = server; if (s == null) return;
+    try {
+      final res = await s.hole('/api/geraete/ablage/${e['id']}/datei');
+      if (res.statusCode != 200) { await res.drain<void>(); return; }
+      final b = BytesBuilder(copy: false); await for (final t in res) { b.add(t); }
+      final wo = await dateiAblegen(e['ordner'] as String?, '${e['name'] ?? 'datei'}', b.takeBytes());
+      try { await s.json('/api/geraete/ablage/${e['id']}', methode: 'DELETE'); } catch (_) {}
+      _zeile(Eintrag(Art.hinweis, '📥 $wo gespeichert'));
+    } catch (err) { _zeile(Eintrag(Art.fehler, 'Datei von Alfred nicht gespeichert: ${'$err'.replaceFirst('Exception: ', '')}')); }
   }
 
   Future<void> _ablageKopieren(Map<String, dynamic> e) async {
@@ -395,6 +410,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       case 'hinweis': _neu(() => ansicht = Ansicht.hinweise);
       case 'antwort': if (server != null && server!.faden != z.faden) { _fadenWechseln(z.faden); } else { _neu(() => ansicht = Ansicht.chat); }
       case 'zwischenablage': _ablageHolen(kopiereId: z.id); // 1.54.0 — Antippen kopiert genau diesen Text
+      case 'datei': _ablageHolen(); // 1.54.1 — Antippen speichert die Datei(en)
     }
   }
 

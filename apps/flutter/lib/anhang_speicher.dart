@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'plattform.dart'; // 1.54.1
 
 /// 1.5.0 — Anhänge aus dem Verlauf auf dem Gerät zwischenspeichern (Owner-Freigabe 11.10., Punkt 2): einmal vom Server
 /// geholt, liegen sie unter `~/.alfred/anhaenge/<id>` und erscheinen beim nächsten Start sofort — auch wenn der Server
@@ -10,8 +11,7 @@ class AnhangSpeicher {
 
   /// Standardort neben der übrigen App-Konfiguration (~/.alfred).
   factory AnhangSpeicher.standard() {
-    final heim = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
-    return AnhangSpeicher(Directory('$heim${Platform.pathSeparator}.alfred${Platform.pathSeparator}anhaenge'));
+    return AnhangSpeicher(Directory('${alfredDatenOrdner()}${Platform.pathSeparator}anhaenge')); // 1.54.1
   }
 
   final Directory verzeichnis;

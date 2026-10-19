@@ -13903,6 +13903,19 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const gw = new GeraeteGateway({
           // v1520 — Handy im Hintergrund: Zwischenablage über Ablage + Push „Zum Kopieren antippen“ (Inhalt nie im Push)
           offlineAktion: (g, aktion, params) => {
+            // v1521 — Datei aufs Handy im Hintergrund: nur der Verweis (quelle) wird gemerkt; die App holt sie beim Antippen oder Öffnen
+            if (aktion === 'datei_ablegen') return (async () => {
+              const quelle = typeof params.quelle === 'string' ? params.quelle : '';
+              const name = typeof params.name === 'string' && params.name.trim() ? params.name.trim() : typeof params.dateiName === 'string' ? params.dateiName : '';
+              if (!quelle || !name) return { success: false, error: 'quelle fehlt', dauerMs: 0 };
+              const ordner = typeof params.ordner === 'string' && params.ordner.trim() ? params.ordner.trim() : undefined;
+              const e = handyAblage.legeDatei(g.id, { quelle, name, ordner, groesse: typeof params.groesse === 'number' ? params.groesse : undefined });
+              const zugestellt = await this.pushDienst?.anGeraet(g.id, { titel: 'Alfred', text: 'Datei bereit – antippen speichert', art: 'datei', id: e.id }).catch(() => false);
+              this.logger.info({ geraet: g.name, ordner: ordner ?? 'Alfred', groesse: e.datei?.groesse, push: !!zugestellt }, 'v1521 Datei abgelegt (Handy im Hintergrund)');
+              return { success: true, dauerMs: 0, display: zugestellt
+                ? `Datei „${name}“ liegt bereit für ${g.name} (Ordner ${ordner ?? 'Alfred'}): Mitteilung ist zugestellt, beim Antippen oder nächsten Öffnen der App wird sie gespeichert.`
+                : `Datei „${name}“ liegt bereit für ${g.name} (Ordner ${ordner ?? 'Alfred'}); beim nächsten Öffnen der App wird sie gespeichert.` };
+            })();
             if (aktion !== 'zwischenablage_setzen') return undefined;
             return (async () => {
               const start = Date.now();
@@ -14198,7 +14211,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // v1520 — Zwischenablage abholen (Handy nach Push oder beim Öffnen): GET = offene Einträge, DELETE <id> = abgeholt
           ablage: async (geraetId: string, id?: string) => {
             if (id) return { status: handyAblage.erledige(geraetId, id) ? 200 : 404, antwort: { ok: true } };
-            return { status: 200, antwort: { eintraege: handyAblage.offene(geraetId).map(e => ({ id: e.id, text: e.text, vertraulich: e.vertraulich, zeit: new Date(e.zeit).toISOString() })) } };
+            return { status: 200, antwort: { eintraege: handyAblage.offene(geraetId).map(e => e.art === 'datei'
+              ? { id: e.id, art: 'datei', name: e.datei?.name, ordner: e.datei?.ordner ?? null, groesse: e.datei?.groesse ?? null, zeit: new Date(e.zeit).toISOString() }
+              : { id: e.id, art: 'text', text: e.text, vertraulich: e.vertraulich, zeit: new Date(e.zeit).toISOString() }) } };
+          },
+          // v1521 — Inhalt einer abgelegten Datei für genau dieses Handy (aus dem Dateispeicher, nicht aus der Ablage)
+          ablageDatei: async (geraetId: string, id: string) => {
+            const e = handyAblage.hole(geraetId, id);
+            if (!e?.datei) return undefined;
+            const d = await gw.ladeDatei(e.datei.quelle);
+            return d ? { name: e.datei.name, data: d.data } : undefined;
           },
           // v1519 H2 — Antwort fertig: Push nur, wenn die App nicht mehr verbunden ist (entscheidet der Push-Dienst)
           antwortFertig: (geraetId: string, faden?: string) => { void this.pushDienst?.antwortFertig(geraetId, faden).catch(() => false); },

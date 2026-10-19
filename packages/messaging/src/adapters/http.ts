@@ -1093,6 +1093,8 @@ export class HttpAdapter extends MessagingAdapter {
     antwortFertig?(geraetId: string, faden?: string): void;
     /** v1520 — Zwischenablage-Ablage des Handys: ohne id Liste, mit id abgeholt */
     ablage?(geraetId: string, id?: string): Promise<{ status: number; antwort: unknown }>;
+    /** v1521 — Inhalt einer abgelegten Datei (nur das eigene Gerät) */
+    ablageDatei?(geraetId: string, id: string): Promise<{ name: string; data: Buffer } | undefined>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -2093,7 +2095,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (/^\/api\/geraete\/anhang\/[0-9a-f]{32}$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
-    } else if (url.pathname === '/api/geraete/ablage' && req.method === 'GET' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}$/.test(url.pathname) && req.method === 'DELETE') {
+    } else if (url.pathname === '/api/geraete/ablage' && req.method === 'GET' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}$/.test(url.pathname) && req.method === 'DELETE' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}\/datei$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAblage(req, res, url).catch(err => this.safeError(res, err)); // v1520
     } else if (url.pathname === '/api/geraete/push' && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetPush(req, res).catch(err => this.safeError(res, err)); // v1518 H2
@@ -6965,6 +6967,12 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     const geraet = this.geraetIdentitaet.get(req);
     if (!geraet || !this.geraeteCallbacks?.ablage) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    if (url.pathname.endsWith('/datei')) { // v1521 — Datei-Inhalt, neutral ausgeliefert (kein Inline-Rendern)
+      const d = await this.geraeteCallbacks.ablageDatei?.(geraet.geraetId, url.pathname.split('/')[4] ?? '');
+      if (!d) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nicht (mehr) vorhanden' })); return; }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(d.data.length), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(d.name)}` });
+      res.end(d.data); return;
+    }
     const id = req.method === 'DELETE' ? url.pathname.split('/').pop() : undefined;
     const r = await this.geraeteCallbacks.ablage(geraet.geraetId, id);
     res.writeHead(r.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });

@@ -10,6 +10,11 @@
 	<string>Alfred</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- 1.54.1 — Ordner „Alfred“ in der Dateien-App (Auf meinem iPhone → Alfred) -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Alfred liest mit der Kamera den Kopplungs-QR von der Seite „Geräte“.</string>
 	<key>NSMicrophoneUsageDescription</key>
