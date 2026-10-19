@@ -2,6 +2,7 @@ import AVFoundation
 import Flutter
 import Network
 import PhotosUI
+import QuickLook
 import UniformTypeIdentifiers
 import Security
 import UIKit
@@ -20,6 +21,8 @@ import UserNotifications
   private var ordnerWahl: OrdnerWahl?
   /// 1.54.2 — offene Foto-/Kamerawahl
   private var fotoWahl: FotoWahl?
+  /// 1.54.4 — offene Vorschau (Quick Look hält seine Datenquelle nicht selbst)
+  private var vorschauQuelle: Vorschau?
 
   override func application(
     _ application: UIApplication,
@@ -178,6 +181,18 @@ import UserNotifications
             picker.delegate = wahl
             self?.obersteAnsicht()?.present(picker, animated: true)
           }
+        case "vorschau":
+          // 1.54.4 — Anhang antippen: iOS-Vorschau (vergrößern, PDF/Office, Teilen/Sichern); Realfall 20.10. 01:29 xdg-open auf iOS
+          guard let pfad = args["pfad"] as? String else { ergebnis(false); return }
+          DispatchQueue.main.async {
+            let quelle = Vorschau(URL(fileURLWithPath: pfad)) { self?.vorschauQuelle = nil }
+            self?.vorschauQuelle = quelle
+            let ql = QLPreviewController()
+            ql.dataSource = quelle
+            ql.delegate = quelle
+            self?.obersteAnsicht()?.present(ql, animated: true)
+            ergebnis(true)
+          }
         case "zwischenablageBild":
           // 1.54.2 — Bild aus der Zwischenablage (iOS fragt beim Einsetzen aus einer anderen App selbst nach)
           if UIPasteboard.general.hasImages, let bild = UIPasteboard.general.image, let pfad = Foto.speichere(bild, nr: 0, art: "eingefuegt") { ergebnis(pfad) } else { ergebnis(nil) }
@@ -230,6 +245,16 @@ final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
   init(fertig: @escaping (URL?) -> Void) { self.fertig = fertig }
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { fertig(urls.first) }
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { fertig(nil) }
+}
+
+/// 1.54.4 — Datenquelle der Quick-Look-Vorschau (eine Datei)
+final class Vorschau: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
+  let url: URL
+  let fertig: () -> Void
+  init(_ url: URL, fertig: @escaping () -> Void) { self.url = url; self.fertig = fertig }
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+  func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
+  func previewControllerDidDismiss(_ controller: QLPreviewController) { fertig() }
 }
 
 /// 1.54.2 — Fotos aus Mediathek oder Kamera; Ergebnis: Pfade der JPEG-Dateien im tmp-Ordner (leer = abgebrochen)

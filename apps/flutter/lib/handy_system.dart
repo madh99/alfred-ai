@@ -99,3 +99,8 @@ Future<List<String>> kameraFoto() async => ((await _kanal.invokeMethod<List<Obje
 Future<String?> zwischenablageBildPfad() async {
   try { return await _kanal.invokeMethod<String>('zwischenablageBild'); } on MissingPluginException { return null; }
 }
+
+/// 1.54.4 — Datei in der iOS-Vorschau (Quick Look) zeigen: Bilder vergrößern, PDF/Office ansehen, Teilen/Sichern.
+Future<bool> handyVorschau(String pfad) async {
+  try { return await _kanal.invokeMethod<bool>('vorschau', {'pfad': pfad}) ?? false; } on MissingPluginException { return false; }
+}

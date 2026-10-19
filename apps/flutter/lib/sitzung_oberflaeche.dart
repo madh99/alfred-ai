@@ -564,6 +564,7 @@ extension _Oberflaeche on _SitzungState {
   Future<void> _anhangOeffnen(Anhang a) async {
     try {
       final f = await _anhangAblegen(a, await getTemporaryDirectory());
+      if (istHandy) { await handyVorschau(f.path); return; } // 1.54.4 — iOS-Vorschau statt Desktop-Programm
       if (Platform.isWindows) { await Process.start('cmd', ['/c', 'start', '', f.path], mode: ProcessStartMode.detached); }
       else if (Platform.isMacOS) { await Process.start('open', [f.path], mode: ProcessStartMode.detached); }
       else { await Process.start('xdg-open', [f.path], mode: ProcessStartMode.detached); }
@@ -573,6 +574,7 @@ extension _Oberflaeche on _SitzungState {
 
   Future<void> _anhangSpeichern(Anhang a) async {
     try {
+      if (istHandy) { _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${await dateiAblegen(null, a.name, a.bytes)}')); return; } // 1.54.4 — Ordner „Alfred“ (Dateien-App)
       final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
       final f = await _anhangAblegen(a, dir);
       _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${f.path}'));

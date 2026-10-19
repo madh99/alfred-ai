@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — iPhone: Anhänge öffnen und vergrößern (App 1.54.4)
+
+Owner-Test 20.10. (Build 96): Bilder im Chat ließen sich durch Antippen nicht vergrößern. Server-Log 01:29: „Anhang nicht geöffnet: Starting new processes is not supported on iOS — xdg-open …“ — die App nahm den Linux-Weg. Auf dem Handy öffnet Antippen jetzt die iOS-Vorschau (Quick Look): Bilder vergrößern, PDF und Office ansehen, Teilen und Sichern; gilt für Bilder im Chat, Upload-Vorschauen und die Anhänge-Ansicht. „Speichern“ legt am Handy im Ordner „Alfred“ ab.
+
+Belegt mit Build 96: „Teilen an Alfred“ aus der Fotos-App — Upload 2,4 MB, Nachricht im Hauptgespräch, Bild für Alfred sichtbar, Mitteilung „Antwort fertig“ (Apple 200).
+
 ### Added — „Teilen an Alfred“ auf dem iPhone (App 1.54.3)
 
 Owner 20.10.: Fotos, Dateien, Links und Text aus anderen Apps über das Teilen-Menü an Alfred schicken.
