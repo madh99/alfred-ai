@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'schluesselbund.dart';
 
@@ -48,6 +49,9 @@ class Kopplung {
     return (server: server.replaceAll(RegExp(r'/+$'), ''), code: code, spki: spki != null && RegExp(r'^[0-9a-f]{64}$').hasMatch(spki) ? spki : null);
   } catch (_) { return null; }
 }
+
+/// 1.54.0 H3 — Server über keinen Weg erreichbar (außerhalb des Heim-WLANs ohne VPN).
+const serverUnerreichbar = 'Server nicht erreichbar — außerhalb des Heim-WLANs das VPN einschalten';
 
 /// Schlüssel-Fingerabdruck des Servers holen (vor der Kopplung, noch ohne Vertrauen).
 Future<String> serverSchluessel(String server) async {
@@ -92,6 +96,7 @@ class HandyVerbindung implements AppVerbindung {
   Kopplung? kopplung;
   WebSocket? _ws;
   Timer? _puls, _spaeter;
+  static const _netz = MethodChannel('alfred/netz');
   bool _laeuft = false, _vorne = true, _verbunden = false;
   AppLifecycleListener? _leben;
   int _rueckzug = 2;
@@ -103,6 +108,7 @@ class HandyVerbindung implements AppVerbindung {
   @override
   Future<void> start() async {
     _laeuft = true;
+    _netz.setMethodCallHandler((c) async { if (c.method == 'geaendert') jetztVerbinden(); return null; }); // 1.54.0 H3
     _leben ??= AppLifecycleListener(
       onResume: () { _vorne = true; _verbinde(); },
       onInactive: () {},
@@ -142,7 +148,7 @@ class HandyVerbindung implements AppVerbindung {
     if (!_laeuft || !_vorne || k == null || _ws != null) return;
     final c = clientFuer(k.konfig);
     try {
-      final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 10));
+      final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 6)); // 1.54.0 H3 — Mobilfunk: nicht lange hängen
       if (!_laeuft || !_vorne) { ws.close(); return; }
       _ws = ws;
       _sende({'typ': 'hallo', 'geraetId': k.geraetId, 'token': k.token, 'manifest': {'protokoll': 1, 'plattform': handyPlattform, 'hostname': k.name, 'satellitVersion': 'app-${version()}', 'aktionen': <Object>[], 'sinne': <Object>[]}});
@@ -153,7 +159,8 @@ class HandyVerbindung implements AppVerbindung {
       aufZustand(zertifikatUnbekannt); // falscher Schlüssel: nicht im Sekundentakt wiederholen
       _spaeterVerbinden(60);
     } catch (e) {
-      aufZustand('Gehirn nicht erreichbar: ${e is TimeoutException ? 'Zeitüberschreitung' : e}');
+      // 1.54.0 H3 — nicht erreichbar (kein Weg ins Heimnetz) klar benennen; andere Fehler wie bisher
+      aufZustand(e is TimeoutException || e is SocketException ? serverUnerreichbar : 'Gehirn nicht erreichbar: $e');
       _spaeterVerbinden(_rueckzug);
       _rueckzug = min(_rueckzug * 2, 60);
     }
@@ -164,6 +171,21 @@ class HandyVerbindung implements AppVerbindung {
     _ws = null; _puls?.cancel(); _puls = null;
     if (_verbunden) { _verbunden = false; _status(false); }
     if (_laeuft && _vorne) _spaeterVerbinden(_rueckzug);
+  }
+
+  /// 1.54.0 H3 — Netzwechsel (iOS-Netzwächter) oder Knopf „Erneut verbinden“: alte Verbindung sofort trennen, Wartezeit
+  /// zurücksetzen und gleich neu verbinden (kurze Pause, damit ein VPN bei Bedarf zuerst steht).
+  void jetztVerbinden({Duration pause = const Duration(milliseconds: 800)}) {
+    if (!_laeuft || !_vorne) return;
+    _rueckzug = 2; _spaeter?.cancel();
+    final ws = _ws;
+    if (ws != null) {
+      _ws = null; _puls?.cancel(); _puls = null;
+      try { ws.close(); } catch (_) {}
+      if (_verbunden) { _verbunden = false; _status(false); }
+    }
+    aufZustand('verbinde …');
+    _spaeter = Timer(pause, _verbinde);
   }
 
   void _spaeterVerbinden(int sekunden) { _spaeter?.cancel(); _spaeter = Timer(Duration(seconds: sekunden), _verbinde); }

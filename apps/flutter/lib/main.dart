@@ -165,6 +165,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final List<Bestaetigung> offen = [];
   final Set<String> gemeldet = {};
   final TextEditingController eingabe = TextEditingController();
+  /// 1.54.0 — Handy: laufende Aufnahme ist ein Diktat (Text ins Eingabefeld statt senden; Owner 19.10.)
+  bool diktat = false;
   final ScrollController scroll = ScrollController();
   final FocusNode fokus = FocusNode();
   final Audio audio = Audio();
@@ -557,7 +559,19 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Padding(padding: const EdgeInsets.only(right: 12), child: Icon(Icons.circle, size: 10, color: satellit?.verbunden == true ? Colors.green : theme.colorScheme.error)),
         ],
       ),
-      body: SafeArea(top: false, child: inhalt),
+      body: SafeArea(top: false, child: Column(children: [
+        // 1.54.0 H3 — kein Weg zum Server (außerhalb des Heim-WLANs ohne VPN): klar sagen, Erneut-Knopf
+        if (satellit?.verbunden != true && ipcZustand == serverUnerreichbar) Material(key: const Key('netz-hinweis'), color: theme.colorScheme.errorContainer, child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+          child: Row(children: [
+            Icon(Icons.wifi_off, size: 18, color: theme.colorScheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(child: Text(serverUnerreichbar, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onErrorContainer))),
+            TextButton(onPressed: () => (ipc as HandyVerbindung).jetztVerbinden(pause: Duration.zero), child: const Text('Erneut')),
+          ]),
+        )),
+        Expanded(child: inhalt),
+      ])),
     );
   }
 

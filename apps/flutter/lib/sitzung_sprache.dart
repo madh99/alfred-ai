@@ -14,6 +14,47 @@ extension _Sprache on _SitzungState {
   }
 
 
+  /// 1.54.0 (Owner 19.10.) — Handy: Antippen = Diktat. Erster Tipp startet, zweiter stoppt; der erkannte Text kommt ins
+  /// Eingabefeld (prüfen, ändern, selbst senden). Gedrückt halten = sprechen und beim Loslassen senden (_haltenStart/_haltenEnde).
+  Future<void> _diktatUmschalten() async {
+    if (aufnahme) { if (diktat) { await _diktatStop(); } else { await _talkStop(); } return; }
+    if (antwortet) return;
+    if (await _aufnahmeStarten('● Diktat läuft — antippen beendet')) _neu(() => diktat = true);
+  }
+
+  Future<void> _haltenStart() async {
+    if (aufnahme || antwortet) return;
+    await _aufnahmeStarten('● Sprich — loslassen sendet');
+  }
+
+  Future<void> _haltenEnde() async { if (aufnahme && !diktat) await _talkStop(); }
+
+  Future<bool> _aufnahmeStarten(String hinweis) async {
+    bool ok;
+    try { ok = await audio.aufnehmen(); } catch (e) { _zeile(Eintrag(Art.fehler, 'Mikrofon: $e')); return false; }
+    if (!ok) { _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return false; }
+    _neu(() { aufnahme = true; diktat = false; fluechtig = hinweis; });
+    return true;
+  }
+
+  Future<void> _diktatStop() async {
+    _neu(() { aufnahme = false; diktat = false; fluechtig = '… schreibe mit'; });
+    final daten = await audio.stop();
+    final s = server;
+    try {
+      if (s == null) return;
+      if (daten.length < 2000) { _zeile(Eintrag(Art.hinweis, '🎙 Aufnahme zu kurz.')); return; }
+      final text = (await s.transkribiere(daten, 'audio/wav')).trim();
+      if (text.isEmpty) { _zeile(Eintrag(Art.hinweis, '🎙 Nichts verstanden.')); return; }
+      final alt = eingabe.text.trimRight();
+      eingabe.text = alt.isEmpty ? text : '$alt $text';
+      eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length);
+      fokus.requestFocus();
+    } catch (e) { _zeile(Eintrag(Art.fehler, '🎙 $e')); }
+    finally { _neu(() => fluechtig = ''); }
+  }
+
+
   Future<void> _talkStop() async {
     _neu(() { aufnahme = false; fluechtig = '… höre zu'; });
     final daten = await audio.stop();

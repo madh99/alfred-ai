@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — iPhone: Diktat und Netzwechsel (App 1.53.0, Build 90)
+
+Owner 19.10.: „Antippen Diktat, halten senden … H3 App-Hilfen freigegeben“ (Zuhören am Handy bewusst noch nicht).
+
+- **Mikrofon auf dem Handy:** Antippen startet ein Diktat, erneutes Antippen beendet es; der erkannte Text kommt ins Eingabefeld zum Prüfen und Ändern. Gedrückt halten nimmt auf, Loslassen sendet direkt. Am Desktop bleibt es beim bisherigen Verhalten.
+- **Netzwechsel (H3):** Die App hört auf iOS-Netzwechsel (WLAN, Mobilfunk, VPN) und verbindet sofort neu, statt auf die tote alte Verbindung und wachsende Wartezeiten zu warten. Verbindungsaufbau höchstens 6 s.
+- **Klare Meldung:** Ist der Server über keinen Weg erreichbar, steht oben „Server nicht erreichbar — außerhalb des Heim-WLANs das VPN einschalten“ mit dem Knopf „Erneut“. Das VPN selbst schaltet iOS über die Regeln der VPN-App ein (On-Demand); eine App darf ein fremdes VPN nicht einschalten.
+
 ### Fixed — „Antwort fertig“ kam nicht als Mitteilung (v1519)
 
 Owner-Test 19.10. 22:12: Frage gestellt, App sofort in den Hintergrund, Antwort 6 s später fertig — kein Push. Auslöser war der abgerissene Antwort-Strom (SSE); iOS hält diese Verbindung im Hintergrund aber noch offen, der Server „stellte zu“. Jetzt prüft der Server am Ende jeder Antwort einer Handy-Sitzung, ob die App noch verbunden ist (die WSS-Verbindung trennt sie beim Wechsel in den Hintergrund sofort); wenn nicht, geht „Antwort fertig“ raus. Ein ausgelassener Push steht jetzt ebenfalls im Log.

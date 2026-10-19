@@ -1,4 +1,5 @@
 import Flutter
+import Network
 import Security
 import UIKit
 import UserNotifications
@@ -8,6 +9,10 @@ import UserNotifications
   /// Phase 5 H2 — Kanal zu lib/handy_push.dart; Ziel einer angetippten Mitteilung, bis Dart es abholt
   private var pushKanal: FlutterMethodChannel?
   private var pushZiel: [String: Any]?
+  /// 1.54.0 H3 — Netzwechsel (WLAN ↔ Mobilfunk, VPN an/aus) an Dart: sofort neu verbinden statt auf den toten Kanal zu warten
+  private let netzWaechter = NWPathMonitor()
+  private var netzKanal: FlutterMethodChannel?
+  private var netzZuletzt: String?
 
   override func application(
     _ application: UIApplication,
@@ -80,6 +85,25 @@ import UserNotifications
         default: ergebnis(FlutterMethodNotImplemented)
         }
       }
+    }
+    // 1.54.0 H3 — Netzwächter; meldet nur echte Wechsel (erster Stand wird nur gemerkt)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredNetz") {
+      netzKanal = FlutterMethodChannel(name: "alfred/netz", binaryMessenger: registrar.messenger())
+      netzWaechter.pathUpdateHandler = { [weak self] pfad in
+        var teile: [String] = []
+        if pfad.status != .satisfied { teile.append("keins") }
+        if pfad.usesInterfaceType(.wifi) { teile.append("wlan") }
+        if pfad.usesInterfaceType(.cellular) { teile.append("mobil") }
+        if pfad.usesInterfaceType(.other) { teile.append("vpn") }
+        let art = teile.joined(separator: "+")
+        DispatchQueue.main.async {
+          guard let self = self else { return }
+          let vorher = self.netzZuletzt
+          self.netzZuletzt = art
+          if vorher != nil && vorher != art { self.netzKanal?.invokeMethod("geaendert", arguments: ["art": art]) }
+        }
+      }
+      netzWaechter.start(queue: DispatchQueue(label: "at.alfred.netz"))
     }
     // 1.52.1 — Links aus Antworten über das System öffnen (Safari, Mail …); die Desktop-Wege (open, xdg-open) gibt es auf iOS nicht
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredSystem") {
