@@ -14,6 +14,9 @@ mkdir -p build
 LOG="$PWD/build/testflight.log" # im eigenen Build-Ordner, nicht unter festem Namen in /tmp (Symlink-Angriff)
 : > "$LOG"
 AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+# Export mit einer Wiederholung: die Cloud-Signatur scheiterte einmal vorübergehend mit errSecInternalComponent
+# (Realfall 19.10. Build 90; der zweite Versuch ohne Änderung lief durch)
+exportieren() { xcodebuild -exportArchive "$@" "${AUTH[@]}" >> "$LOG" 2>&1 || { echo "Export fehlgeschlagen — zweiter Versuch"; sleep 20; xcodebuild -exportArchive "$@" "${AUTH[@]}" >> "$LOG" 2>&1; }; }
 
 echo "1/3 flutter build ios (Release, ohne Signatur)"
 flutter build ios --release --no-codesign >> "$LOG" 2>&1 || { tail -30 "$LOG"; exit 1; }
@@ -44,14 +47,13 @@ PLIST
 # Vorprüfung: lokal exportieren und nachsehen, dass Push (aps-environment production) im signierten Paket steht
 sed 's#<string>upload</string>#<string>export</string>#' build/ExportOptions.plist > build/ExportOptions-pruef.plist
 echo "3a Export lokal (Prüfung der Entitlements)"
-xcodebuild -exportArchive -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions-pruef.plist   -exportPath build/ipa-pruef "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
+exportieren -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions-pruef.plist -exportPath build/ipa-pruef || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 rm -rf build/ipa-pruef/x && mkdir -p build/ipa-pruef/x && unzip -q -o build/ipa-pruef/*.ipa -d build/ipa-pruef/x
 APS="$(codesign -d --entitlements - --xml build/ipa-pruef/x/Payload/Runner.app 2>/dev/null | plutil -extract aps-environment raw -o - - 2>/dev/null || true)"
 echo "aps-environment: ${APS:-fehlt}"
 [ "$APS" = "production" ] || { echo "Push-Recht fehlt im Paket — kein Upload"; exit 1; }
 
 echo "3b Export (Cloud-Signatur) + Upload zu App Store Connect"
-xcodebuild -exportArchive -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist \
-  -exportPath build/ipa "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
+exportieren -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist -exportPath build/ipa || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 grep -E "Upload succeeded|EXPORT SUCCEEDED|Uploaded" "$LOG" | tail -3
 /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleShortVersionString" -c "Print :ApplicationProperties:CFBundleVersion" build/Alfred.xcarchive/Info.plist | paste -sd' ' - | sed 's/^/Version /'
