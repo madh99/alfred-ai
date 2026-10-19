@@ -60,6 +60,19 @@ export function darfErneutVersuchen(version: string, jetzt = Date.now()): { vers
 export function vergissFehlversuche(): void { fehlversuche.clear(); }
 
 /** Prüft beim Server und aktualisiert, wenn dort eine neuere Version liegt. Liefert die neue Version oder undefined. */
+/**
+ * v1516 — Wartezähler je Grund. Realfall 19.10. VM: ein gemeinsamer Rundenzähler — eine Stunde Warten auf den Claude-Code-Auftrag
+ * (Grenze 360) hatte ihn auf 69 gebracht; als kurz eine Aktion lief, griff deren Grenze 60 und das Update wurde aufgegeben
+ * (erst der nächste Server-Hinweis hätte es erneut versucht). Jetzt zählt jeder Grund für sich.
+ */
+export interface UpdateZaehler { aktion: number; auftrag: number; nichtBereit: number }
+export const UPDATE_GRENZEN: Readonly<UpdateZaehler> = { aktion: 60, auftrag: 360, nichtBereit: 10 };
+export const UPDATE_START: Readonly<UpdateZaehler> = { aktion: 0, auftrag: 0, nichtBereit: 0 };
+/** Nächster Zählerstand für einen weiteren Warteschritt; undefined = Grenze für diesen Grund erreicht (aufgeben). */
+export function updateWeiterWarten(z: UpdateZaehler, grund: keyof UpdateZaehler): UpdateZaehler | undefined {
+  return z[grund] >= UPDATE_GRENZEN[grund] ? undefined : { ...z, [grund]: z[grund] + 1 };
+}
+
 export async function aktualisiereWennNeuer(k: GeraetKonfig, eigene: string, log: (z: string) => void): Promise<string | undefined> {
   const tStart = Date.now();
   const info = await geraetJson<UpdateInfo>(k, 'GET', '/api/geraete/update');

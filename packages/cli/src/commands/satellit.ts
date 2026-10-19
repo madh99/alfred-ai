@@ -11,7 +11,7 @@ import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_COD
 import { vergleicheVersion, raeumeVersionen } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
-import { cliOrdner } from './satellit-update.js'; // v1274
+import { cliOrdner, updateWeiterWarten, UPDATE_START, type UpdateZaehler } from './satellit-update.js'; // v1274, v1516
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
 import { installiereStarter } from './satellit-starter.js'; // v1304
 import { installieren, pruefeInstallation, INSTALL_QUELLEN } from './satellit-installieren.js'; // v1410 R3c
@@ -859,21 +859,23 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     if (updateLaeuft || vergleicheVersion(serverVersion, version) <= 0) return;
     updateLaeuft = true;
     log(`Server ${serverVersion} ist neuer als ${version} — Update in 15 s`); // v1262 — sichtbar machen
-    const versuch = async (runde: number) => {
-      if (aktionenLaufend > 0) { log(`Update wartet: ${aktionenLaufend} Aktion(en) laufen (Runde ${runde + 1})`); if (runde < 60) setTimeout(() => versuch(runde + 1), 30_000); else updateLaeuft = false; return; }
+    // v1516 — Wartezähler je Grund (vorher einer für alle: Auftrags-Warten verbrauchte die Grenze für Aktionen → Update aufgegeben)
+    const versuch = async (z: UpdateZaehler) => {
+      if (aktionenLaufend > 0) { const n = updateWeiterWarten(z, 'aktion'); log(`Update wartet: ${aktionenLaufend} Aktion(en) laufen (${z.aktion + 1}.)`); if (n) setTimeout(() => versuch(n), 30_000); else updateLaeuft = false; return; }
       // v1459 — Update-Sperre: nicht während einer Claude-Code-Etappe (höchstens 6 h warten, dann beim nächsten Server-Hinweis erneut)
       let auftr = 0; try { auftr = laufendeAuftraege(); } catch { /* Ordner nicht lesbar: nicht blockieren */ }
-      if (auftr > 0) { if (runde === 0 || runde % 10 === 0) log(`Update wartet: ${auftr} Claude-Code-Auftrag/Aufträge laufen (Runde ${runde + 1})`); if (runde === 0) ereignis('update', `Update auf ${serverVersion} wartet, bis der laufende Auftrag fertig ist`); if (runde < 360) setTimeout(() => versuch(runde + 1), 60_000); else updateLaeuft = false; return; }
+      if (auftr > 0) { const n = updateWeiterWarten(z, 'auftrag'); if (z.auftrag % 10 === 0) log(`Update wartet: ${auftr} Claude-Code-Auftrag/Aufträge laufen (${z.auftrag + 1}. Minute)`); if (z.auftrag === 0) ereignis('update', `Update auf ${serverVersion} wartet, bis der laufende Auftrag fertig ist`); if (n) setTimeout(() => versuch(n), 60_000); else updateLaeuft = false; return; }
       log('Update-Prüfung beim Server …');
       try {
         const neu = await aktualisiereWennNeuer(k, version, log);
         if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); ereignis('update', `Update auf ${neu} installiert — Neustart`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }
         // v1265 — Server ist neuer, hat sein Release aber noch nicht bereit (kurz nach dem Start): später erneut
-        if (runde < 10) { log(`Release ${serverVersion} noch nicht bereit — neuer Versuch in 60 s`); setTimeout(() => versuch(runde + 1), 60_000); return; }
-      } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); if (runde < 10) { setTimeout(() => versuch(runde + 1), 60_000); return; } }
+        const n = updateWeiterWarten(z, 'nichtBereit');
+        if (n) { log(`Release ${serverVersion} noch nicht bereit — neuer Versuch in 60 s`); setTimeout(() => versuch(n), 60_000); return; }
+      } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); const n = updateWeiterWarten(z, 'nichtBereit'); if (n) { setTimeout(() => versuch(n), 60_000); return; } }
       updateLaeuft = false;
     };
-    setTimeout(() => versuch(0), 15_000);
+    setTimeout(() => versuch({ ...UPDATE_START }), 15_000);
   };
   const sinne = new SinneErfasser({ ohneFenster: (k as GeraetKonfig & { sinneOhneFenster?: boolean }).sinneOhneFenster === true });
   // v1429 R4a — Beobachter: Regeln kommen vom Gehirn (`beobachten`), nur freigegebene/lesbare Verzeichnisse, lokales Veto

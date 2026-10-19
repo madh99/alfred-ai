@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Satelliten-Update gab nach langem Warten auf (v1516)
+
+Realfall 19.10. (Ubuntu-VM, Satellit 1498): Das Update wartete über eine Stunde auf den laufenden Claude-Code-Auftrag. Die Warteschleife hatte für alle Gründe einen gemeinsamen Rundenzähler. Bei Runde 69 lief kurz eine normale Aktion, deren Grenze von 60 Runden griff, und das Update wurde aufgegeben; erst der nächste Hinweis vom Server hätte es erneut versucht. Jetzt zählt jeder Grund für sich: Aktion läuft, Auftrag läuft, Release noch nicht bereit.
+
 ### Changed — Folgeaufträge in der Live-Leiste des Chats (v1515)
 
 Owner 19.10. (Screenshot Projektfaden): Wartende Folgeaufträge sollen auch im Chat sichtbar sein. Die Leiste über der Eingabe zeigt jetzt etwa „Finanz-Backend · Etappe 4/6 (+1 Folgeauftrag): …“. „Öffnen“ führt in die Projektansicht mit der Liste.
