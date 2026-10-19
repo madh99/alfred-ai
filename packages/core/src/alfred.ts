@@ -16346,7 +16346,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const { fadenSchluessel, hauptgespraech, FADEN_RE } = await import('./gespraeche.js');
     if (faden !== null && !FADEN_RE.test(faden)) return { ok: false, text: 'Faden ungültig.' };
     const k = faden === null ? hauptgespraech(this.gespraechsOptionen()) : fadenSchluessel(faden);
-    const r = await skill.execute({ action: 'create', name: a.name, schedule_type: a.art, schedule_value: a.wert, prompt_template: a.auftrag },
+    // v1503 — Realfall 19.10. 10:56: der Skill verlangt description („Missing required field "description"“) → erste Zeile des Auftrags
+    const beschreibung = a.auftrag.split('\n').map(z => z.trim()).find(Boolean)?.slice(0, 200) ?? a.name;
+    const r = await skill.execute({ action: 'create', name: a.name, description: beschreibung, schedule_type: a.art, schedule_value: a.wert, prompt_template: a.auftrag },
       { userId: owner, masterUserId: owner, platform: k.platform, chatId: k.chatId, conversationId: '' } as never);
     this.logger.info({ faden: faden ?? 'haupt', name: a.name, art: a.art, wert: a.wert, ok: r.success }, 'v1500 Geplante Aufgabe aus Faden');
     return { ok: !!r.success, text: r.success ? (r.display ?? 'Geplant.') : (r.error ?? 'Nicht geplant.') };

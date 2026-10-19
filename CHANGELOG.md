@@ -55,6 +55,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1503] - 2026-10-19
+
+### Fixed — „Geplante Aufgabe hinzufügen“ aus dem Faden schlug fehl
+
+Owner 19.10. 10:56: „Nicht geplant: HTTP 400 … Missing required field "description" for create action“. Der Skill für geplante Aufgaben verlangt eine Beschreibung, die der neue Weg aus der App (v1500) nicht mitgab. Jetzt ist es die erste Zeile des Auftrags. Das Anlegen ist live bewiesen: Eine Probe-Aufgabe entstand im Faden mit der richtigen Kennung und wurde danach gelöscht. Die App bleibt 1.44.0.
+
 ## [0.19.0-jarvis.1502] - 2026-10-19
 
 ### Fixed — Zusammenfassung eines Fadens brach in der letzten Zeile ab
