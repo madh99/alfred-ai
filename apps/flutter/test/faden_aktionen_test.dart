@@ -45,4 +45,11 @@ void main() {
     final k = appKuerzel.map((e) => e.$1).toList();
     expect(k, containsAll(['Strg+K', 'Strg+N', 'Strg+B', 'Strg+,', 'Strg+Alt+R', 'Strg+Alt+P', 'Strg+Alt+S', 'Strg+Umschalt+A']));
   });
+
+  test('1.45.3 Chatbreite: drei Viertel, mindestens 920, höchstens 1440, nie breiter als verfügbar', () {
+    expect(chatBreite(1566), closeTo(1174.5, 0.01)); // Owner-Fenster 19.10. (Chatbereich ~1566 px)
+    expect(chatBreite(2400), 1440);
+    expect(chatBreite(1000), 920);
+    expect(chatBreite(700), 700);
+  });
 }

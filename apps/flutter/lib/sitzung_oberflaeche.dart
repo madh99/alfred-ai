@@ -158,15 +158,15 @@ extension _Oberflaeche on _SitzungState {
     final geraet = konfig?.name ?? satellit?.name ?? '…';
     // 1.1.1 — Owner 16:12: Dateien ließen sich nicht mehr hineinziehen. Die Ablagezone deckte nur den Verlauf ab,
     // nicht die Eingabekarte; jetzt liegt sie über dem ganzen Chat-Bereich (zusätzlich zum Plus-Knopf).
-    return DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: Column(children: [
+    return LayoutBuilder(builder: (context, groesse) { breiteChat = chatBreite(groesse.maxWidth); return DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: Column(children: [ // 1.45.3 Breite
       SizedBox(height: 48, child: Row(children: [
         if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { _neu(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         const SizedBox(width: 12),
         // 1.17.2 — Owner 13.10.: welches Gespräch gerade offen ist, steht über dem Chat (Gerät dahinter, gedämpft)
         // 1.43.0 D2 — Ordner-Symbol bei Fäden eines Projekts (Projektname im Tooltip)
         if (_offenerFaden() != null && fadenProjektId(_offenerFaden()!) != null) Padding(padding: const EdgeInsets.only(right: 6), child: Tooltip(message: 'Projekt: ${(_offenerFaden()!['projekt'] as Map)['name']}', child: Icon(Icons.folder_outlined, size: 18, color: dim))),
-        Flexible(child: Text.rich(TextSpan(children: [TextSpan(text: _kopfTitel()), TextSpan(text: '  ·  $geraet', style: TextStyle(color: dim))]), key: const Key('chat-kopf'), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall)),
-        const Spacer(),
+        // 1.45.3 — Owner 19.10.: Symbole an den rechten Rand. Flexible + Spacer teilten den freien Platz; was der Titel nicht brauchte, blieb rechts leer
+        Expanded(child: Text.rich(TextSpan(children: [TextSpan(text: _kopfTitel()), TextSpan(text: '  ·  $geraet', style: TextStyle(color: dim))]), key: const Key('chat-kopf'), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall)),
         if (archiv == null) IconButton(key: const Key('karte-knopf'), tooltip: karteOffen ? 'Zusammenfassung ausblenden' : 'Angeheftete Zusammenfassung ein', onPressed: () => _neu(() => karteOffen = !karteOffen), icon: Icon(Icons.fact_check_outlined, size: 20, color: karteOffen ? theme.colorScheme.primary : null)), // 1.44.0 D3
         if (archiv == null) IconButton(key: const Key('seiten-chat-knopf'), tooltip: seitenChatOffen ? 'Seiten-Chat schließen (Strg+Alt+S)' : 'Seiten-Chat (Strg+Alt+S)', onPressed: _seitenChatUmschalten, icon: Icon(Icons.vertical_split_outlined, size: 20, color: seitenChatOffen ? theme.colorScheme.primary : null)),
         if (archiv == null) _kopfMenue(),
@@ -184,7 +184,7 @@ extension _Oberflaeche on _SitzungState {
       ]))),
       Expanded(child: Stack(children: [Positioned.fill(child: verlauf.isEmpty
           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
-          : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
+          : Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: ListView.builder(
               controller: scroll,
               reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
               padding: EdgeInsets.fromLTRB(archiv == null && leistenEintraege(verlauf).length >= 3 ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
@@ -207,10 +207,10 @@ extension _Oberflaeche on _SitzungState {
             ))),
       ), if (archiv == null && leistenEintraege(verlauf).length >= 3) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
         if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
-      if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
-      if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _arbeitsLeiste(theme))), // 1.11.0
-      Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
-    ]));
+      if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _bestaetigungen(theme))),
+      if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _arbeitsLeiste(theme))), // 1.11.0
+      Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _eingabekarte(theme))),
+    ])); });
   }
 
 
@@ -454,7 +454,7 @@ extension _Oberflaeche on _SitzungState {
       case Art.du:
         // 1.2.5 — eigene Nachricht wiederholen oder bearbeiten (Owner-Freigabe 09.10.)
         return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-          Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: _eingeklappt(e)
+          Container(constraints: BoxConstraints(maxWidth: breiteChat * 0.78), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: _eingeklappt(e)
             ? Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 SelectableText(gekuerzt(e.text)),
                 TextButton.icon(onPressed: () => _neu(() => e.aufgeklappt = true), icon: const Icon(Icons.unfold_more, size: 16), label: Text('mehr anzeigen (${(e.text.length / 1024).toStringAsFixed(0)} KB)'), style: TextButton.styleFrom(visualDensity: VisualDensity.compact)),
@@ -468,7 +468,7 @@ extension _Oberflaeche on _SitzungState {
         ])));
       case Art.alfred:
         // 1.1.0 — Antwort ohne Blase (wie in der Vorlage), darunter Aktionen: kopieren, vorlesen
-        return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 820), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat * 0.9), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [Text('Alfred', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)), Text(' · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: dim))]),
           const SizedBox(height: 4),
           AlfredText(e.text, aufKopiert: (was) => _neu(() => fluechtig = '„${was.length > 40 ? '${was.substring(0, 40)}…' : was}" kopiert')), // 1.6.0 Links, Tabellen, Code-Blöcke; 1.12.1 Text

@@ -468,6 +468,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool karteOffen = false; // 1.44.0 D3 — angeheftete Zusammenfassung oben rechts
   Set<String> lesezeichen = {}; // 1.45.0 D4 — Lesezeichen des offenen Fadens (Schlüssel = Prüfsumme der Frage)
   final Expando<GlobalKey> _anker = Expando(); // 1.45.0 — Sprungziel je Verlaufseintrag
+  double breiteChat = 920; // 1.45.3 — aktuelle Breite des Chatbereichs (für Nachrichten im Verlauf)
   int? leisteAktuell; // 1.45.2 — Verlaufs-Index der gerade sichtbaren eigenen Frage (heller Strich)
   bool _leisteGeplant = false;
   final Map<String, (String, String)> seitenChats = {}; // 1.43.0 — Hauptfaden (oder „haupt“) → (Faden, Titel) des Seiten-Chats

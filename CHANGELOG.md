@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Chat nutzt große Fenster, Symbole der Kopfzeile am rechten Rand (App 1.45.3)
+
+Owner 19.10. (Screenshot, Fenster rund 2 000 px breit): Der Chat blieb schmal, und die Symbole der Kopfzeile standen mitten im Fenster.
+
+- **Kopfzeile:** Titel und ein Platzhalter teilten sich den freien Platz. Was der Titel nicht brauchte, blieb rechts leer. Jetzt nimmt der Titel den freien Platz, und die Symbole stehen am rechten Rand.
+- **Breite:** Der Chat (Verlauf, Eingabe, Bestätigungen) nimmt drei Viertel der verfügbaren Breite ein, mindestens 920 px wie bisher, höchstens 1 440 px. Im Fenster des Owners sind das rund 1 175 statt 920 px. Antworten nutzen 90 %, eigene Nachrichten 78 % davon (vorher fest 820 bzw. 720 px).
+
 ### Fixed — App: Verlaufsleiste wie im Vorbild, Sprung erreicht auch weit oben liegende Fragen (App 1.45.2)
 
 Owner 19.10. 11:40 (Screenshots, Vergleich mit dem Vorbild): Die Leiste war über die ganze Höhe verteilt und „funktionierte nicht“.

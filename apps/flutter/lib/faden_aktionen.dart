@@ -59,3 +59,7 @@ const appKuerzel = <(String, String)>[
   ('Enter / Umschalt+Enter', 'Senden / neue Zeile'),
   ('Esc', 'laufende Antwort abbrechen, Schnellfrage schließen'),
 ];
+
+/// 1.45.3 — Breite des Chatbereichs (Owner 19.10.: im großen Fenster mehr Platz, aber nicht ganz): drei Viertel der verfügbaren
+/// Breite, mindestens 920 px (wie bisher), höchstens 1440 px, nie breiter als verfügbar.
+double chatBreite(double verfuegbar) => (verfuegbar * 0.75).clamp(920.0, 1440.0).clamp(0.0, verfuegbar);
