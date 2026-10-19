@@ -1089,6 +1089,8 @@ export class HttpAdapter extends MessagingAdapter {
     konto?(geraetId: string): Promise<unknown | undefined>;
     /** v1518 Phase 5 H2 — Push: GET Stand, POST {art, token, umgebung} (Token-Meldung) oder {telegramStumm} (Schalter, nur Owner-Geräte) */
     push?(geraetId: string, body?: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
+    /** v1519 H2 — Antwort einer Gerätesitzung fertig (Push, wenn die App nicht mehr vorne ist) */
+    antwortFertig?(geraetId: string, faden?: string): void;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -1326,6 +1328,10 @@ export class HttpAdapter extends MessagingAdapter {
       res.end();
       this.streams.delete(chatId);
     }
+    // v1519 H2 — Antwort einer Gerätesitzung fertig: der Server prüft, ob die App noch vorne ist (WSS), sonst Push.
+    // Der SSE-Strom taugt dafür nicht: iOS hält ihn im Hintergrund noch offen (Realfall 19.10. 22:12, kein Push).
+    const z = zerlegeSitzungsChat(chatId);
+    if (z) this.geraeteCallbacks?.antwortFertig?.(z.geraetId, z.faden);
   }
 
   private async resolveTls(): Promise<{ cert: string | Buffer; key: string | Buffer } | null> {

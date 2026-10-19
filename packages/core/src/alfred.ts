@@ -14106,8 +14106,6 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
           nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string) => {
             const ok = gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) });
-            // v1518 H2 — App ging während der Antwort in den Hintergrund: „Antwort fertig“ als Push an dieses Handy
-            if (!ok && !anhang && text) void this.pushDienst?.antwortFertig(geraetId, faden).catch(() => false);
             return ok;
           }, // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang; v1328 Faden
           // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
@@ -14177,6 +14175,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
           // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
           // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          // v1519 H2 — Antwort fertig: Push nur, wenn die App nicht mehr verbunden ist (entscheidet der Push-Dienst)
+          antwortFertig: (geraetId: string, faden?: string) => { void this.pushDienst?.antwortFertig(geraetId, faden).catch(() => false); },
           // v1518 H2 — Push-Token des Handys melden; Schalter „Telegram stumm, wenn Push zugestellt“ (nur Owner-Geräte)
           push: async (geraetId: string, body?: Record<string, unknown>) => {
             const p = this.pushDienst;

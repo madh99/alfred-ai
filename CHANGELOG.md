@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — „Antwort fertig“ kam nicht als Mitteilung (v1519)
+
+Owner-Test 19.10. 22:12: Frage gestellt, App sofort in den Hintergrund, Antwort 6 s später fertig — kein Push. Auslöser war der abgerissene Antwort-Strom (SSE); iOS hält diese Verbindung im Hintergrund aber noch offen, der Server „stellte zu“. Jetzt prüft der Server am Ende jeder Antwort einer Handy-Sitzung, ob die App noch verbunden ist (die WSS-Verbindung trennt sie beim Wechsel in den Hintergrund sofort); wenn nicht, geht „Antwort fertig“ raus. Ein ausgelassener Push steht jetzt ebenfalls im Log.
+
 ### Added — Mitteilungen aufs iPhone, Stufe H2 (v1518, App 1.53.0)
 
 Phase 5 H2 nach Spec Geräte §20.5/§20.6 (Owner 19.10.: „h2 push freigegeben“). Ist die App geschlossen oder im Hintergrund, kommen Bestätigungen, Hinweise und fertige Antworten als Mitteilung.

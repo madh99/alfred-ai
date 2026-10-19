@@ -63,10 +63,12 @@ export class PushDienst {
    */
   async antwortFertig(geraetId: string, faden?: string, jetzt = Date.now()): Promise<boolean> {
     const apns = this.deps.apns; const owner = this.deps.ownerUserId();
-    if (!apns || !owner || this.deps.istVerbunden(geraetId)) return false;
-    if (jetzt - (this.letzteAntwort.get(geraetId) ?? 0) < 60_000) return false;
+    if (!apns || !owner) return false;
+    // nur Handys mit Push-Weg (Desktop-Satelliten haben keinen) — erst danach loggen, sonst stünde jede Desktop-Antwort im Log
     const g = (await this.deps.repo.mitPush(owner).catch(() => [])).find(x => x.id === geraetId && x.push.art === 'apns');
     if (!g) return false;
+    if (this.deps.istVerbunden(geraetId)) { this.deps.logger.info({ geraet: g.name, art: 'antwort' }, 'v1518 Push ausgelassen — App vorne (verbunden)'); return false; }
+    if (jetzt - (this.letzteAntwort.get(geraetId) ?? 0) < 60_000) return false;
     this.letzteAntwort.set(geraetId, jetzt);
     const r = await apns.sende(g.push.token, g.push.umgebung ?? 'production', { titel: 'Alfred', text: 'Antwort fertig', art: 'antwort', faden });
     this.deps.logger.info({ geraet: g.name, art: 'antwort', status: r.status, grund: r.grund, dauerMs: r.dauerMs, umgebung: g.push.umgebung }, r.ok ? 'v1518 Push zugestellt' : 'v1518 Push fehlgeschlagen');
