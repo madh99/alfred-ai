@@ -14,13 +14,15 @@ describe('deuteGeraete', () => {
       { name: 'Laptop', plattform: 'linux', online: true, sinneZeit: iso(1), sinne: { leerlaufSek: 10, akkuProzent: 12, akkuLaedt: true } },
       { name: 'Handy', plattform: 'android', online: false, zuletztGesehen: iso(200) },
       { name: 'Tablet', plattform: 'ios', online: false, zuletztGesehen: iso(20) },
+      { name: 'VM', plattform: 'linux', online: false, zuletztGesehen: iso(200) },
     ] })!;
     expect(d.zeilen[0]).toBe('PC-madh (windows): aktiv (Leerlauf unter 1 min), Fenster „Visual Studio Code"');
     expect(d.zeilen[1]).toBe('⚠️ Mac (macos): im Leerlauf seit 23 min, Akku 12 % (nicht am Netz)');
     expect(d.zeilen[2]).toContain('Akku 12 % (lädt)');
-    expect(d.zeilen[3]).toBe('⚠️ Handy (android): getrennt seit 3 h 20 min');
-    expect(d.zeilen[4]).toBe('Tablet (ios): getrennt seit 20 min');
-    expect(d.auffaellig).toEqual(['geraet:Mac:akku', 'geraet:Handy:getrennt']);
+    expect(d.zeilen[3]).toBe('Handy (android): zuletzt verbunden vor 3 h 20 min'); // Phase 5 H1 — Handys trennen im Hintergrund
+    expect(d.zeilen[4]).toBe('Tablet (ios): zuletzt verbunden vor 20 min');
+    expect(d.zeilen[5]).toBe('⚠️ VM (linux): getrennt seit 3 h 20 min');
+    expect(d.auffaellig).toEqual(['geraet:Mac:akku', 'geraet:VM:getrennt']);
     expect(d.aktiv).toEqual({ name: 'Laptop', leerlaufSek: 10 });
   });
   it('Systemzeile mit Laufzeit, CPU, GPU, RAM und knappem Laufwerk als Befund', () => {

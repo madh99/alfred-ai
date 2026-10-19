@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'anhang_speicher.dart';
+import 'tls.dart'; // Phase 5 H1
 import 'modell.dart';
 
 /// 1.0.5 — MIME-Typ aus der Dateiendung (für Anhänge aus dem SSE-Strom).
@@ -19,8 +20,7 @@ String _mimeAusName(String name) {
 /// offene Bestätigungen, Entscheidung. `insecure` = selbst signiertes Zertifikat des Servers akzeptieren (wie beim Satelliten).
 class Server {
   Server(this.k) {
-    _client = HttpClient();
-    if (k.insecure) _client.badCertificateCallback = (cert, host, port) => true;
+    _client = clientFuer(k); // Phase 5 H1 — Pinning oder insecure (tls.dart)
   }
 
   final Konfig k;

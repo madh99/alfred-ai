@@ -76,6 +76,7 @@ extension _Befehle on _SitzungState {
   /// B2 — Tray-Menü mit Zählern und Zuhören-Schalter; Tooltip mit Zusammenfassung, unter macOS die Zahl neben dem Symbol.
   /// Wird alle 5 s aufgerufen und setzt das Menü nur neu, wenn sich etwas geändert hat.
   Future<void> _trayAktualisieren({bool erzwingen = false}) async {
+    if (!istDesktop) return; // Phase 5 H1
     final teile = [
       if (hinweiseOffen > 0) '$hinweiseOffen ${hinweiseOffen == 1 ? 'Hinweis' : 'Hinweise'}',
       if (aufgabenFaelligZahl > 0) '$aufgabenFaelligZahl ${aufgabenFaelligZahl == 1 ? 'Aufgabe' : 'Aufgaben'} fällig',

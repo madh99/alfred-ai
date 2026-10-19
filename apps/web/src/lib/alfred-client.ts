@@ -1802,6 +1802,26 @@ export class AlfredClient {
   }
 
   /** v1162 — Lebenszeichen-Kachel */
+  // ── Phase 5 H1 — Seite „Geräte“: gekoppelte Geräte, Kopplungscode mit QR (Spec Geräte §20.5 Punkt 6), Widerruf ──
+  async fetchGeraete(): Promise<GeraetDto[] | null> {
+    const res = await fetch(`${this.baseUrl}/api/geraete`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data?.geraete) ? data.geraete as GeraetDto[] : null;
+  }
+
+  async geraetKopplungscode(): Promise<Kopplungscode> {
+    const res = await fetch(`${this.baseUrl}/api/geraete/pairing-code`, { method: 'POST', headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.code) throw new Error(data?.fehler ?? data?.error ?? `HTTP ${res.status}`);
+    return data as Kopplungscode;
+  }
+
+  async geraetWiderrufen(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/geraete/${encodeURIComponent(id)}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
   async fetchLebenszeichen(): Promise<LebenszeichenStatus | null> {
     const res = await fetch(`${this.baseUrl}/api/lebenszeichen`, { headers: this.authHeaders });
     if (!res.ok) return null;
@@ -3942,3 +3962,8 @@ export interface AgentConventionsHistoryEntry {
   rolledBackAt: string | null;
   rolledBackBy: string | null;
 }
+
+/** Phase 5 H1 — Eintrag aus GET /api/geraete (nur Owner). */
+export interface GeraetDto { id: string; name: string; plattform: string; status: 'aktiv' | 'widerrufen'; online: boolean; verbundenSeit?: string; zuletztGesehen?: string; erstellt: string; manifest?: { satellitVersion?: string; aktionen?: unknown[] } }
+/** Phase 5 H1 — POST /api/geraete/pairing-code: Code (5 min, einmalig), Server-Adresse, Fingerabdruck des Server-Schlüssels, QR-Inhalt. */
+export interface Kopplungscode { code: string; gueltigBis: string; server: string; fingerabdruck?: string; qr?: string }

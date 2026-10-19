@@ -29,6 +29,8 @@ export interface GeraeteDeutung { zeilen: string[]; auffaellig: string[]; aktiv?
 export const AKTIV_LEERLAUF_SEK = 5 * 60;
 export const GETRENNT_AUFFAELLIG_MIN = 180;
 export const AKKU_NIEDRIG_PROZENT = 15;
+/** Phase 5 H1 — Handys trennen im Hintergrund (iOS/Android), das ist kein Befund. */
+export const HANDY_PLATTFORMEN: ReadonlySet<string> = new Set(['ios', 'android']);
 /** Sinne älter als das gelten als unbekannt (Satellit sendet jede Minute). */
 export const SINNE_FRISCH_MS = 3 * 60_000;
 
@@ -52,8 +54,10 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
     if (!g.online) {
       const seit = g.zuletztGesehen ? jetzt - Date.parse(g.zuletztGesehen) : undefined;
       const minuten = seit !== undefined ? seit / 60_000 : undefined;
-      if (minuten !== undefined && minuten >= GETRENNT_AUFFAELLIG_MIN) { warn = true; auffaellig.push(`geraet:${g.name}:getrennt`); }
-      teile.push(seit !== undefined ? `getrennt seit ${formatiereDauerKurz(seit)}` : 'getrennt');
+      // Phase 5 H1 (Spec Geräte §20.5 Punkt 2) — ein Handy ist nur verbunden, solange die App vorne ist: getrennt ist sein Normalzustand
+      if (minuten !== undefined && minuten >= GETRENNT_AUFFAELLIG_MIN && !HANDY_PLATTFORMEN.has(g.plattform)) { warn = true; auffaellig.push(`geraet:${g.name}:getrennt`); }
+      const handy = HANDY_PLATTFORMEN.has(g.plattform);
+      teile.push(seit !== undefined ? (handy ? `zuletzt verbunden vor ${formatiereDauerKurz(seit)}` : `getrennt seit ${formatiereDauerKurz(seit)}`) : (handy ? 'nicht verbunden' : 'getrennt'));
     } else {
       const frisch = g.sinneZeit ? jetzt - Date.parse(g.sinneZeit) <= SINNE_FRISCH_MS : false;
       const s = frisch ? g.sinne : undefined;

@@ -7,7 +7,13 @@ import 'modell.dart';
 /// Anhängen an den laufenden Satelliten (Spec §8 „Anhängen statt verbinden"): 127.0.0.1 mit dem Port aus ~/.alfred/ipc.json,
 /// erst `hallo` mit Geheimnis, dann JSON-Zeilen: status, ereignis, bestaetigung, konfig. Ohne Satellit keine App —
 /// die App ist ein Fenster auf den CLI-Dienst, kein zweiter Satellit.
-class IpcVerbindung {
+/// Phase 5 H1 — gemeinsame Schnittstelle: Desktop über den Satelliten (IPC), Handy direkt (handy_verbindung.dart).
+abstract class AppVerbindung {
+  Future<void> start();
+  void stop();
+}
+
+class IpcVerbindung implements AppVerbindung {
   IpcVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand});
 
   final void Function(SatellitStatus) aufStatus;
@@ -23,11 +29,13 @@ class IpcVerbindung {
   static String heim() => Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
   static File datei() => File('${heim()}${Platform.pathSeparator}.alfred${Platform.pathSeparator}ipc.json');
 
+  @override
   Future<void> start() async {
     _laeuft = true;
     await _verbinde();
   }
 
+  @override
   void stop() {
     _laeuft = false;
     _neu?.cancel();

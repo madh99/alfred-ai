@@ -52,7 +52,7 @@ class SatellitStatus {
 }
 
 class Konfig {
-  Konfig({required this.server, required this.geraetId, required this.token, required this.name, required this.insecure, this.aktivierungswort = 'Alfred'});
+  Konfig({required this.server, required this.geraetId, required this.token, required this.name, required this.insecure, this.aktivierungswort = 'Alfred', this.schluessel = const []});
   final String server;
   final String geraetId;
   final String token;
@@ -60,6 +60,8 @@ class Konfig {
   final bool insecure;
   /// Meilenstein 4 — Wort, mit dem eine Äußerung an Alfred beginnt (GeraetKonfig.aktivierungswort, v1309).
   final String aktivierungswort;
+  /// Phase 5 H1 — gemerkte Schlüssel-Fingerabdrücke (SPKI, SHA-256) des Servers; gesetzt = Pinning statt `insecure` (tls.dart)
+  final List<String> schluessel;
 }
 
 /// 1.2.8 — Anfang einer langen Nachricht für die eingeklappte Darstellung: höchstens 8 Zeilen oder 500 Zeichen.

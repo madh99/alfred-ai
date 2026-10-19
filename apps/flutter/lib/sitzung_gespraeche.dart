@@ -54,7 +54,7 @@ extension _Gespraeche on _SitzungState {
   /// 1.2.1 — Gespräch wurde auf einem anderen Kanal fortgeführt: Verlauf vom Server neu laden, lokale Hinweise behalten.
   Future<void> _gespraechNachladen() async {
     if (antwortet || fundstelle != null) return; // 1.5.0 — Fundstelle bleibt stehen, bis sie verlassen wird
-    final hinweise = verlauf.where((e) => e.art != Art.du && e.art != Art.alfred).toList();
+    final hinweise = verlauf.where((e) => e.art != Art.du && e.art != Art.alfred && !e.text.startsWith('Verlauf geladen:')).toList(); // 1.52.0 — Hinweis kommt neu
     _neu(() { verlauf.clear(); laufend = null; });
     await _holeVerlauf();
     if (hinweise.isNotEmpty) _neu(() { verlauf.addAll(hinweise); verlauf.sort((a, b) => a.zeit.compareTo(b.zeit)); });

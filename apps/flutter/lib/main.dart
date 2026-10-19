@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert'; // Phase 5 H1 Startdatei
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kDebugMode; // Phase 5 H1
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
@@ -15,6 +17,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import 'aktivierungswort.dart'; // 1.3.0
+import 'plattform.dart'; // Phase 5 H1
+import 'handy_verbindung.dart'; // Phase 5 H1
+import 'kopplung.dart'; // Phase 5 H1
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -81,9 +86,20 @@ Future<void> main(List<String> args) async {
   for (var i = 0; i < args.length; i++) {
     if (args[i].startsWith('--') && i + 1 < args.length) { m[args[i].substring(2)] = args[i + 1]; i++; }
   }
+  // Phase 5 H1 — Beweisläufe im iOS-Simulator: Startwerte aus einer einmaligen Datei im Datenordner der App
+  // (`simctl get_app_container … data`/Documents/alfred-start.json, {"koppeln": "...", "sende": "..."}); simctl reicht unter iOS
+  // weder Argumente noch Umgebung an Dart weiter. Nur in Debug-Builds, die Datei wird sofort gelöscht.
+  if (istHandy && kDebugMode) {
+    WidgetsFlutterBinding.ensureInitialized(); // path_provider braucht die Bindung
+    try {
+      final f = File('${(await getApplicationDocumentsDirectory()).path}/alfred-start.json'); // iOS: HOME aus der Umgebung ist nicht der Datenordner
+      if (f.existsSync()) { final j = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>; f.deleteSync(); for (final e in j.entries) { m[e.key] = '${e.value}'; } }
+    } catch (_) { /* ohne Startwerte weiter */ }
+  }
   startArgs = m;
   WidgetsFlutterBinding.ensureInitialized();
   einstellungenLaden(); // 1.1.0 — Farbschema vor dem ersten Bild
+  if (istDesktop) { // Phase 5 H1 — Fenster, Kürzel, Desktop-Benachrichtigungen, Autostart nur auf dem Desktop
   await windowManager.ensureInitialized();
   await windowManager.waitUntilReadyToShow(const WindowOptions(title: 'Alfred', size: Size(1180, 800), minimumSize: Size(640, 480), center: true), () async {
     await windowManager.show();
@@ -112,6 +128,7 @@ Future<void> main(List<String> args) async {
       }
     } catch (_) { /* Autostart ist Komfort */ }
   }
+  } // istDesktop
   runApp(const AlfredApp());
 }
 
@@ -187,6 +204,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   HoerClient? hoerClient;
   SatzendeErkenner? erkenner;
   DateTime gespraechsfensterBis = DateTime.fromMillisecondsSinceEpoch(0);
+  int verlaufAbruf = 0; // 1.52.0 — nur der jüngste Verlaufsabruf schreibt (Handy: Konfiguration und Verbinden fielen zusammen → alles doppelt)
   // 1.3.0 — Aktivierungswort lokal (ONNX): nur Äußerungen mit erkanntem Wort (oder im Gesprächsfenster) gehen ans Relais
   OnnxWortModell? wortModell;
   WortErkenner? wortErkenner;
@@ -212,21 +230,25 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Timer? updateTakt;
   Timer? abfrage;
   int benachrichtigungNr = 0;
-  late final IpcVerbindung ipc;
+  late final AppVerbindung ipc; // Phase 5 H1 — Desktop: IPC zum Satelliten, Handy: direkt (handy_verbindung.dart)
   final HotKey tastenkuerzel = HotKey(key: PhysicalKeyboardKey.space, modifiers: [HotKeyModifier.control, HotKeyModifier.alt], scope: HotKeyScope.system);
 
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
     HardwareKeyboard.instance.addHandler(_schnellTaste); // 1.7.1
     scroll.addListener(_leisteNachScroll); // 1.45.2 — gerade sichtbare Frage in der Verlaufsleiste
-    trayManager.addListener(this);
-    windowManager.setPreventClose(true);
-    _trayEinrichten();
-    trayTakt = Timer.periodic(const Duration(seconds: 5), (_) => _trayAktualisieren()); // 1.10.0 B2
-    _tastenkuerzelEinrichten();
-    ipc = IpcVerbindung(
+    if (istDesktop) { // Phase 5 H1
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      windowManager.setPreventClose(true);
+      _trayEinrichten();
+      trayTakt = Timer.periodic(const Duration(seconds: 5), (_) => _trayAktualisieren()); // 1.10.0 B2
+      _tastenkuerzelEinrichten();
+    } else {
+      sichtbar = true; // Handy: App vorne = sichtbar (Hintergrund trennt die Verbindung)
+    }
+    ipc = _verbindung(
       aufStatus: (s) {
         final wieder = s.verbunden && satellit?.verbunden != true; // 1.6.0 — nach Wiederverbinden verpasste Bestätigungen holen
         setState(() => satellit = s);
@@ -301,8 +323,18 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     );
     ipc.start();
     AnhangSpeicher.standard().aufraeumen(); // 1.5.0 — Gerätespeicher der Anhänge: älter als 30 Tage weg (wie am Server)
-    _zeile(Eintrag(Art.hinweis,'Alfred-App — Verlauf, Chat und Bestätigungen laufen über den Satelliten dieses Geräts. Strg+Alt+Leertaste: sprechen (auch aus anderen Programmen).'));
+    _zeile(Eintrag(Art.hinweis, istHandy ? 'Alfred — direkt mit deinem Server verbunden (Schlüssel geprüft).' : 'Alfred-App — Verlauf, Chat und Bestätigungen laufen über den Satelliten dieses Geräts. Strg+Alt+Leertaste: sprechen (auch aus anderen Programmen).'));
   }
+
+  /// Phase 5 H1 — Desktop hängt am Satelliten (IPC), das Handy verbindet sich selbst (gleiche Rückrufe).
+  AppVerbindung _verbindung({required void Function(SatellitStatus) aufStatus, required void Function(String, String, DateTime, Anhang?, String?) aufEreignis, required void Function(Bestaetigung) aufBestaetigung, required void Function(Konfig) aufKonfig, required void Function(String) aufZustand}) {
+    if (istDesktop) return IpcVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, aufZustand: aufZustand);
+    return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion,
+      aufZustand: (z) { if (z.contains('neu koppeln')) { setState(() { konfig = null; server = null; }); } aufZustand(z); });
+  }
+
+  /// Phase 5 H1 — Handy ohne Kopplung: Kopplungsansicht statt Chat.
+  bool get _handyUngekoppelt => istHandy && konfig == null && (ipcZustand == 'nicht gekoppelt' || ipcZustand.contains('neu koppeln'));
 
   /// C1 — setState ist @protected; die ausgelagerten Teile (Extensions) rufen es über diesen Helfer.
   void _neu(VoidCallback f) => setState(f);
@@ -318,10 +350,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     for (final s in _signale) { s.cancel(); }
     hoerClient?.schluss();
     ipc.stop();
-    windowManager.removeListener(this);
+    if (istDesktop) windowManager.removeListener(this);
     HardwareKeyboard.instance.removeHandler(_schnellTaste);
-    trayManager.removeListener(this);
-    hotKeyManager.unregisterAll();
+    if (istDesktop) { trayManager.removeListener(this); hotKeyManager.unregisterAll(); }
     audio.dispose();
     super.dispose();
   }
@@ -417,18 +448,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   // ── 1.1.0 Redesign Stufe 1 (Owner-Vorlage 09.10.): Symbolleiste | Seitenleiste | Hauptbereich ──────────────────────
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (_handyUngekoppelt) { // Phase 5 H1
+      return KopplungsAnsicht(version: appVersion, hinweis: ipcZustand == 'nicht gekoppelt' ? null : ipcZustand, aufGekoppelt: (k) => (ipc as HandyVerbindung).gekoppelt(k), automatisch: startArgs['koppeln']);
+    }
     if (schnell) { // 1.7.0
       return Scaffold(body: Schnellfrage(
         eingabe: eingabe, fokus: fokus, ziel: _fadenTitel(server?.faden), antwortet: antwortet, status: fluechtig, antwort: _schnellAntwort,
         aufSenden: _schnellSenden, aufStopp: _abbrechen, aufSchliessen: _schnellfrageSchliessen, aufFensterOeffnen: () => _schnellfrageSchliessen(insFenster: true),
       ));
     }
-    return Scaffold(
-      body: Row(children: [
-        _leiste(theme),
-        if (seitenleisteOffen && ansicht == Ansicht.chat) _seitenleiste(theme), // 1.36.0 — Gespräche nur im Chat
-        const VerticalDivider(width: 1),
-        Expanded(child: switch (ansicht) {
+    final inhalt = switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
           Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen, aufVorgaenge: () => setState(() => ansicht = Ansicht.vorgaenge), aufBefunde: (q) => setState(() { befundeFilter = q; ansicht = Ansicht.befunde; })),
           Ansicht.eingang => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Eingang(json: server!.json, bestaetigungen: List.of(offen), aufEntscheiden: _entscheide, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen, aufGeaendert: () { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }), // 1.36.0
@@ -442,7 +471,15 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
-        }),
+        };
+    // Phase 5 H1 (Spec §20.4) — schmal (Handy, unter 700 px): Navigation und Gespräche in der Schublade, Inhalt volle Breite
+    if (MediaQuery.sizeOf(context).width < 700) return _schmal(theme, inhalt);
+    return Scaffold(
+      body: Row(children: [
+        _leiste(theme),
+        if (seitenleisteOffen && ansicht == Ansicht.chat) _seitenleiste(theme), // 1.36.0 — Gespräche nur im Chat
+        const VerticalDivider(width: 1),
+        Expanded(child: inhalt),
         // 1.43.0 D2 — Seiten-Chat neben dem Hauptchat (eigener Faden, eigene Verbindung)
         if (seitenChatOffen && ansicht == Ansicht.chat && konfig != null && seitenChats[server?.faden ?? 'haupt'] != null) ...[
           const VerticalDivider(width: 1),
@@ -454,6 +491,36 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             aufGeaendert: _faedenLaden)),
         ],
       ]),
+    );
+  }
+
+  /// Phase 5 H1 — schmale Oberfläche: Schublade mit Navigation (Symbole) und Gesprächsliste, Inhalt im sicheren Bereich.
+  /// Nach einer Auswahl (andere Ansicht oder anderer Faden) schließt sich die Schublade selbst.
+  final GlobalKey<ScaffoldState> _schublade = GlobalKey<ScaffoldState>();
+  String _auswahlVorher = '';
+  Widget _schmal(ThemeData theme, Widget inhalt) {
+    final auswahl = '${ansicht.name}|${server?.faden}|$archiv';
+    if (auswahl != _auswahlVorher) {
+      _auswahlVorher = auswahl;
+      WidgetsBinding.instance.addPostFrameCallback((_) { if (_schublade.currentState?.isDrawerOpen == true) _schublade.currentState?.closeDrawer(); });
+    }
+    final titel = ansicht == Ansicht.chat ? _fadenTitel(server?.faden) : ansicht.name[0].toUpperCase() + ansicht.name.substring(1);
+    return Scaffold(
+      key: _schublade,
+      drawer: Drawer(width: MediaQuery.sizeOf(context).width.clamp(0, 380).toDouble(), child: SafeArea(child: Row(children: [
+        _leiste(theme, breit: false),
+        Expanded(child: _seitenleiste(theme)),
+      ]))),
+      appBar: AppBar(
+        key: const Key('handy-leiste'), toolbarHeight: 44, titleSpacing: 0,
+        leading: IconButton(key: const Key('handy-menue'), tooltip: 'Menü', icon: const Icon(Icons.menu), onPressed: () => _schublade.currentState?.openDrawer()),
+        title: ansicht == Ansicht.chat ? null : Text(titel, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium), // Chat hat seine eigene Kopfzeile
+        actions: [
+          if (offen.isNotEmpty) IconButton(tooltip: 'Bestätigungen', onPressed: () => _neu(() => ansicht = Ansicht.chat), icon: Badge.count(count: offen.length, child: const Icon(Icons.notifications_none))),
+          Padding(padding: const EdgeInsets.only(right: 12), child: Icon(Icons.circle, size: 10, color: satellit?.verbunden == true ? Colors.green : theme.colorScheme.error)),
+        ],
+      ),
+      body: SafeArea(top: false, child: inhalt),
     );
   }
 

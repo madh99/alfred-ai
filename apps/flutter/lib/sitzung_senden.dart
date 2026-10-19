@@ -4,6 +4,7 @@ part of 'main.dart';
 extension _Senden on _SitzungState {
   // ── Selbstupdate (M6): Server kennt den neuesten Installer je Plattform ──────────────────────────────────────────
   Future<void> _updatePruefen() async {
+    if (!istDesktop) return; // Phase 5 H1 — Handy: Updates über TestFlight bzw. Play
     final s = server; if (s == null) return;
     updateGeprueft = DateTime.now(); // 1.10.0
     if (appVersion.isEmpty) { try { final p = await PackageInfo.fromPlatform(); appVersion = p.version; } catch (_) { appVersion = '0.0.0'; } }
@@ -113,11 +114,13 @@ extension _Senden on _SitzungState {
   /// Verlauf der Gerätesitzung vom Gehirn (`/api/geraete/verlauf`, v1314) — vor den Zeilen dieses Starts einsortiert.
   Future<void> _holeVerlauf({String? um}) async {
     final s = server; if (s == null) return;
+    final abruf = ++verlaufAbruf;
     _lesezeichenLaden(); // 1.45.0 D4
     WidgetsBinding.instance.addPostFrameCallback((_) => _leisteNachScroll()); // 1.45.2
     try {
       // 1.2.0 je Faden; 1.2.6: 60 sichtbare Zeilen; 1.5.0 `um` = Fundstelle der Suche (20 Zeilen rund um den Treffer)
       final j = await s.json('/api/geraete/verlauf?limit=${um == null ? 60 : 20}${s.faden == null ? '' : '&faden=${s.faden}'}${um == null ? '' : '&um=${Uri.encodeQueryComponent(um)}'}');
+      if (abruf != verlaufAbruf) return; // inzwischen neuer abgerufen
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
       if (n.isEmpty) return;
       // Zuordnung Server-Zeile → Eintrag in verlauf.dart (testbar); Anhänge kommen im Hintergrund nach (1.4.2)

@@ -298,6 +298,8 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
   private readonly oauthCallbacks: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>> = new Map();
   private readonly publicUrl?: string;
+  /** Phase 5 H1 — SHA-256 des Server-Schlüssels (SPKI, hex); die Handy-App pinnt genau diesen Wert. */
+  private tlsFingerabdruck?: string;
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
@@ -1130,6 +1132,8 @@ export class HttpAdapter extends MessagingAdapter {
 
     const tlsOpts = await this.resolveTls();
     if (tlsOpts) {
+      // Phase 5 H1 (Spec Geräte §20.5 Punkt 6) — Fingerabdruck des öffentlichen Schlüssels (SPKI, SHA-256) für den Kopplungs-QR
+      try { this.tlsFingerabdruck = spkiFingerabdruck(tlsOpts.cert); } catch { this.tlsFingerabdruck = undefined; }
       this.server = https.createServer(tlsOpts, handler);
       // Also start a plain HTTP server for Sonos TTS file serving
       // Sonos speakers cannot access HTTPS with self-signed certs
@@ -6739,10 +6743,16 @@ export class HttpAdapter extends MessagingAdapter {
   // ── v1224 Geräte-Routen ──
   private async handleGeraetePairingCode(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
+    // Phase 5 H1 — Kopplungscode und Geräteliste nur für den Owner (gekoppelte Geräte gehören dem Owner; vorher reichte jede Web-Sitzung)
+    if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
     if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
     const r = await this.geraeteCallbacks.pairingCode();
     res.writeHead('fehler' in r ? 409 : 200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(r));
+    if ('fehler' in r) { res.end(JSON.stringify(r)); return; }
+    // Phase 5 H1 (Spec Geräte §20.4/§20.5 Punkt 6) — QR-Inhalt {server, code, fingerabdruck} für die Handy-App
+    const server = (this.publicUrl ?? `https://${req.headers.host ?? `${this.host}:${this.port}`}`).replace(/\/+$/, '');
+    const fingerabdruck = this.tlsFingerabdruck;
+    res.end(JSON.stringify({ ...r, server, ...(fingerabdruck ? { fingerabdruck, qr: JSON.stringify({ server, code: r.code, fingerabdruck }) } : {}) }));
   }
 
   /** Ohne Bearer-Auth: der kurzlebige Pairing-Code IST die Berechtigung (5 min, einmalig). */
@@ -6757,6 +6767,8 @@ export class HttpAdapter extends MessagingAdapter {
 
   private async handleGeraeteListe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
+    // Phase 5 H1 — Kopplungscode und Geräteliste nur für den Owner (gekoppelte Geräte gehören dem Owner; vorher reichte jede Web-Sitzung)
+    if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
     if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
     const liste = await this.geraeteCallbacks.liste();
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -7242,6 +7254,7 @@ export class HttpAdapter extends MessagingAdapter {
 
   private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
+    if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; } // Phase 5 H1
     if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
     const id = decodeURIComponent(url.pathname.split('/').pop() ?? '');
     const ok = await this.geraeteCallbacks.widerrufe(id);
@@ -7295,4 +7308,10 @@ export function fadenAenderungLesen(body: string): { titel?: string; aenderung?:
   const mitAenderung = Object.keys(aenderung).length > 0;
   if (!titel && !mitAenderung) return undefined;
   return { ...(titel ? { titel } : {}), ...(mitAenderung ? { aenderung } : {}) };
+}
+
+/** Phase 5 H1 — SHA-256 (hex) des SubjectPublicKeyInfo im ersten Zertifikat einer PEM-Kette; gleiche Rechnung wie lib/spki.dart der App. */
+export function spkiFingerabdruck(pem: string | Buffer): string {
+  const spki = new crypto.X509Certificate(pem).publicKey.export({ type: 'spki', format: 'der' });
+  return crypto.createHash('sha256').update(spki).digest('hex');
 }

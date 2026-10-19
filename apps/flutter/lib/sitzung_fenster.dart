@@ -4,6 +4,7 @@ part of 'main.dart';
 extension _Fenster on _SitzungState {
   // ── Tray, Fenster, Tastenkürzel (Meilenstein 2) ──────────────────────────────────────────────────────────────────
   Future<void> _trayEinrichten() async {
+    if (!istDesktop) return; // Phase 5 H1
     try {
       await trayManager.setIcon(Platform.isWindows ? 'assets/alfred.ico' : 'assets/alfred.png'); // M5: macOS/Linux brauchen PNG
       await _trayAktualisieren(erzwingen: true); // 1.10.0 B2 — Menü mit Zählern und Zuhören-Schalter
@@ -12,6 +13,7 @@ extension _Fenster on _SitzungState {
 
 
   Future<void> _tastenkuerzelEinrichten() async {
+    if (!istDesktop) return; // Phase 5 H1
     if (Platform.isLinux) {
       // 1.0.3 — Wayland: keybinder kann nicht binden; GNOME-Kürzel + SIGUSR1/SIGUSR2 (linux_hotkey.dart). Unter X11 zusätzlich wie bisher.
       _signale = LinuxHotkey.hoere(_talkUmschalten, _schnellfrageUmschalten);
@@ -32,7 +34,7 @@ extension _Fenster on _SitzungState {
 
 
   Future<void> _schnellfrageOeffnen() async {
-    if (schnell) return;
+    if (schnell || !istDesktop) return; // Phase 5 H1
     try { _rahmenVorher = await windowManager.getBounds(); _sichtbarVorher = await windowManager.isVisible() && !await windowManager.isMinimized(); _maximiertVorher = await windowManager.isMaximized(); } catch (_) {}
     _neu(() { schnell = true; schnellSeit = null; ansicht = Ansicht.chat; });
     try {
@@ -118,14 +120,14 @@ extension _Fenster on _SitzungState {
 
 
   Future<void> _zeigen() async {
-    await windowManager.show();
-    await windowManager.focus();
+    if (istDesktop) { await windowManager.show(); await windowManager.focus(); } // Phase 5 H1
     _neu(() => sichtbar = true);
     _gesehenMerken(); // 1.5.0
   }
 
 
   Future<void> _beenden() async {
+    if (!istDesktop) return; // Phase 5 H1 — iOS beendet Apps selbst
     abfrage?.cancel();
     hoerClient?.schluss();
     ipc.stop();
@@ -137,6 +139,7 @@ extension _Fenster on _SitzungState {
 
 
   Future<void> _titel() async {
+    if (!istDesktop) return; // Phase 5 H1
     final geraet = konfig?.name ?? satellit?.name ?? 'Alfred';
     try { await windowManager.setTitle(offen.isEmpty ? 'Alfred — $geraet' : 'Alfred — $geraet · ${offen.length} ${offen.length == 1 ? 'Bestätigung' : 'Bestätigungen'}'); } catch (_) {}
   }

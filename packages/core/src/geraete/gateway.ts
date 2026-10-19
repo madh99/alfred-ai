@@ -245,6 +245,8 @@ export class GeraeteGateway {
 
   private registriereSkill(v: Verbindung): void {
     if (this.deps.skillRegistry.has(v.skillName)) this.deps.skillRegistry.unregister(v.skillName);
+    // Phase 5 H1 (Spec Geräte §20.5 Punkt 1) — ein Gerät ohne Aktionen (Handy-App) ist kein Werkzeug: kein leerer Skill in der Tool-Liste
+    if (v.eintrag.manifest.aktionen.length === 0) return;
     const userId = v.eintrag.userId;
     const skill = new GeraetSkill({
       istOwner: this.deps.istOwner, // v1268

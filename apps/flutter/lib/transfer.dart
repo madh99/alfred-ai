@@ -5,14 +5,14 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'modell.dart';
+import 'tls.dart'; // Phase 5 H1
 
 /// Meilenstein 3 — Datei zum Gehirn, derselbe Weg wie der Satellit (v1241/v1249): Start mit Name, Größe und SHA-256,
 /// Blöcke per PUT mit Offset, bei Verbindungsabbruch Stand abfragen und weitermachen, zum Schluss `fertig` → Schlüssel
 /// im Dateispeicher des Owners. Die Prüfsumme prüft das Gehirn; stimmt sie nicht, gibt es keinen Schlüssel.
 class Transfer {
   Transfer(this.k) {
-    _client = HttpClient();
-    if (k.insecure) _client.badCertificateCallback = (cert, host, port) => true;
+    _client = clientFuer(k); // Phase 5 H1 — Pinning oder insecure (tls.dart)
   }
   final Konfig k;
   late final HttpClient _client;

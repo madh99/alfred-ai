@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'modell.dart';
+import 'tls.dart'; // Phase 5 H1
 
 /// Meilenstein 4 — Echtzeit-Hören. Dieselbe Kette wie die Terminal-Sitzung (v1250–v1252):
 /// Mikrofonstrom (PCM 16 kHz mono 16 Bit) → Satzende lokal (Lautstärke gegen Grundpegel) → Hör-Relais am Server
@@ -166,8 +167,7 @@ class HoerClient {
 
   Future<void> verbinde() async {
     final url = '${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/hoeren';
-    final client = HttpClient();
-    if (k.insecure) client.badCertificateCallback = (cert, host, port) => true;
+    final client = clientFuer(k); // Phase 5 H1 — Pinning oder insecure (tls.dart)
     final ws = await WebSocket.connect(url, headers: {'Authorization': 'Bearer ${k.token}'}, customClient: client).timeout(const Duration(seconds: 15));
     _ws = ws;
     final bereit = Completer<void>();

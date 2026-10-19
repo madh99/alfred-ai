@@ -5,9 +5,12 @@ extension _Oberflaeche on _SitzungState {
   /// 1.36.0 — Navigation mit Beschriftung und Gruppen (Owner 16.10.: „sehr plump in der UI"; vorher 15 unbeschriftete Symbole):
   /// Chat · Eingang (Vorgänge, Hinweise, Aufgaben, Bestätigungen) · Haus & Systeme (Lage, Befunde, Beobachter) · Arbeit (Projekte) ·
   /// Wissen (Gedächtnis, Suche, Anhänge) · unten Befehle und Einstellungen. Breit (mit Text) oder schmal (nur Symbole), gemerkt.
-  Widget _leiste(ThemeData theme) {
+  Widget _leiste(ThemeData theme, {bool? breit}) { // Phase 5 H1 — in der Handy-Schublade nur Symbole
+    return _leisteBauen(theme, breit ?? navBreit);
+  }
+
+  Widget _leisteBauen(ThemeData theme, bool breit) {
     final cs = theme.colorScheme;
-    final breit = navBreit;
     final ohneServer = server == null;
     Widget eintrag(IconData icon, IconData aktivIcon, String text, bool aktiv, VoidCallback? auf, {int zaehler = 0, String? tip}) {
       final farbe = auf == null ? cs.onSurfaceVariant.withValues(alpha: 0.45) : aktiv ? cs.onPrimaryContainer : cs.onSurfaceVariant;
@@ -218,7 +221,7 @@ extension _Oberflaeche on _SitzungState {
     final geraet = konfig?.name ?? satellit?.name ?? '…';
     // 1.1.1 — Owner 16:12: Dateien ließen sich nicht mehr hineinziehen. Die Ablagezone deckte nur den Verlauf ab,
     // nicht die Eingabekarte; jetzt liegt sie über dem ganzen Chat-Bereich (zusätzlich zum Plus-Knopf).
-    return LayoutBuilder(builder: (context, groesse) { breiteChat = chatBreite(groesse.maxWidth); return DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: Column(children: [ // 1.45.3 Breite
+    return LayoutBuilder(builder: (context, groesse) { breiteChat = chatBreite(groesse.maxWidth); return _ablage(Column(children: [ // 1.45.3 Breite; Phase 5 H1 Ablage nur Desktop
       SizedBox(height: 48, child: Row(children: [
         if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { _neu(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         const SizedBox(width: 12),
@@ -368,7 +371,7 @@ extension _Oberflaeche on _SitzungState {
             enabled: !antwortet,
             minLines: 1,
             maxLines: 6,
-            decoration: InputDecoration.collapsed(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Umschalt+Enter: neue Zeile, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (leer = nur ablegen)', hintStyle: TextStyle(color: dim)),
+            decoration: InputDecoration.collapsed(hintText: anhaenge.isEmpty ? (istHandy ? 'Nachricht an Alfred …' : 'Nachricht an Alfred … (Umschalt+Enter: neue Zeile, Dateien hineinziehen)') : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (leer = nur ablegen)', hintStyle: TextStyle(color: dim)),
             onSubmitted: (_) => _senden(),
           ),
         ),
@@ -393,14 +396,14 @@ extension _Oberflaeche on _SitzungState {
               if (stufenStand.zuletztModell != null) PopupMenuItem<String?>(enabled: false, child: Text('Letzte Antwort: ${stufenStand.zuletztModell}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
             ],
             child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text('${stufen[tierWahl] ?? 'Automatisch'}${stufenStand.fuer(tierWahl) == null ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+              Text('${stufen[tierWahl] ?? 'Automatisch'}${stufenStand.fuer(tierWahl) == null || istHandy ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
               Icon(Icons.expand_more, size: 16, color: dim),
             ])),
           ),
           const SizedBox(width: 8),
           if (fluechtig.isNotEmpty) Expanded(child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim), overflow: TextOverflow.ellipsis)) else const Spacer(),
           IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic_none, size: 22, color: aufnahme ? theme.colorScheme.error : null), visualDensity: VisualDensity.compact),
-          hoeren
+          if (istDesktop) hoeren // Phase 5 H1 — Aktivierungswort gibt es auf dem Handy nicht (Spec §20.4)
             ? IconButton.filledTonal(tooltip: 'Zuhören aus', onPressed: _hoerenUmschalten, icon: const Icon(Icons.headset_mic, size: 20), visualDensity: VisualDensity.compact)
             : IconButton(tooltip: 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: const Icon(Icons.headset, size: 22), visualDensity: VisualDensity.compact),
           const SizedBox(width: 4),
@@ -531,6 +534,9 @@ extension _Oberflaeche on _SitzungState {
     if (s == null || k == null) return null;
     return s.datei(k, d.name);
   }
+
+  /// Phase 5 H1 — Dateien ins Fenster ziehen gibt es nur auf dem Desktop.
+  Widget _ablage(Widget kind) => istDesktop ? DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: kind) : kind;
 
   Widget _eintrag(Eintrag e, ThemeData theme) {
     final zeit = '${e.zeit.hour.toString().padLeft(2, '0')}:${e.zeit.minute.toString().padLeft(2, '0')}';

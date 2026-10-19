@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Alfred-App für das iPhone, Stufe H1 (v1517, App 1.52.0)
+
+Phase 5 H1 nach Spec Geräte §20 (Owner 19.10.: „H1 freigegeben, mit Simulator beginnen“). Die Desktop-App läuft jetzt auch auf iOS, vorerst im Simulator; TestFlight folgt.
+
+- **Direkt verbunden:** Auf dem Handy gibt es keinen Satelliten. Die App verbindet sich selbst per WSS mit dem Server, nur solange sie im Vordergrund ist. Chat, Fäden, Eingang, Vorgänge, Aufgaben, Bestätigungen, Sprechen und Vorlesen laufen über dieselben Geräte-Routen wie am Desktop.
+- **Kopplung mit festem Schlüssel:** Die App liest den QR der neuen Web-Seite „Geräte“ (Kamera) oder nimmt Server und Code von Hand. Sie zeigt den Fingerabdruck des Server-Schlüssels (SHA-256 des SPKI) und vergleicht ihn mit dem QR. Danach gilt nur noch genau dieser Schlüssel (Pinning). Die Kopplung liegt im Schlüsselbund. Bei einem fremden Schlüssel bricht die App mit „Server-Zertifikat unbekannt — neu koppeln“ ab.
+- **Schmale Oberfläche** unter 700 px: Navigation und Gesprächsliste in einer Schublade, der Inhalt nutzt die volle Breite. Desktop-Teile (Fenster, Tray, Tastenkürzel, Aktivierungswort, Ablage per Ziehen, Selbst-Update) sind auf dem Handy aus.
+- **Server:** Geräte ohne Aktionen (das Handy) bekommen keinen leeren `geraet_<name>`-Skill mehr. Im Weltmodell ist „getrennt“ bei `ios`/`android` der Normalzustand („zuletzt verbunden vor …“, kein Befund). Der Kopplungscode liefert Server-Adresse, Fingerabdruck und QR-Inhalt `{server, code, fingerabdruck}`.
+- **Web-Seite „Geräte“** (Haus & Systeme): gekoppelte Geräte mit Status, Kopplungscode mit QR, Fingerabdruck als Text und Restzeit, Entkoppeln.
+
+### Security — Kopplungscode, Geräteliste und Entkoppeln nur für den Owner (v1517)
+
+Die drei Routen prüften bisher nur eine gültige Anmeldung. Damit konnte jede Web-Sitzung einen Kopplungscode erzeugen; das Gerät wäre dem Owner zugeordnet worden. Jetzt antworten sie anderen Benutzern mit 403.
+
+### Fixed — App: Verlauf beim Verbinden doppelt (App 1.52.0)
+
+Fielen Konfiguration und erste Verbindung zusammen (auf dem Handy immer), luden zwei Abrufe den Verlauf gleichzeitig: Nachrichten und der Hinweis „Verlauf geladen“ standen doppelt da. Jetzt schreibt nur der jüngste Abruf.
+
 ### Fixed — Satelliten-Update gab nach langem Warten auf (v1516)
 
 Realfall 19.10. (Ubuntu-VM, Satellit 1498): Das Update wartete über eine Stunde auf den laufenden Claude-Code-Auftrag. Die Warteschleife hatte für alle Gründe einen gemeinsamen Rundenzähler. Bei Runde 69 lief kurz eine normale Aktion, deren Grenze von 60 Runden griff, und das Update wurde aufgegeben; erst der nächste Hinweis vom Server hätte es erneut versucht. Jetzt zählt jeder Grund für sich: Aktion läuft, Auftrag läuft, Release noch nicht bereit.
