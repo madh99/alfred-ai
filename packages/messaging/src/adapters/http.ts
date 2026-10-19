@@ -1077,6 +1077,8 @@ export class HttpAdapter extends MessagingAdapter {
     anhaenge?(geraetId: string, limit: number): Promise<Array<{ id: string; name: string; mime: string; groesse: number; zeit: string; faden: string | null }>>;
     /** v1347 — abgelegten Anhang einer Nachricht abrufen (undefined = unbekannt, abgelaufen oder nicht erlaubt). */
     anhang?(geraetId: string, id: string): Promise<{ daten: Buffer; name: string; mime: string } | undefined>; // v1336 system = interne Fortsetzung
+    /** v1505 — eigene hochgeladene Datei aus dem Dateispeicher (Vorschau im Verlauf); nur Owner-Geräte, nur Owner-Schlüssel. */
+    datei?(geraetId: string, key: string): Promise<{ daten: Buffer; name: string; mime: string } | undefined>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -2067,6 +2069,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (/^\/api\/geraete\/anhang\/[0-9a-f]{32}$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
+    } else if (url.pathname === '/api/geraete/datei' && req.method === 'GET') {
+      this.handleGeraetDatei(req, res, url).catch(err => this.safeError(res, err)); // v1505
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
     } else if (url.pathname === '/api/geraete/abbrechen' && req.method === 'POST') {
@@ -6901,6 +6905,28 @@ export class HttpAdapter extends MessagingAdapter {
     if (!a) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Anhang nicht (mehr) vorhanden' })); return; }
     // v1348 — Sicherheitsreview: gespeicherter Typ/Inhalt stammt aus Skill-Ergebnissen; inline nur Rasterbilder, alles andere
     // (auch SVG/HTML) als Download mit neutralem Typ; nosniff + abgeschottete CSP gegen Ausführung im Server-Ursprung.
+    const inline = /^image\/(jpeg|png|gif|webp)$/i.test(a.mime);
+    res.writeHead(200, {
+      'Content-Type': inline ? a.mime : 'application/octet-stream',
+      'Content-Length': a.daten.length,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(a.name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Cache-Control': 'private, max-age=86400',
+    });
+    res.end(a.daten);
+  }
+
+  /** v1505 — eigene hochgeladene Datei (FileStore-Schlüssel aus der Upload-Zeile) für die Vorschau im Verlauf der App.
+   *  Gleiche Abschottung wie beim Anhang: inline nur Rasterbilder, sonst Download mit neutralem Typ. */
+  private async handleGeraetDatei(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.datei) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const key = url.searchParams.get('key') ?? '';
+    if (!key || key.length > 400 || key.includes('..') || key.startsWith('/')) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'key ungültig' })); return; }
+    const a = await this.geraeteCallbacks.datei(geraet.geraetId, key);
+    if (!a) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Datei nicht vorhanden oder nicht erlaubt' })); return; }
     const inline = /^image\/(jpeg|png|gif|webp)$/i.test(a.mime);
     res.writeHead(200, {
       'Content-Type': inline ? a.mime : 'application/octet-stream',

@@ -263,10 +263,34 @@ Owner 19.10. mit Screenshots der Codex-App. Seitenleiste: Projektfäden und Gesp
 - **Nachweis:** Sprung und Lesezeichen bleiben nach einem Neustart.
 
 **D5 — Kontomenü unten links (ersetzt die Satelliten-Zeile)**
-- Kosten & Guthaben: heute, Woche, Monat, teuerstes Modell, Tagesbudget, Claude-Code-Kosten. Neue Geräte-Route auf Basis der vorhandenen Kostenauswertung.
+
+Owner-Entscheidungen 19.10.:
+1. Das Menü sitzt unten links in der linken Navigation.
+2. Kein Guthaben.
+3. Herkunft der Kosten wird ab jetzt erfasst.
+4. Budget nur als Anzeige.
+
+- **Kosten:**
+  - heute, Woche, Monat, teuerstes Modell;
+  - Aufteilung nach Herkunft: Chat, Hintergrund (Nachtjobs, Beobachter, Wächter), geplante Aufgaben, Claude Code;
+  - Tagesbudget nur als Anzeige („x von y“), ohne Grenze, ohne Warnung und ohne Sperre (Regel 16.10.: keine Standard-Kostengrenze).
+  - Neue Geräte-Route auf Basis der vorhandenen Kostenauswertung.
+- **Herkunft erfassen (Server):**
+  - Heute zählt `llm_usage` nur Tag × Modell (`llm_usage_by_user` dazu je Nutzer); der Zweck eines Aufrufs geht verloren.
+  - Neu: Die Einstiegspunkte setzen einen Zweck im Ausführungskontext (AsyncLocalStorage):
+    - Nachrichtenverarbeitung = `chat`;
+    - Läufe des Job-Registers = `hintergrund:<job>`;
+    - geplante Aufgaben = `aufgabe`;
+    - Claude-Code-Läufe = `claude-code`.
+  - Die vorhandene Kostenzählung schreibt zusätzlich in eine Tabelle `llm_usage_zweck` (Tag × Zweck × Modell: Aufrufe, Tokens, Kosten).
+  - Aufrufe ohne Kontext zählen als `sonstiges`. Das macht sichtbar, wo ein Einstiegspunkt fehlt.
+  - Gilt ab Einführung, keine Rückrechnung.
 - Geräte (Satellitenstatus), Einstellungen (Strg+,), Hilfe (Befehle, Kürzel), Über/Update (App- und Server-Version).
-- Ohne Team-Funktionen.
-- **Nachweis:** Die Zahlen stimmen mit der Kostenauswertung des Servers überein.
+- Ohne Team-Funktionen und ohne Guthaben.
+- **Nachweis:**
+  - Die Summen stimmen mit der Kostenauswertung des Servers überein.
+  - Die Summe über alle Zwecke ergibt die Tagessumme.
+  - `sonstiges` bleibt nach einem Tag Betrieb klein (Ausreißer werden einem Einstiegspunkt zugeordnet).
 
 **D6 — Nachrichten und Eingabe**
 - **Unter jeder Antwort:** Kopieren, Vorlesen, 👍/👎 (Entscheidung 4) und „…“ mit Abzweigen ab hier, Als Aufgabe übernehmen, Merken, Kopieren als Markdown.

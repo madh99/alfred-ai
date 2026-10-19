@@ -10,6 +10,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 
 import 'modell.dart';
+import 'upload_vorschau.dart';
 
 class LeistenEintrag {
   const LeistenEintrag({required this.index, required this.frage, required this.antwort, required this.schluessel});
@@ -31,12 +32,14 @@ List<LeistenEintrag> leistenEintraege(List<Eintrag> verlauf) {
   final aus = <LeistenEintrag>[];
   for (var i = 0; i < verlauf.length; i++) {
     final e = verlauf[i];
-    if (e.art != Art.du || e.text.trim().isEmpty) continue;
+    if (e.art != Art.du) continue;
+    final frage = uploadKurztext(e.text, lokaleDateien: e.lokaleDateien); // 1.46.0 — Upload-Zeilen nicht in die Karte
+    if (frage.trim().isEmpty) continue;
     var antwort = '';
     for (var j = i + 1; j < verlauf.length && verlauf[j].art != Art.du; j++) {
       if (verlauf[j].art == Art.alfred && verlauf[j].text.trim().isNotEmpty) { antwort = _kurz(verlauf[j].text, 220); break; }
     }
-    aus.add(LeistenEintrag(index: i, frage: _kurz(e.text, 120), antwort: antwort, schluessel: lesezeichenSchluessel(e.text)));
+    aus.add(LeistenEintrag(index: i, frage: _kurz(frage, 120), antwort: antwort, schluessel: lesezeichenSchluessel(e.text)));
   }
   return aus;
 }

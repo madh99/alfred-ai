@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+
 import 'anhang_speicher.dart';
 import 'modell.dart';
 
@@ -60,6 +62,25 @@ class Server {
     final bytes = b.takeBytes();
     await speicher?.schreibe(id, bytes);
     return _anhaenge[id] = Anhang(name: name, mime: mime, bytes: bytes);
+  }
+
+  /// 1.46.0 — eigene hochgeladene Datei aus dem Dateispeicher (v1505 `/api/geraete/datei`), für die Vorschau im Verlauf.
+  /// Einmal je Schlüssel angefragt (auch ein Fehlschlag bleibt gemerkt — kein erneuter Abruf bei jedem Zeichnen).
+  final Map<String, Future<Anhang?>> _dateien = {};
+  Future<Anhang?> datei(String key, String name) => _dateien[key] ??= _dateiLaden(key, name);
+  Future<Anhang?> _dateiLaden(String key, String name) async {
+    try {
+      final id = md5.convert(utf8.encode(key)).toString();
+      final mime = _mimeAusName(name);
+      final lokal = await speicher?.lies(id);
+      if (lokal != null) return Anhang(name: name, mime: mime, bytes: lokal);
+      final res = await hole('/api/geraete/datei?key=${Uri.encodeQueryComponent(key)}');
+      if (res.statusCode != 200) { await res.drain<void>(); return null; }
+      final b = BytesBuilder(copy: false); await for (final teil in res) { b.add(teil); }
+      final bytes = b.takeBytes();
+      await speicher?.schreibe(id, bytes);
+      return Anhang(name: name, mime: mime, bytes: bytes);
+    } catch (_) { return null; }
   }
 
   /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).

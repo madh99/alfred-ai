@@ -7,12 +7,14 @@ enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
 enum Ansicht { chat, eingang, kacheln, vorgaenge, hinweise, aufgaben, gedaechtnis, befunde, projekte, beobachter, suche, anhaenge, einstellungen } // 1.5.0 suche, anhaenge; 1.9.0 aufgaben, gedaechtnis; 1.12.0 befunde; 1.15.0 projekte
 
 class Eintrag {
-  Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];
+  Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge, this.lokaleDateien = const []}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];
   final Art art;
   String text;
   final DateTime zeit;
   /// 1.0.5 — Bilder und Dateien, die mit der Antwort kommen (Kamerafoto, Bildschirmfoto, geholte Datei).
   final List<Anhang> anhaenge;
+  /// 1.46.0 — gerade gesendete eigene Dateien (Pfade), als Vorschau über der Blase bis zum Neuladen des Verlaufs.
+  final List<String> lokaleDateien;
   /// 1.2.8 — lange eigene Nachricht vom Benutzer aufgeklappt (Einklappen in main.dart `_eingeklappt`).
   bool aufgeklappt = false;
   /// 1.5.0 — Treffer der Suche (Fundstelle hervorgehoben).

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — App und Web: eigene Anhänge als Vorschau über der Nachricht (v1505, App 1.46.0)
+
+Owner 19.10. (Screenshot): Angehängte Bilder und Dateien erschienen im Verlauf als technische Zeilen („Datei „…“ (… Bytes, SHA-256 …) liegt in deinem Dateispeicher, Schlüssel: … Bestätige kurz den Empfang.“). Jetzt wie im Vorbild:
+
+- **Bilder** stehen als Vorschaukacheln in einer Reihe über der eigenen Nachricht, ein Klick öffnet das Bild. **Andere Dateien** erscheinen als Kärtchen mit Name und Größe, ein Klick öffnet bzw. lädt sie herunter.
+- Die Blase zeigt nur noch den eigenen Text. „Bestätige kurz den Empfang.“ wird nicht mehr angezeigt. Die Verlaufsleiste nennt bei reinen Dateinachrichten „📎 Name“.
+- Die Nachricht an Alfred bleibt unverändert, er braucht die Schlüssel weiterhin. Erkannt werden die Zeilen von App und Web (auch ältere ohne Größe), alte Gespräche zeigen dadurch ebenfalls die Vorschau.
+- **Server:** neue Route `GET /api/geraete/datei?key=…` für die App. Sie ist nur für Geräte des Owners offen und liest nur Schlüssel aus dessen Dateispeicher, bis 25 MB. Wie beim Anhang werden nur Rasterbilder inline ausgeliefert, alles andere als Download mit neutralem Typ, nosniff und abgeschotteter CSP. Die App hält geladene Dateien im vorhandenen Zwischenspeicher auf dem Gerät.
+- **Web:** Direkt nach dem Senden stand die lokale Vorschau als `![name](data:…)` im Klartext in der Blase, also die gesamte Daten-URL. Diese Zeilen werden jetzt ebenfalls als Kacheln gezeigt.
+
 ### Fixed — App: Chat nutzt große Fenster, Symbole der Kopfzeile am rechten Rand (App 1.45.3)
 
 Owner 19.10. (Screenshot, Fenster rund 2 000 px breit): Der Chat blieb schmal, und die Symbole der Kopfzeile standen mitten im Fenster.

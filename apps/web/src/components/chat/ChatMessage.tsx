@@ -4,6 +4,8 @@ import { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage as ChatMessageType } from '@/types/api';
+import { useConfig } from '@/context/ConfigContext';
+import { uploadZeilenTrennen, istBildName, groesseText, type UploadVerweis } from '@/lib/upload-zeilen';
 
 /**
  * v629 — Wiki-Style entity link rewrite.
@@ -59,6 +61,38 @@ function rewriteEntityLinks(text: string): string {
   return segments.join('');
 }
 
+/** v1505 — eigene Anhänge als Kacheln über der Blase (Bilder) bzw. Kärtchen (andere Dateien). */
+function UploadVorschau({ dateien }: { dateien: UploadVerweis[] }) {
+  const { client } = useConfig();
+  return (
+    <div className="flex flex-wrap justify-end gap-2 mb-1.5 max-w-[85%]">
+      {dateien.map((d, i) => {
+        const url = d.src ?? (d.key && client ? client.fileDownloadUrl(d.key) : undefined);
+        if (istBildName(d.name) && url) {
+          return (
+            <a key={i} href={url} target="_blank" rel="noreferrer" title={d.name} className="block">
+              <img src={url} alt={d.name} className="h-24 w-24 object-cover rounded-xl border border-[#2a2a2a] bg-[#1a1a1a]" />
+            </a>
+          );
+        }
+        const inhalt = (
+          <>
+            <span className="text-lg leading-none">📄</span>
+            <span className="min-w-0">
+              <span className="block truncate font-medium text-gray-200">{d.name}</span>
+              {d.groesse !== undefined && <span className="block text-[10px] text-gray-500">{groesseText(d.groesse)}</span>}
+            </span>
+          </>
+        );
+        const klasse = 'flex items-center gap-2 max-w-[260px] px-3 py-2 rounded-xl bg-[#1a1a1a] border border-[#2a2a2a] text-xs';
+        return url
+          ? <a key={i} href={url} download={d.name} title={d.name} className={`${klasse} hover:border-blue-500/40`}>{inhalt}</a>
+          : <div key={i} title={d.name} className={klasse}>{inhalt}</div>;
+      })}
+    </div>
+  );
+}
+
 interface Props {
   message: ChatMessageType;
   isLastUser?: boolean;
@@ -72,6 +106,7 @@ interface Props {
 
 export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onEdit, onReply, streaming }: Props) {
   const isUser = message.role === 'user';
+  const upload = useMemo(() => (isUser ? uploadZeilenTrennen(message.content) : { text: message.content, dateien: [] }), [isUser, message.content]); // v1505
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
@@ -94,7 +129,9 @@ export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onE
   const canRetry = !isUser && isLastAssistant && !streaming && onRetry;
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 group`}>
+    <div className={`flex ${isUser ? 'flex-col items-end' : 'justify-start'} mb-4 group`}>
+      {isUser && upload.dateien.length > 0 && !editing && <UploadVorschau dateien={upload.dateien} />}
+      {(!isUser || editing || upload.text || message.attachments?.length) ? (
       <div
         className={`relative max-w-[85%] rounded-2xl px-4 py-3 ${
           isUser
@@ -123,7 +160,7 @@ export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onE
             </div>
           </div>
         ) : isUser ? (
-          <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{upload.text}</p>
         ) : (
           <AssistantMarkdown content={message.content} />
         )}
@@ -178,6 +215,7 @@ export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onE
           </div>
         )}
       </div>
+      ) : null}
     </div>
   );
 }

@@ -291,9 +291,9 @@ extension _Senden on _SitzungState {
     }
     if (text == null) {
       eingabe.clear();
-      final namen = anhaenge.map((f) => f.uri.pathSegments.last).toList();
+      final pfade = anhaenge.map((f) => f.path).toList(); // 1.46.0 — Vorschau über der Blase statt „📎 Namen“
       final zitat = bezug == null ? '' : '↩ „${bezug!.text.replaceAll('\n', ' ').substring(0, bezug!.text.length > 80 ? 80 : bezug!.text.length)}${bezug!.text.length > 80 ? '…' : ''}“\n'; // 1.2.2
-      _zeile(Eintrag(Art.du, '$zitat${namen.isEmpty ? t : '${t.isEmpty ? '' : '$t\n'}📎 ${namen.join(', ')}'}'));
+      _zeile(Eintrag(Art.du, '$zitat$t', lokaleDateien: pfade));
       if (mitAnhang) {
         // Anhänge zuerst hochladen, dann Alfred mit Text und Schlüsseln ansprechen (Datei + Frage in einer Nachricht)
         List<String> zeilen;

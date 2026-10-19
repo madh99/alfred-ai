@@ -63,6 +63,8 @@ describe('istSitzungsPfad', () => {
     // v1349 — Anhang-Abruf (v1347) nur mit gültiger Kennung
     expect(istSitzungsPfad('/api/geraete/anhang/'+'a'.repeat(32))).toBe(true);
     expect(istSitzungsPfad('/api/geraete/anhang/../config')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/datei')).toBe(true); // v1505
+    expect(istSitzungsPfad('/api/geraete/datei/x')).toBe(false);
     // v1350 — Suche und Anhang-Übersicht
     expect(istSitzungsPfad('/api/geraete/suche?q=rechnung')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/anhaenge?limit=50')).toBe(true);

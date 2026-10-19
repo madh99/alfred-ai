@@ -447,21 +447,35 @@ extension _Oberflaeche on _SitzungState {
   }
 
 
+  /// 1.46.0 — Inhalt einer eigenen Datei für Vorschau und Öffnen: lokal gesendet → von der Platte, sonst vom Server.
+  Future<Anhang?> _uploadLaden(UploadVerweis d) async {
+    if (d.pfad != null) {
+      try { final f = File(d.pfad!); return Anhang(name: d.name, mime: d.istBild ? 'image/${d.name.split('.').last.toLowerCase().replaceAll('jpg', 'jpeg')}' : 'application/octet-stream', bytes: await f.readAsBytes()); } catch (_) { return null; }
+    }
+    final s = server; final k = d.key;
+    if (s == null || k == null) return null;
+    return s.datei(k, d.name);
+  }
+
   Widget _eintrag(Eintrag e, ThemeData theme) {
     final zeit = '${e.zeit.hour.toString().padLeft(2, '0')}:${e.zeit.minute.toString().padLeft(2, '0')}';
     final dim = theme.colorScheme.onSurfaceVariant;
     switch (e.art) {
       case Art.du:
         // 1.2.5 — eigene Nachricht wiederholen oder bearbeiten (Owner-Freigabe 09.10.)
+        // 1.46.0 — Upload-Zeilen als Vorschaubilder/Kärtchen über der Blase, die Blase zeigt nur den eigenen Text
+        final u = uploadZeilenTrennen(e.text);
+        final dateien = [...u.dateien, for (final p in e.lokaleDateien) UploadVerweis(name: File(p).uri.pathSegments.last, pfad: p)];
         return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-          Container(constraints: BoxConstraints(maxWidth: breiteChat * 0.78), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: _eingeklappt(e)
+          if (dateien.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat * 0.78), child: UploadVorschau(dateien: dateien, laden: _uploadLaden, aufOeffnen: _anhangOeffnen))),
+          if (u.text.isNotEmpty) Container(constraints: BoxConstraints(maxWidth: breiteChat * 0.78), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: _eingeklappt(e)
             ? Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                SelectableText(gekuerzt(e.text)),
+                SelectableText(gekuerzt(u.text)),
                 TextButton.icon(onPressed: () => _neu(() => e.aufgeklappt = true), icon: const Icon(Icons.unfold_more, size: 16), label: Text('mehr anzeigen (${(e.text.length / 1024).toStringAsFixed(0)} KB)'), style: TextButton.styleFrom(visualDensity: VisualDensity.compact)),
               ])
-            : SelectableText(e.text)),
+            : SelectableText(u.text)),
           Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(tooltip: 'Bearbeiten (Text in die Eingabe legen)', onPressed: antwortet ? null : () { eingabe.text = _ohneZitat(e.text); eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length); fokus.requestFocus(); }, icon: Icon(Icons.edit_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            IconButton(tooltip: 'Bearbeiten (Text in die Eingabe legen)', onPressed: antwortet ? null : () { eingabe.text = _ohneZitat(u.text); eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length); fokus.requestFocus(); }, icon: Icon(Icons.edit_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Erneut senden', onPressed: antwortet ? null : () => _senden(text: _ohneZitat(e.text)), icon: Icon(Icons.replay_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             if (archiv == null) IconButton(tooltip: lesezeichen.contains(lesezeichenSchluessel(e.text)) ? 'Lesezeichen entfernen' : 'Lesezeichen (in der Verlaufsleiste hervorgehoben)', onPressed: () => _lesezeichenUmschalten(e), icon: Icon(lesezeichen.contains(lesezeichenSchluessel(e.text)) ? Icons.bookmark : Icons.bookmark_border, size: 16, color: lesezeichen.contains(lesezeichenSchluessel(e.text)) ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact), // 1.45.0 D4
           ]),

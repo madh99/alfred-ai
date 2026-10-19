@@ -14125,6 +14125,20 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (!eigene && !(await this.geraetGehoertOwner(geraetId))) return undefined;
             return { daten: a.daten, name: a.name, mime: a.mime };
           },
+          // v1505 — eigene hochgeladene Datei für die Vorschau im Verlauf: Uploads der Geräte liegen im Dateispeicher des Owners,
+          // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
+          datei: async (geraetId: string, key: string) => {
+            const owner = this.ownerMasterUserId ?? this.tryOwner();
+            if (!this.fileStoreRef || !owner || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            try {
+              const daten = await this.fileStoreRef.read(key, owner);
+              if (daten.length > 25 * 1024 * 1024) return undefined;
+              const name = path.basename(key).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, '');
+              const endung = path.extname(name).toLowerCase();
+              const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' } as Record<string, string>)[endung] ?? 'application/octet-stream';
+              return { daten, name, mime };
+            } catch { return undefined; }
+          },
           // v1350 — Suche im Verlauf (Owner-Freigabe 11.10., Punkt 4): Owner-Geräte suchen in Hauptgespräch und Fäden,
           // andere Geräte nur in ihren eigenen Sitzungs-Gesprächen (dieselbe Grenze wie verlauf/faeden).
           suche: async (geraetId: string, text: string, limit: number) => {
