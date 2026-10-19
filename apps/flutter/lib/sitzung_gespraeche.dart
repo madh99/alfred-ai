@@ -147,6 +147,82 @@ extension _Gespraeche on _SitzungState {
       final l = ((j['lesezeichen'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map((x) => '${x['schluessel']}').toSet();
       if (mounted) _neu(() => lesezeichen = l);
     } catch (_) { /* Komfort */ }
+    _bewertungenLaden(); // 1.50.0 D6a — gleiche Gelegenheiten wie die Lesezeichen
+  }
+
+  /// 1.50.0 D6a — Bewertungen des offenen Fadens.
+  Future<void> _bewertungenLaden() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/faeden/${s.faden ?? 'haupt'}/bewertung');
+      final b = {for (final x in ((j['bewertungen'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>()) '${x['schluessel']}': (x['wert'] as num?)?.toInt() ?? 0};
+      if (mounted) _neu(() => bewertungen = b);
+    } catch (_) { /* Komfort */ }
+  }
+
+  /// 1.50.0 D6a — 👍/👎 setzen oder (erneut tippen) zurücknehmen; 👎 fragt nach dem Grund (optional). Mit Grund wird es
+  /// eine Korrektur, die Alfred künftig beachtet.
+  Future<void> _bewerten(Eintrag e, int wert) async {
+    final s = server; if (s == null) return;
+    final k = lesezeichenSchluessel(e.text);
+    final vorher = bewertungen[k] ?? 0;
+    final neu = vorher == wert ? 0 : wert;
+    String? grund;
+    if (neu == -1) {
+      grund = await _grundFragen();
+      if (grund == null) return; // abgebrochen
+    }
+    _neu(() => neu == 0 ? bewertungen.remove(k) : bewertungen[k] = neu);
+    try {
+      final i = verlauf.indexOf(e);
+      final r = await s.json('/api/geraete/faeden/${s.faden ?? 'haupt'}/bewertung', methode: 'POST', koerper: {
+        'schluessel': k, 'wert': neu,
+        if (grund != null && grund.isNotEmpty) 'grund': grund,
+        if (neu != 0) 'frage': i < 0 ? '' : frageVor(verlauf, i),
+        if (neu != 0) 'antwort': e.text.length > 1200 ? e.text.substring(0, 1200) : e.text,
+      });
+      if (r['korrektur'] == 'gespeichert' || r['korrektur'] == 'aufgefrischt') {
+        _neu(() => fluechtig = '👎 gespeichert — Alfred beachtet die Korrektur künftig');
+      } else if (neu != 0) {
+        _neu(() => fluechtig = neu == 1 ? '👍 gespeichert' : '👎 gespeichert');
+      }
+    } catch (err) {
+      _neu(() => vorher == 0 ? bewertungen.remove(k) : bewertungen[k] = vorher);
+      _zeile(Eintrag(Art.fehler, 'Bewertung nicht gespeichert: $err'));
+    }
+  }
+
+  /// Grund für ein 👎 (leer erlaubt). null = abgebrochen.
+  Future<String?> _grundFragen() {
+    final c = TextEditingController();
+    return showDialog<String>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Was war nicht gut?'),
+      content: SizedBox(width: 440, child: TextField(key: const Key('bewertung-grund'), controller: c, autofocus: true, maxLines: 4, minLines: 2,
+        decoration: const InputDecoration(hintText: 'z. B. „Die Summe gilt nur bis August.“ (optional — mit Grund merkt sich Alfred die Korrektur)'))),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Abbrechen')),
+        FilledButton(key: const Key('bewertung-senden'), onPressed: () => Navigator.of(ctx).pop(c.text.trim()), child: const Text('👎 senden')),
+      ],
+    ));
+  }
+
+  /// 1.50.0 D6a — Antwort (Klartext) ins Gedächtnis.
+  Future<void> _merken(Eintrag e) async {
+    final s = server; if (s == null) return;
+    final t = ohneMarkdown(e.text);
+    try {
+      await s.json('/api/geraete/gedaechtnis', methode: 'POST', koerper: {'text': t.length > 4000 ? t.substring(0, 4000) : t});
+      _neu(() => fluechtig = 'im Gedächtnis gespeichert');
+    } catch (err) { _zeile(Eintrag(Art.fehler, 'Nicht gemerkt: $err')); }
+  }
+
+  /// 1.50.0 D6b — Stufen (Modell, Gründlichkeit) und Modell der letzten Antwort.
+  Future<void> _stufenLaden() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/stufen${s.faden == null ? '' : '?faden=${s.faden}'}');
+      if (mounted) _neu(() => stufenStand = StufenStand.aus(j));
+    } catch (_) { /* Komfort: ohne Server-Unterstützung bleibt die Wahl wie bisher */ }
   }
 
   Future<void> _lesezeichenUmschalten(Eintrag e) async {

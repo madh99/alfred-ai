@@ -231,6 +231,8 @@ export class MessagePipeline {
   private readonly conversationManager: ConversationManager;
   private readonly users: UserRepository;
   private readonly logger: Logger;
+  /** v1510 D6b — Modell und Stufe der letzten Antwort je Gespräch (Anzeige „zuletzt“ in der App; begrenzt auf 200). */
+  private readonly letzteModelle = new Map<string, { modell: string; stufe: string; zeit: number }>();
   private readonly skillRegistry?: SkillRegistry;
   private readonly skillSandbox?: SkillSandbox;
   private readonly securityManager?: SecurityManager;
@@ -513,6 +515,13 @@ export class MessagePipeline {
     if (!fertig) return { content: text, stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0 } } as Awaited<ReturnType<LLMProvider['complete']>>;
     if (!fertig.content && text) fertig = { ...fertig, content: text };
     return fertig;
+  }
+
+  /** v1510 D6b — jüngste Antwort unter den Gesprächen, deren chatId [teil] enthält oder gleich [genau] ist. */
+  letztesModell(teil: string, genau?: string): { modell: string; stufe: string; zeit: number } | undefined {
+    let best: { modell: string; stufe: string; zeit: number } | undefined;
+    for (const [k, v] of this.letzteModelle) if ((k.includes(teil) || k === genau) && (!best || v.zeit > best.zeit)) best = v;
+    return best;
   }
 
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
@@ -1608,6 +1617,7 @@ export class MessagePipeline {
             ? await this.llmGestreamt(anfrage, (t) => onProgress?.({ kind: 'delta', text: t }))
             : await this.llm.complete(anfrage);
           previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
+          if (response.model) { this.letzteModelle.delete(message.chatId); this.letzteModelle.set(message.chatId, { modell: response.model, stufe: String(message.metadata?.tier ?? 'automatisch'), zeit: Date.now() }); if (this.letzteModelle.size > 200) this.letzteModelle.delete(this.letzteModelle.keys().next().value!); } // v1510 D6b
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;
         } catch (err: unknown) {

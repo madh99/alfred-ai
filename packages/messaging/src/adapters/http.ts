@@ -250,6 +250,7 @@ export interface GeraetOwnerAnsichten {
   gedaechtnis(o: { typ?: string; q?: string }): Promise<unknown>;
   gedaechtnisAendern(id: string, text: unknown): Promise<boolean>;
   gedaechtnisLoeschen(id: string): Promise<boolean>;
+  gedaechtnisAnlegen?(text: unknown): Promise<{ id: string }>; // v1510 D6a
   vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null>;
   befunde(): Promise<unknown>; // v1359
   befundAktion?(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1481
@@ -1094,6 +1095,10 @@ export class HttpAdapter extends MessagingAdapter {
     fadenAufgabe?(geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }): Promise<{ ok: boolean; text: string }>; // v1500
     fadenZusammenfassung?(geraetId: string, faden: string | null, neu: boolean): Promise<Record<string, unknown> | undefined>; // v1501
     fadenLesezeichen?(geraetId: string, faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }): Promise<Array<{ schluessel: string; text: string; zeit: string }> | undefined>; // v1504
+    /** v1510 D6a — 👍/👎 je Antwort: GET Liste, POST {schluessel, wert 1|-1|0, grund?, frage?, antwort?} */
+    fadenBewertung?(geraetId: string, faden: string | null, setzen?: { schluessel: string; wert: number; grund?: string; frage?: string; antwort?: string }): Promise<{ bewertungen: Array<{ schluessel: string; wert: number; grund?: string }>; korrektur?: string } | undefined>;
+    /** v1510 D6b — Stufen (Modell, Gründlichkeit) und Modell der letzten Antwort */
+    stufen?(geraetId: string, faden: string | null): Promise<unknown | undefined>;
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
@@ -2085,6 +2090,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetSucheAnhaenge(req, res, url).catch(err => this.safeError(res, err)); // v1350
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
+    } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/bewertung$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraetFadenBewertung(req, res, url).catch(err => this.safeError(res, err)); // v1510 D6a
+    } else if (url.pathname === '/api/geraete/stufen' && req.method === 'GET') {
+      this.handleGeraetStufen(req, res, url).catch(err => this.safeError(res, err)); // v1510 D6b
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/lesezeichen$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetFadenLesezeichen(req, res, url).catch(err => this.safeError(res, err)); // v1504 D4
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/zusammenfassung$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
@@ -7015,6 +7024,7 @@ export class HttpAdapter extends MessagingAdapter {
    *   POST   /api/geraete/aufgaben/:id          { erledigt?, faellig?, titel?, prioritaet? }
    *   DELETE /api/geraete/erinnerungen/:id
    *   GET    /api/geraete/gedaechtnis?typ=&q=
+   *   POST   /api/geraete/gedaechtnis           { text }  (v1510 Merken)
    *   POST   /api/geraete/gedaechtnis/:id       { text }
    *   DELETE /api/geraete/gedaechtnis/:id
    *   POST   /api/geraete/vorgaenge/:id         { status: erledigt | verworfen, notiz? }
@@ -7045,6 +7055,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'aufgaben' && id && m === 'POST') { const t = await a.aufgabeAendern(id, body); antwort(t ? 200 : 404, t ? { aufgabe: t } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'erinnerungen' && id && m === 'DELETE') { const ok = await a.erinnerungLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'gedaechtnis' && !id && m === 'GET') { antwort(200, await a.gedaechtnis({ typ: url.searchParams.get('typ') || undefined, q: url.searchParams.get('q')?.slice(0, 200) || undefined })); return; }
+      if (bereich === 'gedaechtnis' && !id && m === 'POST' && a.gedaechtnisAnlegen) { antwort(200, await a.gedaechtnisAnlegen(body.text)); return; } // v1510 D6a Merken
       if (bereich === 'gedaechtnis' && id && m === 'POST') { const ok = await a.gedaechtnisAendern(id, body.text); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'gedaechtnis' && id && m === 'DELETE') { const ok = await a.gedaechtnisLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'befunde' && !id && m === 'GET') { antwort(200, await a.befunde()); return; } // v1359
@@ -7138,6 +7149,35 @@ export class HttpAdapter extends MessagingAdapter {
     const id = url.pathname.split('/').slice(-2)[0] ?? '';
     const r = await this.geraeteCallbacks.fadenZusammenfassung(geraet.geraetId, id === 'haupt' ? null : id, req.method === 'POST');
     res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'Faden nicht gefunden' }));
+  }
+
+  /** v1510 (D6a) — Bewertung einer Antwort: GET Liste, POST {schluessel, wert 1|-1|0, grund?, frage?, antwort?}. */
+  private async handleGeraetFadenBewertung(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.fadenBewertung) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const id = url.pathname.split('/').slice(-2)[0] ?? '';
+    let setzen: { schluessel: string; wert: number; grund?: string; frage?: string; antwort?: string } | undefined;
+    if (req.method === 'POST') {
+      let j: Record<string, unknown> = {};
+      try { j = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { j = {}; }
+      const schluessel = String(j.schluessel ?? '');
+      if (!/^[0-9a-f]{8,64}$/.test(schluessel) || ![1, -1, 0].includes(Number(j.wert))) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'schluessel (hex) und wert (1, -1 oder 0) nötig' })); return; }
+      const text = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined);
+      setzen = { schluessel, wert: Number(j.wert), ...(text(j.grund, 600) ? { grund: text(j.grund, 600) } : {}), ...(text(j.frage, 400) ? { frage: text(j.frage, 400) } : {}), ...(text(j.antwort, 1200) ? { antwort: text(j.antwort, 1200) } : {}) };
+    }
+    const r = await this.geraeteCallbacks.fadenBewertung(geraet.geraetId, id === 'haupt' ? null : id, setzen);
+    res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'Faden nicht gefunden' }));
+  }
+
+  /** v1510 (D6b) — Stufen mit Modell und Gründlichkeit, dazu das Modell der letzten Antwort (?faden=). */
+  private async handleGeraetStufen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.stufen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const f = url.searchParams.get('faden');
+    const r = await this.geraeteCallbacks.stufen(geraet.geraetId, f && /^[a-z0-9-]{1,40}$/.test(f) ? f : null);
+    res.writeHead(r ? 200 : 403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'nur Geräte des Owners' }));
   }
 
   /** v1504 (D4) — Lesezeichen eines Fadens: GET Liste, POST {schluessel, text, an} setzt oder entfernt eines. */

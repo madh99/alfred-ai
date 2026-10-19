@@ -3008,6 +3008,23 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
+    version: 145,
+    description: 'v1510 D6a — antwort_bewertungen: 👍/👎 je Antwort (Faden + Text-Prüfsumme), Grund bei 👎 (SQLite-Spiegel zu PG v149).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS antwort_bewertungen (
+          faden TEXT NOT NULL,
+          schluessel TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          wert INTEGER NOT NULL,
+          grund TEXT,
+          frage TEXT,
+          antwort TEXT,
+          zeit TEXT NOT NULL,
+          PRIMARY KEY (faden, schluessel)
+        )`);
+    },
+  },
+  {
     version: 144,
     description: 'v1506 D5 — llm_usage_zweck: Kosten je Tag, Herkunft (chat, hintergrund:<job>, aufgabe, claude-code, sonstiges) und Modell (SQLite-Spiegel zu PG v148).',
     up(db) {

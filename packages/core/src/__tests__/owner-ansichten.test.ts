@@ -47,6 +47,7 @@ function aufbau() {
       },
     },
     vorgangEntscheiden: async (u, id, status) => (u === OWNER && id === 'v1' ? { titel: `Vorgang ${status}` } : null),
+    merken: async (o, t) => { memories.push({ id: 'm-neu', user_id: o, key: 'gemerkt:1', value: t, type: 'fact', source: 'manual', updated_at: '2026-10-19' }); return 'm-neu'; }, // v1510
   };
   return { a: new OwnerAnsichten(deps), todos, reminders, memories, sql };
 }
@@ -100,6 +101,14 @@ describe('OwnerAnsichten — Gedächtnis', () => {
     expect((await a.gedaechtnis({ typ: 'feedback' })).eintraege.map(e => e.id)).toEqual(['m2']);
     expect((await a.gedaechtnis({ q: 'linz wohnt' })).eintraege).toHaveLength(1);
     expect((await a.gedaechtnis({ q: 'wien' })).eintraege).toHaveLength(0);
+  });
+
+  it('v1510 Merken: neuer Eintrag beim Owner, leerer oder zu langer Text abgewiesen', async () => {
+    const { a, memories } = aufbau();
+    expect(await a.gedaechtnisAnlegen('  Heizöl bei Kreuzmayr bestellt  ')).toEqual({ id: 'm-neu' });
+    expect(memories.find(m => m.id === 'm-neu')).toMatchObject({ user_id: OWNER, value: 'Heizöl bei Kreuzmayr bestellt' });
+    await expect(a.gedaechtnisAnlegen('')).rejects.toThrow('text');
+    await expect(a.gedaechtnisAnlegen('x'.repeat(4001))).rejects.toThrow('text');
   });
 
   it('korrigieren und löschen nur beim Owner; SQL mit user_id', async () => {

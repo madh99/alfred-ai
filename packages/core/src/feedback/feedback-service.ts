@@ -471,6 +471,24 @@ Antwort als JSON: {"intent":"correction|preference|rule|skip","reason":"kurze Be
    *
    * Lazy — bypassed entirely when no embeddingService is wired (no breaking change).
    */
+  /**
+   * v1510 D6a — 👎 mit Grund aus App/Web: ausdrückliche Bewertung des Owners, daher ohne Klassifizierung direkt als
+   * Korrektur (Typ correction) — erscheint im harten Korrektur-Block von Chat und Reasoning. Dubletten werden aufgefrischt.
+   */
+  async korrekturAusBewertung(o: { userId: string; frage: string; antwort: string; grund: string }): Promise<'gespeichert' | 'aufgefrischt' | 'leer'> {
+    const grund = o.grund.replace(/\s+/g, ' ').trim();
+    if (grund.length < 3) return 'leer';
+    const frage = o.frage.replace(/\s+/g, ' ').trim().slice(0, 140);
+    const regel = `Nutzer-Korrektur (Antwort mit 👎 bewertet${frage ? ` zu „${frage}“` : ''}): ${grund.slice(0, 400)}`;
+    await this.feedbackRepo.recordEvent(o.userId, 'conversation_correction', undefined, `bewertung:${o.userId}:${new Date().toISOString().slice(0, 10)}`, regel,
+      { userMessage: frage, antwort: o.antwort.slice(0, 300), quelle: 'bewertung' });
+    const dedup = await this.tryDeduplicate(o.userId, regel, 'correction');
+    if (dedup.skipped) return 'aufgefrischt';
+    await this.memoryRepo.saveWithMetadata(o.userId, `feedback:correction:${Date.now()}`, regel, 'general', 'correction', 0.95, 'manual');
+    this.logger.info({ regel: regel.slice(0, 120) }, 'v1510 Korrektur aus 👎-Bewertung gespeichert');
+    return 'gespeichert';
+  }
+
   private async tryDeduplicate(userId: string, value: string, type: string): Promise<{
     skipped: boolean;
     existingKey?: string;

@@ -189,6 +189,7 @@ export class Alfred {
   private summaryRepo?: SummaryRepository;
   private activityRepo?: ActivityRepository;
   private memoryRepo?: MemoryRepository;
+  private feedbackServiceRef?: import('./feedback/feedback-service.js').FeedbackService; // v1510 D6a
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   /** v824 — Agent-Conventions Repository für CLAUDE.md/AGENTS.md-Lifecycle. */
@@ -6770,6 +6771,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.logger.child({ component: 'feedback' }),
     );
     feedbackService.setLLM(llmProvider);
+    this.feedbackServiceRef = feedbackService; // v1510 D6a — 👎 mit Grund → Korrektur
     // v606 K4 — embedding-based dedup for new corrections/preferences/rules.
     // Uses llmProvider.embed() directly (returns { embedding: number[] }).
     if (llmProvider.supportsEmbeddings()) {
@@ -14195,6 +14197,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           fadenAufgabe: async (geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAufgabe(faden, a) : { ok: false, text: 'nur Geräte des Owners' }, // v1500
           fadenZusammenfassung: async (geraetId: string, faden: string | null, neu: boolean) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenZusammenfassung(faden, neu) : undefined, // v1501
           fadenLesezeichen: async (geraetId: string, faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenLesezeichen(faden, setzen) : undefined, // v1504
+          fadenBewertung: async (geraetId: string, faden: string | null, setzen?: { schluessel: string; wert: number; grund?: string; frage?: string; antwort?: string }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenBewertung(faden, setzen) : undefined, // v1510 D6a
+          // v1510 D6b — Stufen (Modell, Gründlichkeit) + Modell der letzten Antwort in dieser Sitzung bzw. diesem Faden
+          stufen: async (geraetId: string, faden: string | null) => (await this.geraetGehoertOwner(geraetId)) ? { stufen: this.llmProvider.stufen(), automatisch: 'default', zuletzt: this.pipeline.letztesModell(geraetId, faden ? `owner:faden:${faden}` : undefined) ?? null } : undefined,
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -15808,6 +15813,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const db = this.database.getAdapter();
     return new OwnerAnsichten({
       owner,
+      merken: async (o, text) => { if (!this.memoryRepo) throw new Error('kein Gedächtnis'); return (await this.memoryRepo.saveWithMetadata(o, `gemerkt:${Date.now()}`, text, 'general', 'fact', 1, 'manual')).id; }, // v1510 D6a
       todos: this.todoRepo as any,
       erinnerungen: this.reminderRepo,
       db: { query: (q, pa) => db.query(q, pa) as Promise<unknown[]>, execute: async (q, pa) => ({ changes: (await db.execute(q, pa)).changes }) },
@@ -16458,6 +16464,31 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * v1504 (D4) — Lesezeichen je Faden (App-Spec §11): serverseitig gespeichert, damit sie nach einem Neustart und auf jedem Gerät
    * gleich sind. Schlüssel = Prüfsumme der Nachricht (von der App gebildet). Datei data/lesezeichen.json.
    */
+  /** v1510 D6a — 👍/👎 einer Antwort (Tabelle antwort_bewertungen; wert 0 = zurücknehmen). 👎 mit Grund → Korrektur im
+   *  Gedächtnis (harter Korrektur-Block). Liefert alle Bewertungen des Fadens. */
+  async ownerFadenBewertung(faden: string | null, setzen?: { schluessel: string; wert: number; grund?: string; frage?: string; antwort?: string }): Promise<{ bewertungen: Array<{ schluessel: string; wert: number; grund?: string }>; korrektur?: string } | undefined> {
+    const { FADEN_RE } = await import('./gespraeche.js');
+    if (faden !== null && !FADEN_RE.test(faden)) return undefined;
+    const owner = this.ownerMasterUserId;
+    if (!owner || !this.database) return undefined;
+    const db = this.database.getAdapter();
+    const f = faden ?? 'haupt';
+    let korrektur: string | undefined;
+    if (setzen) {
+      if (setzen.wert === 0) await db.execute('DELETE FROM antwort_bewertungen WHERE faden = ? AND schluessel = ?', [f, setzen.schluessel]);
+      else await db.execute(`INSERT INTO antwort_bewertungen (faden, schluessel, user_id, wert, grund, frage, antwort, zeit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (faden, schluessel) DO UPDATE SET wert = excluded.wert, grund = excluded.grund, frage = excluded.frage, antwort = excluded.antwort, zeit = excluded.zeit`,
+        [f, setzen.schluessel, owner, setzen.wert, setzen.grund ?? null, setzen.frage ?? null, setzen.antwort ?? null, new Date().toISOString()]);
+      if (setzen.wert === -1 && setzen.grund && this.feedbackServiceRef) {
+        korrektur = await this.feedbackServiceRef.korrekturAusBewertung({ userId: owner, frage: setzen.frage ?? '', antwort: setzen.antwort ?? '', grund: setzen.grund })
+          .catch((err: Error) => { this.logger.warn({ err: err.message }, 'v1510 Korrektur aus Bewertung fehlgeschlagen'); return undefined; });
+      }
+      this.logger.info({ faden: f, wert: setzen.wert, grund: !!setzen.grund, korrektur }, 'v1510 Antwort bewertet');
+    }
+    const rows = await db.query('SELECT schluessel, wert, grund FROM antwort_bewertungen WHERE faden = ?', [f]) as Array<{ schluessel: string; wert: number; grund: string | null }>;
+    return { bewertungen: rows.map(r => ({ schluessel: r.schluessel, wert: Number(r.wert), ...(r.grund ? { grund: r.grund } : {}) })), ...(korrektur ? { korrektur } : {}) };
+  }
+
   async ownerFadenLesezeichen(faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }): Promise<Array<{ schluessel: string; text: string; zeit: string }> | undefined> {
     const { FADEN_RE } = await import('./gespraeche.js');
     if (faden !== null && !FADEN_RE.test(faden)) return undefined;

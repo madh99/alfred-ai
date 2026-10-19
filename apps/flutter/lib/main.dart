@@ -33,6 +33,7 @@ import 'faden_karte.dart'; // 1.44.0 D3
 import 'verlaufsleiste.dart'; // 1.45.0 D4
 import 'upload_vorschau.dart'; // 1.46.0
 import 'konto_menue.dart'; // 1.47.0 D5
+import 'antwort_aktionen.dart'; // 1.50.0 D6
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -277,7 +278,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
         if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
         if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
-        if (erste) { _faedenLaden(); _kontoLaden(); } // 1.2.0 Gespräche; 1.47.0 Kosten für den Kontoknopf
+        if (erste) { _faedenLaden(); _kontoLaden(); _stufenLaden(); } // 1.2.0 Gespräche; 1.47.0 Kosten für den Kontoknopf
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {
           final auto = startArgs['sende'];
@@ -470,6 +471,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final Set<String> projekteAlleFaeden = {}; // 1.42.0 — Projekte mit aufgeklapptem „Weitere“
   bool seitenChatOffen = false; // 1.43.0 D2 — Seiten-Chat rechts
   bool karteOffen = false; // 1.44.0 D3 — angeheftete Zusammenfassung oben rechts
+  Map<String, int> bewertungen = {}; // 1.50.0 D6a — 👍 (1) / 👎 (-1) je Antwort des offenen Fadens (Schlüssel = Prüfsumme)
+  StufenStand stufenStand = const StufenStand(); // 1.50.0 D6b — Modell und Gründlichkeit je Stufe, zuletzt antwortendes Modell
   Set<String> lesezeichen = {}; // 1.45.0 D4 — Lesezeichen des offenen Fadens (Schlüssel = Prüfsumme der Frage)
   final Expando<GlobalKey> _anker = Expando(); // 1.45.0 — Sprungziel je Verlaufseintrag
   double breiteChat = 920; // 1.45.3 — aktuelle Breite des Chatbereichs (für Nachrichten im Verlauf)

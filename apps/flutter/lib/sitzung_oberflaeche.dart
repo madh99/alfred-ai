@@ -376,11 +376,26 @@ extension _Oberflaeche on _SitzungState {
         Row(children: [
           IconButton(tooltip: 'Datei anhängen', onPressed: antwortet ? null : _anhangWaehlen, icon: const Icon(Icons.add_circle_outline, size: 22), visualDensity: VisualDensity.compact),
           PopupMenuButton<String?>(
-            tooltip: 'Stufe: wie gründlich Alfred denkt (Kosten, Tempo)',
+            // 1.50.0 D6b — hinter jeder Stufe Modell und Gründlichkeit; „Automatisch“ zeigt, was gerade dahinter steht
+            tooltip: [
+              'Stufe: wie gründlich Alfred denkt (Kosten, Tempo)',
+              if (stufenStand.fuer(tierWahl) != null) '${stufen[tierWahl] ?? 'Automatisch'}: ${stufeZeile(stufenStand.fuer(tierWahl))}',
+              if (stufenStand.zuletztModell != null) 'Letzte Antwort: ${stufenStand.zuletztModell}',
+            ].join('\n'),
             initialValue: tierWahl,
+            onOpened: _stufenLaden,
             onSelected: (v) => _neu(() => tierWahl = v == '' ? null : v),
-            itemBuilder: (_) => [for (final s in stufen.entries) PopupMenuItem<String?>(value: s.key ?? '', child: Text(s.value))],
-            child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [Text(stufen[tierWahl] ?? 'Automatisch', style: theme.textTheme.bodySmall?.copyWith(color: dim)), Icon(Icons.expand_more, size: 16, color: dim)])),
+            itemBuilder: (_) => [
+              for (final s in stufen.entries) PopupMenuItem<String?>(value: s.key ?? '', child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(s.key == null && stufenStand.fuer(null) != null ? 'Automatisch (${stufen[stufenStand.automatisch] ?? stufenStand.automatisch})' : s.value),
+                if (stufenStand.fuer(s.key) != null) Text(stufeZeile(stufenStand.fuer(s.key)), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+              ])),
+              if (stufenStand.zuletztModell != null) PopupMenuItem<String?>(enabled: false, child: Text('Letzte Antwort: ${stufenStand.zuletztModell}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+            ],
+            child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('${stufen[tierWahl] ?? 'Automatisch'}${stufenStand.fuer(tierWahl) == null ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+              Icon(Icons.expand_more, size: 16, color: dim),
+            ])),
           ),
           const SizedBox(width: 8),
           if (fluechtig.isNotEmpty) Expanded(child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim), overflow: TextOverflow.ellipsis)) else const Spacer(),
@@ -548,10 +563,34 @@ extension _Oberflaeche on _SitzungState {
           AlfredText(e.text, aufKopiert: (was) => _neu(() => fluechtig = '„${was.length > 40 ? '${was.substring(0, 40)}…' : was}" kopiert')), // 1.6.0 Links, Tabellen, Code-Blöcke; 1.12.1 Text
           for (final a in e.anhaenge) AnhangAnsicht(a, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufAbspielen: (x) => audio.abspielen(x.daten, x.mime).catchError((Object err) => _zeile(Eintrag(Art.fehler, '🔊 $err')))), // 1.5.0 eigenes Widget
           if (e.text.isNotEmpty) Row(children: [
-            IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); _neu(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            // 1.50.0 D6a — Kopieren als Klartext (Markdown im Menü), 👍/👎, Antworten, „…“ mit Abzweigen, Aufgabe, Merken
+            IconButton(tooltip: 'Kopieren (Text)', onPressed: () { Clipboard.setData(ClipboardData(text: ohneMarkdown(e.text))); _neu(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Vorlesen', onPressed: () => _sprichKurz(e.text), icon: Icon(Icons.volume_up_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
-            if (archiv == null) IconButton(tooltip: 'Ab hier abzweigen (neues Gespräch mit dem Verlauf bis hier)', onPressed: () => _fadenAbzweigen(server?.faden, bis: e.zeit), icon: Icon(Icons.call_split, size: 16, color: dim), visualDensity: VisualDensity.compact), // 1.43.0 D2
+            if (archiv == null) ...() {
+              final w = bewertungen[lesezeichenSchluessel(e.text)] ?? 0;
+              return [
+                IconButton(key: Key('gut-${e.zeit.millisecondsSinceEpoch}'), tooltip: w == 1 ? 'Gute Antwort (zurücknehmen)' : 'Gute Antwort', onPressed: () => _bewerten(e, 1), icon: Icon(w == 1 ? Icons.thumb_up : Icons.thumb_up_outlined, size: 16, color: w == 1 ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact),
+                IconButton(key: Key('schlecht-${e.zeit.millisecondsSinceEpoch}'), tooltip: w == -1 ? 'Schlechte Antwort (zurücknehmen)' : 'Schlechte Antwort (mit Grund: Alfred merkt sich die Korrektur)', onPressed: () => _bewerten(e, -1), icon: Icon(w == -1 ? Icons.thumb_down : Icons.thumb_down_outlined, size: 16, color: w == -1 ? theme.colorScheme.error : dim), visualDensity: VisualDensity.compact),
+              ];
+            }(),
             IconButton(tooltip: 'Darauf antworten (Alfred weiß dann, worauf du dich beziehst)', onPressed: () { _neu(() => bezug = e); fokus.requestFocus(); }, icon: Icon(Icons.reply_outlined, size: 16, color: bezug == e ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact), // 1.2.2
+            PopupMenuButton<String>(
+              key: Key('mehr-${e.zeit.millisecondsSinceEpoch}'), tooltip: 'Mehr', icon: Icon(Icons.more_horiz, size: 16, color: dim), padding: EdgeInsets.zero, iconSize: 16,
+              onSelected: (a) {
+                switch (a) {
+                  case 'abzweigen': _fadenAbzweigen(server?.faden, bis: e.zeit); // 1.43.0 D2
+                  case 'aufgabe': _aufgabeAusPalette(aufgabenTitel(e.text));
+                  case 'merken': _merken(e);
+                  case 'markdown': Clipboard.setData(ClipboardData(text: e.text)); _neu(() => fluechtig = 'als Markdown kopiert');
+                }
+              },
+              itemBuilder: (_) => [
+                if (archiv == null) const PopupMenuItem(value: 'abzweigen', child: ListTile(dense: true, leading: Icon(Icons.call_split, size: 18), title: Text('Ab hier abzweigen'))),
+                const PopupMenuItem(value: 'aufgabe', child: ListTile(dense: true, leading: Icon(Icons.add_task, size: 18), title: Text('Als Aufgabe übernehmen'))),
+                const PopupMenuItem(value: 'merken', child: ListTile(dense: true, leading: Icon(Icons.psychology_outlined, size: 18), title: Text('Merken (Gedächtnis)'))),
+                const PopupMenuItem(value: 'markdown', child: ListTile(dense: true, leading: Icon(Icons.code, size: 18), title: Text('Als Markdown kopieren'))),
+              ],
+            ),
           ]),
         ]))));
       case Art.satellit:

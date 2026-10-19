@@ -47,6 +47,8 @@ export interface OwnerAnsichtenDeps {
   };
   erinnerungen: { getByUser(userId: string): Promise<ReminderLike[]>; getById(id: string): Promise<ReminderLike | undefined>; cancel(id: string): Promise<boolean> };
   db: { query(sql: string, params: unknown[]): Promise<unknown[]>; execute(sql: string, params: unknown[]): Promise<{ changes: number }> };
+  /** v1510 D6a — „Merken“ aus dem Antwort-Menü: neuer Gedächtnis-Eintrag des Owners; liefert die ID. */
+  merken?: (owner: string, text: string) => Promise<string>;
   vorgangEntscheiden(userId: string, id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<{ titel: string } | null>;
   /** v1362 — Abschluss mit Ergebnis (Vorgang holen, abschließen, Zahl der „kein Problem" je Schlüssel) und Regeln */
   vorgangHolen?: (userId: string, id: string) => Promise<{ titel: string; dedupeKey?: string; status: string } | null>;
@@ -177,6 +179,16 @@ export class OwnerAnsichten {
     const r = await this.d.db.execute("UPDATE memories SET value = ?, source = 'manual', confidence = 1, updated_at = ? WHERE id = ? AND user_id = ?", [t, (this.d.jetzt?.() ?? new Date()).toISOString(), id, this.d.owner]);
     if (r.changes > 0) this.d.protokoll?.('Gedächtnis korrigiert', { id, zeichen: t.length });
     return r.changes > 0;
+  }
+
+  /** v1510 D6a — Owner merkt sich einen Text (Antwort-Menü „Merken“): neuer Eintrag, Quelle manual. */
+  async gedaechtnisAnlegen(text: unknown): Promise<{ id: string }> {
+    const t = typeof text === 'string' ? text.trim() : '';
+    if (!t || t.length > 4000) throw new Error('text: 1–4000 Zeichen');
+    if (!this.d.merken) throw new Error('Merken nicht verfügbar');
+    const id = await this.d.merken(this.d.owner, t);
+    this.d.protokoll?.('Gedächtnis angelegt', { id, zeichen: t.length });
+    return { id };
   }
 
   async gedaechtnisLoeschen(id: string): Promise<boolean> {

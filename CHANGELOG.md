@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Antwort-Menü mit Bewertung und Stufen-Anzeige (v1510, App 1.50.0, App-Spec §11.3 D6a/D6b)
+
+Owner-Freigabe 19.10. (D6c „Nur vorschlagen“ entfällt).
+
+- **Unter jeder Antwort:**
+  - Kopieren (jetzt als Klartext ohne Markdown-Zeichen), Vorlesen, 👍, 👎, Antworten und ein „…“-Menü mit „Ab hier abzweigen“, „Als Aufgabe übernehmen“ (erste Zeile als Titel), „Merken (Gedächtnis)“ und „Als Markdown kopieren“.
+  - Erneutes Tippen auf 👍 oder 👎 nimmt die Bewertung zurück.
+- **Bewertungen:**
+  - Gespeichert in der neuen Tabelle `antwort_bewertungen` (Faden, Prüfsumme der Antwort, Wert, Grund, Frage, Antwortanfang; SQLite 145, PG 149), damit sie gezählt und ausgewertet werden können.
+  - Route `/api/geraete/faeden/:f/bewertung`.
+  - Ein 👎 fragt nach dem Grund. Mit Grund wird daraus eine Korrektur im Gedächtnis (Typ `correction`), die im Korrektur-Block von Chat und Reasoning steht; gleiche Korrekturen werden aufgefrischt statt doppelt angelegt.
+- **Merken:** neue Route `POST /api/geraete/gedaechtnis` (nur Owner-Geräte) legt einen Gedächtnis-Eintrag an.
+- **Stufen-Anzeige:**
+  - Die Stufen-Wahl zeigt hinter jeder Stufe Modell und Gründlichkeit, „Automatisch“ zeigt die Stufe dahinter (heute „Normal“). Der Knopf nennt das Modell, etwa „Automatisch · gpt-6.1-sol“.
+  - Das Modell der letzten Antwort steht im Menü und im Tooltip; bei einem Rückfall auf ein anderes Modell zeigt es das tatsächlich verwendete.
+  - Route `/api/geraete/stufen`; `ModelRouter.stufen()`, Pipeline merkt sich das antwortende Modell je Gespräch.
+
 ### Fixed — App: Code-Agenten nicht im API-Tagesbudget (App 1.49.1)
 
 Owner 19.10.: Claude Code, Codex und Mistral Vibe laufen über ihre eigenen CLIs, nicht über die API. Sie zählen weiter zu Heute, Woche und Monat, aber nicht zum Tagesbudget.

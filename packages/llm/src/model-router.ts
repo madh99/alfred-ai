@@ -490,6 +490,19 @@ export class ModelRouter extends LLMProvider {
     return this.resolve().provider.getContextWindow();
   }
 
+  /** v1510 D6b — Stufen für die Anzeige in der App: Modell, Gründlichkeit (reasoning effort) und Verfügbarkeit je Stufe;
+   *  „Automatisch“ (keine Stufe gewählt) läuft auf `default`. */
+  stufen(): Array<{ stufe: ModelTier; modell: string; gruendlichkeit?: string; verfuegbar: boolean }> {
+    const aus: Array<{ stufe: ModelTier; modell: string; gruendlichkeit?: string; verfuegbar: boolean }> = [];
+    for (const tier of TIERS) {
+      const provider = this.providers.get(tier);
+      if (!provider || !['fast', 'medium', 'default', 'strong'].includes(tier)) continue; // nur Chat-Stufen (ohne embeddings, local, fallback)
+      const effort = TIER_DEFAULT_EFFORT[tier];
+      aus.push({ stufe: tier, modell: this.multiConfig[tier]?.model ?? 'unbekannt', ...(effort ? { gruendlichkeit: effort } : {}), verfuegbar: provider.isAvailable() });
+    }
+    return aus;
+  }
+
   getProviderStatuses(): Record<string, { model: string; available: boolean }> {
     const result: Record<string, { model: string; available: boolean }> = {};
     for (const tier of TIERS) {

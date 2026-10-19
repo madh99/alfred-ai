@@ -305,6 +305,14 @@ Owner-Entscheidungen 19.10.:
   - Durchgesetzt wird das deterministisch in der Werkzeug-Ausführung: Verändernde Aktionen werden abgewiesen, Claude-Code-Fragen laufen nur lesend.
   - Der Schalter steht am Faden und gilt in App, Web und Telegram, bis ihn der Owner ausschaltet.
 - **Nachweis:** Im Modus „Nur vorschlagen“ zeigt das Log keinen verändernden Schritt. Die Bewertung ist gespeichert und gezählt; ein 👎 mit Grund ergibt eine Korrektur.
+- **Umsetzungsstand (Owner 19.10.: „d6c weglassen, d6a und d6b umsetzen“):**
+  - **D6c „Nur vorschlagen“ entfällt.** Riskantes läuft ohnehin über Bestätigungen; bei Bedarf gezielt nachrüsten.
+  - **D6a (v1510 / App 1.50.0):**
+    - Tabelle `antwort_bewertungen`, Route `/api/geraete/faeden/:f/bewertung`.
+    - 👎 mit Grund wird über `FeedbackService.korrekturAusBewertung` zur Korrektur.
+    - „Merken“ über `POST /api/geraete/gedaechtnis`.
+    - „Kopieren“ liefert Klartext, „Als Markdown kopieren“ steht im „…“-Menü.
+  - **D6b (v1510 / App 1.50.0):** Route `/api/geraete/stufen` (Modell und Gründlichkeit je Stufe, Modell der letzten Antwort).
 
 ### 11.4 Rahmen
 

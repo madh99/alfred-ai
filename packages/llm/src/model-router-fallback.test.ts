@@ -243,3 +243,17 @@ describe('v868.3 Billing-Cooldown + Recovery', () => {
     expect(def.state.calls).toBe(defCalls);
   });
 });
+
+describe('v1510 D6b stufen()', () => {
+  it('nur Chat-Stufen mit Modell, Gründlichkeit und Verfügbarkeit (ohne embeddings/fallback)', () => {
+    const r = buildRouter(
+      { default: mockProvider('ok', 'gpt'), fast: mockProvider('ok', 'haiku'), strong: mockProvider('ok', 'opus'), embeddings: mockProvider('ok', 'emb'), fallback: mockProvider('ok', 'mistral') },
+      { strong: { provider: 'anthropic', model: 'opus-test' } } as Partial<MultiModelConfig>,
+    );
+    const s = r.stufen();
+    expect(s.map(x => x.stufe).sort()).toEqual(['default', 'fast', 'strong']);
+    expect(s.find(x => x.stufe === 'default')).toEqual({ stufe: 'default', modell: 'gpt-test', gruendlichkeit: 'medium', verfuegbar: true });
+    expect(s.find(x => x.stufe === 'strong')?.gruendlichkeit).toBe('high');
+    expect(s.find(x => x.stufe === 'fast')?.gruendlichkeit).toBe('low');
+  });
+});

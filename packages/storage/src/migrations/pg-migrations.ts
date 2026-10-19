@@ -2315,6 +2315,23 @@ export const PG_MIGRATIONS: PgMigration[] = [
     },
   },
   {
+    version: 149,
+    description: 'v1510 D6a — antwort_bewertungen: 👍/👎 je Antwort (Faden + Text-Prüfsumme), Grund bei 👎 (PG-Spiegel zu SQLite v145).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS antwort_bewertungen (
+          faden TEXT NOT NULL,
+          schluessel TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          wert INTEGER NOT NULL,
+          grund TEXT,
+          frage TEXT,
+          antwort TEXT,
+          zeit TEXT NOT NULL,
+          PRIMARY KEY (faden, schluessel)
+        )`, []);
+    },
+  },
+  {
     version: 148,
     description: 'v1506 D5 — llm_usage_zweck: Kosten je Tag, Herkunft (chat, hintergrund:<job>, aufgabe, claude-code, sonstiges) und Modell (PG-Spiegel zu SQLite v144).',
     async up(db) {

@@ -21,11 +21,12 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/verlauf$/, // v1314
   /^\/api\/app\/update(\/datei)?$/, // v1322 — Desktop-App holt ihr eigenes Update (M6) — Verlauf der eigenen Sitzung für die Desktop-App
   /^\/api\/vorgaenge$/, // v1313 — Kachel „Vorgänge" der Desktop-App (nur Liste; Entscheidungen bleiben beim API-Token)
-  /^\/api\/geraete\/faeden(\/[a-z0-9-]{1,40}(\/(abzweigen|aufgabe|zusammenfassung|lesezeichen))?)?$/, // v1328 — Gesprächsfäden der eigenen Sitzung (Liste, Löschen); v1500 abzweigen, geplante Aufgabe
+  /^\/api\/geraete\/faeden(\/[a-z0-9-]{1,40}(\/(abzweigen|aufgabe|zusammenfassung|lesezeichen|bewertung))?)?$/, // v1328 — Gesprächsfäden der eigenen Sitzung (Liste, Löschen); v1500 abzweigen, geplante Aufgabe
   /^\/api\/geraete\/spiegelung$/, // v1334 — Spiegel-Schalter (nur Geräte des Owners)
   /^\/api\/geraete\/hinweise(\/[A-Za-z0-9-]{1,64})?$/, // v1343 — Sammlung „Hinweise" (nur Geräte des Owners): Liste, Entscheidung
   /^\/api\/geraete\/anhang\/[0-9a-f]{32}$/, // v1349 — abgelegte Anhänge aus dem Verlauf (v1347 fehlte hier → 401)
   /^\/api\/geraete\/(suche|anhaenge)$/, // v1350 — Suche im Verlauf, Übersicht der Anhänge
+  /^\/api\/geraete\/stufen$/, // v1510 D6b — Stufen mit Modell und Gründlichkeit
   /^\/api\/geraete\/konto$/, // v1506 D5 — Kontomenü (Kosten, Geräte); nur Owner-Geräte
   /^\/api\/geraete\/datei$/, // v1505 — eigene hochgeladene Datei (Vorschau im Verlauf), Schlüssel als ?key=
   /^\/api\/geraete\/meldung$/, // v1351 — Fehlermeldungen der Desktop-App ins Server-Log
