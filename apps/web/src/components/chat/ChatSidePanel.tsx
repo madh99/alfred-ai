@@ -69,6 +69,8 @@ export function ChatSidePanel({ visible, onClose }: Props) {
       const r = await client.decideConfirmation(id, decision);
       if (!r.ok) {
         setError(`Aktion fehlgeschlagen: ${r.reason ?? 'unbekannt'}`);
+      } else if (r.fehler) {
+        setError(`Freigegeben, aber fehlgeschlagen: ${r.fehler}`); // v1512 P3
       }
       await load();
     } finally { setBusy(null); }

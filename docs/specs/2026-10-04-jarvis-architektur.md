@@ -535,6 +535,22 @@ Folgerung: Das Aufmerksamkeitsbudget (Regel 1) muss zuerst den Bestand senken (I
 10. **Kosten als eine Zahl:** Claude-Code-Kosten (laut JSON, auch wenn das Max-Abo sie trägt), Alfreds Modellkosten je Etappe (LLM-Logzeilen), Ressourcen der Stages — ein Budget, ein Zähler, Meldung bei 80 %.
 11. **Meldedisziplin:** Ruhefenster gelten auch für Zwischenmeldungen; Sammelmeldung statt Einzelzeilen bei schnellen Etappen; Rückfragen mit Optionen als Bestätigung, nie als Freitext.
 12. **Pilot und Erfolgsmaß:** erst ein Wegwerf-Projekt mit Profil `dev` auf der Ubuntu-VM (Beweise nur dort), Erfolgsmaß je Release (R1: Meldung in < 1 min nach Ende; R2: ein Projekt mit ≥ 3 Etappen ohne manuellen Eingriff außer Planbestätigung; R5: dev-Stage in < 15 min bereit); Rückbau der Funktion möglich, ohne andere Vorgänge zu stören.
+### Folgeaufträge und Verzeichnis-Sperre (umgesetzt v1512, Owner-Freigabe 19.10.: „p1 bis p5 freigegeben“)
+
+Realfall 19.10. 15:52: Ein Auftrag „sobald die 6 Etappen fertig sind …“ wurde zu einem zweiten Lauf im selben Repo. Alfred stoppte ihn selbst wieder; die Karte blieb anklickbar.
+
+- **P1 Warteschlange:**
+  - Läuft im Verzeichnis eines Geräts schon ein Lauf oder wartet einer auf den Owner, wird `start`/`projekt_weiter` deterministisch zum Folgeauftrag (`data/projekt-folgeauftraege.json`).
+  - Nach dem Ende plant Alfred den nächsten auf dem neuen Stand und legt die Startkarte vor.
+  - Mit dem Schalter „Folgeaufträge ohne Rückfrage starten“ (Tag `folge-auto`, Standard aus) startet er direkt.
+  - Nach Abbruch oder Anhalten fragt er immer nach.
+  - Mehrere Folgeaufträge sind möglich; sie lassen sich in App, Web und Chat ansehen, umsortieren und entfernen.
+  - **Sperre:** Der Server (`planeLauf`, Freigabe in `antwort()`) und der Satellit (`schreibenderImVerzeichnis`) lassen nie zwei schreibende Läufe im selben Verzeichnis zu. Lesende Fragen und andere Projekte (auch auf demselben Gerät) bleiben frei.
+- **P2:** Ein Stopp durch Alfred heißt „von Alfred gestoppt: …“, „vom Owner gestoppt“ nur bei direktem Owner-Aufruf.
+- **P3:** Beim Ende eines Laufs werden seine offenen Karten zurückgezogen. Eine gescheiterte Freigabe meldet App und Web als Fehler.
+- **P4:** Projekt-Bestätigungen tragen den Projektfaden als Herkunft. Die Fortsetzung nach einem Fehlschlag nutzt nur Projektwerkzeuge.
+- **P5:** Die feste Rückmeldung „Als Folgeauftrag Nr. N eingereiht …“ ist ein echter Eintrag, keine Notiz.
+
 ### Offene Owner-Entscheidungen
 
 Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).

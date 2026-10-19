@@ -130,6 +130,15 @@ export class ProjektAktenUeberProjekte {
     return true;
   }
 
+  /** v1512 — einfacher Schalter als Tag (ohne Einrichtungsschritt). Liefert false, wenn das Projekt fehlt oder kein Geräte-Projekt ist. */
+  async setzeSchalter(userId: string, id: string, an: boolean, tag: 'folge-auto'): Promise<boolean> {
+    const p = await this.repo.getById(userId, id);
+    if (!p?.geraetId) return false;
+    const tags = (p.tags ?? []).filter(t => t !== tag);
+    await this.repo.update(userId, id, { tags: an ? [...tags, tag] : tags });
+    return true;
+  }
+
   /** v1486 F5 — Einrichtungsschritt „passt so“ (bleibt, wie er ist). Liefert false, wenn das Projekt fehlt. */
   async einrichtungOk(userId: string, id: string, schritt: EinrichtungSchritt): Promise<boolean> {
     const p = await this.repo.getById(userId, id);

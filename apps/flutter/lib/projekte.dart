@@ -36,6 +36,10 @@ bool protokollAn(Map<String, dynamic>? d) => d?['protokoll'] != false;
 bool mergeRequestsAn(Map<String, dynamic>? d) => d?['mergeRequests'] == true;
 /// 1.29.0 — „automatisch zusammenführen“ (v1458); fehlt das Feld, gilt aus (Alfred fragt vor dem Zusammenführen).
 bool mrAutoAn(Map<String, dynamic>? d) => d?['mergeRequestsAuto'] == true;
+/// 1.51.0 — Schalter „Folgeaufträge ohne Rückfrage starten“ (v1512, Owner 19.10.: Standard aus).
+bool folgeAutoAn(Map<String, dynamic>? d) => d?['folgeAuto'] == true;
+/// 1.51.0 — Folgeaufträge des Projekts (Warteschlange, erster = als Nächstes dran).
+List<Map<String, dynamic>> folgeauftraege(Map<String, dynamic>? d) => ((d?['folgeauftraege'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList();
 
 /// 1.19.0 — Projektregeln (v1426, Projekt-Konventionen): Schalter mit Optionen und eigene Regeln; jede Änderung geht sofort an den Server.
 class ProjektRegeln extends StatefulWidget {
@@ -340,6 +344,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
     finally { if (mounted) setState(() => plant = false); }
   }
 
+  /// 1.51.0 — Folgeaufträge: Schalter und Reihe (entfernen, hoch, runter); alles über den Skill-Weg des Servers (v1512)
+  Future<void> folgeAktion(String aktion, {String? folgeId, String? text}) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': aktion, 'lauf': ?folgeId, 'text': ?text});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gespeichert.'}' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) await laden();
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   /// 1.29.0 — Schalter „automatisch zusammenführen“ (v1458)
   Future<void> mrAutoSetzen(bool an) async {
     setState(() { plant = true; meldung = null; });
@@ -446,6 +463,21 @@ class _ProjektDetailState extends State<ProjektDetail> {
         Text('Abnahme: ${befehle.isEmpty ? 'keine — Alfred fragt nach jeder Etappe' : befehle.join(' ; ')}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text('${laeufe.length} ${laeufe.length == 1 ? 'Lauf' : 'Läufe'} · ${usd(kosten)}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         ProjektEinrichtung(id: widget.id, json: widget.json, einrichtung: j['einrichtung'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.37.0 v1486
+        // 1.51.0 — Folgeaufträge (v1512): Reihe nach dem laufenden Lauf, nie zwei Läufe im selben Verzeichnis
+        if (folgeauftraege(j).isNotEmpty) Card(key: const Key('projekt-folge'), margin: const EdgeInsets.symmetric(vertical: 8), child: Padding(padding: const EdgeInsets.fromLTRB(12, 10, 4, 6), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Folgeaufträge (${folgeauftraege(j).length})', style: theme.textTheme.titleSmall),
+          Text(folgeAutoAn(j) ? 'Starten nach dem laufenden Lauf direkt (Schalter unten).' : 'Nach dem laufenden Lauf plant Alfred den nächsten und legt dir die Startkarte vor.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          for (final (i, f) in folgeauftraege(j).indexed) Row(key: Key('folge-${f['id']}'), children: [
+            SizedBox(width: 22, child: Text('${i + 1}.', style: theme.textTheme.bodySmall)),
+            Expanded(child: Text('${f['ziel'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
+            IconButton(tooltip: 'Nach vorne', iconSize: 18, visualDensity: VisualDensity.compact, onPressed: plant || i == 0 ? null : () => folgeAktion('folge_hoch', folgeId: '${f['id']}'), icon: const Icon(Icons.arrow_upward)),
+            IconButton(tooltip: 'Nach hinten', iconSize: 18, visualDensity: VisualDensity.compact, onPressed: plant || i == folgeauftraege(j).length - 1 ? null : () => folgeAktion('folge_runter', folgeId: '${f['id']}'), icon: const Icon(Icons.arrow_downward)),
+            IconButton(key: Key('folge-weg-${f['id']}'), tooltip: 'Entfernen', iconSize: 18, visualDensity: VisualDensity.compact, onPressed: plant ? null : () => folgeAktion('folge_entfernen', folgeId: '${f['id']}'), icon: const Icon(Icons.delete_outline)),
+          ]),
+        ]))),
+        SwitchListTile(key: const Key('projekt-folge-auto'), contentPadding: EdgeInsets.zero, dense: true, value: folgeAutoAn(j), onChanged: plant ? null : (an) => folgeAktion('folge_auto', text: an ? 'an' : 'aus'),
+          title: const Text('Folgeaufträge ohne Rückfrage starten'),
+          subtitle: Text(folgeAutoAn(j) ? 'An: Nach einem regulär beendeten Lauf startet Alfred den nächsten Folgeauftrag direkt und meldet den Plan. Nach einem Abbruch fragt er trotzdem.' : 'Aus: Für jeden Folgeauftrag bekommst du die Startkarte.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
         // 1.18.0 — Schalter je Projekt: Auftrag und Bericht jeder Etappe mit committen (v1425)
         SwitchListTile(key: const Key('projekt-protokoll'), contentPadding: EdgeInsets.zero, dense: true, value: protokollAn(j), onChanged: plant ? null : protokollSetzen,
           title: const Text('Protokoll im Projekt'),

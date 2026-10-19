@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Folgeaufträge je Projekt, nie zwei Läufe im selben Verzeichnis (v1512, App 1.51.0)
+
+Realfall 19.10. 15:52 (Finanz-Backend): Auf „sobald die 6 Etappen fertig sind, auch folgendes prüfen …“ legte Alfred einen zweiten Projektlauf im selben Verzeichnis an und stoppte ihn sechs Sekunden später selbst. Die Meldung lautete „vom Owner gestoppt“. Die Startkarte blieb anklickbar, die Freigabe scheiterte, und die App zeigte trotzdem „✅ Freigegeben“. Die Fortsetzung lief im Telegram-Chat mit Kalender- und ITSM-Abfragen. Ohne Alfreds eigenen Stopp hätten zwei Claude-Code-Läufe im selben Repo gearbeitet. Owner: „das Verhalten hätte ich erwartet“.
+
+- **Warteschlange (P1):**
+  - Läuft im Verzeichnis schon ein Lauf oder wartet einer auf die Freigabe, wird ein neuer Auftrag dafür (Start oder Weiterarbeit) als Folgeauftrag eingereiht, statt einen zweiten Lauf anzulegen. Die Reihe übersteht Neustarts.
+  - **Nachrücken:** Nach dem Ende plant Alfred den nächsten Folgeauftrag auf dem neuen Stand und legt die Startkarte vor. Er rückt nach jedem Ende nach und zusätzlich im 10-Minuten-Job, etwa wenn das Gerät gerade weg war.
+  - **Schalter je Projekt** „Folgeaufträge ohne Rückfrage starten“ (App, Web, Chat; Standard aus): Nach einem regulär beendeten Lauf startet der nächste direkt, Alfred meldet nur den Plan.
+  - **Nach Abbruch oder Anhalten** fragt Alfred immer: „Folgeauftrag trotzdem starten?“.
+  - Mehrere Folgeaufträge sind möglich. App und Web zeigen sie in der Projektansicht mit „nach vorne“, „nach hinten“ und „entfernen“. Im Chat gibt es dafür die Aktion `projekt_folgeauftraege`; das Kontomenü zeigt bei laufenden Projekten „danach: N Folgeaufträge“.
+- **Sperre an zwei Stellen:**
+  - Der Server prüft beim Planen und noch einmal bei der Freigabe. Wird ein Plan freigegeben, während im Verzeichnis inzwischen ein anderer Lauf läuft, wird er zum Folgeauftrag.
+  - Der Satellit lehnt einen zweiten schreibenden Claude-Code-Auftrag im selben Verzeichnis ab, bevor er etwas anlegt.
+  - Lesende Fragen zum Projekt und andere Projekte, auch auf demselben Gerät, laufen weiter parallel.
+- **Wer gestoppt hat (P2):** Stoppt Alfred einen Lauf, steht dort „von Alfred gestoppt“, auf Wunsch mit Grund. „Vom Owner gestoppt“ erscheint nur, wenn der Owner selbst den Knopf drückt.
+- **Karten räumen sich auf (P3):**
+  - Endet ein Lauf, werden seine offenen Bestätigungen zurückgezogen.
+  - Scheitert eine freigegebene Aktion, liefert die Entscheidungs-Route den Fehler mit. App und Web zeigen dann „❌ Freigegeben, aber fehlgeschlagen: …“ statt „✅ Freigegeben“.
+- **Nachfrage im Projektfaden (P4):** Projekt-Bestätigungen tragen den Projektfaden als Herkunft, Ergebnis und Fortsetzung laufen dort. Die Fortsetzung nach einer gescheiterten Projekt-Freigabe darf nur Projektwerkzeuge nutzen.
+- **Feste Rückmeldung (P5):** Beim Einreihen bekommt Alfred „Als Folgeauftrag Nr. N eingereiht …“ als Werkzeugergebnis. „Vorgemerkt“ heißt damit ein echter Eintrag.
+- **Kleinigkeit:** Ein Satellit älter als 1512 kennt die Sperre am Gerät noch nicht; die Server-Sperre gilt trotzdem.
+
 ### Fixed — Herkunft der Kosten: Projektleitung als Hintergrund (v1511)
 
 Durchsicht „Sonstiges“ 19.10.: Zwei Opus-Aufrufe (0,04 $) nach Etappenenden des Finanz-Backends (11:39 und 12:06 UTC) liefen ohne Zweck. Die Projektleitung (Plan erstellen, Etappe bewerten, Ereignisse der Geräte) verbucht jetzt als `hintergrund:projekte`, auf jedem Weg (Auftragsende, Freigabe, Fortsetzen).

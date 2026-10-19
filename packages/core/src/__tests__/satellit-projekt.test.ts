@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void>; vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>; devAktiv?: (s: ProjektStand) => Promise<boolean>; devNachEtappe?: (s: ProjektStand) => Promise<string | undefined> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void>; vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>; devAktiv?: (s: ProjektStand) => Promise<boolean>; devNachEtappe?: (s: ProjektStand) => Promise<string | undefined>; extra?: Partial<import('../projekt/satellit-projekt.js').SatellitProjektDeps> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -26,6 +26,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     ...(o.nachLauf ? { nachLauf: o.nachLauf } : {}), // v1437
     ...(o.vorEtappe ? { vorEtappe: o.vorEtappe } : {}), // v1455
     ...(o.devAktiv ? { devAktiv: o.devAktiv } : {}), ...(o.devNachEtappe ? { devNachEtappe: o.devNachEtappe } : {}), // v1460
+    ...(o.extra ?? {}), // v1512
     logger: { info: () => undefined, warn: () => undefined },
   });
   const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
@@ -39,6 +40,46 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1512 P1 Sperre: aktiv im selben Verzeichnis (auch mit / am Ende), anderes Verzeichnis frei; Freigabe eines zweiten Plans wird Folgeauftrag', async () => {
+    const eingereiht: string[] = []; const ende: string[] = []; const karten: string[] = [];
+    const a = aufbau({ extra: {
+      alsFolgeauftrag: async (s, nach) => { eingereiht.push(`${s.ziel}>${nach.id}`); return 1; },
+      nachEnde: async (s) => { ende.push(`${s.id}:${s.status}`); },
+      kartenZurueckziehen: async (s) => { karten.push(s.id); return 1; },
+    } });
+    const s1 = await a.p.starte(start);
+    expect(a.p.aktivImVerzeichnis('g1', start.projekt + '/')?.id).toBe(s1.id); // wartet auf Freigabe = aktiv
+    expect(a.p.aktivImVerzeichnis('g1', '/home/madh/claudecode/anders')).toBeUndefined();
+    expect(a.p.aktivImVerzeichnis('g2', start.projekt)).toBeUndefined();
+    const s2 = await a.p.starte({ ...start, ziel: 'Zweiter Auftrag' }); // direkt über starte (ohne Warteschlange davor)
+    await a.p.antwort(s1.id, a.fragen[0]!.nonce); // erster läuft
+    await a.p.antwort(s2.id, a.fragen[1]!.nonce); // zweiter darf nicht parallel laufen
+    expect(a.p.hole(s2.id)!.status).toBe('abgebrochen');
+    expect(a.p.hole(s2.id)!.grund).toContain('von Alfred eingereiht');
+    expect(eingereiht).toEqual([`Zweiter Auftrag>${s1.id}`]);
+    expect(a.aufrufe.filter(x => x.aktion === 'auftrag_starten')).toHaveLength(1);
+    expect(karten).toContain(s2.id); // P3: Karten des beendeten Laufs zurückgezogen
+    expect(ende).toEqual([]); // eingereihter Lauf löst kein Nachrücken aus
+    await a.p.stoppe(s1.id);
+    expect(a.p.hole(s1.id)!.grund).toBe('von Alfred gestoppt'); // P2: Standard ist Alfred, nicht der Owner
+    await new Promise(r => setTimeout(r, 5));
+    expect(ende).toEqual([`${s1.id}:abgebrochen`]); // Nachrücken nach jedem Ende
+    expect(a.p.letzterImVerzeichnis('g1', start.projekt)?.id).toBeDefined();
+  });
+
+  it('v1512 P1 ohne Rückfrage: kein Bestätigungs-Aufruf, Plan als Meldung, erster Auftrag startet; Hinweis vor der Planfrage', async () => {
+    const a = aufbau();
+    const s = await a.p.starte({ ...start, ohneRueckfrage: true, hinweis: '🧭 Folgeauftrag' });
+    await new Promise(r => setTimeout(r, 5));
+    expect(a.fragen).toHaveLength(0);
+    expect(a.meldungen.some(m => m.startsWith('▶ Folgeauftrag ohne Rückfrage gestartet') && m.includes('🧭 Folgeauftrag'))).toBe(true);
+    expect(a.p.hole(s.id)!.status).toBe('laeuft');
+    expect(a.aufrufe.filter(x => x.aktion === 'auftrag_starten')).toHaveLength(1);
+    const b = aufbau();
+    await b.p.starte({ ...start, hinweis: '⚠ Folgeauftrag: Der vorige Lauf endete „abgebrochen“. Folgeauftrag trotzdem starten?' });
+    expect(b.fragen[0]!.text.startsWith('⚠ Folgeauftrag')).toBe(true);
+  });
+
   it('v1460 Startregel: neues Projekt immer, übernommenes nur mit dev am Gerät; dev auch nach Etappe ohne Abnahme', async () => {
     const a = aufbau();
     const s = await a.p.starte(start);

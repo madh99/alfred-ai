@@ -87,6 +87,8 @@ export interface OwnerAnsichtenDeps {
     loeschen?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1458 — Schalter „automatisch zusammenführen“ */
     mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1512 P1 — Folgeaufträge: liste, entfernen/hoch/runter (folgeId), auto_an/auto_aus */
+    folge?: (id: string, was: string, folgeId?: string) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1486 F5 — Einrichtung: ok:<schritt> („passt so“), pruefung_vorschlag (nur lesend am Gerät), pruefung_setzen (befehle) */
     einrichtung?: (id: string, was: string, befehle?: string[]) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1426 — Konventionen ändern (Teil-Änderung, Felder siehe projekt/konventionen.ts) */
@@ -274,6 +276,14 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt automatisch zusammenführen', { projekt: id, an: text === 'an' });
       return this.d.projekte.mrAuto(id, text === 'an');
     }
+    if (aktion === 'folge_auto' || aktion === 'folge_entfernen' || aktion === 'folge_hoch' || aktion === 'folge_runter' || aktion === 'folge_liste') { // v1512 — folgeId als „lauf“, folge_auto mit text an/aus
+      if (!this.d.projekte.folge) return { success: false, error: 'nicht verfügbar' };
+      if (aktion === 'folge_auto' && text !== 'an' && text !== 'aus') return { success: false, error: 'text muss an oder aus sein' };
+      if (aktion !== 'folge_liste' && aktion !== 'folge_auto' && (typeof lauf !== 'string' || !lauf)) return { success: false, error: 'lauf (folge-Kennung) fehlt' };
+      const was = aktion === 'folge_auto' ? (text === 'an' ? 'auto_an' : 'auto_aus') : aktion.slice('folge_'.length);
+      if (aktion !== 'folge_liste') this.d.protokoll?.('Projekt Folgeaufträge', { projekt: id, was });
+      return this.d.projekte.folge(id, was, typeof lauf === 'string' ? lauf : undefined);
+    }
     if (aktion === 'merge_requests') { // v1455 — text „an“ oder „aus“
       if (!this.d.projekte.mergeRequests || (text !== 'an' && text !== 'aus')) return { success: false, error: 'text muss an oder aus sein' };
       this.d.protokoll?.('Projekt Merge Requests', { projekt: id, an: text === 'an' });
@@ -285,7 +295,7 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt Frage', { projekt: id, laenge: f.length });
       return this.d.projekte.frage(id, f);
     }
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, mr_auto, loeschen, konventionen, freigeben oder ablehnen sein' };
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, mr_auto, folge_auto, folge_entfernen, folge_hoch, folge_runter, loeschen, konventionen, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

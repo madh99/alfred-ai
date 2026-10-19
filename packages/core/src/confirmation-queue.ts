@@ -308,6 +308,22 @@ export class ConfirmationQueue {
   /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
   private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; error?: string; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
+  /** v1512 P3 — Fehler der zuletzt freigegebenen, aber gescheiterten Aktion je Bestätigung (für die Antwort an App/Web). */
+  private readonly fehlgeschlagen = new Map<string, string>();
+
+  /** v1512 P3 — offene Bestätigungen zurückziehen (z. B. Projekt beendet): nicht mehr anklickbar, verschwinden in App und Web. */
+  async zurueckziehen(ids: string[], grund: string): Promise<number> {
+    let n = 0;
+    for (const id of ids) {
+      const p = await this.confirmRepo.getById(id).catch(() => undefined);
+      if (!p) continue;
+      await this.confirmRepo.resolve(id, 'expired');
+      this.herkuenfte.delete(id);
+      this.activityLogger?.logConfirmation({ confirmationId: id, skillName: p.skillName, description: p.description, source: p.source, sourceId: p.sourceId, outcome: 'expired', userId: p.chatId, platform: p.platform, chatId: p.chatId, error: `zurückgezogen: ${grund}` });
+      n++;
+    }
+    return n;
+  }
 
   /** v1454 — Bestätigung abgelehnt oder abgelaufen: der Auftraggeber (z. B. ein Geräte-Projekt) erfährt es, egal über welchen Kanal. */
   private nachOhneAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen') => Promise<void>;
@@ -534,6 +550,7 @@ export class ConfirmationQueue {
           });
         } catch (err) {
           this.logger.error({ err, confirmationId: pending.id }, 'Confirmed action failed');
+          this.fehlgeschlagen.set(pending.id, err instanceof Error ? err.message : String(err)); // v1512 P3
           if (adapter) {
             await adapter.sendMessage(chatId, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -596,7 +613,7 @@ export class ConfirmationQueue {
     /** v657 — kann auch ein custom extra-action key sein (z.B. 'cancel_item', 'snooze_24h') */
     decision: 'approve' | 'reject' | string;
     userId: string;
-  }): Promise<{ ok: boolean; reason?: string }> {
+  }): Promise<{ ok: boolean; reason?: string; fehler?: string }> {
     const pending = await this.confirmRepo.getById(opts.id);
     if (!pending) {
       const stale = await this.confirmRepo.getByIdAnyStatus(opts.id);
@@ -628,7 +645,10 @@ export class ConfirmationQueue {
       `confirm:${pending.id}:${opts.decision}`,
       context,
     );
-    return handled ? { ok: true } : { ok: false, reason: 'not-handled' };
+    // v1512 P3 — Realfall 19.10. 15:53: App zeigte „✅ Freigegeben“, obwohl die Aktion scheiterte → Fehler mitliefern
+    const fehler = this.fehlgeschlagen.get(pending.id);
+    this.fehlgeschlagen.delete(pending.id);
+    return handled ? { ok: true, ...(fehler ? { fehler } : {}) } : { ok: false, reason: 'not-handled' };
   }
 
   async listPendingForUser(userId: string | string[], limit = 50): Promise<PendingConfirmation[]> {

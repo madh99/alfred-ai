@@ -213,6 +213,10 @@ extension _Senden on _SitzungState {
       _neu(() => offen.remove(b));
       _titel();
       _zeile(Eintrag(Art.hinweis, '${ja ? '✅ Freigegeben' : '❌ Abgelehnt'}: ${b.text.length > 100 ? b.text.substring(0, 100) : b.text}'));
+    } else if (r.startsWith('fehlgeschlagen: ')) { // 1.51.0 — freigegeben, aber die Aktion scheiterte
+      _neu(() => offen.remove(b));
+      _titel();
+      _zeile(Eintrag(Art.fehler, '❌ Freigegeben, aber fehlgeschlagen: ${r.substring(16)} — ${b.text.length > 80 ? b.text.substring(0, 80) : b.text}'));
     } else {
       _zeile(Eintrag(Art.fehler, 'Entscheidung nicht angenommen ($r)'));
     }

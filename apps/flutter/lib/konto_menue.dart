@@ -41,10 +41,12 @@ class KontoKosten {
 
 /// v1509 — ein laufender Claude-Code-Lauf auf einem Gerät (Projekt-Etappe, Auftrag oder Frage zum Projekt).
 class KontoLauf {
-  const KontoLauf({required this.art, required this.titel, this.akteId, this.etappe, this.etappen, this.fix, this.seit, this.kostenBisher, this.schritt});
+  const KontoLauf({required this.art, required this.titel, this.akteId, this.etappe, this.etappen, this.fix, this.seit, this.kostenBisher, this.schritt, this.folgeauftraege = 0});
   final String art, titel;
   final String? akteId, schritt;
   final int? etappe, etappen, fix;
+  /// 1.51.0 — wartende Folgeaufträge danach (v1512)
+  final int folgeauftraege;
   final DateTime? seit;
   final double? kostenBisher;
 
@@ -53,6 +55,7 @@ class KontoLauf {
     etappe: (l['etappe'] as num?)?.toInt(), etappen: (l['etappen'] as num?)?.toInt(), fix: (l['fix'] as num?)?.toInt(),
     seit: l['seit'] is String ? DateTime.tryParse(l['seit'] as String)?.toLocal() : null,
     kostenBisher: l['kostenBisher'] is num ? (l['kostenBisher'] as num).toDouble() : null, schritt: l['schritt'] as String?,
+    folgeauftraege: (l['folgeauftraege'] as num?)?.toInt() ?? 0,
   );
 
   /// „Projekt Finanz-Backend · Etappe 6/8 seit 12:51“
@@ -220,6 +223,7 @@ class KontoMenue extends StatelessWidget {
               Text(l.zeile, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
               if (l.schritt != null) Text(l.schritt!, maxLines: 1, overflow: TextOverflow.ellipsis, style: klein),
               if (l.kostenBisher != null) Text('Projekt bisher ${kostenText(l.kostenBisher!)} · laufende Etappe wird am Ende verbucht', style: klein),
+              if (l.folgeauftraege > 0) Text('danach: ${l.folgeauftraege} ${l.folgeauftraege == 1 ? 'Folgeauftrag' : 'Folgeaufträge'}', key: Key('konto-folge-${g.name}'), style: klein),
             ])),
           ])),
         ))),

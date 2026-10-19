@@ -255,6 +255,41 @@ void main() {
     expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-mr-auto'))).value, isTrue);
   });
 
+  testWidgets('1.51.0 Folgeaufträge: Liste mit Reihenfolge, entfernen/hoch, Schalter ohne Rückfrage (Standard aus)', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var folge = [
+      {'id': 'folge-a', 'position': 1, 'ziel': 'Mail-Anleitung in der Admin-UI'},
+      {'id': 'folge-b', 'position': 2, 'ziel': 'Hilfe-Seite überarbeiten'},
+    ];
+    var auto = false;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') {
+        gesendet.add(koerper!);
+        if (koerper['aktion'] == 'folge_entfernen') folge = folge.where((f) => f['id'] != koerper['lauf']).toList();
+        if (koerper['aktion'] == 'folge_auto') auto = koerper['text'] == 'an';
+        return {'success': true, 'display': 'ok'};
+      }
+      return {'id': 'b77431a2-e388', 'name': 'Finanz-Backend', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true, 'folgeAuto': auto, 'folgeauftraege': folge};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.text('Folgeaufträge (2)'), findsOneWidget);
+    expect(find.text('Mail-Anleitung in der Admin-UI'), findsOneWidget);
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-folge-auto'))).value, isFalse);
+    await t.tap(find.descendant(of: find.byKey(const Key('folge-folge-b')), matching: find.byIcon(Icons.arrow_upward)));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'folge_hoch', 'lauf': 'folge-b'});
+    await t.tap(find.byKey(const Key('folge-weg-folge-a')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'folge_entfernen', 'lauf': 'folge-a'});
+    expect(find.text('Folgeaufträge (1)'), findsOneWidget);
+    await t.tap(find.byKey(const Key('projekt-folge-auto')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'folge_auto', 'text': 'an'});
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-folge-auto'))).value, isTrue);
+  });
+
   testWidgets('1.28.0 Endgültig löschen: erst Dialog, dann nur die Anfrage (Bestätigung beim Owner)', (t) async {
     final gesendet = <Map<String, dynamic>>[];
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {

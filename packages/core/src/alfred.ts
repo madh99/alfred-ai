@@ -14,6 +14,7 @@ import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { aktuellerKostenZweck, mitKostenZweck } from './kosten-zweck.js'; // v1506 D5, v1511
+import { FolgeAuftraege } from './projekt/folgeauftraege.js'; // v1512 P1
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
@@ -190,6 +191,7 @@ export class Alfred {
   private activityRepo?: ActivityRepository;
   private memoryRepo?: MemoryRepository;
   private feedbackServiceRef?: import('./feedback/feedback-service.js').FeedbackService; // v1510 D6a
+  private folgeAuftraegeRef?: FolgeAuftraege; // v1512 P1 — Folgeaufträge je Projektverzeichnis
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   /** v824 — Agent-Conventions Repository für CLAUDE.md/AGENTS.md-Lifecycle. */
@@ -7163,7 +7165,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const t = `Die von mir freigegebene Aktion ist mit einem Fehler zurückgekommen: ${pending.description}.\n\nFehlermeldung und Ausgabe:\n${fehler}\n\nStelle fest, was tatsächlich passiert ist (z. B. läuft der Dienst trotzdem, hat nur eine Prüfung im Befehl versagt?). Führe die Aktion NICHT erneut aus. Wenn eine Prüfung nötig ist, nur lesend und knapp. Melde mir dann in wenigen Sätzen den tatsächlichen Stand und, falls wirklich etwas fehlt, den nächsten Schritt.`;
         const hk = ziel.herkunft?.userId ? { chatId: ziel.herkunft.chatId, platform: ziel.herkunft.platform, userId: ziel.herkunft.userId } : undefined;
         this.logger.info({ beschreibung: pending.description.slice(0, 80) }, 'v1450 Fortsetzung nach fehlgeschlagener Freigabe');
-        return this.fortsetzungImOwnerChat(t, { id: 'bestaetigt-fehler', platform: ziel.platform, chatId: ziel.chatId, herkunft: hk });
+        // v1512 P4 — Projekt-Freigaben: nur Projektwerkzeuge (Realfall 19.10.: Kalender/ITSM-Abfragen in der Fortsetzung)
+        const nurProjekt = pending.skillName === 'project_agent' ? { allowedSkills: ['project_agent', 'project'] } : {};
+        return this.fortsetzungImOwnerChat(t, { id: 'bestaetigt-fehler', platform: ziel.platform, chatId: ziel.chatId, herkunft: hk, ...nurProjekt });
       }
       const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
@@ -11099,7 +11103,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   const ownerUid = this.tryOwner() ?? '';
                   // v772 — userRole='admin' damit verifyTaskAccess in project-agent-skill durchlässt
                   // (sonst chatId=='' Check schlägt fehl → falsch-orphan-marking, Agent läuft echt weiter)
-                  const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin' } as any;
+                  const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin', ownerDirekt: true } as any; // v1512 P2 — Owner-Knopf
                   const r = await this.projectAgentSkillRef.execute({ action: 'stop', task_id: taskId }, ctx);
                   if (!r.success) {
                     this.logger.warn({ taskId, error: r.error }, 'v772 project_agent.stop returned failure — falling back to orphan-mark');
@@ -15874,6 +15878,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         etappe: s.nr, etappen: s.plan.length, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}),
         ...(s.etappeStart ? { seit: new Date(s.etappeStart).toISOString() } : {}),
         kostenBisher: Math.round(s.kostenUsd * 100) / 100,
+        folgeauftraege: this.folgeAuftraegeRef?.reihe(s.geraetId, s.projekt).length ?? 0, // v1512
         ...(live(s.id)?.schritte?.length ? { schritt: String(live(s.id)!.schritte.at(-1)).slice(0, 120) } : {}),
       })),
       ...gw.laufendeAuftraege(geraetId).filter(a => !projektAuftraege.has(a.auftragId)).map(a => ({
@@ -15953,7 +15958,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), dev: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p), einrichtung: einrichtungStand(p) }; // v1439 deploy, v1486 F5 einrichtung
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), dev: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p), einrichtung: einrichtungStand(p), folgeAuto: (p.tags ?? []).includes('folge-auto'), folgeauftraege: (this.folgeAuftraegeRef?.reiheDerAkte(p.id, p.geraetId ?? undefined, p.cwd ?? undefined) ?? []).map((e, i) => ({ id: e.id, position: i + 1, ziel: e.ziel, eingereiht: new Date(e.eingereiht).toISOString() })) }; // v1439 deploy, v1486 F5 einrichtung, v1512 Folgeaufträge
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15970,6 +15975,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
+      folge: async (id: string, was: string, folgeId?: string) => skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, ctx(`project:${id}`)), // v1512 App
       einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1486 F5
       loeschen: async (id: string) => this.projektEndgueltigLoeschen(id), // v1457
     };
@@ -16284,6 +16290,23 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return { success: false, error: 'unbekannte Einrichtung' };
   }
 
+  /** v1512 P1 — Schalter „Folgeaufträge ohne Rückfrage starten“ (Tag folge-auto; Owner 19.10.: Standard aus). */
+  private async folgeAutoAn(akteId: string): Promise<boolean> {
+    const o = this.ownerMasterUserId;
+    if (!o || !this.projectRepo) return false;
+    const p = await this.projectRepo.getById(o, akteId).catch(() => null);
+    return (p?.tags ?? []).includes('folge-auto');
+  }
+
+  private async geraeteProjektFolgeAuto(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const { ProjektAktenUeberProjekte } = await import('./projekt/akten-projekte.js');
+    if (!(await new ProjektAktenUeberProjekte(repo).setzeSchalter(o, id, an, 'folge-auto'))) return { success: false, error: 'kein Geräte-Projekt' };
+    this.logger.info({ projekt: id, an }, 'v1512 Folgeaufträge ohne Rückfrage umgeschaltet');
+    return { success: true, display: an ? 'Folgeaufträge ohne Rückfrage: an — nach einem regulär beendeten Lauf startet Alfred den nächsten Folgeauftrag direkt und meldet den Plan.' : 'Folgeaufträge ohne Rückfrage: aus — Alfred legt dir für jeden Folgeauftrag die Startkarte vor.' };
+  }
+
   private async geraeteProjektMrAuto(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
     const o = this.ownerMasterUserId; const repo = this.projectRepo;
     if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
@@ -16588,6 +16611,10 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     };
     /** v1419 G3 — Faden eines Geräte-Projekts (Owner-Faden, in App, Web und Telegram-/faden gleich) */
     const projektFaden = (akteId?: string): string | undefined => (akteId && /^[0-9a-f]{8}/.test(akteId) ? `projekt-${akteId.slice(0, 8)}` : undefined);
+    // v1512 P1 — Folgeaufträge je Verzeichnis (übersteht Neustarts); Nachrücken nach jedem Ende und im 10-min-Job
+    const folge = new FolgeAuftraege(path.resolve(process.cwd(), 'data', 'projekt-folgeauftraege.json'));
+    this.folgeAuftraegeRef = folge;
+    let folgeNachruecken: () => Promise<void> = async () => { /* wird unten gesetzt */ };
     const projekte = new SatellitProjekte({
       // v1398 — Weiterarbeit: Bestand als Daten an das Ziel, frühere Läufe und Commits über die vorhandenen Blöcke des Planers
       // v1511 — Kostenherkunft der Projektleitung (Plan, Abnahme) auf jedem Weg: hintergrund:projekte
@@ -16616,7 +16643,25 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       frage: async (s, text, nonce) => {
         if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue');
         const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
-        await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform, source: 'geraet', sourceId: `projekt-${s.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: s.id, freigabe: nonce }, timeoutMinutes: 720 });
+        // v1512 P4 — Herkunft = Projektfaden (sonst die Sitzung des Starts): Ergebnis und Fortsetzung nach der Entscheidung laufen dort,
+        // nicht im Telegram-Chat (Realfall 19.10. 15:53: Fortsetzung in Telegram mit Kalender-/ITSM-Abfragen)
+        const ow = owner(); const pf = projektFaden(s.akteId);
+        const herkunft = ow ? (pf ? { chatId: `owner:faden:${pf}`, platform: 'api', userId: ow } : s.herkunft ? { chatId: s.herkunft.chatId, platform: s.herkunft.platform, userId: ow } : undefined) : undefined;
+        await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform, source: 'geraet', sourceId: `projekt-${s.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: s.id, freigabe: nonce }, timeoutMinutes: 720, ...(herkunft ? { herkunft } : {}) });
+      },
+      // v1512 P1 — nach jedem Ende rückt der nächste Folgeauftrag des Verzeichnisses nach
+      nachEnde: async () => { await folgeNachruecken(); },
+      // v1512 P1 — Plan freigegeben, während im Verzeichnis ein anderer Lauf läuft: in die Warteschlange statt parallel
+      alsFolgeauftrag: async (s, nach) => folge.einreihen({ geraetId: s.geraetId, geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, befehle: s.pruefBefehle,
+        input: { ...(s.grenzen.budgetUsd ? { budget_usd: s.grenzen.budgetUsd } : {}), ...(s.grenzen.maxStunden ? { max_stunden: s.grenzen.maxStunden } : {}) },
+        ...(s.herkunft ? { herkunft: { chatId: s.herkunft.chatId, platform: s.herkunft.platform } } : {}), ...(s.akteId ? { akteId: s.akteId } : {}), nach: nach.id }).position,
+      // v1512 P3 — Projekt beendet: seine offenen Karten zurückziehen (Realfall 15:53: Freigabe auf eine Karte eines schon gestoppten Laufs)
+      kartenZurueckziehen: async (s) => {
+        if (!this.confirmationQueue || !this.database) return 0;
+        const rows = await this.database.getAdapter().query("SELECT id FROM pending_confirmations WHERE status = 'pending' AND source_id LIKE ?", [`projekt-${s.id}-%`]) as Array<{ id: string }>;
+        const n = rows.length ? await this.confirmationQueue.zurueckziehen(rows.map(r => String(r.id)), `Projekt ${s.status}`) : 0;
+        if (n) this.logger.info({ lauf: s.id, status: s.status, karten: n }, 'v1512 offene Karten des Laufs zurückgezogen');
+        return n;
       },
       // v1419 G3 — Owner 13.10.: Projektmeldungen in den Projektfaden; ins Hauptgespräch nur Ende und Entscheidungen (Rückfragen kommen
       // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
@@ -16717,7 +16762,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
     this.satellitProjekte = projekte;
     // v1415 — Rückfall: wartende Etappen alle 10 min nachholen (falls ein Verbindungsereignis fehlte) und nach 24 h anhalten
-    this.registriereJob({ key: 'projekte-nachholen', beschreibung: 'Projekt-Etappen starten, die auf ein Gerät warten', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', run: async () => ({ ok: true, zaehler: { versuche: await projekte.nachholen() } }) });
+    this.registriereJob({ key: 'projekte-nachholen', beschreibung: 'Projekt-Etappen starten, die auf ein Gerät warten', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', run: async () => { const versuche = await projekte.nachholen(); await folgeNachruecken(); return { ok: true, zaehler: { versuche, folge: folge.verzeichnisse().length } }; } }); // v1512 P1 Folgeaufträge
     // v1403 — Owner 12.10.: „aus den Geräte-Projekten fortsetzen → man muss zu den Bestätigungen wechseln, um es freizugeben".
     // Freigabe direkt in der Projektansicht: die offene Bestätigung dieses Laufs (source_id projekt-<lauf>-…) wie ein Knopfdruck entscheiden.
     this.geraeteLaufEntscheiden = async (laufId, entscheidung) => {
@@ -16763,9 +16808,25 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       return { fehler: `Kein Projekt „${ref}" gefunden. Vorhanden: ${akten.filter(a => a.status !== 'archiviert').map(a => a.name).join(', ') || 'keine'}` };
     };
     /** Gemeinsamer Start (start und projekt_weiter): Verzeichnis prüfen, Akte und Bestand ermitteln, Plan erstellen, Owner fragen. */
-    const planeLauf = async (g: { id: string; name: string; aktionen: string[] }, o: { projekt: string; ziel: string; befehle: string[]; input: Record<string, unknown>; context: import('@alfred/types').SkillContext; name?: string }) => {
+    const planeLauf = async (g: { id: string; name: string; aktionen: string[] }, o: { projekt: string; ziel: string; befehle: string[]; input: Record<string, unknown>; context: import('@alfred/types').SkillContext; name?: string; /** v1512 — aus der Warteschlange */ folge?: { hinweis?: string; ohneRueckfrage?: boolean } }) => {
       const { projekt, ziel, befehle, input, context } = o;
       if (!g.aktionen.includes('auftrag_starten') || !g.aktionen.includes('pruefen_befehl')) return { success: false, error: `Auf ${g.name} fehlt Claude Code oder die Prüfaktion (Satellit ≥ 1383 und claude im PATH nötig)` };
+      // v1512 P1 — nie zwei Läufe im selben Verzeichnis (Owner 19.10.): läuft dort einer oder warten schon Folgeaufträge, wird
+      // eingereiht. Andere Verzeichnisse (auch auf demselben Gerät) bleiben frei. Die Rückmeldung ist fest (P5), nicht vom Modell.
+      if (!o.folge) {
+        const aktiv = projekte.aktivImVerzeichnis(g.id, projekt);
+        const wartend = folge.reihe(g.id, projekt).length;
+        if (aktiv || wartend) {
+          const startOpt = Object.fromEntries(Object.entries(input).filter(([k]) => ['budget_usd', 'max_stunden', 'sudo_sperre'].includes(k)));
+          const { eintrag, position } = folge.einreihen({ geraetId: g.id, geraet: g.name, projekt, ziel, befehle, input: startOpt, ...(o.name ? { name: o.name } : {}),
+            ...(context.chatId ? { herkunft: { chatId: context.chatId, platform: context.platform } } : {}), ...(aktiv?.akteId ? { akteId: aktiv.akteId } : {}), ...(aktiv ? { nach: aktiv.id } : {}) });
+          const auto = aktiv?.akteId ? await this.folgeAutoAn(aktiv.akteId) : false;
+          this.logger.info({ folge: eintrag.id, position, nach: aktiv?.id, geraet: g.name, projekt }, 'v1512 Folgeauftrag eingereiht');
+          const lauf = aktiv ? `läuft gerade „${aktiv.akteName ?? 'ein Lauf'}“ (${aktiv.id}, ${aktiv.status === 'laeuft' ? `Etappe ${aktiv.nr}/${aktiv.plan.length}` : 'wartet auf den Owner'})` : 'warten schon frühere Folgeaufträge';
+          return { success: true, data: { folgeauftrag: eintrag.id, position, ...(aktiv ? { nach: aktiv.id } : {}) },
+            display: `Als Folgeauftrag Nr. ${position} eingereiht (${eintrag.id}) — im Verzeichnis ${projekt} auf ${g.name} ${lauf}. Kein zweiter Lauf im selben Verzeichnis. Nach dem Ende plant Alfred den Folgeauftrag auf dem neuen Stand und ${auto ? 'startet ihn direkt (Schalter „ohne Rückfrage“ ist an)' : 'legt dem Owner dann die Startkarte vor'}. Endet der laufende Lauf nicht regulär, fragt Alfred vorher nach. Das ist ein echter Eintrag in der Warteschlange.` };
+        }
+      }
       // v1391 — Verzeichnis vor dem Planen prüfen: nicht freigegeben → sofort ablehnen; fehlt → wird beim ersten Auftrag angelegt
       const pr = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: projekt }] }, 30_000).catch(() => undefined);
       const grundV = (pr?.data as { ergebnisse?: Array<{ ok: boolean; grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '';
@@ -16791,13 +16852,59 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const grenzen: Record<string, number> = {};
       if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
       if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung), vorgefunden: bestand?.offen,
+      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung), vorgefunden: bestand?.offen, ...(o.folge?.ohneRueckfrage ? { ohneRueckfrage: true } : {}), ...(o.folge?.hinweis ? { hinweis: o.folge.hinweis } : {}), // v1512
         // v1409 R3b — Projekt-Option (Tag) oder Start-Option; die Geräte-Einstellung meldet der Satellit beim Lesen
         sudoSperre: akte?.sudoSperre || input.sudo_sperre === true ? 'projekt' : (lesen?.data as { sudoSperreGeraet?: boolean } | undefined)?.sudoSperreGeraet ? 'geraet' : undefined });
       if (input.sudo_sperre === true && akte && !akte.sudoSperre && ow && aktenRepo) await aktenRepo.setzeSudoSperre(ow, akte.id, true).catch(() => undefined);
       return ergebnis(s, `Projekt ${akteName} (${s.id}) auf ${g.name} geplant (${s.plan.length} Etappen${vorherige.length ? `, Weiterarbeit nach ${vorherige.length} früheren Läufen` : ''}) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
     };
     const ergebnis = (s: import('./projekt/satellit-projekt.js').ProjektStand | undefined, display: string) => ({ success: !!s, data: s ? { task_id: s.id, status: s.status, etappe: s.nr, etappen: s.plan.length, kostenUsd: Number(s.kostenUsd.toFixed(2)) } : undefined, display });
+    // v1512 P1 — Folgeaufträge nachrücken: je Verzeichnis ohne aktiven Lauf den ersten planen. Nach regulärem Ende Startkarte
+    // (oder direkt mit Schalter „ohne Rückfrage“), nach Abbruch/Anhalten immer mit Nachfrage. Gerät weg → bleibt vorne in der Reihe.
+    let rueckt = false;
+    folgeNachruecken = async () => {
+      if (rueckt) return;
+      rueckt = true;
+      try {
+        for (const v of folge.verzeichnisse()) {
+          if (projekte.aktivImVerzeichnis(v.geraetId, v.projekt)) continue;
+          const e = folge.naechster(v.geraetId, v.projekt);
+          if (!e) continue;
+          const g = gw.geraetNachName(e.geraetId);
+          if (!g) { folge.vorne(e); continue; }
+          const vorher = projekte.letzterImVerzeichnis(e.geraetId, e.projekt);
+          const regulaer = !vorher || vorher.status === 'fertig';
+          const akteId = e.akteId ?? vorher?.akteId;
+          const auto = regulaer && akteId ? await this.folgeAutoAn(akteId) : false;
+          const hinweis = regulaer ? `🧭 Folgeauftrag (eingereiht ${new Date(e.eingereiht).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}) — der vorige Lauf ist fertig.`
+            : `⚠ Folgeauftrag: Der vorige Lauf (${vorher!.id}) endete „${vorher!.status === 'angehalten' ? 'angehalten' : 'abgebrochen'}${vorher!.grund ? `: ${vorher!.grund}` : ''}“. Folgeauftrag trotzdem starten?`;
+          const o = owner();
+          const ctx = { userId: o ?? '', masterUserId: o, chatId: e.herkunft?.chatId ?? '', platform: e.herkunft?.platform ?? 'api' } as import('@alfred/types').SkillContext;
+          const r = await planeLauf(g, { projekt: e.projekt, ziel: e.ziel, befehle: e.befehle, input: e.input, context: ctx, ...(e.name ? { name: e.name } : {}), folge: { hinweis, ohneRueckfrage: auto } })
+            .catch((err: Error) => ({ success: false as const, error: err.message }));
+          this.logger.info({ folge: e.id, geraet: e.geraet, projekt: e.projekt, auto, regulaer, ok: r.success }, 'v1512 Folgeauftrag nachgerückt');
+          if (!r.success) {
+            const f = projektFaden(akteId);
+            const t = `⚠ Folgeauftrag konnte nicht geplant werden (${'error' in r ? r.error : 'unbekannt'}). Auftrag: „${e.ziel.slice(0, 300)}“ — bitte neu anstoßen.`;
+            if (f) await this.meldeInFaden(f, t).catch(() => undefined); else await this.meldeOhneModell(t, e.herkunft ? { chatId: e.herkunft.chatId, platform: e.herkunft.platform } : undefined).catch(() => undefined);
+          }
+        }
+      } finally { rueckt = false; }
+    };
+    const folgeVerwalten = async (ref: string, input: Record<string, unknown>) => {
+      const t = await akteAus(ref);
+      if ('fehler' in t) return { success: false, error: t.fehler };
+      const was = String(input.folge ?? 'liste');
+      const reihe = () => folge.reiheDerAkte(t.akte.id, t.akte.geraetId, t.akte.pfad);
+      const id = String(input.folge_id ?? '').trim();
+      if (was === 'auto_an' || was === 'auto_aus') return this.geraeteProjektFolgeAuto(t.akte.id, was === 'auto_an');
+      if (was === 'entfernen') { const e = id ? folge.entferne(id) : undefined; return e ? { success: true, display: `Folgeauftrag entfernt: „${e.ziel.slice(0, 120)}“` } : { success: false, error: `Folgeauftrag ${id || '(folge_id fehlt)'} nicht gefunden` }; }
+      if (was === 'hoch' || was === 'runter') return folge.verschiebe(id, was === 'hoch' ? -1 : 1) ? { success: true, display: `Reihenfolge geändert: ${reihe().map((e, i) => `${i + 1}. ${e.ziel.slice(0, 60)}`).join(' · ')}` } : { success: false, error: 'Verschieben nicht möglich (Rand der Reihe oder unbekannte Kennung)' };
+      const l = reihe();
+      const auto = await this.folgeAutoAn(t.akte.id);
+      return { success: true, data: { folgeauftraege: l.map((e, i) => ({ id: e.id, position: i + 1, ziel: e.ziel, eingereiht: new Date(e.eingereiht).toISOString() })), ohneRueckfrage: auto },
+        display: l.length ? `Folgeaufträge für ${t.akte.name}${auto ? ' (starten ohne Rückfrage)' : ''}:\n${l.map((e, i) => `${i + 1}. ${e.ziel.slice(0, 160)} (${e.id})`).join('\n')}` : `Keine Folgeaufträge für ${t.akte.name}.` };
+    };
     skill.setSatellit({
       start: async (input, context) => {
         const name = String(input.geraet ?? '').trim();
@@ -17153,7 +17260,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (s0?.auftragId) { const st = await gw.sendeAktion(s0.geraetId, 'auftrag_stand', { id: s0.auftragId }, 20_000).catch(() => undefined); const d = String(st?.display ?? ''); const i = d.indexOf('Letzte Protokollzeilen:'); if (i >= 0) live = `\n\nAuf ${s0.geraet} gerade (Claude Code):\n${d.slice(i + 'Letzte Protokollzeilen:'.length).trim().slice(0, 1500)}`; }
         const s = s0; return s ? ergebnis(s, `${s.id} · ${s.status}${s.grund ? ` (${s.grund})` : ''} · Etappe ${s.nr}/${s.plan.length}${s.auftragId ? ' läuft' : ''} · ${s.kostenUsd.toFixed(2)} USD${s.frage ? `\nWartet auf dich: ${s.frage.text.slice(0, 300)}` : ''}\n${s.plan.map((p, i) => `${i + 1}. ${s.erledigt.find(e => e.nr === i + 1)?.ok ? '✅' : i + 1 === s.nr ? '▶' : '·'} ${p.slice(0, 120)}`).join('\n')}${live}`) : { success: false, error: `Projekt ${id} unbekannt` };
       },
-      stop: async (id) => ((await projekte.stoppe(id)) ? { success: true, display: `Projekt ${id} gestoppt` } : { success: false, error: `Projekt ${id} läuft nicht` }),
+      folge: (ref, input) => folgeVerwalten(ref, input), // v1512 P1
+      stop: async (id, grund) => ((await projekte.stoppe(id, grund)) /* v1512 P2 */ ? { success: true, display: `Projekt ${id} gestoppt` } : { success: false, error: `Projekt ${id} läuft nicht` }),
       antwort: async (id, nonce) => ((await projekte.antwort(id, nonce)) ? { success: true, display: `Projekt ${id}: weiter` } : { success: false, error: 'Freigabe ungültig oder schon verwendet' }),
       fortsetzen: async (id) => { const r = await projekte.fortsetzenNach(id); return r.ok ? { success: true, display: `Projekt ${id} wird fortgesetzt (aktuelle Etappe neu, gleiche Freigabe und Grenzen)` } : { success: false, error: r.grund ?? 'nicht möglich' }; }, // v1391
       weiter: async (id) => ((await projekte.weiterOhneAenderung(id)) ? { success: true, display: `Projekt ${id}: weiter ohne Planänderung` } : { success: false, error: 'Keine offene Planänderung' }),
@@ -17220,6 +17328,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
+      folge: async (id: string, was: string, folgeId?: string) => skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never), // v1512 Web
       einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1487
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },

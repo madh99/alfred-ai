@@ -22,6 +22,8 @@ export interface AuftragMeta {
   gitAngelegt?: boolean;
   /** v1397 — bestehendes Verzeichnis übernommen (nur auf Wunsch des Projekts) */
   git?: GitUebernahme;
+  /** v1512 — Frage zum Projekt (nur lesend); zählt nicht für die Verzeichnis-Sperre */
+  nurLesen?: boolean;
 }
 
 export interface AuftragErgebnis { text: string; kosten?: number; dauerMs?: number; sitzung?: string; fehler?: string }
@@ -121,6 +123,12 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; ohneWmi
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
   // v1404 — Frage zum Projekt: Verzeichnis muss existieren; keine Auftragsdatei, kein Git, keine Schreib-/Shell-Werkzeuge (siehe argumenteFuer)
   if (opts.nurLesen && !existsSync(opts.projekt)) throw new Error(`Projektverzeichnis fehlt: ${opts.projekt}`);
+  // v1512 P1 — nie zwei schreibende Claude-Code-Aufträge im selben Verzeichnis (Owner 19.10.); lesende Fragen und andere
+  // Verzeichnisse bleiben frei. Vor jeder Wirkung (Ordner, Git, Auftragsdatei).
+  if (!opts.nurLesen) {
+    const belegt = schreibenderImVerzeichnis(opts.projekt, opts.home);
+    if (belegt) throw new Error(`Im Verzeichnis ${opts.projekt} läuft schon der Claude-Code-Auftrag ${belegt.id} („${belegt.titel}“) — kein zweiter schreibender Auftrag im selben Verzeichnis`);
+  }
   const neu = !existsSync(opts.projekt);
   if (neu) mkdirSync(opts.projekt, { recursive: true });
   if (!statSync(opts.projekt).isDirectory()) throw new Error(`Projektpfad ist kein Verzeichnis: ${opts.projekt}`);
@@ -144,7 +152,7 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; ohneWmi
   const befehl = istCmd ? 'cmd.exe' : claude;
   const befehlArgs = istCmd ? ['/c', claude, ...args] : args;
   const zusatzEnv = { CLAUDE_CODE_NO_UPDATE_CHECK: '1' };
-  const metaVon = (pid: number | undefined): AuftragMeta => ({ id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … ${args.slice(2).join(' ')}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) });
+  const metaVon = (pid: number | undefined): AuftragMeta => ({ id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … ${args.slice(2).join(' ')}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}), ...(opts.nurLesen ? { nurLesen: true } : {}) });
   const abschliessen = (meta: AuftragMeta, code: number | null) => {
     let protokoll = '';
     try { protokoll = readFileSync(logPfad(id, opts.home), 'utf8'); } catch { /* leer */ }
@@ -253,6 +261,25 @@ export function laufendeAuftraege(home?: string): number {
   let n = 0;
   for (const id of readdirSync(o).sort().reverse().slice(0, 50)) { const m = ladeMeta(id, home); if (m?.status === 'laeuft' && laeuft(m.pid)) n++; }
   return n;
+}
+
+/** v1512 — gleiches Verzeichnis: aufgelöster Pfad, unter Windows ohne Groß/Klein. */
+export function gleichesVerzeichnis(a: string, b: string): boolean {
+  const n = (p: string) => { const r = path.resolve(p).replace(/[\\/]+$/, ''); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  return n(a) === n(b);
+}
+
+/** v1512 P1 — laufender schreibender Auftrag (Prozess lebt) im Verzeichnis; Fragen (nur lesend, auch ältere mit FRAGE.md) zählen nicht. */
+export function schreibenderImVerzeichnis(projekt: string, home?: string): AuftragMeta | undefined {
+  const o = auftraegeOrdner(home);
+  if (!existsSync(o)) return undefined;
+  for (const id of readdirSync(o).sort().reverse().slice(0, 50)) {
+    const m = ladeMeta(id, home);
+    if (!m || m.status !== 'laeuft' || !laeuft(m.pid)) continue;
+    if (m.nurLesen || /FRAGE\.md$/.test(m.auftragDatei ?? '')) continue;
+    if (gleichesVerzeichnis(m.projekt, projekt)) return m;
+  }
+  return undefined;
 }
 
 export function formatiereMeta(m: AuftragMeta): string {

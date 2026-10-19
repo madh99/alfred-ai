@@ -119,6 +119,8 @@ class Server {
     final req = await _anfrage('POST', '/api/confirmations/${Uri.encodeComponent(id)}/${ja ? 'approve' : 'reject'}');
     final res = await req.close();
     final body = await res.transform(utf8.decoder).join();
+    // 1.51.0 (v1512 P3) — Freigabe angenommen, aber Aktion gescheitert: Server liefert „fehler“ (vorher stand trotzdem „✅ Freigegeben“)
+    if (res.statusCode == 200 && ja) { try { final j = jsonDecode(body); if (j is Map && j['fehler'] is String) return 'fehlgeschlagen: ${j['fehler']}'; } catch (_) {} }
     return res.statusCode == 200 ? (ja ? 'freigegeben' : 'abgelehnt') : 'HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}';
   }
 

@@ -497,12 +497,12 @@ export class HttpAdapter extends MessagingAdapter {
 
   // v629 — Confirmations + Reminders Side-Panel API
   private confirmationsListFn?: () => Promise<any[]>;
-  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string }>;
+  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   private remindersListFn?: () => Promise<any[]>;
 
   setConfirmationCallbacks(opts: {
     list: () => Promise<any[]>;
-    decide: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string }>;
+    decide: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   }): void {
     this.confirmationsListFn = opts.list;
     this.confirmationsDecideFn = opts.decide;
@@ -823,7 +823,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { einrichtung?: (id: string, was: string, befehle?: string[]) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
+  private geraeteProjektCallbacks?: { einrichtung?: (id: string, was: string, befehle?: string[]) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; folge?: (id: string, was: string, folgeId?: string) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   /** v1457 — Projekt endgültig löschen (jedes Projekt; stellt nur die Owner-Bestätigung, gelöscht wird nach dem Ja) */
   private projektLoeschenFn?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
@@ -865,6 +865,9 @@ export class HttpAdapter extends MessagingAdapter {
       antwort(200, cb.einrichtung && /^(ok:(repo|pruefung|mr|regeln|protokoll)|pruefung_vorschlag|pruefung_setzen)$/.test(text) ? await cb.einrichtung(id, text, befehle) : { success: false, error: 'text muss ok:<schritt>, pruefung_vorschlag oder pruefung_setzen sein' });
       return;
     }
+    // v1512 P1 — Folgeaufträge im Web: /folge-auto {an}, /folge {aktion: liste|entfernen|hoch|runter, lauf: folge-…}
+    if (url.pathname.endsWith('/folge-auto')) { const jp = j as { an?: unknown }; antwort(200, cb.folge && typeof jp.an === 'boolean' ? await cb.folge(id, jp.an ? 'auto_an' : 'auto_aus') : { success: false, error: 'an (true|false) nötig' }); return; }
+    if (url.pathname.endsWith('/folge')) { const jp = j as { aktion?: unknown; lauf?: unknown }; const a = typeof jp.aktion === 'string' ? jp.aktion : 'liste'; antwort(200, cb.folge && ['liste', 'entfernen', 'hoch', 'runter'].includes(a) ? await cb.folge(id, a, typeof jp.lauf === 'string' ? jp.lauf : undefined) : { success: false, error: 'aktion muss liste, entfernen, hoch oder runter sein' }); return; }
     if (url.pathname.endsWith('/mr-auto')) { const jp = j as { an?: unknown }; antwort(200, cb.mrAuto && typeof jp.an === 'boolean' ? await cb.mrAuto(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1458
     if (url.pathname.endsWith('/merge-requests')) { const jp = j as { an?: unknown }; antwort(200, cb.mergeRequests && typeof jp.an === 'boolean' ? await cb.mergeRequests(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1455
     if (url.pathname.endsWith('/protokoll')) { const jp = j as { an?: unknown }; antwort(200, cb.protokoll && typeof jp.an === 'boolean' ? await cb.protokoll(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1425
@@ -1418,7 +1421,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/merge-requests|\/mr-auto|\/deploy|\/einrichtung)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/merge-requests|\/mr-auto|\/folge-auto|\/folge|\/deploy|\/einrichtung)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }
@@ -3237,7 +3240,7 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true }));
+    res.end(JSON.stringify({ success: true, ...(result.fehler ? { fehler: result.fehler } : {}) })); // v1512 P3 — Aktion gescheitert
   }
 
   private async handleRemindersList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

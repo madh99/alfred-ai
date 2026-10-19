@@ -300,7 +300,10 @@ export async function extendedPreflight(cwd: string, agentCommand: string): Prom
 export interface SatellitProjektHandler {
   start: (input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
   status: (id: string) => SkillResult | Promise<SkillResult>; // v1392 mit Live-Schritten vom Gerät
-  stop: (id: string) => Promise<SkillResult>;
+  /** v1512 P2 — grund: „von Alfred gestoppt: …“ oder „vom Owner gestoppt“ (nur bei direktem Owner-Aufruf) */
+  stop: (id: string, grund?: string) => Promise<SkillResult>;
+  /** v1512 P1 — Folgeaufträge eines Projekts: liste, entfernen (folge_id), hoch/runter (folge_id), auto an/aus */
+  folge?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   antwort: (id: string, nonce: string) => Promise<SkillResult>;
   weiter: (id: string) => Promise<SkillResult>;
   /** v1391 — angehaltenes Projekt fortsetzen */
@@ -437,7 +440,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren', 'projekt_dev'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren', 'projekt_dev', 'projekt_folgeauftraege'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -510,6 +513,9 @@ Actions:
           },
           template: { type: 'string', description: 'Project template name (for start, optional)' },
           task_id: { type: 'string', description: 'Task ID (for status/interject/stop)' },
+          grund: { type: 'string', description: 'stop bei sat-Läufen: kurzer Grund (erscheint als „von Alfred gestoppt: <Grund>“).' },
+          folge: { type: 'string', enum: ['liste', 'entfernen', 'hoch', 'runter', 'auto_an', 'auto_aus'], description: 'projekt_folgeauftraege: liste (Standard) zeigt die Warteschlange; entfernen/hoch/runter mit folge_id; auto_an/auto_aus = Schalter „Folgeaufträge ohne Rückfrage starten“ (Standard aus). Neue Folgeaufträge entstehen von selbst: projekt_weiter/start, während im Verzeichnis ein Lauf läuft, reiht ein.' },
+          folge_id: { type: 'string', description: 'projekt_folgeauftraege: Kennung folge-… des Eintrags' },
           message: { type: 'string', description: 'Message to inject (for interject)' },
         },
         required: ['action'],
@@ -537,7 +543,7 @@ Actions:
     // v1434 B13 — Projekt von GitLab aufs Gerät holen (danach ein Geräte-Projekt wie jedes andere)
     if (action === 'projekt_holen') return this.satellit?.holen ? this.satellit.holen(input, context) : { success: false, error: 'Projekte holen ist nicht verfügbar (Geräte-Gateway fehlt)' };
     // v1398 — Projektakten
-    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren', 'projekt_dev'].includes(action) || satId.startsWith('prj-')) {
+    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren', 'projekt_dev', 'projekt_folgeauftraege'].includes(action) || satId.startsWith('prj-')) {
       if (!this.satellit?.projekte) return { success: false, error: 'Projektakten sind nicht verfügbar' };
       const ref = String(input.projekt ?? input.task_id ?? '').trim();
       if (action === 'projekte') return this.satellit.projekte();
@@ -558,6 +564,7 @@ Actions:
         return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, an, auto) : { success: false, error: 'nicht verfügbar' };
       }
       if (action === 'projekt_dev') return this.satellit.dev ? this.satellit.dev(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1460
+      if (action === 'projekt_folgeauftraege') return this.satellit.folge ? this.satellit.folge(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1512
       if (action === 'projekt_mr_zusammenfuehren') return this.satellit.mrZusammenfuehren ? this.satellit.mrZusammenfuehren(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1458 — nur aus der Bestätigung
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge, typeof input.budget_usd === 'number' ? input.budget_usd : undefined) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
@@ -566,7 +573,8 @@ Actions:
     if (satId.startsWith('sat-') || action === 'satellit_antwort' || action === 'satellit_weiter') {
       if (!this.satellit) return { success: false, error: 'Projekte auf Geräten sind nicht verfügbar' };
       if (action === 'status') return this.satellit.status(satId);
-      if (action === 'stop') return this.satellit.stop(satId);
+      // v1512 P2 — wer stoppt: direkter Owner-Aufruf (Web-Knopf) setzt ownerDirekt; sonst hat Alfred entschieden (Grund optional)
+      if (action === 'stop') return this.satellit.stop(satId, (context as { ownerDirekt?: boolean }).ownerDirekt ? 'vom Owner gestoppt' : `von Alfred gestoppt${typeof input.grund === 'string' && input.grund.trim() ? `: ${input.grund.trim().slice(0, 200)}` : ''}`);
       if (action === 'satellit_antwort') return this.satellit.antwort(satId, String(input.freigabe ?? ''));
       if (action === 'satellit_weiter') return this.satellit.weiter(satId);
       if (action === 'resume' && this.satellit.fortsetzen) return this.satellit.fortsetzen(satId); // v1391

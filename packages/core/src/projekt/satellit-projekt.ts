@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import { konventionsBlock, changelogPflicht, changelogAuftrag, type Konventionen } from './konventionen.js'; // v1426
 import { START_REGEL } from './geraet-dev.js'; // v1460
+import { pfadSchluessel } from './folgeauftraege.js'; // v1512
 import {
   STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag, pfadeSicher,
   type Grenzen, type MutationsArt,
@@ -100,6 +101,12 @@ export interface SatellitProjektDeps {
   pruefBefehleSetzen?: (s: ProjektStand, befehle: string[]) => Promise<void>;
   /** v1437 B14 — nach dem Ende eines Laufs (z. B. automatisch in dev deployen, wenn alle Etappen grün abgenommen sind) */
   nachLauf?: (s: ProjektStand) => Promise<void>;
+  /** v1512 P1 — nach JEDEM Ende (fertig, abgebrochen, angehalten): wartende Folgeaufträge des Verzeichnisses nachrücken lassen */
+  nachEnde?: (s: ProjektStand) => Promise<void>;
+  /** v1512 P1 — Freigabe eines Plans, während im selben Verzeichnis schon ein Lauf läuft: als Folgeauftrag einreihen (Position) */
+  alsFolgeauftrag?: (s: ProjektStand, nach: ProjektStand) => Promise<number>;
+  /** v1512 P3 — offene Bestätigungen dieses Laufs zurückziehen (Projekt beendet → Karte nicht mehr anklickbar) */
+  kartenZurueckziehen?: (s: ProjektStand) => Promise<number>;
   /** v1455 — vor jedem Auftrag (Merge-Request-Modus: Zweig anlegen, neue MR-Kommentare des Owners als Hinweise); Meldung geht in den Faden */
   vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>;
   /** v1460 — dev am Gerät für ein übernommenes Projekt eingeschaltet → Startregel in den Auftrag (neue Projekte bekommen sie immer) */
@@ -194,7 +201,7 @@ export class SatellitProjekte {
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
-  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; akteId?: string; akteName?: string; nameNeu?: boolean; kontext?: PlanKontext; umgebung?: string; sudoSperre?: 'projekt' | 'geraet'; vorgefunden?: string[] }): Promise<ProjektStand> {
+  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; akteId?: string; akteName?: string; nameNeu?: boolean; kontext?: PlanKontext; umgebung?: string; sudoSperre?: 'projekt' | 'geraet'; vorgefunden?: string[]; /** v1512 — Folgeauftrag mit Schalter „ohne Rückfrage“ */ ohneRueckfrage?: boolean; /** v1512 — Zeile vor der Planfrage (z. B. voriger Lauf abgebrochen) */ hinweis?: string }): Promise<ProjektStand> {
     const g = { ...STANDARD_GRENZEN, ...(o.grenzen ?? {}) };
     const roh = await this.d.planen(o.ziel, o.kontext);
     if (!roh.length) throw new Error('Der Planer lieferte keine Etappen');
@@ -205,7 +212,19 @@ export class SatellitProjekte {
       ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.umgebung ? { umgebung: o.umgebung } : {}), ...(o.sudoSperre === 'projekt' ? { sudoSperre: true } : {}), ...(o.vorgefunden?.length ? { vorgefunden: pfadeSicher(o.vorgefunden) } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
     const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen, name: s.akteName, nameNeu: o.nameNeu, laeufeBisher: o.kontext?.vorherige?.length, umgebung: o.umgebung, sudoSperre: o.sudoSperre, vorgefunden: s.vorgefunden });
-    await this.stelleFrage(s, 'plan', text);
+    const planText = o.hinweis ? `${o.hinweis}\n\n${text}` : text;
+    if (o.ohneRueckfrage) {
+      // v1512 — Schalter „Folgeaufträge ohne Rückfrage starten“ (Owner 19.10., Standard aus): Plan melden und direkt freigeben
+      const nonce = randomUUID();
+      s.frage = { nonce, art: 'plan', text: planText };
+      this.sichere(s);
+      try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
+      await this.d.melde(s, `▶ Folgeauftrag ohne Rückfrage gestartet (Schalter am Projekt).\n\n${planText}`).catch(() => undefined);
+      this.d.logger.info({ id: s.id, geraet: s.geraet, projekt: s.projekt, etappen: plan.length }, 'v1512 Folgeauftrag ohne Rückfrage gestartet');
+      void this.antwort(s.id, nonce);
+      return s;
+    }
+    await this.stelleFrage(s, 'plan', planText);
     try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
     this.sichere(s);
     this.d.logger.info({ id: s.id, geraet: s.geraet, projekt: s.projekt, etappen: plan.length }, 'v1387 Satelliten-Projekt geplant');
@@ -230,6 +249,13 @@ export class SatellitProjekte {
     s.frage = undefined;
     return this.seriell(id, async () => {
       if (f.art === 'plan') {
+        // v1512 P1 — nie zwei Läufe im selben Verzeichnis: läuft dort inzwischen ein anderer, wird dieser zum Folgeauftrag
+        const anderer = this.aktivImVerzeichnis(s.geraetId, s.projekt, s.id);
+        if (anderer && anderer.status === 'laeuft') {
+          const pos = await this.d.alsFolgeauftrag?.(s, anderer).catch(() => undefined);
+          await this.beende(s, 'abgebrochen', `von Alfred eingereiht: im Verzeichnis läuft schon ${anderer.akteName ?? anderer.id} (${anderer.id})${pos ? ` — als Folgeauftrag Nr. ${pos} vorgemerkt` : ''}`, { ohneNachruecken: true });
+          return;
+        }
         s.status = 'laeuft'; s.start = this.jetzt();
         // v1398 — Akte zuordnen bzw. anlegen (erst mit der Freigabe: abgelehnte Pläne legen keine Akte an)
         if (this.d.akte) { const a = await this.d.akte.zuordnen(s).catch((err: Error) => { this.d.logger.warn({ id: s.id, err: err.message }, 'v1398 Akte nicht zugeordnet'); return undefined; }); if (a) s.akteId = a; }
@@ -267,13 +293,27 @@ export class SatellitProjekte {
     }).then(() => true);
   }
 
-  stoppe(id: string, grund = 'vom Owner gestoppt'): Promise<boolean> {
+  /** v1512 P2 — Standard „von Alfred gestoppt“; „vom Owner …“ nur, wenn der Owner selbst stoppt (Aufrufer gibt es an). */
+  stoppe(id: string, grund = 'von Alfred gestoppt'): Promise<boolean> {
     const s = this.staende.get(id);
     if (!s || s.status === 'fertig' || s.status === 'abgebrochen') return Promise.resolve(false);
     return this.seriell(id, async () => {
       if (s.auftragId) { try { await this.d.aktion(s.geraetId, 'auftrag_abbrechen', { id: s.auftragId }, 30_000); } catch { /* Gerät weg */ } }
       await this.beende(s, 'abgebrochen', grund);
     }).then(() => true);
+  }
+
+  /** v1512 P1 — aktiver Lauf (läuft oder wartet auf den Owner) im selben Verzeichnis desselben Geräts; andere Verzeichnisse zählen nicht. */
+  aktivImVerzeichnis(geraetId: string, projekt: string, ausser?: string): ProjektStand | undefined {
+    const k = pfadSchluessel(geraetId, projekt);
+    return [...this.staende.values()].find(x => x.id !== ausser && (x.status === 'laeuft' || x.status === 'wartet_owner') && pfadSchluessel(x.geraetId, x.projekt) === k);
+  }
+
+  /** v1512 P1 — zuletzt beendeter Lauf eines Verzeichnisses (für den Hinweis beim Nachrücken). */
+  letzterImVerzeichnis(geraetId: string, projekt: string): ProjektStand | undefined {
+    const k = pfadSchluessel(geraetId, projekt);
+    return [...this.staende.values()].filter(x => pfadSchluessel(x.geraetId, x.projekt) === k && (x.status === 'fertig' || x.status === 'abgebrochen' || x.status === 'angehalten'))
+      .sort((a, b) => b.aktualisiert - a.aktualisiert)[0];
   }
 
   /** Ende-Meldung eines Auftrags (R1). Gehört er zu einem laufenden Projekt, geht es dort weiter. */
@@ -602,9 +642,10 @@ export class SatellitProjekte {
     await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend, vorgefunden: s.vorgefunden, umgebung: s.umgebung ? `${s.umgebung} · neu installiert: ${i.werkzeug}` : undefined }), `Etappe ${s.nr}: nach Installation`);
   }
 
-  private async beende(s: ProjektStand, status: 'fertig' | 'abgebrochen' | 'angehalten', grund?: string): Promise<void> {
+  private async beende(s: ProjektStand, status: 'fertig' | 'abgebrochen' | 'angehalten', grund?: string, opt?: { ohneNachruecken?: boolean }): Promise<void> {
     s.status = status; s.grund = grund; s.auftragId = undefined; s.frage = undefined;
     this.sichere(s);
+    await this.d.kartenZurueckziehen?.(s).catch(() => 0); // v1512 P3
     const ok = s.erledigt.filter(x => x.ok).length;
     const text = `${status === 'fertig' ? '🏁 Projekt fertig' : status === 'angehalten' ? '⏸ Projekt angehalten' : '⏹ Projekt abgebrochen'}: „${s.ziel.slice(0, 120)}" auf ${s.geraet}${grund ? ` — ${grund}` : ''}. ${ok}/${s.plan.length} Etappen ok, ${s.kostenUsd.toFixed(2)} USD, ${Math.round((this.jetzt() - s.start) / 60_000)} min. Verzeichnis: ${s.projekt}`;
     this.d.logger.info({ id: s.id, status, grund, etappenOk: ok, etappen: s.plan.length, kostenUsd: s.kostenUsd }, 'v1387 Satelliten-Projekt beendet');
@@ -612,6 +653,7 @@ export class SatellitProjekte {
     await this.d.vorgang?.abschliessen(s, text).catch(() => undefined);
     await this.d.akte?.beruehren?.(s).catch(() => undefined); // v1398
     if (status === 'fertig') void this.d.nachLauf?.(s).catch((err: Error) => this.d.logger.warn({ id: s.id, err: err.message }, 'v1437 nach dem Lauf fehlgeschlagen'));
+    if (!opt?.ohneNachruecken) void this.d.nachEnde?.(s).catch((err: Error) => this.d.logger.warn({ id: s.id, err: err.message }, 'v1512 Nachrücken fehlgeschlagen')); // v1512 P1
   }
 }
 

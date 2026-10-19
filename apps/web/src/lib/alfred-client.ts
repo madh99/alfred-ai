@@ -1336,7 +1336,7 @@ export class AlfredClient {
     return data.confirmations ?? [];
   }
 
-  async decideConfirmation(id: string, decision: 'approve' | 'reject' | string): Promise<{ ok: boolean; reason?: string }> {
+  async decideConfirmation(id: string, decision: 'approve' | 'reject' | string): Promise<{ ok: boolean; reason?: string; fehler?: string }> {
     // v657 — decision kann auch ein custom-extra-action-key sein (z.B. 'cancel_item', 'snooze_24h')
     const res = await fetch(`${this.baseUrl}/api/confirmations/${id}/${decision}`, {
       method: 'POST',
@@ -1344,7 +1344,8 @@ export class AlfredClient {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.error ?? `http-${res.status}` };
-    return { ok: true };
+    // v1512 P3 — freigegeben, aber die Aktion scheiterte
+    return typeof data.fehler === 'string' ? { ok: true, fehler: data.fehler } : { ok: true };
   }
 
   // ── v661 — Todos API ──
@@ -1690,6 +1691,16 @@ export class AlfredClient {
   /** v1457 — Projekt endgültig löschen: stellt die Owner-Bestätigung (gelöscht wird erst nach dem Ja) */
   async projektEndgueltigLoeschen(id: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/endgueltig-loeschen`, { method: 'POST', headers: this.jsonHeaders, body: '{}' });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  /** v1512 — Folgeaufträge eines Geräte-Projekts: Liste (Warteschlange) bzw. entfernen/hoch/runter (lauf = folge-…) */
+  async geraetProjektFolge(id: string, aktion: 'liste' | 'entfernen' | 'hoch' | 'runter' = 'liste', lauf?: string): Promise<{ success: boolean; display?: string; error?: string; data?: { folgeauftraege?: Array<{ id: string; position: number; ziel: string; eingereiht: string }>; ohneRueckfrage?: boolean } }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/folge`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ aktion, ...(lauf ? { lauf } : {}) }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  /** v1512 — Schalter „Folgeaufträge ohne Rückfrage starten“ (Standard aus) */
+  async geraetProjektFolgeAuto(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/folge-auto`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
   /** v1458 — Schalter „automatisch zusammenführen“ (sonst fragt Alfred vor dem Zusammenführen) */

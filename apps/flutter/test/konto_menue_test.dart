@@ -94,7 +94,7 @@ void main() {
     t.view.physicalSize = const Size(900, 1600); t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     final vm = KontoGeraet.aus({'name': 'Ubuntu-VM', 'plattform': 'linux', 'online': true, 'laeuft': [
-      {'art': 'projekt', 'titel': 'Finanz-Backend', 'akteId': 'akte-1', 'etappe': 7, 'etappen': 8, 'seit': DateTime(2026, 10, 19, 13, 39).toUtc().toIso8601String(), 'kostenBisher': 82.4, 'schritt': 'npm test'},
+      {'art': 'projekt', 'titel': 'Finanz-Backend', 'akteId': 'akte-1', 'etappe': 7, 'etappen': 8, 'seit': DateTime(2026, 10, 19, 13, 39).toUtc().toIso8601String(), 'kostenBisher': 82.4, 'schritt': 'npm test', 'folgeauftraege': 2},
     ]});
     String? geoeffnet;
     await t.pumpWidget(MaterialApp(home: Scaffold(body: KontoMenue(geraet: 'X', verbunden: true, versionen: '', geraete: [vm],
@@ -105,6 +105,7 @@ void main() {
     expect(find.text('Projekt Finanz-Backend · Etappe 7/8 seit 13:39'), findsOneWidget);
     expect(find.text('npm test'), findsOneWidget);
     expect(find.text('Projekt bisher 82,40 \$ · laufende Etappe wird am Ende verbucht'), findsOneWidget);
+    expect(find.text('danach: 2 Folgeaufträge'), findsOneWidget); // 1.51.0
     await t.tap(find.text('Projekt Finanz-Backend · Etappe 7/8 seit 13:39'));
     expect(geoeffnet, 'akte-1');
   });

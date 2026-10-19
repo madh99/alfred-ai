@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ProjectConventionsView } from './ProjectConventionsView'; // v1426
 import { GeraeteProjektDeploy } from './GeraeteProjektDeploy'; // v1439
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView'; // v1443 B15 — Umgebungen wie beim Projekt-Agenten
@@ -39,6 +39,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const protokollAn = !(p.tags ?? []).includes('protokoll-aus'); // v1425
   const mergeRequestsAn = (p.tags ?? []).includes('merge-requests'); // v1455
   const mrAutoAn = (p.tags ?? []).includes('mr-auto-merge'); // v1458
+  const folgeAutoAn = (p.tags ?? []).includes('folge-auto'); // v1512
   const dev = p.deployZiel?.geraetDev ?? { art: p.deployZiel?.stufen && (p.deployZiel.stufen as Record<string, unknown>).dev ? 'host' as const : 'geraet' as const }; // v1460
   async function devAktion(felder: Record<string, unknown>) { setBusy(true); const r = await client.geraetProjektDeploy(p.id, 'dev', felder).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Erledigt.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }
   function devEintragen() { const a = dev.angabe; const kein = confirm('Ist das Projekt KEIN Dienst (Bibliothek, Kommandozeile, Desktop-App)? OK = kein Dienst, Abbrechen = Startbefehl eintragen'); if (kein) { void devAktion({ dev_aktion: 'setzen', kein_dienst: true }); return; } const start = prompt('Startbefehl im Projektordner', a?.start ?? 'npm start'); if (!start) return; const port = prompt('Port (leer = ohne)', a?.port ? String(a.port) : ''); const pruefung = prompt('Prüfadresse (leer = ohne, z. B. /api/status)', a?.pruefung ?? ''); const einrichten = prompt('Einrichtung für test (optional, mehrere Befehle mit ; trennen)', (a?.einrichten ?? []).join('; ')); void devAktion({ dev_aktion: 'setzen', start, ...(port ? { port: Number(port) } : {}), ...(pruefung ? { pruefung } : {}), ...(einrichten ? { einrichten: einrichten.split(';').map(x => x.trim()).filter(Boolean) } : {}) }); }
@@ -53,6 +54,11 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const [bericht, setBericht] = useState<string | null>(null); // v1417 G1 — aufgeklappte Etappe (lauf:nr)
   const [diff, setDiff] = useState<{ sha: string; dateien: string[]; text: string } | null>(null);
   const laeuftGerade = laeufe.some(l => l.status === 'laeuft' || l.status === 'wartet_owner');
+  // v1512 — Folgeaufträge (Warteschlange nach dem laufenden Lauf)
+  const [folge, setFolge] = useState<Array<{ id: string; position: number; ziel: string }>>([]);
+  const folgeLaden = useCallback(async () => { const r = await client.geraetProjektFolge(p.id).catch(() => null); setFolge(r?.success ? (r.data?.folgeauftraege ?? []) : []); }, [client, p.id]);
+  useEffect(() => { void folgeLaden(); }, [folgeLaden, detail]);
+  async function folgeAktion(aktion: 'entfernen' | 'hoch' | 'runter', id: string) { setBusy(true); const r = await client.geraetProjektFolge(p.id, aktion, id).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); await folgeLaden(); }
   // v1418 G2 — läuft eine Etappe, alle 5 s neu laden (Live-Aktivität)
   const etappeLaeuft = laeufe.some(l => l.status === 'laeuft');
   useEffect(() => { if (!etappeLaeuft) return; const t = setInterval(onReload, 5000); return () => clearInterval(t); }, [etappeLaeuft, onReload]);
@@ -195,6 +201,27 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
           </label>
         )}
       </div>
+      {/* v1512 — Folgeaufträge und Schalter „ohne Rückfrage starten“ */}
+      {folge.length > 0 && (
+        <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 text-xs space-y-1">
+          <div className="text-gray-200">Folgeaufträge ({folge.length})</div>
+          <div className="text-gray-500">{folgeAutoAn ? 'Starten nach dem laufenden Lauf direkt.' : 'Nach dem laufenden Lauf plant Alfred den nächsten und legt dir die Startkarte vor.'}</div>
+          {folge.map((f, i) => (
+            <div key={f.id} className="flex items-center gap-2">
+              <span className="text-gray-500 w-5">{i + 1}.</span>
+              <span className="flex-1 text-gray-300 truncate" title={f.ziel}>{f.ziel}</span>
+              <button className="px-1 text-gray-400 hover:text-white disabled:opacity-30" disabled={busy || i === 0} title="Nach vorne" onClick={() => void folgeAktion('hoch', f.id)}>↑</button>
+              <button className="px-1 text-gray-400 hover:text-white disabled:opacity-30" disabled={busy || i === folge.length - 1} title="Nach hinten" onClick={() => void folgeAktion('runter', f.id)}>↓</button>
+              <button className="px-1 text-red-400 hover:text-red-300 disabled:opacity-30" disabled={busy} title="Entfernen" onClick={() => void folgeAktion('entfernen', f.id)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 flex items-center gap-3 cursor-pointer text-xs">
+        <input type="checkbox" className="h-4 w-4 accent-blue-500" checked={folgeAutoAn} disabled={busy}
+          onChange={async (ev) => { const an = ev.target.checked; setBusy(true); const r = await client.geraetProjektFolgeAuto(p.id, an).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }} />
+        <span><span className="text-gray-200">Folgeaufträge ohne Rückfrage starten</span><span className="block text-gray-500">{folgeAutoAn ? 'An: nach einem regulär beendeten Lauf startet Alfred den nächsten Folgeauftrag direkt; nach einem Abbruch fragt er trotzdem.' : 'Aus (Standard): für jeden Folgeauftrag bekommst du die Startkarte.'}</span></span>
+      </label>
       {p.description && <div className="text-xs text-gray-400 whitespace-pre-wrap">{p.description}</div>}
 
       {p.status !== 'archived' && (

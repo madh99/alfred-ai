@@ -100,7 +100,7 @@ export function EingangPage() {
 
   const bestaetigen = (b: PendingConfirmationItem, entscheidung: string) => aktion(b.id, async () => {
     const r = await client.decideConfirmation(b.id, entscheidung);
-    return r.ok ? null : `Bestätigung fehlgeschlagen: ${r.reason ?? 'unbekannt'}`;
+    return r.ok ? (r.fehler ? `❌ Freigegeben, aber fehlgeschlagen: ${r.fehler}` : null) : `Bestätigung fehlgeschlagen: ${r.reason ?? 'unbekannt'}`; // v1512 P3
   });
 
   const ausfuehren = (v: VorgangDto) => {

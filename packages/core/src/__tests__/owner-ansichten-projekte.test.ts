@@ -27,7 +27,7 @@ describe('OwnerAnsichten: Projekte', () => {
   it('ohne Text oder unbekannte Aktion: nichts ausgelöst', async () => {
     aufrufe.length = 0;
     expect((await a.projektAktion('p1', 'weiter', '   ')).error).toMatch(/text fehlt/);
-    expect((await a.projektAktion('p1', 'zerstoeren', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, mr_auto, loeschen, konventionen, freigeben oder ablehnen/);
+    expect((await a.projektAktion('p1', 'zerstoeren', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, mr_auto, folge_auto, folge_entfernen, folge_hoch, folge_runter, loeschen, konventionen, freigeben oder ablehnen/);
     expect(aufrufe).toEqual([]);
   });
 });
