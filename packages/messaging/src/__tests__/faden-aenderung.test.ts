@@ -21,3 +21,11 @@ describe('v1497 fadenAenderungLesen', () => {
     expect(fadenAenderungLesen('null')).toBeUndefined();
   });
 });
+
+describe('v1499 fadenAenderungLesen projekt', () => {
+  it('Projekt als Text zuordnen, null löst, leer zählt nicht', () => {
+    expect(fadenAenderungLesen(JSON.stringify({ projekt: 'Finanz-Backend' }))).toEqual({ aenderung: { projekt: 'Finanz-Backend' } });
+    expect(fadenAenderungLesen(JSON.stringify({ projekt: null }))).toEqual({ aenderung: { projekt: null } });
+    expect(fadenAenderungLesen(JSON.stringify({ projekt: '  ' }))).toBeUndefined();
+  });
+});

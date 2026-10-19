@@ -1097,7 +1097,8 @@ export class MessagePipeline {
           // v1421 — Projektfaden (owner:faden:projekt-<id8>): die Stichwort-Auswahl kennt das Projekt nicht und ließ
           // project_agent weg (Realfall 13.10.: „App neu starten“ → „kein Zugriff auf das Projekt“). Deterministisch
           // dazu: Projekt-Werkzeuge und der Skill des Geräts, auf dem das Projekt liegt.
-          const fadenProjekt = /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1];
+          // v1499 D1 — auch ein dem Projekt zugeordneter Faden (conversations.project_id) bekommt die Projekt-Werkzeuge
+          const fadenProjekt = /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1] ?? (gespraech ? conversation.projectId : undefined);
           if (fadenProjekt && this.projectRepo) {
             const proj = await this.projectRepo.getById(masterUserId, fadenProjekt).catch(() => undefined) as { geraet?: string } | undefined;
             if (proj) {
@@ -1202,7 +1203,8 @@ export class MessagePipeline {
       // und in den System-Prompt injizieren. So weiß der LLM cwd, repo, aktive Sessions,
       // offene Items, letzte Decisions etc. ohne dass der User sie tippen muss.
       // v1419 G3 — im Projektfaden (Owner-Faden projekt-<id8>) gilt der Projekt-Kontext wie im Web-Projekt-Chat
-      const projectIdForChat = message.metadata?.projectId ?? /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1];
+      // v1499 D1 — Owner-Entscheidung 19.10.: Fäden unter einem Projekt bekommen dessen Kontext wie der Projektfaden
+      const projectIdForChat = message.metadata?.projectId ?? /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1] ?? (gespraech ? conversation.projectId : undefined);
       if (projectIdForChat && this.projectRepo) {
         try {
           // v667 — masterUserId ist hier bereits auf project-owner überschrieben (Fix C oben)

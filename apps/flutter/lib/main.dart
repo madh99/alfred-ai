@@ -24,7 +24,6 @@ import 'gedaechtnis.dart'; // 1.9.0
 import 'befunde.dart'; // 1.12.0
 import 'beobachter.dart'; // 1.20.0
 import 'projekte.dart'; // 1.15.0
-import 'vorgaenge.dart'; // 1.9.0
 import 'vorgaenge_ansicht.dart'; // 1.34.0
 import 'eingang.dart'; // 1.36.0
 import 'faden_liste.dart'; // 1.41.0
@@ -445,6 +444,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool archivOffen = false; // 1.41.0 — Abschnitt „Archiv“ aufgeklappt
   String fadenFilter = ''; // 1.41.0 — Filter nach Titel (ab mehr als 12 Fäden)
   final Map<String, Timer> loeschenAusstehend = {}; // 1.41.0 — Löschen mit Rückgängig (8 s)
+  List<Map<String, dynamic>> projekteKurz = []; // 1.42.0 D1 — aktive Projekte vom Server (Seitenleiste, Zuordnen)
+  bool projekteZu = false; // 1.42.0 — Abschnitt „Projekte“ eingeklappt
+  final Set<String> projekteGeschlossen = {}; // 1.42.0 — eingeklappte Projektordner
+  final Set<String> projekteAlleFaeden = {}; // 1.42.0 — Projekte mit aufgeklapptem „Weitere“
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
 

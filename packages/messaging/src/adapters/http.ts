@@ -424,7 +424,7 @@ export class HttpAdapter extends MessagingAdapter {
   // v627 — Conversation-History API (WebUI viewer)
   /** v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche. */
   private gespraecheFn?: {
-    liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean }>>;
+    liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean; projekt?: { id: string; name: string } }>>;
     verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean }>>;
     loeschen: (faden: string) => Promise<boolean>;
     /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
@@ -432,7 +432,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1335 — Faden umbenennen. */
     umbenennen?: (faden: string, titel: string) => Promise<boolean>;
     /** v1497 — Faden anheften/lösen, archivieren/zurückholen. */
-    setzen?: (faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }) => Promise<boolean>;
+    setzen?: (faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => Promise<boolean>;
+    /** v1499 — aktive Projekte für Seitenleiste und Zuordnen-Dialog. */
+    projekte?: () => Promise<Array<{ id: string; name: string; aktualisiert: string; geraet?: string }>>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
 
@@ -1080,7 +1082,8 @@ export class HttpAdapter extends MessagingAdapter {
     spiegelung?(geraetId: string, setzen?: boolean): Promise<boolean | undefined>;
     /** v1335 — Faden umbenennen (nur Geräte des Owners). */
     fadenUmbenennen?(geraetId: string, faden: string, titel: string): Promise<boolean>;
-    fadenSetzen?(geraetId: string, faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }): Promise<boolean>; // v1497
+    fadenSetzen?(geraetId: string, faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }): Promise<boolean>; // v1497, v1499 projekt
+    fadenProjekte?(geraetId: string): Promise<Array<{ id: string; name: string; aktualisiert: string; geraet?: string }> | undefined>; // v1499
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
@@ -3004,7 +3007,8 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
     if (art === 'liste') {
       const faeden = (await this.gespraecheFn.liste()).filter(f => !f.archiv);
-      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faeden })); return;
+      const projekte = this.gespraecheFn.projekte ? await this.gespraecheFn.projekte().catch(() => []) : []; // v1499
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faeden, projekte })); return;
     }
     if (art === 'verlauf') {
       const faden = url.searchParams.get('faden');
@@ -6901,8 +6905,9 @@ export class HttpAdapter extends MessagingAdapter {
     const geraet = this.geraetIdentitaet.get(req);
     if (!geraet || !this.geraeteCallbacks?.faeden) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const faeden = await this.geraeteCallbacks.faeden(geraet.geraetId);
+    const projekte = this.geraeteCallbacks.fadenProjekte ? await this.geraeteCallbacks.fadenProjekte(geraet.geraetId).catch(() => undefined) : undefined; // v1499
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ geraet: geraet.name, faeden }));
+    res.end(JSON.stringify({ geraet: geraet.name, faeden, ...(projekte ? { projekte } : {}) }));
   }
 
   /** v1334 — Spiegel-Schalter aus der Desktop-App (GET liest, POST {"an": true|false} setzt). */
@@ -7111,14 +7116,15 @@ const GERAETE_PROJEKT_ERLAUBT = new Set(['chat-history', 'open-items', 'decision
  * v1497 — PATCH-Körper eines Fadens: {"titel"?: string, "angeheftet"?: boolean, "archiviert"?: boolean}.
  * Liefert undefined, wenn nichts Gültiges darin steht.
  */
-export function fadenAenderungLesen(body: string): { titel?: string; aenderung?: { angeheftet?: boolean; archiviert?: boolean } } | undefined {
+export function fadenAenderungLesen(body: string): { titel?: string; aenderung?: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null } } | undefined {
   let j: Record<string, unknown>;
   try { j = JSON.parse(body || '{}') as Record<string, unknown>; } catch { return undefined; }
   if (!j || typeof j !== 'object') return undefined;
   const titel = typeof j.titel === 'string' && j.titel.trim() ? j.titel.trim().slice(0, 80) : undefined;
-  const aenderung: { angeheftet?: boolean; archiviert?: boolean } = {};
+  const aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null } = {};
   if (typeof j.angeheftet === 'boolean') aenderung.angeheftet = j.angeheftet;
   if (typeof j.archiviert === 'boolean') aenderung.archiviert = j.archiviert;
+  if (j.projekt === null || (typeof j.projekt === 'string' && j.projekt.trim())) aenderung.projekt = j.projekt === null ? null : String(j.projekt).trim().slice(0, 80); // v1499
   const mitAenderung = Object.keys(aenderung).length > 0;
   if (!titel && !mitAenderung) return undefined;
   return { ...(titel ? { titel } : {}), ...(mitAenderung ? { aenderung } : {}) };

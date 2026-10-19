@@ -73,9 +73,8 @@ extension _Oberflaeche on _SitzungState {
   Widget _seitenleiste(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
     final geraet = konfig?.name ?? satellit?.name ?? '…';
-    final letzte = verlauf.where((e) => e.art == Art.du && e.text.trim().isNotEmpty).toList().reversed.take(8).toList();
     Widget abschnitt(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text(t, style: theme.textTheme.labelMedium?.copyWith(color: dim)));
-    final gruppen = fadenGruppen(faeden, alle: alleFaeden, filter: fadenFilter, ausgeblendet: loeschenAusstehend.keys.toSet()); // 1.41.0
+    final gruppen = fadenGruppen(faeden, alle: alleFaeden, filter: fadenFilter, ausgeblendet: loeschenAusstehend.keys.toSet(), projekte: projekteKurz, offeneProjekte: projekteAlleFaeden); // 1.41.0, 1.42.0 Projekte
     Widget fadenZeile(Map<String, dynamic> f, IconData symbol, {bool angeheftet = false}) => ListTile(
       dense: true, selected: server?.faden == f['faden'],
       leading: Icon(symbol, size: 18, color: angeheftet ? theme.colorScheme.primary : null),
@@ -96,6 +95,26 @@ extension _Oberflaeche on _SitzungState {
         ])),
         Padding(padding: const EdgeInsets.fromLTRB(10, 10, 10, 0), child: ListTile(dense: true, leading: const Icon(Icons.edit_square, size: 20), title: const Text('Neuer Chat'), subtitle: Text('Eigenes Gespräch mit Alfred', style: theme.textTheme.labelSmall?.copyWith(color: dim)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), tileColor: theme.colorScheme.surfaceContainerHigh, onTap: _neuerChat)),
         Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
+          // 1.42.0 D1 (App-Spec §11) — Projekte mit ihren Fäden, getrennt von den Gesprächen
+          if (gruppen.projekte.isNotEmpty) ...[
+            Padding(padding: const EdgeInsets.fromLTRB(16, 14, 4, 0), child: Row(children: [
+              Expanded(child: InkWell(onTap: () => _neu(() => projekteZu = !projekteZu), child: Row(children: [Text('Projekte', style: theme.textTheme.labelMedium?.copyWith(color: dim)), Icon(projekteZu ? Icons.chevron_right : Icons.expand_more, size: 16, color: dim)]))),
+              IconButton(tooltip: 'Alle Projekte', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _neu(() { projekteAnfang = null; ansicht = Ansicht.projekte; }), icon: const Icon(Icons.more_horiz)),
+              IconButton(tooltip: 'Neues Projekt (im Gespräch beschreiben)', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () { _neuerChat(); eingabe.text = 'Neues Projekt: '; fokus.requestFocus(); }, icon: const Icon(Icons.add)),
+            ])),
+            if (!projekteZu) for (final p in gruppen.projekte) ...[
+              ListTile(dense: true, contentPadding: const EdgeInsets.only(left: 8, right: 12),
+                leading: IconButton(tooltip: projekteGeschlossen.contains(p.id) ? 'Fäden zeigen' : 'Fäden ausblenden', iconSize: 18, visualDensity: VisualDensity.compact,
+                  onPressed: () => _neu(() { if (!projekteGeschlossen.remove(p.id)) projekteGeschlossen.add(p.id); }),
+                  icon: Icon(projekteGeschlossen.contains(p.id) ? Icons.folder_outlined : Icons.folder_open_outlined)),
+                title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+                onTap: () => _neu(() { projekteAnfang = p.id; ansicht = Ansicht.projekte; })),
+              if (!projekteGeschlossen.contains(p.id)) ...[
+                for (final f in p.faeden) Padding(padding: const EdgeInsets.only(left: 18), child: fadenZeile(f, istProjektFaden(f) ? Icons.construction : Icons.chat_bubble_outline)),
+                if (p.weitere > 0) Padding(padding: const EdgeInsets.only(left: 18), child: ListTile(dense: true, leading: const Icon(Icons.expand_more, size: 18), title: Text('Weitere (${p.weitere})', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)), onTap: () => _neu(() => projekteAlleFaeden.add(p.id)))),
+              ],
+            ],
+          ],
           abschnitt('Gespräche'),
           ListTile(dense: true, selected: server?.faden == null, leading: const Icon(Icons.forum_outlined, size: 18), title: Text('Hauptgespräch', style: theme.textTheme.bodySmall), onTap: () => _fadenWechseln(null)),
           // 1.41.0 (v1497) — angeheftete oben, dann die neuesten 12 mit „Weitere“, Filter ab 13 Fäden; Archiv getrennt
@@ -111,20 +130,16 @@ extension _Oberflaeche on _SitzungState {
             abschnitt('Bestätigungen (${offen.length})'),
             for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => _neu(() => ansicht = Ansicht.chat)),
           ],
-          if (gruppen.archiviert.isNotEmpty) ...[
-            ListTile(dense: true, leading: Icon(archivOffen ? Icons.expand_less : Icons.expand_more, size: 18), title: Text('Archiv (${gruppen.archiviert.length})', style: theme.textTheme.labelMedium?.copyWith(color: dim)), onTap: () => _neu(() => archivOffen = !archivOffen)),
+          // 1.42.0 D1 — Archiv mit den früheren Gerätesitzungen (vorher eigener Abschnitt)
+          if (gruppen.archiviert.isNotEmpty || gruppen.sitzungen.isNotEmpty) ...[
+            ListTile(dense: true, leading: Icon(archivOffen ? Icons.expand_less : Icons.expand_more, size: 18), title: Text('Archiv (${gruppen.archiviert.length + gruppen.sitzungen.length})', style: theme.textTheme.labelMedium?.copyWith(color: dim)), onTap: () => _neu(() => archivOffen = !archivOffen)),
             if (archivOffen || fadenFilter.isNotEmpty) for (final f in gruppen.archiviert) fadenZeile(f, Icons.archive_outlined),
+            if (archivOffen && gruppen.sitzungen.isNotEmpty) ...[
+              Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 2), child: Text('Frühere Sitzungen', style: theme.textTheme.labelSmall?.copyWith(color: dim))),
+              for (final f in gruppen.sitzungen.take(6)) ListTile(dense: true, selected: archiv == f['archiv'], leading: const Icon(Icons.inventory_2_outlined, size: 18), title: Text('${f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${_fadenZeit('${f['zeit'] ?? ''}')} · ${f['anzahl']} Nachrichten', style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _archivOeffnen('${f['archiv']}')),
+            ],
           ],
-          if (gruppen.sitzungen.isNotEmpty) ...[
-            abschnitt('Frühere Sitzungen'), // 1.41.0 — hieß „Archiv (frühere Sitzungen)“
-            for (final f in gruppen.sitzungen.take(6)) ListTile(dense: true, selected: archiv == f['archiv'], leading: const Icon(Icons.inventory_2_outlined, size: 18), title: Text('${f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${_fadenZeit('${f['zeit'] ?? ''}')} · ${f['anzahl']} Nachrichten', style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _archivOeffnen('${f['archiv']}')),
-          ],
-          abschnitt('Vorgänge${vorgaenge.isEmpty ? '' : ' (${vorgaenge.length})'}'),
-          if (vorgaenge.isEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('Keine offenen Vorgänge.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
-          if (vorgaenge.length > 8) ListTile(dense: true, leading: const Icon(Icons.more_horiz, size: 18), title: Text('Alle ${vorgaenge.length} anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)), onTap: () => _neu(() => ansicht = Ansicht.vorgaenge)), // 1.34.0
-          for (final v in vorgaenge.take(8)) ListTile(dense: true, leading: const Icon(Icons.assignment_outlined, size: 18), title: Text('${v['titel'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${v['status'] ?? ''}${v['naechsterSchritt'] != null ? ' · ${v['naechsterSchritt']}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _vorgangOeffnen(v)), // 1.9.0 A4 — Details und Entscheidung statt nur Nachfrage
-          if (letzte.isNotEmpty) abschnitt('Letzte'),
-          for (final e in letzte) ListTile(dense: true, leading: const Icon(Icons.history, size: 18), title: Text(e.text.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () { eingabe.text = e.text; fokus.requestFocus(); _neu(() => ansicht = Ansicht.chat); }),
+          // 1.42.0 D1 — „Vorgänge“ (Eingang in der Navigation zählt sie) und „Letzte“ (zeigen die Fäden) entfallen
         ])),
         const Divider(height: 1),
         Padding(padding: const EdgeInsets.fromLTRB(16, 8, 12, 10), child: Row(children: [

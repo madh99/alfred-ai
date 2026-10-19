@@ -8973,7 +8973,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
-            setzen: (faden: string, a: { angeheftet?: boolean; archiviert?: boolean }) => this.ownerFadenSetzen(faden, a), // v1497
+            setzen: (faden: string, a: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => this.ownerFadenSetzen(faden, a), // v1497, v1499 projekt
+            projekte: () => this.ownerProjekteKurz(), // v1499
             // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
             istOwner: async (webUserId: string) => {
               if (!this.ownerMasterUserId) return false;
@@ -14147,7 +14148,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             });
           },
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
-          fadenSetzen: async (geraetId: string, faden: string, a: { angeheftet?: boolean; archiviert?: boolean }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenSetzen(faden, a) : false, // v1497
+          fadenSetzen: async (geraetId: string, faden: string, a: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenSetzen(faden, a) : false, // v1497, v1499 projekt
+          fadenProjekte: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerProjekteKurz() : undefined, // v1499
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -15623,10 +15625,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const haupt = hauptgespraech(this.gespraechsOptionen());
     const h = await this.conversationRepo.findByPlatformChat(haupt.platform, haupt.chatId);
     aus.push({ faden: null, titel: 'Hauptgespräch', zeit: h?.updatedAt ?? new Date(0).toISOString(), anzahl: h ? await this.conversationRepo.countMessages(h.id) : 0 }); // v1336 Zahl statt 0
-    // v1497 — aktive Fäden (angeheftete zuerst), danach die archivierten mit Kennzeichen
+    // v1497 — aktive Fäden (angeheftete zuerst), danach die archivierten mit Kennzeichen; v1499 mit Projekt
+    const { projektDesFadens } = await import('./gespraeche.js');
+    const projekte = await this.ownerProjekteKurz();
     for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 200, { archiviert: false })) {
       if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
-      aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl, ...(c.pinnedAt ? { angeheftet: true } : {}) });
+      const faden = c.chatId.slice(FADEN_PRAEFIX.length);
+      const projekt = projektDesFadens(faden, c.projectId, projekte);
+      aus.push({ faden, titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl, ...(c.pinnedAt ? { angeheftet: true } : {}), ...(projekt ? { projekt } : {}) });
     }
     for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 200, { archiviert: true })) {
       if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
@@ -16276,13 +16282,45 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * v1497 — Faden anheften/lösen, archivieren/zurückholen (Owner-Freigabe 18.10.). Archivieren löst das Anheften;
    * Schreiben in einen archivierten Faden holt ihn zurück (ConversationRepository.addMessage).
    */
+  /** v1499 — aktive Geräte-Projekte des Owners, zuletzt aktive zuerst (Seitenleiste, Zuordnen-Dialog, Telegram). */
+  async ownerProjekteKurz(): Promise<import('./gespraeche.js').ProjektKurz[]> {
+    const o = this.ownerMasterUserId;
+    if (!o || !this.projectRepo) return [];
+    const l = await this.projectRepo.list(o, { nurGeraete: true, limit: 500 }).catch(() => []);
+    return l.filter(p => p.status !== 'archived')
+      .map(p => ({ id: p.id, name: p.name, aktualisiert: p.lastActiveAt ?? p.createdAt, ...(p.geraet ? { geraet: p.geraet } : {}) }))
+      .sort((a, b) => String(b.aktualisiert).localeCompare(String(a.aktualisiert)));
+  }
+
+  /**
+   * v1499 (D1) — Faden, aus dem ein Projekt gestartet wurde, dem Projekt zuordnen. Nur wenn der Faden noch keinem Projekt
+   * gehört: eine Zuordnung oder ein Lösen durch den Owner bleibt stehen. Hauptgespräch, Telegram und Projektfäden zählen nicht.
+   */
+  async fadenMitProjektVerknuepfen(chatId: string | undefined, projektId: string): Promise<boolean> {
+    if (!this.conversationRepo) return false;
+    const { fadenAusChatId, fadenSchluessel } = await import('./gespraeche.js');
+    const faden = fadenAusChatId(chatId);
+    if (!faden) return false;
+    const k = fadenSchluessel(faden);
+    const c = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
+    if (!c || c.deletedAt || c.projectId) return false;
+    await this.conversationRepo.updateLifecycle(c.id, { projectId: projektId });
+    this.logger.info({ faden, projekt: projektId }, 'v1499 Faden dem Projekt zugeordnet');
+    return true;
+  }
+
   async ownerFadenSetzen(faden: string, aenderung: import('./gespraeche.js').FadenAenderung): Promise<boolean> {
     if (!this.conversationRepo) return false;
-    const { fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
+    const { fadenSchluessel, FADEN_RE, projektAusEingabe } = await import('./gespraeche.js');
     if (!FADEN_RE.test(faden)) return false;
     const c = await this.conversationRepo.findByPlatformChat(fadenSchluessel(faden).platform, fadenSchluessel(faden).chatId);
     if (!c || c.deletedAt) return false;
-    const u: { pinned?: boolean; archived?: boolean } = {};
+    const u: { pinned?: boolean; archived?: boolean; projectId?: string | null } = {};
+    if (aenderung.projekt !== undefined) { // v1499 — zuordnen (ID, Anfang oder Name) oder lösen (null); Projektfäden bleiben bei ihrem Projekt
+      if (faden.startsWith('projekt-')) return false;
+      if (aenderung.projekt === null) u.projectId = null;
+      else { const p = projektAusEingabe(aenderung.projekt, await this.ownerProjekteKurz()); if (!p) return false; u.projectId = p.id; }
+    }
     if (aenderung.angeheftet !== undefined) u.pinned = aenderung.angeheftet;
     if (aenderung.archiviert !== undefined) { u.archived = aenderung.archiviert; if (aenderung.archiviert) u.pinned = false; }
     if (Object.keys(u).length === 0) return false;
@@ -16358,6 +16396,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
           const id = await zuordnen(s);
           if (id && aktenRepo) await aktenRepo.sitzung(id, s, s.start).catch((err: Error) => this.logger.warn({ err: err.message, lauf: s.id }, 'v1399 Projekt-Sitzung nicht angelegt'));
           const f = projektFaden(id); if (f) await this.ownerFadenUmbenennen(f, `🔨 ${s.akteName ?? 'Projekt'}`).catch(() => false); // v1419 G3
+          if (id) await this.fadenMitProjektVerknuepfen(s.herkunft?.chatId, id).catch(() => false); // v1499 D1 — Herkunftsfaden unter das Projekt
           // v1486 F5 — offene Einrichtung einmal je Lauf im Projektfaden nennen (hält nichts auf)
           if (f && id && this.projectRepo) {
             const o = owner(); const p = o ? await this.projectRepo.getById(o, id).catch(() => null) : null;
@@ -16953,6 +16992,20 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         } catch (err) { this.logger.warn({ lauf: l.id, err: (err as Error).message }, 'v1398 Lauf nicht zugeordnet'); }
       }
       await namenAuffrischen();
+      // v1499 D1 — einmalig: Herkunftsfäden bestehender Projekte zuordnen (älteste Läufe zuerst; Marker verhindert, dass ein
+      // späteres „Aus Projekt lösen“ beim nächsten Start überschrieben wird)
+      try {
+        const fs = await import('node:fs');
+        const marker = path.resolve(process.cwd(), 'data', 'projekte-satellit', '.faden-zuordnung-v1499');
+        if (!fs.existsSync(marker)) {
+          let n = 0;
+          for (const l of projekte.liste().filter(x => x.akteId && x.herkunft).sort((x, y) => x.start - y.start)) {
+            if (await this.fadenMitProjektVerknuepfen(l.herkunft!.chatId, l.akteId!).catch(() => false)) n++;
+          }
+          fs.writeFileSync(marker, new Date().toISOString());
+          this.logger.info({ zugeordnet: n }, 'v1499 Herkunftsfäden bestehender Projekte zugeordnet');
+        }
+      } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1499 Herkunftsfäden nicht zugeordnet'); }
     })(); }, 95_000).unref?.();
     void namenAuffrischen();
     // v1399 — Web: Geräte-Projekt-Stand und Weiterarbeiten über denselben Skill-Weg wie im Gespräch (Plan → Bestätigung)

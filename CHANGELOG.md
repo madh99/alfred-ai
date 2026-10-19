@@ -55,6 +55,29 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1499] - 2026-10-19
+
+### Added — Projekte in der Seitenleiste, Fäden unter ihrem Projekt (App 1.42.0, Web, Telegram; App-Spec §11 D1)
+
+Owner 19.10.: Projektfäden und Gesprächsfäden sollen getrennt stehen, „Letzte“ kann entfallen. Ein Faden, aus dem ein Projekt entstanden ist, gehört unter das Projekt. Realfall: „finanzapp“ stand neben „🔨 Finanz-Backend“, obwohl das Projekt dort begonnen wurde.
+
+- **Seitenleiste der App**, von oben:
+  - **Projekte** (einklappbar, „…“ = alle Projekte, „+“ = neues Projekt im Gespräch beschreiben). Je aktives Projekt ein Ordner, darunter Projektfaden und zugeordnete Fäden (höchstens 5, sonst „Weitere“). Klick auf den Namen öffnet die Projektansicht.
+  - **Gespräche** ohne Projektfäden.
+  - **Bestätigungen**, solange offene da sind.
+  - **Archiv** mit den früheren Gerätesitzungen.
+  - „Letzte“ und „Vorgänge“ entfallen (Owner-Entscheidung; der Eingang in der Navigation zählt die Vorgänge).
+  - Der Filter sucht auch in Projektnamen.
+- **Zuordnung:**
+  - Startet ein Projekt aus einem Faden, gehört dieser Faden ab der Freigabe des Laufs zum Projekt (`conversations.project_id`).
+  - Bestehende Projekte bekommen ihren Herkunftsfaden einmalig aus der gespeicherten Herkunft ihrer Läufe. Ein Marker verhindert, dass ein späteres „Aus Projekt lösen“ beim nächsten Start überschrieben wird.
+  - Hauptgespräch, Telegram und Projektfäden selbst werden nie zugeordnet.
+  - **Von Hand:** in der App „Einem Projekt zuordnen …“ und „Aus Projekt lösen“ im Faden-Menü; im Web 📁 bzw. 📤 an der Fadenzeile; in Telegram `/faden projekt <Nr|Kennung> <Projekt>`, mit `-` zum Lösen. Das Projekt geht per ID, ID-Anfang oder Name.
+- **Kontext:** In einem zugeordneten Faden bekommt Alfred den Projekt-Kontext und die Projekt-Werkzeuge wie im Projektfaden (Owner-Entscheidung 2). Ohne Projektnamen ist klar, welches Projekt gemeint ist.
+- **Web:** Die Fäden stehen unter den Projektordnern der Seitenleiste. Geräte-Projekte erscheinen dort, sobald sie Fäden haben. „Gespräche“ zeigt keine Projektfäden mehr.
+- **Server:** Die Fadenlisten liefern je Faden `projekt` (id, name) und die Liste `projekte` (aktive Geräte-Projekte). PATCH nimmt `projekt` (ID/Name oder `null`).
+- Tests: 9 Server, 5 App.
+
 ## [0.19.0-jarvis.1498] - 2026-10-19
 
 ### Fixed — Fragen zum Projekt brechen nicht mehr an einer festen Kostengrenze ab

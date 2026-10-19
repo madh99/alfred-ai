@@ -147,10 +147,13 @@ export function spiegelBefehl(text: string, store: FadenStore): string {
 }
 
 /** archiv = frühere Gerätesitzung (nur lesen); angeheftet/archiviert (v1497) = Zustand eines Owner-Fadens. */
-export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean }
+export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string; angeheftet?: boolean; archiviert?: boolean; projekt?: { id: string; name: string } }
+
+/** v1499 — aktive Projekte (Geräte-Projektakten) für die Seitenleiste und den Zuordnen-Dialog. */
+export interface ProjektKurz { id: string; name: string; aktualisiert: string; geraet?: string }
 
 /** v1497 — Anheften und Archivieren eines Fadens. */
-export interface FadenAenderung { angeheftet?: boolean; archiviert?: boolean }
+export interface FadenAenderung { angeheftet?: boolean; archiviert?: boolean; /** v1499 — Projekt-ID, Name oder null (lösen) */ projekt?: string | null }
 
 /** v1335 — Abhängigkeiten der Faden-Befehle und der Pipeline (ein Typ für beide Seiten). */
 export interface FadenDeps {
@@ -191,7 +194,20 @@ export async function fadenBefehl(
     const alle = await deps.liste();
     const l = alle.filter(f => !f.archiv && !f.archiviert);
     const archiviert = alle.filter(f => f.archiviert).length;
-    return `Gespräche (▶ = aktiv hier, 📌 = angeheftet):\n${l.map(zeile).join('\n')}${archiviert ? `\n\nArchiviert: ${archiviert} — /faden archiv zeigt sie.` : ''}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden name <Kennung> <Titel> · /faden anheften|lösen <Nr|Kennung> · /faden archiv [<Nr|Kennung>] · /faden zurück <Kennung> · /faden löschen <Kennung>`;
+    return `Gespräche (▶ = aktiv hier, 📌 = angeheftet):\n${l.map(zeile).join('\n')}${archiviert ? `\n\nArchiviert: ${archiviert} — /faden archiv zeigt sie.` : ''}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden name <Kennung> <Titel> · /faden anheften|lösen <Nr|Kennung> · /faden archiv [<Nr|Kennung>] · /faden zurück <Kennung> · /faden projekt <Nr|Kennung> <Projekt> · /faden löschen <Kennung>`;
+  }
+  // v1499 — `/faden projekt <Nr|Kennung> <Projekt>` ordnet zu, `… -` löst
+  if (wort === 'projekt') {
+    if (!deps.setzen) return 'Das geht hier nicht.';
+    const l = await sichtbar();
+    const nr = Number(rest[0]);
+    const f = Number.isInteger(nr) && nr >= 1 && nr <= l.length ? l[nr - 1].faden : FADEN_RE.test(rest[0] ?? '') ? rest[0] : null;
+    const name = rest.slice(1).join(' ').trim();
+    if (!f || !name) return 'So geht es: /faden projekt <Nr|Kennung> <Projekt> — oder /faden projekt <Nr|Kennung> - zum Lösen.';
+    if (f.startsWith('projekt-')) return 'Ein Projektfaden gehört immer zu seinem Projekt.';
+    const loesen = name === '-';
+    if (!(await deps.setzen(f, { projekt: loesen ? null : name }))) return loesen ? `Faden ${f} nicht gefunden.` : `Faden ${f} oder Projekt „${name}“ nicht gefunden.`;
+    return loesen ? `Faden ${f} gehört zu keinem Projekt mehr.` : `Faden ${f} gehört jetzt zum Projekt „${name}“.`;
   }
   // v1497 — anheften, lösen, archivieren, zurückholen (ohne Angabe: der aktive Faden)
   if (['anheften', 'lösen', 'loesen', 'archiv', 'archivieren', 'zurück', 'zurueck'].includes(wort)) {
@@ -239,4 +255,34 @@ export async function fadenBefehl(
   if (!ziel) return `Kein Faden „${wort}“. /faden zeigt die Liste.`;
   deps.store.setze(platform, chatId, ziel.faden);
   return ziel.faden ? `Weiter im Faden ${ziel.faden} — ${ziel.titel || '(leer)'}.` : 'Zurück im Hauptgespräch.';
+}
+
+/**
+ * v1499 — Faden aus der Chat-Kennung einer Anfrage (Herkunft eines Projektstarts): App/Terminal `sitzung:<gerät>:<faden>`,
+ * Owner-Faden `owner:faden:<faden>`. Hauptgespräch, Projektfäden und Kanal-Chats (Telegram) haben keinen eigenen Faden.
+ */
+export function fadenAusChatId(chatId: string | undefined): string | undefined {
+  if (!chatId) return undefined;
+  const m = /^owner:faden:([a-z0-9-]{1,40})$/.exec(chatId) ?? /^(?:api:)?sitzung:[^:]+:([a-z0-9-]{1,40})$/.exec(chatId);
+  const f = m?.[1];
+  if (!f || f === 'haupt' || f.startsWith('projekt-')) return undefined;
+  return f;
+}
+
+/**
+ * v1499 — Projekt eines Fadens: der Projektfaden `projekt-<id8>` gehört immer zu seinem Projekt, andere Fäden über die
+ * Zuordnung (conversations.project_id). Nur aktive Projekte zählen; archivierte geben den Faden frei.
+ */
+export function projektDesFadens(faden: string | null, projectId: string | undefined, projekte: ProjektKurz[]): { id: string; name: string } | undefined {
+  const kurz = /^projekt-([0-9a-f]{8})$/.exec(faden ?? '')?.[1];
+  const p = kurz ? projekte.find(x => x.id.startsWith(kurz)) : projectId ? projekte.find(x => x.id === projectId) : undefined;
+  return p ? { id: p.id, name: p.name } : undefined;
+}
+
+/** v1499 — Projekt aus der Eingabe des Owners: ID, ID-Anfang oder Name (ohne Groß/klein, ohne 🔨). */
+export function projektAusEingabe(eingabe: string, projekte: ProjektKurz[]): ProjektKurz | undefined {
+  const e = eingabe.replace(/🔨/g, '').trim().toLowerCase();
+  if (!e) return undefined;
+  return projekte.find(p => p.id === e) ?? projekte.find(p => e.length >= 6 && p.id.startsWith(e))
+    ?? projekte.find(p => p.name.toLowerCase() === e) ?? (() => { const t = projekte.filter(p => p.name.toLowerCase().includes(e)); return t.length === 1 ? t[0] : undefined; })();
 }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
 import { eingangEintraege, hinweisOffen, vorgaengeFuerDich } from '@/components/eingang/eingang-logik';
-import { fadenGruppen, fadenTitel, type FadenEintrag } from './faden-liste'; // v1497
+import { fadenGruppen, fadenTitel, istProjektFaden, type FadenEintrag, type ProjektKurz } from './faden-liste'; // v1497, v1499
 
 const BASE = '/alfred';
 
@@ -72,8 +72,11 @@ export function Sidebar() {
   const [fadenFilter, setFadenFilter] = useState('');
   const [geloescht, setGeloescht] = useState<{ faden: string; titel: string } | null>(null);
   const loeschTimer = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // v1499 (D1) — aktive Geräte-Projekte und je Projekt aufgeklapptes „Weitere“
+  const [projekteKurz, setProjekteKurz] = useState<ProjektKurz[]>([]);
+  const [offeneProjekte, setOffeneProjekte] = useState<Set<string>>(new Set());
   const aktiverFaden = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('faden') : null;
-  function faedenLaden() { if (client) client.fetchGespraeche().then(setFaeden).catch(() => setFaeden([])); }
+  function faedenLaden() { if (client) client.fetchGespraecheMitProjekten().then(r => { setFaeden(r.faeden); setProjekteKurz(r.projekte); }).catch(() => setFaeden([])); } // v1499
   useEffect(() => { faedenLaden(); }, [client]); // eslint-disable-line react-hooks/exhaustive-deps
   function neuerFaden() {
     const id = Date.now().toString(36);
@@ -105,13 +108,22 @@ export function Sidebar() {
     loeschTimer.current.delete(geloescht.faden);
     setGeloescht(null);
   }
-  async function fadenSetzen(f: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }) {
+  // v1499 (D1) — Faden einem Projekt zuordnen (Auswahl per Nummer) oder lösen
+  function fadenProjekt(f: FadenEintrag) {
+    if (!f.faden) return;
+    if (f.projekt) { void fadenSetzen(f.faden, { projekt: null }); return; }
+    if (projekteKurz.length === 0) { alert('Es gibt noch kein aktives Projekt.'); return; }
+    const wahl = prompt(`Einem Projekt zuordnen — Nummer eingeben:\n${projekteKurz.map((p, i) => `${i + 1}. ${p.name}`).join('\n')}`)?.trim();
+    const nr = Number(wahl);
+    if (Number.isInteger(nr) && nr >= 1 && nr <= projekteKurz.length) void fadenSetzen(f.faden, { projekt: projekteKurz[nr - 1].id });
+  }
+  async function fadenSetzen(f: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) {
     if (!client) return;
     try { await client.setzeGespraech(f, aenderung); } catch {}
     faedenLaden();
     if (aenderung.archiviert && aktiverFaden === f) window.location.href = `${BASE}/chat/`;
   }
-  const gruppen = fadenGruppen(faeden, { alle: alleFaeden, filter: fadenFilter, ausgeblendet: new Set([...loeschTimer.current.keys(), ...(geloescht ? [geloescht.faden] : [])]) });
+  const gruppen = fadenGruppen(faeden, { alle: alleFaeden, filter: fadenFilter, ausgeblendet: new Set([...loeschTimer.current.keys(), ...(geloescht ? [geloescht.faden] : [])]), projekte: projekteKurz, offeneProjekte });
   const fadenZeile = (f: FadenEintrag, symbol: string) => (
     <div key={f.faden ?? 'haupt'} className={clsx('group flex items-center gap-2 px-3 py-1 rounded-lg', (f.faden ?? null) === (aktiverFaden ?? null) && isActive(`${BASE}/chat`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}>
       <a href={f.faden ? `${BASE}/chat/?faden=${encodeURIComponent(f.faden)}` : `${BASE}/chat/`} className="flex-1 min-w-0 flex items-center gap-2">
@@ -122,6 +134,7 @@ export function Sidebar() {
         <>
           {!f.archiviert && <button onClick={() => fadenSetzen(f.faden!, { angeheftet: !f.angeheftet })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-amber-400 text-xs" title={f.angeheftet ? 'Lösen' : 'Anheften'}>{f.angeheftet ? '📍' : '📌'}</button>}
           <button onClick={() => fadenUmbenennen(f.faden!, f.titel)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Umbenennen">✎</button>
+          {!f.archiviert && !istProjektFaden(f) && <button onClick={() => fadenProjekt(f)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title={f.projekt ? `Aus Projekt „${f.projekt.name}“ lösen` : 'Einem Projekt zuordnen'}>{f.projekt ? '📤' : '📁'}</button>}
           <button onClick={() => fadenSetzen(f.faden!, { archiviert: !f.archiviert })} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title={f.archiviert ? 'Zurückholen' : 'Archivieren'}>{f.archiviert ? '↩' : '🗄'}</button>
           <button onClick={() => fadenLoeschen(f.faden!, fadenTitel(f))} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
         </>
@@ -425,7 +438,7 @@ export function Sidebar() {
         </div>
 
         {/* Projekte (collapsible) */}
-        {projects.length > 0 && (
+        {(projects.length > 0 || gruppen.projekte.some(g => g.faeden.length > 0)) && (
           <div>
             <div className="flex items-center justify-between px-3 py-1">
               <button
@@ -440,16 +453,26 @@ export function Sidebar() {
             </div>
             {projectsOpen && (
               <div className="space-y-0.5">
-                {projects.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => openProject(p.id)}
-                    className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
-                  >
-                    <span className="text-[11px]">📁</span>
-                    <span className="truncate flex-1">{p.name}</span>
-                  </button>
-                ))}
+                {[...projects, ...gruppen.projekte.filter(g => g.faeden.length > 0 && !projects.some(p => p.id === g.id)).map(g => ({ id: g.id, name: g.name }))].map(p => {
+                  const g = gruppen.projekte.find(x => x.id === p.id); // v1499 (D1) — Fäden des Projekts darunter
+                  return (
+                    <div key={p.id}>
+                      <button
+                        onClick={() => openProject(p.id)}
+                        className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
+                      >
+                        <span className="text-[11px]">📁</span>
+                        <span className="truncate flex-1">{p.name}</span>
+                      </button>
+                      {g && g.faeden.length > 0 && (
+                        <div className="ml-4">
+                          {g.faeden.map(f => fadenZeile(f, istProjektFaden(f) ? '🔨' : '🧵'))}
+                          {g.weitere > 0 && <button onClick={() => setOffeneProjekte(s => new Set([...s, p.id]))} className="w-full text-left px-3 py-1 text-xs text-blue-400 hover:underline">Weitere ({g.weitere})</button>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

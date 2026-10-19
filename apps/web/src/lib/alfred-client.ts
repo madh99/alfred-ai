@@ -195,6 +195,14 @@ export class AlfredClient {
     return (await res.json()).faeden ?? [];
   }
 
+  /** v1499 (D1) — Fäden samt aktiven Geräte-Projekten (Seitenleiste, Zuordnen). */
+  async fetchGespraecheMitProjekten(): Promise<{ faeden: Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; angeheftet?: boolean; archiviert?: boolean; projekt?: { id: string; name: string } }>; projekte: Array<{ id: string; name: string; aktualisiert?: string }> }> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Gespräche: ${res.status}`);
+    const j = await res.json();
+    return { faeden: j.faeden ?? [], projekte: j.projekte ?? [] };
+  }
+
   async fetchGespraechVerlauf(faden: string | null, limit = 200): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>> {
     const q = `limit=${limit}${faden ? `&faden=${encodeURIComponent(faden)}` : ''}`;
     const res = await fetch(`${this.baseUrl}/api/gespraeche/verlauf?${q}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
@@ -208,7 +216,7 @@ export class AlfredClient {
   }
 
   /** v1497 — Faden anheften/lösen, archivieren/zurückholen. */
-  async setzeGespraech(faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean }): Promise<boolean> {
+  async setzeGespraech(faden: string, aenderung: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }): Promise<boolean> { // v1499 projekt
     const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, body: JSON.stringify(aenderung) });
     return res.ok;
   }

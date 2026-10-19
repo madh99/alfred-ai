@@ -25,7 +25,8 @@ extension _Gespraeche on _SitzungState {
     try {
       final j = await s.json('/api/geraete/faeden');
       final l = ((j['faeden'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
-      if (mounted) _neu(() => faeden = l);
+      final p = ((j['projekte'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>(); // 1.42.0 D1
+      if (mounted) _neu(() { faeden = l; projekteKurz = p; });
     } catch (_) { /* Seitenleiste ist Komfort */ }
   }
 
@@ -135,6 +136,16 @@ extension _Gespraeche on _SitzungState {
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht geändert: $e')); }
   }
 
+  /// 1.42.0 D1 — Faden einem Projekt zuordnen (Auswahl der aktiven Projekte) oder lösen.
+  Future<void> _fadenProjektWaehlen(String faden) async {
+    if (projekteKurz.isEmpty) { _zeile(Eintrag(Art.hinweis, 'Es gibt noch kein aktives Projekt.')); return; }
+    final id = await showDialog<String>(context: context, builder: (ctx) => SimpleDialog(
+      title: const Text('Einem Projekt zuordnen'),
+      children: [for (final p in projekteKurz) SimpleDialogOption(onPressed: () => Navigator.of(ctx).pop('${p['id']}'), child: Row(children: [const Icon(Icons.folder_outlined, size: 18), const SizedBox(width: 10), Expanded(child: Text('${p['name']}'))]))],
+    ));
+    if (id != null) await _fadenSetzen(faden, {'projekt': id});
+  }
+
   /// 1.41.0 — Menü je Faden: Anheften, Umbenennen, Archivieren, Löschen.
   Widget _fadenMenue(Map<String, dynamic> f) {
     final id = '${f['faden']}'; final titel = fadenTitelText(f);
@@ -146,12 +157,17 @@ extension _Gespraeche on _SitzungState {
           case 'anheften': _fadenSetzen(id, {'angeheftet': !angeheftet});
           case 'umbenennen': _fadenUmbenennen(id, '${f['titel'] ?? ''}');
           case 'archiv': _fadenSetzen(id, {'archiviert': !archiviert});
+          case 'projekt': _fadenProjektWaehlen(id); // 1.42.0 D1
+          case 'projekt_loesen': _fadenSetzen(id, {'projekt': null});
           case 'loeschen': _fadenLoeschen(id, titel);
         }
       },
       itemBuilder: (_) => [
         if (!archiviert) PopupMenuItem(value: 'anheften', child: ListTile(dense: true, leading: Icon(angeheftet ? Icons.push_pin : Icons.push_pin_outlined, size: 18), title: Text(angeheftet ? 'Lösen' : 'Anheften'))),
         const PopupMenuItem(value: 'umbenennen', child: ListTile(dense: true, leading: Icon(Icons.edit_outlined, size: 18), title: Text('Umbenennen'))),
+        if (!archiviert && !istProjektFaden(f)) fadenProjektId(f) == null
+            ? const PopupMenuItem(value: 'projekt', child: ListTile(dense: true, leading: Icon(Icons.drive_file_move_outlined, size: 18), title: Text('Einem Projekt zuordnen …')))
+            : const PopupMenuItem(value: 'projekt_loesen', child: ListTile(dense: true, leading: Icon(Icons.drive_file_move_rtl_outlined, size: 18), title: Text('Aus Projekt lösen'))),
         PopupMenuItem(value: 'archiv', child: ListTile(dense: true, leading: Icon(archiviert ? Icons.unarchive_outlined : Icons.archive_outlined, size: 18), title: Text(archiviert ? 'Zurückholen' : 'Archivieren'))),
         const PopupMenuItem(value: 'loeschen', child: ListTile(dense: true, leading: Icon(Icons.delete_outline, size: 18), title: Text('Löschen'))),
       ],
@@ -249,9 +265,5 @@ extension _Gespraeche on _SitzungState {
   }
 
   void _nachfragen(String text) { eingabe.text = text; fokus.requestFocus(); _neu(() => ansicht = Ansicht.chat); }
-
-  Future<void> _vorgangOeffnen(Map<String, dynamic> v) async {
-    final s = server; if (s == null) return;
-    if (await zeigeVorgang(context, v: v, schritte: vorgangSchritte, json: s.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen)) await _vorgaengeLaden();
-  }
+  // 1.42.0 D1 — _vorgangOeffnen entfällt mit dem Abschnitt „Vorgänge“; Vorgänge öffnen sich in ihrer Ansicht (Eingang/Vorgänge)
 }
