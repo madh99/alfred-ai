@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreLocation
 import Flutter
 import Network
 import PhotosUI
@@ -23,12 +24,15 @@ import UserNotifications
   private var fotoWahl: FotoWahl?
   /// 1.54.4 — offene Vorschau (Quick Look hält seine Datenquelle nicht selbst)
   private var vorschauQuelle: Vorschau?
+  /// v1522 — Standortzonen; früh angelegt, damit iOS Zonenereignisse auch nach einem Start im Hintergrund zustellt
+  let zonen = ZonenWaechter()
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     UNUserNotificationCenter.current().delegate = self
+    zonen.starte()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -181,6 +185,16 @@ import UserNotifications
             picker.delegate = wahl
             self?.obersteAnsicht()?.present(picker, animated: true)
           }
+        case "zonenSetzen":
+          // v1522 — Zonen aus den App-Einstellungen [{name, breite, laenge, radius}]; iOS überwacht sie selbst
+          self?.zonen.setze((args["zonen"] as? [[String: Any]]) ?? [])
+          ergebnis(true)
+        case "zonenErlaubnis":
+          self?.zonen.erlaubnis { ergebnis($0) }
+        case "zonenStatus":
+          ergebnis(self?.zonen.status())
+        case "ortJetzt":
+          self?.zonen.ortJetzt { ergebnis($0) }
         case "vorschau":
           // 1.54.4 — Anhang antippen: iOS-Vorschau (vergrößern, PDF/Office, Teilen/Sichern); Realfall 20.10. 01:29 xdg-open auf iOS
           guard let pfad = args["pfad"] as? String else { ergebnis(false); return }
@@ -245,6 +259,85 @@ final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
   init(fertig: @escaping (URL?) -> Void) { self.fertig = fertig }
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { fertig(urls.first) }
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { fertig(nil) }
+}
+
+/// v1522 — Standortzonen: iOS überwacht Kreiszonen (energiesparend, auch bei geschlossener App) und weckt die App beim
+/// Betreten/Verlassen kurz im Hintergrund; die Meldung geht nativ an den Server (nur der Zonenname, nie Koordinaten).
+final class ZonenWaechter: NSObject, CLLocationManagerDelegate {
+  private let ort = CLLocationManager()
+  private var erlaubnisFertig: ((String) -> Void)?
+  private var ortFertig: (([String: Any]?) -> Void)?
+  static let schluessel = "alfred.zonen"
+
+  func starte() { ort.delegate = self }
+
+  func status() -> String {
+    switch ort.authorizationStatus {
+    case .authorizedAlways: return "immer"
+    case .authorizedWhenInUse: return "beimBenutzen"
+    case .denied, .restricted: return "abgelehnt"
+    default: return "offen"
+    }
+  }
+
+  /// Erst „Beim Verwenden“, danach „Immer“ (iOS fragt in zwei Schritten); Ergebnis wie status()
+  func erlaubnis(_ fertig: @escaping (String) -> Void) {
+    erlaubnisFertig = fertig
+    switch ort.authorizationStatus {
+    case .notDetermined: ort.requestWhenInUseAuthorization()
+    case .authorizedWhenInUse: ort.requestAlwaysAuthorization()
+    default: erlaubnisFertig = nil; fertig(status())
+    }
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    if manager.authorizationStatus == .authorizedWhenInUse, erlaubnisFertig != nil { manager.requestAlwaysAuthorization(); return }
+    if let f = erlaubnisFertig, manager.authorizationStatus != .notDetermined { erlaubnisFertig = nil; f(status()) }
+    if manager.authorizationStatus == .authorizedAlways { pruefeAlle() }
+  }
+
+  func setze(_ liste: [[String: Any]]) {
+    UserDefaults.standard.set(liste, forKey: ZonenWaechter.schluessel)
+    for r in ort.monitoredRegions { ort.stopMonitoring(for: r) }
+    for z in liste.prefix(10) {
+      guard let name = z["name"] as? String, let b = z["breite"] as? Double, let l = z["laenge"] as? Double else { continue }
+      let radius = min(max((z["radius"] as? Double) ?? 150, 100), ort.maximumRegionMonitoringDistance)
+      let r = CLCircularRegion(center: CLLocationCoordinate2D(latitude: b, longitude: l), radius: radius, identifier: name)
+      r.notifyOnEntry = true; r.notifyOnExit = true
+      ort.startMonitoring(for: r)
+    }
+    if liste.isEmpty { melde(art: "aus", zone: nil) } else { pruefeAlle() } // keine Zonen: Server vergisst die letzte
+  }
+
+  private func pruefeAlle() { for r in ort.monitoredRegions { ort.requestState(for: r) } }
+
+  func ortJetzt(_ fertig: @escaping ([String: Any]?) -> Void) { ortFertig = fertig; ort.requestLocation() }
+
+  func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    guard let f = ortFertig, let l = locations.last else { return }
+    ortFertig = nil
+    f(["breite": l.coordinate.latitude, "laenge": l.coordinate.longitude, "genau": l.horizontalAccuracy])
+  }
+
+  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) { if let f = ortFertig { ortFertig = nil; f(nil) } }
+
+  func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) { melde(art: "betreten", zone: region.identifier) }
+  func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) { melde(art: "verlassen", zone: region.identifier) }
+  func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+    if state == .inside { melde(art: "betreten", zone: region.identifier) }
+    else if state == .outside { melde(art: "verlassen", zone: region.identifier) }
+  }
+
+  /// Meldung mit kurzer Hintergrundzeit (iOS weckt die App nur für Sekunden)
+  private func melde(art: String, zone: String?) {
+    var aufgabe: UIBackgroundTaskIdentifier = .invalid
+    aufgabe = UIApplication.shared.beginBackgroundTask(withName: "alfred.zone") { UIApplication.shared.endBackgroundTask(aufgabe); aufgabe = .invalid }
+    Task {
+      defer { if aufgabe != .invalid { UIApplication.shared.endBackgroundTask(aufgabe) } }
+      guard let k = try? Kopplung.lade() else { return }
+      try? await Netz(k).zone(art: art, zone: zone)
+    }
+  }
 }
 
 /// 1.54.4 — Datenquelle der Quick-Look-Vorschau (eine Datei)

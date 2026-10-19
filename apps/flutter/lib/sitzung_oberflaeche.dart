@@ -507,6 +507,23 @@ extension _Oberflaeche on _SitzungState {
           Align(alignment: Alignment.centerLeft, child: TextButton.icon(key: const Key('ordner-freigeben'), icon: const Icon(Icons.create_new_folder_outlined, size: 18), label: const Text('Ordner freigeben'),
             onPressed: _ordnerFreigebenKnopf)),
         ],
+        if (istHandy) ...[ // v1522 — Standortzonen
+          const SizedBox(height: 8),
+          Text('Standortzonen', style: theme.textTheme.titleSmall),
+          Text('iOS erkennt die Zonen selbst, auch bei geschlossener App. Zum Server geht nur der Name (z. B. „Zuhause“) bzw. „unterwegs“ — nie Koordinaten. Alfred nutzt das nur intern.', style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          FutureBuilder<String>(future: zonenStatus(), builder: (_, st) {
+            final s = st.data ?? '…';
+            final text = switch (s) { 'immer' => 'Standort: Immer erlaubt', 'beimBenutzen' => 'Standort nur beim Verwenden — für Zonen „Immer“ erlauben', 'abgelehnt' => 'Standort abgelehnt — in den iOS-Einstellungen unter Alfred → Standort „Immer“ wählen', 'offen' => 'Standort noch nicht erlaubt', _ => s };
+            return ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(s == 'immer' ? Icons.location_on : Icons.location_off_outlined, size: 20, color: s == 'immer' ? Colors.green : null), title: Text(text),
+              trailing: s == 'immer' || s == 'abgelehnt' ? null : TextButton(key: const Key('zonen-erlauben'), onPressed: () async { await zonenErlaubnis(); _neu(() {}); }, child: const Text('Erlauben')));
+          }),
+          for (final z in standortZonenGespeichert()) ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.radio_button_checked, size: 20), title: Text(z.name), subtitle: Text('Umkreis ${z.radius.round()} m'),
+            trailing: IconButton(tooltip: 'Zone entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () async { await zoneEntfernen(z.name); _neu(() {}); })),
+          Wrap(spacing: 8, children: [
+            TextButton.icon(key: const Key('zone-ha'), icon: const Icon(Icons.home_outlined, size: 18), label: const Text('Zuhause aus Home Assistant'), onPressed: _zoneAusHa),
+            TextButton.icon(key: const Key('zone-hier'), icon: const Icon(Icons.my_location, size: 18), label: const Text('Aktuellen Ort als Zone'), onPressed: _zoneHier),
+          ]),
+        ],
         if (istHandy) SwitchListTile(key: const Key('auto-vorlesen'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Automatisch vorlesen'), subtitle: Text('Mit Kopfhörern, Bluetooth-Audio oder im Auto werden Antworten auch auf getippte Fragen vorgelesen', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: autoVorlesen, onChanged: (v) { _neu(() => autoVorlesen = v); autoVorlesenSpeichern(v); }), // 1.54.0
         if (istHandy) SwitchListTile(key: const Key('telegram-stumm'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Telegram stumm, wenn Mitteilung zugestellt'), subtitle: Text(telegramStumm == null ? 'Stand wird geladen …' : 'Hinweise und Bestätigungen kommen dann nur aufs Handy, solange die Mitteilung ankam', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: telegramStumm ?? false, onChanged: telegramStumm == null ? null : (v) => _telegramStummSetzen(v)), // 1.53.0 H2
         Text('Alfred kennt den Verlauf aus allen Kanälen immer. In Telegram zeigt „/verlauf" die letzten Nachrichten, „/spiegel an" schaltet dasselbe wie dieser Schalter.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
@@ -590,6 +607,46 @@ extension _Oberflaeche on _SitzungState {
     final s = server; final k = d.key;
     if (s == null || k == null) return null;
     return s.datei(k, d.name);
+  }
+
+  /// v1522 — „Zuhause“ aus Home Assistant (zone.home) übernehmen
+  Future<void> _zoneAusHa() async {
+    String text;
+    try {
+      final j = await server!.json('/api/geraete/zonen/vorschlag');
+      final v = ((j['vorschlaege'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>().firstOrNull;
+      if (v == null) { text = 'Home Assistant liefert keine Heimzone (zone.home)'; }
+      else {
+        if (await zonenStatus() != 'immer') await zonenErlaubnis();
+        await zoneSetzen('${v['name']}', (v['breite'] as num).toDouble(), (v['laenge'] as num).toDouble(), radius: ((v['radius'] as num?) ?? 150).toDouble());
+        text = '📍 Zone „${v['name']}“ aus Home Assistant übernommen (Umkreis ${(v['radius'] as num?)?.round() ?? 150} m)';
+      }
+    } catch (e) { text = 'Zone nicht übernommen: ${'$e'.replaceFirst('Exception: ', '')}'; }
+    _neu(() {});
+    _zeile(Eintrag(Art.hinweis, text));
+    if (mounted) ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// v1522 — Zone am aktuellen Ort anlegen (Name frei, Vorschlag „Zuhause“ bzw. „Büro“; Umkreis 150 m)
+  Future<void> _zoneHier() async {
+    final vorhanden = standortZonenGespeichert().map((z) => z.name.toLowerCase()).toSet();
+    final feld = TextEditingController(text: vorhanden.contains('zuhause') ? 'Büro' : 'Zuhause');
+    final name = await showDialog<String>(context: context, builder: (c) => AlertDialog(
+      title: const Text('Zone am aktuellen Ort'),
+      content: TextField(controller: feld, autofocus: true, decoration: const InputDecoration(labelText: 'Name der Zone')),
+      actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Abbrechen')), FilledButton(onPressed: () => Navigator.pop(c, feld.text.trim()), child: const Text('Anlegen'))],
+    ));
+    if (name == null || name.isEmpty) return;
+    String text;
+    try {
+      if (await zonenStatus() == 'offen') await zonenErlaubnis();
+      final o = await ortJetzt();
+      if (o == null) { text = 'Ort nicht ermittelbar — Standort-Erlaubnis prüfen'; }
+      else { await zoneSetzen(name, o.breite, o.laenge); text = '📍 Zone „$name“ angelegt (Umkreis 150 m, Ortsgenauigkeit ${o.genau.round()} m)'; }
+    } catch (e) { text = 'Zone nicht angelegt: ${'$e'.replaceFirst('Exception: ', '')}'; }
+    _neu(() {});
+    _zeile(Eintrag(Art.hinweis, text));
+    if (mounted) ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));
   }
 
   /// 1.54.2 — Ordner freigeben mit sichtbarem Ergebnis; jeder Ausgang auch ins Server-Log (Art „ordner“), damit ein

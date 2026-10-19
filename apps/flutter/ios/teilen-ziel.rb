@@ -3,11 +3,22 @@
 require 'xcodeproj'
 
 projekt = Xcodeproj::Project.open(File.join(__dir__, 'Runner.xcodeproj'))
+runner = projekt.targets.find { |t| t.name == 'Runner' } or abort 'Ziel Runner fehlt'
+
+# v1522 — gemeinsamer Netz-Code (Kopplung, festes Server-Zertifikat) in App und Erweiterung
+def gemeinsam_aufnehmen(projekt, runner)
+  teilen = projekt.targets.find { |t| t.name == 'Teilen' }
+  gruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Gemeinsam' } || projekt.main_group.new_group('Gemeinsam', 'Gemeinsam')
+  datei = gruppe.files.find { |f| f.path == 'AlfredNetz.swift' } || gruppe.new_reference('AlfredNetz.swift')
+  [runner, teilen].compact.each { |t| t.add_file_references([datei]) unless t.source_build_phase.files_references.include?(datei) }
+end
+
 if projekt.targets.any? { |t| t.name == 'Teilen' }
-  puts 'Ziel Teilen existiert schon'
+  gemeinsam_aufnehmen(projekt, runner)
+  projekt.save
+  puts 'Ziel Teilen existiert schon — gemeinsame Datei geprüft'
   exit 0
 end
-runner = projekt.targets.find { |t| t.name == 'Runner' } or abort 'Ziel Runner fehlt'
 
 ziel = projekt.new_target(:app_extension, 'Teilen', :ios, '15.0', nil, :swift)
 gruppe = projekt.main_group.new_group('Teilen', 'Teilen')
@@ -50,6 +61,7 @@ runner.build_phases.delete(einbetten)
 stelle = runner.build_phases.index { |ph| ph.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) && ph.name == 'Thin Binary' } || runner.build_phases.length
 runner.build_phases.insert(stelle, einbetten)
 runner.add_dependency(ziel)
+gemeinsam_aufnehmen(projekt, runner)
 
 projekt.save
 puts "Ziel Teilen angelegt (Konfigurationen: #{ziel.build_configurations.map(&:name).join(', ')})"

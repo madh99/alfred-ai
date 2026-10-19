@@ -104,3 +104,32 @@ Future<String?> zwischenablageBildPfad() async {
 Future<bool> handyVorschau(String pfad) async {
   try { return await _kanal.invokeMethod<bool>('vorschau', {'pfad': pfad}) ?? false; } on MissingPluginException { return false; }
 }
+
+// ── v1522 — Standortzonen (iOS überwacht sie selbst, Meldung nativ an den Server) ──
+
+/// Zonen an iOS übergeben (ersetzt die überwachten Zonen); höchstens 10.
+Future<void> zonenAnIos() async {
+  try { await _kanal.invokeMethod('zonenSetzen', {'zonen': [for (final z in standortZonenGespeichert()) {'name': z.name, 'breite': z.breite, 'laenge': z.laenge, 'radius': z.radius}]}); } on MissingPluginException { /* Desktop */ }
+}
+
+/// Erlaubnis „Immer“ anfragen (iOS fragt in zwei Schritten). Ergebnis: immer | beimBenutzen | abgelehnt | offen.
+Future<String> zonenErlaubnis() async => await _kanal.invokeMethod<String>('zonenErlaubnis') ?? 'offen';
+Future<String> zonenStatus() async { try { return await _kanal.invokeMethod<String>('zonenStatus') ?? 'offen'; } on MissingPluginException { return 'offen'; } }
+
+/// Aktueller Ort (einmalig, für „Zone hier anlegen“); null = nicht ermittelbar.
+Future<({double breite, double laenge, double genau})?> ortJetzt() async {
+  final r = await _kanal.invokeMethod<Map<Object?, Object?>>('ortJetzt');
+  if (r == null || r['breite'] is! num || r['laenge'] is! num) return null;
+  return (breite: (r['breite'] as num).toDouble(), laenge: (r['laenge'] as num).toDouble(), genau: ((r['genau'] as num?) ?? 0).toDouble());
+}
+
+/// Zone hinzufügen oder gleichnamige ersetzen, dann an iOS.
+Future<void> zoneSetzen(String name, double breite, double laenge, {double radius = 150}) async {
+  standortZonenSpeichern([for (final z in standortZonenGespeichert()) if (z.name.toLowerCase() != name.toLowerCase()) z, (name: name, breite: breite, laenge: laenge, radius: radius)]);
+  await zonenAnIos();
+}
+
+Future<void> zoneEntfernen(String name) async {
+  standortZonenSpeichern([for (final z in standortZonenGespeichert()) if (z.name != name) z]);
+  await zonenAnIos();
+}

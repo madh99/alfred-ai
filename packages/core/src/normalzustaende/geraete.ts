@@ -28,6 +28,8 @@ export interface GeraetZustand {
   zuletztGesehen?: string;
   sinne?: GeraetSinne;
   sinneZeit?: string;
+  /** v1522 — Standortzone des Handys (null = unterwegs), auch bei geschlossener App */
+  zone?: { name: string | null; seit: string };
 }
 export interface GeraeteDeutung { zeilen: string[]; auffaellig: string[]; aktiv?: { name: string; leerlaufSek: number } }
 
@@ -38,6 +40,12 @@ export const AKKU_NIEDRIG_PROZENT = 15;
 export const HANDY_PLATTFORMEN: ReadonlySet<string> = new Set(['ios', 'android']);
 /** Sinne älter als das gelten als unbekannt (Satellit sendet jede Minute). */
 export const SINNE_FRISCH_MS = 3 * 60_000;
+
+/** v1522 — „zu Hause seit 18:05“ / „unterwegs seit 08:15“ (Uhrzeit lokal) */
+export function zonenText(z: { name: string | null; seit: string }): string {
+  const uhr = new Date(z.seit).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+  return `${z.name ? `Zone „${z.name}“` : 'unterwegs'} seit ${uhr}`;
+}
 
 export function formatiereDauerKurz(ms: number): string {
   if (ms < 60_000) return 'unter 1 min';
@@ -62,6 +70,7 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       // Phase 5 H1 (Spec Geräte §20.5 Punkt 2) — ein Handy ist nur verbunden, solange die App vorne ist: getrennt ist sein Normalzustand
       if (minuten !== undefined && minuten >= GETRENNT_AUFFAELLIG_MIN && !HANDY_PLATTFORMEN.has(g.plattform)) { warn = true; auffaellig.push(`geraet:${g.name}:getrennt`); }
       const handy = HANDY_PLATTFORMEN.has(g.plattform);
+      if (handy && g.zone) teile.push(zonenText(g.zone)); // v1522
       teile.push(seit !== undefined ? (handy ? `zuletzt verbunden vor ${formatiereDauerKurz(seit)}` : `getrennt seit ${formatiereDauerKurz(seit)}`) : (handy ? 'nicht verbunden' : 'getrennt'));
     } else {
       const frisch = g.sinneZeit ? jetzt - Date.parse(g.sinneZeit) <= SINNE_FRISCH_MS : false;
@@ -77,7 +86,8 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       } else {
         teile.push(g.verbundenSeit ? `online seit ${formatiereDauerKurz(jetzt - Date.parse(g.verbundenSeit))}` : 'online');
       }
-      // v1520 — Handy: in der App (Owner schaut aufs Handy), Netzweg, Audio, Fokus
+      // v1520 — Handy: in der App (Owner schaut aufs Handy), Netzweg, Audio, Fokus; v1522 Zone
+      if (HANDY_PLATTFORMEN.has(g.plattform) && g.zone) teile.push(zonenText(g.zone));
       if (HANDY_PLATTFORMEN.has(g.plattform) && s) {
         if (s.netz) teile.push(s.netz.split('+').map(t => NETZ_TEXT[t] ?? t).join(' + '));
         if (s.audio && s.audio !== 'lautsprecher') teile.push(AUDIO_TEXT[s.audio] ?? s.audio);

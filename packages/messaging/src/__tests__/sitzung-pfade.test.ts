@@ -67,6 +67,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/konto')).toBe(true); // v1506
     expect(istSitzungsPfad('/api/geraete/push')).toBe(true); // v1518 H2
     expect(istSitzungsPfad('/api/geraete/ablage')).toBe(true); // v1520
+    expect(istSitzungsPfad('/api/geraete/zone')).toBe(true); // v1522
+    expect(istSitzungsPfad('/api/geraete/zonen/vorschlag')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/ablage/0b6f1e2a-1c3d-4e5f-8a9b-0c1d2e3f4a5b')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/ablage/../x')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/ablage/0b6f1e2a-1c3d-4e5f-8a9b-0c1d2e3f4a5b/datei')).toBe(true); // v1521

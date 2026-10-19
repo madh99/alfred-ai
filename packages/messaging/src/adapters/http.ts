@@ -1093,6 +1093,9 @@ export class HttpAdapter extends MessagingAdapter {
     antwortFertig?(geraetId: string, faden?: string): void;
     /** v1520 — Zwischenablage-Ablage des Handys: ohne id Liste, mit id abgeholt */
     ablage?(geraetId: string, id?: string): Promise<{ status: number; antwort: unknown }>;
+    /** v1522 — Standortzone des Handys melden; Vorschlag „Zuhause“ aus Home Assistant */
+    zone?(geraetId: string, body: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
+    zonenVorschlag?(geraetId: string): Promise<{ status: number; antwort: unknown }>;
     /** v1521 — Inhalt einer abgelegten Datei (nur das eigene Gerät) */
     ablageDatei?(geraetId: string, id: string): Promise<{ name: string; data: Buffer } | undefined>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
@@ -2097,6 +2100,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/ablage' && req.method === 'GET' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}$/.test(url.pathname) && req.method === 'DELETE' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}\/datei$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAblage(req, res, url).catch(err => this.safeError(res, err)); // v1520
+    } else if ((url.pathname === '/api/geraete/zone' && req.method === 'POST') || (url.pathname === '/api/geraete/zonen/vorschlag' && req.method === 'GET')) {
+      this.handleGeraetZone(req, res, url).catch(err => this.safeError(res, err)); // v1522
     } else if (url.pathname === '/api/geraete/push' && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetPush(req, res).catch(err => this.safeError(res, err)); // v1518 H2
     } else if (url.pathname === '/api/geraete/konto' && req.method === 'GET') {
@@ -6962,6 +6967,22 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1506 D5 — Kontomenü der App: Kosten mit Herkunft, Tagesbudget (nur Anzeige), verbundene Geräte. */
+  /** v1522 — Standortzone des Handys (nur Gerätetoken). */
+  private async handleGeraetZone(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.zone || !this.geraeteCallbacks.zonenVorschlag) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    let r: { status: number; antwort: unknown };
+    if (url.pathname.endsWith('/vorschlag')) r = await this.geraeteCallbacks.zonenVorschlag(geraet.geraetId);
+    else {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await this.readBody(req)) as Record<string, unknown>; } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kein JSON' })); return; }
+      r = await this.geraeteCallbacks.zone(geraet.geraetId, body);
+    }
+    res.writeHead(r.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(r.antwort));
+  }
+
   /** v1520 — Zwischenablage-Ablage des Handys abholen; nur mit Gerätetoken, nur die eigenen Einträge. */
   private async handleGeraetAblage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;

@@ -17,6 +17,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Alfred liest mit der Kamera den Kopplungs-QR von der Seite „Geräte“.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Alfred erkennt deine Zonen (zu Hause, Büro, unterwegs). Nur der Zonenname geht an deinen Alfred-Server, nie die Koordinaten.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Damit Alfred auch bei geschlossener App weiß, ob du zu Hause, im Büro oder unterwegs bist. Nur der Zonenname geht an deinen Alfred-Server, nie die Koordinaten.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Zum Sprechen mit Alfred (nur solange du die Sprechtaste hältst).</string>
 	<key>NSLocalNetworkUsageDescription</key>

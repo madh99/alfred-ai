@@ -13900,7 +13900,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const vorgaengeG = new VRepoG(dbG);
         const { HandyAblage } = await import('./geraete/handy-ablage.js'); // v1520
         const handyAblage = new HandyAblage();
+        const { HandyZonen } = await import('./geraete/handy-zonen.js'); // v1522
+        const handyZonen = new HandyZonen(path.resolve(process.cwd(), 'data', 'handy-zonen.json'));
         const gw = new GeraeteGateway({
+          zoneVon: (id: string) => { const z = handyZonen.von(id); return z ? { name: z.zone, seit: z.seit } : undefined; }, // v1522
           // v1520 — Handy im Hintergrund: Zwischenablage über Ablage + Push „Zum Kopieren antippen“ (Inhalt nie im Push)
           offlineAktion: (g, aktion, params) => {
             // v1521 — Datei aufs Handy im Hintergrund: nur der Verweis (quelle) wird gemerkt; die App holt sie beim Antippen oder Öffnen
@@ -14208,6 +14211,28 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
           // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
           // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          // v1522 — Standortzone vom Handy (nur der Name; iOS meldet auch bei geschlossener App). Intern: Weltmodell und Lage.
+          zone: async (geraetId: string, body: Record<string, unknown>) => {
+            const art = typeof body.art === 'string' ? body.art : '';
+            const zone = typeof body.zone === 'string' ? body.zone : null;
+            const r = handyZonen.melde(geraetId, { art, zone });
+            const z = handyZonen.von(geraetId);
+            this.logger.info({ geraetId, art, zone, jetzt: z?.zone ?? 'unterwegs', geaendert: !!r }, 'v1522 Zone gemeldet');
+            return { status: 200, antwort: { ok: true, zone: z?.zone ?? null, seit: z?.seit } };
+          },
+          // v1522 — Vorschlag „Zuhause“ aus Home Assistant (zone.home); nur Koordinaten für die App, nie gespeichert
+          zonenVorschlag: async (geraetId: string) => {
+            if (!(await this.geraetGehoertOwner(geraetId))) return { status: 403, antwort: { error: 'nur Geräte des Owners' } }; // Heim-Koordinaten
+            const ha = this.config.homeassistant as { baseUrl?: string; accessToken?: string; verifyTls?: boolean } | undefined;
+            if (!ha?.baseUrl || !ha.accessToken || ha.verifyTls === false) return { status: 200, antwort: { vorschlaege: [] } };
+            try {
+              const res = await fetch(`${ha.baseUrl.replace(/\/+$/, '')}/api/states/zone.home`, { headers: { Authorization: `Bearer ${ha.accessToken}` }, signal: AbortSignal.timeout(8000) });
+              const j = await res.json() as { attributes?: { latitude?: number; longitude?: number; radius?: number } };
+              const a = j.attributes;
+              if (!res.ok || typeof a?.latitude !== 'number' || typeof a.longitude !== 'number') return { status: 200, antwort: { vorschlaege: [] } };
+              return { status: 200, antwort: { vorschlaege: [{ name: 'Zuhause', breite: a.latitude, laenge: a.longitude, radius: Math.max(100, Math.min(Number(a.radius) || 150, 500)), quelle: 'Home Assistant' }] } };
+            } catch { return { status: 200, antwort: { vorschlaege: [] } }; }
+          },
           // v1520 — Zwischenablage abholen (Handy nach Push oder beim Öffnen): GET = offene Einträge, DELETE <id> = abgeholt
           ablage: async (geraetId: string, id?: string) => {
             if (id) return { status: handyAblage.erledige(geraetId, id) ? 200 : 404, antwort: { ok: true } };

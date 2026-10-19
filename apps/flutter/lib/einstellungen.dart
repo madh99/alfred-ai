@@ -69,6 +69,14 @@ List<({String name, String bookmark})> ablageOrdnerGespeichert() {
 }
 void ablageOrdnerSpeichern(List<({String name, String bookmark})> ordner) { final j = _lesen(); j['ablageOrdner'] = [for (final o in ordner) {'name': o.name, 'bookmark': o.bookmark}]; _schreiben(j); }
 
+/// v1522 — Handy: Standortzonen (Name, Mittelpunkt, Radius in m). Bleiben auf dem Gerät; zum Server geht nur der Zonenname.
+List<({String name, double breite, double laenge, double radius})> standortZonenGespeichert() {
+  final l = _lesen()['standortZonen'];
+  if (l is! List) return const [];
+  return [for (final e in l) if (e is Map && e['name'] is String && e['breite'] is num && e['laenge'] is num) (name: e['name'] as String, breite: (e['breite'] as num).toDouble(), laenge: (e['laenge'] as num).toDouble(), radius: ((e['radius'] as num?) ?? 150).toDouble())];
+}
+void standortZonenSpeichern(List<({String name, double breite, double laenge, double radius})> z) { final j = _lesen(); j['standortZonen'] = [for (final x in z) {'name': x.name, 'breite': x.breite, 'laenge': x.laenge, 'radius': x.radius}]; _schreiben(j); }
+
 /// 1.36.0 — Navigation breit (mit Beschriftung) oder schmal (nur Symbole); Standard breit.
 bool navBreitGespeichert() => _lesen()['navBreit'] != false;
 void navBreitSpeichern(bool breit) { final j = _lesen(); j['navBreit'] = breit; _schreiben(j); }

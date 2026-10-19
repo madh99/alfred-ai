@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standortzonen des iPhones (v1522, App 1.55.0)
+
+Owner 20.10.: „Standardzonen“ umsetzen (Spec Geräte §20.11, eigene Freigabe).
+
+- **Zonen:** „Zuhause“ auf Knopfdruck aus Home Assistant (`zone.home`, nur für Geräte des Owners), weitere Zonen am aktuellen Ort („Büro“ usw., Umkreis 150 m), höchstens 10. „Unterwegs“ heißt: in keiner Zone. Die Zonen liegen nur auf dem iPhone.
+- **iOS überwacht die Zonen selbst** (energiesparend, auch bei geschlossener App, Erlaubnis „Immer“). Beim Betreten oder Verlassen meldet die App nativ, ohne Flutter, nur den Zonennamen an den Server, nie Koordinaten. Netz-Code mit festem Server-Schlüssel gemeinsam mit „Teilen an Alfred“.
+- **Server:** aktuelle Zone je Handy (`data/handy-zonen.json`), Route `/api/geraete/zone`, Weltmodell-Zeile auch bei geschlossener App, etwa „iPhone (ios): Zone „Büro“ seit 08:30, zuletzt verbunden vor 3 h“. Alfred nutzt die Zone intern (Weltmodell, Lage) und meldet Wechsel nicht von sich aus.
+
 ### Fixed — iPhone: Anhänge öffnen und vergrößern (App 1.54.4)
 
 Owner-Test 20.10. (Build 96): Bilder im Chat ließen sich durch Antippen nicht vergrößern. Server-Log 01:29: „Anhang nicht geöffnet: Starting new processes is not supported on iOS — xdg-open …“ — die App nahm den Linux-Weg. Auf dem Handy öffnet Antippen jetzt die iOS-Vorschau (Quick Look): Bilder vergrößern, PDF und Office ansehen, Teilen und Sichern; gilt für Bilder im Chat, Upload-Vorschauen und die Anhänge-Ansicht. „Speichern“ legt am Handy im Ordner „Alfred“ ab.

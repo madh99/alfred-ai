@@ -263,6 +263,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       sichtbar = true; // Handy: App vorne = sichtbar (Hintergrund trennt die Verbindung)
     }
     if (istHandy) push = HandyPush(aufToken: _pushTokenMelden, aufGeoeffnet: _pushOeffnen); // Phase 5 H2
+    if (istHandy) zonenAnIos(); // v1522 — überwachte Zonen = Einstellungen (iOS prüft dabei den aktuellen Stand)
     ipc = _verbindung(
       aufStatus: (s) {
         final wieder = s.verbunden && satellit?.verbunden != true; // 1.6.0 — nach Wiederverbinden verpasste Bestätigungen holen
