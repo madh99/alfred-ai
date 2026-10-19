@@ -167,6 +167,7 @@ extension _Oberflaeche on _SitzungState {
         if (_offenerFaden() != null && fadenProjektId(_offenerFaden()!) != null) Padding(padding: const EdgeInsets.only(right: 6), child: Tooltip(message: 'Projekt: ${(_offenerFaden()!['projekt'] as Map)['name']}', child: Icon(Icons.folder_outlined, size: 18, color: dim))),
         Flexible(child: Text.rich(TextSpan(children: [TextSpan(text: _kopfTitel()), TextSpan(text: '  ·  $geraet', style: TextStyle(color: dim))]), key: const Key('chat-kopf'), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall)),
         const Spacer(),
+        if (archiv == null) IconButton(key: const Key('karte-knopf'), tooltip: karteOffen ? 'Zusammenfassung ausblenden' : 'Angeheftete Zusammenfassung ein', onPressed: () => _neu(() => karteOffen = !karteOffen), icon: Icon(Icons.fact_check_outlined, size: 20, color: karteOffen ? theme.colorScheme.primary : null)), // 1.44.0 D3
         if (archiv == null) IconButton(key: const Key('seiten-chat-knopf'), tooltip: seitenChatOffen ? 'Seiten-Chat schließen (Strg+Alt+S)' : 'Seiten-Chat (Strg+Alt+S)', onPressed: _seitenChatUmschalten, icon: Icon(Icons.vertical_split_outlined, size: 20, color: seitenChatOffen ? theme.colorScheme.primary : null)),
         if (archiv == null) _kopfMenue(),
         if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
@@ -181,7 +182,7 @@ extension _Oberflaeche on _SitzungState {
         TextButton(onPressed: () => _neu(() => ansicht = Ansicht.suche), child: const Text('Zur Suche')),
         TextButton(onPressed: _fundstelleVerlassen, child: const Text('Zum Gespräch')),
       ]))),
-      Expanded(child: verlauf.isEmpty
+      Expanded(child: Stack(children: [Positioned.fill(child: verlauf.isEmpty
           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
           : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
               controller: scroll,
@@ -204,13 +205,25 @@ extension _Oberflaeche on _SitzungState {
                 return neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w;
               },
             ))),
-      ),
+      ), if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
       if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _arbeitsLeiste(theme))), // 1.11.0
       Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
     ]));
   }
 
+
+  /// 1.44.0 D3 — Karte oben rechts: Projektkarte in Fäden eines Projekts, sonst Zusammenfassung des Fadens.
+  Widget _karte(ThemeData theme) {
+    final s = server;
+    if (s == null) return const SizedBox.shrink();
+    final f = _offenerFaden();
+    final projektId = f == null ? null : fadenProjektId(f);
+    return Card(key: const Key('faden-karte'), elevation: 3, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 340, maxHeight: 440), child: SingleChildScrollView(child: SizedBox(width: 340, child: projektId != null
+        ? ProjektKarte(key: ValueKey('p-$projektId'), json: s.json, projektId: projektId, dieserRechner: konfig?.name ?? satellit?.name ?? '',
+            aufProjektansicht: () => _neu(() { projekteAnfang = projektId; ansicht = Ansicht.projekte; }), aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)))
+        : FadenKarte(key: ValueKey('f-${s.faden ?? 'haupt'}'), json: s.json, faden: s.faden, aufBestaetigungen: () => _neu(() => ansicht = Ansicht.eingang))))));
+  }
 
   bool _eingeklappt(Eintrag e) {
     if (e.art != Art.du || e.aufgeklappt || e.text.length <= klappAb) return false;

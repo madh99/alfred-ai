@@ -55,6 +55,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1501] - 2026-10-19
+
+### Added — Angeheftete Zusammenfassung oben rechts im Chat (App 1.44.0; App-Spec §11 D3)
+
+Neuer Schalter in der Kopfzeile (auch in der Befehlspalette): Eine Karte schwebt oben rechts über dem Verlauf.
+
+- **In Fäden eines Projekts:**
+  - Projektname (Klick öffnet die Projektansicht), Gerät und Pfad.
+  - Stand des letzten Laufs (läuft, Etappe x/y, abgenommen, wartet), Prüfungen der letzten Etappe (grün, rot, ungeprüft) und Kosten des Laufs.
+  - **Änderungen**: der jüngste Commit mit dem Diff (gleicher Weg wie in der Projektansicht).
+  - Schnellaktionen: dev öffnen, dev starten bzw. neu starten, Projektansicht.
+  - **Ordner** und **Terminal** gibt es nur auf dem Rechner, auf dem das Projekt liegt (Windows Terminal oder cmd, macOS Terminal, gnome-terminal).
+- **In anderen Fäden:**
+  - Zusammenfassung in 3 bis 5 Zeilen **nur auf Klick** (Owner-Entscheidung 3; günstiges Modell, letzte 80 Nachrichten). Sie wird je Faden mit Stand gespeichert (`data/faden-zusammenfassungen.json`), dazu „n neue Nachrichten seither“.
+  - Dazu die **offenen Bestätigungen aus diesem Faden**. Vorgänge kennen ihren Faden nicht (Herkunft nur Befund, Reasoning, Projekt) und stehen deshalb weiter im Eingang.
+- **Server:** `GET|POST /api/geraete/faeden/:f/zusammenfassung` (`haupt` = Hauptgespräch), nur Geräte des Owners.
+- Tests: 4 App (davon 3 mit Oberfläche), Pfade.
+
 ## [0.19.0-jarvis.1500] - 2026-10-19
 
 ### Added — Kopfzeile mit Menü, Tastenkürzel, Abzweigen, Seiten-Chat, geplante Aufgabe aus dem Faden (App 1.43.0, Web; App-Spec §11 D2)

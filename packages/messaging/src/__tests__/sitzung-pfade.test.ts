@@ -90,6 +90,7 @@ describe('v1500 Faden-Aktionen der Sitzung', () => {
   it('abzweigen und aufgabe erlaubt, andere Unterpfade nicht', () => {
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/abzweigen')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/faeden/haupt/aufgabe')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/zusammenfassung')).toBe(true); // v1501 D3
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/loeschen')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/faeden/mvcisfqj/abzweigen/x')).toBe(false);

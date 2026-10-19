@@ -25,6 +25,7 @@ extension _Befehle on _SitzungState {
         Befehl(titel: 'Gespräch: ${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', untertitel: _fadenZeit('${f['zeit'] ?? ''}'), icon: Icons.chat_bubble_outline, stichworte: 'faden', aktion: (_) { zeige(Ansicht.chat); _fadenWechseln('${f['faden']}'); }),
       // 1.43.0 D2 — Projekte, Aktionen zum offenen Gespräch, Tastenkürzel
       for (final p in projekteKurz) Befehl(titel: 'Projekt: ${p['name']}', icon: Icons.folder_outlined, stichworte: 'projekt ordner', aktion: (_) => _neu(() { projekteAnfang = '${p['id']}'; ansicht = Ansicht.projekte; })),
+      Befehl(titel: 'Zusammenfassung ein/aus', untertitel: 'Karte oben rechts: Projektstand oder Zusammenfassung', icon: Icons.fact_check_outlined, stichworte: 'angeheftet karte stand aenderungen', aktion: (_) => _neu(() { karteOffen = !karteOffen; ansicht = Ansicht.chat; })), // 1.44.0 D3
       Befehl(titel: 'Seiten-Chat ein/aus', untertitel: 'Strg+Alt+S', icon: Icons.vertical_split_outlined, stichworte: 'zwischenfrage nebenbei', aktion: (_) => _seitenChatUmschalten()),
       Befehl(titel: 'Gespräch abzweigen', untertitel: 'neuer Faden mit dem bisherigen Verlauf', icon: Icons.call_split, stichworte: 'fork kopie verzweigen', aktion: (_) { zeige(Ansicht.chat); _fadenAbzweigen(server?.faden); }),
       Befehl(titel: 'Geplante Aufgabe aus diesem Gespräch', icon: Icons.schedule, stichworte: 'planen regelmaessig taeglich', aktion: (_) { zeige(Ansicht.chat); _aufgabeAusFaden(server?.faden); }),

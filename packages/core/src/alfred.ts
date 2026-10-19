@@ -14153,6 +14153,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           fadenProjekte: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerProjekteKurz() : undefined, // v1499
           fadenAbzweigen: async (geraetId: string, quelle: string | null, bis?: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAbzweigen(quelle, bis) : undefined, // v1500
           fadenAufgabe: async (geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAufgabe(faden, a) : { ok: false, text: 'nur Geräte des Owners' }, // v1500
+          fadenZusammenfassung: async (geraetId: string, faden: string | null, neu: boolean) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenZusammenfassung(faden, neu) : undefined, // v1501
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -16349,6 +16350,44 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       { userId: owner, masterUserId: owner, platform: k.platform, chatId: k.chatId, conversationId: '' } as never);
     this.logger.info({ faden: faden ?? 'haupt', name: a.name, art: a.art, wert: a.wert, ok: r.success }, 'v1500 Geplante Aufgabe aus Faden');
     return { ok: !!r.success, text: r.success ? (r.display ?? 'Geplant.') : (r.error ?? 'Nicht geplant.') };
+  }
+
+  /**
+   * v1501 (D3) — Zusammenfassung eines Fadens (Owner-Entscheidung 19.10.: nur auf Klick). Gespeichert je Faden mit Stand
+   * (Zeit, Zahl der Nachrichten) in data/faden-zusammenfassungen.json; dazu die offenen Bestätigungen aus diesem Faden.
+   */
+  async ownerFadenZusammenfassung(faden: string | null, neu: boolean): Promise<Record<string, unknown> | undefined> {
+    if (!this.conversationRepo) return undefined;
+    const { fadenSchluessel, hauptgespraech, FADEN_RE } = await import('./gespraeche.js');
+    if (faden !== null && !FADEN_RE.test(faden)) return undefined;
+    const k = faden === null ? hauptgespraech(this.gespraechsOptionen()) : fadenSchluessel(faden);
+    const c = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
+    if (!c || c.deletedAt) return undefined;
+    const fs = await import('node:fs');
+    const datei = path.resolve(process.cwd(), 'data', 'faden-zusammenfassungen.json');
+    let alle: Record<string, { text: string; stand: string; anzahl: number }> = {};
+    try { alle = JSON.parse(fs.readFileSync(datei, 'utf8')) as typeof alle; } catch { /* noch keine */ }
+    const schluessel = faden ?? 'haupt';
+    const anzahl = await this.conversationRepo.countMessages(c.id);
+    if (neu) {
+      const m = (await this.conversationRepo.getMessages(c.id, 80)).filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim());
+      if (m.length === 0) return { anzahl, bestaetigungen: [] };
+      const verlauf = m.map(x => `${x.role === 'user' ? 'Owner' : 'Alfred'}: ${x.content.replace(/\s+/g, ' ').slice(0, 600)}`).join('\n').slice(-12000);
+      const r = await this.llmProvider.complete({ messages: [{ role: 'user', content: `Fasse dieses Gespräch in 3 bis 5 kurzen Zeilen auf Deutsch zusammen: worum es geht, was entschieden oder erledigt ist, was offen ist. Keine Einleitung, keine Überschrift, Zeilen mit „• “.\n\n${verlauf}` }], tier: 'fast', maxTokens: 400 });
+      const text = r.content.trim();
+      if (text) {
+        alle[schluessel] = { text, stand: new Date().toISOString(), anzahl };
+        try { fs.writeFileSync(datei, JSON.stringify(alle, null, 1)); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1501 Zusammenfassung nicht gespeichert'); }
+      }
+      this.logger.info({ faden: schluessel, nachrichten: m.length, zeichen: text.length }, 'v1501 Faden zusammengefasst');
+    }
+    // offene Bestätigungen, die in diesem Faden entstanden sind (Owner-Faden oder App-Sitzung mit diesem Faden)
+    const bestaetigungen = faden === null || !this.database ? [] : (await this.database.getAdapter().query(
+      "SELECT id, description FROM pending_confirmations WHERE status = 'pending' AND (chat_id = ? OR chat_id LIKE ?) ORDER BY created_at",
+      [k.chatId, `%sitzung:%:${faden}`],
+    ).catch(() => []) as Array<Record<string, unknown>>).map(b => ({ id: String(b.id), text: String(b.description ?? '').split('\n')[0].slice(0, 160) }));
+    const z = alle[schluessel];
+    return { ...(z ? { text: z.text, stand: z.stand, standAnzahl: z.anzahl } : {}), anzahl, bestaetigungen };
   }
 
   async ownerFadenSetzen(faden: string, aenderung: import('./gespraeche.js').FadenAenderung): Promise<boolean> {
