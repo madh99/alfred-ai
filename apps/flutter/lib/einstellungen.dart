@@ -8,6 +8,9 @@ import 'plattform.dart'; // 1.54.1
 /// Seitenleiste. Liegt als kleine JSON-Datei neben der Satelliten-Konfiguration (~/.alfred/app.json).
 final themeModus = ValueNotifier<ThemeMode>(ThemeMode.system);
 
+/// 1.54.2 — Ort der Einstellungsdatei (für Diagnosemeldungen)
+String einstellungsDatei() => _pfad();
+
 String _pfad() => '${alfredDatenOrdner()}${Platform.pathSeparator}app.json'; // 1.54.1 — Handy: beschreibbarer Ordner
 
 Map<String, dynamic> _lesen() {

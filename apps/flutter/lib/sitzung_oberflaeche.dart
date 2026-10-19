@@ -466,7 +466,7 @@ extension _Oberflaeche on _SitzungState {
           for (final o in ablageOrdnerGespeichert()) ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.folder_outlined, size: 20), title: Text(o.name),
             trailing: IconButton(tooltip: 'Freigabe entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () { ordnerEntfernen(o.name); _neu(() {}); (ipc as HandyVerbindung).jetztVerbinden(); })),
           Align(alignment: Alignment.centerLeft, child: TextButton.icon(key: const Key('ordner-freigeben'), icon: const Icon(Icons.create_new_folder_outlined, size: 18), label: const Text('Ordner freigeben'),
-            onPressed: () async { final n = await ordnerFreigeben(); if (n == null) return; _neu(() {}); _zeile(Eintrag(Art.hinweis, '📁 Ordner „$n“ freigegeben')); (ipc as HandyVerbindung).jetztVerbinden(); })),
+            onPressed: _ordnerFreigebenKnopf)),
         ],
         if (istHandy) SwitchListTile(key: const Key('auto-vorlesen'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Automatisch vorlesen'), subtitle: Text('Mit Kopfhörern, Bluetooth-Audio oder im Auto werden Antworten auch auf getippte Fragen vorgelesen', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: autoVorlesen, onChanged: (v) { _neu(() => autoVorlesen = v); autoVorlesenSpeichern(v); }), // 1.54.0
         if (istHandy) SwitchListTile(key: const Key('telegram-stumm'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Telegram stumm, wenn Mitteilung zugestellt'), subtitle: Text(telegramStumm == null ? 'Stand wird geladen …' : 'Hinweise und Bestätigungen kommen dann nur aufs Handy, solange die Mitteilung ankam', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: telegramStumm ?? false, onChanged: telegramStumm == null ? null : (v) => _telegramStummSetzen(v)), // 1.53.0 H2
@@ -549,6 +549,24 @@ extension _Oberflaeche on _SitzungState {
     final s = server; final k = d.key;
     if (s == null || k == null) return null;
     return s.datei(k, d.name);
+  }
+
+  /// 1.54.2 — Ordner freigeben mit sichtbarem Ergebnis; jeder Ausgang auch ins Server-Log (Art „ordner“), damit ein
+  /// Fehlschlag am Gerät nachvollziehbar ist.
+  Future<void> _ordnerFreigebenKnopf() async {
+    String text;
+    try {
+      final r = await ordnerFreigeben();
+      text = r.name == null ? 'Ordnerfreigabe: ${r.detail}' : '📁 Ordner „${r.name}“ freigegeben';
+      server?.melde(r.name == null ? 'abgebrochen: ${r.detail}' : 'freigegeben: ${r.name} — ${r.detail}', art: 'ordner', version: appVersion, plattform: 'ios');
+      if (r.name != null) { _neu(() {}); (ipc as HandyVerbindung).jetztVerbinden(); }
+    } catch (e) {
+      text = 'Ordnerfreigabe fehlgeschlagen: ${'$e'.replaceFirst('Exception: ', '')}';
+      server?.melde(text, art: 'ordner', version: appVersion, plattform: 'ios');
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));
+    _zeile(Eintrag(Art.hinweis, text));
   }
 
   /// 1.52.1 — Verlaufsleiste nur am Desktop: sie lebt von Maus und Darüberfahren, am Finger ist der 28-px-Rand kaum zu treffen.

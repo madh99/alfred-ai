@@ -37,14 +37,19 @@ const alfredOrdner = 'Alfred';
 /// Namen aller Ziele für das Manifest: „Alfred“ zuerst, dann die freigegebenen.
 List<String> ablageOrdnerNamen() => [alfredOrdner, for (final o in ablageOrdnerGespeichert()) o.name];
 
-/// Ordner freigeben (iOS-Dateien-Fenster). null = abgebrochen. Gleichnamige ersetzt die alte Freigabe.
-Future<String?> ordnerFreigeben() async {
-  final r = await _kanal.invokeMethod<Map<Object?, Object?>>('ordnerWaehlen');
-  if (r == null || r['name'] is! String || r['bookmark'] is! Uint8List) return null;
-  final name = r['name'] as String;
-  final neu = [for (final o in ablageOrdnerGespeichert()) if (o.name.toLowerCase() != name.toLowerCase()) o, (name: name, bookmark: base64Encode(r['bookmark'] as Uint8List))];
+/// Ordner freigeben (iOS-Dateien-Fenster). Ergebnis: Name, oder null = abgebrochen. Fehler mit Grund als Exception.
+/// 1.54.2 — prüft nach dem Speichern, dass die Freigabe wirklich in der Liste steht (Owner-Test 20.10.: blieb ohne Wirkung).
+Future<({String? name, String detail})> ordnerFreigeben() async {
+  final Map<Object?, Object?>? r;
+  try { r = await _kanal.invokeMethod<Map<Object?, Object?>>('ordnerWaehlen'); }
+  on PlatformException catch (e) { throw Exception('iOS: ${e.message ?? e.code}'); }
+  if (r == null || r['abgebrochen'] == true) return (name: null, detail: 'Auswahl abgebrochen (kein Ordner zurückgegeben)');
+  final name = r['name'], bookmark = r['bookmark'];
+  if (name is! String || bookmark is! Uint8List) throw Exception('unerwartete Antwort von iOS: ${r.keys.join(', ')}');
+  final neu = [for (final o in ablageOrdnerGespeichert()) if (o.name.toLowerCase() != name.toLowerCase()) o, (name: name, bookmark: base64Encode(bookmark))];
   ablageOrdnerSpeichern(neu);
-  return name;
+  if (!ablageOrdnerGespeichert().any((o) => o.name == name)) throw Exception('Freigabe nicht gespeichert — Einstellungsdatei nicht schreibbar (${einstellungsDatei()})');
+  return (name: name, detail: 'Pfad ${r['pfad']}, Zugriff ${r['zugriff']}, Bookmark ${bookmark.length} B');
 }
 
 void ordnerEntfernen(String name) => ablageOrdnerSpeichern([for (final o in ablageOrdnerGespeichert()) if (o.name != name) o]);

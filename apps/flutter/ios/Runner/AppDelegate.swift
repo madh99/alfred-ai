@@ -132,13 +132,16 @@ import UserNotifications
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder])
             let wahl = OrdnerWahl { url in
               self?.ordnerWahl = nil
-              guard let url = url else { ergebnis(nil); return }
+              guard let url = url else { ergebnis(["abgebrochen": true]); return }
               let zugriff = url.startAccessingSecurityScopedResource()
               defer { if zugriff { url.stopAccessingSecurityScopedResource() } }
               do {
                 let b = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-                ergebnis(["name": url.lastPathComponent, "bookmark": FlutterStandardTypedData(bytes: b)])
-              } catch { ergebnis(FlutterError(code: "bookmark", message: error.localizedDescription, details: nil)) }
+                ergebnis(["name": url.lastPathComponent, "bookmark": FlutterStandardTypedData(bytes: b), "pfad": url.path, "zugriff": zugriff])
+              } catch {
+                // 1.54.2 — Grund mitliefern (Diagnose Owner-Test 20.10.: Freigabe von Downloads blieb ohne Wirkung)
+                ergebnis(FlutterError(code: "bookmark", message: "\(error.localizedDescription) (Pfad \(url.path), Zugriff \(zugriff))", details: nil))
+              }
             }
             self?.ordnerWahl = wahl
             picker.delegate = wahl
