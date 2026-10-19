@@ -21,6 +21,7 @@ import 'plattform.dart'; // Phase 5 H1
 import 'handy_verbindung.dart'; // Phase 5 H1
 import 'kopplung.dart'; // Phase 5 H1
 import 'handy_push.dart'; // Phase 5 H2
+import 'halte_knopf.dart'; // 1.53.0+91
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -167,6 +168,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final TextEditingController eingabe = TextEditingController();
   /// 1.54.0 — Handy: laufende Aufnahme ist ein Diktat (Text ins Eingabefeld statt senden; Owner 19.10.)
   bool diktat = false;
+  /// 1.53.0+91 — Halten am Handy-Mikrofon: schon losgelassen, während das Mikrofon noch startete (halte_knopf.dart)
+  bool losgelassen = false;
   final ScrollController scroll = ScrollController();
   final FocusNode fokus = FocusNode();
   final Audio audio = Audio();

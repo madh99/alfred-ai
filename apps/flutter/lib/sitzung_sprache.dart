@@ -24,7 +24,9 @@ extension _Sprache on _SitzungState {
 
   Future<void> _haltenStart() async {
     if (aufnahme || antwortet) return;
-    await _aufnahmeStarten('● Sprich — loslassen sendet');
+    final ok = await _aufnahmeStarten('● Sprich — loslassen sendet');
+    // schon losgelassen, während das Mikrofon startete: gleich beenden (sonst bliebe die Aufnahme hängen)
+    if (ok && losgelassen) await _talkStop();
   }
 
   Future<void> _haltenEnde() async { if (aufnahme && !diktat) await _talkStop(); }

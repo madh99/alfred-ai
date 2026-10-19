@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — iPhone: Halten am Mikrofon nahm nicht auf (App 1.53.0, Build 91)
+
+Owner-Test 19.10. (Build 90): Langes Drücken zeigte nur die Kurzinfo „Halten: sprechen und senden“, eine Aufnahme startete nie — die Kurzinfo nahm die Halte-Geste für sich. Der Handy-Knopf hat jetzt keine Kurzinfo mehr und erkennt Halten direkt an den Fingerereignissen: nach 0,4 s startet die Aufnahme mit kurzem Vibrieren, Loslassen sendet; wer loslässt, bevor das Mikrofon bereit ist, beendet sauber. Antippen bleibt Diktat.
+
 ### Changed — iPhone: Diktat und Netzwechsel (App 1.53.0, Build 90)
 
 Owner 19.10.: „Antippen Diktat, halten senden … H3 App-Hilfen freigegeben“ (Zuhören am Handy bewusst noch nicht).

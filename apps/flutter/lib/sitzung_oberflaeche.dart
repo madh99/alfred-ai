@@ -402,9 +402,10 @@ extension _Oberflaeche on _SitzungState {
           ),
           const SizedBox(width: 8),
           if (fluechtig.isNotEmpty) Expanded(child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim), overflow: TextOverflow.ellipsis)) else const Spacer(),
-          if (istHandy) GestureDetector( // 1.54.0 — Handy: Antippen = Diktat ins Eingabefeld, Halten = sprechen und beim Loslassen senden
-            key: const Key('mikro-handy'), onLongPressStart: (_) => _haltenStart(), onLongPressEnd: (_) => _haltenEnde(),
-            child: IconButton(tooltip: aufnahme ? (diktat ? 'Diktat beenden' : 'Loslassen sendet') : 'Antippen: Diktat · Halten: sprechen und senden', onPressed: _diktatUmschalten, icon: Icon(aufnahme ? (diktat ? Icons.stop_circle : Icons.mic) : Icons.mic_none, size: 22, color: aufnahme ? theme.colorScheme.error : null), visualDensity: VisualDensity.compact))
+          if (istHandy) HalteKnopf( // 1.53.0+91 — Antippen = Diktat, Halten (0,4 s) = sprechen, Loslassen sendet
+            key: const Key('mikro-handy'), aktiv: !aufnahme && !antwortet,
+            aufTipp: _diktatUmschalten, aufHalten: () { losgelassen = false; _haltenStart(); }, aufLoslassen: () { losgelassen = true; _haltenEnde(); },
+            icon: Icon(aufnahme ? (diktat ? Icons.stop_circle : Icons.mic) : Icons.mic_none, size: 22, color: aufnahme ? theme.colorScheme.error : null))
           else IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic_none, size: 22, color: aufnahme ? theme.colorScheme.error : null), visualDensity: VisualDensity.compact),
           if (istDesktop) hoeren // Phase 5 H1 — Aktivierungswort gibt es auf dem Handy nicht (Spec §20.4)
             ? IconButton.filledTonal(tooltip: 'Zuhören aus', onPressed: _hoerenUmschalten, icon: const Icon(Icons.headset_mic, size: 20), visualDensity: VisualDensity.compact)
