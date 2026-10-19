@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
 import type { ConversationRepository, MemoryRepository, RunbookRepository, AsyncDbAdapter } from '@alfred/storage';
 import type { ConfirmationQueue } from '../confirmation-queue.js';
+import { mitKostenZweck } from '../kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 /**
  * v621 R2 — Title-Normalisierung für Duplikat-Erkennung.
@@ -92,7 +93,7 @@ export class ChatSessionRunbookReflector {
         return;
       }
       this.tickRunning = true;
-      this.tick()
+      mitKostenZweck('hintergrund:runbook-reflector', () => this.tick())
         .catch(err => this.logger.warn({ err }, 'Runbook-reflector tick failed'))
         .finally(() => { this.tickRunning = false; });
     }, ChatSessionRunbookReflector.POLL_INTERVAL_MS);

@@ -9,6 +9,7 @@ import { DocReflector } from './reflection/doc-reflector.js';
 import { OpenItemsReflector } from './reflection/open-items-reflector.js';
 import { ActionExecutor } from './reflection/action-executor.js';
 import type { ReflectionResult } from './reflection/types.js';
+import { mitKostenZweck } from './kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 export class ReflectionEngine {
   private readonly logger: Logger;
@@ -108,7 +109,7 @@ export class ReflectionEngine {
 
     // Check every hour, only act at configured hour
     this.timer = setInterval(() => {
-      this.tick().catch(err => this.logger.error({ err }, 'Reflection tick error'));
+      mitKostenZweck('hintergrund:reflection', () => this.tick()).catch(err => this.logger.error({ err }, 'Reflection tick error'));
     }, 60 * 60_000);
   }
 

@@ -6,6 +6,7 @@ import type { LLMProvider } from '@alfred/llm';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform } from '@alfred/types';
 import { AUTOMATION_TEMPLATES } from './automation-templates.js';
+import { mitKostenZweck } from '../kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 const execFileAsync = promisify(execFile);
 
@@ -76,9 +77,9 @@ export class AutomationEngine {
 
   /** Periodischer Sweep: prüft alle 60s ob Automations fällig sind. */
   start(): void {
-    this.timer = setInterval(() => this.tick().catch(err => this.logger.warn({ err }, 'AutomationEngine tick failed')), 60_000);
+    this.timer = setInterval(() => mitKostenZweck('hintergrund:automation', () => this.tick()).catch(err => this.logger.warn({ err }, 'AutomationEngine tick failed')), 60_000);
     // Initial-Tick gleich nach Start
-    setTimeout(() => this.tick().catch(() => {}), 5_000);
+    setTimeout(() => mitKostenZweck('hintergrund:automation', () => this.tick()).catch(() => {}), 5_000);
   }
 
   stop(): void {

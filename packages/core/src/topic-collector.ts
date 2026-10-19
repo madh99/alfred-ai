@@ -7,6 +7,7 @@ import type { AsyncDbAdapter } from '@alfred/storage';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { resolveYoutubeChannel, fetchYoutubeChannelVideos, fetchYoutubeTranscriptSegments, extractYoutubeVideoId } from '@alfred/skills';
 import type { LLMProvider } from '@alfred/llm';
+import { mitKostenZweck } from './kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 export interface CollectedRawItem {
   title: string;
@@ -69,7 +70,7 @@ export class TopicCollector {
   start(): void {
     if (this.timer) return;
     const interval = this.opts.intervalMs ?? 60 * 60_000;
-    this.timer = setInterval(() => { void this.tick(); }, interval);
+    this.timer = setInterval(() => { void mitKostenZweck('hintergrund:themen', () => this.tick()); }, interval);
     this.logger.info({ intervalMs: interval }, 'v929 topic collector started');
   }
 

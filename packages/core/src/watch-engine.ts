@@ -11,6 +11,7 @@ import { buildSkillContext } from './context-factory.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import type { ActivityLogger } from './activity-logger.js';
 import type { SkillHealthTracker } from './skill-health-tracker.js';
+import { mitKostenZweck } from './kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 const MAX_CHAIN_DEPTH = 5;
 
@@ -55,7 +56,7 @@ export class WatchEngine {
   ) {}
 
   start(): void {
-    this.timer = setInterval(() => this.tick(), this.tickIntervalMs);
+    this.timer = setInterval(() => mitKostenZweck('hintergrund:watch', () => this.tick()), this.tickIntervalMs);
     this.logger.info('Watch engine started');
   }
 

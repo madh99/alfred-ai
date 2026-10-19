@@ -37,6 +37,7 @@ import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
 import { buildSkillContext } from './context-factory.js';
 import { DeliveryScheduler, type ActivityProfile } from './delivery-scheduler.js';
+import { mitKostenZweck } from './kosten-zweck.js'; // v1507 D5
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
@@ -724,7 +725,8 @@ export class ReasoningEngine {
     this.tickTimer = setInterval(() => {
       if (tickRunning) return;
       tickRunning = true;
-      this.tick()
+      // v1507 D5 — eigener Takt außerhalb des Job-Registers: Kosten als Hintergrund verbuchen (live 19.10.: „sonstiges“)
+      mitKostenZweck('hintergrund:reasoning', () => this.tick())
         .catch(err => this.logger.error({ err }, 'Reasoning tick unhandled error'))
         .finally(() => { tickRunning = false; });
     }, 60_000);
@@ -742,7 +744,12 @@ export class ReasoningEngine {
    * Trigger a focused reasoning pass in response to an event (watch alert, calendar, todo, post-skill).
    * Debounced: max one event-triggered reasoning per 5 minutes.
    */
-  async triggerOnEvent(eventType: string, eventDescription: string, eventData: Record<string, unknown> = {}): Promise<void> {
+  /** v1507 D5 — Kostenherkunft „hintergrund:reasoning-ereignis“ (vom Ereignis ausgelöster Pass). */
+  triggerOnEvent(eventType: string, eventDescription: string, eventData: Record<string, unknown> = {}): Promise<void> {
+    return mitKostenZweck('hintergrund:reasoning-ereignis', () => this.triggerOnEventIntern(eventType, eventDescription, eventData));
+  }
+
+  private async triggerOnEventIntern(eventType: string, eventDescription: string, eventData: Record<string, unknown>): Promise<void> {
     if (!this.enabled) return;
 
     // Local debounce (lightweight pre-check, protects SQLite single-node)
@@ -879,7 +886,12 @@ ${this.buildTopicInstructions()}`;
   }
   /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal an den Scheduler. */
   setAnwesenheitsQuelle(fn: () => import('./delivery-scheduler.js').Anwesenheit | undefined): void { this.deliveryScheduler?.setAnwesenheitsQuelle(fn); }
-  async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
+  /** v1507 D5 — Kostenherkunft „hintergrund:reasoning-ereignis“. */
+  triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
+    return mitKostenZweck('hintergrund:reasoning-ereignis', () => this.triggerMiniPassIntern(ereignis));
+  }
+
+  private async triggerMiniPassIntern(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
     const now = Date.now();

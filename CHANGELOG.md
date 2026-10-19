@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Herkunft der Kosten: eigene Takte als Hintergrund (v1507)
+
+Live-Prüfung von v1506 (19.10. 13:01): Der Reasoning-Vollpass landete als „sonstiges“. Er läuft auf einem eigenen Takt außerhalb des Job-Registers.
+
+- **Als Hintergrund zugeordnet:**
+  - Reasoning-Takt (`hintergrund:reasoning`);
+  - vom Ereignis ausgelöste Reasoning-Pässe (`hintergrund:reasoning-ereignis`);
+  - Automationen, Runbook-Reflektor, Reflexion, Todo-Wächter, Themensammler und Watches (`hintergrund:<name>`).
+- Der LLM-Entity-Linker des Wissensgraphen ruft die API auf eigenem Weg auf, an der Kostenzählung vorbei. Seine Aufrufe stehen jetzt ebenfalls mit Herkunft in `llm_usage_zweck`. Vorher zählte `llm_usage` einen Aufruf mehr als die Zweck-Tabelle.
+
 ### Added — Kontomenü unten links und Herkunft der Kosten (v1506, App 1.47.0, App-Spec §11.3 D5)
 
 Owner-Entscheidungen 19.10.: Menü unten links in der Navigation, kein Guthaben, Herkunft der Kosten ab jetzt erfassen, Tagesbudget nur als Anzeige.

@@ -6930,6 +6930,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             );
             llmLinker.setUsageCallback((_service, model, inp, out) => {
               usageRepo.record(model, inp, out, 0, 0, 0).catch(() => {});
+              usageRepo.recordZweck(aktuellerKostenZweck(), model, inp, out, 0).catch(() => {}); // v1507 D5 — eigener API-Weg, an setPersist vorbei
             });
             llmLinker.setDocumentRepo(documentRepo);
             kgServiceInstance.setLLMLinker(llmLinker);

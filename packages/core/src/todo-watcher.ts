@@ -4,6 +4,7 @@ import type { CalendarNotificationRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform } from '@alfred/types';
 import type { ActivityLogger } from './activity-logger.js';
+import { mitKostenZweck } from './kosten-zweck.js'; // v1507 D5 — eigener Takt außerhalb des Job-Registers
 
 export interface TodoWatcherConfig {
   /** Minutes before due date to send reminder (default: 30) */
@@ -40,7 +41,7 @@ export class TodoWatcher {
   }
 
   start(): void {
-    this.timer = setInterval(() => this.tick(), this.tickIntervalMs);
+    this.timer = setInterval(() => mitKostenZweck('hintergrund:todo-watcher', () => this.tick()), this.tickIntervalMs);
     this.logger.info({ minutesBefore: this.minutesBefore }, 'Todo watcher started');
   }
 
