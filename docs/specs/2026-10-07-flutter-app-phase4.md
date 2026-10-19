@@ -195,3 +195,90 @@ App 1.0.3/1.0.4 (Commits 62d57ba0, 39b098c5): Enter sendet im mehrzeiligen Feld 
 **12.10.2026 00:25 — v1358 Zuordnung Melder → Automation → Schalter (Owner: „1 und 2 freigegeben", Änderungen in HA bedenken).** Ursache der Delegation 23:53 belegt: Filter „licht" fand nur das Waschkammerl, Alfred delegierte die Suche nach der Zuordnung (inkl. selbst vorgeschlagenem ssh). `relations` liest die Automations-Konfigurationen (auch Geräte-Trigger), Raum/Gerät, höchstens alle 30 min, Vergleich mit letztem Stand in data/homeassistant-zuordnung.json (Sensortausch/Stilllegung/Umbau → „v1358 HA-Zuordnung geändert"). match prüft Raum, Gerät, schaltende Automationen und Regel „bewegungslicht". Realfrage wörtlich wiederholt (api-v1358-licht): **46 s, nur gpt-6.1-sol 5 Aufrufe ≈ 0,10–0,32 USD, keine Unteraufgabe, kein Opus** (vorher 231 s/≈ 1,4–1,6 USD, ursprünglich 3,12 USD/275 s); Antwort gleichwertig (beide stummen Melder, Kette Melder → EIN/AUS-Automation, Batteriewert eingefroren, Prüfschritt). Lücken: Speisekammer fehlt (Türkontakt statt Bewegungsmelder als Auslöser), Zuordnung bei zwei parallelen Erstaufrufen doppelt geladen. Spec „Home-Assistant-Prüfung nach Best Practice" (Jarvis-Spec, Entwurf H1–H5) ohne Umsetzung.
 
 **12.10.2026 02:05 — v1359 Haus-Check + App 1.12.0, v1360 Hinweise + App 1.12.1 (Owner „ok wie empfohlen", „1 und 2 freigegeben").** v1359: Haus-Check als Befunde (Quelle haus-check, beobachtend), App-Ansicht „Befunde"; Erstlauf 01:13 38 Befunde, 0 Vorgänge, Lage bündelt. v1360: Realfall 11.10. „Claude-API-Zugang deaktiviert" 9× zugestellt (Claude-Aufrufe fehlerfrei), Vorreden und rohes JSON als Hinweise; Ursachen belegt: Gate v1142 erkennt Thema nur bei Jaccard ≥ 0,5 oder Objekt-Liste (alle 11 Texte „neu"), Fakten-Gegenprobe v1214 nur für Vorgänge. Neu: insights/hinweis-pruefung.ts (Vorreden, JSON-Rettung, Wiederholung über Anker + Wortüberlappung je Aufzählungspunkt; kalibriert an 103 Hinweisen: 25 Vorreden, 35 Wiederholungen nur aus bekannten Serien, Fehltreffer PlugSG3/Shelly, PV/git-server, AC Mesh/LG-TV beseitigt), Fakten-Gegenprobe vor jeder Zustellung, Anbieter-Datenlage aus dem Provider-Puls (Beweis 02:05: Anthropic-Hinweis gegen Live-Puls → Widerspruch). Erster Pass nach Deploy (02:00) ohne Hinweise — Live-Logzeilen „v1360 …" stehen noch aus. App 1.12.1: SelectionArea (Tabellen markierbar), Klick auf Code kopiert, Klick auf IP → Kopieren/Im Browser öffnen, „Erledigt"-Meldung 8 s (Flutter 3.47 persist). VM-Klickbeweis nicht möglich (ydotool bewegt den Zeiger unter Wayland nicht); echter Mausklick im Widget-Test belegt. Alle Plattformen 1.12.1 auf dem Server.
+
+
+## 11. Desktop-Ausbau nach Codex-Vorbild (Entwurf 19.10.2026, Entscheidungen getroffen, KEINE Umsetzungsfreigabe)
+
+Owner 19.10. mit Screenshots der Codex-App. Seitenleiste: Projektfäden und Gesprächsfäden trennen, „Letzte“ entfällt, Fäden, aus denen ein Projekt entstand, kommen unter das Projekt. Dazu Kopfzeile mit Menü, angeheftete Zusammenfassung, Verlaufsleiste, Kontomenü, Nachrichten- und Eingabe-Elemente. Reihenfolge: **vor** den Handy-Apps (Geräte-Spec §20), weil diese dieselben Bausteine übernehmen.
+
+### 11.1 Ausgangslage (belegt 19.10.)
+
+- **Seitenleiste:** Gespräche (Hauptgespräch, angeheftet, 12 + Weitere, Filter, Archiv), Bestätigungen, Frühere Sitzungen, Vorgänge, „Letzte“ (letzte 8 eigene Fragen des offenen Fadens), unten die Satelliten-Zeile.
+- **Projektfäden** heißen `owner:faden:projekt-<id8>` und stehen zwischen den Gesprächen.
+- **Herkunft:** Projektläufe merken `herkunft` (chatId des Starts) in `satellit-projekt.ts`. Bestehende Projekte lassen sich also nachträglich ihrem Herkunftsfaden zuordnen.
+- **Verknüpfung:** `conversations.project_id` existiert, bisher nur für `project:<id>`-Chats genutzt.
+- **Schon da:** Stufen-Wahl (Gründlichkeit), Bearbeiten, Erneut senden, Kopieren, Vorlesen, Antworten, eingeklappte lange Nachrichten.
+- **Fehlt:** Tastenkürzel in der App (nur Esc in der Schnellfrage), Kostenanzeige, Abzweigen für Owner-Fäden. Abzweigen gibt es serverseitig nur für Web-Chats (v644 `branchAtMessage`).
+
+### 11.2 Entscheidungen des Owners (19.10., „wie empfohlen“)
+
+1. **Vorgänge** verschwinden aus der Seitenleiste, weil der Eingang in der Navigation sie mit Zähler zeigt.
+2. **Fäden unter einem Projekt bekommen dessen Kontext:** Alfred weiß dort ohne Nachfrage, um welches Projekt es geht.
+3. **Zusammenfassung normaler Fäden** nur auf Klick, ohne laufende Kosten.
+4. **👎 bei einer Antwort** wird gezählt (Messen). Den Grund kann der Owner optional angeben, daraus entsteht eine Korrektur (Korrektur-Gate).
+5. **Seiten-Chat** kommt in D2. Ein eigenes Fenster je Faden kommt später, als eigener Schritt.
+6. **Das Web zieht bei D1, D2 und D6 mit.**
+
+### 11.3 Etappen
+
+**D1 — Seitenleiste mit Projekten**
+- **Aufbau von oben nach unten:**
+  1. Neuer Chat.
+  2. **Projekte** (aufklappbar, „+“, „…“): je Projekt ein Ordner, sortiert nach letzter Aktivität. Klick auf den Namen öffnet die Projektansicht. Darunter Projektfaden und zugeordnete Fäden, höchstens 5, sonst „Weitere“. Archivierte Projekte unter „…“.
+  3. **Gespräche** ohne Projektfäden (Hauptgespräch, angeheftet, Weitere, Filter, Archiv mit den früheren Sitzungen).
+  4. **Bestätigungen**, solange welche offen sind.
+- **Entfällt:** „Letzte“ und Vorgänge.
+- **Zuordnung:**
+  - Der Projektstart aus einem Faden setzt die Verknüpfung, ebenso der Projektfaden selbst.
+  - Bestehende Projekte bekommen sie einmalig aus der gemerkten `herkunft` ihrer Läufe.
+  - Im Faden-Menü gibt es „Einem Projekt zuordnen …“ und „Aus Projekt lösen“; Telegram bekommt `/faden projekt <Nr> <Projekt>`.
+  - Die Fadenliste liefert dazu `projekt` (id, name).
+- **Kontext (Entscheidung 2):** In Fäden eines Projekts steht das Projekt (Name, Gerät, Pfad, Stand) im Prompt wie im Projektfaden.
+- **Nachweis:** Screenshot von App und Web, „finanzapp“ steht unter „Finanz-Backend“. Ein neues Projekt aus einem Faden ordnet sich selbst ein. Eine Frage im zugeordneten Faden kommt ohne Projektnamen beim richtigen Projekt an.
+
+**D2 — Kopfzeile, Menü, Tastenkürzel, Abzweigen, Seiten-Chat**
+- **Kopfzeile:** Titel (Ordnersymbol bei Projektfäden), rechts „…“, der Schalter für die Zusammenfassung (D3) und „Seiten-Chat“.
+- **„…“-Menü** (Kopfzeile und Seitenleiste):
+  - Umbenennen (Strg+Alt+R), Anheften/Lösen (Strg+Alt+P), Neuer Seiten-Chat (Strg+Alt+S).
+  - Abzweigen: ab Ende oder ab einer Nachricht, neuer Faden mit dem Verlauf bis dahin.
+  - Geplante Aufgabe hinzufügen … (Vorschlag aus dem Faden, Ergebnis jedes Laufs in diesen Faden).
+  - Kopieren (Markdown oder letzte Antwort), Exportieren (.md-Datei), Im Browser öffnen.
+  - Einem Projekt zuordnen …, Archivieren (Strg+Umschalt+A), Löschen (mit Rückgängig).
+- **Kürzel:** Strg+N (neuer Chat), Strg+K (Fäden, Projekte und Ansichten durchsuchen), Strg+B (Seitenleiste), Strg+, (Einstellungen). Eine Liste aller Kürzel steht unter Hilfe.
+- **Seiten-Chat:** ein schmaler zweiter Chat rechts, ein eigener Faden mit Verweis auf den Hauptfaden. Er lässt sich schließen und später wieder öffnen.
+- **Server:** Abzweigen für Owner-Fäden (Verlauf bis zur Nachricht kopieren, neuer Faden mit Titel „↳ <alter Titel>“).
+- **Nachweis:** Kürzel- und Menütest; ein abgezweigter Faden hat den richtigen Verlauf; die geplante Aufgabe liefert in den Faden.
+
+**D3 — Angeheftete Zusammenfassung (Karte oben rechts, ein/aus)**
+- **Projektfaden:**
+  - Name und Stand (Lauf, Etappe, Prüfungen).
+  - **Änderungen** seit dem letzten Lauf (vorhandene Änderungsansicht).
+  - Schnellaktionen: dev starten und öffnen; Ordner und Terminal am Gerät öffnen, nur wenn das Projekt auf diesem Gerät liegt; Projektansicht.
+- **Normaler Faden (Entscheidung 3):** Zusammenfassung in 3 bis 5 Zeilen auf Klick (fast-Tier, je Faden gespeichert, mit Stand-Zeit), dazu offene Bestätigungen und Vorgänge aus diesem Faden.
+- **Nachweis:** Karte in beiden Fadenarten, Änderungen stimmen mit `projekt_diff` überein.
+
+**D4 — Verlaufsleiste mit Vorschau und Lesezeichen**
+- Ein Strich je eigener Nachricht am linken Rand. Darüberfahren zeigt Frage und Antwortanfang, Klick springt hin.
+- 🔖 je Nachricht, serverseitig gespeichert (App und Web gleich). Markierte Striche sind hervorgehoben.
+- **Nachweis:** Sprung und Lesezeichen bleiben nach einem Neustart.
+
+**D5 — Kontomenü unten links (ersetzt die Satelliten-Zeile)**
+- Kosten & Guthaben: heute, Woche, Monat, teuerstes Modell, Tagesbudget, Claude-Code-Kosten. Neue Geräte-Route auf Basis der vorhandenen Kostenauswertung.
+- Geräte (Satellitenstatus), Einstellungen (Strg+,), Hilfe (Befehle, Kürzel), Über/Update (App- und Server-Version).
+- Ohne Team-Funktionen.
+- **Nachweis:** Die Zahlen stimmen mit der Kostenauswertung des Servers überein.
+
+**D6 — Nachrichten und Eingabe**
+- **Unter jeder Antwort:** Kopieren, Vorlesen, 👍/👎 (Entscheidung 4) und „…“ mit Abzweigen ab hier, Als Aufgabe übernehmen, Merken, Kopieren als Markdown.
+- **Stufen-Wahl:** zeigt Modell und Gründlichkeit hinter „Automatisch“.
+- **Schalter „Nur vorschlagen“ je Faden:**
+  - Alfred plant und beschreibt, führt aber nichts aus.
+  - Durchgesetzt wird das deterministisch in der Werkzeug-Ausführung: Verändernde Aktionen werden abgewiesen, Claude-Code-Fragen laufen nur lesend.
+  - Der Schalter steht am Faden und gilt in App, Web und Telegram, bis ihn der Owner ausschaltet.
+- **Nachweis:** Im Modus „Nur vorschlagen“ zeigt das Log keinen verändernden Schritt. Die Bewertung ist gespeichert und gezählt; ein 👎 mit Grund ergibt eine Korrektur.
+
+### 11.4 Rahmen
+
+- Jede Etappe ist ein eigenes Server-Release plus App-Version (Windows, Linux, macOS über das Fernbuild), mit Sichtbeweis per Screenshot (PC und VM) und Audit wie bisher.
+- Die Handy-App (Geräte-Spec §20) übernimmt danach dieselbe Seitenleiste mit Projekten, dasselbe Menü und dieselbe Zusammenfassungskarte in schmaler Form.
+- **Nicht Teil:** eigenes Fenster je Faden (später), Team-Funktionen, Teilen über fremde Dienste.
