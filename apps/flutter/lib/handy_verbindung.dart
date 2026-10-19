@@ -161,9 +161,18 @@ class HandyVerbindung implements AppVerbindung {
     try { _ws?.add(jsonEncode({'id': '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 30)}', 'zeit': DateTime.now().toUtc().toIso8601String(), 'version': 1, ...n})); } catch (_) {}
   }
 
+  /// 1.54.2 — Realfall 19.10. 23:59:20: Rückkehr in die App und Netzwechsel bauten gleichzeitig zwei Verbindungen auf
+  /// („neue Verbindung desselben Geräts“); während eines Aufbaus startet kein zweiter.
+  bool _verbindet = false;
+
   Future<void> _verbinde() async {
     final k = kopplung;
-    if (!_laeuft || !_vorne || k == null || _ws != null) return;
+    if (!_laeuft || !_vorne || k == null || _ws != null || _verbindet) return;
+    _verbindet = true;
+    try { await _verbindeEinmal(k); } finally { _verbindet = false; }
+  }
+
+  Future<void> _verbindeEinmal(Kopplung k) async {
     final c = clientFuer(k.konfig);
     try {
       final ws = await WebSocket.connect('${k.server.replaceFirst(RegExp('^http', caseSensitive: false), 'ws')}/api/geraete/ws', customClient: c).timeout(const Duration(seconds: 6)); // 1.54.0 H3 — Mobilfunk: nicht lange hängen
