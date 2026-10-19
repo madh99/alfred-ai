@@ -55,6 +55,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1502] - 2026-10-19
+
+### Fixed — Zusammenfassung eines Fadens brach in der letzten Zeile ab
+
+Live-Probe nach v1501 an „finanzapp“: Die vierte Zeile endete mitten im Wort („(B“). Grund war das Antwortlimit von 400 Tokens bei langen Zeilen. Jetzt gilt ein Limit von 1 200 Tokens, und jede Zeile darf höchstens 160 Zeichen haben. Die App bleibt 1.44.0.
+
 ## [0.19.0-jarvis.1501] - 2026-10-19
 
 ### Added — Angeheftete Zusammenfassung oben rechts im Chat (App 1.44.0; App-Spec §11 D3)

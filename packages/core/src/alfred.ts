@@ -16373,7 +16373,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const m = (await this.conversationRepo.getMessages(c.id, 80)).filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim());
       if (m.length === 0) return { anzahl, bestaetigungen: [] };
       const verlauf = m.map(x => `${x.role === 'user' ? 'Owner' : 'Alfred'}: ${x.content.replace(/\s+/g, ' ').slice(0, 600)}`).join('\n').slice(-12000);
-      const r = await this.llmProvider.complete({ messages: [{ role: 'user', content: `Fasse dieses Gespräch in 3 bis 5 kurzen Zeilen auf Deutsch zusammen: worum es geht, was entschieden oder erledigt ist, was offen ist. Keine Einleitung, keine Überschrift, Zeilen mit „• “.\n\n${verlauf}` }], tier: 'fast', maxTokens: 400 });
+      const r = await this.llmProvider.complete({ messages: [{ role: 'user', content: `Fasse dieses Gespräch in 3 bis 5 Zeilen auf Deutsch zusammen: worum es geht, was entschieden oder erledigt ist, was offen ist. Jede Zeile höchstens 160 Zeichen. Keine Einleitung, keine Überschrift, Zeilen mit „• “.\n\n${verlauf}` }], tier: 'fast', maxTokens: 1200 }); // v1502 — 400 schnitt die letzte Zeile ab (Live-Probe 19.10.)
       const text = r.content.trim();
       if (text) {
         alle[schluessel] = { text, stand: new Date().toISOString(), anzahl };
