@@ -60,8 +60,7 @@ extension _Oberflaeche on _SitzungState {
         ])),
         Divider(height: 1, color: cs.outlineVariant),
         const SizedBox(height: 6),
-        eintrag(Icons.keyboard_command_key, Icons.keyboard_command_key, 'Befehle', false, () => _paletteOeffnen(), tip: 'Befehle (Strg+K)'), // 1.10.0 B1
-        eintrag(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => zu(Ansicht.einstellungen)),
+        _kontoKnopf(theme, breit), // 1.47.0 D5 — Kontomenü (Einstellungen, Befehle, Hilfe, Kosten, Geräte, Update)
         eintrag(breit ? Icons.keyboard_double_arrow_left : Icons.keyboard_double_arrow_right, Icons.keyboard_double_arrow_left, breit ? 'Einklappen' : 'Ausklappen', false, () { _neu(() => navBreit = !navBreit); navBreitSpeichern(navBreit); }),
         const SizedBox(height: 8),
       ]),
@@ -141,13 +140,73 @@ extension _Oberflaeche on _SitzungState {
           ],
           // 1.42.0 D1 — „Vorgänge“ (Eingang in der Navigation zählt sie) und „Letzte“ (zeigen die Fäden) entfallen
         ])),
-        const Divider(height: 1),
-        Padding(padding: const EdgeInsets.fromLTRB(16, 8, 12, 10), child: Row(children: [
-          Icon(Icons.circle, size: 9, color: satellit?.verbunden == true ? Colors.green : theme.colorScheme.error),
-          const SizedBox(width: 6),
-          Expanded(child: Text(satellit == null ? ipcZustand : 'Satellit ${satellit!.version}${satellit!.verbunden ? ' · Alfred ${satellit!.serverVersion ?? ''}' : ' · nicht verbunden'}', style: theme.textTheme.labelSmall?.copyWith(color: dim), overflow: TextOverflow.ellipsis)),
-        ])),
+        // 1.47.0 D5 — die Satelliten-Zeile ist ins Kontomenü unten links gewandert
       ]),
+    );
+  }
+
+  /// 1.47.0 D5 — Kosten und Geräte für das Kontomenü laden (Fehler bleiben im Menü sichtbar, kein Abbruch).
+  Future<void> _kontoLaden() async {
+    final s = server;
+    if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/konto');
+      final geraete = [for (final g in (j['geraete'] as List? ?? const [])) '${(g as Map)['name']} · ${g['plattform']}'];
+      kontoStand.value = (KontoKosten.aus(j['kosten'] as Map<String, dynamic>), geraete, null);
+    } catch (e) {
+      kontoStand.value = (kontoStand.value.$1, kontoStand.value.$2, 'Kosten nicht geladen: $e');
+    }
+    if (mounted) _neu(() {}); // Kostenzeile im Knopf
+  }
+
+  /// 1.47.0 D5 — Knopf unten links: Gerät, Verbindung, Kosten heute; öffnet das Kontomenü darüber.
+  Widget _kontoKnopf(ThemeData theme, bool breit) {
+    final cs = theme.colorScheme;
+    final verbunden = satellit?.verbunden == true;
+    final heute = kontoStand.value.$1?.heute;
+    final name = konfig?.name ?? satellit?.name ?? 'Gerät';
+    final symbol = Stack(clipBehavior: Clip.none, children: [
+      CircleAvatar(radius: 14, backgroundColor: cs.primaryContainer, child: Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(), style: theme.textTheme.labelLarge?.copyWith(color: cs.onPrimaryContainer, fontWeight: FontWeight.w700))),
+      Positioned(right: -1, bottom: -1, child: Container(width: 10, height: 10, decoration: BoxDecoration(color: verbunden ? Colors.green : cs.error, shape: BoxShape.circle, border: Border.all(color: cs.surfaceContainerLow, width: 2)))),
+    ]);
+    return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), child: Tooltip(message: breit ? '' : 'Konto: $name', child: Material(color: Colors.transparent, borderRadius: BorderRadius.circular(10), child: InkWell(
+      key: const Key('konto-knopf'), borderRadius: BorderRadius.circular(10), onTap: _kontoOeffnen,
+      child: SizedBox(height: 48, child: breit
+          ? Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: Row(children: [
+              symbol, const SizedBox(width: 10),
+              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(heute == null ? (verbunden ? 'verbunden' : 'nicht verbunden') : 'heute ${kostenText(heute)}', maxLines: 1, style: theme.textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+              ])),
+              Icon(Icons.unfold_more, size: 16, color: cs.onSurfaceVariant),
+            ]))
+          : Center(child: symbol)),
+    ))));
+  }
+
+  /// 1.47.0 D5 — Kontomenü über dem Knopf unten links öffnen; Kosten werden beim Öffnen frisch geladen.
+  Future<void> _kontoOeffnen() async {
+    _kontoLaden();
+    final sat = satellit;
+    final versionen = [
+      if (appVersion.isNotEmpty) 'App $appVersion',
+      if (sat != null) 'Satellit ${sat.version}',
+      if (sat?.serverVersion != null) 'Alfred ${sat!.serverVersion}',
+      if (sat == null) ipcZustand,
+    ].join(' · ');
+    void schliessenUnd(VoidCallback f) { Navigator.of(context).pop(); f(); }
+    await showGeneralDialog<void>(context: context, barrierDismissible: true, barrierLabel: 'Kontomenü', barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 120),
+      pageBuilder: (ctx, _, _) => SafeArea(child: Align(alignment: Alignment.bottomLeft, child: Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 60),
+        child: ConstrainedBox(constraints: BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height - 80), child: ValueListenableBuilder(valueListenable: kontoStand, builder: (_, st, _) => KontoMenue(
+          geraet: konfig?.name ?? sat?.name ?? 'Gerät', verbunden: sat?.verbunden == true, versionen: versionen,
+          kosten: st.$1, fehler: st.$3, geraete: st.$2,
+          aufEinstellungen: () => schliessenUnd(() => _neu(() => ansicht = Ansicht.einstellungen)),
+          aufBefehle: () => schliessenUnd(_paletteOeffnen),
+          aufKuerzel: () => schliessenUnd(_kuerzelZeigen),
+          updateText: update != null ? 'Update ${update!.version} installieren' : 'Nach Update suchen',
+          aufUpdate: () => schliessenUnd(() { if (update != null) { _updateInstallieren(); } else { _updatePruefen(); } }),
+        )))))),
     );
   }
 

@@ -122,6 +122,44 @@ export class UsageRepository {
     }
   }
 
+  /**
+   * v1506 D5 — Kosten mit Herkunft: chat, hintergrund:<job>, aufgabe, claude-code (Kosten der Claude-Code-Läufe,
+   * nicht in llm_usage), sonstiges. Eigene Tabelle neben llm_usage, damit die Gesamtsummen unverändert bleiben.
+   */
+  async recordZweck(zweck: string, model: string, inputTokens: number, outputTokens: number, costUsd: number, now = new Date()): Promise<void> {
+    const date = localDateKey(now, this.timezone);
+    await this.adapter.execute(`
+      INSERT INTO llm_usage_zweck (date, zweck, model, calls, input_tokens, output_tokens, cost_usd)
+      VALUES (?, ?, ?, 1, ?, ?, ?)
+      ON CONFLICT(date, zweck, model) DO UPDATE SET
+        calls = llm_usage_zweck.calls + 1,
+        input_tokens = llm_usage_zweck.input_tokens + excluded.input_tokens,
+        output_tokens = llm_usage_zweck.output_tokens + excluded.output_tokens,
+        cost_usd = llm_usage_zweck.cost_usd + excluded.cost_usd
+    `, [date, zweck.slice(0, 80), model.slice(0, 80), inputTokens, outputTokens, costUsd]);
+  }
+
+  /** v1506 D5 — lokaler Tagesschlüssel (gleiche Zeitzone wie record()). */
+  tagesSchluessel(now = new Date()): string { return localDateKey(now, this.timezone); }
+
+  /** v1506 D5 — Summen je Modell aus llm_usage im Zeitraum (inklusive). */
+  async summeJeModell(von: string, bis: string): Promise<Array<{ model: string; calls: number; costUsd: number }>> {
+    const rows = await this.adapter.query(`
+      SELECT model, SUM(calls) AS calls, SUM(cost_usd) AS cost_usd FROM llm_usage
+      WHERE date >= ? AND date <= ? GROUP BY model
+    `, [von, bis]) as Record<string, unknown>[];
+    return rows.map(r => ({ model: String(r.model), calls: Number(r.calls ?? 0), costUsd: Number(r.cost_usd ?? 0) }));
+  }
+
+  /** v1506 D5 — Summen je Herkunft aus llm_usage_zweck im Zeitraum (inklusive). */
+  async summeJeZweck(von: string, bis: string): Promise<Array<{ zweck: string; calls: number; costUsd: number }>> {
+    const rows = await this.adapter.query(`
+      SELECT zweck, SUM(calls) AS calls, SUM(cost_usd) AS cost_usd FROM llm_usage_zweck
+      WHERE date >= ? AND date <= ? GROUP BY zweck
+    `, [von, bis]) as Record<string, unknown>[];
+    return rows.map(r => ({ zweck: String(r.zweck), calls: Number(r.calls ?? 0), costUsd: Number(r.cost_usd ?? 0) }));
+  }
+
   /** Get usage grouped by user_id for a date range. */
   async getByUser(startDate: string, endDate: string): Promise<Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }>> {
     const rows = await this.adapter.query(`

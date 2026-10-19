@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Kontomenü unten links und Herkunft der Kosten (v1506, App 1.47.0, App-Spec §11.3 D5)
+
+Owner-Entscheidungen 19.10.: Menü unten links in der Navigation, kein Guthaben, Herkunft der Kosten ab jetzt erfassen, Tagesbudget nur als Anzeige.
+
+- **Herkunft der Kosten:**
+  - Die Einstiegspunkte setzen einen Zweck im Ausführungskontext: Nachrichtenverarbeitung `chat`, Läufe des Job-Registers `hintergrund:<job>`, geplante Aufgaben `aufgabe`.
+  - Läuft eine Aufgabe oder ein Hintergrund-Job intern durch die Nachrichtenverarbeitung, behält sie ihren Zweck.
+  - Die Kostenzählung schreibt jeden Aufruf zusätzlich in die neue Tabelle `llm_usage_zweck` (Tag × Zweck × Modell; SQLite-Migration 144, PG 148).
+  - Aufrufe ohne Kontext zählen als `sonstiges`.
+  - Kosten der Claude-Code-Läufe auf Geräten (Auftragsende) und der Code-Agenten auf dem Server werden als `claude-code` verbucht.
+  - `llm_usage` und die bisherigen Auswertungen bleiben unverändert. Keine Rückrechnung.
+- **Server:** `GET /api/geraete/konto` (nur Geräte des Owners) liefert:
+  - Kosten heute, Woche (ab Montag) und Monat, jeweils LLM plus Claude Code;
+  - Herkunft heute;
+  - teuerste Hintergrund-Jobs und teuerstes Modell im Monat;
+  - Claude Code im Monat;
+  - das vorhandene Tagesbudget (`llm.tagesbudgetUsd`) und die verbundenen Geräte.
+- **App:**
+  - Unten links in der Navigation sitzt ein Kontoknopf mit Gerät, Verbindungspunkt und Kosten heute. Er öffnet darüber das Kontomenü mit Kosten, Herkunft, Budgetbalken, verbundenen Geräten, Versionen (App, Satellit, Alfred), Einstellungen, Befehlen, Tastenkürzeln und Update.
+  - Der Budgetbalken ist nur eine Anzeige, ohne Warnfarbe auch über dem Budget.
+  - Die Einträge „Befehle“ und „Einstellungen“ der Navigation sind ins Menü gewandert; Strg+K und Strg+, gelten weiter.
+  - Die Satelliten-Zeile unten in der Gesprächsspalte entfällt.
+
 ### Changed — App und Web: eigene Anhänge als Vorschau über der Nachricht (v1505, App 1.46.0)
 
 Owner 19.10. (Screenshot): Angehängte Bilder und Dateien erschienen im Verlauf als technische Zeilen („Datei „…“ (… Bytes, SHA-256 …) liegt in deinem Dateispeicher, Schlüssel: … Bestätige kurz den Empfang.“). Jetzt wie im Vorbild:

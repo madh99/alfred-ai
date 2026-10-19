@@ -34,6 +34,7 @@ import type { Platform } from '@alfred/types';
 import { istProtokollAnfrage, werkzeugeAus } from './lernen/anfrage-protokoll.js'; // v1374
 import { absichtenAus } from './skill-filter.js'; // v1374
 import { dossierThemaFuer, dossierAuszug } from './interessen/dossier-auszug.js'; // v1377
+import { mitKostenZweckWennLeer } from './kosten-zweck.js'; // v1506 D5
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -515,6 +516,11 @@ export class MessagePipeline {
   }
 
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
+    // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
+    return mitKostenZweckWennLeer('chat', () => this.processIntern(message, onProgress));
+  }
+
+  private async processIntern(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
 

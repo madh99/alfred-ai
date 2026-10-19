@@ -13,6 +13,7 @@ import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { aktuellerKostenZweck } from './kosten-zweck.js'; // v1506 D5
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
@@ -776,6 +777,7 @@ export class Alfred {
     this.usageRepo = usageRepo;
     llmProvider.setPersist((model, inp, out, cacheR, cacheW, cost) => {
       usageRepo.record(model, inp, out, cacheR, cacheW, cost).catch(() => {});
+      usageRepo.recordZweck(aktuellerKostenZweck(), model, inp, out, cost).catch(() => {}); // v1506 D5 Kostenherkunft
     });
 
     // v1162 — Jarvis Schicht 0: Provider-Puls. Jeder Erfolg/Fehler je Tier
@@ -1826,6 +1828,7 @@ export class Alfred {
                     projId = proj?.id;
                   }
                 } catch { /* best-effort — Run wird auch ohne Projekt-Zuordnung erfasst */ }
+                if ((info.usage?.costUsd ?? 0) > 0) this.usageRepo?.recordZweck('claude-code', info.model ?? info.agentName ?? 'code-agent', info.usage?.inputTokens ?? 0, info.usage?.outputTokens ?? 0, info.usage?.costUsd ?? 0).catch(() => {}); // v1506 D5
                 await this.cliRunsRepoRef.record({
                   userId: uid,
                   projectId: projId,
@@ -13937,6 +13940,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Die Ausgabe von Claude Code steht nur als gekennzeichneter Datenblock darin und geht an kein Modell.
           beiEreignis: async ({ geraet, ereignis, herkunft }) => {
             if (ereignis.art !== 'auftrag') return;
+            // v1506 D5 — Kosten des Claude-Code-Laufs auf dem Gerät (nicht in llm_usage) mit Herkunft „claude-code“
+            if (typeof ereignis.kosten === 'number' && ereignis.kosten > 0) this.usageRepo?.recordZweck('claude-code', 'claude-code', 0, 0, ereignis.kosten).catch(() => {});
             // v1432 — Frage zum Projekt, auf die gewartet wird: Antwort geht als Werkzeug-Ergebnis an Alfred, keine zweite Meldung
             if (this.frageWarten.erfuelle(ereignis.auftragId, ereignis)) { this.projektLiveEnde(ereignis.auftragId); this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status, kosten: ereignis.kosten }, 'v1432 Antwort auf Projektfrage abgeholt'); return; }
             if (herkunft?.frage) { this.projektLiveEnde(ereignis.auftragId); await this.projektFrageNachliefern(geraet, ereignis, herkunft); return; }
@@ -14127,6 +14132,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
           // v1505 — eigene hochgeladene Datei für die Vorschau im Verlauf: Uploads der Geräte liegen im Dateispeicher des Owners,
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
+          // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
+          // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          konto: async (geraetId: string) => {
+            if (!this.usageRepo || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            const { kontoKosten } = await import('./konto.js');
+            const tagesbudgetUsd = (this.config.llm as { tagesbudgetUsd?: number }).tagesbudgetUsd;
+            const kosten = await kontoKosten(this.usageRepo, { ...(tagesbudgetUsd ? { tagesbudgetUsd } : {}) });
+            return { kosten, geraete: gw.verbundene().map(g => ({ name: g.name, plattform: g.plattform, seit: g.verbundenSeit })) };
+          },
           datei: async (geraetId: string, key: string) => {
             const owner = this.ownerMasterUserId ?? this.tryOwner();
             if (!this.fileStoreRef || !owner || !(await this.geraetGehoertOwner(geraetId))) return undefined;

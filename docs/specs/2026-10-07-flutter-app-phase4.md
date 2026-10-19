@@ -291,6 +291,11 @@ Owner-Entscheidungen 19.10.:
   - Die Summen stimmen mit der Kostenauswertung des Servers überein.
   - Die Summe über alle Zwecke ergibt die Tagessumme.
   - `sonstiges` bleibt nach einem Tag Betrieb klein (Ausreißer werden einem Einstiegspunkt zugeordnet).
+- **Umsetzungsstand:** Freigabe 19.10. („ok d5“), umgesetzt in v1506 / App 1.47.0.
+  - Neue Tabelle `llm_usage_zweck`.
+  - Route `/api/geraete/konto`.
+  - Kontoknopf und -menü in der Navigation.
+  - Claude Code wird aus dem Auftragsende der Geräte und aus den Code-Agenten des Servers verbucht.
 
 **D6 — Nachrichten und Eingabe**
 - **Unter jeder Antwort:** Kopieren, Vorlesen, 👍/👎 (Entscheidung 4) und „…“ mit Abzweigen ab hier, Als Aufgabe übernehmen, Merken, Kopieren als Markdown.

@@ -15,6 +15,7 @@ import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
 import { standRahmen, standAus, laufVollstaendig, istPruefAuftrag, NACHFORDERUNG } from './geplant/stand.js'; // v1449
 import { standLesen, standSchreiben, berichtBauen, einschaetzungAus } from './geplant/bericht.js'; // v1465, v1466
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
+import { mitKostenZweck } from './kosten-zweck.js'; // v1506 D5
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -86,7 +87,12 @@ export class ProactiveScheduler {
     await this.executeAction(action, ausloeser);
   }
 
-  private async executeAction(action: ScheduledAction, ausloeser?: { text: string; allowedSkills?: string[] }): Promise<void> {
+  /** v1506 D5 — Kostenherkunft „aufgabe“ für alles, was eine geplante Aufgabe auslöst (auch durch die Pipeline). */
+  private executeAction(action: ScheduledAction, ausloeser?: { text: string; allowedSkills?: string[] }): Promise<void> {
+    return mitKostenZweck('aufgabe', () => this.executeActionIntern(action, ausloeser));
+  }
+
+  private async executeActionIntern(action: ScheduledAction, ausloeser?: { text: string; allowedSkills?: string[] }): Promise<void> {
     const now = new Date().toISOString();
     const startMs = Date.now();
     this.logger.info({ actionId: action.id, name: action.name, ...(ausloeser ? { ausloeser: ausloeser.text.slice(0, 160), allowedSkills: ausloeser.allowedSkills } : {}) }, 'Executing scheduled action');

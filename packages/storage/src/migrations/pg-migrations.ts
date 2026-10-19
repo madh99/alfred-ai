@@ -2314,4 +2314,20 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived_at TEXT', []);
     },
   },
+  {
+    version: 148,
+    description: 'v1506 D5 — llm_usage_zweck: Kosten je Tag, Herkunft (chat, hintergrund:<job>, aufgabe, claude-code, sonstiges) und Modell (PG-Spiegel zu SQLite v144).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS llm_usage_zweck (
+          date TEXT NOT NULL,
+          zweck TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+          PRIMARY KEY (date, zweck, model)
+        )`, []);
+    },
+  },
 ];

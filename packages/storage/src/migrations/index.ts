@@ -3007,4 +3007,20 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE conversations ADD COLUMN archived_at TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 144,
+    description: 'v1506 D5 — llm_usage_zweck: Kosten je Tag, Herkunft (chat, hintergrund:<job>, aufgabe, claude-code, sonstiges) und Modell (SQLite-Spiegel zu PG v148).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS llm_usage_zweck (
+          date TEXT NOT NULL,
+          zweck TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (date, zweck, model)
+        )`);
+    },
+  },
 ];

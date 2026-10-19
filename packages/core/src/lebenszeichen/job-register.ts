@@ -1,5 +1,6 @@
 import type { Logger } from 'pino';
 import { istNachtjobFaellig, lokalesDatum } from '../nachtjob-plan.js';
+import { mitKostenZweck } from '../kosten-zweck.js'; // v1506 D5
 
 /**
  * Jarvis Schicht 0 — Lebenszeichen: das Job-Register.
@@ -212,7 +213,7 @@ export class JobRegister {
       let runId: string | undefined;
       try { runId = await this.deps.runs?.start(def.key, userId, this.deps.nodeId); } catch { /* Persistenz ist Zusatz */ }
       try {
-        const r = (await def.run({ userId })) ?? { ok: true };
+        const r = (await mitKostenZweck(`hintergrund:${def.key}`, () => def.run({ userId }))) ?? { ok: true }; // v1506 D5 Kostenherkunft
         if (r.ok) okZahl++; else fehler.push(r.fehler ?? 'unbekannt');
         for (const [k, v] of Object.entries(r.zaehler ?? {})) summe[k] = (summe[k] ?? 0) + v;
         if (runId) await this.deps.runs?.finish(runId, r.ok, r.zaehler, r.fehler).catch(() => undefined);
