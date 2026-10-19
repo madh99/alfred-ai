@@ -160,6 +160,15 @@ export class UsageRepository {
     return rows.map(r => ({ zweck: String(r.zweck), calls: Number(r.calls ?? 0), costUsd: Number(r.cost_usd ?? 0) }));
   }
 
+  /** v1508 — Summen je Herkunft und Modell (Claude-Code-Läufe je Gerät: Modell `gerät:<Name>`). */
+  async summeJeZweckUndModell(von: string, bis: string): Promise<Array<{ zweck: string; model: string; calls: number; costUsd: number }>> {
+    const rows = await this.adapter.query(`
+      SELECT zweck, model, SUM(calls) AS calls, SUM(cost_usd) AS cost_usd FROM llm_usage_zweck
+      WHERE date >= ? AND date <= ? GROUP BY zweck, model
+    `, [von, bis]) as Record<string, unknown>[];
+    return rows.map(r => ({ zweck: String(r.zweck), model: String(r.model), calls: Number(r.calls ?? 0), costUsd: Number(r.cost_usd ?? 0) }));
+  }
+
   /** Get usage grouped by user_id for a date range. */
   async getByUser(startDate: string, endDate: string): Promise<Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }>> {
     const rows = await this.adapter.query(`

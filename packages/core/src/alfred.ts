@@ -1828,7 +1828,8 @@ export class Alfred {
                     projId = proj?.id;
                   }
                 } catch { /* best-effort — Run wird auch ohne Projekt-Zuordnung erfasst */ }
-                if ((info.usage?.costUsd ?? 0) > 0) this.usageRepo?.recordZweck('claude-code', info.model ?? info.agentName ?? 'code-agent', info.usage?.inputTokens ?? 0, info.usage?.outputTokens ?? 0, info.usage?.costUsd ?? 0).catch(() => {}); // v1506 D5
+                // v1506 D5, v1508 — je Agent getrennt (claude-code, codex, mistral-vibe …)
+                if ((info.usage?.costUsd ?? 0) > 0) this.usageRepo?.recordZweck(`agent:${String(info.agentName ?? 'code-agent').toLowerCase()}`, info.model ?? info.agentName ?? 'code-agent', info.usage?.inputTokens ?? 0, info.usage?.outputTokens ?? 0, info.usage?.costUsd ?? 0).catch(() => {});
                 await this.cliRunsRepoRef.record({
                   userId: uid,
                   projectId: projId,
@@ -13942,7 +13943,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           beiEreignis: async ({ geraet, ereignis, herkunft }) => {
             if (ereignis.art !== 'auftrag') return;
             // v1506 D5 — Kosten des Claude-Code-Laufs auf dem Gerät (nicht in llm_usage) mit Herkunft „claude-code“
-            if (typeof ereignis.kosten === 'number' && ereignis.kosten > 0) this.usageRepo?.recordZweck('claude-code', 'claude-code', 0, 0, ereignis.kosten).catch(() => {});
+            // v1508 — als Agent claude-code, Modell = Gerät (Kosten je Gerät im Kontomenü)
+            if (typeof ereignis.kosten === 'number' && ereignis.kosten > 0) this.usageRepo?.recordZweck('agent:claude-code', `gerät:${geraet}`, 0, 0, ereignis.kosten).catch(() => {});
             // v1432 — Frage zum Projekt, auf die gewartet wird: Antwort geht als Werkzeug-Ergebnis an Alfred, keine zweite Meldung
             if (this.frageWarten.erfuelle(ereignis.auftragId, ereignis)) { this.projektLiveEnde(ereignis.auftragId); this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status, kosten: ereignis.kosten }, 'v1432 Antwort auf Projektfrage abgeholt'); return; }
             if (herkunft?.frage) { this.projektLiveEnde(ereignis.auftragId); await this.projektFrageNachliefern(geraet, ereignis, herkunft); return; }
@@ -14140,7 +14142,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const { kontoKosten } = await import('./konto.js');
             const tagesbudgetUsd = (this.config.llm as { tagesbudgetUsd?: number }).tagesbudgetUsd;
             const kosten = await kontoKosten(this.usageRepo, { ...(tagesbudgetUsd ? { tagesbudgetUsd } : {}) });
-            return { kosten, geraete: gw.verbundene().map(g => ({ name: g.name, plattform: g.plattform, seit: g.verbundenSeit })) };
+            // v1508 — alle gekoppelten Geräte (auch offline) mit Details zum Aufklappen (Owner 19.10.)
+            const geraete = (await gw.liste().catch(() => [])).map(g => ({
+              name: g.name, plattform: g.manifest?.plattform ?? g.plattform, online: g.online,
+              hostname: g.manifest?.hostname, satellitVersion: g.manifest?.satellitVersion,
+              verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, gekoppelt: g.erstellt,
+              rechte: g.scopes ?? [], aktionen: (g.manifest?.aktionen ?? []).length, sinne: g.manifest?.sinne ?? [],
+              claudeCodeMonat: kosten.geraeteMonat[g.name] ?? 0,
+            })).sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+            return { kosten, geraete };
           },
           datei: async (geraetId: string, key: string) => {
             const owner = this.ownerMasterUserId ?? this.tryOwner();

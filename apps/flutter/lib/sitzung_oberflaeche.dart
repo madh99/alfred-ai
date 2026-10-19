@@ -151,7 +151,7 @@ extension _Oberflaeche on _SitzungState {
     if (s == null) return;
     try {
       final j = await s.json('/api/geraete/konto');
-      final geraete = [for (final g in (j['geraete'] as List? ?? const [])) '${(g as Map)['name']} · ${g['plattform']}'];
+      final geraete = [for (final g in (j['geraete'] as List? ?? const [])) KontoGeraet.aus(g as Map<String, dynamic>)]; // 1.48.0 Details je Gerät
       kontoStand.value = (KontoKosten.aus(j['kosten'] as Map<String, dynamic>), geraete, null);
     } catch (e) {
       kontoStand.value = (kontoStand.value.$1, kontoStand.value.$2, 'Kosten nicht geladen: $e');

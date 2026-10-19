@@ -1,13 +1,16 @@
 /// 1.47.0 (v1506, D5) — Kontomenü unten links in der Navigation (Owner 19.10.): ersetzt die Satelliten-Zeile.
-/// Kosten heute/Woche/Monat mit Herkunft, teuerstem Modell und Claude Code; Tagesbudget nur als Anzeige (keine Grenze,
+/// Kosten heute/Woche/Monat mit Herkunft, teuerstem Modell und Code-Agenten; Tagesbudget nur als Anzeige (keine Grenze,
 /// keine Warnfarbe); kein Guthaben. Dazu Geräte, Einstellungen, Hilfe, Versionen und Update.
+/// 1.48.0 (v1508) — Code-Agenten getrennt (Claude Code, Codex, Mistral Vibe); Geräte je Eintrag aufklappbar mit Details.
 library;
 
 import 'package:flutter/material.dart';
 
 class KontoKosten {
-  const KontoKosten({required this.heute, required this.woche, required this.monat, required this.claudeCodeMonat, this.tagesbudget, this.herkunftHeute = const [], this.hintergrundMonat = const [], this.teuerstesModell, this.teuerstesModellKosten});
-  final double heute, woche, monat, claudeCodeMonat;
+  const KontoKosten({required this.heute, required this.woche, required this.monat, this.agenten = const [], this.tagesbudget, this.herkunftHeute = const [], this.hintergrundMonat = const [], this.teuerstesModell, this.teuerstesModellKosten});
+  final double heute, woche, monat;
+  /// (Agent, heute, Monat)
+  final List<(String, double, double)> agenten;
   final double? tagesbudget;
   final List<(String, double)> herkunftHeute;
   final List<(String, double)> hintergrundMonat;
@@ -21,7 +24,7 @@ class KontoKosten {
     final tm = k['teuerstesModell'] as Map<String, dynamic>?;
     return KontoKosten(
       heute: _z(k['heute']), woche: _z(k['woche']), monat: _z(k['monat']),
-      claudeCodeMonat: _z((k['claudeCode'] as Map<String, dynamic>?)?['monat']),
+      agenten: [for (final a in (k['agenten'] as List? ?? const [])) ('${(a as Map)['agent']}', _z(a['heute']), _z(a['monat']))],
       tagesbudget: k['tagesbudgetUsd'] is num ? (k['tagesbudgetUsd'] as num).toDouble() : null,
       herkunftHeute: [for (final h in (k['herkunftHeute'] as List? ?? const [])) ('${(h as Map)['herkunft']}', _z(h['kosten']))],
       hintergrundMonat: [for (final h in (k['hintergrundMonat'] as List? ?? const [])) ('${(h as Map)['job']}', _z(h['kosten']))],
@@ -30,20 +33,54 @@ class KontoKosten {
   }
 }
 
+/// Gekoppeltes Gerät mit Details (v1508, `geraete` aus `/api/geraete/konto`).
+class KontoGeraet {
+  const KontoGeraet({required this.name, required this.plattform, required this.online, this.hostname, this.satellitVersion, this.verbundenSeit, this.zuletztGesehen, this.gekoppelt, this.rechte = const [], this.aktionen = 0, this.sinne = const [], this.claudeCodeMonat = 0});
+  final String name, plattform;
+  final bool online;
+  final String? hostname, satellitVersion;
+  final DateTime? verbundenSeit, zuletztGesehen, gekoppelt;
+  final List<String> rechte, sinne;
+  final int aktionen;
+  final double claudeCodeMonat;
+
+  static KontoGeraet aus(Map<String, dynamic> g) {
+    DateTime? zeit(Object? v) => v is String ? DateTime.tryParse(v)?.toLocal() : null;
+    return KontoGeraet(
+      name: '${g['name'] ?? '?'}', plattform: '${g['plattform'] ?? ''}', online: g['online'] == true,
+      hostname: g['hostname'] as String?, satellitVersion: g['satellitVersion'] as String?,
+      verbundenSeit: zeit(g['verbundenSeit']), zuletztGesehen: zeit(g['zuletztGesehen']), gekoppelt: zeit(g['gekoppelt']),
+      rechte: [for (final r in (g['rechte'] as List? ?? const [])) '$r'], sinne: [for (final s in (g['sinne'] as List? ?? const [])) '$s'],
+      aktionen: (g['aktionen'] as num?)?.toInt() ?? 0, claudeCodeMonat: KontoKosten._z(g['claudeCodeMonat']),
+    );
+  }
+}
+
 /// „3,12 $“ — zwei Nachkommastellen, unter einem Cent „< 0,01 $“.
 String kostenText(double v) => v > 0 && v < 0.005 ? '< 0,01 \$' : '${v.toStringAsFixed(2).replaceAll('.', ',')} \$';
 
-const herkunftNamen = {'chat': 'Chat', 'hintergrund': 'Hintergrund', 'aufgabe': 'Geplante Aufgaben', 'claude-code': 'Claude Code', 'sonstiges': 'Sonstiges'};
+const agentNamen = {'claude-code': 'Claude Code', 'codex': 'Codex', 'mistral-vibe': 'Mistral Vibe'};
+String agentName(String a) => agentNamen[a] ?? a;
+String herkunftName(String h) => h.startsWith('agent:') ? agentName(h.substring(6))
+    : const {'chat': 'Chat', 'hintergrund': 'Hintergrund', 'aufgabe': 'Geplante Aufgaben', 'claude-code': 'Claude Code', 'sonstiges': 'Sonstiges'}[h] ?? h;
+
+String _zeitText(DateTime? t) {
+  if (t == null) return '–';
+  final z = '${t.day}.${t.month}.${t.year}, ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  return z;
+}
+
+const _plattformNamen = {'windows': 'Windows', 'macos': 'macOS', 'linux': 'Linux'};
 
 class KontoMenue extends StatelessWidget {
   const KontoMenue({super.key, required this.geraet, required this.verbunden, required this.versionen, this.kosten, this.fehler, this.geraete = const [], required this.aufEinstellungen, required this.aufBefehle, required this.aufKuerzel, required this.updateText, required this.aufUpdate});
   final String geraet;
   final bool verbunden;
-  /// z. B. „App 1.47.0 · Satellit … · Alfred …“
+  /// z. B. „App 1.48.0 · Satellit … · Alfred …“
   final String versionen;
   final KontoKosten? kosten;
   final String? fehler;
-  final List<String> geraete;
+  final List<KontoGeraet> geraete;
   final VoidCallback aufEinstellungen, aufBefehle, aufKuerzel, aufUpdate;
   final String updateText;
 
@@ -57,8 +94,11 @@ class KontoMenue extends StatelessWidget {
     Widget punkt(IconData i, String t, VoidCallback auf, {String? kuerzel, Key? key}) => InkWell(key: key, onTap: auf, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9), child: Row(children: [
       Icon(i, size: 18, color: dim), const SizedBox(width: 12), Expanded(child: Text(t)), if (kuerzel != null) Text(kuerzel, style: klein),
     ])));
+    Widget zeile(String l, String r, {TextStyle? stil}) => Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), child: Row(children: [
+      Expanded(child: Text(l, style: stil ?? theme.textTheme.bodySmall)), Text(r, style: stil ?? theme.textTheme.bodySmall),
+    ]));
     final k = kosten;
-    return Material(key: const Key('konto-menue'), elevation: 8, color: cs.surfaceContainerHigh, borderRadius: BorderRadius.circular(14), child: SizedBox(width: 340, child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+    return Material(key: const Key('konto-menue'), elevation: 8, color: cs.surfaceContainerHigh, borderRadius: BorderRadius.circular(14), clipBehavior: Clip.antiAlias, child: SizedBox(width: 360, child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
       Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Row(children: [
         Icon(Icons.circle, size: 10, color: verbunden ? Colors.green : cs.error),
         const SizedBox(width: 8),
@@ -83,21 +123,27 @@ class KontoMenue extends StatelessWidget {
         ])),
         if (k.herkunftHeute.isNotEmpty) ...[
           Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 2), child: Text('Heute nach Herkunft', style: klein)),
-          for (final (h, v) in k.herkunftHeute) Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), child: Row(children: [
-            Expanded(child: Text(herkunftNamen[h] ?? h, style: theme.textTheme.bodySmall)),
-            Text(kostenText(v), style: theme.textTheme.bodySmall),
+          for (final (h, v) in k.herkunftHeute) zeile(herkunftName(h), kostenText(v)),
+        ],
+        if (k.agenten.isNotEmpty) ...[
+          Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 2), child: Row(children: [
+            Expanded(child: Text('Code-Agenten', style: klein)), SizedBox(width: 70, child: Text('heute', textAlign: TextAlign.right, style: klein)), SizedBox(width: 70, child: Text('Monat', textAlign: TextAlign.right, style: klein)),
+          ])),
+          for (final (a, h, m) in k.agenten) Padding(key: Key('konto-agent-$a'), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2), child: Row(children: [
+            Expanded(child: Text(agentName(a), style: theme.textTheme.bodySmall)),
+            SizedBox(width: 70, child: Text(kostenText(h), textAlign: TextAlign.right, style: theme.textTheme.bodySmall)),
+            SizedBox(width: 70, child: Text(kostenText(m), textAlign: TextAlign.right, style: theme.textTheme.bodySmall)),
           ])),
         ],
         Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 0), child: Text([
           if (k.teuerstesModell != null) 'Teuerstes Modell im Monat: ${k.teuerstesModell} (${kostenText(k.teuerstesModellKosten ?? 0)})',
-          'Claude Code im Monat: ${kostenText(k.claudeCodeMonat)}',
           if (k.hintergrundMonat.isNotEmpty) 'Teuerste Hintergrund-Jobs: ${k.hintergrundMonat.take(3).map((j) => '${j.$1} ${kostenText(j.$2)}').join(', ')}',
         ].join('\n'), style: klein)),
       ],
       const Divider(height: 20),
       if (geraete.isNotEmpty) ...[
-        titel('Verbundene Geräte'),
-        for (final g in geraete) Padding(padding: const EdgeInsets.fromLTRB(16, 2, 16, 2), child: Row(children: [const Icon(Icons.circle, size: 7, color: Colors.green), const SizedBox(width: 8), Expanded(child: Text(g, style: theme.textTheme.bodySmall, overflow: TextOverflow.ellipsis))])),
+        titel('Geräte'),
+        for (final g in geraete) _geraet(theme, g),
         const Divider(height: 20),
       ],
       punkt(Icons.settings_outlined, 'Einstellungen', aufEinstellungen, kuerzel: 'Strg+,', key: const Key('konto-einstellungen')),
@@ -106,5 +152,32 @@ class KontoMenue extends StatelessWidget {
       punkt(Icons.system_update_alt, updateText, aufUpdate, key: const Key('konto-update')),
       const SizedBox(height: 6),
     ]))));
+  }
+
+  /// 1.48.0 — ein Gerät, aufklappbar: Status, Hostname, Satellit, Zeiten, Fähigkeiten, Rechte, Claude Code im Monat.
+  Widget _geraet(ThemeData theme, KontoGeraet g) {
+    final cs = theme.colorScheme;
+    final klein = theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant);
+    Widget detail(String l, String r) => Padding(padding: const EdgeInsets.symmetric(vertical: 1.5), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(width: 110, child: Text(l, style: klein)), Expanded(child: Text(r, style: theme.textTheme.bodySmall)),
+    ]));
+    return Theme(data: theme.copyWith(dividerColor: Colors.transparent), child: ExpansionTile(
+      key: Key('konto-geraet-${g.name}'),
+      dense: true, visualDensity: VisualDensity.compact,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16), childrenPadding: const EdgeInsets.fromLTRB(34, 0, 16, 8),
+      leading: Icon(Icons.circle, size: 9, color: g.online ? Colors.green : cs.outline),
+      title: Text(g.name, style: theme.textTheme.bodyMedium, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${_plattformNamen[g.plattform] ?? g.plattform} · ${g.online ? 'verbunden' : 'offline'}', style: klein),
+      expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (g.hostname != null) detail('Hostname', g.hostname!),
+        if (g.satellitVersion != null) detail('Satellit', g.satellitVersion!),
+        g.online ? detail('Verbunden seit', _zeitText(g.verbundenSeit)) : detail('Zuletzt gesehen', _zeitText(g.zuletztGesehen)),
+        detail('Gekoppelt', _zeitText(g.gekoppelt)),
+        detail('Fähigkeiten', '${g.aktionen} Aktionen${g.sinne.isEmpty ? '' : ' · Sinne: ${g.sinne.join(', ')}'}'),
+        if (g.rechte.isNotEmpty) detail('Rechte', g.rechte.join(', ')),
+        detail('Claude Code (Monat)', kostenText(g.claudeCodeMonat)),
+      ],
+    ));
   }
 }

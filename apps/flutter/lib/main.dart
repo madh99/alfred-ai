@@ -206,7 +206,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   String appVersion = '';
   UpdateInfo? update;
   /// 1.47.0 D5 — Kontomenü: Kosten und verbundene Geräte (null = noch nicht geladen), Fehlertext.
-  final kontoStand = ValueNotifier<(KontoKosten?, List<String>, String?)>((null, const [], null));
+  final kontoStand = ValueNotifier<(KontoKosten?, List<KontoGeraet>, String?)>((null, const [], null));
   bool updateLaeuft = false;
   Timer? updateTakt;
   Timer? abfrage;

@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Kontomenü: Code-Agenten getrennt, Geräte aufklappbar (v1508, App 1.48.0)
+
+Owner 19.10.: Die Zeile „Claude Code“ trennen in Claude Code, Codex und Mistral, unter den Geräten Details je Gerät.
+
+- **Code-Agenten getrennt:**
+  - Kosten der Code-Agenten werden je Agent verbucht (`agent:claude-code`, `agent:codex`, `agent:mistral-vibe`).
+  - Das Menü zeigt je Agent eine Zeile mit heute und Monat. Die drei bekannten Agenten stehen immer da, auch mit 0.
+  - Zeilen aus v1506/v1507 (`claude-code`) zählen weiter zu Claude Code.
+- **Kosten je Gerät:** Claude-Code-Läufe auf Geräten tragen den Gerätenamen.
+- **Geräte:**
+  - Statt nur der verbundenen Geräte stehen alle gekoppelten Geräte im Menü, auch die offline sind, mit Status und Plattform.
+  - Aufgeklappt zeigt jeder Eintrag: Hostname, Satellitenversion, verbunden seit bzw. zuletzt gesehen, gekoppelt seit, Zahl der Aktionen und Sinne, Rechte und Claude-Code-Kosten des Geräts im Monat.
+
 ### Fixed — Herkunft der Kosten: eigene Takte als Hintergrund (v1507)
 
 Live-Prüfung von v1506 (19.10. 13:01): Der Reasoning-Vollpass landete als „sonstiges“. Er läuft auf einem eigenen Takt außerhalb des Job-Registers.
