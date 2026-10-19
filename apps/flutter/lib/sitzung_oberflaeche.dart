@@ -205,7 +205,7 @@ extension _Oberflaeche on _SitzungState {
                 return KeyedSubtree(key: _ankerVon(e), child: neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w); // 1.45.0 D4 Sprungziel
               },
             ))),
-      ), if (archiv == null && leistenEintraege(verlauf).length >= 3) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht)), // 1.45.0 D4
+      ), if (archiv == null && leistenEintraege(verlauf).length >= 3) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
         if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
       if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _arbeitsLeiste(theme))), // 1.11.0

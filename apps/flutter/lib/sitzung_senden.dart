@@ -114,6 +114,7 @@ extension _Senden on _SitzungState {
   Future<void> _holeVerlauf({String? um}) async {
     final s = server; if (s == null) return;
     _lesezeichenLaden(); // 1.45.0 D4
+    WidgetsBinding.instance.addPostFrameCallback((_) => _leisteNachScroll()); // 1.45.2
     try {
       // 1.2.0 je Faden; 1.2.6: 60 sichtbare Zeilen; 1.5.0 `um` = Fundstelle der Suche (20 Zeilen rund um den Treffer)
       final j = await s.json('/api/geraete/verlauf?limit=${um == null ? 60 : 20}${s.faden == null ? '' : '&faden=${s.faden}'}${um == null ? '' : '&um=${Uri.encodeQueryComponent(um)}'}');

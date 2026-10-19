@@ -158,24 +158,36 @@ extension _Gespraeche on _SitzungState {
     catch (err) { _neu(() => an ? lesezeichen.remove(k) : lesezeichen.add(k)); _zeile(Eintrag(Art.fehler, 'Lesezeichen nicht gespeichert: $err')); }
   }
 
-  /// 1.45.0 D4 — zur Nachricht [i] springen. Die Liste baut nur sichtbare Einträge: erst ungefähr hinscrollen, dann genau.
+  /// 1.45.0 D4 — zur Nachricht [i] springen (1.45.2: über springeZu, mit einer echten umgekehrten Liste getestet).
   Future<void> _zuNachricht(int i) async {
-    if (!scroll.hasClients || i < 0 || i >= verlauf.length) return;
-    final k = _ankerVon(verlauf[i]);
-    Future<bool> sichtbar() async {
-      await WidgetsBinding.instance.endOfFrame;
-      final c = k.currentContext;
-      if (c == null || !c.mounted) return false;
-      await Scrollable.ensureVisible(c, alignment: 0.15, duration: const Duration(milliseconds: 250));
-      return true;
+    if (i < 0 || i >= verlauf.length) return;
+    final ok = await springeZu(scroll, _ankerVon(verlauf[i]), (verlauf.length - 1 - i) / verlauf.length);
+    if (ok) _neu(() => leisteAktuell = i);
+  }
+
+  /// 1.45.2 — nach dem Scrollen (einmal je Bild): welche eigene Frage steht gerade oben im sichtbaren Bereich?
+  void _leisteNachScroll() {
+    if (_leisteGeplant) return;
+    _leisteGeplant = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) { _leisteGeplant = false; _leisteAktuellBerechnen(); });
+  }
+
+  void _leisteAktuellBerechnen() {
+    if (!mounted || !scroll.hasClients) return;
+    final vp = scroll.position.context.storageContext.findRenderObject();
+    if (vp is! RenderBox || !vp.hasSize) return;
+    int? oben; double obenY = double.negativeInfinity;
+    int? sichtbar; double sichtbarY = double.infinity;
+    for (final e in leistenEintraege(verlauf)) {
+      final ro = _anker[verlauf[e.index]]?.currentContext?.findRenderObject();
+      if (ro is! RenderBox || !ro.attached || !ro.hasSize) continue;
+      final y = ro.localToGlobal(Offset.zero, ancestor: vp).dy;
+      if (y + ro.size.height < 0 || y > vp.size.height) continue; // außerhalb des sichtbaren Bereichs
+      if (y <= vp.size.height * 0.35 && y > obenY) { oben = e.index; obenY = y; }
+      if (y < sichtbarY) { sichtbar = e.index; sichtbarY = y; }
     }
-    if (await sichtbar()) return;
-    final p = scroll.position;
-    final ziel = (verlauf.length - 1 - i) / verlauf.length * p.maxScrollExtent; // umgekehrte Liste: 0 = neueste
-    for (final d in [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0]) {
-      scroll.jumpTo((ziel + d * p.viewportDimension).clamp(0.0, scroll.position.maxScrollExtent));
-      if (await sichtbar()) return;
-    }
+    final neu = oben ?? sichtbar;
+    if (neu != null && neu != leisteAktuell) _neu(() => leisteAktuell = neu);
   }
 
   /// 1.43.0 D2 — Eintrag des offenen Fadens aus der Liste (null im Hauptgespräch).

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Verlaufsleiste wie im Vorbild, Sprung erreicht auch weit oben liegende Fragen (App 1.45.2)
+
+Owner 19.10. 11:40 (Screenshots, Vergleich mit dem Vorbild): Die Leiste war über die ganze Höhe verteilt und „funktionierte nicht“.
+
+- **Sprung repariert:** Der Verlauf baut nur sichtbare Einträge, seine Gesamthöhe ist deshalb eine Schätzung, die beim Scrollen wächst. Der Sprung rechnete einmal mit der frühen, zu kleinen Schätzung und erreichte Fragen weiter oben nicht. Jetzt schätzt er nach jedem Schritt neu und sucht notfalls die Liste in Schritten von 80 % der Bildschirmhöhe ab. Ein Test mit 300 unterschiedlich hohen Einträgen springt zu Einträgen ganz oben, in der Mitte und unten.
+- **Aussehen wie im Vorbild:** Die Striche stehen dicht untereinander (7 px, bei vielen Fragen enger) in der Mitte. Die gerade sichtbare Frage ist hell und länger; sie wird beim Scrollen mitgeführt.
+- **Karte statt Tooltip:** Beim Darüberfahren erscheint neben dem Strich eine Karte mit der Frage (fett), dem Anfang der Antwort und einem anklickbaren 🔖. Ein Klick auf Karte oder Strich springt hin.
+
+
 ### Fixed — App: Verlaufsleiste stieß im schmalen Fenster an den Text (App 1.45.1)
 
 Sichtbeweis 19.10. (Ubuntu-VM, schmales Fenster): Die Striche der Verlaufsleiste lagen direkt am Textanfang. Ist die Leiste da, hat der Verlauf links jetzt 38 statt 20 Pixel Rand.

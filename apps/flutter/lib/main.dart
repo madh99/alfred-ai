@@ -215,6 +215,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     super.initState();
     windowManager.addListener(this);
     HardwareKeyboard.instance.addHandler(_schnellTaste); // 1.7.1
+    scroll.addListener(_leisteNachScroll); // 1.45.2 — gerade sichtbare Frage in der Verlaufsleiste
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _trayEinrichten();
@@ -467,6 +468,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool karteOffen = false; // 1.44.0 D3 — angeheftete Zusammenfassung oben rechts
   Set<String> lesezeichen = {}; // 1.45.0 D4 — Lesezeichen des offenen Fadens (Schlüssel = Prüfsumme der Frage)
   final Expando<GlobalKey> _anker = Expando(); // 1.45.0 — Sprungziel je Verlaufseintrag
+  int? leisteAktuell; // 1.45.2 — Verlaufs-Index der gerade sichtbaren eigenen Frage (heller Strich)
+  bool _leisteGeplant = false;
   final Map<String, (String, String)> seitenChats = {}; // 1.43.0 — Hauptfaden (oder „haupt“) → (Faden, Titel) des Seiten-Chats
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
