@@ -10,16 +10,19 @@ export PATH="$HOME/dev/flutter/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" LANG=
 source "$HOME/.config/alfred/asc.env"
 [ -r "$ASC_KEY_PATH" ] || { echo "API-Schlüssel nicht lesbar: $ASC_KEY_PATH"; exit 1; }
 cd "$(dirname "$0")/.."
-LOG=/tmp/alfred-ios-testflight.log
+mkdir -p build
+LOG="$PWD/build/testflight.log" # im eigenen Build-Ordner, nicht unter festem Namen in /tmp (Symlink-Angriff)
 : > "$LOG"
 AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
 
 echo "1/3 flutter build ios (Release, ohne Signatur)"
 flutter build ios --release --no-codesign >> "$LOG" 2>&1 || { tail -30 "$LOG"; exit 1; }
 
-echo "2/3 Archiv (signiert)"
+# Archiv unsigniert: über ssh ist der Schlüsselbund gesperrt („User interaction is not allowed“), und eine lokale
+# Development-Signatur braucht es nicht — die Verteil-Signatur setzt der Export per Cloud-Signatur (API-Schlüssel).
+echo "2/3 Archiv (unsigniert)"
 xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -destination generic/platform=iOS \
-  -archivePath build/Alfred.xcarchive archive "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
+  -archivePath build/Alfred.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 
 cat > build/ExportOptions.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,7 +37,7 @@ cat > build/ExportOptions.plist <<'PLIST'
 </dict></plist>
 PLIST
 
-echo "3/3 Export + Upload zu App Store Connect"
+echo "3/3 Export (Cloud-Signatur) + Upload zu App Store Connect"
 xcodebuild -exportArchive -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist \
   -exportPath build/ipa "${AUTH[@]}" >> "$LOG" 2>&1 || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
 grep -E "Upload succeeded|EXPORT SUCCEEDED|Uploaded" "$LOG" | tail -3

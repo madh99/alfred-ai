@@ -7,6 +7,8 @@ MAC="${ALFRED_MAC:-madh@192.168.1.146}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO"
 VERSION="$(sed -n 's/^version: *//p' apps/flutter/pubspec.yaml | tr -d '\r')"
+# geht in einen Befehl am Mac: nur das erwartete Format zulassen
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]] || { echo "Unerwartete Version in pubspec.yaml: $VERSION"; exit 1; }
 [ -z "$(git status --porcelain apps/flutter)" ] || echo "Hinweis: nicht committete Änderungen unter apps/flutter werden NICHT mitgebaut"
 ZIEL="dev/alfred-ios-release/${VERSION//+/-}"
 echo "Alfred $VERSION — TestFlight (Quelle $(git rev-parse --short HEAD))"
