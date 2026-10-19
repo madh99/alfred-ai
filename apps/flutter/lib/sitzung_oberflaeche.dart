@@ -84,9 +84,9 @@ extension _Oberflaeche on _SitzungState {
       subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
       trailing: _fadenMenue(f),
       onTap: () => _fadenWechseln('${f['faden']}'));
-    return Container(
-      width: 270,
+    return Material( // 1.52.0 — Material statt Container(color): ListTiles brauchen es für Hintergrund und Tipp-Welle (Debug-Prüfung in der Handy-Schublade)
       color: theme.colorScheme.surfaceContainerLow,
+      child: SizedBox(width: 270,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(padding: const EdgeInsets.fromLTRB(16, 12, 6, 0), child: Row(children: [
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -145,7 +145,7 @@ extension _Oberflaeche on _SitzungState {
         ])),
         // 1.47.0 D5 — die Satelliten-Zeile ist ins Kontomenü unten links gewandert
       ]),
-    );
+    ));
   }
 
   /// 1.47.0 D5 — Kosten und Geräte für das Kontomenü laden (Fehler bleiben im Menü sichtbar, kein Abbruch).

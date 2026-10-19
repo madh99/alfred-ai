@@ -46,10 +46,11 @@ dependencies:
   package_info_plus: ^9.0.0
   file_selector: ^1.0.3
   onnxruntime: ^1.4.1
-  flutter_secure_storage: ^10.3.4
   mobile_scanner: ^7.4.2
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test: # Phase 5 H1 — Bedien-Beweise im iOS-Simulator gegen den echten Server
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

@@ -9,7 +9,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/widgets.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'schluesselbund.dart';
 
 import 'ipc.dart';
 import 'modell.dart';
@@ -77,8 +77,8 @@ Future<Kopplung> koppeln({required String server, required String code, required
 }
 
 class HandyVerbindung implements AppVerbindung {
-  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, FlutterSecureStorage? speicher})
-      : _speicher = speicher ?? const FlutterSecureStorage();
+  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, Schluesselbund? speicher})
+      : _speicher = speicher ?? const GeraeteSchluesselbund();
 
   final void Function(SatellitStatus) aufStatus;
   final void Function(String art, String text, DateTime zeit, Anhang? anhang, String? faden) aufEreignis;
@@ -86,7 +86,7 @@ class HandyVerbindung implements AppVerbindung {
   final void Function(Konfig) aufKonfig;
   final void Function(String) aufZustand;
   final String Function() version;
-  final FlutterSecureStorage _speicher;
+  final Schluesselbund _speicher;
   static const _schluessel = 'alfred_kopplung';
 
   Kopplung? kopplung;
@@ -96,9 +96,9 @@ class HandyVerbindung implements AppVerbindung {
   AppLifecycleListener? _leben;
   int _rueckzug = 2;
 
-  Future<Kopplung?> ladeKopplung() async { try { return Kopplung.ausJson(await _speicher.read(key: _schluessel)); } catch (_) { return null; } }
-  Future<void> speichere(Kopplung k) async { await _speicher.write(key: _schluessel, value: jsonEncode(k.zuJson())); kopplung = k; }
-  Future<void> vergiss() async { try { await _speicher.delete(key: _schluessel); } catch (_) {} kopplung = null; }
+  Future<Kopplung?> ladeKopplung() async { try { return Kopplung.ausJson(await _speicher.lesen(_schluessel)); } catch (_) { return null; } }
+  Future<void> speichere(Kopplung k) async { await _speicher.schreiben(_schluessel, jsonEncode(k.zuJson())); kopplung = k; }
+  Future<void> vergiss() async { try { await _speicher.loeschen(_schluessel); } catch (_) {} kopplung = null; }
 
   @override
   Future<void> start() async {
@@ -119,7 +119,7 @@ class HandyVerbindung implements AppVerbindung {
   Future<void> gekoppelt(Kopplung k) async { await speichere(k); aufKonfig(k.konfig); _rueckzug = 2; await _verbinde(); }
 
   @override
-  void stop() { _laeuft = false; _trenne(); _leben?.dispose(); _leben = null; }
+  void stop() { _laeuft = false; _verbunden = false; _trenne(); _leben?.dispose(); _leben = null; } // beim Abbau keine Statusmeldung mehr (Oberfläche ist weg)
 
   void _trenne() {
     _puls?.cancel(); _puls = null; _spaeter?.cancel();
