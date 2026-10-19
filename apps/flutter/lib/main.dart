@@ -321,7 +321,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       },
       aufZustand: (z) => setState(() => ipcZustand = z),
     );
-    ipc.start();
+    if (istDesktop) {
+      ipc.start();
+    } else {
+      // 1.52.1 — Handy: Version vor dem Verbinden lesen (Manifest „app-<Version>“); am Desktop füllt sie die Update-Prüfung
+      PackageInfo.fromPlatform().then((p) => appVersion = p.version, onError: (_) {}).whenComplete(ipc.start);
+    }
     AnhangSpeicher.standard().aufraeumen(); // 1.5.0 — Gerätespeicher der Anhänge: älter als 30 Tage weg (wie am Server)
     _zeile(Eintrag(Art.hinweis, istHandy ? 'Alfred — direkt mit deinem Server verbunden (Schlüssel geprüft).' : 'Alfred-App — Verlauf, Chat und Bestätigungen laufen über den Satelliten dieses Geräts. Strg+Alt+Leertaste: sprechen (auch aus anderen Programmen).'));
   }
