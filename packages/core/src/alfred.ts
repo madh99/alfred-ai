@@ -17243,9 +17243,24 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!id) { const t = await akteAus(ref); if ('fehler' in t) return { success: false, error: t.fehler }; id = t.akte.id; }
         return this.projektEndgueltigLoeschen(id, typeof input.bestaetigt === 'string' ? input.bestaetigt : undefined, context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined);
       },
-      mergeRequests: async (ref, an, auto) => { // v1455, v1458 auto = automatisch zusammenführen
+      mergeRequests: async (ref, an, auto, bestaetigt) => { // v1455, v1458 auto = automatisch zusammenführen
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };
+        // v1514 — Owner 19.10. (Befund aus der Sicherheitsprüfung zu v1512): „automatisch zusammenführen: an“ hebt die Rückfrage vor dem
+        // Zusammenführen auf → über den Skill (Chat/Modell) nur mit Owner-Bestätigung (Einmal-Kennung, nie im Prompt). Aus geht direkt;
+        // App und Web schalten direkt (Owner).
+        if (auto === true) {
+          if (bestaetigt) {
+            if (!this.deployFreigaben.loese(bestaetigt, t.akte.id, 'mr_auto')) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+          } else {
+            if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+            const nonce = this.deployFreigaben.stelle(t.akte.id, 'mr_auto', undefined, 24 * 3_600_000);
+            const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: this.config.telegram?.enabled ? 'telegram' : 'api', source: 'geraet', sourceId: `mr-auto-${t.akte.id}-${Date.now()}`,
+              description: `🔀 Für „${t.akte.name}“ „automatisch zusammenführen“ einschalten?${an === true ? ' (mit Merge Requests)' : ''} Danach führt Alfred den Merge Request nach einem grünen Lauf ohne Rückfrage zusammen.`,
+              skillName: 'project_agent', skillParams: { action: 'projekt_merge_requests', projekt: t.akte.id, auto_zusammenfuehren: true, ...(an !== undefined ? { merge_requests: an } : {}), bestaetigt: nonce }, timeoutMinutes: 720 });
+            return ok ? { success: true, data: { bestaetigung: true }, display: `${t.akte.name} — „automatisch zusammenführen“ zur Bestätigung gestellt; eingeschaltet wird erst nach dem Ja des Owners.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+          }
+        }
         if (auto !== undefined && an === undefined) { const a = await this.geraeteProjektMrAuto(t.akte.id, auto); return a.success ? { success: true, display: `${t.akte.name} — ${a.display}` } : { success: false, error: a.error }; }
         if (auto !== undefined) await this.geraeteProjektMrAuto(t.akte.id, auto);
         const r = await this.geraeteProjektMergeRequests(t.akte.id, an !== false);

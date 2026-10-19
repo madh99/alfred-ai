@@ -317,7 +317,7 @@ export interface SatellitProjektHandler {
   /** v1409 R3b — Projekt-Option sudo-Sperre */
   sudoSperre?: (ref: string, an: boolean) => Promise<SkillResult>;
   /** v1455 — Etappen über Branch und Merge Request (an/aus je Projekt) */
-  mergeRequests?: (ref: string, an: boolean | undefined, auto?: boolean) => Promise<SkillResult>;
+  mergeRequests?: (ref: string, an: boolean | undefined, auto?: boolean, bestaetigt?: string) => Promise<SkillResult>; // v1514 bestaetigt = Einmal-Kennung aus der Owner-Bestätigung
   /** v1458 — Merge Request nach dem Ja des Owners zusammenführen (nur aus der Bestätigung) */
   mrZusammenfuehren?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   /** v1460 — dev am Gerät (stand, einschalten, ausschalten, art, erkennen, setzen, neustart, stoppen) */
@@ -561,7 +561,7 @@ Actions:
       if (action === 'projekt_merge_requests') { // v1455, v1458 auto_zusammenfuehren
         const auto = typeof input.auto_zusammenfuehren === 'boolean' ? input.auto_zusammenfuehren : undefined;
         const an = typeof input.merge_requests === 'boolean' ? input.merge_requests : auto !== undefined ? undefined : true;
-        return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, an, auto) : { success: false, error: 'nicht verfügbar' };
+        return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, an, auto, typeof input.bestaetigt === 'string' ? input.bestaetigt : undefined) : { success: false, error: 'nicht verfügbar' };
       }
       if (action === 'projekt_dev') return this.satellit.dev ? this.satellit.dev(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1460
       if (action === 'projekt_folgeauftraege') return this.satellit.folge ? this.satellit.folge(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1512

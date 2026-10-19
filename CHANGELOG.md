@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — „automatisch zusammenführen“ nur durch den Owner (v1514)
+
+Gleiche Lücke wie in v1513 beim älteren Schalter aus v1458: Über den Chat-Skill (`projekt_merge_requests`, `auto_zusammenfuehren: true`) konnte das Modell die Rückfrage vor dem Zusammenführen aufheben (Owner 19.10.: „ja, wie vorgeschlagen“).
+
+- Über den Skill stellt „einschalten“ jetzt eine Bestätigung mit Einmal-Kennung (24 h); erst das Ja des Owners schaltet ein.
+- Ausschalten geht weiter direkt; App und Web schalten weiter direkt.
+
 ### Security — Schalter „Folgeaufträge ohne Rückfrage“ nur durch den Owner (v1513)
 
 Die Sicherheitsprüfung des Commits zu v1512 fand eine Lücke: Den Schalter konnte auch das Modell über den Skill einschalten (`projekt_folgeauftraege`, `auto_an`). Damit hätte Alfred die Startkarte künftiger Claude-Code-Läufe selbst aufheben können.
