@@ -313,18 +313,30 @@ extension AppDelegate {
 /// Generisches Passwort im Schlüsselbund der App; nur auf diesem Gerät, lesbar ab dem ersten Entsperren (kein iCloud-Abgleich).
 enum Schluesselbund {
   static let dienst = "at.alfred.app"
+  /// 1.54.3 — gemeinsame Gruppe mit der Share-Erweiterung („Teilen an Alfred“ liest die Kopplung mit)
+  static let gruppe = "T28LD8TF6X.at.alfred.app.gemeinsam"
+  /// bis 1.54.2: Standardgruppe der App (Application-Identifier)
+  static let alteGruppe = "T28LD8TF6X.at.alfred.app"
 
-  static func basis(_ schluessel: String) -> [String: Any] {
-    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: dienst, kSecAttrAccount as String: schluessel]
+  static func basis(_ schluessel: String, gruppe: String = gruppe) -> [String: Any] {
+    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: dienst, kSecAttrAccount as String: schluessel, kSecAttrAccessGroup as String: gruppe]
   }
 
-  static func lesen(_ schluessel: String) -> String? {
-    var q = basis(schluessel)
+  private static func roh(_ q: [String: Any]) -> String? {
+    var q = q
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var daten: AnyObject?
     guard SecItemCopyMatching(q as CFDictionary, &daten) == errSecSuccess, let d = daten as? Data else { return nil }
     return String(data: d, encoding: .utf8)
+  }
+
+  static func lesen(_ schluessel: String) -> String? {
+    if let wert = roh(basis(schluessel)) { return wert }
+    // einmaliger Umzug aus der alten Gruppe — die Kopplung bleibt, die Share-Erweiterung sieht sie danach
+    guard let alt = roh(basis(schluessel, gruppe: alteGruppe)) else { return nil }
+    if schreiben(schluessel, alt) { SecItemDelete(basis(schluessel, gruppe: alteGruppe) as CFDictionary) }
+    return alt
   }
 
   static func schreiben(_ schluessel: String, _ wert: String) -> Bool {
@@ -337,6 +349,7 @@ enum Schluesselbund {
 
   static func loeschen(_ schluessel: String) -> Bool {
     let s = SecItemDelete(basis(schluessel) as CFDictionary)
+    SecItemDelete(basis(schluessel, gruppe: alteGruppe) as CFDictionary)
     return s == errSecSuccess || s == errSecItemNotFound
   }
 }

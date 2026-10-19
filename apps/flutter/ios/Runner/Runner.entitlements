@@ -8,5 +8,11 @@
 	<!-- 1.54.0 — nur Dringendes als zeitkritische Mitteilung durch einen Fokus (Fokus-Status lesen lässt Apple für diese App nicht zu) -->
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<!-- 1.54.3 — Kopplung gemeinsam mit der Share-Erweiterung; die eigene Gruppe (Application-Identifier) bleibt für den Umzug lesbar -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>T28LD8TF6X.at.alfred.app.gemeinsam</string>
+		<string>T28LD8TF6X.at.alfred.app</string>
+	</array>
 </dict>
 </plist>

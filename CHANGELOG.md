@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — „Teilen an Alfred“ auf dem iPhone (App 1.54.3)
+
+Owner 20.10.: Fotos, Dateien, Links und Text aus anderen Apps über das Teilen-Menü an Alfred schicken.
+
+- **Share-Erweiterung „Alfred“:** Im Teilen-Menü (Fotos, Safari, Mail, Dateien …) erscheint Alfred. Ein kleines Fenster fragt „Was soll Alfred damit tun?“ (optional) und sendet: Dateien blockweise in den Dateispeicher (Fotos als JPEG), Links und Text in die Nachricht, alles ins Hauptgespräch. Die Antwort kommt als Mitteilung „Antwort fertig“. Eine Share-Erweiterung darf die App nicht zuverlässig öffnen, darum sendet sie selbst.
+- **Sicherheit:** Die Erweiterung liest die Kopplung aus einem mit der App gemeinsamen Schlüsselbund (Team-Gruppe) und prüft den Server-Schlüssel genauso fest wie die App. Die vorhandene Kopplung zieht beim ersten Start der App einmalig in diese Gruppe um, neu koppeln ist nicht nötig.
+- **Vorlese-Symbol:** Mit Kopfhörern, Bluetooth-Audio oder im Auto zeigt der Vorlese-Schalter in der Chat-Kopfzeile ein grünes Kopfhörer- bzw. Auto-Symbol, solange automatisch vorgelesen wird; der Audio-Wechsel kommt sofort.
+- Das TestFlight-Skript signiert die Erweiterung mit und prüft vor dem Upload die Schlüsselbund-Gruppe in App und Erweiterung.
+
 ### Fixed — iPhone: Einstellungen wurden nie gespeichert; Fotos und Einfügen im Chat (App 1.54.2)
 
 Owner-Test 20.10. (Build 94): „Ordnerfreigabe fehlgeschlagen – Einstellungsdatei nicht schreibbar“. Server-Log 00:38:55 zeigte den Pfad `./Library/Application Support/alfred/app.json`: Im iOS-App-Prozess ist `HOME` nicht gesetzt, der Pfad war relativ und nie beschreibbar. Damit gingen auf dem iPhone alle lokalen Einstellungen verloren (Ordnerfreigaben, automatisch vorlesen, Erscheinungsbild) und der Anhang-Zwischenspeicher blieb leer. Jetzt fragt die App beim Start den echten Ordner beim System ab.

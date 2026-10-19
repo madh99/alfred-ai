@@ -1,0 +1,2 @@
+// Version und Build-Nummer der Erweiterung = die der App (App Store verlangt Gleichstand); kommt aus flutter build ios
+#include? "../Flutter/Generated.xcconfig"
