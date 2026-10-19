@@ -15894,7 +15894,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const neu = !this.projektLiveAuftraege.has(f.auftragId);
     this.projektLiveAuftraege.set(f.auftragId, s.id);
     const etappe = s.plan[s.nr - 1] ?? '';
-    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${s.id}`, phase: neu ? 'start' : 'status', kanal: `Projekt auf ${s.geraet}`, frage: `${s.akteName ?? 'Projekt'} · Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''}: ${etappe.slice(0, 80)}`, text: f.schritte.at(-1) ?? `${f.werkzeuge} Schritte`, projekt: s.akteId });
+    const folgeZahl = this.folgeAuftraegeRef?.reihe(s.geraetId, s.projekt).length ?? 0; // v1515 — Owner 19.10.: Folgeauftrag in der Live-Leiste des Chats
+    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${s.id}`, phase: neu ? 'start' : 'status', kanal: `Projekt auf ${s.geraet}`, frage: `${s.akteName ?? 'Projekt'} · Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''}${folgeZahl ? ` (+${folgeZahl} ${folgeZahl === 1 ? 'Folgeauftrag' : 'Folgeaufträge'})` : ''}: ${etappe.slice(0, 80)}`, text: f.schritte.at(-1) ?? `${f.werkzeuge} Schritte`, projekt: s.akteId });
   }
 
   private projektLiveEnde(auftragId: string): void {

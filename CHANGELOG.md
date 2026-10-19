@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Folgeaufträge in der Live-Leiste des Chats (v1515)
+
+Owner 19.10. (Screenshot Projektfaden): Wartende Folgeaufträge sollen auch im Chat sichtbar sein. Die Leiste über der Eingabe zeigt jetzt etwa „Finanz-Backend · Etappe 4/6 (+1 Folgeauftrag): …“. „Öffnen“ führt in die Projektansicht mit der Liste.
+
 ### Security — „automatisch zusammenführen“ nur durch den Owner (v1514)
 
 Gleiche Lücke wie in v1513 beim älteren Schalter aus v1458: Über den Chat-Skill (`projekt_merge_requests`, `auto_zusammenfuehren: true`) konnte das Modell die Rückfrage vor dem Zusammenführen aufheben (Owner 19.10.: „ja, wie vorgeschlagen“).
