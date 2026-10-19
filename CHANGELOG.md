@@ -55,6 +55,21 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1504] - 2026-10-19
+
+### Added — Verlaufsleiste mit Vorschau und Lesezeichen (App 1.45.0; App-Spec §11 D4)
+
+- **Verlaufsleiste** am linken Rand des Chats: ein Strich je eigener Frage, gleichmäßig von alt (oben) bis neu (unten).
+  - Darüberfahren zeigt die Frage und den Anfang von Alfreds Antwort, ein Klick springt hin.
+  - Die Liste baut nur sichtbare Einträge: Der Sprung scrollt erst ungefähr hin, dann genau.
+  - Die Leiste erscheint ab drei eigenen Fragen.
+- **Lesezeichen** (🔖) an jeder eigenen Frage. Markierte Fragen sind in der Leiste breiter und farbig, in der Vorschau steht 🔖 davor.
+  - Gespeichert wird am Server je Faden (`data/lesezeichen.json`, Route `GET|POST /api/geraete/faeden/:f/lesezeichen`).
+  - Lesezeichen bleiben damit nach einem Neustart und sind auf jedem Gerät gleich.
+  - Schlüssel ist eine Prüfsumme des Fragetexts.
+- **Geplante Aufgabe aus dem Faden:** Die Rückmeldung ist jetzt deutsch und lesbar, zum Beispiel „Geplant: „…“ — jeden Montag um 19:30. Das Ergebnis kommt in dieses Gespräch.“ statt „Scheduled action created … running "undefined"“.
+- Tests: 4 App, 2 Server (Zeitplan-Text), Pfade.
+
 ## [0.19.0-jarvis.1503] - 2026-10-19
 
 ### Fixed — „Geplante Aufgabe hinzufügen“ aus dem Faden schlug fehl

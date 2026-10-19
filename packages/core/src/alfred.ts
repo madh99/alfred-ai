@@ -14154,6 +14154,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           fadenAbzweigen: async (geraetId: string, quelle: string | null, bis?: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAbzweigen(quelle, bis) : undefined, // v1500
           fadenAufgabe: async (geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenAufgabe(faden, a) : { ok: false, text: 'nur Geräte des Owners' }, // v1500
           fadenZusammenfassung: async (geraetId: string, faden: string | null, neu: boolean) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenZusammenfassung(faden, neu) : undefined, // v1501
+          fadenLesezeichen: async (geraetId: string, faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenLesezeichen(faden, setzen) : undefined, // v1504
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -16351,7 +16352,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const r = await skill.execute({ action: 'create', name: a.name, description: beschreibung, schedule_type: a.art, schedule_value: a.wert, prompt_template: a.auftrag },
       { userId: owner, masterUserId: owner, platform: k.platform, chatId: k.chatId, conversationId: '' } as never);
     this.logger.info({ faden: faden ?? 'haupt', name: a.name, art: a.art, wert: a.wert, ok: r.success }, 'v1500 Geplante Aufgabe aus Faden');
-    return { ok: !!r.success, text: r.success ? (r.display ?? 'Geplant.') : (r.error ?? 'Nicht geplant.') };
+    const { zeitplanText } = await import('./gespraeche.js'); // v1504 — Rückmeldung auf Deutsch
+    return { ok: !!r.success, text: r.success ? `Geplant: „${a.name}“ — ${zeitplanText(a.art, a.wert)}. Das Ergebnis kommt in dieses Gespräch.` : (r.error ?? 'Nicht geplant.') };
   }
 
   /**
@@ -16390,6 +16392,29 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     ).catch(() => []) as Array<Record<string, unknown>>).map(b => ({ id: String(b.id), text: String(b.description ?? '').split('\n')[0].slice(0, 160) }));
     const z = alle[schluessel];
     return { ...(z ? { text: z.text, stand: z.stand, standAnzahl: z.anzahl } : {}), anzahl, bestaetigungen };
+  }
+
+  /**
+   * v1504 (D4) — Lesezeichen je Faden (App-Spec §11): serverseitig gespeichert, damit sie nach einem Neustart und auf jedem Gerät
+   * gleich sind. Schlüssel = Prüfsumme der Nachricht (von der App gebildet). Datei data/lesezeichen.json.
+   */
+  async ownerFadenLesezeichen(faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }): Promise<Array<{ schluessel: string; text: string; zeit: string }> | undefined> {
+    const { FADEN_RE } = await import('./gespraeche.js');
+    if (faden !== null && !FADEN_RE.test(faden)) return undefined;
+    const fs = await import('node:fs');
+    const datei = path.resolve(process.cwd(), 'data', 'lesezeichen.json');
+    let alle: Record<string, Record<string, { text: string; zeit: string }>> = {};
+    try { alle = JSON.parse(fs.readFileSync(datei, 'utf8')) as typeof alle; } catch { /* noch keine */ }
+    const f = faden ?? 'haupt';
+    if (setzen) {
+      const eigene = alle[f] ?? {};
+      if (setzen.an) eigene[setzen.schluessel] = { text: setzen.text, zeit: new Date().toISOString() };
+      else delete eigene[setzen.schluessel];
+      if (Object.keys(eigene).length) alle[f] = eigene; else delete alle[f];
+      try { fs.writeFileSync(datei, JSON.stringify(alle, null, 1)); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1504 Lesezeichen nicht gespeichert'); }
+      this.logger.info({ faden: f, an: setzen.an }, 'v1504 Lesezeichen');
+    }
+    return Object.entries(alle[f] ?? {}).map(([schluessel, v]) => ({ schluessel, ...v }));
   }
 
   async ownerFadenSetzen(faden: string, aenderung: import('./gespraeche.js').FadenAenderung): Promise<boolean> {

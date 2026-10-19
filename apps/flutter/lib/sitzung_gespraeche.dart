@@ -136,6 +136,48 @@ extension _Gespraeche on _SitzungState {
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht geändert: $e')); }
   }
 
+  /// 1.45.0 D4 — Sprungziel eines Verlaufseintrags.
+  GlobalKey _ankerVon(Eintrag e) => _anker[e] ??= GlobalKey();
+
+  /// 1.45.0 D4 — Lesezeichen des offenen Fadens laden (nach jedem Laden des Verlaufs).
+  Future<void> _lesezeichenLaden() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/faeden/${s.faden ?? 'haupt'}/lesezeichen');
+      final l = ((j['lesezeichen'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map((x) => '${x['schluessel']}').toSet();
+      if (mounted) _neu(() => lesezeichen = l);
+    } catch (_) { /* Komfort */ }
+  }
+
+  Future<void> _lesezeichenUmschalten(Eintrag e) async {
+    final s = server; if (s == null) return;
+    final k = lesezeichenSchluessel(e.text);
+    final an = !lesezeichen.contains(k);
+    _neu(() => an ? lesezeichen.add(k) : lesezeichen.remove(k));
+    try { await s.json('/api/geraete/faeden/${s.faden ?? 'haupt'}/lesezeichen', methode: 'POST', koerper: {'schluessel': k, 'text': e.text.length > 200 ? e.text.substring(0, 200) : e.text, 'an': an}); }
+    catch (err) { _neu(() => an ? lesezeichen.remove(k) : lesezeichen.add(k)); _zeile(Eintrag(Art.fehler, 'Lesezeichen nicht gespeichert: $err')); }
+  }
+
+  /// 1.45.0 D4 — zur Nachricht [i] springen. Die Liste baut nur sichtbare Einträge: erst ungefähr hinscrollen, dann genau.
+  Future<void> _zuNachricht(int i) async {
+    if (!scroll.hasClients || i < 0 || i >= verlauf.length) return;
+    final k = _ankerVon(verlauf[i]);
+    Future<bool> sichtbar() async {
+      await WidgetsBinding.instance.endOfFrame;
+      final c = k.currentContext;
+      if (c == null || !c.mounted) return false;
+      await Scrollable.ensureVisible(c, alignment: 0.15, duration: const Duration(milliseconds: 250));
+      return true;
+    }
+    if (await sichtbar()) return;
+    final p = scroll.position;
+    final ziel = (verlauf.length - 1 - i) / verlauf.length * p.maxScrollExtent; // umgekehrte Liste: 0 = neueste
+    for (final d in [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0]) {
+      scroll.jumpTo((ziel + d * p.viewportDimension).clamp(0.0, scroll.position.maxScrollExtent));
+      if (await sichtbar()) return;
+    }
+  }
+
   /// 1.43.0 D2 — Eintrag des offenen Fadens aus der Liste (null im Hauptgespräch).
   Map<String, dynamic>? _offenerFaden() {
     final f = server?.faden;

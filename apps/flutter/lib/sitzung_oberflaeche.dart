@@ -202,10 +202,11 @@ extension _Oberflaeche on _SitzungState {
                 final w = e.fund // 1.5.0 — Treffer der Suche hervorheben
                     ? Container(key: fundSchluessel, padding: const EdgeInsets.only(left: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))), child: roh)
                     : roh;
-                return neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w;
+                return KeyedSubtree(key: _ankerVon(e), child: neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w); // 1.45.0 D4 Sprungziel
               },
             ))),
-      ), if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
+      ), if (archiv == null && leistenEintraege(verlauf).length >= 3) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht)), // 1.45.0 D4
+        if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
       if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _arbeitsLeiste(theme))), // 1.11.0
       Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
@@ -462,6 +463,7 @@ extension _Oberflaeche on _SitzungState {
           Row(mainAxisSize: MainAxisSize.min, children: [
             IconButton(tooltip: 'Bearbeiten (Text in die Eingabe legen)', onPressed: antwortet ? null : () { eingabe.text = _ohneZitat(e.text); eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length); fokus.requestFocus(); }, icon: Icon(Icons.edit_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Erneut senden', onPressed: antwortet ? null : () => _senden(text: _ohneZitat(e.text)), icon: Icon(Icons.replay_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            if (archiv == null) IconButton(tooltip: lesezeichen.contains(lesezeichenSchluessel(e.text)) ? 'Lesezeichen entfernen' : 'Lesezeichen (in der Verlaufsleiste hervorgehoben)', onPressed: () => _lesezeichenUmschalten(e), icon: Icon(lesezeichen.contains(lesezeichenSchluessel(e.text)) ? Icons.bookmark : Icons.bookmark_border, size: 16, color: lesezeichen.contains(lesezeichenSchluessel(e.text)) ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact), // 1.45.0 D4
           ]),
         ])));
       case Art.alfred:

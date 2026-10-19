@@ -1089,6 +1089,7 @@ export class HttpAdapter extends MessagingAdapter {
     fadenAbzweigen?(geraetId: string, quelle: string | null, bis?: string): Promise<{ faden: string; titel: string; kopiert: number } | undefined>; // v1500
     fadenAufgabe?(geraetId: string, faden: string | null, a: { name: string; auftrag: string; art: string; wert: string }): Promise<{ ok: boolean; text: string }>; // v1500
     fadenZusammenfassung?(geraetId: string, faden: string | null, neu: boolean): Promise<Record<string, unknown> | undefined>; // v1501
+    fadenLesezeichen?(geraetId: string, faden: string | null, setzen?: { schluessel: string; text: string; an: boolean }): Promise<Array<{ schluessel: string; text: string; zeit: string }> | undefined>; // v1504
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
@@ -2076,6 +2077,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetSucheAnhaenge(req, res, url).catch(err => this.safeError(res, err)); // v1350
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
+    } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/lesezeichen$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraetFadenLesezeichen(req, res, url).catch(err => this.safeError(res, err)); // v1504 D4
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/zusammenfassung$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetFadenZusammenfassung(req, res, url).catch(err => this.safeError(res, err)); // v1501 D3
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}\/(abzweigen|aufgabe)$/.test(url.pathname) && req.method === 'POST') {
@@ -7095,6 +7098,24 @@ export class HttpAdapter extends MessagingAdapter {
     const id = url.pathname.split('/').slice(-2)[0] ?? '';
     const r = await this.geraeteCallbacks.fadenZusammenfassung(geraet.geraetId, id === 'haupt' ? null : id, req.method === 'POST');
     res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ?? { error: 'Faden nicht gefunden' }));
+  }
+
+  /** v1504 (D4) — Lesezeichen eines Fadens: GET Liste, POST {schluessel, text, an} setzt oder entfernt eines. */
+  private async handleGeraetFadenLesezeichen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.fadenLesezeichen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const id = url.pathname.split('/').slice(-2)[0] ?? '';
+    let setzen: { schluessel: string; text: string; an: boolean } | undefined;
+    if (req.method === 'POST') {
+      let j: Record<string, unknown> = {};
+      try { j = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { j = {}; }
+      const schluessel = String(j.schluessel ?? '');
+      if (!/^[0-9a-f]{8,64}$/.test(schluessel) || typeof j.an !== 'boolean') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'schluessel (hex) und an (boolean) nötig' })); return; }
+      setzen = { schluessel, text: String(j.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200), an: j.an };
+    }
+    const r = await this.geraeteCallbacks.fadenLesezeichen(geraet.geraetId, id === 'haupt' ? null : id, setzen);
+    res.writeHead(r ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(r ? { lesezeichen: r } : { error: 'Faden nicht gefunden' }));
   }
 
   /** v1500 (D2) — Web: Faden des Owners abzweigen (POST /api/gespraeche/:f/abzweigen {bis?}). */

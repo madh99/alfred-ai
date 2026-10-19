@@ -92,10 +92,12 @@ describe('v1460 dev starten, neu starten, stoppen', () => {
     expect(r2.ok).toBe(true);
     if (!r2.ok) return;
     expect(r2.pid).not.toBe(r1.pid);
-    expect(prozessLebt(r1.pid)).toBe(false);
+    // v1504 — unter Last (volle Testreihe) endet ein Prozess unter Windows nicht sofort: bis zu 5 s warten statt einmal nachsehen
+    const bisFalsch = async (f: () => boolean | Promise<boolean>): Promise<boolean> => { for (let i = 0; i < 50; i++) { if (!(await f())) return false; await new Promise(r => setTimeout(r, 100)); } return true; };
+    expect(await bisFalsch(() => prozessLebt(r1.pid))).toBe(false);
     expect((await devStoppen(d, HOME)).ok).toBe(true);
-    expect(prozessLebt(r2.pid)).toBe(false);
-    expect(await portBelegt(port)).toBe(false);
+    expect(await bisFalsch(() => prozessLebt(r2.pid))).toBe(false);
+    expect(await bisFalsch(() => portBelegt(port))).toBe(false);
     expect(readFileSync(path.join(d, '.alfred', 'dev.log'), 'utf8')).toContain('Alfred startet: node server.js');
   }, 60_000);
 

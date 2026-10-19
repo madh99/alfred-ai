@@ -30,6 +30,7 @@ import 'faden_liste.dart'; // 1.41.0
 import 'faden_aktionen.dart'; // 1.43.0 D2
 import 'seiten_chat.dart'; // 1.43.0 D2
 import 'faden_karte.dart'; // 1.44.0 D3
+import 'verlaufsleiste.dart'; // 1.45.0 D4
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -464,6 +465,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final Set<String> projekteAlleFaeden = {}; // 1.42.0 — Projekte mit aufgeklapptem „Weitere“
   bool seitenChatOffen = false; // 1.43.0 D2 — Seiten-Chat rechts
   bool karteOffen = false; // 1.44.0 D3 — angeheftete Zusammenfassung oben rechts
+  Set<String> lesezeichen = {}; // 1.45.0 D4 — Lesezeichen des offenen Fadens (Schlüssel = Prüfsumme der Frage)
+  final Expando<GlobalKey> _anker = Expando(); // 1.45.0 — Sprungziel je Verlaufseintrag
   final Map<String, (String, String)> seitenChats = {}; // 1.43.0 — Hauptfaden (oder „haupt“) → (Faden, Titel) des Seiten-Chats
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
   bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)

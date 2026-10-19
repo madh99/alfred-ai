@@ -286,3 +286,22 @@ export function projektAusEingabe(eingabe: string, projekte: ProjektKurz[]): Pro
   return projekte.find(p => p.id === e) ?? projekte.find(p => e.length >= 6 && p.id.startsWith(e))
     ?? projekte.find(p => p.name.toLowerCase() === e) ?? (() => { const t = projekte.filter(p => p.name.toLowerCase().includes(e)); return t.length === 1 ? t[0] : undefined; })();
 }
+
+/**
+ * v1504 — Zeitplan einer geplanten Aufgabe lesbar (Rückmeldung an den Owner statt „Scheduled action created … running "undefined"“):
+ * cron „M H * * *“ → „täglich um HH:MM“, „M H * * D“ → „jeden Montag um HH:MM“, once → „einmalig am TT.MM.JJJJ um HH:MM“ (Ortszeit Wien).
+ */
+export function zeitplanText(art: string, wert: string): string {
+  const zwei = (n: number) => String(n).padStart(2, '0');
+  if (art === 'once') {
+    const d = new Date(wert);
+    if (Number.isNaN(d.getTime())) return `einmalig (${wert})`;
+    return `einmalig am ${d.toLocaleString('de-AT', { timeZone: 'Europe/Vienna', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' um')}`;
+  }
+  const m = /^(\d{1,2}) (\d{1,2}) \* \* (\*|[0-6])$/.exec(wert.trim());
+  if (art !== 'cron' || !m) return `nach Plan „${wert}“`;
+  const um = `${zwei(Number(m[2]))}:${zwei(Number(m[1]))}`;
+  if (m[3] === '*') return `täglich um ${um}`;
+  const tage = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+  return `jeden ${tage[Number(m[3])]} um ${um}`;
+}
