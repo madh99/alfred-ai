@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Verlaufsleiste stieß im schmalen Fenster an den Text (App 1.45.1)
+
+Sichtbeweis 19.10. (Ubuntu-VM, schmales Fenster): Die Striche der Verlaufsleiste lagen direkt am Textanfang. Ist die Leiste da, hat der Verlauf links jetzt 38 statt 20 Pixel Rand.
+
 ### Fixed — App: Gespräche fehlen nach Start ohne Server (App 1.17.1)
 
 Startete die App, während der Server nicht erreichbar war (z. B. Neustart des Servers), blieben die einmaligen Abrufe beim Start erfolglos: In der Seitenleiste stand nur „Hauptgespräch“, bis die App erneut gestartet wurde. Nach dem Wiederverbinden lädt die App jetzt Gespräche, Spiegel-Schalter und den Verlauf des offenen Gesprächs nach.

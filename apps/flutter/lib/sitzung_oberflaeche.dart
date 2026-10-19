@@ -187,7 +187,7 @@ extension _Oberflaeche on _SitzungState {
           : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
               controller: scroll,
               reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+              padding: EdgeInsets.fromLTRB(archiv == null && leistenEintraege(verlauf).length >= 3 ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
               itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
               itemBuilder: (context, ri) {
                 if (ri == verlauf.length) { // 1.6.0 — ganz oben: ältere Nachrichten
