@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Schalter „Folgeaufträge ohne Rückfrage“ nur durch den Owner (v1513)
+
+Die Sicherheitsprüfung des Commits zu v1512 fand eine Lücke: Den Schalter konnte auch das Modell über den Skill einschalten (`projekt_folgeauftraege`, `auto_an`). Damit hätte Alfred die Startkarte künftiger Claude-Code-Läufe selbst aufheben können.
+
+- Über den Skill (Chat) stellt „einschalten“ jetzt eine Bestätigung mit Einmal-Kennung (24 h). Erst das Ja des Owners schaltet ein. Die Kennung steht nie im Prompt.
+- Ausschalten ist strenger und geht weiter direkt.
+- App und Web (Owner) schalten direkt, nicht mehr über den Skill.
+
 ### Added — Folgeaufträge je Projekt, nie zwei Läufe im selben Verzeichnis (v1512, App 1.51.0)
 
 Realfall 19.10. 15:52 (Finanz-Backend): Auf „sobald die 6 Etappen fertig sind, auch folgendes prüfen …“ legte Alfred einen zweiten Projektlauf im selben Verzeichnis an und stoppte ihn sechs Sekunden später selbst. Die Meldung lautete „vom Owner gestoppt“. Die Startkarte blieb anklickbar, die Freigabe scheiterte, und die App zeigte trotzdem „✅ Freigegeben“. Die Fortsetzung lief im Telegram-Chat mit Kalender- und ITSM-Abfragen. Ohne Alfreds eigenen Stopp hätten zwei Claude-Code-Läufe im selben Repo gearbeitet. Owner: „das Verhalten hätte ich erwartet“.

@@ -15975,7 +15975,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
-      folge: async (id: string, was: string, folgeId?: string) => skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, ctx(`project:${id}`)), // v1512 App
+      folge: async (id: string, was: string, folgeId?: string) => was === 'auto_an' || was === 'auto_aus' ? this.geraeteProjektFolgeAuto(id, was === 'auto_an') : skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, ctx(`project:${id}`)), // v1512 App
       einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1486 F5
       loeschen: async (id: string) => this.projektEndgueltigLoeschen(id), // v1457
     };
@@ -16897,7 +16897,19 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const was = String(input.folge ?? 'liste');
       const reihe = () => folge.reiheDerAkte(t.akte.id, t.akte.geraetId, t.akte.pfad);
       const id = String(input.folge_id ?? '').trim();
-      if (was === 'auto_an' || was === 'auto_aus') return this.geraeteProjektFolgeAuto(t.akte.id, was === 'auto_an');
+      // v1513 — Sicherheitsprüfung 19.10.: Einschalten hebt die Startkarte künftiger Läufe auf → über den Skill (Chat/Modell) nur mit
+      // Owner-Bestätigung (Einmal-Kennung, nie im Prompt). Ausschalten ist strenger und geht direkt. App und Web schalten direkt (Owner).
+      if (was === 'auto_aus') return this.geraeteProjektFolgeAuto(t.akte.id, false);
+      if (was === 'auto_an') {
+        const bestaetigt = String(input.bestaetigt ?? '');
+        if (bestaetigt) return this.deployFreigaben.loese(bestaetigt, t.akte.id, 'folge_auto') ? this.geraeteProjektFolgeAuto(t.akte.id, true) : { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+        if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+        const nonce = this.deployFreigaben.stelle(t.akte.id, 'folge_auto', undefined, 24 * 3_600_000);
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: this.config.telegram?.enabled ? 'telegram' : 'api', source: 'geraet', sourceId: `folge-auto-${t.akte.id}-${Date.now()}`,
+          description: `🧭 Für „${t.akte.name}“ den Schalter „Folgeaufträge ohne Rückfrage starten“ einschalten? Danach startet Alfred nach einem regulär beendeten Lauf den nächsten Folgeauftrag ohne Startkarte (nach einem Abbruch fragt er weiter).`,
+          skillName: 'project_agent', skillParams: { action: 'projekt_folgeauftraege', projekt: t.akte.id, folge: 'auto_an', bestaetigt: nonce }, timeoutMinutes: 720 });
+        return ok ? { success: true, data: { bestaetigung: true }, display: 'Zur Bestätigung gestellt — eingeschaltet wird erst nach dem Ja des Owners (in App und Web schaltet er selbst).' } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+      }
       if (was === 'entfernen') { const e = id ? folge.entferne(id) : undefined; return e ? { success: true, display: `Folgeauftrag entfernt: „${e.ziel.slice(0, 120)}“` } : { success: false, error: `Folgeauftrag ${id || '(folge_id fehlt)'} nicht gefunden` }; }
       if (was === 'hoch' || was === 'runter') return folge.verschiebe(id, was === 'hoch' ? -1 : 1) ? { success: true, display: `Reihenfolge geändert: ${reihe().map((e, i) => `${i + 1}. ${e.ziel.slice(0, 60)}`).join(' · ')}` } : { success: false, error: 'Verschieben nicht möglich (Rand der Reihe oder unbekannte Kennung)' };
       const l = reihe();
@@ -17328,7 +17340,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
-      folge: async (id: string, was: string, folgeId?: string) => skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never), // v1512 Web
+      folge: async (id: string, was: string, folgeId?: string) => was === 'auto_an' || was === 'auto_aus' ? this.geraeteProjektFolgeAuto(id, was === 'auto_an') : skill.execute({ action: 'projekt_folgeauftraege', projekt: id, folge: was, ...(folgeId ? { folge_id: folgeId } : {}) }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never), // v1512 Web
       einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1487
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },

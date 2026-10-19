@@ -85,7 +85,7 @@ export function nachkontrolle(o: { prozess: Prozess; deployOk: boolean; deployFe
 }
 
 /** Einmal-Kennungen für bestätigte Deploys/Rollbacks (die Bestätigung des Owners trägt sie; das Modell kann sie nicht erraten). */
-export type FreigabeArt = 'deploy' | 'rollback' | 'ziel' | 'remote' | 'loeschen' | 'zusammenfuehren' | 'dev_start' | 'test_start'; // v1457, v1458, v1460, v1462
+export type FreigabeArt = 'deploy' | 'rollback' | 'ziel' | 'remote' | 'loeschen' | 'zusammenfuehren' | 'dev_start' | 'test_start' | 'folge_auto'; // v1457, v1458, v1460, v1462, v1513
 
 export class DeployFreigaben {
   private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; stufe?: Stufe; wert?: string; bis: number }>();
