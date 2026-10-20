@@ -41,7 +41,8 @@ extension _Gespraeche on _SitzungState {
     if (!warteschlange.leer) Future.microtask(_nachsenden); // 1.8.0
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     if (faden != null && faeden.any((x) => x['faden'] == faden && x['archiviert'] == true)) _zeile(Eintrag(Art.hinweis, 'Archiviertes Gespräch — wenn du hier schreibst, kommt es zurück in die Liste.')); // 1.41.0
-    _eingabeAktivieren(); // 1.67.5
+    // 1.69.0 — Owner: im neuen, leeren Chat ist die Tastatur gleich offen; sonst wie 1.67.5
+    if (istHandy && !verlauf.any((e) => e.art == Art.du || e.art == Art.alfred)) { fokus.requestFocus(); } else { _eingabeAktivieren(); }
   }
 
 
@@ -404,15 +405,17 @@ extension _Gespraeche on _SitzungState {
   }
 
   /// 1.43.0 D2 — Menü „…“ der Kopfzeile: alle Aktionen zum offenen Gespräch.
-  Widget _kopfMenue() {
+  Widget _kopfMenue({bool handy = false}) {
     final f = _offenerFaden();
     final id = f == null ? null : '${f['faden']}';
     final angeheftet = f?['angeheftet'] == true, archiviert = f?['archiviert'] == true;
-    PopupMenuItem<String> e(String w, IconData i, String t, [String? k]) => PopupMenuItem(value: w, child: ListTile(dense: true, leading: Icon(i, size: 18), title: Text(t), trailing: k == null ? null : Text(k, style: const TextStyle(fontSize: 11))));
+    PopupMenuItem<String> e(String w, IconData i, String t, [String? k]) => PopupMenuItem(value: w, child: ListTile(dense: true, leading: Icon(i, size: 18), title: Text(t), trailing: k == null || handy ? null : Text(k, style: const TextStyle(fontSize: 11))));
     return PopupMenuButton<String>(
       key: const Key('kopf-menue'), tooltip: 'Mehr zu diesem Gespräch', icon: const Icon(Icons.more_horiz, size: 20),
       onSelected: (w) {
         switch (w) {
+          case 'vorlesen': _neu(() => stimme = !stimme); // 1.69.0 Handy
+          case 'karte': _neu(() => karteOffen = !karteOffen);
           case 'umbenennen': _fadenUmbenennen(id!, '${f!['titel'] ?? ''}');
           case 'anheften': _fadenSetzen(id!, {'angeheftet': !angeheftet});
           case 'seiten': _seitenChatUmschalten();
@@ -429,16 +432,21 @@ extension _Gespraeche on _SitzungState {
         }
       },
       itemBuilder: (_) => [
+        if (handy) ...[ // 1.69.0 — am Handy wandern Vorlesen und Zusammenfassung aus dem alten Kopf hierher
+          e('vorlesen', stimme ? Icons.volume_up : Icons.volume_off, stimme ? 'Antworten vorlesen: an' : vorlesenAutomatisch ? 'Vorlesen: automatisch' : 'Antworten vorlesen: aus'),
+          e('karte', Icons.fact_check_outlined, karteOffen ? 'Zusammenfassung ausblenden' : 'Zusammenfassung zeigen'),
+          const PopupMenuDivider(),
+        ],
         if (f != null) e('umbenennen', Icons.edit_outlined, 'Umbenennen', 'Strg+Alt+R'),
         if (f != null && !archiviert) e('anheften', angeheftet ? Icons.push_pin : Icons.push_pin_outlined, angeheftet ? 'Lösen' : 'Anheften', 'Strg+Alt+P'),
-        e('seiten', Icons.vertical_split_outlined, seitenChatOffen ? 'Seiten-Chat schließen' : 'Neuer Seiten-Chat', 'Strg+Alt+S'),
+        if (!handy) e('seiten', Icons.vertical_split_outlined, seitenChatOffen ? 'Seiten-Chat schließen' : 'Neuer Seiten-Chat', 'Strg+Alt+S'),
         e('abzweigen', Icons.call_split, 'Abzweigen'),
         e('aufgabe', Icons.schedule, 'Geplante Aufgabe hinzufügen …'),
         const PopupMenuDivider(),
         e('kopieren', Icons.copy_all_outlined, 'Gespräch kopieren (Markdown)'),
         e('letzte', Icons.content_copy, 'Letzte Antwort kopieren'),
         e('export', Icons.download_outlined, 'Exportieren (.md)'),
-        e('browser', Icons.open_in_browser, 'Im Browser öffnen'),
+        if (!handy) e('browser', Icons.open_in_browser, 'Im Browser öffnen'),
         if (f != null && !archiviert && !istProjektFaden(f)) ...[
           const PopupMenuDivider(),
           fadenProjektId(f) == null ? e('projekt', Icons.drive_file_move_outlined, 'Einem Projekt zuordnen …') : e('projekt_loesen', Icons.drive_file_move_rtl_outlined, 'Aus Projekt lösen'),

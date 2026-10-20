@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — iPhone-Chat: schwebender Kopf, Eingabe in zwei Zuständen, Milchglas (App 1.69.0)
+
+Owner 20.10.: „1–3 wie vorgeschlagen umsetzen, Weg A“.
+
+- **Eingabe:**
+  - **Eingeklappt** (leer, nicht aktiv): eine Leiste mit **+** · Eingabe · **Mikrofon** · **Gesprächsknopf**.
+  - **Aufgeklappt** (aktiv oder mit Inhalt): oben das Feld, darunter **+** · **Stufe** · **Mikrofon** · **Senden**. Die Stufe erscheint nur hier.
+  - Nur das Feld öffnet die Tastatur; Plus, Mikrofon und Gesprächsknopf nicht.
+  - Im **neuen, leeren Chat** ist die Tastatur gleich offen.
+  - **Herunterwischen** über den Chat schließt sie, auch im leeren Chat.
+- **Ein Kopf statt zwei Rahmen:**
+  - Links ein runder **Menü**-Knopf. Ein Punkt zeigt die Verbindung, eine Zahl die offenen Bestätigungen.
+  - Rechts eine Kapsel mit **Neuer Chat** und **„…“**. Darin liegen jetzt auch Vorlesen und Zusammenfassung.
+  - Der Gesprächsname steht klein in der Mitte, im leeren Chat nicht.
+- **Milchglas:** Kopf und Eingabe sind halbdurchsichtig mit Weichzeichnung, der Verlauf läuft darunter durch.
+- Am Desktop bleibt alles wie bisher.
+
 ### Added — Unterhaltung: lebendige Kugel (App 1.68.0)
 
 Owner 20.10.: „a+b+c+d+e bitte umsetzen“.

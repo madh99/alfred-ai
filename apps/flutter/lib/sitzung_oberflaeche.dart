@@ -217,6 +217,7 @@ extension _Oberflaeche on _SitzungState {
 
   /// Hauptbereich Chat: Kopfzeile, Verlauf (mittig, Datumstrenner), Bestätigungskarten, Eingabekarte.
   Widget _chat(ThemeData theme) {
+    if (istHandy) return _chatHandy(theme); // 1.69.0
     final dim = theme.colorScheme.onSurfaceVariant;
     final geraet = konfig?.name ?? satellit?.name ?? '…';
     // 1.1.1 — Owner 16:12: Dateien ließen sich nicht mehr hineinziehen. Die Ablagezone deckte nur den Verlauf ab,
@@ -246,30 +247,7 @@ extension _Oberflaeche on _SitzungState {
         TextButton(onPressed: () => _neu(() => ansicht = Ansicht.suche), child: const Text('Zur Suche')),
         TextButton(onPressed: _fundstelleVerlassen, child: const Text('Zum Gespräch')),
       ]))),
-      Expanded(child: Stack(children: [Positioned.fill(child: verlauf.isEmpty
-          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
-          : Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: ListView.builder(
-              controller: scroll,
-              reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
-              keyboardDismissBehavior: istHandy ? ScrollViewKeyboardDismissBehavior.onDrag : ScrollViewKeyboardDismissBehavior.manual, // 1.67.5 — Scrollen schließt die Tastatur
-              padding: EdgeInsets.fromLTRB(_mitVerlaufsleiste ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
-              itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
-              itemBuilder: (context, ri) {
-                if (ri == verlauf.length) { // 1.6.0 — ganz oben: ältere Nachrichten
-                  return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Center(child: laedtAeltere
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : TextButton.icon(onPressed: _aeltereLaden, icon: const Icon(Icons.expand_less, size: 18), label: const Text('Ältere Nachrichten laden'))));
-                }
-                final i = verlauf.length - 1 - ri;
-                final e = verlauf[i];
-                final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
-                final roh = _eintrag(e, theme);
-                final w = e.fund // 1.5.0 — Treffer der Suche hervorheben
-                    ? Container(key: fundSchluessel, padding: const EdgeInsets.only(left: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))), child: roh)
-                    : roh;
-                return KeyedSubtree(key: _ankerVon(e), child: neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w); // 1.45.0 D4 Sprungziel
-              },
-            ))),
+      Expanded(child: Stack(children: [Positioned.fill(child: _verlaufInhalt(theme, EdgeInsets.fromLTRB(_mitVerlaufsleiste ? 38 : 20, 12, 20, 12))
       ), if (_mitVerlaufsleiste) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
         if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _bestaetigungen(theme))),
@@ -306,52 +284,39 @@ extension _Oberflaeche on _SitzungState {
   }
 
 
-  /// Eingabekarte wie in der Vorlage: Textfeld oben, darunter Anhang, Stufenwahl, Status, Mikrofon, Zuhören, Senden.
-  /// 1.11.0 — Leiste über der Eingabe: Alfred arbeitet an einer Anfrage aus Telegram oder einem anderen Gerät.
-  Widget _arbeitsLeiste(ThemeData theme) {
+  /// 1.69.0 — Verlauf bzw. leerer Zustand; `innen` = Abstand (am Handy Platz für die schwebenden Leisten darüber).
+  Widget _verlaufInhalt(ThemeData theme, EdgeInsets innen) {
     final dim = theme.colorScheme.onSurfaceVariant;
-    return Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Column(children: [
-      for (final a in fremdeArbeit.values.take(3)) Card(key: Key('arbeit-${a.id}'), color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5), margin: const EdgeInsets.only(bottom: 4), child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), child: Row(children: [
-        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-        const SizedBox(width: 10),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(a.projekt != null ? '🔨 ${a.frage}' : 'Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelMedium), // 1.16.1 G2
-          Text(a.status?.isNotEmpty == true ? a.status! : (a.projekt != null ? a.kanal : a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
-        ])),
-        if (a.projekt != null) TextButton(key: Key('arbeit-projekt-${a.id}'), onPressed: () => _neu(() { projekteAnfang = a.projekt; ansicht = Ansicht.projekte; }), child: const Text('Öffnen')) // 1.16.1 G2
-        else if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),
-        if (a.projekt == null) IconButton(tooltip: 'Anfrage abbrechen', onPressed: () => _fremdeArbeitStoppen(a), icon: const Icon(Icons.stop_circle_outlined)),
-      ]))),
-    ]));
+    return verlauf.isEmpty
+          ? Padding(padding: innen, child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)])))
+          : Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: ListView.builder(
+              controller: scroll,
+              reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
+              keyboardDismissBehavior: istHandy ? ScrollViewKeyboardDismissBehavior.onDrag : ScrollViewKeyboardDismissBehavior.manual, // 1.67.5 — Scrollen schließt die Tastatur
+              padding: innen, // 1.45.1 Platz für die Verlaufsleiste; 1.69.0 am Handy für Kopf und Eingabe darüber
+              itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
+              itemBuilder: (context, ri) {
+                if (ri == verlauf.length) { // 1.6.0 — ganz oben: ältere Nachrichten
+                  return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Center(child: laedtAeltere
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : TextButton.icon(onPressed: _aeltereLaden, icon: const Icon(Icons.expand_less, size: 18), label: const Text('Ältere Nachrichten laden'))));
+                }
+                final i = verlauf.length - 1 - ri;
+                final e = verlauf[i];
+                final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
+                final roh = _eintrag(e, theme);
+                final w = e.fund // 1.5.0 — Treffer der Suche hervorheben
+                    ? Container(key: fundSchluessel, padding: const EdgeInsets.only(left: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))), child: roh)
+                    : roh;
+                return KeyedSubtree(key: _ankerVon(e), child: neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w); // 1.45.0 D4 Sprungziel
+              },
+            )));
   }
 
-  Widget _eingabekarte(ThemeData theme) {
+  /// 1.0.3/1.69.0 — das Eingabefeld (ein Feld für Desktop-Karte und Handy-Leiste; der Schlüssel hält Fokus und Text beim Umbau).
+  Widget _eingabeFeld(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
-    const stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'};
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 6, 20, 14),
-      padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
-      decoration: BoxDecoration(
-        color: theme.brightness == Brightness.light ? Colors.white : theme.colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-        boxShadow: theme.brightness == Brightness.light ? [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 4))] : null,
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (bezug != null) Padding(padding: const EdgeInsets.only(bottom: 6), child: Container( // 1.2.2 — Zitat der Nachricht, auf die geantwortet wird
-          padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-          decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(10), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))),
-          child: Row(children: [
-            Icon(Icons.reply, size: 16, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text('Antwort auf Alfred: ${bezug!.text.replaceAll('\n', ' ')}', maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim))),
-            IconButton(tooltip: 'Bezug entfernen', onPressed: () => _neu(() => bezug = null), icon: const Icon(Icons.close, size: 16), visualDensity: VisualDensity.compact),
-          ]),
-        )),
-        if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
-          for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => _neu(() => anhaenge.remove(f))),
-        ])),
-        // 1.0.3 — mehrzeiliges Feld: Enter sendet, Umschalt+Enter macht eine neue Zeile (onSubmitted feuert bei maxLines > 1 nicht).
+    return KeyedSubtree(key: feldSchluessel, child: // 1.0.3 — mehrzeiliges Feld: Enter sendet, Umschalt+Enter macht eine neue Zeile (onSubmitted feuert bei maxLines > 1 nicht).
         Focus(
           onKeyEvent: (node, ev) {
             // 1.6.0 — Strg+V / ⌘V: liegt ein Bild in der Zwischenablage, wird es Anhang (Text fügt das Feld wie gewohnt ein)
@@ -381,11 +346,14 @@ extension _Oberflaeche on _SitzungState {
             decoration: InputDecoration.collapsed(hintText: anhaenge.isEmpty ? (istHandy ? 'Nachricht an Alfred …' : 'Nachricht an Alfred … (Umschalt+Enter: neue Zeile, Dateien hineinziehen)') : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (leer = nur ablegen)', hintStyle: TextStyle(color: dim)),
             onSubmitted: (_) => _senden(),
           ),
-        ),
-        const SizedBox(height: 6),
-        Row(children: [
-          IconButton(tooltip: 'Datei anhängen', onPressed: antwortet ? null : _anhangWaehlen, icon: const Icon(Icons.add_circle_outline, size: 22), visualDensity: VisualDensity.compact),
-          PopupMenuButton<String?>(
+        ));
+  }
+
+  /// 1.50.0 D6b/1.69.0 — Stufenwahl (am Handy nur im aufgeklappten Zustand).
+  Widget _stufenWahl(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    const stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'};
+    return PopupMenuButton<String?>(
             // 1.50.0 D6b — hinter jeder Stufe Modell und Gründlichkeit; „Automatisch“ zeigt, was gerade dahinter steht
             tooltip: [
               'Stufe: wie gründlich Alfred denkt (Kosten, Tempo)',
@@ -406,7 +374,143 @@ extension _Oberflaeche on _SitzungState {
               Text('${stufen[tierWahl] ?? 'Automatisch'}${stufenStand.fuer(tierWahl) == null || istHandy ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
               Icon(Icons.expand_more, size: 16, color: dim),
             ])),
-          ),
+          );
+  }
+
+  /// 1.69.0 (Owner 20.10.: „1–3 wie vorgeschlagen, Weg A“) — iPhone-Chat: ein schwebender Kopf (Menü links, Neuer Chat und „…“
+  /// rechts), die Eingabe als Leiste unten, beides aus Milchglas; der Verlauf läuft darunter durch. Herunterwischen schließt die
+  /// Tastatur, auch im leeren Chat.
+  Widget _chatHandy(ThemeData theme) {
+    final oben = MediaQuery.paddingOf(context).top;
+    const kopf = 50.0;
+    return LayoutBuilder(builder: (context, groesse) {
+      breiteChat = chatBreite(groesse.maxWidth);
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragUpdate: (d) { if (d.delta.dy > 6 && fokus.hasFocus) fokus.unfocus(); },
+        child: Stack(children: [
+          Positioned.fill(child: _verlaufInhalt(theme, EdgeInsets.fromLTRB(16, oben + kopf + 14, 16, unterHoehe + 8))),
+          if (karteOffen && archiv == null) Positioned(top: oben + kopf + 10, right: 12, child: _karte(theme)),
+          Positioned(top: oben + 6, left: 12, right: 12, child: _kopfHandy(theme)),
+          Positioned(left: 0, right: 0, bottom: 0, child: Messen(aufGroesse: (g) { if ((g.height - unterHoehe).abs() > 0.5) _neu(() => unterHoehe = g.height); }, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (fundstelle != null) Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 4), child: Glas(child: Padding(padding: const EdgeInsets.fromLTRB(14, 2, 4, 2), child: Row(children: [
+              Expanded(child: Text('Fundstelle — Schreiben setzt das Gespräch fort', style: theme.textTheme.bodySmall, overflow: TextOverflow.ellipsis)),
+              TextButton(onPressed: _fundstelleVerlassen, child: const Text('Zum Gespräch')),
+            ])))),
+            if (offen.isNotEmpty) _bestaetigungen(theme),
+            if (fremdeArbeit.isNotEmpty) _arbeitsLeiste(theme),
+            _eingabeHandy(theme),
+          ]))),
+        ]),
+      );
+    });
+  }
+
+  /// 1.69.0 — schwebender Kopf: links Menü (Punkt = Verbindung, Zahl = offene Bestätigungen), Mitte Gesprächsname (nicht im
+  /// leeren Chat), rechts Neuer Chat und „…“.
+  Widget _kopfHandy(ThemeData theme) {
+    final verbunden = satellit?.verbunden == true;
+    final hatInhalt = verlauf.any((e) => e.art == Art.du || e.art == Art.alfred);
+    return Row(children: [
+      Glas(rund: true, child: SizedBox(width: 46, height: 46, child: Stack(alignment: Alignment.center, children: [
+        IconButton(key: const Key('handy-menue'), tooltip: 'Menü', icon: const Icon(Icons.menu), onPressed: () => _schublade.currentState?.openDrawer()),
+        Positioned(right: 10, top: 10, child: IgnorePointer(child: Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: verbunden ? Colors.green : theme.colorScheme.error)))),
+        if (offen.isNotEmpty) Positioned(right: 1, bottom: 1, child: IgnorePointer(child: Badge.count(count: offen.length))),
+      ]))),
+      const SizedBox(width: 10),
+      Expanded(child: hatInhalt ? Text(_kopfTitel(), key: const Key('chat-kopf'), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)) : const SizedBox.shrink()),
+      const SizedBox(width: 10),
+      Glas(child: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(key: const Key('neuer-chat'), tooltip: 'Neuer Chat', icon: const Icon(Icons.edit_square), onPressed: _neuerChat),
+        if (archiv == null) _kopfMenue(handy: true) else const SizedBox(width: 6),
+      ])),
+    ]);
+  }
+
+  /// 1.69.0 — Eingabe am Handy in zwei Zuständen. Eingeklappt (leer, nicht aktiv): eine Leiste [+] Feld [Mikrofon] [Gespräch].
+  /// Aufgeklappt (aktiv oder Inhalt): Feld oben, darunter [+] Stufe [Mikrofon] [Senden]. Nur das Feld öffnet die Tastatur.
+  Widget _eingabeHandy(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final auf = fokus.hasFocus || eingabe.text.trim().isNotEmpty || anhaenge.isNotEmpty || bezug != null || aufnahme;
+    final plus = IconButton(tooltip: 'Datei anhängen', onPressed: antwortet ? null : _anhangWaehlen, icon: const Icon(Icons.add, size: 26), visualDensity: VisualDensity.compact);
+    final mikro = HalteKnopf(key: const Key('mikro-handy'), aktiv: !aufnahme && !antwortet,
+      aufTipp: _diktatUmschalten, aufHalten: () { losgelassen = false; _haltenStart(); }, aufLoslassen: () { losgelassen = true; _haltenEnde(); },
+      icon: Icon(aufnahme ? (diktat ? Icons.stop_circle : Icons.mic) : Icons.mic_none, size: 24, color: aufnahme ? theme.colorScheme.error : null));
+    final rechts = antwortet
+      ? StoppKnopf(key: const Key('stopp'), aufStopp: _abbrechen)
+      : ValueListenableBuilder<TextEditingValue>(valueListenable: eingabe, builder: (context, wert, _) => wert.text.trim().isEmpty && anhaenge.isEmpty && !aufnahme
+          ? IconButton.filled(key: const Key('unterhaltung-start'), tooltip: 'Unterhaltung', onPressed: server == null ? null : _unterhaltungStart, style: IconButton.styleFrom(backgroundColor: const Color(0xFF1F6FEB), foregroundColor: Colors.white), icon: const Icon(Icons.graphic_eq, size: 20))
+          : IconButton.filled(key: const Key('senden'), tooltip: 'Senden (Enter)', onPressed: () => _senden(), icon: const Icon(Icons.arrow_upward, size: 20)));
+    return Padding(padding: const EdgeInsets.fromLTRB(12, 2, 12, 8), child: Column(mainAxisSize: MainAxisSize.min, children: [
+      if (fluechtig.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(fluechtig, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim))),
+      Glas(radius: auf ? 24 : 28, child: Padding(padding: EdgeInsets.fromLTRB(auf ? 14 : 2, auf ? 10 : 2, 6, auf ? 6 : 2), child: auf
+        ? Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (bezug != null) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [
+              Icon(Icons.reply, size: 16, color: theme.colorScheme.primary), const SizedBox(width: 6),
+              Expanded(child: Text('Antwort auf Alfred: ${bezug!.text.replaceAll('\n', ' ')}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+              IconButton(tooltip: 'Bezug entfernen', onPressed: () => _neu(() => bezug = null), icon: const Icon(Icons.close, size: 16), visualDensity: VisualDensity.compact),
+            ])),
+            if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
+              for (final f in anhaenge) InputChip(label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), onDeleted: () => _neu(() => anhaenge.remove(f))),
+            ])),
+            _eingabeFeld(theme),
+            const SizedBox(height: 4),
+            Row(children: [plus, const Spacer(), _stufenWahl(theme), mikro, const SizedBox(width: 4), rechts]),
+          ])
+        : Row(children: [plus, Expanded(child: _eingabeFeld(theme)), mikro, const SizedBox(width: 4), rechts]),
+      )),
+    ]));
+  }
+
+  /// Eingabekarte wie in der Vorlage: Textfeld oben, darunter Anhang, Stufenwahl, Status, Mikrofon, Zuhören, Senden.
+  /// 1.11.0 — Leiste über der Eingabe: Alfred arbeitet an einer Anfrage aus Telegram oder einem anderen Gerät.
+  Widget _arbeitsLeiste(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    return Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Column(children: [
+      for (final a in fremdeArbeit.values.take(3)) Card(key: Key('arbeit-${a.id}'), color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5), margin: const EdgeInsets.only(bottom: 4), child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), child: Row(children: [
+        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(a.projekt != null ? '🔨 ${a.frage}' : 'Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelMedium), // 1.16.1 G2
+          Text(a.status?.isNotEmpty == true ? a.status! : (a.projekt != null ? a.kanal : a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ])),
+        if (a.projekt != null) TextButton(key: Key('arbeit-projekt-${a.id}'), onPressed: () => _neu(() { projekteAnfang = a.projekt; ansicht = Ansicht.projekte; }), child: const Text('Öffnen')) // 1.16.1 G2
+        else if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),
+        if (a.projekt == null) IconButton(tooltip: 'Anfrage abbrechen', onPressed: () => _fremdeArbeitStoppen(a), icon: const Icon(Icons.stop_circle_outlined)),
+      ]))),
+    ]));
+  }
+
+  Widget _eingabekarte(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
+      decoration: BoxDecoration(
+        color: theme.brightness == Brightness.light ? Colors.white : theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        boxShadow: theme.brightness == Brightness.light ? [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 4))] : null,
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (bezug != null) Padding(padding: const EdgeInsets.only(bottom: 6), child: Container( // 1.2.2 — Zitat der Nachricht, auf die geantwortet wird
+          padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+          decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(10), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))),
+          child: Row(children: [
+            Icon(Icons.reply, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Antwort auf Alfred: ${bezug!.text.replaceAll('\n', ' ')}', maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+            IconButton(tooltip: 'Bezug entfernen', onPressed: () => _neu(() => bezug = null), icon: const Icon(Icons.close, size: 16), visualDensity: VisualDensity.compact),
+          ]),
+        )),
+        if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
+          for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => _neu(() => anhaenge.remove(f))),
+        ])),
+        _eingabeFeld(theme),
+        const SizedBox(height: 6),
+        Row(children: [
+          IconButton(tooltip: 'Datei anhängen', onPressed: antwortet ? null : _anhangWaehlen, icon: const Icon(Icons.add_circle_outline, size: 22), visualDensity: VisualDensity.compact),
+          _stufenWahl(theme),
           const SizedBox(width: 8),
           if (fluechtig.isNotEmpty) Expanded(child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim), overflow: TextOverflow.ellipsis)) else const Spacer(),
           if (istHandy) HalteKnopf( // 1.53.0+91 — Antippen = Diktat, Halten (0,4 s) = sprechen, Loslassen sendet
@@ -788,5 +892,55 @@ extension _Oberflaeche on _SitzungState {
       case Art.fehler:
         return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error));
     }
+  }
+}
+
+/// 1.69.0 — Milchglas (Weg A): weichgezeichneter Hintergrund, halbdurchsichtige Fläche, feiner heller Rand.
+class Glas extends StatelessWidget {
+  const Glas({super.key, required this.child, this.radius = 23, this.rund = false});
+  final Widget child;
+  final double radius;
+  final bool rund;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hell = theme.brightness == Brightness.light;
+    final br = BorderRadius.circular(rund ? 999 : radius);
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: br, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: hell ? 0.08 : 0.35), blurRadius: 18, offset: const Offset(0, 4))]),
+      child: ClipRRect(borderRadius: br, child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: br,
+            color: (hell ? Colors.white : theme.colorScheme.surfaceContainerHigh).withValues(alpha: hell ? 0.62 : 0.55),
+            border: Border.all(color: Colors.white.withValues(alpha: hell ? 0.6 : 0.10), width: 0.8),
+          ),
+          child: child,
+        ),
+      )),
+    );
+  }
+}
+
+/// 1.69.0 — meldet die Größe des Kindes nach jedem Layout (Abstand des Verlaufs zur schwebenden Eingabe).
+class Messen extends SingleChildRenderObjectWidget {
+  const Messen({super.key, required this.aufGroesse, super.child});
+  final ValueChanged<Size> aufGroesse;
+  @override
+  RenderObject createRenderObject(BuildContext context) => _MessenBox(aufGroesse);
+  @override
+  void updateRenderObject(BuildContext context, covariant _MessenBox r) { r.aufGroesse = aufGroesse; }
+}
+
+class _MessenBox extends RenderProxyBox {
+  _MessenBox(this.aufGroesse);
+  ValueChanged<Size> aufGroesse;
+  Size? _alt;
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (size != _alt) { _alt = size; final g = size; WidgetsBinding.instance.addPostFrameCallback((_) => aufGroesse(g)); }
   }
 }

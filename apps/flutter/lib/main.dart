@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert'; // Phase 5 H1 Startdatei
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui; // 1.69.0 Milchglas
 
 import 'package:flutter/foundation.dart' show kDebugMode; // Phase 5 H1
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'; // 1.69.0 Messen
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:local_notifier/local_notifier.dart';
@@ -252,6 +254,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   @override
   void initState() {
     super.initState();
+    fokus.addListener(() { if (istHandy && mounted) setState(() {}); }); // 1.69.0 — Eingabe klappt mit dem Fokus auf/zu
     HardwareKeyboard.instance.addHandler(_schnellTaste); // 1.7.1
     scroll.addListener(_leisteNachScroll); // 1.45.2 — gerade sichtbare Frage in der Verlaufsleiste
     if (istDesktop) { // Phase 5 H1
@@ -607,7 +610,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         _leiste(theme, breit: false),
         Expanded(child: _seitenleiste(theme)),
       ]))),
-      appBar: AppBar(
+      // 1.69.0 — im Chat schwebt der eigene Kopf über dem Verlauf (ein Rahmen statt zwei)
+      appBar: ansicht == Ansicht.chat ? null : AppBar(
         key: const Key('handy-leiste'), toolbarHeight: 44, titleSpacing: 0,
         leading: IconButton(key: const Key('handy-menue'), tooltip: 'Menü', icon: const Icon(Icons.menu), onPressed: () => _schublade.currentState?.openDrawer()),
         title: ansicht == Ansicht.chat ? null : Text(titel, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium), // Chat hat seine eigene Kopfzeile
@@ -617,6 +621,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         ],
       ),
       body: SafeArea(top: false, child: Column(children: [
+        // 1.69.0 — ohne Kopfleiste stehen Hinweise unter der Statusleiste
+        if (ansicht == Ansicht.chat && ((satellit?.verbunden != true && ipcZustand == serverUnerreichbar) || ablageOffen.isNotEmpty)) SizedBox(height: MediaQuery.paddingOf(context).top),
         // 1.54.0 H3 — kein Weg zum Server (außerhalb des Heim-WLANs ohne VPN): klar sagen, Erneut-Knopf
         if (satellit?.verbunden != true && ipcZustand == serverUnerreichbar) Material(key: const Key('netz-hinweis'), color: theme.colorScheme.errorContainer, child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
@@ -692,6 +698,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
   }
   int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden
+  double unterHoehe = 120; // 1.69.0 — Höhe der schwebenden Eingabe (Abstand des Verlaufs)
+  final GlobalKey feldSchluessel = GlobalKey(); // 1.69.0 — Eingabefeld behält Fokus beim Auf-/Zuklappen
 
   /// 1.67.5 (Owner 20.10.) — Eingabe von sich aus aktivieren: am Desktop wie bisher, am Handy NICHT (sonst springt die Tastatur
   /// beim Öffnen, nach jeder Antwort, nach dem Diktat und im Gesprächsmodus hoch). Am Handy nur nach Tippen ins Feld oder nach
