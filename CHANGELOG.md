@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fokusfilter: Diagnose und Ersatzweg (App 1.61.0, iPhone)
+
+Realfall 20.10.: Fokus „Nicht stören“ mit Filter „Alfred“ eingeschaltet, am Server kam keine Meldung an. Der Filter verschluckte Fehler beim Senden still.
+
+- Jeder Aufruf des Fokusfilters hält fest, wann er lief, ob an oder aus, und ob das Senden geklappt hat. Bei Fehlern steht der Grund dabei.
+- Die App meldet das beim nächsten Öffnen in den Server-Log (App-Meldung „fokus“).
+- Konnte der Filter nicht senden, schickt die App den aktuellen Fokus beim Öffnen selbst nach.
+
 ### Changed — Ablegen in einen nicht freigegebenen Ordner: Hinweis statt umsonst fragen (v1530)
 
 Owner 20.10.: „Schreibfreigaben mitmelden umsetzen“. Realfall 12:59: Ein Foto sollte auf den Schreibtisch am PC. Erst kam die Bestätigung, nach dem Ja meldete der PC „nicht freigegeben“.

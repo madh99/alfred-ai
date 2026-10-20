@@ -33,9 +33,14 @@ struct AlfredFokusFilter: SetFocusFilterIntent {
     // für die App (Vorlesen im Fokus) und für eine spätere Anzeige
     if aktiv { UserDefaults.standard.set(["name": name ?? "Fokus", "hinweise": (hinweise ?? .nurDringend).rawValue, "vorlesen": vorlesen ?? false], forKey: "alfred.fokus") }
     else { UserDefaults.standard.removeObject(forKey: "alfred.fokus") }
-    if let k = try? Kopplung.lade() {
-      try? await Netz(k).fokus(aktiv: aktiv, name: name, hinweise: (hinweise ?? .nurDringend).rawValue, vorlesen: vorlesen ?? false)
-    }
+    // 1.61.0 — Realfall 20.10. 13:1x: Fokus an, am Server kam nichts an. Jeder Aufruf wird festgehalten (lief der Filter, ging das
+    // Senden?); die App meldet das beim nächsten Öffnen und sendet den Fokus selbst nach, wenn es hier nicht geklappt hat.
+    var ergebnis = "gesendet"
+    do {
+      let k = try Kopplung.lade() // wirft „nicht gekoppelt“, wenn der Schlüsselbund im Filter-Aufruf nicht lesbar ist
+      try await Netz(k).fokus(aktiv: aktiv, name: name, hinweise: (hinweise ?? .nurDringend).rawValue, vorlesen: vorlesen ?? false)
+    } catch { ergebnis = "Fehler: \(error.localizedDescription)" }
+    UserDefaults.standard.set(["zeit": ISO8601DateFormatter().string(from: Date()), "aktiv": aktiv, "ergebnis": ergebnis], forKey: "alfred.fokus.meldung")
     return .result()
   }
 }

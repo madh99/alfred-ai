@@ -270,7 +270,9 @@ extension AppDelegate {
     z["akkuLaedt"] = geraet.batteryState == .charging || geraet.batteryState == .full
     if let netz = netzZuletzt { z["netz"] = netz }
     if let art = bewegung.aktuell { z["bewegung"] = art } // v1526
-    if let f = UserDefaults.standard.dictionary(forKey: "alfred.fokus") { z["fokus"] = f["name"]; z["fokusVorlesen"] = f["vorlesen"] } // v1528
+    if let f = UserDefaults.standard.dictionary(forKey: "alfred.fokus") { z["fokus"] = f["name"]; z["fokusVorlesen"] = f["vorlesen"]; z["fokusHinweise"] = f["hinweise"] } // v1528
+    z["fokusAktiv"] = UserDefaults.standard.dictionary(forKey: "alfred.fokus") != nil // 1.61.0
+    if let m = UserDefaults.standard.dictionary(forKey: "alfred.fokus.meldung") { z["fokusMeldung"] = m } // 1.61.0 — letzter Aufruf des Fokusfilters
     let ausgang = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
     switch ausgang {
     case .some(.headphones): z["audio"] = "kopfhoerer"

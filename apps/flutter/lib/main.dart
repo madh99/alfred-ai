@@ -273,7 +273,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
-        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); _fokusAbgleich(z); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio; 1.61.0 Fokus
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -676,6 +676,21 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// v1526 — auch im Auto (Bewegung), nicht nur mit Kopfhörern/CarPlay
   bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto' || fokusVorlesen);
   bool fokusVorlesen = false; // v1528 — Fokusfilter „Antworten vorlesen“
+  String _fokusGemeldet = ''; // 1.61.0 — Zeit des zuletzt gemeldeten Fokusfilter-Aufrufs
+
+  /// 1.61.0 — Fokusfilter-Aufruf melden (Server-Log „App-Meldung“ art fokus) und, wenn der Filter nicht senden konnte,
+  /// den aktuellen Fokus selbst an den Server geben. Der Server führt ihn idempotent (gleiche Meldung ändert nichts).
+  Future<void> _fokusAbgleich(Map<String, dynamic> z) async {
+    final s = server; final m = z['fokusMeldung'];
+    if (s == null || m is! Map) return;
+    final zeit = '${m['zeit']}';
+    if (zeit == _fokusGemeldet) return;
+    _fokusGemeldet = zeit;
+    final ok = m['ergebnis'] == 'gesendet';
+    try { await s.melde('Fokusfilter ${m['aktiv'] == true ? 'an' : 'aus'} um $zeit: ${m['ergebnis']}', art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
+    if (ok) return;
+    try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
+  }
   int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden
   UnterhaltungsStand? unterhaltung; // 1.58.0 G1 — Unterhaltungsmodus läuft
   SatzendeErkenner? uErkenner;
