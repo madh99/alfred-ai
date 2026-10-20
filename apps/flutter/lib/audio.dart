@@ -20,10 +20,12 @@ class Audio {
   bool get hoert => _strom != null;
 
   /// Meilenstein 4 — Mikrofonstrom PCM 16 kHz mono 16 Bit (record.startStream), Blöcke an [aufDaten].
-  Future<bool> stromStart(void Function(Uint8List) aufDaten, void Function(String) aufEnde) async {
+  /// 1.60.0 G3 — `echo`: Sprachverarbeitung des Systems (iOS: Voice Processing mit Echounterdrückung, Rauschfilter, Pegelung),
+  /// damit Alfreds eigene Stimme beim Ins-Wort-Fallen nicht als Sprache des Owners zählt. Senkt unter iOS die Wiedergabelautstärke.
+  Future<bool> stromStart(void Function(Uint8List) aufDaten, void Function(String) aufEnde, {bool echo = false}) async {
     if (_strom != null) return true;
     if (!await _rec.hasPermission()) return false;
-    final s = await _rec.startStream(const RecordConfig(encoder: AudioEncoder.pcm16bits, sampleRate: 16000, numChannels: 1));
+    final s = await _rec.startStream(RecordConfig(encoder: AudioEncoder.pcm16bits, sampleRate: 16000, numChannels: 1, echoCancel: echo, noiseSuppress: echo, autoGain: echo));
     _strom = s.listen(aufDaten, onError: (Object e) => aufEnde('$e'), onDone: () { if (_strom != null) { _strom = null; aufEnde('Strom zu Ende'); } });
     return true;
   }

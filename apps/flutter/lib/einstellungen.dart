@@ -60,6 +60,9 @@ void stillUpdateSpeichern(bool an) { final j = _lesen(); j['stillUpdate'] = an; 
 /// 1.54.0 — Handy: Antworten automatisch vorlesen, wenn Kopfhörer, Bluetooth-Audio oder Auto verbunden sind (Standard an).
 bool autoVorlesenGespeichert() => _lesen()['autoVorlesen'] != false;
 void autoVorlesenSpeichern(bool an) { final j = _lesen(); j['autoVorlesen'] = an; _schreiben(j); }
+/// 1.60.0 G3 (Owner 20.10.: „als Schalter, Standard aus“) — in der Unterhaltung Alfred ins Wort fallen (iOS-Echounterdrückung).
+bool insWortFallenGespeichert() => _lesen()['insWortFallen'] == true;
+void insWortFallenSpeichern(bool an) { final j = _lesen(); j['insWortFallen'] = an; _schreiben(j); }
 
 /// 1.54.1 — Handy: freigegebene Ordner für Dateien von Alfred (Name + iOS-Bookmark, Base64). „Alfred“ ist immer da (Standard).
 List<({String name, String bookmark})> ablageOrdnerGespeichert() {

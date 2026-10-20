@@ -5,6 +5,7 @@
 library;
 
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -32,23 +33,53 @@ double pegelAusRms(double rms) {
   return (log(rms / 100) / log(100)).clamp(0.0, 1.0);
 }
 
+/// 1.60.0 G3 — Ins Wort fallen: Während Alfred spricht, zählt nur deutlich laute, anhaltende Sprache als Unterbrechung
+/// (nach der Echounterdrückung bleibt von Alfreds Stimme ein Rest; kurze Geräusche, Husten, ein „mhm“ zählen nicht).
+/// Hält die letzten [vorlaufMs] Ton vor, damit der Anfang des Satzes, der unterbricht, nicht verloren geht.
+class InsWortErkenner {
+  InsWortErkenner({this.mindestSchwelle = 1500, this.haltenMs = 450, this.vorlaufMs = 700});
+  final double mindestSchwelle;
+  final int haltenMs, vorlaufMs;
+  int _lautMs = 0;
+  final List<Uint8List> _vorlauf = [];
+  int _vorlaufBytes = 0;
+
+  /// Block während der Wiedergabe; true = unterbrechen. `schwelle` = Sprechschwelle des Satzende-Erkenners (Grundpegel × Faktor).
+  bool schiebe(Uint8List pcm, double rms, {double schwelle = 0}) {
+    final ms = pcm.length ~/ 32; // 16 kHz, 16 Bit mono = 32 Bytes je ms
+    _vorlauf.add(pcm); _vorlaufBytes += pcm.length;
+    while (_vorlaufBytes > vorlaufMs * 32 && _vorlauf.length > 1) { _vorlaufBytes -= _vorlauf.removeAt(0).length; }
+    final grenze = max(mindestSchwelle, schwelle * 2);
+    _lautMs = rms >= grenze ? _lautMs + ms : max(0, _lautMs - ms * 2); // Pausen zwischen Silben bauen schneller ab als Sprache auf
+    if (_lautMs < haltenMs) return false;
+    _lautMs = 0;
+    return true;
+  }
+
+  /// Ton vor und während der Unterbrechung (geht an den Satzende-Erkenner), danach leer.
+  Uint8List nimmVorlauf() { final b = BytesBuilder(copy: false); for (final x in _vorlauf) { b.add(x); } _vorlauf.clear(); _vorlaufBytes = 0; return b.takeBytes(); }
+  void zuruecksetzen() { _lautMs = 0; _vorlauf.clear(); _vorlaufBytes = 0; }
+}
+
 /// Text unter der Kugel.
-String phasenText(UPhase p, {required bool stumm}) => stumm
+String phasenText(UPhase p, {required bool stumm, bool insWort = false}) => stumm
     ? 'Mikrofon stumm'
     : switch (p) {
         UPhase.hoert => 'Ich höre zu …',
         UPhase.versteht => 'Verstehe …',
         UPhase.denkt => 'Denke nach …',
-        UPhase.spricht => 'Antippen unterbricht',
+        UPhase.spricht => insWort ? 'Sprich einfach dazwischen' : 'Antippen unterbricht',
       };
 
 class UnterhaltungsAnsicht extends StatefulWidget {
-  const UnterhaltungsAnsicht({super.key, required this.stand, required this.spielt, required this.aufKugel, required this.aufStumm, required this.aufBeenden, this.stufe});
+  const UnterhaltungsAnsicht({super.key, required this.stand, required this.spielt, required this.aufKugel, required this.aufStumm, required this.aufBeenden, this.stufe, this.insWort = false});
   final UnterhaltungsStand stand;
   /// Wiedergabe läuft gerade (jedes Bild abgefragt, damit die Kugel im Takt der Ausgabe schwingt)
   final bool Function() spielt;
   final VoidCallback aufKugel, aufStumm, aufBeenden;
   final String? stufe;
+  /// 1.60.0 G3 — Ins-Wort-Fallen ist an
+  final bool insWort;
 
   @override
   State<UnterhaltungsAnsicht> createState() => _UnterhaltungsAnsichtState();
@@ -91,7 +122,7 @@ class _UnterhaltungsAnsichtState extends State<UnterhaltungsAnsicht> with Single
             }),
           ),
           const SizedBox(height: 28),
-          Text(phasenText(phase, stumm: st.stumm), key: const Key('unterhaltung-phase'), style: theme.textTheme.titleMedium?.copyWith(color: weiss)),
+          Text(phasenText(phase, stumm: st.stumm, insWort: widget.insWort), key: const Key('unterhaltung-phase'), style: theme.textTheme.titleMedium?.copyWith(color: weiss)),
           const SizedBox(height: 16),
           Padding(padding: const EdgeInsets.symmetric(horizontal: 28), child: Column(children: [
             if (st.du.isNotEmpty) Text(st.du, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(color: blass)),

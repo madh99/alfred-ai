@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Unterhaltung: Alfred ins Wort fallen (App 1.60.0, iPhone)
+
+Owner 20.10.: „g3 als Schalter, Standard aus“. Einstellungen → Sprache → **„Unterhaltung: ins Wort fallen“**; gilt ab der nächsten Unterhaltung.
+
+- Während Alfred spricht, einfach dazwischenreden: Er hört sofort auf, bricht die laufende Antwort ab und hört zu. Der Anfang des unterbrechenden Satzes geht nicht verloren.
+- Als Unterbrechung zählt nur deutliche, anhaltende Sprache (etwa eine halbe Sekunde). Kurze Geräusche und der Rest von Alfreds eigener Stimme zählen nicht.
+- Nutzt die Echounterdrückung von iOS (Sprachverarbeitung). Dadurch klingt die Wiedergabe etwas leiser, deshalb ist der Schalter standardmäßig aus. Ist er aus, bleibt alles wie in 1.58.0: Kugel antippen unterbricht.
+
 ### Changed — Dateien ablegen: eine Bestätigung für mehrere, eigene Uploads ohne Rückfrage (v1529, App 1.59.0)
 
 Owner 20.10.: „a und b zusammen, Downloads als Standard, aber auch zusätzliche oder andere einstellbar“. Anlass: vier Fotos vom iPhone sollten in die Downloads am PC, jedes kam mit eigener Bestätigung.

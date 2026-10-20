@@ -504,6 +504,10 @@ extension _Oberflaeche on _SitzungState {
       ])),
       karte('Sprache', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Antworten vorlesen'), value: stimme, onChanged: (v) => _neu(() => stimme = v)),
+        // 1.60.0 G3 (Owner 20.10.: „als Schalter, Standard aus“) — gilt ab der nächsten Unterhaltung
+        if (istHandy) SwitchListTile(key: const Key('ins-wort-fallen'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Unterhaltung: ins Wort fallen'),
+          subtitle: Text('Während Alfred spricht, einfach dazwischenreden — er hört auf und hört dir zu. Nutzt die Echounterdrückung von iOS: Alfred klingt dabei etwas leiser. Gilt ab der nächsten Unterhaltung.', style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          value: insWortFallen, onChanged: (v) { _neu(() => insWortFallen = v); insWortFallenSpeichern(v); }),
         // 1.3.0 — lokales Aktivierungswort (Owner-Ok 10.10.): Standard an; gilt ab dem nächsten Start des Zuhörens
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Aktivierungswort in der App erkennen'), subtitle: Text(wortLokal ? 'Nur Äußerungen mit erkanntem Wort gehen an den Server (Modell in der App, 2,8 MB).${wortVerworfen > 0 ? ' Verworfen seit Start: $wortVerworfen.' : ''}' : 'Aus: jede Äußerung geht an den Server, der das Wort im Transkript prüft.', style: theme.textTheme.bodySmall?.copyWith(color: dim)), value: wortLokal, onChanged: (v) { _neu(() => wortLokal = v); wortLokalSpeichern(v); }),
         Text('Sprechen: Strg+Alt+Leertaste (global). Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“ über den Kopfhörer-Knopf in der Eingabekarte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),

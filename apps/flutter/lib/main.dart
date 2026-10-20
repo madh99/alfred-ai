@@ -538,7 +538,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final seite = _seite(context);
     final u = unterhaltung; // 1.58.0 G1 — Unterhaltung liegt über allem; der Chat darunter füllt sich mit
     if (u == null) return seite;
-    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
+    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, insWort: uInsWort != null, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
       aufKugel: _unterhaltungUnterbrechen, aufStumm: _unterhaltungStumm, aufBeenden: _unterhaltungEnde))]);
   }
 
@@ -679,6 +679,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden
   UnterhaltungsStand? unterhaltung; // 1.58.0 G1 — Unterhaltungsmodus läuft
   SatzendeErkenner? uErkenner;
+  bool insWortFallen = insWortFallenGespeichert(); // 1.60.0 G3 — Schalter, Standard aus
+  InsWortErkenner? uInsWort;
+  bool uUnterbrochen = false;
+  Uint8List? uWartend;
   bool uBeschaeftigt = false;
   DateTime uRuheBis = DateTime.fromMillisecondsSinceEpoch(0);
 

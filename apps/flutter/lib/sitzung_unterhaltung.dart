@@ -16,19 +16,33 @@ extension _Unterhaltung on _SitzungState {
     if (aufnahme) { await audio.stop(); _neu(() { aufnahme = false; diktat = false; fluechtig = ''; }); }
     final stand = UnterhaltungsStand();
     final erk = SatzendeErkenner(endeMs: 800); // etwas mehr Pause als beim Zuhören: im freien Gespräch denkt man beim Reden
-    uErkenner = erk; uBeschaeftigt = false;
+    uErkenner = erk; uBeschaeftigt = false; uUnterbrochen = false; uWartend = null;
+    final insWort = istHandy && insWortFallen; // 1.60.0 G3 — nur am iPhone (Echounterdrückung des Systems), Schalter Standard aus
+    uInsWort = insWort ? InsWortErkenner() : null;
     bool ok;
     try {
-      ok = await audio.stromStart((pcm) => _unterhaltungTon(stand, erk, pcm), (grund) { _zeile(Eintrag(Art.fehler, '🗣 Mikrofon: $grund')); _unterhaltungEnde(); });
+      ok = await audio.stromStart((pcm) => _unterhaltungTon(stand, erk, pcm), (grund) { _zeile(Eintrag(Art.fehler, '🗣 Mikrofon: $grund')); _unterhaltungEnde(); }, echo: insWort);
     } catch (e) { _zeile(Eintrag(Art.fehler, '🗣 Mikrofon: $e')); return; }
     if (!ok) { _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
     _neu(() => unterhaltung = stand);
-    _protokolliere(Eintrag(Art.hinweis, '🗣 Unterhaltung gestartet (Stufe $_uStufe)'));
+    _protokolliere(Eintrag(Art.hinweis, '🗣 Unterhaltung gestartet (Stufe $_uStufe${insWort ? ', ins Wort fallen an' : ''})'));
   }
 
   void _unterhaltungTon(UnterhaltungsStand stand, SatzendeErkenner erk, Uint8List pcm) {
     if (!identical(unterhaltung, stand)) return;
-    final still = stand.stumm || uBeschaeftigt || antwortet || audio.spielt || DateTime.now().isBefore(uRuheBis);
+    // 1.60.0 G3 — Alfred spricht: laute, anhaltende Sprache unterbricht ihn; der Ton davor geht an den Satzende-Erkenner
+    final iw = uInsWort;
+    if (iw != null && audio.spielt && !uUnterbrochen && !stand.stumm) {
+      if (!iw.schiebe(pcm, rms16(pcm), schwelle: erk.schwelle)) return;
+      uUnterbrochen = true;
+      _protokolliere(Eintrag(Art.hinweis, '🗣 ins Wort gefallen'));
+      vorleserLaufend?.stopp(); audio.abbrechen();
+      if (antwortet) _abbrechen();
+      erk.zuruecksetzen();
+      pcm = iw.nimmVorlauf();
+    }
+    // unterbrochen: zuhören, auch solange die abgebrochene Antwort noch ausläuft
+    final still = stand.stumm || DateTime.now().isBefore(uRuheBis) || (!uUnterbrochen && (uBeschaeftigt || antwortet || audio.spielt));
     if (still) { // Halbduplex — angefangene Äußerung verwerfen, sonst hängt der Nachhall der Ausgabe daran
       if (erk.spricht) erk.zuruecksetzen();
       if (stand.phase == UPhase.versteht) stand.phase = UPhase.hoert;
@@ -38,14 +52,15 @@ extension _Unterhaltung on _SitzungState {
     for (final ev in erk.schiebe(pcm)) {
       if (ev is SatzStart) { stand.phase = UPhase.versteht; }
       else if (ev is SatzEnde) { _unterhaltungAeusserung(stand, ev.audio); }
-      else if (ev is SatzVerworfen) { stand.phase = UPhase.hoert; }
+      else if (ev is SatzVerworfen) { stand.phase = UPhase.hoert; uUnterbrochen = false; }
     }
   }
 
   Future<void> _unterhaltungAeusserung(UnterhaltungsStand stand, Uint8List pcm) async {
     final s = server;
-    if (s == null || uBeschaeftigt) return;
-    uBeschaeftigt = true;
+    if (s == null) return;
+    if (uBeschaeftigt) { if (uUnterbrochen) uWartend = pcm; return; } // G3 — kommt dran, sobald die abgebrochene Antwort beendet ist
+    uBeschaeftigt = true; uUnterbrochen = false; uInsWort?.zuruecksetzen();
     stand.phase = UPhase.denkt;
     try {
       final text = (await s.transkribiere(pcmZuWav(pcm), 'audio/wav')).trim();
@@ -59,9 +74,16 @@ extension _Unterhaltung on _SitzungState {
       _zeile(Eintrag(Art.fehler, '🗣 $e'));
     } finally {
       uBeschaeftigt = false;
-      uRuheBis = DateTime.now().add(const Duration(milliseconds: 350)); // Nachhall der letzten Silbe nicht als neuen Satz nehmen
-      uErkenner?.zuruecksetzen();
-      if (identical(unterhaltung, stand)) stand.phase = UPhase.hoert;
+      final w = uWartend; uWartend = null;
+      if (w != null && identical(unterhaltung, stand)) {
+        Future.microtask(() => _unterhaltungAeusserung(stand, w)); // G3 — der Satz, mit dem der Owner unterbrochen hat
+      } else if (uUnterbrochen) {
+        if (identical(unterhaltung, stand)) stand.phase = UPhase.versteht; // G3 — Owner spricht noch: Erkenner nicht zurücksetzen
+      } else {
+        uRuheBis = DateTime.now().add(const Duration(milliseconds: 350)); // Nachhall der letzten Silbe nicht als neuen Satz nehmen
+        uErkenner?.zuruecksetzen();
+        if (identical(unterhaltung, stand)) stand.phase = UPhase.hoert;
+      }
     }
   }
 
@@ -78,7 +100,7 @@ extension _Unterhaltung on _SitzungState {
   Future<void> _unterhaltungEnde() async {
     final stand = unterhaltung; if (stand == null) return;
     _neu(() => unterhaltung = null);
-    uErkenner = null;
+    uErkenner = null; uInsWort = null; uUnterbrochen = false; uWartend = null;
     if (antwortet) { await _abbrechen(); } else { vorleserLaufend?.stopp(); await audio.abbrechen(); }
     await audio.stromStop();
     _protokolliere(Eintrag(Art.hinweis, '🗣 Unterhaltung beendet (${stand.wechsel} Wortwechsel)'));
