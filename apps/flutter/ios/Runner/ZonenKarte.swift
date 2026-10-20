@@ -41,7 +41,7 @@ final class ZonenKarte: UIViewController, MKMapViewDelegate, UISearchBarDelegate
     titel.font = .preferredFont(forTextStyle: .headline)
     umkreis.font = .preferredFont(forTextStyle: .footnote)
     umkreis.textColor = .secondaryLabel
-    regler.minimumValue = 100; regler.maximumValue = 500
+    regler.minimumValue = 0; regler.maximumValue = 1 // v1527 — logarithmisch 100 m … 3 km (Owner 20.10.)
     regler.addTarget(self, action: #selector(radiusGeaendert), for: .valueChanged)
     let umbenennen = UIButton(type: .system); umbenennen.setTitle("Umbenennen", for: .normal); umbenennen.addTarget(self, action: #selector(umbenennenTippen), for: .touchUpInside)
     let loeschen = UIButton(type: .system); loeschen.setTitle("Löschen", for: .normal); loeschen.setTitleColor(.systemRed, for: .normal); loeschen.addTarget(self, action: #selector(loeschenTippen), for: .touchUpInside)
@@ -104,8 +104,8 @@ final class ZonenKarte: UIViewController, MKMapViewDelegate, UISearchBarDelegate
     guard let i = gewaehlt, i < zonen.count else { leiste.isHidden = true; return }
     leiste.isHidden = false
     titel.text = zonen[i].name
-    regler.value = Float(zonen[i].radius)
-    umkreis.text = "Umkreis \(Int(zonen[i].radius)) m"
+    regler.value = ZonenKarte.reglerWert(zonen[i].radius)
+    umkreis.text = umkreisText(zonen[i].radius)
   }
 
   func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -140,10 +140,23 @@ final class ZonenKarte: UIViewController, MKMapViewDelegate, UISearchBarDelegate
 
   // ── Bearbeiten ──
 
+  /// v1527 — Umkreis logarithmisch: 100 m … 3 km; unter 500 m in 10-m-, bis 1 km in 50-m-, darüber in 100-m-Schritten.
+  /// Untergrenze 100 m: iOS bestimmt den Ort für Zonen auf etwa 50–200 m genau, kleinere Kreise wirken nicht genauer.
+  static let minRadius = 100.0, maxRadius = 3000.0
+  static func radius(_ wert: Float) -> Double {
+    let r = minRadius * pow(maxRadius / minRadius, Double(min(max(wert, 0), 1)))
+    let schritt = r < 500 ? 10.0 : r < 1000 ? 50.0 : 100.0
+    return min(max((r / schritt).rounded() * schritt, minRadius), maxRadius)
+  }
+  static func reglerWert(_ radius: Double) -> Float {
+    Float(log(min(max(radius, minRadius), maxRadius) / minRadius) / log(maxRadius / minRadius))
+  }
+  private func umkreisText(_ r: Double) -> String { r >= 1000 ? String(format: "Umkreis %.1f km", r / 1000).replacingOccurrences(of: ".", with: ",") : "Umkreis \(Int(r)) m" }
+
   @objc private func radiusGeaendert() {
     guard let i = gewaehlt else { return }
-    zonen[i].radius = Double((regler.value / 10).rounded() * 10)
-    umkreis.text = "Umkreis \(Int(zonen[i].radius)) m"
+    zonen[i].radius = ZonenKarte.radius(regler.value)
+    umkreis.text = umkreisText(zonen[i].radius)
     karte.removeOverlays(karte.overlays)
     for z in zonen { karte.addOverlay(MKCircle(center: z.mitte, radius: z.radius)) }
   }

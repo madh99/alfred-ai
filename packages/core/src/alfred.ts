@@ -14230,7 +14230,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               const j = await res.json() as { attributes?: { latitude?: number; longitude?: number; radius?: number } };
               const a = j.attributes;
               if (!res.ok || typeof a?.latitude !== 'number' || typeof a.longitude !== 'number') return { status: 200, antwort: { vorschlaege: [] } };
-              return { status: 200, antwort: { vorschlaege: [{ name: 'Zuhause', breite: a.latitude, laenge: a.longitude, radius: Math.max(100, Math.min(Number(a.radius) || 150, 500)), quelle: 'Home Assistant' }] } };
+              return { status: 200, antwort: { vorschlaege: [{ name: 'Zuhause', breite: a.latitude, laenge: a.longitude, radius: Math.max(100, Math.min(Number(a.radius) || 150, 3000)), quelle: 'Home Assistant' }] } };
             } catch { return { status: 200, antwort: { vorschlaege: [] } }; }
           },
           // v1520 — Zwischenablage abholen (Handy nach Push oder beim Öffnen): GET = offene Einträge, DELETE <id> = abgeholt

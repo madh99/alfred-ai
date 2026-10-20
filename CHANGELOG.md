@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Zonen bis 3 km Umkreis (v1527, App 1.56.1)
+
+Owner 20.10.: Obergrenze anheben. Der Umkreis-Regler der Zonenkarte läuft jetzt logarithmisch von 100 m bis 3 km (unten in 10-m-, oben in 100-m-Schritten), „Zuhause“ aus Home Assistant darf ebenfalls bis 3 km. Die Untergrenze bleibt 100 m: iOS bestimmt den Ort für Zonen auf etwa 50–200 m genau, kleinere Kreise würden nur am Rand flackern.
+
 ### Added — Zonen auf der Karte und Bewegung (v1526, App 1.56.0)
 
 Owner 20.10.: „Kartenansicht mit Adresseingabe und Bewegung umsetzen“.
