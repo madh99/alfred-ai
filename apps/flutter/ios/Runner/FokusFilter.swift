@@ -64,6 +64,16 @@ enum FokusAbgleich {
     protokolliere(["zeit": zeit, "aktiv": aktiv, "ergebnis": ergebnis, "quelle": quelle])
   }
 
+  /// 1.64.0 — noch nicht gemeldete Einträge nativ ans Server-Log (die Dart-Meldung kam nicht an, wenn die App nach 3–5 s wieder zu war).
+  static func berichte() async {
+    let l = (UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") as? [[String: Any]]) ?? []
+    let schon = UserDefaults.standard.string(forKey: "alfred.fokus.berichtet") ?? ""
+    let neu = l.filter { ($0["zeit"] as? String ?? "") > schon && ($0["ergebnis"] as? String) != nil }
+    guard !neu.isEmpty, let k = try? Kopplung.lade() else { return }
+    let text = neu.map { "Fokus\(($0["quelle"] as? String) == "abgleich" ? " (Abgleich)" : "filter") \(($0["aktiv"] as? Bool) == true ? "an" : "aus") um \($0["zeit"] as? String ?? "?"): \($0["ergebnis"] as? String ?? "?")" }.joined(separator: " | ")
+    if (try? await Netz(k).meldung(art: "fokus", text: text)) != nil, let z = neu.last?["zeit"] as? String { UserDefaults.standard.set(z, forKey: "alfred.fokus.berichtet") }
+  }
+
   /// Eintrag mit gleicher Zeit ersetzen, sonst anhängen; höchstens 10.
   private static func protokolliere(_ e: [String: Any]) {
     var l = (UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") as? [[String: Any]]) ?? []

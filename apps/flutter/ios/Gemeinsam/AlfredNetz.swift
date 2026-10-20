@@ -82,6 +82,12 @@ final class Netz: NSObject, URLSessionDelegate {
   }
 
   /// v1528 — iOS-Fokus melden (Fokusfilter)
+  /// 1.64.0 — Meldung ins Server-Log (wie die App: /api/geraete/meldung, art z. B. „fokus“)
+  func meldung(art: String, text: String) async throws {
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    _ = try await json("POST", "/api/geraete/meldung", ["art": art, "text": String(text.prefix(1000)), "version": version, "plattform": "ios"])
+  }
+
   func fokus(aktiv: Bool, name: String?, hinweise: String, vorlesen: Bool) async throws {
     _ = try await json("POST", "/api/geraete/fokus", ["aktiv": aktiv, "name": name.map { $0 as Any } ?? NSNull(), "hinweise": hinweise, "vorlesen": vorlesen])
   }

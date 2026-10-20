@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fokus: Melden direkt aus iOS (App 1.64.0, iPhone)
+
+Realfall 20.10. 16:58/16:59: Nach dem Test war die App nur 3–5 Sekunden offen, die Meldung der App ging nicht mehr raus.
+
+- Das Melden des Filter-Verlaufs und der Fokus-Abgleich laufen jetzt in iOS selbst. Beides startet, sobald die App aktiv wird, und hat eigene Hintergrundzeit, auch wenn die App gleich wieder geschlossen wird. Dasselbe geschieht bei jedem Zonenwechsel.
+
 ### Fixed — Fokus: Verlauf aller Filter-Aufrufe (App 1.63.0, iPhone)
 
 Realfall 20.10. 16:42: Das „aus“ kam über den Abgleich an, das „an“ beim Ein- und Ausschalten davor fehlte. Die App bewahrte nur den letzten Aufruf auf, der Abgleich hatte den Eintrag des Filters überschrieben.

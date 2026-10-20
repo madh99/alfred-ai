@@ -40,7 +40,22 @@ import UserNotifications
     zonen.bewegung = bewegung
     zonen.starte()
     bewegung.starte()
+    NotificationCenter.default.addObserver(self, selector: #selector(wirdAktiv), name: UIApplication.didBecomeActiveNotification, object: nil) // 1.64.0
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // 1.64.0 — App wird aktiv (Systemnachricht, gilt auch mit Scenes): Fokus mit iOS abgleichen und den Verlauf der Filter-Aufrufe nativ melden (mit Hintergrundzeit,
+  // damit es auch klappt, wenn die App nach wenigen Sekunden wieder geschlossen wird)
+  @objc private func wirdAktiv() {
+    guard #available(iOS 16.0, *) else { return }
+    let application = UIApplication.shared
+    var aufgabe: UIBackgroundTaskIdentifier = .invalid
+    aufgabe = application.beginBackgroundTask(withName: "alfred.fokus") { application.endBackgroundTask(aufgabe); aufgabe = .invalid }
+    Task {
+      defer { if aufgabe != .invalid { application.endBackgroundTask(aufgabe) } }
+      await FokusAbgleich.jetzt()
+      await FokusAbgleich.berichte()
+    }
   }
 
   // Phase 5 H2 — APNs-Token an Dart (Server: /api/geraete/push); Debug-Builds laufen gegen die Sandbox, TestFlight gegen production
@@ -408,7 +423,7 @@ final class ZonenWaechter: NSObject, CLLocationManagerDelegate {
       guard let k = try? Kopplung.lade() else { return }
       let b = await bewegung?.letzte()
       try? await Netz(k).zone(art: art, zone: zone, bewegung: b)
-      if #available(iOS 16.0, *) { await FokusAbgleich.jetzt() } // 1.62.0 — Ausschalten des Fokus ruft den Filter nicht auf
+      if #available(iOS 16.0, *) { await FokusAbgleich.jetzt(); await FokusAbgleich.berichte() } // 1.62.0 — Ausschalten des Fokus ruft den Filter nicht auf
     }
   }
 }

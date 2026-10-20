@@ -687,8 +687,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final neu = [for (final m in l) if (m is Map && '${m['zeit']}'.compareTo(_fokusGemeldet) > 0) m];
     if (neu.isEmpty) return;
     _fokusGemeldet = '${neu.last['zeit']}';
-    final text = neu.map((m) => 'Fokus${m['quelle'] == 'abgleich' ? ' (Abgleich)' : 'filter'} ${m['aktiv'] == true ? 'an' : 'aus'} um ${m['zeit']}: ${m['ergebnis']}').join(' | ');
-    try { await s.melde(text, art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
+    // 1.64.0 — das Melden ins Server-Log macht iOS selbst (FokusAbgleich.berichte); hier nur der Ersatzweg
     if (neu.last['ergebnis'] == 'gesendet') return;
     try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
   }
