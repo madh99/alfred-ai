@@ -1096,6 +1096,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1522 — Standortzone des Handys melden; Vorschlag „Zuhause“ aus Home Assistant */
     zone?(geraetId: string, body: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
     zonenVorschlag?(geraetId: string): Promise<{ status: number; antwort: unknown }>;
+    /** v1528 — iOS-Fokus des Handys (Fokusfilter) */
+    fokus?(geraetId: string, body: Record<string, unknown>): Promise<{ status: number; antwort: unknown }>;
     /** v1521 — Inhalt einer abgelegten Datei (nur das eigene Gerät) */
     ablageDatei?(geraetId: string, id: string): Promise<{ name: string; data: Buffer } | undefined>;
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
@@ -2100,6 +2102,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/ablage' && req.method === 'GET' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}$/.test(url.pathname) && req.method === 'DELETE' || /^\/api\/geraete\/ablage\/[0-9a-f-]{36}\/datei$/.test(url.pathname) && req.method === 'GET') {
       this.handleGeraetAblage(req, res, url).catch(err => this.safeError(res, err)); // v1520
+    } else if (url.pathname === '/api/geraete/fokus' && req.method === 'POST') {
+      this.handleGeraetFokus(req, res).catch(err => this.safeError(res, err)); // v1528
     } else if ((url.pathname === '/api/geraete/zone' && req.method === 'POST') || (url.pathname === '/api/geraete/zonen/vorschlag' && req.method === 'GET')) {
       this.handleGeraetZone(req, res, url).catch(err => this.safeError(res, err)); // v1522
     } else if (url.pathname === '/api/geraete/push' && (req.method === 'GET' || req.method === 'POST')) {
@@ -6967,6 +6971,18 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1506 D5 — Kontomenü der App: Kosten mit Herkunft, Tagesbudget (nur Anzeige), verbundene Geräte. */
+  /** v1528 — iOS-Fokus des Handys (nur Gerätetoken). */
+  private async handleGeraetFokus(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.fokus) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(await this.readBody(req)) as Record<string, unknown>; } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kein JSON' })); return; }
+    const r = await this.geraeteCallbacks.fokus(geraet.geraetId, body);
+    res.writeHead(r.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(r.antwort));
+  }
+
   /** v1522 — Standortzone des Handys (nur Gerätetoken). */
   private async handleGeraetZone(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;

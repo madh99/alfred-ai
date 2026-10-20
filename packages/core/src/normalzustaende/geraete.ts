@@ -34,6 +34,8 @@ export interface GeraetZustand {
   sinneZeit?: string;
   /** v1522 — Standortzone des Handys (null = unterwegs), auch bei geschlossener App */
   zone?: { name: string | null; seit: string; bewegung?: string; gemeldet?: string };
+  /** v1528 — aktiver iOS-Fokus (Fokusfilter) */
+  fokus?: { name: string; hinweise: string; seit: string };
 }
 export interface GeraeteDeutung { zeilen: string[]; auffaellig: string[]; aktiv?: { name: string; leerlaufSek: number } }
 
@@ -52,6 +54,13 @@ export function zonenText(z: { name: string | null; seit: string; bewegung?: str
   const frisch = z.gemeldet ? jetzt - Date.parse(z.gemeldet) <= 60 * 60_000 : false;
   const bew = frisch && z.bewegung ? BEWEGUNG_TEXT[z.bewegung] : undefined;
   return `${z.name ? `Zone „${z.name}“` : 'unterwegs'} seit ${uhr}${bew ? `, zuletzt ${bew}` : ''}`;
+}
+
+/** v1528 — „Fokus „Arbeit“ (nur Dringendes) seit 08:30“ */
+export function fokusText(f: { name: string; hinweise: string; seit: string }): string {
+  const uhr = new Date(f.seit).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+  const art = f.hinweise === 'keine' ? 'nur Notfälle' : f.hinweise === 'nurDringend' ? 'nur Dringendes' : 'alle Hinweise';
+  return `Fokus „${f.name}“ (${art}) seit ${uhr}`;
 }
 
 export function formatiereDauerKurz(ms: number): string {
@@ -78,6 +87,7 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       if (minuten !== undefined && minuten >= GETRENNT_AUFFAELLIG_MIN && !HANDY_PLATTFORMEN.has(g.plattform)) { warn = true; auffaellig.push(`geraet:${g.name}:getrennt`); }
       const handy = HANDY_PLATTFORMEN.has(g.plattform);
       if (handy && g.zone) teile.push(zonenText(g.zone, jetzt)); // v1522
+      if (handy && g.fokus) teile.push(fokusText(g.fokus)); // v1528
       teile.push(seit !== undefined ? (handy ? `zuletzt verbunden vor ${formatiereDauerKurz(seit)}` : `getrennt seit ${formatiereDauerKurz(seit)}`) : (handy ? 'nicht verbunden' : 'getrennt'));
     } else {
       const frisch = g.sinneZeit ? jetzt - Date.parse(g.sinneZeit) <= SINNE_FRISCH_MS : false;
@@ -95,6 +105,7 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       }
       // v1520 — Handy: in der App (Owner schaut aufs Handy), Netzweg, Audio, Fokus; v1522 Zone
       if (HANDY_PLATTFORMEN.has(g.plattform) && g.zone) teile.push(zonenText({ ...g.zone, bewegung: undefined }, jetzt));
+      if (HANDY_PLATTFORMEN.has(g.plattform) && g.fokus) teile.push(fokusText(g.fokus)); // v1528
       if (HANDY_PLATTFORMEN.has(g.plattform) && s) {
         if (s.netz) teile.push(s.netz.split('+').map(t => NETZ_TEXT[t] ?? t).join(' + '));
         if (s.bewegung && BEWEGUNG_TEXT[s.bewegung]) teile.push(BEWEGUNG_TEXT[s.bewegung]); // v1526 — live bei offener App

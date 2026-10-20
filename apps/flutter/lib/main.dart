@@ -271,7 +271,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
-        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; }); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -664,7 +664,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// 1.54.3 — automatisches Vorlesen greift gerade (Handy, Schalter an, Kopfhörer/Bluetooth/Auto)
   String bewegungJetzt = ''; // v1526 — auto, rad, laeuft, geht, still
   /// v1526 — auch im Auto (Bewegung), nicht nur mit Kopfhörern/CarPlay
-  bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto');
+  bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto' || fokusVorlesen);
+  bool fokusVorlesen = false; // v1528 — Fokusfilter „Antworten vorlesen“
 
 }
 

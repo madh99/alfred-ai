@@ -11,6 +11,7 @@
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		2B494A3E33953413BA521622 /* AlfredNetz.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A35BD3C2369A14546566EA /* AlfredNetz.swift */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
+		3481407BE5CE99332B7D52A1 /* FokusFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		7230B0676E2DDD689A3E8F36 /* ZonenKarte.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7D90C994CA51AD3C496AF2 /* ZonenKarte.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
@@ -86,6 +87,7 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FokusFilter.swift; sourceTree = "<group>"; };
 		DBB77F1AA0BB149319682769 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E528AE7A5838DDCD418D4C51 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		E8EDA9B73C3483F41687E1F3 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -206,6 +208,7 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				8C7D90C994CA51AD3C496AF2 /* ZonenKarte.swift */,
+				C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -404,6 +407,7 @@
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				02CAD672AD756B1DED09CF6E /* AlfredNetz.swift in Sources */,
 				7230B0676E2DDD689A3E8F36 /* ZonenKarte.swift in Sources */,
+				3481407BE5CE99332B7D52A1 /* FokusFilter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

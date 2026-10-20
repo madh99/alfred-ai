@@ -280,7 +280,7 @@ extension _Senden on _SitzungState {
   Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit, Wartend? nachsenden}) async {
     letzteAktivitaet = DateTime.now(); // 1.8.0
     // 1.54.0 — Handy mit Kopfhörer, Bluetooth-Audio oder im Auto: auch getippte Fragen werden vorgelesen (Schalter, Standard an)
-    if (!sprechen && istHandy && autoVorlesen) { final z = await handyZustand(); if (vorleseAusgaenge.contains(z['audio']) || z['bewegung'] == 'auto') sprechen = true; } // v1526 auch im Auto
+    if (!sprechen && istHandy && autoVorlesen) { final z = await handyZustand(); if (vorleseAusgaenge.contains(z['audio']) || z['bewegung'] == 'auto' || z['fokusVorlesen'] == true) sprechen = true; } // v1526 auch im Auto, v1528 Fokus
     var t = (text ?? eingabe.text).trim();
     final s = server;
     final mitAnhang = text == null && anhaenge.isNotEmpty;

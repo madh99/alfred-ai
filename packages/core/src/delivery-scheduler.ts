@@ -24,7 +24,9 @@ const MIN_HOUR_CLASS: Record<Urgency, HourClass> = {
 const CLASS_ORDER: Record<HourClass, number> = { QUIET: 0, WAKING: 1, WINDING_DOWN: 2, ACTIVE: 3 };
 
 /** v1198 — Anwesenheit aus Home Assistant (Personen-Entitäten, Innenraum-Bewegung). */
-export interface Anwesenheit { jemandZuhause?: boolean; letzteBewegungAt?: number; /** v1237 — Gerät mit frischen Sinnen und kurzem Leerlauf. */ amGeraet?: { name: string; leerlaufSek: number } }
+export interface Anwesenheit { jemandZuhause?: boolean; letzteBewegungAt?: number; /** v1237 — Gerät mit frischen Sinnen und kurzem Leerlauf. */ amGeraet?: { name: string; leerlaufSek: number };
+  /** v1528 — aktiver iOS-Fokus des Owners (Fokusfilter): Hinweise alle | nurDringend | keine */
+  fokus?: { name: string; hinweise: 'alle' | 'nurDringend' | 'keine' } }
 /** v1237 — Leerlauf bis hierher heißt „sitzt gerade davor". */
 export const GERAET_AKTIV_SEK = 120;
 /** Bewegung im Haus innerhalb dieser Spanne gilt als „jemand ist wach und da". */
@@ -41,6 +43,11 @@ export function entscheideZustellung(e: {
   anwesenheit?: Anwesenheit; now?: number;
 }): { liefern: boolean; grund: string } {
   if (e.urgency === 'urgent') return { liefern: true, grund: 'dringend' };
+  // v1528 — Fokus des Owners geht vor (ausdrückliche Einstellung im iOS-Fokusfilter): „keine“ = nur Notfälle (dringend, oben),
+  // „nur Dringendes“ = auch hohe Dringlichkeit; alles andere wird aufgeschoben
+  const f = e.anwesenheit?.fokus;
+  if (f?.hinweise === 'keine') return { liefern: false, grund: `Fokus „${f.name}“: nur Notfälle` };
+  if (f?.hinweise === 'nurDringend' && e.urgency !== 'high') return { liefern: false, grund: `Fokus „${f.name}“: nur Dringendes` };
   if (e.chatAktiv) return { liefern: true, grund: 'Chat aktiv (letzte 30 min)' };
   if (e.imRuhefenster) return { liefern: false, grund: 'Ruhefenster' };
   const now = e.now ?? Date.now();

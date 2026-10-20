@@ -31,6 +31,7 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/push$/, // v1518 H2 — Push-Token des Handys, Schalter „Telegram stumm“
   /^\/api\/geraete\/ablage(\/[0-9a-f-]{36}(\/datei)?)?$/, // v1520 Zwischenablage, v1521 Datei des Handys
   /^\/api\/geraete\/zone$/, // v1522 — Standortzone des Handys
+  /^\/api\/geraete\/fokus$/, // v1528 — iOS-Fokus des Handys
   /^\/api\/geraete\/zonen\/vorschlag$/, // v1522 — Vorschlag „Zuhause“ aus Home Assistant
   /^\/api\/geraete\/datei$/, // v1505 — eigene hochgeladene Datei (Vorschau im Verlauf), Schlüssel als ?key=
   /^\/api\/geraete\/meldung$/, // v1351 — Fehlermeldungen der Desktop-App ins Server-Log

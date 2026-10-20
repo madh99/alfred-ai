@@ -81,6 +81,11 @@ final class Netz: NSObject, URLSessionDelegate {
     _ = try await json("POST", "/api/geraete/zone", ["art": art, "zone": zone.map { $0 as Any } ?? NSNull(), "bewegung": bewegung.map { $0 as Any } ?? NSNull()])
   }
 
+  /// v1528 — iOS-Fokus melden (Fokusfilter)
+  func fokus(aktiv: Bool, name: String?, hinweise: String, vorlesen: Bool) async throws {
+    _ = try await json("POST", "/api/geraete/fokus", ["aktiv": aktiv, "name": name.map { $0 as Any } ?? NSNull(), "hinweise": hinweise, "vorlesen": vorlesen])
+  }
+
   /// Nachricht ins Gespräch; es wird nur auf die Annahme gewartet (die Antwort kommt als Mitteilung).
   func nachricht(_ text: String, chatId: String) async throws {
     let body = try JSONSerialization.data(withJSONObject: ["text": text, "chatId": chatId, "stream": true])

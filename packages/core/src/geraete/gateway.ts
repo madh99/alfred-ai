@@ -57,6 +57,8 @@ export interface GeraeteGatewayDeps {
    */
   /** v1522 — Standortzone eines Handys (für die Weltmodell-Deutung) */
   zoneVon?: (geraetId: string) => { name: string | null; seit: string; bewegung?: string; gemeldet?: string } | undefined;
+  /** v1528 — aktiver iOS-Fokus eines Handys */
+  fokusVon?: (geraetId: string) => { name: string; hinweise: string; seit: string } | undefined;
   offlineAktion?: (g: GeraetEintrag, aktion: string, params: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }> | undefined;
 }
 
@@ -189,12 +191,12 @@ export class GeraeteGateway {
   /** v1237 — Zustände für die Weltmodell-Deutung (normalzustaende/geraete.ts). */
   async zustaende(): Promise<import('../normalzustaende/geraete.js').GeraetZustand[]> {
     const l = await this.liste();
-    return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit, zone: this.deps.zoneVon?.(g.id) }));
+    return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit, zone: this.deps.zoneVon?.(g.id), fokus: this.deps.fokusVon?.(g.id) }));
   }
 
   /** v1238 — Zustände der gerade verbundenen Geräte, synchron aus dem Speicher (Prompt-Block, Skill-Aktion zustand). */
   zustaendeVerbunden(): import('../normalzustaende/geraete.js').GeraetZustand[] {
-    return [...this.verbindungen.values()].map(v => ({ name: v.eintrag.name, plattform: v.eintrag.manifest.plattform, online: true, verbundenSeit: v.verbundenSeit, sinne: v.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: v.sinneZeit ? new Date(v.sinneZeit).toISOString() : undefined, zone: this.deps.zoneVon?.(v.eintrag.id) }));
+    return [...this.verbindungen.values()].map(v => ({ name: v.eintrag.name, plattform: v.eintrag.manifest.plattform, online: true, verbundenSeit: v.verbundenSeit, sinne: v.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: v.sinneZeit ? new Date(v.sinneZeit).toISOString() : undefined, zone: this.deps.zoneVon?.(v.eintrag.id), fokus: this.deps.fokusVon?.(v.eintrag.id) }));
   }
 
   /** v1237 — Gerät, an dem der Owner gerade sitzt (frische Sinne, kurzer Leerlauf) — Zustellsignal. */

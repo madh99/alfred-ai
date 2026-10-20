@@ -15,6 +15,9 @@ def gemeinsam_aufnehmen(projekt, runner)
   rgruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Runner' } or abort 'Gruppe Runner fehlt'
   karte = rgruppe.files.find { |f| f.path == 'ZonenKarte.swift' } || rgruppe.new_reference('ZonenKarte.swift')
   runner.add_file_references([karte]) unless runner.source_build_phase.files_references.include?(karte)
+  # v1528 — Fokusfilter (App Intents)
+  fokus = rgruppe.files.find { |f| f.path == 'FokusFilter.swift' } || rgruppe.new_reference('FokusFilter.swift')
+  runner.add_file_references([fokus]) unless runner.source_build_phase.files_references.include?(fokus)
 end
 
 if projekt.targets.any? { |t| t.name == 'Teilen' }

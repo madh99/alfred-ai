@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Fokus des iPhones über Fokusfilter (v1528, App 1.57.0)
+
+Owner 20.10.: „Weg B wie vorgeschlagen“. Apple gibt Apps den Fokus-Status nur über die Kommunikations-Berechtigung; der offizielle Weg für alle Apps sind Fokusfilter (iOS 16).
+
+- **Einrichten:** iOS-Einstellungen → Fokus → z. B. „Arbeit“ → Fokusfilter → **Alfred**: Name (z. B. „Arbeit“), Hinweise (**Alle**, **Nur Dringendes**, **Nur Notfälle**), Antworten vorlesen. iOS ruft Alfred beim Ein- und Ausschalten des Fokus auf — auch automatisch nach Zeitplan oder Ort, bei geschlossener App —, die App meldet nativ an den Server.
+- **Zustellung:** Im Fokus gilt die Einstellung vor allen anderen Regeln, auch vor „Owner chattet gerade“: „Nur Dringendes“ lässt dringende und wichtige Hinweise sofort durch, der Rest wird aufgeschoben; „Nur Notfälle“ nur dringende. Gilt für alle Kanäle, auch Telegram.
+- **Weltmodell:** „iPhone: Fokus „Arbeit“ (nur Dringendes) seit 08:30“. **Vorlesen** im Fokus, wenn eingestellt.
+- iOS meldet nicht, welcher Fokus läuft — darum das Feld „Name“.
+
 ### Changed — Zonen bis 3 km Umkreis (v1527, App 1.56.1)
 
 Owner 20.10.: Obergrenze anheben. Der Umkreis-Regler der Zonenkarte läuft jetzt logarithmisch von 100 m bis 3 km (unten in 10-m-, oben in 100-m-Schritten), „Zuhause“ aus Home Assistant darf ebenfalls bis 3 km. Die Untergrenze bleibt 100 m: iOS bestimmt den Ort für Zonen auf etwa 50–200 m genau, kleinere Kreise würden nur am Rand flackern.

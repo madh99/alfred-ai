@@ -259,6 +259,7 @@ extension AppDelegate {
     z["akkuLaedt"] = geraet.batteryState == .charging || geraet.batteryState == .full
     if let netz = netzZuletzt { z["netz"] = netz }
     if let art = bewegung.aktuell { z["bewegung"] = art } // v1526
+    if let f = UserDefaults.standard.dictionary(forKey: "alfred.fokus") { z["fokus"] = f["name"]; z["fokusVorlesen"] = f["vorlesen"] } // v1528
     let ausgang = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
     switch ausgang {
     case .some(.headphones): z["audio"] = "kopfhoerer"

@@ -448,6 +448,8 @@ export class Alfred {
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
   /** v1518 Phase 5 H2 — Push an die Handys des Owners (APNs) */
   private pushDienst?: import('./geraete/push-dienst.js').PushDienst;
+  /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
+  private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
   private hoerRelais?: import('./geraete/hoeren.js').HoerRelais;
   /** v1258 — Releases für das Satelliten-Autoupdate. */
@@ -13902,7 +13904,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const handyAblage = new HandyAblage();
         const { HandyZonen } = await import('./geraete/handy-zonen.js'); // v1522
         const handyZonen = new HandyZonen(path.resolve(process.cwd(), 'data', 'handy-zonen.json'));
+        const { HandyFokus } = await import('./geraete/handy-fokus.js'); // v1528
+        const handyFokus = new HandyFokus(path.resolve(process.cwd(), 'data', 'handy-fokus.json'));
+        this.handyFokus = handyFokus;
         const gw = new GeraeteGateway({
+          fokusVon: (id: string) => handyFokus.von(id), // v1528
           zoneVon: (id: string) => { const z = handyZonen.von(id); return z ? { name: z.zone, seit: z.seit, bewegung: z.bewegung, gemeldet: z.gemeldet } : undefined; }, // v1522, v1526 Bewegung
           // v1520 — Handy im Hintergrund: Zwischenablage über Ablage + Push „Zum Kopieren antippen“ (Inhalt nie im Push)
           offlineAktion: (g, aktion, params) => {
@@ -14211,6 +14217,13 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // daher nur Owner-Geräte, gelesen mit der Owner-ID (FileStore prüft das Schlüssel-Präfix); bis 25 MB.
           // v1506 D5 — Kontomenü: Kosten (heute/Woche/Monat, Herkunft, teuerstes Modell, Claude Code), Tagesbudget nur als
           // Anzeige, verbundene Geräte. Nur Geräte des Owners.
+          // v1528 — iOS-Fokus vom Handy (Fokusfilter): aktiv mit Name/Hinweise/Vorlesen oder aus
+          fokus: async (geraetId: string, body: Record<string, unknown>) => {
+            const geaendert = handyFokus.melde(geraetId, body);
+            const f = handyFokus.von(geraetId);
+            this.logger.info({ geraetId, aktiv: !!f, name: f?.name, hinweise: f?.hinweise, vorlesen: f?.vorlesen, geaendert }, 'v1528 Fokus gemeldet');
+            return { status: 200, antwort: { ok: true, fokus: f ?? null } };
+          },
           // v1522 — Standortzone vom Handy (nur der Name; iOS meldet auch bei geschlossener App). Intern: Weltmodell und Lage.
           zone: async (geraetId: string, body: Record<string, unknown>) => {
             const art = typeof body.art === 'string' ? body.art : '';
@@ -15091,7 +15104,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
         this.haEreignisQuelle.start();
-        this.reasoningEngine?.setAnwesenheitsQuelle(() => ({ ...(this.hausAnwesenheit ?? {}), amGeraet: this.geraeteGateway?.aktivesGeraet() })); // v1198, v1237 Owner am Gerät
+        this.reasoningEngine?.setAnwesenheitsQuelle(() => { const f = this.handyFokus?.aktiv(); return { ...(this.hausAnwesenheit ?? {}), amGeraet: this.geraeteGateway?.aktivesGeraet(), ...(f ? { fokus: { name: f.name, hinweise: f.hinweise } } : {}) }; }); // v1198, v1237 Owner am Gerät, v1528 Fokus
         const quelle = this.haEreignisQuelle;
         this.registriereJob({
           key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
