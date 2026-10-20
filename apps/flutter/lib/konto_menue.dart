@@ -111,7 +111,7 @@ String _zeitText(DateTime? t) {
 const _plattformNamen = {'windows': 'Windows', 'macos': 'macOS', 'linux': 'Linux'};
 
 class KontoMenue extends StatelessWidget {
-  const KontoMenue({super.key, required this.geraet, required this.verbunden, required this.versionen, this.kosten, this.fehler, this.geraete = const [], required this.aufEinstellungen, required this.aufBefehle, required this.aufKuerzel, required this.updateText, required this.aufUpdate, this.aufProjekt});
+  const KontoMenue({super.key, required this.geraet, required this.verbunden, required this.versionen, this.kosten, this.fehler, this.geraete = const [], required this.aufEinstellungen, required this.aufBefehle, required this.aufKuerzel, required this.updateText, required this.aufUpdate, this.aufProjekt, this.aufKosten, this.aufWeb});
   final String geraet;
   final bool verbunden;
   /// z. B. „App 1.48.0 · Satellit … · Alfred …“
@@ -120,6 +120,8 @@ class KontoMenue extends StatelessWidget {
   final String? fehler;
   final List<KontoGeraet> geraete;
   final VoidCallback aufEinstellungen, aufBefehle, aufKuerzel, aufUpdate;
+  /// 1.71.0 — Kosten-Verlauf und Verwaltungsseiten im Web
+  final VoidCallback? aufKosten, aufWeb;
   final String updateText;
   /// v1509 — Klick auf ein laufendes Projekt: Projektansicht (Kennung der Akte, falls bekannt)
   final void Function(String? akteId)? aufProjekt;
@@ -188,7 +190,9 @@ class KontoMenue extends StatelessWidget {
         for (final g in geraete) _geraet(theme, g),
         const Divider(height: 20),
       ],
+      if (aufKosten != null) punkt(Icons.payments_outlined, 'Kosten-Verlauf', aufKosten!, key: const Key('konto-kosten')), // 1.71.0
       punkt(Icons.settings_outlined, 'Einstellungen', aufEinstellungen, kuerzel: 'Strg+,', key: const Key('konto-einstellungen')),
+      if (aufWeb != null) punkt(Icons.open_in_browser, 'Im Web öffnen …', aufWeb!, key: const Key('konto-web')), // 1.71.0
       punkt(Icons.keyboard_command_key, 'Befehle', aufBefehle, kuerzel: 'Strg+K'),
       punkt(Icons.help_outline, 'Hilfe: Tastenkürzel', aufKuerzel),
       punkt(Icons.system_update_alt, updateText, aufUpdate, key: const Key('konto-update')),

@@ -15963,7 +15963,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const { OwnerAnsichten } = await import('./geraete/owner-ansichten.js');
     const { VorgaengeRepository } = await import('@alfred/storage');
     const db = this.database.getAdapter();
-    return new OwnerAnsichten({
+    const ansichten = new OwnerAnsichten({
       owner,
       merken: async (o, text) => { if (!this.memoryRepo) throw new Error('kein Gedächtnis'); return (await this.memoryRepo.saveWithMetadata(o, `gemerkt:${Date.now()}`, text, 'general', 'fact', 1, 'manual')).id; }, // v1510 D6a
       todos: this.todoRepo as any,
@@ -16005,6 +16005,67 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       projekte: geraetId === WEB_OWNER_QUELLE ? undefined : await this.geraeteProjekteFuerApp(owner, geraetId), // v1487 — das Web hat eigene Projekt-Routen
       ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
+    return Object.assign(ansichten, this.weitereAnsichten(owner, db));
+  }
+
+  /** v1536 (Owner 20.10. „1–5 wie vorgeschlagen“) — Notizen, Wissen, Interessen, Ziele und Nutzung für die Apps (nur Owner). */
+  private weitereAnsichten(owner: string, db: AsyncDbAdapter) {
+    const tag = (d: string, minus: number) => { const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() - minus); return t.toISOString().slice(0, 10); };
+    return {
+      notizen: async (q?: string, limit?: number) => {
+        if (!this.noteRepo) return { notes: [] };
+        return { notes: q ? await this.noteRepo.search(owner, q) : await this.noteRepo.list(owner, Math.min(Math.max(limit ?? 100, 1), 500)) };
+      },
+      notizAnlegen: async (b: Record<string, unknown>) => {
+        const titel = typeof b.title === 'string' ? b.title.trim().slice(0, 200) : '';
+        const inhalt = typeof b.content === 'string' ? b.content.trim().slice(0, 20_000) : '';
+        if (!this.noteRepo) throw new Error('Notizen nicht verfügbar');
+        if (!titel && !inhalt) throw new Error('Titel oder Inhalt fehlt');
+        return { note: await this.noteRepo.save(owner, titel || inhalt.split('\n')[0]!.slice(0, 80), inhalt || titel) };
+      },
+      // nur die persönliche Ebene (keine Infrastruktur); mit q: Treffer im Namen samt direkten Nachbarn
+      wissen: async (q?: string) => {
+        const g = await new KnowledgeGraphRepository(db).getFullGraph(owner, 'personal');
+        const sortiert = [...g.entities].sort((x, y) => (y.mentionCount ?? 0) - (x.mentionCount ?? 0));
+        if (!q) {
+          const top = sortiert.slice(0, 300); const ids = new Set(top.map(e => e.id));
+          return { entities: top, relations: g.relations.filter(r => ids.has(r.sourceEntityId) && ids.has(r.targetEntityId)), gesamt: g.entities.length };
+        }
+        const n = q.toLowerCase();
+        const treffer = new Set(sortiert.filter(e => e.name.toLowerCase().includes(n) || (e.normalizedName ?? '').includes(n)).slice(0, 50).map(e => e.id));
+        const rel = g.relations.filter(r => treffer.has(r.sourceEntityId) || treffer.has(r.targetEntityId));
+        const ids = new Set([...treffer, ...rel.flatMap(r => [r.sourceEntityId, r.targetEntityId])]);
+        return { entities: sortiert.filter(e => ids.has(e.id)), relations: rel, gesamt: g.entities.length };
+      },
+      interessen: async () => {
+        if (!this.interestsRepo) return { topics: [] };
+        const r = this.interestsRepo;
+        const topics = await r.listTopics(owner);
+        return { topics: await Promise.all(topics.map(async t => ({ ...t, digest: await r.getDigest(t.id), itemsLast7d: await r.countItemsSince(t.id, new Date(Date.now() - 7 * 86_400_000).toISOString()) }))) };
+      },
+      interessenEintraege: async (id: string, limit?: number) => {
+        if (!this.interestsRepo) return undefined;
+        if (!(await this.interestsRepo.listTopics(owner)).some(t => t.id === id)) return undefined; // nur eigene Themen
+        return { items: await this.interestsRepo.listItems(id, { limit: Math.min(Math.max(limit ?? 30, 1), 100) }) };
+      },
+      ziele: async () => {
+        const { GoalsRepository } = await import('@alfred/storage');
+        return { goals: await new GoalsRepository(db).list(owner, {}) };
+      },
+      ziel: async (id: string) => {
+        const { GoalsRepository } = await import('@alfred/storage');
+        const r = new GoalsRepository(db);
+        const goal = await r.getById(owner, id);
+        return goal ? { goal, checkpoints: await r.listCheckpoints(id, 30) } : undefined;
+      },
+      // Kosten je Tag und Modell (LLM); Code-Agenten stehen getrennt im Kontomenü (/api/geraete/konto)
+      nutzung: async (tage?: number) => {
+        if (!this.usageRepo) return { tage: [] };
+        const n = Math.min(Math.max(tage ?? 30, 1), 366);
+        const heute = (await this.usageRepo.getHeute()).date;
+        return { von: tag(heute, n - 1), bis: heute, tage: await this.usageRepo.getRange(tag(heute, n - 1), heute) };
+      },
+    };
   }
 
   /**

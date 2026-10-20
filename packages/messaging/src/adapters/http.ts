@@ -265,6 +265,16 @@ export interface GeraetOwnerAnsichten {
   beobachter?(): Promise<unknown>; // v1429 R4a
   beobachterAnlegen?(b: unknown): Promise<unknown>;
   beobachterAendern?(id: string, b: unknown): Promise<unknown>;
+  /** v1536 (Owner 20.10. „1–5 wie vorgeschlagen“) — weitere Ansichten der Apps: Notizen (lesen, suchen, anlegen), Wissen,
+   *  Interessen und Ziele (lesend), Kosten je Tag und Modell. */
+  notizen?(q?: string, limit?: number): Promise<unknown>;
+  notizAnlegen?(body: Record<string, unknown>): Promise<unknown>;
+  wissen?(q?: string): Promise<unknown>;
+  interessen?(): Promise<unknown>;
+  interessenEintraege?(id: string, limit?: number): Promise<unknown>;
+  ziele?(): Promise<unknown>;
+  ziel?(id: string): Promise<unknown>;
+  nutzung?(tage?: number): Promise<unknown>;
 }
 
 export class HttpAdapter extends MessagingAdapter {
@@ -2148,7 +2158,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/owner\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|hinweise)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
       this.handleWebOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1487
-    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter|notizen|wissen|interessen|ziele|nutzung)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter, v1536 notizen/wissen/interessen/ziele/nutzung
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
@@ -7190,6 +7200,15 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'beobachter' && !id && m === 'GET' && a.beobachter) { antwort(200, await a.beobachter()); return; } // v1429
       if (bereich === 'beobachter' && !id && m === 'POST' && a.beobachterAnlegen) { antwort(200, await a.beobachterAnlegen(body)); return; }
       if (bereich === 'beobachter' && id && m === 'POST' && a.beobachterAendern) { antwort(200, await a.beobachterAendern(id, body)); return; }
+      // v1536 — Notizen, Wissen, Interessen, Ziele, Nutzung
+      if (bereich === 'notizen' && !id && m === 'GET' && a.notizen) { antwort(200, await a.notizen(url.searchParams.get('q')?.slice(0, 200) || undefined, Number(url.searchParams.get('limit')) || undefined)); return; }
+      if (bereich === 'notizen' && !id && m === 'POST' && a.notizAnlegen) { antwort(200, await a.notizAnlegen(body)); return; }
+      if (bereich === 'wissen' && !id && m === 'GET' && a.wissen) { antwort(200, await a.wissen(url.searchParams.get('q')?.slice(0, 100) || undefined)); return; }
+      if (bereich === 'interessen' && !id && m === 'GET' && a.interessen) { antwort(200, await a.interessen()); return; }
+      if (bereich === 'interessen' && id && m === 'GET' && a.interessenEintraege) { const x = await a.interessenEintraege(id, Number(url.searchParams.get('limit')) || undefined); antwort(x ? 200 : 404, x ?? { error: 'nicht gefunden' }); return; }
+      if (bereich === 'ziele' && !id && m === 'GET' && a.ziele) { antwort(200, await a.ziele()); return; }
+      if (bereich === 'ziele' && id && m === 'GET' && a.ziel) { const x = await a.ziel(id); antwort(x ? 200 : 404, x ?? { error: 'nicht gefunden' }); return; }
+      if (bereich === 'nutzung' && !id && m === 'GET' && a.nutzung) { antwort(200, await a.nutzung(Number(url.searchParams.get('tage')) || undefined)); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }
       if (bereich === 'regeln' && id && m === 'POST') { const x = await a.regelAendern(id, body.aktion); antwort(x ? 200 : 404, x ? { ok: true, ...(x as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'vorgaenge' && id && m === 'POST') { const v = await a.vorgangEntscheiden(id, body.status, body.notiz); antwort(v ? 200 : 404, v ? { ok: true, titel: v.titel } : { error: 'nicht gefunden' }); return; }

@@ -54,10 +54,13 @@ extension _Oberflaeche on _SitzungState {
           eintrag(Icons.dashboard_outlined, Icons.dashboard, 'Lage', ansicht == Ansicht.kacheln, ohneServer ? null : () => zu(Ansicht.kacheln, () => kachelnOffen = true), tip: 'Lage: Befunde, Vorgänge, Geräte'),
           eintrag(Icons.report_problem_outlined, Icons.report_problem, 'Befunde', ansicht == Ansicht.befunde, ohneServer ? null : () => zu(Ansicht.befunde, () => befundeFilter = null), tip: 'Was Alfred als auffällig führt (Haus-Check u. a.)'), // 1.12.0
           eintrag(Icons.visibility_outlined, Icons.visibility, 'Beobachter', ansicht == Ansicht.beobachter, ohneServer ? null : () => zu(Ansicht.beobachter)), // 1.20.0
+          eintrag(Icons.payments_outlined, Icons.payments, 'Kosten', ansicht == Ansicht.kosten, ohneServer ? null : () => zu(Ansicht.kosten), tip: 'Kosten je Tag und Modell, Code-Agenten getrennt'), // 1.71.0
           gruppe('Arbeit'),
           eintrag(Icons.construction_outlined, Icons.construction, 'Projekte', ansicht == Ansicht.projekte, ohneServer ? null : () => zu(Ansicht.projekte), tip: 'Projekte auf Geräten'), // 1.15.0
           gruppe('Wissen'),
           eintrag(Icons.psychology_outlined, Icons.psychology, 'Gedächtnis', ansicht == Ansicht.gedaechtnis, ohneServer ? null : () => zu(Ansicht.gedaechtnis), tip: 'Was Alfred über dich weiß'), // 1.9.0 A3
+          eintrag(Icons.sticky_note_2_outlined, Icons.sticky_note_2, 'Notizen', ansicht == Ansicht.notizen, ohneServer ? null : () => zu(Ansicht.notizen), tip: 'Notizen lesen, suchen, anlegen'), // 1.71.0
+          eintrag(Icons.hub_outlined, Icons.hub, 'Wissen', ansicht == Ansicht.wissen, ohneServer ? null : () => zu(Ansicht.wissen), tip: 'Wissen, Interessen und Ziele'), // 1.71.0
           eintrag(Icons.search, Icons.manage_search, 'Suche', ansicht == Ansicht.suche, ohneServer ? null : () => zu(Ansicht.suche), tip: 'Suche im Verlauf'), // 1.5.0
           eintrag(Icons.photo_library_outlined, Icons.photo_library, 'Anhänge', ansicht == Ansicht.anhaenge, ohneServer ? null : () => zu(Ansicht.anhaenge), tip: 'Fotos und Dateien'), // 1.5.0
         ])),
@@ -207,6 +210,8 @@ extension _Oberflaeche on _SitzungState {
           aufEinstellungen: () => schliessenUnd(() => _neu(() => ansicht = Ansicht.einstellungen)),
           aufBefehle: () => schliessenUnd(_paletteOeffnen),
           aufKuerzel: () => schliessenUnd(_kuerzelZeigen),
+          aufKosten: () => schliessenUnd(() => _neu(() => ansicht = Ansicht.kosten)), // 1.71.0
+          aufWeb: konfig == null ? null : () => schliessenUnd(() => zeigeWebSeiten(context, konfig!.server)), // 1.71.0
           updateText: update != null ? 'Update ${update!.version} installieren' : 'Nach Update suchen',
           aufUpdate: () => schliessenUnd(() { if (update != null) { _updateInstallieren(); } else { _updatePruefen(); } }),
           aufProjekt: (id) => schliessenUnd(() => _neu(() { projekteAnfang = id; ansicht = Ansicht.projekte; })), // 1.49.0

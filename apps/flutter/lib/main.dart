@@ -26,6 +26,10 @@ import 'handy_system.dart'; // 1.54.0
 import 'unterhaltung.dart'; // 1.58.0 G1
 import 'glas.dart'; // 1.69.0
 import 'geraet_koppeln.dart'; // 1.70.0
+import 'kosten_ansicht.dart'; // 1.71.0
+import 'notizen.dart'; // 1.71.0
+import 'wissen_ansicht.dart'; // 1.71.0
+import 'web_seiten.dart'; // 1.71.0
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -568,6 +572,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.projekte => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Projekte(key: ValueKey(projekteAnfang), json: server!.json, anfang: projekteAnfang, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufGespraech: (f) => _fadenWechseln(f)), // 1.15.0, 1.16.1 anfang
           Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
+          Ansicht.kosten => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : KostenAnsicht(json: server!.json), // 1.71.0
+          Ansicht.notizen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : NotizenAnsicht(json: server!.json), // 1.71.0
+          Ansicht.wissen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : WissenAnsicht(json: server!.json), // 1.71.0
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
         };

@@ -18,6 +18,10 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'Projekte', untertitel: 'auf Geräten: Läufe, Stand, weiterarbeiten', icon: Icons.construction_outlined, stichworte: 'projekt claude code bauen etappen entwicklung', aktion: (_) => zeige(Ansicht.projekte)), // 1.15.0
       Befehl(titel: 'Suche im Verlauf', icon: Icons.search, stichworte: 'finden', aktion: (_) => zeige(Ansicht.suche)),
       Befehl(titel: 'Anhänge', untertitel: 'Fotos und Dateien', icon: Icons.photo_library_outlined, stichworte: 'galerie bilder dateien', aktion: (_) => zeige(Ansicht.anhaenge)),
+      Befehl(titel: 'Kosten', untertitel: 'je Tag und Modell, Code-Agenten getrennt', icon: Icons.payments_outlined, stichworte: 'kosten geld budget dollar verbrauch modelle', aktion: (_) => zeige(Ansicht.kosten)), // 1.71.0
+      Befehl(titel: 'Notizen', untertitel: 'lesen, suchen, anlegen', icon: Icons.sticky_note_2_outlined, stichworte: 'notiz notes merken', aktion: (_) => zeige(Ansicht.notizen)), // 1.71.0
+      Befehl(titel: 'Wissen', untertitel: 'Wissen, Interessen und Ziele', icon: Icons.hub_outlined, stichworte: 'wissensgraph personen orte interessen themen ziele', aktion: (_) => zeige(Ansicht.wissen)), // 1.71.0
+      if (konfig != null) Befehl(titel: 'Im Web öffnen …', untertitel: 'Einstellungen, Runbooks, ITSM, Logs …', icon: Icons.open_in_browser, stichworte: 'web browser verwaltung settings sandboxes runbooks itsm cmdb logs cluster', aktion: (_) => zeigeWebSeiten(context, konfig!.server)), // 1.71.0
       Befehl(titel: 'Einstellungen', icon: Icons.settings_outlined, stichworte: 'optionen', aktion: (_) => zeige(Ansicht.einstellungen)),
       Befehl(titel: 'Neuer Chat', icon: Icons.add_comment_outlined, stichworte: 'faden gesprach neu', aktion: (_) { zeige(Ansicht.chat); _neuerChat(); }),
       Befehl(titel: 'Gespräch: Hauptgespräch', icon: Icons.forum_outlined, stichworte: 'faden', aktion: (_) { zeige(Ansicht.chat); _fadenWechseln(null); }),

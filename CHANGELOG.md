@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Kosten, Notizen, Wissen, Interessen und Ziele in den Apps, „Im Web öffnen“ (v1536, App 1.71.0)
+
+Owner 20.10.: „1–5 wie vorgeschlagen umsetzen“. Mit diesem Release sind die Teile 3–5 umgesetzt.
+
+- **Kosten** (Haus & Systeme, im Kontomenü unter „Kosten-Verlauf“):
+  - Zeitraum 7, 30 oder 90 Tage, Summe und Schnitt je Tag.
+  - Balken je Tag. Tage über dem Tagesbudget sind rot, das Budget ist als Linie eingezeichnet.
+  - Aufteilung je Modell mit Anteil und Aufrufen.
+  - Code-Agenten stehen in einem eigenen Block, weil sie nicht zum API-Budget zählen. Dazu „Wofür“ im Monat und die Gesamtkosten inklusive Agenten.
+- **Notizen** (Wissen): Liste, Suche, ganze Notiz mit Kopieren, neue Notiz anlegen.
+- **Wissen** (Wissen), nur lesend, in drei Reitern:
+  - **Wissen:** Einträge der persönlichen Ebene nach Art gruppiert. Ohne Suche erscheinen die meistgenannten, mit Suche die Treffer samt direkten Nachbarn. Antippen zeigt Merkmale und Beziehungen.
+  - **Interessen:** beobachtete Themen mit Stichworten, neuen Einträgen der letzten 7 Tage und Zusammenfassung. Antippen zeigt die Einträge, Links öffnen im Browser.
+  - **Ziele:** Status und letzte Prüfung, Antippen zeigt die Prüfungen.
+- **Im Web öffnen …** (Kontomenü und Befehlspalette) öffnet im Browser: Einstellungen, Hintergrundaufgaben, Runbooks, Sandboxes, Projekt-Agenten, ITSM, CMDB, Services, Dokumentation, Logs, Cluster. Social ist pausiert und deshalb nicht dabei.
+- **Server:** neue Geräte-Routen `/api/geraete/notizen` (GET, POST), `wissen`, `interessen[/<id>]`, `ziele[/<id>]` und `nutzung?tage=`. Sie stehen nur Geräten des Owners zur Verfügung. Interessen-Einträge gibt der Server nur zu eigenen Themen aus.
+
 ### Changed — Lage neu, neues Gerät aus der App koppeln (v1535, App 1.70.0)
 
 Owner 20.10.: „1–5 wie vorgeschlagen umsetzen“. Hier sind Teil 1 und 2 umgesetzt, die Teile 3–5 folgen im nächsten Release.
