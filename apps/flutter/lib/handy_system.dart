@@ -26,6 +26,11 @@ Future<Map<String, dynamic>> handyZustand() async {
   on PlatformException { return const {}; }
 }
 
+/// 1.62.0 — aktuellen Fokusfilter von iOS abgleichen (das Ausschalten eines Fokus ruft den Filter nicht auf).
+Future<void> handyFokusAbgleich() async {
+  try { await _kanal.invokeMethod<bool>('fokusAbgleich').timeout(const Duration(seconds: 8)); } catch (_) {}
+}
+
 /// Audio-Ausgänge, bei denen Antworten automatisch vorgelesen werden (Kopfhörer, Bluetooth, Auto).
 const vorleseAusgaenge = {'kopfhoerer', 'bluetooth', 'auto'};
 

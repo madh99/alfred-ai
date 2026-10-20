@@ -273,7 +273,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
-        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); _fokusAbgleich(z); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio; 1.61.0 Fokus
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyFokusAbgleich().then((_) => handyZustand()).then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); _fokusAbgleich(z); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio; 1.61.0 Fokus
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -687,7 +687,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (zeit == _fokusGemeldet) return;
     _fokusGemeldet = zeit;
     final ok = m['ergebnis'] == 'gesendet';
-    try { await s.melde('Fokusfilter ${m['aktiv'] == true ? 'an' : 'aus'} um $zeit: ${m['ergebnis']}', art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
+    try { await s.melde('Fokus${m['quelle'] == 'abgleich' ? ' (Abgleich)' : 'filter'} ${m['aktiv'] == true ? 'an' : 'aus'} um $zeit: ${m['ergebnis']}', art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
     if (ok) return;
     try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
   }

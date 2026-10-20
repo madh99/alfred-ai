@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fokus aus kam nicht an (App 1.62.0, iPhone)
+
+Realfall 20.10.: Um 13:38 meldete der Fokusfilter „Nicht Stören (nur Dringendes)“. Beim Ausschalten rief iOS den Filter nicht auf, am Server blieb der Fokus aktiv, und normale Hinweise wurden weiter aufgeschoben.
+
+- Die App fragt iOS selbst nach dem aktuellen Fokusfilter: beim Öffnen und bei jedem Zonenwechsel, der die App auch im Hintergrund weckt. Bei einer Änderung meldet sie sie dem Server.
+- Die App-Meldung zeigt, ob die Änderung vom Filter kam oder aus dem Abgleich.
+
 ### Fixed — Fokusfilter: Diagnose und Ersatzweg (App 1.61.0, iPhone)
 
 Realfall 20.10.: Fokus „Nicht stören“ mit Filter „Alfred“ eingeschaltet, am Server kam keine Meldung an. Der Filter verschluckte Fehler beim Senden still.

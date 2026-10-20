@@ -29,19 +29,35 @@ struct AlfredFokusFilter: SetFocusFilterIntent {
   }
 
   func perform() async throws -> some IntentResult {
-    let aktiv = name != nil || hinweise != nil || vorlesen != nil
-    // für die App (Vorlesen im Fokus) und für eine spätere Anzeige
-    if aktiv { UserDefaults.standard.set(["name": name ?? "Fokus", "hinweise": (hinweise ?? .nurDringend).rawValue, "vorlesen": vorlesen ?? false], forKey: "alfred.fokus") }
-    else { UserDefaults.standard.removeObject(forKey: "alfred.fokus") }
-    // 1.61.0 — Realfall 20.10. 13:1x: Fokus an, am Server kam nichts an. Jeder Aufruf wird festgehalten (lief der Filter, ging das
-    // Senden?); die App meldet das beim nächsten Öffnen und sendet den Fokus selbst nach, wenn es hier nicht geklappt hat.
+    // 1.61.0 — jeder Aufruf wird festgehalten (lief der Filter, ging das Senden?); die App meldet das beim nächsten Öffnen
+    await FokusAbgleich.uebernimm(self, quelle: "filter", immer: true)
+    return .result()
+  }
+}
+
+/// 1.62.0 — Realfall 20.10. 13:38: Einschalten rief den Filter auf, Ausschalten NICHT (am Server blieb der Fokus aktiv, Hinweise
+/// wurden aufgeschoben). Darum fragt die App den aktuellen Filter selbst ab (`current`): beim Öffnen und bei jedem Zonenwechsel,
+/// der die App im Hintergrund weckt. Gemeldet wird nur bei Änderung gegenüber dem gespeicherten Stand.
+@available(iOS 16.0, *)
+enum FokusAbgleich {
+  static func jetzt() async {
+    guard let f = try? await AlfredFokusFilter.current else { return }
+    await uebernimm(f, quelle: "abgleich", immer: false)
+  }
+
+  static func uebernimm(_ f: AlfredFokusFilter, quelle: String, immer: Bool) async {
+    let aktiv = f.name != nil || f.hinweise != nil || f.vorlesen != nil
+    let neu: [String: Any]? = aktiv ? ["name": f.name ?? "Fokus", "hinweise": (f.hinweise ?? .nurDringend).rawValue, "vorlesen": f.vorlesen ?? false] : nil
+    let alt = UserDefaults.standard.dictionary(forKey: "alfred.fokus")
+    let gleich = (alt == nil && neu == nil) || (alt != nil && neu != nil && NSDictionary(dictionary: alt!).isEqual(to: neu!))
+    if gleich && !immer { return }
+    if let n = neu { UserDefaults.standard.set(n, forKey: "alfred.fokus") } else { UserDefaults.standard.removeObject(forKey: "alfred.fokus") }
     var ergebnis = "gesendet"
     do {
-      let k = try Kopplung.lade() // wirft „nicht gekoppelt“, wenn der Schlüsselbund im Filter-Aufruf nicht lesbar ist
-      try await Netz(k).fokus(aktiv: aktiv, name: name, hinweise: (hinweise ?? .nurDringend).rawValue, vorlesen: vorlesen ?? false)
+      let k = try Kopplung.lade()
+      try await Netz(k).fokus(aktiv: aktiv, name: f.name, hinweise: (f.hinweise ?? .nurDringend).rawValue, vorlesen: f.vorlesen ?? false)
     } catch { ergebnis = "Fehler: \(error.localizedDescription)" }
-    UserDefaults.standard.set(["zeit": ISO8601DateFormatter().string(from: Date()), "aktiv": aktiv, "ergebnis": ergebnis], forKey: "alfred.fokus.meldung")
-    return .result()
+    UserDefaults.standard.set(["zeit": ISO8601DateFormatter().string(from: Date()), "aktiv": aktiv, "ergebnis": ergebnis, "quelle": quelle], forKey: "alfred.fokus.meldung")
   }
 }
 

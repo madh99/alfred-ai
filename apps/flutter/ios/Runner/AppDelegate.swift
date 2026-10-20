@@ -150,6 +150,9 @@ import UserNotifications
           ergebnis(true)
         case "zustand":
           ergebnis(self?.systemZustand())
+        case "fokusAbgleich":
+          // 1.62.0 — aktuellen Fokusfilter von iOS holen und bei Änderung melden (vor dem nächsten „zustand“)
+          if #available(iOS 16.0, *) { Task { await FokusAbgleich.jetzt(); ergebnis(true) } } else { ergebnis(false) }
         case "ordnerWaehlen":
           // 1.54.1 — Owner gibt einen Ordner frei (Downloads, iCloud Drive …); iOS liefert eine dauerhafte Freigabe (Bookmark)
           DispatchQueue.main.async {
@@ -405,6 +408,7 @@ final class ZonenWaechter: NSObject, CLLocationManagerDelegate {
       guard let k = try? Kopplung.lade() else { return }
       let b = await bewegung?.letzte()
       try? await Netz(k).zone(art: art, zone: zone, bewegung: b)
+      if #available(iOS 16.0, *) { await FokusAbgleich.jetzt() } // 1.62.0 — Ausschalten des Fokus ruft den Filter nicht auf
     }
   }
 }
