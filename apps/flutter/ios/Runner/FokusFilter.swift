@@ -52,12 +52,23 @@ enum FokusAbgleich {
     let gleich = (alt == nil && neu == nil) || (alt != nil && neu != nil && NSDictionary(dictionary: alt!).isEqual(to: neu!))
     if gleich && !immer { return }
     if let n = neu { UserDefaults.standard.set(n, forKey: "alfred.fokus") } else { UserDefaults.standard.removeObject(forKey: "alfred.fokus") }
+    // 1.63.0 — Verlauf der letzten 10 Aufrufe; der Eintrag steht VOR dem Senden („läuft“), damit auch ein abgebrochener Aufruf
+    // sichtbar bleibt (vorher überschrieb der Abgleich beim Öffnen den Eintrag des Filters)
+    let zeit = ISO8601DateFormatter().string(from: Date())
+    protokolliere(["zeit": zeit, "aktiv": aktiv, "ergebnis": "läuft", "quelle": quelle])
     var ergebnis = "gesendet"
     do {
       let k = try Kopplung.lade()
       try await Netz(k).fokus(aktiv: aktiv, name: f.name, hinweise: (f.hinweise ?? .nurDringend).rawValue, vorlesen: f.vorlesen ?? false)
     } catch { ergebnis = "Fehler: \(error.localizedDescription)" }
-    UserDefaults.standard.set(["zeit": ISO8601DateFormatter().string(from: Date()), "aktiv": aktiv, "ergebnis": ergebnis, "quelle": quelle], forKey: "alfred.fokus.meldung")
+    protokolliere(["zeit": zeit, "aktiv": aktiv, "ergebnis": ergebnis, "quelle": quelle])
+  }
+
+  /// Eintrag mit gleicher Zeit ersetzen, sonst anhängen; höchstens 10.
+  private static func protokolliere(_ e: [String: Any]) {
+    var l = (UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") as? [[String: Any]]) ?? []
+    if let i = l.lastIndex(where: { ($0["zeit"] as? String) == (e["zeit"] as? String) && ($0["quelle"] as? String) == (e["quelle"] as? String) }) { l[i] = e } else { l.append(e) }
+    UserDefaults.standard.set(Array(l.suffix(10)), forKey: "alfred.fokus.meldungen")
   }
 }
 

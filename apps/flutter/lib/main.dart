@@ -681,14 +681,15 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// 1.61.0 — Fokusfilter-Aufruf melden (Server-Log „App-Meldung“ art fokus) und, wenn der Filter nicht senden konnte,
   /// den aktuellen Fokus selbst an den Server geben. Der Server führt ihn idempotent (gleiche Meldung ändert nichts).
   Future<void> _fokusAbgleich(Map<String, dynamic> z) async {
-    final s = server; final m = z['fokusMeldung'];
-    if (s == null || m is! Map) return;
-    final zeit = '${m['zeit']}';
-    if (zeit == _fokusGemeldet) return;
-    _fokusGemeldet = zeit;
-    final ok = m['ergebnis'] == 'gesendet';
-    try { await s.melde('Fokus${m['quelle'] == 'abgleich' ? ' (Abgleich)' : 'filter'} ${m['aktiv'] == true ? 'an' : 'aus'} um $zeit: ${m['ergebnis']}', art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
-    if (ok) return;
+    final s = server; final l = z['fokusMeldungen'];
+    if (s == null || l is! List || l.isEmpty) return;
+    // 1.63.0 — alle neuen Aufrufe melden (ISO-Zeiten sind als Text sortierbar), nicht nur den letzten
+    final neu = [for (final m in l) if (m is Map && '${m['zeit']}'.compareTo(_fokusGemeldet) > 0) m];
+    if (neu.isEmpty) return;
+    _fokusGemeldet = '${neu.last['zeit']}';
+    final text = neu.map((m) => 'Fokus${m['quelle'] == 'abgleich' ? ' (Abgleich)' : 'filter'} ${m['aktiv'] == true ? 'an' : 'aus'} um ${m['zeit']}: ${m['ergebnis']}').join(' | ');
+    try { await s.melde(text, art: 'fokus', version: appVersion, plattform: Platform.operatingSystem); } catch (_) {}
+    if (neu.last['ergebnis'] == 'gesendet') return;
     try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
   }
   int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden

@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fokus: Verlauf aller Filter-Aufrufe (App 1.63.0, iPhone)
+
+Realfall 20.10. 16:42: Das „aus“ kam über den Abgleich an, das „an“ beim Ein- und Ausschalten davor fehlte. Die App bewahrte nur den letzten Aufruf auf, der Abgleich hatte den Eintrag des Filters überschrieben.
+
+- Die letzten zehn Aufrufe von Filter und Abgleich bleiben erhalten. Jeder Eintrag steht schon vor dem Senden da, mit „läuft“.
+- Beim Öffnen meldet die App alle neuen Einträge, nicht nur den letzten.
+
 ### Fixed — Fokus aus kam nicht an (App 1.62.0, iPhone)
 
 Realfall 20.10.: Um 13:38 meldete der Fokusfilter „Nicht Stören (nur Dringendes)“. Beim Ausschalten rief iOS den Filter nicht auf, am Server blieb der Fokus aktiv, und normale Hinweise wurden weiter aufgeschoben.
