@@ -94,6 +94,15 @@ export function describesOtherPersonsHome(text: string): boolean {
  * (reine Adress-Memories wie „heim_adresse: 3033 Altlengbach"), gilt der
  * Key weiterhin — aber nur, wenn genau EINE Stadt vorkommt.
  */
+/**
+ * v1523 — Fahrt-/Strecken-Satz: „Rückfahrt Linz → Heimat“, „return Linz→Home“, „Anfahrt Büro → Linz (150km)“. Ein Wohn-Wort
+ * darin beschreibt die Richtung, nicht den Wohnort (Realfall 20.10.: zwei BMW-Service-Memories machten Linz zum Zuhause, die
+ * Querverknüpfung hängte danach alle Hausgeräte und den BMW an Linz — auch nach dem Löschen immer wieder).
+ */
+export function istFahrtSatz(satz: string): boolean {
+  return /→|->|\b(nach|rückfahrt|rückweg|anfahrt|hinfahrt|heimfahrt|heimweg|return|drive|to|from)\b|\d+\s?km\b/i.test(satz);
+}
+
 export function homeFlagsForCity(key: string, value: string, city: string, cityCount = 1): { isHome?: true; isUserHome?: true } {
   if (describesOtherPersonsHome(key)) return {};
   const valueHasHomeWord = /wohnort|wohnt|wohn|zuhause|home|heim|privat/i.test(value);
@@ -106,7 +115,7 @@ export function homeFlagsForCity(key: string, value: string, city: string, cityC
   const lower = satz.toLowerCase();
   const positiv = /wohnort|wohnt|wohn|zuhause|home|heim|privat/i.test(lower);
   const negation = /nicht|kein|niemals|never|not\s/i.test(lower);
-  if (positiv && !negation && !describesOtherPersonsHome(satz)) return { isHome: true, isUserHome: true };
+  if (positiv && !negation && !istFahrtSatz(satz) && !describesOtherPersonsHome(satz)) return { isHome: true, isUserHome: true };
   return {};
 }
 
@@ -2653,8 +2662,8 @@ export class KnowledgeGraphService {
             const isOtherPersonHome = describesOtherPersonsHome(citySentence)
               || describesOtherPersonsHome(fact.key)
               || describesOtherPersonsHome(fact.value);
-            const isHome = hasHomeWord && !hasNegation && !isOtherPersonHome;
-            const isWork = hasWorkWord && !hasNegation && !isOtherPersonHome;
+            const isHome = hasHomeWord && !hasNegation && !isOtherPersonHome && !istFahrtSatz(citySentence); // v1523 — Fahrtrichtung ist kein Wohnort
+            const isWork = hasWorkWord && !hasNegation && !isOtherPersonHome && !istFahrtSatz(citySentence); // v1523 — „Anfahrt Büro → Linz“ macht Linz nicht zum Arbeitsort
             // Address: use the matching sentence (compact), NOT the whole memory blob
             const addressSnippet = citySentence.trim().slice(0, 200);
             // Only SET isHome/isWork/isUserHome to true, never overwrite true→false

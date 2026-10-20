@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wissensgraph: Linz galt als Zuhause, Hausgeräte hingen immer wieder an Linz (v1523)
+
+Owner 20.10. (Screenshots Wissensgraph): Netzwerkgeräte aus UniFi/Home Assistant und der BMW waren mit „Linz“ verbunden und kamen nach dem Löschen wieder. Ursache belegt: Die Memory-Synchronisation markierte einen Ort als Zuhause, sobald im selben Satz irgendein Wohn-Wort stand. Zwei BMW-Service-Memories („return Linz→Home“, „Rückfahrt Linz → Heimat“) machten Linz so zum kanonischen Zuhause (`isUserHome`), die Querverknüpfung hängte danach alle Dinge „zu Hause“ an Linz. Altlengbach trug nur das schwächere Merkmal.
+
+- Fahrt- und Strecken-Sätze (→, „nach“, Rück-/An-/Hinfahrt, „return“, Kilometer) zählen nicht mehr als Beleg für Wohn- oder Arbeitsort; gilt für beide Stellen, die die Merkmale setzen.
+- Bestandsdaten einmalig korrigiert: Linz ohne Zuhause-/Arbeits-Merkmale, Altlengbach ist das Zuhause, die falschen Verbindungen zu Linz sind gelöscht.
+
 ### Added — Standortzonen des iPhones (v1522, App 1.55.0)
 
 Owner 20.10.: „Standardzonen“ umsetzen (Spec Geräte §20.11, eigene Freigabe).

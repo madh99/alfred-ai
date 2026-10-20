@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  homeFlagsForCity, istMomentzustandsName, istDateiFragmentName,
+  homeFlagsForCity, istFahrtSatz, istMomentzustandsName, istDateiFragmentName,
   istUngueltigeEntitaet, waehleKanonischesZuhause, istVerlaesslichePerson,
   INTERNAL_MEMORY_KEY_PREFIXES,
 } from '../knowledge-graph.js';
@@ -27,6 +27,22 @@ describe('Wien-Test — homeFlagsForCity (satz-genau statt Key-pauschal)', () =>
     expect(homeFlagsForCity('home_mutter', 'Eichgraben', 'Eichgraben', 1)).toEqual({});
     expect(homeFlagsForCity('home_info', 'Die Mutter wohnt in Eichgraben. Der User wohnt in Altlengbach.', 'Eichgraben', 2)).toEqual({});
     expect(homeFlagsForCity('home_info', 'Die Mutter wohnt in Eichgraben. Der User wohnt in Altlengbach.', 'Altlengbach', 2)).toEqual({ isHome: true, isUserHome: true });
+  });
+});
+
+describe('Linz-Test — Fahrtrichtung ist kein Wohnort (v1523, Realfall 20.10.)', () => {
+  it('BMW-Service-Memories machen Linz nicht zum Zuhause', () => {
+    expect(homeFlagsForCity('bmw_charging_plan_confirmed', 'Full charge at home before departure enables service drive Wien→Linz (150km) + return Linz→Home (170km)', 'Linz', 2)).toEqual({});
+    expect(homeFlagsForCity('anfahrt_büro_linz_bmw_service', '– Anfahrt Büro → Linz (150km, 12:42), BMW Servicetermin Höglinger Denzel (15:10, 45 Min), Rückfahrt Linz → Heimat (15:55)', 'Linz', 1)).toEqual({});
+  });
+  it('echte Wohnort-Sätze bleiben gültig', () => {
+    expect(homeFlagsForCity('wohnort', 'Der User wohnt in Altlengbach.', 'Altlengbach', 1)).toEqual({ isHome: true, isUserHome: true });
+    expect(homeFlagsForCity('home', 'Zuhause: Alleestrasse 6, 3033 Altlengbach', 'Altlengbach', 1)).toEqual({ isHome: true, isUserHome: true });
+  });
+  it('istFahrtSatz', () => {
+    expect(istFahrtSatz('Rückfahrt Linz → Heimat (15:55)')).toBe(true);
+    expect(istFahrtSatz('Fahrt nach Hause über Linz')).toBe(true);
+    expect(istFahrtSatz('Der User wohnt in Altlengbach')).toBe(false);
   });
 });
 
