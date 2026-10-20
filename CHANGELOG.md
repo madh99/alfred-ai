@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Unterhaltung: freies Gespräch mit Alfred (App 1.58.0)
+
+Owner 20.10.: „wie empfohlen g1–g4 freigegeben“.
+
+- **Starten:** Am iPhone wird der Senden-Knopf bei leerem Eingabefeld zum **blauen Unterhaltungsknopf** (Wellen-Symbol), sobald getippt wird wieder zum Senden-Pfeil, während einer Antwort zu Stopp. Am Desktop steht der Knopf neben dem Mikrofon.
+- **Ablauf:** Eine Kugel zeigt, ob Alfred zuhört, versteht, nachdenkt oder spricht. Die Sprechpause schickt den Satz, die Antwort wird schon beim Entstehen vorgelesen, danach hört Alfred wieder zu. **Antippen der Kugel** unterbricht ihn sofort; **Mikrofon stumm** und **X** zum Beenden. Fragen und Antworten stehen danach im Chat (🗣).
+- **Schnell:** Standard ist die schnelle Stufe; eine in der Eingabekarte gewählte Stufe gilt auch hier.
+- **Bildschirm gesperrt (G2):** Eine laufende Unterhaltung geht am iPhone auch bei gesperrtem Bildschirm weiter (Hintergrund-Audio, nur solange sie läuft). Die Wiedergabe läuft dabei über iOS selbst, damit das Mikrofon nach jedem Vorlesen offen bleibt.
+- Halbduplex: Während Alfred spricht, hört er nicht zu; der Nachhall der letzten Silbe wird verworfen. Am Desktop beendet die Unterhaltung das Zuhören mit Aktivierungswort, beide teilen sich das Mikrofon.
+
 ### Added — Fokus des iPhones über Fokusfilter (v1528, App 1.57.0)
 
 Owner 20.10.: „Weg B wie vorgeschlagen“. Apple gibt Apps den Fokus-Status nur über die Kommunikations-Berechtigung; der offizielle Weg für alle Apps sind Fokusfilter (iOS 16).

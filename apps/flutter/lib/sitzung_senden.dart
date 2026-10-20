@@ -277,7 +277,7 @@ extension _Senden on _SitzungState {
 
   /// Sendet `text` (oder die Eingabezeile) und liefert den Endtext der Antwort.
   /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
-  Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit, Wartend? nachsenden}) async {
+  Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit, Wartend? nachsenden, String? tier}) async {
     letzteAktivitaet = DateTime.now(); // 1.8.0
     // 1.54.0 — Handy mit Kopfhörer, Bluetooth-Audio oder im Auto: auch getippte Fragen werden vorgelesen (Schalter, Standard an)
     if (!sprechen && istHandy && autoVorlesen) { final z = await handyZustand(); if (vorleseAusgaenge.contains(z['audio']) || z['bewegung'] == 'auto' || z['fokusVorlesen'] == true) sprechen = true; } // v1526 auch im Auto, v1528 Fokus
@@ -322,11 +322,13 @@ extension _Senden on _SitzungState {
     try {
       final bezugText = bezug?.text; // 1.2.2 — Antwort-Bezug geht mit, dann ist er erledigt
       if (bezug != null) _neu(() => bezug = null);
-      final ende = await s.sende(t, tier: tierWahl, bezug: bezugText, // 1.1.0 — Stufenwahl aus der Eingabekarte
+      final ende = await s.sende(t, tier: tier ?? tierWahl, bezug: bezugText, // 1.58.0 G1 Unterhaltung: schnelle Stufe
+        // 1.1.0 — Stufenwahl aus der Eingabekarte
         aufDelta: (d) {
           if (laufend == null) { laufend = e; _neu(() { verlauf.add(e); fluechtig = ''; }); }
           gezeigt += d;
           vorleser?.fuege(d);
+          unterhaltung?.texte(alfred: sprechbar(gezeigt)); // 1.58.0 G1
           _neu(() => e.text = gezeigt);
           _nachUnten();
         },

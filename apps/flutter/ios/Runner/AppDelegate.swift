@@ -29,6 +29,8 @@ import UserNotifications
   let zonen = ZonenWaechter()
   /// v1526 — Bewegung (still, geht, läuft, Rad, Auto)
   let bewegung = BewegungsSinn()
+  /// 1.58.0 G1 — Vorlesen in der Unterhaltung, ohne die Audiositzung der Aufnahme anzufassen
+  let ton = TonSpieler()
 
   override func application(
     _ application: UIApplication,
@@ -236,6 +238,15 @@ import UserNotifications
         case "zwischenablageBild":
           // 1.54.2 — Bild aus der Zwischenablage (iOS fragt beim Einsetzen aus einer anderen App selbst nach)
           if UIPasteboard.general.hasImages, let bild = UIPasteboard.general.image, let pfad = Foto.speichere(bild, nr: 0, art: "eingefuegt") { ergebnis(pfad) } else { ergebnis(nil) }
+        case "tonSpielen":
+          // 1.58.0 G1 — liefert erst am Ende der Wiedergabe (true) oder beim Abbruch (false); Format unlesbar → Fehler, Dart nimmt audioplayers
+          guard let d = args["daten"] as? FlutterStandardTypedData else { ergebnis(FlutterError(code: "args", message: "daten", details: nil)); return }
+          self?.ton.spiele(d.data) { ok, fehler in
+            if let f = fehler { ergebnis(FlutterError(code: "ton", message: f, details: nil)) } else { ergebnis(ok) }
+          }
+        case "tonStopp":
+          self?.ton.stopp()
+          ergebnis(true)
         case "ordnerSchreiben":
           // 1.54.1 — Datei in einen freigegebenen Ordner; nie überschreiben („Name (1).pdf“)
           guard let b = args["bookmark"] as? FlutterStandardTypedData, let name = args["name"] as? String, let daten = args["daten"] as? FlutterStandardTypedData else { ergebnis(FlutterError(code: "args", message: "bookmark, name, daten", details: nil)); return }
@@ -282,6 +293,31 @@ extension AppDelegate {
 }
 
 /// 1.54.1 — Ordnerwahl über das Dateien-Fenster von iOS
+/// 1.58.0 G1 — einfache Wiedergabe für die Unterhaltung. AVAudioPlayer spielt in der Kategorie, die die Aufnahme gesetzt hat
+/// (playAndRecord, Lautsprecher/Bluetooth), und deaktiviert die Sitzung am Ende nicht — das Mikrofon läuft weiter.
+final class TonSpieler: NSObject, AVAudioPlayerDelegate {
+  private var spieler: AVAudioPlayer?
+  private var fertig: ((Bool, String?) -> Void)?
+
+  func spiele(_ daten: Data, fertig: @escaping (Bool, String?) -> Void) {
+    stopp()
+    do {
+      let s = try AVAudioPlayer(data: daten)
+      s.delegate = self
+      spieler = s
+      self.fertig = fertig
+      if !s.play() { beende(false, "Wiedergabe startet nicht") }
+    } catch { fertig(false, error.localizedDescription) }
+  }
+
+  func stopp() { spieler?.stop(); beende(false, nil) }
+
+  private func beende(_ ok: Bool, _ fehler: String?) { let f = fertig; fertig = nil; spieler = nil; f?(ok, fehler) }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { beende(flag, nil) }
+  func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { beende(false, error?.localizedDescription ?? "Format") }
+}
+
 final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
   let fertig: (URL?) -> Void
   init(fertig: @escaping (URL?) -> Void) { self.fertig = fertig }

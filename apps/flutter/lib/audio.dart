@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
@@ -60,7 +60,20 @@ class Audio {
     } catch (_) { return Uint8List(0); }
   }
 
+  /// 1.58.0 G1 — iPhone mit laufendem Mikrofonstrom (Unterhaltung): eigene Wiedergabe (AVAudioPlayer). audioplayers schaltet
+  /// nach jedem Ende die Audiositzung ab — das hält die laufende Aufnahme an, und bei gesperrtem Bildschirm (G2) darf iOS
+  /// sie danach nicht wieder starten. Die native Wiedergabe lässt die Sitzung der Aufnahme (Lautsprecher, Bluetooth) in Ruhe.
+  static const _system = MethodChannel('alfred/system');
+  bool get _nativ => Platform.isIOS && _strom != null;
+
   Future<void> abspielen(Uint8List daten, String mime) async {
+    if (_nativ) {
+      spielt = true;
+      try { await _system.invokeMethod<bool>('tonSpielen', {'daten': daten}); return; }
+      on PlatformException catch (_) { /* Format kann AVAudioPlayer nicht — weiter über audioplayers */ }
+      on MissingPluginException catch (_) {}
+      finally { spielt = false; }
+    }
     await _player.stop();
     final fertig = _player.onPlayerStateChanged.firstWhere((s) => s == PlayerState.completed || s == PlayerState.stopped);
     spielt = true;
@@ -76,7 +89,7 @@ class Audio {
     } finally { spielt = false; try { await f.delete(); } catch (_) {} }
   }
 
-  Future<void> abbrechen() async { try { await _player.stop(); } catch (_) {} }
+  Future<void> abbrechen() async { if (Platform.isIOS) { try { await _system.invokeMethod<bool>('tonStopp'); } catch (_) {} } try { await _player.stop(); } catch (_) {} }
 
   Future<void> dispose() async { try { await _rec.dispose(); } catch (_) {} try { await _player.dispose(); } catch (_) {} }
 }

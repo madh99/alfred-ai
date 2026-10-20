@@ -23,6 +23,7 @@ import 'kopplung.dart'; // Phase 5 H1
 import 'handy_push.dart'; // Phase 5 H2
 import 'halte_knopf.dart'; // 1.53.0+91
 import 'handy_system.dart'; // 1.54.0
+import 'unterhaltung.dart'; // 1.58.0 G1
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -70,6 +71,7 @@ part 'sitzung_senden.dart';
 part 'sitzung_oberflaeche.dart';
 part 'sitzung_gespraeche.dart';
 part 'sitzung_befehle.dart'; // 1.10.0
+part 'sitzung_unterhaltung.dart'; // 1.58.0 G1
 
 /// Alfred — Desktop-App, Phase 4 (Spec docs/specs/2026-10-07-flutter-app-phase4.md).
 /// Meilenstein 1: hängt sich an den Satelliten (IPC), spricht per HTTP mit dem Gehirn, zeigt Verlauf, streamt Antworten,
@@ -533,6 +535,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   @override
   // ── 1.1.0 Redesign Stufe 1 (Owner-Vorlage 09.10.): Symbolleiste | Seitenleiste | Hauptbereich ──────────────────────
   Widget build(BuildContext context) {
+    final seite = _seite(context);
+    final u = unterhaltung; // 1.58.0 G1 — Unterhaltung liegt über allem; der Chat darunter füllt sich mit
+    if (u == null) return seite;
+    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
+      aufKugel: _unterhaltungUnterbrechen, aufStumm: _unterhaltungStumm, aufBeenden: _unterhaltungEnde))]);
+  }
+
+  Widget _seite(BuildContext context) {
     final theme = Theme.of(context);
     if (_handyUngekoppelt) { // Phase 5 H1
       return KopplungsAnsicht(version: appVersion, hinweis: ipcZustand == 'nicht gekoppelt' ? null : ipcZustand, aufGekoppelt: (k) => (ipc as HandyVerbindung).gekoppelt(k), automatisch: startArgs['koppeln']);
@@ -666,6 +676,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// v1526 — auch im Auto (Bewegung), nicht nur mit Kopfhörern/CarPlay
   bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto' || fokusVorlesen);
   bool fokusVorlesen = false; // v1528 — Fokusfilter „Antworten vorlesen“
+  UnterhaltungsStand? unterhaltung; // 1.58.0 G1 — Unterhaltungsmodus läuft
+  SatzendeErkenner? uErkenner;
+  bool uBeschaeftigt = false;
+  DateTime uRuheBis = DateTime.fromMillisecondsSinceEpoch(0);
 
 }
 

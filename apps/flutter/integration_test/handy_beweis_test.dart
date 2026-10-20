@@ -20,7 +20,8 @@ void main() {
   testWidgets('Handy: Frage stellen, Antwort erhalten, Faden archivieren', (t) async {
     await app.main(const []);
     final senden = find.byTooltip('Senden (Enter)');
-    await warte(t, () => senden.evaluate().isNotEmpty, was: 'Chat mit Senden-Knopf');
+    // 1.58.0 G1 — bei leerem Feld steht dort der Unterhaltungsknopf, der Senden-Pfeil kommt erst mit Text
+    await warte(t, () => find.byKey(const Key('unterhaltung-start')).evaluate().isNotEmpty, was: 'Chat mit Unterhaltungsknopf');
     // Status-Punkt grün = WSS verbunden
     await warte(t, () => find.byWidgetPredicate((w) => w is Icon && w.icon == Icons.circle && w.color == Colors.green).evaluate().isNotEmpty, was: 'verbunden');
 
@@ -35,7 +36,7 @@ void main() {
     await t.pump();
     await t.tap(senden);
     await warte(t, () => find.byKey(const Key('stopp')).evaluate().isNotEmpty, sekunden: 15, was: 'Antwort läuft');
-    await warte(t, () => find.byKey(const Key('stopp')).evaluate().isEmpty && senden.evaluate().isNotEmpty, sekunden: 180, was: 'Antwort fertig');
+    await warte(t, () => find.byKey(const Key('stopp')).evaluate().isEmpty && find.byKey(const Key('unterhaltung-start')).evaluate().isNotEmpty, sekunden: 180, was: 'Antwort fertig');
     await warte(t, () => find.textContaining('Verstanden').evaluate().length >= 2, sekunden: 20, was: 'Antwort im Verlauf');
 
     await t.tap(find.byKey(const Key('kopf-menue')));

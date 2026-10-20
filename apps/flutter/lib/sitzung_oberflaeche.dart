@@ -416,10 +416,14 @@ extension _Oberflaeche on _SitzungState {
           if (istDesktop) hoeren // Phase 5 H1 — Aktivierungswort gibt es auf dem Handy nicht (Spec §20.4)
             ? IconButton.filledTonal(tooltip: 'Zuhören aus', onPressed: _hoerenUmschalten, icon: const Icon(Icons.headset_mic, size: 20), visualDensity: VisualDensity.compact)
             : IconButton(tooltip: 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: const Icon(Icons.headset, size: 22), visualDensity: VisualDensity.compact),
+          if (istDesktop) IconButton(key: const Key('unterhaltung-start'), tooltip: 'Unterhaltung (freies Gespräch)', onPressed: server == null || antwortet ? null : _unterhaltungStart, icon: const Icon(Icons.graphic_eq, size: 22), visualDensity: VisualDensity.compact), // 1.58.0 G4
           const SizedBox(width: 4),
           antwortet // 1.7.0 — während der Antwort wird Senden zu Stopp (Owner-Freigabe 11.10., Punkt 5)
             ? StoppKnopf(key: const Key('stopp'), aufStopp: _abbrechen) // 1.14.1 — Lauf-Kreis um Stopp (wie bis 1.6 um Senden)
-            : IconButton.filled(tooltip: 'Senden (Enter)', onPressed: () => _senden(), icon: const Icon(Icons.arrow_upward, size: 20)),
+            // 1.58.0 G1 (Owner 20.10.) — Handy: leeres Eingabefeld → blauer Unterhaltungsknopf, sobald getippt wird → Senden-Pfeil
+            : ValueListenableBuilder<TextEditingValue>(valueListenable: eingabe, builder: (context, wert, _) => istHandy && wert.text.trim().isEmpty && anhaenge.isEmpty && !aufnahme
+                ? IconButton.filled(key: const Key('unterhaltung-start'), tooltip: 'Unterhaltung', onPressed: server == null ? null : _unterhaltungStart, style: IconButton.styleFrom(backgroundColor: const Color(0xFF1F6FEB), foregroundColor: Colors.white), icon: const Icon(Icons.graphic_eq, size: 20))
+                : IconButton.filled(key: const Key('senden'), tooltip: 'Senden (Enter)', onPressed: () => _senden(), icon: const Icon(Icons.arrow_upward, size: 20))),
         ]),
       ]),
     );
