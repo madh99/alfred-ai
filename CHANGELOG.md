@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Siri-Kurzbefehle nur am entsperrten iPhone (App 1.67.1)
+
+„Frag Alfred“ und „Unterhaltung mit Alfred“ verlangen am gesperrten iPhone erst Face ID oder den Code. Alfred kann Haus, Kalender und Geräte bedienen, darum soll niemand über Siri an einem fremden, gesperrten Telefon Aufträge geben können.
+
 ### Added — Siri: „Frag Alfred“ und „Unterhaltung mit Alfred“ (App 1.67.0, iPhone)
 
 Owner 20.10.: „Koppel-Ergänzung und Siri-Kurzbefehle wie empfohlen umsetzen“.

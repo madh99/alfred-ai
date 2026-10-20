@@ -12,6 +12,8 @@ struct FragAlfred: AppIntent {
   static var title: LocalizedStringResource = "Alfred fragen"
   static var description = IntentDescription("Stellt Alfred eine Frage; Siri liest die Antwort vor. Frage und Antwort stehen danach im Hauptgespräch.")
   static var openAppWhenRun = false
+  /// Alfred kann Haus, Kalender und Geräte bedienen: am gesperrten iPhone erst nach Face ID / Code (Sicherheitsprüfung 20.10.)
+  static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
   @Parameter(title: "Frage", requestValueDialog: IntentDialog("Was möchtest du Alfred fragen?")) var frage: String
 
@@ -27,6 +29,7 @@ struct UnterhaltungMitAlfred: AppIntent {
   static var title: LocalizedStringResource = "Unterhaltung mit Alfred"
   static var description = IntentDescription("Öffnet Alfred direkt im Unterhaltungsmodus.")
   static var openAppWhenRun = true
+  static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
   @MainActor
   func perform() async throws -> some IntentResult {
