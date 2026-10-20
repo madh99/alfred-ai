@@ -47,12 +47,24 @@ enum GemeinsamerSpeicher {
 }
 
 /// HTTPS mit festem Server-Schlüssel (SHA-256 des SubjectPublicKeyInfo, wie lib/spki.dart).
-final class Netz: NSObject, URLSessionDelegate {
+final class Netz: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
   private let k: Kopplung
   private lazy var sitzung = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
   init(_ k: Kopplung) { self.k = k }
 
   func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    pruefe(challenge, completionHandler)
+  }
+
+  /// 1.67.3 — Realfall 20.10. 19:42 („Frag Alfred“ aus der Kurzbefehle-App: „Zertifikat ungültig“): bei Datenströmen
+  /// (bytes(for:)) als ERSTER Anfrage schickt iOS die Serverprüfung an die Aufgaben-Ebene. Ohne diese Methode prüfte iOS selbst
+  /// und lehnte das selbst signierte Zertifikat ab. „Teilen“ fiel nicht auf: dort liefen vorher Uploads auf derselben Verbindung.
+  func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    pruefe(challenge, completionHandler)
+  }
+
+  private func pruefe(_ challenge: URLAuthenticationChallenge, _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else { completionHandler(.performDefaultHandling, nil); return }
     guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = challenge.protectionSpace.serverTrust,
           let kette = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let blatt = kette.first,
           let spki = Der.spki([UInt8](SecCertificateCopyData(blatt) as Data)) else { completionHandler(.cancelAuthenticationChallenge, nil); return }

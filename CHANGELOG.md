@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — „Frag Alfred“: Zertifikatsprüfung bei Datenströmen (App 1.67.3)
+
+Realfall 20.10. 19:42: „Frag Alfred“ aus der Kurzbefehle-App meldete „Das Zertifikat für diesen Server ist ungültig“. Ist ein Datenstrom die erste Anfrage, fragt iOS die Serverprüfung auf Aufgaben-Ebene ab. Diese Stelle fehlte, darum prüfte iOS selbst und lehnte das selbst signierte Zertifikat ab. Jetzt laufen beide Ebenen über denselben Schlüsselvergleich wie bisher.
+
 ### Fixed — App Store: Kurzbefehl-Beschreibung ohne „Siri“ (App 1.67.2)
 
 Apple hat Build 112 abgelehnt (ITMS-90626): Die Beschreibung eines App Intents darf das Wort „Siri“ nicht enthalten. Die Beschreibung von „Alfred fragen“ ist umformuliert. Das TestFlight-Skript prüft die Intent-Texte jetzt vor dem Hochladen.
