@@ -17,6 +17,8 @@ export class SpeechSynthesizer {
   private cachedVoiceId?: string;
   /** v1244 — Cache der Owner-Standardstimme läuft ab, damit „set_default" ohne Neustart wirkt. */
   private cachedVoiceAt = 0;
+  /** v1534 — zuletzt gültig aufgelöste Standardstimme: fällt die Auflösung aus, spricht Alfred weiter damit statt mit der Server-Standardstimme */
+  private letzteGueltigeStimme?: string;
   private static readonly VOICE_CACHE_MS = 60_000;
   private usageCallback?: (model: string, units: number) => void;
 
@@ -31,11 +33,21 @@ export class SpeechSynthesizer {
   private async loeseStimmennameAuf(name: string): Promise<string | undefined> {
     try {
       const resp = await fetch(`${this.baseUrl}/audio/voices`, { headers: { Authorization: `Bearer ${this.apiKey}` } });
-      if (!resp.ok) return undefined;
+      if (!resp.ok) { this.logger.warn({ name, status: resp.status }, 'v1534 Stimmenliste des Anbieters nicht abrufbar'); return undefined; }
       const data = await resp.json() as { items?: Array<{ id: string; name: string }> };
       const treffer = (data.items ?? []).find(v => v.name.toLowerCase() === name.toLowerCase());
       if (treffer) this.logger.info({ name, voiceId: treffer.id }, 'v1244 Standardstimme per Name aufgelöst');
       return treffer?.id;
+    } catch { return undefined; }
+  }
+
+  /** v1534 — Stimm-ID aus der eigenen Ablage (Skill voice: voice_<name> = {"voice_id": …}). */
+  private async stimmeAusAblage(userId: string, name: string): Promise<string | undefined> {
+    if (!this.skillState) return undefined;
+    try {
+      const roh = await this.skillState.get(userId, 'voice', `voice_${name.toLowerCase().replace(/\s+/g, '_')}`);
+      const id = roh ? (JSON.parse(roh) as { voice_id?: unknown }).voice_id : undefined;
+      return typeof id === 'string' && /^[0-9a-f]{8}-/.test(id) ? id : undefined;
     } catch { return undefined; }
   }
 
@@ -69,7 +81,15 @@ export class SpeechSynthesizer {
           let val: string | undefined;
           if (this.skillState) val = await this.skillState.get(userId, 'voice', 'voice_default') ?? undefined;
           else if (this.memoryRepo) val = (await this.memoryRepo.recall(userId, 'voice_default'))?.value ?? undefined;
-          if (val && !/^[0-9a-f]{8}-/.test(val)) val = await this.loeseStimmennameAuf(val);
+          // v1534 — Realfall 20.10.: ab 13:27 scheiterte die Namensauflösung über die Anbieterliste still, Alfred sprach mit der
+          // Server-Standardstimme. Zuerst die eigene Ablage (voice_<name>, beim Anlegen der Stimme gespeichert), dann der Anbieter,
+          // sonst die zuletzt gültige Stimme.
+          if (val && !/^[0-9a-f]{8}-/.test(val)) {
+            const name = val;
+            val = (await this.stimmeAusAblage(userId, name)) ?? (await this.loeseStimmennameAuf(name));
+            if (!val) { val = this.letzteGueltigeStimme; this.logger.warn({ name, weiter: val ?? 'Server-Standardstimme' }, 'v1534 Standardstimme nicht auflösbar'); }
+          }
+          if (val) this.letzteGueltigeStimme = val;
           this.cachedVoiceId = val || undefined;
           this.cachedVoiceAt = Date.now();
         } catch { /* ignore */ }

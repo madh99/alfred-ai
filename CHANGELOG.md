@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Alfred spricht wieder mit seiner eingestellten Stimme (v1534)
+
+Realfall 20.10.: Ab 13:27 klang Alfred abends mit der Server-Standardstimme statt mit „alfred-jav“. Die Stimme ist als Name gespeichert. Sie wurde bei jedem Abruf über die Stimmenliste des Anbieters in ihre ID übersetzt, und diese Abfrage scheiterte ohne Meldung.
+
+- Die Übersetzung nimmt zuerst Alfreds eigene Ablage. Die ID wurde schon beim Anlegen der Stimme gespeichert. Erst danach wird der Anbieter gefragt.
+- Fällt beides aus, bleibt die zuletzt gültige Stimme, statt auf die Standardstimme zu wechseln. Das Scheitern steht jetzt im Log („v1534 …“).
+
 ### Fixed — Siri-Sätze, die nicht als Nachricht an einen Kontakt gelten (App 1.67.4)
 
 Realfall 20.10.: „Hey Siri, frag Alfred …“ öffnete Nachrichten und wollte jemandem schreiben. Siri hält „Alfred“ für einen Kontakt, und „Frag/Sag“ plus Name ist für Siri eine Nachricht an eine Person. Das hat Vorrang vor App-Kurzbefehlen. Neue Sätze:
