@@ -59,7 +59,7 @@ class PinAgent extends https.Agent {
   // http-Client unterstützt das asynchrone createConnection (Callback): die Anfrage wartet auf die Prüfung
   override createConnection(optionen: http.RequestOptions, fertig?: (err: Error | null, stream: Duplex) => void): Duplex | undefined {
     const host = String(optionen.host ?? optionen.hostname ?? '');
-    const s = tls.connect({ ...(optionen as tls.ConnectionOptions), servername: (optionen as tls.ConnectionOptions).servername ?? (host && !net.isIP(host) ? host : undefined), rejectUnauthorized: !this.k.insecure && !(this.k.serverSchluessel?.length) });
+    const s = tls.connect({ ...(optionen as tls.ConnectionOptions), servername: (optionen as tls.ConnectionOptions).servername ?? (host && !net.isIP(host) ? host : undefined), rejectUnauthorized: !this.k.insecure }); // CA-Prüfung (samt Hostname) bleibt, wo sie war; der Pin kommt zusätzlich
     let erledigt = false;
     const melde = (err: Error | null) => { if (erledigt) return; erledigt = true; if (err) s.destroy(); fertig?.(err, s); };
     s.once('secureConnect', () => {

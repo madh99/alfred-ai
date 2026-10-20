@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Pinning schwächt die normale Zertifikatsprüfung nicht mehr ab (v1532)
+
+Gefunden bei der Nachprüfung von v1531: Ein Gerät, das **mit** Zertifikatsprüfung gekoppelt ist (ohne `--insecure`), hat sie in der Stufe „lernen“ übersprungen, sobald es einen Server-Schlüssel kannte. Jetzt bleibt die Prüfung samt Hostname erhalten, und der Pin kommt zusätzlich dazu. Die Satelliten mit selbst signiertem Server (`insecure`) verhalten sich unverändert.
+
 ### Security — Satelliten: Server-Schlüssel gepinnt, Befehle signiert (v1531, App 1.66.0)
 
 Owner 20.10.: „1 und 2 gemeinsam wie empfohlen umsetzen“. Bisher verbanden sich die Satelliten ohne Zertifikatsprüfung. Wer sich im Heimnetz dazwischenschaltet, hätte das Gerätetoken bekommen und den Geräten Befehle schicken können.
