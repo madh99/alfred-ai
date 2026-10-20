@@ -11,6 +11,7 @@ Owner 20.10. (Screenshots Wissensgraph): Netzwerkgeräte aus UniFi/Home Assistan
 
 - Fahrt- und Strecken-Sätze (→, „nach“, Rück-/An-/Hinfahrt, „return“, Kilometer) zählen nicht mehr als Beleg für Wohn- oder Arbeitsort; gilt für beide Stellen, die die Merkmale setzen.
 - v1524: Der Wächter für Verbindungen zu einem falschen Zuhause prüft auch Netzwerkgeräte.
+- v1525: Zweite Ursache belegt: Altlengbach liegt auf der Ebene `infra` (CMDB), Querverknüpfung und Wächter sahen nur `personal` — ohne Kandidat entstanden keine Zuhause-Verbindungen, mit falsch markiertem Linz die falschen, und der Wächter räumte nie auf; nur die nächtliche Konsolidierung sah alle Ebenen. Jetzt wählen alle drei das Zuhause aus allen Orten. Dazu 11 veraltete Verbindungen zu „Österreich“ (15./16.10.) gelöscht.
 - Bestandsdaten einmalig korrigiert: Linz ohne Zuhause-/Arbeits-Merkmale, Altlengbach ist das Zuhause, die falschen Verbindungen zu Linz sind gelöscht.
 
 ### Added — Standortzonen des iPhones (v1522, App 1.55.0)

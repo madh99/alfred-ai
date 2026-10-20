@@ -1733,7 +1733,7 @@ export class KnowledgeGraphService {
         try {
           const { entities: alleEntities, relations: alleRelations } = await this.kgRepo.getFullGraph(userId, 'personal');
           const byId = new Map(alleEntities.map(e => [e.id, e]));
-          const kanonisch = waehleKanonischesZuhause(alleEntities.filter(e => e.entityType === 'location'));
+          const kanonisch = waehleKanonischesZuhause(await this.kgRepo.getEntitiesByType(userId, 'location')); // v1525 — alle Ebenen, wie die Konsolidierung
           if (kanonisch) {
             for (const r of alleRelations) {
               if (r.relationType !== 'located_at' && r.relationType !== 'home_location') continue;
@@ -2271,7 +2271,9 @@ export class KnowledgeGraphService {
             'KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt');
         }
       }
-      const homeLocation = waehleKanonischesZuhause(locations);
+      // v1525 — Zuhause aus ALLEN Orten wählen, nicht nur der Ebene „personal“: Altlengbach liegt auf „infra“ (CMDB) und war hier
+      // unsichtbar — ohne Kandidat entstanden keine Relationen, mit falsch markiertem Linz die falschen (Realfall 20.10.).
+      const homeLocation = waehleKanonischesZuhause(await this.kgRepo.getEntitiesByType(userId, 'location'));
       const energyMetric = metrics.find(m => m.normalizedName === 'strompreis');
 
       // Rule 1: Vehicle ↔ Charger
