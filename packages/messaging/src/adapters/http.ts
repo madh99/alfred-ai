@@ -1053,6 +1053,8 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1224 — Geräte (Satelliten): Pairing, Liste, Widerruf, WebSocket-Upgrade. */
   private geraeteCallbacks?: {
     pairingCode(): Promise<{ code: string; gueltigBis: string } | { fehler: string }> | { code: string; gueltigBis: string } | { fehler: string };
+    /** v1535 — Kopplungscode aus der App (Gerätetoken eines Owner-Geräts); undefined = kein Owner-Gerät */
+    kopplungsCode?(geraetId: string): Promise<{ code: string; gueltigBis: string } | { fehler: string } | undefined>;
     paare(body: Record<string, unknown>, remote: string): Promise<{ ok: true; id: string; token: string; name: string; skillName: string } | { ok: false; grund: string }>;
     liste(): Promise<unknown[]>;
     widerrufe(id: string): Promise<boolean>;
@@ -2078,6 +2080,8 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname === '/api/lebenszeichen' && req.method === 'GET') {
       this.handleLebenszeichen(req, res).catch(err => this.safeError(res, err));
     // ── v1224 Geräte ──
+    } else if (url.pathname === '/api/geraete/kopplungscode' && req.method === 'POST') {
+      this.handleGeraetKopplungscode(req, res).catch(err => this.safeError(res, err)); // v1535
     } else if (url.pathname === '/api/geraete/pairing-code' && req.method === 'POST') {
       this.handleGeraetePairingCode(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete/pair' && req.method === 'POST') {
@@ -6775,6 +6779,21 @@ export class HttpAdapter extends MessagingAdapter {
     res.writeHead('fehler' in r ? 409 : 200, { 'Content-Type': 'application/json' });
     if ('fehler' in r) { res.end(JSON.stringify(r)); return; }
     // Phase 5 H1 (Spec Geräte §20.4/§20.5 Punkt 6) — QR-Inhalt {server, code, fingerabdruck} für die Handy-App
+    const server = (this.publicUrl ?? `https://${req.headers.host ?? `${this.host}:${this.port}`}`).replace(/\/+$/, '');
+    const fingerabdruck = this.tlsFingerabdruck;
+    res.end(JSON.stringify({ ...r, server, ...(fingerabdruck ? { fingerabdruck, qr: JSON.stringify({ server, code: r.code, fingerabdruck }) } : {}) }));
+  }
+
+  /** v1535 (Owner 20.10.: „1–5 wie vorgeschlagen“) — Kopplungscode aus Desktop- oder Handy-App: wie im Web (Server, Schlüssel, QR),
+   *  aber mit dem Gerätetoken eines Owner-Geräts. Der Owner bekommt bei jedem Code eine Meldung (wer hat ihn angefordert). */
+  private async handleGeraetKopplungscode(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.kopplungsCode) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const r = await this.geraeteCallbacks.kopplungsCode(geraet.geraetId);
+    if (!r) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
+    res.writeHead('fehler' in r ? 409 : 200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    if ('fehler' in r) { res.end(JSON.stringify(r)); return; }
     const server = (this.publicUrl ?? `https://${req.headers.host ?? `${this.host}:${this.port}`}`).replace(/\/+$/, '');
     const fingerabdruck = this.tlsFingerabdruck;
     res.end(JSON.stringify({ ...r, server, ...(fingerabdruck ? { fingerabdruck, qr: JSON.stringify({ server, code: r.code, fingerabdruck }) } : {}) }));

@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Lage neu, neues Gerät aus der App koppeln (v1535, App 1.70.0)
+
+Owner 20.10.: „1–5 wie vorgeschlagen umsetzen“. Hier sind Teil 1 und 2 umgesetzt, die Teile 3–5 folgen im nächsten Release.
+
+- **Lage**, in den Apps am iPhone und am Desktop:
+  - **Auf einen Blick** mit Ampel-Chips: Zustand gesamt, Geräte online, Kosten heute von Budget, Modelle. Jeder Chip springt zu seinem Abschnitt.
+  - **Braucht dich:** Vorgänge, die auf dich warten, und offene Bestätigungen.
+  - **Lage:** drei Zeilen mit Symbolen, der Rest über „mehr“, dazu aufklappbar „Warum?“.
+  - **Vorgänge.**
+  - **Befunde** mit Alter, dazu aufklappbar „Erledigt (24 h)“.
+  - **Geräte** mit Akku, Leerlauf und CPU, aufklappbar mit Fenster, RAM, Laufwerken und Version, dazu laufende Vorhaben.
+  - **Kennzahlen** heute gegen gestern.
+  - **Technik** eingeklappt: Wächter-Meldungen, Modelle mit Ampel, Kanäle, Proben, Jobs mit Fehler, letzte Läufe.
+  - Fällt eine Datenquelle aus, bleibt die andere sichtbar. „Stand“ und „veraltet“ werden angezeigt.
+  - Im Hintergrund pausiert die Aktualisierung. Am iPhone heißt die Ansicht jetzt „Lage“ statt „Kacheln“.
+- **Neues Gerät koppeln** (Einstellungen → Verbindung): Die App zeigt den Kopplungscode, einen QR-Code für die Handy-App und den fertigen Befehl für PC, Mac und Linux samt Schlüsselprüfung. Der Server gibt Codes nur an Geräte des Owners aus. Für jeden Code bekommst du eine Meldung, welches Gerät ihn angefordert hat.
+
 ### Changed — iPhone-Chat: schwebender Kopf, Eingabe in zwei Zuständen, Milchglas (App 1.69.0)
 
 Owner 20.10.: „1–3 wie vorgeschlagen umsetzen, Weg A“.

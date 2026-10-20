@@ -681,6 +681,8 @@ extension _Oberflaeche on _SitzungState {
         Text('Gerät: ${konfig?.name ?? '…'}', style: theme.textTheme.bodyMedium),
         Text('Server: ${konfig?.server ?? '…'}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text(satellit == null ? ipcZustand : 'Satellit ${satellit!.version} · ${satellit!.verbunden ? 'verbunden mit Alfred ${satellit!.serverVersion ?? ''}' : 'nicht verbunden'}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        // 1.70.0 — neues Gerät direkt aus der App koppeln (Code, QR, Befehl mit Schlüsselprüfung)
+        if (server != null) Align(alignment: Alignment.centerLeft, child: Padding(padding: const EdgeInsets.only(top: 6), child: OutlinedButton.icon(key: const Key('geraet-koppeln'), icon: const Icon(Icons.add_link, size: 18), label: const Text('Neues Gerät koppeln …'), onPressed: () => zeigeNeuesGeraet(context, server!.json)))),
       ])),
       karte('App', Row(children: [
         Expanded(child: Text('Version ${appVersion.isEmpty ? '…' : appVersion}${update != null ? ' — Update ${update!.version} verfügbar' : ' — aktuell'}', style: theme.textTheme.bodyMedium)),
@@ -895,52 +897,3 @@ extension _Oberflaeche on _SitzungState {
   }
 }
 
-/// 1.69.0 — Milchglas (Weg A): weichgezeichneter Hintergrund, halbdurchsichtige Fläche, feiner heller Rand.
-class Glas extends StatelessWidget {
-  const Glas({super.key, required this.child, this.radius = 23, this.rund = false});
-  final Widget child;
-  final double radius;
-  final bool rund;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final hell = theme.brightness == Brightness.light;
-    final br = BorderRadius.circular(rund ? 999 : radius);
-    return DecoratedBox(
-      decoration: BoxDecoration(borderRadius: br, boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: hell ? 0.08 : 0.35), blurRadius: 18, offset: const Offset(0, 4))]),
-      child: ClipRRect(borderRadius: br, child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: br,
-            color: (hell ? Colors.white : theme.colorScheme.surfaceContainerHigh).withValues(alpha: hell ? 0.62 : 0.55),
-            border: Border.all(color: Colors.white.withValues(alpha: hell ? 0.6 : 0.10), width: 0.8),
-          ),
-          child: child,
-        ),
-      )),
-    );
-  }
-}
-
-/// 1.69.0 — meldet die Größe des Kindes nach jedem Layout (Abstand des Verlaufs zur schwebenden Eingabe).
-class Messen extends SingleChildRenderObjectWidget {
-  const Messen({super.key, required this.aufGroesse, super.child});
-  final ValueChanged<Size> aufGroesse;
-  @override
-  RenderObject createRenderObject(BuildContext context) => _MessenBox(aufGroesse);
-  @override
-  void updateRenderObject(BuildContext context, covariant _MessenBox r) { r.aufGroesse = aufGroesse; }
-}
-
-class _MessenBox extends RenderProxyBox {
-  _MessenBox(this.aufGroesse);
-  ValueChanged<Size> aufGroesse;
-  Size? _alt;
-  @override
-  void performLayout() {
-    super.performLayout();
-    if (size != _alt) { _alt = size; final g = size; WidgetsBinding.instance.addPostFrameCallback((_) => aufGroesse(g)); }
-  }
-}

@@ -2,11 +2,9 @@ import 'dart:async';
 import 'dart:convert'; // Phase 5 H1 Startdatei
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui; // 1.69.0 Milchglas
 
 import 'package:flutter/foundation.dart' show kDebugMode; // Phase 5 H1
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart'; // 1.69.0 Messen
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:local_notifier/local_notifier.dart';
@@ -26,6 +24,8 @@ import 'handy_push.dart'; // Phase 5 H2
 import 'halte_knopf.dart'; // 1.53.0+91
 import 'handy_system.dart'; // 1.54.0
 import 'unterhaltung.dart'; // 1.58.0 G1
+import 'glas.dart'; // 1.69.0
+import 'geraet_koppeln.dart'; // 1.70.0
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
@@ -558,7 +558,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     }
     final inhalt = switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
-          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen, aufVorgaenge: () => setState(() => ansicht = Ansicht.vorgaenge), aufBefunde: (q) => setState(() { befundeFilter = q; ansicht = Ansicht.befunde; })),
+          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, bestaetigungen: offen.length, aufEingang: () => setState(() => ansicht = Ansicht.eingang), aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen, aufVorgaenge: () => setState(() => ansicht = Ansicht.vorgaenge), aufBefunde: (q) => setState(() { befundeFilter = q; ansicht = Ansicht.befunde; })),
           Ansicht.eingang => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Eingang(json: server!.json, bestaetigungen: List.of(offen), aufEntscheiden: _entscheide, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen, aufGeaendert: () { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }), // 1.36.0
           Ansicht.vorgaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : VorgaengeAnsicht(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen, aufGeaendert: _vorgaengeLaden), // 1.34.0
           Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
@@ -603,7 +603,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       _auswahlVorher = auswahl;
       WidgetsBinding.instance.addPostFrameCallback((_) { if (_schublade.currentState?.isDrawerOpen == true) _schublade.currentState?.closeDrawer(); });
     }
-    final titel = ansicht == Ansicht.chat ? _fadenTitel(server?.faden) : ansicht.name[0].toUpperCase() + ansicht.name.substring(1);
+    final titel = ansicht == Ansicht.chat ? _fadenTitel(server?.faden) : ansicht == Ansicht.kacheln ? 'Lage' : ansicht.name[0].toUpperCase() + ansicht.name.substring(1); // 1.70.0 — „Lage“ statt „Kacheln“
     return Scaffold(
       key: _schublade,
       drawer: Drawer(width: MediaQuery.sizeOf(context).width.clamp(0, 380).toDouble(), child: SafeArea(child: Row(children: [

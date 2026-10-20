@@ -14143,6 +14143,17 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const appMeldungsGrenze = new (await import('./geraete/app-meldungen.js')).AppMeldungsGrenze(); // v1351
         (logApiAdapter as any).setGeraeteCallbacks({
           pairingCode: () => gw.erzeugePairingCode(),
+          // v1535 — Kopplungscode aus der App: nur Owner-Geräte; Meldung an den Owner (Erkennung, falls ein Gerät missbraucht wird)
+          kopplungsCode: async (geraetId: string) => {
+            if (!(await this.geraetGehoertOwner(geraetId))) return undefined;
+            const r = gw.erzeugePairingCode();
+            if ('code' in r) {
+              const von = gw.nameVon(geraetId) ?? geraetId.slice(0, 8);
+              this.logger.info({ geraet: von }, 'v1535 Kopplungscode aus der App erzeugt');
+              void this.sendeAnOwner(`🔗 Kopplungscode für ein neues Gerät erzeugt — angefordert von „${von}“, 5 Minuten gültig. Warst du das nicht: in der App unter Geräte „${von}“ entkoppeln.`);
+            }
+            return r;
+          },
           paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
           liste: () => gw.liste(),
           widerrufe: (id: string) => gw.widerrufe(id),
