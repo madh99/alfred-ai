@@ -18,7 +18,7 @@ Usage:
 Commands:
   start          Start Alfred (load config, bootstrap, and run)
   chat           Auf gekoppelten Geräten: die Sitzung (wie alfred sitzung); sonst Terminal-Chat zum Server (--model, --tier)
-  pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
+  pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--schluessel <hex>] [--name] [--insecure] [--verzeichnisse "a;b"])
   einstellungen  Satelliten-Einstellungen anzeigen oder ändern (freigabe, fenster-sperre, foto-sperre, wort, sinne-fenster, oberflaeche)
   sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit, --einfach = ohne Ink-Oberfläche)
   satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal, --install, --starter = alfred in den PATH)
@@ -163,6 +163,7 @@ async function main(): Promise<void> {
         name: typeof parsed.flags['name'] === 'string' ? parsed.flags['name'] : undefined,
         insecure: !!parsed.flags['insecure'],
         verzeichnisse: typeof parsed.flags['verzeichnisse'] === 'string' ? parsed.flags['verzeichnisse'] : undefined,
+        schluessel: typeof parsed.flags['schluessel'] === 'string' ? parsed.flags['schluessel'] : undefined, // v1533
       });
       break;
     }

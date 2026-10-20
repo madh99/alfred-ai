@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Siri: „Frag Alfred“ und „Unterhaltung mit Alfred“ (App 1.67.0, iPhone)
+
+Owner 20.10.: „Koppel-Ergänzung und Siri-Kurzbefehle wie empfohlen umsetzen“.
+
+- **„Hey Siri, frag Alfred“** (auch „Alfred fragen“, „Frage an Alfred“): Siri fragt, was du wissen willst. Alfred antwortet auf der schnellen Stufe, Siri liest die Antwort vor. Lange Antworten werden nach etwa 700 Zeichen beendet mit „Den Rest findest du im Chat“. Frage und Antwort stehen danach im Hauptgespräch. Die App muss dafür nicht offen sein.
+- **„Hey Siri, Unterhaltung mit Alfred“** (auch „Mit Alfred sprechen“): Die App öffnet sich direkt im Unterhaltungsmodus, auch aus dem kalten Start.
+- Die Kurzbefehle stehen ohne Einrichtung bereit, auch in der Kurzbefehle-App. Die Grundsprache der App ist jetzt Deutsch, damit Siri die Sätze zuordnet.
+
+### Changed — Desktop koppeln mit Schlüsselprüfung (v1533)
+
+- In der Web-Oberfläche (Geräte → Kopplungscode) steht der **fertige Befehl** zum Kopieren: `alfred pair --server … --code … --insecure --schluessel …`.
+- `alfred pair --schluessel <hex>` vergleicht den Schlüssel des Servers **vor** dem Koppeln. Passt er nicht, wird abgebrochen. Die Kopplung selbst läuft über eine Verbindung, die genau diesen Schlüssel erzwingt. Bei https ohne lesbaren Schlüssel wird nicht mehr gekoppelt.
+
 ### Security — Pinning schwächt die normale Zertifikatsprüfung nicht mehr ab (v1532)
 
 Gefunden bei der Nachprüfung von v1531: Ein Gerät, das **mit** Zertifikatsprüfung gekoppelt ist (ohne `--insecure`), hat sie in der Stufe „lernen“ übersprungen, sobald es einen Server-Schlüssel kannte. Jetzt bleibt die Prüfung samt Hostname erhalten, und der Pin kommt zusätzlich dazu. Die Satelliten mit selbst signiertem Server (`insecure`) verhalten sich unverändert.

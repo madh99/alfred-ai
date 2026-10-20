@@ -28,6 +28,7 @@
 		C9B9E23FBAAB0C8E943171C1 /* Teilen.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F555217E47C22B2C7528DA4C /* Teilen.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D1A1B114C4D5E223EE04D1F7 /* FokusErweiterung.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6B9ADF4DDEB291D5EFFFF3 /* FokusErweiterung.swift */; };
 		E600D38DAA0524D3D5313340 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E528AE7A5838DDCD418D4C51 /* Foundation.framework */; };
+		EB39CCB60FEEEDACB5EAC996 /* SiriBefehle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F6E34587775D3378713776F /* SiriBefehle.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -97,6 +98,7 @@
 		363A3921E41F4F385EBF8652 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		372AFFAE828C0BF9F2F1BEA1 /* Teilen.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = Teilen.entitlements; sourceTree = "<group>"; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
+		4F6E34587775D3378713776F /* SiriBefehle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SiriBefehle.swift; sourceTree = "<group>"; };
 		61A35BD3C2369A14546566EA /* AlfredNetz.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AlfredNetz.swift; sourceTree = "<group>"; };
 		71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Fokus.xcconfig; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				8C7D90C994CA51AD3C496AF2 /* ZonenKarte.swift */,
 				C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */,
+				4F6E34587775D3378713776F /* SiriBefehle.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -366,11 +369,12 @@
 			};
 			buildConfigurationList = 97C146E91CF9000F007C117D /* Build configuration list for PBXProject "Runner" */;
 			compatibilityVersion = "Xcode 9.3";
-			developmentRegion = en;
+			developmentRegion = de;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				de,
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
@@ -495,6 +499,7 @@
 				02CAD672AD756B1DED09CF6E /* AlfredNetz.swift in Sources */,
 				7230B0676E2DDD689A3E8F36 /* ZonenKarte.swift in Sources */,
 				3481407BE5CE99332B7D52A1 /* FokusFilter.swift in Sources */,
+				EB39CCB60FEEEDACB5EAC996 /* SiriBefehle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -26,6 +26,11 @@ Future<Map<String, dynamic>> handyZustand() async {
   on PlatformException { return const {}; }
 }
 
+/// 1.67.0 — hat Siri („Unterhaltung mit Alfred“) gerade die Unterhaltung gewünscht? Liest und löscht den Wunsch.
+Future<bool> handyUnterhaltungAusstehend() async {
+  try { return await _kanal.invokeMethod<bool>('unterhaltungAusstehend') ?? false; } catch (_) { return false; }
+}
+
 /// 1.62.0 — aktuellen Fokusfilter von iOS abgleichen (das Ausschalten eines Fokus ruft den Filter nicht auf).
 Future<void> handyFokusAbgleich() async {
   try { await _kanal.invokeMethod<bool>('fokusAbgleich').timeout(const Duration(seconds: 8)); } catch (_) {}

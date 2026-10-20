@@ -18,6 +18,12 @@ def gemeinsam_aufnehmen(projekt, runner)
   # v1528 — Fokusfilter (App Intents)
   fokus = rgruppe.files.find { |f| f.path == 'FokusFilter.swift' } || rgruppe.new_reference('FokusFilter.swift')
   runner.add_file_references([fokus]) unless runner.source_build_phase.files_references.include?(fokus)
+  # 1.67.0 — Siri-Kurzbefehle (nur in der App)
+  siri = rgruppe.files.find { |f| f.path == 'SiriBefehle.swift' } || rgruppe.new_reference('SiriBefehle.swift')
+  runner.add_file_references([siri]) unless runner.source_build_phase.files_references.include?(siri)
+  # 1.67.0 — Grundsprache Deutsch: Siri ordnet die Sätze der Kurzbefehle der Gerätesprache zu
+  projekt.root_object.development_region = 'de'
+  projekt.root_object.known_regions = (projekt.root_object.known_regions | ['de'])
 end
 
 # 1.65.0 (Owner 20.10.: „Weg 1“) — Fokus-Erweiterung: App-Intents-Erweiterung (ExtensionKit), damit iOS den Fokusfilter auch bei

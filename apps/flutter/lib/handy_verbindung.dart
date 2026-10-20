@@ -97,7 +97,7 @@ Future<Kopplung> koppeln({required String server, required String code, required
 }
 
 class HandyVerbindung implements AppVerbindung {
-  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, this.aufAudio, this.aufBewegung, Schluesselbund? speicher})
+  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, this.aufAudio, this.aufBewegung, this.aufUnterhaltung, Schluesselbund? speicher})
       : _speicher = speicher ?? const GeraeteSchluesselbund();
 
   final void Function(SatellitStatus) aufStatus;
@@ -110,6 +110,8 @@ class HandyVerbindung implements AppVerbindung {
   final void Function(String)? aufAudio;
   /// v1526 — Bewegung (auto, rad, laeuft, geht, still)
   final void Function(String)? aufBewegung;
+  /// 1.67.0 — Siri: „Unterhaltung mit Alfred“ bei laufender App
+  final void Function()? aufUnterhaltung;
   final void Function(String) aufZustand;
   final String Function() version;
   final Schluesselbund _speicher;
@@ -133,6 +135,7 @@ class HandyVerbindung implements AppVerbindung {
     _netz.setMethodCallHandler((c) async { // 1.54.0 H3 Netzwechsel; 1.54.3 Audio-Ausgang
       if (c.method == 'geaendert') jetztVerbinden();
       if (c.method == 'audio' && c.arguments is Map) { aufAudio?.call('${(c.arguments as Map)['audio']}'); _sinneSenden(); }
+      if (c.method == 'unterhaltung') aufUnterhaltung?.call(); // 1.67.0
       if (c.method == 'bewegung' && c.arguments is Map) { aufBewegung?.call('${(c.arguments as Map)['bewegung']}'); _sinneSenden(); } // v1526
       return null;
     });

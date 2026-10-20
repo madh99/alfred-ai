@@ -41,11 +41,15 @@ import UserNotifications
     zonen.starte()
     bewegung.starte()
     NotificationCenter.default.addObserver(self, selector: #selector(wirdAktiv), name: UIApplication.didBecomeActiveNotification, object: nil) // 1.64.0
+    NotificationCenter.default.addObserver(self, selector: #selector(unterhaltungGewuenscht), name: .alfredUnterhaltung, object: nil) // 1.67.0 Siri
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   // 1.64.0 — App wird aktiv (Systemnachricht, gilt auch mit Scenes): Fokus mit iOS abgleichen und den Verlauf der Filter-Aufrufe nativ melden (mit Hintergrundzeit,
   // damit es auch klappt, wenn die App nach wenigen Sekunden wieder geschlossen wird)
+  /// 1.67.0 — „Hey Siri, Unterhaltung mit Alfred“, während die App schon läuft: Dart sofort Bescheid geben
+  @objc private func unterhaltungGewuenscht() { DispatchQueue.main.async { self.netzKanal?.invokeMethod("unterhaltung", arguments: nil) } }
+
   @objc private func wirdAktiv() {
     guard #available(iOS 16.0, *) else { return }
     let application = UIApplication.shared
@@ -165,6 +169,11 @@ import UserNotifications
           ergebnis(true)
         case "zustand":
           ergebnis(self?.systemZustand())
+        case "unterhaltungAusstehend":
+          // 1.67.0 — Siri hat die Unterhaltung gewünscht (höchstens 60 s her)? Einmal lesen, dann vergessen.
+          let t = UserDefaults.standard.double(forKey: "alfred.unterhaltung.start")
+          UserDefaults.standard.removeObject(forKey: "alfred.unterhaltung.start")
+          ergebnis(t > 0 && Date().timeIntervalSince1970 - t < 60)
         case "fokusAbgleich":
           // 1.62.0 — aktuellen Fokusfilter von iOS holen und bei Änderung melden (vor dem nächsten „zustand“)
           if #available(iOS 16.0, *) { Task { await FokusAbgleich.jetzt(); ergebnis(true) } } else { ergebnis(false) }

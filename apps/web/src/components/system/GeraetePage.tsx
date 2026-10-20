@@ -84,7 +84,7 @@ export function GeraetePage() {
           <h2 className="text-sm font-semibold text-gray-300">Neues Gerät koppeln</h2>
           {!kopplung && <button onClick={codeErzeugen} className="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white">Kopplungscode erzeugen</button>}
         </div>
-        {!kopplung && <p className="mt-2 text-xs text-gray-500">Für die Alfred-App auf dem Handy: QR mit der App scannen. Desktop: <code>alfred pair --server {"<Server>"} --code {"<Code>"}</code>.</p>}
+        {!kopplung && <p className="mt-2 text-xs text-gray-500">Für die Alfred-App auf dem Handy: QR mit der App scannen. Desktop (PC, Mac, Linux): Code erzeugen, dann den angezeigten Befehl im Terminal ausführen — er prüft den Schlüssel des Servers selbst.</p>}
         {kopplung && (
           <div className="mt-3 flex flex-wrap gap-6 items-start">
             {qrBild && <img src={qrBild} alt="Kopplungs-QR" width={240} height={240} className="rounded bg-white p-1" />}
@@ -92,6 +92,10 @@ export function GeraetePage() {
               <div><span className="text-gray-500 text-xs block">Code</span><span className="font-mono text-2xl tracking-widest">{kopplung.code}</span></div>
               <div><span className="text-gray-500 text-xs block">Server</span><span className="font-mono">{kopplung.server}</span></div>
               {kopplung.fingerabdruck && <div><span className="text-gray-500 text-xs block">Schlüssel des Servers (zum Vergleich in der App)</span><span className="font-mono text-lg">{kurz(kopplung.fingerabdruck)}</span></div>}
+              {/* v1533 — fertiger Befehl fürs Desktop-Koppeln: mit --insecure (selbst signiertes Zertifikat) und dem erwarteten Schlüssel */}
+              <div><span className="text-gray-500 text-xs block">Desktop: im Terminal ausführen</span>
+                <code className="block font-mono text-xs bg-black/40 rounded px-2 py-1 select-all break-all">{`alfred pair --server ${kopplung.server} --code ${kopplung.code} --insecure${kopplung.fingerabdruck ? ` --schluessel ${kopplung.fingerabdruck}` : ''}`}</code>
+              </div>
               <div className="text-xs text-gray-500">gültig noch {Math.floor(rest / 60)}:{String(rest % 60).padStart(2, '0')} min, nur einmal verwendbar</div>
               <button onClick={() => { setKopplung(null); setQrBild(null); }} className="px-2.5 py-1 text-xs rounded border border-[#1f1f1f] text-gray-500 hover:text-gray-300">Schließen</button>
             </div>

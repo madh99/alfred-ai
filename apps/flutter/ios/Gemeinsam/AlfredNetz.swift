@@ -114,6 +114,31 @@ final class Netz: NSObject, URLSessionDelegate {
     _ = try await json("POST", "/api/geraete/fokus", ["aktiv": aktiv, "name": name.map { $0 as Any } ?? NSNull(), "hinweise": hinweise, "vorlesen": vorlesen])
   }
 
+  /// 1.67.0 — Frage für Siri: Nachricht ins Gespräch und auf die fertige Antwort warten (SSE „response“), schnelle Stufe.
+  func frage(_ text: String, chatId: String) async throws -> String {
+    let body = try JSONSerialization.data(withJSONObject: ["text": text, "chatId": chatId, "stream": true, "tier": "fast"])
+    var r = anfrage("POST", "/api/message", body)
+    r.timeoutInterval = 90
+    let (bytes, res) = try await sitzung.bytes(for: r)
+    let status = (res as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else { bytes.task.cancel(); throw NSError(domain: "at.alfred.siri", code: 7, userInfo: [NSLocalizedDescriptionKey: "Alfred ist gerade nicht erreichbar (HTTP \(status))"]) }
+    var antwort = "", teile = ""
+    for try await zeile in bytes.lines {
+      guard zeile.hasPrefix("data:") else { continue }
+      let roh = zeile.dropFirst(5).trimmingCharacters(in: .whitespaces)
+      guard let d = roh.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+      switch j["type"] as? String {
+      case "progress" where (j["kind"] as? String) == "delta": teile += j["text"] as? String ?? ""
+      case "response": // es kann mehrere geben (z. B. Hinweis und Antwort)
+        if let t = j["text"] as? String, !t.isEmpty { antwort += (antwort.isEmpty ? "" : " ") + t }
+      case "error": throw NSError(domain: "at.alfred.siri", code: 8, userInfo: [NSLocalizedDescriptionKey: j["error"] as? String ?? "Fehler"])
+      case "done": bytes.task.cancel(); return antwort.isEmpty ? teile : antwort
+      default: break
+      }
+    }
+    return antwort.isEmpty ? teile : antwort
+  }
+
   /// Nachricht ins Gespräch; es wird nur auf die Annahme gewartet (die Antwort kommt als Mitteilung).
   func nachricht(_ text: String, chatId: String) async throws {
     let body = try JSONSerialization.data(withJSONObject: ["text": text, "chatId": chatId, "stream": true])

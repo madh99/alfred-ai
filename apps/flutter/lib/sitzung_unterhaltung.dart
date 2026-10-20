@@ -8,6 +8,13 @@ part of 'main.dart';
 extension _Unterhaltung on _SitzungState {
   String get _uStufe => tierWahl ?? 'fast';
 
+  /// 1.67.0 — „Hey Siri, Unterhaltung mit Alfred“: Wunsch abholen; nach einem kalten Start erst auf die Verbindung warten.
+  Future<void> _unterhaltungAusSiri() async {
+    if (!istHandy || !await handyUnterhaltungAusstehend()) return;
+    for (var i = 0; i < 60 && (server == null || satellit?.verbunden != true); i++) { await Future<void>.delayed(const Duration(milliseconds: 250)); }
+    if (mounted) await _unterhaltungStart();
+  }
+
   Future<void> _unterhaltungStart() async {
     if (unterhaltung != null) return;
     if (server == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht verbunden — $ipcZustand')); return; }
