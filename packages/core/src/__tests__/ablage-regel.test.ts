@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EigeneUploads, ablageOhneRueckfrage, EIGENER_UPLOAD_MS } from '../geraete/ablage-regel.js';
-import { GeraetSkill, dateiNameAusQuelle } from '../geraete/geraet-skill.js';
+import { GeraetSkill, dateiNameAusQuelle, nichtSchreibfreigegeben } from '../geraete/geraet-skill.js';
 import { Freigaben } from '../geraete/freigaben.js';
 
 const DL = 'C:\\Users\\madh\\Downloads';
@@ -34,7 +34,7 @@ describe('v1529 B — Ablage ohne Rückfrage', () => {
 });
 
 describe('v1529 A — gebündelte Bestätigung im Geräte-Skill', () => {
-  function skill(o: { eigen?: string[]; ordner?: string[] } = {}) {
+  function skill(o: { eigen?: string[]; ordner?: string[]; frei?: string[] } = {}) {
     const gesendet: Array<Record<string, unknown>> = [];
     const fragen: Array<{ description: string; aktion: string; params: Record<string, unknown> }> = [];
     const fg = new Freigaben();
@@ -48,6 +48,7 @@ describe('v1529 A — gebündelte Bestätigung im Geräte-Skill', () => {
       dateien: { lade: async (q: string) => ({ name: q.split('/').pop()!.replace(/^.*Z_/, ''), data: Buffer.from('bild') }), speichere: async () => 'k' },
       ablageOrdner: () => o.ordner,
       eigenerUpload: (q: string) => (o.eigen ?? []).includes(q),
+      schreibFreigaben: () => o.frei,
     } as never);
     return { s, gesendet, fragen };
   }
@@ -89,6 +90,26 @@ describe('v1529 A — gebündelte Bestätigung im Geräte-Skill', () => {
     await warte();
     expect(fragen).toHaveLength(1);
     expect(gesendet).toHaveLength(3);
+  });
+  it('v1530: Ziel ohne Schreibfreigabe → sofort Hinweis, keine Bestätigung (Realfall Schreibtisch 12:59)', async () => {
+    const { s, fragen, gesendet } = skill({ ordner: [DL], frei: ['C:\\Users\\madh\\Documents', DL] });
+    const r = await s.execute({ action: 'datei_ablegen', quelle: keys[0], path: 'C:\\Users\\madh\\Desktop\\foto-1.jpg' }, ctx);
+    await warte();
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('nicht zum Schreiben freigegeben');
+    expect(r.error).toContain('freigabe_aendern');
+    expect(fragen).toHaveLength(0);
+    expect(gesendet).toHaveLength(0);
+    // freigegebener Ordner (Groß/klein egal) fragt wie gewohnt
+    await s.execute({ action: 'datei_ablegen', quelle: keys[0], path: 'c:/users/madh/documents/x.jpg' }, ctx);
+    await warte();
+    expect(fragen).toHaveLength(1);
+  });
+  it('v1530: ohne gemeldete Freigaben (älterer Satellit) und bei ~-Pfaden entscheidet das Gerät', () => {
+    expect(nichtSchreibfreigegeben('C:\\x\\y.jpg', undefined, true)).toBeUndefined();
+    expect(nichtSchreibfreigegeben('~/Desktop/y.jpg', ['/home/madh/Documents'], false)).toBeUndefined();
+    expect(nichtSchreibfreigegeben('/home/madh/Desktop/y.jpg', ['/home/madh/Documents'], false)?.ziel).toBe('/home/madh/Desktop/y.jpg');
+    expect(nichtSchreibfreigegeben('/home/madh/Documents/a/y.jpg', ['/home/madh/Documents'], false)).toBeUndefined();
   });
   it('datei_ablegen_mehrere ohne Freigabe wird abgewiesen (das Modell kann es nicht selbst auslösen)', async () => {
     const { s, gesendet } = skill();

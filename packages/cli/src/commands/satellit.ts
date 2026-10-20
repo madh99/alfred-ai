@@ -922,7 +922,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
         // v1411 R3d — aktive Vertrauensstufen mit den Sinnen melden (das Gehirn überspringt damit Einzelbestätigungen im Ordner)
-        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), ablage: aktiveAblageOrdner(k), beobachter: beobachter.stand() }; /* v1529 ablage */ sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
+        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), ablage: aktiveAblageOrdner(k), schreibfreigaben: k.freigegebeneVerzeichnisse.map(p => path.resolve(p)), beobachter: beobachter.stand() }; /* v1529 ablage, v1530 Schreibfreigaben */ sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
         sinneSofort = () => { void sendeSinne(); };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Ablegen in einen nicht freigegebenen Ordner: Hinweis statt umsonst fragen (v1530)
+
+Owner 20.10.: „Schreibfreigaben mitmelden umsetzen“. Realfall 12:59: Ein Foto sollte auf den Schreibtisch am PC. Erst kam die Bestätigung, nach dem Ja meldete der PC „nicht freigegeben“.
+
+- Die Satelliten melden ihre Verzeichnisse mit Schreibrecht in den Sinnen.
+- Liegt das Ziel außerhalb, legt Alfred nichts ab und stellt nichts zur Bestätigung. Er sagt gleich, welche Ordner freigegeben sind, und fragt, ob der Ordner freigegeben werden soll. Das Freigeben bestätigst du wie bisher.
+- Bei älteren Satelliten, `~`-Pfaden und relativen Pfaden entscheidet weiterhin das Gerät.
+
 ### Added — Unterhaltung: Alfred ins Wort fallen (App 1.60.0, iPhone)
 
 Owner 20.10.: „g3 als Schalter, Standard aus“. Einstellungen → Sprache → **„Unterhaltung: ins Wort fallen“**; gilt ab der nächsten Unterhaltung.

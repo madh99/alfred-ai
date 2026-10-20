@@ -304,6 +304,8 @@ export class GeraeteGateway {
       // v1529 — Ablage-Ordner aus den Sinnen (am Gerät eingestellt, Standard Downloads; nur frische Sinne)
       ablageOrdner: () => (v.sinneZeit && Date.now() - v.sinneZeit < 5 * 60_000 && Array.isArray(v.sinne?.ablage) ? (v.sinne!.ablage as unknown[]).filter((x): x is string => typeof x === 'string' && !!x) : undefined),
       eigenerUpload: (quelle) => this.eigeneUploads.istEigen(quelle),
+      // v1530 — Verzeichnisse mit Schreibrecht aus den Sinnen: Ablegen außerhalb wird nicht erst zur Bestätigung gestellt
+      schreibFreigaben: () => (v.sinneZeit && Date.now() - v.sinneZeit < 5 * 60_000 && Array.isArray(v.sinne?.schreibfreigaben) ? (v.sinne!.schreibfreigaben as unknown[]).filter((x): x is string => typeof x === 'string' && !!x) : undefined),
       merkeAuftrag: (auftragId, herkunft) => { this.auftraege.merke(v.eintrag.id, auftragId, herkunft); }, // v1342/v1383
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;

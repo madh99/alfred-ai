@@ -1,4 +1,4 @@
-import { vertrauenDeckt } from './vertrauen.js'; // v1411 R3d
+import { vertrauenDeckt, imVerzeichnis } from './vertrauen.js'; // v1411 R3d, v1530
 import { ablageOhneRueckfrage } from './ablage-regel.js'; // v1529
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
@@ -36,6 +36,8 @@ export interface GeraetSkillDeps {
   /** v1529 — Ablage-Ordner des Geräts (Sinne; am Gerät eingestellt, Standard Downloads) und eigene Uploads des Owners */
   ablageOrdner?: () => string[] | undefined;
   eigenerUpload?: (quelle: string) => boolean;
+  /** v1530 — Verzeichnisse mit Schreibrecht (Sinne); undefined = unbekannt (älterer Satellit), dann entscheidet das Gerät */
+  schreibFreigaben?: () => string[] | undefined;
   /** v1529 A — Wartezeit, bis gesammelte datei_ablegen als eine Bestätigung gestellt werden (Standard 1,5 s) */
   sammelMs?: number;
   vorhaben: {
@@ -162,6 +164,15 @@ export class GeraetSkill extends Skill {
     if (def.autonomie === 'nie') {
       await this.deps.schritt?.({ art: 'blockiert', aktion, params, beschreibung, ergebnis: 'Autonomie-Klasse nie', autonomie: 'nie' });
       return { success: false, error: `„${aktion}" auf ${this.deps.name} ist für Alfred gesperrt (Autonomie: nie) — nur der Owner selbst.` };
+    }
+    // v1530 (Owner 20.10.) — Realfall 12:59: Foto auf den Schreibtisch → Bestätigung → nach dem Ja „nicht freigegeben“.
+    // Kennt das Gehirn die Schreibfreigaben, sagt es das vorher und fragt nicht umsonst.
+    if (aktion === 'datei_ablegen') {
+      const nicht = nichtSchreibfreigegeben(params.path, this.deps.schreibFreigaben?.(), this.deps.manifest.plattform === 'windows');
+      if (nicht) {
+        await this.deps.schritt?.({ art: 'blockiert', aktion, params, beschreibung, ergebnis: 'Ziel ohne Schreibfreigabe', autonomie: def.autonomie });
+        return { success: false, error: `„${nicht.ziel}“ ist auf ${this.deps.name} nicht zum Schreiben freigegeben (Schreibrecht: ${nicht.frei.length ? nicht.frei.join(', ') : 'kein Ordner'}). Nicht ablegen und nichts zur Bestätigung stellen — frag den Owner, ob er den Ordner freigeben möchte; wenn ja: freigabe_aendern mit pfad (der Ordner) und recht=schreiben (er bestätigt das), danach erneut ablegen. Oder einen freigegebenen Ordner vorschlagen.` };
+      }
     }
     // v1230 — ein aktives Vorhaben deckt die Aktion: keine Einzelbestätigung
     const vorhaben = def.autonomie === 'bestaetigen' && !bestaetigt ? this.deps.vorhaben.deckt(aktion, params) : undefined;
@@ -291,6 +302,16 @@ export class GeraetSkill extends Skill {
     const text = `${ok} von ${liste.length} Dateien auf ${this.deps.name} abgelegt:\n${zeilen.join('\n')}`;
     return ok > 0 ? { success: true, data: { geraet: this.deps.name, abgelegt: ok, von: liste.length }, display: text } : { success: false, error: text };
   }
+}
+
+/**
+ * v1530 — Ziel außerhalb aller Schreibfreigaben? Nur bei absoluten Pfaden und bekannter Freigabeliste; `~` und relative Pfade
+ * löst erst das Gerät auf, dort entscheidet weiter der Satellit.
+ */
+export function nichtSchreibfreigegeben(ziel: unknown, frei: string[] | undefined, win: boolean): { ziel: string; frei: string[] } | undefined {
+  const z = typeof ziel === 'string' ? ziel.trim() : '';
+  if (!frei || !z || !/^([A-Za-z]:[\\/]|\/)/.test(z)) return undefined;
+  return frei.some(f => imVerzeichnis(z, f, win)) ? undefined : { ziel: z, frei };
 }
 
 /** v1529 — Dateiname aus einem FileStore-Schlüssel („<user>/2026-10-20T09-06-51-330Z_foto.jpg“ → „foto.jpg“) oder Pfad. */
