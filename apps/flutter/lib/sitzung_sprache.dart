@@ -51,7 +51,7 @@ extension _Sprache on _SitzungState {
       final alt = eingabe.text.trimRight();
       eingabe.text = alt.isEmpty ? text : '$alt $text';
       eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length);
-      fokus.requestFocus();
+      _eingabeAktivieren(); // 1.67.5 — am Handy: Text steht drin, Tastatur erst beim Antippen
     } catch (e) { _zeile(Eintrag(Art.fehler, '🎙 $e')); }
     finally { _neu(() => fluechtig = ''); }
   }

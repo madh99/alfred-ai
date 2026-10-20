@@ -251,6 +251,7 @@ extension _Oberflaeche on _SitzungState {
           : Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: ListView.builder(
               controller: scroll,
               reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
+              keyboardDismissBehavior: istHandy ? ScrollViewKeyboardDismissBehavior.onDrag : ScrollViewKeyboardDismissBehavior.manual, // 1.67.5 — Scrollen schließt die Tastatur
               padding: EdgeInsets.fromLTRB(_mitVerlaufsleiste ? 38 : 20, 12, 20, 12), // 1.45.1 — Platz für die Verlaufsleiste
               itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
               itemBuilder: (context, ri) {
@@ -373,7 +374,7 @@ extension _Oberflaeche on _SitzungState {
               ...st.contextMenuButtonItems,
               ContextMenuButtonItem(label: 'Bild einfügen', onPressed: () { ContextMenuController.removeAny(); _bildEinfuegen(); }),
             ]) : null,
-            autofocus: true,
+            autofocus: !istHandy, // 1.67.5 — am Handy erst beim Antippen
             enabled: !antwortet,
             minLines: 1,
             maxLines: 6,

@@ -41,7 +41,7 @@ extension _Gespraeche on _SitzungState {
     if (!warteschlange.leer) Future.microtask(_nachsenden); // 1.8.0
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     if (faden != null && faeden.any((x) => x['faden'] == faden && x['archiviert'] == true)) _zeile(Eintrag(Art.hinweis, 'Archiviertes Gespräch — wenn du hier schreibst, kommt es zurück in die Liste.')); // 1.41.0
-    fokus.requestFocus();
+    _eingabeAktivieren(); // 1.67.5
   }
 
 

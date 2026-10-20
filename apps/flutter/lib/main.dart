@@ -692,6 +692,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try { await s.json('/api/geraete/fokus', methode: 'POST', koerper: {'aktiv': z['fokusAktiv'] == true, 'name': z['fokus'], 'hinweise': z['fokusHinweise'] ?? 'nurDringend', 'vorlesen': z['fokusVorlesen'] == true}); } catch (_) {}
   }
   int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden
+
+  /// 1.67.5 (Owner 20.10.) — Eingabe von sich aus aktivieren: am Desktop wie bisher, am Handy NICHT (sonst springt die Tastatur
+  /// beim Öffnen, nach jeder Antwort, nach dem Diktat und im Gesprächsmodus hoch). Am Handy nur nach Tippen ins Feld oder nach
+  /// einer ausdrücklichen Aktion (Bearbeiten, Darauf antworten, Nachfragen) — dort wird fokus.requestFocus() direkt aufgerufen.
+  void _eingabeAktivieren() { if (!istHandy) fokus.requestFocus(); }
   UnterhaltungsStand? unterhaltung; // 1.58.0 G1 — Unterhaltungsmodus läuft
   SatzendeErkenner? uErkenner;
   bool insWortFallen = insWortFallenGespeichert(); // 1.60.0 G3 — Schalter, Standard aus

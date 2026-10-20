@@ -42,7 +42,7 @@ extension _Senden on _SitzungState {
       if (anhaenge.any((a) => a.path == f.path)) continue;
       _neu(() => anhaenge.add(f));
     }
-    fokus.requestFocus();
+    _eingabeAktivieren(); // 1.67.5
   }
 
 
@@ -361,7 +361,7 @@ extension _Senden on _SitzungState {
     } finally {
       vorleserLaufend = null;
       _neu(() { antwortet = false; fluechtig = ''; laufend = null; });
-      fokus.requestFocus();
+      _eingabeAktivieren(); // 1.67.5
       final rest = nachreichen; nachreichen = null; // 1.4.1
       if (rest != null && hoeren) {
         _zeile(Eintrag(Art.du, '🎧 $rest'));

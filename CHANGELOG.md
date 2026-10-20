@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — iPhone: Tastatur nur noch beim Antippen des Eingabefelds (App 1.67.5)
+
+Owner 20.10.: Die Tastatur öffnete sich beim Öffnen des Chats, im Gesprächsmodus und scheinbar beim Scrollen.
+
+- Das Eingabefeld aktiviert sich am iPhone nicht mehr von selbst. Bisher passierte das beim Öffnen, nach jeder Antwort, beim Wechsel des Gesprächs, nach dem Diktat und beim Anhängen. Die Tastatur kommt nur noch beim Antippen des Felds oder nach „Bearbeiten“, „Darauf antworten“ und „Nachfragen“.
+- Der Gesprächsmodus schließt beim Start die Tastatur.
+- Scrollen im Chat schließt die Tastatur.
+- Am Desktop bleibt alles wie bisher, das Feld ist dort weiterhin gleich bereit zum Tippen.
+
 ### Fixed — Alfred spricht wieder mit seiner eingestellten Stimme (v1534)
 
 Realfall 20.10.: Ab 13:27 klang Alfred abends mit der Server-Standardstimme statt mit „alfred-jav“. Die Stimme ist als Name gespeichert. Sie wurde bei jedem Abruf über die Stimmenliste des Anbieters in ihre ID übersetzt, und diese Abfrage scheiterte ohne Meldung.

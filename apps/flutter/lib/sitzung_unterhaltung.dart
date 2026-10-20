@@ -21,6 +21,7 @@ extension _Unterhaltung on _SitzungState {
     if (antwortet) return;
     if (hoeren) await _hoerenStop(null); // Desktop: Aktivierungswort-Zuhören und Unterhaltung teilen sich das Mikrofon
     if (aufnahme) { await audio.stop(); _neu(() { aufnahme = false; diktat = false; fluechtig = ''; }); }
+    fokus.unfocus(); // 1.67.5 — Tastatur zu, die Unterhaltung liegt über dem Chat
     final stand = UnterhaltungsStand();
     final erk = SatzendeErkenner(endeMs: 800); // etwas mehr Pause als beim Zuhören: im freien Gespräch denkt man beim Reden
     uErkenner = erk; uBeschaeftigt = false; uUnterbrochen = false; uWartend = null;
