@@ -47,6 +47,20 @@ class IpcVerbindung implements AppVerbindung {
     try { _sock?.write('${jsonEncode(n)}\n'); } catch (_) {}
   }
 
+  /// 1.59.0 (v1529) — Ablage-Ordner des Satelliten lesen (`arg` null) oder ändern („+ pfad“, „- pfad“). Nur lokal über IPC —
+  /// aus dem Chat lässt sich die Liste nicht ändern. Ergebnis: wirksame Ordner und, beim Ändern, die Meldung des Satelliten.
+  Completer<Map<String, dynamic>>? _einstellungen;
+  Future<({List<String> ordner, bool ok, String? text})> ablageOrdner({String? arg}) async {
+    if (_sock == null) throw StateError('Satellit nicht verbunden');
+    final c = _einstellungen = Completer<Map<String, dynamic>>();
+    sende(arg == null ? {'typ': 'befehl', 'befehl': 'einstellungen'} : {'typ': 'befehl', 'befehl': 'einstellung', 'schluessel': 'ablage', 'arg': arg});
+    final n = await c.future.timeout(const Duration(seconds: 5), onTimeout: () => throw StateError('Satellit antwortet nicht — Update des Satelliten abwarten'));
+    final liste = (n['liste'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>();
+    final a = liste.where((e) => e['schluessel'] == 'ablage').firstOrNull;
+    if (a == null) throw StateError('Satellit kennt die Ablage-Ordner noch nicht — Update des Satelliten abwarten');
+    return (ordner: [for (final x in (a['eintraege'] as List<dynamic>? ?? const [])) '$x'], ok: n['ok'] != false, text: n['text'] as String?);
+  }
+
   Future<void> _verbinde() async {
     if (!_laeuft) return;
     try {
@@ -96,6 +110,9 @@ class IpcVerbindung implements AppVerbindung {
       case 'bestaetigung':
         final b = n['bestaetigung'] as Map<String, dynamic>;
         aufBestaetigung(Bestaetigung(id: '${b['id']}', text: '${b['description'] ?? ''}', quelle: b['source'] as String?, seit: DateTime.tryParse('${b['createdAt'] ?? ''}')));
+      case 'einstellungen': // 1.59.0 (v1529)
+        final c = _einstellungen; _einstellungen = null;
+        if (c != null && !c.isCompleted) c.complete(n);
       case 'konfig':
         final k = n['konfig'] as Map<String, dynamic>;
         aufKonfig(Konfig(server: '${k['server']}', geraetId: '${k['geraetId']}', token: '${k['token']}', name: '${k['name']}', insecure: k['insecure'] == true, aktivierungswort: (k['aktivierungswort'] as String?)?.trim().isNotEmpty == true ? '${k['aktivierungswort']}' : 'Alfred'));

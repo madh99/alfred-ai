@@ -12,6 +12,7 @@ import { GeraetSkill } from './geraet-skill.js';
 import { Freigaben, VorhabenFreigaben, vorhabenDateiSpeicher } from './freigaben.js';
 import { AuftragHerkunft } from './auftrag-herkunft.js'; // v1383
 import { Transfers, TransferOffsetFehler } from './transfers.js'; // v1249
+import { EigeneUploads } from './ablage-regel.js'; // v1529
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -92,6 +93,8 @@ export class GeraeteGateway {
   private pairFehlerGlobal = { n: 0, bis: 0 };
   /** v1225 — Einmal-Freigaben für bestätigte Geräteaktionen. */
   private readonly freigaben = new Freigaben();
+  /** v1529 — eigene Uploads des Owners (30 min): Ablegen in Ablage-Ordnern ohne Rückfrage */
+  readonly eigeneUploads = new EigeneUploads();
   /** v1230 — Vorhaben-Freigaben (ein Ja für viele Schritte). */
   private readonly vorhaben: VorhabenFreigaben;
   /** v1249 — blockweiser Dateitransfer (Upload Gerät → Server, Download Server → Gerät). */
@@ -298,6 +301,9 @@ export class GeraeteGateway {
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
       // v1411 R3d — Vertrauensstufen aus den Sinnen (nur frische Sinne, höchstens 5 min alt)
       vertrauen: () => (v.sinneZeit && Date.now() - v.sinneZeit < 5 * 60_000 && Array.isArray(v.sinne?.vertrauen) ? (v.sinne!.vertrauen as Array<{ pfad: string; bis: string }>).filter(x => typeof x?.pfad === 'string' && typeof x?.bis === 'string') : undefined),
+      // v1529 — Ablage-Ordner aus den Sinnen (am Gerät eingestellt, Standard Downloads; nur frische Sinne)
+      ablageOrdner: () => (v.sinneZeit && Date.now() - v.sinneZeit < 5 * 60_000 && Array.isArray(v.sinne?.ablage) ? (v.sinne!.ablage as unknown[]).filter((x): x is string => typeof x === 'string' && !!x) : undefined),
+      eigenerUpload: (quelle) => this.eigeneUploads.istEigen(quelle),
       merkeAuftrag: (auftragId, herkunft) => { this.auftraege.merke(v.eintrag.id, auftragId, herkunft); }, // v1342/v1383
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;
@@ -420,14 +426,15 @@ export class GeraeteGateway {
     const f = this.transfers.schliesseUpload(id, geraetId);
     if (!this.deps.dateien) throw new Error('Dateispeicher nicht eingerichtet');
     const key = await this.deps.dateien.speichere(f.name, f.data);
-    this.deps.logger.info({ id, name: f.name, groesse: f.data.length, key, geraetId }, 'v1249 Upload abgeschlossen');
+    if (f.eigen) this.eigeneUploads.merke(key); // v1529 — eigener Upload des Owners: Ablegen in Ablage-Ordnern ohne Rückfrage
+    this.deps.logger.info({ id, name: f.name, groesse: f.data.length, key, geraetId, eigen: f.eigen }, 'v1249 Upload abgeschlossen');
     return { key, name: f.name, groesse: f.data.length, sha256: f.sha256 };
   }
 
   /** v1249 — HTTP-Routen für den blockweisen Transfer (Ausweis: Gerätetoken oder API-Token). */
   transferRoute(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown {
     switch (art) {
-      case 'start': { const b = (p.body ?? {}) as Record<string, unknown>; return this.transfers.starteUpload(p.geraetId ?? 'api', b.name, b.groesse, b.sha256); }
+      case 'start': { const b = (p.body ?? {}) as Record<string, unknown>; return this.transfers.starteUpload(p.geraetId ?? 'api', b.name, b.groesse, b.sha256, b.zweck); } // v1529 zweck
       case 'block': {
         try { return this.transfers.schreibeBlock(String(p.id), p.offset ?? -1, p.data ?? Buffer.alloc(0), p.geraetId); }
         catch (err) { if (err instanceof TransferOffsetFehler) return { offsetFehler: true, empfangen: err.empfangen, groesse: err.groesse }; throw err; }

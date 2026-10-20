@@ -676,6 +676,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// v1526 — auch im Auto (Bewegung), nicht nur mit Kopfhörern/CarPlay
   bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto' || fokusVorlesen);
   bool fokusVorlesen = false; // v1528 — Fokusfilter „Antworten vorlesen“
+  int ablageNeu = 0; // 1.59.0 — Ablage-Ordner neu laden
   UnterhaltungsStand? unterhaltung; // 1.58.0 G1 — Unterhaltungsmodus läuft
   SatzendeErkenner? uErkenner;
   bool uBeschaeftigt = false;

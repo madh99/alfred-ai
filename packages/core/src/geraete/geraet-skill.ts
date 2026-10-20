@@ -1,4 +1,5 @@
 import { vertrauenDeckt } from './vertrauen.js'; // v1411 R3d
+import { ablageOhneRueckfrage } from './ablage-regel.js'; // v1529
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
 import { paramsKurz, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
@@ -32,6 +33,11 @@ export interface GeraetSkillDeps {
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
   /** v1411 R3d — vom Gerät gemeldete, lokal gesetzte Vertrauensstufen „projekt" (Sinne) */
   vertrauen?: () => import('./vertrauen.js').Vertrauen[] | undefined;
+  /** v1529 — Ablage-Ordner des Geräts (Sinne; am Gerät eingestellt, Standard Downloads) und eigene Uploads des Owners */
+  ablageOrdner?: () => string[] | undefined;
+  eigenerUpload?: (quelle: string) => boolean;
+  /** v1529 A — Wartezeit, bis gesammelte datei_ablegen als eine Bestätigung gestellt werden (Standard 1,5 s) */
+  sammelMs?: number;
   vorhaben: {
     erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number; herkunft?: VorhabenHerkunft }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
     aktiviere: (nonce: unknown) => { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: VorhabenHerkunft } | undefined; // v1297 nonce, v1324 herkunft
@@ -140,6 +146,7 @@ export class GeraetSkill extends Skill {
       void this.deps.vorhaben.nachFreigabe?.(v).catch(() => undefined);
       return { success: true, data: { freigegeben: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben freigegeben bis ${new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })}: ${v.beschreibung}. Alfred führt es jetzt aus.` };
     }
+    if (aktion === 'datei_ablegen_mehrere') return this.mehrereAblegen(input); // v1529 A — gebündelte Freigabe
     const def = this.deps.manifest.aktionen.find(a => a.name === aktion);
     if (!def) return { success: false, error: `Unbekannte Aktion „${aktion}" auf ${this.deps.name}. Verfügbar: ${this.deps.manifest.aktionen.map(a => a.name).join(', ')}` };
     const params: Record<string, unknown> = { ...input };
@@ -160,7 +167,12 @@ export class GeraetSkill extends Skill {
     const vorhaben = def.autonomie === 'bestaetigen' && !bestaetigt ? this.deps.vorhaben.deckt(aktion, params) : undefined;
     // v1411 R3d — Vertrauensstufe „projekt" (nur am Gerät setzbar) deckt Befehle/Ablegen/Aufträge/Prüfungen in ihrem Ordner
     const vertraut = def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben ? vertrauenDeckt(aktion, params, this.deps.vertrauen?.(), { win: this.deps.manifest.plattform === 'windows' }) : undefined;
-    if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben && !vertraut) {
+    // v1529 B — eigener Upload des Owners in einen Ablage-Ordner des Geräts: ohne Rückfrage (Regeln in ablage-regel.ts)
+    const ablage = aktion === 'datei_ablegen' && def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben && !vertraut
+      ? ablageOhneRueckfrage({ quelle: params.quelle, ziel: params.path, eigen: (q) => this.deps.eigenerUpload?.(q) ?? false, ordner: this.deps.ablageOrdner?.(), mitHerkunft: !!herkunft, win: this.deps.manifest.plattform === 'windows' })
+      : undefined;
+    if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben && !vertraut && !ablage) {
+      if (aktion === 'datei_ablegen') return this.sammle(params, herkunft); // v1529 A — mehrere Dateien: eine Bestätigung
       const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params }, herkunft);
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
@@ -170,25 +182,14 @@ export class GeraetSkill extends Skill {
     // v1235 — datei_ablegen: Quelle erst jetzt (nach Freigabe) laden; die Nutzlast geht nie durch die Queue
     let geraetParams = params;
     if (aktion === 'datei_ablegen') {
-      const quelle = String(params.quelle ?? '');
-      if (!quelle) return { success: false, error: 'quelle fehlt (FileStore-Schlüssel oder Serverpfad)' };
-      if (!this.deps.dateien) return { success: false, error: 'Dateitransfer am Server nicht eingerichtet' };
-      const q = await this.deps.dateien.lade(quelle).catch(() => undefined);
-      if (!q) return { success: false, error: `Quelle nicht lesbar: ${quelle}` };
-      if (q.data.length > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: `Datei zu groß (${q.data.length} B, Grenze ${TRANSFER_GROSS_MAX_BYTES} B)` };
-      if (q.data.length > TRANSFER_MAX_BYTES) {
-        // v1249 — über 8 MB: blockweise über HTTPS, das Gerät holt sich die Blöcke mit seinem Token
-        if (!this.deps.transfer) return { success: false, error: 'Blockweiser Transfer am Server nicht eingerichtet' };
-        const t = this.deps.transfer.bereitstellen(sichererDateiname(q.name), q.data);
-        geraetParams = { ...params, dateiName: sichererDateiname(q.name), downloadId: t.id, sha256: t.sha256, groesse: t.groesse, blockGroesse: t.blockGroesse };
-      } else {
-        geraetParams = { ...params, dateiName: sichererDateiname(q.name), inhaltBase64: q.data.toString('base64'), sha256: sha256Hex(q.data), groesse: q.data.length };
-      }
+      const vor = await this.ablageVorbereiten(params);
+      if ('error' in vor) return { success: false, error: vor.error };
+      geraetParams = vor.params;
     }
     const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
     // v1342 — Auftrag gestartet: Sitzung merken, damit das Ende (Ereignis vom Gerät) dort gemeldet wird
     if (aktion === 'auftrag_starten' && r.success && herkunft) { const id = (r.data as { id?: string } | undefined)?.id; if (id) this.deps.merkeAuftrag?.(id, herkunft); }
-    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : vertraut ? `${beschreibung} (Vertrauensstufe projekt: ${vertraut.pfad})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
+    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : vertraut ? `${beschreibung} (Vertrauensstufe projekt: ${vertraut.pfad})` : ablage ? `${beschreibung} (eigener Upload, Ablage-Ordner ${ablage})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
     // v1249 — datei_holen über 8 MB: das Gerät hat blockweise hochgeladen, der Server hat schon gespeichert (key)
     const dg = r.data as { key?: string; dateiName?: string; groesse?: number; sha256?: string; gross?: boolean } | undefined;
@@ -216,7 +217,89 @@ export class GeraetSkill extends Skill {
     }
     return { success: true, data: r.data, display: r.display ?? `${beschreibung} — ausgeführt (${r.dauerMs} ms)` };
   }
+
+  /** v1235/v1249 — Quelle laden und als Nutzlast (bis 8 MB) oder blockweisen Download fürs Gerät vorbereiten. */
+  private async ablageVorbereiten(params: Record<string, unknown>): Promise<{ params: Record<string, unknown> } | { error: string }> {
+    const quelle = String(params.quelle ?? '');
+    if (!quelle) return { error: 'quelle fehlt (FileStore-Schlüssel oder Serverpfad)' };
+    if (!this.deps.dateien) return { error: 'Dateitransfer am Server nicht eingerichtet' };
+    const q = await this.deps.dateien.lade(quelle).catch(() => undefined);
+    if (!q) return { error: `Quelle nicht lesbar: ${quelle}` };
+    if (q.data.length > TRANSFER_GROSS_MAX_BYTES) return { error: `Datei zu groß (${q.data.length} B, Grenze ${TRANSFER_GROSS_MAX_BYTES} B)` };
+    if (q.data.length > TRANSFER_MAX_BYTES) {
+      // v1249 — über 8 MB: blockweise über HTTPS, das Gerät holt sich die Blöcke mit seinem Token
+      if (!this.deps.transfer) return { error: 'Blockweiser Transfer am Server nicht eingerichtet' };
+      const t = this.deps.transfer.bereitstellen(sichererDateiname(q.name), q.data);
+      return { params: { ...params, dateiName: sichererDateiname(q.name), downloadId: t.id, sha256: t.sha256, groesse: t.groesse, blockGroesse: t.blockGroesse } };
+    }
+    return { params: { ...params, dateiName: sichererDateiname(q.name), inhaltBase64: q.data.toString('base64'), sha256: sha256Hex(q.data), groesse: q.data.length } };
+  }
+
+  /**
+   * v1529 A — datei_ablegen, die fragen müssen, werden je Gespräch gesammelt: Das Modell ruft für vier Fotos viermal auf
+   * (Realfall 20.10. 11:07:05, alle in derselben Sekunde). Nach kurzer Ruhe geht EINE Bestätigung an den Owner — bei einer
+   * Datei wie bisher, bei mehreren als datei_ablegen_mehrere mit allen Zielen.
+   */
+  private readonly sammlung = new Map<string, { dateien: Array<Record<string, unknown>>; herkunft?: { chatId: string; platform: string; userId: string }; timer?: ReturnType<typeof setTimeout> }>();
+
+  private sammle(params: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId: string }): SkillResult {
+    const k = herkunft ? `${herkunft.platform}:${herkunft.chatId}` : '-';
+    let s = this.sammlung.get(k);
+    if (!s) { s = { dateien: [], herkunft }; this.sammlung.set(k, s); }
+    const { action: _action, ...rest } = params;
+    s.dateien.push(rest);
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = setTimeout(() => { void this.sammlungStellen(k); }, this.deps.sammelMs ?? 1500);
+    s.timer.unref?.();
+    return { success: true, data: { zurBestaetigung: true, geraet: this.deps.name, aktion: 'datei_ablegen', gesammelt: s.dateien.length }, display: `Zur Bestätigung an den Owner gestellt: ${dateiNameAusQuelle(rest.quelle)} nach ${String(rest.path ?? '')} auf ${this.deps.name}. Mehrere Dateien aus dieser Anfrage kommen in EINE Bestätigung. Nach Freigabe wird abgelegt.` };
+  }
+
+  private async sammlungStellen(k: string): Promise<void> {
+    const s = this.sammlung.get(k);
+    this.sammlung.delete(k);
+    if (!s || s.dateien.length === 0) return;
+    const einzeln = s.dateien.length === 1;
+    const aktion = einzeln ? 'datei_ablegen' : 'datei_ablegen_mehrere';
+    const params: Record<string, unknown> = einzeln ? { action: aktion, ...s.dateien[0] } : { action: aktion, dateien: s.dateien };
+    const ziele = [...new Set(s.dateien.map(d => zielOrdner(String(d.path ?? ''))))];
+    const beschreibung = einzeln
+      ? `Auf ${this.deps.name}: datei_ablegen ${paramsKurz(params)}`.trim()
+      : `Auf ${this.deps.name}: ${s.dateien.length} Dateien ablegen in ${ziele.join(', ')}: ${s.dateien.map(d => dateiNameAusQuelle(d.quelle)).join(', ')}`.slice(0, 900);
+    let gestellt = false;
+    try { gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params }, s.herkunft); } catch { gestellt = false; }
+    await this.deps.schritt?.({ art: gestellt ? 'zur_bestaetigung' : 'fehlgeschlagen', aktion, params: einzeln ? params : { anzahl: s.dateien.length, ziele }, beschreibung, ergebnis: gestellt ? undefined : 'Bestätigung konnte nicht gestellt werden', autonomie: 'bestaetigen' })?.catch?.(() => undefined);
+  }
+
+  /** v1529 A — nach der einen Freigabe alle Dateien der Reihe nach ablegen. Ohne gültige Freigabe nie. */
+  private async mehrereAblegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const params: Record<string, unknown> = { ...input };
+    const freigabe = params.freigabe;
+    delete params.freigabe;
+    delete params.confirmed;
+    if (!this.deps.pruefeFreigabe(freigabe, 'datei_ablegen_mehrere', params)) return { success: false, error: 'datei_ablegen_mehrere läuft nur nach der Freigabe des Owners — für einzelne Dateien datei_ablegen verwenden.' };
+    const liste = (Array.isArray(params.dateien) ? params.dateien : []).filter((d): d is Record<string, unknown> => !!d && typeof d === 'object').slice(0, 50);
+    const zeilen: string[] = [];
+    let ok = 0;
+    for (const d of liste) {
+      const p: Record<string, unknown> = { action: 'datei_ablegen', ...d };
+      const vor = await this.ablageVorbereiten(p);
+      const r: { success: boolean; error?: string; display?: string } = 'error' in vor ? { success: false, error: vor.error } : await this.deps.sendeAktion('datei_ablegen', vor.params);
+      if (r.success) ok++;
+      zeilen.push(`${r.success ? '✅' : '❌'} ${dateiNameAusQuelle(d.quelle)}${r.success ? '' : ` — ${r.error ?? 'Fehler'}`}`);
+      await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion: 'datei_ablegen', params: p, beschreibung: `Auf ${this.deps.name}: datei_ablegen ${paramsKurz(p)} (gebündelte Freigabe)`.trim(), ergebnis: r.success ? (r.display ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: 'bestaetigen' });
+    }
+    const text = `${ok} von ${liste.length} Dateien auf ${this.deps.name} abgelegt:\n${zeilen.join('\n')}`;
+    return ok > 0 ? { success: true, data: { geraet: this.deps.name, abgelegt: ok, von: liste.length }, display: text } : { success: false, error: text };
+  }
 }
+
+/** v1529 — Dateiname aus einem FileStore-Schlüssel („<user>/2026-10-20T09-06-51-330Z_foto.jpg“ → „foto.jpg“) oder Pfad. */
+export function dateiNameAusQuelle(q: unknown): string {
+  const t = String(q ?? '').split(/[\\/]/).pop() ?? '';
+  return t.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, '') || String(q ?? '');
+}
+/** Zielpfad mit Dateinamen → Ordner (für die Beschreibung der gebündelten Bestätigung). */
+const zielOrdner = (p: string): string => /\.[A-Za-z0-9]{1,6}$/.test(p) ? (p.replace(/[\\/][^\\/]*$/, '') || p) : p;
 
 /**
  * v1491 — Realfall 16.10. 22:15: das Modell übergab den Ordner eines Claude-Code-Auftrags als `cwd` statt `projekt`; der Satellit

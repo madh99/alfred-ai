@@ -23,10 +23,11 @@ export type IpcNachricht =
   | { typ: 'status'; status: SatellitStatus }
   | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string; anhang?: IpcAnhang; faden?: string } // v1328 faden
   | { typ: 'bestaetigung'; bestaetigung: BestaetigungKurz }
-  | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' | 'konfig' | 'hallo'; geheimnis?: string } // v1309 neuladen; v1312 konfig/hallo für die Desktop-App
+  | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' | 'konfig' | 'hallo' | 'einstellungen' | 'einstellung'; geheimnis?: string; schluessel?: string; arg?: string } // v1309 neuladen; v1312 konfig/hallo für die Desktop-App; v1529 einstellungen/einstellung
+  | { typ: 'einstellungen'; liste: Array<{ schluessel: string; titel: string; wert: string; eintraege?: string[] }>; ok?: boolean; text?: string } // v1529
   | { typ: 'konfig'; konfig: { server: string; geraetId: string; token: string; name: string; insecure: boolean; aktivierungswort?: string } }; // v1312 — Antwort auf befehl konfig; v1314 Aktivierungswort
 
-export type IpcBefehl = 'status' | 'beenden' | 'neuladen' | 'konfig';
+export type IpcBefehl = 'status' | 'beenden' | 'neuladen' | 'konfig' | 'einstellungen' | 'einstellung';
 
 /** v1312 — Zugang für die Desktop-App (Flutter kann keine Named Pipe von Node öffnen): zusätzlich 127.0.0.1:<Port> mit Geheimnis in ~/.alfred/ipc.json (0600). */
 export function ipcTcpDatei(): string { return path.join(os.homedir(), '.alfred', 'ipc.json'); }
@@ -60,7 +61,7 @@ export class IpcServer {
   private geheimnis = '';
   constructor(
     private readonly statusQuelle: () => SatellitStatus,
-    private readonly beiBefehl: (befehl: IpcBefehl, antworte: (n: IpcNachricht) => void) => void,
+    private readonly beiBefehl: (befehl: IpcBefehl, antworte: (n: IpcNachricht) => void, n?: { schluessel?: string; arg?: string }) => void,
     private readonly pfad: string = ipcPfad(),
     private readonly tcpDatei: string | null = ipcTcpDatei(),
   ) {}
@@ -82,7 +83,7 @@ export class IpcServer {
         else { try { sock.destroy(); } catch { /* */ } }
         return;
       }
-      if (n.befehl !== 'hallo') this.beiBefehl(n.befehl, antworte);
+      if (n.befehl !== 'hallo') this.beiBefehl(n.befehl, antworte, { schluessel: n.schluessel, arg: n.arg });
     }));
     sock.on('close', () => this.clients.delete(sock));
     sock.on('error', () => this.clients.delete(sock));

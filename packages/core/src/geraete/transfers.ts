@@ -22,6 +22,8 @@ export interface TransferEintrag {
   pfad: string;
   empfangen: number;
   erstellt: number;
+  /** v1529 — vom Owner selbst geschickt (App/Teilen kennzeichnen den Upload mit zweck „owner“), nicht von datei_holen */
+  eigen?: boolean;
 }
 
 export const TRANSFER_TTL_MS = 60 * 60_000;
@@ -33,7 +35,7 @@ export class Transfers {
     mkdirSync(ordner, { recursive: true });
   }
 
-  starteUpload(geraetId: string, name: unknown, groesse: unknown, sha256: unknown): { id: string; blockGroesse: number } {
+  starteUpload(geraetId: string, name: unknown, groesse: unknown, sha256: unknown, zweck?: unknown): { id: string; blockGroesse: number } {
     this.raeumeAuf();
     const g = Number(groesse);
     if (!Number.isInteger(g) || g <= 0) throw new Error('groesse fehlt oder ungültig');
@@ -43,7 +45,7 @@ export class Transfers {
     const id = randomUUID();
     const pfad = path.join(this.ordner, `${id}.part`);
     writeFileSync(pfad, Buffer.alloc(0), { mode: 0o600 });
-    this.eintraege.set(id, { id, art: 'upload', geraetId, name: sichererDateiname(name), groesse: g, sha256: h, pfad, empfangen: 0, erstellt: this.now() });
+    this.eintraege.set(id, { id, art: 'upload', geraetId, name: sichererDateiname(name), groesse: g, sha256: h, pfad, empfangen: 0, erstellt: this.now(), eigen: zweck === 'owner' });
     return { id, blockGroesse: TRANSFER_BLOCK_BYTES };
   }
 
@@ -64,14 +66,14 @@ export class Transfers {
   }
 
   /** Prüft Vollständigkeit und Prüfsumme, liefert die Datei und räumt den Eintrag ab. */
-  schliesseUpload(id: string, geraetId?: string): { name: string; data: Buffer; sha256: string } {
+  schliesseUpload(id: string, geraetId?: string): { name: string; data: Buffer; sha256: string; eigen: boolean } {
     const e = this.hole(id, 'upload', geraetId);
     if (e.empfangen !== e.groesse) throw new Error(`unvollständig: ${e.empfangen} von ${e.groesse} B`);
     const data = readFileSync(e.pfad);
     const ist = createHash('sha256').update(data).digest('hex');
     this.beende(id);
     if (ist !== e.sha256) throw new Error('Prüfsumme stimmt nicht');
-    return { name: e.name, data, sha256: ist };
+    return { name: e.name, data, sha256: ist, eigen: !!e.eigen };
   }
 
   bereitstellen(geraetId: string, name: string, data: Buffer): { id: string; groesse: number; sha256: string; blockGroesse: number } {

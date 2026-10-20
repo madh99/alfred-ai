@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { einstellungen, wendeAn, trenneBefehl, einstellungenText } from './satellit-einstellungen.js';
+import { einstellungen, wendeAn, trenneBefehl, einstellungenText, aktiveAblageOrdner } from './satellit-einstellungen.js';
+import { mkdtempSync } from 'node:fs';
 import type { GeraetKonfig } from './pair.js';
 
 const konfig = (): GeraetKonfig => ({ server: 'https://s:3420', geraetId: 'abcdef12-3456', token: 't', name: 'PC', freigegebeneVerzeichnisse: [os.tmpdir()], erlaubteProgramme: [] });
@@ -9,7 +10,7 @@ const konfig = (): GeraetKonfig => ({ server: 'https://s:3420', geraetId: 'abcde
 describe('Satelliten-Einstellungen (v1309)', () => {
   it('listet die Felder mit Werten', () => {
     const l = einstellungen(konfig(), { version: '1309', dienst: 'läuft' });
-    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'beobachter', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen, v1429 beobachter
+    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'ablage', 'beobachter', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen, v1429 beobachter, v1529 ablage
     expect(l[2]!.eintraege).toEqual([`${os.tmpdir()} (schreiben)`]);
     expect(l[5]!.wert).toBe('Alfred');
     expect(l[7]!.wert).toBe('ink');
@@ -64,5 +65,20 @@ describe('v1429 Beobachter-Veto', () => {
     expect(wendeAn(k, 'beobachter', 'an').ok).toBe(true);
     expect((k as { beobachterAus?: boolean }).beobachterAus).toBe(false);
     expect(wendeAn(k, 'beobachter', 'vielleicht').ok).toBe(false);
+  });
+
+  it('v1529 ablage: Standard Downloads, hinzufügen nur mit Schreibrecht, entfernen; Sinne nur vorhandene Ordner', () => {
+    const k = konfig();
+    expect(einstellungen(k, { version: '1529', dienst: '' }).find(e => e.schluessel === 'ablage')!.wert).toBe('Standard (Downloads)');
+    const d = mkdtempSync(path.join(os.tmpdir(), 'ablage-'));
+    expect(wendeAn(k, 'ablage', `+ ${d}`).ok).toBe(true);
+    expect(k.ablageOrdner).toContain(path.resolve(d));
+    expect(k.ablageOrdner).toContain(path.resolve(path.join(os.homedir(), 'Downloads'))); // zusätzlich, Standard bleibt
+    expect(aktiveAblageOrdner(k)).toContain(path.resolve(d)); // in tmpdir = Schreibfreigabe
+    expect(wendeAn(k, 'ablage', `- ${path.join(os.homedir(), 'Downloads')}`).ok).toBe(true);
+    expect(k.ablageOrdner).toEqual([path.resolve(d)]); // „andere“ statt Standard
+    const ohne = { ...konfig(), freigegebeneVerzeichnisse: [] };
+    expect(wendeAn(ohne, 'ablage', `+ ${d}`).ok).toBe(false); // kein Schreibrecht
+    expect(wendeAn(k, 'ablage', 'quatsch').ok).toBe(false);
   });
 });

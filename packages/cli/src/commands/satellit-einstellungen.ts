@@ -20,6 +20,7 @@ export const EINSTELLUNGEN_HILFE = [
   'oberflaeche ink|einfach                  Sitzung mit Ink-Oberfläche oder einfacher Ausgabe starten',
   'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
   'beobachter an|aus                        Beobachter dieses Geräts (Ordner u. a.) erlauben oder alle abschalten — die Regeln bleiben am Server',
+  'ablage + <pfad> | - <pfad>              Ablage-Ordner: Dateien, die du selbst an Alfred geschickt hast (App, Teilen), legt Alfred hier ohne Rückfrage ab (Standard: Downloads; nur hier am Gerät, nie aus dem Chat)',
   'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Entwicklungsbefehle (npm, git, …) und Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
 ];
 
@@ -39,6 +40,7 @@ export function einstellungen(k: GeraetKonfig, extra: { version: string; dienst:
     { schluessel: 'sinne-fenster', titel: 'Fenstertitel in den Sinnen', wert: k.sinneOhneFenster ? 'aus' : 'an', art: 'schalter' },
     { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: k.sitzungEinfach ? 'einfach' : 'ink', art: 'schalter' },
     { schluessel: 'vertrauen', titel: 'Vertrauensstufe projekt', wert: aktivesVertrauen(k).length ? `${aktivesVertrauen(k).length} Ordner` : 'keine', art: 'liste', eintraege: aktivesVertrauen(k).map(v => `${v.pfad} bis ${new Date(v.bis).toLocaleString('de-AT')}`), hinweis: 'nur lokal setzbar; Installieren bleibt bestätigungspflichtig' }, // v1411
+    { schluessel: 'ablage', titel: 'Ablage-Ordner ohne Rückfrage', wert: k.ablageOrdner ? `${aktiveAblageOrdner(k).length} Ordner` : 'Standard (Downloads)', art: 'liste', eintraege: aktiveAblageOrdner(k), hinweis: 'nur eigene Uploads aus App/Teilen; nur lokal setzbar; überschrieben wird nie' }, // v1529
     { schluessel: 'beobachter', titel: 'Beobachter (Ordner u. a.)', wert: k.beobachterAus ? 'aus' : 'an', art: 'schalter', hinweis: 'aus: dieses Gerät beobachtet nichts, egal was am Server eingestellt ist' }, // v1429
     { schluessel: 'sudo-sperre', titel: 'sudo in Claude-Code-Aufträgen', wert: k.sudoSperre ? 'gesperrt' : 'erlaubt', art: 'schalter', hinweis: 'gesperrt: Systemänderungen nur über installieren mit Bestätigung' }, // v1409
   ];
@@ -101,6 +103,20 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
       k.vertrauen = [...(k.vertrauen ?? []).filter(v => !gleich(path.resolve(v.pfad), p) && Date.parse(v.bis) > Date.now()), { pfad: p, bis: bis.toISOString() }];
       return { ok: true, text: `Vertrauensstufe projekt: ${p} bis ${bis.toLocaleString('de-AT')}` };
     }
+    case 'ablage': { // v1529 — nur lokal (Sitzung, alfred einstellungen, Desktop-App), nie aus dem Chat
+      const m = /^([+-])\s*(.+)$/.exec(a);
+      if (!m) return { ok: false, text: 'ablage + <pfad> | ablage - <pfad>' };
+      const p = heim(m[2]!.trim().replace(/^"|"$/g, ''));
+      const liste = [...(k.ablageOrdner ?? standardAblageOrdner())].map(x => path.resolve(x));
+      if (m[1] === '-') {
+        k.ablageOrdner = liste.filter(x => !gleich(x, p));
+        return { ok: true, text: `Ablage-Ordner entfernt: ${p}` };
+      }
+      try { if (!statSync(p).isDirectory()) return { ok: false, text: `Kein Verzeichnis: ${p}` }; } catch { return { ok: false, text: `Verzeichnis nicht gefunden: ${p}` }; }
+      if (!inSchreibFreigabe(k, p)) return { ok: false, text: `Nur in einem Verzeichnis mit Schreibrecht (erst „freigabe ${p} schreiben“): ${p}` };
+      k.ablageOrdner = liste.some(x => gleich(x, p)) ? liste : [...liste, p];
+      return { ok: true, text: `Ablage-Ordner: ${p}` };
+    }
     case 'beobachter': { // v1429 R4a — lokales Veto
       if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'beobachter an|aus' };
       k.beobachterAus = a.toLowerCase() === 'aus';
@@ -125,6 +141,20 @@ export function trenneBefehl(zeile: string): { befehl: string; arg: string } {
 
 export function einstellungenText(liste: Einstellung[]): string {
   return liste.map(e => `${e.titel}: ${e.wert}${e.eintraege?.length ? '\n' + e.eintraege.map(x => `   - ${x}`).join('\n') : ''}`).join('\n');
+}
+
+/** v1529 — Standard-Ablage-Ordner: Downloads (gibt es den Ordner nicht, keiner). */
+export function standardAblageOrdner(): string[] { return [path.join(os.homedir(), 'Downloads')]; }
+
+/** v1529 — liegt `p` in einem Verzeichnis mit Schreibrecht? */
+function inSchreibFreigabe(k: GeraetKonfig, p: string): boolean {
+  const sep = path.sep;
+  return k.freigegebeneVerzeichnisse.some(f => { const fr = path.resolve(f); return gleich(fr, p) || (process.platform === 'win32' ? p.toLowerCase().startsWith(fr.toLowerCase() + sep) : p.startsWith(fr + sep)); });
+}
+
+/** v1529 — wirksame Ablage-Ordner (Sinne): eingestellt oder Standard, nur vorhandene und mit Schreibrecht. */
+export function aktiveAblageOrdner(k: GeraetKonfig): string[] {
+  return (k.ablageOrdner ?? standardAblageOrdner()).map(x => path.resolve(x)).filter(p => { try { return statSync(p).isDirectory() && inSchreibFreigabe(k, p); } catch { return false; } });
 }
 
 /** v1411 — aktive (nicht abgelaufene) Vertrauensstufen. */

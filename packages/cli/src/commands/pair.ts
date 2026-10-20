@@ -31,6 +31,8 @@ export interface GeraetKonfig {
   beobachterAus?: boolean;
   /** v1411 R3d — Vertrauensstufe „projekt": nur lokal setzbar (alfred einstellungen vertrauen …), Pfad + Ablaufzeit (ISO) */
   vertrauen?: Array<{ pfad: string; bis: string }>;
+  /** v1529 — Ablage-Ordner: eigene Uploads des Owners landen hier ohne Rückfrage. Fehlt der Eintrag, gilt Downloads. Nur lokal setzbar. */
+  ablageOrdner?: string[];
   erlaubteProgramme: string[];
   /** v1252 — Wort fürs Zuhören (Standard „Alfred"); v1309 über die Einstellungen pflegbar. */
   aktivierungswort?: string;

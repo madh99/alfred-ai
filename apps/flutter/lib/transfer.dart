@@ -36,7 +36,7 @@ class Transfer {
     final name = datei.uri.pathSegments.last;
     final groesse = await datei.length();
     final hash = (await sha256.bind(datei.openRead()).first).toString();
-    final start = await _json(await _anfrage('POST', '/api/geraete/dateien'), {'name': name, 'groesse': groesse, 'sha256': hash});
+    final start = await _json(await _anfrage('POST', '/api/geraete/dateien'), {'name': name, 'groesse': groesse, 'sha256': hash, 'zweck': 'owner'}); // v1529 — selbst geschickt: Ablage-Ordner ohne Rückfrage
     final id = '${start['id']}';
     final block = (start['blockGroesse'] as num?)?.toInt() ?? 1024 * 1024;
     var offset = 0;

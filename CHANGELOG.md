@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Dateien ablegen: eine Bestätigung für mehrere, eigene Uploads ohne Rückfrage (v1529, App 1.59.0)
+
+Owner 20.10.: „a und b zusammen, Downloads als Standard, aber auch zusätzliche oder andere einstellbar“. Anlass: vier Fotos vom iPhone sollten in die Downloads am PC, jedes kam mit eigener Bestätigung.
+
+- **Gebündelt:** Legt Alfred aus einer Anfrage mehrere Dateien auf demselben Gerät ab, kommt **eine** Bestätigung mit allen Dateien und dem Zielordner. Ein Ja legt alle ab, die Antwort meldet „4 von 4 Dateien abgelegt“ mit jeder Datei. Bei einer Datei bleibt es wie bisher.
+- **Ohne Rückfrage**, wenn alles zutrifft: Die Datei hast du selbst geschickt (App oder Teilen am iPhone, höchstens 30 Minuten alt), das Ziel liegt in einem **Ablage-Ordner** des Geräts, und die Anfrage kommt aus einem Gespräch. Dateien aus Mails, dem Netz oder von anderen Geräten fragen weiter. Überschrieben wird nie, und ausführen kann Alfred eine abgelegte Datei nur mit Bestätigung.
+- **Ablage-Ordner:** Standard sind die **Downloads**. In der Desktop-App unter Einstellungen → Gespräche → „Ablage-Ordner ohne Rückfrage“ kommen weitere Ordner dazu, oder du entfernst die Downloads. Am Terminal gilt dasselbe: `alfred einstellungen ablage + <pfad>` / `- <pfad>`. Die Liste ist nur am Gerät änderbar, nie aus dem Chat, und nur innerhalb von Ordnern mit Schreibrecht.
+
 ### Added — Unterhaltung: freies Gespräch mit Alfred (App 1.58.0)
 
 Owner 20.10.: „wie empfohlen g1–g4 freigegeben“.

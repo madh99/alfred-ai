@@ -15,7 +15,7 @@ import { cliOrdner, updateWeiterWarten, UPDATE_START, type UpdateZaehler } from 
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
 import { installiereStarter } from './satellit-starter.js'; // v1304
 import { installieren, pruefeInstallation, INSTALL_QUELLEN } from './satellit-installieren.js'; // v1410 R3c
-import { aktivesVertrauen } from './satellit-einstellungen.js'; // v1411 R3d
+import { aktivesVertrauen, aktiveAblageOrdner, einstellungen as einstellungsListe, wendeAn as einstellungAnwenden } from './satellit-einstellungen.js'; // v1411 R3d, v1529
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { BeobachterVerwaltung, type BeobachterRegel } from './satellit-beobachter.js'; // v1429 R4a
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
@@ -832,15 +832,24 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   let ipc: IpcServer | undefined;
   const ereignis = (art: IpcEreignisArt, text: string, anhang?: IpcAnhang, faden?: string) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) }); } catch { /* */ } };
   if (!opts.einmal && !opts.ohneIpc && !process.env.ALFRED_KEIN_IPC) {
-    const s = new IpcServer(status, (befehl, antworte) => {
+    const s = new IpcServer(status, (befehl, antworte, n) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
       // v1312 — Desktop-App holt sich Server und Gerätetoken vom Satelliten (gleicher Benutzer, geschützter Zugang)
       if (befehl === 'konfig') antworte({ typ: 'konfig', konfig: { server: k.server, geraetId: k.geraetId, token: k.token, name: k.name, insecure: !!k.insecure, aktivierungswort: k.aktivierungswort } }); // v1314 Aktivierungswort für die App
       if (befehl === 'beenden') { log('Beendet über IPC (Sitzung)'); stop(); setTimeout(() => process.exit(0), 200); }
       // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
+      // v1529 — Desktop-App: Einstellungen lesen und lokal ändern (nur über IPC, nie aus dem Chat); vorerst nur die Ablage-Ordner
+      if (befehl === 'einstellungen' || befehl === 'einstellung') {
+        let r: { ok: boolean; text: string } | undefined;
+        if (befehl === 'einstellung') {
+          if (n?.schluessel !== 'ablage') r = { ok: false, text: 'Über die App änderbar: ablage' };
+          else { r = einstellungAnwenden(k, 'ablage', String(n.arg ?? '')); if (r.ok) { speichereKonfig(k); log(`Einstellung (App): ${r.text}`); sinneSofort?.(); } }
+        }
+        antworte({ typ: 'einstellungen', liste: einstellungsListe(k, { version, dienst: '' }).map(e => ({ schluessel: e.schluessel, titel: e.titel, wert: e.wert, eintraege: e.eintraege })), ok: r?.ok, text: r?.text });
+      }
       if (befehl === 'neuladen') {
         const neu = ladeKonfig();
-        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; if (!neu.beobachterAus) k.beobachterAus = undefined; beobachter.setze(beobachterRegeln); /* v1429 Veto sofort */ bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
+        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; if (!neu.ablageOrdner) k.ablageOrdner = undefined; /* v1529 */ if (!neu.beobachterAus) k.beobachterAus = undefined; beobachter.setze(beobachterRegeln); /* v1429 Veto sofort */ bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
       }
     });
     s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
@@ -913,7 +922,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
         // v1411 R3d — aktive Vertrauensstufen mit den Sinnen melden (das Gehirn überspringt damit Einzelbestätigungen im Ordner)
-        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), beobachter: beobachter.stand() }; sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
+        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), ablage: aktiveAblageOrdner(k), beobachter: beobachter.stand() }; /* v1529 ablage */ sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
         sinneSofort = () => { void sendeSinne(); };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });

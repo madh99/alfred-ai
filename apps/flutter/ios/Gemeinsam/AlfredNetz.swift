@@ -58,7 +58,7 @@ final class Netz: NSObject, URLSessionDelegate {
   /// Blockweise in den Dateispeicher (POST start → PUT Blöcke → POST fertig), wie lib/transfer.dart.
   func hochladen(name: String, daten: Data) async throws -> (key: String, sha256: String) {
     let hash = SHA256.hash(data: daten).map { String(format: "%02x", $0) }.joined()
-    let start = try await json("POST", "/api/geraete/dateien", ["name": name, "groesse": daten.count, "sha256": hash])
+    let start = try await json("POST", "/api/geraete/dateien", ["name": name, "groesse": daten.count, "sha256": hash, "zweck": "owner"]) // v1529 — selbst geteilt: Ablage-Ordner ohne Rückfrage
     guard let id = start["id"] as? String else { throw NSError(domain: "at.alfred.teilen", code: 4, userInfo: [NSLocalizedDescriptionKey: "Upload nicht gestartet"]) }
     let block = (start["blockGroesse"] as? Int) ?? 1024 * 1024
     var offset = 0

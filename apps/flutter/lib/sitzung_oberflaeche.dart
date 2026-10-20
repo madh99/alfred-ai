@@ -431,6 +431,15 @@ extension _Oberflaeche on _SitzungState {
 
 
   /// 1.6.0 — Punkt 3: Bild aus der Zwischenablage als Anhang der Eingabezeile.
+  /// 1.59.0 (v1529) — Ablage-Ordner am Satelliten ändern („+ pfad“ / „- pfad“); Ergebnis als Hinweis, Liste neu laden.
+  Future<void> _ablageAendern(String arg) async {
+    try {
+      final r = await (ipc as IpcVerbindung).ablageOrdner(arg: arg);
+      if (r.text != null) _zeile(Eintrag(r.ok ? Art.hinweis : Art.fehler, '📁 ${r.text}'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, '📁 $e')); }
+    _neu(() => ablageNeu++);
+  }
+
   Future<void> _bildEinfuegen() async {
     if (antwortet) return;
     final f = await bildAusZwischenablage();
@@ -510,6 +519,26 @@ extension _Oberflaeche on _SitzungState {
             trailing: IconButton(tooltip: 'Freigabe entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () { ordnerEntfernen(o.name); _neu(() {}); (ipc as HandyVerbindung).jetztVerbinden(); })),
           Align(alignment: Alignment.centerLeft, child: TextButton.icon(key: const Key('ordner-freigeben'), icon: const Icon(Icons.create_new_folder_outlined, size: 18), label: const Text('Ordner freigeben'),
             onPressed: _ordnerFreigebenKnopf)),
+        ],
+        if (istDesktop && ipc is IpcVerbindung) ...[ // 1.59.0 (v1529) — Ablage-Ordner des Satelliten
+          const SizedBox(height: 8),
+          Text('Ablage-Ordner ohne Rückfrage', style: theme.textTheme.titleSmall),
+          Text('Dateien, die du selbst an Alfred geschickt hast (App, Teilen am iPhone), legt er hier ohne Rückfrage ab — überschrieben wird nie. Alles andere fragt, mehrere Dateien in einer Bestätigung. Nur hier am Gerät änderbar, nie aus dem Chat.', style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          FutureBuilder<({List<String> ordner, bool ok, String? text})>(
+            key: ValueKey('ablage-$ablageNeu'),
+            future: (ipc as IpcVerbindung).ablageOrdner(),
+            builder: (_, st) {
+              if (st.hasError) return ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.info_outline, size: 20), title: Text('${st.error}'.replaceFirst('Bad state: ', '')));
+              if (!st.hasData) return const ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text('Stand wird geladen …'));
+              final l = st.data!.ordner;
+              return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (l.isEmpty) const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.folder_off_outlined, size: 20), title: Text('Keiner — jede Datei wird bestätigt')),
+                for (final o in l) ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.folder_outlined, size: 20), title: Text(o),
+                  trailing: IconButton(tooltip: 'Entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () => _ablageAendern('- $o'))),
+              ]);
+            }),
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(key: const Key('ablage-hinzu'), icon: const Icon(Icons.create_new_folder_outlined, size: 18), label: const Text('Ordner hinzufügen'),
+            onPressed: () async { final d = await getDirectoryPath(confirmButtonText: 'Als Ablage-Ordner'); if (d != null) await _ablageAendern('+ $d'); })),
         ],
         if (istHandy) ...[ // v1522 — Standortzonen
           const SizedBox(height: 8),
