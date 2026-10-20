@@ -43,8 +43,15 @@ struct UnterhaltungMitAlfred: AppIntent {
 @available(iOS 16.0, *)
 struct AlfredKurzbefehle: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
-    AppShortcut(intent: FragAlfred(), phrases: ["Frag \(.applicationName)", "\(.applicationName) fragen", "Frage an \(.applicationName)"])
-    AppShortcut(intent: UnterhaltungMitAlfred(), phrases: ["Unterhaltung mit \(.applicationName)", "Mit \(.applicationName) sprechen", "\(.applicationName) Unterhaltung"])
+    // 1.67.4 — Realfall 20.10.: „Frage Alfred …“ ging an Nachrichten (Siri hält „Alfred“ für einen Kontakt; Frag/Sag + Name =
+    // Nachricht an eine Person, das hat Vorrang). Darum zuerst Sätze, die nicht nach „einer Person etwas sagen“ klingen.
+    AppShortcut(intent: FragAlfred(), phrases: [
+      "\(.applicationName) Frage", "\(.applicationName) Assistent", "\(.applicationName), ich habe eine Frage",
+      "Bei \(.applicationName) nachfragen", "Frag \(.applicationName)", "\(.applicationName) fragen", "Frage an \(.applicationName)",
+    ])
+    AppShortcut(intent: UnterhaltungMitAlfred(), phrases: [
+      "\(.applicationName) Unterhaltung", "\(.applicationName) Gespräch", "\(.applicationName) Gesprächsmodus", "Unterhaltung mit \(.applicationName)",
+    ])
   }
 }
 
