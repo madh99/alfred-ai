@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App Store: Kurzbefehl-Beschreibung ohne „Siri“ (App 1.67.2)
+
+Apple hat Build 112 abgelehnt (ITMS-90626): Die Beschreibung eines App Intents darf das Wort „Siri“ nicht enthalten. Die Beschreibung von „Alfred fragen“ ist umformuliert. Das TestFlight-Skript prüft die Intent-Texte jetzt vor dem Hochladen.
+
 ### Security — Siri-Kurzbefehle nur am entsperrten iPhone (App 1.67.1)
 
 „Frag Alfred“ und „Unterhaltung mit Alfred“ verlangen am gesperrten iPhone erst Face ID oder den Code. Alfred kann Haus, Kalender und Geräte bedienen, darum soll niemand über Siri an einem fremden, gesperrten Telefon Aufträge geben können.

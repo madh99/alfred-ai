@@ -10,7 +10,7 @@ extension Notification.Name { static let alfredUnterhaltung = Notification.Name(
 @available(iOS 16.0, *)
 struct FragAlfred: AppIntent {
   static var title: LocalizedStringResource = "Alfred fragen"
-  static var description = IntentDescription("Stellt Alfred eine Frage; Siri liest die Antwort vor. Frage und Antwort stehen danach im Hauptgespräch.")
+  static var description = IntentDescription("Stellt Alfred eine Frage und liest die Antwort vor. Frage und Antwort stehen danach im Hauptgespräch.") // Apple ITMS-90626: das Wort „Siri“ ist in Beschreibungen nicht erlaubt
   static var openAppWhenRun = false
   /// Alfred kann Haus, Kalender und Geräte bedienen: am gesperrten iPhone erst nach Face ID / Code (Sicherheitsprüfung 20.10.)
   static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication

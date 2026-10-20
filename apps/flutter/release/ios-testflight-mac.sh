@@ -65,6 +65,11 @@ for teil in Payload/Runner.app Payload/Runner.app/PlugIns/Teilen.appex Payload/R
   codesign -d --entitlements - --xml "build/ipa-pruef/x/$teil" 2>/dev/null | grep -q 'T28LD8TF6X.at.alfred.app.gemeinsam' || { echo "Schlüsselbund-Gruppe fehlt: $teil — kein Upload"; exit 1; }
 done
 echo "Schlüsselbund-Gruppe: App, Teilen und Fokus ok"
+# Apple ITMS-90626 (Build 112 abgelehnt): das Wort „Siri“ darf in Titeln/Beschreibungen der App Intents nicht vorkommen
+for meta in build/ipa-pruef/x/Payload/Runner.app/Metadata.appintents build/ipa-pruef/x/Payload/Runner.app/Extensions/Fokus.appex/Metadata.appintents; do
+  if [ -d "$meta" ] && grep -qi 'siri' "$meta/extract.actionsdata"; then echo "„Siri“ in den Intent-Texten ($meta) — Apple lehnt das ab, kein Upload"; exit 1; fi
+done
+echo "Intent-Texte: ohne „Siri“ ok"
 
 echo "3b Export (Cloud-Signatur) + Upload zu App Store Connect"
 exportieren -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist -exportPath build/ipa || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }
