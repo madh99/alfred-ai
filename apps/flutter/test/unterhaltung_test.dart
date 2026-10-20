@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:alfred_app/unterhaltung.dart';
@@ -61,6 +62,31 @@ void main() {
     });
     test('Phasentext mit ins Wort fallen', () {
       expect(phasenText(UPhase.spricht, stumm: false, insWort: true), 'Sprich einfach dazwischen');
+    });
+  });
+
+  group('1.68.0 Kugel', () {
+    Uint8List ton(double hz, {int ms = 200, double amp = 6000}) {
+      final n = 16 * ms; final b = ByteData(n * 2);
+      for (var i = 0; i < n; i++) { b.setInt16(i * 2, (amp * sin(2 * pi * hz * i / 16000)).round(), Endian.little); }
+      return b.buffer.asUint8List();
+    }
+    test('Bänder: tiefer Ton → tief, hoher Ton → hoch', () {
+      final (t1, _, h1) = Baender().schiebe(ton(150));
+      final (t2, _, h2) = Baender().schiebe(ton(5000));
+      expect(t1, greaterThan(h1));
+      expect(h2, greaterThan(t2));
+      expect(Baender().schiebe(Uint8List(0)), (0.0, 0.0, 0.0));
+    });
+    test('Stimmung nach festen Regeln: Warnung vor Erledigt', () {
+      expect(stimmungAus('Der Access Point ist offline.'), Stimmung.warnung);
+      expect(stimmungAus('✅ Erledigt, die Datei ist abgelegt.'), Stimmung.erledigt);
+      expect(stimmungAus('Fehler beim Speichern, aber Rest erledigt'), Stimmung.warnung);
+      expect(stimmungAus('Morgen wird es sonnig.'), Stimmung.neutral);
+      final st = UnterhaltungsStand()..texte(alfred: 'Achtung: Störung im WLAN');
+      expect(st.stimmung, Stimmung.warnung);
+      st.texte(alfred: '');
+      expect(st.stimmung, Stimmung.neutral);
     });
   });
 }

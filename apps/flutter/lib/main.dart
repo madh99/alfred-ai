@@ -538,7 +538,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final seite = _seite(context);
     final u = unterhaltung; // 1.58.0 G1 — Unterhaltung liegt über allem; der Chat darunter füllt sich mit
     if (u == null) return seite;
-    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, insWort: uInsWort != null, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
+    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, insWort: uInsWort != null, ausgabePegel: audio.ausgabePegel, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
       aufKugel: _unterhaltungUnterbrechen, aufStumm: _unterhaltungStumm, aufBeenden: _unterhaltungEnde))]);
   }
 

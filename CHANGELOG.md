@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Unterhaltung: lebendige Kugel (App 1.68.0)
+
+Owner 20.10.: „a+b+c+d+e bitte umsetzen“.
+
+- **Shader statt Zeichnung:** Die Kugel ist eine fließende, plasmaartige Fläche mit organischem Rand. Sie läuft auf dem Grafikchip, am iPhone und am Desktop. Lädt der Shader auf einem Gerät nicht, bleibt die bisherige Kugel.
+- **Im Takt von Alfreds Stimme (iPhone):** Die Wiedergabe misst ihre Lautstärke, und die Kugel schwillt mit Silben und Pausen. Am Desktop gibt es dafür ein ruhiges Muster.
+- **Reagiert auf deine Stimme:** Das Mikrofon wird in drei Bänder zerlegt. Tiefe Stimmanteile bewegen den Umriss, Zischlaute lassen den Rand fein zittern.
+- **Fließende Zustände:**
+  - Zuhören: Wellen laufen nach innen.
+  - Nachdenken: Lichtteilchen kreisen um den Kern.
+  - Sprechen: Ringe laufen nach außen.
+  - Stumm: entfärbt.
+- **Stimmung:** Die Farbe folgt der Antwort nach festen Regeln: bernstein bei Warnung oder Störung, grün bei „erledigt“, sonst blau.
+
 ### Fixed — iPhone: Tastatur nur noch beim Antippen des Eingabefelds (App 1.67.5)
 
 Owner 20.10.: Die Tastatur öffnete sich beim Öffnen des Chats, im Gesprächsmodus und scheinbar beim Scrollen.

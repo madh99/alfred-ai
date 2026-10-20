@@ -91,6 +91,12 @@ class Audio {
     } finally { spielt = false; try { await f.delete(); } catch (_) {} }
   }
 
+  /// 1.68.0 A — Lautstärke der laufenden Wiedergabe 0..1 (iPhone, eigene Wiedergabe mit Pegelmessung); -1 = nicht messbar
+  Future<double> ausgabePegel() async {
+    if (!_nativ || !spielt) return -1;
+    try { return (await _system.invokeMethod<double>('tonPegel')) ?? -1; } catch (_) { return -1; }
+  }
+
   Future<void> abbrechen() async { if (Platform.isIOS) { try { await _system.invokeMethod<bool>('tonStopp'); } catch (_) {} } try { await _player.stop(); } catch (_) {} }
 
   Future<void> dispose() async { try { await _rec.dispose(); } catch (_) {} try { await _player.dispose(); } catch (_) {} }

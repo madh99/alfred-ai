@@ -57,6 +57,7 @@ extension _Unterhaltung on _SitzungState {
       return;
     }
     stand.neuerPegel(pegelAusRms(rms16(pcm)));
+    stand.neueBaender(pcm); // 1.68.0 B
     for (final ev in erk.schiebe(pcm)) {
       if (ev is SatzStart) { stand.phase = UPhase.versteht; }
       else if (ev is SatzEnde) { _unterhaltungAeusserung(stand, ev.audio); }

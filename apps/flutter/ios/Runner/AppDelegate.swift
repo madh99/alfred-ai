@@ -274,6 +274,9 @@ import UserNotifications
         case "tonStopp":
           self?.ton.stopp()
           ergebnis(true)
+        case "tonPegel":
+          // 1.68.0 A — Lautstärke der Wiedergabe 0..1 für die Kugel (bis zu 30-mal je Sekunde abgefragt)
+          ergebnis(self?.ton.pegel() ?? -1)
         case "ordnerSchreiben":
           // 1.54.1 — Datei in einen freigegebenen Ordner; nie überschreiben („Name (1).pdf“)
           guard let b = args["bookmark"] as? FlutterStandardTypedData, let name = args["name"] as? String, let daten = args["daten"] as? FlutterStandardTypedData else { ergebnis(FlutterError(code: "args", message: "bookmark, name, daten", details: nil)); return }
@@ -335,6 +338,7 @@ final class TonSpieler: NSObject, AVAudioPlayerDelegate {
     do {
       let s = try AVAudioPlayer(data: daten)
       s.delegate = self
+      s.isMeteringEnabled = true // 1.68.0 A
       spieler = s
       self.fertig = fertig
       if !s.play() { beende(false, "Wiedergabe startet nicht") }
@@ -342,6 +346,14 @@ final class TonSpieler: NSObject, AVAudioPlayerDelegate {
   }
 
   func stopp() { spieler?.stop(); beende(false, nil) }
+
+  /// 1.68.0 A — mittlere Lautstärke (dB, -160…0) auf 0..1; Sprache liegt etwa bei -30…-5 dB
+  func pegel() -> Double {
+    guard let s = spieler, s.isPlaying else { return 0 }
+    s.updateMeters()
+    let db = Double(s.averagePower(forChannel: 0))
+    return max(0, min(1, (db + 45) / 40))
+  }
 
   private func beende(_ ok: Bool, _ fehler: String?) { let f = fertig; fertig = nil; spieler = nil; f?(ok, fehler) }
 
