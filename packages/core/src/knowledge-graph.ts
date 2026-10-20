@@ -1740,7 +1740,8 @@ export class KnowledgeGraphService {
               const src = byId.get(r.sourceEntityId);
               const tgt = byId.get(r.targetEntityId);
               if (!src || !tgt) continue;
-              if (src.entityType !== 'item' && src.entityType !== 'vehicle') continue;
+              // v1523 — auch Netzwerkgeräte (UniFi/HA): sie blieben sonst trotz richtigem Zuhause am falschen Ort hängen (Realfall Linz)
+              if (src.entityType !== 'item' && src.entityType !== 'vehicle' && (src.entityType as string) !== 'network_device') continue;
               if (tgt.entityType !== 'location' || tgt.id === kanonisch.id) continue;
               // Straßen-Adresse des Zuhauses zählt als korrekt.
               if (String((tgt.attributes as Record<string, unknown> | undefined)?.city ?? '') === kanonisch.name) continue;

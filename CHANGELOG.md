@@ -7,9 +7,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Fixed — Wissensgraph: Linz galt als Zuhause, Hausgeräte hingen immer wieder an Linz (v1523)
 
-Owner 20.10. (Screenshots Wissensgraph): Netzwerkgeräte aus UniFi/Home Assistant und der BMW waren mit „Linz“ verbunden und kamen nach dem Löschen wieder. Ursache belegt: Die Memory-Synchronisation markierte einen Ort als Zuhause, sobald im selben Satz irgendein Wohn-Wort stand. Zwei BMW-Service-Memories („return Linz→Home“, „Rückfahrt Linz → Heimat“) machten Linz so zum kanonischen Zuhause (`isUserHome`), die Querverknüpfung hängte danach alle Dinge „zu Hause“ an Linz. Altlengbach trug nur das schwächere Merkmal.
+Owner 20.10. (Screenshots Wissensgraph): Netzwerkgeräte aus UniFi/Home Assistant und der BMW waren mit „Linz“ verbunden und kamen nach dem Löschen wieder. Ursache belegt: Die Memory-Synchronisation markierte einen Ort als Zuhause, sobald im selben Satz irgendein Wohn-Wort stand. Zwei BMW-Service-Memories („return Linz→Home“, „Rückfahrt Linz → Heimat“) gaben Linz so das Zuhause-Merkmal (`isUserHome`). Bis 15.10. waren Linz und Österreich die einzigen Kandidaten, die Querverknüpfung hängte die Hausgeräte an Linz. Seit 16.10. entfernte die nächtliche Wartung das Merkmal jeden Morgen wieder (Altlengbach kanonisch), die Synchronisation setzte es tagsüber erneut. Die Netzwerkgeräte blieben dabei an Linz hängen, weil der Wächter für falsche Zuhause-Verbindungen nur Typ `item` und `vehicle` prüfte.
 
 - Fahrt- und Strecken-Sätze (→, „nach“, Rück-/An-/Hinfahrt, „return“, Kilometer) zählen nicht mehr als Beleg für Wohn- oder Arbeitsort; gilt für beide Stellen, die die Merkmale setzen.
+- v1524: Der Wächter für Verbindungen zu einem falschen Zuhause prüft auch Netzwerkgeräte.
 - Bestandsdaten einmalig korrigiert: Linz ohne Zuhause-/Arbeits-Merkmale, Altlengbach ist das Zuhause, die falschen Verbindungen zu Linz sind gelöscht.
 
 ### Added — Standortzonen des iPhones (v1522, App 1.55.0)
