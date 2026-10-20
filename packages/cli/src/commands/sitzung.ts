@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
+import { tlsOptionen } from './satellit-sicherheit.js'; // v1531
 import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
@@ -34,7 +35,7 @@ function anfrage(k: GeraetKonfig, methode: 'GET' | 'POST', pfad: string, body?: 
     const req = mod.request(u, {
       method: methode,
       headers: { Authorization: `Bearer ${k.token}`, 'Content-Type': 'application/json', ...(daten ? { 'Content-Length': Buffer.byteLength(daten) } : {}) },
-      rejectUnauthorized: !k.insecure,
+      ...tlsOptionen(k), // v1531
       timeout: 20_000,
     }, (res) => {
       let text = '';
@@ -56,7 +57,7 @@ function anfrageStrom(k: GeraetKonfig, pfad: string, body: unknown, aufEreignis:
     const req = mod.request(u, {
       method: 'POST',
       headers: { Authorization: `Bearer ${k.token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(daten) },
-      rejectUnauthorized: !k.insecure,
+      ...tlsOptionen(k), // v1531
     }, (res) => {
       if (res.statusCode !== 200) { let t = ''; res.on('data', (c: Buffer) => { t += c.toString(); }); res.on('end', () => reject(new Error(`HTTP ${res.statusCode}: ${t.slice(0, 200)}`))); return; }
       let puffer = '';
@@ -89,7 +90,7 @@ function anfrageRoh(k: GeraetKonfig, pfad: string, body: Buffer | string, conten
     const req = mod.request(u, {
       method: 'POST',
       headers: { Authorization: `Bearer ${k.token}`, 'Content-Type': contentType, 'Content-Length': daten.length },
-      rejectUnauthorized: !k.insecure,
+      ...tlsOptionen(k), // v1531
       timeout: 120_000,
     }, (res) => {
       const teile: Buffer[] = [];

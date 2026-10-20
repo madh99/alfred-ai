@@ -21,6 +21,7 @@ export const EINSTELLUNGEN_HILFE = [
   'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
   'beobachter an|aus                        Beobachter dieses Geräts (Ordner u. a.) erlauben oder alle abschalten — die Regeln bleiben am Server',
   'ablage + <pfad> | - <pfad>              Ablage-Ordner: Dateien, die du selbst an Alfred geschickt hast (App, Teilen), legt Alfred hier ohne Rückfrage ab (Standard: Downloads; nur hier am Gerät, nie aus dem Chat)',
+  'sicherheit locker | neu                 Stufe „streng“ zurücknehmen (locker) oder gemerkten Server- und Befehls-Schlüssel vergessen und neu lernen (neu, z. B. nach Server-Wechsel) — nur hier am Gerät',
   'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Entwicklungsbefehle (npm, git, …) und Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
 ];
 
@@ -41,6 +42,7 @@ export function einstellungen(k: GeraetKonfig, extra: { version: string; dienst:
     { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: k.sitzungEinfach ? 'einfach' : 'ink', art: 'schalter' },
     { schluessel: 'vertrauen', titel: 'Vertrauensstufe projekt', wert: aktivesVertrauen(k).length ? `${aktivesVertrauen(k).length} Ordner` : 'keine', art: 'liste', eintraege: aktivesVertrauen(k).map(v => `${v.pfad} bis ${new Date(v.bis).toLocaleString('de-AT')}`), hinweis: 'nur lokal setzbar; Installieren bleibt bestätigungspflichtig' }, // v1411
     { schluessel: 'ablage', titel: 'Ablage-Ordner ohne Rückfrage', wert: k.ablageOrdner ? `${aktiveAblageOrdner(k).length} Ordner` : 'Standard (Downloads)', art: 'liste', eintraege: aktiveAblageOrdner(k), hinweis: 'nur eigene Uploads aus App/Teilen; nur lokal setzbar; überschrieben wird nie' }, // v1529
+    { schluessel: 'sicherheit', titel: 'Sicherheit (Server-Schlüssel, Befehlssignatur)', wert: `${k.sicherheitStreng ? 'streng' : 'lernen'} · Schlüssel ${k.serverSchluessel?.length ? k.serverSchluessel[0]!.match(/.{1,4}/g)!.slice(0, 4).join(' ') + ' …' : 'noch nicht gemerkt'} · Befehle ${k.befehlsKey ? 'signiert' : 'Schlüssel fehlt'}`, art: 'info', hinweis: 'streng: anderer Server oder unsignierter Befehl wird abgelehnt' }, // v1531
     { schluessel: 'beobachter', titel: 'Beobachter (Ordner u. a.)', wert: k.beobachterAus ? 'aus' : 'an', art: 'schalter', hinweis: 'aus: dieses Gerät beobachtet nichts, egal was am Server eingestellt ist' }, // v1429
     { schluessel: 'sudo-sperre', titel: 'sudo in Claude-Code-Aufträgen', wert: k.sudoSperre ? 'gesperrt' : 'erlaubt', art: 'schalter', hinweis: 'gesperrt: Systemänderungen nur über installieren mit Bestätigung' }, // v1409
   ];
@@ -116,6 +118,12 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
       if (!inSchreibFreigabe(k, p)) return { ok: false, text: `Nur in einem Verzeichnis mit Schreibrecht (erst „freigabe ${p} schreiben“): ${p}` };
       k.ablageOrdner = liste.some(x => gleich(x, p)) ? liste : [...liste, p];
       return { ok: true, text: `Ablage-Ordner: ${p}` };
+    }
+    case 'sicherheit': { // v1531 — nur lokal; aus dem Netz lässt sich die Stufe nicht zurücknehmen
+      const w = a.toLowerCase();
+      if (w === 'locker') { k.sicherheitStreng = false; return { ok: true, text: 'Sicherheit: Stufe lernen (Abweichungen werden gemeldet, nicht abgewiesen)' }; }
+      if (w === 'neu') { k.serverSchluessel = undefined; k.befehlsKey = undefined; k.sicherheitStreng = false; return { ok: true, text: 'Server- und Befehls-Schlüssel vergessen — werden bei der nächsten Verbindung neu gelernt' }; }
+      return { ok: false, text: 'sicherheit locker | sicherheit neu' };
     }
     case 'beobachter': { // v1429 R4a — lokales Veto
       if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'beobachter an|aus' };

@@ -13,6 +13,7 @@ import { Freigaben, VorhabenFreigaben, vorhabenDateiSpeicher } from './freigaben
 import { AuftragHerkunft } from './auftrag-herkunft.js'; // v1383
 import { Transfers, TransferOffsetFehler } from './transfers.js'; // v1249
 import { EigeneUploads } from './ablage-regel.js'; // v1529
+import { signiereBefehl, SIGNIERTE_TYPEN, type BefehlsSchluessel } from './befehl-signatur.js'; // v1531
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -39,6 +40,10 @@ export interface GeraeteGatewayDeps {
   transferOrdner?: string;
   /** v1258 — öffentlicher Release-Schlüssel für das Willkommen (Satelliten prüfen Updates damit). */
   releaseKey?: () => string | undefined;
+  /** v1531 — Befehle signieren (Ed25519); fehlt er, gehen Befehle unsigniert (Tests, alte Konfiguration) */
+  befehlsSchluessel?: BefehlsSchluessel;
+  /** v1531 Stufe b — Geräte sollen streng prüfen (einseitig: einmal gesetzt, nur am Gerät rücknehmbar) */
+  streng?: () => boolean;
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
@@ -76,6 +81,8 @@ interface Verbindung {
   /** v1237 — letzte Sinne (Leerlauf, Fenster, Akku) und ihr Zeitpunkt. */
   sinne?: Record<string, unknown>;
   sinneZeit?: number;
+  /** v1531 — zuletzt geloggter Sicherheitsstand */
+  sicherheitZuletzt?: string;
 }
 
 export class GeraeteGateway {
@@ -284,7 +291,7 @@ export class GeraeteGateway {
     this.ohneVerbindung.delete(eintrag.id); // v1520
     await this.deps.repo.setzeZuletztGesehen(eintrag.id, gepr.manifest).catch(() => undefined);
     this.registriereSkill(verbindung);
-    this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName, releaseKey: this.deps.releaseKey?.() }); // v1258
+    this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName, releaseKey: this.deps.releaseKey?.(), befehlsKey: this.deps.befehlsSchluessel?.oeffentlichPem, streng: this.deps.streng?.() === true }); // v1258, v1531
     try { this.deps.beiVerbindung?.(eintrag.id); } catch { /* Folgearbeit darf die Verbindung nicht stören */ } // v1415
     this.deps.logger.info({ geraetId: eintrag.id, name: eintrag.name, plattform: gepr.manifest.plattform, aktionen: gepr.manifest.aktionen.map(a => a.name), skillName, remote }, 'v1224 Gerät verbunden');
     return verbindung;
@@ -384,12 +391,19 @@ export class GeraeteGateway {
         try { this.deps.beiBeobachtung?.(v.eintrag.id, e); } catch { /* Folgearbeit */ }
         return;
       }
-      case 'sinne':
+      case 'sinne': {
         v.zuletztPuls = Date.now();
         // v1237 — Sinne merken: Weltmodell-Quelle „Geräte" und Anwesenheitssignal lesen sie
         v.sinne = n.werte ?? {};
         v.sinneZeit = Date.now();
+        // v1531 — Sicherheitsstand des Geräts (Pin, Befehlssignatur, streng) ins Log, sobald er sich ändert
+        const sich = (v.sinne as Record<string, unknown>).sicherheit;
+        if (sich && typeof sich === 'object') {
+          const kurz = JSON.stringify({ ...(sich as Record<string, unknown>), befehleOk: undefined });
+          if (kurz !== v.sicherheitZuletzt) { v.sicherheitZuletzt = kurz; this.deps.logger.info({ geraet: v.eintrag.name, ...(sich as Record<string, unknown>) }, 'v1531 Sicherheit des Geräts'); }
+        }
         return;
+      }
       default:
         this.deps.logger.debug({ typ: (n as { typ?: string }).typ }, 'v1224 unbekannter Nachrichtentyp');
     }
@@ -500,7 +514,16 @@ export class GeraeteGateway {
 
   private sende(ws: WebSocket, n: Partial<GeraetNachricht> & { typ: string; id?: string }): void {
     if (ws.readyState !== WebSocket.OPEN) return;
-    try { ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); } catch { /* */ }
+    try {
+      let nachricht: Record<string, unknown> = { id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n };
+      // v1531 — Befehle an das Gerät signieren (Ziel-Gerät, Zeit und ID mitsigniert)
+      const s = this.deps.befehlsSchluessel;
+      if (s && (SIGNIERTE_TYPEN as readonly string[]).includes(n.typ)) {
+        const ziel = [...this.verbindungen.values()].find(x => x.ws === ws)?.eintrag.id;
+        if (ziel) nachricht = signiereBefehl(nachricht, ziel, s);
+      }
+      ws.send(JSON.stringify(nachricht));
+    } catch { /* */ }
   }
 }
 

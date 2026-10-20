@@ -115,7 +115,7 @@ class IpcVerbindung implements AppVerbindung {
         if (c != null && !c.isCompleted) c.complete(n);
       case 'konfig':
         final k = n['konfig'] as Map<String, dynamic>;
-        aufKonfig(Konfig(server: '${k['server']}', geraetId: '${k['geraetId']}', token: '${k['token']}', name: '${k['name']}', insecure: k['insecure'] == true, aktivierungswort: (k['aktivierungswort'] as String?)?.trim().isNotEmpty == true ? '${k['aktivierungswort']}' : 'Alfred'));
+        aufKonfig(Konfig(server: '${k['server']}', geraetId: '${k['geraetId']}', token: '${k['token']}', name: '${k['name']}', insecure: k['insecure'] == true, schluessel: [for (final x in (k['schluessel'] as List<dynamic>? ?? const [])) '$x'], aktivierungswort: (k['aktivierungswort'] as String?)?.trim().isNotEmpty == true ? '${k['aktivierungswort']}' : 'Alfred'));
     }
   }
 }

@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Satelliten: Server-Schlüssel gepinnt, Befehle signiert (v1531, App 1.66.0)
+
+Owner 20.10.: „1 und 2 gemeinsam wie empfohlen umsetzen“. Bisher verbanden sich die Satelliten ohne Zertifikatsprüfung. Wer sich im Heimnetz dazwischenschaltet, hätte das Gerätetoken bekommen und den Geräten Befehle schicken können.
+
+- **Server-Schlüssel gepinnt:** Der Satellit merkt sich beim ersten Kontakt den öffentlichen Schlüssel des Servers (SHA-256 der SPKI, dasselbe Format wie am iPhone). Danach prüft er ihn bei jeder Verbindung, und zwar beim Verbindungsaufbau, bevor Token oder Daten gesendet werden. Das gilt für WebSocket, HTTP, Updates, Hören, die Terminal-Sitzung und die Kopplung, die den Schlüssel gleich anzeigt. Gepinnt wird der Schlüssel, nicht das Zertifikat: Eine Erneuerung des Zertifikats mit demselben Schlüssel bricht nichts. Das aktuelle Zertifikat läuft bis 03/2027.
+- **Desktop-App:** Sie bekommt den gemerkten Schlüssel vom Satelliten und prüft ihn auf demselben Weg wie die Handy-App.
+- **Befehle signiert:** Der Server signiert jede Aktion und jede Beobachter-Regel mit einem eigenen Ed25519-Schlüssel (`data/geraete-befehlsschluessel.pem`). Ziel-Gerät, Zeit und ID werden mitsigniert. Damit lässt sich ein Befehl weder ändern noch an ein anderes Gerät umleiten noch wiederholen.
+- **Einführung in zwei Stufen:**
+  - **Lernen** (jetzt): Abweichungen werden gemeldet (Sinne „sicherheit“, Server-Log „v1531 Sicherheit des Geräts“), aber nichts wird abgewiesen.
+  - **Streng** (nach Beobachtung, über `data/geraete-sicherheit.json` mit `{"streng": true}`): Ein fremder Server bekommt keine Verbindung mehr, ein unsignierter Befehl wird nicht ausgeführt. Die Geräte übernehmen „streng“ nur, wenn sie beide Schlüssel schon gelernt haben, und aus dem Netz lässt es sich nicht zurücknehmen. Zurücknehmen geht nur am Gerät: `alfred einstellungen sicherheit locker`. Nach einem Server-Wechsel: `sicherheit neu`.
+- **.93 (node-b)** braucht vor dem Wiedereinschalten denselben TLS-Schlüssel und dieselbe `geraete-befehlsschluessel.pem` wie .92.
+
 ### Fixed — Fokus auch bei geschlossener App: eigene Fokus-Erweiterung (App 1.65.0, iPhone)
 
 Owner 20.10.: „Weg 1 wie empfohlen“. Tests mit Build 105 bis 108 haben gezeigt, dass iOS den Fokusfilter beim Umschalten nur aufruft, wenn die App läuft. Laut Apple (WWDC22, „Meet Focus filters“) startet iOS bei geschlossener App stattdessen eine Erweiterung, wenn die App eine hat.

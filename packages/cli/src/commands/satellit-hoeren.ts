@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 import type { GeraetKonfig } from './pair.js';
+import { tlsOptionen } from './satellit-sicherheit.js'; // v1531
 
 /**
  * v1251 — Client des Hör-Relais (Sitzung → Server → Mistral Realtime).
@@ -17,7 +18,7 @@ export class HoerClient {
   verbinde(): Promise<void> {
     return new Promise((resolve, reject) => {
       const url = this.k.server.replace(/^http/i, 'ws') + '/api/geraete/hoeren';
-      const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${this.k.token}` }, rejectUnauthorized: !this.k.insecure });
+      const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${this.k.token}` }, ...tlsOptionen(this.k) } /* v1531 — Pin vor dem Token-Header */);
       this.ws = ws;
       let bereit = false;
       ws.on('open', () => { this.offen = true; });

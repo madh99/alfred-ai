@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import type { GeraetKonfig } from './pair.js';
+import { tlsOptionen } from './satellit-sicherheit.js'; // v1531
 
 /**
  * v1249 — HTTP mit Gerätetoken (Satellit und Sitzung): JSON oder Rohdaten senden, Rohdaten empfangen.
@@ -23,7 +24,7 @@ export function geraetAnfrage(
     const req = mod.request(u, {
       method: methode,
       headers: { Authorization: `Bearer ${k.token}`, ...(daten ? { 'Content-Type': contentType, 'Content-Length': daten.length } : {}), ...(opts.headers ?? {}) },
-      rejectUnauthorized: !k.insecure,
+      ...(u.protocol === 'https:' ? tlsOptionen(k) : {}), // v1531 — Server-Schlüssel wird vor dem Senden geprüft
       timeout: opts.timeoutMs ?? 120_000,
     }, (res) => {
       res.setTimeout(opts.timeoutMs ?? 120_000, () => { try { res.destroy(new Error('Antwort-Zeitüberschreitung')); } catch { /* */ } }); // v1264

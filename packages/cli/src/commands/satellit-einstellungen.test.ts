@@ -10,7 +10,7 @@ const konfig = (): GeraetKonfig => ({ server: 'https://s:3420', geraetId: 'abcde
 describe('Satelliten-Einstellungen (v1309)', () => {
   it('listet die Felder mit Werten', () => {
     const l = einstellungen(konfig(), { version: '1309', dienst: 'läuft' });
-    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'ablage', 'beobachter', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen, v1429 beobachter, v1529 ablage
+    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'ablage', 'sicherheit', 'beobachter', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen, v1429 beobachter, v1529 ablage, v1531 sicherheit
     expect(l[2]!.eintraege).toEqual([`${os.tmpdir()} (schreiben)`]);
     expect(l[5]!.wert).toBe('Alfred');
     expect(l[7]!.wert).toBe('ink');

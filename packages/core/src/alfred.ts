@@ -13966,6 +13966,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           auftraegeDatei: path.resolve(process.cwd(), 'data', 'geraete-auftraege.json'), // v1383 — Ende-Meldung in die Sitzung des Starts
           transferOrdner: path.resolve(process.cwd(), 'data', 'transfers'), // v1249
           releaseKey: () => this.releasesRef?.publicKey, // v1258
+          // v1531 — Befehle an Satelliten signieren (eigener Schlüssel; .93 braucht dieselbe Datei). Stufe b „streng“ über
+          // data/geraete-sicherheit.json {"streng": true}: die Geräte prüfen dann hart (Pin und Signatur), einseitig.
+          befehlsSchluessel: (await import('./geraete/befehl-signatur.js')).ladeOderErzeugeBefehlsSchluessel(path.resolve(process.cwd(), 'data', 'geraete-befehlsschluessel.pem')),
+          streng: () => { try { return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'data', 'geraete-sicherheit.json'), 'utf8')).streng === true; } catch { return false; } },
           // v1235 — Dateitransfer: Quelle = FileStore-Schlüssel des Owners oder Serverpfad unter dem Alfred-Datenordner
           dateien: {
             lade: async (quelle: string) => {

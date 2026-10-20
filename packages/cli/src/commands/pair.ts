@@ -31,6 +31,10 @@ export interface GeraetKonfig {
   beobachterAus?: boolean;
   /** v1411 R3d — Vertrauensstufe „projekt": nur lokal setzbar (alfred einstellungen vertrauen …), Pfad + Ablaufzeit (ISO) */
   vertrauen?: Array<{ pfad: string; bis: string }>;
+  /** v1531 — Sicherheit: gemerkter Server-Schlüssel (SHA-256 der SPKI, hex), Befehls-Schlüssel (PEM), Stufe streng */
+  serverSchluessel?: string[];
+  befehlsKey?: string;
+  sicherheitStreng?: boolean;
   /** v1529 — Ablage-Ordner: eigene Uploads des Owners landen hier ohne Rückfrage. Fehlt der Eintrag, gilt Downloads. Nur lokal setzbar. */
   ablageOrdner?: string[];
   erlaubteProgramme: string[];
@@ -91,6 +95,17 @@ export async function pairCommand(opts: { server?: string; code?: string; name?:
     if (!existsSync(v)) console.error(`  WARNUNG: Verzeichnis existiert nicht: ${v} — in PowerShell die Liste in EIN Anführungszeichenpaar setzen, Trenner ; oder ,`);
   }
   const manifest = baueManifest(getVersion());
+  // v1531 — Server-Schlüssel schon beim Koppeln merken und anzeigen (wie die Handy-App): danach nur noch dieser Server
+  let pin: string | undefined;
+  try {
+    const u = new URL(server);
+    if (u.protocol === 'https:') {
+      const { connect } = await import('node:tls');
+      const { spkiHex } = await import('@alfred/core');
+      pin = await new Promise<string>((ok, fehl) => { const s = connect({ host: u.hostname, port: Number(u.port || 443), servername: /^[\d.]+$/.test(u.hostname) ? undefined : u.hostname, rejectUnauthorized: !opts.insecure }, () => { const c = s.getPeerCertificate(true); s.end(); c?.raw ? ok(spkiHex(c.raw)) : fehl(new Error('kein Zertifikat')); }); s.once('error', fehl); });
+      console.log(`Server-Schlüssel: ${pin.match(/.{1,4}/g)!.slice(0, 4).join(' ')} … (wird gemerkt; ein anderer Server wird später abgelehnt)`);
+    }
+  } catch (err) { console.error(`Server-Schlüssel nicht lesbar: ${(err as Error).message}`); }
   const dispatcher = opts.insecure ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
   const res = await undiciFetch(`${server}/api/geraete/pair`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -102,7 +117,7 @@ export async function pairCommand(opts: { server?: string; code?: string; name?:
     console.error(`Pairing fehlgeschlagen: ${body.grund ?? body.error ?? res.status}`);
     process.exit(1);
   }
-  speichereKonfig({ server, geraetId: body.id, token: body.token, name: body.name ?? name, insecure: !!opts.insecure, freigegebeneVerzeichnisse: freigegebene, erlaubteProgramme: [] });
+  speichereKonfig({ server, geraetId: body.id, token: body.token, name: body.name ?? name, insecure: !!opts.insecure, freigegebeneVerzeichnisse: freigegebene, erlaubteProgramme: [], ...(pin ? { serverSchluessel: [pin] } : {}) });
   console.log(`Gekoppelt: ${body.name} → ${server} (Skill im Gehirn: ${body.skillName})`);
   console.log(`Konfiguration: ${konfigPfad()}`);
   console.log(`Freigegebene Verzeichnisse: ${freigegebene.join(', ')}`);

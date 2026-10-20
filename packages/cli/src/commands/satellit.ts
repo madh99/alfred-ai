@@ -15,6 +15,7 @@ import { cliOrdner, updateWeiterWarten, UPDATE_START, type UpdateZaehler } from 
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
 import { installiereStarter } from './satellit-starter.js'; // v1304
 import { installieren, pruefeInstallation, INSTALL_QUELLEN } from './satellit-installieren.js'; // v1410 R3c
+import { tlsOptionen, willkommenSicherheit, befehlPruefen, sicherheitsStand, setzeSicherheitsLog } from './satellit-sicherheit.js'; // v1531
 import { aktivesVertrauen, aktiveAblageOrdner, einstellungen as einstellungsListe, wendeAn as einstellungAnwenden } from './satellit-einstellungen.js'; // v1411 R3d, v1529
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { BeobachterVerwaltung, type BeobachterRegel } from './satellit-beobachter.js'; // v1429 R4a
@@ -818,6 +819,7 @@ function ipcPfadText(): string { try { return process.platform === 'win32' ? 'Na
 
 export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: (zeile: string) => void; fehler?: (zeile: string) => void; ohneIpc?: boolean }): { stop: () => void; fertig: Promise<void> } {
   const log = opts.log ?? (() => undefined);
+  setzeSicherheitsLog(log); // v1531 — Pin-Meldungen ins Satelliten-Log
   const fehler = opts.fehler ?? log;
   const version = getVersion();
   // v1462 — bestätigte dev-/test-Instanzen nach einem Neustart des Geräts wieder hochfahren (und alle 10 min nachsehen)
@@ -835,7 +837,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     const s = new IpcServer(status, (befehl, antworte, n) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
       // v1312 — Desktop-App holt sich Server und Gerätetoken vom Satelliten (gleicher Benutzer, geschützter Zugang)
-      if (befehl === 'konfig') antworte({ typ: 'konfig', konfig: { server: k.server, geraetId: k.geraetId, token: k.token, name: k.name, insecure: !!k.insecure, aktivierungswort: k.aktivierungswort } }); // v1314 Aktivierungswort für die App
+      if (befehl === 'konfig') antworte({ typ: 'konfig', konfig: { server: k.server, geraetId: k.geraetId, token: k.token, name: k.name, insecure: !!k.insecure, aktivierungswort: k.aktivierungswort, schluessel: k.serverSchluessel ?? [] } }); // v1314 Aktivierungswort für die App, v1531 Pins
       if (befehl === 'beenden') { log('Beendet über IPC (Sitzung)'); stop(); setTimeout(() => process.exit(0), 200); }
       // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
       // v1529 — Desktop-App: Einstellungen lesen und lokal ändern (nur über IPC, nie aus dem Chat); vorerst nur die Ablage-Ordner
@@ -849,7 +851,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
       }
       if (befehl === 'neuladen') {
         const neu = ladeKonfig();
-        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; if (!neu.ablageOrdner) k.ablageOrdner = undefined; /* v1529 */ if (!neu.beobachterAus) k.beobachterAus = undefined; beobachter.setze(beobachterRegeln); /* v1429 Veto sofort */ bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
+        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; if (!neu.ablageOrdner) k.ablageOrdner = undefined; /* v1529 */ if (!neu.sicherheitStreng) k.sicherheitStreng = undefined; if (!neu.serverSchluessel) k.serverSchluessel = undefined; /* v1531 */ if (!neu.beobachterAus) k.beobachterAus = undefined; beobachter.setze(beobachterRegeln); /* v1429 Veto sofort */ bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
       }
     });
     s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
@@ -916,13 +918,13 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   const fertig = (async () => {
     while (laeuft) {
       const ende = await new Promise<string>((resolve) => {
-        const ws = new WebSocket(wsUrl, { rejectUnauthorized: !k.insecure });
+        const ws = new WebSocket(wsUrl, { ...tlsOptionen(k) }); // v1531 — Server-Schlüssel vor dem hallo (Token) geprüft
         aktiv = ws;
         let puls: ReturnType<typeof setInterval> | undefined;
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
         // v1411 R3d — aktive Vertrauensstufen mit den Sinnen melden (das Gehirn überspringt damit Einzelbestätigungen im Ordner)
-        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), ablage: aktiveAblageOrdner(k), schreibfreigaben: k.freigegebeneVerzeichnisse.map(p => path.resolve(p)), beobachter: beobachter.stand() }; /* v1529 ablage, v1530 Schreibfreigaben */ sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
+        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), sicherheit: sicherheitsStand(k), ablage: aktiveAblageOrdner(k), schreibfreigaben: k.freigegebeneVerzeichnisse.map(p => path.resolve(p)), beobachter: beobachter.stand() }; /* v1529 ablage, v1530 Schreibfreigaben */ sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
         sinneSofort = () => { void sendeSinne(); };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
@@ -938,6 +940,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             rueckzugMs = 1000; log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName} (Satellit ${version})`);
             verbunden = true; serverVersion = String(n.serverVersion ?? ''); verbundenSeit = new Date().toISOString(); ereignis('verbunden', `Verbunden mit Alfred ${serverVersion}`); // v1302
             // v1258 — Release-Schlüssel merken, laufende Version bestätigen, Update prüfen
+            willkommenSicherheit(k, n as { befehlsKey?: unknown; streng?: unknown }, log); // v1531
             const rk = merkeReleaseKey((n as { releaseKey?: unknown }).releaseKey);
             if (rk === 'gemerkt') log('Release-Schlüssel des Servers gemerkt'); else if (rk === 'abweichend') fehler('WARNUNG: Release-Schlüssel des Servers weicht vom gemerkten ab — Updates werden abgelehnt');
             bestaetigeAktuell(version);
@@ -953,6 +956,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           }
           if (n.typ === 'puls_ok') return;
           if (n.typ === 'beobachten') { // v1429 R4a — Regeln vom Gehirn übernehmen, Stand sofort melden
+            if (!befehlPruefen(k, n as unknown as Record<string, unknown>, fehler).erlaubt) return; // v1531
             beobachterRegeln = Array.isArray(n.regeln) ? (n.regeln as unknown as BeobachterRegel[]) : [];
             beobachter.setze(beobachterRegeln);
             setTimeout(() => { void sendeSinne(); }, 500);
@@ -991,6 +995,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           }
           if (n.typ === 'aktion') {
             const start = Date.now();
+            // v1531 — Befehlssignatur; in Stufe streng wird ein unsignierter oder fremder Befehl nicht ausgeführt
+            const sp = befehlPruefen(k, n as unknown as Record<string, unknown>, fehler);
+            if (!sp.erlaubt) { sende({ typ: 'aktion_ergebnis', id: n.id, success: false, error: `Befehl abgelehnt: Signatur ${sp.ergebnis}`, dauerMs: 0 }); return; }
             log(`[${new Date().toLocaleTimeString('de-AT')}] Aktion ${n.aktion} ${paramsFuerLog(n.params ?? {}).slice(0, 160)}`); // v1434 — Token nie ins Log
             ereignis('aktion', `Aktion ${n.aktion}`);
             let r: Ergebnis;

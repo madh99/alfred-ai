@@ -32,10 +32,10 @@ export interface GeraetManifest {
 export interface GeraetRahmen { typ: string; id: string; zeit: string; version: 1 }
 
 export interface GeraetHallo extends GeraetRahmen { typ: 'hallo'; geraetId: string; token: string; manifest: GeraetManifest }
-export interface GeraetWillkommen extends GeraetRahmen { typ: 'willkommen'; geraetId: string; name: string; serverVersion: string; skillName: string; /** v1258 — öffentlicher Release-Schlüssel (PEM) für signierte Updates */ releaseKey?: string }
+export interface GeraetWillkommen extends GeraetRahmen { typ: 'willkommen'; geraetId: string; name: string; serverVersion: string; skillName: string; /** v1258 — öffentlicher Release-Schlüssel (PEM) für signierte Updates */ releaseKey?: string; /** v1531 — öffentlicher Befehls-Schlüssel (PEM, Ed25519) und Stufe „streng“ */ befehlsKey?: string; streng?: boolean }
 export interface GeraetPuls extends GeraetRahmen { typ: 'puls' }
 export interface GeraetPulsOk extends GeraetRahmen { typ: 'puls_ok' }
-export interface GeraetAktion extends GeraetRahmen { typ: 'aktion'; aktion: string; params: Record<string, unknown>; begruendung?: string; vorgangId?: string }
+export interface GeraetAktion extends GeraetRahmen { typ: 'aktion'; aktion: string; params: Record<string, unknown>; begruendung?: string; vorgangId?: string; /** v1531 — Ziel-Gerät und Signatur */ an?: string; sig?: string }
 export interface GeraetAktionErgebnis extends GeraetRahmen { typ: 'aktion_ergebnis'; success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }
 export interface GeraetSinne extends GeraetRahmen { typ: 'sinne'; werte: Record<string, unknown> }
 export interface GeraetFehler extends GeraetRahmen { typ: 'fehler'; grund: string }
