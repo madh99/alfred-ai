@@ -77,8 +77,8 @@ final class Netz: NSObject, URLSessionDelegate {
   }
 
   /// v1522 — Standortzone melden (nur der Name; `null` = unterwegs).
-  func zone(art: String, zone: String?) async throws {
-    _ = try await json("POST", "/api/geraete/zone", ["art": art, "zone": zone.map { $0 as Any } ?? NSNull()])
+  func zone(art: String, zone: String?, bewegung: String? = nil) async throws {
+    _ = try await json("POST", "/api/geraete/zone", ["art": art, "zone": zone.map { $0 as Any } ?? NSNull(), "bewegung": bewegung.map { $0 as Any } ?? NSNull()])
   }
 
   /// Nachricht ins Gespräch; es wird nur auf die Annahme gewartet (die Antwort kommt als Mitteilung).

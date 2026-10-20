@@ -97,7 +97,7 @@ Future<Kopplung> koppeln({required String server, required String code, required
 }
 
 class HandyVerbindung implements AppVerbindung {
-  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, this.aufAudio, Schluesselbund? speicher})
+  HandyVerbindung({required this.aufStatus, required this.aufEreignis, required this.aufBestaetigung, required this.aufKonfig, required this.aufZustand, required this.version, this.aufHinweis, this.aufAudio, this.aufBewegung, Schluesselbund? speicher})
       : _speicher = speicher ?? const GeraeteSchluesselbund();
 
   final void Function(SatellitStatus) aufStatus;
@@ -108,6 +108,8 @@ class HandyVerbindung implements AppVerbindung {
   final void Function(String)? aufHinweis;
   /// 1.54.3 — Audio-Ausgang (kopfhoerer, bluetooth, auto, lautsprecher …)
   final void Function(String)? aufAudio;
+  /// v1526 — Bewegung (auto, rad, laeuft, geht, still)
+  final void Function(String)? aufBewegung;
   final void Function(String) aufZustand;
   final String Function() version;
   final Schluesselbund _speicher;
@@ -131,6 +133,7 @@ class HandyVerbindung implements AppVerbindung {
     _netz.setMethodCallHandler((c) async { // 1.54.0 H3 Netzwechsel; 1.54.3 Audio-Ausgang
       if (c.method == 'geaendert') jetztVerbinden();
       if (c.method == 'audio' && c.arguments is Map) { aufAudio?.call('${(c.arguments as Map)['audio']}'); _sinneSenden(); }
+      if (c.method == 'bewegung' && c.arguments is Map) { aufBewegung?.call('${(c.arguments as Map)['bewegung']}'); _sinneSenden(); } // v1526
       return null;
     });
     _leben ??= AppLifecycleListener(
@@ -214,7 +217,7 @@ class HandyVerbindung implements AppVerbindung {
     if (_ws == null) return;
     final z = await handyZustand();
     final werte = <String, Object?>{'leerlaufSek': 0};
-    for (final k in ['akkuProzent', 'akkuLaedt', 'netz', 'audio', 'modell', 'system']) { if (z[k] != null) werte[k] = z[k]; }
+    for (final k in ['akkuProzent', 'akkuLaedt', 'netz', 'audio', 'modell', 'system', 'bewegung']) { if (z[k] != null) werte[k] = z[k]; } // v1526 bewegung
     final frei = z['speicherFreiGb'], gesamt = z['speicherGesamtGb'];
     if (frei is num && gesamt is num && gesamt > 0) werte['laufwerke'] = [{'name': 'Speicher', 'freiGb': frei.round(), 'gesamtGb': gesamt.round()}];
     _sende({'typ': 'sinne', 'werte': werte});

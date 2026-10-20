@@ -14,9 +14,13 @@ export interface GeraetSinne {
   laufwerke?: Array<{ name: string; gesamtGb: number; freiGb: number }>;
   /** v1520 — Handy (nur solange die App offen ist): Netzweg, Audio-Ausgang, Fokus, Modell und System */
   netz?: string; audio?: string; fokus?: boolean; modell?: string; system?: string;
+  /** v1526 — Bewegung (auto, rad, laeuft, geht, still) */
+  bewegung?: string;
 }
 /** v1520 — Klartext für Netzweg und Audio-Ausgang des Handys */
 const NETZ_TEXT: Record<string, string> = { wlan: 'WLAN', mobil: 'Mobilfunk', vpn: 'VPN', keins: 'kein Netz' };
+/** v1526 — Klartext der Bewegung; „still“ wird nicht eigens genannt */
+export const BEWEGUNG_TEXT: Record<string, string> = { auto: 'im Auto', rad: 'auf dem Rad', laeuft: 'läuft', geht: 'zu Fuß' };
 const AUDIO_TEXT: Record<string, string> = { kopfhoerer: 'Kopfhörer', bluetooth: 'Bluetooth-Audio', auto: 'im Auto (CarPlay/Auto-Audio)', lautsprecher: 'Lautsprecher' };
 /** v1239 — Laufwerk unter diesem Anteil frei ist auffällig. */
 export const LAUFWERK_KNAPP_ANTEIL = 0.1;
@@ -29,7 +33,7 @@ export interface GeraetZustand {
   sinne?: GeraetSinne;
   sinneZeit?: string;
   /** v1522 — Standortzone des Handys (null = unterwegs), auch bei geschlossener App */
-  zone?: { name: string | null; seit: string };
+  zone?: { name: string | null; seit: string; bewegung?: string; gemeldet?: string };
 }
 export interface GeraeteDeutung { zeilen: string[]; auffaellig: string[]; aktiv?: { name: string; leerlaufSek: number } }
 
@@ -42,9 +46,12 @@ export const HANDY_PLATTFORMEN: ReadonlySet<string> = new Set(['ios', 'android']
 export const SINNE_FRISCH_MS = 3 * 60_000;
 
 /** v1522 — „zu Hause seit 18:05“ / „unterwegs seit 08:15“ (Uhrzeit lokal) */
-export function zonenText(z: { name: string | null; seit: string }): string {
+export function zonenText(z: { name: string | null; seit: string; bewegung?: string; gemeldet?: string }, jetzt = Date.now()): string {
   const uhr = new Date(z.seit).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
-  return `${z.name ? `Zone „${z.name}“` : 'unterwegs'} seit ${uhr}`;
+  // v1526 — Bewegung bei der letzten Zonenmeldung, nur wenn frisch (≤ 60 min) und nicht „still“
+  const frisch = z.gemeldet ? jetzt - Date.parse(z.gemeldet) <= 60 * 60_000 : false;
+  const bew = frisch && z.bewegung ? BEWEGUNG_TEXT[z.bewegung] : undefined;
+  return `${z.name ? `Zone „${z.name}“` : 'unterwegs'} seit ${uhr}${bew ? `, zuletzt ${bew}` : ''}`;
 }
 
 export function formatiereDauerKurz(ms: number): string {
@@ -70,7 +77,7 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       // Phase 5 H1 (Spec Geräte §20.5 Punkt 2) — ein Handy ist nur verbunden, solange die App vorne ist: getrennt ist sein Normalzustand
       if (minuten !== undefined && minuten >= GETRENNT_AUFFAELLIG_MIN && !HANDY_PLATTFORMEN.has(g.plattform)) { warn = true; auffaellig.push(`geraet:${g.name}:getrennt`); }
       const handy = HANDY_PLATTFORMEN.has(g.plattform);
-      if (handy && g.zone) teile.push(zonenText(g.zone)); // v1522
+      if (handy && g.zone) teile.push(zonenText(g.zone, jetzt)); // v1522
       teile.push(seit !== undefined ? (handy ? `zuletzt verbunden vor ${formatiereDauerKurz(seit)}` : `getrennt seit ${formatiereDauerKurz(seit)}`) : (handy ? 'nicht verbunden' : 'getrennt'));
     } else {
       const frisch = g.sinneZeit ? jetzt - Date.parse(g.sinneZeit) <= SINNE_FRISCH_MS : false;
@@ -87,9 +94,10 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
         teile.push(g.verbundenSeit ? `online seit ${formatiereDauerKurz(jetzt - Date.parse(g.verbundenSeit))}` : 'online');
       }
       // v1520 — Handy: in der App (Owner schaut aufs Handy), Netzweg, Audio, Fokus; v1522 Zone
-      if (HANDY_PLATTFORMEN.has(g.plattform) && g.zone) teile.push(zonenText(g.zone));
+      if (HANDY_PLATTFORMEN.has(g.plattform) && g.zone) teile.push(zonenText({ ...g.zone, bewegung: undefined }, jetzt));
       if (HANDY_PLATTFORMEN.has(g.plattform) && s) {
         if (s.netz) teile.push(s.netz.split('+').map(t => NETZ_TEXT[t] ?? t).join(' + '));
+        if (s.bewegung && BEWEGUNG_TEXT[s.bewegung]) teile.push(BEWEGUNG_TEXT[s.bewegung]); // v1526 — live bei offener App
         if (s.audio && s.audio !== 'lautsprecher') teile.push(AUDIO_TEXT[s.audio] ?? s.audio);
         if (s.fokus === true) teile.push('Fokus an');
       }

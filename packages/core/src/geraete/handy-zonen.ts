@@ -7,7 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface ZonenStand { zone: string | null; seit: string; gemeldet: string }
+export interface ZonenStand { zone: string | null; seit: string; gemeldet: string; /** v1526 — Bewegung bei der Meldung (auto, rad, laeuft, geht, still) */ bewegung?: string }
+
+const BEWEGUNGEN = new Set(['auto', 'rad', 'laeuft', 'geht', 'still']);
 
 export class HandyZonen {
   private stand: Record<string, ZonenStand> = {};
@@ -23,7 +25,7 @@ export class HandyZonen {
    * Verlassen einer anderen als der aktuellen Zone ändert nichts (Reihenfolge der iOS-Ereignisse ist nicht garantiert).
    * Ergebnis: geänderter Stand oder undefined.
    */
-  melde(geraetId: string, m: { art: string; zone?: string | null }): { vorher: string | null; jetzt: string | null } | undefined {
+  melde(geraetId: string, m: { art: string; zone?: string | null; bewegung?: unknown }): { vorher: string | null; jetzt: string | null } | undefined {
     const zone = typeof m.zone === 'string' && m.zone.trim() ? m.zone.trim().slice(0, 40) : null;
     const alt = this.stand[geraetId];
     if (m.art === 'aus') { if (!alt) return undefined; this.vergiss(geraetId); return { vorher: alt.zone, jetzt: null }; } // keine Zonen mehr eingerichtet
@@ -35,7 +37,8 @@ export class HandyZonen {
     else return undefined;
     const zeit = new Date(this.now()).toISOString();
     const geaendert = !alt || jetzt !== vorher;
-    this.stand[geraetId] = { zone: jetzt, seit: geaendert ? zeit : alt.seit, gemeldet: zeit };
+    const bewegung = typeof m.bewegung === 'string' && BEWEGUNGEN.has(m.bewegung) ? m.bewegung : alt?.bewegung;
+    this.stand[geraetId] = { zone: jetzt, seit: geaendert ? zeit : alt.seit, gemeldet: zeit, ...(bewegung ? { bewegung } : {}) };
     this.speichern();
     return geaendert ? { vorher, jetzt } : undefined;
   }

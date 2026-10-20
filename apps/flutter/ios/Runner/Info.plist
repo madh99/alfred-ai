@@ -21,6 +21,8 @@
 	<string>Alfred erkennt deine Zonen (zu Hause, Büro, unterwegs). Nur der Zonenname geht an deinen Alfred-Server, nie die Koordinaten.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Damit Alfred auch bei geschlossener App weiß, ob du zu Hause, im Büro oder unterwegs bist. Nur der Zonenname geht an deinen Alfred-Server, nie die Koordinaten.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Alfred erkennt, ob du gehst, Rad fährst oder im Auto sitzt — im Auto liest er Antworten automatisch vor. Zum Server geht nur die Art der Bewegung.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Zum Sprechen mit Alfred (nur solange du die Sprechtaste hältst).</string>
 	<key>NSLocalNetworkUsageDescription</key>

@@ -271,7 +271,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
         if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
-        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() => audioAusgang = '${z['audio'] ?? ''}'); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio
+        if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); handyZustand().then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; }); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -351,7 +351,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// Phase 5 H1 — Desktop hängt am Satelliten (IPC), das Handy verbindet sich selbst (gleiche Rückrufe).
   AppVerbindung _verbindung({required void Function(SatellitStatus) aufStatus, required void Function(String, String, DateTime, Anhang?, String?) aufEreignis, required void Function(Bestaetigung) aufBestaetigung, required void Function(Konfig) aufKonfig, required void Function(String) aufZustand}) {
     if (istDesktop) return IpcVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, aufZustand: aufZustand);
-    return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAudio: (a) { if (mounted) setState(() => audioAusgang = a); },
+    return HandyVerbindung(aufStatus: aufStatus, aufEreignis: aufEreignis, aufBestaetigung: aufBestaetigung, aufKonfig: aufKonfig, version: () => appVersion, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAudio: (a) { if (mounted) setState(() => audioAusgang = a); }, aufBewegung: (b) { if (mounted) setState(() => bewegungJetzt = b); },
       aufZustand: (z) { if (z.contains('neu koppeln')) { setState(() { konfig = null; server = null; }); } aufZustand(z); });
   }
 
@@ -662,7 +662,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool autoVorlesen = autoVorlesenGespeichert(); // 1.54.0 — bei Kopfhörer/Bluetooth/Auto Antworten vorlesen (Standard an)
   String audioAusgang = ''; // 1.54.3 — aktueller Audio-Ausgang des Handys (für das Vorlese-Symbol)
   /// 1.54.3 — automatisches Vorlesen greift gerade (Handy, Schalter an, Kopfhörer/Bluetooth/Auto)
-  bool get vorlesenAutomatisch => istHandy && autoVorlesen && vorleseAusgaenge.contains(audioAusgang);
+  String bewegungJetzt = ''; // v1526 — auto, rad, laeuft, geht, still
+  /// v1526 — auch im Auto (Bewegung), nicht nur mit Kopfhörern/CarPlay
+  bool get vorlesenAutomatisch => istHandy && autoVorlesen && (vorleseAusgaenge.contains(audioAusgang) || bewegungJetzt == 'auto');
 
 }
 

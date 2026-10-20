@@ -13903,7 +13903,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { HandyZonen } = await import('./geraete/handy-zonen.js'); // v1522
         const handyZonen = new HandyZonen(path.resolve(process.cwd(), 'data', 'handy-zonen.json'));
         const gw = new GeraeteGateway({
-          zoneVon: (id: string) => { const z = handyZonen.von(id); return z ? { name: z.zone, seit: z.seit } : undefined; }, // v1522
+          zoneVon: (id: string) => { const z = handyZonen.von(id); return z ? { name: z.zone, seit: z.seit, bewegung: z.bewegung, gemeldet: z.gemeldet } : undefined; }, // v1522, v1526 Bewegung
           // v1520 — Handy im Hintergrund: Zwischenablage über Ablage + Push „Zum Kopieren antippen“ (Inhalt nie im Push)
           offlineAktion: (g, aktion, params) => {
             // v1521 — Datei aufs Handy im Hintergrund: nur der Verweis (quelle) wird gemerkt; die App holt sie beim Antippen oder Öffnen
@@ -14215,9 +14215,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           zone: async (geraetId: string, body: Record<string, unknown>) => {
             const art = typeof body.art === 'string' ? body.art : '';
             const zone = typeof body.zone === 'string' ? body.zone : null;
-            const r = handyZonen.melde(geraetId, { art, zone });
+            const r = handyZonen.melde(geraetId, { art, zone, bewegung: body.bewegung }); // v1526 Bewegung mit
             const z = handyZonen.von(geraetId);
-            this.logger.info({ geraetId, art, zone, jetzt: z?.zone ?? 'unterwegs', geaendert: !!r }, 'v1522 Zone gemeldet');
+            this.logger.info({ geraetId, art, zone, jetzt: z?.zone ?? 'unterwegs', bewegung: z?.bewegung, geaendert: !!r }, 'v1522 Zone gemeldet');
             return { status: 200, antwort: { ok: true, zone: z?.zone ?? null, seit: z?.seit } };
           },
           // v1522 — Vorschlag „Zuhause“ aus Home Assistant (zone.home); nur Koordinaten für die App, nie gespeichert

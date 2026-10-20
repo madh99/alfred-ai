@@ -234,8 +234,8 @@ extension _Oberflaeche on _SitzungState {
         if (archiv == null) IconButton(key: const Key('seiten-chat-knopf'), tooltip: seitenChatOffen ? 'Seiten-Chat schließen (Strg+Alt+S)' : 'Seiten-Chat (Strg+Alt+S)', onPressed: _seitenChatUmschalten, icon: Icon(Icons.vertical_split_outlined, size: 20, color: seitenChatOffen ? theme.colorScheme.primary : null)),
         if (archiv == null) _kopfMenue(),
         if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
-        IconButton(key: const Key('vorlesen-knopf'), tooltip: stimme ? 'Antworten vorlesen: an' : vorlesenAutomatisch ? 'Vorlesen automatisch (${audioAusgang == 'auto' ? 'im Auto' : 'Kopfhörer'})' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme),
-          icon: Icon(stimme ? Icons.volume_up : vorlesenAutomatisch ? (audioAusgang == 'auto' ? Icons.directions_car : Icons.headphones) : Icons.volume_off, size: 20, color: !stimme && vorlesenAutomatisch ? Colors.green : null)), // 1.54.3 — grün, wenn automatisch vorgelesen wird
+        IconButton(key: const Key('vorlesen-knopf'), tooltip: stimme ? 'Antworten vorlesen: an' : vorlesenAutomatisch ? 'Vorlesen automatisch (${audioAusgang == 'auto' || bewegungJetzt == 'auto' ? 'im Auto' : 'Kopfhörer'})' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme),
+          icon: Icon(stimme ? Icons.volume_up : vorlesenAutomatisch ? (audioAusgang == 'auto' || (bewegungJetzt == 'auto' && !vorleseAusgaenge.contains(audioAusgang)) ? Icons.directions_car : Icons.headphones) : Icons.volume_off, size: 20, color: !stimme && vorlesenAutomatisch ? Colors.green : null)), // 1.54.3 — grün, wenn automatisch vorgelesen wird
         const SizedBox(width: 8),
       ])),
       const Divider(height: 1),
@@ -520,10 +520,17 @@ extension _Oberflaeche on _SitzungState {
           for (final z in standortZonenGespeichert()) ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.radio_button_checked, size: 20), title: Text(z.name), subtitle: Text('Umkreis ${z.radius.round()} m'),
             trailing: IconButton(tooltip: 'Zone entfernen', icon: const Icon(Icons.close, size: 18), onPressed: () async { await zoneEntfernen(z.name); _neu(() {}); })),
           Wrap(spacing: 8, children: [
+            TextButton.icon(key: const Key('zonen-karte'), icon: const Icon(Icons.map_outlined, size: 18), label: const Text('Zonen auf der Karte'), onPressed: () async { try { if (await zonenStatus() == 'offen') await zonenErlaubnis(); if (await zonenKarteOeffnen()) { _neu(() {}); _zeile(Eintrag(Art.hinweis, '📍 Zonen gespeichert: ${standortZonenGespeichert().map((z) => z.name).join(', ')}')); } } catch (e) { _zeile(Eintrag(Art.fehler, 'Karte: $e')); } }), // v1526
             TextButton.icon(key: const Key('zone-ha'), icon: const Icon(Icons.home_outlined, size: 18), label: const Text('Zuhause aus Home Assistant'), onPressed: _zoneAusHa),
             TextButton.icon(key: const Key('zone-hier'), icon: const Icon(Icons.my_location, size: 18), label: const Text('Aktuellen Ort als Zone'), onPressed: _zoneHier),
           ]),
         ],
+        if (istHandy) FutureBuilder<String>(future: bewegungStatus(), builder: (_, st) { // v1526 — Bewegung
+          final s = st.data ?? '…';
+          final text = switch (s) { 'erlaubt' => 'Bewegung: erlaubt${bewegungJetzt.isEmpty ? '' : ' — jetzt ${const {'auto': 'im Auto', 'rad': 'auf dem Rad', 'laeuft': 'läuft', 'geht': 'zu Fuß', 'still': 'still'}[bewegungJetzt] ?? bewegungJetzt}'}', 'abgelehnt' => 'Bewegung abgelehnt — in den iOS-Einstellungen unter Alfred → Bewegung & Fitness erlauben', 'nichtVerfuegbar' => 'Bewegung auf diesem Gerät nicht verfügbar', 'offen' => 'Bewegung noch nicht erlaubt (im Auto automatisch vorlesen)', _ => s };
+          return ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.directions_walk, size: 20, color: s == 'erlaubt' ? Colors.green : null), title: Text(text),
+            trailing: s == 'offen' ? TextButton(key: const Key('bewegung-erlauben'), onPressed: () async { await bewegungErlaubnis(); _neu(() {}); }, child: const Text('Erlauben')) : null);
+        }),
         if (istHandy) SwitchListTile(key: const Key('auto-vorlesen'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Automatisch vorlesen'), subtitle: Text('Mit Kopfhörern, Bluetooth-Audio oder im Auto werden Antworten auch auf getippte Fragen vorgelesen', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: autoVorlesen, onChanged: (v) { _neu(() => autoVorlesen = v); autoVorlesenSpeichern(v); }), // 1.54.0
         if (istHandy) SwitchListTile(key: const Key('telegram-stumm'), dense: true, contentPadding: EdgeInsets.zero, title: const Text('Telegram stumm, wenn Mitteilung zugestellt'), subtitle: Text(telegramStumm == null ? 'Stand wird geladen …' : 'Hinweise und Bestätigungen kommen dann nur aufs Handy, solange die Mitteilung ankam', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: telegramStumm ?? false, onChanged: telegramStumm == null ? null : (v) => _telegramStummSetzen(v)), // 1.53.0 H2
         Text('Alfred kennt den Verlauf aus allen Kanälen immer. In Telegram zeigt „/verlauf" die letzten Nachrichten, „/spiegel an" schaltet dasselbe wie dieser Schalter.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),

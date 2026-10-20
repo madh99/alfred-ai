@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Zonen auf der Karte und Bewegung (v1526, App 1.56.0)
+
+Owner 20.10.: „Kartenansicht mit Adresseingabe und Bewegung umsetzen“.
+
+- **Zonenkarte** (Einstellungen → Standortzonen → „Zonen auf der Karte“, Apple-Karten): alle Zonen als Kreise; neue Zone über die **Adresssuche** oder **langes Tippen**; Stecknadel ziehen verschiebt die Zone; Umkreis 100–500 m; umbenennen, löschen. Eine gleichnamige Zone wird ersetzt — so lässt sich „Zuhause“ auch unabhängig von Home Assistant festlegen. Die Zonen bleiben auf dem iPhone.
+- **Bewegung** (Erlaubnis „Bewegung & Fitness“): still, zu Fuß, läuft, Rad, Auto. Bei offener App live in den Sinnen; bei jedem Zonenwechsel liefert iOS die Bewegung der letzten Minuten nachträglich mit, auch bei geschlossener App. Im Weltmodell etwa „unterwegs seit 10:08, zuletzt im Auto“. Zum Server geht nur die Art der Bewegung.
+- **Im Auto automatisch vorlesen** — auch ohne CarPlay oder Kopfhörer, wenn iOS „Auto“ erkennt; das Vorlese-Symbol zeigt dann das grüne Auto.
+
 ### Fixed — Wissensgraph: Linz galt als Zuhause, Hausgeräte hingen immer wieder an Linz (v1523)
 
 Owner 20.10. (Screenshots Wissensgraph): Netzwerkgeräte aus UniFi/Home Assistant und der BMW waren mit „Linz“ verbunden und kamen nach dem Löschen wieder. Ursache belegt: Die Memory-Synchronisation markierte einen Ort als Zuhause, sobald im selben Satz irgendein Wohn-Wort stand. Zwei BMW-Service-Memories („return Linz→Home“, „Rückfahrt Linz → Heimat“) gaben Linz so das Zuhause-Merkmal (`isUserHome`). Bis 15.10. waren Linz und Österreich die einzigen Kandidaten, die Querverknüpfung hängte die Hausgeräte an Linz. Seit 16.10. entfernte die nächtliche Wartung das Merkmal jeden Morgen wieder (Altlengbach kanonisch), die Synchronisation setzte es tagsüber erneut. Die Netzwerkgeräte blieben dabei an Linz hängen, weil der Wächter für falsche Zuhause-Verbindungen nur Typ `item` und `vehicle` prüfte.

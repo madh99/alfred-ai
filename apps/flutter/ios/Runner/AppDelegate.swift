@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreLocation
+import CoreMotion
 import Flutter
 import Network
 import PhotosUI
@@ -26,13 +27,17 @@ import UserNotifications
   private var vorschauQuelle: Vorschau?
   /// v1522 — Standortzonen; früh angelegt, damit iOS Zonenereignisse auch nach einem Start im Hintergrund zustellt
   let zonen = ZonenWaechter()
+  /// v1526 — Bewegung (still, geht, läuft, Rad, Auto)
+  let bewegung = BewegungsSinn()
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     UNUserNotificationCenter.current().delegate = self
+    zonen.bewegung = bewegung
     zonen.starte()
+    bewegung.starte()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -118,6 +123,8 @@ import UserNotifications
         }
       }
       netzWaechter.start(queue: DispatchQueue(label: "at.alfred.netz"))
+      // v1526 — Bewegung gewechselt (z. B. ins Auto): sofort an Dart (Vorlese-Symbol, Sinne)
+      bewegung.beiWechsel = { [weak self] art in self?.netzKanal?.invokeMethod("bewegung", arguments: ["bewegung": art]) }
       // 1.54.3 — Audio-Ausgang gewechselt (AirPods, Auto …): sofort an Dart, damit das Vorlese-Symbol stimmt
       NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
         guard let self = self else { return }
@@ -185,6 +192,25 @@ import UserNotifications
             picker.delegate = wahl
             self?.obersteAnsicht()?.present(picker, animated: true)
           }
+        case "zonenKarte":
+          // v1526 — Karte mit allen Zonen; Ergebnis die geänderte Liste (nil = abgebrochen)
+          let liste = (args["zonen"] as? [[String: Any]]) ?? []
+          let zonen = liste.compactMap { z -> ZonenKarte.Zone? in
+            guard let n = z["name"] as? String, let b = z["breite"] as? Double, let l = z["laenge"] as? Double else { return nil }
+            return ZonenKarte.Zone(name: n, mitte: CLLocationCoordinate2D(latitude: b, longitude: l), radius: (z["radius"] as? Double) ?? 150)
+          }
+          DispatchQueue.main.async {
+            let k = ZonenKarte(zonen: zonen) { neu in
+              ergebnis(neu.map { $0.map { ["name": $0.name, "breite": $0.mitte.latitude, "laenge": $0.mitte.longitude, "radius": $0.radius] } })
+            }
+            let nav = UINavigationController(rootViewController: k)
+            nav.modalPresentationStyle = .fullScreen
+            self?.obersteAnsicht()?.present(nav, animated: true)
+          }
+        case "bewegungErlaubnis":
+          self?.bewegung.erlaubnis { ergebnis($0) }
+        case "bewegungStatus":
+          ergebnis(BewegungsSinn.status())
         case "zonenSetzen":
           // v1522 — Zonen aus den App-Einstellungen [{name, breite, laenge, radius}]; iOS überwacht sie selbst
           self?.zonen.setze((args["zonen"] as? [[String: Any]]) ?? [])
@@ -232,6 +258,7 @@ extension AppDelegate {
     if geraet.batteryLevel >= 0 { z["akkuProzent"] = Int((geraet.batteryLevel * 100).rounded()) }
     z["akkuLaedt"] = geraet.batteryState == .charging || geraet.batteryState == .full
     if let netz = netzZuletzt { z["netz"] = netz }
+    if let art = bewegung.aktuell { z["bewegung"] = art } // v1526
     let ausgang = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
     switch ausgang {
     case .some(.headphones): z["audio"] = "kopfhoerer"
@@ -265,6 +292,8 @@ final class OrdnerWahl: NSObject, UIDocumentPickerDelegate {
 /// Betreten/Verlassen kurz im Hintergrund; die Meldung geht nativ an den Server (nur der Zonenname, nie Koordinaten).
 final class ZonenWaechter: NSObject, CLLocationManagerDelegate {
   private let ort = CLLocationManager()
+  /// v1526 — letzte Bewegung geht mit jeder Zonenmeldung mit
+  weak var bewegung: BewegungsSinn?
   private var erlaubnisFertig: ((String) -> Void)?
   private var ortFertig: (([String: Any]?) -> Void)?
   static let schluessel = "alfred.zonen"
@@ -335,7 +364,64 @@ final class ZonenWaechter: NSObject, CLLocationManagerDelegate {
     Task {
       defer { if aufgabe != .invalid { UIApplication.shared.endBackgroundTask(aufgabe) } }
       guard let k = try? Kopplung.lade() else { return }
-      try? await Netz(k).zone(art: art, zone: zone)
+      let b = await bewegung?.letzte()
+      try? await Netz(k).zone(art: art, zone: zone, bewegung: b)
+    }
+  }
+}
+
+/// v1526 — Bewegung über CoreMotion (Erlaubnis „Bewegung & Fitness“). Live nur, solange die App läuft; bei einem Zonenereignis
+/// im Hintergrund liefert iOS die Aktivität der letzten Minuten nachträglich (letzte()).
+final class BewegungsSinn {
+  private let manager = CMMotionActivityManager()
+  private(set) var aktuell: String?
+  var beiWechsel: ((String) -> Void)?
+
+  static func status() -> String {
+    guard CMMotionActivityManager.isActivityAvailable() else { return "nichtVerfuegbar" }
+    switch CMMotionActivityManager.authorizationStatus() {
+    case .authorized: return "erlaubt"
+    case .denied, .restricted: return "abgelehnt"
+    default: return "offen"
+    }
+  }
+
+  static func art(_ a: CMMotionActivity) -> String? {
+    if a.confidence == .low { return nil }
+    if a.automotive { return "auto" }
+    if a.cycling { return "rad" }
+    if a.running { return "laeuft" }
+    if a.walking { return "geht" }
+    if a.stationary { return "still" }
+    return nil
+  }
+
+  /// Live-Aktualisierung (nur bei Erlaubnis; ohne Erlaubnis kein Dialog beim Start)
+  func starte() {
+    guard BewegungsSinn.status() == "erlaubt" else { return }
+    manager.startActivityUpdates(to: .main) { [weak self] a in
+      guard let self = self, let a = a, let neu = BewegungsSinn.art(a), neu != self.aktuell else { return }
+      self.aktuell = neu
+      self.beiWechsel?(neu)
+    }
+  }
+
+  /// Erlaubnis anfragen: die erste Abfrage zeigt den iOS-Dialog
+  func erlaubnis(_ fertig: @escaping (String) -> Void) {
+    manager.queryActivityStarting(from: Date().addingTimeInterval(-60), to: Date(), to: .main) { [weak self] _, _ in
+      let s = BewegungsSinn.status()
+      if s == "erlaubt" { self?.starte() }
+      fertig(s)
+    }
+  }
+
+  /// Letzte sichere Aktivität der vergangenen 10 Minuten (auch im Hintergrund)
+  func letzte() async -> String? {
+    guard BewegungsSinn.status() == "erlaubt" else { return aktuell }
+    return await withCheckedContinuation { f in
+      manager.queryActivityStarting(from: Date().addingTimeInterval(-600), to: Date(), to: OperationQueue()) { liste, _ in
+        f.resume(returning: (liste ?? []).reversed().lazy.compactMap(BewegungsSinn.art).first ?? self.aktuell)
+      }
     }
   }
 }

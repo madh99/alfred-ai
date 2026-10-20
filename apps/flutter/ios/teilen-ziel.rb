@@ -11,6 +11,10 @@ def gemeinsam_aufnehmen(projekt, runner)
   gruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Gemeinsam' } || projekt.main_group.new_group('Gemeinsam', 'Gemeinsam')
   datei = gruppe.files.find { |f| f.path == 'AlfredNetz.swift' } || gruppe.new_reference('AlfredNetz.swift')
   [runner, teilen].compact.each { |t| t.add_file_references([datei]) unless t.source_build_phase.files_references.include?(datei) }
+  # v1526 — nur in der App: Zonenkarte (MapKit)
+  rgruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Runner' } or abort 'Gruppe Runner fehlt'
+  karte = rgruppe.files.find { |f| f.path == 'ZonenKarte.swift' } || rgruppe.new_reference('ZonenKarte.swift')
+  runner.add_file_references([karte]) unless runner.source_build_phase.files_references.include?(karte)
 end
 
 if projekt.targets.any? { |t| t.name == 'Teilen' }

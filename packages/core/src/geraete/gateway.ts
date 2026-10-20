@@ -56,7 +56,7 @@ export interface GeraeteGatewayDeps {
    * an und stellt sie per Push zu. `undefined` = für diese Aktion kein Weg ohne Verbindung.
    */
   /** v1522 — Standortzone eines Handys (für die Weltmodell-Deutung) */
-  zoneVon?: (geraetId: string) => { name: string | null; seit: string } | undefined;
+  zoneVon?: (geraetId: string) => { name: string | null; seit: string; bewegung?: string; gemeldet?: string } | undefined;
   offlineAktion?: (g: GeraetEintrag, aktion: string, params: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }> | undefined;
 }
 

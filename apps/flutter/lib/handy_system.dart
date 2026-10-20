@@ -133,3 +133,19 @@ Future<void> zoneEntfernen(String name) async {
   standortZonenSpeichern([for (final z in standortZonenGespeichert()) if (z.name != name) z]);
   await zonenAnIos();
 }
+
+// ── v1526 — Zonenkarte und Bewegung ──
+
+/// Karte mit allen Zonen öffnen (Adresssuche, langes Tippen, verschieben, Umkreis); übernommen → speichern und an iOS.
+/// Ergebnis: true = geändert.
+Future<bool> zonenKarteOeffnen() async {
+  final r = await _kanal.invokeMethod<List<Object?>>('zonenKarte', {'zonen': [for (final z in standortZonenGespeichert()) {'name': z.name, 'breite': z.breite, 'laenge': z.laenge, 'radius': z.radius}]});
+  if (r == null) return false;
+  standortZonenSpeichern([for (final e in r) if (e is Map && e['name'] is String && e['breite'] is num && e['laenge'] is num) (name: e['name'] as String, breite: (e['breite'] as num).toDouble(), laenge: (e['laenge'] as num).toDouble(), radius: ((e['radius'] as num?) ?? 150).toDouble())]);
+  await zonenAnIos();
+  return true;
+}
+
+/// Bewegung: erlaubt | abgelehnt | offen | nichtVerfuegbar
+Future<String> bewegungStatus() async { try { return await _kanal.invokeMethod<String>('bewegungStatus') ?? 'offen'; } on MissingPluginException { return 'nichtVerfuegbar'; } }
+Future<String> bewegungErlaubnis() async => await _kanal.invokeMethod<String>('bewegungErlaubnis') ?? 'offen';
