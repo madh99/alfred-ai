@@ -24,6 +24,28 @@ struct Kopplung {
   }
 }
 
+/// 1.65.0 — kleiner gemeinsamer Speicher für App und Erweiterungen (Schlüsselbund-Gruppe, auch bei gesperrtem Gerät nach dem
+/// ersten Entsperren lesbar). UserDefaults sind je Prozess getrennt; der Fokus-Stand muss aber in App UND Fokus-Erweiterung gelten.
+enum GemeinsamerSpeicher {
+  private static func abfrage(_ schluessel: String) -> [String: Any] {
+    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "at.alfred.app.gemeinsam", kSecAttrAccount as String: schluessel, kSecAttrAccessGroup as String: Kopplung.gruppe]
+  }
+  static func lies(_ schluessel: String) -> Any? {
+    var q = abfrage(schluessel); q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
+    var d: AnyObject?
+    guard SecItemCopyMatching(q as CFDictionary, &d) == errSecSuccess, let data = d as? Data else { return nil }
+    return try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+  }
+  static func schreib(_ schluessel: String, _ wert: Any?) {
+    let q = abfrage(schluessel)
+    guard let w = wert, let data = try? JSONSerialization.data(withJSONObject: w, options: [.fragmentsAllowed]) else { SecItemDelete(q as CFDictionary); return }
+    if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+      var neu = q; neu[kSecValueData as String] = data; neu[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+      SecItemAdd(neu as CFDictionary, nil)
+    }
+  }
+}
+
 /// HTTPS mit festem Server-Schlüssel (SHA-256 des SubjectPublicKeyInfo, wie lib/spki.dart).
 final class Netz: NSObject, URLSessionDelegate {
   private let k: Kopplung

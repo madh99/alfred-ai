@@ -29,8 +29,10 @@ struct AlfredFokusFilter: SetFocusFilterIntent {
   }
 
   func perform() async throws -> some IntentResult {
-    // 1.61.0 — jeder Aufruf wird festgehalten (lief der Filter, ging das Senden?); die App meldet das beim nächsten Öffnen
-    await FokusAbgleich.uebernimm(self, quelle: "filter", immer: true)
+    // 1.65.0 — läuft in der App (wenn sie läuft) oder in der Fokus-Erweiterung (sonst; WWDC22 „Meet Focus filters“).
+    // Jeder Aufruf wird festgehalten und gleich ins Server-Log gemeldet.
+    await FokusAbgleich.uebernimm(self, quelle: FokusAbgleich.inErweiterung ? "erweiterung" : "filter", immer: true)
+    await FokusAbgleich.berichte()
     return .result()
   }
 }
@@ -40,6 +42,8 @@ struct AlfredFokusFilter: SetFocusFilterIntent {
 /// der die App im Hintergrund weckt. Gemeldet wird nur bei Änderung gegenüber dem gespeicherten Stand.
 @available(iOS 16.0, *)
 enum FokusAbgleich {
+  /// läuft dieser Code in der Fokus-Erweiterung (statt in der App)?
+  static var inErweiterung: Bool { Bundle.main.bundleURL.pathExtension == "appex" }
   static func jetzt() async {
     guard let f = try? await AlfredFokusFilter.current else { return }
     await uebernimm(f, quelle: "abgleich", immer: false)
@@ -48,10 +52,10 @@ enum FokusAbgleich {
   static func uebernimm(_ f: AlfredFokusFilter, quelle: String, immer: Bool) async {
     let aktiv = f.name != nil || f.hinweise != nil || f.vorlesen != nil
     let neu: [String: Any]? = aktiv ? ["name": f.name ?? "Fokus", "hinweise": (f.hinweise ?? .nurDringend).rawValue, "vorlesen": f.vorlesen ?? false] : nil
-    let alt = UserDefaults.standard.dictionary(forKey: "alfred.fokus")
+    let alt = GemeinsamerSpeicher.lies("alfred.fokus") as? [String: Any]
     let gleich = (alt == nil && neu == nil) || (alt != nil && neu != nil && NSDictionary(dictionary: alt!).isEqual(to: neu!))
     if gleich && !immer { return }
-    if let n = neu { UserDefaults.standard.set(n, forKey: "alfred.fokus") } else { UserDefaults.standard.removeObject(forKey: "alfred.fokus") }
+    GemeinsamerSpeicher.schreib("alfred.fokus", neu)
     // 1.63.0 — Verlauf der letzten 10 Aufrufe; der Eintrag steht VOR dem Senden („läuft“), damit auch ein abgebrochener Aufruf
     // sichtbar bleibt (vorher überschrieb der Abgleich beim Öffnen den Eintrag des Filters)
     let zeit = ISO8601DateFormatter().string(from: Date())
@@ -66,19 +70,33 @@ enum FokusAbgleich {
 
   /// 1.64.0 — noch nicht gemeldete Einträge nativ ans Server-Log (die Dart-Meldung kam nicht an, wenn die App nach 3–5 s wieder zu war).
   static func berichte() async {
-    let l = (UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") as? [[String: Any]]) ?? []
-    let schon = UserDefaults.standard.string(forKey: "alfred.fokus.berichtet") ?? ""
+    let l = (GemeinsamerSpeicher.lies("alfred.fokus.meldungen") as? [[String: Any]]) ?? []
+    let schon = GemeinsamerSpeicher.lies("alfred.fokus.berichtet") as? String ?? ""
     let neu = l.filter { ($0["zeit"] as? String ?? "") > schon && ($0["ergebnis"] as? String) != nil }
     guard !neu.isEmpty, let k = try? Kopplung.lade() else { return }
-    let text = neu.map { "Fokus\(($0["quelle"] as? String) == "abgleich" ? " (Abgleich)" : "filter") \(($0["aktiv"] as? Bool) == true ? "an" : "aus") um \($0["zeit"] as? String ?? "?"): \($0["ergebnis"] as? String ?? "?")" }.joined(separator: " | ")
-    if (try? await Netz(k).meldung(art: "fokus", text: text)) != nil, let z = neu.last?["zeit"] as? String { UserDefaults.standard.set(z, forKey: "alfred.fokus.berichtet") }
+    let text = neu.map(zeile).joined(separator: " | ")
+    if (try? await Netz(k).meldung(art: "fokus", text: text)) != nil, let z = neu.last?["zeit"] as? String { GemeinsamerSpeicher.schreib("alfred.fokus.berichtet", z) }
+  }
+
+  /// Eine Zeile fürs Server-Log, z. B. „Fokus (Erweiterung) an um 2026-10-20T15:12:42Z: gesendet“.
+  private static func zeile(_ e: [String: Any]) -> String {
+    let quelle: String
+    switch e["quelle"] as? String {
+    case "abgleich": quelle = "Fokus (Abgleich)"
+    case "erweiterung": quelle = "Fokus (Erweiterung)"
+    default: quelle = "Fokusfilter"
+    }
+    let an = (e["aktiv"] as? Bool) == true ? "an" : "aus"
+    let zeit = e["zeit"] as? String ?? "?"
+    let ergebnis = e["ergebnis"] as? String ?? "?"
+    return "\(quelle) \(an) um \(zeit): \(ergebnis)"
   }
 
   /// Eintrag mit gleicher Zeit ersetzen, sonst anhängen; höchstens 10.
   private static func protokolliere(_ e: [String: Any]) {
-    var l = (UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") as? [[String: Any]]) ?? []
+    var l = (GemeinsamerSpeicher.lies("alfred.fokus.meldungen") as? [[String: Any]]) ?? []
     if let i = l.lastIndex(where: { ($0["zeit"] as? String) == (e["zeit"] as? String) && ($0["quelle"] as? String) == (e["quelle"] as? String) }) { l[i] = e } else { l.append(e) }
-    UserDefaults.standard.set(Array(l.suffix(10)), forKey: "alfred.fokus.meldungen")
+    GemeinsamerSpeicher.schreib("alfred.fokus.meldungen", Array(l.suffix(10)))
   }
 }
 

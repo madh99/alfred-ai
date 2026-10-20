@@ -288,9 +288,11 @@ extension AppDelegate {
     z["akkuLaedt"] = geraet.batteryState == .charging || geraet.batteryState == .full
     if let netz = netzZuletzt { z["netz"] = netz }
     if let art = bewegung.aktuell { z["bewegung"] = art } // v1526
-    if let f = UserDefaults.standard.dictionary(forKey: "alfred.fokus") { z["fokus"] = f["name"]; z["fokusVorlesen"] = f["vorlesen"]; z["fokusHinweise"] = f["hinweise"] } // v1528
-    z["fokusAktiv"] = UserDefaults.standard.dictionary(forKey: "alfred.fokus") != nil // 1.61.0
-    if let l = UserDefaults.standard.array(forKey: "alfred.fokus.meldungen") { z["fokusMeldungen"] = l } // 1.63.0 — letzte Aufrufe von Filter und Abgleich
+    // v1528/1.65.0 — Fokus-Stand aus dem gemeinsamen Speicher (schreibt auch die Fokus-Erweiterung)
+    let fokus = GemeinsamerSpeicher.lies("alfred.fokus") as? [String: Any]
+    if let f = fokus { z["fokus"] = f["name"]; z["fokusVorlesen"] = f["vorlesen"]; z["fokusHinweise"] = f["hinweise"] }
+    z["fokusAktiv"] = fokus != nil
+    if let l = GemeinsamerSpeicher.lies("alfred.fokus.meldungen") { z["fokusMeldungen"] = l } // 1.63.0 — letzte Aufrufe
     let ausgang = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType
     switch ausgang {
     case .some(.headphones): z["audio"] = "kopfhoerer"

@@ -20,8 +20,61 @@ def gemeinsam_aufnehmen(projekt, runner)
   runner.add_file_references([fokus]) unless runner.source_build_phase.files_references.include?(fokus)
 end
 
+# 1.65.0 (Owner 20.10.: „Weg 1“) — Fokus-Erweiterung: App-Intents-Erweiterung (ExtensionKit), damit iOS den Fokusfilter auch bei
+# geschlossener App aufruft. xcodeproj 1.28 kennt den Produkttyp nicht — Typ, Dateityp und Einbettungsziel wie Xcodes Vorlage
+# „App Intents Extension“. Filter und Netz-Code sind dieselben Dateien wie in der App.
+def fokus_ziel(projekt, runner)
+  return if projekt.targets.any? { |t| t.name == 'Fokus' }
+  ziel = projekt.new_target(:app_extension, 'Fokus', :ios, '16.0', nil, :swift)
+  ziel.product_type = 'com.apple.product-type.extensionkit-extension'
+  ziel.product_reference.explicit_file_type = 'wrapper.extensionkit-extension'
+  gruppe = projekt.main_group.new_group('Fokus', 'Fokus')
+  haupt = gruppe.new_reference('FokusErweiterung.swift')
+  gruppe.new_reference('Info.plist')
+  gruppe.new_reference('Fokus.entitlements')
+  xcconfig = gruppe.new_reference('Fokus.xcconfig')
+  rgruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Runner' } or abort 'Gruppe Runner fehlt'
+  filter = rgruppe.files.find { |f| f.path == 'FokusFilter.swift' } or abort 'FokusFilter.swift fehlt'
+  ggruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Gemeinsam' } or abort 'Gruppe Gemeinsam fehlt'
+  netz = ggruppe.files.find { |f| f.path == 'AlfredNetz.swift' } or abort 'AlfredNetz.swift fehlt'
+  ziel.add_file_references([haupt, filter, netz])
+  projekt.build_configurations.map(&:name).each do |name|
+    ziel.add_build_configuration(name, name == 'Debug' ? :debug : :release) unless ziel.build_configurations.any? { |c| c.name == name }
+  end
+  ziel.build_configurations.each do |c|
+    c.base_configuration_reference = xcconfig
+    b = c.build_settings
+    b['PRODUCT_BUNDLE_IDENTIFIER'] = 'at.alfred.app.fokus'
+    b['PRODUCT_NAME'] = 'Fokus'
+    b['INFOPLIST_FILE'] = 'Fokus/Info.plist'
+    b['GENERATE_INFOPLIST_FILE'] = 'NO'
+    b['CODE_SIGN_ENTITLEMENTS'] = 'Fokus/Fokus.entitlements'
+    b['CODE_SIGN_STYLE'] = 'Automatic'
+    b['DEVELOPMENT_TEAM'] = 'T28LD8TF6X'
+    b['SWIFT_VERSION'] = '5.0'
+    b['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
+    b['TARGETED_DEVICE_FAMILY'] = '1,2'
+    b['SKIP_INSTALL'] = 'YES'
+    b['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+    b['LD_RUNPATH_SEARCH_PATHS'] = ['$(inherited)', '@executable_path/Frameworks', '@executable_path/../../Frameworks']
+    b['MARKETING_VERSION'] = '$(FLUTTER_BUILD_NAME)'
+    b['CURRENT_PROJECT_VERSION'] = '$(FLUTTER_BUILD_NUMBER)'
+  end
+  einbetten = runner.new_copy_files_build_phase('Embed ExtensionKit Extensions')
+  einbetten.dst_subfolder_spec = '16'
+  einbetten.dst_path = '$(EXTENSIONS_FOLDER_PATH)'
+  datei = einbetten.add_file_reference(ziel.product_reference, true)
+  datei.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+  runner.build_phases.delete(einbetten)
+  stelle = runner.build_phases.index { |ph| ph.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) && ph.name == 'Thin Binary' } || runner.build_phases.length
+  runner.build_phases.insert(stelle, einbetten)
+  runner.add_dependency(ziel)
+  puts 'Ziel Fokus angelegt'
+end
+
 if projekt.targets.any? { |t| t.name == 'Teilen' }
   gemeinsam_aufnehmen(projekt, runner)
+  fokus_ziel(projekt, runner)
   projekt.save
   puts 'Ziel Teilen existiert schon — gemeinsame Datei geprüft'
   exit 0
@@ -69,6 +122,7 @@ stelle = runner.build_phases.index { |ph| ph.is_a?(Xcodeproj::Project::Object::P
 runner.build_phases.insert(stelle, einbetten)
 runner.add_dependency(ziel)
 gemeinsam_aufnehmen(projekt, runner)
+fokus_ziel(projekt, runner)
 
 projekt.save
 puts "Ziel Teilen angelegt (Konfigurationen: #{ziel.build_configurations.map(&:name).join(', ')})"

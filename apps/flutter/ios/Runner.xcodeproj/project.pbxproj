@@ -11,17 +11,22 @@
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		2B494A3E33953413BA521622 /* AlfredNetz.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A35BD3C2369A14546566EA /* AlfredNetz.swift */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
+		33BFB2364774207E992D7ED5 /* AlfredNetz.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A35BD3C2369A14546566EA /* AlfredNetz.swift */; };
 		3481407BE5CE99332B7D52A1 /* FokusFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
+		41DB3E4246C88933895935F4 /* FokusFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */; };
+		63C17FCB1F87826E7737FBC0 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E528AE7A5838DDCD418D4C51 /* Foundation.framework */; };
 		7230B0676E2DDD689A3E8F36 /* ZonenKarte.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7D90C994CA51AD3C496AF2 /* ZonenKarte.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
+		8B31111D833E8D6A05D046BD /* Fokus.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 7D167B07B4B67FB3FFD624F5 /* Fokus.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		C173E784EE612AFA38476CE8 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8EDA9B73C3483F41687E1F3 /* ShareViewController.swift */; };
 		C9B9E23FBAAB0C8E943171C1 /* Teilen.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F555217E47C22B2C7528DA4C /* Teilen.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D1A1B114C4D5E223EE04D1F7 /* FokusErweiterung.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6B9ADF4DDEB291D5EFFFF3 /* FokusErweiterung.swift */; };
 		E600D38DAA0524D3D5313340 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E528AE7A5838DDCD418D4C51 /* Foundation.framework */; };
 /* End PBXBuildFile section */
 
@@ -39,6 +44,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 97C146ED1CF9000F007C117D;
 			remoteInfo = Runner;
+		};
+		5C83CB8B4FF143F202937981 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 485D63A2CDB1E56A20A5168C;
+			remoteInfo = Fokus;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -64,6 +76,17 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F3FB6ABEE800F647A5E1D68B /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				8B31111D833E8D6A05D046BD /* Fokus.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -71,14 +94,17 @@
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		363A3921E41F4F385EBF8652 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		372AFFAE828C0BF9F2F1BEA1 /* Teilen.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = Teilen.entitlements; sourceTree = "<group>"; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		61A35BD3C2369A14546566EA /* AlfredNetz.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AlfredNetz.swift; sourceTree = "<group>"; };
+		71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; path = Fokus.xcconfig; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		78E0A7A72DC9AD7400C4905E /* FlutterGeneratedPluginSwiftPackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = FlutterGeneratedPluginSwiftPackage; path = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
+		7D167B07B4B67FB3FFD624F5 /* Fokus.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = Fokus.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8C7D90C994CA51AD3C496AF2 /* ZonenKarte.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZonenKarte.swift; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -87,6 +113,8 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BA6B9ADF4DDEB291D5EFFFF3 /* FokusErweiterung.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FokusErweiterung.swift; sourceTree = "<group>"; };
+		C5C498C2DDF1166571D04D02 /* Fokus.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = Fokus.entitlements; sourceTree = "<group>"; };
 		C6BB6B6D7B18CA90EE55D604 /* FokusFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FokusFilter.swift; sourceTree = "<group>"; };
 		DBB77F1AA0BB149319682769 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E528AE7A5838DDCD418D4C51 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -101,6 +129,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D931051DE1DD22AAB42DC585 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				63C17FCB1F87826E7737FBC0 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -160,6 +196,18 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		732A054A9540D097AB2EEA92 /* Fokus */ = {
+			isa = PBXGroup;
+			children = (
+				BA6B9ADF4DDEB291D5EFFFF3 /* FokusErweiterung.swift */,
+				363A3921E41F4F385EBF8652 /* Info.plist */,
+				C5C498C2DDF1166571D04D02 /* Fokus.entitlements */,
+				71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */,
+			);
+			name = Fokus;
+			path = Fokus;
+			sourceTree = "<group>";
+		};
 		9740EEB11CF90186004384FC /* Flutter */ = {
 			isa = PBXGroup;
 			children = (
@@ -182,6 +230,7 @@
 				4B09A75A6127C7B8C6746B4E /* Frameworks */,
 				1E5253A12A9E5B849E1FA797 /* Teilen */,
 				31E03F31AF3484A40D8C2741 /* Gemeinsam */,
+				732A054A9540D097AB2EEA92 /* Fokus */,
 			);
 			sourceTree = "<group>";
 		};
@@ -191,6 +240,7 @@
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
 				F555217E47C22B2C7528DA4C /* Teilen.appex */,
+				7D167B07B4B67FB3FFD624F5 /* Fokus.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -250,6 +300,23 @@
 			productReference = 331C8081294A63A400263BE5 /* RunnerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		485D63A2CDB1E56A20A5168C /* Fokus */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0FB4B05B6252B245FA027484 /* Build configuration list for PBXNativeTarget "Fokus" */;
+			buildPhases = (
+				0245F47D559C181DFFDA69C7 /* Sources */,
+				D931051DE1DD22AAB42DC585 /* Frameworks */,
+				4E2B48FD9383C5A892C7E1E2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Fokus;
+			productName = Fokus;
+			productReference = 7D167B07B4B67FB3FFD624F5 /* Fokus.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 		97C146ED1CF9000F007C117D /* Runner */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
@@ -260,12 +327,14 @@
 				97C146EC1CF9000F007C117D /* Resources */,
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				8A99C39C14AECEAB5AE62C0C /* Embed Foundation Extensions */,
+				F3FB6ABEE800F647A5E1D68B /* Embed ExtensionKit Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				1F367004BBABF7F81716F93D /* PBXTargetDependency */,
+				71B68820A3CBA80554EE7880 /* PBXTargetDependency */,
 			);
 			name = Runner;
 			packageProductDependencies = (
@@ -314,12 +383,20 @@
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
 				192BB11DEB4768D6ECA3FB74 /* Teilen */,
+				485D63A2CDB1E56A20A5168C /* Fokus */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		331C807F294A63A400263BE5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4E2B48FD9383C5A892C7E1E2 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -381,6 +458,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0245F47D559C181DFFDA69C7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1A1B114C4D5E223EE04D1F7 /* FokusErweiterung.swift in Sources */,
+				41DB3E4246C88933895935F4 /* FokusFilter.swift in Sources */,
+				33BFB2364774207E992D7ED5 /* AlfredNetz.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		331C807D294A63A400263BE5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -425,6 +512,12 @@
 			target = 97C146ED1CF9000F007C117D /* Runner */;
 			targetProxy = 331C8085294A63A400263BE5 /* PBXContainerItemProxy */;
 		};
+		71B68820A3CBA80554EE7880 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = Fokus;
+			target = 485D63A2CDB1E56A20A5168C /* Fokus */;
+			targetProxy = 5C83CB8B4FF143F202937981 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
@@ -447,6 +540,34 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		037BFB083EFF0372048D46A9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = Fokus/Fokus.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = T28LD8TF6X;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Fokus/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = at.alfred.app.fokus;
+				PRODUCT_NAME = Fokus;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		249021D3217E4FDB00AE95B9 /* Profile */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -758,6 +879,64 @@
 			};
 			name = Release;
 		};
+		B82BD4F4BEA0029EE1A37F7B /* Profile */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = Fokus/Fokus.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = T28LD8TF6X;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Fokus/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = at.alfred.app.fokus;
+				PRODUCT_NAME = Fokus;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Profile;
+		};
+		CD6DBBEC695F029F85DF14B7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 71E7F24E34E27F4DD318D7AE /* Fokus.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = Fokus/Fokus.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = T28LD8TF6X;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Fokus/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = at.alfred.app.fokus;
+				PRODUCT_NAME = Fokus;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		F091E1F4C4B48A879D20B5A3 /* Profile */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = EB7547D681C6D7BE543D1BF8 /* Teilen.xcconfig */;
@@ -819,6 +998,16 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0FB4B05B6252B245FA027484 /* Build configuration list for PBXNativeTarget "Fokus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD6DBBEC695F029F85DF14B7 /* Release */,
+				037BFB083EFF0372048D46A9 /* Debug */,
+				B82BD4F4BEA0029EE1A37F7B /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

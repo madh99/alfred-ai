@@ -32,6 +32,10 @@ xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Relea
 # „Teilen an Alfred“: die Erweiterung zuerst (gemeinsamer Schlüsselbund), dann die App
 APPEX=build/Alfred.xcarchive/Products/Applications/Runner.app/PlugIns/Teilen.appex
 if [ -d "$APPEX" ]; then codesign --force --sign - --entitlements ios/Teilen/Teilen.entitlements "$APPEX" >> "$LOG" 2>&1; fi
+# 1.65.0 — Fokus-Erweiterung (App Intents, ExtensionKit) liegt unter Extensions/, nicht PlugIns/
+FOKUSX=build/Alfred.xcarchive/Products/Applications/Runner.app/Extensions/Fokus.appex
+[ -d "$FOKUSX" ] || { echo "Fokus-Erweiterung fehlt im Archiv — kein Upload"; exit 1; }
+codesign --force --sign - --entitlements ios/Fokus/Fokus.entitlements "$FOKUSX" >> "$LOG" 2>&1
 codesign --force --sign - --entitlements ios/Runner/Runner.entitlements build/Alfred.xcarchive/Products/Applications/Runner.app >> "$LOG" 2>&1
 
 cat > build/ExportOptions.plist <<'PLIST'
@@ -56,11 +60,11 @@ APS="$(codesign -d --entitlements - --xml build/ipa-pruef/x/Payload/Runner.app 2
 echo "aps-environment: ${APS:-fehlt}"
 [ "$APS" = "production" ] || { echo "Push-Recht fehlt im Paket — kein Upload"; exit 1; }
 # gemeinsamer Schlüsselbund in App und Erweiterung (sonst sieht „Teilen an Alfred“ die Kopplung nicht)
-for teil in Payload/Runner.app Payload/Runner.app/PlugIns/Teilen.appex; do
+for teil in Payload/Runner.app Payload/Runner.app/PlugIns/Teilen.appex Payload/Runner.app/Extensions/Fokus.appex; do
   [ -d "build/ipa-pruef/x/$teil" ] || { echo "fehlt im Paket: $teil"; exit 1; }
   codesign -d --entitlements - --xml "build/ipa-pruef/x/$teil" 2>/dev/null | grep -q 'T28LD8TF6X.at.alfred.app.gemeinsam' || { echo "Schlüsselbund-Gruppe fehlt: $teil — kein Upload"; exit 1; }
 done
-echo "Schlüsselbund-Gruppe: App und Teilen ok"
+echo "Schlüsselbund-Gruppe: App, Teilen und Fokus ok"
 
 echo "3b Export (Cloud-Signatur) + Upload zu App Store Connect"
 exportieren -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist -exportPath build/ipa || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }

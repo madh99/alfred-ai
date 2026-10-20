@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fokus auch bei geschlossener App: eigene Fokus-Erweiterung (App 1.65.0, iPhone)
+
+Owner 20.10.: „Weg 1 wie empfohlen“. Tests mit Build 105 bis 108 haben gezeigt, dass iOS den Fokusfilter beim Umschalten nur aufruft, wenn die App läuft. Laut Apple (WWDC22, „Meet Focus filters“) startet iOS bei geschlossener App stattdessen eine Erweiterung, wenn die App eine hat.
+
+- Neue App-Intents-Erweiterung „Fokus“ (at.alfred.app.fokus). Sie enthält denselben Filter wie die App und meldet jedes Ein- und Ausschalten direkt an Alfred. Ins Server-Log kommt sie als „Fokus (Erweiterung)“.
+- App und Erweiterung teilen den Fokus-Stand über den gemeinsamen Schlüsselbund. Vorlesen im Fokus und der Abgleich beim Öffnen und bei Zonenwechseln sehen so denselben Stand.
+- Der Abgleich beim Öffnen und bei Zonenwechseln bleibt als Absicherung.
+
 ### Fixed — Fokus: Melden direkt aus iOS (App 1.64.0, iPhone)
 
 Realfall 20.10. 16:58/16:59: Nach dem Test war die App nur 3–5 Sekunden offen, die Meldung der App ging nicht mehr raus.
