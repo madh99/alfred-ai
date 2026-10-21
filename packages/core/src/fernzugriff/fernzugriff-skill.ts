@@ -2,7 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { Fernzugang } from '@alfred/storage';
 import { Freigaben } from '../geraete/freigaben.js';
-import { befehlsklasse, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
+import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 
 /**
@@ -39,11 +39,12 @@ export interface FernzugriffDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
 }
 
-const ANZEIGE_MAX = 6000;
+/** v1542 (F3) — so viel geht ans Modell (die Pipeline kappt bei 12 000 mit Anfang und Ende); vorher 6000 → SMART-Werte fehlten */
+export const ANZEIGE_MAX = 12_000;
 const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'zugang_bestaetigen'] as const;
 
 function kuerze(t: string, max = ANZEIGE_MAX): string {
-  return t.length <= max ? t : `${t.slice(0, max)}\n… (${t.length - max} Zeichen gekürzt)`;
+  return kuerzeMitte(t, max);
 }
 
 export class FernzugriffSkill extends Skill {
@@ -52,7 +53,7 @@ export class FernzugriffSkill extends Skill {
     category: 'infrastructure',
     description:
       'SSH auf Hosts, die Alfred nicht selbst angelegt hat (z. B. Proxmox-Knoten pve, NAS), über hinterlegte Zugänge. ' +
-      'liste: Zugänge. lesen: lesender Befehl (zpool status, pvecm status, qm list, df -h, free -h, journalctl -u …, systemctl status …, smartctl -a /dev/…) — läuft sofort. ' +
+      'liste: Zugänge. lesen: lesender Befehl — läuft sofort (zpool status/list/events, zfs list, pvecm status, pvesm status/list, qm list/config/listsnapshot, df -h, free -h, journalctl -u …, systemctl status …, smartctl -a /dev/… oder /dev/disk/by-id/…, smartctl --scan, nvme smart-log, lsblk -o …, ls -l /dev/disk/by-id). Mehrere Lesebefehle mit ; oder && und Pipes zu grep/head/tail/wc/sort/uniq/cut gehen ebenfalls mit lesen — für Diagnosen immer lesen versuchen. ' +
       'ausfuehren: jeder andere Befehl (Neustart eines Dienstes, zpool scrub, apt …) — fragt den Owner, läuft nach seinem Ja als root (sudo). Zerstörerisches (mkfs, zpool destroy, dd auf Datenträger …) nie. ' +
       'pruefen: Verbindung und sudo testen. anlegen: neuen Zugang (name, host oder CMDB-Name, benutzer alfred) — Host-Schlüssel wird gelesen und vom Owner bestätigt. ' +
       'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung).',
@@ -202,7 +203,15 @@ export class FernzugriffSkill extends Skill {
   private ergebnis(z: Fernzugang, befehl: string, r: SshErgebnis): SkillResult {
     const aus = [r.stdout.trimEnd(), r.stderr.trim() ? `[stderr]\n${r.stderr.trim()}` : ''].filter(Boolean).join('\n');
     const kopf = `${z.name}$ ${befehl}${r.code !== 0 ? `  (Exit ${r.code})` : ''}`;
-    return { success: r.code === 0, data: { name: z.name, befehl, code: r.code, stdout: r.stdout.slice(0, 200_000), stderr: r.stderr.slice(0, 20_000) }, display: `\`\`\`\n${kuerze(`${kopf}\n${aus || '(keine Ausgabe)'}`)}\n\`\`\``, ...(r.code !== 0 ? { error: r.hostSchluesselGeaendert ? 'Host-Schlüssel geändert — Zugang gesperrt' : `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` } : {}) };
+    const display = `\`\`\`\n${kuerze(`${kopf}\n${aus || '(keine Ausgabe)'}`)}\n\`\`\``;
+    // v1542 (F3) — Exit ≠ 0 mit Ausgabe ist ein Ergebnis, kein Fehlschlag: smartctl meldet z. B. eine Platte mit Fehlern über eine
+    // Bitmaske im Exit-Code, die Werte stehen trotzdem in der Ausgabe. Ohne Ausgabe (oder bei Verbindungs-/Schlüsselproblemen) Fehler.
+    const nurFehler = r.hostSchluesselGeaendert || (r.code !== 0 && !r.stdout.trim());
+    return {
+      success: !nurFehler, display,
+      data: { name: z.name, befehl, code: r.code, stdout: r.stdout.slice(0, 200_000), stderr: r.stderr.slice(0, 20_000) },
+      ...(nurFehler ? { error: r.hostSchluesselGeaendert ? 'Host-Schlüssel geändert — Zugang gesperrt' : `Exit ${r.code}: ${r.stderr.trim().slice(-1500)}` } : {}),
+    };
   }
 
   private async pruefen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {

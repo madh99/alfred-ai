@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { befehlsklasse, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle } from './regeln.js';
+import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle } from './regeln.js';
 
 // v1539 — Fernzugriff: Befehlsklassen und Host-Schlüssel (Realfall 21.10.: „zpool status“ auf pve)
 describe('v1539 Befehlsklassen', () => {
@@ -9,13 +9,36 @@ describe('v1539 Befehlsklassen', () => {
     }
   });
   it('verkettete, umgeleitete oder unbekannte Befehle brauchen Bestätigung', () => {
-    for (const b of ['zpool status; reboot', 'zpool status | tail', 'cat /etc/pve/priv/authkey.key', 'qm start 105', 'systemctl restart pveproxy', 'apt upgrade -y', 'zpool scrub rpool', 'echo $(id)', 'reboot']) {
+    for (const b of ['zpool status; reboot', 'zpool status | sh', 'cat /etc/pve/priv/authkey.key', 'qm start 105', 'systemctl restart pveproxy', 'apt upgrade -y', 'zpool scrub rpool', 'echo $(id)', 'reboot']) {
       expect(befehlsklasse(b), b).toBe('bestaetigen');
     }
   });
   it('v1541 journalctl: Zeit nur im festen Format, verändernde Optionen nie als „lesen“', () => {
     for (const b of ['journalctl --since today -n 100', 'journalctl -u pveproxy --since "2026-10-21 08:00" --no-pager', 'journalctl --since -2h -p err']) expect(befehlsklasse(b), b).toBe('lesen');
     for (const b of ['journalctl --since x --rotate', 'journalctl --since "1 --vacuum-time=1s"', 'journalctl --vacuum-size=1M', 'journalctl --flush', 'journalctl -D /var/log/x', 'journalctl --file /root/x', 'journalctl --until yesterday --setup-keys']) expect(befehlsklasse(b), b).toBe('bestaetigen');
+  });
+  it('v1542 F1: Diagnose aus dem Realfall 21.10. ohne Rückfrage', () => {
+    for (const b of ['smartctl -a /dev/disk/by-id/nvme-Fanxiang_S501Q_2TB_FXS501Q242220497_1', 'smartctl --scan-open', 'smartctl -x /dev/nvme0n1', 'lsblk -o NAME,SIZE,MODEL,SERIAL,MOUNTPOINTS', 'ls -l /dev/disk/by-id/nvme-*', 'pvesm list backupshare --content backup --vmid 106', 'nvme smart-log /dev/nvme0', 'qm listsnapshot 106', 'zpool events -v', 'zfs list -r -o name,used,avail,refer,mountpoint zfs-nvme002']) {
+      expect(befehlsklasse(b), b).toBe('lesen');
+    }
+  });
+  it('v1542 F2: Ketten aus Lesebefehlen und Pipes zu Filtern sind lesen, sonst Bestätigung', () => {
+    for (const b of ['zpool status -v zfs-nvme002; lsblk -o NAME,SIZE,MODEL,SERIAL,MOUNTPOINTS; smartctl --scan-open', 'zpool list && zfs list', 'journalctl -k -n 500 --no-pager | grep -i nvme | tail -n 50', 'ls -l /dev/disk/by-id/nvme-* | wc -l', 'qm list | sort -k 3 | head -20', 'zpool status;']) {
+      expect(befehlsklasse(b), b).toBe('lesen');
+    }
+    for (const b of ['zpool status; qm start 106', 'zpool status | sh', 'zpool status | tee /etc/x', 'zpool status > /tmp/x', 'zpool status || reboot', 'zpool status & reboot', 'grep -f /etc/shadow x', 'zpool list | grep "a;b"', 'zpool list | xargs rm', 'qm list; ;', '; zpool list']) {
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
+    }
+    expect(befehlsklasse('zpool list; zpool destroy tank')).toBe('nie');
+  });
+  it('v1542 F3: Kürzen behält Anfang und Ende', () => {
+    const t = Array.from({ length: 2000 }, (_, i) => `zeile ${i}`).join('\n');
+    const k = kuerzeMitte(t, 1000);
+    expect(k.length).toBeLessThan(1100);
+    expect(k.startsWith('zeile 0')).toBe(true);
+    expect(k.endsWith('zeile 1999')).toBe(true);
+    expect(k).toContain('in der Mitte ausgelassen');
+    expect(kuerzeMitte('kurz', 10)).toBe('kurz');
   });
   it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
     for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {

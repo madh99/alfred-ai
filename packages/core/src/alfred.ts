@@ -7254,7 +7254,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const nurProjekt = pending.skillName === 'project_agent' ? { allowedSkills: ['project_agent', 'project'] } : {};
         return this.fortsetzungImOwnerChat(t, { id: 'bestaetigt-fehler', platform: ziel.platform, chatId: ziel.chatId, herkunft: hk, ...nurProjekt });
       }
-      const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
+      const roh = result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '');
+      // v1542 (F3) — Fernzugriff: Ausgabe vollständig weiter (Realfall 21.10.: nach 3 500 Zeichen fehlten die SMART-Werte, eine Runde umsonst)
+      const display = pending.skillName === 'fernzugriff' ? (await import('./fernzugriff/regeln.js')).kuerzeMitte(roh, 12_000) : roh.slice(0, 3500);
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
       // v1341 — mit Herkunft (Gerätesitzung, App, Terminal) läuft die Fortsetzung dort, der Owner-Chat bekommt die Kopie (wie Vorhaben, v1324)
       const herkunft = ziel.herkunft?.userId ? { chatId: ziel.herkunft.chatId, platform: ziel.herkunft.platform, userId: ziel.herkunft.userId } : undefined;

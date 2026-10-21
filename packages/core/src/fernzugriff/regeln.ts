@@ -13,7 +13,7 @@ const STEUERZEICHEN = /[;&|`<>\\\n\r]|\$[({A-Za-z_]/;
 
 /** Lesende Befehle (ganzer Befehl, nach Normalisierung). Bewusst ohne cat/less beliebiger Dateien (Geheimnisse in /etc/pve). */
 const LESE_BEFEHLE: RegExp[] = [
-  /^zpool (status|list|iostat|get|history)( [-\w.@:/]+)*$/,
+  /^zpool (status|list|iostat|get|history|events)( [-\w.@:/]+)*$/, // v1542 events
   /^zpool status$/,
   /^zfs (list|get)( [-\w.@:/,=]+)*$/,
   /^pvecm (status|nodes)$/,
@@ -29,8 +29,15 @@ const LESE_BEFEHLE: RegExp[] = [
   /^free( -[hmgb])*$/,
   /^(uptime|hostname|whoami|id|date|nproc)$/,
   /^uname( -[a-z]+)*$/,
-  /^lsblk( -[a-zA-Z]+)*$/,
-  /^smartctl -[aHiAx] \/dev\/[a-z0-9]+$/,
+  // v1542 (Owner 22.10. „F1–F4“) — Diagnose wie im Realfall 21.10. (NVMe in zfs-nvme002): Spalten, Geräte nach ID, Speicherinhalt
+  /^lsblk( -[a-zA-Z]+| (-o|--output) [A-Za-z,:-]+)*( \/dev\/[\w/.:-]+)?$/,
+  /^smartctl( -[aHiAxj]+| --(all|health|info|xall|json))+ \/dev\/([a-z0-9]+|disk\/by-(id|path|uuid)\/[\w.:-]+)$/,
+  /^smartctl --scan(-open)?$/,
+  /^nvme (list|(smart-log|error-log|id-ctrl) \/dev\/nvme\d+(n\d+)?)$/,
+  /^ls( -[lahdR1]+)* \/dev\/disk(\/by-(id|uuid|path|label|partuuid))?\/?[\w.:*-]*$/,
+  /^lspci( -[vnkt]+)*$/,
+  /^pvesm list [\w.-]+( --content (backup|images|iso|vztmpl|rootdir|snippets)| --vmid \d{1,9})*$/,
+  /^(qm|pct) listsnapshot \d{1,9}$/,
   /^sensors$/,
   /^ip( -[a-z0-9]+)* (a|addr|address|r|route|link|neigh)( show)?( [\w.-]+)?$/,
   /^cat \/proc\/(mdstat|meminfo|loadavg|cpuinfo|version|pressure\/(cpu|memory|io))$/,
@@ -66,13 +73,57 @@ export function normalisiereBefehl(befehl: string): string {
 /** v1541 — Optionen, die etwas verändern oder fremde Dateien lesen; mit ihnen ist kein Befehl „lesen“, egal was das Muster erlaubt. */
 const VERAENDERNDE_OPTIONEN = /(^| )(--vacuum[\w-]*|--rotate|--flush|--sync|--relinquish-var|--setup-keys|--file|--directory|--root|--merge|-D|-M|--output-fields|--update-catalog|--force|-f)( |=|$)/;
 
+/** v1542 — Zeichen, die nie in einem Lese-Befehl vorkommen dürfen (Umleitung, Ersetzung, Fortsetzung, Hintergrund). */
+const HARTE_ZEICHEN = /[`<>\\\n\r]|\$[({A-Za-z_]/;
+
+/** v1542 — Filter, die hinter einer Pipe stehen dürfen: lesen nur ihre Eingabe, schreiben nichts, starten nichts. */
+const FILTER: RegExp[] = [
+  /^e?grep( -[a-eg-zA-Z]+)*( -e)? ("[^"]*"|'[^']*'|[\w.:/@=-]+)$/,
+  /^(head|tail)( -n ?\d{1,5}| -\d{1,5}| -c ?\d{1,7})?$/,
+  /^wc( -[lwcm]+)?$/,
+  /^sort( -[nrhuV]+| -k ?[\d,]+)*$/,
+  /^uniq( -[cdu]+)?$/,
+  /^cut( -d ?('.'|"."|[^\s'"])| -[fc] ?[\d,-]+)+$/,
+];
+
+function einzelBefehl(b: string): Befehlsklasse {
+  if (VERAENDERNDE_OPTIONEN.test(b)) return 'bestaetigen';
+  return LESE_BEFEHLE.some(r => r.test(b)) ? 'lesen' : 'bestaetigen';
+}
+
 export function befehlsklasse(befehl: string): Befehlsklasse {
   const b = normalisiereBefehl(befehl);
   if (!b) return 'nie';
   if (NIE_BEFEHLE.some(r => r.test(b))) return 'nie';
-  if (STEUERZEICHEN.test(b)) return 'bestaetigen';
-  if (VERAENDERNDE_OPTIONEN.test(b)) return 'bestaetigen';
-  return LESE_BEFEHLE.some(r => r.test(b)) ? 'lesen' : 'bestaetigen';
+  if (!STEUERZEICHEN.test(b)) return einzelBefehl(b);
+  // v1542 (F2) — Ketten mit ; oder && sind „lesen“, wenn JEDER Teil liest; Pipes nur zu FILTER. Alles Übrige (||, einzelnes &,
+  // Umleitung, Ersetzung) braucht die Bestätigung. Ein ; oder | in Anführungszeichen zerfällt beim Teilen und fällt damit durch.
+  if (HARTE_ZEICHEN.test(b) || b.includes('||')) return 'bestaetigen';
+  const ohneUnd = b.replace(/&&/g, ';');
+  if (ohneUnd.includes('&')) return 'bestaetigen';
+  const segmente = ohneUnd.split(';').map(s => s.trim());
+  if (segmente.some(s => !s)) return segmente.filter(Boolean).length && segmente[segmente.length - 1] === '' && segmente.slice(0, -1).every(Boolean) ? pruefeSegmente(segmente.slice(0, -1)) : 'bestaetigen';
+  return pruefeSegmente(segmente);
+}
+
+function pruefeSegmente(segmente: string[]): Befehlsklasse {
+  for (const seg of segmente) {
+    const stufen = seg.split('|').map(s => s.trim());
+    if (stufen.some(s => !s)) return 'bestaetigen';
+    if (einzelBefehl(normalisiereBefehl(stufen[0]!)) !== 'lesen') return 'bestaetigen';
+    if (!stufen.slice(1).every(f => FILTER.some(r => r.test(f)))) return 'bestaetigen';
+  }
+  return 'lesen';
+}
+
+/** v1542 (F3) — lange Ausgaben kürzen, aber Anfang UND Ende behalten (Fehler und Zusammenfassungen stehen oft am Ende). */
+export function kuerzeMitte(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const kopf = Math.floor(max * 0.7), ende = Math.floor(max * 0.25);
+  const a = text.slice(0, kopf), z = text.slice(text.length - ende);
+  const aZeile = a.lastIndexOf('\n') > kopf * 0.8 ? a.slice(0, a.lastIndexOf('\n')) : a;
+  const zZeile = z.indexOf('\n') >= 0 && z.indexOf('\n') < ende * 0.2 ? z.slice(z.indexOf('\n') + 1) : z;
+  return `${aZeile}\n… (${text.length - aZeile.length - zZeile.length} Zeichen in der Mitte ausgelassen) …\n${zZeile}`;
 }
 
 /** Befehl, wie er per ssh läuft: als root über sudo -n (kein Passwort-Prompt), komplexe Befehle in sh -c. */

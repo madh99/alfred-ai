@@ -114,3 +114,19 @@ describe('v1539 FernzugriffSkill', () => {
     expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve', befehl: 'qm list' })).toBeUndefined();
   });
 });
+
+describe('v1542 F3 Ergebnisse', () => {
+  it('Exit ≠ 0 mit Ausgabe ist ein Ergebnis (smartctl-Bitmaske), ohne Ausgabe ein Fehler; lange Ausgabe behält das Ende', async () => {
+    const lang = Array.from({ length: 3000 }, (_, i) => `zeile ${i}`).join('\n') + '\nSMART overall-health: PASSED';
+    const t = aufbau(b => (b.includes('smartctl') ? { code: 4, stdout: lang, stderr: '' } : b.includes('kaputt') ? { code: 1, stdout: '', stderr: 'nicht gefunden' } : { code: 0, stdout: 'ok', stderr: '' }));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'smartctl -a /dev/nvme0n1' }, ctx);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('(Exit 4)');
+    expect(r.display).toContain('SMART overall-health: PASSED');
+    expect(r.display!.length).toBeLessThan(12_200);
+    const f = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'ls -l /dev/disk/by-id/kaputt' }, ctx);
+    expect(f.success).toBe(false);
+    expect(f.error).toContain('nicht gefunden');
+  });
+});

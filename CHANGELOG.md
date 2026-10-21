@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Fernzugriff: Diagnosen ohne Rückfrage, Ketten aus Lesebefehlen, vollständige Ergebnisse (v1542)
+
+Owner 22.10.: „F1–F4 wie empfohlen umsetzen“, hier F1 bis F3. Realfall 21.10. (defekte NVMe in `zfs-nvme002` auf pve):
+- Die Analyse brauchte fünf Rückfragen für reine Lesebefehle.
+- Eine Runde war umsonst, weil das Ergebnis nach dem Ja bei 3 500 Zeichen abgeschnitten wurde und die SMART-Werte fehlten.
+
+- **F1 — mehr Diagnose-Befehle gelten als „lesen“:**
+  - `smartctl -a|-x|-H|-i …` auch mit `/dev/disk/by-id/…` sowie `smartctl --scan(-open)`;
+  - `nvme list|smart-log|error-log|id-ctrl`, `lsblk -o <Spalten>`, `ls -l /dev/disk/by-id/…`, `lspci`;
+  - `pvesm list <Speicher> [--content …] [--vmid …]`, `qm|pct listsnapshot <id>`, `zpool events`.
+- **F2 — Ketten:** Mit `;` oder `&&` verbundene Befehle gelten als „lesen“, wenn **jeder Teil** liest.
+  - Pipes sind nur zu `grep`, `head`, `tail`, `wc`, `sort`, `uniq` und `cut` erlaubt (`grep -f` ausgenommen).
+  - `||`, ein einzelnes `&`, Umleitungen und Ersetzungen brauchen weiter die Bestätigung. Steckt in einer Kette etwas Zerstörerisches, bleibt die ganze Kette „nie“.
+- **F3 — vollständige Ergebnisse:**
+  - Alfred bekommt bis 12 000 Zeichen statt 6 000, nach einer Freigabe statt 3 500. Wird gekürzt, bleiben Anfang **und** Ende erhalten.
+  - Ein Exit-Code ungleich 0 mit Ausgabe gilt als Ergebnis samt Code (z. B. die Fehler-Bitmaske von `smartctl`). Nur ohne Ausgabe gilt er als Fehler.
+- Die Skill-Beschreibung nennt die neuen Lesebefehle und Ketten, damit das Modell für Diagnosen „lesen“ wählt.
+
 ### Security — Fernzugriff: journalctl-Zeitangaben streng, verändernde Optionen nie „lesen“ (v1541)
 
 Nachschärfung zu v1539 aus der Sicherheitsprüfung: `--since` und `--until` ließen freie Werte mit Leerzeichen und Bindestrichen zu. Dadurch hätte z. B. `journalctl --since x --rotate` ohne Rückfrage als root laufen können.

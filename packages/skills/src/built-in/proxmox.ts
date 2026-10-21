@@ -44,8 +44,8 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 
 /** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
-const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready']);
-const VM_ZIEL_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
+const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
+const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
   // read
@@ -56,6 +56,7 @@ type Action =
   | 'vm_status'
   | 'list_snapshots'
   | 'list_storage'
+  | 'backups_vm'
   | 'list_tasks'
   | 'task_status'
   // write
@@ -137,6 +138,7 @@ export class ProxmoxSkill extends Skill {
             'vm_status',
             'list_snapshots',
             'list_storage',
+            'backups_vm',
             'list_tasks',
             'task_status',
             'start_vm',
@@ -336,6 +338,8 @@ export class ProxmoxSkill extends Skill {
           );
         case 'list_storage':
           return await this.listStorage(input.node as string | undefined);
+        case 'backups_vm':
+          return await this.backupsVm(input.vmid as number | undefined);
         case 'list_tasks':
           return await this.listTasks(input.node as string | undefined);
         case 'task_status':
@@ -724,6 +728,55 @@ export class ProxmoxSkill extends Skill {
     }
 
     return { success: true, data, display: lines.join('\n') };
+  }
+
+  /**
+   * v1543 (Owner 22.10. „F4“) — alle Sicherungen einer VM über alle Knoten und Speicher mit Inhalt „backup“ (lokal, NFS, PBS),
+   * neueste zuerst; nicht erreichbare oder inaktive Backup-Speicher werden ausgewiesen (Realfall 21.10.: pbs-unas „No route to host“).
+   */
+  async backupsVmDaten(vmid: number): Promise<{ vmid: number; name?: string; backups: Array<{ speicher: string; volid: string; zeit: string; groesse?: number; format?: string; geprueft?: string }>; unerreichbar: Array<{ speicher: string; grund: string }>; speicher: string[] }> {
+    const vm = (await this.getAllVms()).find(e => e.vmid === vmid);
+    const nodes = (await this.get<{ node: string; status?: string }[]>('/nodes')).filter(n => n.status !== 'offline');
+    const gesehen = new Set<string>();
+    const backups: Array<{ speicher: string; volid: string; zeit: string; groesse?: number; format?: string; geprueft?: string }> = [];
+    const unerreichbar: Array<{ speicher: string; grund: string }> = [];
+    const speicher: string[] = [];
+    for (const n of nodes) {
+      const liste = await this.get<Array<{ storage: string; content?: string; active?: number; enabled?: number; shared?: number }>>(`/nodes/${n.node}/storage`).catch(() => []);
+      for (const st of liste) {
+        if (!(st.content ?? '').split(',').includes('backup')) continue;
+        const schluessel = st.shared ? st.storage : `${n.node}/${st.storage}`;
+        if (gesehen.has(schluessel)) continue;
+        gesehen.add(schluessel);
+        speicher.push(schluessel);
+        if (st.enabled === 0) { unerreichbar.push({ speicher: schluessel, grund: 'deaktiviert' }); continue; }
+        if (!st.active) { unerreichbar.push({ speicher: schluessel, grund: 'nicht aktiv (nicht erreichbar)' }); continue; }
+        try {
+          const inhalt = await this.get<Array<{ volid: string; ctime?: number; size?: number; format?: string; vmid?: number; verification?: { state?: string } }>>(`/nodes/${n.node}/storage/${encodeURIComponent(st.storage)}/content?content=backup&vmid=${vmid}`);
+          for (const b of inhalt) {
+            if (b.vmid !== undefined && Number(b.vmid) !== vmid) continue;
+            backups.push({ speicher: schluessel, volid: b.volid, zeit: b.ctime ? new Date(b.ctime * 1000).toISOString() : '', groesse: b.size, format: b.format, geprueft: b.verification?.state });
+          }
+        } catch (err) {
+          unerreichbar.push({ speicher: schluessel, grund: (err as Error).message.slice(0, 120) });
+        }
+      }
+    }
+    backups.sort((a, b) => b.zeit.localeCompare(a.zeit));
+    return { vmid, name: vm?.name, backups, unerreichbar, speicher };
+  }
+
+  private async backupsVm(vmid?: number): Promise<SkillResult> {
+    if (vmid == null) return { success: false, error: 'Missing required "vmid" parameter' };
+    const d = await this.backupsVmDaten(vmid);
+    const zeilen = [`## Sicherungen von VM ${vmid}${d.name ? ` (${d.name})` : ''}`, ''];
+    if (!d.backups.length) zeilen.push(`⚠️ Keine Sicherung auf ${d.speicher.length} Backup-Speicher(n) gefunden.`);
+    for (const b of d.backups.slice(0, 15)) {
+      const tage = b.zeit ? Math.floor((Date.now() - Date.parse(b.zeit)) / 86_400_000) : undefined;
+      zeilen.push(`- ${b.zeit.slice(0, 16).replace('T', ' ')} · ${b.speicher} · ${bytes(b.groesse)}${tage !== undefined ? ` · vor ${tage} Tagen` : ''}${b.geprueft ? ` · Prüfung: ${b.geprueft}` : ''}`);
+    }
+    if (d.unerreichbar.length) zeilen.push('', `Nicht geprüft: ${d.unerreichbar.map(u => `${u.speicher} (${u.grund})`).join(', ')}`);
+    return { success: true, data: d, display: zeilen.join('\n') };
   }
 
   private async listTasks(node?: string): Promise<SkillResult> {
