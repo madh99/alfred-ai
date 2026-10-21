@@ -24,6 +24,25 @@ interface VmEntry {
   netout?: number;
 }
 
+/**
+ * v1537 (Owner 21.10. „A+B+C“) — VM über ihren Namen statt über die Nummer. Realfall 21.10.: Der Denk-Durchlauf schlug
+ * `vm_status` mit `{"vm":"git-server"}` vor, der Skill kannte nur `vmid` → „Missing required vmid“ bei jedem Klick.
+ * Genau gleichnamig (ohne Groß/Klein) gewinnt, sonst ein eindeutiger Teiltreffer; mehrdeutig oder unbekannt → klare Meldung.
+ */
+export function vmNameAufloesen(entries: { vmid: number; name?: string; node: string }[], name: string): { vmid: number } | { fehler: string } {
+  const n = name.trim().toLowerCase();
+  if (!n) return { fehler: 'Leerer VM-Name' };
+  const genau = entries.filter(e => (e.name ?? '').toLowerCase() === n);
+  if (genau.length === 1) return { vmid: genau[0]!.vmid };
+  const kandidaten = genau.length > 1 ? genau : entries.filter(e => (e.name ?? '').toLowerCase().includes(n));
+  if (kandidaten.length === 1) return { vmid: kandidaten[0]!.vmid };
+  if (kandidaten.length === 0) return { fehler: `Keine VM mit Namen „${name}“ gefunden. Mit "list_vms" die vorhandenen VMs ansehen.` };
+  return { fehler: `Name „${name}“ ist mehrdeutig: ${kandidaten.slice(0, 6).map(e => `${e.vmid} ${e.name ?? '-'} (${e.node})`).join(', ')} — vmid angeben.` };
+}
+
+/** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
+const VM_ZIEL_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
+
 type Action =
   // read
   | 'cluster_status'
@@ -139,6 +158,10 @@ export class ProxmoxSkill extends Skill {
           type: 'number',
           description: 'Virtual machine / container ID',
         },
+        vm: {
+          type: 'string',
+          description: 'VM-/Container-Name statt vmid (wird über die VM-Liste aufgelöst)',
+        },
         node: {
           type: 'string',
           description: 'Proxmox node name (optional — resolved automatically when omitted)',
@@ -241,6 +264,14 @@ export class ProxmoxSkill extends Skill {
 
   /** Set SSH key path for Cloud-Init auto-injection on clone_vm/create_lxc. */
   setSshKeyPath(path: string): void { this.sshKeyPath = path; }
+  /** v1537 — VM-Aktionen brauchen eine VM-Nummer oder einen Namen (vm / vm_name / name), sonst ist der Vorschlag unvollständig. */
+  pruefeEingabe(input: Record<string, unknown>): string | undefined {
+    const action = input.action as string | undefined;
+    if (!action || !VM_ZIEL_AKTIONEN.has(action)) return undefined;
+    if (typeof input.vmid === 'number' || (typeof input.vmid === 'string' && input.vmid.trim())) return undefined;
+    if ([input.vm, input.vm_name, input.vmname, input.name].some(x => typeof x === 'string' && x.trim())) return undefined;
+    return `${action} braucht vmid oder vm (Name)`;
+  }
 
   /** Set default SSH user for post-provision. */
   setSshUser(user: string): void { this.sshUser = user; }
@@ -264,6 +295,18 @@ export class ProxmoxSkill extends Skill {
     }
 
     try {
+      // v1537 — vmid als Text („105“) oder VM über den Namen (vm / vm_name / name bzw. nicht-numerische vmid)
+      if (VM_ZIEL_AKTIONEN.has(action)) {
+        if (typeof input.vmid === 'string' && /^\d+$/.test(input.vmid.trim())) input = { ...input, vmid: Number(input.vmid.trim()) };
+        if (typeof input.vmid !== 'number') {
+          const name = [input.vm, input.vm_name, input.vmname, typeof input.vmid === 'string' ? input.vmid : undefined, input.name].find(x => typeof x === 'string' && x.trim()) as string | undefined;
+          if (name) {
+            const r = vmNameAufloesen(await this.getAllVms(), name);
+            if ('fehler' in r) return { success: false, error: r.fehler };
+            input = { ...input, vmid: r.vmid };
+          }
+        }
+      }
       switch (action) {
         // read
         case 'cluster_status':

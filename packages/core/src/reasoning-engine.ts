@@ -636,10 +636,16 @@ export class ReasoningEngine {
           continue;
         }
         const autonomie = klassifiziereAktion(a.skillName, a.skillParams);
+        // v1537 Teil B — unvollständige Parameter (Realfall 21.10. `vm_status` ohne vmid) gleich am Vorgang benennen, damit der
+        // nächste Pass einen gültigen Vorschlag macht und die App statt „Ausführen“ den Grund zeigt
+        const { eingabeFehler } = await import('./vorgaenge/vorschlag.js');
+        const pruefSkill = this.skillRegistry.get(a.skillName);
+        const unvollstaendig = pruefSkill && a.skillParams ? eingabeFehler(pruefSkill, a.skillParams) : undefined;
+        if (unvollstaendig) this.logger.info({ titel: a.description.slice(0, 120), skill: a.skillName, grund: unvollstaendig }, 'v1537 Vorschlag unvollständig — Vorgang mit Grund');
         const dedupeKey = `${a.skillName}:${a.description.toLowerCase().replace(/[^a-zäöüß0-9]+/g, ' ').trim().slice(0, 80)}`;
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel: a.description.slice(0, 200), besitzer: autonomie === 'auto' ? 'alfred' : 'user', status: 'offen',
-          naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
+          naechsterSchritt: unvollstaendig ? `Vorschlag unvollständig (${unvollstaendig}) — Aktion mit gültigen Parametern neu vorschlagen`.slice(0, 300) : autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), // v1185 — ohne Frist blieben übersprungene Vorschläge ewig „offen"
           quelle: 'reasoning', autonomie, dedupeKey, kategorie: a.skillName, // v1186 — bei Aktionen bleibt der Skill die Kategorie
           begruendung: kurzBegruendung(this.aktuelleBegruendung), // v1201

@@ -14464,7 +14464,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { ausfuehrbarerVorschlag, vorschlagKurz } = await import('./vorgaenge/vorschlag.js');
         const offene = await Promise.all(u.offene.map(async v => {
           const s = befundSchluesselAus(v.dedupeKey);
-          const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, v.id).catch(() => []), n => this.skillRegistry.has(n));
+          const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, v.id).catch(() => []), n => this.skillRegistry.has(n), n => this.skillRegistry.get(n)); // v1537 Prüfung
           const vorschlag = vs ? { ausfuehrbar: vs.ausfuehrbar, text: vorschlagKurz(vs), ...(vs.ausfuehrbar ? {} : { grund: vs.grund }) } : undefined;
           const basis = { ...v, ...(vorschlag ? { vorschlag } : {}) };
           return s ? { ...basis, befund: s, nieStumm: nieStummschaltbar(s), keinProblemBisher: keinProblem.get(v.dedupeKey!) ?? 0 } : basis;
@@ -15937,7 +15937,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!v) return null;
     if (v.status !== 'offen' && v.status !== 'wartet') throw new Error(`Vorgang ist ${v.status}`);
     const { ausfuehrbarerVorschlag } = await import('./vorgaenge/vorschlag.js');
-    const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, id), n => this.skillRegistry.has(n));
+    const vs = ausfuehrbarerVorschlag(await repo.schritteVon(owner, id), n => this.skillRegistry.has(n), n => this.skillRegistry.get(n)); // v1537 Prüfung + keine Wiederholung
     if (!vs) throw new Error('Zu diesem Vorgang gibt es keine vorgeschlagene Aktion');
     if (!vs.ausfuehrbar) throw new Error(vs.grund);
     const skill = this.skillRegistry.get(vs.skill)!;

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — „Ausführen“ bei Vorgängen: VM über den Namen, Parameter vorher prüfen, keinen Fehler wiederholen (v1537)
+
+Owner 21.10.: „A+B+C wie vorgeschlagen umsetzen“. Realfall 21.10.: Der Vorgang „Proxmox git-server RAM-Auslastung prüfen“ schlug viermal mit „Missing required "vmid" parameter“ fehl. Der Vorschlag nannte die VM beim Namen (`vm: git-server`), der Proxmox-Skill kannte nur die Nummer.
+
+- **A — Proxmox:** Alle Aktionen auf eine vorhandene VM nehmen auch den Namen an (`vm`, `vm_name`, `name` oder eine nicht-numerische `vmid`). Auch eine Nummer als Text wird angenommen. Ein genauer Name gewinnt, sonst gilt ein eindeutiger Teiltreffer. Bei mehreren oder keinen Treffern kommt eine klare Meldung mit den Kandidaten. Bei `clone_vm` und `create_lxc` bleibt `name` der Name der neuen Maschine.
+- **B — Prüfung vor dem Ausführen:** Vorgeschlagene Parameter werden gegen das Schema des Skills geprüft (Pflichtfelder, erlaubte Aktion, Zahlen). Skills können eine eigene Prüfung je Aktion mitbringen, Proxmox z. B. „VM-Nummer oder Name nötig“. Ist ein Vorschlag unvollständig, zeigt die App den Grund statt „Ausführen“. Ein neuer Vorgang trägt den Grund im nächsten Schritt, damit der nächste Durchlauf einen gültigen Vorschlag macht.
+- **C — keine Wiederholung:** Ist dieselbe Aktion mit denselben Parametern seit dem letzten Vorschlag fehlgeschlagen, bietet die App sie nicht erneut an („Gleiche Aktion schlug zuletzt fehl: …“). Ausnahme: Der Fehler betraf die Parameter und die Prüfung lässt sie inzwischen zu, wie beim Realfall nach Teil A. Ein neuer Vorschlag gibt die Aktion wieder frei. Die Vorsilbe „vom Owner ausgeführt (App):“ stapelt sich nicht mehr.
+
 ### Added — Kosten, Notizen, Wissen, Interessen und Ziele in den Apps, „Im Web öffnen“ (v1536, App 1.71.0)
 
 Owner 20.10.: „1–5 wie vorgeschlagen umsetzen“. Mit diesem Release sind die Teile 3–5 umgesetzt.
