@@ -1,0 +1,58 @@
+import { describe, it, expect } from 'vitest';
+import { befehlsklasse, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle } from './regeln.js';
+
+// v1539 — Fernzugriff: Befehlsklassen und Host-Schlüssel (Realfall 21.10.: „zpool status“ auf pve)
+describe('v1539 Befehlsklassen', () => {
+  it('lesende Befehle laufen ohne Rückfrage', () => {
+    for (const b of ['zpool status', 'sudo zpool status', 'zpool status -v rpool', 'pvecm status', 'qm list', 'pct config 105', 'df -h', 'free -h', 'journalctl -u pveproxy -n 50 --no-pager', 'systemctl status pvedaemon', 'smartctl -a /dev/nvme0n1', 'cat /proc/mdstat', 'pvesh get /cluster/resources --output-format json']) {
+      expect(befehlsklasse(b), b).toBe('lesen');
+    }
+  });
+  it('verkettete, umgeleitete oder unbekannte Befehle brauchen Bestätigung', () => {
+    for (const b of ['zpool status; reboot', 'zpool status | tail', 'cat /etc/pve/priv/authkey.key', 'qm start 105', 'systemctl restart pveproxy', 'apt upgrade -y', 'zpool scrub rpool', 'echo $(id)', 'reboot']) {
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
+    }
+  });
+  it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
+    for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {
+      expect(befehlsklasse(b), b).toBe('nie');
+    }
+    expect(befehlsklasse('rm -rf /tmp/alfred-test')).toBe('bestaetigen');
+  });
+  it('sudo -n, komplexe Befehle in sh -c mit sicherem Quoting', () => {
+    expect(fernBefehl('zpool status', true)).toBe('sudo -n zpool status');
+    expect(fernBefehl("journalctl -n 5 | grep 'x'", true)).toBe(`sudo -n sh -c 'journalctl -n 5 | grep '\\''x'\\'''`);
+    expect(fernBefehl('sudo df -h', false)).toBe('df -h');
+  });
+});
+
+describe('v1539 Host-Schlüssel', () => {
+  // öffentlicher Testschlüssel (ed25519), Fingerabdruck mit ssh-keygen -lf gegengeprüft
+  const k = 'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
+  it('liest ssh-keyscan, ignoriert Kommentare und Unbekanntes', () => {
+    const r = leseKeyscan(`# 192.168.1.22:22 SSH-2.0-OpenSSH_9.2p1\n192.168.1.22 ssh-ed25519 ${k}\n192.168.1.22 bogus xyz\n`);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ typ: 'ssh-ed25519', schluessel: k });
+    expect(r[0]!.fingerabdruck).toBe(fingerabdruck(k));
+    expect(r[0]!.fingerabdruck).toBe('SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU'); // = ssh-keygen -lf
+  });
+  it('known_hosts-Zeilen, Port in Klammern', () => {
+    const s = leseKeyscan(`h ssh-ed25519 ${k}`);
+    expect(knownHostsZeilen('192.168.1.22', 22, s)).toBe(`192.168.1.22 ssh-ed25519 ${k}\n`);
+    expect(knownHostsZeilen('pve', 2222, s)).toBe(`[pve]:2222 ssh-ed25519 ${k}\n`);
+  });
+  it('Host und Benutzer ohne Optionen-Einschleusung', () => {
+    expect(gueltigerHost('192.168.1.22')).toBe(true);
+    expect(gueltigerHost('pve.local')).toBe(true);
+    expect(gueltigerHost('-oProxyCommand=x')).toBe(false);
+    expect(gueltigerHost('a b')).toBe(false);
+    expect(gueltigerBenutzer('alfred')).toBe(true);
+    expect(gueltigerBenutzer('-l')).toBe(false);
+  });
+  it('Einrichtung: Benutzer und Schlüssel; die sudo-Regel richtet der Owner selbst ein', () => {
+    const t = einrichtungsBefehle(`ssh-ed25519 ${k} alfred@alfred1`);
+    expect(t).toContain('useradd -m -s /bin/bash alfred');
+    expect(t).toContain(`ssh-ed25519 ${k} alfred@alfred1`);
+    expect(t).toContain('sudo-Regel');
+  });
+});

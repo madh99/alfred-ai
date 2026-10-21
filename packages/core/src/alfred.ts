@@ -6769,6 +6769,53 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       activityLogger,
     );
 
+    // 7e1. v1539 — Fernzugriff: SSH auf fremde Hosts (Proxmox-Knoten u. a.) über hinterlegte Zugänge mit bestätigtem Host-Schlüssel
+    {
+      const { FernzugriffSkill } = await import('./fernzugriff/fernzugriff-skill.js');
+      const { sshAusfuehren, keyscan, eigenerSchluessel } = await import('./fernzugriff/ssh.js');
+      const { FernzugaengeRepository } = await import('@alfred/storage');
+      const datenOrdner = path.resolve(process.cwd(), 'data');
+      const cmdbFz = new CmdbRepository(adapter);
+      const ownerFz = () => this.ownerMasterUserId ?? this.tryOwner();
+      skillRegistry.register(new FernzugriffSkill({
+        repo: new FernzugaengeRepository(adapter),
+        owner: ownerFz,
+        istOwner: (ctx) => {
+          const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
+          if (owner.size === 0) return false;
+          const ids = [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].filter((x): x is string => !!x);
+          const ok = ids.some(id => owner.has(id));
+          if (!ok) this.logger.warn({ userId: ctx.userId, platform: ctx.platform }, 'v1539 Fernzugriff eines Nicht-Owners abgewiesen');
+          return ok;
+        },
+        cmdbFinde: async (name) => {
+          const o = ownerFz(); if (!o) return null;
+          const a = await cmdbFz.findAssetByName(o, name) ?? (await cmdbFz.searchAssets(o, name)).find(x => x.name.toLowerCase() === name.toLowerCase() || x.hostname?.toLowerCase() === name.toLowerCase()) ?? null;
+          return a ? { id: a.id, name: a.name, host: a.ipAddress ?? a.fqdn ?? a.hostname } : null;
+        },
+        cmdbMarkiere: async (assetId, zugang) => {
+          const o = ownerFz(); if (!o) return;
+          const a = await cmdbFz.getAssetById(o, assetId); if (!a) return;
+          const { fernzugang: _alt, ...rest } = (a.attributes ?? {}) as Record<string, unknown>;
+          await cmdbFz.updateAsset(o, assetId, { attributes: zugang ? { ...rest, fernzugang: zugang } : rest });
+        },
+        bestaetigung: async (frage, herkunft) => {
+          if (!this.confirmationQueue) return false;
+          const chatId = this.config.security?.ownerUserId ?? '';
+          if (!chatId) return false;
+          const platform = this.config.telegram?.enabled ? 'telegram' : 'api';
+          const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `fernzugriff-${String(frage.params.action)}-${Date.now()}`, description: frage.description, skillName: 'fernzugriff', skillParams: frage.params, timeoutMinutes: 60, ...(herkunft && herkunft.chatId !== chatId ? { herkunft } : {}) } as never);
+          return ok !== false;
+        },
+        ssh: (ziel, befehl, timeoutMs) => sshAusfuehren(ziel, befehl, datenOrdner, timeoutMs),
+        keyscan,
+        schluessel: () => eigenerSchluessel(datenOrdner),
+        melde: (t) => { void this.sendeAnOwner(t); },
+        protokoll: (msg, daten) => this.logger.info(daten, msg),
+      }));
+      this.logger.info('v1539 Fernzugriff-Skill registriert');
+    }
+
     // 7e2. Initialize feedback service (rejection/correction tracking)
     const feedbackRepo = new FeedbackRepository(adapter);
     const feedbackService = new FeedbackService(

@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Fernzugriff: SSH auf fremde Hosts über die CMDB, mit gepinntem Host-Schlüssel (v1539)
+
+Owner 21.10.: „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“. Realfall 21.10.: Alfred konnte `zpool status` auf dem Proxmox-Knoten nicht ausführen. Der Host lehnte seinen Schlüssel ab, und es gab keinen Weg, einen Zugang zu hinterlegen.
+
+- **Neuer Skill `fernzugriff`:**
+  - **lesen:** feste Liste lesender Befehle, läuft sofort, als root über `sudo -n`, ohne sudo-Recht als Benutzer. Dazu gehören `zpool status/list`, `zfs list`, `pvecm status`, `pvesm status`, `qm/pct list|status|config`, `pvesh get`, `df`, `free`, `journalctl`, `systemctl status`, `smartctl`, `dmesg` u. a.
+  - **ausfuehren:** jeder andere Befehl, nur nach dem Ja des Owners. Die Einmal-Freigabe ist an Zugang und Befehl gebunden, 60 Minuten gültig und nur einmal verwendbar. Standard ist root, verkettete Befehle laufen über `sh -c`.
+  - **nie, auch nicht mit Bestätigung:** Was Datenträger, Pools oder das System unwiederbringlich zerstört (`mkfs`, `wipefs`, `dd` auf Geräte, `rm -rf /`, `zpool destroy/labelclear`, `zfs destroy -r`, `pvecm delnode` …). Verkettungen, Umleitungen und Ersetzungen zählen nie als „lesen“.
+  - Dazu `pruefen` (Verbindung, sudo ohne Passwort), `schluessel` (öffentlicher Schlüssel und Einrichtung auf dem Host), `anlegen` und `entfernen` (beide mit Bestätigung) sowie `liste`.
+- **Zugänge** liegen in der neuen Tabelle `fernzugaenge` (PG v151, SQLite v147): Host, Port, Benutzer (Standard `alfred`), Pfad des Schlüssels, bestätigter Host-Schlüssel und Verweis auf den **CMDB-Eintrag**.
+  - Der Host kommt aus IP oder Hostname des CMDB-Eintrags.
+  - Der CMDB-Eintrag erhält `attributes.fernzugang`.
+  - Der private Schlüssel ist eine eigene Datei (`data/fernzugriff/id_ed25519`, beim ersten Bedarf erzeugt) und steht nie in der DB.
+- **Host-Schlüssel gepinnt:**
+  - Beim Anlegen liest Alfred den Host-Schlüssel und stellt seinen SHA256-Fingerabdruck zur Bestätigung, samt Befehl zum Vergleichen auf dem Host. Erst nach dem Ja verbindet er sich.
+  - Verbunden wird nur mit eigener known_hosts-Datei, `StrictHostKeyChecking=yes`, `BatchMode` und `IdentitiesOnly`.
+  - Ändert sich der Host-Schlüssel, wird der Zugang gesperrt und der Owner benachrichtigt.
+- **Nur der Owner** kann den Skill verwenden. Vorgänge stufen `lesen/pruefen/liste/schluessel` als „auto“ ein, alles Weitere fragt der Skill selbst. Stichwörter wie SSH, zpool, pvecm, journalctl, systemctl und sudo wählen die Infrastruktur-Werkzeuge.
+- Der **Deploy-Skill** bleibt unverändert. Er nutzt weiter seinen eigenen Zugang zu den von Alfred angelegten VMs.
+
 ### Security — Proxmox: VM-Name nur eindeutig bei verändernden Aktionen (v1538)
 
 Nachschärfung zu v1537 aus der Sicherheitsprüfung:

@@ -104,6 +104,8 @@ export type { ProviderPulsRow, MeldungRow } from './repositories/lebenszeichen-r
 export { MesswerteRepository } from './repositories/messwerte-repository.js';
 export type { Messwert } from './repositories/messwerte-repository.js';
 export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
+export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
+export type { Fernzugang, FernzugangStatus } from './repositories/fernzugaenge-repository.js';
 export type { Vorgang, VorgangSchritt, VorgangStatus, Autonomie, SchrittArt } from './repositories/vorgaenge-repository.js';
 export { titelAehnlichkeit, VORGANG_AEHNLICHKEIT_SCHWELLE, themenGleich, titelAnker } from './repositories/vorgaenge-repository.js';
 export { BefundeRepository } from './repositories/befunde-repository.js'; // v1217

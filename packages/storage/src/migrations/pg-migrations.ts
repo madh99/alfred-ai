@@ -2356,4 +2356,28 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE geraete ADD COLUMN IF NOT EXISTS apns_umgebung TEXT', []);
     },
   },
+  {
+    version: 151,
+    description: 'v1539 — fernzugaenge: SSH-Zugänge zu fremden Hosts (Proxmox-Knoten u. a.) mit bestätigtem Host-Schlüssel und CMDB-Bezug (PG-Spiegel zu SQLite v147).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS fernzugaenge (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL DEFAULT 22,
+          benutzer TEXT NOT NULL,
+          schluessel_pfad TEXT NOT NULL,
+          host_schluessel TEXT,
+          fingerabdruck TEXT,
+          cmdb_asset_id TEXT,
+          status TEXT NOT NULL,
+          zuletzt_ok TEXT,
+          zuletzt_fehler TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_fernzugaenge_user ON fernzugaenge (user_id)', []);
+    },
+  },
 ];

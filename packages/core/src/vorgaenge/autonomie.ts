@@ -25,6 +25,7 @@ const AUTO: Record<string, RegExp> = {
   insights: /^(dismiss|snooze|act)$/,
   goals: /^(add|update|check|checkpoint)$/,
   calendar: /^(list|get|search|find|free_slots|availability)$/,
+  fernzugriff: /^(liste|lesen|pruefen|schluessel)$/, // v1539 — lesend; ausfuehren/anlegen/entfernen fragen den Owner im Skill
 };
 
 const NIE: Record<string, RegExp | true> = {

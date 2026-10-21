@@ -3047,4 +3047,28 @@ export const MIGRATIONS: Migration[] = [
       for (const spalte of ['push_art', 'push_token', 'apns_umgebung']) { try { db.exec(`ALTER TABLE geraete ADD COLUMN ${spalte} TEXT`); } catch { /* exists */ } }
     },
   },
+  {
+    version: 147,
+    description: 'v1539 — fernzugaenge: SSH-Zugänge zu fremden Hosts mit bestätigtem Host-Schlüssel und CMDB-Bezug (SQLite-Spiegel zu PG v151).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS fernzugaenge (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL DEFAULT 22,
+          benutzer TEXT NOT NULL,
+          schluessel_pfad TEXT NOT NULL,
+          host_schluessel TEXT,
+          fingerabdruck TEXT,
+          cmdb_asset_id TEXT,
+          status TEXT NOT NULL,
+          zuletzt_ok TEXT,
+          zuletzt_fehler TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_fernzugaenge_user ON fernzugaenge (user_id)');
+    },
+  },
 ];
