@@ -40,6 +40,15 @@ describe('v1539 Befehlsklassen', () => {
     expect(k).toContain('in der Mitte ausgelassen');
     expect(kuerzeMitte('kurz', 10)).toBe('kurz');
   });
+  it('v1545 Docker: lesende Befehle sofort, verändernde und volles inspect mit Bestätigung', () => {
+    for (const b of ['docker ps', 'docker ps -a --no-trunc', 'docker logs --tail 200 homeassistant', 'docker logs --since 1h -t homeassistant', 'docker stats --no-stream', 'docker inspect --format "{{.State.Status}} {{.RestartCount}}" homeassistant', 'docker images', 'docker system df -v', 'docker compose ls', 'docker compose -p homeassistant ps', 'docker top homeassistant', 'docker ps | grep home', 'docker info']) {
+      expect(befehlsklasse(b), b).toBe('lesen');
+    }
+    for (const b of ['docker restart homeassistant', 'docker stop homeassistant', 'docker rm -f x', 'docker inspect homeassistant', 'docker compose config', 'docker logs -f homeassistant', 'docker exec homeassistant ls', 'docker compose -p homeassistant up -d', 'docker ps -f status=exited', 'docker inspect --format "{{json .Config.Env}}$(id)" x', 'docker inspect --format "{{json .Config.Env}}" homeassistant', 'docker inspect --format "{{.Config.Env}}" x']) {
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
+    }
+    expect(befehlsklasse('docker system prune -af')).not.toBe('lesen');
+  });
   it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
     for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {
       expect(befehlsklasse(b), b).toBe('nie');

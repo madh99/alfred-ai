@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Fernzugriff: lesende Docker-Befehle (v1545)
+
+Owner 22.10.: „docker-lesebefehle aufnehmen“. Der Fernzugriff gilt für jeden Linux-Host mit SSH, z. B. den Docker-Host mit Home Assistant.
+
+- **Ohne Rückfrage:** `docker ps|container ls` (mit `-a`, `-q`, `-s`, `--no-trunc`, `--format`), `docker logs` (mit `--tail`, `-n`, `-t`, `--since`, `--until`), `docker stats --no-stream`, `docker images|image ls`, `docker network|volume ls`, `docker system df`, `docker version|info`, `docker top|port <container>`, `docker compose ls` und `docker compose -p <projekt> ps|top|images`. Ketten und Pipes zu Filtern gelten wie bisher.
+- **`docker inspect`** läuft nur gezielt mit `--format "{{…}}"` ohne Rückfrage, und nie mit `Env`. Ein volles `docker inspect` und `docker compose config` zeigen die Umgebungsvariablen der Container, oft mit Passwörtern, und brauchen deshalb die Bestätigung.
+- **Mit Bestätigung** bleiben `restart`, `stop`, `rm`, `exec`, `up`, `logs -f` sowie Filter mit `-f`.
+
 ### Fixed — Feste Abschnitte erreichen den Owner sicher (v1544)
 
 Live-Probe von v1543 am 22.10.: Die Regel „Wiederherstellbarkeit“ lief und hängte ihren Abschnitt an das Ergebnis an (Log „v1543 Wiederherstellbarkeit geprüft“: VM 100, 106, 115). Das Modell ließ den Abschnitt in seiner Antwort aber weg. Damit hing die Regel doch wieder vom Modell ab.

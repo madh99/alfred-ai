@@ -38,6 +38,19 @@ const LESE_BEFEHLE: RegExp[] = [
   /^lspci( -[vnkt]+)*$/,
   /^pvesm list [\w.-]+( --content (backup|images|iso|vztmpl|rootdir|snippets)| --vmid \d{1,9})*$/,
   /^(qm|pct) listsnapshot \d{1,9}$/,
+  // v1545 (Owner 22.10. „docker-lesebefehle aufnehmen“) — Docker-Host (z. B. Home Assistant neben anderen Containern). Volles
+  // `docker inspect` und `docker compose config` zeigen Umgebungsvariablen (oft Passwörter) → nur mit Bestätigung; gezielt mit --format ja.
+  /^docker (ps|container ls)( -a| --all| -q| -s| --size| --no-trunc| --format "[^"]*")*$/,
+  /^docker logs( --tail \d{1,5}| -n \d{1,5}| -t| --timestamps| --since (\d{1,4}[smhd]|\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?)| --until (\d{1,4}[smhd]|\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?))* [\w.-]+$/,
+  /^docker stats --no-stream( --no-trunc| --format "[^"]*")*( [\w.-]+)*$/,
+  /^docker inspect --format "(?![^"]*\bEnv\b)(\{\{[\w .:,()|'-]*\}\}[ :,/=-]*)+" [\w.:/-]+( [\w.:/-]+)*$/, // ohne .Config.Env
+  /^docker (images|image ls)( -a| --all| --digests| --no-trunc)*$/,
+  /^docker (network|volume) ls$/,
+  /^docker system df( -v)?$/,
+  /^docker (version|info)$/,
+  /^docker (top|port) [\w.-]+$/,
+  /^docker compose ls( -a| --all)?$/,
+  /^docker compose -p [\w-]+ (ps|top|images)( -a| --all)?$/,
   /^sensors$/,
   /^ip( -[a-z0-9]+)* (a|addr|address|r|route|link|neigh)( show)?( [\w.-]+)?$/,
   /^cat \/proc\/(mdstat|meminfo|loadavg|cpuinfo|version|pressure\/(cpu|memory|io))$/,
