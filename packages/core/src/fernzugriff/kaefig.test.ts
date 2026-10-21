@@ -43,3 +43,33 @@ describe('v1549 Lese-Käfig', () => {
     expect(kaefigGrenze('grep: x: No such file or directory')).toBe(false);
   });
 });
+
+// v1551 — Sicherheitsprüfung: Sperrliste umgehbar → Pfade im Käfig unsichtbar + Ausgabe geschwärzt; curl nur an den Host selbst
+describe('v1551 Nachschärfung', () => {
+  it('Käfig macht Geheimnis-Pfade unsichtbar und prüft das im Selbsttest', async () => {
+    const { GEHEIM_PFADE, KAEFIG_SELBSTTEST } = await import('./kaefig.js');
+    const p = kaefigEigenschaften('alfred', 60).find(x => x.startsWith('InaccessiblePaths='))!;
+    for (const g of ['/etc/shadow', '/root/.ssh', '/etc/ssh/ssh_host_ed25519_key', '/etc/pve/priv', '/etc/ssl/private']) { expect(GEHEIM_PFADE).toContain(g); expect(p).toContain(`-${g}`); }
+    expect(KAEFIG_SELBSTTEST).toContain('PROBE_GEHEIMNIS');
+    expect(werteSelbsttest('PROBE_GEHEIMNIS /etc/shadow\nPROBE_LESEN_OK\nPROBE_ENDE', 0)).toMatchObject({ ok: false });
+  });
+  it('Schwärzung: Schlüssel, Hashes, KEY=Wert, URL-Zugangsdaten, Bearer — egal wie gelesen', async () => {
+    const { schwaerze } = await import('./kaefig.js');
+    const roh = [
+      'root:$6$abcdefgh$Xyz0123456789abcdefghijkl:19000:0:99999:7:::',
+      '-----BEGIN OPENSSH PRIVATE KEY-----', 'b3BlbnNzaC1rZXktdjEAAAAA', '-----END OPENSSH PRIVATE KEY-----',
+      'POSTGRES_PASSWORD=sehrgeheim123', 'export API_KEY="abcd1234efgh"', 'DB_HOST=db', 'url: postgres://app:geheim99@db:5432/app',
+      'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9abcdefghijkl', 'normale zeile token ok',
+    ].join('\n');
+    const r = schwaerze(roh);
+    for (const g of ['$6$abcdefgh', 'b3BlbnNzaC1rZXktdjEAAAAA', 'sehrgeheim123', 'abcd1234efgh', 'geheim99', 'eyJhbGciOiJIUzI1NiJ9abcdefghijkl']) expect(r.text).not.toContain(g);
+    expect(r.text).toContain('DB_HOST=db');
+    expect(r.text).toContain('normale zeile token ok');
+    expect(r.anzahl).toBe(6);
+  });
+  it('curl ohne Rückfrage nur an den Host selbst, ohne Query und ohne -L', async () => {
+    const { befehlsklasse } = await import('./regeln.js');
+    for (const b of ['curl -sI http://localhost:8123', 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/health', 'curl -skI https://[::1]:8006']) expect(befehlsklasse(b), b).toBe('lesen');
+    for (const b of ['curl -s http://169.254.169.254/latest/meta-data', 'curl -sI http://192.168.1.1', 'curl -s http://localhost:8080/admin?reboot=1', 'curl -sL http://localhost/', 'curl -s http://localhost.evil.com/']) expect(befehlsklasse(b), b).toBe('bestaetigen');
+  });
+});

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Fernzugriff: Geheimnisse auch bei umgangener Sperrliste geschützt, curl nur an den Host selbst (v1551)
+
+Nachschärfung zu v1549 aus der Sicherheitsprüfung:
+
+- **Geheimnis-Pfade im Käfig unsichtbar** (`InaccessiblePaths`), unabhängig davon, wie ein Befehl sie anspricht. Die Sperrliste auf den Befehlstext ließ sich umgehen, etwa mit `cat /etc/sha""dow`, `f=/etc/shadow; cat $f` oder `find … -exec cat`. Betroffen sind `/etc/shadow`/`gshadow`, die SSH-Host-Schlüssel, `/etc/ssl/private`, `/etc/pve/priv`, die Let's-Encrypt-Schlüssel, `/root/.ssh`/`.gnupg`/`.pgpass`/`.my.cnf`/`.netrc`/`.git-credentials`/`.docker` und die Vaultwarden-Daten. Der Selbsttest prüft zusätzlich, dass `/etc/shadow` im Käfig nicht lesbar ist. Die Lese-Probe nutzt jetzt `/etc/sudoers`.
+- **Schwärzung jeder Fernzugriff-Ausgabe,** bevor das Modell sie sieht oder sie als Seite abgelegt wird. Geschwärzt werden private Schlüssel, Passwort-Hashes, Werte von `…PASSWORD/SECRET/TOKEN/API_KEY/…`-Einträgen, Zugangsdaten in URLs und Bearer-Tokens. Die Zahl der Schwärzungen steht in der Ausgabe.
+- **`curl` ohne Rückfrage nur an `localhost`, `127.0.0.1` und `[::1]`**, ohne Query-String und ohne Weiterleitung (`-L`). Andere Ziele brauchen die Bestätigung. Im Käfig hat `curl` ohnehin kein Netz.
+- **Neuer Käfig-Test nach jedem Start:** Der Käfig wird je Zugang nach jedem Start einmal neu geprüft, damit geänderte Eigenschaften oder ein veränderter Host sicher getestet sind.
+
 ### Added — Skill oder SSH bewusst wählen, Weg-Erfahrungen (v1550)
 
 Owner 22.10.: „er soll überlegen, was für die aktuelle Aufgabenstellung die bessere Wahl ist, Skill oder SSH“, „S1–S4 wie empfohlen umsetzen inkl. d“, hier S4. Alfred wählt selbst. Feste Regeln sorgen dafür, dass er beide Wege kennt und sieht.

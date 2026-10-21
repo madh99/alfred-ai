@@ -247,3 +247,15 @@ describe('v1550 S4c Fachskill-Hinweis', () => {
     expect(r.display).toContain('Für pve gibt es auch: Proxmox-Skill');
   });
 });
+
+describe('v1551 Schwärzung im Ergebnis', () => {
+  it('Geheimnis in der Ausgabe erreicht weder Anzeige noch Daten', async () => {
+    const t = aufbau(() => ({ code: 0, stdout: 'APP_SECRET=abc123def456\nPORT=8080', stderr: '' }));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool list' }, ctx);
+    expect(r.display).not.toContain('abc123def456');
+    expect(JSON.stringify(r.data)).not.toContain('abc123def456');
+    expect(r.display).toContain('1 Geheimnis(se) geschwärzt');
+    expect(r.display).toContain('PORT=8080');
+  });
+});

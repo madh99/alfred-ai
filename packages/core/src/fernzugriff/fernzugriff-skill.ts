@@ -5,7 +5,7 @@ import { Freigaben } from '../geraete/freigaben.js';
 import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
-import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze } from './kaefig.js';
+import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze, schwaerze } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
 
@@ -106,6 +106,8 @@ export class FernzugriffSkill extends Skill {
 
   private readonly freigaben = new Freigaben();
   private readonly seiten = new Map<string, { name: string; befehl: string; text: string; zeit: number }>();
+  /** v1551 — Käfig je Zugang nach jedem Start einmal neu prüfen (geänderte Eigenschaften, geänderter Host) */
+  private readonly kaefigGeprueft = new Set<string>();
 
   constructor(private readonly deps: FernzugriffDeps) { super(); }
 
@@ -233,7 +235,11 @@ export class FernzugriffSkill extends Skill {
     return Math.min(Math.max(s, 5), 900) * 1000;
   }
 
-  private ergebnis(z: Fernzugang, befehl: string, r: SshErgebnis, zusatz = ''): SkillResult {
+  private ergebnis(z: Fernzugang, befehl: string, r0: SshErgebnis, zusatz = ''): SkillResult {
+    // v1551 — Geheimnisse schwärzen, bevor irgendetwas davon das Modell oder die Seiten-Ablage erreicht
+    const so = schwaerze(r0.stdout), se = schwaerze(r0.stderr);
+    const r: SshErgebnis = { ...r0, stdout: so.text, stderr: se.text };
+    if (so.anzahl + se.anzahl) { zusatz += `  [${so.anzahl + se.anzahl} Geheimnis(se) geschwärzt]`; this.deps.protokoll?.('v1551 Geheimnisse in Ausgabe geschwärzt', { name: z.name, befehl: befehl.slice(0, 120), anzahl: so.anzahl + se.anzahl }); }
     const aus = [r.stdout.trimEnd(), r.stderr.trim() ? `[stderr]\n${r.stderr.trim()}` : ''].filter(Boolean).join('\n');
     const kopf = `${z.name}$ ${befehl}${zusatz}${r.code !== 0 ? `  (Exit ${r.code})` : ''}`;
     const voll = `${kopf}\n${aus || '(keine Ausgabe)'}`;
@@ -331,7 +337,7 @@ export class FernzugriffSkill extends Skill {
 
   /** v1549 — Käfig bereit? Beim ersten Mal (oder nach „an“) Selbsttest mit echten Schreib-, Kill-, Docker-, D-Bus- und Netzversuchen. */
   private async kaefigBereit(owner: string, z: Fernzugang): Promise<{ ok: boolean; grund: string }> {
-    if (z.kaefig === 'aktiv') return { ok: true, grund: 'aktiv' };
+    if (z.kaefig === 'aktiv' && this.kaefigGeprueft.has(z.id)) return { ok: true, grund: 'aktiv' };
     if (z.kaefig === 'aus') return { ok: false, grund: 'vom Owner abgeschaltet' };
     if (z.kaefig === 'fehlt') return { ok: false, grund: 'Selbsttest gescheitert' };
     if (!this.deps.repo.setzeKaefig) return { ok: false, grund: 'nicht eingerichtet' };
@@ -339,6 +345,7 @@ export class FernzugriffSkill extends Skill {
     const w = werteSelbsttest(`${r.stdout}\n${r.stderr}`, r.code);
     await this.deps.repo.setzeKaefig(owner, z.id, w.ok ? 'aktiv' : 'fehlt');
     z.kaefig = w.ok ? 'aktiv' : 'fehlt';
+    if (w.ok) this.kaefigGeprueft.add(z.id); else this.kaefigGeprueft.delete(z.id);
     this.deps.protokoll?.(w.ok ? 'v1549 Lese-Käfig geprüft — aktiv' : 'v1549 Lese-Käfig geprüft — nicht verfügbar', { name: z.name, grund: w.grund, code: r.code, stderr: r.stderr.trim().slice(-200) });
     return w;
   }

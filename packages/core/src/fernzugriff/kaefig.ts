@@ -53,7 +53,34 @@ export function kaefigEigenschaften(benutzer: string, sekunden: number): string[
     'MemoryMax=1G',
     'TasksMax=64',
     'WorkingDirectory=/',
+    // v1551 (Sicherheitsprüfung) — Geheimnis-Pfade im Käfig unsichtbar, unabhängig davon, wie der Befehl sie anspricht
+    // (`cat /etc/sha""dow`, `f=/etc/shadow; cat $f`, find -exec …). „-“ = fehlende Pfade ignorieren.
+    `InaccessiblePaths=${GEHEIM_PFADE.map(p => `-${p}`).join(' ')}`,
   ];
+}
+
+/** v1551 — Standardorte von Geheimnissen, im Käfig unsichtbar. Was hier fehlt (z. B. .env unter /opt), fängt die Schwärzung der Ausgabe. */
+export const GEHEIM_PFADE = [
+  '/etc/shadow', '/etc/shadow-', '/etc/gshadow', '/etc/gshadow-', '/etc/security/opasswd',
+  '/etc/ssh/ssh_host_rsa_key', '/etc/ssh/ssh_host_ecdsa_key', '/etc/ssh/ssh_host_ed25519_key', '/etc/ssh/ssh_host_dsa_key',
+  '/etc/ssl/private', '/etc/pve/priv', '/etc/letsencrypt/archive', '/etc/letsencrypt/keys',
+  '/root/.ssh', '/root/.gnupg', '/root/.pgpass', '/root/.my.cnf', '/root/.netrc', '/root/.git-credentials', '/root/.docker',
+  '/var/lib/vaultwarden', '/opt/vaultwarden',
+];
+
+/**
+ * v1551 — Geheimnisse in einer Ausgabe schwärzen, bevor sie das Modell sieht — egal, auf welchem Weg sie gelesen wurden.
+ * Private Schlüssel, Passwort-Hashes, KEY=Wert-Paare mit Geheimnis-Namen, Zugangsdaten in URLs, Bearer-Tokens.
+ */
+export function schwaerze(text: string): { text: string; anzahl: number } {
+  let anzahl = 0;
+  const zaehle = (ersatz: string) => () => { anzahl++; return ersatz; };
+  let t = text.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, zaehle('[privater Schlüssel geschwärzt]'));
+  t = t.replace(/\$(1|2[abxy]?|5|6|7|y|gy)\$[^\s:]{8,}/g, zaehle('[Passwort-Hash geschwärzt]'));
+  t = t.replace(/^(\s*(?:export\s+)?[A-Za-z0-9_.-]*(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT)[A-Za-z0-9_.-]*\s*[=:]\s*)(['"]?)([^\s'"#]{4,})\2/gim, (_m, a: string, q: string) => { anzahl++; return `${a}${q}[geschwärzt]${q}`; });
+  t = t.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]{3,})@/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
+  t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  return { text: t, anzahl };
 }
 
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -76,7 +103,9 @@ export const KAEFIG_SELBSTTEST = [
   'if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo PROBE_DOCKER; fi',
   'if command -v systemctl >/dev/null 2>&1 && systemctl show -p Version >/dev/null 2>&1; then echo PROBE_DBUS; fi',
   'if command -v bash >/dev/null 2>&1 && timeout 3 bash -c "exec 3<>/dev/tcp/1.1.1.1/53" 2>/dev/null; then echo PROBE_NETZ; fi',
-  'if head -c 1 /etc/shadow >/dev/null 2>&1; then echo PROBE_LESEN_OK; fi',
+  // v1551 — Lesen geschützter Dateien muss gehen (/etc/sudoers: nur root), Geheimnis-Pfade müssen unsichtbar sein
+  'if head -c 1 /etc/sudoers >/dev/null 2>&1; then echo PROBE_LESEN_OK; fi',
+  'if head -c 1 /etc/shadow >/dev/null 2>&1; then echo PROBE_GEHEIMNIS /etc/shadow; fi',
   'echo PROBE_ENDE',
 ].join('; ');
 
@@ -84,10 +113,10 @@ export type KaefigStatus = 'ungeprueft' | 'aktiv' | 'fehlt' | 'aus';
 
 export function werteSelbsttest(ausgabe: string, code: number): { ok: boolean; grund: string } {
   if (!ausgabe.includes('PROBE_ENDE')) return { ok: false, grund: code === 0 ? 'Selbsttest unvollständig' : `systemd-run nicht nutzbar (Exit ${code})` };
-  const verstoesse = ausgabe.split(/\r?\n/).filter(z => /^PROBE_(SCHREIBEN|KILL|DOCKER|DBUS|NETZ)/.test(z.trim())).map(z => z.trim().replace(/^PROBE_/, ''));
+  const verstoesse = ausgabe.split(/\r?\n/).filter(z => /^PROBE_(SCHREIBEN|KILL|DOCKER|DBUS|NETZ|GEHEIMNIS)/.test(z.trim())).map(z => z.trim().replace(/^PROBE_/, ''));
   if (verstoesse.length) return { ok: false, grund: `Käfig hält nicht: ${verstoesse.join(', ')}` };
   if (!ausgabe.includes('PROBE_LESEN_OK')) return { ok: false, grund: 'im Käfig ist Lesen geschützter Dateien nicht möglich' };
-  return { ok: true, grund: 'schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Lesen ok' };
+  return { ok: true, grund: 'schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok' };
 }
 
 /** Typische Meldungen, wenn ein Befehl im Käfig an seine Grenzen stößt (für einen verständlichen Hinweis). */

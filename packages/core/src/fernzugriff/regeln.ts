@@ -64,7 +64,8 @@ const LESE_BEFEHLE: RegExp[] = [
   /^apt list --upgradable$/,
   /^last -n \d{1,3}$/,
   // v1549 (S1) — Netz-Diagnose außerhalb des Käfigs (der hat kein Netz): nur GET/HEAD, ping/dig mit Grenzen
-  /^curl( -[sSIkLv]+| -m \d{1,3}| --max-time \d{1,3}| -o \/dev\/null| -w "%\{(http_code|time_total|time_connect|remote_ip)\}( %\{(http_code|time_total|time_connect|remote_ip)\})*\\?n?")* https?:\/\/[\w.:\[\]-]+(\/[\w./%?=&-]*)?$/,
+  // v1551 (Sicherheitsprüfung, SSRF) — ohne Rückfrage nur an den Host selbst, ohne Query-String und ohne Weiterleitung (-L)
+  /^curl( -[sSIkv]+| -m \d{1,3}| --max-time \d{1,3}| -o \/dev\/null| -w "%\{(http_code|time_total|time_connect|remote_ip)\}( %\{(http_code|time_total|time_connect|remote_ip)\})*")* https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(\/[\w./%-]*)?$/,
   /^ping -c [1-9]( -W \d{1,2})? [\w.:-]+$/,
   /^(dig|nslookup|host)( [\w.:@+-]+){1,3}$/,
   /^ss( -[tulnpaxs]+)+$/,
