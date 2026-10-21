@@ -237,3 +237,13 @@ describe('v1549 S1–S3 Lese-Käfig, Geheimnisse, Seiten', () => {
     expect((await t.skill.execute({ action: 'seite', id: 'deadbeef' }, ctx)).success).toBe(false);
   });
 });
+
+describe('v1550 S4c Fachskill-Hinweis', () => {
+  it('Ergebnis nennt, was der Fachskill zum selben Host kann', async () => {
+    const t = aufbau();
+    (t.skill as unknown as { deps: { fachskillHinweis: (z: unknown) => Promise<string> } }).deps.fachskillHinweis = async () => 'ℹ️ Für pve gibt es auch: Proxmox-Skill: … Abwägen, was für die Aufgabe besser ist.';
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool list' }, ctx);
+    expect(r.display).toContain('Für pve gibt es auch: Proxmox-Skill');
+  });
+});

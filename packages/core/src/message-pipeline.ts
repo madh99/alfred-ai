@@ -359,6 +359,12 @@ export class MessagePipeline {
   /** v1206 — Weltmodell-Zusammenfassung für den Chat (lazy, aus dem Reasoning-Kollektor). */
   private weltmodellQuelle?: () => string | undefined;
   setWeltmodellQuelle(fn: () => string | undefined): void { this.weltmodellQuelle = fn; }
+  /** v1550 (S4c) — Zusatz an ein Werkzeugergebnis, nur für das Modell (z. B. „für Host-Ursachen gibt es Fernzugang …“) */
+  private werkzeugHinweis?: (skillName: string) => string | undefined;
+  setWerkzeugHinweis(fn: (skillName: string) => string | undefined): void { this.werkzeugHinweis = fn; }
+  /** v1550 (S4d) — Werkzeugaufrufe eines Zugs (Name, Eingabe, Fehler, Inhalt) zur Auswertung „welcher Weg half“ */
+  private werkzeugErfahrung?: (aufrufe: Array<{ name: string; input: Record<string, unknown>; isError: boolean; inhalt: string }>, frage: string) => Promise<void>;
+  setWerkzeugErfahrung(fn: NonNullable<MessagePipeline['werkzeugErfahrung']>): void { this.werkzeugErfahrung = fn; }
 
   /** v1374 — Lernende Helfer L0: Anfrage-Protokoll (von alfred.ts gesetzt; Fehler dort bleiben folgenlos). */
   private anfrageProtokoll?: (e: { chatId: string; kanal: string; userId?: string; text: string; absicht: string[]; werkzeuge: Array<{ skill: string; aktion?: string; ok: boolean }>; stufe?: string; modell?: string; dauerMs: number; kostenUsd: number; runden: number; abgebrochen?: boolean }) => Promise<void>;
@@ -1838,6 +1844,13 @@ export class MessagePipeline {
         }
       }
 
+      // v1550 (S4d) — welcher Weg (Fachskill oder Fernzugriff) hat in diesem Zug versagt bzw. geholfen
+      if (this.werkzeugErfahrung && accumulatedToolCalls.length > 1) {
+        const ergebnisse = new Map<string, { content: unknown; is_error?: boolean }>();
+        for (const b of accumulatedToolResults as Array<{ type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean }>) if (b.type === 'tool_result' && b.tool_use_id) ergebnisse.set(b.tool_use_id, { content: b.content, is_error: b.is_error });
+        const aufrufe = accumulatedToolCalls.map(c => { const e = ergebnisse.get(c.id); return { name: c.name, input: (c.input ?? {}) as Record<string, unknown>, isError: !!e?.is_error, inhalt: typeof e?.content === 'string' ? e.content.slice(0, 2000) : '' }; });
+        void this.werkzeugErfahrung(aufrufe, message.text ?? '').catch(() => undefined);
+      }
       // 8. Save accumulated tool interactions as a single consolidated pair
       //    (instead of 2 messages per iteration, this stores at most 2 total)
       if (accumulatedToolCalls.length > 0) {
@@ -2214,6 +2227,8 @@ export class MessagePipeline {
       // Redact sensitive secrets from tool results before sending to LLM
       content = redactSecrets(content);
       content = truncateToolResult(content, tc.name === 'fernzugriff' ? FERNZUGRIFF_MAX_CHARS : MAX_TOOL_RESULT_CHARS); // v1548 (K1) — Fernzugriff: lange Ausgaben (docker ps, smartctl) ganz
+      const hinweis = this.werkzeugHinweis?.(tc.name); // v1550 (S4c)
+      if (hinweis) content += `\n\n${hinweis}`;
       return {
         type: 'tool_result' as const,
         tool_use_id: tc.id,

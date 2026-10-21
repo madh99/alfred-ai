@@ -126,6 +126,14 @@ let projektNamenMuster: RegExp | undefined;
 export function setzeProjektNamenMuster(m: RegExp | undefined): void { projektNamenMuster = m; }
 
 /**
+ * v1550 (S4a) — nennt die Nachricht (oder der jüngste Verlauf) einen Host mit Fernzugang („pve3 hat Probleme“, „was ist mit dem
+ * dockerhost los?“), sind alle Infrastruktur-Werkzeuge dabei — Fachskills UND Fernzugriff —, damit Alfred zwischen ihnen abwägen kann.
+ * Vorher traf so eine Nachricht oft kein Stichwort und landete im Rückfall ohne beide.
+ */
+let fernzugangNamenMuster: RegExp | undefined;
+export function setzeFernzugangNamenMuster(m: RegExp | undefined): void { fernzugangNamenMuster = m; }
+
+/**
  * v1472 — Realfall 16.10. 08:47: Icon-Entwurf mit zwei image_generate-Aufrufen, dann „freigegeben“, „oder doch … flutter“, „ja“ —
  * die Anfrage rutschte aus den letzten 3 Nutzernachrichten, der Rückfall hatte keine Medien, Alfred sagte „Bildgenerierung nicht verfügbar“.
  * Werkzeuge, die im selben Gespräch zuletzt tatsächlich aufgerufen wurden, bleiben deshalb in jeder Auswahl.
@@ -168,7 +176,11 @@ export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, ve
   const r0 = werkzeugeOhneAkten(text, verlauf, alle);
   const namen = [...benutzt, ...genannteWerkzeuge(text, alle)]; // v1472 benutzt, v1474 beim Namen genannt
   const fehlend = [...new Set(namen)].map(n => alle.find(m => m.name === n)).filter((m): m is T => !!m && !r0.metas.includes(m));
-  const r = fehlend.length ? { metas: [...r0.metas, ...fehlend], grund: r0.grund } : r0;
+  let r = fehlend.length ? { metas: [...r0.metas, ...fehlend], grund: r0.grund } : r0;
+  if (fernzugangNamenMuster && (fernzugangNamenMuster.test(text) || verlauf.slice(-2).some(v => fernzugangNamenMuster!.test(v ?? '')))) {
+    const infra = alle.filter(m => m.category === 'infrastructure' && !istGeraeteSkill(m) && !r.metas.includes(m));
+    if (infra.length) r = { metas: [...r.metas, ...infra], grund: r.grund };
+  }
   if (!projektNamenMuster?.test(text) || r.metas.some(m => m.name === 'project_agent')) return r;
   const pa = alle.find(m => m.name === 'project_agent');
   return pa ? { metas: [...r.metas, pa], grund: r.grund } : r;

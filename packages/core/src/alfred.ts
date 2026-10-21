@@ -451,6 +451,9 @@ export class Alfred {
   /** v1540 — Live-Aktivität bei roter Lage (Sperrbildschirm/Dynamic Island) */
   private liveAktivitaet?: import('./geraete/live-aktivitaet.js').LiveAktivitaet;
   private liveZuletzt = 0;
+  /** v1550 (S4) — aktive Fernzugänge (Namen) für Hinweise und Werkzeugwahl */
+  private fernzugangNamen: string[] = [];
+  private fernzugangNamenAuffrischen?: () => Promise<void>;
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
@@ -6805,6 +6808,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
 
     // 7e1. v1539 — Fernzugriff: SSH auf fremde Hosts (Proxmox-Knoten u. a.) über hinterlegte Zugänge mit bestätigtem Host-Schlüssel
     {
+      const { FernzugaengeRepository: FzRepo } = await import('@alfred/storage');
+      const repoFz = new FzRepo(adapter);
       const { FernzugriffSkill } = await import('./fernzugriff/fernzugriff-skill.js');
       const { sshAusfuehren, keyscan, eigenerSchluessel } = await import('./fernzugriff/ssh.js');
       const { FernzugaengeRepository } = await import('@alfred/storage');
@@ -6812,8 +6817,24 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const cmdbFz = new CmdbRepository(adapter);
       const ownerFz = () => this.ownerMasterUserId ?? this.tryOwner();
       skillRegistry.register(new FernzugriffSkill({
-        repo: new FernzugaengeRepository(adapter),
+        repo: repoFz,
         owner: ownerFz,
+        beiAenderung: () => { void this.fernzugangNamenAuffrischen?.().catch(() => undefined); }, // v1550 (S4a)
+        // v1550 (S4c) — Fachskills zum Host: Quelle des CMDB-Eintrags und seiner Nachbarn (z. B. Container/Dienste auf dem dockerhost)
+        fachskillHinweis: async (z) => {
+          const o = ownerFz(); if (!o || !z.cmdbAssetId) return undefined;
+          const { fachskillHinweis, FACHSKILL_FAEHIGKEITEN } = await import('./fernzugriff/weg-wahl.js');
+          const quellen = new Set<string>();
+          const a = await cmdbFz.getAssetById(o, z.cmdbAssetId).catch(() => null);
+          if (a?.sourceSkill) quellen.add(a.sourceSkill);
+          for (const rel of (await cmdbFz.getRelationsForAsset(o, z.cmdbAssetId).catch(() => [])).slice(0, 60)) {
+            const anderes = rel.sourceAssetId === z.cmdbAssetId ? rel.targetAssetId : rel.sourceAssetId;
+            const b = await cmdbFz.getAssetById(o, anderes).catch(() => null);
+            if (b?.sourceSkill) quellen.add(b.sourceSkill);
+          }
+          const vorhanden = [...quellen].filter(q => q in FACHSKILL_FAEHIGKEITEN && skillRegistry.has(q));
+          return fachskillHinweis(z.name, vorhanden);
+        },
         istOwner: (ctx) => {
           const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
           if (owner.size === 0) return false;
@@ -6872,6 +6893,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         },
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
+      this.fernzugangNamenAuffrischen = async () => {
+        const o = ownerFz(); if (!o) return;
+        const { namenMuster } = await import('./fernzugriff/weg-wahl.js');
+        const { setzeFernzugangNamenMuster } = await import('./skill-filter.js');
+        const aktiv = (await repoFz.liste(o)).filter(z => z.status === 'aktiv');
+        const namen = [...aktiv.map(z => z.name)];
+        for (const z of aktiv) if (z.cmdbAssetId) { const a = await cmdbFz.getAssetById(o, z.cmdbAssetId).catch(() => null); if (a) namen.push(a.name, ...(a.hostname ? [a.hostname] : [])); }
+        setzeFernzugangNamenMuster(namenMuster(namen));
+        this.fernzugangNamen = aktiv.map(z => z.name);
+        this.logger.info({ zugaenge: this.fernzugangNamen, namen: [...new Set(namen)].length }, 'v1550 Fernzugang-Namen für die Werkzeugwahl');
+      };
+      setTimeout(() => { void this.fernzugangNamenAuffrischen?.().catch(() => undefined); }, 20_000);
     }
 
     // 7e2. Initialize feedback service (rejection/correction tracking)
@@ -7262,6 +7295,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
 
     // Wire confirmation queue, activity logger, skill health tracker, and insight tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
+    // v1550 (S4c) — Ergebnisse der Fachskills nennen die Fernzugänge (nur fürs Modell); (S4d) Weg-Erfahrungen merken
+    {
+      const { fernzugangHinweis, wegErfahrungen, FACHSKILL_FAEHIGKEITEN } = await import('./fernzugriff/weg-wahl.js');
+      this.pipeline.setWerkzeugHinweis((skill) => (skill in FACHSKILL_FAEHIGKEITEN ? fernzugangHinweis(this.fernzugangNamen) : undefined));
+      this.pipeline.setWerkzeugErfahrung(async (aufrufe, frage) => {
+        const e = wegErfahrungen(aufrufe, frage);
+        const o = this.ownerMasterUserId ?? this.tryOwner();
+        if (!e.length || !o || !this.memoryRepo) return;
+        for (const x of e) {
+          await this.memoryRepo.saveWithMetadata(o, x.key, x.text, 'infrastruktur', 'pattern', 0.7, 'auto').catch(() => undefined);
+          this.logger.info({ key: x.key, text: x.text.slice(0, 200) }, 'v1550 Weg-Erfahrung gemerkt');
+        }
+      });
+    }
     // v1239 — nach einer freigegebenen Geräteaktion arbeitet Alfred mit dem Ergebnis weiter (Antwort auf die
     // ursprüngliche Frage, nächste Schritte), statt das Rohergebnis zu senden. Vorhaben haben ihre eigene Fortsetzung.
     this.confirmationQueue.setNachAusfuehrung(async (pending, result, ziel) => {

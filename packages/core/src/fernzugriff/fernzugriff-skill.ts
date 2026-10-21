@@ -7,6 +7,7 @@ import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
+import { ABWAEGUNG } from './weg-wahl.js';
 
 /**
  * v1539 (Owner 21.10. „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“).
@@ -44,6 +45,10 @@ export interface FernzugriffDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** v1543 (F4) — Sicherungen betroffener VMs aus allen Quellen (Proxmox-Speicher, Commvault) als Textabschnitt */
   wiederherstellbarkeit?: (vmids: number[]) => Promise<string | undefined>;
+  /** v1550 (S4c) — was Fachskills zum selben Host zusätzlich können (Hinweis im Ergebnis) */
+  fachskillHinweis?: (z: Fernzugang) => Promise<string | undefined>;
+  /** v1550 (S4a) — Zugänge geändert (Namensmuster für den Skill-Filter neu bilden) */
+  beiAenderung?: () => void;
 }
 
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
@@ -74,6 +79,7 @@ export class FernzugriffSkill extends Skill {
       'pruefen: Verbindung und sudo testen. anlegen: neuen Zugang (name, host oder CMDB-Name, benutzer alfred) — Host-Schlüssel wird gelesen und vom Owner bestätigt. ' +
       'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung). ' +
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
+      `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -191,6 +197,7 @@ export class FernzugriffSkill extends Skill {
     await this.deps.repo.setzeStatus(owner, z.id, 'aktiv');
     if (z.cmdbAssetId) await this.deps.cmdbMarkiere?.(z.cmdbAssetId, { name: z.name, benutzer: z.benutzer, port: z.port }).catch(() => undefined);
     this.deps.protokoll?.('v1539 Fernzugang bestätigt', { name: z.name, host: z.host });
+    this.deps.beiAenderung?.();
     const p = await this.pruefen(owner, { name: z.name });
     return { success: true, display: `✅ Fernzugang „${z.name}“ ist aktiv.\n${p.display ?? p.error ?? ''}` };
   }
@@ -293,7 +300,7 @@ export class FernzugriffSkill extends Skill {
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
     this.deps.protokoll?.('v1539 Fernzugriff lesen', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
-    return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r), context);
+    return this.mitWiederherstellbarkeit(befehl, r, await this.mitFachskill(z, this.ergebnis(z, befehl, r)), context);
   }
 
   /**
@@ -307,12 +314,19 @@ export class FernzugriffSkill extends Skill {
     const sek = this.timeout(input) / 1000;
     const r = await this.lauf(owner, z, kaefigBefehl(befehl, z.benutzer, sek), (sek + 15) * 1000);
     this.deps.protokoll?.('v1549 Fernzugriff im Lese-Käfig', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
-    const e = this.ergebnis(z, befehl, r, '  (Lese-Käfig)');
+    const e = await this.mitFachskill(z, this.ergebnis(z, befehl, r, '  (Lese-Käfig)'));
     if (r.code !== 0 && kaefigGrenze(r.stderr)) {
       const hinweis = '\n[Der Befehl stieß an den Lese-Käfig (schreibt, spricht einen Dienst/Socket an oder braucht Netz). Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
       return { ...e, display: `${e.display ?? ''}${hinweis}`, ...(e.error ? { error: `${e.error}${hinweis}` } : {}) };
     }
     return this.mitWiederherstellbarkeit(befehl, r, e, context);
+  }
+
+  /** v1550 (S4c) — Hinweis, was Fachskills zum selben Host zusätzlich können (nur fürs Modell; Fehler stören das Ergebnis nicht). */
+  private async mitFachskill(z: Fernzugang, e: SkillResult): Promise<SkillResult> {
+    const h = await this.deps.fachskillHinweis?.(z).catch(() => undefined);
+    if (!h) return e;
+    return { ...e, display: `${e.display ?? ''}\n${h}`, ...(e.error ? { error: `${e.error}\n${h}` } : {}) };
   }
 
   /** v1549 — Käfig bereit? Beim ersten Mal (oder nach „an“) Selbsttest mit echten Schreib-, Kill-, Docker-, D-Bus- und Netzversuchen. */
@@ -425,6 +439,7 @@ export class FernzugriffSkill extends Skill {
       await this.deps.repo.entferne(owner, z.id);
       if (z.cmdbAssetId) await this.deps.cmdbMarkiere?.(z.cmdbAssetId, null).catch(() => undefined);
       this.deps.protokoll?.('v1539 Fernzugang entfernt', { name: z.name });
+      this.deps.beiAenderung?.();
       return { success: true, display: `Fernzugang „${z.name}“ entfernt. Auf dem Host bleibt der Benutzer ${z.benutzer} samt Schlüssel, bis du ihn dort löschst.` };
     }
     const nonce = this.freigaben.erzeuge('fernzugriff', 'entfernen', gebunden);

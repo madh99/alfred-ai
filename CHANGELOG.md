@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Skill oder SSH bewusst wählen, Weg-Erfahrungen (v1550)
+
+Owner 22.10.: „er soll überlegen, was für die aktuelle Aufgabenstellung die bessere Wahl ist, Skill oder SSH“, „S1–S4 wie empfohlen umsetzen inkl. d“, hier S4. Alfred wählt selbst. Feste Regeln sorgen dafür, dass er beide Wege kennt und sieht.
+
+- **(a) Beide Werkzeuge sichtbar:** Nennt eine Nachricht oder der jüngste Verlauf einen Host mit Fernzugang („pve3 hat Probleme“, „was ist mit dem dockerhost los?“), sind alle Infrastruktur-Werkzeuge dabei, also Fachskills **und** Fernzugriff. Bisher traf so eine Nachricht oft kein Stichwort und landete im Rückfall ohne beide. Das Muster bildet sich aus den aktiven Zugängen und den Namen ihrer CMDB-Einträge und wird bei Änderungen neu gebildet.
+- **(b) Abwägungshilfe** in der Fernzugriff-Beschreibung:
+  - Fachskill eher für den Überblick über mehrere Hosts, für strukturierte Daten und saubere API-Aktionen.
+  - SSH eher, wenn die Antwort nur auf dem Host liegt (Logs, Dateien, Kernel, Hardware), der Skill nicht reicht oder fehlschlägt, und für Ursachen.
+  - Oft beides.
+- **(c) Hinweise in beide Richtungen, nur für das Modell:**
+  - Das Fernzugriff-Ergebnis nennt, was die Fachskills zum selben Host zusätzlich können. Grundlage sind die Quelle des CMDB-Eintrags und seiner Nachbarn, z. B. Proxmox, Home Assistant, Docker, UniFi, MikroTik, Commvault.
+  - Ergebnisse dieser Fachskills nennen die bestehenden Fernzugänge für Ursachen auf Host-Ebene.
+- **(d) Weg-Erfahrungen:** Hat in einer Antwort ein Fachskill versagt oder nichts geliefert und danach der Fernzugriff die Antwort gebracht, oder umgekehrt, merkt Alfred sich das als Erfahrung (Gedächtnis, Typ `pattern`, je Weg-Paar überschrieben statt gehäuft). Bei ähnlichen Aufgaben fließt sie über das Gedächtnis ein. Log „v1550 Weg-Erfahrung gemerkt“.
+- **Selbsttest des Lese-Käfigs nachgeschärft:** Er prüft dauerhafte Pfade (`/etc`, `/root`, `/var/log`, `/var/lib`, `/usr`, `/home`). `/tmp` und `/var/tmp` sind im Käfig privat und werden verworfen. Realfall 22.10. auf pve: Der erste Selbsttest wertete `/var/tmp` als Lücke und schaltete den Käfig vorsichtshalber nicht frei.
+
 ### Added — Fernzugriff: Lese-Käfig für jede lesende Analyse, Geheimnis-Sperre, vollständige Ausgaben seitenweise (v1549)
 
 Owner 22.10.: „S1–S4 wie empfohlen umsetzen inkl. d“, hier S1 bis S3. Bisher lief ohne Rückfrage nur, was auf einer festen Liste stand (Proxmox, ZFS, Docker, Systemgrundlagen). Jede andere lesende Analyse fragte den Owner, z. B. Konfigdateien, Logs unter `/var/log`, `find`, `du` oder `ss`. Ausgaben über 30 000 Zeichen wurden gekürzt.

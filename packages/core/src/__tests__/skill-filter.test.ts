@@ -259,3 +259,19 @@ describe('Werkzeugwahl je Nachricht (v1300)', () => {
     expect(namen(o)).not.toContain('geraet_macbook');
   });
 });
+
+// v1550 (S4a) — ein Host mit Fernzugang in der Nachricht bringt Fachskills UND Fernzugriff mit
+describe('v1550 Fernzugang-Namen in der Werkzeugwahl', () => {
+  it('„pve3 hat Probleme“ (kein Stichwort) → Infrastruktur-Werkzeuge dabei; ohne Namen nicht', async () => {
+    const { werkzeugeFuerNachricht, setzeFernzugangNamenMuster } = await import('../skill-filter.js');
+    const { namenMuster } = await import('../fernzugriff/weg-wahl.js');
+    const m = (name: string, category: SkillCategory) => ({ name, category, description: '', riskLevel: 'read', version: '1', inputSchema: {} }) as unknown as SkillMetadata;
+    const alle = [m('note', 'core'), m('weather', 'information'), m('proxmox', 'infrastructure'), m('fernzugriff', 'infrastructure'), m('homeassistant', 'infrastructure')];
+    setzeFernzugangNamenMuster(namenMuster(['pve', 'pve1', 'pve3', 'dockerhost']));
+    const mit = werkzeugeFuerNachricht('pve3 hat Probleme, schau mal', [], alle).metas.map(x => x.name);
+    expect(mit).toEqual(expect.arrayContaining(['proxmox', 'fernzugriff', 'homeassistant']));
+    const ohne = werkzeugeFuerNachricht('Wie wird das Wetter morgen?', [], alle).metas.map(x => x.name);
+    expect(ohne).not.toContain('fernzugriff');
+    setzeFernzugangNamenMuster(undefined);
+  });
+});

@@ -69,7 +69,9 @@ export function kaefigBefehl(befehl: string, benutzer: string, sekunden: number)
  * PROBE_<X> außer LESEN_OK/ENDE bedeutet: der Käfig hält hier nicht.
  */
 export const KAEFIG_SELBSTTEST = [
-  'for z in /etc /root /var/tmp /usr; do if touch "$z/.alfred-kaefig-probe" 2>/dev/null; then echo "PROBE_SCHREIBEN $z"; rm -f "$z/.alfred-kaefig-probe"; fi; done',
+  // v1550 — dauerhafte Pfade; /tmp und /var/tmp sind im Käfig privat (PrivateTmp) und werden verworfen (Realfall 22.10. pve: der
+  // erste Selbsttest wertete /var/tmp fälschlich als Lücke und schaltete den Käfig nicht frei — richtig vorsichtig, aber unnötig)
+  'for z in /etc /root /var/log /var/lib /usr /home; do if touch "$z/.alfred-kaefig-probe" 2>/dev/null; then echo "PROBE_SCHREIBEN $z"; rm -f "$z/.alfred-kaefig-probe"; fi; done',
   'if kill -0 1 2>/dev/null; then echo PROBE_KILL; fi',
   'if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo PROBE_DOCKER; fi',
   'if command -v systemctl >/dev/null 2>&1 && systemctl show -p Version >/dev/null 2>&1; then echo PROBE_DBUS; fi',
