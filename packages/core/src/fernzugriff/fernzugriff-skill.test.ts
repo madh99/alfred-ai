@@ -130,3 +130,23 @@ describe('v1542 F3 Ergebnisse', () => {
     expect(f.error).toContain('nicht gefunden');
   });
 });
+
+describe('v1543 F4 Wiederherstellbarkeit', () => {
+  it('zpool status mit dauerhaften Fehlern hängt die Prüfung der betroffenen VMs an, sonst nicht', async () => {
+    const zpool = 'pool: zfs-nvme002\n state: DEGRADED\nerrors: Permanent errors have been detected in the following files:\n        zfs-nvme002/vm-106-disk-1:<0x1>\n';
+    let ausgabe = zpool;
+    const t = aufbau(() => ({ code: 0, stdout: ausgabe, stderr: '' }));
+    const gefragt: number[][] = [];
+    (t.skill as unknown as { deps: { wiederherstellbarkeit: (v: number[]) => Promise<string> } }).deps.wiederherstellbarkeit = async (v) => { gefragt.push(v); return '### Wiederherstellbarkeit (automatisch geprüft)\n- VM 106: …'; };
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status -v zfs-nvme002' }, ctx);
+    expect(gefragt).toEqual([[106]]);
+    expect(r.display).toContain('### Wiederherstellbarkeit');
+    ausgabe = 'pool: rpool\n state: ONLINE\nerrors: No known data errors\n';
+    const ok = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status' }, ctx);
+    expect(ok.display).not.toContain('Wiederherstellbarkeit');
+    ausgabe = zpool;
+    await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zfs list' }, ctx); // nicht zpool status → keine Prüfung
+    expect(gefragt).toHaveLength(1);
+  });
+});

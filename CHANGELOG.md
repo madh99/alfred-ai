@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Feste Regel „Wiederherstellbarkeit“ bei ZFS-Datenfehlern (v1543)
+
+Owner 22.10.: „F1–F4 wie empfohlen umsetzen“, hier F4. Realfall 21.10.: `zpool status` zeigte dauerhafte Datenfehler in VM-Volumes. Alfred empfahl daraufhin „aktuellere Sicherungen suchen“, fragte aber weder Commvault noch die übrigen Backup-Speicher selbst ab.
+
+- **Regel:** Nennt die Ausgabe von `zpool status` (Fernzugriff, lesend oder bestätigt) dauerhafte Fehler in VM- oder Container-Volumes (`vm-…`, `subvol-…`, `base-…`), prüft Alfred von sich aus die Sicherungen genau dieser VMs. Das Ergebnis hängt er als Abschnitt „Wiederherstellbarkeit (automatisch geprüft)“ an, unabhängig davon, was das Modell tut.
+- **Was geprüft wird:**
+  - alle Backup-Speicher aller Proxmox-Knoten (lokal, NFS, PBS) mit Datum, Alter und Prüfstatus;
+  - nicht aktive oder nicht erreichbare Speicher werden ausgewiesen, z. B. ein PBS mit „No route to host“;
+  - Commvault: Schutzstatus und letzte Sicherung der gleichnamigen VM.
+
+  Sicherungen älter als 7 Tage tragen den Hinweis „veraltet“. VMs ganz ohne nachgewiesene Sicherung werden mit dem Hinweis genannt, vor jedem Eingriff zuerst lesbare Daten zu sichern.
+- **Proxmox:** neue Aktion `backups_vm` (VM-Nummer oder Name). Sie listet alle Sicherungen einer VM über alle Knoten und Speicher, die neueste zuerst.
+- Schlägt die Prüfung fehl, bleibt das eigentliche Ergebnis erhalten, mit einem Hinweis auf den Fehler.
+
 ### Changed — Fernzugriff: Diagnosen ohne Rückfrage, Ketten aus Lesebefehlen, vollständige Ergebnisse (v1542)
 
 Owner 22.10.: „F1–F4 wie empfohlen umsetzen“, hier F1 bis F3. Realfall 21.10. (defekte NVMe in `zfs-nvme002` auf pve):

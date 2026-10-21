@@ -4,6 +4,7 @@ import type { Fernzugang } from '@alfred/storage';
 import { Freigaben } from '../geraete/freigaben.js';
 import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
+import { betroffeneVmids } from './wiederherstellbarkeit.js';
 
 /**
  * v1539 (Owner 21.10. „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“).
@@ -37,6 +38,8 @@ export interface FernzugriffDeps {
   schluessel: () => Promise<{ pfad: string; oeffentlich: string; neu: boolean }>;
   melde?: (text: string) => void;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
+  /** v1543 (F4) — Sicherungen betroffener VMs aus allen Quellen (Proxmox-Speicher, Commvault) als Textabschnitt */
+  wiederherstellbarkeit?: (vmids: number[]) => Promise<string | undefined>;
 }
 
 /** v1542 (F3) — so viel geht ans Modell (die Pipeline kappt bei 12 000 mit Anfang und Ende); vorher 6000 → SMART-Werte fehlten */
@@ -214,6 +217,24 @@ export class FernzugriffSkill extends Skill {
     };
   }
 
+  /**
+   * v1543 (F4) — feste Regel: nennt `zpool status` dauerhafte Datenfehler in VM-Volumes, werden die Sicherungen dieser VMs aus allen
+   * Quellen geprüft und an das Ergebnis gehängt (das Modell muss nicht daran denken). Fehler der Prüfung brechen das Ergebnis nicht.
+   */
+  private async mitWiederherstellbarkeit(befehl: string, r: SshErgebnis, e: SkillResult): Promise<SkillResult> {
+    if (!this.deps.wiederherstellbarkeit || !/\bzpool status\b/.test(befehl)) return e;
+    const vmids = betroffeneVmids(r.stdout);
+    if (!vmids.length) return e;
+    try {
+      const text = await this.deps.wiederherstellbarkeit(vmids);
+      if (!text) return e;
+      this.deps.protokoll?.('v1543 Wiederherstellbarkeit angehängt', { vmids });
+      return { ...e, display: `${e.display ?? ''}\n\n${text}`, data: { ...(e.data as Record<string, unknown>), wiederherstellbarkeit: text } };
+    } catch (err) {
+      return { ...e, display: `${e.display ?? ''}\n\n(Wiederherstellbarkeit nicht prüfbar: ${(err as Error).message.slice(0, 160)})` };
+    }
+  }
+
   private async pruefen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
     const z = await this.zugang(owner, input);
     const a = await this.lauf(owner, z, 'hostname', 20_000);
@@ -231,7 +252,7 @@ export class FernzugriffSkill extends Skill {
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
     this.deps.protokoll?.('v1539 Fernzugriff lesen', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
-    return this.ergebnis(z, befehl, r);
+    return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r));
   }
 
   private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
@@ -251,7 +272,7 @@ export class FernzugriffSkill extends Skill {
       if (!this.freigaben.verbrauche(freigabe, 'fernzugriff', 'ausfuehren', gebunden)) return { success: false, error: 'Diese Freigabe ist ungültig, abgelaufen oder gehört zu einem anderen Befehl.' };
       const r = await this.lauf(owner, z, fernBefehl(befehl, alsRoot), this.timeout(params));
       this.deps.protokoll?.('v1539 Fernzugriff ausgeführt (bestätigt)', { name: z.name, befehl: befehl.slice(0, 200), code: r.code, root: alsRoot });
-      return this.ergebnis(z, befehl, r);
+      return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r));
     }
     const nonce = this.freigaben.erzeuge('fernzugriff', 'ausfuehren', gebunden);
     const frage = `🖥 Auf ${z.name} (${z.host}) ${alsRoot ? 'als root ' : ''}ausführen?\n\n${befehl.slice(0, 1500)}`;

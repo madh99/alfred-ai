@@ -6846,6 +6846,30 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         schluessel: () => eigenerSchluessel(datenOrdner),
         melde: (t) => { void this.sendeAnOwner(t); },
         protokoll: (msg, daten) => this.logger.info(daten, msg),
+        // v1543 (F4) — Sicherungen betroffener VMs: alle Proxmox-Backup-Speicher (inkl. PBS-Erreichbarkeit) und Commvault
+        wiederherstellbarkeit: async (vmids) => {
+          const px = skillRegistry.get('proxmox') as unknown as { backupsVmDaten?: (id: number) => Promise<{ vmid: number; name?: string; backups: Array<{ speicher: string; volid: string; zeit: string; groesse?: number; geprueft?: string }>; unerreichbar: Array<{ speicher: string; grund: string }>; speicher: string[] }> } | undefined;
+          if (!px?.backupsVmDaten) return undefined;
+          const { wiederherstellbarkeitText, commvaultFuerVm } = await import('./fernzugriff/wiederherstellbarkeit.js');
+          let cvVms: Array<Record<string, unknown>> | { fehler: string } | null = null;
+          const cv = skillRegistry.get('commvault');
+          if (cv) {
+            try {
+              const r = await skillSandbox.execute(cv, { action: 'virtual_machines' }, { userId: this.config.security?.ownerUserId ?? '', platform: 'api', chatId: '', conversationId: '' } as never);
+              cvVms = r.success ? (((r.data as { vms?: Array<Record<string, unknown>> } | undefined)?.vms) ?? []) : { fehler: String(r.error ?? 'Fehler').slice(0, 80) };
+            } catch (err) { cvVms = { fehler: (err as Error).message.slice(0, 80) }; }
+          }
+          const liste = await Promise.all(vmids.map(async (vmid) => {
+            try {
+              const d = await px.backupsVmDaten!(vmid);
+              return { ...d, commvault: cvVms === null ? null : Array.isArray(cvVms) ? commvaultFuerVm(cvVms, d.name) : cvVms };
+            } catch (err) {
+              return { vmid, backups: [], unerreichbar: [], speicher: [], commvault: null, fehler: (err as Error).message.slice(0, 120) };
+            }
+          }));
+          this.logger.info({ vmids, ergebnis: liste.map(w => ({ vmid: w.vmid, backups: w.backups.length, neueste: w.backups[0]?.zeit, unerreichbar: w.unerreichbar.length, commvault: w.commvault === null ? 'keine' : 'fehler' in (w.commvault as object) ? 'fehler' : 'ja' })) }, 'v1543 Wiederherstellbarkeit geprüft');
+          return wiederherstellbarkeitText(liste);
+        },
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
     }
