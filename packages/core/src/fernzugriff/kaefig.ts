@@ -104,8 +104,10 @@ export const KAEFIG_SELBSTTEST = [
   'if command -v systemctl >/dev/null 2>&1 && systemctl show -p Version >/dev/null 2>&1; then echo PROBE_DBUS; fi',
   'if command -v bash >/dev/null 2>&1 && timeout 3 bash -c "exec 3<>/dev/tcp/1.1.1.1/53" 2>/dev/null; then echo PROBE_NETZ; fi',
   // v1551 — Lesen geschützter Dateien muss gehen (/etc/sudoers: nur root), Geheimnis-Pfade müssen unsichtbar sein
-  'if head -c 1 /etc/sudoers >/dev/null 2>&1; then echo PROBE_LESEN_OK; fi',
-  'if head -c 1 /etc/shadow >/dev/null 2>&1; then echo PROBE_GEHEIMNIS /etc/shadow; fi',
+  // v1552 — auf INHALT prüfen: InaccessiblePaths legt einen leeren Platzhalter (Rechte 000) darüber, den CAP_DAC_READ_SEARCH öffnen darf;
+  // „öffnen klappt“ hieß deshalb fälschlich „lesbar“ (Realfall 22.10. pve: Käfig vorsichtshalber gesperrt)
+  'if [ -n "$(head -c 1 /etc/sudoers 2>/dev/null)" ]; then echo PROBE_LESEN_OK; fi',
+  'if [ -n "$(head -c 1 /etc/shadow 2>/dev/null)" ]; then echo PROBE_GEHEIMNIS /etc/shadow; fi',
   'echo PROBE_ENDE',
 ].join('; ');
 

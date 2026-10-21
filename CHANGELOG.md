@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Käfig-Selbsttest prüft Inhalt statt nur Öffnen (v1552)
+
+Realfall 22.10. nach v1551 auf pve: Der Selbsttest meldete „/etc/shadow lesbar“ und sperrte den Käfig vorsichtshalber. Tatsächlich legt `InaccessiblePaths` einen **leeren** Platzhalter mit Rechten 000 über die Datei. Das Leserecht des Käfigs (`CAP_DAC_READ_SEARCH`) darf ihn öffnen, er liefert aber nichts. Die Proben für „Lesen geht“ (`/etc/sudoers`) und „Geheimnis unsichtbar“ (`/etc/shadow`) prüfen jetzt, ob **Inhalt** kommt.
+
 ### Security — Fernzugriff: Geheimnisse auch bei umgangener Sperrliste geschützt, curl nur an den Host selbst (v1551)
 
 Nachschärfung zu v1549 aus der Sicherheitsprüfung:
