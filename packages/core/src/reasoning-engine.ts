@@ -2859,12 +2859,32 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
 
         if (!this.confirmationQueue) continue;
+        // v1547 (B2) — neues Ticket vorgeschlagen, aber ein passendes ist offen: keine Frage an den Owner, die Symptome kommen an das
+        // bestehende Ticket (create_incident erkennt es und hängt sie an). Realfall 22.10. 00:36: zweites Ticket zur selben Latenz.
+        if (action.skillName === 'itsm' && action.skillParams?.action === 'create_incident' && typeof action.skillParams.title === 'string') {
+          const itsmSkill = this.skillRegistry.get('itsm');
+          if (itsmSkill) {
+            try {
+              const { context: vCtx } = await buildSkillContext(this.userRepo, { userId: this.defaultChatId, platform: this.defaultPlatform, chatId: this.defaultChatId, chatType: 'dm' });
+              const f = await this.skillSandbox.execute(itsmSkill, { action: 'find_open_incident', title: action.skillParams.title }, vCtx);
+              const offen = f.success ? f.data as { id?: string; title?: string } | null : null;
+              if (offen?.id) {
+                await this.skillSandbox.execute(itsmSkill, action.skillParams, vCtx);
+                this.logger.info({ titel: String(action.skillParams.title).slice(0, 120), incident: offen.id, vorhanden: offen.title?.slice(0, 80) }, 'v1547 Ticket bereits offen — Symptome angehängt statt Vorschlag');
+                await this.markActionProposed(action);
+                continue;
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1547 Ticketsuche fehlgeschlagen — Vorschlag wie bisher'); }
+          }
+        }
+        // v1547 (B1) — unter dem frei formulierten Titel die echte Aktion (Skill, Aktion, Kern-Parameter), ohne Modell
+        const { aktionsZeile } = await import('./vorgaenge/vorschlag.js');
         await this.confirmationQueue.enqueue({
           chatId: this.defaultChatId,
           platform: this.defaultPlatform,
           source: 'reasoning',
           sourceId: 'reasoning-engine',
-          description: action.description,
+          description: `${action.description}\n→ ${aktionsZeile(action.skillName, action.skillParams)}`,
           skillName: action.skillName,
           skillParams: action.skillParams,
           timeoutMinutes: 180,

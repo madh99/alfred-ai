@@ -142,10 +142,30 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
  * Treffer braucht ≥2 gemeinsame Schlüsselwörter bei Quellen-Übereinstimmung,
  * sonst ≥3 (wie findOpenIncidentForAsset seit v1174).
  */
+/**
+ * v1547 (Owner 22.10. „B1–B3“, B2) — Schreibvarianten gleich behandeln: Realfall 22.10. 00:36 „Home Assistant Latenzanomalie“
+ * und „Latenz-Anomalie homeassistant/selbstupdate“ hatten kein einziges gleich geschriebenes Wort → zweites Ticket. Verglichen wird
+ * jetzt ohne Leerzeichen, Bindestriche, Schrägstriche und Satzzeichen.
+ */
+export function titelNormal(t: string): string {
+  return t.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '');
+}
+
+/** v1547 — Schlüsselwörter eines neuen Tickettitels (bisher nur im ITSM-Skill; jetzt auch für den Denk-Durchlauf). */
+export function incidentSchluessel(title: string): { sourceLabel: string; keywords: string[] } {
+  const afterColon = title.includes(':') ? title.split(':').slice(1).join(':').trim() : title;
+  const GENERIC_KEYWORDS = new Set(['device', 'state', 'status', 'check', 'alert', 'monitor', 'connected', 'failed', 'error', 'down', 'unavailable']);
+  const keywords = afterColon.split(/\s+/).filter(w => w.length >= 4 && !GENERIC_KEYWORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
+  return { sourceLabel: title.split(':')[0]?.trim() || '', keywords };
+}
+
 export function passtZuIncidentTitel(title: string, sourceLabel: string, titleKeywords: string[]): boolean {
-  const titleLower = title.toLowerCase();
-  const sourceMatch = sourceLabel ? titleLower.includes(sourceLabel.toLowerCase()) : false;
-  const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
+  const titleNorm = titelNormal(title);
+  const quelle = sourceLabel ? titelNormal(sourceLabel) : '';
+  const sourceMatch = quelle ? titleNorm.includes(quelle) : false;
+  const woerter = [...new Set(titleKeywords.map(titelNormal).filter(w => w.length >= 3))];
+  const matchCount = woerter.filter(kw => titleNorm.includes(kw)).length;
+  titleKeywords = woerter;
   if (titleKeywords.length === 0) return false;
   if (sourceMatch && matchCount >= Math.min(2, titleKeywords.length)) return true;
   return matchCount >= Math.min(3, titleKeywords.length);

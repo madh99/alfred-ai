@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bestätigungen aus dem Denk-Durchlauf: echte Aktion sichtbar, kein Ticket-Doppel, Rückmeldung in der App (v1547)
+
+Owner 22.10.: „B1–B3 wie empfohlen umsetzen“. Realfall 22.10., 00:36: „Latenz bei homeassistant prüfen“ legte in Wahrheit ein Ticket an. Es war ein zweites zur selben Latenz, und das Ergebnis kam nur in Telegram an.
+
+- **B1 — echte Aktion unter dem Titel:** Unter jeder Bestätigung aus dem Denk-Durchlauf steht fest eine Zeile mit der Aktion, gebildet aus Skill, Aktion und Kern-Parametern ohne Modell, z. B. „→ Ticket anlegen: Home Assistant Latenzanomalie … (high)“ oder „→ VM neu starten: git-server“. Bei unbekannten Aktionen steht dort Skill · Aktion · Parameter.
+- **B2 — kein zweites Ticket:**
+  - Tickettitel werden ohne Leerzeichen, Bindestriche, Schrägstriche und Satzzeichen verglichen. „Home Assistant Latenzanomalie“ trifft damit „Latenz-Anomalie homeassistant/selbstupdate“.
+  - Schlägt der Denk-Durchlauf ein neues Ticket vor, obwohl ein passendes offen ist, fragt er nicht mehr nach. Die neuen Symptome kommen an das bestehende Ticket (Log „v1547 Ticket bereits offen — Symptome angehängt statt Vorschlag“).
+  - Dafür gibt es die neue lesende ITSM-Aktion `find_open_incident`.
+- **B3 — Rückmeldung dort, wo bestätigt wurde:** Wer eine Bestätigung in der App freigibt, bekommt das Ergebnis jetzt auch in die Hauptsitzung dieses Geräts, z. B. „✅ … Incident erstellt …“ im Verlauf. Telegram bekommt wie bisher die Kopie.
+
 ### Security — Fernzugriff: Docker-Formatvorlagen nur mit festen Feldern (v1546)
 
 Nachschärfung zu v1545 aus der Sicherheitsprüfung:

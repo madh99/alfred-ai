@@ -26,3 +26,17 @@ describe('passtZuIncidentTitel', () => {
     expect(passtZuIncidentTitel(terrasse, 'homeassistant', [])).toBe(false);
   });
 });
+
+// v1547 (B2) — Realfall 22.10. 00:36: gleiche Latenz, andere Schreibweise → zweites Ticket
+describe('v1547 Schreibvarianten', () => {
+  it('„Home Assistant Latenzanomalie“ trifft „Latenz-Anomalie homeassistant/selbstupdate“', async () => {
+    const { incidentSchluessel } = await import('../repositories/itsm-repository.js');
+    const neu = incidentSchluessel('Home Assistant Latenzanomalie (Ø 2,7 s statt ~111 ms)');
+    expect(passtZuIncidentTitel('Latenz-Anomalie homeassistant/selbstupdate', neu.sourceLabel, neu.keywords)).toBe(true);
+  });
+  it('ohne gemeinsames Thema bleibt es getrennt', async () => {
+    const { incidentSchluessel } = await import('../repositories/itsm-repository.js');
+    const neu = incidentSchluessel('Home Assistant Datenbank wächst stark');
+    expect(passtZuIncidentTitel('Latenz-Anomalie homeassistant/selbstupdate', neu.sourceLabel, neu.keywords)).toBe(false);
+  });
+});

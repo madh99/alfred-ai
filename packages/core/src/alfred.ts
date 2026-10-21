@@ -9259,10 +9259,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return [];
             }
           },
-          decide: async (id: string, decision: 'approve' | 'reject' | string) => {
+          decide: async (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => {
             try {
               if (!ownerUid) return { ok: false, reason: 'no-owner' };
-              return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid });
+              // v1547 (B3) — Entscheidung aus der App: Ergebnis auch in die Hauptsitzung dieses Geräts
+              const herkunft = von?.geraetId ? { chatId: `sitzung:${von.geraetId}:haupt`, platform: 'api' } : undefined;
+              return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid, ...(herkunft ? { herkunft } : {}) });
             } catch (err) {
               this.logger.warn({ err, id, decision }, 'Confirmation web-decision failed');
               return { ok: false, reason: 'error' };

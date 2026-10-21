@@ -83,5 +83,33 @@ export function vorschlagKurz(v: Vorschlag): string {
   return [v.skill, v.aktion, ...teile].filter(Boolean).join(' · ');
 }
 
+/**
+ * v1547 (Owner 22.10. „B1–B3“, B1) — was eine Bestätigung wirklich auslöst, in einer Zeile, ohne Modell. Realfall 22.10. 00:36:
+ * „Latenz bei homeassistant prüfen“ legte in Wahrheit ein Ticket an.
+ */
+const AKTION_NAMEN: Record<string, Record<string, string>> = {
+  itsm: { create_incident: 'Ticket anlegen', update_incident: 'Ticket ändern', close_incident: 'Ticket schließen', create_change_request: 'Change anlegen', create_problem: 'Problem anlegen', link_incident_to_problem: 'Ticket mit Problem verknüpfen' },
+  reminder: { set: 'Erinnerung setzen', create: 'Erinnerung setzen', cancel: 'Erinnerung löschen' },
+  todo: { create: 'Aufgabe anlegen', add: 'Aufgabe anlegen', complete: 'Aufgabe erledigen' },
+  calendar: { create: 'Termin anlegen', create_event: 'Termin anlegen', update: 'Termin ändern', delete: 'Termin löschen' },
+  email: { send: 'E-Mail senden', reply: 'E-Mail beantworten' },
+  watch: { create: 'Beobachtung anlegen', add: 'Beobachtung anlegen' },
+  proxmox: { start_vm: 'VM starten', shutdown_vm: 'VM herunterfahren', reboot_vm: 'VM neu starten', stop_vm: 'VM hart stoppen', create_snapshot: 'Snapshot anlegen', backup_vm: 'Sicherung starten', migrate_vm: 'VM migrieren' },
+  homeassistant: { call_service: 'Home Assistant schalten', turn_on: 'einschalten', turn_off: 'ausschalten' },
+};
+
+export function aktionsZeile(skill: string, params: Record<string, unknown> | undefined): string {
+  const p = params ?? {};
+  const aktion = typeof p.action === 'string' ? p.action : '';
+  const name = AKTION_NAMEN[skill]?.[aktion];
+  const kurz = (t: unknown, n: number) => { const s = String(t).replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+  if (name) {
+    const kern = [p.title, p.message, p.name, p.subject, p.summary, p.text, p.vm, p.vmid, p.entity_id].find(x => (typeof x === 'string' && x.trim()) || typeof x === 'number');
+    const zusatz = [typeof p.severity === 'string' ? p.severity : '', typeof p.incident_id === 'string' ? `#${p.incident_id.slice(0, 8)}` : ''].filter(Boolean).join(', ');
+    return `${name}${kern !== undefined ? `: ${kurz(kern, 140)}` : ''}${zusatz ? ` (${zusatz})` : ''}`;
+  }
+  return vorschlagKurz({ ausfuehrbar: true, skill, aktion: aktion || undefined, params: p, beschreibung: '', zeit: '' });
+}
+
 /** „Später“: erlaubte Rückstellungen (Stunden) — morgen früh wird vom Aufrufer berechnet. */
 export const SPAETER_STUNDEN = [3, 24, 72, 168] as const;

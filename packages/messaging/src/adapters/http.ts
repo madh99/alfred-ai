@@ -512,12 +512,12 @@ export class HttpAdapter extends MessagingAdapter {
 
   // v629 — Confirmations + Reminders Side-Panel API
   private confirmationsListFn?: () => Promise<any[]>;
-  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
+  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   private remindersListFn?: () => Promise<any[]>;
 
   setConfirmationCallbacks(opts: {
     list: () => Promise<any[]>;
-    decide: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
+    decide: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   }): void {
     this.confirmationsListFn = opts.list;
     this.confirmationsDecideFn = opts.decide;
@@ -3279,7 +3279,9 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const segments = url.pathname.split('/');
     const id = segments[segments.length - 2]; // .../{id}/approve|reject
-    const result = await this.confirmationsDecideFn(id, decision);
+    // v1547 (B3) — bestätigt ein Gerät (App), bekommt seine Sitzung das Ergebnis auch (bisher nur Telegram)
+    const geraet = this.geraetIdentitaet.get(req);
+    const result = await this.confirmationsDecideFn(id, decision, geraet ? { geraetId: geraet.geraetId } : undefined);
     if (!result.ok) {
       res.writeHead(result.reason?.startsWith('already-') ? 409 : 404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: result.reason ?? 'Failed' }));

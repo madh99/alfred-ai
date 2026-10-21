@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ausfuehrbarerVorschlag, eingabeFehler, vorschlagKurz } from './vorschlag.js';
+import { aktionsZeile, ausfuehrbarerVorschlag, eingabeFehler, vorschlagKurz } from './vorschlag.js';
 
 // v1480 — Werte wie im Realfall 16.10. (Vorgänge a734fddf, 2eb06cab, d02d9ac1)
 const gibt = (n: string) => ['reminder', 'itsm', 'goe_charger'].includes(n);
@@ -65,5 +65,18 @@ describe('v1537 Prüfung und keine Wiederholung', () => {
       .toMatchObject({ ausfuehrbar: false, grund: 'Vorschlag unvollständig: vm_status braucht vmid oder vm (Name)' });
     const neu = [...real, { art: 'vorgeschlagen', skill: 'proxmox', params: { action: 'vm_status', vmid: 105 }, beschreibung: 'neu', zeit: '2026-10-22T08:00:00Z' }];
     expect(ausfuehrbarerVorschlag(neu, () => true, () => proxmox)).toMatchObject({ ausfuehrbar: true, params: { vmid: 105 } });
+  });
+});
+
+// v1547 (B1) — Realfall 22.10. 00:36: „Latenz bei homeassistant prüfen“ legte ein Ticket an
+describe('v1547 aktionsZeile', () => {
+  it('benennt die echte Aktion mit Kern-Parameter', () => {
+    expect(aktionsZeile('itsm', { action: 'create_incident', title: 'Home Assistant Latenzanomalie (Ø 2,7 s statt ~111 ms)', severity: 'high' }))
+      .toBe('Ticket anlegen: Home Assistant Latenzanomalie (Ø 2,7 s statt ~111 ms) (high)');
+    expect(aktionsZeile('itsm', { action: 'close_incident', incident_id: 'c0bf83e6-4f47', resolution: 'x' })).toBe('Ticket schließen (#c0bf83e6)');
+    expect(aktionsZeile('proxmox', { action: 'reboot_vm', vm: 'git-server' })).toBe('VM neu starten: git-server');
+  });
+  it('unbekannte Aktion: Skill · Aktion · Parameter', () => {
+    expect(aktionsZeile('goe_charger', { action: 'set_current', ampere: 10 })).toBe('goe_charger · set_current · ampere=10');
   });
 });

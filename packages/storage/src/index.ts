@@ -81,6 +81,7 @@ export { AgentSessionRepository, type AgentSession, type AgentSessionStatus, typ
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
 export { CmdbRepository } from './repositories/cmdb-repository.js';
 export { ItsmRepository } from './repositories/itsm-repository.js';
+export { incidentSchluessel, titelNormal, passtZuIncidentTitel } from './repositories/itsm-repository.js'; // v1547
 export { ProblemRepository, normalizeTitle as normalizeIncidentTitle } from './repositories/problem-repository.js';
 export { MetricSamplesRepository } from './repositories/metric-samples-repository.js';
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';

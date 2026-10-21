@@ -620,6 +620,8 @@ export class ConfirmationQueue {
     /** v657 — kann auch ein custom extra-action key sein (z.B. 'cancel_item', 'snooze_24h') */
     decision: 'approve' | 'reject' | string;
     userId: string;
+    /** v1547 (B3) — Sitzung, aus der entschieden wurde (App): bekommt das Ergebnis zusätzlich, falls die Anfrage keine eigene Herkunft hat */
+    herkunft?: { chatId: string; platform: string };
   }): Promise<{ ok: boolean; reason?: string; fehler?: string }> {
     const pending = await this.confirmRepo.getById(opts.id);
     if (!pending) {
@@ -644,6 +646,7 @@ export class ConfirmationQueue {
       masterUserId: opts.userId,
     };
 
+    if (opts.herkunft && !this.herkuenfte.has(pending.id) && opts.herkunft.chatId !== pending.chatId) this.herkuenfte.set(pending.id, opts.herkunft); // v1547 (B3)
     // Re-use the chat-flow handler — pass synthetic callback so auto-sibling-cleanup,
     // adapter notifications, and feedback hooks run exactly like a Telegram button press.
     const handled = await this.checkForConfirmation(

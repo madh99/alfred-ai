@@ -1,12 +1,13 @@
 import type { SkillMetadata, SkillContext, SkillResult, IncidentSeverity, ServiceHealthStatus } from '@alfred/types';
 import type { ItsmRepository, ProblemRepository, MetricSamplesRepository } from '@alfred/storage';
+import { incidentSchluessel } from '@alfred/storage';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
 type LlmCallback = (prompt: string, tier?: string) => Promise<string>;
 
 type Action =
-  | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'close_incident'
+  | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'find_open_incident' | 'close_incident'
   | 'create_change_request' | 'update_change' | 'get_change' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
   | 'create_problem' | 'update_problem' | 'get_problem' | 'list_problems' | 'link_incident_to_problem' | 'unlink_incident_from_problem' | 'promote_to_problem' | 'create_fix_change' | 'mark_known_error' | 'detect_problem_patterns' | 'problem_dashboard'
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard'
@@ -76,7 +77,7 @@ export class ItsmSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending', 'search_history'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'find_open_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending', 'search_history'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -226,6 +227,7 @@ export class ItsmSkill extends Skill {
         case 'update_incident': return await this.updateIncident(userId, input);
         case 'list_incidents': return await this.listIncidents(userId, input);
         case 'get_incident': return await this.getIncident(userId, input.incident_id as string);
+        case 'find_open_incident': return await this.findOpenIncident(userId, input); // v1547
         case 'close_incident': return await this.closeIncident(userId, input);
         case 'create_change_request': return await this.createChangeRequest(userId, input);
         case 'update_change': return await this.updateChange(userId, input);
@@ -282,16 +284,23 @@ export class ItsmSkill extends Skill {
 
   // ── Incidents ──────────────────────────────────────────────
 
+  /** v1547 (B2) — offenes Ticket zum Titel suchen (lesend), z. B. bevor der Denk-Durchlauf ein neues vorschlägt. */
+  private async findOpenIncident(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const title = typeof input.title === 'string' ? input.title : '';
+    if (!title) return { success: false, error: 'title erforderlich' };
+    const { sourceLabel, keywords } = incidentSchluessel(title);
+    const existing = await this.itsm.findOpenIncidentForAsset(userId, sourceLabel, keywords);
+    return existing
+      ? { success: true, data: existing, display: `Offenes Ticket passt: **${existing.title}** (${existing.status}) — ID: ${existing.id}` }
+      : { success: true, data: null, display: 'Kein passendes offenes Ticket.' };
+  }
+
   private async createIncident(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const title = input.title as string;
     if (!title) return { success: false, error: 'title erforderlich' };
 
-    // Dedup: check if a similar incident is already open
-    // Use content after ':' for keywords (strip generic prefix like "Monitor:", "homeassistant:")
-    const afterColon = title.includes(':') ? title.split(':').slice(1).join(':').trim() : title;
-    const GENERIC_KEYWORDS = new Set(['device', 'state', 'status', 'check', 'alert', 'monitor', 'connected', 'failed', 'error', 'down', 'unavailable']);
-    const keywords = afterColon.split(/\s+/).filter(w => w.length >= 4 && !GENERIC_KEYWORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
-    const sourceLabel = title.split(':')[0]?.trim() || '';
+    // Dedup: check if a similar incident is already open (v1547 — Schlüsselwörter und Vergleich in @alfred/storage, Schreibvarianten gleich)
+    const { sourceLabel, keywords } = incidentSchluessel(title);
     const existing = await this.itsm.findOpenIncidentForAsset(userId, sourceLabel, keywords);
     if (existing) {
       // Append new symptoms if provided
