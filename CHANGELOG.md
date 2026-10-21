@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Proxmox: VM-Name nur eindeutig bei verändernden Aktionen (v1538)
+
+Nachschärfung zu v1537 aus der Sicherheitsprüfung:
+
+- **Verändernde Aktionen** (starten, stoppen, neu starten, Snapshot anlegen/löschen/zurückspielen, sichern, migrieren) nehmen eine VM nur noch bei **genau gleichem Namen** an. Ein Teiltreffer bestimmt dort nie das Ziel. Teiltreffer bleiben für lesende Aktionen erlaubt (Status, Snapshots auflisten, Warten auf Bereitschaft).
+- **`name` gilt nicht mehr als VM-Name.** Bei Snapshot-Aktionen ist `name` der Name des Snapshots. Der VM-Name kommt nur aus `vm`, `vm_name` oder einer nicht-numerischen `vmid`.
+
 ### Fixed — „Ausführen“ bei Vorgängen: VM über den Namen, Parameter vorher prüfen, keinen Fehler wiederholen (v1537)
 
 Owner 21.10.: „A+B+C wie vorgeschlagen umsetzen“. Realfall 21.10.: Der Vorgang „Proxmox git-server RAM-Auslastung prüfen“ schlug viermal mit „Missing required "vmid" parameter“ fehl. Der Vorschlag nannte die VM beim Namen (`vm: git-server`), der Proxmox-Skill kannte nur die Nummer.

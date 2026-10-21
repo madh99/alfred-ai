@@ -20,4 +20,8 @@ describe('v1537 vmNameAufloesen', () => {
     expect(vmNameAufloesen(vms, 'web')).toMatchObject({ fehler: expect.stringContaining('mehrdeutig') });
     expect(vmNameAufloesen(vms, 'nas')).toMatchObject({ fehler: expect.stringContaining('Keine VM') });
   });
+  it('v1538 verändernde Aktionen: nur genauer Name, nie Teiltreffer', () => {
+    expect(vmNameAufloesen(vms, 'home', { nurGenau: true })).toMatchObject({ fehler: expect.stringContaining('genau') });
+    expect(vmNameAufloesen(vms, 'git-server', { nurGenau: true })).toEqual({ vmid: 101 });
+  });
 });
