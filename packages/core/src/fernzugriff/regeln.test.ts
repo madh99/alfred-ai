@@ -48,6 +48,13 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('bestaetigen');
     }
     expect(befehlsklasse('docker system prune -af')).not.toBe('lesen');
+    // v1546 — Sicherheitsprüfung: Ersetzung in --format nie lesen; inspect nur mit erlaubten Feldern
+    for (const b of ['docker ps --format "$(id)"', 'docker ps --format "`id`"', 'docker stats --no-stream --format "$HOME"', 'docker ps --format "{{.Command}}"', 'docker inspect --format "{{json .Config}}" homeassistant', 'docker inspect --format "{{json .}}" homeassistant', 'docker inspect --format "{{.Config}}" x', 'docker inspect --format "{{.Config.Labels}}" x']) {
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
+    }
+    for (const b of ['docker ps --format "{{.Names}} {{.Status}}"', 'docker ps --format "table {{.Names}}, {{.Ports}}"', 'docker stats --no-stream --format "{{.Name}}: {{.CPUPerc}} {{.MemUsage}}"', 'docker inspect --format "{{.State.Health.Status}}" homeassistant', 'docker inspect --format "{{json .NetworkSettings.Ports}}" homeassistant']) {
+      expect(befehlsklasse(b), b).toBe('lesen');
+    }
   });
   it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
     for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {

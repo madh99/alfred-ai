@@ -40,10 +40,11 @@ const LESE_BEFEHLE: RegExp[] = [
   /^(qm|pct) listsnapshot \d{1,9}$/,
   // v1545 (Owner 22.10. „docker-lesebefehle aufnehmen“) — Docker-Host (z. B. Home Assistant neben anderen Containern). Volles
   // `docker inspect` und `docker compose config` zeigen Umgebungsvariablen (oft Passwörter) → nur mit Bestätigung; gezielt mit --format ja.
-  /^docker (ps|container ls)( -a| --all| -q| -s| --size| --no-trunc| --format "[^"]*")*$/,
+  /^docker (ps|container ls)( -a| --all| -q| -s| --size| --no-trunc| --format "(table )?(\{\{\.(ID|Image|Names|Status|State|Ports|RunningFor|CreatedAt|Size|Networks|Mounts)\}\}[ :,/=|-]*)+")*$/,
   /^docker logs( --tail \d{1,5}| -n \d{1,5}| -t| --timestamps| --since (\d{1,4}[smhd]|\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?)| --until (\d{1,4}[smhd]|\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?))* [\w.-]+$/,
-  /^docker stats --no-stream( --no-trunc| --format "[^"]*")*( [\w.-]+)*$/,
-  /^docker inspect --format "(?![^"]*\bEnv\b)(\{\{[\w .:,()|'-]*\}\}[ :,/=-]*)+" [\w.:/-]+( [\w.:/-]+)*$/, // ohne .Config.Env
+  /^docker stats --no-stream( --no-trunc| --format "(table )?(\{\{\.(Name|ID|Container|CPUPerc|MemUsage|MemPerc|NetIO|BlockIO|PIDs)\}\}[ :,/=|-]*)+")*( [\w.-]+)*$/,
+  // v1546 (Sicherheitsprüfung) — feste Feldliste statt Sperre auf „Env“: {{json .Config}} oder {{json .}} enthielten die Umgebung trotzdem
+  /^docker inspect --format "(\{\{(json )?\.(Name|Id|Created|RestartCount|Image|Platform|Driver|Mounts|State(\.\w+)*|NetworkSettings(\.(IPAddress|Ports|Networks|Gateway|MacAddress))?|HostConfig\.(RestartPolicy(\.\w+)?|NetworkMode|Memory|NanoCpus)|Config\.(Image|Hostname|User|WorkingDir))\}\}[ :,/=|-]*)+" [\w.:/-]+( [\w.:/-]+)*$/,
   /^docker (images|image ls)( -a| --all| --digests| --no-trunc)*$/,
   /^docker (network|volume) ls$/,
   /^docker system df( -v)?$/,

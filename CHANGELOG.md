@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Fernzugriff: Docker-Formatvorlagen nur mit festen Feldern (v1546)
+
+Nachschärfung zu v1545 aus der Sicherheitsprüfung:
+
+- **`docker inspect --format`** erlaubt ohne Rückfrage nur noch eine feste Feldliste: `.Name`, `.Id`, `.Created`, `.RestartCount`, `.Image`, `.Platform`, `.Driver`, `.Mounts`, `.State…`, `.NetworkSettings.(IPAddress|Ports|Networks|Gateway|MacAddress)`, `.HostConfig.(RestartPolicy|NetworkMode|Memory|NanoCpus)` und `.Config.(Image|Hostname|User|WorkingDir)`. Die bisherige Sperre auf „Env“ ließ `{{json .Config}}` und `{{json .}}` durch, beide enthalten die Umgebungsvariablen.
+- **`docker ps|stats --format`** erlaubt nur noch feste Felder statt beliebiger Vorlagen. `.Command` ist ausgenommen, weil Aufrufargumente Geheimnisse enthalten können. Ersetzungen (`$(…)`, `` `…` ``, `$VAR`) waren schon vorher bestätigungspflichtig. Tests belegen das jetzt.
+
 ### Added — Fernzugriff: lesende Docker-Befehle (v1545)
 
 Owner 22.10.: „docker-lesebefehle aufnehmen“. Der Fernzugriff gilt für jeden Linux-Host mit SSH, z. B. den Docker-Host mit Home Assistant.
