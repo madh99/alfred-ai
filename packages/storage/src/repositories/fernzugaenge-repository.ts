@@ -24,6 +24,8 @@ export interface Fernzugang {
   fingerabdruck?: string;
   cmdbAssetId?: string;
   status: FernzugangStatus;
+  /** v1549 — Lese-Käfig: ungeprueft (noch kein Selbsttest), aktiv, fehlt (Selbsttest gescheitert), aus (vom Owner abgeschaltet) */
+  kaefig?: 'ungeprueft' | 'aktiv' | 'fehlt' | 'aus';
   zuletztOk?: string;
   zuletztFehler?: string;
   erstellt: string;
@@ -73,6 +75,11 @@ export class FernzugaengeRepository {
     await this.db.execute('UPDATE fernzugaenge SET status = ?, geaendert = ? WHERE id = ? AND user_id = ?', [status, new Date().toISOString(), id, userId]);
   }
 
+  /** v1549 — Stand des Lese-Käfigs (Selbsttest oder Schalter des Owners). */
+  async setzeKaefig(userId: string, id: string, kaefig: NonNullable<Fernzugang['kaefig']>): Promise<void> {
+    await this.db.execute('UPDATE fernzugaenge SET kaefig = ?, geaendert = ? WHERE id = ? AND user_id = ?', [kaefig, new Date().toISOString(), id, userId]);
+  }
+
   async merkeErgebnis(userId: string, id: string, ok: boolean, fehler?: string): Promise<void> {
     const jetzt = new Date().toISOString();
     if (ok) await this.db.execute('UPDATE fernzugaenge SET zuletzt_ok = ?, zuletzt_fehler = NULL WHERE id = ? AND user_id = ?', [jetzt, id, userId]);
@@ -90,6 +97,7 @@ export class FernzugaengeRepository {
       benutzer: String(r.benutzer), schluesselPfad: String(r.schluessel_pfad),
       hostSchluessel: (r.host_schluessel as string | null) ?? undefined, fingerabdruck: (r.fingerabdruck as string | null) ?? undefined,
       cmdbAssetId: (r.cmdb_asset_id as string | null) ?? undefined, status: r.status as FernzugangStatus,
+      kaefig: ((r.kaefig as string | null) ?? 'ungeprueft') as Fernzugang['kaefig'],
       zuletztOk: (r.zuletzt_ok as string | null) ?? undefined, zuletztFehler: (r.zuletzt_fehler as string | null) ?? undefined,
       erstellt: String(r.erstellt), geaendert: String(r.geaendert),
     };

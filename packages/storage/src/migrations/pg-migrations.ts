@@ -2380,4 +2380,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_fernzugaenge_user ON fernzugaenge (user_id)', []);
     },
   },
+  {
+    version: 152,
+    description: 'v1549 — fernzugaenge.kaefig: Lese-Käfig je Zugang (ungeprueft|aktiv|fehlt|aus) (PG-Spiegel zu SQLite v148).',
+    async up(db) {
+      await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS kaefig TEXT', []);
+    },
+  },
 ];

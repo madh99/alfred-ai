@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Fernzugriff: Lese-Käfig für jede lesende Analyse, Geheimnis-Sperre, vollständige Ausgaben seitenweise (v1549)
+
+Owner 22.10.: „S1–S4 wie empfohlen umsetzen inkl. d“, hier S1 bis S3. Bisher lief ohne Rückfrage nur, was auf einer festen Liste stand (Proxmox, ZFS, Docker, Systemgrundlagen). Jede andere lesende Analyse fragte den Owner, z. B. Konfigdateien, Logs unter `/var/log`, `find`, `du` oder `ss`. Ausgaben über 30 000 Zeichen wurden gekürzt.
+
+- **S1 — Lese-Käfig:** Ein Befehl außerhalb der festen Liste läuft mit `lesen` jetzt **ohne Rückfrage** in einem Käfig auf dem Host (`systemd-run`). Der Käfig hat:
+  - ein schreibgeschütztes Dateisystem (`ProtectSystem=strict`, `ProtectHome=read-only`, eigenes `/tmp`);
+  - den Benutzer des Zugangs mit nur dem Recht „alles lesen“ (`CAP_DAC_READ_SEARCH`);
+  - keine Unix-Sockets (kein Docker, kein D-Bus, also kein Dienst-Neustart) und kein Netz (`IPAddressDeny=any`);
+  - keine neuen Rechte (`NoNewPrivileges`, kein SUID) und keine Geräte;
+  - eine Grenze für Laufzeit, Speicher (1 GB) und Prozesse (64).
+
+  Was schreiben will, scheitert technisch. Die Antwort sagt dann, dass eine gewollte Änderung über `ausfuehren` geht, und das fragt den Owner.
+- **Selbsttest je Zugang:** Bevor der Käfig gilt, prüft Alfred ihn auf dem Host mit echten Versuchen: in `/etc`, `/root`, `/var/tmp` und `/usr` schreiben, PID 1 beenden, Docker und D-Bus ansprechen, ins Netz gehen. Alles muss scheitern, Lesen muss gehen. Erst dann steht der Käfig auf „aktiv“, sonst auf „fehlt“, und es bleibt bei der Rückfrage. `pruefen` testet mit. Neue Aktion `kaefig`: ausschalten sofort, einschalten nur mit Bestätigung und neuem Selbsttest. Gespeichert wird der Stand in der neuen Spalte `fernzugaenge.kaefig` (PG v152, SQLite v148).
+- **Netz-Diagnose ohne Käfig,** auf der festen Liste: `curl` nur GET/HEAD, `ping -c N`, `dig`/`nslookup`/`host` und `ss`.
+- **S2 — Geheimnisse nie ohne Rückfrage, auch nicht im Käfig:**
+  - Passwort-Hashes, private SSH-Schlüssel, `.key`/`.p12`/`/etc/ssl/private`, `.env`;
+  - `/etc/pve/priv`, `.pgpass`/`.my.cnf`/`.netrc`/`.git-credentials`/Docker-`config.json`, `.htpasswd`, `wp-config.php`;
+  - Vaultwarden-/Bitwarden- und `secrets`-Ordner;
+  - Umgebungsvariablen (`/proc/*/environ`, `printenv`, volles `docker inspect`, `docker compose config`, `docker exec`) und Datenbank-Dumps.
+- **S3 — Ausgaben vollständig:** Ist eine Ausgabe länger als 30 000 Zeichen, legt der Server sie vollständig ab (bis 5 MB, 2 Stunden). Alfred bekommt Anfang und Ende und holt mit der neuen Aktion `seite` weitere Seiten oder Suchtreffer mit Zeilennummern nach, ohne den Befehl erneut auszuführen.
+
 ### Fixed — Fernzugriff: lange Ausgaben ganz, Docker-Formatvorlagen in einfachen Anführungszeichen, „tail -n +N“ (v1548)
 
 Owner 22.10.: „K1–K3 wie vorgeschlagen umsetzen“. Realfall 22.10., 01:09 (`docker ps` auf dem Docker-Host mit rund 40 Containern):

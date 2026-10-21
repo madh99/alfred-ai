@@ -17,6 +17,7 @@ function aufbau(ssh: (b: string) => { code: number; stdout: string; stderr: stri
     setzeStatus: async (_u, id, s) => { zeilen.get(id)!.status = s; },
     merkeErgebnis: async () => undefined,
     entferne: async (_u, id) => zeilen.delete(id),
+    setzeKaefig: async (_u, id, k) => { zeilen.get(id)!.kaefig = k; },
   };
   const fragen: Array<{ description: string; params: Record<string, unknown> }> = [];
   const befehle: string[] = [];
@@ -63,7 +64,7 @@ describe('v1539 FernzugriffSkill', () => {
     const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status' }, ctx);
     expect(r.success).toBe(true);
     expect(t.befehle).toEqual(['sudo -n zpool status']);
-    expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status; reboot' }, ctx)).error).toContain('kein reiner Lesebefehl');
+    expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status; reboot' }, ctx)).error).toContain('Lese-Käfig'); // v1549: ohne bestandenen Selbsttest kein Käfig
   });
 
   it('lesen ohne sudo-Recht fällt auf den Benutzer zurück', async () => {
@@ -167,7 +168,72 @@ describe('v1548 K1 Kürzung', () => {
     ausgabe = zeilen(200); // ≈ 60 000
     const g = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'docker ps' }, ctx);
     expect(g.display!.length).toBeLessThan(30_200);
-    expect(g.display).toContain('Ausgabe gekürzt — kompakter abfragen');
+    expect(g.display).toContain('Vollständig gespeichert'); // v1549 S3 statt reinem Kürzungshinweis
     expect(g.display).toContain('container-199');
+  });
+});
+
+describe('v1549 S1–S3 Lese-Käfig, Geheimnisse, Seiten', () => {
+  const kaefigSsh = (probe: string, ausgabe: () => string) => (b: string) => (
+    b.includes('PROBE_ENDE') ? { code: 0, stdout: probe, stderr: '' }
+      : b.includes('touch /etc/x') ? { code: 1, stdout: '', stderr: "touch: cannot touch '/etc/x': Read-only file system" }
+      : { code: 0, stdout: ausgabe(), stderr: '' });
+
+  it('unbekannter Lesebefehl läuft nach bestandenem Selbsttest im Käfig, ohne Rückfrage', async () => {
+    const t = aufbau(kaefigSsh('PROBE_LESEN_OK\nPROBE_ENDE\n', () => 'server { listen 80; }'));
+    await aktiv(t);
+    t.befehle.length = 0;
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'cat /etc/nginx/nginx.conf' }, ctx);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('(Lese-Käfig)');
+    expect(t.fragen).toHaveLength(0);
+    expect(t.zeilen.get('z1')!.kaefig).toBe('aktiv');
+    expect(t.befehle.at(-1)).toMatch(/^sudo -n systemd-run .*ProtectSystem=strict.* -- \/bin\/sh -c 'cat \/etc\/nginx\/nginx.conf'$/);
+  });
+
+  it('Selbsttest mit Verstoß → Käfig „fehlt“, Befehl nur mit Bestätigung', async () => {
+    const t = aufbau(kaefigSsh('PROBE_SCHREIBEN /etc\nPROBE_LESEN_OK\nPROBE_ENDE\n', () => 'x'));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'cat /etc/nginx/nginx.conf' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Lese-Käfig ist auf pve nicht verfügbar');
+    expect(t.zeilen.get('z1')!.kaefig).toBe('fehlt');
+  });
+
+  it('Schreibversuch im Käfig scheitert mit Hinweis auf ausfuehren', async () => {
+    const t = aufbau(kaefigSsh('PROBE_LESEN_OK\nPROBE_ENDE\n', () => 'x'));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'touch /etc/x' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('stieß an den Lese-Käfig');
+  });
+
+  it('Geheimnisse und abgeschalteter Käfig', async () => {
+    const t = aufbau(kaefigSsh('PROBE_LESEN_OK\nPROBE_ENDE\n', () => 'x'));
+    await aktiv(t);
+    expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'cat /opt/app/.env' }, ctx)).error).toContain('.env');
+    await t.skill.execute({ action: 'kaefig', name: 'pve', an: false }, ctx);
+    expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'cat /etc/nginx/nginx.conf' }, ctx)).error).toContain('abgeschaltet');
+    // Einschalten nur mit Bestätigung, dann neuer Selbsttest
+    await t.skill.execute({ action: 'kaefig', name: 'pve', an: true }, ctx);
+    const f = t.fragen.pop()!;
+    expect(f.description).toContain('Lese-Käfig');
+    const r = await t.skill.execute(f.params, ctx);
+    expect(r.display).toContain('ist an');
+  });
+
+  it('S3: lange Ausgabe vollständig abgelegt — Seiten und Suche ohne erneuten Lauf', async () => {
+    const lang = Array.from({ length: 4000 }, (_, i) => `logzeile ${i}${i === 3333 ? ' FEHLER: disk timeout' : ''}`).join('\n');
+    const t = aufbau(kaefigSsh('PROBE_LESEN_OK\nPROBE_ENDE\n', () => lang));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'cat /var/log/syslog' }, ctx);
+    const id = /id=([0-9a-f]{8})/.exec(r.display!)![1]!;
+    const laeufe = t.befehle.length;
+    const s2 = await t.skill.execute({ action: 'seite', id, seite: 2 }, ctx);
+    expect(s2.display).toMatch(/Seite 2\/\d+/);
+    const such = await t.skill.execute({ action: 'seite', id, suche: 'fehler' }, ctx);
+    expect(such.display).toContain('3335: logzeile 3333 FEHLER: disk timeout'); // Zeile 1 ist der Kopf „pve$ …“
+    expect(t.befehle.length).toBe(laeufe);
+    expect((await t.skill.execute({ action: 'seite', id: 'deadbeef' }, ctx)).success).toBe(false);
   });
 });

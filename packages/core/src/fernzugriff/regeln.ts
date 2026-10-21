@@ -63,6 +63,11 @@ const LESE_BEFEHLE: RegExp[] = [
   /^systemctl (status [\w@.-]+( --no-pager)?|is-active [\w@.-]+|is-failed [\w@.-]+|--failed( --no-pager)?|list-units( --type=\w+)?( --state=\w+)?( --no-pager)?)$/,
   /^apt list --upgradable$/,
   /^last -n \d{1,3}$/,
+  // v1549 (S1) — Netz-Diagnose außerhalb des Käfigs (der hat kein Netz): nur GET/HEAD, ping/dig mit Grenzen
+  /^curl( -[sSIkLv]+| -m \d{1,3}| --max-time \d{1,3}| -o \/dev\/null| -w "%\{(http_code|time_total|time_connect|remote_ip)\}( %\{(http_code|time_total|time_connect|remote_ip)\})*\\?n?")* https?:\/\/[\w.:\[\]-]+(\/[\w./%?=&-]*)?$/,
+  /^ping -c [1-9]( -W \d{1,2})? [\w.:-]+$/,
+  /^(dig|nslookup|host)( [\w.:@+-]+){1,3}$/,
+  /^ss( -[tulnpaxs]+)+$/,
 ];
 
 /** Nie erlaubt, auch nicht mit Bestätigung: macht Datenträger, Pools oder das System unwiederbringlich kaputt. */

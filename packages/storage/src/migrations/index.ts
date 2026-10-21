@@ -3071,4 +3071,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_fernzugaenge_user ON fernzugaenge (user_id)');
     },
   },
+  {
+    version: 148,
+    description: 'v1549 — fernzugaenge.kaefig: Lese-Käfig je Zugang (SQLite-Spiegel zu PG v152).',
+    up(db) {
+      try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN kaefig TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

@@ -5,6 +5,8 @@ import { Freigaben } from '../geraete/freigaben.js';
 import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
+import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze } from './kaefig.js';
+import { randomBytes } from 'node:crypto';
 
 /**
  * v1539 (Owner 21.10. „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“).
@@ -23,6 +25,8 @@ export interface FernzugriffRepo {
   setzeStatus(userId: string, id: string, status: Fernzugang['status']): Promise<void>;
   merkeErgebnis(userId: string, id: string, ok: boolean, fehler?: string): Promise<void>;
   entferne(userId: string, id: string): Promise<boolean>;
+  /** v1549 — Lese-Käfig je Zugang */
+  setzeKaefig?(userId: string, id: string, kaefig: NonNullable<Fernzugang['kaefig']>): Promise<void>;
 }
 
 export interface FernzugriffDeps {
@@ -45,7 +49,12 @@ export interface FernzugriffDeps {
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
-const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'zugang_bestaetigen'] as const;
+const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen'] as const;
+
+/** v1549 (S3) — vollständige lange Ausgaben bleiben 2 h abrufbar (höchstens 30, je 5 MB), seitenweise oder per Suche. */
+const SEITEN_GUELTIG_MS = 2 * 3_600_000;
+const SEITEN_MAX = 30;
+const SEITE_ZEICHEN = 25_000;
 
 /** v1548 (K1) — bei einer Kürzung sagt die Ausgabe selbst, wie es kompakter geht (Modell fragt sonst dieselbe lange Ausgabe erneut). */
 export const KUERZUNG_HINWEIS = '[Ausgabe gekürzt — kompakter abfragen: z. B. docker ps --format \'{{.Names}}\\t{{.Status}}\', | head -n N, | tail -n +N, | grep <muster>; das sind Lesebefehle ohne Rückfrage]';
@@ -63,7 +72,9 @@ export class FernzugriffSkill extends Skill {
       'liste: Zugänge. lesen: lesender Befehl — läuft sofort (zpool status/list/events, zfs list, pvecm status, pvesm status/list, qm list/config/listsnapshot, df -h, free -h, journalctl -u …, systemctl status …, smartctl -a /dev/… oder /dev/disk/by-id/…, smartctl --scan, nvme smart-log, lsblk -o …, ls -l /dev/disk/by-id; Docker: docker ps, docker logs --tail N <container>, docker stats --no-stream, docker inspect --format "{{…}}" <container>, docker images, docker system df, docker compose ls). Mehrere Lesebefehle mit ; oder && und Pipes zu grep/head/tail/wc/sort/uniq/cut gehen ebenfalls mit lesen — für Diagnosen immer lesen versuchen. ' +
       'ausfuehren: jeder andere Befehl (Neustart eines Dienstes, zpool scrub, apt …) — fragt den Owner, läuft nach seinem Ja als root (sudo). Zerstörerisches (mkfs, zpool destroy, dd auf Datenträger …) nie. ' +
       'pruefen: Verbindung und sudo testen. anlegen: neuen Zugang (name, host oder CMDB-Name, benutzer alfred) — Host-Schlüssel wird gelesen und vom Owner bestätigt. ' +
-      'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung).',
+      'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung). ' +
+      'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
+      'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 15 * 60_000,
@@ -78,12 +89,17 @@ export class FernzugriffSkill extends Skill {
         port: { type: 'number', description: 'anlegen: SSH-Port (Standard 22)' },
         benutzer: { type: 'string', description: 'anlegen: Benutzer auf dem Host (Standard alfred)' },
         timeout_s: { type: 'number', description: 'Zeitlimit in Sekunden (Standard 60, höchstens 900)' },
+        id: { type: 'string', description: 'seite: Kennung der gespeicherten Ausgabe' },
+        seite: { type: 'number', description: 'seite: Seitennummer (ab 1)' },
+        suche: { type: 'string', description: 'seite: Suchmuster (Regex, ohne Groß/Klein) in der gespeicherten Ausgabe' },
+        an: { type: 'boolean', description: 'kaefig: an (true) oder aus (false)' },
       },
       required: ['action'],
     },
   };
 
   private readonly freigaben = new Freigaben();
+  private readonly seiten = new Map<string, { name: string; befehl: string; text: string; zeit: number }>();
 
   constructor(private readonly deps: FernzugriffDeps) { super(); }
 
@@ -111,7 +127,10 @@ export class FernzugriffSkill extends Skill {
         case 'lesen': return await this.lesen(owner, input, context);
         case 'ausfuehren': return await this.ausfuehren(owner, input, herkunft, context);
         case 'entfernen': return await this.entfernen(owner, input, herkunft);
-        default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => a !== 'zugang_bestaetigen').join(', ')})` };
+        case 'seite': return this.seite(input);
+        case 'kaefig': return await this.kaefigSchalter(owner, input, herkunft);
+        case 'kaefig_bestaetigen': return await this.kaefigBestaetigen(owner, input);
+        default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => !a.endsWith('_bestaetigen')).join(', ')})` };
       }
     } catch (err) {
       return { success: false, error: (err as Error).message.slice(0, 500) };
@@ -121,7 +140,7 @@ export class FernzugriffSkill extends Skill {
   private async liste(owner: string): Promise<SkillResult> {
     const l = await this.deps.repo.liste(owner);
     if (!l.length) return { success: true, data: [], display: 'Noch kein Fernzugang hinterlegt. Mit `schluessel` zeige ich meinen öffentlichen Schlüssel und die Einrichtung auf dem Host, danach `anlegen`.' };
-    const zeilen = l.map(z => `- **${z.name}** ${z.benutzer}@${z.host}${z.port !== 22 ? `:${z.port}` : ''} · ${z.status === 'aktiv' ? 'aktiv' : z.status === 'wartet' ? 'wartet auf Bestätigung des Host-Schlüssels' : 'gesperrt'}${z.zuletztOk ? ` · zuletzt ok ${z.zuletztOk.slice(0, 16).replace('T', ' ')}` : ''}${z.zuletztFehler ? ` · Fehler: ${z.zuletztFehler.slice(0, 120)}` : ''}`);
+    const zeilen = l.map(z => `- **${z.name}** ${z.benutzer}@${z.host}${z.port !== 22 ? `:${z.port}` : ''} · ${z.status === 'aktiv' ? 'aktiv' : z.status === 'wartet' ? 'wartet auf Bestätigung des Host-Schlüssels' : 'gesperrt'}${z.kaefig ? ` · Lese-Käfig ${z.kaefig}` : ''}${z.zuletztOk ? ` · zuletzt ok ${z.zuletztOk.slice(0, 16).replace('T', ' ')}` : ''}${z.zuletztFehler ? ` · Fehler: ${z.zuletztFehler.slice(0, 120)}` : ''}`);
     return { success: true, data: l.map(({ hostSchluessel: _h, ...rest }) => rest), display: zeilen.join('\n') };
   }
 
@@ -207,10 +226,19 @@ export class FernzugriffSkill extends Skill {
     return Math.min(Math.max(s, 5), 900) * 1000;
   }
 
-  private ergebnis(z: Fernzugang, befehl: string, r: SshErgebnis): SkillResult {
+  private ergebnis(z: Fernzugang, befehl: string, r: SshErgebnis, zusatz = ''): SkillResult {
     const aus = [r.stdout.trimEnd(), r.stderr.trim() ? `[stderr]\n${r.stderr.trim()}` : ''].filter(Boolean).join('\n');
-    const kopf = `${z.name}$ ${befehl}${r.code !== 0 ? `  (Exit ${r.code})` : ''}`;
-    const display = `\`\`\`\n${kuerze(`${kopf}\n${aus || '(keine Ausgabe)'}`)}\n\`\`\``;
+    const kopf = `${z.name}$ ${befehl}${zusatz}${r.code !== 0 ? `  (Exit ${r.code})` : ''}`;
+    const voll = `${kopf}\n${aus || '(keine Ausgabe)'}`;
+    // v1549 (S3) — zu lang: vollständig ablegen, erste Fassung mit Anfang/Ende, Rest über action=seite (ohne erneuten Lauf)
+    let text = kuerze(voll);
+    if (voll.length > ANZEIGE_MAX) {
+      const id = this.legeAb(z.name, befehl, voll);
+      const zeilen = voll.split('\n').length, seiten = Math.ceil(voll.length / SEITE_ZEICHEN);
+      const hinweis = `[Vollständig gespeichert: ${zeilen} Zeilen, ${voll.length} Zeichen, ${seiten} Seiten — action=seite, id=${id}, seite=1…${seiten}, oder suche=<regex>; kein erneuter Lauf nötig]`;
+      text = `${kuerzeMitte(voll, ANZEIGE_MAX - hinweis.length - 1)}\n${hinweis}`;
+    }
+    const display = `\`\`\`\n${text}\n\`\`\``;
     // v1542 (F3) — Exit ≠ 0 mit Ausgabe ist ein Ergebnis, kein Fehlschlag: smartctl meldet z. B. eine Platte mit Fehlern über eine
     // Bitmaske im Exit-Code, die Werte stehen trotzdem in der Ausgabe. Ohne Ausgabe (oder bei Verbindungs-/Schlüsselproblemen) Fehler.
     const nurFehler = r.hostSchluesselGeaendert || (r.code !== 0 && !r.stdout.trim());
@@ -246,19 +274,116 @@ export class FernzugriffSkill extends Skill {
     const a = await this.lauf(owner, z, 'hostname', 20_000);
     if (a.code !== 0) return { success: false, error: `Verbindung zu ${z.benutzer}@${z.host} fehlgeschlagen: ${a.stderr.trim().slice(-300)}${/Permission denied/i.test(a.stderr) ? ' — Schlüssel auf dem Host noch nicht eingetragen? (`schluessel` zeigt die Einrichtung)' : ''}` };
     const s = await this.lauf(owner, z, 'sudo -n true', 20_000);
-    return { success: true, data: { hostname: a.stdout.trim(), sudo: s.code === 0 }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}). sudo ohne Passwort: ${s.code === 0 ? 'ja' : 'nein — Befehle laufen dann ohne root'}.` };
+    // v1549 — Käfig mitprüfen (außer der Owner hat ihn abgeschaltet); ein früheres „fehlt“ wird neu getestet
+    if (s.code === 0 && z.kaefig === 'fehlt' && this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }
+    const k = s.code === 0 ? await this.kaefigBereit(owner, z) : { ok: false, grund: 'braucht sudo ohne Passwort' };
+    return { success: true, data: { hostname: a.stdout.trim(), sudo: s.code === 0, kaefig: k }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}). sudo ohne Passwort: ${s.code === 0 ? 'ja' : 'nein — Befehle laufen dann ohne root'}. Lese-Käfig: ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}.` };
   }
 
   /** Lesender Befehl: als root, wenn sudo ohne Passwort geht, sonst als Benutzer. */
   private async lesen(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const befehl = typeof input.befehl === 'string' ? normalisiereBefehl(input.befehl) : '';
     const klasse = befehlsklasse(befehl);
-    if (klasse !== 'lesen') return { success: false, error: klasse === 'nie' ? `„${befehl.slice(0, 120)}“ ist nie erlaubt.` : `„${befehl.slice(0, 120)}“ ist kein reiner Lesebefehl — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
+    if (klasse === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
+    // v1549 (S2) — Geheimnisse nie ohne Rückfrage (die Ausgabe ginge an das Modell), auch nicht im Käfig
+    const geheim = geheimnisGrund(befehl);
+    if (geheim) return { success: false, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
+    if (klasse !== 'lesen') return this.imKaefig(owner, befehl, input, context);
     const z = await this.zugang(owner, input);
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
     this.deps.protokoll?.('v1539 Fernzugriff lesen', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
     return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r), context);
+  }
+
+  /**
+   * v1549 (S1) — unbekannter Befehl ohne Rückfrage im Lese-Käfig. Erst nach bestandenem Selbsttest des Käfigs auf diesem Host; ist der
+   * Käfig aus oder fehlt er, bleibt es bei der Rückfrage (ausfuehren).
+   */
+  private async imKaefig(owner: string, befehl: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
+    const z = await this.zugang(owner, input);
+    const k = await this.kaefigBereit(owner, z);
+    if (!k.ok) return { success: false, error: `„${befehl.slice(0, 120)}“ ist kein Befehl der festen Leseliste, und der Lese-Käfig ist auf ${z.name} nicht verfügbar (${k.grund}) — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
+    const sek = this.timeout(input) / 1000;
+    const r = await this.lauf(owner, z, kaefigBefehl(befehl, z.benutzer, sek), (sek + 15) * 1000);
+    this.deps.protokoll?.('v1549 Fernzugriff im Lese-Käfig', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
+    const e = this.ergebnis(z, befehl, r, '  (Lese-Käfig)');
+    if (r.code !== 0 && kaefigGrenze(r.stderr)) {
+      const hinweis = '\n[Der Befehl stieß an den Lese-Käfig (schreibt, spricht einen Dienst/Socket an oder braucht Netz). Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
+      return { ...e, display: `${e.display ?? ''}${hinweis}`, ...(e.error ? { error: `${e.error}${hinweis}` } : {}) };
+    }
+    return this.mitWiederherstellbarkeit(befehl, r, e, context);
+  }
+
+  /** v1549 — Käfig bereit? Beim ersten Mal (oder nach „an“) Selbsttest mit echten Schreib-, Kill-, Docker-, D-Bus- und Netzversuchen. */
+  private async kaefigBereit(owner: string, z: Fernzugang): Promise<{ ok: boolean; grund: string }> {
+    if (z.kaefig === 'aktiv') return { ok: true, grund: 'aktiv' };
+    if (z.kaefig === 'aus') return { ok: false, grund: 'vom Owner abgeschaltet' };
+    if (z.kaefig === 'fehlt') return { ok: false, grund: 'Selbsttest gescheitert' };
+    if (!this.deps.repo.setzeKaefig) return { ok: false, grund: 'nicht eingerichtet' };
+    const r = await this.lauf(owner, z, kaefigBefehl(KAEFIG_SELBSTTEST, z.benutzer, 30), 45_000);
+    const w = werteSelbsttest(`${r.stdout}\n${r.stderr}`, r.code);
+    await this.deps.repo.setzeKaefig(owner, z.id, w.ok ? 'aktiv' : 'fehlt');
+    z.kaefig = w.ok ? 'aktiv' : 'fehlt';
+    this.deps.protokoll?.(w.ok ? 'v1549 Lese-Käfig geprüft — aktiv' : 'v1549 Lese-Käfig geprüft — nicht verfügbar', { name: z.name, grund: w.grund, code: r.code, stderr: r.stderr.trim().slice(-200) });
+    return w;
+  }
+
+  private async kaefigSchalter(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
+    const z = await this.zugang(owner, input);
+    if (!this.deps.repo.setzeKaefig) return { success: false, error: 'Lese-Käfig nicht verfügbar' };
+    if (input.an === false) {
+      await this.deps.repo.setzeKaefig(owner, z.id, 'aus');
+      this.deps.protokoll?.('v1549 Lese-Käfig abgeschaltet', { name: z.name });
+      return { success: true, display: `Lese-Käfig auf ${z.name} ist aus: unbekannte Befehle fragen wieder den Owner.` };
+    }
+    const gebunden = { action: 'kaefig_bestaetigen', name: z.name };
+    const nonce = this.freigaben.erzeuge('fernzugriff', 'kaefig_bestaetigen', gebunden);
+    const gestellt = await this.deps.bestaetigung({ description: `🔒 Lese-Käfig auf ${z.name} (${z.host}) einschalten? Unbekannte lesende Befehle laufen dann ohne Rückfrage, schreibgeschützt und ohne Netz/Docker/D-Bus. Vorher prüfe ich ihn mit echten Schreibversuchen.`, params: { ...gebunden, freigabe: nonce } }, herkunft);
+    return gestellt ? { success: true, data: { zurBestaetigung: true }, display: `Einschalten des Lese-Käfigs auf ${z.name} zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+  }
+
+  private async kaefigBestaetigen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const { freigabe, ...params } = input;
+    if (!this.freigaben.verbrauche(freigabe, 'fernzugriff', 'kaefig_bestaetigen', params)) return { success: false, error: 'Diese Freigabe ist ungültig oder abgelaufen.' };
+    const z = await this.zugang(owner, params);
+    await this.deps.repo.setzeKaefig!(owner, z.id, 'ungeprueft');
+    z.kaefig = 'ungeprueft';
+    const k = await this.kaefigBereit(owner, z);
+    return k.ok ? { success: true, display: `✅ Lese-Käfig auf ${z.name} ist an (${k.grund}).` } : { success: false, error: `Lese-Käfig auf ${z.name} nicht verfügbar: ${k.grund}` };
+  }
+
+  private legeAb(name: string, befehl: string, text: string): string {
+    const jetzt = Date.now();
+    for (const [k, v] of this.seiten) if (jetzt - v.zeit > SEITEN_GUELTIG_MS) this.seiten.delete(k);
+    while (this.seiten.size >= SEITEN_MAX) this.seiten.delete(this.seiten.keys().next().value!);
+    const id = randomBytes(4).toString('hex');
+    this.seiten.set(id, { name, befehl, text: text.slice(0, 5 * 1024 * 1024), zeit: jetzt });
+    return id;
+  }
+
+  /** v1549 (S3) — gespeicherte Ausgabe: Seite N (≈ 25 000 Zeichen, an Zeilengrenzen) oder Treffer einer Suche mit Zeilennummern. */
+  private seite(input: Record<string, unknown>): SkillResult {
+    const id = typeof input.id === 'string' ? input.id.trim() : '';
+    const a = this.seiten.get(id);
+    if (!a || Date.now() - a.zeit > SEITEN_GUELTIG_MS) return { success: false, error: `Keine gespeicherte Ausgabe „${id}“ (gelten 2 Stunden) — Befehl erneut ausführen.` };
+    const zeilen = a.text.split('\n');
+    if (typeof input.suche === 'string' && input.suche.trim()) {
+      let re: RegExp;
+      try { re = new RegExp(input.suche.slice(0, 200), 'i'); } catch { return { success: false, error: 'Ungültiges Suchmuster' }; }
+      const treffer: string[] = [];
+      let laenge = 0;
+      for (let i = 0; i < zeilen.length && laenge < SEITE_ZEICHEN; i++) {
+        if (re.test(zeilen[i]!)) { const t = `${i + 1}: ${zeilen[i]}`; treffer.push(t); laenge += t.length + 1; }
+      }
+      return { success: true, data: { id, treffer: treffer.length }, display: `\`\`\`\n${a.name}$ ${a.befehl}  — Suche „${input.suche.slice(0, 80)}“: ${treffer.length} Treffer${laenge >= SEITE_ZEICHEN ? ' (weitere — Muster enger fassen)' : ''}\n${treffer.join('\n') || '(keine)'}\n\`\`\`` };
+    }
+    const seiten: string[] = [];
+    let akt = '';
+    for (const z of zeilen) { if (akt.length + z.length + 1 > SEITE_ZEICHEN && akt) { seiten.push(akt); akt = ''; } akt += `${z}\n`; }
+    if (akt) seiten.push(akt);
+    const n = Math.min(Math.max(Math.floor(Number(input.seite) || 1), 1), seiten.length);
+    return { success: true, data: { id, seite: n, seiten: seiten.length }, display: `\`\`\`\n[${a.name}$ ${a.befehl} — Seite ${n}/${seiten.length}]\n${seiten[n - 1]!.slice(0, SEITE_ZEICHEN + 2000)}\`\`\`` };
   }
 
   private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }, context?: SkillContext): Promise<SkillResult> {
