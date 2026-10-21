@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Fernzugriff: journalctl-Zeitangaben streng, verändernde Optionen nie „lesen“ (v1541)
+
+Nachschärfung zu v1539 aus der Sicherheitsprüfung: `--since` und `--until` ließen freie Werte mit Leerzeichen und Bindestrichen zu. Dadurch hätte z. B. `journalctl --since x --rotate` ohne Rückfrage als root laufen können.
+
+- **Zeitangaben** sind nur noch in festen Formaten erlaubt: `"JJJJ-MM-TT[ hh:mm[:ss]]"`, `JJJJ-MM-TT`, `today`, `yesterday` und relativ (`-2h`, `-30min`, `-1d`).
+- **Verändernde oder fremde Dateien lesende Optionen** machen jeden Befehl bestätigungspflichtig, unabhängig vom Muster: `--vacuum…`, `--rotate`, `--flush`, `--sync`, `--relinquish-var`, `--setup-keys`, `--file`, `--directory`, `--root`, `--merge`, `-D`, `-M`, `--update-catalog`, `--force`, `-f`.
+
 ### Added — Lage-Widget am iPhone in allen Größen, Live-Aktivität bei roter Lage (v1540, App 1.72.0)
 
 Owner 21.10.: „Widget vollumfänglich alle Größen und live bei rot mitmachen“.

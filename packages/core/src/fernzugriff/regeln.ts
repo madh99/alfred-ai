@@ -37,7 +37,8 @@ const LESE_BEFEHLE: RegExp[] = [
   /^top -b(n| -n) ?1$/,
   /^ps( aux| -ef| axu)$/,
   /^dmesg( -T| --ctime)?( -l (err|warn|crit|alert|emerg)(,(err|warn|crit|alert|emerg))*)?$/,
-  /^journalctl( (-n \d{1,5}|-u [\w@.-]+|-p (err|warning|crit|alert|emerg|\d)|-b( -?\d)?|--since "?[\w :.-]+"?|--until "?[\w :.-]+"?|--no-pager|-k|-o (short|short-iso|cat)))+$/,
+  // v1541 (Sicherheitsprüfung) — Zeitangaben nur im festen Format: ein freies „--since x --rotate“ lief sonst ungefragt als root
+  /^journalctl( (-n \d{1,5}|-u [\w@.-]+|-p (err|warning|crit|alert|emerg|\d)|-b( -?\d)?|--(since|until) ("\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?"|\d{4}-\d{2}-\d{2}|today|yesterday|-\d{1,4}(min|h|d))|--no-pager|-k|-o (short|short-iso|cat)))+$/,
   /^systemctl (status [\w@.-]+( --no-pager)?|is-active [\w@.-]+|is-failed [\w@.-]+|--failed( --no-pager)?|list-units( --type=\w+)?( --state=\w+)?( --no-pager)?)$/,
   /^apt list --upgradable$/,
   /^last -n \d{1,3}$/,
@@ -62,11 +63,15 @@ export function normalisiereBefehl(befehl: string): string {
   return befehl.trim().replace(/^sudo\s+(-n\s+)?/, '').replace(/\s+/g, ' ');
 }
 
+/** v1541 — Optionen, die etwas verändern oder fremde Dateien lesen; mit ihnen ist kein Befehl „lesen“, egal was das Muster erlaubt. */
+const VERAENDERNDE_OPTIONEN = /(^| )(--vacuum[\w-]*|--rotate|--flush|--sync|--relinquish-var|--setup-keys|--file|--directory|--root|--merge|-D|-M|--output-fields|--update-catalog|--force|-f)( |=|$)/;
+
 export function befehlsklasse(befehl: string): Befehlsklasse {
   const b = normalisiereBefehl(befehl);
   if (!b) return 'nie';
   if (NIE_BEFEHLE.some(r => r.test(b))) return 'nie';
   if (STEUERZEICHEN.test(b)) return 'bestaetigen';
+  if (VERAENDERNDE_OPTIONEN.test(b)) return 'bestaetigen';
   return LESE_BEFEHLE.some(r => r.test(b)) ? 'lesen' : 'bestaetigen';
 }
 

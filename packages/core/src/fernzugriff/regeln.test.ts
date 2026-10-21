@@ -13,6 +13,10 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('bestaetigen');
     }
   });
+  it('v1541 journalctl: Zeit nur im festen Format, verändernde Optionen nie als „lesen“', () => {
+    for (const b of ['journalctl --since today -n 100', 'journalctl -u pveproxy --since "2026-10-21 08:00" --no-pager', 'journalctl --since -2h -p err']) expect(befehlsklasse(b), b).toBe('lesen');
+    for (const b of ['journalctl --since x --rotate', 'journalctl --since "1 --vacuum-time=1s"', 'journalctl --vacuum-size=1M', 'journalctl --flush', 'journalctl -D /var/log/x', 'journalctl --file /root/x', 'journalctl --until yesterday --setup-keys']) expect(befehlsklasse(b), b).toBe('bestaetigen');
+  });
   it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
     for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {
       expect(befehlsklasse(b), b).toBe('nie');
