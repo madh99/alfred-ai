@@ -21,6 +21,9 @@ def gemeinsam_aufnehmen(projekt, runner)
   # 1.67.0 — Siri-Kurzbefehle (nur in der App)
   siri = rgruppe.files.find { |f| f.path == 'SiriBefehle.swift' } || rgruppe.new_reference('SiriBefehle.swift')
   runner.add_file_references([siri]) unless runner.source_build_phase.files_references.include?(siri)
+  # 1.72.0 — Lage-Daten (Widget-Kurzform, Live-Aktivität) in App und Widget
+  lage = gruppe.files.find { |f| f.path == 'LageDaten.swift' } || gruppe.new_reference('LageDaten.swift')
+  runner.add_file_references([lage]) unless runner.source_build_phase.files_references.include?(lage)
   # 1.67.0 — Grundsprache Deutsch: Siri ordnet die Sätze der Kurzbefehle der Gerätesprache zu
   projekt.root_object.development_region = 'de'
   projekt.root_object.known_regions = (projekt.root_object.known_regions | ['de'])
@@ -78,9 +81,55 @@ def fokus_ziel(projekt, runner)
   puts 'Ziel Fokus angelegt'
 end
 
+# 1.72.0 (v1540, Owner 21.10. „Widget vollumfänglich alle Größen und live bei rot“) — Widget-Erweiterung „Lage“ (WidgetKit, klassische
+# App-Erweiterung unter PlugIns/ wie „Teilen“): Lage-Widget aller Größen und die Live-Aktivität. Netz-Code und Lage-Daten sind
+# dieselben Dateien wie in der App. iOS 16.1 (ActivityKit).
+def lage_ziel(projekt, runner)
+  return if projekt.targets.any? { |t| t.name == 'Lage' }
+  ziel = projekt.new_target(:app_extension, 'Lage', :ios, '16.1', nil, :swift)
+  gruppe = projekt.main_group.new_group('Lage', 'Lage')
+  haupt = gruppe.new_reference('LageWidget.swift')
+  gruppe.new_reference('Info.plist')
+  gruppe.new_reference('Lage.entitlements')
+  xcconfig = gruppe.new_reference('Lage.xcconfig')
+  ggruppe = projekt.main_group.children.find { |g| g.respond_to?(:path) && g.path == 'Gemeinsam' } or abort 'Gruppe Gemeinsam fehlt'
+  netz = ggruppe.files.find { |f| f.path == 'AlfredNetz.swift' } or abort 'AlfredNetz.swift fehlt'
+  daten = ggruppe.files.find { |f| f.path == 'LageDaten.swift' } or abort 'LageDaten.swift fehlt'
+  ziel.add_file_references([haupt, netz, daten])
+  projekt.build_configurations.map(&:name).each do |name|
+    ziel.add_build_configuration(name, name == 'Debug' ? :debug : :release) unless ziel.build_configurations.any? { |c| c.name == name }
+  end
+  ziel.build_configurations.each do |c|
+    c.base_configuration_reference = xcconfig
+    b = c.build_settings
+    b['PRODUCT_BUNDLE_IDENTIFIER'] = 'at.alfred.app.lage'
+    b['PRODUCT_NAME'] = 'Lage'
+    b['INFOPLIST_FILE'] = 'Lage/Info.plist'
+    b['GENERATE_INFOPLIST_FILE'] = 'NO'
+    b['CODE_SIGN_ENTITLEMENTS'] = 'Lage/Lage.entitlements'
+    b['CODE_SIGN_STYLE'] = 'Automatic'
+    b['DEVELOPMENT_TEAM'] = 'T28LD8TF6X'
+    b['SWIFT_VERSION'] = '5.0'
+    b['IPHONEOS_DEPLOYMENT_TARGET'] = '16.1'
+    b['TARGETED_DEVICE_FAMILY'] = '1,2'
+    b['SKIP_INSTALL'] = 'YES'
+    b['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+    b['LD_RUNPATH_SEARCH_PATHS'] = ['$(inherited)', '@executable_path/Frameworks', '@executable_path/../../Frameworks']
+    b['MARKETING_VERSION'] = '$(FLUTTER_BUILD_NAME)'
+    b['CURRENT_PROJECT_VERSION'] = '$(FLUTTER_BUILD_NUMBER)'
+  end
+  # in dieselbe Einbettungsphase wie „Teilen“ (PlugIns/)
+  einbetten = runner.copy_files_build_phases.find { |ph| ph.name == 'Embed Foundation Extensions' } or abort 'Einbettungsphase fehlt'
+  datei = einbetten.add_file_reference(ziel.product_reference, true)
+  datei.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+  runner.add_dependency(ziel)
+  puts 'Ziel Lage angelegt'
+end
+
 if projekt.targets.any? { |t| t.name == 'Teilen' }
   gemeinsam_aufnehmen(projekt, runner)
   fokus_ziel(projekt, runner)
+  lage_ziel(projekt, runner)
   projekt.save
   puts 'Ziel Teilen existiert schon — gemeinsame Datei geprüft'
   exit 0
@@ -129,6 +178,7 @@ runner.build_phases.insert(stelle, einbetten)
 runner.add_dependency(ziel)
 gemeinsam_aufnehmen(projekt, runner)
 fokus_ziel(projekt, runner)
+lage_ziel(projekt, runner)
 
 projekt.save
 puts "Ziel Teilen angelegt (Konfigurationen: #{ziel.build_configurations.map(&:name).join(', ')})"

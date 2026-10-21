@@ -108,5 +108,23 @@ export class ApnsSender {
     }
   }
 
+  /** v1540 — Live-Aktivität (start/update/end): Push-Typ liveactivity, Topic <bundle>.push-type.liveactivity, fertiger Körper. */
+  async sendeLive(token: string, umgebung: ApnsUmgebung, koerper: string, prioritaet: 5 | 10): Promise<ApnsErgebnis> {
+    const start = this.jetzt();
+    const transport = this.opts.transport ?? (this.standard ??= http2Transport());
+    try {
+      const r = await transport({
+        host: APNS_HOST[umgebung], pfad: `/3/device/${encodeURIComponent(token)}`, koerper,
+        kopf: { authorization: `bearer ${this.anmeldung()}`, 'apns-topic': `${this.opts.bundleId}.push-type.liveactivity`, 'apns-push-type': 'liveactivity', 'apns-priority': String(prioritaet) },
+      });
+      let grund: string | undefined;
+      if (r.status !== 200) { try { grund = (JSON.parse(r.koerper) as { reason?: string }).reason; } catch { grund = r.koerper.slice(0, 80) || undefined; } }
+      if (grund === 'ExpiredProviderToken') this.jwt = undefined;
+      return { ok: r.status === 200, status: r.status, grund, dauerMs: this.jetzt() - start, tokenUngueltig: r.status === 410 || grund === 'Unregistered' || grund === 'BadDeviceToken' };
+    } catch (err) {
+      return { ok: false, status: 0, grund: (err as Error).message.slice(0, 120), dauerMs: this.jetzt() - start, tokenUngueltig: false };
+    }
+  }
+
   private standard?: ApnsTransport;
 }

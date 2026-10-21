@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 /// Was eine angetippte Mitteilung öffnen soll (eigener Schlüssel `alfred` der APNs-Nutzlast).
 class PushZiel {
   const PushZiel({required this.art, this.id, this.faden});
-  /// bestaetigung | hinweis | antwort
+  /// bestaetigung | hinweis | antwort | zwischenablage | datei; 1.72.0 aus dem Widget: lage | eingang | befund | vorgang
   final String art;
   final String? id;
   final String? faden;

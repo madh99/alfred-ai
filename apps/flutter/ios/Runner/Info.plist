@@ -89,5 +89,18 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>at.alfred.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>alfred</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

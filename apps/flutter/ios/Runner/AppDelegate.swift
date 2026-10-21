@@ -1,3 +1,4 @@
+import ActivityKit
 import AVFoundation
 import CoreLocation
 import CoreMotion
@@ -31,6 +32,8 @@ import UserNotifications
   let bewegung = BewegungsSinn()
   /// 1.58.0 G1 — Vorlesen in der Unterhaltung, ohne die Audiositzung der Aufnahme anzufassen
   let ton = TonSpieler()
+  /// 1.72.0 — nimmt alfred://… über die Szenen-Schnittstelle von Flutter entgegen
+  private lazy var zielOeffner = ZielOeffner { [weak self] url in self?.oeffneZiel(url) }
 
   override func application(
     _ application: UIApplication,
@@ -42,7 +45,22 @@ import UserNotifications
     bewegung.starte()
     NotificationCenter.default.addObserver(self, selector: #selector(wirdAktiv), name: UIApplication.didBecomeActiveNotification, object: nil) // 1.64.0
     NotificationCenter.default.addObserver(self, selector: #selector(unterhaltungGewuenscht), name: .alfredUnterhaltung, object: nil) // 1.67.0 Siri
+    NotificationCenter.default.addObserver(self, selector: #selector(gehtInHintergrund), name: UIApplication.didEnterBackgroundNotification, object: nil) // 1.72.0
+    LiveMelder.beobachte() // 1.72.0 — auch nach einem Start im Hintergrund (Push-to-Start weckt die App für den Update-Token)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// 1.72.0 — App geht in den Hintergrund: Widget mit dem neuen Stand auffrischen
+  @objc private func gehtInHintergrund() { WidgetAuffrischen.alle() }
+
+  /// 1.72.0 — Sprung aus Widget oder Live-Aktivität (alfred://lage, alfred://befund?id=…): wie eine angetippte Mitteilung an Dart
+  func oeffneZiel(_ url: URL) {
+    guard url.scheme == "alfred", let art = url.host, ["lage", "eingang", "befund", "vorgang"].contains(art) else { return }
+    var ziel: [String: Any] = ["art": art]
+    if let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value,
+       id.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil { ziel["id"] = id }
+    pushZiel = ziel
+    pushKanal?.invokeMethod("geoeffnet", arguments: ziel)
   }
 
   // 1.64.0 — App wird aktiv (Systemnachricht, gilt auch mit Scenes): Fokus mit iOS abgleichen und den Verlauf der Filter-Aufrufe nativ melden (mit Hintergrundzeit,
@@ -108,6 +126,7 @@ import UserNotifications
     }
     // Phase 5 H2 — Mitteilungen: Erlaubnis + Anmeldung, Ziel nach Kaltstart
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AlfredPush") {
+      registrar.addSceneDelegate(zielOeffner) // 1.72.0 — alfred://… aus Widget und Live-Aktivität
       let kanal = FlutterMethodChannel(name: "alfred/push", binaryMessenger: registrar.messenger())
       pushKanal = kanal
       kanal.setMethodCallHandler { [weak self] aufruf, ergebnis in
@@ -636,5 +655,56 @@ enum Schluesselbund {
     let s = SecItemDelete(basis(schluessel) as CFDictionary)
     SecItemDelete(basis(schluessel, gruppe: alteGruppe) as CFDictionary)
     return s == errSecSuccess || s == errSecItemNotFound
+  }
+}
+
+
+/// 1.72.0 — Szenen-Empfänger für alfred://-Links aus Widget und Live-Aktivität. FlutterSceneDelegate gibt die Szenen-Methoden
+/// nicht frei; Flutter verteilt sie über addSceneDelegate an Plugins (Kaltstart über die Verbindungsoptionen, sonst openURLContexts).
+final class ZielOeffner: NSObject, FlutterSceneLifeCycleDelegate {
+  private let auf: (URL) -> Void
+  init(_ auf: @escaping (URL) -> Void) { self.auf = auf }
+  func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions?) -> Bool {
+    guard let url = connectionOptions?.urlContexts.first?.url, url.scheme == "alfred" else { return false }
+    auf(url)
+    return true
+  }
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+    guard let url = URLContexts.first?.url, url.scheme == "alfred" else { return false }
+    auf(url)
+    return true
+  }
+}
+
+/// 1.72.0 (v1540) — Live-Aktivität: Push-to-Start-Token (iOS 17.2+) und je Aktivität den Update-Token an den Server melden;
+/// der Server startet, aktualisiert und beendet die Aktivität per Push, solange die Lage rot ist.
+enum LiveMelder {
+  #if DEBUG
+  static let umgebung = "sandbox"
+  #else
+  static let umgebung = "production"
+  #endif
+
+  static func melde(_ body: [String: Any]) async {
+    var b = body
+    b["umgebung"] = umgebung
+    do { try await Netz(try Kopplung.lade()).live(b) } catch { NSLog("Alfred Live-Aktivität: Meldung fehlgeschlagen: \(error.localizedDescription)") }
+  }
+
+  static func beobachte() {
+    guard #available(iOS 17.2, *) else { return }
+    Task { for await t in Activity<LageAttribute>.pushToStartTokenUpdates { await melde(["art": "start", "token": t.hex]) } }
+    for a in Activity<LageAttribute>.activities { folge(a) }
+    Task { for await a in Activity<LageAttribute>.activityUpdates { folge(a) } }
+  }
+
+  @available(iOS 16.2, *)
+  private static func folge(_ a: Activity<LageAttribute>) {
+    Task { for await t in a.pushTokenUpdates { await melde(["art": "aktivitaet", "token": t.hex, "id": a.id]) } }
+    Task {
+      for await z in a.activityStateUpdates where z == .ended || z == .dismissed {
+        await melde(["art": "ende", "id": a.id])
+      }
+    }
   }
 }

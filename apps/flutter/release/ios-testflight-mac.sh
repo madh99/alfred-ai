@@ -36,6 +36,10 @@ if [ -d "$APPEX" ]; then codesign --force --sign - --entitlements ios/Teilen/Tei
 FOKUSX=build/Alfred.xcarchive/Products/Applications/Runner.app/Extensions/Fokus.appex
 [ -d "$FOKUSX" ] || { echo "Fokus-Erweiterung fehlt im Archiv — kein Upload"; exit 1; }
 codesign --force --sign - --entitlements ios/Fokus/Fokus.entitlements "$FOKUSX" >> "$LOG" 2>&1
+# 1.72.0 — Lage-Widget (WidgetKit) unter PlugIns/
+LAGEX=build/Alfred.xcarchive/Products/Applications/Runner.app/PlugIns/Lage.appex
+[ -d "$LAGEX" ] || { echo "Lage-Widget fehlt im Archiv — kein Upload"; exit 1; }
+codesign --force --sign - --entitlements ios/Lage/Lage.entitlements "$LAGEX" >> "$LOG" 2>&1
 codesign --force --sign - --entitlements ios/Runner/Runner.entitlements build/Alfred.xcarchive/Products/Applications/Runner.app >> "$LOG" 2>&1
 
 cat > build/ExportOptions.plist <<'PLIST'
@@ -60,16 +64,19 @@ APS="$(codesign -d --entitlements - --xml build/ipa-pruef/x/Payload/Runner.app 2
 echo "aps-environment: ${APS:-fehlt}"
 [ "$APS" = "production" ] || { echo "Push-Recht fehlt im Paket — kein Upload"; exit 1; }
 # gemeinsamer Schlüsselbund in App und Erweiterung (sonst sieht „Teilen an Alfred“ die Kopplung nicht)
-for teil in Payload/Runner.app Payload/Runner.app/PlugIns/Teilen.appex Payload/Runner.app/Extensions/Fokus.appex; do
+for teil in Payload/Runner.app Payload/Runner.app/PlugIns/Teilen.appex Payload/Runner.app/Extensions/Fokus.appex Payload/Runner.app/PlugIns/Lage.appex; do
   [ -d "build/ipa-pruef/x/$teil" ] || { echo "fehlt im Paket: $teil"; exit 1; }
   codesign -d --entitlements - --xml "build/ipa-pruef/x/$teil" 2>/dev/null | grep -q 'T28LD8TF6X.at.alfred.app.gemeinsam' || { echo "Schlüsselbund-Gruppe fehlt: $teil — kein Upload"; exit 1; }
 done
-echo "Schlüsselbund-Gruppe: App, Teilen und Fokus ok"
+echo "Schlüsselbund-Gruppe: App, Teilen, Fokus und Lage ok"
 # Apple ITMS-90626 (Build 112 abgelehnt): das Wort „Siri“ darf in Titeln/Beschreibungen der App Intents nicht vorkommen
-for meta in build/ipa-pruef/x/Payload/Runner.app/Metadata.appintents build/ipa-pruef/x/Payload/Runner.app/Extensions/Fokus.appex/Metadata.appintents; do
+for meta in build/ipa-pruef/x/Payload/Runner.app/Metadata.appintents build/ipa-pruef/x/Payload/Runner.app/Extensions/Fokus.appex/Metadata.appintents build/ipa-pruef/x/Payload/Runner.app/PlugIns/Lage.appex/Metadata.appintents; do
   if [ -d "$meta" ] && grep -qi 'siri' "$meta/extract.actionsdata"; then echo "„Siri“ in den Intent-Texten ($meta) — Apple lehnt das ab, kein Upload"; exit 1; fi
 done
 echo "Intent-Texte: ohne „Siri“ ok"
+# 1.72.0 — Live-Aktivitäten müssen in der App erlaubt sein
+/usr/libexec/PlistBuddy -c "Print :NSSupportsLiveActivities" build/ipa-pruef/x/Payload/Runner.app/Info.plist 2>/dev/null | grep -q true || { echo "NSSupportsLiveActivities fehlt — kein Upload"; exit 1; }
+echo "Live-Aktivitäten: erlaubt"
 
 echo "3b Export (Cloud-Signatur) + Upload zu App Store Connect"
 exportieren -archivePath build/Alfred.xcarchive -exportOptionsPlist build/ExportOptions.plist -exportPath build/ipa || { grep -E "error:|Error" "$LOG" | tail -20; exit 1; }

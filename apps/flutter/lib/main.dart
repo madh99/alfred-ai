@@ -425,6 +425,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       case 'antwort': if (server != null && server!.faden != z.faden) { _fadenWechseln(z.faden); } else { _neu(() => ansicht = Ansicht.chat); }
       case 'zwischenablage': _ablageHolen(kopiereId: z.id); // 1.54.0 — Antippen kopiert genau diesen Text
       case 'datei': _ablageHolen(); // 1.54.1 — Antippen speichert die Datei(en)
+      // 1.72.0 — Sprünge aus Lage-Widget und Live-Aktivität (alfred://…)
+      case 'lage': _neu(() { kachelnOffen = true; ansicht = Ansicht.kacheln; });
+      case 'eingang': _neu(() => ansicht = Ansicht.eingang);
+      case 'befund': _neu(() { befundeFilter = null; ansicht = Ansicht.befunde; });
+      case 'vorgang': _neu(() => ansicht = Ansicht.vorgaenge);
     }
   }
 

@@ -448,6 +448,9 @@ export class Alfred {
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
   /** v1518 Phase 5 H2 — Push an die Handys des Owners (APNs) */
   private pushDienst?: import('./geraete/push-dienst.js').PushDienst;
+  /** v1540 — Live-Aktivität bei roter Lage (Sperrbildschirm/Dynamic Island) */
+  private liveAktivitaet?: import('./geraete/live-aktivitaet.js').LiveAktivitaet;
+  private liveZuletzt = 0;
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
@@ -477,6 +480,37 @@ export class Alfred {
       this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln, nichtZugestellt: nichtZugestelltZeile(zustellProtokoll.zaehlung24h()), projekte: this.satellitProjekte?.lageZeile() ?? null });
       this.lageStand = new Date().toISOString();
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1220 Lage nicht aktualisiert'); }
+    void this.livePruefen(); // v1540
+  }
+
+  /** v1540 — Lage in Kurzform (Widget, Live-Aktivität): dieselbe Ampel wie die App. */
+  private async lageKurzBerechnen(): Promise<import('./lebenszeichen/lage-kurz.js').LageKurz> {
+    const { lageKurz } = await import('./lebenszeichen/lage-kurz.js');
+    const owner = this.tryOwner();
+    const lz = await this.lebenszeichenStatus();
+    let vorgaenge: Array<{ id: string; titel: string; status?: string; besitzer?: string }> = [];
+    let bestaetigungen = 0;
+    if (owner && this.database) {
+      const { VorgaengeRepository: VRepoK } = await import('@alfred/storage');
+      vorgaenge = await new VRepoK(this.database.getAdapter()).offene(owner, 50).catch(() => []);
+      try {
+        const ids = (await this.userRepo.getLinkedUsers(owner)).map(u => u.id);
+        if (!ids.includes(owner)) ids.push(owner);
+        bestaetigungen = (await this.confirmationQueue?.listPendingForUser(ids, 50) ?? []).length;
+      } catch { /* ohne Zahl */ }
+    }
+    return lageKurz(lz, vorgaenge, bestaetigungen);
+  }
+
+  /** v1540 — Live-Aktivität starten/aktualisieren/beenden; höchstens einmal je Minute (die Lage wird oft aktualisiert). */
+  private async livePruefen(erzwingen = false): Promise<void> {
+    if (!this.liveAktivitaet) return;
+    if (!erzwingen && Date.now() - this.liveZuletzt < 60_000) return;
+    this.liveZuletzt = Date.now();
+    try {
+      const r = await this.liveAktivitaet.pruefe(await this.lageKurzBerechnen());
+      if (r !== 'unveraendert') this.logger.info({ ergebnis: r }, 'v1540 Live-Aktivität geprüft');
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1540 Live-Aktivität nicht geprüft'); }
   }
   /** v1177 — Jarvis Schicht 2: Echtzeit-Ereignisse aus Home Assistant (WebSocket). */
   private haEreignisQuelle?: import('./ereignisse/ha-ereignisse.js').HaEreignisQuelle;
@@ -14088,6 +14122,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             einstellungenDatei: path.resolve(process.cwd(), 'data', 'push-einstellungen.json'),
           });
           this.pushDienst = push;
+          const { LiveAktivitaet } = await import('./geraete/live-aktivitaet.js'); // v1540
+          this.liveAktivitaet = new LiveAktivitaet({ datei: path.resolve(process.cwd(), 'data', 'live-aktivitaet.json'), apns, logger: this.logger.child({ component: 'live' }) });
           const stummNach = (r: { zugestellt: number }) => r.zugestellt > 0 && push.einstellungen().telegramStumm;
           // Bestätigungen an den Owner: Titel „Bestätigung nötig“, Grund = Aktion in Kurzform (keine Werte aus dem Inhalt)
           this.confirmationQueue?.setPushVorChat(async (b) => {
@@ -14648,6 +14684,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // läuft je Master-User (v1159) und schreibt jeden Lauf nach job_runs.
       const jobRegister = this.jobRegister;
       if (!jobRegister) throw new Error('Job-Register fehlt (v1165: wird im Puls-Block angelegt)');
+      // v1540 — Live-Aktivität: auch ohne neue Lage (Modell gestört, Wächter-Meldung) im 10-Minuten-Raster prüfen
+      jobRegister.registriere({
+        key: 'live-aktivitaet', beschreibung: 'Live-Aktivität am iPhone bei roter Lage starten/beenden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 2, timeoutMin: 2,
+        run: async () => { await this.livePruefen(true); return { ok: true, zaehler: { aktiv: this.liveAktivitaet?.aktiv ? 1 : 0 } }; },
+      });
       jobRegister.registriere({
         key: 'consolidation', beschreibung: 'Memory-Konsolidierung', takt: { art: 'taeglich', um: '03:00' }, bereich: 'master', slot: true,
         run: async ({ userId }) => {
@@ -16052,11 +16093,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       projekte: geraetId === WEB_OWNER_QUELLE ? undefined : await this.geraeteProjekteFuerApp(owner, geraetId), // v1487 — das Web hat eigene Projekt-Routen
       ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
-    return Object.assign(ansichten, this.weitereAnsichten(owner, db));
+    return Object.assign(ansichten, this.weitereAnsichten(owner, db, geraetId));
   }
 
   /** v1536 (Owner 20.10. „1–5 wie vorgeschlagen“) — Notizen, Wissen, Interessen, Ziele und Nutzung für die Apps (nur Owner). */
-  private weitereAnsichten(owner: string, db: AsyncDbAdapter) {
+  private weitereAnsichten(owner: string, db: AsyncDbAdapter, geraetId?: string) {
     const tag = (d: string, minus: number) => { const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() - minus); return t.toISOString().slice(0, 10); };
     return {
       notizen: async (q?: string, limit?: number) => {
@@ -16111,6 +16152,16 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const n = Math.min(Math.max(tage ?? 30, 1), 366);
         const heute = (await this.usageRepo.getHeute()).date;
         return { von: tag(heute, n - 1), bis: heute, tage: await this.usageRepo.getRange(tag(heute, n - 1), heute) };
+      },
+      // v1540 — Lage in Kurzform für Widget und Live-Aktivität
+      lageKurz: () => this.lageKurzBerechnen(),
+      // v1540 — Token der Live-Aktivität (Push-to-Start bzw. je Aktivität); nur Handys des Owners
+      liveMerken: async (b: Record<string, unknown>) => {
+        if (!this.liveAktivitaet || !geraetId) throw new Error('Live-Aktivität nicht verfügbar (kein APNs-Schlüssel)');
+        const r = this.liveAktivitaet.merke(geraetId, b);
+        if (!r.ok) throw new Error(r.grund);
+        if (b.art === 'start' || b.art === 'aktivitaet') void this.livePruefen(true); // ist es gerade rot, gleich starten bzw. aktualisieren
+        return r;
       },
     };
   }

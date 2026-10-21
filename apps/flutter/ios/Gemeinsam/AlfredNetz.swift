@@ -110,6 +110,24 @@ final class Netz: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     return (key, hash)
   }
 
+  /// 1.72.0 (v1540) — rohe JSON-Antwort (das Widget dekodiert selbst), mit Statusprüfung.
+  func daten(_ pfad: String) async throws -> Data {
+    let (d, res) = try await sitzung.data(for: anfrage("GET", pfad, nil))
+    let status = (res as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else { throw NSError(domain: "at.alfred.lage", code: status, userInfo: [NSLocalizedDescriptionKey: "Alfred nicht erreichbar (HTTP \(status))"]) }
+    return d
+  }
+
+  /// 1.72.0 (v1540) — Vorgang zurückstellen (Widget „Später“): bis morgen 8 Uhr.
+  func spaeter(vorgang: String) async throws {
+    _ = try await json("POST", "/api/geraete/vorgaenge/\(vorgang)", ["aktion": "spaeter", "bis": "morgen"])
+  }
+
+  /// 1.72.0 (v1540) — Token der Live-Aktivität an den Server (art start | aktivitaet | ende).
+  func live(_ body: [String: Any]) async throws {
+    _ = try await json("POST", "/api/geraete/live", body)
+  }
+
   /// v1522 — Standortzone melden (nur der Name; `null` = unterwegs).
   func zone(art: String, zone: String?, bewegung: String? = nil) async throws {
     _ = try await json("POST", "/api/geraete/zone", ["art": art, "zone": zone.map { $0 as Any } ?? NSNull(), "bewegung": bewegung.map { $0 as Any } ?? NSNull()])

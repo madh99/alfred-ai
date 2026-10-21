@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Lage-Widget am iPhone in allen Größen, Live-Aktivität bei roter Lage (v1540, App 1.72.0)
+
+Owner 21.10.: „Widget vollumfänglich alle Größen und live bei rot mitmachen“.
+
+- **Lage-Widget** (neue Widget-Erweiterung „Lage“):
+  - **Home-Bildschirm:**
+    - **klein:** Ampel, Zustand, was dich braucht, Geräte, Stand;
+    - **mittel:** dazu der jüngste Befund und Kosten heute;
+    - **groß und iPad extragroß:** die Befunde mit Alter, der erste wartende Vorgang mit Knopf „Morgen“ (zurückstellen) und der Knopf „Aktualisieren“.
+  - **Sperrbildschirm:** rund (Ampel und Zahl), rechteckig (Zustand, jüngster Befund, offene Punkte) und als Zeile. StandBy nutzt das kleine Widget.
+  - **Antippen** öffnet die passende Stelle der App: Lage, Eingang, Befunde oder Vorgänge.
+  - **Datenschutz:** Befundtitel sind auf dem gesperrten Gerät verborgen.
+  - **Daten:** Das Widget holt die Lage selbst über die gepinnte Verbindung, alle 15 Minuten, bei Rot alle 5 Minuten. Ohne Netz zeigt es den letzten Stand mit dem Hinweis „offline“. Die App frischt das Widget auf, sobald sie in den Hintergrund geht.
+- **Live-Aktivität bei Rot** auf Sperrbildschirm und Dynamic Island:
+  - Wird die Lage rot (gestörtes Modell oder Wächter-Meldung), startet der Server die Aktivität per Push auf dem iPhone (Push-to-Start, iOS 17.2+). Ändert sich der Zustand, aktualisiert er sie.
+  - Ist die Lage fünf Minuten lang nicht mehr rot, beendet er sie. Die Entwarnung bleibt 15 Minuten sichtbar. Kurze Aussetzer starten keine neue Aktivität.
+  - Über Apple gehen nur Ampel, Zähler und Uhrzeit, keine Namen und keine Werte (Spec Geräte §20.5).
+  - Geprüft wird nach jeder Lage-Aktualisierung (höchstens einmal je Minute) und im 10-Minuten-Raster (Job `live-aktivitaet`).
+- **Server:** neue Geräte-Routen `GET /api/geraete/lage` (Lage in Kurzform, dieselbe Ampel wie die App) und `POST /api/geraete/live` (Tokens der Live-Aktivität), nur für Geräte des Owners. Der APNs-Sender kennt den Push-Typ `liveactivity`. Die Tokens liegen in `data/live-aktivitaet.json`.
+- **TestFlight-Prüfung** erweitert: Das Archiv muss das Widget enthalten, mit Schlüsselbund-Gruppe und ohne „Siri“ in den Intent-Texten. Die App muss Live-Aktivitäten erlauben.
+
 ### Added — Fernzugriff: SSH auf fremde Hosts über die CMDB, mit gepinntem Host-Schlüssel (v1539)
 
 Owner 21.10.: „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“. Realfall 21.10.: Alfred konnte `zpool status` auf dem Proxmox-Knoten nicht ausführen. Der Host lehnte seinen Schlüssel ab, und es gab keinen Weg, einen Zugang zu hinterlegen.
