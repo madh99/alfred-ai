@@ -124,7 +124,7 @@ describe('v1542 F3 Ergebnisse', () => {
     expect(r.success).toBe(true);
     expect(r.display).toContain('(Exit 4)');
     expect(r.display).toContain('SMART overall-health: PASSED');
-    expect(r.display!.length).toBeLessThan(12_200);
+    expect(r.display!.length).toBeLessThan(30_200); // v1548 K1: Grenze 30 000
     const f = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'ls -l /dev/disk/by-id/kaputt' }, ctx);
     expect(f.success).toBe(false);
     expect(f.error).toContain('nicht gefunden');
@@ -152,5 +152,22 @@ describe('v1543 F4 Wiederherstellbarkeit', () => {
     ausgabe = zpool;
     await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zfs list' }, ctx); // nicht zpool status → keine Prüfung
     expect(gefragt).toHaveLength(2);
+  });
+});
+
+describe('v1548 K1 Kürzung', () => {
+  it('bis 30 000 Zeichen ganz, darüber gekürzt mit Hinweis, wie es kompakter geht', async () => {
+    const zeilen = (n: number) => Array.from({ length: n }, (_, i) => `container-${i} `.padEnd(300, '.')).join('\n');
+    let ausgabe = zeilen(48); // ≈ 14 600 Zeichen wie im Realfall (docker ps, 40+ Container)
+    const t = aufbau(() => ({ code: 0, stdout: ausgabe, stderr: '' }));
+    await aktiv(t);
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'docker ps' }, ctx);
+    expect(r.display).toContain('container-47');
+    expect(r.display).not.toContain('ausgelassen');
+    ausgabe = zeilen(200); // ≈ 60 000
+    const g = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'docker ps' }, ctx);
+    expect(g.display!.length).toBeLessThan(30_200);
+    expect(g.display).toContain('Ausgabe gekürzt — kompakter abfragen');
+    expect(g.display).toContain('container-199');
   });
 });

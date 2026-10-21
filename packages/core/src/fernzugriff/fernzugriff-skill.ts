@@ -42,12 +42,16 @@ export interface FernzugriffDeps {
   wiederherstellbarkeit?: (vmids: number[]) => Promise<string | undefined>;
 }
 
-/** v1542 (F3) — so viel geht ans Modell (die Pipeline kappt bei 12 000 mit Anfang und Ende); vorher 6000 → SMART-Werte fehlten */
-export const ANZEIGE_MAX = 12_000;
+/** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
+ *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
+export const ANZEIGE_MAX = 30_000;
 const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'zugang_bestaetigen'] as const;
 
+/** v1548 (K1) — bei einer Kürzung sagt die Ausgabe selbst, wie es kompakter geht (Modell fragt sonst dieselbe lange Ausgabe erneut). */
+export const KUERZUNG_HINWEIS = '[Ausgabe gekürzt — kompakter abfragen: z. B. docker ps --format \'{{.Names}}\\t{{.Status}}\', | head -n N, | tail -n +N, | grep <muster>; das sind Lesebefehle ohne Rückfrage]';
+
 function kuerze(t: string, max = ANZEIGE_MAX): string {
-  return kuerzeMitte(t, max);
+  return t.length <= max ? t : `${kuerzeMitte(t, max - KUERZUNG_HINWEIS.length - 1)}\n${KUERZUNG_HINWEIS}`;
 }
 
 export class FernzugriffSkill extends Skill {

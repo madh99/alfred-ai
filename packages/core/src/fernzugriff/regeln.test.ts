@@ -56,6 +56,18 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('lesen');
     }
   });
+  it('v1548 K2/K3: Befehle aus dem Realfall 22.10. 01:09 (dockerhost) sind lesen', () => {
+    // genau so vom Modell geschickt (im JSON stand \\t, im Befehl also Backslash + t)
+    expect(befehlsklasse(String.raw`docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'`)).toBe('lesen');
+    expect(befehlsklasse('docker ps | tail -n +22')).toBe('lesen');
+    expect(befehlsklasse('docker ps -a | head -n 20')).toBe('lesen');
+    expect(befehlsklasse(String.raw`docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}'`)).toBe('lesen');
+    expect(befehlsklasse(`docker inspect --format '{{.State.Health.Status}}' homeassistant`)).toBe('lesen');
+    // weiterhin gesperrt: Ersetzung in '…' gibt es nicht, aber $, Backtick, Backslash bleiben verdächtig; Env nie
+    for (const b of [`docker ps --format '{{.Names}}'$(id)`, `docker ps --format '$(id)'`, `docker inspect --format '{{json .Config}}' x`, String.raw`docker ps --format '{{.Names}}\n'`, `docker ps --format '{{.Command}}'`]) {
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
+    }
+  });
   it('zerstörerische Befehle nie, auch versteckt in einer Kette', () => {
     for (const b of ['zpool destroy tank', 'mkfs.ext4 /dev/sdb1', 'wipefs -a /dev/sdb', 'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'rm -rf /etc', 'qm list; zpool labelclear /dev/sdb', 'pvecm delnode pve2', 'zfs destroy -r rpool/data', '']) {
       expect(befehlsklasse(b), b).toBe('nie');

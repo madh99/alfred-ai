@@ -69,6 +69,7 @@ const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const MAX_TOOL_RESULT_CHARS = 12_000; // Truncate tool results exceeding this length
+const FERNZUGRIFF_MAX_CHARS = 30_000; // v1548 (K1) — Fernzugriff-Ausgaben (Owner 22.10.: K1–K3)
 
 
 /** Sensitive field names to redact from tool results before sending to LLM. */
@@ -2212,7 +2213,7 @@ export class MessagePipeline {
       }
       // Redact sensitive secrets from tool results before sending to LLM
       content = redactSecrets(content);
-      content = truncateToolResult(content, MAX_TOOL_RESULT_CHARS);
+      content = truncateToolResult(content, tc.name === 'fernzugriff' ? FERNZUGRIFF_MAX_CHARS : MAX_TOOL_RESULT_CHARS); // v1548 (K1) — Fernzugriff: lange Ausgaben (docker ps, smartctl) ganz
       return {
         type: 'tool_result' as const,
         tool_use_id: tc.id,

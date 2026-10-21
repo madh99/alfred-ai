@@ -93,7 +93,7 @@ const HARTE_ZEICHEN = /[`<>\\\n\r]|\$[({A-Za-z_]/;
 /** v1542 — Filter, die hinter einer Pipe stehen dürfen: lesen nur ihre Eingabe, schreiben nichts, starten nichts. */
 const FILTER: RegExp[] = [
   /^e?grep( -[a-eg-zA-Z]+)*( -e)? ("[^"]*"|'[^']*'|[\w.:/@=-]+)$/,
-  /^(head|tail)( -n ?\d{1,5}| -\d{1,5}| -c ?\d{1,7})?$/,
+  /^(head|tail)( -n ?\+?\d{1,5}| -\d{1,5}| -c ?\+?\d{1,7})?$/, // v1548 (K3) — auch „ab Zeile N“ (-n +N)
   /^wc( -[lwcm]+)?$/,
   /^sort( -[nrhuV]+| -k ?[\d,]+)*$/,
   /^uniq( -[cdu]+)?$/,
@@ -106,7 +106,9 @@ function einzelBefehl(b: string): Befehlsklasse {
 }
 
 export function befehlsklasse(befehl: string): Befehlsklasse {
-  const b = normalisiereBefehl(befehl);
+  // v1548 (K2, Realfall 22.10. 01:09) — nur für die Einordnung: `\t` (Tabulator in Docker-Formatvorlagen) wie ein Leerzeichen, und
+  // '…' ohne $, Backtick und Backslash wie "…" (in einfachen Anführungszeichen ersetzt die Shell nichts). Ausgeführt wird unverändert.
+  const b = normalisiereBefehl(befehl.replace(/\\t/g, ' ').replace(/'([^'"$`\\]*)'/g, '"$1"'));
   if (!b) return 'nie';
   if (NIE_BEFEHLE.some(r => r.test(b))) return 'nie';
   if (!STEUERZEICHEN.test(b)) return einzelBefehl(b);

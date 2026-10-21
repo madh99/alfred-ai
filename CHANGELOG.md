@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fernzugriff: lange Ausgaben ganz, Docker-Formatvorlagen in einfachen Anführungszeichen, „tail -n +N“ (v1548)
+
+Owner 22.10.: „K1–K3 wie vorgeschlagen umsetzen“. Realfall 22.10., 01:09 (`docker ps` auf dem Docker-Host mit rund 40 Containern):
+- Die Ausgabe hatte rund 14 600 Zeichen, 2 673 Zeichen in der Mitte fehlten.
+- Alfreds kompakte Nachfragen wurden zweimal fälschlich als „nicht lesend“ abgewiesen.
+
+- **K1 — 30 000 statt 12 000 Zeichen** für Fernzugriff-Ausgaben: im Skill, in der Pipeline (nur für diesen Skill) und in der Fortsetzung nach einer Freigabe. Wird darüber hinaus gekürzt, sagt die Ausgabe selbst, wie es kompakter geht (`--format`, `| head -n N`, `| tail -n +N`, `| grep`).
+- **K2 — Docker-Formatvorlagen in einfachen Anführungszeichen und mit `\t`** gelten als lesend, z. B. `docker ps --format 'table {{.Names}}\t{{.Status}}'`. Für die Prüfung zählt `\t` wie ein Leerzeichen, und `'…'` ohne `$`, Backtick und Backslash zählt wie `"…"`. Ausgeführt wird der Befehl unverändert. Die feste Feldliste aus v1546 bleibt bestehen.
+- **K3 — `head`/`tail -n +N`** („ab Zeile N“) ist als Filter erlaubt.
+- Tests mit genau den Befehlen aus dem Realfall.
+
 ### Fixed — Bestätigungen aus dem Denk-Durchlauf: echte Aktion sichtbar, kein Ticket-Doppel, Rückmeldung in der App (v1547)
 
 Owner 22.10.: „B1–B3 wie empfohlen umsetzen“. Realfall 22.10., 00:36: „Latenz bei homeassistant prüfen“ legte in Wahrheit ein Ticket an. Es war ein zweites zur selben Latenz, und das Ergebnis kam nur in Telegram an.
