@@ -104,8 +104,8 @@ export class FernzugriffSkill extends Skill {
         case 'anlegen': return await this.anlegen(owner, input, herkunft);
         case 'zugang_bestaetigen': return await this.zugangBestaetigen(owner, input);
         case 'pruefen': return await this.pruefen(owner, input);
-        case 'lesen': return await this.lesen(owner, input);
-        case 'ausfuehren': return await this.ausfuehren(owner, input, herkunft);
+        case 'lesen': return await this.lesen(owner, input, context);
+        case 'ausfuehren': return await this.ausfuehren(owner, input, herkunft, context);
         case 'entfernen': return await this.entfernen(owner, input, herkunft);
         default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => a !== 'zugang_bestaetigen').join(', ')})` };
       }
@@ -221,7 +221,7 @@ export class FernzugriffSkill extends Skill {
    * v1543 (F4) — feste Regel: nennt `zpool status` dauerhafte Datenfehler in VM-Volumes, werden die Sicherungen dieser VMs aus allen
    * Quellen geprüft und an das Ergebnis gehängt (das Modell muss nicht daran denken). Fehler der Prüfung brechen das Ergebnis nicht.
    */
-  private async mitWiederherstellbarkeit(befehl: string, r: SshErgebnis, e: SkillResult): Promise<SkillResult> {
+  private async mitWiederherstellbarkeit(befehl: string, r: SshErgebnis, e: SkillResult, context?: SkillContext): Promise<SkillResult> {
     if (!this.deps.wiederherstellbarkeit || !/\bzpool status\b/.test(befehl)) return e;
     const vmids = betroffeneVmids(r.stdout);
     if (!vmids.length) return e;
@@ -229,6 +229,8 @@ export class FernzugriffSkill extends Skill {
       const text = await this.deps.wiederherstellbarkeit(vmids);
       if (!text) return e;
       this.deps.protokoll?.('v1543 Wiederherstellbarkeit angehängt', { vmids });
+      // v1544 — der Abschnitt erreicht den Owner sicher: die Pipeline hängt ihn an, wenn das Modell ihn weglässt
+      if (context?.antwortZusatz) (context.antwortZusatz.nachsaetze ??= []).push(text);
       return { ...e, display: `${e.display ?? ''}\n\n${text}`, data: { ...(e.data as Record<string, unknown>), wiederherstellbarkeit: text } };
     } catch (err) {
       return { ...e, display: `${e.display ?? ''}\n\n(Wiederherstellbarkeit nicht prüfbar: ${(err as Error).message.slice(0, 160)})` };
@@ -244,7 +246,7 @@ export class FernzugriffSkill extends Skill {
   }
 
   /** Lesender Befehl: als root, wenn sudo ohne Passwort geht, sonst als Benutzer. */
-  private async lesen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+  private async lesen(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const befehl = typeof input.befehl === 'string' ? normalisiereBefehl(input.befehl) : '';
     const klasse = befehlsklasse(befehl);
     if (klasse !== 'lesen') return { success: false, error: klasse === 'nie' ? `„${befehl.slice(0, 120)}“ ist nie erlaubt.` : `„${befehl.slice(0, 120)}“ ist kein reiner Lesebefehl — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
@@ -252,10 +254,10 @@ export class FernzugriffSkill extends Skill {
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
     this.deps.protokoll?.('v1539 Fernzugriff lesen', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
-    return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r));
+    return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r), context);
   }
 
-  private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
+  private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }, context?: SkillContext): Promise<SkillResult> {
     const { freigabe, ...params } = input;
     const befehl = typeof params.befehl === 'string' ? normalisiereBefehl(params.befehl) : '';
     if (!befehl) return { success: false, error: 'ausfuehren braucht befehl' };
@@ -264,7 +266,7 @@ export class FernzugriffSkill extends Skill {
       this.deps.protokoll?.('v1539 Fernzugriff abgewiesen (nie)', { name: params.name, befehl: befehl.slice(0, 200) });
       return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt (zerstört Datenträger, Pools oder das System). Das muss der Owner selbst am Host tun.` };
     }
-    if (klasse === 'lesen') return this.lesen(owner, params);
+    if (klasse === 'lesen') return this.lesen(owner, params, context);
     const z = await this.zugang(owner, params);
     const alsRoot = params.als_root !== false;
     const gebunden = { action: 'ausfuehren', name: z.name, befehl, als_root: alsRoot, ...(typeof params.timeout_s === 'number' ? { timeout_s: params.timeout_s } : {}) };
@@ -272,7 +274,7 @@ export class FernzugriffSkill extends Skill {
       if (!this.freigaben.verbrauche(freigabe, 'fernzugriff', 'ausfuehren', gebunden)) return { success: false, error: 'Diese Freigabe ist ungültig, abgelaufen oder gehört zu einem anderen Befehl.' };
       const r = await this.lauf(owner, z, fernBefehl(befehl, alsRoot), this.timeout(params));
       this.deps.protokoll?.('v1539 Fernzugriff ausgeführt (bestätigt)', { name: z.name, befehl: befehl.slice(0, 200), code: r.code, root: alsRoot });
-      return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r));
+      return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r), context);
     }
     const nonce = this.freigaben.erzeuge('fernzugriff', 'ausfuehren', gebunden);
     const frage = `🖥 Auf ${z.name} (${z.host}) ${alsRoot ? 'als root ' : ''}ausführen?\n\n${befehl.slice(0, 1500)}`;

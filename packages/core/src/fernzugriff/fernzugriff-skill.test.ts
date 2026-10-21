@@ -142,11 +142,15 @@ describe('v1543 F4 Wiederherstellbarkeit', () => {
     const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status -v zfs-nvme002' }, ctx);
     expect(gefragt).toEqual([[106]]);
     expect(r.display).toContain('### Wiederherstellbarkeit');
+    // v1544 — als Nachsatz für die Pipeline vorgemerkt
+    const mitZusatz = { ...ctx, antwortZusatz: { quellen: [] as string[] } } as SkillContext;
+    await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status -v zfs-nvme002' }, mitZusatz);
+    expect(mitZusatz.antwortZusatz?.nachsaetze?.[0]).toContain('### Wiederherstellbarkeit');
     ausgabe = 'pool: rpool\n state: ONLINE\nerrors: No known data errors\n';
     const ok = await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status' }, ctx);
     expect(ok.display).not.toContain('Wiederherstellbarkeit');
     ausgabe = zpool;
     await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zfs list' }, ctx); // nicht zpool status → keine Prüfung
-    expect(gefragt).toHaveLength(1);
+    expect(gefragt).toHaveLength(2);
   });
 });

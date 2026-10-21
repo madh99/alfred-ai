@@ -668,9 +668,9 @@ export class MessagePipeline {
       tracePhase('alfred_user', { hasRole: !!alfredUser });
 
       // HA context
+      baseContext.antwortZusatz = { quellen: [] }; // v1432; v1544 — auch ohne Cluster (Nachsätze der Skills)
       if (this.nodeId !== 'single') {
         baseContext.nodeId = this.nodeId;
-        baseContext.antwortZusatz = { quellen: [] }; // v1432
         baseContext.clusterEnabled = true;
       }
 
@@ -1818,6 +1818,11 @@ export class MessagePipeline {
       const zusatz = baseContext.antwortZusatz;
       if (zusatz?.ausstehend && zusatz.quellen.length === 0) responseText = zusatz.ausstehend;
       else if (zusatz?.quellen.length) for (const q of new Set(zusatz.quellen)) if (!responseText.includes(q)) responseText += `\n\n🔎 ${q}`;
+      // v1544 — feste Abschnitte der Skills (z. B. „Wiederherstellbarkeit“, Realfall 22.10.: das Modell ließ den angehängten Abschnitt weg)
+      for (const n of new Set(zusatz?.nachsaetze ?? [])) {
+        const kopf = n.split('\n')[0]!.replace(/^#+\s*/, '').trim();
+        if (kopf && !responseText.includes(kopf)) responseText += `\n\n${n}`;
+      }
 
       // 7b. Output moderation (optional — skipped when no moderationService configured)
       if (this.moderationService && responseText && responseText !== '(no response)') {

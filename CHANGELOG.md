@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Feste Abschnitte erreichen den Owner sicher (v1544)
+
+Live-Probe von v1543 am 22.10.: Die Regel „Wiederherstellbarkeit“ lief und hängte ihren Abschnitt an das Ergebnis an (Log „v1543 Wiederherstellbarkeit geprüft“: VM 100, 106, 115). Das Modell ließ den Abschnitt in seiner Antwort aber weg. Damit hing die Regel doch wieder vom Modell ab.
+
+- **Nachsätze:** Skills können ganze Abschnitte als Nachsatz vormerken (`antwortZusatz.nachsaetze`). Fehlt die Überschrift eines Nachsatzes in der Antwort, hängt die Pipeline ihn wörtlich an. Das gilt auch für die Fortsetzung nach einer Freigabe. Der Fernzugriff merkt den Abschnitt „Wiederherstellbarkeit“ so vor.
+- `antwortZusatz` gibt es jetzt in jedem Betrieb. Bisher wurde es nur im Cluster-Betrieb angelegt, auf einem einzelnen Knoten fehlten damit auch die Quellenzeilen aus v1432.
+
 ### Added — Feste Regel „Wiederherstellbarkeit“ bei ZFS-Datenfehlern (v1543)
 
 Owner 22.10.: „F1–F4 wie empfohlen umsetzen“, hier F4. Realfall 21.10.: `zpool status` zeigte dauerhafte Datenfehler in VM-Volumes. Alfred empfahl daraufhin „aktuellere Sicherungen suchen“, fragte aber weder Commvault noch die übrigen Backup-Speicher selbst ab.

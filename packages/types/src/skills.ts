@@ -108,7 +108,7 @@ export interface SkillContext {
   /** AbortSignal for cooperative cancellation (e.g. pause). */
   abortSignal?: AbortSignal;
   /** v1432 — Zusatz zur Antwort dieses Zugs (Pipeline): Quellenzeilen darunter; `ausstehend` ersetzt die Antwort durch einen festen Satz */
-  antwortZusatz?: { quellen: string[]; ausstehend?: string };
+  antwortZusatz?: { quellen: string[]; ausstehend?: string; /** v1544 — ganze Abschnitte (erste Zeile = Überschrift), wörtlich angehängt, wenn die Antwort sie nicht enthält */ nachsaetze?: string[] };
   /** v1498 — Wortlaut der Nachricht, auf die das Modell gerade antwortet (z. B. Titel einer Projektfrage in den Worten des Owners). */
   anfrageText?: string;
   /** v1490 — nach der Freigabe: die Sitzung, aus der die Anfrage kam (die Ausführung selbst läuft im Chat der Bestätigung) */
