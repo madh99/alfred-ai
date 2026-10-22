@@ -188,6 +188,8 @@ Owner 22.10.: „natürlich sollte das auch mit ITSM und CMDB vollumfänglich ve
 | 12 | Sperrzeiten sollen **gepflegt werden können** | Sperrzeiten-Kalender (global oder je Service/Gruppe), Pflege wie Wartungsfenster; optional „Abwesenheit des Owners“ aus dem Kalender als Sperrzeit für nicht dringende Changes. |
 | 13 | Zeitfenster: Vorschlag erbeten; **Rückweg nur vorschlagen, dann auf Freigabe warten** | **Vorschlag:** Verknüpfung, wenn innerhalb von **24 h** nach Abschluss (bei als kritisch markierten Services **72 h**) ein Incident oder Monitoring-Befund ein Asset/Service des Changes oder einen direkt abhängigen (CMDB) betrifft. Alfred meldet sofort (Push „zeitkritisch“), hängt Change, Prüfergebnisse und Rückweg an und **wartet auf die Freigabe** des Rückwegs — er geht ihn nie selbst. |
 
+**Owner 22.10. (Annahme cf82f3f2):** Netz — Alfred entscheidet selbst, ob ein neues VLAN nötig ist oder Default reicht, legt VLANs selbst an und wählt selbst das Gerät (UniFi oder pfSense) → die Netz-Aktionen aus E4-N (I7) werden vor dem ersten Umzug gebraucht, Owner-Schritte für VLANs sind nur Übergang. Sicherung — Ziel legt vorerst der Owner fest; sobald die Backup-Infrastruktur funktioniert, plant Alfred Sicherungen in den Changes mit (PBS-Skill I4c).
+
 **Weitere Folgen:** Wartungsfenster, Sperrzeiten, Benachrichtigungsregeln und Standard-Changes sind eigene, in App/Web pflegbare Objekte (Teil von I3/I4b); UniFi-DNS-Aktionen und PBS-Skill kommen in I7 bzw. als eigenes Release vor dem ersten Lauf mit Sicherungs-Bezug.
 
 ## 6. Vorgeschlagene Reihenfolge der Umsetzung (je Release mit Live-Beweis)
