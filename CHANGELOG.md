@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bestandsaufnahme der Infrastruktur, nur lesend (v1553, Spec Infrastruktur-Vorhaben I1)
+
+Owner 22.10.: „I1 wie vorgeschlagen umsetzen“ (Spec `docs/specs/2026-10-22-infrastruktur-vorhaben.md`).
+
+- **Neuer Skill `infrastruktur`, Aktion `bestand`:**
+  - Er aktualisiert die CMDB aus den Quellen Fernzugriff, Proxmox, NPM, UniFi, pfSense und MikroTik.
+  - Er liest die Sicherungen aller VMs/CTs in einem Durchgang über alle Backup-Speicher (neu: `proxmox.alleBackupsDaten`).
+  - Er erstellt den **Bestandsbericht** und legt ihn als CMDB-Dokument (Typ `inventory`) ab.
+  - An der Infrastruktur ändert er nichts.
+- **Neue CMDB-Quelle `fernzugriff`:** feste Lesebefehle je Linux-Host mit Fernzugang, aus der Leseliste oder im Lese-Käfig, mit Schwärzung. Ohne Modell wird erfasst:
+  - Betriebssystem, Kernel, CPUs, RAM, Dateisysteme, laufende Dienste, offene Ports, (Sicherheits-)Updates;
+  - Container mit Image, Zustand, Gesundheit, Ports, Netzen, Mounts und Compose-Zuordnung, dazu Compose-Projekte und Docker-Volumes mit Größe.
+
+  In der CMDB werden daraus Host, Container, Anwendung (Compose-Projekt) und Speicher (Volume), mit den Beziehungen `runs_on`, `part_of` und `depends_on`. Bisher standen Container gar nicht in der CMDB, weil der Docker-Skill nicht eingerichtet ist.
+- **Feste Regeln für Auffälligkeiten,** nach Schwere sortiert:
+  - Container unhealthy, im Neustart-Kreislauf oder mit Fehler beendet;
+  - Dateisystem ab 85 % (ab 95 % hoch);
+  - offene Sicherheitsupdates;
+  - Betriebssystem ohne Support (Debian ≤ 11, Ubuntu < 22.04 oder ohne LTS);
+  - laufende VM ohne Sicherung oder mit Sicherung älter als 7 Tage (älter als 30 Tage: hoch);
+  - nicht erreichbare Backup-Speicher;
+  - Proxy-Ziel, auf dem kein Dienst lauscht;
+  - Teile, die nicht erfasst werden konnten.
+- **Leseliste ergänzt:** `cat /etc/os-release` (und `hostname`/`debian_version`/`redhat-release`/`issue`) sowie genau die Compose-Zuordnung über `docker inspect` (nur die Labels `com.docker.compose.project`/`service`).
+- **Stichwörter** „Bestandsaufnahme“, „Bestand“, „Architektur“ und „Migration“ wählen die Infrastruktur-Werkzeuge.
+
 ### Fixed — Käfig-Selbsttest prüft Inhalt statt nur Öffnen (v1552)
 
 Realfall 22.10. nach v1551 auf pve: Der Selbsttest meldete „/etc/shadow lesbar“ und sperrte den Käfig vorsichtshalber. Tatsächlich legt `InaccessiblePaths` einen **leeren** Platzhalter mit Rechten 000 über die Datei. Das Leserecht des Käfigs (`CAP_DAC_READ_SEARCH`) darf ihn öffnen, er liefert aber nichts. Die Proben für „Lesen geht“ (`/etc/sudoers`) und „Geheimnis unsichtbar“ (`/etc/shadow`) prüfen jetzt, ob **Inhalt** kommt.

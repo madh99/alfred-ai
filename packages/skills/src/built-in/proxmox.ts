@@ -734,6 +734,46 @@ export class ProxmoxSkill extends Skill {
    * v1543 (Owner 22.10. „F4“) — alle Sicherungen einer VM über alle Knoten und Speicher mit Inhalt „backup“ (lokal, NFS, PBS),
    * neueste zuerst; nicht erreichbare oder inaktive Backup-Speicher werden ausgewiesen (Realfall 21.10.: pbs-unas „No route to host“).
    */
+  /**
+   * I1 (Spec Infrastruktur-Vorhaben) — Sicherungen ALLER VMs/CTs in einem Durchgang (je Backup-Speicher einmal statt je VM):
+   * vmid → neueste Sicherung, Anzahl, Speicher; dazu VMs ohne Sicherung und nicht erreichbare Speicher.
+   */
+  async alleBackupsDaten(): Promise<{ jeVm: Record<number, { name?: string; neueste?: string; anzahl: number; speicher: string[] }>; ohne: Array<{ vmid: number; name?: string }>; unerreichbar: Array<{ speicher: string; grund: string }>; speicher: string[] }> {
+    const vms = await this.getAllVms();
+    const jeVm: Record<number, { name?: string; neueste?: string; anzahl: number; speicher: string[] }> = {};
+    for (const v of vms) jeVm[v.vmid] = { name: v.name, anzahl: 0, speicher: [] };
+    const nodes = (await this.get<{ node: string; status?: string }[]>('/nodes')).filter(n => n.status !== 'offline');
+    const gesehen = new Set<string>();
+    const unerreichbar: Array<{ speicher: string; grund: string }> = [];
+    const speicher: string[] = [];
+    for (const n of nodes) {
+      const liste = await this.get<Array<{ storage: string; content?: string; active?: number; enabled?: number; shared?: number }>>(`/nodes/${n.node}/storage`).catch(() => []);
+      for (const st of liste) {
+        if (!(st.content ?? '').split(',').includes('backup')) continue;
+        const schluessel = st.shared ? st.storage : `${n.node}/${st.storage}`;
+        if (gesehen.has(schluessel)) continue;
+        gesehen.add(schluessel);
+        speicher.push(schluessel);
+        if (st.enabled === 0) { unerreichbar.push({ speicher: schluessel, grund: 'deaktiviert' }); continue; }
+        if (!st.active) { unerreichbar.push({ speicher: schluessel, grund: 'nicht aktiv (nicht erreichbar)' }); continue; }
+        try {
+          const inhalt = await this.get<Array<{ vmid?: number; ctime?: number }>>(`/nodes/${n.node}/storage/${encodeURIComponent(st.storage)}/content?content=backup`);
+          for (const b of inhalt) {
+            const id = Number(b.vmid);
+            if (!Number.isFinite(id)) continue;
+            const e = (jeVm[id] ??= { anzahl: 0, speicher: [] });
+            e.anzahl++;
+            if (!e.speicher.includes(schluessel)) e.speicher.push(schluessel);
+            const zeit = b.ctime ? new Date(b.ctime * 1000).toISOString() : undefined;
+            if (zeit && (!e.neueste || zeit > e.neueste)) e.neueste = zeit;
+          }
+        } catch (err) { unerreichbar.push({ speicher: schluessel, grund: (err as Error).message.slice(0, 120) }); }
+      }
+    }
+    const ohne = vms.filter(v => !jeVm[v.vmid]?.anzahl).map(v => ({ vmid: v.vmid, name: v.name }));
+    return { jeVm, ohne, unerreichbar, speicher };
+  }
+
   async backupsVmDaten(vmid: number): Promise<{ vmid: number; name?: string; backups: Array<{ speicher: string; volid: string; zeit: string; groesse?: number; format?: string; geprueft?: string }>; unerreichbar: Array<{ speicher: string; grund: string }>; speicher: string[] }> {
     const vm = (await this.getAllVms()).find(e => e.vmid === vmid);
     const nodes = (await this.get<{ node: string; status?: string }[]>('/nodes')).filter(n => n.status !== 'offline');

@@ -454,6 +454,9 @@ export class Alfred {
   /** v1550 (S4) — aktive Fernzugänge (Namen) für Hinweise und Werkzeugwahl */
   private fernzugangNamen: string[] = [];
   private fernzugangNamenAuffrischen?: () => Promise<void>;
+  /** I1 — Fernzugriff-Skill (Sammler) und letzte Host-Bestände der Discovery */
+  private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+  private hostBestaende = new Map<string, import('./infrastruktur/sammler.js').HostBestand>();
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
@@ -3427,6 +3430,38 @@ export class Alfred {
             return data?.stdout ?? result.display ?? '';
           });
         }
+
+        // I1 (Spec Infrastruktur-Vorhaben) — Hosts mit Fernzugang von innen: OS, Ressourcen, Updates, Dienste, Ports, Container,
+        // Compose-Projekte, Volumes. Feste Lesebefehle (Leseliste/Lese-Käfig), keine Änderungen.
+        cmdbSkill.registerDiscoverySource('fernzugriff', async () => {
+          const assets: any[] = []; const relations: any[] = [];
+          const fz = this.fernzugriffRef;
+          if (!fz) return { assets, relations };
+          const { sammleLinux } = await import('./infrastruktur/sammler.js');
+          for (const z of await fz.aktiveZugaenge()) {
+            const b = await sammleLinux(z.name, z.host, (cmd) => fz.lesenIntern(z.name, cmd, 90_000));
+            this.hostBestaende.set(z.name, b);
+            const hostKey = `fernzugriff:host:${z.name}`;
+            assets.push({ name: z.name, assetType: 'server', sourceSkill: 'fernzugriff', sourceId: `host:${z.name}`, ipAddress: z.host, status: 'active', attributes: {
+              os: b.os?.name, os_id: b.os?.id, os_version: b.os?.version, kernel: b.kernel, cpus: b.cpus, ram_total: b.ram?.gesamt, ram_used: b.ram?.belegt,
+              updates: b.updates?.anzahl, security_updates: b.updates?.sicherheit, disks: b.dateisysteme, services: b.dienste.length, ports: b.ports.map(p => p.port), erfassungsfehler: b.fehler } });
+            for (const p of b.compose) {
+              assets.push({ name: `${p.name} (${z.name})`, assetType: 'application', sourceSkill: 'fernzugriff', sourceId: `${z.name}/compose/${p.name}`, ipAddress: z.host, status: /running/.test(p.status) ? 'active' : 'inactive', attributes: { host: z.name, status: p.status, config_files: p.dateien } });
+              relations.push({ sourceKey: `fernzugriff:${z.name}/compose/${p.name}`, targetKey: hostKey, relationType: 'runs_on' });
+            }
+            for (const v of b.volumes) assets.push({ name: `${v.name} (${z.name})`, assetType: 'storage', sourceSkill: 'fernzugriff', sourceId: `${z.name}/vol/${v.name}`, status: 'active', attributes: { host: z.name, size: v.groesse, docker_volume: true } });
+            for (const c of b.container) {
+              const key = `${z.name}/${c.name}`;
+              assets.push({ name: c.name, assetType: 'container', sourceSkill: 'fernzugriff', sourceId: key, ipAddress: z.host, status: c.zustand === 'running' ? 'active' : 'inactive', attributes: {
+                host: z.name, image: c.image, state: c.zustand, status: c.status, health: c.gesundheit, ports: c.ports, networks: c.netze, mounts: c.mounts, compose_project: c.composeProjekt, compose_service: c.composeDienst } });
+              relations.push({ sourceKey: `fernzugriff:${key}`, targetKey: hostKey, relationType: 'runs_on' });
+              if (c.composeProjekt) relations.push({ sourceKey: `fernzugriff:${key}`, targetKey: `fernzugriff:${z.name}/compose/${c.composeProjekt}`, relationType: 'part_of' });
+              for (const m of c.mounts) if (b.volumes.some(v => v.name === m)) relations.push({ sourceKey: `fernzugriff:${key}`, targetKey: `fernzugriff:${z.name}/vol/${m}`, relationType: 'depends_on' });
+            }
+            this.logger.info({ zugang: z.name, container: b.container.length, compose: b.compose.length, volumes: b.volumes.length, fehler: b.fehler }, 'I1 Host erfasst');
+          }
+          return { assets, relations };
+        });
 
         // Wire discovery sources from registered infra skills
         const wrapSkillAsSource = (skillName: string, discoverFn: () => Promise<{ assets: any[]; relations: any[] }>) => {
@@ -6893,6 +6928,60 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         },
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
+      this.fernzugriffRef = skillRegistry.get('fernzugriff') as unknown as import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+      // I1 (Spec Infrastruktur-Vorhaben) — Bestandsaufnahme
+      {
+        const { InfrastrukturSkill } = await import('./infrastruktur/infrastruktur-skill.js');
+        const istOwnerFz = (ctx: import('@alfred/types').SkillContext) => {
+          const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
+          const ids = [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].filter((x): x is string => !!x);
+          return owner.size > 0 && ids.some(id => owner.has(id));
+        };
+        // CMDB arbeitet mit der Master-UUID des Owners (Identitäts-Regel v1159)
+        const ctxIntern = () => ({ userId: ownerFz() ?? '', masterUserId: ownerFz() ?? '', platform: 'api', chatId: '', conversationId: '' }) as never;
+        skillRegistry.register(new InfrastrukturSkill({
+          istOwner: istOwnerFz,
+          entdecke: async (quellen) => {
+            const cmdb = skillRegistry.get('cmdb');
+            if (!cmdb) return ['CMDB nicht verfügbar'];
+            const aus: string[] = [];
+            for (const q of quellen) {
+              try {
+                const r = await skillSandbox.execute(cmdb, { action: 'discover_source', source: q }, ctxIntern());
+                const d = r.data as { assets?: number; relations?: number; stale?: number } | undefined;
+                aus.push(r.success ? `${q}: ${d?.assets ?? 0} Assets, ${d?.relations ?? 0} Relationen${d?.stale ? `, ${d.stale} veraltet markiert` : ''}` : `${q}: ${String(r.error ?? 'Fehler').slice(0, 120)}`);
+              } catch (err) { aus.push(`${q}: ${(err as Error).message.slice(0, 120)}`); }
+            }
+            return aus;
+          },
+          hosts: () => [...this.hostBestaende.values()],
+          vms: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { sourceSkill: 'proxmox' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => a.assetType === 'vm' || a.assetType === 'lxc').map(a => ({ name: a.name, typ: a.assetType, status: a.status, ip: a.ipAddress, node: a.sourceId?.split(':')[0], vmid: Number(a.identifier?.replace('vmid:', '')) || undefined }));
+          },
+          proxy: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { sourceSkill: 'nginx_proxy_manager' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => a.assetType === 'proxy_host' && a.status === 'active').map(a => { const at = a.attributes as { domain_names?: string[]; forward_host?: string; forward_port?: number }; return { domains: at.domain_names ?? [a.name], forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0) }; });
+          },
+          netze: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { assetType: 'network' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => ['unifi', 'pfsense', 'mikrotik'].includes(a.sourceSkill ?? '') && a.status === 'active' && !String(a.sourceId ?? '').startsWith('gw:')).map(a => { const at = a.attributes as { vlan?: string | number; vlan_tag?: string | number; subnet?: string; ip_subnet?: string }; return { quelle: a.sourceSkill!, name: a.name, vlan: at.vlan ?? at.vlan_tag, subnet: at.subnet ?? at.ip_subnet }; });
+          },
+          backups: async () => {
+            const px = skillRegistry.get('proxmox') as unknown as { alleBackupsDaten?: () => Promise<import('./infrastruktur/bericht.js').BackupStand> } | undefined;
+            return px?.alleBackupsDaten ? px.alleBackupsDaten() : undefined;
+          },
+          speichereBericht: async (titel, markdown) => {
+            const o = ownerFz(); if (!o) throw new Error('Kein Owner');
+            return (await cmdbFz.saveDocument(o, { docType: 'inventory', title: titel, content: markdown, format: 'markdown', generatedBy: 'alfred:infrastruktur-I1' })).id;
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        }));
+        this.logger.info('I1 Infrastruktur-Skill registriert');
+      }
       this.fernzugangNamenAuffrischen = async () => {
         const o = ownerFz(); if (!o) return;
         const { namenMuster } = await import('./fernzugriff/weg-wahl.js');

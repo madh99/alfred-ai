@@ -328,6 +328,38 @@ export class FernzugriffSkill extends Skill {
     return this.mitWiederherstellbarkeit(befehl, r, e, context);
   }
 
+  /**
+   * I1 (Spec Infrastruktur-Vorhaben) — für feste Sammler ohne Modell: derselbe Weg wie `lesen` (Leseliste als root mit Rückfall,
+   * sonst Lese-Käfig; Geheimnisse und Nie-Befehle abgewiesen; Ausgabe geschwärzt). Liefert stdout oder wirft.
+   */
+  async lesenIntern(name: string, befehl: string, timeoutMs = 60_000): Promise<string> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    const b = normalisiereBefehl(befehl);
+    const klasse = befehlsklasse(b);
+    if (klasse === 'nie') throw new Error('nie erlaubt');
+    if (geheimnisGrund(b)) throw new Error('berührt Geheimnisse');
+    const z = await this.zugang(owner, { name });
+    let r: SshErgebnis;
+    if (klasse === 'lesen') {
+      r = await this.lauf(owner, z, fernBefehl(b, true), timeoutMs);
+      if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, b, timeoutMs);
+    } else {
+      const k = await this.kaefigBereit(owner, z);
+      if (!k.ok) throw new Error(`nicht auf der Leseliste, Lese-Käfig nicht verfügbar (${k.grund})`);
+      r = await this.lauf(owner, z, kaefigBefehl(b, z.benutzer, timeoutMs / 1000), timeoutMs + 15_000);
+    }
+    if (r.code !== 0 && !r.stdout.trim()) throw new Error(`Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}`);
+    return schwaerze(r.stdout).text;
+  }
+
+  /** I1 — aktive Zugänge (Name, Host, CMDB-Verweis) für die Sammler. */
+  async aktiveZugaenge(): Promise<Array<{ name: string; host: string; cmdbAssetId?: string }>> {
+    const owner = this.deps.owner();
+    if (!owner) return [];
+    return (await this.deps.repo.liste(owner)).filter(z => z.status === 'aktiv').map(z => ({ name: z.name, host: z.host, ...(z.cmdbAssetId ? { cmdbAssetId: z.cmdbAssetId } : {}) }));
+  }
+
   /** v1550 (S4c) — Hinweis, was Fachskills zum selben Host zusätzlich können (nur fürs Modell; Fehler stören das Ergebnis nicht). */
   private async mitFachskill(z: Fernzugang, e: SkillResult): Promise<SkillResult> {
     const h = await this.deps.fachskillHinweis?.(z).catch(() => undefined);

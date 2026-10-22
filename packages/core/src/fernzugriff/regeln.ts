@@ -69,6 +69,9 @@ const LESE_BEFEHLE: RegExp[] = [
   /^ping -c [1-9]( -W \d{1,2})? [\w.:-]+$/,
   /^(dig|nslookup|host)( [\w.:@+-]+){1,3}$/,
   /^ss( -[tulnpaxs]+)+$/,
+  // I1 Bestandsaufnahme (Spec Infrastruktur-Vorhaben) — Betriebssystem und genau die Compose-Zuordnung (nur diese zwei Labels)
+  /^cat \/etc\/(os-release|hostname|debian_version|redhat-release|issue)$/,
+  /^docker inspect --format '\{\{\.Name\}\},\{\{index \.Config\.Labels "com\.docker\.compose\.project"\}\},\{\{index \.Config\.Labels "com\.docker\.compose\.service"\}\}'( [\w.-]+)+$/,
 ];
 
 /** Nie erlaubt, auch nicht mit Bestätigung: macht Datenträger, Pools oder das System unwiederbringlich kaputt. */
