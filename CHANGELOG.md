@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Sicherungsjobs in Proxmox, feste IPs in UniFi (v1599)
+
+- **`proxmox create_backup_job` / `delete_backup_job` / `list_backup_jobs`:** eigene vzdump-Jobs (Owner 22.10.: Übergangssicherung, solange PBS absichtlich aus ist).
+  - Job-IDs immer `alfred-…`; Modus snapshot, zstd, `keep-last`, optional Bandbreitengrenze.
+  - Prüft VMs, Zielspeicher (muss Sicherungen aufnehmen) und Doppelsicherungen. Wiederholbar, mit Nachlesen.
+  - Anlegen und Entfernen nur als Change-Schritt. Der Rückweg trifft nur eigene Jobs; Sicherungsdateien bleiben.
+- **`unifi set_fixed_ip` / `clear_fixed_ip`:** DHCP-Reservierung für ein Gerät (Owner 22.10.: feste IP für die Sicherungsablage).
+  - Das Netz ergibt sich aus der Adresse. Abgelehnt werden: Gateway, Adressen außerhalb aller Netze, fremde Reservierungen und eine abweichende eigene.
+  - Alte fremde Einträge mit derselben Adresse erscheinen als Hinweis. Wird nachgelesen, nur als Change-Schritt.
+- **Change-Prüfung:** `delete_backup_job` gilt nicht als Löschung (es gehen keine Daten verloren). Die neuen Aktionen prüfen sich selbst nach.
+
 ### Fixed — Owner-Seiten im Web erkennen die Anmeldung des Owners (v1598)
 
 - **Realfall 22.10.:** Vorhaben, Wartung und Tresor zeigten dem angemeldeten Owner (Web-Benutzer `admin`, auch aus der App heraus geöffnet) nur „Nur für den Owner“, der Tresor „Einträge (0)“.

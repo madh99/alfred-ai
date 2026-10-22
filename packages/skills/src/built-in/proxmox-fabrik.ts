@@ -134,3 +134,42 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
 
 /** Dateiname des Snippets einer VM */
 export const snippetDatei = (vmid: number) => `alfred-${vmid}-user.yaml`;
+
+/**
+ * Owner 22.10. (Übergangsjob): PBS ist absichtlich aus (UNAS mit SMR-Platten), bis zum neuen Speicher sichert ein eigener
+ * vzdump-Job die neuen VMs auf backupshare. Alfreds Jobs heißen immer alfred-…, damit Rückweg und Löschen nur eigene treffen.
+ */
+export const SICHERUNGSJOB_ID = /^alfred-[a-z0-9-]{1,40}$/;
+export interface SicherungsJobWunsch { id: string; vmids: number[]; storage: string; schedule: string; keepLast: number; bwlimit?: number; kommentar?: string }
+export interface SicherungsJobVorhanden { id: string; schedule?: string; storage?: string; vmid?: string; 'prune-backups'?: string | Record<string, string | number>; enabled?: number | string }
+const vmSet = (s: string | undefined) => [...new Set((s ?? '').split(',').map(x => Number(x.trim())).filter(Number.isInteger))].sort((a, b) => a - b).join(',');
+const keepLastAus = (p: SicherungsJobVorhanden['prune-backups']) => typeof p === 'string' ? Number(/keep-last=(\d+)/.exec(p)?.[1]) : p ? Number(p['keep-last']) : NaN;
+
+export function sicherungsJobPruefung(w: SicherungsJobWunsch, vorhanden: SicherungsJobVorhanden[], vmidsVorhanden: number[], speicherMitBackup: string[]): { fehler: string[]; body?: Record<string, unknown>; gleich: boolean } {
+  const f: string[] = [];
+  if (!SICHERUNGSJOB_ID.test(w.id)) f.push('job_id: alfred-… (Kleinbuchstaben, Ziffern, -)');
+  if (!w.vmids.length || w.vmids.some(v => !Number.isInteger(v) || v < 100)) f.push('vmids: Liste vorhandener VMIDs');
+  for (const v of w.vmids) if (Number.isInteger(v) && !vmidsVorhanden.includes(v)) f.push(`VM ${v} gibt es nicht`);
+  if (!speicherMitBackup.includes(w.storage)) f.push(`Speicher „${w.storage}“ nimmt keine Sicherungen (vorhanden: ${speicherMitBackup.join(', ') || 'keiner'})`);
+  if (!/^[a-z0-9 :.,*/-]{3,60}$/i.test(w.schedule) || !/\d/.test(w.schedule)) f.push('schedule: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“');
+  if (!Number.isInteger(w.keepLast) || w.keepLast < 1 || w.keepLast > 30) f.push('keep_last: 1–30');
+  if (w.bwlimit !== undefined && (!Number.isInteger(w.bwlimit) || w.bwlimit < 1000)) f.push('bwlimit: KiB/s, mindestens 1000');
+  const da = vorhanden.find(j => j.id === w.id);
+  const vmids = vmSet(w.vmids.join(','));
+  if (f.length) return { fehler: f, gleich: false };
+  if (da) {
+    const gleich = da.schedule === w.schedule && da.storage === w.storage && vmSet(da.vmid) === vmids && keepLastAus(da['prune-backups']) === w.keepLast && String(da.enabled ?? '1') !== '0';
+    return gleich ? { fehler: [], gleich: true } : { fehler: [`Job ${w.id} gibt es schon mit anderen Werten — erst delete_backup_job`], gleich: false };
+  }
+  // dieselben VMs schon in einem anderen aktiven Job auf demselben Speicher → doppelt gesichert, eher ein Planungsfehler
+  for (const j of vorhanden) {
+    if (String(j.enabled ?? '1') === '0' || j.storage !== w.storage) continue;
+    const doppelt = w.vmids.filter(v => vmSet(j.vmid).split(',').includes(String(v)));
+    if (doppelt.length) f.push(`VM ${doppelt.join(', ')} sichert schon Job ${j.id} auf ${w.storage}`);
+  }
+  if (f.length) return { fehler: f, gleich: false };
+  return {
+    fehler: [], gleich: false,
+    body: { id: w.id, vmid: vmids, storage: w.storage, schedule: w.schedule, mode: 'snapshot', compress: 'zstd', 'prune-backups': `keep-last=${w.keepLast}`, enabled: 1, ...(w.bwlimit ? { bwlimit: w.bwlimit } : {}), comment: (w.kommentar ?? 'Alfred-Übergangssicherung').slice(0, 200) },
+  };
+}

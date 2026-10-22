@@ -45,11 +45,11 @@ export const ZEITLIMIT_MAX_S = 4 * 3600;
 const LESE_MUSTER = /^(list|get|show|status|info|search|logs?$|ps$|inspect|describe|check|ping|traceroute|torch|query|read|lesen|pruefen|discover|wait_ready|backups_vm|cluster_status|node_stats|vm_status|task_status|interfaces|traffic|resources|dhcp_leases|arp|routes|dns_cache|connections|neighbors|wireless|firewall_rules|nat_rules|stats|containers|images|grundlage|bestand|vorhaben_liste|vorhaben_zeigen|impact|topology|dashboard|api_pruefen|trunk_path)/;
 const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_config', 'snapshot', 'backup', 'export_config']);
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
-const LOESCH_MUSTER = /^(delete_vm|delete_backup|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
+const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
 const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']);
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
-const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'export_config']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt
+const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;

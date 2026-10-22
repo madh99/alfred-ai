@@ -60,3 +60,30 @@ export function netzWerte(n: NetzNeu): { ipSubnet: string; gateway: string; dhcp
 
 /** Hostname für lokales DNS (UniFi) */
 export const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+/**
+ * Owner 22.10. („feste IP planen“): Die Sicherungsablage backupshare (Samba, 192.168.1.111) hat keine Reservierung — eine feste IP
+ * ist nur zulässig, wenn sie im Subnetz eines Netzes liegt (nicht Gateway/Netz/Broadcast) und kein anderes Gerät sie reserviert hat.
+ */
+export interface FestIpClient { _id?: string; mac: string; name?: string; hostname?: string; use_fixedip?: boolean; fixed_ip?: string; last_ip?: string; ip?: string; network_id?: string }
+export interface FestIpNetz { _id: string; name: string; ip_subnet?: string }
+export function festeIpPruefung(mac: string, ip: string, clients: FestIpClient[], netze: FestIpNetz[]): { fehler: string[]; hinweise: string[]; netz?: FestIpNetz; client?: FestIpClient; schonGesetzt: boolean } {
+  const fehler: string[] = [], hinweise: string[] = [];
+  const m = mac.trim().toLowerCase();
+  if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m)) fehler.push('mac: aa:bb:cc:dd:ee:ff');
+  const z = ipZahl(ip);
+  if (z === undefined) fehler.push('ip: IPv4-Adresse ohne Präfix, z. B. 192.168.1.111');
+  const netz = z === undefined ? undefined : netze.find(n => { const s = n.ip_subnet ? subnetz(n.ip_subnet) : undefined; return !!s && z > s.netz && z < s.broadcast; });
+  if (z !== undefined && !netz) fehler.push(`${ip} liegt in keinem Netz der UniFi`);
+  else if (netz && z !== undefined && z === subnetz(netz.ip_subnet!)!.gateway) fehler.push(`${ip} ist das Gateway von ${netz.name}`);
+  const client = clients.find(c => c.mac.toLowerCase() === m);
+  const schonGesetzt = !!client?.use_fixedip && client.fixed_ip === ip && (!netz || client.network_id === netz._id);
+  if (client?.use_fixedip && client.fixed_ip && client.fixed_ip !== ip) fehler.push(`${m} hat schon die feste IP ${client.fixed_ip} — erst entfernen (clear_fixed_ip)`);
+  for (const c of clients) {
+    if (c.mac.toLowerCase() === m) continue;
+    const name = c.name || c.hostname || c.mac;
+    if (c.use_fixedip && c.fixed_ip === ip) fehler.push(`${ip} ist schon für ${name} (${c.mac}) reserviert`);
+    else if ((c.ip ?? c.last_ip) === ip) hinweise.push(`${name} (${c.mac}) hatte zuletzt ${ip} — nur ein alter Eintrag, keine Reservierung`);
+  }
+  return { fehler, hinweise, ...(netz ? { netz } : {}), ...(client ? { client } : {}), schonGesetzt };
+}

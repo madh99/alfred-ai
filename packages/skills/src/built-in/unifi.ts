@@ -1,4 +1,4 @@
-import { HOSTNAME, ipZahl, neuesNetzFehler, netzWerte, type NetzVorhanden } from './netz-regeln.js';
+import { HOSTNAME, festeIpPruefung, ipZahl, neuesNetzFehler, netzWerte, type FestIpClient, type FestIpNetz, type NetzVorhanden } from './netz-regeln.js';
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
@@ -16,7 +16,8 @@ export class UniFiSkill extends Skill {
       'Manage UniFi network devices, clients, and WLANs. ' +
       'Use "list_devices" to see APs/switches, "list_clients" for connected clients, ' +
       '"restart_device" to reboot a device, "block_client"/"unblock_client" for access control. ' +
-      'Firewall (Zonen-Modell, UniFi Network 9+): "list_firewall_policies" (mit source_zone+destination_zone = Auswertungsreihenfolge), "create_firewall_policy" (Ausnahmen mit before_policy VOR die Sperre setzen), "set_firewall_policy_enabled", "delete_firewall_policy" — Änderungen nur nach Owner-Bestätigung.',
+      'Firewall (Zonen-Modell, UniFi Network 9+): "list_firewall_policies" (mit source_zone+destination_zone = Auswertungsreihenfolge), "create_firewall_policy" (Ausnahmen mit before_policy VOR die Sperre setzen), "set_firewall_policy_enabled", "delete_firewall_policy" — Änderungen nur nach Owner-Bestätigung. ' +
+      'Feste IP (DHCP-Reservierung, nur als Change-Schritt): "set_fixed_ip" (mac, fixed_ip; Netz aus der Adresse, nie eine fremde Reservierung), Rückweg "clear_fixed_ip" (mac).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
@@ -56,6 +57,8 @@ export class UniFiSkill extends Skill {
             'delete_firewall_policy',
             'create_network',
             'delete_network',
+            'set_fixed_ip',
+            'clear_fixed_ip',
             'create_zone',
             'delete_zone',
             'export_config',
@@ -168,6 +171,7 @@ export class UniFiSkill extends Skill {
         zone_name: { type: 'string', description: 'create_zone/delete_zone: Name der eigenen Firewall-Zone (z. B. Docker-Dev)' },
         client_ip: { type: 'string', description: 'trunk_path: IP eines Geräts im Netz (z. B. des Proxmox-Knotens), von dessen Switch-Port bis zur UDM' },
         client_mac: { type: 'string', description: 'trunk_path: MAC statt IP' },
+        fixed_ip: { type: 'string', description: 'set_fixed_ip: feste IP (DHCP-Reservierung) für das Gerät mit mac, z. B. 192.168.1.111 — Netz ergibt sich aus der Adresse' },
         device: { type: 'string', description: 'allow_/exclude_network_on_port: Switch (Name oder MAC)' },
         switch_port: { type: 'number', description: 'allow_/exclude_network_on_port: Port-Nummer am Switch' },
         networks: { type: 'array', items: { type: 'string' }, description: 'create_zone: Netze (Name oder VLAN), die in die Zone wandern' },
@@ -302,6 +306,11 @@ export class UniFiSkill extends Skill {
           if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
           return await this.portNetz(input, action === 'allow_network_on_port');
 
+        case 'set_fixed_ip':
+        case 'clear_fixed_ip':
+          // Owner 22.10. („feste IP planen“): Reservierungen ändern nur als Schritt eines freigegebenen Changes; Rückweg = clear_fixed_ip
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
+          return action === 'set_fixed_ip' ? await this.festeIpSetzen(input) : await this.festeIpEntfernen(input);
         case 'create_network':
           return await this.netzAnlegen(input);
         case 'delete_network':
@@ -1189,6 +1198,44 @@ export class UniFiSkill extends Skill {
     const r = await this.request<any[]>('POST', 'rest/networkconf', body);
     const id = Array.isArray(r) ? r[0]?._id : (r as { _id?: string } | undefined)?._id;
     return { success: true, data: { id, name: neu.name, vlan: neu.vlan, gateway: w.gateway, ip_subnet: w.ipSubnet, ...(neu.dhcp ? { dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop } : {}) }, display: `✅ Netz „${neu.name}“ angelegt: VLAN ${neu.vlan}, Gateway ${w.ipSubnet}${neu.dhcp ? `, DHCP ${w.dhcpStart}–${w.dhcpStop}` : ', ohne DHCP'}` };
+  }
+
+  private async festeIpLesen(mac: string): Promise<FestIpClient | undefined> {
+    const alle = (await this.request<FestIpClient[]>('GET', 'rest/user')) ?? [];
+    return alle.find(c => String(c.mac ?? '').toLowerCase() === mac);
+  }
+
+  /** DHCP-Reservierung setzen und nachlesen; nie eine fremde Reservierung überschreiben (festeIpPruefung) */
+  private async festeIpSetzen(input: Record<string, unknown>): Promise<SkillResult> {
+    const mac = String(input.mac ?? '').trim().toLowerCase(), ip = String(input.fixed_ip ?? '').trim();
+    const [clients, netze, aktiv] = await Promise.all([
+      this.request<FestIpClient[]>('GET', 'rest/user').then(r => r ?? []),
+      this.request<FestIpNetz[]>('GET', 'rest/networkconf').then(r => r ?? []),
+      this.request<FestIpClient[]>('GET', 'stat/sta').then(r => r ?? []).catch(() => [] as FestIpClient[]),
+    ]);
+    // aktive Geräte zeigen die aktuelle IP; für die Prüfung mit den gespeicherten Einträgen zusammenführen
+    const alle = clients.map(c => ({ ...c, ip: aktiv.find(a => a.mac?.toLowerCase() === c.mac?.toLowerCase())?.ip ?? c.ip }));
+    const p = festeIpPruefung(mac, ip, alle, netze);
+    if (p.fehler.length) return { success: false, error: `Feste IP nicht gesetzt: ${p.fehler.join('; ')}` };
+    const hinweis = p.hinweise.length ? ` (Hinweis: ${p.hinweise.join('; ')})` : '';
+    if (p.schonGesetzt) return { success: true, data: { mac, fixed_ip: ip, netz: p.netz!.name, vorhanden: true }, display: `${mac} hat bereits die feste IP ${ip} in ${p.netz!.name}${hinweis}` };
+    const werte = { use_fixedip: true, fixed_ip: ip, network_id: p.netz!._id };
+    if (p.client?._id) await this.request('PUT', `rest/user/${p.client._id}`, werte);
+    else await this.request('POST', 'rest/user', { mac, ...werte });
+    const nachher = await this.festeIpLesen(mac);
+    if (!nachher?.use_fixedip || nachher.fixed_ip !== ip) return { success: false, error: `Feste IP für ${mac} nach dem Setzen nicht nachlesbar (gelesen: ${nachher?.fixed_ip ?? 'keine'})` };
+    return { success: true, data: { mac, fixed_ip: ip, netz: p.netz!.name, neu: !p.client?._id }, display: `✅ Feste IP ${ip} für ${p.client?.name || p.client?.hostname || mac} in ${p.netz!.name} gesetzt — gilt ab der nächsten DHCP-Erneuerung${hinweis}` };
+  }
+
+  private async festeIpEntfernen(input: Record<string, unknown>): Promise<SkillResult> {
+    const mac = String(input.mac ?? '').trim().toLowerCase();
+    if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return { success: false, error: 'clear_fixed_ip: mac aa:bb:cc:dd:ee:ff' };
+    const c = await this.festeIpLesen(mac);
+    if (!c?._id || !c.use_fixedip) return { success: true, data: { mac, schonOhne: true }, display: `${mac} hat keine feste IP` };
+    await this.request('PUT', `rest/user/${c._id}`, { use_fixedip: false });
+    const nachher = await this.festeIpLesen(mac);
+    if (nachher?.use_fixedip) return { success: false, error: `Feste IP für ${mac} ist nach dem Entfernen noch gesetzt` };
+    return { success: true, data: { mac, entfernt: c.fixed_ip }, display: `✅ Feste IP ${c.fixed_ip} für ${c.name || c.hostname || mac} entfernt` };
   }
 
   private async netzLoeschen(input: Record<string, unknown>): Promise<SkillResult> {

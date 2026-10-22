@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
-import { DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
+import { sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
 /** I5 — was die Vorlagen-Fabrik vom Server braucht (SSH auf den Knoten, Fernzugang, CMDB); verdrahtet in alfred.ts */
 export interface VmFabrikDeps {
@@ -66,11 +66,11 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job']);
 const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
@@ -149,7 +149,8 @@ export class ProxmoxSkill extends Skill {
       '"clone_vm" klont VM aus Template mit Cloud-Init (hostname, template=VMID, ip, gateway). Mit runtime=docker/node/python wird nach Erstellung automatisch SSH abgewartet und die Runtime + qemu-guest-agent installiert. ' +
       '"create_lxc" erstellt LXC Container. ' +
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
-      'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop).',
+      'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
+      'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 600_000, // 10 min — clone + SSH wait + runtime install can take 5+ min
@@ -287,6 +288,11 @@ export class ProxmoxSkill extends Skill {
         nameserver: { type: 'string', description: 'provision_vm: DNS-Server (IP, mehrere mit Leerzeichen)' },
         vm_name: { type: 'string', description: 'delete_vm: Name der VM zur Bestätigung (muss zur vmid passen)' },
         force_stop: { type: 'boolean', description: 'delete_vm: laufende VM vorher hart stoppen (nur für Rückwege frisch angelegter VMs)' },
+        job_id: { type: 'string', description: 'create_/delete_backup_job: Job-ID, immer alfred-… (z. B. alfred-uebergang)' },
+        vmids: { type: 'array', items: { type: 'number' }, description: 'create_backup_job: zu sichernde VMIDs' },
+        schedule: { type: 'string', description: 'create_backup_job: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“' },
+        keep_last: { type: 'number', description: 'create_backup_job: so viele Sicherungen je VM behalten (1–30)' },
+        bwlimit: { type: 'number', description: 'create_backup_job: Bandbreitengrenze in KiB/s (optional, schont den Zielspeicher)' },
         docker_bridge_ip: {
           type: 'string',
           description: 'Docker Bridge IP (z.B. 192.168.248.1/24). Setzt daemon.json bip. Nur bei runtime=docker.',
@@ -458,6 +464,12 @@ export class ProxmoxSkill extends Skill {
           return await this.deleteImage(input);
         case 'delete_backup':
           return await this.deleteBackup(input);
+        case 'list_backup_jobs':
+          return await this.listBackupJobs();
+        case 'create_backup_job':
+          return await this.createBackupJob(input);
+        case 'delete_backup_job':
+          return await this.deleteBackupJob(input);
         case 'create_template':
           return await this.createTemplate(input);
         case 'provision_vm':
@@ -1401,6 +1413,42 @@ export class ProxmoxSkill extends Skill {
       content: 'import', filename: input.filename, url: input.url, checksum: input.checksum, 'checksum-algorithm': input.checksum_algorithm, 'verify-certificates': 1,
     });
     return { success: true, data: { upid, node, storage, volid }, display: `Image wird geladen und geprüft (${input.checksum_algorithm}): ${input.url} → ${volid}` };
+  }
+
+  /** Übergangsjob 22.10. — geplante vzdump-Jobs des Clusters */
+  private async listBackupJobs(): Promise<SkillResult> {
+    const jobs = (await this.get<Array<SicherungsJobVorhanden & { comment?: string; mode?: string; 'next-run'?: number }>>('/cluster/backup')) ?? [];
+    const zeile = (j: typeof jobs[number]) => `${j.id}: ${String(j.enabled ?? '1') === '0' ? 'AUS' : 'an'}, ${j.schedule ?? '-'} → ${j.storage ?? '-'}, VMs ${j.vmid ?? ((j as { all?: number }).all ? 'alle' : '-')}${j['next-run'] ? `, nächster Lauf ${new Date(j['next-run'] * 1000).toISOString().slice(0, 16)}` : ''}${j.comment ? ` — ${j.comment}` : ''}`;
+    return { success: true, data: jobs, display: jobs.length ? jobs.map(zeile).join('\n') : 'Keine Sicherungsjobs' };
+  }
+
+  /** Nur im Change: eigener vzdump-Job (alfred-…), wiederholbar; danach nachlesen */
+  private async createBackupJob(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmids = (Array.isArray(input.vmids) ? input.vmids : String(input.vmids ?? '').split(',')).map(v => Number(String(v).trim())).filter(v => !Number.isNaN(v));
+    const w = { id: String(input.job_id ?? '').trim(), vmids, storage: String(input.storage ?? '').trim(), schedule: String(input.schedule ?? '').trim(), keepLast: Number(input.keep_last ?? 3), ...(input.bwlimit !== undefined ? { bwlimit: Number(input.bwlimit) } : {}), ...(typeof input.description === 'string' ? { kommentar: input.description } : {}) };
+    const [jobs, vms, speicher] = await Promise.all([
+      this.get<SicherungsJobVorhanden[]>('/cluster/backup').then(r => r ?? []),
+      this.getAllVms(),
+      this.get<Array<{ storage: string; content?: string; disable?: number }>>('/storage').then(r => r ?? []),
+    ]);
+    const p = sicherungsJobPruefung(w, jobs, vms.map(v => v.vmid), speicher.filter(s => !s.disable && (s.content ?? '').split(',').includes('backup')).map(s => s.storage));
+    if (p.fehler.length) return { success: false, error: `Sicherungsjob nicht angelegt: ${p.fehler.join('; ')}` };
+    if (p.gleich) return { success: true, data: { id: w.id, vorhanden: true }, display: `Sicherungsjob ${w.id} ist bereits genau so vorhanden` };
+    await this.post('/cluster/backup', p.body);
+    const nachher = ((await this.get<SicherungsJobVorhanden[]>('/cluster/backup')) ?? []).find(j => j.id === w.id);
+    if (!nachher) return { success: false, error: `Sicherungsjob ${w.id} nach dem Anlegen nicht nachlesbar` };
+    return { success: true, data: { id: w.id, ...p.body }, display: `✅ Sicherungsjob ${w.id}: VMs ${String(p.body!.vmid)} → ${w.storage}, ${w.schedule}, je VM die letzten ${w.keepLast}${w.bwlimit ? `, höchstens ${Math.round(w.bwlimit / 1024)} MiB/s` : ''}` };
+  }
+
+  /** Rückweg: nur eigene Jobs (alfred-…) */
+  private async deleteBackupJob(input: Record<string, unknown>): Promise<SkillResult> {
+    const id = String(input.job_id ?? '').trim();
+    if (!SICHERUNGSJOB_ID.test(id)) return { success: false, error: 'delete_backup_job: nur eigene Jobs (alfred-…)' };
+    const da = ((await this.get<SicherungsJobVorhanden[]>('/cluster/backup')) ?? []).some(j => j.id === id);
+    if (!da) return { success: true, data: { id, schonWeg: true }, display: `Sicherungsjob ${id} gibt es nicht (mehr)` };
+    await this.del(`/cluster/backup/${encodeURIComponent(id)}`);
+    if (((await this.get<SicherungsJobVorhanden[]>('/cluster/backup')) ?? []).some(j => j.id === id)) return { success: false, error: `Sicherungsjob ${id} ist nach dem Löschen noch vorhanden` };
+    return { success: true, data: { id, entfernt: true }, display: `✅ Sicherungsjob ${id} entfernt (vorhandene Sicherungsdateien bleiben)` };
   }
 
   /** Eine vzdump-Sicherungsdatei entfernen (Stilllegung) — nur im Change; danach nachlesen */

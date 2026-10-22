@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { neuesterStand, imageAngabe, summeAus, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME } from './proxmox-fabrik.js';
+import { sicherungsJobPruefung, neuesterStand, imageAngabe, summeAus, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME } from './proxmox-fabrik.js';
 import { ProxmoxSkill } from './proxmox.js';
 
 // I5 — Vorlagen-Fabrik: Stände/Prüfsummen der Herausgeber, Vorlagen-Konfiguration, Cloud-Init mit eigenem Host-Schlüssel
@@ -103,5 +103,23 @@ describe('Eingabeprüfung der Fabrik-Aktionen', () => {
     const r = await px.execute({ action: 'provision_vm', template: 9020, hostname: 'probe-i5', ip: '192.168.1.140/24', gateway: '192.168.1.1' }, { ausChange: true } as never);
     expect(r.success).toBe(false);
     expect(r.error).toMatch(/nicht eingerichtet/);
+  });
+});
+
+describe('sicherungsJobPruefung (Übergangsjob 22.10.)', () => {
+  const w = { id: 'alfred-uebergang', vmids: [144], storage: 'backupshare', schedule: 'sat 03:00', keepLast: 3 };
+  it('neuer Job → vollständiger Auftrag mit snapshot/zstd/keep-last', () => {
+    const r = sicherungsJobPruefung({ ...w, bwlimit: 50000 }, [{ id: 'backup-pbs', storage: 'pbs-unas', vmid: '144', enabled: 0 }], [112, 144], ['backupshare', 'pbs-unas']);
+    expect(r.fehler).toEqual([]);
+    expect(r.body).toMatchObject({ id: 'alfred-uebergang', vmid: '144', storage: 'backupshare', mode: 'snapshot', compress: 'zstd', 'prune-backups': 'keep-last=3', enabled: 1, bwlimit: 50000 });
+  });
+  it('gleicher vorhandener Job → wiederholbar; abweichender → Fehler', () => {
+    expect(sicherungsJobPruefung(w, [{ id: 'alfred-uebergang', schedule: 'sat 03:00', storage: 'backupshare', vmid: '144', 'prune-backups': { 'keep-last': '3' }, enabled: 1 }], [144], ['backupshare']).gleich).toBe(true);
+    expect(sicherungsJobPruefung(w, [{ id: 'alfred-uebergang', schedule: 'sun 03:00', storage: 'backupshare', vmid: '144', 'prune-backups': 'keep-last=3' }], [144], ['backupshare']).fehler[0]).toContain('anderen Werten');
+  });
+  it('falsche Angaben und Doppelsicherung → Fehler', () => {
+    const r = sicherungsJobPruefung({ ...w, id: 'backup-1', vmids: [999], storage: 'local', schedule: 'x', keepLast: 0 }, [], [144], ['backupshare']);
+    expect(r.fehler.length).toBe(5);
+    expect(sicherungsJobPruefung(w, [{ id: 'alfred-alt', storage: 'backupshare', vmid: '112,144', enabled: 1 }], [112, 144], ['backupshare']).fehler[0]).toContain('alfred-alt');
   });
 });
