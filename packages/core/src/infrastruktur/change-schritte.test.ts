@@ -219,3 +219,13 @@ describe('I3 Negative Prüfung (Realfall 22.10.: „abbrechen, wenn i3probe scho
     expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('nichtEnthalten gibt es nur bei');
   });
 });
+
+describe('I4 Realfall: unerfüllbare Prüfung im Plan', () => {
+  it('erwartet mit Verneinung wird abgewiesen, Textstück bleibt erlaubt', () => {
+    const c = snapshotChange();
+    (c.schritte[1] as { pruefung: Record<string, unknown> }).pruefung = { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'Snapshot i3probe ist nicht vorhanden' };
+    expect(pruefeChangePlan(c, ctx()).fehler.join(' ')).toContain('nichtEnthalten mit dem Namen verwenden');
+    (c.schritte[1] as { pruefung: Record<string, unknown> }).pruefung = { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'i3probe' };
+    expect(pruefeChangePlan(c, ctx()).fehler).toEqual([]);
+  });
+});

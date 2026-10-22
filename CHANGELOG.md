@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planprüfung weist unerfüllbare Prüfungen ab (v1561)
+
+- Realfall 22.10., erster Lauf des Ausführungsmotors (Probe-Change test-ubuntu):
+  - Der Snapshot wurde angelegt, geprüft und gelöscht.
+  - Danach hielt der Motor an, weil die Prüfung des Löschschritts `erwartet: „Snapshot i3probe ist nicht vorhanden“` verlangte. Diesen Satz gibt Proxmox nie aus.
+- Ein `erwartet` mit Verneinung („nicht“, „kein“, „fehlt“, „gelöscht“, „missing“ …) wird beim Planen jetzt abgewiesen, mit dem Hinweis auf `nichtEnthalten`.
+
 ### Added — Ausführungsmotor für freigegebene Infrastruktur-Changes (v1560, Spec Infrastruktur-Vorhaben I4)
 
 Owner 22.10.: „I4 wie vorgeschlagen umsetzen“, danach „ja, einspielen“. Fernzugriff-Befehle eines freigegebenen Changes laufen mit der Change-Freigabe als Berechtigung, ohne Einzelrückfrage; die Nie-Liste bleibt gesperrt.

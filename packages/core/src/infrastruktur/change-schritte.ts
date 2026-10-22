@@ -36,6 +36,8 @@ export interface ChangePlan {
   schritte: ChangeSchritt[];
 }
 
+/** Verneinende Aussagen in `erwartet` (können als Textstück einer Ausgabe praktisch nie vorkommen) */
+const VERNEINUNG = /(^|[^\p{L}])(nicht|kein|keine|keinen|keiner|not|no longer|fehlt|entfernt|gelöscht|geloescht|absent|missing|removed|deleted)([^\p{L}]|$)/iu;
 export const PRUEF_TYPEN: readonly PruefTyp[] = ['http', 'port', 'dns', 'ping', 'container_healthy', 'datei', 'befehl', 'skill'];
 export const ZEITLIMIT_STANDARD_S = 600;
 export const ZEITLIMIT_MAX_S = 4 * 3600;
@@ -102,6 +104,8 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   const aus: Pruefung = { typ };
   for (const k of ['ziel', 'erwartet', 'nichtEnthalten', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
   if (aus.nichtEnthalten && !['http', 'befehl', 'skill'].includes(typ)) f.push(`${wo}: nichtEnthalten gibt es nur bei http-, befehl- und skill-Prüfungen`);
+  // I4 (Realfall 22.10.: erwartet „Snapshot i3probe ist nicht vorhanden“ — kein Textstück der Ausgabe, Prüfung unerfüllbar)
+  if (aus.erwartet && VERNEINUNG.test(aus.erwartet)) f.push(`${wo}: erwartet „${aus.erwartet.slice(0, 60)}“ ist eine Aussage — erwartet ist ein Textstück, das in der Ausgabe vorkommen muss; für „ist nicht (mehr) da“ nichtEnthalten mit dem Namen verwenden`);
   const port = zahl(p.port); if (port !== undefined) aus.port = port;
   if (obj(p.parameter)) aus.parameter = obj(p.parameter)!;
   const fehlt = (felder: Array<keyof Pruefung>) => { for (const k of felder) if (aus[k] === undefined) f.push(`${wo}: pruefung ${typ} braucht ${String(k)}`); };
