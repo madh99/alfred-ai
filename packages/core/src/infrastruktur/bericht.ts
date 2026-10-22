@@ -49,7 +49,11 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
     if (h.updates?.sicherheit) a.push({ schwere: 'mittel', bereich: h.zugang, text: `${h.updates.sicherheit} Sicherheitsupdates offen (${h.updates.anzahl} Updates gesamt)` });
     const os = osSupport(h.os, jetzt);
     if (!os.ok) a.push({ schwere: 'mittel', bereich: h.zugang, text: os.text! });
-    if (h.fehler.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${h.fehler.map(f => f.split(':')[0]).join(', ')}` });
+    // I1 (Realfall 22.10. dockerhost: „Problem with MergeList …“) — gestörte Paketverwaltung ist ein Befund, kein bloßer Erfassungsfehler
+    const apt = h.fehler.find(f => f.startsWith('updates:') && /MergeList|Hash Sum mismatch|Could not get lock|dpkg was interrupted|NO_PUBKEY|EXPKEYSIG/i.test(f));
+    if (apt) a.push({ schwere: 'mittel', bereich: h.zugang, text: `Paketverwaltung gestört — Updates nicht prüfbar (${apt.replace(/^updates:\s*/, '').replace(/\s+/g, ' ').slice(0, 120)})` });
+    const rest = h.fehler.filter(f => f !== apt);
+    if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}` });
   }
   if (e.backups) {
     for (const u of e.backups.unerreichbar) a.push({ schwere: 'hoch', bereich: 'Sicherung', text: `Backup-Speicher ${u.speicher} ${u.grund}` });

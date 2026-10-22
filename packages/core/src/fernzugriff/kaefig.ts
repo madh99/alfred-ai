@@ -19,7 +19,8 @@ const GEHEIMNISSE: Array<{ muster: RegExp; grund: string }> = [
   { muster: /\.(key|p12|pfx|jks|keystore|kdbx)\b|\/etc\/ssl\/private|\/etc\/letsencrypt\/(archive|live)\/[^\s]*privkey/, grund: 'Schlüssel-/Zertifikatsdateien' },
   { muster: /(^|[\s/'"=])\.env(\.[\w-]+)?\b|\benv_file\b/, grund: '.env-Dateien' },
   { muster: /\/etc\/pve\/priv\b|\/etc\/pve\/.*\.(key|pem)\b|\/root\/\.(pgpass|my\.cnf|netrc|git-credentials|docker\/config\.json)|\/home\/[^/\s]+\/\.(pgpass|my\.cnf|netrc|git-credentials|docker\/config\.json)|\.htpasswd\b|wp-config\.php\b/, grund: 'Zugangsdaten-Dateien' },
-  { muster: /vaultwarden|bitwarden|\/(secrets?|credentials?)(\/|\b)/i, grund: 'Passwort-Tresor oder Geheimnis-Ordner' },
+  // I1 (Realfall 22.10.: Compose-Abfrage mit dem Containernamen „vaultwarden“ abgewiesen) — nur Pfade, nicht bloße Namen
+  { muster: /\/[^\s'"]*(vaultwarden|bitwarden)|\/(secrets?|credentials?)(\/|\b)/i, grund: 'Passwort-Tresor oder Geheimnis-Ordner' },
   { muster: /\/proc\/(\d+|self)\/environ\b|(^|[;&|]\s*)(printenv|env)\s*($|[;&|])|\bdocker\s+(inspect(?!\s+--format)|compose\s+config|exec)\b/, grund: 'Umgebungsvariablen' },
   { muster: /\b(mysqldump|pg_dump|pg_dumpall|mongodump)\b/, grund: 'Datenbank-Inhalt' },
 ];

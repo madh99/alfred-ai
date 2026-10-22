@@ -54,3 +54,15 @@ describe('I1 Bestandsbericht', () => {
     expect(r.kurz).toContain('1 Container');
   });
 });
+
+describe('I1 Nachschärfung nach dem ersten Lauf (22.10.)', () => {
+  it('gestörte Paketverwaltung ist ein Befund; Containername „vaultwarden“ ist kein Geheimnis-Pfad', async () => {
+    const a = auffaelligkeiten({ hosts: [host({ fehler: ['updates: Exit 100: E: Problem with MergeList /var/lib/apt/lists/download.docker.com_linux_ubuntu_dists_jammy_stable_binary-amd64_Packages', 'ram: Exit 1'] })], vms: [], proxy: [] }, jetzt);
+    expect(a.map(x => x.text)).toEqual(expect.arrayContaining([expect.stringContaining('Paketverwaltung gestört'), 'Nicht erfasst: ram']));
+    const { geheimnisGrund } = await import('../fernzugriff/kaefig.js');
+    const { composeBefehl } = await import('./sammler.js');
+    expect(geheimnisGrund(composeBefehl(['vaultwarden', 'mariadb-vaultwarden', 'synapse']))).toBeUndefined();
+    expect(geheimnisGrund('cat /opt/vaultwarden/data/db.sqlite3')).toBeDefined();
+    expect(geheimnisGrund('ls /srv/secrets/')).toBeDefined();
+  });
+});

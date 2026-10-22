@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bestandsaufnahme nach dem ersten Lauf nachgeschärft (v1554)
+
+- **Compose-Zuordnung auf dem dockerhost** wurde als „berührt Geheimnisse“ abgewiesen, weil ein Container `vaultwarden` heißt. Die Geheimnis-Regel für Passwort-Tresore greift jetzt nur noch auf Pfade (z. B. `/opt/vaultwarden/…`), nicht auf bloße Container-Namen.
+- **Gestörte Paketverwaltung** (z. B. „Problem with MergeList“, „Hash Sum mismatch“, Sperre, unterbrochenes dpkg, fehlender Signaturschlüssel) erscheint als eigene Auffälligkeit (mittel) mit Fehlerauszug statt nur als „Nicht erfasst: updates“.
+
 ### Added — Bestandsaufnahme der Infrastruktur, nur lesend (v1553, Spec Infrastruktur-Vorhaben I1)
 
 Owner 22.10.: „I1 wie vorgeschlagen umsetzen“ (Spec `docs/specs/2026-10-22-infrastruktur-vorhaben.md`).
