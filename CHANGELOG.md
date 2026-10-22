@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Folge-Changes starten sofort; keine wertlosen Runbook-Vorschläge (v1580)
+
+- **Folge-Changes:** Ein Change, der von einem anderen abhängt, startet jetzt direkt nach dessen Abschluss.
+  - Bisher wartete er auf den nächsten 10-Minuten-Takt des Motors. Realfall: 733bbe87 wartete gut 6 Minuten.
+- **Lern-Job (Skill-Fehler → Workaround → Runbook):** Muster ohne Bereich und ohne erkannte Fehlerklasse werden verworfen, ebenso der Hilfe-Skill als Auslöser.
+  - Realfall: „Skill help auf ? → Workaround“ mit einem einzigen Ping, alle 15 Minuten erneut vorgeschlagen.
+
 ### Fixed — Überarbeitung einer Zielarchitektur ohne vollständiges Neuschreiben (v1579)
 
 - **Realfall:** Version 3 von cf82f3f2 sollte Version 2 mit 15 zusätzlichen Firewall-Regeln sein. Das Modell musste die ganze Architektur (5 Gruppen, alle Einheiten, Netze, Regeln) als einen Werkzeugaufruf neu ausgeben. Nach rund drei Minuten kam der Aufruf leer an (`input: {}`).

@@ -125,6 +125,7 @@ export class ChangeMotor {
   async weiter(o: string, c0: CmdbChangeRequest, lauf: ChangeLauf): Promise<void> {
     if (this.laufend.has(c0.id)) return;
     this.laufend.add(c0.id);
+    let fertig = false;
     try {
       const schritte = (c0.schritte ?? []) as ChangeSchritt[];
       for (const s of schritte) {
@@ -154,9 +155,12 @@ export class ChangeMotor {
       const quellen = [...new Set(schritte.filter(wirkt).map(s => QUELLE[s.skill ?? '']).filter((q): q is string => !!q))];
       const disc = quellen.length && this.d.entdecke ? await this.d.entdecke(quellen).catch(err => [`Discovery: ${(err as Error).message}`]) : [];
       await this.beende(o, c0, lauf, 'completed', undefined, disc);
+      fertig = true;
     } finally {
       this.laufend.delete(c0.id);
     }
+    // Realfall 22.10. (733bbe87 wartete 6 min auf den 10-Minuten-Takt): abhängige Changes gleich nach dem Abschluss anstoßen
+    if (fertig) await this.anstossen().catch(err => this.log('I4 Motorfehler', { id: c0.id, fehler: (err as Error).message }));
   }
 
   /** Einen Schritt ausführen und prüfen (Aktion, Prüfung oder Warten). */

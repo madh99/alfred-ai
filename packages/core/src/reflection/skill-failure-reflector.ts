@@ -133,9 +133,12 @@ export class SkillFailureReflector {
         }
       }
 
-      if (workaround.length > 0 && finalSuccess) {
-        // Try to derive scope (host/cwd) from the failed-skill inputs
-        const scope = this.extractScope(e.input);
+      // Try to derive scope (host/cwd) from the failed-skill inputs
+      const scope = this.extractScope(e.input);
+      // Realfall 22.10. („Skill help auf ? → Workaround“ mit einem Ping): ohne Bereich und ohne erkannte Fehlerklasse ist das keine
+      // Lektion; der Hilfe-Skill selbst ist nie Auslöser
+      const brauchbar = e.skillName !== 'help' && !(errClass === 'OTHER' && !scope);
+      if (workaround.length > 0 && finalSuccess && brauchbar) {
         patterns.push({
           failedSkill: e.skillName,
           errorClass: errClass,

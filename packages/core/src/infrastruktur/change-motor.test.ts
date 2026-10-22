@@ -221,3 +221,20 @@ describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () 
     expect(await new ChangeMotor(w.deps).pruefeStoerungen([{ id: 'i', title: 'x', severity: 'high', status: 'open', affectedAssetIds: ['a-vm'], createdAt: new Date(ende + 25 * 3_600_000).toISOString() }])).toBe(0);
   });
 });
+
+// Realfall 22.10. (733bbe87 wartete auf den 10-Minuten-Takt): abhängiger Change startet gleich nach dem Abschluss
+describe('Folge-Change', () => {
+  it('startet direkt nach dem Abschluss des Changes, von dem er abhängt', async () => {
+    const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })]);
+    const b = { ...w.c, id: 'chg-2', status: 'approved', abhaengigVon: ['chg-1'], lauf: undefined, schritte: [S({ nr: 1, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'y' } })] } as CmdbChangeRequest;
+    const alle = [w.c, b];
+    w.deps.itsm.liste = async () => alle;
+    w.deps.itsm.hole = async (_o, id) => alle.find(x => x.id === id) ?? null;
+    w.deps.itsm.motorSetze = async (_o, id, d) => { const x = alle.find(y => y.id === id)!; if (d.status) x.status = d.status; x.lauf = JSON.parse(JSON.stringify(d.lauf)); return x; };
+    const m = new ChangeMotor(w.deps);
+    expect(await m.anstossen()).toEqual(['chg-1']); // chg-2 wartet auf chg-1
+    await warte(m); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(b.status).toBe('completed');
+  });
+});

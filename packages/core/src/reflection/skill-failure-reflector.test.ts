@@ -103,3 +103,15 @@ describe('SkillFailureReflector', () => {
     expect(patterns[0].scope).toBe('cwd=/tmp/proj');
   });
 });
+
+// Realfall 22.10.: „Skill help auf ? → Workaround“ (ein Ping) — keine Lektion
+describe('SkillFailureReflector: unbrauchbare Muster', () => {
+  it('Hilfe-Skill als Auslöser und Muster ohne Bereich mit Fehlerklasse OTHER werden verworfen', async () => {
+    const fehler = (id: string, action: string, details: Record<string, unknown> = {}) => ({ id, action, outcome: 'error' as const, errorMessage: 'Skill "infrastruktur" ist für deine Rolle nicht verfügbar.', details, timestamp: `2026-10-22T10:0${id}:00Z` });
+    const ok = (id: string) => ({ id, action: 'shell', outcome: 'success' as const, details: { command: 'ping -c 2 -W 1 192.168.1.221' }, timestamp: `2026-10-22T10:0${id}:00Z` });
+    const hilfe = new SkillFailureReflector(makeRepoStub([fehler('1', 'help'), fehler('2', 'help'), ok('3')]), noopLogger);
+    expect(await hilfe.detect('u')).toEqual([]);
+    const ohneBereich = new SkillFailureReflector(makeRepoStub([fehler('1', 'unifi'), fehler('2', 'unifi'), ok('3')]), noopLogger);
+    expect(await ohneBereich.detect('u')).toEqual([]);
+  });
+});
