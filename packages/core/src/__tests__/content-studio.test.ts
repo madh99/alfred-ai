@@ -1,8 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, extractJsonArray, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags, ensureAbsaetze } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
+
+// Realfall 22.10. (Do 18:50): Slots „Mo/Do 18:00“ werden ab „jetzt“ gesucht — donnerstags/montags nach 18 Uhr lag im 7-Tage-Fenster nur
+// ein Slot, Tests wurden rot. Für die slot-abhängigen Gruppen: feste Uhr Mi 01.07.2026 12:00 (je Test 11 min weiter, damit Zeit-Caches ablaufen).
+let testUhr = new Date(2026, 6, 1, 12, 0).getTime();
+function festeUhr(): void {
+  beforeEach(() => { testUhr += 11 * 60_000; vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(testUhr); });
+  afterEach(() => { vi.useRealTimers(); });
+}
 
 function makeLogger() {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as any;
@@ -250,6 +258,7 @@ function makeStack(opts: {
 }
 
 describe('ContentStudio (v935)', () => {
+  festeUhr();
   it('approve-Modus: erzeugt Entwürfe und terminiert sie in freie Slots', async () => {
     const { studio, createdItems, transitions, llm } = makeStack({ channel: makeChannel({ mode: 'approve' }) });
     const created = await studio.fillChannel(makeChannel({ mode: 'approve' }));
@@ -2229,6 +2238,7 @@ describe('ContentStudio — Batch-Resilienz (v978)', () => {
 });
 
 describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
+  festeUhr();
   // Realfall Public Viewing: Event-Titel tragen den Termin, der Ort steht in
   // der summary („Dublin Irish Pub, Wien") — beides muss beim LLM ankommen.
   const EVENT_LOCAL = new Date(2099, 6, 4, 19, 0); // 04.07.2099 19:00 Server-Ortszeit
