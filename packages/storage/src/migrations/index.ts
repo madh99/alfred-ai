@@ -3127,4 +3127,37 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE cmdb_change_requests ADD COLUMN lauf TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 152,
+    description: 'I4b Teil 1 — infra_kalender, infra_benachrichtigungen, cmdb_change_requests.ankuendigung (SQLite-Spiegel zu PG v156).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_kalender (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          art TEXT NOT NULL,
+          name TEXT NOT NULL,
+          geltung TEXT NOT NULL,
+          regel TEXT NOT NULL,
+          aktiv INTEGER NOT NULL DEFAULT 1,
+          notiz TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_infra_kalender_user ON infra_kalender (user_id)');
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_benachrichtigungen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          geltung TEXT NOT NULL,
+          empfaenger TEXT NOT NULL,
+          kanaele TEXT NOT NULL,
+          zeitpunkte TEXT NOT NULL,
+          aktiv INTEGER NOT NULL DEFAULT 1,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_infra_benachrichtigungen_user ON infra_benachrichtigungen (user_id)');
+      try { db.exec('ALTER TABLE cmdb_change_requests ADD COLUMN ankuendigung TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

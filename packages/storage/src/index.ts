@@ -107,6 +107,8 @@ export type { Messwert } from './repositories/messwerte-repository.js';
 export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
 export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
+export { WartungRepository } from './repositories/wartung-repository.js'; // I4b
+export type { KalenderZeile, RegelZeile } from './repositories/wartung-repository.js';
 export { SCHRITT_CHANGE_GESPERRT } from './repositories/itsm-repository.js'; // I3
 export type { ChangeSchrittDaten } from './repositories/itsm-repository.js';
 export type { Vorhaben, VorhabenStatus, VorhabenEntscheidung } from './repositories/vorhaben-repository.js';

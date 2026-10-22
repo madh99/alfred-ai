@@ -5,6 +5,8 @@ import type { HostBestand } from './sammler.js';
 import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
 import { changeAnzeige, type ChangePlanung } from './change-planung.js';
 import type { ChangeMotor } from './change-motor.js';
+import { KANAELE, ZEITPUNKTE, regelFehler, regelText, type Empfaenger, type Kanal, type KalenderEintrag, type BenachrichtigungsRegel, type Zeitpunkt } from './wartung.js';
+import { erreichbar } from './wartung-dienst.js';
 import { PRUEF_TYPEN } from './change-schritte.js';
 
 /** Ausschnitt des VorhabenRepository (@alfred/storage), damit der Skill ohne DB testbar bleibt. */
@@ -55,13 +57,23 @@ export interface InfrastrukturDeps {
   changes?: ChangePlanung;
   // ── I4 ──
   motor?: ChangeMotor;
+  // ── I4b ──
+  wartung?: {
+    kalender(o: string): Promise<KalenderEintrag[]>;
+    regeln(o: string): Promise<BenachrichtigungsRegel[]>;
+    kalenderAnlegen(o: string, e: { art: 'fenster' | 'sperre'; name: string; geltung: unknown; regel: unknown; notiz?: string }): Promise<string>;
+    regelAnlegen(o: string, e: { name: string; geltung: unknown; empfaenger: unknown[]; kanaele: string[]; zeitpunkte: string[] }): Promise<string>;
+    entferne(o: string, id: string): Promise<boolean>;
+  };
+  /** Alfred-Benutzer (Familie) nach Name auflösen → Telegram-ID */
+  nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; telegramId?: string } | undefined>;
 }
 
 export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'unifi', 'pfsense', 'mikrotik'];
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -88,6 +100,8 @@ export class InfrastrukturSkill extends Skill {
       + 'Schritt: art aktion (skill, aktion, parameter, pruefung, rueckweg {skill,aktion,parameter} — Pflicht bei ändernden Aktionen; vor der ersten Änderung eine Sicherung, z. B. proxmox create_snapshot), pruefung (pruefung), warten (sekunden oder pruefung), owner (frage — für Handgriffe, solange eine Skill-Aktion fehlt). '
       + 'Verweise: {{schrittN.feld}} auf frühere Aktionen, {{geheim:name}} für Tresor-Werte. Ein Paket mit Fehlern wird nicht gespeichert — nachbessern. '
       + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
+      + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
+      + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
     version: '2.0.0',
@@ -142,6 +156,14 @@ export class InfrastrukturSkill extends Skill {
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
         wahl: { type: 'string', enum: ['wiederholen', 'abbrechen'], description: 'change_steuern: was der Owner gesagt hat' },
+        name: { type: 'string', description: 'fenster_anlegen/sperre_anlegen/benachrichtigung_anlegen: Bezeichnung' },
+        regel: { type: 'object', description: 'Fenster/Sperre', properties: { art: { type: 'string', enum: ['einmalig', 'woechentlich'] }, von: { type: 'string' }, bis: { type: 'string' }, tage: { type: 'array', items: { type: 'number' } } } },
+        fuer: { type: 'array', items: { type: 'string' }, description: 'Asset-Namen/IDs; leer = global' },
+        notiz: { type: 'string' },
+        empfaenger: { type: 'array', items: { type: 'object', properties: { art: { type: 'string', enum: ['owner', 'nutzer', 'kontakt'] }, name: { type: 'string' }, email: { type: 'string' }, haDienst: { type: 'string', description: 'Home-Assistant notify-Ziel, z. B. mobile_app_xyz' } } } },
+        kanaele: { type: 'array', items: { type: 'string', enum: [...KANAELE] } },
+        zeitpunkte: { type: 'array', items: { type: 'string', enum: [...ZEITPUNKTE] } },
+        id: { type: 'string', description: 'wartung_entfernen: ID des Fensters/der Sperre/der Regel' },
         wortlaut: { type: 'string', description: 'entscheiden: die Worte des Owners' },
       },
       required: ['action'],
@@ -159,6 +181,7 @@ export class InfrastrukturSkill extends Skill {
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;
     if (action.startsWith('change') || action === 'freigabe_anfragen' || action === 'freigeben') return this.changeAktion(owner, repo, action, input);
+    if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     switch (action) {
       case 'vorhaben_anlegen': return this.anlegen(owner, repo, input);
       case 'vorhaben_liste': {
@@ -329,6 +352,68 @@ export class InfrastrukturSkill extends Skill {
       if (!ids.length) return { success: false, error: 'ids (Change-IDs) angeben' };
       const r = await ch.freigabeAnfragen(owner, ids);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler.join('\n') };
+    }
+    return { success: false, error: 'Unbekannte Aktion' };
+  }
+
+  private async wartungAktion(owner: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const w = this.deps.wartung;
+    if (!w) return { success: false, error: 'Wartungskalender nicht verfügbar' };
+    const geltung = async (): Promise<{ g: { global?: boolean; assetIds?: string[] }; text: string } | string> => {
+      const fuer = Array.isArray(input.fuer) ? input.fuer.filter((x): x is string => typeof x === 'string' && !!x.trim() && x.trim().toLowerCase() !== 'global') : [];
+      if (!fuer.length) return { g: { global: true }, text: 'alle Changes' };
+      if (!this.deps.changes) return 'Asset-Auflösung nicht verfügbar';
+      const r = await this.deps.changes.loeseAssets(owner, fuer);
+      return r.fehler.length ? r.fehler.join('; ') : { g: { assetIds: r.ids }, text: r.namen.join(', ') };
+    };
+    if (action === 'wartung_liste') {
+      const [k, r] = await Promise.all([w.kalender(owner), w.regeln(owner)]);
+      const z = ['### Wartungsfenster', ...k.filter(e => e.art === 'fenster').map(e => `- ${e.aktiv ? '' : '(aus) '}**${e.name}** — ${regelText(e.regel)} · ${e.geltung.global ? 'global' : `${(e.geltung.assetIds ?? []).length} Assets`} · ${e.id.slice(0, 8)}`), '', '### Sperrzeiten', ...k.filter(e => e.art === 'sperre').map(e => `- ${e.aktiv ? '' : '(aus) '}**${e.name}** — ${regelText(e.regel)} · ${e.geltung.global ? 'global' : `${(e.geltung.assetIds ?? []).length} Assets`} · ${e.id.slice(0, 8)}`), '', '### Benachrichtigungen', ...r.map(x => `- ${x.aktiv ? '' : '(aus) '}**${x.name}** — ${x.empfaenger.map(e => e.name ?? e.art).join(', ')} über ${x.kanaele.join('/')} · ${x.zeitpunkte.join(', ')} · ${x.geltung.global ? 'global' : `${(x.geltung.assetIds ?? []).length} Assets`} · ${x.id.slice(0, 8)}`)];
+      if (!k.some(e => e.art === 'fenster')) z.push('', 'Ohne Wartungsfenster dürfen freigegebene Changes jederzeit starten (außer in Sperrzeiten).');
+      return { success: true, data: { kalender: k, regeln: r }, display: z.join('\n') };
+    }
+    if (action === 'fenster_anlegen' || action === 'sperre_anlegen') {
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      if (name.length < 2) return { success: false, error: 'name fehlt' };
+      const rf = regelFehler(input.regel);
+      if (rf) return { success: false, error: `regel: ${rf}` };
+      const g = await geltung(); if (typeof g === 'string') return { success: false, error: g };
+      const art = action === 'fenster_anlegen' ? 'fenster' : 'sperre';
+      const id = await w.kalenderAnlegen(owner, { art, name, geltung: g.g, regel: input.regel, ...(typeof input.notiz === 'string' ? { notiz: input.notiz } : {}) });
+      this.deps.protokoll?.('I4b Kalender angelegt', { id, art, name });
+      return { success: true, data: { id }, display: `${art === 'fenster' ? 'Wartungsfenster' : 'Sperrzeit'} **${name}** angelegt: ${regelText(input.regel as never)}, gilt für ${g.text} (${id.slice(0, 8)}).` };
+    }
+    if (action === 'benachrichtigung_anlegen') {
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      const kanaele = (Array.isArray(input.kanaele) ? input.kanaele : []).filter((k): k is Kanal => (KANAELE as readonly string[]).includes(String(k)));
+      const zeitpunkte = (Array.isArray(input.zeitpunkte) ? input.zeitpunkte : []).filter((z): z is Zeitpunkt => (ZEITPUNKTE as readonly string[]).includes(String(z)));
+      if (name.length < 2 || !kanaele.length || !zeitpunkte.length) return { success: false, error: `name, kanaele (${KANAELE.join('/')}) und zeitpunkte (${ZEITPUNKTE.join('/')}) angeben` };
+      const empfaenger: Empfaenger[] = [];
+      for (const e0 of Array.isArray(input.empfaenger) ? input.empfaenger : []) {
+        const e = (e0 ?? {}) as Record<string, unknown>;
+        const art = e.art === 'nutzer' || e.art === 'kontakt' ? e.art : 'owner';
+        const basis: Empfaenger = { art, ...(typeof e.name === 'string' && e.name.trim() ? { name: e.name.trim() } : {}), ...(typeof e.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.email.trim()) ? { email: e.email.trim() } : {}), ...(typeof e.haDienst === 'string' && /^[\w.]+$/.test(e.haDienst.trim()) ? { haDienst: e.haDienst.trim() } : {}) };
+        if (art === 'nutzer') {
+          const n = basis.name ? await this.deps.nutzerAufloesen?.(basis.name) : undefined;
+          if (!n) return { success: false, error: `Alfred-Benutzer „${basis.name ?? '?'}“ nicht gefunden` };
+          Object.assign(basis, { userId: n.userId, name: n.name, ...(n.telegramId ? { telegramId: n.telegramId } : {}) });
+        }
+        if (!erreichbar(basis, kanaele)) return { success: false, error: `${basis.name ?? art} ist über ${kanaele.join('/')} nicht erreichbar (owner: push/telegram; nutzer: telegram mit verknüpftem Konto, email, homeassistant mit haDienst; kontakt: email oder haDienst)` };
+        empfaenger.push(basis);
+      }
+      if (!empfaenger.length) return { success: false, error: 'empfaenger fehlt' };
+      const g = await geltung(); if (typeof g === 'string') return { success: false, error: g };
+      const id = await w.regelAnlegen(owner, { name, geltung: g.g, empfaenger, kanaele, zeitpunkte });
+      this.deps.protokoll?.('I4b Benachrichtigung angelegt', { id, name, empfaenger: empfaenger.map(e => e.name ?? e.art), kanaele, zeitpunkte });
+      return { success: true, data: { id }, display: `Benachrichtigung **${name}** angelegt: ${empfaenger.map(e => e.name ?? e.art).join(', ')} über ${kanaele.join('/')} — ${zeitpunkte.join(', ')}; gilt für ${g.text} (${id.slice(0, 8)}).` };
+    }
+    if (action === 'wartung_entfernen') {
+      const k = String(input.id ?? '').trim();
+      const alle = [...(await w.kalender(owner)).map(e => e.id), ...(await w.regeln(owner)).map(r => r.id)];
+      const treffer = alle.filter(x => x === k || (k.length >= 6 && x.startsWith(k)));
+      if (treffer.length !== 1) return { success: false, error: `Eintrag „${k}“ nicht eindeutig gefunden` };
+      await w.entferne(owner, treffer[0]!);
+      return { success: true, display: `Eintrag ${treffer[0]!.slice(0, 8)} entfernt.` };
     }
     return { success: false, error: 'Unbekannte Aktion' };
   }

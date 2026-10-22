@@ -156,3 +156,20 @@ describe('I4 Sicherheitsbefund: Freigabe vor jedem Schritt', () => {
     expect(w.aufrufe.filter(a => a.startsWith('proxmox.'))).toEqual([]);
   });
 });
+
+describe('I4b Motor wartet auf den Zeitplan', () => {
+  it('zeitplan nein → nicht starten; ja → starten', async () => {
+    const w = welt(probe());
+    w.deps.zeitplan = async () => ({ jetzt: false, grund: 'außerhalb der Wartungsfenster' });
+    expect(await w.motor.anstossen()).toEqual([]);
+    expect(w.c.status).toBe('approved');
+    const ereignisse: string[] = [];
+    w.deps.zeitplan = async () => ({ jetzt: true, grund: 'im Fenster' });
+    w.deps.ereignis = async (_o, _c, z) => { ereignisse.push(z); };
+    const m2 = new ChangeMotor(w.deps);
+    expect(await m2.anstossen()).toEqual(['chg-1']);
+    await warte(m2);
+    expect(w.c.status).toBe('completed');
+    expect(ereignisse).toEqual(['start', 'ende']);
+  });
+});

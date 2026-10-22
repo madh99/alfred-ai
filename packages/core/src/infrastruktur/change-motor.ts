@@ -37,6 +37,10 @@ export interface MotorDeps {
   /** Frage an den Owner (Button); nach dem Ja ruft die Queue den Skill infrastruktur mit `params` auf */
   frage?: (description: string, params: Record<string, unknown>) => Promise<boolean>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
+  /** I4b — darf der Change jetzt starten (Fenster, Sperren, Ankündigung)? Verschickt fällige Ankündigungen. */
+  zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
+  /** I4b — Start/Ende/Störung an die Empfänger der Benachrichtigungsregeln */
+  ereignis?: (o: string, c: CmdbChangeRequest, z: 'start' | 'ende' | 'stoerung', text: string) => Promise<void>;
   jetzt?: () => number;
   schlafe?: (ms: number) => Promise<void>;
   /** Wartezeiten (für Tests verkürzbar) */
@@ -89,6 +93,10 @@ export class ChangeMotor {
       if (abh.some(x => !x || x.status !== 'completed')) continue;
       const belegt = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig').flatMap(x => x.affectedAssetIds);
       if (c.affectedAssetIds.some(a => belegt.includes(a))) { this.log('I4 Change wartet (Asset belegt)', { id: c.id }); continue; }
+      if (this.d.zeitplan) {
+        const z = await this.d.zeitplan(o, c).catch(err => ({ jetzt: false, grund: `Zeitplan nicht prüfbar: ${(err as Error).message}` }));
+        if (!z.jetzt) { this.log('I4b Change wartet', { id: c.id, grund: z.grund, startAb: (z as { startAb?: string }).startAb }); continue; }
+      }
       gestartet.push(c.id);
       void this.starte(o, c).catch(err => this.log('I4 Motorfehler', { id: c.id, fehler: (err as Error).message }));
     }
@@ -100,6 +108,7 @@ export class ChangeMotor {
     const akt = await this.d.itsm.motorSetze(o, c.id, { status: 'in_progress', lauf });
     this.log('I4 Change gestartet', { id: c.id, titel: c.title, schritte: (c.schritte ?? []).length });
     await this.d.melde?.(`▶️ Change gestartet: ${c.title} (${c.id.slice(0, 8)}, ${(c.schritte ?? []).length} Schritte)`, false);
+    await this.d.ereignis?.(o, akt, 'start', `Die Wartung „${c.title}“ beginnt jetzt${c.ausfallMinuten ? ` (erwartete Unterbrechung bis ${c.ausfallMinuten} min)` : ''}.`).catch(() => undefined);
     await this.weiter(o, akt, lauf);
   }
 
@@ -273,6 +282,7 @@ export class ChangeMotor {
     }
     await this.d.itsm.motorSetze(o, c.id, { lauf });
     this.log('I4 Change angehalten', { id: c.id, grund: grund.slice(0, 300), incident: lauf.incidentId, rueckwegFrage: frageGestellt });
+    await this.d.ereignis?.(o, c, 'stoerung', `Die Wartung „${c.title}“ ist angehalten: ${grund.slice(0, 200)}`).catch(() => undefined);
     await this.d.melde?.(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)})\n${grund}${frageGestellt ? '\nRückweg wartet auf dein Ja.' : rw.length ? '' : '\nKein Rückweg nötig oder möglich.'}`, true);
   }
 
@@ -375,5 +385,6 @@ export class ChangeMotor {
     if (this.d.incident && lauf.incidentId && status !== 'completed') await this.d.incident.notiz(o, lauf.incidentId, `Change-Ende: ${status}\n${bericht}`).catch(() => undefined);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
     await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}`, status === 'failed');
+    await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
   }
 }

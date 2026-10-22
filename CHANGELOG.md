@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Wartungsfenster, Sperrzeiten und Benachrichtigungsregeln (v1563, Spec Infrastruktur-Vorhaben I4b Teil 1)
+
+Owner 22.10. (5b-7 Wartungsfenster-Kalender mit „wer wann wie informiert“, 5b-12 pflegbare Sperrzeiten); Freigabe „mit dem nächsten Schritt weitermachen“.
+
+- **Neue Tabellen** `infra_kalender` (Wartungsfenster und Sperrzeiten) und `infra_benachrichtigungen` (Regeln) sowie `cmdb_change_requests.ankuendigung` (PG v156 / SQLite v152).
+  - Einträge sind einmalig (von/bis) oder wöchentlich (Tage, HH:MM, auch über Mitternacht), in Wiener Zeit, global oder je Asset.
+- **Der Ausführungsmotor fragt vor jedem Start den Zeitplan:**
+  - Keine Sperrzeit; gibt es geltende Fenster, muss eines offen sein und bis zu seinem Ende die erwartete Ausfallzeit (mindestens 15 Minuten) Platz haben.
+  - Verlangt eine Benachrichtigungsregel „24 h vorher“ oder „1 h vorher“, legt Alfred den Start fest (frühestens nach der Vorlaufzeit, im nächsten passenden Fenster), kündigt ihn an und beginnt erst dann.
+  - Notfall-Changes sind ausgenommen. Ohne Fenster dürfen Changes jederzeit starten.
+- **Benachrichtigungen** zu den Zeitpunkten 24 h vorher, 1 h vorher, Start, Ende und Störung, jeweils genau einmal:
+  - an den Owner per Push oder Telegram;
+  - an Alfred-Benutzer (z. B. Familie) per Telegram (das Konto wird beim Anlegen aufgelöst) oder E-Mail;
+  - an Kontakte per E-Mail oder über ein Home-Assistant-notify-Ziel.
+  - Beim Anlegen wird geprüft, dass jeder Empfänger über mindestens einen Kanal erreichbar ist.
+- **Pflege:**
+  - im Gespräch über den Skill `infrastruktur` (`wartung_liste`, `fenster_anlegen`, `sperre_anlegen`, `benachrichtigung_anlegen`, `wartung_entfernen`);
+  - im Web auf der neuen Seite „Wartung“ (`/api/wartung`, nur der Owner) mit denselben Aktionen und Prüfungen.
+
 ### Security — Ausführungsmotor prüft die Freigabe vor jedem Schritt (v1562)
 
 - Befund aus der Commit-Prüfung: Beim Fortsetzen (Neustart, Owner-Schritt, Wiederholen, Rückweg) wurde nicht erneut geprüft, ob die Owner-Freigabe noch genau den gespeicherten Plan deckt.

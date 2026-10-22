@@ -7019,6 +7019,43 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           nachFreigabe: () => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); },
         });
+        // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
+        const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
+        const wartungRepo = new WartungRepository(adapter);
+        const alfredUsersI4b = new AlfredUserRepoI4b(adapter);
+        const { WartungsDienst } = await import('./infrastruktur/wartung-dienst.js');
+        const ctxOwnerI4b = () => { const o = ownerFz() ?? ''; return { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never; };
+        const wartungLesen = {
+          kalender: async (o: string) => (await wartungRepo.kalender(o)) as never as import('./infrastruktur/wartung.js').KalenderEintrag[],
+          regeln: async (o: string) => (await wartungRepo.regeln(o)) as never as import('./infrastruktur/wartung.js').BenachrichtigungsRegel[],
+        };
+        const wartungsDienst = new WartungsDienst({
+          ...wartungLesen,
+          setzeAnkuendigung: (o, id, a) => itsmI3.setzeAnkuendigung(o, id, a),
+          sende: async (e, kanal, titel, text) => {
+            if (kanal === 'push') {
+              if (e.art !== 'owner' || !this.pushDienst) return false;
+              const r = await this.pushDienst.anOwner({ titel, text: text.slice(0, 180), art: 'hinweis', stufe: 'active' });
+              return r.zugestellt > 0;
+            }
+            if (kanal === 'telegram') {
+              if (e.art === 'owner') return this.sendeAnOwner(`${titel}\n${text}`);
+              const tg = this.adapters.get('telegram' as never);
+              if (!e.telegramId || !tg) return false;
+              await tg.sendDirectMessage(e.telegramId, `${titel}\n${text}`);
+              return true;
+            }
+            if (kanal === 'email') {
+              const sk = skillRegistry.get('email');
+              if (!e.email || !sk) return false;
+              return (await skillSandbox.execute(sk, { action: 'send', to: e.email, subject: titel, body: text }, ctxOwnerI4b())).success;
+            }
+            const ha = skillRegistry.get('homeassistant');
+            if (!e.haDienst || !ha) return false;
+            return (await skillSandbox.execute(ha, { action: 'notify', message: text, title: titel, target: e.haDienst }, ctxOwnerI4b())).success;
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        });
         // I4 — Ausführungsmotor
         {
           const { ChangeMotor } = await import('./infrastruktur/change-motor.js');
@@ -7064,6 +7101,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return ok !== false;
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
+            zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
+            ereignis: (o, c, z, text) => wartungsDienst.ereignis(o, c, z, text),
           });
           this.registriereJob({
             key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
@@ -7148,8 +7187,30 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           changes: this.changePlanung,
           motor: this.changeMotor,
+          wartung: {
+            ...wartungLesen,
+            kalenderAnlegen: (o, e) => wartungRepo.kalenderAnlegen(o, e),
+            regelAnlegen: (o, e) => wartungRepo.regelAnlegen(o, e),
+            entferne: (o, id) => wartungRepo.entferne(o, id),
+          },
+          nutzerAufloesen: async (name) => {
+            const n = name.trim().toLowerCase();
+            const u = (await alfredUsersI4b.getAll()).find(x => x.username.toLowerCase() === n || (x.displayName ?? '').toLowerCase() === n || (x.displayName ?? '').toLowerCase().split(/\s+/)[0] === n);
+            if (!u) return undefined;
+            const tg = (await alfredUsersI4b.getPlatformLinks(u.id)).find(l => l.platform === 'telegram');
+            return { userId: u.id, name: u.displayName ?? u.username, ...(tg ? { telegramId: tg.platformUserId } : {}) };
+          },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
+        // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner)
+        (this.adapters.get('api' as never) as unknown as { setWartungCallbacks?: (cb: unknown) => void } | undefined)?.setWartungCallbacks?.({
+          aktion: async (uid: string, body: Record<string, unknown>) => {
+            const sk = skillRegistry.get('infrastruktur');
+            if (!sk) return { success: false, error: 'nicht verfügbar' };
+            const master = uid ? await this.userRepo?.getMasterUserId(uid).catch(() => uid) ?? uid : (ownerFz() ?? '');
+            return skillSandbox.execute(sk, body, { userId: uid || master, masterUserId: master, platform: 'api', chatId: '', conversationId: '' } as never);
+          },
+        });
       }
       this.fernzugangNamenAuffrischen = async () => {
         const o = ownerFz(); if (!o) return;

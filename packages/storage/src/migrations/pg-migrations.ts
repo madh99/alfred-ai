@@ -2436,4 +2436,37 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS lauf TEXT', []);
     },
   },
+  {
+    version: 156,
+    description: 'I4b Teil 1 (Spec Infrastruktur-Vorhaben) — infra_kalender (Wartungsfenster/Sperrzeiten), infra_benachrichtigungen (wer/wann/wie), cmdb_change_requests.ankuendigung (PG-Spiegel zu SQLite v152).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_kalender (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          art TEXT NOT NULL,
+          name TEXT NOT NULL,
+          geltung TEXT NOT NULL,
+          regel TEXT NOT NULL,
+          aktiv INTEGER NOT NULL DEFAULT 1,
+          notiz TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_kalender_user ON infra_kalender (user_id)', []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_benachrichtigungen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          geltung TEXT NOT NULL,
+          empfaenger TEXT NOT NULL,
+          kanaele TEXT NOT NULL,
+          zeitpunkte TEXT NOT NULL,
+          aktiv INTEGER NOT NULL DEFAULT 1,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_benachrichtigungen_user ON infra_benachrichtigungen (user_id)', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS ankuendigung TEXT', []);
+    },
+  },
 ];

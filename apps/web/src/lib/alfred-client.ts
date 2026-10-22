@@ -1779,6 +1779,16 @@ export class AlfredClient {
   }
 
   /** v1185 — Kachel Vorgänge */
+  /** I4b — Wartungsfenster, Sperrzeiten, Benachrichtigungsregeln (dieselben Aktionen wie im Gespräch) */
+  async wartung(): Promise<{ success: boolean; data?: { kalender: WartungKalenderDto[]; regeln: WartungRegelDto[] }; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/wartung`, { headers: this.authHeaders });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  async wartungAktion(b: Record<string, unknown>): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/wartung`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(b) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   /** v1429 R4a — Beobachter-Regeln (Liste mit Stand, Geräte, Projekte) */
   async beobachter(): Promise<BeobachterListe | null> {
     const res = await fetch(`${this.baseUrl}/api/beobachter`, { headers: this.authHeaders });
@@ -3967,3 +3977,7 @@ export interface AgentConventionsHistoryEntry {
 export interface GeraetDto { id: string; name: string; plattform: string; status: 'aktiv' | 'widerrufen'; online: boolean; verbundenSeit?: string; zuletztGesehen?: string; erstellt: string; manifest?: { satellitVersion?: string; aktionen?: unknown[] } }
 /** Phase 5 H1 — POST /api/geraete/pairing-code: Code (5 min, einmalig), Server-Adresse, Fingerabdruck des Server-Schlüssels, QR-Inhalt. */
 export interface Kopplungscode { code: string; gueltigBis: string; server: string; fingerabdruck?: string; qr?: string }
+
+/** I4b — Wartungskalender (Struktur wie core/infrastruktur/wartung.ts) */
+export interface WartungKalenderDto { id: string; art: 'fenster' | 'sperre'; name: string; geltung: { global?: boolean; assetIds?: string[] }; regel: { art: 'einmalig'; von: string; bis: string } | { art: 'woechentlich'; tage: number[]; von: string; bis: string }; aktiv: boolean; notiz?: string }
+export interface WartungRegelDto { id: string; name: string; geltung: { global?: boolean; assetIds?: string[] }; empfaenger: Array<{ art: string; name?: string; email?: string; haDienst?: string }>; kanaele: string[]; zeitpunkte: string[]; aktiv: boolean }

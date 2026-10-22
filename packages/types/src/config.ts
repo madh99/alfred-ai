@@ -947,6 +947,8 @@ export interface CmdbChangeRequest {
   freigabeAnfrage?: { hash: string; bis: string; fingerabdruck: string };
   /** I4 — Laufzustand des Ausführungsmotors (Struktur siehe core/infrastruktur/change-lauf.ts) */
   lauf?: unknown;
+  /** I4b — angekündigter Start und bereits gesendete Benachrichtigungen ({ start?: ISO, gesendet: string[] }) */
+  ankuendigung?: { start?: string; gesendet: string[] };
   createdAt: string;
   updatedAt: string;
 }

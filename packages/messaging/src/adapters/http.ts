@@ -892,6 +892,23 @@ export class HttpAdapter extends MessagingAdapter {
     if (!text) { antwort(400, { error: 'text fehlt (was soll als Nächstes passieren?)' }); return; }
     antwort(200, await cb.weiter(id, text));
   }
+  /** I4b — Wartungsfenster, Sperrzeiten, Benachrichtigungsregeln fürs Web (dieselben Aktionen und Prüfungen wie im Gespräch) */
+  private wartungCallbacks?: { aktion: (userId: string, body: Record<string, unknown>) => Promise<unknown> };
+  setWartungCallbacks(cb: HttpAdapter['wartungCallbacks']): void { this.wartungCallbacks = cb; }
+  private async handleWartung(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.wartungCallbacks;
+    if (!cb) { antwort(503, { error: 'Wartung nicht verfügbar' }); return; }
+    const userId = await this.resolveUserId(req);
+    if (req.method === 'GET') { antwort(200, await cb.aktion(userId, { action: 'wartung_liste' })); return; }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    if (!['fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(String(body.action))) { antwort(400, { error: 'unbekannte Aktion' }); return; }
+    antwort(200, await cb.aktion(userId, body));
+  }
+
   /** v1429 R4a — Beobachter-Regeln fürs Web (dieselben wie App und Gespräch) */
   private beobachterCallbacks?: { liste: () => Promise<unknown>; anlegen: (b: Record<string, unknown>) => Promise<unknown>; aendern: (id: string, b: Record<string, unknown>) => Promise<unknown> };
   setBeobachterCallbacks(cb: HttpAdapter['beobachterCallbacks']): void { this.beobachterCallbacks = cb; }
@@ -2167,6 +2184,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/wartung' && (req.method === 'GET' || req.method === 'POST')) { // I4b
+      this.handleWartung(req, res).catch(err => this.safeError(res, err));
     } else if (/^\/api\/beobachter(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleBeobachter(req, res, url).catch(err => this.safeError(res, err)); // v1429 R4a
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {

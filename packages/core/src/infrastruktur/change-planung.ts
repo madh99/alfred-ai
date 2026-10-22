@@ -145,6 +145,19 @@ export class ChangePlanung {
 
   liste(owner: string): Promise<CmdbChangeRequest[]> { return this.d.itsm.liste(owner); }
 
+  /** I4b — Asset-Namen/IDs/Quellen eindeutig auflösen (dieselben Regeln wie bei „betroffen“). */
+  async loeseAssets(owner: string, namen: string[]): Promise<{ ids: string[]; namen: string[]; fehler: string[] }> {
+    const ctx = await this.kontext(owner);
+    const aus = { ids: [] as string[], namen: [] as string[], fehler: [] as string[] };
+    for (const n of namen) {
+      const a = ctx.asset(n);
+      if (!a) aus.fehler.push(`„${n}“ ist kein CMDB-Asset`);
+      else if ('mehrdeutig' in a) aus.fehler.push(`„${n}“ ist mehrdeutig: ${a.mehrdeutig.slice(0, 5).join('; ')}`);
+      else if (!aus.ids.includes(a.id)) { aus.ids.push(a.id); aus.namen.push(a.name); }
+    }
+    return aus;
+  }
+
   async finde(owner: string, k: string): Promise<CmdbChangeRequest | null> {
     const direkt = await this.d.itsm.hole(owner, k);
     if (direkt) return direkt;

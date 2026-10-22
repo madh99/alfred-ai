@@ -137,6 +137,7 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
     ...(r.freigegeben_ueber ? { freigegebenUeber: r.freigegeben_ueber as string } : {}),
     ...(r.freigabe_anfrage ? { freigabeAnfrage: jsonOder(r.freigabe_anfrage) as CmdbChangeRequest['freigabeAnfrage'] } : {}),
     ...(r.lauf ? { lauf: jsonOder(r.lauf) } : {}),
+    ...(r.ankuendigung ? { ankuendigung: jsonOder(r.ankuendigung) as CmdbChangeRequest['ankuendigung'] } : {}),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -962,6 +963,11 @@ export class ItsmRepository {
     werte.push(e.id, userId);
     await this.db.execute(`UPDATE cmdb_change_requests SET ${felder.join(', ')} WHERE id = ? AND user_id = ?`, werte);
     return (await this.getChangeRequestById(userId, e.id))!;
+  }
+
+  /** I4b — angekündigten Start und gesendete Benachrichtigungen am Change festhalten (Plan und Freigabe bleiben unberührt). */
+  async setzeAnkuendigung(userId: string, id: string, a: { start?: string; gesendet: string[] }): Promise<void> {
+    await this.db.execute('UPDATE cmdb_change_requests SET ankuendigung = ?, updated_at = ? WHERE id = ? AND user_id = ?', [JSON.stringify(a), new Date().toISOString(), id, userId]);
   }
 
   /** I3 — offene Freigabe-Frage am Change vermerken (nur Hash der Einmal-Freigabe, Gültigkeit, Fingerabdruck). */
