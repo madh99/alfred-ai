@@ -7226,7 +7226,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               notiz: async (o, id, text) => { await itsmI3.updateIncident(o, id, { investigationNotes: text } as never); },
             },
             melde: async (text, dringend) => {
-              await this.sendeAnOwner(text);
+              // Realfall 22.10.: Fertigmeldungen kamen nur über Telegram/Push, nicht in den App-Verlauf (Freigabe-Fragen schon) — jetzt wie alle
+              // Meldungen ohne Modell: Telegram UND im Verlauf gespeichert (die App zeigt sie im Hauptgespräch)
+              await this.meldeOhneModell(text);
               await this.pushDienst?.anOwner({ titel: dringend ? 'Change braucht dich' : 'Change', text: text.slice(0, 180), art: 'hinweis', stufe: dringend ? 'time-sensitive' : 'active' }).catch(() => undefined);
             },
             frage: async (description, params) => {

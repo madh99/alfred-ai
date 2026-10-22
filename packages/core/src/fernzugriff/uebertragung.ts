@@ -28,6 +28,8 @@ export function pruefePfad(p: unknown, art: 'quelle' | 'ziel'): string | undefin
   return undefined;
 }
 export const gueltigerName = (x: unknown): x is string => typeof x === 'string' && NAME.test(x);
+/** Docker-Volumes: auch anonyme Volumes mit 64-stelliger ID (Realfall 22.10.: pgAdmin-Volume c3805b…) */
+const VOLUME = /^[a-zA-Z0-9][\w.-]{0,127}$/;
 
 /** Dateiliste eines Ordners (fehlt er, ist die Ausgabe leer) — NUL-getrennt: „typ größe zeit modus uid gid pfad\0linkziel\0“ */
 export const listenBefehl = (p: string) => `if [ -d '${p}' ]; then cd -- '${p}' && find . -xdev -printf '%y %s %T@ %m %U %G %p\\0%l\\0'; fi`;
@@ -153,7 +155,7 @@ export async function kopiere<Z>(w: Wege<Z>, q: Z, qPfad: string, z: Z, zPfad: s
 }
 
 export async function volumePfad<Z>(w: Wege<Z>, x: Z, volume: string, anlegen: boolean): Promise<string> {
-  if (!gueltigerName(volume)) throw new Error(`ungültiger Volume-Name ${volume}`);
+  if (typeof volume !== 'string' || !VOLUME.test(volume)) throw new Error(`ungültiger Volume-Name ${volume}`);
   const r = await w.lauf(x, root(volumeBefehl(volume, anlegen)), '', 60_000);
   const p = r.stdout.trim();
   if (r.code !== 0 || !/^\/var\/lib\/docker\/volumes\/[\w.-]+\/_data$/.test(p)) throw new Error(`Volume ${volume}: ${anlegen ? 'nicht anlegbar' : 'nicht gefunden'} (${(r.stderr || p).trim().slice(-160)})`);

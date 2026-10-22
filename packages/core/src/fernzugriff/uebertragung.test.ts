@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, type Wege, type Eintrag } from './uebertragung.js';
+import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, volumePfad, type Wege, type Eintrag } from './uebertragung.js';
 
 // I6 — Abgleich nach rsync-Art gegen zwei simulierte Dateisysteme (die echten find/tar-Befehle prüft der Live-Lauf)
 type Fs = Map<string, Eintrag & { inhalt?: string }>;
@@ -107,5 +107,16 @@ describe('I6 kopiere (zwei Durchgänge)', () => {
     expect(befehle[0]).toContain('docker exec -i pg-neu pg_restore -U app -d app --clean --if-exists --no-owner --exit-on-error');
     expect(e).toMatchObject({ tabellen: 2, zeilen: 8, abweichungen: ['public.b: 5 → 4 Zeilen'] });
     await expect(kopiereDatenbank(w, 'q', 'pg; rm -rf /', 'z', 'pg', 'app', 'app', { timeoutMs: 1000 })).rejects.toThrow(/ungültiger Name/);
+  });
+});
+
+// Realfall 22.10. (Change e1843faa Schritt 4): anonymes Volume mit 64-stelliger ID wurde als ungültig abgewiesen
+describe('I6 Volume-Namen', () => {
+  it('64-stellige Docker-ID ist gültig, Shell-Zeichen nicht', async () => {
+    const id = 'c3805b9065b214f3e198b3bb8ced0484230938c0146e65348fa8d2c5c2ebb4ab';
+    const w = { lauf: async () => ({ code: 0, stdout: `/var/lib/docker/volumes/${id}/_data
+`, stderr: '' }), strom: async () => ({ codeQuelle: 0, codeZiel: 0, bytes: 0, stderrQuelle: '', stderrZiel: '' }) } as Wege<string>;
+    expect(await volumePfad(w, 'q', id, false)).toBe(`/var/lib/docker/volumes/${id}/_data`);
+    await expect(volumePfad(w, 'q', 'x; rm -rf /', false)).rejects.toThrow(/ungültiger Volume-Name/);
   });
 });

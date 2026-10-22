@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Anonyme Docker-Volumes kopierbar; Change-Meldungen auch im App-Verlauf (v1593)
+
+- **Volume-Namen (Realfall pgAdmin-Umzug, Schritt 4):** Das anonyme Volume `c3805b…` hat eine 64-stellige ID, die Namensprüfung erlaubte nur 63 Zeichen. Jetzt sind Volume-Namen bis 128 Zeichen erlaubt (`[a-zA-Z0-9][\w.-]*`); Shell-Zeichen bleiben ausgeschlossen.
+- **Change-Meldungen:** Fertig-, Start- und Haltemeldungen des Motors gingen nur an Telegram und als Push, nicht in den Verlauf der App; Freigabe-Fragen kamen dort sehr wohl an. Jetzt laufen sie wie alle Meldungen ohne Modell: Telegram und gespeichert im Verlauf, den die App anzeigt.
+
 ### Fixed — UniFi-Regel ein/aus über PUT statt PATCH (v1592)
 
 - **Realfall 22.10. (Change 9703757c):** `set_firewall_policy_enabled` schickte `PATCH {enabled}`. Das Integration-API der UDM nimmt bei PATCH nur `loggingEnabled`/`reportFlowEnabled` an und antwortete mit `unknown-property $.enabled`. Die Aktion war seit v1386 nie live gelaufen.
