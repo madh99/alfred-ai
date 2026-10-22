@@ -22,6 +22,8 @@ describe('Sitzungs-Chats (v1328)', () => {
     expect(sitzungsChatErlaubt('5060785419', 'abc')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/faeden')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/faeden/m1x2')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/changes')).toBe(true); // v1601 App-Ansicht Changes
+    expect(istSitzungsPfad('/api/vorhaben')).toBe(false); // Web-Seite bleibt Benutzer-Sitzungen vorbehalten
     expect(istSitzungsPfad('/api/geraete/projekte')).toBe(true); // v1401 App-Ansicht Projekte
     expect(istSitzungsPfad('/api/geraete/projekte/b77431a2-e388-4d7e-a4d9-b3a8a31542fc')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/faeden/../x')).toBe(false);

@@ -466,6 +466,8 @@ export class Alfred {
   private tresorRepo?: import('@alfred/storage').TresorRepository;
   /** Einwand — Widerspruch des Owners zu Change/Architektur */
   private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
+  /** v1601 — Vorhaben und Changes mit Laufstand (Web-Seite Vorhaben und App-Ansicht Changes teilen sich die Liste) */
+  private changesUebersicht?: () => Promise<unknown>;
   /** I5 — Server-Anteile der Vorlagen-Fabrik (auch nach Hot-Reload des Proxmox-Skills wieder setzen) */
   private vmFabrik?: import('@alfred/skills').VmFabrikDeps;
   /** I4 — Ausführungsmotor für freigegebene Changes */
@@ -14159,16 +14161,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               ...(l ? { lauf: { schritt: l.schritt, schrittTitel: akt?.titel, fertig: (l.ergebnisse ?? []).filter(e => e.ok).length, start: l.start, ende: l.ende, grund: l.grund?.slice(0, 300), schrittListe: st.map(x => ({ nr: x.nr, titel: x.titel, art: x.art, ok: (l.ergebnisse ?? []).find(e => e.nr === x.nr)?.ok ?? null })) } } : {}),
             };
           };
+          const listeFuer = async (o: string) => {
+            const [vs, cs] = await Promise.all([vr.liste(o), ir.listChangeRequests(o, { limit: 500 })]);
+            const mitSchritten = cs.filter(c => c.schritte?.length);
+            return {
+              vorhaben: vs.map(v => ({ id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, architekturVersion: v.architekturVersion, geaendert: v.geaendert, changes: mitSchritten.filter(c => c.vorhabenId === v.id).map(kurz) })),
+              ohneVorhaben: mitSchritten.filter(c => !c.vorhabenId).map(kurz),
+            };
+          };
+          // v1601 — dieselbe Liste für die App-Ansicht „Changes“ (nur Owner-Geräte, siehe ownerAnsichten)
+          this.changesUebersicht = async () => { const o = this.ownerMasterUserId ?? this.tryOwner(); if (!o) throw new Error('kein Owner'); return listeFuer(o); };
           (apiAdapter as unknown as { setVorhabenCallbacks?: (cb: unknown) => void }).setVorhabenCallbacks?.({
-            liste: async (uid: string) => {
-              const o = await owner(uid);
-              const [vs, cs] = await Promise.all([vr.liste(o), ir.listChangeRequests(o, { limit: 500 })]);
-              const mitSchritten = cs.filter(c => c.schritte?.length);
-              return {
-                vorhaben: vs.map(v => ({ id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, architekturVersion: v.architekturVersion, geaendert: v.geaendert, changes: mitSchritten.filter(c => c.vorhabenId === v.id).map(kurz) })),
-                ohneVorhaben: mitSchritten.filter(c => !c.vorhabenId).map(kurz),
-              };
-            },
+            liste: async (uid: string) => listeFuer(await owner(uid)),
             detail: async (uid: string, id: string) => {
               const o = await owner(uid);
               const v = await vr.finde(o, id);
@@ -16826,7 +16830,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       projekte: geraetId === WEB_OWNER_QUELLE ? undefined : await this.geraeteProjekteFuerApp(owner, geraetId), // v1487 — das Web hat eigene Projekt-Routen
       ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
-    return Object.assign(ansichten, this.weitereAnsichten(owner, db, geraetId));
+    return Object.assign(ansichten, this.weitereAnsichten(owner, db, geraetId), this.changesUebersicht ? { changes: this.changesUebersicht } : {});
   }
 
   /** v1536 (Owner 20.10. „1–5 wie vorgeschlagen“) — Notizen, Wissen, Interessen, Ziele und Nutzung für die Apps (nur Owner). */

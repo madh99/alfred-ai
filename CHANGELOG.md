@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Changes in der App (v1601, App 1.75.0)
+
+- **`GET /api/geraete/changes`** (nur Geräte des Owners): Vorhaben und Changes mit Laufstand. Es ist dieselbe Liste wie auf der Web-Seite „Vorhaben“; beide nutzen eine gemeinsame Funktion.
+- **App 1.75.0 – eigene Ansicht „Changes“** (Owner 22.10.: „eigene Changes-Ansicht in der App“). Bisher ging das nur im Chat oder über die Web-Seite im Browser.
+  - Gruppen: läuft gerade, braucht dich (angehalten), wartet auf Freigabe, freigegeben, in Planung, abgeschlossen (7 Tage).
+  - Je Change: Fortschritt, aktueller Schritt, Grund des Anhaltens und eine aufklappbare Schrittliste.
+  - Knöpfe „Wiederholen …“, „Rückweg …“, „Abbrechen …“ und „Nachfragen“ füllen nur die Chat-Eingabe vor. „Zur Freigabe“ öffnet die offenen Bestätigungen.
+  - Zähler in der Navigation. Solange ein Change läuft, wird alle 5 s nachgelesen.
+
 ### Fixed — Klare Rückmeldung nach einer Change-Freigabe; Web-Daten nur für den eigenen Benutzer (v1600)
 
 - **Realfall 22.10.:** Nach dem Ja zu einem Change kamen in der App mehrere, teils doppelte Rückmeldungen. Darunter waren die wiederholte Freigabe-Frage, ein Text „in deinem Namen“ und eine Zusammenfassung des Modells, die „angelegt“ meldete, bevor der Motor fertig war. „Freigegeben“ stand außerdem unter der Erfolgsmeldung, weil die Antwort auf das Ja erst nach der Modellrunde kam.
