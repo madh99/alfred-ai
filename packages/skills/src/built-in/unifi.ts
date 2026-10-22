@@ -59,6 +59,9 @@ export class UniFiSkill extends Skill {
             'create_zone',
             'delete_zone',
             'export_config',
+            'trunk_path',
+            'allow_network_on_port',
+            'exclude_network_on_port',
             'list_dns_records',
             'create_dns_record',
             'delete_dns_record',
@@ -163,6 +166,10 @@ export class UniFiSkill extends Skill {
         destination_ip: { type: 'string', description: 'Ziel-Adressen statt Zielnetz: IP, Subnetz (CIDR) oder Bereich a-b, kommagetrennt' },
         allow_return_traffic: { type: 'boolean', description: 'create_firewall_policy ALLOW: Antworten ausdrücklich zulassen (in Changes immer true)' },
         zone_name: { type: 'string', description: 'create_zone/delete_zone: Name der eigenen Firewall-Zone (z. B. Docker-Dev)' },
+        client_ip: { type: 'string', description: 'trunk_path: IP eines Geräts im Netz (z. B. des Proxmox-Knotens), von dessen Switch-Port bis zur UDM' },
+        client_mac: { type: 'string', description: 'trunk_path: MAC statt IP' },
+        device: { type: 'string', description: 'allow_/exclude_network_on_port: Switch (Name oder MAC)' },
+        switch_port: { type: 'number', description: 'allow_/exclude_network_on_port: Port-Nummer am Switch' },
         networks: { type: 'array', items: { type: 'string' }, description: 'create_zone: Netze (Name oder VLAN), die in die Zone wandern' },
         before_policy: { type: 'string', description: 'Name oder ID der Policy, VOR die die neue gesetzt wird (z. B. eine Sperre, für die eine Ausnahme gilt) — sonst hängt sie hinten an und greift ggf. nie' },
         policy_id: { type: 'string', description: 'ID der Policy (set_firewall_policy_enabled, delete_firewall_policy)' },
@@ -288,6 +295,12 @@ export class UniFiSkill extends Skill {
           return action === 'create_zone' ? await this.zoneAnlegen(input) : await this.zoneLoeschen(input);
         case 'export_config':
           return await this.konfigSichern();
+        case 'trunk_path':
+          return await this.trunkPfad(input);
+        case 'allow_network_on_port':
+        case 'exclude_network_on_port':
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
+          return await this.portNetz(input, action === 'allow_network_on_port');
 
         case 'create_network':
           return await this.netzAnlegen(input);
@@ -1209,6 +1222,72 @@ export class UniFiSkill extends Skill {
     if (eigene.length) return { success: false, error: `Zone „${z.name}" hat noch ${eigene.length} eigene Policies (${eigene.slice(0, 5).map(p => p.name).join(', ')}) — zuerst entfernen` };
     await this.integ('DELETE', `/sites/${sid}/firewall/zones/${z.id}`);
     return { success: true, data: { id: z.id, name: z.name }, display: `✅ Firewall-Zone „${z.name}" gelöscht` };
+  }
+
+  /**
+   * Pilot cf82f3f2 (Realfall 22.10.: VLAN 824 kam nicht bis zur UDM — Trunk-Ports der Kern-Switches führen nur ausgewählte VLANs).
+   * Weg von einem Gerät (IP/MAC) über die Uplinks bis zur UDM, je Port: Modus (auto = alle VLANs, custom = ausgewählte, block_all) und ob
+   * das Netz durchgelassen wird. Nur lesend.
+   */
+  private async trunkPfad(input: Record<string, unknown>): Promise<SkillResult> {
+    const netzName = String(input.network_name ?? '').trim();
+    const netze = (await this.request<any[]>('GET', 'rest/networkconf')) ?? [];
+    // noch nicht angelegtes Netz: wie die UDM es behandelt — Ports mit ausgewählten VLANs (custom) schließen neue Netze aus
+    const netz = netze.find(n => String(n.name ?? '').toLowerCase() === netzName.toLowerCase()) ?? { _id: '__neu__', name: netzName || 'neues Netz', vlan: 'neu' };
+    const geraete = (await this.request<any[]>('GET', 'stat/device')) ?? [];
+    const clients = (await this.request<any[]>('GET', 'stat/sta')) ?? [];
+    const ip = String(input.client_ip ?? '').trim(); const mac = String(input.client_mac ?? '').trim().toLowerCase();
+    const c = clients.find(x => (ip && x.ip === ip) || (mac && String(x.mac).toLowerCase() === mac));
+    if (!c?.sw_mac || c.sw_port === undefined) return { success: false, error: `Gerät ${ip || mac} ist keinem Switch-Port zugeordnet` };
+    const pfad: Array<{ geraet: string; mac: string; port: number; rolle: string; modus: string; durch: boolean }> = [];
+    const stand = (d: any, portIdx: number, rolle: string) => {
+      const ov = (d.port_overrides ?? []).find((o: any) => o.port_idx === portIdx) ?? {};
+      const p = (d.port_table ?? []).find((x: any) => x.port_idx === portIdx) ?? {};
+      const modus = String(ov.tagged_vlan_mgmt ?? p.tagged_vlan_mgmt ?? 'auto');
+      const aus: string[] = ov.excluded_networkconf_ids ?? p.excluded_networkconf_ids ?? [];
+      const nativ = ov.native_networkconf_id ?? p.native_networkconf_id;
+      const durch = nativ === netz._id || modus === 'auto' || (modus === 'custom' && netz._id !== '__neu__' && !aus.includes(netz._id));
+      pfad.push({ geraet: String(d.name ?? d.mac), mac: String(d.mac), port: portIdx, rolle, modus, durch });
+    };
+    let d = geraete.find(x => String(x.mac).toLowerCase() === String(c.sw_mac).toLowerCase());
+    if (!d) return { success: false, error: `Switch ${c.sw_mac} ist kein UniFi-Gerät — Pfad nicht bestimmbar` };
+    stand(d, Number(c.sw_port), 'Gerät');
+    for (let i = 0; i < 8 && d && d.type !== 'udm' && d.type !== 'ugw' && d.uplink?.uplink_mac; i++) {
+      stand(d, Number(d.uplink.port_idx), 'Uplink');
+      const weiter = geraete.find(x => String(x.mac).toLowerCase() === String(d.uplink.uplink_mac).toLowerCase());
+      if (!weiter) break;
+      stand(weiter, Number(d.uplink.uplink_remote_port), 'Gegenstelle');
+      d = weiter;
+    }
+    const zu = pfad.filter(x => !x.durch);
+    return { success: true, data: { netz: netz.name, vlan: netz.vlan, pfad, gesperrt: zu }, display: [`Weg von ${ip || mac} bis zur UDM für ${netz.name} (VLAN ${netz.vlan}):`, ...pfad.map(x => `- ${x.geraet} Port ${x.port} (${x.rolle}): ${x.modus}${x.durch ? ' — durchgelassen' : ' — GESPERRT'}`), zu.length ? `${zu.length} Port(s) lassen das Netz nicht durch → allow_network_on_port je Port (device, switch_port, network_name).` : 'Alle Ports lassen das Netz durch.'].join('\n') };
+  }
+
+  /** Netz auf einem Trunk-Port (eigene Port-Einstellung, Modus custom) erlauben bzw. wieder ausschließen — nur im Change */
+  private async portNetz(input: Record<string, unknown>, erlauben: boolean): Promise<SkillResult> {
+    const netzName = String(input.network_name ?? '').trim();
+    const netz = ((await this.request<any[]>('GET', 'rest/networkconf')) ?? []).find(n => String(n.name ?? '').toLowerCase() === netzName.toLowerCase());
+    if (!netz) return { success: false, error: `Netz „${netzName}“ nicht gefunden` };
+    const kennung = String(input.device ?? '').trim().toLowerCase(); const portIdx = Number(input.switch_port);
+    const d = ((await this.request<any[]>('GET', 'stat/device')) ?? []).find(x => String(x.mac).toLowerCase() === kennung || String(x.name ?? '').toLowerCase() === kennung);
+    if (!d || !Number.isInteger(portIdx)) return { success: false, error: 'device (Name oder MAC) und switch_port angeben' };
+    const overrides: any[] = JSON.parse(JSON.stringify(d.port_overrides ?? []));
+    const ov = overrides.find(o => o.port_idx === portIdx);
+    if (!ov) return { success: false, error: `${d.name} Port ${portIdx} hat keine eigene Einstellung (Profil oder Standard) — nicht geändert` };
+    const modus = String(ov.tagged_vlan_mgmt ?? 'auto');
+    if (modus === 'block_all') return { success: false, error: `${d.name} Port ${portIdx} führt keine getaggten VLANs (block_all) — kein Trunk, nicht geändert` };
+    if (modus !== 'custom') return { success: true, data: { geaendert: false, modus }, display: `${d.name} Port ${portIdx}: Modus ${modus} — ${netz.name} ist bereits durchgelassen` };
+    const aus: string[] = ov.excluded_networkconf_ids ?? [];
+    const drin = !aus.includes(netz._id);
+    if (erlauben === drin) return { success: true, data: { geaendert: false }, display: `${d.name} Port ${portIdx}: ${netz.name} ist bereits ${erlauben ? 'erlaubt' : 'ausgeschlossen'}` };
+    ov.excluded_networkconf_ids = erlauben ? aus.filter(x => x !== netz._id) : [...aus, netz._id];
+    await this.request('PUT', `rest/device/${d._id}`, { port_overrides: overrides });
+    // zurücklesen
+    const neu = ((await this.request<any[]>('GET', 'stat/device')) ?? []).find(x => x._id === d._id);
+    const ov2 = (neu?.port_overrides ?? []).find((o: any) => o.port_idx === portIdx);
+    const jetzt = !(ov2?.excluded_networkconf_ids ?? []).includes(netz._id);
+    if (jetzt !== erlauben) return { success: false, error: `${d.name} Port ${portIdx}: Änderung nicht übernommen (zurückgelesen)` };
+    return { success: true, data: { geaendert: true, device: d.name, port: portIdx, netz: netz.name }, display: `✅ ${d.name} Port ${portIdx}: ${netz.name} (VLAN ${netz.vlan}) ${erlauben ? 'erlaubt' : 'wieder ausgeschlossen'} (zurückgelesen)` };
   }
 
   /** Sicherung vor Netz-/Firewall-Änderungen: Netze (beide APIs), Zonen, Policies, Reihenfolgen als JSON-Datei am Alfred-Server */

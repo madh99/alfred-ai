@@ -19,6 +19,8 @@ export interface VmFabrikDeps {
   anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
   /** Fernzugang entfernen, CMDB-Eintrag stilllegen */
   abmelden(v: { name: string; node: string; vmid: number }): Promise<string>;
+  /** Abgebrochene Bereitstellung fortsetzen: Fernzugang (mit dem Host-Schlüssel der VM) besteht schon — nur auf SSH/Cloud-Init warten */
+  fortsetzen?(v: { name: string; ip: string; node: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,6 +1446,21 @@ export class ProxmoxSkill extends Skill {
     const vorlage = alle.find(v => v.vmid === tpl);
     if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
     const node = (input.node as string) ?? vorlage.node;
+    // Realfall 22.10. (docker-dev-01: VM stand, SSH kam wegen eines Trunk-Ports nicht durch): eine von Alfred angelegte VM mit genau
+    // dieser IP wird fortgesetzt statt neu angelegt — der Fernzugang mit ihrem Host-Schlüssel besteht schon
+    const da = alle.find(v => v.name === name && v.type === 'qemu');
+    if (da) {
+      const cfg = await this.get<{ description?: string; ipconfig0?: string }>(`/nodes/${da.node}/qemu/${da.vmid}/config`).catch(() => ({} as { description?: string; ipconfig0?: string }));
+      const vonAlfred = String(cfg.description ?? '').includes('Angelegt von Alfred (I5)') && String(cfg.ipconfig0 ?? '').includes(`ip=${ip},`);
+      if (!vonAlfred || !this.fabrik.fortsetzen) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
+      if (da.status !== 'running') await this.aufgabeOderFehler(await this.post<string>(`/nodes/${da.node}/qemu/${da.vmid}/status/start`, {}), 120_000, 'Starten');
+      const a = await this.fabrik.fortsetzen({ name, ip: ip.replace(/\/\d+$/, ''), node: da.node, vmid: da.vmid, zeitlimitMs: 600_000 });
+      if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
+      await this.post(`/nodes/${da.node}/qemu/${da.vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
+      const sp = await this.get<{ path?: string }>('/storage/local').catch(() => ({} as { path?: string }));
+      await this.fabrik.snippetEntfernen(da.node, `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(da.vmid)}`).catch(() => undefined);
+      return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
+    }
     if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
     const hindernisse = await this.fabrik.vorpruefung({ name, ip: ip.replace(/\/\d+$/, '') });
     if (hindernisse.length) return { success: false, error: hindernisse.join('; ') };

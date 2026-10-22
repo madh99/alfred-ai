@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — UniFi-Trunk-Pfad prüfen und VLANs auf Trunk-Ports freigeben; abgebrochene VM-Bereitstellung fortsetzen (v1587)
+
+Realfall 22.10.: `docker-dev-01` stand in VLAN 824, war aber nicht erreichbar. Die Trunk-Ports der Kern-Switches führen nur ausgewählte VLANs und schlossen das neue Netz aus. Die UDM antwortete „No route to host“, die VM erreichte keine Paketquellen.
+
+- **`trunk_path`** (nur lesend): der Weg von einem Gerät (IP/MAC) über die Uplinks bis zur UDM.
+  - Je Port: Modus (auto/custom/block_all) und ob das Netz durchgelassen wird.
+  - Für ein noch nicht angelegtes Netz gilt, was die UDM tut: Ports mit ausgewählten VLANs schließen neue Netze aus.
+- **`allow_network_on_port` / `exclude_network_on_port`:** ein Netz auf einem Trunk-Port erlauben bzw. wieder ausschließen.
+  - Nur im Change; das Ergebnis wird zurückgelesen.
+  - Geändert werden nur Ports mit eigener Einstellung im Modus „custom“, nie block_all oder Profile.
+- **Planung:** Für jedes neue VLAN liest Alfred den Trunk-Pfad zum Proxmox-Knoten und plant je gesperrtem Port eine Freigabe mit Rückweg ein.
+- **`provision_vm` setzt fort:** Steht eine von Alfred angelegte VM mit derselben IP schon und besteht ihr Fernzugang, wartet der Schritt nur noch auf SSH und Cloud-Init, statt neu anzulegen. „Schritt wiederholen“ genügt dann.
+
 ### Fixed — Angehaltener Change ohne Wirkung sperrt keine Assets mehr (v1586)
 
 - **Realfall 22.10.:** B hielt an einer reinen Prüfung an. Die Asset-Sperre des Motors hielt danach die Wiederherstellungs-Changes T und A3 zurück, auf die B selbst wartete; der Motor meldete eine Stunde lang „Asset belegt“, eine Verklemmung.

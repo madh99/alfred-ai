@@ -6984,6 +6984,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const netzFb = await import('./infrastruktur/netz-pruefung.js');
         const fz = this.fernzugriffRef;
         const warte = (ms: number) => new Promise(r => setTimeout(r, ms));
+        const warteBereit = async (v: { name: string; ip: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }> => {
+            const start = Date.now();
+            let letzte = '';
+            while (Date.now() - start < v.zeitlimitMs) {
+              // SSH mit genau dem selbst erzeugten Host-Schlüssel; erst fertig, wenn Cloud-Init durch ist und sich abgeschaltet hat
+              const r = await fz.ausfuehrenIntern(v.name, 'cloud-init status --wait >/dev/null 2>&1; test -f /etc/cloud/cloud-init.disabled && hostname', false, 300_000)
+                .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+              if (r.code === 0 && r.stdout.trim() === v.name) {
+                const k = await fz.kaefigVorbereiten(v.name).catch((e: Error) => ({ ok: false, grund: e.message }));
+                const s = Math.round((Date.now() - start) / 1000);
+                this.logger.info({ name: v.name, ip: v.ip, vmid: v.vmid, sekunden: s, kaefig: k }, 'I5 VM bereitgestellt, Fernzugang aktiv');
+                return { ok: true, meldung: `SSH mit Alfreds Host-Schlüssel nach ${s} s, Cloud-Init fertig und abgeschaltet; Fernzugang „${v.name}“ und CMDB-Eintrag angelegt; Lese-Käfig ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}` };
+              }
+              if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
+              letzte = (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+              await warte(10_000);
+            }
+            return { ok: false, meldung: `VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };
+        };
         this.vmFabrik = {
           hostSchluessel: () => hostSchluesselErzeugen(datenOrdner),
           alfredSchluessel: async () => (await eigenerSchluessel(datenOrdner)).oeffentlich,
@@ -7005,23 +7024,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (!o) return { ok: false, meldung: 'kein Owner bekannt' };
             const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', attributes: { vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: 'alfred-i5' } } as never);
             await fz.zugangBereitstellen({ name: v.name, host: v.ip, hostSchluessel: v.hostSchluessel, cmdbAssetId: asset.id });
-            const start = Date.now();
-            let letzte = '';
-            while (Date.now() - start < v.zeitlimitMs) {
-              // SSH mit genau dem selbst erzeugten Host-Schlüssel; erst fertig, wenn Cloud-Init durch ist und sich abgeschaltet hat
-              const r = await fz.ausfuehrenIntern(v.name, 'cloud-init status --wait >/dev/null 2>&1; test -f /etc/cloud/cloud-init.disabled && hostname', false, 300_000)
-                .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
-              if (r.code === 0 && r.stdout.trim() === v.name) {
-                const k = await fz.kaefigVorbereiten(v.name).catch((e: Error) => ({ ok: false, grund: e.message }));
-                const s = Math.round((Date.now() - start) / 1000);
-                this.logger.info({ name: v.name, ip: v.ip, vmid: v.vmid, sekunden: s, kaefig: k }, 'I5 VM bereitgestellt, Fernzugang aktiv');
-                return { ok: true, meldung: `SSH mit Alfreds Host-Schlüssel nach ${s} s, Cloud-Init fertig und abgeschaltet; Fernzugang „${v.name}“ und CMDB-Eintrag angelegt; Lese-Käfig ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}` };
-              }
-              if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
-              letzte = (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
-              await warte(10_000);
-            }
-            return { ok: false, meldung: `VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };
+            return warteBereit(v);
+          },
+          fortsetzen: async (v) => {
+            const o = ownerFz();
+            const z = o ? await repoFz.finde(o, v.name) : null;
+            if (!z || z.host !== v.ip || z.status !== 'aktiv') return { ok: false, meldung: `kein aktiver Fernzugang „${v.name}“ mit ${v.ip} — Fortsetzen nicht möglich` };
+            return warteBereit(v);
           },
           abmelden: async (v) => {
             const o = ownerFz();
