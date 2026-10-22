@@ -395,6 +395,69 @@ export class FernzugriffSkill extends Skill {
     return r.code === 0;
   }
 
+  /** I5 — Snippet-Pfad am Proxmox-Knoten (nur Cloud-Init-Snippets von Alfred) */
+  static readonly SNIPPET_PFAD = /^\/(var\/lib\/vz|mnt\/pve\/[\w-]+)\/snippets\/alfred-\d{3,9}-user\.yaml$/;
+
+  /** I5 — Cloud-Init-Snippet (enthält den privaten Host-Schlüssel der neuen VM) per stdin als root mit Rechten 600 schreiben */
+  async snippetSchreiben(knoten: string, pfad: string, inhalt: string): Promise<void> {
+    const owner = this.deps.owner();
+    if (!FernzugriffSkill.SNIPPET_PFAD.test(pfad)) throw new Error('ungültiger Snippet-Pfad');
+    if (!owner || !this.deps.sshEingabe) throw new Error('Snippet-Übergabe nicht verfügbar');
+    const z = await this.zugang(owner, { name: knoten });
+    const r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, fernBefehl(`sh -c 'umask 077; cat > ${pfad}'`, true), inhalt, 30_000);
+    if (r.code !== 0) throw new Error(`Snippet nicht geschrieben (Exit ${r.code}: ${schwaerze(r.stderr).text.slice(-160)})`);
+    this.deps.protokoll?.('I5 Snippet geschrieben', { name: z.name, pfad });
+  }
+
+  async snippetEntfernen(knoten: string, pfad: string): Promise<boolean> {
+    const owner = this.deps.owner();
+    if (!owner || !FernzugriffSkill.SNIPPET_PFAD.test(pfad)) return false;
+    const z = await this.zugang(owner, { name: knoten });
+    const r = await this.lauf(owner, z, fernBefehl(`rm -f ${pfad}`, true), 30_000);
+    this.deps.protokoll?.('I5 Snippet entfernt', { name: z.name, pfad, ok: r.code === 0 });
+    if (r.code !== 0) throw new Error(`Snippet ${pfad} auf ${knoten} nicht entfernt (Exit ${r.code})`);
+    return true;
+  }
+
+  /** I5 — Zugang einer von Alfred angelegten VM: Host-Schlüssel ist bekannt (selbst erzeugt), daher ohne Keyscan und ohne Rückfrage aktiv. */
+  async zugangBereitstellen(e: { name: string; host: string; hostSchluessel: string; cmdbAssetId?: string; benutzer?: string }): Promise<Fernzugang> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    if (!/^[\w.-]{1,64}$/.test(e.name) || !gueltigerHost(e.host)) throw new Error('ungültiger Name oder Host');
+    const benutzer = e.benutzer ?? 'alfred';
+    if (!gueltigerBenutzer(benutzer)) throw new Error('ungültiger Benutzer');
+    if (await this.deps.repo.finde(owner, e.name)) throw new Error(`Fernzugang „${e.name}“ gibt es schon`);
+    const schluessel = leseKeyscan(`${e.host} ${e.hostSchluessel}`);
+    if (schluessel.length !== 1) throw new Error('Host-Schlüssel nicht lesbar');
+    const k = await this.deps.schluessel();
+    const z = await this.deps.repo.speichere(owner, { name: e.name, host: e.host, port: 22, benutzer, schluesselPfad: k.pfad, hostSchluessel: knownHostsZeilen(e.host, 22, schluessel), fingerabdruck: `${schluessel[0]!.typ} ${schluessel[0]!.fingerabdruck}`, ...(e.cmdbAssetId ? { cmdbAssetId: e.cmdbAssetId } : {}), status: 'aktiv' });
+    if (this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }
+    if (e.cmdbAssetId) await this.deps.cmdbMarkiere?.(e.cmdbAssetId, { name: z.name, benutzer, port: 22 }).catch(() => undefined);
+    this.deps.protokoll?.('I5 Fernzugang mit eigenem Host-Schlüssel angelegt', { name: z.name, host: e.host, fingerabdruck: z.fingerabdruck });
+    this.deps.beiAenderung?.();
+    return z;
+  }
+
+  /** I5 — Käfig des Zugangs prüfen (Selbsttest) — nach der Bereitstellung, damit Lesebefehle ohne Rückfrage gekapselt laufen */
+  async kaefigVorbereiten(name: string): Promise<{ ok: boolean; grund: string }> {
+    const owner = this.deps.owner();
+    if (!owner) return { ok: false, grund: 'kein Owner' };
+    return this.kaefigBereit(owner, await this.zugang(owner, { name }));
+  }
+
+  /** I5 — Zugang einer entfernten VM abmelden (nur wenn Name und Host passen) */
+  async zugangAbmelden(name: string, host?: string): Promise<boolean> {
+    const owner = this.deps.owner();
+    if (!owner) return false;
+    const z = await this.deps.repo.finde(owner, name);
+    if (!z || (host && z.host !== host)) return false;
+    if (z.cmdbAssetId) await this.deps.cmdbMarkiere?.(z.cmdbAssetId, null).catch(() => undefined);
+    const ok = await this.deps.repo.entferne(owner, z.id);
+    this.deps.protokoll?.('I5 Fernzugang abgemeldet', { name, host: z.host, ok });
+    this.deps.beiAenderung?.();
+    return ok;
+  }
+
   /** I1 — aktive Zugänge (Name, Host, CMDB-Verweis) für die Sammler. */
   async aktiveZugaenge(): Promise<Array<{ name: string; host: string; cmdbAssetId?: string }>> {
     const owner = this.deps.owner();

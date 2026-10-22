@@ -50,7 +50,7 @@ export type { OcrResult, OcrPage, OcrDocumentInput } from './built-in/ocr-servic
 export { TTSSkill } from './built-in/tts.js';
 export { ImageGenerateSkill } from './built-in/image-generate.js';
 export type { ImageGeneratorInterface } from './built-in/image-generate.js';
-export { ProxmoxSkill } from './built-in/proxmox.js';
+export { ProxmoxSkill, type VmFabrikDeps } from './built-in/proxmox.js';
 export { UniFiSkill } from './built-in/unifi.js';
 export { HomeAssistantSkill } from './built-in/home-assistant.js';
 export { pruefSatz, type PruefBefund } from './built-in/ha-pruefung.js'; // v1359 Haus-Check

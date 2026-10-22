@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { gueltigerHost, gueltigerBenutzer } from './regeln.js';
 
@@ -76,6 +76,20 @@ export async function keyscan(host: string, port: number): Promise<string> {
 }
 
 /** Eigener Schlüssel für den Fernzugriff (data/fernzugriff/id_ed25519); wird beim ersten Bedarf erzeugt. */
+/** I5 — neuer ed25519-Host-Schlüssel für eine VM; die Dateien liegen nur kurz in einem 700-Ordner unter data/ und werden sofort entfernt. */
+export async function hostSchluesselErzeugen(datenOrdner: string): Promise<{ privat: string; oeffentlich: string }> {
+  const basis = path.join(datenOrdner, 'fernzugriff');
+  await mkdir(basis, { recursive: true, mode: 0o700 });
+  const ordner = await mkdtemp(path.join(basis, 'host-'));
+  try {
+    const pfad = path.join(ordner, 'k');
+    await execFileAsync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', pfad], { timeout: 20_000 });
+    return { privat: await readFile(pfad, 'utf8'), oeffentlich: (await readFile(`${pfad}.pub`, 'utf8')).trim() };
+  } finally {
+    await rm(ordner, { recursive: true, force: true });
+  }
+}
+
 export async function eigenerSchluessel(datenOrdner: string): Promise<{ pfad: string; oeffentlich: string; neu: boolean }> {
   const ordner = path.join(datenOrdner, 'fernzugriff');
   await mkdir(ordner, { recursive: true, mode: 0o700 });

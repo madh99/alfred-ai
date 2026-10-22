@@ -2,6 +2,24 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
+
+/** I5 — was die Vorlagen-Fabrik vom Server braucht (SSH auf den Knoten, Fernzugang, CMDB); verdrahtet in alfred.ts */
+export interface VmFabrikDeps {
+  /** neuer ed25519-Host-Schlüssel für eine VM (OpenSSH-Format) */
+  hostSchluessel(): Promise<{ privat: string; oeffentlich: string }>;
+  /** öffentlicher Schlüssel, mit dem Alfred sich anmeldet */
+  alfredSchluessel(): Promise<string>;
+  /** Hindernisse vor dem Anlegen (Name als Fernzugang vergeben, IP antwortet schon …) — leer = frei */
+  vorpruefung(v: { name: string; ip: string }): Promise<string[]>;
+  /** Snippet am Knoten schreiben (über dessen Fernzugang, Rechte 600) bzw. entfernen */
+  snippetSchreiben(node: string, pfad: string, inhalt: string): Promise<void>;
+  snippetEntfernen(node: string, pfad: string): Promise<void>;
+  /** Fernzugang mit dem bekannten Host-Schlüssel + CMDB-Eintrag anlegen und warten, bis SSH und Cloud-Init fertig sind */
+  anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
+  /** Fernzugang entfernen, CMDB-Eintrag stilllegen */
+  abmelden(v: { name: string; node: string; vmid: number }): Promise<string>;
+}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -45,6 +63,10 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
+/** I5 — Vorlagen-Fabrik */
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm'] as const;
+/** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm']);
 const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
@@ -78,7 +100,8 @@ type Action =
   | 'clone_vm'
   | 'list_networks'
   | 'wait_ready'
-  | 'api_raw';
+  | 'api_raw'
+  | typeof FABRIK_AKTIONEN[number];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,7 +144,8 @@ export class ProxmoxSkill extends Skill {
       'Manage Proxmox VE virtual machines, containers, and cluster. ' +
       '"clone_vm" klont VM aus Template mit Cloud-Init (hostname, template=VMID, ip, gateway). Mit runtime=docker/node/python wird nach Erstellung automatisch SSH abgewartet und die Runtime + qemu-guest-agent installiert. ' +
       '"create_lxc" erstellt LXC Container. ' +
-      '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups.',
+      '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
+      'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 600_000, // 10 min — clone + SSH wait + runtime install can take 5+ min
@@ -157,6 +181,7 @@ export class ProxmoxSkill extends Skill {
             'clone_vm',
             'list_networks',
             'wait_ready',
+            ...FABRIK_AKTIONEN,
           ],
           description: 'The Proxmox action to perform',
         },
@@ -247,6 +272,17 @@ export class ProxmoxSkill extends Skill {
           enum: ['docker', 'node', 'python'],
           description: 'Nach VM-Erstellung: Runtime installieren (docker, node, python). Installiert auch qemu-guest-agent. Wartet automatisch auf SSH.',
         },
+        // I5 — Vorlagen-Fabrik
+        distro: { type: 'string', enum: Object.keys(DISTROS), description: 'list_cloud_images: ubuntu-24.04, ubuntu-26.04, debian-12, debian-13 (leer = alle)' },
+        url: { type: 'string', description: 'download_image: Image-URL des Herausgebers mit datiertem Stand (aus list_cloud_images)' },
+        checksum: { type: 'string', description: 'download_image: Prüfsumme des Herausgebers (aus list_cloud_images)' },
+        checksum_algorithm: { type: 'string', enum: ['sha256', 'sha512'], description: 'download_image: sha256 (Ubuntu) oder sha512 (Debian)' },
+        filename: { type: 'string', description: 'download_image: Dateiname im import-Speicher (…qcow2, aus list_cloud_images)' },
+        image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
+        volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
+        nameserver: { type: 'string', description: 'provision_vm: DNS-Server (IP, mehrere mit Leerzeichen)' },
+        vm_name: { type: 'string', description: 'delete_vm: Name der VM zur Bestätigung (muss zur vmid passen)' },
+        force_stop: { type: 'boolean', description: 'delete_vm: laufende VM vorher hart stoppen (nur für Rückwege frisch angelegter VMs)' },
         docker_bridge_ip: {
           type: 'string',
           description: 'Docker Bridge IP (z.B. 192.168.248.1/24). Setzt daemon.json bip. Nur bei runtime=docker.',
@@ -273,11 +309,36 @@ export class ProxmoxSkill extends Skill {
   /** v1537 — VM-Aktionen brauchen eine VM-Nummer oder einen Namen (vm / vm_name / name), sonst ist der Vorschlag unvollständig. */
   pruefeEingabe(input: Record<string, unknown>): string | undefined {
     const action = input.action as string | undefined;
+    if (action === 'delete_vm') {
+      const vmid = typeof input.vmid === 'number' ? input.vmid : typeof input.vmid === 'string' && /^\d+$/.test(input.vmid.trim()) ? Number(input.vmid) : NaN;
+      if (!Number.isInteger(vmid) || vmid < 100) return 'delete_vm braucht die vmid (Zahl)';
+      if (typeof input.vm_name !== 'string' || !input.vm_name.trim()) return 'delete_vm braucht vm_name zur Bestätigung';
+      return undefined;
+    }
+    if (action === 'download_image') return pruefeDownload(input) ?? (typeof input.storage === 'string' && input.storage ? undefined : 'download_image braucht storage (mit Inhalt import)');
+    if (action === 'create_template') {
+      if (typeof input.image !== 'string' || !IMPORT_VOLUME.test(input.image)) return 'create_template: image muss ein import-Volume sein (storage:import/datei.qcow2)';
+      if (typeof input.hostname !== 'string' || !VM_NAME.test(input.hostname)) return 'create_template: hostname (Name der Vorlage) aus Kleinbuchstaben, Ziffern, -';
+      if (typeof input.storage !== 'string' || !input.storage) return 'create_template braucht storage (Ziel der Platte)';
+      return undefined;
+    }
+    if (action === 'provision_vm') {
+      if (typeof input.hostname !== 'string' || !VM_NAME.test(input.hostname)) return 'provision_vm: hostname aus Kleinbuchstaben, Ziffern, -';
+      if (typeof input.ip !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(input.ip)) return 'provision_vm: ip als CIDR (z. B. 192.168.1.140/24) — feste Adresse, damit Alfred den Host sicher erreicht';
+      if (typeof input.gateway !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}$/.test(input.gateway)) return 'provision_vm braucht gateway';
+      if (input.template === undefined || !/^\d+$/.test(String(input.template))) return 'provision_vm: template als VMID';
+      return undefined;
+    }
+    if (action === 'delete_image' && (typeof input.volid !== 'string' || !IMPORT_VOLUME.test(input.volid))) return 'delete_image: volid eines import-Volumes';
     if (!action || !VM_ZIEL_AKTIONEN.has(action)) return undefined;
     if (typeof input.vmid === 'number' || (typeof input.vmid === 'string' && input.vmid.trim())) return undefined;
     if ([input.vm, input.vm_name, input.vmname].some(x => typeof x === 'string' && x.trim())) return undefined; // v1538 — `name` ist bei Snapshots der Snapshot-Name
     return `${action} braucht vmid oder vm (Name)`;
   }
+
+  /** I5 — Vorlagen-Fabrik: Server-Anteile (Knoten-SSH, Fernzugang, CMDB) */
+  private fabrik?: VmFabrikDeps;
+  setVmFabrik(deps: VmFabrikDeps): void { this.fabrik = deps; }
 
   /** Set default SSH user for post-provision. */
   setSshUser(user: string): void { this.sshUser = user; }
@@ -298,6 +359,9 @@ export class ProxmoxSkill extends Skill {
     const action = input.action as Action | undefined;
     if (!action) {
       return { success: false, error: 'Missing required field "action"' };
+    }
+    if (NUR_IM_CHANGE.has(action) && _context?.ausChange !== true) {
+      return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen und die Freigabe anfragen` };
     }
 
     try {
@@ -380,6 +444,20 @@ export class ProxmoxSkill extends Skill {
           return await this.listNetworksAction(input);
         case 'wait_ready':
           return await this.waitReady(input);
+
+        // ── I5 VORLAGEN-FABRIK ────────────────────────────────
+        case 'list_cloud_images':
+          return await this.listCloudImages(input);
+        case 'download_image':
+          return await this.downloadImage(input);
+        case 'delete_image':
+          return await this.deleteImage(input);
+        case 'create_template':
+          return await this.createTemplate(input);
+        case 'provision_vm':
+          return await this.provisionVm(input);
+        case 'delete_vm':
+          return await this.deleteVm(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -1250,6 +1328,192 @@ export class ProxmoxSkill extends Skill {
       data: { node, templateVmid, hostname, upid, clonedVmid: assignedVmid, ip, steps },
       display: steps.join('\n'),
     };
+  }
+
+  // -----------------------------------------------------------------------
+  // I5 — Vorlagen-Fabrik
+  // -----------------------------------------------------------------------
+
+  /** Auf eine Proxmox-Aufgabe warten; Fehler mit der Ausgabe des Tasks */
+  private async warteAufgabe(upid: string, ms: number): Promise<{ fertig: boolean; ok: boolean; status: string }> {
+    const node = upid.split(':')[1];
+    const bis = Date.now() + ms;
+    while (Date.now() < bis) {
+      try {
+        const t = await this.get<{ status?: string; exitstatus?: string }>(`/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`);
+        if (t.status === 'stopped') return { fertig: true, ok: t.exitstatus === 'OK', status: t.exitstatus ?? 'unbekannt' };
+      } catch { /* Task noch nicht sichtbar */ }
+      await new Promise(r => setTimeout(r, 2_000));
+    }
+    return { fertig: false, ok: false, status: 'läuft noch' };
+  }
+
+  private async aufgabeOderFehler(upid: unknown, ms: number, was: string): Promise<void> {
+    if (typeof upid !== 'string' || !upid.startsWith('UPID:')) return;
+    const w = await this.warteAufgabe(upid, ms);
+    if (!w.ok) throw new Error(`${was}: ${w.fertig ? w.status : `nach ${Math.round(ms / 1000)} s nicht fertig`} (${upid})`);
+  }
+
+  private async holeText(url: string): Promise<string> {
+    const res = await tlsFetch(url, { method: 'GET' }, false);
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+    return res.text();
+  }
+
+  /** Neuester Stand je Distribution mit URL und Prüfsumme des Herausgebers (über HTTPS mit Zertifikatsprüfung) */
+  private async listCloudImages(input: Record<string, unknown>): Promise<SkillResult> {
+    const gewuenscht = istDistro(input.distro) ? [input.distro] : Object.keys(DISTROS) as Distro[];
+    const liste: ImageAngabe[] = [];
+    const fehler: string[] = [];
+    for (const d of gewuenscht) {
+      const q = DISTROS[d];
+      try {
+        const stand = neuesterStand(await this.holeText(q.basis), q.herausgeber);
+        if (!stand) { fehler.push(`${d}: kein datierter Stand gefunden`); continue; }
+        const a = imageAngabe(d, stand, await this.holeText(`${q.basis}${stand}/${q.summen}`));
+        if ('fehler' in a) fehler.push(a.fehler); else liste.push(a);
+      } catch (err) { fehler.push(`${d}: ${(err as Error).message.slice(0, 120)}`); }
+    }
+    const zeilen = liste.map(a => `- **${a.distro}** Stand ${a.stand}: ${a.url}\n  ${a.checksum_algorithm} ${a.checksum.slice(0, 16)}… → filename ${a.filename}`);
+    return { success: liste.length > 0, data: { images: liste, fehler }, display: [...zeilen, ...fehler.map(f => `⚠️ ${f}`)].join('\n'), ...(liste.length ? {} : { error: fehler.join('; ') || 'keine Images' }) };
+  }
+
+  /** Image beim Herausgeber laden; Proxmox prüft die Prüfsumme. Liefert die Aufgabe (UPID) — der Change-Motor verfolgt sie. */
+  private async downloadImage(input: Record<string, unknown>): Promise<SkillResult> {
+    const f = pruefeDownload(input);
+    if (f) return { success: false, error: f };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const storage = input.storage as string;
+    if (!node || !storage) return { success: false, error: 'download_image braucht node und storage' };
+    const st = (await this.get<Array<{ storage: string; content?: string; active?: number }>>(`/nodes/${node}/storage`)).find(s => s.storage === storage);
+    if (!st) return { success: false, error: `Speicher ${storage} gibt es auf ${node} nicht` };
+    if (!String(st.content ?? '').split(',').includes('import')) return { success: false, error: `Speicher ${storage} hat keinen Inhalt „import“ (${st.content ?? '-'})` };
+    const volid = `${storage}:import/${input.filename as string}`;
+    const vorhanden = await this.get<Array<{ volid: string }>>(`/nodes/${node}/storage/${storage}/content?content=import`).catch(() => [] as Array<{ volid: string }>);
+    if (vorhanden.some(v => v.volid === volid)) return { success: false, error: `${volid} gibt es schon — vorhandenes Image verwenden oder zuerst delete_image` };
+    const upid = await this.post<string>(`/nodes/${node}/storage/${storage}/download-url`, {
+      content: 'import', filename: input.filename, url: input.url, checksum: input.checksum, 'checksum-algorithm': input.checksum_algorithm, 'verify-certificates': 1,
+    });
+    return { success: true, data: { upid, node, storage, volid }, display: `Image wird geladen und geprüft (${input.checksum_algorithm}): ${input.url} → ${volid}` };
+  }
+
+  private async deleteImage(input: Record<string, unknown>): Promise<SkillResult> {
+    const volid = input.volid as string;
+    if (!IMPORT_VOLUME.test(volid ?? '')) return { success: false, error: 'delete_image: volid eines import-Volumes' };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const storage = volid.split(':')[0]!;
+    const upid = await this.del<string>(`/nodes/${node}/storage/${storage}/content/${encodeURIComponent(volid)}`);
+    await this.aufgabeOderFehler(upid, 120_000, 'Image entfernen');
+    return { success: true, data: { volid, entfernt: true }, display: `Image ${volid} entfernt` };
+  }
+
+  private async vmidFrei(vmid: number): Promise<boolean> {
+    return !(await this.getAllVms()).some(v => v.vmid === vmid);
+  }
+
+  /** Vorlage aus einem import-Volume: VM anlegen (Platte importieren, Cloud-Init-Laufwerk), dann zur Vorlage machen */
+  private async createTemplate(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const name = input.hostname as string;
+    const image = input.image as string;
+    const storage = input.storage as string;
+    if (!node) return { success: false, error: 'create_template braucht node' };
+    if (!IMPORT_VOLUME.test(image ?? '') || !VM_NAME.test(name ?? '') || !storage) return { success: false, error: this.pruefeEingabe({ ...input, action: 'create_template' }) ?? 'Eingaben unvollständig' };
+    const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
+    if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
+    if ((await this.getAllVms()).some(v => v.name === name)) return { success: false, error: `Name ${name} ist vergeben` };
+    const beschreibung = `Vorlage von Alfred (I5) aus ${image}, angelegt ${new Date().toISOString().slice(0, 10)}`;
+    const upid = await this.post<string>(`/nodes/${node}/qemu`, vorlagenKonfig({ vmid, name, storage, image, bridge: input.bridge as string | undefined, memory: input.memory as number | undefined, cores: input.cores as number | undefined, beschreibung }));
+    this.vmCache = null;
+    await this.aufgabeOderFehler(upid, 540_000, 'VM für die Vorlage anlegen');
+    const upid2 = await this.post<string>(`/nodes/${node}/qemu/${vmid}/template`, {});
+    await this.aufgabeOderFehler(upid2, 300_000, 'zur Vorlage machen');
+    this.vmCache = null;
+    return { success: true, data: { vmid, name, node, storage, image, template: true }, display: `Vorlage ${name} (VMID ${vmid}) auf ${node}/${storage} aus ${image}` };
+  }
+
+  /** Neue VM aus einer Vorlage: Benutzer alfred, Host-Schlüssel von Alfred (Snippet am Knoten), feste IP, Fernzugang + CMDB */
+  private async provisionVm(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.fabrik) return { success: false, error: 'Vorlagen-Fabrik ist nicht eingerichtet (Fernzugriff fehlt)' };
+    const f = this.pruefeEingabe({ ...input, action: 'provision_vm' });
+    if (f) return { success: false, error: f };
+    const name = input.hostname as string;
+    const ip = input.ip as string;
+    const tpl = Number(input.template);
+    const alle = await this.getAllVms();
+    const vorlage = alle.find(v => v.vmid === tpl);
+    if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
+    const node = (input.node as string) ?? vorlage.node;
+    if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
+    const hindernisse = await this.fabrik.vorpruefung({ name, ip: ip.replace(/\/\d+$/, '') });
+    if (hindernisse.length) return { success: false, error: hindernisse.join('; ') };
+    const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
+    if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
+    const schritte: string[] = [];
+    const clone: Record<string, unknown> = { newid: vmid, name, full: 1, target: node };
+    if (typeof input.storage === 'string' && input.storage) clone.storage = input.storage;
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vorlage.node}/qemu/${tpl}/clone`, clone), 900_000, 'Klonen');
+    this.vmCache = null;
+    schritte.push(`VM ${name} (VMID ${vmid}) aus Vorlage ${tpl} auf ${node} geklont`);
+    // Host-Schlüssel + Snippet
+    const hs = await this.fabrik.hostSchluessel();
+    const daten = cloudInitBenutzerDaten({ hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich });
+    const snippetSpeicher = 'local';
+    const sp = await this.get<{ path?: string }>(`/storage/${snippetSpeicher}`);
+    const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
+    await this.fabrik.snippetSchreiben(node, pfad, daten);
+    try {
+      const konfig: Record<string, unknown> = {
+        cicustom: `user=${snippetSpeicher}:snippets/${snippetDatei(vmid)}`,
+        ipconfig0: `ip=${ip},gw=${input.gateway as string}`,
+        agent: 'enabled=1',
+        description: `Angelegt von Alfred (I5) aus Vorlage ${tpl} am ${new Date().toISOString().slice(0, 10)}. Host-Schlüssel ${hs.oeffentlich.split(' ')[1]?.slice(0, 16)}…`,
+      };
+      if (typeof input.nameserver === 'string' && input.nameserver.trim()) konfig.nameserver = input.nameserver.trim();
+      if (typeof input.memory === 'number') konfig.memory = input.memory;
+      if (typeof input.cores === 'number') konfig.cores = input.cores;
+      if (input.bridge || input.vlan_tag) konfig.net0 = `virtio,bridge=${(input.bridge as string) ?? 'vmbr0'}${input.vlan_tag ? `,tag=${input.vlan_tag as number}` : ''}`;
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, konfig);
+      if (typeof input.disk_size === 'number' && input.disk_size > 0) {
+        await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
+      }
+      await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
+      schritte.push(`gestartet mit ${ip}, Benutzer alfred, Host-Schlüssel von Alfred`);
+      const a = await this.fabrik.anmelden({ name, ip: ip.replace(/\/\d+$/, ''), node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 600_000 });
+      schritte.push(a.meldung);
+      if (!a.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip } };
+      // Cloud-Init ist in der VM abgeschaltet; Laufwerk und Snippet (mit dem privaten Host-Schlüssel) weg — das Laufwerk beim nächsten Kaltstart
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
+      schritte.push('Cloud-Init-Laufwerk zum Entfernen vorgemerkt');
+    } finally {
+      await this.fabrik.snippetEntfernen(node, pfad).catch(() => undefined);
+    }
+    schritte.push('Snippet am Knoten entfernt');
+    return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich }, display: schritte.map(s => `- ${s}`).join('\n') };
+  }
+
+  /** VM oder Vorlage entfernen — nur mit passendem Namen, nie geschützte; laufende nur mit force_stop. Danach Fernzugang/CMDB abmelden. */
+  private async deleteVm(input: Record<string, unknown>): Promise<SkillResult> {
+    const f = this.pruefeEingabe({ ...input, action: 'delete_vm' });
+    if (f) return { success: false, error: f };
+    const vmid = Number(input.vmid);
+    const name = String(input.vm_name).trim();
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm) return { success: true, data: { vmid, schonWeg: true }, display: `VMID ${vmid} gibt es nicht (mehr)` };
+    if (vm.name !== name) return { success: false, error: `VMID ${vmid} heißt „${vm.name}“, nicht „${name}“ — nichts gelöscht` };
+    if (vm.type !== 'qemu') return { success: false, error: 'delete_vm gilt nur für QEMU-VMs' };
+    const cfg = await this.get<{ protection?: number }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    if (cfg.protection) return { success: false, error: `${name} ist geschützt (protection) — nichts gelöscht` };
+    const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
+    if (st.status === 'running') {
+      if (input.force_stop !== true) return { success: false, error: `${name} läuft — erst herunterfahren (oder force_stop)` };
+      await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/status/stop`, {}), 120_000, 'Stoppen');
+    }
+    await this.aufgabeOderFehler(await this.del<string>(`/nodes/${vm.node}/qemu/${vmid}?purge=1&destroy-unreferenced-disks=1`), 600_000, 'Löschen');
+    this.vmCache = null;
+    const ab = this.fabrik ? await this.fabrik.abmelden({ name, node: vm.node, vmid }).catch((e: Error) => `Abmelden fehlgeschlagen: ${e.message}`) : '';
+    return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${ab ? `. ${ab}` : ''}` };
   }
 
   private async listNetworksAction(input: Record<string, unknown>): Promise<SkillResult> {

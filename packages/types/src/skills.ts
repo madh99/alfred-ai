@@ -86,6 +86,8 @@ export interface SkillContext {
   };
   /** HA cluster node ID (set when cluster.enabled). */
   nodeId?: string;
+  /** I5 — Aufruf als Schritt eines freigegebenen Changes (nur der Change-Motor setzt das) */
+  ausChange?: boolean;
   /** Whether HA cluster mode is active. */
   clusterEnabled?: boolean;
   /** Audio/image attachments from the current message (e.g. voice messages, photos). */

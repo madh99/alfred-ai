@@ -465,6 +465,8 @@ export class Alfred {
   private tresorRepo?: import('@alfred/storage').TresorRepository;
   /** Einwand — Widerspruch des Owners zu Change/Architektur */
   private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
+  /** I5 — Server-Anteile der Vorlagen-Fabrik (auch nach Hot-Reload des Proxmox-Skills wieder setzen) */
+  private vmFabrik?: import('@alfred/skills').VmFabrikDeps;
   /** I4 — Ausführungsmotor für freigegebene Changes */
   private changeMotor?: import('./infrastruktur/change-motor.js').ChangeMotor;
   /** I4b — Web-Pflege der Wartung (bei den ITSM-Routen angebunden) */
@@ -6969,6 +6971,62 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
       this.fernzugriffRef = skillRegistry.get('fernzugriff') as unknown as import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+      // I5 — Vorlagen-Fabrik: der Proxmox-Skill bekommt Host-Schlüssel, Snippets am Knoten (über dessen Fernzugang), Fernzugang und CMDB
+      {
+        const { hostSchluesselErzeugen } = await import('./fernzugriff/ssh.js');
+        const netzFb = await import('./infrastruktur/netz-pruefung.js');
+        const fz = this.fernzugriffRef;
+        const warte = (ms: number) => new Promise(r => setTimeout(r, ms));
+        this.vmFabrik = {
+          hostSchluessel: () => hostSchluesselErzeugen(datenOrdner),
+          alfredSchluessel: async () => (await eigenerSchluessel(datenOrdner)).oeffentlich,
+          vorpruefung: async ({ name, ip }) => {
+            const h: string[] = [];
+            const o = ownerFz();
+            if (!o) return ['kein Owner bekannt'];
+            if (await repoFz.finde(o, name)) h.push(`Fernzugang „${name}“ gibt es schon`);
+            if ((await repoFz.liste(o)).some(z => z.host === ip)) h.push(`${ip} ist schon ein Fernzugang`);
+            const a = (await cmdbFz.searchAssets(o, ip).catch(() => [])).find(x => x.ipAddress === ip && x.status === 'active');
+            if (a) h.push(`${ip} gehört laut CMDB zu ${a.name}`);
+            if (await netzFb.ping(ip).catch(() => false)) h.push(`${ip} antwortet schon auf Ping — Adresse belegt`);
+            return h;
+          },
+          snippetSchreiben: (node, pfad, inhalt) => fz.snippetSchreiben(node, pfad, inhalt),
+          snippetEntfernen: async (node, pfad) => { await fz.snippetEntfernen(node, pfad); },
+          anmelden: async (v) => {
+            const o = ownerFz();
+            if (!o) return { ok: false, meldung: 'kein Owner bekannt' };
+            const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', attributes: { vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: 'alfred-i5' } } as never);
+            await fz.zugangBereitstellen({ name: v.name, host: v.ip, hostSchluessel: v.hostSchluessel, cmdbAssetId: asset.id });
+            const start = Date.now();
+            let letzte = '';
+            while (Date.now() - start < v.zeitlimitMs) {
+              // SSH mit genau dem selbst erzeugten Host-Schlüssel; erst fertig, wenn Cloud-Init durch ist und sich abgeschaltet hat
+              const r = await fz.ausfuehrenIntern(v.name, 'cloud-init status --wait >/dev/null 2>&1; test -f /etc/cloud/cloud-init.disabled && hostname', false, 300_000)
+                .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+              if (r.code === 0 && r.stdout.trim() === v.name) {
+                const k = await fz.kaefigVorbereiten(v.name).catch((e: Error) => ({ ok: false, grund: e.message }));
+                const s = Math.round((Date.now() - start) / 1000);
+                this.logger.info({ name: v.name, ip: v.ip, vmid: v.vmid, sekunden: s, kaefig: k }, 'I5 VM bereitgestellt, Fernzugang aktiv');
+                return { ok: true, meldung: `SSH mit Alfreds Host-Schlüssel nach ${s} s, Cloud-Init fertig und abgeschaltet; Fernzugang „${v.name}“ und CMDB-Eintrag angelegt; Lese-Käfig ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}` };
+              }
+              if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
+              letzte = (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+              await warte(10_000);
+            }
+            return { ok: false, meldung: `VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };
+          },
+          abmelden: async (v) => {
+            const o = ownerFz();
+            const teile: string[] = [];
+            if (await fz.zugangAbmelden(v.name)) teile.push(`Fernzugang „${v.name}“ entfernt`);
+            const a = o ? await cmdbFz.getAssetBySource(o, 'proxmox', `${v.node}:${v.vmid}`).catch(() => null) : null;
+            if (o && a) { await cmdbFz.updateAsset(o, a.id, { status: 'decommissioned' } as never); teile.push(`CMDB-Eintrag ${a.name} stillgelegt`); }
+            return teile.join(', ');
+          },
+        };
+        (skillRegistry.get('proxmox') as unknown as { setVmFabrik?: (d: unknown) => void } | undefined)?.setVmFabrik?.(this.vmFabrik);
+      }
       // I1 (Spec Infrastruktur-Vorhaben) — Bestandsaufnahme
       {
         const { InfrastrukturSkill } = await import('./infrastruktur/infrastruktur-skill.js');
@@ -7130,7 +7188,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const sk = skillRegistry.get(name);
               if (!sk) return { success: false, error: `Skill ${name} nicht verfügbar` };
               const o = ownerFz() ?? '';
-              return skillSandbox.execute(sk, input, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never, timeoutMs);
+              return skillSandbox.execute(sk, input, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '', ausChange: true } as never, timeoutMs);
             },
             fernLesen: (z, b, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.lesenIntern(z, b, t); },
             fernAusfuehren: (z, b, root, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(z, b, root, t); },
@@ -16244,7 +16302,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // 4. Register new skill if config is present
       if (service === 'proxmox' && freshConfig.proxmox) {
         const { ProxmoxSkill } = await import('@alfred/skills');
-        this.skillRegistry.register(new ProxmoxSkill(freshConfig.proxmox));
+        const pxNeu = new ProxmoxSkill(freshConfig.proxmox);
+        if (this.vmFabrik) pxNeu.setVmFabrik(this.vmFabrik); // I5
+        this.skillRegistry.register(pxNeu);
         this.config.proxmox = freshConfig.proxmox;
         this.logger.info({ baseUrl: freshConfig.proxmox.baseUrl }, 'Proxmox skill hot-reloaded');
       }

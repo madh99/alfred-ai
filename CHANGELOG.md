@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Vorlagen-Fabrik für Proxmox: Images der Herausgeber, Vorlagen, neue VMs mit eigenem Host-Schlüssel (I5, v1575)
+
+**Neue Proxmox-Aktionen:**
+- **`list_cloud_images`** (nur lesend) liefert für Ubuntu 24.04/26.04 und Debian 12/13:
+  - den neuesten **datierten** Stand des Herausgebers samt URL;
+  - die Prüfsumme aus SHA256SUMS bzw. SHA512SUMS, geholt über HTTPS mit Zertifikatsprüfung.
+- **`download_image`** lädt das Image mit `download-url` in einen Speicher mit dem Inhalt „import“; Proxmox prüft dabei die Prüfsumme.
+  - Die Prüfsumme steht im Change, die Freigabe gilt also für genau dieses Image.
+  - Erlaubt sind nur die Domains der Herausgeber mit datiertem Stand-Ordner.
+- **`create_template`** baut aus dem import-Volume eine VM und macht daraus eine Vorlage. Die VM bekommt:
+  - die importierte Platte, ein Cloud-Init-Laufwerk, den Gast-Agent und eine serielle Konsole;
+  - die Herkunft in der Beschreibung.
+- **`provision_vm`** klont aus der Vorlage eine VM mit fester IP:
+  - Benutzer `alfred` mit Alfreds Schlüssel, kein Passwort-Login, Root gesperrt.
+  - Den **Host-Schlüssel erzeugt Alfred selbst** und gibt ihn per Cloud-Init-Snippet mit. Das Snippet liegt am Knoten mit Rechten 600, übertragen über stdin; Cloud-Init erzeugt keine eigenen Schlüssel.
+  - Alfred verbindet sich nur mit genau diesem Schlüssel, ohne ungeprüften Keyscan, und wartet, bis Cloud-Init fertig ist und sich abgeschaltet hat. Danach kann eine neue Cloud-Init-Runde den Host-Schlüssel nicht mehr tauschen.
+  - Fernzugang, CMDB-Eintrag (`proxmox`, `<knoten>:<vmid>`) und der Selbsttest des Lese-Käfigs entstehen automatisch.
+  - Danach werden das Snippet am Knoten entfernt und das Cloud-Init-Laufwerk zum Entfernen vorgemerkt.
+  - Vorher wird geprüft, ob Name und Adresse frei sind: Fernzugang, CMDB, Ping.
+- **`delete_vm`** braucht die vmid und zur Bestätigung den passenden Namen.
+  - Geschützte VMs werden nie gelöscht. Laufende nur mit `force_stop`, das für Rückwege frisch angelegter VMs gedacht ist.
+  - Danach werden Fernzugang und CMDB abgemeldet.
+- **`delete_image`** entfernt ein import-Volume.
+
+**Regeln:**
+- Die schreibenden Fabrik-Aktionen laufen **nur als Schritte freigegebener Changes**. Nur der Change-Motor setzt die Kennung dafür; aus dem Chat werden sie abgewiesen.
+- `delete_vm` ist außerhalb von Rückwegen nur in Stilllegungs-Changes zulässig.
+- Die Planung kennt den Ablauf: Image ermitteln → laden → Vorlage → VM, jeweils mit Rückweg.
+
 ### Added — Web-Seite „Vorhaben“; ITSM zeigt wartende und abgeschlossene Changes (v1574)
 
 - Ausgangspunkt war ein Realfall: Ein freigegebener Change war im Web nirgends zu finden. Der ITSM-Standardfilter „Aktiv“ kannte den Status `submitted` (wartet auf Freigabe) nicht, und abgeschlossene oder abgebrochene Changes waren ausgeblendet.

@@ -259,3 +259,32 @@ describe('v1551 Schwärzung im Ergebnis', () => {
     expect(r.display).toContain('PORT=8080');
   });
 });
+
+// I5 — Zugang einer von Alfred angelegten VM: eigener Host-Schlüssel, ohne Keyscan/Rückfrage aktiv; Snippets nur unter snippets/alfred-*
+describe('I5 Vorlagen-Fabrik', () => {
+  it('legt den Zugang mit dem bekannten Host-Schlüssel aktiv an (kein Keyscan, keine Frage) und meldet ihn wieder ab', async () => {
+    const t = aufbau();
+    const z = await t.skill.zugangBereitstellen({ name: 'probe-i5', host: '192.168.1.140', hostSchluessel: `ssh-ed25519 ${K}`, cmdbAssetId: 'a9' });
+    expect(z.status).toBe('aktiv');
+    expect(z.hostSchluessel).toBe(`192.168.1.140 ssh-ed25519 ${K}\n`);
+    expect(z.kaefig).toBe('ungeprueft');
+    expect(t.fragen).toHaveLength(0);
+    await expect(t.skill.zugangBereitstellen({ name: 'probe-i5', host: '192.168.1.141', hostSchluessel: `ssh-ed25519 ${K}` })).rejects.toThrow(/gibt es schon/);
+    expect(await t.skill.zugangAbmelden('probe-i5', '192.168.1.99')).toBe(false);
+    expect(await t.skill.zugangAbmelden('probe-i5', '192.168.1.140')).toBe(true);
+    expect(t.zeilen.size).toBe(0);
+  });
+  it('weist unlesbare Host-Schlüssel ab', async () => {
+    const t = aufbau();
+    await expect(t.skill.zugangBereitstellen({ name: 'x', host: '192.168.1.140', hostSchluessel: 'ssh-ed25519 kaputt!' })).rejects.toThrow(/nicht lesbar/);
+  });
+  it('schreibt Snippets nur an den erlaubten Ort', async () => {
+    const t = aufbau();
+    await aktiv(t);
+    await expect(t.skill.snippetSchreiben('pve', '/etc/sudoers.d/x', 'a')).rejects.toThrow(/Snippet-Pfad/);
+    await expect(t.skill.snippetSchreiben('pve', '/var/lib/vz/snippets/../../x-9021-user.yaml', 'a')).rejects.toThrow(/Snippet-Pfad/);
+    expect(await t.skill.snippetEntfernen('pve', '/var/lib/vz/snippets/fremd.yaml')).toBe(false);
+    expect(await t.skill.snippetEntfernen('pve', '/var/lib/vz/snippets/alfred-9021-user.yaml')).toBe(true);
+    expect(t.befehle.at(-1)).toContain('rm -f /var/lib/vz/snippets/alfred-9021-user.yaml');
+  });
+});
