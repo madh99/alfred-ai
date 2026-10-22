@@ -407,9 +407,13 @@ export class ChangeMotor {
     const o = this.d.owner(); if (!o) return 0;
     const jetzt = this.jetzt();
     let neu = 0;
-    const offen = incidents.filter(i => !['resolved', 'closed'].includes(i.status) && i.affectedAssetIds?.length);
+    const alle = await this.d.itsm.liste(o);
+    // Realfall 22.10. (Vorlage 9020 und Netz Docker-Dev zurückgerollt): Incidents, die der Motor beim Anhalten eines Changes selbst
+    // anlegt, hat DIESER Change verursacht — nie einem anderen, früheren Change mit gemeinsamen Assets zuschreiben
+    const eigeneIncidents = new Set(alle.map(x => (x.lauf as ChangeLauf | undefined)?.incidentId).filter((x): x is string => !!x));
+    const offen = incidents.filter(i => !['resolved', 'closed'].includes(i.status) && i.affectedAssetIds?.length && !eigeneIncidents.has(i.id));
     if (!offen.length) return 0;
-    for (const c of (await this.d.itsm.liste(o)).filter(x => x.status === 'completed' && x.schritte?.length)) {
+    for (const c of alle.filter(x => x.status === 'completed' && x.schritte?.length)) {
       const l = c.lauf as ChangeLauf | undefined;
       if (!l?.ende) continue;
       const ende = Date.parse(l.ende);

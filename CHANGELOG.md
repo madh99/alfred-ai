@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Störungen nach Changes: der Halt eines Changes wird nie einem anderen zugeschrieben (v1585)
+
+- **Realfall 22.10., zweimal:** Der Motor legt beim Anhalten eines Changes einen Incident an. Der Job „Störungen nach Changes“ wertete diesen Incident als mögliche Folge eines früher abgeschlossenen Changes mit gemeinsamen Assets (pve3 bzw. Docker-Dev) und bot dessen Rückweg an.
+  - Nach dem Ja wurden die Vorlage 9020 samt Image (I5-Beweis) und das gerade fertige Netz Docker-Dev (Pilot A) zurückgerollt.
+- **Jetzt:** Incidents, die der Motor für einen angehaltenen Change angelegt hat, gelten als von diesem Change verursacht. Sie werden nie mit anderen Changes verknüpft und lösen keine Rückweg-Frage aus.
+
 ### Fixed — UniFi: Rückverkehr zum Gateway, abgeleitete Regeln, wiederholbare Netz-/Zonenanlage (v1584)
 
 Realfall beim ersten Lauf des Pilot-Changes d72cbb06:

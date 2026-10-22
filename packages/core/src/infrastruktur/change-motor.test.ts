@@ -213,6 +213,21 @@ describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () 
     await warte(m);
     expect(w.c.status).toBe('rolled_back');
   });
+  it('Realfall 22.10.: der Halt-Incident eines anderen Changes wird nie dem abgeschlossenen Change zugeschrieben', async () => {
+    const w = welt(probe());
+    await w.motor.anstossen(); await warte(w.motor);
+    const ende = Date.parse((w.c.lauf as ChangeLauf).ende!);
+    const spaeter = new Date(ende + 600_000).toISOString();
+    // ein zweiter Change auf demselben Asset hielt an; sein Incident steht in seinem Lauf
+    const b = { ...w.c, id: 'chg-2', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 1, start: spaeter, ergebnisse: [], incidentId: 'i-halt' } } as CmdbChangeRequest;
+    w.deps.itsm.liste = async () => [w.c, b];
+    w.deps.jetzt = () => ende + 900_000;
+    const m = new ChangeMotor(w.deps);
+    const fragenVorher = w.fragen.length;
+    expect(await m.pruefeStoerungen([{ id: 'i-halt', title: 'Change angehalten: B', severity: 'medium', status: 'open', affectedAssetIds: ['a-vm'], createdAt: spaeter }])).toBe(0);
+    expect(w.fragen.length).toBe(fragenVorher);
+    expect((w.c.lauf as ChangeLauf).stoerungen ?? []).toEqual([]);
+  });
   it('außerhalb des Zeitfensters (25 h, nicht kritisch) → nichts', async () => {
     const w = welt(probe());
     await w.motor.anstossen(); await warte(w.motor);
