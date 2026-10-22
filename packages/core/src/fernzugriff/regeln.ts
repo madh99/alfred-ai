@@ -92,7 +92,18 @@ const NIE_BEFEHLE: RegExp[] = [
 ];
 
 export function normalisiereBefehl(befehl: string): string {
-  return befehl.trim().replace(/^sudo\s+(-n\s+)?/, '').replace(/\s+/g, ' ');
+  // Realfall 22.10. (pgAdmin-Umzug, Schritt 5): Leerzeichen INNERHALB von Anführungszeichen sind Inhalt (YAML-Einrückung per printf) —
+  // nur außerhalb zusammenfassen
+  const b = befehl.trim().replace(/^sudo\s+(-n\s+)?/, '');
+  let aus = ''; let q: string | null = null; let leer = false;
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i]!;
+    if (q) { aus += c; if (c === q && (q === "'" || b[i - 1] !== '\\')) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; aus += c; leer = false; continue; }
+    if (/\s/.test(c)) { if (!leer) { aus += ' '; leer = true; } continue; }
+    leer = false; aus += c;
+  }
+  return aus;
 }
 
 /** v1541 — Optionen, die etwas verändern oder fremde Dateien lesen; mit ihnen ist kein Befehl „lesen“, egal was das Muster erlaubt. */

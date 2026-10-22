@@ -111,3 +111,13 @@ describe('v1539 Host-Schlüssel', () => {
     expect(t).toContain('sudo-Regel');
   });
 });
+
+// Realfall 22.10. (pgAdmin-Umzug Schritt 5): YAML-Einrückung in printf-Argumenten ging durch das Zusammenfassen verloren
+describe('normalisiereBefehl', () => {
+  it('fasst Leerzeichen nur außerhalb von Anführungszeichen zusammen', async () => {
+    const { normalisiereBefehl } = await import('./regeln.js');
+    expect(normalisiereBefehl("  sudo -n printf '%s\n'  'services:' '  pgadmin:' '    image: x'   > /srv/a.yaml ")).toBe("printf '%s\n' 'services:' '  pgadmin:' '    image: x' > /srv/a.yaml");
+    expect(normalisiereBefehl('echo  "a   b"   c')).toBe('echo "a   b" c');
+    expect(normalisiereBefehl('docker   ps\n  -a')).toBe('docker ps -a');
+  });
+});

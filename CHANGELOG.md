@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fernzugriff-Befehle behalten Leerzeichen in Anführungszeichen (v1594)
+
+- **Realfall 22.10. (pgAdmin-Umzug, Schritt 5):** `normalisiereBefehl` fasste alle Leerzeichen zusammen, auch innerhalb von Anführungszeichen.
+  - Die per `printf` geschriebene Compose-Datei verlor dadurch ihre YAML-Einrückung; Compose meldete `services.container_name must be a mapping`.
+- **Jetzt:** Zusammengefasst wird nur noch außerhalb von einfachen und doppelten Anführungszeichen.
+- **Live belegt in diesem Lauf:** Die Datenübertragung zwischen zwei echten Hosts (I6) hat das pgAdmin-Volume vom dockerhost auf `docker-dev-01` vorkopiert, 31 Dateien und 6,3 MB in 1 s, mit Prüfsumme.
+
 ### Fixed — Anonyme Docker-Volumes kopierbar; Change-Meldungen auch im App-Verlauf (v1593)
 
 - **Volume-Namen (Realfall pgAdmin-Umzug, Schritt 4):** Das anonyme Volume `c3805b…` hat eine 64-stellige ID, die Namensprüfung erlaubte nur 63 Zeichen. Jetzt sind Volume-Namen bis 128 Zeichen erlaubt (`[a-zA-Z0-9][\w.-]*`); Shell-Zeichen bleiben ausgeschlossen.
