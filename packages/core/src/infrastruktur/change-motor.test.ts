@@ -173,3 +173,39 @@ describe('I4b Motor wartet auf den Zeitplan', () => {
     expect(ereignisse).toEqual(['start', 'ende']);
   });
 });
+
+describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () => {
+  it('Incident an abhängigem Asset binnen 24 h → verknüpft, Frage, kein Rückweg ohne Ja; danach zurückgerollt', async () => {
+    const w = welt(probe());
+    w.deps.abhaengigeIds = async () => ['a-dienst'];
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    const ende = (w.c.lauf as ChangeLauf).ende!;
+    const spaeter = new Date(Date.parse(ende) + 3_600_000).toISOString();
+    const vorher = new Date(Date.parse(ende) - 60_000).toISOString();
+    w.deps.jetzt = () => Date.parse(spaeter) + 60_000;
+    const m = new ChangeMotor(w.deps);
+    expect(await m.pruefeStoerungen([
+      { id: 'i-alt', title: 'schon vorher', severity: 'high', status: 'open', affectedAssetIds: ['a-vm'], createdAt: vorher },
+      { id: 'i-fremd', title: 'woanders', severity: 'high', status: 'open', affectedAssetIds: ['a-anders'], createdAt: spaeter },
+      { id: 'i-1', title: 'Dienst down', severity: 'critical', status: 'open', affectedAssetIds: ['a-dienst'], createdAt: spaeter },
+    ])).toBe(1);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.stoerungen?.map(s => s.incidentId)).toEqual(['i-1']);
+    // Probe-Plan hat einen Rückweg zu Schritt 2 → Frage gestellt, nichts ausgeführt
+    const f = w.fragen.at(-1)!;
+    expect(f.d).toContain('Möglicherweise durch Change verursacht');
+    expect(w.c.status).toBe('completed');
+    expect(await m.pruefeStoerungen([{ id: 'i-1', title: 'Dienst down', severity: 'critical', status: 'open', affectedAssetIds: ['a-dienst'], createdAt: spaeter }])).toBe(0); // nicht doppelt
+    expect(await m.rueckwegNachJa('o', 'chg-1', f.p.freigabe)).toContain('Rückweg läuft');
+    await warte(m);
+    expect(w.c.status).toBe('rolled_back');
+  });
+  it('außerhalb des Zeitfensters (25 h, nicht kritisch) → nichts', async () => {
+    const w = welt(probe());
+    await w.motor.anstossen(); await warte(w.motor);
+    const ende = Date.parse((w.c.lauf as ChangeLauf).ende!);
+    w.deps.jetzt = () => ende + 25 * 3_600_000;
+    expect(await new ChangeMotor(w.deps).pruefeStoerungen([{ id: 'i', title: 'x', severity: 'high', status: 'open', affectedAssetIds: ['a-vm'], createdAt: new Date(ende + 25 * 3_600_000).toISOString() }])).toBe(0);
+  });
+});

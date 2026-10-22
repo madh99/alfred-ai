@@ -23,8 +23,10 @@ export interface ChangeLauf {
   /** Grund des Anhaltens (für Owner und Incident) */
   grund?: string;
   incidentId?: string;
-  /** Offene Owner-Frage (Owner-Schritt oder Rückweg): nur Hash der Einmal-Freigabe */
-  frage?: { art: 'owner_schritt' | 'rueckweg'; hash: string; schritt: number; bis: string };
+  /** Offene Owner-Frage (Owner-Schritt, Rückweg, Rückweg nach Störung): nur Hash der Einmal-Freigabe */
+  frage?: { art: 'owner_schritt' | 'rueckweg' | 'rueckweg_nach_stoerung'; hash: string; schritt: number; bis: string };
+  /** I4b Teil 2 — Störungen nach Abschluss, die möglicherweise der Change verursacht hat */
+  stoerungen?: Array<{ incidentId: string; titel: string; schwere: string; zeit: string }>;
 }
 
 export const MAX_AUSGABE = 2000;

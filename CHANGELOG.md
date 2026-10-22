@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Störungen nach Changes erkennen, Rückweg nur anbieten (v1565, Spec Infrastruktur-Vorhaben I4b Teil 2)
+
+Owner 22.10. (5b-13): Verknüpfung 24 h (kritische Services 72 h); „Rückweg nur vorschlagen, dann auf Freigabe warten“.
+
+- **Neuer Job `change-stoerungen`** (10-Minuten-Raster) verknüpft Incidents mit abgeschlossenen Changes, wenn sie:
+  - offen sind;
+  - innerhalb von 24 h nach dem Ende eines Changes mit Schritten entstanden sind (72 h, wenn die Auswirkungsanalyse kritische Services nannte);
+  - eines seiner Assets oder ein davon abhängiges Asset betreffen (CMDB, eingehende Beziehungen, Tiefe 3).
+- **Folgen einer Verknüpfung:**
+  - Notiz im Incident („möglicherweise durch Change …“), Vermerk im Change;
+  - zeitkritische Meldung an den Owner und Benachrichtigung nach den Regeln (Ereignis „Störung“);
+  - der Rückweg aller erledigten Schritte wird **nur als Frage** angeboten (Button, Einmal-Freigabe 24 Stunden). Ohne Ja passiert nichts, mit Ja wird der Change zurückgerollt.
+- Jeder Incident wird nur einmal verknüpft. Das Repository erlaubt den Wechsel `completed → rolled_back/failed` nur dem Motor.
+
 ### Fixed — Wartung: Matrix als Kanal, Web-Anbindung (v1564)
 
 Befunde aus dem ersten Test (22.10.):

@@ -946,7 +946,8 @@ export class ItsmRepository {
   async motorSetze(userId: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string }): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
-    const erlaubt: Record<string, string[]> = { approved: ['in_progress'], in_progress: ['completed', 'failed', 'rolled_back', 'cancelled'], cancelled: [] };
+    // I4b — nach Abschluss: Rückweg nach einer vom Change verursachten Störung (nur nach Owner-Ja, siehe Motor)
+    const erlaubt: Record<string, string[]> = { approved: ['in_progress'], in_progress: ['completed', 'failed', 'rolled_back', 'cancelled'], completed: ['rolled_back', 'failed'], cancelled: [] };
     if (d.status && d.status !== e.status) {
       if (!(erlaubt[e.status] ?? []).includes(d.status)) throw new Error(`Motor: Wechsel ${e.status} → ${d.status} nicht erlaubt`);
       if (d.status === 'in_progress' && (!e.freigabeFingerabdruck || e.freigabeFingerabdruck !== e.fingerabdruck)) throw new Error('Motor: Freigabe deckt den aktuellen Plan nicht');

@@ -7105,12 +7105,33 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
+            abhaengigeIds: async (o, ids) => {
+              const alle = new Set<string>(ids); let rand = [...ids];
+              for (let tiefe = 0; tiefe < 3 && rand.length && alle.size < 200; tiefe++) {
+                const naechste: string[] = [];
+                for (const id of rand) for (const r of await cmdbFz.getRelationsForAsset(o, id).catch(() => [])) {
+                  const dazu = r.targetAssetId === id ? r.sourceAssetId : r.relationType === 'part_of' && r.sourceAssetId === id ? r.targetAssetId : undefined;
+                  if (dazu && !alle.has(dazu)) { alle.add(dazu); naechste.push(dazu); }
+                }
+                rand = naechste;
+              }
+              return [...alle].filter(id => !ids.includes(id));
+            },
             ereignis: (o, c, z, text) => wartungsDienst.ereignis(o, c, z, text),
           });
           this.registriereJob({
             key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
             takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 1, timeoutMin: 2,
             run: async () => ({ ok: true, zaehler: { gestartet: (await this.changeMotor!.anstossen()).length, aktiv: this.changeMotor!.aktiv() } }),
+          });
+          this.registriereJob({
+            key: 'change-stoerungen', beschreibung: 'I4b — Incidents nach abgeschlossenen Changes (24 h, kritisch 72 h) verknüpfen, Rückweg nur anbieten',
+            takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 3, timeoutMin: 3,
+            run: async () => {
+              const o = ownerFz(); if (!o) return { ok: true };
+              const inc = await itsmI3.listIncidents(o, { limit: 300 } as never);
+              return { ok: true, zaehler: { verknuepft: await this.changeMotor!.pruefeStoerungen(inc as never) } };
+            },
           });
           setTimeout(() => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor-Start fehlgeschlagen')); }, 45_000);
           this.logger.info('I4 Ausführungsmotor registriert');

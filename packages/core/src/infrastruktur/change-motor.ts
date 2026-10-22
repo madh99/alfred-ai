@@ -39,6 +39,8 @@ export interface MotorDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4b — darf der Change jetzt starten (Fenster, Sperren, Ankündigung)? Verschickt fällige Ankündigungen. */
   zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
+  /** I4b Teil 2 — IDs der Assets, die von den gegebenen abhängen (CMDB, eingehende Beziehungen) */
+  abhaengigeIds?: (o: string, ids: string[]) => Promise<string[]>;
   /** I4b — Start/Ende/Störung an die Empfänger der Benachrichtigungsregeln */
   ereignis?: (o: string, c: CmdbChangeRequest, z: 'start' | 'ende' | 'stoerung', text: string) => Promise<void>;
   jetzt?: () => number;
@@ -301,8 +303,9 @@ export class ChangeMotor {
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
     if (!c || !l?.frage || typeof nonce !== 'string') return 'Keine offene Frage zu diesem Change.';
-    if (l.frage.art !== art || l.frage.hash !== hash(nonce) || Date.parse(l.frage.bis) < this.jetzt() || (schritt !== undefined && l.frage.schritt !== schritt)) return 'Diese Freigabe ist ungültig oder abgelaufen.';
-    if (c.status !== 'in_progress') return `Change ist ${c.status}.`;
+    const passt = l.frage.art === art || (art === 'rueckweg' && l.frage.art === 'rueckweg_nach_stoerung');
+    if (!passt || l.frage.hash !== hash(nonce) || Date.parse(l.frage.bis) < this.jetzt() || (schritt !== undefined && l.frage.schritt !== schritt)) return 'Diese Freigabe ist ungültig oder abgelaufen.';
+    if (c.status !== (l.frage.art === 'rueckweg_nach_stoerung' ? 'completed' : 'in_progress')) return `Change ist ${c.status}.`;
     delete l.frage;
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });
     return { c, lauf: l };
@@ -339,6 +342,48 @@ export class ChangeMotor {
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });
     void this.weiter(o, c, l).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
     return `Schritt ${l.schritt} wird wiederholt.`;
+  }
+
+  /**
+   * I4b Teil 2 (Owner 22.10., 5b-13) — Störungen nach Abschluss: Ein offener Incident, der innerhalb von 24 h (kritische Services 72 h)
+   * nach dem Ende eines Changes an einem seiner Assets oder einem davon abhängigen Asset entsteht, wird mit dem Change verknüpft.
+   * Alfred meldet zeitkritisch und bietet den Rückweg NUR als Frage an („Rückweg nur vorschlagen, dann auf Freigabe warten“).
+   */
+  async pruefeStoerungen(incidents: Array<{ id: string; title: string; severity: string; status: string; affectedAssetIds: string[]; createdAt: string }>): Promise<number> {
+    const o = this.d.owner(); if (!o) return 0;
+    const jetzt = this.jetzt();
+    let neu = 0;
+    const offen = incidents.filter(i => !['resolved', 'closed'].includes(i.status) && i.affectedAssetIds?.length);
+    if (!offen.length) return 0;
+    for (const c of (await this.d.itsm.liste(o)).filter(x => x.status === 'completed' && x.schritte?.length)) {
+      const l = c.lauf as ChangeLauf | undefined;
+      if (!l?.ende) continue;
+      const ende = Date.parse(l.ende);
+      const kritisch = !!(c.auswirkung as { kritisch?: boolean } | undefined)?.kritisch;
+      const fenster = (kritisch ? 72 : 24) * 3_600_000;
+      if (jetzt - ende > fenster) continue;
+      const kandidaten = offen.filter(i => { const t = Date.parse(i.createdAt); return t >= ende && t <= ende + fenster && !(l.stoerungen ?? []).some(s => s.incidentId === i.id); });
+      if (!kandidaten.length) continue;
+      const bereich = new Set([...c.affectedAssetIds, ...(await this.d.abhaengigeIds?.(o, c.affectedAssetIds).catch(() => []) ?? [])]);
+      const treffer = kandidaten.filter(i => i.affectedAssetIds.some(a => bereich.has(a)));
+      if (!treffer.length) continue;
+      l.stoerungen = [...(l.stoerungen ?? []), ...treffer.map(i => ({ incidentId: i.id, titel: i.title, schwere: i.severity, zeit: i.createdAt }))];
+      const rw = rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse);
+      let frage = false;
+      if (rw.length && this.d.frage && !l.frage) {
+        const nonce = randomUUID();
+        l.frage = { art: 'rueckweg_nach_stoerung', hash: hash(nonce), schritt: 0, bis: new Date(jetzt + FRAGE_GUELTIG_MS).toISOString() };
+        await this.d.itsm.motorSetze(o, c.id, { lauf: l });
+        frage = await this.d.frage(`🚨 Möglicherweise durch Change verursacht: ${treffer.map(i => `${i.title} (${i.severity})`).join('; ')}\n\nChange „${c.title}“ (${c.id.slice(0, 8)}) wurde ${new Date(ende).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })} abgeschlossen und berührt dieselben Assets.\n\nRückweg ausführen?\n${rw.map(s => `  zu Schritt ${s.nr}: ${s.rueckweg!.skill}.${s.rueckweg!.aktion}`).join('\n')}\n\nOhne Ja passiert nichts.`, { action: 'rueckweg_ausfuehren', change: c.id, freigabe: nonce }).catch(() => false);
+      }
+      await this.d.itsm.motorSetze(o, c.id, { lauf: l });
+      for (const i of treffer) await this.d.incident?.notiz(o, i.id, `Möglicherweise durch Change ${c.id.slice(0, 8)} „${c.title}“ verursacht (abgeschlossen ${l.ende}, berührt dieselben Assets).${frage ? ' Rückweg wurde dem Owner zur Freigabe angeboten.' : rw.length ? '' : ' Der Change hat keinen Rückweg.'}`).catch(() => undefined);
+      this.log('I4b Störung nach Change', { id: c.id, incidents: treffer.map(i => i.id), kritisch, rueckwegFrage: frage });
+      await this.d.melde?.(`🚨 Störung möglicherweise durch Change „${c.title}“ (${c.id.slice(0, 8)}): ${treffer.map(i => i.title).join('; ')}${frage ? '\nRückweg wartet auf dein Ja.' : ''}`, true);
+      await this.d.ereignis?.(o, c, 'stoerung', `Nach der Wartung „${c.title}“ ist eine Störung aufgetreten: ${treffer.map(i => i.title).join('; ')}`).catch(() => undefined);
+      neu += treffer.length;
+    }
+    return neu;
   }
 
   private async rueckweg(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, grund: string): Promise<void> {
