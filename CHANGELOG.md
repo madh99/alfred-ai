@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Soll/Ist-Abgleich angenommener Zielarchitekturen (v1570, Spec Infrastruktur-Vorhaben I4b Teil 5)
+
+- **Soll in der CMDB:** Mit der Annahme einer Zielarchitektur legt Alfred jede geplante VM/LXC als CMDB-Asset mit Status `planned` an (Quelle `infrastruktur`, mit Knoten, Größe, Distribution, Netz, Gruppe, Diensten).
+  - Gibt es die VM dann wirklich, wird der Plan-Eintrag mit Verweis auf das echte Asset abgeschlossen.
+- **Abgleich ohne Modell** je Gruppe:
+  - neue VM: läuft sie, auf dem geplanten Knoten, mit geplanter vCPU- und RAM-Größe? Gibt es das geplante Netz/VLAN? Laufen die Dienste auf dem neuen Host und nicht mehr am alten? Zeigen Proxy-Einträge noch auf den alten Host bzw. schon auf die neue VM?
+  - „bleibt“: Läuft der Dienst weiter am bisherigen Ort?
+  - „stilllegen“: Ist er stillgelegt?
+  - Ergebnis: erfüllte und offene Punkte, Abweichungen.
+- **Wann:** auf Zuruf (`soll_ist`) und automatisch nach jedem abgeschlossenen Change des Vorhabens; die Abschlussmeldung des Motors nennt dann den Fortschritt und die offenen Punkte.
+
 ### Fixed — Freigabe-Frage und Web-Meldung bei abgewiesener Freigabe (v1569)
 
 - Die Freigabe-Frage sagte noch „ausgeführt wird er erst im Ausführungsmotor (folgt mit I4)“. Jetzt heißt es: Nach dem Ja startet der Motor den Change sofort oder im nächsten passenden Wartungsfenster; „Nein, weil …“ wird ein Einwand.

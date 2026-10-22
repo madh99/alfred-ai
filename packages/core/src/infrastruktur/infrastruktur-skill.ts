@@ -22,7 +22,7 @@ export interface VorhabenSpeicher {
 export interface VorhabenDaten {
   id: string; titel: string; ziel: string; hosts: string[];
   status: 'entwurf' | 'architektur_vorgeschlagen' | 'angenommen' | 'verworfen';
-  bestandDocId?: string; architekturDocId?: string; architekturVersion: number;
+  bestandDocId?: string; architekturDocId?: string; architekturVersion: number; architektur?: unknown;
   entscheidungen: Array<{ zeit: string; entscheidung: string; wortlaut: string; architekturVersion: number }>;
   changeIds: string[]; erstellt: string;
 }
@@ -74,6 +74,8 @@ export interface InfrastrukturDeps {
   };
   // ── I4b Teil 4 ──
   standard?: StandardChanges;
+  // ── I4b Teil 5 — Soll/Ist ──
+  sollIst?: { planen(o: string, v: VorhabenDaten): Promise<number>; abgleich(o: string, v: VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
   // ── Einwand ──
   einwand?: import('./einwand.js').EinwandDienst;
   updatesSchalter?: { liste(o: string): Promise<Record<string, string>>; setze(o: string, name: string, an: boolean): Promise<boolean> };
@@ -85,7 +87,7 @@ export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager',
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -115,6 +117,7 @@ export class InfrastrukturSkill extends Skill {
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
+      + 'SOLL/IST (I4b): soll_ist (vorhaben) — Abgleich der angenommenen Zielarchitektur mit dem Ist (VMs, Netze, Dienste am neuen Host, Proxy-Ziele), Fortschritt und Abweichungen; nach jedem abgeschlossenen Change des Vorhabens automatisch. '
       + 'EINWAND: einwand (change ODER vorhaben, bezug z. B. „Schritt 4“ oder „Netze“, text = Einwand des Owners in seinen Worten, wortlaut) — nimmt dem Change die Freigabe bzw. setzt das Vorhaben in den Entwurf; einwaende (change|vorhaben) listet sie. Beim Überarbeiten (change_aendern bzw. architektur_vorschlagen) JEDEN offenen Einwand beantworten: antworten [{einwand: ID, art umgesetzt|abgelehnt, text}]. '
       + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
@@ -217,6 +220,13 @@ export class InfrastrukturSkill extends Skill {
     if (!v) return { success: false, error: `Vorhaben „${String(input.vorhaben ?? '')}“ nicht gefunden — vorhaben_liste zeigt alle.` };
     switch (action) {
       case 'vorhaben_zeigen': return { success: true, data: v, display: this.zeige(v) };
+      case 'soll_ist': {
+        if (v.status !== 'angenommen') return { success: false, error: 'Soll/Ist gibt es erst für eine angenommene Zielarchitektur' };
+        if (!this.deps.sollIst) return { success: false, error: 'Soll/Ist nicht verfügbar' };
+        await this.deps.sollIst.planen(owner, v);
+        const r = await this.deps.sollIst.abgleich(owner, v);
+        return { success: true, data: r, display: r.text };
+      }
       case 'grundlage': {
         const g = await this.grundlage(v.hosts);
         return { success: true, data: g, display: `Vorhaben **${v.titel}** — Ziel: ${v.ziel}\n\n${grundlageText(g)}` };
@@ -327,6 +337,8 @@ export class InfrastrukturSkill extends Skill {
     if (e === 'annehmen' && this.deps.einwand && (await this.deps.einwand.offen(owner, 'vorhaben', v.id)).length) return { success: false, error: 'Es gibt offene Einwände des Owners zu dieser Architektur — erst überarbeiten und beantworten' };
     const neu = await repo.entscheide(owner, v.id, { entscheidung: e, wortlaut, architekturVersion: v.architekturVersion }, status);
     if (e === 'annehmen') await this.deps.einwand?.erledigeBeantwortete(owner, 'vorhaben', v.id);
+    // I4b Teil 5 — angenommene Architektur als Soll-Zustand in die CMDB (geplante VMs)
+    if (e === 'annehmen') { const n = await this.deps.sollIst?.planen(owner, neu).catch(() => 0); this.deps.protokoll?.('I4b Soll angelegt', { id: v.id, geplant: n }); }
     this.deps.protokoll?.('I2 Owner-Entscheidung', { id: v.id, entscheidung: e, version: v.architekturVersion });
     const weiter = e === 'annehmen' ? 'Grundlage für die Changes (nächste Ausbaustufe I3: Changes mit Schritten, je Change eigene Freigabe).' : e === 'ueberarbeiten' ? 'Architektur nach den Hinweisen des Owners überarbeiten und erneut mit architektur_vorschlagen senden.' : 'Vorhaben beendet.';
     return { success: true, data: { status: neu.status }, display: `Vorhaben **${v.titel}**: ${STATUS_TEXT[neu.status]} („${wortlaut}“). ${weiter}` };

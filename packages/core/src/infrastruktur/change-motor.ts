@@ -39,6 +39,8 @@ export interface MotorDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4b — darf der Change jetzt starten (Fenster, Sperren, Ankündigung)? Verschickt fällige Ankündigungen. */
   zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
+  /** I4b Teil 5 — nach Abschluss eines Changes eines Vorhabens: Soll/Ist-Abgleich (Text für die Meldung) */
+  nachAbschluss?: (o: string, c: CmdbChangeRequest) => Promise<string | undefined>;
   /** I4b Teil 2 — IDs der Assets, die von den gegebenen abhängen (CMDB, eingehende Beziehungen) */
   abhaengigeIds?: (o: string, ids: string[]) => Promise<string[]>;
   /** I4b — Start/Ende/Störung an die Empfänger der Benachrichtigungsregeln */
@@ -429,7 +431,8 @@ export class ChangeMotor {
     await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht });
     if (this.d.incident && lauf.incidentId && status !== 'completed') await this.d.incident.notiz(o, lauf.incidentId, `Change-Ende: ${status}\n${bericht}`).catch(() => undefined);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
-    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}`, status === 'failed');
+    const sollIst = status === 'completed' && c.vorhabenId ? await this.d.nachAbschluss?.(o, c).catch(() => undefined) : undefined;
+    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}`, status === 'failed');
     await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
   }
 }

@@ -458,6 +458,8 @@ export class Alfred {
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
   /** I3 — Planung/Freigabe von Changes mit Schritten (auch für Web-Freigabe) */
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
+  /** I4b Teil 5 — Soll/Ist-Abgleich angenommener Architekturen */
+  private sollIstDienst?: { planen(o: string, v: import('./infrastruktur/infrastruktur-skill.js').VorhabenDaten): Promise<number>; abgleich(o: string, v: import('./infrastruktur/infrastruktur-skill.js').VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
   /** Einwand — Widerspruch des Owners zu Change/Architektur */
   private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
   /** I4 — Ausführungsmotor für freigegebene Changes */
@@ -7075,6 +7077,36 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         });
+        // I4b Teil 5 — Soll/Ist: angenommene Architektur als geplante CMDB-Assets, Abgleich mit dem Ist
+        {
+          const { sollIst, sollIstText, geplanteAssets } = await import('./infrastruktur/soll-ist.js');
+          const proxyListe = async (o: string) => (await cmdbFz.listAssets(o, { sourceSkill: 'nginx_proxy_manager' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>)).filter(a => a.assetType === 'proxy_host' && a.status === 'active').map(a => { const at = a.attributes as { domain_names?: string[]; forward_host?: string; forward_port?: number }; return { domains: at.domain_names ?? [a.name], forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0) }; });
+          const netzListe = async (o: string) => (await cmdbFz.listAssets(o, { assetType: 'network' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>)).filter(a => ['unifi', 'pfsense', 'mikrotik'].includes(a.sourceSkill ?? '') && a.status === 'active').map(a => { const at = a.attributes as { vlan?: string | number; vlan_tag?: string | number; subnet?: string }; return { quelle: a.sourceSkill!, name: a.name, vlan: at.vlan ?? at.vlan_tag, subnet: at.subnet }; });
+          this.sollIstDienst = {
+            planen: async (o, v) => {
+              if (!v.architektur) return 0;
+              let n = 0;
+              for (const g of geplanteAssets(v.id, v.architektur as never)) { await cmdbFz.upsertAsset(o, { ...g, status: 'planned', sourceSkill: 'infrastruktur' } as never); n++; }
+              return n;
+            },
+            abgleich: async (o, v) => {
+              const a = v.architektur as import('./infrastruktur/architektur.js').Architektur;
+              const alteHosts = v.hosts.some(h => { const b = this.hostBestaende.get(h); return !b?.erfasst || Date.now() - Date.parse(b.erfasst) > 6 * 3_600_000; });
+              if (alteHosts) { const cmdb = skillRegistry.get('cmdb'); if (cmdb) await skillSandbox.execute(cmdb, { action: 'discover_source', source: 'fernzugriff' }, ctxOwnerI4b()).catch(() => undefined); }
+              const vmAssets = (await cmdbFz.listAssets(o, { sourceSkill: 'proxmox' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>)).filter(x => x.assetType === 'vm' || x.assetType === 'lxc');
+              const vms = vmAssets.map(x => { const at = x.attributes as { cpus?: number; maxmem?: number; node?: string }; return { assetId: x.id, name: x.name, status: x.status, ...(at.node ? { node: at.node } : {}), ...(x.ipAddress ? { ip: x.ipAddress } : {}), ...(at.cpus ? { cpus: Number(at.cpus) } : {}), ...(at.maxmem ? { ramBytes: Number(at.maxmem) } : {}) }; });
+              const zugaenge = (await this.fernzugriffRef?.aktiveZugaenge() ?? []).map(z => ({ name: z.name, host: z.host }));
+              const r = sollIst({ architektur: a, vms, zugaenge, hosts: [...this.hostBestaende.values()], netze: await netzListe(o), proxy: await proxyListe(o), quellHosts: v.hosts });
+              // Geplante VM gibt es real → geplantes Asset als ersetzt markieren
+              for (const g of geplanteAssets(v.id, a)) {
+                const ist = vms.find(x => x.name.toLowerCase() === g.name.toLowerCase() && x.status === 'active');
+                if (ist) await cmdbFz.upsertAsset(o, { ...g, status: 'decommissioned', sourceSkill: 'infrastruktur', attributes: { ...g.attributes, ersetztDurch: ist.assetId } } as never).catch(() => undefined);
+              }
+              this.logger.info({ vorhaben: v.id, erfuellt: r.erfuellt, gesamt: r.gesamt, abweichungen: r.abweichungen.length }, 'I4b Soll/Ist-Abgleich');
+              return { text: sollIstText(v.titel, r), erfuellt: r.erfuellt, gesamt: r.gesamt, abweichungen: r.abweichungen };
+            },
+          };
+        }
         // I4 — Ausführungsmotor
         {
           const { ChangeMotor } = await import('./infrastruktur/change-motor.js');
@@ -7121,6 +7153,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
+            nachAbschluss: async (o, c) => {
+              const { VorhabenRepository: VR } = await import('@alfred/storage');
+              const v = await new VR(adapter).hole(o, c.vorhabenId!);
+              if (!v || v.status !== 'angenommen' || !this.sollIstDienst) return undefined;
+              const r = await this.sollIstDienst.abgleich(o, v as never);
+              return `Vorhaben „${v.titel}“: ${r.erfuellt}/${r.gesamt} Soll-Punkte erfüllt${r.abweichungen.length ? ` — offen: ${r.abweichungen.slice(0, 5).join('; ')}${r.abweichungen.length > 5 ? ' …' : ''}` : ''}`;
+            },
             abhaengigeIds: async (o, ids) => {
               const alle = new Set<string>(ids); let rand = [...ids];
               for (let tiefe = 0; tiefe < 3 && rand.length && alle.size < 200; tiefe++) {
@@ -7252,6 +7291,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           changes: this.changePlanung,
           motor: this.changeMotor,
           einwand: this.einwandDienst,
+          sollIst: this.sollIstDienst,
           standard: new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
