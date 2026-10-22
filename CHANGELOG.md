@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Netz-Aktionen für UniFi und pfSense: VLANs, Interfaces, DHCP, lokales DNS (v1571, Spec Infrastruktur-Vorhaben E4-N)
+
+Owner 22.10. bei der Annahme von cf82f3f2: „VLANs soll Alfred selbst anlegen und selbst entscheiden, ob auf UniFi oder pfSense.“ Die Netz-Aktionen werden deshalb vor den ersten Umzug gezogen; alle laufen nur als Schritte freigegebener Changes, jeweils mit eigenem Rückweg.
+
+- **UniFi:**
+  - `create_network` (Name, VLAN, Subnetz, DHCP; Gateway = erste Adresse) ↔ `delete_network`. Das Löschen ist nie erlaubt für WAN, VPN oder Default und nie, solange Geräte im Netz sind.
+  - Lokales DNS (Network ≥ 8, v2-API `static-dns`): `list_dns_records`, `create_dns_record` (A, AAAA, CNAME) ↔ `delete_dns_record`.
+- **pfSense (REST API v2):**
+  - `create_vlan` ↔ `delete_vlan` (nur, wenn nicht als Interface zugewiesen);
+  - `assign_interface` (statische IP aus dem Subnetz, danach apply) ↔ `unassign_interface` (nur optN, nie WAN/LAN);
+  - `enable_dhcp` ↔ `disable_dhcp`;
+  - `api_pruefen`: lesende Vorprüfung, ob diese Endpunkte im OpenAPI-Schema des Geräts vorhanden sind.
+- **Gemeinsame Regeln** (`netz-regeln.ts`): VLAN 2–4094 und frei, Name frei, Subnetz ohne Überschneidung mit vorhandenen Netzen, DHCP-Bereich im Subnetz und nicht das Gateway.
+
+### Fixed — Soll/Ist: „bleibt“ gilt auch für absichtlich gestoppte Container (v1571)
+
+- Realfall 22.10.: keycloak/ioBroker (gestoppt, bleiben laut Owner gestoppt erhalten) erschienen als Abweichung. „bleibt“ heißt jetzt „vorhanden wie bisher“, ob laufend oder gestoppt.
+
 ### Added — Soll/Ist-Abgleich angenommener Zielarchitekturen (v1570, Spec Infrastruktur-Vorhaben I4b Teil 5)
 
 - **Soll in der CMDB:** Mit der Annahme einer Zielarchitektur legt Alfred jede geplante VM/LXC als CMDB-Asset mit Status `planned` an (Quelle `infrastruktur`, mit Knoten, Größe, Distribution, Netz, Gruppe, Diensten).

@@ -45,3 +45,13 @@ describe('I4b Soll/Ist', () => {
     expect(geplanteAssets('v-1', arch)).toEqual([{ name: 'docker-dev-01', assetType: 'vm', sourceId: 'vorhaben:v-1:docker-dev-01', attributes: expect.objectContaining({ knoten: 'pve3', vcpu: 4, ramGb: 8, netz: 'Docker-Dev' }) }]);
   });
 });
+
+describe('I4b Soll/Ist — bleibt (Realfall: gestoppte Altbestände)', () => {
+  it('gestoppte Container in „bleibt“ sind erfüllt, fehlende nicht', () => {
+    const a: Architektur = { ...arch, gruppen: [{ name: 'Alt', zweck: 'z', begruendung: 'b', einheiten: ['iobroker', 'weg'], ziel: 'bleibt' }], netze: [], reihenfolge: [] };
+    const h = host('dockerhost', '192.168.1.211', [['iobroker', 'iobroker']]);
+    h.container[0]!.zustand = 'exited';
+    const r = sollIst({ architektur: a, vms: [], zugaenge: [], netze: [], proxy: [], hosts: [h], quellHosts: ['dockerhost'] });
+    expect(r.gruppen[0]!.punkte).toEqual([{ ok: true, text: 'iobroker bleibt wie geplant (gestoppt)' }, { ok: false, text: 'weg ist am bisherigen Ort nicht mehr vorhanden' }]);
+  });
+});

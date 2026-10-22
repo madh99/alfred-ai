@@ -1,8 +1,9 @@
+import { ipZahl, neuesNetzFehler, netzWerte, subnetz, type NetzVorhanden } from './netz-regeln.js';
 import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status';
+type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -30,7 +31,12 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status'] },
+        action: { type: 'string', enum: ['list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
+        vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
+        subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
+        interface_id: { type: 'string', description: 'unassign_interface/enable_dhcp/disable_dhcp: Interface-ID, z. B. opt3' },
+        dhcp_start: { type: 'string' }, dhcp_stop: { type: 'string' },
         interface: { type: 'string', description: 'Interface-Name (z.B. lan, wan, opt1) für list_rules Filter oder create_rule' },
         protocol: { type: 'string', description: 'Protokoll: tcp, udp, icmp, any (default: tcp)' },
         source: { type: 'string', description: 'Quell-IP/Netzwerk (z.B. 172.17.0.10, 192.168.1.0/24, any)' },
@@ -66,6 +72,13 @@ export class PfSenseSkill extends Skill {
       case 'list_dhcp_leases': return this.listDhcpLeases();
       case 'list_arp': return this.listArp();
       case 'status': return this.getStatus();
+      case 'api_pruefen': return await this.apiPruefen();
+      case 'create_vlan': return await this.vlanAnlegen(input);
+      case 'delete_vlan': return await this.vlanLoeschen(input);
+      case 'assign_interface': return await this.interfaceZuweisen(input);
+      case 'unassign_interface': return await this.interfaceEntfernen(input);
+      case 'enable_dhcp': return await this.dhcp(input, true);
+      case 'disable_dhcp': return await this.dhcp(input, false);
       default: return { success: false, error: `Unknown action: ${String(action)}` };
     }
   }
@@ -260,6 +273,90 @@ export class PfSenseSkill extends Skill {
     );
     const display = `## pfSense VLANs (${vlans.length})\n\n| Tag | Interface | Parent | Beschreibung |\n|-----|-----------|--------|--------------|\n${lines.join('\n')}`;
     return { success: true, data: vlans, display };
+  }
+
+  // ── Netz-Aktionen (Owner 22.10.: Alfred legt VLANs selbst an, wählt UniFi oder pfSense) ──
+  /** Endpunkte, die die Netz-Aktionen brauchen (pfSense REST API v2) */
+  static readonly NETZ_ENDPUNKTE: Array<[string, string]> = [['/api/v2/interface/vlan', 'post'], ['/api/v2/interface/vlan', 'delete'], ['/api/v2/interface', 'post'], ['/api/v2/interface', 'delete'], ['/api/v2/interface/apply', 'post'], ['/api/v2/services/dhcp_server', 'patch']];
+
+  /** Lesend: sind die Endpunkte der Netz-Aktionen auf diesem pfSense vorhanden (OpenAPI-Schema)? */
+  private async apiPruefen(): Promise<SkillResult> {
+    const schema = await this.pfFetch('/schema/openapi') as { paths?: Record<string, Record<string, unknown>> };
+    const pfade = schema.paths ?? {};
+    const z = PfSenseSkill.NETZ_ENDPUNKTE.map(([p, m]) => ({ pfad: p, methode: m.toUpperCase(), da: !!pfade[p]?.[m] }));
+    const ok = z.every(x => x.da);
+    return { success: true, data: { ok, endpunkte: z }, display: `${ok ? '✅ Alle Endpunkte für Netz-Aktionen vorhanden' : '⚠️ Es fehlen Endpunkte'}\n${z.map(x => `- ${x.da ? '✓' : '✗'} ${x.methode} ${x.pfad}`).join('\n')}` };
+  }
+
+  private async vlans(): Promise<Array<{ id?: number | string; if?: string; tag?: number; vlanif?: string; descr?: string }>> {
+    return this.fetchDualEndpoint('/interface/vlans', '/interface/vlan');
+  }
+  private async interfaces(): Promise<Array<{ id?: string; if?: string; descr?: string; ipaddr?: string; subnet?: number | string; enable?: boolean }>> {
+    return this.fetchDualEndpoint('/interfaces', '/interface');
+  }
+  private static vlanIf(v: { if?: string; tag?: number; vlanif?: string }): string { return v.vlanif ?? `${v.if}.${v.tag}`; }
+
+  private async vlanAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const parent = String(input.parent_interface ?? '').trim(); const tag = Number(input.vlan); const descr = String(input.description ?? `Alfred VLAN ${tag}`).trim().slice(0, 60);
+    if (!/^[a-z]+\d+$/.test(parent)) return { success: false, error: 'parent_interface: physisches Interface, z. B. vtnet1' };
+    if (!Number.isInteger(tag) || tag < 2 || tag > 4094) return { success: false, error: 'vlan: 2–4094' };
+    const vorhanden = await this.vlans();
+    if (vorhanden.some(v => Number(v.tag) === tag && v.if === parent)) return { success: false, error: `VLAN ${tag} auf ${parent} gibt es schon` };
+    const r = await this.pfFetch('/interface/vlan', { method: 'POST', body: JSON.stringify({ if: parent, tag, descr }) }) as { data?: { id?: number | string } };
+    return { success: true, data: { id: r.data?.id, vlan: tag, parent_interface: parent, vlanif: `${parent}.${tag}` }, display: `✅ VLAN ${tag} auf ${parent} angelegt (${parent}.${tag})` };
+  }
+
+  private async vlanLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const tag = Number(input.vlan);
+    const v = (await this.vlans()).find(x => Number(x.tag) === tag && (!input.parent_interface || x.if === input.parent_interface));
+    if (!v) return { success: false, error: `VLAN ${tag} nicht gefunden` };
+    const vif = PfSenseSkill.vlanIf(v);
+    if ((await this.interfaces()).some(i => i.if === vif)) return { success: false, error: `VLAN ${tag} ist noch als Interface zugewiesen — zuerst unassign_interface` };
+    await this.pfFetch(`/interface/vlan?id=${encodeURIComponent(String(v.id))}`, { method: 'DELETE' });
+    return { success: true, data: { vlan: tag, vlanif: vif }, display: `✅ VLAN ${tag} (${vif}) gelöscht` };
+  }
+
+  private async interfaceZuweisen(input: Record<string, unknown>): Promise<SkillResult> {
+    const tag = Number(input.vlan); const descr = String(input.description ?? '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_').slice(0, 24);
+    if (!descr) return { success: false, error: 'description: Name des Interfaces (z. B. DOCKER_DEV)' };
+    const v = (await this.vlans()).find(x => Number(x.tag) === tag);
+    if (!v) return { success: false, error: `VLAN ${tag} nicht gefunden — zuerst create_vlan` };
+    const vif = PfSenseSkill.vlanIf(v);
+    const ifs = await this.interfaces();
+    if (ifs.some(i => i.if === vif)) return { success: false, error: `${vif} ist schon zugewiesen` };
+    const vorhanden: NetzVorhanden[] = ifs.filter(i => i.ipaddr && ipZahl(String(i.ipaddr)) !== undefined && i.subnet).map(i => ({ name: String(i.descr ?? i.id), subnet: `${i.ipaddr}/${i.subnet}` }));
+    const f = neuesNetzFehler({ name: descr, vlan: tag, subnet: String(input.subnet ?? '') }, vorhanden).filter(x => !x.startsWith('VLAN '));
+    if (f.length) return { success: false, error: `Interface nicht zugewiesen: ${f.join('; ')}` };
+    const w = netzWerte({ name: descr, vlan: tag, subnet: String(input.subnet) });
+    const s = subnetz(String(input.subnet))!;
+    const r = await this.pfFetch('/interface', { method: 'POST', body: JSON.stringify({ if: vif, descr, enable: true, typev4: 'static', ipaddr: w.gateway, subnet: s.laenge }) }) as { data?: { id?: string } };
+    await this.pfFetch('/interface/apply', { method: 'POST', body: '{}' });
+    return { success: true, data: { interface_id: r.data?.id, vlanif: vif, ip: w.gateway, subnet: s.laenge, dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop }, display: `✅ ${vif} als ${descr} (${r.data?.id ?? '?'}) zugewiesen: ${w.gateway}/${s.laenge}` };
+  }
+
+  private async interfaceEntfernen(input: Record<string, unknown>): Promise<SkillResult> {
+    const id = String(input.interface_id ?? '').trim();
+    if (!/^opt\d+$/.test(id)) return { success: false, error: 'interface_id: nur zusätzliche Interfaces (optN) — nie WAN/LAN' };
+    await this.pfFetch(`/interface?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await this.pfFetch('/interface/apply', { method: 'POST', body: '{}' });
+    return { success: true, data: { interface_id: id }, display: `✅ Interface ${id} entfernt` };
+  }
+
+  private async dhcp(input: Record<string, unknown>, an: boolean): Promise<SkillResult> {
+    const id = String(input.interface_id ?? '').trim();
+    if (!/^(lan|opt\d+)$/.test(id)) return { success: false, error: 'interface_id: lan oder optN' };
+    const ifs = await this.interfaces();
+    const i = ifs.find(x => x.id === id);
+    if (!i?.ipaddr || !i.subnet) return { success: false, error: `Interface ${id} ohne statische IP — DHCP geht nicht` };
+    const body: Record<string, unknown> = { id, enable: an };
+    if (an) {
+      const w = netzWerte({ name: id, vlan: 2, subnet: `${i.ipaddr}/${i.subnet}`, ...(typeof input.dhcp_start === 'string' ? { dhcpStart: input.dhcp_start } : {}), ...(typeof input.dhcp_stop === 'string' ? { dhcpStop: input.dhcp_stop } : {}) });
+      const s = subnetz(`${i.ipaddr}/${i.subnet}`)!;
+      for (const x of [w.dhcpStart, w.dhcpStop]) { const z = ipZahl(x); if (z === undefined || z <= s.netz || z >= s.broadcast) return { success: false, error: `${x} liegt nicht im Subnetz von ${id}` }; }
+      Object.assign(body, { range_from: w.dhcpStart, range_to: w.dhcpStop });
+    }
+    await this.pfFetch('/services/dhcp_server', { method: 'PATCH', body: JSON.stringify(body) });
+    return { success: true, data: { interface_id: id, enable: an, ...(an ? { range_from: body.range_from, range_to: body.range_to } : {}) }, display: `✅ DHCP auf ${id} ${an ? `an (${String(body.range_from)}–${String(body.range_to)})` : 'aus'}` };
   }
 
   private async listGateways(): Promise<SkillResult> {

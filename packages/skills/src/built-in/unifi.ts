@@ -1,3 +1,4 @@
+import { HOSTNAME, ipZahl, neuesNetzFehler, netzWerte, type NetzVorhanden } from './netz-regeln.js';
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
@@ -53,8 +54,13 @@ export class UniFiSkill extends Skill {
             'create_firewall_policy',
             'set_firewall_policy_enabled',
             'delete_firewall_policy',
+            'create_network',
+            'delete_network',
+            'list_dns_records',
+            'create_dns_record',
+            'delete_dns_record',
           ],
-          description: 'The UniFi action to perform',
+          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME) / delete_dns_record (hostname).',
         },
         mac: {
           type: 'string',
@@ -102,8 +108,16 @@ export class UniFiSkill extends Skill {
         },
         network_name: {
           type: 'string',
-          description: 'Netzwerk/VLAN Name für next_free_ip (z.B. "Default", "Keller", "VLAN 10")',
+          description: 'Netzwerk/VLAN Name für next_free_ip, create_network, delete_network (z.B. "Default", "Keller", "VLAN 10")',
         },
+        vlan: { type: 'number', description: 'create_network: VLAN-ID 2–4094' },
+        subnet: { type: 'string', description: 'create_network: Subnetz, z. B. 10.203.21.0/28 (Gateway = erste Adresse)' },
+        dhcp: { type: 'boolean', description: 'create_network: DHCP an (Standard true)' },
+        dhcp_start: { type: 'string', description: 'create_network: erste DHCP-Adresse (optional)' },
+        dhcp_stop: { type: 'string', description: 'create_network: letzte DHCP-Adresse (optional)' },
+        hostname: { type: 'string', description: 'create_dns_record/delete_dns_record: Name, z. B. matrix.home.arpa' },
+        ip: { type: 'string', description: 'create_dns_record: Ziel (IP bzw. Name bei CNAME)' },
+        record_type: { type: 'string', enum: ['A', 'AAAA', 'CNAME'], description: 'create_dns_record: Standard A' },
         start_ip: {
           type: 'number',
           description: 'Ab welcher Host-Nummer suchen (für next_free_ip, default: 10)',
@@ -260,6 +274,17 @@ export class UniFiSkill extends Skill {
         case 'set_firewall_policy_enabled':
         case 'delete_firewall_policy':
           return await this.firewallAenderung(action, input);
+
+        case 'create_network':
+          return await this.netzAnlegen(input);
+        case 'delete_network':
+          return await this.netzLoeschen(input);
+        case 'list_dns_records':
+          return await this.dnsListe();
+        case 'create_dns_record':
+          return await this.dnsAnlegen(input);
+        case 'delete_dns_record':
+          return await this.dnsLoeschen(input);
 
         default:
           return { success: false, error: `Unknown action: ${action}` };
@@ -1086,6 +1111,74 @@ export class UniFiSkill extends Skill {
 
     await this.request('POST', 'cmd/devmgr', { cmd: 'adopt', mac });
     return { success: true, data: { mac }, display: `Adopt command sent to device ${mac}.` };
+  }
+
+  // ── Netze und lokales DNS (Owner 22.10.: Alfred legt VLANs selbst an) ──
+
+  private async netzAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const neu = { name: String(input.network_name ?? '').trim(), vlan: Number(input.vlan), subnet: String(input.subnet ?? '').trim(), dhcp: input.dhcp !== false, ...(typeof input.dhcp_start === 'string' ? { dhcpStart: input.dhcp_start } : {}), ...(typeof input.dhcp_stop === 'string' ? { dhcpStop: input.dhcp_stop } : {}) };
+    const vorhanden = ((await this.request<any[]>('GET', 'rest/networkconf')) ?? []).map((n): NetzVorhanden => ({ name: String(n.name ?? ''), vlan: n.vlan, subnet: n.ip_subnet, purpose: n.purpose }));
+    const f = neuesNetzFehler(neu, vorhanden);
+    if (f.length) return { success: false, error: `Netz nicht angelegt: ${f.join('; ')}` };
+    const w = netzWerte(neu);
+    const body = { name: neu.name, purpose: 'corporate', networkgroup: 'LAN', vlan_enabled: true, vlan: neu.vlan, ip_subnet: w.ipSubnet, dhcpd_enabled: neu.dhcp, ...(neu.dhcp ? { dhcpd_start: w.dhcpStart, dhcpd_stop: w.dhcpStop } : {}), enabled: true };
+    const r = await this.request<any[]>('POST', 'rest/networkconf', body);
+    const id = Array.isArray(r) ? r[0]?._id : (r as { _id?: string } | undefined)?._id;
+    return { success: true, data: { id, name: neu.name, vlan: neu.vlan, gateway: w.gateway, ip_subnet: w.ipSubnet, ...(neu.dhcp ? { dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop } : {}) }, display: `✅ Netz „${neu.name}“ angelegt: VLAN ${neu.vlan}, Gateway ${w.ipSubnet}${neu.dhcp ? `, DHCP ${w.dhcpStart}–${w.dhcpStop}` : ', ohne DHCP'}` };
+  }
+
+  private async netzLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = String(input.network_name ?? '').trim();
+    const netze = (await this.request<any[]>('GET', 'rest/networkconf')) ?? [];
+    const n = netze.find(x => String(x.name ?? '').toLowerCase() === name.toLowerCase());
+    if (!n) return { success: false, error: `Netz „${name}“ nicht gefunden` };
+    if (n.purpose === 'wan' || n.purpose === 'vpn-client' || String(n.name).toLowerCase() === 'default' || !n.vlan_enabled) return { success: false, error: `Netz „${n.name}“ wird nicht gelöscht (WAN, VPN, Default oder ohne VLAN)` };
+    // nie ein Netz löschen, in dem noch Geräte sind
+    const clients = (await this.request<any[]>('GET', 'stat/sta').catch(() => [])) ?? [];
+    const drin = clients.filter(c => c.network_id === n._id || c.network === n.name);
+    if (drin.length) return { success: false, error: `Im Netz „${n.name}“ sind noch ${drin.length} Geräte — nicht gelöscht` };
+    await this.request('DELETE', `rest/networkconf/${n._id}`);
+    return { success: true, data: { id: n._id, name: n.name, vlan: n.vlan }, display: `✅ Netz „${n.name}“ (VLAN ${n.vlan}) gelöscht` };
+  }
+
+  /** Lokale DNS-Einträge (UniFi Network ≥ 8: v2-API static-dns) */
+  private async v2(method: string, pfad: string, body?: unknown): Promise<unknown> {
+    await this.ensureAuth();
+    const base = this.config.baseUrl.replace(/\/+$/, '');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.config.apiKey) headers['X-API-Key'] = this.config.apiKey;
+    else { if (this.cookies.length > 0) headers['Cookie'] = this.cookies.join('; '); if (this.csrfToken) headers['X-CSRF-Token'] = this.csrfToken; }
+    const res = await this.rawFetch(`${base}/proxy/network/v2/api/site/${this.site}/${pfad}`, { method, headers, signal: AbortSignal.timeout(20_000), ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    if (!res.ok) throw new Error(`UniFi v2 ${pfad} HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    const t = await res.text();
+    return t ? JSON.parse(t) : undefined;
+  }
+
+  private async dnsListe(): Promise<SkillResult> {
+    const l = ((await this.v2('GET', 'static-dns')) as Array<{ _id: string; key: string; value: string; record_type: string; enabled: boolean }> | undefined) ?? [];
+    return { success: true, data: l, display: l.length ? ['| Name | Typ | Ziel | aktiv |', '|---|---|---|---|', ...l.map(e => `| ${e.key} | ${e.record_type} | ${e.value} | ${e.enabled ? 'ja' : 'nein'} |`)].join('\n') : 'Keine lokalen DNS-Einträge.' };
+  }
+
+  private async dnsAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const key = String(input.hostname ?? '').trim().toLowerCase(); const value = String(input.ip ?? '').trim();
+    const typ = ['A', 'AAAA', 'CNAME'].includes(String(input.record_type)) ? String(input.record_type) : 'A';
+    if (!HOSTNAME.test(key)) return { success: false, error: 'hostname ungültig' };
+    if (typ === 'A' && ipZahl(value) === undefined) return { success: false, error: 'ip: IPv4-Adresse angeben' };
+    if (typ === 'CNAME' && !HOSTNAME.test(value)) return { success: false, error: 'ip: Zielname angeben' };
+    if (typ === 'AAAA' && !/^[0-9a-f:]+$/i.test(value)) return { success: false, error: 'ip: IPv6-Adresse angeben' };
+    const l = ((await this.v2('GET', 'static-dns')) as Array<{ key: string }> | undefined) ?? [];
+    if (l.some(e => e.key.toLowerCase() === key)) return { success: false, error: `DNS-Eintrag ${key} gibt es schon` };
+    const r = await this.v2('POST', 'static-dns', { key, value, record_type: typ, enabled: true });
+    return { success: true, data: { hostname: key, ip: value, record_type: typ, id: (r as { _id?: string } | undefined)?._id }, display: `✅ Lokaler DNS-Eintrag ${key} → ${value} (${typ})` };
+  }
+
+  private async dnsLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const key = String(input.hostname ?? '').trim().toLowerCase();
+    const l = ((await this.v2('GET', 'static-dns')) as Array<{ _id: string; key: string; value: string }> | undefined) ?? [];
+    const e = l.find(x => x.key.toLowerCase() === key);
+    if (!e) return { success: false, error: `DNS-Eintrag ${key} nicht gefunden` };
+    await this.v2('DELETE', `static-dns/${e._id}`);
+    return { success: true, data: { hostname: e.key, ip: e.value }, display: `✅ Lokaler DNS-Eintrag ${e.key} gelöscht` };
   }
 
   // ── Infra helpers ──────────────────────────────────────────────

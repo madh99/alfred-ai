@@ -57,9 +57,11 @@ export function sollIst(e: SollIstEingabe): SollIstErgebnis {
       }
       if (vm?.ip) for (const p of e.proxy.filter(x => x.forwardHost === vm.ip)) punkte.push({ ok: true, text: `Proxy ${p.domains[0]} → ${g.vmName}` });
     } else if (g.ziel === 'bleibt') {
+      // „bleibt“ heißt: bleibt, wie es ist — auch absichtlich gestoppte Container (Realfall 22.10.: keycloak/ioBroker gestoppt erhalten)
       for (const einheit of g.einheiten.filter(x => !e.quellHosts.includes(x))) {
-        const da = quellen.some(h => hatEinheit(h, einheit));
-        punkte.push({ ok: da, text: `${einheit} ${da ? 'läuft wie geplant weiter' : 'läuft nicht mehr am bisherigen Ort'}` });
+        const c = quellen.flatMap(h => h.container).filter(x => x.composeProjekt === einheit || x.name === einheit);
+        const laeuft = c.some(x => x.zustand === 'running');
+        punkte.push({ ok: c.length > 0, text: `${einheit} ${!c.length ? 'ist am bisherigen Ort nicht mehr vorhanden' : laeuft ? 'läuft wie geplant weiter' : 'bleibt wie geplant (gestoppt)'}` });
       }
     } else if (g.ziel === 'stilllegen') {
       for (const einheit of g.einheiten) {
