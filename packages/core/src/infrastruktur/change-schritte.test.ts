@@ -207,3 +207,15 @@ describe('I3 Asset-Auflösung (Realfall 22.10.: test-ubuntu als Deploy-Anwendung
     expect(r2.ok && r2.changes[0]!.affectedAssetIds).toEqual(['f278eb95-3463-481a-9d06-497b2c5fecdf']);
   });
 });
+
+describe('I3 Negative Prüfung (Realfall 22.10.: „abbrechen, wenn i3probe schon existiert“)', () => {
+  it('nichtEnthalten bei skill/befehl/http, sonst Fehler; im Plan lesbar', () => {
+    const c = snapshotChange();
+    c.schritte[0] = { titel: 'Snapshot darf noch nicht existieren', art: 'pruefung', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', nichtEnthalten: 'i3probe' } } as never;
+    const p = pruefeChangePlan(c, ctx());
+    expect(p.fehler).toEqual([]);
+    expect(plaeneAusSchritten(p.plan).umsetzung).toContain('→ enthält nicht „i3probe“');
+    c.schritte[0] = { titel: 'x', art: 'pruefung', pruefung: { typ: 'ping', ziel: 'a', nichtEnthalten: 'b' } } as never;
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('nichtEnthalten gibt es nur bei');
+  });
+});

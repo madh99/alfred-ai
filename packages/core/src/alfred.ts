@@ -6969,12 +6969,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (!o || !ids.length) return leer;
           const namen = new Map<string, string>();
           const alle = new Set<string>(ids);
-          for (const id of ids) {
-            const a = await cmdbFz.getAssetById(o, id).catch(() => null);
-            if (a) namen.set(a.id, a.name);
-            const t = await cmdbFz.getTopology(o, id, 3).catch(() => ({ assets: [] as Array<{ id: string; name: string }> }));
-            for (const x of t.assets) { alle.add(x.id); namen.set(x.id, x.name); }
+          // Nur was vom Ziel abhängt (Realfall 22.10.: die Topologie in beide Richtungen zog über den Knoten alle Nachbar-VMs und deren
+          // Incidents herein): eingehende Beziehungen (X läuft auf / hängt ab von / ist Teil von Ziel) bis Tiefe 3, dazu das Ganze, zu dem
+          // das Ziel gehört (part_of nach außen).
+          let rand = [...ids];
+          for (let tiefe = 0; tiefe < 3 && rand.length && alle.size < 200; tiefe++) {
+            const naechste: string[] = [];
+            for (const id of rand) {
+              const rels = await cmdbFz.getRelationsForAsset(o, id).catch(() => []);
+              for (const r of rels) {
+                const dazu = r.targetAssetId === id ? r.sourceAssetId : r.relationType === 'part_of' && r.sourceAssetId === id ? r.targetAssetId : undefined;
+                if (dazu && !alle.has(dazu)) { alle.add(dazu); naechste.push(dazu); }
+              }
+            }
+            rand = naechste;
           }
+          for (const id of alle) { const a = await cmdbFz.getAssetById(o, id).catch(() => null); if (a) namen.set(a.id, a.name); }
           const services = (await itsmI3.listServices(o).catch(() => [])).filter(sv => sv.assetIds.some(id => alle.has(id)) || sv.components.some(c => c.assetId && alle.has(c.assetId)));
           const incidents = (await itsmI3.listIncidents(o, { limit: 300 } as never).catch(() => [])).filter(i => !['resolved', 'closed'].includes(i.status) && (i.affectedAssetIds ?? []).some((id: string) => alle.has(id)));
           const changes = (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).filter(c => c.id !== ohneChangeId && ['submitted', 'approved', 'in_progress'].includes(c.status) && c.affectedAssetIds.some(id => ids.includes(id)));

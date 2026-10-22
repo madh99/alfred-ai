@@ -17,7 +17,7 @@ import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
 
 export type AktionsArt = 'lesen' | 'sicherung' | 'aendern' | 'loeschen';
 export type PruefTyp = 'http' | 'port' | 'dns' | 'ping' | 'container_healthy' | 'datei' | 'befehl' | 'skill';
-export interface Pruefung { typ: PruefTyp; ziel?: string; port?: number; erwartet?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string; parameter?: Record<string, unknown> }
+export interface Pruefung { typ: PruefTyp; ziel?: string; port?: number; erwartet?: string; /** Ausgabe darf das nicht enthalten (z. B. „Snapshot existiert schon“) */ nichtEnthalten?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string; parameter?: Record<string, unknown> }
 export interface Rueckweg { skill?: string; aktion?: string; parameter?: Record<string, unknown>; keiner?: string }
 export interface ChangeSchritt {
   nr: number; titel: string; art: 'aktion' | 'pruefung' | 'warten' | 'owner';
@@ -100,7 +100,8 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   const typ = txt(p.typ) as PruefTyp;
   if (!PRUEF_TYPEN.includes(typ)) { f.push(`${wo}: pruefung.typ muss ${PRUEF_TYPEN.join('/')} sein`); return undefined; }
   const aus: Pruefung = { typ };
-  for (const k of ['ziel', 'erwartet', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
+  for (const k of ['ziel', 'erwartet', 'nichtEnthalten', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
+  if (aus.nichtEnthalten && !['http', 'befehl', 'skill'].includes(typ)) f.push(`${wo}: nichtEnthalten gibt es nur bei http-, befehl- und skill-Prüfungen`);
   const port = zahl(p.port); if (port !== undefined) aus.port = port;
   if (obj(p.parameter)) aus.parameter = obj(p.parameter)!;
   const fehlt = (felder: Array<keyof Pruefung>) => { for (const k of felder) if (aus[k] === undefined) f.push(`${wo}: pruefung ${typ} braucht ${String(k)}`); };
@@ -277,14 +278,14 @@ const param = (p?: Record<string, unknown>) => (p && Object.keys(p).length ? ` (
 export function pruefText(p?: Pruefung): string {
   if (!p) return '—';
   switch (p.typ) {
-    case 'http': return `HTTP ${p.ziel}${p.erwartet ? ` → ${p.erwartet}` : ''}`;
+    case 'http': return `HTTP ${p.ziel}${p.erwartet ? ` → ${p.erwartet}` : ''}${p.nichtEnthalten ? `, ohne „${p.nichtEnthalten}“` : ''}`;
     case 'port': return `Port ${p.ziel}:${p.port} offen`;
     case 'dns': return `DNS ${p.ziel}${p.erwartet ? ` → ${p.erwartet}` : ''}`;
     case 'ping': return `Ping ${p.ziel}`;
     case 'container_healthy': return `Container ${p.container} auf ${p.zugang} läuft/healthy`;
     case 'datei': return `Datei ${p.pfad} auf ${p.zugang}`;
-    case 'befehl': return `Befehl auf ${p.zugang}: ${p.befehl}${p.erwartet ? ` → ${p.erwartet}` : ''}`;
-    case 'skill': return `${p.skill}.${p.aktion}${param(p.parameter)}${p.erwartet ? ` → enthält „${p.erwartet}“` : ''}`;
+    case 'befehl': return `Befehl auf ${p.zugang}: ${p.befehl}${p.erwartet ? ` → ${p.erwartet}` : ''}${p.nichtEnthalten ? `, ohne „${p.nichtEnthalten}“` : ''}`;
+    case 'skill': return `${p.skill}.${p.aktion}${param(p.parameter)}${p.erwartet ? ` → enthält „${p.erwartet}“` : ''}${p.nichtEnthalten ? ` → enthält nicht „${p.nichtEnthalten}“` : ''}`;
   }
 }
 export function schrittText(s: ChangeSchritt): string {

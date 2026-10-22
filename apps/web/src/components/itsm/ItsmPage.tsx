@@ -68,7 +68,7 @@ interface ChangeRequest {
   freigegebenUeber?: string;
 }
 
-interface ChangePruefung { typ: string; ziel?: string; port?: number; erwartet?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string }
+interface ChangePruefung { typ: string; ziel?: string; port?: number; erwartet?: string; nichtEnthalten?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string }
 interface ChangeSchritt {
   nr: number; titel: string; art: 'aktion' | 'pruefung' | 'warten' | 'owner';
   skill?: string; aktion?: string; parameter?: Record<string, unknown>; pruefung?: ChangePruefung;
@@ -85,7 +85,7 @@ function pruefKurz(p?: ChangePruefung): string {
     case 'container_healthy': return `${p.container} auf ${p.zugang} healthy`;
     case 'datei': return `Datei ${p.pfad} auf ${p.zugang}`;
     case 'befehl': return `${p.zugang}: ${p.befehl}`;
-    default: return `${p.skill}.${p.aktion}${p.erwartet ? ` → „${p.erwartet}“` : ''}`;
+    default: return `${p.skill}.${p.aktion}${p.erwartet ? ` → „${p.erwartet}“` : ''}${p.nichtEnthalten ? ` → ohne „${p.nichtEnthalten}“` : ''}`;
   }
 }
 

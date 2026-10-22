@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Auswirkung nur über Abhängige, negative Prüfung (v1559)
+
+Befunde aus dem ersten Live-Change (22.10., Probe-Change test-ubuntu):
+- **Die Auswirkungsanalyse war zu breit.** Die CMDB-Topologie lief in beide Richtungen, von test-ubuntu über den Knoten pve3 zu allen Nachbar-VMs; dadurch hing ein fremder Incident („git-server RAM 95 %“) am Change.
+  - Jetzt zählen nur Assets, die vom Ziel abhängen: eingehende Beziehungen bis Tiefe 3, dazu das Ganze, zu dem das Ziel gehört (`part_of`).
+- **Prüfungen können jetzt auch „darf nicht enthalten“ (`nichtEnthalten`)** bei http-, Befehl- und Skill-Prüfungen.
+  - Anlass: Das Modell wollte „abbrechen, wenn der Snapshot schon existiert“ und schrieb dafür eine Erwartung, die nie zutreffen konnte.
+
 ### Fixed — Change-Planung: betroffene Assets eindeutig auflösen (v1558)
 
 - Realfall 22.10.: Der erste Probe-Change wurde abgewiesen, weil „test-ubuntu“ in der CMDB zugleich Deploy-Anwendung und VM ist. Der Hinweis nannte nur Kurz-IDs, mit denen das Modell nicht weiterkam.
