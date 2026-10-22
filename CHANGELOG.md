@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Keine eigenen Sperrregeln, die den Rückverkehr der UDM verwerfen (v1591)
+
+- **Realfall 22.10.:** `docker-dev-01` war trotz offenem Trunk per SSH nicht erreichbar.
+  - Die eigene Regel `cf82-dev-block-to-internal` (Index 10000) stand vor der von der UDM abgeleiteten Rückverkehr-Regel der SSH-Freigabe (Index 30000) und verwarf die Antworten der VM.
+  - Die Sperre war überflüssig, weil die UDM das Zonenpaar standardmäßig selbst sperrt.
+- **Schutzregel:** `create_firewall_policy` legt keine BLOCK/REJECT-Regel ohne Filter für ein Zonenpaar an, das die UDM bereits selbst sperrt.
+- **Planung:** Eigene Sperren nur Richtung External und Gateway, wo die UDM standardmäßig erlaubt; nie zwischen eigener Zone und Internal, Vpn oder anderen Zonen.
+
 ### Fixed — Gescheiterte VM-Bereitstellung hinterlässt keine unstartbare VM (v1590)
 
 - **Realfall 22.10.:** Nach dem gescheiterten Schritt 2 von B ließ sich `docker-dev-01` nicht mehr starten (`volume 'local:snippets/alfred-144-user.yaml' does not exist`).

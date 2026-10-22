@@ -431,6 +431,14 @@ export class UniFiSkill extends Skill {
         if (vor.source.zoneId !== b.source.zoneId || vor.destination.zoneId !== b.destination.zoneId) throw new Error(`„${vor.name}" liegt in einem anderen Zonenpaar — Reihenfolge gilt nur innerhalb eines Zonenpaars`);
       }
       if (policies.some(p => p.name.toLowerCase() === w.name.trim().toLowerCase())) throw new Error(`Es gibt schon eine Policy „${w.name.trim()}" — anderen Namen wählen`);
+      // Realfall 22.10. (docker-dev-01 per SSH unerreichbar): eine eigene BLOCK-Regel steht vor den von der UDM abgeleiteten
+      // Rückverkehr-Regeln (Index 30000) und verwirft damit auch die Antworten erlaubter Verbindungen der Gegenrichtung. Sperrt die UDM
+      // das Zonenpaar ohnehin (System-Standard BLOCK), ist eine eigene Sperre ohne Filter überflüssig und schädlich.
+      const bb = body as { action: { type: string }; source: { zoneId: string; trafficFilter?: unknown }; destination: { zoneId: string; trafficFilter?: unknown } };
+      if (bb.action.type !== 'ALLOW' && !bb.source.trafficFilter && !bb.destination.trafficFilter) {
+        const standard = policies.filter(p => p.metadata?.origin === 'SYSTEM_DEFINED' && p.source.zoneId === bb.source.zoneId && p.destination.zoneId === bb.destination.zoneId && !(p as { connectionStateFilter?: unknown }).connectionStateFilter).sort((a, b) => (b.index ?? 0) - (a.index ?? 0))[0];
+        if (standard && standard.action.type !== 'ALLOW') throw new Error(`Das Zonenpaar sperrt die UDM bereits selbst („${standard.name}") — eine eigene Sperre ohne Filter würde nur die Antworten erlaubter Verbindungen verwerfen. Nicht anlegen.`);
+      }
       const vorschau = policyZeile({ id: 'neu', enabled: true, ...(body as Omit<Policy, 'id' | 'enabled'>), name: w.name.trim() } as Policy, zonen, netze).replace(/ · neu$/, '');
       beschreibung = `Firewall-Policy anlegen: ${vorschau}${vor ? `, eingereiht VOR „${vor.name}"` : ', hinten im Zonenpaar'}`;
       schluessel = JSON.stringify(['create', body, vor?.id ?? null]);
