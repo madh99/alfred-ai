@@ -288,6 +288,7 @@ function statusBadge(status: string) {
     resolved: 'bg-green-500/10 text-green-400',
     closed: 'bg-gray-500/10 text-gray-400',
     draft: 'bg-gray-500/10 text-gray-400',
+    submitted: 'bg-amber-500/10 text-amber-300',
     pending: 'bg-yellow-500/10 text-yellow-400',
     approved: 'bg-blue-500/10 text-blue-400',
     in_progress: 'bg-orange-500/10 text-orange-400',
@@ -1054,7 +1055,8 @@ export function ItsmPage() {
   const INCIDENT_ACTIVE_STATES = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
   // v668 — 'draft' und 'logged' sind die Default-Status frisch angelegter Records.
   // Vorher fehlten sie hier, daher hat der Aktiv-Filter alle neuen Tickets ausgeblendet.
-  const CHANGE_ACTIVE_STATES = new Set(['draft', 'pending', 'approved', 'in_progress']);
+  // Realfall 22.10.: Changes mit Schritten warten im Status „submitted“ auf die Owner-Freigabe — fehlte hier, die Liste wirkte leer
+  const CHANGE_ACTIVE_STATES = new Set(['draft', 'pending', 'submitted', 'approved', 'in_progress']);
   const PROBLEM_ACTIVE_STATES = new Set(['logged', 'open', 'analyzing', 'root_cause_identified', 'fix_in_progress']);
 
   function applyIncFilter(inc: Incident): boolean {
@@ -1095,7 +1097,7 @@ export function ItsmPage() {
   }, [incidents]);
   const chgStats = useMemo(() => {
     // v668 — 'draft' ist der Default-Status frisch angelegter Change Requests, vorher nicht gezählt.
-    const s = { draft: 0, pending: 0, approved: 0, in_progress: 0, completed: 0, failed: 0 };
+    const s = { draft: 0, pending: 0, submitted: 0, approved: 0, in_progress: 0, completed: 0, failed: 0, cancelled: 0, rolled_back: 0 };
     for (const c of changes) { if (c.status in s) (s as any)[c.status]++; }
     return s;
   }, [changes]);
@@ -1553,13 +1555,17 @@ export function ItsmPage() {
           <div className={clsx('space-y-3', selectedChange ? 'w-1/2' : 'w-full')}>
             {/* v645 — Stats */}
             <div className="flex gap-2 flex-wrap text-xs">
-              <StatChip active={chgStatusFilter === 'active'} onClick={() => setChgStatusFilter('active')} label="Aktiv" value={chgStats.draft + chgStats.pending + chgStats.approved + chgStats.in_progress} tone="blue" />
+              <StatChip active={chgStatusFilter === 'active'} onClick={() => setChgStatusFilter('active')} label="Aktiv" value={chgStats.draft + chgStats.pending + chgStats.submitted + chgStats.approved + chgStats.in_progress} tone="blue" />
               <StatChip active={chgStatusFilter === 'draft'} onClick={() => setChgStatusFilter('draft')} label="Draft" value={chgStats.draft} tone="gray" />
               <StatChip active={chgStatusFilter === 'pending'} onClick={() => setChgStatusFilter('pending')} label="Pending" value={chgStats.pending} tone="amber" />
+              <StatChip active={chgStatusFilter === 'submitted'} onClick={() => setChgStatusFilter('submitted')} label="Wartet auf Freigabe" value={chgStats.submitted} tone="amber" />
               <StatChip active={chgStatusFilter === 'approved'} onClick={() => setChgStatusFilter('approved')} label="Approved" value={chgStats.approved} tone="emerald" />
               <StatChip active={chgStatusFilter === 'in_progress'} onClick={() => setChgStatusFilter('in_progress')} label="In Progress" value={chgStats.in_progress} tone="blue" />
               <StatChip active={chgStatusFilter === 'completed'} onClick={() => setChgStatusFilter('completed')} label="Completed" value={chgStats.completed} tone="gray" />
               {chgStats.failed > 0 && <StatChip active={chgStatusFilter === 'failed'} onClick={() => setChgStatusFilter('failed')} label="Failed" value={chgStats.failed} tone="red" />}
+              {chgStats.rolled_back > 0 && <StatChip active={chgStatusFilter === 'rolled_back'} onClick={() => setChgStatusFilter('rolled_back')} label="Zurückgerollt" value={chgStats.rolled_back} tone="red" />}
+              <StatChip active={chgStatusFilter === 'cancelled'} onClick={() => setChgStatusFilter('cancelled')} label="Abgebrochen" value={chgStats.cancelled} tone="gray" />
+              <StatChip active={chgStatusFilter === ''} onClick={() => setChgStatusFilter('')} label="Alle" value={changes.length} tone="gray" />
             </div>
             <div className="flex gap-2 items-center flex-wrap">
               <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={chgStatusFilter} onChange={e => setChgStatusFilter(e.target.value)}>
@@ -1567,6 +1573,7 @@ export function ItsmPage() {
                 <option value="">Alle Status</option>
                 <option value="draft">Draft</option>
                 <option value="pending">Pending</option>
+                <option value="submitted">Wartet auf Freigabe</option>
                 <option value="approved">Approved</option>
                 <option value="in_progress">In Progress</option>
                 <option value="completed">Completed</option>

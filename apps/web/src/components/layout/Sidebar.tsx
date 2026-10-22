@@ -34,6 +34,7 @@ const HAUS = [
   { href: `${BASE}/lebenszeichen/`, label: 'Lage', icon: '💓' },
   { href: `${BASE}/befunde/`, label: 'Befunde', icon: '⚠️' },
   { href: `${BASE}/beobachter/`, label: 'Beobachter', icon: '🔭' }, // v1429
+  { href: `${BASE}/vorhaben/`, label: 'Vorhaben', icon: '🗺️' }, // Vorhaben-Übersicht
   { href: `${BASE}/wartung/`, label: 'Wartung', icon: '🛠️' }, // I4b
   { href: `${BASE}/tresor/`, label: 'Tresor', icon: '🔐' }, // I4c
   { href: `${BASE}/geraete/`, label: 'Geräte', icon: '📱' }, // Phase 5 H1 — Kopplung mit QR

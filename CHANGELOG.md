@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Web-Seite „Vorhaben“; ITSM zeigt wartende und abgeschlossene Changes (v1574)
+
+- Ausgangspunkt war ein Realfall: Ein freigegebener Change war im Web nirgends zu finden. Der ITSM-Standardfilter „Aktiv“ kannte den Status `submitted` (wartet auf Freigabe) nicht, und abgeschlossene oder abgebrochene Changes waren ausgeblendet.
+- **ITSM → Changes:**
+  - neue Filter-Chips „Wartet auf Freigabe“, „Zurückgerollt“, „Abgebrochen“ und „Alle“;
+  - `submitted` zählt jetzt zu „Aktiv“.
+- **Neue Seite „Vorhaben“** (nur Owner, nur lesend):
+  - je Infrastruktur-Vorhaben: Ziel, Status, Zielarchitektur (Dokument mit Version), zugehörige Changes mit Status/Phase/Termin, Owner-Entscheidungen im Wortlaut und Einwände;
+  - Soll/Ist-Abgleich auf Knopfdruck;
+  - Changes ohne Vorhaben (Proben, Standard-Changes) stehen getrennt darunter.
+  - Routen: `GET /api/vorhaben`, `GET /api/vorhaben/:id`, `POST /api/vorhaben/:id/soll-ist`. Es gilt dieselbe fail-closed-Owner-Prüfung wie bei Tresor und Wartung.
+- **App:** Die Web-Seiten-Liste enthält jetzt Vorhaben, Wartung und Tresor.
+
 ### Security — Owner-Prüfung der Routen für Tresor, Wartung und Einwand ohne Durchlass (v1573)
 
 - Befund aus der Commit-Prüfung: Eine leere Benutzer-ID galt als Owner (fail-open). Ebenso wurde ein Fehler bei der Auflösung der Master-ID als Treffer gewertet.

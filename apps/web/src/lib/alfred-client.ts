@@ -1779,6 +1779,20 @@ export class AlfredClient {
   }
 
   /** v1185 — Kachel Vorgänge */
+  /** Vorhaben-Übersicht (Vorhaben, Architektur, Changes, Einwände, Soll/Ist) */
+  async vorhabenListe(): Promise<{ vorhaben?: VorhabenDto[]; ohneVorhaben?: ChangeKurzDto[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/vorhaben`, { headers: this.authHeaders });
+    return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  }
+  async vorhabenDetail(id: string): Promise<{ vorhaben?: VorhabenDto & { entscheidungen: Array<{ zeit: string; entscheidung: string; wortlaut: string; architekturVersion: number }> }; architektur?: { titel: string; inhalt: string; version: number } | null; changes?: ChangeKurzDto[]; einwaende?: EinwandDto[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/vorhaben/${encodeURIComponent(id)}`, { headers: this.authHeaders });
+    return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  }
+  async vorhabenSollIst(id: string): Promise<{ text?: string; erfuellt?: number; gesamt?: number; abweichungen?: string[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/vorhaben/${encodeURIComponent(id)}/soll-ist`, { method: 'POST', headers: this.jsonHeaders, body: '{}' });
+    return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  }
+
   /** I4c — Tresor: Namen/Protokoll lesen, Wert setzen (geht nur zum Server, kommt nie zurück), Eintrag entfernen */
   async tresor(): Promise<{ eintraege?: Array<{ name: string; herkunft: string; zweck?: string; geaendert: string }>; protokoll?: Array<{ name: string; art: string; wofuer?: string; zeit: string }>; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/tresor`, { headers: this.authHeaders, cache: 'no-store' });
@@ -4003,3 +4017,5 @@ export interface Kopplungscode { code: string; gueltigBis: string; server: strin
 export interface WartungKalenderDto { id: string; art: 'fenster' | 'sperre'; name: string; geltung: { global?: boolean; assetIds?: string[] }; regel: { art: 'einmalig'; von: string; bis: string } | { art: 'woechentlich'; tage: number[]; von: string; bis: string }; aktiv: boolean; notiz?: string }
 export interface WartungRegelDto { id: string; name: string; geltung: { global?: boolean; assetIds?: string[] }; empfaenger: Array<{ art: string; name?: string; email?: string; haDienst?: string }>; kanaele: string[]; zeitpunkte: string[]; aktiv: boolean }
 export interface EinwandDto { id: string; bezug: string; text: string; quelle: string; status: 'offen' | 'beantwortet' | 'erledigt'; antwortArt?: 'umgesetzt' | 'abgelehnt'; antwort?: string; erstellt: string }
+export interface ChangeKurzDto { id: string; titel: string; status: string; typ: string; risiko: string; schritte: number; geplantAb?: string; ausfallMinuten?: number; freigegebenUeber?: string; phase?: string; erstellt: string }
+export interface VorhabenDto { id: string; titel: string; ziel: string; status: string; hosts: string[]; architekturVersion: number; geaendert?: string; changes?: ChangeKurzDto[] }

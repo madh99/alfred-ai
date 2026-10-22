@@ -910,6 +910,26 @@ export class HttpAdapter extends MessagingAdapter {
     antwort(200, await cb.aktion(userId, body));
   }
 
+  /** Vorhaben-Übersicht im Web (Owner 22.10.: „ich sehe die Changes nirgends — was ist geplant?“): Vorhaben, Architektur, Changes, Einwände, Soll/Ist */
+  private vorhabenCallbacks?: { liste: (uid: string) => Promise<unknown>; detail: (uid: string, id: string) => Promise<unknown>; sollIst: (uid: string, id: string) => Promise<unknown> };
+  setVorhabenCallbacks(cb: HttpAdapter['vorhabenCallbacks']): void { this.vorhabenCallbacks = cb; }
+  private async handleVorhaben(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.vorhabenCallbacks;
+    if (!cb) { antwort(503, { error: 'Vorhaben nicht verfügbar' }); return; }
+    const uid = await this.ownerAnfrage(req);
+    if (uid === null) { antwort(403, { error: 'Nur für den Owner' }); return; }
+    const teile = url.pathname.split('/').filter(Boolean); // api, vorhaben, <id>, [soll-ist]
+    try {
+      if (teile.length === 2 && req.method === 'GET') { antwort(200, await cb.liste(uid)); return; }
+      if (teile.length === 3 && req.method === 'GET') { antwort(200, await cb.detail(uid, teile[2]!)); return; }
+      if (teile.length === 4 && teile[3] === 'soll-ist' && req.method === 'POST') { antwort(200, await cb.sollIst(uid, teile[2]!)); return; }
+      antwort(404, { error: 'unbekannt' });
+    } catch (err) { antwort((err as { status?: number }).status ?? 400, { error: (err as Error).message.slice(0, 200) }); }
+  }
+
   /** I4c — Tresor im Web: Werte gehen direkt an den Server, nie über das Modell; Antworten enthalten nie Werte */
   private tresorCallbacks?: { liste: (uid: string) => Promise<unknown>; setze: (uid: string, b: Record<string, unknown>) => Promise<unknown>; entferne: (uid: string, name: string) => Promise<unknown> };
   setTresorCallbacks(cb: HttpAdapter['tresorCallbacks']): void { this.tresorCallbacks = cb; }
@@ -2221,6 +2241,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
+    } else if (/^\/api\/vorhaben(\/[A-Za-z0-9-]{6,64}(\/soll-ist)?)?$/.test(url.pathname)) { // Vorhaben-Übersicht
+      this.handleVorhaben(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/tresor' && (req.method === 'GET' || req.method === 'POST')) { // I4c
       this.handleTresor(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/einwand' && (req.method === 'GET' || req.method === 'POST')) { // Einwand

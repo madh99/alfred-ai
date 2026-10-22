@@ -14053,6 +14053,44 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
 
         if (this.wartungWebAktion) (apiAdapter as unknown as { setWartungCallbacks?: (cb: unknown) => void }).setWartungCallbacks?.(this.wartungWebAktion); // I4b
+        // Vorhaben-Übersicht im Web (Owner 22.10.: „was ist geplant?“) — nur Owner, nur lesend (Soll/Ist auf Knopfdruck)
+        {
+          const { VorhabenRepository: VRw, CmdbRepository: CRw, ItsmRepository: IRw } = await import('@alfred/storage');
+          const vr = new VRw(dbAdapter), cr = new CRw(dbAdapter), ir = new IRw(dbAdapter);
+          const owner = async (uid: string): Promise<string> => {
+            const o = this.ownerMasterUserId ?? this.tryOwner();
+            const m = uid ? await this.userRepo.getMasterUserId(uid).catch(() => undefined) : o;
+            if (!o || !m || m !== o) throw Object.assign(new Error('Nur für den Owner'), { status: 403 });
+            return o;
+          };
+          const kurz = (c: import('@alfred/types').CmdbChangeRequest) => ({ id: c.id, titel: c.title, status: c.status, typ: c.type, risiko: c.riskLevel, schritte: (c.schritte ?? []).length, geplantAb: c.scheduledAt, ausfallMinuten: c.ausfallMinuten, freigegebenUeber: c.freigegebenUeber, phase: (c.lauf as { phase?: string } | undefined)?.phase, erstellt: c.createdAt });
+          (apiAdapter as unknown as { setVorhabenCallbacks?: (cb: unknown) => void }).setVorhabenCallbacks?.({
+            liste: async (uid: string) => {
+              const o = await owner(uid);
+              const [vs, cs] = await Promise.all([vr.liste(o), ir.listChangeRequests(o, { limit: 500 })]);
+              const mitSchritten = cs.filter(c => c.schritte?.length);
+              return {
+                vorhaben: vs.map(v => ({ id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, architekturVersion: v.architekturVersion, geaendert: v.geaendert, changes: mitSchritten.filter(c => c.vorhabenId === v.id).map(kurz) })),
+                ohneVorhaben: mitSchritten.filter(c => !c.vorhabenId).map(kurz),
+              };
+            },
+            detail: async (uid: string, id: string) => {
+              const o = await owner(uid);
+              const v = await vr.finde(o, id);
+              if (!v) throw Object.assign(new Error('Vorhaben nicht gefunden'), { status: 404 });
+              const doc = v.architekturDocId ? await cr.getDocumentById(o, v.architekturDocId).catch(() => null) : null;
+              const cs = (await ir.listChangeRequests(o, { limit: 500 })).filter(c => c.vorhabenId === v.id).map(kurz);
+              const einwaende = this.einwandDienst ? await this.einwandDienst.liste(o, 'vorhaben', v.id) : [];
+              return { vorhaben: { id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, entscheidungen: v.entscheidungen, architekturVersion: v.architekturVersion, bestandDocId: v.bestandDocId }, architektur: doc ? { titel: doc.title, inhalt: doc.content, version: doc.version } : null, changes: cs, einwaende };
+            },
+            sollIst: async (uid: string, id: string) => {
+              const o = await owner(uid);
+              const v = await vr.finde(o, id);
+              if (!v || v.status !== 'angenommen' || !this.sollIstDienst) throw Object.assign(new Error('Soll/Ist gibt es erst für eine angenommene Zielarchitektur'), { status: 400 });
+              return this.sollIstDienst.abgleich(o, v as never);
+            },
+          });
+        }
         // I4c — Tresor-Seite im Web: Werte gehen direkt an den Server (nie über das Modell, nie durch die Skill-Sandbox); nur der Owner
         if (this.tresor && this.tresorRepo) {
           const tresor = this.tresor, tresorRepo = this.tresorRepo;
