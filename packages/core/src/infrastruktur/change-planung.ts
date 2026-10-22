@@ -228,7 +228,7 @@ export class ChangePlanung {
     const bis = new Date((this.d.jetzt?.() ?? Date.now()) + FREIGABE_FRAGE_GUELTIG_MS).toISOString();
     for (const c of changes) await this.d.itsm.setzeFreigabeAnfrage(owner, c.id, { hash: hash(nonce), bis, fingerabdruck: c.fingerabdruck });
     const kopf = changes.length > 1 ? `${changes.length} Changes freigeben (Paket):` : 'Change freigeben:';
-    const ok = await this.d.bestaetigung({ description: `${kopf}\n\n${teile.join('\n\n')}\n\nNach dem Ja ist der Change freigegeben, ausgeführt wird er erst im Ausführungsmotor (folgt mit I4).`, params: { ...params, freigabe: nonce } });
+    const ok = await this.d.bestaetigung({ description: `${kopf}\n\n${teile.join('\n\n')}\n\nNach dem Ja startet der Ausführungsmotor den Change — sofort oder im nächsten passenden Wartungsfenster (nie in einer Sperrzeit) und meldet das Ergebnis. „Nein, weil …“ wird ein Einwand.`, params: { ...params, freigabe: nonce } });
     if (!ok) return { ok: false, fehler: ['Freigabe-Frage konnte nicht gestellt werden'] };
     this.d.protokoll?.('I3 Freigabe angefragt', { changes: changes.map(c => c.id) });
     return { ok: true, text: `Freigabe-Frage gestellt (${changes.length} Change${changes.length > 1 ? 's' : ''}) — der Owner bestätigt in der App oder in Telegram.` };

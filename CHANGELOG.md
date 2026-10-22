@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Freigabe-Frage und Web-Meldung bei abgewiesener Freigabe (v1569)
+
+- Die Freigabe-Frage sagte noch „ausgeführt wird er erst im Ausführungsmotor (folgt mit I4)“. Jetzt heißt es: Nach dem Ja startet der Motor den Change sofort oder im nächsten passenden Wartungsfenster; „Nein, weil …“ wird ein Einwand.
+- **Web, ITSM → Changes:** Eine fachlich abgewiesene Freigabe (z. B. offener Einwand, Prüfung nicht bestanden) zeigt jetzt den Grund (HTTP 400) statt „Internal server error“.
+
 ### Added — Einwand: Widerspruch zu Changes und Zielarchitekturen mit Pflicht zur Antwort (v1568)
 
 Owner 22.10.: „Einwand wie vorgeschlagen umsetzen“. Anlass war die Frage, wie man einem Plan oder einem einzelnen Punkt eines vorgeschlagenen Changes widerspricht.

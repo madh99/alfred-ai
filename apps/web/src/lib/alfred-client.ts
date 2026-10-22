@@ -2511,7 +2511,8 @@ export class AlfredClient {
 
   async itsmUpdateChange(id: string, data: Record<string, unknown>): Promise<any> {
     const res = await fetch(`${this.baseUrl}/api/itsm/changes/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
-    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    // Einwand/I3 — fachliche Ablehnung mit Grund anzeigen (z. B. „offene Einwände“)
+    if (!res.ok) { const j = await res.json().catch(() => null) as { error?: string } | null; throw new Error(j?.error && res.status === 400 ? j.error : `ITSM: HTTP ${res.status}`); }
     return res.json();
   }
 

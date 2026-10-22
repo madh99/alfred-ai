@@ -14017,11 +14017,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             // I3 — Change mit Schritten: „Approve“ im Web = Owner-Freigabe mit erneuter Prüfung und Fingerabdruck; I3-Felder nie über das Web
             for (const k of ['schritte', 'fingerabdruck', 'freigabeFingerabdruck', 'freigegebenAt', 'freigegebenUeber', 'freigabeAnfrage', 'pruefung', 'auswirkung', 'vorhabenId', 'abhaengigVon']) delete mapped[k];
             const vorher = await itsmRepo.getChangeRequestById(userId, id);
+            const fachlich = (err: unknown) => Object.assign(new Error((err as Error).message), { status: 400 });
             if (vorher?.schritte?.length && mapped.status === 'approved') {
               if (!this.changePlanung) throw new Error('Change-Planung nicht verfügbar');
-              return this.changePlanung.freigebenWeb(userId, id);
+              try { return await this.changePlanung.freigebenWeb(userId, id); } catch (err) { throw fachlich(err); }
             }
-            return itsmRepo.updateChangeRequest(userId, id, mapped as any);
+            try { return await itsmRepo.updateChangeRequest(userId, id, mapped as any); } catch (err) { if (vorher?.schritte?.length) throw fachlich(err); throw err; }
           },
           listServices: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listServices(await resolveUser(uid), filters as any),
           createService: async (uid: string, data: Record<string, unknown>) => {

@@ -4803,7 +4803,11 @@ export class HttpAdapter extends MessagingAdapter {
       const result = await fn(this.itsmCallbacks, userId, body);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
-    })().catch(err => this.safeError(res, err));
+    })().catch(err => {
+      // Einwand/I3 — fachliche Ablehnung (z. B. Freigabe trotz offenem Einwand) mit Grund statt „Internal server error“
+      if (err instanceof Error && (err as { status?: number }).status === 400 && !res.headersSent) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: err.message })); return; }
+      this.safeError(res, err);
+    });
   }
 
   private handleDocsRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: DocsCallbacks, userId: string) => Promise<any>): void {
