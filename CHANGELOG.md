@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Owner-Prüfung der Routen für Tresor, Wartung und Einwand ohne Durchlass (v1573)
+
+- Befund aus der Commit-Prüfung: Eine leere Benutzer-ID galt als Owner (fail-open). Ebenso wurde ein Fehler bei der Auflösung der Master-ID als Treffer gewertet.
+- Jetzt gilt eine leere ID nur, wenn **ausdrücklich der globale API-Token** im Authorization-Header steht. Sonst gibt es 403, und ein Auflösungsfehler bedeutet kein Zugriff.
+
 ### Added — Tresor für Geheimnisse in Infrastruktur-Changes (v1572, Spec Infrastruktur-Vorhaben I4c)
 
 Owner 22.10. (5b-5): eigener Tresor am Server. Der optionale Spiegel nach Vaultwarden folgt.

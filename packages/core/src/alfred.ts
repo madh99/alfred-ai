@@ -7380,7 +7380,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           aktion: async (uid: string, body: Record<string, unknown>) => {
             const sk = skillRegistry.get('infrastruktur');
             if (!sk) return { success: false, error: 'nicht verfügbar' };
-            const master = uid ? await this.userRepo?.getMasterUserId(uid).catch(() => uid) ?? uid : (ownerFz() ?? '');
+            // Sicherheitsbefund 22.10.: Auflösungsfehler nicht als Erfolg werten; '' nur beim globalen API-Token (http.ownerAnfrage)
+            const master = uid ? await this.userRepo?.getMasterUserId(uid).catch(() => undefined) : (ownerFz() ?? undefined);
+            if (!master) return { success: false, error: 'Nur für den Owner' };
             return skillSandbox.execute(sk, body, { userId: uid || master, masterUserId: master, platform: 'api', chatId: '', conversationId: '' } as never);
           },
         };
@@ -14056,8 +14058,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           const tresor = this.tresor, tresorRepo = this.tresorRepo;
           const nurOwner = async (uid: string): Promise<string> => {
             const o = this.ownerMasterUserId ?? this.tryOwner();
-            const m = uid ? await this.userRepo.getMasterUserId(uid).catch(() => uid) : o;
-            if (!o || m !== o) throw Object.assign(new Error('Nur für den Owner'), { status: 403 });
+            // '' kommt nur noch beim globalen API-Token an (http.ownerAnfrage); Fehler bei der Auflösung → kein Zugriff
+            const m = uid ? await this.userRepo.getMasterUserId(uid).catch(() => undefined) : o;
+            if (!o || !m || m !== o) throw Object.assign(new Error('Nur für den Owner'), { status: 403 });
             return o;
           };
           (apiAdapter as unknown as { setTresorCallbacks?: (cb: unknown) => void }).setTresorCallbacks?.({

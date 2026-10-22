@@ -901,7 +901,8 @@ export class HttpAdapter extends MessagingAdapter {
     if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
     const cb = this.wartungCallbacks;
     if (!cb) { antwort(503, { error: 'Wartung nicht verfügbar' }); return; }
-    const userId = await this.resolveUserId(req);
+    const userId = await this.ownerAnfrage(req);
+    if (userId === null) { antwort(403, { error: 'Nur für den Owner' }); return; }
     if (req.method === 'GET') { antwort(200, await cb.aktion(userId, { action: 'wartung_liste' })); return; }
     let body: Record<string, unknown> = {};
     try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
@@ -918,7 +919,8 @@ export class HttpAdapter extends MessagingAdapter {
     if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
     const cb = this.tresorCallbacks;
     if (!cb) { antwort(503, { error: 'Tresor nicht verfügbar' }); return; }
-    const uid = await this.resolveUserId(req);
+    const uid = await this.ownerAnfrage(req);
+    if (uid === null) { antwort(403, { error: 'Nur für den Owner' }); return; }
     try {
       if (req.method === 'GET') { antwort(200, await cb.liste(uid)); return; }
       let body: Record<string, unknown> = {};
@@ -936,7 +938,8 @@ export class HttpAdapter extends MessagingAdapter {
     if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
     const cb = this.wartungCallbacks;
     if (!cb) { antwort(503, { error: 'nicht verfügbar' }); return; }
-    const userId = await this.resolveUserId(req);
+    const userId = await this.ownerAnfrage(req);
+    if (userId === null) { antwort(403, { error: 'Nur für den Owner' }); return; }
     if (req.method === 'GET') { antwort(200, await cb.aktion(userId, { action: 'einwaende', change: url.searchParams.get('change') ?? '' })); return; }
     let body: Record<string, unknown> = {};
     try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
@@ -4770,6 +4773,18 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   // ── CMDB/ITSM/Docs generic handlers ──
+
+  /**
+   * Sicherheitsbefund 22.10. (fail-open) — für Owner-Routen (Tresor, Wartung, Einwand): Benutzer-ID aus dem Benutzer-Token, oder ''
+   * NUR wenn ausdrücklich der globale API-Token im Authorization-Header steht. Sonst null → 403.
+   */
+  private async ownerAnfrage(req: http.IncomingMessage): Promise<string | null> {
+    const uid = await this.resolveUserId(req);
+    if (uid) return uid;
+    const token = req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null;
+    if (this.apiToken && token && token.length === this.apiToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.apiToken))) return '';
+    return null;
+  }
 
   private async resolveUserId(req: http.IncomingMessage): Promise<string> {
     const token = req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null;
