@@ -3527,6 +3527,32 @@ export class Alfred {
                 }
               }
             } catch { /* storage listing failed */ }
+            // I2 (Realfall 22.10.: alle Speicher standen „inactive“ ohne Größe — die Cluster-Liste /storage kennt weder Status noch
+            // Kapazität) — Stand je Knoten über /nodes/{n}/storage lesen: aktiv, wenn auf mindestens einem Knoten aktiv; Kapazität je
+            // Knoten in attributes.knoten; gesamt/belegt bei geteilten Speichern einmal, sonst als Summe; Beziehung Knoten → Speicher.
+            try {
+              const proSpeicher = new Map<string, { shared: boolean; knoten: Record<string, { aktiv: boolean; total: number; used: number }> }>();
+              for (const n of (nodesResult.success && Array.isArray(nodesResult.data) ? nodesResult.data as any[] : []).filter((x: any) => x.status === 'online')) {
+                const r = await skillSandbox.execute(pxSkill, { action: 'list_storage', node: n.node }, {} as any).catch(() => null);
+                if (!r?.success || !Array.isArray(r.data)) continue;
+                for (const st of r.data as any[]) {
+                  const e = proSpeicher.get(st.storage) ?? { shared: !!st.shared, knoten: {} };
+                  e.knoten[n.node] = { aktiv: !!st.active, total: Number(st.total ?? 0), used: Number(st.used ?? 0) };
+                  proSpeicher.set(st.storage, e);
+                  if (st.active) relations.push({ sourceKey: `proxmox:node:${n.node}`, targetKey: `proxmox:storage:${st.storage}`, relationType: 'connects_to' as const });
+                }
+              }
+              for (const a of assets) {
+                if (a.assetType !== 'storage') continue;
+                const e = proSpeicher.get(a.name);
+                if (!e) continue;
+                const werte = Object.values(e.knoten).filter(k => k.aktiv);
+                a.status = werte.length ? 'active' : 'inactive';
+                const total = e.shared ? Math.max(0, ...werte.map(k => k.total)) : werte.reduce((t, k) => t + k.total, 0);
+                const used = e.shared ? Math.max(0, ...werte.map(k => k.used)) : werte.reduce((t, k) => t + k.used, 0);
+                a.attributes = { ...a.attributes, shared: e.shared, total, used, knoten: e.knoten };
+              }
+            } catch { /* Stand je Knoten nicht lesbar */ }
 
             // 4. VMs/LXCs
             const vmsResult = await skillSandbox.execute(pxSkill, { action: 'list_vms' }, {} as any);
@@ -6991,7 +7017,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           speicher: async () => {
             const o = ownerFz(); if (!o) return [];
             const l = await cmdbFz.listAssets(o, { sourceSkill: 'proxmox', assetType: 'storage' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
-            return l.filter(a => a.sourceSkill === 'proxmox' && a.assetType === 'storage' && a.status === 'active').map(a => { const at = a.attributes as { storageType?: string; total?: number; used?: number }; return { name: a.name, ...(at.storageType ? { typ: at.storageType } : {}), gesamt: Number(at.total ?? 0), belegt: Number(at.used ?? 0) }; }).filter(s => s.gesamt > 0);
+            return l.filter(a => a.sourceSkill === 'proxmox' && a.assetType === 'storage' && a.status === 'active').map(a => {
+              const at = a.attributes as { storageType?: string; content?: string; total?: number; used?: number; knoten?: Record<string, { aktiv: boolean; total: number; used: number }> };
+              const knoten = Object.fromEntries(Object.entries(at.knoten ?? {}).filter(([, k]) => k.aktiv).map(([n, k]) => [n, { gesamt: k.total, belegt: k.used }]));
+              return { name: a.name, ...(at.storageType ? { typ: at.storageType } : {}), ...(at.content ? { inhalt: at.content } : {}), gesamt: Number(at.total ?? 0), belegt: Number(at.used ?? 0), ...(Object.keys(knoten).length ? { knoten } : {}) };
+            }).filter(s => s.gesamt > 0);
           },
           letzterBestandDocId: async () => {
             const o = ownerFz(); if (!o) return undefined;

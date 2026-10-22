@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Proxmox-Speicher in der CMDB, Architektur-Prüfung nachgeschärft (v1556)
+
+Befunde aus dem ersten Architektur-Vorschlag (22.10., Vorhaben „Dockerhost auf neue Docker-VMs aufteilen“):
+
+- **Proxmox-Speicher standen alle als „inactive“ ohne Größe in der CMDB**, weil die Discovery nur die Cluster-Liste `/storage` las; diese kennt weder Status noch Kapazität.
+  - Die Discovery liest jetzt zusätzlich `/nodes/{n}/storage` je Knoten: aktiv, sobald der Speicher auf mindestens einem Knoten aktiv ist.
+  - Die Kapazität je Knoten steht in `attributes.knoten`; Gesamtwerte zählen geteilte Speicher einmal, sonst als Summe.
+  - Neu sind die Beziehungen Knoten → Speicher (`connects_to`).
+  - Folge im Vorschlag: Der Speicher „data2“ wurde als unbekannt abgewiesen.
+- **Speicherprüfung in der Architektur:**
+  - Der gewählte Speicher muss auf dem gewählten Knoten aktiv sein und VM-Disks (`images`) bzw. CT-Disks (`rootdir`) aufnehmen.
+  - Die Kapazität wird je Knoten geprüft; dazu kommt ein Hinweis bei Speichern, die schon zu 85 % oder mehr belegt sind.
+- **Firewall strukturiert statt Freitext.** Im ersten Vorschlag waren es 16 Freitext-Zonen, die sich nicht in Changes übersetzen lassen.
+  - Je Regel gilt genau eine Zone `von`/`nach`: Netz, Gruppe oder `internet`/`vpn`/`proxy`/`alle`.
+  - Dazu `protokoll` (tcp, udp, tcp+udp, icmp, alle) und `ports` (443, 8008,8448, 10000-20000, alle); alles andere ist gesperrt.
+  - Ungültige Regeln werden abgewiesen.
+- **Subnetze neuer Netze** dürfen sich weder mit vorhandenen noch untereinander überschneiden (IPv4).
+
 ### Added — Infrastruktur-Vorhaben und Zielarchitektur nach fester Vorlage (v1555, Spec Infrastruktur-Vorhaben I2)
 
 Owner 22.10.: „I2 wie vorgeschlagen umsetzen“. Es wird nichts ausgeführt; Changes entstehen erst in I3.

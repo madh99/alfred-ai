@@ -33,7 +33,7 @@ const gueltig = () => ({
     { name: 'Alt', zweck: 'Altsystem', begruendung: 'nach Migration', einheiten: ['dockerhost'], ziel: 'bleibt' },
   ],
   netze: [{ name: 'Server', vlan: 30, subnetz: '192.168.30.0/24', geraet: 'unifi', zweck: 'Server-Dienste', neu: true }],
-  firewall: [{ von: 'Server', nach: 'internet', erlaubt: 'ausgehend 443', begruendung: 'Updates, Föderation' }],
+  firewall: [{ von: 'Server', nach: 'internet', protokoll: 'tcp', ports: '443', begruendung: 'Updates, Föderation' }, { von: 'proxy', nach: 'Matrix', protokoll: 'tcp', ports: '8008, 8448', begruendung: 'Reverse-Proxy' }],
   proxyDns: 'NPM-Ziel auf die neue IP umstellen.', sicherung: 'Snapshot vor jedem Change, PBS täglich.', updates: 'unattended-upgrades an.',
   reihenfolge: [{ gruppe: 'Matrix', ausfallMinuten: 20 }],
   risiken: [{ risiko: 'Datenbank inkonsistent', massnahme: 'Dienst stoppen vor letztem Abgleich' }],
@@ -120,5 +120,48 @@ describe('I2 Architektur-Dokument', () => {
     expect(md).toContain('| pve | 128 GB | 100 GB | 4,0 GB | 24 GB |');
     expect(md).toContain('1. **Matrix** — erwartete Ausfallzeit 20 min');
     expect(md).toContain('mindestens 7 Tage');
+  });
+});
+
+describe('I2 Speicher je Knoten (Realfall 22.10.: „data2“ galt als unbekannt)', () => {
+  it('Speicher muss auf dem Knoten aktiv sein und Disks aufnehmen; Kapazität je Knoten', () => {
+    const g = grundlage();
+    g.speicher = [
+      { name: 'data2', typ: 'lvmthin', inhalt: 'rootdir,images', gesamt: 900 * GiB, belegt: 300 * GiB, knoten: { pve3: { gesamt: 900 * GiB, belegt: 300 * GiB } } },
+      { name: 'local', typ: 'dir', inhalt: 'backup,iso,vztmpl', gesamt: 100 * GiB, belegt: 10 * GiB, knoten: { pve: { gesamt: 100 * GiB, belegt: 10 * GiB } } },
+    ];
+    const a = gueltig() as Record<string, any>;
+    a.gruppen[0].speicher = 'data2';
+    expect(pruefeArchitektur(a, g).fehler.join('\n')).toContain('Speicher „data2“ ist auf Knoten pve nicht verfügbar (nur pve3)');
+    a.gruppen[0].speicher = 'local';
+    expect(pruefeArchitektur(a, g).fehler.join('\n')).toContain('nimmt keine VM-Disks auf');
+    a.gruppen[0].speicher = 'gibtsnicht';
+    expect(pruefeArchitektur(a, g).fehler.join('\n')).toContain('unbekannt oder nicht aktiv (data2, local)');
+    g.knoten.push({ name: 'pve3', online: true, ramGesamt: 64 * GiB, ramBelegt: 8 * GiB });
+    a.gruppen[0].speicher = 'data2'; a.gruppen[0].knoten = 'pve3'; a.gruppen[0].diskGb = 700;
+    const p = pruefeArchitektur(a, g);
+    expect(p.fehler).toEqual([]);
+    expect(p.hinweise.join('\n')).toContain('Speicher data2 auf pve3: geplant 700 GB, frei nur 600 GB');
+    expect(grundlageText(g)).toContain('- data2 (lvmthin; rootdir,images): pve3 300 GB/900 GB');
+  });
+});
+
+describe('I2 Firewall strukturiert und Subnetze ohne Überschneidung (Realfall 22.10.: 16 Freitext-Zonen)', () => {
+  it('Zonen nur Netz/Gruppe/Schlüsselwort, Protokoll und Ports gültig; Subnetz-Überschneidung abgewiesen', () => {
+    const a = gueltig() as Record<string, any>;
+    a.firewall.push({ von: 'Neue Zonen', nach: 'Docker-VMs', protokoll: 'tcp', ports: '22', begruendung: 'x' }, { von: 'vpn', nach: 'Rest', protokoll: 'quic', ports: '70000', begruendung: '' });
+    a.netze.push({ name: 'Kollision', vlan: 31, subnetz: '192.168.1.128/25', geraet: 'unifi', zweck: 'x', neu: true });
+    const f = pruefeArchitektur(a, grundlage()).fehler.join('\n');
+    expect(f).toContain('von „Neue Zonen“ ist weder Netz noch Gruppe noch internet/vpn/proxy/alle');
+    expect(f).toContain('nach „Docker-VMs“ ist weder Netz noch Gruppe');
+    expect(f).toContain('protokoll muss tcp/udp/tcp+udp/icmp/alle sein');
+    expect(f).toContain('ports „70000“ ungültig');
+    expect(f).toContain('begruendung fehlt');
+    expect(f).toContain('Subnetz 192.168.1.128/25 überschneidet sich mit Default/unifi');
+    const p = pruefeArchitektur(gueltig(), grundlage());
+    expect(p.fehler).toEqual([]);
+    expect(p.architektur.firewall[1]).toMatchObject({ von: 'proxy', nach: 'Matrix', ports: '8008,8448' });
+    const md = architekturDokument({ titel: 't', ziel: 'z', id: 'i', version: 1 }, p.architektur, grundlage(), []);
+    expect(md).toContain('| proxy | Matrix | tcp | 8008,8448 | Reverse-Proxy |');
   });
 });

@@ -73,7 +73,7 @@ export class InfrastrukturSkill extends Skill {
       + '1) vorhaben_anlegen (titel, ziel in den Worten des Owners, hosts = Fernzugang-Namen); '
       + '2) grundlage (vorhaben) — Einheiten (Compose-Projekte, einzelne Container, Host) mit gemessenem RAM, Daten, Ports, Proxy-Domains, dazu Proxmox-Knoten, Speicher, Netze; '
       + '3) architektur_vorschlagen (vorhaben, architektur) — JEDE Einheit genau einer Gruppe zuordnen (ziel vm|lxc|bleibt|stilllegen; vm/lxc mit vmName, knoten, vcpu, ramGb, diskGb, distribution + distributionBegruendung, netz), '
-      + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan), firewall, proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
+      + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan, subnetz ohne Überschneidung), firewall (je Regel eine Zone von/nach: Netz, Gruppe oder internet/vpn/proxy/alle; protokoll, ports), proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
       + 'Ergebnis: Architektur-Dokument (CMDB). 4) entscheiden NUR auf ausdrückliche Aussage des Owners (annehmen|ueberarbeiten|ablehnen, wortlaut = seine Worte). '
       + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben.',
     riskLevel: 'read',
@@ -102,7 +102,7 @@ export class InfrastrukturSkill extends Skill {
               netz: { type: 'string' }, verwaltung: { type: 'string', enum: ['fernzugriff', 'satellit'] },
             } } },
             netze: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, vlan: { type: 'number' }, subnetz: { type: 'string' }, geraet: { type: 'string', enum: ['unifi', 'pfsense', 'mikrotik'] }, zweck: { type: 'string' }, neu: { type: 'boolean' } } } },
-            firewall: { type: 'array', items: { type: 'object', properties: { von: { type: 'string' }, nach: { type: 'string' }, erlaubt: { type: 'string' }, begruendung: { type: 'string' } } } },
+            firewall: { type: 'array', description: 'je Regel EINE Zone von/nach: Netzname, Gruppenname oder internet/vpn/proxy/alle; alles andere gilt als gesperrt', items: { type: 'object', properties: { von: { type: 'string' }, nach: { type: 'string' }, protokoll: { type: 'string', enum: ['tcp', 'udp', 'tcp+udp', 'icmp', 'alle'] }, ports: { type: 'string', description: '443 | 8008,8448 | 10000-20000 | alle' }, begruendung: { type: 'string' } } } },
             proxyDns: { type: 'string' }, sicherung: { type: 'string' }, updates: { type: 'string' },
             reihenfolge: { type: 'array', items: { type: 'object', properties: { gruppe: { type: 'string' }, ausfallMinuten: { type: 'number' }, voraussetzung: { type: 'string' } } } },
             risiken: { type: 'array', items: { type: 'object', properties: { risiko: { type: 'string' }, massnahme: { type: 'string' } } } },

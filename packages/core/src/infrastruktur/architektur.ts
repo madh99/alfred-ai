@@ -13,6 +13,9 @@ import type { NetzEintrag, ProxyEintrag, VmEintrag } from './bericht.js';
 
 export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'rocky-9', 'alma-9', 'alpine-3', 'windows-server-2022', 'windows-server-2025'] as const;
 export const NETZ_GERAETE = ['unifi', 'pfsense', 'mikrotik'] as const;
+/** Firewall-Zonen außer Netzen und Gruppen (I2-Nachschärfung 22.10.: Freitext-Zonen sind für Changes nicht verwendbar) */
+export const ZONEN_WORTE = ['internet', 'vpn', 'proxy', 'alle'] as const;
+export const PROTOKOLLE = ['tcp', 'udp', 'tcp+udp', 'icmp', 'alle'] as const;
 /** Owner 22.10. (5b-10): Altes mindestens 7 Tage stehen lassen */
 export const ALT_BEHALTEN_TAGE = 7;
 
@@ -30,7 +33,13 @@ export interface Einheit {
   datenBytes: number;
 }
 export interface KnotenStand { name: string; online: boolean; cpus?: number; ramGesamt: number; ramBelegt: number }
-export interface SpeicherStand { name: string; typ?: string; gesamt: number; belegt: number }
+export interface SpeicherStand {
+  name: string; typ?: string; gesamt: number; belegt: number;
+  /** Proxmox-Inhaltsarten, z. B. „images,rootdir“ */
+  inhalt?: string;
+  /** Kapazität je Knoten, auf dem der Speicher aktiv ist (fehlt: unbekannt) */
+  knoten?: Record<string, { gesamt: number; belegt: number }>;
+}
 
 export interface PlanungsGrundlage {
   hosts: Array<{ zugang: string; host: string; os?: string; cpus?: number; ramGesamt?: number; ramBelegt?: number; erfasst?: string }>;
@@ -57,7 +66,7 @@ export interface Architektur {
   zusammenfassung: string;
   gruppen: ArchitekturGruppe[];
   netze: ArchitekturNetz[];
-  firewall: Array<{ von: string; nach: string; erlaubt: string; begruendung: string }>;
+  firewall: Array<{ von: string; nach: string; protokoll: string; ports: string; begruendung: string }>;
   proxyDns: string;
   sicherung: string;
   updates: string;
@@ -129,9 +138,9 @@ export function grundlageText(g: PlanungsGrundlage): string {
   }
   if (g.proxyOhneZuordnung.length) z.push('', `Proxy-Einträge auf diese Hosts ohne Zuordnung (Host-Netz oder kein Dienst): ${g.proxyOhneZuordnung.join('; ')}`);
   z.push('', '### Proxmox-Knoten', '', ...g.knoten.map(k => `- ${k.name}${k.online ? '' : ' (offline)'}: ${k.cpus ?? '?'} CPUs, RAM ${gb(k.ramBelegt)} von ${gb(k.ramGesamt)} belegt, frei ${gb(Math.max(0, k.ramGesamt - k.ramBelegt))}`));
-  z.push('', '### Speicher', '', ...g.speicher.map(s => `- ${s.name}${s.typ ? ` (${s.typ})` : ''}: ${gb(s.belegt)} von ${gb(s.gesamt)} belegt`));
+  z.push('', '### Speicher (für VM-/CT-Disks: Inhalt images bzw. rootdir)', '', ...g.speicher.map(s => `- ${s.name}${s.typ ? ` (${s.typ}${s.inhalt ? `; ${s.inhalt}` : ''})` : ''}: ${s.knoten ? Object.entries(s.knoten).map(([k, w]) => `${k} ${gb(w.belegt)}/${gb(w.gesamt)}`).join(', ') : `${gb(s.belegt)} von ${gb(s.gesamt)} belegt`}`));
   z.push('', '### Netze/VLANs (vorhanden)', '', ...g.netze.map(n => `- ${n.name} (${n.quelle}${n.vlan !== undefined && n.vlan !== null && n.vlan !== '' ? `, VLAN ${n.vlan}` : ''}${n.subnet ? `, ${n.subnet}` : ''})`));
-  z.push('', `Erlaubte Distributionen: ${DISTRIBUTIONEN.join(', ')}. Netz-Geräte: ${NETZ_GERAETE.join(', ')}.`);
+  z.push('', `Erlaubte Distributionen: ${DISTRIBUTIONEN.join(', ')}. Netz-Geräte: ${NETZ_GERAETE.join(', ')}. Firewall-Zonen: Netze, Gruppen oder ${ZONEN_WORTE.join(', ')}; Protokolle ${PROTOKOLLE.join(', ')}.`);
   return z.join('\n');
 }
 
@@ -215,7 +224,16 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler:
       if (!gr.distributionBegruendung) f.push(`Gruppe „${n}“: distributionBegruendung fehlt (warum diese Distribution)`);
       if (!gr.netz) f.push(`Gruppe „${n}“: netz fehlt (Netz/VLAN der neuen ${gr.ziel.toUpperCase()})`);
       else if (!netzBekannt(gr.netz)) f.push(`Gruppe „${n}“: Netz „${gr.netz}“ ist weder vorhanden noch unter netze geplant`);
-      if (gr.speicher) { const s = speicherNamen.get(gr.speicher.toLowerCase()); if (!s) f.push(`Gruppe „${n}“: Speicher „${gr.speicher}“ unbekannt`); else gr.speicher = s.name; }
+      if (gr.speicher) {
+        const s = speicherNamen.get(gr.speicher.toLowerCase());
+        if (!s) f.push(`Gruppe „${n}“: Speicher „${gr.speicher}“ unbekannt oder nicht aktiv (${g.speicher.map(y => y.name).join(', ') || 'keine bekannt'})`);
+        else {
+          gr.speicher = s.name;
+          if (s.knoten && k && !s.knoten[k.name]) f.push(`Gruppe „${n}“: Speicher „${s.name}“ ist auf Knoten ${k.name} nicht verfügbar (nur ${Object.keys(s.knoten).join(', ')})`);
+          const brauche = gr.ziel === 'lxc' ? 'rootdir' : 'images';
+          if (s.inhalt && !s.inhalt.split(',').map(x => x.trim()).includes(brauche)) f.push(`Gruppe „${n}“: Speicher „${s.name}“ nimmt keine ${gr.ziel === 'lxc' ? 'CT' : 'VM'}-Disks auf (Inhalt ${s.inhalt})`);
+        }
+      }
       // Größen gegen den gemessenen Bedarf (nur Hinweise)
       const es = gr.einheiten.map(e => einheitNach.get(e.toLowerCase())!).filter(e => e.art !== 'host');
       const ramBedarf = es.reduce((s, e) => s + e.ramBytes, 0);
@@ -239,19 +257,54 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler:
     if (neu > frei * 0.9) h.push(`Knoten ${k.name}: geplant ${gb(neu)} RAM, frei nur ${gb(frei)} — erst nach Abbau des Altsystems oder auf andere Knoten verteilen`);
   }
   for (const s of g.speicher) {
-    const neu = a.gruppen.filter(x => x.speicher === s.name && x.diskGb).reduce((t, x) => t + x.diskGb! * GB, 0);
-    if (neu && neu > (s.gesamt - s.belegt) * 0.9) h.push(`Speicher ${s.name}: geplant ${gb(neu)}, frei nur ${gb(Math.max(0, s.gesamt - s.belegt))}`);
+    // Je Knoten, wenn bekannt (lokale Speicher haben je Knoten eigene Kapazität); geteilte Speicher zählen einmal
+    const orte = s.knoten && s.typ !== 'rbd' && s.typ !== 'cifs' && s.typ !== 'nfs' && s.typ !== 'pbs' ? Object.entries(s.knoten).map(([k, w]) => ({ ort: `${s.name} auf ${k}`, knoten: k as string | undefined, ...w })) : [{ ort: s.name, knoten: undefined as string | undefined, gesamt: s.gesamt, belegt: s.belegt }];
+    for (const o of orte) {
+      const neu = a.gruppen.filter(x => x.speicher === s.name && x.diskGb && (!o.knoten || x.knoten === o.knoten)).reduce((t, x) => t + x.diskGb! * GB, 0);
+      if (neu && neu > (o.gesamt - o.belegt) * 0.9) h.push(`Speicher ${o.ort}: geplant ${gb(neu)}, frei nur ${gb(Math.max(0, o.gesamt - o.belegt))}`);
+    }
+    if (s.gesamt && s.belegt / s.gesamt >= 0.85 && a.gruppen.some(x => x.speicher === s.name)) h.push(`Speicher ${s.name} ist bereits zu ${Math.round((s.belegt / s.gesamt) * 100)} % belegt`);
   }
 
-  // Firewall
+  // Firewall — strukturiert (Zone → Zone, Protokoll, Ports), damit I3 daraus Regeln als Change-Schritte bilden kann
+  const zone = (z: string): string | undefined => {
+    const k = z.toLowerCase();
+    const netz = a.netze.find(n => n.name.toLowerCase() === k) ?? (vorhandeneNetze.get(k) ? { name: vorhandeneNetze.get(k)!.name } : undefined);
+    if (netz) return netz.name;
+    const gr = a.gruppen.find(y => y.name.toLowerCase() === k);
+    if (gr) return gr.name;
+    return (ZONEN_WORTE as readonly string[]).includes(k) ? k : undefined;
+  };
   for (const [i, w0] of liste(r.firewall).entries()) {
     const w = (w0 ?? {}) as Record<string, unknown>;
-    const regel = { von: txt(w.von), nach: txt(w.nach), erlaubt: txt(w.erlaubt), begruendung: txt(w.begruendung) };
-    if (!regel.von || !regel.nach || !regel.erlaubt) { f.push(`firewall[${i}]: von, nach und erlaubt angeben`); continue; }
-    for (const z of [regel.von, regel.nach]) if (!netzBekannt(z) && !/^(internet|wan|lan|alle|any|vpn)$/i.test(z) && !a.gruppen.some(y => y.name.toLowerCase() === z.toLowerCase())) h.push(`Firewall: „${z}“ ist kein bekanntes Netz und keine Gruppe`);
-    a.firewall.push(regel);
+    const regel = { von: txt(w.von), nach: txt(w.nach), protokoll: txt(w.protokoll).toLowerCase() || 'tcp', ports: txt(w.ports).replace(/\s+/g, '').toLowerCase(), begruendung: txt(w.begruendung) };
+    const von = zone(regel.von), nach = zone(regel.nach);
+    if (!von) f.push(`firewall[${i}]: von „${regel.von}“ ist weder Netz noch Gruppe noch ${ZONEN_WORTE.join('/')} — eine Zone je Regel`);
+    if (!nach) f.push(`firewall[${i}]: nach „${regel.nach}“ ist weder Netz noch Gruppe noch ${ZONEN_WORTE.join('/')} — eine Zone je Regel`);
+    if (!(PROTOKOLLE as readonly string[]).includes(regel.protokoll)) f.push(`firewall[${i}]: protokoll muss ${PROTOKOLLE.join('/')} sein`);
+    const portsOk = regel.ports === 'alle' || (/^\d{1,5}(-\d{1,5})?(,\d{1,5}(-\d{1,5})?)*$/.test(regel.ports) && regel.ports.split(/[,-]/).every(p => Number(p) >= 1 && Number(p) <= 65535));
+    if (regel.protokoll !== 'icmp' && !portsOk) f.push(`firewall[${i}]: ports „${regel.ports}“ ungültig (z. B. 443, 8008,8448, 10000-20000 oder alle)`);
+    if (!regel.begruendung) f.push(`firewall[${i}]: begruendung fehlt`);
+    if (von && nach) a.firewall.push({ ...regel, von, nach, ...(regel.protokoll === 'icmp' ? { ports: '—' } : {}) });
   }
   if (a.netze.some(n => n.neu) && !a.firewall.length) f.push('firewall fehlt: neue Netze brauchen Regeln zwischen den Zonen');
+  // Subnetze dürfen sich weder mit vorhandenen noch untereinander überschneiden (IPv4)
+  const bereich = (cidr?: string): [number, number] | undefined => {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr ?? '');
+    if (!m) return undefined;
+    const ip = ((Number(m[1]) << 24) >>> 0) + (Number(m[2]) << 16) + (Number(m[3]) << 8) + Number(m[4]);
+    const len = Number(m[5]); const groesse = 2 ** (32 - len);
+    const start = Math.floor(ip / groesse) * groesse;
+    return [start, start + groesse - 1];
+  };
+  const belegt = g.netze.map(n => ({ name: `${n.name}/${n.quelle}`, b: bereich(n.subnet) })).filter(x => x.b);
+  for (const n of a.netze.filter(x => x.neu)) {
+    const b = bereich(n.subnetz);
+    if (!b) continue;
+    for (const x of [...belegt, ...a.netze.filter(y => y !== n && y.neu).map(y => ({ name: y.name, b: bereich(y.subnetz) }))]) {
+      if (x.b && b[0] <= x.b[1] && x.b[0] <= b[1]) { f.push(`Netz „${n.name}“: Subnetz ${n.subnetz} überschneidet sich mit ${x.name}`); break; }
+    }
+  }
 
   // Reihenfolge
   const neueVms = a.gruppen.filter(x => x.ziel === 'vm' || x.ziel === 'lxc').map(x => x.name.toLowerCase());
@@ -305,7 +358,7 @@ export function architekturDokument(v: { titel: string; ziel: string; id: string
   z.push('', '## 4. Netze, VLANs und Firewall', '');
   if (a.netze.length) { z.push('| Netz | VLAN | Subnetz | Gerät | neu | Zweck |', '|---|---|---|---|---|---|'); for (const n of a.netze) z.push(`| ${n.name} | ${n.vlan ?? '—'} | ${n.subnetz ?? '—'} | ${n.geraet} | ${n.neu ? 'ja' : 'nein'} | ${zelle(n.zweck)} |`); }
   else z.push('Keine Netzänderungen.');
-  if (a.firewall.length) { z.push('', '| Von | Nach | Erlaubt | Begründung |', '|---|---|---|---|'); for (const w of a.firewall) z.push(`| ${zelle(w.von)} | ${zelle(w.nach)} | ${zelle(w.erlaubt)} | ${zelle(w.begruendung)} |`); }
+  if (a.firewall.length) { z.push('', 'Firewall (alles andere zwischen den Zonen gesperrt):', '', '| Von | Nach | Protokoll | Ports | Begründung |', '|---|---|---|---|---|'); for (const w of a.firewall) z.push(`| ${zelle(w.von)} | ${zelle(w.nach)} | ${w.protokoll} | ${w.ports} | ${zelle(w.begruendung)} |`); }
   z.push('', '## 5. Reverse-Proxy und DNS', '');
   const umzug = a.gruppen.filter(x => x.ziel === 'vm' || x.ziel === 'lxc');
   const domains = umzug.flatMap(x => x.einheiten.flatMap(e => (einheit.get(e)?.proxy ?? []).map(d => `- ${d} → neu ${x.vmName} (Gruppe ${x.name})`)));
