@@ -56,6 +56,32 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('lesen');
     }
   });
+  it('v1602: Umzugserhebung (Realfall 23.10.) — Filter, Ports, Bind-Mounts, Links, Compose-Labels lesen; Env/Labels/Cmd nicht', () => {
+    for (const b of [
+      `docker ps -a --filter name=pgadmin4-pgadmin-1 --format '{{.Names}} / {{.Ports}}'`,
+      'docker ps --filter status=exited',
+      'docker ps -a --format "{{.Names}} {{.Image}} {{.Status}} {{.Ports}}" | grep redis',
+      'docker ps -a --no-trunc --format "{{.Names}} / {{.Networks}} / {{.Mounts}} / {{.Ports}} / {{.Size}}"',
+      `docker ps -a --format '{{.Names}} {{.Label "com.docker.compose.project"}}'`,
+      'docker inspect --format "{{.Name}} {{.HostConfig.Links}} {{.HostConfig.PortBindings}} {{.Mounts}}" redis postgreDEV pg-app-dev',
+      'docker inspect --format "{{.Name}} {{.HostConfig.Binds}}" redis open-webui',
+      'docker inspect --format "{{.Name}} image={{.Config.Image}} imageid={{.Image}} ports={{json .HostConfig.PortBindings}} networks={{json .NetworkSettings.Networks}}" redis',
+      `docker inspect --format '{{.Name}} proj={{index .Config.Labels "com.docker.compose.project"}} svc={{index .Config.Labels "com.docker.compose.service"}}' redis`,
+      'docker network inspect bridge wp-lk-dev_default',
+      'docker volume inspect --format "{{.Name}} {{.Mountpoint}} {{.Driver}}" open-webui',
+    ]) expect(befehlsklasse(b), b).toBe('lesen');
+    for (const b of [
+      'docker ps -a --format "{{.Names}} {{.Labels}}"',
+      `docker ps --format '{{.Label "traefik.http.middlewares.auth.basicauth.users"}}'`,
+      'docker inspect --format "{{.Name}} LINKS={{.HostConfig.Links}} LABELS={{.Config.Labels}}" redis',
+      'docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" redis',
+      'docker inspect --format "{{.Config.Cmd}}" redis',
+      `docker inspect --format '{{index .Config.Labels "traefik.auth"}}' x`,
+      'docker volume inspect open-webui',
+      'docker volume inspect --format "{{.Options}}" cifs',
+      `docker ps --filter 'name=$(id)'`,
+    ]) expect(befehlsklasse(b), b).toBe('bestaetigen');
+  });
   it('v1548 K2/K3: Befehle aus dem Realfall 22.10. 01:09 (dockerhost) sind lesen', () => {
     // genau so vom Modell geschickt (im JSON stand \\t, im Befehl also Backslash + t)
     expect(befehlsklasse(String.raw`docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'`)).toBe('lesen');

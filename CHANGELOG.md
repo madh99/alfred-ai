@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Docker-Lesebefehle für Umzugserhebungen (v1602)
+
+- **Realfall 23.10. (Erhebung Pilot Teil 2):** Rund 30 Docker-Abfragen wurden nicht als Lesebefehle erkannt und liefen deshalb im Lese-Käfig. Der Käfig hat bewusst keinen Docker-Socket, also scheiterten sie alle. Die Erhebung blieb unvollständig: Ports, Bind-Mounts und Verbindungen fehlten.
+- **Neu ohne Rückfrage:**
+  - `docker ps --filter …`
+  - `docker inspect --format` mit `HostConfig.PortBindings/Binds/Links/ExtraHosts/Dns/VolumesFrom`, `Config.ExposedPorts/Volumes` und den Compose-Labels `com.docker.compose.*`; kurze Beschriftungen wie `img=` sind erlaubt
+  - Formatvorlagen in einfachen oder doppelten Anführungszeichen
+  - `docker network inspect`
+  - `docker volume inspect --format` mit Name, Treiber und Mountpoint
+- **Weiterhin nur mit Bestätigung:**
+  - Umgebung, `Cmd`, `Entrypoint` und beliebige Labels (sie können Zugangsdaten tragen)
+  - volles `docker volume inspect` (CIFS-Optionen enthalten das Passwort)
+  - die Kurzform `-f`
+- **Schwärzung:** Die Ausgaben schwärzen jetzt auch htpasswd-Hashes (`$apr1$`).
+- **Hinweis an das Modell:** In Formatvorlagen kein `|` und kein `;` verwenden, denn beide zerlegen den Befehl.
+
 ### Added — Changes in der App (v1601, App 1.75.0)
 
 - **`GET /api/geraete/changes`** (nur Geräte des Owners): Vorhaben und Changes mit Laufstand. Es ist dieselbe Liste wie auf der Web-Seite „Vorhaben“; beide nutzen eine gemeinsame Funktion.
