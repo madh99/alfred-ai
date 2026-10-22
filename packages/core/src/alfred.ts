@@ -7182,6 +7182,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const o = ownerFz(); if (!o) throw new Error('Kein Owner');
             return (await cmdbFz.saveDocument(o, { docType: 'inventory', title: titel, content: markdown, format: 'markdown', generatedBy: 'alfred:infrastruktur-I1' })).id;
           },
+          problems: async (auff, bericht, erfassung) => {
+            const o = ownerFz(); if (!o) throw new Error('Kein Owner');
+            const { ProblemRepository } = await import('@alfred/storage');
+            const pr = new ProblemRepository(adapter);
+            const { befundeAlsProblems } = await import('./infrastruktur/befund-problems.js');
+            return befundeAlsProblems(auff, {
+              liste: async () => (await pr.listProblems(o, { limit: 1000 })).map(p => ({ id: p.id, title: p.title, status: p.status, ...(p.detectionMethod ? { detectionMethod: p.detectionMethod } : {}) })),
+              anlegen: async (d) => (await pr.createProblem(o, { ...d, category: d.category as never, detectedBy: 'auto' })).id,
+              loese: async (id, notiz) => { await pr.appendAnalysisNotes(o, id, notiz); await pr.updateProblem(o, id, { status: 'resolved' } as never); },
+              assetFuer: async (zugang) => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).find(z => z.name === zugang)?.cmdbAssetId,
+            }, bericht, erfassung);
+          },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           // I2 — Vorhaben und Zielarchitektur
           ownerId: () => ownerFz() ?? undefined,

@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Befunde der Bestandsaufnahme werden ITSM-Problems (v1566, Spec Infrastruktur-Vorhaben I4b Teil 3)
+
+- **Jede Auffälligkeit des Bestandsberichts** hat jetzt einen über Läufe stabilen Schlüssel (z. B. `platte:pve:/data_safe/…`, `container-unhealthy:dockerhost:noah…`) und eine Kategorie.
+- **Nach jeder Bestandsaufnahme** entstehen daraus ITSM-Problems, ohne Modell:
+  - nur Schwere hoch oder mittel;
+  - **keine Sicherungs-Befunde** (Owner 22.10.: „die backups usw brauchst du dich nicht zu kümmern das mach ich!“) und keine Erfassungslücken;
+  - je Schlüssel höchstens ein Problem, auch ein geschlossenes zählt;
+  - Kategorie: Platte → capacity, Updates und Betriebssystem → security, Container → software, Paketverwaltung und Proxy → configuration; das betroffene Host-Asset wird verknüpft.
+- **Offene Problems, deren Befund nicht mehr auftritt,** werden mit Vermerk als gelöst markiert.
+  - Das gilt nur für Hosts, die in diesem Lauf vollständig erfasst wurden; ein Ausfall der Erfassung zählt nicht als gelöst.
+- Die Antwort der Bestandsaufnahme nennt neue, bekannte und gelöste Problems.
+
 ### Added — Störungen nach Changes erkennen, Rückweg nur anbieten (v1565, Spec Infrastruktur-Vorhaben I4b Teil 2)
 
 Owner 22.10. (5b-13): Verknüpfung 24 h (kritische Services 72 h); „Rückweg nur vorschlagen, dann auf Freigabe warten“.

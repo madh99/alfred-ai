@@ -44,6 +44,8 @@ export interface InfrastrukturDeps {
   netze: () => Promise<NetzEintrag[]>;
   backups?: () => Promise<BackupStand | undefined>;
   speichereBericht: (titel: string, markdown: string) => Promise<string>;
+  /** I4b Teil 3 — Befunde als ITSM-Problems (ohne Doppelte, ohne Sicherung) */
+  problems?: (auff: import('./bericht.js').Auffaelligkeit[], bericht: { docId: string; datum: string }, erfassung: { hosts: Set<string>; alle: boolean }) => Promise<{ neu: string[]; bekannt: number; geloest: string[] }>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   // ── I2 ──
   ownerId?: () => string | undefined;
@@ -217,12 +219,15 @@ export class InfrastrukturSkill extends Skill {
     const titel = `Bestandsbericht ${new Date().toLocaleDateString('de-AT', { timeZone: 'Europe/Vienna' })}`;
     const markdown = `${r.markdown}\n\n## Discovery\n\n${discovery.map(d => `- ${d}`).join('\n')}\n`;
     const docId = await this.deps.speichereBericht(titel, markdown);
+    const vollstaendig = new Set(hosts.filter(h => !h.fehler.length).map(h => h.zugang));
+    const pr = await this.deps.problems?.(r.auffaelligkeiten, { docId, datum: new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' }) }, { hosts: vollstaendig, alle: vollstaendig.size === hosts.length && !discovery.some(d => /Fehler|error|nicht verfügbar/i.test(d)) }).catch(err => { this.deps.protokoll?.('I4b Problems fehlgeschlagen', { fehler: (err as Error).message }); return undefined; });
+    if (pr) this.deps.protokoll?.('I4b Befunde als Problems', { neu: pr.neu.length, bekannt: pr.bekannt, geloest: pr.geloest.length });
     this.deps.protokoll?.('I1 Bestandsaufnahme fertig', { dauerS: Math.round((Date.now() - start) / 1000), hosts: hosts.length, vms: vms.length, auffaelligkeiten: r.auffaelligkeiten.length, docId });
     const top = r.auffaelligkeiten.slice(0, 25).map(a => `- **${a.schwere}** · ${a.bereich}: ${a.text}`);
     return {
       success: true,
       data: { docId, auffaelligkeiten: r.auffaelligkeiten, hosts: hosts.map(h => ({ zugang: h.zugang, container: h.container.length, fehler: h.fehler })), discovery },
-      display: `## ${titel}\n\n${r.kurz}\n\n### Auffälligkeiten\n${top.join('\n') || 'Keine.'}${r.auffaelligkeiten.length > 25 ? `\n… und ${r.auffaelligkeiten.length - 25} weitere im Bericht` : ''}\n\nVollständiger Bericht als CMDB-Dokument (ID ${docId}).\n\n### Discovery\n${discovery.map(d => `- ${d}`).join('\n')}`,
+      display: `## ${titel}\n\n${r.kurz}${pr ? `\n\nITSM: ${pr.neu.length} neue Problems, ${pr.bekannt} bereits bekannt, ${pr.geloest.length} als gelöst markiert (Sicherungs-Befunde ausgenommen).` : ''}\n\n### Auffälligkeiten\n${top.join('\n') || 'Keine.'}${r.auffaelligkeiten.length > 25 ? `\n… und ${r.auffaelligkeiten.length - 25} weitere im Bericht` : ''}\n\nVollständiger Bericht als CMDB-Dokument (ID ${docId}).\n\n### Discovery\n${discovery.map(d => `- ${d}`).join('\n')}`,
     };
   }
 

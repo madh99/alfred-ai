@@ -66,3 +66,25 @@ describe('I1 Nachschärfung nach dem ersten Lauf (22.10.)', () => {
     expect(geheimnisGrund('ls /srv/secrets/')).toBeDefined();
   });
 });
+
+describe('I4b Teil 3 — Befunde als Problems', () => {
+  it('nur hoch/mittel ohne Sicherung, ohne Doppelte, verschwundene Befunde nur bei vollständiger Erfassung lösen', async () => {
+    const { befundeAlsProblems } = await import('./befund-problems.js');
+    const a = auffaelligkeiten({
+      hosts: [host({ container: [{ name: 'noah', image: 'x', zustand: 'running', status: 'Up (unhealthy)', gesundheit: 'unhealthy', ports: '', netze: [], mounts: [] }], dateisysteme: [{ mount: '/', groesse: '98G', belegt: '96G', prozent: 98 }], fehler: ['ram: Exit 1'] })],
+      vms: [{ name: 'vm', typ: 'vm', status: 'active', vmid: 1 }], proxy: [],
+      backups: { jeVm: {}, ohne: [{ vmid: 1, name: 'vm' }], unerreichbar: [] },
+    }, jetzt);
+    const db: Array<{ id: string; title: string; status: string; detectionMethod?: string }> = [{ id: 'p-alt', title: 'alt', status: 'logged', detectionMethod: 'infrastruktur-bestand:platte:anderer:/' }, { id: 'p-weg', title: 'weg', status: 'logged', detectionMethod: 'infrastruktur-bestand:container-unhealthy:dockerhost:alt' }];
+    const geloest: string[] = [];
+    const z = { liste: async () => db, anlegen: async (d: { title: string; detectionMethod: string }) => { const id = `p${db.length}`; db.push({ id, title: d.title, status: 'logged', detectionMethod: d.detectionMethod }); return id; }, loese: async (id: string) => { geloest.push(id); } };
+    // dockerhost mit Erfassungsfehler → nichts von ihm als gelöst markieren
+    const r1 = await befundeAlsProblems(a, z, { docId: 'd', datum: 'heute' }, { hosts: new Set(), alle: false });
+    expect(r1.neu.length).toBe(2); // unhealthy + Platte; Sicherung und „Nicht erfasst“ nicht
+    expect(db.filter(p => p.title.includes('Sicherung'))).toEqual([]);
+    expect(geloest).toEqual([]);
+    const r2 = await befundeAlsProblems(a, z, { docId: 'd', datum: 'heute' }, { hosts: new Set(['dockerhost']), alle: false });
+    expect(r2).toMatchObject({ neu: [], bekannt: 2 });
+    expect(geloest).toEqual(['p-weg']); // anderer Host nicht erfasst → p-alt bleibt
+  });
+});

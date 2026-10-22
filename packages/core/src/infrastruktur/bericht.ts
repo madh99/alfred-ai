@@ -14,7 +14,9 @@ export interface BackupStand {
   ohne: Array<{ vmid: number; name?: string }>;
   unerreichbar: Array<{ speicher: string; grund: string }>;
 }
-export interface Auffaelligkeit { schwere: 'hoch' | 'mittel' | 'niedrig'; bereich: string; text: string }
+/** I4b Teil 3 — `schluessel` ist stabil über Läufe (für Problems ohne Doppelte), `kategorie` steuert die Übernahme ins ITSM */
+export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy';
+export interface Auffaelligkeit { schwere: 'hoch' | 'mittel' | 'niedrig'; bereich: string; text: string; schluessel?: string; kategorie?: BefundKategorie; zugang?: string }
 
 export const BACKUP_ALT_TAGE = 7;
 export const PLATTE_VOLL_PROZENT = 85;
@@ -41,35 +43,36 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
   const a: Auffaelligkeit[] = [];
   for (const h of e.hosts) {
     for (const c of h.container) {
-      if (c.gesundheit === 'unhealthy') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Container ${c.name} ist unhealthy (${c.status})` });
-      else if (c.zustand === 'restarting') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Container ${c.name} startet ständig neu (${c.status})` });
-      else if (c.zustand === 'exited' && !/Exited \(0\)/.test(c.status)) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Container ${c.name} beendet mit Fehler (${c.status}) — aufräumen oder reparieren` });
+      const k = { kategorie: 'container' as const, zugang: h.zugang };
+      if (c.gesundheit === 'unhealthy') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Container ${c.name} ist unhealthy (${c.status})`, schluessel: `container-unhealthy:${h.zugang}:${c.name}`, ...k });
+      else if (c.zustand === 'restarting') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Container ${c.name} startet ständig neu (${c.status})`, schluessel: `container-neustart:${h.zugang}:${c.name}`, ...k });
+      else if (c.zustand === 'exited' && !/Exited \(0\)/.test(c.status)) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Container ${c.name} beendet mit Fehler (${c.status}) — aufräumen oder reparieren`, schluessel: `container-beendet:${h.zugang}:${c.name}`, ...k });
     }
-    for (const f of h.dateisysteme) if (f.prozent >= PLATTE_VOLL_PROZENT) a.push({ schwere: f.prozent >= 95 ? 'hoch' : 'mittel', bereich: h.zugang, text: `${f.mount} zu ${f.prozent} % belegt (${f.belegt} von ${f.groesse})` });
-    if (h.updates?.sicherheit) a.push({ schwere: 'mittel', bereich: h.zugang, text: `${h.updates.sicherheit} Sicherheitsupdates offen (${h.updates.anzahl} Updates gesamt)` });
+    for (const f of h.dateisysteme) if (f.prozent >= PLATTE_VOLL_PROZENT) a.push({ schwere: f.prozent >= 95 ? 'hoch' : 'mittel', bereich: h.zugang, text: `${f.mount} zu ${f.prozent} % belegt (${f.belegt} von ${f.groesse})`, schluessel: `platte:${h.zugang}:${f.mount}`, kategorie: 'platte', zugang: h.zugang });
+    if (h.updates?.sicherheit) a.push({ schwere: 'mittel', bereich: h.zugang, text: `${h.updates.sicherheit} Sicherheitsupdates offen (${h.updates.anzahl} Updates gesamt)`, schluessel: `updates:${h.zugang}`, kategorie: 'updates', zugang: h.zugang });
     const os = osSupport(h.os, jetzt);
-    if (!os.ok) a.push({ schwere: 'mittel', bereich: h.zugang, text: os.text! });
+    if (!os.ok) a.push({ schwere: 'mittel', bereich: h.zugang, text: os.text!, schluessel: `os:${h.zugang}:${h.os?.id ?? ''}${h.os?.version ?? ''}`, kategorie: 'os', zugang: h.zugang });
     // I1 (Realfall 22.10. dockerhost: „Problem with MergeList …“) — gestörte Paketverwaltung ist ein Befund, kein bloßer Erfassungsfehler
     const apt = h.fehler.find(f => f.startsWith('updates:') && /MergeList|Hash Sum mismatch|Could not get lock|dpkg was interrupted|NO_PUBKEY|EXPKEYSIG/i.test(f));
-    if (apt) a.push({ schwere: 'mittel', bereich: h.zugang, text: `Paketverwaltung gestört — Updates nicht prüfbar (${apt.replace(/^updates:\s*/, '').replace(/\s+/g, ' ').slice(0, 120)})` });
+    if (apt) a.push({ schwere: 'mittel', bereich: h.zugang, text: `Paketverwaltung gestört — Updates nicht prüfbar (${apt.replace(/^updates:\s*/, '').replace(/\s+/g, ' ').slice(0, 120)})`, schluessel: `paketverwaltung:${h.zugang}`, kategorie: 'paketverwaltung', zugang: h.zugang });
     const rest = h.fehler.filter(f => f !== apt);
-    if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}` });
+    if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}`, schluessel: `erfassung:${h.zugang}`, kategorie: 'erfassung', zugang: h.zugang });
   }
   if (e.backups) {
-    for (const u of e.backups.unerreichbar) a.push({ schwere: 'hoch', bereich: 'Sicherung', text: `Backup-Speicher ${u.speicher} ${u.grund}` });
+    for (const u of e.backups.unerreichbar) a.push({ schwere: 'hoch', bereich: 'Sicherung', text: `Backup-Speicher ${u.speicher} ${u.grund}`, schluessel: `sicherung-speicher:${u.speicher}`, kategorie: 'sicherung' });
     const laufend = new Set(e.vms.filter(v => v.status === 'active' && v.vmid !== undefined).map(v => v.vmid!));
-    for (const o of e.backups.ohne) if (laufend.has(o.vmid)) a.push({ schwere: 'hoch', bereich: 'Sicherung', text: `VM/CT ${o.vmid}${o.name ? ` (${o.name})` : ''} hat keine Sicherung` });
+    for (const o of e.backups.ohne) if (laufend.has(o.vmid)) a.push({ schwere: 'hoch', bereich: 'Sicherung', text: `VM/CT ${o.vmid}${o.name ? ` (${o.name})` : ''} hat keine Sicherung`, schluessel: `sicherung-fehlt:${o.vmid}`, kategorie: 'sicherung' });
     for (const [id, s] of Object.entries(e.backups.jeVm)) {
       if (!laufend.has(Number(id)) || !s.neueste) continue;
       const tage = Math.floor((jetzt.getTime() - Date.parse(s.neueste)) / 86_400_000);
-      if (tage > BACKUP_ALT_TAGE) a.push({ schwere: tage > 30 ? 'hoch' : 'mittel', bereich: 'Sicherung', text: `VM/CT ${id}${s.name ? ` (${s.name})` : ''}: neueste Sicherung vor ${tage} Tagen` });
+      if (tage > BACKUP_ALT_TAGE) a.push({ schwere: tage > 30 ? 'hoch' : 'mittel', bereich: 'Sicherung', text: `VM/CT ${id}${s.name ? ` (${s.name})` : ''}: neueste Sicherung vor ${tage} Tagen`, schluessel: `sicherung-alt:${id}`, kategorie: 'sicherung' });
     }
   }
   // Proxy-Ziele auf einem erfassten Host ohne lauschenden Port
   const hostNachIp = new Map(e.hosts.map(h => [h.host, h] as const));
   for (const p of e.proxy) {
     const h = hostNachIp.get(p.forwardHost);
-    if (h && h.ports.length && !h.ports.some(x => x.port === p.forwardPort)) a.push({ schwere: 'mittel', bereich: 'Proxy', text: `${p.domains[0] ?? '?'} → ${p.forwardHost}:${p.forwardPort}: auf ${h.zugang} lauscht dort kein Dienst` });
+    if (h && h.ports.length && !h.ports.some(x => x.port === p.forwardPort)) a.push({ schwere: 'mittel', bereich: 'Proxy', text: `${p.domains[0] ?? '?'} → ${p.forwardHost}:${p.forwardPort}: auf ${h.zugang} lauscht dort kein Dienst`, schluessel: `proxy:${p.domains[0] ?? ''}:${p.forwardHost}:${p.forwardPort}`, kategorie: 'proxy', zugang: h.zugang });
   }
   const rang = { hoch: 0, mittel: 1, niedrig: 2 } as const;
   return a.sort((x, y) => rang[x.schwere] - rang[y.schwere]);
