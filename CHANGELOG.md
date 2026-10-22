@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Überarbeitung einer Zielarchitektur ohne vollständiges Neuschreiben (v1579)
+
+- **Realfall:** Version 3 von cf82f3f2 sollte Version 2 mit 15 zusätzlichen Firewall-Regeln sein. Das Modell musste die ganze Architektur (5 Gruppen, alle Einheiten, Netze, Regeln) als einen Werkzeugaufruf neu ausgeben. Nach rund drei Minuten kam der Aufruf leer an (`input: {}`).
+- **Neu:** `architektur_vorschlagen` nimmt statt `architektur` auch `aenderungen`. Die neue Fassung ist die gespeicherte Fassung plus diese Änderungen:
+  - oberste Felder ersetzen;
+  - `firewall_hinzu` und `firewall_entfernen`, ohne doppelte Regeln.
+- Das Ergebnis durchläuft dieselbe vollständige Prüfung wie eine neu gesendete Architektur.
+
 ### Added — Firewall-Zonen „alfred“ und „gateway“ in der Zielarchitektur (v1578)
 
 - Neue Netze brauchen gezielte Regeln für die Verwaltung. Bisher ließ sich Alfreds Server nur als ganzes Default-Netz angeben.

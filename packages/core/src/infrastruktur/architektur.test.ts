@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { architekturDokument, grundlageText, hostPorts, planungsGrundlage, pruefeArchitektur } from './architektur.js';
+import { architekturDokument, grundlageText, hostPorts, planungsGrundlage, pruefeArchitektur, mitAenderungen } from './architektur.js';
 import { groesseBytes, leseStats, LINUX_BEFEHLE } from './sammler.js';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import type { HostBestand } from './sammler.js';
@@ -163,5 +163,24 @@ describe('I2 Firewall strukturiert und Subnetze ohne Überschneidung (Realfall 2
     expect(p.architektur.firewall[1]).toMatchObject({ von: 'proxy', nach: 'Matrix', ports: '8008,8448' });
     const md = architekturDokument({ titel: 't', ziel: 'z', id: 'i', version: 1 }, p.architektur, grundlage(), []);
     expect(md).toContain('| proxy | Matrix | tcp | 8008,8448 | Reverse-Proxy |');
+  });
+});
+
+// Realfall 22.10. (cf82f3f2 v3): kleine Überarbeitung ohne die ganze Architektur neu zu senden
+describe('Neue Fassung aus gespeicherter Fassung + Änderungen', () => {
+  it('gespeicherte Fassung besteht die Prüfung erneut; Regeln kommen hinzu/fallen weg, ohne Doppelte', () => {
+    const g = grundlage();
+    const v2 = pruefeArchitektur(gueltig(), g);
+    expect(v2.fehler).toEqual([]);
+    const neu = { von: 'alfred', nach: 'Matrix', protokoll: 'tcp', ports: '22', begruendung: 'Verwaltung' };
+    const m = mitAenderungen(v2.architektur, { zusammenfassung: 'Version 3: Verwaltungszugang ergänzt.', firewall_hinzu: [neu, { ...neu, ports: ' 22' }], firewall_entfernen: [{ von: 'Server', nach: 'internet', protokoll: 'tcp', ports: '443' }] });
+    expect('roh' in m).toBe(true);
+    const v3 = pruefeArchitektur((m as { roh: unknown }).roh, g);
+    expect(v3.fehler).toEqual([]);
+    expect(v3.architektur.zusammenfassung).toBe('Version 3: Verwaltungszugang ergänzt.');
+    expect(v3.architektur.firewall.filter(r => r.von === 'alfred')).toHaveLength(1);
+    expect(v3.architektur.firewall.some(r => r.von === 'Server' && r.nach === 'internet')).toBe(false);
+    expect(v3.architektur.gruppen).toEqual(v2.architektur.gruppen);
+    expect(mitAenderungen(undefined, {})).toHaveProperty('fehler');
   });
 });

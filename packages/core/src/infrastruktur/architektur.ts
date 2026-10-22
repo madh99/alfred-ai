@@ -158,6 +158,25 @@ const liste = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
  * Prüft die vom Modell gelieferte Architektur gegen die Grundlage. `fehler` → nicht speicherbar (das Modell muss nachbessern),
  * `hinweise` → stehen im Dokument (z. B. knappe Ressourcen). `architektur` ist die bereinigte Fassung (Namen wie im Bestand).
  */
+/**
+ * Neue Fassung = gespeicherte Fassung + Änderungen (Realfall 22.10.: Version 3 von cf82f3f2 = Version 2 + 15 Firewall-Regeln; das Modell
+ * musste die ganze Architektur neu ausgeben, der Aufruf kam abgeschnitten und leer an). Oberste Felder werden ersetzt, Firewall-Regeln
+ * können einzeln hinzukommen oder wegfallen. Das Ergebnis wird danach ganz normal geprüft.
+ */
+export function mitAenderungen(basis: unknown, aenderungen: unknown): { roh: Record<string, unknown> } | { fehler: string } {
+  if (!basis || typeof basis !== 'object') return { fehler: 'Es gibt noch keine gespeicherte Fassung — die Architektur vollständig senden' };
+  if (!aenderungen || typeof aenderungen !== 'object' || Array.isArray(aenderungen)) return { fehler: 'aenderungen muss ein Objekt sein' };
+  const a = aenderungen as Record<string, unknown>;
+  const roh = JSON.parse(JSON.stringify(basis)) as Record<string, unknown>;
+  for (const [k, w] of Object.entries(a)) if (k !== 'firewall_hinzu' && k !== 'firewall_entfernen' && w !== undefined) roh[k] = w;
+  const gleich = (x: Record<string, unknown>, y: Record<string, unknown>) => ['von', 'nach', 'protokoll'].every(f => String(x[f] ?? '').toLowerCase() === String(y[f] ?? '').toLowerCase()) && String(x.ports ?? '').replace(/\s/g, '') === String(y.ports ?? '').replace(/\s/g, '');
+  let fw = Array.isArray(roh.firewall) ? (roh.firewall as Array<Record<string, unknown>>) : [];
+  if (Array.isArray(a.firewall_entfernen)) fw = fw.filter(r => !(a.firewall_entfernen as Array<Record<string, unknown>>).some(e => e && gleich(r, e)));
+  if (Array.isArray(a.firewall_hinzu)) for (const r of a.firewall_hinzu as Array<Record<string, unknown>>) if (r && !fw.some(x => gleich(x, r))) fw.push(r);
+  roh.firewall = fw;
+  return { roh };
+}
+
 export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler: string[]; hinweise: string[]; architektur: Architektur } {
   const f: string[] = []; const h: string[] = [];
   const r = (roh && typeof roh === 'object' ? roh : {}) as Record<string, unknown>;

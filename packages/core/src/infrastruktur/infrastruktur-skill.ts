@@ -2,7 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { bestandsbericht, type BackupStand, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 import type { HostBestand } from './sammler.js';
-import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
+import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, mitAenderungen, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
 import { changeAnzeige, type ChangePlanung } from './change-planung.js';
 import type { ChangeMotor } from './change-motor.js';
 import type { StandardChanges } from './standard-changes.js';
@@ -110,6 +110,7 @@ export class InfrastrukturSkill extends Skill {
       + '2) grundlage (vorhaben) — Einheiten (Compose-Projekte, einzelne Container, Host) mit gemessenem RAM, Daten, Ports, Proxy-Domains, dazu Proxmox-Knoten, Speicher, Netze; '
       + '3) architektur_vorschlagen (vorhaben, architektur) — JEDE Einheit genau einer Gruppe zuordnen (ziel vm|lxc|bleibt|stilllegen; vm/lxc mit vmName, knoten, vcpu, ramGb, diskGb, distribution + distributionBegruendung, netz), '
       + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan, subnetz ohne Überschneidung), firewall (je Regel eine Zone von/nach: Netz, Gruppe oder internet/vpn/proxy/alle; protokoll, ports), proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
+      + 'Kleine Überarbeitung einer gespeicherten Fassung: architektur_vorschlagen mit aenderungen statt architektur (nur das Neue senden). '
       + 'Ergebnis: Architektur-Dokument (CMDB). 4) entscheiden NUR auf ausdrückliche Aussage des Owners (annehmen|ueberarbeiten|ablehnen, wortlaut = seine Worte). '
       + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben. '
       + 'CHANGES (I3, nichts wird ausgeführt): changes_planen (vorhaben optional — nur mit angenommener Architektur; changes = Liste von Plänen: schluessel, titel, begruendung, typ normal|notfall, risiko niedrig|mittel|hoch|kritisch, ausfallMinuten, geplantAb, betroffen = CMDB-Assets, abhaengigVon = Schlüssel/Change-IDs, zweck stilllegung nur für Löschen, ohneSicherungGrund wenn nur Neues entsteht, schritte). '
@@ -182,6 +183,7 @@ export class InfrastrukturSkill extends Skill {
         laenge: { type: 'number', description: 'tresor_erzeugen: Länge des Zufallspassworts (16–128, Standard 32)' },
         zweck: { type: 'string', description: 'tresor_erzeugen: wofür' },
         text: { type: 'string', description: 'einwand: der Einwand des Owners' },
+        aenderungen: { type: 'object', description: 'architektur_vorschlagen OHNE architektur: neue Fassung = gespeicherte Fassung + diese Änderungen — firewall_hinzu [{von,nach,protokoll,ports,begruendung}], firewall_entfernen [{von,nach,protokoll,ports}], sonst oberste Felder ersetzen (z. B. zusammenfassung, offeneEntscheidungen). Für kleine Überarbeitungen immer so statt die ganze Architektur neu zu senden.' },
         antworten: { type: 'array', description: 'change_aendern/architektur_vorschlagen: Antwort auf jeden offenen Einwand', items: { type: 'object', properties: { einwand: { type: 'string' }, art: { type: 'string', enum: ['umgesetzt', 'abgelehnt'] }, text: { type: 'string' } } } },
         name: { type: 'string', description: 'fenster_anlegen/sperre_anlegen/benachrichtigung_anlegen: Bezeichnung' },
         regel: { type: 'object', description: 'Fenster/Sperre', properties: { art: { type: 'string', enum: ['einmalig', 'woechentlich'] }, von: { type: 'string' }, bis: { type: 'string' }, tage: { type: 'array', items: { type: 'number' } } } },
@@ -253,7 +255,7 @@ export class InfrastrukturSkill extends Skill {
         const g = await this.grundlage(v.hosts);
         return { success: true, data: g, display: `Vorhaben **${v.titel}** — Ziel: ${v.ziel}\n\n${grundlageText(g)}` };
       }
-      case 'architektur_vorschlagen': return this.vorschlagen(owner, repo, v, input.architektur, input.antworten);
+      case 'architektur_vorschlagen': return this.vorschlagen(owner, repo, v, input.architektur, input.antworten, input.aenderungen);
       case 'entscheiden': return this.entscheiden(owner, repo, v, input);
     }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -324,7 +326,7 @@ export class InfrastrukturSkill extends Skill {
     return planungsGrundlage({ hosts: bestaende, knoten, speicher, netze, proxy, vms, dns });
   }
 
-  private async vorschlagen(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, roh: unknown, antwortenRoh?: unknown): Promise<SkillResult> {
+  private async vorschlagen(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, roh: unknown, antwortenRoh?: unknown, aenderungen?: unknown): Promise<SkillResult> {
     if (v.status === 'verworfen') return { success: false, error: 'Das Vorhaben ist verworfen.' };
     if (v.status === 'angenommen') return { success: false, error: 'Die Architektur ist bereits angenommen — für eine neue Fassung zuerst entscheiden(ueberarbeiten) auf Wunsch des Owners.' };
     if (!this.deps.speichereArchitektur) return { success: false, error: 'Dokumentablage nicht verfügbar' };
@@ -332,7 +334,13 @@ export class InfrastrukturSkill extends Skill {
     if (ew.fehler.length) return { success: false, error: `Offene Einwände des Owners zuerst beantworten:\n${ew.fehler.map(x => `- ${x}`).join('\n')}` };
     const g = await this.grundlage(v.hosts);
     if (!g.hosts.length) return { success: false, error: `Kein Bestand für ${v.hosts.join(', ')} — Fernzugriff prüfen.` };
-    const p = pruefeArchitektur(typeof roh === 'string' ? (() => { try { return JSON.parse(roh); } catch { return {}; } })() : roh, g);
+    let quelle: unknown = typeof roh === 'string' ? (() => { try { return JSON.parse(roh); } catch { return {}; } })() : roh;
+    if (aenderungen !== undefined && (quelle === undefined || quelle === null)) {
+      const m = mitAenderungen(v.architektur, typeof aenderungen === 'string' ? (() => { try { return JSON.parse(aenderungen); } catch { return null; } })() : aenderungen);
+      if ('fehler' in m) return { success: false, error: m.fehler };
+      quelle = m.roh;
+    }
+    const p = pruefeArchitektur(quelle, g);
     if (p.fehler.length) {
       this.deps.protokoll?.('I2 Architektur abgewiesen', { id: v.id, fehler: p.fehler.length, erste: p.fehler.slice(0, 5) });
       return { success: false, error: `Architektur nicht vollständig (${p.fehler.length} Punkte) — bitte nachbessern und erneut senden:\n${p.fehler.map(x => `- ${x}`).join('\n')}` };
