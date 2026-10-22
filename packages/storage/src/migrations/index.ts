@@ -3078,4 +3078,28 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN kaefig TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 149,
+    description: 'I2 (Spec Infrastruktur-Vorhaben) — infra_vorhaben (SQLite-Spiegel zu PG v153).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_vorhaben (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          titel TEXT NOT NULL,
+          ziel TEXT NOT NULL,
+          hosts TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL,
+          bestand_doc_id TEXT,
+          architektur TEXT,
+          architektur_doc_id TEXT,
+          architektur_version INTEGER NOT NULL DEFAULT 0,
+          entscheidungen TEXT NOT NULL DEFAULT '[]',
+          problem_ids TEXT NOT NULL DEFAULT '[]',
+          change_ids TEXT NOT NULL DEFAULT '[]',
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_infra_vorhaben_user ON infra_vorhaben (user_id, status)');
+    },
+  },
 ];

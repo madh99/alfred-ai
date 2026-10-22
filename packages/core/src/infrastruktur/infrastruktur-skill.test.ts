@@ -26,3 +26,61 @@ describe('I1 InfrastrukturSkill', () => {
     expect((await s.execute({ action: 'bestand' }, { userId: 'fremd' } as SkillContext)).success).toBe(false);
   });
 });
+
+// I2 — Vorhaben: anlegen, Grundlage, Architektur (abgewiesen → gültig), Entscheidung
+describe('I2 Vorhaben im Skill', () => {
+  it('führt durch den Ablauf und hält die Statusregeln ein', async () => {
+    const { InfrastrukturSkill: S } = await import('./infrastruktur-skill.js');
+    type V = import('./infrastruktur-skill.js').VorhabenDaten;
+    const db = new Map<string, V>();
+    let entdeckt = 0; const docs: string[] = [];
+    const host = { zugang: 'dockerhost', host: '192.168.1.211', dateisysteme: [], dienste: ['docker'], ports: [], fehler: [], compose: [], volumes: [], erfasst: new Date().toISOString(),
+      container: [{ name: 'dashy', image: 'lissy93/dashy', zustand: 'running', status: 'Up', ports: '0.0.0.0:4000->8080/tcp', netze: [], mounts: [], ramBytes: 80 * 1024 ** 2 }] };
+    const s = new S({
+      istOwner: c => c.userId === 'owner', ownerId: () => 'o1',
+      entdecke: async () => { entdeckt++; return []; }, hosts: () => [host],
+      vms: async () => [], proxy: async () => [], netze: async () => [{ quelle: 'unifi', name: 'Default', vlan: 1 }], speichereBericht: async () => 'x',
+      aktiveZugaenge: async () => ['pve', 'dockerhost'],
+      knoten: async () => [{ name: 'pve', online: true, ramGesamt: 64 * 1024 ** 3, ramBelegt: 10 * 1024 ** 3 }], speicher: async () => [],
+      letzterBestandDocId: async () => 'bestand-1',
+      speichereArchitektur: async (_id, _t, md) => { docs.push(md); return `arch-${docs.length}`; },
+      vorhaben: {
+        liste: async () => [...db.values()],
+        finde: async (_u, k) => db.get(k) ?? [...db.values()].find(v => v.id.startsWith(k) || v.titel === k) ?? null,
+        anlegen: async (_u, e) => { const v: V = { id: 'v-123456789', ...e, status: 'entwurf', architekturVersion: 0, entscheidungen: [], changeIds: [], erstellt: 'jetzt' }; db.set(v.id, v); return v; },
+        setzeArchitektur: async (_u, id, _a, docId) => { const v = db.get(id)!; Object.assign(v, { architekturDocId: docId, architekturVersion: v.architekturVersion + 1, status: 'architektur_vorgeschlagen' }); return v; },
+        entscheide: async (_u, id, e, status) => { const v = db.get(id)!; v.entscheidungen.push({ zeit: 'jetzt', ...e }); v.status = status; return v; },
+      },
+    });
+    const ctx = { userId: 'owner' } as SkillContext;
+    expect((await s.execute({ action: 'vorhaben_anlegen', titel: 'Aufteilen', ziel: 'dockerhost auf neue VMs verteilen', hosts: ['gibtsnicht'] }, ctx)).error).toContain('Kein aktiver Fernzugang');
+    const an = await s.execute({ action: 'vorhaben_anlegen', titel: 'Aufteilen', ziel: 'dockerhost auf neue VMs verteilen', hosts: ['DockerHost'] }, ctx);
+    expect(an.success).toBe(true);
+    expect(db.get('v-123456789')).toMatchObject({ hosts: ['dockerhost'], bestandDocId: 'bestand-1' });
+    const g = await s.execute({ action: 'grundlage', vorhaben: 'v-1234' }, ctx);
+    expect(g.display).toContain('| dashy | container | dockerhost |');
+    expect(entdeckt).toBe(0); // frischer Bestand → keine neue Erfassung
+    expect((await s.execute({ action: 'entscheiden', vorhaben: 'v-1234', entscheidung: 'annehmen', wortlaut: 'ja' }, ctx)).error).toContain('nur bei vorgeschlagener Architektur');
+    const schlecht = await s.execute({ action: 'architektur_vorschlagen', vorhaben: 'v-1234', architektur: { gruppen: [] } }, ctx);
+    expect(schlecht.success).toBe(false);
+    expect(schlecht.error).toContain('Nicht zugeordnete Einheiten');
+    expect(docs).toEqual([]);
+    const arch = {
+      zusammenfassung: 'Dashy zieht in eine kleine eigene VM, der Host bleibt vorerst stehen.',
+      gruppen: [
+        { name: 'Web', zweck: 'Dashboards', begruendung: 'klein, unkritisch', einheiten: ['dashy'], ziel: 'vm', vmName: 'web1', knoten: 'pve', vcpu: 1, ramGb: 2, diskGb: 20, distribution: 'debian-12', distributionBegruendung: 'Standard', netz: 'Default' },
+        { name: 'Alt', zweck: 'Altsystem', begruendung: 'bleibt bis zur Stilllegung', einheiten: ['dockerhost'], ziel: 'bleibt' },
+      ],
+      sicherung: 'Snapshot vor Change', updates: 'automatisch', reihenfolge: [{ gruppe: 'Web', ausfallMinuten: 5 }], risiken: [{ risiko: 'Port belegt', massnahme: 'vorher prüfen' }],
+    };
+    const ok = await s.execute({ action: 'architektur_vorschlagen', vorhaben: 'Aufteilen', architektur: JSON.stringify(arch) }, ctx);
+    expect(ok.success).toBe(true);
+    expect(docs[0]).toContain('# Zielarchitektur: Aufteilen (Version 1)');
+    expect(db.get('v-123456789')!.status).toBe('architektur_vorgeschlagen');
+    expect((await s.execute({ action: 'entscheiden', vorhaben: 'v-1234', entscheidung: 'annehmen', wortlaut: '' }, ctx)).success).toBe(false);
+    const ja = await s.execute({ action: 'entscheiden', vorhaben: 'v-1234', entscheidung: 'annehmen', wortlaut: 'passt so' }, ctx);
+    expect(ja.display).toContain('Architektur angenommen');
+    expect((await s.execute({ action: 'architektur_vorschlagen', vorhaben: 'v-1234', architektur: arch }, ctx)).error).toContain('bereits angenommen');
+    expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'v-1234' }, ctx)).display).toContain('annehmen (Version 1): „passt so“');
+  });
+});

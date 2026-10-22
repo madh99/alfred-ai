@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Infrastruktur-Vorhaben und Zielarchitektur nach fester Vorlage (v1555, Spec Infrastruktur-Vorhaben I2)
+
+Owner 22.10.: „I2 wie vorgeschlagen umsetzen“. Es wird nichts ausgeführt; Changes entstehen erst in I3.
+
+- **Vorhaben** (neue Tabelle `infra_vorhaben`, PG v153 / SQLite v149): Titel, Ziel in den Worten des Owners, betroffene Hosts (Fernzugänge), Bestandsbericht, Zielarchitektur (Struktur und CMDB-Dokument, versioniert), Entscheidungen des Owners mit Wortlaut, Bezug zu Problems und Changes.
+  - Status: `entwurf` → `architektur_vorgeschlagen` → `angenommen` oder `verworfen`; „überarbeiten“ führt zurück in den Entwurf.
+- **Neue Aktionen im Skill `infrastruktur`:** `vorhaben_anlegen`, `vorhaben_liste`, `vorhaben_zeigen`, `grundlage`, `architektur_vorschlagen` und `entscheiden`.
+  - `entscheiden` gilt nur auf ausdrückliche Aussage des Owners und speichert seinen Wortlaut.
+- **Planungsgrundlage:** Sie wird ohne Modell aus dem Bestand gebildet.
+  - Einheiten sind Compose-Projekte, einzelne Container und der Host selbst, jeweils mit gemessenem RAM, Daten in Volumes, Bind-Mounts, veröffentlichten Ports und zugeordneten Proxy-Domains.
+  - Dazu kommen Proxmox-Knoten (RAM gesamt/belegt), Speicher, vorhandene Netze/VLANs und bestehende VM-Namen.
+  - Proxy-Einträge ohne eindeutige Zuordnung (z. B. Host-Netz) werden eigens ausgewiesen.
+  - Ein Host-Bestand älter als 6 Stunden wird vorher neu erfasst.
+- **Deterministische Prüfung der Architektur.** Ein Vorschlag mit Fehlern wird nicht gespeichert; das Modell erhält die Fehlerliste zum Nachbessern.
+  - Jede Einheit ist genau einer Gruppe zugeordnet (vm, lxc, bleibt, stilllegen).
+  - Knoten, Speicher und Netze existieren; VM-Namen sind gültig und frei; neue VLAN-IDs sind nicht vergeben.
+  - Größen liegen in Grenzen; die Distribution steht auf einer festen Liste und ist begründet; Windows ist nicht als LXC erlaubt.
+  - Neue Netze haben Firewall-Regeln; jede neue VM steht in der Migrationsreihenfolge; mindestens ein Risiko ist benannt.
+  - Hinweise ohne Abweisung: RAM bzw. Disk knapp gegenüber der Messung, Knoten oder Speicher ohne Reserve, Stilllegung erst nach 7 Tagen.
+- **Architektur-Dokument nach fester Vorlage** (CMDB-Dokumenttyp `architecture`, verknüpft mit dem Vorhaben, versioniert), mit 12 Pflichtabschnitten:
+  - Ausgangslage, Zielbild, Gruppen, Netze/VLANs/Firewall, Reverse-Proxy/DNS (umzustellende Einträge aus dem Bestand), Ressourcen je Knoten, Sicherung, Updates, Migrationsreihenfolge, Risiken, offene Entscheidungen, Prüfhinweise.
+- **Sammler:** `docker stats` (Momentaufnahme CPU/RAM je Container) für die Größenplanung; Erfassungszeitpunkt je Host.
+- **CMDB-Typen:** Dokumenttyp `architecture` und Verknüpfungstyp `vorhaben` (auch in Infra-Docs nutzbar).
+- **Stichwörter:** „Vorhaben“ und „Zielarchitektur“ wählen die Infrastruktur-Werkzeuge.
+
 ### Fixed — Bestandsaufnahme nach dem ersten Lauf nachgeschärft (v1554)
 
 - **Compose-Zuordnung auf dem dockerhost** wurde als „berührt Geheimnisse“ abgewiesen, weil ein Container `vaultwarden` heißt. Die Geheimnis-Regel für Passwort-Tresore greift jetzt nur noch auf Pfade (z. B. `/opt/vaultwarden/…`), nicht auf bloße Container-Namen.

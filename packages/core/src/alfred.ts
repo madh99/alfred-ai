@@ -6979,6 +6979,28 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return (await cmdbFz.saveDocument(o, { docType: 'inventory', title: titel, content: markdown, format: 'markdown', generatedBy: 'alfred:infrastruktur-I1' })).id;
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
+          // I2 — Vorhaben und Zielarchitektur
+          ownerId: () => ownerFz() ?? undefined,
+          vorhaben: new (await import('@alfred/storage')).VorhabenRepository(adapter),
+          aktiveZugaenge: async () => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).map(z => z.name),
+          knoten: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { sourceSkill: 'proxmox', assetType: 'server' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => a.sourceSkill === 'proxmox' && a.assetType === 'server' && String(a.sourceId ?? '').startsWith('node:')).map(a => { const at = a.attributes as { maxcpu?: number; mem?: number; maxmem?: number }; return { name: a.name, online: a.status === 'active', ...(at.maxcpu ? { cpus: Number(at.maxcpu) } : {}), ramGesamt: Number(at.maxmem ?? 0), ramBelegt: Number(at.mem ?? 0) }; });
+          },
+          speicher: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { sourceSkill: 'proxmox', assetType: 'storage' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => a.sourceSkill === 'proxmox' && a.assetType === 'storage' && a.status === 'active').map(a => { const at = a.attributes as { storageType?: string; total?: number; used?: number }; return { name: a.name, ...(at.storageType ? { typ: at.storageType } : {}), gesamt: Number(at.total ?? 0), belegt: Number(at.used ?? 0) }; }).filter(s => s.gesamt > 0);
+          },
+          letzterBestandDocId: async () => {
+            const o = ownerFz(); if (!o) return undefined;
+            return (await cmdbFz.listDocuments(o, { docType: 'inventory', limit: 50 })).find(d => d.generatedBy === 'alfred:infrastruktur-I1')?.id;
+          },
+          speichereArchitektur: async (vorhabenId, titel, markdown) => {
+            const o = ownerFz(); if (!o) throw new Error('Kein Owner');
+            return (await cmdbFz.saveDocument(o, { docType: 'architecture', title: titel, content: markdown, format: 'markdown', linkedEntityType: 'vorhaben', linkedEntityId: vorhabenId, generatedBy: 'alfred:infrastruktur-I2' })).id;
+          },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
       }

@@ -974,9 +974,9 @@ export interface CmdbProblem {
   updatedAt: string;
 }
 
-export type CmdbDocType = 'runbook' | 'postmortem' | 'inventory' | 'topology' | 'service_map' | 'change_log' | 'problem_analysis' | 'custom';
+export type CmdbDocType = 'runbook' | 'postmortem' | 'inventory' | 'topology' | 'service_map' | 'change_log' | 'problem_analysis' | 'architecture' | 'custom';
 export type CmdbDocFormat = 'markdown' | 'mermaid';
-export type CmdbLinkedEntityType = 'asset' | 'service' | 'incident' | 'change_request' | 'problem';
+export type CmdbLinkedEntityType = 'asset' | 'service' | 'incident' | 'change_request' | 'problem' | 'vorhaben';
 
 export interface CmdbDocument {
   id: string;

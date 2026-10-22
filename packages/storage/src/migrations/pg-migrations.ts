@@ -2387,4 +2387,28 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS kaefig TEXT', []);
     },
   },
+  {
+    version: 153,
+    description: 'I2 (Spec Infrastruktur-Vorhaben) — infra_vorhaben: Ziel, Hosts, Status, Architektur (Struktur + CMDB-Dokument), Owner-Entscheidungen, Bezug zu Problems und Changes (PG-Spiegel zu SQLite v149).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_vorhaben (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          titel TEXT NOT NULL,
+          ziel TEXT NOT NULL,
+          hosts TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL,
+          bestand_doc_id TEXT,
+          architektur TEXT,
+          architektur_doc_id TEXT,
+          architektur_version INTEGER NOT NULL DEFAULT 0,
+          entscheidungen TEXT NOT NULL DEFAULT '[]',
+          problem_ids TEXT NOT NULL DEFAULT '[]',
+          change_ids TEXT NOT NULL DEFAULT '[]',
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_vorhaben_user ON infra_vorhaben (user_id, status)', []);
+    },
+  },
 ];

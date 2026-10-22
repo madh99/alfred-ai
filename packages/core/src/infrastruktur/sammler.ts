@@ -8,6 +8,8 @@
 export interface ContainerBestand {
   name: string; image: string; zustand: string; status: string; gesundheit?: 'healthy' | 'unhealthy' | 'starting';
   ports: string; netze: string[]; mounts: string[]; composeProjekt?: string; composeDienst?: string;
+  /** I2 — Momentaufnahme aus docker stats (nur laufende Container) */
+  cpuProzent?: number; ramBytes?: number;
 }
 export interface HostBestand {
   zugang: string; host: string;
@@ -22,6 +24,8 @@ export interface HostBestand {
   compose: Array<{ name: string; status: string; dateien: string }>;
   volumes: Array<{ name: string; groesse: string }>;
   fehler: string[];
+  /** I2 — Zeitpunkt der Erfassung (ISO) */
+  erfasst?: string;
 }
 
 /** Die festen Lesebefehle (Schlüssel → Befehl). Docker nur, wenn vorhanden; Updates je Paketverwaltung. */
@@ -37,6 +41,8 @@ export const LINUX_BEFEHLE = {
   docker: "docker ps -a --no-trunc --format '{{.Names}}\\t{{.Image}}\\t{{.State}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Networks}}\\t{{.Mounts}}'",
   compose: 'docker compose ls -a',
   volumes: 'docker system df -v',
+  // I2 — Verbrauch je Container für die Größenplanung der Ziel-VMs
+  stats: 'docker stats --no-stream --format "{{.Name}},{{.CPUPerc}},{{.MemUsage}}"',
 } as const;
 
 /** Compose-Zuordnung je Container (nur diese beiden Labels, keine Umgebung). */
@@ -144,9 +150,29 @@ export function leseVolumes(t: string): HostBestand['volumes'] {
   return aus;
 }
 
+const EINHEIT: Record<string, number> = { b: 1, kb: 1e3, kib: 1024, mb: 1e6, mib: 1024 ** 2, gb: 1e9, gib: 1024 ** 3, tb: 1e12, tib: 1024 ** 4 };
+
+/** „1.2GiB“, „350MB“, „0B“ → Bytes (undefined, wenn nicht lesbar). */
+export function groesseBytes(t: string): number | undefined {
+  const m = /^\s*([\d.]+)\s*([kmgt]i?b|b)\s*$/i.exec(t);
+  if (!m) return undefined;
+  return Math.round(Number(m[1]) * (EINHEIT[m[2]!.toLowerCase()] ?? NaN)) || 0;
+}
+
+export function leseStats(t: string): Map<string, { cpuProzent: number; ramBytes: number }> {
+  const m = new Map<string, { cpuProzent: number; ramBytes: number }>();
+  for (const z of t.split(/\r?\n/)) {
+    const [name, cpu, mem] = z.split(',');
+    if (!name?.trim() || !cpu || !mem) continue;
+    const ram = groesseBytes(mem.split('/')[0] ?? '');
+    m.set(name.trim(), { cpuProzent: Number.parseFloat(cpu) || 0, ramBytes: ram ?? 0 });
+  }
+  return m;
+}
+
 /** Sammelt den Bestand eines Linux-Hosts mit den festen Lesebefehlen. `lesen` liefert stdout (geschwärzt) oder wirft. */
 export async function sammleLinux(zugang: string, host: string, lesen: (befehl: string) => Promise<string>): Promise<HostBestand> {
-  const b: HostBestand = { zugang, host, dateisysteme: [], dienste: [], ports: [], container: [], compose: [], volumes: [], fehler: [] };
+  const b: HostBestand = { zugang, host, dateisysteme: [], dienste: [], ports: [], container: [], compose: [], volumes: [], fehler: [], erfasst: new Date().toISOString() };
   const versuch = async <T>(schluessel: string, befehl: string, f: (t: string) => T): Promise<T | undefined> => {
     try { return f(await lesen(befehl)); } catch (err) { b.fehler.push(`${schluessel}: ${(err as Error).message.slice(0, 160)}`); return undefined; }
   };
@@ -167,6 +193,10 @@ export async function sammleLinux(zugang: string, host: string, lesen: (befehl: 
     }
     b.compose = (await versuch('compose', LINUX_BEFEHLE.compose, leseComposeLs)) ?? [];
     b.volumes = (await versuch('volumes', LINUX_BEFEHLE.volumes, leseVolumes)) ?? [];
+    if (b.container.some(c => c.zustand === 'running')) {
+      const stats = await versuch('stats', LINUX_BEFEHLE.stats, leseStats);
+      for (const c of b.container) { const st = stats?.get(c.name); if (st) { c.cpuProzent = st.cpuProzent; c.ramBytes = st.ramBytes; } }
+    }
   }
   return b;
 }

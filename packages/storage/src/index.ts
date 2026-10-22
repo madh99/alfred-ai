@@ -106,6 +106,8 @@ export { MesswerteRepository } from './repositories/messwerte-repository.js';
 export type { Messwert } from './repositories/messwerte-repository.js';
 export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
+export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
+export type { Vorhaben, VorhabenStatus, VorhabenEntscheidung } from './repositories/vorhaben-repository.js';
 export type { Fernzugang, FernzugangStatus } from './repositories/fernzugaenge-repository.js';
 export type { Vorgang, VorgangSchritt, VorgangStatus, Autonomie, SchrittArt } from './repositories/vorgaenge-repository.js';
 export { titelAehnlichkeit, VORGANG_AEHNLICHKEIT_SCHWELLE, themenGleich, titelAnker } from './repositories/vorgaenge-repository.js';
