@@ -205,6 +205,21 @@ Owner 22.10.: „natürlich sollte das auch mit ITSM und CMDB vollumfänglich ve
   - *Stand 22.10.:* Teil 1 Wartungsfenster/Sperrzeiten/Benachrichtigungen (v1563/v1564: Tabellen infra_kalender/infra_benachrichtigungen, Motor startet nur nach Zeitplan, 24 h/1 h-Ankündigung verschiebt den Start, Kanäle Push/Telegram/Matrix/E-Mail/HA, Web-Seite „Wartung“) — live: Anlegen/Liste/Entfernen über Web-API, „alex“ mit Matrix-Konto aufgelöst. Teil 2 Störungen nach Changes (v1565, Job change-stoerungen, Rückweg nur als Frage) — getestet, Live-Fall offen. Teil 3 Befunde als Problems (v1566) — live: 9 Problems, zweiter Lauf 0 neu/9 bekannt, Sicherung ausgenommen. Teil 4 Standard-Changes (v1567): Vorlagen a (Snapshot anlegen/aufräumen), c (Sicherheitsupdates, Schalter je Host — vorhandene Hosts aus), d (Image gleiche Hauptversion), e (Neustart unhealthy 1×/Tag); b/g folgen I5 (Proxmox-Skill kann VMs nicht löschen), f folgt I7; einmalige Owner-Freigabe je Vorlage per Button — live: Liste, Freigabe-Frage snapshot_anlegen gestellt. Dazu Cloudflare in der Bestandsaufnahme nachgezogen (Lücke I1, Owner-Frage): DNS je Proxy-Domain, 41 Beziehungen DNS → Proxy. Offen: Teil 5 Soll/Ist (nach angenommener Architektur).
 - **I4c** PBS-Skill (5b-3) und Tresor mit optionalem Vaultwarden-Spiegel (5b-5).
 - **I5** Vorlagen-Fabrik Linux + neue Hosts automatisch verwaltet (E4-V, E4-H) → Beweis Debian-Vorlage + Wegwerf-VM.
+  - *Stand 22.10. abends:*
+    - I4c Tresor umgesetzt (v1572); PBS-Skill zurückgestellt, weil pbs-unas nicht erreichbar ist; Vaultwarden-Spiegel offen.
+    - Einwand, Soll/Ist und Netz-Aktionen umgesetzt (v1568–v1571).
+    - Sichtbarkeit (v1574): ITSM zeigt wartende und abgeschlossene Changes; neue Web-Seite „Vorhaben“.
+    - I5 umgesetzt (v1575), Proxmox-Aktionen:
+      - `list_cloud_images`: datierter Stand und Prüfsumme der Herausgeber; Ubuntu 24.04/26.04, Debian 12/13; live gelesen.
+      - `download_image`: download-url in den Inhalt import, Prüfsumme prüft Proxmox.
+      - `create_template`.
+      - `provision_vm`: Benutzer alfred; Host-Schlüssel von Alfred per Snippet; Cloud-Init danach abgeschaltet; Fernzugang, CMDB und Käfig-Selbsttest automatisch.
+      - `delete_vm` und `delete_image`.
+    - Die schreibenden Fabrik-Aktionen laufen nur im Change-Motor.
+    - Beweis als Changes geplant, die Owner-Freigabe ist offen:
+      - 4dc47fa3: Ubuntu-24.04-Vorlage und Wegwerf-VM probe-i5;
+      - 733bbe87: Stilllegung von probe-i5.
+    - Ubuntu statt Debian, weil die Zielarchitektur Ubuntu 24.04 vorsieht.
 - **I6** Daten-Übertragung + Tresor (E4-D, E4-G) → Beweis Container-Migration unkritisch (E5.3).
 - **I7** Netz-Aktionen nach Owner-Entscheidungen (E4-N).
 - **I8** Windows-Analyse (E4-W lesend), dann Windows-Vorlage.
