@@ -66,7 +66,7 @@ export interface InfrastrukturDeps {
     entferne(o: string, id: string): Promise<boolean>;
   };
   /** Alfred-Benutzer (Familie) nach Name auflösen → Telegram-ID */
-  nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; telegramId?: string } | undefined>;
+  nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; konten: Record<string, string> } | { unbekannt: string[] } | undefined>;
 }
 
 export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'unifi', 'pfsense', 'mikrotik'];
@@ -160,7 +160,7 @@ export class InfrastrukturSkill extends Skill {
         regel: { type: 'object', description: 'Fenster/Sperre', properties: { art: { type: 'string', enum: ['einmalig', 'woechentlich'] }, von: { type: 'string' }, bis: { type: 'string' }, tage: { type: 'array', items: { type: 'number' } } } },
         fuer: { type: 'array', items: { type: 'string' }, description: 'Asset-Namen/IDs; leer = global' },
         notiz: { type: 'string' },
-        empfaenger: { type: 'array', items: { type: 'object', properties: { art: { type: 'string', enum: ['owner', 'nutzer', 'kontakt'] }, name: { type: 'string' }, email: { type: 'string' }, haDienst: { type: 'string', description: 'Home-Assistant notify-Ziel, z. B. mobile_app_xyz' } } } },
+        empfaenger: { type: 'array', items: { type: 'object', properties: { art: { type: 'string', enum: ['owner', 'nutzer', 'kontakt'] }, name: { type: 'string', description: 'bei nutzer: Benutzername in Alfred (wartung_liste/Fehlermeldung nennt die vorhandenen)' }, email: { type: 'string' }, haDienst: { type: 'string', description: 'Home-Assistant notify-Ziel, z. B. mobile_app_xyz' } } } },
         kanaele: { type: 'array', items: { type: 'string', enum: [...KANAELE] } },
         zeitpunkte: { type: 'array', items: { type: 'string', enum: [...ZEITPUNKTE] } },
         id: { type: 'string', description: 'wartung_entfernen: ID des Fensters/der Sperre/der Regel' },
@@ -395,10 +395,10 @@ export class InfrastrukturSkill extends Skill {
         const basis: Empfaenger = { art, ...(typeof e.name === 'string' && e.name.trim() ? { name: e.name.trim() } : {}), ...(typeof e.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e.email.trim()) ? { email: e.email.trim() } : {}), ...(typeof e.haDienst === 'string' && /^[\w.]+$/.test(e.haDienst.trim()) ? { haDienst: e.haDienst.trim() } : {}) };
         if (art === 'nutzer') {
           const n = basis.name ? await this.deps.nutzerAufloesen?.(basis.name) : undefined;
-          if (!n) return { success: false, error: `Alfred-Benutzer „${basis.name ?? '?'}“ nicht gefunden` };
-          Object.assign(basis, { userId: n.userId, name: n.name, ...(n.telegramId ? { telegramId: n.telegramId } : {}) });
+          if (!n || 'unbekannt' in n) return { success: false, error: `Alfred-Benutzer „${basis.name ?? '?'}“ nicht gefunden${n && 'unbekannt' in n ? ` — vorhanden: ${n.unbekannt.join(', ')}` : ''}` };
+          Object.assign(basis, { userId: n.userId, name: n.name, konten: n.konten, ...(n.konten.telegram ? { telegramId: n.konten.telegram } : {}) });
         }
-        if (!erreichbar(basis, kanaele)) return { success: false, error: `${basis.name ?? art} ist über ${kanaele.join('/')} nicht erreichbar (owner: push/telegram; nutzer: telegram mit verknüpftem Konto, email, homeassistant mit haDienst; kontakt: email oder haDienst)` };
+        if (!erreichbar(basis, kanaele)) return { success: false, error: `${basis.name ?? art} ist über ${kanaele.join('/')} nicht erreichbar (owner: push/telegram; nutzer: telegram/matrix mit verknüpftem Konto${basis.konten ? ` — verknüpft: ${Object.keys(basis.konten).join(', ') || 'keins'}` : ''}, email, homeassistant mit haDienst; kontakt: email oder haDienst)` };
         empfaenger.push(basis);
       }
       if (!empfaenger.length) return { success: false, error: 'empfaenger fehlt' };

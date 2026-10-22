@@ -460,6 +460,8 @@ export class Alfred {
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
   /** I4 — Ausführungsmotor für freigegebene Changes */
   private changeMotor?: import('./infrastruktur/change-motor.js').ChangeMotor;
+  /** I4b — Web-Pflege der Wartung (bei den ITSM-Routen angebunden) */
+  private wartungWebAktion?: { aktion: (uid: string, body: Record<string, unknown>) => Promise<unknown> };
   private hostBestaende = new Map<string, import('./infrastruktur/sammler.js').HostBestand>();
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
@@ -7038,11 +7040,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const r = await this.pushDienst.anOwner({ titel, text: text.slice(0, 180), art: 'hinweis', stufe: 'active' });
               return r.zugestellt > 0;
             }
-            if (kanal === 'telegram') {
-              if (e.art === 'owner') return this.sendeAnOwner(`${titel}\n${text}`);
-              const tg = this.adapters.get('telegram' as never);
-              if (!e.telegramId || !tg) return false;
-              await tg.sendDirectMessage(e.telegramId, `${titel}\n${text}`);
+            if (kanal === 'telegram' || kanal === 'matrix') {
+              if (e.art === 'owner' && kanal === 'telegram') return this.sendeAnOwner(`${titel}\n${text}`);
+              const ziel = e.konten?.[kanal] ?? (kanal === 'telegram' ? e.telegramId : undefined);
+              const ad = this.adapters.get(kanal as never);
+              if (!ziel || !ad) return false;
+              await ad.sendDirectMessage(ziel, `${titel}\n${text}`);
               return true;
             }
             if (kanal === 'email') {
@@ -7195,22 +7198,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           nutzerAufloesen: async (name) => {
             const n = name.trim().toLowerCase();
-            const u = (await alfredUsersI4b.getAll()).find(x => x.username.toLowerCase() === n || (x.displayName ?? '').toLowerCase() === n || (x.displayName ?? '').toLowerCase().split(/\s+/)[0] === n);
-            if (!u) return undefined;
-            const tg = (await alfredUsersI4b.getPlatformLinks(u.id)).find(l => l.platform === 'telegram');
-            return { userId: u.id, name: u.displayName ?? u.username, ...(tg ? { telegramId: tg.platformUserId } : {}) };
+            const alle = await alfredUsersI4b.getAll();
+            const u = alle.find(x => x.username.toLowerCase() === n || (x.displayName ?? '').toLowerCase() === n || (x.displayName ?? '').toLowerCase().split(/\s+/)[0] === n);
+            if (!u) return { unbekannt: alle.map(x => `${x.username}${x.displayName ? ` (${x.displayName})` : ''}`) };
+            const konten: Record<string, string> = {};
+            for (const l of await alfredUsersI4b.getPlatformLinks(u.id)) if ((l.platform === 'telegram' || l.platform === 'matrix') && !konten[l.platform] && !l.platformUserId.startsWith('web-')) konten[l.platform] = l.platformUserId;
+            return { userId: u.id, name: u.displayName || u.username, konten };
           },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
-        // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner)
-        (this.adapters.get('api' as never) as unknown as { setWartungCallbacks?: (cb: unknown) => void } | undefined)?.setWartungCallbacks?.({
+        // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner);
+        // angebunden bei den ITSM-Routen, weil der Web-Adapter hier noch nicht existiert (Realfall 22.10.: „Wartung nicht verfügbar“)
+        this.wartungWebAktion = {
           aktion: async (uid: string, body: Record<string, unknown>) => {
             const sk = skillRegistry.get('infrastruktur');
             if (!sk) return { success: false, error: 'nicht verfügbar' };
             const master = uid ? await this.userRepo?.getMasterUserId(uid).catch(() => uid) ?? uid : (ownerFz() ?? '');
             return skillSandbox.execute(sk, body, { userId: uid || master, masterUserId: master, platform: 'api', chatId: '', conversationId: '' } as never);
           },
-        });
+        };
       }
       this.fernzugangNamenAuffrischen = async () => {
         const o = ownerFz(); if (!o) return;
@@ -13877,6 +13883,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             cmdbRepo.searchDocuments(await resolveUser(uid), query, filters as any),
         });
 
+        if (this.wartungWebAktion) (apiAdapter as unknown as { setWartungCallbacks?: (cb: unknown) => void }).setWartungCallbacks?.(this.wartungWebAktion); // I4b
         (apiAdapter as any).setItsmCallbacks({
           listIncidents: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listIncidents(await resolveUser(uid), filters as any),
           getIncident: async (uid: string, id: string) => itsmRepo.getIncidentById(await resolveUser(uid), id),

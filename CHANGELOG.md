@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wartung: Matrix als Kanal, Web-Anbindung (v1564)
+
+Befunde aus dem ersten Test (22.10.):
+- **„Alexandra“ wurde nicht gefunden.** Sie ist als Alfred-Benutzer „alex“ angelegt und nur über Matrix verknüpft.
+  - Neu ist der Kanal **Matrix**: Zustellung über den Matrix-Adapter an das verknüpfte Konto.
+  - Beim Anlegen werden alle verknüpften Telegram- und Matrix-Konten übernommen.
+  - Ist ein Name unbekannt, nennt die Meldung die vorhandenen Alfred-Benutzer.
+- **Die Web-Seite meldete „Wartung nicht verfügbar“.** Die Route wurde angebunden, bevor der Web-Adapter existierte; jetzt geschieht das zusammen mit den ITSM-Routen.
+
 ### Added — Wartungsfenster, Sperrzeiten und Benachrichtigungsregeln (v1563, Spec Infrastruktur-Vorhaben I4b Teil 1)
 
 Owner 22.10. (5b-7 Wartungsfenster-Kalender mit „wer wann wie informiert“, 5b-12 pflegbare Sperrzeiten); Freigabe „mit dem nächsten Schritt weitermachen“.

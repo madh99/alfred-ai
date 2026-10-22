@@ -56,5 +56,7 @@ describe('I4b WartungsDienst', () => {
     expect(erreichbar({ art: 'nutzer', name: 'X', telegramId: '1' }, ['telegram'])).toBe(true);
     expect(erreichbar({ art: 'kontakt', email: 'a@b.at' }, ['push', 'email'])).toBe(true);
     expect(erreichbar({ art: 'kontakt' }, ['homeassistant'])).toBe(false);
+    expect(erreichbar({ art: 'nutzer', name: 'alex', konten: { matrix: '@alex1979:chat.3033.at' } }, ['telegram', 'matrix'])).toBe(true);
+    expect(erreichbar({ art: 'nutzer', name: 'alex', konten: { matrix: '@x' } }, ['telegram'])).toBe(false);
   });
 });

@@ -11,7 +11,7 @@ import type { WartungKalenderDto, WartungRegelDto } from '@/lib/alfred-client';
 
 const TAGE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const ZEITPUNKTE: Record<string, string> = { '24h_vorher': '24 h vorher', '1h_vorher': '1 h vorher', start: 'Start', ende: 'Ende', stoerung: 'Störung' };
-const KANAELE: Record<string, string> = { push: 'Push (iPhone)', telegram: 'Telegram', email: 'E-Mail', homeassistant: 'Home Assistant' };
+const KANAELE: Record<string, string> = { push: 'Push (iPhone)', telegram: 'Telegram', matrix: 'Matrix', email: 'E-Mail', homeassistant: 'Home Assistant' };
 const feld = 'w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200';
 
 function regelText(r: WartungKalenderDto['regel']): string {
@@ -121,7 +121,7 @@ export function WartungPage() {
         <div className="grid grid-cols-2 gap-2">
           <input className={feld} placeholder="Name, z. B. Familie bei Home Assistant" value={r.name} onChange={e => setR({ ...r, name: e.target.value })} />
           <input className={feld} placeholder="gilt für Assets (Komma), leer = alle" value={r.fuer} onChange={e => setR({ ...r, fuer: e.target.value })} />
-          <input className={feld} placeholder="Alfred-Benutzer (Komma), z. B. Alexandra" value={r.nutzer} onChange={e => setR({ ...r, nutzer: e.target.value })} />
+          <input className={feld} placeholder="Alfred-Benutzer (Komma), z. B. alex" value={r.nutzer} onChange={e => setR({ ...r, nutzer: e.target.value })} />
           <input className={feld} placeholder="weitere E-Mail-Adressen (Komma)" value={r.emails} onChange={e => setR({ ...r, emails: e.target.value })} />
           <input className={feld} placeholder="Home-Assistant notify-Ziel (optional), z. B. mobile_app_…" value={r.haDienst} onChange={e => setR({ ...r, haDienst: e.target.value })} />
           <label className="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={r.owner} onChange={e => setR({ ...r, owner: e.target.checked })} />auch mich (Owner)</label>

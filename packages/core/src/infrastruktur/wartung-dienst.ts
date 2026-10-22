@@ -77,5 +77,5 @@ export class WartungsDienst {
 
 /** Ist ein Empfänger über mindestens einen der Kanäle erreichbar (für die Prüfung beim Anlegen)? */
 export function erreichbar(e: Empfaenger, kanaele: Kanal[]): boolean {
-  return kanaele.some(k => (k === 'push' && e.art === 'owner') || (k === 'telegram' && (e.art === 'owner' || !!e.telegramId)) || (k === 'email' && !!e.email) || (k === 'homeassistant' && !!e.haDienst));
+  return kanaele.some(k => (k === 'push' && e.art === 'owner') || (k === 'telegram' && (e.art === 'owner' || !!e.telegramId || !!e.konten?.telegram)) || (k === 'matrix' && !!e.konten?.matrix) || (k === 'email' && !!e.email) || (k === 'homeassistant' && !!e.haDienst));
 }

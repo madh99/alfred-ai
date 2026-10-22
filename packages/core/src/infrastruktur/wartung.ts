@@ -12,12 +12,12 @@ export type KalenderRegel =
 export interface KalenderEintrag { id: string; art: KalenderArt; name: string; geltung: Geltung; regel: KalenderRegel; aktiv: boolean; notiz?: string }
 
 export type Zeitpunkt = '24h_vorher' | '1h_vorher' | 'start' | 'ende' | 'stoerung';
-export type Kanal = 'push' | 'telegram' | 'email' | 'homeassistant';
-export interface Empfaenger { art: 'owner' | 'nutzer' | 'kontakt'; userId?: string; name?: string; email?: string; haDienst?: string; /** beim Anlegen aus dem Alfred-Benutzer aufgelöst */ telegramId?: string }
+export type Kanal = 'push' | 'telegram' | 'matrix' | 'email' | 'homeassistant';
+export interface Empfaenger { art: 'owner' | 'nutzer' | 'kontakt'; userId?: string; name?: string; email?: string; haDienst?: string; /** beim Anlegen aus dem Alfred-Benutzer aufgelöst */ telegramId?: string; /** verknüpfte Konten des Alfred-Benutzers (Plattform → ID), z. B. matrix */ konten?: Record<string, string> }
 export interface BenachrichtigungsRegel { id: string; name: string; geltung: Geltung; empfaenger: Empfaenger[]; kanaele: Kanal[]; zeitpunkte: Zeitpunkt[]; aktiv: boolean }
 
 export const ZEITPUNKTE: readonly Zeitpunkt[] = ['24h_vorher', '1h_vorher', 'start', 'ende', 'stoerung'];
-export const KANAELE: readonly Kanal[] = ['push', 'telegram', 'email', 'homeassistant'];
+export const KANAELE: readonly Kanal[] = ['push', 'telegram', 'matrix', 'email', 'homeassistant'];
 const ZONE = 'Europe/Vienna';
 const MIN = 60_000;
 
