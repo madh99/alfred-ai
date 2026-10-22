@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gescheiterte VM-Bereitstellung hinterlässt keine unstartbare VM (v1590)
+
+- **Realfall 22.10.:** Nach dem gescheiterten Schritt 2 von B ließ sich `docker-dev-01` nicht mehr starten (`volume 'local:snippets/alfred-144-user.yaml' does not exist`).
+  - `provision_vm` entfernte das Snippet mit dem privaten Host-Schlüssel auch beim Scheitern. Den Verweis darauf (`cicustom`) und das Cloud-Init-Laufwerk entfernte es aber nur bei Erfolg.
+- **Jetzt:** Beides wird in jedem Fall zusammen mit dem Snippet entfernt. Die VM startet weiter mit dem Stand ihres ersten Starts.
+
 ### Fixed — Telegram 409 beim Neustart beendet Alfred nicht mehr (v1589)
 
 - **Realfall 22.10.:** Das Update auf 1588 wurde 17 s nach dem Start verworfen, und die vorige Version lief wieder.

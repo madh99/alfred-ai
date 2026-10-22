@@ -1504,6 +1504,9 @@ export class ProxmoxSkill extends Skill {
       schritte.push('Cloud-Init-Laufwerk zum Entfernen vorgemerkt');
     } finally {
       await this.fabrik.snippetEntfernen(node, pfad).catch(() => undefined);
+      // Realfall 22.10. (docker-dev-01 startete nach Fehlschlag nicht mehr: „volume local:snippets/alfred-144-user.yaml does not exist“):
+      // ohne Snippet darf kein Verweis darauf bleiben — Cloud-Init-Laufwerk mit entfernen (die VM hat ihre Daten vom ersten Start)
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
     }
     schritte.push('Snippet am Knoten entfernt');
     return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich }, display: schritte.map(s => `- ${s}`).join('\n') };
