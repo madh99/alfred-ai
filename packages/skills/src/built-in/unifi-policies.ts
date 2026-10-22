@@ -26,6 +26,10 @@ export interface RegelWunsch {
   aktion: 'ALLOW' | 'BLOCK' | 'REJECT';
   quelleZone?: string; quelleNetz?: string; quellePort?: string;
   zielZone?: string; zielNetz?: string; zielPort?: string;
+  /** Pilot cf82f3f2 (22.10.) — einzelne Adressen, Subnetze (CIDR) oder Bereiche a-b, kommagetrennt; statt eines Netzes */
+  quelleIps?: string; zielIps?: string;
+  /** Antworten auf erlaubte Verbindungen ausdrücklich zulassen (sonst kann eine BLOCK-Regel der Gegenrichtung sie treffen) */
+  rueckverkehr?: boolean;
   protokoll?: string; // TCP | UDP | TCP_UDP | ICMP | alle
   ipVersion?: 'IPV4' | 'IPV6' | 'IPV4_AND_IPV6';
   logging?: boolean;
@@ -70,7 +74,24 @@ function protokollScope(protokoll: string | undefined, ipVersion: string, mitPor
   return { ipVersion, protocolFilter: { type: 'NAMED_PROTOCOL', matchOpposite: false, protocol: { name: p } } };
 }
 
-function seite(netzName: string | undefined, port: string | undefined, netze: Netz[]): Record<string, unknown> | undefined {
+const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+/** „192.168.1.92“, „10.203.24.0/28“, „10.0.0.5-10.0.0.9“ (kommagetrennt) → IP-Filter des API */
+export function ipFilter(spez: string): Record<string, unknown> {
+  const items = spez.split(',').map(t => t.trim()).filter(Boolean).map((t) => {
+    const sub = /^(.+)\/(\d{1,2})$/.exec(t);
+    if (sub) { if (!IPV4.test(sub[1]!) || Number(sub[2]) > 32) throw new Error(`Subnetz „${t}" ungültig`); return { type: 'SUBNET', value: t }; }
+    const rng = /^(.+?)\s*-\s*(.+)$/.exec(t);
+    if (rng) { if (!IPV4.test(rng[1]!) || !IPV4.test(rng[2]!)) throw new Error(`Bereich „${t}" ungültig`); return { type: 'IP_ADDRESS_RANGE', start: rng[1], stop: rng[2] }; }
+    if (!IPV4.test(t)) throw new Error(`IP-Adresse „${t}" ungültig`);
+    return { type: 'IP_ADDRESS', value: t };
+  });
+  if (!items.length) throw new Error('IP-Adresse fehlt');
+  return { type: 'IP_ADDRESSES', matchOpposite: false, items };
+}
+
+function seite(netzName: string | undefined, port: string | undefined, netze: Netz[], ips?: string): Record<string, unknown> | undefined {
+  if (netzName && ips) throw new Error('Netz und IP-Adressen nicht gleichzeitig auf einer Seite — eins von beiden');
+  if (ips) return { type: 'IP_ADDRESS', ipAddressFilter: ipFilter(ips), ...(port ? { portFilter: portFilter(port) } : {}) };
   if (netzName) {
     const n = findeNetz(netze, netzName);
     return { type: 'NETWORK', networkFilter: { networkIds: [n.id], matchOpposite: false }, ...(port ? { portFilter: portFilter(port) } : {}) };
@@ -92,11 +113,11 @@ export function baueRegel(w: RegelWunsch, zonen: Zone[], netze: Netz[]): Record<
   };
   const qz = zoneFuer(w.quelleZone, w.quelleNetz, 'Quell');
   const zz = zoneFuer(w.zielZone, w.zielNetz, 'Ziel');
-  const qf = seite(w.quelleNetz, w.quellePort, netze);
-  const zf = seite(w.zielNetz, w.zielPort, netze);
+  const qf = seite(w.quelleNetz, w.quellePort, netze, w.quelleIps);
+  const zf = seite(w.zielNetz, w.zielPort, netze, w.zielIps);
   return {
     enabled: true, name: w.name.trim(),
-    action: w.aktion === 'ALLOW' ? { type: 'ALLOW', allowReturnTraffic: false } : { type: w.aktion },
+    action: w.aktion === 'ALLOW' ? { type: 'ALLOW', allowReturnTraffic: w.rueckverkehr === true } : { type: w.aktion },
     source: { zoneId: qz.id, ...(qf ? { trafficFilter: qf } : {}) },
     destination: { zoneId: zz.id, ...(zf ? { trafficFilter: zf } : {}) },
     ipProtocolScope: protokollScope(w.protokoll, w.ipVersion ?? 'IPV4', !!(w.quellePort || w.zielPort)),

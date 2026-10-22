@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — UniFi: eigene Firewall-Zonen, IP-Regeln, Sicherung; Firewall-Schritte im Change ohne Einzelrückfrage (v1581)
+
+Realfall Pilot cf82f3f2: Die Planung schob 9 von 27 Schritten als Handarbeit auf den Owner (UniFi sichern, Trunk, Regeln mit IP-Quellen, Standard-Sperre). Außerdem hätte `create_firewall_policy` im Change nur eine Rückfrage gestellt und trotzdem Erfolg gemeldet.
+
+- **Firewall-Änderungen im Change:** Die Freigabe des Changes ersetzt jetzt die Einzelbestätigung, wie beim Fernzugriff. Außerhalb von Changes bleibt die Rückfrage.
+- **IP-Regeln:** `create_firewall_policy` nimmt `source_ip`/`destination_ip` (einzelne Adressen, Subnetze, Bereiche) statt ganzer Netze, z. B. nur der Alfred-Server per SSH in eine neue Zone.
+- **Rückverkehr:** Mit `allow_return_traffic` werden Antworten auf erlaubte Verbindungen ausdrücklich zugelassen.
+- **`create_zone` / `delete_zone`:** eigene Firewall-Zone je Gruppe mit ihren Netzen, nur im Change.
+  - Gelöscht werden nur eigene Zonen ohne verbliebene eigene Policies.
+- **`export_config`:** Sicherung von Netzen, Zonen und Policies als JSON-Datei am Alfred-Server vor jeder Netzänderung (zählt als Sicherungsschritt).
+- **Planung:** Die Architektur-Zonen werden auf UniFi-Zonen abgebildet:
+  - `alfred` → Internal + Server-IP;
+  - `gateway` → Gateway;
+  - `internet` → External;
+  - `vpn` → Vpn.
+
+  Am Ende kommt je Zonenpaar eine ausdrückliche BLOCK-Regel, damit nichts von Standardregeln der UDM abhängt. Netzschritte brauchen keine owner-Schritte mehr.
+
 ### Fixed — Folge-Changes starten sofort; keine wertlosen Runbook-Vorschläge (v1580)
 
 - **Folge-Changes:** Ein Change, der von einem anderen abhängt, startet jetzt direkt nach dessen Abschluss.

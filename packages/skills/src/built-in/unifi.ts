@@ -56,6 +56,9 @@ export class UniFiSkill extends Skill {
             'delete_firewall_policy',
             'create_network',
             'delete_network',
+            'create_zone',
+            'delete_zone',
+            'export_config',
             'list_dns_records',
             'create_dns_record',
             'delete_dns_record',
@@ -156,6 +159,11 @@ export class UniFiSkill extends Skill {
         destination_network: { type: 'string', description: 'Zielnetz: Name, ID oder VLAN-Nummer' },
         destination_port: { type: 'string', description: 'Zielport(s)' },
         policy_protocol: { type: 'string', description: 'TCP, UDP, TCP_UDP, ICMP oder alle (Ports brauchen TCP/UDP)' },
+        source_ip: { type: 'string', description: 'Quell-Adressen statt Quellnetz: IP, Subnetz (CIDR) oder Bereich a-b, kommagetrennt (z. B. 192.168.1.92) — Zone dann mit source_zone angeben' },
+        destination_ip: { type: 'string', description: 'Ziel-Adressen statt Zielnetz: IP, Subnetz (CIDR) oder Bereich a-b, kommagetrennt' },
+        allow_return_traffic: { type: 'boolean', description: 'create_firewall_policy ALLOW: Antworten ausdrücklich zulassen (in Changes immer true)' },
+        zone_name: { type: 'string', description: 'create_zone/delete_zone: Name der eigenen Firewall-Zone (z. B. Docker-Dev)' },
+        networks: { type: 'array', items: { type: 'string' }, description: 'create_zone: Netze (Name oder VLAN), die in die Zone wandern' },
         before_policy: { type: 'string', description: 'Name oder ID der Policy, VOR die die neue gesetzt wird (z. B. eine Sperre, für die eine Ausnahme gilt) — sonst hängt sie hinten an und greift ggf. nie' },
         policy_id: { type: 'string', description: 'ID der Policy (set_firewall_policy_enabled, delete_firewall_policy)' },
         freigabe: { type: 'string', description: 'Nur intern: Einmal-Freigabe nach Owner-Bestätigung — nie selbst setzen' },
@@ -273,7 +281,13 @@ export class UniFiSkill extends Skill {
         case 'create_firewall_policy':
         case 'set_firewall_policy_enabled':
         case 'delete_firewall_policy':
-          return await this.firewallAenderung(action, input);
+          return await this.firewallAenderung(action, input, _context?.ausChange === true);
+        case 'create_zone':
+        case 'delete_zone':
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
+          return action === 'create_zone' ? await this.zoneAnlegen(input) : await this.zoneLoeschen(input);
+        case 'export_config':
+          return await this.konfigSichern();
 
         case 'create_network':
           return await this.netzAnlegen(input);
@@ -380,7 +394,7 @@ export class UniFiSkill extends Skill {
   }
 
   /** Schreibende Firewall-Aktionen: ohne gültige Einmal-Freigabe nur Prüfung + Bestätigung beim Owner. */
-  private async firewallAenderung(action: string, input: Record<string, unknown>): Promise<SkillResult> {
+  private async firewallAenderung(action: string, input: Record<string, unknown>, ausChange = false): Promise<SkillResult> {
     const { sid, zonen, netze, policies } = await this.firewallStand();
     const findePolicy = (x: unknown) => { const t = String(x ?? '').trim(); const l = policies.filter(p => p.id === t || p.name.toLowerCase() === t.toLowerCase()); if (l.length > 1) throw new Error(`„${t}" ist nicht eindeutig (${l.length} Policies) — ID angeben`); return l[0]; };
     // Vorbereitung (deterministisch, ohne Änderung): Body bauen bzw. Ziel finden, Beschreibung für die Bestätigung
@@ -392,6 +406,9 @@ export class UniFiSkill extends Skill {
         quelleZone: input.source_zone as string | undefined, quelleNetz: input.source_network as string | undefined, quellePort: input.source_port !== undefined ? String(input.source_port) : undefined,
         zielZone: input.destination_zone as string | undefined, zielNetz: input.destination_network as string | undefined, zielPort: input.destination_port !== undefined ? String(input.destination_port) : undefined,
         protokoll: input.policy_protocol as string | undefined,
+        ...(typeof input.source_ip === 'string' && input.source_ip.trim() ? { quelleIps: input.source_ip } : {}),
+        ...(input.allow_return_traffic === true || String(input.allow_return_traffic) === 'true' ? { rueckverkehr: true } : {}),
+        ...(typeof input.destination_ip === 'string' && input.destination_ip.trim() ? { zielIps: input.destination_ip } : {}),
       };
       body = baueRegel(w, zonen, netze);
       if (input.before_policy) {
@@ -420,7 +437,8 @@ export class UniFiSkill extends Skill {
 
     const nonce = typeof input.freigabe === 'string' ? input.freigabe : undefined;
     const fg = nonce ? this.freigaben.get(nonce) : undefined;
-    if (!fg || fg.bis < Date.now() || fg.schluessel !== schluessel) {
+    // Pilot cf82f3f2 (22.10.): im freigegebenen Change ersetzt dessen Freigabe die Einzelbestätigung (sonst fragte der Schritt nur und meldete Erfolg)
+    if (!ausChange && (!fg || fg.bis < Date.now() || fg.schluessel !== schluessel)) {
       if (nonce) this.freigaben.delete(nonce);
       if (!this.bestaetigung) return { success: false, error: 'Firewall-Änderungen brauchen eine Owner-Bestätigung, die hier nicht verfügbar ist' };
       const neu = randomUUID();
@@ -431,7 +449,7 @@ export class UniFiSkill extends Skill {
         ? { success: true, data: { zurBestaetigung: true }, display: `Zur Bestätigung an den Owner: ${beschreibung}. Nach dem Ja wird die Änderung ausgeführt und die Reihenfolge geprüft.` }
         : { success: false, error: 'Bestätigung konnte nicht eingereiht werden' };
     }
-    this.freigaben.delete(nonce!);
+    if (nonce) this.freigaben.delete(nonce);
 
     if (action === 'create_firewall_policy') {
       const neu = await this.integ<Policy>('POST', `/sites/${sid}/firewall/policies`, body);
@@ -1139,6 +1157,49 @@ export class UniFiSkill extends Skill {
     if (drin.length) return { success: false, error: `Im Netz „${n.name}“ sind noch ${drin.length} Geräte — nicht gelöscht` };
     await this.request('DELETE', `rest/networkconf/${n._id}`);
     return { success: true, data: { id: n._id, name: n.name, vlan: n.vlan }, display: `✅ Netz „${n.name}“ (VLAN ${n.vlan}) gelöscht` };
+  }
+
+  /** Pilot cf82f3f2 — eigene Firewall-Zone mit ihren Netzen: zwischen eigenen Zonen und den übrigen gilt, was die Policies erlauben */
+  private async zoneAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = String(input.zone_name ?? '').trim();
+    if (!/^[\w .-]{2,40}$/.test(name)) return { success: false, error: 'zone_name: 2–40 Zeichen' };
+    const { sid, zonen, netze } = await this.firewallStand();
+    if (zonen.some(z => z.name.toLowerCase() === name.toLowerCase())) return { success: false, error: `Zone „${name}" gibt es schon` };
+    const wuensche = Array.isArray(input.networks) ? input.networks.map(String) : typeof input.networks === 'string' ? String(input.networks).split(',') : [];
+    const ids: string[] = [];
+    for (const w of wuensche.map(x => x.trim()).filter(Boolean)) {
+      const n = netze.find(x => x.name.toLowerCase() === w.toLowerCase() || x.id === w || (x.vlanId !== undefined && String(x.vlanId) === w));
+      if (!n) return { success: false, error: `Netz „${w}" unbekannt` };
+      ids.push(n.id);
+    }
+    const z = await this.integ<Zone & { networkIds?: string[] }>('POST', `/sites/${sid}/firewall/zones`, { name, networkIds: ids });
+    return { success: true, data: { id: z.id, name: z.name, networkIds: z.networkIds ?? ids }, display: `✅ Firewall-Zone „${z.name}" angelegt (${ids.length} Netz(e)). Rückgängig: delete_zone ${z.name}` };
+  }
+
+  private async zoneLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = String(input.zone_name ?? '').trim();
+    const { sid, zonen, policies } = await this.firewallStand();
+    const z = zonen.find(x => x.name.toLowerCase() === name.toLowerCase() || x.id === name) as (Zone & { metadata?: { origin?: string } }) | undefined;
+    if (!z) return { success: true, data: { schonWeg: true }, display: `Zone „${name}" gibt es nicht (mehr)` };
+    if (z.metadata?.origin !== 'USER_DEFINED') return { success: false, error: `„${z.name}" ist keine eigene Zone — wird nicht gelöscht` };
+    const eigene = policies.filter(p => p.metadata?.origin !== 'SYSTEM_DEFINED' && (p.source.zoneId === z.id || p.destination.zoneId === z.id));
+    if (eigene.length) return { success: false, error: `Zone „${z.name}" hat noch ${eigene.length} eigene Policies (${eigene.slice(0, 5).map(p => p.name).join(', ')}) — zuerst entfernen` };
+    await this.integ('DELETE', `/sites/${sid}/firewall/zones/${z.id}`);
+    return { success: true, data: { id: z.id, name: z.name }, display: `✅ Firewall-Zone „${z.name}" gelöscht` };
+  }
+
+  /** Sicherung vor Netz-/Firewall-Änderungen: Netze (beide APIs), Zonen, Policies, Reihenfolgen als JSON-Datei am Alfred-Server */
+  private async konfigSichern(): Promise<SkillResult> {
+    const { sid, zonen, netze, policies } = await this.firewallStand();
+    const netzconf = (await this.request<any[]>('GET', 'rest/networkconf').catch(() => [])) ?? [];
+    const stand = { zeit: new Date().toISOString(), zonen, netze, netzconf, policies };
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { join, resolve } = await import('node:path');
+    const ordner = resolve(process.cwd(), 'data', 'unifi-sicherungen');
+    await mkdir(ordner, { recursive: true, mode: 0o700 });
+    const datei = join(ordner, `unifi-${stand.zeit.replace(/[:.]/g, '-')}.json`);
+    await writeFile(datei, JSON.stringify(stand, null, 1), { mode: 0o600 });
+    return { success: true, data: { datei, zonen: zonen.length, netze: netze.length, policies: policies.length, site: sid }, display: `UniFi-Konfiguration gesichert: ${datei} (${netze.length} Netze, ${zonen.length} Zonen, ${policies.length} Policies)` };
   }
 
   /** Lokale DNS-Einträge (UniFi Network ≥ 8: v2-API static-dns) */
