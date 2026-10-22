@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — UniFi-Regel ein/aus über PUT statt PATCH (v1592)
+
+- **Realfall 22.10. (Change 9703757c):** `set_firewall_policy_enabled` schickte `PATCH {enabled}`. Das Integration-API der UDM nimmt bei PATCH nur `loggingEnabled`/`reportFlowEnabled` an und antwortete mit `unknown-property $.enabled`. Die Aktion war seit v1386 nie live gelaufen.
+- **Jetzt:** Alfred liest die Regel, schickt sie per PUT mit genau den vom API angenommenen Feldern und dem neuen Zustand zurück und liest danach nach.
+- Das Format ist vorab wirkungsgleich live geprüft: PUT mit unverändertem Zustand ergab HTTP 200.
+
 ### Fixed — Keine eigenen Sperrregeln, die den Rückverkehr der UDM verwerfen (v1591)
 
 - **Realfall 22.10.:** `docker-dev-01` war trotz offenem Trunk per SSH nicht erreichbar.

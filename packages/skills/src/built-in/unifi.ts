@@ -498,7 +498,16 @@ export class UniFiSkill extends Skill {
     }
     if (action === 'set_firewall_policy_enabled') {
       const an = JSON.parse(schluessel)[2] as boolean;
-      await this.integ('PATCH', `/sites/${sid}/firewall/policies/${ziel!.id}`, { enabled: an });
+      // Realfall 22.10. (9703757c): PATCH kennt nur loggingEnabled/reportFlowEnabled („unknown-property $.enabled“) — Ein/Aus geht nur
+      // per PUT mit der vollständigen Regel, und zwar nur mit den Feldern, die das API dafür annimmt
+      const voll = await this.integ<Record<string, unknown>>('GET', `/sites/${sid}/firewall/policies/${ziel!.id}`);
+      const FELDER = ['name', 'description', 'action', 'source', 'destination', 'ipProtocolScope', 'connectionStateFilter', 'ipsecFilter', 'loggingEnabled', 'reportFlowEnabled', 'schedule'];
+      const put: Record<string, unknown> = { enabled: an };
+      for (const f of FELDER) if (voll[f] !== undefined && voll[f] !== null) put[f] = voll[f];
+      if (put.loggingEnabled === undefined) put.loggingEnabled = false;
+      await this.integ('PUT', `/sites/${sid}/firewall/policies/${ziel!.id}`, put);
+      const nach = await this.integ<{ enabled?: boolean }>('GET', `/sites/${sid}/firewall/policies/${ziel!.id}`);
+      if (nach.enabled !== an) return { success: false, error: `Policy „${ziel!.name}" ist nach dem Speichern weiterhin ${nach.enabled ? 'ein' : 'aus'} (zurückgelesen)` };
       return { success: true, data: { id: ziel!.id, enabled: an }, display: `✅ Policy „${ziel!.name}" ${an ? 'eingeschaltet' : 'ausgeschaltet'}` };
     }
     await this.integ('DELETE', `/sites/${sid}/firewall/policies/${ziel!.id}`);
