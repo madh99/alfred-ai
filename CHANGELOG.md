@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planprüfung: Go-Templates, selbstprüfende Aktionen; Export-Datei nach Tresor-Übernahme entfernen (v1583)
+
+Realfall bei der Planung des pgAdmin-Umzugs: Die Planprüfung blockierte drei sachlich richtige Schritte.
+
+- **Go-Templates:** Ausdrücke wie `{{range .Config.Env}}{{println .}}{{end}}` von `docker --format` gelten nicht mehr als vergessene Platzhalter.
+- **Selbstprüfende Aktionen:** `kopieren`, `datenbank_kopieren`, `geheim_uebernehmen` und `export_config` prüfen ihr Ergebnis selbst (Prüfsumme, Zeilenzahl, Größe, Datei). Eine zusätzliche Prüfung ist bei ihnen optional; bei allen anderen ändernden Aktionen bleibt sie Pflicht.
+- **`geheim_uebernehmen` mit `quelle_entfernen`:** Eine eigens exportierte Datei direkt unter `/root/` oder `/tmp/` wird nach der Übernahme in den Tresor gleich wieder entfernt, im selben Schritt.
+
 ### Fixed — Planprüfung: VMID per Verweis, Docker-Compose- und DNS-Prüfungen (v1582)
 
 Realfall bei der Planung des Pilots: Die Planprüfung lehnte drei gültige Angaben ab.

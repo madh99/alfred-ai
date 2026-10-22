@@ -125,6 +125,7 @@ export class FernzugriffSkill extends Skill {
         pfad: { type: 'string', description: 'geheim_uebernehmen: Datei mit Geheimnissen an der Quelle (z. B. /opt/app/.env)' },
         tresor_name: { type: 'string', description: 'geheim_uebernehmen: Name des Tresor-Eintrags (danach {{geheimdatei:name}} am Ziel)' },
         zweck: { type: 'string', description: 'geheim_uebernehmen: wofür' },
+        quelle_entfernen: { type: 'boolean', description: 'geheim_uebernehmen: Datei danach entfernen — nur für eigene Export-Dateien unter /root/ oder /tmp/' },
       },
       required: ['action'],
     },
@@ -487,7 +488,13 @@ export class FernzugriffSkill extends Skill {
     if (!r.stdout.length) return { success: false, error: `${pfad} ist leer` };
     await this.deps.tresorSetzen(input.tresor_name, r.stdout, `${z.name}:${pfad}`, typeof input.zweck === 'string' ? input.zweck.slice(0, 200) : undefined);
     this.deps.protokoll?.('I6 Geheimnis in den Tresor übernommen', { zugang: z.name, pfad, tresor: input.tresor_name, bytes: Buffer.byteLength(r.stdout) });
-    return { success: true, data: { tresor_name: input.tresor_name, bytes: Buffer.byteLength(r.stdout), herkunft: `${z.name}:${pfad}` }, display: `${pfad} von ${z.name} als Tresor-Eintrag „${input.tresor_name}“ übernommen (${Buffer.byteLength(r.stdout)} Bytes; Inhalt bleibt am Server).` };
+    // Pilot cf82f3f2: eine eigens exportierte Datei (z. B. Umgebung eines Containers) gleich wieder entfernen — nur unter /root/ oder /tmp/
+    if (input.quelle_entfernen === true) {
+      if (!/^\/(root|tmp)\/[A-Za-z0-9._@+-]+$/.test(pfad)) return { success: false, error: `quelle_entfernen nur für Dateien direkt unter /root/ oder /tmp/ — ${pfad} bleibt (Tresor-Eintrag ist angelegt)` };
+      const rm = await this.wege(owner).lauf(z, fernBefehl(`rm -f -- '${pfad}' && test ! -e '${pfad}'`, true), '', 30_000);
+      if (rm.code !== 0) return { success: false, error: `Tresor-Eintrag angelegt, aber ${pfad} auf ${z.name} nicht entfernt (Exit ${rm.code})` };
+    }
+    return { success: true, data: { tresor_name: input.tresor_name, bytes: Buffer.byteLength(r.stdout), herkunft: `${z.name}:${pfad}` }, display: `${pfad} von ${z.name} als Tresor-Eintrag „${input.tresor_name}“ übernommen (${Buffer.byteLength(r.stdout)} Bytes; Inhalt bleibt am Server)${input.quelle_entfernen === true ? '; Datei an der Quelle entfernt' : ''}.` };
   }
 
   /** I6 — Übertragungen dürfen lange dauern (Standard 1 h, höchstens 4 h) */

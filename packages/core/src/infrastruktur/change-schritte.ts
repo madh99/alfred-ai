@@ -47,14 +47,16 @@ const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_con
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
-const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt
+const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']);
+/** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
+const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'export_config']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
 /** I4c — {{geheim:x}} nur als ganzer Wert in Feldern, die die Skill-Sandbox im Log schwärzt (oberste Ebene, exakte Schreibweise) */
 const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessToken|refreshToken|clientSecret)$/;
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
-const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.))[^}]*\}\}/i;
+const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   if (skill === 'fernzugriff') return aktion === 'lesen' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
@@ -220,7 +222,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       if (einordnung === 'sicherung' && ersteSicherung === undefined) ersteSicherung = nr;
       if ((einordnung === 'aendern' || einordnung === 'loeschen') && ersteAenderung === undefined) ersteAenderung = nr;
       // Prüfung je Aktion (außer reinen Lese-Schritten)
-      if (einordnung !== 'lesen') { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
+      if (einordnung !== 'lesen' && !(SELBST_GEPRUEFT.has(schritt.aktion) && !s.pruefung)) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
       else if (s.pruefung) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
       // Rückweg für ändernde Aktionen
       if (einordnung === 'aendern' || einordnung === 'loeschen') {

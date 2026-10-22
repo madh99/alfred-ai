@@ -247,3 +247,20 @@ describe('I6 Migration im Plan', () => {
     expect(pruefeChangePlan(plan(false), k).fehler.some(x => x.includes('Tresor-Eintrag „dashy-env“ gibt es nicht'))).toBe(true);
   });
 });
+
+describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
+  it('docker --format mit range/println/end ist kein Platzhalter; kopieren ohne eigene Prüfung zulässig', () => {
+    const plan = {
+      titel: 'Env exportieren', begruendung: 'Pilot: Umgebung exportieren und Daten kopieren', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], ohneSicherungGrund: 'Quelle bleibt',
+      schritte: [
+        { titel: 'Env exportieren', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: "docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' pgadmin4-pgadmin-1 > /root/x.env" }, pruefung: { typ: 'datei', zugang: 'dockerhost', pfad: '/root/x.env' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: 'rm -f /root/x.env' } } },
+        { titel: 'Kopieren', art: 'aktion', skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'dockerhost', quelle_pfad: '/opt/a', ziel: 'web1', ziel_pfad: '/srv/a' }, rueckweg: { keiner: 'Quelle bleibt' } },
+      ],
+    };
+    const r = pruefeChangePlan(plan, ctx());
+    expect(r.fehler).toEqual([]);
+    const ohne = pruefeChangePlan({ ...plan, schritte: [{ ...plan.schritte[0], pruefung: undefined }] }, ctx());
+    expect(ohne.fehler.some(x => x.includes('pruefung fehlt'))).toBe(true); // nur selbstprüfende Aktionen sind ausgenommen
+    expect(pruefeChangePlan({ ...plan, schritte: [{ ...plan.schritte[0], parameter: { name: 'dockerhost', befehl: 'echo {{host_id}}' } }] }, ctx()).fehler.some(x => x.includes('Platzhalter'))).toBe(true);
+  });
+});
