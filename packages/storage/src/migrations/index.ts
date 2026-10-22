@@ -3160,4 +3160,24 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE cmdb_change_requests ADD COLUMN ankuendigung TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 153,
+    description: 'I4b Teil 4 — infra_standard_freigaben, fernzugaenge.sicherheitsupdates (SQLite-Spiegel zu PG v157).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_standard_freigaben (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          vorlage TEXT NOT NULL,
+          abdruck TEXT NOT NULL,
+          status TEXT NOT NULL,
+          frage_hash TEXT,
+          frage_bis TEXT,
+          freigegeben_at TEXT,
+          widerrufen_at TEXT,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_standard_vorlage ON infra_standard_freigaben (user_id, vorlage)');
+      try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN sicherheitsupdates TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

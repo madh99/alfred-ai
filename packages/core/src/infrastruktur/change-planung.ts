@@ -14,6 +14,8 @@ export interface ChangeSpeicher {
   setzeSchritte(owner: string, id: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest>;
   freigeben(owner: string, id: string, fingerabdruck: string, ueber: 'frage' | 'web'): Promise<CmdbChangeRequest>;
   setzeFreigabeAnfrage(owner: string, id: string, a: { hash: string; bis: string; fingerabdruck: string } | null): Promise<void>;
+  /** I4b Teil 4 — Change aus freigegebener Standard-Vorlage (sofort freigegeben) */
+  legeStandardAn?(owner: string, d: ChangeSchrittDaten, vorlage: string): Promise<CmdbChangeRequest>;
 }
 /** Gültigkeit einer Freigabe-Frage (das Ja kann auch Stunden später kommen; der Fingerabdruck bindet sie an den Plan) */
 export const FREIGABE_FRAGE_GUELTIG_MS = 24 * 3_600_000;
@@ -36,7 +38,7 @@ const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', 
 export function planAusChange(c: CmdbChangeRequest): Record<string, unknown> {
   const z = (c.pruefung as { zusatz?: { zweck?: string; ohneSicherungGrund?: string } } | undefined)?.zusatz ?? {};
   return {
-    titel: c.title, begruendung: c.description ?? '', typ: c.type === 'emergency' ? 'notfall' : c.type, risiko: c.riskLevel,
+    titel: c.title, begruendung: c.description ?? '', typ: c.type === 'emergency' ? 'notfall' : 'normal', risiko: c.riskLevel,
     ausfallMinuten: c.ausfallMinuten, ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), betroffen: c.affectedAssetIds,
     abhaengigVon: c.abhaengigVon ?? [], ...(z.zweck ? { zweck: z.zweck } : {}), ...(z.ohneSicherungGrund ? { ohneSicherungGrund: z.ohneSicherungGrund } : {}),
     schritte: (c.schritte ?? []) as unknown[],
@@ -121,6 +123,24 @@ export class ChangePlanung {
     }
     this.d.protokoll?.('I3 Changes geplant', { anzahl: angelegt.length, vorhaben: vorhaben?.id, ids: angelegt.map(c => c.id) });
     return { ok: true, changes: angelegt };
+  }
+
+  /**
+   * I4b Teil 4 — Plan einer freigegebenen Standard-Vorlage prüfen (dieselben Regeln wie jeder Change) und als Standard-Change
+   * speichern; das Merkmal (z. B. Host:Container) dient den Grenzen („höchstens 1× je Tag“).
+   */
+  async planenStandard(owner: string, roh: Record<string, unknown>, vorlage: string, merkmal: string): Promise<{ ok: true; change: CmdbChangeRequest } | { ok: false; fehler: string[] }> {
+    if (!this.d.itsm.legeStandardAn) return { ok: false, fehler: ['Standard-Changes nicht verfügbar'] };
+    const ctx = await this.kontext(owner);
+    const e = pruefeChangePlan(roh, ctx);
+    if (e.fehler.length) return { ok: false, fehler: e.fehler };
+    const aus = await this.d.auswirkung(e.betroffeneIds);
+    if (aus.offeneIncidents.some(i => /\b(critical|kritisch)\b/i.test(i)) && vorlage !== 'neustart_unhealthy') return { ok: false, fehler: [`Offener kritischer Incident auf betroffenen Assets (${aus.offeneIncidents.join('; ')}) — kein Standard-Change`] };
+    const d = this.daten(e.plan, e.betroffeneIds, [], aus, [...e.hinweise, `Standard-Change aus Vorlage ${vorlage} (vom Owner vorab freigegeben)`, ...this.auswirkungsHinweise(aus, 'normal')]);
+    (d.pruefung as unknown as { zusatz: Record<string, unknown> }).zusatz = { ...((d.pruefung as unknown as { zusatz?: Record<string, unknown> }).zusatz ?? {}), vorlage, merkmal };
+    const c = await this.d.itsm.legeStandardAn(owner, d, vorlage);
+    this.d.protokoll?.('I4b Standard-Change gespeichert', { id: c.id, vorlage, merkmal, status: c.status });
+    return { ok: true, change: c };
   }
 
   /** Plan eines vorhandenen Changes ersetzen (neue Prüfung; Freigabe verfällt bei geändertem Fingerabdruck). */

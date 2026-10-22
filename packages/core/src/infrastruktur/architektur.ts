@@ -9,7 +9,7 @@
  */
 import type { HostBestand } from './sammler.js';
 import { groesseBytes } from './sammler.js';
-import type { NetzEintrag, ProxyEintrag, VmEintrag } from './bericht.js';
+import { dnsText, domainsMitDns, type DnsEintrag, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 
 export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'rocky-9', 'alma-9', 'alpine-3', 'windows-server-2022', 'windows-server-2025'] as const;
 export const NETZ_GERAETE = ['unifi', 'pfsense', 'mikrotik'] as const;
@@ -50,6 +50,8 @@ export interface PlanungsGrundlage {
   speicher: SpeicherStand[];
   netze: NetzEintrag[];
   vms: VmEintrag[];
+  /** Domain → öffentliches DNS (Cloudflare), z. B. „Cloudflare Proxy: A 84.x“ */
+  dns: Record<string, string>;
 }
 
 export interface ArchitekturGruppe {
@@ -91,7 +93,7 @@ export function hostPorts(ports: string): number[] {
 }
 
 /** Einheiten (Compose-Projekt, einzelner Container, Host) und Ressourcen-Stand als Grundlage für Planung und Prüfung. */
-export function planungsGrundlage(e: { hosts: HostBestand[]; knoten: KnotenStand[]; speicher: SpeicherStand[]; netze: NetzEintrag[]; proxy: ProxyEintrag[]; vms: VmEintrag[] }): PlanungsGrundlage {
+export function planungsGrundlage(e: { hosts: HostBestand[]; knoten: KnotenStand[]; speicher: SpeicherStand[]; netze: NetzEintrag[]; proxy: ProxyEintrag[]; vms: VmEintrag[]; dns?: DnsEintrag[] }): PlanungsGrundlage {
   const einheiten: Einheit[] = [];
   const proxyOhne: string[] = [];
   for (const h of e.hosts) {
@@ -124,6 +126,7 @@ export function planungsGrundlage(e: { hosts: HostBestand[]; knoten: KnotenStand
   return {
     hosts: e.hosts.map(h => ({ zugang: h.zugang, host: h.host, ...(h.os ? { os: h.os.name } : {}), ...(h.cpus ? { cpus: h.cpus } : {}), ...(h.ram ? { ramGesamt: h.ram.gesamt, ramBelegt: h.ram.belegt } : {}), ...(h.erfasst ? { erfasst: h.erfasst } : {}) })),
     einheiten, proxyOhneZuordnung: proxyOhne, knoten: e.knoten, speicher: e.speicher, netze: e.netze, vms: e.vms,
+    dns: e.dns?.length ? Object.fromEntries(domainsMitDns(e.proxy, e.dns).map(s => [s.domain, dnsText(s)])) : {},
   };
 }
 
@@ -137,6 +140,8 @@ export function grundlageText(g: PlanungsGrundlage): string {
     z.push(`| ${e.name} | ${e.art} | ${e.host} | ${e.art === 'host' ? '—' : `${e.container.length}${zust ? ` (${zust} nicht laufend)` : ''}: ${e.container.map(c => c.image.replace(/@sha256:.*/, '')).slice(0, 4).join(', ')}`} | ${mb(e.ramBytes)} | ${e.datenBytes ? gb(e.datenBytes) : '—'} | ${e.ports.slice(0, 8).join(', ') || '—'} | ${e.proxy.join(', ') || '—'} | ${e.bindMounts.length ? e.bindMounts.slice(0, 3).join(', ') + (e.bindMounts.length > 3 ? ' …' : '') : '—'} |`);
   }
   if (g.proxyOhneZuordnung.length) z.push('', `Proxy-Einträge auf diese Hosts ohne Zuordnung (Host-Netz oder kein Dienst): ${g.proxyOhneZuordnung.join('; ')}`);
+  const domains = [...new Set(g.einheiten.flatMap(e => e.proxy))];
+  if (domains.length && Object.keys(g.dns).length) z.push('', '### Öffentliches DNS der Domains (Cloudflare)', '', ...domains.map(d => `- ${d}: ${g.dns[d] ?? 'unbekannt'}`), '', 'Zeigt ein Eintrag auf die WAN-Adresse (NPM), ändert sich beim Umzug nur das NPM-Ziel; zeigt er direkt auf den Host, ist auch ein DNS-Schritt (cloudflare_dns update_record) nötig.');
   z.push('', '### Proxmox-Knoten', '', ...g.knoten.map(k => `- ${k.name}${k.online ? '' : ' (offline)'}: ${k.cpus ?? '?'} CPUs, RAM ${gb(k.ramBelegt)} von ${gb(k.ramGesamt)} belegt, frei ${gb(Math.max(0, k.ramGesamt - k.ramBelegt))}`));
   z.push('', '### Speicher (für VM-/CT-Disks: Inhalt images bzw. rootdir)', '', ...g.speicher.map(s => `- ${s.name}${s.typ ? ` (${s.typ}${s.inhalt ? `; ${s.inhalt}` : ''})` : ''}: ${s.knoten ? Object.entries(s.knoten).map(([k, w]) => `${k} ${gb(w.belegt)}/${gb(w.gesamt)}`).join(', ') : `${gb(s.belegt)} von ${gb(s.gesamt)} belegt`}`));
   z.push('', '### Netze/VLANs (vorhanden)', '', ...g.netze.map(n => `- ${n.name} (${n.quelle}${n.vlan !== undefined && n.vlan !== null && n.vlan !== '' ? `, VLAN ${n.vlan}` : ''}${n.subnet ? `, ${n.subnet}` : ''})`));
@@ -361,7 +366,7 @@ export function architekturDokument(v: { titel: string; ziel: string; id: string
   if (a.firewall.length) { z.push('', 'Firewall (alles andere zwischen den Zonen gesperrt):', '', '| Von | Nach | Protokoll | Ports | Begründung |', '|---|---|---|---|---|'); for (const w of a.firewall) z.push(`| ${zelle(w.von)} | ${zelle(w.nach)} | ${w.protokoll} | ${w.ports} | ${zelle(w.begruendung)} |`); }
   z.push('', '## 5. Reverse-Proxy und DNS', '');
   const umzug = a.gruppen.filter(x => x.ziel === 'vm' || x.ziel === 'lxc');
-  const domains = umzug.flatMap(x => x.einheiten.flatMap(e => (einheit.get(e)?.proxy ?? []).map(d => `- ${d} → neu ${x.vmName} (Gruppe ${x.name})`)));
+  const domains = umzug.flatMap(x => x.einheiten.flatMap(e => (einheit.get(e)?.proxy ?? []).map(d => `- ${d} → neu ${x.vmName} (Gruppe ${x.name})${g.dns[d] ? ` · DNS: ${g.dns[d]}` : ''}`)));
   z.push(domains.length ? `Umzustellende Proxy-Einträge (aus dem Bestand):\n${domains.join('\n')}` : 'Keine Proxy-Einträge betroffen (laut Bestand).');
   if (g.proxyOhneZuordnung.length) z.push('', `Ohne eindeutige Zuordnung (manuell prüfen): ${g.proxyOhneZuordnung.join('; ')}`);
   if (a.proxyDns) z.push('', a.proxyDns);

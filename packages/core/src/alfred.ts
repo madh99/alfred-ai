@@ -7006,6 +7006,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             setzeSchritte: (o, id, d) => itsmI3.setzeSchritte(o, id, d),
             freigeben: (o, id, fp, ueber) => itsmI3.freigebeSchrittChange(o, id, fp, ueber),
             setzeFreigabeAnfrage: (o, id, a) => itsmI3.setzeFreigabeAnfrage(o, id, a),
+            legeStandardAn: (o, d, v) => itsmI3.legeStandardChangeAn(o, d, v),
           },
           skill: (n) => skillRegistry.get(n) as never,
           assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status, assetType: a.assetType, ...(a.sourceId ? { sourceId: a.sourceId } : {}), ...(a.sourceSkill ? { sourceSkill: a.sourceSkill } : {}) })); },
@@ -7167,7 +7168,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           proxy: async () => {
             const o = ownerFz(); if (!o) return [];
             const l = await cmdbFz.listAssets(o, { sourceSkill: 'nginx_proxy_manager' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
-            return l.filter(a => a.assetType === 'proxy_host' && a.status === 'active').map(a => { const at = a.attributes as { domain_names?: string[]; forward_host?: string; forward_port?: number }; return { domains: at.domain_names ?? [a.name], forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0) }; });
+            return l.filter(a => a.assetType === 'proxy_host' && a.status === 'active').map(a => { const at = a.attributes as { domain_names?: string[]; forward_host?: string; forward_port?: number }; return { domains: at.domain_names ?? [a.name], forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0), assetId: a.id }; });
+          },
+          // Owner 22.10.: öffentliche Domains über Cloudflare — DNS-Einträge aus der CMDB (Quelle cloudflare_dns)
+          dns: async () => {
+            const o = ownerFz(); if (!o) return [];
+            const l = await cmdbFz.listAssets(o, { sourceSkill: 'cloudflare_dns', assetType: 'dns_record' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+            return l.filter(a => a.status === 'active').map(a => { const at = a.attributes as { type?: string; content?: string; proxied?: boolean; zone?: string }; return { fqdn: a.fqdn ?? a.name.replace(/ \([A-Z]+\)$/, ''), typ: String(at.type ?? ''), inhalt: String(at.content ?? ''), ...(at.proxied !== undefined ? { proxied: !!at.proxied } : {}), zone: String(at.zone ?? ''), assetId: a.id }; });
+          },
+          verknuepfeDns: async (paare) => {
+            const o = ownerFz(); if (!o) return 0;
+            let n = 0;
+            for (const p of paare) { await cmdbFz.upsertRelation(o, p.dnsAssetId, p.proxyAssetId, 'resolves_to', true).catch(() => undefined); n++; }
+            return n;
           },
           netze: async () => {
             const o = ownerFz(); if (!o) return [];
@@ -7223,6 +7236,56 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           changes: this.changePlanung,
           motor: this.changeMotor,
+          standard: new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
+            stand: (o) => wartungRepo.standardStand(o),
+            setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
+            speichere: (o, plan, v, m) => this.changePlanung!.planenStandard(o, plan, v, m),
+            nachAnlage: () => { void this.changeMotor?.anstossen().catch(() => undefined); },
+            frage: async (description, params) => {
+              if (!this.confirmationQueue) return false;
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (!chatId) return false;
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform: this.config.telegram?.enabled ? 'telegram' : 'api', source: 'geraet', sourceId: `infrastruktur-standard-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
+              return ok !== false;
+            },
+            kontext: async (o) => {
+              const vms = await cmdbFz.listAssets(o, { sourceSkill: 'proxmox' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>);
+              const vmAus = (a: (typeof vms)[number]) => ({ assetId: a.id, vmid: Number(a.identifier?.replace('vmid:', '')), node: String(a.sourceId ?? '').split(':')[0]!, name: a.name });
+              const zugaenge = await this.fernzugriffRef?.aktiveZugaenge() ?? [];
+              const schalter = await wartungRepo.updatesSchalter(o);
+              const changes = await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => []);
+              return {
+                jetzt: new Date(),
+                vm: async (k) => {
+                  const n = k.trim().toLowerCase();
+                  const t = vms.filter(a => (a.assetType === 'vm' || a.assetType === 'lxc') && a.status === 'active' && (a.name.toLowerCase() === n || a.identifier === `vmid:${n}` || a.id === k));
+                  return t.length === 1 ? vmAus(t[0]!) : { fehler: t.length ? `VM „${k}“ mehrdeutig` : `VM „${k}“ nicht gefunden (aktive Proxmox-VM)` };
+                },
+                vmFuerZugang: async (z) => {
+                  const host = zugaenge.find(x => x.name === z)?.host;
+                  const t = host ? vms.filter(a => (a.assetType === 'vm' || a.assetType === 'lxc') && a.status === 'active' && a.ipAddress === host) : [];
+                  return t.length === 1 ? vmAus(t[0]!) : undefined;
+                },
+                zugangAsset: async (z) => zugaenge.find(x => x.name === z)?.cmdbAssetId,
+                container: (z, name) => {
+                  const h = this.hostBestaende.get(z);
+                  const c = h?.container.find(x => x.name === name);
+                  if (!c || !h) return undefined;
+                  const datei = c.composeProjekt ? h.compose.find(p => p.name === c.composeProjekt)?.dateien.split(',')[0] : undefined;
+                  return { image: c.image, zustand: c.zustand, ...(c.gesundheit ? { gesundheit: c.gesundheit } : {}), ...(c.composeProjekt ? { composeProjekt: c.composeProjekt } : {}), ...(c.composeDienst ? { composeDienst: c.composeDienst } : {}), ...(datei ? { composeDatei: datei } : {}) };
+                },
+                snapshots: async (vmid, node) => {
+                  const sk = skillRegistry.get('proxmox'); if (!sk) return [];
+                  const r = await skillSandbox.execute(sk, { action: 'list_snapshots', vmid, node }, ctxOwnerI4b());
+                  return Array.isArray(r.data) ? (r.data as Array<{ name?: string }>).filter(s => s.name && s.name !== 'current').map(s => ({ name: s.name! })) : [];
+                },
+                updatesAn: async (z) => schalter[z] === 'an',
+                anzahl: async (v, m, seit) => changes.filter(c => c.freigegebenUeber === `standard:${v}` && Date.parse(c.createdAt) >= seit && ((c.pruefung as { zusatz?: { merkmal?: string } } | undefined)?.zusatz?.merkmal === m)).length,
+              };
+            },
+            protokoll: (msg, daten) => this.logger.info(daten, msg),
+          }),
+          updatesSchalter: { liste: (o) => wartungRepo.updatesSchalter(o), setze: (o, n, an) => wartungRepo.setzeUpdatesSchalter(o, n, an) },
           wartung: {
             ...wartungLesen,
             kalenderAnlegen: (o, e) => wartungRepo.kalenderAnlegen(o, e),

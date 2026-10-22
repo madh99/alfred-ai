@@ -5,6 +5,7 @@ import type { HostBestand } from './sammler.js';
 import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
 import { changeAnzeige, type ChangePlanung } from './change-planung.js';
 import type { ChangeMotor } from './change-motor.js';
+import type { StandardChanges } from './standard-changes.js';
 import { KANAELE, ZEITPUNKTE, regelFehler, regelText, type Empfaenger, type Kanal, type KalenderEintrag, type BenachrichtigungsRegel, type Zeitpunkt } from './wartung.js';
 import { erreichbar } from './wartung-dienst.js';
 import { PRUEF_TYPEN } from './change-schritte.js';
@@ -42,6 +43,10 @@ export interface InfrastrukturDeps {
   vms: () => Promise<VmEintrag[]>;
   proxy: () => Promise<ProxyEintrag[]>;
   netze: () => Promise<NetzEintrag[]>;
+  /** Öffentliche DNS-Einträge (Cloudflare) aus der CMDB */
+  dns?: () => Promise<import('./bericht.js').DnsEintrag[]>;
+  /** CMDB-Beziehungen DNS-Eintrag → Proxy-Eintrag (resolves_to) */
+  verknuepfeDns?: (paare: Array<{ dnsAssetId: string; proxyAssetId: string }>) => Promise<number>;
   backups?: () => Promise<BackupStand | undefined>;
   speichereBericht: (titel: string, markdown: string) => Promise<string>;
   /** I4b Teil 3 — Befunde als ITSM-Problems (ohne Doppelte, ohne Sicherung) */
@@ -67,15 +72,18 @@ export interface InfrastrukturDeps {
     regelAnlegen(o: string, e: { name: string; geltung: unknown; empfaenger: unknown[]; kanaele: string[]; zeitpunkte: string[] }): Promise<string>;
     entferne(o: string, id: string): Promise<boolean>;
   };
+  // ── I4b Teil 4 ──
+  standard?: StandardChanges;
+  updatesSchalter?: { liste(o: string): Promise<Record<string, string>>; setze(o: string, name: string, an: boolean): Promise<boolean> };
   /** Alfred-Benutzer (Familie) nach Name auflösen → Telegram-ID */
   nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; konten: Record<string, string> } | { unbekannt: string[] } | undefined>;
 }
 
-export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'unifi', 'pfsense', 'mikrotik'];
+export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'cloudflare_dns', 'unifi', 'pfsense', 'mikrotik'];
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -104,6 +112,7 @@ export class InfrastrukturSkill extends Skill {
       + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
+      + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
       + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
     version: '2.0.0',
@@ -166,6 +175,10 @@ export class InfrastrukturSkill extends Skill {
         kanaele: { type: 'array', items: { type: 'string', enum: [...KANAELE] } },
         zeitpunkte: { type: 'array', items: { type: 'string', enum: [...ZEITPUNKTE] } },
         id: { type: 'string', description: 'wartung_entfernen: ID des Fensters/der Sperre/der Regel' },
+        vorlage: { type: 'string', description: 'Standard-Vorlage: snapshot_anlegen, snapshot_aufraeumen, sicherheitsupdates, image_aktualisieren, neustart_unhealthy' },
+        parameter: { type: 'object', description: 'standard_change: Parameter der Vorlage (siehe standard_liste), z. B. {vm, tage} oder {zugang, container}' },
+        zugang: { type: 'string', description: 'updates_schalter: Fernzugang-Name' },
+        an: { type: 'boolean', description: 'updates_schalter: true = Sicherheitsupdates automatisch (Standard-Change c), false = nur Info' },
         wortlaut: { type: 'string', description: 'entscheiden: die Worte des Owners' },
       },
       required: ['action'],
@@ -184,6 +197,7 @@ export class InfrastrukturSkill extends Skill {
     const repo = this.deps.vorhaben;
     if (action.startsWith('change') || action === 'freigabe_anfragen' || action === 'freigeben') return this.changeAktion(owner, repo, action, input);
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
+    if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
     switch (action) {
       case 'vorhaben_anlegen': return this.anlegen(owner, repo, input);
       case 'vorhaben_liste': {
@@ -210,12 +224,19 @@ export class InfrastrukturSkill extends Skill {
     const start = Date.now();
     const quellen = Array.isArray(input.quellen) && input.quellen.length ? input.quellen.filter((q): q is string => typeof q === 'string' && BESTAND_QUELLEN.includes(q)) : BESTAND_QUELLEN;
     const discovery = await this.deps.entdecke(quellen);
-    const [vms, proxy, netze, backups] = await Promise.all([
+    const [vms, proxy, netze, backups, dns] = await Promise.all([
       this.deps.vms().catch(() => []), this.deps.proxy().catch(() => []), this.deps.netze().catch(() => []),
       this.deps.backups?.().catch(() => undefined) ?? Promise.resolve(undefined),
+      this.deps.dns?.().catch(() => []) ?? Promise.resolve([]),
     ]);
     const hosts = this.deps.hosts();
-    const r = bestandsbericht({ hosts, vms, proxy, netze, ...(backups ? { backups } : {}) });
+    const r = bestandsbericht({ hosts, vms, proxy, netze, ...(backups ? { backups } : {}), ...(dns.length ? { dns } : {}) });
+    if (dns.length && this.deps.verknuepfeDns) {
+      const { domainsMitDns } = await import('./bericht.js');
+      const paare = domainsMitDns(proxy, dns).filter(s => s.eintrag?.assetId && s.proxy.assetId).map(s => ({ dnsAssetId: s.eintrag!.assetId!, proxyAssetId: s.proxy.assetId! }));
+      const n = await this.deps.verknuepfeDns(paare).catch(() => 0);
+      this.deps.protokoll?.('I1 DNS → Proxy verknüpft', { paare: paare.length, neu: n });
+    }
     const titel = `Bestandsbericht ${new Date().toLocaleDateString('de-AT', { timeZone: 'Europe/Vienna' })}`;
     const markdown = `${r.markdown}\n\n## Discovery\n\n${discovery.map(d => `- ${d}`).join('\n')}\n`;
     const docId = await this.deps.speichereBericht(titel, markdown);
@@ -256,11 +277,12 @@ export class InfrastrukturSkill extends Skill {
     const finde = () => hosts.map(h => this.deps.hosts().find(b => b.zugang.toLowerCase() === h.toLowerCase()));
     if (!finde().every(frisch)) await this.deps.entdecke(['fernzugriff']);
     const bestaende = finde().filter((b): b is HostBestand => !!b);
-    const [knoten, speicher, netze, proxy, vms] = await Promise.all([
+    const [knoten, speicher, netze, proxy, vms, dns] = await Promise.all([
       this.deps.knoten?.().catch(() => []) ?? Promise.resolve([]), this.deps.speicher?.().catch(() => []) ?? Promise.resolve([]),
       this.deps.netze().catch(() => []), this.deps.proxy().catch(() => []), this.deps.vms().catch(() => []),
+      this.deps.dns?.().catch(() => []) ?? Promise.resolve([]),
     ]);
-    return planungsGrundlage({ hosts: bestaende, knoten, speicher, netze, proxy, vms });
+    return planungsGrundlage({ hosts: bestaende, knoten, speicher, netze, proxy, vms, dns });
   }
 
   private async vorschlagen(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, roh: unknown): Promise<SkillResult> {
@@ -419,6 +441,39 @@ export class InfrastrukturSkill extends Skill {
       if (treffer.length !== 1) return { success: false, error: `Eintrag „${k}“ nicht eindeutig gefunden` };
       await w.entferne(owner, treffer[0]!);
       return { success: true, display: `Eintrag ${treffer[0]!.slice(0, 8)} entfernt.` };
+    }
+    return { success: false, error: 'Unbekannte Aktion' };
+  }
+
+  private async standardAktion(owner: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const st = this.deps.standard;
+    if (!st) return { success: false, error: 'Standard-Changes nicht verfügbar' };
+    const key = typeof input.vorlage === 'string' ? input.vorlage.trim() : '';
+    const wortlaut = typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
+    if (action === 'standard_liste') {
+      const l = await st.liste(owner);
+      const sch = await this.deps.updatesSchalter?.liste(owner).catch(() => ({})) ?? {};
+      return { success: true, data: { vorlagen: l, updatesSchalter: sch }, display: [...l.map(v => `- **${v.titel}** (${v.key}) — ${v.zustand}\n  ${v.beschreibung}${Object.keys(v.parameter).length ? `\n  Parameter: ${Object.entries(v.parameter).map(([k, t]) => `${k} = ${t}`).join('; ')}` : ''}`), '', `Sicherheitsupdates je Host: ${Object.entries(sch).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}`].join('\n') };
+    }
+    if (action === 'standard_freigabe_anfragen') { const t = await st.freigabeAnfragen(owner, key); return { success: t.startsWith('Freigabe-Frage'), display: t }; }
+    if (action === 'standard_freigeben') { const r = await st.freigebenNachJa(owner, key, input.freigabe); return r.ok ? { success: true, display: r.text } : { success: false, error: r.text }; }
+    if (action === 'standard_widerrufen') {
+      if (wortlaut.length < 2) return { success: false, error: 'wortlaut: die Worte des Owners' };
+      return { success: true, display: await st.widerrufen(owner, key) };
+    }
+    if (action === 'updates_schalter') {
+      const z = typeof input.zugang === 'string' ? input.zugang.trim() : '';
+      if (wortlaut.length < 2) return { success: false, error: 'wortlaut: die Worte des Owners — den Schalter stellt nur der Owner' };
+      if (!z || typeof input.an !== 'boolean') return { success: false, error: 'zugang und an (true/false) angeben' };
+      const ok = await this.deps.updatesSchalter?.setze(owner, z, input.an);
+      this.deps.protokoll?.('I4b Updates-Schalter', { zugang: z, an: input.an, wortlaut: wortlaut.slice(0, 200) });
+      return ok ? { success: true, display: `Sicherheitsupdates für ${z}: ${input.an ? 'an — Alfred darf sie als Standard-Change (c) einspielen, wenn die Vorlage freigegeben ist' : 'aus — nur Info'}.` } : { success: false, error: `Fernzugang ${z} nicht gefunden` };
+    }
+    if (action === 'standard_change') {
+      const p = input.parameter && typeof input.parameter === 'object' ? input.parameter as Record<string, unknown> : {};
+      const r = await st.anlegen(owner, key, p);
+      if (!r.ok) return { success: false, error: `Kein Standard-Change: ${r.fehler.join('; ')}` };
+      return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Standard-Change **${r.change.title}** (${r.change.id.slice(0, 8)}) angelegt und durch die Vorlage freigegeben — der Motor startet ihn nach Zeitplan (Wartungsfenster/Sperrzeiten) und meldet das Ergebnis.` };
     }
     return { success: false, error: 'Unbekannte Aktion' };
   }

@@ -51,7 +51,8 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot']);
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
-const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.|geheim:))[^}]*\}\}/i;
+/** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
+const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.|geheim:|\.|json \.))[^}]*\}\}/i;
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   if (skill === 'fernzugriff') return aktion === 'lesen' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
@@ -212,7 +213,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         const rw = obj(s.rueckweg);
         if (!rw) f.push(`${wo}: rueckweg fehlt (ändernde Aktion)`);
         else if (txt(rw.keiner)) {
-          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen') f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
+          const neustart = schritt.skill === 'fernzugriff' && /^docker restart [\w.-]+$/.test(String(schritt.parameter.befehl ?? '').trim());
+          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {
           const rs = ctx.skill(txt(rw.skill));

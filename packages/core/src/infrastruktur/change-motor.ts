@@ -186,7 +186,7 @@ export class ChangeMotor {
   private async aktion(skill: string, aktion: string, p: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string }> {
     if (skill === 'fernzugriff' && (aktion === 'lesen' || aktion === 'ausfuehren')) {
       const name = String(p.name ?? ''); const befehl = String(p.befehl ?? '');
-      if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs); return { ok: true, ausgabe: t, daten: { ausgabe: t.slice(0, 2000) } }; }
+      if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
       const r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
     }

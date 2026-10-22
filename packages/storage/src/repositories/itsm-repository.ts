@@ -966,6 +966,19 @@ export class ItsmRepository {
     return (await this.getChangeRequestById(userId, e.id))!;
   }
 
+  /**
+   * I4b Teil 4 — Change aus einer vom Owner vorab freigegebenen Standard-Vorlage: Typ standard, sofort freigegeben für genau seinen
+   * Fingerabdruck (freigegeben_ueber = standard:<vorlage>). Der Aufrufer prüft Vorlagen-Freigabe, Grenzen und Planprüfung.
+   */
+  async legeStandardChangeAn(userId: string, d: ChangeSchrittDaten, vorlage: string): Promise<CmdbChangeRequest> {
+    if (d.pruefung.fehler.length) throw new Error('Standard-Change mit Prüffehlern');
+    const c = await this.legeSchrittChangeAn(userId, { ...d, type: 'standard' });
+    const now = new Date().toISOString();
+    await this.db.execute(`UPDATE cmdb_change_requests SET status = 'approved', freigabe_fingerabdruck = fingerabdruck, freigegeben_at = ?, freigegeben_ueber = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'submitted'`,
+      [now, `standard:${vorlage}`, now, c.id, userId]);
+    return (await this.getChangeRequestById(userId, c.id))!;
+  }
+
   /** I4b — angekündigten Start und gesendete Benachrichtigungen am Change festhalten (Plan und Freigabe bleiben unberührt). */
   async setzeAnkuendigung(userId: string, id: string, a: { start?: string; gesendet: string[] }): Promise<void> {
     await this.db.execute('UPDATE cmdb_change_requests SET ankuendigung = ?, updated_at = ? WHERE id = ? AND user_id = ?', [JSON.stringify(a), new Date().toISOString(), id, userId]);

@@ -2469,4 +2469,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS ankuendigung TEXT', []);
     },
   },
+  {
+    version: 157,
+    description: 'I4b Teil 4 — infra_standard_freigaben (einmalige Owner-Freigabe je Standard-Change-Vorlage), fernzugaenge.sicherheitsupdates (Schalter je Host) (PG-Spiegel zu SQLite v153).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_standard_freigaben (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          vorlage TEXT NOT NULL,
+          abdruck TEXT NOT NULL,
+          status TEXT NOT NULL,
+          frage_hash TEXT,
+          frage_bis TEXT,
+          freigegeben_at TEXT,
+          widerrufen_at TEXT,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_standard_vorlage ON infra_standard_freigaben (user_id, vorlage)', []);
+      await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS sicherheitsupdates TEXT', []);
+    },
+  },
 ];

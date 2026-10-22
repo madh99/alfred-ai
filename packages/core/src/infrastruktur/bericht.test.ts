@@ -50,7 +50,7 @@ describe('I1 Bestandsbericht', () => {
       vms: [{ name: 'docker-host', typ: 'vm', status: 'active', vmid: 120, node: 'pve', ip: '192.168.1.211' }], proxy: [{ domains: ['matrix.example.at'], forwardHost: '192.168.1.211', forwardPort: 8008 }],
       netze: [{ quelle: 'unifi', name: 'Default', subnet: '192.168.1.0/24' }, { quelle: 'pfsense', name: 'IoT', vlan: 30 }],
     }, jetzt);
-    for (const s of ['# Bestandsbericht', '## Auffälligkeiten', '## Host dockerhost (192.168.1.211)', '| synapse | matrixdotorg/synapse | running (healthy) | matrix/synapse | matrix | synapse_data |', '## Proxmox VMs/Container', '**pfsense:** IoT (VLAN 30)', 'matrix.example.at → 192.168.1.211:8008']) expect(r.markdown).toContain(s);
+    for (const s of ['# Bestandsbericht', '## Auffälligkeiten', '## Host dockerhost (192.168.1.211)', '| synapse | matrixdotorg/synapse | running (healthy) | matrix/synapse | matrix | synapse_data |', '## Proxmox VMs/Container', '**pfsense:** IoT (VLAN 30)', '| matrix.example.at | 192.168.1.211:8008 | — |']) expect(r.markdown).toContain(s);
     expect(r.kurz).toContain('1 Container');
   });
 });
@@ -86,5 +86,18 @@ describe('I4b Teil 3 — Befunde als Problems', () => {
     const r2 = await befundeAlsProblems(a, z, { docId: 'd', datum: 'heute' }, { hosts: new Set(['dockerhost']), alle: false });
     expect(r2).toMatchObject({ neu: [], bekannt: 2 });
     expect(geloest).toEqual(['p-weg']); // anderer Host nicht erfasst → p-alt bleibt
+  });
+});
+
+describe('Cloudflare (Owner 22.10.: öffentliche Domains)', () => {
+  it('Domain ↔ DNS-Eintrag, Wildcard, außerhalb der Zonen; Befund ohne Eintrag', async () => {
+    const { domainsMitDns, dnsText } = await import('./bericht.js');
+    const proxy = [{ domains: ['chat.3033.at'], forwardHost: '192.168.1.211', forwardPort: 8008 }, { domains: ['neu.3033.at'], forwardHost: '192.168.1.211', forwardPort: 81 }, { domains: ['strom.dohnal.local'], forwardHost: '192.168.1.211', forwardPort: 3070 }, { domains: ['x.wild.at'], forwardHost: 'h', forwardPort: 1 }];
+    const dns = [{ fqdn: 'chat.3033.at', typ: 'A', inhalt: '84.1.2.3', proxied: true, zone: '3033.at' }, { fqdn: '*.wild.at', typ: 'CNAME', inhalt: 'wild.at', proxied: false, zone: 'wild.at' }, { fqdn: '3033.at', typ: 'MX', inhalt: 'mail', zone: '3033.at' }];
+    const s = domainsMitDns(proxy, dns);
+    expect(s.map(dnsText)).toEqual(['Cloudflare Proxy: A 84.1.2.3', 'Cloudflare-Zone 3033.at, kein Eintrag', 'nicht in Cloudflare', 'Cloudflare nur DNS: CNAME wild.at (Wildcard)']);
+    const a = auffaelligkeiten({ hosts: [], vms: [], proxy, dns }, jetzt);
+    expect(a.map(x => x.text)).toEqual(['neu.3033.at: NPM-Eintrag vorhanden, aber kein DNS-Eintrag in der Cloudflare-Zone 3033.at']);
+    expect(a[0]!.schluessel).toBe('proxy-dns:neu.3033.at');
   });
 });

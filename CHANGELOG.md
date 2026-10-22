@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standard-Changes mit einmaliger Owner-Freigabe; Cloudflare in der Bestandsaufnahme (v1567, Spec Infrastruktur-Vorhaben I4b Teil 4)
+
+Owner 22.10.: „Teil 4 wie vorgeschlagen umsetzen“ (Vorschlag 5b-11 a–g) und die Frage, warum Cloudflare für öffentliche Domains nicht eingebunden ist.
+
+- **Standard-Change-Vorlagen:**
+  - Der Owner gibt jede Vorlage **einmal per Button** frei (Hash der Einmal-Freigabe, an Schlüssel, Version und Beschreibung gebunden); jede ist einzeln widerrufbar, und eine Änderung der Vorlage lässt die Freigabe verfallen.
+  - Danach legt Alfred daraus Changes ohne Einzel-Ja an (Typ `standard`, Freigabe `standard:<vorlage>`). Sie durchlaufen dieselbe Planprüfung und denselben Motor (Wartungsfenster, Sperrzeiten, Ankündigung); offene kritische Incidents blockieren.
+  - Neue Tabelle `infra_standard_freigaben` sowie Schalter `fernzugaenge.sicherheitsupdates` (PG v157 / SQLite v153).
+- **Vorlagen:**
+  - **(a)** `snapshot_anlegen` (`alfred_JJJJMMTT_<Tage>d`, 1–14 Tage) und `snapshot_aufraeumen` (löscht nur eigene, abgelaufene Snapshots).
+  - **(c)** `sicherheitsupdates`: nur Hosts mit Schalter „an“, die als Proxmox-VM laufen. Ablauf: Snapshot → `apt-get update` → `unattended-upgrade` → Prüfung, dass keine Sicherheitsupdates offen sind; Rückweg Snapshot zurücksetzen. Die vorhandenen Hosts stehen auf „aus“ (nur Info), bis der Owner umschaltet.
+  - **(d)** `image_aktualisieren`: nur Compose-Dienste mit Healthcheck und festgelegter Hauptversion, nie Datenbanken oder Home Assistant; Rückweg über das alte Image.
+  - **(e)** `neustart_unhealthy`: nur wenn laut Bestand unhealthy, höchstens 1× je Tag und Container, nie Datenbanken oder Home Assistant.
+  - (b) Vorlage neu bauen und (g) Test-VM folgen mit I5 (der Proxmox-Skill kann VMs noch nicht löschen); (f) Zertifikat erneuern folgt mit I7.
+- **Neue Aktionen im Skill `infrastruktur`:** `standard_liste`, `standard_freigabe_anfragen`, `standard_freigeben` (nur über das Owner-Ja), `standard_widerrufen`, `standard_change`, `updates_schalter`.
+- **Planprüfung:**
+  - Go-Template-Felder von Docker (`{{.Image}}`) gelten nicht mehr als Platzhalter.
+  - Ein `docker restart` braucht keinen Rückweg.
+  - Lese-Ausgaben für Verweise werden ohne Zeilenumbruch übernommen.
+- **Cloudflare in der Bestandsaufnahme** (Lücke aus I1 — die Spec verlangt die Kette DNS → Proxy → Dienst):
+  - Quelle `cloudflare_dns` in der Bestandsaufnahme; der Bericht zeigt je Proxy-Domain den öffentlichen Eintrag (Cloudflare-Proxy oder nur DNS, A/CNAME, Wildcard) bzw. „nicht in Cloudflare“.
+  - Neuer Befund: Proxy-Domain in einer Cloudflare-Zone ohne Eintrag.
+  - CMDB-Beziehungen DNS-Eintrag → Proxy-Eintrag (`resolves_to`).
+  - Planungsgrundlage und Architektur-Dokument nennen das öffentliche DNS je Domain, damit bei einem Umzug erkennbar ist, ob auch ein DNS-Schritt nötig ist.
+
 ### Added — Befunde der Bestandsaufnahme werden ITSM-Problems (v1566, Spec Infrastruktur-Vorhaben I4b Teil 3)
 
 - **Jede Auffälligkeit des Bestandsberichts** hat jetzt einen über Läufe stabilen Schlüssel (z. B. `platte:pve:/data_safe/…`, `container-unhealthy:dockerhost:noah…`) und eine Kategorie.

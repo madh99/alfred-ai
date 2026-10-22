@@ -7,7 +7,29 @@
 import type { HostBestand } from './sammler.js';
 
 export interface VmEintrag { name: string; typ: string; status: string; ip?: string; node?: string; vmid?: number }
-export interface ProxyEintrag { domains: string[]; forwardHost: string; forwardPort: number }
+export interface ProxyEintrag { domains: string[]; forwardHost: string; forwardPort: number; assetId?: string }
+/** Öffentlicher DNS-Eintrag (Cloudflare) — Owner 22.10.: „öffentlich verfügbare Domains … Cloudflare eingebunden?“ */
+export interface DnsEintrag { fqdn: string; typ: string; inhalt: string; proxied?: boolean; zone: string; assetId?: string }
+export interface DomainStand { domain: string; proxy: ProxyEintrag; eintrag?: DnsEintrag; zone?: string }
+
+/** Je Proxy-Domain: der passende Cloudflare-Eintrag (A/AAAA/CNAME, auch Wildcard) und ob die Domain in einer Cloudflare-Zone liegt. */
+export function domainsMitDns(proxy: ProxyEintrag[], dns: DnsEintrag[]): DomainStand[] {
+  const zonen = [...new Set(dns.map(d => d.zone.toLowerCase()))].sort((a, b) => b.length - a.length);
+  const web = dns.filter(d => ['A', 'AAAA', 'CNAME'].includes(d.typ.toUpperCase()));
+  const aus: DomainStand[] = [];
+  for (const p of proxy) for (const d0 of p.domains) {
+    const d = d0.toLowerCase();
+    const zone = zonen.find(z => d === z || d.endsWith(`.${z}`));
+    const eintrag = web.find(x => x.fqdn.toLowerCase() === d) ?? (zone ? web.find(x => x.fqdn.toLowerCase() === `*.${d.slice(d.indexOf('.') + 1)}`) : undefined);
+    aus.push({ domain: d0, proxy: p, ...(eintrag ? { eintrag } : {}), ...(zone ? { zone } : {}) });
+  }
+  return aus;
+}
+export function dnsText(s: DomainStand): string {
+  if (!s.zone) return 'nicht in Cloudflare';
+  if (!s.eintrag) return `Cloudflare-Zone ${s.zone}, kein Eintrag`;
+  return `Cloudflare ${s.eintrag.proxied ? 'Proxy' : 'nur DNS'}: ${s.eintrag.typ} ${s.eintrag.inhalt}${s.eintrag.fqdn.startsWith('*.') ? ' (Wildcard)' : ''}`;
+}
 export interface NetzEintrag { quelle: string; name: string; vlan?: string | number; subnet?: string }
 export interface BackupStand {
   jeVm: Record<number, { name?: string; neueste?: string; anzahl: number; speicher: string[] }>;
@@ -39,7 +61,7 @@ export function osSupport(os: HostBestand['os'], jetzt = new Date()): { ok: bool
   return { ok: true };
 }
 
-export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; proxy: ProxyEintrag[]; backups?: BackupStand }, jetzt = new Date()): Auffaelligkeit[] {
+export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; proxy: ProxyEintrag[]; backups?: BackupStand; dns?: DnsEintrag[] }, jetzt = new Date()): Auffaelligkeit[] {
   const a: Auffaelligkeit[] = [];
   for (const h of e.hosts) {
     for (const c of h.container) {
@@ -74,13 +96,15 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
     const h = hostNachIp.get(p.forwardHost);
     if (h && h.ports.length && !h.ports.some(x => x.port === p.forwardPort)) a.push({ schwere: 'mittel', bereich: 'Proxy', text: `${p.domains[0] ?? '?'} → ${p.forwardHost}:${p.forwardPort}: auf ${h.zugang} lauscht dort kein Dienst`, schluessel: `proxy:${p.domains[0] ?? ''}:${p.forwardHost}:${p.forwardPort}`, kategorie: 'proxy', zugang: h.zugang });
   }
+  // Proxy-Domain in einer Cloudflare-Zone ohne öffentlichen Eintrag (die Domain ist im Internet nicht erreichbar)
+  if (e.dns?.length) for (const s of domainsMitDns(e.proxy, e.dns)) if (s.zone && !s.eintrag) a.push({ schwere: 'mittel', bereich: 'DNS', text: `${s.domain}: NPM-Eintrag vorhanden, aber kein DNS-Eintrag in der Cloudflare-Zone ${s.zone}`, schluessel: `proxy-dns:${s.domain.toLowerCase()}`, kategorie: 'proxy' });
   const rang = { hoch: 0, mittel: 1, niedrig: 2 } as const;
   return a.sort((x, y) => rang[x.schwere] - rang[y.schwere]);
 }
 
 const gb = (b?: number) => (b ? `${(b / 1024 ** 3).toFixed(1)} GB` : '—');
 
-export function bestandsbericht(e: { hosts: HostBestand[]; vms: VmEintrag[]; proxy: ProxyEintrag[]; netze: NetzEintrag[]; backups?: BackupStand }, jetzt = new Date()): { markdown: string; auffaelligkeiten: Auffaelligkeit[]; kurz: string } {
+export function bestandsbericht(e: { hosts: HostBestand[]; vms: VmEintrag[]; proxy: ProxyEintrag[]; netze: NetzEintrag[]; backups?: BackupStand; dns?: DnsEintrag[] }, jetzt = new Date()): { markdown: string; auffaelligkeiten: Auffaelligkeit[]; kurz: string } {
   const auff = auffaelligkeiten(e, jetzt);
   const datum = jetzt.toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'medium', timeStyle: 'short' });
   const z: string[] = [`# Bestandsbericht ${datum}`, '', '_Erstellt von Alfred (Bestandsaufnahme I1, nur lesend). Grundlage für den Architektur-Vorschlag._', ''];
@@ -123,8 +147,8 @@ export function bestandsbericht(e: { hosts: HostBestand[]; vms: VmEintrag[]; pro
     z.push('');
   }
   if (e.proxy.length) {
-    z.push('## Reverse-Proxy (NPM)', '');
-    for (const p of e.proxy) z.push(`- ${p.domains.join(', ')} → ${p.forwardHost}:${p.forwardPort}`);
+    z.push('## Reverse-Proxy (NPM) und öffentliches DNS (Cloudflare)', '', '| Domain | NPM-Ziel | DNS |', '|---|---|---|');
+    for (const s of domainsMitDns(e.proxy, e.dns ?? [])) z.push(`| ${s.domain} | ${s.proxy.forwardHost}:${s.proxy.forwardPort} | ${e.dns?.length ? dnsText(s) : '—'} |`);
     z.push('');
   }
   const kurz = `${e.vms.length} VMs/CT, ${e.hosts.length} Hosts, ${e.hosts.reduce((s, h) => s + h.container.length, 0)} Container, ${e.proxy.length} Proxy-Einträge; Auffälligkeiten: ${auff.filter(x => x.schwere === 'hoch').length} hoch, ${auff.filter(x => x.schwere === 'mittel').length} mittel`;

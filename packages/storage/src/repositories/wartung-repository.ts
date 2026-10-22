@@ -46,6 +46,34 @@ export class WartungRepository {
     return false;
   }
 
+  // ── I4b Teil 4 — Standard-Change-Vorlagen: einmalige Owner-Freigabe je Vorlage ──
+  async standardStand(userId: string): Promise<Array<{ vorlage: string; abdruck: string; status: string; frageHash?: string; frageBis?: string; freigegebenAt?: string; widerrufenAt?: string }>> {
+    const rows = await this.db.query('SELECT * FROM infra_standard_freigaben WHERE user_id = ?', [userId]);
+    return rows.map(r => { const x = r as Record<string, unknown>; return { vorlage: String(x.vorlage), abdruck: String(x.abdruck), status: String(x.status), ...(x.frage_hash ? { frageHash: String(x.frage_hash) } : {}), ...(x.frage_bis ? { frageBis: String(x.frage_bis) } : {}), ...(x.freigegeben_at ? { freigegebenAt: String(x.freigegeben_at) } : {}), ...(x.widerrufen_at ? { widerrufenAt: String(x.widerrufen_at) } : {}) }; });
+  }
+
+  async standardSetze(userId: string, vorlage: string, d: { abdruck: string; status: 'angefragt' | 'freigegeben' | 'widerrufen'; frageHash?: string | null; frageBis?: string | null }): Promise<void> {
+    const jetzt = new Date().toISOString();
+    const da = await this.db.queryOne('SELECT id FROM infra_standard_freigaben WHERE user_id = ? AND vorlage = ?', [userId, vorlage]);
+    const fa = d.status === 'freigegeben' ? jetzt : null, wa = d.status === 'widerrufen' ? jetzt : null;
+    if (da) await this.db.execute('UPDATE infra_standard_freigaben SET abdruck = ?, status = ?, frage_hash = ?, frage_bis = ?, freigegeben_at = COALESCE(?, freigegeben_at), widerrufen_at = ?, geaendert = ? WHERE user_id = ? AND vorlage = ?',
+      [d.abdruck, d.status, d.frageHash ?? null, d.frageBis ?? null, fa, wa, jetzt, userId, vorlage]);
+    else await this.db.execute('INSERT INTO infra_standard_freigaben (id, user_id, vorlage, abdruck, status, frage_hash, frage_bis, freigegeben_at, widerrufen_at, geaendert) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [randomUUID(), userId, vorlage, d.abdruck, d.status, d.frageHash ?? null, d.frageBis ?? null, fa, wa, jetzt]);
+  }
+
+  /** Schalter „Sicherheitsupdates automatisch“ je Fernzugang (5b-8): 'an' | 'aus' (leer = aus bei vorhandenen Hosts). */
+  async updatesSchalter(userId: string): Promise<Record<string, string>> {
+    const rows = await this.db.query('SELECT name, sicherheitsupdates FROM fernzugaenge WHERE user_id = ?', [userId]);
+    return Object.fromEntries(rows.map(r => { const x = r as Record<string, unknown>; return [String(x.name), String(x.sicherheitsupdates ?? 'aus')]; }));
+  }
+  async setzeUpdatesSchalter(userId: string, name: string, an: boolean): Promise<boolean> {
+    const r = await this.db.queryOne('SELECT id FROM fernzugaenge WHERE user_id = ? AND LOWER(name) = ?', [userId, name.trim().toLowerCase()]);
+    if (!r) return false;
+    await this.db.execute('UPDATE fernzugaenge SET sicherheitsupdates = ?, geaendert = ? WHERE id = ?', [an ? 'an' : 'aus', new Date().toISOString(), (r as { id: string }).id]);
+    return true;
+  }
+
   async setzeAktiv(userId: string, id: string, aktiv: boolean): Promise<boolean> {
     const jetzt = new Date().toISOString();
     for (const t of ['infra_kalender', 'infra_benachrichtigungen']) {
