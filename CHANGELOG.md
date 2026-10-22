@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Überarbeitung einer Zielarchitektur nach teilweiser Umsetzung (v1597)
+
+- **Realfall 22.10. (Version 4 von cf82f3f2):** Die Prüfung lehnte die Überarbeitung ab, weil VLAN 824, sein Subnetz und `docker-dev-01` „bereits vergeben“ seien. Das waren aber die schon umgesetzten Teile desselben Vorhabens.
+- **Jetzt:** Netze (gleicher Name, VLAN, Subnetz) und VM-Namen aus der vorigen Fassung desselben Vorhabens gelten als eigen. Ein fremdes Netz mit demselben VLAN bleibt ein Konflikt.
+
 ### Added — Alte Sicherungen löschen; Einheiten in der Architektur verschieben (v1596)
 
 - **`proxmox delete_backup`** (Owner 22.10.: „die alten Sicherungen kann man löschen“) entfernt eine vzdump-Sicherungsdatei.

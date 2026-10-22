@@ -3,7 +3,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { bestandsbericht, type BackupStand, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 import type { HostBestand } from './sammler.js';
-import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, mitAenderungen, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
+import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, mitAenderungen, bisherigeFassung, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
 import { changeAnzeige, type ChangePlanung } from './change-planung.js';
 import type { ChangeMotor } from './change-motor.js';
 import type { StandardChanges } from './standard-changes.js';
@@ -344,7 +344,7 @@ export class InfrastrukturSkill extends Skill {
       if ('fehler' in m) return { success: false, error: m.fehler };
       quelle = m.roh;
     }
-    const p = pruefeArchitektur(quelle, g);
+    const p = pruefeArchitektur(quelle, g, bisherigeFassung(v.architektur));
     if (p.fehler.length) {
       this.deps.protokoll?.('I2 Architektur abgewiesen', { id: v.id, fehler: p.fehler.length, erste: p.fehler.slice(0, 5) });
       return { success: false, error: `Architektur nicht vollständig (${p.fehler.length} Punkte) — bitte nachbessern und erneut senden:\n${p.fehler.map(x => `- ${x}`).join('\n')}` };

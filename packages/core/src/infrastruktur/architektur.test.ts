@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { architekturDokument, grundlageText, hostPorts, planungsGrundlage, pruefeArchitektur, mitAenderungen } from './architektur.js';
+import { architekturDokument, grundlageText, hostPorts, planungsGrundlage, pruefeArchitektur, mitAenderungen, bisherigeFassung } from './architektur.js';
 import { groesseBytes, leseStats, LINUX_BEFEHLE } from './sammler.js';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import type { HostBestand } from './sammler.js';
@@ -199,5 +199,25 @@ describe('einheit_verschieben', () => {
     expect(neu.find(x => x.name === ziel.name)!.einheiten).toContain(einheit);
     expect(neu.find(x => x.name === quelle.name)!.einheiten).not.toContain(einheit);
     expect(mitAenderungen(v.architektur, { einheit_verschieben: [{ einheit: 'gibtsnicht', nach_gruppe: ziel.name }] })).toHaveProperty('fehler');
+  });
+});
+
+// Realfall 22.10. (Version 4 von cf82f3f2): schon umgesetzte eigene Teile sind bei der Überarbeitung kein Konflikt
+describe('Überarbeitung nach Umsetzung', () => {
+  it('Netz/VLAN/Subnetz und VM-Name der vorigen Fassung gelten als eigen, fremde weiter als Konflikt', () => {
+    const g = grundlage();
+    const v3 = pruefeArchitektur(gueltig(), g);
+    expect(v3.fehler).toEqual([]);
+    // umgesetzt: Netz „Server“ VLAN 30 mit Subnetz und VM „matrix“ existieren jetzt
+    g.netze.push({ quelle: 'unifi', name: 'Server', vlan: 30, subnet: '192.168.30.1/24' } as never);
+    g.vms.push({ name: 'matrix', typ: 'vm', status: 'active', vmid: 150 } as never);
+    const ohne = pruefeArchitektur(gueltig(), g);
+    expect(ohne.fehler.some(x => x.includes('VLAN 30 ist bereits vergeben'))).toBe(true);
+    expect(ohne.fehler.some(x => x.includes('„matrix“ ist bereits vergeben'))).toBe(true);
+    const mit = pruefeArchitektur(gueltig(), g, bisherigeFassung(v3.architektur));
+    expect(mit.fehler).toEqual([]);
+    // ein fremdes Netz mit demselben VLAN bleibt ein Konflikt
+    g.netze.push({ quelle: 'pfsense', name: 'Fremd', vlan: 30 } as never);
+    expect(pruefeArchitektur(gueltig(), g, bisherigeFassung(v3.architektur)).fehler.some(x => x.includes('VLAN 30 ist bereits vergeben'))).toBe(true);
   });
 });

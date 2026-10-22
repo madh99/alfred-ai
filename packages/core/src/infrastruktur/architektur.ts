@@ -190,7 +190,18 @@ export function mitAenderungen(basis: unknown, aenderungen: unknown): { roh: Rec
   return { roh };
 }
 
-export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler: string[]; hinweise: string[]; architektur: Architektur } {
+/**
+ * Realfall 22.10. (Version 4 von cf82f3f2): Bei einer Überarbeitung sind VLAN 824, sein Subnetz und docker-dev-01 schon umgesetzt — das
+ * ist kein Konflikt. `bisher` = vorige Fassung desselben Vorhabens: deren Netze (gleicher Name, VLAN, Subnetz) und VM-Namen gelten als eigene.
+ */
+export interface BisherigeFassung { netze: Array<{ name: string; vlan?: number; subnetz?: string }>; vmNamen: string[] }
+export function bisherigeFassung(a: unknown): BisherigeFassung | undefined {
+  if (!a || typeof a !== 'object') return undefined;
+  const x = a as { netze?: Array<{ name?: string; vlan?: number; subnetz?: string; neu?: boolean }>; gruppen?: Array<{ vmName?: string }> };
+  return { netze: (x.netze ?? []).filter(n => n.neu && n.name).map(n => ({ name: n.name!, ...(n.vlan !== undefined ? { vlan: n.vlan } : {}), ...(n.subnetz ? { subnetz: n.subnetz } : {}) })), vmNamen: (x.gruppen ?? []).map(gr => gr.vmName).filter((v): v is string => !!v).map(v => v.toLowerCase()) };
+}
+
+export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage, bisher?: BisherigeFassung): { fehler: string[]; hinweise: string[]; architektur: Architektur } {
   const f: string[] = []; const h: string[] = [];
   const r = (roh && typeof roh === 'object' ? roh : {}) as Record<string, unknown>;
   const a: Architektur = {
@@ -213,7 +224,8 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler:
     if (a.netze.some(x => x.name.toLowerCase() === netz.name.toLowerCase())) f.push(`Netz „${netz.name}“ doppelt`);
     if (!(NETZ_GERAETE as readonly string[]).includes(netz.geraet)) f.push(`Netz „${netz.name}“: geraet muss ${NETZ_GERAETE.join('/')} sein`);
     if (netz.vlan !== undefined && (!Number.isInteger(netz.vlan) || netz.vlan < 1 || netz.vlan > 4094)) f.push(`Netz „${netz.name}“: VLAN ${netz.vlan} ungültig (1–4094)`);
-    if (netz.neu && netz.vlan !== undefined && belegteVlans.has(netz.vlan)) f.push(`Netz „${netz.name}“: VLAN ${netz.vlan} ist bereits vergeben (${g.netze.filter(x => Number(x.vlan) === netz.vlan).map(x => `${x.name}/${x.quelle}`).join(', ')})`);
+    const eigenesNetz = (nz: ArchitekturNetz) => !!bisher?.netze.some(b => b.name.toLowerCase() === nz.name.toLowerCase() && b.vlan === nz.vlan && (b.subnetz ?? '') === (nz.subnetz ?? ''));
+    if (netz.neu && netz.vlan !== undefined && belegteVlans.has(netz.vlan) && !(eigenesNetz(netz) && g.netze.every(x => Number(x.vlan) !== netz.vlan || x.name.toLowerCase() === netz.name.toLowerCase()))) f.push(`Netz „${netz.name}“: VLAN ${netz.vlan} ist bereits vergeben (${g.netze.filter(x => Number(x.vlan) === netz.vlan).map(x => `${x.name}/${x.quelle}`).join(', ')})`);
     if (!netz.neu && !vorhandeneNetze.has(netz.name.toLowerCase())) f.push(`Netz „${netz.name}“ ist als vorhanden markiert, existiert aber nicht (neu: true setzen oder vorhandenen Namen verwenden)`);
     if (netz.subnetz && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$|^[0-9a-f:]+\/\d{1,3}$/i.test(netz.subnetz)) f.push(`Netz „${netz.name}“: Subnetz „${netz.subnetz}“ ungültig`);
     if (!netz.zweck) f.push(`Netz „${netz.name}“: zweck fehlt`);
@@ -250,7 +262,7 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler:
       if (txt(x.speicher)) gr.speicher = txt(x.speicher);
       gr.verwaltung = txt(x.verwaltung) === 'satellit' ? 'satellit' : 'fernzugriff';
       if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(gr.vmName)) f.push(`Gruppe „${n}“: vmName „${gr.vmName}“ ungültig (Kleinbuchstaben, Ziffern, Bindestrich)`);
-      else if (vmNamen.has(gr.vmName)) f.push(`Gruppe „${n}“: VM-Name „${gr.vmName}“ ist bereits vergeben`);
+      else if (vmNamen.has(gr.vmName) && !bisher?.vmNamen.includes(gr.vmName.toLowerCase())) f.push(`Gruppe „${n}“: VM-Name „${gr.vmName}“ ist bereits vergeben`);
       else if (a.gruppen.some(y => y.vmName === gr.vmName)) f.push(`Gruppe „${n}“: VM-Name „${gr.vmName}“ doppelt`);
       const k = knotenNamen.get(gr.knoten.toLowerCase());
       if (!k) f.push(`Gruppe „${n}“: Knoten „${gr.knoten}“ unbekannt (${g.knoten.map(y => y.name).join(', ')})`); else gr.knoten = k.name;
@@ -335,11 +347,13 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage): { fehler:
     const start = Math.floor(ip / groesse) * groesse;
     return [start, start + groesse - 1];
   };
-  const belegt = g.netze.map(n => ({ name: `${n.name}/${n.quelle}`, b: bereich(n.subnet) })).filter(x => x.b);
+  const belegt = g.netze.map(n => ({ name: `${n.name}/${n.quelle}`, roh: n.name.toLowerCase(), b: bereich(n.subnet) })).filter(x => x.b);
   for (const n of a.netze.filter(x => x.neu)) {
     const b = bereich(n.subnetz);
     if (!b) continue;
-    for (const x of [...belegt, ...a.netze.filter(y => y !== n && y.neu).map(y => ({ name: y.name, b: bereich(y.subnetz) }))]) {
+    // das schon umgesetzte eigene Netz (gleicher Name, laut voriger Fassung) überschneidet sich nicht mit sich selbst
+    const eigen = !!bisher?.netze.some(y => y.name.toLowerCase() === n.name.toLowerCase() && (y.subnetz ?? '') === (n.subnetz ?? ''));
+    for (const x of [...belegt.filter(y => !(eigen && y.roh === n.name.toLowerCase())), ...a.netze.filter(y => y !== n && y.neu).map(y => ({ name: y.name, b: bereich(y.subnetz) }))]) {
       if (x.b && b[0] <= x.b[1] && x.b[0] <= b[1]) { f.push(`Netz „${n.name}“: Subnetz ${n.subnetz} überschneidet sich mit ${x.name}`); break; }
     }
   }
