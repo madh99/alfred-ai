@@ -40,6 +40,7 @@ import 'befunde.dart'; // 1.12.0
 import 'beobachter.dart'; // 1.20.0
 import 'projekte.dart'; // 1.15.0
 import 'vorgaenge_ansicht.dart'; // 1.34.0
+import 'changes_ansicht.dart'; // 1.75.0
 import 'eingang.dart'; // 1.36.0
 import 'faden_liste.dart'; // 1.41.0
 import 'faden_aktionen.dart'; // 1.43.0 D2
@@ -233,6 +234,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   // 1.4.0 — Owner-Befund 10.10. 19:46: lange Antworten im Zuhören wurden als „nicht an mich" verworfen, weil das
   // Gesprächsfenster erst am Ende der Transkription geprüft wurde. Jetzt zählt der Zustand beim Beginn der Äußerung.
   int hinweiseOffen = 0; // 1.4.0 — Zähler der Sammlung Hinweise (Symbolleiste)
+  int changesOffen = 0; // 1.75.0 — Changes, die laufen, angehalten sind oder auf Freigabe warten
   bool aeusserungImFenster = false;
   /// 1.4.1 — gehörter Text, der eintraf, während Alfred noch antwortete; wird danach gesendet statt verworfen.
   String? nachreichen;
@@ -325,7 +327,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
         if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
-        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
+        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
         if (erste) { _faedenLaden(); _kontoLaden(); _stufenLaden(); } // 1.2.0 Gespräche; 1.47.0 Kosten für den Kontoknopf
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {
@@ -580,6 +582,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.kosten => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : KostenAnsicht(json: server!.json), // 1.71.0
           Ansicht.notizen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : NotizenAnsicht(json: server!.json), // 1.71.0
           Ansicht.wissen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : WissenAnsicht(json: server!.json), // 1.71.0
+          Ansicht.changes => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : ChangesAnsicht(json: server!.json, aufNachfragen: _nachfragen, aufBestaetigungen: () => _neu(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), aufAnzahl: (n) { if (mounted && n != changesOffen) _neu(() => changesOffen = n); }), // 1.75.0
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
         };

@@ -53,6 +53,7 @@ extension _Oberflaeche on _SitzungState {
           gruppe('Haus & Systeme'),
           eintrag(Icons.dashboard_outlined, Icons.dashboard, 'Lage', ansicht == Ansicht.kacheln, ohneServer ? null : () => zu(Ansicht.kacheln, () => kachelnOffen = true), tip: 'Lage: Befunde, Vorgänge, Geräte'),
           eintrag(Icons.report_problem_outlined, Icons.report_problem, 'Befunde', ansicht == Ansicht.befunde, ohneServer ? null : () => zu(Ansicht.befunde, () => befundeFilter = null), tip: 'Was Alfred als auffällig führt (Haus-Check u. a.)'), // 1.12.0
+          eintrag(Icons.published_with_changes_outlined, Icons.published_with_changes, 'Changes', ansicht == Ansicht.changes, ohneServer ? null : () => zu(Ansicht.changes), zaehler: changesOffen, tip: 'Infrastruktur-Changes: was läuft, was angehalten ist, was auf Freigabe wartet'), // 1.75.0
           eintrag(Icons.visibility_outlined, Icons.visibility, 'Beobachter', ansicht == Ansicht.beobachter, ohneServer ? null : () => zu(Ansicht.beobachter)), // 1.20.0
           eintrag(Icons.payments_outlined, Icons.payments, 'Kosten', ansicht == Ansicht.kosten, ohneServer ? null : () => zu(Ansicht.kosten), tip: 'Kosten je Tag und Modell, Code-Agenten getrennt'), // 1.71.0
           gruppe('Arbeit'),

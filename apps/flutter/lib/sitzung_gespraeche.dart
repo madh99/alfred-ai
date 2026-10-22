@@ -504,6 +504,15 @@ extension _Gespraeche on _SitzungState {
 
 
   /// 1.5.1 — Zähler offener Hinweise ohne geöffnete Ansicht (Owner 11.10.); kein Owner-Gerät/alter Server → bleibt still.
+  /// 1.75.0 — Zähler der Changes (läuft, angehalten, wartet auf Freigabe); alter Server/kein Owner-Gerät → bleibt still.
+  Future<void> _changesZaehlen() async {
+    final s = server; if (s == null) return;
+    try {
+      final n = changesZahl(await s.json('/api/geraete/changes'), DateTime.now());
+      if (mounted && n != changesOffen) _neu(() => changesOffen = n);
+    } catch (_) { /* Zähler ist Komfort */ }
+  }
+
   Future<void> _hinweiseZaehlen() async {
     final s = server; if (s == null) return;
     try {
