@@ -47,7 +47,7 @@ const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_con
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
-const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot']);
+const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
@@ -186,6 +186,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   const roheSchritte = Array.isArray(r.schritte) ? r.schritte : [];
   if (!roheSchritte.length) f.push('schritte fehlen');
   const aktionsNummern = new Set<number>();
+  // I6 — Tresor-Einträge, die ein früherer Schritt dieses Plans per geheim_uebernehmen anlegt, gelten für spätere Schritte als vorhanden
+  const tresorNamen = ctx.tresorNamen ? new Set(ctx.tresorNamen) : undefined;
   let ersteAenderung: number | undefined; let ersteSicherung: number | undefined;
   for (const [i, s0] of roheSchritte.entries()) {
     const s = obj(s0) ?? {};
@@ -208,7 +210,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const aktionen = skillAktionen(sk);
       if (!aktionen.includes(schritt.aktion)) { f.push(`${wo}: ${schritt.skill} kennt die Aktion „${schritt.aktion}“ nicht${aktionen.length ? ` (${aktionen.slice(0, 30).join(', ')})` : ''} — fehlt eine Fähigkeit, als owner-Schritt planen`); plan.schritte.push(schritt); continue; }
       const schema = (sk.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties;
-      const ersatz = verweise(schritt.parameter, nr, aktionsNummern, f, wo, schema, { befehlErlaubt: schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren', ...(ctx.tresorNamen ? { namen: ctx.tresorNamen } : {}) });
+      const ersatz = verweise(schritt.parameter, nr, aktionsNummern, f, wo, schema, { befehlErlaubt: schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });
       const fe = eingabeFehler(sk, { ...ersatz, action: schritt.aktion });
       if (fe) f.push(`${wo}: ${fe}`);
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
@@ -234,7 +236,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);
           else {
-            const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(ctx.tresorNamen ? { namen: ctx.tresorNamen } : {}) });
+            const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });
             const feR = eingabeFehler(rs, { ...ersatzR, action: rueck.aktion });
             if (feR) f.push(`${wo} (Rückweg): ${feR}`);
             if (rueck.skill === 'fernzugriff' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
@@ -242,6 +244,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           schritt.rueckweg = rueck;
         }
       }
+      if (schritt.skill === 'fernzugriff' && schritt.aktion === 'geheim_uebernehmen' && typeof schritt.parameter.tresor_name === 'string') tresorNamen?.add(schritt.parameter.tresor_name);
       aktionsNummern.add(nr);
     } else if (art === 'pruefung') {
       const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p;

@@ -46,7 +46,7 @@ export async function sshAusfuehren(ziel: SshZiel, befehl: string, datenOrdner: 
 /**
  * I4c — wie sshAusfuehren, aber `eingabe` geht über stdin (Geheimnisse nie in der Befehlszeile, nicht in ps, nicht im Log).
  */
-export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: string, eingabe: string, timeoutMs = 60_000): Promise<SshErgebnis> {
+export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: string, eingabe: string, timeoutMs = 60_000, max = AUSGABE_MAX): Promise<SshErgebnis> {
   if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
   if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
   const ordner = path.join(datenOrdner, 'fernzugriff');
@@ -60,11 +60,67 @@ export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: 
     const p = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     const t = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
-    p.stdout.on('data', d => { if (stdout.length < AUSGABE_MAX) stdout += d; });
+    let zuViel = false;
+    p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8'); // Mehrbyte-Zeichen (Umlaute in Dateinamen) nicht an Chunk-Grenzen zerteilen
+    p.stdout.on('data', d => { if (stdout.length < max) stdout += d; else zuViel = true; });
     p.stderr.on('data', d => { if (stderr.length < AUSGABE_MAX) stderr += d; });
-    p.on('close', code => { clearTimeout(t); resolve({ code: code ?? 124, stdout, stderr, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr) }); });
+    p.on('close', code => { clearTimeout(t); resolve({ code: zuViel ? 125 : code ?? 124, stdout, stderr: zuViel ? `${stderr}\nAusgabe größer als ${max} Bytes` : stderr, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr) }); });
     p.on('error', err => { clearTimeout(t); resolve({ code: 255, stdout, stderr: err.message, hostSchluesselGeaendert: false }); });
     p.stdin.end(eingabe);
+  });
+}
+
+/**
+ * I6 — Strom von Host zu Host über den Server: stdout der Quelle → (Bandbreitengrenze) → stdin des Ziels. Die Daten berühren weder
+ * die Platte des Servers noch das Modell; `eingabe` geht an stdin der Quelle (z. B. die Dateiliste für tar -T -).
+ */
+export async function sshStrom(q: SshZiel, qBefehl: string, qEingabe: string, z: SshZiel, zBefehl: string, datenOrdner: string,
+  o: { timeoutMs: number; kbps?: number; fortschritt?: (bytes: number) => void }): Promise<{ codeQuelle: number; codeZiel: number; bytes: number; stderrQuelle: string; stderrZiel: string; hostSchluesselGeaendert: boolean }> {
+  const args = async (x: SshZiel, befehl: string) => {
+    if (!gueltigerHost(x.host) || !gueltigerBenutzer(x.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
+    if (!x.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
+    const ordner = path.join(datenOrdner, 'fernzugriff');
+    await mkdir(ordner, { recursive: true, mode: 0o700 });
+    const knownHosts = path.join(ordner, `known_hosts_${x.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
+    await writeFile(knownHosts, x.hostSchluessel, { mode: 0o600 });
+    return ['-i', x.schluesselPfad, '-p', String(x.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+      '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${x.benutzer}@${x.host}`, befehl];
+  };
+  const { spawn } = await import('node:child_process');
+  const { Transform } = await import('node:stream');
+  const qa = await args(q, qBefehl), za = await args(z, zBefehl);
+  return new Promise(resolve => {
+    const pq = spawn('ssh', qa, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const pz = spawn('ssh', za, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let eq = '', ez = '', bytes = 0, cq: number | null | undefined, cz: number | null | undefined;
+    const start = Date.now();
+    const bremse = new Transform({
+      transform(chunk: Buffer, _enc, fertig) {
+        bytes += chunk.length;
+        o.fortschritt?.(bytes);
+        const soll = o.kbps ? (bytes / (o.kbps * 1024)) * 1000 : 0;
+        const warte = Math.max(0, soll - (Date.now() - start));
+        if (warte > 0) setTimeout(() => fertig(null, chunk), Math.min(warte, 5_000)); else fertig(null, chunk);
+      },
+    });
+    const t = setTimeout(() => { pq.kill('SIGKILL'); pz.kill('SIGKILL'); }, o.timeoutMs);
+    pq.stderr.on('data', d => { if (eq.length < 64_000) eq += d; });
+    pz.stderr.on('data', d => { if (ez.length < 64_000) ez += d; });
+    pz.stdout.resume();
+    pq.stdout.pipe(bremse).pipe(pz.stdin);
+    pz.stdin.on('error', () => undefined);
+    const ende = () => {
+      if (cq === undefined || cz === undefined) return;
+      clearTimeout(t);
+      resolve({ codeQuelle: cq ?? 124, codeZiel: cz ?? 124, bytes, stderrQuelle: eq, stderrZiel: ez, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(eq + ez) });
+    };
+    // Bricht das Ziel ab, darf die Quelle nicht ewig weiterschreiben (und umgekehrt bekommt das Ziel EOF über die Pipe)
+    pq.on('close', c => { cq = c; ende(); });
+    pz.on('close', c => { cz = c; if (cq === undefined && c !== 0) pq.kill('SIGTERM'); ende(); });
+    pq.on('error', err => { eq += err.message; cq = 255; ende(); });
+    pz.on('error', err => { ez += err.message; cz = 255; ende(); });
+    pq.stdin.on('error', () => undefined);
+    pq.stdin.end(qEingabe);
   });
 }
 

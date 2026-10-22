@@ -8,6 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze, schwaerze } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
+import { kopiere, kopiereDatenbank, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
 
 /**
  * v1539 (Owner 21.10. „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“).
@@ -39,8 +40,12 @@ export interface FernzugriffDeps {
   cmdbMarkiere?: (assetId: string, zugang: { name: string; benutzer: string; port: number } | null) => Promise<void>;
   bestaetigung: (frage: { description: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string }) => Promise<boolean>;
   ssh: (ziel: SshZiel, befehl: string, timeoutMs?: number) => Promise<SshErgebnis>;
-  /** I4c — SSH mit Eingabe über stdin (Geheimnisse nie in der Befehlszeile) */
-  sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number) => Promise<SshErgebnis>;
+  /** I4c — SSH mit Eingabe über stdin (Geheimnisse nie in der Befehlszeile); I6: `max` für große Dateilisten */
+  sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number, max?: number) => Promise<SshErgebnis>;
+  /** I6 — Strom Quelle → Server → Ziel (tar, pg_dump) */
+  sshStrom?: (q: SshZiel, qBefehl: string, qEingabe: string, z: SshZiel, zBefehl: string, o: { timeoutMs: number; kbps?: number; fortschritt?: (bytes: number) => void }) => Promise<StromErgebnis & { hostSchluesselGeaendert: boolean }>;
+  /** I6 (E4-G) — Geheimnis vom Quell-Host direkt in den Tresor (Wert erreicht nie das Modell) */
+  tresorSetzen?: (name: string, wert: string, herkunft: string, zweck?: string) => Promise<void>;
   keyscan: (host: string, port: number) => Promise<string>;
   schluessel: () => Promise<{ pfad: string; oeffentlich: string; neu: boolean }>;
   melde?: (text: string) => void;
@@ -56,7 +61,9 @@ export interface FernzugriffDeps {
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
-const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen'] as const;
+const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen'] as const;
+/** I6 — Datenübertragung und Geheimnis-Übernahme nur als Schritte freigegebener Changes */
+const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']);
 
 /** v1549 (S3) — vollständige lange Ausgaben bleiben 2 h abrufbar (höchstens 30, je 5 MB), seitenweise oder per Suche. */
 const SEITEN_GUELTIG_MS = 2 * 3_600_000;
@@ -101,6 +108,23 @@ export class FernzugriffSkill extends Skill {
         seite: { type: 'number', description: 'seite: Seitennummer (ab 1)' },
         suche: { type: 'string', description: 'seite: Suchmuster (Regex, ohne Groß/Klein) in der gespeicherten Ausgabe' },
         an: { type: 'boolean', description: 'kaefig: an (true) oder aus (false)' },
+        // I6 — Datenübertragung (nur in Changes)
+        quelle: { type: 'string', description: 'kopieren/datenbank_kopieren: Zugang der Quelle' },
+        ziel: { type: 'string', description: 'kopieren/datenbank_kopieren: Zugang des Ziels' },
+        quelle_pfad: { type: 'string', description: 'kopieren: Ordner an der Quelle (absolut)' },
+        ziel_pfad: { type: 'string', description: 'kopieren: Ordner am Ziel (/srv/…, /opt/…, /data/…, /mnt/…, /home/<b>/…)' },
+        quelle_volume: { type: 'string', description: 'kopieren: Docker-Volume an der Quelle statt quelle_pfad' },
+        ziel_volume: { type: 'string', description: 'kopieren: Docker-Volume am Ziel (wird angelegt) statt ziel_pfad' },
+        loeschen: { type: 'boolean', description: 'kopieren: am Ziel entfernen, was es an der Quelle nicht gibt (Abgleich nach dem Stoppen)' },
+        pruefsumme: { type: 'boolean', description: 'kopieren: SHA-256 über alle Dateien beider Seiten vergleichen (Standard ja)' },
+        kbps: { type: 'number', description: 'kopieren/datenbank_kopieren: Bandbreitengrenze in KB/s' },
+        quelle_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container an der Quelle' },
+        ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
+        datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname' },
+        db_benutzer: { type: 'string', description: 'datenbank_kopieren: Datenbank-Benutzer' },
+        pfad: { type: 'string', description: 'geheim_uebernehmen: Datei mit Geheimnissen an der Quelle (z. B. /opt/app/.env)' },
+        tresor_name: { type: 'string', description: 'geheim_uebernehmen: Name des Tresor-Eintrags (danach {{geheimdatei:name}} am Ziel)' },
+        zweck: { type: 'string', description: 'geheim_uebernehmen: wofür' },
       },
       required: ['action'],
     },
@@ -127,6 +151,7 @@ export class FernzugriffSkill extends Skill {
     if (!owner) return { success: false, error: 'Kein Owner bekannt.' };
     const action = String(input.action ?? 'liste');
     const herkunft = context.chatId && context.platform ? { chatId: context.chatId, platform: String(context.platform) } : undefined;
+    if (NUR_IM_CHANGE.has(action) && context.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen` };
     try {
       switch (action) {
         case 'liste': return await this.liste(owner);
@@ -140,6 +165,9 @@ export class FernzugriffSkill extends Skill {
         case 'seite': return this.seite(input);
         case 'kaefig': return await this.kaefigSchalter(owner, input, herkunft);
         case 'kaefig_bestaetigen': return await this.kaefigBestaetigen(owner, input);
+        case 'kopieren': return await this.kopieren(owner, input);
+        case 'datenbank_kopieren': return await this.datenbankKopieren(owner, input);
+        case 'geheim_uebernehmen': return await this.geheimUebernehmen(owner, input);
         default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => !a.endsWith('_bestaetigen')).join(', ')})` };
       }
     } catch (err) {
@@ -393,6 +421,79 @@ export class FernzugriffSkill extends Skill {
     const r = await this.lauf(owner, z, fernBefehl(`rm -f ${pfad}`, true), 30_000);
     this.deps.protokoll?.('I4c Geheimnis-Datei entfernt', { name: z.name, pfad, ok: r.code === 0 });
     return r.code === 0;
+  }
+
+  // ── I6 — Daten übertragen ───────────────────────────────────────────────────────────────────────────────────
+  private wege(owner: string): Wege<Fernzugang> {
+    const ziel = (z: Fernzugang): SshZiel => ({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel });
+    return {
+      lauf: async (z, befehl, eingabe, timeoutMs, max) => {
+        if (!this.deps.sshEingabe) throw new Error('SSH mit Eingabe nicht verfügbar');
+        const r = await this.deps.sshEingabe(ziel(z), befehl, eingabe, timeoutMs, max);
+        if (r.hostSchluesselGeaendert) { await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt'); throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`); }
+        return { code: r.code, stdout: r.stdout, stderr: schwaerze(r.stderr).text };
+      },
+      strom: async (q, qb, qe, z, zb, o) => {
+        if (!this.deps.sshStrom) throw new Error('Übertragung nicht verfügbar');
+        const r = await this.deps.sshStrom(ziel(q), qb, qe, ziel(z), zb, o);
+        if (r.hostSchluesselGeaendert) throw new Error('Host-Schlüssel hat sich geändert — Übertragung abgebrochen');
+        return { ...r, stderrQuelle: schwaerze(r.stderrQuelle).text, stderrZiel: schwaerze(r.stderrZiel).text };
+      },
+      protokoll: (m, d) => this.deps.protokoll?.(m, d),
+    };
+  }
+
+  private async kopieren(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const q = await this.zugang(owner, { name: input.quelle });
+    const z = await this.zugang(owner, { name: input.ziel });
+    const w = this.wege(owner);
+    const qPfad = typeof input.quelle_volume === 'string' && input.quelle_volume ? await volumePfad(w, q, input.quelle_volume, false) : input.quelle_pfad;
+    const zPfad = typeof input.ziel_volume === 'string' && input.ziel_volume ? await volumePfad(w, z, input.ziel_volume, true) : input.ziel_pfad;
+    const f = pruefePfad(qPfad, 'quelle') ?? pruefePfad(zPfad, 'ziel');
+    if (f) return { success: false, error: f };
+    if (q.id === z.id && (qPfad === zPfad || String(zPfad).startsWith(`${String(qPfad)}/`) || String(qPfad).startsWith(`${String(zPfad)}/`))) return { success: false, error: 'Quelle und Ziel überlappen' };
+    const kbps = typeof input.kbps === 'number' && input.kbps > 0 ? input.kbps : undefined;
+    const e = await kopiere(w, q, qPfad as string, z, zPfad as string, { loeschen: input.loeschen === true, pruefsumme: input.pruefsumme !== false, timeoutMs: this.timeoutLang(input), ...(kbps ? { kbps } : {}) });
+    this.deps.protokoll?.('I6 kopiert', { quelle: `${q.name}:${String(qPfad)}`, ziel: `${z.name}:${String(zPfad)}`, ...e });
+    const mb = (b: number) => `${(b / 1024 / 1024).toFixed(1)} MB`;
+    const zeilen = [
+      `${q.name}:${String(qPfad)} → ${z.name}:${String(zPfad)} in ${e.sekunden} s: ${e.neu} neu, ${e.geaendert} geändert, ${e.geloescht} am Ziel entfernt, ${mb(e.bytes)} übertragen${e.uebersprungen ? `, ${e.uebersprungen} Sonderdateien übersprungen` : ''}.`,
+      `Danach noch abweichend: ${e.restUnterschiede}${e.restUnterschiede ? ' (bei laufendem Dienst normal — nach dem Stoppen erneut abgleichen)' : ''}.`,
+      ...(e.summe ? [`Prüfsumme (${e.summe.dateien} Dateien): ${e.summe.gleich ? 'gleich' : `VERSCHIEDEN (Quelle ${e.summe.quelle.slice(0, 12)}…, Ziel ${e.summe.ziel.slice(0, 12)}…)`}.`] : []),
+    ];
+    const ok = !e.summe || e.summe.gleich;
+    return { success: ok, data: { ...e, quelle_pfad: qPfad, ziel_pfad: zPfad, gleich: e.summe?.gleich ?? null }, display: zeilen.join('\n'), ...(ok ? {} : { error: zeilen.join('\n') }) };
+  }
+
+  private async datenbankKopieren(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const q = await this.zugang(owner, { name: input.quelle });
+    const z = await this.zugang(owner, { name: input.ziel });
+    const kbps = typeof input.kbps === 'number' && input.kbps > 0 ? input.kbps : undefined;
+    const e = await kopiereDatenbank(this.wege(owner), q, String(input.quelle_container ?? ''), z, String(input.ziel_container ?? ''), String(input.datenbank ?? ''), String(input.db_benutzer ?? ''), { timeoutMs: this.timeoutLang(input), ...(kbps ? { kbps } : {}) });
+    this.deps.protokoll?.('I6 Datenbank kopiert', { quelle: q.name, ziel: z.name, datenbank: input.datenbank, bytes: e.bytes, tabellen: e.tabellen, zeilen: e.zeilen, abweichungen: e.abweichungen.length });
+    const text = `PostgreSQL ${String(input.datenbank)}: ${q.name}/${String(input.quelle_container)} → ${z.name}/${String(input.ziel_container)} in ${e.sekunden} s (${(e.bytes / 1024 / 1024).toFixed(1)} MB Dump). ${e.tabellen} Tabellen, ${e.zeilen} Zeilen; ${e.abweichungen.length ? `Abweichungen: ${e.abweichungen.slice(0, 10).join('; ')}` : 'Zeilenzahl je Tabelle gleich'}.`;
+    return { success: e.abweichungen.length === 0, data: e, display: text, ...(e.abweichungen.length ? { error: text } : {}) };
+  }
+
+  /** E4-G — Datei mit Geheimnissen (.env o. ä.) als root lesen und direkt in den Tresor legen; Antwort nur Name und Größe */
+  private async geheimUebernehmen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.deps.tresorSetzen) return { success: false, error: 'Tresor nicht verfügbar' };
+    const z = await this.zugang(owner, { name: input.name });
+    const pfad = input.pfad;
+    if (typeof pfad !== 'string' || !/^\/[A-Za-z0-9._@+\/-]+$/.test(pfad) || pfad.split('/').includes('..')) return { success: false, error: 'pfad: absoluter Dateipfad' };
+    if (!gueltigerName(input.tresor_name) || !/^[a-z0-9][\w.-]{1,60}$/.test(input.tresor_name)) return { success: false, error: 'tresor_name: Kleinbuchstaben, Ziffern, . _ - (2–61 Zeichen)' };
+    const r = await this.wege(owner).lauf(z, fernBefehl(`cat -- '${pfad}'`, true), '', 30_000, 64 * 1024);
+    if (r.code !== 0) return { success: false, error: `${pfad} auf ${z.name} nicht lesbar (Exit ${r.code})` };
+    if (!r.stdout.length) return { success: false, error: `${pfad} ist leer` };
+    await this.deps.tresorSetzen(input.tresor_name, r.stdout, `${z.name}:${pfad}`, typeof input.zweck === 'string' ? input.zweck.slice(0, 200) : undefined);
+    this.deps.protokoll?.('I6 Geheimnis in den Tresor übernommen', { zugang: z.name, pfad, tresor: input.tresor_name, bytes: Buffer.byteLength(r.stdout) });
+    return { success: true, data: { tresor_name: input.tresor_name, bytes: Buffer.byteLength(r.stdout), herkunft: `${z.name}:${pfad}` }, display: `${pfad} von ${z.name} als Tresor-Eintrag „${input.tresor_name}“ übernommen (${Buffer.byteLength(r.stdout)} Bytes; Inhalt bleibt am Server).` };
+  }
+
+  /** I6 — Übertragungen dürfen lange dauern (Standard 1 h, höchstens 4 h) */
+  private timeoutLang(input: Record<string, unknown>): number {
+    const s = typeof input.timeout_s === 'number' ? input.timeout_s : 3600;
+    return Math.min(Math.max(s, 60), 4 * 3600) * 1000;
   }
 
   /** I5 — Snippet-Pfad am Proxmox-Knoten (nur Cloud-Init-Snippets von Alfred) */

@@ -10,7 +10,7 @@ const skill = (name: string, aktionen: string[], props: Record<string, { type?: 
 const SKILLS: Record<string, ReturnType<typeof skill>> = {
   proxmox: skill('proxmox', ['list_vms', 'vm_status', 'create_snapshot', 'delete_snapshot', 'rollback_snapshot', 'clone_vm', 'start_vm', 'stop_vm', 'delete_vm'], { vmid: { type: 'number' }, name: { type: 'string' } }, i => (['create_snapshot', 'vm_status', 'start_vm', 'stop_vm', 'delete_snapshot', 'rollback_snapshot'].includes(String(i.action)) && i.vmid === undefined ? `${i.action} braucht vmid oder vm (Name)` : undefined)),
   nginx_proxy_manager: skill('nginx_proxy_manager', ['list_hosts', 'create_host', 'update_host', 'delete_host']),
-  fernzugriff: skill('fernzugriff', ['lesen', 'ausfuehren'], { name: { type: 'string' }, befehl: { type: 'string' } }),
+  fernzugriff: skill('fernzugriff', ['lesen', 'ausfuehren', 'kopieren', 'geheim_uebernehmen'], { name: { type: 'string' }, befehl: { type: 'string' }, pfad: { type: 'string' }, tresor_name: { type: 'string' }, quelle: { type: 'string' }, ziel: { type: 'string' }, quelle_pfad: { type: 'string' }, ziel_pfad: { type: 'string' } }),
   itsm: skill('itsm', ['approve_change']),
 };
 const assets = [{ id: 'a-pve', name: 'pve' }, { id: 'a-dh', name: 'dockerhost' }, { id: 'a-dh2', name: 'dockerhost' }, { id: 'a-test', name: 'test-vm' }];
@@ -227,5 +227,23 @@ describe('I4 Realfall: unerfüllbare Prüfung im Plan', () => {
     expect(pruefeChangePlan(c, ctx()).fehler.join(' ')).toContain('nichtEnthalten mit dem Namen verwenden');
     (c.schritte[1] as { pruefung: Record<string, unknown> }).pruefung = { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'i3probe' };
     expect(pruefeChangePlan(c, ctx()).fehler).toEqual([]);
+  });
+});
+
+// I6 — Geheimnis im selben Change übernehmen und am Ziel schreiben; Kopieren ohne Rückweg zulässig
+describe('I6 Migration im Plan', () => {
+  const plan = (mitUebernahme: boolean) => ({
+    titel: 'Dashy umziehen', begruendung: 'Probe-Migration', typ: 'normal', risiko: 'niedrig', betroffen: ['dockerhost'], ohneSicherungGrund: 'Quelle bleibt unberührt',
+    schritte: [
+      ...(mitUebernahme ? [{ titel: '.env in den Tresor', art: 'aktion', skill: 'fernzugriff', aktion: 'geheim_uebernehmen', parameter: { name: 'dockerhost', pfad: '/opt/dashy/.env', tresor_name: 'dashy-env' }, rueckweg: { keiner: 'nur Tresor' } }] : []),
+      { titel: 'Daten vorkopieren', art: 'aktion', skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'dockerhost', quelle_pfad: '/opt/dashy', ziel: 'web1', ziel_pfad: '/srv/dashy' }, pruefung: { typ: 'datei', zugang: 'web1', pfad: '/srv/dashy' }, rueckweg: { keiner: 'Quelle bleibt unberührt' } },
+      { titel: '.env schreiben', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'web1', befehl: 'install -m 600 {{geheimdatei:dashy-env}} /srv/dashy/.env' }, pruefung: { typ: 'datei', zugang: 'web1', pfad: '/srv/dashy/.env' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'web1', befehl: 'rm -f /srv/dashy/.env' } } },
+    ],
+  });
+  it('Tresor-Name aus geheim_uebernehmen gilt für spätere Schritte; ohne die Übernahme fehlt er', () => {
+    const k = { ...ctx(), tresorNamen: new Set<string>() };
+    const ok = pruefeChangePlan(plan(true), k);
+    expect(ok.fehler.filter(x => /Tresor|Rückweg|rueckweg/.test(x))).toEqual([]);
+    expect(pruefeChangePlan(plan(false), k).fehler.some(x => x.includes('Tresor-Eintrag „dashy-env“ gibt es nicht'))).toBe(true);
   });
 });

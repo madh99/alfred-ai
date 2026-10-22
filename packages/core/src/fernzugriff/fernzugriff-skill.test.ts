@@ -288,3 +288,15 @@ describe('I5 Vorlagen-Fabrik', () => {
     expect(t.befehle.at(-1)).toContain('rm -f /var/lib/vz/snippets/alfred-9021-user.yaml');
   });
 });
+
+// I6 — Datenübertragung und Geheimnis-Übernahme nur im Change-Motor
+describe('I6 nur im Change', () => {
+  it('kopieren, datenbank_kopieren, geheim_uebernehmen werden aus dem Chat abgewiesen', async () => {
+    const t = aufbau();
+    for (const action of ['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']) {
+      const r = await t.skill.execute({ action, quelle: 'pve', ziel: 'pve', name: 'pve' }, ctx);
+      expect(r.error).toMatch(/nur als Schritt eines freigegebenen Changes/);
+    }
+    expect(t.befehle).toEqual([]);
+  });
+});

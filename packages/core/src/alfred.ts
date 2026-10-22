@@ -6939,7 +6939,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           return ok !== false;
         },
         ssh: (ziel, befehl, timeoutMs) => sshAusfuehren(ziel, befehl, datenOrdner, timeoutMs),
-        sshEingabe: async (ziel, befehl, eingabe, timeoutMs) => (await import('./fernzugriff/ssh.js')).sshMitEingabe(ziel, befehl, datenOrdner, eingabe, timeoutMs),
+        sshEingabe: async (ziel, befehl, eingabe, timeoutMs, max) => (await import('./fernzugriff/ssh.js')).sshMitEingabe(ziel, befehl, datenOrdner, eingabe, timeoutMs, max),
+        // I6 — Daten von Host zu Host über den Server (nie über das Modell) und Geheimnisse direkt in den Tresor
+        sshStrom: async (q, qb, qe, z, zb, o) => (await import('./fernzugriff/ssh.js')).sshStrom(q, qb, qe, z, zb, datenOrdner, o),
+        tresorSetzen: async (name, wert, herkunft, zweck) => {
+          const o = ownerFz();
+          if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar');
+          await this.tresor.setze(o, name, wert, herkunft, zweck);
+        },
         keyscan,
         schluessel: () => eigenerSchluessel(datenOrdner),
         melde: (t) => { void this.sendeAnOwner(t); },

@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Datenübertragung von Host zu Host und Geheimnisse direkt in den Tresor (I6, v1577)
+
+Neue Fernzugriff-Aktionen, **nur als Schritte freigegebener Changes**:
+
+- **`kopieren`** gleicht einen Ordner oder ein Docker-Volume von Host zu Host ab, nach Art von rsync:
+  - Beide Seiten liefern eine Dateiliste (Typ, Größe, Zeit, Rechte, Eigentümer, Link-Ziel). Übertragen wird nur, was neu ist oder sich unterscheidet, als tar-Strom Quelle → Server → Ziel.
+  - Die Daten berühren weder die Platte des Servers noch das Modell.
+  - Mit `loeschen` verschwindet am Ziel, was an der Quelle fehlt.
+  - Danach zählt Alfred die verbliebenen Unterschiede und vergleicht eine SHA-256 über alle Dateien beider Seiten.
+  - Zwei Durchgänge: Vorkopieren bei laufendem Dienst, nach dem Stoppen nur noch der Rest. Ein Abbruch wird durch erneuten Aufruf fortgesetzt; eine Bandbreitengrenze (`kbps`) ist einstellbar.
+  - Docker-Volumes über `quelle_volume`/`ziel_volume`; das Ziel-Volume wird angelegt.
+  - Ziele nur in Datenbereichen (`/srv`, `/opt`, `/data`, `/mnt`, `/home/<b>`, Docker-Volumes), nie in Systemordnern.
+- **`datenbank_kopieren`** überträgt eine PostgreSQL-Datenbank:
+  - `pg_dump -Fc` → `pg_restore` als Strom;
+  - Prüfung: exakte Zeilenzahl je Tabelle auf beiden Seiten.
+- **`geheim_uebernehmen`** liest eine Geheimnisdatei (z. B. `.env`) am Quell-Host als root und legt sie direkt in den Tresor.
+  - Das Modell sieht nur Namen und Größe.
+  - Am Ziel schreibt `{{geheimdatei:name}}` sie wieder.
+  - Die Planung erkennt Tresor-Einträge, die ein früherer Schritt desselben Changes anlegt.
+
+**Planung:** Die drei Aktionen brauchen keinen Rückweg, weil die Quelle unberührt bleibt. Die Planung kennt den Migrationsablauf: vorkopieren → stoppen → abgleichen mit Prüfsumme → starten → prüfen → Proxy umstellen; Rückweg Proxy zurück und Quelle starten.
+
+**Belegt:** Mit den echten Befehlen auf Linux (lokal) waren Umlaute, Leerzeichen, Typwechsel, Löschungen, Rechte und ein Fortsetzungslauf ohne Übertragung korrekt; `diff -r` war leer.
+
 ### Fixed — Ja zum Rückweg wirkungslos, Proxmox-Prüfung im Käfig, Wiederholen ohne doppelte Aktion (v1576)
 
 Realfall am Beweis-Change 4dc47fa3 (I5):
