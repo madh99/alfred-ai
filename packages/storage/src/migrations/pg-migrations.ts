@@ -2429,4 +2429,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_cmdb_cr_vorhaben ON cmdb_change_requests (vorhaben_id)', []);
     },
   },
+  {
+    version: 155,
+    description: 'I4 (Spec Infrastruktur-Vorhaben) — cmdb_change_requests.lauf: Laufzustand des Ausführungsmotors (PG-Spiegel zu SQLite v151).',
+    async up(db) {
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS lauf TEXT', []);
+    },
+  },
 ];

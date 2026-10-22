@@ -136,6 +136,7 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
     ...(r.freigegeben_at ? { freigegebenAt: r.freigegeben_at as string } : {}),
     ...(r.freigegeben_ueber ? { freigegebenUeber: r.freigegeben_ueber as string } : {}),
     ...(r.freigabe_anfrage ? { freigabeAnfrage: jsonOder(r.freigabe_anfrage) as CmdbChangeRequest['freigabeAnfrage'] } : {}),
+    ...(r.lauf ? { lauf: jsonOder(r.lauf) } : {}),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -934,6 +935,32 @@ export class ItsmRepository {
         JSON.stringify(d.pruefung), d.fingerabdruck, freigabeBleibt ? e.freigabeFingerabdruck! : null, freigabeBleibt ? e.freigegebenAt ?? null : null,
         freigabeBleibt ? e.freigegebenUeber ?? null : null, new Date().toISOString(), e.id, userId],
     );
+    return (await this.getChangeRequestById(userId, e.id))!;
+  }
+
+  /**
+   * I4 — Statuswechsel und Laufzustand durch den Ausführungsmotor (einziger Weg zu in_progress/completed/failed/rolled_back für
+   * Changes mit Schritten). Start nur aus approved und nur, wenn die Freigabe genau den aktuellen Plan deckt.
+   */
+  async motorSetze(userId: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string }): Promise<CmdbChangeRequest> {
+    const e = await this.getChangeRequestById(userId, id);
+    if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
+    const erlaubt: Record<string, string[]> = { approved: ['in_progress'], in_progress: ['completed', 'failed', 'rolled_back', 'cancelled'], cancelled: [] };
+    if (d.status && d.status !== e.status) {
+      if (!(erlaubt[e.status] ?? []).includes(d.status)) throw new Error(`Motor: Wechsel ${e.status} → ${d.status} nicht erlaubt`);
+      if (d.status === 'in_progress' && (!e.freigabeFingerabdruck || e.freigabeFingerabdruck !== e.fingerabdruck)) throw new Error('Motor: Freigabe deckt den aktuellen Plan nicht');
+    }
+    const now = new Date().toISOString();
+    const felder = ['lauf = ?', 'updated_at = ?'];
+    const werte: unknown[] = [JSON.stringify(d.lauf), now];
+    if (d.status && d.status !== e.status) {
+      felder.push('status = ?'); werte.push(d.status);
+      if (d.status === 'in_progress' && !e.startedAt) { felder.push('started_at = ?'); werte.push(now); }
+      if (['completed', 'failed', 'rolled_back', 'cancelled'].includes(d.status)) { felder.push('completed_at = ?'); werte.push(now); }
+    }
+    if (d.result !== undefined) { felder.push('result = ?'); werte.push(d.result); }
+    werte.push(e.id, userId);
+    await this.db.execute(`UPDATE cmdb_change_requests SET ${felder.join(', ')} WHERE id = ? AND user_id = ?`, werte);
     return (await this.getChangeRequestById(userId, e.id))!;
   }
 

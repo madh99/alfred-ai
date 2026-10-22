@@ -458,6 +458,8 @@ export class Alfred {
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
   /** I3 — Planung/Freigabe von Changes mit Schritten (auch für Web-Freigabe) */
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
+  /** I4 — Ausführungsmotor für freigegebene Changes */
+  private changeMotor?: import('./infrastruktur/change-motor.js').ChangeMotor;
   private hostBestaende = new Map<string, import('./infrastruktur/sammler.js').HostBestand>();
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
@@ -7015,7 +7017,62 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return ok !== false;
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
+          nachFreigabe: () => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); },
         });
+        // I4 — Ausführungsmotor
+        {
+          const { ChangeMotor } = await import('./infrastruktur/change-motor.js');
+          const netz = await import('./infrastruktur/netz-pruefung.js');
+          this.changeMotor = new ChangeMotor({
+            owner: () => ownerFz() ?? undefined,
+            itsm: { liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }), hole: (o, id) => itsmI3.getChangeRequestById(o, id), motorSetze: (o, id, d) => itsmI3.motorSetze(o, id, d) },
+            fuehreAus: async (name, input, timeoutMs) => {
+              const sk = skillRegistry.get(name);
+              if (!sk) return { success: false, error: `Skill ${name} nicht verfügbar` };
+              const o = ownerFz() ?? '';
+              return skillSandbox.execute(sk, input, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never, timeoutMs);
+            },
+            fernLesen: (z, b, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.lesenIntern(z, b, t); },
+            fernAusfuehren: (z, b, root, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(z, b, root, t); },
+            netz: { http: netz.http, port: netz.port, dns: netz.aufloesen, ping: netz.ping },
+            cmdbProtokoll: async (assetId, text) => { const o = ownerFz(); if (o) await cmdbFz.logChange(o, assetId, 'updated', 'maintenance', undefined, undefined, undefined, text, 'infrastruktur-I4'); },
+            entdecke: async (quellen) => {
+              const cmdb = skillRegistry.get('cmdb'); const o = ownerFz();
+              if (!cmdb || !o) return [];
+              const aus: string[] = [];
+              for (const q of quellen) {
+                const r = await skillSandbox.execute(cmdb, { action: 'discover_source', source: q }, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never).catch(err => ({ success: false, error: (err as Error).message, data: undefined }));
+                const d = r.data as { assets?: number; relations?: number } | undefined;
+                aus.push(r.success ? `${q}: ${d?.assets ?? 0} Assets` : `${q}: ${String(r.error ?? 'Fehler').slice(0, 80)}`);
+              }
+              return aus;
+            },
+            incident: {
+              anlegen: async (o, d) => (await itsmI3.createIncident(o, { title: d.titel, description: d.text, severity: d.schwere as never, affectedAssetIds: d.assetIds, symptoms: d.text, detectedBy: 'change-motor' })).id,
+              notiz: async (o, id, text) => { await itsmI3.updateIncident(o, id, { investigationNotes: text } as never); },
+            },
+            melde: async (text, dringend) => {
+              await this.sendeAnOwner(text);
+              await this.pushDienst?.anOwner({ titel: dringend ? 'Change braucht dich' : 'Change', text: text.slice(0, 180), art: 'hinweis', stufe: dringend ? 'time-sensitive' : 'active' }).catch(() => undefined);
+            },
+            frage: async (description, params) => {
+              if (!this.confirmationQueue) return false;
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (!chatId) return false;
+              const platform = this.config.telegram?.enabled ? 'telegram' : 'api';
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `infrastruktur-motor-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
+              return ok !== false;
+            },
+            protokoll: (msg, daten) => this.logger.info(daten, msg),
+          });
+          this.registriereJob({
+            key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
+            takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 1, timeoutMin: 2,
+            run: async () => ({ ok: true, zaehler: { gestartet: (await this.changeMotor!.anstossen()).length, aktiv: this.changeMotor!.aktiv() } }),
+          });
+          setTimeout(() => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor-Start fehlgeschlagen')); }, 45_000);
+          this.logger.info('I4 Ausführungsmotor registriert');
+        }
         const istOwnerFz = (ctx: import('@alfred/types').SkillContext) => {
           const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
           const ids = [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].filter((x): x is string => !!x);
@@ -7090,6 +7147,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return (await cmdbFz.saveDocument(o, { docType: 'architecture', title: titel, content: markdown, format: 'markdown', linkedEntityType: 'vorhaben', linkedEntityId: vorhabenId, generatedBy: 'alfred:infrastruktur-I2' })).id;
           },
           changes: this.changePlanung,
+          motor: this.changeMotor,
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
       }
@@ -14462,7 +14520,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             eigeneVersion,
             eingangOrdner: path.resolve(process.cwd(), 'data', 'updates'),
             logger: this.logger.child({ component: 'selbstupdate' }),
-            ruhe: () => ({ vorhaben: this.geraeteGateway?.vorhabenAktive().length ?? 0, hoeren: this.hoerRelais?.aktive().length ?? 0 }),
+            ruhe: () => ({ vorhaben: this.geraeteGateway?.vorhabenAktive().length ?? 0, hoeren: this.hoerRelais?.aktive().length ?? 0, changes: this.changeMotor?.aktiv() ?? 0 }),
             melde: (t) => this.sendeAnOwner(t),
             neustart: () => { if (this.neustartHandler) this.neustartHandler(); else process.exit(NEUSTART_CODE); },
           });

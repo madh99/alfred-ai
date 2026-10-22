@@ -109,7 +109,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'port') { fehlt(['ziel', 'port']); if (aus.port !== undefined && (aus.port < 1 || aus.port > 65535)) f.push(`${wo}: Port ungültig`); }
   if (typ === 'dns' || typ === 'ping') fehlt(['ziel']);
   if (typ === 'container_healthy') fehlt(['zugang', 'container']);
-  if (typ === 'datei') fehlt(['zugang', 'pfad']);
+  if (typ === 'datei') { fehlt(['zugang', 'pfad']); if (aus.pfad && !/^\/[\w./-]+$/.test(aus.pfad)) f.push(`${wo}: pfad muss ein einfacher absoluter Pfad sein`); }
   if (typ === 'befehl') { fehlt(['zugang', 'befehl']); if (aus.befehl && befehlsklasse(aus.befehl) !== 'lesen') f.push(`${wo}: Prüfbefehl „${aus.befehl.slice(0, 60)}“ ist kein reiner Lesebefehl`); }
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);

@@ -353,6 +353,22 @@ export class FernzugriffSkill extends Skill {
     return schwaerze(r.stdout).text;
   }
 
+  /**
+   * I4 (Spec Infrastruktur-Vorhaben) — Ausführung für den Change-Motor: die Owner-Freigabe des ganzen Changes (Fingerabdruck über
+   * genau diesen Befehl) ersetzt die Einzelrückfrage. Nie-Befehle bleiben gesperrt; die Ausgabe wird geschwärzt. Nur aus dem Kern
+   * aufrufbar, nicht als Skill-Aktion.
+   */
+  async ausfuehrenIntern(name: string, befehl: string, alsRoot: boolean, timeoutMs = 300_000): Promise<{ code: number; stdout: string; stderr: string }> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    const b = normalisiereBefehl(befehl);
+    if (befehlsklasse(b) === 'nie') throw new Error(`„${b.slice(0, 120)}“ ist nie erlaubt`);
+    const z = await this.zugang(owner, { name });
+    const r = await this.lauf(owner, z, fernBefehl(b, alsRoot), timeoutMs);
+    this.deps.protokoll?.('I4 Fernzugriff ausgeführt (Change)', { name: z.name, befehl: b.slice(0, 200), code: r.code, root: alsRoot });
+    return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
+  }
+
   /** I1 — aktive Zugänge (Name, Host, CMDB-Verweis) für die Sammler. */
   async aktiveZugaenge(): Promise<Array<{ name: string; host: string; cmdbAssetId?: string }>> {
     const owner = this.deps.owner();

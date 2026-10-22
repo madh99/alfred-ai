@@ -26,6 +26,8 @@ export interface ChangeDeps {
   bestaetigung?: (frage: { description: string; params: Record<string, unknown> }) => Promise<boolean>;
   jetzt?: () => number;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
+  /** I4 — nach jeder Owner-Freigabe (Motor anstoßen) */
+  nachFreigabe?: () => void;
 }
 
 const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', high: 'hoch', critical: 'kritisch' };
@@ -210,6 +212,7 @@ export class ChangePlanung {
       catch (err) { z.push(`✗ ${akt!.title}: ${(err as Error).message}`); }
     }
     this.d.protokoll?.('I3 Owner-Freigabe', { ergebnis: z });
+    if (z.some(x => x.startsWith('✓'))) this.d.nachFreigabe?.();
     return { ok: z.every(x => x.startsWith('✓')), text: z.join('\n') };
   }
 
@@ -221,6 +224,7 @@ export class ChangePlanung {
     if (!b.ok) throw new Error(b.grund);
     const f = await this.d.itsm.freigeben(owner, c.id, c.fingerabdruck!, 'web');
     this.d.protokoll?.('I3 Owner-Freigabe', { id: c.id, ueber: 'web' });
+    this.d.nachFreigabe?.();
     return f;
   }
 }
@@ -242,5 +246,8 @@ export function changeAnzeige(c: CmdbChangeRequest): string {
   ];
   if (a) z.push('', `**Auswirkung:** ${a.assets.join(', ')}${a.abhaengige.length ? `; abhängig: ${a.abhaengige.slice(0, 10).join(', ')}` : ''}${a.services.length ? `; Services: ${a.services.map(x => `${x.name} (${x.kritikalitaet})`).join(', ')}` : ''}`);
   if (c.pruefung?.hinweise.length) z.push('', '**Hinweise:**', ...c.pruefung.hinweise.map(x => `- ${x}`));
+  const l = c.lauf as { phase?: string; schritt?: number; grund?: string; ergebnisse?: Array<{ nr: number; ok: boolean; fehler?: string; pruefung?: { text: string } }> } | undefined;
+  if (l?.phase) z.push('', `**Lauf:** ${l.phase}${l.schritt ? `, Schritt ${l.schritt}` : ''}${l.grund ? ` — ${l.grund}` : ''}`, ...(l.ergebnisse ?? []).map(e => `- ${e.ok ? '✓' : '✗'} Schritt ${e.nr}${e.pruefung ? `: ${e.pruefung.text}` : ''}${e.fehler ? ` — ${e.fehler}` : ''}`));
+  if (c.result && ['completed', 'failed', 'rolled_back', 'cancelled'].includes(c.status)) z.push('', '**Bericht:**', c.result);
   return z.filter(x => x !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
 }

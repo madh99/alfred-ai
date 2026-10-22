@@ -4,6 +4,7 @@ import { bestandsbericht, type BackupStand, type NetzEintrag, type ProxyEintrag,
 import type { HostBestand } from './sammler.js';
 import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
 import { changeAnzeige, type ChangePlanung } from './change-planung.js';
+import type { ChangeMotor } from './change-motor.js';
 import { PRUEF_TYPEN } from './change-schritte.js';
 
 /** Ausschnitt des VorhabenRepository (@alfred/storage), damit der Skill ohne DB testbar bleibt. */
@@ -52,13 +53,15 @@ export interface InfrastrukturDeps {
   speichereArchitektur?: (vorhabenId: string, titel: string, markdown: string) => Promise<string>;
   // ── I3 ──
   changes?: ChangePlanung;
+  // ── I4 ──
+  motor?: ChangeMotor;
 }
 
 export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'unifi', 'pfsense', 'mikrotik'];
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -84,7 +87,8 @@ export class InfrastrukturSkill extends Skill {
       + 'CHANGES (I3, nichts wird ausgeführt): changes_planen (vorhaben optional — nur mit angenommener Architektur; changes = Liste von Plänen: schluessel, titel, begruendung, typ normal|notfall, risiko niedrig|mittel|hoch|kritisch, ausfallMinuten, geplantAb, betroffen = CMDB-Assets, abhaengigVon = Schlüssel/Change-IDs, zweck stilllegung nur für Löschen, ohneSicherungGrund wenn nur Neues entsteht, schritte). '
       + 'Schritt: art aktion (skill, aktion, parameter, pruefung, rueckweg {skill,aktion,parameter} — Pflicht bei ändernden Aktionen; vor der ersten Änderung eine Sicherung, z. B. proxmox create_snapshot), pruefung (pruefung), warten (sekunden oder pruefung), owner (frage — für Handgriffe, solange eine Skill-Aktion fehlt). '
       + 'Verweise: {{schrittN.feld}} auf frühere Aktionen, {{geheim:name}} für Tresor-Werte. Ein Paket mit Fehlern wird nicht gespeichert — nachbessern. '
-      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners.',
+      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
+      + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
     version: '2.0.0',
     timeoutMs: 15 * 60_000,
@@ -137,6 +141,7 @@ export class InfrastrukturSkill extends Skill {
         ids: { type: 'array', items: { type: 'string' }, description: 'freigabe_anfragen: Change-IDs (ein Change oder ein Paket)' },
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
+        wahl: { type: 'string', enum: ['wiederholen', 'abbrechen'], description: 'change_steuern: was der Owner gesagt hat' },
         wortlaut: { type: 'string', description: 'entscheiden: die Worte des Owners' },
       },
       required: ['action'],
@@ -270,6 +275,21 @@ export class InfrastrukturSkill extends Skill {
     if (action === 'freigeben') {
       const r = await ch.freigebenNachJa(owner, input);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.text };
+    }
+    if (action === 'owner_schritt_erledigt' || action === 'rueckweg_ausfuehren' || action === 'change_steuern') {
+      const m = this.deps.motor;
+      if (!m) return { success: false, error: 'Ausführungsmotor nicht verfügbar' };
+      const c = await ch.finde(owner, String(input.change ?? ''));
+      if (!c) return { success: false, error: `Change „${String(input.change ?? '')}“ nicht gefunden` };
+      if (action === 'owner_schritt_erledigt') { const t = await m.ownerSchrittErledigt(owner, c.id, Number(input.schritt), input.freigabe); return { success: !/ungültig|Keine offene|ist /.test(t), display: t }; }
+      if (action === 'rueckweg_ausfuehren') { const t = await m.rueckwegNachJa(owner, c.id, input.freigabe); return { success: t.startsWith('Rückweg läuft'), display: t }; }
+      const wahl = input.wahl === 'wiederholen' || input.wahl === 'abbrechen' ? input.wahl : undefined;
+      const wortlaut = typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
+      if (!wahl) return { success: false, error: 'wahl: wiederholen oder abbrechen' };
+      if (wortlaut.length < 2) return { success: false, error: 'wortlaut: die Worte des Owners — ohne ausdrückliche Aussage des Owners nicht steuern' };
+      this.deps.protokoll?.('I4 Owner steuert Change', { id: c.id, wahl, wortlaut: wortlaut.slice(0, 200) });
+      const t = await m.steuern(owner, c.id, wahl);
+      return { success: !/nicht angehalten/.test(t), display: t };
     }
     if (action === 'changes_planen') {
       let vorhaben: VorhabenDaten | null = null;

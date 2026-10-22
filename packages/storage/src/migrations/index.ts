@@ -3120,4 +3120,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_cmdb_cr_vorhaben ON cmdb_change_requests (vorhaben_id)');
     },
   },
+  {
+    version: 151,
+    description: 'I4 (Spec Infrastruktur-Vorhaben) — cmdb_change_requests.lauf (SQLite-Spiegel zu PG v155).',
+    up(db) {
+      try { db.exec('ALTER TABLE cmdb_change_requests ADD COLUMN lauf TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

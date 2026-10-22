@@ -26,7 +26,8 @@ export interface SelbstupdateDeps {
   eingangOrdner: string;
   logger: Logger;
   /** Laufende Arbeit, die ein Neustart stören würde */
-  ruhe: () => { vorhaben: number; hoeren: number };
+  /** I4: changes = Infrastruktur-Changes, deren Schritte gerade laufen — auf sie wird ohne Zeitgrenze gewartet */
+  ruhe: () => { vorhaben: number; hoeren: number; changes?: number };
   /** Ein Satz an den Owner (best-effort) */
   melde: (text: string) => Promise<unknown>;
   /** Beendet den Prozess mit Code 75 (sauberer Stop über den Starter) */
@@ -195,9 +196,9 @@ export class Selbstupdate {
     for (;;) {
       const r = this.deps.ruhe();
       const fenster = imPassFenster((this.deps.jetzt ?? (() => new Date()))());
-      if (!fenster && r.vorhaben === 0 && r.hoeren === 0) return undefined;
-      if (Date.now() - start > max && !fenster) return `nach ${Math.round(max / 60_000)} min Warten trotz ${r.vorhaben} Vorhaben/${r.hoeren} Hör-Sitzung`;
-      if (this.lauf) this.lauf.hinweis = fenster ? 'Pass-Fenster' : `${r.vorhaben} Vorhaben, ${r.hoeren} Hör-Sitzung`;
+      if (!fenster && r.vorhaben === 0 && r.hoeren === 0 && !r.changes) return undefined;
+      if (Date.now() - start > max && !fenster && !r.changes) return `nach ${Math.round(max / 60_000)} min Warten trotz ${r.vorhaben} Vorhaben/${r.hoeren} Hör-Sitzung`;
+      if (this.lauf) this.lauf.hinweis = fenster ? 'Pass-Fenster' : r.changes ? `${r.changes} laufende Infrastruktur-Changes` : `${r.vorhaben} Vorhaben, ${r.hoeren} Hör-Sitzung`;
       await new Promise(res => setTimeout(res, schritt));
     }
   }

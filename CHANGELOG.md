@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Ausführungsmotor für freigegebene Infrastruktur-Changes (v1560, Spec Infrastruktur-Vorhaben I4)
+
+Owner 22.10.: „I4 wie vorgeschlagen umsetzen“, danach „ja, einspielen“. Fernzugriff-Befehle eines freigegebenen Changes laufen mit der Change-Freigabe als Berechtigung, ohne Einzelrückfrage; die Nie-Liste bleibt gesperrt.
+
+- **Start:** Ein freigegebener Change startet sofort nach der Freigabe oder ab `geplantAb`.
+  - Voraussetzungen: alle Abhängigkeiten abgeschlossen, und kein anderer laufender Change berührt dieselben Assets.
+  - Angestoßen wird nach jeder Freigabe, beim Start und über das Job-Register (`change-motor`, 10-Minuten-Raster).
+  - Den Start erlaubt das Repository nur, wenn die Freigabe genau den aktuellen Plan deckt (`motorSetze`).
+- **Ablauf je Schritt:**
+  - Verweise auflösen; eingesetzte Werte nur aus Buchstaben, Ziffern und `. : / @ -`, ein Verweis als ganzer Befehl ist verboten.
+  - Ausführen über die Skill-Sandbox als Owner; Fernzugriff über den neuen internen Weg `ausfuehrenIntern`.
+  - Proxmox-Aufgaben (UPID) werden bis zum Ende verfolgt.
+  - Prüfung mit Wiederholung; danach Ergebnis, Ausgabe und Daten im Laufzustand (`cmdb_change_requests.lauf`, PG v155 / SQLite v151) sowie ein CMDB-Änderungseintrag je betroffenem Asset.
+- **Prüfungen vom Server:** HTTP(S) (selbstsignierte Zertifikate je Anfrage erlaubt), TCP-Port, DNS, Ping; Container, Datei und Lesebefehl über den Fernzugriff; lesende Skill-Aktion. Jeweils mit `erwartet` bzw. `nichtEnthalten`.
+- **Bei Fehler gilt der freigegebene Plan:**
+  - `anhalten`: Incident, zeitkritische Meldung (Telegram und iPhone-Push), Rückweg nur als Frage an den Owner (Button, Hash der Einmal-Freigabe am Lauf, 24 Stunden gültig).
+  - `rueckweg`: Der im Plan freigegebene Rückweg läuft selbst.
+  - `weiter`: Der Lauf setzt fort.
+  - Im angehaltenen Zustand kann der Owner im Chat „wiederholen“ oder „abbrechen“ sagen (`change_steuern`, mit Wortlaut).
+- **Owner-Schritte** warten auf das Ja des Owners (Button).
+- **Neustart:** Ein lesender Schritt wird fortgesetzt; mitten in einem ändernden Schritt oder im Rückweg hält der Change an und fragt.
+  - Das Selbstupdate wartet ohne Zeitgrenze, solange Change-Schritte laufen.
+- **Abschluss:** Discovery der berührten Quellen; Bericht (Schritte, Prüfungen, Rückweg, Dauer) als Ergebnis bzw. PIR-Grundlage im Change und als Notiz im Incident; Meldung an den Owner.
+  - Ein Abbruch im Web wird erkannt und abgeschlossen.
+
 ### Fixed — Change-Auswirkung nur über Abhängige, negative Prüfung (v1559)
 
 Befunde aus dem ersten Live-Change (22.10., Probe-Change test-ubuntu):

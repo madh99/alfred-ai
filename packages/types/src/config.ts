@@ -945,6 +945,8 @@ export interface CmdbChangeRequest {
   freigegebenUeber?: string;
   /** Offene Freigabe-Frage: nur der Hash der Einmal-Freigabe (der Wert steht allein in der Bestätigungs-Queue) und die Gültigkeit */
   freigabeAnfrage?: { hash: string; bis: string; fingerabdruck: string };
+  /** I4 — Laufzustand des Ausführungsmotors (Struktur siehe core/infrastruktur/change-lauf.ts) */
+  lauf?: unknown;
   createdAt: string;
   updatedAt: string;
 }
