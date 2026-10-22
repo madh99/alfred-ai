@@ -127,7 +127,7 @@ export interface HttpAdapterOptions {
   tls?: TlsOptions;
   authCallback?: {
     loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
-    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
+    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string; masterUserId?: string } | null>;
   };
   oauthCallbacks?: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>>;
   publicUrl?: string;
@@ -4801,9 +4801,13 @@ export class HttpAdapter extends MessagingAdapter {
    * NUR wenn ausdrücklich der globale API-Token im Authorization-Header steht. Sonst null → 403.
    */
   private async ownerAnfrage(req: http.IncomingMessage): Promise<string | null> {
-    const uid = await this.resolveUserId(req);
-    if (uid) return uid;
     const token = req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null;
+    // v1598 — Realfall 22.10.: Die Web-Anmeldung lieferte nie eine Benutzer-ID (getUserByToken gibt userId, nicht id) → der Owner sah
+    // „Nur für den Owner“. Jetzt zählt der Master aus den Plattform-Verknüpfungen; eine Sitzung ohne eindeutigen Master bekommt nichts.
+    if (this.authCb && token) {
+      const user = await this.authCb.getUserByToken(token).catch(() => null);
+      if (user) return user.masterUserId ?? null;
+    }
     if (this.apiToken && token && token.length === this.apiToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.apiToken))) return '';
     return null;
   }

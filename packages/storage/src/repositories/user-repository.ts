@@ -48,6 +48,12 @@ export class UserRepository {
     return user;
   }
 
+  /** Nur nachschlagen, nie anlegen (Owner-Erkennung der Web-Anmeldung, v1598) */
+  async findByPlatform(platform: Platform, platformUserId: string): Promise<User | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM users WHERE platform = ? AND platform_user_id = ?', [platform, platformUserId]) as Record<string, string> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async findById(id: string): Promise<User | undefined> {
     const row = await this.adapter.queryOne('SELECT * FROM users WHERE id = ?', [id]) as Record<string, string> | undefined;
     if (!row) return undefined;

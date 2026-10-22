@@ -111,6 +111,7 @@ import { ReasoningEngine } from './reasoning-engine.js';
 import { InsightTracker } from './insight-tracker.js';
 import { ReflectionEngine } from './reflection-engine.js';
 import { resolveReflectionConfig } from './reflection/index.js';
+import { webMasterAus } from './identity/web-master.js'; // v1598
 
 /**
  * v633 T3.2 — Look up a known-error Problem whose keyword footprint matches the new
@@ -407,7 +408,7 @@ export class Alfred {
   private adapterClaimManager?: import('./adapter-claim-manager.js').AdapterClaimManager;
   private webAuthCallback?: {
     loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
-    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
+    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string; masterUserId?: string } | null>;
   };
   private reminderRepo?: ReminderRepository;
   /** v661 — Todos + Notes für WebUI-API */
@@ -6385,7 +6386,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (new Date(entry.expiresAt) < new Date()) return null;
           const user = await alfredUserRepo.getById(entry.userId);
           if (!user) return null;
-          return { userId: user.id, username: user.username, role: user.role };
+          // v1598 — Master über die Plattform-Verknüpfungen (Web-Platzhalter zählen nicht); nur eindeutig, sonst keiner
+          const master = await webMasterAus(await alfredUserRepo.getPlatformLinks(user.id).catch(() => []), (p, id) => userRepo.findByPlatform(p as import('@alfred/types').Platform, id));
+          return { userId: user.id, username: user.username, role: user.role, ...(master ? { masterUserId: master } : {}) };
         },
       };
     }

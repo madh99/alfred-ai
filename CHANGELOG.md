@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Owner-Seiten im Web erkennen die Anmeldung des Owners (v1598)
+
+- **Realfall 22.10.:** Vorhaben, Wartung und Tresor zeigten dem angemeldeten Owner (Web-Benutzer `admin`, auch aus der App heraus geöffnet) nur „Nur für den Owner“, der Tresor „Einträge (0)“.
+- **Ursache:** Die Sitzungsprüfung lieferte zur Anmeldung nie eine Benutzer-ID. Die Owner-Routen nahmen deshalb an, es sei weder ein Benutzer noch der API-Token, und lehnten ab.
+- **Jetzt:** Die Sitzung trägt den Master des Web-Benutzers, ermittelt über seine Plattform-Verknüpfungen (Web-Platzhalter zählen nicht). Er gilt nur, wenn er eindeutig ist. Owner-Routen lassen nur diesen Master zu, alle anderen Anmeldungen bleiben gesperrt.
+
 ### Fixed — Überarbeitung einer Zielarchitektur nach teilweiser Umsetzung (v1597)
 
 - **Realfall 22.10. (Version 4 von cf82f3f2):** Die Prüfung lehnte die Überarbeitung ab, weil VLAN 824, sein Subnetz und `docker-dev-01` „bereits vergeben“ seien. Das waren aber die schon umgesetzten Teile desselben Vorhabens.
