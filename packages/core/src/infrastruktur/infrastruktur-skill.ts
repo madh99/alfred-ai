@@ -3,6 +3,8 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { bestandsbericht, type BackupStand, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 import type { HostBestand } from './sammler.js';
 import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
+import { changeAnzeige, type ChangePlanung } from './change-planung.js';
+import { PRUEF_TYPEN } from './change-schritte.js';
 
 /** Ausschnitt des VorhabenRepository (@alfred/storage), damit der Skill ohne DB testbar bleibt. */
 export interface VorhabenSpeicher {
@@ -11,6 +13,7 @@ export interface VorhabenSpeicher {
   anlegen(userId: string, e: { titel: string; ziel: string; hosts: string[]; bestandDocId?: string }): Promise<VorhabenDaten>;
   setzeArchitektur(userId: string, id: string, architektur: unknown, docId: string, bestandDocId?: string): Promise<VorhabenDaten>;
   entscheide(userId: string, id: string, e: { entscheidung: 'annehmen' | 'ablehnen' | 'ueberarbeiten'; wortlaut: string; architekturVersion: number }, status: VorhabenDaten['status']): Promise<VorhabenDaten>;
+  fuegeChangesHinzu?(userId: string, id: string, changeIds: string[]): Promise<void>;
 }
 export interface VorhabenDaten {
   id: string; titel: string; ziel: string; hosts: string[];
@@ -47,13 +50,15 @@ export interface InfrastrukturDeps {
   speicher?: () => Promise<SpeicherStand[]>;
   letzterBestandDocId?: () => Promise<string | undefined>;
   speichereArchitektur?: (vorhabenId: string, titel: string, markdown: string) => Promise<string>;
+  // ── I3 ──
+  changes?: ChangePlanung;
 }
 
 export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager', 'unifi', 'pfsense', 'mikrotik'];
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -75,7 +80,11 @@ export class InfrastrukturSkill extends Skill {
       + '3) architektur_vorschlagen (vorhaben, architektur) — JEDE Einheit genau einer Gruppe zuordnen (ziel vm|lxc|bleibt|stilllegen; vm/lxc mit vmName, knoten, vcpu, ramGb, diskGb, distribution + distributionBegruendung, netz), '
       + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan, subnetz ohne Überschneidung), firewall (je Regel eine Zone von/nach: Netz, Gruppe oder internet/vpn/proxy/alle; protokoll, ports), proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
       + 'Ergebnis: Architektur-Dokument (CMDB). 4) entscheiden NUR auf ausdrückliche Aussage des Owners (annehmen|ueberarbeiten|ablehnen, wortlaut = seine Worte). '
-      + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben.',
+      + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben. '
+      + 'CHANGES (I3, nichts wird ausgeführt): changes_planen (vorhaben optional — nur mit angenommener Architektur; changes = Liste von Plänen: schluessel, titel, begruendung, typ normal|notfall, risiko niedrig|mittel|hoch|kritisch, ausfallMinuten, geplantAb, betroffen = CMDB-Assets, abhaengigVon = Schlüssel/Change-IDs, zweck stilllegung nur für Löschen, ohneSicherungGrund wenn nur Neues entsteht, schritte). '
+      + 'Schritt: art aktion (skill, aktion, parameter, pruefung, rueckweg {skill,aktion,parameter} — Pflicht bei ändernden Aktionen; vor der ersten Änderung eine Sicherung, z. B. proxmox create_snapshot), pruefung (pruefung), warten (sekunden oder pruefung), owner (frage — für Handgriffe, solange eine Skill-Aktion fehlt). '
+      + 'Verweise: {{schrittN.feld}} auf frühere Aktionen, {{geheim:name}} für Tresor-Werte. Ein Paket mit Fehlern wird nicht gespeichert — nachbessern. '
+      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners.',
     riskLevel: 'read',
     version: '2.0.0',
     timeoutMs: 15 * 60_000,
@@ -110,6 +119,24 @@ export class InfrastrukturSkill extends Skill {
           },
         },
         entscheidung: { type: 'string', enum: ['annehmen', 'ueberarbeiten', 'ablehnen'], description: 'entscheiden: nur was der Owner ausdrücklich gesagt hat' },
+        changes: {
+          type: 'array', description: 'changes_planen: Pläne',
+          items: { type: 'object', properties: {
+            schluessel: { type: 'string' }, titel: { type: 'string' }, begruendung: { type: 'string' }, typ: { type: 'string', enum: ['normal', 'notfall'] },
+            risiko: { type: 'string', enum: ['niedrig', 'mittel', 'hoch', 'kritisch'] }, ausfallMinuten: { type: 'number' }, geplantAb: { type: 'string' },
+            betroffen: { type: 'array', items: { type: 'string' } }, abhaengigVon: { type: 'array', items: { type: 'string' } },
+            zweck: { type: 'string', enum: ['stilllegung'] }, ohneSicherungGrund: { type: 'string' },
+            schritte: { type: 'array', items: { type: 'object', properties: {
+              titel: { type: 'string' }, art: { type: 'string', enum: ['aktion', 'pruefung', 'warten', 'owner'] }, skill: { type: 'string' }, aktion: { type: 'string' }, parameter: { type: 'object' },
+              pruefung: { type: 'object', properties: { typ: { type: 'string', enum: [...PRUEF_TYPEN] }, ziel: { type: 'string' }, port: { type: 'number' }, erwartet: { type: 'string' }, zugang: { type: 'string' }, container: { type: 'string' }, pfad: { type: 'string' }, befehl: { type: 'string' }, skill: { type: 'string' }, aktion: { type: 'string' }, parameter: { type: 'object' } } },
+              rueckweg: { type: 'object', properties: { skill: { type: 'string' }, aktion: { type: 'string' }, parameter: { type: 'object' }, keiner: { type: 'string' } } },
+              sekunden: { type: 'number' }, frage: { type: 'string' }, zeitlimitS: { type: 'number' }, beiFehler: { type: 'string', enum: ['anhalten', 'rueckweg', 'weiter'] },
+            } } },
+          } },
+        },
+        ids: { type: 'array', items: { type: 'string' }, description: 'freigabe_anfragen: Change-IDs (ein Change oder ein Paket)' },
+        change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
+        plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
         wortlaut: { type: 'string', description: 'entscheiden: die Worte des Owners' },
       },
       required: ['action'],
@@ -126,6 +153,7 @@ export class InfrastrukturSkill extends Skill {
     const owner = this.deps.ownerId?.();
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;
+    if (action.startsWith('change') || action === 'freigabe_anfragen' || action === 'freigeben') return this.changeAktion(owner, repo, action, input);
     switch (action) {
       case 'vorhaben_anlegen': return this.anlegen(owner, repo, input);
       case 'vorhaben_liste': {
@@ -234,6 +262,55 @@ export class InfrastrukturSkill extends Skill {
     this.deps.protokoll?.('I2 Owner-Entscheidung', { id: v.id, entscheidung: e, version: v.architekturVersion });
     const weiter = e === 'annehmen' ? 'Grundlage für die Changes (nächste Ausbaustufe I3: Changes mit Schritten, je Change eigene Freigabe).' : e === 'ueberarbeiten' ? 'Architektur nach den Hinweisen des Owners überarbeiten und erneut mit architektur_vorschlagen senden.' : 'Vorhaben beendet.';
     return { success: true, data: { status: neu.status }, display: `Vorhaben **${v.titel}**: ${STATUS_TEXT[neu.status]} („${wortlaut}“). ${weiter}` };
+  }
+
+  private async changeAktion(owner: string, repo: VorhabenSpeicher, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const ch = this.deps.changes;
+    if (!ch) return { success: false, error: 'Change-Planung nicht verfügbar' };
+    if (action === 'freigeben') {
+      const r = await ch.freigebenNachJa(owner, input);
+      return r.ok ? { success: true, display: r.text } : { success: false, error: r.text };
+    }
+    if (action === 'changes_planen') {
+      let vorhaben: VorhabenDaten | null = null;
+      if (typeof input.vorhaben === 'string' && input.vorhaben.trim()) {
+        vorhaben = await repo.finde(owner, input.vorhaben);
+        if (!vorhaben) return { success: false, error: `Vorhaben „${input.vorhaben}“ nicht gefunden` };
+      }
+      const plaene = Array.isArray(input.changes) ? input.changes : typeof input.changes === 'string' ? (() => { try { const x = JSON.parse(input.changes as string); return Array.isArray(x) ? x : []; } catch { return []; } })() : [];
+      const r = await ch.planen(owner, plaene, vorhaben ? { id: vorhaben.id, status: vorhaben.status, titel: vorhaben.titel } : undefined);
+      if (!r.ok) {
+        this.deps.protokoll?.('I3 Changes abgewiesen', { fehler: r.fehler.length, erste: r.fehler.slice(0, 5) });
+        return { success: false, error: `Changes nicht gespeichert (${r.fehler.length} Punkte) — bitte nachbessern und das ganze Paket erneut senden:\n${r.fehler.map(x => `- ${x}`).join('\n')}` };
+      }
+      if (vorhaben) await repo.fuegeChangesHinzu?.(owner, vorhaben.id, r.changes.map(c => c.id));
+      return {
+        success: true, data: r.changes.map(c => ({ id: c.id, titel: c.title, fingerabdruck: c.fingerabdruck })),
+        display: `${r.changes.length} Change${r.changes.length > 1 ? 's' : ''} geplant und geprüft (nichts ausgeführt):\n${r.changes.map(c => `- **${c.title}** (${c.id.slice(0, 8)}) — ${(c.schritte ?? []).length} Schritte${c.pruefung?.hinweise.length ? `; Hinweise: ${c.pruefung.hinweise.join('; ')}` : ''}`).join('\n')}\n\nZur Freigabe: freigabe_anfragen mit den IDs (der Owner bestätigt per Button). Ansicht auch im Web unter ITSM → Changes.`,
+      };
+    }
+    if (action === 'changes_liste') {
+      let l = (await ch.liste(owner)).filter(c => c.schritte?.length);
+      if (typeof input.vorhaben === 'string' && input.vorhaben.trim()) { const v = await repo.finde(owner, input.vorhaben); l = l.filter(c => c.vorhabenId === v?.id); }
+      return { success: true, data: l.map(c => ({ id: c.id, titel: c.title, status: c.status })), display: l.length ? l.map(c => `- **${c.title}** (${c.id.slice(0, 8)}) — ${c.status}, ${(c.schritte ?? []).length} Schritte${c.vorhabenId ? `, Vorhaben ${c.vorhabenId.slice(0, 8)}` : ''}`).join('\n') : 'Keine Changes mit Schritten.' };
+    }
+    if (action === 'change_zeigen') {
+      const c = await ch.finde(owner, String(input.change ?? ''));
+      if (!c) return { success: false, error: `Change „${String(input.change ?? '')}“ nicht gefunden` };
+      return { success: true, data: c, display: c.schritte?.length ? changeAnzeige(c) : `${c.title} (${c.status}) — ohne Schritte` };
+    }
+    if (action === 'change_aendern') {
+      const r = await ch.aendern(owner, String(input.change ?? ''), typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan);
+      if (!r.ok) return { success: false, error: `Änderung nicht gespeichert:\n${r.fehler.map(x => `- ${x}`).join('\n')}` };
+      return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Change **${r.change.title}** geändert (Plan ${r.change.fingerabdruck?.slice(0, 12)}).${r.freigabeVerfallen ? ' Die bisherige Freigabe ist verfallen — neue Freigabe nötig.' : ''}` };
+    }
+    if (action === 'freigabe_anfragen') {
+      const ids = (Array.isArray(input.ids) ? input.ids : Array.isArray(input.changes) ? input.changes : typeof input.change === 'string' ? [input.change] : []).map(x => typeof x === 'string' ? x : String((x as { id?: string })?.id ?? '')).filter(Boolean);
+      if (!ids.length) return { success: false, error: 'ids (Change-IDs) angeben' };
+      const r = await ch.freigabeAnfragen(owner, ids);
+      return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler.join('\n') };
+    }
+    return { success: false, error: 'Unbekannte Aktion' };
   }
 
   private zeige(v: VorhabenDaten): string {

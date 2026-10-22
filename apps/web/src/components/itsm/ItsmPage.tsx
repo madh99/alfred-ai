@@ -55,6 +55,87 @@ interface ChangeRequest {
   startedAt: string | null;
   completedAt: string | null;
   result: string;
+  // I3 (Spec Infrastruktur-Vorhaben) — Change mit Schritten
+  schritte?: ChangeSchritt[];
+  vorhabenId?: string;
+  abhaengigVon?: string[];
+  ausfallMinuten?: number;
+  auswirkung?: { assets: string[]; abhaengige: string[]; services: Array<{ name: string; kritikalitaet: string }>; kritisch: boolean; offeneIncidents: string[]; ueberschneidungen: string[] };
+  pruefung?: { fehler: string[]; hinweise: string[]; zeit: string };
+  fingerabdruck?: string;
+  freigabeFingerabdruck?: string;
+  freigegebenAt?: string;
+  freigegebenUeber?: string;
+}
+
+interface ChangePruefung { typ: string; ziel?: string; port?: number; erwartet?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string }
+interface ChangeSchritt {
+  nr: number; titel: string; art: 'aktion' | 'pruefung' | 'warten' | 'owner';
+  skill?: string; aktion?: string; parameter?: Record<string, unknown>; pruefung?: ChangePruefung;
+  rueckweg?: { skill?: string; aktion?: string; parameter?: Record<string, unknown>; keiner?: string };
+  sekunden?: number; frage?: string; zeitlimitS: number; beiFehler: string; einordnung?: string;
+}
+
+function pruefKurz(p?: ChangePruefung): string {
+  if (!p) return '—';
+  switch (p.typ) {
+    case 'http': return `HTTP ${p.ziel ?? ''}${p.erwartet ? ` → ${p.erwartet}` : ''}`;
+    case 'port': return `Port ${p.ziel}:${p.port}`;
+    case 'dns': case 'ping': return `${p.typ.toUpperCase()} ${p.ziel ?? ''}`;
+    case 'container_healthy': return `${p.container} auf ${p.zugang} healthy`;
+    case 'datei': return `Datei ${p.pfad} auf ${p.zugang}`;
+    case 'befehl': return `${p.zugang}: ${p.befehl}`;
+    default: return `${p.skill}.${p.aktion}${p.erwartet ? ` → „${p.erwartet}“` : ''}`;
+  }
+}
+
+/** I3 — Schritte, Auswirkung, Prüfhinweise und Freigabe-Stand eines Changes mit Schritten (nur Anzeige; Plan ändert nur Alfred). */
+function ChangeSchritteAnsicht({ c }: { c: ChangeRequest }) {
+  const schritte = c.schritte ?? [];
+  const farbe: Record<string, string> = { lesen: 'text-gray-400', sicherung: 'text-green-400', aendern: 'text-orange-400', loeschen: 'text-red-400', pruefung: 'text-blue-400', warten: 'text-gray-400', owner: 'text-purple-400' };
+  const freigabe = c.status === 'approved'
+    ? `Freigegeben ${c.freigegebenAt ? fmtDate(c.freigegebenAt) : ''} über ${c.freigegebenUeber === 'web' ? 'Web' : 'Freigabe-Frage'} — Plan ${c.freigabeFingerabdruck?.slice(0, 12)}`
+    : c.status === 'submitted' ? `Wartet auf Freigabe — Plan ${c.fingerabdruck?.slice(0, 12)}` : c.status;
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-gray-400 flex gap-3 flex-wrap">
+        <span>{freigabe}</span>
+        {c.ausfallMinuten !== undefined && <span>Ausfall: {c.ausfallMinuten} min</span>}
+        {c.vorhabenId && <span>Vorhaben: {c.vorhabenId.slice(0, 8)}</span>}
+        {c.abhaengigVon && c.abhaengigVon.length > 0 && <span>Hängt ab von: {c.abhaengigVon.map(x => x.slice(0, 8)).join(', ')}</span>}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead><tr className="text-gray-500 text-left"><th className="pr-2">#</th><th className="pr-2">Schritt</th><th className="pr-2">Was</th><th className="pr-2">Prüfung</th><th className="pr-2">Rückweg</th><th>bei Fehler</th></tr></thead>
+          <tbody>
+            {schritte.map(x => (
+              <tr key={x.nr} className="border-t border-[#1f1f1f] align-top">
+                <td className="pr-2 py-1 text-gray-500">{x.nr}</td>
+                <td className="pr-2 py-1 text-gray-200">{x.titel}<div className={clsx('text-[10px]', farbe[x.einordnung ?? x.art] ?? 'text-gray-400')}>{x.einordnung ?? x.art}</div></td>
+                <td className="pr-2 py-1 text-gray-300 font-mono break-all">{x.art === 'aktion' ? `${x.skill}.${x.aktion} ${x.parameter ? JSON.stringify(x.parameter) : ''}` : x.art === 'owner' ? x.frage : x.art === 'warten' ? `${x.sekunden ? `${x.sekunden} s` : ''} ${x.pruefung ? `bis ${pruefKurz(x.pruefung)}` : ''}` : ''}</td>
+                <td className="pr-2 py-1 text-gray-400">{pruefKurz(x.pruefung)}</td>
+                <td className="pr-2 py-1 text-gray-400">{x.rueckweg ? (x.rueckweg.keiner ? `keiner: ${x.rueckweg.keiner}` : `${x.rueckweg.skill}.${x.rueckweg.aktion}`) : '—'}</td>
+                <td className="py-1 text-gray-500">{x.beiFehler}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {c.auswirkung && (
+        <div className="text-xs text-gray-400">
+          <span className="text-gray-500">Auswirkung: </span>{c.auswirkung.assets.join(', ')}
+          {c.auswirkung.abhaengige.length > 0 && <> · abhängig: {c.auswirkung.abhaengige.slice(0, 12).join(', ')}</>}
+          {c.auswirkung.services.length > 0 && <> · Services: {c.auswirkung.services.map(sv => `${sv.name} (${sv.kritikalitaet})`).join(', ')}</>}
+        </div>
+      )}
+      {c.pruefung && c.pruefung.hinweise.length > 0 && (
+        <ul className="text-xs text-amber-300/80 list-disc pl-4">{c.pruefung.hinweise.map((h, i) => <li key={i}>{h}</li>)}</ul>
+      )}
+      {c.pruefung && c.pruefung.fehler.length > 0 && (
+        <ul className="text-xs text-red-400 list-disc pl-4">{c.pruefung.fehler.map((h, i) => <li key={i}>{h}</li>)}</ul>
+      )}
+    </div>
+  );
 }
 
 interface ServiceComponent {
@@ -1543,7 +1624,7 @@ export function ItsmPage() {
           </div>
 
           {/* Detail */}
-          {selectedChange && (
+          {selectedChange && (() => { const mitSchritten = (selectedChange.schritte?.length ?? 0) > 0; return (
             <div className="w-1/2 bg-[#111111] border border-[#1f1f1f] rounded-xl p-5 space-y-4 overflow-y-auto max-h-[calc(100vh-220px)]">
               <div className="flex justify-between items-start">
                 <div>
@@ -1557,7 +1638,10 @@ export function ItsmPage() {
                 <span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(selectedChange.status))}>{selectedChange.status}</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400 capitalize">{selectedChange.type}</span>
                 <span className={clsx('text-xs px-2 py-0.5 rounded-full', SEV_BG[selectedChange.riskLevel] ?? 'bg-gray-500/10 text-gray-400')}>Risiko: {selectedChange.riskLevel}</span>
+                {mitSchritten && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300">{selectedChange.schritte!.length} Schritte</span>}
               </div>
+
+              {mitSchritten && <ChangeSchritteAnsicht c={selectedChange} />}
 
               <EditableTextField label="Beschreibung" value={selectedChange.description} placeholder="Beschreibung der Änderung..."
                 onSave={val => updateChangeField(selectedChange.id, { description: val })}
@@ -1565,15 +1649,15 @@ export function ItsmPage() {
 
               <EditableTextField label="Implementation Plan" value={selectedChange.implementationPlan} placeholder="Schritte zur Umsetzung..."
                 onSave={val => updateChangeField(selectedChange.id, { implementation_plan: val })}
-                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+                disabled={mitSchritten || selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
 
               <EditableTextField label="Rollback Plan" value={selectedChange.rollbackPlan} placeholder="Schritte zum Rückgängigmachen..."
                 onSave={val => updateChangeField(selectedChange.id, { rollback_plan: val })}
-                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+                disabled={mitSchritten || selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
 
               <EditableTextField label="Test Plan" value={selectedChange.testPlan} placeholder="Wie wird die Änderung getestet?"
                 onSave={val => updateChangeField(selectedChange.id, { test_plan: val })}
-                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+                disabled={mitSchritten || selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
 
               {selectedChange.result && (
                 <div>
@@ -1591,7 +1675,7 @@ export function ItsmPage() {
                     return (
                       <span key={aid} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-300 font-mono flex items-center gap-1">
                         {asset ? `${asset.name} (${asset.assetType})` : aid.slice(0, 8)}
-                        {!['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && (
+                        {!mitSchritten && !['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && (
                           <button onClick={() => updateChangeField(selectedChange.id, { affected_asset_ids: selectedChange.affectedAssetIds.filter(x => x !== aid) })}
                             className="text-red-400 hover:text-red-300 ml-1">&times;</button>
                         )}
@@ -1599,7 +1683,7 @@ export function ItsmPage() {
                     );
                   })}
                 </div>
-                {!['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && allAssets.length > 0 && (
+                {!mitSchritten && !['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && allAssets.length > 0 && (
                   <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-400 w-full" value=""
                     onChange={e => { if (!e.target.value) return; updateChangeField(selectedChange.id, { affected_asset_ids: [...(selectedChange.affectedAssetIds ?? []), e.target.value] }); }}>
                     <option value="">+ Asset verknüpfen...</option>
@@ -1621,16 +1705,21 @@ export function ItsmPage() {
 
               {/* Action Buttons — mit Modal für Pflichtfelder */}
               <div className="flex gap-2 flex-wrap pt-2 border-t border-[#1f1f1f]">
-                {(selectedChange.status === 'draft' || selectedChange.status === 'pending') && (
+                {mitSchritten && selectedChange.status === 'submitted' && (
+                  <button onClick={() => { if (confirm(`Change „${selectedChange.title}“ mit ${selectedChange.schritte!.length} Schritten freigeben?\nDie Freigabe gilt genau für Plan ${selectedChange.fingerabdruck?.slice(0, 12)} — jede Änderung braucht eine neue Freigabe.`)) submitChangeTransition(selectedChange.id, 'approved', {}); }}
+                    className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Freigeben (Plan {selectedChange.fingerabdruck?.slice(0, 8)})</button>
+                )}
+                {mitSchritten && selectedChange.status === 'approved' && <span className="text-xs text-gray-500 self-center">Ausführung über den Ausführungsmotor (folgt)</span>}
+                {!mitSchritten && (selectedChange.status === 'draft' || selectedChange.status === 'pending') && (
                   <button onClick={() => openChangeTransition(selectedChange.id, 'approved')} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Approve</button>
                 )}
-                {selectedChange.status === 'approved' && (
+                {!mitSchritten && selectedChange.status === 'approved' && (
                   <button onClick={() => openChangeTransition(selectedChange.id, 'in_progress')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Start</button>
                 )}
-                {selectedChange.status === 'in_progress' && (
+                {!mitSchritten && selectedChange.status === 'in_progress' && (
                   <button onClick={() => openChangeTransition(selectedChange.id, 'completed')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Complete</button>
                 )}
-                {(selectedChange.status === 'in_progress' || selectedChange.status === 'completed') && (
+                {!mitSchritten && (selectedChange.status === 'in_progress' || selectedChange.status === 'completed') && (
                   <button onClick={() => openChangeTransition(selectedChange.id, 'rolled_back')} className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-500 text-white rounded">Rollback</button>
                 )}
                 {selectedChange.status !== 'completed' && selectedChange.status !== 'rolled_back' && selectedChange.status !== 'cancelled' && (
@@ -1638,7 +1727,7 @@ export function ItsmPage() {
                 )}
               </div>
             </div>
-          )}
+          ); })()}
         </div>
       )}
 

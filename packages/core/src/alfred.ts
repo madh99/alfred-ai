@@ -456,6 +456,8 @@ export class Alfred {
   private fernzugangNamenAuffrischen?: () => Promise<void>;
   /** I1 — Fernzugriff-Skill (Sammler) und letzte Host-Bestände der Discovery */
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+  /** I3 — Planung/Freigabe von Changes mit Schritten (auch für Web-Freigabe) */
+  private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
   private hostBestaende = new Map<string, import('./infrastruktur/sammler.js').HostBestand>();
   /** v1528 — iOS-Fokus der Handys (Fokusfilter) */
   private handyFokus?: import('./geraete/handy-fokus.js').HandyFokus;
@@ -6958,6 +6960,52 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       // I1 (Spec Infrastruktur-Vorhaben) — Bestandsaufnahme
       {
         const { InfrastrukturSkill } = await import('./infrastruktur/infrastruktur-skill.js');
+        const { ChangePlanung } = await import('./infrastruktur/change-planung.js');
+        const itsmI3 = new (await import('@alfred/storage')).ItsmRepository(adapter);
+        // I3 — Auswirkungsanalyse aus der CMDB: abhängige Assets (Topologie), Services, offene Incidents, überschneidende Changes
+        const auswirkungI3 = async (ids: string[], ohneChangeId?: string) => {
+          const o = ownerFz();
+          const leer = { assets: [] as string[], abhaengige: [] as string[], services: [] as Array<{ name: string; kritikalitaet: string }>, kritisch: false, offeneIncidents: [] as string[], ueberschneidungen: [] as string[] };
+          if (!o || !ids.length) return leer;
+          const namen = new Map<string, string>();
+          const alle = new Set<string>(ids);
+          for (const id of ids) {
+            const a = await cmdbFz.getAssetById(o, id).catch(() => null);
+            if (a) namen.set(a.id, a.name);
+            const t = await cmdbFz.getTopology(o, id, 3).catch(() => ({ assets: [] as Array<{ id: string; name: string }> }));
+            for (const x of t.assets) { alle.add(x.id); namen.set(x.id, x.name); }
+          }
+          const services = (await itsmI3.listServices(o).catch(() => [])).filter(sv => sv.assetIds.some(id => alle.has(id)) || sv.components.some(c => c.assetId && alle.has(c.assetId)));
+          const incidents = (await itsmI3.listIncidents(o, { limit: 300 } as never).catch(() => [])).filter(i => !['resolved', 'closed'].includes(i.status) && (i.affectedAssetIds ?? []).some((id: string) => alle.has(id)));
+          const changes = (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).filter(c => c.id !== ohneChangeId && ['submitted', 'approved', 'in_progress'].includes(c.status) && c.affectedAssetIds.some(id => ids.includes(id)));
+          return {
+            assets: ids.map(id => namen.get(id) ?? id), abhaengige: [...alle].filter(id => !ids.includes(id)).map(id => namen.get(id) ?? id),
+            services: services.map(sv => ({ name: sv.name, kritikalitaet: sv.criticality ?? 'medium' })), kritisch: services.some(sv => sv.criticality === 'critical'),
+            offeneIncidents: incidents.map(i => `${i.title} (${i.severity})`), ueberschneidungen: changes.map(c => `${c.title} (${c.status}, ${c.id.slice(0, 8)})`),
+          };
+        };
+        this.changePlanung = new ChangePlanung({
+          itsm: {
+            liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }),
+            hole: (o, id) => itsmI3.getChangeRequestById(o, id),
+            legeAn: (o, d) => itsmI3.legeSchrittChangeAn(o, d),
+            setzeSchritte: (o, id, d) => itsmI3.setzeSchritte(o, id, d),
+            freigeben: (o, id, fp, ueber) => itsmI3.freigebeSchrittChange(o, id, fp, ueber),
+            setzeFreigabeAnfrage: (o, id, a) => itsmI3.setzeFreigabeAnfrage(o, id, a),
+          },
+          skill: (n) => skillRegistry.get(n) as never,
+          assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status })); },
+          auswirkung: auswirkungI3,
+          bestaetigung: async (frage) => {
+            if (!this.confirmationQueue) return false;
+            const chatId = this.config.security?.ownerUserId ?? '';
+            if (!chatId) return false;
+            const platform = this.config.telegram?.enabled ? 'telegram' : 'api';
+            const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `infrastruktur-freigabe-${Date.now()}`, description: frage.description, skillName: 'infrastruktur', skillParams: frage.params, timeoutMinutes: 24 * 60 } as never);
+            return ok !== false;
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        });
         const istOwnerFz = (ctx: import('@alfred/types').SkillContext) => {
           const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
           const ids = [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].filter((x): x is string => !!x);
@@ -7031,6 +7079,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const o = ownerFz(); if (!o) throw new Error('Kein Owner');
             return (await cmdbFz.saveDocument(o, { docType: 'architecture', title: titel, content: markdown, format: 'markdown', linkedEntityType: 'vorhaben', linkedEntityId: vorhabenId, generatedBy: 'alfred:infrastruktur-I2' })).id;
           },
+          changes: this.changePlanung,
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
       }
@@ -13716,7 +13765,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           updateChange: async (uid: string, id: string, data: Record<string, unknown>) => {
             const mapped: Record<string, unknown> = {};
             for (const [k, v] of Object.entries(data)) mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
-            return itsmRepo.updateChangeRequest(await resolveUser(uid), id, mapped as any);
+            const userId = await resolveUser(uid);
+            // I3 — Change mit Schritten: „Approve“ im Web = Owner-Freigabe mit erneuter Prüfung und Fingerabdruck; I3-Felder nie über das Web
+            for (const k of ['schritte', 'fingerabdruck', 'freigabeFingerabdruck', 'freigegebenAt', 'freigegebenUeber', 'freigabeAnfrage', 'pruefung', 'auswirkung', 'vorhabenId', 'abhaengigVon']) delete mapped[k];
+            const vorher = await itsmRepo.getChangeRequestById(userId, id);
+            if (vorher?.schritte?.length && mapped.status === 'approved') {
+              if (!this.changePlanung) throw new Error('Change-Planung nicht verfügbar');
+              return this.changePlanung.freigebenWeb(userId, id);
+            }
+            return itsmRepo.updateChangeRequest(userId, id, mapped as any);
           },
           listServices: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listServices(await resolveUser(uid), filters as any),
           createService: async (uid: string, data: Record<string, unknown>) => {
@@ -13832,6 +13889,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             for (const id of data.ids) {
               try {
                 let updates: Record<string, unknown>;
+                if (data.action === 'approve' && this.changePlanung && (await itsmRepo.getChangeRequestById(userId, id))?.schritte?.length) {
+                  await this.changePlanung.freigebenWeb(userId, id); ok++; continue; // I3 — geprüfte Owner-Freigabe
+                }
                 switch (data.action) {
                   case 'approve': updates = { status: 'approved' }; break;
                   case 'reject': updates = { status: 'rejected' }; break;

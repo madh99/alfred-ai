@@ -1,0 +1,190 @@
+import { describe, it, expect } from 'vitest';
+import type { CmdbChangeRequest } from '@alfred/types';
+import type { ChangeSchrittDaten } from '@alfred/storage';
+import { aktionsArt, changeFingerabdruck, plaeneAusSchritten, pruefeChangePlan, zyklus, type PruefKontext } from './change-schritte.js';
+import { ChangePlanung, planAusChange, FREIGABE_FRAGE_GUELTIG_MS } from './change-planung.js';
+
+// I3 — Changes mit Schritten: Prüfung beim Anlegen, Fingerabdruck, Paket, Owner-Freigabe
+const skill = (name: string, aktionen: string[], props: Record<string, { type?: string }> = {}, pruefe?: (i: Record<string, unknown>) => string | undefined) =>
+  ({ metadata: { name, inputSchema: { type: 'object', properties: { action: { type: 'string', enum: aktionen }, ...props }, required: ['action'] } }, ...(pruefe ? { pruefeEingabe: pruefe } : {}) });
+const SKILLS: Record<string, ReturnType<typeof skill>> = {
+  proxmox: skill('proxmox', ['list_vms', 'vm_status', 'create_snapshot', 'delete_snapshot', 'rollback_snapshot', 'clone_vm', 'start_vm', 'stop_vm', 'delete_vm'], { vmid: { type: 'number' }, name: { type: 'string' } }, i => (['create_snapshot', 'vm_status', 'start_vm', 'stop_vm', 'delete_snapshot', 'rollback_snapshot'].includes(String(i.action)) && i.vmid === undefined ? `${i.action} braucht vmid oder vm (Name)` : undefined)),
+  nginx_proxy_manager: skill('nginx_proxy_manager', ['list_hosts', 'create_host', 'update_host', 'delete_host']),
+  fernzugriff: skill('fernzugriff', ['lesen', 'ausfuehren'], { name: { type: 'string' }, befehl: { type: 'string' } }),
+  itsm: skill('itsm', ['approve_change']),
+};
+const assets = [{ id: 'a-pve', name: 'pve' }, { id: 'a-dh', name: 'dockerhost' }, { id: 'a-dh2', name: 'dockerhost' }, { id: 'a-test', name: 'test-vm' }];
+const ctx = (changes: PruefKontext['changes'] = []): PruefKontext => ({
+  skill: n => SKILLS[n] as never,
+  asset: k => { if (assets.some(a => a.id === k)) return assets.find(a => a.id === k)!; const t = assets.filter(a => a.name === k); return t.length > 1 ? { mehrdeutig: t.map(a => a.id) } : t[0]; },
+  changes, jetzt: new Date('2026-10-22T10:00:00Z'),
+});
+const snapshotChange = () => ({
+  titel: 'Snapshot-Probe test-vm', begruendung: 'Harmloser Probe-Change für den Ausführungsmotor', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+  schritte: [
+    { titel: 'Zustand lesen', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 9001 } },
+    { titel: 'Snapshot anlegen', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 9001, name: 'i3probe' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'i3probe' }, rueckweg: { skill: 'proxmox', aktion: 'delete_snapshot', parameter: { vmid: 9001, name: 'i3probe' } } },
+    { titel: 'Snapshot löschen', art: 'aktion', skill: 'proxmox', aktion: 'delete_snapshot', parameter: { vmid: 9001, name: 'i3probe' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status' }, rueckweg: { keiner: 'Probe-Snapshot, nichts zu bewahren' } },
+    { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'ping', ziel: '192.168.1.240' } },
+  ],
+});
+
+describe('I3 Einordnung der Aktionen', () => {
+  it('lesen, Sicherung, ändern, löschen; Fernzugriff nach Befehlsklasse', () => {
+    expect(aktionsArt('proxmox', 'list_vms')).toBe('lesen');
+    expect(aktionsArt('proxmox', 'create_snapshot')).toBe('sicherung');
+    expect(aktionsArt('proxmox', 'clone_vm')).toBe('aendern');
+    expect(aktionsArt('proxmox', 'delete_vm')).toBe('loeschen');
+    expect(aktionsArt('nginx_proxy_manager', 'update_host')).toBe('aendern');
+    expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'uptime' })).toBe('lesen');
+    expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'systemctl restart nginx' })).toBe('aendern');
+  });
+});
+
+describe('I3 Prüfung beim Anlegen', () => {
+  it('gültiger Snapshot-Probe-Change: keine Fehler, Pläne aus den Schritten', () => {
+    const p = pruefeChangePlan(snapshotChange(), ctx());
+    expect(p.fehler).toEqual([]);
+    expect(p.betroffeneIds).toEqual(['a-test']);
+    expect(p.plan.schritte.map(s => s.einordnung)).toEqual(['lesen', 'sicherung', 'aendern', undefined]);
+    const pl = plaeneAusSchritten(p.plan);
+    expect(pl.umsetzung).toContain('2. Snapshot anlegen — proxmox.create_snapshot (vmid=9001, name=i3probe) [sicherung]');
+    expect(pl.rueckweg).toContain('zu Schritt 3 (Snapshot löschen): kein Rückweg — Probe-Snapshot');
+    expect(pl.test).toContain('Schritt 4: Ping 192.168.1.240');
+  });
+  it('weist ab: unbekannte Aktion/Skill, Nie-Skill, fehlender Rückweg, keine Sicherung vor Änderung, Löschen ohne Stilllegung, Platzhalter, falsche Verweise, Nie-Befehl, mehrdeutiges Asset', () => {
+    const f = pruefeChangePlan({
+      titel: 'Alles falsch', begruendung: 'zeigt die Regeln', typ: 'standard', risiko: 'hoch', betroffen: ['dockerhost', 'gibtsnicht'],
+      schritte: [
+        { titel: 'VM klonen', art: 'aktion', skill: 'proxmox', aktion: 'clone_vm', parameter: { name: 'neu' }, pruefung: { typ: 'port', ziel: '10.0.0.5', port: 22 } },
+        { titel: 'VLAN anlegen', art: 'aktion', skill: 'unifi', aktion: 'create_network' },
+        { titel: 'Netz', art: 'aktion', skill: 'proxmox', aktion: 'create_vlan' },
+        { titel: 'Selbst freigeben', art: 'aktion', skill: 'itsm', aktion: 'approve_change' },
+        { titel: 'Alte VM weg', art: 'aktion', skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: 120 }, pruefung: { typ: 'ping', ziel: 'x' }, rueckweg: { keiner: 'geht nicht' } },
+        { titel: 'Proxy', art: 'aktion', skill: 'nginx_proxy_manager', aktion: 'update_host', parameter: { forward_host: '{{schritt9.ip}}', id: '<host-id>' }, pruefung: { typ: 'http', ziel: 'https://x.at' }, rueckweg: { skill: 'nginx_proxy_manager', aktion: 'update_host' } },
+        { titel: 'Platte', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: 'mkfs.ext4 /dev/sda' }, pruefung: { typ: 'befehl', zugang: 'dockerhost', befehl: 'rm -rf /tmp/x' }, rueckweg: { keiner: 'x' } },
+        { titel: '', art: 'warten' },
+      ],
+    }, ctx()).fehler.join('\n');
+    for (const t of ['Standard-Changes', 'ausfallMinuten fehlt', '„dockerhost“ ist mehrdeutig', '„gibtsnicht“ ist kein CMDB-Asset', 'Schritt 1: rueckweg fehlt', 'Skill „unifi“ gibt es nicht', 'proxmox kennt die Aktion „create_vlan“ nicht', 'als owner-Schritt planen', 'Skill itsm ist in Changes nicht erlaubt', 'entfernt Bestehendes endgültig', 'Verweis {{schritt9.ip}} zeigt nicht auf eine frühere Aktion', 'Platzhalter', 'Nie-Liste', 'kein reiner Lesebefehl', 'Schritt 8: titel fehlt', 'warten braucht sekunden oder eine pruefung', 'Vor der ersten ändernden Aktion (Schritt 1) fehlt eine Sicherung'])
+      expect(f).toContain(t);
+  });
+  it('ohneSicherungGrund erlaubt reine Neuanlage; Verweis auf frühere Aktion ist gültig; Owner-Schritt für fehlende Fähigkeiten', () => {
+    const p = pruefeChangePlan({
+      titel: 'Neue VM matrix', begruendung: 'Zielarchitektur Gruppe Kommunikation', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['pve'], ohneSicherungGrund: 'legt nur eine neue VM an',
+      schritte: [
+        { titel: 'Klonen', art: 'aktion', skill: 'proxmox', aktion: 'clone_vm', parameter: { name: 'matrix' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'matrix' }, rueckweg: { skill: 'proxmox', aktion: 'stop_vm', parameter: { vmid: '{{schritt1.vmid}}' } } },
+        { titel: 'Starten', art: 'aktion', skill: 'proxmox', aktion: 'start_vm', parameter: { vmid: '{{schritt1.vmid}}' }, pruefung: { typ: 'ping', ziel: '{{schritt1.ip}}' }, rueckweg: { skill: 'proxmox', aktion: 'stop_vm', parameter: { vmid: '{{schritt1.vmid}}' } } },
+        { titel: 'VLAN 821 in UniFi anlegen', art: 'owner', frage: 'Bitte VLAN 821 in UniFi anlegen und bestätigen' },
+        { titel: 'Warten bis SSH', art: 'warten', pruefung: { typ: 'port', ziel: '{{schritt1.ip}}', port: 22 }, zeitlimitS: 300 },
+      ],
+    }, ctx());
+    expect(p.fehler).toEqual([]);
+    expect(p.hinweise.join('\n')).toContain('Ohne Sicherung geplant');
+    expect(p.hinweise.join('\n')).toContain('Owner-Schritte');
+  });
+  it('Fingerabdruck: gleich bei gleicher Struktur (Schlüsselreihenfolge egal), anders bei jeder Parameteränderung', () => {
+    const a = pruefeChangePlan(snapshotChange(), ctx());
+    const umgestellt = snapshotChange(); umgestellt.schritte[1]!.parameter = { name: 'i3probe', vmid: 9001 };
+    const b = pruefeChangePlan(umgestellt, ctx());
+    expect(changeFingerabdruck(a.plan, a.betroffeneIds, [])).toBe(changeFingerabdruck(b.plan, b.betroffeneIds, []));
+    const geaendert = snapshotChange(); geaendert.schritte[1]!.parameter = { vmid: 9002, name: 'i3probe' };
+    const c = pruefeChangePlan(geaendert, ctx());
+    expect(changeFingerabdruck(c.plan, c.betroffeneIds, [])).not.toBe(changeFingerabdruck(a.plan, a.betroffeneIds, []));
+    expect(changeFingerabdruck(a.plan, a.betroffeneIds, ['x'])).not.toBe(changeFingerabdruck(a.plan, a.betroffeneIds, []));
+  });
+  it('Zyklen', () => {
+    expect(zyklus(new Map([['a', ['b']], ['b', ['c']], ['c', []]]))).toBeUndefined();
+    expect(zyklus(new Map([['a', ['b']], ['b', ['a']]]))).toEqual(['a', 'b', 'a']);
+  });
+});
+
+/** In-Memory-ITSM mit denselben Regeln wie das Repository (Freigabe nur bei passendem Fingerabdruck). */
+function speicher() {
+  const db = new Map<string, CmdbChangeRequest>(); let n = 0;
+  const aus = (d: ChangeSchrittDaten, id: string, alt?: CmdbChangeRequest): CmdbChangeRequest => ({
+    id, userId: 'o', title: d.title, description: d.description, type: d.type, status: alt?.status ?? 'submitted', riskLevel: d.riskLevel,
+    affectedAssetIds: d.affectedAssetIds, affectedServiceIds: [], implementationPlan: d.implementationPlan, rollbackPlan: d.rollbackPlan, testPlan: d.testPlan,
+    ...(d.scheduledAt ? { scheduledAt: d.scheduledAt } : {}), schritte: d.schritte, abhaengigVon: d.abhaengigVon, ausfallMinuten: d.ausfallMinuten, pruefung: d.pruefung, fingerabdruck: d.fingerabdruck,
+    ...(d.vorhabenId ? { vorhabenId: d.vorhabenId } : {}), createdAt: 'x', updatedAt: 'x',
+  });
+  return {
+    db,
+    liste: async () => [...db.values()],
+    hole: async (_o: string, id: string) => db.get(id) ?? null,
+    legeAn: async (_o: string, d: ChangeSchrittDaten) => { const id = `chg-${String(++n).padStart(4, '0')}-0000`; db.set(id, aus(d, id)); return db.get(id)!; },
+    setzeSchritte: async (_o: string, id: string, d: ChangeSchrittDaten) => { const e = db.get(id)!; const bleibt = e.status === 'approved' && e.freigabeFingerabdruck === d.fingerabdruck; const neu = aus(d, id, e); neu.status = bleibt ? 'approved' : 'submitted'; if (bleibt) neu.freigabeFingerabdruck = e.freigabeFingerabdruck; db.set(id, neu); return neu; },
+    freigeben: async (_o: string, id: string, fp: string, ueber: 'frage' | 'web') => { const e = db.get(id)!; if (e.status !== 'submitted' || e.fingerabdruck !== fp) throw new Error('Freigabe ungültig'); Object.assign(e, { status: 'approved', freigabeFingerabdruck: fp, freigegebenUeber: ueber }); return e; },
+    setzeFreigabeAnfrage: async (_o: string, id: string, a: CmdbChangeRequest['freigabeAnfrage'] | null) => { const e = db.get(id)!; if (a) e.freigabeAnfrage = a; else delete e.freigabeAnfrage; },
+  };
+}
+const keineAuswirkung = async (ids: string[]) => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] });
+
+describe('I3 Paket planen und Owner-Freigabe', () => {
+  it('Paket: alles oder nichts, Abhängigkeiten in Reihenfolge, Zyklen abgewiesen', async () => {
+    const it3 = speicher();
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const kaputt = await pl.planen('o', [{ ...snapshotChange(), schluessel: 'a' }, { titel: 'x' }]);
+    expect(kaputt.ok).toBe(false);
+    expect(it3.db.size).toBe(0);
+    const kreis = await pl.planen('o', [{ ...snapshotChange(), schluessel: 'a', abhaengigVon: ['b'] }, { ...snapshotChange(), schluessel: 'b', abhaengigVon: ['a'] }]);
+    expect(kreis.ok).toBe(false);
+    if (!kreis.ok) expect(kreis.fehler.join('\n')).toContain('Abhängigkeiten im Kreis');
+    const ok = await pl.planen('o', [{ ...snapshotChange(), schluessel: 'spaeter', abhaengigVon: ['zuerst'] }, { ...snapshotChange(), schluessel: 'zuerst' }]);
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    const [erst, dann] = ok.changes;
+    expect(dann!.abhaengigVon).toEqual([erst!.id]);
+    expect(await pl.planen('o', [snapshotChange()], { id: 'v1', status: 'architektur_vorgeschlagen', titel: 'V' })).toMatchObject({ ok: false });
+  });
+
+  it('Freigabe nur über das Ja auf die Frage: Hash am Change, einmal verwendbar, an den Plan gebunden; Planänderung → neue Freigabe', async () => {
+    const it3 = speicher();
+    let frage: { description: string; params: Record<string, unknown> } | undefined;
+    let jetzt = Date.parse('2026-10-22T10:00:00Z');
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung, bestaetigung: async f => { frage = f; return true; }, jetzt: () => jetzt });
+    const r = await pl.planen('o', [snapshotChange()]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const id = r.changes[0]!.id;
+    // ohne Frage keine Freigabe (Modell ruft freigeben selbst)
+    expect((await pl.freigebenNachJa('o', { changes: [{ id, fingerabdruck: r.changes[0]!.fingerabdruck }], freigabe: 'erfunden' })).ok).toBe(false);
+    expect((await pl.freigabeAnfragen('o', [id.slice(0, 8)])).ok).toBe(true);
+    expect(frage!.description).toContain('Snapshot-Probe test-vm');
+    expect(frage!.description).toContain('Freigabe gilt genau für Plan');
+    expect(it3.db.get(id)!.freigabeAnfrage!.hash).not.toBe(frage!.params.freigabe); // nur der Hash steht am Change
+    // falscher Wert → nein; richtiger → ja; zweites Mal → nein
+    expect((await pl.freigebenNachJa('o', { ...frage!.params, freigabe: 'falsch' })).ok).toBe(false);
+    const ja = await pl.freigebenNachJa('o', frage!.params);
+    expect(ja).toMatchObject({ ok: true });
+    expect(it3.db.get(id)!.status).toBe('approved');
+    expect((await pl.freigebenNachJa('o', frage!.params)).ok).toBe(false);
+    // gleiche Struktur erneut speichern → Freigabe bleibt; geänderter Parameter → verfällt
+    expect((await pl.aendern('o', id, planAusChange(it3.db.get(id)!)))).toMatchObject({ ok: true, freigabeVerfallen: false });
+    const neu = snapshotChange(); neu.schritte[1]!.parameter = { vmid: 9001, name: 'anders' };
+    expect(await pl.aendern('o', id, neu)).toMatchObject({ ok: true, freigabeVerfallen: true });
+    expect(it3.db.get(id)!.status).toBe('submitted');
+    // abgelaufene Frage
+    await pl.freigabeAnfragen('o', [id]);
+    jetzt += FREIGABE_FRAGE_GUELTIG_MS + 1000;
+    expect((await pl.freigebenNachJa('o', frage!.params)).ok).toBe(false);
+    // Frage gestellt, danach Plan geändert → altes Ja ungültig
+    jetzt = Date.parse('2026-10-22T11:00:00Z');
+    await pl.freigabeAnfragen('o', [id]);
+    const alteFrage = frage!;
+    const nochmal = snapshotChange(); nochmal.schritte[1]!.parameter = { vmid: 9001, name: 'drittens' };
+    await pl.aendern('o', id, nochmal);
+    expect((await pl.freigebenNachJa('o', alteFrage.params)).ok).toBe(false);
+  });
+
+  it('Web-Freigabe prüft erneut; offener kritischer Incident blockiert Normal-Changes', async () => {
+    const it3 = speicher();
+    let incidents: string[] = [];
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: async ids => ({ ...(await keineAuswirkung(ids)), offeneIncidents: incidents }) });
+    const r = await pl.planen('o', [snapshotChange()]);
+    if (!r.ok) throw new Error('x');
+    incidents = ['Platte voll (critical)'];
+    await expect(pl.freigebenWeb('o', r.changes[0]!.id)).rejects.toThrow('Offener kritischer Incident');
+    incidents = [];
+    expect((await pl.freigebenWeb('o', r.changes[0]!.id)).freigegebenUeber).toBe('web');
+  });
+});

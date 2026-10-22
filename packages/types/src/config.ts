@@ -928,6 +928,23 @@ export interface CmdbChangeRequest {
   linkedProblemId?: string;
   /** v633 T3.6 — GitLab/GitHub Merge-Request URL (auto-populated when change is created by code-agent fix). */
   prUrl?: string;
+  // ── I3 (Spec Infrastruktur-Vorhaben) — Change mit Schritten; Struktur siehe core/infrastruktur/change-schritte.ts ──
+  schritte?: unknown[];
+  vorhabenId?: string;
+  abhaengigVon?: string[];
+  ausfallMinuten?: number;
+  /** Auswirkungsanalyse aus der CMDB zum Zeitpunkt der Prüfung */
+  auswirkung?: unknown;
+  pruefung?: { fehler: string[]; hinweise: string[]; zeit: string };
+  /** Fingerabdruck über Schritte, Abhängigkeiten und betroffene Assets */
+  fingerabdruck?: string;
+  /** Fingerabdruck, den der Owner freigegeben hat (weicht er vom aktuellen ab, ist die Freigabe ungültig) */
+  freigabeFingerabdruck?: string;
+  freigegebenAt?: string;
+  /** Weg der Owner-Freigabe: frage (App/Telegram-Button) oder web */
+  freigegebenUeber?: string;
+  /** Offene Freigabe-Frage: nur der Hash der Einmal-Freigabe (der Wert steht allein in der Bestätigungs-Queue) und die Gültigkeit */
+  freigabeAnfrage?: { hash: string; bis: string; fingerabdruck: string };
   createdAt: string;
   updatedAt: string;
 }

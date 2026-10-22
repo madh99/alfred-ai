@@ -2411,4 +2411,22 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_vorhaben_user ON infra_vorhaben (user_id, status)', []);
     },
   },
+  {
+    version: 154,
+    description: 'I3 (Spec Infrastruktur-Vorhaben) — cmdb_change_requests: Schritte, Vorhaben, Abhängigkeiten, Ausfallzeit, Auswirkung, Prüfung, Fingerabdruck und Owner-Freigabe (PG-Spiegel zu SQLite v150).',
+    async up(db) {
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS schritte TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS vorhaben_id TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS abhaengig_von TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS ausfall_minuten INTEGER', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS auswirkung TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS pruefung TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS fingerabdruck TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS freigabe_fingerabdruck TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS freigegeben_at TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS freigegeben_ueber TEXT', []);
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS freigabe_anfrage TEXT', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_cmdb_cr_vorhaben ON cmdb_change_requests (vorhaben_id)', []);
+    },
+  },
 ];

@@ -90,6 +90,14 @@ export class VorhabenRepository {
     return (await this.hole(userId, id))!;
   }
 
+  /** I3 — Changes eines Vorhabens nachtragen (ohne Doppelte). */
+  async fuegeChangesHinzu(userId: string, id: string, changeIds: string[]): Promise<void> {
+    const v = await this.hole(userId, id);
+    if (!v) throw new Error('Vorhaben nicht gefunden');
+    const alle = [...new Set([...v.changeIds, ...changeIds])];
+    await this.db.execute('UPDATE infra_vorhaben SET change_ids = ?, geaendert = ? WHERE id = ? AND user_id = ?', [JSON.stringify(alle), new Date().toISOString(), id, userId]);
+  }
+
   private zeile(r: Record<string, unknown>): Vorhaben {
     return {
       id: String(r.id), userId: String(r.user_id), titel: String(r.titel), ziel: String(r.ziel),

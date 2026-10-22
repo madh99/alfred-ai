@@ -125,9 +125,35 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
     linkedIncidentId: r.linked_incident_id as string | undefined,
     linkedProblemId: r.linked_problem_id as string | undefined,
     prUrl: r.pr_url as string | undefined,
+    ...(r.schritte ? { schritte: parseJsonArray(r.schritte) } : {}),
+    ...(r.vorhaben_id ? { vorhabenId: r.vorhaben_id as string } : {}),
+    ...(r.abhaengig_von ? { abhaengigVon: parseJsonArray(r.abhaengig_von) } : {}),
+    ...(r.ausfall_minuten !== null && r.ausfall_minuten !== undefined ? { ausfallMinuten: Number(r.ausfall_minuten) } : {}),
+    ...(r.auswirkung ? { auswirkung: jsonOder(r.auswirkung) } : {}),
+    ...(r.pruefung ? { pruefung: jsonOder(r.pruefung) as CmdbChangeRequest['pruefung'] } : {}),
+    ...(r.fingerabdruck ? { fingerabdruck: r.fingerabdruck as string } : {}),
+    ...(r.freigabe_fingerabdruck ? { freigabeFingerabdruck: r.freigabe_fingerabdruck as string } : {}),
+    ...(r.freigegeben_at ? { freigegebenAt: r.freigegeben_at as string } : {}),
+    ...(r.freigegeben_ueber ? { freigegebenUeber: r.freigegeben_ueber as string } : {}),
+    ...(r.freigabe_anfrage ? { freigabeAnfrage: jsonOder(r.freigabe_anfrage) as CmdbChangeRequest['freigabeAnfrage'] } : {}),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
+}
+
+function jsonOder(v: unknown): unknown { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return undefined; } }
+
+/** I3 — Status, die ein Change mit Schritten nur über die Owner-Freigabe bzw. den Ausführungsmotor (I4) erreicht. */
+const SCHRITT_GESCHUETZTE_STATUS = new Set(['approved', 'in_progress', 'completed', 'failed', 'rolled_back']);
+export const SCHRITT_CHANGE_GESPERRT = 'Change mit Schritten: Freigabe nur durch den Owner (Freigabe-Frage in App/Telegram oder Web), Ausführung nur über den Ausführungsmotor';
+
+/** I3 — Felder eines Changes mit Schritten, die bei jeder Planänderung gemeinsam gesetzt werden. */
+export interface ChangeSchrittDaten {
+  title: string; description?: string; type: ChangeRequestType; riskLevel: IncidentSeverity;
+  affectedAssetIds: string[]; affectedServiceIds: string[];
+  implementationPlan: string; rollbackPlan: string; testPlan: string; scheduledAt?: string;
+  schritte: unknown[]; vorhabenId?: string; abhaengigVon: string[]; ausfallMinuten?: number;
+  auswirkung?: unknown; pruefung: { fehler: string[]; hinweise: string[]; zeit: string }; fingerabdruck: string;
 }
 
 // ── Repository ───────────────────────────────────────────────
@@ -828,6 +854,13 @@ export class ItsmRepository {
   }>): Promise<CmdbChangeRequest | null> {
     const existing = await this.getChangeRequestById(userId, id);
     if (!existing) return null;
+    // I3 — bei Changes mit Schritten führt kein allgemeiner Weg (ITSM-Skill, Web-PATCH, Sammelaktion) zu Freigabe oder Ausführung;
+    // Titel/Typ/Risiko/Pläne/Termin/betroffene Assets ändern nur über setzeSchritte (neue Prüfung, Freigabe verfällt).
+    if (existing.schritte?.length) {
+      if (updates.status && SCHRITT_GESCHUETZTE_STATUS.has(updates.status)) throw new Error(SCHRITT_CHANGE_GESPERRT);
+      const erlaubt = new Set(['status', 'description', 'result', 'prUrl']);
+      if (Object.keys(updates).some(k => !erlaubt.has(k))) throw new Error('Change mit Schritten: Plan, Termin, Risiko und betroffene Assets nur über die Infrastruktur-Planung ändern (neue Prüfung, Freigabe verfällt)');
+    }
 
     const fields: string[] = [];
     const params: unknown[] = [];
@@ -860,6 +893,73 @@ export class ItsmRepository {
 
     await this.db.execute(`UPDATE cmdb_change_requests SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getChangeRequestById(userId, id);
+  }
+
+  /** I3 — Change mit Schritten anlegen (Status submitted, wenn die Prüfung ohne Fehler war, sonst draft). */
+  async legeSchrittChangeAn(userId: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `INSERT INTO cmdb_change_requests (
+        id, user_id, title, description, type, status, risk_level, affected_asset_ids, affected_service_ids,
+        implementation_plan, rollback_plan, test_plan, scheduled_at, schritte, vorhaben_id, abhaengig_von, ausfall_minuten,
+        auswirkung, pruefung, fingerabdruck, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, d.title, d.description ?? null, d.type, d.pruefung.fehler.length ? 'draft' : 'submitted', d.riskLevel,
+        JSON.stringify(d.affectedAssetIds), JSON.stringify(d.affectedServiceIds), d.implementationPlan, d.rollbackPlan, d.testPlan,
+        d.scheduledAt ?? null, JSON.stringify(d.schritte), d.vorhabenId ?? null, JSON.stringify(d.abhaengigVon), d.ausfallMinuten ?? null,
+        d.auswirkung === undefined ? null : JSON.stringify(d.auswirkung), JSON.stringify(d.pruefung), d.fingerabdruck, now, now],
+    );
+    return (await this.getChangeRequestById(userId, id))!;
+  }
+
+  /**
+   * I3 — Plan eines Changes mit Schritten ersetzen. Ändert sich der Fingerabdruck, verfällt eine Freigabe (Status zurück auf
+   * submitted bzw. draft bei Prüffehlern). Laufende oder abgeschlossene Changes bleiben unverändert.
+   */
+  async setzeSchritte(userId: string, id: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest> {
+    const e = await this.getChangeRequestById(userId, id);
+    if (!e) throw new Error(`Change ${id} nicht gefunden`);
+    if (!['draft', 'submitted', 'approved'].includes(e.status)) throw new Error(`Change ist ${e.status} — Plan nicht mehr änderbar`);
+    const freigabeBleibt = e.status === 'approved' && e.freigabeFingerabdruck === d.fingerabdruck && !d.pruefung.fehler.length;
+    const status = freigabeBleibt ? 'approved' : d.pruefung.fehler.length ? 'draft' : 'submitted';
+    await this.db.execute(
+      `UPDATE cmdb_change_requests SET title = ?, description = ?, type = ?, status = ?, risk_level = ?, affected_asset_ids = ?, affected_service_ids = ?,
+        implementation_plan = ?, rollback_plan = ?, test_plan = ?, scheduled_at = ?, schritte = ?, vorhaben_id = ?, abhaengig_von = ?, ausfall_minuten = ?,
+        auswirkung = ?, pruefung = ?, fingerabdruck = ?, freigabe_fingerabdruck = ?, freigegeben_at = ?, freigegeben_ueber = ?, freigabe_anfrage = NULL, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+      [d.title, d.description ?? null, d.type, status, d.riskLevel, JSON.stringify(d.affectedAssetIds), JSON.stringify(d.affectedServiceIds),
+        d.implementationPlan, d.rollbackPlan, d.testPlan, d.scheduledAt ?? null, JSON.stringify(d.schritte), d.vorhabenId ?? null,
+        JSON.stringify(d.abhaengigVon), d.ausfallMinuten ?? null, d.auswirkung === undefined ? null : JSON.stringify(d.auswirkung),
+        JSON.stringify(d.pruefung), d.fingerabdruck, freigabeBleibt ? e.freigabeFingerabdruck! : null, freigabeBleibt ? e.freigegebenAt ?? null : null,
+        freigabeBleibt ? e.freigegebenUeber ?? null : null, new Date().toISOString(), e.id, userId],
+    );
+    return (await this.getChangeRequestById(userId, e.id))!;
+  }
+
+  /** I3 — offene Freigabe-Frage am Change vermerken (nur Hash der Einmal-Freigabe, Gültigkeit, Fingerabdruck). */
+  async setzeFreigabeAnfrage(userId: string, id: string, a: { hash: string; bis: string; fingerabdruck: string } | null): Promise<void> {
+    await this.db.execute('UPDATE cmdb_change_requests SET freigabe_anfrage = ?, updated_at = ? WHERE id = ? AND user_id = ?', [a ? JSON.stringify(a) : null, new Date().toISOString(), id, userId]);
+  }
+
+  /**
+   * I3 — Owner-Freigabe eines Changes mit Schritten: nur, wenn die gespeicherte Prüfung fehlerfrei ist und der freigegebene
+   * Fingerabdruck dem aktuellen Plan entspricht. Der Aufrufer stellt sicher, dass die Freigabe vom Owner kommt.
+   */
+  async freigebeSchrittChange(userId: string, id: string, fingerabdruck: string, ueber: 'frage' | 'web'): Promise<CmdbChangeRequest> {
+    const e = await this.getChangeRequestById(userId, id);
+    if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
+    if (e.status !== 'submitted') throw new Error(`Freigabe nur im Status submitted (ist ${e.status})`);
+    if (e.pruefung?.fehler.length) throw new Error(`Prüfung nicht bestanden (${e.pruefung.fehler.length} Punkte)`);
+    if (!e.fingerabdruck || e.fingerabdruck !== fingerabdruck) throw new Error('Der Plan hat sich seit der Freigabe-Frage geändert — Freigabe ungültig');
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `UPDATE cmdb_change_requests SET status = 'approved', freigabe_fingerabdruck = ?, freigegeben_at = ?, freigegeben_ueber = ?, freigabe_anfrage = NULL, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'submitted' AND fingerabdruck = ?`,
+      [fingerabdruck, now, ueber, now, e.id, userId, fingerabdruck],
+    );
+    const neu = (await this.getChangeRequestById(userId, e.id))!;
+    if (neu.status !== 'approved') throw new Error('Freigabe nicht gesetzt (Change hat sich parallel geändert)');
+    return neu;
   }
 
   // ── SLA Events ────────────────────────────────────────────

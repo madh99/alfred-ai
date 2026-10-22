@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — ITSM-Changes mit Schritten, Prüfung beim Anlegen und Owner-Freigabe (v1557, Spec Infrastruktur-Vorhaben I3)
+
+Owner 22.10.: „I3 wie vorgeschlagen umsetzen“. Es wird nichts ausgeführt; das übernimmt der Ausführungsmotor in I4.
+
+- **Changes mit Schritten als Erweiterung der ITSM-Changes** (`cmdb_change_requests`, PG v154 / SQLite v150). Neue Felder:
+  - Schritte, Vorhaben, Abhängigkeiten, erwartete Ausfallzeit;
+  - Auswirkungsanalyse, Prüfergebnis, Fingerabdruck und Owner-Freigabe (Fingerabdruck, Zeitpunkt, Weg), offene Freigabe-Frage.
+- **Schritt-Arten:**
+  - `aktion`: Skill-Aktion mit Parametern, Prüfung, Rückweg, Zeitlimit und Verhalten bei Fehler;
+  - `pruefung`: http, port, dns, ping, container_healthy, datei, Lesebefehl, lesende Skill-Aktion;
+  - `warten`: Zeit oder Bedingung;
+  - `owner`: Handgriff oder Entscheidung des Owners, z. B. solange eine Skill-Aktion fehlt.
+  - Verweise `{{schrittN.feld}}` auf frühere Aktionen und `{{geheim:name}}` für Tresor-Werte.
+- **Prüfung beim Anlegen ohne Modell.** Ein Paket mit Fehlern wird nicht gespeichert; das Modell bekommt alle Fehler zum Nachbessern.
+  - Skill und Aktion existieren, Parameter passen zum Schema und zur Eingabeprüfung des Skills; keine Platzhalter.
+  - Verweise zeigen auf frühere Aktionen.
+  - Rückweg für jede ändernde Aktion; Sicherung vor der ersten Änderung, außer bei begründeter reiner Neuanlage.
+  - Prüfung je ändernder Aktion; Prüfbefehle nur lesend; Nie-Liste des Fernzugriffs.
+  - Endgültiges Löschen nur in einem eigenen Stilllegungs-Change.
+  - Planungs-, Freigabe- und Geräte-Skills sind als Schritt gesperrt.
+  - Betroffene Assets sind in der CMDB eindeutig; Abhängigkeiten bilden keinen Kreis.
+  - Standard-Changes folgen in I4b.
+- **Auswirkungsanalyse aus der CMDB:** abhängige Assets (Topologie), betroffene Services mit Kritikalität, offene Incidents und überschneidende Changes.
+  - Ein offener kritischer Incident blockiert die Freigabe eines Normal-Changes.
+- **Lesbare Umsetzungs-, Rückweg- und Testpläne** werden aus den Schritten erzeugt; die Schritte bleiben die Quelle.
+- **Owner-Freigabe je Change oder Paket:**
+  - `freigabe_anfragen` stellt die Frage per Button in App/Telegram. Am Change steht nur der Hash der Einmal-Freigabe; sie ist 24 Stunden gültig, übersteht Neustarts und ist an den Fingerabdruck des Plans gebunden.
+  - Vor der Freigabe wird der Plan erneut geprüft. Jede Planänderung lässt die Freigabe verfallen.
+  - Im Web heißt der Knopf „Freigeben (Plan …)“.
+- **Zentrale Sperre im Repository:** Changes mit Schritten erreichen `approved`, `in_progress`, `completed`, `failed` oder `rolled_back` über keinen allgemeinen Weg (ITSM-Skill, Web-PATCH, Sammelaktion).
+  - Plan, Termin, Risiko und betroffene Assets ändern sich nur über die Infrastruktur-Planung.
+- **Neue Aktionen im Skill `infrastruktur`:** `changes_planen` (mit Vorhaben nur bei angenommener Architektur), `changes_liste`, `change_zeigen`, `change_aendern`, `freigabe_anfragen` und `freigeben` (nur über das Owner-Ja).
+- **Web, ITSM → Changes:** Schritte-Tabelle mit Einordnung (lesen, Sicherung, ändern, löschen), Prüfung, Rückweg, Auswirkung, Hinweisen und Freigabe-Stand.
+  - Pläne und betroffene Assets sind dort nur lesbar; Start/Complete/Rollback entfallen bei Changes mit Schritten.
+
 ### Fixed — Proxmox-Speicher in der CMDB, Architektur-Prüfung nachgeschärft (v1556)
 
 Befunde aus dem ersten Architektur-Vorschlag (22.10., Vorhaben „Dockerhost auf neue Docker-VMs aufteilen“):
