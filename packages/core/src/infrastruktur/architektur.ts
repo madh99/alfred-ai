@@ -14,7 +14,8 @@ import { dnsText, domainsMitDns, type DnsEintrag, type NetzEintrag, type ProxyEi
 export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'rocky-9', 'alma-9', 'alpine-3', 'windows-server-2022', 'windows-server-2025'] as const;
 export const NETZ_GERAETE = ['unifi', 'pfsense', 'mikrotik'] as const;
 /** Firewall-Zonen außer Netzen und Gruppen (I2-Nachschärfung 22.10.: Freitext-Zonen sind für Changes nicht verwendbar) */
-export const ZONEN_WORTE = ['internet', 'vpn', 'proxy', 'alle'] as const;
+/** Feste Zonen: proxy = konkrete NPM-IP; alfred = der Server, auf dem Alfred läuft (Verwaltung, Datenübertragung); gateway = Gateway des eigenen Netzes (DNS/NTP) — Architektur v3 cf82f3f2, Owner 22.10. */
+export const ZONEN_WORTE = ['internet', 'vpn', 'proxy', 'alfred', 'gateway', 'alle'] as const;
 export const PROTOKOLLE = ['tcp', 'udp', 'tcp+udp', 'icmp', 'alle'] as const;
 /** Owner 22.10. (5b-10): Altes mindestens 7 Tage stehen lassen */
 export const ALT_BEHALTEN_TAGE = 7;

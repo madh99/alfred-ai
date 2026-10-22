@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Firewall-Zonen „alfred“ und „gateway“ in der Zielarchitektur (v1578)
+
+- Neue Netze brauchen gezielte Regeln für die Verwaltung. Bisher ließ sich Alfreds Server nur als ganzes Default-Netz angeben.
+  - **`alfred`** ist der Server, auf dem Alfred läuft: SSH für Einrichtung, Fernzugang und Datenübertragung.
+  - **`gateway`** ist das Gateway des jeweiligen Netzes: DNS und NTP.
+- Grundlage für Version 3 der Zielarchitektur cf82f3f2 (Owner 22.10.).
+
 ### Added — Datenübertragung von Host zu Host und Geheimnisse direkt in den Tresor (I6, v1577)
 
 Neue Fernzugriff-Aktionen, **nur als Schritte freigegebener Changes**:

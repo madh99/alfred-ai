@@ -33,7 +33,7 @@ const gueltig = () => ({
     { name: 'Alt', zweck: 'Altsystem', begruendung: 'nach Migration', einheiten: ['dockerhost'], ziel: 'bleibt' },
   ],
   netze: [{ name: 'Server', vlan: 30, subnetz: '192.168.30.0/24', geraet: 'unifi', zweck: 'Server-Dienste', neu: true }],
-  firewall: [{ von: 'Server', nach: 'internet', protokoll: 'tcp', ports: '443', begruendung: 'Updates, Föderation' }, { von: 'proxy', nach: 'Matrix', protokoll: 'tcp', ports: '8008, 8448', begruendung: 'Reverse-Proxy' }],
+  firewall: [{ von: 'Server', nach: 'internet', protokoll: 'tcp', ports: '443', begruendung: 'Updates, Föderation' }, { von: 'proxy', nach: 'Matrix', protokoll: 'tcp', ports: '8008, 8448', begruendung: 'Reverse-Proxy' }, { von: 'alfred', nach: 'Matrix', protokoll: 'tcp', ports: '22', begruendung: 'Verwaltung und Datenübertragung' }, { von: 'Matrix', nach: 'gateway', protokoll: 'udp', ports: '53,123', begruendung: 'DNS und NTP' }],
   proxyDns: 'NPM-Ziel auf die neue IP umstellen.', sicherung: 'Snapshot vor jedem Change, PBS täglich.', updates: 'unattended-upgrades an.',
   reihenfolge: [{ gruppe: 'Matrix', ausfallMinuten: 20 }],
   risiken: [{ risiko: 'Datenbank inkonsistent', massnahme: 'Dienst stoppen vor letztem Abgleich' }],
@@ -152,7 +152,7 @@ describe('I2 Firewall strukturiert und Subnetze ohne Überschneidung (Realfall 2
     a.firewall.push({ von: 'Neue Zonen', nach: 'Docker-VMs', protokoll: 'tcp', ports: '22', begruendung: 'x' }, { von: 'vpn', nach: 'Rest', protokoll: 'quic', ports: '70000', begruendung: '' });
     a.netze.push({ name: 'Kollision', vlan: 31, subnetz: '192.168.1.128/25', geraet: 'unifi', zweck: 'x', neu: true });
     const f = pruefeArchitektur(a, grundlage()).fehler.join('\n');
-    expect(f).toContain('von „Neue Zonen“ ist weder Netz noch Gruppe noch internet/vpn/proxy/alle');
+    expect(f).toContain('von „Neue Zonen“ ist weder Netz noch Gruppe noch internet/vpn/proxy/alfred/gateway/alle');
     expect(f).toContain('nach „Docker-VMs“ ist weder Netz noch Gruppe');
     expect(f).toContain('protokoll muss tcp/udp/tcp+udp/icmp/alle sein');
     expect(f).toContain('ports „70000“ ungültig');
