@@ -979,6 +979,16 @@ export class ItsmRepository {
     return (await this.getChangeRequestById(userId, c.id))!;
   }
 
+  /** Einwand des Owners: ein noch nicht gestarteter Change mit Schritten fällt in den Entwurf zurück (Freigabe und Freigabe-Frage verfallen). */
+  async sperreDurchEinwand(userId: string, id: string): Promise<string> {
+    const e = await this.getChangeRequestById(userId, id);
+    if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
+    if (!['draft', 'submitted', 'approved'].includes(e.status)) return e.status;
+    await this.db.execute("UPDATE cmdb_change_requests SET status = 'draft', freigabe_fingerabdruck = NULL, freigegeben_at = NULL, freigegeben_ueber = NULL, freigabe_anfrage = NULL, ankuendigung = NULL, updated_at = ? WHERE id = ? AND user_id = ?",
+      [new Date().toISOString(), e.id, userId]);
+    return 'draft';
+  }
+
   /** I4b — angekündigten Start und gesendete Benachrichtigungen am Change festhalten (Plan und Freigabe bleiben unberührt). */
   async setzeAnkuendigung(userId: string, id: string, a: { start?: string; gesendet: string[] }): Promise<void> {
     await this.db.execute('UPDATE cmdb_change_requests SET ankuendigung = ?, updated_at = ? WHERE id = ? AND user_id = ?', [JSON.stringify(a), new Date().toISOString(), id, userId]);

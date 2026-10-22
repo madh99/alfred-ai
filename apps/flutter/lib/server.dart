@@ -115,8 +115,10 @@ class Server {
     }).toList();
   }
 
-  Future<String> entscheide(String id, bool ja) async {
+  /// Einwand (Owner 22.10.) — beim Nein optional ein Grund; bei Change-Freigaben wird er am Server zum Einwand.
+  Future<String> entscheide(String id, bool ja, {String? grund}) async {
     final req = await _anfrage('POST', '/api/confirmations/${Uri.encodeComponent(id)}/${ja ? 'approve' : 'reject'}');
+    if (!ja && grund != null && grund.trim().isNotEmpty) req.add(utf8.encode(jsonEncode({'grund': grund.trim()})));
     final res = await req.close();
     final body = await res.transform(utf8.decoder).join();
     // 1.51.0 (v1512 P3) — Freigabe angenommen, aber Aktion gescheitert: Server liefert „fehler“ (vorher stand trotzdem „✅ Freigegeben“)

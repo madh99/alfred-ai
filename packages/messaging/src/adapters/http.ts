@@ -512,12 +512,12 @@ export class HttpAdapter extends MessagingAdapter {
 
   // v629 — Confirmations + Reminders Side-Panel API
   private confirmationsListFn?: () => Promise<any[]>;
-  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
+  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }, grund?: string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   private remindersListFn?: () => Promise<any[]>;
 
   setConfirmationCallbacks(opts: {
     list: () => Promise<any[]>;
-    decide: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
+    decide: (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }, grund?: string) => Promise<{ ok: boolean; reason?: string; fehler?: string }>;
   }): void {
     this.confirmationsListFn = opts.list;
     this.confirmationsDecideFn = opts.decide;
@@ -907,6 +907,20 @@ export class HttpAdapter extends MessagingAdapter {
     try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
     if (!['fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(String(body.action))) { antwort(400, { error: 'unbekannte Aktion' }); return; }
     antwort(200, await cb.aktion(userId, body));
+  }
+
+  /** Einwand (Owner 22.10.) — Einwände zu Changes im Web erfassen/lesen (dieselbe Skill-Aktion wie im Gespräch, nur Owner) */
+  private async handleEinwand(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.wartungCallbacks;
+    if (!cb) { antwort(503, { error: 'nicht verfügbar' }); return; }
+    const userId = await this.resolveUserId(req);
+    if (req.method === 'GET') { antwort(200, await cb.aktion(userId, { action: 'einwaende', change: url.searchParams.get('change') ?? '' })); return; }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    antwort(200, await cb.aktion(userId, { action: 'einwand', change: String(body.change ?? ''), bezug: String(body.bezug ?? 'gesamt'), text: String(body.text ?? ''), quelle: 'web' }));
   }
 
   /** v1429 R4a — Beobachter-Regeln fürs Web (dieselben wie App und Gespräch) */
@@ -2184,6 +2198,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/einwand' && (req.method === 'GET' || req.method === 'POST')) { // Einwand
+      this.handleEinwand(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/wartung' && (req.method === 'GET' || req.method === 'POST')) { // I4b
       this.handleWartung(req, res).catch(err => this.safeError(res, err));
     } else if (/^\/api\/beobachter(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
@@ -3300,7 +3316,10 @@ export class HttpAdapter extends MessagingAdapter {
     const id = segments[segments.length - 2]; // .../{id}/approve|reject
     // v1547 (B3) — bestätigt ein Gerät (App), bekommt seine Sitzung das Ergebnis auch (bisher nur Telegram)
     const geraet = this.geraetIdentitaet.get(req);
-    const result = await this.confirmationsDecideFn(id, decision, geraet ? { geraetId: geraet.geraetId } : undefined);
+    // Einwand — „Nein, weil …“ aus App/Web: optionaler JSON-Körper { grund }
+    let grund: string | undefined;
+    if (decision === 'reject') { try { const b = JSON.parse((await this.readBody(req)) || '{}') as { grund?: unknown }; if (typeof b.grund === 'string' && b.grund.trim()) grund = b.grund.trim().slice(0, 2000); } catch { /* ohne Grund */ } }
+    const result = await this.confirmationsDecideFn(id, decision, geraet ? { geraetId: geraet.geraetId } : undefined, grund);
     if (!result.ok) {
       res.writeHead(result.reason?.startsWith('already-') ? 409 : 404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: result.reason ?? 'Failed' }));

@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Einwand: Widerspruch zu Changes und Zielarchitekturen mit Pflicht zur Antwort (v1568)
+
+Owner 22.10.: „Einwand wie vorgeschlagen umsetzen“. Anlass war die Frage, wie man einem Plan oder einem einzelnen Punkt eines vorgeschlagenen Changes widerspricht.
+
+- **Einwand als eigenes Objekt** (Tabelle `infra_einwaende`, PG v158 / SQLite v154): Bezug (gesamt, Schritt N, Abschnitt), Text, Quelle (Chat, Web, App, Nein auf eine Freigabe), Status offen → beantwortet → erledigt, Antwort (umgesetzt oder abgelehnt, mit Begründung).
+- **Wirkung:**
+  - Ein Einwand nimmt einem noch nicht gestarteten Change die Freigabe; er fällt zurück in den Entwurf, die offene Freigabe-Frage und eine Ankündigung verfallen.
+  - Eine Zielarchitektur geht zurück in den Entwurf.
+  - Solange Einwände offen sind, ist weder Freigabe noch Annahme möglich.
+- **Pflicht zur Antwort:** `change_aendern` bzw. `architektur_vorschlagen` gehen erst durch, wenn **jeder** offene Einwand beantwortet ist (`antworten: [{einwand, art umgesetzt|abgelehnt, text}]`).
+  - Die Antworten stehen in der nächsten Freigabe-Frage bzw. beim Architektur-Vorschlag; mit der Freigabe bzw. Annahme sind sie erledigt.
+- **Erfassen:**
+  - im Gespräch (`einwand`, `einwaende`);
+  - im Web: Knopf „Einwand“ je Schritt und für den ganzen Change in ITSM → Changes, mit Liste samt Antworten (`/api/einwand`);
+  - **„nein, weil …“** auf eine Change-Freigabe, im Chat oder mit Grund aus Web/App (`POST /api/confirmations/:id/reject` mit `{grund}`). Ein Nein ohne Grund wird als „Freigabe abgelehnt (ohne Begründung)“ erfasst.
+
 ### Added — Standard-Changes mit einmaliger Owner-Freigabe; Cloudflare in der Bestandsaufnahme (v1567, Spec Infrastruktur-Vorhaben I4b Teil 4)
 
 Owner 22.10.: „Teil 4 wie vorgeschlagen umsetzen“ (Vorschlag 5b-11 a–g) und die Frage, warum Cloudflare für öffentliche Domains nicht eingebunden ist.

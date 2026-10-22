@@ -458,6 +458,8 @@ export class Alfred {
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
   /** I3 — Planung/Freigabe von Changes mit Schritten (auch für Web-Freigabe) */
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
+  /** Einwand — Widerspruch des Owners zu Change/Architektur */
+  private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
   /** I4 — Ausführungsmotor für freigegebene Changes */
   private changeMotor?: import('./infrastruktur/change-motor.js').ChangeMotor;
   /** I4b — Web-Pflege der Wartung (bei den ITSM-Routen angebunden) */
@@ -6998,6 +7000,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             offeneIncidents: incidents.map(i => `${i.title} (${i.severity})`), ueberschneidungen: changes.map(c => `${c.title} (${c.status}, ${c.id.slice(0, 8)})`),
           };
         };
+        // Einwand (Owner 22.10.) — vor der Planung, weil Freigabe/Überarbeitung ihn prüfen
+        {
+          const { EinwandRepository, VorhabenRepository: VorhabenRepoEw } = await import('@alfred/storage');
+          const { EinwandDienst } = await import('./infrastruktur/einwand.js');
+          const ewRepo = new EinwandRepository(adapter); const vrEw = new VorhabenRepoEw(adapter);
+          this.einwandDienst = new EinwandDienst({
+            repo: { anlegen: (o, e) => ewRepo.anlegen(o, e), liste: (o, a, i) => ewRepo.liste(o, a, i), beantworte: (o, i, a, t) => ewRepo.beantworte(o, i, a, t), erledige: (o, ids) => ewRepo.erledige(o, ids) },
+            sperreChange: (o, id) => itsmI3.sperreDurchEinwand(o, id),
+            sperreVorhaben: async (o, id) => { const v = await vrEw.hole(o, id); if (!v) throw new Error('Vorhaben nicht gefunden'); if (v.status !== 'verworfen') await vrEw.setzeStatus(o, id, 'entwurf'); return 'entwurf'; },
+            protokoll: (msg, daten) => this.logger.info(daten, msg),
+          });
+        }
         this.changePlanung = new ChangePlanung({
           itsm: {
             liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }),
@@ -7021,6 +7035,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           nachFreigabe: () => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); },
+          einwand: this.einwandDienst,
         });
         // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
         const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
@@ -7236,6 +7251,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           changes: this.changePlanung,
           motor: this.changeMotor,
+          einwand: this.einwandDienst,
           standard: new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
@@ -9727,12 +9743,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return [];
             }
           },
-          decide: async (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }) => {
+          decide: async (id: string, decision: 'approve' | 'reject' | string, von?: { geraetId: string }, grund?: string) => {
             try {
               if (!ownerUid) return { ok: false, reason: 'no-owner' };
               // v1547 (B3) — Entscheidung aus der App: Ergebnis auch in die Hauptsitzung dieses Geräts
               const herkunft = von?.geraetId ? { chatId: `sitzung:${von.geraetId}:haupt`, platform: 'api' } : undefined;
-              return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid, ...(herkunft ? { herkunft } : {}) });
+              return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid, ...(herkunft ? { herkunft } : {}), ...(grund ? { grund } : {}) });
             } catch (err) {
               this.logger.warn({ err, id, decision }, 'Confirmation web-decision failed');
               return { ok: false, reason: 'error' };
@@ -17595,7 +17611,17 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     // v1454 — „Nein“ (Telegram, Web, App) oder Ablauf einer Projekt-Rückfrage erreicht den Lauf
     if (!this.confirmationQueue) this.logger.warn('v1454 Projekt-Ablehnung nicht verdrahtet — keine Bestätigungs-Queue');
     else this.logger.info('v1454 Projekt-Ablehnung verdrahtet');
-    this.confirmationQueue?.setNachOhneAusfuehrung(async (p, wie) => {
+    this.confirmationQueue?.setNachOhneAusfuehrung(async (p, wie, grund) => {
+      // Einwand (Owner 22.10.) — „Nein“ auf eine Change-Freigabe ist ein Einwand (mit Grund, sonst „ohne Begründung“)
+      if (p.skillName === 'infrastruktur' && wie === 'abgelehnt' && p.skillParams.action === 'freigeben' && this.einwandDienst) {
+        const o = this.ownerMasterUserId ?? this.tryOwner();
+        if (!o) return;
+        for (const c of (Array.isArray(p.skillParams.changes) ? p.skillParams.changes : []) as Array<{ id?: string }>) {
+          if (!c?.id) continue;
+          await this.einwandDienst.erfasse(o, { zielArt: 'change', zielId: c.id, bezug: 'gesamt', text: grund ?? 'Freigabe abgelehnt (ohne Begründung)', quelle: 'freigabe-nein' }).catch(err => this.logger.warn({ err, id: c.id }, 'Einwand aus Nein fehlgeschlagen'));
+        }
+        return;
+      }
       // v1458 — „Nein“ bzw. Ablauf beim Zusammenführen: MR bleibt offen, der nächste Lauf arbeitet auf demselben Zweig weiter
       if (p.skillName === 'project_agent' && p.skillParams.action === 'projekt_mr_zusammenfuehren') {
         const l = projekte.hole(String(p.skillParams.lauf ?? ''));

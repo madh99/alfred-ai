@@ -2489,4 +2489,25 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS sicherheitsupdates TEXT', []);
     },
   },
+  {
+    version: 158,
+    description: 'Einwand (Owner 22.10.) — infra_einwaende: Widerspruch zu Change/Architektur mit Pflicht zur Antwort (PG-Spiegel zu SQLite v154).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_einwaende (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          ziel_art TEXT NOT NULL,
+          ziel_id TEXT NOT NULL,
+          bezug TEXT NOT NULL,
+          text TEXT NOT NULL,
+          quelle TEXT NOT NULL,
+          status TEXT NOT NULL,
+          antwort_art TEXT,
+          antwort TEXT,
+          antwort_at TEXT,
+          erstellt TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_einwaende_ziel ON infra_einwaende (user_id, ziel_art, ziel_id)', []);
+    },
+  },
 ];

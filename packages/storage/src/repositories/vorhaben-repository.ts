@@ -90,6 +90,11 @@ export class VorhabenRepository {
     return (await this.hole(userId, id))!;
   }
 
+  /** Einwand — Vorhaben zurück in den Entwurf (Architektur bleibt als Grundlage der Überarbeitung). */
+  async setzeStatus(userId: string, id: string, status: VorhabenStatus): Promise<void> {
+    await this.db.execute('UPDATE infra_vorhaben SET status = ?, geaendert = ? WHERE id = ? AND user_id = ?', [status, new Date().toISOString(), id, userId]);
+  }
+
   /** I3 — Changes eines Vorhabens nachtragen (ohne Doppelte). */
   async fuegeChangesHinzu(userId: string, id: string, changeIds: string[]): Promise<void> {
     const v = await this.hole(userId, id);

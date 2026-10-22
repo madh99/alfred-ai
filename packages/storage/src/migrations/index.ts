@@ -3180,4 +3180,25 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN sicherheitsupdates TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 154,
+    description: 'Einwand — infra_einwaende (SQLite-Spiegel zu PG v158).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_einwaende (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          ziel_art TEXT NOT NULL,
+          ziel_id TEXT NOT NULL,
+          bezug TEXT NOT NULL,
+          text TEXT NOT NULL,
+          quelle TEXT NOT NULL,
+          status TEXT NOT NULL,
+          antwort_art TEXT,
+          antwort TEXT,
+          antwort_at TEXT,
+          erstellt TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_infra_einwaende_ziel ON infra_einwaende (user_id, ziel_art, ziel_id)');
+    },
+  },
 ];

@@ -108,6 +108,8 @@ export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
 export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
 export { WartungRepository } from './repositories/wartung-repository.js'; // I4b
+export { EinwandRepository } from './repositories/einwand-repository.js'; // Einwand
+export type { Einwand, EinwandZiel, EinwandStatus } from './repositories/einwand-repository.js';
 export type { KalenderZeile, RegelZeile } from './repositories/wartung-repository.js';
 export { SCHRITT_CHANGE_GESPERRT } from './repositories/itsm-repository.js'; // I3
 export type { ChangeSchrittDaten } from './repositories/itsm-repository.js';

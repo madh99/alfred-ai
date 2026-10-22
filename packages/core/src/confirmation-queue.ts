@@ -123,6 +123,12 @@ function titelOderBeschreibung(c: Pick<PendingConfirmation, 'description' | 'ski
   return `${t} ${c.description ?? ''}`.trim();
 }
 
+/** Einwand (Owner 22.10.) — aus „nein, weil Schritt 4 …“ den Grund; ein bloßes „nein“ hat keinen. */
+export function neinGrund(text: string): string | undefined {
+  const g = text.trim().replace(/^(nein|nö|no|abbrechen|n)(?![a-zäöüß])[\s,.:;!\-—–]*/i, '').replace(/^(weil|denn|da)(?![a-zäöüß])\s*/i, '').trim();
+  return g.length >= 3 ? g.slice(0, 2000) : undefined;
+}
+
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
   private feedbackService?: FeedbackService;
@@ -333,11 +339,13 @@ export class ConfirmationQueue {
   }
 
   /** v1454 — Bestätigung abgelehnt oder abgelaufen: der Auftraggeber (z. B. ein Geräte-Projekt) erfährt es, egal über welchen Kanal. */
-  private nachOhneAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen') => Promise<void>;
+  private nachOhneAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen', grund?: string) => Promise<void>;
+  /** Einwand (Owner 22.10.) — Grund eines Neins aus Web/App (bis zur Verarbeitung im Ablehnungszweig) */
+  private readonly grundFuerWeb = new Map<string, string>();
   setNachOhneAusfuehrung(fn: NonNullable<ConfirmationQueue['nachOhneAusfuehrung']>): void { this.nachOhneAusfuehrung = fn; }
-  private meldeOhneAusfuehrung(p: { id: string; source: string; skillName: string; skillParams?: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen'): void {
+  private meldeOhneAusfuehrung(p: { id: string; source: string; skillName: string; skillParams?: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen', grund?: string): void {
     if (!this.nachOhneAusfuehrung) return;
-    void this.nachOhneAusfuehrung({ id: p.id, source: p.source, skillName: p.skillName, skillParams: p.skillParams ?? {} }, wie)
+    void this.nachOhneAusfuehrung({ id: p.id, source: p.source, skillName: p.skillName, skillParams: p.skillParams ?? {} }, wie, grund)
       .catch(err => this.logger.warn({ err: (err as Error).message, id: p.id, wie }, 'v1454 Nachlauf nach Ablehnung/Ablauf fehlgeschlagen'));
   }
 
@@ -582,7 +590,10 @@ export class ConfirmationQueue {
       }
     } else {
       await this.confirmRepo.resolve(pending.id, 'rejected');
-      this.meldeOhneAusfuehrung(pending as never, 'abgelehnt');
+      // Einwand — „nein, weil …“ im Chat bzw. Grund aus Web/App geht an den Auftraggeber
+      const grund = this.grundFuerWeb.get(pending.id) ?? (callbackMatch ? undefined : neinGrund(text));
+      this.grundFuerWeb.delete(pending.id);
+      this.meldeOhneAusfuehrung(pending as never, 'abgelehnt', grund);
       if (adapter) {
         await adapter.sendMessage(chatId, `\u274C Aktion abgelehnt: ${pending.description}`);
       }
@@ -622,8 +633,11 @@ export class ConfirmationQueue {
     userId: string;
     /** v1547 (B3) — Sitzung, aus der entschieden wurde (App): bekommt das Ergebnis zusätzlich, falls die Anfrage keine eigene Herkunft hat */
     herkunft?: { chatId: string; platform: string };
+    /** Einwand — Begründung eines Neins */
+    grund?: string;
   }): Promise<{ ok: boolean; reason?: string; fehler?: string }> {
     const pending = await this.confirmRepo.getById(opts.id);
+    if (pending && opts.decision === 'reject' && opts.grund?.trim()) this.grundFuerWeb.set(pending.id, opts.grund.trim().slice(0, 2000));
     if (!pending) {
       const stale = await this.confirmRepo.getByIdAnyStatus(opts.id);
       if (stale) return { ok: false, reason: `already-${stale.status}` };

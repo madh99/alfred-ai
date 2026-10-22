@@ -30,6 +30,8 @@ export interface ChangeDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4 — nach jeder Owner-Freigabe (Motor anstoßen) */
   nachFreigabe?: () => void;
+  /** Einwand — offene Einwände blockieren, Antworten sind Pflicht, Freigabe-Frage nennt sie */
+  einwand?: import('./einwand.js').EinwandDienst;
 }
 
 const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', high: 'hoch', critical: 'kritisch' };
@@ -144,9 +146,11 @@ export class ChangePlanung {
   }
 
   /** Plan eines vorhandenen Changes ersetzen (neue Prüfung; Freigabe verfällt bei geändertem Fingerabdruck). */
-  async aendern(owner: string, id: string, roh: unknown): Promise<{ ok: true; change: CmdbChangeRequest; freigabeVerfallen: boolean } | { ok: false; fehler: string[] }> {
+  async aendern(owner: string, id: string, roh: unknown, antwortenRoh?: unknown): Promise<{ ok: true; change: CmdbChangeRequest; freigabeVerfallen: boolean } | { ok: false; fehler: string[] }> {
     const alt = await this.finde(owner, id);
     if (!alt?.schritte?.length) return { ok: false, fehler: [`Change ${id} nicht gefunden oder ohne Schritte`] };
+    const ew = this.d.einwand ? await this.d.einwand.pruefeAntworten(owner, 'change', alt.id, antwortenRoh) : { fehler: [], antworten: [] };
+    if (ew.fehler.length) return { ok: false, fehler: ew.fehler };
     const ctx = await this.kontext(owner);
     ctx.changes = ctx.changes.filter(c => c.id !== alt.id);
     const e = pruefeChangePlan(roh, ctx);
@@ -158,6 +162,7 @@ export class ChangePlanung {
     if (fehler.length) return { ok: false, fehler };
     const aus = await this.d.auswirkung(e.betroffeneIds, alt.id);
     const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId));
+    if (ew.antworten.length) await this.d.einwand!.speichereAntworten(owner, ew.antworten);
     const verfallen = alt.status === 'approved' && neu.status !== 'approved';
     this.d.protokoll?.('I3 Change geändert', { id: alt.id, freigabeVerfallen: verfallen, fingerabdruck: neu.fingerabdruck?.slice(0, 12) });
     return { ok: true, change: neu, freigabeVerfallen: verfallen };
@@ -189,7 +194,9 @@ export class ChangePlanung {
   /** Vor jeder Freigabe: gespeicherten Plan erneut prüfen (CMDB/Skills können sich geändert haben), Fingerabdruck vergleichen, Sperren. */
   async freigabeBereit(owner: string, c: CmdbChangeRequest): Promise<{ ok: true; auswirkung: Auswirkung; hinweise: string[] } | { ok: false; grund: string }> {
     if (!c.schritte?.length) return { ok: false, grund: 'Change ohne Schritte' };
-    if (c.status !== 'submitted') return { ok: false, grund: `Status ${c.status} — freigeben geht nur bei submitted` };
+    if (c.status !== 'submitted') return { ok: false, grund: `Status ${c.status} — freigeben geht nur bei submitted${c.status === 'draft' ? ' (offener Einwand oder Prüffehler — erst den Plan überarbeiten)' : ''}` };
+    const offen = this.d.einwand ? await this.d.einwand.offen(owner, 'change', c.id) : [];
+    if (offen.length) return { ok: false, grund: `${offen.length} offene Einwände des Owners — erst beantworten (change_aendern mit antworten)` };
     const ctx = await this.kontext(owner);
     ctx.changes = ctx.changes.filter(x => x.id !== c.id);
     const e = pruefeChangePlan(planAusChange(c), ctx);
@@ -210,6 +217,8 @@ export class ChangePlanung {
       const b = await this.freigabeBereit(owner, c);
       if (!b.ok) { fehler.push(`${c.title} (${c.id.slice(0, 8)}): ${b.grund}`); continue; }
       changes.push({ id: c.id, fingerabdruck: c.fingerabdruck! });
+      const einwaende = this.d.einwand ? await this.d.einwand.antwortText(owner, 'change', c.id) : '';
+      if (einwaende) teile.push(einwaende);
       teile.push(freigabeText({ id: c.id, titel: c.title, risiko: RISIKO_TEXT[c.riskLevel] ?? c.riskLevel, typ: c.type === 'emergency' ? 'Notfall-Change' : 'Normal-Change', ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}), ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), schritte: c.schritte as ChangeSchritt[], auswirkung: b.auswirkung, hinweise: b.hinweise, fingerabdruck: c.fingerabdruck! }));
     }
     if (fehler.length) return { ok: false, fehler };
@@ -241,7 +250,7 @@ export class ChangePlanung {
       await this.d.itsm.setzeFreigabeAnfrage(owner, c.id, null); // einmal verwendbar
       const b = akt ? await this.freigabeBereit(owner, akt) : { ok: false as const, grund: 'nicht gefunden' };
       if (!b.ok) { z.push(`✗ ${akt?.title ?? c.id}: ${b.grund}`); continue; }
-      try { const f = await this.d.itsm.freigeben(owner, c.id, c.fingerabdruck, 'frage'); z.push(`✓ ${f.title} (${f.id.slice(0, 8)}) freigegeben`); }
+      try { const f = await this.d.itsm.freigeben(owner, c.id, c.fingerabdruck, 'frage'); await this.d.einwand?.erledigeBeantwortete(owner, 'change', f.id); z.push(`✓ ${f.title} (${f.id.slice(0, 8)}) freigegeben`); }
       catch (err) { z.push(`✗ ${akt!.title}: ${(err as Error).message}`); }
     }
     this.d.protokoll?.('I3 Owner-Freigabe', { ergebnis: z });
@@ -256,6 +265,7 @@ export class ChangePlanung {
     const b = await this.freigabeBereit(owner, c);
     if (!b.ok) throw new Error(b.grund);
     const f = await this.d.itsm.freigeben(owner, c.id, c.fingerabdruck!, 'web');
+    await this.d.einwand?.erledigeBeantwortete(owner, 'change', f.id);
     this.d.protokoll?.('I3 Owner-Freigabe', { id: c.id, ueber: 'web' });
     this.d.nachFreigabe?.();
     return f;

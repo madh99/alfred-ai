@@ -74,6 +74,8 @@ export interface InfrastrukturDeps {
   };
   // ── I4b Teil 4 ──
   standard?: StandardChanges;
+  // ── Einwand ──
+  einwand?: import('./einwand.js').EinwandDienst;
   updatesSchalter?: { liste(o: string): Promise<Record<string, string>>; setze(o: string, name: string, an: boolean): Promise<boolean> };
   /** Alfred-Benutzer (Familie) nach Name auflösen → Telegram-ID */
   nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; konten: Record<string, string> } | { unbekannt: string[] } | undefined>;
@@ -83,7 +85,7 @@ export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager',
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -113,6 +115,7 @@ export class InfrastrukturSkill extends Skill {
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
+      + 'EINWAND: einwand (change ODER vorhaben, bezug z. B. „Schritt 4“ oder „Netze“, text = Einwand des Owners in seinen Worten, wortlaut) — nimmt dem Change die Freigabe bzw. setzt das Vorhaben in den Entwurf; einwaende (change|vorhaben) listet sie. Beim Überarbeiten (change_aendern bzw. architektur_vorschlagen) JEDEN offenen Einwand beantworten: antworten [{einwand: ID, art umgesetzt|abgelehnt, text}]. '
       + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
     version: '2.0.0',
@@ -167,6 +170,9 @@ export class InfrastrukturSkill extends Skill {
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
         wahl: { type: 'string', enum: ['wiederholen', 'abbrechen'], description: 'change_steuern: was der Owner gesagt hat' },
+        bezug: { type: 'string', description: 'einwand: worauf er sich bezieht (Schritt N, Abschnitt, gesamt)' },
+        text: { type: 'string', description: 'einwand: der Einwand des Owners' },
+        antworten: { type: 'array', description: 'change_aendern/architektur_vorschlagen: Antwort auf jeden offenen Einwand', items: { type: 'object', properties: { einwand: { type: 'string' }, art: { type: 'string', enum: ['umgesetzt', 'abgelehnt'] }, text: { type: 'string' } } } },
         name: { type: 'string', description: 'fenster_anlegen/sperre_anlegen/benachrichtigung_anlegen: Bezeichnung' },
         regel: { type: 'object', description: 'Fenster/Sperre', properties: { art: { type: 'string', enum: ['einmalig', 'woechentlich'] }, von: { type: 'string' }, bis: { type: 'string' }, tage: { type: 'array', items: { type: 'number' } } } },
         fuer: { type: 'array', items: { type: 'string' }, description: 'Asset-Namen/IDs; leer = global' },
@@ -198,6 +204,7 @@ export class InfrastrukturSkill extends Skill {
     if (action.startsWith('change') || action === 'freigabe_anfragen' || action === 'freigeben') return this.changeAktion(owner, repo, action, input);
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
+    if (action === 'einwand' || action === 'einwaende') return this.einwandAktion(owner, repo, action, input);
     switch (action) {
       case 'vorhaben_anlegen': return this.anlegen(owner, repo, input);
       case 'vorhaben_liste': {
@@ -214,7 +221,7 @@ export class InfrastrukturSkill extends Skill {
         const g = await this.grundlage(v.hosts);
         return { success: true, data: g, display: `Vorhaben **${v.titel}** — Ziel: ${v.ziel}\n\n${grundlageText(g)}` };
       }
-      case 'architektur_vorschlagen': return this.vorschlagen(owner, repo, v, input.architektur);
+      case 'architektur_vorschlagen': return this.vorschlagen(owner, repo, v, input.architektur, input.antworten);
       case 'entscheiden': return this.entscheiden(owner, repo, v, input);
     }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -285,10 +292,12 @@ export class InfrastrukturSkill extends Skill {
     return planungsGrundlage({ hosts: bestaende, knoten, speicher, netze, proxy, vms, dns });
   }
 
-  private async vorschlagen(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, roh: unknown): Promise<SkillResult> {
+  private async vorschlagen(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, roh: unknown, antwortenRoh?: unknown): Promise<SkillResult> {
     if (v.status === 'verworfen') return { success: false, error: 'Das Vorhaben ist verworfen.' };
     if (v.status === 'angenommen') return { success: false, error: 'Die Architektur ist bereits angenommen — für eine neue Fassung zuerst entscheiden(ueberarbeiten) auf Wunsch des Owners.' };
     if (!this.deps.speichereArchitektur) return { success: false, error: 'Dokumentablage nicht verfügbar' };
+    const ew = this.deps.einwand ? await this.deps.einwand.pruefeAntworten(owner, 'vorhaben', v.id, antwortenRoh) : { fehler: [], antworten: [] };
+    if (ew.fehler.length) return { success: false, error: `Offene Einwände des Owners zuerst beantworten:\n${ew.fehler.map(x => `- ${x}`).join('\n')}` };
     const g = await this.grundlage(v.hosts);
     if (!g.hosts.length) return { success: false, error: `Kein Bestand für ${v.hosts.join(', ')} — Fernzugriff prüfen.` };
     const p = pruefeArchitektur(typeof roh === 'string' ? (() => { try { return JSON.parse(roh); } catch { return {}; } })() : roh, g);
@@ -301,8 +310,10 @@ export class InfrastrukturSkill extends Skill {
     const md = architekturDokument({ titel: v.titel, ziel: v.ziel, id: v.id, version, ...(bestandDocId ? { bestandDocId } : {}) }, p.architektur, g, p.hinweise);
     const docId = await this.deps.speichereArchitektur(v.id, `Zielarchitektur ${v.titel} v${version}`, md);
     await repo.setzeArchitektur(owner, v.id, p.architektur, docId, bestandDocId);
+    if (ew.antworten.length) await this.deps.einwand!.speichereAntworten(owner, ew.antworten);
+    const einwaende = this.deps.einwand ? await this.deps.einwand.antwortText(owner, 'vorhaben', v.id) : '';
     this.deps.protokoll?.('I2 Architektur vorgeschlagen', { id: v.id, version, docId, gruppen: p.architektur.gruppen.length, neueVms: p.architektur.gruppen.filter(x => x.ziel === 'vm' || x.ziel === 'lxc').length, hinweise: p.hinweise.length });
-    return { success: true, data: { docId, version, hinweise: p.hinweise }, display: `${md}\n\n---\nGespeichert als CMDB-Dokument ${docId} (Vorhaben ${v.id.slice(0, 8)}, Version ${version}). Bitte den Owner entscheiden lassen.` };
+    return { success: true, data: { docId, version, hinweise: p.hinweise }, display: `${md}\n\n---\n${einwaende ? `${einwaende}\n\n` : ''}Gespeichert als CMDB-Dokument ${docId} (Vorhaben ${v.id.slice(0, 8)}, Version ${version}). Bitte den Owner entscheiden lassen.` };
   }
 
   private async entscheiden(owner: string, repo: VorhabenSpeicher, v: VorhabenDaten, input: Record<string, unknown>): Promise<SkillResult> {
@@ -313,7 +324,9 @@ export class InfrastrukturSkill extends Skill {
     if (e === 'annehmen' && v.status !== 'architektur_vorgeschlagen') return { success: false, error: `Annehmen geht nur bei vorgeschlagener Architektur (Stand: ${STATUS_TEXT[v.status]})` };
     if (v.status === 'verworfen') return { success: false, error: 'Das Vorhaben ist bereits verworfen.' };
     const status = e === 'annehmen' ? 'angenommen' : e === 'ablehnen' ? 'verworfen' : 'entwurf';
+    if (e === 'annehmen' && this.deps.einwand && (await this.deps.einwand.offen(owner, 'vorhaben', v.id)).length) return { success: false, error: 'Es gibt offene Einwände des Owners zu dieser Architektur — erst überarbeiten und beantworten' };
     const neu = await repo.entscheide(owner, v.id, { entscheidung: e, wortlaut, architekturVersion: v.architekturVersion }, status);
+    if (e === 'annehmen') await this.deps.einwand?.erledigeBeantwortete(owner, 'vorhaben', v.id);
     this.deps.protokoll?.('I2 Owner-Entscheidung', { id: v.id, entscheidung: e, version: v.architekturVersion });
     const weiter = e === 'annehmen' ? 'Grundlage für die Changes (nächste Ausbaustufe I3: Changes mit Schritten, je Change eigene Freigabe).' : e === 'ueberarbeiten' ? 'Architektur nach den Hinweisen des Owners überarbeiten und erneut mit architektur_vorschlagen senden.' : 'Vorhaben beendet.';
     return { success: true, data: { status: neu.status }, display: `Vorhaben **${v.titel}**: ${STATUS_TEXT[neu.status]} („${wortlaut}“). ${weiter}` };
@@ -370,7 +383,7 @@ export class InfrastrukturSkill extends Skill {
       return { success: true, data: c, display: c.schritte?.length ? changeAnzeige(c) : `${c.title} (${c.status}) — ohne Schritte` };
     }
     if (action === 'change_aendern') {
-      const r = await ch.aendern(owner, String(input.change ?? ''), typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan);
+      const r = await ch.aendern(owner, String(input.change ?? ''), typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan, input.antworten);
       if (!r.ok) return { success: false, error: `Änderung nicht gespeichert:\n${r.fehler.map(x => `- ${x}`).join('\n')}` };
       return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Change **${r.change.title}** geändert (Plan ${r.change.fingerabdruck?.slice(0, 12)}).${r.freigabeVerfallen ? ' Die bisherige Freigabe ist verfallen — neue Freigabe nötig.' : ''}` };
     }
@@ -476,6 +489,35 @@ export class InfrastrukturSkill extends Skill {
       return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Standard-Change **${r.change.title}** (${r.change.id.slice(0, 8)}) angelegt und durch die Vorlage freigegeben — der Motor startet ihn nach Zeitplan (Wartungsfenster/Sperrzeiten) und meldet das Ergebnis.` };
     }
     return { success: false, error: 'Unbekannte Aktion' };
+  }
+
+  private async einwandAktion(owner: string, repo: VorhabenSpeicher, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const ew = this.deps.einwand;
+    if (!ew) return { success: false, error: 'Einwände nicht verfügbar' };
+    const ziel = async (): Promise<{ art: 'change' | 'vorhaben'; id: string; titel: string } | string> => {
+      if (typeof input.change === 'string' && input.change.trim()) {
+        const c = await this.deps.changes?.finde(owner, input.change.trim());
+        return c ? { art: 'change', id: c.id, titel: c.title } : `Change „${input.change}“ nicht gefunden`;
+      }
+      if (typeof input.vorhaben === 'string' && input.vorhaben.trim()) {
+        const v = await repo.finde(owner, input.vorhaben.trim());
+        return v ? { art: 'vorhaben', id: v.id, titel: v.titel } : `Vorhaben „${input.vorhaben}“ nicht gefunden`;
+      }
+      return 'change oder vorhaben angeben';
+    };
+    const z = await ziel();
+    if (typeof z === 'string') return { success: false, error: z };
+    if (action === 'einwaende') {
+      const l = await ew.liste(owner, z.art, z.id);
+      return { success: true, data: l, display: l.length ? l.map(e => `- ${e.status === 'offen' ? '🟠 offen' : e.status === 'beantwortet' ? '🔵 beantwortet' : '✅ erledigt'} · ${e.bezug}: „${e.text}“${e.antwort ? ` → ${e.antwortArt}: ${e.antwort}` : ''} (${e.id.slice(0, 8)})`).join('\n') : `Keine Einwände zu ${z.titel}.` };
+    }
+    const text = typeof input.text === 'string' ? input.text.trim() : typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
+    const quelle = typeof input.quelle === 'string' && ['chat', 'web', 'app'].includes(input.quelle) ? input.quelle : 'chat';
+    try {
+      const r = await ew.erfasse(owner, { zielArt: z.art, zielId: z.id, ...(typeof input.bezug === 'string' ? { bezug: input.bezug } : {}), text, quelle });
+      const folge = z.art === 'change' ? (r.folge === 'draft' ? 'Der Change ist zurück im Entwurf, eine Freigabe ist verfallen.' : `Der Change ist ${r.folge} — der Einwand ist vermerkt${r.folge === 'in_progress' ? '; zum Stoppen „abbrechen“' : ''}.`) : 'Das Vorhaben ist zurück im Entwurf.';
+      return { success: true, data: { id: r.einwand.id }, display: `Einwand zu **${z.titel}** (${r.einwand.bezug}) erfasst: „${r.einwand.text}“. ${folge} Beim Überarbeiten muss Alfred ihn beantworten.` };
+    } catch (err) { return { success: false, error: (err as Error).message }; }
   }
 
   private zeige(v: VorhabenDaten): string {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { EinwandDto } from '@/lib/alfred-client';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
 
@@ -89,9 +90,24 @@ function pruefKurz(p?: ChangePruefung): string {
   }
 }
 
-/** I3 — Schritte, Auswirkung, Prüfhinweise und Freigabe-Stand eines Changes mit Schritten (nur Anzeige; Plan ändert nur Alfred). */
-function ChangeSchritteAnsicht({ c }: { c: ChangeRequest }) {
+/** I3 — Schritte, Auswirkung, Prüfhinweise und Freigabe-Stand eines Changes mit Schritten (nur Anzeige; Plan ändert nur Alfred).
+ *  Einwand (Owner 22.10.) — je Schritt und für den ganzen Change; Alfred muss beim Überarbeiten jeden beantworten. */
+function ChangeSchritteAnsicht({ c, nachEinwand }: { c: ChangeRequest; nachEinwand: () => void }) {
+  const { client } = useConfig();
   const schritte = c.schritte ?? [];
+  const [einwaende, setEinwaende] = useState<EinwandDto[]>([]);
+  const [meldung, setMeldung] = useState<string | null>(null);
+  const laden = useCallback(async () => { if (!client) return; const r = await client.einwaende(c.id).catch(() => null); setEinwaende(r?.success && Array.isArray(r.data) ? r.data : []); }, [client, c.id]);
+  useEffect(() => { void laden(); }, [laden]);
+  const einwand = async (bezug: string) => {
+    if (!client) return;
+    const text = prompt(`Einwand zu ${bezug === 'gesamt' ? 'diesem Change' : bezug}:`);
+    if (!text?.trim()) return;
+    const r = await client.einwandErfassen({ change: c.id, bezug, text: text.trim() }).catch((e: Error) => ({ success: false, error: e.message }));
+    setMeldung(r.success ? ((r as { display?: string }).display ?? 'Einwand erfasst.') : (r.error ?? 'Fehler'));
+    await laden(); nachEinwand();
+  };
+  const offenBei = (bezug: string) => einwaende.filter(e => e.status === 'offen' && e.bezug === bezug).length;
   const farbe: Record<string, string> = { lesen: 'text-gray-400', sicherung: 'text-green-400', aendern: 'text-orange-400', loeschen: 'text-red-400', pruefung: 'text-blue-400', warten: 'text-gray-400', owner: 'text-purple-400' };
   const freigabe = c.status === 'approved'
     ? `Freigegeben ${c.freigegebenAt ? fmtDate(c.freigegebenAt) : ''} über ${c.freigegebenUeber === 'web' ? 'Web' : 'Freigabe-Frage'} — Plan ${c.freigabeFingerabdruck?.slice(0, 12)}`
@@ -106,7 +122,7 @@ function ChangeSchritteAnsicht({ c }: { c: ChangeRequest }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
-          <thead><tr className="text-gray-500 text-left"><th className="pr-2">#</th><th className="pr-2">Schritt</th><th className="pr-2">Was</th><th className="pr-2">Prüfung</th><th className="pr-2">Rückweg</th><th>bei Fehler</th></tr></thead>
+          <thead><tr className="text-gray-500 text-left"><th className="pr-2">#</th><th className="pr-2">Schritt</th><th className="pr-2">Was</th><th className="pr-2">Prüfung</th><th className="pr-2">Rückweg</th><th className="pr-2">bei Fehler</th><th></th></tr></thead>
           <tbody>
             {schritte.map(x => (
               <tr key={x.nr} className="border-t border-[#1f1f1f] align-top">
@@ -115,7 +131,8 @@ function ChangeSchritteAnsicht({ c }: { c: ChangeRequest }) {
                 <td className="pr-2 py-1 text-gray-300 font-mono break-all">{x.art === 'aktion' ? `${x.skill}.${x.aktion} ${x.parameter ? JSON.stringify(x.parameter) : ''}` : x.art === 'owner' ? x.frage : x.art === 'warten' ? `${x.sekunden ? `${x.sekunden} s` : ''} ${x.pruefung ? `bis ${pruefKurz(x.pruefung)}` : ''}` : ''}</td>
                 <td className="pr-2 py-1 text-gray-400">{pruefKurz(x.pruefung)}</td>
                 <td className="pr-2 py-1 text-gray-400">{x.rueckweg ? (x.rueckweg.keiner ? `keiner: ${x.rueckweg.keiner}` : `${x.rueckweg.skill}.${x.rueckweg.aktion}`) : '—'}</td>
-                <td className="py-1 text-gray-500">{x.beiFehler}</td>
+                <td className="pr-2 py-1 text-gray-500">{x.beiFehler}</td>
+                <td className="py-1">{!['completed', 'rolled_back', 'cancelled', 'failed'].includes(c.status) && <button onClick={() => void einwand(`Schritt ${x.nr}`)} className="text-[10px] text-amber-400 hover:text-amber-300 whitespace-nowrap">Einwand{offenBei(`Schritt ${x.nr}`) ? ` (${offenBei(`Schritt ${x.nr}`)})` : ''}</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -134,6 +151,20 @@ function ChangeSchritteAnsicht({ c }: { c: ChangeRequest }) {
       {c.pruefung && c.pruefung.fehler.length > 0 && (
         <ul className="text-xs text-red-400 list-disc pl-4">{c.pruefung.fehler.map((h, i) => <li key={i}>{h}</li>)}</ul>
       )}
+      <div className="space-y-1">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">Einwände</span>
+          {!['completed', 'rolled_back', 'cancelled', 'failed'].includes(c.status) && <button onClick={() => void einwand('gesamt')} className="text-xs text-amber-400 hover:text-amber-300">+ Einwand zum ganzen Change</button>}
+        </div>
+        {meldung && <p className="text-xs text-gray-400">{meldung}</p>}
+        {einwaende.length === 0 ? <p className="text-xs text-gray-600">Keine.</p> : einwaende.map(e => (
+          <div key={e.id} className="text-xs">
+            <span className={e.status === 'offen' ? 'text-amber-300' : e.status === 'beantwortet' ? 'text-blue-300' : 'text-gray-500'}>{e.status === 'offen' ? 'offen' : e.status === 'beantwortet' ? 'beantwortet' : 'erledigt'}</span>
+            <span className="text-gray-300"> · {e.bezug}: „{e.text}“</span>
+            {e.antwort && <span className="text-gray-400"> → {e.antwortArt === 'umgesetzt' ? 'umgesetzt' : 'nicht umgesetzt'}: {e.antwort}</span>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1641,7 +1672,7 @@ export function ItsmPage() {
                 {mitSchritten && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300">{selectedChange.schritte!.length} Schritte</span>}
               </div>
 
-              {mitSchritten && <ChangeSchritteAnsicht c={selectedChange} />}
+              {mitSchritten && <ChangeSchritteAnsicht c={selectedChange} nachEinwand={() => void loadChanges()} />}
 
               <EditableTextField label="Beschreibung" value={selectedChange.description} placeholder="Beschreibung der Änderung..."
                 onSave={val => updateChangeField(selectedChange.id, { description: val })}

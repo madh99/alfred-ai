@@ -208,10 +208,37 @@ extension _Senden on _SitzungState {
   }
 
 
+  /// Einwand (Owner 22.10.) — Freigabe-Fragen zu Infrastruktur-Changes und Standard-Vorlagen
+  static bool _istChangeFreigabe(String text) => text.contains('Change freigeben') || text.contains('Changes freigeben') || text.contains('Freigabe gilt genau für Plan') || text.contains('Standard-Change-Vorlage freigeben');
+
+  /// „Nein, weil …“: bei Change-Freigaben ein Feld für den Grund (leer = Nein ohne Grund, Abbrechen = keine Entscheidung).
+  Future<String?> _neinGrund(Bestaetigung b) async {
+    final feld = TextEditingController();
+    final ok = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+      title: const Text('Nein — warum?'),
+      content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(b.text.length > 300 ? '${b.text.substring(0, 300)} …' : b.text, style: Theme.of(c).textTheme.bodySmall),
+        const SizedBox(height: 12),
+        TextField(controller: feld, autofocus: true, minLines: 2, maxLines: 5, decoration: const InputDecoration(hintText: 'z. B. „Schritt 4 nicht vor 22 Uhr“ — wird ein Einwand, den Alfred beantworten muss', border: OutlineInputBorder())),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Abbrechen')),
+        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Nein senden')),
+      ],
+    ));
+    if (ok != true) return null;
+    return feld.text;
+  }
+
   Future<void> _entscheide(Bestaetigung b, bool ja) async {
     final s = server;
     if (s == null) return;
-    final r = await s.entscheide(b.id, ja);
+    String? grund;
+    if (!ja && _istChangeFreigabe(b.text)) {
+      grund = await _neinGrund(b);
+      if (grund == null) return; // abgebrochen
+    }
+    final r = await s.entscheide(b.id, ja, grund: grund);
     if (r == 'freigegeben' || r == 'abgelehnt') {
       _neu(() => offen.remove(b));
       _titel();
