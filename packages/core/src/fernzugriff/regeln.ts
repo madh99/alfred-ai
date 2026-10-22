@@ -49,6 +49,8 @@ const LESE_BEFEHLE: RegExp[] = [
   /^docker (network|volume) ls$/,
   /^docker system df( -v)?$/,
   /^docker (version|info)$/,
+  /^docker compose version( --short)?$/, // Pilot cf82f3f2: Prüfschritt nach der Docker-Installation
+  /^getent (hosts|ahosts|ahostsv4) [\w.-]+$/, // DNS-Auflösung über die Systemkonfiguration prüfen
   /^docker (top|port) [\w.-]+$/,
   /^docker compose ls( -a| --all)?$/,
   /^docker compose -p [\w-]+ (ps|top|images)( -a| --all)?$/,

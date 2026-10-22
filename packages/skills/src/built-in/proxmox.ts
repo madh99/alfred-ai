@@ -311,7 +311,7 @@ export class ProxmoxSkill extends Skill {
     const action = input.action as string | undefined;
     if (action === 'delete_vm') {
       const vmid = typeof input.vmid === 'number' ? input.vmid : typeof input.vmid === 'string' && /^\d+$/.test(input.vmid.trim()) ? Number(input.vmid) : NaN;
-      if (!Number.isInteger(vmid) || vmid < 100) return 'delete_vm braucht die vmid (Zahl)';
+      if (!Number.isInteger(vmid) || vmid < 1) return 'delete_vm braucht die vmid (Zahl)'; // Schutz ist vm_name; ab 1, damit Verweise {{schrittN.vmid}} die Planprüfung bestehen
       if (typeof input.vm_name !== 'string' || !input.vm_name.trim()) return 'delete_vm braucht vm_name zur Bestätigung';
       return undefined;
     }

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planprüfung: VMID per Verweis, Docker-Compose- und DNS-Prüfungen (v1582)
+
+Realfall bei der Planung des Pilots: Die Planprüfung lehnte drei gültige Angaben ab.
+
+- **VMID per Verweis:** `delete_vm` mit `vmid: {{schrittN.vmid}}` wurde abgelehnt, weil der Platzhalter der Planprüfung (1) unter der Mindest-VMID 100 lag.
+  - Die Untergrenze ist jetzt 1. Der eigentliche Schutz bleibt der passende `vm_name`.
+- **Leseliste:** `docker compose version` und `getent hosts <name>` stehen jetzt darauf. Sie dienen als Prüfschritte nach der Docker-Installation bzw. für die DNS-Auflösung.
+
 ### Added — UniFi: eigene Firewall-Zonen, IP-Regeln, Sicherung; Firewall-Schritte im Change ohne Einzelrückfrage (v1581)
 
 Realfall Pilot cf82f3f2: Die Planung schob 9 von 27 Schritten als Handarbeit auf den Owner (UniFi sichern, Trunk, Regeln mit IP-Quellen, Standard-Sperre). Außerdem hätte `create_firewall_policy` im Change nur eine Rückfrage gestellt und trotzdem Erfolg gemeldet.
