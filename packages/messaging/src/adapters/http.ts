@@ -4816,7 +4816,9 @@ export class HttpAdapter extends MessagingAdapter {
     const token = req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null;
     if (this.authCb && token) {
       const user = await this.authCb.getUserByToken(token);
-      if (user) return (user as any).masterUserId ?? (user as any).id ?? '';
+      // v1600 — vorher immer '' (getUserByToken liefert userId, nicht id) → CMDB/ITSM/Doku fielen für JEDE Web-Anmeldung auf den Owner zurück.
+      // Jetzt der eigene Master; ohne eindeutigen Master die eigene Kennung (sieht nur eigene, also keine fremden Daten). '' nur beim API-Token.
+      if (user) return user.masterUserId ?? user.userId;
     }
     return '';
   }

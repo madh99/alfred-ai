@@ -213,13 +213,14 @@ export class ChangePlanung {
   /** Freigabe-Frage an den Owner (App/Telegram-Button) für einen oder mehrere Changes — Einmal-Freigabe über Fingerabdrücke. */
   async freigabeAnfragen(owner: string, keys: string[]): Promise<{ ok: true; text: string } | { ok: false; fehler: string[] }> {
     if (!this.d.bestaetigung) return { ok: false, fehler: ['Freigabe-Fragen sind nicht verfügbar'] };
-    const fehler: string[] = []; const teile: string[] = []; const changes: Array<{ id: string; fingerabdruck: string }> = [];
+    const fehler: string[] = []; const teile: string[] = []; const changes: Array<{ id: string; fingerabdruck: string }> = []; const titel: string[] = [];
     for (const k of keys) {
       const c = await this.finde(owner, k);
       if (!c) { fehler.push(`${k}: nicht gefunden`); continue; }
       const b = await this.freigabeBereit(owner, c);
       if (!b.ok) { fehler.push(`${c.title} (${c.id.slice(0, 8)}): ${b.grund}`); continue; }
       changes.push({ id: c.id, fingerabdruck: c.fingerabdruck! });
+      titel.push(`${c.title} (${c.id.slice(0, 8)})`);
       const einwaende = this.d.einwand ? await this.d.einwand.antwortText(owner, 'change', c.id) : '';
       if (einwaende) teile.push(einwaende);
       teile.push(freigabeText({ id: c.id, titel: c.title, risiko: RISIKO_TEXT[c.riskLevel] ?? c.riskLevel, typ: c.type === 'emergency' ? 'Notfall-Change' : 'Normal-Change', ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}), ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), schritte: c.schritte as ChangeSchritt[], auswirkung: b.auswirkung, hinweise: b.hinweise, fingerabdruck: c.fingerabdruck! }));
@@ -230,7 +231,8 @@ export class ChangePlanung {
     const nonce = randomUUID();
     const bis = new Date((this.d.jetzt?.() ?? Date.now()) + FREIGABE_FRAGE_GUELTIG_MS).toISOString();
     for (const c of changes) await this.d.itsm.setzeFreigabeAnfrage(owner, c.id, { hash: hash(nonce), bis, fingerabdruck: c.fingerabdruck });
-    const kopf = changes.length > 1 ? `${changes.length} Changes freigeben (Paket):` : 'Change freigeben:';
+    // v1600 — Realfall 22.10.: Die App zeigt nur die ersten 80–100 Zeichen („Freigegeben: Change freigeben: **Übergangss…“) → Titel in die erste Zeile
+    const kopf = changes.length > 1 ? `${changes.length} Changes freigeben: ${titel.join(' · ')}` : `Change freigeben: ${titel[0]}`;
     const ok = await this.d.bestaetigung({ description: `${kopf}\n\n${teile.join('\n\n')}\n\nNach dem Ja startet der Ausführungsmotor den Change — sofort oder im nächsten passenden Wartungsfenster (nie in einer Sperrzeit) und meldet das Ergebnis. „Nein, weil …“ wird ein Einwand.`, params: { ...params, freigabe: nonce } });
     if (!ok) return { ok: false, fehler: ['Freigabe-Frage konnte nicht gestellt werden'] };
     this.d.protokoll?.('I3 Freigabe angefragt', { changes: changes.map(c => c.id) });

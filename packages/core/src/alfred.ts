@@ -7124,7 +7124,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return ok !== false;
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
-          nachFreigabe: () => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); },
+          // v1600 — Realfall 22.10.: Motor-Meldungen standen in der App ÜBER „Freigegeben“ (die Antwort auf das Ja kam zuletzt) → kurz nach der Antwort starten
+          nachFreigabe: () => { setTimeout(() => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); }, 3000).unref?.(); },
           einwand: this.einwandDienst,
           tresorNamen: (o) => this.tresor!.namen(o),
         });
@@ -7886,6 +7887,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // ursprüngliche Frage, nächste Schritte), statt das Rohergebnis zu senden. Vorhaben haben ihre eigene Fortsetzung.
     this.confirmationQueue.setNachAusfuehrung(async (pending, result, ziel) => {
       if (pending.source !== 'geraet') return false;
+      // v1600 — Realfall 22.10.: nach dem Ja kamen die wiederholte Frage, eine Modellrunde („Übergangsjob angelegt“ noch vor dem Motor) und die
+      // Motor-Meldungen. Change-Freigaben bekommen nur noch die kurze Bestätigung; Start und Ergebnis meldet der Ausführungsmotor.
+      if (pending.skillName === 'infrastruktur' && pending.skillParams?.action === 'freigeben') {
+        const z = result?.display ?? (result?.success === false ? `✗ ${String(result.error ?? 'Freigabe nicht übernommen')}` : '');
+        return { meldung: z.includes('✓') ? `${z}\n\nDer Ausführungsmotor meldet Start und Ergebnis.` : z || '✗ Freigabe nicht übernommen' };
+      }
       if (pending.skillParams?.action === 'vorhaben_freigeben') return false;
       if (pending.skillName === 'selbstupdate') return false; // v1266 — deterministische Meldung statt LLM-Runde
       // v1450 — Fehlschlag: tatsächlichen Stand feststellen statt still zu enden (Realfall 14.10.: „fehlgeschlagen“, App lief aber)

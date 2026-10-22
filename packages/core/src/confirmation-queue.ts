@@ -319,7 +319,8 @@ export class ConfirmationQueue {
   }
 
   /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
-  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; error?: string; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
+  /** true = Fortsetzung übernimmt die Antwort; { meldung } = kurze feste Meldung statt der wiederholten Frage (v1600) */
+  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; error?: string; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean | { meldung: string }>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
   /** v1512 P3 — Fehler der zuletzt freigegebenen, aber gescheiterten Aktion je Bestätigung (für die Antwort an App/Web). */
   private readonly fehlgeschlagen = new Map<string, string>();
@@ -545,17 +546,18 @@ export class ConfirmationQueue {
           if (adapter) await this.sendeAnhaenge(adapter, chatId, result?.attachments); // v1236
           // v1239 — Fortsetzung: Alfred arbeitet mit dem Ergebnis weiter (Owner-Beobachtung: Rohergebnis statt Antwort)
           let uebernommen = false;
+          let meldung: string | undefined;
           if (this.nachAusfuehrung) {
             // v1341 — Realfall 09.10. 23:29: Frage aus der Gerätesitzung, „Ja" in Telegram → die Fortsetzung lief im Telegram-Chat und
             // die Antwort stand nur dort. Mit der Herkunft läuft sie in der anfragenden Sitzung (Push an die App), Telegram bekommt die Kopie.
-            try { uebernommen = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId, herkunft: this.herkuenfte.get(pending.id) }); }
+            try { const r = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId, herkunft: this.herkuenfte.get(pending.id) }); if (typeof r === 'object') meldung = r.meldung; else uebernommen = r; }
             catch (err) { this.logger.warn({ err: (err as Error).message, confirmationId: pending.id }, 'v1239 Fortsetzung nach Bestätigung fehlgeschlagen'); }
           }
           // Show full skill result (like a normal chat interaction), not just "Ausgeführt"
           const display = result?.display ?? result?.data ? String(result.display ?? JSON.stringify(result.data)) : '';
-          const msg = display
+          const msg = meldung ?? (display
             ? `\u2705 **${pending.description}**\n\n${display}`
-            : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
+            : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`);
           if (adapter && !uebernommen) await adapter.sendMessage(chatId, msg);
           await this.anHerkunft(pending.id, msg, result?.attachments); // v1319 — auch an die anfragende Sitzung (App, Terminal); v1325 mit Anhängen (Foto)
           this.activityLogger?.logConfirmation({

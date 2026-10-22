@@ -201,6 +201,13 @@ export class ChatSessionRunbookReflector {
       return;
     }
 
+    // v1600 — Realfall 22.10.: „Runbook aus Chat-Session erstellen: Alte Proxmox-Sicherungen … einplanen?“ — Infrastruktur-Changes haben ihr
+    // Gedächtnis schon im ITSM (Plan, Rückweg, Verlauf); aus solchen Sitzungen kein Runbook-Vorschlag
+    if (msgs.some(m => /\bChanges? (freigeben|gestartet)\b|Change gestartet:/.test(m.content))) {
+      await this.markProcessed(userId, markerKey);
+      return;
+    }
+
     // Build LLM extraction prompt
     const transcript = msgs.map(m => {
       const role = m.role.padEnd(10);

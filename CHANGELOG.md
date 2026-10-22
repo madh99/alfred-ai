@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Klare Rückmeldung nach einer Change-Freigabe; Web-Daten nur für den eigenen Benutzer (v1600)
+
+- **Realfall 22.10.:** Nach dem Ja zu einem Change kamen in der App mehrere, teils doppelte Rückmeldungen. Darunter waren die wiederholte Freigabe-Frage, ein Text „in deinem Namen“ und eine Zusammenfassung des Modells, die „angelegt“ meldete, bevor der Motor fertig war. „Freigegeben“ stand außerdem unter der Erfolgsmeldung, weil die Antwort auf das Ja erst nach der Modellrunde kam.
+  - Change-Freigaben bekommen jetzt nur noch die kurze Bestätigung „✓ <Titel> (<ID>) freigegeben“. Start und Ergebnis meldet allein der Ausführungsmotor.
+  - Der Motor startet drei Sekunden nach der Antwort auf das Ja, „Freigegeben“ steht also immer zuerst.
+  - Die Freigabe-Frage nennt Titel und Kennung in der ersten Zeile, damit die gekürzten Zeilen der App lesbar bleiben.
+- **Runbook-Vorschläge:** Aus Gesprächen mit Infrastruktur-Changes entstehen keine Runbook-Vorschläge mehr. Plan, Rückweg und Verlauf stehen dort schon im ITSM.
+- **Sicherheit:** Die Web-Seiten für CMDB, ITSM und Infrastruktur-Doku bekamen für jede Anmeldung die Daten des Owners, weil die Sitzung nie eine Benutzer-ID lieferte. Jetzt gilt der Master der Anmeldung. Ohne eindeutigen Master gilt die eigene Kennung. Der Owner-Rückfall bleibt nur beim API-Token.
+
 ### Added — Sicherungsjobs in Proxmox, feste IPs in UniFi (v1599)
 
 - **`proxmox create_backup_job` / `delete_backup_job` / `list_backup_jobs`:** eigene vzdump-Jobs (Owner 22.10.: Übergangssicherung, solange PBS absichtlich aus ist).
