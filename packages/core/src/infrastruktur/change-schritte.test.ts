@@ -188,3 +188,22 @@ describe('I3 Paket planen und Owner-Freigabe', () => {
     expect((await pl.freigebenWeb('o', r.changes[0]!.id)).freigegebenUeber).toBe('web');
   });
 });
+
+describe('I3 Asset-Auflösung (Realfall 22.10.: test-ubuntu als Deploy-Anwendung und VM)', () => {
+  it('sourceId und ID-Anfang lösen auf; mehrdeutig nennt volle IDs mit Typ und Quelle', async () => {
+    const it3 = speicher();
+    const liste = [
+      { id: 'cadab99c-0e34-4d48-bc0a-0adafcb31a96', name: 'test-ubuntu', status: 'active', assetType: 'application', sourceSkill: 'deploy', sourceId: 'deploy:192.168.1.96:test-ubuntu' },
+      { id: 'f278eb95-3463-481a-9d06-497b2c5fecdf', name: 'test-ubuntu', status: 'active', assetType: 'vm', sourceSkill: 'proxmox', sourceId: 'pve3:142' },
+      { id: '38cc7619-e59b-4a51-aa92-978685f142e3', name: 'test-ubuntu', status: 'unknown', assetType: 'vm', sourceSkill: 'proxmox', sourceId: 'pve:142' },
+    ];
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => liste, auswirkung: keineAuswirkung });
+    const mehr = await pl.planen('o', [{ ...snapshotChange(), betroffen: ['test-ubuntu'] }]);
+    expect(mehr.ok).toBe(false);
+    if (!mehr.ok) { expect(mehr.fehler.join('\n')).toContain('f278eb95-3463-481a-9d06-497b2c5fecdf (vm, proxmox pve3:142)'); expect(mehr.fehler.join('\n')).not.toContain('38cc7619'); }
+    const r1 = await pl.planen('o', [{ ...snapshotChange(), betroffen: ['pve3:142'] }]);
+    expect(r1.ok && r1.changes[0]!.affectedAssetIds).toEqual(['f278eb95-3463-481a-9d06-497b2c5fecdf']);
+    const r2 = await pl.planen('o', [{ ...snapshotChange(), betroffen: ['f278eb95'] }]);
+    expect(r2.ok && r2.changes[0]!.affectedAssetIds).toEqual(['f278eb95-3463-481a-9d06-497b2c5fecdf']);
+  });
+});

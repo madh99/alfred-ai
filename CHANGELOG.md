@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Planung: betroffene Assets eindeutig auflösen (v1558)
+
+- Realfall 22.10.: Der erste Probe-Change wurde abgewiesen, weil „test-ubuntu“ in der CMDB zugleich Deploy-Anwendung und VM ist. Der Hinweis nannte nur Kurz-IDs, mit denen das Modell nicht weiterkam.
+- Betroffene Assets lassen sich jetzt auflösen über:
+  - die volle ID;
+  - einen eindeutigen ID-Anfang ab 8 Zeichen;
+  - die Quelle (`sourceId`, z. B. `pve3:142`);
+  - Name oder Hostname, bei gleichem Namen nur aktive Einträge.
+- Bleibt es mehrdeutig, nennt der Hinweis die vollen IDs mit Typ und Quelle. Geraten wird weiterhin nicht.
+
 ### Added — ITSM-Changes mit Schritten, Prüfung beim Anlegen und Owner-Freigabe (v1557, Spec Infrastruktur-Vorhaben I3)
 
 Owner 22.10.: „I3 wie vorgeschlagen umsetzen“. Es wird nichts ausgeführt; das übernimmt der Ausführungsmotor in I4.

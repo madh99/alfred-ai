@@ -21,7 +21,7 @@ const hash = (nonce: string) => createHash('sha256').update(nonce).digest('hex')
 export interface ChangeDeps {
   itsm: ChangeSpeicher;
   skill: PruefKontext['skill'];
-  assets: () => Promise<Array<{ id: string; name: string; hostname?: string; status?: string }>>;
+  assets: () => Promise<Array<{ id: string; name: string; hostname?: string; status?: string; assetType?: string; sourceId?: string; sourceSkill?: string }>>;
   auswirkung: (assetIds: string[], ohneChangeId?: string) => Promise<Auswirkung>;
   bestaetigung?: (frage: { description: string; params: Record<string, unknown> }) => Promise<boolean>;
   jetzt?: () => number;
@@ -49,14 +49,20 @@ export class ChangePlanung {
     return {
       skill: this.d.skill,
       changes: changes.map(c => ({ id: c.id, abhaengigVon: c.abhaengigVon ?? [], status: c.status })),
+      // I3 (Realfall 22.10.: „test-ubuntu“ = Deploy-Anwendung und VM) — ID, ID-Anfang ab 8 Zeichen, sourceId (z. B. pve3:142), Name/Hostname;
+      // bei mehreren Treffern mit gleichem Namen nur die aktiven; bleibt es mehrdeutig, nennt der Hinweis volle IDs mit Typ und Quelle.
       asset: (k: string) => {
-        const n = k.trim().toLowerCase();
-        const id = assets.find(a => a.id === k.trim());
-        if (id) return { id: id.id, name: id.name };
+        const roh = k.trim(); const n = roh.toLowerCase();
+        const eins = (a: (typeof assets)[number]) => ({ id: a.id, name: a.name });
+        const id = assets.find(a => a.id === roh);
+        if (id) return eins(id);
+        if (roh.length >= 8) { const p = assets.filter(a => a.id.startsWith(roh)); if (p.length === 1) return eins(p[0]!); }
+        const quelle = assets.filter(a => a.sourceId?.toLowerCase() === n);
+        if (quelle.length === 1) return eins(quelle[0]!);
         let treffer = assets.filter(a => a.name.toLowerCase() === n || a.hostname?.toLowerCase() === n);
         if (treffer.length > 1) { const aktiv = treffer.filter(a => a.status === 'active'); if (aktiv.length) treffer = aktiv; }
-        if (treffer.length > 1) return { mehrdeutig: treffer.map(a => `${a.name} ${a.id.slice(0, 8)}`) };
-        return treffer[0] ? { id: treffer[0].id, name: treffer[0].name } : undefined;
+        if (treffer.length > 1) return { mehrdeutig: treffer.map(a => `${a.id} (${a.assetType ?? '?'}, ${a.sourceSkill ?? '?'}${a.sourceId ? ` ${a.sourceId}` : ''})`) };
+        return treffer[0] ? eins(treffer[0]) : undefined;
       },
     };
   }

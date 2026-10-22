@@ -149,7 +149,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   for (const b of Array.isArray(r.betroffen) ? r.betroffen : []) {
     const a = ctx.asset(txt(b));
     if (!a) f.push(`betroffen: „${txt(b)}“ ist kein CMDB-Asset`);
-    else if ('mehrdeutig' in a) f.push(`betroffen: „${txt(b)}“ ist mehrdeutig (${a.mehrdeutig.slice(0, 5).join(', ')}) — Asset-ID angeben`);
+    else if ('mehrdeutig' in a) f.push(`betroffen: „${txt(b)}“ ist mehrdeutig: ${a.mehrdeutig.slice(0, 5).join('; ')} — die passende volle ID oder Quelle (z. B. pve3:142) angeben`);
     else if (!betroffeneIds.includes(a.id)) { betroffeneIds.push(a.id); plan.betroffen.push(a.name); }
   }
   if (!betroffeneIds.length) f.push('betroffen fehlt (CMDB-Assets, die der Change berührt oder neu anlegt — bei neuen VMs den Proxmox-Knoten)');

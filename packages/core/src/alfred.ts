@@ -6994,7 +6994,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             setzeFreigabeAnfrage: (o, id, a) => itsmI3.setzeFreigabeAnfrage(o, id, a),
           },
           skill: (n) => skillRegistry.get(n) as never,
-          assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status })); },
+          assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status, assetType: a.assetType, ...(a.sourceId ? { sourceId: a.sourceId } : {}), ...(a.sourceSkill ? { sourceSkill: a.sourceSkill } : {}) })); },
           auswirkung: auswirkungI3,
           bestaetigung: async (frage) => {
             if (!this.confirmationQueue) return false;
