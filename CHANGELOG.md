@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Trunk-Port-Änderung: verzögertes Zurücklesen (v1588)
+
+- **Realfall 22.10.:** `allow_network_on_port` meldete „nicht übernommen“, weil sofort nach dem Speichern zurückgelesen wurde. Die UDM wendet Port-Einstellungen aber mit Verzug an; Sekunden später war VLAN 824 auf US XG 16 Port 9 tatsächlich erlaubt.
+- **Jetzt:** Zurückgelesen wird bis zu 30 s lang alle 3 s.
+
 ### Added — UniFi-Trunk-Pfad prüfen und VLANs auf Trunk-Ports freigeben; abgebrochene VM-Bereitstellung fortsetzen (v1587)
 
 Realfall 22.10.: `docker-dev-01` stand in VLAN 824, war aber nicht erreichbar. Die Trunk-Ports der Kern-Switches führen nur ausgewählte VLANs und schlossen das neue Netz aus. Die UDM antwortete „No route to host“, die VM erreichte keine Paketquellen.

@@ -1282,11 +1282,15 @@ export class UniFiSkill extends Skill {
     if (erlauben === drin) return { success: true, data: { geaendert: false }, display: `${d.name} Port ${portIdx}: ${netz.name} ist bereits ${erlauben ? 'erlaubt' : 'ausgeschlossen'}` };
     ov.excluded_networkconf_ids = erlauben ? aus.filter(x => x !== netz._id) : [...aus, netz._id];
     await this.request('PUT', `rest/device/${d._id}`, { port_overrides: overrides });
-    // zurücklesen
-    const neu = ((await this.request<any[]>('GET', 'stat/device')) ?? []).find(x => x._id === d._id);
-    const ov2 = (neu?.port_overrides ?? []).find((o: any) => o.port_idx === portIdx);
-    const jetzt = !(ov2?.excluded_networkconf_ids ?? []).includes(netz._id);
-    if (jetzt !== erlauben) return { success: false, error: `${d.name} Port ${portIdx}: Änderung nicht übernommen (zurückgelesen)` };
+    // zurücklesen — die UDM wendet Port-Einstellungen mit Verzug an (Realfall 22.10.: sofortiges Lesen zeigte noch den alten Stand)
+    let jetzt = !erlauben;
+    for (let i = 0; i < 10 && jetzt !== erlauben; i++) {
+      await new Promise(r => setTimeout(r, 3_000));
+      const neu = ((await this.request<any[]>('GET', 'stat/device')) ?? []).find(x => x._id === d._id);
+      const ov2 = (neu?.port_overrides ?? []).find((o: any) => o.port_idx === portIdx);
+      jetzt = !(ov2?.excluded_networkconf_ids ?? []).includes(netz._id);
+    }
+    if (jetzt !== erlauben) return { success: false, error: `${d.name} Port ${portIdx}: Änderung nach 30 s nicht übernommen (zurückgelesen)` };
     return { success: true, data: { geaendert: true, device: d.name, port: portIdx, netz: netz.name }, display: `✅ ${d.name} Port ${portIdx}: ${netz.name} (VLAN ${netz.vlan}) ${erlauben ? 'erlaubt' : 'wieder ausgeschlossen'} (zurückgelesen)` };
   }
 
