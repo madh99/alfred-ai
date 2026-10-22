@@ -35,6 +35,7 @@ describe('I3 Einordnung der Aktionen', () => {
     expect(aktionsArt('proxmox', 'create_snapshot')).toBe('sicherung');
     expect(aktionsArt('proxmox', 'clone_vm')).toBe('aendern');
     expect(aktionsArt('proxmox', 'delete_vm')).toBe('loeschen');
+    expect(aktionsArt('proxmox', 'delete_backup')).toBe('loeschen');
     expect(aktionsArt('nginx_proxy_manager', 'update_host')).toBe('aendern');
     expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'uptime' })).toBe('lesen');
     expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'systemctl restart nginx' })).toBe('aendern');

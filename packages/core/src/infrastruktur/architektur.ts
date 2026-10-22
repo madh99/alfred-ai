@@ -168,7 +168,20 @@ export function mitAenderungen(basis: unknown, aenderungen: unknown): { roh: Rec
   if (!aenderungen || typeof aenderungen !== 'object' || Array.isArray(aenderungen)) return { fehler: 'aenderungen muss ein Objekt sein' };
   const a = aenderungen as Record<string, unknown>;
   const roh = JSON.parse(JSON.stringify(basis)) as Record<string, unknown>;
-  for (const [k, w] of Object.entries(a)) if (k !== 'firewall_hinzu' && k !== 'firewall_entfernen' && w !== undefined) roh[k] = w;
+  for (const [k, w] of Object.entries(a)) if (k !== 'firewall_hinzu' && k !== 'firewall_entfernen' && k !== 'einheit_verschieben' && w !== undefined) roh[k] = w;
+  // Owner 22.10. (MongoDB/Joomla-DB nicht mehr gebraucht): einzelne Einheiten in eine andere Gruppe verschieben, ohne alle Gruppen neu zu senden
+  if (Array.isArray(a.einheit_verschieben)) {
+    const gruppen = Array.isArray(roh.gruppen) ? (roh.gruppen as Array<Record<string, unknown>>) : [];
+    for (const v of a.einheit_verschieben as Array<Record<string, unknown>>) {
+      const einheit = String(v?.einheit ?? ''); const nach = String(v?.nach_gruppe ?? '');
+      const ziel = gruppen.find(g => String(g.name ?? '').toLowerCase() === nach.toLowerCase());
+      if (!einheit || !ziel) return { fehler: `einheit_verschieben: Einheit „${einheit}“ oder Gruppe „${nach}“ unbekannt` };
+      const quelle = gruppen.find(g => Array.isArray(g.einheiten) && (g.einheiten as string[]).includes(einheit));
+      if (!quelle) return { fehler: `einheit_verschieben: Einheit „${einheit}“ ist keiner Gruppe zugeordnet` };
+      quelle.einheiten = (quelle.einheiten as string[]).filter(x => x !== einheit);
+      ziel.einheiten = [...((ziel.einheiten as string[] | undefined) ?? []), einheit];
+    }
+  }
   const gleich = (x: Record<string, unknown>, y: Record<string, unknown>) => ['von', 'nach', 'protokoll'].every(f => String(x[f] ?? '').toLowerCase() === String(y[f] ?? '').toLowerCase()) && String(x.ports ?? '').replace(/\s/g, '') === String(y.ports ?? '').replace(/\s/g, '');
   let fw = Array.isArray(roh.firewall) ? (roh.firewall as Array<Record<string, unknown>>) : [];
   if (Array.isArray(a.firewall_entfernen)) fw = fw.filter(r => !(a.firewall_entfernen as Array<Record<string, unknown>>).some(e => e && gleich(r, e)));

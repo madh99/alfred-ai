@@ -184,3 +184,20 @@ describe('Neue Fassung aus gespeicherter Fassung + Änderungen', () => {
     expect(mitAenderungen(undefined, {})).toHaveProperty('fehler');
   });
 });
+
+// Owner 22.10. (MongoDB/Joomla-DB nicht mehr gebraucht): Einheit in eine andere Gruppe verschieben
+describe('einheit_verschieben', () => {
+  it('verschiebt eine Einheit, unbekannte Namen sind ein Fehler', () => {
+    const g = grundlage();
+    const v = pruefeArchitektur(gueltig(), g);
+    const quelle = v.architektur.gruppen.find(x => x.einheiten.length > 0)!;
+    const ziel = v.architektur.gruppen.find(x => x.name !== quelle.name)!;
+    const einheit = quelle.einheiten[0]!;
+    const m = mitAenderungen(v.architektur, { einheit_verschieben: [{ einheit, nach_gruppe: ziel.name }] });
+    expect('roh' in m).toBe(true);
+    const neu = (m as { roh: { gruppen: Array<{ name: string; einheiten: string[] }> } }).roh.gruppen;
+    expect(neu.find(x => x.name === ziel.name)!.einheiten).toContain(einheit);
+    expect(neu.find(x => x.name === quelle.name)!.einheiten).not.toContain(einheit);
+    expect(mitAenderungen(v.architektur, { einheit_verschieben: [{ einheit: 'gibtsnicht', nach_gruppe: ziel.name }] })).toHaveProperty('fehler');
+  });
+});

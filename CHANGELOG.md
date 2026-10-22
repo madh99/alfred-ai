@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Alte Sicherungen löschen; Einheiten in der Architektur verschieben (v1596)
+
+- **`proxmox delete_backup`** (Owner 22.10.: „die alten Sicherungen kann man löschen“) entfernt eine vzdump-Sicherungsdatei.
+  - Nur echte Sicherungs-Volumes, nie geschützte, nur im Change. Danach wird nachgelesen.
+  - Gilt als Löschen, ist also nur in einem Stilllegungs-Change zulässig.
+- **`architektur_vorschlagen` mit `aenderungen.einheit_verschieben`** verschiebt einzelne Einheiten in eine andere Gruppe, ohne alle Gruppen neu zu senden. Anlass: MongoDB und die Joomla-Datenbank werden nicht mehr gebraucht und wandern auf „stilllegen“.
+
 ### Changed — Laufende Changes sichtbar; Rückweg nur auf ausdrücklichen Wunsch; Kopieren übernimmt den Wurzelordner (v1595)
 
 - **Laufende Changes sichtbar** (Owner 22.10.: „aktuell ist es ein Ratespiel“):

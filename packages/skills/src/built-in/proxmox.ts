@@ -66,9 +66,11 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup'] as const;
+/** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
+const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup']);
 const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
@@ -454,6 +456,8 @@ export class ProxmoxSkill extends Skill {
           return await this.downloadImage(input);
         case 'delete_image':
           return await this.deleteImage(input);
+        case 'delete_backup':
+          return await this.deleteBackup(input);
         case 'create_template':
           return await this.createTemplate(input);
         case 'provision_vm':
@@ -1397,6 +1401,23 @@ export class ProxmoxSkill extends Skill {
       content: 'import', filename: input.filename, url: input.url, checksum: input.checksum, 'checksum-algorithm': input.checksum_algorithm, 'verify-certificates': 1,
     });
     return { success: true, data: { upid, node, storage, volid }, display: `Image wird geladen und geprüft (${input.checksum_algorithm}): ${input.url} → ${volid}` };
+  }
+
+  /** Eine vzdump-Sicherungsdatei entfernen (Stilllegung) — nur im Change; danach nachlesen */
+  private async deleteBackup(input: Record<string, unknown>): Promise<SkillResult> {
+    const volid = String(input.volid ?? '');
+    if (!SICHERUNG_VOLUME.test(volid)) return { success: false, error: 'delete_backup: volid einer vzdump-Sicherung (speicher:backup/vzdump-qemu-<vmid>-<datum>.vma.zst)' };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    if (!node) return { success: false, error: 'delete_backup braucht node' };
+    const storage = volid.split(':')[0]!;
+    const vorher = await this.get<Array<{ volid: string; size?: number; protected?: number }>>(`/nodes/${node}/storage/${storage}/content?content=backup`);
+    const v = vorher.find(x => x.volid === volid);
+    if (!v) return { success: true, data: { volid, schonWeg: true }, display: `${volid} gibt es nicht (mehr)` };
+    if (v.protected) return { success: false, error: `${volid} ist geschützt (protected) — nicht gelöscht` };
+    await this.aufgabeOderFehler(await this.del<string>(`/nodes/${node}/storage/${storage}/content/${encodeURIComponent(volid)}`), 600_000, 'Sicherung löschen');
+    const nachher = await this.get<Array<{ volid: string }>>(`/nodes/${node}/storage/${storage}/content?content=backup`);
+    if (nachher.some(x => x.volid === volid)) return { success: false, error: `${volid} ist nach dem Löschen noch vorhanden` };
+    return { success: true, data: { volid, entfernt: true, gb: Math.round((v.size ?? 0) / 1e9) }, display: `Sicherung ${volid} entfernt (${Math.round((v.size ?? 0) / 1e9)} GB frei)` };
   }
 
   private async deleteImage(input: Record<string, unknown>): Promise<SkillResult> {
