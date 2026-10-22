@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Telegram 409 beim Neustart beendet Alfred nicht mehr (v1589)
+
+- **Realfall 22.10.:** Das Update auf 1588 wurde 17 s nach dem Start verworfen, und die vorige Version lief wieder.
+  - Die alte Instanz hielt ihre Telegram-Abfrage noch offen. Telegram antwortete `409 Conflict`, der Fehler aus `bot.start()` war nicht abgefangen und beendete den Prozess mit Code 1.
+- **Jetzt:** Bei 409 startet die Abfrage nach 5 s erneut, höchstens 12-mal. Andere Fehler werden als Adapter-Fehler gemeldet statt den Prozess zu beenden.
+- Enthält den Fix aus 1588 (Trunk-Port-Änderung verzögert zurücklesen), der dadurch nie lief.
+
 ### Fixed — Trunk-Port-Änderung: verzögertes Zurücklesen (v1588)
 
 - **Realfall 22.10.:** `allow_network_on_port` meldete „nicht übernommen“, weil sofort nach dem Speichern zurückgelesen wurde. Die UDM wendet Port-Einstellungen aber mit Verzug an; Sekunden später war VLAN 824 auf US XG 16 Port 9 tatsächlich erlaubt.

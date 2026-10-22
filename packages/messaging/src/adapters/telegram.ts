@@ -266,7 +266,16 @@ export class TelegramAdapter extends MessagingAdapter {
       this.emit('error', err.error as Error);
     });
 
-    this.bot.start({
+    this.starteAbfrage(this.bot, 0);
+  }
+
+  /**
+   * Realfall 22.10. (Update auf 1588 verworfen): Beim Neustart hielt die alte Instanz ihre getUpdates-Abfrage noch offen; Telegram
+   * antwortete 409 Conflict, das Versprechen von bot.start() wurde nicht abgefangen und beendete den Prozess. Jetzt: bei 409 nach
+   * kurzer Pause erneut, andere Fehler als Adapter-Fehler melden.
+   */
+  private starteAbfrage(bot: Bot, versuch: number): void {
+    bot.start({
       // v662 — message_reaction muss explizit in allowed_updates damit Telegram
       // diese Events zustellt. Wir packen alle Standards rein + reactions.
       allowed_updates: [
@@ -277,6 +286,12 @@ export class TelegramAdapter extends MessagingAdapter {
         this.status = 'connected';
         this.emit('connected');
       },
+    }).catch((err: unknown) => {
+      if (this.bot !== bot) return; // inzwischen neu verbunden
+      const konflikt = /409|Conflict/i.test((err as Error)?.message ?? '');
+      if (konflikt && versuch < 12) { setTimeout(() => { if (this.bot === bot) this.starteAbfrage(bot, versuch + 1); }, 5_000); return; }
+      this.status = 'error';
+      this.emit('error', err instanceof Error ? err : new Error(String(err)));
     });
   }
 
