@@ -133,6 +133,16 @@ describe('I4 Ausführungsmotor', () => {
     expect(await belegt.motor.anstossen()).toEqual([]);
   });
 
+  it('Realfall 22.10.: angehalten ohne Wirkung sperrt keine Assets; angehalten nach einer Änderung schon', async () => {
+    const leer = welt(probe());
+    leer.deps.itsm.liste = async () => [leer.c, { ...leer.c, id: 'chg-0', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 1, start: 'x', ergebnisse: [{ nr: 1, ok: false, start: 'x' }] } } as CmdbChangeRequest];
+    expect(await leer.motor.anstossen()).toEqual(['chg-1']);
+    await warte(leer.motor);
+    const gewirkt = welt(probe());
+    gewirkt.deps.itsm.liste = async () => [gewirkt.c, { ...gewirkt.c, id: 'chg-0', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, start: 'x', ergebnisse: [{ nr: 1, ok: true, start: 'x' }, { nr: 2, ok: true, aktionOk: true, start: 'x' }] } } as CmdbChangeRequest];
+    expect(await gewirkt.motor.anstossen()).toEqual([]);
+  });
+
   it('Neustart mitten in einem ändernden Schritt → anhalten und fragen; in einem lesenden → fortsetzen', async () => {
     const w = welt(probe(), { status: 'in_progress' });
     w.c.lauf = { phase: 'laeuft', schritt: 3, start: new Date().toISOString(), ergebnisse: [{ nr: 1, ok: true, start: 'x' }, { nr: 2, ok: true, aktionOk: true, start: 'x', daten: { vmid: 142 } }] } satisfies ChangeLauf;

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Angehaltener Change ohne Wirkung sperrt keine Assets mehr (v1586)
+
+- **Realfall 22.10.:** B hielt an einer reinen Prüfung an. Die Asset-Sperre des Motors hielt danach die Wiederherstellungs-Changes T und A3 zurück, auf die B selbst wartete; der Motor meldete eine Stunde lang „Asset belegt“, eine Verklemmung.
+- **Jetzt:** Ein angehaltener Change sperrt seine Assets nur, wenn er schon einen ändernden oder sichernden Schritt ausgeführt hat. Laufende Changes und solche, die auf den Owner warten, sperren weiterhin.
+
 ### Fixed — Störungen nach Changes: der Halt eines Changes wird nie einem anderen zugeschrieben (v1585)
 
 - **Realfall 22.10., zweimal:** Der Motor legt beim Anhalten eines Changes einen Incident an. Der Job „Störungen nach Changes“ wertete diesen Incident als mögliche Folge eines früher abgeschlossenen Changes mit gemeinsamen Assets (pve3 bzw. Docker-Dev) und bot dessen Rückweg an.

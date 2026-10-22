@@ -100,7 +100,10 @@ export class ChangeMotor {
       if (c.scheduledAt && Date.parse(c.scheduledAt) > this.jetzt()) continue;
       const abh = (c.abhaengigVon ?? []).map(id => alle.find(x => x.id === id));
       if (abh.some(x => !x || x.status !== 'completed')) continue;
-      const belegt = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig').flatMap(x => x.affectedAssetIds);
+      // Realfall 22.10. (B hielt an einer reinen Prüfung an und sperrte damit T und A3, auf die er selbst wartet): ein angehaltener Change
+      // belegt seine Assets nur, wenn er schon etwas verändert hat
+      const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk) && st.some(s => s.nr === e.nr && wirkt(s))); };
+      const belegt = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig' && ((x.lauf as ChangeLauf | undefined)?.phase !== 'angehalten' || hatGewirkt(x))).flatMap(x => x.affectedAssetIds);
       if (c.affectedAssetIds.some(a => belegt.includes(a))) { this.log('I4 Change wartet (Asset belegt)', { id: c.id }); continue; }
       if (this.d.zeitplan) {
         const z = await this.d.zeitplan(o, c).catch(err => ({ jetzt: false, grund: `Zeitplan nicht prüfbar: ${(err as Error).message}` }));
