@@ -117,7 +117,8 @@ export function baueRegel(w: RegelWunsch, zonen: Zone[], netze: Netz[]): Record<
   const zf = seite(w.zielNetz, w.zielPort, netze, w.zielIps);
   return {
     enabled: true, name: w.name.trim(),
-    action: w.aktion === 'ALLOW' ? { type: 'ALLOW', allowReturnTraffic: w.rueckverkehr === true } : { type: w.aktion },
+    // Realfall 22.10. (d72cbb06): zum Gateway lehnt die UDM „Rückverkehr zulassen“ ab (cant-allow-return-traffic)
+    action: w.aktion === 'ALLOW' ? { type: 'ALLOW', allowReturnTraffic: w.rueckverkehr === true && zz.name.toLowerCase() !== 'gateway' } : { type: w.aktion },
     source: { zoneId: qz.id, ...(qf ? { trafficFilter: qf } : {}) },
     destination: { zoneId: zz.id, ...(zf ? { trafficFilter: zf } : {}) },
     ipProtocolScope: protokollScope(w.protokoll, w.ipVersion ?? 'IPV4', !!(w.quellePort || w.zielPort)),

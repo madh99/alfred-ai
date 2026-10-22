@@ -58,3 +58,14 @@ describe('UniFi-Policies mit IP-Adressen', () => {
     expect(() => baueRegel({ name: 'x', aktion: 'ALLOW', quelleNetz: 'DeviceLAN', quelleIps: '1.2.3.4', zielZone: 'Gateway' }, z2, netze)).toThrow(/nicht gleichzeitig/);
   });
 });
+
+// Realfall 22.10. (d72cbb06 Schritt 5): die UDM lehnt „Rückverkehr zulassen“ für Regeln zum Gateway ab
+describe('UniFi-Policies: Rückverkehr', () => {
+  const z2: Zone[] = [...zonen, { id: 'z-dev', name: 'Docker-Dev' }];
+  it('zum Gateway nie, sonst auf Wunsch', () => {
+    const gw = baueRegel({ name: 'dns', aktion: 'ALLOW', quelleZone: 'Docker-Dev', zielZone: 'Gateway', zielPort: '53,123', protokoll: 'udp', rueckverkehr: true }, z2, netze);
+    expect(gw.action).toEqual({ type: 'ALLOW', allowReturnTraffic: false });
+    const ssh = baueRegel({ name: 'ssh', aktion: 'ALLOW', quelleZone: 'Internal', quelleIps: '192.168.1.92', zielZone: 'Docker-Dev', zielPort: '22', protokoll: 'tcp', rueckverkehr: true }, z2, netze);
+    expect(ssh.action).toEqual({ type: 'ALLOW', allowReturnTraffic: true });
+  });
+});

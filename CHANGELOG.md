@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — UniFi: Rückverkehr zum Gateway, abgeleitete Regeln, wiederholbare Netz-/Zonenanlage (v1584)
+
+Realfall beim ersten Lauf des Pilot-Changes d72cbb06:
+
+- **Rückverkehr zum Gateway:** Für Regeln **zum Gateway** lehnt die UDM „Rückverkehr zulassen“ ab (`cant-allow-return-traffic`); Schritt 5 scheiterte daran.
+  - Gateway-Regeln setzen die Option nie.
+  - Lehnt die UDM sie anderswo ab, legt Alfred die Regel einmal ohne sie an und vermerkt das.
+- **Abgeleitete Regeln:** Beim Anlegen einer Zone erzeugt die UDM aus vorhandenen Objekten automatisch Regeln je Zone (`origin: DERIVED`, hier „xxx111“). Der Rückweg `delete_zone` hielt sie für eigene Regeln und brach ab.
+  - Jetzt verhindern nur von Hand angelegte Regeln (`USER_DEFINED`) das Löschen einer Zone.
+  - Abgeleitete Regeln werden, wie System-Regeln, nie geändert oder gelöscht.
+- **Wiederholbar:** `create_network` und `create_zone` melden „bereits vorhanden“, wenn Netz bzw. Zone genau so existiert (Name, VLAN, Subnetz, DHCP bzw. dieselben Netze). So kann ein abgebrochener Change erneut laufen.
+
 ### Fixed — Planprüfung: Go-Templates, selbstprüfende Aktionen; Export-Datei nach Tresor-Übernahme entfernen (v1583)
 
 Realfall bei der Planung des pgAdmin-Umzugs: Die Planprüfung blockierte drei sachlich richtige Schritte.

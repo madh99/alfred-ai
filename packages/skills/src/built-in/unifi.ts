@@ -424,7 +424,7 @@ export class UniFiSkill extends Skill {
     } else {
       ziel = findePolicy(input.policy_id ?? input.policy_name);
       if (!ziel) throw new Error('Policy nicht gefunden (policy_id oder exakter policy_name)');
-      if (ziel.metadata?.origin === 'SYSTEM_DEFINED') throw new Error('Systemregeln werden nicht verändert');
+      if (ziel.metadata?.origin === 'SYSTEM_DEFINED' || ziel.metadata?.origin === 'DERIVED') throw new Error('System- und abgeleitete Regeln (aus UniFi-Objekten) werden nicht verändert');
       if (action === 'set_firewall_policy_enabled') {
         const an = input.enabled === true || String(input.enabled).toLowerCase() === 'true';
         beschreibung = `Firewall-Policy ${an ? 'EINSCHALTEN' : 'AUSSCHALTEN'}: ${policyZeile(ziel, zonen, netze)}`;
@@ -452,7 +452,16 @@ export class UniFiSkill extends Skill {
     if (nonce) this.freigaben.delete(nonce);
 
     if (action === 'create_firewall_policy') {
-      const neu = await this.integ<Policy>('POST', `/sites/${sid}/firewall/policies`, body);
+      let neu: Policy;
+      let ohneRueckverkehr = false;
+      try {
+        neu = await this.integ<Policy>('POST', `/sites/${sid}/firewall/policies`, body);
+      } catch (err) {
+        const b = body as { action?: { allowReturnTraffic?: boolean } };
+        if (!/cant-allow-return-traffic/.test((err as Error).message) || !b.action?.allowReturnTraffic) throw err;
+        b.action.allowReturnTraffic = false; ohneRueckverkehr = true;
+        neu = await this.integ<Policy>('POST', `/sites/${sid}/firewall/policies`, body);
+      }
       let reihenText = 'hinten im Zonenpaar';
       if (vor) {
         const r = await this.reihenfolge(sid, neu.source.zoneId, neu.destination.zoneId);
@@ -464,7 +473,7 @@ export class UniFiSkill extends Skill {
         if (iNeu < 0 || iVor < 0 || iNeu > iVor) return { success: false, data: { id: neu.id }, error: `Policy ${neu.id} angelegt, aber die Reihenfolge stimmt nicht (Position ${iNeu + 1}, „${vor.name}" an ${iVor + 1}) — bitte prüfen` };
         reihenText = `Position ${iNeu + 1}, direkt vor „${vor.name}" (zurückgelesen)`;
       }
-      return { success: true, data: { id: neu.id, name: neu.name }, display: `✅ Firewall-Policy angelegt: ${policyZeile(neu, zonen, netze)} — ${reihenText}. Rückgängig: delete_firewall_policy ${neu.id}` };
+      return { success: true, data: { id: neu.id, name: neu.name }, display: `✅ Firewall-Policy angelegt: ${policyZeile(neu, zonen, netze)} — ${reihenText}${ohneRueckverkehr ? ' (Rückverkehr-Option hier nicht zulässig — ohne angelegt)' : ''}. Rückgängig: delete_firewall_policy ${neu.id}` };
     }
     if (action === 'set_firewall_policy_enabled') {
       const an = JSON.parse(schluessel)[2] as boolean;
@@ -1135,7 +1144,14 @@ export class UniFiSkill extends Skill {
 
   private async netzAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
     const neu = { name: String(input.network_name ?? '').trim(), vlan: Number(input.vlan), subnet: String(input.subnet ?? '').trim(), dhcp: input.dhcp !== false, ...(typeof input.dhcp_start === 'string' ? { dhcpStart: input.dhcp_start } : {}), ...(typeof input.dhcp_stop === 'string' ? { dhcpStop: input.dhcp_stop } : {}) };
-    const vorhanden = ((await this.request<any[]>('GET', 'rest/networkconf')) ?? []).map((n): NetzVorhanden => ({ name: String(n.name ?? ''), vlan: n.vlan, subnet: n.ip_subnet, purpose: n.purpose }));
+    const roh = (await this.request<any[]>('GET', 'rest/networkconf')) ?? [];
+    // wiederholbar: ein Netz mit genau diesem Namen, VLAN, Subnetz und DHCP-Stand gilt als vorhanden
+    const gleiches = roh.find(n => String(n.name ?? '').toLowerCase() === neu.name.toLowerCase());
+    if (gleiches && Number(gleiches.vlan) === neu.vlan && /^[\d.]+\/\d+$/.test(neu.subnet) && gleiches.ip_subnet === netzWerte(neu).ipSubnet && !!gleiches.dhcpd_enabled === neu.dhcp) {
+      const w0 = netzWerte(neu);
+      return { success: true, data: { id: gleiches._id, name: gleiches.name, vlan: neu.vlan, gateway: w0.gateway, ip_subnet: w0.ipSubnet, vorhanden: true }, display: `Netz „${gleiches.name}“ ist bereits genau so vorhanden (VLAN ${neu.vlan}, ${w0.ipSubnet}) — übernommen` };
+    }
+    const vorhanden = roh.map((n): NetzVorhanden => ({ name: String(n.name ?? ''), vlan: n.vlan, subnet: n.ip_subnet, purpose: n.purpose }));
     const f = neuesNetzFehler(neu, vorhanden);
     if (f.length) return { success: false, error: `Netz nicht angelegt: ${f.join('; ')}` };
     const w = netzWerte(neu);
@@ -1164,13 +1180,19 @@ export class UniFiSkill extends Skill {
     const name = String(input.zone_name ?? '').trim();
     if (!/^[\w .-]{2,40}$/.test(name)) return { success: false, error: 'zone_name: 2–40 Zeichen' };
     const { sid, zonen, netze } = await this.firewallStand();
-    if (zonen.some(z => z.name.toLowerCase() === name.toLowerCase())) return { success: false, error: `Zone „${name}" gibt es schon` };
+    const da = zonen.find(z => z.name.toLowerCase() === name.toLowerCase()) as (Zone & { networkIds?: string[] }) | undefined;
     const wuensche = Array.isArray(input.networks) ? input.networks.map(String) : typeof input.networks === 'string' ? String(input.networks).split(',') : [];
     const ids: string[] = [];
     for (const w of wuensche.map(x => x.trim()).filter(Boolean)) {
       const n = netze.find(x => x.name.toLowerCase() === w.toLowerCase() || x.id === w || (x.vlanId !== undefined && String(x.vlanId) === w));
       if (!n) return { success: false, error: `Netz „${w}" unbekannt` };
       ids.push(n.id);
+    }
+    // wiederholbar (Realfall 22.10.: A lief bis zur Zone, der Rückweg blieb hängen): gleiche Zone mit denselben Netzen = vorhanden
+    if (da) {
+      const gleich = [...(da.networkIds ?? [])].sort().join(',') === [...ids].sort().join(',');
+      if (!gleich) return { success: false, error: `Zone „${name}" gibt es schon mit anderen Netzen` };
+      return { success: true, data: { id: da.id, name: da.name, networkIds: da.networkIds ?? [], vorhanden: true }, display: `Firewall-Zone „${da.name}" ist bereits genau so vorhanden (${ids.length} Netz(e)) — übernommen` };
     }
     const z = await this.integ<Zone & { networkIds?: string[] }>('POST', `/sites/${sid}/firewall/zones`, { name, networkIds: ids });
     return { success: true, data: { id: z.id, name: z.name, networkIds: z.networkIds ?? ids }, display: `✅ Firewall-Zone „${z.name}" angelegt (${ids.length} Netz(e)). Rückgängig: delete_zone ${z.name}` };
@@ -1182,7 +1204,8 @@ export class UniFiSkill extends Skill {
     const z = zonen.find(x => x.name.toLowerCase() === name.toLowerCase() || x.id === name) as (Zone & { metadata?: { origin?: string } }) | undefined;
     if (!z) return { success: true, data: { schonWeg: true }, display: `Zone „${name}" gibt es nicht (mehr)` };
     if (z.metadata?.origin !== 'USER_DEFINED') return { success: false, error: `„${z.name}" ist keine eigene Zone — wird nicht gelöscht` };
-    const eigene = policies.filter(p => p.metadata?.origin !== 'SYSTEM_DEFINED' && (p.source.zoneId === z.id || p.destination.zoneId === z.id));
+    // Realfall 22.10.: die UDM leitet aus Objekten (z. B. „xxx111“) Regeln je Zone ab (origin DERIVED) — die verschwinden mit der Zone
+    const eigene = policies.filter(p => p.metadata?.origin === 'USER_DEFINED' && (p.source.zoneId === z.id || p.destination.zoneId === z.id));
     if (eigene.length) return { success: false, error: `Zone „${z.name}" hat noch ${eigene.length} eigene Policies (${eigene.slice(0, 5).map(p => p.name).join(', ')}) — zuerst entfernen` };
     await this.integ('DELETE', `/sites/${sid}/firewall/zones/${z.id}`);
     return { success: true, data: { id: z.id, name: z.name }, display: `✅ Firewall-Zone „${z.name}" gelöscht` };
