@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Ja zum Rückweg wirkungslos, Proxmox-Prüfung im Käfig, Wiederholen ohne doppelte Aktion (v1576)
+
+Realfall am Beweis-Change 4dc47fa3 (I5):
+- **Das Ja des Owners zum Rückweg lief ins Leere.** `rueckweg_ausfuehren` und `owner_schritt_erledigt` wurden nicht an die Change-Logik weitergeleitet, sondern landeten in der Vorhaben-Suche („Vorhaben „“ nicht gefunden“). Der Fehler bestand seit I4 und fiel erst jetzt auf, weil dieser Weg live noch nie lief. Behoben, mit Test.
+- **Prüfung des Image-Downloads im Lese-Käfig gescheitert.**
+  - `pvesm list <speicher> --content import` stand nicht auf der festen Leseliste. Der Befehl lief deshalb im Käfig, und der sperrt Unix-Sockets, die die Proxmox-Werkzeuge brauchen.
+  - Der Inhaltstyp `import` ist jetzt erlaubt. Der Download selbst war gelungen: Datei vorhanden, Prüfsumme bestätigt.
+- **„Schritt wiederholen“ führte die Aktion erneut aus**, auch wenn nur die Prüfung gescheitert war. Ein Download wäre dann an „gibt es schon“ gescheitert. Jetzt läuft nach gelungener Aktion nur die Prüfung erneut; Ausgabe und Daten der Aktion bleiben für spätere Verweise erhalten.
+
 ### Added — Vorlagen-Fabrik für Proxmox: Images der Herausgeber, Vorlagen, neue VMs mit eigenem Host-Schlüssel (I5, v1575)
 
 **Neue Proxmox-Aktionen:**

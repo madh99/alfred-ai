@@ -18,7 +18,7 @@ describe('v1539 Befehlsklassen', () => {
     for (const b of ['journalctl --since x --rotate', 'journalctl --since "1 --vacuum-time=1s"', 'journalctl --vacuum-size=1M', 'journalctl --flush', 'journalctl -D /var/log/x', 'journalctl --file /root/x', 'journalctl --until yesterday --setup-keys']) expect(befehlsklasse(b), b).toBe('bestaetigen');
   });
   it('v1542 F1: Diagnose aus dem Realfall 21.10. ohne Rückfrage', () => {
-    for (const b of ['smartctl -a /dev/disk/by-id/nvme-Fanxiang_S501Q_2TB_FXS501Q242220497_1', 'smartctl --scan-open', 'smartctl -x /dev/nvme0n1', 'lsblk -o NAME,SIZE,MODEL,SERIAL,MOUNTPOINTS', 'ls -l /dev/disk/by-id/nvme-*', 'pvesm list backupshare --content backup --vmid 106', 'nvme smart-log /dev/nvme0', 'qm listsnapshot 106', 'zpool events -v', 'zfs list -r -o name,used,avail,refer,mountpoint zfs-nvme002']) {
+    for (const b of ['smartctl -a /dev/disk/by-id/nvme-Fanxiang_S501Q_2TB_FXS501Q242220497_1', 'smartctl --scan-open', 'smartctl -x /dev/nvme0n1', 'lsblk -o NAME,SIZE,MODEL,SERIAL,MOUNTPOINTS', 'ls -l /dev/disk/by-id/nvme-*', 'pvesm list backupshare --content backup --vmid 106', 'pvesm list backupshare --content import', 'nvme smart-log /dev/nvme0', 'qm listsnapshot 106', 'zpool events -v', 'zfs list -r -o name,used,avail,refer,mountpoint zfs-nvme002']) {
       expect(befehlsklasse(b), b).toBe('lesen');
     }
   });

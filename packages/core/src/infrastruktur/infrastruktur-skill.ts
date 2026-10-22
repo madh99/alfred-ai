@@ -210,7 +210,8 @@ export class InfrastrukturSkill extends Skill {
     const owner = this.deps.ownerId?.();
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;
-    if (action.startsWith('change') || action === 'freigabe_anfragen' || action === 'freigeben') return this.changeAktion(owner, repo, action, input);
+    // Realfall 22.10. (4dc47fa3): owner_schritt_erledigt/rueckweg_ausfuehren fehlten hier und landeten in der Vorhaben-Suche — das Ja des Owners verpuffte
+    if (action.startsWith('change') || ['freigabe_anfragen', 'freigeben', 'owner_schritt_erledigt', 'rueckweg_ausfuehren'].includes(action)) return this.changeAktion(owner, repo, action, input);
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
     if (action === 'einwand' || action === 'einwaende') return this.einwandAktion(owner, repo, action, input);

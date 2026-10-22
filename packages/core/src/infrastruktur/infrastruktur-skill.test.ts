@@ -84,3 +84,28 @@ describe('I2 Vorhaben im Skill', () => {
     expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'v-1234' }, ctx)).display).toContain('annehmen (Version 1): „passt so“');
   });
 });
+
+// Realfall 22.10. (4dc47fa3): das Ja zum Rückweg landete in der Vorhaben-Suche („Vorhaben „“ nicht gefunden“)
+describe('Owner-Antworten an den Motor', () => {
+  it('rueckweg_ausfuehren und owner_schritt_erledigt erreichen den Motor', async () => {
+    const { InfrastrukturSkill: S } = await import('./infrastruktur-skill.js');
+    const aufrufe: string[] = [];
+    const s = new S({
+      istOwner: (c: SkillContext) => c.userId === 'owner', ownerId: () => 'o1',
+      entdecke: async () => [], hosts: () => [], vms: async () => [], proxy: async () => [], netze: async () => [], speichereBericht: async () => 'x',
+      aktiveZugaenge: async () => [], knoten: async () => [], speicher: async () => [], letzterBestandDocId: async () => undefined,
+      vorhaben: { liste: async () => [], finde: async () => null } as never,
+      changes: { finde: async (_o: string, k: string) => (k.startsWith('4dc47fa3') ? { id: '4dc47fa3-x' } : null) } as never,
+      motor: {
+        rueckwegNachJa: async (_o: string, id: string, f: unknown) => { aufrufe.push(`rueckweg:${id}:${String(f)}`); return 'Rückweg läuft (1 Schritt).'; },
+        ownerSchrittErledigt: async (_o: string, id: string, n: number) => { aufrufe.push(`owner:${id}:${n}`); return 'Schritt 2 erledigt — der Change läuft weiter.'; },
+      } as never,
+    } as never);
+    const ctx = { userId: 'owner' } as SkillContext;
+    const r = await s.execute({ action: 'rueckweg_ausfuehren', change: '4dc47fa3-855d', freigabe: 'n1' }, ctx);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('Rückweg läuft');
+    expect((await s.execute({ action: 'owner_schritt_erledigt', change: '4dc47fa3', schritt: 2, freigabe: 'n2' }, ctx)).success).toBe(true);
+    expect(aufrufe).toEqual(['rueckweg:4dc47fa3-x:n1', 'owner:4dc47fa3-x:2']);
+  });
+});

@@ -106,6 +106,18 @@ describe('I4 Ausführungsmotor', () => {
     expect(w2.c.status).toBe('cancelled');
   });
 
+  it('wiederholen nach gelungener Aktion mit gescheiterter Prüfung: nur die Prüfung läuft neu (Realfall 4dc47fa3 — Download „gibt es schon“)', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    w.snaps.add('i3probe'); // Prüfung wäre jetzt erfüllt (z. B. Leseliste korrigiert)
+    expect(await w.motor.steuern('o', 'chg-1', 'wiederholen')).toContain('nur die Prüfung');
+    await warte(w.motor);
+    expect(w.aufrufe.filter(a => a === 'proxmox.create_snapshot:i3probe')).toHaveLength(1);
+    expect(w.c.status).toBe('completed');
+    expect((w.c.lauf as ChangeLauf).ergebnisse.find(e => e.nr === 2)).toMatchObject({ ok: true, aktionOk: true, daten: { vmid: 142 } });
+  });
+
   it('Owner-Schritt wartet auf das Ja; Start nur mit gültiger Freigabe, nicht vor dem Termin, nicht bei belegtem Asset', async () => {
     const plan: ChangeSchritt[] = [S({ nr: 1, art: 'owner', frage: 'VLAN 821 in UniFi anlegen' }), S({ nr: 2, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })];
     const w = welt(plan);

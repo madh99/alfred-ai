@@ -36,7 +36,7 @@ const LESE_BEFEHLE: RegExp[] = [
   /^nvme (list|(smart-log|error-log|id-ctrl) \/dev\/nvme\d+(n\d+)?)$/,
   /^ls( -[lahdR1]+)* \/dev\/disk(\/by-(id|uuid|path|label|partuuid))?\/?[\w.:*-]*$/,
   /^lspci( -[vnkt]+)*$/,
-  /^pvesm list [\w.-]+( --content (backup|images|iso|vztmpl|rootdir|snippets)| --vmid \d{1,9})*$/,
+  /^pvesm list [\w.-]+( --content (backup|images|iso|vztmpl|rootdir|snippets|import)| --vmid \d{1,9})*$/,
   /^(qm|pct) listsnapshot \d{1,9}$/,
   // v1545 (Owner 22.10. „docker-lesebefehle aufnehmen“) — Docker-Host (z. B. Home Assistant neben anderen Containern). Volles
   // `docker inspect` und `docker compose config` zeigen Umgebungsvariablen (oft Passwörter) → nur mit Bestätigung; gezielt mit --format ja.

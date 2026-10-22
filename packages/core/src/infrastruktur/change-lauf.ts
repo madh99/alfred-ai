@@ -27,6 +27,8 @@ export interface ChangeLauf {
   frage?: { art: 'owner_schritt' | 'rueckweg' | 'rueckweg_nach_stoerung'; hash: string; schritt: number; bis: string };
   /** I4b Teil 2 — Störungen nach Abschluss, die möglicherweise der Change verursacht hat */
   stoerungen?: Array<{ incidentId: string; titel: string; schwere: string; zeit: string }>;
+  /** Wiederholen nach gelungener Aktion mit gescheiterter Prüfung: nur die Prüfung neu (Aktion nicht doppelt — z. B. Download „gibt es schon“) */
+  nurPruefung?: { nr: number; ausgabe?: string; daten?: unknown };
 }
 
 export const MAX_AUSGABE = 2000;

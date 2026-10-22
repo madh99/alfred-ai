@@ -136,7 +136,9 @@ export class ChangeMotor {
         lauf.schritt = s.nr; lauf.phase = 'laeuft';
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         if (s.art === 'owner') { await this.frageOwner(o, c0, lauf, s); return; }
-        const e = await this.schritt(s, lauf.ergebnisse, { o, wofuer: `Change ${c0.id.slice(0, 8)} Schritt ${s.nr}` });
+        const vorher = lauf.nurPruefung?.nr === s.nr ? lauf.nurPruefung : undefined;
+        delete lauf.nurPruefung;
+        const e = await this.schritt(s, lauf.ergebnisse, { o, wofuer: `Change ${c0.id.slice(0, 8)} Schritt ${s.nr}` }, vorher);
         lauf.ergebnisse = [...lauf.ergebnisse.filter(x => x.nr !== s.nr), e];
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         this.log('I4 Schritt', { id: c0.id, nr: s.nr, ok: e.ok, pruefung: e.pruefung?.ok, fehler: e.fehler?.slice(0, 200) });
@@ -195,12 +197,14 @@ export class ChangeMotor {
     }
   }
 
-  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string }): Promise<SchrittErgebnis> {
+  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
     const e: SchrittErgebnis = { nr: s.nr, ok: false, start: this.iso() };
     const fertig = (x: Partial<SchrittErgebnis>): SchrittErgebnis => ({ ...e, ...x, ende: this.iso() });
     try {
       if (s.art === 'aktion') {
-        const r = await this.mitGeheimnissen(z, s.skill!, s.aktion!, s.parameter ?? {}, ergebnisse, s.zeitlimitS * 1000);
+        const r = vorher && s.pruefung
+          ? { ok: true, ...(vorher.ausgabe !== undefined ? { ausgabe: vorher.ausgabe } : {}), ...(vorher.daten !== undefined ? { daten: vorher.daten } : {}) }
+          : await this.mitGeheimnissen(z, s.skill!, s.aktion!, s.parameter ?? {}, ergebnisse, s.zeitlimitS * 1000);
         if (!r.ok) return fertig({ fehler: r.fehler, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) });
         const basis = { aktionOk: true, ausgabe: r.ausgabe?.slice(0, MAX_AUSGABE), daten: kuerzeDaten(r.daten) };
         if (!s.pruefung) return fertig({ ...basis, ok: true });
@@ -380,10 +384,14 @@ export class ChangeMotor {
     if (l.phase !== 'angehalten') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
     delete l.frage;
     if (wahl === 'abbrechen') { await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)'); return 'Change abgebrochen, ohne Rückweg. Der Bericht steht im Change.'; }
+    const alt = l.ergebnisse.find(e => e.nr === l.schritt);
+    const s = (c.schritte as ChangeSchritt[] | undefined)?.find(x => x.nr === l.schritt);
+    const nurPruefung = !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
+    if (nurPruefung) l.nurPruefung = { nr: l.schritt, ...(alt!.ausgabe !== undefined ? { ausgabe: alt!.ausgabe } : {}), ...(alt!.daten !== undefined ? { daten: alt!.daten } : {}) };
     l.ergebnisse = l.ergebnisse.filter(e => e.nr !== l.schritt); l.phase = 'laeuft'; delete l.grund;
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });
     void this.weiter(o, c, l).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
-    return `Schritt ${l.schritt} wird wiederholt.`;
+    return nurPruefung ? `Schritt ${l.schritt}: Die Aktion war schon gelungen — nur die Prüfung läuft erneut.` : `Schritt ${l.schritt} wird wiederholt.`;
   }
 
   /**
