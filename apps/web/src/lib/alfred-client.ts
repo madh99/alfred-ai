@@ -1779,6 +1779,16 @@ export class AlfredClient {
   }
 
   /** v1185 — Kachel Vorgänge */
+  /** I4c — Tresor: Namen/Protokoll lesen, Wert setzen (geht nur zum Server, kommt nie zurück), Eintrag entfernen */
+  async tresor(): Promise<{ eintraege?: Array<{ name: string; herkunft: string; zweck?: string; geaendert: string }>; protokoll?: Array<{ name: string; art: string; wofuer?: string; zeit: string }>; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/tresor`, { headers: this.authHeaders, cache: 'no-store' });
+    return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  }
+  async tresorAktion(b: Record<string, unknown>): Promise<{ ok?: boolean; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/tresor`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(b), cache: 'no-store' });
+    return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  }
+
   /** Einwand (Owner 22.10.) — Einwände zu einem Change lesen und erfassen */
   async einwaende(changeId: string): Promise<{ success: boolean; data?: EinwandDto[]; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/einwand?change=${encodeURIComponent(changeId)}`, { headers: this.authHeaders });

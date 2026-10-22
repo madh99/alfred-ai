@@ -3201,4 +3201,30 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_infra_einwaende_ziel ON infra_einwaende (user_id, ziel_art, ziel_id)');
     },
   },
+  {
+    version: 155,
+    description: 'I4c — Tresor (SQLite-Spiegel zu PG v159).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS tresor_eintraege (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          wert TEXT NOT NULL,
+          herkunft TEXT NOT NULL,
+          zweck TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tresor_name ON tresor_eintraege (user_id, name)');
+      db.exec(`CREATE TABLE IF NOT EXISTS tresor_protokoll (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          art TEXT NOT NULL,
+          wofuer TEXT,
+          zeit TEXT NOT NULL
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_tresor_protokoll ON tresor_protokoll (user_id, zeit)');
+    },
+  },
 ];

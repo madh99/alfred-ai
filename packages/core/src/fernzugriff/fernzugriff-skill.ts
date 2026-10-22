@@ -39,6 +39,8 @@ export interface FernzugriffDeps {
   cmdbMarkiere?: (assetId: string, zugang: { name: string; benutzer: string; port: number } | null) => Promise<void>;
   bestaetigung: (frage: { description: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string }) => Promise<boolean>;
   ssh: (ziel: SshZiel, befehl: string, timeoutMs?: number) => Promise<SshErgebnis>;
+  /** I4c — SSH mit Eingabe über stdin (Geheimnisse nie in der Befehlszeile) */
+  sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number) => Promise<SshErgebnis>;
   keyscan: (host: string, port: number) => Promise<string>;
   schluessel: () => Promise<{ pfad: string; oeffentlich: string; neu: boolean }>;
   melde?: (text: string) => void;
@@ -367,6 +369,30 @@ export class FernzugriffSkill extends Skill {
     const r = await this.lauf(owner, z, fernBefehl(b, alsRoot), timeoutMs);
     this.deps.protokoll?.('I4 Fernzugriff ausgeführt (Change)', { name: z.name, befehl: b.slice(0, 200), code: r.code, root: alsRoot });
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
+  }
+
+  /** I4c — Pfad einer Geheimnis-Datei am Ziel-Host (tmpfs, nur root) */
+  static readonly GEHEIM_PFAD = /^\/run\/alfred-g-[0-9a-f]{16}$/;
+
+  /** I4c — Geheimnis per stdin in eine Datei (600, root) am Host schreiben; der Wert erscheint nie in einer Befehlszeile oder im Log. */
+  async geheimDateiSchreiben(name: string, pfad: string, wert: string): Promise<void> {
+    const owner = this.deps.owner();
+    if (!owner || !this.deps.sshEingabe) throw new Error('Geheimnis-Übergabe nicht verfügbar');
+    if (!FernzugriffSkill.GEHEIM_PFAD.test(pfad)) throw new Error('ungültiger Geheimnis-Pfad');
+    const z = await this.zugang(owner, { name });
+    const r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, fernBefehl(`sh -c 'umask 077; cat > ${pfad}'`, true), wert, 30_000);
+    if (r.code !== 0) throw new Error(`Geheimnis-Datei nicht geschrieben (Exit ${r.code}: ${schwaerze(r.stderr).text.slice(-160)})`);
+    this.deps.protokoll?.('I4c Geheimnis-Datei geschrieben', { name: z.name, pfad });
+  }
+
+  /** I4c — Geheimnis-Datei nach dem Schritt entfernen (Fehler werden gemeldet, nicht verschluckt). */
+  async geheimDateiEntfernen(name: string, pfad: string): Promise<boolean> {
+    const owner = this.deps.owner();
+    if (!owner || !FernzugriffSkill.GEHEIM_PFAD.test(pfad)) return false;
+    const z = await this.zugang(owner, { name });
+    const r = await this.lauf(owner, z, fernBefehl(`rm -f ${pfad}`, true), 30_000);
+    this.deps.protokoll?.('I4c Geheimnis-Datei entfernt', { name: z.name, pfad, ok: r.code === 0 });
+    return r.code === 0;
   }
 
   /** I1 — aktive Zugänge (Name, Host, CMDB-Verweis) für die Sammler. */

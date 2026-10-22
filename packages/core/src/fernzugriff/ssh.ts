@@ -43,6 +43,31 @@ export async function sshAusfuehren(ziel: SshZiel, befehl: string, datenOrdner: 
   }
 }
 
+/**
+ * I4c — wie sshAusfuehren, aber `eingabe` geht über stdin (Geheimnisse nie in der Befehlszeile, nicht in ps, nicht im Log).
+ */
+export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: string, eingabe: string, timeoutMs = 60_000): Promise<SshErgebnis> {
+  if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
+  if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
+  const ordner = path.join(datenOrdner, 'fernzugriff');
+  await mkdir(ordner, { recursive: true, mode: 0o700 });
+  const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
+  await writeFile(knownHosts, ziel.hostSchluessel, { mode: 0o600 });
+  const args = ['-i', ziel.schluesselPfad, '-p', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+    '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`, befehl];
+  const { spawn } = await import('node:child_process');
+  return new Promise(resolve => {
+    const p = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    const t = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
+    p.stdout.on('data', d => { if (stdout.length < AUSGABE_MAX) stdout += d; });
+    p.stderr.on('data', d => { if (stderr.length < AUSGABE_MAX) stderr += d; });
+    p.on('close', code => { clearTimeout(t); resolve({ code: code ?? 124, stdout, stderr, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr) }); });
+    p.on('error', err => { clearTimeout(t); resolve({ code: 255, stdout, stderr: err.message, hostSchluesselGeaendert: false }); });
+    p.stdin.end(eingabe);
+  });
+}
+
 /** Host-Schlüssel lesen (ohne Anmeldung) — Ergebnis bestätigt der Owner, erst dann wird er verwendet. */
 export async function keyscan(host: string, port: number): Promise<string> {
   if (!gueltigerHost(host)) throw new Error('Ungültiger Host');

@@ -10,7 +10,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { kuerzeDaten, laufBericht, loeseAuf, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { geheimNamen, kuerzeDaten, laufBericht, loeseAuf, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { ohneGeheimnisse } from './tresor.js';
+import { randomBytes } from 'node:crypto';
 import type { ChangeSchritt, Pruefung } from './change-schritte.js';
 
 export interface MotorDeps {
@@ -45,6 +47,9 @@ export interface MotorDeps {
   abhaengigeIds?: (o: string, ids: string[]) => Promise<string[]>;
   /** I4b — Start/Ende/Störung an die Empfänger der Benachrichtigungsregeln */
   ereignis?: (o: string, c: CmdbChangeRequest, z: 'start' | 'ende' | 'stoerung', text: string) => Promise<void>;
+  /** I4c — Tresor (nur hier werden Werte gelesen) und Geheimnis-Dateien am Ziel-Host */
+  tresor?: { lies(o: string, name: string, wofuer: string): Promise<string> };
+  geheimDatei?: { schreiben(zugang: string, pfad: string, wert: string): Promise<void>; entfernen(zugang: string, pfad: string): Promise<boolean> };
   jetzt?: () => number;
   schlafe?: (ms: number) => Promise<void>;
   /** Wartezeiten (für Tests verkürzbar) */
@@ -131,7 +136,7 @@ export class ChangeMotor {
         lauf.schritt = s.nr; lauf.phase = 'laeuft';
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         if (s.art === 'owner') { await this.frageOwner(o, c0, lauf, s); return; }
-        const e = await this.schritt(s, lauf.ergebnisse);
+        const e = await this.schritt(s, lauf.ergebnisse, { o, wofuer: `Change ${c0.id.slice(0, 8)} Schritt ${s.nr}` });
         lauf.ergebnisse = [...lauf.ergebnisse.filter(x => x.nr !== s.nr), e];
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         this.log('I4 Schritt', { id: c0.id, nr: s.nr, ok: e.ok, pruefung: e.pruefung?.ok, fehler: e.fehler?.slice(0, 200) });
@@ -153,14 +158,49 @@ export class ChangeMotor {
   }
 
   /** Einen Schritt ausführen und prüfen (Aktion, Prüfung oder Warten). */
-  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[]): Promise<SchrittErgebnis> {
+  /**
+   * I4c — Aktion mit Tresor-Werten: Werte erst jetzt lesen, Geheimnis-Dateien am Host anlegen (stdin, 600) und danach in jedem Fall
+   * entfernen; Ausgaben ohne die Werte. Ohne Tresor-Verweise ist das ein gewöhnlicher Aufruf.
+   */
+  private async mitGeheimnissen(z: { o: string; wofuer: string } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string }> {
+    const namen = geheimNamen(parameter);
+    const werte = new Map<string, string>(); const dateien = new Map<string, string>(); const angelegt: Array<{ zugang: string; pfad: string }> = [];
+    try {
+      if (namen.werte.length || namen.dateien.length) {
+        if (!z || !this.d.tresor) return { ok: false, fehler: 'Tresor nicht verfügbar' };
+        for (const n of [...namen.werte, ...namen.dateien]) if (!werte.has(n)) werte.set(n, await this.d.tresor.lies(z.o, n, z.wofuer));
+        if (namen.dateien.length) {
+          if (skill !== 'fernzugriff' || aktion !== 'ausfuehren' || !this.d.geheimDatei) return { ok: false, fehler: '{{geheimdatei:…}} nur in Fernzugriff-Befehlen' };
+          const zugang = String(parameter.name ?? '');
+          for (const n of namen.dateien) {
+            const pfad = `/run/alfred-g-${randomBytes(8).toString('hex')}`;
+            await this.d.geheimDatei.schreiben(zugang, pfad, werte.get(n)!);
+            angelegt.push({ zugang, pfad }); dateien.set(n, pfad);
+          }
+        }
+      }
+      const p = loeseAuf(parameter, ergebnisse, { werte, dateien });
+      if (p.fehler) return { ok: false, fehler: p.fehler };
+      const r = await this.aktion(skill, aktion, p.wert, timeoutMs);
+      const geheim = [...werte.values()];
+      if (!geheim.length) return r;
+      const rein = (t?: string) => (t === undefined ? undefined : ohneGeheimnisse(t, geheim));
+      let daten = r.daten; try { daten = JSON.parse(ohneGeheimnisse(JSON.stringify(r.daten ?? null), geheim)); } catch { daten = undefined; }
+      return { ok: r.ok, ...(r.ausgabe !== undefined ? { ausgabe: rein(r.ausgabe)! } : {}), ...(daten !== undefined && daten !== null ? { daten } : {}), ...(r.fehler !== undefined ? { fehler: rein(r.fehler)! } : {}) };
+    } finally {
+      for (const a of angelegt) {
+        const ok = await this.d.geheimDatei!.entfernen(a.zugang, a.pfad).catch(() => false);
+        if (!ok) { this.log('I4c Geheimnis-Datei nicht entfernt', { zugang: a.zugang, pfad: a.pfad }); await this.d.melde?.(`⚠️ Geheimnis-Datei ${a.pfad} auf ${a.zugang} konnte nicht entfernt werden — bitte prüfen.`, true); }
+      }
+    }
+  }
+
+  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string }): Promise<SchrittErgebnis> {
     const e: SchrittErgebnis = { nr: s.nr, ok: false, start: this.iso() };
     const fertig = (x: Partial<SchrittErgebnis>): SchrittErgebnis => ({ ...e, ...x, ende: this.iso() });
     try {
       if (s.art === 'aktion') {
-        const p = loeseAuf(s.parameter ?? {}, ergebnisse);
-        if (p.fehler) return fertig({ fehler: p.fehler });
-        const r = await this.aktion(s.skill!, s.aktion!, p.wert, s.zeitlimitS * 1000);
+        const r = await this.mitGeheimnissen(z, s.skill!, s.aktion!, s.parameter ?? {}, ergebnisse, s.zeitlimitS * 1000);
         if (!r.ok) return fertig({ fehler: r.fehler, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) });
         const basis = { aktionOk: true, ausgabe: r.ausgabe?.slice(0, MAX_AUSGABE), daten: kuerzeDaten(r.daten) };
         if (!s.pruefung) return fertig({ ...basis, ok: true });
@@ -398,8 +438,7 @@ export class ChangeMotor {
       for (const s of rw) {
         const frisch = await this.d.itsm.hole(o, c.id);
         if (!frisch || !this.freigabeDeckt(frisch, c)) { lauf.rueckweg = [...lauf.rueckweg!, { zuSchritt: s.nr, ok: false, text: 'Freigabe deckt den Plan nicht mehr — Rückweg nicht ausgeführt', zeit: this.iso() }]; allesOk = false; break; }
-        const p = loeseAuf(s.rueckweg!.parameter ?? {}, lauf.ergebnisse);
-        const r = p.fehler ? { ok: false, fehler: p.fehler } : await this.aktion(s.rueckweg!.skill!, s.rueckweg!.aktion!, p.wert, s.zeitlimitS * 1000).catch(err => ({ ok: false, fehler: (err as Error).message }));
+        const r = await this.mitGeheimnissen({ o, wofuer: `Change ${c.id.slice(0, 8)} Rückweg zu Schritt ${s.nr}` }, s.rueckweg!.skill!, s.rueckweg!.aktion!, s.rueckweg!.parameter ?? {}, lauf.ergebnisse, s.zeitlimitS * 1000).catch(err => ({ ok: false, fehler: (err as Error).message }));
         const eintrag = { zuSchritt: s.nr, ok: r.ok, text: r.ok ? `${s.rueckweg!.skill}.${s.rueckweg!.aktion} ok` : String(r.fehler ?? 'gescheitert').slice(0, 300), zeit: this.iso() };
         lauf.rueckweg = [...lauf.rueckweg!, eintrag];
         await this.d.itsm.motorSetze(o, c.id, { lauf });

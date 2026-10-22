@@ -909,6 +909,26 @@ export class HttpAdapter extends MessagingAdapter {
     antwort(200, await cb.aktion(userId, body));
   }
 
+  /** I4c — Tresor im Web: Werte gehen direkt an den Server, nie über das Modell; Antworten enthalten nie Werte */
+  private tresorCallbacks?: { liste: (uid: string) => Promise<unknown>; setze: (uid: string, b: Record<string, unknown>) => Promise<unknown>; entferne: (uid: string, name: string) => Promise<unknown> };
+  setTresorCallbacks(cb: HttpAdapter['tresorCallbacks']): void { this.tresorCallbacks = cb; }
+  private async handleTresor(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.tresorCallbacks;
+    if (!cb) { antwort(503, { error: 'Tresor nicht verfügbar' }); return; }
+    const uid = await this.resolveUserId(req);
+    try {
+      if (req.method === 'GET') { antwort(200, await cb.liste(uid)); return; }
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+      if (body.action === 'setzen') { antwort(200, await cb.setze(uid, body)); return; }
+      if (body.action === 'entfernen') { antwort(200, await cb.entferne(uid, String(body.name ?? ''))); return; }
+      antwort(400, { error: 'unbekannte Aktion' });
+    } catch (err) { antwort((err as { status?: number }).status ?? 400, { error: (err as Error).message.slice(0, 200) }); }
+  }
+
   /** Einwand (Owner 22.10.) — Einwände zu Changes im Web erfassen/lesen (dieselbe Skill-Aktion wie im Gespräch, nur Owner) */
   private async handleEinwand(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -2198,6 +2218,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/tresor' && (req.method === 'GET' || req.method === 'POST')) { // I4c
+      this.handleTresor(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/einwand' && (req.method === 'GET' || req.method === 'POST')) { // Einwand
       this.handleEinwand(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/wartung' && (req.method === 'GET' || req.method === 'POST')) { // I4b

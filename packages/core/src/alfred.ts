@@ -460,6 +460,9 @@ export class Alfred {
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
   /** I4b Teil 5 — Soll/Ist-Abgleich angenommener Architekturen */
   private sollIstDienst?: { planen(o: string, v: import('./infrastruktur/infrastruktur-skill.js').VorhabenDaten): Promise<number>; abgleich(o: string, v: import('./infrastruktur/infrastruktur-skill.js').VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
+  /** I4c — Tresor */
+  private tresor?: import('./infrastruktur/tresor.js').Tresor;
+  private tresorRepo?: import('@alfred/storage').TresorRepository;
   /** Einwand — Widerspruch des Owners zu Change/Architektur */
   private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
   /** I4 — Ausführungsmotor für freigegebene Changes */
@@ -6934,6 +6937,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           return ok !== false;
         },
         ssh: (ziel, befehl, timeoutMs) => sshAusfuehren(ziel, befehl, datenOrdner, timeoutMs),
+        sshEingabe: async (ziel, befehl, eingabe, timeoutMs) => (await import('./fernzugriff/ssh.js')).sshMitEingabe(ziel, befehl, datenOrdner, eingabe, timeoutMs),
         keyscan,
         schluessel: () => eigenerSchluessel(datenOrdner),
         melde: (t) => { void this.sendeAnOwner(t); },
@@ -7002,6 +7006,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             offeneIncidents: incidents.map(i => `${i.title} (${i.severity})`), ueberschneidungen: changes.map(c => `${c.title} (${c.status}, ${c.id.slice(0, 8)})`),
           };
         };
+        // I4c — Tresor (Schlüssel data/tresor.key, getrennt vom envEncryptionKey)
+        {
+          const { TresorRepository } = await import('@alfred/storage');
+          const { Tresor } = await import('./infrastruktur/tresor.js');
+          this.tresorRepo = new TresorRepository(adapter);
+          this.tresor = new Tresor({ speicher: this.tresorRepo, schluesselPfad: path.resolve(process.cwd(), 'data', 'tresor.key'), protokoll: (msg, daten) => this.logger.info(daten, msg) });
+        }
         // Einwand (Owner 22.10.) — vor der Planung, weil Freigabe/Überarbeitung ihn prüfen
         {
           const { EinwandRepository, VorhabenRepository: VorhabenRepoEw } = await import('@alfred/storage');
@@ -7038,6 +7049,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           nachFreigabe: () => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); },
           einwand: this.einwandDienst,
+          tresorNamen: (o) => this.tresor!.namen(o),
         });
         // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
         const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
@@ -7153,6 +7165,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
+            tresor: this.tresor,
+            geheimDatei: { schreiben: (z, p, w) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.geheimDateiSchreiben(z, p, w); }, entfernen: (z, p) => this.fernzugriffRef?.geheimDateiEntfernen(z, p) ?? Promise.resolve(false) },
             nachAbschluss: async (o, c) => {
               const { VorhabenRepository: VR } = await import('@alfred/storage');
               const v = await new VR(adapter).hole(o, c.vorhabenId!);
@@ -7292,6 +7306,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           motor: this.changeMotor,
           einwand: this.einwandDienst,
           sollIst: this.sollIstDienst,
+          tresor: { liste: (o) => this.tresor!.liste(o), erzeuge: (o, n, l, z) => this.tresor!.erzeuge(o, n, l, z), entferne: (o, n) => this.tresor!.entferne(o, n) },
           standard: new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
@@ -14036,6 +14051,21 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
 
         if (this.wartungWebAktion) (apiAdapter as unknown as { setWartungCallbacks?: (cb: unknown) => void }).setWartungCallbacks?.(this.wartungWebAktion); // I4b
+        // I4c — Tresor-Seite im Web: Werte gehen direkt an den Server (nie über das Modell, nie durch die Skill-Sandbox); nur der Owner
+        if (this.tresor && this.tresorRepo) {
+          const tresor = this.tresor, tresorRepo = this.tresorRepo;
+          const nurOwner = async (uid: string): Promise<string> => {
+            const o = this.ownerMasterUserId ?? this.tryOwner();
+            const m = uid ? await this.userRepo.getMasterUserId(uid).catch(() => uid) : o;
+            if (!o || m !== o) throw Object.assign(new Error('Nur für den Owner'), { status: 403 });
+            return o;
+          };
+          (apiAdapter as unknown as { setTresorCallbacks?: (cb: unknown) => void }).setTresorCallbacks?.({
+            liste: async (uid: string) => { const o = await nurOwner(uid); return { eintraege: await tresor.liste(o), protokoll: await tresorRepo.protokoll(o, 30) }; },
+            setze: async (uid: string, b: { name?: string; wert?: string; zweck?: string }) => { const o = await nurOwner(uid); await tresor.setze(o, String(b.name ?? '').trim(), String(b.wert ?? ''), 'owner-web', b.zweck ? String(b.zweck) : undefined); return { ok: true }; },
+            entferne: async (uid: string, name: string) => { const o = await nurOwner(uid); return { ok: await tresor.entferne(o, name) }; },
+          });
+        }
         (apiAdapter as any).setItsmCallbacks({
           listIncidents: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listIncidents(await resolveUser(uid), filters as any),
           getIncident: async (uid: string, id: string) => itsmRepo.getIncidentById(await resolveUser(uid), id),

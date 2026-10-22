@@ -50,9 +50,11 @@ const LOESCH_MUSTER = /^(delete_vm|destroy|destroy_vm|delete_lxc|delete_containe
 const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot']);
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
-const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+/** I4c — {{geheim:x}} nur als ganzer Wert in Feldern, die die Skill-Sandbox im Log schwärzt (oberste Ebene, exakte Schreibweise) */
+const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessToken|refreshToken|clientSecret)$/;
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
-const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.|geheim:|\.|json \.))[^}]*\}\}/i;
+const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.))[^}]*\}\}/i;
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   if (skill === 'fernzugriff') return aktion === 'lesen' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
@@ -66,6 +68,8 @@ export interface PruefKontext {
   skill: (name: string) => (PruefbarerSkill & { metadata: { name: string } }) | undefined;
   /** CMDB-Assets nach Name oder ID auflösen */
   asset: (nameOderId: string) => { id: string; name: string } | { mehrdeutig: string[] } | undefined;
+  /** I4c — Namen im Tresor (fehlt die Angabe, wird nur die Form geprüft) */
+  tresorNamen?: Set<string>;
   /** vorhandene Changes (für Abhängigkeiten und Zyklen) */
   changes: Array<{ id: string; abhaengigVon: string[]; status: string }>;
   jetzt?: Date;
@@ -82,7 +86,7 @@ export function skillAktionen(s: PruefbarerSkill): string[] {
 }
 
 /** Verweise in Parametern prüfen; liefert Fehler und eine Kopie mit Ersatzwerten für die Schemaprüfung. */
-function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern: Set<number>, f: string[], wo: string, schema?: Record<string, { type?: string }>): Record<string, unknown> {
+function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern: Set<number>, f: string[], wo: string, schema?: Record<string, { type?: string }>, geheim?: { befehlErlaubt: boolean; namen?: Set<string> }): Record<string, unknown> {
   const kopie: Record<string, unknown> = {};
   for (const [k, w] of Object.entries(parameter)) {
     const text = typeof w === 'string' ? w : JSON.stringify(w ?? null);
@@ -91,6 +95,14 @@ function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern
     for (const m of text.matchAll(VERWEIS)) {
       ersetzt = true;
       if (m[2]) { const n = Number(m[2]); if (n >= nr || !aktionsNummern.has(n)) f.push(`${wo}: Verweis {{${m[1]}}} zeigt nicht auf eine frühere Aktion`); }
+      if (m[4]) {
+        if (!GEHEIM_FELDER.test(k) || typeof w !== 'string' || w.trim() !== m[0]) f.push(`${wo}: {{geheim:${m[4]}}} nur als ganzer Wert in einem Feld wie password/secret/token — in Befehlen {{geheimdatei:${m[4]}}} verwenden`);
+        if (geheim?.namen && !geheim.namen.has(m[4])) f.push(`${wo}: Tresor-Eintrag „${m[4]}“ gibt es nicht`);
+      }
+      if (m[5]) {
+        if (!geheim?.befehlErlaubt || k !== 'befehl') f.push(`${wo}: {{geheimdatei:${m[5]}}} nur im Befehl eines Fernzugriff-Schritts`);
+        if (geheim?.namen && !geheim.namen.has(m[5])) f.push(`${wo}: Tresor-Eintrag „${m[5]}“ gibt es nicht`);
+      }
     }
     kopie[k] = ersetzt && typeof w === 'string' ? (schema?.[k]?.type === 'number' || schema?.[k]?.type === 'integer' ? 1 : 'verweis') : w;
   }
@@ -196,7 +208,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const aktionen = skillAktionen(sk);
       if (!aktionen.includes(schritt.aktion)) { f.push(`${wo}: ${schritt.skill} kennt die Aktion „${schritt.aktion}“ nicht${aktionen.length ? ` (${aktionen.slice(0, 30).join(', ')})` : ''} — fehlt eine Fähigkeit, als owner-Schritt planen`); plan.schritte.push(schritt); continue; }
       const schema = (sk.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties;
-      const ersatz = verweise(schritt.parameter, nr, aktionsNummern, f, wo, schema);
+      const ersatz = verweise(schritt.parameter, nr, aktionsNummern, f, wo, schema, { befehlErlaubt: schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren', ...(ctx.tresorNamen ? { namen: ctx.tresorNamen } : {}) });
       const fe = eingabeFehler(sk, { ...ersatz, action: schritt.aktion });
       if (fe) f.push(`${wo}: ${fe}`);
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
@@ -222,7 +234,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);
           else {
-            const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties);
+            const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(ctx.tresorNamen ? { namen: ctx.tresorNamen } : {}) });
             const feR = eingabeFehler(rs, { ...ersatzR, action: rueck.aktion });
             if (feR) f.push(`${wo} (Rückweg): ${feR}`);
             if (rueck.skill === 'fernzugriff' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
@@ -251,7 +263,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   if (plan.ohneSicherungGrund) h.push(`Ohne Sicherung geplant: ${plan.ohneSicherungGrund}`);
   if (plan.schritte.length && !plan.schritte.some(s => s.art === 'pruefung' || (s.art === 'warten' && s.pruefung))) h.push('Keine Abschlussprüfung als eigener Schritt — nur die Prüfungen der Aktionen');
   if (plan.schritte.some(s => s.art === 'owner')) h.push('Enthält Owner-Schritte — der Ablauf wartet dort auf dich');
-  if (JSON.stringify(roheSchritte).includes('{{geheim:')) h.push('Verwendet Tresor-Verweise — ausführbar erst mit dem Tresor (I4c)');
+  if (/\{\{geheim(datei)?:/.test(JSON.stringify(roheSchritte))) h.push('Verwendet Tresor-Einträge — Werte setzt erst der Motor ein, das Modell sieht sie nie');
   if (plan.zweck === 'stilllegung') h.push('Stilllegung: frühestens 7 Tage nach erfolgreicher Migration (Owner 22.10.)');
   if (plan.typ === 'notfall') h.push('Notfall-Change: nachträgliche Prüfung (PIR) Pflicht');
   return { fehler: f, hinweise: h, plan, betroffeneIds };

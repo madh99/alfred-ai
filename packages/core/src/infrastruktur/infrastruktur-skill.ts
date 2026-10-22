@@ -76,6 +76,8 @@ export interface InfrastrukturDeps {
   standard?: StandardChanges;
   // ── I4b Teil 5 — Soll/Ist ──
   sollIst?: { planen(o: string, v: VorhabenDaten): Promise<number>; abgleich(o: string, v: VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
+  // ── I4c — Tresor (ohne Werte) ──
+  tresor?: { liste(o: string): Promise<Array<{ name: string; herkunft: string; zweck?: string; geaendert: string }>>; erzeuge(o: string, name: string, laenge?: number, zweck?: string): Promise<void>; entferne(o: string, name: string): Promise<boolean> };
   // ── Einwand ──
   einwand?: import('./einwand.js').EinwandDienst;
   updatesSchalter?: { liste(o: string): Promise<Record<string, string>>; setze(o: string, name: string, an: boolean): Promise<boolean> };
@@ -87,7 +89,7 @@ export const BESTAND_QUELLEN = ['fernzugriff', 'proxmox', 'nginx_proxy_manager',
 /** Host-Bestände älter als das werden für die Planung neu erfasst */
 export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -118,6 +120,7 @@ export class InfrastrukturSkill extends Skill {
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
       + 'SOLL/IST (I4b): soll_ist (vorhaben) — Abgleich der angenommenen Zielarchitektur mit dem Ist (VMs, Netze, Dienste am neuen Host, Proxy-Ziele), Fortschritt und Abweichungen; nach jedem abgeschlossenen Change des Vorhabens automatisch. '
+      + 'TRESOR (I4c): tresor_liste (nur Namen), tresor_erzeugen (name, laenge, zweck — Zufallspasswort am Server, der Wert wird nie gezeigt), tresor_entfernen (name, wortlaut). Werte setzt der Owner auf der Tresor-Seite im Web; NIE nach Passwörtern im Chat fragen. In Change-Schritten: {{geheimdatei:name}} im Befehl eines Fernzugriff-Schritts (Datei 600 am Host, z. B. --env-file) oder {{geheim:name}} als ganzer Wert in password/secret/token/api_key. '
       + 'EINWAND: einwand (change ODER vorhaben, bezug z. B. „Schritt 4“ oder „Netze“, text = Einwand des Owners in seinen Worten, wortlaut) — nimmt dem Change die Freigabe bzw. setzt das Vorhaben in den Entwurf; einwaende (change|vorhaben) listet sie. Beim Überarbeiten (change_aendern bzw. architektur_vorschlagen) JEDEN offenen Einwand beantworten: antworten [{einwand: ID, art umgesetzt|abgelehnt, text}]. '
       + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
@@ -174,6 +177,8 @@ export class InfrastrukturSkill extends Skill {
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
         wahl: { type: 'string', enum: ['wiederholen', 'abbrechen'], description: 'change_steuern: was der Owner gesagt hat' },
         bezug: { type: 'string', description: 'einwand: worauf er sich bezieht (Schritt N, Abschnitt, gesamt)' },
+        laenge: { type: 'number', description: 'tresor_erzeugen: Länge des Zufallspassworts (16–128, Standard 32)' },
+        zweck: { type: 'string', description: 'tresor_erzeugen: wofür' },
         text: { type: 'string', description: 'einwand: der Einwand des Owners' },
         antworten: { type: 'array', description: 'change_aendern/architektur_vorschlagen: Antwort auf jeden offenen Einwand', items: { type: 'object', properties: { einwand: { type: 'string' }, art: { type: 'string', enum: ['umgesetzt', 'abgelehnt'] }, text: { type: 'string' } } } },
         name: { type: 'string', description: 'fenster_anlegen/sperre_anlegen/benachrichtigung_anlegen: Bezeichnung' },
@@ -208,6 +213,20 @@ export class InfrastrukturSkill extends Skill {
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
     if (action === 'einwand' || action === 'einwaende') return this.einwandAktion(owner, repo, action, input);
+    if (action.startsWith('tresor_')) {
+      const t = this.deps.tresor;
+      if (!t) return { success: false, error: 'Tresor nicht verfügbar' };
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      if (action === 'tresor_liste') { const l = await t.liste(owner); return { success: true, data: l.map(e => ({ name: e.name, herkunft: e.herkunft, zweck: e.zweck })), display: l.length ? l.map(e => `- ${e.name} (${e.herkunft}${e.zweck ? `, ${e.zweck}` : ''})`).join('\n') : 'Der Tresor ist leer. Werte legt der Owner auf der Web-Seite „Tresor“ an.' }; }
+      if (action === 'tresor_erzeugen') {
+        try { await t.erzeuge(owner, name, typeof input.laenge === 'number' ? input.laenge : undefined, typeof input.zweck === 'string' ? input.zweck : undefined); }
+        catch (err) { return { success: false, error: (err as Error).message }; }
+        return { success: true, data: { name }, display: `Tresor-Eintrag ${name} mit Zufallspasswort angelegt (Wert bleibt am Server).` };
+      }
+      const wortlaut = typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
+      if (wortlaut.length < 2) return { success: false, error: 'wortlaut: nur auf ausdrücklichen Wunsch des Owners' };
+      return (await t.entferne(owner, name)) ? { success: true, display: `Tresor-Eintrag ${name} entfernt.` } : { success: false, error: `Tresor-Eintrag ${name} nicht gefunden` };
+    }
     switch (action) {
       case 'vorhaben_anlegen': return this.anlegen(owner, repo, input);
       case 'vorhaben_liste': {

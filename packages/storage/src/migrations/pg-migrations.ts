@@ -2510,4 +2510,30 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_infra_einwaende_ziel ON infra_einwaende (user_id, ziel_art, ziel_id)', []);
     },
   },
+  {
+    version: 159,
+    description: 'I4c (Spec Infrastruktur-Vorhaben) — Tresor: tresor_eintraege (nur verschlüsselt) und tresor_protokoll (ohne Werte) (PG-Spiegel zu SQLite v155).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS tresor_eintraege (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          wert TEXT NOT NULL,
+          herkunft TEXT NOT NULL,
+          zweck TEXT,
+          erstellt TEXT NOT NULL,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tresor_name ON tresor_eintraege (user_id, name)', []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS tresor_protokoll (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          art TEXT NOT NULL,
+          wofuer TEXT,
+          zeit TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_tresor_protokoll ON tresor_protokoll (user_id, zeit)', []);
+    },
+  },
 ];

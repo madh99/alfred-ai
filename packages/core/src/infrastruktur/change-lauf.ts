@@ -56,7 +56,13 @@ export function pfadWert(o: unknown, pfad: string): unknown {
   return x;
 }
 
-const VERWEIS = /\{\{\s*(?:schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+const VERWEIS = /\{\{\s*(?:schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+
+/** I4c — Namen der Tresor-Verweise in einem Wert (für das Vorab-Lesen im Motor) */
+export function geheimNamen(wert: unknown): { werte: string[]; dateien: string[] } {
+  const t = JSON.stringify(wert ?? null);
+  return { werte: [...new Set([...t.matchAll(/\{\{\s*geheim:([a-z0-9][\w.-]{1,60})\s*\}\}/g)].map(m => m[1]!))], dateien: [...new Set([...t.matchAll(/\{\{\s*geheimdatei:([a-z0-9][\w.-]{1,60})\s*\}\}/g)].map(m => m[1]!))] };
+}
 
 /**
  * Verweise auflösen: `{{schrittN.feld}}` aus den Daten früherer Schritte; steht der Verweis allein, bleibt der Typ erhalten
@@ -72,7 +78,7 @@ const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript'])
  * (Zahl bleibt Zahl). Jeder eingesetzte Text muss SICHERER_WERT entsprechen (keine Leerzeichen, Shell-Zeichen, Anführungszeichen);
  * in Befehlsfeldern ist ein Verweis als ganzer Wert verboten. `{{geheim:…}}` geht erst mit dem Tresor (I4c) → Fehler.
  */
-export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[]): { wert: T; fehler?: string } {
+export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }): { wert: T; fehler?: string } {
   let fehler: string | undefined;
   const sicher = (w: unknown, verweis: string): boolean => {
     if (typeof w === 'number' || typeof w === 'boolean') return true;
@@ -82,6 +88,9 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[]): { wert: T; 
   };
   const ersetze = (v: unknown, feld?: string): unknown => {
     if (typeof v === 'string') {
+      // I4c — {{geheim:x}} als ganzer Wert → Tresor-Wert (nur im Motor, nie im Lauf gespeichert)
+      const g = /^\{\{\s*geheim:([a-z0-9][\w.-]{1,60})\s*\}\}$/.exec(v.trim());
+      if (g) { const w = geheim?.werte.get(g[1]!); if (w === undefined) fehler ??= `Tresor-Eintrag ${g[1]} nicht verfügbar`; return w ?? ''; }
       const allein = /^\{\{\s*schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}$/.exec(v.trim());
       if (allein) {
         if (feld && BEFEHLS_FELDER.has(feld.toLowerCase())) { fehler ??= `Verweis als ganzer Befehl ist nicht erlaubt (${feld})`; return ''; }
@@ -90,8 +99,9 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[]): { wert: T; 
         if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
         return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
       }
-      return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, geheim: string | undefined) => {
-        if (geheim) { fehler ??= `Tresor-Verweis {{geheim:${geheim}}} — der Tresor folgt mit I4c`; return ''; }
+      return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
+        if (gName) { fehler ??= `{{geheim:${gName}}} nur als ganzer Wert erlaubt`; return ''; }
+        if (gDatei) { const pfad = geheim?.dateien.get(gDatei); if (!pfad) fehler ??= `Geheimnis-Datei ${gDatei} nicht bereit`; return pfad ?? ''; }
         const e = ergebnisse.find(x => x.nr === Number(nr) && x.ok);
         const w = e ? pfadWert(e.daten, f2!) : undefined;
         if (w === undefined || (typeof w === 'object' && w !== null)) { fehler ??= `Verweis {{schritt${nr}.${f2}}} hat keinen einfachen Wert`; return ''; }

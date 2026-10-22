@@ -109,6 +109,7 @@ export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.j
 export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
 export { WartungRepository } from './repositories/wartung-repository.js'; // I4b
 export { EinwandRepository } from './repositories/einwand-repository.js'; // Einwand
+export { TresorRepository } from './repositories/tresor-repository.js'; // I4c
 export type { Einwand, EinwandZiel, EinwandStatus } from './repositories/einwand-repository.js';
 export type { KalenderZeile, RegelZeile } from './repositories/wartung-repository.js';
 export { SCHRITT_CHANGE_GESPERRT } from './repositories/itsm-repository.js'; // I3

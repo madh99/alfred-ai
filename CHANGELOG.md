@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Tresor für Geheimnisse in Infrastruktur-Changes (v1572, Spec Infrastruktur-Vorhaben I4c)
+
+Owner 22.10. (5b-5): eigener Tresor am Server. Der optionale Spiegel nach Vaultwarden folgt.
+
+- **Speicher:**
+  - AES-256-GCM mit eigenem Schlüssel `data/tresor.key` (32 Byte, Datei 600, getrennt vom envEncryptionKey).
+  - Tabellen `tresor_eintraege` (nur verschlüsselt) und `tresor_protokoll` (gesetzt, erzeugt, gelesen, entfernt, wofür; ohne Werte) — PG v159 / SQLite v155.
+- **Werte hinein, nie über das Modell:**
+  - Web-Seite **„Tresor“** (`/api/tresor`, nur der Owner, Antworten ohne Werte, `no-store`);
+  - `tresor_erzeugen`: Zufallspasswort am Server, der Wert wird nie angezeigt.
+  - Alfred fragt nie im Chat nach Passwörtern.
+- **Werte hinaus, nur im Ausführungsmotor eines freigegebenen Changes:**
+  - `{{geheimdatei:name}}` im Befehl eines Fernzugriff-Schritts: Der Wert geht **über stdin der SSH-Verbindung** in `/run/alfred-g-<zufällig>` (root, 600) am Host; der Befehl enthält nur den Pfad, und die Datei wird nach dem Schritt in jedem Fall entfernt. Scheitert das Entfernen, wird zeitkritisch gemeldet.
+  - `{{geheim:name}}` nur als ganzer Wert in Feldern, die die Skill-Sandbox im Log schwärzt (`password`, `secret`, `token`, `api_key` …).
+  - Ausgaben, Fehlertexte und Daten eines Schritts werden vor dem Speichern um die verwendeten Werte bereinigt.
+- **Planprüfung:**
+  - Tresor-Verweise nur in den erlaubten Formen; der Eintrag muss im Tresor existieren.
+  - Ungültige `{{geheim…}}`-Formen gelten als Platzhalter.
+- **Neue Aktionen im Skill `infrastruktur`:** `tresor_liste` (nur Namen), `tresor_erzeugen`, `tresor_entfernen` (nur auf Wunsch des Owners).
+- **Fernzugriff:** `sshMitEingabe` (SSH mit stdin), `geheimDateiSchreiben` / `geheimDateiEntfernen`.
+
 ### Added — Netz-Aktionen für UniFi und pfSense: VLANs, Interfaces, DHCP, lokales DNS (v1571, Spec Infrastruktur-Vorhaben E4-N)
 
 Owner 22.10. bei der Annahme von cf82f3f2: „VLANs soll Alfred selbst anlegen und selbst entscheiden, ob auf UniFi oder pfSense.“ Die Netz-Aktionen werden deshalb vor den ersten Umzug gezogen; alle laufen nur als Schritte freigegebener Changes, jeweils mit eigenem Rückweg.
