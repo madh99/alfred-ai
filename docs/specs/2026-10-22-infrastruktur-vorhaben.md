@@ -129,6 +129,31 @@ Alfred
 5. **Windows:** Analyse eines vorhandenen Windows-Rechners (lesend), danach Windows-Vorlage + Wegwerf-VM.
 Erst danach: kritische Dienste (Home Assistant, Matrix, Datenbanken).
 
+## 4b. Volle Verknüpfung mit ITSM und CMDB
+
+Owner 22.10.: „natürlich sollte das auch mit ITSM und CMDB vollumfänglich verknüpft bzw. integriert sein“. Grundsatz: **kein paralleles System** — Vorhaben, Changes und Bestand leben in den vorhandenen ITSM-/CMDB-Strukturen und erweitern sie.
+
+**Changes = ITSM-Changes (erweitert, nicht daneben)**
+- Ein Change aus E2 ist ein ITSM-Change (`create_change_request` …) mit zusätzlichem Feld *Schritte*; Freitext-Plan, Rückweg und Testplan werden aus den Schritten erzeugt (lesbar), bleiben aber nicht die Quelle.
+- **Change-Typen nach ITIL:** *Standard-Change* (vorab freigegebene Vorlage für wiederkehrende, risikoarme Abläufe — z. B. „Snapshot anlegen“, „Container-Image aktualisieren mit Rückweg“, „Vorlage neu bauen“; einmal freigegeben, danach ohne Einzel-Ja innerhalb festgelegter Grenzen), *Normal-Change* (Freigabe je Change), *Notfall-Change* (bei Störung, mit nachträglicher Prüfung).
+- **Auswirkungsanalyse aus der CMDB** vor der Freigabe: betroffene Dienste, abhängige Dienste (`impact_analysis`/`service_impact_analysis`), SLA, erwartete Ausfallzeit — steht im Change und in der Freigabe-Ansicht.
+- **Konflikte und Sperrzeiten:** kein Change auf Assets mit offenem kritischem Incident (außer Notfall-Change); keine zwei überlappenden Changes auf denselben Assets; optionale Sperrzeiten (Owner).
+- **Nachbetrachtung (PIR):** nach Abschluss Ergebnis, Abweichungen, Dauer, tatsächliche Ausfallzeit in den Change (`pir_pending` vorhanden); Erfahrungen fließen in Vorlagen und Runbooks.
+
+**Incidents und Problems**
+- Ein Schritt scheitert → Incident, verknüpft mit Change und Asset; Rückweg ausgeführt → im Incident dokumentiert.
+- **Change-verursachte Störungen:** Meldet das Monitoring in einem Zeitfenster nach einem Change eine Störung an betroffenen Assets/Diensten, wird der Incident automatisch mit dem Change verknüpft (Hinweis „möglicherweise durch Change X“) und der Rückweg als Vorschlag angeboten.
+- **E1-Befunde werden ITSM-Objekte:** fehlende Sicherung, veraltete Distribution, unhealthy Dienst, Einzelpunkt → Problem/Known Error (mit Dedup wie v1547); ein Vorhaben kann aus Problems entstehen und schließt sie beim Abschluss (`create_fix_change`, `link_incident_to_problem` vorhanden).
+
+**CMDB als Wahrheit, laufend gepflegt**
+- Jeder Schritt mit Wirkung aktualisiert die CMDB **im selben Ablauf** (neue VM → Asset; Container umgezogen → Beziehung neu; Proxy-Ziel geändert → Beziehung; Altes → `decommission_asset` nach dem Lösch-Change). Änderungen tragen den Change als Ursache (`logChange` → Änderungsverlauf je Asset).
+- **Soll/Ist:** Die Zielarchitektur wird als *geplanter* Zustand in der CMDB abgelegt (Status „geplant“); nach jedem Change Abgleich Soll ↔ Ist, Abweichungen als Befund.
+- **Discovery nach dem Change:** gezieltes `discover_source` der betroffenen Quellen (Proxmox, Docker, UniFi …) als Abschlussprüfung — die CMDB muss den neuen Zustand selbst sehen.
+- **Dienste/Services:** ITSM-Services und Komponenten (`add_component`/`remove_component`), Failure-Modes und SLA ziehen mit um; Service-Doku und Topologie (Infra-Docs `generate_service_doc`, `topology_diagram`, `service_map`) werden nach jedem Change neu erzeugt.
+- **Runbooks:** aus einem erfolgreich abgearbeiteten Change entsteht auf Wunsch ein Runbook bzw. eine Standard-Change-Vorlage („so migriert man einen Compose-Dienst“).
+
+**Sichtbar in App/Web:** Vorhaben → Changes → Schritte mit Verweisen auf Assets, Services, Incidents, Problems; je Asset die Change-Historie; Lage zeigt laufende und anstehende Changes, „Braucht dich“ die offenen Freigaben.
+
 ## 5. Lücken zum Besprechen (Owner-Entscheidungen)
 
 1. **Wo liegt internes DNS?** (UniFi, pfSense, Pi-hole, AdGuard …) — davon hängt E4-N ab.
@@ -141,13 +166,17 @@ Erst danach: kritische Dienste (Home Assistant, Matrix, Datenbanken).
 8. **Updates in Vorlagen und VMs:** automatische Sicherheitsupdates ja/nein; Hauptversions-Upgrades immer als Change.
 9. **Netz-Zielbild:** eigene VLANs je Gruppe (Smart Home, Server, Entwicklung, Gäste) als Teil der Architektur oder vorerst flaches Netz behalten?
 10. **Löschen von Altem:** Wartezeit nach erfolgreicher Migration (Vorschlag 14 Tage gestoppt behalten), dann eigener Change.
+11. **Standard-Changes:** Welche wiederkehrenden Abläufe dürfen nach einmaliger Freigabe ohne Einzel-Ja laufen (Vorschlag: Snapshot anlegen/löschen eigener Snapshots, Vorlage neu bauen, Container-Image aktualisieren mit Rückweg)?
+12. **Sperrzeiten:** gibt es Zeiten ohne Changes (z. B. Wochenende, Urlaub)?
+13. **Change-verursachte Störungen:** Zeitfenster für die automatische Verknüpfung (Vorschlag 24 h) und ob der Rückweg dann nur vorgeschlagen oder bei kritischen Diensten selbst ausgeführt werden darf.
 
 ## 6. Vorgeschlagene Reihenfolge der Umsetzung (je Release mit Live-Beweis)
 
 - **I1** E1-Sammler Linux/Proxmox/Docker/Netz + CMDB-Abgleich + Bestandsbericht (lesend) → Beweis: Bericht dockerhost/pve.
 - **I2** Architektur-Dokumentvorlage + Vorhaben-Datenmodell (ohne Ausführung) → Beweis: Architektur-Vorschlag dockerhost.
-- **I3** Change-Schritte + Prüfung beim Anlegen + Darstellung/Freigabe in App/Web (E2).
-- **I4** Ausführungsmotor (E3) mit Prüf-Schritten, Rückweg, Neustartfestigkeit — Beweis mit einem harmlosen Change (Snapshot anlegen, prüfen, löschen).
+- **I3** Change-Schritte als Erweiterung der ITSM-Changes + Prüfung beim Anlegen + Auswirkungsanalyse aus der CMDB + Darstellung/Freigabe in App/Web (E2, 4b).
+- **I4** Ausführungsmotor (E3) mit Prüf-Schritten, Rückweg, Neustartfestigkeit, CMDB-Pflege je Schritt, Incident bei Fehlschlag, PIR — Beweis mit einem harmlosen Change (Snapshot anlegen, prüfen, löschen).
+- **I4b** Standard-Changes, Change-verursachte Störungen (Monitoring ↔ Change), E1-Befunde als Problems, Soll/Ist-Abgleich (4b).
 - **I5** Vorlagen-Fabrik Linux + neue Hosts automatisch verwaltet (E4-V, E4-H) → Beweis Debian-Vorlage + Wegwerf-VM.
 - **I6** Daten-Übertragung + Tresor (E4-D, E4-G) → Beweis Container-Migration unkritisch (E5.3).
 - **I7** Netz-Aktionen nach Owner-Entscheidungen (E4-N).
