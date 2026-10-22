@@ -120,6 +120,18 @@ describe('I4 Ausführungsmotor', () => {
     expect((w.c.lauf as ChangeLauf).ergebnisse.find(e => e.nr === 2)).toMatchObject({ ok: true, aktionOk: true, daten: { vmid: 142 } });
   });
 
+  it('v1604 Realfall 9527d97f: wartet auf einen angehaltenen, schon wirksamen Change → einmal melden, nicht still warten', async () => {
+    const w = welt(probe());
+    const blocker = { ...w.c, id: 'chg-0aaaaaaa', title: 'pgAdmin erreichbar', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, ergebnisse: [{ nr: 2, ok: false, aktionOk: true }] } } as unknown as CmdbChangeRequest;
+    w.deps.itsm.liste = async () => [w.c, blocker];
+    expect(await w.motor.anstossen()).toEqual([]);
+    expect(await w.motor.anstossen()).toEqual([]);
+    const m = w.meldungen.filter(x => x.includes('startet aber nicht'));
+    expect(m).toHaveLength(1);
+    expect(m[0]).toContain('chg-0aaa');
+    expect(m[0]).toContain('abbrechen');
+  });
+
   it('Owner-Schritt wartet auf das Ja; Start nur mit gültiger Freigabe, nicht vor dem Termin, nicht bei belegtem Asset', async () => {
     const plan: ChangeSchritt[] = [S({ nr: 1, art: 'owner', frage: 'VLAN 821 in UniFi anlegen' }), S({ nr: 2, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })];
     const w = welt(plan);

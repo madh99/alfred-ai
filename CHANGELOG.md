@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Freigegebener Change wartet nicht mehr still auf einen angehaltenen (v1604)
+
+- **Realfall 23.10.:** `9527d97f` war freigegeben, startete aber nicht. Der angehaltene `4f2642ab` hatte schon gewirkt und belegte deshalb dieselbe UniFi. Er konnte aber erst gelingen, wenn `9527d97f` gelaufen war. Im Log stand nur „wartet (Asset belegt)“.
+- **Jetzt:** Wartet ein freigegebener Change auf ein Gerät, das ein angehaltener Change belegt, meldet der Motor das dem Owner einmal je Paar. Die Meldung nennt beide Changes und die drei Auswege: Schritt wiederholen, abbrechen ohne Rückweg (die Wirkung bleibt), Rückweg ausführen.
+
 ### Fixed — Firewall-Ausnahmen wirken, Abschlussproben können Ports prüfen (v1603)
 
 - **Realfall 23.10. (Change 4f2642ab, pgAdmin):** Beide neuen ALLOW-Regeln wurden angelegt, wirkten aber nicht.

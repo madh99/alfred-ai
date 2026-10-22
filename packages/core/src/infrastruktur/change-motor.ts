@@ -81,6 +81,8 @@ export class ChangeMotor {
 
   /** Anzahl Changes, deren Schritte gerade aktiv laufen (Selbstupdate wartet darauf). */
   aktiv(): number { return this.laufend.size; }
+  /** v1604 — „wartet auf angehaltenen Change“ nur einmal je Paar melden */
+  private readonly wartenGemeldet = new Set<string>();
 
   /**
    * Fällige freigegebene Changes starten, unterbrochene nach einem Neustart behandeln, abgebrochene abschließen.
@@ -103,8 +105,24 @@ export class ChangeMotor {
       // Realfall 22.10. (B hielt an einer reinen Prüfung an und sperrte damit T und A3, auf die er selbst wartet): ein angehaltener Change
       // belegt seine Assets nur, wenn er schon etwas verändert hat
       const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk) && st.some(s => s.nr === e.nr && wirkt(s))); };
-      const belegt = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig' && ((x.lauf as ChangeLauf | undefined)?.phase !== 'angehalten' || hatGewirkt(x))).flatMap(x => x.affectedAssetIds);
-      if (c.affectedAssetIds.some(a => belegt.includes(a))) { this.log('I4 Change wartet (Asset belegt)', { id: c.id }); continue; }
+      const belegende = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig' && ((x.lauf as ChangeLauf | undefined)?.phase !== 'angehalten' || hatGewirkt(x)) && x.affectedAssetIds.some(a => c.affectedAssetIds.includes(a)));
+      if (belegende.length) {
+        this.log('I4 Change wartet (Asset belegt)', { id: c.id, durch: belegende.map(x => x.id) });
+        // v1604 — Realfall 23.10.: 9527d97f wartete still auf den angehaltenen 4f2642ab, der wiederum 9527d97f brauchte. Ein angehaltener
+        // Change löst sich nie von selbst → dem Owner einmal sagen, worauf der freigegebene wartet und wie es weitergeht.
+        for (const x of belegende.filter(x => (x.lauf as ChangeLauf | undefined)?.phase === 'angehalten')) {
+          const k = `${c.id}:${x.id}`;
+          if (this.wartenGemeldet.has(k)) continue;
+          this.wartenGemeldet.add(k);
+          await this.d.melde?.(`⏸️ ${c.title} (${c.id.slice(0, 8)}) ist freigegeben, startet aber nicht: ${x.title} (${x.id.slice(0, 8)}) ist angehalten und belegt dasselbe Gerät.
+
+Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
+• „Change ${x.id.slice(0, 8)} Schritt wiederholen“
+• „Change ${x.id.slice(0, 8)} abbrechen“ (ohne Rückweg — Wirkung bleibt)
+• „Change ${x.id.slice(0, 8)} Rückweg ausführen“`, true);
+        }
+        continue;
+      }
       if (this.d.zeitplan) {
         const z = await this.d.zeitplan(o, c).catch(err => ({ jetzt: false, grund: `Zeitplan nicht prüfbar: ${(err as Error).message}` }));
         if (!z.jetzt) { this.log('I4b Change wartet', { id: c.id, grund: z.grund, startAb: (z as { startAb?: string }).startAb }); continue; }
