@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Firewall-Ausnahmen wirken, Abschlussproben können Ports prüfen (v1603)
+
+- **Realfall 23.10. (Change 4f2642ab, pgAdmin):** Beide neuen ALLOW-Regeln wurden angelegt, wirkten aber nicht.
+  - Die eine stand „hinten im Zonenpaar“, also hinter der eigenen Sperre.
+  - Die Antworten der anderen verwarf die Sperre der Gegenrichtung.
+  - Die Abschlussprobe `nc -z` lief im Lese-Käfig ohne Netz und konnte nie gelingen.
+- **`unifi create_firewall_policy`:**
+  - Eine ALLOW-Regel ohne `before_policy` wird automatisch vor die erste aktive eigene Sperre desselben Zonenpaars eingereiht.
+  - Sperrt eine eigene, aktive Regel ohne Filter die Gegenrichtung, wird die ALLOW-Regel nicht angelegt. Die Meldung nennt die Sperre und den Weg, sie abzuschalten (die UDM sperrt eigene Zonen ohnehin).
+- **Leseliste:** `nc -z [-v] [-w N] <host> <port>` ist ein Verbindungstest ohne Rückfrage, nur ein Port, ohne `-e` und `-l`.
+
 ### Fixed — Docker-Lesebefehle für Umzugserhebungen (v1602)
 
 - **Realfall 23.10. (Erhebung Pilot Teil 2):** Rund 30 Docker-Abfragen wurden nicht als Lesebefehle erkannt und liefen deshalb im Lese-Käfig. Der Käfig hat bewusst keinen Docker-Socket, also scheiterten sie alle. Die Erhebung blieb unvollständig: Ports, Bind-Mounts und Verbindungen fehlten.

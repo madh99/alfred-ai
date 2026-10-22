@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { UniFiSkill } from '../built-in/unifi.js';
 
 // v1386 — Firewall-Änderungen nur mit Einmal-Freigabe nach Owner-Bestätigung
-function aufbau() {
+function aufbau(weitere: unknown[] = []) {
   const s = new UniFiSkill({ baseUrl: 'https://udm', apiKey: 'k', verifyTls: false } as never);
   const aufrufe: Array<{ method: string; url: string; body?: unknown }> = [];
   let reihen = { beforeSystemDefined: ['dns', 'block'], afterSystemDefined: [] as string[] };
@@ -22,6 +22,7 @@ function aufbau() {
     if (url.includes('/firewall/policies')) return antwort({ data: [
       { id: 'dns', name: 'A_DNS', enabled: true, action: { type: 'ALLOW' }, source: { zoneId: 'z-int' }, destination: { zoneId: 'z-gw' } },
       { id: 'block', name: 'Block 817_LAN', enabled: true, action: { type: 'BLOCK' }, source: { zoneId: 'z-int' }, destination: { zoneId: 'z-gw' } },
+      ...weitere,
     ] });
     return antwort({ message: 'unbekannt' }, 404);
   };
@@ -67,5 +68,24 @@ describe('Firewall-Freigabe', () => {
     const d = await s.execute({ action: 'delete_firewall_policy', policy_id: 'gibtsnicht' }, {} as never);
     expect(d.success).toBe(false);
     expect(schreibend()).toHaveLength(0);
+  });
+
+  it('v1603 Realfall 4f2642ab: Ausnahme ohne before_policy kommt automatisch vor die eigene Sperre', async () => {
+    const { s, fragen } = aufbau();
+    const { before_policy: _b, ...ohne } = wunsch;
+    await s.execute(ohne, {} as never);
+    expect(fragen[0]!.beschreibung).toMatch(/VOR „Block 817_LAN" \(automatisch vor die Sperre\)/);
+  });
+
+  it('v1603: Sperre ohne Filter in der Gegenrichtung verwirft die Antworten → ALLOW nicht anlegen', async () => {
+    const { s, fragen, schreibend } = aufbau([{ id: 'gegen', name: 'cf82-dev-block-from-internal', enabled: true, action: { type: 'BLOCK' }, source: { zoneId: 'z-gw' }, destination: { zoneId: 'z-int' } }]);
+    const r = await s.execute(wunsch, {} as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/Gegenrichtung sperrt „cf82-dev-block-from-internal" \(gegen\).*enabled=false/);
+    expect(fragen).toHaveLength(0);
+    expect(schreibend()).toHaveLength(0);
+    // abgeschaltete Sperre stört nicht
+    const b = aufbau([{ id: 'gegen', name: 'x', enabled: false, action: { type: 'BLOCK' }, source: { zoneId: 'z-gw' }, destination: { zoneId: 'z-int' } }]);
+    expect((await b.s.execute(wunsch, {} as never)).success).toBe(true);
   });
 });

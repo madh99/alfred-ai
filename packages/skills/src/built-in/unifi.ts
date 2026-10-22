@@ -448,8 +448,18 @@ export class UniFiSkill extends Skill {
         const standard = policies.filter(p => p.metadata?.origin === 'SYSTEM_DEFINED' && p.source.zoneId === bb.source.zoneId && p.destination.zoneId === bb.destination.zoneId && !(p as { connectionStateFilter?: unknown }).connectionStateFilter).sort((a, b) => (b.index ?? 0) - (a.index ?? 0))[0];
         if (standard && standard.action.type !== 'ALLOW') throw new Error(`Das Zonenpaar sperrt die UDM bereits selbst („${standard.name}") — eine eigene Sperre ohne Filter würde nur die Antworten erlaubter Verbindungen verwerfen. Nicht anlegen.`);
       }
+      // v1603 — Realfall 23.10. (Change 4f2642ab, pgAdmin): die neue Ausnahme landete „hinten im Zonenpaar“ HINTER der eigenen Sperre und
+      // griff nie; ihre Antworten verwarf zudem die Sperre der Gegenrichtung. Ausnahmen gehören vor die Sperre; eine Sperre ohne Filter in
+      // der Gegenrichtung macht eine ALLOW-Regel mit Rückverkehr wirkungslos → nicht anlegen, erst die Sperre abschalten.
+      let automatischVor = false;
+      if (bb.action.type === 'ALLOW') {
+        const eigeneSperre = (q: string, z: string) => policies.filter(p => p.enabled && p.metadata?.origin !== 'SYSTEM_DEFINED' && p.metadata?.origin !== 'DERIVED' && p.action.type !== 'ALLOW' && p.source.zoneId === q && p.destination.zoneId === z).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        if (!vor) { const s = eigeneSperre(bb.source.zoneId, bb.destination.zoneId)[0]; if (s) { vor = s; automatischVor = true; } }
+        const gegen = eigeneSperre(bb.destination.zoneId, bb.source.zoneId).find(p => !(p.source as { trafficFilter?: unknown }).trafficFilter && !(p.destination as { trafficFilter?: unknown }).trafficFilter);
+        if (gegen) throw new Error(`Die Gegenrichtung sperrt „${gegen.name}" (${gegen.id}) ohne Filter — sie verwirft die Antworten dieser Verbindung. Erst set_firewall_policy_enabled ${gegen.id} enabled=false (die UDM sperrt eigene Zonen ohnehin), dann diese Regel anlegen.`);
+      }
       const vorschau = policyZeile({ id: 'neu', enabled: true, ...(body as Omit<Policy, 'id' | 'enabled'>), name: w.name.trim() } as Policy, zonen, netze).replace(/ · neu$/, '');
-      beschreibung = `Firewall-Policy anlegen: ${vorschau}${vor ? `, eingereiht VOR „${vor.name}"` : ', hinten im Zonenpaar'}`;
+      beschreibung = `Firewall-Policy anlegen: ${vorschau}${vor ? `, eingereiht VOR „${vor.name}"${automatischVor ? ' (automatisch vor die Sperre)' : ''}` : ', hinten im Zonenpaar'}`;
       schluessel = JSON.stringify(['create', body, vor?.id ?? null]);
     } else {
       ziel = findePolicy(input.policy_id ?? input.policy_name);
