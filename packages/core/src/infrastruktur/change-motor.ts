@@ -328,17 +328,12 @@ export class ChangeMotor {
       lauf.incidentId = await this.d.incident.anlegen(o, { titel: `Change angehalten: ${c.title}`, text: `Change ${c.id} (${c.title}) angehalten.\n${grund}`, schwere: c.riskLevel === 'critical' || c.riskLevel === 'high' ? 'high' : 'medium', assetIds: c.affectedAssetIds }).catch(() => undefined);
     }
     const rw = rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], lauf.ergebnisse);
-    let frageGestellt = false;
-    if (rw.length && this.d.frage) {
-      const nonce = randomUUID();
-      lauf.frage = { art: 'rueckweg', hash: hash(nonce), schritt: lauf.schritt, bis: new Date(this.jetzt() + FRAGE_GUELTIG_MS).toISOString() };
-      await this.d.itsm.motorSetze(o, c.id, { lauf });
-      frageGestellt = await this.d.frage(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)})\n${grund}\n\nRückweg ausführen? In dieser Reihenfolge:\n${rw.map(s => `  zu Schritt ${s.nr}: ${s.rueckweg!.skill}.${s.rueckweg!.aktion}`).join('\n')}\n\nOhne Ja bleibt der Change angehalten (alternativ im Chat: „Schritt wiederholen“ oder „abbrechen“).`, { action: 'rueckweg_ausfuehren', change: c.id, freigabe: nonce }).catch(() => false);
-    }
+    // Owner 22.10. („ok zum offenen Vorschlag“; dreimal hat ein Ja auf die Rückweg-Frage einen fast fertigen Lauf zurückgerollt):
+    // keine Ja/Nein-Frage mehr — Standard ist „angehalten lassen“; der Rückweg läuft nur auf ausdrücklichen Wunsch im Chat
     await this.d.itsm.motorSetze(o, c.id, { lauf });
-    this.log('I4 Change angehalten', { id: c.id, grund: grund.slice(0, 300), incident: lauf.incidentId, rueckwegFrage: frageGestellt });
+    this.log('I4 Change angehalten', { id: c.id, grund: grund.slice(0, 300), incident: lauf.incidentId, rueckwegMoeglich: rw.length });
     await this.d.ereignis?.(o, c, 'stoerung', `Die Wartung „${c.title}“ ist angehalten: ${grund.slice(0, 200)}`).catch(() => undefined);
-    await this.d.melde?.(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)})\n${grund}${frageGestellt ? '\nRückweg wartet auf dein Ja.' : rw.length ? '' : '\nKein Rückweg nötig oder möglich.'}`, true);
+    await this.d.melde?.(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)}) bei Schritt ${lauf.schritt}\n${grund}\n\nDer Change bleibt angehalten, bis du entscheidest (im Chat):\n• „Change ${c.id.slice(0, 8)} Schritt wiederholen“\n• „Change ${c.id.slice(0, 8)} abbrechen“ (ohne Rückweg)${rw.length ? `\n• „Change ${c.id.slice(0, 8)} Rückweg ausführen“ — macht rückgängig: ${rw.map(s => `Schritt ${s.nr} (${s.rueckweg!.skill}.${s.rueckweg!.aktion})`).join(', ')}` : '\nEin Rückweg ist nicht nötig.'}`, true);
   }
 
   private async frageOwner(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, s: ChangeSchritt): Promise<void> {
@@ -383,14 +378,26 @@ export class ChangeMotor {
     return 'Rückweg läuft — ich melde das Ergebnis.';
   }
 
-  /** Owner im Chat: angehaltenen Schritt wiederholen oder abbrechen (ohne Rückweg). */
-  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen'): Promise<string> {
+  /** Owner im Chat: angehaltenen Schritt wiederholen, abbrechen (ohne Rückweg) oder den Rückweg ausdrücklich ausführen. */
+  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg'): Promise<string> {
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
+    // Rückweg nach einer Störung: abgeschlossener Change mit verknüpfter Störung
+    if (wahl === 'rueckweg' && c && l && c.status === 'completed' && (l.stoerungen ?? []).length && !this.laufend.has(c.id)) {
+      if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Dieser Change hat keinen Rückweg.';
+      delete l.frage;
+      void this.rueckweg(o, c, l, `Rückweg nach Störung auf Wunsch des Owners`).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
+      return 'Rückweg läuft — ich melde das Ergebnis.';
+    }
     if (!c || !l || c.status !== 'in_progress' || this.laufend.has(c.id)) return 'Der Change ist nicht angehalten.';
     if (l.phase !== 'angehalten') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
     delete l.frage;
     if (wahl === 'abbrechen') { await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)'); return 'Change abgebrochen, ohne Rückweg. Der Bericht steht im Change.'; }
+    if (wahl === 'rueckweg') {
+      if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Es gibt nichts zurückzunehmen — „abbrechen“ beendet den Change.';
+      void this.rueckweg(o, c, l, l.grund ?? 'vom Owner gewählt').catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
+      return 'Rückweg läuft — ich melde das Ergebnis.';
+    }
     const alt = l.ergebnisse.find(e => e.nr === l.schritt);
     const s = (c.schritte as ChangeSchritt[] | undefined)?.find(x => x.nr === l.schritt);
     const nurPruefung = !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
@@ -430,17 +437,11 @@ export class ChangeMotor {
       if (!treffer.length) continue;
       l.stoerungen = [...(l.stoerungen ?? []), ...treffer.map(i => ({ incidentId: i.id, titel: i.title, schwere: i.severity, zeit: i.createdAt }))];
       const rw = rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse);
-      let frage = false;
-      if (rw.length && this.d.frage && !l.frage) {
-        const nonce = randomUUID();
-        l.frage = { art: 'rueckweg_nach_stoerung', hash: hash(nonce), schritt: 0, bis: new Date(jetzt + FRAGE_GUELTIG_MS).toISOString() };
-        await this.d.itsm.motorSetze(o, c.id, { lauf: l });
-        frage = await this.d.frage(`🚨 Möglicherweise durch Change verursacht: ${treffer.map(i => `${i.title} (${i.severity})`).join('; ')}\n\nChange „${c.title}“ (${c.id.slice(0, 8)}) wurde ${new Date(ende).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })} abgeschlossen und berührt dieselben Assets.\n\nRückweg ausführen?\n${rw.map(s => `  zu Schritt ${s.nr}: ${s.rueckweg!.skill}.${s.rueckweg!.aktion}`).join('\n')}\n\nOhne Ja passiert nichts.`, { action: 'rueckweg_ausfuehren', change: c.id, freigabe: nonce }).catch(() => false);
-      }
+      // Owner 22.10.: Rückweg nie als Ja/Nein-Frage — nur Meldung mit dem ausdrücklichen Chat-Befehl
       await this.d.itsm.motorSetze(o, c.id, { lauf: l });
-      for (const i of treffer) await this.d.incident?.notiz(o, i.id, `Möglicherweise durch Change ${c.id.slice(0, 8)} „${c.title}“ verursacht (abgeschlossen ${l.ende}, berührt dieselben Assets).${frage ? ' Rückweg wurde dem Owner zur Freigabe angeboten.' : rw.length ? '' : ' Der Change hat keinen Rückweg.'}`).catch(() => undefined);
-      this.log('I4b Störung nach Change', { id: c.id, incidents: treffer.map(i => i.id), kritisch, rueckwegFrage: frage });
-      await this.d.melde?.(`🚨 Störung möglicherweise durch Change „${c.title}“ (${c.id.slice(0, 8)}): ${treffer.map(i => i.title).join('; ')}${frage ? '\nRückweg wartet auf dein Ja.' : ''}`, true);
+      for (const i of treffer) await this.d.incident?.notiz(o, i.id, `Möglicherweise durch Change ${c.id.slice(0, 8)} „${c.title}“ verursacht (abgeschlossen ${l.ende}, berührt dieselben Assets).${rw.length ? ' Rückweg nur auf ausdrücklichen Wunsch des Owners.' : ' Der Change hat keinen Rückweg.'}`).catch(() => undefined);
+      this.log('I4b Störung nach Change', { id: c.id, incidents: treffer.map(i => i.id), kritisch, rueckwegMoeglich: rw.length });
+      await this.d.melde?.(`🚨 Störung möglicherweise durch Change „${c.title}“ (${c.id.slice(0, 8)}, abgeschlossen ${new Date(ende).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })}): ${treffer.map(i => `${i.title} (${i.severity})`).join('; ')}${rw.length ? `\nNur wenn du ihn wirklich zurücknehmen willst, im Chat: „Change ${c.id.slice(0, 8)} Rückweg ausführen“ — macht rückgängig: ${rw.map(s => `Schritt ${s.nr} (${s.rueckweg!.skill}.${s.rueckweg!.aktion})`).join(', ')}` : ''}`, true);
       await this.d.ereignis?.(o, c, 'stoerung', `Nach der Wartung „${c.title}“ ist eine Störung aufgetreten: ${treffer.map(i => i.title).join('; ')}`).catch(() => undefined);
       neu += treffer.length;
     }

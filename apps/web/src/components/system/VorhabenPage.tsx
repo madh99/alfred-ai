@@ -31,6 +31,40 @@ function ChangeZeilen({ changes }: { changes: ChangeKurzDto[] }) {
   );
 }
 
+const PHASE: Record<string, string> = { laeuft: 'läuft', angehalten: 'angehalten — wartet auf deine Entscheidung', wartet_owner: 'wartet auf deinen Handgriff', rueckweg: 'Rückweg läuft', fertig: 'fertig' };
+
+/** Owner 22.10.: laufende und angehaltene Changes sofort sichtbar — welcher Schritt, wie weit, was ist los, was kann ich tun */
+function AktiveChanges({ changes }: { changes: ChangeKurzDto[] }) {
+  if (!changes.length) return <div className="text-sm rounded-xl px-4 py-3 bg-[#111111] border border-[#1f1f1f] text-gray-400">Gerade läuft kein Change.</div>;
+  return (
+    <div className="space-y-3">
+      {changes.map(c => {
+        const l = c.lauf;
+        const angehalten = c.phase === 'angehalten';
+        const farbeRahmen = angehalten ? 'border-amber-500/50' : c.phase === 'rueckweg' ? 'border-red-500/50' : 'border-blue-500/50';
+        const kurzId = c.id.slice(0, 8);
+        const minuten = l?.start ? Math.round((Date.now() - Date.parse(l.start)) / 60_000) : null;
+        return (
+          <section key={c.id} className={`bg-[#111111] border ${farbeRahmen} rounded-xl p-4 space-y-2`}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-gray-100">{c.titel} <span className="text-gray-600 font-mono">{kurzId}</span></h2>
+              <span className={`text-xs ${angehalten ? 'text-amber-300' : 'text-blue-300'}`}>{PHASE[c.phase ?? ''] ?? c.phase ?? c.status}{minuten !== null ? ` · seit ${minuten} min` : ''}</span>
+            </div>
+            {l && <p className="text-xs text-gray-300">Schritt {l.schritt ?? '?'} von {c.schritte}{l.schrittTitel ? `: ${l.schrittTitel}` : ''} · {l.fertig} erledigt</p>}
+            {l && (
+              <div className="flex gap-1">
+                {l.schrittListe.map(s => <span key={s.nr} title={`${s.nr}. ${s.titel}`} className={`h-2 flex-1 rounded ${s.ok === true ? 'bg-emerald-500' : s.ok === false ? 'bg-red-500' : s.nr === l.schritt ? 'bg-blue-400 animate-pulse' : 'bg-[#2a2a2a]'}`} />)}
+              </div>
+            )}
+            {angehalten && l?.grund && <p className="text-xs text-amber-200 whitespace-pre-wrap">{l.grund}</p>}
+            {angehalten && <p className="text-xs text-gray-400">Im Chat: „Change {kurzId} Schritt wiederholen“ · „Change {kurzId} abbrechen“ · „Change {kurzId} Rückweg ausführen“</p>}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 export function VorhabenPage() {
   const { client } = useConfig();
   const [liste, setListe] = useState<{ vorhaben: VorhabenDto[]; ohneVorhaben: ChangeKurzDto[] } | null>(null);
@@ -47,6 +81,9 @@ export function VorhabenPage() {
     setListe({ vorhaben: x.vorhaben ?? [], ohneVorhaben: x.ohneVorhaben ?? [] });
   }, [client]);
   useEffect(() => { void laden(); }, [laden]);
+  // laufende Changes: alle 10 s neu laden
+  useEffect(() => { const t = setInterval(() => { void laden(); }, 10_000); return () => clearInterval(t); }, [laden]);
+  const aktiv = liste ? [...liste.vorhaben.flatMap(v => v.changes ?? []), ...liste.ohneVorhaben].filter(c => c.status === 'in_progress') : [];
 
   const oeffne = async (id: string) => {
     if (!client) return;
@@ -69,6 +106,7 @@ export function VorhabenPage() {
         <p className="text-sm text-gray-500 mt-1">Was an der Infrastruktur geplant ist: Ziel, Zielarchitektur, Changes und wie weit Soll und Ist auseinanderliegen. Freigeben und widersprechen per Freigabe-Frage oder unter ITSM → Changes.</p>
       </div>
       {fehler && <div className="text-sm rounded px-3 py-2 bg-red-500/10 text-red-300">{fehler}</div>}
+      {liste && <div><h2 className="text-sm font-semibold text-gray-300 mb-2">Jetzt aktiv</h2><AktiveChanges changes={aktiv} /></div>}
       {liste?.vorhaben.length === 0 && <p className="text-sm text-gray-500">Noch keine Vorhaben.</p>}
       {liste?.vorhaben.map(v => (
         <section key={v.id} className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4 space-y-3">

@@ -120,3 +120,18 @@ describe('I6 Volume-Namen', () => {
     await expect(volumePfad(w, 'q', 'x; rm -rf /', false)).rejects.toThrow(/ungültiger Volume-Name/);
   });
 });
+
+// Realfall 22.10. (pgAdmin: „Permission denied“ — Zielordner root 755 statt 5050:0 775)
+describe('I6 Wurzelordner', () => {
+  it('Besitzer und Rechte des Wurzelordners werden wie an der Quelle gesetzt', async () => {
+    const q: Fs = new Map<string, Eintrag & { inhalt?: string }>([['.', { ...d('775'), uid: '5050', gid: '0' }], ['./a.db', f('x')]]);
+    const z: Fs = new Map([['.', { ...d('755'), uid: '0', gid: '0' }]]);
+    const { w, befehle } = welt(q, z);
+    const lauf0 = w.lauf;
+    w.lauf = async (h, b, e, t, m) => { if (b.includes('chown 5050:0')) { z.set('.', { ...d('775'), uid: '5050', gid: '0' }); return { code: 0, stdout: '', stderr: '' }; } return lauf0(h, b, e, t, m); };
+    const e = await kopiere(w, 'q', '/var/lib/docker/volumes/x/_data', 'z', '/var/lib/docker/volumes/y/_data', { loeschen: true, pruefsumme: false, timeoutMs: 60_000 });
+    expect(e.wurzelAngeglichen).toBe(true);
+    expect(e.restUnterschiede).toBe(0);
+    void befehle;
+  });
+});

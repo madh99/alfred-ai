@@ -129,7 +129,7 @@ export class InfrastrukturSkill extends Skill {
       + 'SOLL/IST (I4b): soll_ist (vorhaben) — Abgleich der angenommenen Zielarchitektur mit dem Ist (VMs, Netze, Dienste am neuen Host, Proxy-Ziele), Fortschritt und Abweichungen; nach jedem abgeschlossenen Change des Vorhabens automatisch. '
       + 'TRESOR (I4c): tresor_liste (nur Namen), tresor_erzeugen (name, laenge, zweck — Zufallspasswort am Server, der Wert wird nie gezeigt), tresor_entfernen (name, wortlaut). Werte setzt der Owner auf der Tresor-Seite im Web; NIE nach Passwörtern im Chat fragen. In Change-Schritten: {{geheimdatei:name}} im Befehl eines Fernzugriff-Schritts (Datei 600 am Host, z. B. --env-file) oder {{geheim:name}} als ganzer Wert in password/secret/token/api_key. '
       + 'EINWAND: einwand (change ODER vorhaben, bezug z. B. „Schritt 4“ oder „Netze“, text = Einwand des Owners in seinen Worten, wortlaut) — nimmt dem Change die Freigabe bzw. setzt das Vorhaben in den Entwurf; einwaende (change|vorhaben) listet sie. Beim Überarbeiten (change_aendern bzw. architektur_vorschlagen) JEDEN offenen Einwand beantworten: antworten [{einwand: ID, art umgesetzt|abgelehnt, text}]. '
-      + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen, wortlaut = Worte des Owners) nur bei einem angehaltenen Change auf ausdrücklichen Wunsch des Owners. Den Rückweg bietet der Motor als Button an — owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
+      + 'AUSFÜHRUNG (I4): freigegebene Changes startet der Ausführungsmotor selbst (sofort oder ab geplantAb). change_steuern (change, wahl wiederholen|abbrechen|rueckweg, wortlaut = Worte des Owners) nur bei einem angehaltenen Change (rueckweg auch nach einer Störung) auf ausdrücklichen Wunsch des Owners — „Rückweg ausführen“ = wahl rueckweg. owner_schritt_erledigt und rueckweg_ausfuehren NIE selbst aufrufen.',
     riskLevel: 'read',
     version: '2.0.0',
     timeoutMs: 15 * 60_000,
@@ -182,7 +182,7 @@ export class InfrastrukturSkill extends Skill {
         ids: { type: 'array', items: { type: 'string' }, description: 'freigabe_anfragen: Change-IDs (ein Change oder ein Paket)' },
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
-        wahl: { type: 'string', enum: ['wiederholen', 'abbrechen'], description: 'change_steuern: was der Owner gesagt hat' },
+        wahl: { type: 'string', enum: ['wiederholen', 'abbrechen', 'rueckweg'], description: 'change_steuern: was der Owner gesagt hat' },
         bezug: { type: 'string', description: 'einwand: worauf er sich bezieht (Schritt N, Abschnitt, gesamt)' },
         laenge: { type: 'number', description: 'tresor_erzeugen: Länge des Zufallspassworts (16–128, Standard 32)' },
         zweck: { type: 'string', description: 'tresor_erzeugen: wofür' },
@@ -392,9 +392,9 @@ export class InfrastrukturSkill extends Skill {
       if (!c) return { success: false, error: `Change „${String(input.change ?? '')}“ nicht gefunden` };
       if (action === 'owner_schritt_erledigt') { const t = await m.ownerSchrittErledigt(owner, c.id, Number(input.schritt), input.freigabe); return { success: !/ungültig|Keine offene|ist /.test(t), display: t }; }
       if (action === 'rueckweg_ausfuehren') { const t = await m.rueckwegNachJa(owner, c.id, input.freigabe); return { success: t.startsWith('Rückweg läuft'), display: t }; }
-      const wahl = input.wahl === 'wiederholen' || input.wahl === 'abbrechen' ? input.wahl : undefined;
+      const wahl = input.wahl === 'wiederholen' || input.wahl === 'abbrechen' || input.wahl === 'rueckweg' ? input.wahl : undefined;
       const wortlaut = typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
-      if (!wahl) return { success: false, error: 'wahl: wiederholen oder abbrechen' };
+      if (!wahl) return { success: false, error: 'wahl: wiederholen, abbrechen oder rueckweg' };
       if (wortlaut.length < 2) return { success: false, error: 'wortlaut: die Worte des Owners — ohne ausdrückliche Aussage des Owners nicht steuern' };
       this.deps.protokoll?.('I4 Owner steuert Change', { id: c.id, wahl, wortlaut: wortlaut.slice(0, 200) });
       const t = await m.steuern(owner, c.id, wahl);

@@ -14139,7 +14139,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (!o || !m || m !== o) throw Object.assign(new Error('Nur für den Owner'), { status: 403 });
             return o;
           };
-          const kurz = (c: import('@alfred/types').CmdbChangeRequest) => ({ id: c.id, titel: c.title, status: c.status, typ: c.type, risiko: c.riskLevel, schritte: (c.schritte ?? []).length, geplantAb: c.scheduledAt, ausfallMinuten: c.ausfallMinuten, freigegebenUeber: c.freigegebenUeber, phase: (c.lauf as { phase?: string } | undefined)?.phase, erstellt: c.createdAt });
+          // Owner 22.10. („ersichtlich, wenn ein Change läuft und was davon — aktuell ein Ratespiel“): Laufstand je Change
+          const kurz = (c: import('@alfred/types').CmdbChangeRequest) => {
+            const l = c.lauf as { phase?: string; schritt?: number; start?: string; ende?: string; grund?: string; ergebnisse?: Array<{ nr: number; ok: boolean; aktionOk?: boolean; ende?: string; fehler?: string }> } | undefined;
+            const st = (c.schritte ?? []) as Array<{ nr: number; titel: string; art: string }>;
+            const akt = l?.schritt ? st.find(x => x.nr === l.schritt) : undefined;
+            return {
+              id: c.id, titel: c.title, status: c.status, typ: c.type, risiko: c.riskLevel, schritte: st.length, geplantAb: c.scheduledAt, ausfallMinuten: c.ausfallMinuten, freigegebenUeber: c.freigegebenUeber, phase: l?.phase, erstellt: c.createdAt,
+              ...(l ? { lauf: { schritt: l.schritt, schrittTitel: akt?.titel, fertig: (l.ergebnisse ?? []).filter(e => e.ok).length, start: l.start, ende: l.ende, grund: l.grund?.slice(0, 300), schrittListe: st.map(x => ({ nr: x.nr, titel: x.titel, art: x.art, ok: (l.ergebnisse ?? []).find(e => e.nr === x.nr)?.ok ?? null })) } } : {}),
+            };
+          };
           (apiAdapter as unknown as { setVorhabenCallbacks?: (cb: unknown) => void }).setVorhabenCallbacks?.({
             liste: async (uid: string) => {
               const o = await owner(uid);

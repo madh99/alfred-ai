@@ -63,6 +63,8 @@ export function Sidebar() {
   const [eingangOpen, setEingangOpen] = useState(true);
   const [hausOpen, setHausOpen] = useState(true);
   const [eingangCounts, setEingangCounts] = useState<EingangCounts>({ eingang: 0, vorgaenge: 0, bestaetigungen: 0, hinweise: null });
+  // Owner 22.10.: laufende/angehaltene Changes sichtbar statt Ratespiel — Zähler am Eintrag „Vorhaben“, alle 15 s
+  const [aktiveChanges, setAktiveChanges] = useState(0);
   const [suche, setSuche] = useState('');
   const [counts, setCounts] = useState<Counts>({ insights: 0, goals: 0 });
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -201,6 +203,19 @@ export function Sidebar() {
     if (typeof window === 'undefined') return;
     try { localStorage.setItem('alfred-sidebar-haus-open', hausOpen ? '1' : '0'); } catch {}
   }, [hausOpen]);
+
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    const laden = async () => {
+      const x = await client.vorhabenListe().catch(() => null);
+      if (cancelled || !x || x.error) return;
+      setAktiveChanges([...(x.vorhaben ?? []).flatMap(v => v.changes ?? []), ...(x.ohneVorhaben ?? [])].filter(c => c.status === 'in_progress').length);
+    };
+    laden();
+    const t = setInterval(laden, 15_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [client]);
 
   // v1487 — Zähler für Eingang, Vorgänge, Bestätigungen; alle 60 s, Fehler still
   useEffect(() => {
@@ -453,7 +468,7 @@ export function Sidebar() {
           {gruppenKopf('Haus & Systeme', hausOpen, () => setHausOpen(o => !o))}
           {hausOpen && (
             <div className="space-y-0.5 mt-1">
-              {HAUS.map(h => gruppenEintrag(h.href, h.icon, h.label, isActive(h.href)))}
+              {HAUS.map(h => gruppenEintrag(h.href, h.icon, h.label, isActive(h.href), h.href.endsWith('/vorhaben/') ? aktiveChanges : 0, h.href.endsWith('/vorhaben/') && aktiveChanges ? `${aktiveChanges} Change(s) laufen oder sind angehalten` : undefined))}
             </div>
           )}
         </div>

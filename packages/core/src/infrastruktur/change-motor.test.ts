@@ -75,23 +75,25 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.at(-1)).toContain('✅');
   });
 
-  it('Prüfung scheitert → anhalten, Incident, Rückweg nur als Frage; Ja → Rückweg, zurückgerollt', async () => {
+  it('Prüfung scheitert → anhalten, Incident, KEINE Rückweg-Frage (Owner 22.10.); Rückweg nur ausdrücklich per steuern', async () => {
     const w = welt(probe(), { snapshotFehlt: true });
     await w.motor.anstossen(); await warte(w.motor);
     const l = w.c.lauf as ChangeLauf;
     expect(w.c.status).toBe('in_progress');
     expect(l.phase).toBe('angehalten');
     expect(l.incidentId).toBe('inc-1');
-    expect(w.aufrufe).not.toContain('proxmox.delete_snapshot:i3probe'); // kein Rückweg ohne Ja
-    expect(w.fragen[0]!.d).toContain('Rückweg ausführen?');
-    expect(w.meldungen.some(m => m.includes('angehalten'))).toBe(true);
-    expect(await w.motor.rueckwegNachJa('o', 'chg-1', 'falsch')).toContain('ungültig');
-    expect(await w.motor.rueckwegNachJa('o', 'chg-1', w.fragen[0]!.p.freigabe)).toContain('Rückweg läuft');
+    expect(w.aufrufe).not.toContain('proxmox.delete_snapshot:i3probe'); // kein Rückweg von selbst
+    expect(w.fragen).toEqual([]); // keine Ja/Nein-Frage mehr
+    const m = w.meldungen.find(x => x.includes('angehalten'))!;
+    expect(m).toContain('Schritt wiederholen');
+    expect(m).toContain('Rückweg ausführen');
+    expect(m).toContain('delete_snapshot');
+    expect(await w.motor.rueckwegNachJa('o', 'chg-1', 'irgendwas')).toContain('Keine offene Frage'); // alter Weg ohne gültige Frage wirkt nicht
+    expect(await w.motor.steuern('o', 'chg-1', 'rueckweg')).toContain('Rückweg läuft');
     await warte(w.motor);
     expect(w.c.status).toBe('rolled_back');
     expect(w.aufrufe).toContain('proxmox.delete_snapshot:i3probe');
     expect(w.aufrufe.some(a => a.startsWith('incident:Rückweg ausgeführt'))).toBe(true);
-    expect(await w.motor.rueckwegNachJa('o', 'chg-1', w.fragen[0]!.p.freigabe)).not.toContain('Rückweg läuft'); // einmal verwendbar
   });
 
   it('beiFehler rueckweg (im Plan freigegeben) läuft ohne Frage; wiederholen und abbrechen im angehaltenen Zustand', async () => {
@@ -197,7 +199,7 @@ describe('I4b Motor wartet auf den Zeitplan', () => {
 });
 
 describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () => {
-  it('Incident an abhängigem Asset binnen 24 h → verknüpft, Frage, kein Rückweg ohne Ja; danach zurückgerollt', async () => {
+  it('Incident an abhängigem Asset binnen 24 h → verknüpft, Meldung (keine Frage), Rückweg nur ausdrücklich; danach zurückgerollt', async () => {
     const w = welt(probe());
     w.deps.abhaengigeIds = async () => ['a-dienst'];
     await w.motor.anstossen(); await warte(w.motor);
@@ -214,12 +216,13 @@ describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () 
     ])).toBe(1);
     const l = w.c.lauf as ChangeLauf;
     expect(l.stoerungen?.map(s => s.incidentId)).toEqual(['i-1']);
-    // Probe-Plan hat einen Rückweg zu Schritt 2 → Frage gestellt, nichts ausgeführt
-    const f = w.fragen.at(-1)!;
-    expect(f.d).toContain('Möglicherweise durch Change verursacht');
+    // Probe-Plan hat einen Rückweg zu Schritt 2 → nur Meldung mit dem Chat-Befehl, keine Frage, nichts ausgeführt
+    expect(w.fragen).toEqual([]);
+    expect(w.meldungen.at(-1)).toContain('Störung möglicherweise durch Change');
+    expect(w.meldungen.at(-1)).toContain('Rückweg ausführen');
     expect(w.c.status).toBe('completed');
     expect(await m.pruefeStoerungen([{ id: 'i-1', title: 'Dienst down', severity: 'critical', status: 'open', affectedAssetIds: ['a-dienst'], createdAt: spaeter }])).toBe(0); // nicht doppelt
-    expect(await m.rueckwegNachJa('o', 'chg-1', f.p.freigabe)).toContain('Rückweg läuft');
+    expect(await m.steuern('o', 'chg-1', 'rueckweg')).toContain('Rückweg läuft');
     await warte(m);
     expect(w.c.status).toBe('rolled_back');
   });

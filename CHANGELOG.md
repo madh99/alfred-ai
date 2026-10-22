@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Laufende Changes sichtbar; Rückweg nur auf ausdrücklichen Wunsch; Kopieren übernimmt den Wurzelordner (v1595)
+
+- **Laufende Changes sichtbar** (Owner 22.10.: „aktuell ist es ein Ratespiel“):
+  - Die Seite „Vorhaben“ zeigt oben „Jetzt aktiv“, alle 10 s aktualisiert. Je laufendem oder angehaltenem Change:
+    - Phase und Laufzeit;
+    - Schritt X von Y mit Titel;
+    - ein Schrittbalken (erledigt, aktuell, gescheitert);
+    - beim Halt der Grund und die drei möglichen Chat-Befehle.
+  - Der Eintrag „Vorhaben“ in der Seitenleiste zeigt die Zahl aktiver Changes.
+  - `/api/vorhaben` liefert dafür den Laufstand je Change mit.
+- **Rückweg nie mehr als Ja/Nein-Frage** (Owner 22.10., „ok zum offenen Vorschlag“):
+  - Heute hat ein Ja auf die Rückweg-Frage dreimal einen fast fertigen Lauf zurückgerollt.
+  - Ein angehaltener Change bleibt jetzt angehalten. Die Meldung nennt die Befehle „Schritt wiederholen“, „abbrechen“ und „Rückweg ausführen“ samt dem, was der Rückweg rückgängig macht.
+  - Nach einer Störung gilt dasselbe. Der Rückweg läuft nur über `change_steuern` mit `wahl rueckweg` und dem Wortlaut des Owners.
+- **Kopieren übernimmt Besitzer und Rechte des Wurzelordners:**
+  - Realfall pgAdmin: Der neue Volume-Ordner war `root 755` statt `5050:0 775`. pgAdmin konnte seine Datenbank beim Upgrade nicht umbenennen und startete nicht.
+  - Abweichungen am Wurzelordner zählen jetzt auch bei den Restunterschieden.
+
 ### Fixed — Fernzugriff-Befehle behalten Leerzeichen in Anführungszeichen (v1594)
 
 - **Realfall 22.10. (pgAdmin-Umzug, Schritt 5):** `normalisiereBefehl` fasste alle Leerzeichen zusammen, auch innerhalb von Anführungszeichen.

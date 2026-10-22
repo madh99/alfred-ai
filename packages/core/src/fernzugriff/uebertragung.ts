@@ -81,6 +81,11 @@ export function nulListe(pfade: string[]): string {
 export const sendeBefehl = (p: string) => `tar -C '${p}' --numeric-owner --no-recursion --null -T - -cf -`;
 export const empfangeBefehl = (p: string) => `mkdir -p '${p}' && tar -C '${p}' --numeric-owner -xpf -`;
 export const loeschBefehl = (p: string) => `cd -- '${p}' && xargs -0 -r rm -rf --`;
+/** Besitzer (numerisch) und Rechte des Wurzelordners wie an der Quelle */
+export const wurzelBefehl = (p: string, e: { uid: string; gid: string; modus: string }) => {
+  if (!/^\d+$/.test(e.uid) || !/^\d+$/.test(e.gid) || !/^[0-7]{3,4}$/.test(e.modus)) throw new Error('unzulässige Besitzer-/Rechteangabe');
+  return `chown ${e.uid}:${e.gid} '${p}' && chmod ${e.modus} '${p}'`;
+};
 export const summenBefehl = (p: string) => `cd -- '${p}' && find . -xdev -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1 && find . -xdev -type f | wc -l`;
 export const volumeBefehl = (v: string, anlegen: boolean) => `${anlegen ? `docker volume inspect ${v} >/dev/null 2>&1 || docker volume create ${v} >/dev/null; ` : ''}docker volume inspect --format '{{ .Mountpoint }}' ${v}`;
 
@@ -117,7 +122,7 @@ export interface Wege<Z> {
 const LISTE_MAX = 256 * 1024 * 1024;
 const root = (b: string) => fernBefehl(b, true);
 
-export interface KopierErgebnis { neu: number; geaendert: number; geloescht: number; uebersprungen: number; bytes: number; sekunden: number; restUnterschiede: number; summe?: { quelle: string; ziel: string; dateien: number; gleich: boolean } }
+export interface KopierErgebnis { wurzelAngeglichen?: boolean; neu: number; geaendert: number; geloescht: number; uebersprungen: number; bytes: number; sekunden: number; restUnterschiede: number; summe?: { quelle: string; ziel: string; dateien: number; gleich: boolean } }
 
 export async function kopiere<Z>(w: Wege<Z>, q: Z, qPfad: string, z: Z, zPfad: string, o: { loeschen: boolean; pruefsumme: boolean; timeoutMs: number; kbps?: number }): Promise<KopierErgebnis> {
   const start = Date.now();
@@ -142,9 +147,22 @@ export async function kopiere<Z>(w: Wege<Z>, q: Z, qPfad: string, z: Z, zPfad: s
     });
     if (s.codeQuelle !== 0 || s.codeZiel !== 0) throw new Error(`Übertragung gescheitert (Quelle Exit ${s.codeQuelle}, Ziel Exit ${s.codeZiel}): ${(s.stderrQuelle + ' ' + s.stderrZiel).trim().slice(-300)}`);
   }
+  // Realfall 22.10. (pgAdmin startete nicht: „Permission denied“ beim Umbenennen seiner DB): Besitzer und Rechte des Wurzelordners
+  // selbst gehören dazu — die Quelle hatte 5050:0 775, das neu angelegte Volume root 755
+  const qw = ql.get('.')!;
+  const zw = (await liste(z, zPfad, 'Ziel')).get('.');
+  let wurzelAngeglichen = false;
+  if (!zw || zw.uid !== qw.uid || zw.gid !== qw.gid || zw.modus !== qw.modus) {
+    const r = await w.lauf(z, root(wurzelBefehl(zPfad, qw)), '', bis());
+    if (r.code !== 0) throw new Error(`Besitzer/Rechte des Zielordners nicht gesetzt: ${r.stderr.trim().slice(-200)}`);
+    wurzelAngeglichen = true;
+  }
   // Nachkontrolle: was jetzt noch abweicht (bei laufendem Dienst normal, nach dem Stoppen muss es 0 sein)
-  const rest = abgleich(await liste(q, qPfad, 'Quelle'), await liste(z, zPfad, 'Ziel'), o.loeschen);
-  const ergebnis: KopierErgebnis = { neu: a.neu, geaendert: a.geaendert, geloescht: a.loeschen.length, uebersprungen: a.uebersprungen, bytes: a.bytes, sekunden: Math.round((Date.now() - start) / 1000), restUnterschiede: rest.uebertragen.length + rest.loeschen.length };
+  const qRest = await liste(q, qPfad, 'Quelle'), zRest = await liste(z, zPfad, 'Ziel');
+  const rest = abgleich(qRest, zRest, o.loeschen);
+  const wq = qRest.get('.'), wz = zRest.get('.');
+  if (wq && wz && (wq.uid !== wz.uid || wq.gid !== wz.gid || wq.modus !== wz.modus)) rest.uebertragen.push('.');
+  const ergebnis: KopierErgebnis = { neu: a.neu, geaendert: a.geaendert, geloescht: a.loeschen.length, uebersprungen: a.uebersprungen, bytes: a.bytes, sekunden: Math.round((Date.now() - start) / 1000), restUnterschiede: rest.uebertragen.length + rest.loeschen.length, ...(wurzelAngeglichen ? { wurzelAngeglichen } : {}) };
   if (o.pruefsumme) {
     const [rq, rz] = await Promise.all([w.lauf(q, root(summenBefehl(qPfad)), '', bis()), w.lauf(z, root(summenBefehl(zPfad)), '', bis())]);
     const sq = leseSumme(rq.stdout), sz = leseSumme(rz.stdout);
