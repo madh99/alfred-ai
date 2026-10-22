@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Ausführungsmotor prüft die Freigabe vor jedem Schritt (v1562)
+
+- Befund aus der Commit-Prüfung: Beim Fortsetzen (Neustart, Owner-Schritt, Wiederholen, Rückweg) wurde nicht erneut geprüft, ob die Owner-Freigabe noch genau den gespeicherten Plan deckt.
+- Der Motor lädt den Change jetzt vor jedem Schritt und jedem Rückweg-Schritt neu und verlangt:
+  - freigegebener Fingerabdruck = aktueller Fingerabdruck = Fingerabdruck beim Start;
+  - unveränderte Schritte.
+- Weicht etwas ab, hält er an und führt nichts aus.
+
 ### Fixed — Planprüfung weist unerfüllbare Prüfungen ab (v1561)
 
 - Realfall 22.10., erster Lauf des Ausführungsmotors (Probe-Change test-ubuntu):

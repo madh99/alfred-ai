@@ -60,6 +60,12 @@ export class ChangeMotor {
   private schlafe(ms: number): Promise<void> { return this.d.schlafe ? this.d.schlafe(ms) : new Promise(r => setTimeout(r, ms)); }
   private log(msg: string, daten: Record<string, unknown>): void { this.d.protokoll?.(msg, daten); }
 
+  /** Freigabe vorhanden, gleich dem aktuellen Fingerabdruck, und die Schritte im Speicher sind dieselben wie beim Start. */
+  private freigabeDeckt(frisch: CmdbChangeRequest, start: CmdbChangeRequest): boolean {
+    if (!frisch.freigabeFingerabdruck || frisch.freigabeFingerabdruck !== frisch.fingerabdruck || frisch.fingerabdruck !== start.fingerabdruck) return false;
+    try { return JSON.stringify(frisch.schritte ?? []) === JSON.stringify(start.schritte ?? []); } catch { return false; }
+  }
+
   /** Anzahl Changes, deren Schritte gerade aktiv laufen (Selbstupdate wartet darauf). */
   aktiv(): number { return this.laufend.size; }
 
@@ -107,6 +113,8 @@ export class ChangeMotor {
         if (s.nr < lauf.schritt || lauf.ergebnisse.some(e => e.nr === s.nr && e.ok)) continue;
         const frisch = await this.d.itsm.hole(o, c0.id);
         if (!frisch || frisch.status === 'cancelled') { await this.beende(o, frisch ?? c0, lauf, 'cancelled', 'vom Owner abgebrochen'); return; }
+        // Sicherheitsbefund 22.10.: vor jedem Schritt (auch nach Neustart/Owner-Ja) — Freigabe deckt genau den gespeicherten Plan
+        if (!this.freigabeDeckt(frisch, c0)) { await this.halte(o, c0, lauf, 'Freigabe deckt den gespeicherten Plan nicht mehr (Fingerabdruck geändert) — nichts ausgeführt'); return; }
         lauf.schritt = s.nr; lauf.phase = 'laeuft';
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         if (s.art === 'owner') { await this.frageOwner(o, c0, lauf, s); return; }
@@ -331,6 +339,8 @@ export class ChangeMotor {
       const rw = rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], lauf.ergebnisse).filter(s => !lauf.rueckweg!.some(r => r.zuSchritt === s.nr && r.ok));
       let allesOk = true;
       for (const s of rw) {
+        const frisch = await this.d.itsm.hole(o, c.id);
+        if (!frisch || !this.freigabeDeckt(frisch, c)) { lauf.rueckweg = [...lauf.rueckweg!, { zuSchritt: s.nr, ok: false, text: 'Freigabe deckt den Plan nicht mehr — Rückweg nicht ausgeführt', zeit: this.iso() }]; allesOk = false; break; }
         const p = loeseAuf(s.rueckweg!.parameter ?? {}, lauf.ergebnisse);
         const r = p.fehler ? { ok: false, fehler: p.fehler } : await this.aktion(s.rueckweg!.skill!, s.rueckweg!.aktion!, p.wert, s.zeitlimitS * 1000).catch(err => ({ ok: false, fehler: (err as Error).message }));
         const eintrag = { zuSchritt: s.nr, ok: r.ok, text: r.ok ? `${s.rueckweg!.skill}.${s.rueckweg!.aktion} ok` : String(r.fehler ?? 'gescheitert').slice(0, 300), zeit: this.iso() };

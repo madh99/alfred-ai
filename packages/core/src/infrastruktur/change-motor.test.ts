@@ -144,3 +144,15 @@ describe('I4 Sicherheitsbefund: Verweise in Befehlen', () => {
     expect(loeseAuf({ vmid: '{{schritt1.ip}}' }, erg).wert).toEqual({ vmid: '10.0.0.5' });
   });
 });
+
+describe('I4 Sicherheitsbefund: Freigabe vor jedem Schritt', () => {
+  it('geänderter Fingerabdruck nach Neustart → anhalten, nichts ausführen', async () => {
+    const w = welt(probe(), { status: 'in_progress' });
+    w.c.lauf = { phase: 'laeuft', schritt: 1, start: new Date().toISOString(), ergebnisse: [] } satisfies ChangeLauf;
+    w.c.fingerabdruck = 'anders';
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).grund).toContain('Fingerabdruck geändert');
+    expect(w.aufrufe.filter(a => a.startsWith('proxmox.'))).toEqual([]);
+  });
+});
