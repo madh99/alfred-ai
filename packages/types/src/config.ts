@@ -1230,6 +1230,8 @@ export interface MikroTikRouterConfig {
   password: string;
   port?: number;
   ssl?: boolean;
+  /** v1618 — SHA-256-Fingerabdruck des Router-Zertifikats (Pinning); gesetzt → jede andere Gegenstelle wird abgelehnt */
+  tls_fingerprint?: string;
   default?: boolean;
 }
 
@@ -1255,4 +1257,5 @@ export interface MikroTikConfig {
   password?: string;
   port?: number;
   ssl?: boolean;
+  tls_fingerprint?: string;
 }

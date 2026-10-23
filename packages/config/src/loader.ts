@@ -296,6 +296,7 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_MIKROTIK_PASSWORD: ['mikrotik', 'password'],
   ALFRED_MIKROTIK_PORT: ['mikrotik', 'port'],
   ALFRED_MIKROTIK_SSL: ['mikrotik', 'ssl'],
+  ALFRED_MIKROTIK_TLS_FINGERPRINT: ['mikrotik', 'tls_fingerprint'],
   ALFRED_MIKROTIK_CONFIRMATION_MODE: ['mikrotik', 'confirmation_mode'],
   ALFRED_MIKROTIK_POLLING_INTERVAL: ['mikrotik', 'polling_interval'],
   ALFRED_MIKROTIK_AUTO_INCIDENT: ['mikrotik', 'auto_incident'],

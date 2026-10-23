@@ -824,6 +824,7 @@ export const AlfredConfigSchema = z.object({
     password: z.string().optional(),
     port: z.coerce.number().optional(),
     ssl: z.coerce.boolean().optional(),
+    tls_fingerprint: z.string().optional(),
     routers: z.array(z.object({
       name: z.string(),
       host: z.string(),
@@ -831,6 +832,7 @@ export const AlfredConfigSchema = z.object({
       password: z.string(),
       port: z.coerce.number().optional(),
       ssl: z.coerce.boolean().optional(),
+      tls_fingerprint: z.string().optional(),
       default: z.coerce.boolean().optional(),
     })).optional(),
   }).optional(),

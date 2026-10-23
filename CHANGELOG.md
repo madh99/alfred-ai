@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — MikroTik: Zertifikat-Pinning; `status` scheitert ehrlich (v1618)
+
+- **Zertifikat-Pinning:** Mit `ALFRED_MIKROTIK_TLS_FINGERPRINT` (SHA-256, auch je Router als `tls_fingerprint`) prüft der Skill vor dem Senden der Zugangsdaten das Zertifikat des Routers. Passt es nicht, wird abgebrochen, ohne dass das Passwort übertragen wird. Anlass: Die REST-API läuft seit 23.10. über HTTPS mit einem selbst signierten Zertifikat. Bisher wurde jedes Zertifikat angenommen, wer sich im LAN als Router ausgab, hätte das Passwort erhalten.
+- **`status`:** meldete „Erfolg“, auch wenn kein Router erreichbar war, wie Commvault vor v1612. Jetzt scheitert der Aufruf in diesem Fall mit „MikroTik nicht erreichbar — …“. Fehlermeldungen werden nicht mehr auf 80 Zeichen gekürzt.
+
 ### Fixed — MikroTik: Schreiben nur im freigegebenen Change (v1617)
 
 - **Anlass (23.10.):** Nach dem Router-Vorfall soll Alfred den MikroTik konfigurieren können, so wie pfSense und UniFi. Der Skill hatte aber keine Change-Sperre. Sein „Bestätigungsmodus“ meldete nur Erfolg, und mit `configure` ließ er sich abschalten.
