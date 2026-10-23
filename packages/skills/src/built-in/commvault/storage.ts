@@ -35,6 +35,9 @@ export class CommvaultStorage {
       this.api.get<any>('/V4/Storage/Local'),
       this.api.get<any>('/V4/Storage/HyperScale'),
     ]);
+    // v1612 — scheitern alle vier Abfragen, ist Commvault nicht erreichbar (vorher: „0 Pools gefunden“ als Erfolg)
+    const abgelehnt = [disk, cloud, local, hyperscale].filter((x): x is PromiseRejectedResult => x.status === 'rejected');
+    if (abgelehnt.length === 4) throw abgelehnt[0]!.reason instanceof Error ? abgelehnt[0]!.reason : new Error(String(abgelehnt[0]!.reason));
 
     const diskPools = (settled(disk)?.diskStorage ?? []).map((p: any) => ({ ...p, _type: 'Disk' }));
     const cloudPools = (settled(cloud)?.cloudStorage ?? []).map((p: any) => ({ ...p, _type: 'Cloud' }));

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Commvault meldet „nicht erreichbar“ statt „alles ok“ (v1612)
+
+- **Realfall 23.10. (Owner: „Commvault meldet alles ok, obwohl der Server bewusst abgeschaltet ist“):** `status` lieferte „Erfolg, 0 Jobs, 0 Alerts, 0 Pools“. Das Lagebild für Alfreds Reasoning meldete sogar **„Alle Backups OK“**. Fehlgeschlagene Abfragen wurden still zu leeren Listen.
+- **Jetzt:**
+  - `status` meldet `Commvault nicht erreichbar — …`, wenn Jobs, Alerts und Storage alle scheitern. Teilweise lesbare Ergebnisse werden als unvollständig gekennzeichnet.
+  - Das Lagebild sagt „Commvault nicht erreichbar … Backup-Stand unbekannt“, wenn die Jobliste nicht lesbar ist.
+  - Die Pool-Liste wirft, wenn keine der vier Pool-Arten lesbar ist.
+
 ### Changed — Images bei Migrationen per Registry-Digest (v1611)
 
 - **Realfall 23.10. (Change b85e56af, Schritt 4):** Das MySQL-Image wurde per `docker save` übertragen, war am Ziel aber nicht auffindbar. Docker 29 mit containerd-Image-Speicher (docker-dev-01) vergibt andere Image-IDs als Docker 27 (dockerhost), und das Archiv trug keinen Namen.

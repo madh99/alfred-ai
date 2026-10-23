@@ -382,6 +382,13 @@ export class CommvaultSkill extends Skill implements CommvaultApiClient {
       this.storage.list(),
     ]);
 
+    // v1612 — Owner 23.10.: „Commvault meldet alles ok, obwohl der Server (bewusst) abgeschaltet ist“ — gescheiterte Abfragen wurden zu
+    // „0 Jobs, 0 Alerts“. Scheitern alle, ist Commvault nicht erreichbar; scheitern einzelne, ist das Ergebnis unvollständig.
+    const teile = [['Jobs', jobsResult], ['Alerts', alertsResult], ['Storage', storageResult]] as const;
+    const fehler = teile.filter(([, x]) => x.status === 'rejected' || x.value?.success === false)
+      .map(([n, x]) => `${n}: ${x.status === 'rejected' ? (x.reason instanceof Error ? x.reason.message : String(x.reason)) : (x.value.error ?? 'fehlgeschlagen')}`.slice(0, 200));
+    if (fehler.length === teile.length) return { success: false, error: `Commvault nicht erreichbar — ${fehler.join('; ')}` };
+
     // Extract data from module results
     const jobsData = jobsResult.status === 'fulfilled' ? jobsResult.value.data : null;
     const alertsData = alertsResult.status === 'fulfilled' ? alertsResult.value.data : null;
@@ -419,9 +426,11 @@ export class CommvaultSkill extends Skill implements CommvaultApiClient {
         alerts: criticalAlerts,
         totalAlerts,
         storagePools,
+        ...(fehler.length ? { unvollstaendig: fehler } : {}),
       },
       display: [
         '## Commvault Status',
+        ...(fehler.length ? ['', `⚠️ Unvollständig — nicht lesbar: ${fehler.join('; ')}`] : []),
         '',
         `**Jobs (24h):** ${completed.length} erfolgreich, ${running.length} laufend, ${failed.length} fehlgeschlagen`,
         `**Alerts:** ${criticalAlerts} kritisch, ${totalAlerts} gesamt (${unreadAlerts} ungelesen)`,
@@ -700,12 +709,15 @@ export class CommvaultSkill extends Skill implements CommvaultApiClient {
   /** Build compact context for reasoning engine. */
   async buildReasoningContext(): Promise<string> {
     try {
+      // v1612 — vorher wurden Fehler zu leeren Listen und das Lagebild meldete „Alle Backups OK“, obwohl Commvault aus war
+      let jobsFehler: string | undefined;
       const [jobsData, storageData] = await Promise.all([
-        this.api<any>('GET', '/Job?completedJobLookupTime=86400&jobFilter=Backup').catch(() => ({ jobs: [] })),
+        this.api<any>('GET', '/Job?completedJobLookupTime=86400&jobFilter=Backup').catch((e: unknown) => { jobsFehler = e instanceof Error ? e.message : String(e); return { jobs: [] }; }),
         this.api<any>('GET', '/V4/Storage/Disk').catch(() =>
           this.api<any>('GET', '/StoragePool').catch(() => ({}))
         ),
       ]);
+      if (jobsFehler) return `(Commvault nicht erreichbar: ${jobsFehler.slice(0, 120)} — Backup-Stand unbekannt)`;
 
       const jobs = jobsData.jobs ?? jobsData.jobList ?? [];
       const failed = jobs.filter((j: any) => (j.jobSummary?.status ?? j.status) === 'Failed');
