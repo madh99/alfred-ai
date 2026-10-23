@@ -64,14 +64,17 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 
 /** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
-const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
+const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
 /** I5 — Vorlagen-Fabrik */
 const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
 const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm']);
-const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
+/** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
+const AGENT_WARTEN_MS = 180_000;
+const AGENT_ABSTAND_MS = 10_000;
+const VM_ZIEL_AKTIONEN = new Set(['agent_status', 'backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
   // read
@@ -104,6 +107,7 @@ type Action =
   | 'clone_vm'
   | 'list_networks'
   | 'wait_ready'
+  | 'agent_status'
   | 'api_raw'
   | typeof FABRIK_AKTIONEN[number];
 
@@ -187,6 +191,7 @@ export class ProxmoxSkill extends Skill {
             'clone_vm',
             'list_networks',
             'wait_ready',
+            'agent_status',
             ...FABRIK_AKTIONEN,
           ],
           description: 'The Proxmox action to perform',
@@ -455,6 +460,8 @@ export class ProxmoxSkill extends Skill {
           return await this.listNetworksAction(input);
         case 'wait_ready':
           return await this.waitReady(input);
+        case 'agent_status':
+          return await this.agentStatus(input.vmid as number | undefined, input.node as string | undefined);
 
         // ── I5 VORLAGEN-FABRIK ────────────────────────────────
         case 'list_cloud_images':
@@ -741,6 +748,24 @@ export class ProxmoxSkill extends Skill {
     }
 
     return { success: true, data: entries, display: lines.join('\n') };
+  }
+
+  /**
+   * v1626 — Realfall 24.10.: docker-dev-01 lief ohne Gast-Agent (Installation beim ersten Start ohne Netz gescheitert), niemand merkte es.
+   * Antwortet der Agent? Dann mit den IPv4-Adressen der Gast-Schnittstellen (ohne Loopback) — sonst Fehlschlag, damit eine Prüfung anhält.
+   */
+  private async agentStatus(vmid?: number, node?: string): Promise<SkillResult> {
+    if (vmid == null) return { success: false, error: 'Missing required "vmid" parameter' };
+    const resolved = await this.resolveVm(vmid, node);
+    if (resolved.type !== 'qemu') return { success: false, error: `VM ${vmid} ist ein Container (${resolved.type}) — Gast-Agent gibt es nur bei qemu-VMs` };
+    let netz: { result?: Array<{ name?: string; 'ip-addresses'?: Array<{ 'ip-address'?: string; 'ip-address-type'?: string }> }> };
+    try {
+      netz = await this.get(`/nodes/${resolved.node}/qemu/${vmid}/agent/network-get-interfaces`);
+    } catch (err) {
+      return { success: false, error: `Gast-Agent auf VM ${vmid} (${resolved.node}) antwortet nicht: ${(err as Error).message.slice(0, 200)} — qemu-guest-agent im Gast installieren und starten, in Proxmox agent=1` };
+    }
+    const ipv4 = (netz.result ?? []).filter(i => i.name !== 'lo').flatMap(i => (i['ip-addresses'] ?? []).filter(a => a['ip-address-type'] === 'ipv4' && a['ip-address'] && !a['ip-address'].startsWith('127.')).map(a => ({ schnittstelle: i.name ?? '?', ip: a['ip-address']! })));
+    return { success: true, data: { vmid, node: resolved.node, agent: true, ipv4 }, display: `Gast-Agent auf VM ${vmid} (${resolved.node}) antwortet — IPv4: ${ipv4.length ? ipv4.map(a => `${a.ip} (${a.schnittstelle})`).join(', ') : 'keine'}` };
   }
 
   private async vmStatus(
@@ -1581,6 +1606,8 @@ export class ProxmoxSkill extends Skill {
       if (da.status !== 'running') await this.aufgabeOderFehler(await this.post<string>(`/nodes/${da.node}/qemu/${da.vmid}/status/start`, {}), 120_000, 'Starten');
       const a = await this.fabrik.fortsetzen({ name, ip: ip.replace(/\/\d+$/, ''), node: da.node, vmid: da.vmid, zeitlimitMs: 600_000 });
       if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
+      const ga = await this.warteAufAgent(da.vmid, da.node, AGENT_WARTEN_MS);
+      if (!ga.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}\n${ga.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
       await this.post(`/nodes/${da.node}/qemu/${da.vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
       const sp = await this.get<{ path?: string }>('/storage/local').catch(() => ({} as { path?: string }));
       await this.fabrik.snippetEntfernen(da.node, `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(da.vmid)}`).catch(() => undefined);
@@ -1624,6 +1651,10 @@ export class ProxmoxSkill extends Skill {
       const a = await this.fabrik.anmelden({ name, ip: ip.replace(/\/\d+$/, ''), node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 600_000 });
       schritte.push(a.meldung);
       if (!a.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip } };
+      // v1626 — Pflichtprüfung: ohne antwortenden Gast-Agent ist die Bereitstellung nicht fertig (Realfall docker-dev-01, 24.10.)
+      const ga = await this.warteAufAgent(vmid, node, AGENT_WARTEN_MS);
+      schritte.push(ga.meldung);
+      if (!ga.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip } };
       // Cloud-Init ist in der VM abgeschaltet; Laufwerk und Snippet (mit dem privaten Host-Schlüssel) weg — das Laufwerk beim nächsten Kaltstart
       await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
       schritte.push('Cloud-Init-Laufwerk zum Entfernen vorgemerkt');
@@ -1635,6 +1666,20 @@ export class ProxmoxSkill extends Skill {
     }
     schritte.push('Snippet am Knoten entfernt');
     return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich }, display: schritte.map(s => `- ${s}`).join('\n') };
+  }
+
+  /** v1626 — bis der Gast-Agent antwortet (höchstens `ms`); die Meldung nennt bei Misserfolg die Ursache aus Realfall docker-dev-01 */
+  private async warteAufAgent(vmid: number, node: string, ms: number): Promise<{ ok: boolean; meldung: string }> {
+    const ende = Date.now() + ms;
+    let letzte = '';
+    for (;;) {
+      const r = await this.agentStatus(vmid, node).catch((e: Error) => ({ success: false, error: e.message } as SkillResult));
+      if (r.success) return { ok: true, meldung: r.display ?? 'Gast-Agent antwortet' };
+      letzte = r.error ?? '';
+      if (Date.now() >= ende) break;
+      await new Promise(res => setTimeout(res, AGENT_ABSTAND_MS));
+    }
+    return { ok: false, meldung: `Gast-Agent antwortet nach ${Math.round(ms / 1000)} s nicht (${letzte.slice(0, 160)}). Häufigste Ursache: qemu-guest-agent konnte beim ersten Start nicht installiert werden (kein Internet im Netz der VM) — VM und Fernzugang bestehen, Agent per Change nachinstallieren.` };
   }
 
   /** VM oder Vorlage entfernen — nur mit passendem Namen, nie geschützte; laufende nur mit force_stop. Danach Fernzugang/CMDB abmelden. */

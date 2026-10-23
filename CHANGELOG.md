@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gast-Agent: Abfrage und Pflichtprüfung bei der Bereitstellung (v1626)
+
+- **Befund (docker-dev-01):** `qemu-guest-agent` konnte beim ersten Start nicht installiert werden, weil das VLAN noch kein Internet hatte. Cloud-Init schaltet sich danach absichtlich ab, einen zweiten Versuch gab es also nicht. Die Bereitstellung meldete trotzdem Erfolg. Ohne Agent kennt Proxmox auch die IP der VM nicht.
+- **Neu `proxmox.agent_status`** (lesend): Antwortet der Gast-Agent? Wenn ja, mit den IPv4-Adressen des Gasts ohne Loopback, sonst Fehlschlag mit Ursache. Damit taugt die Abfrage als Change-Prüfung.
+- **`provision_vm`** (auch beim Fortsetzen) wartet bis zu 180 s auf den Agenten und scheitert, wenn er nicht antwortet. Der Change hält dann an, statt still durchzulaufen.
+
 ### Fixed — Docker-Lesebefehle: Image-Identität und verständliche Käfig-Meldung (v1625)
 
 - `docker image inspect --format` mit `Id`, `RepoTags`, `RepoDigests`, `Created`, `Size`, `Architecture` und `Os` steht jetzt auf der Leseliste. Für Umzüge per RepoDigest sind das die nötigen Angaben. Config-Felder des Images bleiben bestätigungspflichtig, weil `Env` Zugangsdaten tragen kann.

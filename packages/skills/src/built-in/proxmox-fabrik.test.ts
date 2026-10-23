@@ -169,3 +169,29 @@ describe('restore_backup / isolate_vm (v1614, Rettungskopie)', () => {
     expect(w.cfg).toMatchObject({ net0: 'virtio=AA:00:00:00:00:01,bridge=vmbr1,link_down=1', net1: 'virtio=AA:00:00:00:00:02,bridge=vmbr0,tag=20,link_down=1', onboot: 0, name: 'bgp-mt-1-rettung' });
   });
 });
+
+describe('agent_status (v1626, Realfall docker-dev-01 ohne Gast-Agent)', () => {
+  function welt(agent: boolean) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    a.getAllVms = async () => [{ vmid: 144, name: 'docker-dev-01', node: 'pve3', type: 'qemu' }, { vmid: 200, name: 'ct', node: 'pve3', type: 'lxc' }];
+    a.get = async (p: string) => {
+      if (p.endsWith('/agent/network-get-interfaces')) {
+        if (!agent) throw new Error('HTTP 500 QEMU guest agent is not running');
+        return { result: [{ name: 'lo', 'ip-addresses': [{ 'ip-address': '127.0.0.1', 'ip-address-type': 'ipv4' }] }, { name: 'eth0', 'ip-addresses': [{ 'ip-address': '10.203.24.2', 'ip-address-type': 'ipv4' }, { 'ip-address': 'fe80::1', 'ip-address-type': 'ipv6' }] }] };
+      }
+      return {};
+    };
+    return px;
+  }
+  it('antwortet → IPv4 ohne Loopback; antwortet nicht → Fehlschlag mit Hinweis; Container → Fehlschlag', async () => {
+    const ok = await welt(true).execute({ action: 'agent_status', vm: 'docker-dev-01' }, {} as never);
+    expect(ok.success, ok.error).toBe(true);
+    expect(ok.display).toContain('antwortet — IPv4: 10.203.24.2 (eth0)');
+    expect(ok.display).not.toContain('127.0.0.1');
+    const nein = await welt(false).execute({ action: 'agent_status', vmid: 144 }, {} as never);
+    expect(nein.success).toBe(false);
+    expect(nein.error).toContain('antwortet nicht');
+    expect((await welt(true).execute({ action: 'agent_status', vmid: 200 }, {} as never)).error).toContain('Container');
+  });
+});
