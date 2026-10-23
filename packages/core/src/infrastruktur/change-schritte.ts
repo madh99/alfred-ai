@@ -13,6 +13,7 @@
  */
 import { createHash } from 'node:crypto';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
+import { pruefePfad } from '../fernzugriff/uebertragung.js';
 import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
 
 export type AktionsArt = 'lesen' | 'sicherung' | 'aendern' | 'loeschen';
@@ -218,6 +219,13 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
       schritt.einordnung = einordnung;
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && befehlsklasse(String(schritt.parameter.befehl ?? '')) === 'nie') f.push(`${wo}: Befehl steht auf der Nie-Liste des Fernzugriffs`);
+      // v1610 — Realfall 23.10. (dea4b9cd, Schritt 5): quelle_pfad /root/… wurde erst im Lauf abgewiesen — dieselbe Pfadregel schon beim Planen
+      if (schritt.skill === 'fernzugriff' && schritt.aktion === 'kopieren') {
+        for (const [feld, art] of [['quelle_pfad', 'quelle'], ['ziel_pfad', 'ziel']] as const) {
+          const w = schritt.parameter[feld];
+          if (w !== undefined) { const fehler = pruefePfad(w, art); if (fehler) f.push(`${wo}: ${fehler} (für Hilfsdateien z. B. /srv/<vorhaben>-export verwenden)`); }
+        }
+      }
       if (einordnung === 'loeschen' && plan.zweck !== 'stilllegung') f.push(`${wo}: ${schritt.skill}.${schritt.aktion} entfernt Bestehendes endgültig — nur in einem eigenen Change mit zweck stilllegung`);
       if (einordnung === 'sicherung' && ersteSicherung === undefined) ersteSicherung = nr;
       if ((einordnung === 'aendern' || einordnung === 'loeschen') && ersteAenderung === undefined) ersteAenderung = nr;

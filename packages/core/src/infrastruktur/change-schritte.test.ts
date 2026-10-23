@@ -252,6 +252,17 @@ describe('I6 Migration im Plan', () => {
   });
 });
 
+describe('v1610 Kopierpfade schon beim Planen prüfen (Realfall dea4b9cd)', () => {
+  it('quelle_pfad unter /root und ziel_pfad außerhalb der Zielbereiche werden abgewiesen, /srv geht', () => {
+    const plan = (quelle: string, ziel: string) => ({ titel: 'Image übertragen', begruendung: 'Probe', typ: 'normal', risiko: 'niedrig', betroffen: ['dockerhost'], ohneSicherungGrund: 'Quelle bleibt',
+      schritte: [{ titel: 'Archiv kopieren', art: 'aktion', skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'dockerhost', quelle_pfad: quelle, ziel: 'web1', ziel_pfad: ziel }, rueckweg: { keiner: 'Quelle bleibt' } }] });
+    const f1 = pruefeChangePlan(plan('/root/wp-lk-dev-images', '/srv/wp-lk-dev-images'), ctx()).fehler;
+    expect(f1.some(x => x.includes('quelle_pfad /root/wp-lk-dev-images: Systembereich'))).toBe(true);
+    expect(pruefeChangePlan(plan('/srv/wp-export', '/etc/x'), ctx()).fehler.some(x => x.includes('ziel_pfad /etc/x'))).toBe(true);
+    expect(pruefeChangePlan(plan('/srv/wp-export', '/srv/wp-lk-dev-images'), ctx()).fehler.filter(x => x.includes('_pfad'))).toEqual([]);
+  });
+});
+
 describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
   it('docker --format mit range/println/end ist kein Platzhalter; kopieren ohne eigene Prüfung zulässig', () => {
     const plan = {

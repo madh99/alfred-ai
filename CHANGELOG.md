@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Kopierpfade schon beim Planen prüfen (v1610)
+
+- **Realfall 23.10. (Change dea4b9cd, Schritt 5):** `fernzugriff kopieren` mit `quelle_pfad /root/…` wurde erst im Lauf als „Systembereich“ abgewiesen, nachdem schon vier Schritte gewirkt hatten. `/root` ist als Kopierquelle bewusst gesperrt, weil dort Schlüssel und Zugangsdaten liegen.
+- **Jetzt:** Die Planprüfung wendet auf `quelle_pfad` und `ziel_pfad` dieselbe Pfadregel an wie die Ausführung. Der Plan wird gar nicht erst gespeichert und nennt einen Ausweg (Hilfsdateien z. B. unter `/srv/<vorhaben>-export`).
+
 ### Fixed — Mehrzeilige Change-Befehle kommen wörtlich an (v1609)
 
 - **Realfall 23.10. (Change dea4b9cd, WordPress-Dev, Schritt 2):** Ein freigegebenes mehrzeiliges Skript mit eingebettetem Python endete sofort mit `sh: Syntax error: "(" unexpected`. Die Aufbereitung fasste außerhalb von Anführungszeichen jeden Leerraum zusammen, also auch Zeilenumbrüche und Einrückung. Ausgeführt wurde dabei nichts.
