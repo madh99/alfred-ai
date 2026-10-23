@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Soll/Ist erkennt umbenannte Compose-Projekte am Ziel (v1624)
+
+- Die Einheit „pgadmin4“ (altes Compose-Projekt) läuft auf docker-dev-01 als Projekt „pgadmin“ und galt deshalb als „nirgends laufend gefunden“.
+- Läuft eine Einheit am Ziel nicht unter ihrem Namen, gilt sie jetzt als umgezogen, wenn am Ziel ein Container läuft, dessen Image-Name gleich dem Einheitsnamen ist und dessen Image an der Quelle unter dieser Einheit lief. Allgemeine Images (z. B. `postgres`) einer anderen Einheit zählen nicht.
+
 ### Fixed — Soll/Ist findet den Ziel-Host auch ohne IP am VM-Asset (v1623)
 
 - **Befund:** Der Soll/Ist-Abgleich ordnete den Fernzugang einer neuen VM nur über die IP ihres Proxmox-Assets zu. docker-dev-01 hat dort keine IP, weil kein Gast-Agent-Eintrag vorhanden ist. Darum galten WordPress-Dev, Open WebUI und pgAdmin als „nirgends laufend“, obwohl sie dort laufen.

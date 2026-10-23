@@ -25,6 +25,17 @@ export interface SollIstErgebnis { gruppen: SollIstGruppe[]; erfuellt: number; g
 
 const GB = 1024 ** 3;
 const hatEinheit = (h: HostBestand | undefined, einheit: string) => !!h?.container.some(c => (c.composeProjekt === einheit || c.name === einheit) && c.zustand === 'running');
+/** Image-Name ohne Registry, Tag und Digest („dpage/pgadmin4:latest“ → „pgadmin4“) */
+const imageName = (image: string) => image.split('@')[0]!.split('/').pop()!.split(':')[0]!.toLowerCase();
+/**
+ * v1623 — Realfall 23.10.: die Einheit heißt nach dem alten Compose-Projekt („pgadmin4“), am Ziel heißt das Projekt „pgadmin“.
+ * Nur wenn die Einheit am Ziel nicht unter ihrem Namen läuft: ein laufender Container am Ziel mit genau diesem Image-Namen,
+ * dessen Image an der Quelle unter dem Einheitsnamen lief.
+ */
+const amZielUmbenannt = (ziel: HostBestand | undefined, quellen: HostBestand[], einheit: string) => {
+  const altImages = new Set(quellen.flatMap(h => h.container).filter(c => c.composeProjekt === einheit || c.name === einheit).map(c => imageName(c.image)));
+  return !!ziel?.container.some(c => c.zustand === 'running' && imageName(c.image) === einheit.toLowerCase() && altImages.has(imageName(c.image)));
+};
 
 export function sollIst(e: SollIstEingabe): SollIstErgebnis {
   const gruppen: SollIstGruppe[] = [];
@@ -50,7 +61,7 @@ export function sollIst(e: SollIstEingabe): SollIstErgebnis {
       const zielIp = vm?.ip ?? zielHost?.host;
       const neu = zielHost ? hostNachZugang.get(zielHost.name) : undefined;
       for (const einheit of g.einheiten.filter(x => !e.quellHosts.includes(x))) {
-        const dort = hatEinheit(neu, einheit);
+        const dort = hatEinheit(neu, einheit) || amZielUmbenannt(neu, quellen, einheit);
         const nochAlt = quellen.find(h => hatEinheit(h, einheit));
         punkte.push({ ok: dort && !nochAlt, text: dort ? `${einheit} läuft auf ${g.vmName}${nochAlt ? ` — läuft zusätzlich noch auf ${nochAlt.zugang}` : ''}` : `${einheit} ${nochAlt ? `noch auf ${nochAlt.zugang}` : 'nirgends laufend gefunden'}${vm && !zielHost ? ` (kein Fernzugang für ${g.vmName})` : ''}` });
         // Proxy-Einträge, die über die Ports dieser Einheit noch auf einen Quell-Host zeigen

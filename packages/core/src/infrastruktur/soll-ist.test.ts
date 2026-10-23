@@ -52,6 +52,20 @@ describe('I4b Soll/Ist', () => {
     expect(sollIstText('x', r)).toContain('✓ wp-dev läuft auf docker-dev-01');
     expect(sollIstText('x', r)).toContain('✓ Proxy wp.dev.at → docker-dev-01');
   });
+  it('v1623 Realfall pgAdmin: Einheit „pgadmin4“ läuft am Ziel als Projekt „pgadmin“ mit demselben Image → erkannt; fremdes Image nicht', () => {
+    const a: Architektur = { ...arch, gruppen: [{ ...arch.gruppen[0]!, einheiten: ['pgadmin4', 'postgreDEV'] }] };
+    const alt: HostBestand = { ...host('dockerhost', '192.168.1.211', []), container: [
+      { name: 'pgadmin4-pgadmin-1', image: 'dpage/pgadmin4:latest', zustand: 'exited', status: 'Exited', ports: '', netze: [], mounts: [], composeProjekt: 'pgadmin4' },
+      { name: 'postgreDEV', image: 'postgres:15', zustand: 'running', status: 'Up', ports: '', netze: [], mounts: [], composeProjekt: 'postgreDEV' }] };
+    const neu: HostBestand = { ...host('docker-dev-01', '10.203.24.2', []), container: [
+      { name: 'pgadmin-pilot', image: 'dpage/pgadmin4:latest@sha256:abc', zustand: 'running', status: 'Up', ports: '', netze: [], mounts: [], composeProjekt: 'pgadmin' },
+      { name: 'andere-db', image: 'postgres:15', zustand: 'running', status: 'Up', ports: '', netze: [], mounts: [], composeProjekt: 'andere' }] };
+    const r = sollIst({ architektur: a, quellHosts: ['dockerhost'], vms: [{ assetId: 'v1', name: 'docker-dev-01', node: 'pve3', status: 'active', cpus: 4, ramBytes: 8 * GiB }],
+      zugaenge: [{ name: 'dockerhost', host: '192.168.1.211' }, { name: 'docker-dev-01', host: '10.203.24.2' }], netze: [{ quelle: 'unifi', name: 'Docker-Dev', vlan: 824 }], proxy: [], hosts: [alt, neu] });
+    const t = sollIstText('x', r);
+    expect(t).toContain('✓ pgadmin4 läuft auf docker-dev-01');
+    expect(t).toContain('· postgreDEV noch auf dockerhost');
+  });
   it('geplante Assets je neuer VM', () => {
     expect(geplanteAssets('v-1', arch)).toEqual([{ name: 'docker-dev-01', assetType: 'vm', sourceId: 'vorhaben:v-1:docker-dev-01', attributes: expect.objectContaining({ knoten: 'pve3', vcpu: 4, ramGb: 8, netz: 'Docker-Dev' }) }]);
   });
