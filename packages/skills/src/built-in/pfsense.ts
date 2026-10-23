@@ -3,7 +3,7 @@ import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@a
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
+type Action = 'create_static_route' | 'delete_static_route' | 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -18,8 +18,9 @@ export class PfSenseSkill extends Skill {
       'pfSense Firewall-Verwaltung über REST API. ' +
       '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter, interne ID wie opt1 oder Beschreibung wie MAIN_LAN). ' +
       '"list_routes" zeigt Standard-Gateway, statische Routen und die Adressen der Interfaces (lesend). ' +
+      'Nur als Change-Schritt: "create_rule" (interface z. B. MAIN_LAN oder opt1, protocol, source, destination, destination_port, description = eindeutiger Name) ↔ "delete_rule" (description); "create_static_route" (network CIDR, gateway = Gateway-Name z. B. MAIN_LAN_DHCP, description) ↔ "delete_static_route" (network). ' +
       '"create_rule" erstellt eine neue Regel (interface, protocol, source, destination, destination_port, description). ' +
-      '"delete_rule" löscht eine Regel (rule_id). ' +
+      '"delete_rule" löscht eine Regel (description, nur im Change). ' +
       '"list_interfaces" zeigt verfügbare Netzwerk-Interfaces mit IP/Subnet. ' +
       '"list_vlans" zeigt konfigurierte VLANs mit Tag und Parent-Interface. ' +
       '"list_gateways" zeigt Gateways mit Interface und IP. ' +
@@ -32,7 +33,7 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        action: { type: 'string', enum: ['create_static_route', 'delete_static_route', 'api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
         parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
         vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
         subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
@@ -40,6 +41,8 @@ export class PfSenseSkill extends Skill {
         dhcp_start: { type: 'string' }, dhcp_stop: { type: 'string' },
         interface: { type: 'string', description: 'Interface-Name (z.B. lan, wan, opt1) für list_rules Filter oder create_rule' },
         path: { type: 'string', description: 'api_schema: REST-Pfad der pfSense-API v2, z. B. /firewall/rule oder /routing/static_route' },
+        network: { type: 'string', description: 'create_/delete_static_route: Zielnetz in CIDR, z. B. 10.203.24.0/28' },
+        gateway: { type: 'string', description: 'create_static_route: Gateway-Name aus list_gateways, z. B. MAIN_LAN_DHCP' },
         protocol: { type: 'string', description: 'Protokoll: tcp, udp, icmp, any (default: tcp)' },
         source: { type: 'string', description: 'Quell-IP/Netzwerk (z.B. 172.17.0.10, 192.168.1.0/24, any)' },
         destination: { type: 'string', description: 'Ziel-IP/Netzwerk' },
@@ -64,10 +67,14 @@ export class PfSenseSkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
+    // v1608 — schreibende Aktionen nur als Schritt eines freigegebenen Changes (Freigabe, Rückweg, Protokoll), wie bei Proxmox/UniFi
+    if (PfSenseSkill.NUR_IM_CHANGE.has(action) && _context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen` };
     switch (action) {
       case 'list_rules': return this.listRules(input.interface as string | undefined);
       case 'list_routes': return this.listRoutes();
       case 'api_schema': return await this.apiSchema(String(input.path ?? ''));
+      case 'create_static_route': return await this.routeAnlegen(input);
+      case 'delete_static_route': return await this.routeLoeschen(input);
       case 'create_rule': return this.createRule(input);
       case 'delete_rule': return this.deleteRule(input);
       case 'list_interfaces': return this.listInterfaces();
@@ -199,52 +206,90 @@ export class PfSenseSkill extends Skill {
     return { success: true, data: rules, display };
   }
 
+  static readonly NUR_IM_CHANGE = new Set<string>(['create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp']);
+
+  /** Interface-Angabe (opt1, MAIN_LAN, lan) → interne ID */
+  private async interfaceId(angabe: string): Promise<string | undefined> {
+    const w = angabe.trim().toLowerCase();
+    if (!w) return undefined;
+    const l = await this.interfaces();
+    const t = l.find(i => String(i.id ?? '').toLowerCase() === w || String(i.descr ?? '').toLowerCase() === w || String(i.if ?? '').toLowerCase() === w);
+    return t?.id ? String(t.id) : (['lan', 'wan'].includes(w) ? w : undefined);
+  }
+
+  private async regeln(): Promise<Array<Record<string, unknown>>> { return this.fetchDualEndpoint('/firewall/rules', '/firewall/rule'); }
+
+  /**
+   * v1608 (Realfall 23.10., pgAdmin → 10.0.0.14) — REST-API v2: interface als Liste, Quelle/Ziel/Port als Text, danach /firewall/apply.
+   * Die Beschreibung ist der Schlüssel (IDs verschieben sich beim Löschen): wiederholbar, Rückweg delete_rule mit derselben Beschreibung.
+   */
   private async createRule(input: Record<string, unknown>): Promise<SkillResult> {
-    const iface = (input.interface as string) ?? 'lan';
-    const protocol = (input.protocol as string) ?? 'tcp';
-    const source = input.source as string;
-    const destination = input.destination as string;
-    const destPort = input.destination_port as string;
-    const description = (input.description as string) ?? '';
-    const ruleType = (input.type as string) ?? 'pass';
-
-    if (!destination || !destPort) {
-      return { success: false, error: 'destination und destination_port erforderlich' };
+    const descr = String(input.description ?? '').trim();
+    const ziel = String(input.destination ?? '').trim();
+    const port = input.destination_port !== undefined ? String(input.destination_port).trim() : '';
+    const quelle = String(input.source ?? 'any').trim() || 'any';
+    const protokoll = String(input.protocol ?? 'tcp').toLowerCase();
+    const typ = String(input.type ?? 'pass').toLowerCase();
+    if (!/^[\w .:/>-]{4,80}$/.test(descr)) return { success: false, error: 'create_rule: description als eindeutiger Name (4–80 Zeichen) — der Rückweg findet die Regel darüber' };
+    if (!ziel) return { success: false, error: 'create_rule: destination fehlt' };
+    if (!['pass', 'block', 'reject'].includes(typ)) return { success: false, error: 'type: pass, block oder reject' };
+    if (!['tcp', 'udp', 'tcp/udp', 'icmp'].includes(protokoll)) return { success: false, error: 'protocol: tcp, udp, tcp/udp oder icmp' };
+    if (port && !/^\d{1,5}(:\d{1,5})?$/.test(port)) return { success: false, error: 'destination_port: Port oder Bereich a:b' };
+    const ifId = await this.interfaceId(String(input.interface ?? ''));
+    if (!ifId) return { success: false, error: `Interface „${String(input.interface ?? '')}“ unbekannt (interne ID wie opt1 oder Beschreibung wie MAIN_LAN)` };
+    const vorher = (await this.regeln()).filter(x => String(x.descr ?? '') === descr);
+    if (vorher.length > 1) return { success: false, error: `Mehrere Regeln heißen „${descr}“ — nicht eindeutig` };
+    const soll = { type: typ, interface: [ifId], ipprotocol: 'inet', protocol: protokoll, source: quelle, destination: ziel, ...(port ? { destination_port: port } : {}), descr };
+    const gleich = (x: Record<string, unknown>) => regelSeite(x.source) === quelle && regelSeite(x.destination) === ziel && String(x.destination_port ?? '') === port && String(x.protocol ?? '') === protokoll && regelPasstZuInterface(x, ifId, []) && !x.disabled;
+    if (vorher[0]) {
+      if (gleich(vorher[0])) return { success: true, data: { descr, vorhanden: true }, display: `Regel „${descr}“ ist bereits genau so vorhanden` };
+      return { success: false, error: `Regel „${descr}“ gibt es schon mit anderen Werten — erst delete_rule` };
     }
-
-    const body: Record<string, unknown> = {
-      interface: iface,
-      type: ruleType,
-      ipprotocol: 'inet',
-      protocol,
-      source: source ? { address: source } : { network: 'any' },
-      destination: { address: destination, port: destPort },
-      descr: description || `Alfred: ${source ?? 'any'} → ${destination}:${destPort}`,
-      apply: true,
-    };
-
-    if (input.source_port) {
-      (body.source as Record<string, unknown>).port = input.source_port;
-    }
-
-    const result = await this.pfFetch('/firewall/rule', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-
-    return {
-      success: true,
-      data: result,
-      display: `✅ Firewall-Regel erstellt: ${ruleType} ${protocol} ${source ?? 'any'} → ${destination}:${destPort} (${iface})`,
-    };
+    await this.pfFetch('/firewall/rule', { method: 'POST', body: JSON.stringify(soll) });
+    await this.pfFetch('/firewall/apply', { method: 'POST', body: '{}' });
+    const nachher = (await this.regeln()).find(x => String(x.descr ?? '') === descr);
+    if (!nachher || !gleich(nachher)) return { success: false, error: `Regel „${descr}“ nach dem Anlegen nicht wie gewünscht nachlesbar` };
+    return { success: true, data: { descr, id: nachher.id, interface: ifId }, display: `✅ pfSense-Regel „${descr}“: ${typ} ${protokoll} ${quelle} → ${ziel}${port ? `:${port}` : ''} auf ${ifId} (angewendet, zurückgelesen)` };
   }
 
   private async deleteRule(input: Record<string, unknown>): Promise<SkillResult> {
-    const ruleId = input.rule_id;
-    if (ruleId === undefined) return { success: false, error: 'rule_id erforderlich' };
+    const descr = String(input.description ?? '').trim();
+    if (!descr) return { success: false, error: 'delete_rule: description der Regel (IDs verschieben sich beim Löschen)' };
+    const l = (await this.regeln()).filter(x => String(x.descr ?? '') === descr);
+    if (l.length > 1) return { success: false, error: `Mehrere Regeln heißen „${descr}“ — nicht eindeutig` };
+    if (!l[0]) return { success: true, data: { descr, schonWeg: true }, display: `Regel „${descr}“ gibt es nicht (mehr)` };
+    await this.pfFetch(`/firewall/rule?id=${encodeURIComponent(String(l[0].id))}`, { method: 'DELETE' });
+    await this.pfFetch('/firewall/apply', { method: 'POST', body: '{}' });
+    if ((await this.regeln()).some(x => String(x.descr ?? '') === descr)) return { success: false, error: `Regel „${descr}“ ist nach dem Löschen noch vorhanden` };
+    return { success: true, data: { descr, entfernt: true }, display: `✅ pfSense-Regel „${descr}“ entfernt (angewendet)` };
+  }
 
-    await this.pfFetch(`/firewall/rule/${ruleId}`, { method: 'DELETE' });
-    return { success: true, display: `✅ Firewall-Regel ${ruleId} gelöscht` };
+  private async routen(): Promise<Array<{ id?: number | string; network?: string; gateway?: string; descr?: string; disabled?: boolean }>> { return this.fetchDualEndpoint('/routing/static_routes', '/routing/static_route'); }
+
+  /** v1608 — statische Route (z. B. Rückweg in ein UniFi-VLAN über MAIN_LAN_DHCP), wiederholbar, danach /routing/apply und nachlesen */
+  private async routeAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const netz = String(input.network ?? '').trim(), gw = String(input.gateway ?? '').trim();
+    const descr = String(input.description ?? `Alfred: ${netz} über ${gw}`).trim().slice(0, 80);
+    if (!/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(netz)) return { success: false, error: 'network: CIDR, z. B. 10.203.24.0/28' };
+    const gws = await this.fetchDualEndpoint<{ name?: string }>('/routing/gateways', '/routing/gateway');
+    if (!gws.some(g => g.name === gw)) return { success: false, error: `Gateway „${gw}“ unbekannt (vorhanden: ${gws.map(g => g.name).join(', ')})` };
+    const da = (await this.routen()).find(x => x.network === netz);
+    if (da) return da.gateway === gw && !da.disabled ? { success: true, data: { network: netz, vorhanden: true }, display: `Route ${netz} über ${gw} ist bereits vorhanden` } : { success: false, error: `Route ${netz} gibt es schon (über ${da.gateway}${da.disabled ? ', aus' : ''}) — erst delete_static_route` };
+    await this.pfFetch('/routing/static_route', { method: 'POST', body: JSON.stringify({ network: netz, gateway: gw, descr, disabled: false }) });
+    await this.pfFetch('/routing/apply', { method: 'POST', body: '{}' });
+    const n = (await this.routen()).find(x => x.network === netz);
+    if (!n || n.gateway !== gw) return { success: false, error: `Route ${netz} nach dem Anlegen nicht nachlesbar` };
+    return { success: true, data: { network: netz, gateway: gw }, display: `✅ Statische Route ${netz} über ${gw} angelegt (angewendet, zurückgelesen)` };
+  }
+
+  private async routeLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const netz = String(input.network ?? '').trim();
+    const da = (await this.routen()).find(x => x.network === netz);
+    if (!da) return { success: true, data: { network: netz, schonWeg: true }, display: `Route ${netz} gibt es nicht (mehr)` };
+    await this.pfFetch(`/routing/static_route?id=${encodeURIComponent(String(da.id))}`, { method: 'DELETE' });
+    await this.pfFetch('/routing/apply', { method: 'POST', body: '{}' });
+    if ((await this.routen()).some(x => x.network === netz)) return { success: false, error: `Route ${netz} ist nach dem Löschen noch vorhanden` };
+    return { success: true, data: { network: netz, entfernt: true }, display: `✅ Statische Route ${netz} entfernt (angewendet)` };
   }
 
   private async listInterfaces(): Promise<SkillResult> {

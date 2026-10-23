@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — pfSense-Regeln und statische Routen über die REST-API v2, nur im Change (v1608)
+
+- **Realfall 23.10. (pgAdmin → 10.0.0.14 über die pfSense):**
+  - Es fehlten eine Pass-Regel für die neue Quelle 10.203.24.2 und der Rückweg zu 10.203.24.0/28. Die Antworten gingen über das WAN-Gateway statt zur UDM.
+  - `create_rule` baute noch das v1-Format, `delete_rule` nutzte den v1-Pfad.
+  - Statische Routen konnte der Skill nicht anlegen.
+  - Schreibende pfSense-Aktionen liefen ganz ohne Change.
+- **`create_rule`:**
+  - Felder nach dem OpenAPI-Schema der pfSense: `interface` als Liste (`MAIN_LAN` oder `opt1`), Quelle, Ziel und Port als Text, danach `/firewall/apply`.
+  - Die Beschreibung ist Pflicht und dient als Schlüssel.
+  - Wiederholbar, mit Nachlesen.
+- **`delete_rule`:** findet die Regel über die Beschreibung, löscht sie per `?id=` und wendet an. IDs verschieben sich beim Löschen.
+- **Neu `create_static_route` / `delete_static_route`:** Netz in CIDR und Gateway-Name (geprüft gegen `list_gateways`), danach `/routing/apply`; wiederholbar, mit Nachlesen.
+- **Nur noch als Schritt eines freigegebenen Changes:** Regeln, Routen, VLANs, Interface-Zuweisung und DHCP. Der Firewall-Schritt des Deploy-Skills meldet daher nur noch einen Hinweis.
+
 ### Added — pfSense `api_schema` (v1607)
 
 - **Neu `pfsense api_schema`** (lesend): zeigt für einen Pfad der REST-API v2 die Methoden, Parameter und Body-Felder mit Typ, Pflicht, erlaubten Werten und Vorgabe, gelesen aus dem OpenAPI-Schema der pfSense. Damit werden schreibende Aktionen (Regeln, statische Routen) gegen die tatsächliche API gebaut statt gegen Annahmen.
