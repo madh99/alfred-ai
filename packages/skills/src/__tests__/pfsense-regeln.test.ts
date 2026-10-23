@@ -26,3 +26,18 @@ describe('pfSense-Regeln lesen (v2 und v1)', () => {
     expect(regelZeile({ source: { address: '1.2.3.4' }, destination: { network: 'any', port: '443' }, interface: 'lan', disabled: true }, 3)).toBe('| 3 | pass (aus) | lan | any | 1.2.3.4 | any:443 |  |');
   });
 });
+
+describe('v1613 Portweiterleitungen lesen', () => {
+  it('zeigt außen → innen mit Status', async () => {
+    const { PfSenseSkill } = await import('../built-in/pfsense.js');
+    const s = new PfSenseSkill({ baseUrl: 'https://pf', apiKey: 'k' } as never);
+    (s as unknown as { pfFetch: (p: string) => Promise<unknown> }).pfFetch = async (p) => {
+      if (p === '/firewall/nat/port_forwards') return { data: [{ id: 0, interface: 'wan', protocol: 'tcp', source: 'any', destination: 'wan:ip', destination_port: '443', target: '172.17.0.10', local_port: '443', descr: 'NPM HTTPS' }, { id: 1, interface: 'wan', protocol: 'tcp', source: 'any', destination: 'wan:ip', destination_port: '21115:21119', target: '192.168.1.211', disabled: true, descr: 'Rustdesk' }] };
+      throw new Error(p);
+    };
+    const r = await s.execute({ action: 'list_port_forwards' }, {} as never);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('| 0 | an | wan | tcp | any | wan:ip:443 | 172.17.0.10:443 | NPM HTTPS |');
+    expect(r.display).toContain('| 1 | AUS | wan | tcp | any | wan:ip:21115:21119 | 192.168.1.211:21115:21119 | Rustdesk |');
+  });
+});

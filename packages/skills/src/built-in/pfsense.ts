@@ -3,7 +3,7 @@ import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@a
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'create_static_route' | 'delete_static_route' | 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
+type Action = 'list_port_forwards' | 'create_static_route' | 'delete_static_route' | 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -18,6 +18,7 @@ export class PfSenseSkill extends Skill {
       'pfSense Firewall-Verwaltung über REST API. ' +
       '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter, interne ID wie opt1 oder Beschreibung wie MAIN_LAN). ' +
       '"list_routes" zeigt Standard-Gateway, statische Routen und die Adressen der Interfaces (lesend). ' +
+      '"list_port_forwards" zeigt die Portweiterleitungen (NAT) — was von außen auf welches interne Ziel geht (lesend). ' +
       'Nur als Change-Schritt: "create_rule" (interface z. B. MAIN_LAN oder opt1, protocol, source, destination, destination_port, description = eindeutiger Name) ↔ "delete_rule" (description); "create_static_route" (network CIDR, gateway = Gateway-Name z. B. MAIN_LAN_DHCP, description) ↔ "delete_static_route" (network). ' +
       '"create_rule" erstellt eine neue Regel (interface, protocol, source, destination, destination_port, description). ' +
       '"delete_rule" löscht eine Regel (description, nur im Change). ' +
@@ -33,7 +34,7 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_static_route', 'delete_static_route', 'api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        action: { type: 'string', enum: ['list_port_forwards', 'create_static_route', 'delete_static_route', 'api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
         parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
         vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
         subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
@@ -72,6 +73,7 @@ export class PfSenseSkill extends Skill {
     switch (action) {
       case 'list_rules': return this.listRules(input.interface as string | undefined);
       case 'list_routes': return this.listRoutes();
+      case 'list_port_forwards': return await this.listPortForwards();
       case 'api_schema': return await this.apiSchema(String(input.path ?? ''));
       case 'create_static_route': return await this.routeAnlegen(input);
       case 'delete_static_route': return await this.routeLoeschen(input);
@@ -446,6 +448,18 @@ export class PfSenseSkill extends Skill {
       'Interfaces:', ...i.map(x => `- ${x.descr ?? x.name ?? '?'} (${x.name ?? '?'}/${x.hwif ?? '?'}): ${x.ipaddr ?? '-'}${x.subnet !== undefined && x.subnet !== '' ? `/${x.subnet}` : ''}${x.gateway ? ` · Gateway ${x.gateway}` : ''}${x.status ? ` · ${x.status}` : ''}`),
     ];
     return { success: true, data: { standard: d, routen: r, interfaces: i }, display: zeilen.join('\n') };
+  }
+
+  /** v1613 — Owner 23.10.: „alles, was öffentlich erreichbar ist, geht über MikroTik und pfSense nach außen“ — Portweiterleitungen lesen */
+  private async listPortForwards(): Promise<SkillResult> {
+    let l: Array<Record<string, unknown>>;
+    try { l = await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/nat/port_forwards', '/firewall/nat/port_forward'); }
+    catch (err) { return { success: false, error: err instanceof Error ? err.message : String(err) }; }
+    const zeile = (f: Record<string, unknown>, i: number) => {
+      const iface = Array.isArray(f.interface) ? (f.interface as unknown[]).join(',') : String(f.interface ?? '?');
+      return `| ${f.id ?? i} | ${f.disabled ? 'AUS' : 'an'} | ${iface} | ${f.protocol ?? 'any'} | ${regelSeite(f.source)} | ${regelSeite(f.destination)}:${f.destination_port ?? '*'} | ${f.target ?? '?'}:${f.local_port ?? f.destination_port ?? '*'} | ${f.descr ?? ''} |`;
+    };
+    return { success: true, data: l, display: `## pfSense Portweiterleitungen (${l.length})\n\n| ID | Status | Interface | Proto | Quelle | Ziel:Port (außen) | Intern:Port | Beschreibung |\n|---|---|---|---|---|---|---|---|\n${l.map(zeile).join('\n')}` };
   }
 
   private async listGateways(): Promise<SkillResult> {

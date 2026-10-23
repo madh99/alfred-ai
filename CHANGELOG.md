@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — pfSense-Portweiterleitungen lesen (v1613)
+
+- **Neu `pfsense list_port_forwards`** (lesend): zeigt je Weiterleitung den Status, das Interface, das Protokoll, die Quelle, Ziel und Port außen sowie Adresse und Port innen und die Beschreibung (REST-API v2 `/firewall/nat/port_forwards`).
+- **Anlass (Owner 23.10.):** „Alles, was öffentlich erreichbar ist, geht über MikroTik und pfSense nach außen.“ Vor dem Umzug einer Gruppe muss sichtbar sein, welche Dienste von außen erreichbar sind und wohin.
+
 ### Fixed — Commvault meldet „nicht erreichbar“ statt „alles ok“ (v1612)
 
 - **Realfall 23.10. (Owner: „Commvault meldet alles ok, obwohl der Server bewusst abgeschaltet ist“):** `status` lieferte „Erfolg, 0 Jobs, 0 Alerts, 0 Pools“. Das Lagebild für Alfreds Reasoning meldete sogar **„Alle Backups OK“**. Fehlgeschlagene Abfragen wurden still zu leeren Listen.
