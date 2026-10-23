@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — „Kein Rückweg“ ist keine Restwirkung (v1621)
+
+- Ändernde Schritte, für die der freigegebene Plan ausdrücklich „kein Rückweg“ vorsieht (Tresor-Eintrag, Vorkopie, beabsichtigte Löschung), zählen nicht mehr als Restwirkung. Ihre bleibende Wirkung ist freigegeben.
+- Als Restwirkung zählen nur noch Schritte mit geplantem Rückweg, der nicht oder nicht erfolgreich lief.
+
 ### Fixed — Halt-Incidents enden mit ihrem Change (v1620)
 
 - **Befund:** Der Ausführungsmotor legt beim Anhalten eines Changes einen Incident „Change angehalten“ an, hat ihn aber nie gelöst. 13 Incidents blieben offen, obwohl ihre Changes längst abgeschlossen, zurückgerollt oder abgebrochen waren. Change und Incident waren nicht verknüpft.

@@ -142,13 +142,14 @@ describe('I4 Ausführungsmotor', () => {
   });
 
   it('v1620: Restwirkung = ausgeführte Änderung ohne gelungenen Rückweg (Sicherungen zählen nicht) → Incident bleibt offen und wird hoch', async () => {
-    const plan = probe();
+    const plan = probe(); plan[2]!.rueckweg = { skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 142, name: 'i3probe' } };
+    expect(restWirkung(probe(), { phase: 'fertig', schritt: 3, start: 'x', ergebnisse: [{ nr: 3, ok: true, start: 'x' }] } as ChangeLauf)).toEqual([]); // „kein Rückweg“ = freigegebene Wirkung
     const l = (rw: Array<{ zuSchritt: number; ok: boolean }>): ChangeLauf => ({ phase: 'fertig', schritt: 3, start: 'x', ergebnisse: [{ nr: 2, ok: true, start: 'x' }, { nr: 3, ok: false, aktionOk: true, start: 'x' }], rueckweg: rw.map(r => ({ ...r, text: '', zeit: 'x' })) }) as ChangeLauf;
     expect(restWirkung(plan, l([])).map(s => s.nr)).toEqual([3]);
     expect(restWirkung(plan, l([{ zuSchritt: 3, ok: true }]))).toEqual([]);
     expect(restWirkung(plan, l([{ zuSchritt: 3, ok: false }])).map(s => s.nr)).toEqual([3]);
     // Abbruch nach einer wirksamen Änderung: Schritt 3 löscht den Snapshot, Prüfung scheitert (Snapshot kommt wieder) → angehalten mit Wirkung
-    const w = welt(probe());
+    const w = welt(plan);
     w.deps.fuehreAus = async (skill, input) => { w.aufrufe.push(`${skill}.${String(input.action)}`); if (input.action === 'list_snapshots') return { success: true, data: [{ name: 'i3probe' }] }; if (input.action === 'task_status') return { success: true, data: { status: 'stopped', exitstatus: 'OK' } }; return { success: true, data: { vmid: 142 } }; };
     const m = new ChangeMotor(w.deps);
     await m.anstossen(); await warte(m);

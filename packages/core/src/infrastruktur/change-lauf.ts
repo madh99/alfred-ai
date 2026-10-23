@@ -137,12 +137,13 @@ export const wirkt = (s: ChangeSchritt) => s.art === 'aktion' && (s.einordnung =
 
 /**
  * v1620 — was nach dem Lauf noch wirkt, ohne zurückgenommen zu sein: ausgeführte ändernde/löschende Schritte ohne erfolgreichen Rückweg.
- * Sicherungen (Snapshots) zählen nicht — sie schützen nur und werden beim Aufräumen entfernt.
+ * Sicherungen (Snapshots) zählen nicht — sie schützen nur und werden beim Aufräumen entfernt. Ebenso wenig Schritte mit „kein Rückweg“:
+ * ihre bleibende Wirkung (Tresor-Eintrag, Vorkopie, beabsichtigte Löschung) ist so freigegeben (Realfall e1843faa/dea4b9cd).
  */
 export function restWirkung(schritte: ChangeSchritt[], l: ChangeLauf): ChangeSchritt[] {
   const erledigt = new Set(l.ergebnisse.filter(e => e.ok || e.aktionOk).map(e => e.nr));
   const zurueck = new Set((l.rueckweg ?? []).filter(r => r.ok).map(r => r.zuSchritt));
-  return schritte.filter(s => s.art === 'aktion' && (s.einordnung === 'aendern' || s.einordnung === 'loeschen') && erledigt.has(s.nr) && !zurueck.has(s.nr));
+  return schritte.filter(s => s.art === 'aktion' && (s.einordnung === 'aendern' || s.einordnung === 'loeschen') && !s.rueckweg?.keiner && erledigt.has(s.nr) && !zurueck.has(s.nr));
 }
 
 /** Kurzbericht nach Ende (PIR-Grundlage). */
