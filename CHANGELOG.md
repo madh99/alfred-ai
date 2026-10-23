@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — MikroTik: Schreiben nur im freigegebenen Change (v1617)
+
+- **Anlass (23.10.):** Nach dem Router-Vorfall soll Alfred den MikroTik konfigurieren können, so wie pfSense und UniFi. Der Skill hatte aber keine Change-Sperre. Sein „Bestätigungsmodus“ meldete nur Erfolg, und mit `configure` ließ er sich abschalten.
+- **Jetzt:**
+  - Firewall- und NAT-Regeln, Adressen, Routen, DNS, Schnittstellen, statisches DHCP und Queues ändern sich nur noch als Schritt eines freigegebenen Changes (Freigabe, Rückweg, Protokoll).
+  - Ohne Change wird der Router gar nicht erst angesprochen.
+  - `configure` kann den Schutz nicht mehr abschalten.
+
 ### Fixed — Nur eine gültige Freigabe-Frage je Change (v1616)
 
 - **Realfall 23.10. (Change ba552725, Austausch MikroTik):** Nach der Überarbeitung des Plans gab es zwei Freigabe-Fragen. Der Owner bestätigte die alte und bekam „Keine gültige Freigabe“. Die gültige neue Frage wurde im selben Moment als Geschwister-Bestätigung mit erledigt. Freigeben war danach nicht mehr möglich.

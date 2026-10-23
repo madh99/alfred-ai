@@ -91,7 +91,6 @@ export class MikroTikSkill extends Skill {
         password: { type: 'string' },
         ssl: { type: 'boolean' },
         // Configure
-        confirmation_mode: { type: 'boolean' },
         polling_interval: { type: 'number' },
       },
       required: ['action'],
@@ -112,12 +111,11 @@ export class MikroTikSkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
-    if (WRITE_ACTIONS.has(action) && this.config.confirmation_mode) {
-      return {
-        success: true,
-        data: { requiresConfirmation: true, action, input },
-        display: `⚠️ **Bestätigung erforderlich** — ${action} ist im Bestätigungsmodus.`,
-      };
+    // v1617 (Owner 23.10.: „Alfred soll auch konfigurieren können, wie pfSense und UniFi“) — nach dem Router-Vorfall: schreibende Aktionen nur
+    // als Schritt eines freigegebenen Changes (Freigabe, Rückweg, Protokoll). Der frühere „Bestätigungsmodus“ meldete nur Erfolg und ließ sich
+    // per configure abschalten.
+    if (WRITE_ACTIONS.has(action) && _context?.ausChange !== true) {
+      return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen und die Freigabe anfragen` };
     }
     switch (action) {
       // Monitoring
@@ -643,7 +641,7 @@ export class MikroTikSkill extends Skill {
 
   private doConfigure(input: Record<string, unknown>): SkillResult {
     const changes: string[] = [];
-    if (input.confirmation_mode !== undefined) { this.config.confirmation_mode = input.confirmation_mode as boolean; changes.push(`Bestätigungsmodus: ${input.confirmation_mode}`); }
+    // v1617 — der Schutz schreibender Aktionen ist nicht mehr abschaltbar (nur noch im freigegebenen Change)
     if (input.polling_interval !== undefined) { this.config.polling_interval = input.polling_interval as number; changes.push(`Polling: ${input.polling_interval} Min`); }
     if (changes.length === 0) return { success: false, error: 'Keine Änderungen.' };
     return { success: true, display: `## MikroTik Config\n\n${changes.map(c => `- ${c}`).join('\n')}` };
