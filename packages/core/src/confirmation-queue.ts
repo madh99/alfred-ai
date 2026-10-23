@@ -325,6 +325,15 @@ export class ConfirmationQueue {
   /** v1512 P3 — Fehler der zuletzt freigegebenen, aber gescheiterten Aktion je Bestätigung (für die Antwort an App/Web). */
   private readonly fehlgeschlagen = new Map<string, string>();
 
+  /**
+   * v1616 — Realfall 23.10. (Change ba552725): nach einer Überarbeitung stand die alte Freigabe-Frage weiter da; der Owner bestätigte sie
+   * („keine gültige Freigabe“), und die gültige neue lief dabei als Geschwister mit ab. Offene Bestätigungen nach Bedingung zurückziehen.
+   */
+  async zurueckziehenWenn(chatId: string, platform: string, passt: (p: PendingConfirmation) => boolean, grund: string): Promise<number> {
+    const offen = await this.confirmRepo.findAllPending(chatId, platform as never).catch(() => [] as PendingConfirmation[]);
+    return this.zurueckziehen(offen.filter(passt).map(p => p.id), grund);
+  }
+
   /** v1512 P3 — offene Bestätigungen zurückziehen (z. B. Projekt beendet): nicht mehr anklickbar, verschwinden in App und Web. */
   async zurueckziehen(ids: string[], grund: string): Promise<number> {
     let n = 0;

@@ -49,3 +49,17 @@ describe('v1454 Ablehnung und Ablauf erreichen den Auftraggeber', () => {
     expect(ohne.mock.calls[0]![1]).toBe('abgelaufen');
   });
 });
+
+// v1616 — Realfall 23.10. (ba552725): nach der Überarbeitung gab es zwei Freigabe-Fragen; nur die neue darf offen bleiben
+describe('v1616 zurueckziehenWenn', () => {
+  it('zieht nur passende offene Bestätigungen zurück', async () => {
+    const mk = (id: string, ids: string[]) => ({ id, chatId: 'c1', platform: 'telegram', source: 'geraet', sourceId: id, description: 'Change freigeben', skillName: 'infrastruktur', skillParams: { action: 'freigeben', changes: ids.map(x => ({ id: x, fingerabdruck: 'f' })) }, status: 'pending', createdAt: '', expiresAt: '' });
+    const offen = [mk('alt', ['ba552725']), mk('anderer', ['x1']), { ...mk('fremd', ['ba552725']), skillName: 'proxmox' }];
+    const repo = { findAllPending: vi.fn().mockResolvedValue(offen), getById: vi.fn(async (id: string) => offen.find(o => o.id === id)), resolve: vi.fn().mockResolvedValue(undefined) };
+    const q = new ConfirmationQueue(repo as never, { get: () => undefined } as never, { execute: vi.fn() } as never, new Map() as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
+    const n = await q.zurueckziehenWenn('c1', 'telegram', p => p.skillName === 'infrastruktur' && ((p.skillParams as { changes?: Array<{ id: string }> }).changes ?? []).some(c => c.id === 'ba552725'), 'ersetzt');
+    expect(n).toBe(1);
+    expect(repo.resolve).toHaveBeenCalledWith('alt', 'expired');
+    expect(repo.resolve).toHaveBeenCalledTimes(1);
+  });
+});

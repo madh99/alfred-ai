@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Nur eine gültige Freigabe-Frage je Change (v1616)
+
+- **Realfall 23.10. (Change ba552725, Austausch MikroTik):** Nach der Überarbeitung des Plans gab es zwei Freigabe-Fragen. Der Owner bestätigte die alte und bekam „Keine gültige Freigabe“. Die gültige neue Frage wurde im selben Moment als Geschwister-Bestätigung mit erledigt. Freigeben war danach nicht mehr möglich.
+- **Jetzt:** Bevor eine neue Freigabe-Frage gestellt wird, zieht Alfred ältere offene Fragen zu denselben Changes zurück. Sie verschwinden in App und Web. Es gibt damit immer nur die Frage zum aktuellen Plan.
+
 ### Fixed — `isolate_vm` ohne Löschschutz (v1615)
 
 - Der Löschschutz aus v1614 hätte den Rückweg `delete_vm` der Wiederherstellung blockiert. `isolate_vm` trennt jetzt alle Netzwerkkarten und schaltet den Autostart ab, setzt aber keinen Löschschutz mehr.

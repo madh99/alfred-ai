@@ -7122,6 +7122,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const chatId = this.config.security?.ownerUserId ?? '';
             if (!chatId) return false;
             const platform = this.config.telegram?.enabled ? 'telegram' : 'api';
+            // v1616 — ältere offene Freigabe-Fragen zu denselben Changes zurückziehen (nach einer Überarbeitung gilt nur noch die neue)
+            const ids = new Set(((frage.params as { changes?: Array<{ id?: string }> }).changes ?? []).map(c => c.id).filter((x): x is string => !!x));
+            const weg = await this.confirmationQueue.zurueckziehenWenn(chatId, platform, p => p.skillName === 'infrastruktur' && (p.skillParams as { action?: string })?.action === 'freigeben'
+              && ((p.skillParams as { changes?: Array<{ id?: string }> }).changes ?? []).some(c => !!c.id && ids.has(c.id)), 'durch neue Freigabe-Frage ersetzt (Plan geändert)');
+            if (weg) this.logger.info({ changes: [...ids], zurueckgezogen: weg }, 'v1616 alte Freigabe-Fragen zurückgezogen');
             const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `infrastruktur-freigabe-${Date.now()}`, description: frage.description, skillName: 'infrastruktur', skillParams: frage.params, timeoutMinutes: 24 * 60 } as never);
             return ok !== false;
           },
