@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — pfSense `api_schema` (v1607)
+
+- **Neu `pfsense api_schema`** (lesend): zeigt für einen Pfad der REST-API v2 die Methoden, Parameter und Body-Felder mit Typ, Pflicht, erlaubten Werten und Vorgabe, gelesen aus dem OpenAPI-Schema der pfSense. Damit werden schreibende Aktionen (Regeln, statische Routen) gegen die tatsächliche API gebaut statt gegen Annahmen.
+
 ### Fixed — pfSense-Regeln mit echten Werten, Routen lesbar (v1606)
 
 - **Realfall 23.10. (Change 94f832e0, pgAdmin → VLAN 998):** Die UniFi ließ die Verbindung durch, an der pfSense ging sie verloren. Das ließ sich aber nicht belegen:

@@ -3,7 +3,7 @@ import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@a
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
+type Action = 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -32,13 +32,14 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        action: { type: 'string', enum: ['api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
         parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
         vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
         subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
         interface_id: { type: 'string', description: 'unassign_interface/enable_dhcp/disable_dhcp: Interface-ID, z. B. opt3' },
         dhcp_start: { type: 'string' }, dhcp_stop: { type: 'string' },
         interface: { type: 'string', description: 'Interface-Name (z.B. lan, wan, opt1) für list_rules Filter oder create_rule' },
+        path: { type: 'string', description: 'api_schema: REST-Pfad der pfSense-API v2, z. B. /firewall/rule oder /routing/static_route' },
         protocol: { type: 'string', description: 'Protokoll: tcp, udp, icmp, any (default: tcp)' },
         source: { type: 'string', description: 'Quell-IP/Netzwerk (z.B. 172.17.0.10, 192.168.1.0/24, any)' },
         destination: { type: 'string', description: 'Ziel-IP/Netzwerk' },
@@ -66,6 +67,7 @@ export class PfSenseSkill extends Skill {
     switch (action) {
       case 'list_rules': return this.listRules(input.interface as string | undefined);
       case 'list_routes': return this.listRoutes();
+      case 'api_schema': return await this.apiSchema(String(input.path ?? ''));
       case 'create_rule': return this.createRule(input);
       case 'delete_rule': return this.deleteRule(input);
       case 'list_interfaces': return this.listInterfaces();
@@ -287,6 +289,27 @@ export class PfSenseSkill extends Skill {
     const z = PfSenseSkill.NETZ_ENDPUNKTE.map(([p, m]) => ({ pfad: p, methode: m.toUpperCase(), da: !!pfade[p]?.[m] }));
     const ok = z.every(x => x.da);
     return { success: true, data: { ok, endpunkte: z }, display: `${ok ? '✅ Alle Endpunkte für Netz-Aktionen vorhanden' : '⚠️ Es fehlen Endpunkte'}\n${z.map(x => `- ${x.da ? '✓' : '✗'} ${x.methode} ${x.pfad}`).join('\n')}` };
+  }
+
+  /** v1606 — lesend: Felder eines REST-Endpunkts aus dem OpenAPI-Schema (Methoden, Parameter, Body-Felder mit Typ/Pflicht/Enum) */
+  private async apiSchema(pfad: string): Promise<SkillResult> {
+    const p = pfad.startsWith('/api/v2') ? pfad : `/api/v2${pfad.startsWith('/') ? '' : '/'}${pfad}`;
+    if (!/^\/api\/v2\/[\w/]+$/.test(p)) return { success: false, error: 'path: z. B. /firewall/rule oder /routing/static_route' };
+    const schema = await this.pfFetch('/schema/openapi') as { paths?: Record<string, Record<string, any>>; components?: { schemas?: Record<string, any> } };
+    const e = schema.paths?.[p];
+    if (!e) return { success: false, error: `${p} nicht im Schema; ähnliche: ${Object.keys(schema.paths ?? {}).filter(k => k.includes(p.split('/').pop() ?? '')).slice(0, 10).join(', ')}` };
+    const aufloesen = (x: any): any => (x?.$ref ? schema.components?.schemas?.[String(x.$ref).split('/').pop()!] : x);
+    const zeilen: string[] = [];
+    for (const [m, op] of Object.entries(e)) {
+      if (!op || typeof op !== 'object' || !('responses' in op || 'parameters' in op || 'requestBody' in op)) continue;
+      zeilen.push(`${m.toUpperCase()} ${p}`);
+      for (const pa of (op.parameters ?? []).map(aufloesen)) zeilen.push(`  Parameter ${pa?.name}${pa?.required ? ' (Pflicht)' : ''} in ${pa?.in}: ${pa?.schema?.type ?? ''}`);
+      const body = aufloesen(op.requestBody?.content?.['application/json']?.schema);
+      const props = body?.allOf ? Object.assign({}, ...body.allOf.map((x: any) => aufloesen(x)?.properties ?? {})) : body?.properties ?? {};
+      const pflicht = new Set<string>(body?.required ?? []);
+      for (const [k, v] of Object.entries<any>(props)) zeilen.push(`  Feld ${k}${pflicht.has(k) ? ' (Pflicht)' : ''}: ${v?.type ?? ''}${v?.items?.type ? `<${v.items.type}>` : ''}${v?.enum ? ` [${v.enum.slice(0, 12).join('|')}]` : ''}${v?.default !== undefined ? ` = ${JSON.stringify(v.default)}` : ''}${v?.description ? ` — ${String(v.description).replace(/<[^>]+>/g, '').slice(0, 140)}` : ''}`);
+    }
+    return { success: true, data: { pfad: p }, display: zeilen.join('\n') || 'keine Methoden' };
   }
 
   private async vlans(): Promise<Array<{ id?: number | string; if?: string; tag?: number; vlanif?: string; descr?: string }>> {
