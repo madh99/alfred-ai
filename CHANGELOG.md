@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Mehrzeilige Change-Befehle kommen wörtlich an (v1609)
+
+- **Realfall 23.10. (Change dea4b9cd, WordPress-Dev, Schritt 2):** Ein freigegebenes mehrzeiliges Skript mit eingebettetem Python endete sofort mit `sh: Syntax error: "(" unexpected`. Die Aufbereitung fasste außerhalb von Anführungszeichen jeden Leerraum zusammen, also auch Zeilenumbrüche und Einrückung. Ausgeführt wurde dabei nichts.
+- **Jetzt:** Beim Ausführen (Change-Motor und vom Owner bestätigtes `ausfuehren`) bleibt ein mehrzeiliger Befehl wörtlich erhalten, samt Einrückung. Nur ein führendes `sudo` wird entfernt, verpackt wird er weiter in `sudo -n sh -c '…'`. Einzeilige Befehle werden wie bisher aufbereitet. Für die Einordnung als Lesebefehl gilt ein mehrzeiliger Befehl weiterhin nie als „lesen“.
+
 ### Fixed — pfSense-Regeln und statische Routen über die REST-API v2, nur im Change (v1608)
 
 - **Realfall 23.10. (pgAdmin → 10.0.0.14 über die pfSense):**

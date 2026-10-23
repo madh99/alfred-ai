@@ -114,6 +114,17 @@ export function normalisiereBefehl(befehl: string): string {
   return aus;
 }
 
+/**
+ * v1609 — Realfall 23.10. (Change dea4b9cd, Schritt 2): ein freigegebenes mehrzeiliges Skript (Heredoc mit Python) kam als EINE Zeile an —
+ * normalisiereBefehl fasste Zeilenumbrüche und Einrückung zusammen („sh: Syntax error: "(" unexpected“). Zum Ausführen bleibt ein
+ * mehrzeiliger Befehl wörtlich (nur führendes sudo entfernt); einzeilige werden wie bisher normalisiert. Die Einordnung (befehlsklasse)
+ * normalisiert weiter selbst — ein mehrzeiliger Befehl ist dort nie „lesen“.
+ */
+export function ausfuehrbarerBefehl(befehl: string): string {
+  if (!/[\r\n]/.test(befehl.trim())) return normalisiereBefehl(befehl);
+  return befehl.replace(/\r\n/g, '\n').trim().replace(/^sudo\s+(-n\s+)?/, '');
+}
+
 /** v1541 — Optionen, die etwas verändern oder fremde Dateien lesen; mit ihnen ist kein Befehl „lesen“, egal was das Muster erlaubt. */
 const VERAENDERNDE_OPTIONEN = /(^| )(--vacuum[\w-]*|--rotate|--flush|--sync|--relinquish-var|--setup-keys|--file|--directory|--root|--merge|-D|-M|--output-fields|--update-catalog|--force|-f)( |=|$)/;
 
@@ -174,7 +185,7 @@ export function kuerzeMitte(text: string, max: number): string {
 
 /** Befehl, wie er per ssh läuft: als root über sudo -n (kein Passwort-Prompt), komplexe Befehle in sh -c. */
 export function fernBefehl(befehl: string, alsRoot: boolean): string {
-  const b = normalisiereBefehl(befehl);
+  const b = ausfuehrbarerBefehl(befehl);
   if (!alsRoot) return b;
   if (!STEUERZEICHEN.test(b)) return `sudo -n ${b}`;
   return `sudo -n sh -c '${b.replace(/'/g, `'\\''`)}'`;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle } from './regeln.js';
+import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, ausfuehrbarerBefehl } from './regeln.js';
 
 // v1539 — Fernzugriff: Befehlsklassen und Host-Schlüssel (Realfall 21.10.: „zpool status“ auf pve)
 describe('v1539 Befehlsklassen', () => {
@@ -149,5 +149,22 @@ describe('normalisiereBefehl', () => {
     expect(normalisiereBefehl("  sudo -n printf '%s\n'  'services:' '  pgadmin:' '    image: x'   > /srv/a.yaml ")).toBe("printf '%s\n' 'services:' '  pgadmin:' '    image: x' > /srv/a.yaml");
     expect(normalisiereBefehl('echo  "a   b"   c')).toBe('echo "a   b" c');
     expect(normalisiereBefehl('docker   ps\n  -a')).toBe('docker ps -a');
+  });
+});
+
+describe('v1609 ausfuehrbarerBefehl (Realfall dea4b9cd: Heredoc mit Python zerfiel zu einer Zeile)', () => {
+  it('mehrzeilig bleibt wörtlich samt Einrückung, nur führendes sudo fällt weg; einzeilig wie bisher', () => {
+    const skript = "set -eu\npython3 - <<'PY'\nfor c in [('a', 1)]:\n  print(c)\nPY\necho fertig";
+    expect(ausfuehrbarerBefehl(`sudo -n ${skript}\n`)).toBe(skript);
+    expect(ausfuehrbarerBefehl('docker   ps   -a')).toBe('docker ps -a');
+    expect(ausfuehrbarerBefehl('a\r\n  b')).toBe('a\n  b');
+  });
+  it('fernBefehl packt mehrzeilige Skripte unverändert in sh -c', () => {
+    const f = fernBefehl("set -eu\nprintf '%s\n' x\n  echo eingerückt", true);
+    expect(f.startsWith("sudo -n sh -c '")).toBe(true);
+    expect(f).toContain('\n  echo eingerückt');
+  });
+  it('Einordnung bleibt streng: mehrzeilig ist nie „lesen“', () => {
+    expect(befehlsklasse('docker ps\nrm -rf /tmp/x')).not.toBe('lesen');
   });
 });

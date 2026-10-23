@@ -2,7 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { Fernzugang } from '@alfred/storage';
 import { Freigaben } from '../geraete/freigaben.js';
-import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl } from './regeln.js';
+import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze, schwaerze } from './kaefig.js';
@@ -392,7 +392,7 @@ export class FernzugriffSkill extends Skill {
   async ausfuehrenIntern(name: string, befehl: string, alsRoot: boolean, timeoutMs = 300_000): Promise<{ code: number; stdout: string; stderr: string }> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
-    const b = normalisiereBefehl(befehl);
+    const b = ausfuehrbarerBefehl(befehl);
     if (befehlsklasse(b) === 'nie') throw new Error(`„${b.slice(0, 120)}“ ist nie erlaubt`);
     const z = await this.zugang(owner, { name });
     const r = await this.lauf(owner, z, fernBefehl(b, alsRoot), timeoutMs);
@@ -654,7 +654,7 @@ export class FernzugriffSkill extends Skill {
 
   private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }, context?: SkillContext): Promise<SkillResult> {
     const { freigabe, ...params } = input;
-    const befehl = typeof params.befehl === 'string' ? normalisiereBefehl(params.befehl) : '';
+    const befehl = typeof params.befehl === 'string' ? ausfuehrbarerBefehl(params.befehl) : '';
     if (!befehl) return { success: false, error: 'ausfuehren braucht befehl' };
     const klasse = befehlsklasse(befehl);
     if (klasse === 'nie') {
