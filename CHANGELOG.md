@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Images bei Migrationen per Registry-Digest (v1611)
+
+- **Realfall 23.10. (Change b85e56af, Schritt 4):** Das MySQL-Image wurde per `docker save` übertragen, war am Ziel aber nicht auffindbar. Docker 29 mit containerd-Image-Speicher (docker-dev-01) vergibt andere Image-IDs als Docker 27 (dockerhost), und das Archiv trug keinen Namen.
+- **Planungshinweis für Migrationen:** Am Ziel wird dasselbe Image per Registry-Digest gezogen (`name@sha256:…` aus `RepoDigests` der Quelle), kein `docker save`/`load`. Hilfsdateien liegen nie unter `/root`, sondern z. B. unter `/srv/<vorhaben>-export`.
+
 ### Fixed — Kopierpfade schon beim Planen prüfen (v1610)
 
 - **Realfall 23.10. (Change dea4b9cd, Schritt 5):** `fernzugriff kopieren` mit `quelle_pfad /root/…` wurde erst im Lauf als „Systembereich“ abgewiesen, nachdem schon vier Schritte gewirkt hatten. `/root` ist als Kopierquelle bewusst gesperrt, weil dort Schlüssel und Zugangsdaten liegen.
