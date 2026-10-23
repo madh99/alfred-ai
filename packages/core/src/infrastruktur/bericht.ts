@@ -58,6 +58,13 @@ export function osSupport(os: HostBestand['os'], jetzt = new Date()): { ok: bool
     if (!lts) return { ok: false, text: `${os.name}: keine LTS-Version (kurzer Support)` };
     if (jetzt.getFullYear() > 2000 + jj + 5 || (jetzt.getFullYear() === 2000 + jj + 5 && jetzt.getMonth() >= 4)) return { ok: false, text: `${os.name}: Standard-Support (5 Jahre) beendet` };
   }
+  // v1627 — Rocky/Alma folgen RHEL (Ende der Wartung je Hauptversion); Fedora: jede Version gut 13 Monate (Stand 10/2026: ≤ 42 beendet)
+  if ((os.id === 'rocky' || os.id === 'almalinux' || os.id === 'rhel') && Number.isFinite(v)) {
+    const ende: Record<number, string> = { 8: '2029-05-31', 9: '2032-05-31', 10: '2035-05-31' };
+    const e = ende[Math.floor(v)];
+    if (Math.floor(v) < 8 || (e && jetzt.toISOString().slice(0, 10) > e)) return { ok: false, text: `${os.name}: Support endete ${e ?? 'vor 2024'}` };
+  }
+  if (os.id === 'fedora' && Number.isFinite(v) && v <= 42) return { ok: false, text: `${os.name}: Support beendet (Fedora-Versionen werden nur gut 13 Monate gepflegt)` };
   return { ok: true };
 }
 

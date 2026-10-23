@@ -9,21 +9,51 @@
  * sie beim Herunterladen (download-url mit checksum).
  */
 
-export type Distro = 'ubuntu-24.04' | 'ubuntu-26.04' | 'debian-12' | 'debian-13';
+export type Distro = 'ubuntu-24.04' | 'ubuntu-26.04' | 'debian-12' | 'debian-13' | 'rocky-9' | 'rocky-10' | 'alma-9' | 'alma-10' | 'fedora-44';
+export type Herausgeber = 'ubuntu' | 'debian' | 'rocky' | 'alma' | 'fedora';
 
-interface Quelle { herausgeber: 'ubuntu' | 'debian'; codename: string; basis: string; summen: 'SHA256SUMS' | 'SHA512SUMS'; algorithmus: 'sha256' | 'sha512' }
+/**
+ * Herkunft je Distribution. „verzeichnis“: ein Unterordner je datiertem Stand mit Summen-Datei darin (Ubuntu, Debian).
+ * „flach“ (v1627, Owner 24.10.: Rocky/Alma/Fedora nachziehen): datierte Dateien in einem Ordner, Stand steht im Dateinamen.
+ */
+interface Quelle {
+  herausgeber: Herausgeber; familie: 'deb' | 'rpm'; basis: string; algorithmus: 'sha256' | 'sha512';
+  art: 'verzeichnis' | 'flach';
+  /** verzeichnis: Name der Summen-Datei im Stand-Ordner */
+  summen?: 'SHA256SUMS' | 'SHA512SUMS';
+  codename?: string;
+  /** flach: Dateiname des Images mit dem Stand als erster Gruppe */
+  muster?: RegExp;
+  /** flach: Dateiname des Images zu einem Stand */
+  datei?: (stand: string) => string;
+  /** flach: Summen-Datei zu Image-Datei und Stand */
+  summenDatei?: (datei: string, stand: string) => string;
+  /** RHEL 10 und Abkömmlinge verlangen x86-64-v3 */
+  cpu?: string;
+}
 
 export const DISTROS: Record<Distro, Quelle> = {
-  'ubuntu-24.04': { herausgeber: 'ubuntu', codename: 'noble', basis: 'https://cloud-images.ubuntu.com/releases/noble/', summen: 'SHA256SUMS', algorithmus: 'sha256' },
-  'ubuntu-26.04': { herausgeber: 'ubuntu', codename: 'resolute', basis: 'https://cloud-images.ubuntu.com/releases/resolute/', summen: 'SHA256SUMS', algorithmus: 'sha256' },
-  'debian-12': { herausgeber: 'debian', codename: 'bookworm', basis: 'https://cloud.debian.org/images/cloud/bookworm/', summen: 'SHA512SUMS', algorithmus: 'sha512' },
-  'debian-13': { herausgeber: 'debian', codename: 'trixie', basis: 'https://cloud.debian.org/images/cloud/trixie/', summen: 'SHA512SUMS', algorithmus: 'sha512' },
+  'ubuntu-24.04': { herausgeber: 'ubuntu', familie: 'deb', art: 'verzeichnis', codename: 'noble', basis: 'https://cloud-images.ubuntu.com/releases/noble/', summen: 'SHA256SUMS', algorithmus: 'sha256' },
+  'ubuntu-26.04': { herausgeber: 'ubuntu', familie: 'deb', art: 'verzeichnis', codename: 'resolute', basis: 'https://cloud-images.ubuntu.com/releases/resolute/', summen: 'SHA256SUMS', algorithmus: 'sha256' },
+  'debian-12': { herausgeber: 'debian', familie: 'deb', art: 'verzeichnis', codename: 'bookworm', basis: 'https://cloud.debian.org/images/cloud/bookworm/', summen: 'SHA512SUMS', algorithmus: 'sha512' },
+  'debian-13': { herausgeber: 'debian', familie: 'deb', art: 'verzeichnis', codename: 'trixie', basis: 'https://cloud.debian.org/images/cloud/trixie/', summen: 'SHA512SUMS', algorithmus: 'sha512' },
+  'rocky-9': { herausgeber: 'rocky', familie: 'rpm', art: 'flach', basis: 'https://dl.rockylinux.org/pub/rocky/9/images/x86_64/', algorithmus: 'sha256', muster: /Rocky-9-GenericCloud-Base-(9\.\d+-\d{8}\.\d+)\.x86_64\.qcow2/, datei: st => `Rocky-9-GenericCloud-Base-${st}.x86_64.qcow2`, summenDatei: d => `${d}.CHECKSUM` },
+  'rocky-10': { herausgeber: 'rocky', familie: 'rpm', art: 'flach', basis: 'https://dl.rockylinux.org/pub/rocky/10/images/x86_64/', algorithmus: 'sha256', muster: /Rocky-10-GenericCloud-Base-(10\.\d+-\d{8}\.\d+)\.x86_64\.qcow2/, datei: st => `Rocky-10-GenericCloud-Base-${st}.x86_64.qcow2`, summenDatei: d => `${d}.CHECKSUM`, cpu: 'x86-64-v3' },
+  'alma-9': { herausgeber: 'alma', familie: 'rpm', art: 'flach', basis: 'https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/', algorithmus: 'sha256', muster: /AlmaLinux-9-GenericCloud-(9\.\d+-\d{8}(?:\.\d+)?)\.x86_64\.qcow2/, datei: st => `AlmaLinux-9-GenericCloud-${st}.x86_64.qcow2`, summenDatei: () => 'CHECKSUM' },
+  'alma-10': { herausgeber: 'alma', familie: 'rpm', art: 'flach', basis: 'https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/', algorithmus: 'sha256', muster: /AlmaLinux-10-GenericCloud-(10\.\d+-\d{8}(?:\.\d+)?)\.x86_64\.qcow2/, datei: st => `AlmaLinux-10-GenericCloud-${st}.x86_64.qcow2`, summenDatei: () => 'CHECKSUM', cpu: 'x86-64-v3' },
+  'fedora-44': { herausgeber: 'fedora', familie: 'rpm', art: 'flach', basis: 'https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/', algorithmus: 'sha256', muster: /Fedora-Cloud-Base-Generic-44-(\d+\.\d+)\.x86_64\.qcow2/, datei: st => `Fedora-Cloud-Base-Generic-44-${st}.x86_64.qcow2`, summenDatei: (_d, st) => `Fedora-Cloud-44-${st}-x86_64-CHECKSUM` },
 };
 
 export const istDistro = (x: unknown): x is Distro => typeof x === 'string' && x in DISTROS;
 
-/** Erlaubte Herkunft eines Images (nur die Herausgeber, nur HTTPS) */
-export const IMAGE_URL = /^https:\/\/(cloud-images\.ubuntu\.com\/releases\/[a-z]+\/release-\d{8}(\.\d+)?|cloud\.debian\.org\/images\/cloud\/[a-z]+\/\d{8}-\d{4})\/[a-z0-9][\w.-]*\.(img|qcow2)$/;
+/** Erlaubte Herkunft eines Images (nur die Herausgeber, nur HTTPS, nur datierte Stände — nie „latest“) */
+export const IMAGE_URL = new RegExp(`^https://(${[
+  /cloud-images\.ubuntu\.com\/releases\/[a-z]+\/release-\d{8}(\.\d+)?\/[a-z0-9][\w.-]*\.(img|qcow2)/,
+  /cloud\.debian\.org\/images\/cloud\/[a-z]+\/\d{8}-\d{4}\/[a-z0-9][\w.-]*\.qcow2/,
+  /dl\.rockylinux\.org\/pub\/rocky\/(9|10)\/images\/x86_64\/Rocky-(9|10)-GenericCloud-Base-\d+\.\d+-\d{8}\.\d+\.x86_64\.qcow2/,
+  /repo\.almalinux\.org\/almalinux\/(9|10)\/cloud\/x86_64\/images\/AlmaLinux-(9|10)-GenericCloud-\d+\.\d+-\d{8}(\.\d+)?\.x86_64\.qcow2/,
+  /dl\.fedoraproject\.org\/pub\/fedora\/linux\/releases\/\d{2}\/Cloud\/x86_64\/images\/Fedora-Cloud-Base-Generic-\d{2}-\d+\.\d+\.x86_64\.qcow2/,
+].map(r => r.source).join('|')})$`);
 /** Dateiname im import-Inhalt von Proxmox (nur .qcow2; Proxmox normalisiert sonst) */
 export const IMPORT_DATEI = /^[a-z0-9][a-z0-9.+_-]{2,80}\.qcow2$/;
 /** Volume-ID im import-Inhalt */
@@ -31,26 +61,42 @@ export const IMPORT_VOLUME = /^[a-zA-Z][\w-]{0,40}:import\/[a-z0-9][a-z0-9.+_-]{
 /** Hostname/VM-Name neuer Maschinen */
 export const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** Neuester datierter Stand aus dem Verzeichnis-Listing (Ubuntu „release-20261017/“, Debian „20261021-2638/“). */
-export function neuesterStand(listing: string, herausgeber: 'ubuntu' | 'debian'): string | undefined {
-  const muster = herausgeber === 'ubuntu' ? /href="(release-\d{8}(?:\.\d+)?)\/"/g : /href="(\d{8}-\d{4})\/"/g;
+/** Sortierschlüssel eines Standes: Zahlen links mit Nullen aufgefüllt („9.8-20260525.0“, „release-20261017.1“, „1.7“) */
+const standSchluessel = (s: string) => s.replace(/^release-/, '').replace(/\d+/g, n => n.padStart(10, '0'));
+
+/** Neuester datierter Stand aus dem Verzeichnis-Listing (Ubuntu „release-20261017/“, Debian „20261021-2638/“, flach aus dem Dateinamen). */
+export function neuesterStand(listing: string, quelle: Herausgeber | Quelle): string | undefined {
+  const q = typeof quelle === 'string' ? undefined : quelle;
+  const herausgeber = typeof quelle === 'string' ? quelle : quelle.herausgeber;
+  const muster = q?.art === 'flach' && q.muster ? new RegExp(`href="(?:\\./)?${q.muster.source}"`, 'g')
+    : herausgeber === 'ubuntu' ? /href="(release-\d{8}(?:\.\d+)?)\/"/g : /href="(\d{8}-\d{4})\/"/g;
   const staende = [...new Set([...listing.matchAll(muster)].map(m => m[1]!))];
-  const schluessel = (s: string) => s.replace(/^release-/, '').replace(/\.(\d+)$/, (_, n: string) => `.${n.padStart(3, '0')}`);
-  return staende.sort((a, b) => schluessel(a).localeCompare(schluessel(b))).pop();
+  return staende.sort((a, b) => standSchluessel(a).localeCompare(standSchluessel(b))).pop();
 }
 
 /** Dateiname des Images eines Standes beim Herausgeber */
 export function imageDatei(distro: Distro, stand: string): string {
   const q = DISTROS[distro];
+  if (q.art === 'flach') return q.datei!(stand);
   return q.herausgeber === 'ubuntu' ? `${distro}-server-cloudimg-amd64.img` : `${distro}-genericcloud-amd64-${stand}.qcow2`;
 }
 
-/** Prüfsumme einer Datei aus SHA256SUMS/SHA512SUMS („<hash> *datei“ oder „<hash>  datei“) */
+/** URL der Summen-Datei eines Standes */
+export function summenUrl(distro: Distro, stand: string): string {
+  const q = DISTROS[distro];
+  return q.art === 'flach' ? `${q.basis}${q.summenDatei!(imageDatei(distro, stand), stand)}` : `${q.basis}${stand}/${q.summen}`;
+}
+
+/** Prüfsumme einer Datei aus GNU-Format („<hash> *datei“ / „<hash>  datei“) oder BSD-Format („SHA256 (datei) = <hash>“, Rocky/Fedora) */
 export function summeAus(text: string, datei: string, algorithmus: 'sha256' | 'sha512'): string | undefined {
   const laenge = algorithmus === 'sha256' ? 64 : 128;
+  const name = algorithmus.toUpperCase();
   for (const zeile of text.split(/\r?\n/)) {
-    const m = /^([0-9a-f]+)\s+\*?(\S+)$/.exec(zeile.trim());
-    if (m && m[2] === datei && m[1]!.length === laenge) return m[1];
+    const z = zeile.trim();
+    const gnu = /^([0-9a-f]+)\s+\*?(\S+)$/.exec(z);
+    if (gnu && gnu[2] === datei && gnu[1]!.length === laenge) return gnu[1];
+    const bsd = /^(SHA\d+) \((\S+)\) = ([0-9a-f]+)$/.exec(z);
+    if (bsd && bsd[1] === name && bsd[2] === datei && bsd[3]!.length === laenge) return bsd[3];
   }
   return undefined;
 }
@@ -62,14 +108,21 @@ export function imageAngabe(distro: Distro, stand: string, summenText: string): 
   const q = DISTROS[distro];
   const datei = imageDatei(distro, stand);
   const checksum = summeAus(summenText, datei, q.algorithmus);
-  if (!checksum) return { fehler: `${q.summen} von ${distro} (${stand}) enthält ${datei} nicht` };
+  if (!checksum) return { fehler: `Summen-Datei von ${distro} (${stand}) enthält ${datei} nicht` };
   const kurz = stand.replace(/^release-/, '');
-  return { distro, stand, url: `${q.basis}${stand}/${datei}`, checksum, checksum_algorithm: q.algorithmus, filename: `${distro}-${kurz}.qcow2`.replace(/[^a-z0-9.+_-]/g, '-') };
+  const url = q.art === 'flach' ? `${q.basis}${datei}` : `${q.basis}${stand}/${datei}`;
+  return { distro, stand, url, checksum, checksum_algorithm: q.algorithmus, filename: `${distro}-${kurz}.qcow2`.replace(/[^a-z0-9.+_-]/g, '-') };
+}
+
+/** Distribution zu einem import-Volume (Dateiname „<distro>-<stand>.qcow2“ aus imageAngabe) */
+export function distroAusImage(image: string): Distro | undefined {
+  const datei = image.split('/').pop() ?? '';
+  return (Object.keys(DISTROS) as Distro[]).sort((a, b) => b.length - a.length).find(d => datei.startsWith(`${d}-`));
 }
 
 /** Eingaben von download_image prüfen (Herkunft, Prüfsumme, Dateiname) */
 export function pruefeDownload(i: { url?: unknown; checksum?: unknown; checksum_algorithm?: unknown; filename?: unknown }): string | undefined {
-  if (typeof i.url !== 'string' || !IMAGE_URL.test(i.url)) return 'url muss ein Cloud-Image von cloud-images.ubuntu.com/releases oder cloud.debian.org/images/cloud sein (mit datiertem Stand, list_cloud_images)';
+  if (typeof i.url !== 'string' || !IMAGE_URL.test(i.url)) return 'url muss ein datiertes Cloud-Image eines Herausgebers sein (Ubuntu, Debian, Rocky, Alma, Fedora — aus list_cloud_images, nie „latest“)';
   if (i.checksum_algorithm !== 'sha256' && i.checksum_algorithm !== 'sha512') return 'checksum_algorithm muss sha256 oder sha512 sein';
   if (typeof i.checksum !== 'string' || !new RegExp(`^[0-9a-f]{${i.checksum_algorithm === 'sha256' ? 64 : 128}}$`).test(i.checksum)) return 'checksum fehlt oder passt nicht zum Algorithmus (list_cloud_images liefert sie)';
   if (typeof i.filename !== 'string' || !IMPORT_DATEI.test(i.filename)) return 'filename: Kleinbuchstaben, Ziffern, . + _ - und Endung .qcow2';
@@ -78,8 +131,9 @@ export function pruefeDownload(i: { url?: unknown; checksum?: unknown; checksum_
 
 /** Proxmox-Konfiguration (POST /nodes/{node}/qemu) einer Vorlage aus einem import-Volume */
 export function vorlagenKonfig(v: { vmid: number; name: string; storage: string; image: string; bridge?: string; memory?: number; cores?: number; beschreibung?: string }): Record<string, unknown> {
+  const d = distroAusImage(v.image);
   return {
-    vmid: v.vmid, name: v.name, ostype: 'l26', machine: 'q35', bios: 'seabios', cpu: 'x86-64-v2-AES',
+    vmid: v.vmid, name: v.name, ostype: 'l26', machine: 'q35', bios: 'seabios', cpu: (d && DISTROS[d].cpu) ?? 'x86-64-v2-AES',
     memory: v.memory ?? 2048, cores: v.cores ?? 2, scsihw: 'virtio-scsi-single',
     scsi0: `${v.storage}:0,import-from=${v.image},discard=on,iothread=1,ssd=1`,
     ide2: `${v.storage}:cloudinit`, boot: 'order=scsi0', serial0: 'socket', vga: 'serial0', agent: 'enabled=1',
@@ -92,7 +146,7 @@ const SSH_OEFFENTLICH = /^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A
 const SSH_PRIVAT = /^-----BEGIN OPENSSH PRIVATE KEY-----\n[A-Za-z0-9+/=\n]{100,5000}\n-----END OPENSSH PRIVATE KEY-----\n?$/;
 
 /** Cloud-Init-Benutzerdaten (Snippet) einer neuen VM. Wirft bei ungültigen Eingaben — nichts Ungeprüftes landet im YAML. */
-export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string }): string {
+export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; familie?: 'deb' | 'rpm' }): string {
   if (!VM_NAME.test(v.hostname)) throw new Error(`ungültiger Hostname „${v.hostname}“`);
   const schluessel = [v.alfredSchluessel, ...(v.weitereSchluessel ?? [])].map(s => s.trim());
   for (const s of schluessel) if (!SSH_OEFFENTLICH.test(s)) throw new Error('ungültiger öffentlicher SSH-Schlüssel');
@@ -109,7 +163,7 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
     '  - name: alfred',
     '    gecos: Alfred',
     '    shell: /bin/bash',
-    '    groups: [sudo]',
+    `    groups: [${v.familie === 'rpm' ? 'wheel' : 'sudo'}]`,
     '    sudo: "ALL=(ALL) NOPASSWD:ALL"',
     '    lock_passwd: true',
     '    ssh_authorized_keys:',
@@ -125,6 +179,8 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
     'package_update: true',
     'packages: [qemu-guest-agent]',
     'runcmd:',
+    // v1627 — Realfall docker-dev-01: ohne Internet beim ersten Start scheiterte „packages“ — einige Minuten nachversuchen
+    `  - [sh, -c, ${JSON.stringify(`command -v qemu-ga >/dev/null 2>&1 || for i in 1 2 3 4 5 6 7 8 9 10; do ${v.familie === 'rpm' ? 'dnf -y install qemu-guest-agent' : 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-guest-agent'} && break; sleep 30; done`)}]`,
     '  - [systemctl, enable, --now, qemu-guest-agent]',
     // Danach nie wieder Cloud-Init: sonst erzeugt ein neuer Datenstand (oder ein entferntes Laufwerk) neue Host-Schlüssel und der Fernzugang sperrt
     '  - [touch, /etc/cloud/cloud-init.disabled]',

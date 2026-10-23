@@ -11,7 +11,8 @@ import type { HostBestand } from './sammler.js';
 import { groesseBytes } from './sammler.js';
 import { dnsText, domainsMitDns, type DnsEintrag, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 
-export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'rocky-9', 'alma-9', 'alpine-3', 'windows-server-2022', 'windows-server-2025'] as const;
+// v1627 (Owner 24.10.) — nur, was die Vorlagen-Fabrik bauen kann; Alpine und Windows erst, wenn die Fabrik sie baut
+export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'ubuntu-26.04', 'rocky-9', 'rocky-10', 'alma-9', 'alma-10', 'fedora-44'] as const;
 export const NETZ_GERAETE = ['unifi', 'pfsense', 'mikrotik'] as const;
 /** Firewall-Zonen außer Netzen und Gruppen (I2-Nachschärfung 22.10.: Freitext-Zonen sind für Changes nicht verwendbar) */
 /** Feste Zonen: proxy = konkrete NPM-IP; alfred = der Server, auf dem Alfred läuft (Verwaltung, Datenübertragung); gateway = Gateway des eigenen Netzes (DNS/NTP) — Architektur v3 cf82f3f2, Owner 22.10. */

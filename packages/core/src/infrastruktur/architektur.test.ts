@@ -85,7 +85,7 @@ describe('I2 Architektur prüfen', () => {
     expect(f).toContain('Knoten „pve9“ unbekannt');
     expect(f).toContain('vcpu 1–64');
     expect(f).toContain('diskGb 4–8192');
-    expect(f).toContain('Windows geht nicht als LXC');
+    expect(f).toContain('distribution muss eine von'); // v1627: Windows baut die Vorlagen-Fabrik noch nicht → gar nicht erlaubt
     expect(f).toContain('Netz „Gibtsnicht“ ist weder vorhanden noch unter netze geplant');
     expect(f).toContain('VLAN 20 ist bereits vergeben (IoT/unifi)');
     expect(f).toContain('reihenfolge: es fehlen die Gruppen Matrix, Neu');

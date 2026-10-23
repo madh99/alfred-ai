@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Vorlagen-Fabrik: Rocky, Alma und Fedora (v1627)
+
+- **Neue Distributionen** `rocky-9`, `rocky-10`, `alma-9`, `alma-10` und `fedora-44`: Es gelten nur offizielle, datierte Images der Herausgeber und nie „latest“. Die Prüfsumme kommt vom Herausgeber, im GNU- oder im BSD-Format (`SHA256 (datei) = …`). Neu sind auch flache Verzeichnisse, in denen der Stand im Dateinamen steht.
+- **RHEL-10-Familie:** Vorlagen bekommen CPU-Typ `x86-64-v3`, weil Rocky und Alma 10 sonst nicht starten. Alle drei Nodes unterstützen ihn.
+- **Cloud-Init je Familie:** RPM-Distributionen bekommen den Benutzer in `wheel` und installieren mit `dnf`, Debian-Distributionen in `sudo` mit `apt`. Die Installation von `qemu-guest-agent` wird einige Minuten lang wiederholt, falls beim ersten Start noch kein Netz da ist (Realfall docker-dev-01).
+- **Architektur** erlaubt nur noch Distributionen, die die Fabrik bauen kann. Ubuntu 26.04 und die neuen sind dazugekommen. Alpine und Windows sind entfernt, bis die Fabrik sie bauen kann.
+- **Bestandsaufnahme:** Support-Ende für Rocky/Alma (wie RHEL 8/9/10) und Fedora.
+
 ### Fixed — Gast-Agent: Abfrage und Pflichtprüfung bei der Bereitstellung (v1626)
 
 - **Befund (docker-dev-01):** `qemu-guest-agent` konnte beim ersten Start nicht installiert werden, weil das VLAN noch kein Internet hatte. Cloud-Init schaltet sich danach absichtlich ab, einen zweiten Versuch gab es also nicht. Die Bereitstellung meldete trotzdem Erfolg. Ohne Agent kennt Proxmox auch die IP der VM nicht.

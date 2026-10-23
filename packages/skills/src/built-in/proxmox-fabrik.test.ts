@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sicherungsJobPruefung, neuesterStand, imageAngabe, summeAus, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME } from './proxmox-fabrik.js';
+import { sicherungsJobPruefung, neuesterStand, imageAngabe, summeAus, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, DISTROS, IMAGE_URL, summenUrl, distroAusImage } from './proxmox-fabrik.js';
 import { ProxmoxSkill } from './proxmox.js';
 
 // I5 — Vorlagen-Fabrik: Stände/Prüfsummen der Herausgeber, Vorlagen-Konfiguration, Cloud-Init mit eigenem Host-Schlüssel
@@ -193,5 +193,49 @@ describe('agent_status (v1626, Realfall docker-dev-01 ohne Gast-Agent)', () => {
     expect(nein.success).toBe(false);
     expect(nein.error).toContain('antwortet nicht');
     expect((await welt(true).execute({ action: 'agent_status', vmid: 200 }, {} as never)).error).toContain('Container');
+  });
+});
+
+describe('v1627 Rocky, Alma, Fedora (Owner 24.10.; Listings und Summen wie live am 24.10. gelesen)', () => {
+  const rockyListing = '<a href="Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2">x</a><a href="Rocky-9-GenericCloud-Base-9.7-20251123.0.x86_64.qcow2">x</a><a href="Rocky-9-GenericCloud-Base.latest.x86_64.qcow2">x</a><a href="Rocky-9-GenericCloud-LVM-9.8-20260525.0.x86_64.qcow2">x</a>';
+  const almaListing = '<a href="AlmaLinux-9-GenericCloud-9.8-20260810.x86_64.qcow2">x</a><a href="AlmaLinux-9-GenericCloud-9.8-20261005.x86_64.qcow2">x</a><a href="AlmaLinux-9-GenericCloud-ext4-9.8-20261005.x86_64.qcow2">x</a><a href="AlmaLinux-9-GenericCloud-latest.x86_64.qcow2">x</a>';
+  const fedoraListing = '<a href="Fedora-Cloud-44-1.7-x86_64-CHECKSUM">x</a><a href="Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2">x</a><a href="Fedora-Cloud-Base-UEFI-UKI-44-1.7.x86_64.qcow2">x</a>';
+  it('neuester datierter Stand aus flachen Listings, nie „latest“, nicht LVM/ext4/UKI', () => {
+    expect(neuesterStand(rockyListing, DISTROS['rocky-9'])).toBe('9.8-20260525.0');
+    expect(neuesterStand(almaListing, DISTROS['alma-9'])).toBe('9.8-20261005');
+    expect(neuesterStand(fedoraListing, DISTROS['fedora-44'])).toBe('1.7');
+    expect(neuesterStand('<a href="release-20261017/">', 'ubuntu')).toBe('release-20261017'); // alter Aufruf bleibt
+  });
+  it('BSD-Summen (Rocky/Fedora) und GNU-Summen (Alma); URL passt zur Herkunftsliste', () => {
+    const rocky = imageAngabe('rocky-9', '9.8-20260525.0', '# Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2: 645988352 bytes\nSHA256 (Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2) = ' + 'a'.repeat(64));
+    expect(rocky).toMatchObject({ url: 'https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2', checksum: 'a'.repeat(64), checksum_algorithm: 'sha256', filename: 'rocky-9-9.8-20260525.0.qcow2' });
+    expect(summenUrl('rocky-9', '9.8-20260525.0')).toBe('https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2.CHECKSUM');
+    const alma = imageAngabe('alma-10', '10.2-20261012.0', `${'b'.repeat(64)}  AlmaLinux-10-GenericCloud-10.2-20261012.0.x86_64.qcow2\n${'c'.repeat(64)}  AlmaLinux-10-GenericCloud-ext4-10.2-20261012.0.x86_64.qcow2`);
+    expect(alma).toMatchObject({ checksum: 'b'.repeat(64), url: 'https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.2-20261012.0.x86_64.qcow2' });
+    expect(summenUrl('alma-10', '10.2-20261012.0')).toBe('https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/CHECKSUM');
+    const fed = imageAngabe('fedora-44', '1.7', '-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nSHA256 (Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2) = ' + 'd'.repeat(64));
+    expect(fed).toMatchObject({ checksum: 'd'.repeat(64), url: 'https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2' });
+    expect(summenUrl('fedora-44', '1.7')).toBe('https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-44-1.7-x86_64-CHECKSUM');
+    for (const a of [rocky, alma, fed]) expect(IMAGE_URL.test((a as { url: string }).url)).toBe(true);
+    expect(IMAGE_URL.test('https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2')).toBe(false);
+    expect(IMAGE_URL.test('https://evil.example/Rocky-9-GenericCloud-Base-9.8-20260525.0.x86_64.qcow2')).toBe(false);
+    expect(pruefeDownload({ ...(fed as object), checksum_algorithm: 'sha256' })).toBeUndefined();
+    expect(summeAus('SHA512 (x.qcow2) = ' + 'e'.repeat(64), 'x.qcow2', 'sha256')).toBeUndefined(); // falscher Algorithmus
+  });
+  it('Vorlage: x86-64-v3 für RHEL-10-Familie, sonst v2; Distribution aus dem Image-Namen', () => {
+    expect(distroAusImage('local:import/rocky-10-10.2-20260525.0.qcow2')).toBe('rocky-10');
+    expect(distroAusImage('local:import/rocky-9-9.8-20260525.0.qcow2')).toBe('rocky-9');
+    expect(vorlagenKonfig({ vmid: 9030, name: 'rocky-10', storage: 's', image: 'local:import/rocky-10-10.2-20260525.0.qcow2' }).cpu).toBe('x86-64-v3');
+    expect(vorlagenKonfig({ vmid: 9031, name: 'alma-9', storage: 's', image: 'local:import/alma-9-9.8-20261005.qcow2' }).cpu).toBe('x86-64-v2-AES');
+  });
+  it('Cloud-Init: RPM-Familie mit wheel und dnf, Debian-Familie mit sudo und apt; Agent mit Nachversuch', () => {
+    const basis = { hostname: 'probe-rocky', alfredSchluessel: ALFRED, hostPrivat: HOST_PRIV, hostOeffentlich: HOST_PUB };
+    const rpm = cloudInitBenutzerDaten({ ...basis, familie: 'rpm' });
+    expect(rpm).toContain('    groups: [wheel]');
+    expect(rpm).toContain('dnf -y install qemu-guest-agent');
+    const deb = cloudInitBenutzerDaten(basis);
+    expect(deb).toContain('    groups: [sudo]');
+    expect(deb).toContain('apt-get install -y qemu-guest-agent');
+    expect(deb.indexOf('qemu-ga >/dev/null')).toBeLessThan(deb.indexOf('cloud-init.disabled'));
   });
 });

@@ -10,6 +10,11 @@ describe('I1 Bestandsbericht', () => {
   it('Betriebssystem-Support (Stand 10/2026)', () => {
     expect(osSupport({ name: 'Debian 11', id: 'debian', version: '11' }, jetzt).ok).toBe(false);
     expect(osSupport({ name: 'Debian 12', id: 'debian', version: '12' }, jetzt).ok).toBe(true);
+    // v1627 — RHEL-Familie und Fedora
+    expect(osSupport({ name: 'Rocky Linux 9.8', id: 'rocky', version: '9.8' }, jetzt).ok).toBe(true);
+    expect(osSupport({ name: 'AlmaLinux 7.9', id: 'almalinux', version: '7.9' }, jetzt).ok).toBe(false);
+    expect(osSupport({ name: 'Fedora Linux 44', id: 'fedora', version: '44' }, jetzt).ok).toBe(true);
+    expect(osSupport({ name: 'Fedora Linux 41', id: 'fedora', version: '41' }, jetzt).ok).toBe(false);
     expect(osSupport({ name: 'Ubuntu 20.04', id: 'ubuntu', version: '20.04' }, jetzt).ok).toBe(false);
     expect(osSupport({ name: 'Ubuntu 24.04', id: 'ubuntu', version: '24.04' }, jetzt).ok).toBe(true);
     expect(osSupport({ name: 'Ubuntu 25.04', id: 'ubuntu', version: '25.04' }, jetzt)).toMatchObject({ ok: false, text: expect.stringContaining('keine LTS') });

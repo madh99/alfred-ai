@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
-import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
+import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
 /** I5 — was die Vorlagen-Fabrik vom Server braucht (SSH auf den Knoten, Fernzugang, CMDB); verdrahtet in alfred.ts */
 export interface VmFabrikDeps {
@@ -284,10 +284,10 @@ export class ProxmoxSkill extends Skill {
           description: 'Nach VM-Erstellung: Runtime installieren (docker, node, python). Installiert auch qemu-guest-agent. Wartet automatisch auf SSH.',
         },
         // I5 — Vorlagen-Fabrik
-        distro: { type: 'string', enum: Object.keys(DISTROS), description: 'list_cloud_images: ubuntu-24.04, ubuntu-26.04, debian-12, debian-13 (leer = alle)' },
+        distro: { type: 'string', enum: Object.keys(DISTROS), description: `list_cloud_images: ${Object.keys(DISTROS).join(', ')} (leer = alle)` },
         url: { type: 'string', description: 'download_image: Image-URL des Herausgebers mit datiertem Stand (aus list_cloud_images)' },
         checksum: { type: 'string', description: 'download_image: Prüfsumme des Herausgebers (aus list_cloud_images)' },
-        checksum_algorithm: { type: 'string', enum: ['sha256', 'sha512'], description: 'download_image: sha256 (Ubuntu) oder sha512 (Debian)' },
+        checksum_algorithm: { type: 'string', enum: ['sha256', 'sha512'], description: 'download_image: sha512 (Debian), sonst sha256 — aus list_cloud_images übernehmen' },
         filename: { type: 'string', description: 'download_image: Dateiname im import-Speicher (…qcow2, aus list_cloud_images)' },
         image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
         volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
@@ -1416,9 +1416,9 @@ export class ProxmoxSkill extends Skill {
     for (const d of gewuenscht) {
       const q = DISTROS[d];
       try {
-        const stand = neuesterStand(await this.holeText(q.basis), q.herausgeber);
+        const stand = neuesterStand(await this.holeText(q.basis), q);
         if (!stand) { fehler.push(`${d}: kein datierter Stand gefunden`); continue; }
-        const a = imageAngabe(d, stand, await this.holeText(`${q.basis}${stand}/${q.summen}`));
+        const a = imageAngabe(d, stand, await this.holeText(summenUrl(d, stand)));
         if ('fehler' in a) fehler.push(a.fehler); else liste.push(a);
       } catch (err) { fehler.push(`${d}: ${(err as Error).message.slice(0, 120)}`); }
     }
@@ -1626,7 +1626,10 @@ export class ProxmoxSkill extends Skill {
     schritte.push(`VM ${name} (VMID ${vmid}) aus Vorlage ${tpl} auf ${node} geklont`);
     // Host-Schlüssel + Snippet
     const hs = await this.fabrik.hostSchluessel();
-    const daten = cloudInitBenutzerDaten({ hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich });
+    // v1627 — Distribution der Vorlage aus ihrer Beschreibung („… aus <speicher>:import/<distro>-<stand>.qcow2“): wheel/dnf bei RPM-Familie
+    const tplCfg = await this.get<{ description?: string }>(`/nodes/${vorlage.node}/qemu/${tpl}/config`).catch(() => ({} as { description?: string }));
+    const tplDistro = distroAusImage(/aus (\S+\.qcow2)/.exec(String(tplCfg.description ?? ''))?.[1] ?? '');
+    const daten = cloudInitBenutzerDaten({ familie: tplDistro ? DISTROS[tplDistro].familie : 'deb', hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich });
     const snippetSpeicher = 'local';
     const sp = await this.get<{ path?: string }>(`/storage/${snippetSpeicher}`);
     const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
