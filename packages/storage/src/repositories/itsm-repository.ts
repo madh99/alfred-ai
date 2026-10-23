@@ -943,7 +943,7 @@ export class ItsmRepository {
    * I4 — Statuswechsel und Laufzustand durch den Ausführungsmotor (einziger Weg zu in_progress/completed/failed/rolled_back für
    * Changes mit Schritten). Start nur aus approved und nur, wenn die Freigabe genau den aktuellen Plan deckt.
    */
-  async motorSetze(userId: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string }): Promise<CmdbChangeRequest> {
+  async motorSetze(userId: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string; linkedIncidentId?: string }): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
     // I4b — nach Abschluss: Rückweg nach einer vom Change verursachten Störung (nur nach Owner-Ja, siehe Motor)
@@ -961,6 +961,7 @@ export class ItsmRepository {
       if (['completed', 'failed', 'rolled_back', 'cancelled'].includes(d.status)) { felder.push('completed_at = ?'); werte.push(now); }
     }
     if (d.result !== undefined) { felder.push('result = ?'); werte.push(d.result); }
+    if (d.linkedIncidentId && !e.linkedIncidentId) { felder.push('linked_incident_id = ?'); werte.push(d.linkedIncidentId); }
     werte.push(e.id, userId);
     await this.db.execute(`UPDATE cmdb_change_requests SET ${felder.join(', ')} WHERE id = ? AND user_id = ?`, werte);
     return (await this.getChangeRequestById(userId, e.id))!;

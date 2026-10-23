@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { ChangeMotor, type MotorDeps } from './change-motor.js';
-import { loeseAuf, pfadWert, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
+import { loeseAuf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
 // I4 — Ausführungsmotor gegen Attrappen (kein echter Host)
@@ -21,7 +21,7 @@ function welt(schritte: ChangeSchritt[], opts: { snapshotFehlt?: boolean; status
     owner: () => 'o',
     itsm: {
       liste: async () => [c], hole: async () => c,
-      motorSetze: async (_o, _id, d) => { if (d.status) c.status = d.status; c.lauf = JSON.parse(JSON.stringify(d.lauf)); if (d.result !== undefined) c.result = d.result; return c; },
+      motorSetze: async (_o, _id, d) => { if (d.status) c.status = d.status; c.lauf = JSON.parse(JSON.stringify(d.lauf)); if (d.result !== undefined) c.result = d.result; if (d.linkedIncidentId) c.linkedIncidentId = d.linkedIncidentId; return c; },
     },
     fuehreAus: async (skill, input) => {
       aufrufe.push(`${skill}.${String(input.action)}${input.name ? `:${String(input.name)}` : ''}`);
@@ -35,7 +35,7 @@ function welt(schritte: ChangeSchritt[], opts: { snapshotFehlt?: boolean; status
     netz: { http: async () => ({ status: 200, text: '' }), port: async () => true, dns: async () => ['1.2.3.4'], ping: async () => true },
     cmdbProtokoll: async (_a, t) => { aufrufe.push(`cmdb:${t.slice(0, 30)}`); },
     entdecke: async q => q.map(x => `${x}: 1 Assets`),
-    incident: { anlegen: async () => 'inc-1', notiz: async (_o, _id, t) => { aufrufe.push(`incident:${t.slice(0, 20)}`); } },
+    incident: { anlegen: async () => 'inc-1', notiz: async (_o, _id, t) => { aufrufe.push(`incident:${t.slice(0, 20)}`); }, loese: async (_o, id, t) => { aufrufe.push(`geloest:${id}:${t.slice(0, 60)}`); }, hochstufen: async (_o, id) => { aufrufe.push(`hoch:${id}`); } },
     melde: async t => { meldungen.push(t); },
     frage: async (d, p) => { fragen.push({ d, p }); return true; },
     schlafe: async () => undefined,
@@ -118,6 +118,45 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.aufrufe.filter(a => a === 'proxmox.create_snapshot:i3probe')).toHaveLength(1);
     expect(w.c.status).toBe('completed');
     expect((w.c.lauf as ChangeLauf).ergebnisse.find(e => e.nr === 2)).toMatchObject({ ok: true, aktionOk: true, daten: { vmid: 142 } });
+  });
+
+  it('v1620 Realfall 23.10.: der Halt-Incident endet mit dem Change — zurückgerollt, nach Wiederholen abgeschlossen, abgebrochen ohne Wirkung', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    await w.motor.steuern('o', 'chg-1', 'rueckweg'); await warte(w.motor);
+    expect(w.c.status).toBe('rolled_back');
+    expect(w.aufrufe.some(a => a.startsWith('geloest:inc-1:Change chg-1 vollständig zurückgerollt'))).toBe(true);
+    expect(w.c.linkedIncidentId).toBe('inc-1');
+    const w2 = welt(probe(), { snapshotFehlt: true });
+    await w2.motor.anstossen(); await warte(w2.motor);
+    w2.snaps.add('i3probe');
+    await w2.motor.steuern('o', 'chg-1', 'wiederholen'); await warte(w2.motor);
+    expect(w2.c.status).toBe('completed');
+    expect(w2.aufrufe.some(a => a.startsWith('geloest:inc-1:Change chg-1 nach dem Anhalten abgeschlossen'))).toBe(true);
+    const w3 = welt(probe(), { snapshotFehlt: true });
+    await w3.motor.anstossen(); await warte(w3.motor);
+    await w3.motor.steuern('o', 'chg-1', 'abbrechen');
+    expect(w3.c.status).toBe('cancelled');
+    expect(w3.aufrufe.some(a => a.startsWith('geloest:inc-1:Change chg-1 ohne verbliebene Wirkung'))).toBe(true); // Snapshot zählt nicht als Restwirkung
+    expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
+  });
+
+  it('v1620: Restwirkung = ausgeführte Änderung ohne gelungenen Rückweg (Sicherungen zählen nicht) → Incident bleibt offen und wird hoch', async () => {
+    const plan = probe();
+    const l = (rw: Array<{ zuSchritt: number; ok: boolean }>): ChangeLauf => ({ phase: 'fertig', schritt: 3, start: 'x', ergebnisse: [{ nr: 2, ok: true, start: 'x' }, { nr: 3, ok: false, aktionOk: true, start: 'x' }], rueckweg: rw.map(r => ({ ...r, text: '', zeit: 'x' })) }) as ChangeLauf;
+    expect(restWirkung(plan, l([])).map(s => s.nr)).toEqual([3]);
+    expect(restWirkung(plan, l([{ zuSchritt: 3, ok: true }]))).toEqual([]);
+    expect(restWirkung(plan, l([{ zuSchritt: 3, ok: false }])).map(s => s.nr)).toEqual([3]);
+    // Abbruch nach einer wirksamen Änderung: Schritt 3 löscht den Snapshot, Prüfung scheitert (Snapshot kommt wieder) → angehalten mit Wirkung
+    const w = welt(probe());
+    w.deps.fuehreAus = async (skill, input) => { w.aufrufe.push(`${skill}.${String(input.action)}`); if (input.action === 'list_snapshots') return { success: true, data: [{ name: 'i3probe' }] }; if (input.action === 'task_status') return { success: true, data: { status: 'stopped', exitstatus: 'OK' } }; return { success: true, data: { vmid: 142 } }; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect((w.c.lauf as ChangeLauf).schritt).toBe(3);
+    await m.steuern('o', 'chg-1', 'abbrechen');
+    expect(w.aufrufe.some(a => a.startsWith('geloest:'))).toBe(false);
+    expect(w.aufrufe).toContain('hoch:inc-1');
+    expect(w.aufrufe.some(a => a.startsWith('incident:Change-Ende: cancel'))).toBe(true);
   });
 
   it('v1604 Realfall 9527d97f: wartet auf einen angehaltenen, schon wirksamen Change → einmal melden, nicht still warten', async () => {

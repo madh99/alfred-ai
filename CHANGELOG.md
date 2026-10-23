@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Halt-Incidents enden mit ihrem Change (v1620)
+
+- **Befund:** Der Ausführungsmotor legt beim Anhalten eines Changes einen Incident „Change angehalten“ an, hat ihn aber nie gelöst. 13 Incidents blieben offen, obwohl ihre Changes längst abgeschlossen, zurückgerollt oder abgebrochen waren. Change und Incident waren nicht verknüpft.
+- **Jetzt:** Am Change-Ende wird der eigene Incident **gelöst**, mit dem Lauf-Bericht als Lösung, wenn der Change abgeschlossen ist oder nichts mehr nachwirkt (zurückgerollt oder abgebrochen ohne Restwirkung).
+- **Restwirkung** (`restWirkung`) heißt: ausgeführte ändernde oder löschende Schritte ohne gelungenen Rückweg. Sicherungen (Snapshots) zählen nicht dazu. Bei Restwirkung oder Fehlschlag bleibt der Incident offen, wird auf *high* gestuft und nennt die noch wirksamen Schritte.
+- Der Change trägt den Incident jetzt in `linked_incident_id`.
+
 ### Security — Zertifikat-Pinning auf derselben Verbindung (v1619)
 
 - **Befund aus der Sicherheitsprüfung von v1618:**

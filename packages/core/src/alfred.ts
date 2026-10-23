@@ -7235,6 +7235,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             incident: {
               anlegen: async (o, d) => (await itsmI3.createIncident(o, { title: d.titel, description: d.text, severity: d.schwere as never, affectedAssetIds: d.assetIds, symptoms: d.text, detectedBy: 'change-motor' })).id,
               notiz: async (o, id, text) => { await itsmI3.updateIncident(o, id, { investigationNotes: text } as never); },
+              loese: async (o, id, loesung) => { await itsmI3.updateIncident(o, id, { status: 'resolved', resolution: loesung } as never); },
+              hochstufen: async (o, id) => { await itsmI3.updateIncident(o, id, { severity: 'high' } as never); },
             },
             melde: async (text, dringend) => {
               // Realfall 22.10.: Fertigmeldungen kamen nur über Telegram/Push, nicht in den App-Verlauf (Freigabe-Fragen schon) — jetzt wie alle

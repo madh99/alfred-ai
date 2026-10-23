@@ -135,6 +135,16 @@ export function rueckwegSchritte(schritte: ChangeSchritt[], ergebnisse: SchrittE
 /** Schritte, deren Wirkung über die Laufzeit hinaus Assets verändert (für CMDB-Protokoll und Host-Sperre). */
 export const wirkt = (s: ChangeSchritt) => s.art === 'aktion' && (s.einordnung === 'aendern' || s.einordnung === 'loeschen' || s.einordnung === 'sicherung');
 
+/**
+ * v1620 — was nach dem Lauf noch wirkt, ohne zurückgenommen zu sein: ausgeführte ändernde/löschende Schritte ohne erfolgreichen Rückweg.
+ * Sicherungen (Snapshots) zählen nicht — sie schützen nur und werden beim Aufräumen entfernt.
+ */
+export function restWirkung(schritte: ChangeSchritt[], l: ChangeLauf): ChangeSchritt[] {
+  const erledigt = new Set(l.ergebnisse.filter(e => e.ok || e.aktionOk).map(e => e.nr));
+  const zurueck = new Set((l.rueckweg ?? []).filter(r => r.ok).map(r => r.zuSchritt));
+  return schritte.filter(s => s.art === 'aktion' && (s.einordnung === 'aendern' || s.einordnung === 'loeschen') && erledigt.has(s.nr) && !zurueck.has(s.nr));
+}
+
 /** Kurzbericht nach Ende (PIR-Grundlage). */
 export function laufBericht(titel: string, schritte: ChangeSchritt[], l: ChangeLauf, ergebnis: 'completed' | 'failed' | 'rolled_back' | 'cancelled'): string {
   const dauer = l.ende ? Math.round((Date.parse(l.ende) - Date.parse(l.start)) / 1000) : undefined;

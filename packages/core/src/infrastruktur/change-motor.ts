@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { geheimNamen, kuerzeDaten, laufBericht, loeseAuf, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
 import type { ChangeSchritt, Pruefung } from './change-schritte.js';
@@ -20,7 +20,7 @@ export interface MotorDeps {
   itsm: {
     liste(o: string): Promise<CmdbChangeRequest[]>;
     hole(o: string, id: string): Promise<CmdbChangeRequest | null>;
-    motorSetze(o: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string }): Promise<CmdbChangeRequest>;
+    motorSetze(o: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string; linkedIncidentId?: string }): Promise<CmdbChangeRequest>;
   };
   /** Skill-Aktion als Owner ausführen (Skill-Sandbox mit Zeitlimit) */
   fuehreAus: (skill: string, input: Record<string, unknown>, timeoutMs: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string }>;
@@ -34,7 +34,11 @@ export interface MotorDeps {
   };
   cmdbProtokoll?: (assetId: string, text: string) => Promise<void>;
   entdecke?: (quellen: string[]) => Promise<string[]>;
-  incident?: { anlegen(o: string, d: { titel: string; text: string; schwere: string; assetIds: string[] }): Promise<string>; notiz(o: string, id: string, text: string): Promise<void> };
+  incident?: {
+    anlegen(o: string, d: { titel: string; text: string; schwere: string; assetIds: string[] }): Promise<string>; notiz(o: string, id: string, text: string): Promise<void>;
+    /** v1620 — Change-Ende ohne Restwirkung: eigenen Incident lösen (Lösung = Bericht) bzw. bei Restwirkung hochstufen */
+    loese?(o: string, id: string, loesung: string): Promise<void>; hochstufen?(o: string, id: string): Promise<void>;
+  };
   melde?: (text: string, dringend: boolean) => Promise<void>;
   /** Frage an den Owner (Button); nach dem Ja ruft die Queue den Skill infrastruktur mit `params` auf */
   frage?: (description: string, params: Record<string, unknown>) => Promise<boolean>;
@@ -510,11 +514,29 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   private async beende(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled', grund?: string, discovery: string[] = []): Promise<void> {
     lauf.phase = 'fertig'; lauf.ende = this.iso(); if (grund) lauf.grund = grund; delete lauf.frage;
     const bericht = laufBericht(c.title, (c.schritte ?? []) as ChangeSchritt[], lauf, status) + (discovery.length ? `\nDiscovery danach: ${discovery.join('; ')}` : '');
-    await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht });
-    if (this.d.incident && lauf.incidentId && status !== 'completed') await this.d.incident.notiz(o, lauf.incidentId, `Change-Ende: ${status}\n${bericht}`).catch(() => undefined);
+    await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht, linkedIncidentId: lauf.incidentId });
+    if (this.d.incident && lauf.incidentId) await this.incidentZumEnde(o, c, lauf, status, bericht);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
     const sollIst = status === 'completed' && c.vorhabenId ? await this.d.nachAbschluss?.(o, c).catch(() => undefined) : undefined;
     await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}`, status === 'failed');
     await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
+  }
+
+  /**
+   * v1620 — Realfall 23.10.: 13 Incidents „Change angehalten“ blieben offen, obwohl ihre Changes längst sauber abgeschlossen, zurückgerollt
+   * oder abgebrochen waren. Der eigene Incident hält nur fest, dass der Motor nicht weitermachte — er endet mit dem Change, außer es wirkt
+   * noch etwas nach (gescheiterter Rückweg, Fehlschlag, Abbruch mit nicht zurückgenommener Wirkung): dann bleibt er offen und wird hoch.
+   */
+  private async incidentZumEnde(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled', bericht: string): Promise<void> {
+    const inc = this.d.incident!; const id = lauf.incidentId!;
+    const rest = restWirkung((c.schritte ?? []) as ChangeSchritt[], lauf);
+    const geloest = status === 'completed' || (status !== 'failed' && !rest.length);
+    if (geloest && inc.loese) {
+      await inc.loese(o, id, `Change ${c.id.slice(0, 8)} ${{ completed: 'nach dem Anhalten abgeschlossen', rolled_back: 'vollständig zurückgerollt', cancelled: 'ohne verbliebene Wirkung abgebrochen', failed: 'gescheitert' }[status]}.\n${bericht}`).catch(() => undefined);
+      return;
+    }
+    const offen = rest.length ? `\nNoch wirksam (nicht zurückgenommen): ${rest.map(s => `Schritt ${s.nr} „${s.titel}“`).join('; ')}` : '';
+    await inc.notiz(o, id, `Change-Ende: ${status}${offen}\n${bericht}`).catch(() => undefined);
+    if (!geloest) await inc.hochstufen?.(o, id).catch(() => undefined);
   }
 }
