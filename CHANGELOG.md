@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Soll/Ist findet den Ziel-Host auch ohne IP am VM-Asset (v1623)
+
+- **Befund:** Der Soll/Ist-Abgleich ordnete den Fernzugang einer neuen VM nur über die IP ihres Proxmox-Assets zu. docker-dev-01 hat dort keine IP, weil kein Gast-Agent-Eintrag vorhanden ist. Darum galten WordPress-Dev, Open WebUI und pgAdmin als „nirgends laufend“, obwohl sie dort laufen.
+- **Jetzt:** Der Zugang wird auch über den Namen der VM zugeordnet. Proxy-Ziele werden über die IP des Zugangs geprüft.
+
 ### Fixed — Stilllegung: Entfernen per Fernzugriff ohne Rückweg (v1622)
 
 - Ein Stilllegungs-Change (`zweck: stilllegung`) durfte Dateien oder Verzeichnisse per Fernzugriff (`rm …`) nicht ohne Rückweg entfernen, obwohl das Entfernen dort gewollt endgültig ist. Der Planer verlangte einen Rückweg, der nur erfunden sein konnte.

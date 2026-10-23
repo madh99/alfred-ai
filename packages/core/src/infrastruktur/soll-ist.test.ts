@@ -41,6 +41,17 @@ describe('I4b Soll/Ist', () => {
     expect(r.erfuellt).toBe(r.gesamt);
     expect(sollIstText('x', r)).toContain('✓ Proxy wp.dev.at → docker-dev-01');
   });
+  it('v1623 Realfall 23.10.: VM-Asset ohne IP → Zugang über den Namen, Dienste und Proxy werden erkannt', () => {
+    const r = sollIst({ architektur: arch, quellHosts: ['dockerhost'],
+      vms: [{ assetId: 'v1', name: 'docker-dev-01', node: 'pve3', status: 'active', cpus: 4, ramBytes: 8 * GiB }],
+      zugaenge: [{ name: 'dockerhost', host: '192.168.1.211' }, { name: 'docker-dev-01', host: '10.203.24.2' }],
+      netze: [{ quelle: 'unifi', name: 'Docker-Dev', vlan: 824 }],
+      proxy: [{ domains: ['wp.dev.at'], forwardHost: '10.203.24.2', forwardPort: 8080 }],
+      hosts: [host('dockerhost', '192.168.1.211', [['homeassistant', 'ha']]), host('docker-dev-01', '10.203.24.2', [['wp', 'wp-dev', '0.0.0.0:8080->80/tcp'], ['pga', 'pgadmin']])] });
+    expect(r.abweichungen).toEqual([]);
+    expect(sollIstText('x', r)).toContain('✓ wp-dev läuft auf docker-dev-01');
+    expect(sollIstText('x', r)).toContain('✓ Proxy wp.dev.at → docker-dev-01');
+  });
   it('geplante Assets je neuer VM', () => {
     expect(geplanteAssets('v-1', arch)).toEqual([{ name: 'docker-dev-01', assetType: 'vm', sourceId: 'vorhaben:v-1:docker-dev-01', attributes: expect.objectContaining({ knoten: 'pve3', vcpu: 4, ramGb: 8, netz: 'Docker-Dev' }) }]);
   });

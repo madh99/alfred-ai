@@ -45,7 +45,9 @@ export function sollIst(e: SollIstEingabe): SollIstErgebnis {
         const da = e.netze.some(n => Number(n.vlan) === netz.vlan);
         punkte.push({ ok: da, text: `Netz ${netz.name} (VLAN ${netz.vlan}, ${netz.geraet}) ${da ? 'vorhanden' : 'fehlt noch'}` });
       }
-      const zielHost = vm?.ip ? e.zugaenge.find(z => z.host === vm.ip) : undefined;
+      // v1623 — Realfall 23.10.: das Proxmox-Asset von docker-dev-01 hat keine IP (kein Gast-Agent-Eintrag) → Zugang auch über den Namen
+      const zielHost = vm ? e.zugaenge.find(z => (!!vm.ip && z.host === vm.ip) || z.name.toLowerCase() === vm.name.toLowerCase()) : undefined;
+      const zielIp = vm?.ip ?? zielHost?.host;
       const neu = zielHost ? hostNachZugang.get(zielHost.name) : undefined;
       for (const einheit of g.einheiten.filter(x => !e.quellHosts.includes(x))) {
         const dort = hatEinheit(neu, einheit);
@@ -55,7 +57,7 @@ export function sollIst(e: SollIstEingabe): SollIstErgebnis {
         const ports = new Set([...(neu?.container ?? []), ...quellen.flatMap(h => h.container)].filter(c => c.composeProjekt === einheit || c.name === einheit).flatMap(c => hostPorts(c.ports)));
         for (const q of quellen) for (const p of e.proxy.filter(x => x.forwardHost === q.host && ports.has(x.forwardPort))) punkte.push({ ok: false, text: `Proxy ${p.domains[0]} zeigt noch auf ${q.zugang} (${p.forwardHost}:${p.forwardPort})` });
       }
-      if (vm?.ip) for (const p of e.proxy.filter(x => x.forwardHost === vm.ip)) punkte.push({ ok: true, text: `Proxy ${p.domains[0]} → ${g.vmName}` });
+      if (zielIp) for (const p of e.proxy.filter(x => x.forwardHost === zielIp)) punkte.push({ ok: true, text: `Proxy ${p.domains[0]} → ${g.vmName}` });
     } else if (g.ziel === 'bleibt') {
       // „bleibt“ heißt: bleibt, wie es ist — auch absichtlich gestoppte Container (Realfall 22.10.: keycloak/ioBroker gestoppt erhalten)
       for (const einheit of g.einheiten.filter(x => !e.quellHosts.includes(x))) {
