@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Rettungskopie einer VM aus einer Sicherung (v1614)
+
+- **Anlass (23.10.):** Der MikroTik-Router (VM 104) lehnt alle Zugänge ab, darunter `admin`, den REST-Benutzer und einen SSH-Schlüssel, der am 10.09. noch funktionierte. Seine Konfiguration von nach dem 10.09. läuft aber nachweislich weiter. Ein Einbruch ist wahrscheinlich. Gebraucht wird eine Kopie aus der Sicherung vom 09.01.2026, die nie ins Netz geht.
+- **`proxmox restore_backup`** (nur im Change): stellt eine vzdump-Sicherung als *neue* VM wieder her, ohne Start und mit neuen MAC-Adressen. Die Proxmox-Aufgabe wird an den Change-Motor übergeben, der sie verfolgt. Wiederholbar.
+- **`proxmox isolate_vm`** (nur im Change): trennt jede Netzwerkkarte (`link_down=1`), schaltet den Autostart ab und setzt den Löschschutz; danach wird nachgelesen. Eine laufende VM wird nicht angefasst. Gilt als Change-Schritt ohne Rückweg, weil er die Kopie nur sicherer macht.
+
 ### Added — pfSense-Portweiterleitungen lesen (v1613)
 
 - **Neu `pfsense list_port_forwards`** (lesend): zeigt je Weiterleitung den Status, das Interface, das Protokoll, die Quelle, Ziel und Port außen sowie Adresse und Port innen und die Beschreibung (REST-API v2 `/firewall/nat/port_forwards`).

@@ -173,3 +173,18 @@ export function sicherungsJobPruefung(w: SicherungsJobWunsch, vorhanden: Sicheru
     body: { id: w.id, vmid: vmids, storage: w.storage, schedule: w.schedule, mode: 'snapshot', compress: 'zstd', 'prune-backups': `keep-last=${w.keepLast}`, enabled: 1, ...(w.bwlimit ? { bwlimit: w.bwlimit } : {}), comment: (w.kommentar ?? 'Alfred-Übergangssicherung').slice(0, 200) },
   };
 }
+
+/**
+ * v1614 (Realfall 23.10.: Rettungskopie des gekaperten MikroTik-Routers aus der Januar-Sicherung) — jede Netzwerkkarte einer
+ * wiederhergestellten VM getrennt (link_down=1), damit die Kopie nie neben dem laufenden Original ins Netz geht.
+ */
+export function getrennteNetze(cfg: Record<string, unknown>): Record<string, string> {
+  const aus: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cfg)) {
+    if (!/^net\d+$/.test(k) || typeof v !== 'string') continue;
+    const teile = v.split(',').filter(t => !/^link_down=/.test(t));
+    aus[k] = [...teile, 'link_down=1'].join(',');
+  }
+  return aus;
+}
+export const alleNetzeGetrennt = (cfg: Record<string, unknown>) => Object.entries(cfg).filter(([k]) => /^net\d+$/.test(k)).every(([, v]) => /(^|,)link_down=1(,|$)/.test(String(v)));

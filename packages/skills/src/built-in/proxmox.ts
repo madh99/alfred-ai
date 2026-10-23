@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
-import { sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
+import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
 /** I5 — was die Vorlagen-Fabrik vom Server braucht (SSH auf den Knoten, Fernzugang, CMDB); verdrahtet in alfred.ts */
 export interface VmFabrikDeps {
@@ -66,11 +66,11 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm']);
 const VM_ZIEL_AKTIONEN = new Set(['backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
@@ -150,6 +150,7 @@ export class ProxmoxSkill extends Skill {
       '"create_lxc" erstellt LXC Container. ' +
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
+      'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus, Löschschutz an; Rückweg delete_vm. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -466,6 +467,10 @@ export class ProxmoxSkill extends Skill {
           return await this.deleteBackup(input);
         case 'list_backup_jobs':
           return await this.listBackupJobs();
+        case 'restore_backup':
+          return await this.restoreBackup(input);
+        case 'isolate_vm':
+          return await this.isolateVm(input);
         case 'create_backup_job':
           return await this.createBackupJob(input);
         case 'delete_backup_job':
@@ -1413,6 +1418,57 @@ export class ProxmoxSkill extends Skill {
       content: 'import', filename: input.filename, url: input.url, checksum: input.checksum, 'checksum-algorithm': input.checksum_algorithm, 'verify-certificates': 1,
     });
     return { success: true, data: { upid, node, storage, volid }, display: `Image wird geladen und geprüft (${input.checksum_algorithm}): ${input.url} → ${volid}` };
+  }
+
+  /**
+   * v1614 (Realfall 23.10.: MikroTik-Router gekapert, alle Zugänge entzogen) — Sicherung als NEUE VM wiederherstellen, ohne Start, mit
+   * neuen MACs (unique). Gibt die Proxmox-Aufgabe zurück; der Change-Motor verfolgt sie bis zum Ende. Danach isolate_vm.
+   */
+  private async restoreBackup(input: Record<string, unknown>): Promise<SkillResult> {
+    const volid = String(input.volid ?? '');
+    if (!SICHERUNG_VOLUME.test(volid)) return { success: false, error: 'restore_backup: volid einer vzdump-Sicherung (speicher:backup/vzdump-qemu-<vmid>-<datum>.vma.zst)' };
+    if (!/^[a-zA-Z][\w-]{0,40}:backup\/vzdump-qemu-/.test(volid)) return { success: false, error: 'restore_backup: nur QEMU-Sicherungen' };
+    const node = String(input.node ?? this.config.defaultNode ?? '');
+    const vmid = Number(input.new_vmid);
+    const storage = String(input.storage ?? '');
+    const name = String(input.hostname ?? '').trim();
+    if (!node) return { success: false, error: 'restore_backup braucht node' };
+    if (!Number.isInteger(vmid) || vmid < 100) return { success: false, error: 'new_vmid: freie VMID ≥ 100' };
+    if (!VM_NAME.test(name)) return { success: false, error: 'hostname: Name der Kopie (Kleinbuchstaben, Ziffern, -)' };
+    this.vmCache = null;
+    const vms = await this.getAllVms();
+    const da = vms.find(v => v.vmid === vmid);
+    if (da) {
+      // wiederholbar: dieselbe Kopie gibt es schon (gleicher Name) → übernehmen
+      if (da.name === name) return { success: true, data: { vmid, node: da.node, name, vorhanden: true }, display: `Kopie ${name} (VMID ${vmid}) gibt es bereits` };
+      return { success: false, error: `VMID ${vmid} ist belegt (${da.name ?? '?'})` };
+    }
+    const speicher = (await this.get<Array<{ storage: string; content?: string }>>(`/nodes/${node}/storage`)) ?? [];
+    if (!speicher.some(x => x.storage === storage && (x.content ?? '').split(',').includes('images'))) return { success: false, error: `storage „${storage}“ nimmt auf ${node} keine VM-Platten (images)` };
+    const upid = await this.post<string>(`/nodes/${node}/qemu`, { vmid, archive: volid, storage, unique: 1, start: 0 });
+    this.vmCache = null;
+    return { success: true, data: { upid, vmid, node, name, volid }, display: `Wiederherstellung von ${volid} als VMID ${vmid} auf ${node} (${storage}) gestartet — ohne Start, neue MACs` };
+  }
+
+  /** v1614 — wiederhergestellte Kopie isolieren: jede Netzwerkkarte link_down=1, kein Autostart, Löschschutz; nachlesen */
+  private async isolateVm(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const name = String(input.vm_name ?? input.hostname ?? '').trim();
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm) return { success: false, error: `VMID ${vmid} nicht gefunden` };
+    if (vm.type !== 'qemu') return { success: false, error: 'isolate_vm gilt nur für QEMU-VMs' };
+    // Namensvergleich nach der Wiederherstellung: Proxmox übernimmt den Namen aus der Sicherung — dann zuerst umbenennen
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    if (cfg.lock) return { success: false, error: `VMID ${vmid} ist noch gesperrt (${String(cfg.lock)}) — Wiederherstellung läuft` };
+    const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
+    if (st.status === 'running') return { success: false, error: `VMID ${vmid} läuft — eine Rettungskopie darf nie ungetrennt laufen; nicht verändert` };
+    const netze = getrennteNetze(cfg);
+    await this.api('PUT', `/nodes/${vm.node}/qemu/${vmid}/config`, { ...netze, onboot: 0, protection: 1, ...(name && VM_NAME.test(name) ? { name } : {}), description: `Rettungskopie (Alfred, isoliert) — Netzwerkkarten getrennt, nicht ins Netz schalten, solange das Original läuft.` });
+    const nachher = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    if (!alleNetzeGetrennt(nachher) || Number(nachher.onboot ?? 0) !== 0) return { success: false, error: `VMID ${vmid}: Netzwerkkarten oder Autostart nach dem Setzen nicht wie verlangt` };
+    this.vmCache = null;
+    return { success: true, data: { vmid, node: vm.node, name: nachher.name, getrennt: Object.keys(netze), onboot: 0, protection: 1 }, display: `✅ VMID ${vmid} (${String(nachher.name ?? '')}) isoliert: ${Object.keys(netze).join(', ') || 'keine Karten'} getrennt, kein Autostart, Löschschutz an` };
   }
 
   /** Übergangsjob 22.10. — geplante vzdump-Jobs des Clusters */

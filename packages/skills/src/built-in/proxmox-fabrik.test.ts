@@ -123,3 +123,49 @@ describe('sicherungsJobPruefung (Übergangsjob 22.10.)', () => {
     expect(sicherungsJobPruefung(w, [{ id: 'alfred-alt', storage: 'backupshare', vmid: '112,144', enabled: 1 }], [112, 144], ['backupshare']).fehler[0]).toContain('alfred-alt');
   });
 });
+
+describe('getrennteNetze (Rettungskopie MikroTik 23.10.)', () => {
+  it('setzt link_down=1 an jeder Karte, ersetzt vorhandene Angaben, lässt anderes unberührt', async () => {
+    const { getrennteNetze, alleNetzeGetrennt } = await import('./proxmox-fabrik.js');
+    const cfg = { net0: 'virtio=1E:DA:2E:C4:50:5E,bridge=vmbr1', net1: 'virtio=E6:5A:6D:06:EF:59,bridge=vmbr0,tag=20,link_down=0', net3: 'virtio=BC:24:11:53:C3:E9,bridge=vmbr0', scsi0: 'zfs:vm-1', name: 'BGP-MT-1' };
+    const g = getrennteNetze(cfg);
+    expect(g).toEqual({ net0: 'virtio=1E:DA:2E:C4:50:5E,bridge=vmbr1,link_down=1', net1: 'virtio=E6:5A:6D:06:EF:59,bridge=vmbr0,tag=20,link_down=1', net3: 'virtio=BC:24:11:53:C3:E9,bridge=vmbr0,link_down=1' });
+    expect(alleNetzeGetrennt(cfg)).toBe(false);
+    expect(alleNetzeGetrennt({ ...cfg, ...g })).toBe(true);
+  });
+});
+
+describe('restore_backup / isolate_vm (v1614, Rettungskopie)', () => {
+  function welt() {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's', defaultNode: 'pve1' } as never);
+    const cfg: Record<string, unknown> = { name: 'BGP-MT-1', onboot: 1, net0: 'virtio=AA:00:00:00:00:01,bridge=vmbr1', net1: 'virtio=AA:00:00:00:00:02,bridge=vmbr0,tag=20' };
+    const vms = [{ vmid: 104, name: 'BGP-MT-1', node: 'pve1', type: 'qemu' }];
+    const aufrufe: string[] = [];
+    const a = px as unknown as Record<string, unknown>;
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => { aufrufe.push(`GET ${p}`); if (p.endsWith('/storage')) return [{ storage: 'zfs-nvme002', content: 'images,rootdir' }, { storage: 'backupshare', content: 'backup,import' }]; if (p.endsWith('/config')) return cfg; if (p.endsWith('/status/current')) return { status: 'stopped' }; return {}; };
+    a.post = async (p: string, b: Record<string, unknown>) => { aufrufe.push(`POST ${p} ${JSON.stringify(b)}`); vms.push({ vmid: Number(b.vmid), name: 'BGP-MT-1', node: 'pve1', type: 'qemu' }); return 'UPID:pve1:1:restore'; };
+    a.api = async (m: string, p: string, b: Record<string, unknown>) => { aufrufe.push(`${m} ${p}`); Object.assign(cfg, b); return null; };
+    return { px, cfg, aufrufe };
+  }
+  const imChange = { ausChange: true } as never;
+  const volid = 'backupshare:backup/vzdump-qemu-104-2026_01_09-22_09_00.vma.zst';
+
+  it('nur im Change; stellt ohne Start mit neuen MACs wieder her und gibt die Aufgabe zurück', async () => {
+    const w = welt();
+    expect((await w.px.execute({ action: 'restore_backup', volid, new_vmid: 9104, storage: 'zfs-nvme002', hostname: 'bgp-mt-1-rettung' }, {} as never)).success).toBe(false);
+    const r = await w.px.execute({ action: 'restore_backup', node: 'pve1', volid, new_vmid: 9104, storage: 'zfs-nvme002', hostname: 'bgp-mt-1-rettung' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect((r.data as { upid: string }).upid).toMatch(/^UPID:/);
+    expect(w.aufrufe.find(x => x.startsWith('POST'))).toContain('"unique":1,"start":0');
+    expect((await w.px.execute({ action: 'restore_backup', node: 'pve1', volid, new_vmid: 104, storage: 'zfs-nvme002', hostname: 'x-y' }, imChange)).error).toMatch(/belegt/);
+    expect((await w.px.execute({ action: 'restore_backup', node: 'pve1', volid, new_vmid: 9105, storage: 'backupshare', hostname: 'x-y' }, imChange)).error).toMatch(/images/);
+  });
+
+  it('isolate_vm trennt jede Karte, Autostart aus, Löschschutz an, liest nach', async () => {
+    const w = welt();
+    const r = await w.px.execute({ action: 'isolate_vm', vmid: 104, vm_name: 'bgp-mt-1-rettung' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.cfg).toMatchObject({ net0: 'virtio=AA:00:00:00:00:01,bridge=vmbr1,link_down=1', net1: 'virtio=AA:00:00:00:00:02,bridge=vmbr0,tag=20,link_down=1', onboot: 0, protection: 1, name: 'bgp-mt-1-rettung' });
+  });
+});
