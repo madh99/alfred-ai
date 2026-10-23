@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `isolate_vm` ohne Löschschutz (v1615)
+
+- Der Löschschutz aus v1614 hätte den Rückweg `delete_vm` der Wiederherstellung blockiert. `isolate_vm` trennt jetzt alle Netzwerkkarten und schaltet den Autostart ab, setzt aber keinen Löschschutz mehr.
+
 ### Added — Rettungskopie einer VM aus einer Sicherung (v1614)
 
 - **Anlass (23.10.):** Der MikroTik-Router (VM 104) lehnt alle Zugänge ab, darunter `admin`, den REST-Benutzer und einen SSH-Schlüssel, der am 10.09. noch funktionierte. Seine Konfiguration von nach dem 10.09. läuft aber nachweislich weiter. Ein Einbruch ist wahrscheinlich. Gebraucht wird eine Kopie aus der Sicherung vom 09.01.2026, die nie ins Netz geht.

@@ -150,7 +150,7 @@ export class ProxmoxSkill extends Skill {
       '"create_lxc" erstellt LXC Container. ' +
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
-      'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus, Löschschutz an; Rückweg delete_vm. ' +
+      'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -1450,7 +1450,7 @@ export class ProxmoxSkill extends Skill {
     return { success: true, data: { upid, vmid, node, name, volid }, display: `Wiederherstellung von ${volid} als VMID ${vmid} auf ${node} (${storage}) gestartet — ohne Start, neue MACs` };
   }
 
-  /** v1614 — wiederhergestellte Kopie isolieren: jede Netzwerkkarte link_down=1, kein Autostart, Löschschutz; nachlesen */
+  /** v1614 — wiederhergestellte Kopie isolieren: jede Netzwerkkarte link_down=1, kein Autostart (kein Löschschutz — der Rückweg delete_vm muss gehen); nachlesen */
   private async isolateVm(input: Record<string, unknown>): Promise<SkillResult> {
     const vmid = Number(input.vmid);
     const name = String(input.vm_name ?? input.hostname ?? '').trim();
@@ -1464,11 +1464,11 @@ export class ProxmoxSkill extends Skill {
     const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
     if (st.status === 'running') return { success: false, error: `VMID ${vmid} läuft — eine Rettungskopie darf nie ungetrennt laufen; nicht verändert` };
     const netze = getrennteNetze(cfg);
-    await this.api('PUT', `/nodes/${vm.node}/qemu/${vmid}/config`, { ...netze, onboot: 0, protection: 1, ...(name && VM_NAME.test(name) ? { name } : {}), description: `Rettungskopie (Alfred, isoliert) — Netzwerkkarten getrennt, nicht ins Netz schalten, solange das Original läuft.` });
+    await this.api('PUT', `/nodes/${vm.node}/qemu/${vmid}/config`, { ...netze, onboot: 0, ...(name && VM_NAME.test(name) ? { name } : {}), description: `Rettungskopie (Alfred, isoliert) — Netzwerkkarten getrennt, nicht ins Netz schalten, solange das Original läuft.` });
     const nachher = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
     if (!alleNetzeGetrennt(nachher) || Number(nachher.onboot ?? 0) !== 0) return { success: false, error: `VMID ${vmid}: Netzwerkkarten oder Autostart nach dem Setzen nicht wie verlangt` };
     this.vmCache = null;
-    return { success: true, data: { vmid, node: vm.node, name: nachher.name, getrennt: Object.keys(netze), onboot: 0, protection: 1 }, display: `✅ VMID ${vmid} (${String(nachher.name ?? '')}) isoliert: ${Object.keys(netze).join(', ') || 'keine Karten'} getrennt, kein Autostart, Löschschutz an` };
+    return { success: true, data: { vmid, node: vm.node, name: nachher.name, getrennt: Object.keys(netze), onboot: 0 }, display: `✅ VMID ${vmid} (${String(nachher.name ?? '')}) isoliert: ${Object.keys(netze).join(', ') || 'keine Karten'} getrennt, kein Autostart` };
   }
 
   /** Übergangsjob 22.10. — geplante vzdump-Jobs des Clusters */

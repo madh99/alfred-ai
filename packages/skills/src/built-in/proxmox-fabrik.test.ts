@@ -162,10 +162,10 @@ describe('restore_backup / isolate_vm (v1614, Rettungskopie)', () => {
     expect((await w.px.execute({ action: 'restore_backup', node: 'pve1', volid, new_vmid: 9105, storage: 'backupshare', hostname: 'x-y' }, imChange)).error).toMatch(/images/);
   });
 
-  it('isolate_vm trennt jede Karte, Autostart aus, Löschschutz an, liest nach', async () => {
+  it('isolate_vm trennt jede Karte, Autostart aus, liest nach', async () => {
     const w = welt();
     const r = await w.px.execute({ action: 'isolate_vm', vmid: 104, vm_name: 'bgp-mt-1-rettung' }, imChange);
     expect(r.success, r.error).toBe(true);
-    expect(w.cfg).toMatchObject({ net0: 'virtio=AA:00:00:00:00:01,bridge=vmbr1,link_down=1', net1: 'virtio=AA:00:00:00:00:02,bridge=vmbr0,tag=20,link_down=1', onboot: 0, protection: 1, name: 'bgp-mt-1-rettung' });
+    expect(w.cfg).toMatchObject({ net0: 'virtio=AA:00:00:00:00:01,bridge=vmbr1,link_down=1', net1: 'virtio=AA:00:00:00:00:02,bridge=vmbr0,tag=20,link_down=1', onboot: 0, name: 'bgp-mt-1-rettung' });
   });
 });
