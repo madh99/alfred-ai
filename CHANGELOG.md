@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Docker-Lesebefehle: Image-Identität und verständliche Käfig-Meldung (v1625)
+
+- `docker image inspect --format` mit `Id`, `RepoTags`, `RepoDigests`, `Created`, `Size`, `Architecture` und `Os` steht jetzt auf der Leseliste. Für Umzüge per RepoDigest sind das die nötigen Angaben. Config-Felder des Images bleiben bestätigungspflichtig, weil `Env` Zugangsdaten tragen kann.
+- **Befund:** Docker-Befehle außerhalb der Leseliste liefen im Lese-Käfig ohne Docker-Socket und scheiterten mit „Cannot connect to the Docker daemon“. Das wurde als Sperre des ganzen Docker-Zugriffs gelesen (Erhebung Web/Tresor, 23.10.).
+- **Jetzt:** Die Meldung nennt in diesem Fall die erlaubten Docker-Lesebefehle und -Felder. Sie sagt auch, dass Umgebungsvariablen, Healthcheck-Befehle und andere Labels die Bestätigung des Owners brauchen.
+
 ### Fixed — Soll/Ist erkennt umbenannte Compose-Projekte am Ziel (v1624)
 
 - Die Einheit „pgadmin4“ (altes Compose-Projekt) läuft auf docker-dev-01 als Projekt „pgadmin“ und galt deshalb als „nirgends laufend gefunden“.

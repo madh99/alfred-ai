@@ -48,6 +48,10 @@ describe('v1539 Befehlsklassen', () => {
       expect(befehlsklasse(b), b).toBe('bestaetigen');
     }
     expect(befehlsklasse('docker system prune -af')).not.toBe('lesen');
+    // v1625 — Image-Identität lesbar, Config des Images nicht
+    expect(befehlsklasse("docker image inspect --format '{{.Id}} tags={{json .RepoTags}} digests={{json .RepoDigests}}' app_backend nginx:alpine vaultwarden/server:latest")).toBe('lesen');
+    for (const b of ['docker image inspect --format "{{json .Config.Env}}" app_backend', 'docker image inspect app_backend', 'docker image inspect --format "{{json .}}" x', 'docker image inspect --format "{{.Id}}$(id)" x'])
+      expect(befehlsklasse(b), b).toBe('bestaetigen');
     // v1546 — Sicherheitsprüfung: Ersetzung in --format nie lesen; inspect nur mit erlaubten Feldern
     for (const b of ['docker ps --format "$(id)"', 'docker ps --format "`id`"', 'docker stats --no-stream --format "$HOME"', 'docker ps --format "{{.Command}}"', 'docker inspect --format "{{json .Config}}" homeassistant', 'docker inspect --format "{{json .}}" homeassistant', 'docker inspect --format "{{.Config}}" x', 'docker inspect --format "{{.Config.Labels}}" x']) {
       expect(befehlsklasse(b), b).toBe('bestaetigen');

@@ -51,6 +51,8 @@ const LESE_BEFEHLE: RegExp[] = [
   /^docker network inspect( [\w.-]+)+$/, // Mitglieder und Adressen eines Netzes (keine Geheimnisse)
   /^docker volume inspect --format "((\{\{(json )?\.(Name|Driver|Mountpoint|CreatedAt|Scope)\}\})([ :,/=|-]|[A-Za-z]{1,16}=)*)+"( [\w.-]+)+$/, // ohne Options (CIFS-Volumes tragen dort das Passwort)
   /^docker (images|image ls)( -a| --all| --digests| --no-trunc)*$/,
+  // v1625 — Image-Identität für Umzüge (RepoDigest statt save/load, v1611); keine Config-Felder (Env kann Zugangsdaten tragen)
+  /^docker image inspect --format (?<q>["'])((\{\{(json )?\.(Id|RepoTags|RepoDigests|Created|Size|Architecture|Os)\}\})([ :,/=|-]|[A-Za-z]{1,16}=)*)+\k<q>( [\w.:/@-]+)+$/,
   /^docker (network|volume) ls$/,
   /^docker system df( -v)?$/,
   /^docker (version|info)$/,

@@ -353,7 +353,11 @@ export class FernzugriffSkill extends Skill {
     this.deps.protokoll?.('v1549 Fernzugriff im Lese-Käfig', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
     const e = await this.mitFachskill(z, this.ergebnis(z, befehl, r, '  (Lese-Käfig)'));
     if (r.code !== 0 && kaefigGrenze(r.stderr)) {
-      const hinweis = '\n[Der Befehl stieß an den Lese-Käfig (schreibt, spricht einen Dienst/Socket an oder braucht Netz). Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
+      // v1625 — Realfall 23.10. (Erhebung Web/Tresor): „Cannot connect to the Docker daemon“ las das Modell als Sperre des ganzen Docker-Zugriffs
+      const docker = /^\s*(sudo\s+)?docker\s/.test(befehl) && /Cannot connect to the Docker daemon/i.test(r.stderr);
+      const hinweis = docker
+        ? '\n[Dieser Docker-Befehl steht nicht auf der Docker-Leseliste und lief deshalb im Käfig ohne Docker-Socket. Ohne Rückfrage gehen: docker ps/inspect --format mit einzelnen Feldern (State, State.Health, Mounts, HostConfig.RestartPolicy/PortBindings/Binds, NetworkSettings.Networks, Config.Image/ExposedPorts/Volumes, Labels nur com.docker.compose.*), docker images --digests, docker image inspect --format mit Id/RepoTags/RepoDigests/Created/Size, docker logs --tail N. Umgebungsvariablen, Healthcheck-Befehle und andere Labels nur mit action=ausfuehren (Owner-Bestätigung), weil sie Zugangsdaten tragen können.]'
+        : '\n[Der Befehl stieß an den Lese-Käfig (schreibt, spricht einen Dienst/Socket an oder braucht Netz). Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
       return { ...e, display: `${e.display ?? ''}${hinweis}`, ...(e.error ? { error: `${e.error}${hinweis}` } : {}) };
     }
     return this.mitWiederherstellbarkeit(befehl, r, e, context);
