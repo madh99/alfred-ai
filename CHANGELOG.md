@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — pfSense-Regeln mit echten Werten, Routen lesbar (v1606)
+
+- **Realfall 23.10. (Change 94f832e0, pgAdmin → VLAN 998):** Die UniFi ließ die Verbindung durch, an der pfSense ging sie verloren. Das ließ sich aber nicht belegen:
+  - `list_rules` zeigte überall „any“, weil der Skill noch die Felder der REST-API v1 las. Die v2 liefert Quelle und Ziel als Text und die Interfaces als Liste.
+  - Der Interface-Filter wirkte nicht.
+  - Routen waren nicht abrufbar.
+- **`list_rules`** zeigt jetzt die echte Quelle, das Ziel, den Port, die Interfaces und abgeschaltete Regeln. Der Filter arbeitet im Skill und kennt die interne ID (`opt1`) ebenso wie die Beschreibung (`MAIN_LAN`).
+- **Neu `list_routes`** (lesend): Standard-Gateway, statische Routen und die Adressen der Interfaces.
+
 ### Fixed — Wartender Change startet sofort nach dem Abbruch (v1605)
 
 - **Realfall 23.10.:** Nach „Change 4f2642ab abbrechen“ (01:55) startete der wartende `9527d97f` erst beim nächsten 10-Minuten-Takt (02:05). Nach dem Ende eines Laufs stößt der Motor Folgende schon an, nach einem Abbruch im Chat bisher nicht.

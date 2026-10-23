@@ -3,7 +3,7 @@ import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@a
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
+type Action = 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -16,7 +16,8 @@ export class PfSenseSkill extends Skill {
     category: 'infrastructure',
     description:
       'pfSense Firewall-Verwaltung über REST API. ' +
-      '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter). ' +
+      '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter, interne ID wie opt1 oder Beschreibung wie MAIN_LAN). ' +
+      '"list_routes" zeigt Standard-Gateway, statische Routen und die Adressen der Interfaces (lesend). ' +
       '"create_rule" erstellt eine neue Regel (interface, protocol, source, destination, destination_port, description). ' +
       '"delete_rule" löscht eine Regel (rule_id). ' +
       '"list_interfaces" zeigt verfügbare Netzwerk-Interfaces mit IP/Subnet. ' +
@@ -31,7 +32,7 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        action: { type: 'string', enum: ['list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
         parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
         vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
         subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
@@ -64,6 +65,7 @@ export class PfSenseSkill extends Skill {
     const action = input.action as Action;
     switch (action) {
       case 'list_rules': return this.listRules(input.interface as string | undefined);
+      case 'list_routes': return this.listRoutes();
       case 'create_rule': return this.createRule(input);
       case 'delete_rule': return this.deleteRule(input);
       case 'list_interfaces': return this.listInterfaces();
@@ -177,20 +179,19 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listRules(iface?: string): Promise<SkillResult> {
-    const query = iface ? `?interface=${encodeURIComponent(iface)}` : '';
     let rules: Array<Record<string, unknown>>;
     try {
-      rules = await this.fetchDualEndpoint<Record<string, unknown>>(`/firewall/rules${query}`, `/firewall/rule${query}`);
+      rules = await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/rules', '/firewall/rule');
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-
-    const lines = rules.map((r: any, i: number) => {
-      const src = r.source?.address ?? r.source?.network ?? 'any';
-      const dst = r.destination?.address ?? r.destination?.network ?? 'any';
-      const dstPort = r.destination?.port ?? '*';
-      return `| ${r.id ?? i} | ${r.type ?? 'pass'} | ${r.interface ?? '?'} | ${r.protocol ?? 'any'} | ${src} | ${dst}:${dstPort} | ${r.descr ?? ''} |`;
-    });
+    // v1606 — Realfall 23.10.: die REST-API v2 ignoriert ?interface= und liefert Quelle/Ziel als Text, Interfaces als Liste; der Skill las
+    // noch die v1-Felder (source.address …) und zeigte überall „any“. Jetzt hier filtern (interne ID oder Beschreibung, z. B. MAIN_LAN).
+    if (iface) {
+      const namen = await this.interfaces().catch(() => [] as Array<Record<string, unknown>>);
+      rules = rules.filter(r => regelPasstZuInterface(r, iface, namen));
+    }
+    const lines = rules.map((r, i) => regelZeile(r, i));
 
     const display = `## pfSense Firewall Regeln${iface ? ` (${iface})` : ''}\n\n| ID | Typ | IF | Proto | Source | Destination | Beschreibung |\n|----|-----|-------|-------|--------|-------------|--------|\n${lines.join('\n')}`;
     return { success: true, data: rules, display };
@@ -359,6 +360,26 @@ export class PfSenseSkill extends Skill {
     return { success: true, data: { interface_id: id, enable: an, ...(an ? { range_from: body.range_from, range_to: body.range_to } : {}) }, display: `✅ DHCP auf ${id} ${an ? `an (${String(body.range_from)}–${String(body.range_to)})` : 'aus'}` };
   }
 
+  /** v1606 — Rückweg-Fragen (Realfall 23.10.: Antwort an 10.203.24.2 ging vermutlich über das WAN-Gateway): Standard-Gateway, statische Routen, Interface-Adressen */
+  private async listRoutes(): Promise<SkillResult> {
+    const versuche = async (pfade: string[]) => { for (const p of pfade) { try { return ((await this.pfFetch(p)) as { data?: unknown }).data; } catch { /* nächster */ } } return undefined; };
+    const [standard, routen, ifs] = await Promise.all([
+      versuche(['/routing/gateway/default']),
+      versuche(['/routing/static_routes', '/routing/static_route']),
+      versuche(['/status/interfaces']),
+    ]);
+    if (standard === undefined && routen === undefined && ifs === undefined) return { success: false, error: 'pfSense: weder Standard-Gateway noch statische Routen noch Interface-Status lesbar' };
+    const d = standard as { defaultgw4?: string; defaultgw6?: string } | undefined;
+    const r = (Array.isArray(routen) ? routen : []) as Array<{ network?: string; gateway?: string; descr?: string; disabled?: boolean }>;
+    const i = (Array.isArray(ifs) ? ifs : []) as Array<{ name?: string; descr?: string; hwif?: string; ipaddr?: string; subnet?: string | number; gateway?: string; status?: string }>;
+    const zeilen = [
+      `Standard-Gateway IPv4: ${d?.defaultgw4 || '(automatisch/unbekannt)'}${d?.defaultgw6 ? ` · IPv6: ${d.defaultgw6}` : ''}`,
+      `Statische Routen (${r.length}):`, ...r.map(x => `- ${x.network ?? '?'} → ${x.gateway ?? '?'}${x.disabled ? ' (aus)' : ''}${x.descr ? ` — ${x.descr}` : ''}`),
+      'Interfaces:', ...i.map(x => `- ${x.descr ?? x.name ?? '?'} (${x.name ?? '?'}/${x.hwif ?? '?'}): ${x.ipaddr ?? '-'}${x.subnet !== undefined && x.subnet !== '' ? `/${x.subnet}` : ''}${x.gateway ? ` · Gateway ${x.gateway}` : ''}${x.status ? ` · ${x.status}` : ''}`),
+    ];
+    return { success: true, data: { standard: d, routen: r, interfaces: i }, display: zeilen.join('\n') };
+  }
+
   private async listGateways(): Promise<SkillResult> {
     let gateways: Array<Record<string, unknown>>;
     try {
@@ -417,4 +438,30 @@ export class PfSenseSkill extends Skill {
       return { success: false, error: `pfSense Status: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
+}
+
+/** v1606 — Adresse einer Regel-Seite: v2 liefert Text („any“, „192.168.1.0/24“, „opt1“, „lan:ip“), v1 ein Objekt */
+export function regelSeite(x: unknown): string {
+  if (typeof x === 'string') return x || 'any';
+  if (x && typeof x === 'object') {
+    const o = x as { address?: string; network?: string; any?: unknown; not?: boolean };
+    const a = o.address ?? o.network ?? (o.any !== undefined ? 'any' : undefined) ?? 'any';
+    return o.not ? `!${a}` : a;
+  }
+  return 'any';
+}
+
+/** v1606 — Interface einer Regel (v2: Liste, v1: Text) gegen interne ID oder Beschreibung (MAIN_LAN → opt1) */
+export function regelPasstZuInterface(r: Record<string, unknown>, wunsch: string, interfaces: Array<Record<string, unknown>>): boolean {
+  const w = wunsch.trim().toLowerCase();
+  const ids = new Set([w, ...interfaces.filter(i => String(i.descr ?? '').toLowerCase() === w || String(i.if ?? '').toLowerCase() === w).map(i => String(i.id ?? '').toLowerCase()).filter(Boolean)]);
+  const hat = Array.isArray(r.interface) ? (r.interface as unknown[]).map(x => String(x).toLowerCase()) : String(r.interface ?? '').toLowerCase().split(',');
+  return hat.some(x => ids.has(x.trim()));
+}
+
+export function regelZeile(r: Record<string, unknown>, i: number): string {
+  const f = r as { id?: unknown; type?: string; interface?: unknown; protocol?: string; source?: unknown; destination?: unknown; destination_port?: string; source_port?: string; descr?: string; disabled?: boolean };
+  const iface = Array.isArray(f.interface) ? (f.interface as unknown[]).join(',') : String(f.interface ?? '?');
+  const port = f.destination_port ?? (f.destination as { port?: string } | undefined)?.port ?? '*';
+  return `| ${f.id ?? i} | ${f.type ?? 'pass'}${f.disabled ? ' (aus)' : ''} | ${iface} | ${f.protocol ?? 'any'} | ${regelSeite(f.source)}${f.source_port ? `:${f.source_port}` : ''} | ${regelSeite(f.destination)}:${port || '*'} | ${f.descr ?? ''} |`;
 }
