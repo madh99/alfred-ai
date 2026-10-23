@@ -1,6 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, MikroTikConfig, MikroTikRouterConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
-import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { tlsFetch, pinnedFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
@@ -197,21 +197,6 @@ export class MikroTikSkill extends Skill {
   // ── REST API ───────────────────────────────────────────────
 
   /** Exposed for CMDB discovery. */
-  private readonly geprueft = new Map<string, number>();
-  /** v1618 — SHA-256 des Server-Zertifikats mit dem hinterlegten vergleichen; Ergebnis 10 min je Router gemerkt */
-  private async pruefeFingerabdruck(host: string, port: number, erwartet: string): Promise<void> {
-    const k = `${host}:${port}`;
-    if ((this.geprueft.get(k) ?? 0) > Date.now()) return;
-    const tls = await import('node:tls');
-    const ist = await new Promise<string>((ok, fehler) => {
-      const s = tls.connect({ host, port, servername: /^[\d.]+$/.test(host) ? undefined : host, rejectUnauthorized: false, timeout: 10_000 }, () => { const f = s.getPeerCertificate()?.fingerprint256 ?? ''; s.end(); ok(f); });
-      s.on('error', fehler); s.on('timeout', () => { s.destroy(); fehler(new Error('TLS-Zeitüberschreitung')); });
-    });
-    if (fingerabdruckGleich(ist, erwartet)) { this.geprueft.set(k, Date.now() + 10 * 60_000); return; }
-    this.geprueft.delete(k);
-    throw new Error(`MikroTik ${host}: Zertifikat passt nicht zum hinterlegten Fingerabdruck (gesehen ${ist || 'keins'}) — Anmeldung NICHT gesendet`);
-  }
-
   async api<T = unknown>(conn: RouterConn, method: string, path: string, body?: Record<string, unknown>): Promise<T> {
     const { cfg } = conn;
     const proto = cfg.ssl !== false ? 'https' : 'http';
@@ -232,8 +217,8 @@ export class MikroTikSkill extends Skill {
 
     const skipTls = cfg.ssl !== false;
     // v1618 — Zertifikat-Pinning: vor dem Senden der Zugangsdaten prüfen, dass genau dieser Router antwortet (selbst signiertes Zertifikat)
-    if (proto === 'https' && cfg.tls_fingerprint) await this.pruefeFingerabdruck(cfg.host, port, cfg.tls_fingerprint);
-    const res = await tlsFetch(url, opts, skipTls);
+    // v1618 — Pinning auf DERSELBEN Verbindung, die die Zugangsdaten trägt (pinnedFetch); ohne Fingerabdruck wie bisher
+    const res = proto === 'https' && cfg.tls_fingerprint ? await pinnedFetch(url, opts, cfg.tls_fingerprint) : await tlsFetch(url, opts, skipTls);
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
@@ -750,5 +735,4 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** v1618 — Fingerabdrücke vergleichen: Doppelpunkte, Leerzeichen und Groß/Klein egal */
-export const fingerabdruckGleich = (a: string, b: string) => !!a && !!b && a.replace(/[^0-9a-f]/gi, '').toUpperCase() === b.replace(/[^0-9a-f]/gi, '').toUpperCase();
+export { fingerabdruckGleich } from './social/tls-fetch.js';

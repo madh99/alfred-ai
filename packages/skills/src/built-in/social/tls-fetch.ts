@@ -16,7 +16,7 @@ interface UndiciModule {
   // init bewusst als object: die Node-Typen fixieren dispatcher auf ihren
   // eigenen Dispatcher — wir reichen den undici-Agent opak durch
   fetch(url: string, init?: object): Promise<Response>;
-  Agent: new (opts: { connect: { rejectUnauthorized: boolean } }) => unknown;
+  Agent: new (opts: { connect: { rejectUnauthorized: boolean } | ((o: ConnectOpts, cb: (err: Error | null, socket: unknown) => void) => void) }) => unknown;
   FormData: new () => { append(name: string, value: unknown, fileName?: string): void };
 }
 
@@ -40,6 +40,8 @@ export async function toUndiciBody(u: UndiciModule, body: unknown): Promise<unkn
   }
   return rebuilt;
 }
+
+interface ConnectOpts { hostname: string; host?: string; port: string | number; servername?: string }
 
 let undiciPromise: Promise<UndiciModule | null> | undefined;
 let insecureDispatcher: unknown;
@@ -72,4 +74,46 @@ export async function tlsFetch(url: string, init: RequestInit, insecure: boolean
   insecureDispatcher ??= new undici.Agent({ connect: { rejectUnauthorized: false } });
   const body = await toUndiciBody(undici, init.body);
   return undici.fetch(url, { ...init, body, dispatcher: insecureDispatcher });
+}
+
+/** Fingerabdrücke vergleichen: Doppelpunkte, Leerzeichen und Groß/Klein egal */
+export const fingerabdruckGleich = (a: string | undefined, b: string | undefined) => !!a && !!b && a.replace(/[^0-9a-f]/gi, '').toUpperCase() === b.replace(/[^0-9a-f]/gi, '').toUpperCase();
+
+const gepinnteDispatcher = new Map<string, unknown>();
+
+/**
+ * v1618 (Sicherheitsprüfung) — fetch mit Zertifikat-Pinning für selbst signierte Geräte-Zertifikate (z. B. MikroTik-REST).
+ * Geprüft wird auf DERSELBEN TLS-Verbindung, die danach die Anfrage samt Zugangsdaten trägt: erst nach `secureConnect` und
+ * passendem SHA-256-Fingerabdruck bekommt undici den Socket. Passt er nicht, wird die Verbindung geschlossen, bevor auch nur
+ * ein Byte der Anfrage geschrieben ist. Kein separater Vorab-Test, kein Zwischenspeicher (TOCTOU).
+ */
+export async function pinnedFetch(url: string, init: RequestInit, fingerabdruck: string): Promise<Response> {
+  const undici = await loadUndici();
+  if (!undici) throw new Error('Zertifikat-Pinning: undici nicht verfügbar');
+  const erwartet = fingerabdruck.replace(/[^0-9a-f]/gi, '').toUpperCase();
+  if (erwartet.length !== 64) throw new Error('Zertifikat-Pinning: Fingerabdruck muss SHA-256 sein (64 Hex-Zeichen)');
+  let d = gepinnteDispatcher.get(erwartet);
+  if (!d) {
+    const tls = await import('node:tls');
+    const net = await import('node:net');
+    d = new undici.Agent({
+      connect: (o, cb) => {
+        let fertig = false;
+        const einmal = (err: Error | null, s: unknown) => { if (!fertig) { fertig = true; cb(err, s); } };
+        const host = o.hostname;
+        // rejectUnauthorized: false, weil das Zertifikat selbst signiert ist — die Echtheit belegt stattdessen der Fingerabdruck unten
+        const socket = tls.connect({ host, port: Number(o.port) || 443, servername: net.isIP(host) ? undefined : (o.servername ?? host), rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] });
+        socket.once('secureConnect', () => {
+          const ist = socket.getPeerCertificate()?.fingerprint256;
+          if (fingerabdruckGleich(ist, erwartet)) return einmal(null, socket);
+          socket.destroy();
+          einmal(new Error(`Zertifikat von ${host} passt nicht zum hinterlegten Fingerabdruck (gesehen ${ist || 'keins'}) — Anfrage NICHT gesendet`), null);
+        });
+        socket.once('error', (e) => einmal(e, null));
+      },
+    });
+    gepinnteDispatcher.set(erwartet, d);
+  }
+  const body = await toUndiciBody(undici, init.body);
+  return undici.fetch(url, { ...init, body, dispatcher: d });
 }

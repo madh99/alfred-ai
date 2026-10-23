@@ -37,12 +37,4 @@ describe('MikroTik: Zertifikat-Pinning', () => {
     expect(fingerabdruckGleich('4A:6E:C2:4B', '4A:6E:C2:4C')).toBe(false);
     expect(fingerabdruckGleich('', '4A')).toBe(false);
   });
-  it('falscher Fingerabdruck → Abbruch vor der Anfrage mit Zugangsdaten', async () => {
-    const s = new MikroTikSkill({ host: '192.168.1.95', username: 'alfred-api', password: 'geheim', ssl: true, port: 443, tls_fingerprint: '4A:6E' } as never);
-    const a = s as unknown as { pruefeFingerabdruck: () => Promise<void> };
-    a.pruefeFingerabdruck = async () => { throw new Error('Zertifikat passt nicht zum hinterlegten Fingerabdruck — Anmeldung NICHT gesendet'); };
-    const r = await s.execute({ action: 'status' }, {} as never);
-    expect(r.success).toBe(false);
-    expect(JSON.stringify(r)).toMatch(/Fingerabdruck/);
-  });
 });

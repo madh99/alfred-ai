@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Zertifikat-Pinning auf derselben Verbindung (v1619)
+
+- **Befund aus der Sicherheitsprüfung von v1618:**
+  - Der Fingerabdruck wurde über eine eigene Vorab-Verbindung geprüft, die Zugangsdaten gingen danach über eine *zweite* Verbindung.
+  - Das Ergebnis galt 10 Minuten.
+  - Ein Angreifer im Netz hätte die Prüfung zum echten Router durchreichen und erst die zweite Verbindung abfangen können (TOCTOU).
+- **Jetzt `pinnedFetch` (tls-fetch.ts):**
+  - Geprüft wird im `secureConnect` *derselben* TLS-Verbindung.
+  - Erst bei passendem SHA-256-Fingerabdruck erhält undici den Socket; sonst wird er geschlossen, bevor ein Byte der Anfrage geschrieben ist.
+  - Vorab-Prüfung und Zwischenspeicher entfallen.
+  - Ein Test mit echtem TLS-Server belegt: Bei falschem Fingerabdruck erreicht keine Anfrage den Server.
+
 ### Added — MikroTik: Zertifikat-Pinning; `status` scheitert ehrlich (v1618)
 
 - **Zertifikat-Pinning:** Mit `ALFRED_MIKROTIK_TLS_FINGERPRINT` (SHA-256, auch je Router als `tls_fingerprint`) prüft der Skill vor dem Senden der Zugangsdaten das Zertifikat des Routers. Passt es nicht, wird abgebrochen, ohne dass das Passwort übertragen wird. Anlass: Die REST-API läuft seit 23.10. über HTTPS mit einem selbst signierten Zertifikat. Bisher wurde jedes Zertifikat angenommen, wer sich im LAN als Router ausgab, hätte das Passwort erhalten.
