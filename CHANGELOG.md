@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Stilllegung: Entfernen per Fernzugriff ohne Rückweg (v1622)
+
+- Ein Stilllegungs-Change (`zweck: stilllegung`) durfte Dateien oder Verzeichnisse per Fernzugriff (`rm …`) nicht ohne Rückweg entfernen, obwohl das Entfernen dort gewollt endgültig ist. Der Planer verlangte einen Rückweg, der nur erfunden sein konnte.
+- Jetzt ist „kein Rückweg“ mit Begründung für `rm` in Stilllegungs-Changes zulässig. In allen anderen Changes bleibt ein Rückweg Pflicht.
+
 ### Fixed — „Kein Rückweg“ ist keine Restwirkung (v1621)
 
 - Ändernde Schritte, für die der freigegebene Plan ausdrücklich „kein Rückweg“ vorsieht (Tresor-Eintrag, Vorkopie, beabsichtigte Löschung), zählen nicht mehr als Restwirkung. Ihre bleibende Wirkung ist freigegeben.

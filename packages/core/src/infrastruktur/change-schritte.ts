@@ -238,7 +238,10 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         if (!rw) f.push(`${wo}: rueckweg fehlt (ändernde Aktion)`);
         else if (txt(rw.keiner)) {
           const neustart = schritt.skill === 'fernzugriff' && /^docker restart [\w.-]+$/.test(String(schritt.parameter.befehl ?? '').trim());
-          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
+          // v1622 — Realfall 23.10. (Restwirkung b85e56af): im Stilllegungs-Change ist Entfernen per Fernzugriff (rm) gewollt endgültig —
+          // ein erfundener Rückweg wäre schlechter als keiner
+          const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && /^rm\s/.test(String(schritt.parameter.befehl ?? '').trim());
+          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {
           const rs = ctx.skill(txt(rw.skill));

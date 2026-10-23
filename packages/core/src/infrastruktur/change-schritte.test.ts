@@ -263,6 +263,18 @@ describe('v1610 Kopierpfade schon beim Planen prüfen (Realfall dea4b9cd)', () =
   });
 });
 
+describe('v1622 Stilllegung: Entfernen per Fernzugriff ohne Rückweg (Realfall Restwirkung b85e56af)', () => {
+  const plan = (zweck?: string) => ({ titel: 'Hilfsarchiv entfernen', begruendung: 'Restwirkung eines abgebrochenen Changes', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], ohneSicherungGrund: 'reines Hilfsarchiv', ...(zweck ? { zweck } : {}),
+    schritte: [
+      { titel: 'Vorhanden?', art: 'aktion', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehl: 'ls -la /srv/wp-lk-dev-export' } },
+      { titel: 'Entfernen', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: 'rm -rf -- /srv/wp-lk-dev-export' }, pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehl: 'ls /srv' }, nichtEnthalten: 'wp-lk-dev-export' }, rueckweg: { keiner: 'Hilfsarchiv eines abgebrochenen Changes' } },
+    ] });
+  it('mit zweck stilllegung zulässig, sonst Rückweg nötig', () => {
+    expect(pruefeChangePlan(plan('stilllegung'), ctx()).fehler).toEqual([]);
+    expect(pruefeChangePlan(plan(), ctx()).fehler.join(' | ')).toContain('ohne Rückweg nur bei');
+  });
+});
+
 describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
   it('docker --format mit range/println/end ist kein Platzhalter; kopieren ohne eigene Prüfung zulässig', () => {
     const plan = {
