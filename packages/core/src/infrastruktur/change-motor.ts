@@ -410,7 +410,12 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     if (!c || !l || c.status !== 'in_progress' || this.laufend.has(c.id)) return 'Der Change ist nicht angehalten.';
     if (l.phase !== 'angehalten') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
     delete l.frage;
-    if (wahl === 'abbrechen') { await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)'); return 'Change abgebrochen, ohne Rückweg. Der Bericht steht im Change.'; }
+    if (wahl === 'abbrechen') {
+      await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)');
+      // v1605 — Realfall 23.10.: nach dem Abbruch von 4f2642ab startete der wartende 9527d97f erst beim nächsten 10-Minuten-Takt
+      void this.anstossen().catch(err => this.log('I4 Motorfehler', { id: c.id, fehler: (err as Error).message }));
+      return 'Change abgebrochen, ohne Rückweg. Der Bericht steht im Change.';
+    }
     if (wahl === 'rueckweg') {
       if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Es gibt nichts zurückzunehmen — „abbrechen“ beendet den Change.';
       void this.rueckweg(o, c, l, l.grund ?? 'vom Owner gewählt').catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));

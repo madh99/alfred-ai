@@ -132,6 +132,22 @@ describe('I4 Ausführungsmotor', () => {
     expect(m[0]).toContain('abbrechen');
   });
 
+  it('v1605: nach dem Abbruch des angehaltenen Changes startet der wartende sofort, nicht erst im nächsten Takt', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    const zweiter = { ...w.c, id: 'chg-2', title: 'wartet', status: 'approved', lauf: undefined } as unknown as CmdbChangeRequest;
+    const liste = w.deps.itsm.liste;
+    w.deps.itsm.liste = async (o: string) => [...(await liste(o)), zweiter];
+    expect(await w.motor.anstossen()).toEqual([]);
+    const gestartet: string[] = [];
+    const alt = w.motor.anstossen.bind(w.motor);
+    w.motor.anstossen = async () => { const r = await alt(); gestartet.push(...r); return r; };
+    await w.motor.steuern('o', 'chg-1', 'abbrechen');
+    await new Promise(r => setTimeout(r, 20));
+    expect(gestartet).toContain('chg-2');
+  });
+
   it('Owner-Schritt wartet auf das Ja; Start nur mit gültiger Freigabe, nicht vor dem Termin, nicht bei belegtem Asset', async () => {
     const plan: ChangeSchritt[] = [S({ nr: 1, art: 'owner', frage: 'VLAN 821 in UniFi anlegen' }), S({ nr: 2, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })];
     const w = welt(plan);

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wartender Change startet sofort nach dem Abbruch (v1605)
+
+- **Realfall 23.10.:** Nach „Change 4f2642ab abbrechen“ (01:55) startete der wartende `9527d97f` erst beim nächsten 10-Minuten-Takt (02:05). Nach dem Ende eines Laufs stößt der Motor Folgende schon an, nach einem Abbruch im Chat bisher nicht.
+- **Jetzt:** `change_steuern abbrechen` stößt den Motor sofort an.
+
 ### Fixed — Freigegebener Change wartet nicht mehr still auf einen angehaltenen (v1604)
 
 - **Realfall 23.10.:** `9527d97f` war freigegeben, startete aber nicht. Der angehaltene `4f2642ab` hatte schon gewirkt und belegte deshalb dieselbe UniFi. Er konnte aber erst gelingen, wenn `9527d97f` gelaufen war. Im Log stand nur „wartet (Asset belegt)“.
