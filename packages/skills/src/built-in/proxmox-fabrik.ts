@@ -136,7 +136,8 @@ export function vorlagenKonfig(v: { vmid: number; name: string; storage: string;
     vmid: v.vmid, name: v.name, ostype: 'l26', machine: 'q35', bios: 'seabios', cpu: (d && DISTROS[d].cpu) ?? 'x86-64-v2-AES',
     memory: v.memory ?? 2048, cores: v.cores ?? 2, scsihw: 'virtio-scsi-single',
     scsi0: `${v.storage}:0,import-from=${v.image},discard=on,iothread=1,ssd=1`,
-    ide2: `${v.storage}:cloudinit`, boot: 'order=scsi0', serial0: 'socket', vga: 'serial0', agent: 'enabled=1',
+    // v1629 — Cloud-Init-Laufwerk als SCSI-CD statt IDE: IDE läuft bei q35 über AHCI, das schlanke Debian-12-Cloud-Kernel fand es nicht
+    scsi1: `${v.storage}:cloudinit`, boot: 'order=scsi0', serial0: 'socket', vga: 'serial0', agent: 'enabled=1',
     net0: `virtio,bridge=${v.bridge ?? 'vmbr0'}`,
     ...(v.beschreibung ? { description: v.beschreibung } : {}),
   };
@@ -158,6 +159,9 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
   return [
     '#cloud-config',
     `hostname: ${v.hostname}`,
+    // v1629 — RHEL-Familie bevorzugt den FQDN; ohne Domain wurde daraus „localhost“ (Realfall 24.10., Rocky/Alma/Fedora)
+    `fqdn: ${v.hostname}`,
+    'prefer_fqdn_over_hostname: false',
     'manage_etc_hosts: true',
     'users:',
     '  - name: alfred',
@@ -171,7 +175,8 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
     'disable_root: true',
     'ssh_pwauth: false',
     'ssh_deletekeys: true',
-    'ssh_genkeytypes: []',
+    // v1629 — leere Liste ist laut Schema ungültig; ed25519 kommt aus ssh_keys, vorhandene Schlüssel werden nicht neu erzeugt
+    'ssh_genkeytypes: [ed25519]',
     'ssh_keys:',
     '  ed25519_private: |',
     block,

@@ -47,7 +47,7 @@ describe('Vorlage und Cloud-Init', () => {
   it('Vorlage importiert die Platte aus dem import-Volume und hat ein Cloud-Init-Laufwerk', () => {
     const k = vorlagenKonfig({ vmid: 9020, name: 'ubuntu-2404-20261017', storage: 'nvme-cs001', image: 'backupshare:import/ubuntu-24.04-20261017.qcow2' });
     expect(k.scsi0).toBe('nvme-cs001:0,import-from=backupshare:import/ubuntu-24.04-20261017.qcow2,discard=on,iothread=1,ssd=1');
-    expect(k.ide2).toBe('nvme-cs001:cloudinit');
+    expect(k.scsi1).toBe('nvme-cs001:cloudinit'); expect(k.ide2).toBeUndefined();
     expect(k).toMatchObject({ vmid: 9020, boot: 'order=scsi0', agent: 'enabled=1', net0: 'virtio,bridge=vmbr0' });
     expect(IMPORT_VOLUME.test('backupshare:import/ubuntu-24.04-20261017.qcow2')).toBe(true);
     expect(IMPORT_VOLUME.test('local:iso/x.qcow2')).toBe(false);
@@ -57,7 +57,7 @@ describe('Vorlage und Cloud-Init', () => {
     expect(y.startsWith('#cloud-config\n')).toBe(true);
     expect(y).toContain('  - name: alfred');
     expect(y).toContain(`      - ${JSON.stringify(ALFRED)}`);
-    expect(y).toContain('ssh_deletekeys: true\nssh_genkeytypes: []');
+    expect(y).toContain('ssh_deletekeys: true\nssh_genkeytypes: [ed25519]');
     expect(y).toContain('  ed25519_private: |\n    -----BEGIN OPENSSH PRIVATE KEY-----\n');
     expect(y).toContain('    -----END OPENSSH PRIVATE KEY-----\n  ed25519_public: ');
     expect(y).toContain('ssh_pwauth: false');
@@ -237,5 +237,13 @@ describe('v1627 Rocky, Alma, Fedora (Owner 24.10.; Listings und Summen wie live 
     expect(deb).toContain('    groups: [sudo]');
     expect(deb).toContain('apt-get install -y qemu-guest-agent');
     expect(deb.indexOf('qemu-ga >/dev/null')).toBeLessThan(deb.indexOf('cloud-init.disabled'));
+  });
+});
+
+describe('v1629 Cloud-Init: Hostname auf der RHEL-Familie, gültiges Schema', () => {
+  it('fqdn = Hostname, FQDN nicht bevorzugt, ssh_genkeytypes nicht leer', () => {
+    const y = cloudInitBenutzerDaten({ hostname: 'probe-alma-9', alfredSchluessel: ALFRED, hostPrivat: HOST_PRIV, hostOeffentlich: HOST_PUB, familie: 'rpm' });
+    expect(y).toContain('hostname: probe-alma-9\nfqdn: probe-alma-9\nprefer_fqdn_over_hostname: false');
+    expect(y).not.toContain('ssh_genkeytypes: []');
   });
 });

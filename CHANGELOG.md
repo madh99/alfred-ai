@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Vorlagen-Fabrik: Hostname, Cloud-Init-Laufwerk, Schema (v1629)
+
+- **Befund (Realfall 24.10.):** Von 7 neuen Vorlagen lief nur Debian 13 durch.
+- **Rocky, Alma und Fedora:** Cloud-Init hat Netz, Benutzer und Agent eingerichtet. Den Hostnamen setzte es aber auf „localhost“, weil die RHEL-Familie den FQDN bevorzugt und unser Name keine Domain hat. Die Fabrik wartete auf den richtigen Hostnamen und gab nach 600 s auf.
+  - **Jetzt** setzen die Benutzerdaten `fqdn` und `prefer_fqdn_over_hostname: false`.
+- **Debian 12:** Cloud-Init griff gar nicht. Das Cloud-Init-Laufwerk hängt jetzt als SCSI-CD (`scsi1`) statt als IDE an. IDE läuft bei q35 über AHCI. Der virtio-SCSI-Treiber ist dagegen in jedem Cloud-Kernel enthalten, weil auch die Systemplatte darüber hängt.
+  - Beim Lösen nach dem ersten Start wird das Cloud-Init-Laufwerk an jedem Anschluss gefunden, auch bei älteren Vorlagen mit `ide2`.
+- **`ssh_genkeytypes: []`** war laut Cloud-Init-Schema ungültig und ist jetzt `[ed25519]`. Der ed25519-Schlüssel kommt weiter von Alfred.
+- **Bereitschaft:** Ist die Anmeldung möglich, der Hostname aber falsch, nennt die Meldung das jetzt ausdrücklich, statt nur „nicht bereit“ zu sagen.
+
 ### Fixed — `fernzugriff.pruefen` gilt im Change als lesend (v1628)
 
 - Die Prüfung eines Fernzugangs (Verbindung, sudo, Selbsttest des Lese-Käfigs) und die Liste der Zugänge ändern am Host nichts. Der Change-Prüfer stufte sie trotzdem als ändernd ein und lehnte sie als Prüfschritt ab (Realfall 24.10., Beweis der neuen Vorlagen).

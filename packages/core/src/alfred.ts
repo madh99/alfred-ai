@@ -7003,7 +7003,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 return { ok: true, meldung: `SSH mit Alfreds Host-Schlüssel nach ${s} s, Cloud-Init fertig und abgeschaltet; Fernzugang „${v.name}“ und CMDB-Eintrag angelegt; Lese-Käfig ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}` };
               }
               if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
-              letzte = (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+              // v1629 — Realfall 24.10.: SSH ging, aber der Hostname war „localhost“ → als Ursache melden, nicht nur „nicht bereit“
+              letzte = r.code === 0 && r.stdout.trim() ? `angemeldet, aber Hostname „${r.stdout.trim().slice(0, 60)}“ statt „${v.name}“ (Cloud-Init hat den Namen nicht gesetzt)` : (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
               await warte(10_000);
             }
             return { ok: false, meldung: `VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };

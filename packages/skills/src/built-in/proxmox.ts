@@ -1608,7 +1608,7 @@ export class ProxmoxSkill extends Skill {
       if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
       const ga = await this.warteAufAgent(da.vmid, da.node, AGENT_WARTEN_MS);
       if (!ga.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}\n${ga.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
-      await this.post(`/nodes/${da.node}/qemu/${da.vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
+      await this.cloudInitLoesen(da.node, da.vmid);
       const sp = await this.get<{ path?: string }>('/storage/local').catch(() => ({} as { path?: string }));
       await this.fabrik.snippetEntfernen(da.node, `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(da.vmid)}`).catch(() => undefined);
       return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
@@ -1659,16 +1659,24 @@ export class ProxmoxSkill extends Skill {
       schritte.push(ga.meldung);
       if (!ga.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip } };
       // Cloud-Init ist in der VM abgeschaltet; Laufwerk und Snippet (mit dem privaten Host-Schlüssel) weg — das Laufwerk beim nächsten Kaltstart
-      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
+      await this.cloudInitLoesen(node, vmid);
       schritte.push('Cloud-Init-Laufwerk zum Entfernen vorgemerkt');
     } finally {
       await this.fabrik.snippetEntfernen(node, pfad).catch(() => undefined);
       // Realfall 22.10. (docker-dev-01 startete nach Fehlschlag nicht mehr: „volume local:snippets/alfred-144-user.yaml does not exist“):
       // ohne Snippet darf kein Verweis darauf bleiben — Cloud-Init-Laufwerk mit entfernen (die VM hat ihre Daten vom ersten Start)
-      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: 'cicustom,ide2' }).catch(() => undefined);
+      await this.cloudInitLoesen(node, vmid);
     }
     schritte.push('Snippet am Knoten entfernt');
     return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich }, display: schritte.map(s => `- ${s}`).join('\n') };
+  }
+
+  /** v1629 — Snippet-Verweis und Cloud-Init-Laufwerk entfernen, egal an welchem Anschluss es hängt (alte Vorlagen ide2, neue scsi1) */
+  private async cloudInitLoesen(node: string, vmid: number): Promise<void> {
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`).catch(() => ({} as Record<string, unknown>));
+    const laufwerke = Object.keys(cfg).filter(k => /^(ide|sata|scsi)\d+$/.test(k) && String(cfg[k]).includes('cloudinit'));
+    const weg = [...(cfg.cicustom !== undefined ? ['cicustom'] : []), ...laufwerke];
+    if (weg.length) await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: weg.join(',') }).catch(() => undefined);
   }
 
   /** v1626 — bis der Gast-Agent antwortet (höchstens `ms`); die Meldung nennt bei Misserfolg die Ursache aus Realfall docker-dev-01 */
