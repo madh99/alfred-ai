@@ -60,7 +60,8 @@ const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessTo
 const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
-  if (skill === 'fernzugriff') return aktion === 'lesen' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
+  // v1628 — pruefen (Verbindung, sudo, Käfig-Selbsttest) und liste ändern am Host nichts (Realfall 24.10.: Vorlagen-Beweis)
+  if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';

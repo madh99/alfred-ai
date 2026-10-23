@@ -42,6 +42,9 @@ describe('I3 Einordnung der Aktionen', () => {
     expect(aktionsArt('nginx_proxy_manager', 'update_host')).toBe('aendern');
     expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'uptime' })).toBe('lesen');
     expect(aktionsArt('fernzugriff', 'ausfuehren', { befehl: 'systemctl restart nginx' })).toBe('aendern');
+    expect(aktionsArt('fernzugriff', 'pruefen')).toBe('lesen'); // v1628
+    expect(aktionsArt('fernzugriff', 'liste')).toBe('lesen');
+    expect(aktionsArt('fernzugriff', 'entfernen')).toBe('aendern');
   });
 });
 

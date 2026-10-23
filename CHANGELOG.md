@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `fernzugriff.pruefen` gilt im Change als lesend (v1628)
+
+- Die Prüfung eines Fernzugangs (Verbindung, sudo, Selbsttest des Lese-Käfigs) und die Liste der Zugänge ändern am Host nichts. Der Change-Prüfer stufte sie trotzdem als ändernd ein und lehnte sie als Prüfschritt ab (Realfall 24.10., Beweis der neuen Vorlagen).
+
 ### Added — Vorlagen-Fabrik: Rocky, Alma und Fedora (v1627)
 
 - **Neue Distributionen** `rocky-9`, `rocky-10`, `alma-9`, `alma-10` und `fedora-44`: Es gelten nur offizielle, datierte Images der Herausgeber und nie „latest“. Die Prüfsumme kommt vom Herausgeber, im GNU- oder im BSD-Format (`SHA256 (datei) = …`). Neu sind auch flache Verzeichnisse, in denen der Stand im Dateinamen steht.
