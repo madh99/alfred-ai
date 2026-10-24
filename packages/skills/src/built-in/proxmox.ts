@@ -1622,10 +1622,24 @@ export class ProxmoxSkill extends Skill {
     if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
     const schritte: string[] = [];
     const clone: Record<string, unknown> = { newid: vmid, name, full: 1, target: node };
-    if (typeof input.storage === 'string' && input.storage) clone.storage = input.storage;
+    // v1644 — Realfall 24.10. (5d960660): Proxmox klont nicht über Nodes in einen lokalen Speicher („can't clone to non-shared storage“).
+    // Dann: auf den (gemeinsamen) Speicher der Vorlage an den Ziel-Node klonen und die Platte danach in den gewünschten Speicher verschieben.
+    const wunsch = typeof input.storage === 'string' && input.storage ? input.storage : undefined;
+    let verschiebenNach: string | undefined;
+    if (wunsch) {
+      const st = await this.get<{ type?: string; shared?: number }>(`/storage/${encodeURIComponent(wunsch)}`).catch(() => ({} as { type?: string; shared?: number }));
+      const gemeinsam = !!st.shared || ['rbd', 'cephfs', 'nfs', 'cifs', 'glusterfs', 'iscsi', 'iscsidirect', 'pbs'].includes(String(st.type ?? ''));
+      if (node !== vorlage.node && !gemeinsam) verschiebenNach = wunsch; else clone.storage = wunsch;
+    }
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vorlage.node}/qemu/${tpl}/clone`, clone), 900_000, 'Klonen');
     this.vmCache = null;
     schritte.push(`VM ${name} (VMID ${vmid}) aus Vorlage ${tpl} auf ${node} geklont`);
+    if (verschiebenNach) {
+      await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/move_disk`, { disk: 'scsi0', storage: verschiebenNach, delete: 1 }), 1_800_000, 'Platte verschieben');
+      const nachher = await this.get<{ scsi0?: string }>(`/nodes/${node}/qemu/${vmid}/config`);
+      if (!String(nachher.scsi0 ?? '').startsWith(`${verschiebenNach}:`)) return { success: false, error: `Platte von ${name} liegt nach dem Verschieben nicht auf ${verschiebenNach} (${String(nachher.scsi0 ?? '-').slice(0, 80)})`, data: { vmid, name, node, ip } };
+      schritte.push(`Platte nach ${verschiebenNach} auf ${node} verschoben (lokaler Speicher, über den gemeinsamen Speicher der Vorlage geklont)`);
+    }
     // Host-Schlüssel + Snippet
     const hs = await this.fabrik.hostSchluessel();
     // v1627 — Distribution der Vorlage aus ihrer Beschreibung („… aus <speicher>:import/<distro>-<stand>.qcow2“): wheel/dnf bei RPM-Familie

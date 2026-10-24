@@ -11,7 +11,7 @@ export interface ChangeSpeicher {
   liste(owner: string): Promise<CmdbChangeRequest[]>;
   hole(owner: string, id: string): Promise<CmdbChangeRequest | null>;
   legeAn(owner: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest>;
-  setzeSchritte(owner: string, id: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest>;
+  setzeSchritte(owner: string, id: string, d: ChangeSchrittDaten, o?: { haltOhneWirkung?: boolean }): Promise<CmdbChangeRequest>;
   freigeben(owner: string, id: string, fingerabdruck: string, ueber: 'frage' | 'web'): Promise<CmdbChangeRequest>;
   setzeFreigabeAnfrage(owner: string, id: string, a: { hash: string; bis: string; fingerabdruck: string } | null): Promise<void>;
   /** I4b Teil 4 — Change aus freigegebener Standard-Vorlage (sofort freigegeben) */
@@ -164,9 +164,15 @@ export class ChangePlanung {
     if (z) fehler.push(`Abhängigkeiten im Kreis: ${z.join(' → ')}`);
     if (fehler.length) return { ok: false, fehler };
     const aus = await this.d.auswirkung(e.betroffeneIds, alt.id);
-    const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId));
+    // v1644 — Realfall 24.10. (5d960660: Klon auf falschen Speicher, nichts angelegt): ein angehaltener Change ohne Wirkung darf unter
+    // derselben ID neu geplant werden — abhängige Changes behalten ihren Bezug; die Freigabe verfällt
+    const lauf = alt.lauf as { phase?: string; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
+    const haltOhneWirkung = alt.status === 'in_progress' && lauf?.phase === 'angehalten'
+      && !(lauf.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
+    if (alt.status === 'in_progress' && !haltOhneWirkung) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} läuft oder hat schon etwas verändert — nicht mehr änderbar (abbrechen bzw. Rückweg, dann neu planen)`] };
+    const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung });
     if (ew.antworten.length) await this.d.einwand!.speichereAntworten(owner, ew.antworten);
-    const verfallen = alt.status === 'approved' && neu.status !== 'approved';
+    const verfallen = (alt.status === 'approved' || haltOhneWirkung) && neu.status !== 'approved';
     this.d.protokoll?.('I3 Change geändert', { id: alt.id, freigabeVerfallen: verfallen, fingerabdruck: neu.fingerabdruck?.slice(0, 12) });
     return { ok: true, change: neu, freigabeVerfallen: verfallen };
   }

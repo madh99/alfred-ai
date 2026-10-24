@@ -125,6 +125,29 @@ function speicher() {
     setzeFreigabeAnfrage: async (_o: string, id: string, a: CmdbChangeRequest['freigabeAnfrage'] | null) => { const e = db.get(id)!; if (a) e.freigabeAnfrage = a; else delete e.freigabeAnfrage; },
   };
 }
+describe('v1644 angehaltenen Change ohne Wirkung neu planen (Realfall 5d960660)', () => {
+  it('Halt nach Prüfung/fehlgeschlagenem Schritt ohne Daten → änderbar, Lauf weg, neue Freigabe; nach Wirkung → abgewiesen', async () => {
+    const it3 = speicher();
+    let haltFlag: boolean | undefined;
+    const orig = it3.setzeSchritte;
+    it3.setzeSchritte = async (o: string, id: string, d: ChangeSchrittDaten, x?: { haltOhneWirkung?: boolean }) => { haltFlag = x?.haltOhneWirkung; const r = await orig(o, id, d); delete (r as { lauf?: unknown }).lauf; return r; };
+    const pl = new ChangePlanung({ itsm: it3 as never, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const ok = await pl.planen('o', [snapshotChange()]);
+    if (!ok.ok) throw new Error('planen');
+    const c = it3.db.get(ok.changes[0]!.id)!;
+    Object.assign(c, { status: 'in_progress', lauf: { phase: 'angehalten', schritt: 2, ergebnisse: [{ nr: 1, ok: true }, { nr: 2, ok: false }] } });
+    const r = await pl.aendern('o', c.id, snapshotChange());
+    expect(r.ok).toBe(true);
+    expect(haltFlag).toBe(true);
+    if (r.ok) expect(r.freigabeVerfallen).toBe(true);
+    const d = it3.db.get(c.id)!;
+    Object.assign(d, { status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, ergebnisse: [{ nr: 3, ok: false, aktionOk: true }] } }); // Schritt 3 (aendern) hat gewirkt
+    const r2 = await pl.aendern('o', d.id, snapshotChange());
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.fehler.join(' ')).toContain('schon etwas verändert');
+  });
+});
+
 const keineAuswirkung = async (ids: string[]) => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] });
 
 describe('I3 Paket planen und Owner-Freigabe', () => {

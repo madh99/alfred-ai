@@ -271,3 +271,54 @@ describe('v1639 Snapshot-Namen wie Proxmox (Realfall 2bb39131)', () => {
     expect(px.pruefeEingabe({ action: 'delete_snapshot', vmid: 144, name: '{{schritt1.name}}' })).toBeUndefined();
   });
 });
+
+describe('v1644 provision_vm auf lokalen Speicher eines anderen Nodes (Realfall 5d960660)', () => {
+  function welt(zielSpeicher: { type: string; shared?: number }) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const aufrufe: string[] = [];
+    const vms = [{ vmid: 9020, name: 'ubuntu-2404', node: 'pve3', type: 'qemu', status: 'stopped' }];
+    let scsi0 = 'nvme-cs001:vm-146-disk-0';
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => {
+      if (p === '/storage/data2') return zielSpeicher;
+      if (p.endsWith('/qemu/9020/config')) return { description: 'Vorlage von Alfred (I5) aus backupshare%3Aimport/ubuntu-24.04-20261017.qcow2' };
+      if (p.endsWith('/qemu/146/config')) return { scsi0 };
+      if (p.endsWith('/agent/network-get-interfaces')) return { result: [{ name: 'eth0', 'ip-addresses': [{ 'ip-address': '10.203.25.2', 'ip-address-type': 'ipv4' }] }] };
+      if (p === '/storage/local') return { path: '/var/lib/vz' };
+      return {};
+    };
+    a.post = async (p: string, b: Record<string, unknown>) => {
+      aufrufe.push(`POST ${p} ${JSON.stringify(b)}`);
+      if (p.endsWith('/clone')) { vms.push({ vmid: 146, name: 'docker-ops-01', node: 'pve1', type: 'qemu', status: 'stopped' }); if (b.storage) scsi0 = `${String(b.storage)}:vm-146-disk-0`; }
+      if (p.endsWith('/move_disk')) scsi0 = `${String(b.storage)}:vm-146-disk-0`;
+      return 'UPID:x';
+    };
+    a.api = async () => 'UPID:x';
+    a.aufgabeOderFehler = async () => undefined;
+    a.vmidFrei = async () => true;
+    px.setVmFabrik({
+      vorpruefung: async () => [], hostSchluessel: async () => ({ privat: HOST_PRIV, oeffentlich: HOST_PUB }), alfredSchluessel: async () => ALFRED,
+      snippetSchreiben: async () => undefined, snippetEntfernen: async () => undefined,
+      anmelden: async () => ({ ok: true, meldung: 'SSH ok' }), fortsetzen: async () => ({ ok: true, meldung: 'x' }), abmelden: async () => '',
+    } as never);
+    return { px, aufrufe };
+  }
+  const eingabe = { action: 'provision_vm', template: 9020, node: 'pve1', storage: 'data2', hostname: 'docker-ops-01', ip: '10.203.25.2/28', gateway: '10.203.25.1', new_vmid: 146 };
+  it('lokaler Speicher (lvmthin) auf anderem Node: Klon ohne storage, danach move_disk nach data2', async () => {
+    const w = welt({ type: 'lvmthin' });
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    const klon = w.aufrufe.find(x => x.includes('/clone'))!;
+    expect(klon).not.toContain('"storage"');
+    expect(w.aufrufe.some(x => x.includes('/move_disk') && x.includes('"storage":"data2"') && x.includes('"delete":1'))).toBe(true);
+    expect(r.display).toContain('Platte nach data2 auf pve1 verschoben');
+  });
+  it('gemeinsamer Speicher (rbd): direkt dorthin klonen, kein move_disk', async () => {
+    const w = welt({ type: 'rbd' });
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.find(x => x.includes('/clone'))).toContain('"storage":"data2"');
+    expect(w.aufrufe.some(x => x.includes('/move_disk'))).toBe(false);
+  });
+});

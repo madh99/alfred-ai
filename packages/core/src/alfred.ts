@@ -7114,7 +7114,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }),
             hole: (o, id) => itsmI3.getChangeRequestById(o, id),
             legeAn: (o, d) => itsmI3.legeSchrittChangeAn(o, d),
-            setzeSchritte: (o, id, d) => itsmI3.setzeSchritte(o, id, d),
+            setzeSchritte: (o, id, d, x) => itsmI3.setzeSchritte(o, id, d, x),
             freigeben: (o, id, fp, ueber) => itsmI3.freigebeSchrittChange(o, id, fp, ueber),
             setzeFreigabeAnfrage: (o, id, a) => itsmI3.setzeFreigabeAnfrage(o, id, a),
             legeStandardAn: (o, d, v) => itsmI3.legeStandardChangeAn(o, d, v),

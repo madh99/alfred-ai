@@ -919,10 +919,13 @@ export class ItsmRepository {
    * I3 — Plan eines Changes mit Schritten ersetzen. Ändert sich der Fingerabdruck, verfällt eine Freigabe (Status zurück auf
    * submitted bzw. draft bei Prüffehlern). Laufende oder abgeschlossene Changes bleiben unverändert.
    */
-  async setzeSchritte(userId: string, id: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest> {
+  async setzeSchritte(userId: string, id: string, d: ChangeSchrittDaten, o: { haltOhneWirkung?: boolean } = {}): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e) throw new Error(`Change ${id} nicht gefunden`);
-    if (!['draft', 'submitted', 'approved'].includes(e.status)) throw new Error(`Change ist ${e.status} — Plan nicht mehr änderbar`);
+    // v1644 — angehalten, aber noch ohne Wirkung (der Aufrufer prüft das): Plan überarbeiten, Lauf verwerfen, neue Freigabe nötig
+    const haltNeu = o.haltOhneWirkung === true && e.status === 'in_progress' && (e.lauf as { phase?: string } | undefined)?.phase === 'angehalten';
+    if (!haltNeu && !['draft', 'submitted', 'approved'].includes(e.status)) throw new Error(`Change ist ${e.status} — Plan nicht mehr änderbar`);
+    if (haltNeu) await this.db.execute('UPDATE cmdb_change_requests SET lauf = NULL, started_at = NULL, completed_at = NULL, status = ? WHERE id = ? AND user_id = ?', ['submitted', e.id, userId]);
     const freigabeBleibt = e.status === 'approved' && e.freigabeFingerabdruck === d.fingerabdruck && !d.pruefung.fehler.length;
     const status = freigabeBleibt ? 'approved' : d.pruefung.fehler.length ? 'draft' : 'submitted';
     await this.db.execute(

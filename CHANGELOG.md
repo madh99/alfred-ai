@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bereitstellung auf lokalen Speicher anderer Nodes; angehaltene Changes ohne Wirkung neu planen (v1644)
+
+- **`provision_vm`:** Proxmox klont nicht über Nodes hinweg in einen lokalen Speicher („can't clone to non-shared storage“, Realfall Change 5d960660). Ist der Zielspeicher lokal und der Node ein anderer, klont die Fabrik jetzt auf den gemeinsamen Speicher der Vorlage an den Ziel-Node. Danach verschiebt sie die Platte mit `move_disk` in den gewünschten Speicher und prüft das Ergebnis. Bei gemeinsamem Speicher wird wie bisher direkt geklont.
+- **`change_aendern`:** Ein angehaltener Change, der noch nichts verändert hat, kann jetzt unter derselben ID neu geplant werden. Zählt nur Lesen, Sicherung oder ein Fehlschlag ohne angelegte Daten, wird der Lauf verworfen und eine neue Freigabe ist nötig. Changes, die von ihm abhängen, behalten ihren Bezug. Hat er schon gewirkt, bleibt es bei Abbrechen bzw. Rückweg.
+
 ### Fixed — Skill-Prüfungen durchsuchen nur Werte, nicht Feldnamen (v1643)
 
 - **Befund (Change 4c5652a5, Schritt 6, 24.10.):** Der Trunk war vollständig offen („Alle Ports lassen das Netz durch“). Die Prüfung „darf GESPERRT nicht enthalten“ scheiterte trotzdem. Sie durchsuchte die Skill-Daten als JSON ohne Rücksicht auf Groß- und Kleinschreibung und fand dabei den Feldnamen `gesperrt` der leeren Liste.
