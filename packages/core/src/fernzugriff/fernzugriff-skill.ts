@@ -117,7 +117,7 @@ export class FernzugriffSkill extends Skill {
         quelle_volume: { type: 'string', description: 'kopieren: Docker-Volume an der Quelle statt quelle_pfad' },
         ziel_volume: { type: 'string', description: 'kopieren: Docker-Volume am Ziel (wird angelegt) statt ziel_pfad' },
         loeschen: { type: 'boolean', description: 'kopieren: am Ziel entfernen, was es an der Quelle nicht gibt (Abgleich nach dem Stoppen)' },
-        pruefsumme: { type: 'boolean', description: 'kopieren: SHA-256 über alle Dateien beider Seiten vergleichen (Standard ja)' },
+        pruefsumme: { type: 'boolean', description: 'kopieren: SHA-256 über alle Dateien beider Seiten vergleichen (Standard ja). Bei einer VORKOPIE mit laufender Quelle (z. B. Datenbank) immer false — die Dateien ändern sich währenddessen; die Prüfsumme gehört zur kalten Endkopie nach dem Stopp (Realfall e3adf356, 24.10.)' },
         kbps: { type: 'number', description: 'kopieren/datenbank_kopieren: Bandbreitengrenze in KB/s' },
         quelle_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container an der Quelle' },
         ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
@@ -476,7 +476,7 @@ export class FernzugriffSkill extends Skill {
     const zeilen = [
       `${q.name}:${String(qPfad)} → ${z.name}:${String(zPfad)} in ${e.sekunden} s: ${e.neu} neu, ${e.geaendert} geändert, ${e.geloescht} am Ziel entfernt, ${mb(e.bytes)} übertragen${e.uebersprungen ? `, ${e.uebersprungen} Sonderdateien übersprungen` : ''}.`,
       `Danach noch abweichend: ${e.restUnterschiede}${e.restUnterschiede ? ' (bei laufendem Dienst normal — nach dem Stoppen erneut abgleichen)' : ''}.`,
-      ...(e.summe ? [`Prüfsumme (${e.summe.dateien} Dateien): ${e.summe.gleich ? 'gleich' : `VERSCHIEDEN (Quelle ${e.summe.quelle.slice(0, 12)}…, Ziel ${e.summe.ziel.slice(0, 12)}…)`}.`] : []),
+      ...(e.summe ? [`Prüfsumme (${e.summe.dateien} Dateien): ${e.summe.gleich ? 'gleich' : `VERSCHIEDEN (Quelle ${e.summe.quelle.slice(0, 12)}…, Ziel ${e.summe.ziel.slice(0, 12)}…) — läuft die Quelle noch (Vorkopie), ist das zu erwarten: Vorkopie mit pruefsumme=false planen, die Prüfsumme gehört zur kalten Endkopie`}.`] : []),
     ];
     const ok = !e.summe || e.summe.gleich;
     return { success: ok, data: { ...e, quelle_pfad: qPfad, ziel_pfad: zPfad, gleich: e.summe?.gleich ?? null }, display: zeilen.join('\n'), ...(ok ? {} : { error: zeilen.join('\n') }) };

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Vorkopie ohne Prüfsumme (v1646)
+
+- **Befund (Change e3adf356, 24.10.):** Die Vorkopie einer laufenden PostgreSQL scheiterte am Prüfsummen-Vergleich. Bei `kopieren` ist er standardmäßig eingeschaltet, und die Dateien ändern sich während des Kopierens.
+- Die Beschreibung von `pruefsumme` sagt dem Planer jetzt ausdrücklich: Bei einer Vorkopie mit laufender Quelle immer `false`. Die Prüfsumme gehört zur kalten Endkopie nach dem Stopp.
+- Die Fehlermeldung bei abweichender Prüfsumme nennt diese Ursache.
+
 ### Fixed — Tresor nimmt größere Einträge auf (v1645)
 
 - **Befund (Change cb205507, 24.10.):** Die Laufzeit-Konfiguration dreier Container hatte 14 KB. Der Tresor ließ nur 8 KB je Eintrag zu, Fehlermeldung „Wert fehlt oder ist zu lang“.
