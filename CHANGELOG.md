@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Datenbank-Inventar für MySQL/MariaDB (v1648)
+
+- `fernzugriff.datenbank_inventar` kann jetzt auch MySQL und MariaDB (`art: mysql`, auch `mariadb`). Es liefert Version, Datenbanken mit Größe, Tabellen und genaue Zeilenzahlen, Benutzer@Host und den Fingerabdruck, wie bei PostgreSQL. Gebraucht wird das für den Vaultwarden-Umzug mit seiner MariaDB.
+- Nur lesend in einer Lese-Transaktion. Das Passwort steht nie im Befehl, der Client im Container liest es aus dessen Umgebung (`MYSQL_ROOT_PASSWORD` bzw. `MARIADB_ROOT_PASSWORD`).
+
 ### Changed — Planungshinweise für Umzüge in neue Netze (v1647)
 
 Die Lektionen aus dem Guacamole-Umzug vom 24.10. stehen jetzt in der Anleitung des Infrastruktur-Skills:

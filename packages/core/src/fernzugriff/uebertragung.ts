@@ -204,7 +204,7 @@ export const PG_INVENTAR_SQL = "SELECT 'version|' || current_setting('server_ver
 export const redisInventarBefehl = (c: string) => `docker exec ${c} sh -c 'redis-cli --raw INFO server | grep -E "^redis_version:"; redis-cli --raw INFO keyspace | grep -E "^db[0-9]+:" || true'`; // v1637 — leerer Keyspace ist kein Fehler (Realfall redis 24.10.)
 
 export interface DbInventar {
-  art: 'postgres' | 'redis'; version: string; hauptversion: string;
+  art: 'postgres' | 'redis' | 'mysql'; version: string; hauptversion: string;
   datenbanken: Array<{ name: string; bytes?: number; tabellen?: number; zeilen?: number; schluessel?: number }>;
   rollen: string[]; fingerabdruck: string;
 }
@@ -224,8 +224,9 @@ export function inventarFingerabdruck(teile: string[]): string {
   return createHash('sha256').update(teile.join('\n')).digest('hex');
 }
 
-export async function datenbankInventar<Z>(w: Wege<Z>, z: Z, container: string, art: 'postgres' | 'redis'): Promise<DbInventar> {
+export async function datenbankInventar<Z>(w: Wege<Z>, z: Z, container: string, art: 'postgres' | 'redis' | 'mysql'): Promise<DbInventar> {
   if (!gueltigerName(container)) throw new Error(`ungültiger Containername ${String(container).slice(0, 40)}`);
+  if (art === 'mysql') return mysqlInventar(w, z, container);
   if (art === 'redis') {
     const r = await w.lauf(z, root(redisInventarBefehl(container)), '', 60_000);
     if (r.code !== 0) throw new Error(`Redis-Inventar gescheitert (Exit ${r.code}): ${r.stderr.trim().slice(-200)}`);
@@ -252,4 +253,45 @@ export async function datenbankInventar<Z>(w: Wege<Z>, z: Z, container: string, 
     teile.push(`db|${d.name}`, ...[...zl.entries()].sort((a, c) => a[0].localeCompare(c[0])).map(([t, n]) => `${d.name}.${t}|${n}`));
   }
   return { art, version: basis.version, hauptversion, datenbanken, rollen: basis.rollen, fingerabdruck: inventarFingerabdruck(teile) };
+}
+
+// ── v1648 MySQL/MariaDB (Vaultwarden-Umzug): Zugangsdaten aus der Umgebung des Containers, nur lesende Transaktion ──
+// Passwort nie im Befehl: der Client im Container liest MYSQL_ROOT_PASSWORD bzw. MARIADB_ROOT_PASSWORD selbst (MYSQL_PWD).
+export const mysqlInventarBefehl = (c: string) => `docker exec -i ${c} sh -c 'c=$(command -v mariadb || command -v mysql); MYSQL_PWD="\${MARIADB_ROOT_PASSWORD:-\${MYSQL_ROOT_PASSWORD:-}}" exec "$c" -u root -N -B --connect-timeout=10'`;
+const MYSQL_SYSTEM = ['information_schema', 'performance_schema', 'mysql', 'sys'];
+export const MYSQL_INVENTAR_SQL = [
+  'SET SESSION TRANSACTION READ ONLY;',
+  "SELECT CONCAT('version|', VERSION());",
+  `SELECT CONCAT('db|', s.schema_name, '|', COALESCE(SUM(t.data_length + t.index_length), 0)) FROM information_schema.schemata s LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name WHERE s.schema_name NOT IN (${MYSQL_SYSTEM.map(x => `'${x}'`).join(',')}) GROUP BY s.schema_name ORDER BY s.schema_name;`,
+  `SELECT CONCAT('tab|', table_schema, '|', table_name) FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN (${MYSQL_SYSTEM.map(x => `'${x}'`).join(',')}) ORDER BY table_schema, table_name;`,
+  "SELECT CONCAT('rolle|', user, '@', host) FROM mysql.user ORDER BY user, host;",
+].join('\n') + '\n';
+const mysqlName = (x: string) => '`' + x.replace(/`/g, '``') + '`';
+
+async function mysqlInventar<Z>(w: Wege<Z>, z: Z, container: string): Promise<DbInventar> {
+  const b = await w.lauf(z, root(mysqlInventarBefehl(container)), MYSQL_INVENTAR_SQL, 120_000);
+  if (b.code !== 0) throw new Error(`MySQL-Inventar gescheitert (Exit ${b.code}): ${b.stderr.trim().slice(-200)}`);
+  let version = ''; const dbs: Array<{ name: string; bytes: number }> = []; const tabellen: Array<[string, string]> = []; const rollen: string[] = [];
+  for (const zl of b.stdout.split(/\r?\n/).map(x => x.trim())) {
+    let m: RegExpExecArray | null;
+    if ((m = /^version\|(.+)$/.exec(zl))) version = m[1]!;
+    else if ((m = /^db\|([^|]+)\|(\d+)$/.exec(zl))) dbs.push({ name: m[1]!, bytes: Number(m[2]) });
+    else if ((m = /^tab\|([^|]+)\|(.+)$/.exec(zl))) tabellen.push([m[1]!, m[2]!]);
+    else if ((m = /^rolle\|(.+)$/.exec(zl))) rollen.push(m[1]!);
+  }
+  if (!version) throw new Error('MySQL-Version nicht lesbar');
+  const zaehlung = new Map<string, number>();
+  if (tabellen.length) {
+    const sql = 'SET SESSION TRANSACTION READ ONLY;\n' + tabellen.map(([d, t]) => `SELECT CONCAT(${`'${(d + '.' + t).replace(/'/g, "''")}|'`}, COUNT(*)) FROM ${mysqlName(d)}.${mysqlName(t)};`).join('\n') + '\n';
+    const r = await w.lauf(z, root(mysqlInventarBefehl(container)), sql, 600_000);
+    if (r.code !== 0) throw new Error(`Zeilenzählung (MySQL) gescheitert: ${r.stderr.trim().slice(-200)}`);
+    for (const [k, v] of leseZaehlung(r.stdout)) zaehlung.set(k, v);
+  }
+  const hauptversion = (/^(\d+\.\d+)/.exec(version)?.[1] ?? version) + (/mariadb/i.test(version) ? '-MariaDB' : '');
+  const datenbanken: DbInventar['datenbanken'] = dbs.map(d => {
+    const eigene = [...zaehlung.entries()].filter(([k]) => k.startsWith(`${d.name}.`));
+    return { name: d.name, bytes: d.bytes, tabellen: eigene.length, zeilen: eigene.reduce((x, [, n]) => x + n, 0) };
+  });
+  const teile = [`mysql ${hauptversion}`, ...rollen.map(r => `rolle|${r}`), ...dbs.map(d => `db|${d.name}`), ...[...zaehlung.entries()].sort((a, c) => a[0].localeCompare(c[0])).map(([t, n]) => `${t}|${n}`)];
+  return { art: 'mysql', version, hauptversion, datenbanken, rollen, fingerabdruck: inventarFingerabdruck(teile) };
 }

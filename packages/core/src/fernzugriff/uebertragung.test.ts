@@ -165,3 +165,22 @@ describe('v1636 Datenbank-Inventar (fest, nur lesend)', () => {
     expect(befehl).toContain('|| true');
   });
 });
+
+describe('v1648 Datenbank-Inventar MySQL/MariaDB (Vaultwarden)', () => {
+  const welt = (zeilenUsers: number): Wege<string> => ({
+    lauf: async (_h, b, eingabe) => {
+      expect(b).not.toMatch(/-p\S|--password/); // Passwort nie im Befehl
+      expect(eingabe).toContain('SET SESSION TRANSACTION READ ONLY;');
+      if (eingabe.includes("'version|'")) return { code: 0, stdout: 'version|11.4.2-MariaDB-ubu2404\ndb|vaultwarden|1835008\ntab|vaultwarden|users\ntab|vaultwarden|ciphers\nrolle|root@%\nrolle|vaultwarden@%\n', stderr: '' };
+      return { code: 0, stdout: `vaultwarden.ciphers|412\nvaultwarden.users|${zeilenUsers}\n`, stderr: '' };
+    },
+    strom: async () => { throw new Error('x'); },
+  });
+  it('Version, Datenbanken, Tabellen, Zeilen, Rollen; Fingerabdruck reagiert auf Zeilenzahl', async () => {
+    const a = await datenbankInventar(welt(3), 'dockerhost', 'mariadb-vaultwarden', 'mysql');
+    expect(a).toMatchObject({ art: 'mysql', hauptversion: '11.4-MariaDB', rollen: ['root@%', 'vaultwarden@%'] });
+    expect(a.datenbanken).toEqual([{ name: 'vaultwarden', bytes: 1835008, tabellen: 2, zeilen: 415 }]);
+    expect((await datenbankInventar(welt(3), 'docker-vault-01', 'mariadb-vaultwarden', 'mysql')).fingerabdruck).toBe(a.fingerabdruck);
+    expect((await datenbankInventar(welt(4), 'docker-vault-01', 'mariadb-vaultwarden', 'mysql')).fingerabdruck).not.toBe(a.fingerabdruck);
+  });
+});

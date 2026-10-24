@@ -90,7 +90,7 @@ export class FernzugriffSkill extends Skill {
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
       `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
-      'datenbank_inventar (name, container, art=postgres|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}).',
+      'datenbank_inventar (name, container, art=postgres|mysql|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 15 * 60_000,
@@ -123,7 +123,7 @@ export class FernzugriffSkill extends Skill {
         ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
         datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname' },
         container: { type: 'string', description: 'datenbank_inventar: Container der Datenbank' },
-        art: { type: 'string', enum: ['postgres', 'redis'], description: 'datenbank_inventar: postgres oder redis' },
+        art: { type: 'string', enum: ['postgres', 'mysql', 'mariadb', 'redis'], description: 'datenbank_inventar: postgres, mysql/mariadb oder redis' },
         db_benutzer: { type: 'string', description: 'datenbank_kopieren: Datenbank-Benutzer' },
         pfad: { type: 'string', description: 'geheim_uebernehmen: Datei mit Geheimnissen an der Quelle (z. B. /opt/app/.env)' },
         tresor_name: { type: 'string', description: 'geheim_uebernehmen: Name des Tresor-Eintrags (danach {{geheimdatei:name}} am Ziel)' },
@@ -495,12 +495,12 @@ export class FernzugriffSkill extends Skill {
   /** v1636 — festes, nur lesendes Inventar einer Datenbank im Container (PostgreSQL/Redis) mit Fingerabdruck für Vorher/Nachher */
   private async datenbankInventarAktion(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
     const z = await this.zugang(owner, { name: input.name });
-    const art = input.art === 'redis' ? 'redis' : input.art === 'postgres' ? 'postgres' : undefined;
-    if (!art) return { success: false, error: 'art: postgres oder redis' };
+    const art = input.art === 'redis' ? 'redis' : input.art === 'postgres' ? 'postgres' : input.art === 'mysql' || input.art === 'mariadb' ? 'mysql' : undefined;
+    if (!art) return { success: false, error: 'art: postgres, mysql (auch MariaDB) oder redis' };
     const inv = await datenbankInventar(this.wege(owner), z, String(input.container ?? ''), art);
     this.deps.protokoll?.('v1636 Datenbank-Inventar', { zugang: z.name, container: input.container, art, version: inv.version, datenbanken: inv.datenbanken.length, fingerabdruck: inv.fingerabdruck.slice(0, 16) });
     const zeilen = inv.datenbanken.map(d => `- ${d.name}${d.bytes !== undefined ? ` ${(d.bytes / 1024 / 1024).toFixed(1)} MB` : ''}${d.tabellen !== undefined ? `, ${d.tabellen} Tabellen, ${d.zeilen} Zeilen` : ''}${d.schluessel !== undefined ? `, ${d.schluessel} Schlüssel` : ''}`);
-    const display = [`${art === 'postgres' ? 'PostgreSQL' : 'Redis'} ${inv.version} in ${String(input.container)} auf ${z.name}`, ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
+    const display = [`${art === 'postgres' ? 'PostgreSQL' : art === 'mysql' ? 'MySQL/MariaDB' : 'Redis'} ${inv.version} in ${String(input.container)} auf ${z.name}`, ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
     return { success: true, data: inv, display };
   }
 
