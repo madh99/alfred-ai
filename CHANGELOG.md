@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — `fernzugriff.pruefen` testet den Käfig neu und nennt die Stufe (v1634)
+
+- `pruefen` führt den Käfig-Selbsttest jetzt immer neu aus, statt das Ergebnis vom letzten Start zu übernehmen. So greift ein geänderter Host sofort, etwa nach einem SELinux-Modul.
+- Die Meldung nennt die erreichte Stufe („aktiv (schreibgeschützt, … Lesen ok)“ bzw. „aktiv (eingeschränkt: …)“). Ein Change kann damit gezielt die volle Stufe verlangen.
+
 ### Fixed — Prüfungen speichern, was sie gelesen haben (v1633)
 
 - Prüfungen vom Typ `befehl` und `skill` speicherten nur „ok“ bzw. den Grund, nicht das Gelesene. Damit war im Nachhinein nicht belegbar, was eine Prüfung gesehen hat (Realfall 24.10.: welches System die Wegwerf-VMs melden).

@@ -322,8 +322,10 @@ export class FernzugriffSkill extends Skill {
     const s = await this.lauf(owner, z, 'sudo -n true', 20_000);
     // v1549 — Käfig mitprüfen (außer der Owner hat ihn abgeschaltet); ein früheres „fehlt“ wird neu getestet
     if (s.code === 0 && z.kaefig === 'fehlt' && this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }
+    // v1634 — „pruefen“ testet den Käfig immer neu (geänderter Host, z. B. SELinux-Modul) und nennt die erreichte Stufe
+    if (z.kaefig !== 'aus') this.kaefigGeprueft.delete(z.id);
     const k = s.code === 0 ? await this.kaefigBereit(owner, z) : { ok: false, grund: 'braucht sudo ohne Passwort' };
-    return { success: true, data: { hostname: a.stdout.trim(), sudo: s.code === 0, kaefig: k }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}). sudo ohne Passwort: ${s.code === 0 ? 'ja' : 'nein — Befehle laufen dann ohne root'}. Lese-Käfig: ${k.ok ? 'aktiv' : `nicht verfügbar (${k.grund})`}.` };
+    return { success: true, data: { hostname: a.stdout.trim(), sudo: s.code === 0, kaefig: k, kaefigStufe: this.kaefigStufe.get(z.id) }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}). sudo ohne Passwort: ${s.code === 0 ? 'ja' : 'nein — Befehle laufen dann ohne root'}. Lese-Käfig: ${k.ok ? `aktiv (${k.grund})` : `nicht verfügbar (${k.grund})`}.` };
   }
 
   /** Lesender Befehl: als root, wenn sudo ohne Passwort geht, sonst als Benutzer. */
