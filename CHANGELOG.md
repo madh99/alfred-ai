@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Planungshinweise für Umzüge in neue Netze (v1647)
+
+Die Lektionen aus dem Guacamole-Umzug vom 24.10. stehen jetzt in der Anleitung des Infrastruktur-Skills:
+- Dienste im neuen Netz werden **lokal auf der Ziel-VM** geprüft, etwa mit `curl` auf `127.0.0.1`. Der Alfred-Server darf dort meist nur SSH.
+- Eine **Vorkopie** bei laufender Quelle läuft ohne Prüfsumme.
+- **Öffentliche Dienste über NPM** laufen über die pfSense (NPM im pfSense-LAN, Absender wird auf 192.168.1.139 umgeschrieben). Für jedes neue Zielnetz braucht die pfSense deshalb eine **statische Route** und UniFi eine Freigabe pfSense → Ziel:Port.
+- **Keine Vorbedingungen an Rechner**, die nur bei Bedarf laufen.
+
 ### Changed — Vorkopie ohne Prüfsumme (v1646)
 
 - **Befund (Change e3adf356, 24.10.):** Die Vorkopie einer laufenden PostgreSQL scheiterte am Prüfsummen-Vergleich. Bei `kopieren` ist er standardmäßig eingeschaltet, und die Dateien ändern sich während des Kopierens.
