@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
 import type { ChangeSchritt, Pruefung } from './change-schritte.js';
@@ -339,7 +339,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       case 'skill': {
         const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, 60_000);
         if (!r.success) return { ok: false, text: `${p.skill}.${p.aktion}: ${String(r.error ?? 'Fehler').slice(0, 160)}` };
-        let daten = ''; try { daten = JSON.stringify(r.data ?? ''); } catch { /* egal */ }
+        // v1643 — Realfall 24.10. (4c5652a5 Schritt 6): nur die WERTE der Daten durchsuchen — der Feldname „gesperrt“ (leere Liste) ließ
+        // „darf GESPERRT nicht enthalten“ scheitern, obwohl alle Ports offen waren
+        let daten = ''; try { daten = datenWerte(r.data).join('\n'); } catch { /* egal */ }
         const t = textErfuellt(`${r.display ?? ''}\n${daten}`, p);
         return { ok: t.ok, text: t.ok ? `${p.skill}.${p.aktion} ok` : `${p.skill}.${p.aktion}: ${t.grund}`, ausgabe: (r.display ?? daten).slice(0, MAX_AUSGABE) };
       }

@@ -141,6 +141,19 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
   });
 
+  it('v1643 Realfall 4c5652a5: Skill-Prüfung durchsucht nur Werte, nicht Feldnamen (leeres „gesperrt“ ist kein GESPERRT)', async () => {
+    const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT', erwartet: 'VLAN 825' } })]);
+    w.deps.fuehreAus = async () => ({ success: true, display: 'Weg für Docker-Betrieb (VLAN 825):\n- Port 9: custom — durchgelassen\nAlle Ports lassen das Netz durch.', data: { netz: 'Docker-Betrieb', vlan: 825, pfad: [{ port: 9, durch: true }], gesperrt: [] } });
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    const w2 = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT' } })]);
+    w2.deps.fuehreAus = async () => ({ success: true, display: 'Port 9: custom — GESPERRT', data: { gesperrt: [{ port: 9 }] } });
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten');
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];

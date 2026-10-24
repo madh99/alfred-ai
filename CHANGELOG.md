@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Skill-Prüfungen durchsuchen nur Werte, nicht Feldnamen (v1643)
+
+- **Befund (Change 4c5652a5, Schritt 6, 24.10.):** Der Trunk war vollständig offen („Alle Ports lassen das Netz durch“). Die Prüfung „darf GESPERRT nicht enthalten“ scheiterte trotzdem. Sie durchsuchte die Skill-Daten als JSON ohne Rücksicht auf Groß- und Kleinschreibung und fand dabei den Feldnamen `gesperrt` der leeren Liste.
+- **Jetzt** prüfen `erwartet` und `nichtEnthalten` bei Skill-Prüfungen die Anzeige und nur die Werte der Daten, nicht deren Feldnamen.
+
 ### Fixed — UniFi-Trunk: verzögerte Verteilung neuer Netze durch den Controller (v1642)
 
 - **Befund (Change c89eb974, 24.10.):** Ein neues Netz schließt der Controller auf allen Ports mit „ausgewählten VLANs“ (custom) aus, aber mit Verzug. Port-Freigaben direkt nach dem Anlegen wurden deshalb nachträglich wieder überschrieben. Zwei Trunk-Ports waren danach gesperrt, obwohl ihre Schritte als erfolgreich galten. Das erklärt auch die mehreren Anläufe beim Trunk für VLAN 824.

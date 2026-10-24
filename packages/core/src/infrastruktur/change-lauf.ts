@@ -121,6 +121,15 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
   return fehler ? { wert: neu, fehler } : { wert: neu };
 }
 
+/** v1643 — alle einfachen Werte eines Datenobjekts (ohne Feldnamen), für Textprüfungen gegen Skill-Daten */
+export function datenWerte(d: unknown, aus: string[] = [], tiefe = 0): string[] {
+  if (d === null || d === undefined || tiefe > 12 || aus.length > 5000) return aus;
+  if (typeof d === 'string' || typeof d === 'number' || typeof d === 'boolean') { aus.push(String(d)); return aus; }
+  if (Array.isArray(d)) { for (const x of d) datenWerte(x, aus, tiefe + 1); return aus; }
+  if (typeof d === 'object') for (const v of Object.values(d as Record<string, unknown>)) datenWerte(v, aus, tiefe + 1);
+  return aus;
+}
+
 /** Prüfungs-Text gegen erwartet/nichtEnthalten (ohne Groß/Klein). */
 export function textErfuellt(text: string, p: Pick<Pruefung, 'erwartet' | 'nichtEnthalten'>): { ok: boolean; grund?: string } {
   const t = text.toLowerCase();
