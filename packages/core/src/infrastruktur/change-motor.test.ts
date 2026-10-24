@@ -152,6 +152,22 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.aufrufe.some(a => a.startsWith('geloest:inc-1:'))).toBe(true);
   });
 
+  it('v1652 Realfall 7d873ad4: Datei-Prüfung nutzt nur Metadaten — ein Geheimnis-Pfad scheitert nicht an der Inhalts-Sperre', async () => {
+    const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'datei', zugang: 'pve3', pfad: '/mnt/pve/backupshare/vaultwarden-20261025/vaultwarden.tar.enc' } })]);
+    w.deps.fernLesen = async () => { throw new Error('berührt Geheimnisse'); };
+    const gefragt: string[] = [];
+    w.deps.fernDatei = async (z, p) => { gefragt.push(`${z}:${p}`); return 'regular file 460918'; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(gefragt).toEqual(['pve3:/mnt/pve/backupshare/vaultwarden-20261025/vaultwarden.tar.enc']);
+    const w2 = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'datei', zugang: 'pve3', pfad: '/fehlt' } })]);
+    w2.deps.fernDatei = async () => { throw new Error('nicht vorhanden'); };
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten');
+  });
+
   it('v1643 Realfall 4c5652a5: Skill-Prüfung durchsucht nur Werte, nicht Feldnamen (leeres „gesperrt“ ist kein GESPERRT)', async () => {
     const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT', erwartet: 'VLAN 825' } })]);
     w.deps.fuehreAus = async () => ({ success: true, display: 'Weg für Docker-Betrieb (VLAN 825):\n- Port 9: custom — durchgelassen\nAlle Ports lassen das Netz durch.', data: { netz: 'Docker-Betrieb', vlan: 825, pfad: [{ port: 9, durch: true }], gesperrt: [] } });

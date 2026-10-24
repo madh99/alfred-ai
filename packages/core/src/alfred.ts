@@ -7233,6 +7233,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return skillSandbox.execute(sk, input, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '', ausChange: true } as never, timeoutMs);
             },
             fernLesen: (z, b, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.lesenIntern(z, b, t); },
+            fernDatei: (z, p, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.dateiMetadaten(z, p, t); }, // v1652
             fernAusfuehren: (z, b, root, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(z, b, root, t); },
             netz: { http: netz.http, port: netz.port, dns: netz.aufloesen, ping: netz.ping },
             cmdbProtokoll: async (assetId, text) => { const o = ownerFz(); if (o) await cmdbFz.logChange(o, assetId, 'updated', 'maintenance', undefined, undefined, undefined, text, 'infrastruktur-I4'); },

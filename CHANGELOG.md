@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Datei-Prüfungen in Changes lesen nur Metadaten (v1652)
+
+- **Realfall:** Bei der einmaligen Vaultwarden-Sicherung war die Prüfsumme auf dem Sicherungsspeicher bereits bestätigt, trotzdem hielt der Change an: Die nachgelagerte Datei-Prüfung wurde als „berührt Geheimnisse“ abgewiesen, weil der Pfad „vaultwarden“ enthielt.
+- **Jetzt** prüfen Changes Dateien über einen festen Befehl, der nur Typ und Größe liest und nie den Inhalt. Das funktioniert auch für Pfade, deren Inhalt geschützt bleibt. Der Pfad muss einfach und absolut sein.
+
 ### Fixed — Halt-Incident endet auch nach Neuplanung mit dem Change (v1651)
 
 - **Realfall:** Zwei Changes wurden nach einem Halt ohne Wirkung unter derselben ID neu geplant und später abgeschlossen bzw. zurückgerollt. Ihre Halt-Incidents blieben trotzdem offen, weil die Incident-Zuordnung nur im verworfenen Lauf stand.

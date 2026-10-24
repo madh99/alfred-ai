@@ -379,6 +379,20 @@ export class FernzugriffSkill extends Skill {
    * I1 (Spec Infrastruktur-Vorhaben) — für feste Sammler ohne Modell: derselbe Weg wie `lesen` (Leseliste als root mit Rückfall,
    * sonst Lese-Käfig; Geheimnisse und Nie-Befehle abgewiesen; Ausgabe geschwärzt). Liefert stdout oder wirft.
    */
+  /**
+   * v1652 — Realfall 25.10. (7d873ad4 Schritt 7): Datei-Prüfungen brauchen nur Metadaten. Fester Befehl `stat` (Typ und Größe, nie Inhalt),
+   * daher auch für Pfade, die die Geheimnis-Sperre sonst abweist (…/vaultwarden-…/x.tar.enc). Der Pfad muss einfach und absolut sein.
+   */
+  async dateiMetadaten(name: string, pfad: string, timeoutMs = 30_000): Promise<string> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    if (!/^\/[\w./-]+$/.test(pfad) || pfad.split('/').includes('..')) throw new Error('pfad muss ein einfacher absoluter Pfad sein');
+    const z = await this.zugang(owner, { name });
+    const r = await this.lauf(owner, z, fernBefehl(`stat -c '%F %s' -- ${pfad}`, true), timeoutMs);
+    if (r.code !== 0) throw new Error(/No such file/i.test(r.stderr) ? 'nicht vorhanden' : `Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}`);
+    return r.stdout.trim();
+  }
+
   async lesenIntern(name: string, befehl: string, timeoutMs = 60_000): Promise<string> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');

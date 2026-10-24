@@ -27,6 +27,8 @@ export interface MotorDeps {
   /** Skill-Aktion als Owner ausführen (Skill-Sandbox mit Zeitlimit) */
   fuehreAus: (skill: string, input: Record<string, unknown>, timeoutMs: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string }>;
   fernLesen: (zugang: string, befehl: string, timeoutMs: number) => Promise<string>;
+  /** v1652 — Datei-Prüfung: nur Typ und Größe (fester stat-Befehl), unabhängig von der Geheimnis-Sperre für Inhalte */
+  fernDatei?: (zugang: string, pfad: string, timeoutMs: number) => Promise<string>;
   fernAusfuehren: (zugang: string, befehl: string, alsRoot: boolean, timeoutMs: number) => Promise<{ code: number; stdout: string; stderr: string }>;
   netz: {
     http: (url: string, timeoutMs: number) => Promise<{ status: number; text: string }>;
@@ -329,7 +331,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         return { ok, text: `${c.name}: ${c.status}` };
       }
       case 'datei': {
-        try { await this.d.fernLesen(p.zugang!, `ls -la ${p.pfad}`, 30_000); return { ok: true, text: `${p.pfad} vorhanden` }; }
+        // v1652 — nur Metadaten (Typ, Größe): auch Pfade, deren Inhalt geheim ist, lassen sich so nachweisen
+        try {
+          const m = this.d.fernDatei ? await this.d.fernDatei(p.zugang!, p.pfad!, 30_000) : (await this.d.fernLesen(p.zugang!, `ls -la ${p.pfad}`, 30_000), '');
+          return { ok: true, text: `${p.pfad} vorhanden${m ? ` (${m.slice(0, 80)})` : ''}` };
+        }
         catch (err) { return { ok: false, text: `${p.pfad}: ${(err as Error).message.slice(0, 120)}` }; }
       }
       case 'befehl': {
