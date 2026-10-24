@@ -7215,7 +7215,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const netz = await import('./infrastruktur/netz-pruefung.js');
           this.changeMotor = new ChangeMotor({
             owner: () => ownerFz() ?? undefined,
-            itsm: { liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }), hole: (o, id) => itsmI3.getChangeRequestById(o, id), motorSetze: (o, id, d) => itsmI3.motorSetze(o, id, d), verwerfen: (o, id, g) => itsmI3.verwerfen(o, id, g) },
+            itsm: { liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }), hole: (o, id) => itsmI3.getChangeRequestById(o, id), motorSetze: (o, id, d) => itsmI3.motorSetze(o, id, d), verwerfen: async (o, id, g) => {
+              const c = await itsmI3.verwerfen(o, id, g);
+              // v1641 — Realfall 24.10.: nach dem Verwerfen stand die alte Freigabe-Frage der vier Entwürfe noch in der App → zurückziehen
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (chatId && this.confirmationQueue) {
+                const weg = await this.confirmationQueue.zurueckziehenWenn(chatId, this.config.telegram?.enabled ? 'telegram' : 'api', p => p.skillName === 'infrastruktur' && (p.skillParams as { action?: string })?.action === 'freigeben'
+                  && ((p.skillParams as { changes?: Array<{ id?: string }> }).changes ?? []).some(x => x.id === c.id), 'Change verworfen').catch(() => 0);
+                if (weg) this.logger.info({ change: c.id, zurueckgezogen: weg }, 'v1641 Freigabe-Fragen eines verworfenen Changes zurückgezogen');
+              }
+              return c;
+            } },
             fuehreAus: async (name, input, timeoutMs) => {
               const sk = skillRegistry.get(name);
               if (!sk) return { success: false, error: `Skill ${name} nicht verfügbar` };
@@ -7282,6 +7292,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             ereignis: (o, c, z, text) => wartungsDienst.ereignis(o, c, z, text),
           });
+          // v1641 — einmal beim Start: offene Freigabe-Fragen, deren Changes alle nicht mehr auf Freigabe warten (verworfen, abgebrochen,
+          // schon freigegeben), zurückziehen (Realfall 24.10.: Frage der vier verworfenen Entwürfe stand weiter in der App)
+          setTimeout(() => { void (async () => {
+            const chatId = this.config.security?.ownerUserId ?? ''; const o = ownerFz();
+            if (!chatId || !o || !this.confirmationQueue) return;
+            const offen = new Map((await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).map(c => [c.id, c.status]));
+            const weg = await this.confirmationQueue.zurueckziehenWenn(chatId, this.config.telegram?.enabled ? 'telegram' : 'api', p => {
+              if (p.skillName !== 'infrastruktur' || (p.skillParams as { action?: string })?.action !== 'freigeben') return false;
+              const ids = ((p.skillParams as { changes?: Array<{ id?: string }> }).changes ?? []).map(x => x.id).filter((x): x is string => !!x);
+              return ids.length > 0 && ids.every(id => offen.get(id) !== 'submitted');
+            }, 'Changes warten nicht mehr auf Freigabe');
+            if (weg) this.logger.info({ zurueckgezogen: weg }, 'v1641 veraltete Freigabe-Fragen zurückgezogen');
+          })().catch(err => this.logger.warn({ err }, 'v1641 Aufräumen der Freigabe-Fragen fehlgeschlagen')); }, 20_000).unref?.();
           this.registriereJob({
             key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
             takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 1, timeoutMin: 2,

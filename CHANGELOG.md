@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Freigabe-Fragen verworfener Changes verschwinden (v1641)
+
+- **Befund (Realfall 24.10.):** Nach dem Verwerfen der vier überholten Entwürfe stand ihre alte Freigabe-Frage weiter in der App, mit „Ja/Nein“.
+- **Jetzt:** Verwerfen zieht die offenen Freigabe-Fragen des Changes zurück.
+- Beim Start werden außerdem einmal alle offenen Freigabe-Fragen zurückgezogen, deren Changes nicht mehr auf eine Freigabe warten, weil sie verworfen, abgebrochen oder schon freigegeben sind.
+
 ### Added — Nie gestartete Changes verwerfen (v1640)
 
 - **Befund:** Überholte Entwürfe ließen sich nicht entfernen. „Abbrechen“ ging nur bei angehaltenen Changes, deshalb blieben in der App vier überholte Pläne „in Planung“ stehen (Owner 24.10.).
