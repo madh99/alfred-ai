@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfungen speichern, was sie gelesen haben (v1633)
+
+- Prüfungen vom Typ `befehl` und `skill` speicherten nur „ok“ bzw. den Grund, nicht das Gelesene. Damit war im Nachhinein nicht belegbar, was eine Prüfung gesehen hat (Realfall 24.10.: welches System die Wegwerf-VMs melden).
+- Jetzt steht die gekürzte Ausgabe im Lauf. Bei reinen Prüf-Schritten zeigt der Bericht die erste Zeile als Beleg (`→ PRETTY_NAME="Rocky Linux 9.8 …"`).
+
 ### Fixed — Lese-Käfig auf SELinux-Systemen und Fedora (v1632)
 
 - **Befund (Realfall 24.10.):** Auf Rocky und Alma startete die Käfig-Einheit nicht (226/NAMESPACE), weil SELinux das Überdecken von `/etc/shadow` und `/etc/gshadow` (Typ `shadow_t`) verweigert. Auf Fedora 44 scheiterte `systemd-run --pipe` grundsätzlich („Connection reset by peer“).

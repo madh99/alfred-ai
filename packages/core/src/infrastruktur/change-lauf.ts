@@ -12,7 +12,8 @@ export interface SchrittErgebnis {
   /** v1630 — die Aktion scheiterte, hat aber schon etwas angelegt (der Skill lieferte Daten, z. B. vmid) — ihr Rückweg gehört dazu */
   teilweise?: boolean;
   ausgabe?: string; daten?: unknown; fehler?: string;
-  pruefung?: { ok: boolean; text: string; versuche: number };
+  /** v1633 — ausgabe: was die Prüfung gelesen hat (Befehl/Skill, gekürzt), damit der Bericht es belegt (Realfall 24.10.: /etc/os-release) */
+  pruefung?: { ok: boolean; text: string; versuche: number; ausgabe?: string };
 }
 export interface RueckwegErgebnis { zuSchritt: number; ok: boolean; text: string; zeit: string }
 export interface ChangeLauf {
@@ -154,7 +155,9 @@ export function laufBericht(titel: string, schritte: ChangeSchritt[], l: ChangeL
   const z = [`${titel}: ${{ completed: 'abgeschlossen', failed: 'fehlgeschlagen', rolled_back: 'zurückgerollt', cancelled: 'abgebrochen' }[ergebnis]}${dauer !== undefined ? ` nach ${dauer < 120 ? `${dauer} s` : `${Math.round(dauer / 60)} min`}` : ''}.`];
   for (const s of schritte) {
     const e = l.ergebnisse.find(x => x.nr === s.nr);
-    z.push(`${e ? (e.ok ? '✓' : '✗') : '·'} ${s.nr}. ${s.titel}${e?.pruefung ? ` — Prüfung ${e.pruefung.ok ? 'ok' : 'NICHT ok'}: ${e.pruefung.text}` : ''}${e?.fehler ? ` — ${e.fehler}` : ''}`);
+    // v1633 — bei reinen Prüf-Schritten die erste Zeile des Gelesenen als Beleg (Realfall 24.10.: welches System meldet die Probe-VM?)
+    const beleg = s.art === 'pruefung' && e?.pruefung?.ausgabe ? e.pruefung.ausgabe.split('\n').map(x => x.trim()).find(Boolean)?.slice(0, 100) : undefined;
+    z.push(`${e ? (e.ok ? '✓' : '✗') : '·'} ${s.nr}. ${s.titel}${e?.pruefung ? ` — Prüfung ${e.pruefung.ok ? 'ok' : 'NICHT ok'}: ${e.pruefung.text}${beleg ? ` → ${beleg}` : ''}` : ''}${e?.fehler ? ` — ${e.fehler}` : ''}`);
   }
   if (l.rueckweg?.length) z.push('Rückweg:', ...l.rueckweg.map(r => `${r.ok ? '✓' : '✗'} zu Schritt ${r.zuSchritt}: ${r.text}`));
   if (l.grund && ergebnis !== 'completed') z.push(`Grund: ${l.grund}`);

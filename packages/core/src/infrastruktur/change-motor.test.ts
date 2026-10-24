@@ -141,6 +141,16 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
   });
 
+  it('v1633: Prüf-Schritt speichert das Gelesene und belegt es im Bericht', async () => {
+    const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'probe-rocky-9', befehl: 'cat /etc/os-release', erwartet: 'Rocky' } })]);
+    w.deps.fernLesen = async () => 'PRETTY_NAME="Rocky Linux 9.8 (Blue Onyx)"\nID="rocky"\n';
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect((w.c.lauf as ChangeLauf).ergebnisse[0]!.pruefung?.ausgabe).toContain('Rocky Linux 9.8');
+    expect(w.c.result).toContain('→ PRETTY_NAME="Rocky Linux 9.8 (Blue Onyx)"');
+  });
+
   it('v1630 Realfall 24.10.: gescheiterte Aktion, die schon etwas angelegt hat (Daten trotz Fehler) → teilweise, Rückweg läuft mit', async () => {
     const w = welt(probe());
     const orig = w.deps.fuehreAus;

@@ -287,24 +287,24 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return { ok: true, ...(r.display ? { ausgabe: r.display } : {}), daten: r.data };
   }
 
-  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number): Promise<{ ok: boolean; text: string; versuche: number }> {
+  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
     const aufgeloest = loeseAuf(p0, ergebnisse);
     if (aufgeloest.fehler) return { ok: false, text: aufgeloest.fehler, versuche: 0 };
     const p = aufgeloest.wert;
-    let letzter = '';
+    let letzter = ''; let ausgabe: string | undefined;
     for (let i = 1; i <= versuche; i++) {
       try {
         const r = await this.pruefe(p);
-        if (r.ok) return { ok: true, text: r.text, versuche: i };
-        letzter = r.text;
+        if (r.ok) return { ok: true, text: r.text, versuche: i, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) };
+        letzter = r.text; ausgabe = r.ausgabe;
       } catch (err) { letzter = (err as Error).message.slice(0, 300); }
       if (i < versuche) await this.schlafe(abstandMs);
     }
-    return { ok: false, text: letzter, versuche };
+    return { ok: false, text: letzter, versuche, ...(ausgabe ? { ausgabe } : {}) };
   }
 
   /** Eine Prüfung genau einmal. */
-  async pruefe(p: Pruefung): Promise<{ ok: boolean; text: string }> {
+  async pruefe(p: Pruefung): Promise<{ ok: boolean; text: string; ausgabe?: string }> {
     switch (p.typ) {
       case 'http': {
         const r = await this.d.netz.http(p.ziel!, 15_000);
@@ -332,14 +332,14 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       case 'befehl': {
         const t = await this.d.fernLesen(p.zugang!, p.befehl!, 60_000);
         const r = textErfuellt(t, p);
-        return { ok: r.ok, text: r.ok ? `ok (${t.trim().split('\n').slice(-1)[0]?.slice(0, 80) ?? ''})` : r.grund! };
+        return { ok: r.ok, text: r.ok ? `ok (${t.trim().split('\n').slice(-1)[0]?.slice(0, 80) ?? ''})` : r.grund!, ausgabe: t.slice(0, MAX_AUSGABE) };
       }
       case 'skill': {
         const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, 60_000);
         if (!r.success) return { ok: false, text: `${p.skill}.${p.aktion}: ${String(r.error ?? 'Fehler').slice(0, 160)}` };
         let daten = ''; try { daten = JSON.stringify(r.data ?? ''); } catch { /* egal */ }
         const t = textErfuellt(`${r.display ?? ''}\n${daten}`, p);
-        return { ok: t.ok, text: t.ok ? `${p.skill}.${p.aktion} ok` : `${p.skill}.${p.aktion}: ${t.grund}` };
+        return { ok: t.ok, text: t.ok ? `${p.skill}.${p.aktion} ok` : `${p.skill}.${p.aktion}: ${t.grund}`, ausgabe: (r.display ?? daten).slice(0, MAX_AUSGABE) };
       }
     }
   }
