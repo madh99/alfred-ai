@@ -47,10 +47,23 @@ ChangeGruppen changeGruppen(List<Map<String, dynamic>> alle, DateTime jetzt) {
   return g;
 }
 
-/// Zähler in der Navigation: was gerade läuft, angehalten ist oder auf die Freigabe wartet.
+/// 1.76.0 (Owner 24.10.: „hab in der app nichts anzunehmen?“) — Vorhaben, deren vorgeschlagene Architektur auf den Owner wartet.
+List<Map<String, dynamic>> architekturWartet(Map<String, dynamic> j) => [
+  for (final v in ((j['vorhaben'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>())
+    if ('${v['status']}' == 'architektur_vorgeschlagen') v,
+];
+
+/// Zähler in der Navigation: was gerade läuft, angehalten ist, auf die Freigabe wartet oder als Architektur angenommen werden will.
 int changesZahl(Map<String, dynamic> j, DateTime jetzt) {
   final g = changeGruppen(changesFlach(j), jetzt);
-  return g.laeuft.length + g.brauchtDich.length + g.freigabe.length;
+  return g.laeuft.length + g.brauchtDich.length + g.freigabe.length + architekturWartet(j).length;
+}
+
+/// Vorbefüllte Chat-Sätze der Architektur-Karte (der Owner schickt sie selbst ab — sein Wortlaut ist der Nachweis).
+({String annehmen, String ueberarbeiten, String nachfragen}) architekturSaetze(Map<String, dynamic> v) {
+  final id = '${v['id']}', kurz = id.length > 8 ? id.substring(0, 8) : id;
+  final n = v['architekturVersion'] ?? '?';
+  return (annehmen: 'Vorhaben $kurz: Architektur Version $n annehmen', ueberarbeiten: 'Vorhaben $kurz: Architektur Version $n überarbeiten — ', nachfragen: 'Vorhaben $kurz, Architektur Version $n: ');
 }
 
 /// Kurztext zum Status (deutsch), mit Phase für laufende/angehaltene Changes.
@@ -128,6 +141,10 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
     ]);
     return RefreshIndicator(onRefresh: _laden, child: ListView(padding: const EdgeInsets.fromLTRB(12, 4, 12, 24), children: [
       if (fehler != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text('Changes: $fehler', style: TextStyle(color: t.colorScheme.error))),
+      if (architekturWartet(daten ?? const {}).isNotEmpty) ...[
+        Padding(padding: const EdgeInsets.fromLTRB(4, 14, 4, 6), child: Text('Architektur wartet auf dich (${architekturWartet(daten!).length})', style: t.textTheme.titleSmall)),
+        for (final v in architekturWartet(daten!)) _architekturKarte(t, v),
+      ],
       gruppe('Läuft gerade', g.laeuft, leer: 'Gerade läuft kein Change.'),
       gruppe('Braucht dich', g.brauchtDich),
       gruppe('Wartet auf Freigabe', g.freigabe),
@@ -135,6 +152,32 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
       gruppe('In Planung', g.planung),
       gruppe('Abgeschlossen (7 Tage)', g.erledigt.take(20).toList()),
     ]));
+  }
+
+  Widget _architekturKarte(ThemeData t, Map<String, dynamic> v) {
+    final s = architekturSaetze(v);
+    final id = '${v['id']}', kurz = id.length > 8 ? id.substring(0, 8) : id;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: t.colorScheme.primary.withValues(alpha: 0.5))),
+      child: Padding(padding: const EdgeInsets.fromLTRB(14, 12, 14, 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text('${v['titel']}', style: t.textTheme.titleSmall)),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: t.colorScheme.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+            child: Text('Fassung ${v['architekturVersion'] ?? '?'}', style: t.textTheme.labelSmall?.copyWith(color: t.colorScheme.primary))),
+        ]),
+        const SizedBox(height: 2),
+        Text('$kurz · vorgeschlagene Architektur', style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 6),
+        Text('Alfred hat eine neue Fassung vorgeschlagen. Erst nach deiner Annahme plant er daraus Changes. Ansehen: Menü → Vorhaben.', style: t.textTheme.bodySmall),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, runSpacing: 4, children: [
+          FilledButton.tonalIcon(onPressed: () => widget.aufNachfragen(s.annehmen), icon: const Icon(Icons.check, size: 18), label: const Text('Annehmen …')),
+          TextButton(onPressed: () => widget.aufNachfragen(s.ueberarbeiten), child: const Text('Überarbeiten …')),
+          TextButton.icon(onPressed: () => widget.aufNachfragen(s.nachfragen), icon: const Icon(Icons.chat_bubble_outline, size: 18), label: const Text('Nachfragen')),
+        ]),
+      ])),
+    );
   }
 
   Color _farbe(ThemeData t, Map<String, dynamic> c) {

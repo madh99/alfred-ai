@@ -64,4 +64,22 @@ void main() {
     expect(find.text('1. Jobs lesen'), findsOneWidget);
     await t.pumpWidget(const SizedBox()); // Takt beenden
   });
+
+  testWidgets('1.76.0: vorgeschlagene Architektur zeigt eine Karte; Annehmen füllt nur die Eingabe vor und zählt mit', (t) async {
+    final d = _daten();
+    (d['vorhaben'] as List).add({'id': 'cf82f3f2-9859', 'titel': 'Dockerhost auf neue Docker-VMs aufteilen', 'status': 'architektur_vorgeschlagen', 'architekturVersion': 6, 'changes': []});
+    expect(architekturWartet(d).length, 1);
+    expect(changesZahl(d, _jetzt), 4);
+    expect(architekturSaetze(architekturWartet(d).first).annehmen, 'Vorhaben cf82f3f2: Architektur Version 6 annehmen');
+    final vorgefuellt = <String>[];
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChangesAnsicht(
+      json: (p, {methode = 'GET', koerper}) async => d, aufNachfragen: vorgefuellt.add, jetzt: () => _jetzt))));
+    await t.pump();
+    expect(find.text('Architektur wartet auf dich (1)'), findsOneWidget);
+    expect(find.text('Fassung 6'), findsOneWidget);
+    await t.tap(find.text('Annehmen …'));
+    await t.tap(find.text('Überarbeiten …'));
+    expect(vorgefuellt, ['Vorhaben cf82f3f2: Architektur Version 6 annehmen', 'Vorhaben cf82f3f2: Architektur Version 6 überarbeiten — ']);
+    await t.pumpWidget(const SizedBox());
+  });
 }
