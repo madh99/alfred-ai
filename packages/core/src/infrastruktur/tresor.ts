@@ -56,6 +56,9 @@ export function zufallsPasswort(laenge = 32): string {
   return Array.from({ length: Math.min(128, Math.max(16, laenge)) }, () => z[randomInt(z.length)]).join('');
 }
 
+/** v1645 — größter Tresor-Wert (Zeichen); geheim_uebernehmen liest höchstens 64 KiB ein */
+export const TRESOR_MAX_ZEICHEN = 64 * 1024;
+
 export class Tresor {
   private schluessel?: Buffer;
   constructor(private readonly d: { speicher: TresorSpeicher; schluesselPfad: string; protokoll?: (msg: string, daten: Record<string, unknown>) => void }) {}
@@ -66,7 +69,8 @@ export class Tresor {
 
   async setze(o: string, name: string, wert: string, herkunft: string, zweck?: string): Promise<void> {
     if (!NAME.test(name)) throw new Error('Name: Kleinbuchstaben, Ziffern, . _ - (2–61 Zeichen)');
-    if (!wert || wert.length > 8192) throw new Error('Wert fehlt oder ist zu lang');
+    // v1645 — Realfall 24.10. (cb205507): Laufzeit-Konfiguration dreier Container hatte 14 KB; Grenze wie das Einlesen von geheim_uebernehmen
+    if (!wert || wert.length > TRESOR_MAX_ZEICHEN) throw new Error(`Wert fehlt oder ist zu lang (höchstens ${TRESOR_MAX_ZEICHEN} Zeichen)`);
     await this.d.speicher.setze(o, name, verschluessele(await this.k(), wert), herkunft, zweck);
     await this.d.speicher.protokolliere(o, name, 'gesetzt', herkunft);
     this.d.protokoll?.('I4c Tresor gesetzt', { name, herkunft });

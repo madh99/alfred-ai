@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Tresor nimmt größere Einträge auf (v1645)
+
+- **Befund (Change cb205507, 24.10.):** Die Laufzeit-Konfiguration dreier Container hatte 14 KB. Der Tresor ließ nur 8 KB je Eintrag zu, Fehlermeldung „Wert fehlt oder ist zu lang“.
+- **Jetzt** gelten höchstens 64 KiB je Eintrag. So viel liest auch `geheim_uebernehmen` höchstens ein.
+- Ist eine Datei größer, weist `geheim_uebernehmen` sie ab, statt sie abgeschnitten zu speichern.
+
 ### Added — Bereitstellung auf lokalen Speicher anderer Nodes; angehaltene Changes ohne Wirkung neu planen (v1644)
 
 - **`provision_vm`:** Proxmox klont nicht über Nodes hinweg in einen lokalen Speicher („can't clone to non-shared storage“, Realfall Change 5d960660). Ist der Zielspeicher lokal und der Node ein anderer, klont die Fabrik jetzt auf den gemeinsamen Speicher der Vorlage an den Ziel-Node. Danach verschiebt sie die Platte mit `move_disk` in den gewünschten Speicher und prüft das Ergebnis. Bei gemeinsamem Speicher wird wie bisher direkt geklont.

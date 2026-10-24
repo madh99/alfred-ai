@@ -35,9 +35,13 @@ describe('I4c Tresor', () => {
     await t.erzeuge('o', 'matrix-db');
     await expect(t.erzeuge('o', 'matrix-db')).rejects.toThrow('gibt es schon');
     await expect(t.setze('o', 'Böse Name', 'x', 'owner')).rejects.toThrow('Name');
+    // v1645 — Realfall cb205507: 14 KB Laufzeit-Konfiguration passt; über 64 KiB nicht
+    await t.setze('o', 'ops-runtime', 'x'.repeat(14_409), 'dockerhost:/srv/ops1642-export/runtime.json');
+    expect(await t.lies('o', 'ops-runtime', 'Test')).toHaveLength(14_409);
+    await expect(t.setze('o', 'zu-gross', 'x'.repeat(64 * 1024 + 1), 'owner')).rejects.toThrow('zu lang');
     const w = await t.lies('o', 'matrix-db', 'Change abc Schritt 2');
     expect(w).toHaveLength(32);
-    expect(prot).toEqual(['matrix-db:gesetzt:erzeugt', 'matrix-db:gelesen:Change abc Schritt 2']);
+    expect(prot.filter(x => x.startsWith('matrix-db'))).toEqual(['matrix-db:gesetzt:erzeugt', 'matrix-db:gelesen:Change abc Schritt 2']);
   });
 });
 

@@ -515,6 +515,8 @@ export class FernzugriffSkill extends Skill {
     const r = await this.wege(owner).lauf(z, fernBefehl(`cat -- '${pfad}'`, true), '', 30_000, 64 * 1024);
     if (r.code !== 0) return { success: false, error: `${pfad} auf ${z.name} nicht lesbar (Exit ${r.code})` };
     if (!r.stdout.length) return { success: false, error: `${pfad} ist leer` };
+    // v1645 — nie abgeschnitten speichern: das Einlesen endet bei 64 KiB
+    if (Buffer.byteLength(r.stdout) >= 64 * 1024 - 1) return { success: false, error: `${pfad} ist zu groß für den Tresor (höchstens 64 KiB) — nicht übernommen` };
     await this.deps.tresorSetzen(input.tresor_name, r.stdout, `${z.name}:${pfad}`, typeof input.zweck === 'string' ? input.zweck.slice(0, 200) : undefined);
     this.deps.protokoll?.('I6 Geheimnis in den Tresor übernommen', { zugang: z.name, pfad, tresor: input.tresor_name, bytes: Buffer.byteLength(r.stdout) });
     // Pilot cf82f3f2: eine eigens exportierte Datei (z. B. Umgebung eines Containers) gleich wieder entfernen — nur unter /root/ oder /tmp/
