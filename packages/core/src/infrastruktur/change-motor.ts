@@ -21,6 +21,8 @@ export interface MotorDeps {
     liste(o: string): Promise<CmdbChangeRequest[]>;
     hole(o: string, id: string): Promise<CmdbChangeRequest | null>;
     motorSetze(o: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string; linkedIncidentId?: string }): Promise<CmdbChangeRequest>;
+    /** v1640 — nie gestarteten Change verwerfen */
+    verwerfen?(o: string, id: string, grund: string): Promise<CmdbChangeRequest>;
   };
   /** Skill-Aktion als Owner ausführen (Skill-Sandbox mit Zeitlimit) */
   fuehreAus: (skill: string, input: Record<string, unknown>, timeoutMs: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string }>;
@@ -412,6 +414,14 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       delete l.frage;
       void this.rueckweg(o, c, l, `Rückweg nach Störung auf Wunsch des Owners`).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
       return 'Rückweg läuft — ich melde das Ergebnis.';
+    }
+    // v1640 — nie gestartet (Entwurf, eingereicht, freigegeben ohne Lauf): „abbrechen“ verwirft ihn
+    if (wahl === 'abbrechen' && c && !l?.start && ['draft', 'submitted', 'approved'].includes(c.status) && !this.laufend.has(c.id)) {
+      if (!this.d.itsm.verwerfen) return 'Verwerfen ist hier nicht verfügbar.';
+      const vorher = c.status;
+      await this.d.itsm.verwerfen(o, c.id, 'auf Wunsch des Owners');
+      this.log('I4 Change verworfen', { id: c.id, vorher });
+      return `Change ${c.id.slice(0, 8)} „${c.title}“ verworfen (war ${vorher === 'draft' ? 'in Planung' : vorher === 'submitted' ? 'zur Freigabe' : 'freigegeben, nicht gestartet'}).`;
     }
     if (!c || !l || c.status !== 'in_progress' || this.laufend.has(c.id)) return 'Der Change ist nicht angehalten.';
     if (l.phase !== 'angehalten') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;

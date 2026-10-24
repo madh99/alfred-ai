@@ -943,6 +943,19 @@ export class ItsmRepository {
    * I4 — Statuswechsel und Laufzustand durch den Ausführungsmotor (einziger Weg zu in_progress/completed/failed/rolled_back für
    * Changes mit Schritten). Start nur aus approved und nur, wenn die Freigabe genau den aktuellen Plan deckt.
    */
+  /**
+   * v1640 — Owner 24.10. („was soll man mit den 4 in Planung machen?“): einen nie gestarteten Change verwerfen (Entwurf, eingereicht
+   * oder freigegeben, ohne Lauf) → cancelled mit Grund. Gestartete Changes laufen weiter über den Motor (abbrechen/Rückweg).
+   */
+  async verwerfen(userId: string, id: string, grund: string): Promise<CmdbChangeRequest> {
+    const e = await this.getChangeRequestById(userId, id);
+    if (!e) throw new Error(`Change ${id} nicht gefunden`);
+    if (!['draft', 'submitted', 'approved'].includes(e.status) || (e.lauf && (e.lauf as { start?: string }).start)) throw new Error(`Change ${e.id.slice(0, 8)} ist ${e.status}${e.lauf ? ' und schon gestartet' : ''} — verwerfen geht nur vor dem Start`);
+    const now = new Date().toISOString();
+    await this.db.execute(`UPDATE cmdb_change_requests SET status = ?, result = ?, completed_at = ?, freigabe_fingerabdruck = NULL, updated_at = ? WHERE id = ? AND user_id = ?`, ['cancelled', `Verworfen vor dem Start: ${grund}`.slice(0, 2000), now, now, e.id, userId]);
+    return (await this.getChangeRequestById(userId, e.id))!;
+  }
+
   async motorSetze(userId: string, id: string, d: { status?: 'in_progress' | 'completed' | 'failed' | 'rolled_back' | 'cancelled'; lauf: unknown; result?: string; linkedIncidentId?: string }): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);

@@ -7215,7 +7215,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const netz = await import('./infrastruktur/netz-pruefung.js');
           this.changeMotor = new ChangeMotor({
             owner: () => ownerFz() ?? undefined,
-            itsm: { liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }), hole: (o, id) => itsmI3.getChangeRequestById(o, id), motorSetze: (o, id, d) => itsmI3.motorSetze(o, id, d) },
+            itsm: { liste: (o) => itsmI3.listChangeRequests(o, { limit: 500 }), hole: (o, id) => itsmI3.getChangeRequestById(o, id), motorSetze: (o, id, d) => itsmI3.motorSetze(o, id, d), verwerfen: (o, id, g) => itsmI3.verwerfen(o, id, g) },
             fuehreAus: async (name, input, timeoutMs) => {
               const sk = skillRegistry.get(name);
               if (!sk) return { success: false, error: `Skill ${name} nicht verfügbar` };

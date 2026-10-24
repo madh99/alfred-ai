@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Nie gestartete Changes verwerfen (v1640)
+
+- **Befund:** Überholte Entwürfe ließen sich nicht entfernen. „Abbrechen“ ging nur bei angehaltenen Changes, deshalb blieben in der App vier überholte Pläne „in Planung“ stehen (Owner 24.10.).
+- **Jetzt:** „Change … abbrechen“ verwirft auch einen Change, der nie gestartet wurde, ob in Planung, zur Freigabe oder freigegeben. Er wird `cancelled`, mit Grund im Ergebnis, und die Freigabe wird entfernt. Gestartete Changes laufen weiter über den Motor, also Abbrechen oder Rückweg.
+
 ### Fixed — Snapshot-Namen schon beim Planen prüfen (v1639)
 
 - Proxmox lässt Snapshot-Namen nur mit höchstens 40 Zeichen zu: mit einem Buchstaben beginnend, danach nur Buchstaben, Ziffern, `_` und `-`. Ein zu langer Name fiel erst beim Ausführen auf (Realfall Change 2bb39131, Schritt 1).

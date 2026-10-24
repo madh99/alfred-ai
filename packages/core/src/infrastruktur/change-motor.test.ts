@@ -141,6 +141,20 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
   });
 
+  it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
+    const w = welt(probe(), { status: 'draft' });
+    const verworfen: string[] = [];
+    w.deps.itsm.verwerfen = async (_o, id) => { verworfen.push(id); w.c.status = 'cancelled' as never; return w.c; };
+    const m = new ChangeMotor(w.deps);
+    expect(await m.steuern('o', 'chg-1', 'abbrechen')).toContain('verworfen (war in Planung)');
+    expect(verworfen).toEqual(['chg-1']);
+    const w2 = welt(probe(), { snapshotFehlt: true });
+    w2.deps.itsm.verwerfen = async () => { throw new Error('darf nicht'); };
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    expect(await m2.steuern('o', 'chg-1', 'abbrechen')).toContain('abgebrochen'); // gestartet → normaler Abbruch über den Motor
+  });
+
   it('v1633: Prüf-Schritt speichert das Gelesene und belegt es im Bericht', async () => {
     const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'probe-rocky-9', befehl: 'cat /etc/os-release', erwartet: 'Rocky' } })]);
     w.deps.fernLesen = async () => 'PRETTY_NAME="Rocky Linux 9.8 (Blue Onyx)"\nID="rocky"\n';
