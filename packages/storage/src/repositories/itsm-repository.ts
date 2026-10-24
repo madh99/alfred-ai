@@ -977,7 +977,9 @@ export class ItsmRepository {
       if (['completed', 'failed', 'rolled_back', 'cancelled'].includes(d.status)) { felder.push('completed_at = ?'); werte.push(now); }
     }
     if (d.result !== undefined) { felder.push('result = ?'); werte.push(d.result); }
-    if (d.linkedIncidentId && !e.linkedIncidentId) { felder.push('linked_incident_id = ?'); werte.push(d.linkedIncidentId); }
+    // v1651 — auch der Incident eines Halts sofort (steht im Lauf): ein Neuplanen nach Halt ohne Wirkung verwirft den Lauf
+    const incidentId = d.linkedIncidentId ?? (d.lauf as { incidentId?: string } | null | undefined)?.incidentId;
+    if (incidentId && !e.linkedIncidentId) { felder.push('linked_incident_id = ?'); werte.push(incidentId); }
     werte.push(e.id, userId);
     await this.db.execute(`UPDATE cmdb_change_requests SET ${felder.join(', ')} WHERE id = ? AND user_id = ?`, werte);
     return (await this.getChangeRequestById(userId, e.id))!;

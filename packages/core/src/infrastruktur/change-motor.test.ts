@@ -141,6 +141,17 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
   });
 
+  it('v1651 Realfall 5d960660/937e4aac: nach Halt ohne Wirkung neu geplant und gelaufen → der alte Halt-Incident wird gelöst', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).incidentId).toBe('inc-1');
+    // Neuplanung (setzeSchritte mit haltOhneWirkung): Lauf verworfen, Incident bleibt am Change, neue Freigabe
+    w.c.linkedIncidentId = 'inc-1'; w.c.lauf = undefined; w.c.status = 'approved' as never; w.snaps.add('i3probe');
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    expect(w.aufrufe.some(a => a.startsWith('geloest:inc-1:'))).toBe(true);
+  });
+
   it('v1643 Realfall 4c5652a5: Skill-Prüfung durchsucht nur Werte, nicht Feldnamen (leeres „gesperrt“ ist kein GESPERRT)', async () => {
     const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT', erwartet: 'VLAN 825' } })]);
     w.deps.fuehreAus = async () => ({ success: true, display: 'Weg für Docker-Betrieb (VLAN 825):\n- Port 9: custom — durchgelassen\nAlle Ports lassen das Netz durch.', data: { netz: 'Docker-Betrieb', vlan: 825, pfad: [{ port: 9, durch: true }], gesperrt: [] } });

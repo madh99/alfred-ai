@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Halt-Incident endet auch nach Neuplanung mit dem Change (v1651)
+
+- **Realfall:** Zwei Changes wurden nach einem Halt ohne Wirkung unter derselben ID neu geplant und später abgeschlossen bzw. zurückgerollt. Ihre Halt-Incidents blieben trotzdem offen, weil die Incident-Zuordnung nur im verworfenen Lauf stand.
+- **Jetzt** wird der Incident schon beim Halt am Change vermerkt, und ein neuer Lauf übernimmt ihn. Endet der Change ohne Restwirkung, wird der Incident gelöst, sonst hochgestuft.
+
 ### Fixed — Abgeschnittene Werkzeugaufrufe werden nie mit leerer Eingabe ausgeführt (v1650)
 
 - **Realfall:** Beim Planen eines großen Changes erreichte das Modell genau das Ausgabelimit. Die OpenAI-Responses-Schnittstelle meldete den unvollständigen Werkzeugaufruf als regulären Aufruf, die Argumente kamen leer an, und die Planung brach zweimal mit „Unbekannte Aktion“ ab.

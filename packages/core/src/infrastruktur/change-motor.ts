@@ -140,7 +140,8 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   private async starte(o: string, c: CmdbChangeRequest): Promise<void> {
-    const lauf: ChangeLauf = { phase: 'laeuft', schritt: 1, start: this.iso(), ergebnisse: [] };
+    // v1651 — nach Neuplanung eines angehaltenen Changes gehört dessen Halt-Incident weiter zum Lauf (wird am Ende gelöst)
+    const lauf: ChangeLauf = { phase: 'laeuft', schritt: 1, start: this.iso(), ergebnisse: [], ...(c.linkedIncidentId ? { incidentId: c.linkedIncidentId } : {}) };
     const akt = await this.d.itsm.motorSetze(o, c.id, { status: 'in_progress', lauf });
     this.log('I4 Change gestartet', { id: c.id, titel: c.title, schritte: (c.schritte ?? []).length });
     await this.d.melde?.(`▶️ Change gestartet: ${c.title} (${c.id.slice(0, 8)}, ${(c.schritte ?? []).length} Schritte)`, false);
