@@ -5,7 +5,7 @@ import { Freigaben } from '../geraete/freigaben.js';
 import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
-import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, werteSelbsttest, kaefigGrenze, schwaerze } from './kaefig.js';
+import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { kopiere, kopiereDatenbank, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
@@ -135,6 +135,8 @@ export class FernzugriffSkill extends Skill {
   private readonly seiten = new Map<string, { name: string; befehl: string; text: string; zeit: number }>();
   /** v1551 — Käfig je Zugang nach jedem Start einmal neu prüfen (geänderte Eigenschaften, geänderter Host) */
   private readonly kaefigGeprueft = new Set<string>();
+  /** v1632 — beim Selbsttest ermittelte Stufe je Zugang */
+  private readonly kaefigStufe = new Map<string, KaefigModus>();
 
   constructor(private readonly deps: FernzugriffDeps) { super(); }
 
@@ -349,7 +351,7 @@ export class FernzugriffSkill extends Skill {
     const k = await this.kaefigBereit(owner, z);
     if (!k.ok) return { success: false, error: `„${befehl.slice(0, 120)}“ ist kein Befehl der festen Leseliste, und der Lese-Käfig ist auf ${z.name} nicht verfügbar (${k.grund}) — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
     const sek = this.timeout(input) / 1000;
-    const r = await this.lauf(owner, z, kaefigBefehl(befehl, z.benutzer, sek), (sek + 15) * 1000);
+    const r = await this.lauf(owner, z, kaefigBefehl(befehl, z.benutzer, sek, this.kaefigStufe.get(z.id)), (sek + 15) * 1000);
     this.deps.protokoll?.('v1549 Fernzugriff im Lese-Käfig', { name: z.name, befehl: befehl.slice(0, 200), code: r.code });
     const e = await this.mitFachskill(z, this.ergebnis(z, befehl, r, '  (Lese-Käfig)'));
     if (r.code !== 0 && kaefigGrenze(r.stderr)) {
@@ -382,7 +384,7 @@ export class FernzugriffSkill extends Skill {
     } else {
       const k = await this.kaefigBereit(owner, z);
       if (!k.ok) throw new Error(`nicht auf der Leseliste, Lese-Käfig nicht verfügbar (${k.grund})`);
-      r = await this.lauf(owner, z, kaefigBefehl(b, z.benutzer, timeoutMs / 1000), timeoutMs + 15_000);
+      r = await this.lauf(owner, z, kaefigBefehl(b, z.benutzer, timeoutMs / 1000, this.kaefigStufe.get(z.id)), timeoutMs + 15_000);
     }
     if (r.code !== 0 && !r.stdout.trim()) throw new Error(`Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}`);
     return schwaerze(r.stdout).text;
@@ -590,8 +592,17 @@ export class FernzugriffSkill extends Skill {
     if (z.kaefig === 'aus') return { ok: false, grund: 'vom Owner abgeschaltet' };
     if (z.kaefig === 'fehlt') return { ok: false, grund: 'Selbsttest gescheitert' };
     if (!this.deps.repo.setzeKaefig) return { ok: false, grund: 'nicht eingerichtet' };
-    const r = await this.lauf(owner, z, kaefigBefehl(KAEFIG_SELBSTTEST, z.benutzer, 30), 45_000);
-    const w = werteSelbsttest(`${r.stdout}\n${r.stderr}`, r.code);
+    // v1632 — stärkste Stufe zuerst; die erste, deren Selbsttest besteht, gilt (Realfall 24.10.: SELinux, Fedora ohne --pipe)
+    let w = { ok: false, grund: 'kein Selbsttest' }; let r = { code: -1, stdout: '', stderr: '' } as SshErgebnis; const versucht: string[] = [];
+    for (const stufe of KAEFIG_STUFEN) {
+      r = await this.lauf(owner, z, kaefigBefehl(KAEFIG_SELBSTTEST, z.benutzer, 30, stufe), 45_000);
+      w = werteSelbsttest(`${r.stdout}\n${r.stderr}`, r.code, stufe);
+      if (w.ok) { this.kaefigStufe.set(z.id, stufe); break; }
+      versucht.push(`${stufe.lesen}/${stufe.ausgabe}: ${w.grund}`);
+      // Verstöße (Käfig hält nicht) nie mit einer schwächeren Stufe überspielen
+      if (/Käfig hält nicht/.test(w.grund)) break;
+    }
+    if (!w.ok && versucht.length > 1) w = { ok: false, grund: versucht.join('; ').slice(0, 400) };
     await this.deps.repo.setzeKaefig(owner, z.id, w.ok ? 'aktiv' : 'fehlt');
     z.kaefig = w.ok ? 'aktiv' : 'fehlt';
     if (w.ok) this.kaefigGeprueft.add(z.id); else this.kaefigGeprueft.delete(z.id);

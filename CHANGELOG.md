@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Lese-Käfig auf SELinux-Systemen und Fedora (v1632)
+
+- **Befund (Realfall 24.10.):** Auf Rocky und Alma startete die Käfig-Einheit nicht (226/NAMESPACE), weil SELinux das Überdecken von `/etc/shadow` und `/etc/gshadow` (Typ `shadow_t`) verweigert. Auf Fedora 44 scheiterte `systemd-run --pipe` grundsätzlich („Connection reset by peer“).
+- **Jetzt hat der Käfig Stufen.** Der Selbsttest nimmt die stärkste, die besteht:
+  - Lesen **voll**: mit Leserecht für root-Dateien, Geheimnis-Pfade ausgeblendet.
+  - Lesen **eingeschränkt**: ohne jede Fähigkeit. root-Dateien wie `/etc/shadow` sind dann schon über die Dateirechte unlesbar, die übrigen Geheimnis-Pfade bleiben zusätzlich ausgeblendet.
+  - Ausgabe jeweils über `--pipe` oder über eine root-eigene Datei unter `/run`, die nach dem Lesen gelöscht wird.
+  - Ein Verstoß im Selbsttest („Käfig hält nicht“) wird nie durch eine andere Stufe überspielt.
+- Live geprüft auf Rocky 9 und Fedora 44: `/etc/shadow` unlesbar, Schreiben gesperrt, Exit-Code erhalten, Datei danach entfernt.
+
 ### Fixed — VM entfernen legt auch den Server-Eintrag still (v1631)
 
 - `delete_vm` legte nur den Proxmox-Eintrag (`vm`) in der CMDB still. Der Server-Eintrag aus der Fernzugriffs-Erfassung (`host:<name>`) blieb aktiv. Die IP-Vorprüfung einer neuen VM mit derselben Adresse hielt deshalb an (Realfall 24.10., Neubau der Vorlagen-Proben).

@@ -31,11 +31,28 @@ export function geheimnisGrund(befehl: string): string | undefined {
 }
 
 /** Eigenschaften der Käfig-Einheit (systemd.exec/systemd.resource-control). */
-export function kaefigEigenschaften(benutzer: string, sekunden: number): string[] {
+/**
+ * v1632 — Stufen des Käfigs (Realfall 24.10., Rocky/Alma/Fedora mit SELinux):
+ * - lesen „voll“: CAP_DAC_READ_SEARCH (root-Dateien lesbar), Geheimnis-Pfade per InaccessiblePaths ausgeblendet.
+ *   SELinux verweigert das Überdecken von shadow_t-Dateien (/etc/shadow, /etc/gshadow) → die Einheit startet dann gar nicht (226/NAMESPACE).
+ * - lesen „eingeschraenkt“: keine Fähigkeiten — root-Dateien (auch /etc/shadow, Rechte 000) sind schon über die Rechte unlesbar;
+ *   die übrigen Geheimnis-Pfade bleiben zusätzlich ausgeblendet.
+ * - ausgabe „pipe“ (--pipe) oder „datei“: Fedora 44 lehnt das Weiterreichen der Ein-/Ausgabe an systemd ab („Connection reset by
+ *   peer“) → Ausgabe in eine root-eigene Datei unter /run, danach lesen und löschen.
+ */
+export interface KaefigModus { lesen: 'voll' | 'eingeschraenkt'; ausgabe: 'pipe' | 'datei' }
+export const KAEFIG_STUFEN: KaefigModus[] = [
+  { lesen: 'voll', ausgabe: 'pipe' }, { lesen: 'eingeschraenkt', ausgabe: 'pipe' },
+  { lesen: 'voll', ausgabe: 'datei' }, { lesen: 'eingeschraenkt', ausgabe: 'datei' },
+];
+/** Dateien, die SELinux (Typ shadow_t) nicht überdecken lässt — ohne Fähigkeiten ohnehin unlesbar */
+const SHADOW_PFADE = new Set(['/etc/shadow', '/etc/shadow-', '/etc/gshadow', '/etc/gshadow-', '/etc/security/opasswd']);
+
+export function kaefigEigenschaften(benutzer: string, sekunden: number, modus: KaefigModus = KAEFIG_STUFEN[0]!): string[] {
+  const voll = modus.lesen === 'voll';
   return [
     `User=${benutzer}`,
-    'AmbientCapabilities=CAP_DAC_READ_SEARCH',
-    'CapabilityBoundingSet=CAP_DAC_READ_SEARCH',
+    ...(voll ? ['AmbientCapabilities=CAP_DAC_READ_SEARCH', 'CapabilityBoundingSet=CAP_DAC_READ_SEARCH'] : ['CapabilityBoundingSet=']),
     'NoNewPrivileges=yes',
     'ProtectSystem=strict',
     'ProtectHome=read-only',
@@ -56,7 +73,7 @@ export function kaefigEigenschaften(benutzer: string, sekunden: number): string[
     'WorkingDirectory=/',
     // v1551 (Sicherheitsprüfung) — Geheimnis-Pfade im Käfig unsichtbar, unabhängig davon, wie der Befehl sie anspricht
     // (`cat /etc/sha""dow`, `f=/etc/shadow; cat $f`, find -exec …). „-“ = fehlende Pfade ignorieren.
-    `InaccessiblePaths=${GEHEIM_PFADE.map(p => `-${p}`).join(' ')}`,
+    `InaccessiblePaths=${GEHEIM_PFADE.filter(p => voll || !SHADOW_PFADE.has(p)).map(p => `-${p}`).join(' ')}`,
   ];
 }
 
@@ -87,9 +104,11 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
 const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** Kompletter Befehl für ssh: als root (sudo -n) eine Käfig-Einheit starten, die den Befehl in sh -c ausführt. */
-export function kaefigBefehl(befehl: string, benutzer: string, sekunden: number): string {
-  const props = kaefigEigenschaften(benutzer, sekunden).map(p => `-p ${shQuote(p)}`).join(' ');
-  return `sudo -n systemd-run --quiet --pipe --wait --collect --service-type=exec ${props} -- /bin/sh -c ${shQuote(befehl)}`;
+export function kaefigBefehl(befehl: string, benutzer: string, sekunden: number, modus: KaefigModus = KAEFIG_STUFEN[0]!): string {
+  const props = kaefigEigenschaften(benutzer, sekunden, modus).map(p => `-p ${shQuote(p)}`).join(' ');
+  if (modus.ausgabe === 'pipe') return `sudo -n systemd-run --quiet --pipe --wait --collect --service-type=exec ${props} -- /bin/sh -c ${shQuote(befehl)}`;
+  // Ausgabe über eine root-eigene Datei (mktemp: 0600); systemd öffnet sie außerhalb des Käfigs. Exit-Code der Einheit bleibt erhalten.
+  return `f=$(sudo -n mktemp -p /run alfred-kaefig.XXXXXXXX) || exit 125; sudo -n systemd-run --quiet --wait --collect --service-type=exec -p "StandardOutput=truncate:$f" -p "StandardError=append:$f" ${props} -- /bin/sh -c ${shQuote(befehl)}; rc=$?; sudo -n cat -- "$f"; sudo -n rm -f -- "$f"; exit $rc`;
 }
 
 /**
@@ -108,18 +127,24 @@ export const KAEFIG_SELBSTTEST = [
   // v1552 — auf INHALT prüfen: InaccessiblePaths legt einen leeren Platzhalter (Rechte 000) darüber, den CAP_DAC_READ_SEARCH öffnen darf;
   // „öffnen klappt“ hieß deshalb fälschlich „lesbar“ (Realfall 22.10. pve: Käfig vorsichtshalber gesperrt)
   'if [ -n "$(head -c 1 /etc/sudoers 2>/dev/null)" ]; then echo PROBE_LESEN_OK; fi',
+  // v1632 — Stufe „eingeschraenkt“: öffentliche Dateien müssen lesbar sein
+  'if [ -n "$(head -c 1 /etc/os-release 2>/dev/null)" ]; then echo PROBE_OEFFENTLICH_OK; fi',
   'if [ -n "$(head -c 1 /etc/shadow 2>/dev/null)" ]; then echo PROBE_GEHEIMNIS /etc/shadow; fi',
   'echo PROBE_ENDE',
 ].join('; ');
 
 export type KaefigStatus = 'ungeprueft' | 'aktiv' | 'fehlt' | 'aus';
 
-export function werteSelbsttest(ausgabe: string, code: number): { ok: boolean; grund: string } {
+export function werteSelbsttest(ausgabe: string, code: number, modus: KaefigModus = KAEFIG_STUFEN[0]!): { ok: boolean; grund: string } {
   if (!ausgabe.includes('PROBE_ENDE')) return { ok: false, grund: code === 0 ? 'Selbsttest unvollständig' : `systemd-run nicht nutzbar (Exit ${code})` };
   const verstoesse = ausgabe.split(/\r?\n/).filter(z => /^PROBE_(SCHREIBEN|KILL|DOCKER|DBUS|NETZ|GEHEIMNIS)/.test(z.trim())).map(z => z.trim().replace(/^PROBE_/, ''));
   if (verstoesse.length) return { ok: false, grund: `Käfig hält nicht: ${verstoesse.join(', ')}` };
+  if (modus.lesen === 'eingeschraenkt') {
+    if (!ausgabe.includes('PROBE_OEFFENTLICH_OK')) return { ok: false, grund: 'im Käfig ist nicht einmal Lesen öffentlicher Dateien möglich' };
+    return { ok: true, grund: `eingeschränkt: schreibgeschützt, kein Kill/Docker/D-Bus/Netz, ohne Leserecht für root-Dateien (SELinux erlaubt kein Ausblenden)${modus.ausgabe === 'datei' ? ', Ausgabe über Datei' : ''}` };
+  }
   if (!ausgabe.includes('PROBE_LESEN_OK')) return { ok: false, grund: 'im Käfig ist Lesen geschützter Dateien nicht möglich' };
-  return { ok: true, grund: 'schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok' };
+  return { ok: true, grund: `schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok${modus.ausgabe === 'datei' ? ', Ausgabe über Datei' : ''}` };
 }
 
 /** Typische Meldungen, wenn ein Befehl im Käfig an seine Grenzen stößt (für einen verständlichen Hinweis). */

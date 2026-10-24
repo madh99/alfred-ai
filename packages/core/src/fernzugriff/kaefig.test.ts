@@ -73,3 +73,29 @@ describe('v1551 Nachschärfung', () => {
     for (const b of ['curl -s http://169.254.169.254/latest/meta-data', 'curl -sI http://192.168.1.1', 'curl -s http://localhost:8080/admin?reboot=1', 'curl -sL http://localhost/', 'curl -s http://localhost.evil.com/']) expect(befehlsklasse(b), b).toBe('bestaetigen');
   });
 });
+
+describe('v1632 Käfig-Stufen (Realfall 24.10.: SELinux auf Rocky/Alma, Fedora ohne --pipe)', () => {
+  it('eingeschränkt: keine Fähigkeiten, shadow-Dateien nicht ausgeblendet (SELinux), übrige Geheimnis-Pfade schon', () => {
+    const p = kaefigEigenschaften('alfred', 30, { lesen: 'eingeschraenkt', ausgabe: 'pipe' });
+    expect(p).toContain('CapabilityBoundingSet=');
+    expect(p.some(x => x.startsWith('AmbientCapabilities'))).toBe(false);
+    const ip = p.find(x => x.startsWith('InaccessiblePaths='))!;
+    expect(ip).not.toContain('/etc/shadow');
+    expect(ip).toContain('-/etc/ssh/ssh_host_ed25519_key');
+    expect(kaefigEigenschaften('alfred', 30).find(x => x.startsWith('InaccessiblePaths='))).toContain('-/etc/shadow');
+  });
+  it('Ausgabe über Datei: kein --pipe, root-eigene Datei unter /run, Exit-Code erhalten, Datei wird gelöscht', () => {
+    const b = kaefigBefehl('id', 'alfred', 30, { lesen: 'voll', ausgabe: 'datei' });
+    expect(b).not.toContain('--pipe');
+    expect(b).toContain('mktemp -p /run alfred-kaefig.');
+    expect(b).toContain('"StandardOutput=truncate:$f"');
+    expect(b).toMatch(/rc=\$\?; sudo -n cat -- "\$f"; sudo -n rm -f -- "\$f"; exit \$rc$/);
+    expect(kaefigBefehl('id', 'alfred', 30)).toContain('--pipe');
+  });
+  it('Selbsttest: eingeschränkt braucht öffentliches Lesen statt geschützter Dateien; Verstöße bleiben Verstöße', () => {
+    const e = { lesen: 'eingeschraenkt', ausgabe: 'pipe' } as const;
+    expect(werteSelbsttest('PROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0, e)).toMatchObject({ ok: true });
+    expect(werteSelbsttest('PROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0).ok).toBe(false); // voll verlangt LESEN_OK
+    expect(werteSelbsttest('PROBE_GEHEIMNIS /etc/shadow\nPROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0, e).ok).toBe(false);
+  });
+});
