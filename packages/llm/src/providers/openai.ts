@@ -375,8 +375,9 @@ export class OpenAIProvider extends LLMProvider {
         outputTokens: r.usage?.output_tokens ?? 0,
         cacheReadTokens: r.usage?.input_tokens_details?.cached_tokens ?? 0,
       },
-      stopReason: toolCalls.length > 0 ? 'tool_use'
-        : (r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens' ? 'max_tokens' : 'end_turn'),
+      // v1650 — abgeschnitten geht vor tool_use: ein Werkzeugaufruf am Limit hat unvollständige Argumente
+      stopReason: r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens' ? 'max_tokens'
+        : toolCalls.length > 0 ? 'tool_use' : 'end_turn',
       ...(r.id ? { responseId: r.id } : {}),
     };
   }
@@ -401,7 +402,7 @@ export class OpenAIProvider extends LLMProvider {
         }
       } else if (type === 'response.function_call_arguments.delta' && typeof ev.delta === 'string') {
         yield { type: 'tool_use_delta', toolCall: { input: ev.delta as unknown as Record<string, unknown> } };
-      } else if (type === 'response.completed') {
+      } else if (type === 'response.completed' || type === 'response.incomplete') { // v1650 — auch am Ausgabelimit
         yield { type: 'message_complete', response: this.mapResponsesResponse(ev.response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]) };
       } else if (type === 'response.failed' || type === 'error') {
         const msg = (ev.response as { error?: { message?: string } } | undefined)?.error?.message

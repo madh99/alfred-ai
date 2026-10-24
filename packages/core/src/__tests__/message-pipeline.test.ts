@@ -161,6 +161,37 @@ describe('MessagePipeline', () => {
     expect(mockSkillSandbox.execute).toHaveBeenCalledTimes(1);
   });
 
+  // ---- v1650: abgeschnittener Werkzeugaufruf wird nie mit {} ausgeführt ----
+  for (const fall of [
+    { name: 'Wiederholung mit größerem Limit liefert den vollständigen Aufruf', zweiterAbgeschnitten: false, erwarteteAusfuehrungen: 1 },
+    { name: 'bleibt abgeschnitten → verworfen, Hinweis zum Aufteilen, nichts ausgeführt', zweiterAbgeschnitten: true, erwarteteAusfuehrungen: 0 },
+  ]) {
+    it(`v1650 ${fall.name}`, async () => {
+      const abgeschnitten = { content: '', toolCalls: [{ id: 'tc1', name: 'calculator', input: {} }], usage: { inputTokens: 1, outputTokens: 4096 }, stopReason: 'max_tokens' };
+      mockLLM.complete.mockResolvedValueOnce(abgeschnitten);
+      mockLLM.complete.mockResolvedValueOnce(fall.zweiterAbgeschnitten ? abgeschnitten
+        : { content: '', toolCalls: [{ id: 'tc2', name: 'calculator', input: { expression: '2+2' } }], usage: { inputTokens: 1, outputTokens: 5000 }, stopReason: 'tool_use' });
+      mockLLM.complete.mockResolvedValueOnce({ content: 'Fertig.', usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end_turn' });
+      const skill = { metadata: { name: 'calculator', description: 'Calculator', riskLevel: 'read' as const, version: '1.0.0', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn() };
+      const sandbox = { execute: vi.fn().mockResolvedValue({ success: true, data: 4, display: '4' }) };
+      const pipeline = new MessagePipeline({
+        llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+        skillRegistry: { get: vi.fn(() => skill), getAll: vi.fn(() => [skill]), has: vi.fn(), toToolDefinitions: vi.fn() } as any,
+        skillSandbox: sandbox as any,
+      });
+      const result = await pipeline.process(makeMessage());
+      expect(result.text).toBe('Fertig.');
+      expect(mockLLM.complete.mock.calls[1][0].maxTokens).toBe(4096);
+      const schleife = sandbox.execute.mock.calls.filter((c: any[]) => !(c[1] as Record<string, unknown>)?.action); // ohne Kontext-Vorladung
+      expect(schleife).toHaveLength(fall.erwarteteAusfuehrungen);
+      expect(schleife.every((c: any[]) => Object.keys(c[1] as object).length > 0)).toBe(true);
+      if (fall.zweiterAbgeschnitten) {
+        const letzte = mockLLM.complete.mock.calls[2][0].messages.at(-1);
+        expect(letzte.content).toContain('abgeschnitten und NICHT ausgeführt');
+      }
+    });
+  }
+
   // ---- v1450: frühere Runden nur bei echten geplanten Aufgaben, nie aus dem Verlauf ----
   for (const fall of [
     { name: 'geplante Aufgabe (ohne Verlauf): Bericht aus Runde 1 wird mitgeliefert', metadata: { scheduled: true, skipHistory: true }, erwartetBericht: true },

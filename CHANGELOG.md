@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Abgeschnittene Werkzeugaufrufe werden nie mit leerer Eingabe ausgeführt (v1650)
+
+- **Realfall:** Beim Planen eines großen Changes erreichte das Modell genau das Ausgabelimit. Die OpenAI-Responses-Schnittstelle meldete den unvollständigen Werkzeugaufruf als regulären Aufruf, die Argumente kamen leer an, und die Planung brach zweimal mit „Unbekannte Aktion“ ab.
+- **Jetzt** gilt eine Abschneidung am Limit bei OpenAI (auch im Stream) und Google immer als solche, auch wenn ein Werkzeugaufruf dabei ist.
+- Die Pipeline wiederholt einen abgeschnittenen Aufruf einmal mit größerem Ausgabelimit (16 384 Tokens, nie über dem Maximum des Modells). Bleibt er abgeschnitten, wird er verworfen, und das Modell wird aufgefordert, ihn in kleinere Aufrufe aufzuteilen.
+
 ### Security — MySQL-Inventar: Tabellennamen nie ungeprüft in SQL (v1649)
 
 - **Befund aus der Sicherheitsprüfung von v1648:** Die Zeilenzählung setzte Datenbank- und Tabellennamen als Zeichenkette in SQL ein. Ein absichtlich benannter Tabellenname mit Backslash hätte das Literal verlassen können, denn in MySQL ist der Backslash ein Escape-Zeichen.

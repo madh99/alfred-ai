@@ -114,6 +114,12 @@ function redactInputSecrets(input: Record<string, unknown> | undefined): Record<
   return out;
 }
 const MAX_CONTINUATION_ROUNDS = 3; // Max continuation rounds when LLM hits max_tokens
+const MAX_ABGESCHNITTEN_RUNDEN = 2; // v1650 — so oft darf ein abgeschnittener Werkzeugaufruf neu angefordert werden
+export const ABGESCHNITTEN_HINWEIS = 'Dein letzter Werkzeugaufruf wurde am Ausgabelimit abgeschnitten und NICHT ausgeführt. Teile ihn in mehrere kleinere Aufrufe auf (z. B. einen Change je Aufruf, Begründungen und Befehle knapp) und fahre dann fort.';
+/** v1650 — Ausgabelimit für die Wiederholung eines abgeschnittenen Werkzeugaufrufs: 16 384, nie über dem Modell-Maximum. */
+export function abgeschnittenGroesseresLimit(modellMax: number | undefined): number {
+  return Math.max(1024, Math.min(16_384, modellMax && modellMax > 0 ? modellMax : 16_384));
+}
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
 /**
@@ -1538,6 +1544,7 @@ export class MessagePipeline {
       let lastModel: string | undefined;
       // v1099 (Etappe 2) — Responses-API-Kontinuität innerhalb der Tool-Schleife
       let previousResponseId: string | undefined;
+      let abgeschnittenRunden = 0; // v1650
       const pendingAttachments: SkillResultAttachment[] = [];
       const usedSkillNames = new Set<string>();
       const accumulatedToolCalls: ToolCall[] = [];
@@ -1638,11 +1645,30 @@ export class MessagePipeline {
           throw err;
         }
 
-        // Discard potentially truncated tool calls when output hit max_tokens
+        // v1650 — ein am Ausgabelimit abgeschnittener Werkzeugaufruf (Argumente unvollständig, kamen als {} an)
+        // wird einmal mit größerem Limit wiederholt; bleibt er abgeschnitten, wird er verworfen und das Modell
+        // aufgefordert, ihn aufzuteilen (Realfall 25.10.: changes_planen bei 4096 Tokens zweimal „Unbekannte Aktion“).
         if (response.stopReason === 'max_tokens' && response.toolCalls?.length) {
-          this.logger.warn({ toolCallCount: response.toolCalls.length },
-            'Discarding truncated tool calls due to max_tokens');
-          response = { ...response, toolCalls: [] };
+          const groesser = abgeschnittenGroesseresLimit(this.llm.getContextWindow().maxOutputTokens);
+          this.logger.warn({ toolCallCount: response.toolCalls.length, groesser }, 'v1650 Werkzeugaufruf am Ausgabelimit abgeschnitten — Wiederholung mit größerem Limit');
+          try {
+            const zweiter = await this.llm.complete({ messages, system, tools: tools && tools.length > 0 ? tools : undefined, tier: message.metadata?.tier, maxTokens: groesser });
+            totalInputTokens += zweiter.usage?.inputTokens ?? 0;
+            totalOutputTokens += zweiter.usage?.outputTokens ?? 0;
+            response = zweiter;
+            previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
+          } catch (err) {
+            this.logger.warn({ err: (err as Error).message }, 'v1650 Wiederholung mit größerem Limit gescheitert');
+          }
+        }
+        if (response.stopReason === 'max_tokens' && response.toolCalls?.length) {
+          this.logger.warn({ toolCallCount: response.toolCalls.length }, 'Discarding truncated tool calls due to max_tokens');
+          previousResponseId = undefined;
+          if (++abgeschnittenRunden > MAX_ABGESCHNITTEN_RUNDEN) { response = { ...response, toolCalls: [] }; break; }
+          if (response.content) messages.push({ role: 'assistant', content: response.content });
+          messages.push({ role: 'user', content: ABGESCHNITTEN_HINWEIS });
+          iteration++;
+          continue;
         }
 
         // If no tool calls, check if output was truncated by max_tokens

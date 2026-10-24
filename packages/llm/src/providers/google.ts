@@ -413,7 +413,9 @@ export class GoogleProvider extends LLMProvider {
         outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
         cacheReadTokens: (response.usageMetadata as any)?.cachedContentTokenCount ?? 0,
       },
-      stopReason: toolCalls && toolCalls.length > 0 ? 'tool_use' : 'end_turn',
+      // v1650 — am Ausgabelimit abgeschnitten geht vor tool_use (unvollständige Werkzeugaufrufe nie ausführen)
+      stopReason: (response.candidates?.[0]?.finishReason as string | undefined) === 'MAX_TOKENS' ? 'max_tokens'
+        : toolCalls && toolCalls.length > 0 ? 'tool_use' : 'end_turn',
     };
   }
 }

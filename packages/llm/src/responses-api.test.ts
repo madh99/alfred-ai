@@ -122,6 +122,15 @@ describe('v1099 Responses-API — Antwort-Mapping', () => {
     });
     expect(r.stopReason).toBe('max_tokens');
   });
+
+  it('v1650 — abgeschnittener Werkzeugaufruf meldet max_tokens statt tool_use', () => {
+    const r = internals('gpt-6.1-sol').mapResponsesResponse({
+      id: 'resp_3', status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'function_call', call_id: 'c1', name: 'infrastruktur', arguments: '{"action":"changes_pl' }],
+      usage: { input_tokens: 10, output_tokens: 4096 },
+    });
+    expect(r.stopReason).toBe('max_tokens');
+  });
 });
 
 describe('v1099 — chat/completions-Pfad bleibt kompatibel', () => {
