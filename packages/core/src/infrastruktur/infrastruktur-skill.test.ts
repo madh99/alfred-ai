@@ -27,6 +27,14 @@ describe('I1 InfrastrukturSkill', () => {
   });
 });
 
+describe('v1653 Planungshinweise', () => {
+  it('Container-Nachbau verlangt originalgetreue Netze mit IPAM und festen Container-IPs', () => {
+    const s = new InfrastrukturSkill({ istOwner: () => true } as never);
+    expect(s.metadata.description).toContain('CONTAINER-NACHBAU');
+    expect(s.metadata.description).toContain('IPAMConfig');
+  });
+});
+
 // I2 — Vorhaben: anlegen, Grundlage, Architektur (abgewiesen → gültig), Entscheidung
 describe('I2 Vorhaben im Skill', () => {
   it('führt durch den Ablauf und hält die Statusregeln ein', async () => {

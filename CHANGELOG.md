@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Planungsregel: Container originalgetreu nachbauen, samt Netzadressen (v1653)
+
+- **Realfall:** Ein Umzug wurde automatisch zurückgerollt, obwohl Daten und Datenbank-Fingerabdruck am Ziel identisch waren. Die Anwendung erreicht ihre Datenbank über eine feste IP im Docker-Netz, und dieses Netz wurde am Ziel ohne Subnetz und ohne feste Container-Adresse angelegt.
+- **Jetzt** verlangen die Planungshinweise, Docker-Netze mit Treiber und IPAM-Einstellungen der Quelle anzulegen und je Container die vollständige Netzanbindung samt fester Adresse zu übernehmen. Vorher ist zu prüfen, dass das Subnetz am Ziel frei ist.
+
 ### Fixed — Datei-Prüfungen in Changes lesen nur Metadaten (v1652)
 
 - **Realfall:** Bei der einmaligen Vaultwarden-Sicherung war die Prüfsumme auf dem Sicherungsspeicher bereits bestätigt, trotzdem hielt der Change an: Die nachgelagerte Datei-Prüfung wurde als „berührt Geheimnisse“ abgewiesen, weil der Pfad „vaultwarden“ enthielt.
