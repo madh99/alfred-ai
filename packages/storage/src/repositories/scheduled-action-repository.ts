@@ -92,6 +92,14 @@ export class ScheduledActionRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  /** v1654 — Cron-Aufgaben, die nach einem Lauf ohne nächsten Termin abgeschaltet wurden (Merkmal der Planungslücke). */
+  async getPlanungsluecken(): Promise<ScheduledAction[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM scheduled_actions WHERE enabled = 0 AND schedule_type = 'cron' AND next_run_at IS NULL AND last_run_at IS NOT NULL ORDER BY created_at ASC`,
+    ) as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   async getByUser(userId: string): Promise<ScheduledAction[]> {
     const rows = await this.adapter.query(
       `SELECT * FROM scheduled_actions WHERE user_id = ? ORDER BY created_at DESC`,

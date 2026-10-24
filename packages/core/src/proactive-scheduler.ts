@@ -64,7 +64,7 @@ export class ProactiveScheduler {
    */
   async reparierePlanungsluecken(): Promise<string[]> {
     const repariert: string[] = [];
-    for (const a of await this.actionRepo.getAll()) {
+    for (const a of await this.actionRepo.getPlanungsluecken()) { // getAll liefert nur aktive Aufgaben
       if (a.enabled || a.scheduleType !== 'cron' || a.nextRunAt || !a.lastRunAt) continue;
       const naechster = this.calculateNextRun(a);
       if (!naechster) continue;

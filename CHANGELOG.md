@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Reparatur nach Planungslücke findet die abgeschalteten Aufgaben (v1655)
+
+- Die Reparatur aus v1654 las nur aktive Aufgaben und fand daher nichts. Sie nutzt jetzt eine eigene Abfrage für Zeitplan-Aufgaben, die nach einem Lauf ohne nächsten Termin abgeschaltet wurden.
+
 ### Fixed — Geplante Aufgaben überleben die Zeitumstellung (v1654)
 
 - **Realfall:** Vier tägliche Aufgaben waren nach ihrem Lauf am 24.10. deaktiviert. Die Suche nach dem nächsten Termin reichte nur 24 Stunden weit, der Tag der Umstellung auf Winterzeit hat aber 25 Stunden. Ohne gefundenen Termin wurde die Aufgabe wie eine einmalige abgeschaltet. Wöchentliche und monatliche Zeitpläne waren aus demselben Grund nie planbar.

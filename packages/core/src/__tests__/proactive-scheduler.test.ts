@@ -230,7 +230,7 @@ describe('v1654 Reparatur nach Planungslücke', () => {
       { id: 'd', name: 'nie gelaufen', enabled: false, scheduleType: 'cron', scheduleValue: '0 9 * * *' },
       { id: 'e', name: 'aktiv', enabled: true, scheduleType: 'cron', scheduleValue: '0 9 * * *', lastRunAt: '2026-10-24T07:00:00Z' },
     ];
-    const repo = { ...createMockActionRepo(), getAll: vi.fn(async () => aufgaben) };
+    const repo = { ...createMockActionRepo(), getPlanungsluecken: vi.fn(async () => aufgaben) }; // Merkmal-Filter liegt im SQL, hier zusätzlich im Code geprüft
     const s = new ProactiveScheduler(repo, createMockSkillRegistry(), createMockSkillSandbox(), createMockLLM(), new Map() as any, createMockUsers(), createMockLogger());
     expect(await s.reparierePlanungsluecken()).toEqual(['Mac abends']);
     expect(repo.setEnabled).toHaveBeenCalledTimes(1);
