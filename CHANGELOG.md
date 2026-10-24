@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Snapshot-Namen schon beim Planen prüfen (v1639)
+
+- Proxmox lässt Snapshot-Namen nur mit höchstens 40 Zeichen zu: mit einem Buchstaben beginnend, danach nur Buchstaben, Ziffern, `_` und `-`. Ein zu langer Name fiel erst beim Ausführen auf (Realfall Change 2bb39131, Schritt 1).
+- `create_snapshot`, `delete_snapshot` und `rollback_snapshot` prüfen das jetzt schon in der Eingabeprüfung. Der Change-Planer weist solche Pläne deshalb ab. Verweise wie `{{schrittN.name}}` bleiben erlaubt.
+
 ### Fixed — Fernzugriff: Zugang bei geheim_uebernehmen, Prüfung schon beim Planen (v1638)
 
 - **Befund (Change 026a0768, 24.10.):** Der Plan übergab den Zugang bei `geheim_uebernehmen` als `quelle`, wie bei `kopieren`, die Aktion verlangte aber `name`. Der Change hielt deshalb erst im Lauf an.

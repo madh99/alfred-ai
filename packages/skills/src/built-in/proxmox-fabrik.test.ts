@@ -261,3 +261,13 @@ describe('v1635 SELinux-Modul für den vollen Lese-Käfig (Beweis 69448997)', ()
     expect(deb).not.toContain('write_files');
   });
 });
+
+describe('v1639 Snapshot-Namen wie Proxmox (Realfall 2bb39131)', () => {
+  it('höchstens 40 Zeichen, Buchstabe zuerst; Verweise bleiben erlaubt', () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    expect(px.pruefeEingabe({ action: 'create_snapshot', vmid: 144, name: 'vor-pgadmin-host-ohne-passwortverlust-20261024' })).toMatch(/höchstens 40 Zeichen/);
+    expect(px.pruefeEingabe({ action: 'create_snapshot', vmid: 144, name: '2026-vor' })).toMatch(/Buchstaben beginnend/);
+    expect(px.pruefeEingabe({ action: 'create_snapshot', vmid: 144, name: 'vor-pgadmin-umstellung' })).toBeUndefined();
+    expect(px.pruefeEingabe({ action: 'delete_snapshot', vmid: 144, name: '{{schritt1.name}}' })).toBeUndefined();
+  });
+});

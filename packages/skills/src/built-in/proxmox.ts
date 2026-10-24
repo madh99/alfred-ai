@@ -331,6 +331,8 @@ export class ProxmoxSkill extends Skill {
       if (typeof input.vm_name !== 'string' || !input.vm_name.trim()) return 'delete_vm braucht vm_name zur Bestätigung';
       return undefined;
     }
+    // v1639 — Realfall 2bb39131: Proxmox erlaubt Snapshot-Namen nur bis 40 Zeichen (Buchstabe zuerst, dann Buchstaben/Ziffern/_/-)
+    if (['create_snapshot', 'delete_snapshot', 'rollback_snapshot'].includes(String(action)) && typeof input.name === 'string' && !/^\{\{/.test(input.name) && !/^[A-Za-z][A-Za-z0-9_-]{1,39}$/.test(input.name)) return `${String(action)}: Snapshot-Name „${input.name.slice(0, 60)}“ ungültig — höchstens 40 Zeichen, mit einem Buchstaben beginnend, nur Buchstaben, Ziffern, _ und -`;
     if (action === 'download_image') return pruefeDownload(input) ?? (typeof input.storage === 'string' && input.storage ? undefined : 'download_image braucht storage (mit Inhalt import)');
     if (action === 'create_template') {
       if (typeof input.image !== 'string' || !IMPORT_VOLUME.test(input.image)) return 'create_template: image muss ein import-Volume sein (storage:import/datei.qcow2)';
