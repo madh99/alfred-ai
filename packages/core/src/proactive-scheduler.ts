@@ -53,6 +53,27 @@ export class ProactiveScheduler {
   start(): void {
     this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
     this.logger.info('Proactive scheduler started');
+    void this.reparierePlanungsluecken().catch(err => this.logger.warn({ err }, 'v1654 Reparatur geplanter Aufgaben gescheitert'));
+  }
+
+  /**
+   * v1654 — Realfall 25.10.2026: der 24-h-Horizont der Cron-Suche fand am Tag der Zeitumstellung keinen Termin, der Lauf
+   * deaktivierte daraufhin die Aufgabe wie eine einmalige. Erkennungsmerkmal: Cron, deaktiviert, schon gelaufen, ohne nächsten
+   * Termin — von Hand deaktivierte oder abgelöste Aufgaben behalten ihren nächsten Termin. Solche Aufgaben werden wieder
+   * eingeschaltet, sofern ihr Ausdruck einen Termin hat.
+   */
+  async reparierePlanungsluecken(): Promise<string[]> {
+    const repariert: string[] = [];
+    for (const a of await this.actionRepo.getAll()) {
+      if (a.enabled || a.scheduleType !== 'cron' || a.nextRunAt || !a.lastRunAt) continue;
+      const naechster = this.calculateNextRun(a);
+      if (!naechster) continue;
+      await this.actionRepo.updateLastRun(a.id, a.lastRunAt, naechster);
+      await this.actionRepo.setEnabled(a.id, true);
+      repariert.push(a.name);
+      this.logger.info({ actionId: a.id, name: a.name, naechster }, 'v1654 geplante Aufgabe nach Planungslücke wieder eingeschaltet');
+    }
+    return repariert;
   }
 
   stop(): void {

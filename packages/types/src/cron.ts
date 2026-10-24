@@ -23,17 +23,28 @@ export function matchesCron(cronExpr: string, date: Date): boolean {
   );
 }
 
-/** Calculate the next Date matching a cron expression within the given horizon. */
-export function getNextCronDate(cronExpr: string, from: Date, horizonMs = 24 * 60 * 60_000): Date | null {
+/**
+ * Calculate the next Date matching a cron expression within the given horizon.
+ * v1654 — Realfall 25.10.2026: der Horizont war 24 h; am Tag der Zeitumstellung (25 h) fand eine tägliche Aufgabe keinen
+ * Termin mehr und wurde deaktiviert (Wochen- und Monats-Crons nie). Jetzt ein Jahr; Tage und Stunden ohne Treffer werden
+ * übersprungen, Schritte laufen über den Zeitstempel (stabil bei Zeitumstellungen).
+ */
+export function getNextCronDate(cronExpr: string, from: Date, horizonMs = 366 * 24 * 60 * 60_000): Date | null {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
   const end = from.getTime() + horizonMs;
-  const candidate = new Date(from);
   // Round up to the next whole minute
-  candidate.setSeconds(0, 0);
-  candidate.setMinutes(candidate.getMinutes() + 1);
-
-  while (candidate.getTime() <= end) {
-    if (matchesCron(cronExpr, candidate)) return candidate;
-    candidate.setMinutes(candidate.getMinutes() + 1);
+  let t = Math.floor(from.getTime() / 60_000) * 60_000 + 60_000;
+  while (t <= end) {
+    const c = new Date(t);
+    if (!(matchCronField(parts[2], c.getDate()) && matchCronField(parts[3], c.getMonth() + 1) && matchCronField(parts[4], c.getDay()))) {
+      const mitternacht = new Date(c.getFullYear(), c.getMonth(), c.getDate() + 1, 0, 0, 0, 0).getTime();
+      t = mitternacht > t ? mitternacht : t + 60_000;
+      continue;
+    }
+    if (!matchCronField(parts[1], c.getHours())) { t += (60 - c.getMinutes()) * 60_000; continue; }
+    if (matchCronField(parts[0], c.getMinutes())) return c;
+    t += 60_000;
   }
   return null;
 }

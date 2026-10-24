@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Geplante Aufgaben überleben die Zeitumstellung (v1654)
+
+- **Realfall:** Vier tägliche Aufgaben waren nach ihrem Lauf am 24.10. deaktiviert. Die Suche nach dem nächsten Termin reichte nur 24 Stunden weit, der Tag der Umstellung auf Winterzeit hat aber 25 Stunden. Ohne gefundenen Termin wurde die Aufgabe wie eine einmalige abgeschaltet. Wöchentliche und monatliche Zeitpläne waren aus demselben Grund nie planbar.
+- **Jetzt** reicht die Suche ein Jahr weit und überspringt Tage und Stunden ohne Treffer.
+- Beim Start werden Aufgaben, die auf diese Weise abgeschaltet wurden, wieder eingeschaltet. Von Hand deaktivierte Aufgaben bleiben aus.
+
 ### Changed — Planungsregel: Container originalgetreu nachbauen, samt Netzadressen (v1653)
 
 - **Realfall:** Ein Umzug wurde automatisch zurückgerollt, obwohl Daten und Datenbank-Fingerabdruck am Ziel identisch waren. Die Anwendung erreicht ihre Datenbank über eine feste IP im Docker-Netz, und dieses Netz wurde am Ziel ohne Subnetz und ohne feste Container-Adresse angelegt.

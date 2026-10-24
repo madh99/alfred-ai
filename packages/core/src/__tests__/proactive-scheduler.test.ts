@@ -219,3 +219,22 @@ describe('ProactiveScheduler', () => {
     expect(actionRepo.claimDue).toHaveBeenCalledTimes(2);
   });
 });
+
+// v1654 — Realfall 25.10.2026: Zeitumstellung ließ den 24-h-Horizont leerlaufen, vier tägliche Aufgaben wurden deaktiviert
+describe('v1654 Reparatur nach Planungslücke', () => {
+  it('schaltet nur Cron-Aufgaben ohne nächsten Termin wieder ein; bewusst deaktivierte bleiben aus', async () => {
+    const aufgaben = [
+      { id: 'a', name: 'Mac abends', enabled: false, scheduleType: 'cron', scheduleValue: '30 19 * * *', lastRunAt: '2026-10-24T17:30:28Z' },
+      { id: 'b', name: 'alte Generation', enabled: false, scheduleType: 'cron', scheduleValue: '0 7 * * *', lastRunAt: '2026-10-06T05:00:15Z', nextRunAt: '2026-10-07T05:00:00Z' },
+      { id: 'c', name: 'einmalig', enabled: false, scheduleType: 'once', scheduleValue: '2026-04-17T11:00:00', lastRunAt: '2026-04-17T09:00:07Z' },
+      { id: 'd', name: 'nie gelaufen', enabled: false, scheduleType: 'cron', scheduleValue: '0 9 * * *' },
+      { id: 'e', name: 'aktiv', enabled: true, scheduleType: 'cron', scheduleValue: '0 9 * * *', lastRunAt: '2026-10-24T07:00:00Z' },
+    ];
+    const repo = { ...createMockActionRepo(), getAll: vi.fn(async () => aufgaben) };
+    const s = new ProactiveScheduler(repo, createMockSkillRegistry(), createMockSkillSandbox(), createMockLLM(), new Map() as any, createMockUsers(), createMockLogger());
+    expect(await s.reparierePlanungsluecken()).toEqual(['Mac abends']);
+    expect(repo.setEnabled).toHaveBeenCalledTimes(1);
+    expect(repo.setEnabled).toHaveBeenCalledWith('a', true);
+    expect(repo.updateLastRun).toHaveBeenCalledWith('a', '2026-10-24T17:30:28Z', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+  });
+});
