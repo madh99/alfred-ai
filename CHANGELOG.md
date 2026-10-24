@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — MySQL-Inventar: Tabellennamen nie ungeprüft in SQL (v1649)
+
+- **Befund aus der Sicherheitsprüfung von v1648:** Die Zeilenzählung setzte Datenbank- und Tabellennamen als Zeichenkette in SQL ein. Ein absichtlich benannter Tabellenname mit Backslash hätte das Literal verlassen können, denn in MySQL ist der Backslash ein Escape-Zeichen.
+- **Jetzt** werden nur noch Namen aus `A–Z a–z 0–9 _ $ -` gezählt, alle anderen stehen als „nicht gezählt“ im Fingerabdruck. Außerdem läuft die Sitzung mit `NO_BACKSLASH_ESCAPES`.
+- Ein Test mit einem präparierten Tabellennamen belegt, dass er nie ins SQL gelangt.
+
 ### Added — Datenbank-Inventar für MySQL/MariaDB (v1648)
 
 - `fernzugriff.datenbank_inventar` kann jetzt auch MySQL und MariaDB (`art: mysql`, auch `mariadb`). Es liefert Version, Datenbanken mit Größe, Tabellen und genaue Zeilenzahlen, Benutzer@Host und den Fingerabdruck, wie bei PostgreSQL. Gebraucht wird das für den Vaultwarden-Umzug mit seiner MariaDB.

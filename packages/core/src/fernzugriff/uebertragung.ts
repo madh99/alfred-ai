@@ -281,8 +281,13 @@ async function mysqlInventar<Z>(w: Wege<Z>, z: Z, container: string): Promise<Db
   }
   if (!version) throw new Error('MySQL-Version nicht lesbar');
   const zaehlung = new Map<string, number>();
-  if (tabellen.length) {
-    const sql = 'SET SESSION TRANSACTION READ ONLY;\n' + tabellen.map(([d, t]) => `SELECT CONCAT(${`'${(d + '.' + t).replace(/'/g, "''")}|'`}, COUNT(*)) FROM ${mysqlName(d)}.${mysqlName(t)};`).join('\n') + '\n';
+  // v1648 (Sicherheitsprüfung) — Namen landen in SQL: nur einfache Namen zählen (kein Quote/Backslash möglich), andere als „nicht gezählt“
+  // im Fingerabdruck; zusätzlich NO_BACKSLASH_ESCAPES, damit ein Backslash nie ein Literal verlassen kann
+  const einfach = (x: string) => /^[A-Za-z0-9_$-]{1,64}$/.test(x);
+  const zaehlbar = tabellen.filter(([d, t]) => einfach(d) && einfach(t));
+  const nichtGezaehlt = tabellen.filter(([d, t]) => !(einfach(d) && einfach(t))).map(([d, t]) => `${d}.${t}`);
+  if (zaehlbar.length) {
+    const sql = "SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES');\nSET SESSION TRANSACTION READ ONLY;\n" + zaehlbar.map(([d, t]) => `SELECT CONCAT('${d}.${t}|', COUNT(*)) FROM ${mysqlName(d)}.${mysqlName(t)};`).join('\n') + '\n';
     const r = await w.lauf(z, root(mysqlInventarBefehl(container)), sql, 600_000);
     if (r.code !== 0) throw new Error(`Zeilenzählung (MySQL) gescheitert: ${r.stderr.trim().slice(-200)}`);
     for (const [k, v] of leseZaehlung(r.stdout)) zaehlung.set(k, v);
@@ -292,6 +297,6 @@ async function mysqlInventar<Z>(w: Wege<Z>, z: Z, container: string): Promise<Db
     const eigene = [...zaehlung.entries()].filter(([k]) => k.startsWith(`${d.name}.`));
     return { name: d.name, bytes: d.bytes, tabellen: eigene.length, zeilen: eigene.reduce((x, [, n]) => x + n, 0) };
   });
-  const teile = [`mysql ${hauptversion}`, ...rollen.map(r => `rolle|${r}`), ...dbs.map(d => `db|${d.name}`), ...[...zaehlung.entries()].sort((a, c) => a[0].localeCompare(c[0])).map(([t, n]) => `${t}|${n}`)];
+  const teile = [`mysql ${hauptversion}`, ...rollen.map(r => `rolle|${r}`), ...dbs.map(d => `db|${d.name}`), ...[...zaehlung.entries()].sort((a, c) => a[0].localeCompare(c[0])).map(([t, n]) => `${t}|${n}`), ...nichtGezaehlt.sort().map(t => `${t}|nicht gezählt`)];
   return { art: 'mysql', version, hauptversion, datenbanken, rollen, fingerabdruck: inventarFingerabdruck(teile) };
 }

@@ -167,6 +167,20 @@ describe('v1636 Datenbank-Inventar (fest, nur lesend)', () => {
 });
 
 describe('v1648 Datenbank-Inventar MySQL/MariaDB (Vaultwarden)', () => {
+  it('Sicherheitsprüfung: ungewöhnliche Tabellennamen werden nie in SQL eingesetzt, sondern als „nicht gezählt“ geführt', async () => {
+    const zweite: string[] = [];
+    const w: Wege<string> = {
+      lauf: async (_h, _b, eingabe) => {
+        if (eingabe.includes("'version|'")) return { code: 0, stdout: ['version|11.3.2-MariaDB', 'db|vw|1', 'tab|vw|users', "tab|vw|x\\'; DROP TABLE users; --"].join('\n'), stderr: '' };
+        zweite.push(eingabe); return { code: 0, stdout: 'vw.users|3\n', stderr: '' };
+      },
+      strom: async () => { throw new Error('x'); },
+    };
+    const inv = await datenbankInventar(w, 'h', 'mariadb-vaultwarden', 'mysql');
+    expect(zweite[0]).toContain('NO_BACKSLASH_ESCAPES');
+    expect(zweite[0]).not.toContain('DROP');
+    expect(inv.datenbanken[0]).toMatchObject({ tabellen: 1, zeilen: 3 });
+  });
   const welt = (zeilenUsers: number): Wege<string> => ({
     lauf: async (_h, b, eingabe) => {
       expect(b).not.toMatch(/-p\S|--password/); // Passwort nie im Befehl
