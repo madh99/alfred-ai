@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — UniFi-Trunk: verzögerte Verteilung neuer Netze durch den Controller (v1642)
+
+- **Befund (Change c89eb974, 24.10.):** Ein neues Netz schließt der Controller auf allen Ports mit „ausgewählten VLANs“ (custom) aus, aber mit Verzug. Port-Freigaben direkt nach dem Anlegen wurden deshalb nachträglich wieder überschrieben. Zwei Trunk-Ports waren danach gesperrt, obwohl ihre Schritte als erfolgreich galten. Das erklärt auch die mehreren Anläufe beim Trunk für VLAN 824.
+- **`create_network`** wartet jetzt bis zu 120 s, bis jeder custom-Port das neue Netz in seinen Ausschlüssen führt. Erst danach geht es weiter.
+- **`allow_network_on_port` / `exclude_network_on_port`** lesen nach 20 s noch einmal nach und setzen eine überschriebene Einstellung einmal neu. Hält sie dann immer noch nicht, scheitert der Schritt, statt einen falschen Erfolg zu melden.
+
 ### Fixed — Freigabe-Fragen verworfener Changes verschwinden (v1641)
 
 - **Befund (Realfall 24.10.):** Nach dem Verwerfen der vier überholten Entwürfe stand ihre alte Freigabe-Frage weiter in der App, mit „Ja/Nein“.

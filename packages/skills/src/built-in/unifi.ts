@@ -8,6 +8,8 @@ import { baueRegel, neueReihenfolge, policyZeile, type Netz, type Policy, type R
 
 type ControllerMode = 'unifi-os' | 'classic';
 
+/** v1642 — Wartezeiten für die Verteilung von Port-Einstellungen durch den Controller */
+export const UNIFI_ZEITEN = { verteilungMs: 120_000, abstandMs: 5_000, nachlesenMs: 20_000 };
 export class UniFiSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'unifi',
@@ -1207,7 +1209,10 @@ export class UniFiSkill extends Skill {
     const body = { name: neu.name, purpose: 'corporate', networkgroup: 'LAN', vlan_enabled: true, vlan: neu.vlan, ip_subnet: w.ipSubnet, dhcpd_enabled: neu.dhcp, ...(neu.dhcp ? { dhcpd_start: w.dhcpStart, dhcpd_stop: w.dhcpStop } : {}), enabled: true };
     const r = await this.request<any[]>('POST', 'rest/networkconf', body);
     const id = Array.isArray(r) ? r[0]?._id : (r as { _id?: string } | undefined)?._id;
-    return { success: true, data: { id, name: neu.name, vlan: neu.vlan, gateway: w.gateway, ip_subnet: w.ipSubnet, ...(neu.dhcp ? { dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop } : {}) }, display: `✅ Netz „${neu.name}“ angelegt: VLAN ${neu.vlan}, Gateway ${w.ipSubnet}${neu.dhcp ? `, DHCP ${w.dhcpStart}–${w.dhcpStop}` : ', ohne DHCP'}` };
+    // v1642 — Realfall 24.10. (c89eb974): der Controller schließt ein neues Netz auf allen Ports mit „ausgewählten VLANs“ (custom) erst mit
+    // Verzug aus — Port-Freigaben direkt danach wurden wieder überschrieben. Warten, bis die Ausschlüsse verteilt sind (stabil).
+    const verteilt = id ? await this.warteAufNetzVerteilung(String(id)) : true;
+    return { success: true, data: { id, name: neu.name, verteilt, vlan: neu.vlan, gateway: w.gateway, ip_subnet: w.ipSubnet, ...(neu.dhcp ? { dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop } : {}) }, display: `✅ Netz „${neu.name}“ angelegt: VLAN ${neu.vlan}, Gateway ${w.ipSubnet}${neu.dhcp ? `, DHCP ${w.dhcpStart}–${w.dhcpStop}` : ', ohne DHCP'}` };
   }
 
   private async festeIpLesen(mac: string): Promise<FestIpClient | undefined> {
@@ -1337,6 +1342,18 @@ export class UniFiSkill extends Skill {
     return { success: true, data: { netz: netz.name, vlan: netz.vlan, pfad, gesperrt: zu }, display: [`Weg von ${ip || mac} bis zur UDM für ${netz.name} (VLAN ${netz.vlan}):`, ...pfad.map(x => `- ${x.geraet} Port ${x.port} (${x.rolle}): ${x.modus}${x.durch ? ' — durchgelassen' : ' — GESPERRT'}`), zu.length ? `${zu.length} Port(s) lassen das Netz nicht durch → allow_network_on_port je Port (device, switch_port, network_name).` : 'Alle Ports lassen das Netz durch.'].join('\n') };
   }
 
+  /** v1642 — bis jeder custom-Port das neue Netz in seinen Ausschlüssen führt (oder höchstens 120 s); true = vollständig verteilt */
+  private async warteAufNetzVerteilung(netzId: string, maxMs = UNIFI_ZEITEN.verteilungMs): Promise<boolean> {
+    const ende = Date.now() + maxMs;
+    for (;;) {
+      const geraete = ((await this.request<any[]>('GET', 'stat/device').catch(() => [])) ?? []);
+      const custom = geraete.flatMap(d => (d.port_overrides ?? []).filter((o: any) => o.tagged_vlan_mgmt === 'custom'));
+      if (custom.every((o: any) => (o.excluded_networkconf_ids ?? []).includes(netzId))) return true;
+      if (Date.now() >= ende) return false;
+      await new Promise(r => setTimeout(r, UNIFI_ZEITEN.abstandMs));
+    }
+  }
+
   /** Netz auf einem Trunk-Port (eigene Port-Einstellung, Modus custom) erlauben bzw. wieder ausschließen — nur im Change */
   private async portNetz(input: Record<string, unknown>, erlauben: boolean): Promise<SkillResult> {
     const netzName = String(input.network_name ?? '').trim();
@@ -1365,6 +1382,25 @@ export class UniFiSkill extends Skill {
       jetzt = !(ov2?.excluded_networkconf_ids ?? []).includes(netz._id);
     }
     if (jetzt !== erlauben) return { success: false, error: `${d.name} Port ${portIdx}: Änderung nach 30 s nicht übernommen (zurückgelesen)` };
+    // v1642 — nachlesen nach einer Weile: hat der Controller die Freigabe wieder überschrieben (Verteilung eines neuen Netzes), einmal neu setzen
+    const stabil = async () => {
+      await new Promise(r => setTimeout(r, UNIFI_ZEITEN.nachlesenMs));
+      const neu = ((await this.request<any[]>('GET', 'stat/device')) ?? []).find(x => x._id === d._id);
+      const ov3 = (neu?.port_overrides ?? []).find((o: any) => o.port_idx === portIdx);
+      return { neu, ok: !(ov3?.excluded_networkconf_ids ?? []).includes(netz._id) === erlauben };
+    };
+    let s1 = await stabil();
+    if (!s1.ok && s1.neu) {
+      const ov4 = JSON.parse(JSON.stringify(s1.neu.port_overrides ?? []));
+      const o4 = ov4.find((o: any) => o.port_idx === portIdx);
+      if (o4) {
+        const a4: string[] = o4.excluded_networkconf_ids ?? [];
+        o4.excluded_networkconf_ids = erlauben ? a4.filter(x => x !== netz._id) : [...new Set([...a4, netz._id])];
+        await this.request('PUT', `rest/device/${d._id}`, { port_overrides: ov4 });
+        s1 = await stabil();
+      }
+    }
+    if (!s1.ok) return { success: false, error: `${d.name} Port ${portIdx}: Änderung wurde vom Controller wieder überschrieben (auch nach erneutem Setzen)` };
     return { success: true, data: { geaendert: true, device: d.name, port: portIdx, netz: netz.name }, display: `✅ ${d.name} Port ${portIdx}: ${netz.name} (VLAN ${netz.vlan}) ${erlauben ? 'erlaubt' : 'wieder ausgeschlossen'} (zurückgelesen)` };
   }
 
