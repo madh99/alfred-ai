@@ -181,17 +181,29 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
     '  ed25519_private: |',
     block,
     `  ed25519_public: ${JSON.stringify(hostOeff)}`,
+    // v1635 — RHEL-Familie (SELinux): systemd darf shadow_t-Dateien im Lese-Käfig überdecken → voller Käfig (Beweis 69448997, 24.10.)
+    ...(v.familie === 'rpm' ? [
+      'write_files:',
+      `  - path: ${SELINUX_KAEFIG_PFAD}`,
+      '    permissions: "0644"',
+      `    content: ${JSON.stringify(`${SELINUX_KAEFIG_REGEL}\n`)}`,
+    ] : []),
     'package_update: true',
     'packages: [qemu-guest-agent]',
     'runcmd:',
     // v1627 — Realfall docker-dev-01: ohne Internet beim ersten Start scheiterte „packages“ — einige Minuten nachversuchen
     `  - [sh, -c, ${JSON.stringify(`command -v qemu-ga >/dev/null 2>&1 || for i in 1 2 3 4 5 6 7 8 9 10; do ${v.familie === 'rpm' ? 'dnf -y install qemu-guest-agent' : 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-guest-agent'} && break; sleep 30; done`)}]`,
     '  - [systemctl, enable, --now, qemu-guest-agent]',
+    ...(v.familie === 'rpm' ? [`  - [sh, -c, ${JSON.stringify(`command -v semodule >/dev/null 2>&1 && semodule -i ${SELINUX_KAEFIG_PFAD} || true`)}]`] : []),
     // Danach nie wieder Cloud-Init: sonst erzeugt ein neuer Datenstand (oder ein entferntes Laufwerk) neue Host-Schlüssel und der Fernzugang sperrt
     '  - [touch, /etc/cloud/cloud-init.disabled]',
     '',
   ].join('\n');
 }
+
+/** v1635 — lokales SELinux-Modul für den vollen Lese-Käfig (einzige Regel; Rückweg: semodule -r alfred-kaefig) */
+export const SELINUX_KAEFIG_REGEL = '(allow init_t shadow_t (file (mounton)))';
+export const SELINUX_KAEFIG_PFAD = '/etc/selinux/alfred-kaefig.cil';
 
 /** Dateiname des Snippets einer VM */
 export const snippetDatei = (vmid: number) => `alfred-${vmid}-user.yaml`;

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Vorlagen-Fabrik: voller Lese-Käfig auch auf RHEL-Systemen (v1635)
+
+- Neue Rocky-, Alma- und Fedora-VMs bekommen beim ersten Start über Cloud-Init ein lokales SELinux-Modul (`/etc/selinux/alfred-kaefig.cil`) mit genau einer Regel: `(allow init_t shadow_t (file (mounton)))`. Damit darf systemd `/etc/shadow` und `/etc/gshadow` im Käfig überdecken, und der Käfig läuft in der vollen Stufe.
+- Belegt mit Change 69448997 auf probe-rocky-9: Danach sind Shadow-Dateien und SSH-Host-Schlüssel im Käfig unsichtbar, `/var/log/secure` und `sshd_config` sind lesbar.
+- Rückweg auf einem Host: `semodule -r alfred-kaefig`. Fehlt das Modul, bleibt die eingeschränkte Stufe als Rückfall.
+
 ### Changed — `fernzugriff.pruefen` testet den Käfig neu und nennt die Stufe (v1634)
 
 - `pruefen` führt den Käfig-Selbsttest jetzt immer neu aus, statt das Ergebnis vom letzten Start zu übernehmen. So greift ein geänderter Host sofort, etwa nach einem SELinux-Modul.

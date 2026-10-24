@@ -247,3 +247,17 @@ describe('v1629 Cloud-Init: Hostname auf der RHEL-Familie, gültiges Schema', ()
     expect(y).not.toContain('ssh_genkeytypes: []');
   });
 });
+
+describe('v1635 SELinux-Modul für den vollen Lese-Käfig (Beweis 69448997)', () => {
+  it('RPM-Familie schreibt das Modul und installiert es vor dem Abschalten von Cloud-Init; Debian-Familie nicht', () => {
+    const basis = { hostname: 'probe-rocky-9', alfredSchluessel: ALFRED, hostPrivat: HOST_PRIV, hostOeffentlich: HOST_PUB };
+    const rpm = cloudInitBenutzerDaten({ ...basis, familie: 'rpm' });
+    expect(rpm).toContain('write_files:\n  - path: /etc/selinux/alfred-kaefig.cil');
+    expect(rpm).toContain('content: "(allow init_t shadow_t (file (mounton)))\\n"');
+    expect(rpm.indexOf('semodule -i /etc/selinux/alfred-kaefig.cil')).toBeGreaterThan(0);
+    expect(rpm.indexOf('semodule -i')).toBeLessThan(rpm.indexOf('cloud-init.disabled'));
+    const deb = cloudInitBenutzerDaten(basis);
+    expect(deb).not.toContain('semodule');
+    expect(deb).not.toContain('write_files');
+  });
+});
