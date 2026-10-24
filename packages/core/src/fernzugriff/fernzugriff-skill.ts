@@ -146,7 +146,11 @@ export class FernzugriffSkill extends Skill {
   /** v1537 — Vorschläge vor „Ausführen“ prüfen: Zugang und Befehl müssen angegeben sein. */
   pruefeEingabe(input: Record<string, unknown>): string | undefined {
     const a = String(input.action ?? '');
-    if (['lesen', 'ausfuehren', 'pruefen', 'entfernen'].includes(a) && !(typeof input.name === 'string' && input.name.trim())) return `${a} braucht name (Zugang)`;
+    // v1638 — Realfall 24.10. (026a0768 Schritt 3: geheim_uebernehmen mit „quelle“ statt „name“ hielt erst im Lauf an): auch diese Aktionen prüfen
+    const zugangName = typeof input.name === 'string' && input.name.trim() ? input.name : a === 'geheim_uebernehmen' && typeof input.quelle === 'string' && input.quelle.trim() ? input.quelle : '';
+    if (['lesen', 'ausfuehren', 'pruefen', 'entfernen', 'geheim_uebernehmen', 'datenbank_inventar'].includes(a) && !zugangName) return `${a} braucht name (Zugang)`;
+    if (['kopieren', 'datenbank_kopieren'].includes(a) && !(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return `${a} braucht quelle und ziel (Zugänge)`;
+    if (a === 'datenbank_inventar' && !(typeof input.container === 'string' && input.container.trim())) return 'datenbank_inventar braucht container';
     if (['lesen', 'ausfuehren'].includes(a) && !(typeof input.befehl === 'string' && input.befehl.trim())) return `${a} braucht befehl`;
     return undefined;
   }
@@ -503,7 +507,8 @@ export class FernzugriffSkill extends Skill {
   /** E4-G — Datei mit Geheimnissen (.env o. ä.) als root lesen und direkt in den Tresor legen; Antwort nur Name und Größe */
   private async geheimUebernehmen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
     if (!this.deps.tresorSetzen) return { success: false, error: 'Tresor nicht verfügbar' };
-    const z = await this.zugang(owner, { name: input.name });
+    // v1638 — „quelle“ wie bei kopieren als Zugang zulassen
+    const z = await this.zugang(owner, { name: input.name ?? input.quelle });
     const pfad = input.pfad;
     if (typeof pfad !== 'string' || !/^\/[A-Za-z0-9._@+\/-]+$/.test(pfad) || pfad.split('/').includes('..')) return { success: false, error: 'pfad: absoluter Dateipfad' };
     if (!gueltigerName(input.tresor_name) || !/^[a-z0-9][\w.-]{1,60}$/.test(input.tresor_name)) return { success: false, error: 'tresor_name: Kleinbuchstaben, Ziffern, . _ - (2–61 Zeichen)' };

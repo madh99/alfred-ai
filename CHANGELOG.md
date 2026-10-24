@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fernzugriff: Zugang bei geheim_uebernehmen, Prüfung schon beim Planen (v1638)
+
+- **Befund (Change 026a0768, 24.10.):** Der Plan übergab den Zugang bei `geheim_uebernehmen` als `quelle`, wie bei `kopieren`, die Aktion verlangte aber `name`. Der Change hielt deshalb erst im Lauf an.
+- **Jetzt:** `geheim_uebernehmen` akzeptiert `quelle` als Zugang.
+- Die Eingabeprüfung, die der Change-Planer nutzt, verlangt jetzt außerdem den Zugang bei `geheim_uebernehmen` und `datenbank_inventar`, Quelle und Ziel bei `kopieren` und `datenbank_kopieren` sowie den Container beim Inventar. Solche Pläne werden gar nicht erst gespeichert.
+
 ### Fixed — Datenbank-Inventar: leerer Redis-Keyspace ist kein Fehler (v1637)
 
 - Bei einem leeren Redis fand der Filter auf die Keyspace-Zeilen nichts und beendete sich mit Exit 1. Das Inventar meldete deshalb „gescheitert“ (Realfall 24.10., Container redis). Jetzt gilt das als „keine Schlüssel“.

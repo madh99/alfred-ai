@@ -113,6 +113,11 @@ describe('v1539 FernzugriffSkill', () => {
     expect((await t.skill.execute({ action: 'liste' }, { ...ctx, userId: 'fremd' } as SkillContext)).error).toContain('nur für den Owner');
     expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve' })).toContain('befehl');
     expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve', befehl: 'qm list' })).toBeUndefined();
+    // v1638 — Realfall 026a0768: geheim_uebernehmen ohne Zugang fiel erst im Lauf auf; „quelle“ gilt wie bei kopieren als Zugang
+    expect(t.skill.pruefeEingabe({ action: 'geheim_uebernehmen', pfad: '/srv/x.env', tresor_name: 'x-env' })).toContain('name');
+    expect(t.skill.pruefeEingabe({ action: 'geheim_uebernehmen', quelle: 'dockerhost', pfad: '/srv/x.env', tresor_name: 'x-env' })).toBeUndefined();
+    expect(t.skill.pruefeEingabe({ action: 'kopieren', quelle: 'dockerhost' })).toContain('ziel');
+    expect(t.skill.pruefeEingabe({ action: 'datenbank_inventar', name: 'dockerhost', art: 'postgres' })).toContain('container');
   });
 });
 
