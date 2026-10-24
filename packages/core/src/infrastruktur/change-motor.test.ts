@@ -141,6 +141,24 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.aufrufe.some(a => a.startsWith('hoch:'))).toBe(false);
   });
 
+  it('v1630 Realfall 24.10.: gescheiterte Aktion, die schon etwas angelegt hat (Daten trotz Fehler) → teilweise, Rückweg läuft mit', async () => {
+    const w = welt(probe());
+    const orig = w.deps.fuehreAus;
+    w.deps.fuehreAus = async (skill, input, t) => {
+      if (input.action === 'create_snapshot') { w.aufrufe.push('proxmox.create_snapshot:i3probe'); w.snaps.add('i3probe'); return { success: false, error: 'VM angelegt, Anmeldung gescheitert', data: { vmid: 142 } }; }
+      return orig(skill, input, t);
+    };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    expect(l.ergebnisse.find(e => e.nr === 2)).toMatchObject({ ok: false, teilweise: true, daten: { vmid: 142 } });
+    await m.steuern('o', 'chg-1', 'rueckweg'); await warte(m);
+    expect(w.aufrufe).toContain('proxmox.delete_snapshot:i3probe');
+    expect(w.snaps.size).toBe(0);
+    expect(w.c.status).toBe('rolled_back');
+  });
+
   it('v1620: Restwirkung = ausgeführte Änderung ohne gelungenen Rückweg (Sicherungen zählen nicht) → Incident bleibt offen und wird hoch', async () => {
     const plan = probe(); plan[2]!.rueckweg = { skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 142, name: 'i3probe' } };
     expect(restWirkung(probe(), { phase: 'fertig', schritt: 3, start: 'x', ergebnisse: [{ nr: 3, ok: true, start: 'x' }] } as ChangeLauf)).toEqual([]); // „kein Rückweg“ = freigegebene Wirkung

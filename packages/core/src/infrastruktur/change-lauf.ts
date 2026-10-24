@@ -9,6 +9,8 @@ export interface SchrittErgebnis {
   nr: number; ok: boolean; start: string; ende?: string;
   /** die Aktion selbst lief durch (auch wenn danach die Prüfung scheiterte) — dann gehört ihr Rückweg dazu */
   aktionOk?: boolean;
+  /** v1630 — die Aktion scheiterte, hat aber schon etwas angelegt (der Skill lieferte Daten, z. B. vmid) — ihr Rückweg gehört dazu */
+  teilweise?: boolean;
   ausgabe?: string; daten?: unknown; fehler?: string;
   pruefung?: { ok: boolean; text: string; versuche: number };
 }
@@ -128,7 +130,7 @@ export function textErfuellt(text: string, p: Pick<Pruefung, 'erwartet' | 'nicht
 
 /** Rückweg-Reihenfolge: erledigte Schritte mit Rückweg in umgekehrter Reihenfolge (ohne „keiner“). */
 export function rueckwegSchritte(schritte: ChangeSchritt[], ergebnisse: SchrittErgebnis[]): ChangeSchritt[] {
-  const erledigt = new Set(ergebnisse.filter(e => e.ok || e.aktionOk).map(e => e.nr));
+  const erledigt = new Set(ergebnisse.filter(e => e.ok || e.aktionOk || e.teilweise).map(e => e.nr));
   return [...schritte].reverse().filter(s => erledigt.has(s.nr) && s.rueckweg && !s.rueckweg.keiner && s.rueckweg.skill);
 }
 
@@ -141,7 +143,7 @@ export const wirkt = (s: ChangeSchritt) => s.art === 'aktion' && (s.einordnung =
  * ihre bleibende Wirkung (Tresor-Eintrag, Vorkopie, beabsichtigte Löschung) ist so freigegeben (Realfall e1843faa/dea4b9cd).
  */
 export function restWirkung(schritte: ChangeSchritt[], l: ChangeLauf): ChangeSchritt[] {
-  const erledigt = new Set(l.ergebnisse.filter(e => e.ok || e.aktionOk).map(e => e.nr));
+  const erledigt = new Set(l.ergebnisse.filter(e => e.ok || e.aktionOk || e.teilweise).map(e => e.nr));
   const zurueck = new Set((l.rueckweg ?? []).filter(r => r.ok).map(r => r.zuSchritt));
   return schritte.filter(s => s.art === 'aktion' && (s.einordnung === 'aendern' || s.einordnung === 'loeschen') && !s.rueckweg?.keiner && erledigt.has(s.nr) && !zurueck.has(s.nr));
 }

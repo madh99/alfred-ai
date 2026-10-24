@@ -108,7 +108,7 @@ export class ChangeMotor {
       if (abh.some(x => !x || x.status !== 'completed')) continue;
       // Realfall 22.10. (B hielt an einer reinen Prüfung an und sperrte damit T und A3, auf die er selbst wartet): ein angehaltener Change
       // belegt seine Assets nur, wenn er schon etwas verändert hat
-      const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk) && st.some(s => s.nr === e.nr && wirkt(s))); };
+      const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk || e.teilweise) && st.some(s => s.nr === e.nr && wirkt(s))); };
       const belegende = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig' && ((x.lauf as ChangeLauf | undefined)?.phase !== 'angehalten' || hatGewirkt(x)) && x.affectedAssetIds.some(a => c.affectedAssetIds.includes(a)));
       if (belegende.length) {
         this.log('I4 Change wartet (Asset belegt)', { id: c.id, durch: belegende.map(x => x.id) });
@@ -168,7 +168,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         lauf.ergebnisse = [...lauf.ergebnisse.filter(x => x.nr !== s.nr), e];
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         this.log('I4 Schritt', { id: c0.id, nr: s.nr, ok: e.ok, pruefung: e.pruefung?.ok, fehler: e.fehler?.slice(0, 200) });
-        if (wirkt(s) && (e.ok || e.aktionOk)) for (const a of c0.affectedAssetIds) await this.d.cmdbProtokoll?.(a, `Change ${c0.id.slice(0, 8)} „${c0.title}“ Schritt ${s.nr}: ${s.titel}${e.ok ? '' : ' (Prüfung gescheitert)'}`).catch(() => undefined);
+        if (wirkt(s) && (e.ok || e.aktionOk || e.teilweise)) for (const a of c0.affectedAssetIds) await this.d.cmdbProtokoll?.(a, `Change ${c0.id.slice(0, 8)} „${c0.title}“ Schritt ${s.nr}: ${s.titel}${e.ok ? '' : ' (Prüfung gescheitert)'}`).catch(() => undefined);
         if (e.ok) continue;
         if (s.beiFehler === 'weiter') continue;
         const grund = `Schritt ${s.nr} „${s.titel}“: ${e.fehler ?? e.pruefung?.text ?? 'gescheitert'}`;
@@ -193,7 +193,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
    * I4c — Aktion mit Tresor-Werten: Werte erst jetzt lesen, Geheimnis-Dateien am Host anlegen (stdin, 600) und danach in jedem Fall
    * entfernen; Ausgaben ohne die Werte. Ohne Tresor-Verweise ist das ein gewöhnlicher Aufruf.
    */
-  private async mitGeheimnissen(z: { o: string; wofuer: string } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string }> {
+  private async mitGeheimnissen(z: { o: string; wofuer: string } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
     const namen = geheimNamen(parameter);
     const werte = new Map<string, string>(); const dateien = new Map<string, string>(); const angelegt: Array<{ zugang: string; pfad: string }> = [];
     try {
@@ -217,7 +217,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       if (!geheim.length) return r;
       const rein = (t?: string) => (t === undefined ? undefined : ohneGeheimnisse(t, geheim));
       let daten = r.daten; try { daten = JSON.parse(ohneGeheimnisse(JSON.stringify(r.daten ?? null), geheim)); } catch { daten = undefined; }
-      return { ok: r.ok, ...(r.ausgabe !== undefined ? { ausgabe: rein(r.ausgabe)! } : {}), ...(daten !== undefined && daten !== null ? { daten } : {}), ...(r.fehler !== undefined ? { fehler: rein(r.fehler)! } : {}) };
+      return { ok: r.ok, ...(r.ausgabe !== undefined ? { ausgabe: rein(r.ausgabe)! } : {}), ...(daten !== undefined && daten !== null ? { daten } : {}), ...(r.fehler !== undefined ? { fehler: rein(r.fehler)! } : {}), ...(r.teilweise ? { teilweise: true } : {}) };
     } finally {
       for (const a of angelegt) {
         const ok = await this.d.geheimDatei!.entfernen(a.zugang, a.pfad).catch(() => false);
@@ -234,7 +234,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         const r = vorher && s.pruefung
           ? { ok: true, ...(vorher.ausgabe !== undefined ? { ausgabe: vorher.ausgabe } : {}), ...(vorher.daten !== undefined ? { daten: vorher.daten } : {}) }
           : await this.mitGeheimnissen(z, s.skill!, s.aktion!, s.parameter ?? {}, ergebnisse, s.zeitlimitS * 1000);
-        if (!r.ok) return fertig({ fehler: r.fehler, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) });
+        if (!r.ok) return fertig({ fehler: r.fehler, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}), ...(r.teilweise ? { teilweise: true, daten: kuerzeDaten(r.daten) } : {}) });
         const basis = { aktionOk: true, ausgabe: r.ausgabe?.slice(0, MAX_AUSGABE), daten: kuerzeDaten(r.daten) };
         if (!s.pruefung) return fertig({ ...basis, ok: true });
         const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs);
@@ -258,7 +258,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   /** Skill-Aktion (Fernzugriff über den internen Weg; Proxmox-Aufgaben bis zum Ende verfolgt). */
-  private async aktion(skill: string, aktion: string, p: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string }> {
+  private async aktion(skill: string, aktion: string, p: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
     if (skill === 'fernzugriff' && (aktion === 'lesen' || aktion === 'ausfuehren')) {
       const name = String(p.name ?? ''); const befehl = String(p.befehl ?? '');
       if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
@@ -266,7 +266,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
     }
     const r = await this.d.fuehreAus(skill, { ...p, action: aktion }, timeoutMs);
-    if (!r.success) return { ok: false, fehler: String(r.error ?? 'Skill-Fehler').slice(0, 500), ...(r.display ? { ausgabe: r.display } : {}) };
+    // v1630 — Realfall 24.10. (provision_vm: VM geklont, Anmeldung gescheitert, Rückweg ließ die VM stehen): liefert der Skill trotz
+    // Fehlschlag Daten, hat er schon etwas angelegt — mitnehmen, damit Verweise und Rückweg greifen
+    if (!r.success) return { ok: false, fehler: String(r.error ?? 'Skill-Fehler').slice(0, 500), ...(r.display ? { ausgabe: r.display } : {}), ...(r.data !== undefined && r.data !== null ? { daten: r.data, teilweise: true } : {}) };
     // Proxmox liefert bei Snapshots/Backups sofort eine Aufgabe (UPID) — bis zu ihrem Ende verfolgen
     const upid = (r.data as { upid?: unknown } | undefined)?.upid;
     if (skill === 'proxmox' && typeof upid === 'string' && upid.startsWith('UPID:')) {

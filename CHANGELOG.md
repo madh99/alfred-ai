@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rückweg nimmt teilweise ausgeführte Schritte mit (v1630)
+
+- **Befund (Realfall 24.10.):** `provision_vm` hatte die Wegwerf-VM schon geklont und gestartet, die Anmeldung scheiterte. Der Skill meldete den Fehlschlag mit den Daten der VM (vmid), der Motor verwarf diese Daten. Der Rückweg galt deshalb als vollständig, ließ aber sechs VMs samt Fernzugängen stehen.
+- **Jetzt:** Liefert ein gescheiterter Skill-Aufruf Daten, gilt der Schritt als **teilweise ausgeführt** und behält die Daten. Sein Rückweg läuft mit, Verweise wie `{{schrittN.vmid}}` greifen. Restwirkung, Asset-Sperre und CMDB-Protokoll berücksichtigen ihn.
+
 ### Fixed — Vorlagen-Fabrik: Hostname, Cloud-Init-Laufwerk, Schema (v1629)
 
 - **Befund (Realfall 24.10.):** Von 7 neuen Vorlagen lief nur Debian 13 durch.
