@@ -201,7 +201,7 @@ export async function kopiereDatenbank<Z>(w: Wege<Z>, q: Z, qC: string, z: Z, zC
 const PG_LESEND = "-e PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=600000'";
 export const pgInventarBefehl = (c: string, db: string) => `docker exec -i ${PG_LESEND} ${c} sh -c 'exec psql -X -w -At -v ON_ERROR_STOP=1 -U "\${POSTGRES_USER:-postgres}" -d ${db}'`;
 export const PG_INVENTAR_SQL = "SELECT 'version|' || current_setting('server_version_num');\nSELECT 'db|' || datname || '|' || pg_database_size(oid) FROM pg_database WHERE datallowconn ORDER BY datname;\nSELECT 'rolle|' || rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;\n";
-export const redisInventarBefehl = (c: string) => `docker exec ${c} sh -c 'redis-cli --raw INFO server | grep -E "^redis_version:"; redis-cli --raw INFO keyspace | grep -E "^db[0-9]+:"'`;
+export const redisInventarBefehl = (c: string) => `docker exec ${c} sh -c 'redis-cli --raw INFO server | grep -E "^redis_version:"; redis-cli --raw INFO keyspace | grep -E "^db[0-9]+:" || true'`; // v1637 — leerer Keyspace ist kein Fehler (Realfall redis 24.10.)
 
 export interface DbInventar {
   art: 'postgres' | 'redis'; version: string; hauptversion: string;

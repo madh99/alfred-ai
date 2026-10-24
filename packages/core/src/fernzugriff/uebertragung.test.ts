@@ -158,5 +158,10 @@ describe('v1636 Datenbank-Inventar (fest, nur lesend)', () => {
     const r = await datenbankInventar(w, 'dockerhost', 'redis', 'redis');
     expect(r).toMatchObject({ version: '7.2.5', hauptversion: '7.2', datenbanken: [{ name: 'db0', schluessel: 3 }] });
     await expect(datenbankInventar(w, 'dockerhost', 'redis; rm -rf /', 'redis')).rejects.toThrow(/ungültiger Containername/);
+    // v1637 — leerer Keyspace: grep findet nichts, darf aber nicht scheitern
+    let befehl = '';
+    const leer: Wege<string> = { lauf: async (_h, b) => { befehl = b; return { code: 0, stdout: 'redis_version:7.2.5\n', stderr: '' }; }, strom: async () => { throw new Error('x'); } };
+    expect((await datenbankInventar(leer, 'dockerhost', 'redis', 'redis')).datenbanken).toEqual([]);
+    expect(befehl).toContain('|| true');
   });
 });

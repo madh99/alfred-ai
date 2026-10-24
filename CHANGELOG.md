@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Datenbank-Inventar: leerer Redis-Keyspace ist kein Fehler (v1637)
+
+- Bei einem leeren Redis fand der Filter auf die Keyspace-Zeilen nichts und beendete sich mit Exit 1. Das Inventar meldete deshalb „gescheitert“ (Realfall 24.10., Container redis). Jetzt gilt das als „keine Schlüssel“.
+
 ### Added — `fernzugriff.datenbank_inventar`: fester Datenbank-Nachweis (v1636)
 
 - **Neue, nur lesende Aktion** für PostgreSQL und Redis in Containern. Sie liefert Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen bzw. Redis-Schlüssel je Datenbank, dazu einen **Fingerabdruck** (SHA-256 über Hauptversion, Datenbanken, Rollen und Zeilenzahl je Tabelle, ohne Größen).
