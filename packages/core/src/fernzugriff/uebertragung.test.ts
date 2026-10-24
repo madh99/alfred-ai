@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, volumePfad, type Wege, type Eintrag } from './uebertragung.js';
+import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, volumePfad, datenbankInventar, type Wege, type Eintrag } from './uebertragung.js';
 
 // I6 — Abgleich nach rsync-Art gegen zwei simulierte Dateisysteme (die echten find/tar-Befehle prüft der Live-Lauf)
 type Fs = Map<string, Eintrag & { inhalt?: string }>;
@@ -133,5 +133,30 @@ describe('I6 Wurzelordner', () => {
     expect(e.wurzelAngeglichen).toBe(true);
     expect(e.restUnterschiede).toBe(0);
     void befehle;
+  });
+});
+
+describe('v1636 Datenbank-Inventar (fest, nur lesend)', () => {
+  const pg = (zeilenFamapp: number): Wege<string> => ({
+    lauf: async (_h, b, eingabe) => {
+      expect(b).toContain('default_transaction_read_only=on');
+      if (eingabe.includes("'version|'")) return { code: 0, stdout: 'version|150008\ndb|famapp|8438275\ndb|postgres|7648047\nrolle|app\nrolle|postgres\n', stderr: '' };
+      if (b.includes('-d famapp')) return { code: 0, stdout: `public.kinder|${zeilenFamapp}\npublic.termine|12\n`, stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    },
+    strom: async () => { throw new Error('nicht erwartet'); },
+  });
+  it('PostgreSQL: Version, Datenbanken, Rollen, Zeilen; Fingerabdruck gleich bei gleichem Bestand, anders bei anderer Zeilenzahl', async () => {
+    const a = await datenbankInventar(pg(5), 'dockerhost', 'postgreDEV', 'postgres');
+    expect(a).toMatchObject({ version: '150008', hauptversion: '15', rollen: ['app', 'postgres'] });
+    expect(a.datenbanken.find(d => d.name === 'famapp')).toMatchObject({ tabellen: 2, zeilen: 17 });
+    expect((await datenbankInventar(pg(5), 'docker-dev-01', 'postgreDEV', 'postgres')).fingerabdruck).toBe(a.fingerabdruck);
+    expect((await datenbankInventar(pg(6), 'docker-dev-01', 'postgreDEV', 'postgres')).fingerabdruck).not.toBe(a.fingerabdruck);
+  });
+  it('Redis: Version und Schlüssel je Datenbank; ungültiger Containername wird abgewiesen', async () => {
+    const w: Wege<string> = { lauf: async () => ({ code: 0, stdout: 'redis_version:7.2.5\ndb0:keys=3,expires=0,avg_ttl=0\n', stderr: '' }), strom: async () => { throw new Error('x'); } };
+    const r = await datenbankInventar(w, 'dockerhost', 'redis', 'redis');
+    expect(r).toMatchObject({ version: '7.2.5', hauptversion: '7.2', datenbanken: [{ name: 'db0', schluessel: 3 }] });
+    await expect(datenbankInventar(w, 'dockerhost', 'redis; rm -rf /', 'redis')).rejects.toThrow(/ungültiger Containername/);
   });
 });

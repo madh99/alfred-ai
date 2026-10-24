@@ -9,6 +9,7 @@
  *
  * Datenbanken: PostgreSQL per pg_dump -Fc | pg_restore als Strom; Prüfung: exakte Zeilenzahl je Tabelle auf beiden Seiten.
  */
+import { createHash } from 'node:crypto';
 import { fernBefehl } from './regeln.js';
 
 export interface Eintrag { typ: string; groesse: number; zeit: number; modus: string; uid: string; gid: string; link: string }
@@ -191,4 +192,64 @@ export async function kopiereDatenbank<Z>(w: Wege<Z>, q: Z, qC: string, z: Z, zC
   if (rq.code !== 0 || rz.code !== 0) throw new Error(`Zeilenzählung gescheitert: ${(rq.stderr + rz.stderr).trim().slice(-200)}`);
   const zq = leseZaehlung(rq.stdout);
   return { bytes: s.bytes, sekunden: Math.round((Date.now() - start) / 1000), tabellen: zq.size, zeilen: [...zq.values()].reduce((x, y) => x + y, 0), abweichungen: vergleicheZaehlung(zq, leseZaehlung(rz.stdout)) };
+}
+
+// ── v1636 Datenbank-Inventar (fest, nur lesend) ───────────────────────────────────────────────────────────────
+// Owner 24.10.: Umzugs-Changes sollen Datenbestände selbst nachweisen statt Owner-Schritten. Kein freies SQL: festes Skript,
+// Lese-Transaktion (default_transaction_read_only), Ausgabe nur Namen, Größen, Zeilenzahlen. Der Fingerabdruck (SHA-256 über
+// Hauptversion, Datenbanken, Rollen und Zeilenzahl je Tabelle — ohne Größen, die nach einer Kopie schwanken) macht vorher/nachher vergleichbar.
+const PG_LESEND = "-e PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=600000'";
+export const pgInventarBefehl = (c: string, db: string) => `docker exec -i ${PG_LESEND} ${c} sh -c 'exec psql -X -w -At -v ON_ERROR_STOP=1 -U "\${POSTGRES_USER:-postgres}" -d ${db}'`;
+export const PG_INVENTAR_SQL = "SELECT 'version|' || current_setting('server_version_num');\nSELECT 'db|' || datname || '|' || pg_database_size(oid) FROM pg_database WHERE datallowconn ORDER BY datname;\nSELECT 'rolle|' || rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;\n";
+export const redisInventarBefehl = (c: string) => `docker exec ${c} sh -c 'redis-cli --raw INFO server | grep -E "^redis_version:"; redis-cli --raw INFO keyspace | grep -E "^db[0-9]+:"'`;
+
+export interface DbInventar {
+  art: 'postgres' | 'redis'; version: string; hauptversion: string;
+  datenbanken: Array<{ name: string; bytes?: number; tabellen?: number; zeilen?: number; schluessel?: number }>;
+  rollen: string[]; fingerabdruck: string;
+}
+
+export function leseInventarBasis(t: string): { version: string; dbs: Array<{ name: string; bytes: number }>; rollen: string[] } {
+  let version = ''; const dbs: Array<{ name: string; bytes: number }> = []; const rollen: string[] = [];
+  for (const z of t.split(/\r?\n/).map(x => x.trim())) {
+    let m: RegExpExecArray | null;
+    if ((m = /^version\|(\d+)$/.exec(z))) version = m[1]!;
+    else if ((m = /^db\|([^|]+)\|(\d+)$/.exec(z))) dbs.push({ name: m[1]!, bytes: Number(m[2]) });
+    else if ((m = /^rolle\|(.+)$/.exec(z))) rollen.push(m[1]!);
+  }
+  return { version, dbs, rollen };
+}
+
+export function inventarFingerabdruck(teile: string[]): string {
+  return createHash('sha256').update(teile.join('\n')).digest('hex');
+}
+
+export async function datenbankInventar<Z>(w: Wege<Z>, z: Z, container: string, art: 'postgres' | 'redis'): Promise<DbInventar> {
+  if (!gueltigerName(container)) throw new Error(`ungültiger Containername ${String(container).slice(0, 40)}`);
+  if (art === 'redis') {
+    const r = await w.lauf(z, root(redisInventarBefehl(container)), '', 60_000);
+    if (r.code !== 0) throw new Error(`Redis-Inventar gescheitert (Exit ${r.code}): ${r.stderr.trim().slice(-200)}`);
+    const version = /redis_version:([\d.]+)/.exec(r.stdout)?.[1] ?? '';
+    if (!version) throw new Error('Redis-Version nicht lesbar');
+    const dbs = [...r.stdout.matchAll(/^(db\d+):keys=(\d+)/gm)].map(m => ({ name: m[1]!, schluessel: Number(m[2]) }));
+    const hauptversion = version.split('.').slice(0, 2).join('.');
+    return { art, version, hauptversion, datenbanken: dbs, rollen: [], fingerabdruck: inventarFingerabdruck([`redis ${hauptversion}`, ...dbs.map(d => `${d.name}|${d.schluessel}`)]) };
+  }
+  const b = await w.lauf(z, root(pgInventarBefehl(container, 'postgres')), PG_INVENTAR_SQL, 120_000);
+  if (b.code !== 0) throw new Error(`PostgreSQL-Inventar gescheitert (Exit ${b.code}): ${b.stderr.trim().slice(-200)}`);
+  const basis = leseInventarBasis(b.stdout);
+  if (!basis.version || !basis.dbs.length) throw new Error('PostgreSQL-Version oder Datenbankliste nicht lesbar');
+  const hauptversion = String(Math.floor(Number(basis.version) / 10000));
+  const datenbanken: DbInventar['datenbanken'] = [];
+  const teile = [`postgres ${hauptversion}`, ...basis.rollen.map(r => `rolle|${r}`)];
+  for (const d of basis.dbs) {
+    if (!gueltigerName(d.name)) { datenbanken.push({ name: d.name, bytes: d.bytes }); teile.push(`db|${d.name}|nicht gezählt`); continue; }
+    const r = await w.lauf(z, root(pgInventarBefehl(container, d.name)), PG_ZAEHL_SQL, 600_000);
+    if (r.code !== 0) throw new Error(`Zeilenzählung in ${d.name} gescheitert: ${r.stderr.trim().slice(-200)}`);
+    const zl = leseZaehlung(r.stdout);
+    const zeilen = [...zl.values()].reduce((x, y) => x + y, 0);
+    datenbanken.push({ name: d.name, bytes: d.bytes, tabellen: zl.size, zeilen });
+    teile.push(`db|${d.name}`, ...[...zl.entries()].sort((a, c) => a[0].localeCompare(c[0])).map(([t, n]) => `${d.name}.${t}|${n}`));
+  }
+  return { art, version: basis.version, hauptversion, datenbanken, rollen: basis.rollen, fingerabdruck: inventarFingerabdruck(teile) };
 }

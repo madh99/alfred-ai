@@ -8,7 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
-import { kopiere, kopiereDatenbank, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
+import { kopiere, kopiereDatenbank, datenbankInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
 
 /**
  * v1539 (Owner 21.10. „ssh über cmdb plus skill fernzugriff, benutzer alfred mit sudo-rechten, er soll auch etwas machen können“).
@@ -61,7 +61,7 @@ export interface FernzugriffDeps {
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
-const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen'] as const;
+const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar'] as const;
 /** I6 — Datenübertragung und Geheimnis-Übernahme nur als Schritte freigegebener Changes */
 const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']);
 
@@ -89,7 +89,8 @@ export class FernzugriffSkill extends Skill {
       'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung). ' +
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
       `${ABWAEGUNG} ` +
-      'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung).',
+      'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
+      'datenbank_inventar (name, container, art=postgres|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 15 * 60_000,
@@ -121,6 +122,8 @@ export class FernzugriffSkill extends Skill {
         quelle_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container an der Quelle' },
         ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
         datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname' },
+        container: { type: 'string', description: 'datenbank_inventar: Container der Datenbank' },
+        art: { type: 'string', enum: ['postgres', 'redis'], description: 'datenbank_inventar: postgres oder redis' },
         db_benutzer: { type: 'string', description: 'datenbank_kopieren: Datenbank-Benutzer' },
         pfad: { type: 'string', description: 'geheim_uebernehmen: Datei mit Geheimnissen an der Quelle (z. B. /opt/app/.env)' },
         tresor_name: { type: 'string', description: 'geheim_uebernehmen: Name des Tresor-Eintrags (danach {{geheimdatei:name}} am Ziel)' },
@@ -170,6 +173,7 @@ export class FernzugriffSkill extends Skill {
         case 'kaefig_bestaetigen': return await this.kaefigBestaetigen(owner, input);
         case 'kopieren': return await this.kopieren(owner, input);
         case 'datenbank_kopieren': return await this.datenbankKopieren(owner, input);
+        case 'datenbank_inventar': return await this.datenbankInventarAktion(owner, input);
         case 'geheim_uebernehmen': return await this.geheimUebernehmen(owner, input);
         default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => !a.endsWith('_bestaetigen')).join(', ')})` };
       }
@@ -482,6 +486,18 @@ export class FernzugriffSkill extends Skill {
     this.deps.protokoll?.('I6 Datenbank kopiert', { quelle: q.name, ziel: z.name, datenbank: input.datenbank, bytes: e.bytes, tabellen: e.tabellen, zeilen: e.zeilen, abweichungen: e.abweichungen.length });
     const text = `PostgreSQL ${String(input.datenbank)}: ${q.name}/${String(input.quelle_container)} → ${z.name}/${String(input.ziel_container)} in ${e.sekunden} s (${(e.bytes / 1024 / 1024).toFixed(1)} MB Dump). ${e.tabellen} Tabellen, ${e.zeilen} Zeilen; ${e.abweichungen.length ? `Abweichungen: ${e.abweichungen.slice(0, 10).join('; ')}` : 'Zeilenzahl je Tabelle gleich'}.`;
     return { success: e.abweichungen.length === 0, data: e, display: text, ...(e.abweichungen.length ? { error: text } : {}) };
+  }
+
+  /** v1636 — festes, nur lesendes Inventar einer Datenbank im Container (PostgreSQL/Redis) mit Fingerabdruck für Vorher/Nachher */
+  private async datenbankInventarAktion(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const z = await this.zugang(owner, { name: input.name });
+    const art = input.art === 'redis' ? 'redis' : input.art === 'postgres' ? 'postgres' : undefined;
+    if (!art) return { success: false, error: 'art: postgres oder redis' };
+    const inv = await datenbankInventar(this.wege(owner), z, String(input.container ?? ''), art);
+    this.deps.protokoll?.('v1636 Datenbank-Inventar', { zugang: z.name, container: input.container, art, version: inv.version, datenbanken: inv.datenbanken.length, fingerabdruck: inv.fingerabdruck.slice(0, 16) });
+    const zeilen = inv.datenbanken.map(d => `- ${d.name}${d.bytes !== undefined ? ` ${(d.bytes / 1024 / 1024).toFixed(1)} MB` : ''}${d.tabellen !== undefined ? `, ${d.tabellen} Tabellen, ${d.zeilen} Zeilen` : ''}${d.schluessel !== undefined ? `, ${d.schluessel} Schlüssel` : ''}`);
+    const display = [`${art === 'postgres' ? 'PostgreSQL' : 'Redis'} ${inv.version} in ${String(input.container)} auf ${z.name}`, ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
+    return { success: true, data: inv, display };
   }
 
   /** E4-G — Datei mit Geheimnissen (.env o. ä.) als root lesen und direkt in den Tresor legen; Antwort nur Name und Größe */

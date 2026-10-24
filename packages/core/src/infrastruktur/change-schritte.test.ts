@@ -294,3 +294,16 @@ describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
     expect(pruefeChangePlan({ ...plan, schritte: [{ ...plan.schritte[0], parameter: { name: 'dockerhost', befehl: 'echo {{host_id}}' } }] }, ctx()).fehler.some(x => x.includes('Platzhalter'))).toBe(true);
   });
 });
+
+describe('v1636 Datenbank-Inventar als Vorher/Nachher-Nachweis', () => {
+  it('datenbank_inventar ist lesend und als Prüfung mit Verweis auf den Vorher-Fingerabdruck zulässig', () => {
+    SKILLS.fernzugriff = skill('fernzugriff', ['lesen', 'ausfuehren', 'kopieren', 'geheim_uebernehmen', 'pruefen', 'datenbank_inventar'], { name: { type: 'string' }, befehl: { type: 'string' }, container: { type: 'string' }, art: { type: 'string' } });
+    expect(aktionsArt('fernzugriff', 'datenbank_inventar')).toBe('lesen');
+    const p = pruefeChangePlan({ titel: 'Inventar-Probe', begruendung: 'Datenbestand vor und nach dem Umzug nachweisen', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Vorher', art: 'aktion', skill: 'fernzugriff', aktion: 'datenbank_inventar', parameter: { name: 'dockerhost', container: 'postgreDEV', art: 'postgres' } },
+        { titel: 'Nachher gleich', art: 'pruefung', pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'datenbank_inventar', parameter: { name: 'docker-dev-01', container: 'postgreDEV', art: 'postgres' }, erwartet: '{{schritt1.fingerabdruck}}' } },
+      ] }, ctx());
+    expect(p.fehler).toEqual([]);
+  });
+});

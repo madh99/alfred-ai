@@ -61,7 +61,7 @@ const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   // v1628 — pruefen (Verbindung, sudo, Käfig-Selbsttest) und liste ändern am Host nichts (Realfall 24.10.: Vorlagen-Beweis)
-  if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
+  if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || aktion === 'datenbank_inventar' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';

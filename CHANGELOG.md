@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — `fernzugriff.datenbank_inventar`: fester Datenbank-Nachweis (v1636)
+
+- **Neue, nur lesende Aktion** für PostgreSQL und Redis in Containern. Sie liefert Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen bzw. Redis-Schlüssel je Datenbank, dazu einen **Fingerabdruck** (SHA-256 über Hauptversion, Datenbanken, Rollen und Zeilenzahl je Tabelle, ohne Größen).
+- Es gibt kein freies SQL: ein festes Skript in einer Lese-Transaktion (`default_transaction_read_only`), und die Containernamen werden geprüft. Deshalb läuft die Aktion ohne Rückfrage und gilt im Change als lesend.
+- Umzugs-Changes können den Datenbestand damit selbst belegen: vorher Inventar, nachher Prüfung mit `erwartet: {{schrittN.fingerabdruck}}`. Owner-Schritte für Versionen, Datenbanklisten und Zeilenzahlen entfallen (Owner 24.10.).
+
 ### Added — Vorlagen-Fabrik: voller Lese-Käfig auch auf RHEL-Systemen (v1635)
 
 - Neue Rocky-, Alma- und Fedora-VMs bekommen beim ersten Start über Cloud-Init ein lokales SELinux-Modul (`/etc/selinux/alfred-kaefig.cil`) mit genau einer Regel: `(allow init_t shadow_t (file (mounton)))`. Damit darf systemd `/etc/shadow` und `/etc/gshadow` im Käfig überdecken, und der Käfig läuft in der vollen Stufe.
