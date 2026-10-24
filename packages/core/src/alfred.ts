@@ -7044,6 +7044,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (await fz.zugangAbmelden(v.name)) teile.push(`Fernzugang „${v.name}“ entfernt`);
             const a = o ? await cmdbFz.getAssetBySource(o, 'proxmox', `${v.node}:${v.vmid}`).catch(() => null) : null;
             if (o && a) { await cmdbFz.updateAsset(o, a.id, { status: 'decommissioned' } as never); teile.push(`CMDB-Eintrag ${a.name} stillgelegt`); }
+            // v1631 — Realfall 24.10.: der Server-Eintrag der Fernzugriffs-Erfassung (host:<name>) blieb aktiv; die Vorprüfung der IP
+            // hielt den Neubau mit derselben Adresse deshalb an
+            const h = o ? await cmdbFz.getAssetBySource(o, 'fernzugriff', `host:${v.name}`).catch(() => null) : null;
+            if (o && h && h.status !== 'decommissioned') { await cmdbFz.updateAsset(o, h.id, { status: 'decommissioned' } as never); teile.push(`Server-Eintrag ${h.name} stillgelegt`); }
             return teile.join(', ');
           },
         };

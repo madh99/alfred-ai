@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — VM entfernen legt auch den Server-Eintrag still (v1631)
+
+- `delete_vm` legte nur den Proxmox-Eintrag (`vm`) in der CMDB still. Der Server-Eintrag aus der Fernzugriffs-Erfassung (`host:<name>`) blieb aktiv. Die IP-Vorprüfung einer neuen VM mit derselben Adresse hielt deshalb an (Realfall 24.10., Neubau der Vorlagen-Proben).
+- Jetzt werden beide Einträge stillgelegt.
+
 ### Fixed — Rückweg nimmt teilweise ausgeführte Schritte mit (v1630)
 
 - **Befund (Realfall 24.10.):** `provision_vm` hatte die Wegwerf-VM schon geklont und gestartet, die Anmeldung scheiterte. Der Skill meldete den Fehlschlag mit den Daten der VM (vmid), der Motor verwarf diese Daten. Der Rückweg galt deshalb als vollständig, ließ aber sechs VMs samt Fernzugängen stehen.
