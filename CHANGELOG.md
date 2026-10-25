@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Port-Weiterleitungen auf der pfSense (v1670)
+
+- Alfred kann auf der pfSense, über die der Internetzugang läuft, Port-Weiterleitungen samt passender Firewall-Regel anlegen und wieder entfernen — nur als Schritt eines freigegebenen Changes, mit Rückweg. Anlass sind die Videoanrufe des Matrix-Servers.
+
 ### Added — Port-Weiterleitungen im UniFi-Skill (v1669)
 
 - Alfred kann Port-Weiterleitungen der UniFi-Gateways jetzt auflisten und — als Schritt eines freigegebenen Changes, mit Rückweg — anlegen und wieder entfernen. Anlass sind die Videoanrufe des Matrix-Servers, die auch von außen erreichbar sein sollen.

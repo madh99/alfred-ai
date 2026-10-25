@@ -3,7 +3,7 @@ import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@a
 import { Skill } from '../skill.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
-type Action = 'list_port_forwards' | 'create_static_route' | 'delete_static_route' | 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
+type Action = 'list_port_forwards' | 'create_port_forward' | 'delete_port_forward' | 'create_static_route' | 'delete_static_route' | 'api_schema' | 'list_routes' | 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status' | 'api_pruefen' | 'create_vlan' | 'delete_vlan' | 'assign_interface' | 'unassign_interface' | 'enable_dhcp' | 'disable_dhcp';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -19,6 +19,7 @@ export class PfSenseSkill extends Skill {
       '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter, interne ID wie opt1 oder Beschreibung wie MAIN_LAN). ' +
       '"list_routes" zeigt Standard-Gateway, statische Routen und die Adressen der Interfaces (lesend). ' +
       '"list_port_forwards" zeigt die Portweiterleitungen (NAT) — was von außen auf welches interne Ziel geht (lesend). ' +
+      'Nur als Change-Schritt (v1670): "create_port_forward" (interface z. B. opt8 = WAN-Eingang, protocol tcp|udp|tcp/udp, destination_port Port oder Bereich a:b, target interne IPv4, local_port optional, source optional, description = eindeutiger Name; Firewall-Regel wird verknüpft angelegt) ↔ "delete_port_forward" (description). Der Internetzugang läuft über die pfSense, nicht über die UniFi. ' +
       'Nur als Change-Schritt: "create_rule" (interface z. B. MAIN_LAN oder opt1, protocol, source, destination, destination_port, description = eindeutiger Name) ↔ "delete_rule" (description); "create_static_route" (network CIDR, gateway = Gateway-Name z. B. MAIN_LAN_DHCP, description) ↔ "delete_static_route" (network). ' +
       '"create_rule" erstellt eine neue Regel (interface, protocol, source, destination, destination_port, description). ' +
       '"delete_rule" löscht eine Regel (description, nur im Change). ' +
@@ -34,7 +35,7 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_port_forwards', 'create_static_route', 'delete_static_route', 'api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
+        action: { type: 'string', enum: ['list_port_forwards', 'create_port_forward', 'delete_port_forward', 'create_static_route', 'delete_static_route', 'api_schema', 'list_routes', 'list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status', 'api_pruefen', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp'], description: 'Netz-Aktionen (Owner 22.10.): api_pruefen (lesend: sind die REST-Endpunkte da?), create_vlan (parent_interface, vlan, description) ↔ delete_vlan (vlan); assign_interface (vlan, description, subnet) ↔ unassign_interface (interface_id); enable_dhcp (interface_id, dhcp_start, dhcp_stop) ↔ disable_dhcp (interface_id).' },
         parent_interface: { type: 'string', description: 'create_vlan: physisches Parent-Interface, z. B. vtnet1 oder igb1' },
         vlan: { type: 'number', description: 'create_vlan/delete_vlan/assign_interface: VLAN-Tag 2–4094' },
         subnet: { type: 'string', description: 'assign_interface: Subnetz, z. B. 10.203.21.0/28 (Interface-IP = erste Adresse)' },
@@ -47,7 +48,9 @@ export class PfSenseSkill extends Skill {
         protocol: { type: 'string', description: 'Protokoll: tcp, udp, icmp, any (default: tcp)' },
         source: { type: 'string', description: 'Quell-IP/Netzwerk (z.B. 172.17.0.10, 192.168.1.0/24, any)' },
         destination: { type: 'string', description: 'Ziel-IP/Netzwerk' },
-        destination_port: { type: 'string', description: 'Ziel-Port oder Port-Range (z.B. 3000, 80-443)' },
+        destination_port: { type: 'string', description: 'Ziel-Port oder Port-Range (z.B. 3000, 80-443; bei create_rule/create_port_forward Bereich als a:b)' },
+        target: { type: 'string', description: 'create_port_forward: private IPv4 des internen Ziels' },
+        local_port: { type: 'string', description: 'create_port_forward: Port am Ziel (bei Bereichen der erste Port, Standard)' },
         source_port: { type: 'string', description: 'Quell-Port (optional, meist any)' },
         type: { type: 'string', description: 'Regel-Typ: pass, block, reject (default: pass)' },
         description: { type: 'string', description: 'Beschreibung der Regel' },
@@ -74,6 +77,8 @@ export class PfSenseSkill extends Skill {
       case 'list_rules': return this.listRules(input.interface as string | undefined);
       case 'list_routes': return this.listRoutes();
       case 'list_port_forwards': return await this.listPortForwards();
+      case 'create_port_forward': return await this.portWeiterleitungAnlegen(input); // v1670
+      case 'delete_port_forward': return await this.portWeiterleitungLoeschen(input);
       case 'api_schema': return await this.apiSchema(String(input.path ?? ''));
       case 'create_static_route': return await this.routeAnlegen(input);
       case 'delete_static_route': return await this.routeLoeschen(input);
@@ -208,7 +213,7 @@ export class PfSenseSkill extends Skill {
     return { success: true, data: rules, display };
   }
 
-  static readonly NUR_IM_CHANGE = new Set<string>(['create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp']);
+  static readonly NUR_IM_CHANGE = new Set<string>(['create_rule', 'delete_rule', 'create_port_forward', 'delete_port_forward', 'create_static_route', 'delete_static_route', 'create_vlan', 'delete_vlan', 'assign_interface', 'unassign_interface', 'enable_dhcp', 'disable_dhcp']);
 
   /** Interface-Angabe (opt1, MAIN_LAN, lan) → interne ID */
   private async interfaceId(angabe: string): Promise<string | undefined> {
@@ -252,6 +257,59 @@ export class PfSenseSkill extends Skill {
     const nachher = (await this.regeln()).find(x => String(x.descr ?? '') === descr);
     if (!nachher || !gleich(nachher)) return { success: false, error: `Regel „${descr}“ nach dem Anlegen nicht wie gewünscht nachlesbar` };
     return { success: true, data: { descr, id: nachher.id, interface: ifId }, display: `✅ pfSense-Regel „${descr}“: ${typ} ${protokoll} ${quelle} → ${ziel}${port ? `:${port}` : ''} auf ${ifId} (angewendet, zurückgelesen)` };
+  }
+
+  /**
+   * v1670 — Owner 25.10.: Matrix-Videoanrufe von außen. Port-Weiterleitung (NAT) mit verknüpfter Firewall-Regel (associated_rule_id „new“,
+   * wie die bestehenden Weiterleitungen), Schlüssel ist die Beschreibung; Bereiche „a:b“, local_port = erster Port des Bereichs (API v2).
+   */
+  private async portWeiterleitungAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const descr = String(input.description ?? '').trim();
+    const protokoll = String(input.protocol ?? 'tcp').toLowerCase();
+    const aussen = String(input.destination_port ?? '').trim();
+    const ziel = String(input.target ?? '').trim();
+    const lokal = String(input.local_port ?? aussen.split(':')[0]).trim();
+    const quelle = String(input.source ?? 'any').trim() || 'any';
+    if (!/^[\w .:/>-]{4,80}$/.test(descr)) return { success: false, error: 'create_port_forward: description als eindeutiger Name (4–80 Zeichen) — der Rückweg findet die Weiterleitung darüber' };
+    if (!['tcp', 'udp', 'tcp/udp'].includes(protokoll)) return { success: false, error: 'protocol: tcp, udp oder tcp/udp' };
+    if (!/^\d{1,5}(:\d{1,5})?$/.test(aussen) || !/^\d{1,5}$/.test(lokal)) return { success: false, error: 'destination_port: Port oder Bereich a:b; local_port: ein Port (bei Bereichen der erste)' };
+    if (!/^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/.test(ziel)) return { success: false, error: 'target: private IPv4 des internen Ziels' };
+    if (quelle !== 'any' && !/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(quelle)) return { success: false, error: 'source: any oder IPv4[/Präfix]' };
+    const ifId = await this.interfaceId(String(input.interface ?? ''));
+    if (!ifId) return { success: false, error: `Interface „${String(input.interface ?? '')}“ unbekannt (z. B. opt8 für den WAN-Eingang)` };
+    const ab = String(input.destination ?? `${ifId}:ip`).trim();
+    const alle = await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/nat/port_forwards', '/firewall/nat/port_forward');
+    const gleichName = alle.filter(x => String(x.descr ?? '') === descr);
+    if (gleichName.length) {
+      const x = gleichName[0]!;
+      const gleich = String(x.target) === ziel && String(x.destination_port) === aussen && String(x.protocol) === protokoll;
+      return gleich ? { success: true, data: { descr, vorhanden: true }, display: `Weiterleitung „${descr}“ ist bereits genau so vorhanden` } : { success: false, error: `Weiterleitung „${descr}“ gibt es schon mit anderen Werten — erst delete_port_forward` };
+    }
+    const belegt = alle.find(x => String(x.interface) === ifId && !x.disabled && String(x.protocol) === protokoll && String(x.destination_port) === aussen);
+    if (belegt) return { success: false, error: `Port ${aussen}/${protokoll} auf ${ifId} ist schon weitergeleitet (an ${String(belegt.target)}, „${String(belegt.descr ?? '')}“)` };
+    await this.pfFetch('/firewall/nat/port_forward', { method: 'POST', body: JSON.stringify({ interface: ifId, ipprotocol: 'inet', protocol: protokoll, source: quelle, destination: ab, destination_port: aussen, target: ziel, local_port: lokal, descr, associated_rule_id: 'new' }) });
+    await this.pfFetch('/firewall/apply', { method: 'POST', body: '{}' });
+    const n = (await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/nat/port_forwards', '/firewall/nat/port_forward')).find(x => String(x.descr ?? '') === descr);
+    if (!n || String(n.target) !== ziel || String(n.destination_port) !== aussen) return { success: false, error: `Weiterleitung „${descr}“ nach dem Anlegen nicht wie gewünscht nachlesbar` };
+    return { success: true, data: { descr, id: n.id, regel: n.associated_rule_id, interface: ifId }, display: `✅ pfSense-Weiterleitung „${descr}“: ${protokoll} ${ab}:${aussen} → ${ziel}:${lokal} (Quelle ${quelle}, Firewall-Regel verknüpft)` };
+  }
+
+  private async portWeiterleitungLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const descr = String(input.description ?? '').trim();
+    if (!descr) return { success: false, error: 'delete_port_forward: description der Weiterleitung' };
+    const l = (await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/nat/port_forwards', '/firewall/nat/port_forward')).filter(x => String(x.descr ?? '') === descr);
+    if (l.length > 1) return { success: false, error: `Mehrere Weiterleitungen heißen „${descr}“ — nicht eindeutig` };
+    if (!l[0]) return { success: true, data: { descr, schonWeg: true }, display: `Weiterleitung „${descr}“ gibt es nicht (mehr)` };
+    const regelId = String(l[0].associated_rule_id ?? '');
+    await this.pfFetch(`/firewall/nat/port_forward?id=${encodeURIComponent(String(l[0].id))}`, { method: 'DELETE' });
+    // verknüpfte Firewall-Regel mit entfernen, falls die API sie stehen lässt
+    if (regelId.startsWith('nat_')) {
+      const r = (await this.regeln()).find(x => String(x.associated_rule_id ?? '') === regelId);
+      if (r) await this.pfFetch(`/firewall/rule?id=${encodeURIComponent(String(r.id))}`, { method: 'DELETE' });
+    }
+    await this.pfFetch('/firewall/apply', { method: 'POST', body: '{}' });
+    if ((await this.fetchDualEndpoint<Record<string, unknown>>('/firewall/nat/port_forwards', '/firewall/nat/port_forward')).some(x => String(x.descr ?? '') === descr)) return { success: false, error: `Weiterleitung „${descr}“ ist nach dem Löschen noch vorhanden` };
+    return { success: true, data: { descr, entfernt: true }, display: `✅ pfSense-Weiterleitung „${descr}“ samt verknüpfter Regel entfernt (angewendet)` };
   }
 
   private async deleteRule(input: Record<string, unknown>): Promise<SkillResult> {
