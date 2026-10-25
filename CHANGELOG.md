@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Architektur-Fassung in der App ansehen, GitLab-Registry für Alfred (v1657, App 1.77.0)
+
+- **Architektur-Fassung ansehen:** Die Karte „Architektur wartet auf dich“ hat jetzt den Knopf „Fassung ansehen“. Der Reiter „Was ist neu“ zeigt zeilengenau, was sich gegenüber der zuletzt angenommenen Fassung ändert, geordnet nach Abschnitten. Der Reiter „Ganze Fassung“ zeigt das vollständige Dokument. Annehmen und Überarbeiten gehen direkt aus der Ansicht.
+- **GitLab-Skill (nur lesend):** zeigt Projekte mit ihrem Registry-Pfad und je Projekt die Images der Container-Registry mit Tags, Digest und Größe.
+- **Images über die eigene Registry übertragen:** Zwei neue Fernzugriff-Aktionen, die nur in freigegebenen Changes laufen. Die eine lädt ein lokal gebautes Image unverändert in die GitLab-Registry, die andere holt es am Ziel genau über seinen Digest. Die Anmeldung gilt nur für den einen Aufruf, der Zugangsschlüssel steht nie in einer Befehlszeile und bleibt nicht auf dem Server.
+
 ### Fixed — Gleichzeitige Fernzugriffe sperren keinen Zugang mehr (v1656)
 
 - **Realfall:** Zwei gleichzeitige Abfragen an denselben Server führten dazu, dass dessen Zugang als „Host-Schlüssel geändert“ gesperrt wurde, obwohl sich der Schlüssel nicht geändert hatte. Die Datei mit dem bestätigten Schlüssel wurde bei jedem Aufruf neu geschrieben, und der zweite Aufruf las sie in diesem Moment leer.

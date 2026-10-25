@@ -468,6 +468,8 @@ export class Alfred {
   private einwandDienst?: import('./infrastruktur/einwand.js').EinwandDienst;
   /** v1601 — Vorhaben und Changes mit Laufstand (Web-Seite Vorhaben und App-Ansicht Changes teilen sich die Liste) */
   private changesUebersicht?: () => Promise<unknown>;
+  /** v1657 — App: Inhalt der vorgeschlagenen Architektur-Fassung und Vergleich mit der zuletzt angenommenen */
+  private architekturFassung?: (vorhabenId: string) => Promise<unknown>;
   /** I5 — Server-Anteile der Vorlagen-Fabrik (auch nach Hot-Reload des Proxmox-Skills wieder setzen) */
   private vmFabrik?: import('@alfred/skills').VmFabrikDeps;
   /** I4 — Ausführungsmotor für freigegebene Changes */
@@ -6952,6 +6954,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar');
           await this.tresor.setze(o, name, wert, herkunft, zweck);
         },
+        // v1658 — Container-Registry des eigenen GitLab: Server aus dem Image-Präfix eines Projekts, Benutzer aus /user, Token aus forge.gitlab
+        registry: (() => {
+          let gemerkt: { server: string; benutzer: string } | undefined;
+          return async () => {
+            const gl = this.config.codeAgents?.forge?.gitlab;
+            if (!gl?.token || !gl.baseUrl) throw new Error('forge.gitlab (token, baseUrl) fehlt');
+            if (!gemerkt) {
+              const api = `${gl.baseUrl.replace(/\/+$/, '')}/api/v4`, kopf = { 'PRIVATE-TOKEN': gl.token };
+              const u = await fetch(`${api}/user`, { headers: kopf, signal: AbortSignal.timeout(15_000) });
+              const p = await fetch(`${api}/projects?membership=true&per_page=20&simple=false`, { headers: kopf, signal: AbortSignal.timeout(15_000) });
+              if (!u.ok || !p.ok) throw new Error(`GitLab nicht erreichbar (${u.status}/${p.status})`);
+              const benutzer = String(((await u.json()) as { username?: string }).username ?? '');
+              const praefix = ((await p.json()) as Array<{ container_registry_image_prefix?: string }>).map(x => x.container_registry_image_prefix).find(Boolean);
+              if (!benutzer || !praefix) throw new Error('GitLab liefert keinen Registry-Pfad (Container-Registry aktiviert?)');
+              gemerkt = { server: praefix.split('/')[0]!, benutzer };
+            }
+            return { ...gemerkt, token: gl.token };
+          };
+        })(),
         keyscan,
         schluessel: () => eigenerSchluessel(datenOrdner),
         melde: (t) => { void this.sendeAnOwner(t); },
@@ -6983,6 +7004,24 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
       this.fernzugriffRef = skillRegistry.get('fernzugriff') as unknown as import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+      // v1658 — GitLab und seine Container-Registry, nur lesend (Owner 25.10.)
+      const gl = this.config.codeAgents?.forge?.gitlab;
+      if (gl?.token && gl.baseUrl && !skillRegistry.has('gitlab')) {
+        const { GitlabSkill } = await import('./gitlab/gitlab-skill.js');
+        const api = `${gl.baseUrl.replace(/\/+$/, '')}/api/v4`;
+        skillRegistry.register(new GitlabSkill({
+          istOwner: (ctx) => {
+            const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
+            return [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].some(id => !!id && owner.has(id));
+          },
+          api: async (pfad) => {
+            const r = await fetch(`${api}${pfad}`, { headers: { 'PRIVATE-TOKEN': gl.token }, signal: AbortSignal.timeout(20_000) });
+            if (!r.ok) throw new Error(`GitLab ${r.status} für ${pfad.split('?')[0]}`);
+            return r.json();
+          },
+        }));
+        this.logger.info('v1658 GitLab-Skill registriert');
+      }
       // I5 — Vorlagen-Fabrik: der Proxmox-Skill bekommt Host-Schlüssel, Snippets am Knoten (über dessen Fernzugang), Fernzugang und CMDB
       {
         const { hostSchluesselErzeugen } = await import('./fernzugriff/ssh.js');
@@ -14181,6 +14220,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         {
           const { VorhabenRepository: VRw, CmdbRepository: CRw, ItsmRepository: IRw } = await import('@alfred/storage');
           const vr = new VRw(dbAdapter), cr = new CRw(dbAdapter), ir = new IRw(dbAdapter);
+          const { zeilenUnterschied, fassungAusTitel, vergleichsBasis } = await import('./infrastruktur/fassung-vergleich.js'); // v1657
           const owner = async (uid: string): Promise<string> => {
             const o = this.ownerMasterUserId ?? this.tryOwner();
             const m = uid ? await this.userRepo.getMasterUserId(uid).catch(() => undefined) : o;
@@ -14207,6 +14247,22 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           };
           // v1601 — dieselbe Liste für die App-Ansicht „Changes“ (nur Owner-Geräte, siehe ownerAnsichten)
           this.changesUebersicht = async () => { const o = this.ownerMasterUserId ?? this.tryOwner(); if (!o) throw new Error('kein Owner'); return listeFuer(o); };
+          // v1657 — Owner 25.10. („man kann sich NICHT ansehen was man annimmt“): Fassung + Unterschied zur zuletzt angenommenen
+          this.architekturFassung = async (id: string) => {
+            const o = this.ownerMasterUserId ?? this.tryOwner(); if (!o) throw new Error('kein Owner');
+            const v = await vr.finde(o, id);
+            if (!v) return undefined;
+            const doc = v.architekturDocId ? await cr.getDocumentById(o, v.architekturDocId).catch(() => null) : null;
+            const basis = vergleichsBasis(v.architekturVersion, v.entscheidungen);
+            const docs = basis ? await cr.getDocumentsForEntity(o, 'vorhaben', v.id).catch(() => []) : [];
+            const alt = basis ? docs.filter(d => d.docType === 'architecture' && fassungAusTitel(d.title) === basis.version).sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0] : undefined;
+            return {
+              vorhaben: { id: v.id, titel: v.titel, status: v.status, architekturVersion: v.architekturVersion },
+              fassung: doc ? { version: v.architekturVersion, inhalt: doc.content } : null,
+              basis: basis && alt ? { version: basis.version, angenommen: basis.angenommen } : null,
+              unterschied: doc && alt ? zeilenUnterschied(alt.content, doc.content) : null,
+            };
+          };
           (apiAdapter as unknown as { setVorhabenCallbacks?: (cb: unknown) => void }).setVorhabenCallbacks?.({
             liste: async (uid: string) => listeFuer(await owner(uid)),
             detail: async (uid: string, id: string) => {
@@ -16866,7 +16922,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       projekte: geraetId === WEB_OWNER_QUELLE ? undefined : await this.geraeteProjekteFuerApp(owner, geraetId), // v1487 — das Web hat eigene Projekt-Routen
       ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
-    return Object.assign(ansichten, this.weitereAnsichten(owner, db, geraetId), this.changesUebersicht ? { changes: this.changesUebersicht } : {});
+    return Object.assign(ansichten, this.weitereAnsichten(owner, db, geraetId), this.changesUebersicht ? { changes: this.changesUebersicht } : {}, this.architekturFassung ? { architekturFassung: this.architekturFassung } : {});
   }
 
   /** v1536 (Owner 20.10. „1–5 wie vorgeschlagen“) — Notizen, Wissen, Interessen, Ziele und Nutzung für die Apps (nur Owner). */

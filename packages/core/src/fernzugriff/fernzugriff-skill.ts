@@ -8,6 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
+import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
 import { kopiere, kopiereDatenbank, datenbankInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
 
 /**
@@ -46,6 +47,8 @@ export interface FernzugriffDeps {
   sshStrom?: (q: SshZiel, qBefehl: string, qEingabe: string, z: SshZiel, zBefehl: string, o: { timeoutMs: number; kbps?: number; fortschritt?: (bytes: number) => void }) => Promise<StromErgebnis & { hostSchluesselGeaendert: boolean }>;
   /** I6 (E4-G) — Geheimnis vom Quell-Host direkt in den Tresor (Wert erreicht nie das Modell) */
   tresorSetzen?: (name: string, wert: string, herkunft: string, zweck?: string) => Promise<void>;
+  /** v1658 — Container-Registry des eigenen GitLab (Server, Benutzer, Token aus forge.gitlab) */
+  registry?: () => Promise<RegistryZugang>;
   keyscan: (host: string, port: number) => Promise<string>;
   schluessel: () => Promise<{ pfad: string; oeffentlich: string; neu: boolean }>;
   melde?: (text: string) => void;
@@ -61,9 +64,9 @@ export interface FernzugriffDeps {
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
-const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar'] as const;
+const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen'] as const;
 /** I6 — Datenübertragung und Geheimnis-Übernahme nur als Schritte freigegebener Changes */
-const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen']);
+const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen']); // v1658 Registry
 
 /** v1549 (S3) — vollständige lange Ausgaben bleiben 2 h abrufbar (höchstens 30, je 5 MB), seitenweise oder per Suche. */
 const SEITEN_GUELTIG_MS = 2 * 3_600_000;
@@ -90,7 +93,8 @@ export class FernzugriffSkill extends Skill {
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
       `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
-      'datenbank_inventar (name, container, art=postgres|mysql|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}).',
+      'datenbank_inventar (name, container, art=postgres|mysql|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}). ' +
+      'REGISTRY (nur in Changes): image_hochladen (name, image = lokales Image auf dem Host, registry_ziel = <registry>/<gitlab-projekt>/<name>:<tag>) lädt ein lokal gebautes Image unverändert in die Registry des eigenen GitLab und liefert {{schrittN.digest}}; image_holen (name, image = <registry>/<pfad>@sha256:<digest>) holt genau dieses Image am Ziel und liefert {{schrittN.image_id}}. Anmeldung jeweils nur für den einen Aufruf (Token über stdin, temporäre Docker-Konfiguration).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 15 * 60_000,
@@ -123,6 +127,8 @@ export class FernzugriffSkill extends Skill {
         ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
         datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname' },
         container: { type: 'string', description: 'datenbank_inventar: Container der Datenbank' },
+        image: { type: 'string', description: 'image_hochladen: lokales Image auf dem Host (Name:Tag oder sha256:…); image_holen: <registry>/<pfad>@sha256:<digest>' },
+        registry_ziel: { type: 'string', description: 'image_hochladen: <registry>/<gitlab-projekt>/<name>:<tag> (eigene GitLab-Registry, Pfad aus gitlab projekte)' },
         art: { type: 'string', enum: ['postgres', 'mysql', 'mariadb', 'redis'], description: 'datenbank_inventar: postgres, mysql/mariadb oder redis' },
         db_benutzer: { type: 'string', description: 'datenbank_kopieren: Datenbank-Benutzer' },
         pfad: { type: 'string', description: 'geheim_uebernehmen: Datei mit Geheimnissen an der Quelle (z. B. /opt/app/.env)' },
@@ -148,7 +154,9 @@ export class FernzugriffSkill extends Skill {
     const a = String(input.action ?? '');
     // v1638 — Realfall 24.10. (026a0768 Schritt 3: geheim_uebernehmen mit „quelle“ statt „name“ hielt erst im Lauf an): auch diese Aktionen prüfen
     const zugangName = typeof input.name === 'string' && input.name.trim() ? input.name : a === 'geheim_uebernehmen' && typeof input.quelle === 'string' && input.quelle.trim() ? input.quelle : '';
-    if (['lesen', 'ausfuehren', 'pruefen', 'entfernen', 'geheim_uebernehmen', 'datenbank_inventar'].includes(a) && !zugangName) return `${a} braucht name (Zugang)`;
+    if (a === 'image_hochladen' && !(typeof input.image === 'string' && input.image.trim() && typeof input.registry_ziel === 'string' && input.registry_ziel.trim())) return 'image_hochladen braucht image (lokal) und registry_ziel';
+    if (a === 'image_holen' && !(typeof input.image === 'string' && input.image.includes('@sha256:'))) return 'image_holen braucht image mit @sha256-Digest';
+    if (['lesen', 'ausfuehren', 'pruefen', 'entfernen', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen'].includes(a) && !zugangName) return `${a} braucht name (Zugang)`;
     if (['kopieren', 'datenbank_kopieren'].includes(a) && !(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return `${a} braucht quelle und ziel (Zugänge)`;
     if (a === 'datenbank_inventar' && !(typeof input.container === 'string' && input.container.trim())) return 'datenbank_inventar braucht container';
     if (['lesen', 'ausfuehren'].includes(a) && !(typeof input.befehl === 'string' && input.befehl.trim())) return `${a} braucht befehl`;
@@ -179,6 +187,8 @@ export class FernzugriffSkill extends Skill {
         case 'datenbank_kopieren': return await this.datenbankKopieren(owner, input);
         case 'datenbank_inventar': return await this.datenbankInventarAktion(owner, input);
         case 'geheim_uebernehmen': return await this.geheimUebernehmen(owner, input);
+        case 'image_hochladen': return await this.imageHochladen(owner, input);
+        case 'image_holen': return await this.imageHolen(owner, input);
         default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => !a.endsWith('_bestaetigen')).join(', ')})` };
       }
     } catch (err) {
@@ -507,6 +517,41 @@ export class FernzugriffSkill extends Skill {
   }
 
   /** v1636 — festes, nur lesendes Inventar einer Datenbank im Container (PostgreSQL/Redis) mit Fingerabdruck für Vorher/Nachher */
+  /** v1658 — lokal gebautes Image unverändert in die eigene Registry (Token nur über stdin, temporäre Docker-Konfiguration) */
+  private async imageHochladen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.deps.registry || !this.deps.sshEingabe) return { success: false, error: 'Registry nicht eingerichtet (forge.gitlab fehlt)' };
+    const lokal = String(input.image ?? '').trim(), ziel = String(input.registry_ziel ?? '').trim();
+    if (!lokaleReferenz(lokal)) return { success: false, error: 'image: lokales Image als Name[:Tag] oder sha256:… angeben' };
+    const reg = await this.deps.registry();
+    const zr = zielReferenz(reg.server, ziel);
+    if ('fehler' in zr) return { success: false, error: zr.fehler };
+    const z = await this.zugang(owner, { name: input.name });
+    const r = await this.deps.sshEingabe(this.sshZiel(z), fernBefehl(hochladenBefehl(reg, lokal, ziel), true), reg.token, this.timeoutLang(input));
+    const digest = ausgabeWert(r.stdout, 'DIGEST');
+    this.deps.protokoll?.('v1658 Image hochgeladen', { name: z.name, image: lokal, ziel, code: r.code, digest });
+    if (r.code !== 0 || !digest) return { success: false, error: `Hochladen gescheitert (Exit ${r.code}): ${schwaerze(r.stderr || r.stdout).text.trim().slice(-300)}` };
+    return { success: true, data: { digest, referenz: `${ziel.slice(0, ziel.lastIndexOf(':'))}@${digest}`, ziel }, display: `${lokal} von ${z.name} unverändert hochgeladen: ${ziel} → ${digest}` };
+  }
+
+  /** v1658 — genau das Image mit diesem Digest am Host holen und den Digest prüfen */
+  private async imageHolen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.deps.registry || !this.deps.sshEingabe) return { success: false, error: 'Registry nicht eingerichtet (forge.gitlab fehlt)' };
+    const ref = String(input.image ?? '').trim();
+    const reg = await this.deps.registry();
+    const hr = holReferenz(reg.server, ref);
+    if ('fehler' in hr) return { success: false, error: hr.fehler };
+    const z = await this.zugang(owner, { name: input.name });
+    const r = await this.deps.sshEingabe(this.sshZiel(z), fernBefehl(holenBefehl(reg, ref, hr.digest), true), reg.token, this.timeoutLang(input));
+    const imageId = ausgabeWert(r.stdout, 'IMAGE_ID');
+    this.deps.protokoll?.('v1658 Image geholt', { name: z.name, image: ref, code: r.code, imageId });
+    if (r.code !== 0 || !imageId) return { success: false, error: `Holen gescheitert (Exit ${r.code}): ${schwaerze(r.stderr || r.stdout).text.trim().slice(-300)}` };
+    return { success: true, data: { image_id: imageId, digest: hr.digest, image: ref }, display: `${ref} auf ${z.name} geholt, Digest geprüft (Image ${imageId.slice(0, 19)}…)` };
+  }
+
+  private sshZiel(z: Fernzugang): SshZiel {
+    return { id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel };
+  }
+
   private async datenbankInventarAktion(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
     const z = await this.zugang(owner, { name: input.name });
     const art = input.art === 'redis' ? 'redis' : input.art === 'postgres' ? 'postgres' : input.art === 'mysql' || input.art === 'mariadb' ? 'mysql' : undefined;

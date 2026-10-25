@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'aufgaben.dart' show JsonAbruf;
+import 'markdown.dart' show AlfredText;
 
 const _erledigt = {'completed', 'rolled_back', 'failed', 'cancelled'};
 
@@ -64,6 +65,13 @@ int changesZahl(Map<String, dynamic> j, DateTime jetzt) {
   final id = '${v['id']}', kurz = id.length > 8 ? id.substring(0, 8) : id;
   final n = v['architekturVersion'] ?? '?';
   return (annehmen: 'Vorhaben $kurz: Architektur Version $n annehmen', ueberarbeiten: 'Vorhaben $kurz: Architektur Version $n überarbeiten — ', nachfragen: 'Vorhaben $kurz, Architektur Version $n: ');
+}
+
+/// 1.77.0 (Owner 25.10.: „man kann sich NICHT ansehen was man annimmt“) — Überschrift des Vergleichs aus `/api/geraete/vorhaben/<id>`.
+String fassungVergleichTitel(Map<String, dynamic> j) {
+  final b = (j['basis'] as Map?)?.cast<String, dynamic>();
+  if (b == null) return 'Erste Fassung — nichts zum Vergleichen';
+  return b['angenommen'] == true ? 'Neu gegenüber Fassung ${b['version']} (von dir angenommen)' : 'Neu gegenüber Fassung ${b['version']}';
 }
 
 /// Kurztext zum Status (deutsch), mit Phase für laufende/angehaltene Changes.
@@ -169,14 +177,72 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
         const SizedBox(height: 2),
         Text('$kurz · vorgeschlagene Architektur', style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 6),
-        Text('Alfred hat eine neue Fassung vorgeschlagen. Erst nach deiner Annahme plant er daraus Changes. Ansehen: Menü → Vorhaben.', style: t.textTheme.bodySmall),
+        Text('Alfred hat eine neue Fassung vorgeschlagen. Erst nach deiner Annahme plant er daraus Changes.', style: t.textTheme.bodySmall),
         const SizedBox(height: 6),
         Wrap(spacing: 6, runSpacing: 4, children: [
+          OutlinedButton.icon(onPressed: () => _fassungZeigen(v), icon: const Icon(Icons.article_outlined, size: 18), label: const Text('Fassung ansehen')),
           FilledButton.tonalIcon(onPressed: () => widget.aufNachfragen(s.annehmen), icon: const Icon(Icons.check, size: 18), label: const Text('Annehmen …')),
           TextButton(onPressed: () => widget.aufNachfragen(s.ueberarbeiten), child: const Text('Überarbeiten …')),
           TextButton.icon(onPressed: () => widget.aufNachfragen(s.nachfragen), icon: const Icon(Icons.chat_bubble_outline, size: 18), label: const Text('Nachfragen')),
         ]),
       ])),
+    );
+  }
+
+  /// 1.77.0 — Fassung mit „Was ist neu“ (Unterschied zur zuletzt angenommenen) und dem ganzen Text; Annehmen direkt von hier.
+  Future<void> _fassungZeigen(Map<String, dynamic> v) async {
+    final id = '${v['id']}';
+    final s = architekturSaetze(v);
+    final laden = widget.json('/api/geraete/vorhaben/$id');
+    await showDialog<void>(context: context, builder: (ctx) {
+      final t = Theme.of(ctx);
+      final gross = MediaQuery.of(ctx).size;
+      return Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        child: SizedBox(width: gross.width.clamp(320, 980).toDouble(), height: gross.height * 0.85, child: FutureBuilder<Map<String, dynamic>>(
+          future: laden,
+          builder: (ctx, snap) {
+            if (snap.hasError) return Center(child: Padding(padding: const EdgeInsets.all(16), child: Text('Fassung nicht ladbar: ${snap.error}', style: TextStyle(color: t.colorScheme.error))));
+            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+            final j = snap.data!;
+            final inhalt = '${(j['fassung'] as Map?)?['inhalt'] ?? 'Kein Dokument zur Fassung gefunden.'}';
+            final unterschied = ((j['unterschied'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+            return DefaultTabController(length: 2, child: Column(children: [
+              Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 0), child: Row(children: [
+                Expanded(child: Text('${v['titel']} · Fassung ${v['architekturVersion'] ?? '?'}', style: t.textTheme.titleMedium)),
+                IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close), tooltip: 'Schließen'),
+              ])),
+              const TabBar(tabs: [Tab(text: 'Was ist neu'), Tab(text: 'Ganze Fassung')]),
+              Expanded(child: TabBarView(children: [
+                ListView(padding: const EdgeInsets.all(16), children: [
+                  Text(fassungVergleichTitel(j), style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 8),
+                  if (j['basis'] != null && unterschied.isEmpty) const Text('Keine inhaltlichen Änderungen.'),
+                  for (final z in unterschied) _unterschiedZeile(t, z),
+                ]),
+                SingleChildScrollView(padding: const EdgeInsets.all(16), child: AlfredText(inhalt)),
+              ])),
+              Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: Wrap(spacing: 8, runSpacing: 4, alignment: WrapAlignment.end, children: [
+                TextButton(onPressed: () { Navigator.pop(ctx); widget.aufNachfragen(s.ueberarbeiten); }, child: const Text('Überarbeiten …')),
+                FilledButton.tonalIcon(onPressed: () { Navigator.pop(ctx); widget.aufNachfragen(s.annehmen); }, icon: const Icon(Icons.check, size: 18), label: const Text('Annehmen …')),
+              ])),
+            ]));
+          },
+        )),
+      );
+    });
+  }
+
+  Widget _unterschiedZeile(ThemeData t, Map<String, dynamic> z) {
+    final art = '${z['art']}', zeile = '${z['zeile']}';
+    if (art == 'abschnitt') return Padding(padding: const EdgeInsets.only(top: 10, bottom: 2), child: Text(zeile.replaceFirst(RegExp(r'^#+\s*'), ''), style: t.textTheme.titleSmall));
+    final neu = art == 'neu';
+    final farbe = neu ? Colors.green : t.colorScheme.error;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: farbe.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(4), border: Border(left: BorderSide(color: farbe, width: 3))),
+      child: SelectableText('${neu ? '+' : '−'} $zeile', style: t.textTheme.bodySmall?.copyWith(fontFamily: 'monospace', decoration: neu ? null : TextDecoration.lineThrough)),
     );
   }
 

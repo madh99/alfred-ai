@@ -82,4 +82,41 @@ void main() {
     expect(vorgefuellt, ['Vorhaben cf82f3f2: Architektur Version 6 annehmen', 'Vorhaben cf82f3f2: Architektur Version 6 überarbeiten — ']);
     await t.pumpWidget(const SizedBox());
   });
+
+  testWidgets('1.77.0: „Fassung ansehen“ zeigt die Änderungen gegenüber der angenommenen Fassung und den ganzen Text', (t) async {
+    t.view.physicalSize = const Size(1400, 1000); t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final d = _daten();
+    (d['vorhaben'] as List).add({'id': 'cf82f3f2-9859', 'titel': 'Dockerhost aufteilen', 'status': 'architektur_vorgeschlagen', 'architekturVersion': 8, 'changes': []});
+    final fassung = {
+      'vorhaben': {'id': 'cf82f3f2-9859', 'architekturVersion': 8},
+      'fassung': {'version': 8, 'inhalt': '# Zielarchitektur (Version 8)\n\nWeb zieht nach docker-web-01.'},
+      'basis': {'version': 6, 'angenommen': true},
+      'unterschied': [
+        {'art': 'abschnitt', 'zeile': '## Netze'},
+        {'art': 'weg', 'zeile': '| 826 | frei |'},
+        {'art': 'neu', 'zeile': '| 826 | Docker-Web |'},
+      ],
+    };
+    final abgerufen = <String>[], vorgefuellt = <String>[];
+    expect(fassungVergleichTitel(fassung), 'Neu gegenüber Fassung 6 (von dir angenommen)');
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChangesAnsicht(
+      json: (p, {methode = 'GET', koerper}) async { abgerufen.add(p); return p.startsWith('/api/geraete/vorhaben/') ? fassung : d; },
+      aufNachfragen: vorgefuellt.add, jetzt: () => _jetzt))));
+    await t.pump();
+    await t.tap(find.text('Fassung ansehen'));
+    await t.pumpAndSettle();
+    expect(abgerufen, contains('/api/geraete/vorhaben/cf82f3f2-9859'));
+    expect(find.text('Neu gegenüber Fassung 6 (von dir angenommen)'), findsOneWidget);
+    expect(find.text('Netze'), findsOneWidget);
+    expect(find.text('+ | 826 | Docker-Web |'), findsOneWidget);
+    expect(find.text('− | 826 | frei |'), findsOneWidget);
+    await t.tap(find.text('Ganze Fassung'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Web zieht nach docker-web-01.', findRichText: true), findsWidgets);
+    await t.tap(find.widgetWithText(FilledButton, 'Annehmen …').last);
+    await t.pumpAndSettle();
+    expect(vorgefuellt, ['Vorhaben cf82f3f2: Architektur Version 8 annehmen']);
+    await t.pumpWidget(const SizedBox());
+  });
 }

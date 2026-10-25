@@ -279,6 +279,8 @@ export interface GeraetOwnerAnsichten {
   lageKurz?(): Promise<unknown>;
   /** v1601 (Owner 22.10.: „eigene Changes-Ansicht in der App“) — Vorhaben und Changes mit Laufstand, wie die Web-Seite Vorhaben */
   changes?(): Promise<unknown>;
+  /** v1657 — vorgeschlagene Architektur-Fassung mit Unterschied zur zuletzt angenommenen (Karte „Architektur wartet auf dich“) */
+  architekturFassung?(vorhabenId: string): Promise<unknown>;
   liveMerken?(body: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -2237,7 +2239,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/owner\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|hinweise)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
       this.handleWebOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1487
-    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter|notizen|wissen|interessen|ziele|nutzung|lage|live|changes)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter, v1536 notizen/wissen/interessen/ziele/nutzung
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter|notizen|wissen|interessen|ziele|nutzung|lage|live|changes|vorhaben)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter, v1536 notizen/wissen/interessen/ziele/nutzung
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
@@ -7324,6 +7326,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'ziele' && id && m === 'GET' && a.ziel) { const x = await a.ziel(id); antwort(x ? 200 : 404, x ?? { error: 'nicht gefunden' }); return; }
       if (bereich === 'lage' && !id && m === 'GET' && a.lageKurz) { antwort(200, await a.lageKurz()); return; } // v1540
       if (bereich === 'changes' && !id && m === 'GET' && a.changes) { antwort(200, await a.changes()); return; } // v1601
+      if (bereich === 'vorhaben' && id && m === 'GET' && a.architekturFassung) { const x = await a.architekturFassung(id); antwort(x ? 200 : 404, x ?? { error: 'nicht gefunden' }); return; } // v1657
       if (bereich === 'live' && !id && m === 'POST' && a.liveMerken) { antwort(200, await a.liveMerken(body)); return; } // v1540
       if (bereich === 'nutzung' && !id && m === 'GET' && a.nutzung) { antwort(200, await a.nutzung(Number(url.searchParams.get('tage')) || undefined)); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }
