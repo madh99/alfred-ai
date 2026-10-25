@@ -1541,6 +1541,9 @@ export class MessagePipeline {
       let consecutiveErrors = 0;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
+      // v1659 — echte Kosten je Aufruf (vom Router, Cache berücksichtigt); fehlt ein Wert, gilt die alte Schätzung
+      let kostenSumme = 0, kostenVollstaendig = true;
+      const verbuche = (r: LLMResponse): void => { if (typeof r.kostenUsd === 'number') kostenSumme += r.kostenUsd; else kostenVollstaendig = false; };
       let lastModel: string | undefined;
       // v1099 (Etappe 2) — Responses-API-Kontinuität innerhalb der Tool-Schleife
       let previousResponseId: string | undefined;
@@ -1634,6 +1637,7 @@ export class MessagePipeline {
           if (response.model) { this.letzteModelle.delete(message.chatId); this.letzteModelle.set(message.chatId, { modell: response.model, stufe: String(message.metadata?.tier ?? 'automatisch'), zeit: Date.now() }); if (this.letzteModelle.size > 200) this.letzteModelle.delete(this.letzteModelle.keys().next().value!); } // v1510 D6b
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;
+          verbuche(response);
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           if (errMsg.includes('prompt is too long') && budgetMultiplier > 0.3) {
@@ -1655,6 +1659,7 @@ export class MessagePipeline {
             const zweiter = await this.llm.complete({ messages, system, tools: tools && tools.length > 0 ? tools : undefined, tier: message.metadata?.tier, maxTokens: groesser });
             totalInputTokens += zweiter.usage?.inputTokens ?? 0;
             totalOutputTokens += zweiter.usage?.outputTokens ?? 0;
+            verbuche(zweiter);
             response = zweiter;
             previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
           } catch (err) {
@@ -1696,6 +1701,7 @@ export class MessagePipeline {
                 });
                 totalInputTokens += response.usage?.inputTokens ?? 0;
                 totalOutputTokens += response.usage?.outputTokens ?? 0;
+                verbuche(response);
                 if (response.content) {
                   fullText += response.content;
                 }
@@ -2003,7 +2009,8 @@ export class MessagePipeline {
       const duration = Date.now() - startTime;
       const model = response.model ?? lastModel ?? 'unknown';
       lastModel = model;
-      const requestCostUsd = calculateCost(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens });
+      // v1659 — Realfall 25.10.: die Schätzung aus der Token-Summe rechnete jede Werkzeugrunde ohne Cache (16,39 $ statt ≈ 0,60 $)
+      const requestCostUsd = kostenVollstaendig ? kostenSumme : calculateCost(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens });
       this.logger.info(
         {
           duration, model,

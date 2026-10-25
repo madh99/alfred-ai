@@ -334,6 +334,7 @@ export class ModelRouter extends LLMProvider {
     const model = event.response.model ?? tierConfig?.model ?? 'unknown';
     if (!event.response.model) event.response.model = model;
     const costUsd = this.costTracker.record(model, event.response.usage);
+    event.response.kostenUsd = costUsd; // v1659
     this.logger?.info(
       {
         tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, stream: true,
@@ -353,6 +354,7 @@ export class ModelRouter extends LLMProvider {
     const model = response.model ?? tierConfig?.model ?? 'unknown';
     if (!response.model) response.model = model;
     const costUsd = this.costTracker.record(model, response.usage);
+    response.kostenUsd = costUsd; // v1659 — die Pipeline summiert die echten Kosten je Aufruf
     this.logger?.info(
       {
         tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, durationMs,

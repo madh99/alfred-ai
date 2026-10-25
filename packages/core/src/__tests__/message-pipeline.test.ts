@@ -161,6 +161,21 @@ describe('MessagePipeline', () => {
     expect(mockSkillSandbox.execute).toHaveBeenCalledTimes(1);
   });
 
+  // ---- v1659: Anfragekosten = Summe der echten Kosten je Aufruf (Cache berücksichtigt) ----
+  it('v1659 Realfall web-v1: Kosten der Anfrage aus den Aufrufen, nicht aus der Token-Summe', async () => {
+    mockLLM.complete.mockResolvedValueOnce({ content: '', toolCalls: [{ id: 'tc1', name: 'calculator', input: { expression: '1+1' } }], usage: { inputTokens: 120_000, outputTokens: 200, cacheReadTokens: 119_000 }, stopReason: 'tool_use', model: 'gpt-6.1-sol', kostenUsd: 0.015 });
+    mockLLM.complete.mockResolvedValueOnce({ content: 'Fertig.', usage: { inputTokens: 121_000, outputTokens: 300, cacheReadTokens: 120_000 }, stopReason: 'end_turn', model: 'gpt-6.1-sol', kostenUsd: 0.017 });
+    const skill = { metadata: { name: 'calculator', description: 'Calculator', riskLevel: 'read' as const, version: '1.0.0', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn() };
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+      skillRegistry: { get: vi.fn(() => skill), getAll: vi.fn(() => [skill]), has: vi.fn(), toToolDefinitions: vi.fn() } as any,
+      skillSandbox: { execute: vi.fn().mockResolvedValue({ success: true, data: 2, display: '2' }) } as any,
+    });
+    const vorher = pipeline.getMetrics().totalCostUsd;
+    await pipeline.process(makeMessage());
+    expect(pipeline.getMetrics().totalCostUsd - vorher).toBeCloseTo(0.032, 6);
+  });
+
   // ---- v1650: abgeschnittener Werkzeugaufruf wird nie mit {} ausgeführt ----
   for (const fall of [
     { name: 'Wiederholung mit größerem Limit liefert den vollständigen Aufruf', zweiterAbgeschnitten: false, erwarteteAusfuehrungen: 1 },

@@ -24,7 +24,7 @@ export function zeilenUnterschied(alt: string, neu: string, maxZeilen = 4000): U
   const aus: UnterschiedZeile[] = [];
   let ueberschrift = '', gezeigt = '';
   for (const z of roh) {
-    if (/^#{1,6}\s/.test(z.zeile) && z.art !== 'weg') ueberschrift = z.zeile;
+    if (/^#{1,6}\s/.test(z.zeile) && z.art !== 'weg') { ueberschrift = z.zeile; if (z.art === 'neu') gezeigt = z.zeile; } // geänderte Überschrift steht schon als Zeile da
     if (z.art === 'gleich' || !z.zeile.trim()) continue;
     if (ueberschrift && ueberschrift !== gezeigt && z.zeile !== ueberschrift) { aus.push({ art: 'abschnitt', zeile: ueberschrift }); gezeigt = ueberschrift; }
     aus.push({ art: z.art, zeile: z.zeile });

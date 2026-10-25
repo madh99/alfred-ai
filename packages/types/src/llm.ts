@@ -99,6 +99,8 @@ export interface LLMResponse {
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
   /** v1099 — Responses-API: ID dieser Antwort (für previousResponseId der nächsten Tool-Runde). */
   responseId?: string;
+  /** v1659 — vom Router verbuchte Kosten dieses einen Aufrufs (Cache-Lesen und -Schreiben berücksichtigt) */
+  kostenUsd?: number;
 }
 
 export interface ToolDefinition {

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Kosten je Anfrage stimmen bei langen Werkzeugschleifen (v1658)
+
+- **Realfall:** Für eine Anfrage mit 34 Werkzeugrunden wurden 16,39 $ gemeldet, tatsächlich kostete sie etwa 0,60 $. Die Kosten je Anfrage wurden aus der Summe aller Eingabe-Tokens geschätzt, ohne den Cache zu berücksichtigen. Die Gesamtkosten waren davon nicht betroffen.
+- **Jetzt** setzt sich die Zahl je Anfrage aus den tatsächlich verbuchten Kosten der einzelnen Aufrufe zusammen, einschließlich Cache.
+- Im Architektur-Vergleich erscheint eine geänderte Überschrift nicht mehr doppelt.
+
 ### Added — Architektur-Fassung in der App ansehen, GitLab-Registry für Alfred (v1657, App 1.77.0)
 
 - **Architektur-Fassung ansehen:** Die Karte „Architektur wartet auf dich“ hat jetzt den Knopf „Fassung ansehen“. Der Reiter „Was ist neu“ zeigt zeilengenau, was sich gegenüber der zuletzt angenommenen Fassung ändert, geordnet nach Abschnitten. Der Reiter „Ganze Fassung“ zeigt das vollständige Dokument. Annehmen und Überarbeiten gehen direkt aus der Ansicht.
