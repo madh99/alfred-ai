@@ -29,6 +29,29 @@ describe('MikroTik: Schreiben nur im Change', () => {
   });
 });
 
+// v1671 — NAT-/Filterregeln mit allen Bedingungen (Protokoll, Zielport, Schnittstelle, Zustand)
+describe('MikroTik: Regeln vollständig', () => {
+  it('nat_rules zeigt Protokoll, Zielport, Schnittstelle und Pause; add_nat setzt in-interface', async () => {
+    const s = new MikroTikSkill({ host: '192.168.1.95', username: 'alfred-api', password: 'x', ssl: true } as never);
+    let gesendet: Record<string, string> | undefined;
+    (s as unknown as { api: (c: unknown, m: string, p: string, b?: Record<string, string>) => Promise<unknown> }).api = async (_c, m, p, b) => {
+      if (m === 'POST') { gesendet = b; return { ret: '*9' }; }
+      if (p === '/ip/firewall/nat') return [{ '.id': '*2', chain: 'dstnat', action: 'dst-nat', protocol: 'tcp', 'dst-port': '443', 'in-interface': 'ether2', 'dst-address': '91.114.43.170', 'to-addresses': '172.31.0.10', 'to-ports': '443', bytes: '1', disabled: 'false' },
+        { '.id': '*5', chain: 'dstnat', action: 'dst-nat', 'dst-address': '91.114.43.171', 'to-addresses': '172.31.0.10', disabled: 'true' }];
+      return [{ '.id': '*1', chain: 'forward', action: 'accept', 'connection-state': 'established,related', disabled: 'false' }];
+    };
+    const n = (await s.execute({ action: 'nat_rules' }, {} as never)).display ?? '';
+    expect(n).toContain('protocol=tcp');
+    expect(n).toContain('dst-port=443');
+    expect(n).toContain('in-interface=ether2');
+    expect(n).toMatch(/⏸️ \*5/);
+    expect(n).not.toContain('bytes=');
+    expect((await s.execute({ action: 'firewall_rules' }, {} as never)).display).toContain('connection-state=established,related');
+    await s.execute({ action: 'add_nat', protocol: 'udp', port: '65246-65248', in_interface: 'ether2', to_addresses: '172.31.0.10' }, { ausChange: true } as never);
+    expect(gesendet).toMatchObject({ protocol: 'udp', 'dst-port': '65246-65248', 'in-interface': 'ether2', 'to-addresses': '172.31.0.10' });
+  });
+});
+
 // v1618 — Zertifikat-Pinning: bei falschem Fingerabdruck werden keine Zugangsdaten gesendet
 describe('MikroTik: Zertifikat-Pinning', () => {
   it('Vergleich ignoriert Doppelpunkte und Groß/Klein', async () => {

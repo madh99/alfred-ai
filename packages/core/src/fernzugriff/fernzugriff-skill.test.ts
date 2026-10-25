@@ -323,3 +323,16 @@ describe('v1668 Metadaten-Prüfungen laufen als root', () => {
     expect(t.befehle.some(b => b.includes('systemd-run'))).toBe(false);
   });
 });
+
+// v1671 — Owner 25.10. (pgsql-p01): Anmeldung abgelehnt → die Einrichtungsbefehle stehen in der Meldung und als Nachsatz
+describe('v1671 Einrichtung bei abgelehnter Anmeldung', () => {
+  it('Bestätigung mit Permission denied liefert die Befehle mit Alfreds Schlüssel', async () => {
+    const t = aufbau(() => ({ code: 255, stdout: '', stderr: 'alfred@10.0.0.14: Permission denied (publickey,password).' }));
+    await t.skill.execute({ action: 'anlegen', name: 'pve' }, ctx);
+    const zusatz: { nachsaetze?: string[] } = {};
+    const r = await t.skill.execute(t.fragen.pop()!.params, { ...ctx, antwortZusatz: zusatz } as unknown as SkillContext);
+    expect(r.display).toContain('useradd -m -s /bin/bash alfred');
+    expect(r.display).toContain("echo 'ssh-ed25519 XYZ alfred-fernzugriff' >> /home/alfred/.ssh/authorized_keys");
+    expect(zusatz.nachsaetze?.[0]).toContain('authorized_keys');
+  });
+});

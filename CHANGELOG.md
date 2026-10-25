@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — MikroTik-Regeln vollständig, Fernzugang-Einrichtung sichtbar (v1671)
+
+- Die Übersicht der NAT- und Firewall-Regeln des MikroTik zeigt jetzt alle Bedingungen einer Regel (Protokoll, Port, Schnittstelle, Verbindungszustand); neue Regeln können auf eine Schnittstelle beschränkt werden.
+- Scheitert die Anmeldung an einem neuen Fernzugang, nennt Alfred die nötigen Einrichtungsbefehle direkt in der Meldung, statt auf eine frühere Nachricht zu verweisen.
+
 ### Added — Port-Weiterleitungen auf der pfSense (v1670)
 
 - Alfred kann auf der pfSense, über die der Internetzugang läuft, Port-Weiterleitungen samt passender Firewall-Regel anlegen und wieder entfernen — nur als Schritt eines freigegebenen Changes, mit Rückweg. Anlass sind die Videoanrufe des Matrix-Servers.

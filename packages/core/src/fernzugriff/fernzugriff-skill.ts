@@ -178,8 +178,8 @@ export class FernzugriffSkill extends Skill {
         case 'liste': return await this.liste(owner);
         case 'schluessel': return await this.schluesselZeigen();
         case 'anlegen': return await this.anlegen(owner, input, herkunft);
-        case 'zugang_bestaetigen': return await this.zugangBestaetigen(owner, input);
-        case 'pruefen': return await this.pruefen(owner, input);
+        case 'zugang_bestaetigen': return await this.zugangBestaetigen(owner, input, context);
+        case 'pruefen': return await this.pruefen(owner, input, context);
         case 'lesen': return await this.lesen(owner, input, context);
         case 'ausfuehren': return await this.ausfuehren(owner, input, herkunft, context);
         case 'entfernen': return await this.entfernen(owner, input, herkunft);
@@ -245,7 +245,7 @@ export class FernzugriffSkill extends Skill {
       : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
   }
 
-  private async zugangBestaetigen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+  private async zugangBestaetigen(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const { freigabe, ...params } = input;
     if (!this.freigaben.verbrauche(freigabe, 'fernzugriff', 'zugang_bestaetigen', params)) return { success: false, error: 'Diese Bestätigung ist ungültig oder abgelaufen — Zugang neu anlegen.' };
     const z = await this.deps.repo.hole(owner, String(params.id ?? ''));
@@ -254,7 +254,7 @@ export class FernzugriffSkill extends Skill {
     if (z.cmdbAssetId) await this.deps.cmdbMarkiere?.(z.cmdbAssetId, { name: z.name, benutzer: z.benutzer, port: z.port }).catch(() => undefined);
     this.deps.protokoll?.('v1539 Fernzugang bestätigt', { name: z.name, host: z.host });
     this.deps.beiAenderung?.();
-    const p = await this.pruefen(owner, { name: z.name });
+    const p = await this.pruefen(owner, { name: z.name }, context);
     return { success: true, display: `✅ Fernzugang „${z.name}“ ist aktiv.\n${p.display ?? p.error ?? ''}` };
   }
 
@@ -336,10 +336,20 @@ export class FernzugriffSkill extends Skill {
     }
   }
 
-  private async pruefen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+  private async pruefen(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const z = await this.zugang(owner, input);
     const a = await this.lauf(owner, z, 'hostname', 20_000);
-    if (a.code !== 0) return { success: false, error: `Verbindung zu ${z.benutzer}@${z.host} fehlgeschlagen: ${a.stderr.trim().slice(-300)}${/Permission denied/i.test(a.stderr) ? ' — Schlüssel auf dem Host noch nicht eingetragen? (`schluessel` zeigt die Einrichtung)' : ''}` };
+    if (a.code !== 0) {
+      // v1671 — Owner 25.10.: bei pgsql-p01 sah er nur „Anmeldung blockiert, mit den oben gezeigten Befehlen einrichten“ —
+      // die Befehle selbst gehören in die Meldung und erreichen den Owner sicher (Nachsatz), auch wenn das Modell sie weglässt.
+      let einrichtung = '';
+      if (/Permission denied/i.test(a.stderr)) {
+        const k = await this.deps.schluessel().catch(() => undefined);
+        einrichtung = k ? `Einrichtung auf ${z.host} (als root):\n\n\`\`\`\n${einrichtungsBefehle(k.oeffentlich, z.benutzer)}\n\`\`\`` : '';
+        if (einrichtung && context?.antwortZusatz) (context.antwortZusatz.nachsaetze ??= []).push(einrichtung);
+      }
+      return { success: false, error: `Verbindung zu ${z.benutzer}@${z.host} fehlgeschlagen: ${a.stderr.trim().slice(-300)}${einrichtung ? `\n\nSchlüssel auf dem Host noch nicht eingetragen. ${einrichtung}` : ''}` };
+    }
     const s = await this.lauf(owner, z, 'sudo -n true', 20_000);
     // v1549 — Käfig mitprüfen (außer der Owner hat ihn abgeschaltet); ein früheres „fehlt“ wird neu getestet
     if (s.code === 0 && z.kaefig === 'fehlt' && this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }

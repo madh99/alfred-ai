@@ -60,6 +60,8 @@ export class MikroTikSkill extends Skill {
         port: { type: 'string', description: 'Destination Port' },
         to_addresses: { type: 'string', description: 'NAT to-addresses' },
         to_ports: { type: 'string', description: 'NAT to-ports' },
+        in_interface: { type: 'string', description: 'Eingehende Schnittstelle (in-interface), z. B. die WAN-Schnittstelle bei dst-nat' },
+        out_interface: { type: 'string', description: 'Ausgehende Schnittstelle (out-interface)' },
         comment: { type: 'string', description: 'Kommentar' },
         position: { type: 'number', description: 'Position in der Regelkette' },
         id: { type: 'string', description: 'RouterOS ID (*1, *2, etc.)' },
@@ -436,12 +438,8 @@ export class MikroTikSkill extends Skill {
     const chain = input.chain as string | undefined;
     if (chain) rules = rules.filter(r => r.chain === chain);
     const lines = [`## Firewall Rules — ${conn.name}`, `${rules.length} Regeln`, ''];
-    for (const r of rules.slice(0, 40)) {
-      const disabled = r.disabled === 'true' || r.disabled === true ? '⏸️' : '✅';
-      const src = r['src-address'] ?? '*';
-      const dst = r['dst-address'] ?? '*';
-      const proto = r.protocol ? `${r.protocol}${r['dst-port'] ? ':' + r['dst-port'] : ''}` : '*';
-      lines.push(`${disabled} ${r['.id']} **${r.chain}** ${src} → ${dst} (${proto}) → **${r.action}**${r.comment ? ` // ${r.comment}` : ''}`);
+    for (const r of rules.slice(0, 100)) {
+      lines.push(`${aus(r) ? '⏸️' : '✅'} ${r['.id']} **${r.chain}** ${regelBedingungen(r)} → **${r.action}**${r.comment ? ` // ${r.comment}` : ''}`);
     }
     return { success: true, data: { count: rules.length }, display: lines.join('\n') };
   }
@@ -453,6 +451,8 @@ export class MikroTikSkill extends Skill {
     if (input.dst) body['dst-address'] = input.dst as string;
     if (input.protocol) body.protocol = input.protocol as string;
     if (input.port) body['dst-port'] = input.port as string;
+    if (input.in_interface) body['in-interface'] = input.in_interface as string;
+    if (input.out_interface) body['out-interface'] = input.out_interface as string;
     if (input.comment) body.comment = input.comment as string;
     const result = await this.api<any>(conn, 'POST', '/ip/firewall/filter/add', body);
     return { success: true, display: `Firewall-Regel hinzugefügt auf **${conn.name}**: ${body.chain} ${body.action} (${result?.ret ?? 'ok'})` };
@@ -462,12 +462,10 @@ export class MikroTikSkill extends Skill {
     const conn = this.requireRouter(input);
     const rules = await this.api<any[]>(conn, 'GET', '/ip/firewall/nat');
     const lines = [`## NAT Rules — ${conn.name}`, `${rules.length} Regeln`, ''];
-    for (const r of rules.slice(0, 30)) {
-      const src = r['src-address'] ?? '*';
-      const dst = r['dst-address'] ?? '*';
+    for (const r of rules.slice(0, 100)) {
       const toAddr = r['to-addresses'] ?? '';
       const toPort = r['to-ports'] ?? '';
-      lines.push(`${r['.id']} **${r.chain}** ${src} → ${dst} → **${r.action}**${toAddr ? ` to ${toAddr}` : ''}${toPort ? `:${toPort}` : ''}${r.comment ? ` // ${r.comment}` : ''}`);
+      lines.push(`${aus(r) ? '⏸️' : '✅'} ${r['.id']} **${r.chain}** ${regelBedingungen(r)} → **${r.action}**${toAddr ? ` to ${toAddr}` : ''}${toPort ? `:${toPort}` : ''}${r.comment ? ` // ${r.comment}` : ''}`);
     }
     return { success: true, data: { count: rules.length }, display: lines.join('\n') };
   }
@@ -479,6 +477,8 @@ export class MikroTikSkill extends Skill {
     if (input.dst) body['dst-address'] = input.dst as string;
     if (input.protocol) body.protocol = input.protocol as string;
     if (input.port) body['dst-port'] = input.port as string;
+    if (input.in_interface) body['in-interface'] = input.in_interface as string;
+    if (input.out_interface) body['out-interface'] = input.out_interface as string;
     if (input.to_addresses) body['to-addresses'] = input.to_addresses as string;
     if (input.to_ports) body['to-ports'] = input.to_ports as string;
     if (input.comment) body.comment = input.comment as string;
@@ -734,5 +734,16 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} B`;
 }
+
+// v1671 — Fassung 11 (25.10.): die Kurzansicht zeigte nur Quelle/Ziel, Protokoll, Zielport, Schnittstelle und
+// Verbindungszustand fehlten → Weiterleitungen waren nicht eindeutig zuzuordnen. Jetzt alle Bedingungen der Regel.
+const KEINE_BEDINGUNG = new Set(['.id', '.nextid', 'chain', 'action', 'comment', 'disabled', 'dynamic', 'invalid', 'bytes', 'packets', 'to-addresses', 'to-ports', 'log', 'log-prefix']);
+export function regelBedingungen(r: Record<string, unknown>): string {
+  const teile = Object.entries(r)
+    .filter(([k, v]) => !KEINE_BEDINGUNG.has(k) && v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${k}=${String(v)}`);
+  return teile.length ? teile.join(' ') : 'alles';
+}
+function aus(r: Record<string, unknown>): boolean { return r.disabled === 'true' || r.disabled === true; }
 
 export { fingerabdruckGleich } from './social/tls-fetch.js';
