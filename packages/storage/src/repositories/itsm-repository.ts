@@ -929,9 +929,12 @@ export class ItsmRepository {
       if (!angehalten) throw new Error(`Change ist ${e.status} — Korrektur ab Haltepunkt nur bei einem angehaltenen Change`);
       const lauf = { ...(e.lauf as Record<string, unknown>), korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString() } };
       await this.db.execute(
-        `UPDATE cmdb_change_requests SET description = ?, implementation_plan = ?, rollback_plan = ?, test_plan = ?, schritte = ?, ausfall_minuten = ?, auswirkung = ?, pruefung = ?,
+        // v1662 — alle Plan-Felder wie beim normalen Ändern (Titel, Typ, Risiko, Assets, Abhängigkeiten gehen in den Fingerabdruck ein)
+        `UPDATE cmdb_change_requests SET title = ?, description = ?, type = ?, risk_level = ?, affected_asset_ids = ?, affected_service_ids = ?, implementation_plan = ?, rollback_plan = ?, test_plan = ?,
+          scheduled_at = ?, schritte = ?, vorhaben_id = ?, abhaengig_von = ?, ausfall_minuten = ?, auswirkung = ?, pruefung = ?,
           fingerabdruck = ?, freigabe_fingerabdruck = NULL, freigegeben_at = NULL, freigegeben_ueber = NULL, freigabe_anfrage = NULL, lauf = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'in_progress'`,
-        [d.description ?? null, d.implementationPlan, d.rollbackPlan, d.testPlan, JSON.stringify(d.schritte), d.ausfallMinuten ?? null, d.auswirkung === undefined ? null : JSON.stringify(d.auswirkung),
+        [d.title, d.description ?? null, d.type, d.riskLevel, JSON.stringify(d.affectedAssetIds), JSON.stringify(d.affectedServiceIds), d.implementationPlan, d.rollbackPlan, d.testPlan,
+          d.scheduledAt ?? null, JSON.stringify(d.schritte), d.vorhabenId ?? null, JSON.stringify(d.abhaengigVon), d.ausfallMinuten ?? null, d.auswirkung === undefined ? null : JSON.stringify(d.auswirkung),
           JSON.stringify(d.pruefung), d.fingerabdruck, JSON.stringify(lauf), new Date().toISOString(), e.id, userId],
       );
       return (await this.getChangeRequestById(userId, e.id))!;

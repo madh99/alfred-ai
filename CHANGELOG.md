@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Korrektur ab Haltepunkt lässt sich freigeben (v1662)
+
+- Eine Korrektur ab dem Haltepunkt wurde gespeichert, ließ sich aber nicht freigeben, wenn sich dabei auch die betroffenen Assets oder andere Plan-Angaben geändert hatten. Jetzt werden alle Angaben des korrigierten Plans übernommen.
+
 ### Added — Angehaltene Changes ab dem Haltepunkt korrigieren (v1661)
 
 - **Realfall:** Ein Change hielt nach sieben erfolgreichen Schritten an einer fehlerhaften Prüfung an. Weil er schon gewirkt hatte, war er nicht mehr änderbar; es blieb nur Abbrechen oder Rückweg mit neuer Planung, und damit verloren auch die abhängigen Changes ihre Freigabe.
