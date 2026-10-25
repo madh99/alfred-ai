@@ -168,6 +168,28 @@ describe('I4 Ausführungsmotor', () => {
     expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten');
   });
 
+  it('v1661 Realfall 0cd5c0a4: ab dem Haltepunkt korrigiert → weiter erst mit neuer Freigabe, dann am Haltepunkt ohne Wiederholung der früheren Schritte', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    const haltepunkt = l.schritt;
+    const vorher = w.aufrufe.length;
+    // Korrektur gespeichert: neuer Plan, Freigabe verfallen
+    l.korrektur = { abSchritt: haltepunkt, zeit: 'x' };
+    Object.assign(w.c, { fingerabdruck: 'neu', freigabeFingerabdruck: 'alt' });
+    expect(await w.motor.steuern('o', 'chg-1', 'wiederholen')).toContain('wartet auf deine Freigabe');
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    // Owner gibt den korrigierten Plan frei → der Motor macht am Haltepunkt weiter
+    w.c.freigabeFingerabdruck = 'neu'; w.snaps.add('i3probe');
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    expect((w.c.lauf as ChangeLauf).korrektur).toBeUndefined();
+    expect(w.aufrufe.slice(vorher).filter(a => a.startsWith('proxmox.vm_status')).length).toBeLessThanOrEqual(1); // Schritt 1 lief nicht erneut als Aktion
+    expect(w.meldungen.some(m => m.includes('Korrektur freigegeben'))).toBe(true);
+  });
+
   it('v1643 Realfall 4c5652a5: Skill-Prüfung durchsucht nur Werte, nicht Feldnamen (leeres „gesperrt“ ist kein GESPERRT)', async () => {
     const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT', erwartet: 'VLAN 825' } })]);
     w.deps.fuehreAus = async () => ({ success: true, display: 'Weg für Docker-Betrieb (VLAN 825):\n- Port 9: custom — durchgelassen\nAlle Ports lassen das Netz durch.', data: { netz: 'Docker-Betrieb', vlan: 825, pfad: [{ port: 9, durch: true }], gesperrt: [] } });

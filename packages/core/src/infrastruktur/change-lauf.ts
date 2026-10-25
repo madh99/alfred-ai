@@ -32,6 +32,8 @@ export interface ChangeLauf {
   stoerungen?: Array<{ incidentId: string; titel: string; schwere: string; zeit: string }>;
   /** Wiederholen nach gelungener Aktion mit gescheiterter Prüfung: nur die Prüfung neu (Aktion nicht doppelt — z. B. Download „gibt es schon“) */
   nurPruefung?: { nr: number; ausgabe?: string; daten?: unknown };
+  /** v1661 — Plan ab dem Haltepunkt korrigiert; weiter erst mit der Freigabe des neuen Plans */
+  korrektur?: { abSchritt: number; zeit: string };
 }
 
 export const MAX_AUSGABE = 2000;

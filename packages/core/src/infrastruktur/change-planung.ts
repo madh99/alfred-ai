@@ -11,7 +11,7 @@ export interface ChangeSpeicher {
   liste(owner: string): Promise<CmdbChangeRequest[]>;
   hole(owner: string, id: string): Promise<CmdbChangeRequest | null>;
   legeAn(owner: string, d: ChangeSchrittDaten): Promise<CmdbChangeRequest>;
-  setzeSchritte(owner: string, id: string, d: ChangeSchrittDaten, o?: { haltOhneWirkung?: boolean }): Promise<CmdbChangeRequest>;
+  setzeSchritte(owner: string, id: string, d: ChangeSchrittDaten, o?: { haltOhneWirkung?: boolean; korrekturAb?: number }): Promise<CmdbChangeRequest>;
   freigeben(owner: string, id: string, fingerabdruck: string, ueber: 'frage' | 'web'): Promise<CmdbChangeRequest>;
   setzeFreigabeAnfrage(owner: string, id: string, a: { hash: string; bis: string; fingerabdruck: string } | null): Promise<void>;
   /** I4b Teil 4 — Change aus freigegebener Standard-Vorlage (sofort freigegeben) */
@@ -156,6 +156,19 @@ export class ChangePlanung {
     if (ew.fehler.length) return { ok: false, fehler: ew.fehler };
     const ctx = await this.kontext(owner);
     ctx.changes = ctx.changes.filter(c => c.id !== alt.id);
+    // v1661 — Realfall 25.10. (0cd5c0a4 Schritt 8: falscher Image-Vergleich, Schritte 1–7 hatten schon gewirkt): ein angehaltener Change MIT
+    // Wirkung ist ab dem Haltepunkt korrigierbar. Die schon gelaufenen Schritte übernimmt der Server unverändert aus dem gespeicherten Plan,
+    // der Lauf mit seinen Ergebnissen bleibt; die Freigabe verfällt, nach dem neuen Ja geht es am Haltepunkt weiter.
+    const lauf0 = alt.lauf as { phase?: string; schritt?: number; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
+    const hatGewirkt = (lauf0?.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
+    const korrekturAb = alt.status === 'in_progress' && lauf0?.phase === 'angehalten' && hatGewirkt && typeof lauf0.schritt === 'number' ? lauf0.schritt : undefined;
+    if (korrekturAb !== undefined) {
+      const r = (typeof roh === 'string' ? (() => { try { return JSON.parse(roh) as Record<string, unknown>; } catch { return undefined; } })() : roh as Record<string, unknown> | undefined) ?? {};
+      const neue = Array.isArray(r.schritte) ? r.schritte : [];
+      if (neue.length < korrekturAb) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} ist bei Schritt ${korrekturAb} angehalten und hat schon gewirkt — nur ab Schritt ${korrekturAb} änderbar; die vollständige Schrittliste mit gleicher Nummerierung senden`] };
+      const gelaufen = [...((alt.schritte ?? []) as ChangeSchritt[])].filter(s => s.nr < korrekturAb).sort((a, b) => a.nr - b.nr);
+      roh = { ...r, schritte: [...gelaufen, ...neue.slice(korrekturAb - 1)] };
+    }
     const e = pruefeChangePlan(roh, ctx);
     const fehler = [...e.fehler];
     const kanten = new Map(ctx.changes.map(c => [c.id, c.abhaengigVon] as [string, string[]]));
@@ -169,10 +182,10 @@ export class ChangePlanung {
     const lauf = alt.lauf as { phase?: string; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
     const haltOhneWirkung = alt.status === 'in_progress' && lauf?.phase === 'angehalten'
       && !(lauf.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
-    if (alt.status === 'in_progress' && !haltOhneWirkung) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} läuft oder hat schon etwas verändert — nicht mehr änderbar (abbrechen bzw. Rückweg, dann neu planen)`] };
-    const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung });
+    if (alt.status === 'in_progress' && !haltOhneWirkung && korrekturAb === undefined) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} läuft gerade — nicht änderbar (erst angehalten ist er ab dem Haltepunkt korrigierbar)`] };
+    const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung, ...(korrekturAb !== undefined ? { korrekturAb } : {}) });
     if (ew.antworten.length) await this.d.einwand!.speichereAntworten(owner, ew.antworten);
-    const verfallen = (alt.status === 'approved' || haltOhneWirkung) && neu.status !== 'approved';
+    const verfallen = (alt.status === 'approved' || haltOhneWirkung || korrekturAb !== undefined) && neu.freigabeFingerabdruck !== neu.fingerabdruck;
     this.d.protokoll?.('I3 Change geändert', { id: alt.id, freigabeVerfallen: verfallen, fingerabdruck: neu.fingerabdruck?.slice(0, 12) });
     return { ok: true, change: neu, freigabeVerfallen: verfallen };
   }
@@ -203,7 +216,9 @@ export class ChangePlanung {
   /** Vor jeder Freigabe: gespeicherten Plan erneut prüfen (CMDB/Skills können sich geändert haben), Fingerabdruck vergleichen, Sperren. */
   async freigabeBereit(owner: string, c: CmdbChangeRequest): Promise<{ ok: true; auswirkung: Auswirkung; hinweise: string[] } | { ok: false; grund: string }> {
     if (!c.schritte?.length) return { ok: false, grund: 'Change ohne Schritte' };
-    if (c.status !== 'submitted') return { ok: false, grund: `Status ${c.status} — freigeben geht nur bei submitted${c.status === 'draft' ? ' (offener Einwand oder Prüffehler — erst den Plan überarbeiten)' : ''}` };
+    // v1661 — korrigierter angehaltener Change: braucht die Freigabe des neuen Plans
+    const korrigiert = c.status === 'in_progress' && !!(c.lauf as { korrektur?: unknown } | undefined)?.korrektur && (c.lauf as { phase?: string }).phase === 'angehalten' && c.freigabeFingerabdruck !== c.fingerabdruck;
+    if (c.status !== 'submitted' && !korrigiert) return { ok: false, grund: `Status ${c.status} — freigeben geht nur bei submitted${c.status === 'draft' ? ' (offener Einwand oder Prüffehler — erst den Plan überarbeiten)' : ''}` };
     const offen = this.d.einwand ? await this.d.einwand.offen(owner, 'change', c.id) : [];
     if (offen.length) return { ok: false, grund: `${offen.length} offene Einwände des Owners — erst beantworten (change_aendern mit antworten)` };
     const ctx = await this.kontext(owner);

@@ -106,6 +106,14 @@ export class ChangeMotor {
       // Owner hat im Web/Chat abgebrochen, während der Change angehalten war → Bericht nachtragen
       if (c.status === 'cancelled' && l && l.phase !== 'fertig') { await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen'); continue; }
       if (c.status === 'in_progress' && l && (l.phase === 'laeuft' || l.phase === 'rueckweg')) { await this.nachNeustart(o, c, l); continue; }
+      // v1661 — korrigierter angehaltener Change: nach der Freigabe des neuen Plans am Haltepunkt weiter
+      if (c.status === 'in_progress' && l?.phase === 'angehalten' && l.korrektur && c.freigabeFingerabdruck && c.freigabeFingerabdruck === c.fingerabdruck) {
+        this.log('I4 Korrigierter Change läuft weiter', { id: c.id, abSchritt: l.korrektur.abSchritt });
+        await this.d.melde?.(`▶️ Korrektur freigegeben: ${c.title} (${c.id.slice(0, 8)}) läuft ab Schritt ${l.korrektur.abSchritt} weiter`, false);
+        await this.steuern(o, c.id, 'wiederholen');
+        gestartet.push(c.id);
+        continue;
+      }
       if (c.status !== 'approved') continue;
       if (c.scheduledAt && Date.parse(c.scheduledAt) > this.jetzt()) continue;
       const abh = (c.abhaengigVon ?? []).map(id => alle.find(x => x.id === id));
@@ -445,6 +453,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Es gibt nichts zurückzunehmen — „abbrechen“ beendet den Change.';
       void this.rueckweg(o, c, l, l.grund ?? 'vom Owner gewählt').catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
       return 'Rückweg läuft — ich melde das Ergebnis.';
+    }
+    // v1661 — ab dem Haltepunkt korrigiert: weiter nur, wenn der Owner genau den neuen Plan freigegeben hat
+    if (l.korrektur) {
+      if (!c.freigabeFingerabdruck || c.freigabeFingerabdruck !== c.fingerabdruck) return `Der Plan wurde ab Schritt ${l.korrektur.abSchritt} korrigiert — er wartet auf deine Freigabe, danach geht es dort weiter.`;
+      delete l.korrektur;
     }
     const alt = l.ergebnisse.find(e => e.nr === l.schritt);
     const s = (c.schritte as ChangeSchritt[] | undefined)?.find(x => x.nr === l.schritt);

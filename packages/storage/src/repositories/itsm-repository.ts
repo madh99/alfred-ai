@@ -919,11 +919,25 @@ export class ItsmRepository {
    * I3 — Plan eines Changes mit Schritten ersetzen. Ändert sich der Fingerabdruck, verfällt eine Freigabe (Status zurück auf
    * submitted bzw. draft bei Prüffehlern). Laufende oder abgeschlossene Changes bleiben unverändert.
    */
-  async setzeSchritte(userId: string, id: string, d: ChangeSchrittDaten, o: { haltOhneWirkung?: boolean } = {}): Promise<CmdbChangeRequest> {
+  async setzeSchritte(userId: string, id: string, d: ChangeSchrittDaten, o: { haltOhneWirkung?: boolean; korrekturAb?: number } = {}): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e) throw new Error(`Change ${id} nicht gefunden`);
+    const angehalten = e.status === 'in_progress' && (e.lauf as { phase?: string } | undefined)?.phase === 'angehalten';
+    // v1661 — angehalten MIT Wirkung, korrigiert ab dem Haltepunkt (der Aufrufer übernimmt die gelaufenen Schritte unverändert):
+    // Plan und Fingerabdruck neu, Lauf und Status bleiben, die Freigabe verfällt
+    if (o.korrekturAb !== undefined) {
+      if (!angehalten) throw new Error(`Change ist ${e.status} — Korrektur ab Haltepunkt nur bei einem angehaltenen Change`);
+      const lauf = { ...(e.lauf as Record<string, unknown>), korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString() } };
+      await this.db.execute(
+        `UPDATE cmdb_change_requests SET description = ?, implementation_plan = ?, rollback_plan = ?, test_plan = ?, schritte = ?, ausfall_minuten = ?, auswirkung = ?, pruefung = ?,
+          fingerabdruck = ?, freigabe_fingerabdruck = NULL, freigegeben_at = NULL, freigegeben_ueber = NULL, freigabe_anfrage = NULL, lauf = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'in_progress'`,
+        [d.description ?? null, d.implementationPlan, d.rollbackPlan, d.testPlan, JSON.stringify(d.schritte), d.ausfallMinuten ?? null, d.auswirkung === undefined ? null : JSON.stringify(d.auswirkung),
+          JSON.stringify(d.pruefung), d.fingerabdruck, JSON.stringify(lauf), new Date().toISOString(), e.id, userId],
+      );
+      return (await this.getChangeRequestById(userId, e.id))!;
+    }
     // v1644 — angehalten, aber noch ohne Wirkung (der Aufrufer prüft das): Plan überarbeiten, Lauf verwerfen, neue Freigabe nötig
-    const haltNeu = o.haltOhneWirkung === true && e.status === 'in_progress' && (e.lauf as { phase?: string } | undefined)?.phase === 'angehalten';
+    const haltNeu = o.haltOhneWirkung === true && angehalten;
     if (!haltNeu && !['draft', 'submitted', 'approved'].includes(e.status)) throw new Error(`Change ist ${e.status} — Plan nicht mehr änderbar`);
     if (haltNeu) await this.db.execute('UPDATE cmdb_change_requests SET lauf = NULL, started_at = NULL, completed_at = NULL, status = ? WHERE id = ? AND user_id = ?', ['submitted', e.id, userId]);
     const freigabeBleibt = e.status === 'approved' && e.freigabeFingerabdruck === d.fingerabdruck && !d.pruefung.fehler.length;
@@ -1025,10 +1039,21 @@ export class ItsmRepository {
   async freigebeSchrittChange(userId: string, id: string, fingerabdruck: string, ueber: 'frage' | 'web'): Promise<CmdbChangeRequest> {
     const e = await this.getChangeRequestById(userId, id);
     if (!e?.schritte?.length) throw new Error(`Change ${id} nicht gefunden oder ohne Schritte`);
-    if (e.status !== 'submitted') throw new Error(`Freigabe nur im Status submitted (ist ${e.status})`);
+    // v1661 — korrigierter angehaltener Change: Freigabe des neuen Plans, Status bleibt in_progress (der Motor macht am Haltepunkt weiter)
+    const korrigiert = e.status === 'in_progress' && !!(e.lauf as { korrektur?: unknown; phase?: string } | undefined)?.korrektur && (e.lauf as { phase?: string }).phase === 'angehalten';
+    if (e.status !== 'submitted' && !korrigiert) throw new Error(`Freigabe nur im Status submitted (ist ${e.status})`);
     if (e.pruefung?.fehler.length) throw new Error(`Prüfung nicht bestanden (${e.pruefung.fehler.length} Punkte)`);
     if (!e.fingerabdruck || e.fingerabdruck !== fingerabdruck) throw new Error('Der Plan hat sich seit der Freigabe-Frage geändert — Freigabe ungültig');
     const now = new Date().toISOString();
+    if (korrigiert) {
+      await this.db.execute(
+        `UPDATE cmdb_change_requests SET freigabe_fingerabdruck = ?, freigegeben_at = ?, freigegeben_ueber = ?, freigabe_anfrage = NULL, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'in_progress' AND fingerabdruck = ?`,
+        [fingerabdruck, now, ueber, now, e.id, userId, fingerabdruck],
+      );
+      const k = (await this.getChangeRequestById(userId, e.id))!;
+      if (k.freigabeFingerabdruck !== fingerabdruck) throw new Error('Freigabe nicht gesetzt (Change hat sich parallel geändert)');
+      return k;
+    }
     await this.db.execute(
       `UPDATE cmdb_change_requests SET status = 'approved', freigabe_fingerabdruck = ?, freigegeben_at = ?, freigegeben_ueber = ?, freigabe_anfrage = NULL, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'submitted' AND fingerabdruck = ?`,
       [fingerabdruck, now, ueber, now, e.id, userId, fingerabdruck],

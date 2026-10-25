@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
-import { aktionsArt, changeFingerabdruck, plaeneAusSchritten, pruefeChangePlan, zyklus, type PruefKontext } from './change-schritte.js';
+import { aktionsArt, changeFingerabdruck, plaeneAusSchritten, pruefeChangePlan, zyklus, type PruefKontext, type ChangeSchritt } from './change-schritte.js';
 import { ChangePlanung, planAusChange, FREIGABE_FRAGE_GUELTIG_MS } from './change-planung.js';
 
 // I3 — Changes mit Schritten: Prüfung beim Anlegen, Fingerabdruck, Paket, Owner-Freigabe
@@ -128,9 +128,9 @@ function speicher() {
 describe('v1644 angehaltenen Change ohne Wirkung neu planen (Realfall 5d960660)', () => {
   it('Halt nach Prüfung/fehlgeschlagenem Schritt ohne Daten → änderbar, Lauf weg, neue Freigabe; nach Wirkung → abgewiesen', async () => {
     const it3 = speicher();
-    let haltFlag: boolean | undefined;
+    let haltFlag: boolean | undefined; let korrekturAb: number | undefined;
     const orig = it3.setzeSchritte;
-    it3.setzeSchritte = async (o: string, id: string, d: ChangeSchrittDaten, x?: { haltOhneWirkung?: boolean }) => { haltFlag = x?.haltOhneWirkung; const r = await orig(o, id, d); delete (r as { lauf?: unknown }).lauf; return r; };
+    it3.setzeSchritte = async (o: string, id: string, d: ChangeSchrittDaten, x?: { haltOhneWirkung?: boolean; korrekturAb?: number }) => { haltFlag = x?.haltOhneWirkung; korrekturAb = x?.korrekturAb; const r = await orig(o, id, d); delete (r as { lauf?: unknown }).lauf; return r; };
     const pl = new ChangePlanung({ itsm: it3 as never, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
     const ok = await pl.planen('o', [snapshotChange()]);
     if (!ok.ok) throw new Error('planen');
@@ -142,9 +142,26 @@ describe('v1644 angehaltenen Change ohne Wirkung neu planen (Realfall 5d960660)'
     if (r.ok) expect(r.freigabeVerfallen).toBe(true);
     const d = it3.db.get(c.id)!;
     Object.assign(d, { status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, ergebnisse: [{ nr: 3, ok: false, aktionOk: true }] } }); // Schritt 3 (aendern) hat gewirkt
-    const r2 = await pl.aendern('o', d.id, snapshotChange());
-    expect(r2.ok).toBe(false);
-    if (!r2.ok) expect(r2.fehler.join(' ')).toContain('schon etwas verändert');
+    // v1661 — Realfall 0cd5c0a4: mit Wirkung ab dem Haltepunkt korrigierbar; gelaufene Schritte übernimmt der Server unverändert
+    const geaendert = snapshotChange();
+    geaendert.schritte[0]!.titel = 'Zustand lesen (vom Modell umformuliert)';
+    (geaendert.schritte[2]!.rueckweg as { keiner: string }).keiner = 'Probe-Snapshot, korrigierter Grund';
+    const r2 = await pl.aendern('o', d.id, geaendert);
+    expect(r2.ok).toBe(true);
+    expect(korrekturAb).toBe(3);
+    const e = it3.db.get(d.id)!;
+    expect((e.schritte as ChangeSchritt[])[0]!.titel).toBe('Zustand lesen');
+    expect((e.schritte as ChangeSchritt[])[2]!.rueckweg).toEqual({ keiner: 'Probe-Snapshot, korrigierter Grund' });
+    if (r2.ok) expect(r2.freigabeVerfallen).toBe(true);
+    const kurz = snapshotChange(); kurz.schritte = kurz.schritte.slice(0, 2);
+    Object.assign(it3.db.get(d.id)!, { status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, ergebnisse: [{ nr: 3, ok: false, aktionOk: true }] } });
+    const r3 = await pl.aendern('o', d.id, kurz);
+    expect(r3.ok).toBe(false);
+    if (!r3.ok) expect(r3.fehler.join(' ')).toContain('nur ab Schritt 3 änderbar');
+    Object.assign(it3.db.get(d.id)!, { status: 'in_progress', lauf: { phase: 'laeuft', schritt: 3, ergebnisse: [] } });
+    const r4 = await pl.aendern('o', d.id, snapshotChange());
+    expect(r4.ok).toBe(false);
+    if (!r4.ok) expect(r4.fehler.join(' ')).toContain('läuft gerade');
   });
 });
 

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Angehaltene Changes ab dem Haltepunkt korrigieren (v1661)
+
+- **Realfall:** Ein Change hielt nach sieben erfolgreichen Schritten an einer fehlerhaften Prüfung an. Weil er schon gewirkt hatte, war er nicht mehr änderbar; es blieb nur Abbrechen oder Rückweg mit neuer Planung, und damit verloren auch die abhängigen Changes ihre Freigabe.
+- **Jetzt** lässt sich ein angehaltener Change ab dem Haltepunkt korrigieren. Die bereits gelaufenen Schritte bleiben unverändert erhalten, der korrigierte Rest braucht eine neue Freigabe. Nach dem Ja macht der Change genau dort weiter, ohne frühere Schritte zu wiederholen.
+- Planungshinweis ergänzt: Images werden über ihren Registry-Digest verglichen, nicht über die Image-ID, die je nach Docker-Speicher verschieden ausfällt.
+
 ### Fixed — Bestätigte Fernzugriffe antworten im richtigen Gespräch, öffentliche Images per Digest (v1660)
 
 - **Fortsetzung im Ursprungsgespräch:** Wurde eine Fernzugriff-Aktion aus einem Gesprächsfaden heraus vorgeschlagen und in der App bestätigt, kam das Ergebnis im Telegram-Hauptgespräch an statt im Faden. Jetzt läuft die Fortsetzung dort, wo die Frage gestellt wurde; das Hauptgespräch erhält wie bisher eine Kopie.
