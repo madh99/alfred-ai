@@ -1649,10 +1649,31 @@ export class MessagePipeline {
           throw err;
         }
 
+        // v1674 — Realfall 26.10. 00:43 (data2-Change, Opus 5.5 mit immer aktivem Denken): viermal stop_reason max_tokens bei
+        // 4096 Tokens ohne Text und ohne Werkzeugaufruf — das Limit ging im Denkblock bzw. im verworfenen tool_use auf. Die
+        // Text-Fortsetzung schickte dreimal dieselbe Anfrage mit demselben Limit, am Ende „(no response)“. Jetzt: einmal dieselbe
+        // Anfrage mit größerem Limit; ein danach abgeschnittener Werkzeugaufruf geht ohne erneute Vergrößerung in den v1650-Pfad.
+        let schonVergroessert = false;
+        if (response.stopReason === 'max_tokens' && !response.toolCalls?.length && !(response.content ?? '').trim()) {
+          const groesser = abgeschnittenGroesseresLimit(this.llm.getContextWindow().maxOutputTokens);
+          this.logger.warn({ groesser, outputTokens: response.usage?.outputTokens }, 'v1674 leere Antwort am Ausgabelimit — Wiederholung mit größerem Limit');
+          try {
+            const zweiter = await this.llm.complete({ messages, system, tools: tools && tools.length > 0 ? tools : undefined, tier: message.metadata?.tier, maxTokens: groesser });
+            totalInputTokens += zweiter.usage?.inputTokens ?? 0;
+            totalOutputTokens += zweiter.usage?.outputTokens ?? 0;
+            verbuche(zweiter);
+            response = zweiter;
+            previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
+            schonVergroessert = true;
+          } catch (err) {
+            this.logger.warn({ err: (err as Error).message }, 'v1674 Wiederholung mit größerem Limit gescheitert');
+          }
+        }
+
         // v1650 — ein am Ausgabelimit abgeschnittener Werkzeugaufruf (Argumente unvollständig, kamen als {} an)
         // wird einmal mit größerem Limit wiederholt; bleibt er abgeschnitten, wird er verworfen und das Modell
         // aufgefordert, ihn aufzuteilen (Realfall 25.10.: changes_planen bei 4096 Tokens zweimal „Unbekannte Aktion“).
-        if (response.stopReason === 'max_tokens' && response.toolCalls?.length) {
+        if (response.stopReason === 'max_tokens' && response.toolCalls?.length && !schonVergroessert) {
           const groesser = abgeschnittenGroesseresLimit(this.llm.getContextWindow().maxOutputTokens);
           this.logger.warn({ toolCallCount: response.toolCalls.length, groesser }, 'v1650 Werkzeugaufruf am Ausgabelimit abgeschnitten — Wiederholung mit größerem Limit');
           try {
@@ -1705,13 +1726,17 @@ export class MessagePipeline {
                 if (response.content) {
                   fullText += response.content;
                 }
+                if (response.toolCalls?.length) { previousResponseId = response.responseId; break; } // v1674 — die Fortsetzung will ein Werkzeug: ausführen statt verwerfen
               } catch {
                 break;
               }
             }
-            response = { ...response, content: fullText, stopReason: 'end_turn' };
+            // v1674 — vollständige Werkzeugaufrufe aus der Fortsetzung laufen weiter durch die Schleife
+            response = response.toolCalls?.length && response.stopReason !== 'max_tokens'
+              ? { ...response, content: fullText }
+              : { ...response, content: fullText, stopReason: 'end_turn', toolCalls: undefined };
           }
-          break;
+          if (!response.toolCalls?.length) break;
         }
 
         // Timeout check

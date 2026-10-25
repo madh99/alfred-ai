@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Keine leere Antwort mehr bei langen Planungen (v1674)
+
+- Bricht das Modell eine Antwort am Ausgabelimit ab, bevor Text oder ein Werkzeugaufruf entstanden ist, wiederholt Alfred die Anfrage einmal mit größerem Limit, statt sie mehrmals unverändert zu senden und am Ende ohne Antwort dazustehen. Werkzeugaufrufe aus einer fortgesetzten Antwort werden jetzt ausgeführt.
+
 ### Fixed — Prüfungen in Changes dürfen Dateien lesen (v1673)
 
 - Prüfschritte in geplanten Changes dürfen jetzt dieselben lesenden Befehle verwenden, die Alfred auch sonst ohne Rückfrage geschützt ausführt (zum Beispiel eine Konfigurationsdatei anzeigen oder Prozesse auflisten). Verändernde Befehle und Dateien mit Geheimnissen bleiben als Prüfung ausgeschlossen.

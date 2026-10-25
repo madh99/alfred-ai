@@ -207,6 +207,42 @@ describe('MessagePipeline', () => {
     });
   }
 
+  // ---- v1674: leere Antwort am Ausgabelimit (Denkblock) → einmal mit größerem Limit, Werkzeugaufruf wird ausgeführt ----
+  it('v1674 leere max_tokens-Antwort: Wiederholung mit größerem Limit, danach Werkzeug ausgeführt statt „(no response)“', async () => {
+    const leer = { content: '', usage: { inputTokens: 1, outputTokens: 4096 }, stopReason: 'max_tokens' };
+    mockLLM.complete.mockResolvedValueOnce(leer);
+    mockLLM.complete.mockResolvedValueOnce({ content: '', toolCalls: [{ id: 'tc1', name: 'calculator', input: { expression: '2+2' } }], usage: { inputTokens: 1, outputTokens: 6000 }, stopReason: 'tool_use' });
+    mockLLM.complete.mockResolvedValueOnce({ content: 'Change vorgelegt.', usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end_turn' });
+    const skill = { metadata: { name: 'calculator', description: 'Calculator', riskLevel: 'read' as const, version: '1.0.0', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn() };
+    const sandbox = { execute: vi.fn().mockResolvedValue({ success: true, data: 4, display: '4' }) };
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+      skillRegistry: { get: vi.fn(() => skill), getAll: vi.fn(() => [skill]), has: vi.fn(), toToolDefinitions: vi.fn() } as any,
+      skillSandbox: sandbox as any,
+    });
+    const result = await pipeline.process(makeMessage());
+    expect(result.text).toBe('Change vorgelegt.');
+    expect(mockLLM.complete.mock.calls[1][0].maxTokens).toBeGreaterThan(0);
+    expect(mockLLM.complete.mock.calls[1][0].messages).toEqual(mockLLM.complete.mock.calls[0][0].messages); // dieselbe Anfrage, kein „kürzer“-Zusatz
+    expect(sandbox.execute.mock.calls.filter((c: any[]) => !(c[1] as Record<string, unknown>)?.action)).toHaveLength(1);
+  });
+
+  it('v1674 Fortsetzung liefert einen Werkzeugaufruf → wird ausgeführt', async () => {
+    mockLLM.complete.mockResolvedValueOnce({ content: 'Teil 1 ', usage: { inputTokens: 1, outputTokens: 4096 }, stopReason: 'max_tokens' });
+    mockLLM.complete.mockResolvedValueOnce({ content: 'Teil 2', toolCalls: [{ id: 'tc1', name: 'calculator', input: { expression: '1+1' } }], usage: { inputTokens: 1, outputTokens: 10 }, stopReason: 'tool_use' });
+    mockLLM.complete.mockResolvedValueOnce({ content: 'Ergebnis 2.', usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end_turn' });
+    const skill = { metadata: { name: 'calculator', description: 'Calculator', riskLevel: 'read' as const, version: '1.0.0', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn() };
+    const sandbox = { execute: vi.fn().mockResolvedValue({ success: true, data: 2, display: '2' }) };
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+      skillRegistry: { get: vi.fn(() => skill), getAll: vi.fn(() => [skill]), has: vi.fn(), toToolDefinitions: vi.fn() } as any,
+      skillSandbox: sandbox as any,
+    });
+    const result = await pipeline.process(makeMessage());
+    expect(sandbox.execute.mock.calls.filter((c: any[]) => !(c[1] as Record<string, unknown>)?.action)).toHaveLength(1);
+    expect(result.text).toContain('Ergebnis 2.');
+  });
+
   // ---- v1450: frühere Runden nur bei echten geplanten Aufgaben, nie aus dem Verlauf ----
   for (const fall of [
     { name: 'geplante Aufgabe (ohne Verlauf): Bericht aus Runde 1 wird mitgeliefert', metadata: { scheduled: true, skipHistory: true }, erwartetBericht: true },
