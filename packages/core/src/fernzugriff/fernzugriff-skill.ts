@@ -357,7 +357,8 @@ export class FernzugriffSkill extends Skill {
     // v1549 (S2) — Geheimnisse nie ohne Rückfrage (die Ausgabe ginge an das Modell), auch nicht im Käfig
     const geheim = nurMetadaten(befehl) ? undefined : geheimnisGrund(befehl); // v1665 — ls/test/stat zeigen keine Inhalte
     if (geheim) return { success: false, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
-    if (klasse !== 'lesen') return this.imKaefig(owner, befehl, input, context);
+    // v1668 — Realfall 6193af12 Schritt 2: test -x im Käfig fragte den Käfig-Benutzer; reine Metadaten-Befehle (streng geprüft) laufen als root
+    if (klasse !== 'lesen' && !nurMetadaten(befehl)) return this.imKaefig(owner, befehl, input, context);
     const z = await this.zugang(owner, input);
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
@@ -415,7 +416,7 @@ export class FernzugriffSkill extends Skill {
     if (!nurMetadaten(b) && geheimnisGrund(b)) throw new Error('berührt Geheimnisse'); // v1665
     const z = await this.zugang(owner, { name });
     let r: SshErgebnis;
-    if (klasse === 'lesen') {
+    if (klasse === 'lesen' || nurMetadaten(b)) { // v1668 — Metadaten als root (test -x prüft sonst den Käfig-Benutzer)
       r = await this.lauf(owner, z, fernBefehl(b, true), timeoutMs);
       if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, b, timeoutMs);
     } else {
@@ -564,7 +565,7 @@ export class FernzugriffSkill extends Skill {
     const inv = art === 'sqlite' ? await sqliteInventar(this.wege(owner), z, String(input.pfad ?? '')) : await datenbankInventar(this.wege(owner), z, String(input.container ?? ''), art);
     this.deps.protokoll?.('v1636 Datenbank-Inventar', { zugang: z.name, container: input.container, art, version: inv.version, datenbanken: inv.datenbanken.length, fingerabdruck: inv.fingerabdruck.slice(0, 16) });
     const zeilen = inv.datenbanken.map(d => `- ${d.name}${d.bytes !== undefined ? ` ${(d.bytes / 1024 / 1024).toFixed(1)} MB` : ''}${d.tabellen !== undefined ? `, ${d.tabellen} Tabellen, ${d.zeilen} Zeilen` : ''}${d.schluessel !== undefined ? `, ${d.schluessel} Schlüssel` : ''}`);
-    const display = [`${art === 'postgres' ? 'PostgreSQL' : art === 'mysql' ? 'MySQL/MariaDB' : art === 'sqlite' ? 'SQLite' : 'Redis'} ${inv.version} in ${art === 'sqlite' ? String(input.pfad) : String(input.container)} auf ${z.name}`, ...(inv.hinweis ? [`- ${inv.hinweis}`] : []), ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
+    const display = [`${art === 'postgres' ? 'PostgreSQL' : art === 'mysql' ? 'MySQL/MariaDB' : art === 'sqlite' ? 'SQLite' : 'Redis'} ${inv.version} in ${art === 'sqlite' ? String(input.pfad) : String(input.container)} auf ${z.name}`, ...(inv.hinweis ? [`- ${inv.hinweis}`] : []), ...(inv.integritaet ? [`- Integrität: ${inv.integritaet}`] : []), ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
     return { success: true, data: inv, display };
   }
 

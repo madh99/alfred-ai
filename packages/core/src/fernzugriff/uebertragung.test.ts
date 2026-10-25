@@ -227,3 +227,15 @@ describe('v1663 SQLite-Inventar', () => {
     expect(b).not.toMatch(/sqlite3\.connect\(q\)/);
   });
 });
+
+describe('v1668 SQLite-Inventar meldet die Integrität', () => {
+  const welt = (ausgabe: string): Wege<string> => ({ lauf: async () => ({ code: 0, stdout: ausgabe, stderr: '' }), strom: async () => { throw new Error('nicht erwartet'); } });
+  it('integritaet aus der Kopie, nicht im Fingerabdruck', async () => {
+    const ok = await sqliteInventar(welt('version|3.45.1\nweg|backup\nintegritaet|ok\ntab|seiten|12\n'), 'h', '/x/db.sqlite');
+    const kaputt = await sqliteInventar(welt('version|3.45.1\nweg|backup\nintegritaet|fehler\ntab|seiten|12\n'), 'h', '/x/db.sqlite');
+    expect(ok.integritaet).toBe('ok');
+    expect(kaputt.integritaet).toBe('fehler');
+    expect(kaputt.fingerabdruck).toBe(ok.fingerabdruck);
+    expect(sqliteInventarBefehl('/x/db.sqlite')).toContain('pragma integrity_check');
+  });
+});

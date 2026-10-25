@@ -225,6 +225,10 @@ export const sqliteInventarBefehl = (pfad: string) => [
   '        if os.path.exists(q + e): shutil.copy2(q + e, k + e)',
   'c = sqlite3.connect(k)',
   'print("version|" + sqlite3.sqlite_version); print("weg|" + weg)',
+  // v1668 — Integrität der Kopie mitmelden (geht nicht in den Fingerabdruck ein); Realfall 6193af12 Schritt 11: im Käfig nicht öffenbar
+  'try: i = c.execute("pragma integrity_check").fetchone()[0]',
+  'except Exception as e: i = "fehler " + type(e).__name__',
+  'print("integritaet|" + ("ok" if i == "ok" else "fehler"))',
   'for (n,) in c.execute("select name from sqlite_master where type=\'table\' order by name").fetchall():',
   '    try: print("tab|%s|%d" % (n, c.execute(\'select count(*) from "%s"\' % n.replace(\'"\', \'""\')).fetchone()[0]))',
   '    except Exception: print("tab|%s|fehler" % n)',
@@ -232,15 +236,16 @@ export const sqliteInventarBefehl = (pfad: string) => [
   'PY',
 ].join('\n');
 
-export function leseSqliteInventar(t: string): { version: string; weg: string; tabellen: Array<{ name: string; zeilen: number | 'fehler' }> } {
-  let version = '', weg = ''; const tabellen: Array<{ name: string; zeilen: number | 'fehler' }> = [];
+export function leseSqliteInventar(t: string): { version: string; weg: string; integritaet?: 'ok' | 'fehler'; tabellen: Array<{ name: string; zeilen: number | 'fehler' }> } {
+  let version = '', weg = ''; let integritaet: 'ok' | 'fehler' | undefined; const tabellen: Array<{ name: string; zeilen: number | 'fehler' }> = [];
   for (const z of t.split(/\r?\n/)) {
     let m: RegExpExecArray | null;
     if ((m = /^version\|([\d.]+)$/.exec(z))) version = m[1]!;
     else if ((m = /^weg\|(\w+)$/.exec(z))) weg = m[1]!;
+    else if ((m = /^integritaet\|(ok|fehler)$/.exec(z))) integritaet = m[1] as 'ok' | 'fehler';
     else if ((m = /^tab\|(.+)\|(\d+|fehler)$/.exec(z))) tabellen.push({ name: m[1]!, zeilen: m[2] === 'fehler' ? 'fehler' : Number(m[2]) });
   }
-  return { version, weg, tabellen };
+  return { version, weg, ...(integritaet ? { integritaet } : {}), tabellen };
 }
 
 export async function sqliteInventar<Z>(w: Wege<Z>, z: Z, pfad: string): Promise<DbInventar> {
@@ -252,13 +257,15 @@ export async function sqliteInventar<Z>(w: Wege<Z>, z: Z, pfad: string): Promise
   const zeilen = inv.tabellen.reduce((s, t) => s + (typeof t.zeilen === 'number' ? t.zeilen : 0), 0);
   // Fingerabdruck ohne Version und Kopierweg: nur der Inhalt (Tabellen und Zeilenzahlen) soll vorher und nachher gleich sein
   const teile = ['sqlite', ...inv.tabellen.map(t => `${t.name}|${t.zeilen}`)];
-  return { art: 'sqlite', version: inv.version, hauptversion: inv.version.split('.')[0]!, datenbanken: [{ name: pfad, tabellen: inv.tabellen.length, zeilen }], rollen: [], fingerabdruck: inventarFingerabdruck(teile), ...(inv.tabellen.some(t => t.zeilen === 'fehler') ? { hinweis: `nicht zählbar: ${inv.tabellen.filter(t => t.zeilen === 'fehler').map(t => t.name).join(', ')}` } : {}) };
+  return { art: 'sqlite', version: inv.version, hauptversion: inv.version.split('.')[0]!, datenbanken: [{ name: pfad, tabellen: inv.tabellen.length, zeilen }], rollen: [], fingerabdruck: inventarFingerabdruck(teile), ...(inv.integritaet ? { integritaet: inv.integritaet } : {}), ...(inv.tabellen.some(t => t.zeilen === 'fehler') ? { hinweis: `nicht zählbar: ${inv.tabellen.filter(t => t.zeilen === 'fehler').map(t => t.name).join(', ')}` } : {}) };
 }
 
 export interface DbInventar {
   art: 'postgres' | 'redis' | 'mysql' | 'sqlite'; version: string; hauptversion: string;
   /** v1663 — z. B. SQLite-Tabellen, deren Zählung an beschädigten Seiten scheitert */
   hinweis?: string;
+  /** v1668 — SQLite: Ergebnis von integrity_check auf der Kopie (nicht Teil des Fingerabdrucks) */
+  integritaet?: 'ok' | 'fehler';
   datenbanken: Array<{ name: string; bytes?: number; tabellen?: number; zeilen?: number; schluessel?: number }>;
   rollen: string[]; fingerabdruck: string;
 }

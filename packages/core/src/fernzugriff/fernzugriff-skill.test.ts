@@ -312,3 +312,14 @@ describe('I6 nur im Change', () => {
     expect(t.befehle).toEqual([]);
   });
 });
+
+describe('v1668 Metadaten-Prüfungen laufen als root', () => {
+  it('test -x geht nicht in den Käfig (Realfall 6193af12 Schritt 2)', async () => {
+    const t = aufbau();
+    await aktiv(t);
+    t.befehle.length = 0;
+    await t.skill.lesenIntern('pve', 'test -x /srv/noah-recover-20261025/sqlite3');
+    expect(t.befehle[0]).toBe('sudo -n test -x /srv/noah-recover-20261025/sqlite3');
+    expect(t.befehle.some(b => b.includes('systemd-run'))).toBe(false);
+  });
+});

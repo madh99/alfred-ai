@@ -36,7 +36,7 @@ const PFAD = String.raw`[\w./@+:-]+`;
 const L = '[ \\t]+';
 const METADATEN = [
   new RegExp(String.raw`^ls(${L}-[A-Za-z1]+)*(${L}--)?(${L}${PFAD})+$`),
-  new RegExp(String.raw`^(test|\[)${L}(!${L})?-[edfsLr]${L}${PFAD}(${L}\])?$`),
+  new RegExp(String.raw`^(test|\[)${L}(!${L})?-[edfsLrx]${L}${PFAD}(${L}\])?$`),
   // v1667 — Sicherheitsprüfung: nur einfach zitierte Formate aus einer festen Liste (in "…" würde die Shell $(…) ausführen)
   new RegExp(String.raw`^stat(${L}-c${L}'(%[FsnaUGYyzXWAhim]|[ :|\/.,_-])+')?(${L}--)?(${L}${PFAD})+$`),
 ];

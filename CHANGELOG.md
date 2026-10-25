@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQLite-Inventar mit Integritätsprüfung, Datei-Prüfungen mit vollen Rechten (v1668)
+
+- Das Datenbank-Inventar für SQLite meldet jetzt auch das Ergebnis der Integritätsprüfung, erhoben auf derselben Kopie wie die Zeilenzählung. Eine Nachkontrolle nach einer Reparatur scheitert damit nicht mehr am schreibgeschützten Lesebereich.
+- Reine Datei-Prüfungen (`ls`, `test`, `stat`) laufen mit vollen Rechten. Vorher meldete `test -x` eine vorhandene, ausführbare Datei als fehlend, weil der Lesebereich ohne Rechte auf den Ordner prüfte.
+
 ### Security — Datei-Prüfung mit stat nur mit fest vorgegebenem Format (v1667)
 
 - Die Ausnahme für Datei-Prüfungen ließ beim Befehl `stat` ein Format in doppelten Anführungszeichen zu, in dem die Shell eingebettete Befehle ausführt. Jetzt ist nur noch ein einfach zitiertes Format aus einer festen Liste von Angaben erlaubt.
