@@ -70,8 +70,11 @@ export class UniFiSkill extends Skill {
             'list_dns_records',
             'create_dns_record',
             'delete_dns_record',
+            'list_port_forwards',
+            'create_port_forward',
+            'delete_port_forward',
           ],
-          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME) / delete_dns_record (hostname).',
+          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME) / delete_dns_record (hostname). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
         },
         mac: {
           type: 'string',
@@ -117,6 +120,10 @@ export class UniFiSkill extends Skill {
           type: 'number',
           description: 'Number of uses per voucher (for create_voucher, 0 = unlimited, default: 1)',
         },
+        forward_name: { type: 'string', description: 'create_port_forward/delete_port_forward: Name der Weiterleitung' },
+        forward_ip: { type: 'string', description: 'create_port_forward: private IPv4 des Ziels' },
+        forward_port: { type: 'string', description: 'create_port_forward: Zielport oder -bereich (Standard wie port)' },
+        forward_id: { type: 'string', description: 'delete_port_forward: ID aus list_port_forwards' },
         network_name: {
           type: 'string',
           description: 'Netzwerk/VLAN Name für next_free_ip, create_network, delete_network (z.B. "Default", "Keller", "VLAN 10")',
@@ -323,6 +330,13 @@ export class UniFiSkill extends Skill {
           return await this.dnsAnlegen(input);
         case 'delete_dns_record':
           return await this.dnsLoeschen(input);
+        // v1669 — Port-Weiterleitungen (Owner 25.10.: Matrix-Videoanrufe von außen); Ändern nur als Change-Schritt
+        case 'list_port_forwards':
+          return await this.portWeiterleitungen();
+        case 'create_port_forward':
+        case 'delete_port_forward':
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
+          return action === 'create_port_forward' ? await this.portWeiterleitungAnlegen(input) : await this.portWeiterleitungLoeschen(input);
 
         default:
           return { success: false, error: `Unknown action: ${action}` };
@@ -1567,6 +1581,48 @@ export class UniFiSkill extends Skill {
       data: result,
       display: `✅ UniFi Firewall-Regel erstellt: ${name}`,
     };
+  }
+
+  // ── v1669 Port-Weiterleitungen ─────────────────────────────────
+
+  private async portWeiterleitungen(): Promise<SkillResult> {
+    const l = await this.request('GET', 'rest/portforward') as Array<Record<string, unknown>>;
+    const zeilen = l.map(r => `| ${String(r.name ?? '?')} | ${String(r.proto ?? 'tcp_udp')} | ${String(r.dst_port ?? '')} | ${String(r.fwd ?? '')}:${String(r.fwd_port ?? '')} | ${String(r.src ?? 'any')} | ${r.enabled === false ? 'aus' : 'an'} | ${String(r._id ?? '')} |`);
+    return { success: true, data: l.map(r => ({ id: r._id, name: r.name, proto: r.proto, dst_port: r.dst_port, fwd: r.fwd, fwd_port: r.fwd_port, src: r.src ?? 'any', enabled: r.enabled !== false })), display: l.length ? `## UniFi Port-Weiterleitungen
+
+| Name | Proto | Port außen | Ziel | Quelle | Status | ID |
+|---|---|---|---|---|---|---|
+${zeilen.join('\n')}` : 'Keine Port-Weiterleitungen eingerichtet.' };
+  }
+
+  private async portWeiterleitungAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = String(input.forward_name ?? '').trim();
+    const proto = String(input.protocol ?? 'tcp');
+    const aussen = String(input.port ?? '').trim();
+    const ziel = String(input.forward_ip ?? '').trim();
+    const zielPort = String(input.forward_port ?? aussen).trim();
+    const quelle = String(input.source ?? 'any').trim() || 'any';
+    const port = /^\d{1,5}(-\d{1,5})?$/;
+    if (!/^[\w .:-]{3,60}$/.test(name)) return { success: false, error: 'forward_name: 3–60 Zeichen (Buchstaben, Ziffern, Leerzeichen . : _ -)' };
+    if (!['tcp', 'udp', 'tcp_udp'].includes(proto)) return { success: false, error: 'protocol: tcp, udp oder tcp_udp' };
+    if (!port.test(aussen) || !port.test(zielPort)) return { success: false, error: 'port/forward_port: Zahl oder Bereich wie 65246-65248' };
+    if (!/^(10\.\d{1,3}|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}$/.test(ziel)) return { success: false, error: 'forward_ip: private IPv4-Adresse des Ziels' };
+    if (quelle !== 'any' && !/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(quelle)) return { success: false, error: 'source: any oder IPv4[/Präfix]' };
+    const vorhanden = (await this.request('GET', 'rest/portforward') as Array<Record<string, unknown>>);
+    if (vorhanden.some(r => r.name === name)) return { success: false, error: `Weiterleitung „${name}“ gibt es schon` };
+    const r = await this.request('POST', 'rest/portforward', { name, enabled: true, src: quelle, dst_port: aussen, fwd: ziel, fwd_port: zielPort, proto, log: false, pfwd_interface: 'wan' }) as Array<Record<string, unknown>> | Record<string, unknown>;
+    const neu = Array.isArray(r) ? r[0] : r;
+    return { success: true, data: { id: neu?._id, name, proto, dst_port: aussen, fwd: ziel, fwd_port: zielPort, src: quelle }, display: `✅ Port-Weiterleitung „${name}“: ${proto} ${aussen} → ${ziel}:${zielPort} (Quelle ${quelle})` };
+  }
+
+  private async portWeiterleitungLoeschen(input: Record<string, unknown>): Promise<SkillResult> {
+    const l = await this.request('GET', 'rest/portforward') as Array<Record<string, unknown>>;
+    const id = typeof input.forward_id === 'string' && input.forward_id ? input.forward_id : undefined;
+    const name = typeof input.forward_name === 'string' ? input.forward_name.trim() : '';
+    const treffer = l.filter(r => (id && r._id === id) || (!id && name && r.name === name));
+    if (treffer.length !== 1) return { success: false, error: treffer.length ? 'Name nicht eindeutig — forward_id angeben' : 'Weiterleitung nicht gefunden' };
+    await this.request('DELETE', `rest/portforward/${String(treffer[0]!._id)}`);
+    return { success: true, data: { id: treffer[0]!._id, name: treffer[0]!.name }, display: `✅ Port-Weiterleitung „${String(treffer[0]!.name)}“ entfernt` };
   }
 
   // ── Formatting helpers ─────────────────────────────────────────

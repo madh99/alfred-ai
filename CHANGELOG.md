@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Port-Weiterleitungen im UniFi-Skill (v1669)
+
+- Alfred kann Port-Weiterleitungen der UniFi-Gateways jetzt auflisten und — als Schritt eines freigegebenen Changes, mit Rückweg — anlegen und wieder entfernen. Anlass sind die Videoanrufe des Matrix-Servers, die auch von außen erreichbar sein sollen.
+
 ### Fixed — SQLite-Inventar mit Integritätsprüfung, Datei-Prüfungen mit vollen Rechten (v1668)
 
 - Das Datenbank-Inventar für SQLite meldet jetzt auch das Ergebnis der Integritätsprüfung, erhoben auf derselben Kopie wie die Zeilenzählung. Eine Nachkontrolle nach einer Reparatur scheitert damit nicht mehr am schreibgeschützten Lesebereich.
