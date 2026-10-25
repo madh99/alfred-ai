@@ -155,7 +155,8 @@ export class FernzugriffSkill extends Skill {
     // v1638 — Realfall 24.10. (026a0768 Schritt 3: geheim_uebernehmen mit „quelle“ statt „name“ hielt erst im Lauf an): auch diese Aktionen prüfen
     const zugangName = typeof input.name === 'string' && input.name.trim() ? input.name : a === 'geheim_uebernehmen' && typeof input.quelle === 'string' && input.quelle.trim() ? input.quelle : '';
     if (a === 'image_hochladen' && !(typeof input.image === 'string' && input.image.trim() && typeof input.registry_ziel === 'string' && input.registry_ziel.trim())) return 'image_hochladen braucht image (lokal) und registry_ziel';
-    if (a === 'image_holen' && !(typeof input.image === 'string' && input.image.includes('@sha256:'))) return 'image_holen braucht image mit @sha256-Digest';
+    // v1659 — Realfall 25.10.: beim Planen steht der Digest oft noch als Verweis auf den Hochlade-Schritt da (@{{schrittN.digest}}); geprüft wird nach dem Auflösen
+    if (a === 'image_holen' && !(typeof input.image === 'string' && /@(sha256:[0-9a-f]{64}|\{\{\s*schritt\d+\.digest\s*\}\})$/.test(input.image))) return 'image_holen braucht image mit @sha256-Digest oder @{{schrittN.digest}}';
     if (['lesen', 'ausfuehren', 'pruefen', 'entfernen', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen'].includes(a) && !zugangName) return `${a} braucht name (Zugang)`;
     if (['kopieren', 'datenbank_kopieren'].includes(a) && !(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return `${a} braucht quelle und ziel (Zugänge)`;
     if (a === 'datenbank_inventar' && !(typeof input.container === 'string' && input.container.trim())) return 'datenbank_inventar braucht container';

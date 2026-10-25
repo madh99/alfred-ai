@@ -117,6 +117,10 @@ describe('v1539 FernzugriffSkill', () => {
     expect(t.skill.pruefeEingabe({ action: 'geheim_uebernehmen', pfad: '/srv/x.env', tresor_name: 'x-env' })).toContain('name');
     expect(t.skill.pruefeEingabe({ action: 'geheim_uebernehmen', quelle: 'dockerhost', pfad: '/srv/x.env', tresor_name: 'x-env' })).toBeUndefined();
     expect(t.skill.pruefeEingabe({ action: 'kopieren', quelle: 'dockerhost' })).toContain('ziel');
+    // v1659 — Digest als Verweis auf den Hochlade-Schritt ist beim Planen gültig
+    expect(t.skill.pruefeEingabe({ action: 'image_holen', name: 'docker-web-01', image: 'registry.lokalkraft.at/madh/noahhabel-landingpage/backend@{{schritt3.digest}}' })).toBeUndefined();
+    expect(t.skill.pruefeEingabe({ action: 'image_holen', name: 'docker-web-01', image: `registry.lokalkraft.at/madh/x@sha256:${'a'.repeat(64)}` })).toBeUndefined();
+    expect(t.skill.pruefeEingabe({ action: 'image_holen', name: 'docker-web-01', image: 'registry.lokalkraft.at/madh/x:latest' })).toContain('Digest');
     expect(t.skill.pruefeEingabe({ action: 'datenbank_inventar', name: 'dockerhost', art: 'postgres' })).toContain('container');
   });
 });

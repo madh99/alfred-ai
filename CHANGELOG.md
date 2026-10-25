@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Image holen lässt sich mit dem Digest aus dem Hochlade-Schritt planen (v1659)
+
+- Beim Planen eines Umzugs verlangte das Holen eines Images bereits einen festen Digest, obwohl dieser erst beim Hochladen im selben Change entsteht. Jetzt ist auch der Verweis auf den Hochlade-Schritt erlaubt; die genaue Prüfung erfolgt wie bisher beim Ausführen.
+
 ### Fixed — Kosten je Anfrage stimmen bei langen Werkzeugschleifen (v1658)
 
 - **Realfall:** Für eine Anfrage mit 34 Werkzeugrunden wurden 16,39 $ gemeldet, tatsächlich kostete sie etwa 0,60 $. Die Kosten je Anfrage wurden aus der Summe aller Eingabe-Tokens geschätzt, ohne den Cache zu berücksichtigen. Die Gesamtkosten waren davon nicht betroffen.
