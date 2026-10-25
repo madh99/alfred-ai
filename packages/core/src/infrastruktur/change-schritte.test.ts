@@ -366,3 +366,19 @@ describe('v1664 nach einem Dienst-Stopp nur mit Rückweg (Realfall cb3fd65c)', (
     expect(gut.fehler.filter(x => x.includes('Dienst-Stopp'))).toEqual([]); // Schritt 5 (nach dem Start) darf anhalten
   });
 });
+
+// v1673 — Realfall 25.10. pgsql-p01: Prüfbefehle wie zur Laufzeit (Leseliste, Metadaten oder Lese-Käfig), verändernde bleiben abgewiesen
+describe('v1673 Prüfbefehle im Lese-Käfig', () => {
+  it('lesende Befehle außerhalb der Leseliste sind zulässig, verändernde, mehrzeilige und Geheimnisse nicht', async () => {
+    const { pruefbefehlFehler } = await import('./change-schritte.js');
+    for (const ok of ['ls -l /etc/postgresql/17/main/pg_hba.conf.vor-peer-20261025', 'head -n 1 /etc/postgresql/17/main/pg_hba.conf',
+      "ps -eo pid,args | grep 'postgres: 17/main: synapse'", 'cmp /etc/postgresql/17/main/pg_hba.conf /etc/postgresql/17/main/pg_hba.conf.vor-peer',
+      "grep -c '^local' /etc/postgresql/17/main/pg_hba.conf", 'systemctl is-active postgresql@17-main', 'zpool status', 'ls -la /opt/app/.env']) {
+      expect(pruefbefehlFehler(ok), ok).toBeUndefined();
+    }
+    for (const nein of ['rm -rf /tmp/x', 'mkfs.ext4 /dev/sda', 'cat /opt/app/.env', 'echo x > /etc/y', 'systemctl restart postgresql', 'docker restart synapse',
+      "sed -i 's/a/b/' /etc/x", 'ls /tmp\ncat /etc/shadow', 'cat /etc/x | tee /etc/y', 'sudo -n rm /x']) {
+      expect(pruefbefehlFehler(nein), nein).toBeDefined();
+    }
+  });
+});

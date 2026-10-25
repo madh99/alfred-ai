@@ -13,6 +13,7 @@
  */
 import { createHash } from 'node:crypto';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
+import { nurMetadaten, geheimnisGrund } from '../fernzugriff/kaefig.js';
 import { pruefePfad } from '../fernzugriff/uebertragung.js';
 import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
 
@@ -62,6 +63,25 @@ const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-
 /** v1664 — Befehle, die einen Dienst anhalten bzw. wieder starten (für die Regel „nach dem Stopp nur mit Rückweg“) */
 export const DIENST_STOPP = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(stop|kill|down|pause)|docker\s+container\s+(stop|kill)|systemctl\s+(stop|kill)|service\s+\S+\s+stop)\b/;
 export const DIENST_START = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(start|up|restart|unpause)|docker\s+container\s+(start|restart)|systemctl\s+(start|restart)|service\s+\S+\s+(start|restart))\b/;
+
+/**
+ * v1673 — Realfall 25.10. (pgsql-p01, peer-Zeile): der Validator wies `ls -l …`, `head -n 1 /etc/…/pg_hba.conf` und `ps -eo … | grep`
+ * als „kein reiner Lesebefehl“ ab, obwohl der Motor Prüfbefehle über lesenIntern ausführt — dort läuft alles außerhalb der Leseliste im
+ * Lese-Käfig (Dateisystem schreibgeschützt, kein Netz, keine Sockets; liest mit CAP_DAC_READ_SEARCH auch Root-Dateien). Gleiche Regel wie
+ * zur Laufzeit: nie-Befehle, mehrzeilige Befehle und Geheimnis-Pfade (außer reinen Metadaten) bleiben abgewiesen.
+ */
+// Am Anfang eines Befehls (auch nach ;, &&, ||, |, sudo): Werkzeuge, die schreiben, löschen, Dienste steuern oder Pakete ändern; dazu Umleitungen
+const VERAENDERND = /(^|[;&|]\s*|\bsudo\s+(-\S+\s+)*)(rm|rmdir|mv|cp|tee|touch|truncate|mkdir|ln|install|chmod|chown|chgrp|dd|kill|pkill|killall|reboot|shutdown|halt|poweroff|useradd|userdel|usermod|passwd|apt|apt-get|dnf|yum|pip|npm|systemctl\s+(?!(status|is-active|is-enabled|is-failed|show|cat|list-\S+)\b)\S+|service|docker\s+(?!(ps|logs|inspect|images|image\s+(ls|inspect)|network\s+(ls|inspect)|volume\s+(ls|inspect)|version|info|stats|top|port|compose\s+(ls|ps|version|images))\b)\S+|sed\s+(-\S+\s+)*-i|crontab|mount|umount|psql|mysql|redis-cli)\b|>\s*[^&]|>>/;
+export function pruefbefehlFehler(befehl: string): string | undefined {
+  const k = befehlsklasse(befehl);
+  if (k === 'nie') return 'ist nie erlaubt';
+  if (k === 'lesen' || nurMetadaten(befehl)) return undefined;
+  if (/[\r\n]/.test(befehl.trim())) return 'ist mehrzeilig — Prüfbefehle einzeilig';
+  if (VERAENDERND.test(befehl)) return 'ist kein reiner Lesebefehl (verändert etwas)';
+  const g = geheimnisGrund(befehl);
+  if (g) return `berührt ${g} — als Prüfung nicht zulässig`;
+  return undefined; // läuft im Lese-Käfig
+}
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   // v1628 — pruefen (Verbindung, sudo, Käfig-Selbsttest) und liste ändern am Host nichts (Realfall 24.10.: Vorlagen-Beweis)
@@ -135,7 +155,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'dns' || typ === 'ping') fehlt(['ziel']);
   if (typ === 'container_healthy') fehlt(['zugang', 'container']);
   if (typ === 'datei') { fehlt(['zugang', 'pfad']); if (aus.pfad && !/^\/[\w./-]+$/.test(aus.pfad)) f.push(`${wo}: pfad muss ein einfacher absoluter Pfad sein`); }
-  if (typ === 'befehl') { fehlt(['zugang', 'befehl']); if (aus.befehl && befehlsklasse(aus.befehl) !== 'lesen') f.push(`${wo}: Prüfbefehl „${aus.befehl.slice(0, 60)}“ ist kein reiner Lesebefehl`); }
+  if (typ === 'befehl') { fehlt(['zugang', 'befehl']); const g = aus.befehl ? pruefbefehlFehler(aus.befehl) : undefined; if (g) f.push(`${wo}: Prüfbefehl „${aus.befehl!.slice(0, 60)}“ ${g}`); }
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;

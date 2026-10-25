@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfungen in Changes dürfen Dateien lesen (v1673)
+
+- Prüfschritte in geplanten Changes dürfen jetzt dieselben lesenden Befehle verwenden, die Alfred auch sonst ohne Rückfrage geschützt ausführt (zum Beispiel eine Konfigurationsdatei anzeigen oder Prozesse auflisten). Verändernde Befehle und Dateien mit Geheimnissen bleiben als Prüfung ausgeschlossen.
+
 ### Added — Datenbank-Inventar für PostgreSQL direkt auf dem Host (v1672)
 
 - Das feste, nur lesende Datenbank-Inventar funktioniert jetzt auch, wenn PostgreSQL nicht im Container, sondern direkt auf dem Server läuft. Auf gemeinsam genutzten Datenbank-Servern lässt es sich auf eine einzelne Datenbank beschränken und zeigt Zeichensatz und Sortierung je Datenbank.
