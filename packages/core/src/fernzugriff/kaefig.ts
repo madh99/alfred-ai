@@ -31,14 +31,18 @@ const GEHEIMNISSE: Array<{ muster: RegExp; grund: string }> = [
  * stat -c, auch mit && oder ; verkettet) dürfen Geheimnis-Pfade nennen; alles, was Inhalte liest (cat, grep, Skripte …), bleibt gesperrt.
  */
 const PFAD = String.raw`[\w./@+:-]+`;
+// v1666 — Sicherheitsprüfung zu v1665: nur Leerzeichen/Tab als Trenner (\s passte auch auf Zeilenumbrüche: „ls /x⏎cat /opt/app/.env“
+// galt sonst als reiner ls-Befehl und umging die Geheimnis-Sperre)
+const L = '[ \\t]+';
 const METADATEN = [
-  new RegExp(String.raw`^ls(\s+-[A-Za-z1]+)*(\s+--)?(\s+${PFAD})+$`),
-  new RegExp(String.raw`^(test|\[)\s+(!\s+)?-[edfsLr]\s+${PFAD}(\s+\])?$`),
-  new RegExp(String.raw`^stat(\s+-c\s+('[^'\n]{1,80}'|"[^"\n]{1,80}"))?(\s+--)?(\s+${PFAD})+$`),
+  new RegExp(String.raw`^ls(${L}-[A-Za-z1]+)*(${L}--)?(${L}${PFAD})+$`),
+  new RegExp(String.raw`^(test|\[)${L}(!${L})?-[edfsLr]${L}${PFAD}(${L}\])?$`),
+  new RegExp(String.raw`^stat(${L}-c${L}('[^'\n\r]{1,80}'|"[^"\n\r]{1,80}"))?(${L}--)?(${L}${PFAD})+$`),
 ];
 export function nurMetadaten(befehl: string): boolean {
-  const teile = befehl.trim().split(/\s*(?:&&|;)\s*/).filter(Boolean);
-  return teile.length > 0 && teile.length <= 20 && teile.every(t => METADATEN.some(r => r.test(t)) && !/[$`|<>(){}*?]/.test(t.replace(/'[^'\n]*'|"[^"\n]*"/g, '')));
+  if (/[\r\n\0]/.test(befehl)) return false; // nie mehrzeilig
+  const teile = befehl.trim().split(/[ \t]*(?:&&|;)[ \t]*/).filter(Boolean);
+  return teile.length > 0 && teile.length <= 20 && teile.every(t => METADATEN.some(r => r.test(t)) && !/[$`|&<>(){}*?\\]/.test(t.replace(/'[^'\n]*'|"[^"\n]*"/g, '')));
 }
 
 export function geheimnisGrund(befehl: string): string | undefined {

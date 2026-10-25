@@ -55,6 +55,17 @@ describe('Selbstupdate', () => {
     await expect(su.kandidat({ art: 'datei', version: '0.19.0-jarvis.1299' })).rejects.toThrow(/keine 0.19.0-jarvis.1299/);
   });
 
+  it('v1666 Realfall 374 Tarballs: ältere Versionen werden nicht geöffnet', async () => {
+    writeFileSync(path.join(eingang, 'madh-io-alfred-ai-0.19.0-jarvis.1200.tgz'), 'kein gzip'); // würde beim Öffnen scheitern
+    tarball('0.19.0-jarvis.1270');
+    const warn = vi.fn();
+    const su = new Selbstupdate({ eigeneVersion: '0.19.0-jarvis.1265', eingangOrdner: eingang, cliOrdner: cli, logger: { ...logger, warn } as unknown as Logger, ruhe: () => ({ vorhaben: 0, hoeren: 0 }), melde: async () => undefined, neustart: () => undefined });
+    const u = await su.uebersicht();
+    expect(u.eingang.find(e => e.version === '0.19.0-jarvis.1200')).toMatchObject({ neuer: false });
+    expect(warn).not.toHaveBeenCalled();
+    expect((await su.kandidat({ art: 'datei' })).version).toBe('0.19.0-jarvis.1270');
+  });
+
   it('Freigabe ist einmalig und an die Version gebunden', () => {
     const su = new Selbstupdate({ eigeneVersion: '1.0.0', eingangOrdner: eingang, cliOrdner: cli, logger, ruhe: () => ({ vorhaben: 0, hoeren: 0 }), melde: async () => undefined, neustart: () => undefined });
     const n = su.erzeugeFreigabe('1.0.1', { art: 'datei', pfad: '1.0.1.tgz' });

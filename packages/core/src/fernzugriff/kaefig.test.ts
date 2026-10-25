@@ -105,7 +105,9 @@ describe('v1665 Metadaten-Befehle auf Geheimnis-Pfaden (Realfall 10fb035c)', () 
     for (const b of ['ls -la /srv/vault2510-export', 'test ! -e /srv/vault2510-export/backup.key', 'test ! -e /srv/vault2510-export/runtime.json && test ! -e /srv/vault2510-export/backup.key', "stat -c '%F %s' /srv/vault2510-export/backup.key", '[ -f /opt/app/.env ]']) {
       expect(nurMetadaten(b)).toBe(true);
     }
-    for (const b of ['cat /srv/vault2510-export/backup.key', 'ls /srv/x && cat /opt/app/.env', 'ls $(cat /opt/app/.env)', 'ls /srv/x | head', "python3 -c 'print(open(\"/x/backup.key\").read())'", 'grep -r pass /opt/app/.env', 'ls /srv/* ']) {
+    for (const b of ['cat /srv/vault2510-export/backup.key', 'ls /srv/x && cat /opt/app/.env', 'ls $(cat /opt/app/.env)', 'ls /srv/x | head', "python3 -c 'print(open(\"/x/backup.key\").read())'", 'grep -r pass /opt/app/.env', 'ls /srv/* ',
+      // v1666 — Sicherheitsprüfung: Zeilenumbruch, Wagenrücklauf, einzelnes &, || und Backslash nie als „nur Metadaten“
+      'ls /x\ncat /opt/app/.env', 'ls /x\r\ncat /opt/app/.env', 'test -e /x\ncat /srv/vault2510-export/backup.key', 'ls /x & cat /opt/app/.env', 'ls /x || cat /opt/app/.env', 'ls /x\\\ncat /opt/app/.env', "stat -c '%n\n' /x\ncat /etc/shadow"]) {
       expect(nurMetadaten(b)).toBe(false);
     }
     expect(geheimnisGrund('test ! -e /srv/vault2510-export/backup.key')).toBeDefined(); // die Sperre selbst bleibt unverändert

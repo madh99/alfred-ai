@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Ausnahme für Datei-Prüfungen nur für einzeilige Befehle (v1666)
+
+- Die in v1665 eingeführte Ausnahme für reine Datei-Prüfungen ließ sich mit einem Zeilenumbruch im Befehl umgehen, sodass ein nachfolgender Befehl geschützte Inhalte hätte lesen können. Jetzt gilt die Ausnahme nur für einzeilige Befehle ohne Verkettungstricks.
+
+### Fixed — Selbstupdate bleibt bei vielen alten Paketen schnell (v1666)
+
+- Im Update-Eingang hatten sich mehrere hundert alte Pakete angesammelt. Das Prüfen dauerte dadurch länger als erlaubt, das Update wirkte gescheitert, obwohl es im Hintergrund gelang. Ältere Pakete werden jetzt nicht mehr geöffnet; die alten Pakete wurden in einen Archivordner verschoben.
+
 ### Fixed — Prüfen, ob es eine Datei gibt, auch bei geschützten Pfaden (v1665)
 
 - **Realfall:** Ein Aufräum-Change hielt an, weil die vorbereitende Prüfung „welche Dateien liegen hier“ einen Dateinamen mit Schlüsselendung nannte und deshalb als Zugriff auf Geheimnisse galt.

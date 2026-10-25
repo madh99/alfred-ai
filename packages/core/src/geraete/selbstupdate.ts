@@ -67,6 +67,9 @@ export class Selbstupdate {
   status(): UpdateLauf | undefined { return this.lauf; }
 
   /** Tarballs im Eingang, neueste zuerst. */
+  /** v1666 — Kopfdaten je Tarball (Pfad + Größe + Änderungszeit), damit nicht jeder Aufruf alle Tarballs entpackt */
+  private readonly tarballKopf = new Map<string, { schluessel: string; info: { name: string; version: string } }>();
+
   async eingang(): Promise<UpdateUebersicht['eingang']> {
     let dateien: string[] = [];
     try { dateien = readdirSync(this.deps.eingangOrdner).filter(f => f.endsWith('.tgz')); } catch { return []; }
@@ -74,7 +77,19 @@ export class Selbstupdate {
     for (const f of dateien) {
       const pfad = path.join(this.deps.eingangOrdner, f);
       try {
-        const info = await tarballInfo(pfad);
+        // v1666 — Realfall 25.10.: 374 Tarballs (4,3 GB) im Eingang; jeder Aufruf entpackte alle Kopfdaten und überschritt die 60 s des
+        // Skills — das Update lief trotzdem, das Modell hielt den Dienst aber für kaputt und verweigerte das nächste. Versionen, die laut
+        // Dateiname nicht neuer sind, werden nicht geöffnet; geöffnete Kopfdaten werden je Datei gemerkt.
+        const ausName = /(\d+\.\d+\.\d+(?:-[\w.]+)?)\.tgz$/.exec(f)?.[1];
+        if (ausName && vergleicheVersion(ausName, this.deps.eigeneVersion) <= 0) {
+          out.push({ datei: f, version: ausName, neuer: false, sha256Datei: existsSync(`${pfad}.sha256`) });
+          continue;
+        }
+        const st = statSync(pfad);
+        const schluessel = `${st.size}:${st.mtimeMs}`;
+        let kopf = this.tarballKopf.get(pfad);
+        if (!kopf || kopf.schluessel !== schluessel) { kopf = { schluessel, info: await tarballInfo(pfad) }; this.tarballKopf.set(pfad, kopf); }
+        const info = kopf.info;
         if (info.name !== PAKET_NAME) continue;
         out.push({ datei: f, version: info.version, neuer: vergleicheVersion(info.version, this.deps.eigeneVersion) > 0, sha256Datei: existsSync(`${pfad}.sha256`) });
       } catch (err) { this.deps.logger.warn({ datei: f, err: (err as Error).message }, 'v1266 Tarball im Eingang unlesbar'); }
