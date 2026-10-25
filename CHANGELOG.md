@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Datei-Prüfung mit stat nur mit fest vorgegebenem Format (v1667)
+
+- Die Ausnahme für Datei-Prüfungen ließ beim Befehl `stat` ein Format in doppelten Anführungszeichen zu, in dem die Shell eingebettete Befehle ausführt. Jetzt ist nur noch ein einfach zitiertes Format aus einer festen Liste von Angaben erlaubt.
+
 ### Security — Ausnahme für Datei-Prüfungen nur für einzeilige Befehle (v1666)
 
 - Die in v1665 eingeführte Ausnahme für reine Datei-Prüfungen ließ sich mit einem Zeilenumbruch im Befehl umgehen, sodass ein nachfolgender Befehl geschützte Inhalte hätte lesen können. Jetzt gilt die Ausnahme nur für einzeilige Befehle ohne Verkettungstricks.

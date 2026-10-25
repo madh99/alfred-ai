@@ -107,6 +107,8 @@ describe('v1665 Metadaten-Befehle auf Geheimnis-Pfaden (Realfall 10fb035c)', () 
     }
     for (const b of ['cat /srv/vault2510-export/backup.key', 'ls /srv/x && cat /opt/app/.env', 'ls $(cat /opt/app/.env)', 'ls /srv/x | head', "python3 -c 'print(open(\"/x/backup.key\").read())'", 'grep -r pass /opt/app/.env', 'ls /srv/* ',
       // v1666 — Sicherheitsprüfung: Zeilenumbruch, Wagenrücklauf, einzelnes &, || und Backslash nie als „nur Metadaten“
+      // v1667 — Befehlsersetzung in doppelten Anführungszeichen
+      'stat -c "$(cat /opt/app/.env)" /x', 'stat -c "%s" /x', "stat -c '$(cat /opt/app/.env)' /x", "stat -c '%s' /x; cat /opt/app/.env",
       'ls /x\ncat /opt/app/.env', 'ls /x\r\ncat /opt/app/.env', 'test -e /x\ncat /srv/vault2510-export/backup.key', 'ls /x & cat /opt/app/.env', 'ls /x || cat /opt/app/.env', 'ls /x\\\ncat /opt/app/.env', "stat -c '%n\n' /x\ncat /etc/shadow"]) {
       expect(nurMetadaten(b)).toBe(false);
     }

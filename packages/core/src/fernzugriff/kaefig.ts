@@ -37,12 +37,14 @@ const L = '[ \\t]+';
 const METADATEN = [
   new RegExp(String.raw`^ls(${L}-[A-Za-z1]+)*(${L}--)?(${L}${PFAD})+$`),
   new RegExp(String.raw`^(test|\[)${L}(!${L})?-[edfsLr]${L}${PFAD}(${L}\])?$`),
-  new RegExp(String.raw`^stat(${L}-c${L}('[^'\n\r]{1,80}'|"[^"\n\r]{1,80}"))?(${L}--)?(${L}${PFAD})+$`),
+  // v1667 — Sicherheitsprüfung: nur einfach zitierte Formate aus einer festen Liste (in "…" würde die Shell $(…) ausführen)
+  new RegExp(String.raw`^stat(${L}-c${L}'(%[FsnaUGYyzXWAhim]|[ :|\/.,_-])+')?(${L}--)?(${L}${PFAD})+$`),
 ];
 export function nurMetadaten(befehl: string): boolean {
   if (/[\r\n\0]/.test(befehl)) return false; // nie mehrzeilig
   const teile = befehl.trim().split(/[ \t]*(?:&&|;)[ \t]*/).filter(Boolean);
-  return teile.length > 0 && teile.length <= 20 && teile.every(t => METADATEN.some(r => r.test(t)) && !/[$`|&<>(){}*?\\]/.test(t.replace(/'[^'\n]*'|"[^"\n]*"/g, '')));
+  // Nur einfach zitierte Teile (expandieren nie) vor der Prüfung auf Shell-Zeichen entfernen; doppelte Anführungszeichen sind gar nicht erlaubt
+  return teile.length > 0 && teile.length <= 20 && teile.every(t => METADATEN.some(r => r.test(t)) && !/[$`|&<>(){}*?\\"]/.test(t.replace(/'[^'\n]*'/g, '')));
 }
 
 export function geheimnisGrund(befehl: string): string | undefined {
