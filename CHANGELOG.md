@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Datenbank-Inventar für SQLite (v1663)
+
+- **Realfall:** Beim Umzug einer Anwendung mit SQLite-Datenbank ließ sich der Fingerabdruck nach dem Stopp der Anwendung nicht erheben, weil die Datenbank im schreibgeschützten Lesebereich nicht zu öffnen war. Der Change wurde automatisch zurückgerollt, die Anwendung lief weiter.
+- **Jetzt** erhebt das Datenbank-Inventar auch SQLite-Dateien: auf einer Kopie, die konsistent über die Backup-Funktion entsteht und danach wieder gelöscht wird. Gezählt werden Tabellen und Zeilen; Tabellen, die wegen beschädigter Seiten nicht zählbar sind, werden ausgewiesen und gehen gleichbleibend in den Fingerabdruck ein. Das Original wird nur lesend geöffnet.
+
 ### Fixed — Korrektur ab Haltepunkt lässt sich freigeben (v1662)
 
 - Eine Korrektur ab dem Haltepunkt wurde gespeichert, ließ sich aber nicht freigeben, wenn sich dabei auch die betroffenen Assets oder andere Plan-Angaben geändert hatten. Jetzt werden alle Angaben des korrigierten Plans übernommen.

@@ -203,8 +203,62 @@ export const pgInventarBefehl = (c: string, db: string) => `docker exec -i ${PG_
 export const PG_INVENTAR_SQL = "SELECT 'version|' || current_setting('server_version_num');\nSELECT 'db|' || datname || '|' || pg_database_size(oid) FROM pg_database WHERE datallowconn ORDER BY datname;\nSELECT 'rolle|' || rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;\n";
 export const redisInventarBefehl = (c: string) => `docker exec ${c} sh -c 'redis-cli --raw INFO server | grep -E "^redis_version:"; redis-cli --raw INFO keyspace | grep -E "^db[0-9]+:" || true'`; // v1637 — leerer Keyspace ist kein Fehler (Realfall redis 24.10.)
 
+/**
+ * v1663 — Realfall 25.10. (eedb29a6 Schritt 6): der Fingerabdruck der noah-SQLite lief über `lesen` im Lese-Käfig; nach dem Stopp
+ * waren -wal/-shm weg, ohne Schreibrecht ließ sich die WAL-Datenbank nicht öffnen („unable to open database file“). Jetzt als root
+ * auf einer Kopie in einem eigenen Ordner unter /tmp: zuerst die Backup-API (konsistent auch im Betrieb), sonst die Dateien samt
+ * -wal/-shm. Tabellen und Zeilen der Kopie; scheitert die Zählung einer Tabelle (beschädigte Seiten), steht sie mit „fehler“ im
+ * Fingerabdruck — an einer bitgleichen Kopie am Ziel ebenso. Die Kopie wird immer gelöscht, das Original nie geöffnet zum Schreiben.
+ */
+export const SQLITE_PFAD = /^\/[A-Za-z0-9._@+\/-]{1,250}$/;
+export const sqliteInventarBefehl = (pfad: string) => [
+  'set -eu', 'd=$(mktemp -d /tmp/alfred-sqlite.XXXXXXXX)', 'trap \'rm -rf "$d"\' EXIT',
+  `test -f '${pfad}'`,
+  `python3 - '${pfad}' "$d" <<'PY'`,
+  'import sqlite3, sys, shutil, os',
+  'q, d = sys.argv[1], sys.argv[2]; k = os.path.join(d, "kopie.sqlite"); weg = "backup"',
+  'try:',
+  '    s = sqlite3.connect("file:" + q + "?mode=ro", uri=True); z = sqlite3.connect(k); s.backup(z); z.close(); s.close()',
+  'except Exception:',
+  '    weg = "dateien"',
+  '    for e in ("", "-wal", "-shm"):',
+  '        if os.path.exists(q + e): shutil.copy2(q + e, k + e)',
+  'c = sqlite3.connect(k)',
+  'print("version|" + sqlite3.sqlite_version); print("weg|" + weg)',
+  'for (n,) in c.execute("select name from sqlite_master where type=\'table\' order by name").fetchall():',
+  '    try: print("tab|%s|%d" % (n, c.execute(\'select count(*) from "%s"\' % n.replace(\'"\', \'""\')).fetchone()[0]))',
+  '    except Exception: print("tab|%s|fehler" % n)',
+  'c.close()',
+  'PY',
+].join('\n');
+
+export function leseSqliteInventar(t: string): { version: string; weg: string; tabellen: Array<{ name: string; zeilen: number | 'fehler' }> } {
+  let version = '', weg = ''; const tabellen: Array<{ name: string; zeilen: number | 'fehler' }> = [];
+  for (const z of t.split(/\r?\n/)) {
+    let m: RegExpExecArray | null;
+    if ((m = /^version\|([\d.]+)$/.exec(z))) version = m[1]!;
+    else if ((m = /^weg\|(\w+)$/.exec(z))) weg = m[1]!;
+    else if ((m = /^tab\|(.+)\|(\d+|fehler)$/.exec(z))) tabellen.push({ name: m[1]!, zeilen: m[2] === 'fehler' ? 'fehler' : Number(m[2]) });
+  }
+  return { version, weg, tabellen };
+}
+
+export async function sqliteInventar<Z>(w: Wege<Z>, z: Z, pfad: string): Promise<DbInventar> {
+  if (!SQLITE_PFAD.test(pfad) || pfad.split('/').includes('..')) throw new Error('pfad: absoluter Pfad der SQLite-Datei');
+  const r = await w.lauf(z, root(sqliteInventarBefehl(pfad)), '', 600_000);
+  if (r.code !== 0) throw new Error(`SQLite-Inventar gescheitert (Exit ${r.code}): ${r.stderr.trim().slice(-200)}`);
+  const inv = leseSqliteInventar(r.stdout);
+  if (!inv.version) throw new Error('SQLite-Version nicht lesbar');
+  const zeilen = inv.tabellen.reduce((s, t) => s + (typeof t.zeilen === 'number' ? t.zeilen : 0), 0);
+  // Fingerabdruck ohne Version und Kopierweg: nur der Inhalt (Tabellen und Zeilenzahlen) soll vorher und nachher gleich sein
+  const teile = ['sqlite', ...inv.tabellen.map(t => `${t.name}|${t.zeilen}`)];
+  return { art: 'sqlite', version: inv.version, hauptversion: inv.version.split('.')[0]!, datenbanken: [{ name: pfad, tabellen: inv.tabellen.length, zeilen }], rollen: [], fingerabdruck: inventarFingerabdruck(teile), ...(inv.tabellen.some(t => t.zeilen === 'fehler') ? { hinweis: `nicht zählbar: ${inv.tabellen.filter(t => t.zeilen === 'fehler').map(t => t.name).join(', ')}` } : {}) };
+}
+
 export interface DbInventar {
-  art: 'postgres' | 'redis' | 'mysql'; version: string; hauptversion: string;
+  art: 'postgres' | 'redis' | 'mysql' | 'sqlite'; version: string; hauptversion: string;
+  /** v1663 — z. B. SQLite-Tabellen, deren Zählung an beschädigten Seiten scheitert */
+  hinweis?: string;
   datenbanken: Array<{ name: string; bytes?: number; tabellen?: number; zeilen?: number; schluessel?: number }>;
   rollen: string[]; fingerabdruck: string;
 }

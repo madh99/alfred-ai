@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, volumePfad, datenbankInventar, type Wege, type Eintrag } from './uebertragung.js';
+import { leseListe, abgleich, nulListe, pruefePfad, leseSumme, leseZaehlung, vergleicheZaehlung, kopiere, kopiereDatenbank, volumePfad, datenbankInventar, sqliteInventar, sqliteInventarBefehl, type Wege, type Eintrag } from './uebertragung.js';
 
 // I6 — Abgleich nach rsync-Art gegen zwei simulierte Dateisysteme (die echten find/tar-Befehle prüft der Live-Lauf)
 type Fs = Map<string, Eintrag & { inhalt?: string }>;
@@ -196,5 +196,34 @@ describe('v1648 Datenbank-Inventar MySQL/MariaDB (Vaultwarden)', () => {
     expect(a.datenbanken).toEqual([{ name: 'vaultwarden', bytes: 1835008, tabellen: 2, zeilen: 415 }]);
     expect((await datenbankInventar(welt(3), 'docker-vault-01', 'mariadb-vaultwarden', 'mysql')).fingerabdruck).toBe(a.fingerabdruck);
     expect((await datenbankInventar(welt(4), 'docker-vault-01', 'mariadb-vaultwarden', 'mysql')).fingerabdruck).not.toBe(a.fingerabdruck);
+  });
+});
+
+// v1663 — Realfall eedb29a6: SQLite-Fingerabdruck als root auf einer Kopie, unabhängig vom Käfig und von beschädigten Seiten
+describe('v1663 SQLite-Inventar', () => {
+  const welt = (ausgabe: string): Wege<string> => ({
+    lauf: async (_h, b) => {
+      expect(b.startsWith('sudo -n')).toBe(true);
+      expect(b).toContain('mktemp -d /tmp/alfred-sqlite.');
+      expect(b).toContain('mode=ro');
+      return { code: 0, stdout: ausgabe, stderr: '' };
+    },
+    strom: async () => { throw new Error('nicht erwartet'); },
+  });
+  it('Tabellen und Zeilen; Fingerabdruck unabhängig von Version und Kopierweg, „fehler“ bei beschädigten Tabellen', async () => {
+    const a = await sqliteInventar(welt('version|3.45.1\nweg|backup\ntab|analytics_events|fehler\ntab|seiten|12\ntab|users|3\n'), 'dockerhost', '/opt/noahhabel-cms/app/backend/database/noahhabel_cms.sqlite');
+    expect(a).toMatchObject({ art: 'sqlite', datenbanken: [{ tabellen: 3, zeilen: 15 }], hinweis: 'nicht zählbar: analytics_events' });
+    const b = await sqliteInventar(welt('version|3.46.0\nweg|dateien\ntab|analytics_events|fehler\ntab|seiten|12\ntab|users|3\n'), 'docker-web-01', '/opt/noahhabel-cms/app/backend/database/noahhabel_cms.sqlite');
+    expect(b.fingerabdruck).toBe(a.fingerabdruck);
+    const c = await sqliteInventar(welt('version|3.45.1\nweg|backup\ntab|analytics_events|fehler\ntab|seiten|13\ntab|users|3\n'), 'docker-web-01', '/x/db.sqlite');
+    expect(c.fingerabdruck).not.toBe(a.fingerabdruck);
+    await expect(sqliteInventar(welt(''), 'dockerhost', "/x/db'; rm -rf /")).rejects.toThrow(/pfad/);
+    await expect(sqliteInventar(welt(''), 'dockerhost', '/x/../etc/shadow')).rejects.toThrow(/pfad/);
+  });
+  it('der Befehl öffnet das Original nur lesend und räumt die Kopie immer weg', () => {
+    const b = sqliteInventarBefehl('/srv/app/db.sqlite');
+    expect(b).toContain(`trap 'rm -rf "$d"' EXIT`);
+    expect(b).toContain('?mode=ro');
+    expect(b).not.toMatch(/sqlite3\.connect\(q\)/);
   });
 });
