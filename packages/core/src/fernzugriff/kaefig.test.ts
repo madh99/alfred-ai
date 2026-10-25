@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { geheimnisGrund, kaefigBefehl, kaefigEigenschaften, werteSelbsttest, kaefigGrenze } from './kaefig.js';
+import { geheimnisGrund, nurMetadaten, kaefigBefehl, kaefigEigenschaften, werteSelbsttest, kaefigGrenze } from './kaefig.js';
 
 // v1549 (S1/S2) — Lese-Käfig und Geheimnis-Sperre
 describe('v1549 Geheimnis-Sperre', () => {
@@ -97,5 +97,17 @@ describe('v1632 Käfig-Stufen (Realfall 24.10.: SELinux auf Rocky/Alma, Fedora o
     expect(werteSelbsttest('PROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0, e)).toMatchObject({ ok: true });
     expect(werteSelbsttest('PROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0).ok).toBe(false); // voll verlangt LESEN_OK
     expect(werteSelbsttest('PROBE_GEHEIMNIS /etc/shadow\nPROBE_OEFFENTLICH_OK\nPROBE_ENDE', 0, e).ok).toBe(false);
+  });
+});
+
+describe('v1665 Metadaten-Befehle auf Geheimnis-Pfaden (Realfall 10fb035c)', () => {
+  it('ls, test, stat dürfen Geheimnis-Pfade nennen; Inhalte bleiben gesperrt', () => {
+    for (const b of ['ls -la /srv/vault2510-export', 'test ! -e /srv/vault2510-export/backup.key', 'test ! -e /srv/vault2510-export/runtime.json && test ! -e /srv/vault2510-export/backup.key', "stat -c '%F %s' /srv/vault2510-export/backup.key", '[ -f /opt/app/.env ]']) {
+      expect(nurMetadaten(b)).toBe(true);
+    }
+    for (const b of ['cat /srv/vault2510-export/backup.key', 'ls /srv/x && cat /opt/app/.env', 'ls $(cat /opt/app/.env)', 'ls /srv/x | head', "python3 -c 'print(open(\"/x/backup.key\").read())'", 'grep -r pass /opt/app/.env', 'ls /srv/* ']) {
+      expect(nurMetadaten(b)).toBe(false);
+    }
+    expect(geheimnisGrund('test ! -e /srv/vault2510-export/backup.key')).toBeDefined(); // die Sperre selbst bleibt unverändert
   });
 });

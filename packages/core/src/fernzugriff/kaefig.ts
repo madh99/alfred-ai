@@ -25,6 +25,22 @@ const GEHEIMNISSE: Array<{ muster: RegExp; grund: string }> = [
   { muster: /\b(mysqldump|pg_dump|pg_dumpall|mongodump)\b/, grund: 'Datenbank-Inhalt' },
 ];
 
+/**
+ * v1665 — Realfall 25.10. (10fb035c Schritt 1): Prüfungen wie `ls …/vault2510-export` oder `test ! -e …/backup.key` zeigen nur, ob es eine
+ * Datei gibt — nie ihren Inhalt — und scheiterten trotzdem an der Geheimnis-Sperre. Reine Metadaten-Befehle (ls, test/[ -e/-f/-d/-s/-L/-r ],
+ * stat -c, auch mit && oder ; verkettet) dürfen Geheimnis-Pfade nennen; alles, was Inhalte liest (cat, grep, Skripte …), bleibt gesperrt.
+ */
+const PFAD = String.raw`[\w./@+:-]+`;
+const METADATEN = [
+  new RegExp(String.raw`^ls(\s+-[A-Za-z1]+)*(\s+--)?(\s+${PFAD})+$`),
+  new RegExp(String.raw`^(test|\[)\s+(!\s+)?-[edfsLr]\s+${PFAD}(\s+\])?$`),
+  new RegExp(String.raw`^stat(\s+-c\s+('[^'\n]{1,80}'|"[^"\n]{1,80}"))?(\s+--)?(\s+${PFAD})+$`),
+];
+export function nurMetadaten(befehl: string): boolean {
+  const teile = befehl.trim().split(/\s*(?:&&|;)\s*/).filter(Boolean);
+  return teile.length > 0 && teile.length <= 20 && teile.every(t => METADATEN.some(r => r.test(t)) && !/[$`|<>(){}*?]/.test(t.replace(/'[^'\n]*'|"[^"\n]*"/g, '')));
+}
+
 export function geheimnisGrund(befehl: string): string | undefined {
   for (const g of GEHEIMNISSE) if (g.muster.test(befehl)) return g.grund;
   return undefined;

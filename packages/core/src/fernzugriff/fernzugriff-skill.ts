@@ -5,7 +5,7 @@ import { Freigaben } from '../geraete/freigaben.js';
 import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
-import { geheimnisGrund, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
+import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
@@ -355,7 +355,7 @@ export class FernzugriffSkill extends Skill {
     const klasse = befehlsklasse(befehl);
     if (klasse === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
     // v1549 (S2) — Geheimnisse nie ohne Rückfrage (die Ausgabe ginge an das Modell), auch nicht im Käfig
-    const geheim = geheimnisGrund(befehl);
+    const geheim = nurMetadaten(befehl) ? undefined : geheimnisGrund(befehl); // v1665 — ls/test/stat zeigen keine Inhalte
     if (geheim) return { success: false, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
     if (klasse !== 'lesen') return this.imKaefig(owner, befehl, input, context);
     const z = await this.zugang(owner, input);
@@ -412,7 +412,7 @@ export class FernzugriffSkill extends Skill {
     const b = normalisiereBefehl(befehl);
     const klasse = befehlsklasse(b);
     if (klasse === 'nie') throw new Error('nie erlaubt');
-    if (geheimnisGrund(b)) throw new Error('berührt Geheimnisse');
+    if (!nurMetadaten(b) && geheimnisGrund(b)) throw new Error('berührt Geheimnisse'); // v1665
     const z = await this.zugang(owner, { name });
     let r: SshErgebnis;
     if (klasse === 'lesen') {

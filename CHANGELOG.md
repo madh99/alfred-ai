@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfen, ob es eine Datei gibt, auch bei geschützten Pfaden (v1665)
+
+- **Realfall:** Ein Aufräum-Change hielt an, weil die vorbereitende Prüfung „welche Dateien liegen hier“ einen Dateinamen mit Schlüsselendung nannte und deshalb als Zugriff auf Geheimnisse galt.
+- **Jetzt** sind Befehle, die nur Dateinamen, Typ und Größe zeigen (`ls`, `test`, `stat`), auch für geschützte Pfade erlaubt. Alles, was Inhalte liest, bleibt gesperrt.
+
 ### Fixed — Nach dem Stopp eines Dienstes führt jeder Fehler zurück (v1664)
 
 - **Realfall:** Ein Change stoppte planmäßig einen Dienst, ein späterer Schritt scheiterte und hielt den Change nur an. Der Dienst blieb aus, bis der Rückweg von Hand ausgelöst wurde.
