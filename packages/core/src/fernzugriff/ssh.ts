@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, access, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, mkdtemp, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { gueltigerHost, gueltigerBenutzer } from './regeln.js';
 
@@ -16,13 +16,35 @@ export interface SshErgebnis { code: number; stdout: string; stderr: string; hos
 
 export const AUSGABE_MAX = 4 * 1024 * 1024;
 
+/**
+ * v1656 — Realfall 25.10.2026 01:52: zwei gleichzeitige Abfragen an denselben Zugang; die eine leerte beim Neuschreiben die
+ * known_hosts-Datei, während die andere sie las → „No ED25519 host key is known … Host key verification failed“ → Zugang gesperrt,
+ * obwohl der Schlüssel unverändert war. Jetzt nur bei geändertem Inhalt und atomar (temporäre Datei, dann umbenennen).
+ */
+export async function schreibeKnownHosts(datei: string, inhalt: string): Promise<void> {
+  try { if (await readFile(datei, 'utf8') === inhalt) return; } catch { /* noch nicht vorhanden */ }
+  const tmp = `${datei}.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  await writeFile(tmp, inhalt, { mode: 0o600 });
+  try { await rename(tmp, datei); } catch (err) {
+    // Windows verweigert das Ersetzen einer gerade geöffneten Datei; steht der richtige Inhalt schon drin, ist alles gut
+    await rm(tmp, { force: true });
+    let jetzt = ''; try { jetzt = await readFile(datei, 'utf8'); } catch { /* fehlt */ }
+    if (jetzt !== inhalt) throw err;
+  }
+}
+
+/** v1656 — gesperrt wird nur bei einem tatsächlich anderen Schlüssel; fehlt der Schlüssel in der Datei, ist das kein Wechsel. */
+export function schluesselGeaendert(stderr: string): boolean {
+  return /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key for \S+ has changed/i.test(stderr);
+}
+
 export async function sshAusfuehren(ziel: SshZiel, befehl: string, datenOrdner: string, timeoutMs = 60_000): Promise<SshErgebnis> {
   if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
   if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
   const ordner = path.join(datenOrdner, 'fernzugriff');
   await mkdir(ordner, { recursive: true, mode: 0o700 });
   const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
-  await writeFile(knownHosts, ziel.hostSchluessel, { mode: 0o600 });
+  await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
   const args = [
     '-i', ziel.schluesselPfad, '-p', String(ziel.port),
     '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
@@ -38,7 +60,7 @@ export async function sshAusfuehren(ziel: SshZiel, befehl: string, datenOrdner: 
     const stderr = e.stderr ?? e.message;
     return {
       code: typeof e.code === 'number' ? e.code : e.killed ? 124 : 255, stdout: e.stdout ?? '', stderr,
-      hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr),
+      hostSchluesselGeaendert: schluesselGeaendert(stderr),
     };
   }
 }
@@ -52,7 +74,7 @@ export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: 
   const ordner = path.join(datenOrdner, 'fernzugriff');
   await mkdir(ordner, { recursive: true, mode: 0o700 });
   const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
-  await writeFile(knownHosts, ziel.hostSchluessel, { mode: 0o600 });
+  await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
   const args = ['-i', ziel.schluesselPfad, '-p', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`, befehl];
   const { spawn } = await import('node:child_process');
@@ -64,7 +86,7 @@ export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: 
     p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8'); // Mehrbyte-Zeichen (Umlaute in Dateinamen) nicht an Chunk-Grenzen zerteilen
     p.stdout.on('data', d => { if (stdout.length < max) stdout += d; else zuViel = true; });
     p.stderr.on('data', d => { if (stderr.length < AUSGABE_MAX) stderr += d; });
-    p.on('close', code => { clearTimeout(t); resolve({ code: zuViel ? 125 : code ?? 124, stdout, stderr: zuViel ? `${stderr}\nAusgabe größer als ${max} Bytes` : stderr, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr) }); });
+    p.on('close', code => { clearTimeout(t); resolve({ code: zuViel ? 125 : code ?? 124, stdout, stderr: zuViel ? `${stderr}\nAusgabe größer als ${max} Bytes` : stderr, hostSchluesselGeaendert: schluesselGeaendert(stderr) }); });
     p.on('error', err => { clearTimeout(t); resolve({ code: 255, stdout, stderr: err.message, hostSchluesselGeaendert: false }); });
     p.stdin.end(eingabe);
   });
@@ -82,7 +104,7 @@ export async function sshStrom(q: SshZiel, qBefehl: string, qEingabe: string, z:
     const ordner = path.join(datenOrdner, 'fernzugriff');
     await mkdir(ordner, { recursive: true, mode: 0o700 });
     const knownHosts = path.join(ordner, `known_hosts_${x.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
-    await writeFile(knownHosts, x.hostSchluessel, { mode: 0o600 });
+    await schreibeKnownHosts(knownHosts, x.hostSchluessel);
     return ['-i', x.schluesselPfad, '-p', String(x.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
       '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${x.benutzer}@${x.host}`, befehl];
   };
@@ -112,7 +134,7 @@ export async function sshStrom(q: SshZiel, qBefehl: string, qEingabe: string, z:
     const ende = () => {
       if (cq === undefined || cz === undefined) return;
       clearTimeout(t);
-      resolve({ codeQuelle: cq ?? 124, codeZiel: cz ?? 124, bytes, stderrQuelle: eq, stderrZiel: ez, hostSchluesselGeaendert: /REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(eq + ez) });
+      resolve({ codeQuelle: cq ?? 124, codeZiel: cz ?? 124, bytes, stderrQuelle: eq, stderrZiel: ez, hostSchluesselGeaendert: schluesselGeaendert(eq + ez) });
     };
     // Bricht das Ziel ab, darf die Quelle nicht ewig weiterschreiben (und umgekehrt bekommt das Ziel EOF über die Pipe)
     pq.on('close', c => { cq = c; ende(); });

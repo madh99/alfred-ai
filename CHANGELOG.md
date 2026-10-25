@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gleichzeitige Fernzugriffe sperren keinen Zugang mehr (v1656)
+
+- **Realfall:** Zwei gleichzeitige Abfragen an denselben Server führten dazu, dass dessen Zugang als „Host-Schlüssel geändert“ gesperrt wurde, obwohl sich der Schlüssel nicht geändert hatte. Die Datei mit dem bestätigten Schlüssel wurde bei jedem Aufruf neu geschrieben, und der zweite Aufruf las sie in diesem Moment leer.
+- **Jetzt** wird die Datei nur bei geändertem Inhalt und atomar geschrieben. Gesperrt wird ein Zugang nur noch, wenn der Server tatsächlich einen anderen Schlüssel vorzeigt.
+
 ### Fixed — Reparatur nach Planungslücke findet die abgeschalteten Aufgaben (v1655)
 
 - Die Reparatur aus v1654 las nur aktive Aufgaben und fand daher nichts. Sie nutzt jetzt eine eigene Abfrage für Zeitplan-Aufgaben, die nach einem Lauf ohne nächsten Termin abgeschaltet wurden.
