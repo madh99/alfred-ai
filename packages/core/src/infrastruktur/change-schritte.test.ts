@@ -347,3 +347,22 @@ describe('v1636 Datenbank-Inventar als Vorher/Nachher-Nachweis', () => {
     expect(p.fehler).toEqual([]);
   });
 });
+
+describe('v1664 nach einem Dienst-Stopp nur mit Rückweg (Realfall cb3fd65c)', () => {
+  const plan = (nachStopp: 'anhalten' | 'rueckweg') => ({
+    titel: 'Backend reparieren', begruendung: 'Probe', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 15, betroffen: ['test-vm'],
+    schritte: [
+      { titel: 'Sichern', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 9001, name: 'vor' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'vor' } },
+      { titel: 'Backend stoppen', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', beiFehler: 'rueckweg', parameter: { name: 'test-vm', befehl: 'docker stop -t 60 backend' }, pruefung: { typ: 'ping', ziel: '192.168.1.240' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'test-vm', befehl: 'docker start backend' } } },
+      { titel: 'Reparieren', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', beiFehler: nachStopp, parameter: { name: 'test-vm', befehl: 'touch /srv/x' }, pruefung: { typ: 'ping', ziel: '192.168.1.240' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'test-vm', befehl: 'rm -f /srv/x' } } },
+      { titel: 'Backend starten', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', beiFehler: 'rueckweg', parameter: { name: 'test-vm', befehl: 'docker start backend' }, pruefung: { typ: 'ping', ziel: '192.168.1.240' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'test-vm', befehl: 'docker stop backend' } } },
+      { titel: 'Abschluss', art: 'pruefung', beiFehler: 'anhalten', pruefung: { typ: 'ping', ziel: '192.168.1.240' } },
+    ],
+  });
+  it('„anhalten“ nach dem Stopp wird abgewiesen, nach dem Wiederstart wieder erlaubt', () => {
+    const schlecht = pruefeChangePlan(plan('anhalten'), ctx());
+    expect(schlecht.fehler.join('\n')).toContain('Schritt 3: nach dem Dienst-Stopp in Schritt 2 muss beiFehler „rueckweg“ sein');
+    const gut = pruefeChangePlan(plan('rueckweg'), ctx());
+    expect(gut.fehler.filter(x => x.includes('Dienst-Stopp'))).toEqual([]); // Schritt 5 (nach dem Start) darf anhalten
+  });
+});

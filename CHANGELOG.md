@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Nach dem Stopp eines Dienstes führt jeder Fehler zurück (v1664)
+
+- **Realfall:** Ein Change stoppte planmäßig einen Dienst, ein späterer Schritt scheiterte und hielt den Change nur an. Der Dienst blieb aus, bis der Rückweg von Hand ausgelöst wurde.
+- **Jetzt** werden Pläne abgewiesen, in denen ein Schritt zwischen dem Stopp und dem Wiederstart eines Dienstes bei einem Fehler nur anhält. Dort muss der Rückweg greifen, damit der Dienst sofort wieder läuft.
+
 ### Added — Datenbank-Inventar für SQLite (v1663)
 
 - **Realfall:** Beim Umzug einer Anwendung mit SQLite-Datenbank ließ sich der Fingerabdruck nach dem Stopp der Anwendung nicht erheben, weil die Datenbank im schreibgeschützten Lesebereich nicht zu öffnen war. Der Change wurde automatisch zurückgerollt, die Anwendung lief weiter.

@@ -59,6 +59,10 @@ const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessTo
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
 const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
+/** v1664 — Befehle, die einen Dienst anhalten bzw. wieder starten (für die Regel „nach dem Stopp nur mit Rückweg“) */
+export const DIENST_STOPP = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(stop|kill|down|pause)|docker\s+container\s+(stop|kill)|systemctl\s+(stop|kill)|service\s+\S+\s+stop)\b/;
+export const DIENST_START = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(start|up|restart|unpause)|docker\s+container\s+(start|restart)|systemctl\s+(start|restart)|service\s+\S+\s+(start|restart))\b/;
+
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   // v1628 — pruefen (Verbindung, sudo, Käfig-Selbsttest) und liste ändern am Host nichts (Realfall 24.10.: Vorlagen-Beweis)
   if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || aktion === 'datenbank_inventar' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
@@ -278,6 +282,17 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
     f.push(`Vor der ersten ändernden Aktion (Schritt ${ersteAenderung}) fehlt eine Sicherung (z. B. proxmox create_snapshot/backup_vm, mikrotik backup_config) — oder ohneSicherungGrund angeben, wenn nur Neues entsteht`);
   }
   if (plan.ohneSicherungGrund) h.push(`Ohne Sicherung geplant: ${plan.ohneSicherungGrund}`);
+  // v1664 — Realfall 25.10. (cb3fd65c): nach „Backend stoppen“ hielt Schritt 5 bei einem Fehler nur an — der Dienst blieb aus (API 502), bis der
+  // Owner den Rückweg drückte. Ab einem Dienst-Stopp bis zum Wiederstart muss jeder Schritt bei Fehler den Rückweg nehmen.
+  {
+    let gestopptIn: number | undefined;
+    for (const s of plan.schritte) {
+      const b = s.skill === 'fernzugriff' && s.aktion === 'ausfuehren' ? String(s.parameter?.befehl ?? '') : '';
+      if (b && DIENST_STOPP.test(b)) gestopptIn ??= s.nr;
+      if (gestopptIn !== undefined && s.beiFehler !== 'rueckweg') f.push(`Schritt ${s.nr}: nach dem Dienst-Stopp in Schritt ${gestopptIn} muss beiFehler „rueckweg“ sein — sonst bleibt der Dienst bei einem Fehler aus`);
+      if (b && gestopptIn !== undefined && s.nr > gestopptIn && DIENST_START.test(b) && !DIENST_STOPP.test(b)) gestopptIn = undefined;
+    }
+  }
   if (plan.schritte.length && !plan.schritte.some(s => s.art === 'pruefung' || (s.art === 'warten' && s.pruefung))) h.push('Keine Abschlussprüfung als eigener Schritt — nur die Prüfungen der Aktionen');
   if (plan.schritte.some(s => s.art === 'owner')) h.push('Enthält Owner-Schritte — der Ablauf wartet dort auf dich');
   if (/\{\{geheim(datei)?:/.test(JSON.stringify(roheSchritte))) h.push('Verwendet Tresor-Einträge — Werte setzt erst der Motor ein, das Modell sieht sie nie');
