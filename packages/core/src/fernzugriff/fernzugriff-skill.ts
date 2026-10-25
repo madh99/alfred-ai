@@ -39,7 +39,7 @@ export interface FernzugriffDeps {
   /** CMDB-Eintrag zum Namen (Host aus IP/Hostname) und Rückverweis auf den Zugang */
   cmdbFinde?: (name: string) => Promise<{ id: string; name: string; host?: string } | null>;
   cmdbMarkiere?: (assetId: string, zugang: { name: string; benutzer: string; port: number } | null) => Promise<void>;
-  bestaetigung: (frage: { description: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string }) => Promise<boolean>;
+  bestaetigung: (frage: { description: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string; userId?: string }) => Promise<boolean>;
   ssh: (ziel: SshZiel, befehl: string, timeoutMs?: number) => Promise<SshErgebnis>;
   /** I4c — SSH mit Eingabe über stdin (Geheimnisse nie in der Befehlszeile); I6: `max` für große Dateilisten */
   sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number, max?: number) => Promise<SshErgebnis>;
@@ -94,7 +94,7 @@ export class FernzugriffSkill extends Skill {
       `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
       'datenbank_inventar (name, container, art=postgres|mysql|redis): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}). ' +
-      'REGISTRY (nur in Changes): image_hochladen (name, image = lokales Image auf dem Host, registry_ziel = <registry>/<gitlab-projekt>/<name>:<tag>) lädt ein lokal gebautes Image unverändert in die Registry des eigenen GitLab und liefert {{schrittN.digest}}; image_holen (name, image = <registry>/<pfad>@sha256:<digest>) holt genau dieses Image am Ziel und liefert {{schrittN.image_id}}. Anmeldung jeweils nur für den einen Aufruf (Token über stdin, temporäre Docker-Konfiguration).',
+      'REGISTRY (nur in Changes): image_hochladen (name, image = lokales Image auf dem Host, registry_ziel = <registry>/<gitlab-projekt>/<name>:<tag>) lädt ein lokal gebautes Image unverändert in die Registry des eigenen GitLab und liefert {{schrittN.digest}}; image_holen (name, image = <registry>/<pfad>@sha256:<digest> oder ein öffentliches Image wie nginx@sha256:<digest>) holt genau dieses Image am Ziel und liefert {{schrittN.image_id}}. Anmeldung jeweils nur für den einen Aufruf (Token über stdin, temporäre Docker-Konfiguration).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 15 * 60_000,
@@ -169,7 +169,8 @@ export class FernzugriffSkill extends Skill {
     const owner = this.deps.owner();
     if (!owner) return { success: false, error: 'Kein Owner bekannt.' };
     const action = String(input.action ?? 'liste');
-    const herkunft = context.chatId && context.platform ? { chatId: context.chatId, platform: String(context.platform) } : undefined;
+    // v1660 — mit userId: sonst landet die Fortsetzung nach dem Ja im Owner-Hauptgespräch statt im Faden/in der App, aus der die Frage kam (Realfall 25.10.)
+    const herkunft = context.chatId && context.platform ? { chatId: context.chatId, platform: String(context.platform), ...(context.userId ? { userId: context.userId } : {}) } : undefined;
     if (NUR_IM_CHANGE.has(action) && context.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen` };
     try {
       switch (action) {
@@ -213,7 +214,7 @@ export class FernzugriffSkill extends Skill {
     };
   }
 
-  private async anlegen(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
+  private async anlegen(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<SkillResult> {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (!name || !/^[\w.-]{1,64}$/.test(name)) return { success: false, error: 'anlegen braucht einen Namen (Buchstaben, Ziffern, . _ -)' };
     const cmdb = await this.deps.cmdbFinde?.(name).catch(() => null) ?? null;
@@ -542,7 +543,8 @@ export class FernzugriffSkill extends Skill {
     const hr = holReferenz(reg.server, ref);
     if ('fehler' in hr) return { success: false, error: hr.fehler };
     const z = await this.zugang(owner, { name: input.name });
-    const r = await this.deps.sshEingabe(this.sshZiel(z), fernBefehl(holenBefehl(reg, ref, hr.digest), true), reg.token, this.timeoutLang(input));
+    // v1660 — öffentliche Images ohne Anmeldung: der Token geht dann gar nicht erst zum Host
+    const r = await this.deps.sshEingabe(this.sshZiel(z), fernBefehl(holenBefehl(reg, ref, hr.digest, hr.eigene), true), hr.eigene ? reg.token : '', this.timeoutLang(input));
     const imageId = ausgabeWert(r.stdout, 'IMAGE_ID');
     this.deps.protokoll?.('v1658 Image geholt', { name: z.name, image: ref, code: r.code, imageId });
     if (r.code !== 0 || !imageId) return { success: false, error: `Holen gescheitert (Exit ${r.code}): ${schwaerze(r.stderr || r.stdout).text.trim().slice(-300)}` };
@@ -695,7 +697,7 @@ export class FernzugriffSkill extends Skill {
     return w;
   }
 
-  private async kaefigSchalter(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
+  private async kaefigSchalter(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<SkillResult> {
     const z = await this.zugang(owner, input);
     if (!this.deps.repo.setzeKaefig) return { success: false, error: 'Lese-Käfig nicht verfügbar' };
     if (input.an === false) {
@@ -752,7 +754,7 @@ export class FernzugriffSkill extends Skill {
     return { success: true, data: { id, seite: n, seiten: seiten.length }, display: `\`\`\`\n[${a.name}$ ${a.befehl} — Seite ${n}/${seiten.length}]\n${seiten[n - 1]!.slice(0, SEITE_ZEICHEN + 2000)}\`\`\`` };
   }
 
-  private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }, context?: SkillContext): Promise<SkillResult> {
+  private async ausfuehren(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId?: string }, context?: SkillContext): Promise<SkillResult> {
     const { freigabe, ...params } = input;
     const befehl = typeof params.befehl === 'string' ? ausfuehrbarerBefehl(params.befehl) : '';
     if (!befehl) return { success: false, error: 'ausfuehren braucht befehl' };
@@ -780,7 +782,7 @@ export class FernzugriffSkill extends Skill {
       : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
   }
 
-  private async entfernen(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string }): Promise<SkillResult> {
+  private async entfernen(owner: string, input: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<SkillResult> {
     const { freigabe, ...params } = input;
     const name = typeof params.name === 'string' ? params.name.trim() : '';
     const z = name ? await this.deps.repo.finde(owner, name) : null;

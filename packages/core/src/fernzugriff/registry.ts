@@ -22,13 +22,20 @@ export function zielReferenz(server: string, ref: string): { pfad: string; tag: 
   return { pfad, tag };
 }
 
-export function holReferenz(server: string, ref: string): { pfad: string; digest: string } | { fehler: string } {
+/** v1660 — öffentliche Images (Docker Hub u. a.) nur mit festem Digest; geholt ohne Anmeldung (Realfall 25.10.: nginx@sha256:… für Elphantonaut) */
+const OEFFENTLICH = /^(([a-z0-9][a-z0-9.-]{0,252}(:\d{2,5})?)\/)?[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*){0,6}@(?<digest>sha256:[0-9a-f]{64})$/;
+
+export function holReferenz(server: string, ref: string): { pfad: string; digest: string; eigene: boolean } | { fehler: string } {
   if (!SERVER.test(server)) return { fehler: 'Registry-Server ungültig' };
-  if (!ref.startsWith(`${server}/`)) return { fehler: `image muss aus der eigenen Registry kommen (${server}/…)` };
+  if (!ref.startsWith(`${server}/`)) {
+    const o = OEFFENTLICH.exec(ref);
+    if (!o) return { fehler: 'image nur mit Digest (…@sha256:<64 Hex>) — so kommt am Ziel genau dieses Image an' };
+    return { pfad: ref.slice(0, ref.lastIndexOf('@')), digest: o.groups!.digest!, eigene: false };
+  }
   const m = /^(.+)@(sha256:[0-9a-f]{64})$/.exec(ref.slice(server.length + 1));
   if (!m) return { fehler: 'image nur mit Digest (…@sha256:<64 Hex>) — so kommt am Ziel genau dieses Image an' };
   if (!PFAD.test(m[1]!)) return { fehler: 'image: Pfad nur a-z 0-9 . _ - und /' };
-  return { pfad: m[1]!, digest: m[2]! };
+  return { pfad: m[1]!, digest: m[2]!, eigene: true };
 }
 
 export function lokaleReferenz(ref: string): boolean { return LOKAL.test(ref); }
@@ -48,16 +55,16 @@ export function hochladenBefehl(z: RegistryZugang, lokal: string, ziel: string):
   ].join('\n');
 }
 
-/** Fernbefehl: anmelden (Token von stdin), per Digest holen, Digest prüfen; letzte Zeile IMAGE_ID=sha256:… */
-export function holenBefehl(z: RegistryZugang, ref: string, digest: string): string {
+/** Fernbefehl: (bei der eigenen Registry) anmelden — Token von stdin —, per Digest holen, Digest prüfen; letzte Zeile IMAGE_ID=sha256:… */
+export function holenBefehl(z: RegistryZugang, ref: string, digest: string, anmelden = true): string {
   if (!BENUTZER.test(z.benutzer)) throw new Error('Registry-Benutzer ungültig');
   return [
     'set -eu', 'd=$(mktemp -d /tmp/alfred-registry.XXXXXXXX)', 'trap \'rm -rf "$d"\' EXIT', 'export DOCKER_CONFIG="$d"',
-    `docker login ${z.server} -u ${z.benutzer} --password-stdin >/dev/null`,
+    ...(anmelden ? [`docker login ${z.server} -u ${z.benutzer} --password-stdin >/dev/null`] : []),
     `docker pull -q ${ref} >/dev/null`,
     `docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' ${ref} | grep -qF '@${digest}'`,
     `echo "IMAGE_ID=$(docker image inspect --format '{{.Id}}' ${ref})"`,
-    `docker logout ${z.server} >/dev/null 2>&1 || true`,
+    ...(anmelden ? [`docker logout ${z.server} >/dev/null 2>&1 || true`] : []),
   ].join('\n');
 }
 

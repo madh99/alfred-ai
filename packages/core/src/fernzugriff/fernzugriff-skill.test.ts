@@ -20,19 +20,20 @@ function aufbau(ssh: (b: string) => { code: number; stdout: string; stderr: stri
     setzeKaefig: async (_u, id, k) => { zeilen.get(id)!.kaefig = k; },
   };
   const fragen: Array<{ description: string; params: Record<string, unknown> }> = [];
+  const herkuenfte: Array<{ chatId: string; platform: string; userId?: string } | undefined> = [];
   const befehle: string[] = [];
   const melde = vi.fn();
   const skill = new FernzugriffSkill({
     repo, owner: () => 'owner', istOwner: (c) => c.userId === 'owner',
     cmdbFinde: async (n) => (n === 'pve' ? { id: 'a1', name: 'pve', host: '192.168.1.22' } : null),
     cmdbMarkiere: vi.fn(async () => undefined),
-    bestaetigung: async (f) => { fragen.push(f); return true; },
+    bestaetigung: async (f, h) => { fragen.push(f); herkuenfte.push(h); return true; },
     ssh: async (_z, b) => { befehle.push(b); const r = ssh(b); return { hostSchluesselGeaendert: false, ...r }; },
     keyscan: async () => `# kommentar\n192.168.1.22 ssh-ed25519 ${K}\n`,
     schluessel: async () => ({ pfad: '/data/fernzugriff/id_ed25519', oeffentlich: 'ssh-ed25519 XYZ alfred-fernzugriff', neu: false }),
     melde,
   });
-  return { skill, zeilen, fragen, befehle, melde };
+  return { skill, zeilen, fragen, befehle, melde, herkuenfte };
 }
 
 async function aktiv(t: ReturnType<typeof aufbau>) {
@@ -83,6 +84,8 @@ describe('v1539 FernzugriffSkill', () => {
     const r = await t.skill.execute({ action: 'ausfuehren', name: 'pve', befehl: 'systemctl restart pveproxy' }, ctx);
     expect(r.data).toMatchObject({ zurBestaetigung: true });
     expect(t.befehle).toHaveLength(0);
+    // v1660 — die Herkunft trägt den Benutzer, damit die Fortsetzung nach dem Ja im selben Gespräch läuft
+    expect(t.herkuenfte.at(-1)).toEqual({ chatId: 'c1', platform: 'api', userId: 'owner' });
     const f = t.fragen.pop()!;
     expect((await t.skill.execute({ ...f.params, befehl: 'zpool scrub tank' }, ctx)).success).toBe(false);
     const f2 = (await t.skill.execute({ action: 'ausfuehren', name: 'pve', befehl: 'systemctl restart pveproxy' }, ctx), t.fragen.pop()!);

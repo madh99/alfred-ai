@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bestätigte Fernzugriffe antworten im richtigen Gespräch, öffentliche Images per Digest (v1660)
+
+- **Fortsetzung im Ursprungsgespräch:** Wurde eine Fernzugriff-Aktion aus einem Gesprächsfaden heraus vorgeschlagen und in der App bestätigt, kam das Ergebnis im Telegram-Hauptgespräch an statt im Faden. Jetzt läuft die Fortsetzung dort, wo die Frage gestellt wurde; das Hauptgespräch erhält wie bisher eine Kopie.
+- **Öffentliche Images:** Das Holen von Images per Digest funktionierte nur aus der eigenen Registry. Öffentliche Images, etwa von Docker Hub, lassen sich jetzt ebenfalls genau über ihren Digest holen, ohne Anmeldung.
+
 ### Fixed — Image holen lässt sich mit dem Digest aus dem Hochlade-Schritt planen (v1659)
 
 - Beim Planen eines Umzugs verlangte das Holen eines Images bereits einen festen Digest, obwohl dieser erst beim Hochladen im selben Change entsteht. Jetzt ist auch der Verweis auf den Hochlade-Schritt erlaubt; die genaue Prüfung erfolgt wie bisher beim Ausführen.

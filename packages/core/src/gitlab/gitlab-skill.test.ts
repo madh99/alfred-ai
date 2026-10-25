@@ -36,8 +36,15 @@ describe('v1658 Registry-Befehle', () => {
     expect('fehler' in zielReferenz(reg.server, 'docker.io/madh/x:1')).toBe(true);
     expect('fehler' in zielReferenz(reg.server, 'registry.lokalkraft.at/madh/x')).toBe(true);
     expect('fehler' in zielReferenz(reg.server, "registry.lokalkraft.at/madh/x;rm -rf /:1")).toBe(true);
-    expect(holReferenz(reg.server, `registry.lokalkraft.at/madh/x@sha256:${'b'.repeat(64)}`)).toEqual({ pfad: 'madh/x', digest: `sha256:${'b'.repeat(64)}` });
+    expect(holReferenz(reg.server, `registry.lokalkraft.at/madh/x@sha256:${'b'.repeat(64)}`)).toEqual({ pfad: 'madh/x', digest: `sha256:${'b'.repeat(64)}`, eigene: true });
     expect('fehler' in holReferenz(reg.server, 'registry.lokalkraft.at/madh/x:latest')).toBe(true);
+    // v1660 — öffentliche Images nur mit festem Digest, ohne Anmeldung (Realfall 25.10.: nginx für Elphantonaut)
+    const n = holReferenz(reg.server, `nginx@sha256:${'c'.repeat(64)}`);
+    expect(n).toEqual({ pfad: 'nginx', digest: `sha256:${'c'.repeat(64)}`, eigene: false });
+    expect(holReferenz(reg.server, `ghcr.io/org/app@sha256:${'d'.repeat(64)}`)).toMatchObject({ eigene: false });
+    expect('fehler' in holReferenz(reg.server, 'nginx:latest')).toBe(true);
+    expect('fehler' in holReferenz(reg.server, `nginx;rm -rf /@sha256:${'c'.repeat(64)}`)).toBe(true);
+    expect(holenBefehl(reg, `nginx@sha256:${'c'.repeat(64)}`, `sha256:${'c'.repeat(64)}`, false)).not.toContain('docker login');
     expect(lokaleReferenz('noah-landingpage-backend:latest')).toBe(true);
     expect(lokaleReferenz('x; curl evil')).toBe(false);
   });
