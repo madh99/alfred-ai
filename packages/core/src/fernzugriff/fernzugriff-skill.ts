@@ -93,7 +93,7 @@ export class FernzugriffSkill extends Skill {
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
       `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
-      'datenbank_inventar (name, container, art=postgres|mysql|redis — oder art=sqlite mit pfad = Datei auf dem Host, gezählt auf einer Kopie als root, auch bei beschädigten Seiten): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}). ' +
+      'datenbank_inventar (name, container — PostgreSQL nativ auf dem Host: container=host —, art=postgres|mysql|redis, optional datenbank = nur diese zählen — oder art=sqlite mit pfad = Datei auf dem Host, gezählt auf einer Kopie als root, auch bei beschädigten Seiten): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}). ' +
       'REGISTRY (nur in Changes): image_hochladen (name, image = lokales Image auf dem Host, registry_ziel = <registry>/<gitlab-projekt>/<name>:<tag>) lädt ein lokal gebautes Image unverändert in die Registry des eigenen GitLab und liefert {{schrittN.digest}}; image_holen (name, image = <registry>/<pfad>@sha256:<digest> oder ein öffentliches Image wie nginx@sha256:<digest>) holt genau dieses Image am Ziel und liefert {{schrittN.image_id}}. Anmeldung jeweils nur für den einen Aufruf (Token über stdin, temporäre Docker-Konfiguration).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -125,9 +125,8 @@ export class FernzugriffSkill extends Skill {
         kbps: { type: 'number', description: 'kopieren/datenbank_kopieren: Bandbreitengrenze in KB/s' },
         quelle_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container an der Quelle' },
         ziel_container: { type: 'string', description: 'datenbank_kopieren: PostgreSQL-Container am Ziel (Datenbank muss existieren)' },
-        datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname' },
-        container: { type: 'string', description: 'datenbank_inventar: Container der Datenbank' },
-        image: { type: 'string', description: 'image_hochladen: lokales Image auf dem Host (Name:Tag oder sha256:…); image_holen: <registry>/<pfad>@sha256:<digest>' },
+        datenbank: { type: 'string', description: 'datenbank_kopieren: Datenbankname; datenbank_inventar (postgres): nur diese Datenbank zählen — auf gemeinsam genutzten DB-Hosts' },
+        container: { type: 'string', description: 'datenbank_inventar: Container der Datenbank; "host" = PostgreSQL läuft nativ auf dem Host (Systembenutzer postgres)' },        image: { type: 'string', description: 'image_hochladen: lokales Image auf dem Host (Name:Tag oder sha256:…); image_holen: <registry>/<pfad>@sha256:<digest>' },
         registry_ziel: { type: 'string', description: 'image_hochladen: <registry>/<gitlab-projekt>/<name>:<tag> (eigene GitLab-Registry, Pfad aus gitlab projekte)' },
         art: { type: 'string', enum: ['postgres', 'mysql', 'mariadb', 'redis', 'sqlite'], description: 'datenbank_inventar: postgres, mysql/mariadb, redis (mit container) oder sqlite (mit pfad = Datei auf dem Host)' },
         db_benutzer: { type: 'string', description: 'datenbank_kopieren: Datenbank-Benutzer' },
@@ -572,9 +571,9 @@ export class FernzugriffSkill extends Skill {
     const art = input.art === 'redis' ? 'redis' : input.art === 'postgres' ? 'postgres' : input.art === 'mysql' || input.art === 'mariadb' ? 'mysql' : input.art === 'sqlite' ? 'sqlite' : undefined;
     if (!art) return { success: false, error: 'art: postgres, mysql (auch MariaDB), redis oder sqlite' };
     // v1663 — SQLite: Datei auf dem Host (pfad) statt Container
-    const inv = art === 'sqlite' ? await sqliteInventar(this.wege(owner), z, String(input.pfad ?? '')) : await datenbankInventar(this.wege(owner), z, String(input.container ?? ''), art);
+    const inv = art === 'sqlite' ? await sqliteInventar(this.wege(owner), z, String(input.pfad ?? '')) : await datenbankInventar(this.wege(owner), z, String(input.container ?? ''), art, art === 'postgres' && typeof input.datenbank === 'string' && input.datenbank.trim() ? input.datenbank.trim() : undefined);
     this.deps.protokoll?.('v1636 Datenbank-Inventar', { zugang: z.name, container: input.container, art, version: inv.version, datenbanken: inv.datenbanken.length, fingerabdruck: inv.fingerabdruck.slice(0, 16) });
-    const zeilen = inv.datenbanken.map(d => `- ${d.name}${d.bytes !== undefined ? ` ${(d.bytes / 1024 / 1024).toFixed(1)} MB` : ''}${d.tabellen !== undefined ? `, ${d.tabellen} Tabellen, ${d.zeilen} Zeilen` : ''}${d.schluessel !== undefined ? `, ${d.schluessel} Schlüssel` : ''}`);
+    const zeilen = inv.datenbanken.map(d => `- ${d.name}${d.bytes !== undefined ? ` ${(d.bytes / 1024 / 1024).toFixed(1)} MB` : ''}${d.tabellen !== undefined ? `, ${d.tabellen} Tabellen, ${d.zeilen} Zeilen` : ''}${d.schluessel !== undefined ? `, ${d.schluessel} Schlüssel` : ''}${d.encoding ? `, ${d.encoding} collate=${d.collate} ctype=${d.ctype}` : ''}`);
     const display = [`${art === 'postgres' ? 'PostgreSQL' : art === 'mysql' ? 'MySQL/MariaDB' : art === 'sqlite' ? 'SQLite' : 'Redis'} ${inv.version} in ${art === 'sqlite' ? String(input.pfad) : String(input.container)} auf ${z.name}`, ...(inv.hinweis ? [`- ${inv.hinweis}`] : []), ...(inv.integritaet ? [`- Integrität: ${inv.integritaet}`] : []), ...(zeilen.length ? zeilen : ['- keine Datenbanken/Schlüssel']), ...(inv.rollen.length ? [`Rollen: ${inv.rollen.join(', ')}`] : []), `Fingerabdruck: ${inv.fingerabdruck}`].join('\n');
     return { success: true, data: inv, display };
   }

@@ -153,6 +153,26 @@ describe('v1636 Datenbank-Inventar (fest, nur lesend)', () => {
     expect((await datenbankInventar(pg(5), 'docker-dev-01', 'postgreDEV', 'postgres')).fingerabdruck).toBe(a.fingerabdruck);
     expect((await datenbankInventar(pg(6), 'docker-dev-01', 'postgreDEV', 'postgres')).fingerabdruck).not.toBe(a.fingerabdruck);
   });
+  // v1671 — Realfall 25.10. pgsql-p01: natives PostgreSQL auf gemeinsamem DB-Host, nur synapse zählen, Collation sichtbar
+  it('nativ (container=host): runuser postgres, lesend, nur die genannte Datenbank, Encoding/Collation', async () => {
+    const befehle: string[] = [];
+    const w: Wege<string> = {
+      lauf: async (_h, b, eingabe) => {
+        befehle.push(b);
+        expect(b).toContain('default_transaction_read_only=on');
+        if (eingabe.includes("'version|'")) return { code: 0, stdout: 'version|170004\ndb|andere|100\ndb|synapse|2048\nenc|synapse|UTF8|C|C\nenc|andere|UTF8|de_AT.UTF-8|de_AT.UTF-8\nrolle|synapse\n', stderr: '' };
+        if (b.includes('-d synapse')) return { code: 0, stdout: 'public.events|42\n', stderr: '' };
+        throw new Error(`fremde Datenbank gezählt: ${b}`);
+      },
+      strom: async () => { throw new Error('x'); },
+    };
+    const r = await datenbankInventar(w, 'pgsql-p01', 'host', 'postgres', 'synapse');
+    expect(befehle[0]).toContain('runuser -u postgres -- psql');
+    expect(befehle[0]).not.toContain('docker');
+    expect(r.hauptversion).toBe('17');
+    expect(r.datenbanken).toEqual([{ name: 'synapse', bytes: 2048, encoding: 'UTF8', collate: 'C', ctype: 'C', tabellen: 1, zeilen: 42 }]);
+    await expect(datenbankInventar(w, 'pgsql-p01', 'host', 'postgres', 'fehlt')).rejects.toThrow(/nicht gefunden/);
+  });
   it('Redis: Version und Schlüssel je Datenbank; ungültiger Containername wird abgewiesen', async () => {
     const w: Wege<string> = { lauf: async () => ({ code: 0, stdout: 'redis_version:7.2.5\ndb0:keys=3,expires=0,avg_ttl=0\n', stderr: '' }), strom: async () => { throw new Error('x'); } };
     const r = await datenbankInventar(w, 'dockerhost', 'redis', 'redis');

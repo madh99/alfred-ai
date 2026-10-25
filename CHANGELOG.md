@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Datenbank-Inventar für PostgreSQL direkt auf dem Host (v1672)
+
+- Das feste, nur lesende Datenbank-Inventar funktioniert jetzt auch, wenn PostgreSQL nicht im Container, sondern direkt auf dem Server läuft. Auf gemeinsam genutzten Datenbank-Servern lässt es sich auf eine einzelne Datenbank beschränken und zeigt Zeichensatz und Sortierung je Datenbank.
+
 ### Fixed — MikroTik-Regeln vollständig, Fernzugang-Einrichtung sichtbar (v1671)
 
 - Die Übersicht der NAT- und Firewall-Regeln des MikroTik zeigt jetzt alle Bedingungen einer Regel (Protokoll, Port, Schnittstelle, Verbindungszustand); neue Regeln können auf eine Schnittstelle beschränkt werden.
