@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: alle offenen Bestätigungen sichtbar und lesbar (App 1.78.0)
+
+- Offene Bestätigungen stehen jetzt mit den neuesten zuerst und mit Uhrzeit da. Ein Antippen zeigt den ganzen Text.
+- „Alle anzeigen“ blendet jede offene Bestätigung ein (scrollbar), statt nur drei zu zeigen und auf eine Seitenleiste zu verweisen, in der sie nicht standen.
+
 ### Fixed — Veraltete Handgriff-Fragen verschwinden (v1688)
 
 - Wird ein Change korrigiert, abgebrochen oder läuft er weiter, verschwinden offene Fragen „Schritt N erledigt?“, die nicht mehr zum aktuellen Stand passen. Bisher standen sie weiter in der App und konnten mit der gültigen Frage verwechselt werden.

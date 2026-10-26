@@ -700,27 +700,54 @@ extension _Oberflaeche on _SitzungState {
   }
 
 
+  /// 1.78.0 — Owner 26.10.: nur 3 Bestätigungen sichtbar, auf 3 Zeilen gekürzt, Verweis auf eine Seitenleiste ohne Liste → alte und
+  /// neue Fragen verwechselt. Jetzt: neueste zuerst mit Uhrzeit, Antippen klappt den ganzen Text auf, „Alle anzeigen“ zeigt jede offene.
   Widget _bestaetigungen(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final sortiert = [...offen]..sort((a, b) => (b.seit ?? DateTime(0)).compareTo(a.seit ?? DateTime(0)));
+    final sichtbar = bestAlle ? sortiert : sortiert.take(3).toList();
+    String zeit(DateTime? d) { if (d == null) return ''; final l = d.toLocal(); final h = DateTime.now(); final hm = '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}'; return l.year == h.year && l.month == h.month && l.day == h.day ? hm : '${l.day}.${l.month}. $hm'; }
+    Widget karte(Bestaetigung b) {
+      final auf = bestAufgeklappt.contains(b.id);
+      final lang = b.text.length > 160 || '\n'.allMatches(b.text).length > 2;
+      return Card(
+        margin: const EdgeInsets.only(bottom: 6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: lang ? () => _neu(() => auf ? bestAufgeklappt.remove(b.id) : bestAufgeklappt.add(b.id)) : null,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(padding: const EdgeInsets.only(top: 2), child: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700)),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text([zeit(b.seit), if (b.quelle == 'geraet') 'Gerät'].where((x) => x.isNotEmpty).join(' · '), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+                SelectionArea(child: Text(b.text, maxLines: auf ? null : 3, overflow: auf ? TextOverflow.visible : TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
+                if (lang) Text(auf ? 'weniger' : 'ganzen Text zeigen', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)),
+              ])),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: () => _entscheide(b, true), child: const Text('Ja')),
+              const SizedBox(width: 6),
+              OutlinedButton(onPressed: () => _entscheide(b, false), child: const Text('Nein')),
+            ]),
+          ),
+        ),
+      );
+    }
+    final liste = Column(mainAxisSize: MainAxisSize.min, children: [for (final b in sichtbar) karte(b)]);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-      child: Column(children: [
-        for (final b in offen.take(3))
-          Card(
-            margin: const EdgeInsets.only(bottom: 6),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-              child: Row(children: [
-                Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700),
-                const SizedBox(width: 10),
-                Expanded(child: Text('${b.quelle == 'geraet' ? 'Gerät · ' : ''}${b.text}', maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
-                const SizedBox(width: 8),
-                FilledButton(onPressed: () => _entscheide(b, true), child: const Text('Ja')),
-                const SizedBox(width: 6),
-                OutlinedButton(onPressed: () => _entscheide(b, false), child: const Text('Nein')),
-              ]),
-            ),
-          ),
-        if (offen.length > 3) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('… und ${offen.length - 3} weitere in der Seitenleiste', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (bestAlle && sortiert.length > 3)
+          ConstrainedBox(constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45), child: SingleChildScrollView(child: liste))
+        else
+          liste,
+        if (sortiert.length > 3)
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+            onPressed: () => _neu(() => bestAlle = !bestAlle),
+            icon: Icon(bestAlle ? Icons.expand_less : Icons.expand_more, size: 18),
+            label: Text(bestAlle ? 'Nur die neuesten 3 zeigen' : 'Alle ${sortiert.length} offenen Bestätigungen anzeigen'),
+          )),
       ]),
     );
   }

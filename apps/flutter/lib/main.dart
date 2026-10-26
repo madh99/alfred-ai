@@ -178,6 +178,9 @@ class Sitzung extends StatefulWidget {
 class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final List<Eintrag> verlauf = [];
   final List<Bestaetigung> offen = [];
+  /// 1.78.0 — Bestätigungen: aufgeklappte (ganzer Text) und „alle anzeigen“ (Owner 26.10.: nur 3 sichtbar, abgeschnitten → verwechselt)
+  final Set<String> bestAufgeklappt = {};
+  bool bestAlle = false;
   final Set<String> gemeldet = {};
   final TextEditingController eingabe = TextEditingController();
   /// 1.54.0 — Handy: laufende Aufnahme ist ein Diktat (Text ins Eingabefeld statt senden; Owner 19.10.)
