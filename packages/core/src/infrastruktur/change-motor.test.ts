@@ -451,3 +451,23 @@ describe('v1682 Steuern bei wartendem Owner-Schritt', () => {
     expect(await w.motor.ownerSchrittErledigt('o', 'chg-1', 1, w.fragen[0]!.p.freigabe)).not.toContain('läuft weiter');
   });
 });
+
+// v1683 — Realfall 26.10. (Matrix J Schritt 5): lokaler Resolver mit Altantwort, öffentliche Resolver kennen den neuen Eintrag
+describe('v1683 DNS-Prüfung ohne lokalen Cache', () => {
+  it('besteht, wenn öffentliche Resolver den erwarteten Wert liefern', async () => {
+    const plan: ChangeSchritt[] = [S({ nr: 1, art: 'pruefung', pruefung: { typ: 'dns', ziel: 'turn.3033.at', erwartet: '91.114.43.173' } })];
+    const w = welt(plan);
+    w.deps.netz.dns = async () => ['185.51.8.94'];
+    (w.deps.netz as { dnsFrisch?: (n: string) => Promise<string[]> }).dnsFrisch = async () => ['91.114.43.173'];
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+  });
+  it('scheitert weiter, wenn auch öffentlich der alte Wert steht', async () => {
+    const plan: ChangeSchritt[] = [S({ nr: 1, art: 'pruefung', zeitlimitS: 1, pruefung: { typ: 'dns', ziel: 'turn.3033.at', erwartet: '91.114.43.173' } })];
+    const w = welt(plan);
+    w.deps.netz.dns = async () => ['185.51.8.94'];
+    (w.deps.netz as { dnsFrisch?: (n: string) => Promise<string[]> }).dnsFrisch = async () => ['185.51.8.94'];
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).not.toBe('completed');
+  });
+});

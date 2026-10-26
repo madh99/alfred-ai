@@ -34,6 +34,8 @@ export interface MotorDeps {
     http: (url: string, timeoutMs: number) => Promise<{ status: number; text: string }>;
     port: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
     dns: (name: string) => Promise<string[]>;
+    /** v1683 — Auflösung über öffentliche Resolver ohne lokalen Cache */
+    dnsFrisch?: (name: string) => Promise<string[]>;
     ping: (host: string) => Promise<boolean>;
   };
   cmdbProtokoll?: (assetId: string, text: string) => Promise<void>;
@@ -327,9 +329,15 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       }
       case 'port': { const ok = await this.d.netz.port(p.ziel!, p.port!, 5_000); return { ok, text: `${p.ziel}:${p.port} ${ok ? 'offen' : 'nicht erreichbar'}` }; }
       case 'dns': {
-        const ips = await this.d.netz.dns(p.ziel!);
+        let ips = await this.d.netz.dns(p.ziel!);
+        let quelle = '';
+        // v1683 — lokaler Resolver mit zwischengespeicherter Altantwort: öffentliche Resolver ohne Cache fragen
+        if (p.erwartet && !ips.includes(p.erwartet) && this.d.netz.dnsFrisch) {
+          const frisch = await this.d.netz.dnsFrisch(p.ziel!).catch(() => [] as string[]);
+          if (frisch.includes(p.erwartet)) { ips = frisch; quelle = ' (öffentliche Resolver, lokal noch zwischengespeichert)'; }
+        }
         const ok = ips.length > 0 && (!p.erwartet || ips.includes(p.erwartet));
-        return { ok, text: `${p.ziel} → ${ips.join(', ') || 'keine Adresse'}` };
+        return { ok, text: `${p.ziel} → ${ips.join(', ') || 'keine Adresse'}${quelle}` };
       }
       case 'ping': { const ok = await this.d.netz.ping(p.ziel!); return { ok, text: `${p.ziel} ${ok ? 'antwortet' : 'antwortet nicht'}` }; }
       case 'container_healthy': {

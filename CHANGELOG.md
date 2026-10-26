@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Neue DNS-Einträge werden sofort erkannt (v1683)
+
+- Prüft ein Change einen gerade angelegten DNS-Eintrag, fragt Alfred bei einer veralteten Antwort des lokalen Resolvers zusätzlich öffentliche DNS-Server direkt. Ein Change hält dadurch nicht mehr nur wegen zwischengespeicherter Altwerte an.
+
 ### Fixed — Wartende Changes lassen sich abbrechen (v1682)
 
 - Ein Change, der auf einen Handgriff des Owners wartet, lässt sich jetzt in App und Chat abbrechen, wiederholen oder zurücknehmen. Bisher war das nur bei angehaltenen Changes möglich.

@@ -40,6 +40,17 @@ export async function aufloesen(name: string): Promise<string[]> {
   try { return (await dns.lookup(name, { all: true })).map(a => a.address); } catch { return []; }
 }
 
+/**
+ * v1683 — Realfall 26.10. (Matrix J Schritt 5): ein frisch angelegter A-Record war bei Cloudflare sofort sichtbar, der lokale Resolver
+ * lieferte aber 300 s lang die zwischengespeicherte Wildcard-Antwort — die Prüfung scheiterte sechsmal. Fragt öffentliche Resolver direkt.
+ */
+export async function aufloesenFrisch(name: string): Promise<string[]> {
+  const r = new dns.Resolver({ timeout: 5_000, tries: 2 });
+  r.setServers(['1.1.1.1', '8.8.8.8']);
+  const [v4, v6] = await Promise.all([r.resolve4(name).catch(() => [] as string[]), r.resolve6(name).catch(() => [] as string[])]);
+  return [...v4, ...v6];
+}
+
 export function ping(host: string): Promise<boolean> {
   if (!/^[\w.:-]+$/.test(host)) return Promise.resolve(false);
   return new Promise(resolve => execFile('ping', ['-c', '1', '-W', '2', host], { timeout: 5_000 }, err => resolve(!err)));
