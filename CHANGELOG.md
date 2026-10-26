@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Mehr lokale Gesundheitsprüfungen ohne Rückfrage (v1681)
+
+- Lokale Gesundheitsprüfungen von Diensten (Abruf an localhost in den gängigen Schreibweisen, Verbindungstest auch für UDP) gelten jetzt als reines Lesen und sind als Prüfung in Changes erlaubt.
+
 ### Added — Große Change-Pläne gezielt ändern (v1680)
 
 - Alfred kann in einem geplanten Change einzelne Schritte ersetzen oder neue einfügen, ohne den ganzen Plan neu zu schreiben. Nachfolgende Schritte und ihre Bezüge werden dabei automatisch angepasst.

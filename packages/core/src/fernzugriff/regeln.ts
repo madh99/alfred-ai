@@ -74,11 +74,12 @@ const LESE_BEFEHLE: RegExp[] = [
   /^last -n \d{1,3}$/,
   // v1549 (S1) — Netz-Diagnose außerhalb des Käfigs (der hat kein Netz): nur GET/HEAD, ping/dig mit Grenzen
   // v1551 (Sicherheitsprüfung, SSRF) — ohne Rückfrage nur an den Host selbst, ohne Query-String und ohne Weiterleitung (-L)
-  /^curl( -[sSIkv]+| -m \d{1,3}| --max-time \d{1,3}| -o \/dev\/null| -w "%\{(http_code|time_total|time_connect|remote_ip)\}( %\{(http_code|time_total|time_connect|remote_ip)\})*")* https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(\/[\w./%-]*)?$/,
+  // v1681 — Realfall 26.10. (Matrix J, JWT-Health): gleichwertige Langformen und -f (Fehler bei HTTP ≥ 400) — weiterhin nur localhost
+  /^curl( -[sSIkvf]+| --(fail|silent|show-error|head|insecure)| -m \d{1,3}| --max-time \d{1,3}| --connect-timeout \d{1,3}| -o \/dev\/null| -w "%\{(http_code|time_total|time_connect|remote_ip)\}( %\{(http_code|time_total|time_connect|remote_ip)\})*")* https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(\/[\w./%-]*)?$/,
   /^ping -c [1-9]( -W \d{1,2})? [\w.:-]+$/,
   // v1603 (Realfall 23.10., Change 4f2642ab: die Abschlussprobe `nc -z` lief im Käfig ohne Netz und scheiterte immer) — reiner
   // Verbindungstest: nur -z (sendet keine Daten), ein Port, kein -e/-l
-  /^nc -zv?( -w [1-9]\d?)? [\w.:-]+ \d{1,5}$/,
+  /^nc -z[vu]{0,2}( -w [1-9]\d?)? [\w.:-]+ \d{1,5}$/, // v1681 — auch UDP-Probe (-u), weiterhin ohne Daten
   /^(dig|nslookup|host)( [\w.:@+-]+){1,3}$/,
   /^ss( -[tulnpaxs]+)+$/,
   // I1 Bestandsaufnahme (Spec Infrastruktur-Vorhaben) — Betriebssystem und genau die Compose-Zuordnung (nur diese zwei Labels)

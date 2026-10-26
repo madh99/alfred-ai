@@ -172,3 +172,16 @@ describe('v1609 ausfuehrbarerBefehl (Realfall dea4b9cd: Heredoc mit Python zerfi
     expect(befehlsklasse('docker ps\nrm -rf /tmp/x')).not.toBe('lesen');
   });
 });
+
+// v1681 — Realfall 26.10. Matrix J: curl-Langformen an localhost und nc -zu sind Lesen
+describe('v1681 Leseliste curl/nc', () => {
+  it('curl --fail --silent --show-error an localhost, nc -zu', async () => {
+    const { befehlsklasse } = await import('./regeln.js');
+    expect(befehlsklasse('curl --fail --silent --show-error --max-time 10 http://localhost:8090/healthz')).toBe('lesen');
+    expect(befehlsklasse('curl -fsS http://127.0.0.1:8008/health')).toBe('lesen');
+    expect(befehlsklasse('nc -zu -w 5 127.0.0.1 65349')).toBe('lesen');
+    expect(befehlsklasse('nc -z -w 5 127.0.0.1 7880; nc -z -w 5 127.0.0.1 7881')).toBe('lesen');
+    expect(befehlsklasse('curl --fail https://example.com/')).not.toBe('lesen');
+    expect(befehlsklasse('curl --fail -d x http://localhost:8008/')).not.toBe('lesen');
+  });
+});
