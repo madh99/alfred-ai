@@ -449,3 +449,13 @@ describe('v1678 Käfig-Netzproben und Rückweg aufs Original', () => {
     expect(pruefeChangePlan(mk('/home/synapse/data', false), ctx()).fehler.join('\n')).not.toContain('Originalpfad');
   });
 });
+
+// v1679 — Prüfbefehl mit Verweis wird nach dem Ersetzen eingeordnet (Realfall 26.10. Matrix E4)
+describe('v1679 Verweise im Prüfbefehl', () => {
+  it('docker image inspect …@{{schrittN.digest}} gilt als Leseliste', async () => {
+    const { pruefbefehlFehler, ersetzeVerweise } = await import('./change-schritte.js');
+    const b = "docker image inspect --format '{{json .RepoDigests}}' registry.lokalkraft.at/madh/alfred-ai/matrix-sydent@{{schritt3.digest}}";
+    expect(pruefbefehlFehler(ersetzeVerweise(b))).toBeUndefined();
+    expect(pruefbefehlFehler(ersetzeVerweise("docker network inspect --format '{{json .IPAM.Config}}' bridge"))).toMatch(/ohne Netz/);
+  });
+});

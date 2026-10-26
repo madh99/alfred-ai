@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfungen mit Bezug auf frühere Schritte (v1679)
+
+- Prüfungen, die sich auf das Ergebnis eines früheren Schritts beziehen (zum Beispiel die Kennung eines gerade übertragenen Images), werden beim Planen richtig eingeordnet und nicht mehr fälschlich zurückgewiesen.
+
 ### Fixed — Sicherere Umzugspläne (v1678)
 
 - Geplante Changes werden zurückgewiesen, wenn ihr Rückweg Daten auf den Originalort zurückkopieren und dabei Dateien löschen würde; bei einer abgebrochenen Kopie ginge sonst das Original verloren.

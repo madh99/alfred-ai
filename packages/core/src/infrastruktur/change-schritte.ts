@@ -118,6 +118,16 @@ export function skillAktionen(s: PruefbarerSkill): string[] {
   return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : [];
 }
 
+/**
+ * v1676 — Realfall 26.10. (Matrix E): „registry…/matrix-sydent@{{schritt1.digest}}“ wurde ganz zu „verweis“ — die Image-Prüfung (v1659)
+ * sah den Digest nie. Nur den Verweis selbst ersetzen; ein Digest-Verweis wird zu einem gültigen Platzhalter-Digest.
+ * v1679 — auch für Prüfbefehle: „docker image inspect … @{{schritt3.digest}}“ steht nach dem Auflösen auf der Leseliste.
+ */
+export function ersetzeVerweise(s: string): string {
+  const r = s.replace(new RegExp(VERWEIS.source, 'g'), (m) => (/\.digest\s*\}\}$/.test(m) ? `sha256:${'0'.repeat(64)}` : 'verweis'));
+  return r.trim() === 'verweis' ? 'verweis' : r;
+}
+
 /** Verweise in Parametern prüfen; liefert Fehler und eine Kopie mit Ersatzwerten für die Schemaprüfung. */
 function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern: Set<number>, f: string[], wo: string, schema?: Record<string, { type?: string }>, geheim?: { befehlErlaubt: boolean; namen?: Set<string> }): Record<string, unknown> {
   const kopie: Record<string, unknown> = {};
@@ -137,13 +147,7 @@ function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern
         if (geheim?.namen && !geheim.namen.has(m[5])) f.push(`${wo}: Tresor-Eintrag „${m[5]}“ gibt es nicht`);
       }
     }
-    // v1676 — Realfall 26.10. (Matrix E): „registry…/matrix-sydent@{{schritt1.digest}}“ wurde ganz zu „verweis“ — die Image-Prüfung
-    // (v1659) sah den Digest nie. Nur den Verweis selbst ersetzen; ein Digest-Verweis wird zu einem gültigen Platzhalter-Digest.
-    const teilErsetzt = (s: string) => {
-      const r = s.replace(new RegExp(VERWEIS.source, 'g'), (m) => (/\.digest\s*\}\}$/.test(m) ? `sha256:${'0'.repeat(64)}` : 'verweis'));
-      return r.trim() === 'verweis' ? 'verweis' : r;
-    };
-    kopie[k] = ersetzt && typeof w === 'string' ? (schema?.[k]?.type === 'number' || schema?.[k]?.type === 'integer' ? 1 : teilErsetzt(w)) : w;
+    kopie[k] = ersetzt && typeof w === 'string' ? (schema?.[k]?.type === 'number' || schema?.[k]?.type === 'integer' ? 1 : ersetzeVerweise(w)) : w;
   }
   return kopie;
 }
@@ -169,7 +173,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'dns' || typ === 'ping') fehlt(['ziel']);
   if (typ === 'container_healthy') fehlt(['zugang', 'container']);
   if (typ === 'datei') { fehlt(['zugang', 'pfad']); if (aus.pfad && !/^\/[\w./-]+$/.test(aus.pfad)) f.push(`${wo}: pfad muss ein einfacher absoluter Pfad sein`); }
-  if (typ === 'befehl') { fehlt(['zugang', 'befehl']); const g = aus.befehl ? pruefbefehlFehler(aus.befehl) : undefined; if (g) f.push(`${wo}: Prüfbefehl „${aus.befehl!.slice(0, 60)}“ ${g}`); }
+  if (typ === 'befehl') { fehlt(['zugang', 'befehl']); const g = aus.befehl ? pruefbefehlFehler(ersetzeVerweise(aus.befehl)) : undefined; if (g) f.push(`${wo}: Prüfbefehl „${aus.befehl!.slice(0, 60)}“ ${g}`); }
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;
