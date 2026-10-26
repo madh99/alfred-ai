@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Proxy-Hosts mit Zertifikat zuverlässig anlegen (v1687)
+
+- Das Anlegen eines Proxy-Hosts mit automatischem Let's-Encrypt-Zertifikat bricht nicht mehr nach wenigen Sekunden ab. Wird es wiederholt, übernimmt Alfred einen schon angelegten Host und ergänzt nur, was fehlt, statt einen zweiten anzulegen.
+
 ### Fixed — Firewall-Regeln in langen Listen werden gefunden (v1686)
 
 - Prüft ein Change, ob eine neue Firewall-Regel auf der UniFi angelegt ist, findet er sie jetzt auch, wenn sie in einer langen Regelliste weit hinten steht.

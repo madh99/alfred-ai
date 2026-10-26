@@ -7,6 +7,7 @@ export class NginxProxyManagerSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'nginx_proxy_manager',
     category: 'infrastructure',
+    timeoutMs: 240_000, // v1687 — Let's-Encrypt-Ausstellung beim Anlegen dauert länger als die Standard-30 s
     description:
       'Nginx Proxy Manager — Reverse-Proxy-Verwaltung mit automatischem SSL. ' +
       '"list_hosts" zeigt alle Proxy-Hosts. ' +
@@ -81,7 +82,7 @@ export class NginxProxyManagerSkill extends Skill {
     return this.token;
   }
 
-  private async npmFetch(path: string, options?: RequestInit): Promise<any> {
+  private async npmFetch(path: string, options?: RequestInit, timeoutMs = 15_000): Promise<any> {
     const token = await this.ensureAuth();
     const res = await fetch(`${this.baseUrl}/api${path}`, {
       ...options,
@@ -90,7 +91,7 @@ export class NginxProxyManagerSkill extends Skill {
         'Content-Type': 'application/json',
         ...(options?.headers ?? {}),
       },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!res.ok) {
@@ -161,10 +162,36 @@ export class NginxProxyManagerSkill extends Skill {
       };
     }
 
+    // v1687 — Realfall 26.10. (Matrix J Schritt 21): POST mit certificate_id „new“ holt das Let's-Encrypt-Zertifikat im selben Aufruf und lief
+    // nach 15 s in die Zeitüberschreitung; NPM legte Host und Zertifikat trotzdem an, ssl_forced/http2 fehlten. Eine Wiederholung hätte einen
+    // zweiten Host angelegt. Jetzt: vorhandenen Host mit gleicher Domain und gleichem Ziel übernehmen und Fehlendes nachziehen.
+    const vorhanden = (await this.npmFetch('/nginx/proxy-hosts') as Array<Record<string, unknown> & { id: number; domain_names: string[] }>)
+      .find(h => h.domain_names.some(d => d.toLowerCase() === domain.toLowerCase()));
+    if (vorhanden) {
+      if (vorhanden.forward_host !== targetHost || Number(vorhanden.forward_port) !== Number(targetPort)) {
+        return { success: false, error: `${domain} gibt es schon als Proxy Host ${vorhanden.id} mit anderem Ziel (${String(vorhanden.forward_host)}:${String(vorhanden.forward_port)}) — update_host verwenden` };
+      }
+      const nach: Record<string, unknown> = {};
+      if (ssl && !vorhanden.certificate_id) { nach.certificate_id = 'new'; nach.meta = { letsencrypt_email: this.email, letsencrypt_agree: true, dns_challenge: false }; }
+      if (ssl && forceSsl && !vorhanden.ssl_forced) nach.ssl_forced = 1;
+      if (ssl && !vorhanden.http2_support) nach.http2_support = 1;
+      if (!vorhanden.allow_websocket_upgrade) nach.allow_websocket_upgrade = 1;
+      if (Object.keys(nach).length) {
+        const voll: Record<string, unknown> = { ...(await this.npmFetch(`/nginx/proxy-hosts/${vorhanden.id}`) as Record<string, unknown>), ...nach };
+        for (const key of ['id', 'created_on', 'modified_on', 'owner_user_id', 'certificate', 'owner', 'access_list']) delete voll[key];
+        await this.npmFetch(`/nginx/proxy-hosts/${vorhanden.id}`, { method: 'PUT', body: JSON.stringify(voll) }, nach.certificate_id ? 180_000 : 30_000);
+      }
+      return {
+        success: true,
+        data: { id: vorhanden.id, domain_names: vorhanden.domain_names, vorhanden: true },
+        display: `✅ Proxy Host ${domains.join(', ')} → ${scheme}://${targetHost}:${targetPort} war bereits angelegt (ID: ${vorhanden.id}) — übernommen${Object.keys(nach).length ? `, nachgezogen: ${Object.keys(nach).filter(k => k !== 'meta').join(', ')}` : ''}`,
+      };
+    }
+
     const result = await this.npmFetch('/nginx/proxy-hosts', {
       method: 'POST',
       body: JSON.stringify(body),
-    }) as { id: number; domain_names: string[] };
+    }, ssl ? 180_000 : 30_000) as { id: number; domain_names: string[] };
 
     return {
       success: true,
