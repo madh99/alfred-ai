@@ -499,3 +499,21 @@ describe('v1684 Fernzugänge im Plan', () => {
     expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).not.toContain('gibt es nicht');
   });
 });
+
+// v1685 — Realfall 26.10. (Matrix J wartet bei Owner-Schritt 19, die nötige Korrektur J1 wartete auf J): Korrektur auch bei wartet_owner
+describe('v1685 Korrektur ab Haltepunkt bei wartendem Owner-Schritt', () => {
+  it('ein auf den Owner wartender Change mit Wirkung ist ab dem Haltepunkt korrigierbar', async () => {
+    const it3 = speicher();
+    let korrekturAb: number | undefined;
+    const orig = it3.setzeSchritte;
+    it3.setzeSchritte = async (o: string, id: string, d: ChangeSchrittDaten, x?: { haltOhneWirkung?: boolean; korrekturAb?: number }) => { korrekturAb = x?.korrekturAb; return orig(o, id, d); };
+    const pl = new ChangePlanung({ itsm: it3 as never, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const ok = await pl.planen('o', [snapshotChange()]);
+    if (!ok.ok) throw new Error('planen');
+    const c = it3.db.get(ok.changes[0]!.id)!;
+    Object.assign(c, { status: 'in_progress', lauf: { phase: 'wartet_owner', schritt: 4, ergebnisse: [{ nr: 3, ok: true, aktionOk: true }] } }); // Schritt 3 (löschen) hat gewirkt
+    const r = await pl.aendern('o', c.id, snapshotChange());
+    expect(r.ok).toBe(true);
+    expect(korrekturAb).toBe(4);
+  });
+});

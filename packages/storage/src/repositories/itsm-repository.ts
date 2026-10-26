@@ -926,8 +926,13 @@ export class ItsmRepository {
     // v1661 — angehalten MIT Wirkung, korrigiert ab dem Haltepunkt (der Aufrufer übernimmt die gelaufenen Schritte unverändert):
     // Plan und Fingerabdruck neu, Lauf und Status bleiben, die Freigabe verfällt
     if (o.korrekturAb !== undefined) {
-      if (!angehalten) throw new Error(`Change ist ${e.status} — Korrektur ab Haltepunkt nur bei einem angehaltenen Change`);
-      const lauf = { ...(e.lauf as Record<string, unknown>), korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString() } };
+      // v1685 — Realfall 26.10. (Matrix J wartete bei Schritt 19 auf den Owner und belegte die UDM, die nötige Korrektur J1 wartete auf J):
+      // auch ein Change, der bei einem Owner-Schritt wartet, ist ab dort korrigierbar; die offene Owner-Frage verfällt, er gilt als angehalten
+      const wartetOwner = e.status === 'in_progress' && (e.lauf as { phase?: string } | undefined)?.phase === 'wartet_owner';
+      if (!angehalten && !wartetOwner) throw new Error(`Change ist ${e.status} — Korrektur ab Haltepunkt nur bei einem angehaltenen oder auf den Owner wartenden Change`);
+      const alt = { ...(e.lauf as Record<string, unknown>) };
+      if (wartetOwner) { delete alt.frage; alt.phase = 'angehalten'; alt.grund = `Plan ab Schritt ${o.korrekturAb} korrigiert (wartete auf den Owner)`; }
+      const lauf = { ...alt, korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString() } };
       await this.db.execute(
         // v1662 — alle Plan-Felder wie beim normalen Ändern (Titel, Typ, Risiko, Assets, Abhängigkeiten gehen in den Fingerabdruck ein)
         `UPDATE cmdb_change_requests SET title = ?, description = ?, type = ?, risk_level = ?, affected_asset_ids = ?, affected_service_ids = ?, implementation_plan = ?, rollback_plan = ?, test_plan = ?,

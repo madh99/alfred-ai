@@ -128,11 +128,13 @@ export class ChangeMotor {
         this.log('I4 Change wartet (Asset belegt)', { id: c.id, durch: belegende.map(x => x.id) });
         // v1604 — Realfall 23.10.: 9527d97f wartete still auf den angehaltenen 4f2642ab, der wiederum 9527d97f brauchte. Ein angehaltener
         // Change löst sich nie von selbst → dem Owner einmal sagen, worauf der freigegebene wartet und wie es weitergeht.
-        for (const x of belegende.filter(x => (x.lauf as ChangeLauf | undefined)?.phase === 'angehalten')) {
+        // v1685 — auch ein auf den Owner wartender Change belegt (Realfall 26.10.: J1 wartete still auf J bei Owner-Schritt 19)
+        for (const x of belegende.filter(x => ['angehalten', 'wartet_owner'].includes(String((x.lauf as ChangeLauf | undefined)?.phase)))) {
           const k = `${c.id}:${x.id}`;
           if (this.wartenGemeldet.has(k)) continue;
           this.wartenGemeldet.add(k);
-          await this.d.melde?.(`⏸️ ${c.title} (${c.id.slice(0, 8)}) ist freigegeben, startet aber nicht: ${x.title} (${x.id.slice(0, 8)}) ist angehalten und belegt dasselbe Gerät.
+          const wartet = (x.lauf as ChangeLauf | undefined)?.phase === 'wartet_owner';
+          await this.d.melde?.(`⏸️ ${c.title} (${c.id.slice(0, 8)}) ist freigegeben, startet aber nicht: ${x.title} (${x.id.slice(0, 8)}) ${wartet ? `wartet bei Schritt ${(x.lauf as ChangeLauf).schritt} auf dich` : 'ist angehalten'} und belegt dasselbe Gerät.${wartet ? '\nBraucht der wartende Change diesen hier, gehört die Änderung als Korrektur in ihn selbst (Plan ab dem Haltepunkt ändern).' : ''}
 
 Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
 • „Change ${x.id.slice(0, 8)} Schritt wiederholen“

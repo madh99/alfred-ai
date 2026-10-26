@@ -194,7 +194,8 @@ export class ChangePlanung {
     // der Lauf mit seinen Ergebnissen bleibt; die Freigabe verfällt, nach dem neuen Ja geht es am Haltepunkt weiter.
     const lauf0 = alt.lauf as { phase?: string; schritt?: number; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
     const hatGewirkt = (lauf0?.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
-    const korrekturAb = alt.status === 'in_progress' && lauf0?.phase === 'angehalten' && hatGewirkt && typeof lauf0.schritt === 'number' ? lauf0.schritt : undefined;
+    // v1685 — auch bei wartendem Owner-Schritt (dessen Frage verfällt; der Repository-Teil setzt den Lauf auf angehalten)
+    const korrekturAb = alt.status === 'in_progress' && (lauf0?.phase === 'angehalten' || lauf0?.phase === 'wartet_owner') && hatGewirkt && typeof lauf0.schritt === 'number' ? lauf0.schritt : undefined;
     if (korrekturAb !== undefined) {
       const r = (typeof roh === 'string' ? (() => { try { return JSON.parse(roh) as Record<string, unknown>; } catch { return undefined; } })() : roh as Record<string, unknown> | undefined) ?? {};
       const neue = Array.isArray(r.schritte) ? r.schritte : [];

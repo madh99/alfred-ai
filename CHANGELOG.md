@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wartende Changes korrigierbar, keine stillen Blockaden (v1685)
+
+- Ein Change, der auf einen Handgriff des Owners wartet, lässt sich jetzt ab diesem Punkt korrigieren und läuft nach der neuen Freigabe dort weiter.
+- Wartet ein freigegebener Change, weil ein anderer, auf den Owner wartender Change dasselbe Gerät belegt, erfährt der Owner das jetzt, statt dass beide still stehen.
+
 ### Fixed — Unbekannte Server in Change-Plänen werden erkannt (v1684)
 
 - Nennt ein geplanter Change einen Fernzugang, den es nicht gibt, wird er schon beim Planen zurückgewiesen, mit der Liste der vorhandenen Zugänge. Server, die der Change selbst anlegt, gelten als vorhanden.
