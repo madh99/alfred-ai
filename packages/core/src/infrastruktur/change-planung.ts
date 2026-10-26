@@ -49,6 +49,36 @@ export function planAusChange(c: CmdbChangeRequest): Record<string, unknown> {
   };
 }
 
+/**
+ * v1680 — Realfall 26.10. (Matrix H/I): change_aendern verlangte den vollständigen Plan; für I (19 Schritte mit langen Skripten) wich das
+ * Modell auf einen Code-Agenten aus und scheiterte. Jetzt gezielt: einzelne Schritte ersetzen ({nr, schritt}) oder nach Schritt N
+ * einfügen ({nach, schritt}). Beim Einfügen rücken die folgenden Schritte nach, ihre Verweise {{schrittK…}} (K > N) werden mitgezählt.
+ */
+export function planMitSchrittAenderungen(plan: Record<string, unknown>, ersetzenRoh?: unknown, einfuegenRoh?: unknown): { plan: Record<string, unknown> } | { fehler: string[] } {
+  const schritte = JSON.parse(JSON.stringify(plan.schritte ?? [])) as Array<Record<string, unknown>>;
+  const fehler: string[] = [];
+  const liste = (v: unknown) => (Array.isArray(v) ? v : typeof v === 'string' ? (() => { try { const j = JSON.parse(v); return Array.isArray(j) ? j : []; } catch { return []; } })() : []) as Array<Record<string, unknown>>;
+  for (const e of liste(ersetzenRoh)) {
+    const nr = Number(e.nr);
+    const s = e.schritt;
+    if (!Number.isInteger(nr) || nr < 1 || nr > schritte.length) { fehler.push(`schritte_ersetzen: Schritt ${String(e.nr)} gibt es nicht (1–${schritte.length})`); continue; }
+    if (!s || typeof s !== 'object' || Array.isArray(s)) { fehler.push(`schritte_ersetzen: Schritt ${nr} ohne schritt-Objekt`); continue; }
+    schritte[nr - 1] = { ...(s as Record<string, unknown>), nr };
+  }
+  const einf = liste(einfuegenRoh).map(e => ({ nach: Number(e.nach), schritt: e.schritt })).sort((a, b) => b.nach - a.nach);
+  for (const e of einf) {
+    if (!Number.isInteger(e.nach) || e.nach < 0 || e.nach > schritte.length) { fehler.push(`schritte_einfuegen: nach ${String(e.nach)} ungültig (0–${schritte.length})`); continue; }
+    if (!e.schritt || typeof e.schritt !== 'object' || Array.isArray(e.schritt)) { fehler.push(`schritte_einfuegen: nach ${e.nach} ohne schritt-Objekt`); continue; }
+    // Verweise der folgenden Schritte nachziehen (die eingefügten Schritte verweisen nur auf frühere)
+    for (let i = e.nach; i < schritte.length; i++) {
+      schritte[i] = JSON.parse(JSON.stringify(schritte[i]).replace(/\{\{(\s*)schritt(\d+)\./g, (m, ws: string, k: string) => (Number(k) > e.nach ? `{{${ws}schritt${Number(k) + 1}.` : m)));
+    }
+    schritte.splice(e.nach, 0, { ...(e.schritt as Record<string, unknown>) });
+  }
+  if (fehler.length) return { fehler };
+  return { plan: { ...plan, schritte: schritte.map((s, i) => ({ ...s, nr: i + 1 })) } };
+}
+
 export class ChangePlanung {
   constructor(private readonly d: ChangeDeps) {}
 

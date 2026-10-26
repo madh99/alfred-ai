@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Große Change-Pläne gezielt ändern (v1680)
+
+- Alfred kann in einem geplanten Change einzelne Schritte ersetzen oder neue einfügen, ohne den ganzen Plan neu zu schreiben. Nachfolgende Schritte und ihre Bezüge werden dabei automatisch angepasst.
+
 ### Fixed — Prüfungen mit Bezug auf frühere Schritte (v1679)
 
 - Prüfungen, die sich auf das Ergebnis eines früheren Schritts beziehen (zum Beispiel die Kennung eines gerade übertragenen Images), werden beim Planen richtig eingeordnet und nicht mehr fälschlich zurückgewiesen.

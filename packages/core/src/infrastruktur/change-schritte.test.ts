@@ -459,3 +459,24 @@ describe('v1679 Verweise im Prüfbefehl', () => {
     expect(pruefbefehlFehler(ersetzeVerweise("docker network inspect --format '{{json .IPAM.Config}}' bridge"))).toMatch(/ohne Netz/);
   });
 });
+
+// v1680 — gezielte Schritt-Änderungen (Realfall 26.10. Matrix H/I)
+describe('v1680 planMitSchrittAenderungen', () => {
+  it('ersetzt einzelne Schritte, fügt ein und zieht Verweise nach', async () => {
+    const { planMitSchrittAenderungen } = await import('./change-planung.js');
+    const plan = { titel: 'x', schritte: [
+      { nr: 1, titel: 'a', parameter: { v: 1 } },
+      { nr: 2, titel: 'b', parameter: { image: 'r@{{schritt1.digest}}' } },
+      { nr: 3, titel: 'c', parameter: { ref: '{{schritt2.id}} {{ schritt1.x }}' } },
+    ] };
+    const r = planMitSchrittAenderungen(plan, [{ nr: 1, schritt: { titel: 'A', parameter: { v: 2 } } }], [{ nach: 1, schritt: { titel: 'neu' } }]);
+    expect('plan' in r).toBe(true);
+    const s = (r as { plan: { schritte: Array<Record<string, unknown>> } }).plan.schritte;
+    expect(s.map(x => x.titel)).toEqual(['A', 'neu', 'b', 'c']);
+    expect(s.map(x => x.nr)).toEqual([1, 2, 3, 4]);
+    expect((s[2]!.parameter as Record<string, string>).image).toBe('r@{{schritt1.digest}}');
+    expect((s[3]!.parameter as Record<string, string>).ref).toBe('{{schritt3.id}} {{ schritt1.x }}');
+    expect('fehler' in planMitSchrittAenderungen(plan, [{ nr: 9, schritt: {} }])).toBe(true);
+    expect(plan.schritte[0]!.titel).toBe('a'); // Original unverändert
+  });
+});

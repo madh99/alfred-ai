@@ -4,7 +4,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { bestandsbericht, type BackupStand, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 import type { HostBestand } from './sammler.js';
 import { architekturDokument, grundlageText, planungsGrundlage, pruefeArchitektur, mitAenderungen, bisherigeFassung, DISTRIBUTIONEN, type KnotenStand, type PlanungsGrundlage, type SpeicherStand } from './architektur.js';
-import { changeAnzeige, type ChangePlanung } from './change-planung.js';
+import { changeAnzeige, planAusChange, planMitSchrittAenderungen, type ChangePlanung } from './change-planung.js';
 import type { ChangeMotor } from './change-motor.js';
 import type { StandardChanges } from './standard-changes.js';
 import { KANAELE, ZEITPUNKTE, regelFehler, regelText, type Empfaenger, type Kanal, type KalenderEintrag, type BenachrichtigungsRegel, type Zeitpunkt } from './wartung.js';
@@ -125,7 +125,7 @@ export class InfrastrukturSkill extends Skill {
       + 'NEUE ZONEN/NETZE (v1647, Realfälle 24.10.): Prüfungen auf Dienste im neuen Netz IMMER lokal auf der Ziel-VM (befehl über ihren Fernzugang, z. B. curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:PORT/) — der Alfred-Server darf dort meist nur SSH; die Vorkopie bei laufender Quelle mit pruefsumme false; Dienste, die NPM öffentlich macht, laufen über die pfSense (NPM 172.17.0.10 im pfSense-LAN, SNAT auf 192.168.1.139): für jedes neue Zielnetz braucht die pfSense eine statische Route über MAIN_LAN_DHCP (Vorbild eb72dc07) und UniFi eine Freigabe pfSense 192.168.1.139 → Ziel:Port; Vorbedingungen nie an Rechner knüpfen, die nur bei Bedarf laufen. '
       + 'CONTAINER-NACHBAU (v1653, Realfall 65db5bbc 25.10.): Docker-Netze originalgetreu anlegen — Treiber und IPAM (Subnetz, Gateway, IP-Bereich) aus `docker network inspect` der Quelle übernehmen, und je Container NetworkingConfig.EndpointsConfig vollständig (Aliases UND IPAMConfig mit fester IPv4Address), nicht nur die Aliase; Apps verweisen oft per fester IP auf ihre Datenbank (Vaultwarden: DATABASE_URL auf 192.168.250.20). Vorher prüfen, dass das Subnetz am Ziel frei ist. '
       + 'LOKAL GEBAUTE IMAGES (v1658, Owner 25.10.): nie neu bauen und nie docker save/load — mit gitlab projekte den Registry-Pfad des passenden Projekts finden, im Change fernzugriff image_hochladen an der Quelle (registry_ziel = <Pfad>/<dienst>:migration-<datum>, liefert {{schrittN.digest}}), am Ziel fernzugriff image_holen mit <Pfad>/<dienst>@{{schrittN.digest}} und den Container mit genau dieser Referenz nachbauen. Identität nie über die Image-Id vergleichen (Docker mit containerd-Speicher zeigt am Ziel den Manifest-Digest, die Quelle den Config-Digest — Realfall 0cd5c0a4), sondern über RepoDigests bzw. den Digest aus image_holen. '
-      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt; ein ANGEHALTENER Change, der schon gewirkt hat, ist ab dem Haltepunkt korrigierbar: vollständige Schrittliste mit gleicher Nummerierung senden, die gelaufenen Schritte bleiben unverändert, danach freigabe_anfragen — nach dem Ja macht der Motor am Haltepunkt weiter, kein Abbrechen oder Rückweg nötig), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
+      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt; bei großen Plänen statt plan gezielt schritte_ersetzen [{nr, schritt}] bzw. schritte_einfuegen [{nach, schritt}], nie einen Code-Agenten dafür; ein ANGEHALTENER Change, der schon gewirkt hat, ist ab dem Haltepunkt korrigierbar: vollständige Schrittliste mit gleicher Nummerierung senden, die gelaufenen Schritte bleiben unverändert, danach freigabe_anfragen — nach dem Ja macht der Motor am Haltepunkt weiter, kein Abbrechen oder Rückweg nötig), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
@@ -184,7 +184,9 @@ export class InfrastrukturSkill extends Skill {
         },
         ids: { type: 'array', items: { type: 'string' }, description: 'freigabe_anfragen: Change-IDs (ein Change oder ein Paket)' },
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
-        plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes)' },
+        plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes) — ODER statt plan gezielt schritte_ersetzen/schritte_einfuegen' },
+        schritte_ersetzen: { type: 'array', description: 'change_aendern ohne plan: [{nr, schritt}] — ersetzt genau diese Schritte, der Rest bleibt', items: { type: 'object', properties: { nr: { type: 'number' }, schritt: { type: 'object' } } } },
+        schritte_einfuegen: { type: 'array', description: 'change_aendern ohne plan: [{nach, schritt}] — fügt nach Schritt N ein (0 = vorne); folgende Schritte und ihre {{schrittK…}}-Verweise rücken automatisch nach', items: { type: 'object', properties: { nach: { type: 'number' }, schritt: { type: 'object' } } } },
         wahl: { type: 'string', enum: ['wiederholen', 'abbrechen', 'rueckweg'], description: 'change_steuern: was der Owner gesagt hat' },
         bezug: { type: 'string', description: 'einwand: worauf er sich bezieht (Schritt N, Abschnitt, gesamt)' },
         laenge: { type: 'number', description: 'tresor_erzeugen: Länge des Zufallspassworts (16–128, Standard 32)' },
@@ -432,7 +434,16 @@ export class InfrastrukturSkill extends Skill {
       return { success: true, data: c, display: c.schritte?.length ? changeAnzeige(c) : `${c.title} (${c.status}) — ohne Schritte` };
     }
     if (action === 'change_aendern') {
-      const r = await ch.aendern(owner, String(input.change ?? ''), typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan, input.antworten);
+      let plan: unknown = typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan;
+      // v1680 — gezielte Schritt-Änderungen statt vollständigem Plan
+      if (!plan && (input.schritte_ersetzen !== undefined || input.schritte_einfuegen !== undefined)) {
+        const c = await ch.finde(owner, String(input.change ?? ''));
+        if (!c?.schritte?.length) return { success: false, error: `Change „${String(input.change ?? '')}“ nicht gefunden oder ohne Schritte` };
+        const m = planMitSchrittAenderungen(planAusChange(c), input.schritte_ersetzen, input.schritte_einfuegen);
+        if ('fehler' in m) return { success: false, error: `Änderung nicht gespeichert:\n${m.fehler.map(x => `- ${x}`).join('\n')}` };
+        plan = m.plan;
+      }
+      const r = await ch.aendern(owner, String(input.change ?? ''), plan, input.antworten);
       if (!r.ok) return { success: false, error: `Änderung nicht gespeichert:\n${r.fehler.map(x => `- ${x}`).join('\n')}` };
       return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Change **${r.change.title}** geändert (Plan ${r.change.fingerabdruck?.slice(0, 12)}).${r.freigabeVerfallen ? ' Die bisherige Freigabe ist verfallen — neue Freigabe nötig.' : ''}` };
     }
