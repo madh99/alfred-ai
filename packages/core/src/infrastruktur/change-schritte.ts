@@ -86,6 +86,8 @@ export function pruefbefehlFehler(befehl: string): string | undefined {
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
   // v1628 — pruefen (Verbindung, sudo, Käfig-Selbsttest) und liste ändern am Host nichts (Realfall 24.10.: Vorlagen-Beweis)
   if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || aktion === 'datenbank_inventar' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
+  // v1676 — Realfall 26.10. (Matrix E): der GitLab-Skill liest nur (Projekte, Registry-Tags mit Digest) — „gitlab.registry ist nicht lesend“
+  if (skill === 'gitlab') return 'lesen';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';
@@ -132,7 +134,13 @@ function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern
         if (geheim?.namen && !geheim.namen.has(m[5])) f.push(`${wo}: Tresor-Eintrag „${m[5]}“ gibt es nicht`);
       }
     }
-    kopie[k] = ersetzt && typeof w === 'string' ? (schema?.[k]?.type === 'number' || schema?.[k]?.type === 'integer' ? 1 : 'verweis') : w;
+    // v1676 — Realfall 26.10. (Matrix E): „registry…/matrix-sydent@{{schritt1.digest}}“ wurde ganz zu „verweis“ — die Image-Prüfung
+    // (v1659) sah den Digest nie. Nur den Verweis selbst ersetzen; ein Digest-Verweis wird zu einem gültigen Platzhalter-Digest.
+    const teilErsetzt = (s: string) => {
+      const r = s.replace(new RegExp(VERWEIS.source, 'g'), (m) => (/\.digest\s*\}\}$/.test(m) ? `sha256:${'0'.repeat(64)}` : 'verweis'));
+      return r.trim() === 'verweis' ? 'verweis' : r;
+    };
+    kopie[k] = ersetzt && typeof w === 'string' ? (schema?.[k]?.type === 'number' || schema?.[k]?.type === 'integer' ? 1 : teilErsetzt(w)) : w;
   }
   return kopie;
 }

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Image-Übertragung über die eigene Registry planbar (v1676)
+
+- Changes, die ein Image in die eigene Registry hochladen und am Ziel genau dieses Image holen, werden nicht mehr fälschlich zurückgewiesen. Abfragen der Registry gelten als reine Prüfung.
+
 ### Fixed — Widersprüchliche Prüfungen in Changes werden erkannt (v1675)
 
 - Ein geplanter Change wird zurückgewiesen, wenn eine Prüfung einen Text zugleich erwartet und ausschließt, sodass sie nie bestehen könnte. Vorher fiel das erst beim Ausführen auf, wenn der Change mitten im Ablauf anhielt.

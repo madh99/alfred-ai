@@ -387,3 +387,24 @@ describe('v1673 Prüfbefehle im Lese-Käfig', () => {
     }
   });
 });
+
+// v1676 — Realfall 26.10. Matrix E: image_holen mit @{{schrittN.digest}} und gitlab.registry als Prüfung
+describe('v1676 Verweise im Teil eines Werts, GitLab lesend', () => {
+  it('image_holen mit …@{{schritt1.digest}} besteht die Eingabeprüfung; gitlab ist lesend', async () => {
+    const { FernzugriffSkill } = await import('../fernzugriff/fernzugriff-skill.js');
+    const fz = Object.create(FernzugriffSkill.prototype) as { pruefeEingabe: (i: Record<string, unknown>) => string | undefined; metadata: unknown };
+    const echt = skill('fernzugriff', ['image_hochladen', 'image_holen'], { name: { type: 'string' }, image: { type: 'string' }, registry_ziel: { type: 'string' } }, i => fz.pruefeEingabe(i));
+    const c = {
+      titel: 'Image übertragen', begruendung: 'Originalimage in die eigene Registry und am Ziel holen', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Hochladen', art: 'aktion', skill: 'fernzugriff', aktion: 'image_hochladen', parameter: { name: 'dockerhost-a', image: 'sha256:' + 'a'.repeat(64), registry_ziel: 'registry.lokalkraft.at/madh/alfred-ai/matrix-sydent:migration-20261026' }, pruefung: { typ: 'skill', skill: 'gitlab', aktion: 'registry', erwartet: '{{schritt1.digest}}' }, rueckweg: { keiner: 'nur Kopie' } },
+        { titel: 'Holen', art: 'aktion', skill: 'fernzugriff', aktion: 'image_holen', parameter: { name: 'docker-com-01', image: 'registry.lokalkraft.at/madh/alfred-ai/matrix-sydent@{{schritt1.digest}}' }, rueckweg: { keiner: 'nur Image' } },
+      ],
+    };
+    const k = { ...ctx(), skill: (n: string) => (n === 'fernzugriff' ? echt : n === 'gitlab' ? skill('gitlab', ['projekte', 'registry']) : SKILLS[n]) as never };
+    const fehler = pruefeChangePlan(c, k).fehler.join('\n');
+    expect(fehler).not.toContain('image_holen braucht');
+    expect(fehler).not.toContain('gitlab.registry ist nicht lesend');
+    expect(aktionsArt('gitlab', 'registry')).toBe('lesen');
+  });
+});
