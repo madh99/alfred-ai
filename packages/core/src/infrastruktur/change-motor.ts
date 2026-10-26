@@ -441,7 +441,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       return `Change ${c.id.slice(0, 8)} „${c.title}“ verworfen (war ${vorher === 'draft' ? 'in Planung' : vorher === 'submitted' ? 'zur Freigabe' : 'freigegeben, nicht gestartet'}).`;
     }
     if (!c || !l || c.status !== 'in_progress' || this.laufend.has(c.id)) return 'Der Change ist nicht angehalten.';
-    if (l.phase !== 'angehalten') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
+    // v1682 — Realfall 26.10. (Matrix J c89f6bd9): ein Change, der bei einem Owner-Schritt wartet, ließ sich weder in der App noch im Chat
+    // abbrechen („nicht angehalten (Phase wartet_owner)“). Er steht wie ein angehaltener Change still — dieselben Wahlmöglichkeiten.
+    if (l.phase !== 'angehalten' && l.phase !== 'wartet_owner') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
     delete l.frage;
     if (wahl === 'abbrechen') {
       await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)');

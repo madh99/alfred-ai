@@ -438,3 +438,16 @@ describe('Folge-Change', () => {
     expect(b.status).toBe('completed');
   });
 });
+
+// v1682 — Realfall 26.10. (Matrix J c89f6bd9): Abbrechen, während ein Owner-Schritt wartet
+describe('v1682 Steuern bei wartendem Owner-Schritt', () => {
+  it('abbrechen beendet den Change, die alte Owner-Frage wirkt danach nicht mehr', async () => {
+    const plan: ChangeSchritt[] = [S({ nr: 1, art: 'owner', frage: 'Token im Tresor?' }), S({ nr: 2, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })];
+    const w = welt(plan);
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('wartet_owner');
+    expect(await w.motor.steuern('o', 'chg-1', 'abbrechen')).toContain('abgebrochen');
+    expect(w.c.status).toBe('cancelled');
+    expect(await w.motor.ownerSchrittErledigt('o', 'chg-1', 1, w.fragen[0]!.p.freigabe)).not.toContain('läuft weiter');
+  });
+});

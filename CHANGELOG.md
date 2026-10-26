@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wartende Changes lassen sich abbrechen (v1682)
+
+- Ein Change, der auf einen Handgriff des Owners wartet, lässt sich jetzt in App und Chat abbrechen, wiederholen oder zurücknehmen. Bisher war das nur bei angehaltenen Changes möglich.
+
 ### Fixed — Mehr lokale Gesundheitsprüfungen ohne Rückfrage (v1681)
 
 - Lokale Gesundheitsprüfungen von Diensten (Abruf an localhost in den gängigen Schreibweisen, Verbindungstest auch für UDP) gelten jetzt als reines Lesen und sind als Prüfung in Changes erlaubt.
