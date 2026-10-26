@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Firewall-Regeln in langen Listen werden gefunden (v1686)
+
+- Prüft ein Change, ob eine neue Firewall-Regel auf der UniFi angelegt ist, findet er sie jetzt auch, wenn sie in einer langen Regelliste weit hinten steht.
+
 ### Fixed — Wartende Changes korrigierbar, keine stillen Blockaden (v1685)
 
 - Ein Change, der auf einen Handgriff des Owners wartet, lässt sich jetzt ab diesem Punkt korrigieren und läuft nach der neuen Freigabe dort weiter.

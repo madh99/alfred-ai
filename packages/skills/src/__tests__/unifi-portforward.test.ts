@@ -33,3 +33,16 @@ describe('v1669 UniFi Port-Weiterleitungen', () => {
     expect(w.pf.map(x => x._id)).toEqual(['p1']);
   });
 });
+
+// v1686 — Realfall 26.10. (Matrix J Schritt 19): Liste ohne Filter zeigt nur 80 Policies; Namen aller Treffer stehen in den Daten
+describe('v1686 list_firewall_policies Daten vollständig', () => {
+  it('eine Policy hinter den ersten 80 steht in data.namen', async () => {
+    const s = new UniFiSkill({ baseUrl: 'https://udm', apiKey: 'k', verifyTls: false } as never);
+    const pol = Array.from({ length: 120 }, (_, i) => ({ id: `p${i}`, name: `regel ${i}`, enabled: true, action: { type: 'ALLOW' }, source: { zoneId: 'z1' }, destination: { zoneId: 'z2' }, metadata: { origin: 'USER_DEFINED' } }));
+    pol.push({ id: 'neu', name: 'matrixJ173 TCP replies', enabled: true, action: { type: 'ALLOW' }, source: { zoneId: 'z1' }, destination: { zoneId: 'z2' }, metadata: { origin: 'USER_DEFINED' } });
+    (s as unknown as { firewallStand: () => Promise<unknown> }).firewallStand = async () => ({ sid: 's', zonen: [{ id: 'z1', name: 'A' }, { id: 'z2', name: 'B' }], netze: [], policies: pol });
+    const r = await s.execute({ action: 'list_firewall_policies' }, {} as never);
+    expect(r.display).not.toContain('matrixJ173 TCP replies');
+    expect((r.data as { namen: string[] }).namen).toContain('matrixJ173 TCP replies');
+  });
+});

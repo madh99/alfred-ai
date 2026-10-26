@@ -428,7 +428,9 @@ export class UniFiSkill extends Skill {
       .filter(p => !such || p.name.toLowerCase().includes(such))
       .filter(p => (!qz || p.source.zoneId === qz.id) && (!zz || p.destination.zoneId === zz.id));
     const zeilen = treffer.slice(0, 80).map(p => policyZeile(p, zonen, netze));
-    return { success: true, data: { anzahl: treffer.length, gesamt: policies.length }, display: `${treffer.length} eigene Policies${such ? ` mit „${such}"` : ''}${treffer.length > 80 ? ' (erste 80)' : ''}:\n${zeilen.join('\n')}` };
+    // v1686 — Realfall 26.10. (Matrix J Schritt 19): ohne Filter zeigt die Anzeige nur die ersten 80 von ~470 Policies — die Change-Prüfung
+    // „erwartet <Name>“ fand eine neue Policy dahinter nicht. Namen und IDs aller Treffer stehen jetzt in den Daten (die Prüfung durchsucht sie).
+    return { success: true, data: { anzahl: treffer.length, gesamt: policies.length, namen: treffer.map(p => p.name), ids: treffer.map(p => p.id) }, display: `${treffer.length} eigene Policies${such ? ` mit „${such}"` : ''}${treffer.length > 80 ? ' (erste 80)' : ''}:\n${zeilen.join('\n')}` };
   }
 
   /** Schreibende Firewall-Aktionen: ohne gültige Einmal-Freigabe nur Prüfung + Bestätigung beim Owner. */
