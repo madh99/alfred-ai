@@ -48,6 +48,8 @@ export interface MotorDeps {
   melde?: (text: string, dringend: boolean) => Promise<void>;
   /** Frage an den Owner (Button); nach dem Ja ruft die Queue den Skill infrastruktur mit `params` auf */
   frage?: (description: string, params: Record<string, unknown>) => Promise<boolean>;
+  /** v1688 — veraltete Owner-Fragen in App/Telegram zurückziehen (nach Steuern und vor einer neuen Frage) */
+  fragenAufraeumen?: () => Promise<void>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4b — darf der Change jetzt starten (Fenster, Sperren, Ankündigung)? Verschickt fällige Ankündigungen. */
   zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
@@ -70,6 +72,18 @@ export interface MotorDeps {
 const QUELLE: Record<string, string> = { proxmox: 'proxmox', docker: 'docker', unifi: 'unifi', nginx_proxy_manager: 'nginx_proxy_manager', pfsense: 'pfsense', mikrotik: 'mikrotik', cloudflare_dns: 'cloudflare_dns', fernzugriff: 'fernzugriff' };
 const FRAGE_GUELTIG_MS = 24 * 3_600_000;
 const hash = (n: string) => createHash('sha256').update(n).digest('hex');
+
+/**
+ * v1688 — Realfall 26.10. (Matrix J): Nach Korrekturen ab dem Haltepunkt standen in der App weiter die Fragen „Schritt 30 … erledigt?“
+ * neben der gültigen „Schritt 37 … erledigt?“; ein Ja auf die falsche hätte nichts bewirkt oder verwirrt. Eine offene Owner-Frage ist
+ * veraltet, sobald der Change nicht mehr genau an diesem Schritt mit genau dieser Frage (Nonce) wartet.
+ */
+export function ownerFrageVeraltet(c: CmdbChangeRequest | undefined | null, params: { schritt?: unknown; freigabe?: unknown }): boolean {
+  if (!c || c.status !== 'in_progress') return true;
+  const l = c.lauf as ChangeLauf | undefined;
+  if (!l || l.phase !== 'wartet_owner' || !l.frage || l.frage.art !== 'owner_schritt') return true;
+  return Number(l.frage.schritt) !== Number(params.schritt) || l.frage.hash !== hash(String(params.freigabe ?? ''));
+}
 
 export class ChangeMotor {
   private readonly laufend = new Set<string>();
@@ -394,6 +408,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     lauf.phase = 'wartet_owner';
     lauf.frage = { art: 'owner_schritt', hash: hash(nonce), schritt: s.nr, bis: new Date(this.jetzt() + FRAGE_GUELTIG_MS).toISOString() };
     await this.d.itsm.motorSetze(o, c.id, { lauf });
+    await this.d.fragenAufraeumen?.().catch(() => undefined); // v1688 — frühere Fragen dieses Changes (andere Nonce) verschwinden
     const ok = await this.d.frage?.(`🧑‍🔧 Change ${c.title} (${c.id.slice(0, 8)}), Schritt ${s.nr}: ${s.titel}\n${s.frage}\n\nErledigt? Nach deinem Ja geht es weiter.`, { action: 'owner_schritt_erledigt', change: c.id, schritt: s.nr, freigabe: nonce }).catch(() => false);
     this.log('I4 wartet auf Owner-Schritt', { id: c.id, nr: s.nr, frage: ok });
     await this.d.melde?.(`🧑‍🔧 Change ${c.title}: Schritt ${s.nr} braucht dich — ${s.frage}`, true);
@@ -433,6 +448,12 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
 
   /** Owner im Chat: angehaltenen Schritt wiederholen, abbrechen (ohne Rückweg) oder den Rückweg ausdrücklich ausführen. */
   async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg'): Promise<string> {
+    const r = await this.steuernIntern(o, id, wahl);
+    await this.d.fragenAufraeumen?.().catch(() => undefined); // v1688 — Owner-Fragen eines abgebrochenen/wiederholten Schritts verschwinden
+    return r;
+  }
+
+  private async steuernIntern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg'): Promise<string> {
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
     // Rückweg nach einer Störung: abgeschlossener Change mit verknüpfter Störung

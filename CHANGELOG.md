@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Veraltete Handgriff-Fragen verschwinden (v1688)
+
+- Wird ein Change korrigiert, abgebrochen oder läuft er weiter, verschwinden offene Fragen „Schritt N erledigt?“, die nicht mehr zum aktuellen Stand passen. Bisher standen sie weiter in der App und konnten mit der gültigen Frage verwechselt werden.
+- Die Aufräumung läuft auch beim Start und alle zehn Minuten mit dem Change-Motor.
+
 ### Fixed — Proxy-Hosts mit Zertifikat zuverlässig anlegen (v1687)
 
 - Das Anlegen eines Proxy-Hosts mit automatischem Let's-Encrypt-Zertifikat bricht nicht mehr nach wenigen Sekunden ab. Wird es wiederholt, übernimmt Alfred einen schon angelegten Host und ergänzt nur, was fehlt, statt einen zweiten anzulegen.

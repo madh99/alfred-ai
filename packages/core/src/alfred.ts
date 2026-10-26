@@ -7097,6 +7097,24 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const { InfrastrukturSkill } = await import('./infrastruktur/infrastruktur-skill.js');
         const { ChangePlanung } = await import('./infrastruktur/change-planung.js');
         const itsmI3 = new (await import('@alfred/storage')).ItsmRepository(adapter);
+        // v1688 — offene Owner-Fragen „Schritt N erledigt?“ zurückziehen, deren Change nicht mehr genau dort mit dieser Frage wartet
+        const ownerFragenAufraeumen = async (): Promise<void> => {
+          const chatId = this.config.security?.ownerUserId ?? ''; const o = ownerFz();
+          if (!chatId || !o || !this.confirmationQueue) return;
+          const { ownerFrageVeraltet } = await import('./infrastruktur/change-motor.js');
+          const offen = await this.confirmationQueue.offeneFuer(chatId, this.config.telegram?.enabled ? 'telegram' : 'api');
+          const changes = new Map<string, import('@alfred/types').CmdbChangeRequest | null>();
+          const veraltet = new Set<string>();
+          for (const p of offen) {
+            const sp = p.skillParams as { action?: string; change?: string; schritt?: unknown; freigabe?: unknown };
+            if (p.skillName !== 'infrastruktur' || sp?.action !== 'owner_schritt_erledigt' || !sp.change) continue;
+            if (!changes.has(sp.change)) changes.set(sp.change, await itsmI3.getChangeRequestById(o, sp.change).catch(() => null));
+            if (ownerFrageVeraltet(changes.get(sp.change), sp)) veraltet.add(p.id);
+          }
+          if (!veraltet.size) return;
+          const n = await this.confirmationQueue.zurueckziehen([...veraltet], 'Change wartet nicht mehr an diesem Schritt');
+          this.logger.info({ zurueckgezogen: n }, 'v1688 veraltete Owner-Fragen zurückgezogen');
+        };
         // I3 — Auswirkungsanalyse aus der CMDB: abhängige Assets (Topologie), Services, offene Incidents, überschneidende Changes
         const auswirkungI3 = async (ids: string[], ohneChangeId?: string) => {
           const o = ownerFz();
@@ -7177,6 +7195,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           // v1600 — Realfall 22.10.: Motor-Meldungen standen in der App ÜBER „Freigegeben“ (die Antwort auf das Ja kam zuletzt) → kurz nach der Antwort starten
           nachFreigabe: () => { setTimeout(() => { void this.changeMotor?.anstossen().catch(err => this.logger.warn({ err }, 'I4 Motor anstoßen fehlgeschlagen')); }, 3000).unref?.(); },
+          // v1688 — nach einer Korrektur ab dem Haltepunkt gelten offene „Schritt N erledigt?“-Fragen nicht mehr
+          nachAenderung: () => { void ownerFragenAufraeumen().catch(err => this.logger.warn({ err }, 'v1688 Aufräumen der Owner-Fragen fehlgeschlagen')); },
           einwand: this.einwandDienst,
           tresorNamen: (o) => this.tresor!.namen(o),
           // v1684 — Fernzugänge für die Plan-Prüfung (Realfall 26.10.: Prüfung auf nicht vorhandenen Zugang „udm“)
@@ -7309,6 +7329,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `infrastruktur-motor-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
               return ok !== false;
             },
+            fragenAufraeumen: ownerFragenAufraeumen,
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
             tresor: this.tresor,
@@ -7346,11 +7367,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return ids.length > 0 && ids.every(id => offen.get(id) !== 'submitted');
             }, 'Changes warten nicht mehr auf Freigabe');
             if (weg) this.logger.info({ zurueckgezogen: weg }, 'v1641 veraltete Freigabe-Fragen zurückgezogen');
+            await ownerFragenAufraeumen();
           })().catch(err => this.logger.warn({ err }, 'v1641 Aufräumen der Freigabe-Fragen fehlgeschlagen')); }, 20_000).unref?.();
           this.registriereJob({
             key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
             takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 1, timeoutMin: 2,
-            run: async () => ({ ok: true, zaehler: { gestartet: (await this.changeMotor!.anstossen()).length, aktiv: this.changeMotor!.aktiv() } }),
+            run: async () => {
+              const gestartet = (await this.changeMotor!.anstossen()).length;
+              await ownerFragenAufraeumen().catch(err => this.logger.warn({ err }, 'v1688 Aufräumen der Owner-Fragen fehlgeschlagen'));
+              return { ok: true, zaehler: { gestartet, aktiv: this.changeMotor!.aktiv() } };
+            },
           });
           this.registriereJob({
             key: 'change-stoerungen', beschreibung: 'I4b — Incidents nach abgeschlossenen Changes (24 h, kritisch 72 h) verknüpfen, Rückweg nur anbieten',

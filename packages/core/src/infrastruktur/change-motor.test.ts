@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
-import { ChangeMotor, type MotorDeps } from './change-motor.js';
+import { ChangeMotor, ownerFrageVeraltet, type MotorDeps } from './change-motor.js';
 import { loeseAuf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
@@ -305,6 +305,22 @@ describe('I4 Ausführungsmotor', () => {
     const belegt = welt(probe());
     belegt.deps.itsm.liste = async () => [belegt.c, { ...belegt.c, id: 'chg-0', status: 'in_progress', lauf: { phase: 'laeuft' } } as CmdbChangeRequest];
     expect(await belegt.motor.anstossen()).toEqual([]);
+  });
+
+  it('v1688 Realfall 26.10.: Owner-Frage gilt nur, solange der Change genau dort wartet; Aufräumen nach Frage und Steuerung', async () => {
+    const plan: ChangeSchritt[] = [S({ nr: 1, art: 'owner', frage: 'Token eintragen' }), S({ nr: 2, art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' } })];
+    const w = welt(plan);
+    let aufgeraeumt = 0; w.deps.fragenAufraeumen = async () => { aufgeraeumt++; };
+    await w.motor.anstossen(); await warte(w.motor);
+    const p = w.fragen[0]!.p;
+    expect(aufgeraeumt).toBe(1);
+    expect(ownerFrageVeraltet(w.c, p)).toBe(false);
+    expect(ownerFrageVeraltet(w.c, { ...p, schritt: 30 })).toBe(true);
+    expect(ownerFrageVeraltet(w.c, { ...p, freigabe: 'alt' })).toBe(true);
+    expect(ownerFrageVeraltet(null, p)).toBe(true);
+    await w.motor.steuern('o', 'chg-1', 'abbrechen');
+    expect(aufgeraeumt).toBe(2);
+    expect(ownerFrageVeraltet(w.c, p)).toBe(true);
   });
 
   it('Realfall 22.10.: angehalten ohne Wirkung sperrt keine Assets; angehalten nach einer Änderung schon', async () => {

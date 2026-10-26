@@ -30,6 +30,8 @@ export interface ChangeDeps {
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4 — nach jeder Owner-Freigabe (Motor anstoßen) */
   nachFreigabe?: () => void;
+  /** v1688 — nach einer Plankorrektur veraltete Owner-Fragen zurückziehen */
+  nachAenderung?: () => void;
   /** I4c — Namen im Tresor (für die Prüfung der Tresor-Verweise) */
   tresorNamen?: (owner: string) => Promise<Set<string>>;
   /** v1684 — Namen der Fernzugänge (für die Prüfung von zugang/name in Plänen) */
@@ -220,6 +222,7 @@ export class ChangePlanung {
     const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung, ...(korrekturAb !== undefined ? { korrekturAb } : {}) });
     if (ew.antworten.length) await this.d.einwand!.speichereAntworten(owner, ew.antworten);
     const verfallen = (alt.status === 'approved' || haltOhneWirkung || korrekturAb !== undefined) && neu.freigabeFingerabdruck !== neu.fingerabdruck;
+    if (korrekturAb !== undefined) this.d.nachAenderung?.();
     this.d.protokoll?.('I3 Change geändert', { id: alt.id, freigabeVerfallen: verfallen, fingerabdruck: neu.fingerabdruck?.slice(0, 12) });
     return { ok: true, change: neu, freigabeVerfallen: verfallen };
   }

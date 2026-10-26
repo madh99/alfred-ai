@@ -334,6 +334,11 @@ export class ConfirmationQueue {
     return this.zurueckziehen(offen.filter(passt).map(p => p.id), grund);
   }
 
+  /** v1688 — offene Bestätigungen eines Chats (für Prüfungen, die vor dem Zurückziehen asynchron nachladen müssen) */
+  async offeneFuer(chatId: string, platform: string): Promise<PendingConfirmation[]> {
+    return this.confirmRepo.findAllPending(chatId, platform as never).catch(() => [] as PendingConfirmation[]);
+  }
+
   /** v1512 P3 — offene Bestätigungen zurückziehen (z. B. Projekt beendet): nicht mehr anklickbar, verschwinden in App und Web. */
   async zurueckziehen(ids: string[], grund: string): Promise<number> {
     let n = 0;
