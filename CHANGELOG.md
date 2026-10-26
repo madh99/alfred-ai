@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Unbekannte Server in Change-Plänen werden erkannt (v1684)
+
+- Nennt ein geplanter Change einen Fernzugang, den es nicht gibt, wird er schon beim Planen zurückgewiesen, mit der Liste der vorhandenen Zugänge. Server, die der Change selbst anlegt, gelten als vorhanden.
+
 ### Fixed — Neue DNS-Einträge werden sofort erkannt (v1683)
 
 - Prüft ein Change einen gerade angelegten DNS-Eintrag, fragt Alfred bei einer veralteten Antwort des lokalen Resolvers zusätzlich öffentliche DNS-Server direkt. Ein Change hält dadurch nicht mehr nur wegen zwischengespeicherter Altwerte an.

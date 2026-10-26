@@ -480,3 +480,22 @@ describe('v1680 planMitSchrittAenderungen', () => {
     expect(plan.schritte[0]!.titel).toBe('a'); // Original unverändert
   });
 });
+
+// v1684 — Realfall 26.10. (Matrix J1): Prüfung/Schritt auf nicht vorhandenen Fernzugang
+describe('v1684 Fernzugänge im Plan', () => {
+  it('unbekannter Zugang wird abgewiesen, vorhandene und im Plan angelegte gelten', () => {
+    const k = { ...ctx(), zugaenge: new Set(['dockerhost', 'pve3']) };
+    const c = snapshotChange();
+    c.schritte[3] = { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'udm', befehl: 'zpool status' } } as never;
+    expect(pruefeChangePlan(c, k).fehler.join('\n')).toContain('Fernzugang „udm“ gibt es nicht');
+    c.schritte[3] = { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'pve3', befehl: 'zpool status' } } as never;
+    expect(pruefeChangePlan(c, k).fehler.join('\n')).not.toContain('gibt es nicht');
+    // VM im selben Plan angelegt (Name als Parameter eines Nicht-Fernzugriff-Schritts) → Zugang gilt als vorhanden
+    c.schritte[0] = { titel: 'VM', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 9001, name: 'neue-vm' } } as never;
+    c.schritte[3] = { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'neue-vm', befehl: 'zpool status' } } as never;
+    expect(pruefeChangePlan(c, k).fehler.join('\n')).not.toContain('gibt es nicht');
+    // ohne Zugangsliste keine Prüfung
+    c.schritte[3] = { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'udm', befehl: 'zpool status' } } as never;
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).not.toContain('gibt es nicht');
+  });
+});

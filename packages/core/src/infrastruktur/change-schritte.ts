@@ -103,6 +103,8 @@ export interface PruefKontext {
   asset: (nameOderId: string) => { id: string; name: string } | { mehrdeutig: string[] } | undefined;
   /** I4c — Namen im Tresor (fehlt die Angabe, wird nur die Form geprüft) */
   tresorNamen?: Set<string>;
+  /** v1684 — Namen der Fernzugänge (klein geschrieben); fehlt die Angabe, wird nicht geprüft */
+  zugaenge?: Set<string>;
   /** vorhandene Changes (für Abhängigkeiten und Zyklen) */
   changes: Array<{ id: string; abhaengigVon: string[]; status: string }>;
   jetzt?: Date;
@@ -171,6 +173,8 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'http') { fehlt(['ziel']); if (aus.ziel && !/^https?:\/\//.test(aus.ziel)) f.push(`${wo}: http-Prüfung braucht eine URL`); }
   if (typ === 'port') { fehlt(['ziel', 'port']); if (aus.port !== undefined && (aus.port < 1 || aus.port > 65535)) f.push(`${wo}: Port ungültig`); }
   if (typ === 'dns' || typ === 'ping') fehlt(['ziel']);
+  // v1684 — Realfall 26.10. (Matrix J1 Schritt 1): Prüfung auf Zugang „udm“, den es nicht gibt — der Lauf wäre sicher angehalten
+  if (aus.zugang && ctx.zugaenge && !ctx.zugaenge.has(aus.zugang.toLowerCase()) && ['befehl', 'container_healthy', 'datei'].includes(typ)) f.push(`${wo}: Fernzugang „${aus.zugang}“ gibt es nicht (vorhanden: ${[...ctx.zugaenge].sort().join(', ')})`);
   if (typ === 'container_healthy') fehlt(['zugang', 'container']);
   if (typ === 'datei') { fehlt(['zugang', 'pfad']); if (aus.pfad && !/^\/[\w./-]+$/.test(aus.pfad)) f.push(`${wo}: pfad muss ein einfacher absoluter Pfad sein`); }
   if (typ === 'befehl') { fehlt(['zugang', 'befehl']); const g = aus.befehl ? pruefbefehlFehler(ersetzeVerweise(aus.befehl)) : undefined; if (g) f.push(`${wo}: Prüfbefehl „${aus.befehl!.slice(0, 60)}“ ${g}`); }
@@ -232,6 +236,15 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   const roheSchritte = Array.isArray(r.schritte) ? r.schritte : [];
   if (!roheSchritte.length) f.push('schritte fehlen');
   const aktionsNummern = new Set<number>();
+  // v1684 — Zugänge, die dieser Plan selbst anlegt (VM-Fabrik legt den Fernzugang mit dem VM-Namen an, fernzugriff anlegen), gelten als vorhanden
+  const neueZugaenge = new Set<string>();
+  if (ctx.zugaenge) {
+    for (const s0 of roheSchritte) {
+      const p = obj(obj(s0)?.parameter) ?? {};
+      for (const k of ['name', 'hostname', 'vm_name', 'vmname'] as const) { const v = p[k]; if (typeof v === 'string' && v.trim() && obj(s0)?.skill !== 'fernzugriff') neueZugaenge.add(v.trim().toLowerCase()); }
+    }
+    ctx = { ...ctx, zugaenge: new Set([...ctx.zugaenge, ...neueZugaenge]) };
+  }
   // I6 — Tresor-Einträge, die ein früherer Schritt dieses Plans per geheim_uebernehmen anlegt, gelten für spätere Schritte als vorhanden
   const tresorNamen = ctx.tresorNamen ? new Set(ctx.tresorNamen) : undefined;
   let ersteAenderung: number | undefined; let ersteSicherung: number | undefined;
@@ -262,6 +275,14 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
       schritt.einordnung = einordnung;
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && befehlsklasse(String(schritt.parameter.befehl ?? '')) === 'nie') f.push(`${wo}: Befehl steht auf der Nie-Liste des Fernzugriffs`);
+      // v1684 — Fernzugriff-Schritte nur mit vorhandenen Zugängen (Verweise {{…}} und neu angelegte Zugänge ausgenommen)
+      if (schritt.skill === 'fernzugriff' && schritt.aktion !== 'anlegen' && ctx.zugaenge) {
+        for (const k of ['name', 'quelle', 'ziel'] as const) {
+          const v = schritt.parameter[k];
+          if (typeof v === 'string' && v.trim() && !v.includes('{{') && !ctx.zugaenge.has(v.trim().toLowerCase()) && !(k === 'name' && neueZugaenge.has(v.trim().toLowerCase()))) f.push(`${wo}: Fernzugang „${v}“ gibt es nicht (vorhanden: ${[...ctx.zugaenge].sort().join(', ')})`);
+        }
+      }
+      if (schritt.skill === 'fernzugriff' && schritt.aktion === 'anlegen' && typeof schritt.parameter.name === 'string') neueZugaenge.add(schritt.parameter.name.trim().toLowerCase());
       // v1610 — Realfall 23.10. (dea4b9cd, Schritt 5): quelle_pfad /root/… wurde erst im Lauf abgewiesen — dieselbe Pfadregel schon beim Planen
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'kopieren') {
         for (const [feld, art] of [['quelle_pfad', 'quelle'], ['ziel_pfad', 'ziel']] as const) {

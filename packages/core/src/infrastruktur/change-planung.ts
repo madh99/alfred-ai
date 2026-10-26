@@ -32,6 +32,8 @@ export interface ChangeDeps {
   nachFreigabe?: () => void;
   /** I4c — Namen im Tresor (für die Prüfung der Tresor-Verweise) */
   tresorNamen?: (owner: string) => Promise<Set<string>>;
+  /** v1684 — Namen der Fernzugänge (für die Prüfung von zugang/name in Plänen) */
+  zugaenge?: (owner: string) => Promise<string[]>;
   /** Einwand — offene Einwände blockieren, Antworten sind Pflicht, Freigabe-Frage nennt sie */
   einwand?: import('./einwand.js').EinwandDienst;
 }
@@ -83,9 +85,10 @@ export class ChangePlanung {
   constructor(private readonly d: ChangeDeps) {}
 
   private async kontext(owner: string): Promise<PruefKontext> {
-    const [assets, changes, tresorNamen] = await Promise.all([this.d.assets(), this.d.itsm.liste(owner), this.d.tresorNamen?.(owner).catch(() => undefined)]);
+    const [assets, changes, tresorNamen, zugaenge] = await Promise.all([this.d.assets(), this.d.itsm.liste(owner), this.d.tresorNamen?.(owner).catch(() => undefined), this.d.zugaenge?.(owner).catch(() => undefined)]);
     return {
       ...(tresorNamen ? { tresorNamen } : {}),
+      ...(zugaenge ? { zugaenge: new Set(zugaenge.map(z => z.toLowerCase())) } : {}),
       skill: this.d.skill,
       changes: changes.map(c => ({ id: c.id, abhaengigVon: c.abhaengigVon ?? [], status: c.status })),
       // I3 (Realfall 22.10.: „test-ubuntu“ = Deploy-Anwendung und VM) — ID, ID-Anfang ab 8 Zeichen, sourceId (z. B. pve3:142), Name/Hostname;
