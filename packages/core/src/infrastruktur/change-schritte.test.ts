@@ -408,3 +408,19 @@ describe('v1676 Verweise im Teil eines Werts, GitLab lesend', () => {
     expect(aktionsArt('gitlab', 'registry')).toBe('lesen');
   });
 });
+
+// v1677 — Realfall 26.10. Matrix I: Rückweg fernzugriff.kopieren (ohne Befehl) galt als Nie-Liste
+describe('v1677 Rückweg kopieren', () => {
+  it('kopieren als Rückweg ist erlaubt, ein Nie-Befehl im Rückweg weiter nicht', () => {
+    const c = {
+      titel: 'Daten kopieren', begruendung: 'Kaltkopie mit Rückkopie als Rückweg', typ: 'normal', risiko: 'mittel', ausfallMinuten: 30, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Snapshot', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 9001, name: 'vor' }, rueckweg: { skill: 'proxmox', aktion: 'delete_snapshot', parameter: { vmid: 9001, name: 'vor' } } },
+        { titel: 'Kopie', art: 'aktion', skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'a', quelle_pfad: '/x', ziel: 'b', ziel_pfad: '/y' }, rueckweg: { skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'b', quelle_pfad: '/y', ziel: 'a', ziel_pfad: '/srv/zurueck' } } },
+      ],
+    };
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).not.toContain('Nie-Liste');
+    (c.schritte[1] as { rueckweg: unknown }).rueckweg = { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'a', befehl: 'mkfs.ext4 /dev/sdb' } };
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('Nie-Liste');
+  });
+});

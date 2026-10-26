@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rückkopie als Rückweg eines Umzugs möglich (v1677)
+
+- Ein Umzugs-Change darf als Rückweg die Daten wieder auf den alten Server zurückkopieren. Bisher wurde das fälschlich als verbotener Befehl abgewiesen.
+
 ### Fixed — Image-Übertragung über die eigene Registry planbar (v1676)
 
 - Changes, die ein Image in die eigene Registry hochladen und am Ziel genau dieses Image holen, werden nicht mehr fälschlich zurückgewiesen. Abfragen der Registry gelten als reine Prüfung.

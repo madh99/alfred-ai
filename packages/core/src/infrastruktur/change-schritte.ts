@@ -288,7 +288,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
             const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });
             const feR = eingabeFehler(rs, { ...ersatzR, action: rueck.aktion });
             if (feR) f.push(`${wo} (Rückweg): ${feR}`);
-            if (rueck.skill === 'fernzugriff' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
+            // v1677 — Realfall 26.10. (Matrix I): Rückwege mit fernzugriff.kopieren haben keinen Befehl; der leere Befehl galt als „nie“
+            if (rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
           }
           schritt.rueckweg = rueck;
         }
