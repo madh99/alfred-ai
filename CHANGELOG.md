@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Widersprüchliche Prüfungen in Changes werden erkannt (v1675)
+
+- Ein geplanter Change wird zurückgewiesen, wenn eine Prüfung einen Text zugleich erwartet und ausschließt, sodass sie nie bestehen könnte. Vorher fiel das erst beim Ausführen auf, wenn der Change mitten im Ablauf anhielt.
+
 ### Fixed — Keine leere Antwort mehr bei langen Planungen (v1674)
 
 - Bricht das Modell eine Antwort am Ausgabelimit ab, bevor Text oder ein Werkzeugaufruf entstanden ist, wiederholt Alfred die Anfrage einmal mit größerem Limit, statt sie mehrmals unverändert zu senden und am Ende ohne Antwort dazustehen. Werkzeugaufrufe aus einer fortgesetzten Antwort werden jetzt ausgeführt.

@@ -145,6 +145,9 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   const aus: Pruefung = { typ };
   for (const k of ['ziel', 'erwartet', 'nichtEnthalten', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
   if (aus.nichtEnthalten && !['http', 'befehl', 'skill'].includes(typ)) f.push(`${wo}: nichtEnthalten gibt es nur bei http-, befehl- und skill-Prüfungen`);
+  // v1675 — Realfall 26.10. (5b7dc0f9 Schritt 9): erwartet „lvmthin: data2-pve3“, nichtEnthalten „lvmthin: data2“ — steckt im erwarteten
+  // Text, die Prüfung hätte nie bestanden und den Change nach dem letzten Umbau angehalten
+  if (aus.nichtEnthalten && aus.erwartet && !aus.erwartet.startsWith('{{') && aus.erwartet.includes(aus.nichtEnthalten)) f.push(`${wo}: nichtEnthalten „${aus.nichtEnthalten.slice(0, 60)}“ steckt in erwartet „${aus.erwartet.slice(0, 60)}“ — die Prüfung kann nie bestehen (genauer formulieren, z. B. mit Zählung: grep -c '^… $' → erwartet 0)`);
   // I4 (Realfall 22.10.: erwartet „Snapshot i3probe ist nicht vorhanden“ — kein Textstück der Ausgabe, Prüfung unerfüllbar)
   if (aus.erwartet && VERNEINUNG.test(aus.erwartet)) f.push(`${wo}: erwartet „${aus.erwartet.slice(0, 60)}“ ist eine Aussage — erwartet ist ein Textstück, das in der Ausgabe vorkommen muss; für „ist nicht (mehr) da“ nichtEnthalten mit dem Namen verwenden`);
   const port = zahl(p.port); if (port !== undefined) aus.port = port;

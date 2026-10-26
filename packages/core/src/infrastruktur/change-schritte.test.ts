@@ -264,6 +264,11 @@ describe('I3 Negative Prüfung (Realfall 22.10.: „abbrechen, wenn i3probe scho
     expect(plaeneAusSchritten(p.plan).umsetzung).toContain('→ enthält nicht „i3probe“');
     c.schritte[0] = { titel: 'x', art: 'pruefung', pruefung: { typ: 'ping', ziel: 'a', nichtEnthalten: 'b' } } as never;
     expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('nichtEnthalten gibt es nur bei');
+    // v1675 — Realfall 26.10. 5b7dc0f9: nichtEnthalten steckt im erwarteten Text → nie erfüllbar
+    c.schritte[0] = { titel: 'x', art: 'pruefung', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'lvmthin: data2-pve3', nichtEnthalten: 'lvmthin: data2' } } as never;
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('kann nie bestehen');
+    c.schritte[0] = { titel: 'x', art: 'pruefung', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'data2-pve3', nichtEnthalten: 'data2:' } } as never;
+    expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).not.toContain('kann nie bestehen');
   });
 });
 
