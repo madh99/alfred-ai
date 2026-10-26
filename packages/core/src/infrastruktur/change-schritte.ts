@@ -80,6 +80,9 @@ export function pruefbefehlFehler(befehl: string): string | undefined {
   if (VERAENDERND.test(befehl)) return 'ist kein reiner Lesebefehl (verändert etwas)';
   const g = geheimnisGrund(befehl);
   if (g) return `berührt ${g} — als Prüfung nicht zulässig`;
+  // v1678 — Review 26.10. (Matrix F3/I13/J27, J8): im Lese-Käfig gibt es kein Netz, keine Unix-Sockets und kein D-Bus — Netzproben per
+  // python-socket/curl/wget und systemctl außer status/is-active/is-failed scheitern dort immer
+  if (/\b(socket|urllib|requests|http\.client|ssl\.|wget|openssl\s+s_client|telnet)\b|\bcurl\b|\bnc\b|\bdocker\b|\bsystemctl\b/.test(befehl)) return 'läuft im Lese-Käfig ohne Netz, Docker-Socket und D-Bus und kann so nie bestehen — Netzprobe mit „nc -z -w 5 <host> <port>“ oder „curl … http://localhost…“ (Leseliste), Dienste mit „systemctl is-active <dienst>“, Container mit „docker ps …“/„docker inspect --format …“; alles andere als eigenen ausfuehren-Schritt mit Marker-Ausgabe';
   return undefined; // läuft im Lese-Käfig
 }
 
@@ -290,6 +293,14 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
             if (feR) f.push(`${wo} (Rückweg): ${feR}`);
             // v1677 — Realfall 26.10. (Matrix I): Rückwege mit fernzugriff.kopieren haben keinen Befehl; der leere Befehl galt als „nie“
             if (rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
+            // v1678 — Review 26.10. (Matrix I4–I7): Rückweg kopierte mit loeschen:true vom Ziel zurück auf den ORIGINALPFAD der Quelle. Bricht
+            // die Hin-Kopie mittendrin ab, schneidet der Rückweg das Original auf den unvollständigen Zielstand zurück. Rückkopien gehören
+            // in ein eigenes Verzeichnis (Staging) oder ohne loeschen.
+            const rp = rueck.parameter!; const hp = schritt.parameter;
+            if (rueck.skill === 'fernzugriff' && rueck.aktion === 'kopieren' && schritt.skill === 'fernzugriff' && schritt.aktion === 'kopieren' && rp.loeschen === true
+              && txt(rp.ziel) === txt(hp.quelle) && txt(rp.ziel_pfad).replace(/\/+$/, '') === txt(hp.quelle_pfad).replace(/\/+$/, '')) {
+              f.push(`${wo} (Rückweg): kopiert mit loeschen zurück auf den Originalpfad ${txt(hp.quelle)}:${txt(hp.quelle_pfad)} — bei abgebrochener Hin-Kopie ginge das Original verloren; in ein eigenes Verzeichnis zurückkopieren oder ohne loeschen`);
+            }
           }
           schritt.rueckweg = rueck;
         }

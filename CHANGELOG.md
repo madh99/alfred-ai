@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Sicherere Umzugspläne (v1678)
+
+- Geplante Changes werden zurückgewiesen, wenn ihr Rückweg Daten auf den Originalort zurückkopieren und dabei Dateien löschen würde; bei einer abgebrochenen Kopie ginge sonst das Original verloren.
+- Prüfungen, die in der geschützten Leseumgebung nie funktionieren können (Netzwerkproben, Dienststeuerung), werden schon beim Planen erkannt statt erst mitten im Ablauf.
+
 ### Fixed — Rückkopie als Rückweg eines Umzugs möglich (v1677)
 
 - Ein Umzugs-Change darf als Rückweg die Daten wieder auf den alten Server zurückkopieren. Bisher wurde das fälschlich als verbotener Befehl abgewiesen.

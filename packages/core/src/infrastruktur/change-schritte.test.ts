@@ -424,3 +424,28 @@ describe('v1677 Rückweg kopieren', () => {
     expect(pruefeChangePlan(c, ctx()).fehler.join('\n')).toContain('Nie-Liste');
   });
 });
+
+// v1678 — Review 26.10. Matrix: Netzproben im Käfig, Rückweg auf den Originalpfad
+describe('v1678 Käfig-Netzproben und Rückweg aufs Original', () => {
+  it('Netzprobe per python/curl/systemctl is-enabled abgewiesen, Leseliste erlaubt', async () => {
+    const { pruefbefehlFehler } = await import('./change-schritte.js');
+    expect(pruefbefehlFehler(`python3 -c 'import socket; socket.create_connection(("192.168.1.211",3000),5)'`)).toMatch(/ohne Netz/);
+    expect(pruefbefehlFehler('systemctl is-enabled certbot.timer')).toMatch(/D-Bus/);
+    expect(pruefbefehlFehler('curl -s https://chat.3033.at/_matrix/client/versions')).toMatch(/ohne Netz/);
+    expect(pruefbefehlFehler('nc -z -w 5 192.168.1.211 3000')).toBeUndefined();
+    expect(pruefbefehlFehler('systemctl is-active certbot.timer')).toBeUndefined();
+    expect(pruefbefehlFehler('head -n 1 /etc/hosts')).toBeUndefined();
+  });
+  it('Rückweg kopieren mit loeschen auf den Originalpfad wird abgewiesen, Staging erlaubt', () => {
+    const mk = (rueckZiel: string, loeschen: boolean) => ({
+      titel: 'Kaltkopie', begruendung: 'Kaltkopie der Daten mit Rückweg', typ: 'normal', risiko: 'mittel', ausfallMinuten: 30, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Snapshot', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 9001, name: 'vor' }, rueckweg: { skill: 'proxmox', aktion: 'delete_snapshot', parameter: { vmid: 9001, name: 'vor' } } },
+        { titel: 'Kopie', art: 'aktion', skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'dockerhost', quelle_pfad: '/home/synapse/data', ziel: 'neu', ziel_pfad: '/srv/matrix/synapse', loeschen: true }, rueckweg: { skill: 'fernzugriff', aktion: 'kopieren', parameter: { quelle: 'neu', quelle_pfad: '/srv/matrix/synapse', ziel: 'dockerhost', ziel_pfad: rueckZiel, loeschen } } },
+      ],
+    });
+    expect(pruefeChangePlan(mk('/home/synapse/data/', true), ctx()).fehler.join('\n')).toContain('Originalpfad');
+    expect(pruefeChangePlan(mk('/srv/matrix-return/synapse', true), ctx()).fehler.join('\n')).not.toContain('Originalpfad');
+    expect(pruefeChangePlan(mk('/home/synapse/data', false), ctx()).fehler.join('\n')).not.toContain('Originalpfad');
+  });
+});
