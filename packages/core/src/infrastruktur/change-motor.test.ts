@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
-import { ChangeMotor, ownerFrageVeraltet, type MotorDeps } from './change-motor.js';
+import { ChangeMotor, ownerFrageVeraltet, ueberspringbar, type MotorDeps } from './change-motor.js';
 import { loeseAuf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
@@ -111,7 +111,7 @@ describe('I4 Ausführungsmotor', () => {
   it('wiederholen nach gelungener Aktion mit gescheiterter Prüfung: nur die Prüfung läuft neu (Realfall 4dc47fa3 — Download „gibt es schon“)', async () => {
     const w = welt(probe(), { snapshotFehlt: true });
     await w.motor.anstossen(); await warte(w.motor);
-    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
     w.snaps.add('i3probe'); // Prüfung wäre jetzt erfüllt (z. B. Leseliste korrigiert)
     expect(await w.motor.steuern('o', 'chg-1', 'wiederholen')).toContain('nur die Prüfung');
     await warte(w.motor);
@@ -180,7 +180,7 @@ describe('I4 Ausführungsmotor', () => {
     Object.assign(w.c, { fingerabdruck: 'neu', freigabeFingerabdruck: 'alt' });
     expect(await w.motor.steuern('o', 'chg-1', 'wiederholen')).toContain('wartet auf deine Freigabe');
     await w.motor.anstossen(); await warte(w.motor);
-    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
     // Owner gibt den korrigierten Plan frei → der Motor macht am Haltepunkt weiter
     w.c.freigabeFingerabdruck = 'neu'; w.snaps.add('i3probe');
     await w.motor.anstossen(); await warte(w.motor);
@@ -279,7 +279,7 @@ describe('I4 Ausführungsmotor', () => {
   it('v1605: nach dem Abbruch des angehaltenen Changes startet der wartende sofort, nicht erst im nächsten Takt', async () => {
     const w = welt(probe(), { snapshotFehlt: true });
     await w.motor.anstossen(); await warte(w.motor);
-    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
     const zweiter = { ...w.c, id: 'chg-2', title: 'wartet', status: 'approved', lauf: undefined } as unknown as CmdbChangeRequest;
     const liste = w.deps.itsm.liste;
     w.deps.itsm.liste = async (o: string) => [...(await liste(o)), zweiter];
@@ -323,6 +323,41 @@ describe('I4 Ausführungsmotor', () => {
     expect(ownerFrageVeraltet(w.c, p)).toBe(true);
   });
 
+  it('v1692 Realfall 5bcddc88: angehaltenen LESENDEN Schritt überspringen; ändernde/verwendete nicht', async () => {
+    // Schritt 1 Snapshot (wirkt), 2 lesen → scheitert, 3 Prüfung
+    const plan: ChangeSchritt[] = [
+      { ...probe()[1]!, nr: 1 },
+      S({ nr: 2, skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 999 }, einordnung: 'lesen' }),
+      S({ nr: 3, art: 'pruefung', pruefung: { typ: 'ping', ziel: '192.168.1.96' } }),
+    ];
+    const w = welt(plan);
+    const fuehre = w.deps.fuehreAus;
+    w.deps.fuehreAus = async (skill, input, ctx) => (input.action === "vm_status" && input.vmid === 999 ? { success: false, error: "I/O error" } : fuehre(skill, input, ctx));
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
+    expect(ueberspringbar(w.c.lauf as ChangeLauf, w.c)).toBe(true);
+    expect(w.meldungen.some(m => m.includes('Schritt überspringen'))).toBe(true);
+    expect(await w.motor.steuern('o', 'chg-1', 'ueberspringen')).toContain('Schritt 2 übersprungen');
+    await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.ergebnisse.find(e => e.nr === 2)).toMatchObject({ ok: true, uebersprungen: true });
+    expect(w.c.result).toContain('↷ 2.');
+    expect(rueckwegSchritte(plan, l.ergebnisse).map(s => s.nr)).toEqual([1]);
+
+    // ändernder Schritt angehalten → nicht überspringbar
+    const a = welt(probe(), { snapshotFehlt: true });
+    await a.motor.anstossen(); await warte(a.motor);
+    expect((a.c.lauf as ChangeLauf).schritt).toBe(2);
+    expect(await a.motor.steuern('o', 'chg-1', 'ueberspringen')).toContain('verändert etwas');
+    // lesender Schritt, dessen Ergebnis später verwendet wird → nicht überspringbar
+    const v = welt([S({ nr: 1, skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 999 }, einordnung: 'lesen' }), S({ nr: 2, skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{schritt1.vmid}}' }, einordnung: 'lesen' })]);
+    v.deps.fuehreAus = async () => ({ success: false, error: 'weg' });
+    await v.motor.anstossen(); await warte(v.motor);
+    expect(ueberspringbar(v.c.lauf as ChangeLauf, v.c)).toBe(false);
+    expect(await v.motor.steuern('o', 'chg-1', 'ueberspringen')).toContain('Schritt 2 verwendet');
+  });
+
   it('Realfall 22.10.: angehalten ohne Wirkung sperrt keine Assets; angehalten nach einer Änderung schon', async () => {
     const leer = welt(probe());
     leer.deps.itsm.liste = async () => [leer.c, { ...leer.c, id: 'chg-0', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 1, start: 'x', ergebnisse: [{ nr: 1, ok: false, start: 'x' }] } } as CmdbChangeRequest];
@@ -337,7 +372,7 @@ describe('I4 Ausführungsmotor', () => {
     const w = welt(probe(), { status: 'in_progress' });
     w.c.lauf = { phase: 'laeuft', schritt: 3, start: new Date().toISOString(), ergebnisse: [{ nr: 1, ok: true, start: 'x' }, { nr: 2, ok: true, aktionOk: true, start: 'x', daten: { vmid: 142 } }] } satisfies ChangeLauf;
     await w.motor.anstossen(); await warte(w.motor);
-    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
     expect((w.c.lauf as ChangeLauf).grund).toContain('Neustart während Schritt 3');
     const l = welt(probe(), { status: 'in_progress' });
     l.c.lauf = { phase: 'laeuft', schritt: 1, start: new Date().toISOString(), ergebnisse: [] } satisfies ChangeLauf;
@@ -370,7 +405,7 @@ describe('I4 Sicherheitsbefund: Freigabe vor jedem Schritt', () => {
     w.c.lauf = { phase: 'laeuft', schritt: 1, start: new Date().toISOString(), ergebnisse: [] } satisfies ChangeLauf;
     w.c.fingerabdruck = 'anders';
     await w.motor.anstossen(); await warte(w.motor);
-    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).phase, `${w.c.status} ${w.c.result} ${w.meldungen.join(' | ')}`).toBe('angehalten');
     expect((w.c.lauf as ChangeLauf).grund).toContain('Fingerabdruck geändert');
     expect(w.aufrufe.filter(a => a.startsWith('proxmox.'))).toEqual([]);
   });

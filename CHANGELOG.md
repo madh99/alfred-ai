@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Angehaltene Prüf-Schritte überspringen (v1692)
+
+- Hält ein Change an einem Schritt an, der nur liest, prüft oder wartet, kann der Owner ihn jetzt überspringen („Change … Schritt überspringen“). Der Change läuft danach weiter oder wird regulär abgeschlossen; der Bericht kennzeichnet den Schritt als übersprungen. Bisher blieb in diesem Fall nur der Abbruch, obwohl alles Wirksame schon erledigt war.
+- Schritte, die etwas verändern, schon etwas bewirkt haben oder deren Ergebnis ein späterer Schritt verwendet, lassen sich nicht überspringen.
+
 ### Added — Kleine Korrekturen an Change-Plänen per exaktem Textersatz (v1691)
 
 - Alfred kann in ausgewählten Schritten eines Changes einen Text exakt ersetzen, ohne die Schritte neu zu schreiben. Alles andere bleibt unverändert; kommt der Text in einem genannten Schritt nicht vor, wird nichts gespeichert. Bisher scheiterten solche Korrekturen an großen Plänen, weil die Schritte nicht vollständig sichtbar waren.

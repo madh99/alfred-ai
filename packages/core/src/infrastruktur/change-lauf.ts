@@ -12,6 +12,8 @@ export interface SchrittErgebnis {
   /** v1630 — die Aktion scheiterte, hat aber schon etwas angelegt (der Skill lieferte Daten, z. B. vmid) — ihr Rückweg gehört dazu */
   teilweise?: boolean;
   ausgabe?: string; daten?: unknown; fehler?: string;
+  /** v1692 — vom Owner übersprungen (nur nicht verändernde Schritte): zählt als erledigt, hat aber nichts bewirkt */
+  uebersprungen?: boolean;
   /** v1633 — ausgabe: was die Prüfung gelesen hat (Befehl/Skill, gekürzt), damit der Bericht es belegt (Realfall 24.10.: /etc/os-release) */
   pruefung?: { ok: boolean; text: string; versuche: number; ausgabe?: string };
 }
@@ -144,7 +146,7 @@ export function textErfuellt(text: string, p: Pick<Pruefung, 'erwartet' | 'nicht
 
 /** Rückweg-Reihenfolge: erledigte Schritte mit Rückweg in umgekehrter Reihenfolge (ohne „keiner“). */
 export function rueckwegSchritte(schritte: ChangeSchritt[], ergebnisse: SchrittErgebnis[]): ChangeSchritt[] {
-  const erledigt = new Set(ergebnisse.filter(e => e.ok || e.aktionOk || e.teilweise).map(e => e.nr));
+  const erledigt = new Set(ergebnisse.filter(e => !e.uebersprungen && (e.ok || e.aktionOk || e.teilweise)).map(e => e.nr));
   return [...schritte].reverse().filter(s => erledigt.has(s.nr) && s.rueckweg && !s.rueckweg.keiner && s.rueckweg.skill);
 }
 
@@ -170,7 +172,7 @@ export function laufBericht(titel: string, schritte: ChangeSchritt[], l: ChangeL
     const e = l.ergebnisse.find(x => x.nr === s.nr);
     // v1633 — bei reinen Prüf-Schritten die erste Zeile des Gelesenen als Beleg (Realfall 24.10.: welches System meldet die Probe-VM?)
     const beleg = s.art === 'pruefung' && e?.pruefung?.ausgabe ? e.pruefung.ausgabe.split('\n').map(x => x.trim()).find(Boolean)?.slice(0, 100) : undefined;
-    z.push(`${e ? (e.ok ? '✓' : '✗') : '·'} ${s.nr}. ${s.titel}${e?.pruefung ? ` — Prüfung ${e.pruefung.ok ? 'ok' : 'NICHT ok'}: ${e.pruefung.text}${beleg ? ` → ${beleg}` : ''}` : ''}${e?.fehler ? ` — ${e.fehler}` : ''}`);
+    z.push(`${e ? (e.uebersprungen ? '↷' : e.ok ? '✓' : '✗') : '·'} ${s.nr}. ${s.titel}${e?.uebersprungen ? ` — ${e.ausgabe ?? 'übersprungen'}` : ''}${e?.pruefung ? ` — Prüfung ${e.pruefung.ok ? 'ok' : 'NICHT ok'}: ${e.pruefung.text}${beleg ? ` → ${beleg}` : ''}` : ''}${e?.fehler ? ` — ${e.fehler}` : ''}`);
   }
   if (l.rueckweg?.length) z.push('Rückweg:', ...l.rueckweg.map(r => `${r.ok ? '✓' : '✗'} zu Schritt ${r.zuSchritt}: ${r.text}`));
   if (l.grund && ergebnis !== 'completed') z.push(`Grund: ${l.grund}`);

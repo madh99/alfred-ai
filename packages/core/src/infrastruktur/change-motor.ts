@@ -13,7 +13,7 @@ import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
 import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
-import type { ChangeSchritt, Pruefung } from './change-schritte.js';
+import { aktionsArt, type ChangeSchritt, type Pruefung } from './change-schritte.js';
 
 export interface MotorDeps {
   owner: () => string | undefined;
@@ -78,6 +78,16 @@ const hash = (n: string) => createHash('sha256').update(n).digest('hex');
  * neben der gültigen „Schritt 37 … erledigt?“; ein Ja auf die falsche hätte nichts bewirkt oder verwirrt. Eine offene Owner-Frage ist
  * veraltet, sobald der Change nicht mehr genau an diesem Schritt mit genau dieser Frage (Nonce) wartet.
  */
+/** v1692 — darf der Schritt, an dem der Lauf angehalten hat, übersprungen werden? (liest/prüft/wartet nur, hat nichts bewirkt, kein späterer Verweis) */
+export function ueberspringbar(l: ChangeLauf, c: CmdbChangeRequest): boolean {
+  const schritte = (c.schritte ?? []) as ChangeSchritt[];
+  const s = schritte.find(x => x.nr === l.schritt);
+  const e = l.ergebnisse.find(x => x.nr === l.schritt);
+  if (!s || e?.aktionOk || e?.teilweise) return false;
+  if (!(s.art === 'pruefung' || s.art === 'warten' || (s.art === 'aktion' && !!s.skill && !!s.aktion && aktionsArt(s.skill, s.aktion, s.parameter) === 'lesen'))) return false;
+  return !schritte.some(x => x.nr > s.nr && new RegExp(`\\{\\{\\s*schritt${s.nr}\\.`).test(JSON.stringify(x)));
+}
+
 export function ownerFrageVeraltet(c: CmdbChangeRequest | undefined | null, params: { schritt?: unknown; freigabe?: unknown }): boolean {
   if (!c || c.status !== 'in_progress') return true;
   const l = c.lauf as ChangeLauf | undefined;
@@ -400,7 +410,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     await this.d.itsm.motorSetze(o, c.id, { lauf });
     this.log('I4 Change angehalten', { id: c.id, grund: grund.slice(0, 300), incident: lauf.incidentId, rueckwegMoeglich: rw.length });
     await this.d.ereignis?.(o, c, 'stoerung', `Die Wartung „${c.title}“ ist angehalten: ${grund.slice(0, 200)}`).catch(() => undefined);
-    await this.d.melde?.(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)}) bei Schritt ${lauf.schritt}\n${grund}\n\nDer Change bleibt angehalten, bis du entscheidest (im Chat):\n• „Change ${c.id.slice(0, 8)} Schritt wiederholen“\n• „Change ${c.id.slice(0, 8)} abbrechen“ (ohne Rückweg)${rw.length ? `\n• „Change ${c.id.slice(0, 8)} Rückweg ausführen“ — macht rückgängig: ${rw.map(s => `Schritt ${s.nr} (${s.rueckweg!.skill}.${s.rueckweg!.aktion})`).join(', ')}` : '\nEin Rückweg ist nicht nötig.'}`, true);
+    await this.d.melde?.(`⚠️ Change angehalten: ${c.title} (${c.id.slice(0, 8)}) bei Schritt ${lauf.schritt}\n${grund}\n\nDer Change bleibt angehalten, bis du entscheidest (im Chat):\n• „Change ${c.id.slice(0, 8)} Schritt wiederholen“\n• „Change ${c.id.slice(0, 8)} abbrechen“ (ohne Rückweg)${ueberspringbar(lauf, c) ? `\n• „Change ${c.id.slice(0, 8)} Schritt überspringen“ (der Schritt liest/prüft nur)` : ''}${rw.length ? `\n• „Change ${c.id.slice(0, 8)} Rückweg ausführen“ — macht rückgängig: ${rw.map(s => `Schritt ${s.nr} (${s.rueckweg!.skill}.${s.rueckweg!.aktion})`).join(', ')}` : '\nEin Rückweg ist nicht nötig.'}`, true);
   }
 
   private async frageOwner(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, s: ChangeSchritt): Promise<void> {
@@ -447,13 +457,13 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   /** Owner im Chat: angehaltenen Schritt wiederholen, abbrechen (ohne Rückweg) oder den Rückweg ausdrücklich ausführen. */
-  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg'): Promise<string> {
+  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen'): Promise<string> {
     const r = await this.steuernIntern(o, id, wahl);
     await this.d.fragenAufraeumen?.().catch(() => undefined); // v1688 — Owner-Fragen eines abgebrochenen/wiederholten Schritts verschwinden
     return r;
   }
 
-  private async steuernIntern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg'): Promise<string> {
+  private async steuernIntern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen'): Promise<string> {
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
     // Rückweg nach einer Störung: abgeschlossener Change mit verknüpfter Störung
@@ -494,6 +504,24 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     }
     const alt = l.ergebnisse.find(e => e.nr === l.schritt);
     const s = (c.schritte as ChangeSchritt[] | undefined)?.find(x => x.nr === l.schritt);
+    // v1692 — Realfall 26.10. (5bcddc88): an einem LESENDEN Schritt angehalten (Ausfall pve1), alles Wirksame war durch — der Change
+    // ließ sich nur abbrechen. Überspringen nur für Schritte, die nichts verändern, und nur ohne spätere Verweise auf ihr Ergebnis.
+    if (wahl === 'ueberspringen') {
+      if (!s || l.phase !== 'angehalten') return 'Überspringen geht nur an einem angehaltenen Schritt.';
+      const verwendet = (c.schritte as ChangeSchritt[]).filter(x => x.nr > s.nr && new RegExp(`\\{\\{\\s*schritt${s.nr}\\.`).test(JSON.stringify(x))).map(x => x.nr);
+      const lesend = s.art === 'pruefung' || s.art === 'warten' || (s.art === 'aktion' && !!s.skill && !!s.aktion && aktionsArt(s.skill, s.aktion, s.parameter) === 'lesen');
+      if (!lesend) return `Schritt ${s.nr} „${s.titel}“ verändert etwas — überspringen geht nur bei lesenden, prüfenden oder wartenden Schritten. Möglich: wiederholen, Rückweg oder abbrechen.`;
+      if (alt?.aktionOk || alt?.teilweise) return `Schritt ${s.nr} hat schon etwas bewirkt — nicht überspringbar.`;
+      if (verwendet.length) return `Schritt ${s.nr} kann nicht übersprungen werden: Schritt ${verwendet.join(', ')} verwendet sein Ergebnis.`;
+      const jetzt = this.iso();
+      l.ergebnisse = [...l.ergebnisse.filter(e => e.nr !== s.nr), { nr: s.nr, ok: true, uebersprungen: true, start: alt?.start ?? jetzt, ende: jetzt, ausgabe: `vom Owner übersprungen (vorher: ${(l.grund ?? alt?.fehler ?? 'gescheitert').slice(0, 200)})` }];
+      l.phase = 'laeuft'; delete l.grund;
+      await this.d.itsm.motorSetze(o, c.id, { lauf: l });
+      this.log('I4 Schritt übersprungen', { id: c.id, nr: s.nr });
+      void this.weiter(o, c, l).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
+      const rest = (c.schritte as ChangeSchritt[]).filter(x => x.nr > s.nr).length;
+      return rest ? `Schritt ${s.nr} übersprungen — es geht mit Schritt ${s.nr + 1} weiter.` : `Schritt ${s.nr} übersprungen — das war der letzte Schritt, der Change wird abgeschlossen.`;
+    }
     const nurPruefung = !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
     if (nurPruefung) l.nurPruefung = { nr: l.schritt, ...(alt!.ausgabe !== undefined ? { ausgabe: alt!.ausgabe } : {}), ...(alt!.daten !== undefined ? { daten: alt!.daten } : {}) };
     l.ergebnisse = l.ergebnisse.filter(e => e.nr !== l.schritt); l.phase = 'laeuft'; delete l.grund;
