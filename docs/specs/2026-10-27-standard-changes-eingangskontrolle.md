@@ -159,8 +159,8 @@ Ein Aufruf kann mehrere Assets betreffen, z. B. „Updates für alle Docker-VMs�
 
 ## 10. Owner-Entscheidungen 27.10.2026
 
-1. **Freigabe:** ein einzelnes Ja je Serie: eine kurze Freigabe-Frage pro Lauf einer Vorlage über alle betroffenen Assets, kein Lauf ohne Ja.
+1. **Freigabe:** ein einzelnes Ja **je Serie** (vom Owner bestätigt): eine Freigabe-Frage pro Lauf über alle betroffenen Assets, je Asset mit den anstehenden Änderungen und dem Ergebnis der Eingangskontrolle; einzelne Assets per Einwand ausnehmbar; kein Lauf ohne Ja.
 2. **Rhythmus:** Updates **wöchentlich**, Restoretests **vierteljährlich**, nachts ab 00:30.
 3. **Bei Abweichung:** **beides**, also melden und den Einzelfall automatisch planen lassen (zur Freigabe).
 4. **Verfall:** Eine Vorlage wird nach **mindestens 2 Monaten** ohne Lauf auf „überprüfen“ gesetzt.
-5. **Prüfprofile:** Empfehlung (offen für Bestätigung): sofort für die fünf neuen Docker-VMs (144, 146, 147, 148, 149). Ihre Dienste und Prüfungen sind aus den Umzugs- und I9-Changes bekannt, und sie laufen wöchentlich. Alle anderen Assets bekommen ein Profil beim nächsten Change am jeweiligen Asset.
+5. **Prüfprofile:** vom Owner bestätigt: sofort für die fünf neuen Docker-VMs (144, 146, 147, 148, 149). Ihre Dienste und Prüfungen sind aus den Umzugs- und I9-Changes bekannt, und sie laufen wöchentlich. Alle anderen Assets bekommen ein Profil beim nächsten Change am jeweiligen Asset.
