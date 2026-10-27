@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Unteragent nutzt das Standardmodell (v1699)
+
+- Teilaufträge an einen Unteragenten laufen jetzt mit dem Modell, das auch die normalen Gespräche führt, statt fest mit dem teuersten. Sie sind auf Lese-Erhebungen beschränkt, dafür reicht es; pro Token halbieren sich die Kosten. Mit `ALFRED_DELEGATE_TIER=strong` lässt sich das stärkere Modell wieder einstellen.
+
 ### Added — Standard-Vorlagen mit Eingangskontrolle (v1698)
 
 - Standard-Vorlagen nennen ihre Annahmen (zum Beispiel „Debian-artiges System“, „unattended-upgrades installiert“, „Gast-Agent antwortet“). Vor dem Anlegen eines Changes werden sie live geprüft; weicht etwas ab, entsteht kein Change aus der Vorlage, der Owner bekommt eine Meldung und der Fall wird einzeln geplant. Dieselben Prüfungen laufen als erste Schritte des Changes noch einmal.

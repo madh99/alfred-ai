@@ -47,6 +47,17 @@ const FILE_WRITE_TOOLS = new Set([
 /** v1356 — häufige deutsche/englische Wörter ≥ 4 Zeichen, die in fast jeder Werkzeugbeschreibung stehen. */
 export const FUELLWOERTER = new Set(['eine', 'einen', 'einem', 'einer', 'eines', 'nicht', 'oder', 'aber', 'auch', 'noch', 'nach', 'durch', 'über', 'ueber', 'unter', 'dass', 'wenn', 'dann', 'sind', 'wird', 'werden', 'kann', 'können', 'koennen', 'soll', 'sollen', 'muss', 'alle', 'allen', 'jede', 'jeden', 'jeweils', 'bitte', 'diese', 'dieser', 'dieses', 'welche', 'welcher', 'ausschließlich', 'ausschliesslich', 'lesend', 'letzten', 'danach', 'dabei', 'damit', 'from', 'with', 'this', 'that', 'into', 'about', 'only', 'then', 'have', 'will', 'your', 'their', 'when', 'also', 'each', 'list', 'action', 'actions', 'get', 'data']);
 
+/**
+ * v1699 — Modell des Unteragenten (Owner 27.10.: „wie vorgeschlagen umsetzen“). Bisher fest 'strong' (Opus 5.5, pro Token doppelt so
+ * teuer wie das Standardmodell, ~46 $ seit 22.10.). Seit v1695 macht der Unteragent nur noch Lese-Erhebungen — dafür reicht das
+ * Modell des Hauptgesprächs. ALFRED_DELEGATE_TIER=strong|medium|fast|fallback stellt um; Unsinn → default. Kein Modell-Gate: fällt
+ * die Stufe aus, greift die normale Ersatzkette des Routers.
+ */
+export function delegateTier(env: Record<string, string | undefined> = process.env): 'default' | 'strong' | 'medium' | 'fast' | 'fallback' {
+  const w = (env.ALFRED_DELEGATE_TIER ?? '').trim().toLowerCase();
+  return w === 'strong' || w === 'medium' || w === 'fast' || w === 'fallback' ? w : 'default';
+}
+
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'delegate',
@@ -280,7 +291,7 @@ export class DelegateSkill extends Skill {
           system: systemPrompt,
           tools: tools.length > 0 ? tools : undefined,
           maxTokens: 8192,
-          tier: 'strong',
+          tier: delegateTier(),
         });
 
         totalInputTokens += response.usage.inputTokens;

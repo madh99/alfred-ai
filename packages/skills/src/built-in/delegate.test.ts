@@ -75,3 +75,16 @@ describe('DelegateSkill — ehrlicher Status (K5)', () => {
     expect(g.display).toContain('Iterationsgrenze (1)');
   });
 });
+
+describe('v1699 Modell des Unteragenten', () => {
+  it('Standard ist default, umstellbar per ALFRED_DELEGATE_TIER, Unsinn → default; der Aufruf nutzt die Stufe', async () => {
+    const { delegateTier } = await import('./delegate.js');
+    expect(delegateTier({})).toBe('default');
+    expect(delegateTier({ ALFRED_DELEGATE_TIER: 'strong' })).toBe('strong');
+    expect(delegateTier({ ALFRED_DELEGATE_TIER: 'Opus' })).toBe('default');
+    const registry = new SkillRegistry();
+    const complete = vi.fn().mockResolvedValue({ content: 'fertig', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } });
+    await new DelegateSkill({ complete } as unknown as LLMProvider, registry).execute({ task: 'lesen' }, { userId: 'u', chatId: 'c', platform: 'api' } as unknown as SkillContext);
+    expect((complete.mock.calls[0]![0] as { tier: string }).tier).toBe('default');
+  });
+});
