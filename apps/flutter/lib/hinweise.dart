@@ -137,6 +137,9 @@ class _HinweiseState extends State<Hinweise> {
   Future<void> entscheide(Hinweis h, String aktion, {Map<String, String>? werte}) async {
     try {
       final r = await widget.json('/api/geraete/hinweise/${h.id}', methode: 'POST', koerper: {'aktion': aktion, if (werte != null) 'werte': werte});
+      // 1.82.0 — Owner 27.10. (Fehler „Null check operator used on a null value“): „Nachfragen“ wechselt in den Chat, die Ansicht ist
+      // geschlossen, wenn die Antwort kommt — setState auf eine geschlossene Ansicht stürzt in der Release-App so ab
+      if (!mounted) return;
       if (r['ok'] == true) {
         setState(() {
           h.status = statusNach(aktion) ?? h.status;

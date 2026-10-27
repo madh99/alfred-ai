@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:alfred_app/hinweise.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -118,5 +119,28 @@ void main() {
     await t.tap(find.byKey(const Key('uebernehmen')));
     await t.pumpAndSettle();
     expect(gesendet.single, {'aktion': 'ausfuehren', 'werte': {'info': 'Johann-Böhm-Straße 1, 8605 Kapfenberg'}});
+  });
+
+  testWidgets('1.82.0: Nachfragen schließt die Ansicht, bevor die Antwort kommt — kein Fehler (Owner 27.10.)', (t) async {
+    final meldungen = <String>[];
+    var zeigen = true;
+    late StateSetter neu;
+    final antwort = Completer<Map<String, dynamic>>();
+    await t.binding.setSurfaceSize(const Size(1000, 1400));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: StatefulBuilder(builder: (c, s) { neu = s; return zeigen ? Hinweise(
+      json: (p, {methode = 'GET', koerper}) async {
+        if (methode == 'GET') return {'hinweise': [{'id': 'r1', 'quelle': 'reasoning', 'titel': 'Termin morgen', 'text': 'x', 'status': 'pending', 'zeit': '2026-10-27T08:00:00Z'}]};
+        return antwort.future;
+      },
+      aufNachfragen: (_) => neu(() => zeigen = false), // wie der Wechsel in den Chat
+      aufMeldung: meldungen.add,
+    ) : const SizedBox(); }))));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Nachfragen'));
+    await t.pumpAndSettle();
+    antwort.complete({'ok': true});
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    expect(meldungen.where((m) => m.contains('Fehler')), isEmpty);
   });
 }

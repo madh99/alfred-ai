@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: kein Fehler mehr nach „Nachfragen“ bei Hinweisen (App 1.82.0)
+
+- „Nachfragen“ bei einem Hinweis führte zur Meldung „Null check operator used on a null value“, weil die Hinweis-Ansicht schon geschlossen war, als die Antwort des Servers kam. Die Reaktion wird weiterhin gespeichert, die Meldung erscheint nicht mehr.
+
 ### Fixed — App: Eingabefelder für Hinweise auch im Eingang (App 1.81.0)
 
 - Hinweise mit einer offenen Angabe (Adresse, Geburtstag) lassen sich jetzt auch im Eingang der App beantworten, nicht nur in der Ansicht „Hinweise“.
