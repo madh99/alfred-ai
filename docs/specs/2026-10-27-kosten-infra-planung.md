@@ -52,9 +52,15 @@ Keine Maßnahme unten verändert, *was* das Modell sieht. Ausnahme ist K3: Dort 
 - **Messung vorher und nachher:** Cache-Anteil der ersten Runde, Werte aus dem OpenAI-Dashboard, Kosten je Nachricht im Infra-Faden. Ziel: Die erste Runde liest den stabilen Teil aus dem Cache, wenn die vorige Nachricht weniger als ~30 Minuten (OpenAI) bzw. 5 Minuten (Anthropic) zurückliegt.
 - **Geschätzte Wirkung:** Die erste Runde macht bei gpt im Faden ~53 % der Kosten aus. Liest sie 80 % des Prefix aus dem Cache, sinkt dieser Teil deutlich. Wie viel genau, zeigt erst die Messung.
 
-### K2 – Cache-Diagnose bei Anthropic einschalten (Owner, Konsole)
+### K2 – Cache-Diagnose je Anfrage mitschicken (Code, nur Messung)
 
-Laut Konsole vergleicht die Diagnose jede Anfrage mit der vorigen und zeigt bei einem Cache-Fehlschlag, was sich geändert hat. Damit lässt sich K1 bei Anthropic belegen. Das ist eine Einstellung in der Konsole, keine Code-Änderung.
+Korrektur 27.10.: In den Dashboards lässt sich nichts aktivieren. Bei beiden Anbietern wird die Diagnose **je Anfrage** angefordert:
+- **Anthropic:** `diagnostics: { previous_message_id: <id der vorigen Antwort> }`, beim ersten Zug `null`. Die Antwort enthält `diagnostics.cache_miss_reason.type`, zum Beispiel `system_changed`, `tools_changed`, `messages_changed`, `model_changed`, und dazu `cache_missed_input_tokens`. Beim Streaming steht das im `message_start`-Event.
+- **OpenAI (Responses, GPT-5.6 und neuer):** `prompt_cache_options: { comparison_response_id: <id> }`. Die Antwort enthält `prompt_cache_diagnostics` mit `type` (`cache_hit`/`cache_miss`/…) und `reason`, zum Beispiel `prompt_cache_key_changed`, `tools_changed`, `input_changed`, `model_changed`, dazu `cache_missed_tokens`. Beim Streaming steht es im Event `response.completed`.
+
+Beide sind ohne Zusatzkosten, ändern weder Caching noch Ausgabe, speichern keine Prompt-Inhalte (ZDR-fähig) und blockieren nie eine Anfrage.
+
+Umsetzung: Alfred merkt sich je Gespräch die letzte Antwort-ID je Anbieter und Modell, schickt den Parameter mit und protokolliert den Grund samt verlorener Token. Ein Bericht zeigt dann für den Infra-Faden, *warum* die erste Runde nicht trifft. Erwartet wird `prompt_cache_key_changed` bei OpenAI und `system_changed` bei Anthropic; belegt ist das noch nicht. K2 ändert nichts am Verhalten. Es ist reine Messung und Voraussetzung, um K1 gezielt umzusetzen.
 
 ### K3 – Lesebündel: weniger Werkzeugrunden (Qualität gleich)
 
@@ -86,7 +92,8 @@ Siehe eigene Spec, Etappen S1–S5. Wirkung: Wiederkehrende Wartung kostet fast 
 
 | Schritt | Inhalt | Messpunkt / Beweis |
 |---|---|---|
-| 0 | Basis messen (heute erledigt); Owner schaltet die Anthropic-Cache-Diagnose ein (K2) | Werte oben |
+| 0 | Basis messen (heute erledigt) | Werte oben |
+| 0b | K2 Cache-Diagnose je Anfrage protokollieren | Grund je Fehlschlag (erste Runde) im Infra-Faden |
 | 1 | K1: Messung der Werkzeuglisten-Stabilität, dann stabiler Cache-Schlüssel und geteilter Anthropic-Systemblock | Cache-Anteil der ersten Runde im Infra-Faden; Dashboard OpenAI/Anthropic eine Woche später |
 | 2 | K3 Lesebündel | Runden je Erhebung (vorher 44–76) |
 | 3 | K4 vollständige Teilausgaben | keine „vollständige Daten holen“-Delegationen mehr |
