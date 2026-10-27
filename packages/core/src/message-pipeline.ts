@@ -1627,6 +1627,7 @@ export class MessagePipeline {
             // OpenAI-Provider sendet dann nur die neuen Tool-Ergebnisse);
             // andere Provider ignorieren das Feld, messages bleiben komplett.
             ...(previousResponseId ? { previousResponseId } : {}),
+            cacheDiagnose: message.chatId, // v1693 (K2) — Cache-Diagnose je Gespräch, nur Messung
           };
           // v1248 — Streaming-Pfad: Textstücke gehen als Progress-Ereignis (kind=delta) nach außen,
           // die Antwort selbst bleibt dieselbe Struktur wie bei complete().

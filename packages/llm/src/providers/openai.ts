@@ -9,6 +9,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
+import { DiagnoseKette, istDiagnoseAblehnung, openaiDiagnose } from '../cache-diagnose.js';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
 export class OpenAIProvider extends LLMProvider {
@@ -345,6 +346,7 @@ export class OpenAIProvider extends LLMProvider {
       ...(request.previousResponseId && input.some(i => i.type === 'function_call_output')
         ? { previous_response_id: request.previousResponseId } : {}),
       ...this.extraRequestParams(request), // v1355 — prompt_cache_key auch im Responses-Weg (gpt-6.1-sol)
+      ...this.diagnoseParam(request), // v1693 (K2) — nur Messung
       // temperature bewusst weggelassen — Reasoning-Modelle lehnen sie ab
     };
   }
@@ -382,15 +384,49 @@ export class OpenAIProvider extends LLMProvider {
     };
   }
 
+  /** v1693 (K2) — letzte Antwort-ID je Gespräch; nur echter OpenAI-Endpunkt, nur Responses-Weg */
+  private readonly diagnose = new DiagnoseKette();
+  private diagnoseParam(request: LLMRequest): Record<string, unknown> {
+    if (!this.diagnose.aktiv(request.cacheDiagnose) || !this.istEchterOpenAiEndpunkt()) return {};
+    const vorher = this.diagnose.vorher(request.cacheDiagnose);
+    return vorher ? { prompt_cache_options: { comparison_response_id: vorher } } : {};
+  }
+  private diagnoseAbgelehnt(err: unknown): boolean {
+    if (this.diagnose.aus || !istDiagnoseAblehnung(err, 'prompt_cache_options')) return false;
+    this.diagnose.aus = true;
+    console.warn('[OpenAIProvider] v1693 Cache-Diagnose abgelehnt — für ' + this.config.model + ' abgeschaltet');
+    return true;
+  }
+  private mitDiagnose(r: LLMResponse, request: LLMRequest, roh: unknown, params: Record<string, unknown>): LLMResponse {
+    if (!this.diagnose.aktiv(request.cacheDiagnose) || !this.istEchterOpenAiEndpunkt()) return r;
+    this.diagnose.merke(request.cacheDiagnose, r.responseId);
+    const d = openaiDiagnose((roh as { prompt_cache_diagnostics?: unknown })?.prompt_cache_diagnostics, 'prompt_cache_options' in params);
+    return d ? { ...r, cacheDiagnose: d } : r;
+  }
+
   private async completeViaResponses(request: LLMRequest): Promise<LLMResponse> {
-    const params = this.buildResponsesParams(request);
-    const response = await (this.client.responses.create(params as never) as Promise<unknown>);
-    return this.mapResponsesResponse(response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]);
+    let params = this.buildResponsesParams(request);
+    let response: unknown;
+    try {
+      response = await (this.client.responses.create(params as never) as Promise<unknown>);
+    } catch (err) {
+      if (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err)) throw err;
+      params = this.buildResponsesParams(request);
+      response = await (this.client.responses.create(params as never) as Promise<unknown>);
+    }
+    return this.mitDiagnose(this.mapResponsesResponse(response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]), request, response, params);
   }
 
   private async *streamViaResponses(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
-    const params = { ...this.buildResponsesParams(request), stream: true };
-    const stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
+    let params: Record<string, unknown> = { ...this.buildResponsesParams(request), stream: true };
+    let stream: AsyncIterable<Record<string, unknown>>;
+    try {
+      stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
+    } catch (err) {
+      if (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err)) throw err;
+      params = { ...this.buildResponsesParams(request), stream: true };
+      stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
+    }
     for await (const ev of stream) {
       const type = ev.type as string;
       if (type === 'response.output_text.delta' && typeof ev.delta === 'string') {
@@ -403,7 +439,7 @@ export class OpenAIProvider extends LLMProvider {
       } else if (type === 'response.function_call_arguments.delta' && typeof ev.delta === 'string') {
         yield { type: 'tool_use_delta', toolCall: { input: ev.delta as unknown as Record<string, unknown> } };
       } else if (type === 'response.completed' || type === 'response.incomplete') { // v1650 — auch am Ausgabelimit
-        yield { type: 'message_complete', response: this.mapResponsesResponse(ev.response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]) };
+        yield { type: 'message_complete', response: this.mitDiagnose(this.mapResponsesResponse(ev.response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]), request, ev.response, params) };
       } else if (type === 'response.failed' || type === 'error') {
         const msg = (ev.response as { error?: { message?: string } } | undefined)?.error?.message
           ?? (ev as { message?: string }).message ?? 'Responses-Stream fehlgeschlagen';

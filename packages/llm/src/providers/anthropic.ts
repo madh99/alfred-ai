@@ -8,6 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
+import { DiagnoseKette, anthropicDiagnose, istDiagnoseAblehnung } from '../cache-diagnose.js';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
 /**
@@ -143,10 +144,30 @@ export class AnthropicProvider extends LLMProvider {
     return /^claude-(fable|mythos)-5/.test(model) || /^claude-opus-5-5/.test(model);
   }
 
+  /** v1693 (K2) — letzte Antwort-ID je Gespräch für die Cache-Diagnose */
+  private readonly diagnose = new DiagnoseKette();
+  private diagnoseParam(request: LLMRequest): { diagnostics: { previous_message_id: string | null } } | Record<string, never> {
+    return this.diagnose.aktiv(request.cacheDiagnose) ? { diagnostics: { previous_message_id: this.diagnose.vorher(request.cacheDiagnose) } } : {};
+  }
+  /** Lehnt die API den Parameter ab, ohne ihn wiederholen und für diese Instanz abschalten */
+  private diagnoseAbgelehnt(err: unknown): boolean {
+    if (this.diagnose.aus || !istDiagnoseAblehnung(err, 'diagnostics')) return false;
+    this.diagnose.aus = true;
+    console.warn('[anthropic] v1693 Cache-Diagnose abgelehnt — für ' + this.config.model + ' abgeschaltet');
+    return true;
+  }
+  private mitDiagnose(r: LLMResponse, request: LLMRequest, roh: unknown, gesendet: boolean): LLMResponse {
+    if (!gesendet) return r;
+    const mitVorher = this.diagnose.vorher(request.cacheDiagnose!) !== null;
+    this.diagnose.merke(request.cacheDiagnose, (roh as { id?: string })?.id);
+    return { ...r, cacheDiagnose: anthropicDiagnose((roh as { diagnostics?: unknown })?.diagnostics, mitVorher) };
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
     try {
       return await this.completeEinmal(request);
     } catch (err) {
+      if (this.diagnoseAbgelehnt(err)) return await this.completeEinmal(request);
       if (!this.lerneThinkingAusFehler(err)) throw err;
       return await this.completeEinmal(request); // v1208 — einmal mit gelernter Abschalt-Form
     }
@@ -166,6 +187,7 @@ export class AnthropicProvider extends LLMProvider {
       // v860 — server-side refusal-fallback für Fable 5 (beta-Param; SDK-Typen
       // kennen das Feld noch nicht → kommt über den unknown-cast unten mit).
       ...this.fallbacksParam(),
+      ...this.diagnoseParam(request), // v1693 (K2) — nur Messung
       system: request.system ? [
         {
           type: 'text' as const,
@@ -178,9 +200,10 @@ export class AnthropicProvider extends LLMProvider {
     };
 
     // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
+    const gesendet = 'diagnostics' in params;
     const response = await withPrematureCloseRetry(() => this.client.messages.create(params));
 
-    return this.mapResponse(response);
+    return this.mitDiagnose(this.mapResponse(response), request, response, gesendet);
   }
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
@@ -190,6 +213,7 @@ export class AnthropicProvider extends LLMProvider {
     try {
       for await (const ev of this.streamEinmal(request)) { geliefert = true; yield ev; }
     } catch (err) {
+      if (!geliefert && this.diagnoseAbgelehnt(err)) { yield* this.streamEinmal(request); return; }
       if (geliefert || !this.lerneThinkingAusFehler(err)) throw err;
       yield* this.streamEinmal(request);
     }
@@ -208,6 +232,7 @@ export class AnthropicProvider extends LLMProvider {
       ...this.thinkingParam(request),
       // v860 — server-side refusal-fallback für Fable 5 (beta).
       ...this.fallbacksParam(),
+      ...this.diagnoseParam(request), // v1693 (K2) — nur Messung
       system: request.system ? [
         {
           type: 'text' as const,
@@ -219,7 +244,10 @@ export class AnthropicProvider extends LLMProvider {
       tools,
     });
 
+    const gesendet = this.diagnose.aktiv(request.cacheDiagnose);
+    let startNachricht: unknown; // v1693 — diagnostics kommt im message_start-Event
     for await (const event of stream) {
+      if (event.type === 'message_start') startNachricht = (event as { message?: unknown }).message;
       if (event.type === 'content_block_delta') {
         if (event.delta.type === 'text_delta') {
           yield { type: 'text_delta', text: event.delta.text };
@@ -241,9 +269,10 @@ export class AnthropicProvider extends LLMProvider {
         }
       } else if (event.type === 'message_stop') {
         const finalMessage = await stream.finalMessage();
+        const roh = { id: finalMessage.id, diagnostics: (startNachricht as { diagnostics?: unknown } | undefined)?.diagnostics ?? (finalMessage as unknown as { diagnostics?: unknown }).diagnostics };
         yield {
           type: 'message_complete',
-          response: this.mapResponse(finalMessage),
+          response: this.mitDiagnose(this.mapResponse(finalMessage), request, roh, gesendet),
         };
       }
     }

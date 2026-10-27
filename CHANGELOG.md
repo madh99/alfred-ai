@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Cache-Diagnose für Chat-Anfragen (v1693)
+
+- Alfred lässt sich von Anthropic und OpenAI bei jeder Chat-Anfrage melden, ob und warum der Prompt-Cache nicht getroffen wurde (zum Beispiel geänderter Systemprompt, geänderte Werkzeuge, anderer Cache-Schlüssel), und protokolliert den Grund. Das ist eine reine Messung als Grundlage für spätere Kostensenkungen; Antworten und Caching bleiben unverändert, und lehnt ein Anbieter die Abfrage ab, läuft die Anfrage ohne sie weiter. Abschaltbar mit `ALFRED_CACHE_DIAGNOSE=aus`.
+
 ### Added — Angehaltene Prüf-Schritte überspringen (v1692)
 
 - Hält ein Change an einem Schritt an, der nur liest, prüft oder wartet, kann der Owner ihn jetzt überspringen („Change … Schritt überspringen“). Der Change läuft danach weiter oder wird regulär abgeschlossen; der Bericht kennzeichnet den Schritt als übersprungen. Bisher blieb in diesem Fall nur der Abbruch, obwohl alles Wirksame schon erledigt war.

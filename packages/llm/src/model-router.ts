@@ -341,6 +341,7 @@ export class ModelRouter extends LLMProvider {
         ...(uhr ? { durationMs: Date.now() - uhr.start, ersteAntwortMs: uhr.erstesMs ?? null } : {}),
         inputTokens: event.response.usage?.inputTokens, outputTokens: event.response.usage?.outputTokens,
         cacheReadTokens: event.response.usage?.cacheReadTokens, cacheWriteTokens: event.response.usage?.cacheCreationTokens,
+        ...(event.response.cacheDiagnose ? { cacheDiagnose: event.response.cacheDiagnose } : {}), // v1693 (K2)
       },
       'LLM call completed',
     );
@@ -360,6 +361,7 @@ export class ModelRouter extends LLMProvider {
         tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, durationMs,
         inputTokens: response.usage?.inputTokens, outputTokens: response.usage?.outputTokens,
         cacheReadTokens: response.usage?.cacheReadTokens, cacheWriteTokens: response.usage?.cacheCreationTokens,
+        ...(response.cacheDiagnose ? { cacheDiagnose: response.cacheDiagnose } : {}), // v1693 (K2)
       },
       'LLM call completed',
     );

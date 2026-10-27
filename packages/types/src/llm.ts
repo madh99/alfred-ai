@@ -89,6 +89,17 @@ export interface LLMRequest {
    * andere Provider ignorieren das Feld — die messages bleiben vollständig.
    */
   previousResponseId?: string;
+  /** v1693 (K2) — Gesprächsschlüssel für die Cache-Diagnose (Vergleich mit der vorigen Antwort desselben Gesprächs); nur Messung */
+  cacheDiagnose?: string;
+}
+
+/** v1693 (K2) — Ergebnis der Cache-Diagnose eines Aufrufs (Anthropic diagnostics / OpenAI prompt_cache_diagnostics) */
+export interface CacheDiagnose {
+  ergebnis: 'erster' | 'treffer' | 'abweichung' | 'keine_basis' | 'nicht_verfuegbar' | 'ausstehend';
+  /** bei abweichung: z. B. system_changed, tools_changed, prompt_cache_key_changed, input_changed */
+  grund?: string;
+  /** geschätzte Token nach dem Abweichungspunkt (Größenordnung, keine Abrechnungszahl) */
+  verloreneToken?: number;
 }
 
 export interface LLMResponse {
@@ -101,6 +112,8 @@ export interface LLMResponse {
   responseId?: string;
   /** v1659 — vom Router verbuchte Kosten dieses einen Aufrufs (Cache-Lesen und -Schreiben berücksichtigt) */
   kostenUsd?: number;
+  /** v1693 (K2) — Cache-Diagnose dieses Aufrufs, falls angefordert */
+  cacheDiagnose?: CacheDiagnose;
 }
 
 export interface ToolDefinition {
