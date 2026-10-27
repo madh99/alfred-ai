@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Eingabefelder für Hinweise auch im Eingang (App 1.81.0)
+
+- Hinweise mit einer offenen Angabe (Adresse, Geburtstag) lassen sich jetzt auch im Eingang der App beantworten, nicht nur in der Ansicht „Hinweise“.
+
 ### Fixed — Fehlende Angaben zu Hinweisen wieder eintragbar (v1696, App 1.80.0)
 
 - Hinweise, die nach einer Angabe fragen (zum Beispiel eine fehlende Adresse oder ein Geburtstag), zeigen im Eingang der Web-Oberfläche und unter „Hinweise“ in der App wieder ein Eingabefeld. Bisher blieb der Klick auf die Aktion dort scheinbar wirkungslos, weil die Angabe nicht abgefragt und nicht mitgeschickt wurde.

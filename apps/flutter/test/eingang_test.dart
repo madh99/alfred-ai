@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:alfred_app/aufgaben.dart';
 import 'package:alfred_app/eingang.dart';
@@ -41,5 +42,29 @@ void main() {
 
   test('Zähler: ohne Vorgänge bei Alfred, ohne zurückgestellte', () {
     expect(eingangZahl(bestaetigungen: 1, vorgaenge: vorgaenge, aufgabenFaellig: 1, hinweiseOffen: 2, jetzt: jetzt), 6);
+  });
+
+  testWidgets('1.81.0: Hinweis mit Feld im Eingang fragt die Angabe ab und schickt sie mit (Owner 27.10.)', (t) async {
+    final gesendet = <Map<String, dynamic>?>[];
+    await t.binding.setSurfaceSize(const Size(1000, 1400));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: Eingang(
+      json: (p, {methode = 'GET', koerper}) async {
+        if (methode == 'POST') { gesendet.add(koerper); return {'ok': true}; }
+        if (p == '/api/geraete/hinweise') {
+          return {'hinweise': [{'id': 'a1', 'quelle': 'knowledge', 'titel': 'Adresse für Vereinssitz fehlt', 'text': 'KSV 1919', 'status': 'pending', 'zeit': '2026-10-27T08:00:00Z', 'aktion': 'Adresse speichern', 'felder': [{'key': 'address', 'label': 'Adresse', 'type': 'text'}]}]};
+        }
+        return {};
+      },
+      bestaetigungen: const [], aufEntscheiden: (_, __) async {}, aufMeldung: (_) {},
+    ))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('eingang-aktion-a1')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('feld-address')), 'Johann-Böhm-Straße 1, 8605 Kapfenberg');
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('uebernehmen')));
+    await t.pumpAndSettle();
+    expect(gesendet.single, {'aktion': 'ausfuehren', 'werte': {'address': 'Johann-Böhm-Straße 1, 8605 Kapfenberg'}});
+    await t.pumpWidget(const SizedBox()); // Abgleich-Takt beenden
   });
 }

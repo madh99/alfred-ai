@@ -7,7 +7,7 @@ library;
 import 'package:flutter/material.dart';
 
 import 'aufgaben.dart';
-import 'hinweise.dart' show Hinweis;
+import 'hinweise.dart' show Hinweis, hinweisEingaben;
 import 'modell.dart' show Bestaetigung;
 import 'vorgaenge.dart';
 import 'vorgaenge_ansicht.dart' show vorgangGruppen;
@@ -117,9 +117,15 @@ class _EingangState extends State<Eingang> {
   Future<void> _nach([bool geaendert = true]) async { if (geaendert) { await laden(); widget.aufGeaendert?.call(); } }
 
   Future<void> _hinweis(Hinweis h, String aktion) async {
+    // 1.81.0 — Owner 27.10.: im Eingang fehlte das Eingabefeld (Adresse, Geburtstag) — wie in der Ansicht Hinweise (1.80.0)
+    Map<String, String>? werte;
+    if (aktion == 'ausfuehren' && h.felder.isNotEmpty) { werte = await hinweisEingaben(context, h); if (werte == null) return; }
     try {
-      final r = await widget.json('/api/geraete/hinweise/${h.id}', methode: 'POST', koerper: {'aktion': aktion});
-      if (r['ok'] != true) widget.aufMeldung('💡 Nicht möglich: ${r['grund'] ?? 'unbekannt'}');
+      final r = await widget.json('/api/geraete/hinweise/${h.id}', methode: 'POST', koerper: {'aktion': aktion, if (werte != null) 'werte': werte});
+      if (r['ok'] != true) {
+        widget.aufMeldung('💡 Nicht möglich: ${r['grund'] ?? 'unbekannt'}');
+        if (mounted) ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Nicht möglich: ${r['grund'] ?? 'unbekannt'}')));
+      }
     } catch (e) { widget.aufMeldung('💡 Fehler: $e'); }
     await _nach();
   }
@@ -172,7 +178,7 @@ class _EingangState extends State<Eingang> {
       case EingangArt.hinweis:
         final h = e.roh as Hinweis;
         return [
-          if (h.aktion != null) FilledButton.tonalIcon(style: dicht, onPressed: () => _hinweis(h, 'ausfuehren'), icon: const Icon(Icons.play_arrow, size: 16), label: Text(h.aktion!)),
+          if (h.aktion != null) FilledButton.tonalIcon(key: Key('eingang-aktion-${h.id}'), style: dicht, onPressed: () => _hinweis(h, 'ausfuehren'), icon: const Icon(Icons.play_arrow, size: 16), label: Text(h.aktion!)),
           OutlinedButton(style: dicht, onPressed: () => _hinweis(h, 'gelesen'), child: const Text('Gelesen')),
           IconButton(tooltip: 'Nützlich', onPressed: () => _hinweis(h, 'nuetzlich'), icon: const Icon(Icons.thumb_up_outlined, size: 18)),
           IconButton(tooltip: 'Nicht nützlich', onPressed: () => _hinweis(h, 'nicht_nuetzlich'), icon: const Icon(Icons.thumb_down_outlined, size: 18)),
