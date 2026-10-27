@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Einwand und „Ändern lassen“ direkt an Changes (App 1.79.0)
+
+- Freigabe-Fragen zu Changes haben neben Ja und Nein einen Knopf „Einwand …“: Der Text geht als Einwand an Alfred, der Change bleibt offen, bis Alfred geantwortet hat.
+- „Ändern lassen …“ an der Freigabe-Frage und in der Changes-Ansicht (vor der Freigabe oder ab dem Haltepunkt) füllt die Eingabe mit dem passenden Satz vor; der Owner beschreibt die Änderung und schickt sie selbst ab.
+
 ### Fixed — Löschen einer Testkopie lässt das Original unberührt (v1689)
 
 - Eine aus einer Sicherung wiederhergestellte Kopie trägt bis zur Umbenennung den Namen des Originals. Wird sie in diesem Zustand gelöscht, bleiben Fernzugang und Server-Eintrag des weiterlaufenden Originals jetzt erhalten; stillgelegt wird nur der Eintrag der gelöschten Kopie.

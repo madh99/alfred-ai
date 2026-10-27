@@ -59,6 +59,11 @@ void main() {
     expect(vorgefuellt, ['Change f94cb2cd Schritt wiederholen']);
     await t.tap(find.text('Zur Freigabe'));
     expect(zurFreigabe, 1);
+    // 1.79.0 — Ändern lassen: angehalten ab dem Haltepunkt, wartend auf Freigabe ganz
+    await t.tap(find.byKey(const Key('aendern-f94cb2cd')));
+    await t.tap(find.byKey(const Key('aendern-5530203e')));
+    expect(vorgefuellt.sublist(1), ['Change f94cb2cd ab Schritt 5 ändern: ', 'Change 5530203e ändern: ']);
+    expect(find.byKey(const Key('aendern-27cf0e2b')), findsNothing); // läuft gerade
     await t.tap(find.text('Schritte').first);
     await t.pump();
     expect(find.text('1. Jobs lesen'), findsOneWidget);

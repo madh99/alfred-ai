@@ -209,13 +209,16 @@ extension _Senden on _SitzungState {
 
 
   /// Einwand (Owner 22.10.) — Freigabe-Fragen zu Infrastruktur-Changes und Standard-Vorlagen
+  /// 1.79.0 — Kurz-ID des Changes aus der Freigabe-Frage („… (e40777e1)“), für „Ändern lassen“
+  static String? _changeKurz(String text) => RegExp(r'\(([0-9a-f]{8})\)').firstMatch(text)?.group(1);
+
   static bool _istChangeFreigabe(String text) => text.contains('Change freigeben') || text.contains('Changes freigeben') || text.contains('Freigabe gilt genau für Plan') || text.contains('Standard-Change-Vorlage freigeben');
 
   /// „Nein, weil …“: bei Change-Freigaben ein Feld für den Grund (leer = Nein ohne Grund, Abbrechen = keine Entscheidung).
-  Future<String?> _neinGrund(Bestaetigung b) async {
+  Future<String?> _neinGrund(Bestaetigung b, {bool einwand = false}) async {
     final feld = TextEditingController();
     final ok = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
-      title: const Text('Nein — warum?'),
+      title: Text(einwand ? 'Einwand — wogegen?' : 'Nein — warum?'),
       content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(b.text.length > 300 ? '${b.text.substring(0, 300)} …' : b.text, style: Theme.of(c).textTheme.bodySmall),
         const SizedBox(height: 12),
@@ -230,19 +233,20 @@ extension _Senden on _SitzungState {
     return feld.text;
   }
 
-  Future<void> _entscheide(Bestaetigung b, bool ja) async {
+  Future<void> _entscheide(Bestaetigung b, bool ja, {bool einwand = false}) async {
     final s = server;
     if (s == null) return;
     String? grund;
     if (!ja && _istChangeFreigabe(b.text)) {
-      grund = await _neinGrund(b);
+      grund = await _neinGrund(b, einwand: einwand);
       if (grund == null) return; // abgebrochen
+      if (einwand && grund.trim().isEmpty) { _zeile(Eintrag(Art.hinweis, 'Einwand ohne Text nicht gesendet.')); return; }
     }
     final r = await s.entscheide(b.id, ja, grund: grund);
     if (r == 'freigegeben' || r == 'abgelehnt') {
       _neu(() => offen.remove(b));
       _titel();
-      _zeile(Eintrag(Art.hinweis, '${ja ? '✅ Freigegeben' : '❌ Abgelehnt'}: ${b.text.length > 100 ? b.text.substring(0, 100) : b.text}'));
+      _zeile(Eintrag(Art.hinweis, '${ja ? '✅ Freigegeben' : grund != null && grund.trim().isNotEmpty ? '🗣 Einwand gesendet — der Change bleibt offen, Alfred antwortet' : '❌ Abgelehnt'}: ${b.text.length > 100 ? b.text.substring(0, 100) : b.text}'));
     } else if (r.startsWith('fehlgeschlagen: ')) { // 1.51.0 — freigegeben, aber die Aktion scheiterte
       _neu(() => offen.remove(b));
       _titel();

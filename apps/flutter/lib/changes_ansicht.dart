@@ -303,6 +303,8 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
               TextButton(onPressed: () => widget.aufNachfragen('Change $kurz Rückweg ausführen'), child: const Text('Rückweg …')),
               TextButton(onPressed: () => widget.aufNachfragen('Change $kurz abbrechen'), child: const Text('Abbrechen …')),
             ],
+            // 1.79.0 — Owner 27.10.: Plan ändern lassen (vor der Freigabe oder ab dem Haltepunkt)
+            if (status == 'submitted' || status == 'draft' || halt) TextButton.icon(key: Key('aendern-$kurz'), onPressed: () => widget.aufNachfragen(halt ? 'Change $kurz ab Schritt ${lauf?['schritt'] ?? fertig + 1} ändern: ' : 'Change $kurz ändern: '), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('Ändern lassen …')),
             TextButton.icon(onPressed: () => widget.aufNachfragen('Change $kurz: '), icon: const Icon(Icons.chat_bubble_outline, size: 18), label: const Text('Nachfragen')),
           ]),
         ]))));

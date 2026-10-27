@@ -724,6 +724,11 @@ extension _Oberflaeche on _SitzungState {
                 Text([zeit(b.seit), if (b.quelle == 'geraet') 'Gerät'].where((x) => x.isNotEmpty).join(' · '), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
                 SelectionArea(child: Text(b.text, maxLines: auf ? null : 3, overflow: auf ? TextOverflow.visible : TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
                 if (lang) Text(auf ? 'weniger' : 'ganzen Text zeigen', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)),
+                // 1.79.0 — Owner 27.10.: „nur freigeben und ablehnen?“ — Einwand und Ändern lassen sichtbar statt hinter „Nein“ versteckt
+                if (_Senden._istChangeFreigabe(b.text)) Wrap(spacing: 4, children: [
+                  TextButton.icon(onPressed: () => _entscheide(b, false, einwand: true), icon: const Icon(Icons.record_voice_over_outlined, size: 16), label: const Text('Einwand …')),
+                  if (_Senden._changeKurz(b.text) != null) TextButton.icon(onPressed: () => _nachfragen('Change ${_Senden._changeKurz(b.text)} ändern: '), icon: const Icon(Icons.edit_outlined, size: 16), label: const Text('Ändern lassen …')),
+                ]),
               ])),
               const SizedBox(width: 8),
               FilledButton(onPressed: () => _entscheide(b, true), child: const Text('Ja')),
