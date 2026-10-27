@@ -117,3 +117,39 @@ describe('Owner-Antworten an den Motor', () => {
     expect(aufrufe).toEqual(['rueckweg:4dc47fa3-x:n1', 'owner:4dc47fa3-x:2']);
   });
 });
+
+// v1695 (K4) — große Pläne und Architektur ohne Umweg vollständig abrufbar
+describe('v1695 change_zeigen nur_schritte / vorhaben_zeigen abschnitt', () => {
+  const schritte = Array.from({ length: 56 }, (_, i) => ({ nr: i + 1, titel: `Schritt ${i + 1}`, art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve', befehl: `python3 -c 'print(${'x'.repeat(400)})'` }, beiFehler: 'anhalten' }));
+  const change = { id: 'a3982e74-xxxx', title: 'Restoretest', status: 'submitted', type: 'normal', riskLevel: 'low', schritte, affectedAssetIds: [] };
+  const vorhaben = { id: 'cf82f3f2-xxxx', titel: 'Dockerhost', ziel: 'z', hosts: [], status: 'angenommen', architekturVersion: 12, entscheidungen: [], changeIds: [], erstellt: 'x',
+    architektur: { zusammenfassung: 'Z', reihenfolge: [{ gruppe: 'A' }, { gruppe: 'B' }, { gruppe: 'C' }] } };
+  const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', changes: { finde: async () => change }, vorhaben: { finde: async () => vorhaben } } as never);
+  const ctx = { userId: 'owner' } as SkillContext;
+  it('einzelne Schritte vollständig, unbekannte Nummern klar abgewiesen, lange Übersicht mit Hinweis', async () => {
+    const r = await s.execute({ action: 'change_zeigen', change: 'a3982e74', nur_schritte: [8, 19] }, ctx);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('### Schritt 8');
+    expect(r.display).toContain('x'.repeat(400));
+    expect((r.data as unknown[]).length).toBe(2);
+    expect((await s.execute({ action: 'change_zeigen', change: 'a3982e74', nur_schritte: [99] }, ctx)).error).toContain('1–56');
+    expect((await s.execute({ action: 'change_zeigen', change: 'a3982e74' }, ctx)).display).toContain('nur_schritte');
+  });
+  it('Architektur-Abschnitt vollständig, Listen mit von/bis, unbekannter Abschnitt nennt die vorhandenen', async () => {
+    const r = await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'reihenfolge', von: 2, bis: 3 }, ctx);
+    expect(r.data).toEqual([{ gruppe: 'B' }, { gruppe: 'C' }]);
+    expect(r.display).toContain('3 Einträge, gezeigt 2–3');
+    expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'gruppen' }, ctx)).error).toContain('zusammenfassung, reihenfolge');
+  });
+});
+
+describe('v1695 (K5) Planen/Freigeben nie im Unteragenten', () => {
+  it('changes_planen und freigabe_anfragen aus delegate abgewiesen, Lesen erlaubt', async () => {
+    const vorhaben = { id: 'cf82f3f2-xxxx', titel: 'D', ziel: 'z', hosts: [], status: 'angenommen', architekturVersion: 1, entscheidungen: [], changeIds: [], erstellt: 'x', architektur: { zusammenfassung: 'Z' } };
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: { finde: async () => vorhaben } } as never);
+    const sub = { userId: 'owner', unteragent: true } as SkillContext;
+    expect((await s.execute({ action: 'changes_planen', changes: [] }, sub)).error).toContain('nur im Hauptgespräch');
+    expect((await s.execute({ action: 'freigabe_anfragen', ids: ['x'] }, sub)).error).toContain('nur im Hauptgespräch');
+    expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'zusammenfassung' }, sub)).success).toBe(true);
+  });
+});

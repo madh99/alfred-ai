@@ -80,13 +80,24 @@ function kuerze(t: string, max = ANZEIGE_MAX): string {
   return t.length <= max ? t : `${kuerzeMitte(t, max - KUERZUNG_HINWEIS.length - 1)}\n${KUERZUNG_HINWEIS}`;
 }
 
+/** v1695 (K3) — Lesebündel: Grenzen */
+export const LESEBUENDEL_MAX = 12;
+const LESEBUENDEL_JE = 6_000;
+const LESEBUENDEL_GESAMT = 40_000;
+export function lesebuendelFehler(befehle: unknown): string | undefined {
+  if (!Array.isArray(befehle) || befehle.length === 0) return 'befehle: Liste mit mindestens einem Befehl';
+  if (befehle.length > LESEBUENDEL_MAX) return `befehle: höchstens ${LESEBUENDEL_MAX} je Aufruf`;
+  if (befehle.some(b => typeof b !== 'string' || !b.trim())) return 'befehle: nur nicht-leere Texte';
+  return undefined;
+}
+
 export class FernzugriffSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'fernzugriff',
     category: 'infrastructure',
     description:
       'SSH auf Hosts, die Alfred nicht selbst angelegt hat (z. B. Proxmox-Knoten pve, NAS), über hinterlegte Zugänge. ' +
-      'liste: Zugänge. lesen: lesender Befehl — läuft sofort (zpool status/list/events, zfs list, pvecm status, pvesm status/list, qm list/config/listsnapshot, df -h, free -h, journalctl -u …, systemctl status …, smartctl -a /dev/… oder /dev/disk/by-id/…, smartctl --scan, nvme smart-log, lsblk -o …, ls -l /dev/disk/by-id; Docker: docker ps, docker logs --tail N <container>, docker stats --no-stream, docker inspect --format "{{…}}" <container> (auch .HostConfig.PortBindings/Binds/Links, index .Config.Labels "com.docker.compose.…"; nie Env/Cmd/Labels), docker ps --filter name=…, docker network inspect <netz>, docker volume inspect --format "{{.Mountpoint}}" <volume>, docker images, docker system df, docker compose ls; in Formatvorlagen als Trenner Leerzeichen, / oder = — nie | oder ;, die zerlegen den Befehl). Mehrere Lesebefehle mit ; oder && und Pipes zu grep/head/tail/wc/sort/uniq/cut gehen ebenfalls mit lesen — für Diagnosen immer lesen versuchen. ' +
+      'liste: Zugänge. lesen: lesender Befehl — mehrere auf einmal mit befehle=[…] (Erhebungen bündeln: ein Aufruf je Host statt Befehl für Befehl) — läuft sofort (zpool status/list/events, zfs list, pvecm status, pvesm status/list, qm list/config/listsnapshot, df -h, free -h, journalctl -u …, systemctl status …, smartctl -a /dev/… oder /dev/disk/by-id/…, smartctl --scan, nvme smart-log, lsblk -o …, ls -l /dev/disk/by-id; Docker: docker ps, docker logs --tail N <container>, docker stats --no-stream, docker inspect --format "{{…}}" <container> (auch .HostConfig.PortBindings/Binds/Links, index .Config.Labels "com.docker.compose.…"; nie Env/Cmd/Labels), docker ps --filter name=…, docker network inspect <netz>, docker volume inspect --format "{{.Mountpoint}}" <volume>, docker images, docker system df, docker compose ls; in Formatvorlagen als Trenner Leerzeichen, / oder = — nie | oder ;, die zerlegen den Befehl). Mehrere Lesebefehle mit ; oder && und Pipes zu grep/head/tail/wc/sort/uniq/cut gehen ebenfalls mit lesen — für Diagnosen immer lesen versuchen. ' +
       'ausfuehren: jeder andere Befehl (Neustart eines Dienstes, zpool scrub, apt …) — fragt den Owner, läuft nach seinem Ja als root (sudo). Zerstörerisches (mkfs, zpool destroy, dd auf Datenträger …) nie. ' +
       'pruefen: Verbindung und sudo testen. anlegen: neuen Zugang (name, host oder CMDB-Name, benutzer alfred) — Host-Schlüssel wird gelesen und vom Owner bestätigt. ' +
       'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung). ' +
@@ -104,6 +115,7 @@ export class FernzugriffSkill extends Skill {
         action: { type: 'string', enum: [...AKTIONEN], description: 'liste | lesen | ausfuehren | pruefen | anlegen | schluessel | entfernen' },
         name: { type: 'string', description: 'Name des Zugangs (z. B. pve) oder sein Host' },
         befehl: { type: 'string', description: 'Shell-Befehl auf dem Host (lesen/ausfuehren)' },
+        befehle: { type: 'array', items: { type: 'string' }, description: 'lesen: mehrere lesende Befehle auf demselben Host in EINEM Aufruf (höchstens 12, nacheinander, jede Ausgabe mit Überschrift) — für Erhebungen statt vieler Einzelaufrufe' },
         als_root: { type: 'boolean', description: 'ausfuehren: über sudo als root (Standard ja)' },
         host: { type: 'string', description: 'anlegen: IP oder Hostname (sonst aus dem CMDB-Eintrag)' },
         port: { type: 'number', description: 'anlegen: SSH-Port (Standard 22)' },
@@ -160,6 +172,8 @@ export class FernzugriffSkill extends Skill {
     if (['kopieren', 'datenbank_kopieren'].includes(a) && !(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return `${a} braucht quelle und ziel (Zugänge)`;
     if (a === 'datenbank_inventar' && input.art === 'sqlite' && !(typeof input.pfad === 'string' && input.pfad.startsWith('/'))) return 'datenbank_inventar mit art=sqlite braucht pfad (Datei der Datenbank)'; // v1663
     if (a === 'datenbank_inventar' && input.art !== 'sqlite' && !(typeof input.container === 'string' && input.container.trim())) return 'datenbank_inventar braucht container';
+    // v1695 (K3) — lesen auch mit befehle=[…]
+    if (a === 'lesen' && Array.isArray(input.befehle)) return lesebuendelFehler(input.befehle);
     if (['lesen', 'ausfuehren'].includes(a) && !(typeof input.befehl === 'string' && input.befehl.trim())) return `${a} braucht befehl`;
     return undefined;
   }
@@ -179,7 +193,7 @@ export class FernzugriffSkill extends Skill {
         case 'anlegen': return await this.anlegen(owner, input, herkunft);
         case 'zugang_bestaetigen': return await this.zugangBestaetigen(owner, input, context);
         case 'pruefen': return await this.pruefen(owner, input, context);
-        case 'lesen': return await this.lesen(owner, input, context);
+        case 'lesen': return Array.isArray(input.befehle) ? await this.lesebuendel(owner, input, context) : await this.lesen(owner, input, context);
         case 'ausfuehren': return await this.ausfuehren(owner, input, herkunft, context);
         case 'entfernen': return await this.entfernen(owner, input, herkunft);
         case 'seite': return this.seite(input);
@@ -356,6 +370,29 @@ export class FernzugriffSkill extends Skill {
     if (z.kaefig !== 'aus') this.kaefigGeprueft.delete(z.id);
     const k = s.code === 0 ? await this.kaefigBereit(owner, z) : { ok: false, grund: 'braucht sudo ohne Passwort' };
     return { success: true, data: { hostname: a.stdout.trim(), sudo: s.code === 0, kaefig: k, kaefigStufe: this.kaefigStufe.get(z.id) }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}). sudo ohne Passwort: ${s.code === 0 ? 'ja' : 'nein — Befehle laufen dann ohne root'}. Lese-Käfig: ${k.ok ? `aktiv (${k.grund})` : `nicht verfügbar (${k.grund})`}.` };
+  }
+
+  /**
+   * v1695 (K3, Spec 2026-10-27-kosten-infra-planung) — Lesebündel: Erhebungen brauchten 40–70 Werkzeugrunden je Nachricht, jede
+   * schickte den wachsenden Kontext erneut. Mehrere Befehle laufen nacheinander über denselben Weg wie `lesen` (Leseliste, Käfig,
+   * Geheimnis- und Nie-Sperre je Befehl); jede Ausgabe gekürzt mit Überschrift, gesamt begrenzt.
+   */
+  private async lesebuendel(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
+    const f = lesebuendelFehler(input.befehle);
+    if (f) return { success: false, error: f };
+    const befehle = (input.befehle as unknown[]).map(b => String(b));
+    const teile: string[] = [];
+    const daten: Array<{ befehl: string; ok: boolean }> = [];
+    for (const [i, befehl] of befehle.entries()) {
+      const { befehle: _b, ...rest } = input;
+      const r = await this.lesen(owner, { ...rest, befehl }, context).catch((err: Error) => ({ success: false, error: err.message } as SkillResult));
+      const text = String((r.success ? r.display : r.error ?? r.display) ?? '').trim();
+      daten.push({ befehl, ok: r.success });
+      teile.push(`### ${i + 1}/${befehle.length} ${r.success ? '' : '✗ '}${befehl.slice(0, 160)}\n${text.length > LESEBUENDEL_JE ? `${text.slice(0, LESEBUENDEL_JE)}\n[… gekürzt — einzeln mit action=lesen und seite weiterlesen]` : text}`);
+    }
+    let display = teile.join('\n\n');
+    if (display.length > LESEBUENDEL_GESAMT) display = `${display.slice(0, LESEBUENDEL_GESAMT)}\n[… Gesamtausgabe gekürzt — weniger Befehle je Aufruf]`;
+    return { success: daten.some(d => d.ok), data: { befehle: daten }, display, ...(daten.every(d => !d.ok) ? { error: display } : {}) };
   }
 
   /** Lesender Befehl: als root, wenn sudo ohne Passwort geht, sonst als Benutzer. */

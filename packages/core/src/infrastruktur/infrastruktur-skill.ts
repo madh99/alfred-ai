@@ -92,6 +92,8 @@ export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 
 /** Adresse des Alfred-Servers für Firewall-Regeln (Zone „alfred“ der Architektur) */
 const ALFRED_IP = (() => { try { for (const l of Object.values(networkInterfaces())) for (const a of l ?? []) if (a.family === 'IPv4' && !a.internal && /^(10|172|192)\./.test(a.address) && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address; } catch { /* keine Netzinfo */ } return 'unbekannt'; })();
+/** v1695 (K5) — Aktionen, die nie aus einem Unteragenten laufen */
+export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen']);
 const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
@@ -115,7 +117,8 @@ export class InfrastrukturSkill extends Skill {
       + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan, subnetz ohne Überschneidung), firewall (je Regel eine Zone von/nach: Netz, Gruppe oder internet/vpn/proxy/alle; protokoll, ports), proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
       + 'Kleine Überarbeitung einer gespeicherten Fassung: architektur_vorschlagen mit aenderungen statt architektur (nur das Neue senden). '
       + 'Ergebnis: Architektur-Dokument (CMDB). 4) entscheiden NUR auf ausdrückliche Aussage des Owners (annehmen|ueberarbeiten|ablehnen, wortlaut = seine Worte). '
-      + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben. '
+      + 'UNTERAGENT (delegate): nur für umfangreiche LESE-Erhebungen; Planen, Ändern, Freigaben und Steuern von Changes und Architektur laufen nie im Unteragenten (dort gesperrt). Meldet delegate „TEILERGEBNIS“, das Ergebnis selbst nachprüfen (z. B. changes_liste). '
+      + 'vorhaben_liste / vorhaben_zeigen: Stand der Vorhaben; die gespeicherte Zielarchitektur abschnittsweise vollständig mit abschnitt (+ von/bis bei Listen) statt das Dokument zu lesen oder zu delegieren. '
       + 'CHANGES (I3, nichts wird ausgeführt): changes_planen (vorhaben optional — nur mit angenommener Architektur; changes = Liste von Plänen: schluessel, titel, begruendung, typ normal|notfall, risiko niedrig|mittel|hoch|kritisch, ausfallMinuten, geplantAb, betroffen = CMDB-Assets, abhaengigVon = Schlüssel/Change-IDs, zweck stilllegung nur für Löschen, ohneSicherungGrund wenn nur Neues entsteht, schritte). '
       + 'Schritt: art aktion (skill, aktion, parameter, pruefung, rueckweg {skill,aktion,parameter} — Pflicht bei ändernden Aktionen; vor der ersten Änderung eine Sicherung, z. B. proxmox create_snapshot), pruefung (pruefung), warten (sekunden oder pruefung), owner (frage — für Handgriffe, solange eine Skill-Aktion fehlt). '
       + 'Verweise: {{schrittN.feld}} auf frühere Aktionen, {{geheim:name}} für Tresor-Werte. Ein Paket mit Fehlern wird nicht gespeichert — nachbessern. '
@@ -125,7 +128,7 @@ export class InfrastrukturSkill extends Skill {
       + 'NEUE ZONEN/NETZE (v1647, Realfälle 24.10.): Prüfungen auf Dienste im neuen Netz IMMER lokal auf der Ziel-VM (befehl über ihren Fernzugang, z. B. curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:PORT/) — der Alfred-Server darf dort meist nur SSH; die Vorkopie bei laufender Quelle mit pruefsumme false; Dienste, die NPM öffentlich macht, laufen über die pfSense (NPM 172.17.0.10 im pfSense-LAN, SNAT auf 192.168.1.139): für jedes neue Zielnetz braucht die pfSense eine statische Route über MAIN_LAN_DHCP (Vorbild eb72dc07) und UniFi eine Freigabe pfSense 192.168.1.139 → Ziel:Port; Vorbedingungen nie an Rechner knüpfen, die nur bei Bedarf laufen. '
       + 'CONTAINER-NACHBAU (v1653, Realfall 65db5bbc 25.10.): Docker-Netze originalgetreu anlegen — Treiber und IPAM (Subnetz, Gateway, IP-Bereich) aus `docker network inspect` der Quelle übernehmen, und je Container NetworkingConfig.EndpointsConfig vollständig (Aliases UND IPAMConfig mit fester IPv4Address), nicht nur die Aliase; Apps verweisen oft per fester IP auf ihre Datenbank (Vaultwarden: DATABASE_URL auf 192.168.250.20). Vorher prüfen, dass das Subnetz am Ziel frei ist. '
       + 'LOKAL GEBAUTE IMAGES (v1658, Owner 25.10.): nie neu bauen und nie docker save/load — mit gitlab projekte den Registry-Pfad des passenden Projekts finden, im Change fernzugriff image_hochladen an der Quelle (registry_ziel = <Pfad>/<dienst>:migration-<datum>, liefert {{schrittN.digest}}), am Ziel fernzugriff image_holen mit <Pfad>/<dienst>@{{schrittN.digest}} und den Container mit genau dieser Referenz nachbauen. Identität nie über die Image-Id vergleichen (Docker mit containerd-Speicher zeigt am Ziel den Manifest-Digest, die Quelle den Config-Digest — Realfall 0cd5c0a4), sondern über RepoDigests bzw. den Digest aus image_holen. '
-      + 'changes_liste, change_zeigen (change), change_aendern (change, plan — Freigabe verfällt; bei großen Plänen statt plan gezielt schritte_ersetzen [{nr, schritt}] bzw. schritte_einfuegen [{nach, schritt}] bzw. für kleine Korrekturen text_ersetzen [{suchen, durch, schritte:[nr…]}] (exakter Text, ohne die Schritte neu zu schreiben), nie einen Code-Agenten dafür; ein ANGEHALTENER Change, der schon gewirkt hat, ist ab dem Haltepunkt korrigierbar: vollständige Schrittliste mit gleicher Nummerierung senden, die gelaufenen Schritte bleiben unverändert, danach freigabe_anfragen — nach dem Ja macht der Motor am Haltepunkt weiter, kein Abbrechen oder Rückweg nötig), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
+      + 'changes_liste, change_zeigen (change; große Pläne zeigt die Übersicht gekürzt — einzelne Schritte vollständig mit nur_schritte=[nr…], nie dafür delegieren), change_aendern (change, plan — Freigabe verfällt; bei großen Plänen statt plan gezielt schritte_ersetzen [{nr, schritt}] bzw. schritte_einfuegen [{nach, schritt}] bzw. für kleine Korrekturen text_ersetzen [{suchen, durch, schritte:[nr…]}] (exakter Text, ohne die Schritte neu zu schreiben), nie einen Code-Agenten dafür; ein ANGEHALTENER Change, der schon gewirkt hat, ist ab dem Haltepunkt korrigierbar: vollständige Schrittliste mit gleicher Nummerierung senden, die gelaufenen Schritte bleiben unverändert, danach freigabe_anfragen — nach dem Ja macht der Motor am Haltepunkt weiter, kein Abbrechen oder Rückweg nötig), freigabe_anfragen (ids = Change-IDs; stellt dem Owner die Freigabe-Frage per Button). freigeben NIE selbst aufrufen — kommt nur über das Ja des Owners. '
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Start nach Zeitplan); standard_widerrufen (vorlage, wortlaut); updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
@@ -186,6 +189,10 @@ export class InfrastrukturSkill extends Skill {
         change: { type: 'string', description: 'change_zeigen/change_aendern: Change-ID (oder Anfang)' },
         plan: { type: 'object', description: 'change_aendern: vollständiger neuer Plan (wie ein Element von changes) — ODER statt plan gezielt schritte_ersetzen/schritte_einfuegen' },
         schritte_ersetzen: { type: 'array', description: 'change_aendern ohne plan: [{nr, schritt}] — ersetzt genau diese Schritte, der Rest bleibt', items: { type: 'object', properties: { nr: { type: 'number' }, schritt: { type: 'object' } } } },
+        nur_schritte: { type: 'array', items: { type: 'number' }, description: 'change_zeigen: nur diese Schritte VOLLSTÄNDIG als JSON (alle Parameter, Befehle, Prüfungen, Rückwege) — für große Pläne, deren Übersicht gekürzt ist' },
+        abschnitt: { type: 'string', description: 'vorhaben_zeigen: nur diesen Teil der Zielarchitektur vollständig (zusammenfassung, gruppen, netze, firewall, proxyDns, sicherung, updates, reihenfolge, risiken, offeneEntscheidungen); bei Listen mit von/bis' },
+        von: { type: 'number', description: 'vorhaben_zeigen mit abschnitt: erster Eintrag der Liste (ab 1)' },
+        bis: { type: 'number', description: 'vorhaben_zeigen mit abschnitt: letzter Eintrag der Liste' },
         text_ersetzen: { type: 'array', description: 'change_aendern ohne plan: [{suchen, durch, schritte:[nr…]}] — ersetzt exakt diesen Text in allen Textfeldern der genannten Schritte (muss in jedem vorkommen), sonst bleibt alles bytegleich', items: { type: 'object', properties: { suchen: { type: 'string' }, durch: { type: 'string' }, schritte: { type: 'array', items: { type: 'number' } } } } },
         schritte_einfuegen: { type: 'array', description: 'change_aendern ohne plan: [{nach, schritt}] — fügt nach Schritt N ein (0 = vorne); folgende Schritte und ihre {{schrittK…}}-Verweise rücken automatisch nach', items: { type: 'object', properties: { nach: { type: 'number' }, schritt: { type: 'object' } } } },
         wahl: { type: 'string', enum: ['wiederholen', 'abbrechen', 'rueckweg', 'ueberspringen'], description: 'change_steuern: was der Owner gesagt hat' },
@@ -220,6 +227,8 @@ export class InfrastrukturSkill extends Skill {
     const action = String(input.action ?? '');
     if (action === 'bestand') return this.bestand(input);
     if (!(AKTIONEN as readonly string[]).includes(action)) return { success: false, error: `Unbekannte Aktion (${AKTIONEN.join(', ')})` };
+    // v1695 (K5) — Realfall 27.10. (I9): der Unteragent speicherte 2 von 5 Changes und meldete Erfolg; Planen/Ändern/Freigeben braucht den Faden
+    if (context.unteragent === true && NUR_HAUPTGESPRAECH.has(action)) return { success: false, error: `${action} läuft nur im Hauptgespräch, nicht im Unteragenten — Erhebungsergebnis zurückgeben, Alfred plant selbst.` };
     const owner = this.deps.ownerId?.();
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;
@@ -253,7 +262,20 @@ export class InfrastrukturSkill extends Skill {
     const v = await repo.finde(owner, String(input.vorhaben ?? ''));
     if (!v) return { success: false, error: `Vorhaben „${String(input.vorhaben ?? '')}“ nicht gefunden — vorhaben_liste zeigt alle.` };
     switch (action) {
-      case 'vorhaben_zeigen': return { success: true, data: v, display: this.zeige(v) };
+      case 'vorhaben_zeigen': {
+        // v1695 (K4) — Architektur abschnittsweise vollständig (statt Dokument lesen oder delegieren)
+        if (typeof input.abschnitt === 'string' && input.abschnitt.trim()) {
+          const a = (v.architektur ?? {}) as Record<string, unknown>;
+          const k = input.abschnitt.trim();
+          if (!(k in a)) return { success: false, error: `Abschnitt „${k}“ gibt es nicht — vorhanden: ${Object.keys(a).join(', ') || 'keine gespeicherte Architektur'}` };
+          let teil = a[k];
+          const von = Number(input.von ?? 1), bis = Number(input.bis ?? 0);
+          if (Array.isArray(teil) && (input.von !== undefined || input.bis !== undefined)) teil = teil.slice(Math.max(von, 1) - 1, bis > 0 ? bis : undefined);
+          const text = `Architektur Version ${v.architekturVersion} — ${k}${Array.isArray(a[k]) ? ` (${(a[k] as unknown[]).length} Einträge${Array.isArray(teil) && teil !== a[k] ? `, gezeigt ${Math.max(von, 1)}–${Math.max(von, 1) + (teil as unknown[]).length - 1}` : ''})` : ''}\n${JSON.stringify(teil, null, 1)}`;
+          return { success: true, data: teil, display: text.length > 11_500 ? `${text.slice(0, 11_500)}\n[… gekürzt — mit von/bis kleinere Teile anfordern]` : text };
+        }
+        return { success: true, data: v, display: this.zeige(v) };
+      }
       case 'soll_ist': {
         if (v.status !== 'angenommen') return { success: false, error: 'Soll/Ist gibt es erst für eine angenommene Zielarchitektur' };
         if (!this.deps.sollIst) return { success: false, error: 'Soll/Ist nicht verfügbar' };
@@ -432,7 +454,16 @@ export class InfrastrukturSkill extends Skill {
     if (action === 'change_zeigen') {
       const c = await ch.finde(owner, String(input.change ?? ''));
       if (!c) return { success: false, error: `Change „${String(input.change ?? '')}“ nicht gefunden` };
-      return { success: true, data: c, display: c.schritte?.length ? changeAnzeige(c) : `${c.title} (${c.status}) — ohne Schritte` };
+      // v1695 (K4) — einzelne Schritte vollständig (Realfall 27.10.: Übersicht abgeschnitten → Rückfrage „vollständige Schrittobjekte bereitstellen“)
+      if (Array.isArray(input.nur_schritte)) {
+        const nrn = new Set(input.nur_schritte.map(Number));
+        const gefunden = ((c.schritte ?? []) as Array<{ nr: number }>).filter(x => nrn.has(x.nr));
+        if (!gefunden.length) return { success: false, error: `Change ${c.id.slice(0, 8)} hat keinen der Schritte ${[...nrn].join(', ')} (1–${(c.schritte ?? []).length})` };
+        const text = gefunden.map(x => `### Schritt ${x.nr}\n${JSON.stringify(x, null, 1)}`).join('\n\n');
+        return { success: true, data: gefunden, display: text.length > 11_500 ? `${text.slice(0, 11_500)}\n[… gekürzt — weniger Schritte je Aufruf anfordern]` : text };
+      }
+      const anzeige = c.schritte?.length ? changeAnzeige(c) : `${c.title} (${c.status}) — ohne Schritte`;
+      return { success: true, data: c, display: anzeige.length > 11_000 ? `${anzeige}\n\n[Hinweis: lange Übersicht — einzelne Schritte vollständig mit change_zeigen nur_schritte=[nr…]]` : anzeige };
     }
     if (action === 'change_aendern') {
       let plan: unknown = typeof input.plan === 'string' ? (() => { try { return JSON.parse(input.plan as string); } catch { return {}; } })() : input.plan;

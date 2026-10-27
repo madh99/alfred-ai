@@ -181,7 +181,9 @@ export class DelegateSkill extends Skill {
       'When tool results contain "[Data stored as result_N]", use code_sandbox with ' +
       'action "run_with_data" and data="result_N" to process the data. ' +
       'The data will be injected as INPUT_DATA (parsed array/object). Never hardcode data in code.\n' +
-      'Available JS libraries in code_sandbox (no install needed): exceljs, pdfkit, docx, pdf-parse.';
+      'Available JS libraries in code_sandbox (no install needed): exceljs, pdfkit, docx, pdf-parse.\n\n' +
+      // v1695 (K5) — strukturierte Rückgabe, damit der Auftraggeber prüfen kann, statt einer Zusammenfassung zu glauben
+      'End your final answer with a block that starts with "ERGEBNIS:" listing: erledigt (what was done), offen (what is NOT done, with the reason — e.g. a tool error or time limit), ids (IDs of every object created or changed). Never claim something is done if a tool call for it failed.';
 
     let userContent = task;
     if (additionalContext && typeof additionalContext === 'string') {
@@ -229,6 +231,16 @@ export class DelegateSkill extends Skill {
         };
         void Promise.resolve(this.onSessionCompletion(info)).catch(() => undefined);
       } catch { /* swallow — completion hook must not break delegate */ }
+    };
+
+    // v1695 (K5) — ehrlicher Status: fehlgeschlagene Werkzeugaufrufe, die danach nicht gelungen sind
+    const offeneFehler = new Map<string, string>();
+    const schluessel = (tc: ToolCall) => `${tc.name}${typeof tc.input?.action === 'string' ? `.${tc.input.action}` : ''}`;
+    const abschluss = (inhalt: string, grenze: boolean) => {
+      const offen = [...offeneFehler.entries()].map(([werkzeug, fehler]) => ({ werkzeug, fehler }));
+      const teilweise = grenze || offen.length > 0;
+      const hinweis = teilweise ? `⚠️ TEILERGEBNIS — ${grenze ? `Iterationsgrenze (${maxIterations}) erreicht, die Arbeit ist nicht abgeschlossen` : 'nicht alle Werkzeugaufrufe sind gelungen'}${offen.length ? `; fehlgeschlagen: ${offen.map(o => `${o.werkzeug} (${o.fehler.slice(0, 160)})`).join('; ')}` : ''}. Ergebnis selbst nachprüfen.\n\n` : '';
+      return { status: teilweise ? 'teilweise' as const : 'vollstaendig' as const, offen, text: `${hinweis}${inhalt}` };
     };
 
     let iteration = startIteration;
@@ -286,15 +298,18 @@ export class DelegateSkill extends Skill {
         ) {
           tracker.ping('done', { iteration, maxIterations });
           emitCompletion(true, iteration);
+          const ab = abschluss(response.content, !!response.toolCalls?.length && iteration >= maxIterations);
           return {
             success: true,
             data: {
-              response: response.content,
+              response: ab.text,
+              status: ab.status,
+              ...(ab.offen.length ? { fehlgeschlagen: ab.offen } : {}),
               iterations: iteration,
               usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
               ...(anhaenge.length ? { attachments: anhaenge.length } : {}),
             },
-            display: response.content,
+            display: ab.text,
             ...(anhaenge.length ? { attachments: anhaenge.slice(0, 10) } : {}),
           };
         }
@@ -335,8 +350,9 @@ export class DelegateSkill extends Skill {
           }
 
           const result = await this.executeSubAgentTool(
-            { ...toolCall, input: execInput }, context,
+            { ...toolCall, input: execInput }, { ...context, unteragent: true },
           );
+          if (result.isError) offeneFehler.set(schluessel(toolCall), result.content); else offeneFehler.delete(schluessel(toolCall));
           if (result.attachments?.length) anhaenge.push(...result.attachments);
 
           // Store large successful results with auto-ID

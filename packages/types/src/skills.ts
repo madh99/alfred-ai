@@ -88,6 +88,8 @@ export interface SkillContext {
   nodeId?: string;
   /** I5 — Aufruf als Schritt eines freigegebenen Changes (nur der Change-Motor setzt das) */
   ausChange?: boolean;
+  /** v1695 (K5) — Aufruf aus einem Unteragenten (delegate): Skills können Aktionen dem Hauptgespräch vorbehalten */
+  unteragent?: boolean;
   /** Whether HA cluster mode is active. */
   clusterEnabled?: boolean;
   /** Audio/image attachments from the current message (e.g. voice messages, photos). */

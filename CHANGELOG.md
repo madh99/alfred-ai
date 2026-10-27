@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Weniger Werkzeugrunden und verlässliche Teilaufträge bei Infrastruktur-Arbeit (v1695)
+
+- Erhebungen auf einem Server lassen sich jetzt bündeln: mehrere lesende Befehle laufen in einem Aufruf, jeder mit denselben Schutzregeln wie einzeln. Das spart viele Durchgänge und damit Kosten.
+- Große Change-Pläne und Zielarchitekturen sind gezielt vollständig abrufbar: einzelne Schritte bzw. einzelne Abschnitte, statt einer gekürzten Gesamtansicht.
+- Teilaufträge an einen Unteragenten melden ehrlich „Teilergebnis“, wenn ein Werkzeugaufruf gescheitert ist oder die Arbeit nicht fertig wurde, und enden mit einer Liste aus Erledigtem, Offenem und angelegten IDs. Changes planen, ändern, freigeben oder steuern geht nur im Hauptgespräch, nicht in einem Unteragenten.
+
 ### Changed — Prompt-Cache je Gespräch bei OpenAI (v1694)
 
 - Nachrichten eines Gesprächs nutzen bei OpenAI jetzt denselben Cache-Schlüssel. Bisher bekam jede Nachricht einen neuen, weil wechselnde Teile des Systemprompts in den Schlüssel eingingen; der gleich bleibende Anfang des Prompts wurde deshalb bei jeder Nachricht neu geschrieben statt aus dem Cache gelesen. Am gesendeten Inhalt ändert sich nichts.

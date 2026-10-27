@@ -68,6 +68,26 @@ describe('v1539 FernzugriffSkill', () => {
     expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehl: 'zpool status; reboot' }, ctx)).error).toContain('Lese-Käfig'); // v1549: ohne bestandenen Selbsttest kein Käfig
   });
 
+  it('v1695 (K3) Lesebündel: mehrere Befehle in einem Aufruf, jeder mit denselben Sperren; Grenzen geprüft', async () => {
+    const t = aufbau(b => ({ code: 0, stdout: `aus ${b}`, stderr: '' }));
+    await aktiv(t);
+    t.befehle.length = 0;
+    const r = await t.skill.execute({ action: 'lesen', name: 'pve', befehle: ['zpool status', 'df -h', 'zpool status; reboot', 'cat /root/.ssh/id_ed25519'] }, ctx);
+    expect(r.success).toBe(true);
+    expect(t.befehle.slice(0, 2)).toEqual(['sudo -n zpool status', 'sudo -n df -h']);
+    expect(t.befehle).toHaveLength(3); // Kettenbefehl nur im Lese-Käfig (wie bei einzelnem lesen), Geheimnis gar nicht
+    expect(t.befehle[2]).toContain('systemd-run'); expect(t.befehle[2]).toContain('IPAddressDeny=any');
+    expect(r.display).toContain('### 1/4 zpool status');
+    expect(r.display).toContain('aus sudo -n df -h');
+    expect(r.display).toContain('(Lese-Käfig)');
+    expect(r.display).toContain('### 4/4 ✗ cat /root/.ssh/id_ed25519');
+    expect((r.data as { befehle: Array<{ ok: boolean }> }).befehle.map(x => x.ok)).toEqual([true, true, true, false]);
+    expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve', befehle: [] })).toContain('mindestens');
+    expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve', befehle: Array(13).fill('df -h') })).toContain('höchstens 12');
+    expect(t.skill.pruefeEingabe({ action: 'lesen', name: 'pve', befehle: ['df -h'] })).toBeUndefined();
+    expect((await t.skill.execute({ action: 'lesen', name: 'pve', befehle: ['cat /root/.ssh/id_ed25519'] }, ctx)).success).toBe(false);
+  });
+
   it('lesen ohne sudo-Recht fällt auf den Benutzer zurück', async () => {
     const t = aufbau(b => (b.startsWith('sudo') ? { code: 1, stdout: '', stderr: 'sudo: a password is required' } : { code: 0, stdout: 'pool: rpool', stderr: '' }));
     await aktiv(t);
