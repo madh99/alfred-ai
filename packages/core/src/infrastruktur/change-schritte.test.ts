@@ -479,6 +479,19 @@ describe('v1680 planMitSchrittAenderungen', () => {
     expect('fehler' in planMitSchrittAenderungen(plan, [{ nr: 9, schritt: {} }])).toBe(true);
     expect(plan.schritte[0]!.titel).toBe('a'); // Original unverändert
   });
+  it('v1691 text_ersetzen: exakt, nur in den genannten Schritten, jeder muss den Text enthalten', async () => {
+    const { planMitSchrittAenderungen } = await import('./change-planung.js');
+    const befehl = (n: number) => `python3 -c 'print(dict(vm=${n},restore_sekunden=t["endtime"]-t["starttime"]))'`;
+    const plan = { titel: 'x', schritte: [1, 2, 3].map(nr => ({ nr, titel: `s${nr}`, parameter: { befehl: befehl(nr) } })) };
+    const r = planMitSchrittAenderungen(plan, undefined, undefined, [{ suchen: 'restore_sekunden=t["endtime"]-t["starttime"]', durch: 'restore_start=t["starttime"]', schritte: [1, 3] }]);
+    const s = (r as { plan: { schritte: Array<{ parameter: { befehl: string } }> } }).plan.schritte;
+    expect(s[0]!.parameter.befehl).toBe(`python3 -c 'print(dict(vm=1,restore_start=t["starttime"]))'`);
+    expect(s[1]!.parameter.befehl).toBe(befehl(2));
+    expect(s[2]!.parameter.befehl).toBe(`python3 -c 'print(dict(vm=3,restore_start=t["starttime"]))'`);
+    const f = planMitSchrittAenderungen(plan, undefined, undefined, [{ suchen: 'gibtsnicht', durch: 'x', schritte: [2] }]);
+    expect(f).toEqual({ fehler: ['text_ersetzen: „gibtsnicht“ kommt in Schritt 2 nicht vor'] });
+    expect('fehler' in planMitSchrittAenderungen(plan, undefined, undefined, [{ suchen: 'vm=', durch: 'x' }])).toBe(true);
+  });
 });
 
 // v1684 — Realfall 26.10. (Matrix J1): Prüfung/Schritt auf nicht vorhandenen Fernzugang

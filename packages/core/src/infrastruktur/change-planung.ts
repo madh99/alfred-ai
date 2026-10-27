@@ -58,10 +58,31 @@ export function planAusChange(c: CmdbChangeRequest): Record<string, unknown> {
  * Modell auf einen Code-Agenten aus und scheiterte. Jetzt gezielt: einzelne Schritte ersetzen ({nr, schritt}) oder nach Schritt N
  * einfügen ({nach, schritt}). Beim Einfügen rücken die folgenden Schritte nach, ihre Verweise {{schrittK…}} (K > N) werden mitgezählt.
  */
-export function planMitSchrittAenderungen(plan: Record<string, unknown>, ersetzenRoh?: unknown, einfuegenRoh?: unknown): { plan: Record<string, unknown> } | { fehler: string[] } {
+export function planMitSchrittAenderungen(plan: Record<string, unknown>, ersetzenRoh?: unknown, einfuegenRoh?: unknown, textErsetzenRoh?: unknown): { plan: Record<string, unknown> } | { fehler: string[] } {
   const schritte = JSON.parse(JSON.stringify(plan.schritte ?? [])) as Array<Record<string, unknown>>;
   const fehler: string[] = [];
   const liste = (v: unknown) => (Array.isArray(v) ? v : typeof v === 'string' ? (() => { try { const j = JSON.parse(v); return Array.isArray(j) ? j : []; } catch { return []; } })() : []) as Array<Record<string, unknown>>;
+  // v1691 — Realfall a3982e74: exakter Textersatz in genannten Schritten, ohne dass das Modell die (abgeschnittenen) Schritte neu schreiben muss
+  for (const e of liste(textErsetzenRoh)) {
+    const suchen = typeof e.suchen === 'string' ? e.suchen : '';
+    const durch = typeof e.durch === 'string' ? e.durch : undefined;
+    const nrn = (Array.isArray(e.schritte) ? e.schritte : []).map(Number);
+    if (!suchen || durch === undefined) { fehler.push('text_ersetzen: suchen und durch (Text) angeben'); continue; }
+    if (!nrn.length) { fehler.push(`text_ersetzen „${suchen.slice(0, 40)}“: schritte (Nummern) angeben`); continue; }
+    for (const nr of nrn) {
+      if (!Number.isInteger(nr) || nr < 1 || nr > schritte.length) { fehler.push(`text_ersetzen: Schritt ${String(nr)} gibt es nicht (1–${schritte.length})`); continue; }
+      let treffer = 0;
+      const ersetze = (v: unknown): unknown => {
+        if (typeof v === 'string') { const teile = v.split(suchen); treffer += teile.length - 1; return teile.join(durch); }
+        if (Array.isArray(v)) return v.map(ersetze);
+        if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, ersetze(x)]));
+        return v;
+      };
+      const neu = ersetze(schritte[nr - 1]) as Record<string, unknown>;
+      if (!treffer) { fehler.push(`text_ersetzen: „${suchen.slice(0, 60)}“ kommt in Schritt ${nr} nicht vor`); continue; }
+      schritte[nr - 1] = neu;
+    }
+  }
   for (const e of liste(ersetzenRoh)) {
     const nr = Number(e.nr);
     const s = e.schritt;

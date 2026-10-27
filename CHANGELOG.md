@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Kleine Korrekturen an Change-Plänen per exaktem Textersatz (v1691)
+
+- Alfred kann in ausgewählten Schritten eines Changes einen Text exakt ersetzen, ohne die Schritte neu zu schreiben. Alles andere bleibt unverändert; kommt der Text in einem genannten Schritt nicht vor, wird nichts gespeichert. Bisher scheiterten solche Korrekturen an großen Plänen, weil die Schritte nicht vollständig sichtbar waren.
+
 ### Fixed — Proxmox-Aufgaben-IDs in Change-Schritten (v1690)
 
 - Ein Change-Schritt kann die Aufgaben-ID eines vorherigen Proxmox-Schritts wieder verwenden, auch wenn Alfred über ein API-Token angemeldet ist (ID mit „root@pam!…“). Bisher hielt der Change an dieser Stelle an. Zulässig ist das Zeichen nur in genau dieser Form.
