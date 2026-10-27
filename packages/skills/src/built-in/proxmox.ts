@@ -17,8 +17,8 @@ export interface VmFabrikDeps {
   snippetEntfernen(node: string, pfad: string): Promise<void>;
   /** Fernzugang mit dem bekannten Host-Schlüssel + CMDB-Eintrag anlegen und warten, bis SSH und Cloud-Init fertig sind */
   anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
-  /** Fernzugang entfernen, CMDB-Eintrag stilllegen */
-  abmelden(v: { name: string; node: string; vmid: number }): Promise<string>;
+  /** Fernzugang entfernen, CMDB-Eintrag stilllegen; nurVmid: eine andere VM trägt den Namen noch → nur den Eintrag dieser VMID stilllegen */
+  abmelden(v: { name: string; node: string; vmid: number; nurVmid?: boolean }): Promise<string>;
   /** Abgebrochene Bereitstellung fortsetzen: Fernzugang (mit dem Host-Schlüssel der VM) besteht schon — nur auf SSH/Cloud-Init warten */
   fortsetzen?(v: { name: string; ip: string; node: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
 }
@@ -1729,7 +1729,10 @@ export class ProxmoxSkill extends Skill {
     }
     await this.aufgabeOderFehler(await this.del<string>(`/nodes/${vm.node}/qemu/${vmid}?purge=1&destroy-unreferenced-disks=1`), 600_000, 'Löschen');
     this.vmCache = null;
-    const ab = this.fabrik ? await this.fabrik.abmelden({ name, node: vm.node, vmid }).catch((e: Error) => `Abmelden fehlgeschlagen: ${e.message}`) : '';
+    // v1689 — eine wiederhergestellte Kopie trägt bis zur Umbenennung den Namen des Originals: Fernzugang und Server-Eintrag
+    // gehören dann dem weiterlaufenden Original und bleiben (Rückweg eines Restoretests hätte sonst das Original abgemeldet)
+    const nurVmid = (await this.getAllVms().catch(() => [])).some(v => v.vmid !== vmid && v.name === name);
+    const ab = this.fabrik ? await this.fabrik.abmelden({ name, node: vm.node, vmid, ...(nurVmid ? { nurVmid } : {}) }).catch((e: Error) => `Abmelden fehlgeschlagen: ${e.message}`) : '';
     return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${ab ? `. ${ab}` : ''}` };
   }
 

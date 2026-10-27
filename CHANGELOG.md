@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Löschen einer Testkopie lässt das Original unberührt (v1689)
+
+- Eine aus einer Sicherung wiederhergestellte Kopie trägt bis zur Umbenennung den Namen des Originals. Wird sie in diesem Zustand gelöscht, bleiben Fernzugang und Server-Eintrag des weiterlaufenden Originals jetzt erhalten; stillgelegt wird nur der Eintrag der gelöschten Kopie.
+
 ### Fixed — App: alle offenen Bestätigungen sichtbar und lesbar (App 1.78.0)
 
 - Offene Bestätigungen stehen jetzt mit den neuesten zuerst und mit Uhrzeit da. Ein Antippen zeigt den ganzen Text.

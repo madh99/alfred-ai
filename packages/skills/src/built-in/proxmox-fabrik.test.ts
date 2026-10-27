@@ -322,3 +322,29 @@ describe('v1644 provision_vm auf lokalen Speicher eines anderen Nodes (Realfall 
     expect(w.aufrufe.some(x => x.includes('/move_disk'))).toBe(false);
   });
 });
+
+describe('v1689 delete_vm einer Restore-Kopie mit dem Namen des Originals', () => {
+  function welt() {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    let vms = [{ vmid: 144, name: 'docker-dev-01', node: 'pve3', type: 'qemu' }, { vmid: 9150, name: 'docker-dev-01', node: 'pve3', type: 'qemu' }];
+    const abgemeldet: Array<Record<string, unknown>> = [];
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => (p.endsWith('/status/current') ? { status: 'stopped' } : {});
+    a.del = async () => { vms = vms.filter(v => v.vmid !== 9150); return 'UPID:x'; };
+    a.aufgabeOderFehler = async () => undefined;
+    px.setVmFabrik({ abmelden: async (v: Record<string, unknown>) => { abgemeldet.push(v); return ''; } } as never);
+    return { px, abgemeldet, entferne: () => { vms = vms.filter(v => v.vmid !== 144); } };
+  }
+  it('Original läuft weiter → nur der Eintrag der gelöschten VMID, Fernzugang bleibt', async () => {
+    const w = welt();
+    const r = await w.px.execute({ action: 'delete_vm', vmid: 9150, vm_name: 'docker-dev-01', force_stop: true }, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(w.abgemeldet).toEqual([{ name: 'docker-dev-01', node: 'pve3', vmid: 9150, nurVmid: true }]);
+  });
+  it('kein gleichnamiger Rest → wie bisher vollständig abmelden', async () => {
+    const w = welt(); w.entferne();
+    await w.px.execute({ action: 'delete_vm', vmid: 9150, vm_name: 'docker-dev-01', force_stop: true }, { ausChange: true } as never);
+    expect(w.abgemeldet).toEqual([{ name: 'docker-dev-01', node: 'pve3', vmid: 9150 }]);
+  });
+});
