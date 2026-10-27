@@ -84,3 +84,66 @@ describe('I4b Standard-Freigabe', () => {
     expect(vorlagenAbdruck(V('snapshot_anlegen'))).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+// S1 (Spec 2026-10-27-standard-changes-eingangskontrolle) — Annahmen, Eingangskontrolle, Sperre, Verfall, Zähler
+describe('S1 Eingangskontrolle und Sperre', () => {
+  const aufbau = (o: { pruefe?: (p: { befehl?: string; aktion?: string }) => { ok: boolean; text: string }; laeufe?: { anzahl: number; letzter?: string }; jetztMs?: number } = {}) => {
+    const db = new Map<string, { vorlage: string; abdruck: string; status: string; freigegebenAt?: string }>();
+    const v = V('sicherheitsupdates');
+    db.set(v.key, { vorlage: v.key, abdruck: vorlagenAbdruck(v), status: 'freigegeben', freigegebenAt: '2026-10-20T00:00:00Z' });
+    const gespeichert: Array<Record<string, unknown>> = []; const meldungen: string[] = [];
+    const st = new StandardChanges({
+      stand: async () => [...db.values()],
+      setze: async (_o, k, d) => { db.set(k, { ...db.get(k)!, abdruck: d.abdruck, status: d.status }); },
+      kontext: async () => kontext(),
+      speichere: async (_o, plan) => { gespeichert.push(plan); return { ok: true, change: { id: 'c1', title: 't', status: 'approved' } as never }; },
+      pruefe: async p => (o.pruefe ?? (() => ({ ok: true, text: 'ok' })))(p as never),
+      laeufe: async () => o.laeufe ?? { anzahl: 0 },
+      melde: async t => { meldungen.push(t); },
+      jetzt: () => o.jetztMs ?? Date.parse('2026-10-28T10:00:00Z'),
+    });
+    return { st, db, gespeichert, meldungen };
+  };
+
+  it('Annahmen gehen in den Abdruck; erzeugter Plan mit Eingangskontroll-Schritten besteht die Planprüfung', async () => {
+    const v = V('sicherheitsupdates');
+    expect(vorlagenAbdruck({ ...v, annahmenText: [...v.annahmenText!, 'neu'] })).not.toBe(vorlagenAbdruck(v));
+    const t = aufbau();
+    expect((await t.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' })).ok).toBe(true);
+    const schritte = t.gespeichert[0]!.schritte as Array<{ titel: string; art: string }>;
+    expect(schritte.slice(0, 4).map(s => s.titel)).toEqual(['Eingangskontrolle: Debian-artiges System (apt)', 'Eingangskontrolle: unattended-upgrades ist installiert', 'Eingangskontrolle: keine Paketverwaltung blockiert (dpkg sauber)', 'Eingangskontrolle: Gast-Agent der VM antwortet']);
+    expect(schritte[4]!.titel).toMatch(/^Snapshot/);
+    expect(pruefeChangePlan(t.gespeichert[0]!, pctx).fehler).toEqual([]);
+  });
+
+  it('abweichende Annahme → kein Change, Meldung mit der Abweichung', async () => {
+    const t = aufbau({ pruefe: p => (p.befehl?.includes('os-release') ? { ok: false, text: '„debian“ nicht gefunden (ID=fedora)' } : { ok: true, text: 'ok' }) });
+    const r = await t.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.fehler[0]).toContain('Debian-artiges System (apt): „debian“ nicht gefunden');
+    expect(t.gespeichert).toHaveLength(0);
+    expect(t.meldungen[0]).toContain('Eingangskontrolle weicht ab');
+  });
+
+  it('Sperre nach Halt: überprüfen, kein Anlegen mehr, neue Freigabe nötig; Liste zeigt Zähler', async () => {
+    const t = aufbau({ laeufe: { anzahl: 3, letzter: '2026-10-27T01:00:00Z' } });
+    expect(await t.st.sperre('o', 'sicherheitsupdates', 'I9 – 149 angehalten')).toBe(true);
+    expect(await t.st.sperre('o', 'sicherheitsupdates', 'nochmal')).toBe(false); // schon gesperrt, keine zweite Meldung
+    expect(t.meldungen).toHaveLength(1);
+    const r = await t.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' });
+    expect(!r.ok && r.fehler[0]).toContain('gesperrt (überprüfen)');
+    const z = (await t.st.liste('o')).find(v => v.key === 'sicherheitsupdates')!;
+    expect(z.zustand).toContain('überprüfen');
+    expect(z).toMatchObject({ laeufe: 3, letzterLauf: '2026-10-27T01:00:00Z' });
+    expect(z.annahmen).toHaveLength(4);
+  });
+
+  it('Verfall: über 2 Monate ohne Lauf → gesperrt; letzter Lauf zählt vor der Freigabe', async () => {
+    const alt = aufbau({ jetztMs: Date.parse('2027-01-05T00:00:00Z') });
+    const r = await alt.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' });
+    expect(!r.ok && r.fehler[0]).toContain('über 2 Monate ohne Lauf');
+    expect(alt.db.get('sicherheitsupdates')!.status).toBe('ueberpruefen');
+    const frisch = aufbau({ jetztMs: Date.parse('2027-01-05T00:00:00Z'), laeufe: { anzahl: 5, letzter: '2026-12-30T01:00:00Z' } });
+    expect((await frisch.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' })).ok).toBe(true);
+  });
+});

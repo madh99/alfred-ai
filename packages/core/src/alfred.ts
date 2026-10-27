@@ -7103,6 +7103,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const { InfrastrukturSkill } = await import('./infrastruktur/infrastruktur-skill.js');
         const { ChangePlanung } = await import('./infrastruktur/change-planung.js');
         const itsmI3 = new (await import('@alfred/storage')).ItsmRepository(adapter);
+        // S1 — Standard-Changes: Verweis für den Motor-Hook (Sperre der Vorlage nach Halt/Rückweg); gesetzt, sobald der Skill gebaut ist
+        let standardRef: import('./infrastruktur/standard-changes.js').StandardChanges | undefined;
         // v1688 — offene Owner-Fragen „Schritt N erledigt?“ zurückziehen, deren Change nicht mehr genau dort mit dieser Frage wartet
         const ownerFragenAufraeumen = async (): Promise<void> => {
           const chatId = this.config.security?.ownerUserId ?? ''; const o = ownerFz();
@@ -7336,6 +7338,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return ok !== false;
             },
             fragenAufraeumen: ownerFragenAufraeumen,
+            // S1 — hält ein Change aus einer Standard-Vorlage an oder rollt zurück, wird die Vorlage gesperrt (überprüfen)
+            nachStoerung: async (o, c, grund) => { const v = c.freigegebenUeber?.startsWith('standard:') ? c.freigegebenUeber.slice(9) : undefined; if (v) await standardRef?.sperre(o, v, `${c.title} (${c.id.slice(0, 8)}) ${grund}`); },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
             tresor: this.tresor,
@@ -7498,8 +7502,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           einwand: this.einwandDienst,
           sollIst: this.sollIstDienst,
           tresor: { liste: (o) => this.tresor!.liste(o), erzeuge: (o, n, l, z) => this.tresor!.erzeuge(o, n, l, z), entferne: (o, n) => this.tresor!.entferne(o, n) },
-          standard: new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
+          standard: standardRef = new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
+            // S1 — Eingangskontrolle, Zähler, Meldungen
+            pruefe: (p) => this.changeMotor ? this.changeMotor.pruefe(p) : Promise.resolve({ ok: false, text: 'Motor nicht verfügbar' }),
+            laeufe: async (o, v) => { const l = (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).filter(c => c.freigegebenUeber === `standard:${v}` && c.status === 'completed'); const letzter = l.map(c => String((c.lauf as { ende?: string } | undefined)?.ende ?? c.updatedAt)).sort().at(-1); return { anzahl: l.length, ...(letzter ? { letzter } : {}) }; },
+            melde: async (t) => { await this.meldeOhneModell(t); },
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
             speichere: (o, plan, v, m) => this.changePlanung!.planenStandard(o, plan, v, m),
             nachAnlage: () => { void this.changeMotor?.anstossen().catch(() => undefined); },

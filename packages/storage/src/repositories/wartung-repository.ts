@@ -52,7 +52,7 @@ export class WartungRepository {
     return rows.map(r => { const x = r as Record<string, unknown>; return { vorlage: String(x.vorlage), abdruck: String(x.abdruck), status: String(x.status), ...(x.frage_hash ? { frageHash: String(x.frage_hash) } : {}), ...(x.frage_bis ? { frageBis: String(x.frage_bis) } : {}), ...(x.freigegeben_at ? { freigegebenAt: String(x.freigegeben_at) } : {}), ...(x.widerrufen_at ? { widerrufenAt: String(x.widerrufen_at) } : {}) }; });
   }
 
-  async standardSetze(userId: string, vorlage: string, d: { abdruck: string; status: 'angefragt' | 'freigegeben' | 'widerrufen'; frageHash?: string | null; frageBis?: string | null }): Promise<void> {
+  async standardSetze(userId: string, vorlage: string, d: { abdruck: string; status: 'angefragt' | 'freigegeben' | 'widerrufen' | 'ueberpruefen'; frageHash?: string | null; frageBis?: string | null }): Promise<void> {
     const jetzt = new Date().toISOString();
     const da = await this.db.queryOne('SELECT id FROM infra_standard_freigaben WHERE user_id = ? AND vorlage = ?', [userId, vorlage]);
     const fa = d.status === 'freigegeben' ? jetzt : null, wa = d.status === 'widerrufen' ? jetzt : null;

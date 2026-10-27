@@ -50,6 +50,8 @@ export interface MotorDeps {
   frage?: (description: string, params: Record<string, unknown>) => Promise<boolean>;
   /** v1688 — veraltete Owner-Fragen in App/Telegram zurückziehen (nach Steuern und vor einer neuen Frage) */
   fragenAufraeumen?: () => Promise<void>;
+  /** S1 — ein Lauf hielt an, scheiterte oder rollte zurück (Standard-Vorlagen werden daraufhin gesperrt) */
+  nachStoerung?: (o: string, c: CmdbChangeRequest, grund: string) => Promise<void>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** I4b — darf der Change jetzt starten (Fenster, Sperren, Ankündigung)? Verschickt fällige Ankündigungen. */
   zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
@@ -400,6 +402,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   // ── Anhalten, Rückweg, Owner-Fragen ─────────────────────────
 
   private async halte(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, grund: string): Promise<void> {
+    await this.d.nachStoerung?.(o, c, `angehalten: ${grund.slice(0, 200)}`).catch(() => undefined);
     lauf.phase = 'angehalten'; lauf.grund = grund;
     if (!lauf.incidentId && this.d.incident) {
       lauf.incidentId = await this.d.incident.anlegen(o, { titel: `Change angehalten: ${c.title}`, text: `Change ${c.id} (${c.title}) angehalten.\n${grund}`, schwere: c.riskLevel === 'critical' || c.riskLevel === 'high' ? 'high' : 'medium', assetIds: c.affectedAssetIds }).catch(() => undefined);
@@ -607,6 +610,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   private async beende(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled', grund?: string, discovery: string[] = []): Promise<void> {
+    if (status === 'failed' || status === 'rolled_back') await this.d.nachStoerung?.(o, c, `${status === 'failed' ? 'fehlgeschlagen' : 'zurückgerollt'}${grund ? `: ${grund.slice(0, 200)}` : ''}`).catch(() => undefined);
     lauf.phase = 'fertig'; lauf.ende = this.iso(); if (grund) lauf.grund = grund; delete lauf.frage;
     const bericht = laufBericht(c.title, (c.schritte ?? []) as ChangeSchritt[], lauf, status) + (discovery.length ? `\nDiscovery danach: ${discovery.join('; ')}` : '');
     await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht, linkedIncidentId: lauf.incidentId });

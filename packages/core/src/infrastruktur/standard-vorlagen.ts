@@ -8,6 +8,10 @@
  */
 import { createHash } from 'node:crypto';
 import { LINUX_BEFEHLE } from './sammler.js';
+import type { Pruefung } from './change-schritte.js';
+
+/** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
+export interface Annahme { id: string; text: string; pruefung: Pruefung }
 
 export interface StandardKontext {
   vm(nameOderId: string): Promise<{ assetId: string; vmid: number; node: string; name: string } | { fehler: string }>;
@@ -29,6 +33,9 @@ export interface Vorlage {
   beschreibung: string;
   parameter: Record<string, string>;
   verfuegbar: boolean; folgt?: string;
+  /** S1 — wovon die Vorlage ausgeht (Texte gehen in den Abdruck: geänderte Annahmen = neue Freigabe) */
+  annahmenText?: string[];
+  annahmen?(p: Record<string, unknown>, k: StandardKontext): Promise<Annahme[]>;
   erzeuge?(p: Record<string, unknown>, k: StandardKontext): Promise<{ plan: Record<string, unknown>; merkmal: string } | { fehler: string }>;
 }
 
@@ -90,6 +97,17 @@ export const VORLAGEN: Vorlage[] = [
     key: 'sicherheitsupdates', version: 1, titel: '(c) Sicherheitsupdates einspielen',
     beschreibung: 'Nur für Hosts mit Schalter „Sicherheitsupdates an“, die als Proxmox-VM laufen: Snapshot (3 Tage) → apt-get update → unattended-upgrade (nur Sicherheitsquellen) → Prüfung, dass keine Sicherheitsupdates offen sind, und Erreichbarkeit. Rückweg: Snapshot zurücksetzen. Im Wartungsfenster. Kein Neustart.',
     parameter: { zugang: 'Fernzugang-Name' }, verfuegbar: true,
+    annahmenText: ['Debian-artiges System (apt)', 'unattended-upgrades ist installiert', 'keine Paketverwaltung blockiert (dpkg sauber)', 'Gast-Agent der VM antwortet'],
+    async annahmen(p, k) {
+      const z = txt(p.zugang);
+      const vm = await k.vmFuerZugang(z);
+      return [
+        { id: 'os', text: 'Debian-artiges System (apt)', pruefung: { typ: 'befehl', zugang: z, befehl: 'cat /etc/os-release', erwartet: 'debian' } },
+        { id: 'unattended', text: 'unattended-upgrades ist installiert', pruefung: { typ: 'befehl', zugang: z, befehl: "dpkg-query -W -f '${Status}' unattended-upgrades", erwartet: 'install ok installed' } },
+        { id: 'dpkg', text: 'keine Paketverwaltung blockiert (dpkg sauber)', pruefung: { typ: 'befehl', zugang: z, befehl: 'dpkg --audit', nichtEnthalten: 'package' } },
+        ...(vm ? [{ id: 'agent', text: 'Gast-Agent der VM antwortet', pruefung: { typ: 'skill' as const, skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: vm.vmid, node: vm.node } } }] : []),
+      ];
+    },
     async erzeuge(p, k) {
       const z = txt(p.zugang);
       if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
@@ -159,4 +177,4 @@ export const VORLAGEN: Vorlage[] = [
 ];
 
 /** Fingerabdruck einer Vorlage (Schlüssel, Version, Beschreibung inkl. Grenzen) — ändert sich die Vorlage, verfällt ihre Freigabe. */
-export function vorlagenAbdruck(v: Vorlage): string { return createHash('sha256').update(`${v.key}\n${v.version}\n${v.beschreibung}`).digest('hex'); }
+export function vorlagenAbdruck(v: Vorlage): string { return createHash('sha256').update(`${v.key}\n${v.version}\n${v.beschreibung}${v.annahmenText?.length ? `\n${v.annahmenText.join('\n')}` : ''}`).digest('hex'); }

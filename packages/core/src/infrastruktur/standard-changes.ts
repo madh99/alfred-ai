@@ -5,11 +5,18 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
-import { VORLAGEN, vorlagenAbdruck, type StandardKontext, type Vorlage } from './standard-vorlagen.js';
+import { VORLAGEN, vorlagenAbdruck, type Annahme, type StandardKontext, type Vorlage } from './standard-vorlagen.js';
+import type { Pruefung } from './change-schritte.js';
 
 export interface StandardDeps {
   stand(o: string): Promise<Array<{ vorlage: string; abdruck: string; status: string; frageHash?: string; frageBis?: string; freigegebenAt?: string }>>;
-  setze(o: string, vorlage: string, d: { abdruck: string; status: 'angefragt' | 'freigegeben' | 'widerrufen'; frageHash?: string | null; frageBis?: string | null }): Promise<void>;
+  setze(o: string, vorlage: string, d: { abdruck: string; status: 'angefragt' | 'freigegeben' | 'widerrufen' | 'ueberpruefen'; frageHash?: string | null; frageBis?: string | null }): Promise<void>;
+  /** S1 — lesende Prüfung einer Annahme (Motor.pruefe) */
+  pruefe?: (p: Pruefung) => Promise<{ ok: boolean; text: string }>;
+  /** S1 — erfolgreich abgeschlossene Läufe dieser Vorlage (Anzahl, letzter Abschluss ISO) */
+  laeufe?: (o: string, vorlage: string) => Promise<{ anzahl: number; letzter?: string }>;
+  /** S1 — Meldung an den Owner (Sperre, Verfall, Abweichung) */
+  melde?: (text: string) => Promise<void>;
   kontext(o: string): Promise<StandardKontext>;
   /** Plan prüfen und als Standard-Change (sofort freigegeben) speichern */
   speichere(o: string, plan: Record<string, unknown>, vorlage: string, merkmal: string): Promise<{ ok: true; change: CmdbChangeRequest } | { ok: false; fehler: string[] }>;
@@ -20,6 +27,8 @@ export interface StandardDeps {
   vorlagen?: Vorlage[];
 }
 const GUELTIG_MS = 24 * 3_600_000;
+/** S1 — Owner 27.10.: nach mindestens 2 Monaten ohne Lauf wird eine Vorlage überprüft */
+export const VERFALL_MS = 61 * 86_400_000;
 const hash = (n: string) => createHash('sha256').update(n).digest('hex');
 
 export class StandardChanges {
@@ -28,16 +37,19 @@ export class StandardChanges {
   private jetzt() { return this.d.jetzt?.() ?? Date.now(); }
   vorlage(key: string) { return this.vorlagen.find(v => v.key === key); }
 
-  async liste(o: string): Promise<Array<{ key: string; titel: string; beschreibung: string; parameter: Record<string, string>; zustand: string }>> {
+  async liste(o: string): Promise<Array<{ key: string; titel: string; beschreibung: string; parameter: Record<string, string>; zustand: string; annahmen?: string[]; laeufe?: number; letzterLauf?: string }>> {
     const st = await this.d.stand(o);
-    return this.vorlagen.map(v => {
+    const liste: Array<{ key: string; titel: string; beschreibung: string; parameter: Record<string, string>; zustand: string; annahmen?: string[]; laeufe?: number; letzterLauf?: string }> = this.vorlagen.map(v => {
       const s = st.find(x => x.vorlage === v.key);
       const zustand = !v.verfuegbar ? `folgt ${v.folgt ?? ''}`.trim()
         : s?.status === 'freigegeben' && s.abdruck === vorlagenAbdruck(v) ? `freigegeben ${s.freigegebenAt?.slice(0, 10) ?? ''}`.trim()
         : s?.status === 'freigegeben' ? 'Vorlage geändert — neue Freigabe nötig'
-        : s?.status === 'angefragt' ? 'Freigabe angefragt' : s?.status === 'widerrufen' ? 'widerrufen' : 'nicht freigegeben';
-      return { key: v.key, titel: v.titel, beschreibung: v.beschreibung, parameter: v.parameter, zustand };
+        : s?.status === 'angefragt' ? 'Freigabe angefragt' : s?.status === 'widerrufen' ? 'widerrufen' : s?.status === 'ueberpruefen' ? 'überprüfen — gesperrt, neue Freigabe nötig' : 'nicht freigegeben';
+      return { key: v.key, titel: v.titel, beschreibung: v.beschreibung, parameter: v.parameter, zustand, ...(v.annahmenText?.length ? { annahmen: v.annahmenText } : {}) };
     });
+    // S1 — Zähler: erfolgreiche Läufe und letzter Lauf je Vorlage
+    for (const z of liste) { const l = await this.d.laeufe?.(o, z.key).catch(() => undefined); if (l) Object.assign(z, { laeufe: l.anzahl, ...(l.letzter ? { letzterLauf: l.letzter } : {}) }); }
+    return liste;
   }
 
   async freigabeAnfragen(o: string, key: string): Promise<string> {
@@ -71,15 +83,52 @@ export class StandardChanges {
     return `Vorlage ${v.titel} widerrufen — Alfred legt daraus keine Changes mehr an.`;
   }
 
+  /** S1 — Vorlage sperren (Lauf hielt an / rollte zurück / Verfall): keine Changes mehr daraus bis zur neuen Freigabe */
+  async sperre(o: string, key: string, grund: string): Promise<boolean> {
+    const v = this.vorlage(key);
+    const s = (await this.d.stand(o)).find(x => x.vorlage === key);
+    if (!v || !s || s.status === 'ueberpruefen' || s.status === 'widerrufen') return false;
+    await this.d.setze(o, key, { abdruck: s.abdruck, status: 'ueberpruefen', frageHash: null, frageBis: null });
+    this.d.protokoll?.('S1 Standard-Vorlage gesperrt', { vorlage: key, grund });
+    await this.d.melde?.(`📋 Standard-Vorlage ${v.titel} gesperrt (überprüfen): ${grund}. Aus ihr entstehen keine Changes mehr, bis du sie nach einer Prüfung neu freigibst.`).catch(() => undefined);
+    return true;
+  }
+
   /** Change aus einer freigegebenen Vorlage anlegen (der Motor startet ihn nach Zeitplan). */
   async anlegen(o: string, key: string, p: Record<string, unknown>): Promise<{ ok: true; change: CmdbChangeRequest } | { ok: false; fehler: string[] }> {
     const v = this.vorlage(key);
     if (!v) return { ok: false, fehler: [`Vorlage „${key}“ unbekannt (${this.vorlagen.map(x => x.key).join(', ')})`] };
     if (!v.verfuegbar || !v.erzeuge) return { ok: false, fehler: [`${v.titel} folgt ${v.folgt ?? 'später'}`] };
     const s = (await this.d.stand(o)).find(x => x.vorlage === key);
+    if (s?.status === 'ueberpruefen') return { ok: false, fehler: [`Vorlage ${v.titel} ist gesperrt (überprüfen) — ein Lauf hielt an oder sie lief über 2 Monate nicht. Erst prüfen, dann neu freigeben (standard_freigabe_anfragen).`] };
     if (s?.status !== 'freigegeben' || s.abdruck !== vorlagenAbdruck(v)) return { ok: false, fehler: [`Vorlage ${v.titel} ist nicht (mehr) freigegeben — erst standard_freigabe_anfragen, der Owner bestätigt einmal`] };
-    const e = await v.erzeuge(p, await this.d.kontext(o));
+    // S1 — Verfall: mindestens 2 Monate ohne erfolgreichen Lauf (seit Freigabe bzw. letztem Lauf) → überprüfen
+    const l = await this.d.laeufe?.(o, key).catch(() => undefined);
+    const seit = Math.max(Date.parse(l?.letzter ?? '') || 0, Date.parse(s.freigegebenAt ?? '') || 0);
+    if (seit && this.jetzt() - seit > VERFALL_MS) {
+      await this.sperre(o, key, `über 2 Monate ohne Lauf (seit ${new Date(seit).toISOString().slice(0, 10)})`);
+      return { ok: false, fehler: [`Vorlage ${v.titel}: über 2 Monate ohne Lauf — gesperrt, bitte prüfen und neu freigeben`] };
+    }
+    const kx = await this.d.kontext(o);
+    const e = await v.erzeuge(p, kx);
     if ('fehler' in e) return { ok: false, fehler: [e.fehler] };
+    // S1 — Eingangskontrolle beim Anlegen: jede Annahme live prüfen; Abweichung → kein Change aus der Vorlage
+    const annahmen: Annahme[] = v.annahmen ? await v.annahmen(p, kx) : [];
+    if (annahmen.length && this.d.pruefe) {
+      const abw: string[] = [];
+      for (const a of annahmen) {
+        const r = await this.d.pruefe(a.pruefung).catch((err: Error) => ({ ok: false, text: err.message }));
+        if (!r.ok) abw.push(`${a.text}: ${r.text.slice(0, 160)}`);
+      }
+      if (abw.length) {
+        this.d.protokoll?.('S1 Eingangskontrolle abweichend', { vorlage: key, merkmal: e.merkmal, abweichungen: abw });
+        await this.d.melde?.(`📋 Standard-Vorlage ${v.titel} (${e.merkmal}): Eingangskontrolle weicht ab — kein Change aus der Vorlage.\n${abw.map(x => `• ${x}`).join('\n')}\nDer Fall braucht einen einzeln geplanten Change.`).catch(() => undefined);
+        return { ok: false, fehler: [`Eingangskontrolle der Vorlage ${v.titel} weicht ab — einzeln planen: ${abw.join('; ')}`] };
+      }
+      // … und als erste Schritte des Changes (zwischen Anlegen und Lauf können Stunden liegen)
+      const schritte = (e.plan.schritte as Array<Record<string, unknown>> | undefined) ?? [];
+      e.plan.schritte = [...annahmen.map(a => ({ titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: a.pruefung, beiFehler: 'anhalten' })), ...schritte];
+    }
     const r = await this.d.speichere(o, e.plan, key, e.merkmal);
     if (r.ok) { this.d.protokoll?.('I4b Standard-Change angelegt', { vorlage: key, id: r.change.id, merkmal: e.merkmal }); this.d.nachAnlage?.(); }
     return r;

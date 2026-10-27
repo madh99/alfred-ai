@@ -358,6 +358,18 @@ describe('I4 Ausführungsmotor', () => {
     expect(await v.motor.steuern('o', 'chg-1', 'ueberspringen')).toContain('Schritt 2 verwendet');
   });
 
+  it('S1: Halt und Rückweg melden sich an nachStoerung (Sperre der Standard-Vorlage)', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    const gemeldet: string[] = [];
+    w.deps.nachStoerung = async (_o, c, grund) => { gemeldet.push(`${c.id} ${grund}`); };
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(gemeldet).toHaveLength(1);
+    expect(gemeldet[0]).toMatch(/^chg-1 angehalten: Schritt 2/);
+    await w.motor.steuern('o', 'chg-1', 'rueckweg'); await warte(w.motor);
+    expect(w.c.status).toBe('rolled_back');
+    expect(gemeldet.at(-1)).toMatch(/^chg-1 zurückgerollt/);
+  });
+
   it('Realfall 22.10.: angehalten ohne Wirkung sperrt keine Assets; angehalten nach einer Änderung schon', async () => {
     const leer = welt(probe());
     leer.deps.itsm.liste = async () => [leer.c, { ...leer.c, id: 'chg-0', status: 'in_progress', lauf: { phase: 'angehalten', schritt: 1, start: 'x', ergebnisse: [{ nr: 1, ok: false, start: 'x' }] } } as CmdbChangeRequest];

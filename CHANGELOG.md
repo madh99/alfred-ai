@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standard-Vorlagen mit Eingangskontrolle (v1698)
+
+- Standard-Vorlagen nennen ihre Annahmen (zum Beispiel „Debian-artiges System“, „unattended-upgrades installiert“, „Gast-Agent antwortet“). Vor dem Anlegen eines Changes werden sie live geprüft; weicht etwas ab, entsteht kein Change aus der Vorlage, der Owner bekommt eine Meldung und der Fall wird einzeln geplant. Dieselben Prüfungen laufen als erste Schritte des Changes noch einmal.
+- Hält ein Change aus einer Vorlage an oder rollt zurück, wird die Vorlage gesperrt („überprüfen“), bis der Owner sie nach einer Prüfung neu freigibt. Dasselbe gilt nach mehr als zwei Monaten ohne Lauf.
+- Die Vorlagenliste zeigt Annahmen, erfolgreiche Läufe und den letzten Lauf.
+
 ### Fixed — Keine Runbook-Vorschläge aus Infrastruktur-Gesprächen (v1697)
 
 - Wurden in einem Gespräch Infrastruktur-Changes geplant, geändert, freigegeben oder gesteuert, schlägt Alfred daraus kein Runbook mehr vor — egal in welchem Faden. Diese Arbeit ist im ITSM mit Plan, Rückweg und Verlauf festgehalten; wiederkehrende Abläufe werden zu Standard-Vorlagen. Bisher rutschten solche Vorschläge durch, wenn bestimmte Wörter in den letzten Nachrichten fehlten.
