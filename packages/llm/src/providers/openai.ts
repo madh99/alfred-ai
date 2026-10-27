@@ -98,6 +98,9 @@ export class OpenAIProvider extends LLMProvider {
    * Aufbau bringt ein Schlüssel nichts. (v596 für Mistral eingeführt, v1355 in die Basisklasse gezogen.)
    */
   protected computeCacheKey(request: LLMRequest): string | undefined {
+    // v1694 (K1) — je Gespräch ein fester Schlüssel: alle Nachrichten eines Fadens landen beim selben Cache, der gleiche
+    // Anfang des Prompts wird wiederverwendet. Ohne Gespräch (Hintergrundjobs) bleibt der bisherige Schlüssel (v1355).
+    if (request.gespraech) return createHash('sha256').update(`gespraech|${this.config.model}|${request.gespraech}`).digest('hex').slice(0, 32);
     const hasSystem = typeof request.system === 'string' && request.system.length > 0;
     const hasTools = Array.isArray(request.tools) && request.tools.length > 0;
     if (!hasSystem && !hasTools) return undefined;

@@ -91,6 +91,12 @@ export interface LLMRequest {
   previousResponseId?: string;
   /** v1693 (K2) — Gesprächsschlüssel für die Cache-Diagnose (Vergleich mit der vorigen Antwort desselben Gesprächs); nur Messung */
   cacheDiagnose?: string;
+  /**
+   * v1694 (K1) — Gesprächsschlüssel für das Cache-Routing: OpenAI-kompatible Provider bilden den prompt_cache_key daraus statt
+   * aus dem ganzen Systemprompt (dessen wechselnde Teile gaben jeder Nachricht einen neuen Schlüssel — Diagnose 27.10.:
+   * prompt_cache_key_changed). Ändert nichts am gesendeten Inhalt.
+   */
+  gespraech?: string;
 }
 
 /** v1693 (K2) — Ergebnis der Cache-Diagnose eines Aufrufs (Anthropic diagnostics / OpenAI prompt_cache_diagnostics) */

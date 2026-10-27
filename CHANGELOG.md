@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Prompt-Cache je Gespräch bei OpenAI (v1694)
+
+- Nachrichten eines Gesprächs nutzen bei OpenAI jetzt denselben Cache-Schlüssel. Bisher bekam jede Nachricht einen neuen, weil wechselnde Teile des Systemprompts in den Schlüssel eingingen; der gleich bleibende Anfang des Prompts wurde deshalb bei jeder Nachricht neu geschrieben statt aus dem Cache gelesen. Am gesendeten Inhalt ändert sich nichts.
+
 ### Added — Cache-Diagnose für Chat-Anfragen (v1693)
 
 - Alfred lässt sich von Anthropic und OpenAI bei jeder Chat-Anfrage melden, ob und warum der Prompt-Cache nicht getroffen wurde (zum Beispiel geänderter Systemprompt, geänderte Werkzeuge, anderer Cache-Schlüssel), und protokolliert den Grund. Das ist eine reine Messung als Grundlage für spätere Kostensenkungen; Antworten und Caching bleiben unverändert, und lehnt ein Anbieter die Abfrage ab, läuft die Anfrage ohne sie weiter. Abschaltbar mit `ALFRED_CACHE_DIAGNOSE=aus`.

@@ -48,6 +48,17 @@ describe('OpenAI: prompt_cache_key nur beim echten Endpunkt', () => {
     expect(extra(p, { messages: [] })).toEqual({});
   });
 
+  it('v1694 (K1): mit Gespräch fester Schlüssel je Gespräch und Modell, unabhängig von System und Werkzeugen', () => {
+    const p = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'gpt-6.1-sol' } as never);
+    const k = extra(p, { ...anfrage, gespraech: 'owner:faden:infra' }).prompt_cache_key;
+    expect(k).toMatch(/^[0-9a-f]{32}$/);
+    expect(extra(p, { ...anfrage, system: 'Anders, mit neuer Uhrzeit', tools: [], gespraech: 'owner:faden:infra' }).prompt_cache_key).toBe(k);
+    expect(extra(p, { ...anfrage, gespraech: 'owner:faden:anderer' }).prompt_cache_key).not.toBe(k);
+    expect(k).not.toBe(extra(p).prompt_cache_key);
+    const anderesModell = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'gpt-6.1' } as never);
+    expect(extra(anderesModell, { ...anfrage, gespraech: 'owner:faden:infra' }).prompt_cache_key).not.toBe(k);
+  });
+
   it('OpenAI-kompatible Fremd-Endpunkte bekommen nichts Unbekanntes', () => {
     const fremd = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'llama', baseUrl: 'http://192.168.1.50:8080/v1' } as never);
     expect(extra(fremd)).toEqual({});
