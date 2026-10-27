@@ -48,6 +48,18 @@ function normalizeTitle(title: string): Set<string> {
  *
  * Dedup: per-(conversation, last_message_id) memory marker prevents reprocessing on restart.
  */
+/** v1697 — Aktionen des Infrastruktur-Skills, deren Gedächtnis das ITSM ist (Plan, Rückweg, Verlauf): kein Runbook daraus */
+const INFRA_CHANGE_AKTIONEN = new Set(['changes_planen', 'change_aendern', 'freigabe_anfragen', 'change_steuern', 'standard_change', 'architektur_vorschlagen', 'entscheiden']);
+export function nutztInfraChanges(toolCalls: string | undefined | null): boolean {
+  if (!toolCalls || !toolCalls.includes('infrastruktur')) return false;
+  try {
+    const bloecke = JSON.parse(toolCalls) as unknown;
+    if (!Array.isArray(bloecke)) return false;
+    return bloecke.some(b => !!b && typeof b === 'object' && (b as { name?: unknown }).name === 'infrastruktur'
+      && INFRA_CHANGE_AKTIONEN.has(String(((b as { input?: { action?: unknown } }).input ?? {}).action ?? '')));
+  } catch { return false; }
+}
+
 export class ChatSessionRunbookReflector {
   private timer?: ReturnType<typeof setInterval>;
   private tickRunning = false; // R2: concurrency guard
@@ -203,7 +215,9 @@ export class ChatSessionRunbookReflector {
 
     // v1600 — Realfall 22.10.: „Runbook aus Chat-Session erstellen: Alte Proxmox-Sicherungen … einplanen?“ — Infrastruktur-Changes haben ihr
     // Gedächtnis schon im ITSM (Plan, Rückweg, Verlauf); aus solchen Sitzungen kein Runbook-Vorschlag
-    if (msgs.some(m => /\bChanges? (freigeben|gestartet)\b|Change gestartet:/.test(m.content))) {
+    // v1697 — Owner 27.10. („soll ich zu Infra-Themen nur in einem Faden sprechen?“): der Wort-Filter griff im Infra-Faden nicht, weil
+    // die letzten 50 Nachrichten die Wörter nicht enthielten. Maßgeblich sind die tatsächlich benutzten Werkzeuge — in jedem Faden.
+    if (msgs.some(m => /\bChanges? (freigeben|gestartet)\b|Change gestartet:/.test(m.content) || nutztInfraChanges(m.toolCalls))) {
       await this.markProcessed(userId, markerKey);
       return;
     }

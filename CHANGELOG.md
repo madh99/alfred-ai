@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Keine Runbook-Vorschläge aus Infrastruktur-Gesprächen (v1697)
+
+- Wurden in einem Gespräch Infrastruktur-Changes geplant, geändert, freigegeben oder gesteuert, schlägt Alfred daraus kein Runbook mehr vor — egal in welchem Faden. Diese Arbeit ist im ITSM mit Plan, Rückweg und Verlauf festgehalten; wiederkehrende Abläufe werden zu Standard-Vorlagen. Bisher rutschten solche Vorschläge durch, wenn bestimmte Wörter in den letzten Nachrichten fehlten.
+
 ### Fixed — App: kein Fehler mehr nach „Nachfragen“ bei Hinweisen (App 1.82.0)
 
 - „Nachfragen“ bei einem Hinweis führte zur Meldung „Null check operator used on a null value“, weil die Hinweis-Ansicht schon geschlossen war, als die Antwort des Servers kam. Die Reaktion wird weiterhin gespeichert, die Meldung erscheint nicht mehr.
