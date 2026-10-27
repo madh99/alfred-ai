@@ -147,6 +147,14 @@ function tvm(data: TelematicResponse, key: string): string {
   return tv(data, key, ...(MQTT_ALT_KEYS[key] ?? []));
 }
 
+/** v1700 — BMW lehnt den Refresh-Token ab (400/401): neue Anmeldung nötig, kein Netzwerkfehler */
+export class BmwAnmeldungAbgelaufen extends Error {
+  constructor(readonly status: number) {
+    super(`BMW-Anmeldung abgelaufen: BMW lehnt den gespeicherten Refresh-Token ab (HTTP ${status}). Bitte einmal neu verbinden: bmw authorize ausführen und im Browser bestätigen — der laufende MQTT-Stream hält nur bis zum nächsten Verbindungsabbruch.`);
+    this.name = 'BmwAnmeldungAbgelaufen';
+  }
+}
+
 // ── Skill ─────────────────────────────────────────────────
 export class BMWSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -156,6 +164,7 @@ export class BMWSkill extends Skill {
       'BMW CarData — Fahrzeugdaten abrufen. ' +
       'WICHTIG: Rufe IMMER zuerst "status" oder die gewünschte Action auf — NICHT "authorize". ' +
       'authorize ist NUR nötig wenn der Skill einen Auth-Fehler zurückgibt. Der Token wird automatisch gespeichert und überlebt Restarts. ' +
+      'Meldet der Skill „BMW-Anmeldung abgelaufen“, IST authorize nötig — auch wenn der MQTT-Stream noch Daten liefert (eine bestehende Stream-Verbindung überlebt einen abgelaufenen Refresh-Token, ein Reconnect nicht). ' +
       'Wenn authorize nötig ist: Schritt 1 (ohne device_code) liefert User-Code + URL. ' +
       'Schritt 2: Nach Browser-Bestätigung, authorize ERNEUT ohne Parameter (auto-resume). ' +
       'NIEMALS Schritt 1 wiederholen wenn bereits ein Code ausgegeben wurde! ' +
@@ -1254,13 +1263,16 @@ export class BMWSkill extends Skill {
           const body = await res.text().catch(() => '');
           console.warn(`[BMW] Token refresh permanently failed (${res.status}): ${body.slice(0, 200)}`);
           this.tokens = null;
-          throw new Error('Token-Refresh fehlgeschlagen. Bitte erneut "authorize" aufrufen.');
+          // v1700 — Realfall 23.–27.10.: der Fehler landete im Netzwerk-catch unten und wurde als „Netzwerk“ gemeldet; Alfred hielt die
+          // Anmeldung für gültig und lehnte authorize ab (Stream lief noch). Jetzt eindeutig und ohne Umweg über den catch.
+          throw new BmwAnmeldungAbgelaufen(res.status);
         }
 
         // 5xx or other → transient, retry after delay
         console.warn(`[BMW] Token refresh failed (${res.status}), attempt ${attempt + 1}/2`);
         if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
       } catch (err) {
+        if (err instanceof BmwAnmeldungAbgelaufen) throw err; // v1700 — kein Netzwerkfehler
         // Network/timeout error → retry
         if (attempt === 0) {
           console.warn('[BMW] Token refresh network error, retrying in 3s...', err);

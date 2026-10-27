@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Abgelaufene BMW-Anmeldung wird erkannt (v1700)
+
+- Lehnt BMW den gespeicherten Anmelde-Token ab, meldet Alfred jetzt „BMW-Anmeldung abgelaufen — bitte neu verbinden“ statt eines Netzwerkfehlers und schlägt die Neuanmeldung vor, auch wenn der Fahrzeug-Stream noch Daten liefert. Bisher scheiterte die stündliche Abfrage tagelang mit „Netzwerk“, und Alfred lehnte die Neuanmeldung ab.
+
 ### Changed — Unteragent nutzt das Standardmodell (v1699)
 
 - Teilaufträge an einen Unteragenten laufen jetzt mit dem Modell, das auch die normalen Gespräche führt, statt fest mit dem teuersten. Sie sind auf Lese-Erhebungen beschränkt, dafür reicht es; pro Token halbieren sich die Kosten. Mit `ALFRED_DELEGATE_TIER=strong` lässt sich das stärkere Modell wieder einstellen.
