@@ -41,6 +41,9 @@ export function EingangPage() {
   const [meldung, setMeldung] = useState<string | null>(null);
   const [filter, setFilter] = useState<EingangArt | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // v1696 — Eingabefelder eines Hinweises (Owner 27.10.: Adresse ließ sich nicht eintragen)
+  const [formular, setFormular] = useState<string | null>(null);
+  const [werte, setWerte] = useState<Record<string, string>>({});
 
   // Filter aus der Adresse (?art=bestaetigung), z. B. vom Seitenleisten-Eintrag „Bestätigungen"
   useEffect(() => {
@@ -122,8 +125,9 @@ export function EingangPage() {
     return `✅ Erledigt: ${a.titel}`;
   });
 
-  const hinweis = (h: HinweisZeile, was: 'gelesen' | 'nuetzlich' | 'nicht_nuetzlich' | 'ausfuehren') => aktion(h.id, async () => {
-    const r = await client.hinweisReagieren(h.id, was);
+  const hinweis = (h: HinweisZeile, was: 'gelesen' | 'nuetzlich' | 'nicht_nuetzlich' | 'ausfuehren', eingaben?: Record<string, string>) => aktion(h.id, async () => {
+    const r = await client.hinweisReagieren(h.id, was, eingaben);
+    if (r.ok && was === 'ausfuehren') { setFormular(null); setWerte({}); }
     if (!r.ok) return `💡 Nicht möglich: ${r.grund ?? 'unbekannt'}`;
     return was === 'nuetzlich' || was === 'nicht_nuetzlich' ? '💡 Danke für die Rückmeldung' : null;
   });
@@ -166,7 +170,20 @@ export function EingangPage() {
       case 'hinweis':
         return (
           <>
-            {e.roh.aktion && <button className={knopfHaupt} disabled={aus} onClick={() => hinweis(e.roh, 'ausfuehren')}>▶ {e.roh.aktion}</button>}
+            {e.roh.aktion && formular !== e.id && <button className={knopfHaupt} disabled={aus} onClick={() => (e.roh.felder?.length ? (setFormular(e.id), setWerte({})) : hinweis(e.roh, 'ausfuehren'))}>▶ {e.roh.aktion}</button>}
+            {formular === e.id && e.roh.felder?.length ? (
+              <span className="flex flex-wrap items-end gap-2 w-full">
+                {e.roh.felder.map(f => (
+                  <label key={f.key} className="text-xs text-gray-400 flex flex-col">{f.label}
+                    <input type={f.type} autoFocus={f === e.roh.felder![0]} value={werte[f.key] ?? ''} onChange={ev => setWerte(w => ({ ...w, [f.key]: ev.target.value }))}
+                      onKeyDown={ev => { if (ev.key === 'Enter') hinweis(e.roh, 'ausfuehren', werte); }}
+                      className="mt-1 min-w-[16rem] bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-sm text-gray-200" />
+                  </label>
+                ))}
+                <button className={knopfHaupt} disabled={aus || e.roh.felder.some(f => !(werte[f.key] ?? '').trim())} onClick={() => hinweis(e.roh, 'ausfuehren', werte)}>✓ Übernehmen</button>
+                <button className={knopfNeben} onClick={() => { setFormular(null); setWerte({}); }}>Abbrechen</button>
+              </span>
+            ) : null}
             <button className={knopfNeben} disabled={aus} onClick={() => hinweis(e.roh, 'gelesen')}>Gelesen</button>
             <button className={knopfNeben} disabled={aus} onClick={() => hinweis(e.roh, 'nuetzlich')} title="Nützlich">👍</button>
             <button className={knopfNeben} disabled={aus} onClick={() => hinweis(e.roh, 'nicht_nuetzlich')} title="Nicht nützlich">👎</button>

@@ -284,6 +284,16 @@ export interface GeraetOwnerAnsichten {
   liveMerken?(body: Record<string, unknown>): Promise<unknown>;
 }
 
+/** v1696 — Eingaben zu einem Hinweis (Owner 27.10.: Adresse in App/Web nicht eintragbar): nur Text, höchstens 20 Felder à 2 000 Zeichen */
+export function hinweisWerte(roh: unknown): Record<string, string> | undefined {
+  if (!roh || typeof roh !== 'object' || Array.isArray(roh)) return undefined;
+  const aus: Record<string, string> = {};
+  for (const [k, v] of Object.entries(roh as Record<string, unknown>).slice(0, 20)) {
+    if (/^[\w-]{1,40}$/.test(k) && (typeof v === 'string' || typeof v === 'number')) aus[k] = String(v).slice(0, 2_000);
+  }
+  return Object.keys(aus).length ? aus : undefined;
+}
+
 export class HttpAdapter extends MessagingAdapter {
   readonly platform: Platform = 'api';
   private server: http.Server | https.Server | null = null;
@@ -1212,7 +1222,8 @@ export class HttpAdapter extends MessagingAdapter {
     stufen?(geraetId: string, faden: string | null): Promise<unknown | undefined>;
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
-    hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
+    /** v1696 — werte: Eingaben zu den Feldern des Hinweises (z. B. Adresse, Geburtstag) */
+    hinweisEntscheiden?(geraetId: string, id: string, aktion: string, werte?: Record<string, string>): Promise<{ ok: boolean; grund?: string } | undefined>;
     /** v1353 — native Ansichten der Desktop-App (Aufgaben, Erinnerungen, Gedächtnis, Vorgänge); undefined = kein Owner-Gerät (403). */
     ownerAnsichten?(geraetId: string): Promise<GeraetOwnerAnsichten | undefined>;
     /** v1249 — blockweiser Dateitransfer. */
@@ -7251,11 +7262,11 @@ export class HttpAdapter extends MessagingAdapter {
     if (!geraet || !this.geraeteCallbacks?.hinweisEntscheiden) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const id = url.pathname.split('/').pop() ?? '';
     const body = await this.readBody(req).catch(() => '');
-    let aktion = '';
-    try { aktion = String((JSON.parse(body || '{}') as { aktion?: unknown }).aktion ?? ''); } catch { /* leer */ }
+    let aktion = ''; let werte: Record<string, string> | undefined;
+    try { const j = JSON.parse(body || '{}') as { aktion?: unknown; werte?: unknown }; aktion = String(j.aktion ?? ''); werte = hinweisWerte(j.werte); } catch { /* leer */ }
     const AKTIONEN = HINWEIS_AKTIONEN;
     if (!AKTIONEN.includes(aktion)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `aktion: ${AKTIONEN.join(' | ')}` })); return; }
-    const r = await this.geraeteCallbacks.hinweisEntscheiden(geraet.geraetId, id, aktion);
+    const r = await this.geraeteCallbacks.hinweisEntscheiden(geraet.geraetId, id, aktion, werte);
     if (r === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
     res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(r));
@@ -7358,7 +7369,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (id && m === 'POST' && this.geraeteCallbacks?.hinweisEntscheiden) {
         const aktion = String(body.aktion ?? '');
         if (!HINWEIS_AKTIONEN.includes(aktion)) { antwort(400, { error: `aktion: ${HINWEIS_AKTIONEN.join(' | ')}` }); return; }
-        const r = await this.geraeteCallbacks.hinweisEntscheiden(WEB_OWNER_QUELLE, id, aktion);
+        const r = await this.geraeteCallbacks.hinweisEntscheiden(WEB_OWNER_QUELLE, id, aktion, hinweisWerte(body.werte));
         antwort(r ? (r.ok ? 200 : 409) : 503, r ?? { error: 'nicht verfügbar' }); return;
       }
       antwort(405, { error: 'Methode nicht erlaubt' }); return;

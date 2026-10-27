@@ -17,13 +17,39 @@ class Hinweis {
       : id = '${j['id']}', quelle = '${j['quelle'] ?? ''}', titel = '${j['titel'] ?? ''}', text = '${j['text'] ?? ''}',
         status = '${j['status'] ?? 'pending'}', zeit = DateTime.tryParse('${j['zeit']}')?.toLocal() ?? DateTime.now(),
         dringlichkeit = j['dringlichkeit'] as String?, zugestellt = j['zugestellt'] as String?, aktion = j['aktion'] as String?,
-        reaktion = j['reaktion'] as String?;
+        reaktion = j['reaktion'] as String?,
+        felder = [for (final f in (j['felder'] as List<dynamic>? ?? const [])) if (f is Map<String, dynamic> && f['key'] is String) (key: f['key'] as String, label: '${f['label'] ?? f['key']}', typ: '${f['type'] ?? 'text'}')];
   final String id, quelle, titel, text;
+  /// 1.80.0 — Eingabefelder (z. B. Adresse, Geburtstag; Owner 27.10.: ließ sich nicht eintragen)
+  final List<({String key, String label, String typ})> felder;
   String status;
   String? reaktion;
   final DateTime zeit;
   final String? dringlichkeit, zugestellt, aktion;
   bool get offen => status == 'pending' || status == 'snoozed';
+}
+
+/// 1.80.0 — Eingaben zu einem Hinweis mit Feldern (Server v1696): Dialog mit je einem Feld, alle Pflicht; null = abgebrochen.
+Future<Map<String, String>?> hinweisEingaben(BuildContext context, Hinweis h) {
+  final c = {for (final f in h.felder) f.key: TextEditingController()};
+  return showDialog<Map<String, String>>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, neu) {
+    final komplett = h.felder.every((f) => c[f.key]!.text.trim().isNotEmpty);
+    void senden() { if (komplett) Navigator.pop(ctx, {for (final f in h.felder) f.key: c[f.key]!.text.trim()}); }
+    return AlertDialog(
+      title: Text(h.aktion ?? h.titel),
+      content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(h.titel, style: Theme.of(ctx).textTheme.bodySmall),
+        for (final (i, f) in h.felder.indexed) Padding(padding: const EdgeInsets.only(top: 10), child: TextField(
+          key: Key('feld-${f.key}'), controller: c[f.key], autofocus: i == 0, onChanged: (_) => neu(() {}), onSubmitted: (_) => senden(),
+          keyboardType: f.typ == 'number' ? TextInputType.number : f.typ == 'date' ? TextInputType.datetime : TextInputType.text,
+          decoration: InputDecoration(labelText: f.label, hintText: f.typ == 'date' ? 'JJJJ-MM-TT' : null, border: const OutlineInputBorder(), isDense: true))),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Abbrechen')),
+        FilledButton(key: const Key('uebernehmen'), onPressed: komplett ? senden : null, child: const Text('Übernehmen')),
+      ],
+    );
+  }));
 }
 
 /// 1.5.1 — Zahl offener Hinweise aus der Antwort von `/api/geraete/hinweise`. Owner-Befund 11.10.: der Zähler in der
@@ -108,9 +134,9 @@ class _HinweiseState extends State<Hinweise> {
     } catch (e) { if (mounted) setState(() => fehler = '$e'); }
   }
 
-  Future<void> entscheide(Hinweis h, String aktion) async {
+  Future<void> entscheide(Hinweis h, String aktion, {Map<String, String>? werte}) async {
     try {
-      final r = await widget.json('/api/geraete/hinweise/${h.id}', methode: 'POST', koerper: {'aktion': aktion});
+      final r = await widget.json('/api/geraete/hinweise/${h.id}', methode: 'POST', koerper: {'aktion': aktion, if (werte != null) 'werte': werte});
       if (r['ok'] == true) {
         setState(() {
           h.status = statusNach(aktion) ?? h.status;
@@ -120,6 +146,7 @@ class _HinweiseState extends State<Hinweise> {
         if (aktion == 'ausfuehren') widget.aufMeldung('💡 Ausgeführt: ${h.titel}');
       } else {
         widget.aufMeldung('💡 Nicht möglich: ${r['grund'] ?? 'unbekannt'}');
+        if (mounted) ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Nicht möglich: ${r['grund'] ?? 'unbekannt'}'))); // 1.80.0 — sichtbar in der Ansicht
       }
     } catch (e) { widget.aufMeldung('💡 Fehler: $e'); }
   }
@@ -164,7 +191,7 @@ class _HinweiseState extends State<Hinweise> {
               Text('Nicht nützlich', style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)), Icon(Icons.arrow_drop_down, size: 18, color: theme.colorScheme.primary),
             ])),
           ),
-          if (h.offen && h.aktion != null) TextButton.icon(onPressed: () => entscheide(h, 'ausfuehren'), icon: const Icon(Icons.bolt, size: 16), label: Text(h.aktion!)),
+          if (h.offen && h.aktion != null) TextButton.icon(key: Key('aktion-${h.id}'), onPressed: () async { if (h.felder.isEmpty) return entscheide(h, 'ausfuehren'); final w = await hinweisEingaben(context, h); if (w != null) await entscheide(h, 'ausfuehren', werte: w); }, icon: const Icon(Icons.bolt, size: 16), label: Text(h.aktion!)),
           if (h.offen && h.status != 'snoozed') TextButton.icon(onPressed: () => entscheide(h, 'spaeter'), icon: const Icon(Icons.schedule, size: 16), label: const Text('Später')),
           TextButton.icon(onPressed: () { if (h.reaktion == null) entscheide(h, 'besprochen'); widget.aufNachfragen('${h.titel}\n\n${h.text}'); }, icon: const Icon(Icons.reply_outlined, size: 16), label: const Text('Nachfragen')),
         ]),

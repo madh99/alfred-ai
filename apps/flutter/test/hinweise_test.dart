@@ -90,4 +90,33 @@ void main() {
       expect(find.text('Keine offenen Hinweise.'), findsOneWidget);
     });
   });
+
+  testWidgets('1.80.0: Hinweis mit Feldern öffnet ein Formular und schickt die Werte mit (Owner 27.10.: Adresse nicht eintragbar)', (t) async {
+    final gesendet = <Map<String, dynamic>?>[];
+    await t.binding.setSurfaceSize(const Size(1000, 1400));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: Hinweise(
+      json: (p, {methode = 'GET', koerper}) async {
+        if (methode == 'GET') {
+          return {'hinweise': [
+            {'id': 'a1', 'quelle': 'knowledge', 'titel': 'Adresse für Vereinssitz fehlt', 'text': 'KSV 1919', 'status': 'pending', 'zeit': '2026-10-27T08:00:00Z', 'aktion': 'Adresse eintragen',
+             'felder': [{'key': 'info', 'label': 'Fehlende Infos (Adresse)', 'type': 'text'}]},
+          ]};
+        }
+        gesendet.add(koerper);
+        return {'ok': true};
+      },
+      aufNachfragen: (_) {},
+      aufMeldung: (_) {},
+    ))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('aktion-a1')));
+    await t.pumpAndSettle();
+    expect(find.text('Fehlende Infos (Adresse)'), findsOneWidget);
+    expect(t.widget<FilledButton>(find.byKey(const Key('uebernehmen'))).onPressed, isNull); // leer → nicht senden
+    await t.enterText(find.byKey(const Key('feld-info')), 'Johann-Böhm-Straße 1, 8605 Kapfenberg');
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('uebernehmen')));
+    await t.pumpAndSettle();
+    expect(gesendet.single, {'aktion': 'ausfuehren', 'werte': {'info': 'Johann-Böhm-Straße 1, 8605 Kapfenberg'}});
+  });
 }

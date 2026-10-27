@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fehlende Angaben zu Hinweisen wieder eintragbar (v1696, App 1.80.0)
+
+- Hinweise, die nach einer Angabe fragen (zum Beispiel eine fehlende Adresse oder ein Geburtstag), zeigen im Eingang der Web-Oberfläche und unter „Hinweise“ in der App wieder ein Eingabefeld. Bisher blieb der Klick auf die Aktion dort scheinbar wirkungslos, weil die Angabe nicht abgefragt und nicht mitgeschickt wurde.
+- Scheitert eine Aktion, steht der Grund jetzt direkt in der App-Ansicht und nennt das fehlende Feld mit seinem Namen.
+
 ### Changed — Weniger Werkzeugrunden und verlässliche Teilaufträge bei Infrastruktur-Arbeit (v1695)
 
 - Erhebungen auf einem Server lassen sich jetzt bündeln: mehrere lesende Befehle laufen in einem Aufruf, jeder mit denselben Schutzregeln wie einzeln. Das spart viele Durchgänge und damit Kosten.

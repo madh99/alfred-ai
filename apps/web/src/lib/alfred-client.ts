@@ -1761,7 +1761,7 @@ export class AlfredClient {
   fetchRegeln(): Promise<{ vorschlaege: RegelZeile[]; aktiv: RegelZeile[] }> { return this.ownerAbruf('regeln'); }
   regelAendern(id: string, aktion: 'uebernehmen' | 'ablehnen' | 'widerrufen'): Promise<{ ok: boolean; text: string }> { return this.ownerAbruf(`regeln/${encodeURIComponent(id)}`, { aktion }); }
   fetchHinweise(): Promise<{ hinweise: HinweisZeile[] }> { return this.ownerAbruf('hinweise'); }
-  hinweisReagieren(id: string, aktion: 'ausfuehren' | 'gelesen' | 'nuetzlich' | 'nicht_nuetzlich' | 'bekannt' | 'falsch' | 'kein_interesse' | 'zu_oft' | 'besprochen' | 'spaeter'): Promise<{ ok: boolean; grund?: string }> { return this.ownerAbruf(`hinweise/${encodeURIComponent(id)}`, { aktion }); }
+  hinweisReagieren(id: string, aktion: 'ausfuehren' | 'gelesen' | 'nuetzlich' | 'nicht_nuetzlich' | 'bekannt' | 'falsch' | 'kein_interesse' | 'zu_oft' | 'besprochen' | 'spaeter', werte?: Record<string, string>): Promise<{ ok: boolean; grund?: string }> { return this.ownerAbruf(`hinweise/${encodeURIComponent(id)}`, { aktion, ...(werte ? { werte } : {}) }); }
   fetchOwnerAufgaben(): Promise<{ aufgaben: AufgabeZeile[]; erinnerungen: Array<{ id: string; text: string; zeit: string }> }> { return this.ownerAbruf('aufgaben'); }
   aufgabeErledigt(id: string): Promise<{ aufgabe: AufgabeZeile }> { return this.ownerAbruf(`aufgaben/${encodeURIComponent(id)}`, { erledigt: true }); }
   /** v1487 — Einrichtung eines Geräte-Projekts: ok:<schritt> (passt so), pruefung_vorschlag, pruefung_setzen */
@@ -3360,7 +3360,8 @@ export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer
 export interface VorgangErgebnisEingabe { art: 'behoben' | 'entschieden' | 'kein_problem' | 'anders'; ursache?: string; massnahme?: string; entscheidung?: string; text?: string }
 export interface BefundZeile { id: string; quelle: string; regel?: string; titel: string; detail?: string; entstanden: string; zuletzt: string; erledigt?: string; anzahl: number; vorgang: boolean; vorgangId?: string; nieStumm?: boolean }
 export interface RegelZeile { id: string; text: string; wirkung: string; bis?: string; begruendung?: string; herkunft: string; status: string; abgelaufen: boolean; erstellt: string }
-export interface HinweisZeile { id: string; quelle: string; titel: string; text: string; status: string; zeit: string; dringlichkeit: string | null; zugestellt: string | null; aktion: string | null; reaktion: string | null }
+export interface HinweisFeld { key: string; label: string; type: 'text' | 'date' | 'number' }
+export interface HinweisZeile { id: string; quelle: string; titel: string; text: string; status: string; zeit: string; dringlichkeit: string | null; zugestellt: string | null; aktion: string | null; reaktion: string | null; felder?: HinweisFeld[] }
 export interface AufgabeZeile { id: string; titel: string; beschreibung?: string; prioritaet: string; faellig?: string; liste: string; erledigt: boolean }
 export interface VorgangSchrittDto { id: string; vorgangId?: string; zeit: string; art: string; skill?: string; aktion?: string; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }
 export interface VorgaengeStatus { offene: VorgangDto[]; abgeschlossene: VorgangDto[]; schritte: VorgangSchrittDto[] }

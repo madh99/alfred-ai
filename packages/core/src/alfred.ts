@@ -161,6 +161,12 @@ async function findKnownErrorMatch(
   return null;
 }
 
+/** v1696 — Eingabefelder eines Hinweises für App/Web (key, label, type) */
+function hinweisFelder(sd: Record<string, unknown>): Array<{ key: string; label: string; type: string }> {
+  return (sd.inputFields as unknown[]).filter((f): f is Record<string, unknown> => !!f && typeof f === 'object' && typeof (f as Record<string, unknown>).key === 'string')
+    .map(f => ({ key: String(f.key), label: typeof f.label === 'string' && f.label ? f.label : String(f.key), type: f.type === 'date' || f.type === 'number' ? String(f.type) : 'text' }));
+}
+
 export class Alfred {
   private readonly logger: Logger;
   private database!: Database;
@@ -15307,10 +15313,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const l = (await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 300)).filter(i => i.category !== 'interests').slice(0, 150);
             return l.map(i => {
               const sd = (i.sourceData ?? {}) as Record<string, unknown>;
-              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill && hinweisAktionErlaubt(i.category) ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null, reaktion: i.reaktion ?? null }; // v1361, v1364 Reaktion
+              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill && hinweisAktionErlaubt(i.category) ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null, reaktion: i.reaktion ?? null, ...(i.actionSkill && Array.isArray(sd.inputFields) && sd.inputFields.length ? { felder: hinweisFelder(sd) } : {}) }; // v1696 Felder // v1361, v1364 Reaktion
             });
           },
-          hinweisEntscheiden: async (geraetId: string, id: string, aktion: string) => {
+          hinweisEntscheiden: async (geraetId: string, id: string, aktion: string, werte?: Record<string, string>) => {
             const repo = this.insightsRepo; const owner = this.ownerMasterUserId;
             if (!repo || !owner || !(await this.ownerQuelle(geraetId))) return undefined; // v1487 auch Web
             const insight = await repo.getById(owner, id);
@@ -15325,8 +15331,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const skill = this.skillRegistry?.get(insight.actionSkill);
             if (!skill) return { ok: false, grund: `Skill ${insight.actionSkill} nicht verfügbar` };
             const { extractInputFields, applyActionInputs } = await import('./insight-action-input.js');
-            const applied = applyActionInputs(insight.actionParams ?? {}, extractInputFields(insight.sourceData), undefined);
-            if (!applied.ok) return { ok: false, grund: `Eingabe fehlt: ${applied.missing.join(', ')}` };
+            const felder = extractInputFields(insight.sourceData);
+            const applied = applyActionInputs(insight.actionParams ?? {}, felder, werte); // v1696 — Werte aus App/Web
+            if (!applied.ok) return { ok: false, grund: `Eingabe fehlt: ${applied.missing.map(k => felder.find(f => f.key === k)?.label ?? k).join(', ')}` };
             try {
               const r = await skill.execute(applied.params, { userId: owner, masterUserId: owner } as any);
               if (r && typeof r === 'object' && 'success' in r && (r as { success: boolean }).success === false) return { ok: false, grund: (r as { error?: string }).error ?? 'fehlgeschlagen' };
