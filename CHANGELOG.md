@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Proxmox-Aufgaben-IDs in Change-Schritten (v1690)
+
+- Ein Change-Schritt kann die Aufgaben-ID eines vorherigen Proxmox-Schritts wieder verwenden, auch wenn Alfred über ein API-Token angemeldet ist (ID mit „root@pam!…“). Bisher hielt der Change an dieser Stelle an. Zulässig ist das Zeichen nur in genau dieser Form.
+
 ### Added — App: Einwand und „Ändern lassen“ direkt an Changes (App 1.79.0)
 
 - Freigabe-Fragen zu Changes haben neben Ja und Nein einen Knopf „Einwand …“: Der Text geht als Einwand an Alfred, der Change bleibt offen, bis Alfred geantwortet hat.

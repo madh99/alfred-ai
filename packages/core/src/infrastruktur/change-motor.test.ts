@@ -355,6 +355,13 @@ describe('I4 Sicherheitsbefund: Verweise in Befehlen', () => {
     expect(loeseAuf({ name: '{{schritt1.name}}' }, erg).fehler).toContain('unzulässigen Wert');
     expect(loeseAuf({ vmid: '{{schritt1.ip}}' }, erg).wert).toEqual({ vmid: '10.0.0.5' });
   });
+  it('v1690 Realfall a3982e74: Proxmox-Task-ID mit Token-Benutzer ist zulässig, „!“ sonst nicht', () => {
+    const upid = 'UPID:pve3:002C85BD:074F24AE:6AE09306:qmrestore:9150:root@pam!alfred-ai:';
+    const erg = [{ nr: 3, ok: true, start: 'x', daten: { upid, falsch: 'UPID:pve3:1:2:3:x:1:root@pam!a$(id):', knall: 'a!b' } }];
+    expect(loeseAuf({ befehl: `pvesh get /nodes/pve3/tasks/{{schritt3.upid}}/status` }, erg).wert).toEqual({ befehl: `pvesh get /nodes/pve3/tasks/${upid}/status` });
+    expect(loeseAuf({ befehl: 'echo {{schritt3.falsch}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ befehl: 'echo {{schritt3.knall}}' }, erg).fehler).toContain('unzulässigen Wert');
+  });
 });
 
 describe('I4 Sicherheitsbefund: Freigabe vor jedem Schritt', () => {

@@ -77,6 +77,8 @@ export function geheimNamen(wert: unknown): { werte: string[]; dateien: string[]
  */
 /** Eingesetzte Werte (Sicherheitsbefund 22.10.: Ausgaben eines Hosts dürfen nicht als Shell-Code in spätere Befehle wandern) */
 export const SICHERER_WERT = /^[\w.:\/@-]{1,253}$/;
+/** v1690 — Proxmox-Task-IDs enthalten bei API-Token den Benutzer „root@pam!token“ (Realfall a3982e74 Schritt 8): nur in genau dieser Form zulässig */
+export const PROXMOX_UPID = /^UPID:[\w.-]{1,63}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[\w.-]{1,40}:[\w.-]{0,40}:[\w.-]{1,64}@[\w.-]{1,32}(?:![\w.-]{1,64})?:$/;
 /** Felder, in die ein Verweis nie als ganzer Wert eingesetzt werden darf (ganzer Befehl aus fremder Ausgabe) */
 const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
 
@@ -89,7 +91,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
   let fehler: string | undefined;
   const sicher = (w: unknown, verweis: string): boolean => {
     if (typeof w === 'number' || typeof w === 'boolean') return true;
-    if (typeof w === 'string' && SICHERER_WERT.test(w)) return true;
+    if (typeof w === 'string' && (SICHERER_WERT.test(w) || PROXMOX_UPID.test(w))) return true;
     fehler ??= `Verweis {{${verweis}}} liefert einen unzulässigen Wert (nur Buchstaben, Ziffern und . : / @ - erlaubt)`;
     return false;
   };
