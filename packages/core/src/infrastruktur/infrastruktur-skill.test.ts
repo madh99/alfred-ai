@@ -153,3 +153,16 @@ describe('v1695 (K5) Planen/Freigeben nie im Unteragenten', () => {
     expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'zusammenfassung' }, sub)).success).toBe(true);
   });
 });
+
+describe('v1701 change_aendern geplant_ab allein', () => {
+  it('ändert nur den Termin, Schritte bleiben gleich', async () => {
+    const schritte = [{ nr: 1, titel: 'a', art: 'pruefung', pruefung: { typ: 'ping', ziel: 'x' }, beiFehler: 'anhalten' }];
+    const c = { id: '89b972b8-xxxx', title: 'I9 – 144', status: 'submitted', type: 'normal', riskLevel: 'high', schritte, affectedAssetIds: ['a1'], scheduledAt: '2026-10-27T23:30:00.000Z' };
+    let geaendert: Record<string, unknown> | undefined;
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: { finde: async () => null }, changes: { finde: async () => c, aendern: async (_o: string, _id: string, plan: Record<string, unknown>) => { geaendert = plan; return { ok: true, change: { ...c, fingerabdruck: 'f'.repeat(12) }, freigabeVerfallen: true }; } } } as never);
+    const r = await s.execute({ action: 'change_aendern', change: '89b972b8', geplant_ab: '2026-10-29T00:30:00+01:00' }, { userId: 'owner' } as SkillContext);
+    expect(r.success, r.error).toBe(true);
+    expect(geaendert!.geplantAb).toBe('2026-10-29T00:30:00+01:00');
+    expect(geaendert!.schritte).toEqual(schritte);
+  });
+});

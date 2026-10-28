@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Termin eines Changes allein verschiebbar (v1701)
+
+- Der geplante Start eines Changes lässt sich jetzt ändern, ohne den ganzen Plan neu zu senden. Bisher scheiterte das Umterminieren großer Changes daran.
+
 ### Fixed — Abgelaufene BMW-Anmeldung wird erkannt (v1700)
 
 - Lehnt BMW den gespeicherten Anmelde-Token ab, meldet Alfred jetzt „BMW-Anmeldung abgelaufen — bitte neu verbinden“ statt eines Netzwerkfehlers und schlägt die Neuanmeldung vor, auch wenn der Fahrzeug-Stream noch Daten liefert. Bisher scheiterte die stündliche Abfrage tagelang mit „Netzwerk“, und Alfred lehnte die Neuanmeldung ab.
