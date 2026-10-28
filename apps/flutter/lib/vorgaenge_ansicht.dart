@@ -11,6 +11,15 @@ import 'vorgaenge.dart';
 import 'abgleich.dart'; // 1.40.0
 import 'dart:async';
 
+/// 1.83.0 — Zahl der Vorgänge, um die man sich jetzt kümmern muss (ohne Zurückgestellte) — Navigation und Eingang zählen gleich.
+int vorgangAktivZahl(List<Map<String, dynamic>> offene, DateTime jetzt) { final g = vorgangGruppen(offene, jetzt); return g.fuerDich.length + g.beiAlfred.length; }
+
+/// 1.83.0 — Kopfzeile: „9 offen · 4 zurückgestellt“ statt „13 offen“.
+String vorgangKopfText(List<Map<String, dynamic>> offene, DateTime jetzt) {
+  final z = vorgangGruppen(offene, jetzt).zurueck.length;
+  return '${vorgangAktivZahl(offene, jetzt)} offen${z > 0 ? ' · $z zurückgestellt' : ''}';
+}
+
 /// Gruppen der offenen Vorgänge. Zurückgestellte zuerst aussortiert; „für dich" = wartet oder beim Owner.
 ({List<Map<String, dynamic>> fuerDich, List<Map<String, dynamic>> beiAlfred, List<Map<String, dynamic>> zurueck}) vorgangGruppen(List<Map<String, dynamic>> offene, DateTime jetzt) {
   final fuerDich = <Map<String, dynamic>>[], beiAlfred = <Map<String, dynamic>>[], zurueck = <Map<String, dynamic>>[];
@@ -173,7 +182,8 @@ class _VorgaengeAnsichtState extends State<VorgaengeAnsicht> {
         Row(children: [
           Text('Vorgänge', style: t.textTheme.headlineSmall),
           const SizedBox(width: 12),
-          if (o != null) Text('${o.length} offen', style: t.textTheme.bodyMedium?.copyWith(color: dim)),
+          // 1.83.0 — Owner 28.10.: „13 angezeigt, aber nur 9 zu sehen“ — Zurückgestellte getrennt nennen (sie stehen eingeklappt unten)
+          if (o != null) Text(vorgangKopfText(o, jetzt), style: t.textTheme.bodyMedium?.copyWith(color: dim)),
           const Spacer(),
           IconButton(tooltip: 'Neu laden', onPressed: laden, icon: const Icon(Icons.refresh)),
         ]),

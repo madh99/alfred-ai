@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Test: Prompt-Cache bei OpenAI ohne Cache-Schlüssel (v1703)
+
+- Alfred schickt OpenAI vorerst keinen eigenen Cache-Schlüssel mehr mit, wie es OpenAI empfiehlt. Messungen zeigten, dass der gleich bleibende Anfang des Prompts bei neuen Nachrichten trotz festem Schlüssel nicht aus dem Cache kam. Der frühere Modus lässt sich mit `ALFRED_OPENAI_CACHE_KEY=gespraech` (oder `inhalt`) wieder einstellen.
+
+### Fixed — App: Vorgänge-Zähler ohne zurückgestellte (App 1.83.0)
+
+- Die Zahl bei „Vorgänge“ in der Navigation und in der Kopfzeile zählt zurückgestellte Vorgänge nicht mehr mit; die Kopfzeile nennt sie getrennt („9 offen · 4 zurückgestellt“). Bisher stand dort 13, in der Liste waren aber nur 9 sichtbar.
+
 ### Changed — Messung: wo der Prompt zwischen Nachrichten wechselt (v1702)
 
 - Alfred protokolliert je Anfrage, ab welcher Stelle sich Werkzeugliste und Systemprompt von der vorigen Nachricht desselben Gesprächs unterscheiden (nur Position, Abschnitt und Werkzeugname, kein Inhalt). Grundlage, um den Prompt-Cache gezielt zu verbessern; am Verhalten ändert sich nichts.

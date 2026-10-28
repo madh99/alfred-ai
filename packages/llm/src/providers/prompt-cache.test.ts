@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { markiereVerlaufFuerCache } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
@@ -30,6 +30,9 @@ describe('Anthropic: Verlauf im Cache nur in Werkzeug-Schleifen', () => {
 });
 
 describe('OpenAI: prompt_cache_key nur beim echten Endpunkt', () => {
+  // v1703 — Standard ist jetzt „aus“ (Test nach OpenAI-Empfehlung); diese Fälle prüfen die Modi gespraech/inhalt
+  beforeEach(() => { process.env.ALFRED_OPENAI_CACHE_KEY = 'gespraech'; });
+  afterEach(() => { delete process.env.ALFRED_OPENAI_CACHE_KEY; });
   const anfrage = { system: 'Du bist Alfred.', tools: [{ name: 'reminder', description: 'x', inputSchema: {} }], messages: [{ role: 'user', content: 'Hallo' }] };
   const params = (p: OpenAIProvider) => (p as unknown as { buildResponsesParams: (r: unknown) => Record<string, unknown> }).buildResponsesParams(anfrage);
   const extra = (p: OpenAIProvider, r: unknown = anfrage) => (p as unknown as { extraRequestParams: (r: unknown) => Record<string, unknown> }).extraRequestParams(r);
@@ -63,5 +66,17 @@ describe('OpenAI: prompt_cache_key nur beim echten Endpunkt', () => {
     const fremd = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'llama', baseUrl: 'http://192.168.1.50:8080/v1' } as never);
     expect(extra(fremd)).toEqual({});
     expect(params(fremd).prompt_cache_key).toBeUndefined();
+  });
+});
+
+describe('v1703 Schalter ALFRED_OPENAI_CACHE_KEY', () => {
+  it('Standard aus: kein prompt_cache_key; gespraech und inhalt wie bisher', async () => {
+    const { openaiCacheKeyModus } = await import('./openai.js');
+    expect(openaiCacheKeyModus({})).toBe('aus');
+    expect(openaiCacheKeyModus({ ALFRED_OPENAI_CACHE_KEY: 'gespraech' })).toBe('gespraech');
+    expect(openaiCacheKeyModus({ ALFRED_OPENAI_CACHE_KEY: 'Inhalt' })).toBe('inhalt');
+    const p = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'gpt-6.1-sol' } as never);
+    const r = (p as unknown as { buildResponsesParams: (r: unknown) => Record<string, unknown> }).buildResponsesParams({ system: 'S', messages: [{ role: 'user', content: 'x' }], gespraech: 'c' });
+    expect(r.prompt_cache_key).toBeUndefined();
   });
 });

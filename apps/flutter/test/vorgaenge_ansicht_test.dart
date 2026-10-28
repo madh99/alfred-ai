@@ -19,6 +19,9 @@ void main() {
     expect(g.fuerDich.map((v) => v['id']), ['d', 'c']);
     expect(g.beiAlfred.map((v) => v['id']), ['a', 'b', 'f']);
     expect(g.zurueck.map((v) => v['id']), ['e']);
+    // 1.83.0 — Owner 28.10.: Zähler ohne Zurückgestellte, Kopfzeile nennt sie getrennt
+    expect(vorgangAktivZahl(offene, jetzt), offene.length - 1);
+    expect(vorgangKopfText(offene, jetzt), '${offene.length - 1} offen · 1 zurückgestellt');
     expect(zurueckBis(offene[4], jetzt), isNotNull);
     expect(zurueckBis(offene[5], jetzt), isNull);
   });

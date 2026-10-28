@@ -12,6 +12,12 @@ import type {
 import { DiagnoseKette, istDiagnoseAblehnung, openaiDiagnose } from '../cache-diagnose.js';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
+/** v1703 — Modus des prompt_cache_key am echten OpenAI-Endpunkt */
+export function openaiCacheKeyModus(env: Record<string, string | undefined> = process.env): 'aus' | 'gespraech' | 'inhalt' {
+  const w = (env.ALFRED_OPENAI_CACHE_KEY ?? '').trim().toLowerCase();
+  return w === 'gespraech' || w === 'inhalt' ? w : 'aus';
+}
+
 export class OpenAIProvider extends LLMProvider {
   private client!: OpenAI;
 
@@ -83,6 +89,10 @@ export class OpenAIProvider extends LLMProvider {
     // Werkzeugen landen so auf demselben Cache (Live-Probe 11.10. gpt-6.1-sol: 3 219 von 3 222 Tokens gecacht).
     // Andere OpenAI-kompatible Endpunkte (OpenRouter, OpenWebUI) bekommen nichts Unbekanntes geschickt.
     if (!this.istEchterOpenAiEndpunkt()) return {};
+    // v1703 (K1-Test, Owner 28.10.) — OpenAI empfiehlt, prompt_cache_key wegzulassen, wenn keine getrennte Cache-Abrechnung je
+    // Nutzer nötig ist; mit Schlüssel je Gespräch traf die erste Runde trotz gleichem Prompt-Anfang 0 Token. Schalter
+    // ALFRED_OPENAI_CACHE_KEY: aus (Standard im Test) | gespraech (v1694) | inhalt (v1355).
+    if (openaiCacheKeyModus() === 'aus') return {};
     const key = this.computeCacheKey(request);
     return key ? { prompt_cache_key: key } : {};
   }
@@ -98,6 +108,7 @@ export class OpenAIProvider extends LLMProvider {
    * Aufbau bringt ein Schlüssel nichts. (v596 für Mistral eingeführt, v1355 in die Basisklasse gezogen.)
    */
   protected computeCacheKey(request: LLMRequest): string | undefined {
+    if (openaiCacheKeyModus() === 'inhalt') request = { ...request, gespraech: undefined };
     // v1694 (K1) — je Gespräch ein fester Schlüssel: alle Nachrichten eines Fadens landen beim selben Cache, der gleiche
     // Anfang des Prompts wird wiederverwendet. Ohne Gespräch (Hintergrundjobs) bleibt der bisherige Schlüssel (v1355).
     if (request.gespraech) return createHash('sha256').update(`gespraech|${this.config.model}|${request.gespraech}`).digest('hex').slice(0, 32);
