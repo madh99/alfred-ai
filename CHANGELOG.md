@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Messung: wo der Prompt zwischen Nachrichten wechselt (v1702)
+
+- Alfred protokolliert je Anfrage, ab welcher Stelle sich Werkzeugliste und Systemprompt von der vorigen Nachricht desselben Gesprächs unterscheiden (nur Position, Abschnitt und Werkzeugname, kein Inhalt). Grundlage, um den Prompt-Cache gezielt zu verbessern; am Verhalten ändert sich nichts.
+
 ### Fixed — Termin eines Changes allein verschiebbar (v1701)
 
 - Der geplante Start eines Changes lässt sich jetzt ändern, ohne den ganzen Plan neu zu senden. Bisher scheiterte das Umterminieren großer Changes daran.

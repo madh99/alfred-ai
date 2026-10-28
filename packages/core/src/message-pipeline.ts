@@ -232,7 +232,37 @@ interface ActiveAgent {
 /** v1470 — Grenze je Bild in der Nachricht ans Modell (nach dem Verkleinern). */
 const NACHRICHT_BILD_MAX_BYTES = 5 * 1024 * 1024;
 
+/**
+ * v1702 (K1-Messung, Spec 2026-10-27-kosten-infra-planung) — Realfall 28.10.: zwei Nachrichten im Minutenabstand, gleiche 86 Werkzeuge,
+ * erste Runde 0 Token aus dem Cache → der Prompt weicht schon am Anfang ab. Vergleicht Werkzeuge (Reihenfolge, je Werkzeug Beschreibung
+ * und Schema) und Systemprompt mit der vorigen Nachricht desselben Gesprächs; protokolliert nur Position und Namen, keinen Inhalt.
+ */
+export function promptAbweichung(vorher: Map<string, { system: string; werkzeuge: string[] }>, chatId: string, system: string, tools: Array<{ name: string; description?: string; inputSchema?: unknown }> | undefined): Record<string, unknown> {
+  const werkzeuge = (tools ?? []).map(t => `${t.name}\u0000${t.description ?? ''}\u0000${JSON.stringify(t.inputSchema ?? null)}`);
+  const alt = vorher.get(chatId);
+  vorher.delete(chatId); vorher.set(chatId, { system, werkzeuge });
+  if (vorher.size > 100) vorher.delete(vorher.keys().next().value!);
+  if (!alt) return {};
+  const ersteWerkzeug = werkzeuge.findIndex((w, i) => w !== alt.werkzeuge[i]);
+  const wIdx = ersteWerkzeug === -1 && werkzeuge.length !== alt.werkzeuge.length ? Math.min(werkzeuge.length, alt.werkzeuge.length) : ersteWerkzeug;
+  let sIdx = 0; while (sIdx < system.length && sIdx < alt.system.length && system[sIdx] === alt.system[sIdx]) sIdx++;
+  const name = (w?: string) => w?.split('\u0000')[0];
+  const art = (i: number) => (alt.werkzeuge[i] === undefined || werkzeuge[i] === undefined ? 'Liste' : name(alt.werkzeuge[i]) !== name(werkzeuge[i]) ? 'Reihenfolge' : 'Inhalt');
+  // Abschnitt (letzte Überschrift vor der Abweichung), damit sichtbar wird, WELCHER Teil wechselt — ohne Inhalt
+  const abschnitt = sIdx < system.length || sIdx < alt.system.length ? (system.slice(0, sIdx).match(/\n##? [^\n]{0,60}/g) ?? []).pop()?.trim() : undefined;
+  return {
+    promptVergleich: {
+      werkzeugeGleich: wIdx === -1,
+      ...(wIdx !== -1 ? { ersteAbweichungWerkzeug: wIdx, werkzeugName: name(werkzeuge[wIdx]) ?? name(alt.werkzeuge[wIdx]), werkzeugArt: art(wIdx) } : {}),
+      systemGleichBis: sIdx, systemLaenge: system.length,
+      ...(abschnitt ? { systemAbschnitt: abschnitt } : {}),
+    },
+  };
+}
+
 export class MessagePipeline {
+  /** v1702 — Prompt der vorigen Nachricht je Gespräch (nur für die Abweichungs-Messung, höchstens 100) */
+  private readonly promptVorher = new Map<string, { system: string; werkzeuge: string[] }>();
   private readonly promptBuilder: PromptBuilder;
   private readonly llm: LLMProvider;
   private readonly conversationManager: ConversationManager;
@@ -1530,6 +1560,8 @@ export class MessagePipeline {
         systemChars: system.length, toolCount: tools?.length ?? 0, werkzeugwahl,
         systemTokens: estimateTokens(system), toolTokens,
         historyMsgs: messages.length - 1, historyTokens: messages.slice(0, -1).reduce((s, m) => s + estimateMessageTokens(m), 0),
+        // v1702 (K1-Messung) — wo weicht der Prompt-Anfang von der vorigen Nachricht DESSELBEN Gesprächs ab? (Cache der ersten Runde 0 %)
+        ...promptAbweichung(this.promptVorher, message.chatId, system, tools),
       });
 
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
