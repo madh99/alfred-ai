@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Prompt-Cache über Nachrichten hinweg bei OpenAI (v1704)
+
+- Bei Gesprächen setzt Alfred jetzt ausdrückliche Cache-Haltepunkte nach dem gleich bleibenden Teil des Systemprompts. Neue Nachrichten im selben Gespräch können diesen Teil damit aus dem günstigen Cache lesen; bisher wurde er bei jeder Nachricht neu bezahlt, weil OpenAI den Haltepunkt nur ans Ende der letzten Nachricht setzt. Was das Modell liest, bleibt gleich. Hintergrundaufgaben bleiben unverändert. Abschaltbar mit `ALFRED_OPENAI_CACHE_HALTEPUNKTE=aus`; lehnt die Schnittstelle die Haltepunkte ab, schaltet Alfred sie selbst ab und wiederholt die Anfrage.
+
 ### Changed — Test: Prompt-Cache bei OpenAI ohne Cache-Schlüssel (v1703)
 
 - Alfred schickt OpenAI vorerst keinen eigenen Cache-Schlüssel mehr mit, wie es OpenAI empfiehlt. Messungen zeigten, dass der gleich bleibende Anfang des Prompts bei neuen Nachrichten trotz festem Schlüssel nicht aus dem Cache kam. Der frühere Modus lässt sich mit `ALFRED_OPENAI_CACHE_KEY=gespraech` (oder `inhalt`) wieder einstellen.

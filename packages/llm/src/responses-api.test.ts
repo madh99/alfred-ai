@@ -44,11 +44,14 @@ describe('v1099 Responses-API — Request-Bau', () => {
   it('Tools + Effort ZUSAMMEN, flaches Tool-Format, keine temperature', () => {
     const p = internals('gpt-5.6-sol').buildResponsesParams({
       messages: [{ role: 'user', content: 'Frage' }],
-      system: 'Du bist Alfred.',
+      system: 'Du bist Alfred.', gespraech: 'owner:faden:x',
       tools: [{ name: 'get_score', description: 'Spielstand', inputSchema: { type: 'object', properties: {} } }],
       reasoningEffort: 'max', maxTokens: 2000, temperature: 0.7,
     });
-    expect(p.instructions).toBe('Du bist Alfred.');
+    // v1704 (K1c) — der Systemprompt steht in der Entwickler-Nachricht (mit Cache-Haltepunkt), nicht in instructions
+    expect(p.instructions).toBeUndefined();
+    expect((p.input as Array<{ role?: string; content?: Array<{ text: string }> }>)[0]).toMatchObject({ role: 'developer', content: [{ type: 'input_text', text: 'Du bist Alfred.', prompt_cache_breakpoint: { mode: 'explicit' } }] });
+    expect(p.prompt_cache_options).toEqual({ mode: 'explicit' });
     expect(p.max_output_tokens).toBe(2000);
     expect(p.reasoning).toEqual({ effort: 'max' }); // 'max' läuft hier NICHT über xhigh-Mapping
     expect((p.tools as Array<{ type: string; name: string }>)[0]).toMatchObject({ type: 'function', name: 'get_score' });

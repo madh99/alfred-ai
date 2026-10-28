@@ -10,6 +10,7 @@ import type {
   ToolDefinition,
 } from '@alfred/types';
 import { DiagnoseKette, istDiagnoseAblehnung, openaiDiagnose } from '../cache-diagnose.js';
+import { entwicklerNachricht, haltepunkteAktiv, markiereLetzteNachricht } from '../cache-haltepunkte.js';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
 /** v1703 — Modus des prompt_cache_key am echten OpenAI-Endpunkt */
@@ -349,18 +350,29 @@ export class OpenAIProvider extends LLMProvider {
     } else {
       input = this.mapResponsesInput(request.messages);
     }
+    // v1704 (K1c) — erste Runde: Systemprompt als Entwickler-Nachricht mit ausdrücklichen Cache-Haltepunkten; Folgerunden einer so
+    // begonnenen Kette schicken den Systemprompt NICHT erneut (er liegt in der gespeicherten Vorrunde), sonst wie bisher
+    const fortsetzung = !!request.previousResponseId && input.some(i => i.type === 'function_call_output');
+    let ohneInstructions = false, explizit = false;
+    if (fortsetzung) ohneInstructions = this.k1cKetten.has(request.previousResponseId!);
+    else if (request.system && request.gespraech && !this.k1cAus && this.istEchterOpenAiEndpunkt() && haltepunkteAktiv(this.config.model)) { // nur Gespräche: Einzelaufrufe (Hintergrund) hätten nur Schreibkosten
+      input = [entwicklerNachricht(request.system), ...markiereLetzteNachricht(input)];
+      ohneInstructions = true; explizit = true;
+    }
+    const diag = this.diagnoseParam(request).prompt_cache_options as Record<string, unknown> | undefined; // v1693 (K2) — nur Messung
+    const cacheOptionen = { ...(explizit ? { mode: 'explicit' } : {}), ...(diag ?? {}) };
     const effort = request.reasoningEffort; // Responses akzeptiert none…xhigh und (5.6) max
     return {
       model: this.config.model,
       input,
-      ...(request.system ? { instructions: request.system } : {}),
+      ...(request.system && !ohneInstructions ? { instructions: request.system } : {}),
       max_output_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
       ...(request.tools && request.tools.length > 0 ? { tools: this.mapResponsesTools(request.tools) } : {}),
       ...(effort ? { reasoning: { effort } } : {}),
       ...(request.previousResponseId && input.some(i => i.type === 'function_call_output')
         ? { previous_response_id: request.previousResponseId } : {}),
       ...this.extraRequestParams(request), // v1355 — prompt_cache_key auch im Responses-Weg (gpt-6.1-sol)
-      ...this.diagnoseParam(request), // v1693 (K2) — nur Messung
+      ...(Object.keys(cacheOptionen).length ? { prompt_cache_options: cacheOptionen } : {}),
       // temperature bewusst weggelassen — Reasoning-Modelle lehnen sie ab
     };
   }
@@ -400,6 +412,26 @@ export class OpenAIProvider extends LLMProvider {
 
   /** v1693 (K2) — letzte Antwort-ID je Gespräch; nur echter OpenAI-Endpunkt, nur Responses-Weg */
   private readonly diagnose = new DiagnoseKette();
+  /** v1704 (K1c) — Antwort-IDs von Ketten, die mit Entwickler-Nachricht begonnen haben (Folgerunden ohne instructions) */
+  private readonly k1cKetten = new Set<string>();
+  private k1cAus = false;
+  private merkeK1c(params: Record<string, unknown>, request: LLMRequest, responseId: string | undefined): void {
+    if (!responseId || !request.system || 'instructions' in params) return;
+    this.k1cKetten.add(responseId);
+    if (this.k1cKetten.size > 2000) this.k1cKetten.delete(this.k1cKetten.values().next().value!);
+  }
+  /** v1704 — lehnt die API die Haltepunkte ab (400 mit Feldnamen), ohne sie wiederholen und für diese Instanz abschalten */
+  private k1cAbgelehnt(err: unknown, params: Record<string, unknown>): boolean {
+    const opt = params.prompt_cache_options as { mode?: string } | undefined;
+    if (this.k1cAus || opt?.mode !== 'explicit') return false;
+    const status = (err as { status?: number })?.status;
+    const text = String((err as { message?: string })?.message ?? err ?? '');
+    if (status !== 400 || !/prompt_cache_breakpoint|prompt_cache_options|developer|mode/i.test(text)) return false;
+    this.k1cAus = true;
+    console.warn('[OpenAIProvider] v1704 Cache-Haltepunkte abgelehnt — für ' + this.config.model + ' abgeschaltet: ' + text.slice(0, 160));
+    return true;
+  }
+
   private diagnoseParam(request: LLMRequest): Record<string, unknown> {
     if (!this.diagnose.aktiv(request.cacheDiagnose) || !this.istEchterOpenAiEndpunkt()) return {};
     const vorher = this.diagnose.vorher(request.cacheDiagnose);
@@ -414,7 +446,7 @@ export class OpenAIProvider extends LLMProvider {
   private mitDiagnose(r: LLMResponse, request: LLMRequest, roh: unknown, params: Record<string, unknown>): LLMResponse {
     if (!this.diagnose.aktiv(request.cacheDiagnose) || !this.istEchterOpenAiEndpunkt()) return r;
     this.diagnose.merke(request.cacheDiagnose, r.responseId);
-    const d = openaiDiagnose((roh as { prompt_cache_diagnostics?: unknown })?.prompt_cache_diagnostics, 'prompt_cache_options' in params);
+    const d = openaiDiagnose((roh as { prompt_cache_diagnostics?: unknown })?.prompt_cache_diagnostics, !!(params.prompt_cache_options as { comparison_response_id?: string } | undefined)?.comparison_response_id);
     return d ? { ...r, cacheDiagnose: d } : r;
   }
 
@@ -424,10 +456,11 @@ export class OpenAIProvider extends LLMProvider {
     try {
       response = await (this.client.responses.create(params as never) as Promise<unknown>);
     } catch (err) {
-      if (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err)) throw err;
+      if (!this.k1cAbgelehnt(err, params) && (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err))) throw err;
       params = this.buildResponsesParams(request);
       response = await (this.client.responses.create(params as never) as Promise<unknown>);
     }
+    this.merkeK1c(params, request, (response as { id?: string })?.id);
     return this.mitDiagnose(this.mapResponsesResponse(response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]), request, response, params);
   }
 
@@ -437,7 +470,7 @@ export class OpenAIProvider extends LLMProvider {
     try {
       stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
     } catch (err) {
-      if (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err)) throw err;
+      if (!this.k1cAbgelehnt(err, params) && (!('prompt_cache_options' in params) || !this.diagnoseAbgelehnt(err))) throw err;
       params = { ...this.buildResponsesParams(request), stream: true };
       stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
     }
@@ -453,6 +486,7 @@ export class OpenAIProvider extends LLMProvider {
       } else if (type === 'response.function_call_arguments.delta' && typeof ev.delta === 'string') {
         yield { type: 'tool_use_delta', toolCall: { input: ev.delta as unknown as Record<string, unknown> } };
       } else if (type === 'response.completed' || type === 'response.incomplete') { // v1650 — auch am Ausgabelimit
+        this.merkeK1c(params, request, (ev.response as { id?: string } | undefined)?.id);
         yield { type: 'message_complete', response: this.mitDiagnose(this.mapResponsesResponse(ev.response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]), request, ev.response, params) };
       } else if (type === 'response.failed' || type === 'error') {
         const msg = (ev.response as { error?: { message?: string } } | undefined)?.error?.message

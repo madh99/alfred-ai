@@ -62,10 +62,10 @@ describe('Cache-Diagnose in den Providern', () => {
   it('OpenAI Responses: comparison_response_id erst ab der zweiten Anfrage, nicht bei Fremd-Endpunkten', () => {
     const p = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'gpt-6.1-sol' } as never);
     const intern = p as unknown as { buildResponsesParams: (r: unknown) => Record<string, unknown>; diagnose: DiagnoseKette };
-    const anfrage = { system: 'S', messages: [{ role: 'user', content: 'Hallo' }], cacheDiagnose: 'owner:faden:x' };
-    expect(intern.buildResponsesParams(anfrage).prompt_cache_options).toBeUndefined();
+    const anfrage = { system: 'S', messages: [{ role: 'user', content: 'Hallo' }], cacheDiagnose: 'owner:faden:x', gespraech: 'owner:faden:x' };
+    expect(intern.buildResponsesParams(anfrage).prompt_cache_options).toEqual({ mode: 'explicit' }); // v1704 K1c
     intern.diagnose.merke('owner:faden:x', 'resp_1');
-    expect(intern.buildResponsesParams(anfrage).prompt_cache_options).toEqual({ comparison_response_id: 'resp_1' });
+    expect(intern.buildResponsesParams(anfrage).prompt_cache_options).toEqual({ mode: 'explicit', comparison_response_id: 'resp_1' });
     const fremd = new OpenAIProvider({ provider: 'openai', apiKey: 'test', model: 'llama', baseUrl: 'http://192.168.1.50:8080/v1' } as never) as unknown as typeof intern;
     fremd.diagnose.merke('owner:faden:x', 'resp_1');
     expect(fremd.buildResponsesParams(anfrage).prompt_cache_options).toBeUndefined();
