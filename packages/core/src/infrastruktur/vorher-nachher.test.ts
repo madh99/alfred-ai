@@ -1,0 +1,16 @@
+import { describe, it, expect } from 'vitest';
+import { vorherSkript, nachherSkript, wartungsVerzeichnis } from './vorher-nachher.js';
+
+// S2 — generischer Vorher-/Nachher-Vergleich (auf .92 live ausgeführt: 1 Container, 11 Ports, 14 Dienste, Vergleich ohne Abweichung)
+describe('S2 Vorher/Nachher', () => {
+  it('nur Verzeichnisse unter /var/lib/alfred-wartung, Marker, keine festen Namen', () => {
+    expect(wartungsVerzeichnis('osupd-alfred_20261029_7d')).toBe('/var/lib/alfred-wartung/osupd-alfred_20261029_7d');
+    expect(() => vorherSkript('/etc/x')).toThrow();
+    const v = vorherSkript('/var/lib/alfred-wartung/probe1');
+    expect(v).toContain('S2_VORHER_OK');
+    expect(v).toContain('{{with index .State "Health"}}');
+    const n = nachherSkript('/var/lib/alfred-wartung/probe1', 5);
+    expect(n).toContain('ende=time.monotonic()+30'); // mindestens 30 s
+    expect(n).toContain("a['health']=='healthy' and b['health']!='healthy'");
+  });
+});

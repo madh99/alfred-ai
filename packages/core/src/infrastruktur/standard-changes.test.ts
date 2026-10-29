@@ -147,3 +147,50 @@ describe('S1 Eingangskontrolle und Sperre', () => {
     expect((await frisch.st.anlegen('o', 'sicherheitsupdates', { zugang: 'docker1' })).ok).toBe(true);
   });
 });
+
+// S2/S4 — Vorlage os_updates (aus I9) und Serie mit einer Freigabe-Frage
+describe('S4 Betriebssystem-Updates und Serie', () => {
+  const skillsMit: Record<string, unknown> = { ...SKILLS, proxmox: skill('proxmox', ['vm_status', 'list_snapshots', 'create_snapshot', 'delete_snapshot', 'rollback_snapshot', 'agent_status']) };
+  const pctx2: PruefKontext = { skill: n => skillsMit[n] as never, asset: k => ({ id: k, name: k }), changes: [] };
+  it('erzeugter Plan besteht die Planprüfung, ohne feste Namen/Daten, Fenster, Rückweg Snapshot', async () => {
+    const e = await V('os_updates').erzeuge!({ zugang: 'docker1' }, kontext());
+    expect('plan' in e, 'fehler' in e ? e.fehler : '').toBe(true);
+    if (!('plan' in e)) return;
+    expect(pruefeChangePlan(e.plan, pctx2).fehler).toEqual([]);
+    const s = e.plan.schritte as Array<{ titel: string; parameter?: { befehl?: string }; rueckweg?: { aktion?: string } }>;
+    expect(s.map(x => x.titel.split(':')[0])).toEqual(['Startprüfung', 'Snapshot alfred_20261022_7d', 'Vorher erheben', 'Paketlisten und Upgrade (Docker-Pakete gesperrt, Simulation vorher)', 'Neustart nur bei reboot-required (bis 02', 'Anlaufzeit', 'VM läuft', 'Gast-Agent antwortet', 'Nachher vergleichen']);
+    expect(s[0]!.parameter!.befehl).toContain("'00:30'<=n<'02:00'");
+    expect(s[3]!.parameter!.befehl).toContain('apt-mark');
+    expect(s[8]!.rueckweg!.aktion).toBe('rollback_snapshot');
+    expect(JSON.stringify(e.plan)).not.toMatch(/2026-10-|docker-com-01|synapse/);
+    expect('fehler' in (await V('os_updates').erzeuge!({ zugang: 'docker1', fenster: '03:00-01:00' }, kontext()))).toBe(true);
+  });
+  it('Serie: Hosts mit Schalter, Eingangskontrolle je Host, verkettet, EINE Freigabe-Frage; Abweichung wird ausgelassen und gemeldet', async () => {
+    const v = V('os_updates');
+    const db = new Map([[v.key, { vorlage: v.key, abdruck: vorlagenAbdruck(v), status: 'freigegeben', freigegebenAt: '2026-10-20T00:00:00Z' }]]);
+    let geplant: Array<Record<string, unknown>> = []; let fragen: string[][] = []; const meldungen: string[] = [];
+    const st = new StandardChanges({
+      stand: async () => [...db.values()], setze: async () => undefined,
+      kontext: async () => kontext({ updatesAn: async () => true, vmFuerZugang: async z => ({ assetId: `a-${z}`, vmid: z === 'b' ? 2 : 1, node: 'pve3', name: z }), zugaengeMitUpdates: async () => ['a', 'b', 'c'] }),
+      speichere: async () => ({ ok: false, fehler: ['nicht für Serien'] }),
+      pruefe: async p => ((p as { zugang?: string }).zugang === 'c' && (p as { befehl?: string }).befehl?.includes('python3-apt') ? { ok: false, text: 'nicht installiert' } : { ok: true, text: 'ok' }),
+      melde: async t => { meldungen.push(t); },
+      planeSerie: async (_o, pl) => { geplant = pl; return { ok: true, ids: pl.map((_, i) => `id${i + 1}`) }; },
+      freigabeAnfragen: async (_o, ids) => { fragen.push(ids); return 'Freigabe-Frage gestellt.'; },
+      jetzt: () => Date.parse('2026-10-29T10:00:00Z'),
+    });
+    const r = await st.serie('o', 'os_updates', { geplantAb: '2026-11-05T00:30:00+01:00' });
+    expect(r.ok).toBe(true);
+    expect(geplant.map(p => p.schluessel)).toEqual(['serie1', 'serie2']);
+    expect(geplant[1]!.abhaengigVon).toEqual(['serie1']);
+    expect(geplant[0]!.geplantAb).toBe('2026-11-05T00:30:00+01:00');
+    expect(String(geplant[0]!.begruendung)).toMatch(/^Standard-Serie os_updates /);
+    expect((geplant[0]!.schritte as Array<{ titel: string }>)[0]!.titel).toMatch(/^Eingangskontrolle/);
+    expect(fragen).toEqual([['id1', 'id2']]);
+    expect(meldungen.join(' ')).toContain('c: Eingangskontrolle weicht ab');
+    expect(r.ok && r.text).toContain('a → b');
+    db.set(v.key, { ...db.get(v.key)!, status: 'ueberpruefen' });
+    const g = await st.serie('o', 'os_updates', {});
+    expect(!g.ok && g.fehler[0]).toContain('gesperrt');
+  });
+});

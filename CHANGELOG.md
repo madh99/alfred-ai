@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Wöchentliche Betriebssystem-Updates als Vorlage, Serie mit einer Freigabe (v1705)
+
+- Neue Standard-Vorlage „Betriebssystem-Updates“ nach dem Muster der erfolgreichen Update-Nacht vom 29.10.: nur im Wartungsfenster, Snapshot vorher, Docker-Pakete bleiben unberührt, Neustart nur wenn nötig, Rückweg über den Snapshot.
+- Vor und nach jedem Update erhebt Alfred, welche Container, Ports und Dienste laufen, und prüft danach, dass alles wieder läuft wie vorher. Was vorher schon ungesund war, zählt nicht als Fehler, wird aber genannt. Neue Dienste erkennt die Vorlage so von selbst.
+- Eine Serie legt die Updates für alle Hosts mit eingeschaltetem Update-Schalter an — unkritische zuerst, nacheinander — und stellt eine einzige Freigabe-Frage. Hosts, deren Eingangskontrolle abweicht, werden ausgelassen und gemeldet.
+
 ### Changed — Prompt-Cache über Nachrichten hinweg bei OpenAI (v1704)
 
 - Bei Gesprächen setzt Alfred jetzt ausdrückliche Cache-Haltepunkte nach dem gleich bleibenden Teil des Systemprompts. Neue Nachrichten im selben Gespräch können diesen Teil damit aus dem günstigen Cache lesen; bisher wurde er bei jeder Nachricht neu bezahlt, weil OpenAI den Haltepunkt nur ans Ende der letzten Nachricht setzt. Was das Modell liest, bleibt gleich. Hintergrundaufgaben bleiben unverändert. Abschaltbar mit `ALFRED_OPENAI_CACHE_HALTEPUNKTE=aus`; lehnt die Schnittstelle die Haltepunkte ab, schaltet Alfred sie selbst ab und wiederholt die Anfrage.

@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 import { LINUX_BEFEHLE } from './sammler.js';
 import type { Pruefung } from './change-schritte.js';
+import { fensterAus, osUpdateSchritte } from './os-updates.js';
 
 /** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
 export interface Annahme { id: string; text: string; pruefung: Pruefung }
@@ -24,6 +25,8 @@ export interface StandardKontext {
   updatesAn(zugang: string): Promise<boolean>;
   /** Anzahl Standard-Changes dieser Vorlage mit diesem Merkmal seit `seit` */
   anzahl(vorlage: string, merkmal: string, seit: number): Promise<number>;
+  /** S4 — Fernzugänge mit Schalter „Sicherheitsupdates an“, Reihenfolge: unkritische zuerst (CMDB), sonst nach Name */
+  zugaengeMitUpdates?(): Promise<string[]>;
   jetzt: Date;
 }
 
@@ -170,6 +173,38 @@ export const VORLAGEN: Vorlage[] = [
           { titel: 'Container neu starten', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: z, befehl: `docker restart ${name}` }, pruefung: { typ: 'befehl', zugang: z, befehl: LINUX_BEFEHLE.docker, erwartet: name }, rueckweg: { keiner: 'Neustart hat keinen Rückweg' } },
           { titel: 'Warten bis healthy', art: 'warten', pruefung: { typ: 'container_healthy', zugang: z, container: name }, zeitlimitS: 300 },
         ] } };
+    },
+  },
+  {
+    key: 'os_updates', version: 1, titel: '(h) Betriebssystem-Updates (Updates v2)',
+    beschreibung: 'Für Proxmox-VMs mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (Container, Ports, Dienste) → apt-get upgrade mit gesperrten Docker-Paketen und Simulation vorher → Neustart NUR bei reboot-required und spätestens 30 min vor Fensterende → Warten, VM und Gast-Agent → Nachher-Vergleich (dieselben Container mit gleichem Image, vorher Gesunde wieder gesund, Ports und Dienste wieder da). Rückweg: Snapshot zurücksetzen. Kein Distributions-Upgrade, kein Docker-Wechsel. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage.',
+    parameter: { zugang: 'Fernzugang-Name', fenster: 'optional HH:MM-HH:MM (Standard 00:30-02:45)' }, verfuegbar: true,
+    annahmenText: ['Debian-artiges System (apt, python3-apt)', 'keine Paketverwaltung blockiert (dpkg sauber)', 'Gast-Agent der VM antwortet'],
+    async annahmen(p, k) {
+      const z = txt(p.zugang);
+      const vm = await k.vmFuerZugang(z);
+      return [
+        { id: 'os', text: 'Debian-artiges System (apt, python3-apt)', pruefung: { typ: 'befehl', zugang: z, befehl: "dpkg-query -W -f '${Status}' python3-apt", erwartet: 'install ok installed' } },
+        { id: 'dpkg', text: 'keine Paketverwaltung blockiert (dpkg sauber)', pruefung: { typ: 'befehl', zugang: z, befehl: 'dpkg --audit', nichtEnthalten: 'package' } },
+        ...(vm ? [{ id: 'agent', text: 'Gast-Agent der VM antwortet', pruefung: { typ: 'skill' as const, skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: vm.vmid, node: vm.node } } }] : []),
+      ];
+    },
+    async erzeuge(p, k) {
+      const z = txt(p.zugang);
+      if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
+      if (!(await k.updatesAn(z))) return { fehler: `Schalter „Sicherheitsupdates“ ist für ${z} aus — nur Info (Owner 22.10.)` };
+      const vm = await k.vmFuerZugang(z);
+      if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot keine Standard-Updates` };
+      const f = fensterAus(typeof p.fenster === 'string' ? p.fenster : undefined);
+      if ('fehler' in f) return f;
+      if (await k.anzahl('os_updates', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
+      const snap = snapshotName(k.jetzt, 7);
+      const za = await k.zugangAsset(z);
+      return { merkmal: z, plan: {
+        titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
+        typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...(za ? [za] : [])],
+        schritte: osUpdateSchritte(z, vm, snap, f, `osupd-${snap}`),
+      } };
     },
   },
   { key: 'zertifikat_erneuern', version: 1, titel: '(f) NPM-Zertifikat erneuern', beschreibung: 'Let’s-Encrypt-Zertifikat in NPM erneuern.', parameter: {}, verfuegbar: false, folgt: 'mit I7 (der NPM-Skill hat noch keine Erneuern-Aktion)' },

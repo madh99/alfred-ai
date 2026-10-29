@@ -17,6 +17,9 @@ export interface StandardDeps {
   laeufe?: (o: string, vorlage: string) => Promise<{ anzahl: number; letzter?: string }>;
   /** S1 — Meldung an den Owner (Sperre, Verfall, Abweichung) */
   melde?: (text: string) => Promise<void>;
+  /** S4 — Serie als normales Change-Paket anlegen (verkettet) und EINE Freigabe-Frage stellen (Owner 27.10.: ein Ja je Serie) */
+  planeSerie?: (o: string, plaene: Array<Record<string, unknown>>) => Promise<{ ok: true; ids: string[] } | { ok: false; fehler: string[] }>;
+  freigabeAnfragen?: (o: string, ids: string[]) => Promise<string>;
   kontext(o: string): Promise<StandardKontext>;
   /** Plan prüfen und als Standard-Change (sofort freigegeben) speichern */
   speichere(o: string, plan: Record<string, unknown>, vorlage: string, merkmal: string): Promise<{ ok: true; change: CmdbChangeRequest } | { ok: false; fehler: string[] }>;
@@ -81,6 +84,71 @@ export class StandardChanges {
     await this.d.setze(o, key, { abdruck: vorlagenAbdruck(v), status: 'widerrufen', frageHash: null, frageBis: null });
     this.d.protokoll?.('I4b Standard-Vorlage widerrufen', { vorlage: key });
     return `Vorlage ${v.titel} widerrufen — Alfred legt daraus keine Changes mehr an.`;
+  }
+
+  /** Gemeinsame Prüfung: freigegeben, nicht gesperrt, nicht verfallen */
+  private async nutzbar(o: string, key: string): Promise<{ v: Vorlage } | { fehler: string }> {
+    const v = this.vorlage(key);
+    if (!v) return { fehler: `Vorlage „${key}“ unbekannt (${this.vorlagen.map(x => x.key).join(', ')})` };
+    if (!v.verfuegbar || !v.erzeuge) return { fehler: `${v.titel} folgt ${v.folgt ?? 'später'}` };
+    const s = (await this.d.stand(o)).find(x => x.vorlage === key);
+    if (s?.status === 'ueberpruefen') return { fehler: `Vorlage ${v.titel} ist gesperrt (überprüfen) — ein Lauf hielt an oder sie lief über 2 Monate nicht. Erst prüfen, dann neu freigeben (standard_freigabe_anfragen).` };
+    if (s?.status !== 'freigegeben' || s.abdruck !== vorlagenAbdruck(v)) return { fehler: `Vorlage ${v.titel} ist nicht (mehr) freigegeben — erst standard_freigabe_anfragen, der Owner bestätigt einmal` };
+    const l = await this.d.laeufe?.(o, key).catch(() => undefined);
+    const seit = Math.max(Date.parse(l?.letzter ?? '') || 0, Date.parse(s.freigegebenAt ?? '') || 0);
+    if (seit && this.jetzt() - seit > VERFALL_MS) {
+      await this.sperre(o, key, `über 2 Monate ohne Lauf (seit ${new Date(seit).toISOString().slice(0, 10)})`);
+      return { fehler: `Vorlage ${v.titel}: über 2 Monate ohne Lauf — gesperrt, bitte prüfen und neu freigeben` };
+    }
+    return { v };
+  }
+
+  /** Eingangskontrolle einer Vorlage für einen Parametersatz: Abweichungen (leer = passt) */
+  private async kontrolle(v: Vorlage, p: Record<string, unknown>, kx: StandardKontext): Promise<{ annahmen: Annahme[]; abw: string[] }> {
+    const annahmen: Annahme[] = v.annahmen ? await v.annahmen(p, kx) : [];
+    const abw: string[] = [];
+    if (annahmen.length && this.d.pruefe) {
+      for (const a of annahmen) {
+        const r = await this.d.pruefe(a.pruefung).catch((err: Error) => ({ ok: false, text: err.message }));
+        if (!r.ok) abw.push(`${a.text}: ${r.text.slice(0, 160)}`);
+      }
+    }
+    return { annahmen, abw };
+  }
+
+  /**
+   * S4 — Serie: Vorlage für mehrere Hosts als verkettetes Change-Paket mit EINER Freigabe-Frage (Owner 27.10.: „je Serie“). Hosts aus
+   * `zugaenge` oder alle mit Schalter „Updates an“ (Reihenfolge aus dem Kontext). Jeder Host durchläuft Grenzen und Eingangskontrolle;
+   * wer nicht passt, wird ausgelassen und gemeldet, die übrigen laufen. Hält ein Glied an, warten die folgenden (Abhängigkeit).
+   */
+  async serie(o: string, key: string, opts: { zugaenge?: string[]; parameter?: Record<string, unknown>; geplantAb?: string }): Promise<{ ok: true; text: string; ids: string[] } | { ok: false; fehler: string[] }> {
+    if (!this.d.planeSerie || !this.d.freigabeAnfragen) return { ok: false, fehler: ['Serien sind hier nicht verfügbar'] };
+    const n = await this.nutzbar(o, key);
+    if ('fehler' in n) return { ok: false, fehler: [n.fehler] };
+    const kx = await this.d.kontext(o);
+    const hosts = opts.zugaenge?.length ? opts.zugaenge : (await kx.zugaengeMitUpdates?.()) ?? [];
+    if (!hosts.length) return { ok: false, fehler: ['keine Hosts — kein Fernzugang mit Schalter „Sicherheitsupdates an“ (updates_schalter)'] };
+    const plaene: Array<Record<string, unknown>> = []; const ausgelassen: string[] = [];
+    for (const z of hosts) {
+      const p = { ...(opts.parameter ?? {}), zugang: z };
+      const e = await n.v.erzeuge!(p, kx);
+      if ('fehler' in e) { ausgelassen.push(`${z}: ${e.fehler}`); continue; }
+      const k = await this.kontrolle(n.v, p, kx);
+      if (k.abw.length) { ausgelassen.push(`${z}: Eingangskontrolle weicht ab — ${k.abw.join('; ')}`); continue; }
+      const vorher = plaene.at(-1)?.schluessel as string | undefined;
+      plaene.push({
+        ...e.plan, schluessel: `serie${plaene.length + 1}`, ...(vorher ? { abhaengigVon: [vorher] } : {}), ...(opts.geplantAb ? { geplantAb: opts.geplantAb } : {}),
+        begruendung: `Standard-Serie ${key} (${n.v.titel}): ${String(e.plan.begruendung ?? '')}`,
+        schritte: [...k.annahmen.map(a => ({ titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: a.pruefung, beiFehler: 'anhalten' })), ...((e.plan.schritte as unknown[]) ?? [])],
+      });
+    }
+    if (ausgelassen.length) await this.d.melde?.(`📋 Serie ${n.v.titel}: ausgelassen — ${ausgelassen.join(' · ')}`).catch(() => undefined);
+    if (!plaene.length) return { ok: false, fehler: [`kein Host passt: ${ausgelassen.join(' · ')}`] };
+    const r = await this.d.planeSerie(o, plaene);
+    if (!r.ok) return r;
+    const frage = await this.d.freigabeAnfragen(o, r.ids);
+    this.d.protokoll?.('S4 Standard-Serie angelegt', { vorlage: key, ids: r.ids, ausgelassen });
+    return { ok: true, ids: r.ids, text: `Serie ${n.v.titel}: ${r.ids.length} Changes verkettet (${hosts.filter(h => !ausgelassen.some(a => a.startsWith(`${h}:`))).join(' → ')}).${ausgelassen.length ? ` Ausgelassen: ${ausgelassen.join(' · ')}.` : ''} ${frage}` };
   }
 
   /** S1 — Vorlage sperren (Lauf hielt an / rollte zurück / Verfall): keine Changes mehr daraus bis zur neuen Freigabe */

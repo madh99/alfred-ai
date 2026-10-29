@@ -7339,7 +7339,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             fragenAufraeumen: ownerFragenAufraeumen,
             // S1 — hält ein Change aus einer Standard-Vorlage an oder rollt zurück, wird die Vorlage gesperrt (überprüfen)
-            nachStoerung: async (o, c, grund) => { const v = c.freigegebenUeber?.startsWith('standard:') ? c.freigegebenUeber.slice(9) : undefined; if (v) await standardRef?.sperre(o, v, `${c.title} (${c.id.slice(0, 8)}) ${grund}`); },
+            nachStoerung: async (o, c, grund) => { const v = c.freigegebenUeber?.startsWith('standard:') ? c.freigegebenUeber.slice(9) : /^Standard-Serie ([a-z_]+)/.exec(c.description ?? '')?.[1]; if (v) await standardRef?.sperre(o, v, `${c.title} (${c.id.slice(0, 8)}) ${grund}`); },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
             tresor: this.tresor,
@@ -7506,8 +7506,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             stand: (o) => wartungRepo.standardStand(o),
             // S1 — Eingangskontrolle, Zähler, Meldungen
             pruefe: (p) => this.changeMotor ? this.changeMotor.pruefe(p) : Promise.resolve({ ok: false, text: 'Motor nicht verfügbar' }),
-            laeufe: async (o, v) => { const l = (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).filter(c => c.freigegebenUeber === `standard:${v}` && c.status === 'completed'); const letzter = l.map(c => String((c.lauf as { ende?: string } | undefined)?.ende ?? c.updatedAt)).sort().at(-1); return { anzahl: l.length, ...(letzter ? { letzter } : {}) }; },
+            laeufe: async (o, v) => { const l = (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).filter(c => (c.freigegebenUeber === `standard:${v}` || (c.description ?? '').startsWith(`Standard-Serie ${v} `)) && c.status === 'completed'); const letzter = l.map(c => String((c.lauf as { ende?: string } | undefined)?.ende ?? c.updatedAt)).sort().at(-1); return { anzahl: l.length, ...(letzter ? { letzter } : {}) }; },
             melde: async (t) => { await this.meldeOhneModell(t); },
+            // S4 — Serie: normales Change-Paket (verkettet) + EINE Freigabe-Frage
+            planeSerie: async (o, plaene) => { const r = await this.changePlanung!.planen(o, plaene); return r.ok ? { ok: true as const, ids: r.changes.map(c => c.id) } : r; },
+            freigabeAnfragen: async (o, ids) => { const r = await this.changePlanung!.freigabeAnfragen(o, ids); return r.ok ? r.text : `Freigabe-Frage nicht gestellt: ${r.fehler.join('; ')}`; },
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
             speichere: (o, plan, v, m) => this.changePlanung!.planenStandard(o, plan, v, m),
             nachAnlage: () => { void this.changeMotor?.anstossen().catch(() => undefined); },
@@ -7550,6 +7553,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   return Array.isArray(r.data) ? (r.data as Array<{ name?: string }>).filter(s => s.name && s.name !== 'current').map(s => ({ name: s.name! })) : [];
                 },
                 updatesAn: async (z) => schalter[z] === 'an',
+                // S4 — Hosts der Serie: Schalter an; Reihenfolge unkritische zuerst (höchste CMDB-Kritikalität der Services am Host), dann Name
+                zugaengeMitUpdates: async () => {
+                  const rang: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+                  const mit = await Promise.all(zugaenge.filter(z => schalter[z.name] === 'an').map(async z => {
+                    const sv = z.cmdbAssetId ? await itsmI3.getServicesForAsset(o, z.cmdbAssetId).catch(() => []) : [];
+                    return { name: z.name, r: Math.max(0, ...sv.map(x => rang[String(x.criticality ?? 'medium')] ?? 1)) };
+                  }));
+                  return mit.sort((a, b) => a.r - b.r || a.name.localeCompare(b.name)).map(x => x.name);
+                },
                 anzahl: async (v, m, seit) => changes.filter(c => c.freigegebenUeber === `standard:${v}` && Date.parse(c.createdAt) >= seit && ((c.pruefung as { zusatz?: { merkmal?: string } } | undefined)?.zusatz?.merkmal === m)).length,
               };
             },
