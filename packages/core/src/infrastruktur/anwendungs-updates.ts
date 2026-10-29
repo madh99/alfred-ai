@@ -34,7 +34,8 @@ export function familieAus(paket: string): { familie: string; version: string } 
   return m ? { familie: m[1]!, version: m[2]! } : undefined;
 }
 
-const versionTupel = (v: string) => v.split(/[.-]/).map(x => Number.parseInt(x, 10)).map(n => (Number.isFinite(n) ? n : 0));
+// v1711 — Präfix „v“ (v1.9.8) zählt nicht: „v1“ war sonst 0 und v0.15.7 galt als neuer (Realfall livekit 29.10.)
+const versionTupel = (v: string) => v.replace(/^v(?=\d)/i, '').split(/[.-]/).map(x => Number.parseInt(x, 10)).map(n => (Number.isFinite(n) ? n : 0));
 export function versionGroesser(a: string, b: string): boolean {
   const x = versionTupel(a), y = versionTupel(b);
   for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return d > 0; }

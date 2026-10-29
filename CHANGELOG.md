@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Update-Bericht: Versionen mit „v“-Präfix richtig verglichen (v1711)
+
+- Tags wie „v1.9.8“ wurden falsch eingeordnet, ältere Versionen (z. B. v0.15.7) erschienen als „neuer“. Das Präfix zählt beim Vergleich jetzt nicht mehr.
+
 ### Fixed — Update-Bericht: per Digest festgelegte Container nicht mehr gegen „latest“ verglichen (v1710)
 
 - Mit dem containerd-Image-Store steht die Digest-Referenz eines Images auch unter seinen Tags. Der Bericht verglich solche Container deshalb mit „latest“ und meldete pauschal einen neuen Build — auch bei Datenbanken, deren ursprüngliche Version unbekannt war.

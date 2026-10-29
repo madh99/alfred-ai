@@ -163,3 +163,9 @@ describe('Anwendungs-Updates — nur per Digest festgelegt (v1710)', () => {
     expect(c.hinweis).toMatch(/vermutlich veraltet/);
   });
 });
+
+describe('Anwendungs-Updates — Versionen mit v-Präfix (v1711)', () => {
+  it('v1.9.8 ist neuer als v0.15.7', () => {
+    expect(neuereTags(['v0.15.7', 'v1.9.9', 'v1.10.0', 'v2.0.1'], 'v1.9.8')).toEqual({ gleicheHauptversion: ['v1.10.0', 'v1.9.9'], neueHauptversion: ['v2.0.1'] });
+  });
+});
