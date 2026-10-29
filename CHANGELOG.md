@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Update-Bericht versteht Image-Referenzen mit Tag und festem Digest (v1712)
+
+- Container mit einer Referenz der Form `name:tag@sha256:…` werden über ihren Tag geprüft, während der Digest das laufende Image unverändert festhält. So lassen sich Tags in Compose-Dateien nachtragen, ohne dass dabei ein anderes Image gezogen wird.
+
 ### Fixed — Update-Bericht: Versionen mit „v“-Präfix richtig verglichen (v1711)
 
 - Tags wie „v1.9.8“ wurden falsch eingeordnet, ältere Versionen (z. B. v0.15.7) erschienen als „neuer“. Das Präfix zählt beim Vergleich jetzt nicht mehr.

@@ -169,3 +169,10 @@ describe('Anwendungs-Updates — Versionen mit v-Präfix (v1711)', () => {
     expect(neuereTags(['v0.15.7', 'v1.9.9', 'v1.10.0', 'v2.0.1'], 'v1.9.8')).toEqual({ gleicheHauptversion: ['v1.10.0', 'v1.9.9'], neueHauptversion: ['v2.0.1'] });
   });
 });
+
+describe('Anwendungs-Updates — Tag mit festem Digest (v1712)', () => {
+  it('nginx:1.27@sha256:… nutzt den Tag', () => {
+    expect(waehleReferenz('3f2a9c1b7d4e', 'nginx:1.27@sha256:abc', ['nginx@sha256:abc'])).toBe('nginx:1.27@sha256:abc');
+    expect(leseImageRef('nginx:1.27@sha256:abc')).toEqual({ registry: 'registry-1.docker.io', repo: 'library/nginx', tag: '1.27', digest: 'sha256:abc' });
+  });
+});

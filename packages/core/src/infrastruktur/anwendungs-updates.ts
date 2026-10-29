@@ -298,6 +298,8 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
 export function waehleReferenz(angezeigt: string, konfig: string | undefined, repoTags: string[]): string | undefined {
   const istId = (x: string) => /^sha256:|^[0-9a-f]{12,64}$/.test(x);
   for (const x of [angezeigt, konfig]) if (x && !istId(x) && !x.includes('@')) return x;
+  // v1712 — „name:tag@sha256:…“ (Tag nachgetragen, Digest bleibt fest — Owner 29.10.): Tag zählt, Digest-Vergleich wie sonst
+  for (const x of [angezeigt, konfig]) if (x?.includes('@') && leseImageRef(x).tag) return x;
   repoTags = repoTags.filter(t => !t.includes('@')); // v1710 — containerd-Image-Store führt Digest-Referenzen auch als RepoTag
   const digestRef = [angezeigt, konfig].find(x => x?.includes('@'));
   if (digestRef) { const repo = leseImageRef(digestRef).repo; return repoTags.find(t => leseImageRef(t).repo === repo); }
