@@ -75,3 +75,13 @@ export function osUpdateSchritte(z: string, vm: { vmid: number; node: string }, 
     vn.nachher,
   ];
 }
+
+/** S4 — Beginn der kommenden Nacht (morgen HH:MM Wien) als ISO mit Zeitzonen-Versatz, z. B. 2026-11-05T00:30:00+01:00 */
+export function naechsteNacht(jetzt: Date, um = '00:30'): string {
+  const morgen = new Date(jetzt.getTime() + 86_400_000);
+  const tag = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Vienna', year: 'numeric', month: '2-digit', day: '2-digit' }).format(morgen);
+  // Versatz des Ziels selbst bestimmen (Sommer-/Winterzeit): erst grob, dann mit dem Versatz an diesem Zeitpunkt
+  const versatz = (d: Date) => { const t = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Vienna', timeZoneName: 'shortOffset' }).formatToParts(d).find(x => x.type === 'timeZoneName')?.value ?? 'GMT+1'; const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(t); return m ? `${m[1]}${m[2]!.padStart(2, '0')}:${m[3] ?? '00'}` : '+01:00'; };
+  const grob = new Date(`${tag}T${um}:00+01:00`);
+  return `${tag}T${um}:00${versatz(grob)}`;
+}

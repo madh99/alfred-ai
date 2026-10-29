@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Wöchentlicher Auslöser für Betriebssystem-Updates (v1706)
+
+- Jeden Dienstag um 10:00 legt Alfred die Update-Serie für die kommende Nacht an (alle Hosts mit eingeschaltetem Update-Schalter) und stellt eine Freigabe-Frage. Ohne Ja läuft nichts; kann keine Serie angelegt werden, kommt eine Meldung mit dem Grund.
+
 ### Added — Wöchentliche Betriebssystem-Updates als Vorlage, Serie mit einer Freigabe (v1705)
 
 - Neue Standard-Vorlage „Betriebssystem-Updates“ nach dem Muster der erfolgreichen Update-Nacht vom 29.10.: nur im Wartungsfenster, Snapshot vorher, Docker-Pakete bleiben unberührt, Neustart nur wenn nötig, Rückweg über den Snapshot.

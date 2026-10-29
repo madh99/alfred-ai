@@ -14,3 +14,12 @@ describe('S2 Vorher/Nachher', () => {
     expect(n).toContain("a['health']=='healthy' and b['health']!='healthy'");
   });
 });
+
+describe('S4 naechsteNacht', () => {
+  it('morgen 00:30 Wien mit Winter-/Sommerzeit-Versatz', async () => {
+    const { naechsteNacht } = await import('./os-updates.js');
+    expect(naechsteNacht(new Date('2026-11-04T09:00:00Z'))).toBe('2026-11-05T00:30:00+01:00');
+    expect(naechsteNacht(new Date('2026-07-07T08:00:00Z'))).toBe('2026-07-08T00:30:00+02:00');
+    expect(naechsteNacht(new Date('2026-10-24T09:00:00Z'))).toBe('2026-10-25T00:30:00+02:00'); // Umstellung erst um 03:00
+  });
+});

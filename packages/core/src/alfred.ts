@@ -7585,6 +7585,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
+        // S4 — wöchentliche Betriebssystem-Updates (Owner 27.10.: wöchentlich, nachts ab 00:30; ein Ja je Serie): dienstags 10:00 legt
+        // Alfred die Serie für die kommende Nacht an (alle Hosts mit Schalter „Updates an“) und stellt EINE Freigabe-Frage. Ohne Ja läuft nichts.
+        this.registriereJob({
+          key: 'os-updates-serie', beschreibung: 'S4 — wöchentliche Betriebssystem-Updates: Serie für die Nacht auf Mittwoch anlegen, eine Freigabe-Frage',
+          takt: { art: 'woechentlich', tag: 2, um: '10:00' }, bereich: 'global', slot: true, timeoutMin: 10,
+          run: async () => {
+            const o = ownerFz(); if (!o || !standardRef) return { ok: true, zaehler: { changes: 0 } };
+            const { naechsteNacht } = await import('./infrastruktur/os-updates.js');
+            const r = await standardRef.serie(o, 'os_updates', { geplantAb: naechsteNacht(new Date()) });
+            if (!r.ok) { await this.meldeOhneModell(`📋 Wöchentliche Betriebssystem-Updates: keine Serie angelegt — ${r.fehler.join('; ')}`).catch(() => undefined); return { ok: true, zaehler: { changes: 0 } }; }
+            return { ok: true, zaehler: { changes: r.ids.length } };
+          },
+        });
         // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner);
         // angebunden bei den ITSM-Routen, weil der Web-Adapter hier noch nicht existiert (Realfall 22.10.: „Wartung nicht verfügbar“)
         this.wartungWebAktion = {
