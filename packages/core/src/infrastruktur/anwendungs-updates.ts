@@ -118,7 +118,7 @@ export function realmErlaubt(registry: string, realm: string): boolean {
   try { const u = new URL(realm); return u.protocol === 'https:' && !u.port && !u.username && (REGISTRIES[registry] ?? []).includes(u.hostname); } catch { return false; }
 }
 
-export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ digest?: string; tags?: string[]; fehler?: string }> {
+export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ digest?: string; tags?: string[]; tagDigests?: Record<string, string[]>; fehler?: string }> {
   if (!REGISTRIES[ref.registry]) return { fehler: `Registry ${ref.registry} nicht für Abfragen freigegeben` };
   if (!REPO.test(ref.repo) || (ref.tag && !TAG.test(ref.tag))) return { fehler: 'Image-Name nicht in der üblichen Form' };
   const basis = `https://${ref.registry}/v2/${ref.repo}`;
@@ -139,7 +139,7 @@ export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ di
     return r;
   };
   try {
-    const aus: { digest?: string; tags?: string[]; fehler?: string } = {};
+    const aus: { digest?: string; tags?: string[]; tagDigests?: Record<string, string[]>; fehler?: string } = {};
     if (ref.tag) {
       const r = await hole(`${basis}/manifests/${ref.tag}`, 'HEAD', { Accept: MANIFEST });
       if (r.status === 200) aus.digest = r.headers.get('docker-content-digest') ?? undefined;
@@ -148,7 +148,12 @@ export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ di
     if (ref.registry === 'registry-1.docker.io') {
       // tags/list ist alphabetisch und bei großen Repos (postgres: >5000 Tags) abgeschnitten — Hub-API nach Aktualität
       const t = await abruf(`https://hub.docker.com/v2/repositories/${ref.repo}/tags?page_size=100&ordering=last_updated`);
-      if (t.status === 200) aus.tags = ((await t.json()) as { results?: Array<{ name: string }> }).results?.map(x => x.name) ?? [];
+      if (t.status === 200) {
+        const res = ((await t.json()) as { results?: Array<{ name: string; digest?: string; images?: Array<{ digest?: string }> }> }).results ?? [];
+        aus.tags = res.map(x => x.name);
+        // v1710 — Digest je Tag (Index und Einzel-Images): für Container, die nur per Digest festgelegt sind
+        aus.tagDigests = Object.fromEntries(res.map(x => [x.name, [x.digest, ...(x.images ?? []).map(i => i.digest)].filter((y): y is string => !!y)]));
+      }
     } else {
       const t = await hole(`${basis}/tags/list?n=1000`, 'GET', {});
       if (t.status === 200) aus.tags = ((await t.json()) as { tags?: string[] }).tags ?? [];
@@ -254,7 +259,25 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
       const referenz = waehleReferenz(c.image, k?.ref, b?.tags ?? []);
       const st: ContainerStand = { host: h.name, name: c.name, image: referenz ?? c.image, art: containerArt({ ...c, image: referenz ?? c.image }), gleicheHauptversion: [], neueHauptversion: [] };
       container.push(st);
-      if (!referenz) { st.hinweis = b?.digests.length ? 'per Digest festgelegt' : 'nur Image-ID'; continue; }
+      if (!referenz) {
+        // v1710 — nur per Digest festgelegt (Umzug per RepoDigest): Tag über den Digest bestimmen (Docker Hub), nie gegen :latest raten
+        const dr = (b?.digests ?? [])[0] ?? [c.image, k?.ref].find(x => x?.includes('@'));
+        if (!dr) { st.hinweis = 'nur Image-ID'; continue; }
+        st.art = containerArt({ ...c, image: dr });
+        const ref = leseImageRef(dr); const eigene = new Set((b?.digests ?? [dr]).map(x => x.slice(x.indexOf('@') + 1)));
+        st.image = `${ref.registry === 'registry-1.docker.io' ? ref.repo.replace(/^library\//, '') : `${ref.registry}/${ref.repo}`}@…${[...eigene][0]?.slice(-12) ?? ''}`;
+        const schl = `${ref.registry}/${ref.repo}`;
+        if (!registry.has(schl)) registry.set(schl, registryAbfrage({ registry: ref.registry, repo: ref.repo }, d.abruf));
+        const r = await registry.get(schl)!;
+        if (!r.tagDigests) { st.hinweis = r.fehler ?? 'per Digest festgelegt — Tag nicht bestimmbar'; continue; }
+        const passend = Object.entries(r.tagDigests).filter(([, ds]) => ds.some(x => eigene.has(x))).map(([t]) => t);
+        // genaueste reine Version (1.27.3 vor 1.27 vor 1), sonst ein Tag mit Ziffern (1.27-alpine), sonst latest/stable
+        const tag = passend.filter(t => /^v?\d+(\.\d+)*$/.test(t)).sort((x, y) => y.length - x.length)[0] ?? passend.filter(t => /\d/.test(t)).sort((x, y) => x.length - y.length)[0] ?? passend[0];
+        if (!tag) { st.hinweis = 'per Digest festgelegt — gehört zu keinem der 100 zuletzt aktualisierten Tags (vermutlich veraltet)'; continue; }
+        st.tag = tag; st.image = `${st.image} (= ${tag})`; st.neuerBuild = false;
+        if (r.tags?.length) Object.assign(st, neuereTags(r.tags, tag));
+        continue;
+      }
       const ref = leseImageRef(referenz); const tag = ref.tag ?? 'latest';
       st.tag = tag;
       const schluessel = `${ref.registry}/${ref.repo}:${tag}`;
@@ -274,6 +297,7 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
 export function waehleReferenz(angezeigt: string, konfig: string | undefined, repoTags: string[]): string | undefined {
   const istId = (x: string) => /^sha256:|^[0-9a-f]{12,64}$/.test(x);
   for (const x of [angezeigt, konfig]) if (x && !istId(x) && !x.includes('@')) return x;
+  repoTags = repoTags.filter(t => !t.includes('@')); // v1710 — containerd-Image-Store führt Digest-Referenzen auch als RepoTag
   const digestRef = [angezeigt, konfig].find(x => x?.includes('@'));
   if (digestRef) { const repo = leseImageRef(digestRef).repo; return repoTags.find(t => leseImageRef(t).repo === repo); }
   return repoTags[0];

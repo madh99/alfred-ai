@@ -63,7 +63,7 @@ describe('Anwendungs-Updates — Container', () => {
       return r(404);
     };
     const a = await registryAbfrage({ registry: 'registry-1.docker.io', repo: 'library/nginx', tag: '1.27' }, abruf);
-    expect(a).toEqual({ digest: 'sha256:neu', tags: ['1.29', '1.27'] });
+    expect(a).toMatchObject({ digest: 'sha256:neu', tags: ['1.29', '1.27'] });
     expect(aufrufe[1]).toContain('scope=repository%3Alibrary%2Fnginx%3Apull');
   });
 
@@ -132,5 +132,34 @@ describe('Anwendungs-Updates — Referenz trotz Image-ID (v1709)', () => {
     expect(waehleReferenz('3f2a9c1b7d4e', `sha256:${'a'.repeat(64)}`, ['matrixdotorg/synapse:v1.120.0'])).toBe('matrixdotorg/synapse:v1.120.0');
     expect(waehleReferenz('3f2a9c1b7d4e', 'x/y@sha256:1', ['andere/z:1', 'x/y:2'])).toBe('x/y:2');
     expect(waehleReferenz('3f2a9c1b7d4e', 'x/y@sha256:1', [])).toBeUndefined();
+  });
+});
+
+describe('Anwendungs-Updates — nur per Digest festgelegt (v1710)', () => {
+  const D = `sha256:${'d'.repeat(64)}`, I = `sha256:${'e'.repeat(64)}`;
+  const lauf = async (hub: Array<{ name: string; digest: string }>) => {
+    const a: Record<string, string> = {
+      [UPDATE_BEFEHLE.os]: 'ID=ubuntu', [UPDATE_BEFEHLE.apt]: '', [UPDATE_BEFEHLE.pakete]: '', [UPDATE_BEFEHLE.docker]: 'active',
+      [UPDATE_BEFEHLE.container]: 'pg eeeeeeeeeeee pgdata',
+      [containerBefehl(['pg'])]: `/pg postgres@${D} ${I}`,
+      // containerd-Image-Store: die Digest-Referenz steht auch unter RepoTags
+      [imageBefehl([I])]: `${I} ["postgres@${D}"] ["postgres@${D}"]`,
+    };
+    const r = await sammleAnwendungsUpdates({
+      hosts: [{ name: 'h', updatesSchalter: false }],
+      lesen: async (_z, b) => { if (!(b in a)) throw new Error(b); return a[b]!; },
+      abruf: async (url) => ({ status: url.startsWith('https://hub.docker.com/') ? 200 : 404, headers: { get: () => null }, json: async () => ({ results: hub }) }),
+    });
+    return r.container[0]!;
+  };
+  it('bestimmt den Tag über den Digest statt gegen latest zu raten', async () => {
+    const c = await lauf([{ name: 'latest', digest: 'sha256:x' }, { name: '18.0', digest: 'sha256:x' }, { name: '16.10', digest: D }, { name: '16', digest: D }, { name: '16.11', digest: 'sha256:y' }]);
+    expect(c).toMatchObject({ tag: '16.10', neuerBuild: false, gleicheHauptversion: ['16.11'], neueHauptversion: ['18.0'], art: 'datenbank' });
+    expect(c.image).toContain('(= 16.10)');
+  });
+  it('Digest ohne aktuellen Tag: vermutlich veraltet, kein Vergleich gegen latest', async () => {
+    const c = await lauf([{ name: 'latest', digest: 'sha256:x' }]);
+    expect(c.neuerBuild).toBeUndefined();
+    expect(c.hinweis).toMatch(/vermutlich veraltet/);
   });
 });

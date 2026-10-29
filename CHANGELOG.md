@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Update-Bericht: per Digest festgelegte Container nicht mehr gegen „latest“ verglichen (v1710)
+
+- Mit dem containerd-Image-Store steht die Digest-Referenz eines Images auch unter seinen Tags. Der Bericht verglich solche Container deshalb mit „latest“ und meldete pauschal einen neuen Build — auch bei Datenbanken, deren ursprüngliche Version unbekannt war.
+- Jetzt bestimmt der Bericht bei Docker-Hub-Images den Tag, zu dem der Digest gehört (z. B. postgres 16.10), und meldet von dort aus neuere Versionen derselben und neuer Hauptversion. Gehört der Digest zu keinem aktuellen Tag, steht er als „vermutlich veraltet“ unter „nicht prüfbar“.
+- Die Einordnung (Datenbank, mit Daten, zustandslos) richtet sich bei diesen Containern nach dem Image statt nach der ID.
+
 ### Fixed — Update-Bericht erkennt Container, die per Image-ID oder Digest laufen (v1709)
 
 - Nach dem Umzug auf die neuen Docker-VMs zeigt die Container-Liste dort nur die Image-ID; der Bericht wies diese Container deshalb als „nicht prüfbar“ aus. Er liest jetzt die beim Anlegen verwendete Referenz und die Tags und Digests des Images selbst und prüft diese Container wie alle anderen.
