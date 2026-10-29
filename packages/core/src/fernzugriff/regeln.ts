@@ -85,6 +85,9 @@ const LESE_BEFEHLE: RegExp[] = [
   /^nc -z[vu]{0,2}( -w [1-9]\d?)? [\w.:-]+ \d{1,5}$/, // v1681 — auch UDP-Probe (-u), weiterhin ohne Daten
   /^(dig|nslookup|host)( [\w.:@+-]+){1,3}$/,
   /^ss( -[tulnpaxs]+)+$/,
+  // v1714 — Realfall 29.10. (775ebaf3 Schritt 22): Prüfung der Host-Firewall lief im Käfig ohne root („you must be root“). Nur Anzeige,
+  // keine Änderung (list), Regelwerke enthalten keine Geheimnisse
+  /^nft( -[ans]+)* list (ruleset|tables|table (inet|ip|ip6|arp|bridge|netdev) [\w-]+|chain (inet|ip|ip6|arp|bridge|netdev) [\w-]+ [\w-]+)$/,
   // I1 Bestandsaufnahme (Spec Infrastruktur-Vorhaben) — Betriebssystem und genau die Compose-Zuordnung (nur diese zwei Labels)
   /^cat \/etc\/(os-release|hostname|debian_version|redhat-release|issue)$/,
   /^docker inspect --format '\{\{\.Name\}\},\{\{index \.Config\.Labels "com\.docker\.compose\.project"\}\},\{\{index \.Config\.Labels "com\.docker\.compose\.service"\}\}'( [\w.-]+)+$/,

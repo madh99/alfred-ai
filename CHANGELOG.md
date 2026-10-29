@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Firewall-Prüfungen mit nft laufen als Lesebefehl (v1714)
+
+- Reine Anzeigebefehle von nftables (`nft list ruleset`, `nft list tables`, `nft list table …`, `nft list chain …`) stehen jetzt auf der Leseliste des Fernzugriffs. Prüfungen einer Host-Firewall scheiterten vorher im Lese-Käfig mit „you must be root“, obwohl die Firewall korrekt eingerichtet war.
+- Alle verändernden nft-Befehle (add, delete, flush, -f) brauchen weiterhin eine Bestätigung.
+
 ### Fixed — VM-Bereitstellung übernimmt vorab erfasste CMDB-Einträge (v1713)
 
 - Wurde eine neue VM im selben Change vorab in der CMDB erfasst (gleicher Name und gleiche Adresse, ohne Quelle), hielt die Bereitstellung mit „Adresse gehört laut CMDB zu …“ an — die VM kollidierte mit ihrem eigenen Eintrag.
