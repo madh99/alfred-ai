@@ -71,6 +71,9 @@ const LESE_BEFEHLE: RegExp[] = [
   /^journalctl( (-n \d{1,5}|-u [\w@.-]+|-p (err|warning|crit|alert|emerg|\d)|-b( -?\d)?|--(since|until) ("\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?"|\d{4}-\d{2}-\d{2}|today|yesterday|-\d{1,4}(min|h|d))|--no-pager|-k|-o (short|short-iso|cat)))+$/,
   /^systemctl (status [\w@.-]+( --no-pager)?|is-active [\w@.-]+|is-failed [\w@.-]+|--failed( --no-pager)?|list-units( --type=\w+)?( --state=\w+)?( --no-pager)?)$/,
   /^apt list --upgradable$/,
+  // v1707 — Anwendungs-Update-Bericht: installierte Pakete (dpkg -l: Status, Name, Version) und verfügbare Paketnamen einer Familie (postgresql-…)
+  /^dpkg -l$/,
+  /^apt-cache pkgnames [a-z][a-z0-9.+-]{1,40}$/,
   /^last -n \d{1,3}$/,
   // v1549 (S1) — Netz-Diagnose außerhalb des Käfigs (der hat kein Netz): nur GET/HEAD, ping/dig mit Grenzen
   // v1551 (Sicherheitsprüfung, SSRF) — ohne Rückfrage nur an den Host selbst, ohne Query-String und ohne Weiterleitung (-L)

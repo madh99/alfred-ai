@@ -77,6 +77,8 @@ export interface InfrastrukturDeps {
   standard?: StandardChanges;
   // ── I4b Teil 5 — Soll/Ist ──
   sollIst?: { planen(o: string, v: VorhabenDaten): Promise<number>; abgleich(o: string, v: VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
+  // ── v1707 — Anwendungs-Update-Bericht (nur lesend) ──
+  anwendungsUpdates?: () => Promise<string>;
   // ── I4c — Tresor (ohne Werte) ──
   tresor?: { liste(o: string): Promise<Array<{ name: string; herkunft: string; zweck?: string; geaendert: string }>>; erzeuge(o: string, name: string, laenge?: number, zweck?: string): Promise<void>; entferne(o: string, name: string): Promise<boolean> };
   // ── Einwand ──
@@ -94,7 +96,7 @@ export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 const ALFRED_IP = (() => { try { for (const l of Object.values(networkInterfaces())) for (const a of l ?? []) if (a.family === 'IPv4' && !a.internal && /^(10|172|192)\./.test(a.address) && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address; } catch { /* keine Netzinfo */ } return 'unbekannt'; })();
 /** v1695 (K5) — Aktionen, die nie aus einem Unteragenten laufen */
 export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen']);
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen'] as const;
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'anwendungs_updates', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -132,6 +134,7 @@ export class InfrastrukturSkill extends Skill {
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Eingangskontrolle der Annahmen vor dem Anlegen und als erste Schritte, Start nach Zeitplan; weicht die Eingangskontrolle ab, den Fall einzeln mit changes_planen planen; eine nach Halt/Rückweg oder 2 Monaten ohne Lauf gesperrte Vorlage (überprüfen) braucht eine neue Freigabe); standard_widerrufen (vorlage, wortlaut); standard_serie (vorlage, optional zugaenge [Liste; sonst alle Hosts mit Schalter „Updates an“, unkritische zuerst], optional parameter, geplant_ab) legt die Vorlage für mehrere Hosts als verkettetes Paket an und stellt EINE Freigabe-Frage (Owner: ein Ja je Serie) — für wöchentliche Betriebssystem-Updates Vorlage os_updates; updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
+      + 'ANWENDUNGS-UPDATES: anwendungs_updates (ohne Parameter) — nur lesend, alle Hosts mit Fernzugang: native Pakete (apt, auch Datenbanken wie PostgreSQL, neue Hauptversionen wie postgresql-18) und Container-Images gegen die Registry (neuer Build desselben Tags, neuere Versionen); je Eintrag die Art (Datenbank/mit Daten/zustandslos). Ändert nichts; Updates nur als eigener Change. '
       + 'SOLL/IST (I4b): soll_ist (vorhaben) — Abgleich der angenommenen Zielarchitektur mit dem Ist (VMs, Netze, Dienste am neuen Host, Proxy-Ziele), Fortschritt und Abweichungen; nach jedem abgeschlossenen Change des Vorhabens automatisch. '
       + 'TRESOR (I4c): tresor_liste (nur Namen), tresor_erzeugen (name, laenge, zweck — Zufallspasswort am Server, der Wert wird nie gezeigt), tresor_entfernen (name, wortlaut). Werte setzt der Owner auf der Tresor-Seite im Web; NIE nach Passwörtern im Chat fragen. In Change-Schritten: {{geheimdatei:name}} im Befehl eines Fernzugriff-Schritts (Datei 600 am Host, z. B. --env-file) oder {{geheim:name}} als ganzer Wert in password/secret/token/api_key. '
       + 'EINWAND: einwand (change ODER vorhaben, bezug z. B. „Schritt 4“ oder „Netze“, text = Einwand des Owners in seinen Worten, wortlaut) — nimmt dem Change die Freigabe bzw. setzt das Vorhaben in den Entwurf; einwaende (change|vorhaben) listet sie. Beim Überarbeiten (change_aendern bzw. architektur_vorschlagen) JEDEN offenen Einwand beantworten: antworten [{einwand: ID, art umgesetzt|abgelehnt, text}]. '
@@ -238,6 +241,11 @@ export class InfrastrukturSkill extends Skill {
     if (action.startsWith('change') || ['freigabe_anfragen', 'freigeben', 'owner_schritt_erledigt', 'rueckweg_ausfuehren'].includes(action)) return this.changeAktion(owner, repo, action, input);
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
+    if (action === 'anwendungs_updates') {
+      if (!this.deps.anwendungsUpdates) return { success: false, error: 'Anwendungs-Update-Bericht nicht verfügbar' };
+      const t = await this.deps.anwendungsUpdates();
+      return { success: true, display: t };
+    }
     if (action === 'einwand' || action === 'einwaende') return this.einwandAktion(owner, repo, action, input);
     if (action.startsWith('tresor_')) {
       const t = this.deps.tresor;

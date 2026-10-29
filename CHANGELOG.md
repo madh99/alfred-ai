@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Anwendungs-Update-Bericht für native Anwendungen und Container (v1707)
+
+- Neuer Bericht über anstehende Anwendungs-Updates auf allen Hosts mit Fernzugang, nur lesend. Er deckt nativ installierte Anwendungen (apt, z. B. PostgreSQL) ebenso ab wie Container.
+- Native Pakete: installierte und verfügbare Version, Kennzeichnung von Sicherheitsupdates und neue Hauptversionen einer Paketfamilie (z. B. postgresql-16 → postgresql-17), die ein normales Upgrade nie einspielt.
+- Container: Abgleich des laufenden Images mit der Registry — neuer Build desselben Tags sowie neuere Versionen, getrennt nach gleicher und neuer Hauptversion. Lokal gebaute oder per Digest festgelegte Images werden als nicht prüfbar ausgewiesen.
+- Jeder Eintrag ist eingeordnet: Datenbank, Anwendung mit Daten oder Schema, zustandslos. Der Bericht ändert nichts; Updates laufen weiterhin nur als eigener Change.
+- Abrufbar im Gespräch (Infrastruktur, Aktion „anwendungs_updates“) und jeden Montag um 09:00 als Meldung und CMDB-Dokument.
+- Leseliste des Fernzugriffs um `dpkg -l` und `apt-cache pkgnames <name>` erweitert.
+
 ### Added — Wöchentlicher Auslöser für Betriebssystem-Updates (v1706)
 
 - Jeden Dienstag um 10:00 legt Alfred die Update-Serie für die kommende Nacht an (alle Hosts mit eingeschaltetem Update-Schalter) und stellt eine Freigabe-Frage. Ohne Ja läuft nichts; kann keine Serie angelegt werden, kommt eine Meldung mit dem Grund.

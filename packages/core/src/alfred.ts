@@ -7213,6 +7213,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
         const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
         const wartungRepo = new WartungRepository(adapter);
+        const anwendungsBericht = async (): Promise<string> => {
+          const o = ownerFz(); const fz = this.fernzugriffRef;
+          if (!o || !fz) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
+          const { sammleAnwendungsUpdates, berichtText } = await import('./infrastruktur/anwendungs-updates.js');
+          const schalter = await wartungRepo.updatesSchalter(o).catch(() => ({} as Record<string, string>));
+          const hosts = (await fz.aktiveZugaenge()).map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
+          const r = await sammleAnwendungsUpdates({
+            hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000),
+            abruf: async (url, init) => fetch(url, { ...init, redirect: 'follow', signal: AbortSignal.timeout(20_000) }),
+          });
+          this.logger.info({ hosts: r.hosts.length, container: r.container.length, fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');
+          return berichtText(r.hosts, r.container, new Date());
+        };
         const alfredUsersI4b = new AlfredUserRepoI4b(adapter);
         const { WartungsDienst } = await import('./infrastruktur/wartung-dienst.js');
         const ctxOwnerI4b = () => { const o = ownerFz() ?? ''; return { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never; };
@@ -7501,6 +7514,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           motor: this.changeMotor,
           einwand: this.einwandDienst,
           sollIst: this.sollIstDienst,
+          anwendungsUpdates: () => anwendungsBericht(),
           tresor: { liste: (o) => this.tresor!.liste(o), erzeuge: (o, n, l, z) => this.tresor!.erzeuge(o, n, l, z), entferne: (o, n) => this.tresor!.entferne(o, n) },
           standard: standardRef = new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
@@ -7585,6 +7599,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
+        // v1707 — Anwendungs-Update-Bericht (Owner 29.10.): native Pakete (apt, auch Datenbanken wie PostgreSQL) und Container-Images
+        // aller Hosts mit Fernzugang, nur lesend; Registry-Abfragen von hier aus mit normaler TLS-Prüfung. Montags 09:00 als Meldung + CMDB-Dokument.
+        this.registriereJob({
+          key: 'anwendungs-updates', beschreibung: 'Anwendungs-Update-Bericht: native Pakete und Container-Images aller Hosts (nur lesend)',
+          takt: { art: 'woechentlich', tag: 1, um: '09:00' }, bereich: 'global', slot: true, timeoutMin: 20,
+          run: async () => {
+            const o = ownerFz(); if (!o) return { ok: true, zaehler: { zeichen: 0 } };
+            const text = await anwendungsBericht();
+            await cmdbFz.saveDocument(o, { docType: 'inventory', title: `Anwendungs-Updates ${new Date().toISOString().slice(0, 10)}`, content: text, format: 'markdown', generatedBy: 'alfred:anwendungs-updates' }).catch(() => undefined);
+            await this.meldeOhneModell(text.length > 3500 ? `${text.slice(0, 3500)}
+… (vollständig im CMDB-Dokument „Anwendungs-Updates“)` : text).catch(() => undefined);
+            return { ok: true, zaehler: { zeichen: text.length } };
+          },
+        });
         // S4 — wöchentliche Betriebssystem-Updates (Owner 27.10.: wöchentlich, nachts ab 00:30; ein Ja je Serie): dienstags 10:00 legt
         // Alfred die Serie für die kommende Nacht an (alle Hosts mit Schalter „Updates an“) und stellt EINE Freigabe-Frage. Ohne Ja läuft nichts.
         this.registriereJob({
