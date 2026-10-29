@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import {
-  UPDATE_BEFEHLE, aptArt, berichtText, containerArt, familienBefehl, imageBefehl, leseAptListe, leseImageRef, neueHauptversionen, neuereTags,
+  UPDATE_BEFEHLE, aptArt, containerBefehl, waehleReferenz, berichtText, containerArt, familienBefehl, imageBefehl, leseAptListe, leseImageRef, neueHauptversionen, neuereTags,
   realmErlaubt, registryAbfrage, sammleAnwendungsUpdates,
 } from './anwendungs-updates.js';
 
@@ -25,7 +25,7 @@ describe('Anwendungs-Updates — native Pakete', () => {
   });
 
   it('alle Sammelbefehle stehen auf der Leseliste', () => {
-    for (const b of [...Object.values(UPDATE_BEFEHLE), familienBefehl('postgresql'), imageBefehl(['nginx:1.27', 'ghcr.io/a/b:2'])]) expect(befehlsklasse(b), b).toBe('lesen');
+    for (const b of [...Object.values(UPDATE_BEFEHLE), familienBefehl('postgresql'), imageBefehl(['nginx:1.27', `sha256:${'a'.repeat(64)}`]), containerBefehl(['web', 'matrix-synapse'])]) expect(befehlsklasse(b), b).toBe('lesen');
     expect(befehlsklasse('apt-cache pkgnames postgresql; rm -f /tmp/x')).not.toBe('lesen');
   });
 });
@@ -68,6 +68,7 @@ describe('Anwendungs-Updates — Container', () => {
   });
 
   it('sammelt Host mit nativer DB und Docker-Host, meldet neuen Build', async () => {
+    const A = `sha256:${'a'.repeat(64)}`, B = `sha256:${'b'.repeat(64)}`, C = `sha256:${'c'.repeat(64)}`;
     const antworten: Record<string, Record<string, string>> = {
       'pgsql-p01': {
         [UPDATE_BEFEHLE.os]: 'ID=ubuntu\nVERSION_ID="24.04"',
@@ -81,8 +82,9 @@ describe('Anwendungs-Updates — Container', () => {
         [UPDATE_BEFEHLE.apt]: 'Listing... Done',
         [UPDATE_BEFEHLE.pakete]: 'ii  curl',
         [UPDATE_BEFEHLE.docker]: 'active',
-        [UPDATE_BEFEHLE.container]: 'web nginx:1.27 \napp registry.lokalkraft.at/x/app:1 daten',
-        [imageBefehl(['nginx:1.27', 'registry.lokalkraft.at/x/app:1'])]: 'sha256:1 ["nginx@sha256:alt"]\nsha256:2 []',
+        [UPDATE_BEFEHLE.container]: 'web nginx:1.27 \napp registry.lokalkraft.at/x/app:1 daten\nvw cccccccccccc vw-data',
+        [containerBefehl(['web', 'app', 'vw'])]: `/web nginx:1.27 ${A}\n/app registry.lokalkraft.at/x/app:1 ${B}\n/vw vaultwarden/server@sha256:d1 ${C}`,
+        [imageBefehl([A, B, C])]: `${A} ["nginx:1.27"] ["nginx@sha256:alt"]\n${B} ["registry.lokalkraft.at/x/app:1"] []\n${C} ["vaultwarden/server:1.32.0"] ["vaultwarden/server@sha256:d1"]`,
       },
     };
     const r = await sammleAnwendungsUpdates({
@@ -92,7 +94,9 @@ describe('Anwendungs-Updates — Container', () => {
     });
     expect(r.hosts[0]).toMatchObject({ host: 'pgsql-p01', hauptversionen: [{ familie: 'postgresql', installiert: '16', verfuegbar: '17' }] });
     expect(r.container.find(c => c.name === 'web')).toMatchObject({ art: 'zustandslos', neuerBuild: true, gleicheHauptversion: ['1.28'] });
-    expect(r.container.find(c => c.name === 'app')).toMatchObject({ art: 'mit_daten', hinweis: 'lokal gebaut oder ohne Registry-Digest' });
+    expect(r.container.find(c => c.name === 'app')).toMatchObject({ art: 'mit_daten', hinweis: 'Registry registry.lokalkraft.at nicht für Abfragen freigegeben' });
+    // v1709 — docker ps zeigt nur die ID, Config.Image per Digest: Tag aus RepoTags desselben Repositorys, Digest-Vergleich
+    expect(r.container.find(c => c.name === 'vw')).toMatchObject({ image: 'vaultwarden/server:1.32.0', tag: '1.32.0', art: 'mit_daten', neuerBuild: true });
     const t = berichtText(r.hosts, r.container, new Date('2026-11-03T08:00:00Z'));
     expect(t).toContain('postgresql-16 16.9 → 16.10 **Sicherheit** · Datenbank');
     expect(t).toContain('Neue Hauptversion verfügbar: postgresql 16 → 17');
@@ -118,5 +122,15 @@ describe('Anwendungs-Updates — SSRF-Schutz (v1708)', () => {
     const abruf = async (url: string) => { aufrufe.push(url); return { status: 401, headers: { get: () => 'Bearer realm="http://192.168.1.91/x",service="s"' }, json: async () => ({}) }; };
     await registryAbfrage({ registry: 'ghcr.io', repo: 'a/b', tag: '1' }, abruf);
     expect(aufrufe.every(u => u.startsWith('https://ghcr.io/'))).toBe(true);
+  });
+});
+
+describe('Anwendungs-Updates — Referenz trotz Image-ID (v1709)', () => {
+  it('wählt angezeigtes Image, Config.Image oder RepoTag', () => {
+    expect(waehleReferenz('nginx:1.27', undefined, [])).toBe('nginx:1.27');
+    expect(waehleReferenz('3f2a9c1b7d4e', 'nginx:1.27', [])).toBe('nginx:1.27');
+    expect(waehleReferenz('3f2a9c1b7d4e', `sha256:${'a'.repeat(64)}`, ['matrixdotorg/synapse:v1.120.0'])).toBe('matrixdotorg/synapse:v1.120.0');
+    expect(waehleReferenz('3f2a9c1b7d4e', 'x/y@sha256:1', ['andere/z:1', 'x/y:2'])).toBe('x/y:2');
+    expect(waehleReferenz('3f2a9c1b7d4e', 'x/y@sha256:1', [])).toBeUndefined();
   });
 });

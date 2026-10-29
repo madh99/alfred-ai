@@ -198,7 +198,8 @@ export const UPDATE_BEFEHLE = {
   container: "docker ps --format '{{.Names}} {{.Image}} {{.Mounts}}'",
 } as const;
 export const familienBefehl = (familie: string) => `apt-cache pkgnames ${familie}`;
-export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoDigests}}' ${images.join(' ')}`;
+export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}}' ${images.join(' ')}`;
+export const containerBefehl = (namen: string[]) => `docker inspect --format '{{.Name}} {{.Config.Image}} {{.Image}}' ${namen.join(' ')}`;
 
 export interface SammelDeps {
   hosts: Array<{ name: string; updatesSchalter: boolean }>;
@@ -231,28 +232,49 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
     try {
       liste = (await d.lesen(h.name, UPDATE_BEFEHLE.container)).split(/\r?\n/).filter(z => z.trim().split(/\s+/).length >= 2).map(z => { const [name, image, m] = z.trim().split(/\s+/); return { name: name!.trim(), image: image!.trim(), mounts: (m ?? '').split(',').map(x => x.trim()).filter(Boolean) }; });
     } catch (err) { stand.fehler = `${stand.fehler ? `${stand.fehler}; ` : ''}Container: ${(err as Error).message.slice(0, 120)}`; continue; }
-    const images = [...new Set(liste.map(c => c.image).filter(i => !/^sha256:|^[0-9a-f]{12,64}$/.test(i)))];
-    const lokal = new Map<string, string[]>();
-    if (images.length) {
-      const zeilen = (await d.lesen(h.name, imageBefehl(images)).catch(() => '')).split(/\r?\n/).filter(z => /^sha256:/.test(z));
-      zeilen.forEach((z, i) => { try { lokal.set(images[i]!, (JSON.parse(z.slice(z.indexOf(' ') + 1)) as string[] | null) ?? []); } catch { /* nicht lesbar */ } });
+    if (!liste.length) continue;
+    // v1709 — Realfall 29.10.: nach dem Umzug zeigt docker ps nur die Image-ID (Container aus Digest/ID angelegt). Referenz aus
+    // Config.Image, Tags und Digests über die Image-ID des Containers.
+    const konfig = new Map<string, { ref: string; id: string }>();
+    for (const z of (await d.lesen(h.name, containerBefehl(liste.map(c => c.name))).catch(() => '')).split(/\r?\n/)) {
+      const [n, ref, id] = z.trim().split(/\s+/);
+      if (n && ref && id) konfig.set(n.replace(/^\//, ''), { ref, id });
+    }
+    const ids = [...new Set([...konfig.values()].map(k => k.id).filter(i => /^sha256:[0-9a-f]{64}$/.test(i)))];
+    const bild = new Map<string, { tags: string[]; digests: string[] }>();
+    if (ids.length) {
+      for (const z of (await d.lesen(h.name, imageBefehl(ids)).catch(() => '')).split(/\r?\n/)) {
+        const m = /^(sha256:[0-9a-f]{64}) (\S+) (\S+)$/.exec(z.trim());
+        if (!m) continue;
+        try { bild.set(m[1]!, { tags: (JSON.parse(m[2]!) as string[] | null) ?? [], digests: (JSON.parse(m[3]!) as string[] | null) ?? [] }); } catch { /* nicht lesbar */ }
+      }
     }
     for (const c of liste) {
-      const st: ContainerStand = { host: h.name, name: c.name, image: c.image, art: containerArt(c), gleicheHauptversion: [], neueHauptversion: [] };
+      const k = konfig.get(c.name); const b = k ? bild.get(k.id) : undefined;
+      const referenz = waehleReferenz(c.image, k?.ref, b?.tags ?? []);
+      const st: ContainerStand = { host: h.name, name: c.name, image: referenz ?? c.image, art: containerArt({ ...c, image: referenz ?? c.image }), gleicheHauptversion: [], neueHauptversion: [] };
       container.push(st);
-      if (!images.includes(c.image)) { st.hinweis = 'nur Image-ID'; continue; }
-      const ref = leseImageRef(c.image); const tag = ref.tag ?? (ref.digest ? undefined : 'latest');
-      if (!tag) { st.hinweis = 'per Digest festgelegt'; continue; }
+      if (!referenz) { st.hinweis = b?.digests.length ? 'per Digest festgelegt' : 'nur Image-ID'; continue; }
+      const ref = leseImageRef(referenz); const tag = ref.tag ?? 'latest';
       st.tag = tag;
       const schluessel = `${ref.registry}/${ref.repo}:${tag}`;
       if (!registry.has(schluessel)) registry.set(schluessel, registryAbfrage({ ...ref, tag }, d.abruf));
       const r = await registry.get(schluessel)!;
-      const digests = (lokal.get(c.image) ?? []).map(x => x.slice(x.indexOf('@') + 1));
-      if (r.digest && digests.length) st.neuerBuild = !digests.includes(r.digest);
+      const digests = (b?.digests ?? []).filter(x => leseImageRef(x.slice(0, x.indexOf('@'))).repo === ref.repo).map(x => x.slice(x.indexOf('@') + 1));
+      if (r.fehler && !r.digest) st.hinweis = r.fehler;
+      else if (r.digest && digests.length) st.neuerBuild = !digests.includes(r.digest);
       else if (!digests.length) st.hinweis = 'lokal gebaut oder ohne Registry-Digest';
-      else if (r.fehler) st.hinweis = r.fehler;
       if (r.tags?.length) Object.assign(st, neuereTags(r.tags, tag));
     }
   }
   return { hosts, container };
+}
+
+/** Image-Referenz mit Tag: angezeigtes Image, sonst Config.Image, sonst ein RepoTag (bei Digest-Referenz bevorzugt dasselbe Repository) */
+export function waehleReferenz(angezeigt: string, konfig: string | undefined, repoTags: string[]): string | undefined {
+  const istId = (x: string) => /^sha256:|^[0-9a-f]{12,64}$/.test(x);
+  for (const x of [angezeigt, konfig]) if (x && !istId(x) && !x.includes('@')) return x;
+  const digestRef = [angezeigt, konfig].find(x => x?.includes('@'));
+  if (digestRef) { const repo = leseImageRef(digestRef).repo; return repoTags.find(t => leseImageRef(t).repo === repo); }
+  return repoTags[0];
 }

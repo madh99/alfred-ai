@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Update-Bericht erkennt Container, die per Image-ID oder Digest laufen (v1709)
+
+- Nach dem Umzug auf die neuen Docker-VMs zeigt die Container-Liste dort nur die Image-ID; der Bericht wies diese Container deshalb als „nicht prüfbar“ aus. Er liest jetzt die beim Anlegen verwendete Referenz und die Tags und Digests des Images selbst und prüft diese Container wie alle anderen.
+- Bei per Digest festgelegten Containern wird der Tag desselben Repositorys verwendet; der Digest-Vergleich berücksichtigt nur dieses Repository.
+
 ### Security — Registry-Abfragen des Update-Berichts eingegrenzt (v1708)
 
 - Der Anwendungs-Update-Bericht fragt nur noch freigegebene öffentliche Registries ab (Docker Hub, ghcr.io, quay.io, lscr.io, mcr.microsoft.com, registry.gitlab.com, gcr.io, public.ecr.aws). Vorher konnte ein Image-Name oder eine Registry-Antwort Abrufe an beliebige, auch interne Adressen auslösen.
