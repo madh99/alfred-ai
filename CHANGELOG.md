@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Registry-Abfragen des Update-Berichts eingegrenzt (v1708)
+
+- Der Anwendungs-Update-Bericht fragt nur noch freigegebene öffentliche Registries ab (Docker Hub, ghcr.io, quay.io, lscr.io, mcr.microsoft.com, registry.gitlab.com, gcr.io, public.ecr.aws). Vorher konnte ein Image-Name oder eine Registry-Antwort Abrufe an beliebige, auch interne Adressen auslösen.
+- Anmelde-Token nur per HTTPS von den bekannten Token-Diensten der jeweiligen Registry, Image-Namen nur in der üblichen Form, keine Weiterleitungen.
+- Eigene Registries erscheinen im Bericht als „nicht prüfbar“.
+
 ### Added — Anwendungs-Update-Bericht für native Anwendungen und Container (v1707)
 
 - Neuer Bericht über anstehende Anwendungs-Updates auf allen Hosts mit Fernzugang, nur lesend. Er deckt nativ installierte Anwendungen (apt, z. B. PostgreSQL) ebenso ab wie Container.

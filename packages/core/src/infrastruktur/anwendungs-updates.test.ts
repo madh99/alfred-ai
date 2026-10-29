@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import {
   UPDATE_BEFEHLE, aptArt, berichtText, containerArt, familienBefehl, imageBefehl, leseAptListe, leseImageRef, neueHauptversionen, neuereTags,
-  registryAbfrage, sammleAnwendungsUpdates,
+  realmErlaubt, registryAbfrage, sammleAnwendungsUpdates,
 } from './anwendungs-updates.js';
 
 describe('Anwendungs-Updates — native Pakete', () => {
@@ -98,5 +98,25 @@ describe('Anwendungs-Updates — Container', () => {
     expect(t).toContain('Neue Hauptversion verfügbar: postgresql 16 → 17');
     expect(t).toContain('docker-web-01 / web');
     expect(t).toContain('(wöchentliche OS-Updates an)');
+  });
+});
+
+describe('Anwendungs-Updates — SSRF-Schutz (v1708)', () => {
+  const nie = async () => { throw new Error('darf nicht abgerufen werden'); };
+  it('fragt nur freigegebene öffentliche Registries ab', async () => {
+    for (const reg of ['192.168.1.91:5432', 'localhost:2375', 'registry.lokalkraft.at', '169.254.169.254'])
+      expect((await registryAbfrage({ registry: reg, repo: 'x/y', tag: '1' }, nie)).fehler).toMatch(/nicht für Abfragen freigegeben/);
+    expect((await registryAbfrage({ registry: 'ghcr.io', repo: '../../admin', tag: '1' }, nie)).fehler).toMatch(/üblichen Form/);
+  });
+  it('Token nur per HTTPS vom bekannten Token-Dienst', () => {
+    expect(realmErlaubt('registry-1.docker.io', 'https://auth.docker.io/token')).toBe(true);
+    for (const r of ['http://auth.docker.io/token', 'https://192.168.1.92:3420/api', 'https://auth.docker.io:8443/t', 'https://evil.example/token', 'https://user@auth.docker.io/t'])
+      expect(realmErlaubt('registry-1.docker.io', r), r).toBe(false);
+  });
+  it('fremder realm in der Challenge wird nicht abgerufen', async () => {
+    const aufrufe: string[] = [];
+    const abruf = async (url: string) => { aufrufe.push(url); return { status: 401, headers: { get: () => 'Bearer realm="http://192.168.1.91/x",service="s"' }, json: async () => ({}) }; };
+    await registryAbfrage({ registry: 'ghcr.io', repo: 'a/b', tag: '1' }, abruf);
+    expect(aufrufe.every(u => u.startsWith('https://ghcr.io/'))).toBe(true);
   });
 });

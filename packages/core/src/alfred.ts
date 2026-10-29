@@ -7221,7 +7221,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const hosts = (await fz.aktiveZugaenge()).map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
           const r = await sammleAnwendungsUpdates({
             hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000),
-            abruf: async (url, init) => fetch(url, { ...init, redirect: 'follow', signal: AbortSignal.timeout(20_000) }),
+            abruf: async (url, init) => fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000) }), // v1708 — keine Weiterleitung (SSRF)
           });
           this.logger.info({ hosts: r.hosts.length, container: r.container.length, fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');
           return berichtText(r.hosts, r.container, new Date());

@@ -96,7 +96,31 @@ type Abruf = (url: string, init?: { method?: string; headers?: Record<string, st
 const MANIFEST = 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
 
 /** Anonymer Registry-Zugriff mit Token-Challenge (Docker Hub, ghcr, quay …); Docker Hub zählt HEAD-Anfragen nicht als Pull */
+/**
+ * Sicherheitsprüfung v1708 (SSRF): Registry-Host kommt aus dem Image-Namen eines fremden Hosts, die Token-Adresse aus der Antwort der
+ * Registry — beides darf Alfred nicht an beliebige (interne) Adressen schicken. Deshalb nur diese öffentlichen Registries, Token nur per
+ * HTTPS von deren bekannten Token-Diensten, Repository-Namen nur in der üblichen Form; Weiterleitungen behandelt der Aufrufer als Fehler.
+ */
+export const REGISTRIES: Record<string, string[]> = {
+  'registry-1.docker.io': ['auth.docker.io'],
+  'ghcr.io': ['ghcr.io'],
+  'quay.io': ['quay.io'],
+  'lscr.io': ['ghcr.io'],
+  'mcr.microsoft.com': ['mcr.microsoft.com'],
+  'registry.gitlab.com': ['gitlab.com'],
+  'gcr.io': ['gcr.io'],
+  'public.ecr.aws': ['public.ecr.aws'],
+};
+const REPO = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*){0,4}$/;
+const TAG = /^[\w][\w.-]{0,127}$/;
+
+export function realmErlaubt(registry: string, realm: string): boolean {
+  try { const u = new URL(realm); return u.protocol === 'https:' && !u.port && !u.username && (REGISTRIES[registry] ?? []).includes(u.hostname); } catch { return false; }
+}
+
 export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ digest?: string; tags?: string[]; fehler?: string }> {
+  if (!REGISTRIES[ref.registry]) return { fehler: `Registry ${ref.registry} nicht für Abfragen freigegeben` };
+  if (!REPO.test(ref.repo) || (ref.tag && !TAG.test(ref.tag))) return { fehler: 'Image-Name nicht in der üblichen Form' };
   const basis = `https://${ref.registry}/v2/${ref.repo}`;
   let token: string | undefined;
   const mit = (h: Record<string, string>) => (token ? { ...h, Authorization: `Bearer ${token}` } : h);
@@ -105,7 +129,7 @@ export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ di
     if (r.status === 401 && !token) {
       const ch = r.headers.get('www-authenticate') ?? '';
       const realm = /realm="([^"]+)"/.exec(ch)?.[1]; const service = /service="([^"]+)"/.exec(ch)?.[1];
-      if (!realm) return r;
+      if (!realm || !realmErlaubt(ref.registry, realm)) return r;
       const t = await abruf(`${realm}?${new URLSearchParams({ ...(service ? { service } : {}), scope: `repository:${ref.repo}:pull` })}`);
       if (t.status !== 200) return r;
       const j = await t.json() as { token?: string; access_token?: string };
