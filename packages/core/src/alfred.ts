@@ -7063,7 +7063,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (!o) return ['kein Owner bekannt'];
             if (await repoFz.finde(o, name)) h.push(`Fernzugang „${name}“ gibt es schon`);
             if ((await repoFz.liste(o)).some(z => z.host === ip)) h.push(`${ip} ist schon ein Fernzugang`);
-            const a = (await cmdbFz.searchAssets(o, ip).catch(() => [])).find(x => x.ipAddress === ip && x.status === 'active');
+            // v1713 — Realfall 29.10. (775ebaf3 Schritt 18): ein vorab im selben Change erfasster CMDB-Eintrag DIESER VM (gleicher Name,
+            // ohne Quelle) ist keine Kollision; er wird beim Anmelden übernommen. Belegt bleibt die Adresse für jeden anderen Eintrag.
+            const a = (await cmdbFz.searchAssets(o, ip).catch(() => [])).find(x => x.ipAddress === ip && x.status === 'active' && !(x.name === name && !x.sourceSkill));
             if (a) h.push(`${ip} gehört laut CMDB zu ${a.name}`);
             if (await netzFb.ping(ip).catch(() => false)) h.push(`${ip} antwortet schon auf Ping — Adresse belegt`);
             return h;
@@ -7073,7 +7075,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           anmelden: async (v) => {
             const o = ownerFz();
             if (!o) return { ok: false, meldung: 'kein Owner bekannt' };
-            const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', attributes: { vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: 'alfred-i5' } } as never);
+            // v1713 — vorab erfassten Eintrag gleichen Namens und gleicher Adresse (ohne Quelle) übernehmen statt einen zweiten anzulegen
+            const vorab = (await cmdbFz.searchAssets(o, v.ip).catch(() => [])).find(x => x.name === v.name && x.ipAddress === v.ip && !x.sourceSkill);
+            if (vorab) await cmdbFz.updateAsset(o, vorab.id, { sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, assetType: 'vm' } as never);
+            const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', ...(vorab?.purpose ? { purpose: vorab.purpose } : {}), ...(vorab?.fqdn ? { fqdn: vorab.fqdn } : {}), ...(vorab?.notes ? { notes: vorab.notes } : {}), attributes: { ...(vorab?.attributes ?? {}), vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: 'alfred-i5' } } as never);
             await fz.zugangBereitstellen({ name: v.name, host: v.ip, hostSchluessel: v.hostSchluessel, cmdbAssetId: asset.id });
             return warteBereit(v);
           },

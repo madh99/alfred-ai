@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — VM-Bereitstellung übernimmt vorab erfasste CMDB-Einträge (v1713)
+
+- Wurde eine neue VM im selben Change vorab in der CMDB erfasst (gleicher Name und gleiche Adresse, ohne Quelle), hielt die Bereitstellung mit „Adresse gehört laut CMDB zu …“ an — die VM kollidierte mit ihrem eigenen Eintrag.
+- Ein solcher Eintrag gilt jetzt nicht als Belegung und wird beim Anmelden übernommen: Zweck, Notizen und FQDN bleiben erhalten, es entsteht kein zweiter Eintrag. Für jeden anderen Eintrag bleibt die Adresse belegt; die Ping-Prüfung bleibt unverändert.
+
 ### Changed — Update-Bericht versteht Image-Referenzen mit Tag und festem Digest (v1712)
 
 - Container mit einer Referenz der Form `name:tag@sha256:…` werden über ihren Tag geprüft, während der Digest das laufende Image unverändert festhält. So lassen sich Tags in Compose-Dateien nachtragen, ohne dass dabei ein anderes Image gezogen wird.
