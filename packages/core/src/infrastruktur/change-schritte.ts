@@ -341,6 +341,11 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       if (sek !== undefined) { if (sek < 1 || sek > ZEITLIMIT_MAX_S) f.push(`${wo}: sekunden 1–${ZEITLIMIT_MAX_S}`); schritt.sekunden = sek; }
       if (s.pruefung) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
       if (sek === undefined && !s.pruefung) f.push(`${wo}: warten braucht sekunden oder eine pruefung (warten bis …)`);
+      // v1717 — Realfall 30.10. (8a26aed6 Schritte 49–54): Der Warte-Befehl gab „WARTEN“ bzw. „ZEIT_ERREICHT“ mit Exit 0 aus, ohne
+      // erwartet galt schon „WARTEN“ als erfüllt — alle sechs Wartephasen liefen sofort durch. Wer Text ausgibt, muss sagen, welchen.
+      const wp = schritt.pruefung;
+      if (wp?.typ === 'befehl' && !wp.erwartet && !wp.nichtEnthalten && /\bprint\s*\(|\becho\b|\bprintf\b/.test(wp.befehl ?? ''))
+        f.push(`${wo}: Warte-Prüfung gibt Text aus, hat aber kein erwartet — sie wäre bei jedem Exit 0 sofort erfüllt (erwartet z. B. „ZEIT_ERREICHT“ setzen oder den Befehl erst bei Erfolg mit Exit 0 enden lassen)`);
     } else if (art === 'owner') {
       schritt.frage = txt(s.frage);
       if (schritt.frage.length < 5) f.push(`${wo}: owner-Schritt braucht frage (was der Owner tun oder entscheiden soll)`);

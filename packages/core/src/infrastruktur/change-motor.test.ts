@@ -203,6 +203,26 @@ describe('I4 Ausführungsmotor', () => {
     expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten');
   });
 
+  it('v1717 Realfall 8a26aed6: fernzugriff.lesen als Prüfung — nur stdout zählt, Exit ≠ 0 ist nicht erfüllt', async () => {
+    const befehl = `python3 -c 'print("ZEIT_ERREICHT" if ok else "WARTEN")'`;
+    const lauf = (code: number, stdout: string) => async () => ({ success: true, display: `\`\`\`\npg-repo-01$ ${befehl}${code ? `  (Exit ${code})` : ''}\n${stdout}\`\`\``, data: { name: 'pg-repo-01', befehl, code, stdout, stderr: '' } });
+    const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'pg-repo-01', befehl }, erwartet: 'ZEIT_ERREICHT' } })]);
+    w.deps.fuehreAus = lauf(1, 'WARTEN\n');
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten'); // vorher: Befehlstext enthielt „ZEIT_ERREICHT“ → fälschlich erfüllt
+    const w2 = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'pg-repo-01', befehl }, erwartet: 'ZEIT_ERREICHT' } })]);
+    w2.deps.fuehreAus = lauf(0, 'WARTEN\n');
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten'); // Exit 0, aber Ausgabe WARTEN
+    const w3 = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'pg-repo-01', befehl }, erwartet: 'ZEIT_ERREICHT' } })]);
+    w3.deps.fuehreAus = lauf(0, 'ZEIT_ERREICHT\n');
+    const m3 = new ChangeMotor(w3.deps);
+    await m3.anstossen(); await warte(m3);
+    expect(w3.c.status).toBe('completed');
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];

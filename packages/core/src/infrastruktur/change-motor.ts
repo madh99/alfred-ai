@@ -390,6 +390,16 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       case 'skill': {
         const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, 60_000);
         if (!r.success) return { ok: false, text: `${p.skill}.${p.aktion}: ${String(r.error ?? 'Fehler').slice(0, 160)}` };
+        // v1717 — Realfall 30.10. (8a26aed6 Schritte 55–57): fernzugriff.lesen als Prüfung — die Anzeige enthält den Befehl selbst, und
+        // der stand „print("ZEIT_ERREICHT" if … else "WARTEN")“; erwartet „ZEIT_ERREICHT“ traf den Befehlstext, Exit 1 zählte nicht.
+        // Liefert ein Skill eine Befehlsausführung (code + stdout), zählt nur deren Ausgabe, und Exit ≠ 0 ist nicht erfüllt.
+        const lauf = r.data as { code?: unknown; stdout?: unknown; stderr?: unknown } | undefined;
+        if (lauf && typeof lauf === 'object' && typeof lauf.code === 'number' && typeof lauf.stdout === 'string') {
+          const aus = `${lauf.stdout}${typeof lauf.stderr === 'string' && lauf.stderr.trim() ? `\n${lauf.stderr}` : ''}`;
+          if (lauf.code !== 0) return { ok: false, text: `${p.skill}.${p.aktion}: Exit ${lauf.code} (${lauf.stdout.trim().split('\n').slice(-1)[0]?.slice(0, 80) ?? ''})`, ausgabe: aus.slice(0, MAX_AUSGABE) };
+          const t = textErfuellt(aus, p);
+          return { ok: t.ok, text: t.ok ? `${p.skill}.${p.aktion} ok` : `${p.skill}.${p.aktion}: ${t.grund}`, ausgabe: aus.slice(0, MAX_AUSGABE) };
+        }
         // v1643 — Realfall 24.10. (4c5652a5 Schritt 6): nur die WERTE der Daten durchsuchen — der Feldname „gesperrt“ (leere Liste) ließ
         // „darf GESPERRT nicht enthalten“ scheitern, obwohl alle Ports offen waren
         let daten = ''; try { daten = datenWerte(r.data).join('\n'); } catch { /* egal */ }

@@ -542,3 +542,16 @@ describe('v1716 — Vergleich mit < und > ist kein Platzhalter', () => {
     expect(pruefeChangePlan(mit, ctx()).fehler.some(x => x.includes('Platzhalter'))).toBe(true);
   });
 });
+
+describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
+  const basis = (pruefung: Record<string, unknown>) => ({
+    titel: 'Warten', begruendung: 'Test', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], ohneSicherungGrund: 'nur warten',
+    schritte: [{ titel: 'Bis Ziel warten', art: 'warten', pruefung, zeitlimitS: 3600 }],
+  });
+  const befehl = `python3 -c 'import time; print("ZEIT_ERREICHT" if time.time()>=1 else "WARTEN")'`;
+  it('ohne erwartet abgewiesen, mit erwartet oder reinem Exit-Code-Befehl zulässig', () => {
+    expect(pruefeChangePlan(basis({ typ: 'befehl', zugang: 'dockerhost', befehl }), ctx()).fehler.some(x => x.includes('kein erwartet'))).toBe(true);
+    expect(pruefeChangePlan(basis({ typ: 'befehl', zugang: 'dockerhost', befehl, erwartet: 'ZEIT_ERREICHT' }), ctx()).fehler.some(x => x.includes('kein erwartet'))).toBe(false);
+    expect(pruefeChangePlan(basis({ typ: 'befehl', zugang: 'dockerhost', befehl: 'test -f /srv/x/ok' }), ctx()).fehler.some(x => x.includes('kein erwartet'))).toBe(false);
+  });
+});

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Prüfungen über Fernzugriff werten nur die Befehlsausgabe (v1717)
+
+- Prüfte ein Change-Schritt mit einem Fernzugriff-Lesebefehl, wurde der erwartete Text auch im angezeigten Befehl selbst gefunden, und ein Exit-Code ungleich 0 galt nicht als Fehlschlag. Warteschritte wie „bis zur Zielzeit warten“ waren dadurch sofort erfüllt, obwohl der Befehl „WARTEN“ ausgab und mit Exit 1 endete. Die harte Zeitfensterprüfung danach verhinderte einen verfrühten Start.
+- Jetzt zählt bei solchen Prüfungen nur die tatsächliche Ausgabe des Befehls, und ein Exit-Code ungleich 0 ist nicht erfüllt.
+- Zusätzlich weist die Change-Prüfung Warteschritte ab, deren Prüfbefehl Text ausgibt, ohne den erwarteten Text anzugeben.
+
 ### Fixed — Change-Prüfung hält Vergleiche nicht mehr für Platzhalter (v1716)
 
 - Texte mit Vergleichen wie „frei <20 GiB oder … Dauer>“ wurden als vergessener Platzhalter abgewiesen, weil die Prüfung jedes „<…>“ als Platzhalter wertete. Ein Plan ließ sich dadurch nicht speichern.
