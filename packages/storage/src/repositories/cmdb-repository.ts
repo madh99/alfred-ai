@@ -126,11 +126,13 @@ export class CmdbRepository {
         [userId, asset.sourceSkill, asset.sourceId],
       );
       if (existing) {
+        // v1715 — Realfall 30.10. (775ebaf3): der Abgleich einer Quelle leerte gepflegte Felder (Zweck, Notizen …), die die Quelle
+        // gar nicht liefert. Was die Quelle nicht mitgibt (undefined → NULL), bleibt jetzt erhalten.
         await this.db.execute(
           `UPDATE cmdb_assets SET
-            name = ?, asset_type = ?, identifier = ?, environment = ?, status = ?,
-            ip_address = ?, hostname = ?, fqdn = ?, location = ?, owner = ?, purpose = ?,
-            attributes = ?, tags = ?, notes = ?,
+            name = ?, asset_type = ?, identifier = ?, environment = COALESCE(?, environment), status = ?,
+            ip_address = ?, hostname = ?, fqdn = COALESCE(?, fqdn), location = COALESCE(?, location), owner = COALESCE(?, owner),
+            purpose = COALESCE(?, purpose), attributes = ?, tags = COALESCE(?, tags), notes = COALESCE(?, notes),
             last_seen_at = ?, last_verified_at = ?, updated_at = ?
           WHERE id = ?`,
           [

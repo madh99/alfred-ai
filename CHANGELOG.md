@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CMDB-Abgleich behält gepflegte Felder (v1715)
+
+- Der regelmäßige Abgleich mit einer Quelle (Proxmox, Fernzugriff, UniFi …) setzte Zweck, Notizen, Besitzer, Ort, Tags, FQDN und Umgebung eines Eintrags auf leer, wenn die Quelle diese Felder nicht liefert. Gepflegte Angaben gingen dadurch beim nächsten Abgleich verloren.
+- Diese Felder bleiben jetzt erhalten, solange die Quelle keinen eigenen Wert mitgibt. Gezielt ändern oder leeren lassen sie sich weiterhin über die Bearbeitung des Eintrags.
+
 ### Fixed — Firewall-Prüfungen mit nft laufen als Lesebefehl (v1714)
 
 - Reine Anzeigebefehle von nftables (`nft list ruleset`, `nft list tables`, `nft list table …`, `nft list chain …`) stehen jetzt auf der Leseliste des Fernzugriffs. Prüfungen einer Host-Firewall scheiterten vorher im Lese-Käfig mit „you must be root“, obwohl die Firewall korrekt eingerichtet war.
