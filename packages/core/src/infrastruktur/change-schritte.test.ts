@@ -530,3 +530,15 @@ describe('v1685 Korrektur ab Haltepunkt bei wartendem Owner-Schritt', () => {
     expect(korrekturAb).toBe(4);
   });
 });
+
+describe('v1716 — Vergleich mit < und > ist kein Platzhalter', () => {
+  it('„frei <20GiB oder … Backupdauer>“ geht durch, <host-id> bleibt Platzhalter', () => {
+    const plan = {
+      titel: 'Text', begruendung: 'Test', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], ohneSicherungGrund: 'nur Meldung',
+      schritte: [{ titel: 'Echo', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: 'echo "Melde wenn pgdata frei <20GiB oder Collector stale/Backupdauer>8h"' }, pruefung: { typ: 'befehl', zugang: 'dockerhost', befehl: 'uptime' }, rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl: 'true' } } }],
+    };
+    expect(pruefeChangePlan(plan, ctx()).fehler.filter(x => x.includes('Platzhalter'))).toEqual([]);
+    const mit = { ...plan, schritte: [{ ...plan.schritte[0], parameter: { name: 'dockerhost', befehl: 'ping <host-id>' } }] };
+    expect(pruefeChangePlan(mit, ctx()).fehler.some(x => x.includes('Platzhalter'))).toBe(true);
+  });
+});

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Prüfung hält Vergleiche nicht mehr für Platzhalter (v1716)
+
+- Texte mit Vergleichen wie „frei <20 GiB oder … Dauer>“ wurden als vergessener Platzhalter abgewiesen, weil die Prüfung jedes „<…>“ als Platzhalter wertete. Ein Plan ließ sich dadurch nicht speichern.
+- Als Platzhalter gilt jetzt nur „<…>“, das mit einem Buchstaben beginnt (z. B. <IP>, <host-id>); „{{…}}“-Platzhalter werden unverändert erkannt.
+
 ### Fixed — CMDB-Abgleich behält gepflegte Felder (v1715)
 
 - Der regelmäßige Abgleich mit einer Quelle (Proxmox, Fernzugriff, UniFi …) setzte Zweck, Notizen, Besitzer, Ort, Tags, FQDN und Umgebung eines Eintrags auf leer, wenn die Quelle diese Felder nicht liefert. Gepflegte Angaben gingen dadurch beim nächsten Abgleich verloren.

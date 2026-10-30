@@ -58,7 +58,9 @@ const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{
 /** I4c — {{geheim:x}} nur als ganzer Wert in Feldern, die die Skill-Sandbox im Log schwärzt (oberste Ebene, exakte Schreibweise) */
 const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessToken|refreshToken|clientSecret)$/;
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
-const PLATZHALTER = /<[^<>\n]{2,40}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
+// v1716 — Realfall 30.10. (Paket B, Überwachungstext „frei <20GiB oder … Backupdauer>“): ein Vergleich ist kein Platzhalter; „<…>“
+// zählt nur, wenn es mit einem Buchstaben beginnt (<IP>, <host-id>, <Passwort>)
+const PLATZHALTER = /<[A-Za-zÄÖÜäöüß_][^<>\n]{1,39}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
 /** v1664 — Befehle, die einen Dienst anhalten bzw. wieder starten (für die Regel „nach dem Stopp nur mit Rückweg“) */
 export const DIENST_STOPP = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(stop|kill|down|pause)|docker\s+container\s+(stop|kill)|systemctl\s+(stop|kill)|service\s+\S+\s+stop)\b/;
