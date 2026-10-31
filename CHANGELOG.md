@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Geplante Überwachungsaufgaben melden nur bei Befund und erreichen den Owner (v1720)
+
+- Geplante Aufgaben, die direkt einen Fernzugriff-Befehl ausführen, galten bei jedem Lauf als Meldung, weil die Anzeige den Befehl selbst enthält. Jetzt zählt nur die Ausgabe des Befehls: Ohne Ausgabe und mit Exit 0 bleibt die Aufgabe still, ein Fehler oder Alarmtext wird gemeldet.
+- Aufgaben ohne Ziel-Gespräch (z. B. von einem Change angelegt) stellten ihre Meldungen nirgends zu. Sie gehen jetzt über den Standardweg an den Owner.
+
 ### Fixed — Lange Kopien in Changes: Zeitlimit und Abbruch (v1719)
 
 - Kopier- und andere Fernzugriff-Aktionen in Changes liefen mit der Skill-Vorgabe von einer Stunde statt mit dem Zeitlimit des Schritts. Eine Kopie von 193 GB brach dadurch nach 120 GB ab. Ohne eigene Angabe gilt jetzt das Zeitlimit des Schritts.

@@ -6790,6 +6790,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       };
       // v1447 — Ergebnisse geplanter Aufgaben aus einem Owner-Faden: in den Faden (gespeichert + Owner-Geräte) und als Kopie an Telegram (Owner 14.10.)
       this.proactiveScheduler.setFadenZustellung(async (chatId, text, name) => {
+        // v1720 — Realfall 31.10.: Aufgaben, die ein Change (Kontext ohne Gespräch) anlegt, haben kein Ziel — ein Alarm ging ins Leere.
+        // Ohne Ziel geht die Meldung an den Owner über den Standardweg.
+        if (!chatId.trim()) {
+          await this.meldeOhneModell(text);
+          this.logger.info({ name }, 'v1720 Geplante Aufgabe ohne Ziel an den Owner zugestellt');
+          return true;
+        }
         const f = await this.ownerFadenVon(chatId);
         if (!f) return false;
         await this.meldeInFaden(f, text);

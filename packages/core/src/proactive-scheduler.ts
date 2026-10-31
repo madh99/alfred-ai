@@ -140,7 +140,17 @@ export class ProactiveScheduler {
         });
 
         const result = await this.skillSandbox.execute(skill, input, context);
-        if (result.success) {
+        // v1720 — Realfall 31.10. (Überwachung pgBackRest „PG B neu Repo Alarm“): Die Anzeige eines Fernzugriff-Befehls enthält immer
+        // den Befehl selbst — die Aufgabe galt bei jedem Lauf als Meldung (152×), obwohl die Alarmdatei leer war. Liefert der Skill eine
+        // Befehlsausführung (code + stdout), zählt nur deren Ausgabe: Exit 0 ohne Ausgabe bleibt still, Exit ≠ 0 wird gemeldet.
+        const lauf = result.data as { code?: unknown; stdout?: unknown; stderr?: unknown } | undefined;
+        const befehlsLauf = !!lauf && typeof lauf === 'object' && typeof lauf.code === 'number' && typeof lauf.stdout === 'string';
+        if (result.success && befehlsLauf) {
+          const code = lauf!.code as number; const aus = (lauf!.stdout as string).trim();
+          const err = typeof lauf!.stderr === 'string' ? lauf!.stderr.trim() : '';
+          rohErgebnis = code === 0 ? aus : `${aus}${aus ? '\n' : ''}(Exit ${code})${err ? `\n${err.slice(-500)}` : ''}`;
+          resultText = rohErgebnis;
+        } else if (result.success) {
           const rawText = result.display ?? JSON.stringify(result.data);
           rohErgebnis = rawText;
           if (this.formatter) {
