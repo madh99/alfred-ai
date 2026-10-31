@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Warteschritte brechen bei eindeutigem Fehler sofort ab (v1718)
+
+- Prüfungen in Changes kennen ein neues Feld „abbruch“: Steht dieser Text in der Ausgabe (z. B. „VERIFY_FAILED“), endet ein Warteschritt sofort als Fehler, statt bis zum Zeitlimit weiterzuprüfen. Vorher wartete ein Change nach einer nach einer Sekunde gescheiterten Backup-Prüfung 70 Minuten, bevor er anhielt.
+- Die Change-Prüfung lässt „abbruch“ nur bei Befehls- und Skill-Prüfungen zu und weist es ab, wenn der Abbruchtext im erwarteten Text steckt.
+
 ### Fixed — Change-Prüfungen über Fernzugriff werten nur die Befehlsausgabe (v1717)
 
 - Prüfte ein Change-Schritt mit einem Fernzugriff-Lesebefehl, wurde der erwartete Text auch im angezeigten Befehl selbst gefunden, und ein Exit-Code ungleich 0 galt nicht als Fehlschlag. Warteschritte wie „bis zur Zielzeit warten“ waren dadurch sofort erfüllt, obwohl der Befehl „WARTEN“ ausgab und mit Exit 1 endete. Die harte Zeitfensterprüfung danach verhinderte einen verfrühten Start.

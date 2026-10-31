@@ -340,6 +340,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         const r = await this.pruefe(p);
         if (r.ok) return { ok: true, text: r.text, versuche: i, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) };
         letzter = r.text; ausgabe = r.ausgabe;
+        // v1718 — Realfall 31.10. (8a26aed6 Schritt 67): pg_verifybackup scheiterte nach 1 s, gewartet wurde 70 min bis zum Zeitlimit.
+        // Steht der Abbruch-Text in der Ausgabe, ist das Ergebnis klar — sofort als Fehler beenden.
+        if (p.abbruch && (r.ausgabe ?? r.text).includes(p.abbruch)) return { ok: false, text: `Abbruch („${p.abbruch}“): ${r.text}`, versuche: i, ...(ausgabe ? { ausgabe } : {}) };
       } catch (err) { letzter = (err as Error).message.slice(0, 300); }
       if (i < versuche) await this.schlafe(abstandMs);
     }

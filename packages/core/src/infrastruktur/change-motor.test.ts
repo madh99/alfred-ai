@@ -223,6 +223,16 @@ describe('I4 Ausführungsmotor', () => {
     expect(w3.c.status).toBe('completed');
   });
 
+  it('v1718 Realfall 8a26aed6 Schritt 67: Warten endet sofort, wenn der Abbruch-Text in der Ausgabe steht', async () => {
+    const w = welt([S({ nr: 1, art: 'warten', zeitlimitS: 3600, pruefung: { typ: 'befehl', zugang: 'pg-repo-01', befehl: 'pg-b-verify-state', erwartet: 'VERIFIED_OK', abbruch: 'VERIFY_FAILED' } })]);
+    let aufrufe = 0;
+    w.deps.fernLesen = async () => { aufrufe++; return 'VERIFY_FAILED exit=1\n'; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect(aufrufe).toBe(1); // nicht 3600 s / Takt lang weiterprüfen
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];

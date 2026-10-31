@@ -19,7 +19,7 @@ import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
 
 export type AktionsArt = 'lesen' | 'sicherung' | 'aendern' | 'loeschen';
 export type PruefTyp = 'http' | 'port' | 'dns' | 'ping' | 'container_healthy' | 'datei' | 'befehl' | 'skill';
-export interface Pruefung { typ: PruefTyp; ziel?: string; port?: number; erwartet?: string; /** Ausgabe darf das nicht enthalten (z. B. „Snapshot existiert schon“) */ nichtEnthalten?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string; parameter?: Record<string, unknown> }
+export interface Pruefung { typ: PruefTyp; ziel?: string; port?: number; erwartet?: string; /** Ausgabe darf das nicht enthalten (z. B. „Snapshot existiert schon“) */ nichtEnthalten?: string; /** v1718 — steht das in der Ausgabe, endet ein Warten sofort als Fehler (z. B. „VERIFY_FAILED“) */ abbruch?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string; parameter?: Record<string, unknown> }
 export interface Rueckweg { skill?: string; aktion?: string; parameter?: Record<string, unknown>; keiner?: string }
 export interface ChangeSchritt {
   nr: number; titel: string; art: 'aktion' | 'pruefung' | 'warten' | 'owner';
@@ -162,7 +162,9 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   const typ = txt(p.typ) as PruefTyp;
   if (!PRUEF_TYPEN.includes(typ)) { f.push(`${wo}: pruefung.typ muss ${PRUEF_TYPEN.join('/')} sein`); return undefined; }
   const aus: Pruefung = { typ };
-  for (const k of ['ziel', 'erwartet', 'nichtEnthalten', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
+  for (const k of ['ziel', 'erwartet', 'nichtEnthalten', 'abbruch', 'zugang', 'container', 'pfad', 'befehl', 'skill', 'aktion'] as const) if (txt(p[k])) aus[k] = txt(p[k]);
+  if (aus.abbruch && !['befehl', 'skill'].includes(typ)) f.push(`${wo}: abbruch gibt es nur bei befehl- und skill-Prüfungen`);
+  if (aus.abbruch && aus.erwartet && aus.erwartet.includes(aus.abbruch)) f.push(`${wo}: abbruch „${aus.abbruch.slice(0, 40)}“ steckt in erwartet — die Prüfung bräche bei Erfolg ab`);
   if (aus.nichtEnthalten && !['http', 'befehl', 'skill'].includes(typ)) f.push(`${wo}: nichtEnthalten gibt es nur bei http-, befehl- und skill-Prüfungen`);
   // v1675 — Realfall 26.10. (5b7dc0f9 Schritt 9): erwartet „lvmthin: data2-pve3“, nichtEnthalten „lvmthin: data2“ — steckt im erwarteten
   // Text, die Prüfung hätte nie bestanden und den Change nach dem letzten Umbau angehalten
@@ -409,8 +411,8 @@ export function pruefText(p?: Pruefung): string {
     case 'ping': return `Ping ${p.ziel}`;
     case 'container_healthy': return `Container ${p.container} auf ${p.zugang} läuft/healthy`;
     case 'datei': return `Datei ${p.pfad} auf ${p.zugang}`;
-    case 'befehl': return `Befehl auf ${p.zugang}: ${p.befehl}${p.erwartet ? ` → ${p.erwartet}` : ''}${p.nichtEnthalten ? `, ohne „${p.nichtEnthalten}“` : ''}`;
-    case 'skill': return `${p.skill}.${p.aktion}${param(p.parameter)}${p.erwartet ? ` → enthält „${p.erwartet}“` : ''}${p.nichtEnthalten ? ` → enthält nicht „${p.nichtEnthalten}“` : ''}`;
+    case 'befehl': return `Befehl auf ${p.zugang}: ${p.befehl}${p.erwartet ? ` → ${p.erwartet}` : ''}${p.nichtEnthalten ? `, ohne „${p.nichtEnthalten}“` : ''}${p.abbruch ? `, Abbruch bei „${p.abbruch}“` : ''}`;
+    case 'skill': return `${p.skill}.${p.aktion}${param(p.parameter)}${p.erwartet ? ` → enthält „${p.erwartet}“` : ''}${p.nichtEnthalten ? ` → enthält nicht „${p.nichtEnthalten}“` : ''}${p.abbruch ? `, Abbruch bei „${p.abbruch}“` : ''}`;
   }
 }
 export function schrittText(s: ChangeSchritt): string {
