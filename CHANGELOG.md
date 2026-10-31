@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Andauernde Alarme geplanter Prüfaufgaben werden nicht alle Minuten wiederholt (v1721)
+
+- Eine geplante Prüfaufgabe, die alle fünf Minuten läuft, meldete einen andauernden Alarm bei jedem Lauf. Jetzt wird ein unveränderter Alarm höchstens alle sechs Stunden erneut gemeldet; ändert sich der Text, kommt die Meldung sofort.
+- Ist wieder alles in Ordnung, bleibt die Aufgabe still; ein neuer Alarm danach wird sofort gemeldet.
+
 ### Fixed — Geplante Überwachungsaufgaben melden nur bei Befund und erreichen den Owner (v1720)
 
 - Geplante Aufgaben, die direkt einen Fernzugriff-Befehl ausführen, galten bei jedem Lauf als Meldung, weil die Anzeige den Befehl selbst enthält. Jetzt zählt nur die Ausgabe des Befehls: Ohne Ausgabe und mit Exit 0 bleibt die Aufgabe still, ein Fehler oder Alarmtext wird gemeldet.

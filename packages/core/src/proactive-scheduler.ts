@@ -40,6 +40,8 @@ export class ProactiveScheduler {
    * v1368 — Gedächtnis der gemeldeten Kennungen (Rechnungs-/Vertragsnummern, Beträge) über alle Aufgaben des Benutzers, 60 Tage;
    * von alfred.ts gesetzt. Ohne Gedächtnis gilt jede Kennung als neu (lieber einmal zu viel melden als eine Rechnung verlieren).
    */
+  /** v1721 — zuletzt gemeldeter Text je Skill-Aufgabe (Dauer-Alarm nicht alle 5 min wiederholen) */
+  private letzteSkillMeldung = new Map<string, { text: string; am: number }>();
   private meldeGedaechtnis?: { laden(userId: string): Promise<Set<string>>; merken(userId: string, kennungen: string[]): Promise<void> };
   setMeldeGedaechtnis(g: NonNullable<ProactiveScheduler['meldeGedaechtnis']>): void { this.meldeGedaechtnis = g; }
   /**
@@ -49,6 +51,19 @@ export class ProactiveScheduler {
    */
   private fadenZustellung?: (chatId: string, text: string, name: string) => Promise<boolean>;
   setFadenZustellung(f: NonNullable<ProactiveScheduler['fadenZustellung']>): void { this.fadenZustellung = f; }
+
+  /**
+   * v1721 — Realfall 31.10. (pgBackRest-Überwachung): Eine Skill-Aufgabe alle 5 min meldet einen andauernden Alarm sonst 288× am Tag.
+   * Gleicher Text wie die letzte Meldung: höchstens alle 6 h erneut; geänderter Text sofort. Leere Ausgabe setzt zurück (Entwarnung
+   * bleibt still, der nächste Alarm kommt sofort).
+   */
+  private skillEntscheidung(id: string, text: string): { senden: boolean; grund: string; neu: string[] } {
+    if (text.length < 3) { this.letzteSkillMeldung.delete(id); return { senden: false, grund: 'leer', neu: [] }; }
+    const alt = this.letzteSkillMeldung.get(id);
+    if (alt && alt.text === text && Date.now() - alt.am < 6 * 3_600_000) return { senden: false, grund: 'unverändert seit letzter Meldung', neu: [] };
+    this.letzteSkillMeldung.set(id, { text, am: Date.now() });
+    return { senden: true, grund: alt?.text === text ? 'Skill-Aufgabe (Erinnerung nach 6 h)' : 'Skill-Aufgabe', neu: [] };
+  }
 
   start(): void {
     this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
@@ -285,7 +300,7 @@ export class ProactiveScheduler {
       ? { senden: true, grund: 'Prüfauftrag', neu: [] as string[] }
       : action.promptTemplate
       ? entscheideMeldung({ text: trimmed, prompt: action.promptTemplate, istFehler: isError || trimmed.startsWith('Scheduled action'), bekannt })
-      : { senden: trimmed.length >= 3, grund: trimmed.length >= 3 ? 'Skill-Aufgabe' : 'leer', neu: [] as string[] };
+      : this.skillEntscheidung(action.id, trimmed);
     if (!entscheidung.senden) {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, text: trimmed.slice(0, 200) }, 'Scheduled action produced no actionable output — skipping notification');
       if (action.promptTemplate && entscheidung.grund !== 'leer') zustellProtokoll.merke('aufgabe'); // v1369
