@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Mehrzeilige Lesebefehle im Lese-Käfig (v1722)
+
+- Mehrzeilige Befehle wie ein Python-Skript per Heredoc liefen im Lese-Käfig nicht: Vor der Ausführung wurden alle Zeilenumbrüche zusammengefasst, die Shell brach mit einem Syntaxfehler ab. Prüfschritte in Changes scheiterten dadurch, obwohl der geprüfte Zustand in Ordnung sein konnte.
+- Eingeordnet wird ein Befehl weiterhin in der zusammengefassten Form (Leseliste, Sperren, Geheimnisprüfung). Im Lese-Käfig läuft er jetzt mit seinen Zeilenumbrüchen. Befehle der Leseliste, die außerhalb des Käfigs laufen, bleiben unverändert.
+
 ### Changed — Andauernde Alarme geplanter Prüfaufgaben werden nicht alle Minuten wiederholt (v1721)
 
 - Eine geplante Prüfaufgabe, die alle fünf Minuten läuft, meldete einen andauernden Alarm bei jedem Lauf. Jetzt wird ein unveränderter Alarm höchstens alle sechs Stunden erneut gemeldet; ändert sich der Text, kommt die Meldung sofort.

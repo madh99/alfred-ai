@@ -404,7 +404,10 @@ export class FernzugriffSkill extends Skill {
     const geheim = nurMetadaten(befehl) ? undefined : geheimnisGrund(befehl); // v1665 — ls/test/stat zeigen keine Inhalte
     if (geheim) return { success: false, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
     // v1668 — Realfall 6193af12 Schritt 2: test -x im Käfig fragte den Käfig-Benutzer; reine Metadaten-Befehle (streng geprüft) laufen als root
-    if (klasse !== 'lesen' && !nurMetadaten(befehl)) return this.imKaefig(owner, befehl, input, context);
+    // v1722 — Realfall 31.10. (a4c1b1e8 Schritt 36, vorher 8a26aed6 Schritt 79): normalisiereBefehl fasst auch Zeilenumbrüche zusammen;
+    // ein Heredoc (python3 - <<'PY' …) wurde zu einer Zeile, /bin/sh brach mit „Syntax error: "(" unexpected“ ab. Eingeordnet wird die
+    // normalisierte Form; im Lese-Käfig (dort ist der Käfig die Grenze) läuft der Befehl mit seinen Zeilenumbrüchen.
+    if (klasse !== 'lesen' && !nurMetadaten(befehl)) return this.imKaefig(owner, kaefigText(input.befehl, befehl), input, context);
     const z = await this.zugang(owner, input);
     let r = await this.lauf(owner, z, fernBefehl(befehl, true), this.timeout(input));
     if (r.code !== 0 && /sudo: (a password is required|.*not allowed|.*may not run)/i.test(r.stderr)) r = await this.lauf(owner, z, befehl, this.timeout(input));
@@ -468,7 +471,7 @@ export class FernzugriffSkill extends Skill {
     } else {
       const k = await this.kaefigBereit(owner, z);
       if (!k.ok) throw new Error(`nicht auf der Leseliste, Lese-Käfig nicht verfügbar (${k.grund})`);
-      r = await this.lauf(owner, z, kaefigBefehl(b, z.benutzer, timeoutMs / 1000, this.kaefigStufe.get(z.id)), timeoutMs + 15_000);
+      r = await this.lauf(owner, z, kaefigBefehl(kaefigText(befehl, b), z.benutzer, timeoutMs / 1000, this.kaefigStufe.get(z.id)), timeoutMs + 15_000); // v1722
     }
     if (r.code !== 0 && !r.stdout.trim()) throw new Error(`Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}`);
     return schwaerze(r.stdout).text;
@@ -849,4 +852,10 @@ export class FernzugriffSkill extends Skill {
     const gestellt = await this.deps.bestaetigung({ description: `Fernzugang „${z.name}“ (${z.benutzer}@${z.host}) entfernen?`, params: { ...gebunden, freigabe: nonce } }, herkunft);
     return gestellt ? { success: true, data: { zurBestaetigung: true }, display: `Entfernen von „${z.name}“ zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
   }
+}
+
+/** v1722 — Text für den Lese-Käfig: mehrzeilige Befehle (Heredoc) unverändert bis auf ein vorangestelltes sudo, sonst die normalisierte Form. */
+export function kaefigText(roh: unknown, normalisiert: string): string {
+  if (typeof roh !== 'string' || !roh.includes('\n')) return normalisiert;
+  return roh.trim().replace(/^sudo\s+(-n\s+)?/, '');
 }
