@@ -308,7 +308,10 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
     }
-    const r = await this.d.fuehreAus(skill, { ...p, action: aktion }, timeoutMs);
+    // v1719 — Realfall 31.10. (8a26aed6 Schritt 73): kopieren lief mit der Skill-Vorgabe von 1 h statt mit dem Schrittlimit von 3 h und
+    // brach nach 120 von 193 GB ab. Ohne eigenes timeout_s gilt bei Fernzugriff-Aktionen das Zeitlimit des Schritts.
+    const zeit = skill === 'fernzugriff' && p.timeout_s === undefined ? { timeout_s: Math.floor(timeoutMs / 1000) } : {};
+    const r = await this.d.fuehreAus(skill, { ...p, ...zeit, action: aktion }, timeoutMs);
     // v1630 — Realfall 24.10. (provision_vm: VM geklont, Anmeldung gescheitert, Rückweg ließ die VM stehen): liefert der Skill trotz
     // Fehlschlag Daten, hat er schon etwas angelegt — mitnehmen, damit Verweise und Rückweg greifen
     if (!r.success) return { ok: false, fehler: String(r.error ?? 'Skill-Fehler').slice(0, 500), ...(r.display ? { ausgabe: r.display } : {}), ...(r.data !== undefined && r.data !== null ? { daten: r.data, teilweise: true } : {}) };

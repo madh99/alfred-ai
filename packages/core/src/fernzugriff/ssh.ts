@@ -125,7 +125,15 @@ export async function sshStrom(q: SshZiel, qBefehl: string, qEingabe: string, z:
         if (warte > 0) setTimeout(() => fertig(null, chunk), Math.min(warte, 5_000)); else fertig(null, chunk);
       },
     });
-    const t = setTimeout(() => { pq.kill('SIGKILL'); pz.kill('SIGKILL'); }, o.timeoutMs);
+    // v1719 — Realfall 31.10. (8a26aed6 Schritt 73): nach dem Abbruch kam „close“ nie an (Bremse/Pipe hielt die Ströme offen), die
+    // Kopie hing 1 h 20 min ohne Ergebnis. Nach dem Kill Ströme schließen und spätestens nach 10 s mit Zeitlimit-Ergebnis zurückkehren.
+    bremse.on('error', () => undefined);
+    const t = setTimeout(() => {
+      eq += `\nZeitlimit ${Math.round(o.timeoutMs / 1000)} s erreicht — Übertragung abgebrochen`;
+      pq.kill('SIGKILL'); pz.kill('SIGKILL');
+      pq.stdout.unpipe(); bremse.destroy(); pz.stdin.destroy(); pq.stdout.destroy();
+      setTimeout(() => { if (cq === undefined) cq = 124; if (cz === undefined) cz = 124; ende(); }, 10_000).unref?.();
+    }, o.timeoutMs);
     pq.stderr.on('data', d => { if (eq.length < 64_000) eq += d; });
     pz.stderr.on('data', d => { if (ez.length < 64_000) ez += d; });
     pz.stdout.resume();

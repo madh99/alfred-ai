@@ -233,6 +233,15 @@ describe('I4 Ausführungsmotor', () => {
     expect(aufrufe).toBe(1); // nicht 3600 s / Takt lang weiterprüfen
   });
 
+  it('v1719 Realfall 8a26aed6 Schritt 73: Fernzugriff-Aktion bekommt das Schrittlimit als timeout_s', async () => {
+    const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'kopieren', zeitlimitS: 10800, einordnung: 'aendern', parameter: { quelle: 'pg-repo-01', quelle_pfad: '/a', ziel: 'pg-restore-01', ziel_pfad: '/b' }, rueckweg: { keiner: 'Test' } })]);
+    const eingaben: Array<Record<string, unknown>> = [];
+    w.deps.fuehreAus = async (_s, input) => { eingaben.push(input); return { success: true, data: {}, display: 'ok' }; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(eingaben.find(e => e.action === 'kopieren')?.timeout_s).toBe(10800);
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];

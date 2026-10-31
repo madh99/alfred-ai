@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Lange Kopien in Changes: Zeitlimit und Abbruch (v1719)
+
+- Kopier- und andere Fernzugriff-Aktionen in Changes liefen mit der Skill-Vorgabe von einer Stunde statt mit dem Zeitlimit des Schritts. Eine Kopie von 193 GB brach dadurch nach 120 GB ab. Ohne eigene Angabe gilt jetzt das Zeitlimit des Schritts.
+- Wurde eine Host-zu-Host-Übertragung wegen des Zeitlimits abgebrochen, kehrte sie nicht zurück, und der Change-Schritt blieb ohne Ergebnis stehen. Jetzt werden die Datenströme geschlossen, und die Übertragung meldet spätestens nach 10 Sekunden „Zeitlimit erreicht“.
+
 ### Added — Warteschritte brechen bei eindeutigem Fehler sofort ab (v1718)
 
 - Prüfungen in Changes kennen ein neues Feld „abbruch“: Steht dieser Text in der Ausgabe (z. B. „VERIFY_FAILED“), endet ein Warteschritt sofort als Fehler, statt bis zum Zeitlimit weiterzuprüfen. Vorher wartete ein Change nach einer nach einer Sekunde gescheiterten Backup-Prüfung 70 Minuten, bevor er anhielt.
