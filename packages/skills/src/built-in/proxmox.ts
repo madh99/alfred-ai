@@ -2007,13 +2007,33 @@ export class ProxmoxSkill extends Skill {
       if (input.force_stop !== true) return { success: false, error: `${name} läuft — erst herunterfahren (oder force_stop)` };
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/status/stop`, {}), 120_000, 'Stoppen');
     }
-    await this.aufgabeOderFehler(await this.del<string>(`/nodes/${vm.node}/qemu/${vmid}?purge=1&destroy-unreferenced-disks=1`), 600_000, 'Löschen');
+    let hinweis = '';
+    try {
+      await this.aufgabeOderFehler(await this.del<string>(`/nodes/${vm.node}/qemu/${vmid}?purge=1&destroy-unreferenced-disks=1`), 600_000, 'Löschen');
+    } catch (err) {
+      // v1736 — Realfall 7f04dc5f (01.11.): die Suche nach verwaisten Platten durchsucht jeden Speicher des Knotens; nvme001 ist für pve
+      // eingetragen, die Volume Group fehlt dort („no such logical volume“, vgscan Exit 5). Die eigenen Platten waren da schon gelöscht,
+      // die VM blieb ohne Platten stehen. Dann: Verweise auf nicht mehr vorhandene Platten aus der Konfiguration nehmen und ohne die Suche löschen.
+      if (!/no such logical volume|vgscan|is not online|not available on node|unable to activate storage/i.test((err as Error).message)) throw err;
+      const cfg = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+      const weg: string[] = [];
+      for (const [k, v] of Object.entries(cfg)) {
+        if (!/^(scsi|sata|ide|virtio|efidisk|tpmstate|unused)\d+$/.test(k) || String(v).includes('media=cdrom')) continue;
+        const volid = String(v).split(',')[0]!;
+        const sp = volid.split(':')[0]!;
+        const da = await this.get<Array<{ volid: string }>>(`/nodes/${vm.node}/storage/${sp}/content?vmid=${vmid}`).then(l => l.some(x => x.volid === volid)).catch(() => true);
+        if (!da) weg.push(k);
+      }
+      if (weg.length) await this.post(`/nodes/${vm.node}/qemu/${vmid}/config`, { delete: weg.join(',') });
+      await this.aufgabeOderFehler(await this.del<string>(`/nodes/${vm.node}/qemu/${vmid}?purge=1`), 600_000, 'Löschen (ohne Suche nach verwaisten Platten)');
+      hinweis = ` — Suche nach verwaisten Platten übersprungen (${(err as Error).message.slice(0, 120)}); ${weg.length ? `bereits gelöschte Platten aus der Konfiguration entfernt: ${weg.join(', ')}` : 'alle Platten waren noch referenziert'}`;
+    }
     this.vmCache = null;
     // v1689 — eine wiederhergestellte Kopie trägt bis zur Umbenennung den Namen des Originals: Fernzugang und Server-Eintrag
     // gehören dann dem weiterlaufenden Original und bleiben (Rückweg eines Restoretests hätte sonst das Original abgemeldet)
     const nurVmid = (await this.getAllVms().catch(() => [])).some(v => v.vmid !== vmid && v.name === name);
     const ab = this.fabrik ? await this.fabrik.abmelden({ name, node: vm.node, vmid, ...(nurVmid ? { nurVmid } : {}) }).catch((e: Error) => `Abmelden fehlgeschlagen: ${e.message}`) : '';
-    return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${ab ? `. ${ab}` : ''}` };
+    return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${hinweis}${ab ? `. ${ab}` : ''}` };
   }
 
   private async listNetworksAction(input: Record<string, unknown>): Promise<SkillResult> {

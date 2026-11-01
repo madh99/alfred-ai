@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — VM löschen trotz fehlendem Speicher am Knoten (v1736)
+
+- `delete_vm` sucht beim Löschen auch nach verwaisten Platten, und zwar in jedem Speicher des Knotens. Auf pve ist der Speicher `nvme001` eingetragen, die Volume Group fehlt dort aber. Die Suche brach deshalb ab, nachdem die eigenen Platten schon gelöscht waren, und die VM blieb ohne Platten stehen (Realfall Change 7f04dc5f).
+- Jetzt nimmt Alfred in diesem Fall die bereits gelöschten Platten aus der Konfiguration, löscht die VM ohne diese Suche und nennt das in der Meldung.
+
 ### Fixed — Rückweg nach teilweise ausgeführtem Schritt (v1735)
 
 - Hatte ein Schritt schon etwas angelegt und scheiterte danach (z. B. VM geklont, aber nicht erreichbar), fand sein Rückweg Verweise wie `{{schritt1.vmid}}` nicht, weil nur erfolgreiche Schritte zählten. Die VM blieb stehen (Realfall Change 94959771). Verweise gelten jetzt auch für Schritte, die etwas bewirkt und Daten geliefert haben.

@@ -348,3 +348,22 @@ describe('v1689 delete_vm einer Restore-Kopie mit dem Namen des Originals', () =
     expect(w.abgemeldet).toEqual([{ name: 'docker-dev-01', node: 'pve3', vmid: 9150 }]);
   });
 });
+
+describe('delete_vm bei fehlendem Speicher am Knoten (v1736, Realfall 7f04dc5f)', () => {
+  it('Suche nach verwaisten Platten scheitert → gelöschte Platten aus der Konfiguration nehmen, ohne Suche löschen', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's', defaultNode: 'pve' } as never);
+    const cfg: Record<string, unknown> = { name: 'probe-win25', scsi0: 'nvme-cs001:vm-9101-disk-1,size=64G', efidisk0: 'nvme-cs001:vm-9101-disk-0,size=1M', ide0: 'nvme-cs001:vm-9101-cloudinit,media=cdrom' };
+    const aufrufe: string[] = [];
+    const a = px as unknown as Record<string, unknown>;
+    a.getAllVms = async () => [{ vmid: 9101, name: 'probe-win25', node: 'pve', type: 'qemu' }];
+    a.get = async (p: string) => { if (p.endsWith('/config')) return cfg; if (p.endsWith('/status/current')) return { status: 'stopped' }; if (p.includes('/content?vmid=9101')) return []; return {}; };
+    a.post = async (p: string, b: Record<string, unknown>) => { aufrufe.push(`POST ${p} ${JSON.stringify(b)}`); return null; };
+    a.del = async (p: string) => { aufrufe.push(`DEL ${p}`); return p.includes('destroy-unreferenced-disks=1') ? 'UPID:alt' : 'UPID:neu'; };
+    a.aufgabeOderFehler = async (u: string) => { if (u === 'UPID:alt') throw new Error('Löschen: no such logical volume nvme001/nvme001'); };
+    const r = await px.execute({ action: 'delete_vm', vmid: 9101, vm_name: 'probe-win25', force_stop: true }, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(aufrufe).toContain('POST /nodes/pve/qemu/9101/config {"delete":"scsi0,efidisk0"}');
+    expect(aufrufe).toContain('DEL /nodes/pve/qemu/9101?purge=1');
+    expect(r.display).toContain('Suche nach verwaisten Platten übersprungen');
+  });
+});
