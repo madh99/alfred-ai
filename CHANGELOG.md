@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Leeres LLM-Guthaben wird sofort gemeldet (v1725)
+
+- Ein Guthaben-Fehler bei OpenAI oder Anthropic wurde erst gemeldet, wenn die Störung eine Stunde anhielt; nach jedem Neustart begann diese Stunde von vorn. In den Realfällen vom 29. bis 31.10. kam die Meldung dadurch ein bis sechs Stunden zu spät, Alfred arbeitete so lange über das teurere Ersatzmodell.
+- Jetzt stößt der erste Guthaben-Fehler den Wächter sofort an, und Guthaben-Fehler gelten ohne Wartezeit als Befund. Die Entwarnung nach dem Aufladen kommt ebenso sofort. Andere Störungen (Netz, Rate-Limit) behalten die Schwelle von einer Stunde.
+
 ### Changed — Stabile Werkzeugliste je Gespräch für den Prompt-Cache (v1724)
 
 - Die Werkzeugliste eines Gesprächs wird nur noch erweitert, nie umsortiert oder gekürzt; neu gewählte Werkzeuge kommen ans Ende. Vorher stellte die Auswahl je Nachricht die Liste neu zusammen. Weil die Werkzeuge vorne im Prompt stehen, war der Cache bei der ersten Runde jeder Nachricht dadurch fast wertlos (Messung 28.10.–01.11. im Infra-Faden: 10 % aus dem Cache, Folgerunden 96 %).

@@ -958,6 +958,8 @@ export class Alfred {
     }
     llmProvider.setBillingAlertCallback((info) => {
       this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered' : 'v868 LLM billing failure (Owner-Satz kommt vom Lebenszeichen-Wächter)');
+      // v1725 — Wächter sofort anstoßen (Meldung bzw. Entwarnung ohne Warten auf das 10-min-Raster); Puls ist vorher aktualisiert
+      if (this.jobRegister) setTimeout(() => { void this.jobRegister?.jetzt('degradations-waechter').catch(() => undefined); }, 2_000).unref?.();
     });
 
     // Service usage tracking (STT, TTS, OCR, Moderation)

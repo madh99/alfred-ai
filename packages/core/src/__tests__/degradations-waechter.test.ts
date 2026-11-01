@@ -86,6 +86,12 @@ describe('bewertePuls', () => {
     expect(bewertePuls([gestoert('fast', 'billing', 90, now)], now)[0].text).toMatch(/ohne anthropic-Guthaben \(Tier fast/);
     expect(bewertePuls([gestoert('fast', 'netz', 90, now)], now)).toHaveLength(0);
   });
+
+  it('v1725: Guthaben-Fehler sofort, andere Störungen erst nach der Schwelle', () => {
+    const now = T(12);
+    expect(bewertePuls([gestoert('default', 'billing', 1, now)], now)).toHaveLength(1);
+    expect(bewertePuls([gestoert('default', 'netz', 1, now)], now)).toHaveLength(0);
+  });
 });
 
 describe('nachzuprobendeTiers (v1270)', () => {

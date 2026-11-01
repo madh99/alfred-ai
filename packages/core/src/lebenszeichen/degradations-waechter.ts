@@ -65,8 +65,10 @@ export function bewertePuls(puls: TierPuls[], now: Date): Befund[] {
   for (const p of puls) {
     if (!ProviderPuls.istGestoert(p) || !p.gestoertSeit) continue;
     const dauer = now.getTime() - Date.parse(p.gestoertSeit);
-    if (dauer < DEGRADATION_SCHWELLE_MS) continue;
     const billing = p.fehlerKlasse === 'billing';
+    // v1725 — Realfälle 29.–31.10.: leeres Guthaben wurde erst 1–6 h später gemeldet (Schwelle 1 h, nach jedem Neustart von vorn).
+    // Ein Guthaben-Fehler ist eindeutig und sofort handlungsrelevant — keine Wartezeit; andere Störungen behalten die Schwelle.
+    if (!billing && dauer < DEGRADATION_SCHWELLE_MS) continue;
     if (!billing && !KERN_TIERS.has(p.tier)) continue;
     const letzterErfolg = p.letzterErfolg ? `letzter Erfolg ${datumKurz(p.letzterErfolg)}` : 'noch kein Erfolg seit Start';
     const text = billing

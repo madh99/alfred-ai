@@ -182,6 +182,18 @@ export class JobRegister {
     await Promise.all(faellig.map(({ def, zustand }) => this.mitZeitbudget(def, zustand)));
   }
 
+  /**
+   * v1725 — einen registrierten Job sofort ausführen (z. B. Wächter beim ersten Guthaben-Fehler), außerhalb des Rasters.
+   * Läuft er gerade, passiert nichts (kein Doppelstart). Liefert true, wenn gestartet.
+   */
+  async jetzt(key: string): Promise<boolean> {
+    const eintrag = this.jobs.get(key);
+    if (!eintrag || eintrag.zustand.laeuft) return false;
+    eintrag.zustand.laeuft = true;
+    await this.mitZeitbudget(eintrag.def, eintrag.zustand);
+    return true;
+  }
+
   private async mitZeitbudget(def: JobDefinition, zustand: JobZustand): Promise<void> {
     const budgetMs = (def.timeoutMin ?? STANDARD_TIMEOUT_MIN) * 60_000;
     const lauf = this.ausfuehren(def).catch(err => {
