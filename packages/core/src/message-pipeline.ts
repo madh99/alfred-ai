@@ -410,6 +410,11 @@ export class MessagePipeline {
     void this.anfrageProtokoll({ chatId: message.chatId, kanal: message.platform, text: message.text, absicht: absichtenAus(message.text), stufe: (message.metadata?.tier as string | undefined) ?? 'default', ...d }).catch(() => undefined);
   }
 
+  /** v1727 — Kontostand-Eingabe (OpenAI/Anthropic) → Antworttext; istOwnerChat beschränkt auf Owner-Kanäle */
+  private guthabenStand?: (anbieter: string, betrag: number) => Promise<string>;
+  private istOwnerChat?: (chatId: string) => boolean;
+  setGuthabenStand(fn: (anbieter: string, betrag: number) => Promise<string>, istOwnerChat: (chatId: string) => boolean): void { this.guthabenStand = fn; this.istOwnerChat = istOwnerChat; }
+
   setQuickActions(handler: import('./quick-actions.js').QuickActionHandler): void {
     this.quickActions = handler;
   }
@@ -625,6 +630,16 @@ export class MessagePipeline {
 
     // v847 — Show status immediately so user knows Alfred is working
     onProgress?.({ kind: 'thinking', text: 'Alfred denkt nach…' });
+
+    // v1727 — „OpenAI Guthaben 2,07“: Kontostand ohne Modell übernehmen (nur Owner-Chats: Telegram-Owner, Owner-Fäden, App-Sitzungen)
+    if (this.guthabenStand && message.text && this.istOwnerChat?.(message.chatId)) {
+      const { guthabenEingabe } = await import('./lebenszeichen/guthaben-schaetzung.js');
+      const g = guthabenEingabe(message.text);
+      if (g) {
+        this.logger.info({ anbieter: g.anbieter, betrag: g.betrag }, 'v1727 Kontostand-Eingabe erkannt');
+        return { text: await this.guthabenStand(g.anbieter, g.betrag).catch(err => `Kontostand nicht übernommen: ${(err as Error).message}`) };
+      }
+    }
 
     // v924 — Quick-Action-Callbacks (todo:<id>:done etc.) VOR allem anderen:
     // das sind Button-Klicks, nie LLM-Input.

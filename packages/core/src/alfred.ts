@@ -442,6 +442,10 @@ export class Alfred {
   private jobRegister?: import('./lebenszeichen/job-register.js').JobRegister;
   /** v1726 — Zeitpunkt „Guthaben leer“ je Anbieter festhalten (Ausgangspunkt der Guthaben-Schätzung) */
   private guthabenLeer?: (anbieter: string) => Promise<void>;
+  /** v1727 — vom Owner genannter Kontostand (USD) → Antworttext */
+  private guthabenStand?: (anbieter: string, betragUsd: number, zeit?: string) => Promise<string>;
+  /** v1727 — EZB-Kurs USD je EUR (Tageswert) */
+  private guthabenKurs?: () => Promise<number | undefined>;
   /** v1162 — Jarvis Schicht 0: Provider-Puls, Degradations-Wächter, letzte Proben (für Kachel). */
   private providerPuls?: import('./lebenszeichen/provider-puls.js').ProviderPuls;
   private degradationsWaechter?: import('./lebenszeichen/degradations-waechter.js').DegradationsWaechter;
@@ -6889,66 +6893,123 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       });
 
       // v1726 — Guthaben-Schätzung (Owner 01.11.): Ladungs-Mails von OpenAI/Anthropic ohne Modell auslesen, Restguthaben ab dem letzten
-      // leeren Stand schätzen und rechtzeitig warnen. Zustand im skill_state (Namensraum guthaben) unter dem Owner.
+      // bekannten Stand schätzen und rechtzeitig warnen. v1727: genannte Kontostände als Ausgangspunkt, Korrekturfaktor, Euro brutto.
+      // Zustand im skill_state (Namensraum guthaben) unter dem Owner.
+      const gsLies = async <T>(owner: string, k: string, leer: T): Promise<T> => { try { return JSON.parse((await skillStateRepo.get(owner, 'guthaben', k)) ?? 'null') ?? leer; } catch { return leer; } };
+      const gsSetze = (owner: string, k: string, v: unknown) => skillStateRepo.set(owner, 'guthaben', k, JSON.stringify(v));
+      type GsAnker = import('./lebenszeichen/guthaben-schaetzung.js').Anker;
+      const gsAnker = async (owner: string, a: string): Promise<GsAnker | undefined> => {
+        const anker = await gsLies<GsAnker | null>(owner, `anker:${a}`, null);
+        if (anker) return anker;
+        const leer = await gsLies<string | null>(owner, `leer:${a}`, null); // v1726-Zustand
+        return leer ? { art: 'leer', betrag: 0, zeit: leer } : undefined;
+      };
+      // Kosten je Anbieter aus llm_usage_hourly (stundengenau; die angebrochene Startstunde zählt ganz — vorsichtige Schätzung)
+      const gsKosten = async (a: string, ab: number, bis = Date.now()): Promise<number> => {
+        const { anbieterVonModell } = await import('./lebenszeichen/guthaben-schaetzung.js');
+        const zeilen = await this.database.getAdapter().query('SELECT hour_bucket, model, cost_usd FROM llm_usage_hourly WHERE hour_bucket >= ?', [new Date(ab - 3_600_000).toISOString().slice(0, 13)]) as Array<{ hour_bucket: string; model: string; cost_usd: number }>;
+        return zeilen.filter(z => anbieterVonModell(z.model) === a && Date.parse(`${z.hour_bucket}:00:00Z`) >= ab - 3_600_000 + 1 && Date.parse(`${z.hour_bucket}:00:00Z`) <= bis).reduce((x, z) => x + Number(z.cost_usd || 0), 0);
+      };
+      // EZB-Referenzkurs, einmal je Tag (öffentliche Quelle, ohne Schlüssel; TLS geprüft)
+      const gsKurs = async (owner: string): Promise<number | undefined> => {
+        const { leseEzbKurs } = await import('./lebenszeichen/guthaben-schaetzung.js');
+        const heute = new Date().toISOString().slice(0, 10);
+        const k = await gsLies<{ kurs: number; datum: string } | null>(owner, 'eurkurs', null);
+        if (k?.datum === heute) return k.kurs;
+        try {
+          const r = await fetch('https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml', { signal: AbortSignal.timeout(15_000) });
+          const kurs = r.ok ? leseEzbKurs(await r.text()) : undefined;
+          if (kurs) { await gsSetze(owner, 'eurkurs', { kurs, datum: heute }); return kurs; }
+        } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1727 EZB-Kurs nicht abrufbar'); }
+        return k?.kurs;
+      };
+      this.guthabenKurs = async () => { const o = this.ownerMasterUserId ?? this.tryOwner(); return o ? gsKurs(o) : undefined; };
+      const gsLauf = async (): Promise<Record<string, number>> => {
+        const owner = this.ownerMasterUserId ?? this.tryOwner();
+        const emailSkill = skillRegistry.get('email');
+        const ownerChat = this.config.security?.ownerUserId;
+        if (!owner || !emailSkill || !ownerChat) return { ladungen: 0 };
+        const { leseLadung, schaetze, warnen, warnText } = await import('./lebenszeichen/guthaben-schaetzung.js');
+        const ladungen = await gsLies<import('./lebenszeichen/guthaben-schaetzung.js').Ladung[]>(owner, 'ladungen', []);
+        const gesehen = new Set(await gsLies<string[]>(owner, 'gesehen', []));
+        const { context } = await baueKontext(userRepo, { userId: ownerChat, platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as import('@alfred/types').Platform, chatId: ownerChat });
+        let neu = 0;
+        // Erstlauf (noch keine Ladung bekannt): Suche im Postfach, sonst die 50 neuesten Mails des Posteingangs
+        const erstlauf = ladungen.length === 0;
+        for (const filter of [{ from: 'tm.openai.com', subject: 'account has been funded', query: 'OpenAI API account has been funded' }, { subject: 'receipt from anthropic', query: 'receipt from Anthropic' }]) {
+          const r = erstlauf
+            ? await skillSandbox.execute(emailSkill, { action: 'search', query: filter.query, count: 20 }, context)
+            : await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(filter.from ? { from: filter.from } : {}), subject: filter.subject, count: 50 }, context);
+          const daten = r.data as { messages?: Array<{ id: string; from: string; subject: string; date: string }>; results?: Array<{ id: string; from: string; subject: string; date: string | Date }> } | undefined;
+          const mails = r.success ? (daten?.messages ?? (daten?.results ?? []).map(x => ({ ...x, date: new Date(x.date).toISOString() }))) : [];
+          for (const m of mails) {
+            if (gesehen.has(m.id)) continue;
+            gesehen.add(m.id);
+            const d = await skillSandbox.execute(emailSkill, { action: 'read', messageId: m.id }, context);
+            const body = d.success ? String((d.data as { body?: string })?.body ?? '') : '';
+            const l = body ? leseLadung({ id: m.id, from: m.from, subject: m.subject, body, date: m.date }) : undefined;
+            if (l) { ladungen.push(l); neu++; this.logger.info({ anbieter: l.anbieter, guthaben: l.guthaben, zeit: l.zeit }, 'v1726 Guthaben-Ladung erkannt'); }
+          }
+        }
+        await gsSetze(owner, 'gesehen', [...gesehen].slice(-300));
+        await gsSetze(owner, 'ladungen', ladungen.slice(-100));
+        const kurs = await gsKurs(owner);
+        const gemeldet = await gsLies<Record<string, string>>(owner, 'gewarnt', {});
+        const zaehler: Record<string, number> = { ladungen: ladungen.length, neu };
+        for (const a of ['openai', 'anthropic'] as const) {
+          const anker = await gsAnker(owner, a);
+          const faktor = await gsLies<number>(owner, `faktor:${a}`, 1);
+          const proStunde = (await gsKosten(a, Date.now() - 86_400_000)) / 24;
+          const kostenAb = new Map<string, number>();
+          const ab = anker?.zeit ?? ladungen.filter(l => l.anbieter === a).map(l => l.zeit).sort().pop();
+          if (ab) kostenAb.set(ab, await gsKosten(a, Date.parse(ab)));
+          const sch = schaetze(a, ladungen, anker, iso => kostenAb.get(iso) ?? 0, proStunde, faktor);
+          if (!sch) continue;
+          zaehler[`rest_${a}`] = Math.round(sch.rest);
+          this.logger.info({ ...sch }, 'v1726 Guthaben geschätzt');
+          await gsSetze(owner, `schaetzung:${a}`, { ...sch, um: new Date().toISOString() });
+          const marke = `${sch.seit}|${sch.geladen}`;
+          if (warnen(sch) && gemeldet[a] !== marke) {
+            await this.meldeOhneModell(warnText(sch, kurs)).catch(() => undefined);
+            gemeldet[a] = marke;
+            await gsSetze(owner, 'gewarnt', gemeldet);
+          }
+        }
+        return zaehler;
+      };
       this.registriereJob({
         key: 'guthaben-schaetzung', beschreibung: 'LLM-Guthaben aus Ladungs-Mails und gemessenen Kosten schätzen, rechtzeitig warnen',
         takt: { art: 'intervall', minuten: 30 }, bereich: 'global', startVerzoegerungMin: 3, timeoutMin: 9,
-        run: async () => {
-          const owner = this.ownerMasterUserId ?? this.tryOwner();
-          const emailSkill = skillRegistry.get('email');
-          const ownerChat = this.config.security?.ownerUserId;
-          if (!owner || !emailSkill || !ownerChat) return { ok: true, zaehler: { ladungen: 0 } };
-          const { leseLadung, schaetze, warnen, warnText, anbieterVonModell } = await import('./lebenszeichen/guthaben-schaetzung.js');
-          const lies = async <T>(k: string, leer: T): Promise<T> => { try { return JSON.parse((await skillStateRepo.get(owner, 'guthaben', k)) ?? 'null') ?? leer; } catch { return leer; } };
-          const ladungen = await lies<import('./lebenszeichen/guthaben-schaetzung.js').Ladung[]>('ladungen', []);
-          const gesehen = new Set(await lies<string[]>('gesehen', []));
-          const { context } = await baueKontext(userRepo, { userId: ownerChat, platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as import('@alfred/types').Platform, chatId: ownerChat });
-          let neu = 0;
-          // Erstlauf (noch keine Ladung bekannt): Suche im Postfach, sonst die 50 neuesten Mails des Posteingangs
-          const erstlauf = ladungen.length === 0;
-          for (const filter of [{ from: 'tm.openai.com', subject: 'account has been funded', query: 'OpenAI API account has been funded' }, { subject: 'receipt from anthropic', query: 'receipt from Anthropic' }]) {
-            const r = erstlauf
-              ? await skillSandbox.execute(emailSkill, { action: 'search', query: filter.query, count: 20 }, context)
-              : await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(filter.from ? { from: filter.from } : {}), subject: filter.subject, count: 50 }, context);
-            const daten = r.data as { messages?: Array<{ id: string; from: string; subject: string; date: string }>; results?: Array<{ id: string; from: string; subject: string; date: string | Date }> } | undefined;
-            const mails = r.success ? (daten?.messages ?? (daten?.results ?? []).map(x => ({ ...x, date: new Date(x.date).toISOString() }))) : [];
-            for (const m of mails) {
-              if (gesehen.has(m.id)) continue;
-              gesehen.add(m.id);
-              const d = await skillSandbox.execute(emailSkill, { action: 'read', messageId: m.id }, context);
-              const body = d.success ? String((d.data as { body?: string })?.body ?? '') : '';
-              const l = body ? leseLadung({ id: m.id, from: m.from, subject: m.subject, body, date: m.date }) : undefined;
-              if (l) { ladungen.push(l); neu++; this.logger.info({ anbieter: l.anbieter, guthaben: l.guthaben, zeit: l.zeit }, 'v1726 Guthaben-Ladung erkannt'); }
-            }
-          }
-          await skillStateRepo.set(owner, 'guthaben', 'gesehen', JSON.stringify([...gesehen].slice(-300)));
-          await skillStateRepo.set(owner, 'guthaben', 'ladungen', JSON.stringify(ladungen.slice(-100)));
-          // Kosten je Anbieter aus llm_usage_hourly (stundengenau; die angebrochene Startstunde zählt ganz — vorsichtige Schätzung)
-          const zeilen = await this.database.getAdapter().query('SELECT hour_bucket, model, cost_usd FROM llm_usage_hourly WHERE hour_bucket >= ?', [new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 13)]) as Array<{ hour_bucket: string; model: string; cost_usd: number }>;
-          const kosten = (a: string, ab: number) => zeilen.filter(z => anbieterVonModell(z.model) === a && Date.parse(`${z.hour_bucket}:00:00Z`) >= ab - 3_600_000 + 1).reduce((x, z) => x + Number(z.cost_usd || 0), 0);
-          const gemeldet = await lies<Record<string, string>>('gewarnt', {});
-          const zaehler: Record<string, number> = { ladungen: ladungen.length, neu };
-          for (const a of ['openai', 'anthropic'] as const) {
-            const leer = await lies<string | null>(`leer:${a}`, null) ?? undefined;
-            const proStunde = kosten(a, Date.now() - 86_400_000) / 24;
-            const sch = schaetze(a, ladungen, leer, iso => kosten(a, Date.parse(iso)), proStunde);
-            if (!sch) continue;
-            zaehler[`rest_${a}`] = Math.round(sch.rest);
-            this.logger.info({ ...sch }, 'v1726 Guthaben geschätzt');
-            const marke = `${sch.seit}|${sch.geladen}`;
-            if (warnen(sch) && gemeldet[a] !== marke) {
-              await this.meldeOhneModell(warnText(sch)).catch(() => undefined);
-              gemeldet[a] = marke;
-              await skillStateRepo.set(owner, 'guthaben', 'gewarnt', JSON.stringify(gemeldet));
-            }
-          }
-          return { ok: true, zaehler };
-        },
+        run: async () => ({ ok: true, zaehler: await gsLauf() }),
       });
       this.guthabenLeer = async (anbieter: string) => {
         const owner = this.ownerMasterUserId ?? this.tryOwner();
         if (!owner || !/^(openai|anthropic)$/.test(anbieter)) return;
-        await skillStateRepo.set(owner, 'guthaben', `leer:${anbieter}`, JSON.stringify(new Date().toISOString()));
+        await gsSetze(owner, `anker:${anbieter}`, { art: 'leer', betrag: 0, zeit: new Date().toISOString() });
+      };
+      // v1727 — vom Owner genannter Kontostand: neuer Ausgangspunkt, Korrekturfaktor aus dem Verbrauch seit dem vorigen Stand
+      this.guthabenStand = async (anbieter: string, betragUsd: number, zeit = new Date().toISOString()) => {
+        const owner = this.ownerMasterUserId ?? this.tryOwner();
+        if (!owner) return 'kein Owner bekannt';
+        const { neuerFaktor, schaetze, bruttoEur } = await import('./lebenszeichen/guthaben-schaetzung.js');
+        const a = anbieter as import('./lebenszeichen/guthaben-schaetzung.js').GuthabenAnbieter;
+        const ladungen = await gsLies<import('./lebenszeichen/guthaben-schaetzung.js').Ladung[]>(owner, 'ladungen', []);
+        const vorher = await gsAnker(owner, a) ?? (() => { const l = ladungen.filter(x => x.anbieter === a).sort((x, y) => Date.parse(x.zeit) - Date.parse(y.zeit)).pop(); return l ? { art: 'leer' as const, betrag: 0, zeit: new Date(Date.parse(l.zeit) - 60_000).toISOString() } : undefined; })();
+        const alt = await gsLies<number>(owner, `faktor:${a}`, 1);
+        let faktor = alt;
+        if (vorher) {
+          const gemessen = await gsKosten(a, Date.parse(vorher.zeit), Date.parse(zeit));
+          faktor = neuerFaktor(vorher, { betrag: betragUsd, zeit }, ladungen, a, gemessen, alt);
+        }
+        await gsSetze(owner, `faktor:${a}`, faktor);
+        await gsSetze(owner, `anker:${a}`, { art: 'stand', betrag: betragUsd, zeit });
+        await gsSetze(owner, 'gewarnt', { ...(await gsLies<Record<string, string>>(owner, 'gewarnt', {})), [a]: '' });
+        this.logger.info({ anbieter: a, betragUsd, faktor, vorher }, 'v1727 Kontostand übernommen');
+        const proStunde = (await gsKosten(a, Date.now() - 86_400_000)) / 24;
+        const sch = schaetze(a, ladungen, { art: 'stand', betrag: betragUsd, zeit }, () => 0, proStunde, faktor);
+        const kurs = await gsKurs(owner);
+        const name = a === 'openai' ? 'OpenAI' : 'Anthropic';
+        return `💳 ${name}-Guthaben ${betragUsd.toFixed(2)} $ übernommen${kurs ? ` (≈ ${bruttoEur(betragUsd, kurs, 0).toFixed(2)} € netto)` : ''}. Korrekturfaktor für nicht gemessene Nutzung: ×${faktor.toFixed(2)}${sch?.stundenRest !== undefined ? `; reicht beim aktuellen Verbrauch etwa ${Math.round(sch.stundenRest)} h` : ''}.`;
       };
     }
 
@@ -8196,6 +8257,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         return (await this.hinweisReagieren(id, reaktion)) ?? { ok: false, grund: 'nicht verfügbar' };
       });
       this.pipeline.setQuickActions(quickActions);
+      // v1727 — Kontostand-Eingabe „OpenAI Guthaben 2,07“ (Owner-Kanäle)
+      this.pipeline.setGuthabenStand(
+        async (anbieter, betrag) => this.guthabenStand ? this.guthabenStand(anbieter, betrag) : 'Guthaben-Schätzung nicht verfügbar',
+        (chatId) => String(chatId) === String(this.config.security?.ownerUserId ?? '') || String(chatId).startsWith('owner:') || String(chatId).startsWith('sitzung:'),
+      );
       // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
       this.pipeline.setWeltmodellQuelle(() => {
         const welt = (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.();

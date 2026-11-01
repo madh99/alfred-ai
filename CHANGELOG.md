@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Guthaben-Schätzung mit Kontostand, Korrekturfaktor und Euro (v1727)
+
+- Der Owner kann den aktuellen Kontostand aus der Konsole nennen („OpenAI Guthaben 2,07“, „Guthaben Anthropic: 13.94 $“). Alfred übernimmt ihn ohne Modell als neuen Ausgangspunkt der Schätzung (nur in Owner-Kanälen) und bestätigt mit der neuen Reichweite.
+- Aus zwei bekannten Ständen ergibt sich ein Korrekturfaktor tatsächlicher zu gemessenem Verbrauch (begrenzt auf 1–2, erst ab 2 $ Verbrauch, geglättet). Er deckt Nutzung ab, die Alfred nicht misst, etwa andere Programme mit demselben Konto.
+- Warnungen nennen den Aufladebetrag zusätzlich in Euro brutto (20 % MwSt., EZB-Tageskurs) und zeigen, wie der Kontostand gemeldet wird.
+
 ### Added — Schätzung des LLM-Guthabens mit Vorwarnung (v1726)
 
 - OpenAI und Anthropic liefern den Kontostand nicht über eine Schnittstelle. Alfred liest deshalb die Lade-Mails ohne Modell aus (OpenAI: „Your OpenAI API account has been funded“, Betrag ohne 20 % MwSt.; Anthropic: Stripe-Beleg mit „One-time credit purchase“; Abo-Rechnungen wie der Max-Plan zählen nicht).
