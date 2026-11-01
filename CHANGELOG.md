@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Anwendungs-Update-Bericht mit echter Herkunft und Versionen, Datenbanken in der OS-Update-Serie gesperrt (v1730)
+
+- Images, die beim Umzug über die eigene Registry übertragen wurden (lokale Builds wie sydent, synapse-admin, noah), sucht der Bericht nicht mehr in dieser Registry. Die Herkunft kommt aus dem Change-Verlauf (Digest → Quellhost) und dem alten CMDB-Eintrag (Image-Name, Compose-Ordner). Sie stehen in einem eigenen Abschnitt „Lokal gebaut“, denn ihr Update heißt neu bauen aus der Quelle.
+- Bei gleitenden Tags (`latest`, `stable`, `main` …) vergleicht der Bericht über das OCI-Versions-Label des Images und nennt neuere Versionen derselben bzw. einer neuen Hauptversion. Die Labels Version, Quelle, Revision und Basis-Image sind dafür auf der Docker-Leseliste; andere Labels bleiben gesperrt.
+- Standard-Vorlage (h) Betriebssystem-Updates, Version 2: Native Datenbank-Pakete (PostgreSQL, MariaDB/MySQL, MongoDB, Redis/Valkey) werden wie die Docker-Pakete für die Dauer festgehalten; ihr Update bleibt ein eigener Change. Die Vorlage braucht deshalb eine neue Freigabe.
+- CMDB-Assets lassen sich in allen Aktionen (anzeigen, ändern, stilllegen, löschen) mit der eindeutigen Kurz-ID ansprechen.
+
 ### Fixed — Kurz-IDs bei Changes, Telegram-Formatierung, Docker-Logs beim Lesen, schnellere Warte-Schritte (v1729)
 
 - Changes lassen sich in allen ITSM-Aktionen (ändern, genehmigen, starten, abschließen, Rollback, anzeigen) mit der eindeutigen Kurz-ID ansprechen. Bisher fand nur die Anzeige einen Entwurf per Kurz-ID, die Schreibaktionen meldeten „nicht gefunden“. Die Anzeige sucht außerdem nicht mehr nur unter den letzten 100 Changes.

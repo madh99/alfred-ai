@@ -158,7 +158,7 @@ describe('S4 Betriebssystem-Updates und Serie', () => {
     if (!('plan' in e)) return;
     expect(pruefeChangePlan(e.plan, pctx2).fehler).toEqual([]);
     const s = e.plan.schritte as Array<{ titel: string; parameter?: { befehl?: string }; rueckweg?: { aktion?: string } }>;
-    expect(s.map(x => x.titel.split(':')[0])).toEqual(['Startprüfung', 'Snapshot alfred_20261022_7d', 'Vorher erheben', 'Paketlisten und Upgrade (Docker-Pakete gesperrt, Simulation vorher)', 'Neustart nur bei reboot-required (bis 02', 'Anlaufzeit', 'VM läuft', 'Gast-Agent antwortet', 'Nachher vergleichen']);
+    expect(s.map(x => x.titel.split(':')[0])).toEqual(['Startprüfung', 'Snapshot alfred_20261022_7d', 'Vorher erheben', 'Paketlisten und Upgrade (Docker- und Datenbank-Pakete gesperrt, Simulation vorher)', 'Neustart nur bei reboot-required (bis 02', 'Anlaufzeit', 'VM läuft', 'Gast-Agent antwortet', 'Nachher vergleichen']);
     expect(s[0]!.parameter!.befehl).toContain("'00:30'<=n<'02:00'");
     expect(s[3]!.parameter!.befehl).toContain('apt-mark');
     expect(s[8]!.rueckweg!.aktion).toBe('rollback_snapshot');

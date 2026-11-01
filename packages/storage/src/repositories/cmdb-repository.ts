@@ -175,7 +175,13 @@ export class CmdbRepository {
     const row = await this.db.queryOne(
       `SELECT * FROM cmdb_assets WHERE id = ? AND user_id = ?`, [id, userId],
     );
-    return row ? rowToAsset(row) : null;
+    if (row) return rowToAsset(row);
+    // v1730 — Kurz-ID wie bei Changes (Mangel seit 24.10.: update_asset verlangte volle IDs); nur bei genau einem Treffer
+    if (id.length >= 6 && id.length <= 12 && /^[0-9a-f]+$/i.test(id)) {
+      const rows = await this.db.query(`SELECT * FROM cmdb_assets WHERE id LIKE ? AND user_id = ? LIMIT 2`, [id.toLowerCase() + '%', userId]);
+      if (rows.length === 1) return rowToAsset(rows[0]!);
+    }
+    return null;
   }
 
   async findAssetByName(userId: string, name: string, assetType?: CmdbAssetType): Promise<CmdbAsset | null> {
@@ -235,6 +241,7 @@ export class CmdbRepository {
 
     fields.push(`updated_at = ?`);
     params.push(new Date().toISOString());
+    id = existing.id; // v1730 — volle ID auch bei Kurz-ID-Aufruf
     params.push(id, userId);
 
     await this.db.execute(`UPDATE cmdb_assets SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
@@ -251,6 +258,7 @@ export class CmdbRepository {
 
   async decommissionAsset(userId: string, id: string): Promise<boolean> {
     const existing = await this.getAssetById(userId, id);
+    if (existing) id = existing.id; // v1730 — Kurz-ID
     const oldStatus = existing?.status ?? 'unknown';
     const result = await this.db.execute(
       `UPDATE cmdb_assets SET status = 'decommissioned', updated_at = ? WHERE id = ? AND user_id = ?`,
@@ -263,6 +271,7 @@ export class CmdbRepository {
   }
 
   async deleteAsset(userId: string, id: string): Promise<boolean> {
+    id = (await this.getAssetById(userId, id))?.id ?? id; // v1730 — Kurz-ID
     const result = await this.db.execute(`DELETE FROM cmdb_assets WHERE id = ? AND user_id = ?`, [id, userId]);
     if (result.changes > 0) {
       await this.logChange(userId, null, 'deleted', 'manual', undefined, id, undefined, `Asset ${id} gelöscht`);

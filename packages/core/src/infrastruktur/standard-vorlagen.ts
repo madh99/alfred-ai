@@ -176,8 +176,8 @@ export const VORLAGEN: Vorlage[] = [
     },
   },
   {
-    key: 'os_updates', version: 1, titel: '(h) Betriebssystem-Updates (Updates v2)',
-    beschreibung: 'Für Proxmox-VMs mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (Container, Ports, Dienste) → apt-get upgrade mit gesperrten Docker-Paketen und Simulation vorher → Neustart NUR bei reboot-required und spätestens 30 min vor Fensterende → Warten, VM und Gast-Agent → Nachher-Vergleich (dieselben Container mit gleichem Image, vorher Gesunde wieder gesund, Ports und Dienste wieder da). Rückweg: Snapshot zurücksetzen. Kein Distributions-Upgrade, kein Docker-Wechsel. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage.',
+    key: 'os_updates', version: 2, titel: '(h) Betriebssystem-Updates (Updates v2)',
+    beschreibung: 'Für Proxmox-VMs mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (Container, Ports, Dienste) → apt-get upgrade mit gesperrten Docker- und Datenbank-Paketen (PostgreSQL, MariaDB/MySQL, MongoDB, Redis/Valkey — deren Update ist ein eigener Change) und Simulation vorher → Neustart NUR bei reboot-required und spätestens 30 min vor Fensterende → Warten, VM und Gast-Agent → Nachher-Vergleich (dieselben Container mit gleichem Image, vorher Gesunde wieder gesund, Ports und Dienste wieder da). Rückweg: Snapshot zurücksetzen. Kein Distributions-Upgrade, kein Docker-Wechsel. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage.',
     parameter: { zugang: 'Fernzugang-Name', fenster: 'optional HH:MM-HH:MM (Standard 00:30-02:45)' }, verfuegbar: true,
     annahmenText: ['Debian-artiges System (apt, python3-apt)', 'keine Paketverwaltung blockiert (dpkg sauber)', 'Gast-Agent der VM antwortet'],
     async annahmen(p, k) {

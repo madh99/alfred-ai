@@ -7361,8 +7361,31 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const { sammleAnwendungsUpdates, berichtText } = await import('./infrastruktur/anwendungs-updates.js');
           const schalter = await wartungRepo.updatesSchalter(o).catch(() => ({} as Record<string, string>));
           const hosts = (await fz.aktiveZugaenge()).map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
+          // v1730 — Herkunft übertragener Images: abgeschlossene Changes mit image_hochladen (Digest → Quellhost) + alter CMDB-Eintrag
+          const transporte = new Map<string, { quelleHost: string; change: string }>();
+          type ZeileCh = { id: string; schritte: string | null; lauf: string | null };
+          for (const ch of await adapter.query(`SELECT id, schritte, lauf FROM cmdb_change_requests WHERE user_id = ? AND status = 'completed' AND schritte LIKE ?`, [o, '%image_hochladen%']) as ZeileCh[]) {
+            try {
+              const schritte = JSON.parse(ch.schritte ?? '[]') as Array<{ nr: number; aktion?: string; parameter?: { name?: string } }>;
+              const erg = (JSON.parse(ch.lauf ?? '{}') as { ergebnisse?: Array<{ nr: number; ok?: boolean; daten?: { digest?: string } }> }).ergebnisse ?? [];
+              for (const s of schritte.filter(x => x.aktion === 'image_hochladen' && x.parameter?.name)) {
+                const dg = erg.find(e => e.nr === s.nr && e.ok)?.daten?.digest;
+                if (dg) transporte.set(dg, { quelleHost: s.parameter!.name!, change: ch.id });
+              }
+            } catch { /* Change nicht lesbar */ }
+          }
+          const altAssets = transporte.size ? await adapter.query(`SELECT name, attributes FROM cmdb_assets WHERE user_id = ? AND asset_type IN ('container', 'application')`, [o]) as Array<{ name: string; attributes: string | null }> : [];
+          const herkunft = async (container: string, digests: string[]) => {
+            const t = digests.map(x => transporte.get(x)).find(Boolean);
+            if (!t) return undefined;
+            const passend = altAssets.map(a => { try { return { name: a.name, at: JSON.parse(a.attributes ?? '{}') as Record<string, unknown> }; } catch { return undefined; } })
+              .filter((a): a is { name: string; at: Record<string, unknown> } => !!a && a.at.host === t.quelleHost && (a.name === container || a.name.startsWith(`${container} (`)));
+            const image = passend.map(a => a.at.image).find((x): x is string => typeof x === 'string' && !!x);
+            const ordner = passend.map(a => (typeof a.at.config_files === 'string' ? a.at.config_files : typeof a.at.compose_project === 'string' ? `Compose-Projekt ${a.at.compose_project}` : undefined)).find(Boolean);
+            return { ...t, ...(image ? { image } : {}), ...(ordner ? { ordner } : {}) };
+          };
           const r = await sammleAnwendungsUpdates({
-            hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000),
+            hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000), herkunft,
             abruf: async (url, init) => fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000) }), // v1708 — keine Weiterleitung (SSRF)
           });
           this.logger.info({ hosts: r.hosts.length, container: r.container.length, fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import {
   UPDATE_BEFEHLE, aptArt, containerBefehl, waehleReferenz, berichtText, containerArt, familienBefehl, imageBefehl, leseAptListe, leseImageRef, neueHauptversionen, neuereTags,
-  realmErlaubt, registryAbfrage, sammleAnwendungsUpdates,
+  realmErlaubt, registryAbfrage, sammleAnwendungsUpdates, leseImageZeile,
 } from './anwendungs-updates.js';
 
 describe('Anwendungs-Updates — native Pakete', () => {
@@ -174,5 +174,49 @@ describe('Anwendungs-Updates — Tag mit festem Digest (v1712)', () => {
   it('nginx:1.27@sha256:… nutzt den Tag', () => {
     expect(waehleReferenz('3f2a9c1b7d4e', 'nginx:1.27@sha256:abc', ['nginx@sha256:abc'])).toBe('nginx:1.27@sha256:abc');
     expect(leseImageRef('nginx:1.27@sha256:abc')).toEqual({ registry: 'registry-1.docker.io', repo: 'library/nginx', tag: '1.27', digest: 'sha256:abc' });
+  });
+});
+
+describe('Anwendungs-Updates — Herkunft und Versions-Label (v1730)', () => {
+  const D = `sha256:${'d'.repeat(64)}`, I = `sha256:${'e'.repeat(64)}`, J = `sha256:${'f'.repeat(64)}`;
+  const basis = (container: string, konfig: string, bild: string) => ({
+    [UPDATE_BEFEHLE.os]: 'ID=ubuntu', [UPDATE_BEFEHLE.apt]: '', [UPDATE_BEFEHLE.pakete]: '', [UPDATE_BEFEHLE.docker]: 'active',
+    [UPDATE_BEFEHLE.container]: container, ...konfig ? { [konfig.split('|')[0]!]: konfig.split('|')[1]! } : {}, ...bild ? { [bild.split('|')[0]!]: bild.split('|')[1]! } : {},
+  } as Record<string, string>);
+
+  it('Image-Zeile mit OCI-Labels; leere und fremde Werte zählen nicht', () => {
+    expect(leseImageZeile(`${I} ["a:1"] ["a@${D}"] 1.2.3 https://github.com/o/r`)).toMatchObject({ version: '1.2.3', quelle: 'https://github.com/o/r' });
+    expect(leseImageZeile(`${I} [] [] <no value> <no value>`)).toEqual({ id: I, tags: [], digests: [] });
+    expect(leseImageZeile(`${I} null null`)).toEqual({ id: I, tags: [], digests: [] });
+    expect(befehlsklasse(imageBefehl([I]))).toBe('lesen');
+  });
+
+  it('per eigener Registry übertragenes Image: Herkunft statt Transportweg, keine Registry-Abfrage', async () => {
+    const ref = `registry.lokalkraft.at/madh/alfred-ai/matrix-sydent@${D}`;
+    const a = basis(`sydent ${ref} data`, `${containerBefehl(['sydent'])}|/sydent ${ref} ${I}`, `${imageBefehl([I])}|${I} ["${ref}"] ["${ref}"]`);
+    const abrufe: string[] = [];
+    const r = await sammleAnwendungsUpdates({
+      hosts: [{ name: 'docker-com-01', updatesSchalter: true }],
+      lesen: async (_z, b) => { if (!(b in a)) throw new Error(b); return a[b]!; },
+      abruf: async (url) => { abrufe.push(url); return { status: 404, headers: { get: () => null }, json: async () => ({}) }; },
+      herkunft: async (name, ds) => (name === 'sydent' && ds.includes(D) ? { quelleHost: 'dockerhost', image: 'sydent:latest', ordner: '/home/sydent', change: 'ba143cd1-0000' } : undefined),
+    });
+    const c = r.container[0]!;
+    expect(c.herkunft).toContain('lokal gebaut auf dockerhost als sydent:latest (/home/sydent)');
+    expect(c.image).toBe('sydent:latest');
+    expect(abrufe).toEqual([]);
+    const t = berichtText(r.hosts, r.container, new Date('2026-11-02T08:00:00Z'));
+    expect(t).toContain('## Lokal gebaut');
+    expect(t).not.toContain('lokalkraft');
+  });
+
+  it(':latest mit Versions-Label: neuere Versionen über das Label', async () => {
+    const a = basis('livekit livekit/livekit-server:latest data', `${containerBefehl(['livekit'])}|/livekit livekit/livekit-server:latest ${J}`, `${imageBefehl([J])}|${J} ["livekit/livekit-server:latest"] ["livekit/livekit-server@${D}"] v1.9.1 `);
+    const r = await sammleAnwendungsUpdates({
+      hosts: [{ name: 'h', updatesSchalter: false }],
+      lesen: async (_z, b) => { if (!(b in a)) throw new Error(b); return a[b]!; },
+      abruf: async (url) => ({ status: url.includes('/manifests/') ? 200 : url.includes('hub.docker.com') ? 200 : 401, headers: { get: (n: string) => (n === 'docker-content-digest' ? 'sha256:neu' : null) }, json: async () => ({ results: [{ name: 'v1.9.4' }, { name: 'v1.9.1' }, { name: 'v2.0.0' }, { name: 'latest' }] }) }),
+    });
+    expect(r.container[0]).toMatchObject({ version: 'v1.9.1', neuerBuild: true, gleicheHauptversion: ['v1.9.4'], neueHauptversion: ['v2.0.0'] });
   });
 });

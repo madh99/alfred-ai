@@ -165,7 +165,14 @@ export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ di
 
 // ── Bericht ────────────────────────────────────────────────────
 
-export interface ContainerStand { host: string; name: string; image: string; art: UpdateArt; tag?: string; neuerBuild?: boolean; gleicheHauptversion: string[]; neueHauptversion: string[]; hinweis?: string }
+export interface ContainerStand { host: string; name: string; image: string; art: UpdateArt; tag?: string; neuerBuild?: boolean; gleicheHauptversion: string[]; neueHauptversion: string[]; hinweis?: string; version?: string; herkunft?: string }
+
+/**
+ * v1730 — Owner 01.11.: „synapse wird in lokalkraft gesucht, obwohl es nicht von dort stammt“. Beim Umzug lokal gebauter Images
+ * (fernzugriff image_hochladen) ist die eigene Registry nur der Transportweg. Die Herkunft kommt aus dem Change-Verlauf
+ * (Digest → Quellhost und Quell-Image) und dem alten CMDB-Eintrag des Containers (Image-Name, Compose-Ordner).
+ */
+export interface Herkunft { quelleHost: string; image?: string; ordner?: string; change: string }
 export interface HostStand { host: string; apt: AptUpdate[]; hauptversionen: Array<{ familie: string; installiert: string; verfuegbar: string }>; updatesSchalter: boolean; fehler?: string }
 
 const ART_TEXT: Record<UpdateArt, string> = { datenbank: 'Datenbank — nie Standard, eigener Change', mit_daten: 'mit Daten/Schema — eigener Change mit Sicherung', zustandslos: 'zustandslos — Vorlage (d) möglich', system: 'System' };
@@ -187,9 +194,14 @@ export function berichtText(hosts: HostStand[], container: ContainerStand[], jet
   if (!mitUpdate.length) z.push('- keine neueren Images gefunden');
   for (const c of mitUpdate) {
     const was = [c.neuerBuild ? `neuer Build für ${c.tag}` : '', c.gleicheHauptversion.length ? `neuere Versionen: ${c.gleicheHauptversion.join(', ')}` : '', c.neueHauptversion.length ? `neue Hauptversion: ${c.neueHauptversion.join(', ')}` : ''].filter(Boolean).join(' · ');
-    z.push(`- **${c.host} / ${c.name}** (${c.image}): ${was} — ${ART_TEXT[c.art]}`);
+    z.push(`- **${c.host} / ${c.name}** (${c.image}${c.version ? `, Version ${c.version}` : ''}): ${was} — ${ART_TEXT[c.art]}`);
   }
-  const ohne = container.filter(c => c.hinweis);
+  const lokal = container.filter(c => c.herkunft);
+  if (lokal.length) {
+    z.push('', '## Lokal gebaut (Update = neu bauen aus der Quelle)', '');
+    for (const c of lokal) z.push(`- **${c.host} / ${c.name}**: ${c.herkunft}${c.version ? ` · Version ${c.version}` : ''}`);
+  }
+  const ohne = container.filter(c => c.hinweis && !c.herkunft);
   if (ohne.length) z.push('', `Nicht prüfbar: ${ohne.map(c => `${c.host}/${c.name} (${c.hinweis})`).join(', ')}`);
   return z.join('\n');
 }
@@ -204,13 +216,26 @@ export const UPDATE_BEFEHLE = {
   container: "docker ps --format '{{.Names}} {{.Image}} {{.Mounts}}'",
 } as const;
 export const familienBefehl = (familie: string) => `apt-cache pkgnames ${familie}`;
-export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}}' ${images.join(' ')}`;
+export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "org.opencontainers.image.source"}}' ${images.join(' ')}`;
+
+/** v1730 — eine Zeile von imageBefehl: Id, Tags, Digests und die (oft leeren) OCI-Labels Version/Quelle */
+export function leseImageZeile(z: string): { id: string; tags: string[]; digests: string[]; version?: string; quelle?: string } | undefined {
+  const [id, tags, digests, version, quelle] = z.replace(/\r$/, '').split(' ');
+  if (!id || !/^sha256:[0-9a-f]{64}$/.test(id) || !tags || !digests) return undefined;
+  const wert = (x?: string) => (x && x !== '<no value>' && /^[\w.:/@+~-]{1,200}$/.test(x) ? x : undefined);
+  try {
+    const v = wert(version); const q = wert(quelle);
+    return { id, tags: (JSON.parse(tags) as string[] | null) ?? [], digests: (JSON.parse(digests) as string[] | null) ?? [], ...(v ? { version: v } : {}), ...(q ? { quelle: q } : {}) };
+  } catch { return undefined; }
+}
 export const containerBefehl = (namen: string[]) => `docker inspect --format '{{.Name}} {{.Config.Image}} {{.Image}}' ${namen.join(' ')}`;
 
 export interface SammelDeps {
   hosts: Array<{ name: string; updatesSchalter: boolean }>;
   lesen: (zugang: string, befehl: string) => Promise<string>;
   abruf: Abruf;
+  /** v1730 — Herkunft eines per eigener Registry übertragenen Images (Digest aus dem Change-Verlauf) */
+  herkunft?: (container: string, digests: string[]) => Promise<Herkunft | undefined>;
 }
 
 /** Liest alle Hosts nacheinander; Registry-Abfragen je Image nur einmal (mehrere Hosts mit demselben Image) */
@@ -247,19 +272,28 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
       if (n && ref && id) konfig.set(n.replace(/^\//, ''), { ref, id });
     }
     const ids = [...new Set([...konfig.values()].map(k => k.id).filter(i => /^sha256:[0-9a-f]{64}$/.test(i)))];
-    const bild = new Map<string, { tags: string[]; digests: string[] }>();
+    const bild = new Map<string, { tags: string[]; digests: string[]; version?: string; quelle?: string }>();
     if (ids.length) {
       for (const z of (await d.lesen(h.name, imageBefehl(ids)).catch(() => '')).split(/\r?\n/)) {
-        const m = /^(sha256:[0-9a-f]{64}) (\S+) (\S+)$/.exec(z.trim());
-        if (!m) continue;
-        try { bild.set(m[1]!, { tags: (JSON.parse(m[2]!) as string[] | null) ?? [], digests: (JSON.parse(m[3]!) as string[] | null) ?? [] }); } catch { /* nicht lesbar */ }
+        const b = leseImageZeile(z);
+        if (b) bild.set(b.id, b);
       }
     }
     for (const c of liste) {
       const k = konfig.get(c.name); const b = k ? bild.get(k.id) : undefined;
-      const referenz = waehleReferenz(c.image, k?.ref, b?.tags ?? []);
-      const st: ContainerStand = { host: h.name, name: c.name, image: referenz ?? c.image, art: containerArt({ ...c, image: referenz ?? c.image }), gleicheHauptversion: [], neueHauptversion: [] };
+      const st: ContainerStand = { host: h.name, name: c.name, image: c.image, art: containerArt(c), gleicheHauptversion: [], neueHauptversion: [], ...(b?.version ? { version: b.version } : {}) };
       container.push(st);
+      // v1730 — per eigener Registry übertragen: Herkunft statt Transportweg
+      const eigeneDigests = [...(b?.digests ?? []), ...[c.image, k?.ref].filter((x): x is string => !!x?.includes('@'))].map(x => x.slice(x.indexOf('@') + 1));
+      const hk = d.herkunft && eigeneDigests.length ? await d.herkunft(c.name, [...new Set(eigeneDigests)]).catch(() => undefined) : undefined;
+      if (hk) {
+        st.art = containerArt({ ...c, image: hk.image ?? c.name });
+        st.image = hk.image ?? c.name;
+        st.herkunft = `lokal gebaut auf ${hk.quelleHost}${hk.image ? ` als ${hk.image}` : ''}${hk.ordner ? ` (${hk.ordner})` : ''}, beim Umzug über die eigene Registry übertragen (Change ${hk.change.slice(0, 8)})${b?.quelle ? ` · Quelle ${b.quelle}` : ''}`;
+        continue;
+      }
+      const referenz = waehleReferenz(c.image, k?.ref, b?.tags ?? []);
+      st.image = referenz ?? c.image; st.art = containerArt({ ...c, image: st.image });
       if (!referenz) {
         // v1710 — nur per Digest festgelegt (Umzug per RepoDigest): Tag über den Digest bestimmen (Docker Hub), nie gegen :latest raten
         const dr = (b?.digests ?? [])[0] ?? [c.image, k?.ref].find(x => x?.includes('@'));
@@ -288,7 +322,9 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
       if (r.fehler && !r.digest) st.hinweis = r.fehler;
       else if (r.digest && digests.length) st.neuerBuild = !digests.includes(r.digest);
       else if (!digests.length) st.hinweis = 'lokal gebaut oder ohne Registry-Digest';
-      if (r.tags?.length) Object.assign(st, neuereTags(r.tags, tag));
+      // v1730 — gleitender Tag (latest, stable, main, alpine …): Vergleich über das Versions-Label des Images, sonst nur „neuer Build“
+      const vergleich = /\d/.test(tag) ? tag : b?.version && /^v?\d+(\.\d+)*$/.test(b.version) ? b.version : undefined;
+      if (r.tags?.length && vergleich) Object.assign(st, neuereTags(r.tags, vergleich));
     }
   }
   return { hosts, container };
