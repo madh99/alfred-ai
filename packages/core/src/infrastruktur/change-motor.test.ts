@@ -233,6 +233,19 @@ describe('I4 Ausführungsmotor', () => {
     expect(aufrufe).toBe(1); // nicht 3600 s / Takt lang weiterprüfen
   });
 
+  it('v1729: Warte-Schritt prüft gestaffelt (2, 2, 3, 5 s, dann Grundtakt 10 s)', async () => {
+    const w = welt([S({ nr: 1, art: 'warten', zeitlimitS: 600, pruefung: { typ: 'befehl', zugang: 'pg-repo-01', befehl: 'systemctl is-active x', erwartet: 'active' } })]);
+    w.deps.takt = { pruefAbstandMs: 0, pruefVersuche: 2, taskAbstandMs: 0, wartenAbstandMs: 10_000 };
+    const abstaende: number[] = [];
+    w.deps.schlafe = async ms => { abstaende.push(ms); };
+    let n = 0;
+    w.deps.fernLesen = async () => (++n >= 7 ? 'active\n' : 'activating\n');
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(abstaende).toEqual([2000, 2000, 3000, 5000, 10_000, 10_000]);
+  });
+
   it('v1719 Realfall 8a26aed6 Schritt 73: Fernzugriff-Aktion bekommt das Schrittlimit als timeout_s', async () => {
     const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'kopieren', zeitlimitS: 10800, einordnung: 'aendern', parameter: { quelle: 'pg-repo-01', quelle_pfad: '/a', ziel: 'pg-restore-01', ziel_pfad: '/b' }, rueckweg: { keiner: 'Test' } })]);
     const eingaben: Array<Record<string, unknown>> = [];

@@ -612,8 +612,8 @@ export class ItsmSkill extends Skill {
 
   private async getChange(userId: string, changeId: string): Promise<SkillResult> {
     if (!changeId) return { success: false, error: 'change_id erforderlich' };
-    const changes = await this.itsm.listChangeRequests(userId, {});
-    const cr = changes.find(c => c.id === changeId || c.id.startsWith(changeId));
+    // v1729 — wie die Schreibaktionen über den Speicher (exakt oder eindeutige Kurz-ID), nicht nur unter den letzten 100
+    const cr = await this.itsm.getChangeRequestById(userId, changeId);
     if (!cr) return { success: false, error: `Change ${changeId} nicht gefunden` };
 
     const display = [

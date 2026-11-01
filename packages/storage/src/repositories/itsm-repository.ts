@@ -831,7 +831,13 @@ export class ItsmRepository {
 
   async getChangeRequestById(userId: string, id: string): Promise<CmdbChangeRequest | null> {
     const row = await this.db.queryOne(`SELECT * FROM cmdb_change_requests WHERE id = ? AND user_id = ?`, [id, userId]);
-    return row ? rowToChangeRequest(row) : null;
+    if (row) return rowToChangeRequest(row);
+    // v1729 — Kurz-ID (Realfall 01.11.: Entwurf 4bc22637 lesbar, update/complete meldeten „nicht gefunden“); nur bei genau einem Treffer
+    if (id.length >= 6 && id.length <= 12 && /^[0-9a-f]+$/i.test(id)) {
+      const rows = await this.db.query(`SELECT * FROM cmdb_change_requests WHERE id LIKE ? AND user_id = ? LIMIT 2`, [id.toLowerCase() + '%', userId]);
+      if (rows.length === 1) return rowToChangeRequest(rows[0]!);
+    }
+    return null;
   }
 
   async listChangeRequests(userId: string, filters?: {
@@ -894,7 +900,7 @@ export class ItsmRepository {
     params.push(existing.id, userId);  // Use full UUID, not caller's short ID
 
     await this.db.execute(`UPDATE cmdb_change_requests SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
-    return this.getChangeRequestById(userId, id);
+    return this.getChangeRequestById(userId, existing.id);
   }
 
   /** I3 — Change mit Schritten anlegen (Status submitted, wenn die Prüfung ohne Fehler war, sonst draft). */

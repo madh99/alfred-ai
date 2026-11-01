@@ -3,6 +3,16 @@ import type { Message } from 'grammy/types';
 import type { NormalizedMessage, SendMessageOptions, Attachment } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
+/** v1729 — HTML/Markdown-Text als reiner Text (Rückfall, wenn Telegram die Formatierung ablehnt) */
+export function alsReinText(text: string): string {
+  return text
+    .replace(/<a\s+href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, t: string) => (t === href ? t : `${t} (${href})`))
+    .replace(/<\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:\s[^<>]*)?>/gi, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+}
+
+const formatAbgelehnt = (err: unknown) => /can't parse entities|can't find end of/i.test((err as Error)?.message ?? '');
+
 function mapParseMode(
   mode?: SendMessageOptions['parseMode'],
 ): 'MarkdownV2' | 'HTML' | undefined {
@@ -324,13 +334,18 @@ export class TelegramAdapter extends MessagingAdapter {
           }
         : undefined;
 
-      const result = await this.bot.api.sendMessage(Number(chatId), chunks[i], {
+      const senden = (text: string, parse_mode: 'MarkdownV2' | 'HTML' | undefined) => this.bot.api.sendMessage(Number(chatId), text, {
         reply_to_message_id: options?.replyToMessageId
           ? Number(options.replyToMessageId)
           : undefined,
-        parse_mode: mapParseMode(options?.parseMode),
+        parse_mode,
         message_thread_id: options?.threadId ? Number(options.threadId) : undefined,
         reply_markup: replyMarkup,
+      });
+      // v1729 — lehnt Telegram die Formatierung ab („can't parse entities“), dieselbe Nachricht als reinen Text senden statt sie zu verlieren
+      const result = await senden(chunks[i]!, mapParseMode(options?.parseMode)).catch(async (err: unknown) => {
+        if (!options?.parseMode || options.parseMode === 'text' || !formatAbgelehnt(err)) throw err;
+        return senden(alsReinText(chunks[i]!), undefined);
       });
       lastMessageId = String(result.message_id);
     }
@@ -343,14 +358,11 @@ export class TelegramAdapter extends MessagingAdapter {
     text: string,
     options?: SendMessageOptions,
   ): Promise<void> {
-    await this.bot.api.editMessageText(
-      Number(chatId),
-      Number(messageId),
-      text,
-      {
-        parse_mode: mapParseMode(options?.parseMode),
-      },
-    );
+    await this.bot.api.editMessageText(Number(chatId), Number(messageId), text, { parse_mode: mapParseMode(options?.parseMode) })
+      .catch(async (err: unknown) => {
+        if (!options?.parseMode || options.parseMode === 'text' || !formatAbgelehnt(err)) throw err;
+        await this.bot.api.editMessageText(Number(chatId), Number(messageId), alsReinText(text));
+      });
   }
 
   async deleteMessage(chatId: string, messageId: string): Promise<void> {

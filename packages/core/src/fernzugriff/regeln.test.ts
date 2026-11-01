@@ -185,3 +185,25 @@ describe('v1681 Leseliste curl/nc', () => {
     expect(befehlsklasse('curl --fail -d x http://localhost:8008/')).not.toBe('lesen');
   });
 });
+
+// v1729 — Realfall Element-X-Change 242f8d16 Schritt 12: Docker-Logs mit 2>&1 und sed-Schwärzung liefen im Käfig ohne Docker
+describe('v1729 2>&1 und sed-Ersetzungen beim Lesen', () => {
+  it('Docker-Logs mit 2>&1 und reinen sed-Ersetzungen sind Lesen', () => {
+    const elementX = String.raw`docker logs --since 10m --tail 1500 matrix-element-call-livekit 2>&1 | sed -E 's/([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\.[0-9]{1,3}/\1.0\/24/g; s/([[:xdigit:]]{1,4}:){3,}[[:xdigit:]:%a-zA-Z0-9_-]*/IPv6-Netz-redigiert/g'`;
+    expect(befehlsklasse(elementX)).toBe('lesen');
+    expect(befehlsklasse('docker logs --tail 50 synapse 2>&1 | grep -i error')).toBe('lesen');
+    expect(befehlsklasse("docker logs --tail 50 synapse | sed -e 's/a/b/' -e 's/c/d/g'")).toBe('lesen');
+  });
+  it('sed mit Ausführen, Schreiben, In-Place oder anderen Befehlen bleibt Bestätigung', () => {
+    for (const b of [
+      "docker logs --tail 5 x | sed 's/a/id/e'",
+      "docker logs --tail 5 x | sed 's/a/b/w /tmp/x'",
+      "docker logs --tail 5 x | sed -i 's/a/b/' /etc/hosts",
+      "docker logs --tail 5 x | sed '1d; e id'",
+      "docker logs --tail 5 x | sed \"s/a/$(id)/\"",
+      'docker logs --tail 5 x 2>/tmp/fehler',
+      'docker logs --tail 5 x 2>&1 > /tmp/aus',
+      "sed 's/a/b/' /etc/shadow",
+    ]) expect(befehlsklasse(b), b).not.toBe('lesen');
+  });
+});

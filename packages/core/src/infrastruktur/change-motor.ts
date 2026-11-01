@@ -97,6 +97,9 @@ export function ownerFrageVeraltet(c: CmdbChangeRequest | undefined | null, para
   return Number(l.frage.schritt) !== Number(params.schritt) || l.frage.hash !== hash(String(params.freigabe ?? ''));
 }
 
+/** v1729 — Anteile des Grundtakts für die ersten Prüfungen eines Warte-Schritts (10 s → 2, 2, 3, 5 s, danach 10 s) */
+const WARTEN_STAFFEL = [0.2, 0.2, 0.3, 0.5];
+
 export class ChangeMotor {
   private readonly laufend = new Set<string>();
   private readonly takt: NonNullable<MotorDeps['takt']>;
@@ -290,9 +293,12 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       if (s.art === 'warten') {
         if (s.sekunden && !s.pruefung) { await this.schlafe(s.sekunden * 1000); return fertig({ ok: true, ausgabe: `${s.sekunden} s gewartet` }); }
         if (s.sekunden) await this.schlafe(s.sekunden * 1000);
-        const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / this.takt.wartenAbstandMs));
+        // v1729 — gestaffelt: die ersten Prüfungen nach 2/2/3/5 s, danach im Grundtakt (10 s); Ende spätestens am Zeitlimit.
+        // Kurze Wartezeiten („Dienst wieder oben“) waren sonst nie schneller als 10 s.
+        const basis = this.takt.wartenAbstandMs;
+        const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / basis)) + WARTEN_STAFFEL.length;
         const t0 = Date.now();
-        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, versuche, this.takt.wartenAbstandMs);
+        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, versuche, i => Math.min(basis, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * basis)), t0 + s.zeitlimitS * 1000);
         // v1723 — Realfall 01.11. (a4c1b1e8 Schritte 59/69): ein Abbruch nach 10 s hieß „Bedingung nach 14400 s nicht erfüllt“
         const sek = Math.round((Date.now() - t0) / 1000);
         return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Bedingung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
@@ -338,7 +344,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return { ok: true, ...(r.display ? { ausgabe: r.display } : {}), daten: r.data };
   }
 
-  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
+  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
     const aufgeloest = loeseAuf(p0, ergebnisse);
     if (aufgeloest.fehler) return { ok: false, text: aufgeloest.fehler, versuche: 0 };
     const p = aufgeloest.wert;
@@ -352,7 +358,13 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         // Steht der Abbruch-Text in der Ausgabe, ist das Ergebnis klar — sofort als Fehler beenden.
         if (p.abbruch && (r.ausgabe ?? r.text).includes(p.abbruch)) return { ok: false, text: `Abbruch („${p.abbruch}“): ${r.text}`, versuche: i, ...(ausgabe ? { ausgabe } : {}) };
       } catch (err) { letzter = (err as Error).message.slice(0, 300); }
-      if (i < versuche) await this.schlafe(abstandMs);
+      if (i >= versuche) break;
+      const abstand = typeof abstandMs === 'number' ? abstandMs : abstandMs(i);
+      if (fristMs !== undefined) {
+        const rest = fristMs - Date.now();
+        if (rest <= 0) return { ok: false, text: letzter, versuche: i, ...(ausgabe ? { ausgabe } : {}) };
+        await this.schlafe(Math.min(abstand, rest));
+      } else await this.schlafe(abstand);
     }
     return { ok: false, text: letzter, versuche, ...(ausgabe ? { ausgabe } : {}) };
   }

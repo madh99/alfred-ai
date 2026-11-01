@@ -148,7 +148,24 @@ const FILTER: RegExp[] = [
   /^sort( -[nrhuV]+| -k ?[\d,]+)*$/,
   /^uniq( -[cdu]+)?$/,
   /^cut( -d ?('.'|"."|[^\s'"])| -[fc] ?[\d,-]+)+$/,
+  /^sed( -[Ern]+)*( (-e )?__SED__)+$/, // v1729 — nur reine Ersetzungen (siehe maskiereLeseFormen)
 ];
+
+/** v1729 — sed-Ausdruck aus reinen Ersetzungen s/…/…/ mit Flags g, I oder Zahl; kein e (führt aus), w (schreibt), p, kein anderer Befehl */
+const SED_S = String.raw`s/(?:[^/\\\n]|\\.)*/(?:[^/\\\n]|\\.)*/[gI0-9]*`;
+const SED_AUSDRUCK = new RegExp(`^\\s*${SED_S}(?:\\s*;\\s*${SED_S})*\\s*;?\\s*$`);
+
+/**
+ * v1729 — Realfall Element-X-Change 242f8d16 Schritt 12: `docker logs … 2>&1 | sed -E 's/…/…/g; s/…/…/g'` (Adressen schwärzen) galt
+ * wegen `2>&1` und sed nicht als Lesen und lief im Käfig ohne Docker. `2>&1` legt nur die Fehlerausgabe in die Ausgabe (keine Datei);
+ * sed-Ausdrücke aus reinen Ersetzungen stehen in Anführungszeichen, die Shell ersetzt darin nichts. Beides wird nur für die
+ * Einordnung neutralisiert, ausgeführt wird der Befehl unverändert.
+ */
+function maskiereLeseFormen(b: string): string {
+  return b
+    .replace(/ 2>&1(?= *(\||;|&&|$))/g, '')
+    .replace(/'([^']*)'|"([^"$`\\]*)"/g, (m, a?: string, d?: string) => (SED_AUSDRUCK.test(a ?? d ?? '') ? '__SED__' : m));
+}
 
 function einzelBefehl(b: string): Befehlsklasse {
   if (VERAENDERNDE_OPTIONEN.test(b)) return 'bestaetigen';
@@ -158,9 +175,10 @@ function einzelBefehl(b: string): Befehlsklasse {
 export function befehlsklasse(befehl: string): Befehlsklasse {
   // v1548 (K2, Realfall 22.10. 01:09) — nur für die Einordnung: `\t` (Tabulator in Docker-Formatvorlagen) wie ein Leerzeichen, und
   // '…' ohne $, Backtick und Backslash wie "…" (in einfachen Anführungszeichen ersetzt die Shell nichts). Ausgeführt wird unverändert.
-  const b = normalisiereBefehl(befehl.replace(/\\t/g, ' ').replace(/'([^'"$`\\]*)'/g, '"$1"'));
-  if (!b) return 'nie';
-  if (NIE_BEFEHLE.some(r => r.test(b))) return 'nie';
+  const roh = normalisiereBefehl(befehl.replace(/\\t/g, ' ').replace(/'([^'"$`\\]*)'/g, '"$1"'));
+  if (!roh) return 'nie';
+  if (NIE_BEFEHLE.some(r => r.test(roh))) return 'nie';
+  const b = maskiereLeseFormen(roh);
   if (!STEUERZEICHEN.test(b)) return einzelBefehl(b);
   // v1542 (F2) — Ketten mit ; oder && sind „lesen“, wenn JEDER Teil liest; Pipes nur zu FILTER. Alles Übrige (||, einzelnes &,
   // Umleitung, Ersetzung) braucht die Bestätigung. Ein ; oder | in Anführungszeichen zerfällt beim Teilen und fällt damit durch.

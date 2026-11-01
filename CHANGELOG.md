@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Kurz-IDs bei Changes, Telegram-Formatierung, Docker-Logs beim Lesen, schnellere Warte-Schritte (v1729)
+
+- Changes lassen sich in allen ITSM-Aktionen (ändern, genehmigen, starten, abschließen, Rollback, anzeigen) mit der eindeutigen Kurz-ID ansprechen. Bisher fand nur die Anzeige einen Entwurf per Kurz-ID, die Schreibaktionen meldeten „nicht gefunden“. Die Anzeige sucht außerdem nicht mehr nur unter den letzten 100 Changes.
+- Telegram: Ein rohes „<“ im Text (etwa „<5 h genutzt“) verschluckte bei der HTML-Umwandlung alles bis zum nächsten Link-Anfang. Telegram lehnte die Nachricht dann mit „can't parse entities“ ab, und die Kopie ging verloren. Der Formatter entfernt jetzt nur echte Tags. Lehnt Telegram eine Formatierung trotzdem ab, geht dieselbe Nachricht als reiner Text hinaus.
+- Fernzugriff: `2>&1` und eine Pipe zu `sed` mit reinen Ersetzungen (`s/…/…/g`, z. B. zum Schwärzen von Adressen) gelten als Lesen. Damit laufen Befehle wie `docker logs … 2>&1 | sed …` mit Docker-Zugriff statt im Käfig. sed mit Ausführen-, Schreib- oder anderen Befehlen sowie `-i` braucht weiter die Bestätigung.
+- Warte-Schritte im Change prüfen zuerst nach 2, 2, 3 und 5 Sekunden, danach im gewohnten 10-Sekunden-Takt, und enden genau am Zeitlimit.
+
 ### Changed — Gratis-Guthaben von OpenAI zählt zur Schätzung (v1728)
 
 - Die Mail „Your API credits are ready“ (z. B. 9 $ nach Verknüpfung des ChatGPT-Kontos mit der API-Organisation) wird als Ladung erkannt, mit vollem Betrag und ohne MwSt.

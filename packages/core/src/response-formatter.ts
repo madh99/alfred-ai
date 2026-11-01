@@ -85,7 +85,9 @@ export class ResponseFormatter {
 
     // 6. Strip HTML tags not supported by Telegram
     // Keep: b, i, s, u, a (with href), pre, code, tg-spoiler, tg-emoji, blockquote
-    html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))[^>]*>/gi, '');
+    // v1729 — nur echte Tags (Name beginnt mit Buchstabe, kein „<“ dazwischen): „neuwertig, <5 h genutzt | … <a href…>“ verschluckte
+    // sonst alles bis zum nächsten „>“ samt Link-Anfang → verwaistes </a>, Telegram lehnte ab (Realfall 01.11.)
+    html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))\/?[a-z][\w-]*(?:\s[^<>]*)?\/?>/gi, '');
 
     // 7. Escape stray < that aren't part of valid tags
     html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))/gi, '&lt;');
