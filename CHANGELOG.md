@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Get-WinEvent im Windows-Lese-Käfig nur in exakter Form (v1742)
+
+- `-LogName System , Microsoft-Windows-PowerShell/Operational` ist in PowerShell eine Liste aus zwei Protokollen. Die Prüfung hatte nur den Anfang verglichen.
+- Jetzt muss der ganze Abschnitt exakt `Get-WinEvent [-LogName] System|Application|Setup [-MaxEvents N]` lauten; Ausgabe-Filter folgen nach `|`.
+
 ### Security — keine Zeilenumbrüche im Windows-Lese-Käfig (v1741)
 
 - Ein Zeilenumbruch trennt in PowerShell Anweisungen wie `;`. Ein zweites `Get-WinEvent` in der nächsten Zeile entging deshalb der Protokoll-Prüfung, z. B. für das PowerShell-Protokoll mit mitgeschriebenen Skripten.

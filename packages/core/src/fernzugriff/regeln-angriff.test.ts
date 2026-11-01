@@ -60,6 +60,9 @@ describe('Angriffsprobe Leseliste', () => {
       'Get-Service -Name x -AsJob', 'Get-NetTCPConnection -ThrottleLimit 1', 'Get-Service \u2012ComputerName x', 'Get-Process | Select-Object -First -1',
     ];
     expect(WIN_KAEFIG_CMDLETS_LISTE).not.toContain('Get-HotFix');
+    // vierte Runde: Liste mit Leerzeichen vor dem Komma, Anführungszeichen, weitere Argumente
+    for (const b of ['Get-WinEvent -LogName System , Microsoft-Windows-PowerShell/Operational', 'Get-WinEvent System ,Security', "Get-WinEvent -LogName 'System'", 'Get-WinEvent -LogName System -MaxEvents 5 -Oldest', 'Get-WinEvent -LogName System -MaxEvents 5 x']) expect(windowsKaefigGrund(b), b).toBeDefined();
+    expect(windowsKaefigGrund('Get-WinEvent -LogName System -MaxEvents 5 | Format-List TimeCreated, Message')).toBeUndefined();
     // dritte Runde: Zeilentrenner als Anweisungstrenner (zweites Get-WinEvent in der nächsten Zeile)
     for (const z of [10, 13, 0x85, 0x2028, 0x2029]) {
       const b = `Get-WinEvent -LogName System -MaxEvents 1${String.fromCharCode(z)}Get-WinEvent -LogName Microsoft-Windows-PowerShell/Operational`;

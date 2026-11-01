@@ -356,7 +356,8 @@ export function windowsKaefigGrund(befehl: string): string | undefined {
   if (/\bsecurity\b/i.test(befehl)) return 'das Sicherheitsprotokoll ist im Windows-Lese-Käfig gesperrt';
   for (const teil of befehl.split(/[|;\r\n]/)) {
     if (!/\bGet-WinEvent\b/i.test(teil)) continue;
-    if (/[*?[\]]/.test(teil) || !/^\s*Get-WinEvent\s+(-LogName\s+)?(System|Application|Setup)(\s|$)/i.test(teil)) return 'Get-WinEvent nur mit -LogName System, Application oder Setup (ohne Platzhalter)';
+    // Vierte Runde: „-LogName System , Microsoft-Windows-PowerShell/Operational“ ist eine Liste — der ganze Abschnitt muss exakt passen
+    if (!/^\s*Get-WinEvent(\s+-LogName)?\s+(System|Application|Setup)(\s+-MaxEvents\s+\d{1,4})?\s*$/i.test(teil)) return 'Get-WinEvent nur genau so: Get-WinEvent -LogName System|Application|Setup [-MaxEvents N] (Ausgabe-Filter mit | dahinter)';
   }
   return undefined;
 }
