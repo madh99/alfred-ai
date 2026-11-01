@@ -193,6 +193,20 @@ describe('I8a Windows-Befehlsklassen', () => {
       expect(windowsBefehlsklasse(b), b).toBe('lesen');
     }
   });
+  it('I8b — Windows-Lese-Käfig: Befehl nur Base64 in der Hülle, NoLanguage, keine Programme, Liste ohne Get-CimInstance/Get-Content', async () => {
+    const { windowsKaefigBefehl, WIN_KAEFIG_CMDLETS } = await import('./regeln.js');
+    const boese = "Get-Service'); Remove-Item C:\\ -Recurse; ('";
+    const aussen = windowsKaefigBefehl(boese);
+    expect(aussen).toMatch(/^powershell -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+    const huelle = Buffer.from(aussen.split(' ').pop()!, 'base64').toString('utf16le');
+    expect(huelle).not.toContain('Remove-Item');
+    expect(huelle).toContain(`FromBase64String('${Buffer.from(boese, 'utf-8').toString('base64')}')`);
+    expect(huelle).toContain('NoLanguage');
+    expect(huelle).toContain('$iss.Applications.Clear(); $iss.Scripts.Clear()');
+    expect(huelle).toContain('PSModuleAutoLoadingPreference');
+    for (const c of ['Get-CimInstance', 'Get-Content', 'Get-Item', 'Get-ItemProperty', 'Invoke-Expression', 'Invoke-Command', 'Start-Process', 'Get-ChildItem', 'Import-Module']) expect(WIN_KAEFIG_CMDLETS as readonly string[]).not.toContain(c);
+    expect(() => windowsKaefigBefehl('x'.repeat(4001))).toThrow();
+  });
   it('I8b — alle Befehle des Windows-Sammlers sind Lesen', async () => {
     const { WINDOWS_BEFEHLE } = await import('../infrastruktur/sammler-windows.js');
     for (const b of Object.values(WINDOWS_BEFEHLE)) expect(windowsBefehlsklasse(b), b).toBe('lesen');

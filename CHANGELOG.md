@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Lese-Käfig für Windows (I8b Teil 2, v1738)
+
+- Lesebefehle für Windows, die nicht auf der festen Liste stehen, laufen jetzt ohne Rückfrage in einem eingeschränkten PowerShell-Runspace (der Mechanismus hinter JEA, ohne WinRM):
+  - Sprachmodus `NoLanguage`, also keine Variablen, Skriptblöcke oder Methoden;
+  - sichtbar sind nur lesende Cmdlets (Dienste, Prozesse, Ereignisse, Netz, Firewall, Datenträger, Rollen, Updates, lokale Konten, Freigaben) und Ausgabe-Filter;
+  - keine externen Programme oder Skripte, kein Nachladen von Modulen.
+- Der Befehl steckt Base64-kodiert in der Hülle und kann sie nicht verlassen.
+- Dateiinhalte, Registry und `Get-CimInstance` (Befehlszeilen von Prozessen) bleiben außen vor. Alles andere fragt weiter den Owner, „nie erlaubt“ bleibt gesperrt.
+- Der Käfig wird bei jedem Aufruf mitgeschickt, braucht keine Einrichtung am Host und funktioniert auch auf Windows 11.
+
 ### Added — Bestandsaufnahme für Windows-Hosts (I8b Teil 1, v1737)
 
 - Windows-Zugänge werden in der Bestandsaufnahme mit festen PowerShell-Lesebefehlen erfasst (JSON, Parser ohne Modell):

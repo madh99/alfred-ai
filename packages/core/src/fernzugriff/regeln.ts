@@ -310,3 +310,48 @@ export function windowsBefehlsklasse(befehl: string): Befehlsklasse {
   if (!WIN_LESE.some(r => r.test(stufen[0]!))) return 'bestaetigen';
   return stufen.slice(1).every(f => WIN_FILTER.some(r => r.test(f))) ? 'lesen' : 'bestaetigen';
 }
+
+/**
+ * I8b — Lese-Käfig für Windows: eingeschränkter PowerShell-Runspace (der Mechanismus hinter JEA, ohne WinRM — eine SSH-Anmeldung per
+ * Schlüssel hat keine Anmeldedaten für einen Sprung auf localhost). Sprachmodus NoLanguage (keine Variablen, Skriptblöcke, Methoden),
+ * nur die Cmdlets/Funktionen dieser Liste sichtbar, keine externen Programme und Skripte, kein Nachladen von Modulen. Der Befehl kommt
+ * Base64-kodiert in die Hülle und kann sie nicht verlassen; die Hülle selbst geht als -EncodedCommand.
+ */
+export const WIN_KAEFIG_CMDLETS = [
+  'Get-Service', 'Get-Process', 'Get-WinEvent', 'Get-NetIPConfiguration', 'Get-NetIPAddress', 'Get-NetAdapter', 'Get-NetRoute',
+  'Get-NetTCPConnection', 'Get-NetUDPEndpoint', 'Get-NetFirewallProfile', 'Get-NetFirewallRule', 'Get-NetFirewallPortFilter',
+  'Get-DnsClientServerAddress', 'Resolve-DnsName', 'Get-Volume', 'Get-Disk', 'Get-Partition', 'Get-PhysicalDisk', 'Get-HotFix',
+  'Get-WindowsFeature', 'Get-WindowsCapability', 'Get-ComputerInfo', 'Get-LocalUser', 'Get-LocalGroup', 'Get-LocalGroupMember',
+  'Get-SmbShare', 'Get-SmbShareAccess', 'Get-SmbSession', 'Get-TimeZone', 'Get-Date', 'Get-Culture', 'Get-Counter',
+  'Select-Object', 'Sort-Object', 'Where-Object', 'Group-Object', 'Measure-Object', 'Format-List', 'Format-Table', 'Format-Wide',
+  'ConvertTo-Json', 'ConvertTo-Csv', 'Out-String', 'Out-Default',
+] as const;
+// Get-CimInstance bewusst nicht: Win32_Process zeigt Befehlszeilen (Zugangsdaten); die nötigen Klassen stehen auf der festen Leseliste
+
+export function windowsKaefigBefehl(befehl: string): string {
+  const b = befehl.trim();
+  if (!b || b.length > 4000) throw new Error('Befehl leer oder zu lang (höchstens 4000 Zeichen)');
+  const innen = Buffer.from(b, 'utf-8').toString('base64');
+  const huelle = [
+    '$ErrorActionPreference = "Stop"',
+    `$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${innen}'))`,
+    `$erlaubt = @(${WIN_KAEFIG_CMDLETS.map(c => `'${c}'`).join(',')})`,
+    '$iss = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()',
+    '$iss.LanguageMode = [Management.Automation.PSLanguageMode]::NoLanguage',
+    '$iss.Applications.Clear(); $iss.Scripts.Clear()',
+    '$iss.Variables.Add((New-Object Management.Automation.Runspaces.SessionStateVariableEntry("PSModuleAutoLoadingPreference", "None", "")))',
+    "$module = @('NetTCPIP','NetAdapter','NetSecurity','DnsClient','Storage','SmbShare','Microsoft.PowerShell.LocalAccounts','Microsoft.PowerShell.Diagnostics','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Dism','ServerManager') | Where-Object { Get-Module -ListAvailable -Name $_ }",
+    '$iss.ImportPSModule([string[]]$module)',
+    '$rs = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss); $rs.Open()',
+    '$alle = $rs.SessionStateProxy.InvokeCommand.GetCommands("*", [Management.Automation.CommandTypes]"Alias,Function,Filter,Cmdlet", $true)',
+    'foreach ($c in $alle) { if ($erlaubt -notcontains $c.Name) { $c.Visibility = [Management.Automation.SessionStateEntryVisibility]::Private } }',
+    '$ps = [PowerShell]::Create(); $ps.Runspace = $rs',
+    '[void]$ps.AddScript($t).AddCommand("Out-String").AddParameter("Width", 250)',
+    'try { $aus = $ps.Invoke() } catch { [Console]::Error.WriteLine("KAEFIG: " + $_.Exception.InnerException.Message + $_.Exception.Message); exit 3 }',
+    '$aus | ForEach-Object { [Console]::Out.Write($_) }',
+    'if ($ps.Streams.Error.Count) { $ps.Streams.Error | ForEach-Object { [Console]::Error.WriteLine("KAEFIG: " + $_.ToString()) }; exit 1 }',
+    'exit 0',
+  ].join('\n');
+  return `powershell -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(huelle, 'utf16le').toString('base64')}`;
+}
+

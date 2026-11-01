@@ -2,7 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { Fernzugang } from '@alfred/storage';
 import { Freigaben } from '../geraete/freigaben.js';
-import { befehlsklasse, windowsBefehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
+import { befehlsklasse, windowsBefehlsklasse, windowsKaefigBefehl, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
@@ -403,10 +403,16 @@ export class FernzugriffSkill extends Skill {
     if (zw.system === 'windows') {
       const k = windowsBefehlsklasse(befehl);
       if (k === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
-      if (k !== 'lesen') return { success: false, error: `„${befehl.slice(0, 120)}“ steht nicht auf der Windows-Leseliste (Get-ComputerInfo, Get-Service, Get-HotFix, Get-Volume, Get-NetIPConfiguration, Get-WindowsFeature, Get-WinEvent -LogName System -MaxEvents N … mit Select-Object/Format-List/ConvertTo-Json) — unter Windows gibt es keinen Lese-Käfig; mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
-      const r = await this.lauf(owner, zw, befehl, this.timeout(input));
-      this.deps.protokoll?.('I8a Fernzugriff lesen (Windows)', { name: zw.name, befehl: befehl.slice(0, 200), code: r.code });
-      return this.ergebnis(zw, befehl, r);
+      // I8b — nicht auf der festen Liste: im Windows-Lese-Käfig (eingeschränkter Runspace, NoLanguage, nur lesende Cmdlets)
+      const kaefig = k !== 'lesen';
+      const r = await this.lauf(owner, zw, kaefig ? windowsKaefigBefehl(befehl) : befehl, this.timeout(input));
+      this.deps.protokoll?.(kaefig ? 'I8b Fernzugriff im Windows-Lese-Käfig' : 'I8a Fernzugriff lesen (Windows)', { name: zw.name, befehl: befehl.slice(0, 200), code: r.code });
+      const e = this.ergebnis(zw, befehl, r, kaefig ? '  (Windows-Lese-Käfig)' : undefined);
+      if (kaefig && r.code !== 0 && /KAEFIG:.*(is not recognized|nicht erkannt|CommandNotFound|language mode|Sprachmodus|not allowed|nicht zulässig)/i.test(r.stderr)) {
+        const hinweis = '\n[Der Befehl lief im Windows-Lese-Käfig: nur lesende Get-Cmdlets (Dienste, Prozesse, Ereignisse, Netz, Firewall, Datenträger, Rollen, Updates, lokale Konten, Freigaben) mit Select-Object/Where-Object Name -eq Wert/Sort-Object/Format-*/ConvertTo-Json — keine Variablen, Skriptblöcke, Programme oder Dateiinhalte. Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
+        return { ...e, display: `${e.display ?? ''}${hinweis}`, ...(e.error ? { error: `${e.error}${hinweis}` } : {}) };
+      }
+      return e;
     }
     const klasse = befehlsklasse(befehl);
     if (klasse === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
@@ -472,8 +478,9 @@ export class FernzugriffSkill extends Skill {
     const b = normalisiereBefehl(befehl);
     const zw = await this.zugang(owner, { name });
     if (zw.system === 'windows') {
-      if (windowsBefehlsklasse(b) !== 'lesen') throw new Error('nicht auf der Windows-Leseliste');
-      const r = await this.lauf(owner, zw, b, timeoutMs);
+      const kl = windowsBefehlsklasse(b);
+      if (kl === 'nie') throw new Error('nie erlaubt');
+      const r = await this.lauf(owner, zw, kl === 'lesen' ? b : windowsKaefigBefehl(b), timeoutMs);
       if (r.code !== 0 && (streng || !r.stdout.trim())) throw new Error(`Exit ${r.code}: ${schwaerze(`${r.stdout}\n${r.stderr}`).text.trim().slice(-300)}`);
       return schwaerze(r.stdout).text;
     }
@@ -763,7 +770,7 @@ export class FernzugriffSkill extends Skill {
   private klasseFuer(z: Fernzugang, b: string) { return z.system === 'windows' ? windowsBefehlsklasse(b) : befehlsklasse(b); }
 
   private async kaefigBereit(owner: string, z: Fernzugang): Promise<{ ok: boolean; grund: string }> {
-    if (z.system === 'windows') return { ok: false, grund: 'Windows — nur die feste Leseliste, kein Lese-Käfig' };
+    if (z.system === 'windows') return { ok: true, grund: 'Windows-Lese-Käfig (eingeschränkter Runspace, NoLanguage)' };
     if (z.kaefig === 'aktiv' && this.kaefigGeprueft.has(z.id)) return { ok: true, grund: 'aktiv' };
     if (z.kaefig === 'aus') return { ok: false, grund: 'vom Owner abgeschaltet' };
     if (z.kaefig === 'fehlt') return { ok: false, grund: 'Selbsttest gescheitert' };
