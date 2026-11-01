@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — eindeutige Snapshot-Namen der Standard-Vorlagen (v1751)
+
+- Liegt auf der VM schon ein Snapshot gleichen Namens, etwa von einem am selben Tag abgebrochenen Change, bekommt der neue eine laufende Nummer (`alfred_JJJJMMTT_7d_2`). Bisher hielt der Change mit „snapshot name already used“ an.
+- Die Aufräum-Vorlage erkennt auch nummerierte Alfred-Snapshots und löscht sie nach Ablauf.
+
 ### Fixed — Stilllegung von Gästen und Speicher über Fernzugriff (v1750)
 
 - In einem Stilllegungs-Change dürfen jetzt auch `qm destroy`, `pct destroy`, `pvesm remove`, `lvremove`, `vgremove` und `pvremove` über Fernzugriff ohne Rückweg laufen, etwa für einen Proxmox-Host außerhalb des Clusters. Bisher war das nur für `rm` möglich.

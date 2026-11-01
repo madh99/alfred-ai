@@ -101,3 +101,14 @@ describe('fensterStart', () => {
     expect(fensterStart(new Date('2026-10-22T10:00:00Z'), f)).toBe('2026-10-23T00:30:00+02:00'); // Sommerzeit
   });
 });
+
+// v1751 — Realfall 02.11. 00:40 (6a669184): Snapshot-Name vom abgebrochenen Change desselben Tages schon belegt
+describe('freier Snapshot-Name', () => {
+  it('belegter Name bekommt eine laufende Nummer, die Aufräum-Vorlage erkennt ihn', async () => {
+    const { snapshotAbgelaufen } = await import('./standard-vorlagen.js');
+    const e = await V('windows_updates').erzeuge!({ zugang: 'win1' }, kontext({ snapshots: async () => [{ name: 'alfred_20261103_7d' }] }));
+    expect('plan' in e && (e.plan.schritte as Array<{ parameter?: { name?: string } }>)[0]!.parameter!.name).toBe('alfred_20261103_7d_2');
+    expect(snapshotAbgelaufen('alfred_20261103_7d_2', new Date('2026-11-10T00:00:00Z'))).toBe(true);
+    expect(snapshotAbgelaufen('alfred_20261103_7d_2', new Date('2026-11-09T00:00:00Z'))).toBe(false);
+  });
+});

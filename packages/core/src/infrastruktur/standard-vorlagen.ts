@@ -60,8 +60,19 @@ const fensterAb = (jetzt: Date, f: { von: string; bis: string }) => { const ab =
 
 /** Snapshot-Name der Vorlage a: alfred_JJJJMMTT_<Tage>d (Proxmox erlaubt Buchstaben, Ziffern, _ und -) */
 export function snapshotName(d: Date, tage: number): string { return `alfred_${tag(d)}_${tage}d`; }
+/**
+ * v1751 — Realfall 02.11. 00:40 (6a669184): der Snapshot eines am selben Tag abgebrochenen Changes trug denselben Namen →
+ * „already used“. Ist der Name auf der VM belegt, bekommt der neue eine laufende Nummer (alfred_JJJJMMTT_7d_2 …).
+ */
+export async function freierSnapshotName(k: StandardKontext, vm: { vmid: number; node: string }, tage: number): Promise<string> {
+  const basis = snapshotName(k.jetzt, tage);
+  const belegt = new Set((await k.snapshots(vm.vmid, vm.node).catch(() => [])).map(s => s.name));
+  if (!belegt.has(basis)) return basis;
+  for (let i = 2; i < 100; i++) if (!belegt.has(`${basis}_${i}`)) return `${basis}_${i}`;
+  return `${basis}_${Date.now() % 100000}`;
+}
 export function snapshotAbgelaufen(name: string, jetzt: Date): boolean {
-  const m = /^alfred_(\d{4})(\d{2})(\d{2})_(\d{1,2})d$/.exec(name);
+  const m = /^alfred_(\d{4})(\d{2})(\d{2})_(\d{1,2})d(?:_\d{1,5})?$/.exec(name);
   if (!m) return false;
   const ende = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) + Number(m[4]) * 86_400_000;
   return jetzt.getTime() >= ende;
@@ -81,7 +92,7 @@ export const VORLAGEN: Vorlage[] = [
       const vm = await k.vm(txt(p.vm) || String(p.vm ?? '')); if ('fehler' in vm) return vm;
       const tage = Number(p.tage ?? 7);
       if (!Number.isInteger(tage) || tage < 1 || tage > 14) return { fehler: 'tage 1–14' };
-      const name = snapshotName(k.jetzt, tage);
+      const name = await freierSnapshotName(k, vm, tage);
       return { merkmal: `${vm.vmid}`, plan: {
         titel: `Standard: Snapshot ${name} für ${vm.name}`, begruendung: `Standard-Change (a) — Sicherungspunkt für ${vm.name}, haltbar ${tage} Tage.`, typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: [vm.assetId],
         schritte: [
@@ -128,7 +139,7 @@ export const VORLAGEN: Vorlage[] = [
       if (!(await k.updatesAn(z))) return { fehler: `Schalter „Sicherheitsupdates“ ist für ${z} aus — nur Info (Owner 22.10.)` };
       const vm = await k.vmFuerZugang(z);
       if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot kein Standard-Change (Proxmox-Knoten nur als Normal-Change)` };
-      const snap = snapshotName(k.jetzt, 3);
+      const snap = await freierSnapshotName(k, vm, 3);
       const rueck = { skill: 'proxmox', aktion: 'rollback_snapshot', parameter: { vmid: vm.vmid, node: vm.node, name: snap } };
       return { merkmal: z, plan: {
         titel: `Standard: Sicherheitsupdates ${z}`, begruendung: `Standard-Change (c) — Sicherheitsupdates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg.`, typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...((await k.zugangAsset(z)) ? [(await k.zugangAsset(z))!] : [])],
@@ -210,7 +221,7 @@ export const VORLAGEN: Vorlage[] = [
       const f = fensterAus(typeof p.fenster === 'string' ? p.fenster : undefined);
       if ('fehler' in f) return f;
       if (await k.anzahl('os_updates', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
-      const snap = snapshotName(k.jetzt, 7);
+      const snap = await freierSnapshotName(k, vm, 7);
       const za = await k.zugangAsset(z);
       return { merkmal: z, plan: {
         titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
@@ -243,7 +254,7 @@ export const VORLAGEN: Vorlage[] = [
       const f = fensterAus(typeof p.fenster === 'string' ? p.fenster : undefined);
       if ('fehler' in f) return f;
       if (await k.anzahl('windows_updates', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
-      const snap = snapshotName(k.jetzt, 7);
+      const snap = await freierSnapshotName(k, vm, 7);
       const za = await k.zugangAsset(z);
       return { merkmal: z, plan: {
         titel: `Standard: Windows-Updates ${z}`, begruendung: `Standard-Change (i) — Windows-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
