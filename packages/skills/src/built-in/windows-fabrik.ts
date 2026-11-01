@@ -223,7 +223,7 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'New-Item -Path "HKLM:\\SOFTWARE\\OpenSSH" -Force | Out-Null',
     'Set-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value "$env:WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"',
     'Set-Service -Name sshd -StartupType Automatic',
-    'if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null }',
+    ...SSH_FIREWALL,
     'Write-Output "ALFRED: Cloudbase-Init"',
     '$cbLog = "C:\\Windows\\Temp\\cloudbase-init-msi.log"',
     'Start-Process -FilePath msiexec.exe -ArgumentList "/i","$antwort\\CloudbaseInitSetup_x64.msi","/qn","/l*v",$cbLog,"RUN_SERVICE_AS_LOCAL_SYSTEM=1" -Wait',
@@ -251,12 +251,24 @@ const SSH_OEFF = /^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-
 const SSH_PRIV = /^-----BEGIN OPENSSH PRIVATE KEY-----\n[A-Za-z0-9+/=\n]{100,5000}\n-----END OPENSSH PRIVATE KEY-----\n?$/;
 const psText = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
+/** Firewall-Regel für SSH in allen Netzprofilen (Realfall probe-win25, 01.11.: vorinstallierte Regel nur „Private“, Netz „Public“ → Port 22 zu) */
+const SSH_FIREWALL = [
+  '$r = Get-NetFirewallRule -Name OpenSSH-Server-In-TCP -ErrorAction SilentlyContinue',
+  'if ($r) { Set-NetFirewallRule -Name OpenSSH-Server-In-TCP -Enabled True -Profile Any -Action Allow } else { New-NetFirewallRule -Name OpenSSH-Server-In-TCP -DisplayName "OpenSSH Server (sshd)" -Enabled True -Profile Any -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null }',
+];
+
 /**
- * Benutzerdaten eines Windows-Klons (Cloudbase-Init, #ps1_sysnative): Host-Schlüssel von Alfred (statt eines ungeprüften
- * ersten Kontakts), Anmeldeschlüssel für Administratoren, Kennwort des Kontos alfred (und Administrator bei Server), danach
- * Cloudbase-Init aus — damit bleiben Host-Schlüssel und Kennwort auch nach einem neuen Konfigurationslaufwerk.
+ * Benutzerdaten eines Windows-Klons (Cloudbase-Init, #ps1_sysnative): Computername, Host-Schlüssel von Alfred (statt eines
+ * ungeprüften ersten Kontakts), Anmeldeschlüssel für Administratoren, Kennwort des Kontos alfred (und Administrator bei Server),
+ * SSH-Freigabe in allen Netzprofilen, danach Cloudbase-Init aus — damit bleiben Host-Schlüssel und Kennwort auch nach einem neuen
+ * Konfigurationslaufwerk.
+ *
+ * Realfall probe-win25 (01.11.): Proxmox schreibt den Namen nur in die Standard-Benutzerdaten, die hier ersetzt werden („Hostname not
+ * found in metadata“) — der Name wird deshalb hier gesetzt; beim ersten Start nach sysprep war die Kontenverwaltung noch nicht bereit
+ * („SAM or LSA server was in the wrong state“) — deshalb mit Wiederholung, und bei Misserfolg Neustart mit erneutem Lauf (1003).
  */
-export function windowsBenutzerDaten(v: { variante: WinVariante; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; kennwort: string }): string {
+export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; kennwort: string }): string {
+  if (!/^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$/.test(v.hostname)) throw new Error('Computername: Kleinbuchstaben, Ziffern, -, höchstens 15 Zeichen');
   const schluessel = [v.alfredSchluessel, ...(v.weitereSchluessel ?? [])].map(s => s.trim());
   for (const s of schluessel) if (!SSH_OEFF.test(s)) throw new Error('ungültiger öffentlicher SSH-Schlüssel');
   const hostOeff = v.hostOeffentlich.trim();
@@ -264,23 +276,31 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; alfredSchluesse
   const privat = v.hostPrivat.replace(/\r\n/g, '\n');
   if (!SSH_PRIV.test(privat)) throw new Error('privater Host-Schlüssel hat nicht das OpenSSH-Format');
   if (!KENNWORT.test(v.kennwort)) throw new Error('Kennwort ungültig');
-  const rechte = (pfad: string) => `icacls ${psText(pfad)} /inheritance:r /grant "*S-1-5-18:F" /grant "*S-1-5-32-544:F" | Out-Null`;
+  const rechte = (pfad: string) => `  icacls ${psText(pfad)} /inheritance:r /grant "*S-1-5-18:F" /grant "*S-1-5-32-544:F" | Out-Null; if ($LASTEXITCODE -ne 0) { throw "icacls $LASTEXITCODE" }`;
   return [
     '#ps1_sysnative',
     '$ErrorActionPreference = "Stop"',
     '$ssh = "C:\\ProgramData\\ssh"',
-    'New-Item -ItemType Directory -Path $ssh -Force | Out-Null',
-    'Get-ChildItem "$ssh\\ssh_host_*" -ErrorAction SilentlyContinue | Remove-Item -Force',
-    `[IO.File]::WriteAllText("$ssh\\ssh_host_ed25519_key", ${psText(privat.endsWith('\n') ? privat : `${privat}\n`)})`,
-    `[IO.File]::WriteAllText("$ssh\\ssh_host_ed25519_key.pub", ${psText(`${hostOeff}\n`)})`,
+    'function Einrichten {',
+    '  Get-LocalUser -Name alfred | Out-Null',
+    '  New-Item -ItemType Directory -Path $ssh -Force | Out-Null',
+    '  Get-ChildItem "$ssh\\ssh_host_*" -ErrorAction SilentlyContinue | Remove-Item -Force',
+    `  [IO.File]::WriteAllText("$ssh\\ssh_host_ed25519_key", ${psText(privat.endsWith('\n') ? privat : `${privat}\n`)})`,
+    `  [IO.File]::WriteAllText("$ssh\\ssh_host_ed25519_key.pub", ${psText(`${hostOeff}\n`)})`,
     rechte('C:\\ProgramData\\ssh\\ssh_host_ed25519_key'),
-    `[IO.File]::WriteAllText("$ssh\\administrators_authorized_keys", ${psText(`${schluessel.join('\n')}\n`)})`,
+    `  [IO.File]::WriteAllText("$ssh\\administrators_authorized_keys", ${psText(`${schluessel.join('\n')}\n`)})`,
     rechte('C:\\ProgramData\\ssh\\administrators_authorized_keys'),
-    `$pw = ConvertTo-SecureString ${psText(v.kennwort)} -AsPlainText -Force`,
-    'Set-LocalUser -Name alfred -Password $pw -PasswordNeverExpires $true',
-    ...(v.variante === 'win11' ? [] : ['Set-LocalUser -Name Administrator -Password $pw']),
-    'Set-Service -Name sshd -StartupType Automatic',
-    'Restart-Service -Name sshd -Force',
+    `  $pw = ConvertTo-SecureString ${psText(v.kennwort)} -AsPlainText -Force`,
+    '  Set-LocalUser -Name alfred -Password $pw -PasswordNeverExpires $true',
+    ...(v.variante === 'win11' ? [] : ['  Set-LocalUser -Name Administrator -Password $pw']),
+    ...SSH_FIREWALL.map(z => `  ${z}`),
+    '  Set-Service -Name sshd -StartupType Automatic',
+    '  Restart-Service -Name sshd -Force',
+    '}',
+    '$ok = $false',
+    'for ($i = 0; $i -lt 30 -and -not $ok; $i++) { try { Einrichten; $ok = $true } catch { Start-Sleep -Seconds 20 } }',
+    'if (-not $ok) { exit 1003 }',
+    `if ($env:COMPUTERNAME -ne ${psText(v.hostname.toUpperCase())}) { Rename-Computer -NewName ${psText(v.hostname)} -Force; Set-Service -Name cloudbase-init -StartupType Disabled; exit 1001 }`,
     'Set-Service -Name cloudbase-init -StartupType Disabled',
     'exit 0',
     '',

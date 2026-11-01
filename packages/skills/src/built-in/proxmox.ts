@@ -1807,7 +1807,7 @@ export class ProxmoxSkill extends Skill {
     const kennwort = zufallsKennwort(n => randomBytes(n));
     const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
     schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName})`);
-    const daten = windowsBenutzerDaten({ variante, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort });
+    const daten = windowsBenutzerDaten({ variante, hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort });
     const sp = await this.get<{ path?: string }>('/storage/local');
     const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
     await this.fabrik.snippetSchreiben(node, pfad, daten);

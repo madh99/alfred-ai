@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Klon: Name, SSH-Freigabe, Start nach sysprep (v1734)
+
+Realfall probe-win25 am 01.11.: Die Vorlage war vollständig gebaut, der Klon war aber per SSH nicht erreichbar und behielt den Zufallsnamen. Drei Ursachen, alle im Skript für den Klon behoben (die Vorlage muss nicht neu gebaut werden):
+
+- **Port 22 zu:** Die vorinstallierte OpenSSH-Regel von Windows Server 2025 gilt nur im Profil „Private“, das Netz war „Public“. Die Regel gilt jetzt in allen Profilen, auch beim Bau neuer Vorlagen.
+- **Name nicht gesetzt:** Proxmox schreibt den Namen nur in die Standard-Benutzerdaten, die Alfred ersetzt („Hostname not found in metadata“). Das Skript setzt den Namen jetzt selbst und startet einmal neu.
+- **Erster Lauf gescheitert:** Direkt nach sysprep war die Kontenverwaltung noch nicht bereit („SAM or LSA … wrong state“). Das Skript wiederholt jetzt bis zu 10 Minuten und fordert sonst einen Neustart mit neuem Lauf an.
+
 ### Added — Windows-VMs aus der Vorlage, Windows-Zugang, Standard-Vorlage (f) (I8a Teil 2, v1733)
 
 - Proxmox `provision_windows_vm` (nur im Change) macht aus einer Windows-Vorlage von Alfred eine neue VM:

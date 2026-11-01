@@ -90,14 +90,22 @@ describe('I8a Windows-Vorlagen-Fabrik', () => {
   });
 
   it('Benutzerdaten je Klon: Host-Schlüssel, Anmeldeschlüssel, Kennwort, Cloudbase-Init danach aus; nichts Ungeprüftes', () => {
-    const u = windowsBenutzerDaten({ variante: 'server-standard-core', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW });
+    const u = windowsBenutzerDaten({ variante: 'server-standard-core', hostname: 'probe-win25', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW });
     expect(u.startsWith('#ps1_sysnative')).toBe(true);
     expect(u).toContain('administrators_authorized_keys');
     expect(u).toContain('Set-LocalUser -Name Administrator');
     expect(u).toContain('Set-Service -Name cloudbase-init -StartupType Disabled');
-    expect(windowsBenutzerDaten({ variante: 'win11', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).not.toContain('Name Administrator');
-    expect(() => windowsBenutzerDaten({ variante: 'win11', alfredSchluessel: "ssh-ed25519 x'; rm", hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).toThrow();
-    expect(() => windowsBenutzerDaten({ variante: 'win11', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: "x'; Remove-Item C:\\ -Recurse #aaaaaaaa" })).toThrow();
+    // Realfall probe-win25 (01.11.): Name aus den Benutzerdaten, SSH in allen Profilen, Wiederholung bis die Kontenverwaltung bereit ist
+    expect(u).toContain("if ($env:COMPUTERNAME -ne 'PROBE-WIN25') { Rename-Computer -NewName 'probe-win25' -Force;");
+    expect(u).toContain('exit 1001');
+    expect(u).toContain('-Profile Any');
+    expect(u).toMatch(/for \(\$i = 0; \$i -lt 30 -and -not \$ok; \$i\+\+\) \{ try \{ Einrichten/);
+    expect(u).toContain('if (-not $ok) { exit 1003 }');
+    expect(setupSkript({ variante: 'server-standard-core' })).toContain('-Profile Any');
+    expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'viel-zu-langer-name', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).toThrow();
+    expect(windowsBenutzerDaten({ variante: 'win11', hostname: 'win11-test', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).not.toContain('Name Administrator');
+    expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'win11-test', alfredSchluessel: "ssh-ed25519 x'; rm", hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).toThrow();
+    expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'win11-test', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: "x'; Remove-Item C:\\ -Recurse #aaaaaaaa" })).toThrow();
   });
 
   it('Bau-VM: UEFI mit Microsoft-Schlüsseln, TPM 2.0, drei CDs, feste Maschinenversion', () => {
