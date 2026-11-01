@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Update-Changes starten erst im Wartungsfenster (v1748)
+
+- Wird ein Update-Change einzeln aus der Vorlage (h) Betriebssystem-Updates oder (i) Windows-Updates angelegt, beginnt er außerhalb des Fensters jetzt beim nächsten Fensterbeginn. Bisher startete er sofort, brach an der Fensterprüfung ab und sperrte dadurch die Vorlage.
+- Fehler der Windows-Update-Schritte erscheinen als eine lesbare Zeile statt als PowerShell-CLIXML.
+
 ### Fixed — Windows-Bereitstellung holt eine abgebrochene Einrichtung nach (v1747)
 
 - Bricht das Einrichtungsskript einer neuen Windows-VM beim ersten Start ab, wiederholt Cloudbase-Init es nicht. Schlüssel, Konten, Firewall-Freigabe und Name fehlen dann, und die Bereitstellung wartet bis zum Zeitlimit.

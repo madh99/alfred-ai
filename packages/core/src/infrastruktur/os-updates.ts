@@ -80,8 +80,23 @@ export function osUpdateSchritte(z: string, vm: { vmid: number; node: string }, 
 
 /** S4 — Beginn der kommenden Nacht (morgen HH:MM Wien) als ISO mit Zeitzonen-Versatz, z. B. 2026-11-05T00:30:00+01:00 */
 export function naechsteNacht(jetzt: Date, um = '00:30'): string {
-  const morgen = new Date(jetzt.getTime() + 86_400_000);
-  const tag = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Vienna', year: 'numeric', month: '2-digit', day: '2-digit' }).format(morgen);
+  return wienZeitpunkt(new Date(jetzt.getTime() + 86_400_000), um);
+}
+
+/**
+ * v1748 — Realfall 01.11. 23:20 (d0a4aa66): ein einzeln angelegter Update-Change startete sofort, die Fensterprüfung brach ab und
+ * sperrte die Vorlage. Liegt „jetzt“ (Wien) nicht im Startbereich des Fensters, beginnt der Change beim nächsten Fensterbeginn —
+ * heute, wenn der noch bevorsteht, sonst morgen. Im Startbereich: undefined (sofort).
+ */
+export function fensterStart(jetzt: Date, fenster: { von: string; bis: string }): string | undefined {
+  const n = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Vienna', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(jetzt);
+  if (n >= fenster.von && n < minus(fenster.bis, 45)) return undefined;
+  return wienZeitpunkt(n < fenster.von ? jetzt : new Date(jetzt.getTime() + 86_400_000), fenster.von);
+}
+
+/** Tag von `d` (Wien) um HH:MM Wien als ISO mit dem an diesem Zeitpunkt gültigen Versatz */
+function wienZeitpunkt(d: Date, um: string): string {
+  const tag = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Vienna', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
   // Versatz des Ziels selbst bestimmen (Sommer-/Winterzeit): erst grob, dann mit dem Versatz an diesem Zeitpunkt
   const versatz = (d: Date) => { const t = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Vienna', timeZoneName: 'shortOffset' }).formatToParts(d).find(x => x.type === 'timeZoneName')?.value ?? 'GMT+1'; const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(t); return m ? `${m[1]}${m[2]!.padStart(2, '0')}:${m[3] ?? '00'}` : '+01:00'; };
   const grob = new Date(`${tag}T${um}:00+01:00`);

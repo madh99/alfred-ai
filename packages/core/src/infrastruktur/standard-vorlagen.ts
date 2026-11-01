@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { LINUX_BEFEHLE } from './sammler.js';
 import type { Pruefung } from './change-schritte.js';
-import { fensterAus, osUpdateSchritte } from './os-updates.js';
+import { fensterAus, fensterStart, osUpdateSchritte } from './os-updates.js';
 import { winUpdateSchritte } from './windows-updates.js';
 
 /** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
@@ -55,6 +55,8 @@ const NAME = /^[\w.-]{1,80}$/;
 const PFAD = /^\/[\w./-]{1,200}$/;
 const tag = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '');
 const txt = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+/** v1748 — außerhalb des Startbereichs: Start beim nächsten Fensterbeginn (eine Serie überschreibt das mit ihrem eigenen Zeitpunkt) */
+const fensterAb = (jetzt: Date, f: { von: string; bis: string }) => { const ab = fensterStart(jetzt, f); return ab ? { geplantAb: ab } : {}; };
 
 /** Snapshot-Name der Vorlage a: alfred_JJJJMMTT_<Tage>d (Proxmox erlaubt Buchstaben, Ziffern, _ und -) */
 export function snapshotName(d: Date, tage: number): string { return `alfred_${tag(d)}_${tage}d`; }
@@ -212,7 +214,7 @@ export const VORLAGEN: Vorlage[] = [
       const za = await k.zugangAsset(z);
       return { merkmal: z, plan: {
         titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
-        typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...(za ? [za] : [])],
+        typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...(za ? [za] : [])], ...fensterAb(k.jetzt, f),
         schritte: osUpdateSchritte(z, vm, snap, f, `osupd-${snap}`),
       } };
     },
@@ -245,7 +247,7 @@ export const VORLAGEN: Vorlage[] = [
       const za = await k.zugangAsset(z);
       return { merkmal: z, plan: {
         titel: `Standard: Windows-Updates ${z}`, begruendung: `Standard-Change (i) — Windows-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
-        typ: 'normal', risiko: 'mittel', ausfallMinuten: 10, betroffen: [vm.assetId, ...(za ? [za] : [])],
+        typ: 'normal', risiko: 'mittel', ausfallMinuten: 10, betroffen: [vm.assetId, ...(za ? [za] : [])], ...fensterAb(k.jetzt, f),
         schritte: winUpdateSchritte(z, vm, snap, f),
       } };
     },

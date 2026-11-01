@@ -47,7 +47,8 @@ describe('I8b Vorlage (i) Windows-Updates', () => {
     expect(neu).toContain("'WINUPD_KEIN_NEUSTART'; exit 0");
     expect(neu).toContain("$n -ge '02:15'");
     expect(s[8]!.rueckweg!.aktion).toBe('rollback_snapshot');
-    expect(JSON.stringify(e.plan)).not.toMatch(/2026-11-/);
+    expect(JSON.stringify(e.plan.schritte)).not.toMatch(/2026-11-/);
+    expect(e.plan.geplantAb).toBe("2026-11-04T00:30:00+01:00"); // v1748 — 11:00 Wien liegt außerhalb → nächster Fensterbeginn
   });
   it('Aufgabe ohne Skriptdatei (Job als -EncodedCommand), Arbeitsordner geschützt, Ordnername bereinigt', () => {
     const t = dekodiere(winInstallSkript(winUpdateOrdner('alfred_20261103_7d'), '00:30', '02:00', 5400));
@@ -85,5 +86,18 @@ describe('I8b Vorlage (i) Windows-Updates', () => {
     db.clear(); // nicht freigegeben — ohne Windows-Host kommt die Serie gar nicht bis zur Freigabe-Prüfung
     const k = await st.serie('o', 'windows_updates', {});
     expect(!k.ok && k.fehler[0]).toMatch(/^keine Hosts — kein Windows-Fernzugang/);
+  });
+});
+
+// v1748 — Realfall 01.11. 23:20 (d0a4aa66): einzeln angelegter Update-Change startete sofort außerhalb des Fensters
+describe('fensterStart', () => {
+  const f = { von: '00:30', bis: '02:45' };
+  it('außerhalb: nächster Fensterbeginn (heute oder morgen), im Startbereich: sofort', async () => {
+    const { fensterStart } = await import('./os-updates.js');
+    expect(fensterStart(new Date('2026-11-01T22:20:00Z'), f)).toBe('2026-11-02T00:30:00+01:00'); // 23:20 Wien → heute Nacht
+    expect(fensterStart(new Date('2026-11-01T23:10:00Z'), f)).toBe('2026-11-02T00:30:00+01:00'); // 00:10 Wien → gleich heute
+    expect(fensterStart(new Date('2026-11-01T23:40:00Z'), f)).toBeUndefined(); // 00:40 Wien → im Startbereich
+    expect(fensterStart(new Date('2026-11-02T01:10:00Z'), f)).toBe('2026-11-03T00:30:00+01:00'); // 02:10 Wien → Startbereich vorbei
+    expect(fensterStart(new Date('2026-10-22T10:00:00Z'), f)).toBe('2026-10-23T00:30:00+02:00'); // Sommerzeit
   });
 });

@@ -174,7 +174,8 @@ describe('S4 Betriebssystem-Updates und Serie', () => {
     expect(s[0]!.parameter!.befehl).toContain("'00:30'<=n<'02:00'");
     expect(s[3]!.parameter!.befehl).toContain('apt-mark');
     expect(s[8]!.rueckweg!.aktion).toBe('rollback_snapshot');
-    expect(JSON.stringify(e.plan)).not.toMatch(/2026-10-|docker-com-01|synapse/);
+    expect(JSON.stringify(e.plan.schritte)).not.toMatch(/2026-10-|docker-com-01|synapse/);
+    expect(e.plan.geplantAb).toBe("2026-10-23T00:30:00+02:00"); // v1748 — 12:00 Wien liegt außerhalb → nächster Fensterbeginn
     expect('fehler' in (await V('os_updates').erzeuge!({ zugang: 'docker1', fenster: '03:00-01:00' }, kontext()))).toBe(true);
   });
   it('Serie: Hosts mit Schalter, Eingangskontrolle je Host, verkettet, EINE Freigabe-Frage; Abweichung wird ausgelassen und gemeldet', async () => {
