@@ -46,6 +46,9 @@ export const ZEITLIMIT_MAX_S = 4 * 3600;
 
 const LESE_MUSTER = /^(list|get|show|status|info|search|logs?$|ps$|inspect|describe|check|ping|traceroute|torch|query|read|lesen|pruefen|discover|wait_ready|agent_status|backups_vm|cluster_status|node_stats|vm_status|task_status|interfaces|traffic|resources|dhcp_leases|arp|routes|dns_cache|connections|neighbors|wireless|firewall_rules|nat_rules|stats|containers|images|grundlage|bestand|vorhaben_liste|vorhaben_zeigen|impact|topology|dashboard|api_pruefen|trunk_path)/;
 const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_config', 'snapshot', 'backup', 'export_config']);
+/** v1750 — im Stilllegungs-Change ohne Rückweg zulässige Entfernen-Befehle über Fernzugriff */
+const STILLLEGUNG_ENTFERNEN = /^(rm|qm destroy|pct destroy|pvesm remove|lvremove|vgremove|pvremove)\s/;
+
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
@@ -308,7 +311,12 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const neustart = schritt.skill === 'fernzugriff' && /^docker restart [\w.-]+$/.test(String(schritt.parameter.befehl ?? '').trim());
           // v1622 — Realfall 23.10. (Restwirkung b85e56af): im Stilllegungs-Change ist Entfernen per Fernzugriff (rm) gewollt endgültig —
           // ein erfundener Rückweg wäre schlechter als keiner
-          const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && /^rm\s/.test(String(schritt.parameter.befehl ?? '').trim());
+          // v1750 — Realfall 02.11. (pve2 als Backup-Host): ebenso Gäste, Storage-Einträge und LVM auf einem Host außerhalb des Clusters
+          // (qm/pct destroy, pvesm remove, lvremove/vgremove/pvremove). --destroy-unreferenced-disks nie: es erfasst gleichnamige Disks
+          // auf geteilten Speichern (Realfall: backupshare:116/vm-116-disk-0 gehört der Cluster-VM 116 „NAS01“, nicht VM 116 auf pve2)
+          const bef = String(schritt.parameter.befehl ?? '').trim();
+          const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && STILLLEGUNG_ENTFERNEN.test(bef);
+          if (schritt.skill === 'fernzugriff' && /--destroy-unreferenced-disks/.test(bef)) f.push(`${wo}: --destroy-unreferenced-disks löscht auch gleichnamige Disks auf geteilten Speichern (andere Hosts/Cluster) — nur die Volumes der Gast-Konfiguration löschen (qm/pct destroy <id> --purge)`);
           if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {

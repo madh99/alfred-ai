@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Stilllegung von Gästen und Speicher über Fernzugriff (v1750)
+
+- In einem Stilllegungs-Change dürfen jetzt auch `qm destroy`, `pct destroy`, `pvesm remove`, `lvremove`, `vgremove` und `pvremove` über Fernzugriff ohne Rückweg laufen, etwa für einen Proxmox-Host außerhalb des Clusters. Bisher war das nur für `rm` möglich.
+- `--destroy-unreferenced-disks` weist die Planprüfung immer ab. Die Option löscht auch gleichnamige Disks auf geteilten Speichern und hätte im Realfall die Datenplatte einer Cluster-VM mit derselben Nummer getroffen.
+
 ### Fixed — abgebrochene Standard-Changes zählen nicht zur Tagesgrenze (v1749)
 
 - Ein vom Owner abgebrochener Standard-Change verhinderte bisher bis zum nächsten Tag einen neuen Change derselben Vorlage für denselben Host („höchstens 1× je Tag“). Abgebrochene Changes zählen dafür jetzt nicht mehr.

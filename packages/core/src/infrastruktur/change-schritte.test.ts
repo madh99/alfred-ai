@@ -321,6 +321,12 @@ describe('v1622 Stilllegung: Entfernen per Fernzugriff ohne Rückweg (Realfall R
     expect(pruefeChangePlan(plan('stilllegung'), ctx()).fehler).toEqual([]);
     expect(pruefeChangePlan(plan(), ctx()).fehler.join(' | ')).toContain('ohne Rückweg nur bei');
   });
+  it('v1750 — qm/pct destroy, pvesm remove und LVM-Entfernen ebenso; --destroy-unreferenced-disks nie (Realfall pve2/NAS01)', () => {
+    const mit = (befehl: string) => { const p = plan('stilllegung'); p.schritte[1] = { ...p.schritte[1]!, parameter: { name: 'dockerhost', befehl } }; return pruefeChangePlan(p, ctx()).fehler; };
+    for (const ok of ['qm destroy 105 --purge', 'pct destroy 113 --purge', 'pvesm remove data2', 'vgremove data2', 'pvremove /dev/disk/by-id/ata-X']) expect(mit(ok), ok).toEqual([]);
+    expect(mit('qm destroy 116 --purge --destroy-unreferenced-disks 1').join(' | ')).toContain('geteilten Speichern');
+    expect(mit('wipefs -a /dev/sdd').join(' | ')).toContain('ohne Rückweg nur bei');
+  });
 });
 
 describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
