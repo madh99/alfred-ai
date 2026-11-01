@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Windows-Lese-Käfig mit Erlaubnisliste für Parameter (v1740)
+
+- Die Sperrliste aus v1739 ließ sich umgehen:
+  - Parameter-Aliase mit Unterstrich (`-__Server`);
+  - ein Parameter direkt nach `;`;
+  - das zweite Positionsargument von `Get-HotFix`, das `-ComputerName` ist;
+  - Platzhalter im LogName (`-LogName *` liest auch das Sicherheitsprotokoll).
+- Jetzt gilt eine Erlaubnisliste. Jeder Strich vor einem Wort zählt als Parameter, egal was davor steht, und muss genau einem freigegebenen Namen entsprechen (z. B. -Name, -LogName, -MaxEvents, -Property, -First, Where-Object-Vergleiche). Abkürzungen, Aliase und alles Unbekannte werden abgewiesen.
+- `Get-HotFix` ist nicht mehr im Käfig; auf der festen Liste bleibt es ohne Argumente.
+- `Get-WinEvent` geht nur mit System, Application oder Setup und ohne Platzhalter.
+
 ### Security — Windows-Lese-Käfig auf Parameterebene gesperrt (v1739)
 
 - Eine Sicherheitsprüfung zeigte: Die Cmdlet-Liste allein reicht nicht. Einige Parameter machen aus einem lesenden Befehl etwas anderes:

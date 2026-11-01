@@ -320,7 +320,7 @@ export function windowsBefehlsklasse(befehl: string): Befehlsklasse {
 export const WIN_KAEFIG_CMDLETS = [
   'Get-Service', 'Get-Process', 'Get-WinEvent', 'Get-NetIPConfiguration', 'Get-NetIPAddress', 'Get-NetAdapter', 'Get-NetRoute',
   'Get-NetTCPConnection', 'Get-NetUDPEndpoint', 'Get-NetFirewallProfile', 'Get-NetFirewallRule', 'Get-NetFirewallPortFilter',
-  'Get-DnsClientServerAddress', 'Get-Volume', 'Get-Disk', 'Get-Partition', 'Get-PhysicalDisk', 'Get-HotFix',
+  'Get-DnsClientServerAddress', 'Get-Volume', 'Get-Disk', 'Get-Partition', 'Get-PhysicalDisk',
   'Get-WindowsFeature', 'Get-WindowsCapability', 'Get-ComputerInfo', 'Get-LocalUser', 'Get-LocalGroup', 'Get-LocalGroupMember',
   'Get-SmbShare', 'Get-SmbShareAccess', 'Get-SmbSession', 'Get-TimeZone', 'Get-Date', 'Get-Culture',
   'Select-Object', 'Sort-Object', 'Where-Object', 'Group-Object', 'Measure-Object', 'Format-List', 'Format-Table', 'Format-Wide',
@@ -330,19 +330,31 @@ export const WIN_KAEFIG_CMDLETS = [
 // Resolve-DnsName/Get-Counter nicht: Netzverkehr zu frei wählbaren Zielen (Sicherheitsprüfung 01.11.).
 
 /**
- * Sicherheitsprüfung 01.11. — Parameter, die aus einem lesenden Cmdlet etwas anderes machen: andere Rechner (-ComputerName/-Cn/
- * -CimSession/-Session), beliebige Dateien (-Path/-LiteralPath), Benutzer zu Prozessen (-IncludeUserName), eigene Filter (-FilterXml/
- * -FilterHashtable/-FilterXPath), Anmeldedaten. PowerShell nimmt eindeutige Abkürzungen an — gesperrt ist daher jedes Parameter-Token,
- * das ein Anfang eines dieser Namen ist (auch ein einzelner Buchstabe), dazu das Sicherheitsprotokoll.
+ * Sicherheitsprüfung 01.11. (zweite Runde) — eine Sperrliste war umgehbar (Parameter-Alias -__Server, Parameter nach „;“,
+ * Positionsparameter, Platzhalter im LogName). Deshalb eine Erlaubnisliste: jedes Parameter-Token (Strich vor einem Wort, egal was
+ * davor steht; auch Gedankenstriche, die PowerShell als Strich liest) muss GENAU einem dieser Namen entsprechen — Abkürzungen und
+ * Aliase werden abgewiesen. Get-HotFix ist nicht im Käfig (zweites Positionsargument = -ComputerName); Get-WinEvent nur mit
+ * System, Application oder Setup, ohne Platzhalter.
  */
-const WIN_KAEFIG_GESPERRT = ['computername', 'cn', 'pscomputername', 'cimsession', 'session', 'path', 'literalpath', 'pspath', 'lp', 'includeusername', 'filterxml', 'filterhashtable', 'filterxpath', 'credential', 'server', 'oldest', 'module', 'fileversioninfo'];
+const WIN_KAEFIG_PARAMETER = new Set([
+  'name', 'displayname', 'id', 'logname', 'maxevents', 'property', 'excludeproperty', 'expandproperty', 'first', 'last', 'skip', 'unique',
+  'descending', 'autosize', 'wrap', 'depth', 'compress', 'width', 'online', 'state', 'enabled', 'direction', 'action', 'addressfamily',
+  'interfacealias', 'interfaceindex', 'localport', 'localaddress', 'remoteport', 'remoteaddress', 'protocol', 'status', 'starttype',
+  'group', 'member', 'all', 'detailed', 'notypeinformation', 'sum', 'average', 'maximum', 'minimum', 'value', 'driveletter', 'number',
+  // Vergleichsoperatoren der einfachen Where-Object-Schreibweise
+  'eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like', 'notlike', 'match', 'notmatch', 'contains', 'notcontains', 'in', 'notin',
+  'ceq', 'cne', 'clike', 'cnotlike', 'cmatch', 'cnotmatch', 'ieq', 'ine', 'ilike', 'imatch',
+]);
 export function windowsKaefigGrund(befehl: string): string | undefined {
-  for (const m of befehl.matchAll(/(?:^|[\s(,|])[-\u2013\u2014\u2015]([A-Za-z]+)/g)) {
+  for (const m of befehl.matchAll(/(?<![\p{L}\p{N}_])[-\u2012\u2013\u2014\u2015]([\p{L}\p{N}_]*)/gu)) {
     const t = m[1]!.toLowerCase();
-    const treffer = WIN_KAEFIG_GESPERRT.find(g => g.startsWith(t)); // auch einzelne Buchstaben: Get-Service -C ist eindeutig -ComputerName
-    if (treffer) return `Parameter -${m[1]} (${treffer}) ist im Windows-Lese-Käfig gesperrt`;
+    if (!WIN_KAEFIG_PARAMETER.has(t)) return `Parameter „${m[0]}“ ist im Windows-Lese-Käfig nicht erlaubt (nur ausgeschriebene, freigegebene Parameter wie -Name, -LogName, -MaxEvents, -Property, -First)`;
   }
   if (/\bsecurity\b/i.test(befehl)) return 'das Sicherheitsprotokoll ist im Windows-Lese-Käfig gesperrt';
+  for (const teil of befehl.split(/[|;]/)) {
+    if (!/\bGet-WinEvent\b/i.test(teil)) continue;
+    if (/[*?[\]]/.test(teil) || !/^\s*Get-WinEvent\s+(-LogName\s+)?(System|Application|Setup)(\s|$)/i.test(teil)) return 'Get-WinEvent nur mit -LogName System, Application oder Setup (ohne Platzhalter)';
+  }
   return undefined;
 }
 

@@ -195,7 +195,7 @@ describe('I8a Windows-Befehlsklassen', () => {
   });
   it('I8b — Windows-Lese-Käfig: Befehl nur Base64 in der Hülle, NoLanguage, keine Programme, Liste ohne Get-CimInstance/Get-Content', async () => {
     const { windowsKaefigBefehl, WIN_KAEFIG_CMDLETS } = await import('./regeln.js');
-    const boese = "Get-Service'); Remove-Item C:\\ -Recurse; ('";
+    const boese = "Get-Service'); Remove-Item C:\\Windows; ('";
     const aussen = windowsKaefigBefehl(boese);
     expect(aussen).toMatch(/^powershell -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
     const huelle = Buffer.from(aussen.split(' ').pop()!, 'base64').toString('utf16le');
