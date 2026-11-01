@@ -7208,6 +7208,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return h;
           },
           snippetSchreiben: (node, pfad, inhalt) => fz.snippetSchreiben(node, pfad, inhalt),
+          // I8a — feste Skripte der Windows-Fabrik am Knoten (Auswahl nur über den Namen)
+          knotenSkript: async (node, art, eingabe, timeoutMs) => {
+            const { WIN_KNOTEN_INSPEKTION, WIN_KNOTEN_ANTWORT_ISO } = await import('@alfred/skills');
+            const r = await fz.knotenSkript(node, art === 'win-inspektion' ? WIN_KNOTEN_INSPEKTION : WIN_KNOTEN_ANTWORT_ISO, eingabe, timeoutMs);
+            if (r.code !== 0) throw new Error(`${art} auf ${node}: Exit ${r.code} — ${r.stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}`);
+            return r.stdout;
+          },
           snippetEntfernen: async (node, pfad) => { await fz.snippetEntfernen(node, pfad); },
           anmelden: async (v) => {
             const o = ownerFz();

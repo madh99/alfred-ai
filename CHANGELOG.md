@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Vorlagen-Fabrik, Bau der Vorlage (I8a Teil 1, v1732)
+
+- Proxmox `list_windows_images`: aktuellste Windows-Server-Testversion und Windows 11 Enterprise aus dem Microsoft Evaluation Center (je Sprache, mit Buildnummer), neuestes versioniertes VirtIO-ISO und Cloudbase-Init-MSI von GitHub. Downloads nur von festen Hosts über HTTPS.
+- `download_iso` / `delete_iso` (nur im Change): ISO in einen Speicher mit Inhalt „iso“, mit Platzprüfung.
+- `build_windows_template` (nur im Change):
+  - wählt das Abbild aus dem WIM-Verzeichnis des ISO nach Edition (Standard/Datacenter) und Ausprägung (Core/Desktop) bzw. Windows 11 Enterprise;
+  - baut am Knoten ein Antwort-ISO mit Antwortdatei, Einrichtungsskript, Cloudbase-Init und den VirtIO-Treibern in `$WinPEDriver$`;
+  - legt die VM mit UEFI (Microsoft-Schlüssel), TPM 2.0, fester q35-Maschinenversion und VirtIO an und startet die unbeaufsichtigte Installation.
+- Die Installation in der VM richtet ein: Gast-Werkzeuge, OpenSSH-Server mit PowerShell und Cloudbase-Init. Sie entfernt Host-Schlüssel und Kennwortreste und endet mit `sysprep /generalize` und Ausschalten.
+- `windows_build_log` liest das Einrichtungsprotokoll über den Gast-Agenten. `finish_windows_template` entfernt die CDs und das Antwort-ISO, legt das Konfigurationslaufwerk an und macht die Vorlage.
+- Planungshinweis für Windows-Vorlagen im Infrastruktur-Skill.
+
 ### Fixed — Image-Labels ohne Abbruch lesen (v1731)
 
 - Hatte ein Image gar keine Labels, brach die Label-Abfrage aus v1730 die Image-Abfrage des ganzen Hosts ab („map has no entry for key Labels“). Auf docker-dev-01 und bei battery-redis landeten dadurch Container fälschlich unter „nicht prüfbar“. Die Labels werden jetzt in einer Form gelesen, die fehlende Labels als leer behandelt.

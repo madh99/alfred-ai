@@ -664,6 +664,19 @@ export class FernzugriffSkill extends Skill {
     this.deps.protokoll?.('I5 Snippet geschrieben', { name: z.name, pfad });
   }
 
+  /**
+   * I8a — festes Skript der Windows-Fabrik als root am Proxmox-Knoten, Eingabe (JSON) über stdin. Nur Skripte aus dem Code
+   * (die Verdrahtung wählt sie über einen Namen aus), nie Modelltext; gilt nur für Knoten mit Fernzugang.
+   */
+  async knotenSkript(knoten: string, skript: string, eingabe: string, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+    const owner = this.deps.owner();
+    if (!owner || !this.deps.sshEingabe) throw new Error('Knoten-Skript nicht verfügbar');
+    const z = await this.zugang(owner, { name: knoten });
+    const r = await this.deps.sshEingabe(this.sshZiel(z), fernBefehl(skript, true), eingabe, timeoutMs);
+    this.deps.protokoll?.('I8a Knoten-Skript', { name: z.name, code: r.code });
+    return { code: r.code, stdout: r.stdout, stderr: schwaerze(r.stderr).text };
+  }
+
   async snippetEntfernen(knoten: string, pfad: string): Promise<boolean> {
     const owner = this.deps.owner();
     if (!owner || !FernzugriffSkill.SNIPPET_PFAD.test(pfad)) return false;

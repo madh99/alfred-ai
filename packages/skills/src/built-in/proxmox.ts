@@ -1,6 +1,8 @@
 import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@alfred/types';
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
+import { randomBytes } from 'node:crypto';
+import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, type WimAbbild, type WinVariante } from './windows-fabrik.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
@@ -21,6 +23,8 @@ export interface VmFabrikDeps {
   abmelden(v: { name: string; node: string; vmid: number; nurVmid?: boolean }): Promise<string>;
   /** Abgebrochene Bereitstellung fortsetzen: Fernzugang (mit dem Host-Schlüssel der VM) besteht schon — nur auf SSH/Cloud-Init warten */
   fortsetzen?(v: { name: string; ip: string; node: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
+  /** I8a — festes Skript der Windows-Fabrik am Knoten (Auswahl über den Namen, nie Modelltext), Eingabe JSON über stdin; liefert stdout */
+  knotenSkript?(node: string, art: 'win-inspektion' | 'win-antwort', eingabe: string, timeoutMs: number): Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,11 +70,11 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -155,6 +159,7 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
+      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -288,7 +293,13 @@ export class ProxmoxSkill extends Skill {
         url: { type: 'string', description: 'download_image: Image-URL des Herausgebers mit datiertem Stand (aus list_cloud_images)' },
         checksum: { type: 'string', description: 'download_image: Prüfsumme des Herausgebers (aus list_cloud_images)' },
         checksum_algorithm: { type: 'string', enum: ['sha256', 'sha512'], description: 'download_image: sha512 (Debian), sonst sha256 — aus list_cloud_images übernehmen' },
-        filename: { type: 'string', description: 'download_image: Dateiname im import-Speicher (…qcow2, aus list_cloud_images)' },
+        filename: { type: 'string', description: 'download_image: Dateiname im import-Speicher (…qcow2, aus list_cloud_images); download_iso: Dateiname …iso aus list_windows_images' },
+        // I8a — Windows-Vorlagen
+        sprache: { type: 'string', description: 'list_windows_images: Sprache des ISO, z. B. en-us (Standard) oder de-de' },
+        variante: { type: 'string', enum: WIN_VARIANTEN, description: 'build_windows_template: Edition und Ausprägung' },
+        iso: { type: 'string', description: 'build_windows_template: Volume des Windows-ISO (speicher:iso/…iso)' },
+        virtio_iso: { type: 'string', description: 'build_windows_template: Volume des VirtIO-ISO' },
+        cloudbase_url: { type: 'string', description: 'build_windows_template: Cloudbase-Init-MSI aus list_windows_images' },
         image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
         volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
         nameserver: { type: 'string', description: 'provision_vm: DNS-Server (IP, mehrere mit Leerzeichen)' },
@@ -490,6 +501,18 @@ export class ProxmoxSkill extends Skill {
           return await this.provisionVm(input);
         case 'delete_vm':
           return await this.deleteVm(input);
+        case 'list_windows_images':
+          return await this.listWindowsImages(input);
+        case 'download_iso':
+          return await this.downloadIso(input);
+        case 'delete_iso':
+          return await this.deleteIso(input);
+        case 'build_windows_template':
+          return await this.buildWindowsTemplate(input);
+        case 'windows_build_log':
+          return await this.windowsBuildLog(input);
+        case 'finish_windows_template':
+          return await this.finishWindowsTemplate(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -1559,6 +1582,193 @@ export class ProxmoxSkill extends Skill {
     const upid = await this.del<string>(`/nodes/${node}/storage/${storage}/content/${encodeURIComponent(volid)}`);
     await this.aufgabeOderFehler(upid, 120_000, 'Image entfernen');
     return { success: true, data: { volid, entfernt: true }, display: `Image ${volid} entfernt` };
+  }
+
+  // ── I8a Windows-Vorlagen ─────────────────────────────────────
+
+  /** Ziel einer Weiterleitung (fwlink → aka.ms → Download-Server) ohne Herunterladen; nur über HTTPS mit Zertifikatsprüfung */
+  private async zielUrl(url: string): Promise<{ url: string; groesse?: number }> {
+    const res = await tlsFetch(url, { method: 'HEAD', redirect: 'follow' } as RequestInit, false);
+    if (!res.ok) throw new Error(`${url.slice(0, 80)}: HTTP ${res.status}`);
+    const g = Number(res.headers.get('content-length'));
+    return { url: res.url, ...(Number.isFinite(g) && g > 0 ? { groesse: g } : {}) };
+  }
+
+  /** Aktuellste Server-Testversion und Windows 11 Enterprise je Sprache, VirtIO-ISO und Cloudbase-Init — alles mit fester Herkunft */
+  private async listWindowsImages(input: Record<string, unknown>): Promise<SkillResult> {
+    const sprache = typeof input.sprache === 'string' && SPRACHE.test(input.sprache.toLowerCase()) ? input.sprache.toLowerCase() : 'en-us';
+    const isos: Array<{ produkt: string; version: string; build: string; sprache: string; url: string; filename: string; gb?: number }> = [];
+    const fehler: string[] = [];
+    let server: { version: string; fwlink: string } | undefined;
+    for (const seite of serverSeiten(new Date())) {
+      const html = await this.holeText(seite.url).catch(() => '');
+      const l = evalLinks(html, 'server').find(x => x.sprache === sprache);
+      if (l) { server = { version: l.version ?? seite.version, fwlink: l.fwlink }; break; }
+    }
+    if (!server) fehler.push(`Windows Server: keine Download-Seite mit ISO (${sprache}) gefunden`);
+    const w11 = evalLinks(await this.holeText(WIN11_SEITE).catch(() => ''), 'win11').find(x => x.sprache === sprache);
+    if (!w11) fehler.push(`Windows 11 Enterprise: kein ISO (${sprache}) gefunden`);
+    for (const [produkt, version, fwlink] of [['server', server?.version, server?.fwlink], ['win11', '11', w11?.fwlink]] as const) {
+      if (!fwlink || !version) continue;
+      try {
+        const z = await this.zielUrl(fwlink);
+        const build = buildAusUrl(z.url);
+        if (!WIN_ISO_URL.test(z.url) || !build) { fehler.push(`${produkt}: Weiterleitung auf unerwartete Adresse ${z.url.slice(0, 100)}`); continue; }
+        isos.push({ produkt: produkt === 'server' ? `Windows Server ${version}` : 'Windows 11 Enterprise', version, build, sprache, url: z.url, filename: isoDateiname(produkt, version, build, sprache), ...(z.groesse ? { gb: Math.round(z.groesse / 1e8) / 10 } : {}) });
+      } catch (err) { fehler.push(`${produkt}: ${(err as Error).message.slice(0, 120)}`); }
+    }
+    const virtio = neuesteVirtio(await this.holeText(VIRTIO_ARCHIV).catch(() => ''));
+    if (!virtio) fehler.push('VirtIO: keine Version im Archiv gefunden');
+    let cloudbase: { version: string; url: string } | undefined;
+    try {
+      const rel = JSON.parse(await this.holeText('https://api.github.com/repos/cloudbase/cloudbase-init/releases/latest')) as { tag_name?: string; assets?: Array<{ browser_download_url?: string }> };
+      const url = (rel.assets ?? []).map(x => x.browser_download_url ?? '').find(u => CLOUDBASE_URL.test(u) && u.endsWith('_x64.msi'));
+      if (url) cloudbase = { version: CLOUDBASE_URL.exec(url)![1]!, url }; else fehler.push('Cloudbase-Init: kein x64-MSI in der neuesten Version');
+    } catch (err) { fehler.push(`Cloudbase-Init: ${(err as Error).message.slice(0, 120)}`); }
+    const zeilen = [
+      ...isos.map(i => `- **${i.produkt}** Build ${i.build} (${i.sprache}${i.gb ? `, ${i.gb} GB` : ''}): url ${i.url}\n  → filename ${i.filename}`),
+      ...(virtio ? [`- **VirtIO** ${virtio.version}: url ${virtio.url}\n  → filename virtio-win-${virtio.version.replace(/-\d+$/, '')}.iso`] : []),
+      ...(cloudbase ? [`- **Cloudbase-Init** ${cloudbase.version}: cloudbase_url ${cloudbase.url}`] : []),
+      'Testversionen: Server 180 Tage, Windows 11 Enterprise 90 Tage ab Installation. Microsoft veröffentlicht keine Prüfsummen — Alfred berechnet die SHA-256 nach dem Laden am Knoten.',
+      ...fehler.map(f => `⚠️ ${f}`),
+    ];
+    return { success: isos.length > 0, data: { isos, virtio: virtio ? { ...virtio, filename: `virtio-win-${virtio.version.replace(/-\d+$/, '')}.iso` } : undefined, cloudbase, fehler }, display: zeilen.join('\n'), ...(isos.length ? {} : { error: fehler.join('; ') || 'keine ISOs' }) };
+  }
+
+  /** ISO laden (Proxmox download-url, Zertifikatsprüfung an); nur feste Herkunft. Liefert die Aufgabe — der Change-Motor verfolgt sie. */
+  private async downloadIso(input: Record<string, unknown>): Promise<SkillResult> {
+    const url = String(input.url ?? ''); const filename = String(input.filename ?? '');
+    if (!WIN_ISO_URL.test(url) && !VIRTIO_URL.test(url)) return { success: false, error: 'url: Microsoft-Testversion (software-static.download.prss.microsoft.com) oder VirtIO-ISO aus dem Archiv — aus list_windows_images' };
+    if (!ISO_DATEI.test(filename)) return { success: false, error: 'filename: Kleinbuchstaben, Ziffern, . _ - und Endung .iso (aus list_windows_images)' };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const storage = String(input.storage ?? '');
+    if (!node || !storage) return { success: false, error: 'download_iso braucht node und storage' };
+    const st = (await this.get<Array<{ storage: string; content?: string; avail?: number }>>(`/nodes/${node}/storage`)).find(s => s.storage === storage);
+    if (!st) return { success: false, error: `Speicher ${storage} gibt es auf ${node} nicht` };
+    if (!String(st.content ?? '').split(',').includes('iso')) return { success: false, error: `Speicher ${storage} hat keinen Inhalt „iso“ (${st.content ?? '-'})` };
+    const volid = `${storage}:iso/${filename}`;
+    const vorhanden = await this.get<Array<{ volid: string; size?: number }>>(`/nodes/${node}/storage/${storage}/content?content=iso`).catch(() => [] as Array<{ volid: string; size?: number }>);
+    const da = vorhanden.find(v => v.volid === volid);
+    if (da) return { success: true, data: { node, storage, volid, vorhanden: true }, display: `${volid} ist schon vorhanden (${Math.round((da.size ?? 0) / 1e8) / 10} GB)` };
+    if (st.avail !== undefined && st.avail < 12e9) return { success: false, error: `Speicher ${storage} auf ${node} hat nur ${Math.round(st.avail / 1e9)} GB frei — für ein Windows-ISO zu wenig` };
+    const upid = await this.post<string>(`/nodes/${node}/storage/${storage}/download-url`, { content: 'iso', filename, url, 'verify-certificates': 1 });
+    return { success: true, data: { upid, node, storage, volid }, display: `ISO wird geladen: ${url} → ${volid}` };
+  }
+
+  private async deleteIso(input: Record<string, unknown>): Promise<SkillResult> {
+    const volid = String(input.volid ?? '');
+    if (!ISO_VOLUME.test(volid)) return { success: false, error: 'delete_iso: volid eines ISO (speicher:iso/…iso)' };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const storage = volid.split(':')[0]!;
+    const da = (await this.get<Array<{ volid: string }>>(`/nodes/${node}/storage/${storage}/content?content=iso`)).some(v => v.volid === volid);
+    if (!da) return { success: true, data: { volid, schonWeg: true }, display: `${volid} gibt es nicht (mehr)` };
+    await this.aufgabeOderFehler(await this.del<string>(`/nodes/${node}/storage/${storage}/content/${encodeURIComponent(volid)}`), 120_000, 'ISO entfernen');
+    return { success: true, data: { volid, entfernt: true }, display: `ISO ${volid} entfernt` };
+  }
+
+  /** Höchste q35-Maschinenversion des Knotens (Windows bekommt eine feste) */
+  private async q35Version(node: string): Promise<string | undefined> {
+    const m = await this.get<Array<{ id: string; type?: string }>>(`/nodes/${node}/capabilities/qemu/machines`).catch(() => [] as Array<{ id: string; type?: string }>);
+    const v = m.map(x => /^pc-q35-(\d+)\.(\d+)$/.exec(x.id)).filter((x): x is RegExpExecArray => !!x).sort((a, b) => Number(a[1]) - Number(b[1]) || Number(a[2]) - Number(b[2])).pop();
+    return v?.[0];
+  }
+
+  /**
+   * Bau einer Windows-Vorlage: Abbild aus dem ISO wählen, Antwort-ISO (Antwortdatei, Einrichtungsskript, Cloudbase-Init, Treiber)
+   * am Knoten bauen, VM mit UEFI/TPM anlegen und starten. Die Installation läuft danach allein und endet mit sysprep + Ausschalten.
+   */
+  private async buildWindowsTemplate(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.fabrik?.knotenSkript) return { success: false, error: 'Windows-Fabrik ist nicht eingerichtet (Fernzugriff auf den Knoten fehlt)' };
+    const node = (input.node as string) ?? this.config.defaultNode;
+    const storage = String(input.storage ?? '');
+    const iso = String(input.iso ?? ''); const virtioIso = String(input.virtio_iso ?? '');
+    const variante = input.variante; const name = String(input.hostname ?? '');
+    const cloudbase = String(input.cloudbase_url ?? '');
+    if (!node || !storage) return { success: false, error: 'build_windows_template braucht node und storage' };
+    if (!istWinVariante(variante)) return { success: false, error: `variante: ${WIN_VARIANTEN.join(', ')}` };
+    if (!ISO_VOLUME.test(iso) || !ISO_VOLUME.test(virtioIso)) return { success: false, error: 'iso und virtio_iso: Volumes aus download_iso (speicher:iso/…iso)' };
+    if (!CLOUDBASE_URL.test(cloudbase)) return { success: false, error: 'cloudbase_url: MSI aus list_windows_images' };
+    if (!VM_NAME.test(name)) return { success: false, error: 'hostname: Name der Vorlage (Kleinbuchstaben, Ziffern, -)' };
+    const sprache = /-([a-z]{2}-[a-z]{2})\.iso$/.exec(iso)?.[1];
+    if (!sprache) return { success: false, error: 'Sprache aus dem ISO-Namen nicht lesbar (…-en-us.iso)' };
+    if (variante === 'win11' ? !/win11/.test(iso) : !/win-server/.test(iso)) return { success: false, error: `ISO ${iso} passt nicht zur Variante ${variante}` };
+    const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
+    if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
+    if ((await this.getAllVms()).some(v => v.name === name)) return { success: false, error: `Name ${name} ist vergeben` };
+    for (const v of [iso, virtioIso]) {
+      const [sp] = v.split(':');
+      const liste = await this.get<Array<{ volid: string }>>(`/nodes/${node}/storage/${sp}/content?content=iso`).catch(() => [] as Array<{ volid: string }>);
+      if (!liste.some(x => x.volid === v)) return { success: false, error: `${v} gibt es auf ${node} nicht` };
+    }
+    const insp = knotenJson<{ abbilder: WimAbbild[]; virtio: string[]; gastWerkzeuge: boolean }>(await this.fabrik.knotenSkript(node, 'win-inspektion', JSON.stringify({ windows: iso, virtio: virtioIso }), 300_000));
+    const abbild = waehleAbbild(insp.abbilder, variante as WinVariante);
+    if (!abbild) return { success: false, error: `Im ISO gibt es kein Abbild für ${variante} (vorhanden: ${insp.abbilder.map(a => `${a.index} ${a.editionId}/${a.installationType}`).join(', ')})` };
+    const ordner = virtioOrdner(variante as WinVariante).find(o => insp.virtio.includes(o));
+    if (!ordner || !insp.gastWerkzeuge) return { success: false, error: `VirtIO-ISO ohne passende Treiber (${virtioOrdner(variante as WinVariante).join('/')}) oder ohne virtio-win-guest-tools.exe` };
+    const kennwort = zufallsKennwort(n => randomBytes(n));
+    const regional = { sprache };
+    const b64 = (t: string) => Buffer.from(t, 'utf-8').toString('base64');
+    const antwort = `local:iso/alfred-antwort-${vmid}.iso`;
+    const r = knotenJson<{ iso: string; cloudbaseSha256: string; treiber: string[] }>(await this.fabrik.knotenSkript(node, 'win-antwort', JSON.stringify({
+      ziel: antwort, virtio: virtioIso, ordner, treiber: VIRTIO_TREIBER, cloudbase,
+      dateien: {
+        'autounattend.xml': b64(autounattend({ variante: variante as WinVariante, index: abbild.index, regional, computer: `WIN-${vmid}`, kennwort })),
+        'alfred-setup.ps1': b64(setupSkript({ variante: variante as WinVariante })),
+        'alfred-sysprep.xml': b64(sysprepUnattend({ variante: variante as WinVariante, regional, kennwort: zufallsKennwort(n => randomBytes(n)) })),
+        'cloudbase-init.conf': b64(CLOUDBASE_CONF),
+        'cloudbase-init-unattend.conf': b64(CLOUDBASE_UNATTEND_CONF),
+      },
+    }), 900_000));
+    if (!r.treiber.includes('vioscsi')) return { success: false, error: `Antwort-ISO ohne Speichertreiber vioscsi (${r.treiber.join(', ') || 'keine'})` };
+    const machine = await this.q35Version(node);
+    const beschreibung = `Windows-Vorlage von Alfred (I8a): ${variante}, Abbild ${abbild.index} „${abbild.name}“ Build ${abbild.build ?? '?'}, ISO ${iso}, VirtIO ${virtioIso} (${ordner}), Cloudbase-Init ${CLOUDBASE_URL.exec(cloudbase)![1]} (SHA-256 ${r.cloudbaseSha256.slice(0, 16)}…), gebaut ${new Date().toISOString().slice(0, 10)}`;
+    const konfig = windowsBauKonfig({ vmid, name, storage, windowsIso: iso, virtioIso, antwortIso: antwort, beschreibung, ...(machine ? { machine } : {}), ...(typeof input.disk_size === 'number' ? { groesseGb: input.disk_size } : {}), ...(typeof input.memory === 'number' ? { memory: input.memory } : {}), ...(typeof input.cores === 'number' ? { cores: input.cores } : {}), ...(typeof input.bridge === 'string' ? { bridge: input.bridge } : {}), ...(typeof input.vlan_tag === 'number' ? { vlan: input.vlan_tag } : {}) });
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu`, konfig), 300_000, 'Bau-VM anlegen');
+    this.vmCache = null;
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
+    // „Press any key to boot from CD or DVD“: ein paar Sekunden lang Eingabe senden, danach läuft alles unbeaufsichtigt
+    for (let i = 0; i < 20; i++) {
+      await this.api('PUT', `/nodes/${node}/qemu/${vmid}/sendkey`, { key: 'ret' }).catch(() => undefined);
+      await new Promise(res => setTimeout(res, 1500));
+    }
+    return { success: true, data: { vmid, node, name, variante, abbild: { index: abbild.index, name: abbild.name, build: abbild.build }, antwortIso: antwort, machine, virtioOrdner: ordner, cloudbaseSha256: r.cloudbaseSha256 }, display: `Windows-Installation läuft: ${name} (VMID ${vmid}) auf ${node}, ${abbild.name} Build ${abbild.build ?? '?'}, Maschine ${machine ?? 'q35'} — die VM schaltet sich nach sysprep selbst aus (meist 30–90 min)` };
+  }
+
+  /** Einrichtungsprotokoll der Bau-VM über den Gast-Agenten (gibt es erst nach den Gast-Werkzeugen) */
+  private async windowsBuildLog(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm) return { success: false, error: `VMID ${vmid} nicht gefunden` };
+    try {
+      const r = await this.get<{ content?: string; truncated?: boolean }>(`/nodes/${vm.node}/qemu/${vmid}/agent/file-read?file=${encodeURIComponent('C:\\Windows\\Temp\\alfred-setup.log')}`);
+      const t = String(r.content ?? '');
+      const marken = t.split(/\r?\n/).filter(z => z.startsWith('ALFRED:')).join('\n');
+      return { success: true, data: { marken, ende: t.slice(-3000) }, display: `Einrichtungsprotokoll ${vm.name ?? vmid}:\n${marken || '(noch keine Schritte)'}\n…\n${t.slice(-1500)}` };
+    } catch (err) {
+      return { success: false, error: `Protokoll nicht lesbar (${(err as Error).message.slice(0, 120)}) — vor der Installation der Gast-Werkzeuge antwortet der Agent nicht; Konsole in Proxmox ansehen` };
+    }
+  }
+
+  /** Bau abschließen: VM aus, CDs und Antwort-ISO weg, Konfigurationslaufwerk für Cloudbase-Init, dann Vorlage */
+  private async finishWindowsTemplate(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid); const name = String(input.vm_name ?? '').trim();
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm) return { success: false, error: `VMID ${vmid} nicht gefunden` };
+    if (vm.name !== name) return { success: false, error: `VMID ${vmid} heißt „${vm.name}“, nicht „${name}“` };
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    if (!String(cfg.description ?? '').startsWith('Windows-Vorlage von Alfred (I8a)')) return { success: false, error: `${name} ist keine Windows-Bau-VM von Alfred` };
+    if (cfg.template) return { success: true, data: { vmid, name, node: vm.node, template: true, vorhanden: true }, display: `${name} ist schon eine Vorlage` };
+    const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
+    if (st.status !== 'stopped') return { success: false, error: `${name} läuft noch (${st.status}) — Installation/sysprep nicht fertig; windows_build_log zeigt den Stand` };
+    const antwort = Object.values(cfg).map(String).map(v => /^(local:iso\/alfred-antwort-\d+\.iso)/.exec(v)?.[1]).find(Boolean);
+    const cds = Object.keys(cfg).filter(k => /^(ide|sata)\d+$/.test(k) && String(cfg[k]).includes('media=cdrom'));
+    const storage = /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
+    await this.post(`/nodes/${vm.node}/qemu/${vmid}/config`, { ...(cds.length ? { delete: cds.join(',') } : {}), boot: 'order=scsi0', ...(storage ? { ide0: `${storage}:cloudinit` } : {}) });
+    if (antwort) await this.deleteIso({ volid: antwort, node: vm.node }).catch(() => undefined);
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/template`, {}), 300_000, 'zur Vorlage machen');
+    this.vmCache = null;
+    return { success: true, data: { vmid, name, node: vm.node, template: true, entfernteCds: cds, antwortIsoEntfernt: antwort ?? null }, display: `✅ Windows-Vorlage ${name} (VMID ${vmid}) fertig: CDs ${cds.join(', ') || '-'} entfernt, Antwort-ISO ${antwort ? 'gelöscht' : '-'}, Konfigurationslaufwerk für Cloudbase-Init angelegt` };
   }
 
   private async vmidFrei(vmid: number): Promise<boolean> {
