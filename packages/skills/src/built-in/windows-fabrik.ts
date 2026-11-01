@@ -319,6 +319,34 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: strin
   ].join('\r\n');
 }
 
+/**
+ * Realfall probe-win25b (01.11. 22:30): beim ersten Start nach sysprep endete PowerShell mit den Benutzerdaten nach einer Sekunde
+ * mit Exit 1, ohne einen Befehl auszuführen (zeitgleich „User Profile Service has stopped“). Cloudbase-Init wiederholt nach Exit 1
+ * nicht — Schlüssel, Konto, Firewall und Name fehlten. Dieses feste Skript (Gast-Agent, SYSTEM) holt die Einrichtung genau dann nach:
+ * Cloudbase-Init noch nicht abgeschaltet und der letzte Lauf endete nicht mit 0/1001/1003. Die Benutzerdaten kommen vom
+ * Konfigurationslaufwerk und gehen direkt als -EncodedCommand in einen neuen Prozess — keine Datei, kein Inhalt in der Ausgabe.
+ * Bei 1001 (Name gesetzt) folgt der Neustart, den sonst Cloudbase-Init auslöst.
+ */
+export const WIN_EINRICHTUNG_NACHHOLEN = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  "$log = 'C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init\\log\\cloudbase-init.log'",
+  "if ((Get-Service -Name cloudbase-init).StartType -eq 'Disabled') { 'NACHHOLEN_UNNOETIG Cloudbase-Init schon abgeschaltet'; exit 0 }",
+  "$m = Select-String -Path $log -Pattern 'User_data script ended with return code: (-?\\d+)' -ErrorAction SilentlyContinue | Select-Object -Last 1",
+  "if (-not $m) { 'NACHHOLEN_UNNOETIG Benutzerdaten noch nicht gelaufen'; exit 0 }",
+  "$alt = [int]$m.Matches[0].Groups[1].Value",
+  "if (@(0, 1001, 1003) -contains $alt) { \"NACHHOLEN_UNNOETIG letzter Lauf $alt\"; exit 0 }",
+  "$lw = Get-Volume | Where-Object { $_.FileSystemLabel -eq 'config-2' -and $_.DriveLetter } | Select-Object -First 1",
+  "if (-not $lw) { 'NACHHOLEN_FEHLER kein Konfigurationslaufwerk config-2'; exit 2 }",
+  "$t = [IO.File]::ReadAllText(\"$($lw.DriveLetter):\\openstack\\latest\\user_data\")",
+  "if (-not $t.StartsWith('#ps1_sysnative')) { 'NACHHOLEN_FEHLER Benutzerdaten sind kein PowerShell-Skript'; exit 2 }",
+  "$b = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($t))",
+  "$p = Start-Process -FilePath \"$env:WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $b -Wait -PassThru -WindowStyle Hidden",
+  "$c = $p.ExitCode",
+  "if ($c -eq 1001) { shutdown.exe /r /t 10 /d p:4:1 /c 'Alfred: Einrichtung nachgeholt, Neustart fuer den Namen' | Out-Null }",
+  "\"NACHHOLEN_ERGEBNIS vorher=$alt jetzt=$c\"",
+  "if (@(0, 1001) -contains $c) { exit 0 } else { exit 3 }",
+].join('\r\n');
+
 /** Proxmox-Konfiguration der Bau-VM (UEFI mit Microsoft-Schlüsseln, TPM 2.0, VirtIO) */
 export function windowsBauKonfig(v: { vmid: number; name: string; storage: string; windowsIso: string; virtioIso: string; antwortIso: string; groesseGb?: number; memory?: number; cores?: number; bridge?: string; vlan?: number; beschreibung?: string; machine?: string }): Record<string, unknown> {
   for (const iso of [v.windowsIso, v.virtioIso, v.antwortIso]) if (!ISO_VOLUME.test(iso)) throw new Error(`ungültiges ISO-Volume ${iso}`);

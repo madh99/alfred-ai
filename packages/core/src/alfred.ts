@@ -7175,11 +7175,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const netzFb = await import('./infrastruktur/netz-pruefung.js');
         const fz = this.fernzugriffRef;
         const warte = (ms: number) => new Promise(r => setTimeout(r, ms));
-        const warteBereit = async (v: { name: string; ip: string; vmid: number; zeitlimitMs: number; system?: 'linux' | 'windows' }): Promise<{ ok: boolean; meldung: string }> => {
+        const warteBereit = async (v: { name: string; ip: string; vmid: number; zeitlimitMs: number; system?: 'linux' | 'windows'; nachholen?: () => Promise<string> }): Promise<{ ok: boolean; meldung: string }> => {
             const start = Date.now();
             let letzte = '';
             // I8a — Windows: fertig, wenn der Name gesetzt ist und Cloudbase-Init sich nach den Benutzerdaten abgeschaltet hat
             if (v.system === 'windows') {
+              let nachgeholt = '';
               while (Date.now() - start < v.zeitlimitMs) {
                 const r = await fz.ausfuehrenIntern(v.name, 'hostname; (Get-Service cloudbase-init).StartType', false, 60_000)
                   .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
@@ -7187,13 +7188,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 if (r.code === 0 && h?.toLowerCase() === v.name.toLowerCase() && st === 'Disabled') {
                   const s = Math.round((Date.now() - start) / 1000);
                   this.logger.info({ name: v.name, ip: v.ip, vmid: v.vmid, sekunden: s }, 'I8a Windows-VM bereitgestellt, Fernzugang aktiv');
-                  return { ok: true, meldung: `SSH (PowerShell) mit Alfreds Host-Schlüssel nach ${s} s, Name ${h}, Cloudbase-Init fertig und abgeschaltet; Fernzugang „${v.name}“ (Windows, Leseliste) und CMDB-Eintrag angelegt` };
+                  return { ok: true, meldung: `SSH (PowerShell) mit Alfreds Host-Schlüssel nach ${s} s, Name ${h}, Cloudbase-Init fertig und abgeschaltet; Fernzugang „${v.name}“ (Windows, Leseliste) und CMDB-Eintrag angelegt${nachgeholt ? ` (Einrichtung über den Gast-Agenten nachgeholt: ${nachgeholt})` : ''}` };
                 }
                 if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
                 letzte = r.code === 0 ? `angemeldet, Name „${h ?? '?'}“, Cloudbase-Init ${st ?? '?'}` : (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+                // v1747 — Realfall probe-win25b (01.11.): Benutzerdaten beim ersten Start mit Exit 1 abgebrochen, Cloudbase-Init wiederholt
+                // nicht → nach 5 min ohne SSH einmal über den Gast-Agenten nachholen (das feste Skript prüft selbst, ob es nötig ist)
+                if (r.code !== 0 && !nachgeholt && v.nachholen && Date.now() - start > 300_000) {
+                  nachgeholt = await v.nachholen().catch((e: Error) => `Fehler: ${e.message.slice(0, 160)}`);
+                  this.logger.info({ name: v.name, vmid: v.vmid, ergebnis: nachgeholt }, 'v1747 Windows-Einrichtung über den Gast-Agenten nachgeholt');
+                }
                 await warte(15_000);
               }
-              return { ok: false, meldung: `Windows-VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };
+              return { ok: false, meldung: `Windows-VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})${nachgeholt ? `; Nachholen der Einrichtung: ${nachgeholt}` : ''}` };
             }
             while (Date.now() - start < v.zeitlimitMs) {
               // SSH mit genau dem selbst erzeugten Host-Schlüssel; erst fertig, wenn Cloud-Init durch ist und sich abgeschaltet hat

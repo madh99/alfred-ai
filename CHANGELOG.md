@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Bereitstellung holt eine abgebrochene Einrichtung nach (v1747)
+
+- Bricht das Einrichtungsskript einer neuen Windows-VM beim ersten Start ab, wiederholt Cloudbase-Init es nicht. Schlüssel, Konten, Firewall-Freigabe und Name fehlen dann, und die Bereitstellung wartet bis zum Zeitlimit.
+- Antwortet SSH nach 5 Minuten nicht, holt Alfred die Einrichtung jetzt einmal über den Gast-Agenten nach:
+  - nur wenn Cloudbase-Init noch nicht abgeschaltet ist und der letzte Lauf nicht regulär endete;
+  - die Einrichtungsdaten gehen direkt vom Konfigurationslaufwerk in einen neuen Prozess, ohne Zwischendatei und ohne Ausgabe;
+  - der nötige Neustart für den Namen folgt automatisch.
+
 ### Added — Standard-Vorlage (i) Windows-Updates (v1746)
 
 - Neue Standard-Vorlage `windows_updates` für Windows-VMs auf Proxmox mit Schalter „Sicherheitsupdates an“:

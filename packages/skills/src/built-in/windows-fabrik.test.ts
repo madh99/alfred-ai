@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  evalLinks, buildAusUrl, neuesteVirtio, isoDateiname, waehleAbbild, autounattend, sysprepUnattend, setupSkript, windowsBenutzerDaten,
+  evalLinks, buildAusUrl, neuesteVirtio, isoDateiname, waehleAbbild, autounattend, sysprepUnattend, setupSkript, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN,
   windowsBauKonfig, knotenJson, zufallsKennwort, serverSeiten, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, CLOUDBASE_CONF, KNOTEN_INSPEKTION, KNOTEN_ANTWORT_ISO, type WimAbbild,
 } from './windows-fabrik.js';
 
@@ -133,5 +133,20 @@ describe('I8a Windows-Vorlagen-Fabrik', () => {
     const k = zufallsKennwort(n => new Uint8Array(n).map((_x, i) => i * 7));
     expect(k).toMatch(/^[A-Za-z0-9_.+-]{16,64}$/);
     expect(k).toMatch(/[A-Z]/); expect(k).toMatch(/[a-z]/); expect(k).toMatch(/\d/);
+  });
+});
+
+// v1747 — Realfall probe-win25b: Benutzerdaten beim ersten Start mit Exit 1 abgebrochen, Cloudbase-Init wiederholt nicht
+describe('I8 Einrichtung über den Gast-Agenten nachholen', () => {
+  it('nur wenn nötig, ohne Datei, ohne Inhalt in der Ausgabe, Neustart nur bei 1001', () => {
+    const t = WIN_EINRICHTUNG_NACHHOLEN;
+    expect(t).toContain("StartType -eq 'Disabled') { 'NACHHOLEN_UNNOETIG");
+    expect(t).toContain('@(0, 1001, 1003) -contains $alt');
+    expect(t).toContain("'-EncodedCommand', $b");
+    expect(t).not.toMatch(/Set-Content|Out-File|WriteAllText|Copy-Item/);
+    // gelesen, geprüft, kodiert — die Benutzerdaten (mit Kennwörtern) werden nie ausgegeben
+    expect(t.match(/\$t\b/g)).toEqual(['$t', '$t', '$t']);
+    expect(t).toContain('GetBytes($t)');
+    expect(t).toContain("if ($c -eq 1001) { shutdown.exe /r");
   });
 });

@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { randomBytes } from 'node:crypto';
-import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, type WimAbbild, type WinVariante } from './windows-fabrik.js';
+import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN, type WimAbbild, type WinVariante } from './windows-fabrik.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
@@ -18,7 +18,7 @@ export interface VmFabrikDeps {
   snippetSchreiben(node: string, pfad: string, inhalt: string): Promise<void>;
   snippetEntfernen(node: string, pfad: string): Promise<void>;
   /** Fernzugang mit dem bekannten Host-Schlüssel + CMDB-Eintrag anlegen und warten, bis SSH und Cloud-Init fertig sind */
-  anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number; system?: 'linux' | 'windows' }): Promise<{ ok: boolean; meldung: string }>;
+  anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number; system?: 'linux' | 'windows'; nachholen?: () => Promise<string> }): Promise<{ ok: boolean; meldung: string }>;
   /** Fernzugang entfernen, CMDB-Eintrag stilllegen; nurVmid: eine andere VM trägt den Namen noch → nur den Eintrag dieser VMID stilllegen */
   abmelden(v: { name: string; node: string; vmid: number; nurVmid?: boolean }): Promise<string>;
   /** Abgebrochene Bereitstellung fortsetzen: Fernzugang (mit dem Host-Schlüssel der VM) besteht schon — nur auf SSH/Cloud-Init warten */
@@ -1839,7 +1839,7 @@ export class ProxmoxSkill extends Skill {
       if (typeof input.disk_size === 'number' && input.disk_size > 0) await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
       schritte.push(`gestartet mit ${ip}; Windows richtet sich ein (Name, Netz, Schlüssel) — mit Neustart`);
-      const a = await this.fabrik.anmelden({ name, ip: nackt, node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 1_800_000, system: 'windows' });
+      const a = await this.fabrik.anmelden({ name, ip: nackt, node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 1_800_000, system: 'windows', nachholen: () => this.windowsEinrichtungNachholen(vmid, node) });
       schritte.push(a.meldung);
       if (!a.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip: nackt } };
       const ga = await this.warteAufAgent(vmid, node, AGENT_WARTEN_MS);
@@ -1988,6 +1988,23 @@ export class ProxmoxSkill extends Skill {
   }
 
   /** v1626 — bis der Gast-Agent antwortet (höchstens `ms`); die Meldung nennt bei Misserfolg die Ursache aus Realfall docker-dev-01 */
+  /** Einrichtung einer neuen Windows-VM über den Gast-Agenten nachholen (festes Skript, siehe WIN_EINRICHTUNG_NACHHOLEN) */
+  private async windowsEinrichtungNachholen(vmid: number, node: string): Promise<string> {
+    const b64 = Buffer.from(WIN_EINRICHTUNG_NACHHOLEN, 'utf16le').toString('base64');
+    const { pid } = await this.post<{ pid: number }>(`/nodes/${node}/qemu/${vmid}/agent/exec`, { command: ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', b64] });
+    // die Einrichtung selbst wiederholt bis zu 30× im Abstand von 20 s (Kontenverwaltung noch nicht bereit) — daher bis 12 min warten
+    const ende = Date.now() + 720_000;
+    while (Date.now() < ende) {
+      await new Promise(res => setTimeout(res, 5_000));
+      const st = await this.get<{ exited?: number | boolean; exitcode?: number; 'out-data'?: string; 'err-data'?: string }>(`/nodes/${node}/qemu/${vmid}/agent/exec-status?pid=${pid}`);
+      if (st.exited) {
+        const aus = String(st['out-data'] ?? '').split(/\r?\n/).filter(z => /^NACHHOLEN_/.test(z)).join(' ');
+        return `Exit ${st.exitcode ?? '?'}: ${aus || String(st['err-data'] ?? '').trim().split(/\r?\n/)[0]?.slice(0, 160) || '(keine Ausgabe)'}`;
+      }
+    }
+    return 'nach 12 min noch nicht fertig';
+  }
+
   private async warteAufAgent(vmid: number, node: string, ms: number): Promise<{ ok: boolean; meldung: string }> {
     const ende = Date.now() + ms;
     let letzte = '';
