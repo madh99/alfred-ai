@@ -567,6 +567,15 @@ export class MessagePipeline {
     return best;
   }
 
+  /** v1724 K1b — je Gespräch die bisherige Werkzeugreihenfolge; nach WERKZEUG_RUHE_MS ohne Nachricht beginnt sie neu (Cache ist dann ohnehin abgelaufen) */
+  private werkzeugReihen = new Map<string, { namen: string[]; zuletzt: number }>();
+  private stabileWerkzeugliste<T extends { name: string }>(chatId: string, gewaehlt: T[], zulaessig: T[]): T[] {
+    const r = stabileReihe(this.werkzeugReihen.get(chatId), gewaehlt, zulaessig, Date.now());
+    this.werkzeugReihen.set(chatId, { namen: r.map(m => m.name), zuletzt: Date.now() });
+    if (this.werkzeugReihen.size > 500) { const alt = [...this.werkzeugReihen.entries()].sort((a, b) => a[1].zuletzt - b[1].zuletzt).slice(0, 100); for (const [k] of alt) this.werkzeugReihen.delete(k); }
+    return r;
+  }
+
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
     const lauf = () => mitKostenZweckWennLeer('chat', () => this.processIntern(message, onProgress));
@@ -1194,6 +1203,7 @@ export class MessagePipeline {
         }
       }
 
+      let rollenErlaubt: Set<string> | undefined; // v1724 K1b
       // 6b. Role-based skill filtering (multi-user)
       // v685 — Owner-Fallback: wenn kein expliziter alfred_users-Eintrag existiert
       // und die Message vom Owner kommt (masterUserId == ownerMasterUserId), erbt
@@ -1216,8 +1226,20 @@ export class MessagePipeline {
           if (allowed && allowed !== '*') {
             const allowedSet = new Set(allowed);
             skillMetas = skillMetas.filter(s => allowedSet.has(s.name));
+            rollenErlaubt = allowedSet;
           }
         }
+      }
+
+      // v1724 K1b (Spec 2026-10-27-kosten-infra-planung, Messung 01.11.: erste Runde im Infra-Faden nur 10 % aus dem Cache, weil der
+      // Skill-Filter je Nachricht eine andere Werkzeugliste lieferte — Werkzeuge stehen vorne im Prompt): Die Liste eines Gesprächs wird
+      // nur noch ERWEITERT, nie umsortiert oder gekürzt. Erlaubt bleibt nur, was für diese Nachricht zulässig ist (Rolle, Projekt-Chat);
+      // eine vom Aufrufer festgelegte Liste (allowedSkills) und Sprachnachrichten bleiben unberührt.
+      if (skillMetas && allSkillMetas && werkzeugwahl !== 'erlaubt' && !hasAudioAttachment) {
+        const zulaessig = allSkillMetas.filter(s => (!rollenErlaubt || rollenErlaubt.has(s.name)) && (!isProjectChat || PROJECT_CHAT_WHITELIST.has(s.name)));
+        const vorher = skillMetas.length;
+        skillMetas = this.stabileWerkzeugliste(message.chatId, skillMetas, zulaessig);
+        if (skillMetas.length !== vorher) tracePhase('werkzeuge_stabil', { gewaehlt: vorher, gesamt: skillMetas.length });
       }
 
       const tools = skillMetas
@@ -3223,4 +3245,16 @@ export class MessagePipeline {
 export const FADEN_WARTE_MS = 15 * 60_000;
 export function fadenSperrePflicht(chatId: string | undefined): boolean {
   return typeof chatId === 'string' && chatId.startsWith('owner:faden:');
+}
+
+/** v1724 K1b — Werkzeugreihe eines Gesprächs: bisherige (noch zulässige) in alter Reihenfolge, neue gewählte hinten angehängt */
+export const WERKZEUG_RUHE_MS = 2 * 3_600_000;
+export function stabileReihe<T extends { name: string }>(vorher: { namen: string[]; zuletzt: number } | undefined, gewaehlt: T[], zulaessig: T[], jetzt: number): T[] {
+  if (!vorher || jetzt - vorher.zuletzt > WERKZEUG_RUHE_MS) return gewaehlt;
+  const nachName = new Map(zulaessig.map(m => [m.name, m] as const));
+  for (const m of gewaehlt) if (!nachName.has(m.name)) nachName.set(m.name, m);
+  const aus: T[] = []; const drin = new Set<string>();
+  for (const n of vorher.namen) { const m = nachName.get(n); if (m && !drin.has(n)) { aus.push(m); drin.add(n); } }
+  for (const m of gewaehlt) if (!drin.has(m.name)) { aus.push(m); drin.add(m.name); }
+  return aus;
 }

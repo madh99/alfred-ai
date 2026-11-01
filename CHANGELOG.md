@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Stabile Werkzeugliste je Gespräch für den Prompt-Cache (v1724)
+
+- Die Werkzeugliste eines Gesprächs wird nur noch erweitert, nie umsortiert oder gekürzt; neu gewählte Werkzeuge kommen ans Ende. Vorher stellte die Auswahl je Nachricht die Liste neu zusammen. Weil die Werkzeuge vorne im Prompt stehen, war der Cache bei der ersten Runde jeder Nachricht dadurch fast wertlos (Messung 28.10.–01.11. im Infra-Faden: 10 % aus dem Cache, Folgerunden 96 %).
+- Es bleiben nur Werkzeuge in der Liste, die für die jeweilige Nachricht zulässig sind (Rolle, Projekt-Chat). Eine vom Aufrufer festgelegte Werkzeugliste und Sprachnachrichten sind nicht betroffen. Nach zwei Stunden ohne Nachricht beginnt die Liste neu.
+
 ### Fixed — Changes und Fäden: Lehren aus der pgBackRest-Einführung (v1723)
 
 - Durchgänge im selben Owner-Faden laufen nacheinander. Vorher konnte eine Fortsetzung nach einer Bestätigung parallel zu einer neuen Nachricht laufen; beide änderten denselben Change, der Plan enthielt danach zwei vermischte Fassungen. Ein hängender Durchgang hält den nächsten höchstens 15 Minuten auf.
