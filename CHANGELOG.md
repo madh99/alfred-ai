@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Schätzung des LLM-Guthabens mit Vorwarnung (v1726)
+
+- OpenAI und Anthropic liefern den Kontostand nicht über eine Schnittstelle. Alfred liest deshalb die Lade-Mails ohne Modell aus (OpenAI: „Your OpenAI API account has been funded“, Betrag ohne 20 % MwSt.; Anthropic: Stripe-Beleg mit „One-time credit purchase“; Abo-Rechnungen wie der Max-Plan zählen nicht).
+- Das Restguthaben wird ab dem letzten leeren Stand geschätzt: Ladungen danach minus die von Alfred gemessenen Kosten des Anbieters. Ist noch kein leerer Stand bekannt, zählt vorsichtig nur die letzte Ladung.
+- Reicht das Guthaben beim Verbrauch der letzten 24 Stunden weniger als zwölf Stunden oder liegt es unter 3 $, meldet Alfred das einmal je Ladung. Ausgaben anderer Programme mit denselben Zugangsdaten sieht die Schätzung nicht.
+
 ### Fixed — Leeres LLM-Guthaben wird sofort gemeldet (v1725)
 
 - Ein Guthaben-Fehler bei OpenAI oder Anthropic wurde erst gemeldet, wenn die Störung eine Stunde anhielt; nach jedem Neustart begann diese Stunde von vorn. In den Realfällen vom 29. bis 31.10. kam die Meldung dadurch ein bis sechs Stunden zu spät, Alfred arbeitete so lange über das teurere Ersatzmodell.

@@ -440,6 +440,8 @@ export class Alfred {
   private skillHealthTracker?: SkillHealthTracker;
   /** v1161 — Jarvis Schicht 0: deklaratives Job-Register (ersetzt verstreute Nachtjob-Timer). */
   private jobRegister?: import('./lebenszeichen/job-register.js').JobRegister;
+  /** v1726 — Zeitpunkt „Guthaben leer“ je Anbieter festhalten (Ausgangspunkt der Guthaben-Schätzung) */
+  private guthabenLeer?: (anbieter: string) => Promise<void>;
   /** v1162 — Jarvis Schicht 0: Provider-Puls, Degradations-Wächter, letzte Proben (für Kachel). */
   private providerPuls?: import('./lebenszeichen/provider-puls.js').ProviderPuls;
   private degradationsWaechter?: import('./lebenszeichen/degradations-waechter.js').DegradationsWaechter;
@@ -958,6 +960,8 @@ export class Alfred {
     }
     llmProvider.setBillingAlertCallback((info) => {
       this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered' : 'v868 LLM billing failure (Owner-Satz kommt vom Lebenszeichen-Wächter)');
+      // v1726 — leerer Stand = Ausgangspunkt der Guthaben-Schätzung
+      if (info.kind === 'failure') void this.guthabenLeer?.(info.provider).catch(() => undefined);
       // v1725 — Wächter sofort anstoßen (Meldung bzw. Entwarnung ohne Warten auf das 10-min-Raster); Puls ist vorher aktualisiert
       if (this.jobRegister) setTimeout(() => { void this.jobRegister?.jetzt('degradations-waechter').catch(() => undefined); }, 2_000).unref?.();
     });
@@ -6883,6 +6887,69 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           return { ok: zaehler.fehler === 0, zaehler };
         },
       });
+
+      // v1726 — Guthaben-Schätzung (Owner 01.11.): Ladungs-Mails von OpenAI/Anthropic ohne Modell auslesen, Restguthaben ab dem letzten
+      // leeren Stand schätzen und rechtzeitig warnen. Zustand im skill_state (Namensraum guthaben) unter dem Owner.
+      this.registriereJob({
+        key: 'guthaben-schaetzung', beschreibung: 'LLM-Guthaben aus Ladungs-Mails und gemessenen Kosten schätzen, rechtzeitig warnen',
+        takt: { art: 'intervall', minuten: 30 }, bereich: 'global', startVerzoegerungMin: 3, timeoutMin: 9,
+        run: async () => {
+          const owner = this.ownerMasterUserId ?? this.tryOwner();
+          const emailSkill = skillRegistry.get('email');
+          const ownerChat = this.config.security?.ownerUserId;
+          if (!owner || !emailSkill || !ownerChat) return { ok: true, zaehler: { ladungen: 0 } };
+          const { leseLadung, schaetze, warnen, warnText, anbieterVonModell } = await import('./lebenszeichen/guthaben-schaetzung.js');
+          const lies = async <T>(k: string, leer: T): Promise<T> => { try { return JSON.parse((await skillStateRepo.get(owner, 'guthaben', k)) ?? 'null') ?? leer; } catch { return leer; } };
+          const ladungen = await lies<import('./lebenszeichen/guthaben-schaetzung.js').Ladung[]>('ladungen', []);
+          const gesehen = new Set(await lies<string[]>('gesehen', []));
+          const { context } = await baueKontext(userRepo, { userId: ownerChat, platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as import('@alfred/types').Platform, chatId: ownerChat });
+          let neu = 0;
+          // Erstlauf (noch keine Ladung bekannt): Suche im Postfach, sonst die 50 neuesten Mails des Posteingangs
+          const erstlauf = ladungen.length === 0;
+          for (const filter of [{ from: 'tm.openai.com', subject: 'account has been funded', query: 'OpenAI API account has been funded' }, { subject: 'receipt from anthropic', query: 'receipt from Anthropic' }]) {
+            const r = erstlauf
+              ? await skillSandbox.execute(emailSkill, { action: 'search', query: filter.query, count: 20 }, context)
+              : await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(filter.from ? { from: filter.from } : {}), subject: filter.subject, count: 50 }, context);
+            const daten = r.data as { messages?: Array<{ id: string; from: string; subject: string; date: string }>; results?: Array<{ id: string; from: string; subject: string; date: string | Date }> } | undefined;
+            const mails = r.success ? (daten?.messages ?? (daten?.results ?? []).map(x => ({ ...x, date: new Date(x.date).toISOString() }))) : [];
+            for (const m of mails) {
+              if (gesehen.has(m.id)) continue;
+              gesehen.add(m.id);
+              const d = await skillSandbox.execute(emailSkill, { action: 'read', messageId: m.id }, context);
+              const body = d.success ? String((d.data as { body?: string })?.body ?? '') : '';
+              const l = body ? leseLadung({ id: m.id, from: m.from, subject: m.subject, body, date: m.date }) : undefined;
+              if (l) { ladungen.push(l); neu++; this.logger.info({ anbieter: l.anbieter, guthaben: l.guthaben, zeit: l.zeit }, 'v1726 Guthaben-Ladung erkannt'); }
+            }
+          }
+          await skillStateRepo.set(owner, 'guthaben', 'gesehen', JSON.stringify([...gesehen].slice(-300)));
+          await skillStateRepo.set(owner, 'guthaben', 'ladungen', JSON.stringify(ladungen.slice(-100)));
+          // Kosten je Anbieter aus llm_usage_hourly (stundengenau; die angebrochene Startstunde zählt ganz — vorsichtige Schätzung)
+          const zeilen = await this.database.getAdapter().query('SELECT hour_bucket, model, cost_usd FROM llm_usage_hourly WHERE hour_bucket >= ?', [new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 13)]) as Array<{ hour_bucket: string; model: string; cost_usd: number }>;
+          const kosten = (a: string, ab: number) => zeilen.filter(z => anbieterVonModell(z.model) === a && Date.parse(`${z.hour_bucket}:00:00Z`) >= ab - 3_600_000 + 1).reduce((x, z) => x + Number(z.cost_usd || 0), 0);
+          const gemeldet = await lies<Record<string, string>>('gewarnt', {});
+          const zaehler: Record<string, number> = { ladungen: ladungen.length, neu };
+          for (const a of ['openai', 'anthropic'] as const) {
+            const leer = await lies<string | null>(`leer:${a}`, null) ?? undefined;
+            const proStunde = kosten(a, Date.now() - 86_400_000) / 24;
+            const sch = schaetze(a, ladungen, leer, iso => kosten(a, Date.parse(iso)), proStunde);
+            if (!sch) continue;
+            zaehler[`rest_${a}`] = Math.round(sch.rest);
+            this.logger.info({ ...sch }, 'v1726 Guthaben geschätzt');
+            const marke = `${sch.seit}|${sch.geladen}`;
+            if (warnen(sch) && gemeldet[a] !== marke) {
+              await this.meldeOhneModell(warnText(sch)).catch(() => undefined);
+              gemeldet[a] = marke;
+              await skillStateRepo.set(owner, 'guthaben', 'gewarnt', JSON.stringify(gemeldet));
+            }
+          }
+          return { ok: true, zaehler };
+        },
+      });
+      this.guthabenLeer = async (anbieter: string) => {
+        const owner = this.ownerMasterUserId ?? this.tryOwner();
+        if (!owner || !/^(openai|anthropic)$/.test(anbieter)) return;
+        await skillStateRepo.set(owner, 'guthaben', `leer:${anbieter}`, JSON.stringify(new Date().toISOString()));
+      };
     }
 
     // 7d. Initialize watch engine (condition-based alerts)
