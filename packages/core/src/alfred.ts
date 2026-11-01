@@ -7800,7 +7800,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   }));
                   return mit.sort((a, b) => a.r - b.r || a.name.localeCompare(b.name)).map(x => x.name);
                 },
-                anzahl: async (v, m, seit) => changes.filter(c => c.freigegebenUeber === `standard:${v}` && Date.parse(c.createdAt) >= seit && ((c.pruefung as { zusatz?: { merkmal?: string } } | undefined)?.zusatz?.merkmal === m)).length,
+                // v1749 — Realfall 01.11. (d0a4aa66): ein vom Owner abgebrochener Change zählt nicht zur Tagesgrenze
+                anzahl: async (v, m, seit) => changes.filter(c => c.freigegebenUeber === `standard:${v}` && c.status !== 'cancelled' && Date.parse(c.createdAt) >= seit &&((c.pruefung as { zusatz?: { merkmal?: string } } | undefined)?.zusatz?.merkmal === m)).length,
               };
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),

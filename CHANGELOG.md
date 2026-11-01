@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — abgebrochene Standard-Changes zählen nicht zur Tagesgrenze (v1749)
+
+- Ein vom Owner abgebrochener Standard-Change verhinderte bisher bis zum nächsten Tag einen neuen Change derselben Vorlage für denselben Host („höchstens 1× je Tag“). Abgebrochene Changes zählen dafür jetzt nicht mehr.
+
 ### Fixed — Update-Changes starten erst im Wartungsfenster (v1748)
 
 - Wird ein Update-Change einzeln aus der Vorlage (h) Betriebssystem-Updates oder (i) Windows-Updates angelegt, beginnt er außerhalb des Fensters jetzt beim nächsten Fensterbeginn. Bisher startete er sofort, brach an der Fensterprüfung ab und sperrte dadurch die Vorlage.
