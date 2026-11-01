@@ -46,4 +46,16 @@ describe('Angriffsprobe Leseliste', () => {
     const durch = faelle.filter(f => windowsBefehlsklasse(f) === 'lesen');
     expect(durch).toEqual([]);
   });
+  it('Windows-Lese-Käfig: Parameter für andere Rechner, Dateien, Benutzer, Filter, Anmeldedaten — auch abgekürzt — und das Sicherheitsprotokoll gesperrt', async () => {
+    const { windowsKaefigGrund, windowsKaefigBefehl } = await import('./regeln.js');
+    const gesperrt = [
+      'Get-Service -ComputerName dc01', 'Get-Service -Comp dc01', 'Get-Service -cn dc01', 'Get-Process -IncludeUserName', 'Get-Process -Inc',
+      'Get-WinEvent -Path C:\\x.evtx', 'Get-WinEvent -Pa C:\\x.evtx', 'Get-WinEvent -FilterXml x', 'Get-WinEvent -FilterHashtable x', 'Get-WinEvent -LogName Security -MaxEvents 5',
+      'Get-WinEvent Security', 'Get-NetTCPConnection -CimSession srv', 'Get-SmbShare -Cim srv', 'Get-HotFix -ComputerName:srv', 'Get-Service –ComputerName srv',
+      'Get-Process -Module', 'Get-Process -FileVersionInfo', 'Get-LocalUser | Format-List -Property * -Session x', 'Get-Service -C dc01', 'Get-WinEvent -P C:\\x.evtx',
+    ];
+    expect(gesperrt.filter(b => !windowsKaefigGrund(b))).toEqual([]);
+    for (const b of gesperrt) expect(() => windowsKaefigBefehl(b)).toThrow();
+    for (const b of ['Get-Service | Where-Object Status -eq Running | Measure-Object', 'Get-WinEvent -LogName System -MaxEvents 20 | Format-List TimeCreated, Id, Message', 'Get-NetFirewallRule -Enabled True | Select-Object -First 5', 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, CPU']) expect(windowsKaefigGrund(b), b).toBeUndefined();
+  });
 });

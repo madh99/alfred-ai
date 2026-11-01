@@ -405,7 +405,9 @@ export class FernzugriffSkill extends Skill {
       if (k === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
       // I8b — nicht auf der festen Liste: im Windows-Lese-Käfig (eingeschränkter Runspace, NoLanguage, nur lesende Cmdlets)
       const kaefig = k !== 'lesen';
-      const r = await this.lauf(owner, zw, kaefig ? windowsKaefigBefehl(befehl) : befehl, this.timeout(input));
+      let wirklich = befehl;
+      if (kaefig) { try { wirklich = windowsKaefigBefehl(befehl); } catch (err) { return { success: false, error: `„${befehl.slice(0, 120)}“: ${(err as Error).message} — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` }; } }
+      const r = await this.lauf(owner, zw, wirklich, this.timeout(input));
       this.deps.protokoll?.(kaefig ? 'I8b Fernzugriff im Windows-Lese-Käfig' : 'I8a Fernzugriff lesen (Windows)', { name: zw.name, befehl: befehl.slice(0, 200), code: r.code });
       const e = this.ergebnis(zw, befehl, r, kaefig ? '  (Windows-Lese-Käfig)' : undefined);
       if (kaefig && r.code !== 0 && /KAEFIG:.*(is not recognized|nicht erkannt|CommandNotFound|language mode|Sprachmodus|not allowed|nicht zulässig)/i.test(r.stderr)) {

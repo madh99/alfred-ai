@@ -320,17 +320,37 @@ export function windowsBefehlsklasse(befehl: string): Befehlsklasse {
 export const WIN_KAEFIG_CMDLETS = [
   'Get-Service', 'Get-Process', 'Get-WinEvent', 'Get-NetIPConfiguration', 'Get-NetIPAddress', 'Get-NetAdapter', 'Get-NetRoute',
   'Get-NetTCPConnection', 'Get-NetUDPEndpoint', 'Get-NetFirewallProfile', 'Get-NetFirewallRule', 'Get-NetFirewallPortFilter',
-  'Get-DnsClientServerAddress', 'Resolve-DnsName', 'Get-Volume', 'Get-Disk', 'Get-Partition', 'Get-PhysicalDisk', 'Get-HotFix',
+  'Get-DnsClientServerAddress', 'Get-Volume', 'Get-Disk', 'Get-Partition', 'Get-PhysicalDisk', 'Get-HotFix',
   'Get-WindowsFeature', 'Get-WindowsCapability', 'Get-ComputerInfo', 'Get-LocalUser', 'Get-LocalGroup', 'Get-LocalGroupMember',
-  'Get-SmbShare', 'Get-SmbShareAccess', 'Get-SmbSession', 'Get-TimeZone', 'Get-Date', 'Get-Culture', 'Get-Counter',
+  'Get-SmbShare', 'Get-SmbShareAccess', 'Get-SmbSession', 'Get-TimeZone', 'Get-Date', 'Get-Culture',
   'Select-Object', 'Sort-Object', 'Where-Object', 'Group-Object', 'Measure-Object', 'Format-List', 'Format-Table', 'Format-Wide',
   'ConvertTo-Json', 'ConvertTo-Csv', 'Out-String', 'Out-Default',
 ] as const;
-// Get-CimInstance bewusst nicht: Win32_Process zeigt Befehlszeilen (Zugangsdaten); die nötigen Klassen stehen auf der festen Leseliste
+// Get-CimInstance bewusst nicht: Win32_Process zeigt Befehlszeilen (Zugangsdaten); die nötigen Klassen stehen auf der festen Leseliste.
+// Resolve-DnsName/Get-Counter nicht: Netzverkehr zu frei wählbaren Zielen (Sicherheitsprüfung 01.11.).
+
+/**
+ * Sicherheitsprüfung 01.11. — Parameter, die aus einem lesenden Cmdlet etwas anderes machen: andere Rechner (-ComputerName/-Cn/
+ * -CimSession/-Session), beliebige Dateien (-Path/-LiteralPath), Benutzer zu Prozessen (-IncludeUserName), eigene Filter (-FilterXml/
+ * -FilterHashtable/-FilterXPath), Anmeldedaten. PowerShell nimmt eindeutige Abkürzungen an — gesperrt ist daher jedes Parameter-Token,
+ * das ein Anfang eines dieser Namen ist (auch ein einzelner Buchstabe), dazu das Sicherheitsprotokoll.
+ */
+const WIN_KAEFIG_GESPERRT = ['computername', 'cn', 'pscomputername', 'cimsession', 'session', 'path', 'literalpath', 'pspath', 'lp', 'includeusername', 'filterxml', 'filterhashtable', 'filterxpath', 'credential', 'server', 'oldest', 'module', 'fileversioninfo'];
+export function windowsKaefigGrund(befehl: string): string | undefined {
+  for (const m of befehl.matchAll(/(?:^|[\s(,|])[-\u2013\u2014\u2015]([A-Za-z]+)/g)) {
+    const t = m[1]!.toLowerCase();
+    const treffer = WIN_KAEFIG_GESPERRT.find(g => g.startsWith(t)); // auch einzelne Buchstaben: Get-Service -C ist eindeutig -ComputerName
+    if (treffer) return `Parameter -${m[1]} (${treffer}) ist im Windows-Lese-Käfig gesperrt`;
+  }
+  if (/\bsecurity\b/i.test(befehl)) return 'das Sicherheitsprotokoll ist im Windows-Lese-Käfig gesperrt';
+  return undefined;
+}
 
 export function windowsKaefigBefehl(befehl: string): string {
   const b = befehl.trim();
   if (!b || b.length > 4000) throw new Error('Befehl leer oder zu lang (höchstens 4000 Zeichen)');
+  const grund = windowsKaefigGrund(b);
+  if (grund) throw new Error(grund);
   const innen = Buffer.from(b, 'utf-8').toString('base64');
   const huelle = [
     '$ErrorActionPreference = "Stop"',

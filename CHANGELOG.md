@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Windows-Lese-Käfig auf Parameterebene gesperrt (v1739)
+
+- Eine Sicherheitsprüfung zeigte: Die Cmdlet-Liste allein reicht nicht. Einige Parameter machen aus einem lesenden Befehl etwas anderes:
+  - `-ComputerName`, `-Cn`, `-CimSession`, `-Session`: Zugriff auf andere Rechner;
+  - `-Path`, `-LiteralPath`: beliebige Ereignisprotokoll-Dateien;
+  - `-IncludeUserName`, `-Module`, `-FileVersionInfo`;
+  - `-FilterXml`, `-FilterHashtable`, `-FilterXPath`;
+  - `-Credential`, `-Server`.
+- Diese Parameter sind gesperrt, auch abgekürzt (PowerShell nimmt eindeutige Anfänge an, `-C` wäre bei `Get-Service` schon `-ComputerName`). Das Sicherheitsprotokoll ist ebenfalls gesperrt.
+- `Resolve-DnsName` und `Get-Counter` sind nicht mehr im Käfig (Netzverkehr zu frei wählbaren Zielen).
+- Ein gesperrter Befehl wird mit Hinweis abgewiesen und kann über `ausfuehren` dem Owner vorgelegt werden.
+
 ### Added — Lese-Käfig für Windows (I8b Teil 2, v1738)
 
 - Lesebefehle für Windows, die nicht auf der festen Liste stehen, laufen jetzt ohne Rückfrage in einem eingeschränkten PowerShell-Runspace (der Mechanismus hinter JEA, ohne WinRM):
