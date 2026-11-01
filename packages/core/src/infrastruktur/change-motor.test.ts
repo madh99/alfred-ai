@@ -242,6 +242,23 @@ describe('I4 Ausführungsmotor', () => {
     expect(eingaben.find(e => e.action === 'kopieren')?.timeout_s).toBe(10800);
   });
 
+  it('v1723: Lese-Aktion im Change läuft streng (Exit ≠ 0 = Fehler); Abbruchmeldung nennt die echte Dauer', async () => {
+    const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'lesen', einordnung: 'lesen', parameter: { name: 'docker-com-01', befehl: 'docker logs --since 5m livekit' } })]);
+    const aufrufe: Array<boolean | undefined> = [];
+    w.deps.fernLesen = async (_z, _b, _t, streng) => { aufrufe.push(streng); throw new Error('Exit 1: Cannot connect to the Docker daemon'); };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(aufrufe[0]).toBe(true);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    const w2 = welt([S({ nr: 1, art: 'warten', zeitlimitS: 14400, pruefung: { typ: 'befehl', zugang: 'pg-repo-01', befehl: 'pg-c-state', erwartet: 'OK', abbruch: 'FEHLER' } })]);
+    w2.deps.fernLesen = async () => 'FEHLER\n';
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    const fehler = JSON.stringify(w2.c.lauf);
+    expect(fehler).toMatch(/Nach \d+ s abgebrochen/);
+    expect(fehler).not.toMatch(/nach 14400 s/);
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];

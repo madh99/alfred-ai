@@ -569,7 +569,31 @@ export class MessagePipeline {
 
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
-    return mitKostenZweckWennLeer('chat', () => this.processIntern(message, onProgress));
+    const lauf = () => mitKostenZweckWennLeer('chat', () => this.processIntern(message, onProgress));
+    if (!fadenSperrePflicht(message.chatId)) return lauf();
+    return this.nacheinander(message.chatId, lauf);
+  }
+
+  /**
+   * v1723 — Realfall 31.10. (Change a4c1b1e8): Nach einer Bestätigung setzte Alfred das Gespräch fort, während eine neue Nachricht im
+   * selben Owner-Faden schon lief — zwei Durchgänge änderten denselben Change, der Plan enthielt danach zwei vermischte Fassungen.
+   * Durchgänge eines Owner-Fadens laufen deshalb nacheinander; ein hängender Vorgänger hält höchstens FADEN_WARTE_MS auf.
+   */
+  private fadenLaeufe = new Map<string, Promise<unknown>>();
+  private async nacheinander<T>(chatId: string, f: () => Promise<T>): Promise<T> {
+    const vorher = this.fadenLaeufe.get(chatId) ?? Promise.resolve();
+    let freigeben!: () => void;
+    const meins = new Promise<void>(r => { freigeben = r; });
+    const kette = vorher.then(() => meins, () => meins);
+    this.fadenLaeufe.set(chatId, kette);
+    const warten = Promise.race([vorher.catch(() => undefined), new Promise(r => setTimeout(r, FADEN_WARTE_MS).unref?.())]);
+    const t0 = Date.now();
+    await warten;
+    if (Date.now() - t0 > 1000) this.logger.info({ chatId, gewartetMs: Date.now() - t0 }, 'v1723 Faden-Durchgang wartete auf den vorherigen');
+    try { return await f(); } finally {
+      freigeben();
+      if (this.fadenLaeufe.get(chatId) === kette) this.fadenLaeufe.delete(chatId);
+    }
   }
 
   private async processIntern(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
@@ -3193,4 +3217,10 @@ export class MessagePipeline {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
+}
+
+/** v1723 — nur Owner-Fäden werden serialisiert (dort arbeiten Bestätigungs-Fortsetzungen und neue Aufträge am selben Gegenstand) */
+export const FADEN_WARTE_MS = 15 * 60_000;
+export function fadenSperrePflicht(chatId: string | undefined): boolean {
+  return typeof chatId === 'string' && chatId.startsWith('owner:faden:');
 }

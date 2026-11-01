@@ -26,7 +26,7 @@ export interface MotorDeps {
   };
   /** Skill-Aktion als Owner ausführen (Skill-Sandbox mit Zeitlimit) */
   fuehreAus: (skill: string, input: Record<string, unknown>, timeoutMs: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string }>;
-  fernLesen: (zugang: string, befehl: string, timeoutMs: number) => Promise<string>;
+  fernLesen: (zugang: string, befehl: string, timeoutMs: number, streng?: boolean) => Promise<string>;
   /** v1652 — Datei-Prüfung: nur Typ und Größe (fester stat-Befehl), unabhängig von der Geheimnis-Sperre für Inhalte */
   fernDatei?: (zugang: string, pfad: string, timeoutMs: number) => Promise<string>;
   fernAusfuehren: (zugang: string, befehl: string, alsRoot: boolean, timeoutMs: number) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -291,8 +291,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (s.sekunden && !s.pruefung) { await this.schlafe(s.sekunden * 1000); return fertig({ ok: true, ausgabe: `${s.sekunden} s gewartet` }); }
         if (s.sekunden) await this.schlafe(s.sekunden * 1000);
         const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / this.takt.wartenAbstandMs));
+        const t0 = Date.now();
         const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, versuche, this.takt.wartenAbstandMs);
-        return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Bedingung nach ${s.zeitlimitS} s nicht erfüllt: ${pr.text}` }) });
+        // v1723 — Realfall 01.11. (a4c1b1e8 Schritte 59/69): ein Abbruch nach 10 s hieß „Bedingung nach 14400 s nicht erfüllt“
+        const sek = Math.round((Date.now() - t0) / 1000);
+        return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Bedingung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
       }
       return fertig({ fehler: `Schritt-Art ${s.art} kann der Motor nicht selbst ausführen` });
     } catch (err) {
@@ -304,7 +307,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   private async aktion(skill: string, aktion: string, p: Record<string, unknown>, timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
     if (skill === 'fernzugriff' && (aktion === 'lesen' || aktion === 'ausfuehren')) {
       const name = String(p.name ?? ''); const befehl = String(p.befehl ?? '');
-      if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
+      // v1723 — Realfall 01.11. (Element X 242f8d16 Schritt 12): „docker logs“ scheiterte im Käfig (kein Docker-Socket), der Schritt galt
+      // trotzdem als erledigt. Als Change-AKTION ist ein Lesebefehl mit Exit ≠ 0 ein Fehlschlag (gewollte Fehlercodes: „|| true“ im Plan).
+      if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs, true); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
       const r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
     }

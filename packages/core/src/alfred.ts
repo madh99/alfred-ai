@@ -7326,7 +7326,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const o = ownerFz() ?? '';
               return skillSandbox.execute(sk, input, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '', ausChange: true } as never, timeoutMs);
             },
-            fernLesen: (z, b, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.lesenIntern(z, b, t); },
+            fernLesen: (z, b, t, streng) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.lesenIntern(z, b, t, streng); },
             fernDatei: (z, p, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.dateiMetadaten(z, p, t); }, // v1652
             fernAusfuehren: (z, b, root, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(z, b, root, t); },
             netz: { http: netz.http, port: netz.port, dns: netz.aufloesen, dnsFrisch: netz.aufloesenFrisch, ping: netz.ping },

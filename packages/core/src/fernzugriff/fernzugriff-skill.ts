@@ -456,7 +456,7 @@ export class FernzugriffSkill extends Skill {
     return r.stdout.trim();
   }
 
-  async lesenIntern(name: string, befehl: string, timeoutMs = 60_000): Promise<string> {
+  async lesenIntern(name: string, befehl: string, timeoutMs = 60_000, streng = false): Promise<string> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
     const b = normalisiereBefehl(befehl);
@@ -474,6 +474,8 @@ export class FernzugriffSkill extends Skill {
       r = await this.lauf(owner, z, kaefigBefehl(kaefigText(befehl, b), z.benutzer, timeoutMs / 1000, this.kaefigStufe.get(z.id)), timeoutMs + 15_000); // v1722
     }
     if (r.code !== 0 && !r.stdout.trim()) throw new Error(`Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}`);
+    // v1723 — streng (Change-Aktionen): Exit ≠ 0 ist ein Fehler, auch wenn Ausgabe kam (der Käfig mischt stderr in die Ausgabe)
+    if (streng && r.code !== 0) throw new Error(`Exit ${r.code}: ${schwaerze(`${r.stdout}\n${r.stderr}`).text.trim().slice(-300)}`);
     return schwaerze(r.stdout).text;
   }
 

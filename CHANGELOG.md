@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Changes und Fäden: Lehren aus der pgBackRest-Einführung (v1723)
+
+- Durchgänge im selben Owner-Faden laufen nacheinander. Vorher konnte eine Fortsetzung nach einer Bestätigung parallel zu einer neuen Nachricht laufen; beide änderten denselben Change, der Plan enthielt danach zwei vermischte Fassungen. Ein hängender Durchgang hält den nächsten höchstens 15 Minuten auf.
+- Lesebefehle als Change-Aktion gelten bei einem Exit-Code ungleich 0 als gescheitert. Vorher galt etwa eine Log-Auswertung als erledigt, obwohl der Befehl mit „Cannot connect to the Docker daemon“ scheiterte.
+- Bricht ein Warteschritt wegen eines Fehlertexts vorzeitig ab, nennt die Meldung die tatsächliche Dauer statt des Zeitlimits.
+- Die Planungshinweise für Changes enthalten die Regeln aus den Realfällen: Warteprüfungen mit erwartetem Text und Abbruchtext, wiederanlauffähige Schritte, keine verworfenen Fehlerausgaben, Rechte je ausführendem Benutzer, Tests aus echten Aufrufen, Mindestwerte für PostgreSQL-Wiederherstellungen.
+
 ### Fixed — Mehrzeilige Lesebefehle im Lese-Käfig (v1722)
 
 - Mehrzeilige Befehle wie ein Python-Skript per Heredoc liefen im Lese-Käfig nicht: Vor der Ausführung wurden alle Zeilenumbrüche zusammengefasst, die Shell brach mit einem Syntaxfehler ab. Prüfschritte in Changes scheiterten dadurch, obwohl der geprüfte Zustand in Ordnung sein konnte.
