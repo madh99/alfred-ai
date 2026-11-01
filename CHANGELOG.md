@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — keine Zeilenumbrüche im Windows-Lese-Käfig (v1741)
+
+- Ein Zeilenumbruch trennt in PowerShell Anweisungen wie `;`. Ein zweites `Get-WinEvent` in der nächsten Zeile entging deshalb der Protokoll-Prüfung, z. B. für das PowerShell-Protokoll mit mitgeschriebenen Skripten.
+- Zeilentrenner (auch U+0085, U+2028, U+2029) sind im Käfig nicht mehr erlaubt; die Prüfung zerlegt zusätzlich an Zeilenumbrüchen.
+
 ### Security — Windows-Lese-Käfig mit Erlaubnisliste für Parameter (v1740)
 
 - Die Sperrliste aus v1739 ließ sich umgehen:

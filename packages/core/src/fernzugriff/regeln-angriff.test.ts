@@ -60,6 +60,11 @@ describe('Angriffsprobe Leseliste', () => {
       'Get-Service -Name x -AsJob', 'Get-NetTCPConnection -ThrottleLimit 1', 'Get-Service \u2012ComputerName x', 'Get-Process | Select-Object -First -1',
     ];
     expect(WIN_KAEFIG_CMDLETS_LISTE).not.toContain('Get-HotFix');
+    // dritte Runde: Zeilentrenner als Anweisungstrenner (zweites Get-WinEvent in der nächsten Zeile)
+    for (const z of [10, 13, 0x85, 0x2028, 0x2029]) {
+      const b = `Get-WinEvent -LogName System -MaxEvents 1${String.fromCharCode(z)}Get-WinEvent -LogName Microsoft-Windows-PowerShell/Operational`;
+      expect(windowsKaefigGrund(b), `Zeichen ${z}`).toBeDefined();
+    }
     expect(gesperrt.filter(b => !windowsKaefigGrund(b))).toEqual([]);
     for (const b of gesperrt) expect(() => windowsKaefigBefehl(b)).toThrow();
     for (const b of ['Get-Service | Where-Object Status -eq Running | Measure-Object', 'Get-WinEvent -LogName System -MaxEvents 20 | Format-List TimeCreated, Id, Message', 'Get-NetFirewallRule -Enabled True | Select-Object -First 5', 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, CPU']) expect(windowsKaefigGrund(b), b).toBeUndefined();

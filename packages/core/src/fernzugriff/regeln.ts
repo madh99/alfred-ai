@@ -346,12 +346,15 @@ const WIN_KAEFIG_PARAMETER = new Set([
   'ceq', 'cne', 'clike', 'cnotlike', 'cmatch', 'cnotmatch', 'ieq', 'ine', 'ilike', 'imatch',
 ]);
 export function windowsKaefigGrund(befehl: string): string | undefined {
+  // Dritte Runde der Sicherheitsprüfung: ein Zeilenumbruch trennt in PowerShell Anweisungen wie „;“ — ein zweites Get-WinEvent in
+  // der nächsten Zeile entging der Protokoll-Prüfung. Im Käfig daher keine Zeilentrenner (auch nicht U+0085/U+2028/U+2029).
+  if (/[\r\n\u0085\u2028\u2029\u000b\u000c]/.test(befehl)) return 'Zeilenumbrüche sind im Windows-Lese-Käfig nicht erlaubt — mehrere Befehle mit befehle=[…] einzeln senden';
   for (const m of befehl.matchAll(/(?<![\p{L}\p{N}_])[-\u2012\u2013\u2014\u2015]([\p{L}\p{N}_]*)/gu)) {
     const t = m[1]!.toLowerCase();
     if (!WIN_KAEFIG_PARAMETER.has(t)) return `Parameter „${m[0]}“ ist im Windows-Lese-Käfig nicht erlaubt (nur ausgeschriebene, freigegebene Parameter wie -Name, -LogName, -MaxEvents, -Property, -First)`;
   }
   if (/\bsecurity\b/i.test(befehl)) return 'das Sicherheitsprotokoll ist im Windows-Lese-Käfig gesperrt';
-  for (const teil of befehl.split(/[|;]/)) {
+  for (const teil of befehl.split(/[|;\r\n]/)) {
     if (!/\bGet-WinEvent\b/i.test(teil)) continue;
     if (/[*?[\]]/.test(teil) || !/^\s*Get-WinEvent\s+(-LogName\s+)?(System|Application|Setup)(\s|$)/i.test(teil)) return 'Get-WinEvent nur mit -LogName System, Application oder Setup (ohne Platzhalter)';
   }
