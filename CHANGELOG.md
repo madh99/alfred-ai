@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Gratis-Guthaben von OpenAI zählt zur Schätzung (v1728)
+
+- Die Mail „Your API credits are ready“ (z. B. 9 $ nach Verknüpfung des ChatGPT-Kontos mit der API-Organisation) wird als Ladung erkannt, mit vollem Betrag und ohne MwSt.
+
 ### Changed — Guthaben-Schätzung mit Kontostand, Korrekturfaktor und Euro (v1727)
 
 - Der Owner kann den aktuellen Kontostand aus der Konsole nennen („OpenAI Guthaben 2,07“, „Guthaben Anthropic: 13.94 $“). Alfred übernimmt ihn ohne Modell als neuen Ausgangspunkt der Schätzung (nur in Owner-Kanälen) und bestätigt mit der neuen Reichweite.

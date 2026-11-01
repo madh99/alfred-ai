@@ -28,6 +28,12 @@ export function leseLadung(m: { id: string; from: string; subject: string; body:
     if (!t) return undefined;
     return { anbieter: 'openai', guthaben: Math.round((betrag(t[1]!) / (1 + mwstOpenai)) * 100) / 100, zeit: m.date, mailId: m.id };
   }
+  // v1728 — Gratis-Guthaben (z. B. 9 $ nach Verknüpfung von ChatGPT-Konto und API-Organisation): voller Betrag, keine MwSt.
+  if (von.includes('@tm.openai.com') && /api credits are ready/i.test(m.subject)) {
+    const t = /you received \$\s?([\d.,]+) in api credits/i.exec(m.body.replace(/\s+/g, ' '));
+    if (!t) return undefined;
+    return { anbieter: 'openai', guthaben: betrag(t[1]!), zeit: m.date, mailId: m.id };
+  }
   if (/receipt from anthropic/i.test(m.subject) && (von.includes('stripe.com') || von.includes('anthropic.com'))) {
     // nur Einmal-Guthaben; Abo-Rechnungen (Max plan, Team …) sind keine API-Ladung
     const t = /one-time credit purchase[^\n$€]*?\$\s?([\d.,]+)/i.exec(m.body.replace(/\s+/g, ' '));

@@ -12,6 +12,9 @@ describe('v1726/v1727 — Guthaben-Schätzung', () => {
     expect(leseLadung(anthropicMail)).toMatchObject({ anbieter: 'anthropic', guthaben: 20 });
     expect(leseLadung(maxAbo)).toBeUndefined();
     expect(leseLadung({ ...openaiMail, from: 'phish@example.com' })).toBeUndefined();
+    const gratis = { id: 'm4', from: 'OpenAI <noreply@tm.openai.com>', subject: 'Your API credits are ready', body: 'You’ve successfully linked your ChatGPT account to your API organization: “Mach Personal”.\nToday, you received $9 in API credits.', date: '2026-11-01T12:13:56Z' };
+    expect(leseLadung(gratis)).toMatchObject({ anbieter: 'openai', guthaben: 9 });
+    expect(leseLadung({ ...gratis, from: 'noreply@openai.example.com' })).toBeUndefined();
   });
 
   it('schätzt ab leerem Stand, genanntem Kontostand oder vorsichtig ab der letzten Ladung; Faktor wirkt auf den Verbrauch', () => {

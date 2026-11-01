@@ -6936,7 +6936,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         let neu = 0;
         // Erstlauf (noch keine Ladung bekannt): Suche im Postfach, sonst die 50 neuesten Mails des Posteingangs
         const erstlauf = ladungen.length === 0;
-        for (const filter of [{ from: 'tm.openai.com', subject: 'account has been funded', query: 'OpenAI API account has been funded' }, { subject: 'receipt from anthropic', query: 'receipt from Anthropic' }]) {
+        for (const filter of [{ from: 'tm.openai.com', subject: 'account has been funded', query: 'OpenAI API account has been funded' }, { from: 'tm.openai.com', subject: 'API credits are ready', query: 'Your API credits are ready' }, { subject: 'receipt from anthropic', query: 'receipt from Anthropic' }]) {
           const r = erstlauf
             ? await skillSandbox.execute(emailSkill, { action: 'search', query: filter.query, count: 20 }, context)
             : await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(filter.from ? { from: filter.from } : {}), subject: filter.subject, count: 50 }, context);
