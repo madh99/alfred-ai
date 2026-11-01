@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Lese-Käfig baut Befehle als Objekte statt Skripttext (v1743)
+
+Der Live-Test auf probe-win25 (Windows Server 2025) zeigte, dass der Käfig aus v1738 nie lief:
+
+- In Windows PowerShell 5.1 sind `Applications`/`Scripts` bei `CreateDefault2` leer. Die Listen werden jetzt erst am geöffneten Runspace geleert.
+- Ein `NoLanguage`-Runspace nimmt grundsätzlich keinen Skripttext an. Wie bei JEA zerlegt Alfred den Befehl jetzt mit dem PowerShell-Parser und baut ihn als Befehlsobjekte auf:
+  - genau eine Pipeline;
+  - nur Befehle der Käfig-Liste, über den modulqualifizierten Namen;
+  - Parameter gegen die Cmdlet-Metadaten aufgelöst, nur ausgeschrieben;
+  - als Werte nur Texte, Zahlen und Listen davon.
+- Variablen, Unterausdrücke, Skriptblöcke und Umleitungen werden abgewiesen. Es wird nie Skripttext ausgeführt.
+- Module werden mit voller Sprache geladen (die Netz-/Speicher-Funktionen sind CDXML und brauchen das), danach wird der Runspace auf `NoLanguage` gestellt.
+- Live belegt: 19 lesende Befehle laufen, darunter Netz, Firewall, Datenträger, Rollen, Dienste und Prozesse mit Where/Sort/Select. `Get-Content`, `cmd.exe`, `Get-CimInstance`, `New-CimSession`, `Get-Item Env:`, Variablen und Aliase werden abgewiesen.
+
 ### Security — Get-WinEvent im Windows-Lese-Käfig nur in exakter Form (v1742)
 
 - `-LogName System , Microsoft-Windows-PowerShell/Operational` ist in PowerShell eine Liste aus zwei Protokollen. Die Prüfung hatte nur den Anfang verglichen.

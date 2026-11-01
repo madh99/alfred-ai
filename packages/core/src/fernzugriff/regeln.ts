@@ -370,19 +370,53 @@ export function windowsKaefigBefehl(befehl: string): string {
   const innen = Buffer.from(b, 'utf-8').toString('base64');
   const huelle = [
     '$ErrorActionPreference = "Stop"',
+    'function Nein($m) { [Console]::Error.WriteLine("KAEFIG: " + $m); exit 4 }',
     `$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${innen}'))`,
     `$erlaubt = @(${WIN_KAEFIG_CMDLETS.map(c => `'${c}'`).join(',')})`,
     '$iss = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()',
-    '$iss.LanguageMode = [Management.Automation.PSLanguageMode]::NoLanguage',
-    '$iss.Applications.Clear(); $iss.Scripts.Clear()',
     '$iss.Variables.Add((New-Object Management.Automation.Runspaces.SessionStateVariableEntry("PSModuleAutoLoadingPreference", "None", "")))',
-    "$module = @('NetTCPIP','NetAdapter','NetSecurity','DnsClient','Storage','SmbShare','Microsoft.PowerShell.LocalAccounts','Microsoft.PowerShell.Diagnostics','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Dism','ServerManager') | Where-Object { Get-Module -ListAvailable -Name $_ }",
+    "$module = @('CimCmdlets','NetTCPIP','NetAdapter','NetSecurity','DnsClient','Storage','SmbShare','Microsoft.PowerShell.LocalAccounts','Microsoft.PowerShell.Diagnostics','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Dism','ServerManager') | Where-Object { Get-Module -ListAvailable -Name $_ }",
     '$iss.ImportPSModule([string[]]$module)',
     '$rs = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss); $rs.Open()',
+    // Realfall probe-win25 (01.11.): in Windows PowerShell 5.1 sind $iss.Applications/Scripts bei CreateDefault2 nicht belegt —
+    // die Listen des geöffneten Runspace leeren (leer = keine externen Programme/Skripte erlaubt)
+    '$rs.SessionStateProxy.Applications.Clear(); $rs.SessionStateProxy.Scripts.Clear()',
+    // Realfall probe-win25 (01.11.): Netz-/Speicher-Befehle sind CDXML-Funktionen und brauchen Skriptsprache — Module mit voller
+    // Sprache laden (Funktionen behalten ihren Modus), danach den Runspace auf NoLanguage stellen (zusätzliche Sicherung; es wird
+    // ohnehin kein Skripttext ausgeführt)
+    '$rs.SessionStateProxy.LanguageMode = [Management.Automation.PSLanguageMode]::NoLanguage',
     '$alle = $rs.SessionStateProxy.InvokeCommand.GetCommands("*", [Management.Automation.CommandTypes]"Alias,Function,Filter,Cmdlet", $true)',
     'foreach ($c in $alle) { if ($erlaubt -notcontains $c.Name) { $c.Visibility = [Management.Automation.SessionStateEntryVisibility]::Private } }',
+    // Realfall probe-win25 (01.11.): ein NoLanguage-Runspace nimmt keinen Skripttext an — der Befehl wird mit dem PowerShell-Parser
+    // zerlegt und als Befehlsobjekte aufgebaut (wie JEA): genau eine Pipeline, nur erlaubte Befehle, nur feste Werte
+    'function Wert($a) { $n = $a.GetType().Name; if ($n -eq "StringConstantExpressionAst" -or $n -eq "ConstantExpressionAst") { return $a.Value }; if ($n -eq "ArrayLiteralAst") { return ,@($a.Elements | ForEach-Object { Wert $_ }) }; Nein ("nur feste Werte erlaubt, nicht: " + $a.Extent.Text) }',
+    '$fehler = $null; $tok = $null',
+    '$ast = [Management.Automation.Language.Parser]::ParseInput($t, [ref]$tok, [ref]$fehler)',
+    'if ($fehler.Count) { Nein ("Syntaxfehler: " + $fehler[0].Message) }',
+    '$st = $ast.EndBlock.Statements',
+    'if ($ast.ParamBlock -or $ast.BeginBlock -or $ast.ProcessBlock -or $st.Count -ne 1 -or $st[0].GetType().Name -ne "PipelineAst") { Nein "genau eine Pipeline erlaubt" }',
     '$ps = [PowerShell]::Create(); $ps.Runspace = $rs',
-    '[void]$ps.AddScript($t).AddCommand("Out-String").AddParameter("Width", 250)',
+    'foreach ($el in $st[0].PipelineElements) {',
+    '  if ($el.GetType().Name -ne "CommandAst" -or $el.InvocationOperator -ne "Unknown" -or $el.Redirections.Count) { Nein ("nur Befehle ohne Umleitung: " + $el.Extent.Text) }',
+    '  $ce = $el.CommandElements',
+    '  if ($ce[0].GetType().Name -ne "StringConstantExpressionAst") { Nein "Befehlsname muss fest sein" }',
+    '  $cmd = $rs.SessionStateProxy.InvokeCommand.GetCommand($ce[0].Value, [Management.Automation.CommandTypes]"Cmdlet,Function")',
+    '  if (-not $cmd -or $erlaubt -notcontains $cmd.Name) { Nein ("Befehl nicht im Windows-Lese-Kaefig: " + $ce[0].Value) }',
+    // Realfall probe-win25 (01.11.): AddCommand mit dem CommandInfo-Objekt scheitert bei CDXML-Funktionen („Cannot retrieve the
+    // dynamic parameters“) — über den modulqualifizierten Namen (kein Alias/keine gleichnamige Funktion dazwischen)
+    '  [void]$ps.AddCommand($(if ($cmd.ModuleName) { $cmd.ModuleName + "\\" + $cmd.Name } else { $cmd.Name }))',
+    '  for ($i = 1; $i -lt $ce.Count; $i++) {',
+    '    $e = $ce[$i]',
+    '    if ($e.GetType().Name -eq "CommandParameterAst") {',
+    '      $p = $cmd.Parameters[$e.ParameterName]',
+    '      if (-not $p -or $p.Name -ne $e.ParameterName) { Nein ("Parameter nur ausgeschrieben: -" + $e.ParameterName) }',
+    '      if ($e.Argument) { [void]$ps.AddParameter($p.Name, (Wert $e.Argument)) }',
+    '      elseif ($p.SwitchParameter) { [void]$ps.AddParameter($p.Name, $true) }',
+    '      else { $i++; if ($i -ge $ce.Count) { Nein ("Wert fehlt für -" + $p.Name) }; [void]$ps.AddParameter($p.Name, (Wert $ce[$i])) }',
+    '    } else { [void]$ps.AddArgument((Wert $e)) }',
+    '  }',
+    '}',
+    '[void]$ps.AddCommand("Out-String").AddParameter("Width", 250)',
     'try { $aus = $ps.Invoke() } catch { [Console]::Error.WriteLine("KAEFIG: " + $_.Exception.InnerException.Message + $_.Exception.Message); exit 3 }',
     '$aus | ForEach-Object { [Console]::Out.Write($_) }',
     'if ($ps.Streams.Error.Count) { $ps.Streams.Error | ForEach-Object { [Console]::Error.WriteLine("KAEFIG: " + $_.ToString()) }; exit 1 }',

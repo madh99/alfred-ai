@@ -202,7 +202,8 @@ describe('I8a Windows-Befehlsklassen', () => {
     expect(huelle).not.toContain('Remove-Item');
     expect(huelle).toContain(`FromBase64String('${Buffer.from(boese, 'utf-8').toString('base64')}')`);
     expect(huelle).toContain('NoLanguage');
-    expect(huelle).toContain('$iss.Applications.Clear(); $iss.Scripts.Clear()');
+    expect(huelle).toContain('$rs.SessionStateProxy.Applications.Clear(); $rs.SessionStateProxy.Scripts.Clear()');
+    expect(huelle.indexOf('SessionStateProxy.Applications')).toBeGreaterThan(huelle.indexOf('$rs.Open()'));
     expect(huelle).toContain('PSModuleAutoLoadingPreference');
     for (const c of ['Get-CimInstance', 'Get-Content', 'Get-Item', 'Get-ItemProperty', 'Invoke-Expression', 'Invoke-Command', 'Start-Process', 'Get-ChildItem', 'Import-Module']) expect(WIN_KAEFIG_CMDLETS as readonly string[]).not.toContain(c);
     expect(() => windowsKaefigBefehl('x'.repeat(4001))).toThrow();
