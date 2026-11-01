@@ -7230,12 +7230,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           snippetSchreiben: (node, pfad, inhalt) => fz.snippetSchreiben(node, pfad, inhalt),
           // I8a — Kennwort einer neuen Windows-VM in den Tresor (Konsole/Notfall); der Wert erscheint nie im Change-Protokoll
-          kennwortSichern: async (vmName, wert) => {
+          kennwortSichern: async (vmName, wert, konto) => {
             const o = ownerFz();
             if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar');
-            const n = `win-${vmName}-admin`;
-            await this.tresor.setze(o, n, wert, 'erzeugt', `Kennwort der Konten alfred/Administrator der Windows-VM ${vmName}`);
+            const n = `win-${vmName}-${konto ?? 'admin'}`;
+            await this.tresor.setze(o, n, wert, 'erzeugt', konto ? `Kennwort des Kontos ${konto} (Owner) auf der Windows-VM ${vmName}` : `Kennwort der Konten alfred/Administrator der Windows-VM ${vmName}`);
             return n;
+          },
+          // v1745 — öffentlicher Schlüssel des Owners (nicht geheim; im Tresor, damit nur der Motor ihn einsetzt)
+          ownerSchluessel: async () => {
+            const o = ownerFz();
+            if (!o || !this.tresor || !(await this.tresor.namen(o)).has('owner-ssh-oeffentlich')) return undefined;
+            const k = (await this.tresor.lies(o, 'owner-ssh-oeffentlich', 'eigener Zugang in neuer VM')).trim();
+            return /^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/=]{40,1200}( [\w@.+-]{0,80})?$/.test(k) ? k : undefined;
           },
           // I8a — feste Skripte der Windows-Fabrik am Knoten (Auswahl nur über den Namen)
           knotenSkript: async (node, art, eingabe, timeoutMs) => {
@@ -14605,6 +14612,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             liste: async (uid: string) => { const o = await nurOwner(uid); return { eintraege: await tresor.liste(o), protokoll: await tresorRepo.protokoll(o, 30) }; },
             setze: async (uid: string, b: { name?: string; wert?: string; zweck?: string }) => { const o = await nurOwner(uid); await tresor.setze(o, String(b.name ?? '').trim(), String(b.wert ?? ''), 'owner-web', b.zweck ? String(b.zweck) : undefined); return { ok: true }; },
             entferne: async (uid: string, name: string) => { const o = await nurOwner(uid); return { ok: await tresor.entferne(o, name) }; },
+            // v1745 — nur Web-Anmeldung des Owners (uid nie leer, siehe http.handleTresor); Abruf im Tresor-Protokoll
+            zeige: async (uid: string, name: string) => {
+              if (!uid) throw Object.assign(new Error('nur mit Web-Anmeldung'), { status: 403 });
+              const o = await nurOwner(uid);
+              const wert = await tresor.lies(o, name.trim(), 'angezeigt im Web (Owner)');
+              this.logger.info({ name: name.trim() }, 'v1745 Tresor-Wert im Web angezeigt (Owner)');
+              return { ok: true, wert };
+            },
           });
         }
         (apiAdapter as any).setItsmCallbacks({

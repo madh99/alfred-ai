@@ -945,7 +945,7 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** I4c — Tresor im Web: Werte gehen direkt an den Server, nie über das Modell; Antworten enthalten nie Werte */
-  private tresorCallbacks?: { liste: (uid: string) => Promise<unknown>; setze: (uid: string, b: Record<string, unknown>) => Promise<unknown>; entferne: (uid: string, name: string) => Promise<unknown> };
+  private tresorCallbacks?: { liste: (uid: string) => Promise<unknown>; setze: (uid: string, b: Record<string, unknown>) => Promise<unknown>; entferne: (uid: string, name: string) => Promise<unknown>; zeige?: (uid: string, name: string) => Promise<unknown> };
   setTresorCallbacks(cb: HttpAdapter['tresorCallbacks']): void { this.tresorCallbacks = cb; }
   private async handleTresor(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -961,6 +961,13 @@ export class HttpAdapter extends MessagingAdapter {
       try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
       if (body.action === 'setzen') { antwort(200, await cb.setze(uid, body)); return; }
       if (body.action === 'entfernen') { antwort(200, await cb.entferne(uid, String(body.name ?? ''))); return; }
+      // v1745 (Owner 01.11.: Zugangsdaten zum manuellen Verbinden ansehen) — nur mit der Web-Anmeldung des Owners, nie mit dem API-Token
+      // (das liegt am Server und wird auch von Automatik benutzt); der Wert geht nur an diese Antwort, jeder Abruf steht im Protokoll
+      if (body.action === 'anzeigen') {
+        if (!uid) { antwort(403, { error: 'Anzeigen nur mit der Web-Anmeldung des Owners, nicht mit dem API-Token' }); return; }
+        if (!cb.zeige) { antwort(503, { error: 'nicht verfügbar' }); return; }
+        antwort(200, await cb.zeige(uid, String(body.name ?? ''))); return;
+      }
       antwort(400, { error: 'unbekannte Aktion' });
     } catch (err) { antwort((err as { status?: number }).status ?? 400, { error: (err as Error).message.slice(0, 200) }); }
   }

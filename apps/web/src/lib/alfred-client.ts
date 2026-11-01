@@ -1798,7 +1798,7 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/tresor`, { headers: this.authHeaders, cache: 'no-store' });
     return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   }
-  async tresorAktion(b: Record<string, unknown>): Promise<{ ok?: boolean; error?: string }> {
+  async tresorAktion(b: Record<string, unknown>): Promise<{ ok?: boolean; error?: string; wert?: string }> {
     const res = await fetch(`${this.baseUrl}/api/tresor`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(b), cache: 'no-store' });
     return res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   }

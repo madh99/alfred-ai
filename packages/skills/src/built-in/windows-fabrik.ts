@@ -267,7 +267,7 @@ const SSH_FIREWALL = [
  * found in metadata“) — der Name wird deshalb hier gesetzt; beim ersten Start nach sysprep war die Kontenverwaltung noch nicht bereit
  * („SAM or LSA server was in the wrong state“) — deshalb mit Wiederholung, und bei Misserfolg Neustart mit erneutem Lauf (1003).
  */
-export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; kennwort: string }): string {
+export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; kennwort: string; ownerKonto?: { name: string; kennwort: string }; rdp?: boolean }): string {
   if (!/^[a-z0-9]([a-z0-9-]{0,13}[a-z0-9])?$/.test(v.hostname)) throw new Error('Computername: Kleinbuchstaben, Ziffern, -, höchstens 15 Zeichen');
   const schluessel = [v.alfredSchluessel, ...(v.weitereSchluessel ?? [])].map(s => s.trim());
   for (const s of schluessel) if (!SSH_OEFF.test(s)) throw new Error('ungültiger öffentlicher SSH-Schlüssel');
@@ -276,6 +276,8 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: strin
   const privat = v.hostPrivat.replace(/\r\n/g, '\n');
   if (!SSH_PRIV.test(privat)) throw new Error('privater Host-Schlüssel hat nicht das OpenSSH-Format');
   if (!KENNWORT.test(v.kennwort)) throw new Error('Kennwort ungültig');
+  // v1745 (Owner 01.11.: eigener Zugang) — Konto des Owners als Administrator, eigenes Kennwort im Tresor
+  if (v.ownerKonto && (!/^[a-z][a-z0-9_-]{1,19}$/.test(v.ownerKonto.name) || /^(alfred|administrator|guest|gast)$/i.test(v.ownerKonto.name) || !KENNWORT.test(v.ownerKonto.kennwort))) throw new Error('Owner-Konto: Name a–z/0–9/_/- (2–20, nicht alfred/administrator) und gültiges Kennwort');
   const rechte = (pfad: string) => `  icacls ${psText(pfad)} /inheritance:r /grant "*S-1-5-18:F" /grant "*S-1-5-32-544:F" | Out-Null; if ($LASTEXITCODE -ne 0) { throw "icacls $LASTEXITCODE" }`;
   return [
     '#ps1_sysnative',
@@ -293,6 +295,16 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: strin
     `  $pw = ConvertTo-SecureString ${psText(v.kennwort)} -AsPlainText -Force`,
     '  Set-LocalUser -Name alfred -Password $pw -PasswordNeverExpires $true',
     ...(v.variante === 'win11' ? [] : ['  Set-LocalUser -Name Administrator -Password $pw']),
+    ...(v.ownerKonto ? [
+      `  $opw = ConvertTo-SecureString ${psText(v.ownerKonto.kennwort)} -AsPlainText -Force`,
+      `  if (Get-LocalUser -Name ${psText(v.ownerKonto.name)} -ErrorAction SilentlyContinue) { Set-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires $true } else { New-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires -FullName ${psText(v.ownerKonto.name)} | Out-Null }`,
+      `  if (-not (Get-LocalGroupMember -SID S-1-5-32-544 | Where-Object { $_.Name -like ${psText(`*\\${v.ownerKonto.name}`)} })) { Add-LocalGroupMember -SID S-1-5-32-544 -Member ${psText(v.ownerKonto.name)} }`,
+    ] : []),
+    ...(v.rdp ? [
+      '  Set-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -Name fDenyTSConnections -Value 0',
+      '  Set-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp" -Name UserAuthentication -Value 1',
+      '  Get-NetFirewallRule -Group "@FirewallAPI.dll,-28752" | Enable-NetFirewallRule',
+    ] : []),
     ...SSH_FIREWALL.map(z => `  ${z}`),
     '  Set-Service -Name sshd -StartupType Automatic',
     '  Restart-Service -Name sshd -Force',

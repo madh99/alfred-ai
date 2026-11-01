@@ -26,7 +26,9 @@ export interface VmFabrikDeps {
   /** I8a — festes Skript der Windows-Fabrik am Knoten (Auswahl über den Namen, nie Modelltext), Eingabe JSON über stdin; liefert stdout */
   knotenSkript?(node: string, art: 'win-inspektion' | 'win-antwort', eingabe: string, timeoutMs: number): Promise<string>;
   /** I8a — Kennwort einer neuen Windows-VM im Tresor ablegen; liefert den Namen des Eintrags */
-  kennwortSichern?(vmName: string, wert: string): Promise<string>;
+  kennwortSichern?(vmName: string, wert: string, konto?: string): Promise<string>;
+  /** v1745 — öffentlicher SSH-Schlüssel des Owners (Tresor owner-ssh-oeffentlich), für den eigenen Zugang */
+  ownerSchluessel?(): Promise<string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +304,8 @@ export class ProxmoxSkill extends Skill {
         iso: { type: 'string', description: 'build_windows_template: Volume des Windows-ISO (speicher:iso/…iso)' },
         virtio_iso: { type: 'string', description: 'build_windows_template: Volume des VirtIO-ISO' },
         cloudbase_url: { type: 'string', description: 'build_windows_template: Cloudbase-Init-MSI aus list_windows_images' },
+        owner_konto: { type: 'string', description: 'provision_windows_vm: eigenes Administrator-Konto des Owners (Standard madh, leer = keins); Kennwort im Tresor win-<name>-<konto>' },
+        rdp: { type: 'boolean', description: 'provision_windows_vm: Remotedesktop einschalten (nur auf Wunsch des Owners; mit NLA)' },
         image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
         volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
         nameserver: { type: 'string', description: 'provision_vm: DNS-Server (IP, mehrere mit Leerzeichen)' },
@@ -1807,7 +1811,15 @@ export class ProxmoxSkill extends Skill {
     const kennwort = zufallsKennwort(n => randomBytes(n));
     const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
     schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName})`);
-    const daten = windowsBenutzerDaten({ variante, hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort });
+    // v1745 (Owner 01.11.: eigener Zugang) — Konto des Owners (Standard „madh“, leer = keins) mit eigenem Kennwort, dazu sein SSH-Schlüssel
+    const ownerName = typeof input.owner_konto === 'string' ? input.owner_konto.trim().toLowerCase() : 'madh';
+    const ownerKonto = ownerName ? { name: ownerName, kennwort: zufallsKennwort(n => randomBytes(n)) } : undefined;
+    if (ownerKonto) schritte.push(`Konto ${ownerKonto.name} (Administrator), Kennwort im Tresor (${await this.fabrik.kennwortSichern(name, ownerKonto.kennwort, ownerKonto.name)})`);
+    const ownerSchluessel = await this.fabrik.ownerSchluessel?.().catch(() => undefined);
+    const weitere = [...(typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : []), ...(ownerSchluessel ? [ownerSchluessel.trim()] : [])];
+    if (ownerSchluessel) schritte.push('dein SSH-Schlüssel eingetragen');
+    if (input.rdp === true) schritte.push('Remotedesktop eingeschaltet (nur mit Netzwerkebenen-Authentifizierung)');
+    const daten = windowsBenutzerDaten({ variante, hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: weitere, hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort, ...(ownerKonto ? { ownerKonto } : {}), ...(input.rdp === true ? { rdp: true } : {}) });
     const sp = await this.get<{ path?: string }>('/storage/local');
     const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
     await this.fabrik.snippetSchreiben(node, pfad, daten);

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Tresor-Werte im Web anzeigen, eigener Zugang des Owners auf Windows-VMs (v1745)
+
+- Tresor-Werte lassen sich auf der Tresor-Seite im Web mit „anzeigen“ ansehen:
+  - nach Rückfrage, 30 Sekunden lang, mit „kopieren“;
+  - nur mit der Web-Anmeldung des Owners, nie mit dem API-Token und nie über Chat oder Modell;
+  - jeder Abruf steht im Zugriffsprotokoll.
+- Neue Windows-VMs (`provision_windows_vm`) bekommen einen eigenen Zugang für den Owner:
+  - ein Administrator-Konto `madh` (anderer Name über `owner_konto`, leer = keins) mit eigenem Kennwort im Tresor (`win-<vm>-madh`);
+  - der öffentliche SSH-Schlüssel aus dem Tresor-Eintrag `owner-ssh-oeffentlich`;
+  - auf Wunsch Remotedesktop (`rdp: true`, nur mit Netzwerkebenen-Authentifizierung).
+
 ### Fixed — gewollte Abweisungen schalten Werkzeuge nicht mehr ab; Windows-Bestand bereinigt (v1744)
 
 - Fünf gewollte Abweisungen im Windows-Lese-Käfig in Folge (Live-Test auf probe-win25) haben den Schutzschalter ausgelöst und den ganzen Fernzugriff für einige Minuten abgeschaltet.

@@ -4,7 +4,7 @@
  * I4c (Owner 22.10.2026, 5b-5) — Tresor: Geheimnisse für Infrastruktur-Changes. Werte gehen direkt an den Server (AES-256-GCM,
  * eigener Schlüssel), nie über das Modell, und kommen nie zurück. Alfred setzt sie nur im Ausführungsmotor eines freigegebenen Changes ein.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 
 const feld = 'w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200';
@@ -15,6 +15,10 @@ export function TresorPage() {
   const [protokoll, setProtokoll] = useState<Array<{ name: string; art: string; wofuer?: string; zeit: string }>>([]);
   const [meldung, setMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [f, setF] = useState({ name: '', wert: '', zweck: '' });
+  // v1745 — angezeigter Wert (nur Web-Anmeldung des Owners), verschwindet nach 30 s
+  const [sichtbar, setSichtbar] = useState<{ name: string; wert: string } | null>(null);
+  const uhr = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (uhr.current) clearTimeout(uhr.current); }, []);
 
   const laden = useCallback(async () => {
     if (!client) return;
@@ -37,20 +41,41 @@ export function TresorPage() {
     await laden();
   };
 
+  const anzeigen = async (name: string) => {
+    if (!client || !confirm(`Wert von „${name}“ anzeigen? Er erscheint 30 Sekunden lang hier und der Abruf wird protokolliert.`)) return;
+    const x = await client.tresorAktion({ action: 'anzeigen', name }).catch((e: Error): { ok?: boolean; error?: string; wert?: string } => ({ error: e.message }));
+    if (!x.ok || x.wert === undefined) { setMeldung({ ok: false, text: x.error ?? 'nicht verfügbar' }); return; }
+    setSichtbar({ name, wert: x.wert });
+    if (uhr.current) clearTimeout(uhr.current);
+    uhr.current = setTimeout(() => setSichtbar(null), 30_000);
+    await laden();
+  };
+  const kopieren = async () => {
+    if (!sichtbar) return;
+    try { await navigator.clipboard.writeText(sichtbar.wert); setMeldung({ ok: true, text: `„${sichtbar.name}“ kopiert.` }); } catch { setMeldung({ ok: false, text: 'Kopieren nicht möglich' }); }
+  };
+
   return (
     <div className="p-6 max-w-4xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-gray-100">Tresor</h1>
-        <p className="text-sm text-gray-500 mt-1">Passwörter und Schlüssel für Infrastruktur-Changes. Der Wert geht direkt verschlüsselt an den Server — Alfreds Modell sieht ihn nie, er wird nie angezeigt. In Changes steht nur der Name (<code>{'{{geheimdatei:name}}'}</code> bzw. <code>{'{{geheim:name}}'}</code>).</p>
+        <p className="text-sm text-gray-500 mt-1">Passwörter und Schlüssel für Infrastruktur-Changes. Der Wert geht direkt verschlüsselt an den Server — Alfreds Modell sieht ihn nie. Anzeigen kannst nur du hier im Web (30 Sekunden, jeder Abruf steht unten im Protokoll). In Changes steht nur der Name (<code>{'{{geheimdatei:name}}'}</code> bzw. <code>{'{{geheim:name}}'}</code>).</p>
       </div>
       {meldung && <div className={`text-sm rounded px-3 py-2 ${meldung.ok ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>{meldung.text}</div>}
+      {sichtbar && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 space-y-2">
+          <div className="text-xs text-yellow-300">„{sichtbar.name}“ — verschwindet nach 30 Sekunden</div>
+          <pre className="font-mono text-sm text-gray-100 whitespace-pre-wrap break-all select-all">{sichtbar.wert}</pre>
+          <div className="flex gap-3"><button onClick={() => void kopieren()} className="text-xs text-blue-300 hover:text-blue-200">kopieren</button><button onClick={() => setSichtbar(null)} className="text-xs text-gray-400 hover:text-gray-300">ausblenden</button></div>
+        </div>
+      )}
       <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
         <h2 className="text-sm font-semibold text-gray-300 mb-2">Einträge ({eintraege.length})</h2>
         {eintraege.length === 0 && <p className="text-xs text-gray-500">Leer.</p>}
         {eintraege.map(e => (
           <div key={e.name} className="flex items-center justify-between text-sm py-1 border-t border-[#1f1f1f]">
             <span className="text-gray-200"><strong>{e.name}</strong> <span className="text-gray-500">· {e.herkunft}{e.zweck ? ` · ${e.zweck}` : ''} · {new Date(e.geaendert).toLocaleString('de-AT')}</span></span>
-            <button onClick={() => void entfernen(e.name)} className="text-xs text-red-400 hover:text-red-300">entfernen</button>
+            <span className="flex gap-3"><button onClick={() => void anzeigen(e.name)} className="text-xs text-blue-400 hover:text-blue-300">anzeigen</button><button onClick={() => void entfernen(e.name)} className="text-xs text-red-400 hover:text-red-300">entfernen</button></span>
           </div>
         ))}
       </section>

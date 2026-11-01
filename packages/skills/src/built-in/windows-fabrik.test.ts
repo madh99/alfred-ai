@@ -102,6 +102,16 @@ describe('I8a Windows-Vorlagen-Fabrik', () => {
     expect(u).toMatch(/for \(\$i = 0; \$i -lt 30 -and -not \$ok; \$i\+\+\) \{ try \{ Einrichten/);
     expect(u).toContain('if (-not $ok) { exit 1003 }');
     expect(setupSkript({ variante: 'server-standard-core' })).toContain('-Profile Any');
+    // v1745 — eigener Zugang des Owners: Konto als Administrator, idempotent; RDP nur auf Wunsch, mit NLA
+    const mitOwner = windowsBenutzerDaten({ variante: 'server-standard-core', hostname: 'probe-win25', alfredSchluessel: SCHL, weitereSchluessel: [SCHL], hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW, ownerKonto: { name: 'madh', kennwort: KW }, rdp: true });
+    expect(mitOwner).toContain("New-LocalUser -Name 'madh'");
+    expect(mitOwner).toContain("Where-Object { $_.Name -like '*\\madh' }");
+    expect(mitOwner).toContain('Add-LocalGroupMember -SID S-1-5-32-544');
+    expect(mitOwner).toContain('fDenyTSConnections -Value 0');
+    expect(mitOwner).toContain('UserAuthentication -Value 1');
+    expect(u).not.toContain('fDenyTSConnections');
+    expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'x1', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW, ownerKonto: { name: 'administrator', kennwort: KW } })).toThrow();
+    expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'x1', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW, ownerKonto: { name: "m'; x", kennwort: KW } })).toThrow();
     expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'viel-zu-langer-name', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).toThrow();
     expect(windowsBenutzerDaten({ variante: 'win11', hostname: 'win11-test', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).not.toContain('Name Administrator');
     expect(() => windowsBenutzerDaten({ variante: 'win11', hostname: 'win11-test', alfredSchluessel: "ssh-ed25519 x'; rm", hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).toThrow();
