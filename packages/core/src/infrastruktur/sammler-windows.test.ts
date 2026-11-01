@@ -4,7 +4,7 @@ import { sammleWindows, leseWinOs, leseWinVolumes, leseWinDienste, leseWinPorts,
 // Ausgaben im Format von Windows PowerShell 5.1 (ConvertTo-Json -Compress), wie auf probe-win25 (Server 2025 Core)
 const OS = '{"Caption":"Microsoft Windows Server 2025 Standard Evaluation","Version":"10.0.26100","BuildNumber":"26100","TotalVisibleMemorySize":4193784,"FreePhysicalMemory":2621440}';
 const SYS = '{"NumberOfLogicalProcessors":2,"Domain":"WORKGROUP","PartOfDomain":false}';
-const VOL = '[{"DriveLetter":"C","FileSystemLabel":"Windows","FileSystem":"NTFS","Size":68085919744,"SizeRemaining":55834574848},{"DriveLetter":null,"FileSystemLabel":"System","FileSystem":"FAT32","Size":271314944,"SizeRemaining":240000000},{"DriveLetter":"D","FileSystemLabel":"","FileSystem":"","Size":0,"SizeRemaining":0}]';
+const VOL = '[{"DriveLetter":"C","FileSystemLabel":"Windows","FileSystem":"NTFS","Size":68085919744,"SizeRemaining":55834574848},{"DriveLetter":null,"FileSystemLabel":"System","FileSystem":"FAT32","Size":271314944,"SizeRemaining":240000000},{"DriveLetter":"D","FileSystemLabel":"","FileSystem":"","Size":0,"SizeRemaining":0},{"DriveLetter":"E","FileSystemLabel":"cidata","FileSystem":"CDFS","Size":524288,"SizeRemaining":0}]';
 const DIENSTE = '[{"Name":"sshd","Status":4},{"Name":"WinRM","Status":4},{"Name":"Spooler","Status":1}]';
 const PORTS = '[{"LocalAddress":"0.0.0.0","LocalPort":22,"OwningProcess":3120},{"LocalAddress":"::","LocalPort":22,"OwningProcess":3120},{"LocalAddress":"0.0.0.0","LocalPort":5985,"OwningProcess":4}]';
 const PROZ = '[{"Id":3120,"ProcessName":"sshd"},{"Id":4,"ProcessName":"System"}]';
@@ -31,6 +31,6 @@ describe('I8b Windows-Sammler', () => {
     expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 } } });
     expect(b.windows.domaene).toBeUndefined();
     expect(b.updates).toBeUndefined();
-    expect(b.fehler).toEqual(['ausstehende Updates: Zeitüberschreitung']);
+    expect(b.fehler).toEqual([]);
   });
 });

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — gewollte Abweisungen schalten Werkzeuge nicht mehr ab; Windows-Bestand bereinigt (v1744)
+
+- Fünf gewollte Abweisungen im Windows-Lese-Käfig in Folge (Live-Test auf probe-win25) haben den Schutzschalter ausgelöst und den ganzen Fernzugriff für einige Minuten abgeschaltet.
+- Skill-Ergebnisse können jetzt als „abgewiesen“ gekennzeichnet werden. Das gilt für Regeln wie Leseliste, Käfig, „nie erlaubt“ und Geheimnisse. Solche Ergebnisse zählen nicht als Ausfall, echte Fehler weiter.
+- Windows-Bestand:
+  - `Start-WUScan` gibt es auf Server 2025 nicht; ausstehende Updates kommen mit den Windows-Updates (I8b Teil 3);
+  - CD-Laufwerke (CDFS/UDF, z. B. das Konfigurationslaufwerk) zählen nicht als Volumes;
+  - Ports stehen in der CMDB ohne Doppel (IPv4/IPv6).
+- Live belegt auf probe-win25: Betriebssystem, Build, CPUs, RAM, Volumes, 48 Dienste, Ports, 11 Rollen und 3 Updates stehen in der CMDB.
+
 ### Fixed — Windows-Lese-Käfig baut Befehle als Objekte statt Skripttext (v1743)
 
 Der Live-Test auf probe-win25 (Windows Server 2025) zeigte, dass der Käfig aus v1738 nie lief:

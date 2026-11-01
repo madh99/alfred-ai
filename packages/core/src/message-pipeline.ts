@@ -2606,6 +2606,8 @@ export class MessagePipeline {
         if (this.skillHealthTracker) {
           if (result.success) {
             await this.skillHealthTracker.recordSuccess(toolCall.name);
+          } else if (result.abgewiesen) {
+            // v1744 — Realfall 01.11. (I8b-Beweis): fünf gewollte Abweisungen im Windows-Lese-Käfig schalteten den ganzen Fernzugriff ab
           } else {
             await this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
             // v607 D7 — additionally record per-host failure when the skill

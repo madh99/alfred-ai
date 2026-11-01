@@ -150,6 +150,8 @@ export interface SkillResult {
   success: boolean;
   data?: unknown;
   error?: string;
+  /** v1744 — bewusste Abweisung durch Regeln (Leseliste, Käfig, nie erlaubt) — kein Ausfall: zählt nicht für den Schutzschalter */
+  abgewiesen?: boolean;
   display?: string;
   attachments?: SkillResultAttachment[];
 }

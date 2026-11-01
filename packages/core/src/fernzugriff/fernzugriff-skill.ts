@@ -402,14 +402,18 @@ export class FernzugriffSkill extends Skill {
     const zw = await this.zugang(owner, input);
     if (zw.system === 'windows') {
       const k = windowsBefehlsklasse(befehl);
-      if (k === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
+      if (k === 'nie') return { success: false, abgewiesen: true, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
       // I8b — nicht auf der festen Liste: im Windows-Lese-Käfig (eingeschränkter Runspace, NoLanguage, nur lesende Cmdlets)
       const kaefig = k !== 'lesen';
       let wirklich = befehl;
-      if (kaefig) { try { wirklich = windowsKaefigBefehl(befehl); } catch (err) { return { success: false, error: `„${befehl.slice(0, 120)}“: ${(err as Error).message} — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` }; } }
+      if (kaefig) { try { wirklich = windowsKaefigBefehl(befehl); } catch (err) { return { success: false, abgewiesen: true, error: `„${befehl.slice(0, 120)}“: ${(err as Error).message} — mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` }; } }
       const r = await this.lauf(owner, zw, wirklich, this.timeout(input));
       this.deps.protokoll?.(kaefig ? 'I8b Fernzugriff im Windows-Lese-Käfig' : 'I8a Fernzugriff lesen (Windows)', { name: zw.name, befehl: befehl.slice(0, 200), code: r.code });
       const e = this.ergebnis(zw, befehl, r, kaefig ? '  (Windows-Lese-Käfig)' : undefined);
+      if (kaefig && r.code === 4) {
+        // v1744 — Exit 4 = Abweisung durch die Käfig-Hülle selbst (Befehl/Wert/Pipeline nicht erlaubt), kein Ausfall
+        return { ...e, success: false, abgewiesen: true, error: e.error ?? e.display ?? 'im Windows-Lese-Käfig abgewiesen' };
+      }
       if (kaefig && r.code !== 0 && /KAEFIG:.*(is not recognized|nicht erkannt|CommandNotFound|language mode|Sprachmodus|not allowed|nicht zulässig)/i.test(r.stderr)) {
         const hinweis = '\n[Der Befehl lief im Windows-Lese-Käfig: nur lesende Get-Cmdlets (Dienste, Prozesse, Ereignisse, Netz, Firewall, Datenträger, Rollen, Updates, lokale Konten, Freigaben) mit Select-Object/Where-Object Name -eq Wert/Sort-Object/Format-*/ConvertTo-Json — keine Variablen, Skriptblöcke, Programme oder Dateiinhalte. Für eine gewollte Änderung: action=ausfuehren — das fragt den Owner.]';
         return { ...e, display: `${e.display ?? ''}${hinweis}`, ...(e.error ? { error: `${e.error}${hinweis}` } : {}) };
@@ -417,10 +421,10 @@ export class FernzugriffSkill extends Skill {
       return e;
     }
     const klasse = befehlsklasse(befehl);
-    if (klasse === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
+    if (klasse === 'nie') return { success: false, abgewiesen: true, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
     // v1549 (S2) — Geheimnisse nie ohne Rückfrage (die Ausgabe ginge an das Modell), auch nicht im Käfig
     const geheim = nurMetadaten(befehl) ? undefined : geheimnisGrund(befehl); // v1665 — ls/test/stat zeigen keine Inhalte
-    if (geheim) return { success: false, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
+    if (geheim) return { success: false, abgewiesen: true, error: `„${befehl.slice(0, 120)}“ berührt ${geheim} — das läuft nur mit Bestätigung des Owners (action=ausfuehren).` };
     // v1668 — Realfall 6193af12 Schritt 2: test -x im Käfig fragte den Käfig-Benutzer; reine Metadaten-Befehle (streng geprüft) laufen als root
     // v1722 — Realfall 31.10. (a4c1b1e8 Schritt 36, vorher 8a26aed6 Schritt 79): normalisiereBefehl fasst auch Zeilenumbrüche zusammen;
     // ein Heredoc (python3 - <<'PY' …) wurde zu einer Zeile, /bin/sh brach mit „Syntax error: "(" unexpected“ ab. Eingeordnet wird die

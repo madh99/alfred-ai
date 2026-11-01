@@ -3476,14 +3476,14 @@ export class Alfred {
           const { sammleLinux } = await import('./infrastruktur/sammler.js');
           const { sammleWindows } = await import('./infrastruktur/sammler-windows.js');
           for (const z of await fz.aktiveZugaenge()) {
-            // I8b — Windows-Zugänge: feste PowerShell-Leseliste (Start-WUScan kann dauern → längeres Zeitlimit)
+            // I8b — Windows-Zugänge: feste PowerShell-Leseliste (Rollen/Hotfixes können dauern → längeres Zeitlimit)
             const win = z.system === 'windows' ? await sammleWindows(z.name, z.host, (cmd) => fz.lesenIntern(z.name, cmd, 300_000)) : undefined;
             const b = win ?? await sammleLinux(z.name, z.host, (cmd) => fz.lesenIntern(z.name, cmd, 90_000));
             this.hostBestaende.set(z.name, b);
             const hostKey = `fernzugriff:host:${z.name}`;
             assets.push({ name: z.name, assetType: 'server', sourceSkill: 'fernzugriff', sourceId: `host:${z.name}`, ipAddress: z.host, status: 'active', attributes: {
               os: b.os?.name, os_id: b.os?.id, os_version: b.os?.version, kernel: b.kernel, cpus: b.cpus, ram_total: b.ram?.gesamt, ram_used: b.ram?.belegt,
-              updates: b.updates?.anzahl, security_updates: b.updates?.sicherheit, disks: b.dateisysteme, services: b.dienste.length, ports: b.ports.map(p => p.port), erfassungsfehler: b.fehler,
+              updates: b.updates?.anzahl, security_updates: b.updates?.sicherheit, disks: b.dateisysteme, services: b.dienste.length, ports: [...new Set(b.ports.map(p => p.port))], erfassungsfehler: b.fehler,
               ...(win ? { system: 'windows', domain: win.windows.domaene, roles: win.windows.rollen, hotfixes: win.windows.hotfixes.anzahl, last_hotfix: win.windows.hotfixes.letztes, pending_updates: win.windows.ausstehend } : {}) } });
             for (const p of b.compose) {
               assets.push({ name: `${p.name} (${z.name})`, assetType: 'application', sourceSkill: 'fernzugriff', sourceId: `${z.name}/compose/${p.name}`, ipAddress: z.host, status: /running/.test(p.status) ? 'active' : 'inactive', attributes: { host: z.name, status: p.status, config_files: p.dateien } });
@@ -7396,7 +7396,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (!o || !fz) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
           const { sammleAnwendungsUpdates, berichtText } = await import('./infrastruktur/anwendungs-updates.js');
           const schalter = await wartungRepo.updatesSchalter(o).catch(() => ({} as Record<string, string>));
-          // I8b — Windows-Hosts haben kein apt; ihre ausstehenden Updates stehen im Bestand (Start-WUScan)
+          // I8b — Windows-Hosts haben kein apt; ihre Updates kommen mit den Windows-Updates (I8b Teil 3)
           const hosts = (await fz.aktiveZugaenge()).filter(z => z.system !== 'windows').map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
           // v1730 — Herkunft übertragener Images: abgeschlossene Changes mit image_hochladen (Digest → Quellhost) + alter CMDB-Eintrag
           const transporte = new Map<string, { quelleHost: string; change: string }>();

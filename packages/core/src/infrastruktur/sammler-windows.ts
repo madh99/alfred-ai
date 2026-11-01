@@ -15,7 +15,6 @@ export const WINDOWS_BEFEHLE = {
   prozesse: 'Get-Process | Select-Object Id, ProcessName | ConvertTo-Json -Compress',
   rollen: 'Get-WindowsFeature | Select-Object Name, Installed | ConvertTo-Json -Compress',
   hotfixes: 'Get-HotFix | Select-Object HotFixID, InstalledOn | ConvertTo-Json -Compress',
-  ausstehend: 'Start-WUScan | Select-Object Title | ConvertTo-Json -Compress',
 } as const;
 
 /** ConvertTo-Json liefert bei einem Element ein Objekt, sonst ein Array; leer → [] */
@@ -45,7 +44,7 @@ export function leseWinSystem(t: string): { cpus?: number; domaene?: string } {
 const gib = (b: number) => (b >= 1e12 ? `${(b / 1e12).toFixed(1)}T` : b >= 1e9 ? `${(b / 1e9).toFixed(1)}G` : `${Math.round(b / 1e6)}M`);
 export function leseWinVolumes(t: string): HostBestand['dateisysteme'] {
   return jsonListe<{ DriveLetter?: string | null; FileSystemLabel?: string; FileSystem?: string; Size?: number; SizeRemaining?: number }>(t)
-    .filter(v => zahl(v.Size) > 0 && (v.DriveLetter || v.FileSystemLabel))
+    .filter(v => zahl(v.Size) > 0 && (v.DriveLetter || v.FileSystemLabel) && !/^(CDFS|UDF)$/i.test(String(v.FileSystem ?? '')))
     .map(v => {
       const g = zahl(v.Size), r = zahl(v.SizeRemaining);
       return { mount: v.DriveLetter ? `${v.DriveLetter}:` : String(v.FileSystemLabel), groesse: gib(g), belegt: gib(g - r), prozent: Math.round(((g - r) / g) * 100), ...(v.FileSystem ? { typ: v.FileSystem } : {}) };
@@ -113,7 +112,6 @@ export async function sammleWindows(zugang: string, host: string, lesen: (befehl
   b.ports = (await versuch('ports', WINDOWS_BEFEHLE.ports, t => leseWinPorts(t, prozesse))) ?? [];
   if (/server/i.test(b.os?.name ?? '')) b.windows.rollen = (await versuch('rollen', WINDOWS_BEFEHLE.rollen, leseWinRollen)) ?? [];
   b.windows.hotfixes = (await versuch('hotfixes', WINDOWS_BEFEHLE.hotfixes, leseWinHotfixes)) ?? { anzahl: 0 };
-  const a = await versuch('ausstehende Updates', WINDOWS_BEFEHLE.ausstehend, leseWinAusstehend);
-  if (a) { b.updates = { anzahl: a.anzahl, sicherheit: a.sicherheit }; b.windows.ausstehend = a.titel; }
+  // ausstehende Updates: Start-WUScan gibt es auf Server 2025 nicht (Realfall probe-win25) — kommt mit den Windows-Updates (I8b Teil 3)
   return b;
 }
