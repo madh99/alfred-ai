@@ -91,6 +91,10 @@ const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript'])
  */
 export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }): { wert: T; fehler?: string } {
   let fehler: string | undefined;
+  // v1735 — Realfall 94959771 (01.11.): provision_windows_vm scheiterte nach dem Anlegen der VM (teilweise, Daten mit vmid); der
+  // Rückweg delete_vm {{schritt1.vmid}} fand keinen Wert, weil nur erfolgreiche Schritte zählten — die VM blieb stehen. Werte aus
+  // Schritten, die etwas bewirkt haben (Aktion ok oder teilweise), gelten jetzt auch; nach einem Fehler läuft vorwärts ohnehin nichts weiter.
+  const nutzbar = (x: SchrittErgebnis) => x.ok || !!x.aktionOk || !!x.teilweise;
   const sicher = (w: unknown, verweis: string): boolean => {
     if (typeof w === 'number' || typeof w === 'boolean') return true;
     if (typeof w === 'string' && (SICHERER_WERT.test(w) || PROXMOX_UPID.test(w))) return true;
@@ -105,7 +109,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
       const allein = /^\{\{\s*schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}$/.exec(v.trim());
       if (allein) {
         if (feld && BEFEHLS_FELDER.has(feld.toLowerCase())) { fehler ??= `Verweis als ganzer Befehl ist nicht erlaubt (${feld})`; return ''; }
-        const e = ergebnisse.find(x => x.nr === Number(allein[1]) && x.ok);
+        const e = ergebnisse.find(x => x.nr === Number(allein[1]) && nutzbar(x));
         const w = e ? pfadWert(e.daten, allein[2]!) : undefined;
         if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
         return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
@@ -113,7 +117,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
       return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
         if (gName) { fehler ??= `{{geheim:${gName}}} nur als ganzer Wert erlaubt`; return ''; }
         if (gDatei) { const pfad = geheim?.dateien.get(gDatei); if (!pfad) fehler ??= `Geheimnis-Datei ${gDatei} nicht bereit`; return pfad ?? ''; }
-        const e = ergebnisse.find(x => x.nr === Number(nr) && x.ok);
+        const e = ergebnisse.find(x => x.nr === Number(nr) && nutzbar(x));
         const w = e ? pfadWert(e.daten, f2!) : undefined;
         if (w === undefined || (typeof w === 'object' && w !== null)) { fehler ??= `Verweis {{schritt${nr}.${f2}}} hat keinen einfachen Wert`; return ''; }
         return sicher(w, `schritt${nr}.${f2}`) ? String(w) : '';

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rückweg nach teilweise ausgeführtem Schritt (v1735)
+
+- Hatte ein Schritt schon etwas angelegt und scheiterte danach (z. B. VM geklont, aber nicht erreichbar), fand sein Rückweg Verweise wie `{{schritt1.vmid}}` nicht, weil nur erfolgreiche Schritte zählten. Die VM blieb stehen (Realfall Change 94959771). Verweise gelten jetzt auch für Schritte, die etwas bewirkt und Daten geliefert haben.
+
 ### Fixed — Windows-Klon: Name, SSH-Freigabe, Start nach sysprep (v1734)
 
 Realfall probe-win25 am 01.11.: Die Vorlage war vollständig gebaut, der Klon war aber per SSH nicht erreichbar und behielt den Zufallsnamen. Drei Ursachen, alle im Skript für den Klon behoben (die Vorlage muss nicht neu gebaut werden):
