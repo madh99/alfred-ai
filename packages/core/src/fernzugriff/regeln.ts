@@ -52,8 +52,9 @@ const LESE_BEFEHLE: RegExp[] = [
   /^docker volume inspect --format "((\{\{(json )?\.(Name|Driver|Mountpoint|CreatedAt|Scope)\}\})([ :,/=|-]|[A-Za-z]{1,16}=)*)+"( [\w.-]+)+$/, // ohne Options (CIFS-Volumes tragen dort das Passwort)
   /^docker (images|image ls)( -a| --all| --digests| --no-trunc)*$/,
   // v1625 — Image-Identität für Umzüge (RepoDigest statt save/load, v1611); keine Config-Felder (Env kann Zugangsdaten tragen)
-  // v1730 — dazu die öffentlichen OCI-Labels Version/Quelle/Revision (Anwendungs-Update-Bericht), keine anderen Labels
-  /^docker image inspect --format (?<q>["'])((\{\{((json )?\.(Id|RepoTags|RepoDigests|Created|Size|Architecture|Os)|index \.Config\.Labels "org\.opencontainers\.image\.(version|source|revision|ref\.name|base\.name)")\}\})([ :,/=|-]|[A-Za-z]{1,16}=)*)+\k<q>( [\w.:/@-]+)+$/,
+  // v1730 — dazu die öffentlichen OCI-Labels Version/Quelle/Revision (Anwendungs-Update-Bericht), keine anderen Labels; nur in der Form
+  // {{with index .Config "Labels"}}…{{end}} — ein Image ohne Labels bricht sonst den ganzen Aufruf ab („map has no entry for key“)
+  /^docker image inspect --format (?<q>["'])((\{\{(json )?\.(Id|RepoTags|RepoDigests|Created|Size|Architecture|Os)\}\}|\{\{with index \.Config "Labels"\}\}\{\{index \. "org\.opencontainers\.image\.(version|source|revision|ref\.name|base\.name)"\}\}\{\{end\}\})([ :,/=|-]|[A-Za-z]{1,16}=)*)+\k<q>( [\w.:/@-]+)+$/,
   /^docker (network|volume) ls$/,
   /^docker system df( -v)?$/,
   /^docker (version|info)$/,

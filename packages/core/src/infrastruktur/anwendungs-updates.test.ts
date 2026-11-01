@@ -189,6 +189,11 @@ describe('Anwendungs-Updates — Herkunft und Versions-Label (v1730)', () => {
     expect(leseImageZeile(`${I} [] [] <no value> <no value>`)).toEqual({ id: I, tags: [], digests: [] });
     expect(leseImageZeile(`${I} null null`)).toEqual({ id: I, tags: [], digests: [] });
     expect(befehlsklasse(imageBefehl([I]))).toBe('lesen');
+    // Realfall 01.11.: ohne Labels-Schlüssel brach `index .Config.Labels` den ganzen Aufruf ab → nur die nil-sichere Form
+    expect(imageBefehl([I])).toContain('{{with index .Config "Labels"}}');
+    expect(imageBefehl([I])).not.toContain('.Config.Labels');
+    expect(befehlsklasse(`docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' x`)).not.toBe('lesen');
+    expect(befehlsklasse(`docker image inspect --format '{{with index .Config "Labels"}}{{index . "PASSWORD"}}{{end}}' x`)).not.toBe('lesen');
   });
 
   it('per eigener Registry übertragenes Image: Herkunft statt Transportweg, keine Registry-Abfrage', async () => {

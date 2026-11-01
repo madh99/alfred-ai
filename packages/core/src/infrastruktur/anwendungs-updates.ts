@@ -216,7 +216,7 @@ export const UPDATE_BEFEHLE = {
   container: "docker ps --format '{{.Names}} {{.Image}} {{.Mounts}}'",
 } as const;
 export const familienBefehl = (familie: string) => `apt-cache pkgnames ${familie}`;
-export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "org.opencontainers.image.source"}}' ${images.join(' ')}`;
+export const imageBefehl = (images: string[]) => `docker image inspect --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}} {{with index .Config "Labels"}}{{index . "org.opencontainers.image.version"}}{{end}} {{with index .Config "Labels"}}{{index . "org.opencontainers.image.source"}}{{end}}' ${images.join(' ')}`;
 
 /** v1730 — eine Zeile von imageBefehl: Id, Tags, Digests und die (oft leeren) OCI-Labels Version/Quelle */
 export function leseImageZeile(z: string): { id: string; tags: string[]; digests: string[]; version?: string; quelle?: string } | undefined {

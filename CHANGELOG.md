@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Image-Labels ohne Abbruch lesen (v1731)
+
+- Hatte ein Image gar keine Labels, brach die Label-Abfrage aus v1730 die Image-Abfrage des ganzen Hosts ab („map has no entry for key Labels“). Auf docker-dev-01 und bei battery-redis landeten dadurch Container fälschlich unter „nicht prüfbar“. Die Labels werden jetzt in einer Form gelesen, die fehlende Labels als leer behandelt.
+
 ### Changed — Anwendungs-Update-Bericht mit echter Herkunft und Versionen, Datenbanken in der OS-Update-Serie gesperrt (v1730)
 
 - Images, die beim Umzug über die eigene Registry übertragen wurden (lokale Builds wie sydent, synapse-admin, noah), sucht der Bericht nicht mehr in dieser Registry. Die Herkunft kommt aus dem Change-Verlauf (Digest → Quellhost) und dem alten CMDB-Eintrag (Image-Name, Compose-Ordner). Sie stehen in einem eigenen Abschnitt „Lokal gebaut“, denn ihr Update heißt neu bauen aus der Quelle.
