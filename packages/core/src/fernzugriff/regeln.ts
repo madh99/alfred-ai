@@ -271,3 +271,40 @@ export function einrichtungsBefehle(oeffentlicherSchluessel: string, benutzer = 
     `# danach die sudo-Regel für ${benutzer} nach eigener Wahl in /etc/sudoers.d/ anlegen (mit visudo prüfen)`,
   ].join('\n');
 }
+
+// ── I8a/I8b — Windows (PowerShell über OpenSSH) ─────────────────────────────────────────────────────────────────
+
+/**
+ * Feste Leseliste für Windows (Spec I8b): nur Get-Befehle ohne Skriptblöcke, Variablen, Klammern oder Anführungszeichen; Pipes nur
+ * zu Ausgabe-Filtern. Alles andere braucht die Bestätigung des Owners — einen Lese-Käfig gibt es unter Windows nicht (JEA folgt).
+ */
+const WIN_LESE: RegExp[] = [
+  /^hostname$/i, /^whoami( \/(all|groups|priv))?$/i, /^Get-Date$/i,
+  /^Get-ComputerInfo( -Property [\w*,]+)?$/i,
+  /^Get-Service( -Name [\w*.-]+)?$/i,
+  /^Get-HotFix$/i, /^Get-Volume$/i, /^Get-Disk$/i, /^Get-Partition$/i,
+  /^Get-NetIPConfiguration$/i, /^Get-NetIPAddress( -AddressFamily IPv[46])?$/i, /^Get-NetAdapter$/i, /^Get-DnsClientServerAddress$/i,
+  /^Get-NetFirewallProfile$/i, /^Get-NetTCPConnection -State Listen$/i,
+  /^Get-WindowsFeature$/i, /^Get-WindowsCapability -Online( -Name [\w.~*]+)?$/i,
+  /^Get-CimInstance (-ClassName )?Win32_(OperatingSystem|ComputerSystem|LogicalDisk|Processor|BIOS|QuickFixEngineering)$/i,
+  /^Get-LocalUser$/i, /^Get-LocalGroupMember( -Group)? Administrators$/i,
+  /^Get-SmbShare$/i, // Get-ScheduledTask nicht: Aktionen können Befehlszeilen mit Zugangsdaten zeigen
+  /^Get-WinEvent -LogName (System|Application) -MaxEvents \d{1,4}$/i,
+];
+const WIN_FILTER: RegExp[] = [
+  /^Select-Object( -Property)? [\w*]+( ?, ?[\w*]+)*$/i, /^Select-Object -(First|Last) \d{1,4}$/i,
+  /^Format-List( [\w*]+( ?, ?[\w*]+)*)?$/i, /^Format-Table( -AutoSize)?( [\w*]+( ?, ?[\w*]+)*)?$/i,
+  /^ConvertTo-Json( -Depth \d)?( -Compress)?$/i, /^Sort-Object [\w]+( -Descending)?$/i, /^Out-String -Width \d{2,4}$/i,
+];
+const WIN_NIE: RegExp[] = [/\b(Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition|Reset-PhysicalDisk)\b/i, /\bRemove-Item\b[^|]*\s-Recurse\b[^|]*\sC:\\?(\s|$)/i, /\bbcdedit\b/i, /\bcipher\s+\/w\b/i];
+
+export function windowsBefehlsklasse(befehl: string): Befehlsklasse {
+  const b = befehl.trim().replace(/\s+/g, ' ');
+  if (!b) return 'nie';
+  if (WIN_NIE.some(r => r.test(b))) return 'nie';
+  if (/[;&$`{}()<>@"'\r\n\\]/.test(b)) return 'bestaetigen';
+  const stufen = b.split('|').map(s => s.trim());
+  if (stufen.some(s => !s)) return 'bestaetigen';
+  if (!WIN_LESE.some(r => r.test(stufen[0]!))) return 'bestaetigen';
+  return stufen.slice(1).every(f => WIN_FILTER.some(r => r.test(f))) ? 'lesen' : 'bestaetigen';
+}

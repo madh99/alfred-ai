@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-VMs aus der Vorlage, Windows-Zugang, Standard-Vorlage (f) (I8a Teil 2, v1733)
+
+- Proxmox `provision_windows_vm` (nur im Change) macht aus einer Windows-Vorlage von Alfred eine neue VM:
+  - Klon mit fester IP;
+  - Benutzerdaten über das Konfigurationslaufwerk, ausgeführt von Cloudbase-Init: Host-Schlüssel von Alfred, Anmeldeschlüssel für das Konto alfred, Kennwort;
+  - danach schaltet sich Cloudbase-Init ab.
+- Das Kennwort für alfred (bei Server auch Administrator) liegt im Tresor als `win-<name>-admin`.
+- Fernzugang und CMDB-Eintrag entstehen dabei automatisch.
+- Fernzugriff kennt Windows-Zugänge (Spalte `system`, PG v160 / SQLite v156). Es läuft PowerShell über OpenSSH, ohne sudo und ohne Lese-Käfig. Ohne Rückfrage geht nur eine feste Leseliste von Get-Befehlen (Rechner, Dienste, Updates, Datenträger, Netz, Rollen, Ereignisse) mit Ausgabe-Filtern. Skriptblöcke, Variablen, Verkettungen und Pfade brauchen die Bestätigung; Datenträger löschen ist nie erlaubt.
+- Ein Regressionstest mit Angriffseingaben prüft die Leseliste unter Linux (sed/`2>&1` aus v1729) und unter Windows. `Get-ScheduledTask` steht nicht auf der Windows-Leseliste, weil die Aktionen geplanter Aufgaben Befehlszeilen mit Zugangsdaten zeigen können.
+- Standard-Vorlage (f) „NPM-Zertifikat erneuern“ ist verfügbar:
+  - NPM-Skill `renew_certificate` erneuert ein Let’s-Encrypt-Zertifikat und prüft danach, dass das Ablaufdatum später liegt;
+  - die Vorlage greift nur unter 21 Tagen Restlaufzeit, höchstens 1× je Tag und Zertifikat.
+
 ### Added — Windows-Vorlagen-Fabrik, Bau der Vorlage (I8a Teil 1, v1732)
 
 - Proxmox `list_windows_images`: aktuellste Windows-Server-Testversion und Windows 11 Enterprise aus dem Microsoft Evaluation Center (je Sprache, mit Buildnummer), neuestes versioniertes VirtIO-ISO und Cloudbase-Init-MSI von GitHub. Downloads nur von festen Hosts über HTTPS.

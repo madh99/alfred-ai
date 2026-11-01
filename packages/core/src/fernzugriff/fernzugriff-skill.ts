@@ -2,7 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { Fernzugang } from '@alfred/storage';
 import { Freigaben } from '../geraete/freigaben.js';
-import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
+import { befehlsklasse, windowsBefehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, normalisiereBefehl, ausfuehrbarerBefehl } from './regeln.js';
 import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
@@ -24,7 +24,7 @@ export interface FernzugriffRepo {
   liste(userId: string): Promise<Fernzugang[]>;
   finde(userId: string, nameOderHost: string): Promise<Fernzugang | null>;
   hole(userId: string, id: string): Promise<Fernzugang | null>;
-  speichere(userId: string, e: { name: string; host: string; port: number; benutzer: string; schluesselPfad: string; hostSchluessel?: string; fingerabdruck?: string; cmdbAssetId?: string; status: Fernzugang['status'] }): Promise<Fernzugang>;
+  speichere(userId: string, e: { name: string; host: string; port: number; benutzer: string; schluesselPfad: string; hostSchluessel?: string; fingerabdruck?: string; cmdbAssetId?: string; status: Fernzugang['status']; system?: 'linux' | 'windows' }): Promise<Fernzugang>;
   setzeStatus(userId: string, id: string, status: Fernzugang['status']): Promise<void>;
   merkeErgebnis(userId: string, id: string, ok: boolean, fehler?: string): Promise<void>;
   entferne(userId: string, id: string): Promise<boolean>;
@@ -363,6 +363,7 @@ export class FernzugriffSkill extends Skill {
       }
       return { success: false, error: `Verbindung zu ${z.benutzer}@${z.host} fehlgeschlagen: ${a.stderr.trim().slice(-300)}${einrichtung ? `\n\nSchlüssel auf dem Host noch nicht eingetragen. ${einrichtung}` : ''}` };
     }
+    if (z.system === 'windows') return { success: true, data: { hostname: a.stdout.trim(), system: 'windows' }, display: `Verbindung ok: ${a.stdout.trim()} (${z.benutzer}@${z.host}, Windows/PowerShell). Lesen über die feste Windows-Leseliste, alles andere mit Bestätigung.` };
     const s = await this.lauf(owner, z, 'sudo -n true', 20_000);
     // v1549 — Käfig mitprüfen (außer der Owner hat ihn abgeschaltet); ein früheres „fehlt“ wird neu getestet
     if (s.code === 0 && z.kaefig === 'fehlt' && this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }
@@ -398,6 +399,15 @@ export class FernzugriffSkill extends Skill {
   /** Lesender Befehl: als root, wenn sudo ohne Passwort geht, sonst als Benutzer. */
   private async lesen(owner: string, input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const befehl = typeof input.befehl === 'string' ? normalisiereBefehl(input.befehl) : '';
+    const zw = await this.zugang(owner, input);
+    if (zw.system === 'windows') {
+      const k = windowsBefehlsklasse(befehl);
+      if (k === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
+      if (k !== 'lesen') return { success: false, error: `„${befehl.slice(0, 120)}“ steht nicht auf der Windows-Leseliste (Get-ComputerInfo, Get-Service, Get-HotFix, Get-Volume, Get-NetIPConfiguration, Get-WindowsFeature, Get-WinEvent -LogName System -MaxEvents N … mit Select-Object/Format-List/ConvertTo-Json) — unter Windows gibt es keinen Lese-Käfig; mit action=ausfuehren stelle ich ihn dem Owner zur Bestätigung.` };
+      const r = await this.lauf(owner, zw, befehl, this.timeout(input));
+      this.deps.protokoll?.('I8a Fernzugriff lesen (Windows)', { name: zw.name, befehl: befehl.slice(0, 200), code: r.code });
+      return this.ergebnis(zw, befehl, r);
+    }
     const klasse = befehlsklasse(befehl);
     if (klasse === 'nie') return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt.` };
     // v1549 (S2) — Geheimnisse nie ohne Rückfrage (die Ausgabe ginge an das Modell), auch nicht im Käfig
@@ -460,6 +470,13 @@ export class FernzugriffSkill extends Skill {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
     const b = normalisiereBefehl(befehl);
+    const zw = await this.zugang(owner, { name });
+    if (zw.system === 'windows') {
+      if (windowsBefehlsklasse(b) !== 'lesen') throw new Error('nicht auf der Windows-Leseliste');
+      const r = await this.lauf(owner, zw, b, timeoutMs);
+      if (r.code !== 0 && (streng || !r.stdout.trim())) throw new Error(`Exit ${r.code}: ${schwaerze(`${r.stdout}\n${r.stderr}`).text.trim().slice(-300)}`);
+      return schwaerze(r.stdout).text;
+    }
     const klasse = befehlsklasse(b);
     if (klasse === 'nie') throw new Error('nie erlaubt');
     if (!nurMetadaten(b) && geheimnisGrund(b)) throw new Error('berührt Geheimnisse'); // v1665
@@ -488,9 +505,9 @@ export class FernzugriffSkill extends Skill {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
     const b = ausfuehrbarerBefehl(befehl);
-    if (befehlsklasse(b) === 'nie') throw new Error(`„${b.slice(0, 120)}“ ist nie erlaubt`);
     const z = await this.zugang(owner, { name });
-    const r = await this.lauf(owner, z, fernBefehl(b, alsRoot), timeoutMs);
+    if (this.klasseFuer(z, b) === 'nie') throw new Error(`„${b.slice(0, 120)}“ ist nie erlaubt`);
+    const r = await this.lauf(owner, z, this.befehlFuer(z, b, alsRoot), timeoutMs);
     this.deps.protokoll?.('I4 Fernzugriff ausgeführt (Change)', { name: z.name, befehl: b.slice(0, 200), code: r.code, root: alsRoot });
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
   }
@@ -688,7 +705,7 @@ export class FernzugriffSkill extends Skill {
   }
 
   /** I5 — Zugang einer von Alfred angelegten VM: Host-Schlüssel ist bekannt (selbst erzeugt), daher ohne Keyscan und ohne Rückfrage aktiv. */
-  async zugangBereitstellen(e: { name: string; host: string; hostSchluessel: string; cmdbAssetId?: string; benutzer?: string }): Promise<Fernzugang> {
+  async zugangBereitstellen(e: { name: string; host: string; hostSchluessel: string; cmdbAssetId?: string; benutzer?: string; system?: 'linux' | 'windows' }): Promise<Fernzugang> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
     if (!/^[\w.-]{1,64}$/.test(e.name) || !gueltigerHost(e.host)) throw new Error('ungültiger Name oder Host');
@@ -698,8 +715,8 @@ export class FernzugriffSkill extends Skill {
     const schluessel = leseKeyscan(`${e.host} ${e.hostSchluessel}`);
     if (schluessel.length !== 1) throw new Error('Host-Schlüssel nicht lesbar');
     const k = await this.deps.schluessel();
-    const z = await this.deps.repo.speichere(owner, { name: e.name, host: e.host, port: 22, benutzer, schluesselPfad: k.pfad, hostSchluessel: knownHostsZeilen(e.host, 22, schluessel), fingerabdruck: `${schluessel[0]!.typ} ${schluessel[0]!.fingerabdruck}`, ...(e.cmdbAssetId ? { cmdbAssetId: e.cmdbAssetId } : {}), status: 'aktiv' });
-    if (this.deps.repo.setzeKaefig) { await this.deps.repo.setzeKaefig(owner, z.id, 'ungeprueft'); z.kaefig = 'ungeprueft'; }
+    const z = await this.deps.repo.speichere(owner, { name: e.name, host: e.host, port: 22, benutzer, schluesselPfad: k.pfad, hostSchluessel: knownHostsZeilen(e.host, 22, schluessel), fingerabdruck: `${schluessel[0]!.typ} ${schluessel[0]!.fingerabdruck}`, ...(e.cmdbAssetId ? { cmdbAssetId: e.cmdbAssetId } : {}), status: 'aktiv', ...(e.system === 'windows' ? { system: 'windows' as const } : {}) });
+    if (this.deps.repo.setzeKaefig) { const k = e.system === 'windows' ? 'aus' : 'ungeprueft'; await this.deps.repo.setzeKaefig(owner, z.id, k); z.kaefig = k; }
     if (e.cmdbAssetId) await this.deps.cmdbMarkiere?.(e.cmdbAssetId, { name: z.name, benutzer, port: 22 }).catch(() => undefined);
     this.deps.protokoll?.('I5 Fernzugang mit eigenem Host-Schlüssel angelegt', { name: z.name, host: e.host, fingerabdruck: z.fingerabdruck });
     this.deps.beiAenderung?.();
@@ -741,7 +758,12 @@ export class FernzugriffSkill extends Skill {
   }
 
   /** v1549 — Käfig bereit? Beim ersten Mal (oder nach „an“) Selbsttest mit echten Schreib-, Kill-, Docker-, D-Bus- und Netzversuchen. */
+  /** I8a — Windows: PowerShell über OpenSSH, ohne sudo-Hülle; Einordnung über die Windows-Leseliste */
+  private befehlFuer(z: Fernzugang, b: string, alsRoot: boolean): string { return z.system === 'windows' ? b : fernBefehl(b, alsRoot); }
+  private klasseFuer(z: Fernzugang, b: string) { return z.system === 'windows' ? windowsBefehlsklasse(b) : befehlsklasse(b); }
+
   private async kaefigBereit(owner: string, z: Fernzugang): Promise<{ ok: boolean; grund: string }> {
+    if (z.system === 'windows') return { ok: false, grund: 'Windows — nur die feste Leseliste, kein Lese-Käfig' };
     if (z.kaefig === 'aktiv' && this.kaefigGeprueft.has(z.id)) return { ok: true, grund: 'aktiv' };
     if (z.kaefig === 'aus') return { ok: false, grund: 'vom Owner abgeschaltet' };
     if (z.kaefig === 'fehlt') return { ok: false, grund: 'Selbsttest gescheitert' };
@@ -825,7 +847,8 @@ export class FernzugriffSkill extends Skill {
     const { freigabe, ...params } = input;
     const befehl = typeof params.befehl === 'string' ? ausfuehrbarerBefehl(params.befehl) : '';
     if (!befehl) return { success: false, error: 'ausfuehren braucht befehl' };
-    const klasse = befehlsklasse(befehl);
+    const zk = await this.zugang(owner, params);
+    const klasse = this.klasseFuer(zk, befehl);
     if (klasse === 'nie') {
       this.deps.protokoll?.('v1539 Fernzugriff abgewiesen (nie)', { name: params.name, befehl: befehl.slice(0, 200) });
       return { success: false, error: `„${befehl.slice(0, 120)}“ ist nie erlaubt (zerstört Datenträger, Pools oder das System). Das muss der Owner selbst am Host tun.` };
@@ -836,7 +859,7 @@ export class FernzugriffSkill extends Skill {
     const gebunden = { action: 'ausfuehren', name: z.name, befehl, als_root: alsRoot, ...(typeof params.timeout_s === 'number' ? { timeout_s: params.timeout_s } : {}) };
     if (freigabe !== undefined) {
       if (!this.freigaben.verbrauche(freigabe, 'fernzugriff', 'ausfuehren', gebunden)) return { success: false, error: 'Diese Freigabe ist ungültig, abgelaufen oder gehört zu einem anderen Befehl.' };
-      const r = await this.lauf(owner, z, fernBefehl(befehl, alsRoot), this.timeout(params));
+      const r = await this.lauf(owner, z, this.befehlFuer(z, befehl, alsRoot), this.timeout(params));
       this.deps.protokoll?.('v1539 Fernzugriff ausgeführt (bestätigt)', { name: z.name, befehl: befehl.slice(0, 200), code: r.code, root: alsRoot });
       return this.mitWiederherstellbarkeit(befehl, r, this.ergebnis(z, befehl, r), context);
     }

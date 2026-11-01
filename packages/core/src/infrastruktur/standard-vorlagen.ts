@@ -27,6 +27,8 @@ export interface StandardKontext {
   anzahl(vorlage: string, merkmal: string, seit: number): Promise<number>;
   /** S4 — Fernzugänge mit Schalter „Sicherheitsupdates an“, Reihenfolge: unkritische zuerst (CMDB), sonst nach Name */
   zugaengeMitUpdates?(): Promise<string[]>;
+  /** Vorlage (f) — NPM-Zertifikat nach ID */
+  zertifikat?(id: number): Promise<{ id: number; domains: string[]; provider: string; ablauf?: string } | undefined>;
   jetzt: Date;
 }
 
@@ -207,7 +209,28 @@ export const VORLAGEN: Vorlage[] = [
       } };
     },
   },
-  { key: 'zertifikat_erneuern', version: 1, titel: '(f) NPM-Zertifikat erneuern', beschreibung: 'Let’s-Encrypt-Zertifikat in NPM erneuern.', parameter: {}, verfuegbar: false, folgt: 'mit I7 (der NPM-Skill hat noch keine Erneuern-Aktion)' },
+  {
+    key: 'zertifikat_erneuern', version: 1, titel: '(f) NPM-Zertifikat erneuern',
+    beschreibung: 'Let’s-Encrypt-Zertifikat in Nginx Proxy Manager erneuern — nur wenn es in weniger als 21 Tagen abläuft oder schon abgelaufen ist, höchstens 1× je Tag und Zertifikat. Danach muss das Ablaufdatum später liegen. Kein Rückweg nötig (das bisherige Zertifikat bleibt bis zum Tausch gültig).',
+    parameter: { zertifikat: 'NPM-Zertifikat-ID (aus list_certificates)' }, verfuegbar: true,
+    async erzeuge(p, k) {
+      const id = Number(p.zertifikat);
+      if (!Number.isInteger(id) || id < 1) return { fehler: 'zertifikat: ID aus list_certificates' };
+      if (!k.zertifikat) return { fehler: 'Nginx Proxy Manager ist nicht verbunden' };
+      const z = await k.zertifikat(id);
+      if (!z) return { fehler: `Zertifikat ${id} gibt es nicht` };
+      if (z.provider !== 'letsencrypt') return { fehler: `Zertifikat ${id} ist kein Let’s-Encrypt-Zertifikat (${z.provider})` };
+      const tage = z.ablauf ? (Date.parse(z.ablauf) - k.jetzt.getTime()) / 86_400_000 : -1;
+      if (tage >= 21) return { fehler: `Zertifikat ${id} (${z.domains.join(', ')}) läuft erst in ${Math.floor(tage)} Tagen ab — NPM erneuert selbst; Standard erst unter 21 Tagen` };
+      if (await k.anzahl('zertifikat_erneuern', String(id), k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `Zertifikat ${id}: höchstens 1× je Tag` };
+      return { merkmal: String(id), plan: {
+        titel: `Standard: Zertifikat ${z.domains[0] ?? id} erneuern`, begruendung: `Standard-Change (f) — Zertifikat ${id} (${z.domains.join(', ')}) läuft ${tage < 0 ? 'nicht mehr' : `in ${Math.floor(tage)} Tagen`} ab.`,
+        typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: [], ohneSicherungGrund: 'Erneuern tauscht nur das Zertifikat; das bisherige bleibt bis dahin gültig',
+        schritte: [
+          { titel: 'Zertifikat erneuern und Ablauf prüfen', art: 'aktion', skill: 'nginx_proxy_manager', aktion: 'renew_certificate', parameter: { certificate_id: id }, rueckweg: { keiner: 'Erneuern hat keinen Rückweg; das bisherige Zertifikat bleibt bis zum Tausch gültig' }, zeitlimitS: 300 },
+        ] } };
+    },
+  },
   { key: 'testvm', version: 1, titel: '(g) Test-VM anlegen und nach Ablauf löschen', beschreibung: 'Wegwerf-VM aus Vorlage im Test-VLAN (2 vCPU/4 GB/32 GB, höchstens 3).', parameter: {}, verfuegbar: false, folgt: 'mit I5 (der Proxmox-Skill kann VMs noch nicht löschen)' },
 ];
 

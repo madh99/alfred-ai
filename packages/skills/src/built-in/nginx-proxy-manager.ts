@@ -1,7 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, NginxProxyManagerConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-type Action = 'list_hosts' | 'create_host' | 'update_host' | 'delete_host' | 'list_certificates';
+type Action = 'list_hosts' | 'create_host' | 'update_host' | 'delete_host' | 'list_certificates' | 'renew_certificate';
 
 export class NginxProxyManagerSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -14,13 +14,14 @@ export class NginxProxyManagerSkill extends Skill {
       '"create_host" erstellt einen neuen Proxy-Host (domain, target_host, target_port). SSL via Let\'s Encrypt automatisch. ' +
       '"update_host" aktualisiert einen Host (host_id). ' +
       '"delete_host" löscht einen Host (host_id). ' +
-      '"list_certificates" zeigt SSL-Zertifikate.',
+      '"list_certificates" zeigt SSL-Zertifikate. "renew_certificate" (certificate_id) erneuert ein Let\u2019s-Encrypt-Zertifikat und prüft danach das Ablaufdatum (Standard-Change f).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_hosts', 'create_host', 'update_host', 'delete_host', 'list_certificates'] },
+        action: { type: 'string', enum: ['list_hosts', 'create_host', 'update_host', 'delete_host', 'list_certificates', 'renew_certificate'] },
+        certificate_id: { type: 'number', description: 'renew_certificate: ID aus list_certificates' },
         domain: { type: 'string', description: 'Domain für den Proxy-Host (z.B. uboot.cc)' },
         target_host: { type: 'string', description: 'Ziel-IP oder Hostname (z.B. 192.168.1.95)' },
         target_port: { type: 'number', description: 'Ziel-Port (z.B. 3000)' },
@@ -55,6 +56,7 @@ export class NginxProxyManagerSkill extends Skill {
       case 'update_host': return this.updateHost(input);
       case 'delete_host': return this.deleteHost(input);
       case 'list_certificates': return this.listCertificates();
+      case 'renew_certificate': return this.renewCertificate(input);
       default: return { success: false, error: `Unknown action: ${String(action)}` };
     }
   }
@@ -234,6 +236,21 @@ export class NginxProxyManagerSkill extends Skill {
 
     await this.npmFetch(`/nginx/proxy-hosts/${hostId}`, { method: 'DELETE' });
     return { success: true, display: `✅ Proxy Host ${hostId} gelöscht` };
+  }
+
+  /** Spec I4b Teil 4, Vorlage (f): Let's-Encrypt-Zertifikat erneuern; gilt erst, wenn das Ablaufdatum danach später liegt */
+  private async renewCertificate(input: Record<string, unknown>): Promise<SkillResult> {
+    const id = Number(input.certificate_id);
+    if (!Number.isInteger(id) || id < 1) return { success: false, error: 'renew_certificate braucht certificate_id (Zahl aus list_certificates)' };
+    type Z = { id: number; nice_name: string; domain_names: string[]; expires_on: string; provider: string };
+    const vorher = (await this.npmFetch('/nginx/certificates') as Z[]).find(c => c.id === id);
+    if (!vorher) return { success: false, error: `Zertifikat ${id} gibt es nicht` };
+    if (vorher.provider !== 'letsencrypt') return { success: false, error: `Zertifikat ${id} ist kein Let's-Encrypt-Zertifikat (${vorher.provider}) — Erneuern geht nur dort` };
+    await this.npmFetch(`/nginx/certificates/${id}/renew`, { method: 'POST' }, 180_000);
+    const nachher = (await this.npmFetch('/nginx/certificates') as Z[]).find(c => c.id === id);
+    const alt = Date.parse(vorher.expires_on), neu = Date.parse(nachher?.expires_on ?? '');
+    if (!(neu > alt)) return { success: false, error: `Zertifikat ${id} (${vorher.domain_names.join(', ')}): Ablaufdatum nach dem Erneuern unverändert (${vorher.expires_on})` };
+    return { success: true, data: { id, domains: vorher.domain_names, vorher: vorher.expires_on, nachher: nachher!.expires_on }, display: `✅ Zertifikat ${id} (${vorher.domain_names.join(', ')}) erneuert: gültig bis ${new Date(neu).toISOString().slice(0, 10)} (vorher ${new Date(alt).toISOString().slice(0, 10)})` };
   }
 
   private async listCertificates(): Promise<SkillResult> {

@@ -7171,9 +7171,26 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const netzFb = await import('./infrastruktur/netz-pruefung.js');
         const fz = this.fernzugriffRef;
         const warte = (ms: number) => new Promise(r => setTimeout(r, ms));
-        const warteBereit = async (v: { name: string; ip: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }> => {
+        const warteBereit = async (v: { name: string; ip: string; vmid: number; zeitlimitMs: number; system?: 'linux' | 'windows' }): Promise<{ ok: boolean; meldung: string }> => {
             const start = Date.now();
             let letzte = '';
+            // I8a — Windows: fertig, wenn der Name gesetzt ist und Cloudbase-Init sich nach den Benutzerdaten abgeschaltet hat
+            if (v.system === 'windows') {
+              while (Date.now() - start < v.zeitlimitMs) {
+                const r = await fz.ausfuehrenIntern(v.name, 'hostname; (Get-Service cloudbase-init).StartType', false, 60_000)
+                  .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+                const [h, st] = r.stdout.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+                if (r.code === 0 && h?.toLowerCase() === v.name.toLowerCase() && st === 'Disabled') {
+                  const s = Math.round((Date.now() - start) / 1000);
+                  this.logger.info({ name: v.name, ip: v.ip, vmid: v.vmid, sekunden: s }, 'I8a Windows-VM bereitgestellt, Fernzugang aktiv');
+                  return { ok: true, meldung: `SSH (PowerShell) mit Alfreds Host-Schlüssel nach ${s} s, Name ${h}, Cloudbase-Init fertig und abgeschaltet; Fernzugang „${v.name}“ (Windows, Leseliste) und CMDB-Eintrag angelegt` };
+                }
+                if (/gesperrt|Host-Schlüssel/i.test(r.stderr)) return { ok: false, meldung: `Host-Schlüssel der VM passt nicht zu dem von Alfred erzeugten — Zugang gesperrt (${r.stderr.slice(0, 160)})` };
+                letzte = r.code === 0 ? `angemeldet, Name „${h ?? '?'}“, Cloudbase-Init ${st ?? '?'}` : (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+                await warte(15_000);
+              }
+              return { ok: false, meldung: `Windows-VM nach ${Math.round(v.zeitlimitMs / 1000)} s nicht bereit (${letzte.slice(0, 160)})` };
+            }
             while (Date.now() - start < v.zeitlimitMs) {
               // SSH mit genau dem selbst erzeugten Host-Schlüssel; erst fertig, wenn Cloud-Init durch ist und sich abgeschaltet hat
               const r = await fz.ausfuehrenIntern(v.name, 'cloud-init status --wait >/dev/null 2>&1; test -f /etc/cloud/cloud-init.disabled && hostname', false, 300_000)
@@ -7208,6 +7225,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return h;
           },
           snippetSchreiben: (node, pfad, inhalt) => fz.snippetSchreiben(node, pfad, inhalt),
+          // I8a — Kennwort einer neuen Windows-VM in den Tresor (Konsole/Notfall); der Wert erscheint nie im Change-Protokoll
+          kennwortSichern: async (vmName, wert) => {
+            const o = ownerFz();
+            if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar');
+            const n = `win-${vmName}-admin`;
+            await this.tresor.setze(o, n, wert, 'erzeugt', `Kennwort der Konten alfred/Administrator der Windows-VM ${vmName}`);
+            return n;
+          },
           // I8a — feste Skripte der Windows-Fabrik am Knoten (Auswahl nur über den Namen)
           knotenSkript: async (node, art, eingabe, timeoutMs) => {
             const { WIN_KNOTEN_INSPEKTION, WIN_KNOTEN_ANTWORT_ISO } = await import('@alfred/skills');
@@ -7222,8 +7247,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             // v1713 — vorab erfassten Eintrag gleichen Namens und gleicher Adresse (ohne Quelle) übernehmen statt einen zweiten anzulegen
             const vorab = (await cmdbFz.searchAssets(o, v.ip).catch(() => [])).find(x => x.name === v.name && x.ipAddress === v.ip && !x.sourceSkill);
             if (vorab) await cmdbFz.updateAsset(o, vorab.id, { sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, assetType: 'vm' } as never);
-            const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', ...(vorab?.purpose ? { purpose: vorab.purpose } : {}), ...(vorab?.fqdn ? { fqdn: vorab.fqdn } : {}), ...(vorab?.notes ? { notes: vorab.notes } : {}), attributes: { ...(vorab?.attributes ?? {}), vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: 'alfred-i5' } } as never);
-            await fz.zugangBereitstellen({ name: v.name, host: v.ip, hostSchluessel: v.hostSchluessel, cmdbAssetId: asset.id });
+            const asset = await cmdbFz.upsertAsset(o, { name: v.name, assetType: 'vm', sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: v.ip, hostname: v.name, status: 'active', ...(vorab?.purpose ? { purpose: vorab.purpose } : {}), ...(vorab?.fqdn ? { fqdn: vorab.fqdn } : {}), ...(vorab?.notes ? { notes: vorab.notes } : {}), attributes: { ...(vorab?.attributes ?? {}), vmid: v.vmid, node: v.node, vorlage: v.vorlage, bereitgestellt: v.system === 'windows' ? 'alfred-i8a' : 'alfred-i5', ...(v.system === 'windows' ? { system: 'windows' } : {}) } } as never);
+            await fz.zugangBereitstellen({ name: v.name, host: v.ip, hostSchluessel: v.hostSchluessel, cmdbAssetId: asset.id, ...(v.system === 'windows' ? { system: 'windows' as const } : {}) });
             return warteBereit(v);
           },
           fortsetzen: async (v) => {
@@ -7739,6 +7764,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   return Array.isArray(r.data) ? (r.data as Array<{ name?: string }>).filter(s => s.name && s.name !== 'current').map(s => ({ name: s.name! })) : [];
                 },
                 updatesAn: async (z) => schalter[z] === 'an',
+                // Vorlage (f) — Zertifikat aus Nginx Proxy Manager
+                zertifikat: async (id) => {
+                  const sk = skillRegistry.get('nginx_proxy_manager'); if (!sk) return undefined;
+                  const r = await skillSandbox.execute(sk, { action: 'list_certificates' }, ctxOwnerI4b());
+                  const c = (Array.isArray(r.data) ? r.data as Array<{ id: number; domain_names?: string[]; provider?: string; expires_on?: string }> : []).find(x => x.id === id);
+                  return c ? { id: c.id, domains: c.domain_names ?? [], provider: String(c.provider ?? ''), ...(c.expires_on ? { ablauf: c.expires_on } : {}) } : undefined;
+                },
                 // S4 — Hosts der Serie: Schalter an; Reihenfolge unkritische zuerst (höchste CMDB-Kritikalität der Services am Host), dann Name
                 zugaengeMitUpdates: async () => {
                   const rang: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };

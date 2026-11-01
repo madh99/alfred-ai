@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { randomBytes } from 'node:crypto';
-import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, type WimAbbild, type WinVariante } from './windows-fabrik.js';
+import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, type WimAbbild, type WinVariante } from './windows-fabrik.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
@@ -18,13 +18,15 @@ export interface VmFabrikDeps {
   snippetSchreiben(node: string, pfad: string, inhalt: string): Promise<void>;
   snippetEntfernen(node: string, pfad: string): Promise<void>;
   /** Fernzugang mit dem bekannten Host-Schlüssel + CMDB-Eintrag anlegen und warten, bis SSH und Cloud-Init fertig sind */
-  anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
+  anmelden(v: { name: string; ip: string; node: string; vmid: number; hostSchluessel: string; vorlage: number; zeitlimitMs: number; system?: 'linux' | 'windows' }): Promise<{ ok: boolean; meldung: string }>;
   /** Fernzugang entfernen, CMDB-Eintrag stilllegen; nurVmid: eine andere VM trägt den Namen noch → nur den Eintrag dieser VMID stilllegen */
   abmelden(v: { name: string; node: string; vmid: number; nurVmid?: boolean }): Promise<string>;
   /** Abgebrochene Bereitstellung fortsetzen: Fernzugang (mit dem Host-Schlüssel der VM) besteht schon — nur auf SSH/Cloud-Init warten */
   fortsetzen?(v: { name: string; ip: string; node: string; vmid: number; zeitlimitMs: number }): Promise<{ ok: boolean; meldung: string }>;
   /** I8a — festes Skript der Windows-Fabrik am Knoten (Auswahl über den Namen, nie Modelltext), Eingabe JSON über stdin; liefert stdout */
   knotenSkript?(node: string, art: 'win-inspektion' | 'win-antwort', eingabe: string, timeoutMs: number): Promise<string>;
+  /** I8a — Kennwort einer neuen Windows-VM im Tresor ablegen; liefert den Namen des Eintrags */
+  kennwortSichern?(vmName: string, wert: string): Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +72,11 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -159,7 +161,7 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
-      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. ' +
+      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -513,6 +515,8 @@ export class ProxmoxSkill extends Skill {
           return await this.windowsBuildLog(input);
         case 'finish_windows_template':
           return await this.finishWindowsTemplate(input);
+        case 'provision_windows_vm':
+          return await this.provisionWindowsVm(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -1769,6 +1773,72 @@ export class ProxmoxSkill extends Skill {
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/template`, {}), 300_000, 'zur Vorlage machen');
     this.vmCache = null;
     return { success: true, data: { vmid, name, node: vm.node, template: true, entfernteCds: cds, antwortIsoEntfernt: antwort ?? null }, display: `✅ Windows-Vorlage ${name} (VMID ${vmid}) fertig: CDs ${cds.join(', ') || '-'} entfernt, Antwort-ISO ${antwort ? 'gelöscht' : '-'}, Konfigurationslaufwerk für Cloudbase-Init angelegt` };
+  }
+
+  /**
+   * I8a — neue Windows-VM aus einer Windows-Vorlage: Klon, Benutzerdaten (Host-Schlüssel von Alfred, Anmeldeschlüssel, Kennwort aus
+   * dem Tresor) über das Konfigurationslaufwerk, feste IP; Fernzugang (Windows) + CMDB; danach Snippet und Laufwerk weg.
+   */
+  private async provisionWindowsVm(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.fabrik?.kennwortSichern) return { success: false, error: 'Windows-Fabrik ist nicht eingerichtet (Tresor/Fernzugriff fehlt)' };
+    const name = String(input.hostname ?? ''); const ip = String(input.ip ?? ''); const tpl = Number(input.template);
+    if (!VM_NAME.test(name) || name.length > 15) return { success: false, error: 'hostname: Kleinbuchstaben, Ziffern, -, höchstens 15 Zeichen (Windows-Computername)' };
+    if (!/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(ip) || typeof input.gateway !== 'string') return { success: false, error: 'ip als CIDR (z. B. 10.203.28.5/28) und gateway angeben' };
+    const alle = await this.getAllVms();
+    const vorlage = alle.find(v => v.vmid === tpl);
+    if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
+    const tplCfg = await this.get<{ description?: string; template?: number }>(`/nodes/${vorlage.node}/qemu/${tpl}/config`);
+    const variante = /Windows-Vorlage von Alfred \(I8a\): ([\w-]+),/.exec(String(tplCfg.description ?? ''))?.[1];
+    if (!tplCfg.template || !istWinVariante(variante)) return { success: false, error: `${tpl} ist keine Windows-Vorlage von Alfred` };
+    if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
+    const nackt = ip.replace(/\/\d+$/, '');
+    const hindernisse = await this.fabrik.vorpruefung({ name, ip: nackt });
+    if (hindernisse.length) return { success: false, error: hindernisse.join('; ') };
+    const node = (input.node as string) ?? vorlage.node;
+    const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
+    if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
+    const clone: Record<string, unknown> = { newid: vmid, name, full: 1, target: node };
+    if (typeof input.storage === 'string' && input.storage) clone.storage = input.storage;
+    const schritte: string[] = [];
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vorlage.node}/qemu/${tpl}/clone`, clone), 1_800_000, 'Klonen');
+    this.vmCache = null;
+    schritte.push(`VM ${name} (VMID ${vmid}) aus Windows-Vorlage ${tpl} (${variante}) auf ${node} geklont`);
+    const hs = await this.fabrik.hostSchluessel();
+    const kennwort = zufallsKennwort(n => randomBytes(n));
+    const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
+    schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName})`);
+    const daten = windowsBenutzerDaten({ variante, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort });
+    const sp = await this.get<{ path?: string }>('/storage/local');
+    const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
+    await this.fabrik.snippetSchreiben(node, pfad, daten);
+    try {
+      const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+      const konfig: Record<string, unknown> = {
+        cicustom: `user=local:snippets/${snippetDatei(vmid)}`, citype: 'configdrive2', ipconfig0: `ip=${ip},gw=${input.gateway}`, agent: 'enabled=1',
+        description: `Angelegt von Alfred (I8a) aus Windows-Vorlage ${tpl} (${variante}) am ${new Date().toISOString().slice(0, 10)}. Host-Schlüssel ${hs.oeffentlich.split(' ')[1]?.slice(0, 16)}…, Kennwort im Tresor ${tresorName}`,
+      };
+      // Konfigurationslaufwerk (Cloudbase-Init) — Vorlagen aus finish_windows_template haben es, sonst anlegen
+      if (!Object.values(cfg).some(v => String(v).includes('cloudinit'))) { const st = /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1]; if (st) konfig.ide0 = `${st}:cloudinit`; }
+      if (typeof input.nameserver === 'string' && input.nameserver.trim()) konfig.nameserver = input.nameserver.trim();
+      if (typeof input.memory === 'number') konfig.memory = input.memory;
+      if (typeof input.cores === 'number') konfig.cores = input.cores;
+      if (input.bridge || input.vlan_tag) konfig.net0 = `virtio,bridge=${(input.bridge as string) ?? 'vmbr0'}${input.vlan_tag ? `,tag=${input.vlan_tag as number}` : ''}`;
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, konfig);
+      if (typeof input.disk_size === 'number' && input.disk_size > 0) await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
+      await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
+      schritte.push(`gestartet mit ${ip}; Windows richtet sich ein (Name, Netz, Schlüssel) — mit Neustart`);
+      const a = await this.fabrik.anmelden({ name, ip: nackt, node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 1_800_000, system: 'windows' });
+      schritte.push(a.meldung);
+      if (!a.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip: nackt } };
+      const ga = await this.warteAufAgent(vmid, node, AGENT_WARTEN_MS);
+      schritte.push(ga.meldung);
+      if (!ga.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip: nackt } };
+    } finally {
+      await this.fabrik.snippetEntfernen(node, pfad).catch(() => undefined);
+      await this.cloudInitLoesen(node, vmid);
+    }
+    schritte.push('Benutzerdaten-Snippet entfernt, Konfigurationslaufwerk vorgemerkt');
+    return { success: true, data: { vmid, name, node, ip: nackt, vorlage: tpl, variante, tresor: tresorName, hostSchluessel: hs.oeffentlich }, display: schritte.map(x => `- ${x}`).join('\n') };
   }
 
   private async vmidFrei(vmid: number): Promise<boolean> {

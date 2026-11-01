@@ -53,6 +53,18 @@ describe('I4b Standard-Vorlagen', () => {
     const auf = await V('snapshot_aufraeumen').erzeuge!({ vm: '142' }, kontext());
     expect('plan' in auf && (auf.plan.schritte as Array<{ parameter: { name: string } }>).map(s => s.parameter.name)).toEqual(['alfred_20261010_7d']);
   });
+
+  it('Vorlage (f): nur Let’s Encrypt, erst unter 21 Tagen, 1× je Tag; Schritt renew_certificate', async () => {
+    const jetzt = new Date('2026-11-01T10:00:00Z');
+    const z = (tage: number, provider = 'letsencrypt') => ({ zertifikat: async (id: number) => (id === 7 ? { id: 7, domains: ['rtc.3033.at'], provider, ablauf: new Date(jetzt.getTime() + tage * 86_400_000).toISOString() } : undefined), jetzt });
+    const f = async (o: Partial<StandardKontext>, p: Record<string, unknown> = { zertifikat: 7 }) => { const e = await V('zertifikat_erneuern').erzeuge!(p, kontext(o)); return 'fehler' in e ? e.fehler : e; };
+    expect(await f(z(60))).toContain('NPM erneuert selbst');
+    expect(await f(z(5, 'other'))).toContain('kein Let’s-Encrypt');
+    expect(await f(z(5), { zertifikat: 8 })).toContain('gibt es nicht');
+    expect(await f({ ...z(5), anzahl: async () => 1 })).toContain('höchstens 1× je Tag');
+    const ok = await f(z(5));
+    expect(typeof ok === 'object' && (ok.plan.schritte as unknown[])[0]).toMatchObject({ skill: 'nginx_proxy_manager', aktion: 'renew_certificate', parameter: { certificate_id: 7 } });
+  });
 });
 
 describe('I4b Standard-Freigabe', () => {

@@ -26,6 +26,8 @@ export interface Fernzugang {
   status: FernzugangStatus;
   /** v1549 — Lese-Käfig: ungeprueft (noch kein Selbsttest), aktiv, fehlt (Selbsttest gescheitert), aus (vom Owner abgeschaltet) */
   kaefig?: 'ungeprueft' | 'aktiv' | 'fehlt' | 'aus';
+  /** I8a — Betriebssystem: windows = PowerShell über OpenSSH, ohne sudo und ohne Lese-Käfig (eigene Leseliste) */
+  system?: 'linux' | 'windows';
   zuletztOk?: string;
   zuletztFehler?: string;
   erstellt: string;
@@ -53,20 +55,20 @@ export class FernzugaengeRepository {
   }
 
   /** Anlegen oder (gleicher Name) ersetzen — ein ersetzter Zugang muss seinen Host-Schlüssel neu bestätigen lassen. */
-  async speichere(userId: string, e: { name: string; host: string; port: number; benutzer: string; schluesselPfad: string; hostSchluessel?: string; fingerabdruck?: string; cmdbAssetId?: string; status: FernzugangStatus }): Promise<Fernzugang> {
+  async speichere(userId: string, e: { name: string; host: string; port: number; benutzer: string; schluesselPfad: string; hostSchluessel?: string; fingerabdruck?: string; cmdbAssetId?: string; status: FernzugangStatus; system?: 'linux' | 'windows' }): Promise<Fernzugang> {
     const jetzt = new Date().toISOString();
     const da = await this.finde(userId, e.name);
     if (da && da.name.toLowerCase() === e.name.trim().toLowerCase()) {
       await this.db.execute(
-        'UPDATE fernzugaenge SET host = ?, port = ?, benutzer = ?, schluessel_pfad = ?, host_schluessel = ?, fingerabdruck = ?, cmdb_asset_id = ?, status = ?, geaendert = ? WHERE id = ? AND user_id = ?',
-        [e.host, e.port, e.benutzer, e.schluesselPfad, e.hostSchluessel ?? null, e.fingerabdruck ?? null, e.cmdbAssetId ?? null, e.status, jetzt, da.id, userId],
+        'UPDATE fernzugaenge SET host = ?, port = ?, benutzer = ?, schluessel_pfad = ?, host_schluessel = ?, fingerabdruck = ?, cmdb_asset_id = ?, status = ?, system = ?, geaendert = ? WHERE id = ? AND user_id = ?',
+        [e.host, e.port, e.benutzer, e.schluesselPfad, e.hostSchluessel ?? null, e.fingerabdruck ?? null, e.cmdbAssetId ?? null, e.status, e.system === 'windows' ? 'windows' : null, jetzt, da.id, userId],
       );
       return (await this.hole(userId, da.id))!;
     }
     const id = randomUUID();
     await this.db.execute(
-      'INSERT INTO fernzugaenge (id, user_id, name, host, port, benutzer, schluessel_pfad, host_schluessel, fingerabdruck, cmdb_asset_id, status, erstellt, geaendert) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, userId, e.name.trim(), e.host, e.port, e.benutzer, e.schluesselPfad, e.hostSchluessel ?? null, e.fingerabdruck ?? null, e.cmdbAssetId ?? null, e.status, jetzt, jetzt],
+      'INSERT INTO fernzugaenge (id, user_id, name, host, port, benutzer, schluessel_pfad, host_schluessel, fingerabdruck, cmdb_asset_id, status, system, erstellt, geaendert) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, userId, e.name.trim(), e.host, e.port, e.benutzer, e.schluesselPfad, e.hostSchluessel ?? null, e.fingerabdruck ?? null, e.cmdbAssetId ?? null, e.status, e.system === 'windows' ? 'windows' : null, jetzt, jetzt],
     );
     return (await this.hole(userId, id))!;
   }
@@ -98,6 +100,7 @@ export class FernzugaengeRepository {
       hostSchluessel: (r.host_schluessel as string | null) ?? undefined, fingerabdruck: (r.fingerabdruck as string | null) ?? undefined,
       cmdbAssetId: (r.cmdb_asset_id as string | null) ?? undefined, status: r.status as FernzugangStatus,
       kaefig: ((r.kaefig as string | null) ?? 'ungeprueft') as Fernzugang['kaefig'],
+      system: r.system === 'windows' ? 'windows' : 'linux',
       zuletztOk: (r.zuletzt_ok as string | null) ?? undefined, zuletztFehler: (r.zuletzt_fehler as string | null) ?? undefined,
       erstellt: String(r.erstellt), geaendert: String(r.geaendert),
     };

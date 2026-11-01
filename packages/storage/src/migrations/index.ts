@@ -3227,4 +3227,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_tresor_protokoll ON tresor_protokoll (user_id, zeit)');
     },
   },
+  {
+    version: 156,
+    description: 'I8a — fernzugaenge.system: Betriebssystem des Zugangs (SQLite-Spiegel zu PG v160).',
+    up(db) {
+      try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN system TEXT'); } catch { /* exists */ }
+    },
+  },
 ];
