@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standard-Vorlage (i) Windows-Updates (v1746)
+
+- Neue Standard-Vorlage `windows_updates` für Windows-VMs auf Proxmox mit Schalter „Sicherheitsupdates an“:
+  - Snapshot (7 Tage), dann Prüfung des Wartungsfensters und Festhalten der laufenden automatischen Dienste;
+  - Installation über den Windows-Update-Agenten als einmalige Aufgabe unter SYSTEM, ohne Feature-Upgrades, Treiber und Updates mit Benutzereingabe;
+  - Neustart nur, wenn Windows ihn verlangt, und spätestens 30 Minuten vor Fensterende;
+  - danach VM, Gast-Agent, SSH und Nachher-Vergleich (alle vorher laufenden Dienste laufen wieder); Rückweg über den Snapshot.
+- Die wöchentliche Update-Serie (dienstags) legt Windows-Hosts als eigene Serie mit eigener Freigabe-Frage an; ohne Windows-Host bleibt sie still.
+- Die Linux-Vorlagen (c) und (h) weisen Windows-Hosts ab und verweisen auf (i).
+
 ### Added — Tresor-Werte im Web anzeigen, eigener Zugang des Owners auf Windows-VMs (v1745)
 
 - Tresor-Werte lassen sich auf der Tresor-Seite im Web mit „anzeigen“ ansehen:

@@ -4,12 +4,14 @@
  * daraus innerhalb fester Grenzen Changes ohne Einzel-Ja anlegen. Jeder so erzeugte Change durchläuft dieselbe Planprüfung und
  * denselben Motor (Wartungsfenster, Sperrzeiten, Ankündigung). Die Grenzen prüft die Vorlage selbst, ohne Modell.
  *
- * Nie Standard (5b-11): Firewall/DNS/Netz/VLAN, Datenbanken, Datenlöschung, Hauptversions-Upgrades, Migrationen, Windows-Neustarts.
+ * Nie Standard (5b-11): Firewall/DNS/Netz/VLAN, Datenbanken, Datenlöschung, Hauptversions-Upgrades, Migrationen, Windows-Neustarts —
+ * ausgenommen der Neustart in Vorlage (i) Windows-Updates im Wartungsfenster (Spec I8 3b-1, freigegeben 01.11.).
  */
 import { createHash } from 'node:crypto';
 import { LINUX_BEFEHLE } from './sammler.js';
 import type { Pruefung } from './change-schritte.js';
 import { fensterAus, osUpdateSchritte } from './os-updates.js';
+import { winUpdateSchritte } from './windows-updates.js';
 
 /** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
 export interface Annahme { id: string; text: string; pruefung: Pruefung }
@@ -27,6 +29,8 @@ export interface StandardKontext {
   anzahl(vorlage: string, merkmal: string, seit: number): Promise<number>;
   /** S4 — Fernzugänge mit Schalter „Sicherheitsupdates an“, Reihenfolge: unkritische zuerst (CMDB), sonst nach Name */
   zugaengeMitUpdates?(): Promise<string[]>;
+  /** I8b — Fernzugang ist ein Windows-System (PowerShell über OpenSSH) */
+  istWindows?(zugang: string): boolean;
   /** Vorlage (f) — NPM-Zertifikat nach ID */
   zertifikat?(id: number): Promise<{ id: number; domains: string[]; provider: string; ablauf?: string } | undefined>;
   jetzt: Date;
@@ -38,6 +42,8 @@ export interface Vorlage {
   beschreibung: string;
   parameter: Record<string, string>;
   verfuegbar: boolean; folgt?: string;
+  /** I8b — nur für dieses System (Serie wählt die Hosts danach); ohne Angabe Linux */
+  system?: 'linux' | 'windows';
   /** S1 — wovon die Vorlage ausgeht (Texte gehen in den Abdruck: geänderte Annahmen = neue Freigabe) */
   annahmenText?: string[];
   annahmen?(p: Record<string, unknown>, k: StandardKontext): Promise<Annahme[]>;
@@ -116,6 +122,7 @@ export const VORLAGEN: Vorlage[] = [
     async erzeuge(p, k) {
       const z = txt(p.zugang);
       if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
+      if (k.istWindows?.(z)) return { fehler: `${z} ist ein Windows-System — dafür gibt es die Vorlage (i) windows_updates` };
       if (!(await k.updatesAn(z))) return { fehler: `Schalter „Sicherheitsupdates“ ist für ${z} aus — nur Info (Owner 22.10.)` };
       const vm = await k.vmFuerZugang(z);
       if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot kein Standard-Change (Proxmox-Knoten nur als Normal-Change)` };
@@ -194,6 +201,7 @@ export const VORLAGEN: Vorlage[] = [
     async erzeuge(p, k) {
       const z = txt(p.zugang);
       if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
+      if (k.istWindows?.(z)) return { fehler: `${z} ist ein Windows-System — dafür gibt es die Vorlage (i) windows_updates` };
       if (!(await k.updatesAn(z))) return { fehler: `Schalter „Sicherheitsupdates“ ist für ${z} aus — nur Info (Owner 22.10.)` };
       const vm = await k.vmFuerZugang(z);
       if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot keine Standard-Updates` };
@@ -206,6 +214,39 @@ export const VORLAGEN: Vorlage[] = [
         titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
         typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...(za ? [za] : [])],
         schritte: osUpdateSchritte(z, vm, snap, f, `osupd-${snap}`),
+      } };
+    },
+  },
+  {
+    key: 'windows_updates', version: 1, titel: '(i) Windows-Updates', system: 'windows',
+    beschreibung: 'Für Windows-VMs auf Proxmox mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (laufende automatische Dienste) → Installation über den Windows-Update-Agenten als einmalige Aufgabe unter SYSTEM (alle Software-Updates außer Feature-Upgrades und Updates mit Benutzereingabe, keine Treiber), Start spätestens 45 min vor Fensterende → Neustart NUR wenn Windows ihn verlangt und spätestens 30 min vor Fensterende → Warten, VM, Gast-Agent und SSH → Nachher-Vergleich (alle vorher laufenden Dienste laufen wieder). Rückweg: Snapshot zurücksetzen. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage. Nicht für Cluster-Knoten (folgt mit I8d).',
+    parameter: { zugang: 'Fernzugang-Name (Windows)', fenster: 'optional HH:MM-HH:MM (Standard 00:30-02:45)' }, verfuegbar: true,
+    annahmenText: ['Windows mit Windows-Update-Dienst', 'OpenSSH-Server läuft', 'Gast-Agent der VM antwortet'],
+    async annahmen(p, k) {
+      const z = txt(p.zugang);
+      const vm = await k.vmFuerZugang(z);
+      return [
+        { id: 'wu', text: 'Windows mit Windows-Update-Dienst', pruefung: { typ: 'befehl', zugang: z, befehl: 'Get-Service -Name wuauserv', erwartet: 'wuauserv' } },
+        { id: 'ssh', text: 'OpenSSH-Server läuft', pruefung: { typ: 'befehl', zugang: z, befehl: 'Get-Service -Name sshd', erwartet: 'Running' } },
+        ...(vm ? [{ id: 'agent', text: 'Gast-Agent der VM antwortet', pruefung: { typ: 'skill' as const, skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: vm.vmid, node: vm.node } } }] : []),
+      ];
+    },
+    async erzeuge(p, k) {
+      const z = txt(p.zugang);
+      if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
+      if (!k.istWindows?.(z)) return { fehler: `${z} ist kein Windows-System — dafür gibt es die Vorlage (h) os_updates` };
+      if (!(await k.updatesAn(z))) return { fehler: `Schalter „Sicherheitsupdates“ ist für ${z} aus — nur Info (Owner 22.10.)` };
+      const vm = await k.vmFuerZugang(z);
+      if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot keine Standard-Updates` };
+      const f = fensterAus(typeof p.fenster === 'string' ? p.fenster : undefined);
+      if ('fehler' in f) return f;
+      if (await k.anzahl('windows_updates', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
+      const snap = snapshotName(k.jetzt, 7);
+      const za = await k.zugangAsset(z);
+      return { merkmal: z, plan: {
+        titel: `Standard: Windows-Updates ${z}`, begruendung: `Standard-Change (i) — Windows-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
+        typ: 'normal', risiko: 'mittel', ausfallMinuten: 10, betroffen: [vm.assetId, ...(za ? [za] : [])],
+        schritte: winUpdateSchritte(z, vm, snap, f),
       } };
     },
   },

@@ -7776,6 +7776,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   return Array.isArray(r.data) ? (r.data as Array<{ name?: string }>).filter(s => s.name && s.name !== 'current').map(s => ({ name: s.name! })) : [];
                 },
                 updatesAn: async (z) => schalter[z] === 'an',
+                istWindows: (z) => zugaenge.find(x => x.name === z)?.system === 'windows',
                 // Vorlage (f) — Zertifikat aus Nginx Proxy Manager
                 zertifikat: async (id) => {
                   const sk = skillRegistry.get('nginx_proxy_manager'); if (!sk) return undefined;
@@ -7832,14 +7833,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // S4 — wöchentliche Betriebssystem-Updates (Owner 27.10.: wöchentlich, nachts ab 00:30; ein Ja je Serie): dienstags 10:00 legt
         // Alfred die Serie für die kommende Nacht an (alle Hosts mit Schalter „Updates an“) und stellt EINE Freigabe-Frage. Ohne Ja läuft nichts.
         this.registriereJob({
-          key: 'os-updates-serie', beschreibung: 'S4 — wöchentliche Betriebssystem-Updates: Serie für die Nacht auf Mittwoch anlegen, eine Freigabe-Frage',
+          key: 'os-updates-serie', beschreibung: 'S4 — wöchentliche Betriebssystem-Updates (Linux und Windows je als Serie): für die Nacht auf Mittwoch anlegen, je eine Freigabe-Frage',
           takt: { art: 'woechentlich', tag: 2, um: '10:00' }, bereich: 'global', slot: true, timeoutMin: 10,
           run: async () => {
             const o = ownerFz(); if (!o || !standardRef) return { ok: true, zaehler: { changes: 0 } };
             const { naechsteNacht } = await import('./infrastruktur/os-updates.js');
             const r = await standardRef.serie(o, 'os_updates', { geplantAb: naechsteNacht(new Date()) });
-            if (!r.ok) { await this.meldeOhneModell(`📋 Wöchentliche Betriebssystem-Updates: keine Serie angelegt — ${r.fehler.join('; ')}`).catch(() => undefined); return { ok: true, zaehler: { changes: 0 } }; }
-            return { ok: true, zaehler: { changes: r.ids.length } };
+            if (!r.ok) await this.meldeOhneModell(`📋 Wöchentliche Betriebssystem-Updates: keine Serie angelegt — ${r.fehler.join('; ')}`).catch(() => undefined);
+            // I8b — Windows-Hosts als eigene Serie (Vorlage i); ohne Windows-Host mit Schalter „an“ keine Meldung
+            const w = await standardRef.serie(o, 'windows_updates', { geplantAb: naechsteNacht(new Date()) });
+            if (!w.ok && !w.fehler.some(f => f.startsWith('keine Hosts'))) await this.meldeOhneModell(`📋 Wöchentliche Windows-Updates: keine Serie angelegt — ${w.fehler.join('; ')}`).catch(() => undefined);
+            return { ok: true, zaehler: { changes: (r.ok ? r.ids.length : 0) + (w.ok ? w.ids.length : 0) } };
           },
         });
         // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner);

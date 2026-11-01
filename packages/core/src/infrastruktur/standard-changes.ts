@@ -123,11 +123,14 @@ export class StandardChanges {
    */
   async serie(o: string, key: string, opts: { zugaenge?: string[]; parameter?: Record<string, unknown>; geplantAb?: string }): Promise<{ ok: true; text: string; ids: string[] } | { ok: false; fehler: string[] }> {
     if (!this.d.planeSerie || !this.d.freigabeAnfragen) return { ok: false, fehler: ['Serien sind hier nicht verfügbar'] };
+    // I8b — Hosts vor der Freigabe-Prüfung wählen, nach dem System der Vorlage (Linux/Windows): ohne passende Hosts bleibt die
+    // wöchentliche Windows-Serie still, statt „nicht freigegeben“ zu melden
+    const kx = await this.d.kontext(o);
+    const win = this.vorlage(key)?.system === 'windows';
+    const hosts = opts.zugaenge?.length ? opts.zugaenge : ((await kx.zugaengeMitUpdates?.()) ?? []).filter(z => !!kx.istWindows?.(z) === win);
+    if (!hosts.length) return { ok: false, fehler: [`keine Hosts — kein ${win ? 'Windows-' : ''}Fernzugang mit Schalter „Sicherheitsupdates an“ (updates_schalter)`] };
     const n = await this.nutzbar(o, key);
     if ('fehler' in n) return { ok: false, fehler: [n.fehler] };
-    const kx = await this.d.kontext(o);
-    const hosts = opts.zugaenge?.length ? opts.zugaenge : (await kx.zugaengeMitUpdates?.()) ?? [];
-    if (!hosts.length) return { ok: false, fehler: ['keine Hosts — kein Fernzugang mit Schalter „Sicherheitsupdates an“ (updates_schalter)'] };
     const plaene: Array<Record<string, unknown>> = []; const ausgelassen: string[] = [];
     for (const z of hosts) {
       const p = { ...(opts.parameter ?? {}), zugang: z };
