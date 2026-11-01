@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bestandsaufnahme für Windows-Hosts (I8b Teil 1, v1737)
+
+- Windows-Zugänge werden in der Bestandsaufnahme mit festen PowerShell-Lesebefehlen erfasst (JSON, Parser ohne Modell):
+  - Betriebssystem und Build, RAM, CPUs, Domäne;
+  - Volumes, laufende Dienste, offene Ports mit Prozess;
+  - installierte Rollen, installierte und ausstehende Updates (`Start-WUScan` sucht nur, installiert nichts).
+- Das Ergebnis landet wie bei Linux in der CMDB, mit Zusatzangaben für Windows.
+- Der Anwendungs-Update-Bericht (apt/Container) überspringt Windows-Hosts; deren ausstehende Updates stehen im Bestand.
+- Windows-Leseliste ergänzt um `Get-Process` (ohne Benutzernamen) und `Start-WUScan` (ohne Parameter).
+
 ### Fixed — VM löschen trotz fehlendem Speicher am Knoten (v1736)
 
 - `delete_vm` sucht beim Löschen auch nach verwaisten Platten, und zwar in jedem Speicher des Knotens. Auf pve ist der Speicher `nvme001` eingetragen, die Volume Group fehlt dort aber. Die Suche brach deshalb ab, nachdem die eigenen Platten schon gelöscht waren, und die VM blieb ohne Platten stehen (Realfall Change 7f04dc5f).

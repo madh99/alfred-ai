@@ -744,10 +744,10 @@ export class FernzugriffSkill extends Skill {
   }
 
   /** I1 — aktive Zugänge (Name, Host, CMDB-Verweis) für die Sammler. */
-  async aktiveZugaenge(): Promise<Array<{ name: string; host: string; cmdbAssetId?: string }>> {
+  async aktiveZugaenge(): Promise<Array<{ name: string; host: string; cmdbAssetId?: string; system?: 'linux' | 'windows' }>> {
     const owner = this.deps.owner();
     if (!owner) return [];
-    return (await this.deps.repo.liste(owner)).filter(z => z.status === 'aktiv').map(z => ({ name: z.name, host: z.host, ...(z.cmdbAssetId ? { cmdbAssetId: z.cmdbAssetId } : {}) }));
+    return (await this.deps.repo.liste(owner)).filter(z => z.status === 'aktiv').map(z => ({ name: z.name, host: z.host, ...(z.cmdbAssetId ? { cmdbAssetId: z.cmdbAssetId } : {}), ...(z.system === 'windows' ? { system: 'windows' as const } : {}) }));
   }
 
   /** v1550 (S4c) — Hinweis, was Fachskills zum selben Host zusätzlich können (nur fürs Modell; Fehler stören das Ergebnis nicht). */

