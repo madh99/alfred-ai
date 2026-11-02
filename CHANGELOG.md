@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planprüfung erkennt Prüfbefehle, die im Lese-Käfig nie bestehen können (v1753)
+
+- Die Planprüfung weist Prüf- und Lesebefehle schon beim Planen ab, wenn sie im Lese-Käfig laufen würden und dort nicht funktionieren können:
+  - Zugriffe auf `/dev/disk/by-id` und ähnliche Pfade;
+  - `zpool`/`zfs` außerhalb der Leseliste, etwa in Python oder mit anderen Optionen;
+  - Proxmox-Werkzeuge wie `proxmox-backup-manager` oder `pvesm`, die den Dienst über einen Socket ansprechen.
+- Zu jedem Fall nennt sie die passende Form: `lsblk` mit WWN-Spalte, Befehle der Leseliste oder das Lesen der Konfigurationsdatei.
+- Befehle der Leseliste bleiben unberührt, weil sie als root außerhalb des Käfigs laufen.
+- Das Web nennt bei angehaltenen Changes auch „Schritt überspringen“. In der App gibt es dafür einen eigenen Knopf (mit dem nächsten App-Release).
+
 ### Fixed — Windows-Updates warten auf das Ende der Windows-Wartung (v1752)
 
 - Nach kumulativen Updates startet Windows teils noch mehrmals selbst neu (Wartungsdienst TrustedInstaller). Das brach bisher den Dienste-Vergleich ab.

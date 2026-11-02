@@ -57,7 +57,7 @@ function AktiveChanges({ changes }: { changes: ChangeKurzDto[] }) {
               </div>
             )}
             {angehalten && l?.grund && <p className="text-xs text-amber-200 whitespace-pre-wrap">{l.grund}</p>}
-            {angehalten && <p className="text-xs text-gray-400">Im Chat: „Change {kurzId} Schritt wiederholen“ · „Change {kurzId} abbrechen“ · „Change {kurzId} Rückweg ausführen“</p>}
+            {angehalten && <p className="text-xs text-gray-400">Im Chat: „Change {kurzId} Schritt wiederholen“ · „Change {kurzId} Schritt überspringen“ (nur lesende Schritte) · „Change {kurzId} abbrechen“ · „Change {kurzId} Rückweg ausführen“</p>}
           </section>
         );
       })}

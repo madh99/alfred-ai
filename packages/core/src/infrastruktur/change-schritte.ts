@@ -88,7 +88,23 @@ export function pruefbefehlFehler(befehl: string): string | undefined {
   // v1678 — Review 26.10. (Matrix F3/I13/J27, J8): im Lese-Käfig gibt es kein Netz, keine Unix-Sockets und kein D-Bus — Netzproben per
   // python-socket/curl/wget und systemctl außer status/is-active/is-failed scheitern dort immer
   if (/\b(socket|urllib|requests|http\.client|ssl\.|wget|openssl\s+s_client|telnet)\b|\bcurl\b|\bnc\b|\bdocker\b|\bsystemctl\b/.test(befehl)) return 'läuft im Lese-Käfig ohne Netz, Docker-Socket und D-Bus und kann so nie bestehen — Netzprobe mit „nc -z -w 5 <host> <port>“ oder „curl … http://localhost…“ (Leseliste), Dienste mit „systemctl is-active <dienst>“, Container mit „docker ps …“/„docker inspect --format …“; alles andere als eigenen ausfuehren-Schritt mit Marker-Ausgabe';
-  return undefined; // läuft im Lese-Käfig
+  return kaefigGrenze(befehl); // läuft im Lese-Käfig
+}
+
+/**
+ * v1753 — Realfall 02.11. (8f5375b0, PBS auf pve2): fünf Prüfschritte hielten an, weil der Befehl im Lese-Käfig lief und dort nie
+ * bestehen kann — /dev/disk/by-id unsichtbar, zpool/zfs ohne /dev/zfs, proxmox-backup-manager/pvesm über den Dienst-Socket
+ * („Address family not supported“). Gilt nur für Befehle, die NICHT auf der Leseliste stehen (die laufen als root).
+ */
+/** befehl bzw. befehle=[…] eines fernzugriff.lesen */
+const lesebefehle = (p: Record<string, unknown> | undefined): string[] => [p?.befehl, ...(Array.isArray(p?.befehle) ? p!.befehle as unknown[] : [])].filter((x): x is string => typeof x === 'string' && !!x.trim());
+
+export function kaefigGrenze(befehl: string): string | undefined {
+  if (befehlsklasse(befehl) === 'lesen' || nurMetadaten(befehl)) return undefined;
+  if (/\/dev\/disk\/by-(id|uuid|path|label)\b/.test(befehl)) return 'sieht /dev/disk/by-… im Lese-Käfig nicht — Geräte über „lsblk -J -o NAME,TYPE,FSTYPE,WWN,SERIAL“ ohne Gerätepfad zuordnen (liest /sys) oder „ls -l /dev/disk/by-id“ als eigenen Befehl (Leseliste)';
+  if (/\b(zpool|zfs)\b/.test(befehl)) return 'zpool/zfs finden im Lese-Käfig /dev/zfs nicht — nur als eigener Befehl der Leseliste (z. B. „zpool status <pool>“, „zfs list“), nicht in Python, Pipes zu anderen Werkzeugen oder mit anderen Optionen';
+  if (/\b(proxmox-backup-manager|proxmox-backup-client|pvesh|pvesm|pveum|pvecm|pvenode|qm|pct|ha-manager)\b/.test(befehl)) return 'spricht den Proxmox-Dienst über einen Socket an — im Lese-Käfig gesperrt; stattdessen die Konfiguration lesen (cat /etc/pve/… bzw. /etc/proxmox-backup/…) oder einen Befehl der Leseliste (qm list, pct list, pvesm status, pvesm list <storage>)';
+  return undefined;
 }
 
 export function aktionsArt(skill: string, aktion: string, parameter?: Record<string, unknown>): AktionsArt {
@@ -190,6 +206,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;
     if (aus.skill && !s) f.push(`${wo}: Prüf-Skill ${aus.skill} gibt es nicht`);
     else if (s && aus.aktion && aktionsArt(aus.skill!, aus.aktion, aus.parameter) !== 'lesen') f.push(`${wo}: Prüf-Aktion ${aus.skill}.${aus.aktion} ist nicht lesend`);
+    if (aus.skill === 'fernzugriff' && aus.aktion === 'lesen') for (const b of lesebefehle(aus.parameter)) { const g = kaefigGrenze(ersetzeVerweise(b)); if (g) f.push(`${wo}: Prüfbefehl „${b.slice(0, 60)}“ ${g}`); }
   }
   return aus;
 }
@@ -291,6 +308,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       }
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'anlegen' && typeof schritt.parameter.name === 'string') neueZugaenge.add(schritt.parameter.name.trim().toLowerCase());
       // v1610 — Realfall 23.10. (dea4b9cd, Schritt 5): quelle_pfad /root/… wurde erst im Lauf abgewiesen — dieselbe Pfadregel schon beim Planen
+      // v1753 — lesende Fernzugriff-Schritte scheitern an denselben Käfig-Grenzen wie Prüfungen
+      if (schritt.skill === 'fernzugriff' && schritt.aktion === 'lesen') for (const b of lesebefehle(schritt.parameter)) { const g = kaefigGrenze(ersetzeVerweise(b)); if (g) f.push(`${wo}: Lesebefehl „${b.slice(0, 60)}“ ${g}`); }
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'kopieren') {
         for (const [feld, art] of [['quelle_pfad', 'quelle'], ['ziel_pfad', 'ziel']] as const) {
           const w = schritt.parameter[feld];

@@ -300,6 +300,8 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
             if (status == 'submitted' && widget.aufBestaetigungen != null) FilledButton.tonalIcon(onPressed: widget.aufBestaetigungen, icon: const Icon(Icons.verified_outlined, size: 18), label: const Text('Zur Freigabe')),
             if (halt) ...[
               FilledButton.tonalIcon(onPressed: () => widget.aufNachfragen('Change $kurz Schritt wiederholen'), icon: const Icon(Icons.replay, size: 18), label: const Text('Wiederholen …')),
+              // Owner 02.11.: Überspringen gab es nur im Chat — Alfred lässt es nur bei lesenden/prüfenden Schritten zu und sagt sonst, warum nicht
+              TextButton(key: Key('ueberspringen-$kurz'), onPressed: () => widget.aufNachfragen('Change $kurz Schritt ${lauf?['schritt'] ?? fertig + 1} überspringen'), child: const Text('Überspringen …')),
               TextButton(onPressed: () => widget.aufNachfragen('Change $kurz Rückweg ausführen'), child: const Text('Rückweg …')),
               TextButton(onPressed: () => widget.aufNachfragen('Change $kurz abbrechen'), child: const Text('Abbrechen …')),
             ],

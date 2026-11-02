@@ -561,3 +561,29 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
     expect(pruefeChangePlan(basis({ typ: 'befehl', zugang: 'dockerhost', befehl: 'test -f /srv/x/ok' }), ctx()).fehler.some(x => x.includes('kein erwartet'))).toBe(false);
   });
 });
+
+// v1753 — Realfall 02.11. (8f5375b0): Prüfbefehle, die im Lese-Käfig nie bestehen können, schon beim Planen abweisen
+describe('v1753 Käfig-Grenzen der Prüfbefehle', () => {
+  it('weist die gescheiterten Befehle ab und lässt die Leseliste-Gegenstücke durch', async () => {
+    const { kaefigGrenze } = await import('./change-schritte.js');
+    for (const nein of [
+      "python3 - <<'PY'\nimport subprocess\nsubprocess.check_output(['lsblk','-n','/dev/disk/by-id/wwn-0x1'])\nPY",
+      "python3 - <<'PY'\nimport subprocess\nsubprocess.check_output(['zpool','list','-H','-o','name'])\nPY",
+      'zpool list -H -o name,health backup',
+      'proxmox-backup-manager datastore list',
+      'proxmox-backup-manager user permissions cluster@pbs --path /datastore/backup',
+    ]) expect(kaefigGrenze(nein), nein).toBeTruthy();
+    for (const ja of ['ss -lnt', 'zpool status backup', 'zfs list', 'ls -l /dev/disk/by-id', 'qm list', 'cat /etc/proxmox-backup/datastore.cfg', 'cat /proc/net/tcp6 /proc/net/tcp', 'lsblk -J -o NAME,TYPE,FSTYPE,WWN,SERIAL', 'Get-Service -Name sshd'])
+      expect(kaefigGrenze(ja), ja).toBeUndefined();
+  });
+  it('gilt für Prüfungen über fernzugriff.lesen und für lesende Schritte', () => {
+    const plan = { titel: 'PBS prüfen', begruendung: 'Realfall 8f5375b0', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Datastore', art: 'pruefung', pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehl: 'proxmox-backup-manager datastore list' }, erwartet: '/backup/store' } },
+        { titel: 'Ports', art: 'aktion', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehle: ['zpool list -H -o name,health backup'] } },
+      ] };
+    const f = pruefeChangePlan(plan, ctx()).fehler.join(' | ');
+    expect(f).toContain('Schritt 1: Prüfbefehl „proxmox-backup-manager datastore list“ spricht den Proxmox-Dienst');
+    expect(f).toContain('Schritt 2: Lesebefehl „zpool list -H -o name,health backup“ zpool/zfs finden');
+  });
+});
