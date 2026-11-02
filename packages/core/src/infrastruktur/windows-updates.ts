@@ -150,3 +150,24 @@ export function winUpdateSchritte(z: string, vm: { vmid: number; node: string },
     { titel: 'Nachher: alle vorher laufenden Dienste laufen wieder', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: z, befehl: winNachherSkript(d), timeout_s: 700 }, pruefung: SSH_LAEUFT(z), rueckweg: rueck, zeitlimitS: 800 },
   ];
 }
+
+/**
+ * I8 3b-1 — ausstehende Windows-Updates für den Anwendungs-Update-Bericht: nur suchen (Windows-Update-Agent), nichts laden oder
+ * installieren. Läuft als festes Skript aus dem Code (nicht im Lese-Käfig — der kennt kein COM); auf probe-win25b per SSH belegt.
+ */
+export const WIN_UPDATE_SUCHE = ps([
+  '$s = New-Object -ComObject Microsoft.Update.Session',
+  `$r = $s.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")`,
+  '"ANZAHL=" + $r.Updates.Count',
+  'foreach ($u in $r.Updates) { "UPDATE " + $u.Title + " | " + (@($u.Categories | ForEach-Object { $_.Name }) -join "/") + " | " + $u.InstallationBehavior.RebootBehavior }',
+]);
+
+export interface WinUpdate { titel: string; kategorie: string; neustart: boolean }
+export function leseWinUpdates(t: string): WinUpdate[] | undefined {
+  if (!/^ANZAHL=\d+/m.test(t)) return undefined;
+  return t.split(/\r?\n/).filter(z => z.startsWith('UPDATE ')).map(z => {
+    const [titel, kategorie, rb] = z.slice(7).split(' | ');
+    return { titel: (titel ?? '').trim(), kategorie: (kategorie ?? '').trim(), neustart: (rb ?? '0').trim() !== '0' };
+  });
+}
+

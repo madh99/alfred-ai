@@ -177,7 +177,10 @@ export interface HostStand { host: string; apt: AptUpdate[]; hauptversionen: Arr
 
 const ART_TEXT: Record<UpdateArt, string> = { datenbank: 'Datenbank — nie Standard, eigener Change', mit_daten: 'mit Daten/Schema — eigener Change mit Sicherung', zustandslos: 'zustandslos — Vorlage (d) möglich', system: 'System' };
 
-export function berichtText(hosts: HostStand[], container: ContainerStand[], jetzt: Date): string {
+/** I8 — Windows-Host im Bericht */
+export interface WindowsStand { host: string; updates: Array<{ titel: string; kategorie: string; neustart: boolean }>; updatesSchalter: boolean; fehler?: string }
+
+export function berichtText(hosts: HostStand[], container: ContainerStand[], jetzt: Date, windows: WindowsStand[] = []): string {
   const z: string[] = [`# Anwendungs-Updates ${jetzt.toISOString().slice(0, 10)}`, '', 'Nur gelesen, nichts geändert. Betriebssystem-Pakete auf Hosts mit Update-Schalter spielt die wöchentliche Vorlage ein; hier steht, was darüber hinaus ansteht.', ''];
   z.push('## Native Anwendungen (apt)', '');
   for (const h of hosts) {
@@ -188,6 +191,15 @@ export function berichtText(hosts: HostStand[], container: ContainerStand[], jet
     z.push(`- **${h.host}**${h.updatesSchalter ? ' (wöchentliche OS-Updates an)' : ''}: ${h.apt.length} Pakete${sich ? `, davon ${sich} Sicherheit` : ''}${sys.length && !app.length ? ' — nur System' : ''}`);
     for (const a of app) z.push(`  - ${a.paket} ${a.alt} → ${a.neu}${a.sicherheit ? ' **Sicherheit**' : ''} · ${ART_TEXT[aptArt(a.paket)]}`);
     for (const hv of h.hauptversionen) z.push(`  - Neue Hauptversion verfügbar: ${hv.familie} ${hv.installiert} → ${hv.verfuegbar} (nie automatisch; Upgrade nur als geplanter Change)`);
+  }
+  if (windows.length) {
+    z.push('', '## Windows-Updates', '');
+    for (const w of windows) {
+      if (w.fehler) { z.push(`- **${w.host}**: nicht gelesen (${w.fehler})`); continue; }
+      const neu = w.updates.filter(u => u.neustart).length;
+      z.push(`- **${w.host}**${w.updatesSchalter ? ' (wöchentliche Windows-Updates an, Vorlage i)' : ''}: ${w.updates.length ? `${w.updates.length} ausstehend${neu ? `, davon ${neu} mit Neustart` : ''}` : 'keine ausstehend'}`);
+      for (const u of w.updates) z.push(`  - ${u.titel}${u.kategorie ? ` · ${u.kategorie}` : ''}${u.neustart ? ' · Neustart' : ''}`);
+    }
   }
   z.push('', '## Container', '');
   const mitUpdate = container.filter(c => c.neuerBuild || c.gleicheHauptversion.length || c.neueHauptversion.length);

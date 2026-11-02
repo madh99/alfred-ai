@@ -7410,7 +7410,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (!o || !fz) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
           const { sammleAnwendungsUpdates, berichtText } = await import('./infrastruktur/anwendungs-updates.js');
           const schalter = await wartungRepo.updatesSchalter(o).catch(() => ({} as Record<string, string>));
-          // I8b — Windows-Hosts haben kein apt; ihre Updates kommen mit den Windows-Updates (I8b Teil 3)
+          // I8b — Windows-Hosts haben kein apt; ihre ausstehenden Updates stehen im eigenen Abschnitt (unten)
           const hosts = (await fz.aktiveZugaenge()).filter(z => z.system !== 'windows').map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
           // v1730 — Herkunft übertragener Images: abgeschlossene Changes mit image_hochladen (Digest → Quellhost) + alter CMDB-Eintrag
           const transporte = new Map<string, { quelleHost: string; change: string }>();
@@ -7439,8 +7439,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000), herkunft,
             abruf: async (url, init) => fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000) }), // v1708 — keine Weiterleitung (SSRF)
           });
-          this.logger.info({ hosts: r.hosts.length, container: r.container.length, fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');
-          return berichtText(r.hosts, r.container, new Date());
+          // I8 3b-1 — Windows-Hosts: ausstehende Updates über das feste Such-Skript (nur suchen, nichts installieren)
+          const { WIN_UPDATE_SUCHE, leseWinUpdates } = await import('./infrastruktur/windows-updates.js');
+          const windows: import('./infrastruktur/anwendungs-updates.js').WindowsStand[] = [];
+          for (const z of (await fz.aktiveZugaenge()).filter(x => x.system === 'windows')) {
+            const w = await fz.ausfuehrenIntern(z.name, WIN_UPDATE_SUCHE, false, 180_000).catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+            const liste = w.code === 0 ? leseWinUpdates(w.stdout) : undefined;
+            windows.push({ host: z.name, updatesSchalter: schalter[z.name] === 'an', updates: liste ?? [], ...(liste ? {} : { fehler: (w.stderr || w.stdout).trim().split('\n').slice(-1)[0]?.slice(0, 160) || `Exit ${w.code}` }) });
+          }
+          this.logger.info({ hosts: r.hosts.length, container: r.container.length, windows: windows.map(w => `${w.host}: ${w.fehler ?? w.updates.length}`), fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');
+          return berichtText(r.hosts, r.container, new Date(), windows);
         };
         const alfredUsersI4b = new AlfredUserRepoI4b(adapter);
         const { WartungsDienst } = await import('./infrastruktur/wartung-dienst.js');

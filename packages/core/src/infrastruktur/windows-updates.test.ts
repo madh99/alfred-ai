@@ -112,3 +112,23 @@ describe('freier Snapshot-Name', () => {
     expect(snapshotAbgelaufen('alfred_20261103_7d_2', new Date('2026-11-09T00:00:00Z'))).toBe(false);
   });
 });
+
+// I8 3b-1 — ausstehende Windows-Updates im Anwendungs-Update-Bericht (nur suchen)
+describe('Windows im Anwendungs-Update-Bericht', () => {
+  it('Such-Skript sucht nur; Parser und Berichtsabschnitt', async () => {
+    const { WIN_UPDATE_SUCHE, leseWinUpdates } = await import('./windows-updates.js');
+    const { berichtText } = await import('./anwendungs-updates.js');
+    const skript = dekodiere(WIN_UPDATE_SUCHE);
+    expect(skript).toContain('CreateUpdateSearcher().Search(');
+    expect(skript).not.toMatch(/CreateUpdateDownloader|CreateUpdateInstaller|\.Download\(|\.Install\(|AcceptEula|ScheduledTask|shutdown/i);
+    // Ausgabe wie auf probe-win25b am 02.11. gelesen
+    const l = leseWinUpdates('ANZAHL=1\r\nUPDATE Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.84.0) - Current Channel (Broad) | Definition Updates/Microsoft Defender Antivirus | 0\r\n');
+    expect(l).toEqual([{ titel: 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.84.0) - Current Channel (Broad)', kategorie: 'Definition Updates/Microsoft Defender Antivirus', neustart: false }]);
+    expect(leseWinUpdates('FEHLER: Zugriff verweigert')).toBeUndefined();
+    const t = berichtText([], [], new Date('2026-11-02T12:00:00Z'), [{ host: 'probe-win25b', updatesSchalter: true, updates: l! }, { host: 'win-x', updatesSchalter: false, updates: [], fehler: 'Exit 255' }]);
+    expect(t).toContain('## Windows-Updates');
+    expect(t).toContain('- **probe-win25b** (wöchentliche Windows-Updates an, Vorlage i): 1 ausstehend');
+    expect(t).toContain('- **win-x**: nicht gelesen (Exit 255)');
+    expect(berichtText([], [], new Date())).not.toContain('Windows-Updates'); // ohne Windows-Hosts kein Abschnitt
+  });
+});

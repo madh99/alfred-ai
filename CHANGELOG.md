@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows im Anwendungs-Update-Bericht (v1756)
+
+- Der wöchentliche Bericht über Anwendungs-Updates hat einen eigenen Abschnitt „Windows-Updates“: je Windows-Host die ausstehenden Updates mit Kategorie und dem Hinweis, ob ein Neustart nötig ist.
+- Die Abfrage sucht nur und lädt oder installiert nichts. Sie läuft als festes Skript aus Alfred selbst, weil der Windows-Lese-Käfig keinen Zugriff auf den Windows-Update-Agenten hat.
+- Ohne Windows-Hosts bleibt der Abschnitt weg.
+
 ### Fixed — Käfig-Regel gegen Netz, Docker und systemctl auch für lesende Schritte (v1755)
 
 - Die Regel gegen Netzzugriffe, Docker-Socket und `systemctl` im Lese-Käfig galt bisher nur für Prüfungen. Lesende Schritte und Prüfungen über `fernzugriff.lesen` mit z. B. einem Python-Skript, das `systemctl` aufruft, rutschten durch und hielten erst im Lauf an. Jetzt weist die Planprüfung sie schon beim Planen ab.
