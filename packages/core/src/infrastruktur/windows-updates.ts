@@ -116,6 +116,7 @@ export function winNachherSkript(d: string): string {
   return ps([
     '$ErrorActionPreference = "Stop"',
     `$v = @(Get-Content -Path '${d}\\vorher.txt' | Where-Object { $_ })`,
+    "if ((Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired') -or (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending')) { throw 'Windows verlangt weiterhin einen Neustart' }",
     '$ende = (Get-Date).AddMinutes(10)',
     "do { $fehlt = @($v | Where-Object { (Get-Service -Name $_ -ErrorAction SilentlyContinue).Status -ne 'Running' }); if (-not $fehlt.Count) { break }; Start-Sleep -Seconds 20 } while ((Get-Date) -lt $ende)",
     'if ($fehlt.Count) { throw ("nicht wieder gestartet: " + ($fehlt -join ", ")) }',
@@ -124,6 +125,7 @@ export function winNachherSkript(d: string): string {
 }
 
 const SSH_LAEUFT = (z: string) => ({ typ: 'befehl', zugang: z, befehl: 'Get-Service -Name sshd', erwartet: 'Running' });
+const WARTUNG_RUHT = (z: string) => ({ typ: 'befehl', zugang: z, befehl: 'Get-Service -Name TrustedInstaller', erwartet: 'Stopped' });
 
 /** Schritte der Vorlage (i) für eine Windows-VM */
 export function winUpdateSchritte(z: string, vm: { vmid: number; node: string }, snap: string, fenster: { von: string; bis: string }): Array<Record<string, unknown>> {
@@ -139,6 +141,12 @@ export function winUpdateSchritte(z: string, vm: { vmid: number; node: string },
     { titel: 'VM läuft', art: 'warten', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: vm.vmid, node: vm.node }, erwartet: 'running' }, zeitlimitS: 900 },
     { titel: 'Gast-Agent antwortet', art: 'warten', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: vm.vmid, node: vm.node } }, zeitlimitS: 900 },
     { titel: 'SSH wieder erreichbar', art: 'warten', pruefung: SSH_LAEUFT(z), zeitlimitS: 900 },
+    // v1752 — Realfall 02.11. (87edadca): nach Alfreds Neustart startete Windows noch zweimal selbst neu (TrustedInstaller, 01:39 und
+    // 01:41) und brach den Nachher-Vergleich ab. Erst weiter, wenn der Wartungsdienst ruht — als Warte-Schritte, die einen weiteren
+    // Neustart überstehen (eine gescheiterte Prüfung wird bis zum Zeitlimit wiederholt), dann Ruhezeit und erneute Prüfung.
+    { titel: 'Windows-Wartung abgeschlossen (TrustedInstaller ruht)', art: 'warten', pruefung: WARTUNG_RUHT(z), zeitlimitS: 2700 },
+    { titel: 'Ruhezeit nach der Wartung', art: 'warten', sekunden: 300, zeitlimitS: 600 },
+    { titel: 'Windows-Wartung ruht weiterhin', art: 'warten', pruefung: WARTUNG_RUHT(z), zeitlimitS: 1800 },
     { titel: 'Nachher: alle vorher laufenden Dienste laufen wieder', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: z, befehl: winNachherSkript(d), timeout_s: 700 }, pruefung: SSH_LAEUFT(z), rueckweg: rueck, zeitlimitS: 800 },
   ];
 }

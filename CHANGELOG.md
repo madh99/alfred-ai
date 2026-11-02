@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Updates warten auf das Ende der Windows-Wartung (v1752)
+
+- Nach kumulativen Updates startet Windows teils noch mehrmals selbst neu (Wartungsdienst TrustedInstaller). Das brach bisher den Dienste-Vergleich ab.
+- Die Vorlage (i) Windows-Updates, jetzt Version 2, wartet deshalb nach dem Wiederanlauf, bis der Wartungsdienst ruht. Danach folgen 5 Minuten Ruhezeit und eine erneute Prüfung. Ein weiterer Neustart in dieser Zeit bricht den Lauf nicht ab.
+- Der Dienste-Vergleich meldet ausdrücklich, wenn Windows weiterhin einen Neustart verlangt.
+- Die geänderte Vorlage braucht eine neue Freigabe.
+
 ### Fixed — eindeutige Snapshot-Namen der Standard-Vorlagen (v1751)
 
 - Liegt auf der VM schon ein Snapshot gleichen Namens, etwa von einem am selben Tag abgebrochenen Change, bekommt der neue eine laufende Nummer (`alfred_JJJJMMTT_7d_2`). Bisher hielt der Change mit „snapshot name already used“ an.

@@ -35,7 +35,7 @@ describe('I8b Vorlage (i) Windows-Updates', () => {
     expect(pruefeChangePlan(e.plan, pctx).fehler).toEqual([]);
     const s = e.plan.schritte as Array<{ titel: string; aktion?: string; parameter?: { befehl?: string }; rueckweg?: { aktion?: string } }>;
     expect(s[0]!.aktion).toBe('create_snapshot');
-    expect(s.map(x => x.titel.split(' ')[0])).toEqual(['Snapshot', 'Vorher:', 'Windows-Updates', 'Neustart', 'Anlaufzeit', 'VM', 'Gast-Agent', 'SSH', 'Nachher:']);
+    expect(s.map(x => x.titel.split(' ')[0])).toEqual(['Snapshot', 'Vorher:', 'Windows-Updates', 'Neustart', 'Anlaufzeit', 'VM', 'Gast-Agent', 'SSH', 'Windows-Wartung', 'Ruhezeit', 'Windows-Wartung', 'Nachher:']);
     const vorher = dekodiere(s[1]!.parameter!.befehl!), install = dekodiere(s[2]!.parameter!.befehl!), neu = dekodiere(s[3]!.parameter!.befehl!);
     expect(vorher).toContain("$n -lt '00:30' -or $n -ge '02:00'");
     expect(install).toContain("-User 'SYSTEM'");
@@ -46,7 +46,7 @@ describe('I8b Vorlage (i) Windows-Updates', () => {
     expect(install).toContain("Unregister-ScheduledTask -TaskName 'Alfred-WindowsUpdate'");
     expect(neu).toContain("'WINUPD_KEIN_NEUSTART'; exit 0");
     expect(neu).toContain("$n -ge '02:15'");
-    expect(s[8]!.rueckweg!.aktion).toBe('rollback_snapshot');
+    expect(s[11]!.rueckweg!.aktion).toBe('rollback_snapshot');
     expect(JSON.stringify(e.plan.schritte)).not.toMatch(/2026-11-/);
     expect(e.plan.geplantAb).toBe("2026-11-04T00:30:00+01:00"); // v1748 — 11:00 Wien liegt außerhalb → nächster Fensterbeginn
   });
