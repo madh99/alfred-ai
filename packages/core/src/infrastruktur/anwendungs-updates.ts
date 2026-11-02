@@ -177,6 +177,12 @@ export interface HostStand { host: string; apt: AptUpdate[]; hauptversionen: Arr
 
 const ART_TEXT: Record<UpdateArt, string> = { datenbank: 'Datenbank — nie Standard, eigener Change', mit_daten: 'mit Daten/Schema — eigener Change mit Sicherung', zustandslos: 'zustandslos — Vorlage (d) möglich', system: 'System' };
 
+/**
+ * Text vom Host (Update-Titel, Kategorien) geht in eine Markdown-Meldung: kein Markdown, keine Links, keine Zeilenumbrüche,
+ * begrenzte Länge — ein manipulierter Host soll in der Meldung nichts vortäuschen können (Sicherheitsprüfung 02.11.).
+ */
+export const hostText = (t: string, max = 160) => t.replace(/[\r\n\t]+/g, ' ').replace(/[`*_~\[\]()<>|#!\\]/g, '').replace(/https?:\/\/\S*/gi, '[Link entfernt]').trim().slice(0, max);
+
 /** I8 — Windows-Host im Bericht */
 export interface WindowsStand { host: string; updates: Array<{ titel: string; kategorie: string; neustart: boolean }>; updatesSchalter: boolean; fehler?: string }
 
@@ -195,10 +201,11 @@ export function berichtText(hosts: HostStand[], container: ContainerStand[], jet
   if (windows.length) {
     z.push('', '## Windows-Updates', '');
     for (const w of windows) {
-      if (w.fehler) { z.push(`- **${w.host}**: nicht gelesen (${w.fehler})`); continue; }
+      if (w.fehler && !w.updates.length) { z.push(`- **${w.host}**: nicht gelesen (${hostText(w.fehler)})`); continue; }
       const neu = w.updates.filter(u => u.neustart).length;
-      z.push(`- **${w.host}**${w.updatesSchalter ? ' (wöchentliche Windows-Updates an, Vorlage i)' : ''}: ${w.updates.length ? `${w.updates.length} ausstehend${neu ? `, davon ${neu} mit Neustart` : ''}` : 'keine ausstehend'}`);
-      for (const u of w.updates) z.push(`  - ${u.titel}${u.kategorie ? ` · ${u.kategorie}` : ''}${u.neustart ? ' · Neustart' : ''}`);
+      z.push(`- **${w.host}**${w.updatesSchalter ? ' (wöchentliche Windows-Updates an, Vorlage i)' : ''}: ${w.updates.length ? `${w.updates.length} ausstehend${neu ? `, davon ${neu} mit Neustart` : ''}` : 'keine ausstehend'}${w.fehler ? ` — ${hostText(w.fehler)}` : ''}`);
+      for (const u of w.updates.slice(0, 50)) z.push(`  - ${hostText(u.titel)}${u.kategorie ? ` · ${hostText(u.kategorie, 80)}` : ''}${u.neustart ? ' · Neustart' : ''}`);
+      if (w.updates.length > 50) z.push(`  - … und ${w.updates.length - 50} weitere`);
     }
   }
   z.push('', '## Container', '');

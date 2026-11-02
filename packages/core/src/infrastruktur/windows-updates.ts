@@ -159,15 +159,19 @@ export const WIN_UPDATE_SUCHE = ps([
   '$s = New-Object -ComObject Microsoft.Update.Session',
   `$r = $s.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")`,
   '"ANZAHL=" + $r.Updates.Count',
-  'foreach ($u in $r.Updates) { "UPDATE " + $u.Title + " | " + (@($u.Categories | ForEach-Object { $_.Name }) -join "/") + " | " + $u.InstallationBehavior.RebootBehavior }',
+  // Zeilenumbrüche aus Titeln entfernen — sonst zerfiele ein Update in mehrere Zeilen (Sicherheitsprüfung 02.11.)
+  'foreach ($u in $r.Updates) { "UPDATE " + ($u.Title -replace "[\\r\\n|]+", " ") + " | " + ((@($u.Categories | ForEach-Object { $_.Name }) -join "/") -replace "[\\r\\n|]+", " ") + " | " + $u.InstallationBehavior.RebootBehavior }',
 ]);
 
 export interface WinUpdate { titel: string; kategorie: string; neustart: boolean }
-export function leseWinUpdates(t: string): WinUpdate[] | undefined {
-  if (!/^ANZAHL=\d+/m.test(t)) return undefined;
-  return t.split(/\r?\n/).filter(z => z.startsWith('UPDATE ')).map(z => {
+/** Liste und gemeldete Anzahl — weichen sie ab, ist die Liste unvollständig und der Bericht sagt das (Sicherheitsprüfung 02.11.) */
+export function leseWinUpdates(t: string): { updates: WinUpdate[]; anzahl: number } | undefined {
+  const m = /^ANZAHL=(\d+)/m.exec(t);
+  if (!m) return undefined;
+  const updates = t.split(/\r?\n/).filter(z => z.startsWith('UPDATE ')).map(z => {
     const [titel, kategorie, rb] = z.slice(7).split(' | ');
     return { titel: (titel ?? '').trim(), kategorie: (kategorie ?? '').trim(), neustart: (rb ?? '0').trim() !== '0' };
   });
+  return { updates, anzahl: Number(m[1]) };
 }
 

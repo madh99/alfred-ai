@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Abschnitt im Update-Bericht abgesichert; Einzelsicherungen in der Stilllegung (v1757)
+
+- Update-Titel und Kategorien eines Windows-Hosts gehen nur noch bereinigt in den Bericht: ohne Markdown, ohne Links und ohne Zeilenumbrüche, mit begrenzter Länge, höchstens 50 Einträge je Host. Ein manipulierter Host kann in der Meldung so nichts vortäuschen.
+- Weicht die Zahl der gelesenen Updates von der gemeldeten Anzahl ab, sagt der Bericht „Liste unvollständig“. Bisher wäre er in diesem Fall stillschweigend zu niedrig gewesen. Zeilenumbrüche in Titeln entfernt schon das Such-Skript.
+- In einem Stilllegungs-Change darf jetzt auch `pvesm free` einzelne Sicherungen oder Volumes ohne Rückweg entfernen.
+
 ### Added — Windows im Anwendungs-Update-Bericht (v1756)
 
 - Der wöchentliche Bericht über Anwendungs-Updates hat einen eigenen Abschnitt „Windows-Updates“: je Windows-Host die ausstehenden Updates mit Kategorie und dem Hinweis, ob ein Neustart nötig ist.

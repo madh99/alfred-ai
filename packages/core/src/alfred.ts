@@ -7445,7 +7445,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           for (const z of (await fz.aktiveZugaenge()).filter(x => x.system === 'windows')) {
             const w = await fz.ausfuehrenIntern(z.name, WIN_UPDATE_SUCHE, false, 180_000).catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
             const liste = w.code === 0 ? leseWinUpdates(w.stdout) : undefined;
-            windows.push({ host: z.name, updatesSchalter: schalter[z.name] === 'an', updates: liste ?? [], ...(liste ? {} : { fehler: (w.stderr || w.stdout).trim().split('\n').slice(-1)[0]?.slice(0, 160) || `Exit ${w.code}` }) });
+            const fehler = !liste ? ((w.stderr || w.stdout).trim().split('\n').slice(-1)[0]?.slice(0, 160) || `Exit ${w.code}`)
+              : liste.updates.length !== liste.anzahl ? `Liste unvollständig: ${liste.updates.length} von ${liste.anzahl} gelesen` : undefined;
+            windows.push({ host: z.name, updatesSchalter: schalter[z.name] === 'an', updates: liste?.updates ?? [], ...(fehler ? { fehler } : {}) });
           }
           this.logger.info({ hosts: r.hosts.length, container: r.container.length, windows: windows.map(w => `${w.host}: ${w.fehler ?? w.updates.length}`), fehler: r.hosts.filter(h => h.fehler).map(h => `${h.host}: ${h.fehler}`) }, 'Anwendungs-Updates gelesen');
           return berichtText(r.hosts, r.container, new Date(), windows);

@@ -123,12 +123,25 @@ describe('Windows im Anwendungs-Update-Bericht', () => {
     expect(skript).not.toMatch(/CreateUpdateDownloader|CreateUpdateInstaller|\.Download\(|\.Install\(|AcceptEula|ScheduledTask|shutdown/i);
     // Ausgabe wie auf probe-win25b am 02.11. gelesen
     const l = leseWinUpdates('ANZAHL=1\r\nUPDATE Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.84.0) - Current Channel (Broad) | Definition Updates/Microsoft Defender Antivirus | 0\r\n');
-    expect(l).toEqual([{ titel: 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.84.0) - Current Channel (Broad)', kategorie: 'Definition Updates/Microsoft Defender Antivirus', neustart: false }]);
+    expect(l!.anzahl).toBe(1);
+    expect(l!.updates).toEqual([{ titel: 'Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.84.0) - Current Channel (Broad)', kategorie: 'Definition Updates/Microsoft Defender Antivirus', neustart: false }]);
     expect(leseWinUpdates('FEHLER: Zugriff verweigert')).toBeUndefined();
-    const t = berichtText([], [], new Date('2026-11-02T12:00:00Z'), [{ host: 'probe-win25b', updatesSchalter: true, updates: l! }, { host: 'win-x', updatesSchalter: false, updates: [], fehler: 'Exit 255' }]);
+    const t = berichtText([], [], new Date('2026-11-02T12:00:00Z'), [{ host: 'probe-win25b', updatesSchalter: true, updates: l!.updates }, { host: 'win-x', updatesSchalter: false, updates: [], fehler: 'Exit 255' }]);
     expect(t).toContain('## Windows-Updates');
     expect(t).toContain('- **probe-win25b** (wöchentliche Windows-Updates an, Vorlage i): 1 ausstehend');
     expect(t).toContain('- **win-x**: nicht gelesen (Exit 255)');
     expect(berichtText([], [], new Date())).not.toContain('Windows-Updates'); // ohne Windows-Hosts kein Abschnitt
+  });
+  it('Sicherheitsprüfung 02.11.: Host-Text ohne Markdown/Links, Anzahl-Abgleich, Zeilenumbrüche im Skript entfernt', async () => {
+    const { WIN_UPDATE_SUCHE, leseWinUpdates } = await import('./windows-updates.js');
+    const { berichtText, hostText } = await import('./anwendungs-updates.js');
+    expect(dekodiere(WIN_UPDATE_SUCHE)).toContain('$u.Title -replace');
+    expect(hostText('Update **dringend** [hier](https://boese.example/x) `code`\nZeile2')).toBe('Update dringend hier[Link entfernt] code Zeile2');
+    // gemeldet 2, gelesen 1 → unvollständig erkennbar
+    const l = leseWinUpdates('ANZAHL=2\nUPDATE A | Kat | 0\n')!;
+    expect([l.updates.length, l.anzahl]).toEqual([1, 2]);
+    const t = berichtText([], [], new Date(), [{ host: 'w', updatesSchalter: false, updates: [{ titel: '[Klick](http://x)', kategorie: 'K', neustart: true }], fehler: 'Liste unvollständig: 1 von 2 gelesen' }]);
+    expect(t).toContain('1 ausstehend, davon 1 mit Neustart — Liste unvollständig: 1 von 2 gelesen');
+    expect(t).not.toMatch(/\]\(|http:/);
   });
 });
