@@ -48,7 +48,8 @@ const LESE_MUSTER = /^(list|get|show|status|info|search|logs?$|ps$|inspect|descr
 const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_config', 'snapshot', 'backup', 'export_config']);
 /** v1750 — im Stilllegungs-Change ohne Rückweg zulässige Entfernen-Befehle über Fernzugriff */
 // v1757 — pvesm free (einzelne Sicherungen/Volumes auf einem Speicher; Realfall 02.11. backupshare 2024er Sicherungen)
-const STILLLEGUNG_ENTFERNEN = /^(rm|qm destroy|pct destroy|pvesm remove|pvesm free|lvremove|vgremove|pvremove)\s/;
+// v1758 — Snapshots eines Gasts (Realfall 02.11.: CT-Snapshot aaa von 2024 hielt mp1 in der Replikation)
+const STILLLEGUNG_ENTFERNEN = /^(rm|qm destroy|pct destroy|qm delsnapshot|pct delsnapshot|pvesm remove|pvesm free|lvremove|vgremove|pvremove)\s/;
 
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;

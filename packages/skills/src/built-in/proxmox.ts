@@ -304,7 +304,7 @@ export class ProxmoxSkill extends Skill {
         iso: { type: 'string', description: 'build_windows_template: Volume des Windows-ISO (speicher:iso/…iso)' },
         virtio_iso: { type: 'string', description: 'build_windows_template: Volume des VirtIO-ISO' },
         cloudbase_url: { type: 'string', description: 'build_windows_template: Cloudbase-Init-MSI aus list_windows_images' },
-        owner_konto: { type: 'string', description: 'provision_windows_vm: eigenes Administrator-Konto des Owners (Standard madh, leer = keins); Kennwort im Tresor win-<name>-<konto>' },
+        owner_konto: { type: 'string', description: 'provision_vm/provision_windows_vm: eigenes Konto des Owners (Standard madh, leer = keins). Linux: nur Schlüssel-Anmeldung mit dem Tresor-Schlüssel owner-ssh-oeffentlich, sudo. Windows: Administrator, Kennwort im Tresor win-<name>-<konto>' },
         rdp: { type: 'boolean', description: 'provision_windows_vm: Remotedesktop einschalten (nur auf Wunsch des Owners; mit NLA)' },
         image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
         volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
@@ -1937,7 +1937,11 @@ export class ProxmoxSkill extends Skill {
     // v1627 — Distribution der Vorlage aus ihrer Beschreibung („… aus <speicher>:import/<distro>-<stand>.qcow2“): wheel/dnf bei RPM-Familie
     const tplCfg = await this.get<{ description?: string }>(`/nodes/${vorlage.node}/qemu/${tpl}/config`).catch(() => ({} as { description?: string }));
     const tplDistro = distroAusImage(/aus (\S+\.qcow2)/.exec(String(tplCfg.description ?? ''))?.[1] ?? '');
-    const daten = cloudInitBenutzerDaten({ familie: tplDistro ? DISTROS[tplDistro].familie : 'deb', hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich });
+    // v1758 (Owner 02.11.) — eigenes Konto des Owners (Standard „madh“, leer = keins) mit seinem Schlüssel aus dem Tresor, wie bei Windows
+    const ownerKontoName = typeof input.owner_konto === 'string' ? input.owner_konto.trim().toLowerCase() : 'madh';
+    const ownerKey = ownerKontoName ? await this.fabrik.ownerSchluessel?.().catch(() => undefined) : undefined;
+    const daten = cloudInitBenutzerDaten({ familie: tplDistro ? DISTROS[tplDistro].familie : 'deb', hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: typeof input.ssh_public_key === 'string' && input.ssh_public_key.trim() ? [input.ssh_public_key.trim()] : [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, ...(ownerKontoName && ownerKey ? { ownerKonto: { name: ownerKontoName, schluessel: ownerKey } } : {}) });
+    if (ownerKontoName && ownerKey) schritte.push(`Konto ${ownerKontoName} mit deinem SSH-Schlüssel (sudo)`);
     const snippetSpeicher = 'local';
     const sp = await this.get<{ path?: string }>(`/storage/${snippetSpeicher}`);
     const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;

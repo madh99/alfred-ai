@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — eigenes Konto des Owners auf neuen Linux-VMs; Snapshots in der Stilllegung (v1758)
+
+- Neue Linux-VMs (`provision_vm`) bekommen wie Windows-VMs ein eigenes Konto für den Owner: `madh` (anderer Name über `owner_konto`, leer = keins), Anmeldung nur mit dem SSH-Schlüssel aus dem Tresor-Eintrag `owner-ssh-oeffentlich`, sudo wie auf den übrigen Hosts. Bisher landete ein zusätzlicher Schlüssel nur beim Konto `alfred`.
+- In einem Stilllegungs-Change dürfen jetzt auch `pct delsnapshot` und `qm delsnapshot` alte Snapshots ohne Rückweg entfernen.
+
 ### Fixed — Windows-Abschnitt im Update-Bericht abgesichert; Einzelsicherungen in der Stilllegung (v1757)
 
 - Update-Titel und Kategorien eines Windows-Hosts gehen nur noch bereinigt in den Bericht: ohne Markdown, ohne Links und ohne Zeilenumbrüche, mit begrenzter Länge, höchstens 50 Einträge je Host. Ein manipulierter Host kann in der Meldung so nichts vortäuschen.

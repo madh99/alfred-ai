@@ -147,7 +147,7 @@ const SSH_OEFFENTLICH = /^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A
 const SSH_PRIVAT = /^-----BEGIN OPENSSH PRIVATE KEY-----\n[A-Za-z0-9+/=\n]{100,5000}\n-----END OPENSSH PRIVATE KEY-----\n?$/;
 
 /** Cloud-Init-Benutzerdaten (Snippet) einer neuen VM. Wirft bei ungültigen Eingaben — nichts Ungeprüftes landet im YAML. */
-export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; familie?: 'deb' | 'rpm' }): string {
+export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: string; weitereSchluessel?: string[]; hostPrivat: string; hostOeffentlich: string; familie?: 'deb' | 'rpm'; ownerKonto?: { name: string; schluessel: string } }): string {
   if (!VM_NAME.test(v.hostname)) throw new Error(`ungültiger Hostname „${v.hostname}“`);
   const schluessel = [v.alfredSchluessel, ...(v.weitereSchluessel ?? [])].map(s => s.trim());
   for (const s of schluessel) if (!SSH_OEFFENTLICH.test(s)) throw new Error('ungültiger öffentlicher SSH-Schlüssel');
@@ -156,6 +156,9 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
   const privat = v.hostPrivat.replace(/\r\n/g, '\n');
   if (!SSH_PRIVAT.test(privat)) throw new Error('privater Host-Schlüssel hat nicht das OpenSSH-Format');
   const block = privat.trimEnd().split('\n').map(z => `    ${z}`).join('\n');
+  // v1758 (Owner 02.11.) — eigenes Konto des Owners wie bei Windows (v1745): nur Schlüssel-Anmeldung, sudo wie auf den übrigen Hosts
+  const ok = v.ownerKonto;
+  if (ok && (!/^[a-z][a-z0-9_-]{1,19}$/.test(ok.name) || /^(alfred|root|admin|administrator)$/.test(ok.name) || !SSH_OEFFENTLICH.test(ok.schluessel.trim()))) throw new Error('Owner-Konto: Name a–z/0–9/_/- (2–20, nicht alfred/root) und gültiger öffentlicher SSH-Schlüssel');
   return [
     '#cloud-config',
     `hostname: ${v.hostname}`,
@@ -172,6 +175,16 @@ export function cloudInitBenutzerDaten(v: { hostname: string; alfredSchluessel: 
     '    lock_passwd: true',
     '    ssh_authorized_keys:',
     ...schluessel.map(s => `      - ${JSON.stringify(s)}`),
+    ...(ok ? [
+      `  - name: ${ok.name}`,
+      `    gecos: ${ok.name}`,
+      '    shell: /bin/bash',
+      `    groups: [${v.familie === 'rpm' ? 'wheel' : 'sudo'}]`,
+      '    sudo: "ALL=(ALL) NOPASSWD:ALL"',
+      '    lock_passwd: true',
+      '    ssh_authorized_keys:',
+      `      - ${JSON.stringify(ok.schluessel.trim())}`,
+    ] : []),
     'disable_root: true',
     'ssh_pwauth: false',
     'ssh_deletekeys: true',

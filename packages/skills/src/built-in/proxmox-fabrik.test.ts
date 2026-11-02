@@ -71,6 +71,16 @@ describe('Vorlage und Cloud-Init', () => {
     expect(() => cloudInitBenutzerDaten({ ...basis, hostOeffentlich: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDQowgAO3AO2expjg7K80FWjrxoJ13x' })).toThrow(/ed25519/);
     expect(() => cloudInitBenutzerDaten({ ...basis, hostPrivat: 'kein schlüssel' })).toThrow(/OpenSSH/);
   });
+  it('v1758: eigenes Konto des Owners mit seinem Schlüssel und sudo; ungültige Namen/Schlüssel abgewiesen', () => {
+    const basis = { hostname: 'probe-i5', alfredSchluessel: ALFRED, hostPrivat: HOST_PRIV, hostOeffentlich: HOST_PUB };
+    const y = cloudInitBenutzerDaten({ ...basis, familie: 'rpm', ownerKonto: { name: 'madh', schluessel: ALFRED } });
+    expect(y).toContain(`  - name: madh\n    gecos: madh\n    shell: /bin/bash\n    groups: [wheel]\n    sudo: "ALL=(ALL) NOPASSWD:ALL"\n    lock_passwd: true\n    ssh_authorized_keys:\n      - ${JSON.stringify(ALFRED)}`);
+    expect(y.indexOf('  - name: madh')).toBeGreaterThan(y.indexOf('  - name: alfred'));
+    expect(cloudInitBenutzerDaten(basis)).not.toContain('name: madh');
+    expect(() => cloudInitBenutzerDaten({ ...basis, ownerKonto: { name: 'root', schluessel: ALFRED } })).toThrow(/Owner-Konto/);
+    expect(() => cloudInitBenutzerDaten({ ...basis, ownerKonto: { name: 'madh\n  - name: x', schluessel: ALFRED } })).toThrow(/Owner-Konto/);
+    expect(() => cloudInitBenutzerDaten({ ...basis, ownerKonto: { name: 'madh', schluessel: 'kein schlüssel' } })).toThrow(/Owner-Konto/);
+  });
 });
 
 describe('Eingabeprüfung der Fabrik-Aktionen', () => {
