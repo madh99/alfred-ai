@@ -315,6 +315,15 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const name = String(p.name ?? ''); const befehl = String(p.befehl ?? '');
       // v1723 — Realfall 01.11. (Element X 242f8d16 Schritt 12): „docker logs“ scheiterte im Käfig (kein Docker-Socket), der Schritt galt
       // trotzdem als erledigt. Als Change-AKTION ist ein Lesebefehl mit Exit ≠ 0 ein Fehlschlag (gewollte Fehlercodes: „|| true“ im Plan).
+      // v1754 — Realfall 02.11. (886c0b3b Schritt 6): lesen mit befehle=[…] (ohne befehl) lief als leerer Befehl → „nie erlaubt“.
+      // Jetzt der Reihe nach, jeder streng; die Ausgaben mit Kopfzeile wie beim Skill.
+      const liste = aktion === 'lesen' && !befehl.trim() && Array.isArray(p.befehle) ? (p.befehle as unknown[]).filter((x): x is string => typeof x === 'string' && !!x.trim()) : [];
+      if (liste.length) {
+        const teile: string[] = [];
+        for (const b of liste) teile.push(`${name}$ ${b}\n${await this.d.fernLesen(name, b, timeoutMs, true)}`);
+        const t = teile.join('\n');
+        return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } };
+      }
       if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs, true); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
       const r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — lesende Change-Schritte mit mehreren Befehlen (v1754)
+
+- Ein lesender Fernzugriff-Schritt mit einer Befehlsliste (`befehle=[…]`) lief bisher als leerer Befehl und hielt mit „nie erlaubt“ an. Der Motor führt jetzt jeden Befehl der Reihe nach aus und hält beim ersten Fehler an.
+
 ### Fixed — Planprüfung erkennt Prüfbefehle, die im Lese-Käfig nie bestehen können (v1753)
 
 - Die Planprüfung weist Prüf- und Lesebefehle schon beim Planen ab, wenn sie im Lese-Käfig laufen würden und dort nicht funktionieren können:

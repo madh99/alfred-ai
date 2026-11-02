@@ -272,6 +272,16 @@ describe('I4 Ausführungsmotor', () => {
     expect(fehler).not.toMatch(/nach 14400 s/);
   });
 
+  it('v1754: Lese-Schritt mit befehle=[…] führt jeden Befehl aus (Realfall 886c0b3b: „nie erlaubt“)', async () => {
+    const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'lesen', einordnung: 'lesen', parameter: { name: 'pve', befehle: ['pvesm status --storage pbs-pve2', 'pvesm list pbs-pve2 --content backup --vmid 9102'] } })]);
+    const gelesen: string[] = [];
+    w.deps.fernLesen = async (_z, b) => { gelesen.push(b); return `ok ${b}\n`; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(gelesen).toEqual(['pvesm status --storage pbs-pve2', 'pvesm list pbs-pve2 --content backup --vmid 9102']);
+    expect((w.c.lauf as ChangeLauf).ergebnisse[0]!.ok).toBe(true);
+  });
+
   it('v1640: nie gestarteten Change verwerfen (Entwurf); gestarteten nicht', async () => {
     const w = welt(probe(), { status: 'draft' });
     const verworfen: string[] = [];
