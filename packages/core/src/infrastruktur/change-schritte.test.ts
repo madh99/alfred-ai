@@ -572,8 +572,9 @@ describe('v1753 Käfig-Grenzen der Prüfbefehle', () => {
       'zpool list -H -o name,health backup',
       'proxmox-backup-manager datastore list',
       'proxmox-backup-manager user permissions cluster@pbs --path /datastore/backup',
+      "python3 - <<'PY'\nimport subprocess\nsubprocess.check_output(['systemctl','is-active','proxmox-backup-proxy'])\nPY",
     ]) expect(kaefigGrenze(nein), nein).toBeTruthy();
-    for (const ja of ['ss -lnt', 'zpool status backup', 'zfs list', 'ls -l /dev/disk/by-id', 'qm list', 'cat /etc/proxmox-backup/datastore.cfg', 'cat /proc/net/tcp6 /proc/net/tcp', 'lsblk -J -o NAME,TYPE,FSTYPE,WWN,SERIAL', 'Get-Service -Name sshd'])
+    for (const ja of ['systemctl is-active proxmox-backup-proxy', 'ss -lnt', 'zpool status backup', 'zfs list', 'ls -l /dev/disk/by-id', 'qm list', 'cat /etc/proxmox-backup/datastore.cfg', 'cat /proc/net/tcp6 /proc/net/tcp', 'lsblk -J -o NAME,TYPE,FSTYPE,WWN,SERIAL', 'Get-Service -Name sshd'])
       expect(kaefigGrenze(ja), ja).toBeUndefined();
   });
   it('gilt für Prüfungen über fernzugriff.lesen und für lesende Schritte', () => {

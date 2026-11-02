@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Käfig-Regel gegen Netz, Docker und systemctl auch für lesende Schritte (v1755)
+
+- Die Regel gegen Netzzugriffe, Docker-Socket und `systemctl` im Lese-Käfig galt bisher nur für Prüfungen. Lesende Schritte und Prüfungen über `fernzugriff.lesen` mit z. B. einem Python-Skript, das `systemctl` aufruft, rutschten durch und hielten erst im Lauf an. Jetzt weist die Planprüfung sie schon beim Planen ab.
+- Befehle der Leseliste wie `systemctl is-active <dienst>` bleiben erlaubt, weil sie als root außerhalb des Käfigs laufen.
+
 ### Fixed — lesende Change-Schritte mit mehreren Befehlen (v1754)
 
 - Ein lesender Fernzugriff-Schritt mit einer Befehlsliste (`befehle=[…]`) lief bisher als leerer Befehl und hielt mit „nie erlaubt“ an. Der Motor führt jetzt jeden Befehl der Reihe nach aus und hält beim ersten Fehler an.
