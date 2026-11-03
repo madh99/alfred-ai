@@ -86,7 +86,10 @@ export interface StartPruefung { erlaubt: boolean; grund: string; naechsterStart
  */
 export function startPruefen(c: { notfall: boolean; assetIds: string[]; serviceIds?: string[]; ausfallMinuten?: number }, eintraege: KalenderEintrag[], t: number): StartPruefung {
   if (c.notfall) return { erlaubt: true, grund: 'Notfall-Change' };
-  const geltend = eintraege.filter(e => e.aktiv && giltFuer(e.geltung, c.assetIds, c.serviceIds));
+  // v1760 — Realfall 03.11. (758d2232): ein abgelaufenes einmaliges Fenster (PG17-Update 01–02 Uhr) hielt jeden späteren Change an
+  // diesen Assets ohne nächsten Start fest — vorbei ist vorbei, es gilt nicht mehr
+  const vorbei = (e: KalenderEintrag) => e.regel.art === 'einmalig' && Date.parse(e.regel.bis) <= t;
+  const geltend = eintraege.filter(e => e.aktiv && !vorbei(e) && giltFuer(e.geltung, c.assetIds, c.serviceIds));
   const sperre = geltend.find(e => e.art === 'sperre' && inRegel(e.regel, t));
   const fenster = geltend.filter(e => e.art === 'fenster');
   const bedarf = Math.max(15, c.ausfallMinuten ?? 0) * MIN;

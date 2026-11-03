@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — abgelaufene einmalige Wartungsfenster und Freigabe-Fragen korrigierter Changes (v1760)
+
+- Ein abgelaufenes einmaliges Wartungsfenster gilt nicht mehr. Bisher hielt es jeden späteren Change an denselben Assets dauerhaft fest („außerhalb der Wartungsfenster“, ohne nächsten Starttermin).
+- Die Aufräumrunde nach dem Start zieht die Freigabe-Frage eines angehaltenen, ab dem Haltepunkt korrigierten Changes nicht mehr zurück. Solche Changes stehen auf „in Arbeit“ und warten trotzdem auf die Freigabe ihres neuen Plans; nach einem Neustart war die Frage bisher verschwunden.
+
 ### Fixed — korrigierte Aktion am Haltepunkt läuft neu (v1759)
 
 - Wird ein angehaltener Change ab dem Haltepunkt korrigiert und dabei die Aktion dieses Schritts geändert, führt „Schritt wiederholen“ (auch das automatische Weiterlaufen nach der Freigabe) jetzt die neue Aktion aus. Bisher galt die alte, gelungene Aktion weiter als erledigt, und nur die Prüfung lief erneut — eine Prüfung, die sich auf ein Ergebnis der neuen Aktion stützt, konnte so nie bestehen. Bleibt die Aktion unverändert, läuft wie bisher nur die Prüfung (keine doppelte Wirkung).

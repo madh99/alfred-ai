@@ -7609,11 +7609,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           setTimeout(() => { void (async () => {
             const chatId = this.config.security?.ownerUserId ?? ''; const o = ownerFz();
             if (!chatId || !o || !this.confirmationQueue) return;
-            const offen = new Map((await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).map(c => [c.id, c.status]));
+            // v1760 — Realfall 03.11. (25958184): ein angehaltener, ab dem Haltepunkt korrigierter Change ist in_progress und wartet
+            // trotzdem auf die Freigabe des neuen Plans — seine Frage verschwand beim Update-Neustart
+            const wartet = (c: import('@alfred/types').CmdbChangeRequest) => c.status === 'submitted'
+              || (c.status === 'in_progress' && !!(c.lauf as { korrektur?: unknown } | undefined)?.korrektur && c.freigabeFingerabdruck !== c.fingerabdruck);
+            const offen = new Map((await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => [])).map(c => [c.id, wartet(c)]));
             const weg = await this.confirmationQueue.zurueckziehenWenn(chatId, this.config.telegram?.enabled ? 'telegram' : 'api', p => {
               if (p.skillName !== 'infrastruktur' || (p.skillParams as { action?: string })?.action !== 'freigeben') return false;
               const ids = ((p.skillParams as { changes?: Array<{ id?: string }> }).changes ?? []).map(x => x.id).filter((x): x is string => !!x);
-              return ids.length > 0 && ids.every(id => offen.get(id) !== 'submitted');
+              return ids.length > 0 && ids.every(id => !offen.get(id));
             }, 'Changes warten nicht mehr auf Freigabe');
             if (weg) this.logger.info({ zurueckgezogen: weg }, 'v1641 veraltete Freigabe-Fragen zurückgezogen');
             await ownerFragenAufraeumen();

@@ -35,6 +35,16 @@ describe('I4b Wartungsfenster', () => {
     expect(startPruefen(c, [matrix], t('2026-10-22T10:00:00Z')).erlaubt).toBe(true);
     expect(startPruefen({ ...c, assetIds: ['a-matrix'] }, [matrix], t('2026-10-22T10:00:00Z')).erlaubt).toBe(false);
   });
+  it('v1760 Realfall 758d2232: abgelaufenes einmaliges Fenster blockiert nicht mehr; vorher wartet der Change darauf', () => {
+    const pg: KalenderEintrag = { id: 'f3', art: 'fenster', name: 'PG17 01–02', geltung: { assetIds: ['a-pg'] }, regel: { art: 'einmalig', von: '2026-11-03T01:00:00+01:00', bis: '2026-11-03T02:00:00+01:00' }, aktiv: true };
+    const c = { notfall: false, assetIds: ['a-pg'], ausfallMinuten: 0 };
+    const vorher = startPruefen(c, [pg], t('2026-11-02T22:00:00Z'));
+    expect(vorher).toMatchObject({ erlaubt: false, naechsterStart: t('2026-11-03T00:00:00Z') });
+    expect(startPruefen(c, [pg], t('2026-11-03T00:10:00Z')).erlaubt).toBe(true);
+    expect(startPruefen(c, [pg], t('2026-11-03T20:57:00Z'))).toMatchObject({ erlaubt: true, grund: 'kein Wartungsfenster festgelegt' });
+    // ein weiteres, noch gültiges Fenster gilt weiter
+    expect(startPruefen(c, [pg, { ...nachts, geltung: { assetIds: ['a-pg'] } }], t('2026-11-03T12:00:00Z')).erlaubt).toBe(false);
+  });
   it('Benachrichtigungen 24 h und 1 h vorher, je einmal', () => {
     const r: BenachrichtigungsRegel = { id: 'r1', name: 'Familie bei HA', geltung: { assetIds: ['a-ha'] }, empfaenger: [{ art: 'owner' }], kanaele: ['push'], zeitpunkte: ['24h_vorher', '1h_vorher', 'start'], aktiv: true };
     const c = { id: 'c', assetIds: ['a-ha'], startGeplant: t('2026-10-23T20:00:00Z') };
