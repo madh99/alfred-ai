@@ -938,7 +938,12 @@ export class ItsmRepository {
       if (!angehalten && !wartetOwner) throw new Error(`Change ist ${e.status} — Korrektur ab Haltepunkt nur bei einem angehaltenen oder auf den Owner wartenden Change`);
       const alt = { ...(e.lauf as Record<string, unknown>) };
       if (wartetOwner) { delete alt.frage; alt.phase = 'angehalten'; alt.grund = `Plan ab Schritt ${o.korrekturAb} korrigiert (wartete auf den Owner)`; }
-      const lauf = { ...alt, korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString() } };
+      // v1759 — Realfall 03.11. (25958184): wurde die AKTION des Haltepunkts korrigiert, darf das Wiederholen nicht nur die Prüfung
+      // laufen lassen — die alte, gelungene Aktion ist nicht die neue (deren Beleg fehlte)
+      const aktionTeil = (s: unknown) => { const x = (s ?? {}) as Record<string, unknown>; return JSON.stringify([x.art, x.skill, x.aktion, x.parameter]); };
+      const amHalt = (l: unknown) => ((l ?? []) as Array<{ nr?: number }>).find(s => s.nr === o.korrekturAb);
+      const aktionGeaendert = aktionTeil(amHalt(e.schritte)) !== aktionTeil(amHalt(d.schritte));
+      const lauf = { ...alt, korrektur: { abSchritt: o.korrekturAb, zeit: new Date().toISOString(), ...(aktionGeaendert ? { aktionGeaendert: true } : {}) } };
       await this.db.execute(
         // v1662 — alle Plan-Felder wie beim normalen Ändern (Titel, Typ, Risiko, Assets, Abhängigkeiten gehen in den Fingerabdruck ein)
         `UPDATE cmdb_change_requests SET title = ?, description = ?, type = ?, risk_level = ?, affected_asset_ids = ?, affected_service_ids = ?, implementation_plan = ?, rollback_plan = ?, test_plan = ?,

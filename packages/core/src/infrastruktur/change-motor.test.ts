@@ -190,6 +190,25 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.some(m => m.includes('Korrektur freigegeben'))).toBe(true);
   });
 
+  it('v1759 Realfall 25958184: Aktion am Haltepunkt korrigiert → die neue Aktion läuft, nicht nur die Prüfung', async () => {
+    const lauf = async (aktionGeaendert: boolean) => {
+      const w = welt(probe(), { snapshotFehlt: true });
+      await w.motor.anstossen(); await warte(w.motor);
+      const l = w.c.lauf as ChangeLauf;
+      expect(l.phase).toBe('angehalten');
+      expect(l.ergebnisse.find(e => e.nr === l.schritt)?.aktionOk).toBe(true); // Aktion gelungen, Prüfung gescheitert
+      const vorher = w.aufrufe.filter(a => a.startsWith('proxmox.create_snapshot')).length;
+      l.korrektur = { abSchritt: l.schritt, zeit: 'x', ...(aktionGeaendert ? { aktionGeaendert: true } : {}) };
+      Object.assign(w.c, { fingerabdruck: 'neu', freigabeFingerabdruck: 'neu' });
+      w.snaps.add('i3probe');
+      await w.motor.anstossen(); await warte(w.motor);
+      expect(w.c.status).toBe('completed');
+      return w.aufrufe.filter(a => a.startsWith('proxmox.create_snapshot')).length - vorher;
+    };
+    expect(await lauf(false)).toBe(0); // unveränderte Aktion: nur die Prüfung (nicht doppelt)
+    expect(await lauf(true)).toBe(1); // korrigierte Aktion: läuft neu
+  });
+
   it('v1643 Realfall 4c5652a5: Skill-Prüfung durchsucht nur Werte, nicht Feldnamen (leeres „gesperrt“ ist kein GESPERRT)', async () => {
     const w = welt([S({ nr: 1, art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'trunk_path', nichtEnthalten: 'GESPERRT', erwartet: 'VLAN 825' } })]);
     w.deps.fuehreAus = async () => ({ success: true, display: 'Weg für Docker-Betrieb (VLAN 825):\n- Port 9: custom — durchgelassen\nAlle Ports lassen das Netz durch.', data: { netz: 'Docker-Betrieb', vlan: 825, pfad: [{ port: 9, durch: true }], gesperrt: [] } });

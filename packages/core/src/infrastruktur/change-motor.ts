@@ -543,8 +543,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       return 'Rückweg läuft — ich melde das Ergebnis.';
     }
     // v1661 — ab dem Haltepunkt korrigiert: weiter nur, wenn der Owner genau den neuen Plan freigegeben hat
+    // v1759 — Realfall 03.11. (25958184): Aktion am Haltepunkt korrigiert → die neue Aktion läuft, nicht nur die Prüfung
+    let aktionNeu = false;
     if (l.korrektur) {
       if (!c.freigabeFingerabdruck || c.freigabeFingerabdruck !== c.fingerabdruck) return `Der Plan wurde ab Schritt ${l.korrektur.abSchritt} korrigiert — er wartet auf deine Freigabe, danach geht es dort weiter.`;
+      aktionNeu = !!l.korrektur.aktionGeaendert && l.korrektur.abSchritt === l.schritt;
       delete l.korrektur;
     }
     const alt = l.ergebnisse.find(e => e.nr === l.schritt);
@@ -567,7 +570,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const rest = (c.schritte as ChangeSchritt[]).filter(x => x.nr > s.nr).length;
       return rest ? `Schritt ${s.nr} übersprungen — es geht mit Schritt ${s.nr + 1} weiter.` : `Schritt ${s.nr} übersprungen — das war der letzte Schritt, der Change wird abgeschlossen.`;
     }
-    const nurPruefung = !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
+    const nurPruefung = !aktionNeu && !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
     if (nurPruefung) l.nurPruefung = { nr: l.schritt, ...(alt!.ausgabe !== undefined ? { ausgabe: alt!.ausgabe } : {}), ...(alt!.daten !== undefined ? { daten: alt!.daten } : {}) };
     l.ergebnisse = l.ergebnisse.filter(e => e.nr !== l.schritt); l.phase = 'laeuft'; delete l.grund;
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });

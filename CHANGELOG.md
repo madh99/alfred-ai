@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — korrigierte Aktion am Haltepunkt läuft neu (v1759)
+
+- Wird ein angehaltener Change ab dem Haltepunkt korrigiert und dabei die Aktion dieses Schritts geändert, führt „Schritt wiederholen“ (auch das automatische Weiterlaufen nach der Freigabe) jetzt die neue Aktion aus. Bisher galt die alte, gelungene Aktion weiter als erledigt, und nur die Prüfung lief erneut — eine Prüfung, die sich auf ein Ergebnis der neuen Aktion stützt, konnte so nie bestehen. Bleibt die Aktion unverändert, läuft wie bisher nur die Prüfung (keine doppelte Wirkung).
+
 ### Added — eigenes Konto des Owners auf neuen Linux-VMs; Snapshots in der Stilllegung (v1758)
 
 - Neue Linux-VMs (`provision_vm`) bekommen wie Windows-VMs ein eigenes Konto für den Owner: `madh` (anderer Name über `owner_konto`, leer = keins), Anmeldung nur mit dem SSH-Schlüssel aus dem Tresor-Eintrag `owner-ssh-oeffentlich`, sudo wie auf den übrigen Hosts. Bisher landete ein zusätzlicher Schlüssel nur beim Konto `alfred`.
