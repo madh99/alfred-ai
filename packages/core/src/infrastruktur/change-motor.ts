@@ -343,6 +343,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         const t = await this.d.fuehreAus('proxmox', { action: 'task_status', upid }, 30_000);
         const st = (t.data ?? {}) as { status?: string; exitstatus?: string };
         if (t.success && st.status === 'stopped') {
+          // v1761 — Realfall 04.11. (36d4ae7b): PVE 9 startet jede VM ohne ms-cert=2023k mit „WARNINGS: 1“ (UEFI-2023-Hinweis) — die
+          // Aufgabe ist gelungen; Warnungen nur vermerken, nicht als Fehlschlag werten
+          if (st.exitstatus && /^WARNINGS: \d+$/.test(st.exitstatus)) return { ok: true, ausgabe: `${r.display ? `${r.display}\n` : ''}Proxmox-Aufgabe endete mit ${st.exitstatus} (gelungen, Warnung im Aufgabenprotokoll)`, daten: r.data };
           if (st.exitstatus && st.exitstatus !== 'OK') return { ok: false, fehler: `Proxmox-Aufgabe endete mit ${st.exitstatus}`, ausgabe: r.display };
           break;
         }

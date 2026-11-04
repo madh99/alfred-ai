@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Proxmox-Aufgaben mit Warnungen gelten als gelungen (v1761)
+
+- Endet eine Proxmox-Aufgabe in einem Change mit „WARNINGS: n“, gilt der Schritt jetzt als gelungen; die Warnung steht in der Schrittausgabe. Bisher hielt der Change an und lief in den Rückweg. Seit Proxmox VE 9 endet jeder Start einer VM, deren EFI-Disk noch nicht die Microsoft-Zertifikate von 2023 hat, mit einer solchen Warnung. Echte Fehler halten den Change weiter an.
+
 ### Fixed — abgelaufene einmalige Wartungsfenster und Freigabe-Fragen korrigierter Changes (v1760)
 
 - Ein abgelaufenes einmaliges Wartungsfenster gilt nicht mehr. Bisher hielt es jeden späteren Change an denselben Assets dauerhaft fest („außerhalb der Wartungsfenster“, ohne nächsten Starttermin).

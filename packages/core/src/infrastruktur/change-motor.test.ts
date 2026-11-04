@@ -190,6 +190,22 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.some(m => m.includes('Korrektur freigegeben'))).toBe(true);
   });
 
+  it('v1761 Realfall 36d4ae7b: Proxmox-Aufgabe mit „WARNINGS: 1“ gilt als gelungen, ein Fehler weiter nicht', async () => {
+    const lauf = async (exitstatus: string) => {
+      const w = welt([S({ nr: 1, skill: 'proxmox', aktion: 'vm_start', parameter: { vmid: 9102 }, einordnung: 'aendern' })]);
+      w.deps.fuehreAus = async (_s, input) => input.action === 'task_status'
+        ? { success: true, data: { status: 'stopped', exitstatus } }
+        : { success: true, display: 'gestartet', data: { upid: 'UPID:pve:1:2:3:qmstart:9102:root@pam:' } };
+      const m = new ChangeMotor(w.deps);
+      await m.anstossen(); await warte(m);
+      return w.c;
+    };
+    const gut = await lauf('WARNINGS: 1');
+    expect(gut.status).toBe('completed');
+    expect((gut.lauf as ChangeLauf).ergebnisse[0]?.ausgabe).toContain('WARNINGS: 1');
+    expect(((await lauf('unable to start VM')).lauf as ChangeLauf).phase).toBe('angehalten');
+  });
+
   it('v1759 Realfall 25958184: Aktion am Haltepunkt korrigiert → die neue Aktion läuft, nicht nur die Prüfung', async () => {
     const lauf = async (aktionGeaendert: boolean) => {
       const w = welt(probe(), { snapshotFehlt: true });
