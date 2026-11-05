@@ -41,6 +41,23 @@ void main() {
     expect(changeStatusText({'status': 'in_progress', 'phase': 'angehalten'}), 'angehalten');
     expect(changeStatusText({'status': 'submitted'}), 'wartet auf Freigabe');
     expect(changeStatusText({'status': 'rolled_back', 'phase': 'fertig'}), 'zurückgenommen');
+    expect(changeStatusText({'status': 'submitted', 'freigabeOffen': false}), 'geplant, Freigabe nicht angefragt');
+  });
+
+  testWidgets('1.84.0: nur geplanter Change zeigt „Freigabe anfragen …“ statt „Zur Freigabe“', (t) async {
+    final d = {'vorhaben': [], 'ohneVorhaben': [
+      {'id': '91eb7ee9-aaaa', 'titel': 'UEFI2023 Gruppe C – VM130', 'status': 'submitted', 'freigabeOffen': false, 'schritte': 13, 'erstellt': '2026-10-22T21:00:00Z'},
+      {'id': '5530203e-dddd', 'titel': 'Feste IP', 'status': 'submitted', 'schritte': 2, 'erstellt': '2026-10-22T21:19:05Z'},
+    ]};
+    final vorgefuellt = <String>[];
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChangesAnsicht(
+      json: (p, {methode = 'GET', koerper}) async => d, aufNachfragen: vorgefuellt.add, aufBestaetigungen: () {}, jetzt: () => _jetzt))));
+    await t.pump();
+    expect(find.text('geplant, Freigabe nicht angefragt'), findsOneWidget);
+    await t.tap(find.byKey(const Key('freigabe-anfragen-91eb7ee9')));
+    expect(vorgefuellt, ['Change 91eb7ee9: Freigabe anfragen']);
+    expect(find.text('Zur Freigabe'), findsOneWidget); // der andere wartende Change hat eine offene Frage (Feld fehlt = wie bisher)
+    await t.pumpWidget(const SizedBox());
   });
 
   testWidgets('Ansicht zeigt Laufstand; Knöpfe füllen nur die Eingabe vor', (t) async {

@@ -74,6 +74,10 @@ String fassungVergleichTitel(Map<String, dynamic> j) {
   return b['angenommen'] == true ? 'Neu gegenüber Fassung ${b['version']} (von dir angenommen)' : 'Neu gegenüber Fassung ${b['version']}';
 }
 
+/// 1.84.0 — gibt es zu einem Change, der auf die Freigabe wartet, eine offene Freigabe-Frage? Ältere Server liefern das Feld nicht
+/// (dann wie bisher „Zur Freigabe“).
+bool freigabeAngefragt(Map<String, dynamic> c) => c['freigabeOffen'] != false;
+
 /// Kurztext zum Status (deutsch), mit Phase für laufende/angehaltene Changes.
 String changeStatusText(Map<String, dynamic> c) {
   final phase = '${c['phase'] ?? ''}';
@@ -82,7 +86,7 @@ String changeStatusText(Map<String, dynamic> c) {
   if (phase == 'wartet_owner') return 'wartet auf dich';
   return switch ('${c['status']}') {
     'draft' => 'in Planung',
-    'submitted' => 'wartet auf Freigabe',
+    'submitted' => freigabeAngefragt(c) ? 'wartet auf Freigabe' : 'geplant, Freigabe nicht angefragt',
     'approved' || 'scheduled' => 'freigegeben',
     'in_progress' => 'läuft',
     'completed' => 'abgeschlossen',
@@ -297,7 +301,9 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
           const SizedBox(height: 6),
           Wrap(spacing: 6, runSpacing: 4, children: [
             if (schritte.isNotEmpty) TextButton.icon(onPressed: () => setState(() => aufgeklappt ? offen.remove(id) : offen.add(id)), icon: Icon(aufgeklappt ? Icons.expand_less : Icons.expand_more, size: 18), label: Text(aufgeklappt ? 'Schritte ausblenden' : 'Schritte')),
-            if (status == 'submitted' && widget.aufBestaetigungen != null) FilledButton.tonalIcon(onPressed: widget.aufBestaetigungen, icon: const Icon(Icons.verified_outlined, size: 18), label: const Text('Zur Freigabe')),
+            if (status == 'submitted' && freigabeAngefragt(c) && widget.aufBestaetigungen != null) FilledButton.tonalIcon(onPressed: widget.aufBestaetigungen, icon: const Icon(Icons.verified_outlined, size: 18), label: const Text('Zur Freigabe')),
+            // 1.84.0 — Owner 05.11.: „Zur Freigabe“ führte bei nur geplanten Changes in einen leeren Chat
+            if (status == 'submitted' && !freigabeAngefragt(c)) FilledButton.tonalIcon(key: Key('freigabe-anfragen-$kurz'), onPressed: () => widget.aufNachfragen('Change $kurz: Freigabe anfragen'), icon: const Icon(Icons.outgoing_mail, size: 18), label: const Text('Freigabe anfragen …')),
             if (halt) ...[
               FilledButton.tonalIcon(onPressed: () => widget.aufNachfragen('Change $kurz Schritt wiederholen'), icon: const Icon(Icons.replay, size: 18), label: const Text('Wiederholen …')),
               // Owner 02.11.: Überspringen gab es nur im Chat — Alfred lässt es nur bei lesenden/prüfenden Schritten zu und sagt sonst, warum nicht

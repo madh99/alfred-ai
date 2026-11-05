@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Changes ohne Freigabe-Frage in der App erkennbar (v1762, App 1.84.0)
+
+- Die Change-Liste für App und Web meldet bei wartenden Changes, ob es dazu tatsächlich eine offene Freigabe-Frage gibt. Changes, die nur geplant sind oder deren Frage zurückgezogen wurde, zeigt die App jetzt als „geplant, Freigabe nicht angefragt“ mit dem Knopf „Freigabe anfragen …“ (füllt die Chat-Eingabe vor). Bisher führte „Zur Freigabe“ dort in einen leeren Chat.
+
 ### Fixed — Proxmox-Aufgaben mit Warnungen gelten als gelungen (v1761)
 
 - Endet eine Proxmox-Aufgabe in einem Change mit „WARNINGS: n“, gilt der Schritt jetzt als gelungen; die Warnung steht in der Schrittausgabe. Bisher hielt der Change an und lief in den Rückweg. Seit Proxmox VE 9 endet jeder Start einer VM, deren EFI-Disk noch nicht die Microsoft-Zertifikate von 2023 hat, mit einer solchen Warnung. Echte Fehler halten den Change weiter an.

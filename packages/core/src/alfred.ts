@@ -14570,21 +14570,31 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             return o;
           };
           // Owner 22.10. („ersichtlich, wenn ein Change läuft und was davon — aktuell ein Ratespiel“): Laufstand je Change
-          const kurz = (c: import('@alfred/types').CmdbChangeRequest) => {
+          // v1762 — Owner 05.11. („zur Freigabe … man gelangt zum Chat ohne dass eine Nachricht steht“): ein submitted-Change hat nicht
+          // immer eine offene Freigabe-Frage (nur geplant, oder die Frage wurde zurückgezogen) — die App zeigt dann „Freigabe anfragen …“
+          const offeneFreigaben = async (): Promise<Set<string>> => {
+            const chatId = this.config.security?.ownerUserId ?? '';
+            if (!chatId || !this.confirmationQueue) return new Set();
+            const offen = await this.confirmationQueue.offeneFuer(chatId, this.config.telegram?.enabled ? 'telegram' : 'api').catch(() => []);
+            return new Set(offen.filter(p => p.skillName === 'infrastruktur' && (p.skillParams as { action?: string } | undefined)?.action === 'freigeben')
+              .flatMap(p => ((p.skillParams as { changes?: Array<{ id?: string }> }).changes ?? []).map(x => x.id).filter((x): x is string => !!x)));
+          };
+          const kurz = (c: import('@alfred/types').CmdbChangeRequest, frei?: Set<string>) => {
             const l = c.lauf as { phase?: string; schritt?: number; start?: string; ende?: string; grund?: string; ergebnisse?: Array<{ nr: number; ok: boolean; aktionOk?: boolean; ende?: string; fehler?: string }> } | undefined;
             const st = (c.schritte ?? []) as Array<{ nr: number; titel: string; art: string }>;
             const akt = l?.schritt ? st.find(x => x.nr === l.schritt) : undefined;
             return {
               id: c.id, titel: c.title, status: c.status, typ: c.type, risiko: c.riskLevel, schritte: st.length, geplantAb: c.scheduledAt, ausfallMinuten: c.ausfallMinuten, freigegebenUeber: c.freigegebenUeber, phase: l?.phase, erstellt: c.createdAt,
+              ...(frei && c.status === 'submitted' ? { freigabeOffen: frei.has(c.id) } : {}),
               ...(l ? { lauf: { schritt: l.schritt, schrittTitel: akt?.titel, fertig: (l.ergebnisse ?? []).filter(e => e.ok).length, start: l.start, ende: l.ende, grund: l.grund?.slice(0, 300), schrittListe: st.map(x => ({ nr: x.nr, titel: x.titel, art: x.art, ok: (l.ergebnisse ?? []).find(e => e.nr === x.nr)?.ok ?? null })) } } : {}),
             };
           };
           const listeFuer = async (o: string) => {
-            const [vs, cs] = await Promise.all([vr.liste(o), ir.listChangeRequests(o, { limit: 500 })]);
+            const [vs, cs, frei] = await Promise.all([vr.liste(o), ir.listChangeRequests(o, { limit: 500 }), offeneFreigaben()]);
             const mitSchritten = cs.filter(c => c.schritte?.length);
             return {
-              vorhaben: vs.map(v => ({ id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, architekturVersion: v.architekturVersion, geaendert: v.geaendert, changes: mitSchritten.filter(c => c.vorhabenId === v.id).map(kurz) })),
-              ohneVorhaben: mitSchritten.filter(c => !c.vorhabenId).map(kurz),
+              vorhaben: vs.map(v => ({ id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, architekturVersion: v.architekturVersion, geaendert: v.geaendert, changes: mitSchritten.filter(c => c.vorhabenId === v.id).map(c => kurz(c, frei)) })),
+              ohneVorhaben: mitSchritten.filter(c => !c.vorhabenId).map(c => kurz(c, frei)),
             };
           };
           // v1601 — dieselbe Liste für die App-Ansicht „Changes“ (nur Owner-Geräte, siehe ownerAnsichten)
@@ -14612,7 +14622,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               const v = await vr.finde(o, id);
               if (!v) throw Object.assign(new Error('Vorhaben nicht gefunden'), { status: 404 });
               const doc = v.architekturDocId ? await cr.getDocumentById(o, v.architekturDocId).catch(() => null) : null;
-              const cs = (await ir.listChangeRequests(o, { limit: 500 })).filter(c => c.vorhabenId === v.id).map(kurz);
+              const frei = await offeneFreigaben();
+              const cs = (await ir.listChangeRequests(o, { limit: 500 })).filter(c => c.vorhabenId === v.id).map(c => kurz(c, frei));
               const einwaende = this.einwandDienst ? await this.einwandDienst.liste(o, 'vorhaben', v.id) : [];
               return { vorhaben: { id: v.id, titel: v.titel, ziel: v.ziel, status: v.status, hosts: v.hosts, entscheidungen: v.entscheidungen, architekturVersion: v.architekturVersion, bestandDocId: v.bestandDocId }, architektur: doc ? { titel: doc.title, inhalt: doc.content, version: doc.version } : null, changes: cs, einwaende };
             },
