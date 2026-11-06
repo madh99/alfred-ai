@@ -90,6 +90,18 @@ describe('I3 Prüfung beim Anlegen', () => {
     expect(p.hinweise.join('\n')).toContain('Ohne Sicherung geplant');
     expect(p.hinweise.join('\n')).toContain('Owner-Schritte');
   });
+  it('v1763 Realfall fd861baa: Gast-Agent direkt nach dem VM-Start nur mit Warteschritt auf den Agenten', () => {
+    const plan = (mitWarten: boolean) => ({
+      titel: 'UEFI-Probe 137', begruendung: 'Zertifikate einspielen und im Gast belegen', risiko: 'mittel', ausfallMinuten: 5, betroffen: ['pve'], ohneSicherungGrund: 'Probe',
+      schritte: [
+        { titel: 'Starten', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve', befehl: 'qm start 137' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 137 } }, rueckweg: { keiner: 'Start' } },
+        ...(mitWarten ? [{ titel: 'Agent bereit', art: 'warten', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: 137 } }, zeitlimitS: 900 }] : []),
+        { titel: 'Gastnachweis', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve', befehl: 'qm guest exec 137 -- powershell -Command Confirm-SecureBootUEFI' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 137 } }, rueckweg: { keiner: 'nur lesen' } },
+      ],
+    });
+    expect(pruefeChangePlan(plan(false), ctx()).fehler.join('\n')).toContain('nutzt den Gast-Agenten von VM 137 direkt nach dem Start in Schritt 1');
+    expect(pruefeChangePlan(plan(true), ctx()).fehler.join('\n')).not.toContain('Gast-Agenten');
+  });
   it('Fingerabdruck: gleich bei gleicher Struktur (Schlüsselreihenfolge egal), anders bei jeder Parameteränderung', () => {
     const a = pruefeChangePlan(snapshotChange(), ctx());
     const umgestellt = snapshotChange(); umgestellt.schritte[1]!.parameter = { name: 'i3probe', vmid: 9001 };

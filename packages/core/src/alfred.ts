@@ -7621,6 +7621,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }, 'Changes warten nicht mehr auf Freigabe');
             if (weg) this.logger.info({ zurueckgezogen: weg }, 'v1641 veraltete Freigabe-Fragen zurückgezogen');
             await ownerFragenAufraeumen();
+            // v1763 — nach einem Update geänderte, freigegebene Standard-Vorlagen gleich neu zur Freigabe (Realfall 03.11. Serie leer)
+            await standardRef?.geaenderteNeuAnfragen(o).catch(err => this.logger.warn({ err }, 'v1763 Vorlagen-Neuanfrage fehlgeschlagen'));
           })().catch(err => this.logger.warn({ err }, 'v1641 Aufräumen der Freigabe-Fragen fehlgeschlagen')); }, 20_000).unref?.();
           this.registriereJob({
             key: 'change-motor', beschreibung: 'I4 — freigegebene Infrastruktur-Changes starten (ab geplantem Zeitpunkt), Unterbrochene behandeln',
@@ -7820,7 +7822,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
           }),
-          updatesSchalter: { liste: (o) => wartungRepo.updatesSchalter(o), setze: (o, n, an) => wartungRepo.setzeUpdatesSchalter(o, n, an) },
+          updatesSchalter:{ liste: (o) => wartungRepo.updatesSchalter(o), setze: (o, n, an) => wartungRepo.setzeUpdatesSchalter(o, n, an) },
           wartung: {
             ...wartungLesen,
             kalenderAnlegen: (o, e) => wartungRepo.kalenderAnlegen(o, e),

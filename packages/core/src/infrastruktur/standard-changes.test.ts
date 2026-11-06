@@ -91,6 +91,12 @@ describe('I4b Standard-Freigabe', () => {
     vorlagen.find(v => v.key === 'snapshot_anlegen')!.beschreibung += ' (erweitert)';
     expect((await st.liste('o')).find(v => v.key === 'snapshot_anlegen')!.zustand).toContain('neue Freigabe nötig');
     expect((await st.anlegen('o', 'snapshot_anlegen', { vm: 'test-ubuntu' })).ok).toBe(false);
+    // v1763 — geänderte, freigegebene Vorlage wird nach dem Start sofort neu angefragt (einmal), unveränderte nicht
+    frage = undefined;
+    expect(await st.geaenderteNeuAnfragen('o')).toEqual(['snapshot_anlegen']);
+    expect(frage!.vorlage).toBe('snapshot_anlegen');
+    expect((await st.liste('o')).find(v => v.key === 'snapshot_anlegen')!.zustand).toBe('Freigabe angefragt');
+    expect(await st.geaenderteNeuAnfragen('o')).toEqual([]); // kein zweites Mal
     await st.widerrufen('o', 'snapshot_anlegen');
     expect((await st.liste('o')).find(v => v.key === 'snapshot_anlegen')!.zustand).toBe('widerrufen');
     expect(vorlagenAbdruck(V('snapshot_anlegen'))).toMatch(/^[0-9a-f]{64}$/);

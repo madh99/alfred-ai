@@ -399,6 +399,31 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       if (b && gestopptIn !== undefined && s.nr > gestopptIn && DIENST_START.test(b) && !DIENST_STOPP.test(b)) gestopptIn = undefined;
     }
   }
+  // v1763 — Realfall 06.11. (fd861baa Schritt 10): nach dem Start der Windows-VM lief der Gastnachweis sofort — „QEMU guest agent is
+  // not running“, der Change hielt an. Wer den Gast-Agenten einer gerade gestarteten VM nutzt, wartet vorher auf ihn.
+  {
+    const befehle = (s: ChangeSchritt): string[] => {
+      const p = s.parameter ?? {}; const q = (s.pruefung ?? {}) as Record<string, unknown>; const qp = (q.parameter ?? {}) as Record<string, unknown>;
+      return [p.befehl, ...(Array.isArray(p.befehle) ? p.befehle : []), q.befehl, qp.befehl].filter((x): x is string => typeof x === 'string');
+    };
+    const gestartet = new Map<string, number>();
+    for (const s of plan.schritte) {
+      const bs = befehle(s);
+      const wartetAuf = (vmid: string) => s.art === 'warten' && (
+        (s.pruefung?.typ === 'skill' && s.pruefung.skill === 'proxmox' && s.pruefung.aktion === 'agent_status' && String((s.pruefung.parameter as Record<string, unknown> | undefined)?.vmid ?? '') === vmid)
+        || bs.some(b => new RegExp(`\\bqm\\s+(agent\\s+${vmid}\\s+ping|guest\\s+cmd\\s+${vmid}\\s+ping)\\b`).test(b)));
+      for (const vmid of [...gestartet.keys()]) if (wartetAuf(vmid)) gestartet.delete(vmid);
+      for (const b of bs) {
+        for (const m of b.matchAll(/\bqm\s+(?:guest\s+(?:exec|cmd)|agent)\s+(\d+)/g)) {
+          const ab = gestartet.get(m[1]!);
+          if (ab !== undefined && s.art !== 'warten') { f.push(`Schritt ${s.nr} nutzt den Gast-Agenten von VM ${m[1]} direkt nach dem Start in Schritt ${ab} — vorher einen Warteschritt einfügen, bis der Agent antwortet (proxmox agent_status oder qm agent ${m[1]} ping)`); gestartet.delete(m[1]!); }
+        }
+      }
+      const start = s.skill === 'proxmox' && (s.aktion === 'start_vm' || s.aktion === 'reboot_vm') ? String(s.parameter?.vmid ?? '') : '';
+      if (start) gestartet.set(start, s.nr);
+      for (const b of bs) for (const m of b.matchAll(/\bqm\s+(?:start|reboot)\s+(\d+)/g)) gestartet.set(m[1]!, s.nr);
+    }
+  }
   if (plan.schritte.length && !plan.schritte.some(s => s.art === 'pruefung' || (s.art === 'warten' && s.pruefung))) h.push('Keine Abschlussprüfung als eigener Schritt — nur die Prüfungen der Aktionen');
   if (plan.schritte.some(s => s.art === 'owner')) h.push('Enthält Owner-Schritte — der Ablauf wartet dort auf dich');
   if (/\{\{geheim(datei)?:/.test(JSON.stringify(roheSchritte))) h.push('Verwendet Tresor-Einträge — Werte setzt erst der Motor ein, das Modell sieht sie nie');

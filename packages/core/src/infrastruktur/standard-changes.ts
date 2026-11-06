@@ -67,6 +67,21 @@ export class StandardChanges {
     return ok ? `Freigabe-Frage zur Vorlage ${v.titel} gestellt.` : 'Frage konnte nicht gestellt werden';
   }
 
+  /**
+   * v1763 — Realfall 03.11.: die wöchentliche Serie legte keine Linux-Updates an („nicht (mehr) freigegeben“) — ein Update hatte die
+   * Beschreibung der Vorlage (h) geändert, die Freigabe vom 29.10. hing am alten Abdruck. Nach dem Start: für jede freigegebene
+   * Vorlage mit geändertem Abdruck sofort die neue Freigabe anfragen, statt erst beim nächsten Lauf still leer zu bleiben.
+   */
+  async geaenderteNeuAnfragen(o: string): Promise<string[]> {
+    const st = await this.d.stand(o);
+    const geaendert = this.vorlagen.filter(v => v.verfuegbar && st.some(s => s.vorlage === v.key && s.status === 'freigegeben' && s.abdruck !== vorlagenAbdruck(v)));
+    for (const v of geaendert) {
+      const t = await this.freigabeAnfragen(o, v.key);
+      this.d.protokoll?.('v1763 Vorlage geändert — Freigabe neu angefragt', { vorlage: v.key, ergebnis: t });
+    }
+    return geaendert.map(v => v.key);
+  }
+
   async freigebenNachJa(o: string, key: string, nonce: unknown): Promise<{ ok: boolean; text: string }> {
     const v = this.vorlage(key);
     const s = (await this.d.stand(o)).find(x => x.vorlage === key);

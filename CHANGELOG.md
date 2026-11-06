@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — geänderte Standard-Vorlagen sofort neu zur Freigabe; Gast-Agent nach dem VM-Start abwarten (v1763)
+
+- Ändert ein Update eine bereits freigegebene Standard-Vorlage, fragt Alfred nach dem Start sofort die neue Freigabe an. Bisher verfiel die Freigabe still, und die wöchentliche Update-Serie legte erst beim nächsten Lauf keine Changes an.
+- Die Planprüfung weist Changes ab, die den Gast-Agenten einer gerade gestarteten oder neu gestarteten VM benutzen (`qm guest exec`, `qm agent`), ohne vorher in einem Warteschritt auf den Agenten zu warten (`agent_status` oder `qm agent <vmid> ping`).
+
 ### Changed — Changes ohne Freigabe-Frage in der App erkennbar (v1762, App 1.84.0)
 
 - Die Change-Liste für App und Web meldet bei wartenden Changes, ob es dazu tatsächlich eine offene Freigabe-Frage gibt. Changes, die nur geplant sind oder deren Frage zurückgezogen wurde, zeigt die App jetzt als „geplant, Freigabe nicht angefragt“ mit dem Knopf „Freigabe anfragen …“ (füllt die Chat-Eingabe vor). Bisher führte „Zur Freigabe“ dort in einen leeren Chat.
