@@ -101,6 +101,10 @@ describe('I3 Prüfung beim Anlegen', () => {
     });
     expect(pruefeChangePlan(plan(false), ctx()).fehler.join('\n')).toContain('nutzt den Gast-Agenten von VM 137 direkt nach dem Start in Schritt 1');
     expect(pruefeChangePlan(plan(true), ctx()).fehler.join('\n')).not.toContain('Gast-Agenten');
+    // v1764 — Realfall 91eb7ee9: Aufruf als Python-Liste
+    const py = plan(false);
+    py.schritte[1]!.parameter = { name: 'pve', befehl: "python3 - <<'PY'\nimport subprocess as S\nr=S.run(['qm','guest','exec','137','--','powershell.exe'])\nPY" };
+    expect(pruefeChangePlan(py, ctx()).fehler.join('\n')).toContain('nutzt den Gast-Agenten von VM 137');
   });
   it('Fingerabdruck: gleich bei gleicher Struktur (Schlüsselreihenfolge egal), anders bei jeder Parameteränderung', () => {
     const a = pruefeChangePlan(snapshotChange(), ctx());

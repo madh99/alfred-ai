@@ -190,6 +190,22 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.some(m => m.includes('Korrektur freigegeben'))).toBe(true);
   });
 
+  it('v1764 Realfall 91eb7ee9: „QEMU guest agent is not running“ → Schritt wird nach Pause wiederholt; andere Fehler nicht', async () => {
+    const lauf = async (antworten: Array<{ code: number; stdout: string; stderr: string }>) => {
+      const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve3', befehl: 'qm guest exec 130 -- powershell -Command Confirm-SecureBootUEFI' }, einordnung: 'aendern', rueckweg: { keiner: 'nur lesen' } })]);
+      let n = 0;
+      w.deps.fernAusfuehren = async () => antworten[Math.min(n++, antworten.length - 1)]!;
+      const m = new ChangeMotor(w.deps);
+      await m.anstossen(); await warte(m);
+      return { status: w.c.status, aufrufe: n };
+    };
+    const weg = { code: 1, stdout: 'QEMU guest agent is not running', stderr: '' }, gut = { code: 0, stdout: 'True', stderr: '' };
+    expect(await lauf([weg, weg, gut])).toEqual({ status: 'completed', aufrufe: 3 });
+    const anders = await lauf([{ code: 1, stdout: '', stderr: 'Zugriff verweigert' }, gut]);
+    expect(anders.aufrufe).toBe(1);
+    expect(anders.status).not.toBe('completed');
+  });
+
   it('v1761 Realfall 36d4ae7b: Proxmox-Aufgabe mit „WARNINGS: 1“ gilt als gelungen, ein Fehler weiter nicht', async () => {
     const lauf = async (exitstatus: string) => {
       const w = welt([S({ nr: 1, skill: 'proxmox', aktion: 'vm_start', parameter: { vmid: 9102 }, einordnung: 'aendern' })]);

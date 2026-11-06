@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gast-Agent beim Windows-Start robuster (v1764)
+
+- Scheitert ein Fernzugriff-Schritt eines Changes mit „QEMU guest agent is not running“, wiederholt der Motor ihn nach einer Pause bis zu fünfmal. Unter Windows meldete sich der Agent nach dem Start bereit und war Sekunden später kurz wieder weg; der Change hielt bisher an, obwohl im Gast nichts gelaufen war. Andere Fehler halten weiterhin sofort an.
+- Die Planprüfung aus v1763 (Gast-Agent erst nach einem Warteschritt) erkennt den Aufruf jetzt auch in Skripten, die ihn als Liste schreiben (`['qm','guest','exec','130', …]`).
+
 ### Fixed — geänderte Standard-Vorlagen sofort neu zur Freigabe; Gast-Agent nach dem VM-Start abwarten (v1763)
 
 - Ändert ein Update eine bereits freigegebene Standard-Vorlage, fragt Alfred nach dem Start sofort die neue Freigabe an. Bisher verfiel die Freigabe still, und die wöchentliche Update-Serie legte erst beim nächsten Lauf keine Changes an.

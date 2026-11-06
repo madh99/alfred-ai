@@ -404,7 +404,9 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   {
     const befehle = (s: ChangeSchritt): string[] => {
       const p = s.parameter ?? {}; const q = (s.pruefung ?? {}) as Record<string, unknown>; const qp = (q.parameter ?? {}) as Record<string, unknown>;
-      return [p.befehl, ...(Array.isArray(p.befehle) ? p.befehle : []), q.befehl, qp.befehl].filter((x): x is string => typeof x === 'string');
+      // v1764 — Realfall 06.11. (91eb7ee9): der Aufruf stand als Python-Liste ['qm','guest','exec','130', …] — Anführungszeichen,
+      // Kommas und Klammern wie Leerzeichen behandeln
+      return [p.befehl, ...(Array.isArray(p.befehle) ? p.befehle : []), q.befehl, qp.befehl].filter((x): x is string => typeof x === 'string').map(b => b.replace(/["'`,[\]()]/g, ' '));
     };
     const gestartet = new Map<string, number>();
     for (const s of plan.schritte) {

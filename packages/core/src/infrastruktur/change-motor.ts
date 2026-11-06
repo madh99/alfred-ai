@@ -325,7 +325,14 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } };
       }
       if (aktion === 'lesen' || befehlsklasse(befehl) === 'lesen') { const t = await this.d.fernLesen(name, befehl, timeoutMs, true); return { ok: true, ausgabe: t, daten: { ausgabe: t.trim().slice(0, 2000) } }; }
-      const r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
+      let r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
+      // v1764 — Realfall 06.11. (91eb7ee9 Schritte 5 und 11): der Gast-Agent der gerade gestarteten Windows-VM antwortete im Warteschritt
+      // und war Sekunden später wieder weg („QEMU guest agent is not running“) — im Gast lief nichts. Bis zu 5× nach einer Pause nochmal.
+      for (let n = 0; n < 5 && r.code !== 0 && /QEMU guest agent is not running/i.test(`${r.stdout}\n${r.stderr}`); n++) {
+        this.log('v1764 Gast-Agent nicht bereit — Schritt wird wiederholt', { name, versuch: n + 2 });
+        await this.schlafe(this.takt.wartenAbstandMs * 3);
+        r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
+      }
       return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
     }
     // v1719 — Realfall 31.10. (8a26aed6 Schritt 73): kopieren lief mit der Skill-Vorgabe von 1 h statt mit dem Schrittlimit von 3 h und
