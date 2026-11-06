@@ -72,6 +72,25 @@ describe('I1 Nachschärfung nach dem ersten Lauf (22.10.)', () => {
   });
 });
 
+describe('I8 3b-5 — Windows-Lizenz', () => {
+  it('nicht aktiviert → hoch; Testversion ≤30 Tage → mittel, ≤7 → hoch; aktiviert/weit weg → kein Befund', () => {
+    const w = (zugang: string, lizenz: object) => ({ ...host({ zugang }), windows: { lizenz } }) as HostBestand;
+    const a = auffaelligkeiten({ hosts: [
+      w('workvm', { status: 'benachrichtigung', kanal: 'Einzelhandel' }),
+      w('eval20', { status: 'testversion', kanal: 'Testversion', ablauf: '2026-11-11', restTage: 20 }),
+      w('eval5', { status: 'testversion', kanal: 'Testversion', ablauf: '2026-10-27', restTage: 5 }),
+      w('eval148', { status: 'testversion', kanal: 'Testversion', ablauf: '2027-04-03', restTage: 148 }),
+      w('dev', { status: 'aktiviert', kanal: 'Einzelhandel' }),
+    ], vms: [], proxy: [] }, jetzt).filter(x => x.kategorie === 'lizenz');
+    expect(a.map(x => `${x.schwere}|${x.schluessel}|${x.text}`)).toEqual(expect.arrayContaining([
+      'hoch|lizenz:workvm|Windows nicht aktiviert (Einzelhandel) — Funktionen eingeschränkt',
+      'mittel|lizenz:eval20|Windows-Testversion läuft in 20 Tagen ab (2026-11-11) — Lizenz per Change einspielen (Schlüssel aus dem Tresor)',
+      expect.stringMatching(/^hoch\|lizenz:eval5\|/),
+    ]));
+    expect(a).toHaveLength(3);
+  });
+});
+
 describe('I4b Teil 3 — Befunde als Problems', () => {
   it('nur hoch/mittel ohne Sicherung, ohne Doppelte, verschwundene Befunde nur bei vollständiger Erfassung lösen', async () => {
     const { befundeAlsProblems } = await import('./befund-problems.js');

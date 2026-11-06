@@ -15,7 +15,42 @@ export const WINDOWS_BEFEHLE = {
   prozesse: 'Get-Process | Select-Object Id, ProcessName | ConvertTo-Json -Compress',
   rollen: 'Get-WindowsFeature | Select-Object Name, Installed | ConvertTo-Json -Compress',
   hotfixes: 'Get-HotFix | Select-Object HotFixID, InstalledOn | ConvertTo-Json -Compress',
+  // I8 3b-5 — Lizenz/Aktivierung: alle Lizenzprodukte (ohne Filter — ein -Filter bräuchte Anführungszeichen), ausgewertet wird im Parser
+  lizenz: 'Get-CimInstance -ClassName SoftwareLicensingProduct | Select-Object Name, Description, ApplicationID, PartialProductKey, LicenseStatus, GracePeriodRemaining, EvaluationEndDate | ConvertTo-Json -Compress',
 } as const;
+
+/** Anwendungs-ID von Windows in SoftwareLicensingProduct (die übrigen Einträge sind Office u. a.) */
+export const WINDOWS_APP_ID = '55c92734-d682-4d71-983e-d6ec3f16059f';
+export type LizenzStatus = 'aktiviert' | 'testversion' | 'kulanzfrist' | 'benachrichtigung' | 'nicht_aktiviert' | 'unbekannt';
+export interface WindowsLizenz { status: LizenzStatus; kanal: string; produkt: string; ablauf?: string; restTage?: number }
+
+/** CIM-Datum aus ConvertTo-Json: „/Date(ms)/“, ISO-Text oder Objekt mit DateTime; das Nulldatum 1601 heißt „keins“ */
+function cimDatum(v: unknown): number | undefined {
+  const s = typeof v === 'object' && v ? ((v as { value?: string; DateTime?: string }).value ?? (v as { DateTime?: string }).DateTime) : typeof v === 'string' ? v : undefined;
+  const m = s ? /\/Date\((-?\d+)\)\//.exec(s) : null;
+  const t = m ? Number(m[1]) : s ? Date.parse(s) : NaN;
+  return Number.isFinite(t) && t > Date.UTC(1700, 0, 1) ? t : undefined;
+}
+
+/**
+ * I8 3b-5 — Windows-Lizenz aus SoftwareLicensingProduct: das Windows-Produkt mit installiertem Schlüssel; Kanal aus der Beschreibung
+ * (TIMEBASED_EVAL = Testversion, VOLUME_KMSCLIENT, VOLUME_MAK, RETAIL, OEM); Ablauf aus EvaluationEndDate bzw. der Restlaufzeit
+ * (GracePeriodRemaining, Minuten). LicenseStatus: 0 nicht lizenziert, 1 lizenziert, 2–4/6 Kulanzfrist, 5 Benachrichtigung.
+ */
+export function leseWinLizenz(t: string, jetzt = new Date()): WindowsLizenz | undefined {
+  const l = jsonListe<{ Name?: string; Description?: string; ApplicationID?: string; PartialProductKey?: string | null; LicenseStatus?: number; GracePeriodRemaining?: number; EvaluationEndDate?: unknown }>(t)
+    .filter(p => String(p.ApplicationID ?? '').toLowerCase() === WINDOWS_APP_ID && p.PartialProductKey);
+  const p = l.sort((a, b) => (zahl(b.LicenseStatus) === 1 ? 1 : 0) - (zahl(a.LicenseStatus) === 1 ? 1 : 0))[0];
+  if (!p) return undefined;
+  const d = String(p.Description ?? '');
+  const eval_ = /TIMEBASED_EVAL|EVAL/i.test(`${d} ${p.Name ?? ''}`);
+  const kanal = eval_ ? 'Testversion' : /VOLUME_KMSCLIENT/i.test(d) ? 'Volumen (KMS)' : /VOLUME_MAK/i.test(d) ? 'Volumen (MAK)' : /RETAIL/i.test(d) ? 'Einzelhandel' : /OEM/i.test(d) ? 'OEM' : 'unbekannt';
+  const ls = zahl(p.LicenseStatus);
+  const status: LizenzStatus = ls === 1 ? (eval_ ? 'testversion' : 'aktiviert') : ls === 0 ? 'nicht_aktiviert' : ls === 5 ? 'benachrichtigung' : [2, 3, 4, 6].includes(ls) ? 'kulanzfrist' : 'unbekannt';
+  const rest = zahl(p.GracePeriodRemaining);
+  const ende = cimDatum(p.EvaluationEndDate) ?? (Number.isFinite(rest) && rest > 0 ? jetzt.getTime() + rest * 60_000 : undefined);
+  return { status, kanal, produkt: String(p.Name ?? 'Windows'), ...(ende !== undefined && (eval_ || status === 'kulanzfrist') ? { ablauf: new Date(ende).toISOString().slice(0, 10), restTage: Math.floor((ende - jetzt.getTime()) / 86_400_000) } : {}) };
+}
 
 /** ConvertTo-Json liefert bei einem Element ein Objekt, sonst ein Array; leer → [] */
 export function jsonListe<T = Record<string, unknown>>(t: string): T[] {
@@ -93,7 +128,7 @@ export function leseWinAusstehend(t: string): { anzahl: number; sicherheit: numb
   return { anzahl: titel.length, sicherheit: titel.filter(x => /security|sicherheit|cumulative|kumulativ/i.test(x)).length, titel: titel.slice(0, 20) };
 }
 
-export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[] }
+export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[]; lizenz?: WindowsLizenz }
 
 /** Wie sammleLinux: jeder Befehl einzeln, Fehler je Teil im Bestand (z. B. Rollen gibt es auf Windows 11 nicht) */
 export async function sammleWindows(zugang: string, host: string, lesen: (befehl: string) => Promise<string>): Promise<HostBestand & { windows: WindowsBestand }> {
@@ -112,6 +147,8 @@ export async function sammleWindows(zugang: string, host: string, lesen: (befehl
   b.ports = (await versuch('ports', WINDOWS_BEFEHLE.ports, t => leseWinPorts(t, prozesse))) ?? [];
   if (/server/i.test(b.os?.name ?? '')) b.windows.rollen = (await versuch('rollen', WINDOWS_BEFEHLE.rollen, leseWinRollen)) ?? [];
   b.windows.hotfixes = (await versuch('hotfixes', WINDOWS_BEFEHLE.hotfixes, leseWinHotfixes)) ?? { anzahl: 0 };
+  const lizenz = await versuch('lizenz', WINDOWS_BEFEHLE.lizenz, t => leseWinLizenz(t));
+  if (lizenz) b.windows.lizenz = lizenz;
   // ausstehende Updates: Start-WUScan gibt es auf Server 2025 nicht (Realfall probe-win25) — kommt mit den Windows-Updates (I8b Teil 3)
   return b;
 }

@@ -3484,7 +3484,8 @@ export class Alfred {
             assets.push({ name: z.name, assetType: 'server', sourceSkill: 'fernzugriff', sourceId: `host:${z.name}`, ipAddress: z.host, status: 'active', attributes: {
               os: b.os?.name, os_id: b.os?.id, os_version: b.os?.version, kernel: b.kernel, cpus: b.cpus, ram_total: b.ram?.gesamt, ram_used: b.ram?.belegt,
               updates: b.updates?.anzahl, security_updates: b.updates?.sicherheit, disks: b.dateisysteme, services: b.dienste.length, ports: [...new Set(b.ports.map(p => p.port))], erfassungsfehler: b.fehler,
-              ...(win ? { system: 'windows', domain: win.windows.domaene, roles: win.windows.rollen, hotfixes: win.windows.hotfixes.anzahl, last_hotfix: win.windows.hotfixes.letztes, pending_updates: win.windows.ausstehend } : {}) } });
+              ...(win ? { system: 'windows', domain: win.windows.domaene, roles: win.windows.rollen, hotfixes: win.windows.hotfixes.anzahl, last_hotfix: win.windows.hotfixes.letztes, pending_updates: win.windows.ausstehend,
+                ...(win.windows.lizenz ? { license_status: win.windows.lizenz.status, license_channel: win.windows.lizenz.kanal, license_product: win.windows.lizenz.produkt, license_expires: win.windows.lizenz.ablauf } : {}) } : {}) } });
             for (const p of b.compose) {
               assets.push({ name: `${p.name} (${z.name})`, assetType: 'application', sourceSkill: 'fernzugriff', sourceId: `${z.name}/compose/${p.name}`, ipAddress: z.host, status: /running/.test(p.status) ? 'active' : 'inactive', attributes: { host: z.name, status: p.status, config_files: p.dateien } });
               relations.push({ sourceKey: `fernzugriff:${z.name}/compose/${p.name}`, targetKey: hostKey, relationType: 'runs_on' });

@@ -287,6 +287,8 @@ const WIN_LESE: RegExp[] = [
   /^Get-NetFirewallProfile$/i, /^Get-NetTCPConnection -State Listen$/i,
   /^Get-WindowsFeature$/i, /^Get-WindowsCapability -Online( -Name [\w.~*]+)?$/i,
   /^Get-CimInstance (-ClassName )?Win32_(OperatingSystem|ComputerSystem|LogicalDisk|Processor|BIOS|QuickFixEngineering)$/i,
+  // I8 3b-5 — Lizenzstatus (Teilschlüssel = letzte 5 Zeichen, kein Geheimnis)
+  /^Get-CimInstance (-ClassName )?SoftwareLicensingProduct$/i,
   /^Get-LocalUser$/i, /^Get-LocalGroupMember( -Group)? Administrators$/i,
   /^Get-SmbShare$/i, // Get-ScheduledTask nicht: Aktionen können Befehlszeilen mit Zugangsdaten zeigen
   /^Get-Process$/i, // I8b — Prozessnamen zu offenen Ports (Bestand); ohne -IncludeUserName/Module

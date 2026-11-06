@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sammleWindows, leseWinOs, leseWinVolumes, leseWinDienste, leseWinPorts, leseWinProzesse, leseWinRollen, leseWinHotfixes, leseWinAusstehend, jsonListe, WINDOWS_BEFEHLE } from './sammler-windows.js';
+import { sammleWindows, leseWinOs, leseWinVolumes, leseWinDienste, leseWinPorts, leseWinProzesse, leseWinRollen, leseWinHotfixes, leseWinAusstehend, leseWinLizenz, jsonListe, WINDOWS_BEFEHLE } from './sammler-windows.js';
 
 // Ausgaben im Format von Windows PowerShell 5.1 (ConvertTo-Json -Compress), wie auf probe-win25 (Server 2025 Core)
 const OS = '{"Caption":"Microsoft Windows Server 2025 Standard Evaluation","Version":"10.0.26100","BuildNumber":"26100","TotalVisibleMemorySize":4193784,"FreePhysicalMemory":2621440}';
@@ -26,11 +26,25 @@ describe('I8b Windows-Sammler', () => {
   });
 
   it('sammleWindows: Bestand wie Linux plus Windows-Angaben; Teilfehler stehen im Bestand', async () => {
-    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX };
+    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL };
     const b = await sammleWindows('probe-win25', '192.168.1.222', async c => { if (!(c in antworten)) throw new Error('Zeitüberschreitung'); return antworten[c]!; });
-    expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 } } });
+    expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 }, lizenz: { status: 'testversion', kanal: 'Testversion' } } });
     expect(b.windows.domaene).toBeUndefined();
     expect(b.updates).toBeUndefined();
     expect(b.fehler).toEqual([]);
   });
+
+  // I8 3b-5 — echte Ausgaben vom 06.11. (VM 137 Win11-Dev aktiviert, VM 100 workVM Benachrichtigungsmodus), Testversion wie Server-2025-Eval
+  it('3b-5 Lizenz: Windows-Produkt mit Schlüssel, Office und Nulldatum 1601 ignoriert, Kanal/Status/Ablauf', () => {
+    const jetzt = new Date('2026-11-06T12:00:00Z');
+    expect(leseWinLizenz(LIZ_137, jetzt)).toEqual({ status: 'aktiviert', kanal: 'Einzelhandel', produkt: 'Windows(R), Professional edition' });
+    expect(leseWinLizenz(LIZ_100, jetzt)).toMatchObject({ status: 'benachrichtigung', kanal: 'Einzelhandel' });
+    expect(leseWinLizenz(LIZ_EVAL, jetzt)).toEqual({ status: 'testversion', kanal: 'Testversion', produkt: 'Windows(R), ServerStandardEval edition', ablauf: '2027-04-03', restTage: 148 });
+    // ohne EvaluationEndDate: Restlaufzeit in Minuten
+    expect(leseWinLizenz(LIZ_EVAL.replace('"\\/Date(1806753600000)\\/"', '"\\/Date(-11644473600000)\\/"'), jetzt)).toMatchObject({ restTage: 180, ablauf: '2027-05-05' });
+    expect(leseWinLizenz('[]', jetzt)).toBeUndefined();
+  });
 });
+const LIZ_137 = '[{"Name":"Office 16, Office16O365ProPlusR_Grace edition","Description":"Office 16, RETAIL(Grace) channel","ApplicationID":"0ff1ce15-a989-479d-af46-f275c6370663","PartialProductKey":"VMFTK","LicenseStatus":5,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"},{"Name":"Windows(R), Professional edition","Description":"Windows(R) Operating System, RETAIL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"8HV26","LicenseStatus":1,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"}]';
+const LIZ_100 = '[{"Name":"Windows(R), Professional edition","Description":"Windows(R) Operating System, RETAIL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"3V66T","LicenseStatus":5,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"}]';
+const LIZ_EVAL = '[{"Name":"Windows(R), ServerStandardEval edition","Description":"Windows(R) Operating System, TIMEBASED_EVAL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"XXXXX","LicenseStatus":1,"GracePeriodRemaining":259200,"EvaluationEndDate":"\\/Date(1806753600000)\\/"}]';

@@ -37,7 +37,9 @@ export interface BackupStand {
   unerreichbar: Array<{ speicher: string; grund: string }>;
 }
 /** I4b Teil 3 — `schluessel` ist stabil über Läufe (für Problems ohne Doppelte), `kategorie` steuert die Übernahme ins ITSM */
-export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy';
+export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz';
+/** I8 3b-5 — ab so vielen Resttagen einer Windows-Testversion/Kulanzfrist ein Befund (hoch ab 7 Tagen) */
+export const LIZENZ_WARN_TAGE = 30;
 export interface Auffaelligkeit { schwere: 'hoch' | 'mittel' | 'niedrig'; bereich: string; text: string; schluessel?: string; kategorie?: BefundKategorie; zugang?: string }
 
 export const BACKUP_ALT_TAGE = 7;
@@ -84,6 +86,13 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
     // I1 (Realfall 22.10. dockerhost: „Problem with MergeList …“) — gestörte Paketverwaltung ist ein Befund, kein bloßer Erfassungsfehler
     const apt = h.fehler.find(f => f.startsWith('updates:') && /MergeList|Hash Sum mismatch|Could not get lock|dpkg was interrupted|NO_PUBKEY|EXPKEYSIG/i.test(f));
     if (apt) a.push({ schwere: 'mittel', bereich: h.zugang, text: `Paketverwaltung gestört — Updates nicht prüfbar (${apt.replace(/^updates:\s*/, '').replace(/\s+/g, ' ').slice(0, 120)})`, schluessel: `paketverwaltung:${h.zugang}`, kategorie: 'paketverwaltung', zugang: h.zugang });
+    // I8 3b-5 — Windows-Lizenz: nicht aktiviert oder Testversion/Kulanzfrist läuft bald ab
+    const liz = (h as HostBestand & { windows?: { lizenz?: { status: string; kanal: string; ablauf?: string; restTage?: number } } }).windows?.lizenz;
+    if (liz) {
+      const k = { schluessel: `lizenz:${h.zugang}`, kategorie: 'lizenz' as const, zugang: h.zugang };
+      if (liz.status === 'nicht_aktiviert' || liz.status === 'benachrichtigung') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Windows nicht aktiviert (${liz.kanal}) — Funktionen eingeschränkt`, ...k });
+      else if (liz.restTage !== undefined && liz.restTage <= LIZENZ_WARN_TAGE) a.push({ schwere: liz.restTage <= 7 ? 'hoch' : 'mittel', bereich: h.zugang, text: `Windows-${liz.status === 'testversion' ? 'Testversion' : 'Kulanzfrist'} läuft ${liz.restTage < 0 ? `seit ${-liz.restTage} Tagen nicht mehr` : `in ${liz.restTage} Tagen ab`} (${liz.ablauf}) — Lizenz per Change einspielen (Schlüssel aus dem Tresor)`, ...k });
+    }
     const rest = h.fehler.filter(f => f !== apt);
     if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}`, schluessel: `erfassung:${h.zugang}`, kategorie: 'erfassung', zugang: h.zugang });
   }

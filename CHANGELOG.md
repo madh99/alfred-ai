@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Lizenz und Aktivierung in Bestand, CMDB und Befunden (v1765)
+
+- Die Bestandsaufnahme liest auf Windows-Hosts den Lizenzstand (`SoftwareLicensingProduct`, nur lesend): Produkt, Kanal (Einzelhandel, Volumen/KMS, MAK, OEM, Testversion), Aktivierungsstatus und bei Testversionen oder Kulanzfristen das Ablaufdatum. Office-Produkte und leere Datumswerte (1601) werden übergangen.
+- Die CMDB führt die Angaben als `license_status`, `license_channel`, `license_product` und `license_expires`.
+- Neue Befund-Kategorie „lizenz“: ein nicht aktiviertes Windows ist ein hoher Befund, eine Testversion oder Kulanzfrist mit höchstens 30 Tagen Restlaufzeit ein mittlerer (ab 7 Tagen ein hoher). Die Befunde werden wie die übrigen zu Problems.
+
 ### Fixed — Gast-Agent beim Windows-Start robuster (v1764)
 
 - Scheitert ein Fernzugriff-Schritt eines Changes mit „QEMU guest agent is not running“, wiederholt der Motor ihn nach einer Pause bis zu fünfmal. Unter Windows meldete sich der Agent nach dem Start bereit und war Sekunden später kurz wieder weg; der Change hielt bisher an, obwohl im Gast nichts gelaufen war. Andere Fehler halten weiterhin sofort an.
