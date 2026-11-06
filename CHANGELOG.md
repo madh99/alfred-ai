@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Befunde der Bestandsaufnahme legten Problems doppelt an (v1770)
+
+- Beim Abgleich mit den vorhandenen Problems las die Bestandsaufnahme nur die ersten 1000 Problems, sortiert nach Priorität. Bei über 2000 Problems fielen die mittleren Bestands-Befunde heraus. Sie wurden bei jedem Lauf neu angelegt, und behobene Befunde wurden nie als gelöst markiert.
+- Der Abgleich liest jetzt gezielt alle Problems der Bestandsaufnahme (Präfix der Erkennungsquelle, ohne Obergrenze, älteste zuerst).
+- Bereits entstandene Dubletten schließt der nächste Lauf automatisch mit Verweis auf das älteste Problem zum selben Befund.
+
 ### Added — Standard-Vorlage (j) Windows-Sicherheits-Grundlinie (v1769)
 
 - Neue Vorlage für Windows-VMs auf Proxmox: Im Wartungsfenster erst ein Snapshot (7 Tage) und die Vorher-Erhebung der laufenden Dienste. Dann erzwingt sie die SMB-Signierung für Server und Client und schaltet TLS 1.0/1.1 server- und clientseitig ab. Es folgt ein Neustart, weil SCHANNEL die Protokolle nur beim Start liest. Danach wartet sie auf VM, Gast-Agent und SSH und vergleicht die Dienste mit dem Stand vorher. Zum Schluss prüft sie das Ergebnis mit denselben Lesebefehlen wie die Bestandsaufnahme.

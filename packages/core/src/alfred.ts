@@ -7711,7 +7711,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const pr = new ProblemRepository(adapter);
             const { befundeAlsProblems } = await import('./infrastruktur/befund-problems.js');
             return befundeAlsProblems(auff, {
-              liste: async () => (await pr.listProblems(o, { limit: 1000 })).map(p => ({ id: p.id, title: p.title, status: p.status, ...(p.detectionMethod ? { detectionMethod: p.detectionMethod } : {}) })),
+              liste: async () => (await pr.listProblemsByDetection(o, 'infrastruktur-bestand:')).map(p => ({ id: p.id, title: p.title, status: p.status, ...(p.detectionMethod ? { detectionMethod: p.detectionMethod } : {}) })),
               anlegen: async (d) => (await pr.createProblem(o, { ...d, category: d.category as never, detectedBy: 'auto' })).id,
               loese: async (id, notiz) => { await pr.appendAnalysisNotes(o, id, notiz); await pr.updateProblem(o, id, { status: 'resolved' } as never); },
               assetFuer: async (zugang) => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).find(z => z.name === zugang)?.cmdbAssetId,

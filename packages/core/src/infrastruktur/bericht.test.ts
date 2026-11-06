@@ -134,6 +134,25 @@ describe('I4b Teil 3 — Befunde als Problems', () => {
     expect(r2).toMatchObject({ neu: [], bekannt: 2 });
     expect(geloest).toEqual(['p-weg']); // anderer Host nicht erfasst → p-alt bleibt
   });
+
+  it('v1770 — Dubletten (Realfall 07.11.: Liste bei 1000 abgeschnitten) werden geschlossen; das älteste zählt, auch ein geschlossenes', async () => {
+    const { befundeAlsProblems } = await import('./befund-problems.js');
+    const a = auffaelligkeiten({ hosts: [host({ zugang: 'pve', updates: { anzahl: 45, sicherheit: 3 } })], vms: [], proxy: [] }, jetzt);
+    const M = 'infrastruktur-bestand:';
+    const db = [
+      { id: 'u1', title: 'pve', status: 'logged', detectionMethod: `${M}updates:pve` }, { id: 'u2', title: 'pve', status: 'logged', detectionMethod: `${M}updates:pve` }, { id: 'u3', title: 'pve', status: 'logged', detectionMethod: `${M}updates:pve` },
+      { id: 'g1', title: 'gl', status: 'closed', detectionMethod: `${M}grundlinie:probe-win25b:tls` }, { id: 'g2', title: 'gl', status: 'logged', detectionMethod: `${M}grundlinie:probe-win25b:tls` },
+      { id: 's1', title: 'sig', status: 'logged', detectionMethod: `${M}grundlinie:probe-win25b:smb-signatur` },
+    ];
+    const geloest: string[] = []; const angelegt: string[] = [];
+    const z = { liste: async () => db, anlegen: async (d: { detectionMethod: string }) => { angelegt.push(d.detectionMethod); return 'neu'; }, loese: async (id: string) => { geloest.push(id); } };
+    const r = await befundeAlsProblems(a, z, { docId: 'd', datum: 'heute' }, { hosts: new Set(['pve', 'probe-win25b']), alle: false });
+    expect(r.dubletten).toEqual(['u2', 'u3', 'g2']);
+    expect(angelegt).toEqual([]); // updates:pve ist bekannt (u1), nichts neu
+    expect(r.bekannt).toBe(1);
+    // Grundlinie greift jetzt: s1 verschwunden → gelöst; g1 bleibt geschlossen
+    expect(r.geloest).toEqual(['s1']);
+  });
 });
 
 describe('Cloudflare (Owner 22.10.: öffentliche Domains)', () => {

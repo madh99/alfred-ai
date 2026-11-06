@@ -28,9 +28,23 @@ export interface Erfassung { hosts: Set<string>; alle: boolean }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
 const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie)$/;
 
-export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugriff, bericht: { docId: string; datum: string }, erfassung: Erfassung): Promise<{ neu: string[]; bekannt: number; geloest: string[] }> {
+const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
+
+export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugriff, bericht: { docId: string; datum: string }, erfassung: Erfassung): Promise<{ neu: string[]; bekannt: number; geloest: string[]; dubletten?: string[] }> {
+  // liste() liefert ALLE Problems dieser Quelle, älteste zuerst (v1770 — vorher abgeschnitten bei 1000, Realfall 07.11.)
   const vorhanden = (await z.liste()).filter(p => p.detectionMethod?.startsWith(`${METHODE}:`));
-  const nachSchluessel = new Map(vorhanden.map(p => [p.detectionMethod!.slice(METHODE.length + 1), p]));
+  // je Schlüssel zählt das älteste Problem (auch ein geschlossenes — Regel oben). Jüngere offene zum selben Schlüssel können nur aus
+  // dem Abschneide-Fehler stammen → als Dublette schließen.
+  const nachSchluessel = new Map<string, (typeof vorhanden)[number]>();
+  const dubletten: string[] = [];
+  for (const p of vorhanden) {
+    const k = p.detectionMethod!.slice(METHODE.length + 1);
+    const da = nachSchluessel.get(k);
+    if (!da) { nachSchluessel.set(k, p); continue; }
+    if (!OFFEN(p.status)) continue;
+    await z.loese(p.id, `Dublette von Problem ${da.id} (gleicher Befund ${k}) — automatisch geschlossen (v1770).`);
+    dubletten.push(p.id);
+  }
   const aktuell = auff.filter(uebernehmen);
   const neu: string[] = []; let bekannt = 0;
   for (const a of aktuell) {
@@ -48,12 +62,12 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
   const jetzt = new Set(auff.map(a => a.schluessel).filter(Boolean));
   const geloest: string[] = [];
   for (const [k, p] of nachSchluessel) {
-    if (jetzt.has(k) || ['resolved', 'closed'].includes(p.status)) continue;
+    if (jetzt.has(k) || !OFFEN(p.status)) continue;
     const [kat, zugang] = k.split(':');
     const sicher = HOST_SCHLUESSEL.test(kat!) ? erfassung.hosts.has(zugang!) : erfassung.alle;
     if (!sicher) continue;
     await z.loese(p.id, `Im Bestand vom ${bericht.datum} (Bericht ${bericht.docId}) nicht mehr festgestellt — automatisch als gelöst markiert.`);
     geloest.push(p.id);
   }
-  return { neu, bekannt, geloest };
+  return { neu, bekannt, geloest, ...(dubletten.length ? { dubletten } : {}) };
 }

@@ -105,6 +105,16 @@ export class ProblemRepository {
     return (rows as any[]).map(rowToProblem);
   }
 
+  /**
+   * v1770 — alle Problems einer Erkennungsquelle (detection_method mit diesem Präfix), ohne Obergrenze, älteste zuerst.
+   * Realfall 07.11.: listProblems(limit 1000) bei 2099 Problems schnitt die mittleren Bestands-Befunde ab → Dubletten.
+   */
+  async listProblemsByDetection(userId: string, praefix: string): Promise<CmdbProblem[]> {
+    // exakter Präfixvergleich ohne LIKE-Platzhalter (kein Escaping nötig; gleich in PostgreSQL und SQLite)
+    const rows = await this.db.query(`SELECT * FROM cmdb_problems WHERE user_id = ? AND substr(detection_method, 1, ?) = ? ORDER BY created_at ASC`, [userId, praefix.length, praefix]);
+    return (rows as any[]).map(rowToProblem);
+  }
+
   async updateProblem(userId: string, id: string, updates: Partial<{
     title: string; description: string; status: ProblemStatus; priority: ProblemPriority;
     category: ProblemCategory; rootCauseDescription: string; rootCauseCategory: ProblemCategory;

@@ -51,7 +51,7 @@ export interface InfrastrukturDeps {
   backups?: () => Promise<BackupStand | undefined>;
   speichereBericht: (titel: string, markdown: string) => Promise<string>;
   /** I4b Teil 3 — Befunde als ITSM-Problems (ohne Doppelte, ohne Sicherung) */
-  problems?: (auff: import('./bericht.js').Auffaelligkeit[], bericht: { docId: string; datum: string }, erfassung: { hosts: Set<string>; alle: boolean }) => Promise<{ neu: string[]; bekannt: number; geloest: string[] }>;
+  problems?: (auff: import('./bericht.js').Auffaelligkeit[], bericht: { docId: string; datum: string }, erfassung: { hosts: Set<string>; alle: boolean }) => Promise<{ neu: string[]; bekannt: number; geloest: string[]; dubletten?: string[] }>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   // ── I2 ──
   ownerId?: () => string | undefined;
@@ -327,7 +327,7 @@ export class InfrastrukturSkill extends Skill {
     const docId = await this.deps.speichereBericht(titel, markdown);
     const vollstaendig = new Set(hosts.filter(h => !h.fehler.length).map(h => h.zugang));
     const pr = await this.deps.problems?.(r.auffaelligkeiten, { docId, datum: new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' }) }, { hosts: vollstaendig, alle: vollstaendig.size === hosts.length && !discovery.some(d => /Fehler|error|nicht verfügbar/i.test(d)) }).catch(err => { this.deps.protokoll?.('I4b Problems fehlgeschlagen', { fehler: (err as Error).message }); return undefined; });
-    if (pr) this.deps.protokoll?.('I4b Befunde als Problems', { neu: pr.neu.length, bekannt: pr.bekannt, geloest: pr.geloest.length });
+    if (pr) this.deps.protokoll?.('I4b Befunde als Problems', { neu: pr.neu.length, bekannt: pr.bekannt, geloest: pr.geloest.length, dubletten: pr.dubletten?.length ?? 0 });
     this.deps.protokoll?.('I1 Bestandsaufnahme fertig', { dauerS: Math.round((Date.now() - start) / 1000), hosts: hosts.length, vms: vms.length, auffaelligkeiten: r.auffaelligkeiten.length, docId });
     const top = r.auffaelligkeiten.slice(0, 25).map(a => `- **${a.schwere}** · ${a.bereich}: ${a.text}`);
     return {
