@@ -37,9 +37,43 @@ export interface BackupStand {
   unerreichbar: Array<{ speicher: string; grund: string }>;
 }
 /** I4b Teil 3 — `schluessel` ist stabil über Läufe (für Problems ohne Doppelte), `kategorie` steuert die Übernahme ins ITSM */
-export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz';
+export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz' | 'grundlinie';
 /** I8 3b-5 — ab so vielen Resttagen einer Windows-Testversion/Kulanzfrist ein Befund (hoch ab 7 Tagen) */
 export const LIZENZ_WARN_TAGE = 30;
+/** I8 3b-2a — Defender-Signaturen gelten ab diesem Alter als veraltet */
+export const SIGNATUR_WARN_TAGE = 7;
+
+/** Grundlinien-Stand wie in sammler-windows (hier strukturell, damit bericht.ts den Sammler nicht importiert) */
+interface WinGrundlinie {
+  smb1?: boolean; smbSignaturServer?: boolean; smbSignaturClient?: boolean; gastAnmeldung?: boolean;
+  firewall?: Array<{ profil: string; an: boolean; eingehend: string }>;
+  defender?: { an: boolean; echtzeit: boolean; signaturTage?: number };
+  rdp?: { an: boolean; nla: boolean }; tls10Aus?: boolean; tls11Aus?: boolean; laps?: string;
+}
+
+/**
+ * I8 3b-2a — Abweichungen von der Sicherheits-Grundlinie (Spec 3b-2). Nur was erfasst ist, wird bewertet (fehlender Teil = Lücke).
+ * LAPS nur bei Domänenmitgliedern: Windows LAPS sichert nach AD oder Entra — ohne Domäne/Entra gibt es kein Ziel.
+ */
+export function grundlinienAbweichungen(g: WinGrundlinie | undefined, domaene?: string): Array<{ punkt: string; schwere: 'hoch' | 'mittel'; text: string }> {
+  if (!g) return [];
+  const a: Array<{ punkt: string; schwere: 'hoch' | 'mittel'; text: string }> = [];
+  if (g.smb1) a.push({ punkt: 'smb1', schwere: 'hoch', text: 'SMBv1 ist eingeschaltet' });
+  const sig = [g.smbSignaturServer === false ? 'Server' : '', g.smbSignaturClient === false ? 'Client' : ''].filter(Boolean);
+  if (sig.length) a.push({ punkt: 'smb-signatur', schwere: 'mittel', text: `SMB-Signierung nicht erzwungen (${sig.join(', ')})` });
+  if (g.gastAnmeldung) a.push({ punkt: 'smb-gast', schwere: 'hoch', text: 'unsichere SMB-Gastanmeldung erlaubt' });
+  const fwAus = (g.firewall ?? []).filter(p => !p.an).map(p => p.profil);
+  if (fwAus.length) a.push({ punkt: 'firewall', schwere: 'hoch', text: `Firewall-Profil aus: ${fwAus.join(', ')}` });
+  const fwOffen = (g.firewall ?? []).filter(p => p.an && p.eingehend === 'zulassen').map(p => p.profil);
+  if (fwOffen.length) a.push({ punkt: 'firewall-eingehend', schwere: 'hoch', text: `Firewall lässt eingehend standardmäßig alles zu: ${fwOffen.join(', ')}` });
+  if (g.defender && (!g.defender.an || !g.defender.echtzeit)) a.push({ punkt: 'defender', schwere: 'hoch', text: `Defender ${!g.defender.an ? 'aus' : 'ohne Echtzeitschutz'}` });
+  else if (g.defender?.signaturTage !== undefined && g.defender.signaturTage > SIGNATUR_WARN_TAGE) a.push({ punkt: 'defender-signaturen', schwere: 'mittel', text: `Defender-Signaturen ${g.defender.signaturTage} Tage alt` });
+  if (g.rdp?.an && !g.rdp.nla) a.push({ punkt: 'rdp-nla', schwere: 'hoch', text: 'RDP an ohne Netzwerkebenen-Authentifizierung (NLA)' });
+  const tls = [g.tls10Aus === false ? '1.0' : '', g.tls11Aus === false ? '1.1' : ''].filter(Boolean);
+  if (tls.length) a.push({ punkt: 'tls', schwere: 'mittel', text: `TLS ${tls.join('/')} nicht abgeschaltet` });
+  if (domaene && g.laps !== 'ad' && g.laps !== 'entra') a.push({ punkt: 'laps', schwere: 'mittel', text: `Windows LAPS nicht eingerichtet (Domäne ${domaene})` });
+  return a;
+}
 export interface Auffaelligkeit { schwere: 'hoch' | 'mittel' | 'niedrig'; bereich: string; text: string; schluessel?: string; kategorie?: BefundKategorie; zugang?: string }
 
 export const BACKUP_ALT_TAGE = 7;
@@ -93,6 +127,9 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
       if (liz.status === 'nicht_aktiviert' || liz.status === 'benachrichtigung') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Windows nicht aktiviert (${liz.kanal}) — Funktionen eingeschränkt`, ...k });
       else if (liz.restTage !== undefined && liz.restTage <= LIZENZ_WARN_TAGE) a.push({ schwere: liz.restTage <= 7 ? 'hoch' : 'mittel', bereich: h.zugang, text: `Windows-${liz.status === 'testversion' ? 'Testversion' : 'Kulanzfrist'} läuft ${liz.restTage < 0 ? `seit ${-liz.restTage} Tagen nicht mehr` : `in ${liz.restTage} Tagen ab`} (${liz.ablauf}) — Lizenz per Change einspielen (Schlüssel aus dem Tresor)`, ...k });
     }
+    // I8 3b-2a — Sicherheits-Grundlinie (Spec 3b-2): je Abweichung ein eigener Befund, damit Problems einzeln erledigt werden
+    const win = (h as HostBestand & { windows?: { domaene?: string; grundlinie?: WinGrundlinie } }).windows;
+    for (const g of grundlinienAbweichungen(win?.grundlinie, win?.domaene)) a.push({ ...g, bereich: h.zugang, text: `Grundlinie: ${g.text}`, schluessel: `grundlinie:${h.zugang}:${g.punkt}`, kategorie: 'grundlinie', zugang: h.zugang });
     const rest = h.fehler.filter(f => f !== apt);
     if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}`, schluessel: `erfassung:${h.zugang}`, kategorie: 'erfassung', zugang: h.zugang });
   }

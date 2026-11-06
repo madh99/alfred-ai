@@ -293,7 +293,24 @@ const WIN_LESE: RegExp[] = [
   /^Get-SmbShare$/i, // Get-ScheduledTask nicht: Aktionen können Befehlszeilen mit Zugangsdaten zeigen
   /^Get-Process$/i, // I8b — Prozessnamen zu offenen Ports (Bestand); ohne -IncludeUserName/Module
   /^Get-WinEvent -LogName (System|Application) -MaxEvents \d{1,4}$/i,
+  // I8 3b-2a — Sicherheits-Grundlinie: SMB-Einstellungen und Defender-Zustand (nur Konfiguration, keine Inhalte)
+  /^Get-SmbServerConfiguration$/i, /^Get-SmbClientConfiguration$/i, /^Get-MpComputerStatus$/i,
 ];
+/**
+ * I8 3b-2a — Grundlinien-Werte aus der Registry (RDP/NLA, TLS 1.0/1.1, Windows LAPS). Feste Pfade, nur einzelne Werte, keine Schlüssel
+ * mit Geheimnissen; „?“ steht als Platzhalter für das Leerzeichen (kein Anführungszeichen nötig). Gilt nur in GENAU diesem Wortlaut als
+ * lesend — Variablen, Klammern und Hashtable stecken im festen Text, nicht in einer Eingabe.
+ */
+export const WIN_GRUNDLINIE_REGISTRY = '[pscustomobject]@{'
+  + 'RdpAus=(Get-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal?Server -ErrorAction SilentlyContinue).fDenyTSConnections;'
+  + 'Nla=(Get-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal?Server\\WinStations\\RDP-Tcp -ErrorAction SilentlyContinue).UserAuthentication;'
+  + 'Tls10=(Get-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS?1.0\\Server -ErrorAction SilentlyContinue).Enabled;'
+  + 'Tls11=(Get-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS?1.1\\Server -ErrorAction SilentlyContinue).Enabled;'
+  + 'LapsCsp=(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Microsoft\\Policies\\LAPS -ErrorAction SilentlyContinue).BackupDirectory;'
+  + 'LapsGpo=(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LAPS -ErrorAction SilentlyContinue).BackupDirectory;'
+  + 'LapsLokal=(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\LAPS\\Config -ErrorAction SilentlyContinue).BackupDirectory'
+  + '} | ConvertTo-Json -Compress';
+const WIN_LESE_FEST = new Set([WIN_GRUNDLINIE_REGISTRY]);
 const WIN_FILTER: RegExp[] = [
   /^Select-Object( -Property)? [\w*]+( ?, ?[\w*]+)*$/i, /^Select-Object -(First|Last) \d{1,4}$/i,
   /^Format-List( [\w*]+( ?, ?[\w*]+)*)?$/i, /^Format-Table( -AutoSize)?( [\w*]+( ?, ?[\w*]+)*)?$/i,
@@ -305,6 +322,7 @@ export function windowsBefehlsklasse(befehl: string): Befehlsklasse {
   const b = befehl.trim().replace(/\s+/g, ' ');
   if (!b) return 'nie';
   if (WIN_NIE.some(r => r.test(b))) return 'nie';
+  if (WIN_LESE_FEST.has(b)) return 'lesen';
   if (/[;&$`{}()<>@"'\r\n\\]/.test(b)) return 'bestaetigen';
   const stufen = b.split('|').map(s => s.trim());
   if (stufen.some(s => !s)) return 'bestaetigen';

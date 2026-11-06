@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Sicherheits-Grundlinie erfassen und bewerten (v1768)
+
+- Die Bestandsaufnahme liest auf Windows-Hosts den Ist-Stand der Sicherheits-Grundlinie, nur lesend: SMBv1, SMB-Signierung (Server und Client), unsichere Gastanmeldung, Firewall-Profile mit Standardverhalten für eingehende Verbindungen, Defender (Dienst, Echtzeitschutz, Alter der Signaturen), RDP mit Netzwerkebenen-Authentifizierung, TLS 1.0/1.1 und Windows LAPS.
+- Neue Leseliste-Einträge: `Get-SmbServerConfiguration`, `Get-SmbClientConfiguration`, `Get-MpComputerStatus` sowie ein fester Registry-Lesebefehl, der nur in genau diesem Wortlaut als lesend gilt.
+- Die CMDB führt den Stand als `baseline`.
+- Neue Befund-Kategorie „grundlinie“, je Abweichung ein eigener Befund und damit ein eigenes Problem. Hoch: SMBv1 an, SMB-Gastanmeldung, Firewall-Profil aus oder eingehend offen, Defender aus oder ohne Echtzeitschutz, RDP ohne NLA. Mittel: SMB-Signierung nicht erzwungen, TLS 1.0/1.1 nicht abgeschaltet, Defender-Signaturen älter als 7 Tage, Windows LAPS fehlt bei Domänenmitgliedern.
+
 ### Fixed — Unerfüllbare Erwartungen bei Status-Prüfungen schon beim Planen abweisen (v1767)
 
 - Für Status-Abfragen mit festem Wortlaut (`proxmox.agent_status`, `fernzugriff.pruefen`) prüft die Planprüfung, ob der erwartete Text überhaupt in der Antwort vorkommen kann: als Stück des festen Wortlauts, als Parameterwert, als IPv4-Adresse oder als Host-/VM-Name. Andernfalls weist sie den Plan mit dem tatsächlichen Wortlaut ab. Bisher fiel eine solche Erwartung (etwa „SSH“) erst im Lauf auf und hielt den Change trotz erfolgreicher Prüfung an.

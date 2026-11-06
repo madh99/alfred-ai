@@ -9,7 +9,7 @@ import type { Auffaelligkeit, BefundKategorie } from './bericht.js';
 
 export const METHODE = 'infrastruktur-bestand';
 const AUSGENOMMEN: ReadonlySet<BefundKategorie> = new Set(['sicherung', 'erfassung']);
-const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration' };
+const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security' };
 
 export interface ProblemZugriff {
   liste(): Promise<Array<{ id: string; title: string; status: string; detectionMethod?: string }>>;
@@ -26,7 +26,7 @@ export function uebernehmen(a: Auffaelligkeit): boolean {
 /** Vollständig erfasste Hosts dieses Laufs — nur deren Befunde dürfen als „verschwunden“ gelten (Ausfall der Erfassung ≠ gelöst). */
 export interface Erfassung { hosts: Set<string>; alle: boolean }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
-const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz)$/;
+const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie)$/;
 
 export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugriff, bericht: { docId: string; datum: string }, erfassung: Erfassung): Promise<{ neu: string[]; bekannt: number; geloest: string[] }> {
   const vorhanden = (await z.liste()).filter(p => p.detectionMethod?.startsWith(`${METHODE}:`));

@@ -5,6 +5,7 @@
  * derselbe Host-Bestand wie bei Linux (CMDB, Bericht, Standard-Changes) plus Windows-Angaben (Rollen, Updates, Domäne).
  */
 import type { HostBestand } from './sammler.js';
+import { WIN_GRUNDLINIE_REGISTRY } from '../fernzugriff/regeln.js';
 
 export const WINDOWS_BEFEHLE = {
   os: 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, TotalVisibleMemorySize, FreePhysicalMemory | ConvertTo-Json -Compress',
@@ -17,7 +18,66 @@ export const WINDOWS_BEFEHLE = {
   hotfixes: 'Get-HotFix | Select-Object HotFixID, InstalledOn | ConvertTo-Json -Compress',
   // I8 3b-5 — Lizenz/Aktivierung: alle Lizenzprodukte (ohne Filter — ein -Filter bräuchte Anführungszeichen), ausgewertet wird im Parser
   lizenz: 'Get-CimInstance -ClassName SoftwareLicensingProduct | Select-Object Name, Description, ApplicationID, PartialProductKey, LicenseStatus, GracePeriodRemaining, EvaluationEndDate | ConvertTo-Json -Compress',
+  // I8 3b-2a — Sicherheits-Grundlinie (Spec 3b-2), nur lesend
+  smbServer: 'Get-SmbServerConfiguration | Select-Object EnableSMB1Protocol, RequireSecuritySignature, EncryptData | ConvertTo-Json -Compress',
+  smbClient: 'Get-SmbClientConfiguration | Select-Object RequireSecuritySignature, EnableInsecureGuestLogons | ConvertTo-Json -Compress',
+  firewall: 'Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction | ConvertTo-Json -Compress',
+  defender: 'Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureAge, AntivirusSignatureLastUpdated | ConvertTo-Json -Compress',
+  registry: WIN_GRUNDLINIE_REGISTRY,
 } as const;
+
+/**
+ * I8 3b-2a — Ist-Stand der Sicherheits-Grundlinie. Fehlt ein Teil (Befehl gescheitert), bleibt das Feld leer — das ist eine
+ * Erfassungslücke, kein Befund.
+ */
+export interface WindowsGrundlinie {
+  smb1?: boolean; smbSignaturServer?: boolean; smbSignaturClient?: boolean; gastAnmeldung?: boolean;
+  firewall?: Array<{ profil: string; an: boolean; eingehend: 'blockieren' | 'zulassen' | 'standard' }>;
+  defender?: { an: boolean; echtzeit: boolean; signaturTage?: number };
+  rdp?: { an: boolean; nla: boolean };
+  /** true = per Registry ausdrücklich abgeschaltet (Enabled=0); fehlt der Wert, gilt der Systemstandard */
+  tls10Aus?: boolean; tls11Aus?: boolean;
+  /** Windows LAPS: Sicherungsziel aus Richtlinie/CSP/lokaler Konfiguration (BackupDirectory 0 aus, 1 Entra, 2 AD) */
+  laps?: 'ad' | 'entra' | 'aus';
+}
+
+const wahr = (x: unknown) => x === true || x === 1 || x === 'True' || x === 'true';
+/** GpoBoolean von Get-NetFirewallProfile: 1/True an, 0/False aus, 2/NotConfigured = Standard (an) */
+const fwAn = (x: unknown) => !(x === false || x === 0 || x === 'False');
+/** Action von DefaultInboundAction: 2/Allow zulassen, 4/Block blockieren, 0/NotConfigured Standard (= blockieren) */
+const fwEingehend = (x: unknown): 'blockieren' | 'zulassen' | 'standard' => (x === 2 || x === 'Allow' ? 'zulassen' : x === 4 || x === 'Block' ? 'blockieren' : 'standard');
+
+export function leseWinSmbServer(t: string): Pick<WindowsGrundlinie, 'smb1' | 'smbSignaturServer'> {
+  const s = jsonListe<{ EnableSMB1Protocol?: unknown; RequireSecuritySignature?: unknown }>(t)[0];
+  return s ? { smb1: wahr(s.EnableSMB1Protocol), smbSignaturServer: wahr(s.RequireSecuritySignature) } : {};
+}
+export function leseWinSmbClient(t: string): Pick<WindowsGrundlinie, 'smbSignaturClient' | 'gastAnmeldung'> {
+  const s = jsonListe<{ RequireSecuritySignature?: unknown; EnableInsecureGuestLogons?: unknown }>(t)[0];
+  return s ? { smbSignaturClient: wahr(s.RequireSecuritySignature), gastAnmeldung: wahr(s.EnableInsecureGuestLogons) } : {};
+}
+export function leseWinFirewall(t: string): NonNullable<WindowsGrundlinie['firewall']> {
+  return jsonListe<{ Name?: string; Enabled?: unknown; DefaultInboundAction?: unknown }>(t).filter(p => p.Name).map(p => ({ profil: String(p.Name), an: fwAn(p.Enabled), eingehend: fwEingehend(p.DefaultInboundAction) }));
+}
+export function leseWinDefender(t: string, jetzt = new Date()): WindowsGrundlinie['defender'] {
+  const d = jsonListe<{ AMServiceEnabled?: unknown; AntivirusEnabled?: unknown; RealTimeProtectionEnabled?: unknown; AntivirusSignatureAge?: number; AntivirusSignatureLastUpdated?: unknown }>(t)[0];
+  if (!d) return undefined;
+  const alter = zahl(d.AntivirusSignatureAge), stand = cimDatum(d.AntivirusSignatureLastUpdated);
+  // AntivirusSignatureAge ist 65535, wenn nie aktualisiert — dann zählt das Datum, sonst „unbekannt“
+  const tage = Number.isFinite(alter) && alter < 65535 ? alter : stand !== undefined ? Math.floor((jetzt.getTime() - stand) / 86_400_000) : undefined;
+  return { an: wahr(d.AMServiceEnabled) && wahr(d.AntivirusEnabled), echtzeit: wahr(d.RealTimeProtectionEnabled), ...(tage !== undefined ? { signaturTage: tage } : {}) };
+}
+export function leseWinRegistry(t: string): Pick<WindowsGrundlinie, 'rdp' | 'tls10Aus' | 'tls11Aus' | 'laps'> {
+  const r = jsonListe<{ RdpAus?: number | null; Nla?: number | null; Tls10?: number | null; Tls11?: number | null; LapsCsp?: number | null; LapsGpo?: number | null; LapsLokal?: number | null }>(t)[0];
+  if (!r) return {};
+  // Vorrang wie bei Windows LAPS: CSP vor Gruppenrichtlinie vor lokaler Konfiguration
+  const ziel = [r.LapsCsp, r.LapsGpo, r.LapsLokal].find(x => x !== null && x !== undefined);
+  return {
+    // fDenyTSConnections fehlt = Standard (RDP aus); UserAuthentication fehlt = Standard (NLA an)
+    rdp: { an: r.RdpAus === 0, nla: r.Nla !== 0 },
+    tls10Aus: r.Tls10 === 0, tls11Aus: r.Tls11 === 0,
+    ...(ziel !== undefined && ziel !== null ? { laps: ziel === 2 ? 'ad' as const : ziel === 1 ? 'entra' as const : 'aus' as const } : {}),
+  };
+}
 
 /** Anwendungs-ID von Windows in SoftwareLicensingProduct (die übrigen Einträge sind Office u. a.) */
 export const WINDOWS_APP_ID = '55c92734-d682-4d71-983e-d6ec3f16059f';
@@ -128,7 +188,7 @@ export function leseWinAusstehend(t: string): { anzahl: number; sicherheit: numb
   return { anzahl: titel.length, sicherheit: titel.filter(x => /security|sicherheit|cumulative|kumulativ/i.test(x)).length, titel: titel.slice(0, 20) };
 }
 
-export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[]; lizenz?: WindowsLizenz }
+export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[]; lizenz?: WindowsLizenz; grundlinie?: WindowsGrundlinie }
 
 /** Wie sammleLinux: jeder Befehl einzeln, Fehler je Teil im Bestand (z. B. Rollen gibt es auf Windows 11 nicht) */
 export async function sammleWindows(zugang: string, host: string, lesen: (befehl: string) => Promise<string>): Promise<HostBestand & { windows: WindowsBestand }> {
@@ -149,6 +209,17 @@ export async function sammleWindows(zugang: string, host: string, lesen: (befehl
   b.windows.hotfixes = (await versuch('hotfixes', WINDOWS_BEFEHLE.hotfixes, leseWinHotfixes)) ?? { anzahl: 0 };
   const lizenz = await versuch('lizenz', WINDOWS_BEFEHLE.lizenz, t => leseWinLizenz(t));
   if (lizenz) b.windows.lizenz = lizenz;
+  // I8 3b-2a — Sicherheits-Grundlinie; jeder Teil einzeln (Defender fehlt z. B. auf Servern ohne das Feature)
+  const gl: WindowsGrundlinie = {
+    ...(await versuch('smb', WINDOWS_BEFEHLE.smbServer, leseWinSmbServer)),
+    ...(await versuch('smb-client', WINDOWS_BEFEHLE.smbClient, leseWinSmbClient)),
+    ...(await versuch('registry', WINDOWS_BEFEHLE.registry, leseWinRegistry)),
+  };
+  const fw = await versuch('firewall', WINDOWS_BEFEHLE.firewall, leseWinFirewall);
+  if (fw?.length) gl.firewall = fw;
+  const def = await versuch('defender', WINDOWS_BEFEHLE.defender, t => leseWinDefender(t));
+  if (def) gl.defender = def;
+  if (Object.keys(gl).length) b.windows.grundlinie = gl;
   // ausstehende Updates: Start-WUScan gibt es auf Server 2025 nicht (Realfall probe-win25) — kommt mit den Windows-Updates (I8b Teil 3)
   return b;
 }

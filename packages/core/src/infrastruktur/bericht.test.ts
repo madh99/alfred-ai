@@ -91,6 +91,29 @@ describe('I8 3b-5 — Windows-Lizenz', () => {
   });
 });
 
+describe('I8 3b-2a — Sicherheits-Grundlinie', () => {
+  it('echte Stände 9102/137: Signierung und TLS mittel; harte Verstöße hoch; LAPS nur in der Domäne', async () => {
+    const { grundlinienAbweichungen } = await import('./bericht.js');
+    const p9102 = { smb1: false, smbSignaturServer: false, smbSignaturClient: true, gastAnmeldung: false, rdp: { an: false, nla: true }, tls10Aus: false, tls11Aus: false,
+      firewall: [{ profil: 'Domain', an: true, eingehend: 'standard' }], defender: { an: true, echtzeit: true, signaturTage: 0 } };
+    expect(grundlinienAbweichungen(p9102).map(x => `${x.schwere}|${x.punkt}|${x.text}`)).toEqual([
+      'mittel|smb-signatur|SMB-Signierung nicht erzwungen (Server)',
+      'mittel|tls|TLS 1.0/1.1 nicht abgeschaltet',
+    ]);
+    const schlecht = { smb1: true, smbSignaturServer: true, smbSignaturClient: true, gastAnmeldung: true, rdp: { an: true, nla: false }, tls10Aus: true, tls11Aus: true,
+      firewall: [{ profil: 'Public', an: false, eingehend: 'standard' }, { profil: 'Private', an: true, eingehend: 'zulassen' }], defender: { an: true, echtzeit: false } };
+    expect(grundlinienAbweichungen(schlecht).map(x => `${x.schwere}|${x.punkt}`)).toEqual(['hoch|smb1', 'hoch|smb-gast', 'hoch|firewall', 'hoch|firewall-eingehend', 'hoch|defender', 'hoch|rdp-nla']);
+    expect(grundlinienAbweichungen({ defender: { an: true, echtzeit: true, signaturTage: 9 } })).toEqual([{ punkt: 'defender-signaturen', schwere: 'mittel', text: 'Defender-Signaturen 9 Tage alt' }]);
+    expect(grundlinienAbweichungen({ tls10Aus: true, tls11Aus: true }, 'ad.3033.at')).toEqual([{ punkt: 'laps', schwere: 'mittel', text: 'Windows LAPS nicht eingerichtet (Domäne ad.3033.at)' }]);
+    expect(grundlinienAbweichungen({ tls10Aus: true, tls11Aus: true, laps: 'ad' }, 'ad.3033.at')).toEqual([]);
+    expect(grundlinienAbweichungen(undefined)).toEqual([]);
+    // im Bericht: je Abweichung ein Befund mit Host-Schlüssel (Problems einzeln, Lösen nur bei erfasstem Host)
+    const a = auffaelligkeiten({ hosts: [{ ...host({ zugang: 'probe-win25b' }), windows: { grundlinie: p9102 } } as HostBestand], vms: [], proxy: [] }, jetzt).filter(x => x.kategorie === 'grundlinie');
+    expect(a.map(x => x.schluessel)).toEqual(['grundlinie:probe-win25b:smb-signatur', 'grundlinie:probe-win25b:tls']);
+    expect(a[0]!.text).toBe('Grundlinie: SMB-Signierung nicht erzwungen (Server)');
+  });
+});
+
 describe('I4b Teil 3 — Befunde als Problems', () => {
   it('nur hoch/mittel ohne Sicherung, ohne Doppelte, verschwundene Befunde nur bei vollständiger Erfassung lösen', async () => {
     const { befundeAlsProblems } = await import('./befund-problems.js');
