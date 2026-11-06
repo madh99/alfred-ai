@@ -199,6 +199,8 @@ describe('agent_status (v1626, Realfall docker-dev-01 ohne Gast-Agent)', () => {
     expect(ok.success, ok.error).toBe(true);
     expect(ok.display).toContain('antwortet — IPv4: 10.203.24.2 (eth0)');
     expect(ok.display).not.toContain('127.0.0.1');
+    // v1766 — VM-Name steht in der Antwort (Warteschritte erwarten ihn)
+    expect(ok.display).toContain('VM 144 docker-dev-01 (pve3)');
     const nein = await welt(false).execute({ action: 'agent_status', vmid: 144 }, {} as never);
     expect(nein.success).toBe(false);
     expect(nein.error).toContain('antwortet nicht');

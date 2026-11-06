@@ -598,16 +598,16 @@ export class ProxmoxSkill extends Skill {
   private async resolveVm(
     vmid: number,
     explicitNode?: string,
-  ): Promise<{ node: string; type: 'qemu' | 'lxc' }> {
+  ): Promise<{ node: string; type: 'qemu' | 'lxc'; name?: string }> {
     if (explicitNode) {
       // We still need the type — try qemu first, then lxc
       try {
-        await this.get(`/nodes/${explicitNode}/qemu/${vmid}/status/current`);
-        return { node: explicitNode, type: 'qemu' };
+        const s = await this.get<{ name?: string }>(`/nodes/${explicitNode}/qemu/${vmid}/status/current`);
+        return { node: explicitNode, type: 'qemu', name: s?.name };
       } catch {
         try {
-          await this.get(`/nodes/${explicitNode}/lxc/${vmid}/status/current`);
-          return { node: explicitNode, type: 'lxc' };
+          const s = await this.get<{ name?: string }>(`/nodes/${explicitNode}/lxc/${vmid}/status/current`);
+          return { node: explicitNode, type: 'lxc', name: s?.name };
         } catch {
           throw new Error(`VM ${vmid} not found on node "${explicitNode}"`);
         }
@@ -621,7 +621,7 @@ export class ProxmoxSkill extends Skill {
         `VM ${vmid} not found on any node. Use "list_vms" to see available VMs.`,
       );
     }
-    return { node: match.node, type: match.type };
+    return { node: match.node, type: match.type, name: match.name };
   }
 
   private async getAllVms(): Promise<VmEntry[]> {
@@ -798,7 +798,9 @@ export class ProxmoxSkill extends Skill {
       return { success: false, error: `Gast-Agent auf VM ${vmid} (${resolved.node}) antwortet nicht: ${(err as Error).message.slice(0, 200)} — qemu-guest-agent im Gast installieren und starten, in Proxmox agent=1` };
     }
     const ipv4 = (netz.result ?? []).filter(i => i.name !== 'lo').flatMap(i => (i['ip-addresses'] ?? []).filter(a => a['ip-address-type'] === 'ipv4' && a['ip-address'] && !a['ip-address'].startsWith('127.')).map(a => ({ schnittstelle: i.name ?? '?', ip: a['ip-address']! })));
-    return { success: true, data: { vmid, node: resolved.node, agent: true, ipv4 }, display: `Gast-Agent auf VM ${vmid} (${resolved.node}) antwortet — IPv4: ${ipv4.length ? ipv4.map(a => `${a.ip} (${a.schnittstelle})`).join(', ') : 'keine'}` };
+    // v1766 (Realfall 06.11. Change 6f7b0b99): Warteschritte erwarten oft den VM-Namen — er steht deshalb in der Antwort
+    const wer = resolved.name ? `VM ${vmid} ${resolved.name}` : `VM ${vmid}`;
+    return { success: true, data: { vmid, name: resolved.name, node: resolved.node, agent: true, ipv4 }, display: `Gast-Agent auf ${wer} (${resolved.node}) antwortet — IPv4: ${ipv4.length ? ipv4.map(a => `${a.ip} (${a.schnittstelle})`).join(', ') : 'keine'}` };
   }
 
   private async vmStatus(

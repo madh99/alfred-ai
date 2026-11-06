@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gast-Agent-Abfrage nennt den VM-Namen (v1766)
+
+- `proxmox agent_status` gibt jetzt auch den Namen der VM aus („Gast-Agent auf VM 9102 probe-win25b (pve) antwortet …“). Warteschritte, die den VM-Namen als Erwartung prüfen, blieben bisher bis zum Zeitlimit hängen, obwohl der Agent längst antwortete.
+
 ### Added — Windows-Lizenz und Aktivierung in Bestand, CMDB und Befunden (v1765)
 
 - Die Bestandsaufnahme liest auf Windows-Hosts den Lizenzstand (`SoftwareLicensingProduct`, nur lesend): Produkt, Kanal (Einzelhandel, Volumen/KMS, MAK, OEM, Testversion), Aktivierungsstatus und bei Testversionen oder Kulanzfristen das Ablaufdatum. Office-Produkte und leere Datumswerte (1601) werden übergangen.
