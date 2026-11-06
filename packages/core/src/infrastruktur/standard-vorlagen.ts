@@ -5,13 +5,15 @@
  * denselben Motor (Wartungsfenster, Sperrzeiten, Ankündigung). Die Grenzen prüft die Vorlage selbst, ohne Modell.
  *
  * Nie Standard (5b-11): Firewall/DNS/Netz/VLAN, Datenbanken, Datenlöschung, Hauptversions-Upgrades, Migrationen, Windows-Neustarts —
- * ausgenommen der Neustart in Vorlage (i) Windows-Updates im Wartungsfenster (Spec I8 3b-1, freigegeben 01.11.).
+ * ausgenommen der Neustart in Vorlage (i) Windows-Updates im Wartungsfenster (Spec I8 3b-1, freigegeben 01.11.) und in Vorlage (j)
+ * Sicherheits-Grundlinie (Spec I8 3b-2, Owner 07.11. „ja, so vorbereiten“).
  */
 import { createHash } from 'node:crypto';
 import { LINUX_BEFEHLE } from './sammler.js';
 import type { Pruefung } from './change-schritte.js';
 import { fensterAus, fensterStart, osUpdateSchritte } from './os-updates.js';
 import { winUpdateSchritte } from './windows-updates.js';
+import { winGrundlinieSchritte } from './windows-grundlinie.js';
 
 /** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
 export interface Annahme { id: string; text: string; pruefung: Pruefung }
@@ -260,6 +262,38 @@ export const VORLAGEN: Vorlage[] = [
         titel: `Standard: Windows-Updates ${z}`, begruendung: `Standard-Change (i) — Windows-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
         typ: 'normal', risiko: 'mittel', ausfallMinuten: 10, betroffen: [vm.assetId, ...(za ? [za] : [])], ...fensterAb(k.jetzt, f),
         schritte: winUpdateSchritte(z, vm, snap, f),
+      } };
+    },
+  },
+  {
+    key: 'windows_grundlinie', version: 1, titel: '(j) Windows-Sicherheits-Grundlinie', system: 'windows',
+    beschreibung: 'Für Windows-VMs auf Proxmox: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (laufende automatische Dienste) → SMB-Signierung für Server und Client erzwingen, TLS 1.0 und 1.1 serverseitig und clientseitig abschalten (SCHANNEL, Enabled=0, DisabledByDefault=1), Start spätestens 45 min vor Fensterende → Neustart (immer, SCHANNEL liest die Protokolle nur beim Start), spätestens 30 min vor Fensterende → Warten, VM, Gast-Agent und SSH → Nachher-Vergleich (alle vorher laufenden Dienste laufen wieder) und Prüfung über die Lesebefehle der Bestandsaufnahme (Signierung erzwungen, TLS 1.0/1.1 aus). Rückweg: Snapshot zurücksetzen. Folge: Verbindungen zu SMB-Freigaben ohne Signierung und zu Gegenstellen, die nur TLS 1.0/1.1 können, scheitern danach. Nicht enthalten: Windows LAPS (mit dem AD, I8c) und RDP-Beschränkung auf Verwaltungszonen. Höchstens 1× je Tag und Host. Nicht für Cluster-Knoten (folgt mit I8d).',
+    parameter: { zugang: 'Fernzugang-Name (Windows)', fenster: 'optional HH:MM-HH:MM (Standard 00:30-02:45)' }, verfuegbar: true,
+    annahmenText: ['OpenSSH-Server läuft', 'SMB-Serverdienst vorhanden', 'Gast-Agent der VM antwortet'],
+    async annahmen(p, k) {
+      const z = txt(p.zugang);
+      const vm = await k.vmFuerZugang(z);
+      return [
+        { id: 'ssh', text: 'OpenSSH-Server läuft', pruefung: { typ: 'befehl', zugang: z, befehl: 'Get-Service -Name sshd', erwartet: 'Running' } },
+        { id: 'smb', text: 'SMB-Serverdienst vorhanden', pruefung: { typ: 'befehl', zugang: z, befehl: 'Get-Service -Name LanmanServer', erwartet: 'LanmanServer' } },
+        ...(vm ? [{ id: 'agent', text: 'Gast-Agent der VM antwortet', pruefung: { typ: 'skill' as const, skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: vm.vmid, node: vm.node } } }] : []),
+      ];
+    },
+    async erzeuge(p, k) {
+      const z = txt(p.zugang);
+      if (!NAME.test(z)) return { fehler: 'zugang fehlt' };
+      if (!k.istWindows?.(z)) return { fehler: `${z} ist kein Windows-System — die Grundlinie gibt es nur für Windows` };
+      const vm = await k.vmFuerZugang(z);
+      if (!vm) return { fehler: `${z} läuft nicht als Proxmox-VM — ohne Snapshot keine Standard-Grundlinie` };
+      const f = fensterAus(typeof p.fenster === 'string' ? p.fenster : undefined);
+      if ('fehler' in f) return f;
+      if (await k.anzahl('windows_grundlinie', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
+      const snap = await freierSnapshotName(k, vm, 7);
+      const za = await k.zugangAsset(z);
+      return { merkmal: z, plan: {
+        titel: `Standard: Sicherheits-Grundlinie ${z}`, begruendung: `Standard-Change (j) — SMB-Signierung und TLS 1.0/1.1 auf ${z} (VM ${vm.vmid}) nach Spec I8 3b-2, Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
+        typ: 'normal', risiko: 'mittel', ausfallMinuten: 10, betroffen: [vm.assetId, ...(za ? [za] : [])], ...fensterAb(k.jetzt, f),
+        schritte: winGrundlinieSchritte(z, vm, snap, f),
       } };
     },
   },

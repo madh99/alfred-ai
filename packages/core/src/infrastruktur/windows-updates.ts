@@ -8,10 +8,10 @@
  * Alle Skripte gehen als -EncodedCommand (keine Anführungszeichen-Probleme in der SSH-Befehlszeile).
  */
 
-const minus = (hhmm: string, min: number) => { const [h, m] = hhmm.split(':').map(Number); const t = Math.max(0, h! * 60 + m! - min); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+export const minus = (hhmm: string, min: number) => { const [h, m] = hhmm.split(':').map(Number); const t = Math.max(0, h! * 60 + m! - min); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
 // ohne Fortschrittsanzeige: sonst landet beim ersten Modul-Laden CLIXML im Fehlerkanal
 // v1748 — Fehler als eine lesbare Zeile statt CLIXML (Realfall d0a4aa66: „OperationStopped: (ausserhalb des …“ in XML-Resten)
-const ps = (zeilen: string[]) => `powershell -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(["$ProgressPreference = 'SilentlyContinue'", 'try {', ...zeilen, '} catch { [Console]::Error.WriteLine("FEHLER: " + $_.Exception.Message); exit 1 }'].join('\n'), 'utf16le').toString('base64')}`;
+export const ps = (zeilen: string[]) => `powershell -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(["$ProgressPreference = 'SilentlyContinue'", 'try {', ...zeilen, '} catch { [Console]::Error.WriteLine("FEHLER: " + $_.Exception.Message); exit 1 }'].join('\n'), 'utf16le').toString('base64')}`;
 
 /** Arbeitsordner je Lauf (aus dem Merkmal, z. B. dem Snapshot-Namen) */
 export function winUpdateOrdner(tag: string): string {
@@ -35,7 +35,7 @@ const ordnerSchuetzen = (d: string, frisch: boolean) => [
   `if (Get-ChildItem -LiteralPath '${d}' -Force) { icacls.exe '${d}\\*' /reset /T /C /Q | Out-Null }`,
 ];
 
-const jetztWien = "$n = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'W. Europe Standard Time').ToString('HH:mm')";
+export const jetztWien = "$n = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'W. Europe Standard Time').ToString('HH:mm')";
 
 /** Vorher-Erhebung; prüft zugleich das Fenster (der Snapshot davor ist harmlos, ab hier wird nur im Fenster gearbeitet) */
 export function winVorherSkript(d: string, von: string, startBis: string): string {
@@ -124,7 +124,7 @@ export function winNachherSkript(d: string): string {
   ]);
 }
 
-const SSH_LAEUFT = (z: string) => ({ typ: 'befehl', zugang: z, befehl: 'Get-Service -Name sshd', erwartet: 'Running' });
+export const SSH_LAEUFT = (z: string) => ({ typ: 'befehl', zugang: z, befehl: 'Get-Service -Name sshd', erwartet: 'Running' });
 const WARTUNG_RUHT = (z: string) => ({ typ: 'befehl', zugang: z, befehl: 'Get-Service -Name TrustedInstaller', erwartet: 'Stopped' });
 
 /** Schritte der Vorlage (i) für eine Windows-VM */

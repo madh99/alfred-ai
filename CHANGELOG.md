@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standard-Vorlage (j) Windows-Sicherheits-Grundlinie (v1769)
+
+- Neue Vorlage für Windows-VMs auf Proxmox: Im Wartungsfenster erst ein Snapshot (7 Tage) und die Vorher-Erhebung der laufenden Dienste. Dann erzwingt sie die SMB-Signierung für Server und Client und schaltet TLS 1.0/1.1 server- und clientseitig ab. Es folgt ein Neustart, weil SCHANNEL die Protokolle nur beim Start liest. Danach wartet sie auf VM, Gast-Agent und SSH und vergleicht die Dienste mit dem Stand vorher. Zum Schluss prüft sie das Ergebnis mit denselben Lesebefehlen wie die Bestandsaufnahme.
+- Rückweg ist das Zurücksetzen des Snapshots. Höchstens 1× je Tag und Host. Die Vorlage braucht wie alle Standard-Vorlagen eine einmalige Freigabe.
+- Windows LAPS (mit dem AD) und die Beschränkung von RDP auf Verwaltungszonen sind bewusst nicht enthalten.
+
 ### Added — Windows-Sicherheits-Grundlinie erfassen und bewerten (v1768)
 
 - Die Bestandsaufnahme liest auf Windows-Hosts den Ist-Stand der Sicherheits-Grundlinie, nur lesend: SMBv1, SMB-Signierung (Server und Client), unsichere Gastanmeldung, Firewall-Profile mit Standardverhalten für eingehende Verbindungen, Defender (Dienst, Echtzeitschutz, Alter der Signaturen), RDP mit Netzwerkebenen-Authentifizierung, TLS 1.0/1.1 und Windows LAPS.
