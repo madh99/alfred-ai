@@ -40,6 +40,28 @@ export interface ChangePlan {
 
 /** Verneinende Aussagen in `erwartet` (können als Textstück einer Ausgabe praktisch nie vorkommen) */
 const VERNEINUNG = /(^|[^\p{L}])(nicht|kein|keine|keinen|keiner|not|no longer|fehlt|entfernt|gelöscht|geloescht|absent|missing|removed|deleted)([^\p{L}]|$)/iu;
+/**
+ * v1767 — Realfall 06.11. (Change 6f7b0b99): Status-Abfragen mit fester Wortwahl; erwartet „SSH“ bzw. „probe-win25b“ kam in der
+ * Antwort nie vor und hielt den Change trotz Erfolg an. Für diese Aktionen muss erwartet ein Stück des festen Wortlauts, ein
+ * Parameterwert oder eine IPv4-Adresse sein. Wortlaut bei Änderungen an den Skills nachziehen.
+ */
+export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
+  'proxmox.agent_status': 'Gast-Agent auf VM {vmid} {name} ({node}) antwortet — IPv4: {ip} ({schnittstelle})',
+  'fernzugriff.pruefen': 'Verbindung ok: {hostname} ({benutzer}@{host}, Windows/PowerShell). Lesen über die feste Windows-Leseliste, alles andere mit Bestätigung. '
+    + '| Verbindung ok: {hostname} ({benutzer}@{host}). sudo ohne Passwort: ja | nein — Befehle laufen dann ohne root. Lese-Käfig: aktiv | nicht verfügbar '
+    + '(eingeschränkt: schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok | braucht sudo ohne Passwort | vom Owner abgeschaltet | Selbsttest gescheitert).',
+};
+function festeAusgabeFehler(p: Pruefung): string | undefined {
+  const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
+  if (!vorlage) return undefined;
+  const e = p.erwartet!;
+  const werte = Object.values(p.parameter ?? {}).map(v => String(v));
+  if (vorlage.replace(/\{[a-z]+\}/g, '\u0000').split('\u0000').some(t => t.includes(e)) || werte.some(w => w.includes(e) || e.includes(w) && w.length > 2) || /^\d{1,3}(\.\d{1,3}){3}$/.test(e)
+    // Host-/VM-Namen ({name}, {hostname}) sind erst zur Laufzeit bekannt — namensartige Stücke mit Ziffer oder Bindestrich gelten
+    || /^(?=.*[-\d])[a-z0-9][a-z0-9.-]*$/i.test(e)) return undefined;
+  return `erwartet „${e.slice(0, 60)}“ kommt in der Antwort von ${p.skill}.${p.aktion} nicht vor — sie lautet „${vorlage.slice(0, 160)}…“; ein Fehlschlag meldet die Aktion selbst, erwartet also weglassen oder ein Stück davon wählen (z. B. „${vorlage.split(/[:—(]/)[0]!.replace(/\{[a-z]+\}/g, '').trim()}“)`;
+}
+
 export const PRUEF_TYPEN: readonly PruefTyp[] = ['http', 'port', 'dns', 'ping', 'container_healthy', 'datei', 'befehl', 'skill'];
 export const ZEITLIMIT_STANDARD_S = 600;
 export const ZEITLIMIT_MAX_S = 4 * 3600;
@@ -194,6 +216,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (aus.erwartet && VERNEINUNG.test(aus.erwartet)) f.push(`${wo}: erwartet „${aus.erwartet.slice(0, 60)}“ ist eine Aussage — erwartet ist ein Textstück, das in der Ausgabe vorkommen muss; für „ist nicht (mehr) da“ nichtEnthalten mit dem Namen verwenden`);
   const port = zahl(p.port); if (port !== undefined) aus.port = port;
   if (obj(p.parameter)) aus.parameter = obj(p.parameter)!;
+  const fest = festeAusgabeFehler(aus); if (fest) f.push(`${wo}: ${fest}`);
   const fehlt = (felder: Array<keyof Pruefung>) => { for (const k of felder) if (aus[k] === undefined) f.push(`${wo}: pruefung ${typ} braucht ${String(k)}`); };
   if (typ === 'http') { fehlt(['ziel']); if (aus.ziel && !/^https?:\/\//.test(aus.ziel)) f.push(`${wo}: http-Prüfung braucht eine URL`); }
   if (typ === 'port') { fehlt(['ziel', 'port']); if (aus.port !== undefined && (aus.port < 1 || aus.port > 65535)) f.push(`${wo}: Port ungültig`); }

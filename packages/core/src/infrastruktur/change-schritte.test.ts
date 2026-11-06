@@ -579,6 +579,24 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
 });
 
 // v1753 — Realfall 02.11. (8f5375b0): Prüfbefehle, die im Lese-Käfig nie bestehen können, schon beim Planen abweisen
+describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
+  it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {
+    const { FESTE_AUSGABEN } = await import('./change-schritte.js');
+    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen']);
+    const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Probe prüfen', begruendung: 'Realfall 6f7b0b99', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['probe-win25b'],
+      schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
+    const fz = (erwartet?: string) => pruefeChangePlan(plan({ typ: 'skill', skill: 'fernzugriff', aktion: 'pruefen', parameter: { name: 'probe-win25b' }, ...(erwartet ? { erwartet } : {}) }), ctx());
+    const ag = (erwartet: string) => pruefeChangePlan(plan({ typ: 'skill', skill: 'proxmox', aktion: 'agent_status', parameter: { node: 'pve', vmid: 9102 }, erwartet }), ctx());
+    expect(fz('SSH').fehler.join(' ')).toContain('kommt in der Antwort von fernzugriff.pruefen nicht vor');
+    for (const ok of ['Verbindung ok', 'Lese-Käfig: aktiv', 'Lesen ok', 'eingeschränkt', 'Windows/PowerShell', 'probe-win25b', '192.168.1.223', '{{schritt1.ip}}'])
+      expect(fz(ok).fehler.filter(x => x.includes('nicht vor')), ok).toEqual([]);
+    expect(fz().fehler.filter(x => x.includes('nicht vor'))).toEqual([]);
+    expect(ag('antwortet').fehler.filter(x => x.includes('nicht vor'))).toEqual([]);
+    expect(ag('probe-win25b').fehler.filter(x => x.includes('nicht vor'))).toEqual([]);
+    expect(ag('Agent bereit').fehler.join(' ')).toContain('kommt in der Antwort von proxmox.agent_status nicht vor');
+  });
+});
+
 describe('v1753 Käfig-Grenzen der Prüfbefehle', () => {
   it('weist die gescheiterten Befehle ab und lässt die Leseliste-Gegenstücke durch', async () => {
     const { kaefigGrenze } = await import('./change-schritte.js');

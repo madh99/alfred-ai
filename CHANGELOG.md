@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Unerfüllbare Erwartungen bei Status-Prüfungen schon beim Planen abweisen (v1767)
+
+- Für Status-Abfragen mit festem Wortlaut (`proxmox.agent_status`, `fernzugriff.pruefen`) prüft die Planprüfung, ob der erwartete Text überhaupt in der Antwort vorkommen kann: als Stück des festen Wortlauts, als Parameterwert, als IPv4-Adresse oder als Host-/VM-Name. Andernfalls weist sie den Plan mit dem tatsächlichen Wortlaut ab. Bisher fiel eine solche Erwartung (etwa „SSH“) erst im Lauf auf und hielt den Change trotz erfolgreicher Prüfung an.
+
 ### Fixed — Gast-Agent-Abfrage nennt den VM-Namen (v1766)
 
 - `proxmox agent_status` gibt jetzt auch den Namen der VM aus („Gast-Agent auf VM 9102 probe-win25b (pve) antwortet …“). Warteschritte, die den VM-Namen als Erwartung prüfen, blieben bisher bis zum Zeitlimit hängen, obwohl der Agent längst antwortete.
