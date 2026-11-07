@@ -36,12 +36,20 @@ export interface GeraetZustand {
   zone?: { name: string | null; seit: string; bewegung?: string; gemeldet?: string };
   /** v1528 — aktiver iOS-Fokus (Fokusfilter) */
   fokus?: { name: string; hinweise: string; seit: string };
+  /** v1772 — angenommene Verbindungen in den letzten 10 Minuten (Gateway, im Speicher) */
+  verbindungen10Min?: number;
 }
 export interface GeraeteDeutung { zeilen: string[]; auffaellig: string[]; aktiv?: { name: string; leerlaufSek: number } }
 
 export const AKTIV_LEERLAUF_SEK = 5 * 60;
 export const GETRENNT_AUFFAELLIG_MIN = 180;
 export const AKKU_NIEDRIG_PROZENT = 15;
+/**
+ * v1772 — Verbindungsschleife: so viele Verbindungen in 10 Minuten sind kein Neustart mehr (Realfall 07.11. Office-VM: etwa eine je
+ * Sekunde, zwei Satelliten mit derselben Geräte-ID lösten sich gegenseitig ab). Handys ausgenommen (App vorne/hinten).
+ */
+export const VERBINDUNGSSCHLEIFE_AB = 10;
+export const VERBINDUNGS_FENSTER_MS = 10 * 60_000;
 /** Phase 5 H1 — Handys trennen im Hintergrund (iOS/Android), das ist kein Befund. */
 export const HANDY_PLATTFORMEN: ReadonlySet<string> = new Set(['ios', 'android']);
 /** Sinne älter als das gelten als unbekannt (Satellit sendet jede Minute). */
@@ -118,6 +126,11 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
         if (niedrig) { warn = true; auffaellig.push(`geraet:${g.name}:akku`); }
         teile.push(`Akku ${s.akkuProzent} %${s.akkuLaedt ? ' (lädt)' : niedrig ? ' (nicht am Netz)' : ''}`);
       }
+    }
+    // v1772 — Verbindungsschleife (online wie offline: die Schleife kann gerade zwischen zwei Verbindungen stehen)
+    if ((g.verbindungen10Min ?? 0) >= VERBINDUNGSSCHLEIFE_AB && !HANDY_PLATTFORMEN.has(g.plattform)) {
+      warn = true; auffaellig.push(`geraet:${g.name}:verbindungsschleife`);
+      teile.push(`${g.verbindungen10Min} Neuverbindungen in 10 min (Verbindungsschleife — Satellit am Gerät neu starten; läuft er doppelt?)`);
     }
     zeilen.push(`${warn ? '⚠️ ' : ''}${g.name} (${g.plattform}): ${teile.join(', ')}`);
     // v1239 — Systemzeile: Laufzeit, CPU, GPU, RAM, Laufwerke (knappe Laufwerke als Befund)

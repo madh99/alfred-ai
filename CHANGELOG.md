@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Befund bei Verbindungsschleife eines Geräts; Planprüfung kennt den Proxmox-Task-Status (v1772)
+
+- Das Geräte-Gateway zählt je Gerät die Verbindungen der letzten 10 Minuten. Ab 10 Verbindungen (Handys ausgenommen) entsteht der Befund „Verbindungsschleife“ (`geraet:<name>:verbindungsschleife`) mit Anzahl und Handlungshinweis; beim Erreichen der Schwelle steht eine Warnung im Log. Anlass: ein Satellit verband sich etwa jede Sekunde neu, weil zwei Prozesse mit derselben Geräte-ID sich gegenseitig ablösten — ohne jede Meldung.
+- Die Change-Planprüfung weist Schritte ab, die `endtime` aus `/nodes/<node>/tasks/<upid>/status` lesen. Proxmox liefert das Feld dort nicht; Ende und Dauer stehen in der Aufgabenliste `/nodes/<node>/tasks`. Anlass: ein Wiederherstellungstest hielt nach bestandenen Prüfungen nur am Berichtsteil an.
+
 ### Added — VSS-Bereitschaft für Windows-Sicherungen in Bestand und Befunden (v1771)
 
 - Die Bestandsaufnahme liest je Windows-Host, nur lesend, ob Proxmox-Sicherungen anwendungskonsistent werden können: QEMU-Gast-Agent und dessen VSS-Provider installiert und nicht deaktiviert, VSS-Dienst nicht deaktiviert.

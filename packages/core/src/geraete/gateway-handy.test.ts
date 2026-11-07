@@ -30,3 +30,19 @@ describe('GeraeteGateway — Skill je Gerät', () => {
     expect(registriert).toEqual(['geraet_pc']);
   });
 });
+
+describe('GeraeteGateway — Verbindungen je Gerät zählen (v1772)', () => {
+  it('zählt im gleitenden 10-Minuten-Fenster und warnt einmal beim Erreichen der Schwelle', () => {
+    let jetzt = Date.parse('2026-11-07T21:00:00Z');
+    const warnungen: unknown[] = [];
+    const logger = { info: () => {}, warn: (o: unknown) => { warnungen.push(o); }, error: () => {}, debug: () => {} };
+    const gw = new GeraeteGateway({ logger, repo: {}, skillRegistry: {}, serverVersion: 't', ownerUserId: () => 'o', now: () => jetzt, transferOrdner: path.join(os.tmpdir(), 'alfred-test-transfers') } as never);
+    const merke = () => (gw as unknown as { merkeVerbindung(id: string, n: string): void }).merkeVerbindung('g1', 'Office-VM');
+    for (let i = 0; i < 12; i++) { merke(); jetzt += 1000; }
+    expect(gw.verbindungen10Min('g1')).toBe(12);
+    expect(warnungen).toHaveLength(1);
+    jetzt += 10 * 60_000;
+    expect(gw.verbindungen10Min('g1')).toBe(0);
+    expect(gw.verbindungen10Min('unbekannt')).toBe(0);
+  });
+});

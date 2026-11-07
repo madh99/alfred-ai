@@ -66,3 +66,18 @@ describe('entscheideZustellung — Owner am Gerät', () => {
     expect(entscheideZustellung({ ...basis, urgency: 'low', anwesenheit: { amGeraet: { name: 'PC-madh', leerlaufSek: 30 } } }).liefern).toBe(false);
   });
 });
+
+// v1772 — Realfall 07.11.: Office-VM verband sich etwa jede Sekunde neu (zwei Satelliten mit derselben Geräte-ID)
+describe('deuteGeraete — Verbindungsschleife (v1772)', () => {
+  it('ab 10 Verbindungen in 10 min ⚠️ und Befund-Schlüssel, darunter nichts, Handys nie', () => {
+    const d = deuteGeraete({ jetzt: JETZT, geraete: [
+      { name: 'Office-VM', plattform: 'windows', online: true, verbundenSeit: iso(0), verbindungen10Min: 600 },
+      { name: 'PC', plattform: 'windows', online: true, verbundenSeit: iso(5), verbindungen10Min: 9 },
+      { name: 'Handy', plattform: 'ios', online: true, verbundenSeit: iso(0), verbindungen10Min: 40 },
+      { name: 'VM', plattform: 'linux', online: false, zuletztGesehen: iso(0), verbindungen10Min: 10 },
+    ] })!;
+    expect(d.zeilen[0]).toBe('⚠️ Office-VM (windows): online seit unter 1 min, 600 Neuverbindungen in 10 min (Verbindungsschleife — Satellit am Gerät neu starten; läuft er doppelt?)');
+    expect(d.zeilen.join('\n')).not.toContain('9 Neuverbindungen');
+    expect(d.auffaellig).toEqual(['geraet:Office-VM:verbindungsschleife', 'geraet:VM:verbindungsschleife']);
+  });
+});

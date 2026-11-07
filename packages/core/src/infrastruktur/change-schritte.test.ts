@@ -597,6 +597,19 @@ describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   });
 });
 
+describe('v1772 — endtime aus dem Proxmox-Task-Status', () => {
+  it('weist den Bericht aus Change 6f8f54d1 Schritt 8 ab, lässt die Aufgabenliste und status ohne endtime durch', async () => {
+    const { taskStatusEndtimeFehler } = await import('./change-schritte.js');
+    const real = 'python3 -c \'import json,subprocess\nget=lambda p,*a:json.loads(subprocess.check_output(["pvesh","get",p,"--output-format","json",*a],text=True))\nt=get("/nodes/pve3/tasks/{{schritt3.upid}}/status"); assert t["status"]=="stopped" and t["exitstatus"]=="OK"; assert t.get("endtime") and t.get("starttime")\'';
+    const schritt = (befehl: string) => ({ titel: 'Bericht', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', befehl } });
+    expect(taskStatusEndtimeFehler(schritt(real))).toContain('/nodes/<node>/tasks');
+    expect(taskStatusEndtimeFehler(schritt('pvesh get /nodes/pve3/tasks/{{schritt3.upid}}/status --output-format json'))).toBeUndefined();
+    expect(taskStatusEndtimeFehler(schritt('pvesh get /nodes/pve3/tasks --typefilter qmrestore --output-format json | python3 -c "import json,sys; print([t[\'endtime\'] for t in json.load(sys.stdin)])"'))).toBeUndefined();
+    const plan = { titel: 'Restoretest', begruendung: 'Realfall 6f8f54d1', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], schritte: [schritt(real)] };
+    expect(pruefeChangePlan(plan, ctx()).fehler.join(' | ')).toContain('Schritt 1: liest endtime aus /nodes/<node>/tasks/<upid>/status');
+  });
+});
+
 describe('v1753 Käfig-Grenzen der Prüfbefehle', () => {
   it('weist die gescheiterten Befehle ab und lässt die Leseliste-Gegenstücke durch', async () => {
     const { kaefigGrenze } = await import('./change-schritte.js');

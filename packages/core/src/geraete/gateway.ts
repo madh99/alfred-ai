@@ -15,6 +15,7 @@ import { Transfers, TransferOffsetFehler } from './transfers.js'; // v1249
 import { EigeneUploads } from './ablage-regel.js'; // v1529
 import { signiereBefehl, SIGNIERTE_TYPEN, type BefehlsSchluessel } from './befehl-signatur.js'; // v1531
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
+import { VERBINDUNGS_FENSTER_MS, VERBINDUNGSSCHLEIFE_AB } from '../normalzustaende/geraete.js'; // v1772
 
 /**
  * v1224 — Geräte-Gateway (Gehirn-Seite): Pairing, WebSocket-Verbindungen, Skill-Proxy je Gerät,
@@ -107,6 +108,26 @@ export class GeraeteGateway {
   /** v1249 — blockweiser Dateitransfer (Upload Gerät → Server, Download Server → Gerät). */
   readonly transfers: Transfers;
   private wachhund?: ReturnType<typeof setInterval>;
+  /**
+   * v1772 — Zeitpunkte der angenommenen Verbindungen je Gerät (gleitende 10 Minuten). Realfall 07.11.: die Office-VM verband sich
+   * etwa jede Sekunde neu („neue Verbindung desselben Geräts“, 4118 Mal an einem Tag) — niemand bemerkte es.
+   */
+  private readonly verbindungsZeiten = new Map<string, number[]>();
+
+  /** v1772 — Verbindungen eines Geräts in den letzten 10 Minuten (zählt die aktuelle mit). */
+  verbindungen10Min(id: string): number {
+    const jetzt = this.deps.now?.() ?? Date.now();
+    const l = (this.verbindungsZeiten.get(id) ?? []).filter(t => jetzt - t < VERBINDUNGS_FENSTER_MS);
+    if (l.length) this.verbindungsZeiten.set(id, l); else this.verbindungsZeiten.delete(id);
+    return l.length;
+  }
+
+  private merkeVerbindung(id: string, name: string): void {
+    const jetzt = this.deps.now?.() ?? Date.now();
+    const l = [...(this.verbindungsZeiten.get(id) ?? []).filter(t => jetzt - t < VERBINDUNGS_FENSTER_MS), jetzt].slice(-1000);
+    this.verbindungsZeiten.set(id, l);
+    if (l.length === VERBINDUNGSSCHLEIFE_AB) this.deps.logger.warn({ geraetId: id, name, verbindungen10Min: l.length }, 'v1772 Verbindungsschleife eines Geräts');
+  }
 
   constructor(private readonly deps: GeraeteGatewayDeps) {
     this.auftraege = new AuftragHerkunft(this.deps.auftraegeDatei); // v1383
@@ -201,7 +222,7 @@ export class GeraeteGateway {
   /** v1237 — Zustände für die Weltmodell-Deutung (normalzustaende/geraete.ts). */
   async zustaende(): Promise<import('../normalzustaende/geraete.js').GeraetZustand[]> {
     const l = await this.liste();
-    return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit, zone: this.deps.zoneVon?.(g.id), fokus: this.deps.fokusVon?.(g.id) }));
+    return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit, zone: this.deps.zoneVon?.(g.id), fokus: this.deps.fokusVon?.(g.id), verbindungen10Min: this.verbindungen10Min(g.id) }));
   }
 
   /** v1238 — Zustände der gerade verbundenen Geräte, synchron aus dem Speicher (Prompt-Block, Skill-Aktion zustand). */
@@ -288,6 +309,7 @@ export class GeraeteGateway {
     const skillName = geraetSkillName(eintrag.name);
     const verbindung: Verbindung = { eintrag: { ...eintrag, manifest: gepr.manifest }, ws, skillName, zuletztPuls: Date.now(), verbundenSeit: new Date().toISOString(), offen: new Map() };
     this.verbindungen.set(eintrag.id, verbindung);
+    this.merkeVerbindung(eintrag.id, eintrag.name); // v1772
     this.ohneVerbindung.delete(eintrag.id); // v1520
     await this.deps.repo.setzeZuletztGesehen(eintrag.id, gepr.manifest).catch(() => undefined);
     this.registriereSkill(verbindung);

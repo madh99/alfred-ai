@@ -62,7 +62,18 @@ function festeAusgabeFehler(p: Pruefung): string | undefined {
   return `erwartet „${e.slice(0, 60)}“ kommt in der Antwort von ${p.skill}.${p.aktion} nicht vor — sie lautet „${vorlage.slice(0, 160)}…“; ein Fehlschlag meldet die Aktion selbst, erwartet also weglassen oder ein Stück davon wählen (z. B. „${vorlage.split(/[:—(]/)[0]!.replace(/\{[a-z]+\}/g, '').trim()}“)`;
 }
 
-export const PRUEF_TYPEN: readonly PruefTyp[] = ['http', 'port', 'dns', 'ping', 'container_healthy', 'datei', 'befehl', 'skill'];
+/**
+ * v1772 — Realfall 07.11. (Change 6f8f54d1): der Bericht las die Restore-Dauer aus `/nodes/<n>/tasks/<upid>/status` und verlangte
+ * `endtime` — das Feld liefert Proxmox dort nicht (nur in der Aufgabenliste `/nodes/<n>/tasks`). Der Schritt scheiterte nach
+ * bestandenem Test und hielt den Change an. Gilt für den ganzen Schritt (Befehl, Prüfung, Rückweg).
+ */
+export function taskStatusEndtimeFehler(schritt: unknown): string | undefined {
+  const t = JSON.stringify(schritt ?? '');
+  if (!/tasks\/[^"\s]*\/status/.test(t) || !/endtime/.test(t)) return undefined;
+  return 'liest endtime aus /nodes/<node>/tasks/<upid>/status — dort liefert Proxmox kein endtime (nur status, exitstatus, starttime); Ende und Dauer aus der Aufgabenliste /nodes/<node>/tasks (Eintrag mit dieser upid) lesen';
+}
+
+export const PRUEF_TYPEN: readonly PruefTyp[] =['http', 'port', 'dns', 'ping', 'container_healthy', 'datei', 'befehl', 'skill'];
 export const ZEITLIMIT_STANDARD_S = 600;
 export const ZEITLIMIT_MAX_S = 4 * 3600;
 
@@ -308,6 +319,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       beiFehler: (['anhalten', 'rueckweg', 'weiter'] as const).find(x => x === txt(s.beiFehler)) ?? 'anhalten',
     };
     if (!schritt.titel) f.push(`${wo}: titel fehlt`);
+    const endtime = taskStatusEndtimeFehler(s); if (endtime) f.push(`${wo}: ${endtime}`);
     if (zl !== undefined && (zl < 5 || zl > ZEITLIMIT_MAX_S)) f.push(`${wo}: zeitlimitS 5–${ZEITLIMIT_MAX_S}`);
     if (txt(s.beiFehler) && !['anhalten', 'rueckweg', 'weiter'].includes(txt(s.beiFehler))) f.push(`${wo}: beiFehler muss anhalten, rueckweg oder weiter sein`);
     if (art === 'aktion') {
