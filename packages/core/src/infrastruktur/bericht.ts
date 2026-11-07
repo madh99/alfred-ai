@@ -49,6 +49,7 @@ interface WinGrundlinie {
   firewall?: Array<{ profil: string; an: boolean; eingehend: string }>;
   defender?: { an: boolean; echtzeit: boolean; signaturTage?: number };
   rdp?: { an: boolean; nla: boolean }; tls10Aus?: boolean; tls11Aus?: boolean; laps?: string;
+  vss?: { provider: boolean; agent: boolean; dienst?: boolean };
 }
 
 /**
@@ -71,6 +72,11 @@ export function grundlinienAbweichungen(g: WinGrundlinie | undefined, domaene?: 
   if (g.rdp?.an && !g.rdp.nla) a.push({ punkt: 'rdp-nla', schwere: 'hoch', text: 'RDP an ohne Netzwerkebenen-Authentifizierung (NLA)' });
   const tls = [g.tls10Aus === false ? '1.0' : '', g.tls11Aus === false ? '1.1' : ''].filter(Boolean);
   if (tls.length) a.push({ punkt: 'tls', schwere: 'mittel', text: `TLS ${tls.join('/')} nicht abgeschaltet` });
+  // I8 3b-3 — ohne Gast-Agent mit VSS-Provider (oder bei deaktiviertem VSS-Dienst) sind Proxmox-Sicherungen nur absturzkonsistent
+  if (g.vss) {
+    const grund = [!g.vss.agent ? 'QEMU-Gast-Agent fehlt' : '', !g.vss.provider ? 'QEMU-VSS-Provider fehlt' : '', g.vss.dienst === false ? 'VSS-Dienst deaktiviert' : ''].filter(Boolean);
+    if (grund.length) a.push({ punkt: 'vss', schwere: 'mittel', text: `Sicherungen nicht anwendungskonsistent (${grund.join(', ')})` });
+  }
   if (domaene && g.laps !== 'ad' && g.laps !== 'entra') a.push({ punkt: 'laps', schwere: 'mittel', text: `Windows LAPS nicht eingerichtet (Domäne ${domaene})` });
   return a;
 }

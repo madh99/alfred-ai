@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — VSS-Bereitschaft für Windows-Sicherungen in Bestand und Befunden (v1771)
+
+- Die Bestandsaufnahme liest je Windows-Host, nur lesend, ob Proxmox-Sicherungen anwendungskonsistent werden können: QEMU-Gast-Agent und dessen VSS-Provider installiert und nicht deaktiviert, VSS-Dienst nicht deaktiviert.
+- Fehlt etwas davon, entsteht der Grundlinien-Befund „Sicherungen nicht anwendungskonsistent“ (mittel) mit dem Grund.
+- Der Stand steht in der CMDB unter `baseline.vss`.
+
+### Fixed — Wiederherstellen aus PBS-Sicherungen (v1771)
+
+- `proxmox restore_backup` nimmt jetzt auch PBS-Sicherungen einer VM an (`<speicher>:backup/vm/<vmid>/<Zeitstempel>Z`), bisher nur vzdump-Dateien. Der Wiederherstellungstest der Windows-VM 100 aus `pbs-pve2` hielt deshalb vor der Wiederherstellung an. Löschen bleibt auf vzdump-Dateien beschränkt.
+
 ### Fixed — Befunde der Bestandsaufnahme legten Problems doppelt an (v1770)
 
 - Beim Abgleich mit den vorhandenen Problems las die Bestandsaufnahme nur die ersten 1000 Problems, sortiert nach Priorität. Bei über 2000 Problems fielen die mittleren Bestands-Befunde heraus. Sie wurden bei jedem Lauf neu angelegt, und behobene Befunde wurden nie als gelöst markiert.

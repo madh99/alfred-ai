@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sammleWindows, leseWinOs, leseWinVolumes, leseWinDienste, leseWinPorts, leseWinProzesse, leseWinRollen, leseWinHotfixes, leseWinAusstehend, leseWinLizenz, leseWinSmbServer, leseWinSmbClient, leseWinFirewall, leseWinDefender, leseWinRegistry, jsonListe, WINDOWS_BEFEHLE } from './sammler-windows.js';
+import { sammleWindows, leseWinOs, leseWinVolumes, leseWinDienste, leseWinPorts, leseWinProzesse, leseWinRollen, leseWinHotfixes, leseWinAusstehend, leseWinLizenz, leseWinSmbServer, leseWinSmbClient, leseWinFirewall, leseWinDefender, leseWinRegistry, leseWinVssProvider, leseWinVssDienst, jsonListe, WINDOWS_BEFEHLE } from './sammler-windows.js';
 
 // Ausgaben im Format von Windows PowerShell 5.1 (ConvertTo-Json -Compress), wie auf probe-win25 (Server 2025 Core)
 const OS = '{"Caption":"Microsoft Windows Server 2025 Standard Evaluation","Version":"10.0.26100","BuildNumber":"26100","TotalVisibleMemorySize":4193784,"FreePhysicalMemory":2621440}';
@@ -26,7 +26,7 @@ describe('I8b Windows-Sammler', () => {
   });
 
   it('sammleWindows: Bestand wie Linux plus Windows-Angaben; Teilfehler stehen im Bestand', async () => {
-    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102 };
+    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102, [WINDOWS_BEFEHLE.vssProvider]: VSS_P, [WINDOWS_BEFEHLE.vssDienst]: VSS_D };
     const b = await sammleWindows('probe-win25', '192.168.1.222', async c => { if (!(c in antworten)) throw new Error('Zeitüberschreitung'); return antworten[c]!; });
     expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 }, lizenz: { status: 'testversion', kanal: 'Testversion' } } });
     expect(b.windows.domaene).toBeUndefined();
@@ -83,6 +83,26 @@ describe('I8 3b-2a Sicherheits-Grundlinie', () => {
     // der feste Registry-Text gilt nur exakt — jede Abwandlung braucht die Owner-Bestätigung
     expect(windowsBefehlsklasse(WINDOWS_BEFEHLE.registry.replace('fDenyTSConnections', 'fDenyTSConnections;Remove-Item C:/x'))).toBe('bestaetigen');
     expect(windowsBefehlsklasse(WINDOWS_BEFEHLE.registry.replace('HKLM:\\SOFTWARE\\Microsoft\\Policies\\LAPS', 'HKLM:\\SAM\\SAM'))).toBe('bestaetigen');
+  });
+});
+
+// I8 3b-3 — echte Ausgaben vom 07.11. (VM 9102, 137 und 100 identisch)
+const VSS_P = '[{"Name":"QEMU Guest Agent VSS Provider","Status":1,"StartType":3},{"Name":"QEMU-GA","Status":4,"StartType":2}]';
+const VSS_D = '{"Name":"VSS","Status":1,"StartType":3}';
+
+describe('I8 3b-3 VSS-Bereitschaft', () => {
+  it('Provider und Agent installiert, VSS-Dienst nicht deaktiviert; ohne QEMU-Dienste (leere Ausgabe) beides falsch', async () => {
+    expect(leseWinVssProvider(VSS_P)).toEqual({ provider: true, agent: true });
+    expect(leseWinVssProvider('')).toEqual({ provider: false, agent: false });
+    expect(leseWinVssProvider('{"Name":"QEMU-GA","Status":4,"StartType":2}')).toEqual({ provider: false, agent: true });
+    expect(leseWinVssProvider(VSS_P.replace('"StartType":3}', '"StartType":4}'))).toMatchObject({ provider: false });
+    expect(leseWinVssDienst(VSS_D)).toBe(true);
+    expect(leseWinVssDienst('{"Name":"VSS","Status":1,"StartType":4}')).toBe(false);
+    const { windowsBefehlsklasse } = await import('../fernzugriff/regeln.js');
+    expect(windowsBefehlsklasse(WINDOWS_BEFEHLE.vssProvider)).toBe('lesen');
+    expect(windowsBefehlsklasse(WINDOWS_BEFEHLE.vssDienst)).toBe('lesen');
+    const b = await sammleWindows('w', '1.2.3.4', async c => (c === WINDOWS_BEFEHLE.vssProvider ? VSS_P : c === WINDOWS_BEFEHLE.vssDienst ? VSS_D : (() => { throw new Error('x'); })()));
+    expect(b.windows.grundlinie?.vss).toEqual({ provider: true, agent: true, dienst: true });
   });
 });
 

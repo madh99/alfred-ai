@@ -172,6 +172,16 @@ describe('restore_backup / isolate_vm (v1614, Rettungskopie)', () => {
     expect((await w.px.execute({ action: 'restore_backup', node: 'pve1', volid, new_vmid: 9105, storage: 'backupshare', hostname: 'x-y' }, imChange)).error).toMatch(/images/);
   });
 
+  it('v1771 — PBS-Sicherung einer VM (Realfall 07.11. 6f8f54d1), Container und Fremdformen nicht', async () => {
+    const w = welt();
+    const pbs = 'pbs-pve2:backup/vm/100/2026-11-07T04:50:04Z';
+    const r = await w.px.execute({ action: 'restore_backup', node: 'pve1', volid: pbs, new_vmid: 9160, storage: 'zfs-nvme002', hostname: 'restoretest-workvm' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.find(x => x.startsWith('POST'))).toContain(`"archive":"${pbs}"`);
+    for (const nein of ['pbs-pve2:backup/ct/111/2026-11-07T04:50:04Z', 'pbs-pve2:backup/vm/100/2026-11-07T04:50:04Z;rm', 'pbs-pve2:backup/vm/100/latest'])
+      expect((await w.px.execute({ action: 'restore_backup', node: 'pve1', volid: nein, new_vmid: 9161, storage: 'zfs-nvme002', hostname: 'x-y' }, imChange)).error, nein).toMatch(/volid/);
+  });
+
   it('isolate_vm trennt jede Karte, Autostart aus, liest nach', async () => {
     const w = welt();
     const r = await w.px.execute({ action: 'isolate_vm', vmid: 104, vm_name: 'bgp-mt-1-rettung' }, imChange);

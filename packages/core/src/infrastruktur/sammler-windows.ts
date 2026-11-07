@@ -24,6 +24,9 @@ export const WINDOWS_BEFEHLE = {
   firewall: 'Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction | ConvertTo-Json -Compress',
   defender: 'Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureAge, AntivirusSignatureLastUpdated | ConvertTo-Json -Compress',
   registry: WIN_GRUNDLINIE_REGISTRY,
+  // I8 3b-3 — VSS-konsistente Sicherung: QEMU-Gast-Agent mit VSS-Provider und VSS-Dienst (nicht deaktiviert)
+  vssProvider: 'Get-Service -Name QEMU* | Select-Object Name, Status, StartType | ConvertTo-Json -Compress',
+  vssDienst: 'Get-Service -Name VSS | Select-Object Name, Status, StartType | ConvertTo-Json -Compress',
 } as const;
 
 /**
@@ -39,6 +42,8 @@ export interface WindowsGrundlinie {
   tls10Aus?: boolean; tls11Aus?: boolean;
   /** Windows LAPS: Sicherungsziel aus Richtlinie/CSP/lokaler Konfiguration (BackupDirectory 0 aus, 1 Entra, 2 AD) */
   laps?: 'ad' | 'entra' | 'aus';
+  /** I8 3b-3 — VSS-Sicherung möglich: QEMU-VSS-Provider installiert und nicht deaktiviert; VSS-Dienst nicht deaktiviert */
+  vss?: { provider: boolean; agent: boolean; dienst?: boolean };
 }
 
 const wahr = (x: unknown) => x === true || x === 1 || x === 'True' || x === 'true';
@@ -65,6 +70,18 @@ export function leseWinDefender(t: string, jetzt = new Date()): WindowsGrundlini
   // AntivirusSignatureAge ist 65535, wenn nie aktualisiert — dann zählt das Datum, sonst „unbekannt“
   const tage = Number.isFinite(alter) && alter < 65535 ? alter : stand !== undefined ? Math.floor((jetzt.getTime() - stand) / 86_400_000) : undefined;
   return { an: wahr(d.AMServiceEnabled) && wahr(d.AntivirusEnabled), echtzeit: wahr(d.RealTimeProtectionEnabled), ...(tage !== undefined ? { signaturTage: tage } : {}) };
+}
+/** StartType 4 = Disabled (Zahl oder Text) */
+const deaktiviert = (x: unknown) => x === 4 || x === 'Disabled';
+/** I8 3b-3 — QEMU-GA (Gast-Agent) und „QEMU Guest Agent VSS Provider“ */
+export function leseWinVssProvider(t: string): { provider: boolean; agent: boolean } {
+  const l = jsonListe<{ Name?: string; StartType?: unknown }>(t);
+  const p = l.find(d => /VSS Provider/i.test(String(d.Name ?? ''))), g = l.find(d => /^QEMU-GA$/i.test(String(d.Name ?? '')));
+  return { provider: !!p && !deaktiviert(p.StartType), agent: !!g && !deaktiviert(g.StartType) };
+}
+export function leseWinVssDienst(t: string): boolean | undefined {
+  const d = jsonListe<{ Name?: string; StartType?: unknown }>(t)[0];
+  return d ? !deaktiviert(d.StartType) : undefined;
 }
 export function leseWinRegistry(t: string): Pick<WindowsGrundlinie, 'rdp' | 'tls10Aus' | 'tls11Aus' | 'laps'> {
   const r = jsonListe<{ RdpAus?: number | null; Nla?: number | null; Tls10?: number | null; Tls11?: number | null; LapsCsp?: number | null; LapsGpo?: number | null; LapsLokal?: number | null }>(t)[0];
@@ -219,6 +236,9 @@ export async function sammleWindows(zugang: string, host: string, lesen: (befehl
   if (fw?.length) gl.firewall = fw;
   const def = await versuch('defender', WINDOWS_BEFEHLE.defender, t => leseWinDefender(t));
   if (def) gl.defender = def;
+  // Get-Service -Name QEMU* ohne Treffer: leere Ausgabe mit Exit 0 → „kein Provider, kein Agent“ (kein Lesefehler)
+  const vp = await versuch('vss', WINDOWS_BEFEHLE.vssProvider, leseWinVssProvider);
+  if (vp) { const vd = await versuch('vss-dienst', WINDOWS_BEFEHLE.vssDienst, leseWinVssDienst); gl.vss = { ...vp, ...(vd !== undefined ? { dienst: vd } : {}) }; }
   if (Object.keys(gl).length) b.windows.grundlinie = gl;
   // ausstehende Updates: Start-WUScan gibt es auf Server 2025 nicht (Realfall probe-win25) — kommt mit den Windows-Updates (I8b Teil 3)
   return b;

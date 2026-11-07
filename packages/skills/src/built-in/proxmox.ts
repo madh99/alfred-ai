@@ -77,6 +77,8 @@ const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', '
 const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
+/** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
+const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
 const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
@@ -1486,8 +1488,9 @@ export class ProxmoxSkill extends Skill {
    */
   private async restoreBackup(input: Record<string, unknown>): Promise<SkillResult> {
     const volid = String(input.volid ?? '');
-    if (!SICHERUNG_VOLUME.test(volid)) return { success: false, error: 'restore_backup: volid einer vzdump-Sicherung (speicher:backup/vzdump-qemu-<vmid>-<datum>.vma.zst)' };
-    if (!/^[a-zA-Z][\w-]{0,40}:backup\/vzdump-qemu-/.test(volid)) return { success: false, error: 'restore_backup: nur QEMU-Sicherungen' };
+    const pbs = PBS_VM_SICHERUNG.test(volid);
+    if (!pbs && !SICHERUNG_VOLUME.test(volid)) return { success: false, error: 'restore_backup: volid einer vzdump-Sicherung (speicher:backup/vzdump-qemu-<vmid>-<datum>.vma.zst) oder einer PBS-Sicherung (speicher:backup/vm/<vmid>/<JJJJ-MM-TTThh:mm:ssZ>)' };
+    if (!pbs && !/^[a-zA-Z][\w-]{0,40}:backup\/vzdump-qemu-/.test(volid)) return { success: false, error: 'restore_backup: nur QEMU-Sicherungen' };
     const node = String(input.node ?? this.config.defaultNode ?? '');
     const vmid = Number(input.new_vmid);
     const storage = String(input.storage ?? '');

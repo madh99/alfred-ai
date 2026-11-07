@@ -107,6 +107,10 @@ describe('I8 3b-2a — Sicherheits-Grundlinie', () => {
     expect(grundlinienAbweichungen({ tls10Aus: true, tls11Aus: true }, 'ad.3033.at')).toEqual([{ punkt: 'laps', schwere: 'mittel', text: 'Windows LAPS nicht eingerichtet (Domäne ad.3033.at)' }]);
     expect(grundlinienAbweichungen({ tls10Aus: true, tls11Aus: true, laps: 'ad' }, 'ad.3033.at')).toEqual([]);
     expect(grundlinienAbweichungen(undefined)).toEqual([]);
+    // I8 3b-3 — VSS
+    expect(grundlinienAbweichungen({ vss: { provider: true, agent: true, dienst: true } })).toEqual([]);
+    expect(grundlinienAbweichungen({ vss: { provider: false, agent: true, dienst: false } })).toEqual([{ punkt: 'vss', schwere: 'mittel', text: 'Sicherungen nicht anwendungskonsistent (QEMU-VSS-Provider fehlt, VSS-Dienst deaktiviert)' }]);
+    expect(grundlinienAbweichungen({ vss: { provider: false, agent: false } })[0]!.text).toBe('Sicherungen nicht anwendungskonsistent (QEMU-Gast-Agent fehlt, QEMU-VSS-Provider fehlt)');
     // im Bericht: je Abweichung ein Befund mit Host-Schlüssel (Problems einzeln, Lösen nur bei erfasstem Host)
     const a = auffaelligkeiten({ hosts: [{ ...host({ zugang: 'probe-win25b' }), windows: { grundlinie: p9102 } } as HostBestand], vms: [], proxy: [] }, jetzt).filter(x => x.kategorie === 'grundlinie');
     expect(a.map(x => x.schluessel)).toEqual(['grundlinie:probe-win25b:smb-signatur', 'grundlinie:probe-win25b:tls']);
