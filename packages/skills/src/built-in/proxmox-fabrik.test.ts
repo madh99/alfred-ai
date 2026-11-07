@@ -389,3 +389,56 @@ describe('delete_vm bei fehlendem Speicher am Knoten (v1736, Realfall 7f04dc5f)'
     expect(r.display).toContain('Suche nach verwaisten Platten übersprungen');
   });
 });
+
+// I8c (Vorhaben 8cbcf251) — VLAN-Bridge auf pve1 (vmbr0 nicht VLAN-fähig, Netzliste live 08.11.) und PBS-Ausnahme für die DCs
+describe('I8c VLAN-Bridge und Sicherungs-Ausnahme', () => {
+  const PVE1 = [
+    { iface: 'vmbr0', type: 'bridge', bridge_ports: 'enp8s0f0', active: 1 }, { iface: 'vmbr1', type: 'bridge', bridge_vlan_aware: 1, bridge_ports: 'enp8s0f1', active: 1 },
+    { iface: 'vmbr2', type: 'bridge', bridge_vlan_aware: 1, bridge_ports: 'enp5s0', active: 1 }, { iface: 'vmbr3', type: 'bridge', bridge_vlan_aware: 1, bridge_ports: 'vmbr2.6', active: 1 },
+    { iface: 'vmbr4', type: 'bridge', bridge_vlan_aware: 1, bridge_ports: 'vmbr2.8', active: 1 }, { iface: 'enp8s0f0', type: 'eth', active: 1 },
+  ];
+  it('Plan: neue Bridge über vmbr0, VLAN-fähige Uplinks abgewiesen, vorhandene erkannt', async () => {
+    const { vlanBridgePlan } = await import('./proxmox-fabrik.js');
+    expect(vlanBridgePlan(PVE1, { vlan: 829, ueber: 'vmbr0' })).toEqual({ bridge: 'vmbr5', port: 'vmbr0.829' });
+    expect(vlanBridgePlan(PVE1, { vlan: 829, ueber: 'vmbr2' }).fehler).toContain('VLAN-fähig');
+    expect(vlanBridgePlan(PVE1, { vlan: 6, ueber: 'vmbr2' }).fehler).toContain('VLAN-fähig');
+    expect(vlanBridgePlan([...PVE1, { iface: 'vmbr7', type: 'bridge', bridge_ports: 'vmbr0.829' }], { vlan: 829, ueber: 'vmbr0' })).toMatchObject({ vorhanden: 'vmbr7' });
+    expect(vlanBridgePlan(PVE1, { vlan: 829, ueber: 'vmbr9' }).fehler).toContain('gibt es auf dem Knoten nicht');
+    expect(vlanBridgePlan(PVE1, { vlan: 829, ueber: 'vmbr0', bridge: 'vmbr3' }).fehler).toContain('gibt es schon');
+    expect(vlanBridgePlan(PVE1, { vlan: 5000, ueber: 'vmbr0' }).fehler).toContain('2–4094');
+  });
+  it('Ausnahmeliste: dazu/weg, nur alfred-Jobs mit „alle VMs“ (Realfall alfred-pbs-taeglich)', async () => {
+    const { sicherungsAusnahme } = await import('./proxmox-fabrik.js');
+    const job = { id: 'alfred-pbs-taeglich', all: 1, exclude: '150,151,145,9000,9001,9100,9102,113,130' };
+    expect(sicherungsAusnahme(job, [9200], [])).toEqual({ exclude: '113,130,145,150,151,9000,9001,9100,9102,9200', vorher: '113,130,145,150,151,9000,9001,9100,9102', gleich: false });
+    expect(sicherungsAusnahme({ ...job, exclude: '113,9200' }, [], [9200]).exclude).toBe('113');
+    expect(sicherungsAusnahme({ ...job, exclude: '113,9200' }, [9200], []).gleich).toBe(true);
+    expect(sicherungsAusnahme({ ...job, id: 'backup-fremd' }, [9200], []).fehler).toContain('alfred-');
+    expect(sicherungsAusnahme({ ...job, all: 0 }, [9200], []).fehler).toContain('alle VMs');
+    expect(sicherungsAusnahme(job, [], []).fehler).toContain('angeben');
+  });
+  it('Skill: Bridge nur ohne ausstehende Änderungen, Ausnahme wird nachgelesen', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const netz = PVE1.map(n => ({ ...n })) as Array<Record<string, unknown>>;
+    let changes: string | undefined = '--- /etc/network/interfaces\n+iface vmbr9';
+    const jobs = [{ id: 'alfred-pbs-taeglich', all: 1, exclude: '113' }];
+    const aufrufe: string[] = [];
+    a.apiRoh = async () => ({ data: netz, ...(changes ? { changes } : {}) });
+    a.get = async (p: string) => (p.endsWith('/network') ? netz : p === '/cluster/backup' ? jobs : {});
+    a.post = async (p: string, b: Record<string, unknown>) => { aufrufe.push(`POST ${p}`); netz.push({ ...b, active: 0 }); return null; };
+    a.api = async (m: string, p: string, b?: Record<string, unknown>) => { aufrufe.push(`${m} ${p}`); if (p.endsWith('/network')) { for (const n of netz) n.active = 1; return 'UPID:x'; } if (p.startsWith('/cluster/backup/')) jobs[0]!.exclude = String(b?.exclude ?? ''); return null; };
+    a.aufgabeOderFehler = async () => undefined;
+    const imChange = { ausChange: true } as never;
+    expect((await px.execute({ action: 'create_vlan_bridge', node: 'pve1', vlan: 829, ueber: 'vmbr0' }, {} as never)).success).toBe(false); // nur im Change
+    expect((await px.execute({ action: 'create_vlan_bridge', node: 'pve1', vlan: 829, ueber: 'vmbr0' }, imChange)).error).toContain('stehen schon Netzänderungen aus');
+    changes = undefined;
+    const r = await px.execute({ action: 'create_vlan_bridge', node: 'pve1', vlan: 829, ueber: 'vmbr0' }, imChange);
+    expect(r.error).toBeUndefined();
+    expect(r.data).toMatchObject({ bridge: 'vmbr5', port: 'vmbr0.829' });
+    expect(aufrufe).toEqual(['POST /nodes/pve1/network', 'PUT /nodes/pve1/network']);
+    const e = await px.execute({ action: 'backup_job_exclude', job_id: 'alfred-pbs-taeglich', add_vmids: [9201, 9202] }, imChange);
+    expect(e.error).toBeUndefined();
+    expect(jobs[0]!.exclude).toBe('113,9201,9202');
+  });
+});

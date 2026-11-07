@@ -4,7 +4,7 @@ import { Skill } from '../skill.js';
 import { randomBytes } from 'node:crypto';
 import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN, type WimAbbild, type WinVariante } from './windows-fabrik.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
-import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
+import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, vlanBridgePlan, sicherungsAusnahme, ALFRED_BRIDGE_KOMMENTAR, type NetzIface, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
 /** I5 — was die Vorlagen-Fabrik vom Server braucht (SSH auf den Knoten, Fernzugang, CMDB); verdrahtet in alfred.ts */
 export interface VmFabrikDeps {
@@ -74,13 +74,13 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
 const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -165,7 +165,8 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
-      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB. ' +
+      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1). ' +
+      'I8c (nur in Changes): "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -315,6 +316,11 @@ export class ProxmoxSkill extends Skill {
         force_stop: { type: 'boolean', description: 'delete_vm: laufende VM vorher hart stoppen (nur für Rückwege frisch angelegter VMs)' },
         job_id: { type: 'string', description: 'create_/delete_backup_job: Job-ID, immer alfred-… (z. B. alfred-uebergang)' },
         vmids: { type: 'array', items: { type: 'number' }, description: 'create_backup_job: zu sichernde VMIDs' },
+        add_vmids: { type: 'array', items: { type: 'number' }, description: 'backup_job_exclude: VMIDs, die der Job (alle VMs) künftig auslässt' },
+        remove_vmids: { type: 'array', items: { type: 'number' }, description: 'backup_job_exclude: VMIDs, die wieder gesichert werden (Rückweg)' },
+        vlan: { type: 'number', description: 'create_vlan_bridge: VLAN-ID' },
+        ueber: { type: 'string', description: 'create_vlan_bridge: nicht VLAN-fähige Bridge/Netzkarte des Knotens, über die das VLAN läuft (z. B. vmbr0)' },
+        extra_disk_size: { type: 'number', description: 'provision_windows_vm: zweite Platte in GB (scsi1, gleicher Speicher wie storage), z. B. Sicherungsplatte' },
         schedule: { type: 'string', description: 'create_backup_job: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“' },
         keep_last: { type: 'number', description: 'create_backup_job: so viele Sicherungen je VM behalten (1–30)' },
         bwlimit: { type: 'number', description: 'create_backup_job: Bandbreitengrenze in KiB/s (optional, schont den Zielspeicher)' },
@@ -523,6 +529,12 @@ export class ProxmoxSkill extends Skill {
           return await this.finishWindowsTemplate(input);
         case 'provision_windows_vm':
           return await this.provisionWindowsVm(input);
+        case 'create_vlan_bridge':
+          return await this.vlanBridgeAnlegen(input);
+        case 'delete_vlan_bridge':
+          return await this.vlanBridgeEntfernen(input);
+        case 'backup_job_exclude':
+          return await this.sicherungAusnehmen(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -1842,6 +1854,13 @@ export class ProxmoxSkill extends Skill {
       if (input.bridge || input.vlan_tag) konfig.net0 = `virtio,bridge=${(input.bridge as string) ?? 'vmbr0'}${input.vlan_tag ? `,tag=${input.vlan_tag as number}` : ''}`;
       await this.post(`/nodes/${node}/qemu/${vmid}/config`, konfig);
       if (typeof input.disk_size === 'number' && input.disk_size > 0) await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
+      // I8c — zweite Platte (z. B. Systemstatus-Sicherung eines DC); Windows sieht sie roh, Einrichten macht der AD-Baustein
+      if (typeof input.extra_disk_size === 'number' && input.extra_disk_size > 0) {
+        const st = (typeof input.storage === 'string' && input.storage) || /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
+        if (!st) throw new Error('Speicher für die zweite Platte unbekannt (storage angeben)');
+        await this.post(`/nodes/${node}/qemu/${vmid}/config`, { scsi1: `${st}:${Math.floor(input.extra_disk_size)},discard=on,iothread=1,ssd=1` });
+        schritte.push(`zweite Platte ${Math.floor(input.extra_disk_size)} GB (scsi1, ${st})`);
+      }
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
       schritte.push(`gestartet mit ${ip}; Windows richtet sich ein (Name, Netz, Schlüssel) — mit Neustart`);
       const a = await this.fabrik.anmelden({ name, ip: nackt, node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 1_800_000, system: 'windows', nachholen: () => this.windowsEinrichtungNachholen(vmid, node) });
@@ -1856,6 +1875,64 @@ export class ProxmoxSkill extends Skill {
     }
     schritte.push('Benutzerdaten-Snippet entfernt, Konfigurationslaufwerk vorgemerkt');
     return { success: true, data: { vmid, name, node, ip: nackt, vorlage: tpl, variante, tresor: tresorName, hostSchluessel: hs.oeffentlich }, display: schritte.map(x => `- ${x}`).join('\n') };
+  }
+
+  /** Antwort mit allen Feldern (Proxmox meldet ausstehende Netzänderungen als `changes` neben `data`) */
+  private async apiRoh(path: string): Promise<{ data?: unknown; changes?: string }> {
+    const res = await tlsFetch(`${this.config.baseUrl}/api2/json${path}`, { method: 'GET', headers: { Authorization: `PVEAPIToken=${this.config.tokenId}=${this.config.tokenSecret}` } }, this.config.verifyTls === false);
+    if (!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text().catch(() => '')).slice(0, 300)}`);
+    return (await res.json()) as { data?: unknown; changes?: string };
+  }
+
+  /** I8c — VLAN-Bridge anlegen (nur im Change); Rückweg delete_vlan_bridge. Nur wenn sonst nichts aussteht (fremde Änderungen würden mit wirksam). */
+  private async vlanBridgeAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = String(input.node ?? '');
+    if (!node) return { success: false, error: 'node angeben' };
+    const roh = await this.apiRoh(`/nodes/${node}/network`);
+    if (roh.changes) return { success: false, error: `Auf ${node} stehen schon Netzänderungen aus — nichts angelegt (erst klären, sonst würden sie mit wirksam):\n${String(roh.changes).slice(0, 600)}` };
+    const netz = (roh.data as NetzIface[] | undefined) ?? [];
+    const p = vlanBridgePlan(netz, { vlan: Number(input.vlan), ueber: String(input.ueber ?? ''), ...(typeof input.bridge === 'string' && input.bridge ? { bridge: input.bridge } : {}) });
+    if (p.fehler) return { success: false, error: p.fehler };
+    if (p.vorhanden) return { success: true, data: { node, bridge: p.vorhanden, port: p.port, vorhanden: true }, display: `Bridge ${p.vorhanden} mit ${p.port} gibt es auf ${node} schon` };
+    await this.post(`/nodes/${node}/network`, { iface: p.bridge, type: 'bridge', bridge_ports: p.port, autostart: 1, comments: `${ALFRED_BRIDGE_KOMMENTAR} ${Number(input.vlan)} über ${String(input.ueber)}` });
+    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden');
+    const aktiv = ((await this.get<NetzIface[]>(`/nodes/${node}/network`)) ?? []).find(n => n.iface === p.bridge);
+    if (!aktiv || Number(aktiv.active) !== 1) return { success: false, error: `Bridge ${p.bridge} nach dem Neuladen nicht aktiv`, data: { node, bridge: p.bridge } };
+    return { success: true, data: { node, bridge: p.bridge, port: p.port }, display: `✅ Bridge ${p.bridge} auf ${node} angelegt und aktiv (Port ${p.port}, VLAN ${Number(input.vlan)}) — VMs mit bridge=${p.bridge} ohne Tag anbinden` };
+  }
+
+  /** I8c — Rückweg: nur von Alfred angelegte Bridges, und nur wenn keine VM sie nutzt */
+  private async vlanBridgeEntfernen(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = String(input.node ?? ''); const bridge = String(input.bridge ?? '');
+    if (!node || !/^vmbr\d{1,4}$/.test(bridge)) return { success: false, error: 'node und bridge (vmbr<Zahl>) angeben' };
+    const roh = await this.apiRoh(`/nodes/${node}/network`);
+    if (roh.changes) return { success: false, error: `Auf ${node} stehen Netzänderungen aus — nichts entfernt` };
+    const b = ((roh.data as NetzIface[] | undefined) ?? []).find(n => n.iface === bridge);
+    if (!b) return { success: true, data: { node, bridge, schonWeg: true }, display: `Bridge ${bridge} gibt es auf ${node} nicht (mehr)` };
+    if (!String(b.comments ?? '').startsWith(ALFRED_BRIDGE_KOMMENTAR)) return { success: false, error: `${bridge} wurde nicht von Alfred angelegt — nichts entfernt` };
+    for (const v of (await this.getAllVms()).filter(x => x.node === node && x.type === 'qemu')) {
+      const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${v.vmid}/config`).catch(() => ({} as Record<string, unknown>));
+      if (Object.entries(cfg).some(([k, w]) => /^net\d+$/.test(k) && new RegExp(`bridge=${bridge}(,|$)`).test(String(w)))) return { success: false, error: `${bridge} wird noch von VM ${v.vmid} (${v.name}) genutzt — nichts entfernt` };
+    }
+    await this.del(`/nodes/${node}/network/${bridge}`);
+    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden');
+    if (((await this.get<NetzIface[]>(`/nodes/${node}/network`)) ?? []).some(n => n.iface === bridge)) return { success: false, error: `Bridge ${bridge} nach dem Entfernen noch vorhanden` };
+    return { success: true, data: { node, bridge, entfernt: true }, display: `✅ Bridge ${bridge} auf ${node} entfernt` };
+  }
+
+  /** I8c — VMs aus einem Job „alle VMs“ ausnehmen bzw. wieder aufnehmen (nur im Change, nur alfred-…); danach nachlesen */
+  private async sicherungAusnehmen(input: Record<string, unknown>): Promise<SkillResult> {
+    const id = String(input.job_id ?? '').trim();
+    const liste = (x: unknown) => (Array.isArray(x) ? x : x === undefined || x === '' ? [] : String(x).split(',')).map(v => Number(String(v).trim()));
+    const jobs = (await this.get<Array<{ id: string; all?: number | string; exclude?: string }>>('/cluster/backup')) ?? [];
+    const p = sicherungsAusnahme(jobs.find(j => j.id === id), liste(input.add_vmids), liste(input.remove_vmids));
+    if (p.fehler) return { success: false, error: `backup_job_exclude: ${p.fehler}` };
+    if (p.gleich) return { success: true, data: { id, exclude: p.exclude }, display: `Ausnahmeliste von ${id} ist schon so: ${p.exclude || '(leer)'}` };
+    await this.api('PUT', `/cluster/backup/${encodeURIComponent(id)}`, p.exclude ? { exclude: p.exclude } : { delete: 'exclude' });
+    const nach = ((await this.get<Array<{ id: string; exclude?: string }>>('/cluster/backup')) ?? []).find(j => j.id === id);
+    const ist = (nach?.exclude ?? '').split(',').map(x => Number(x.trim())).filter(Number.isInteger).sort((a, b) => a - b).join(',');
+    if (ist !== p.exclude) return { success: false, error: `Ausnahmeliste von ${id} nach dem Ändern: ${ist || '(leer)'} statt ${p.exclude || '(leer)'}` };
+    return { success: true, data: { id, exclude: p.exclude, vorher: p.vorher }, display: `✅ ${id} lässt jetzt aus: ${p.exclude || '(keine)'} (vorher ${p.vorher || '(keine)'})` };
   }
 
   private async vmidFrei(vmid: number): Promise<boolean> {

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Proxmox: VLAN-Bridge, Ausnahmen im Sicherungsjob, zweite Platte für Windows-VMs (v1776)
+
+- `create_vlan_bridge` (nur in Changes) legt auf einem Knoten eine Bridge mit dem VLAN-Unterinterface einer nicht VLAN-fähigen Uplink-Bridge an (z. B. `vmbr0.829`) und lädt das Netz neu. Das geschieht nur, wenn auf dem Knoten sonst keine Netzänderung aussteht. Ist der Uplink VLAN-fähig, wird abgelehnt mit dem Hinweis, die VM per VLAN-Tag anzubinden. Rückweg `delete_vlan_bridge`: nur Bridges von Alfred, die keine VM nutzt.
+- `backup_job_exclude` (nur in Changes) nimmt VMs aus einem eigenen Job „alle VMs“ aus oder wieder auf und liest das Ergebnis nach.
+- `provision_windows_vm` legt mit `extra_disk_size` eine zweite Platte an (z. B. für die Systemstatus-Sicherung eines Domänencontrollers).
+
 ### Changed — DNS-Weiterleitung an mehrere Server (v1775)
 
 - Eine Domäne kann an mehrere DNS-Server weitergeleitet werden (je Server ein `create_dns_record` mit `record_type: FORWARD`), etwa an beide Domänencontroller. Fällt einer aus, antwortet der andere. Abgewiesen wird nur ein doppeltes Ziel.

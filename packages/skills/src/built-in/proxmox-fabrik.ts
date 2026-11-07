@@ -274,3 +274,41 @@ export function getrennteNetze(cfg: Record<string, unknown>): Record<string, str
   return aus;
 }
 export const alleNetzeGetrennt = (cfg: Record<string, unknown>) => Object.entries(cfg).filter(([k]) => /^net\d+$/.test(k)).every(([, v]) => /(^|,)link_down=1(,|$)/.test(String(v)));
+
+/**
+ * I8c (Vorhaben 8cbcf251) — VLAN-Bridge auf einem Knoten, dessen Uplink-Bridge nicht VLAN-fähig ist (pve1: vmbr0). Muster wie die
+ * vorhandenen vmbr3/vmbr4 (Port vmbr2.6/vmbr2.8): neue Bridge mit dem VLAN-Unterinterface <ueber>.<vlan> als Port. Ist <ueber>
+ * VLAN-fähig, braucht es keine Bridge — die VM bekommt das VLAN als tag.
+ */
+export interface NetzIface { iface: string; type: string; bridge_vlan_aware?: number | string; bridge_ports?: string; comments?: string; active?: number }
+export const ALFRED_BRIDGE_KOMMENTAR = 'Alfred: VLAN';
+export function vlanBridgePlan(netz: NetzIface[], w: { vlan: number; ueber: string; bridge?: string }): { fehler?: string; vorhanden?: string; bridge?: string; port?: string } {
+  if (!Number.isInteger(w.vlan) || w.vlan < 2 || w.vlan > 4094) return { fehler: 'vlan: 2–4094' };
+  const ueber = netz.find(n => n.iface === w.ueber);
+  if (!ueber) return { fehler: `ueber: ${w.ueber} gibt es auf dem Knoten nicht (${netz.filter(n => /bridge|eth|bond/.test(n.type)).map(n => n.iface).join(', ')})` };
+  if (!['bridge', 'eth', 'bond'].includes(ueber.type)) return { fehler: `ueber: ${w.ueber} ist ${ueber.type} — Bridge, Netzkarte oder Bond angeben` };
+  if (ueber.type === 'bridge' && String(ueber.bridge_vlan_aware ?? '') === '1') return { fehler: `${w.ueber} ist VLAN-fähig — keine neue Bridge nötig: VM direkt an ${w.ueber} mit VLAN-Tag ${w.vlan} anbinden` };
+  const port = `${w.ueber}.${w.vlan}`;
+  const da = netz.find(n => n.type === 'bridge' && (n.bridge_ports ?? '').split(/\s+/).includes(port));
+  if (da) return { vorhanden: da.iface, bridge: da.iface, port };
+  if (w.bridge !== undefined) {
+    if (!/^vmbr\d{1,4}$/.test(w.bridge)) return { fehler: 'bridge: vmbr<Zahl>' };
+    if (netz.some(n => n.iface === w.bridge)) return { fehler: `bridge: ${w.bridge} gibt es schon` };
+    return { bridge: w.bridge, port };
+  }
+  for (let i = 0; i < 10000; i++) if (!netz.some(n => n.iface === `vmbr${i}`)) return { bridge: `vmbr${i}`, port };
+  return { fehler: 'kein freier Bridge-Name' };
+}
+
+/** I8c (Owner 08.11.: DCs nicht per PBS) — Ausnahmeliste eines Jobs mit „alle VMs“ ändern; nur eigene Jobs (alfred-…) */
+export function sicherungsAusnahme(job: { id: string; all?: number | string; exclude?: string } | undefined, dazu: number[], weg: number[]): { fehler?: string; exclude?: string; vorher?: string; gleich?: boolean } {
+  if (!job) return { fehler: 'Sicherungsjob nicht gefunden' };
+  if (!SICHERUNGSJOB_ID.test(job.id)) return { fehler: 'nur eigene Jobs (alfred-…)' };
+  if (String(job.all ?? '') !== '1') return { fehler: `${job.id} sichert nicht „alle VMs“ — eine Ausnahmeliste wirkt nur dort` };
+  const alt = (job.exclude ?? '').split(',').map(x => Number(x.trim())).filter(Number.isInteger);
+  if ([...dazu, ...weg].some(v => !Number.isInteger(v) || v < 100)) return { fehler: 'add_vmids/remove_vmids: VMIDs (ab 100)' };
+  if (!dazu.length && !weg.length) return { fehler: 'add_vmids oder remove_vmids angeben' };
+  const neu = [...new Set([...alt.filter(v => !weg.includes(v)), ...dazu])].sort((a, b) => a - b);
+  const vorher = [...new Set(alt)].sort((a, b) => a - b).join(',');
+  return { exclude: neu.join(','), vorher, gleich: neu.join(',') === vorher };
+}
