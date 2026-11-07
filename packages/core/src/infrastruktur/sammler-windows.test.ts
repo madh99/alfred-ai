@@ -26,7 +26,7 @@ describe('I8b Windows-Sammler', () => {
   });
 
   it('sammleWindows: Bestand wie Linux plus Windows-Angaben; Teilfehler stehen im Bestand', async () => {
-    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102, [WINDOWS_BEFEHLE.vssProvider]: VSS_P, [WINDOWS_BEFEHLE.vssDienst]: VSS_D, [WINDOWS_BEFEHLE.dienstGestoppt]: '[]', [WINDOWS_BEFEHLE.ereignisse]: '[]', [WINDOWS_BEFEHLE.zertifikate]: '[]' };
+    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102, [WINDOWS_BEFEHLE.vssProvider]: VSS_P, [WINDOWS_BEFEHLE.vssDienst]: VSS_D, [WINDOWS_BEFEHLE.dienstGestoppt]: '[]', [WINDOWS_BEFEHLE.ereignisse]: '[]', [WINDOWS_BEFEHLE.zertifikate]: '[]', [WINDOWS_BEFEHLE.dcGesundheit]: '{"Dc":false}' };
     const b = await sammleWindows('probe-win25', '192.168.1.222', async c => { if (!(c in antworten)) throw new Error('Zeitüberschreitung'); return antworten[c]!; });
     expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 }, lizenz: { status: 'testversion', kanal: 'Testversion' } } });
     expect(b.windows.domaene).toBeUndefined();
@@ -136,5 +136,22 @@ describe('I8 3b-4 Windows-Überwachung', () => {
     expect(r.ueberwachung.ereignisse).toBeUndefined();
     expect(r.ueberwachung.zertifikate).toHaveLength(1);
     expect(r.fehler).toEqual(['ereignisse: Exit 1']);
+  });
+});
+
+// I8c — Gesundheit der Domänencontroller (Format von dcdiag /q und repadmin /showrepl /csv laut Microsoft)
+describe('I8c DC-Gesundheit', () => {
+  it('Mitgliedsserver: kein DC, kein Befund; DC: fehlgeschlagene Tests und Replikationsfehler', async () => {
+    const { leseWinDcGesundheit } = await import('./sammler-windows.js');
+    const { ueberwachungsBefunde } = await import('./bericht.js');
+    expect(leseWinDcGesundheit('{"Dc":false}')).toBeUndefined();
+    const repl = 'showrepl_COLUMNS,Destination DSA Site,Destination DSA,Naming Context,Source DSA Site,Source DSA,Source Transport Type,Number of Failures,Last Failure Time,Last Success Time,Last Failure Status\r\n'
+      + 'showrepl_INFO,Default-First-Site-Name,DC01,"DC=ad,DC=3033,DC=at",Default-First-Site-Name,DC02,RPC,0,0,2026-11-08 10:00:00,0\r\n'
+      + 'showrepl_INFO,Default-First-Site-Name,DC01,CN=Configuration,Default-First-Site-Name,DC02,RPC,3,2026-11-08 10:05:00,2026-11-08 09:00:00,1722\r\n';
+    const dc = leseWinDcGesundheit(JSON.stringify({ Dc: true, Dcdiag: '\r\n   ......................... DC01 failed test DFSREvent\r\n   ......................... DC01 failed test DFSREvent\r\n', Repl: repl }))!;
+    expect(dc.dcdiagFehler).toEqual(['DFSREvent']);
+    expect(dc.replikation.filter(r => r.fehler > 0)).toEqual([{ quelle: 'DC02', kontext: 'CN=Configuration', fehler: 3, letzterFehler: '2026-11-08 10:05:00', status: '1722' }]);
+    const a = ueberwachungsBefunde('dc01', { dc });
+    expect(a.map(x => `${x.schwere}|${x.schluessel}`)).toEqual(['mittel|ueberwachung:dc01:ad-dcdiag:DFSREvent', 'hoch|ueberwachung:dc01:ad-repl:DC02:CN=Configuration']);
   });
 });

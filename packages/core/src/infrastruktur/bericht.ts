@@ -121,6 +121,7 @@ export interface WinUeberwachung {
   dienste?: Array<{ name: string; anzeige: string; zustand: string; exitCode: number }>;
   ereignisse?: Array<{ quelle: string; anzahl: number; kritisch: number; id: number; zuletzt?: string }>;
   zertifikate?: Array<{ betreff: string; fingerabdruck: string; ablauf?: string }>;
+  dc?: { dcdiagFehler: string[]; replikation: Array<{ quelle: string; kontext: string; fehler: number; letzterFehler?: string; status?: string }> };
 }
 
 /**
@@ -148,6 +149,9 @@ export function ueberwachungsBefunde(zugang: string, u: WinUeberwachung, jetzt =
     if (tage > ZERTIFIKAT_WARN_TAGE) continue;
     a.push({ schwere: tage <= 7 ? 'hoch' : 'mittel', text: `Zertifikat ${z.betreff || z.fingerabdruck.slice(0, 12)} ${tage < 0 ? `seit ${-tage} Tagen abgelaufen` : `läuft in ${tage} Tagen ab`} (${z.ablauf.slice(0, 10)}, Fingerabdruck ${z.fingerabdruck.slice(0, 12)}…)`, ...k(`zertifikat:${z.fingerabdruck}`) });
   }
+  // I8c — Domänencontroller: fehlgeschlagene dcdiag-Tests (mittel), Replikationsfehler (hoch)
+  for (const t of u.dc?.dcdiagFehler ?? []) a.push({ schwere: 'mittel', text: `Domänencontroller: dcdiag-Test ${t} fehlgeschlagen`, ...k(`ad-dcdiag:${t}`) });
+  for (const r of u.dc?.replikation ?? []) if (r.fehler > 0) a.push({ schwere: 'hoch', text: `AD-Replikation von ${r.quelle} (${r.kontext}): ${r.fehler} Fehler in Folge${r.status ? `, Status ${r.status}` : ''}${r.letzterFehler ? `, zuletzt ${r.letzterFehler}` : ''}`, ...k(`ad-repl:${r.quelle}:${r.kontext}`) });
   return a;
 }
 

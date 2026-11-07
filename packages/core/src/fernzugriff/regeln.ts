@@ -324,7 +324,13 @@ export const WIN_UEBERWACHUNG_EREIGNISSE = 'ConvertTo-Json -Compress -InputObjec
   + ' | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 10'
   + ' | ForEach-Object { [pscustomobject]@{Quelle=$_.Name;Anzahl=$_.Count;Kritisch=@($_.Group | Where-Object Level -eq 1).Count;Id=$_.Group[0].Id;Zuletzt=$_.Group[0].TimeCreated} })';
 export const WIN_UEBERWACHUNG_ZERTIFIKATE = 'ConvertTo-Json -Compress -InputObject @(Get-ChildItem -Path Cert:\\LocalMachine\\My | Select-Object Subject, Thumbprint, NotAfter)';
-const WIN_LESE_FEST = new Set([WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE]);
+/**
+ * I8c — Gesundheit eines Domänencontrollers: dcdiag nur Fehler (/q) und Replikationsstand (repadmin /showrepl /csv). Auf Hosts ohne
+ * AD-Werkzeuge ({Dc:false}) — so ist ein Mitgliedsserver keine Erfassungslücke. Beide Programme lesen nur.
+ */
+export const WIN_DC_GESUNDHEIT = 'if (Get-Command -Name dcdiag -ErrorAction SilentlyContinue) { [pscustomobject]@{Dc=$true;Dcdiag=(dcdiag /q | Out-String);Repl=(repadmin /showrepl /csv | Out-String)} | ConvertTo-Json -Compress }'
+  + ' else { [pscustomobject]@{Dc=$false} | ConvertTo-Json -Compress }';
+const WIN_LESE_FEST = new Set([WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE, WIN_DC_GESUNDHEIT]);
 const WIN_FILTER: RegExp[] = [
   /^Select-Object( -Property)? [\w*]+( ?, ?[\w*]+)*$/i, /^Select-Object -(First|Last) \d{1,4}$/i,
   /^Format-List( [\w*]+( ?, ?[\w*]+)*)?$/i, /^Format-Table( -AutoSize)?( [\w*]+( ?, ?[\w*]+)*)?$/i,

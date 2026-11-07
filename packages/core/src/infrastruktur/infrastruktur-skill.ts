@@ -115,7 +115,7 @@ export class InfrastrukturSkill extends Skill {
       + 'Für ein Ziel wie „dockerhost aufteilen“, „neue Architektur vorschlagen“, „auf neue VMs migrieren“: '
       + '1) vorhaben_anlegen (titel, ziel in den Worten des Owners, hosts = Fernzugang-Namen); '
       + '2) grundlage (vorhaben) — Einheiten (Compose-Projekte, einzelne Container, Host) mit gemessenem RAM, Daten, Ports, Proxy-Domains, dazu Proxmox-Knoten, Speicher, Netze; '
-      + '3) architektur_vorschlagen (vorhaben, architektur) — JEDE Einheit genau einer Gruppe zuordnen (ziel vm|lxc|bleibt|stilllegen; vm/lxc mit vmName, knoten, vcpu, ramGb, diskGb, distribution + distributionBegruendung, netz), '
+      + '3) architektur_vorschlagen (vorhaben, architektur) — JEDE Einheit genau einer Gruppe zuordnen; neue Dienste ohne Bestand als Gruppe mit neubau: true (ziel vm|lxc|bleibt|stilllegen; vm/lxc mit vmName, knoten, vcpu, ramGb, diskGb, distribution + distributionBegruendung, netz), '
       + 'netze (neu/vorhanden, geraet unifi|pfsense|mikrotik, vlan, subnetz ohne Überschneidung), firewall (je Regel eine Zone von/nach: Netz, Gruppe oder internet/vpn/proxy/alle; protokoll, ports), proxyDns, sicherung, updates, reihenfolge (jede neue VM/LXC), risiken, offeneEntscheidungen. Wird geprüft; bei Fehlern nachbessern und erneut senden. '
       + 'Kleine Überarbeitung einer gespeicherten Fassung: architektur_vorschlagen mit aenderungen statt architektur (nur das Neue senden). '
       + 'Ergebnis: Architektur-Dokument (CMDB). 4) entscheiden NUR auf ausdrückliche Aussage des Owners (annehmen|ueberarbeiten|ablehnen, wortlaut = seine Worte). '
@@ -165,6 +165,7 @@ export class InfrastrukturSkill extends Skill {
               vmName: { type: 'string' }, knoten: { type: 'string' }, vcpu: { type: 'number' }, ramGb: { type: 'number' }, diskGb: { type: 'number' }, speicher: { type: 'string' },
               distribution: { type: 'string', enum: [...DISTRIBUTIONEN] }, distributionBegruendung: { type: 'string' },
               netz: { type: 'string' }, verwaltung: { type: 'string', enum: ['fernzugriff', 'satellit'] },
+              neubau: { type: 'boolean', description: 'neuer Dienst ohne Einheiten im Bestand (z. B. Domänencontroller) — einheiten dann leer' },
             } } },
             netze: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, vlan: { type: 'number' }, subnetz: { type: 'string' }, geraet: { type: 'string', enum: ['unifi', 'pfsense', 'mikrotik'] }, zweck: { type: 'string' }, neu: { type: 'boolean' } } } },
             firewall: { type: 'array', description: 'je Regel EINE Zone von/nach: Netzname, Gruppenname oder internet/vpn/proxy/alle; alles andere gilt als gesperrt', items: { type: 'object', properties: { von: { type: 'string' }, nach: { type: 'string' }, protokoll: { type: 'string', enum: ['tcp', 'udp', 'tcp+udp', 'icmp', 'alle'] }, ports: { type: 'string', description: '443 | 8008,8448 | 10000-20000 | alle' }, begruendung: { type: 'string' } } } },

@@ -74,7 +74,7 @@ export class UniFiSkill extends Skill {
             'create_port_forward',
             'delete_port_forward',
           ],
-          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME) / delete_dns_record (hostname). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
+          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME|FORWARD — FORWARD leitet alle Anfragen für die Domäne hostname an den DNS-Server ip weiter, z. B. AD-Zone an den DC) / delete_dns_record (hostname). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
         },
         mac: {
           type: 'string',
@@ -135,7 +135,7 @@ export class UniFiSkill extends Skill {
         dhcp_stop: { type: 'string', description: 'create_network: letzte DHCP-Adresse (optional)' },
         hostname: { type: 'string', description: 'create_dns_record/delete_dns_record: Name, z. B. matrix.home.arpa' },
         ip: { type: 'string', description: 'create_dns_record: Ziel (IP bzw. Name bei CNAME)' },
-        record_type: { type: 'string', enum: ['A', 'AAAA', 'CNAME'], description: 'create_dns_record: Standard A' },
+        record_type: { type: 'string', enum: ['A', 'AAAA', 'CNAME', 'FORWARD'], description: 'create_dns_record: Standard A; FORWARD = bedingte Weiterleitung (hostname = Domäne, z. B. ad.3033.at; ip = DNS-Server, z. B. Domänencontroller)' },
         start_ip: {
           type: 'number',
           description: 'Ab welcher Host-Nummer suchen (für next_free_ip, default: 10)',
@@ -1447,15 +1447,37 @@ export class UniFiSkill extends Skill {
     return t ? JSON.parse(t) : undefined;
   }
 
+  /**
+   * I8c — bedingte DNS-Weiterleitung: nur über die Integration-API als DNS-Richtlinie FORWARD_DOMAIN (domain + ipAddress). Feldnamen
+   * aus Drittquellen (unifly, dnsync) — daher nach dem Anlegen zurücklesen und prüfen. Realfall 07.11.: Dream Machine Pro, Network
+   * 11.0.94, /dns/policies liefert dieselben 14 Einträge wie v2 static-dns (Typen A_RECORD …).
+   */
+  private async weiterleitungen(): Promise<Array<{ id: string; domain: string; ipAddress?: string; enabled?: boolean }>> {
+    return (await this.liste<{ id: string; type: string; domain: string; ipAddress?: string; enabled?: boolean }>('/dns/policies')).filter(x => x.type === 'FORWARD_DOMAIN');
+  }
+
   private async dnsListe(): Promise<SkillResult> {
     const l = ((await this.v2('GET', 'static-dns')) as Array<{ _id: string; key: string; value: string; record_type: string; enabled: boolean }> | undefined) ?? [];
+    // I8c — Weiterleitungen aus der Integration-API ergänzen (nur mit API-Schlüssel; fehlt er, bleibt die Liste wie bisher)
+    if (this.config.apiKey) {
+      const w = await this.weiterleitungen().catch(() => []);
+      for (const x of w) if (!l.some(e => e.key.toLowerCase() === x.domain.toLowerCase() && /forward/i.test(e.record_type))) l.push({ _id: x.id, key: x.domain, value: x.ipAddress ?? '', record_type: 'FORWARD', enabled: x.enabled !== false });
+    }
     return { success: true, data: l, display: l.length ? ['| Name | Typ | Ziel | aktiv |', '|---|---|---|---|', ...l.map(e => `| ${e.key} | ${e.record_type} | ${e.value} | ${e.enabled ? 'ja' : 'nein'} |`)].join('\n') : 'Keine lokalen DNS-Einträge.' };
   }
 
   private async dnsAnlegen(input: Record<string, unknown>): Promise<SkillResult> {
     const key = String(input.hostname ?? '').trim().toLowerCase(); const value = String(input.ip ?? '').trim();
-    const typ = ['A', 'AAAA', 'CNAME'].includes(String(input.record_type)) ? String(input.record_type) : 'A';
+    const typ = ['A', 'AAAA', 'CNAME', 'FORWARD'].includes(String(input.record_type)) ? String(input.record_type) : 'A';
     if (!HOSTNAME.test(key)) return { success: false, error: 'hostname ungültig' };
+    if (typ === 'FORWARD') {
+      if (ipZahl(value) === undefined) return { success: false, error: 'ip: IPv4-Adresse des DNS-Servers angeben' };
+      if ((await this.weiterleitungen()).some(x => x.domain.toLowerCase() === key)) return { success: false, error: `Weiterleitung für ${key} gibt es schon` };
+      const r = (await this.integ('POST', `/sites/${await this.siteId()}/dns/policies`, { type: 'FORWARD_DOMAIN', enabled: true, domain: key, ipAddress: value })) as { id?: string } | undefined;
+      const da = (await this.weiterleitungen()).find(x => x.domain.toLowerCase() === key);
+      if (!da || da.ipAddress !== value) return { success: false, error: `Weiterleitung ${key} → ${value} nach dem Anlegen nicht wie erwartet lesbar (gelesen: ${da ? `${da.domain} → ${da.ipAddress ?? '?'}` : 'nichts'})`, data: { id: r?.id ?? da?.id } };
+      return { success: true, data: { hostname: key, ip: value, record_type: 'FORWARD', id: da.id }, display: `✅ DNS-Weiterleitung ${key} → ${value} (alle Anfragen für ${key} gehen an ${value})` };
+    }
     if (typ === 'A' && ipZahl(value) === undefined) return { success: false, error: 'ip: IPv4-Adresse angeben' };
     if (typ === 'CNAME' && !HOSTNAME.test(value)) return { success: false, error: 'ip: Zielname angeben' };
     if (typ === 'AAAA' && !/^[0-9a-f:]+$/i.test(value)) return { success: false, error: 'ip: IPv6-Adresse angeben' };
@@ -1469,6 +1491,11 @@ export class UniFiSkill extends Skill {
     const key = String(input.hostname ?? '').trim().toLowerCase();
     const l = ((await this.v2('GET', 'static-dns')) as Array<{ _id: string; key: string; value: string }> | undefined) ?? [];
     const e = l.find(x => x.key.toLowerCase() === key);
+    if (!e && this.config.apiKey) {
+      // I8c — Weiterleitung (nur über die Integration-API sichtbar/löschbar)
+      const w = (await this.weiterleitungen()).find(x => x.domain.toLowerCase() === key);
+      if (w) { await this.integ('DELETE', `/sites/${await this.siteId()}/dns/policies/${w.id}`); return { success: true, data: { hostname: w.domain, ip: w.ipAddress }, display: `✅ DNS-Weiterleitung ${w.domain} gelöscht` }; }
+    }
     if (!e) return { success: false, error: `DNS-Eintrag ${key} nicht gefunden` };
     await this.v2('DELETE', `static-dns/${e._id}`);
     return { success: true, data: { hostname: e.key, ip: e.value }, display: `✅ Lokaler DNS-Eintrag ${e.key} gelöscht` };

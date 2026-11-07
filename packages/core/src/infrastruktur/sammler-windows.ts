@@ -5,7 +5,7 @@
  * derselbe Host-Bestand wie bei Linux (CMDB, Bericht, Standard-Changes) plus Windows-Angaben (Rollen, Updates, Domäne).
  */
 import type { HostBestand } from './sammler.js';
-import { WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE } from '../fernzugriff/regeln.js';
+import { WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE, WIN_DC_GESUNDHEIT } from '../fernzugriff/regeln.js';
 
 export const WINDOWS_BEFEHLE = {
   os: 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, TotalVisibleMemorySize, FreePhysicalMemory | ConvertTo-Json -Compress',
@@ -31,6 +31,8 @@ export const WINDOWS_BEFEHLE = {
   dienstGestoppt: WIN_UEBERWACHUNG_DIENSTE,
   ereignisse: WIN_UEBERWACHUNG_EREIGNISSE,
   zertifikate: WIN_UEBERWACHUNG_ZERTIFIKATE,
+  // I8c — Domänencontroller: dcdiag (nur Fehler) und Replikation; auf anderen Hosts {Dc:false}
+  dcGesundheit: WIN_DC_GESUNDHEIT,
 } as const;
 
 /** I8 3b-4 — Überwachungsstand eines Windows-Hosts; fehlt ein Teil (Befehl gescheitert), bleibt das Feld leer (Erfassungslücke). */
@@ -40,6 +42,24 @@ export interface WindowsUeberwachung {
   /** Kritische Ereignisse und Fehler der letzten 24 h je Quelle (höchstens 10 Quellen) */
   ereignisse?: Array<{ quelle: string; anzahl: number; kritisch: number; id: number; zuletzt?: string }>;
   zertifikate?: Array<{ betreff: string; fingerabdruck: string; ablauf?: string }>;
+  /** I8c — nur auf Domänencontrollern: von dcdiag gemeldete fehlgeschlagene Tests, Replikationsverbindungen mit Fehlern */
+  dc?: { dcdiagFehler: string[]; replikation: Array<{ quelle: string; kontext: string; fehler: number; letzterFehler?: string; status?: string }> };
+}
+
+/** I8c — dcdiag /q nennt nur Fehler („……… DC01 failed test DFSREvent“); repadmin /showrepl /csv je Verbindung eine showrepl_INFO-Zeile */
+export function leseWinDcGesundheit(t: string): WindowsUeberwachung['dc'] | undefined {
+  const j = JSON.parse(t.trim().replace(/^﻿/, '') || '{}') as { Dc?: boolean; Dcdiag?: string; Repl?: string };
+  if (!j.Dc) return undefined;
+  const dcdiagFehler = [...new Set([...String(j.Dcdiag ?? '').matchAll(/failed test (\S+)/gi)].map(m => m[1]!))];
+  const zeilen = String(j.Repl ?? '').split(/\r?\n/).map(z => z.trim()).filter(Boolean);
+  const kopf = zeilen.find(z => z.startsWith('showrepl_COLUMNS'))?.split(',') ?? [];
+  const sp = (n: string) => kopf.findIndex(k => k.trim().toLowerCase() === n.toLowerCase());
+  const iQ = sp('Source DSA'), iK = sp('Naming Context'), iF = sp('Number of Failures'), iZ = sp('Last Failure Time'), iS = sp('Last Failure Status');
+  const replikation = zeilen.filter(z => z.startsWith('showrepl_INFO')).map(z => z.split(',')).map(f => ({
+    quelle: f[iQ] ?? '?', kontext: f[iK] ?? '?', fehler: Number(f[iF] ?? 0) || 0,
+    ...(f[iZ] && !/^0$/.test(f[iZ]!) ? { letzterFehler: f[iZ] } : {}), ...(f[iS] ? { status: f[iS] } : {}),
+  }));
+  return { dcdiagFehler, replikation };
 }
 
 export function leseWinDienstGestoppt(t: string): NonNullable<WindowsUeberwachung['dienste']> {
@@ -72,6 +92,7 @@ export async function sammleWindowsUeberwachung(lesen: (befehl: string) => Promi
   const d = await versuch('dienste-gestoppt', WINDOWS_BEFEHLE.dienstGestoppt, leseWinDienstGestoppt); if (d) u.dienste = d;
   const e = await versuch('ereignisse', WINDOWS_BEFEHLE.ereignisse, leseWinEreignisse); if (e) u.ereignisse = e;
   const z = await versuch('zertifikate', WINDOWS_BEFEHLE.zertifikate, leseWinZertifikate); if (z) u.zertifikate = z;
+  const dc = await versuch('dc', WINDOWS_BEFEHLE.dcGesundheit, leseWinDcGesundheit); if (dc) u.dc = dc;
   return { ...(dateisysteme ? { dateisysteme } : {}), ueberwachung: u, fehler };
 }
 

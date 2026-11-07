@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Grundlagen für Active Directory: Windows in der Architektur, DNS-Weiterleitung, DC-Gesundheit (v1774)
+
+- Architekturvorschläge kennen Windows-Distributionen (Server 2025 Core, Server 2025, Windows 11) und Gruppen für neue Dienste ohne Bestand (`neubau: true`, z. B. Domänencontroller). Windows-Gruppen werden über den Fernzugang mit OpenSSH/PowerShell verwaltet; Windows als LXC wird abgewiesen.
+- UniFi: `create_dns_record` mit `record_type: FORWARD` legt eine bedingte DNS-Weiterleitung an (alle Anfragen für eine Domäne an einen DNS-Server, z. B. die AD-Zone an den Domänencontroller). Angelegt wird über die Integration-API; der Eintrag wird sofort zurückgelesen und geprüft. `list_dns_records` zeigt Weiterleitungen, `delete_dns_record` entfernt sie.
+- Windows-Überwachung: auf Domänencontrollern werden fehlgeschlagene `dcdiag`-Tests (mittel) und Replikationsfehler aus `repadmin` (hoch) zu Problems; auf anderen Hosts liefert der feste Lesebefehl nur „kein Domänencontroller“.
+
 ### Added — Windows-Überwachung: Dienste, Ereignisprotokoll, Zertifikate, freier Speicher (v1773)
 
 - Neuer stündlicher Lauf „windows-ueberwachung“ liest auf allen Windows-Hosts, nur lesend, gestoppte automatische Dienste, kritische Ereignisse und Fehler der letzten 24 h je Quelle (System/Application, ohne Meldungstexte), Zertifikate im Computerspeicher und den freien Speicher.

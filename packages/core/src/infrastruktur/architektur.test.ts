@@ -221,3 +221,21 @@ describe('Überarbeitung nach Umsetzung', () => {
     expect(pruefeArchitektur(gueltig(), g, bisherigeFassung(v3.architektur)).fehler.some(x => x.includes('VLAN 30 ist bereits vergeben'))).toBe(true);
   });
 });
+
+// I8c — Realfall 07.11. (Vorhaben 8cbcf251): Domänencontroller sind ein neuer Dienst ohne Einheiten im Bestand, Distribution Windows
+describe('I8c Neubau-Gruppen und Windows', () => {
+  const dc = (x: Record<string, unknown> = {}) => ({ name: 'Domänencontroller 1', zweck: 'AD ad.3033.at', begruendung: 'zwei DCs auf verschiedenen Knoten', einheiten: [], ziel: 'vm', neubau: true,
+    vmName: 'dc01', knoten: 'pve1', vcpu: 2, ramGb: 4, diskGb: 96, speicher: 'local-zfs', distribution: 'windows-server-2025-core', distributionBegruendung: 'Vorlage 9100, Core', netz: 'Server', ...x });
+  it('neubau ohne Einheiten ist gültig, Windows-Verwaltung im Dokument; ohne neubau bleibt der Fehler', () => {
+    const a = gueltig(); a.gruppen.push(dc() as never); a.reihenfolge.push({ gruppe: 'Domänencontroller 1', ausfallMinuten: 0 });
+    const p = pruefeArchitektur(a, grundlage());
+    expect(p.fehler).toEqual([]);
+    expect(architekturDokument({ titel: 'I8c', ziel: 'AD', id: 'x', version: 1 }, p.architektur!, grundlage(), [])).toContain('Konto alfred, OpenSSH mit PowerShell');
+    const b = gueltig(); b.gruppen.push(dc({ neubau: undefined }) as never);
+    expect(pruefeArchitektur(b, grundlage()).fehler.join('\n')).toContain('keine Einheiten (neuer Dienst ohne Bestand: neubau: true)');
+    const c = gueltig(); c.gruppen.push(dc({ ziel: 'bleibt' }) as never);
+    expect(pruefeArchitektur(c, grundlage()).fehler.join('\n')).toContain('neubau nur mit ziel vm oder lxc');
+    const d = gueltig(); d.gruppen.push(dc({ ziel: 'lxc' }) as never);
+    expect(pruefeArchitektur(d, grundlage()).fehler.join('\n')).toContain('Windows geht nicht als LXC');
+  });
+});

@@ -12,7 +12,8 @@ import { groesseBytes } from './sammler.js';
 import { dnsText, domainsMitDns, type DnsEintrag, type NetzEintrag, type ProxyEintrag, type VmEintrag } from './bericht.js';
 
 // v1627 (Owner 24.10.) — nur, was die Vorlagen-Fabrik bauen kann; Alpine und Windows erst, wenn die Fabrik sie baut
-export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'ubuntu-26.04', 'rocky-9', 'rocky-10', 'alma-9', 'alma-10', 'fedora-44'] as const;
+// I8c — Windows aus der Vorlagen-Fabrik (I8a): Server 2025 Core (Vorlage 9100), Server 2025 mit Desktop, Windows 11 (bei Bedarf gebaut)
+export const DISTRIBUTIONEN = ['debian-12', 'debian-13', 'ubuntu-24.04', 'ubuntu-26.04', 'rocky-9', 'rocky-10', 'alma-9', 'alma-10', 'fedora-44', 'windows-server-2025-core', 'windows-server-2025', 'windows-11'] as const;
 export const NETZ_GERAETE = ['unifi', 'pfsense', 'mikrotik'] as const;
 /** Firewall-Zonen außer Netzen und Gruppen (I2-Nachschärfung 22.10.: Freitext-Zonen sind für Changes nicht verwendbar) */
 /** Feste Zonen: proxy = konkrete NPM-IP; alfred = der Server, auf dem Alfred läuft (Verwaltung, Datenübertragung); gateway = Gateway des eigenen Netzes (DNS/NTP) — Architektur v3 cf82f3f2, Owner 22.10. */
@@ -64,6 +65,8 @@ export interface ArchitekturGruppe {
   distribution?: string; distributionBegruendung?: string;
   netz?: string;
   verwaltung?: 'fernzugriff' | 'satellit';
+  /** I8c — neuer Dienst ohne Einheiten im Bestand (z. B. Domänencontroller); nur mit ziel vm/lxc */
+  neubau?: boolean;
 }
 export interface ArchitekturNetz { name: string; vlan?: number; subnetz?: string; geraet: string; zweck: string; neu: boolean }
 export interface Architektur {
@@ -147,7 +150,7 @@ export function grundlageText(g: PlanungsGrundlage): string {
   z.push('', '### Proxmox-Knoten', '', ...g.knoten.map(k => `- ${k.name}${k.online ? '' : ' (offline)'}: ${k.cpus ?? '?'} CPUs, RAM ${gb(k.ramBelegt)} von ${gb(k.ramGesamt)} belegt, frei ${gb(Math.max(0, k.ramGesamt - k.ramBelegt))}`));
   z.push('', '### Speicher (für VM-/CT-Disks: Inhalt images bzw. rootdir)', '', ...g.speicher.map(s => `- ${s.name}${s.typ ? ` (${s.typ}${s.inhalt ? `; ${s.inhalt}` : ''})` : ''}: ${s.knoten ? Object.entries(s.knoten).map(([k, w]) => `${k} ${gb(w.belegt)}/${gb(w.gesamt)}`).join(', ') : `${gb(s.belegt)} von ${gb(s.gesamt)} belegt`}`));
   z.push('', '### Netze/VLANs (vorhanden)', '', ...g.netze.map(n => `- ${n.name} (${n.quelle}${n.vlan !== undefined && n.vlan !== null && n.vlan !== '' ? `, VLAN ${n.vlan}` : ''}${n.subnet ? `, ${n.subnet}` : ''})`));
-  z.push('', `Erlaubte Distributionen: ${DISTRIBUTIONEN.join(', ')}. Netz-Geräte: ${NETZ_GERAETE.join(', ')}. Firewall-Zonen: Netze, Gruppen oder ${ZONEN_WORTE.join(', ')}; Protokolle ${PROTOKOLLE.join(', ')}.`);
+  z.push('', `Erlaubte Distributionen: ${DISTRIBUTIONEN.join(', ')}. Neue Dienste ohne Einheiten im Bestand (z. B. Domänencontroller): Gruppe mit neubau: true und ohne einheiten. Netz-Geräte: ${NETZ_GERAETE.join(', ')}. Firewall-Zonen: Netze, Gruppen oder ${ZONEN_WORTE.join(', ')}; Protokolle ${PROTOKOLLE.join(', ')}.`);
   return z.join('\n');
 }
 
@@ -255,7 +258,8 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage, bisher?: B
       if (zugeordnet.has(e.name)) { f.push(`Einheit „${e.name}“ ist zwei Gruppen zugeordnet (${zugeordnet.get(e.name)}, ${n})`); continue; }
       zugeordnet.set(e.name, n); gr.einheiten.push(e.name);
     }
-    if (!gr.einheiten.length) f.push(`Gruppe „${n}“: keine Einheiten`);
+    if (x.neubau === true) { gr.neubau = true; if (gr.ziel !== 'vm' && gr.ziel !== 'lxc') f.push(`Gruppe „${n}“: neubau nur mit ziel vm oder lxc`); }
+    if (!gr.einheiten.length && !gr.neubau) f.push(`Gruppe „${n}“: keine Einheiten (neuer Dienst ohne Bestand: neubau: true)`);
     if (gr.ziel === 'vm' || gr.ziel === 'lxc') {
       gr.vmName = txt(x.vmName); gr.knoten = txt(x.knoten); gr.distribution = txt(x.distribution).toLowerCase(); gr.distributionBegruendung = txt(x.distributionBegruendung); gr.netz = txt(x.netz);
       const vcpu = zahl(x.vcpu), ram = zahl(x.ramGb), disk = zahl(x.diskGb);
@@ -401,7 +405,7 @@ export function architekturDokument(v: { titel: string; ziel: string; id: string
   z.push('', '## 3. Gruppen im Einzelnen');
   for (const x of a.gruppen) {
     z.push('', `### ${x.name}`, '', `**Zweck:** ${x.zweck}`, '', `**Begründung:** ${x.begruendung}`);
-    if (x.distribution) z.push('', `**Distribution ${x.distribution}:** ${x.distributionBegruendung}`, '', `**Verwaltung:** ${x.verwaltung === 'satellit' ? 'Alfred-Satellit' : 'Fernzugriff (Benutzer alfred, Schlüssel per Cloud-Init)'}`);
+    if (x.distribution) z.push('', `**Distribution ${x.distribution}:** ${x.distributionBegruendung}`, '', `**Verwaltung:** ${x.verwaltung === 'satellit' ? 'Alfred-Satellit' : x.distribution.startsWith('windows') ? 'Fernzugriff (Konto alfred, OpenSSH mit PowerShell, Schlüssel aus der Vorlagen-Fabrik)' : 'Fernzugriff (Benutzer alfred, Schlüssel per Cloud-Init)'}`);
     const es = x.einheiten.map(e => einheit.get(e)!).filter(Boolean);
     z.push('', '| Einheit | Container | RAM gemessen | Daten | Ports | Proxy-Domains |', '|---|---|---|---|---|---|');
     for (const e of es) z.push(`| ${e.name}${e.art === 'host' ? ' (Host)' : ''} | ${e.art === 'host' ? '—' : e.container.map(c => `${c.name}${c.gesundheit === 'unhealthy' ? ' ⚠️' : ''}`).join(', ')} | ${mb(e.ramBytes)} | ${e.datenBytes ? gb(e.datenBytes) : '—'} | ${e.ports.slice(0, 10).join(', ') || '—'} | ${e.proxy.join(', ') || '—'} |`);
