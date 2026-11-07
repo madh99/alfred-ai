@@ -7154,6 +7154,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }));
       this.logger.info('v1539 Fernzugriff-Skill registriert');
       this.fernzugriffRef = skillRegistry.get('fernzugriff') as unknown as import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+      // I8c — Active Directory über feste Bausteine (nur in Changes außer status); Tresor wird später gesetzt → zur Laufzeit lesen
+      {
+        const { WindowsAdSkill } = await import('./infrastruktur/windows-ad-skill.js');
+        const ownerAd = () => this.ownerMasterUserId ?? this.tryOwner();
+        skillRegistry.register(new WindowsAdSkill({
+          skript: (zugang, befehl, eingabe, timeoutMs, zweck) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.windowsSkript(zugang, befehl, eingabe, timeoutMs, zweck); },
+          tresor: {
+            namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
+            lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
+            setze: async (name, wert, zweck) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); await this.tresor.setze(o, name, wert, 'erzeugt', zweck); },
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        }));
+        this.logger.info('I8c Windows-AD-Skill registriert');
+      }
       // v1658 — GitLab und seine Container-Registry, nur lesend (Owner 25.10.)
       const gl = this.config.codeAgents?.forge?.gitlab;
       if (gl?.token && gl.baseUrl && !skillRegistry.has('gitlab')) {

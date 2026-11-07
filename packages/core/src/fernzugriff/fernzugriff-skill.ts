@@ -525,6 +525,24 @@ export class FernzugriffSkill extends Skill {
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
   }
 
+  /**
+   * I8c — festes PowerShell-Skript eines Kern-Bausteins (Active Directory) auf einem Windows-Zugang, Geheimnisse nur über die
+   * Standardeingabe (nie in Befehlszeile oder Protokoll). Nur aus dem Kern aufrufbar; die Freigabe des Changes deckt den Baustein.
+   */
+  async windowsSkript(name: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string): Promise<{ code: number; stdout: string; stderr: string }> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    const z = await this.zugang(owner, { name });
+    if (z.system !== 'windows') throw new Error(`${name} ist kein Windows-Zugang`);
+    let r: SshErgebnis;
+    if (eingabe !== undefined) {
+      if (!this.deps.sshEingabe) throw new Error('Übergabe per Standardeingabe nicht verfügbar');
+      r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, befehl, eingabe, timeoutMs);
+    } else r = await this.lauf(owner, z, befehl, timeoutMs);
+    this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined });
+    return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
+  }
+
   /** I4c — Pfad einer Geheimnis-Datei am Ziel-Host (tmpfs, nur root) */
   static readonly GEHEIM_PFAD = /^\/run\/alfred-g-[0-9a-f]{16}$/;
 

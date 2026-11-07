@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Active Directory als Fähigkeit: Skill windows_ad mit festen Bausteinen (v1777)
+
+- Neuer Skill `windows_ad`. Er führt feste PowerShell-Bausteine auf Windows-Fernzugängen aus, statt frei formulierter Befehle im Change: `wald_anlegen` (neuer Wald mit DNS), `dc_hinzufuegen` (weiterer Domänencontroller), `beitreten` (Mitgliedsserver, optional OU), `grundstruktur` (OUs mit Löschschutz, AD-Papierkorb, Automatisierungskonto in den Domänen-Admins, NTP am PDC, DNS-Weiterleiter, KDS-Schlüssel), `sicherung_einrichten` und `sicherung_jetzt` (Systemstatus auf eine eigene Platte), `papierkorb_beweis`, `dns_eintrag` und `dns_eintrag_loeschen`. Alle laufen nur als Schritte freigegebener Changes. Die Aktion `status` liest auch sonst.
+- Kennwörter erzeugt der Skill im Tresor (DSRM je Domänencontroller) oder liest sie von dort (Domänenkonto). Sie gehen nur über die Standardeingabe an das Skript, nie in eine Befehlszeile oder ein Protokoll.
+- Nach jedem Neustart wartet der Skill, bis die Rolle wirklich steht: Domänencontroller mit laufenden AD-Diensten bzw. Mitglied der Domäne.
+- Jeder Baustein ist wiederholbar, hat also keine Wirkung, wenn der Zielzustand schon erreicht ist, und meldet genau ein Ergebnis. Alle Bausteine wurden mit dem PowerShell-Parser unter Windows Server 2025 geprüft.
+
 ### Added — Proxmox: VLAN-Bridge, Ausnahmen im Sicherungsjob, zweite Platte für Windows-VMs (v1776)
 
 - `create_vlan_bridge` (nur in Changes) legt auf einem Knoten eine Bridge mit dem VLAN-Unterinterface einer nicht VLAN-fähigen Uplink-Bridge an (z. B. `vmbr0.829`) und lädt das Netz neu. Das geschieht nur, wenn auf dem Knoten sonst keine Netzänderung aussteht. Ist der Uplink VLAN-fähig, wird abgelehnt mit dem Hinweis, die VM per VLAN-Tag anzubinden. Rückweg `delete_vlan_bridge`: nur Bridges von Alfred, die keine VM nutzt.

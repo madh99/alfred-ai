@@ -87,7 +87,9 @@ const STILLLEGUNG_ENTFERNEN = /^(rm|qm destroy|pct destroy|qm delsnapshot|pct de
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
-const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'isolate_vm', 'image_hochladen', 'image_holen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
+const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'isolate_vm', 'image_hochladen', 'image_holen',
+  // I8c — Active Directory: Hochstufen, Beitritt, Papierkorb sind nicht sinnvoll zurückzunehmen (Herabstufen/Austritt = eigener Change); Sicherung und Beweis wirken nur additiv
+  'wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
 const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
@@ -147,6 +149,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'fernzugriff') return aktion === 'lesen' || aktion === 'pruefen' || aktion === 'liste' || aktion === 'datenbank_inventar' || (aktion === 'ausfuehren' && befehlsklasse(String(parameter?.befehl ?? '')) === 'lesen') ? 'lesen' : 'aendern';
   // v1676 — Realfall 26.10. (Matrix E): der GitLab-Skill liest nur (Projekte, Registry-Tags mit Digest) — „gitlab.registry ist nicht lesend“
   if (skill === 'gitlab') return 'lesen';
+  // I8c — windows_ad: nur status liest; alle Bausteine ändern
+  if (skill === 'windows_ad') return aktion === 'status' ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';
