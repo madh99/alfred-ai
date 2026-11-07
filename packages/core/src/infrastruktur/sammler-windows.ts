@@ -5,7 +5,7 @@
  * derselbe Host-Bestand wie bei Linux (CMDB, Bericht, Standard-Changes) plus Windows-Angaben (Rollen, Updates, Domäne).
  */
 import type { HostBestand } from './sammler.js';
-import { WIN_GRUNDLINIE_REGISTRY } from '../fernzugriff/regeln.js';
+import { WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE } from '../fernzugriff/regeln.js';
 
 export const WINDOWS_BEFEHLE = {
   os: 'Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, TotalVisibleMemorySize, FreePhysicalMemory | ConvertTo-Json -Compress',
@@ -27,7 +27,53 @@ export const WINDOWS_BEFEHLE = {
   // I8 3b-3 — VSS-konsistente Sicherung: QEMU-Gast-Agent mit VSS-Provider und VSS-Dienst (nicht deaktiviert)
   vssProvider: 'Get-Service -Name QEMU* | Select-Object Name, Status, StartType | ConvertTo-Json -Compress',
   vssDienst: 'Get-Service -Name VSS | Select-Object Name, Status, StartType | ConvertTo-Json -Compress',
+  // I8 3b-4 — Überwachung (auch stündlich, ohne den übrigen Bestand)
+  dienstGestoppt: WIN_UEBERWACHUNG_DIENSTE,
+  ereignisse: WIN_UEBERWACHUNG_EREIGNISSE,
+  zertifikate: WIN_UEBERWACHUNG_ZERTIFIKATE,
 } as const;
+
+/** I8 3b-4 — Überwachungsstand eines Windows-Hosts; fehlt ein Teil (Befehl gescheitert), bleibt das Feld leer (Erfassungslücke). */
+export interface WindowsUeberwachung {
+  /** Dienste mit Start „Automatisch“, die nicht laufen (ohne verzögerten/Auslöser-Start) */
+  dienste?: Array<{ name: string; anzeige: string; zustand: string; exitCode: number }>;
+  /** Kritische Ereignisse und Fehler der letzten 24 h je Quelle (höchstens 10 Quellen) */
+  ereignisse?: Array<{ quelle: string; anzahl: number; kritisch: number; id: number; zuletzt?: string }>;
+  zertifikate?: Array<{ betreff: string; fingerabdruck: string; ablauf?: string }>;
+}
+
+export function leseWinDienstGestoppt(t: string): NonNullable<WindowsUeberwachung['dienste']> {
+  return jsonListe<{ Name?: string; DisplayName?: string; State?: string; ExitCode?: number }>(t)
+    .filter(d => d.Name).map(d => ({ name: String(d.Name), anzeige: String(d.DisplayName ?? d.Name), zustand: String(d.State ?? ''), exitCode: Number(d.ExitCode ?? 0) }));
+}
+
+export function leseWinEreignisse(t: string): NonNullable<WindowsUeberwachung['ereignisse']> {
+  return jsonListe<{ Quelle?: string; Anzahl?: number; Kritisch?: number; Id?: number; Zuletzt?: unknown }>(t).filter(e => e.Quelle).map(e => {
+    const z = cimDatum(e.Zuletzt);
+    return { quelle: String(e.Quelle), anzahl: Number(e.Anzahl ?? 0), kritisch: Number(e.Kritisch ?? 0), id: Number(e.Id ?? 0), ...(z ? { zuletzt: new Date(z).toISOString() } : {}) };
+  });
+}
+
+export function leseWinZertifikate(t: string): NonNullable<WindowsUeberwachung['zertifikate']> {
+  return jsonListe<{ Subject?: string; Thumbprint?: string; NotAfter?: unknown }>(t).filter(z => z.Thumbprint).map(z => {
+    const a = cimDatum(z.NotAfter);
+    return { betreff: String(z.Subject ?? ''), fingerabdruck: String(z.Thumbprint), ...(a ? { ablauf: new Date(a).toISOString() } : {}) };
+  });
+}
+
+/** I8 3b-4 — nur die Überwachung (stündlicher Lauf): Dateisysteme und die drei Überwachungsbefehle */
+export async function sammleWindowsUeberwachung(lesen: (befehl: string) => Promise<string>, mitVolumes = true): Promise<{ dateisysteme?: HostBestand['dateisysteme']; ueberwachung: WindowsUeberwachung; fehler: string[] }> {
+  const fehler: string[] = [];
+  const versuch = async <T>(schluessel: string, befehl: string, f: (t: string) => T): Promise<T | undefined> => {
+    try { return f(await lesen(befehl)); } catch (err) { fehler.push(`${schluessel}: ${(err as Error).message.slice(0, 160)}`); return undefined; }
+  };
+  const dateisysteme = mitVolumes ? await versuch('volumes', WINDOWS_BEFEHLE.volumes, leseWinVolumes) : undefined;
+  const u: WindowsUeberwachung = {};
+  const d = await versuch('dienste-gestoppt', WINDOWS_BEFEHLE.dienstGestoppt, leseWinDienstGestoppt); if (d) u.dienste = d;
+  const e = await versuch('ereignisse', WINDOWS_BEFEHLE.ereignisse, leseWinEreignisse); if (e) u.ereignisse = e;
+  const z = await versuch('zertifikate', WINDOWS_BEFEHLE.zertifikate, leseWinZertifikate); if (z) u.zertifikate = z;
+  return { ...(dateisysteme ? { dateisysteme } : {}), ueberwachung: u, fehler };
+}
 
 /**
  * I8 3b-2a — Ist-Stand der Sicherheits-Grundlinie. Fehlt ein Teil (Befehl gescheitert), bleibt das Feld leer — das ist eine
@@ -205,7 +251,7 @@ export function leseWinAusstehend(t: string): { anzahl: number; sicherheit: numb
   return { anzahl: titel.length, sicherheit: titel.filter(x => /security|sicherheit|cumulative|kumulativ/i.test(x)).length, titel: titel.slice(0, 20) };
 }
 
-export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[]; lizenz?: WindowsLizenz; grundlinie?: WindowsGrundlinie }
+export interface WindowsBestand { domaene?: string; rollen: string[]; hotfixes: { anzahl: number; letztes?: string }; ausstehend?: string[]; lizenz?: WindowsLizenz; grundlinie?: WindowsGrundlinie; ueberwachung?: WindowsUeberwachung }
 
 /** Wie sammleLinux: jeder Befehl einzeln, Fehler je Teil im Bestand (z. B. Rollen gibt es auf Windows 11 nicht) */
 export async function sammleWindows(zugang: string, host: string, lesen: (befehl: string) => Promise<string>): Promise<HostBestand & { windows: WindowsBestand }> {
@@ -240,6 +286,10 @@ export async function sammleWindows(zugang: string, host: string, lesen: (befehl
   const vp = await versuch('vss', WINDOWS_BEFEHLE.vssProvider, leseWinVssProvider);
   if (vp) { const vd = await versuch('vss-dienst', WINDOWS_BEFEHLE.vssDienst, leseWinVssDienst); gl.vss = { ...vp, ...(vd !== undefined ? { dienst: vd } : {}) }; }
   if (Object.keys(gl).length) b.windows.grundlinie = gl;
+  // I8 3b-4 — Überwachung auch im täglichen Bestand (Bericht und Problems wie der stündliche Lauf)
+  const ue = await sammleWindowsUeberwachung(lesen, false);
+  b.fehler.push(...ue.fehler);
+  if (Object.keys(ue.ueberwachung).length) b.windows.ueberwachung = ue.ueberwachung;
   // ausstehende Updates: Start-WUScan gibt es auf Server 2025 nicht (Realfall probe-win25) — kommt mit den Windows-Updates (I8b Teil 3)
   return b;
 }

@@ -26,7 +26,7 @@ describe('I8b Windows-Sammler', () => {
   });
 
   it('sammleWindows: Bestand wie Linux plus Windows-Angaben; Teilfehler stehen im Bestand', async () => {
-    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102, [WINDOWS_BEFEHLE.vssProvider]: VSS_P, [WINDOWS_BEFEHLE.vssDienst]: VSS_D };
+    const antworten: Record<string, string> = { [WINDOWS_BEFEHLE.os]: OS, [WINDOWS_BEFEHLE.system]: SYS, [WINDOWS_BEFEHLE.volumes]: VOL, [WINDOWS_BEFEHLE.dienste]: DIENSTE, [WINDOWS_BEFEHLE.ports]: PORTS, [WINDOWS_BEFEHLE.prozesse]: PROZ, [WINDOWS_BEFEHLE.rollen]: ROLLEN, [WINDOWS_BEFEHLE.hotfixes]: HOTFIX, [WINDOWS_BEFEHLE.lizenz]: LIZ_EVAL, [WINDOWS_BEFEHLE.smbServer]: SMB_S, [WINDOWS_BEFEHLE.smbClient]: SMB_C_9102, [WINDOWS_BEFEHLE.firewall]: FW_9102, [WINDOWS_BEFEHLE.defender]: DEF, [WINDOWS_BEFEHLE.registry]: REG_9102, [WINDOWS_BEFEHLE.vssProvider]: VSS_P, [WINDOWS_BEFEHLE.vssDienst]: VSS_D, [WINDOWS_BEFEHLE.dienstGestoppt]: '[]', [WINDOWS_BEFEHLE.ereignisse]: '[]', [WINDOWS_BEFEHLE.zertifikate]: '[]' };
     const b = await sammleWindows('probe-win25', '192.168.1.222', async c => { if (!(c in antworten)) throw new Error('Zeitüberschreitung'); return antworten[c]!; });
     expect(b).toMatchObject({ cpus: 2, dienste: ['WinRM', 'sshd'], windows: { rollen: ['FS-FileServer', 'Windows-Defender'], hotfixes: { anzahl: 2 }, lizenz: { status: 'testversion', kanal: 'Testversion' } } });
     expect(b.windows.domaene).toBeUndefined();
@@ -109,3 +109,32 @@ describe('I8 3b-3 VSS-Bereitschaft', () => {
 const LIZ_137 = '[{"Name":"Office 16, Office16O365ProPlusR_Grace edition","Description":"Office 16, RETAIL(Grace) channel","ApplicationID":"0ff1ce15-a989-479d-af46-f275c6370663","PartialProductKey":"VMFTK","LicenseStatus":5,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"},{"Name":"Windows(R), Professional edition","Description":"Windows(R) Operating System, RETAIL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"8HV26","LicenseStatus":1,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"}]';
 const LIZ_100 = '[{"Name":"Windows(R), Professional edition","Description":"Windows(R) Operating System, RETAIL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"3V66T","LicenseStatus":5,"GracePeriodRemaining":0,"EvaluationEndDate":"\\/Date(-11644473600000)\\/"}]';
 const LIZ_EVAL = '[{"Name":"Windows(R), ServerStandardEval edition","Description":"Windows(R) Operating System, TIMEBASED_EVAL channel","ApplicationID":"55c92734-d682-4d71-983e-d6ec3f16059f","PartialProductKey":"XXXXX","LicenseStatus":1,"GracePeriodRemaining":259200,"EvaluationEndDate":"\\/Date(1806753600000)\\/"}]';
+
+// I8 3b-4 — Überwachung; Ausgaben live von VM 137 (Windows 11) und VM 100 am 07.11.
+describe('I8 3b-4 Windows-Überwachung', () => {
+  const DIENSTE_137 = '[{"Name":"GoogleUpdaterInternalService157.0.8089.0","DisplayName":"Google Updater Internal Service (GoogleUpdaterInternalService157.0.8089.0)","State":"Stopped","ExitCode":0},{"Name":"spice-agent","DisplayName":"Spice Agent","State":"Stopped","ExitCode":0}]';
+  const EREIGNISSE_137 = '[{"Quelle":"VSS","Anzahl":25,"Kritisch":0,"Id":8194,"Zuletzt":"\/Date(1794075415674)\/"},{"Quelle":"Microsoft-Windows-Defrag","Anzahl":1,"Kritisch":0,"Id":264,"Zuletzt":"\/Date(1794022582211)\/"}]';
+  const ZERT_137 = '[{"Subject":"CN=localhost","Thumbprint":"86B402AA56A3F2C453F6139FD5154DF2A72028A8","NotAfter":"\/Date(1808611200000)\/"}]';
+  it('liest Dienste, Ereignisse und Zertifikate; leere Liste ist kein Fehler', async () => {
+    const { leseWinDienstGestoppt, leseWinEreignisse, leseWinZertifikate } = await import('./sammler-windows.js');
+    expect(leseWinDienstGestoppt(DIENSTE_137)[1]).toEqual({ name: 'spice-agent', anzeige: 'Spice Agent', zustand: 'Stopped', exitCode: 0 });
+    expect(leseWinEreignisse(EREIGNISSE_137)[0]).toEqual({ quelle: 'VSS', anzahl: 25, kritisch: 0, id: 8194, zuletzt: new Date(1794075415674).toISOString() });
+    expect(leseWinZertifikate(ZERT_137)).toEqual([{ betreff: 'CN=localhost', fingerabdruck: '86B402AA56A3F2C453F6139FD5154DF2A72028A8', ablauf: '2027-04-25T00:00:00.000Z' }]);
+    expect(leseWinDienstGestoppt('[]')).toEqual([]);
+    expect(leseWinEreignisse('[]')).toEqual([]);
+  });
+  it('sammleWindowsUeberwachung: alle drei Teile, Fehler je Teil', async () => {
+    const { sammleWindowsUeberwachung } = await import('./sammler-windows.js');
+    const r = await sammleWindowsUeberwachung(async (b) => {
+      if (b === WINDOWS_BEFEHLE.volumes) return VOL;
+      if (b === WINDOWS_BEFEHLE.dienstGestoppt) return DIENSTE_137;
+      if (b === WINDOWS_BEFEHLE.ereignisse) throw new Error('Exit 1');
+      return ZERT_137;
+    });
+    expect(r.dateisysteme?.length).toBeGreaterThan(0);
+    expect(r.ueberwachung.dienste).toHaveLength(2);
+    expect(r.ueberwachung.ereignisse).toBeUndefined();
+    expect(r.ueberwachung.zertifikate).toHaveLength(1);
+    expect(r.fehler).toEqual(['ereignisse: Exit 1']);
+  });
+});

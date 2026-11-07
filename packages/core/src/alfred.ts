@@ -3486,7 +3486,8 @@ export class Alfred {
               updates: b.updates?.anzahl, security_updates: b.updates?.sicherheit, disks: b.dateisysteme, services: b.dienste.length, ports: [...new Set(b.ports.map(p => p.port))], erfassungsfehler: b.fehler,
               ...(win ? { system: 'windows', domain: win.windows.domaene, roles: win.windows.rollen, hotfixes: win.windows.hotfixes.anzahl, last_hotfix: win.windows.hotfixes.letztes, pending_updates: win.windows.ausstehend,
                 ...(win.windows.lizenz ? { license_status: win.windows.lizenz.status, license_channel: win.windows.lizenz.kanal, license_product: win.windows.lizenz.produkt, license_expires: win.windows.lizenz.ablauf } : {}),
-                ...(win.windows.grundlinie ? { baseline: win.windows.grundlinie } : {}) } : {}) } });
+                ...(win.windows.grundlinie ? { baseline: win.windows.grundlinie } : {}),
+                ...(win.windows.ueberwachung ? { monitoring: win.windows.ueberwachung } : {}) } : {}) } });
             for (const p of b.compose) {
               assets.push({ name: `${p.name} (${z.name})`, assetType: 'application', sourceSkill: 'fernzugriff', sourceId: `${z.name}/compose/${p.name}`, ipAddress: z.host, status: /running/.test(p.status) ? 'active' : 'inactive', attributes: { host: z.name, status: p.status, config_files: p.dateien } });
               relations.push({ sourceKey: `fernzugriff:${z.name}/compose/${p.name}`, targetKey: hostKey, relationType: 'runs_on' });
@@ -7654,6 +7655,42 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         };
         // CMDB arbeitet mit der Master-UUID des Owners (Identitäts-Regel v1159)
         const ctxIntern = () => ({ userId: ownerFz() ?? '', masterUserId: ownerFz() ?? '', platform: 'api', chatId: '', conversationId: '' }) as never;
+        // I4b Teil 3 — Befunde als Problems (Bestandsaufnahme täglich; I8 3b-4 Windows-Überwachung stündlich)
+        const infraProblems = async (auff: import('./infrastruktur/bericht.js').Auffaelligkeit[], bericht: { docId: string; datum: string }, erfassung: import('./infrastruktur/befund-problems.js').Erfassung) => {
+          const o = ownerFz(); if (!o) throw new Error('Kein Owner');
+          const { ProblemRepository } = await import('@alfred/storage');
+          const pr = new ProblemRepository(adapter);
+          const { befundeAlsProblems } = await import('./infrastruktur/befund-problems.js');
+          return befundeAlsProblems(auff, {
+            liste: async () => (await pr.listProblemsByDetection(o, 'infrastruktur-bestand:')).map(p => ({ id: p.id, title: p.title, status: p.status, ...(p.detectionMethod ? { detectionMethod: p.detectionMethod } : {}) })),
+            anlegen: async (d) => (await pr.createProblem(o, { ...d, category: d.category as never, detectedBy: 'auto' })).id,
+            loese: async (id, notiz) => { await pr.appendAnalysisNotes(o, id, notiz); await pr.updateProblem(o, id, { status: 'resolved' } as never); },
+            assetFuer: async (zugang) => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).find(z => z.name === zugang)?.cmdbAssetId,
+          }, bericht, erfassung);
+        };
+        // I8 3b-4 — Windows-Überwachung stündlich: Dienste, Ereignisprotokoll, Zertifikate, freier Speicher → Problems (nur diese Kategorien)
+        this.registriereJob({
+          key: 'windows-ueberwachung', beschreibung: 'I8 3b-4 — Windows-Hosts: gestoppte Dienste, Ereignisprotokoll-Fehler, Zertifikatsablauf, freier Speicher → Problems',
+          takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 5, timeoutMin: 20,
+          run: async () => {
+            const fz = this.fernzugriffRef;
+            if (!fz || !ownerFz()) return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } };
+            const { sammleWindowsUeberwachung } = await import('./infrastruktur/sammler-windows.js');
+            const { ueberwachungsBefunde, auffaelligkeiten } = await import('./infrastruktur/bericht.js');
+            const auff: import('./infrastruktur/bericht.js').Auffaelligkeit[] = []; const vollstaendig = new Set<string>(); const fehler: string[] = [];
+            const win = (await fz.aktiveZugaenge()).filter(z => z.system === 'windows');
+            for (const z of win) {
+              const r = await sammleWindowsUeberwachung((cmd) => fz.lesenIntern(z.name, cmd, 120_000)).catch(err => ({ ueberwachung: {}, fehler: [`gesamt: ${(err as Error).message.slice(0, 160)}`] } as Awaited<ReturnType<typeof sammleWindowsUeberwachung>>));
+              auff.push(...ueberwachungsBefunde(z.name, r.ueberwachung));
+              if (r.dateisysteme) auff.push(...auffaelligkeiten({ hosts: [{ zugang: z.name, host: z.host, dateisysteme: r.dateisysteme, dienste: [], ports: [], container: [], compose: [], volumes: [], fehler: [], erfasst: '' }], vms: [], proxy: [] }).filter(a => a.kategorie === 'platte'));
+              if (r.fehler.length) fehler.push(`${z.name}: ${r.fehler.join('; ')}`); else vollstaendig.add(z.name);
+            }
+            const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
+            const pr = win.length ? await infraProblems(auff, { docId: 'stündliche Windows-Überwachung', datum }, { hosts: vollstaendig, alle: false, kategorien: new Set(['ueberwachung', 'platte']) }) : undefined;
+            this.logger.info({ hosts: win.length, vollstaendig: vollstaendig.size, befunde: auff.length, neu: pr?.neu.length ?? 0, bekannt: pr?.bekannt ?? 0, geloest: pr?.geloest.length ?? 0, fehler }, 'I8 3b-4 Windows-Überwachung');
+            return { ok: true, zaehler: { hosts: win.length, befunde: auff.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
+          },
+        });
         skillRegistry.register(new InfrastrukturSkill({
           istOwner: istOwnerFz,
           entdecke: async (quellen) => {
@@ -7705,18 +7742,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const o = ownerFz(); if (!o) throw new Error('Kein Owner');
             return (await cmdbFz.saveDocument(o, { docType: 'inventory', title: titel, content: markdown, format: 'markdown', generatedBy: 'alfred:infrastruktur-I1' })).id;
           },
-          problems: async (auff, bericht, erfassung) => {
-            const o = ownerFz(); if (!o) throw new Error('Kein Owner');
-            const { ProblemRepository } = await import('@alfred/storage');
-            const pr = new ProblemRepository(adapter);
-            const { befundeAlsProblems } = await import('./infrastruktur/befund-problems.js');
-            return befundeAlsProblems(auff, {
-              liste: async () => (await pr.listProblemsByDetection(o, 'infrastruktur-bestand:')).map(p => ({ id: p.id, title: p.title, status: p.status, ...(p.detectionMethod ? { detectionMethod: p.detectionMethod } : {}) })),
-              anlegen: async (d) => (await pr.createProblem(o, { ...d, category: d.category as never, detectedBy: 'auto' })).id,
-              loese: async (id, notiz) => { await pr.appendAnalysisNotes(o, id, notiz); await pr.updateProblem(o, id, { status: 'resolved' } as never); },
-              assetFuer: async (zugang) => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).find(z => z.name === zugang)?.cmdbAssetId,
-            }, bericht, erfassung);
-          },
+          problems: infraProblems,
           protokoll: (msg, daten) => this.logger.info(daten, msg),
           // I2 — Vorhaben und Zielarchitektur
           ownerId: () => ownerFz() ?? undefined,

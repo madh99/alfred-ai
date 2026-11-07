@@ -37,7 +37,13 @@ export interface BackupStand {
   unerreichbar: Array<{ speicher: string; grund: string }>;
 }
 /** I4b Teil 3 — `schluessel` ist stabil über Läufe (für Problems ohne Doppelte), `kategorie` steuert die Übernahme ins ITSM */
-export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz' | 'grundlinie';
+export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz' | 'grundlinie' | 'ueberwachung';
+/** I8 3b-4 — Zertifikatsablauf: ab so vielen Resttagen mittel, ab 7 hoch */
+export const ZERTIFIKAT_WARN_TAGE = 30;
+/** I8 3b-4 — so viele Fehler einer Quelle in 24 h sind ein Problem (darunter nur im Bericht) */
+export const EREIGNIS_FEHLER_AB = 20;
+/** I8 3b-4 — Dienste mit Start „Automatisch“, die sich planmäßig selbst beenden (live 07.11.: VM 100, 137, 9102) */
+export const DIENST_SELBSTBEENDER = /^(spice-agent|GoogleUpdater(Internal)?Service[\d.]*|gupdate|edgeupdate|MicrosoftEdgeElevationService)$/i;
 /** I8 3b-5 — ab so vielen Resttagen einer Windows-Testversion/Kulanzfrist ein Befund (hoch ab 7 Tagen) */
 export const LIZENZ_WARN_TAGE = 30;
 /** I8 3b-2a — Defender-Signaturen gelten ab diesem Alter als veraltet */
@@ -110,6 +116,41 @@ export function osSupport(os: HostBestand['os'], jetzt = new Date()): { ok: bool
   return { ok: true };
 }
 
+/** I8 3b-4 — Überwachungsstand wie in sammler-windows (hier strukturell, damit bericht.ts den Sammler nicht importiert) */
+export interface WinUeberwachung {
+  dienste?: Array<{ name: string; anzeige: string; zustand: string; exitCode: number }>;
+  ereignisse?: Array<{ quelle: string; anzahl: number; kritisch: number; id: number; zuletzt?: string }>;
+  zertifikate?: Array<{ betreff: string; fingerabdruck: string; ablauf?: string }>;
+}
+
+/**
+ * I8 3b-4 — Befunde der Windows-Überwachung. Dienst mit Exit-Code ≠ 0 (abgestürzt oder nie gestartet, z. B. 1077) → Problem; Exit-Code 0
+ * (sauber beendet, evtl. von Hand) nur im Bericht. Ereignisse: kritische oder ab EREIGNIS_FEHLER_AB Fehler je Quelle in 24 h → Problem.
+ */
+export function ueberwachungsBefunde(zugang: string, u: WinUeberwachung, jetzt = new Date()): Auffaelligkeit[] {
+  const a: Auffaelligkeit[] = [];
+  const k = (teil: string) => ({ bereich: zugang, schluessel: `ueberwachung:${zugang}:${teil}`, kategorie: 'ueberwachung' as const, zugang });
+  for (const d of u.dienste ?? []) {
+    if (DIENST_SELBSTBEENDER.test(d.name)) continue;
+    const name = d.anzeige && d.anzeige !== d.name ? `${d.anzeige} (${d.name})` : d.name;
+    if (d.exitCode !== 0) a.push({ schwere: 'mittel', text: `Dienst ${name} läuft nicht (Start automatisch, Exit-Code ${d.exitCode}${d.exitCode === 1077 ? ' — seit dem Systemstart nie gestartet' : ''})`, ...k(`dienst:${d.name}`) });
+    else a.push({ schwere: 'niedrig', text: `Dienst ${name} beendet (Start automatisch, Exit-Code 0 — sauber beendet oder von Hand gestoppt)`, ...k(`dienst:${d.name}`) });
+  }
+  for (const e of u.ereignisse ?? []) {
+    const wann = e.zuletzt ? `, zuletzt ${new Date(e.zuletzt).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })}` : '';
+    if (e.kritisch > 0) a.push({ schwere: 'mittel', text: `Ereignisprotokoll: ${e.kritisch} kritische Ereignisse von ${e.quelle} in 24 h (${e.anzahl} gesamt, Ereignis-ID ${e.id}${wann})`, ...k(`ereignis:${e.quelle}`) });
+    else if (e.anzahl >= EREIGNIS_FEHLER_AB) a.push({ schwere: 'mittel', text: `Ereignisprotokoll: ${e.anzahl} Fehler von ${e.quelle} in 24 h (Ereignis-ID ${e.id}${wann})`, ...k(`ereignis:${e.quelle}`) });
+    else a.push({ schwere: 'niedrig', text: `Ereignisprotokoll: ${e.anzahl} Fehler von ${e.quelle} in 24 h (Ereignis-ID ${e.id}${wann})`, ...k(`ereignis:${e.quelle}`) });
+  }
+  for (const z of u.zertifikate ?? []) {
+    if (!z.ablauf) continue;
+    const tage = Math.floor((Date.parse(z.ablauf) - jetzt.getTime()) / 86_400_000);
+    if (tage > ZERTIFIKAT_WARN_TAGE) continue;
+    a.push({ schwere: tage <= 7 ? 'hoch' : 'mittel', text: `Zertifikat ${z.betreff || z.fingerabdruck.slice(0, 12)} ${tage < 0 ? `seit ${-tage} Tagen abgelaufen` : `läuft in ${tage} Tagen ab`} (${z.ablauf.slice(0, 10)}, Fingerabdruck ${z.fingerabdruck.slice(0, 12)}…)`, ...k(`zertifikat:${z.fingerabdruck}`) });
+  }
+  return a;
+}
+
 export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; proxy: ProxyEintrag[]; backups?: BackupStand; dns?: DnsEintrag[] }, jetzt = new Date()): Auffaelligkeit[] {
   const a: Auffaelligkeit[] = [];
   for (const h of e.hosts) {
@@ -136,6 +177,9 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
     // I8 3b-2a — Sicherheits-Grundlinie (Spec 3b-2): je Abweichung ein eigener Befund, damit Problems einzeln erledigt werden
     const win = (h as HostBestand & { windows?: { domaene?: string; grundlinie?: WinGrundlinie } }).windows;
     for (const g of grundlinienAbweichungen(win?.grundlinie, win?.domaene)) a.push({ ...g, bereich: h.zugang, text: `Grundlinie: ${g.text}`, schluessel: `grundlinie:${h.zugang}:${g.punkt}`, kategorie: 'grundlinie', zugang: h.zugang });
+    // I8 3b-4 — Überwachung (Dienste, Ereignisprotokoll, Zertifikate); auch der stündliche Lauf nutzt ueberwachungsBefunde
+    const ue = (h as HostBestand & { windows?: { ueberwachung?: WinUeberwachung } }).windows?.ueberwachung;
+    if (ue) a.push(...ueberwachungsBefunde(h.zugang, ue, jetzt));
     const rest = h.fehler.filter(f => f !== apt);
     if (rest.length) a.push({ schwere: 'niedrig', bereich: h.zugang, text: `Nicht erfasst: ${rest.map(f => f.split(':')[0]).join(', ')}`, schluessel: `erfassung:${h.zugang}`, kategorie: 'erfassung', zugang: h.zugang });
   }

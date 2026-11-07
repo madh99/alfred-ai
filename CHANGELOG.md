@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Überwachung: Dienste, Ereignisprotokoll, Zertifikate, freier Speicher (v1773)
+
+- Neuer stündlicher Lauf „windows-ueberwachung“ liest auf allen Windows-Hosts, nur lesend, gestoppte automatische Dienste, kritische Ereignisse und Fehler der letzten 24 h je Quelle (System/Application, ohne Meldungstexte), Zertifikate im Computerspeicher und den freien Speicher.
+- Dienste mit verzögertem oder auslösergesteuertem Start und bekannte Selbstbeender (SPICE-Agent, Google-/Edge-Updater) werden nicht bewertet. Ein Dienst mit Exit-Code ungleich 0 wird ein Problem, ein sauber beendeter (Exit-Code 0) steht nur im Bericht.
+- Ereignisse: kritische oder ab 20 Fehlern einer Quelle in 24 h werden ein Problem, weniger nur im Bericht. Zertifikate: ab 30 Tagen vor Ablauf mittel, ab 7 Tagen oder abgelaufen hoch.
+- Überwachungs-Befunde sind wiederkehrend: Ein von Alfred als gelöst markiertes Problem verhindert bei erneutem Auftreten kein neues; vom Owner geschlossene bleiben entschieden.
+- Der stündliche Lauf gleicht nur Überwachungs- und Speicher-Befunde der Windows-Hosts ab, andere Befunde derselben Hosts bleiben unberührt. Der tägliche Bestand enthält die Überwachung ebenfalls; die CMDB führt den Stand unter `monitoring`.
+
 ### Added — Befund bei Verbindungsschleife eines Geräts; Planprüfung kennt den Proxmox-Task-Status (v1772)
 
 - Das Geräte-Gateway zählt je Gerät die Verbindungen der letzten 10 Minuten. Ab 10 Verbindungen (Handys ausgenommen) entsteht der Befund „Verbindungsschleife“ (`geraet:<name>:verbindungsschleife`) mit Anzahl und Handlungshinweis; beim Erreichen der Schwelle steht eine Warnung im Log. Anlass: ein Satellit verband sich etwa jede Sekunde neu, weil zwei Prozesse mit derselben Geräte-ID sich gegenseitig ablösten — ohne jede Meldung.

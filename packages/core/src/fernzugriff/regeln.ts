@@ -310,7 +310,21 @@ export const WIN_GRUNDLINIE_REGISTRY = '[pscustomobject]@{'
   + 'LapsGpo=(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LAPS -ErrorAction SilentlyContinue).BackupDirectory;'
   + 'LapsLokal=(Get-ItemProperty -Path HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\LAPS\\Config -ErrorAction SilentlyContinue).BackupDirectory'
   + '} | ConvertTo-Json -Compress';
-const WIN_LESE_FEST = new Set([WIN_GRUNDLINIE_REGISTRY]);
+/**
+ * I8 3b-4 — Überwachung: feste Lesebefehle ohne Anführungszeichen (Wortlaut live an VM 100, 137 und 9102 geprüft, 07.11.).
+ * Dienste: Start „Automatisch“, nicht laufend — ohne verzögerten Start und ohne Auslöser-Start (TriggerInfo), die stehen planmäßig still.
+ * Ereignisse: System/Application, kritisch und Fehler der letzten 24 h, je Quelle gezählt (keine Meldungstexte — können Namen enthalten).
+ * Zertifikate: Computerspeicher „Eigene“ — Betreff, Fingerabdruck, Ablauf (kein privater Schlüssel).
+ */
+export const WIN_UEBERWACHUNG_DIENSTE = 'ConvertTo-Json -Compress -InputObject @(Get-CimInstance -ClassName Win32_Service | Where-Object StartMode -eq Auto'
+  + ' | Where-Object State -ne Running | Where-Object DelayedAutoStart -ne $true'
+  + ' | Where-Object { -not (Test-Path -Path (Join-Path -Path HKLM:\\SYSTEM\\CurrentControlSet\\Services -ChildPath (Join-Path -Path $_.Name -ChildPath TriggerInfo))) }'
+  + ' | Select-Object Name, DisplayName, State, ExitCode)';
+export const WIN_UEBERWACHUNG_EREIGNISSE = 'ConvertTo-Json -Compress -InputObject @(Get-WinEvent -FilterHashtable @{LogName=(Write-Output System Application);Level=1,2;StartTime=(Get-Date).AddHours(-24)} -ErrorAction SilentlyContinue'
+  + ' | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 10'
+  + ' | ForEach-Object { [pscustomobject]@{Quelle=$_.Name;Anzahl=$_.Count;Kritisch=@($_.Group | Where-Object Level -eq 1).Count;Id=$_.Group[0].Id;Zuletzt=$_.Group[0].TimeCreated} })';
+export const WIN_UEBERWACHUNG_ZERTIFIKATE = 'ConvertTo-Json -Compress -InputObject @(Get-ChildItem -Path Cert:\\LocalMachine\\My | Select-Object Subject, Thumbprint, NotAfter)';
+const WIN_LESE_FEST = new Set([WIN_GRUNDLINIE_REGISTRY, WIN_UEBERWACHUNG_DIENSTE, WIN_UEBERWACHUNG_EREIGNISSE, WIN_UEBERWACHUNG_ZERTIFIKATE]);
 const WIN_FILTER: RegExp[] = [
   /^Select-Object( -Property)? [\w*]+( ?, ?[\w*]+)*$/i, /^Select-Object -(First|Last) \d{1,4}$/i,
   /^Format-List( [\w*]+( ?, ?[\w*]+)*)?$/i, /^Format-Table( -AutoSize)?( [\w*]+( ?, ?[\w*]+)*)?$/i,

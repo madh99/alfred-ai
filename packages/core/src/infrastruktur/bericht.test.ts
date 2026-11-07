@@ -171,3 +171,43 @@ describe('Cloudflare (Owner 22.10.: öffentliche Domains)', () => {
     expect(a[0]!.schluessel).toBe('proxy-dns:neu.3033.at');
   });
 });
+
+describe('I8 3b-4 Windows-Überwachung — Befunde und Problems', () => {
+  it('Dienste, Ereignisse, Zertifikate: Schwellen und Selbstbeender', async () => {
+    const { ueberwachungsBefunde } = await import('./bericht.js');
+    const a = ueberwachungsBefunde('vm137', {
+      dienste: [{ name: 'spice-agent', anzeige: 'Spice Agent', zustand: 'Stopped', exitCode: 0 }, { name: 'GoogleUpdaterService157.0.8089.0', anzeige: 'x', zustand: 'Stopped', exitCode: 0 },
+        { name: 'MSSQLSERVER', anzeige: 'SQL Server (MSSQLSERVER)', zustand: 'Stopped', exitCode: 1067 }, { name: 'W32Time', anzeige: 'Windows-Zeitgeber', zustand: 'Stopped', exitCode: 0 }],
+      ereignisse: [{ quelle: 'VSS', anzahl: 25, kritisch: 0, id: 8194 }, { quelle: 'Volsnap', anzahl: 1, kritisch: 0, id: 36 }, { quelle: 'Kernel-Power', anzahl: 2, kritisch: 1, id: 41 }],
+      zertifikate: [{ betreff: 'CN=localhost', fingerabdruck: 'AAAA1111BBBB2222', ablauf: '2027-04-25T00:00:00.000Z' }, { betreff: 'CN=sql', fingerabdruck: 'CCCC3333DDDD4444', ablauf: '2026-10-25T00:00:00.000Z' }, { betreff: 'CN=web', fingerabdruck: 'EEEE5555FFFF6666', ablauf: '2026-11-10T00:00:00.000Z' }],
+    }, jetzt);
+    const m = Object.fromEntries(a.map(x => [x.schluessel, `${x.schwere}|${x.text}`]));
+    expect(Object.keys(m).some(k => /spice|Google/.test(k))).toBe(false);
+    expect(m['ueberwachung:vm137:dienst:MSSQLSERVER']).toBe('mittel|Dienst SQL Server (MSSQLSERVER) (MSSQLSERVER) läuft nicht (Start automatisch, Exit-Code 1067)');
+    expect(m['ueberwachung:vm137:dienst:W32Time']).toMatch(/^niedrig\|/);
+    expect(m['ueberwachung:vm137:ereignis:VSS']).toBe('mittel|Ereignisprotokoll: 25 Fehler von VSS in 24 h (Ereignis-ID 8194)');
+    expect(m['ueberwachung:vm137:ereignis:Volsnap']).toMatch(/^niedrig\|/);
+    expect(m['ueberwachung:vm137:ereignis:Kernel-Power']).toMatch(/^mittel\|Ereignisprotokoll: 1 kritische Ereignisse/);
+    expect(m['ueberwachung:vm137:zertifikat:AAAA1111BBBB2222']).toBeUndefined(); // 185 Tage
+    expect(m['ueberwachung:vm137:zertifikat:CCCC3333DDDD4444']).toBe('hoch|Zertifikat CN=sql läuft in 2 Tagen ab (2026-10-25, Fingerabdruck CCCC3333DDDD…)');
+    expect(m['ueberwachung:vm137:zertifikat:EEEE5555FFFF6666']).toMatch(/^mittel\|Zertifikat CN=web läuft in 18 Tagen ab/);
+  });
+  it('wiederkehrend: gelöstes Problem blockiert nicht, geschlossenes schon; stündlicher Lauf gleicht nur seine Kategorien ab', async () => {
+    const { befundeAlsProblems } = await import('./befund-problems.js');
+    const { ueberwachungsBefunde } = await import('./bericht.js');
+    const M = 'infrastruktur-bestand:';
+    const auff = ueberwachungsBefunde('vm137', { dienste: [{ name: 'MSSQLSERVER', anzeige: 'SQL', zustand: 'Stopped', exitCode: 1067 }, { name: 'Spooler', anzeige: 'Druck', zustand: 'Stopped', exitCode: 5 }] }, jetzt);
+    const db = [
+      { id: 'sql-alt', title: 't', status: 'resolved', detectionMethod: `${M}ueberwachung:vm137:dienst:MSSQLSERVER` },
+      { id: 'spool', title: 't', status: 'closed', detectionMethod: `${M}ueberwachung:vm137:dienst:Spooler` },
+      { id: 'dns-offen', title: 't', status: 'logged', detectionMethod: `${M}ueberwachung:vm137:dienst:Dnscache` },
+      { id: 'lizenz', title: 't', status: 'logged', detectionMethod: `${M}lizenz:vm137` },
+    ];
+    const angelegt: string[] = []; const geloest: string[] = [];
+    const z = { liste: async () => db, anlegen: async (d: { detectionMethod: string }) => { angelegt.push(d.detectionMethod); return `neu${angelegt.length}`; }, loese: async (id: string) => { geloest.push(id); } };
+    const r = await befundeAlsProblems(auff, z, { docId: 'stündlich', datum: 'jetzt' }, { hosts: new Set(['vm137']), alle: false, kategorien: new Set(['ueberwachung', 'platte']) });
+    expect(angelegt).toEqual([`${M}ueberwachung:vm137:dienst:MSSQLSERVER`]); // wieder ausgefallen → neues Problem
+    expect(r.bekannt).toBe(1); // Spooler: vom Owner geschlossen
+    expect(geloest).toEqual(['dns-offen']); // lizenz:vm137 gehört nicht zum stündlichen Lauf
+  });
+});

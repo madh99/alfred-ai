@@ -9,7 +9,7 @@ import type { Auffaelligkeit, BefundKategorie } from './bericht.js';
 
 export const METHODE = 'infrastruktur-bestand';
 const AUSGENOMMEN: ReadonlySet<BefundKategorie> = new Set(['sicherung', 'erfassung']);
-const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security' };
+const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security', ueberwachung: 'software' };
 
 export interface ProblemZugriff {
   liste(): Promise<Array<{ id: string; title: string; status: string; detectionMethod?: string }>>;
@@ -24,9 +24,18 @@ export function uebernehmen(a: Auffaelligkeit): boolean {
 }
 
 /** Vollständig erfasste Hosts dieses Laufs — nur deren Befunde dürfen als „verschwunden“ gelten (Ausfall der Erfassung ≠ gelöst). */
-export interface Erfassung { hosts: Set<string>; alle: boolean }
+export interface Erfassung {
+  hosts: Set<string>; alle: boolean;
+  /** I8 3b-4 — nur diese Kategorien abgleichen (stündliche Überwachung: andere Befunde derselben Hosts bleiben unberührt) */
+  kategorien?: ReadonlySet<string>;
+}
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
-const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie)$/;
+const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung)$/;
+/**
+ * I8 3b-4 — wiederkehrende Befunde: ein Dienst kann nächsten Monat wieder ausfallen. Von Alfred gelöste Problems (resolved) blockieren
+ * den Schlüssel daher nicht — ein neues Auftreten wird ein neues Problem. Vom Owner geschlossene (closed) gelten weiter als entschieden.
+ */
+const WIEDERKEHREND = /^ueberwachung$/;
 
 const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
 
@@ -39,8 +48,12 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
   const dubletten: string[] = [];
   for (const p of vorhanden) {
     const k = p.detectionMethod!.slice(METHODE.length + 1);
+    const kat = k.split(':')[0]!;
+    if (erfassung.kategorien && !erfassung.kategorien.has(kat)) continue;
     const da = nachSchluessel.get(k);
     if (!da) { nachSchluessel.set(k, p); continue; }
+    // wiederkehrend: Bezug ist das offene Problem, sonst das jüngste; ein zweites offenes ist eine Dublette
+    if (WIEDERKEHREND.test(kat) && !OFFEN(da.status)) { nachSchluessel.set(k, p); continue; }
     if (!OFFEN(p.status)) continue;
     await z.loese(p.id, `Dublette von Problem ${da.id} (gleicher Befund ${k}) — automatisch geschlossen (v1770).`);
     dubletten.push(p.id);
@@ -48,7 +61,8 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
   const aktuell = auff.filter(uebernehmen);
   const neu: string[] = []; let bekannt = 0;
   for (const a of aktuell) {
-    if (nachSchluessel.has(a.schluessel!)) { bekannt++; continue; }
+    const da = nachSchluessel.get(a.schluessel!);
+    if (da && !(WIEDERKEHREND.test(a.kategorie!) && da.status === 'resolved')) { bekannt++; continue; }
     const asset = a.zugang ? await z.assetFuer?.(a.zugang).catch(() => undefined) : undefined;
     const id = await z.anlegen({
       title: `${a.bereich}: ${a.text}`.slice(0, 200),
@@ -56,6 +70,7 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
       priority: a.schwere === 'hoch' ? 'high' : 'medium', category: KATEGORIE[a.kategorie!],
       affectedAssetIds: asset ? [asset] : [], detectionMethod: `${METHODE}:${a.schluessel}`,
     });
+    nachSchluessel.set(a.schluessel!, { id, title: '', status: 'open', detectionMethod: `${METHODE}:${a.schluessel}` });
     neu.push(id);
   }
   // Offene Problems, deren Befund verschwunden ist → gelöst (geschlossene/gelöste bleiben unberührt)
