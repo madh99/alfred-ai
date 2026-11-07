@@ -12,7 +12,7 @@ function welt(ipZurueck?: string) {
     aufrufe.push({ m, p, b });
     if (p.startsWith('/sites?')) return { data: [{ id: 'S', internalReference: 'default' }] };
     if (m === 'GET' && p.startsWith('/sites/S/dns/policies')) return { data: pol.map(e => ({ ...e })), totalCount: pol.length };
-    if (m === 'POST' && p === '/sites/S/dns/policies') { const n: Record<string, unknown> = { id: 'f1', ...(b as object) }; if (ipZurueck) n.ipAddress = ipZurueck; pol.push(n); return n; }
+    if (m === 'POST' && p === '/sites/S/dns/policies') { const n: Record<string, unknown> = { id: `f${pol.length}`, ...(b as object) }; if (ipZurueck) n.ipAddress = ipZurueck; pol.push(n); return n; }
     if (m === 'DELETE' && p.startsWith('/sites/S/dns/policies/')) { pol.splice(pol.findIndex(y => y.id === p.split('/').pop()), 1); return {}; }
     throw new Error(`unerwartet ${m} ${p}`);
   };
@@ -28,8 +28,15 @@ describe('I8c UniFi DNS-Weiterleitung', () => {
     expect(r.success).toBe(true);
     expect(w.aufrufe.find(a => a.m === 'POST')!.b).toEqual({ type: 'FORWARD_DOMAIN', enabled: true, domain: 'ad.3033.at', ipAddress: '10.203.29.2' });
     expect((await w.s.execute({ action: 'list_dns_records' }, {} as never)).display).toContain('| ad.3033.at | FORWARD | 10.203.29.2 | ja |');
+    // Owner 07.11.: ausfallsicher — zweiter DC als weiteres Ziel derselben Domäne
+    const r2 = await w.s.execute({ action: 'create_dns_record', hostname: 'ad.3033.at', ip: '10.203.29.3', record_type: 'FORWARD' }, {} as never);
+    expect(r2.success).toBe(true);
+    expect((r2.data as { ziele: string[] }).ziele).toEqual(['10.203.29.2', '10.203.29.3']);
+    expect(r2.display).toContain('fällt eines aus, antwortet das andere');
     expect((await w.s.execute({ action: 'create_dns_record', hostname: 'ad.3033.at', ip: '10.203.29.3', record_type: 'FORWARD' }, {} as never)).error).toContain('gibt es schon');
     expect((await w.s.execute({ action: 'create_dns_record', hostname: 'ad.3033.at', ip: 'dc01', record_type: 'FORWARD' }, {} as never)).error).toContain('IPv4');
+    expect((await w.s.execute({ action: 'delete_dns_record', hostname: 'ad.3033.at', ip: '10.203.29.3' }, {} as never)).success).toBe(true);
+    expect(w.pol.map(p => p.ipAddress ?? p.id)).toEqual(['a1', '10.203.29.2']);
     expect((await w.s.execute({ action: 'delete_dns_record', hostname: 'ad.3033.at' }, {} as never)).success).toBe(true);
     expect(w.pol.map(p => p.id)).toEqual(['a1']);
   });

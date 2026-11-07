@@ -74,7 +74,7 @@ export class UniFiSkill extends Skill {
             'create_port_forward',
             'delete_port_forward',
           ],
-          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME|FORWARD — FORWARD leitet alle Anfragen für die Domäne hostname an den DNS-Server ip weiter, z. B. AD-Zone an den DC) / delete_dns_record (hostname). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
+          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME|FORWARD — FORWARD leitet alle Anfragen für die Domäne hostname an den DNS-Server ip weiter, z. B. AD-Zone an den DC; ausfallsicher: je DNS-Server ein eigener Aufruf, gleiche Domäne) / delete_dns_record (hostname; bei FORWARD optional ip = nur dieses Ziel). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
         },
         mac: {
           type: 'string',
@@ -1472,11 +1472,14 @@ export class UniFiSkill extends Skill {
     if (!HOSTNAME.test(key)) return { success: false, error: 'hostname ungültig' };
     if (typ === 'FORWARD') {
       if (ipZahl(value) === undefined) return { success: false, error: 'ip: IPv4-Adresse des DNS-Servers angeben' };
-      if ((await this.weiterleitungen()).some(x => x.domain.toLowerCase() === key)) return { success: false, error: `Weiterleitung für ${key} gibt es schon` };
+      // I8c (Owner 07.11.: „ausfallsicher“) — dieselbe Domäne an mehrere DNS-Server (je DC ein Eintrag); doppelt nur bei gleichem Ziel
+      if ((await this.weiterleitungen()).some(x => x.domain.toLowerCase() === key && x.ipAddress === value)) return { success: false, error: `Weiterleitung ${key} → ${value} gibt es schon` };
       const r = (await this.integ('POST', `/sites/${await this.siteId()}/dns/policies`, { type: 'FORWARD_DOMAIN', enabled: true, domain: key, ipAddress: value })) as { id?: string } | undefined;
-      const da = (await this.weiterleitungen()).find(x => x.domain.toLowerCase() === key);
+      const alle = (await this.weiterleitungen()).filter(x => x.domain.toLowerCase() === key);
+      const da = alle.find(x => x.ipAddress === value) ?? alle.find(x => x.id === r?.id);
       if (!da || da.ipAddress !== value) return { success: false, error: `Weiterleitung ${key} → ${value} nach dem Anlegen nicht wie erwartet lesbar (gelesen: ${da ? `${da.domain} → ${da.ipAddress ?? '?'}` : 'nichts'})`, data: { id: r?.id ?? da?.id } };
-      return { success: true, data: { hostname: key, ip: value, record_type: 'FORWARD', id: da.id }, display: `✅ DNS-Weiterleitung ${key} → ${value} (alle Anfragen für ${key} gehen an ${value})` };
+      const ziele = alle.map(x => x.ipAddress).filter(Boolean);
+      return { success: true, data: { hostname: key, ip: value, record_type: 'FORWARD', id: da.id, ziele }, display: `✅ DNS-Weiterleitung ${key} → ${value}${ziele.length > 1 ? ` (Ziele jetzt: ${ziele.join(', ')} — fällt eines aus, antwortet das andere)` : ` (alle Anfragen für ${key} gehen an ${value}; für Ausfallsicherheit einen zweiten DNS-Server als weiteres Ziel anlegen)`}` };
     }
     if (typ === 'A' && ipZahl(value) === undefined) return { success: false, error: 'ip: IPv4-Adresse angeben' };
     if (typ === 'CNAME' && !HOSTNAME.test(value)) return { success: false, error: 'ip: Zielname angeben' };
@@ -1493,8 +1496,13 @@ export class UniFiSkill extends Skill {
     const e = l.find(x => x.key.toLowerCase() === key);
     if (!e && this.config.apiKey) {
       // I8c — Weiterleitung (nur über die Integration-API sichtbar/löschbar)
-      const w = (await this.weiterleitungen()).find(x => x.domain.toLowerCase() === key);
-      if (w) { await this.integ('DELETE', `/sites/${await this.siteId()}/dns/policies/${w.id}`); return { success: true, data: { hostname: w.domain, ip: w.ipAddress }, display: `✅ DNS-Weiterleitung ${w.domain} gelöscht` }; }
+      // mit ip nur dieses Ziel, ohne ip alle Ziele der Domäne
+      const ip = String(input.ip ?? '').trim();
+      const ws = (await this.weiterleitungen()).filter(x => x.domain.toLowerCase() === key && (!ip || x.ipAddress === ip));
+      if (ws.length) {
+        for (const w of ws) await this.integ('DELETE', `/sites/${await this.siteId()}/dns/policies/${w.id}`);
+        return { success: true, data: { hostname: key, ziele: ws.map(w => w.ipAddress) }, display: `✅ DNS-Weiterleitung ${key} → ${ws.map(w => w.ipAddress).join(', ')} gelöscht` };
+      }
     }
     if (!e) return { success: false, error: `DNS-Eintrag ${key} nicht gefunden` };
     await this.v2('DELETE', `static-dns/${e._id}`);

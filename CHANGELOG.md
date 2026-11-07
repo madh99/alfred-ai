@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — DNS-Weiterleitung an mehrere Server (v1775)
+
+- Eine Domäne kann an mehrere DNS-Server weitergeleitet werden (je Server ein `create_dns_record` mit `record_type: FORWARD`), etwa an beide Domänencontroller. Fällt einer aus, antwortet der andere. Abgewiesen wird nur ein doppeltes Ziel.
+- `delete_dns_record` entfernt mit `ip` nur dieses Ziel, ohne `ip` alle Weiterleitungen der Domäne.
+
 ### Added — Grundlagen für Active Directory: Windows in der Architektur, DNS-Weiterleitung, DC-Gesundheit (v1774)
 
 - Architekturvorschläge kennen Windows-Distributionen (Server 2025 Core, Server 2025, Windows 11) und Gruppen für neue Dienste ohne Bestand (`neubau: true`, z. B. Domänencontroller). Windows-Gruppen werden über den Fernzugang mit OpenSSH/PowerShell verwaltet; Windows als LXC wird abgewiesen.
