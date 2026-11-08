@@ -112,3 +112,14 @@ describe('I8c Skill windows_ad', () => {
     expect(f.filter(x => /Rückweg|windows_ad|wald_anlegen/.test(x))).toEqual([]);
   });
 });
+
+describe('I8c dns_client (DCs gegenseitig als DNS)', () => {
+  it('setzt in der Reihenfolge, nennt die vorherigen für den Rückweg; nur im Change', async () => {
+    const { dnsClientSkript } = await import('./windows-ad.js');
+    expect(dnsClientSkript({ dns: ['10.203.29.3', '10.203.29.2'] })).toContain("throw ('DNS nach dem Setzen: '");
+    const skill = new WindowsAdSkill({ skript: async () => ({ code: 0, stdout: 'ALFRED-AD {"vorher":["10.203.29.2"],"nachher":["10.203.29.3","10.203.29.2"]}', stderr: '' }) });
+    expect((await skill.execute({ action: 'dns_client', zugang: 'dc01', dns: ['10.203.29.3', '10.203.29.2'] }, {} as never)).success).toBe(false);
+    const r = await skill.execute({ action: 'dns_client', zugang: 'dc01', dns: ['10.203.29.3', '10.203.29.2'] }, { ausChange: true } as never);
+    expect(r.display).toContain('Rückweg: dns_client mit dns ["10.203.29.2"]');
+  });
+});

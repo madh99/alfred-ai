@@ -74,13 +74,13 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
 const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -166,7 +166,7 @@ export class ProxmoxSkill extends Skill {
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
       'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1). ' +
-      'I8c (nur in Changes): "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
+      'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -535,6 +535,8 @@ export class ProxmoxSkill extends Skill {
           return await this.vlanBridgeEntfernen(input);
         case 'backup_job_exclude':
           return await this.sicherungAusnehmen(input);
+        case 'set_vm_resources':
+          return await this.vmRessourcen(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -1933,6 +1935,27 @@ export class ProxmoxSkill extends Skill {
     const ist = (nach?.exclude ?? '').split(',').map(x => Number(x.trim())).filter(Number.isInteger).sort((a, b) => a - b).join(',');
     if (ist !== p.exclude) return { success: false, error: `Ausnahmeliste von ${id} nach dem Ändern: ${ist || '(leer)'} statt ${p.exclude || '(leer)'}` };
     return { success: true, data: { id, exclude: p.exclude, vorher: p.vorher }, display: `✅ ${id} lässt jetzt aus: ${p.exclude || '(keine)'} (vorher ${p.vorher || '(keine)'})` };
+  }
+
+  /** I8c — Arbeitsspeicher/Kerne einer VM (nur im Change); alte Werte für den Rückweg; bei laufender VM wirksam nach reboot_vm */
+  private async vmRessourcen(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid && v.type === 'qemu');
+    if (!vm) return { success: false, error: `VM ${input.vmid} gibt es nicht` };
+    const mem = input.memory === undefined ? undefined : Number(input.memory); const cores = input.cores === undefined ? undefined : Number(input.cores);
+    if (mem === undefined && cores === undefined) return { success: false, error: 'memory (MiB) und/oder cores angeben' };
+    if (mem !== undefined && (!Number.isInteger(mem) || mem < 512 || mem > 524_288)) return { success: false, error: 'memory: MiB 512–524288' };
+    if (cores !== undefined && (!Number.isInteger(cores) || cores < 1 || cores > 64)) return { success: false, error: 'cores: 1–64' };
+    const cfg = await this.get<{ memory?: string | number; cores?: number; balloon?: number }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const vorher = { memory: Number(cfg.memory ?? 512), cores: Number(cfg.cores ?? 1) };
+    if (mem !== undefined && cfg.balloon && Number(cfg.balloon) > mem) return { success: false, error: `Ballon-Minimum ${cfg.balloon} MiB liegt über ${mem} MiB` };
+    const neu: Record<string, unknown> = { ...(mem !== undefined ? { memory: mem } : {}), ...(cores !== undefined ? { cores } : {}) };
+    await this.post(`/nodes/${vm.node}/qemu/${vmid}/config`, neu);
+    const pend = await this.get<Array<{ key: string; value?: unknown; pending?: unknown }>>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Array<{ key: string; value?: unknown; pending?: unknown }>);
+    const wert = (k: string) => { const e = pend.find(x => x.key === k); return e ? Number(e.pending ?? e.value) : undefined; };
+    if ((mem !== undefined && wert('memory') !== mem) || (cores !== undefined && wert('cores') !== cores)) return { success: false, error: `nach dem Ändern gelesen: memory ${wert('memory')}, cores ${wert('cores')}` };
+    const ausstehend = pend.some(x => (x.key === 'memory' || x.key === 'cores') && x.pending !== undefined);
+    return { success: true, data: { vmid, node: vm.node, vorher, nachher: { ...vorher, ...neu }, ausstehend }, display: `✅ VM ${vmid} (${vm.name}): ${mem !== undefined ? `RAM ${vorher.memory} → ${mem} MiB` : ''}${mem !== undefined && cores !== undefined ? ', ' : ''}${cores !== undefined ? `Kerne ${vorher.cores} → ${cores}` : ''}${ausstehend ? ' — wirksam nach reboot_vm (Proxmox wendet ausstehende Änderungen beim Neustart an)' : ''}. Rückweg: set_vm_resources mit memory ${vorher.memory}, cores ${vorher.cores}` };
   }
 
   private async vmidFrei(vmid: number): Promise<boolean> {

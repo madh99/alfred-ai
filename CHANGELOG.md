@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Arbeitsspeicher/Kerne einer VM und DNS-Server eines Windows-Rechners per Change (v1778)
+
+- `proxmox set_vm_resources` (nur in Changes) ändert Arbeitsspeicher und Kerne einer VM, liest die Werte nach und nennt die alten für den Rückweg. Bei laufender VM wird die Änderung mit `reboot_vm` wirksam.
+- `windows_ad dns_client` (nur in Changes) setzt die DNS-Server eines Windows-Rechners in der angegebenen Reihenfolge, prüft das Ergebnis und nennt die vorherigen für den Rückweg (z. B. Domänencontroller gegenseitig).
+
 ### Added — Active Directory als Fähigkeit: Skill windows_ad mit festen Bausteinen (v1777)
 
 - Neuer Skill `windows_ad`. Er führt feste PowerShell-Bausteine auf Windows-Fernzugängen aus, statt frei formulierter Befehle im Change: `wald_anlegen` (neuer Wald mit DNS), `dc_hinzufuegen` (weiterer Domänencontroller), `beitreten` (Mitgliedsserver, optional OU), `grundstruktur` (OUs mit Löschschutz, AD-Papierkorb, Automatisierungskonto in den Domänen-Admins, NTP am PDC, DNS-Weiterleiter, KDS-Schlüssel), `sicherung_einrichten` und `sicherung_jetzt` (Systemstatus auf eine eigene Platte), `papierkorb_beweis`, `dns_eintrag` und `dns_eintrag_loeschen`. Alle laufen nur als Schritte freigegebener Changes. Die Aktion `status` liest auch sonst.

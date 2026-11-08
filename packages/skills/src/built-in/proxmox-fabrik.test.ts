@@ -442,3 +442,21 @@ describe('I8c VLAN-Bridge und Sicherungs-Ausnahme', () => {
     expect(jobs[0]!.exclude).toBe('113,9201,9202');
   });
 });
+
+describe('I8c set_vm_resources', () => {
+  it('RAM ändern, nachlesen, alte Werte für den Rückweg, ausstehend bei laufender VM', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const pending: Array<Record<string, unknown>> = [{ key: 'memory', value: 4096 }, { key: 'cores', value: 2 }];
+    a.getAllVms = async () => [{ vmid: 9102, name: 'probe-win25b', node: 'pve', type: 'qemu' }];
+    a.get = async (p: string) => (p.endsWith('/config') ? { memory: '4096', cores: 2 } : p.endsWith('/pending') ? pending : {});
+    a.post = async (_p: string, b: Record<string, unknown>) => { if (b.memory) pending[0] = { key: 'memory', value: 4096, pending: b.memory }; return null; };
+    const imChange = { ausChange: true } as never;
+    expect((await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 6144 }, {} as never)).success).toBe(false);
+    const r = await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 6144 }, imChange);
+    expect(r.error).toBeUndefined();
+    expect(r.data).toMatchObject({ vorher: { memory: 4096, cores: 2 }, ausstehend: true });
+    expect(r.display).toContain('wirksam nach reboot_vm');
+    expect((await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 100 }, imChange)).error).toContain('512');
+  });
+});

@@ -8,7 +8,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
-  pruefeDnsEintrag, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
+  pruefeDnsEintrag, dnsClientSkript, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
 } from './windows-ad.js';
 
 export interface WindowsAdDeps {
@@ -20,7 +20,7 @@ export interface WindowsAdDeps {
   schlafe?: (ms: number) => Promise<void>;
 }
 
-const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen']);
+const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen', 'dns_client']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const KENNWORT_ZEICHEN = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 /** wie die Windows-Fabrik: erfüllt die Komplexitätsregeln (groß, klein, Ziffer, Sonderzeichen) */
@@ -41,7 +41,8 @@ export class WindowsAdSkill extends Skill {
       + 'sicherung_einrichten (zugang, laufwerk z. B. S, groesse_gb der leeren Zusatzplatte, uhrzeit z. B. 02:30) — Windows-Server-Sicherung, Platte einrichten, tägliche Systemstatus-Sicherung; sicherung_jetzt (zugang, laufwerk) — sofort sichern und Version belegen. '
       + 'papierkorb_beweis (zugang) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
-      + 'Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
+      + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
+      + 'Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -85,6 +86,11 @@ export class WindowsAdSkill extends Skill {
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input);
         case 'papierkorb_beweis': return await this.papierkorb(zugang);
         case 'dns_eintrag': case 'dns_eintrag_loeschen': return await this.dnsEintrag(zugang, action, input);
+        case 'dns_client': {
+          const dns = pruefeDns(input.dns); if (typeof dns === 'string') throw new Error(dns);
+          const r = await this.lauf<{ vorher: string[]; nachher: string[] }>(zugang, dnsClientSkript({ dns }), 'DNS-Server setzen', 120_000);
+          return { success: true, data: r, display: `✅ DNS-Server auf ${zugang}: ${r.nachher.join(', ')} (vorher ${r.vorher.join(', ') || 'keine'}) — Rückweg: dns_client mit dns ${JSON.stringify(r.vorher)}` };
+        }
       }
     } catch (err) { return { success: false, error: (err as Error).message.slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };

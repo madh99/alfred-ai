@@ -256,6 +256,20 @@ export function dnsEintragLoeschenSkript(p: { zone: string; name: string }): str
   ].join('\n');
 }
 
+/** DNS-Server eines Windows-Rechners (aktive Netzkarten) setzen; liefert die vorherigen für den Rückweg */
+export function dnsClientSkript(p: { dns: string[] }): string {
+  return [
+    ...kopf(p, false),
+    "$nics = @(Get-NetAdapter | Where-Object Status -eq 'Up')",
+    "if (-not $nics.Count) { throw 'keine aktive Netzkarte' }",
+    '$vorher = @((Get-DnsClientServerAddress -InterfaceIndex $nics[0].ifIndex -AddressFamily IPv4).ServerAddresses)',
+    dnsSetzen,
+    '$nachher = @((Get-DnsClientServerAddress -InterfaceIndex $nics[0].ifIndex -AddressFamily IPv4).ServerAddresses)',
+    "if (($nachher -join ',') -ne (@($p.dns) -join ',')) { throw ('DNS nach dem Setzen: ' + ($nachher -join ', ')) }",
+    'Ergebnis @{ vorher = $vorher; nachher = $nachher }',
+  ].join('\n');
+}
+
 /** Ergebniszeile aus der Ausgabe (CLIXML-Fortschritt u. Ä. davor/danach wird ignoriert) */
 export function adErgebnis<T = Record<string, unknown>>(stdout: string): T | undefined {
   const z = stdout.split(/\r?\n/).reverse().find(l => l.startsWith(AD_ERGEBNIS));
