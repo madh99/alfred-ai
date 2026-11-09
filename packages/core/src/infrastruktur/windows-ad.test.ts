@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { adErgebnis, adStatusSkript, dcBereit, mitgliedBereit, waldSkript, dcSkript, beitrittSkript, grundstrukturSkript, sicherungSkript, papierkorbSkript, dnsEintragSkript, pruefeWald, pruefeDns, pruefeGrundstruktur, kodiert, adStatusText, type AdStatus } from './windows-ad.js';
+import { adErgebnis, adStatusSkript, dcBereit, mitgliedBereit, waldSkript, dcSkript, beitrittSkript, grundstrukturSkript, sicherungSkript, papierkorbSkript, dnsEintragSkript, pruefeWald, pruefeDns, pruefeGrundstruktur, kodiert, adStatusText, clixmlFehler, type AdStatus } from './windows-ad.js';
 import { WindowsAdSkill, dsrmName } from './windows-ad-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
 
@@ -100,6 +100,24 @@ describe('I8c Skill windows_ad', () => {
     expect((await w.skill.execute({ action: 'status', zugang: 'dc01' }, {} as never)).display).toContain('Domänencontroller von ad.3033.at');
     const f = new WindowsAdSkill({ skript: async () => ({ code: 1, stdout: '#< CLIXML', stderr: 'Install-ADDSForest : Die Prüfung ist fehlgeschlagen.' }), schlafe: async () => undefined });
     expect((await f.execute({ action: 'status', zugang: 'dc01' }, {} as never)).error).toContain('Exit 1): Install-ADDSForest : Die Prüfung ist fehlgeschlagen.');
+  });
+  it('v1779 Realfall 3103ec4c: grundstruktur mit dem Domänen-Administrator aus win-<zugang>-admin; Fehler aus CLIXML lesbar', async () => {
+    const ohne = welt([]);
+    expect((await ohne.skill.execute({ action: 'grundstruktur', zugang: 'dc01', weiterleiter: ['10.203.29.1'] }, imChange)).error).toContain('win-dc01-admin gibt es nicht');
+    const w = welt([{ ous: ['Server'], papierkorb: true, alfredAdmin: 'neu', kds: 'neu' }], ['win-dc01-admin']);
+    const r = await w.skill.execute({ action: 'grundstruktur', zugang: 'dc01', weiterleiter: ['10.203.29.1'] }, imChange);
+    expect(r.error).toBeUndefined();
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin' });
+    const skript = Buffer.from(w.aufrufe[0]!.befehl.split(' ').pop()!, 'base64').toString('utf16le');
+    expect(skript).toContain('[Console]::In.ReadToEnd()');
+    expect(skript).toContain("($d.NetBIOSName + '\\Administrator')");
+    expect(skript).toMatch(/Enable-ADOptionalFeature [^\n]*-Credential \$cred/);
+    expect(skript).toMatch(/Add-ADGroupMember [^\n]*-Credential \$cred/);
+    expect(skript).not.toContain('wert-win-dc01-admin');
+    const aus = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="x"><S S="Error">Enable-ADOptionalFeature : Insufficient access rights_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : 8344_x000D__x000A_</S></Objs>';
+    expect(clixmlFehler(aus)).toBe('Enable-ADOptionalFeature : Insufficient access rights + FullyQualifiedErrorId : 8344');
+    const f = new WindowsAdSkill({ skript: async () => ({ code: 1, stdout: '', stderr: aus }), schlafe: async () => undefined });
+    expect((await f.execute({ action: 'status', zugang: 'dc01' }, {} as never)).error).toContain('Exit 1): Enable-ADOptionalFeature : Insufficient access rights');
   });
   it('Change-Plan: status lesend, Hochstufen ohne Rückweg zulässig', () => {
     expect(aktionsArt('windows_ad', 'status')).toBe('lesen');

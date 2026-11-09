@@ -7,7 +7,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
-  grundstrukturSkript, pruefeGrundstruktur, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
+  grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
   pruefeDnsEintrag, dnsClientSkript, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
 } from './windows-ad.js';
 
@@ -37,7 +37,7 @@ export class WindowsAdSkill extends Skill {
       + 'NUR als Schritte freigegebener Changes: wald_anlegen (zugang, domaene, netbios) — neuer Wald mit DNS auf einem Server der Arbeitsgruppe, DSRM-Kennwort erzeugt Alfred im Tresor (ad-<domäne>-dsrm-<zugang>), Neustart, wartet bis die AD-Dienste laufen (bis 25 min); lokale Konten werden Domänenkonten, der Fernzugang bleibt „alfred“. '
       + 'dc_hinzufuegen (zugang, domaene, netbios, dns = IPs vorhandener DCs, konto_tresor = Tresor-Eintrag mit dem Kennwort von <NETBIOS>\\alfred, z. B. win-dc01-admin) — weiterer DC mit DNS/GC, vorher grundstruktur am ersten DC (alfred in Domänen-Admins). '
       + 'beitreten (zugang, domaene, netbios, dns, konto_tresor, ou optional z. B. Server) — Mitgliedsserver, Neustart, wartet bis beigetreten. '
-      + 'grundstruktur (zugang = PDC, ous Standard Server/Clients/Dienstkonten/Admins, ntp Standard at.pool.ntp.org, weiterleiter = DNS-Weiterleiter, z. B. Gateway des AD-Netzes) — OUs mit Löschschutz, AD-Papierkorb (nicht abschaltbar), alfred in Domänen-Admins, NTP am PDC, Weiterleiter, KDS-Schlüssel für gMSA; wiederholbar. '
+      + 'grundstruktur (zugang = PDC, ous Standard Server/Clients/Dienstkonten/Admins, ntp Standard at.pool.ntp.org, weiterleiter = DNS-Weiterleiter, z. B. Gateway des AD-Netzes, konto_tresor optional, Standard win-<zugang>-admin = Kennwort des Domänen-Administrators) —OUs mit Löschschutz, AD-Papierkorb (nicht abschaltbar), alfred in Domänen-Admins, NTP am PDC, Weiterleiter, KDS-Schlüssel für gMSA; wiederholbar. '
       + 'sicherung_einrichten (zugang, laufwerk z. B. S, groesse_gb der leeren Zusatzplatte, uhrzeit z. B. 02:30) — Windows-Server-Sicherung, Platte einrichten, tägliche Systemstatus-Sicherung; sicherung_jetzt (zugang, laufwerk) — sofort sichern und Version belegen. '
       + 'papierkorb_beweis (zugang) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
@@ -100,7 +100,8 @@ export class WindowsAdSkill extends Skill {
     const r = await this.d.skript(zugang, kodiert(skript), eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck);
     const e = adErgebnis<T>(r.stdout);
     if (r.code !== 0 || !e) {
-      const fehler = `${r.stderr}\n${r.stdout}`.split(/\r?\n/).filter(z => z.trim() && !z.startsWith('#< CLIXML') && !z.startsWith('<Objs')).join(' ').replace(/\s+/g, ' ').slice(-500);
+      const klar = `${r.stderr}\n${r.stdout}`.split(/\r?\n/).filter(z => z.trim() && !z.startsWith('#< CLIXML') && !z.startsWith('<Objs')).join(' ');
+      const fehler = `${klar} ${clixmlFehler(`${r.stderr}\n${r.stdout}`)}`.replace(/\s+/g, ' ').trim().slice(-500);
       throw new Error(`${zweck} auf ${zugang} gescheitert (Exit ${r.code}): ${fehler || 'keine Ausgabe'}`);
     }
     return e;
@@ -184,7 +185,10 @@ export class WindowsAdSkill extends Skill {
     const liste = (x: unknown, std: string[]) => (Array.isArray(x) && x.length ? x.map(String) : typeof x === 'string' && x.trim() ? x.split(',').map(s => s.trim()) : std);
     const p = { ous: liste(input.ous, AD_OUS_STANDARD), ntp: liste(input.ntp, NTP_STANDARD), weiterleiter: liste(input.weiterleiter, []) };
     const f = pruefeGrundstruktur(p); if (f) throw new Error(f);
-    const r = await this.lauf<Record<string, unknown>>(zugang, grundstrukturSkript(p), 'AD-Grundstruktur', 600_000);
+    // Domänen-Administrator für Papierkorb und Domänen-Admins: provision_windows_vm legt das Kennwort von alfred und Administrator
+    // gemeinsam als win-<zugang>-admin ab; nach dem Hochstufen gilt es für den Domänen-Administrator
+    const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `AD-Grundstruktur ${zugang} (Domänen-Administrator)`);
+    const r = await this.lauf<Record<string, unknown>>(zugang, grundstrukturSkript(p), 'AD-Grundstruktur', 600_000, { kennwort });
     if (r.papierkorb !== true) throw new Error('AD-Papierkorb nach dem Einschalten nicht aktiv');
     return { success: true, data: r, display: `✅ Grundstruktur auf ${zugang}: OUs ${p.ous.join(', ')}${(r.ous as string[] | undefined)?.length ? ` (neu: ${(r.ous as string[]).join(', ')})` : ' (vorhanden)'}, AD-Papierkorb an, alfred in Domänen-Admins (${String(r.alfredAdmin)}), NTP ${p.ntp.join(', ')}${p.weiterleiter.length ? `, DNS-Weiterleiter ${(r.weiterleiter as string[] | undefined)?.join(', ')}` : ''}, KDS-Schlüssel ${String(r.kds)}` };
   }

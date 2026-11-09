@@ -147,16 +147,19 @@ export function pruefeGrundstruktur(p: { ous: string[]; ntp: string[]; weiterlei
  */
 export function grundstrukturSkript(p: { ous: string[]; ntp: string[]; weiterleiter: string[] }): string {
   return [
-    ...kopf(p, false),
+    ...kopf(p, true),
     'Import-Module ActiveDirectory',
     '$d = Get-ADDomain; $dn = $d.DistinguishedName; $r = [ordered]@{ ous = @(); papierkorb = $false }',
+    // Realfall 3103ec4c (09.11.): alfred ist nach dem Hochstufen nur in BUILTIN\Administrators — der Papierkorb braucht Organisations-
+    // Admins. Papierkorb und Domänen-Admins daher mit dem Domänen-Administrator (Kennwort über die Standardeingabe).
+    "$cred = New-Object System.Management.Automation.PSCredential (($d.NetBIOSName + '\\Administrator'), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
     "if ($env:COMPUTERNAME -ine ($d.PDCEmulator -split '\\.')[0]) { throw ('nur am PDC-Emulator ' + $d.PDCEmulator) }",
     "foreach ($ou in $p.ous) { if (-not (Get-ADOrganizationalUnit -LDAPFilter ('(ou=' + $ou + ')') -SearchBase $dn -SearchScope OneLevel)) { New-ADOrganizationalUnit -Name $ou -Path $dn -ProtectedFromAccidentalDeletion $true; $r.ous += $ou } }",
     "$f = Get-ADOptionalFeature -Filter \"Name -eq 'Recycle Bin Feature'\"",
-    "if (-not $f.EnabledScopes.Count) { Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name -Confirm:$false; $r.papierkorbNeu = $true }",
+    "if (-not $f.EnabledScopes.Count) { Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name -Credential $cred -Confirm:$false; $r.papierkorbNeu = $true }",
     "$r.papierkorb = [bool]((Get-ADOptionalFeature -Filter \"Name -eq 'Recycle Bin Feature'\").EnabledScopes.Count)",
     "$da = Get-ADGroup -Identity ($d.DomainSID.Value + '-512')",
-    "if (-not (Get-ADGroupMember -Identity $da | Where-Object SamAccountName -eq 'alfred')) { Add-ADGroupMember -Identity $da -Members 'alfred'; $r.alfredAdmin = 'neu' } else { $r.alfredAdmin = 'schon' }",
+    "if (-not (Get-ADGroupMember -Identity $da | Where-Object SamAccountName -eq 'alfred')) { Add-ADGroupMember -Identity $da -Members 'alfred' -Credential $cred; $r.alfredAdmin = 'neu' } else { $r.alfredAdmin = 'schon' }",
     "$peers = ($p.ntp | ForEach-Object { $_ + ',0x8' }) -join ' '",
     "w32tm.exe /config /manualpeerlist:$peers /syncfromflags:manual /reliable:yes /update | Out-Null",
     'Restart-Service -Name W32Time; w32tm.exe /resync /nowait | Out-Null',
@@ -271,6 +274,16 @@ export function dnsClientSkript(p: { dns: string[] }): string {
 }
 
 /** Ergebniszeile aus der Ausgabe (CLIXML-Fortschritt u. Ä. davor/danach wird ignoriert) */
+/**
+ * Fehlertexte aus dem CLIXML-Strom von PowerShell über SSH (Realfall 3103ec4c: der Fehler stand nur in `<S S="Error">…</S>`,
+ * die Meldung lautete deshalb „keine Ausgabe“).
+ */
+export function clixmlFehler(text: string): string {
+  const teile = [...text.matchAll(/<S S="Error">([^<]*)<\/S>/g)].map(m => m[1]!
+    .replace(/_x000D_/g, '').replace(/_x000A_/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
+  return teile.join('').replace(/\s+/g, ' ').trim();
+}
+
 export function adErgebnis<T = Record<string, unknown>>(stdout: string): T | undefined {
   const z = stdout.split(/\r?\n/).reverse().find(l => l.startsWith(AD_ERGEBNIS));
   if (!z) return undefined;

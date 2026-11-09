@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — AD-Grundstruktur mit dem Domänen-Administrator, lesbare PowerShell-Fehler (v1780)
+
+- `windows_ad grundstruktur`: Nach dem Hochstufen ist das Konto alfred nur in BUILTIN\Administrators; der AD-Papierkorb verlangt Organisations-Admins. Papierkorb und die Aufnahme von alfred in Domänen-Admins laufen jetzt mit dem Domänen-Administrator, dessen Kennwort über die Standardeingabe kommt (Tresor-Eintrag `konto_tresor`, Standard `win-<zugang>-admin`).
+- Fehler von PowerShell über SSH kommen als CLIXML; ihr Text (`<S S="Error">`) steht jetzt in der Fehlermeldung statt „keine Ausgabe“.
+
 ### Fixed — Windows-VM auf lokalem Speicher eines anderen Nodes, Netz-Neuladen mit Warnungen (v1779)
 
 - `proxmox provision_windows_vm` mit einem lokalen Speicher eines anderen Nodes als die Vorlage (z. B. `data2-pve1`) scheiterte an „storage is not available on node“. Wie bei Linux-VMs wird jetzt über den gemeinsamen Speicher der Vorlage an den Ziel-Node geklont; System-, EFI- und TPM-Platte werden danach verschoben und nachgelesen.
