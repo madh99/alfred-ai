@@ -165,7 +165,10 @@ export function grundstrukturSkript(p: { ous: string[]; ntp: string[]; weiterlei
     'Restart-Service -Name W32Time; w32tm.exe /resync /nowait | Out-Null',
     '$r.ntp = $p.ntp',
     'if (@($p.weiterleiter).Count) { Set-DnsServerForwarder -IPAddress @($p.weiterleiter); $r.weiterleiter = @((Get-DnsServerForwarder).IPAddress | ForEach-Object { [string]$_ }) }',
-    "if (-not (Get-KdsRootKey)) { Add-KdsRootKey -EffectiveImmediately | Out-Null; $r.kds = 'neu (gMSA nach Replikation, bis 10 h)' } else { $r.kds = 'schon' }",
+    // Realfall 3103ec4c (09.11.): die SSH-Anmeldung per Schlüssel ist ein S4U-Token ohne Domänengruppen — Add-KdsRootKey („The request is
+    // not supported“) hat kein -Credential. Daher über WinRM am eigenen Rechner mit dem Domänen-Administrator (volles Token).
+    "$kds = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $cred -ScriptBlock { if (-not (Get-KdsRootKey)) { Add-KdsRootKey -EffectiveImmediately | Out-Null; 'neu' } else { 'schon' } }",
+    "$r.kds = if ($kds -eq 'neu') { 'neu (gMSA nach Replikation, bis 10 h)' } else { 'schon' }",
     'Ergebnis $r',
   ].join('\n');
 }
@@ -215,20 +218,22 @@ export function sicherungJetztSkript(p: { laufwerk: string }): string {
 /** Beweis AD-Papierkorb: Testkonto anlegen, löschen, aus dem Papierkorb wiederherstellen, prüfen, danach wieder entfernen */
 export function papierkorbSkript(p: { kennung: string }): string {
   return [
-    ...kopf(p, false),
+    ...kopf(p, true),
     'Import-Module ActiveDirectory',
     "$n = 'alfred-pk-' + $p.kennung",
-    '$dn = (Get-ADDomain).UsersContainer',
-    'New-ADUser -Name $n -SamAccountName $n -Path $dn -Enabled $false -Description "Alfred: Beweis AD-Papierkorb (I8c)"',
-    '$guid = (Get-ADUser -Identity $n).ObjectGUID',
-    'Remove-ADUser -Identity $guid -Confirm:$false',
-    "if (Get-ADUser -Filter \"SamAccountName -eq '$n'\") { throw 'Testkonto nach dem Löschen noch da' }",
-    '$geloescht = Get-ADObject -Filter "ObjectGUID -eq \'$guid\'" -IncludeDeletedObjects',
+    '$d = Get-ADDomain; $dn = $d.UsersContainer',
+    // Realfall 3103ec4c: SSH-Token ohne Domänengruppen — alle AD-Befehle mit dem Domänen-Administrator (Kennwort über die Standardeingabe)
+    "$c = New-Object System.Management.Automation.PSCredential (($d.NetBIOSName + '\\Administrator'), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
+    'New-ADUser -Name $n -SamAccountName $n -Path $dn -Enabled $false -Description "Alfred: Beweis AD-Papierkorb (I8c)" -Credential $c',
+    '$guid = (Get-ADUser -Identity $n -Credential $c).ObjectGUID',
+    'Remove-ADUser -Identity $guid -Confirm:$false -Credential $c',
+    "if (Get-ADUser -Filter \"SamAccountName -eq '$n'\" -Credential $c) { throw 'Testkonto nach dem Löschen noch da' }",
+    '$geloescht = Get-ADObject -Filter "ObjectGUID -eq \'$guid\'" -IncludeDeletedObjects -Credential $c',
     "if (-not $geloescht.Deleted) { throw 'Testkonto nicht im Papierkorb' }",
-    'Restore-ADObject -Identity $guid',
-    '$zurueck = Get-ADUser -Identity $guid',
+    'Restore-ADObject -Identity $guid -Credential $c',
+    '$zurueck = Get-ADUser -Identity $guid -Credential $c',
     "if ($zurueck.SamAccountName -ne $n) { throw 'Wiederherstellung nicht belegt' }",
-    'Remove-ADUser -Identity $guid -Confirm:$false',
+    'Remove-ADUser -Identity $guid -Confirm:$false -Credential $c',
     "Ergebnis @{ konto = $n; geloescht = $true; wiederhergestellt = $true; objectGuid = [string]$guid; danachEntfernt = $true }",
   ].join('\n');
 }

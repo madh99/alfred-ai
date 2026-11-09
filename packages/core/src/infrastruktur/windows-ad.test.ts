@@ -114,6 +114,13 @@ describe('I8c Skill windows_ad', () => {
     expect(skript).toMatch(/Enable-ADOptionalFeature [^\n]*-Credential \$cred/);
     expect(skript).toMatch(/Add-ADGroupMember [^\n]*-Credential \$cred/);
     expect(skript).not.toContain('wert-win-dc01-admin');
+    // S4U-Token der SSH-Sitzung ohne Domänengruppen: KDS über WinRM mit dem Domänen-Administrator
+    expect(skript).toMatch(/Invoke-Command -ComputerName \$env:COMPUTERNAME -Credential \$cred -ScriptBlock \{[^\n]*Add-KdsRootKey/);
+    const pk = welt([{ konto: 'alfred-pk-x', wiederhergestellt: true }], ['win-dc01-admin']);
+    expect((await pk.skill.execute({ action: 'papierkorb_beweis', zugang: 'dc01' }, imChange)).error).toBeUndefined();
+    expect(JSON.parse(pk.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin' });
+    const pks = Buffer.from(pk.aufrufe[0]!.befehl.split(' ').pop()!, 'base64').toString('utf16le');
+    for (const z of pks.split('\n').filter(l => /^(New-ADUser|Remove-ADUser|Restore-ADObject|\$guid =|\$geloescht =|\$zurueck =)/.test(l))) expect(z).toContain('-Credential $c');
     const aus = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="x"><S S="Error">Enable-ADOptionalFeature : Insufficient access rights_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : 8344_x000D__x000A_</S></Objs>';
     expect(clixmlFehler(aus)).toBe('Enable-ADOptionalFeature : Insufficient access rights + FullyQualifiedErrorId : 8344');
     const f = new WindowsAdSkill({ skript: async () => ({ code: 1, stdout: '', stderr: aus }), schlafe: async () => undefined });

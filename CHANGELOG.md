@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — KDS-Schlüssel und Papierkorb-Beweis mit vollem Domänen-Token (v1781)
+
+- Die SSH-Anmeldung per Schlüssel ist unter Windows ein S4U-Token ohne Domänengruppen; die Aufnahme in Domänen-Admins wirkt dort nicht. `windows_ad grundstruktur` legt den KDS-Stammschlüssel deshalb über WinRM am eigenen Rechner mit dem Domänen-Administrator an (`Add-KdsRootKey` kennt kein `-Credential`).
+- `windows_ad papierkorb_beweis` führt alle AD-Befehle mit dem Domänen-Administrator aus (Kennwort über die Standardeingabe, `konto_tresor` Standard `win-<zugang>-admin`).
+
 ### Fixed — AD-Grundstruktur mit dem Domänen-Administrator, lesbare PowerShell-Fehler (v1780)
 
 - `windows_ad grundstruktur`: Nach dem Hochstufen ist das Konto alfred nur in BUILTIN\Administrators; der AD-Papierkorb verlangt Organisations-Admins. Papierkorb und die Aufnahme von alfred in Domänen-Admins laufen jetzt mit dem Domänen-Administrator, dessen Kennwort über die Standardeingabe kommt (Tresor-Eintrag `konto_tresor`, Standard `win-<zugang>-admin`).

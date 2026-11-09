@@ -39,7 +39,7 @@ export class WindowsAdSkill extends Skill {
       + 'beitreten (zugang, domaene, netbios, dns, konto_tresor, ou optional z. B. Server) — Mitgliedsserver, Neustart, wartet bis beigetreten. '
       + 'grundstruktur (zugang = PDC, ous Standard Server/Clients/Dienstkonten/Admins, ntp Standard at.pool.ntp.org, weiterleiter = DNS-Weiterleiter, z. B. Gateway des AD-Netzes, konto_tresor optional, Standard win-<zugang>-admin = Kennwort des Domänen-Administrators) —OUs mit Löschschutz, AD-Papierkorb (nicht abschaltbar), alfred in Domänen-Admins, NTP am PDC, Weiterleiter, KDS-Schlüssel für gMSA; wiederholbar. '
       + 'sicherung_einrichten (zugang, laufwerk z. B. S, groesse_gb der leeren Zusatzplatte, uhrzeit z. B. 02:30) — Windows-Server-Sicherung, Platte einrichten, tägliche Systemstatus-Sicherung; sicherung_jetzt (zugang, laufwerk) — sofort sichern und Version belegen. '
-      + 'papierkorb_beweis (zugang) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
+      + 'papierkorb_beweis (zugang, konto_tresor optional wie grundstruktur) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
       + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
       + 'Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
@@ -84,7 +84,7 @@ export class WindowsAdSkill extends Skill {
         case 'grundstruktur': return await this.grundstruktur(zugang, input);
         case 'sicherung_einrichten': return await this.sicherung(zugang, input);
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input);
-        case 'papierkorb_beweis': return await this.papierkorb(zugang);
+        case 'papierkorb_beweis': return await this.papierkorb(zugang, input);
         case 'dns_eintrag': case 'dns_eintrag_loeschen': return await this.dnsEintrag(zugang, action, input);
         case 'dns_client': {
           const dns = pruefeDns(input.dns); if (typeof dns === 'string') throw new Error(dns);
@@ -209,9 +209,10 @@ export class WindowsAdSkill extends Skill {
     return { success: true, data: r, display: `✅ Systemstatus gesichert auf ${zugang} ${laufwerk}: — ${String(r.versionen)} Version(en), neueste ${String(r.neueste)}, ${String(r.freiGb)} GB frei` };
   }
 
-  private async papierkorb(zugang: string): Promise<SkillResult> {
+  private async papierkorb(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
     const kennung = Date.now().toString(36);
-    const r = await this.lauf<Record<string, unknown>>(zugang, papierkorbSkript({ kennung }), 'Papierkorb-Beweis', 300_000);
+    const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `Papierkorb-Beweis ${zugang} (Domänen-Administrator)`);
+    const r = await this.lauf<Record<string, unknown>>(zugang, papierkorbSkript({ kennung }), 'Papierkorb-Beweis', 300_000, { kennwort });
     return { success: true, data: r, display: `✅ AD-Papierkorb belegt: Testkonto ${String(r.konto)} gelöscht, aus dem Papierkorb wiederhergestellt, geprüft und wieder entfernt` };
   }
 
