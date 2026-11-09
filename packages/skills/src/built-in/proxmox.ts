@@ -1447,10 +1447,11 @@ export class ProxmoxSkill extends Skill {
     return { fertig: false, ok: false, status: 'läuft noch' };
   }
 
-  private async aufgabeOderFehler(upid: unknown, ms: number, was: string): Promise<void> {
+  /** warnungenOk: „WARNINGS: n“ gilt als gelungen (Realfall b0e35618: Netz neu laden auf pve1 warnt nur über die fehlende SDN-Zeile) */
+  private async aufgabeOderFehler(upid: unknown, ms: number, was: string, warnungenOk = false): Promise<void> {
     if (typeof upid !== 'string' || !upid.startsWith('UPID:')) return;
     const w = await this.warteAufgabe(upid, ms);
-    if (!w.ok) throw new Error(`${was}: ${w.fertig ? w.status : `nach ${Math.round(ms / 1000)} s nicht fertig`} (${upid})`);
+    if (!w.ok && !(warnungenOk && w.fertig && /^WARNINGS: \d+$/.test(w.status))) throw new Error(`${was}: ${w.fertig ? w.status : `nach ${Math.round(ms / 1000)} s nicht fertig`} (${upid})`);
   }
 
   private async holeText(url: string): Promise<string> {
@@ -1821,11 +1822,29 @@ export class ProxmoxSkill extends Skill {
     const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
     if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
     const clone: Record<string, unknown> = { newid: vmid, name, full: 1, target: node };
-    if (typeof input.storage === 'string' && input.storage) clone.storage = input.storage;
+    // Realfall 3103ec4c (09.11.): wie v1644 bei Linux — in einen lokalen Speicher eines anderen Nodes klont Proxmox nicht
+    // („storage 'data2-pve1' is not available on node 'pve'“). Dann auf den gemeinsamen Speicher der Vorlage an den Ziel-Node
+    // klonen und System-, EFI- und TPM-Platte danach verschieben.
+    const wunsch = typeof input.storage === 'string' && input.storage ? input.storage : undefined;
+    let verschiebenNach: string | undefined;
+    if (wunsch) {
+      const st = await this.get<{ type?: string; shared?: number }>(`/storage/${encodeURIComponent(wunsch)}`).catch(() => ({} as { type?: string; shared?: number }));
+      const gemeinsam = !!st.shared || ['rbd', 'cephfs', 'nfs', 'cifs', 'glusterfs', 'iscsi', 'iscsidirect', 'pbs'].includes(String(st.type ?? ''));
+      if (node !== vorlage.node && !gemeinsam) verschiebenNach = wunsch; else clone.storage = wunsch;
+    }
     const schritte: string[] = [];
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vorlage.node}/qemu/${tpl}/clone`, clone), 1_800_000, 'Klonen');
     this.vmCache = null;
     schritte.push(`VM ${name} (VMID ${vmid}) aus Windows-Vorlage ${tpl} (${variante}) auf ${node} geklont`);
+    if (verschiebenNach) {
+      const vorher = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+      const platten = ['scsi0', 'efidisk0', 'tpmstate0'].filter(k => typeof vorher[k] === 'string' && !String(vorher[k]).startsWith(`${verschiebenNach}:`));
+      for (const disk of platten) await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/move_disk`, { disk, storage: verschiebenNach, delete: 1 }), 1_800_000, `Platte ${disk} verschieben`);
+      const nachher = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+      const falsch = platten.filter(k => !String(nachher[k] ?? '').startsWith(`${verschiebenNach}:`));
+      if (falsch.length) return { success: false, error: `${falsch.join(', ')} von ${name} liegt nach dem Verschieben nicht auf ${verschiebenNach}`, data: { vmid, name, node, ip } };
+      schritte.push(`${platten.join(', ')} nach ${verschiebenNach} auf ${node} verschoben (über den gemeinsamen Speicher der Vorlage geklont)`);
+    }
     const hs = await this.fabrik.hostSchluessel();
     const kennwort = zufallsKennwort(n => randomBytes(n));
     const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
@@ -1897,7 +1916,7 @@ export class ProxmoxSkill extends Skill {
     if (p.fehler) return { success: false, error: p.fehler };
     if (p.vorhanden) return { success: true, data: { node, bridge: p.vorhanden, port: p.port, vorhanden: true }, display: `Bridge ${p.vorhanden} mit ${p.port} gibt es auf ${node} schon` };
     await this.post(`/nodes/${node}/network`, { iface: p.bridge, type: 'bridge', bridge_ports: p.port, autostart: 1, comments: `${ALFRED_BRIDGE_KOMMENTAR} ${Number(input.vlan)} über ${String(input.ueber)}` });
-    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden');
+    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden', true);
     const aktiv = ((await this.get<NetzIface[]>(`/nodes/${node}/network`)) ?? []).find(n => n.iface === p.bridge);
     if (!aktiv || Number(aktiv.active) !== 1) return { success: false, error: `Bridge ${p.bridge} nach dem Neuladen nicht aktiv`, data: { node, bridge: p.bridge } };
     return { success: true, data: { node, bridge: p.bridge, port: p.port }, display: `✅ Bridge ${p.bridge} auf ${node} angelegt und aktiv (Port ${p.port}, VLAN ${Number(input.vlan)}) — VMs mit bridge=${p.bridge} ohne Tag anbinden` };
@@ -1917,7 +1936,7 @@ export class ProxmoxSkill extends Skill {
       if (Object.entries(cfg).some(([k, w]) => /^net\d+$/.test(k) && new RegExp(`bridge=${bridge}(,|$)`).test(String(w)))) return { success: false, error: `${bridge} wird noch von VM ${v.vmid} (${v.name}) genutzt — nichts entfernt` };
     }
     await this.del(`/nodes/${node}/network/${bridge}`);
-    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden');
+    await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/network`), 180_000, 'Netz neu laden', true);
     if (((await this.get<NetzIface[]>(`/nodes/${node}/network`)) ?? []).some(n => n.iface === bridge)) return { success: false, error: `Bridge ${bridge} nach dem Entfernen noch vorhanden` };
     return { success: true, data: { node, bridge, entfernt: true }, display: `✅ Bridge ${bridge} auf ${node} entfernt` };
   }

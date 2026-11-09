@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-VM auf lokalem Speicher eines anderen Nodes, Netz-Neuladen mit Warnungen (v1779)
+
+- `proxmox provision_windows_vm` mit einem lokalen Speicher eines anderen Nodes als die Vorlage (z. B. `data2-pve1`) scheiterte an „storage is not available on node“. Wie bei Linux-VMs wird jetzt über den gemeinsamen Speicher der Vorlage an den Ziel-Node geklont; System-, EFI- und TPM-Platte werden danach verschoben und nachgelesen.
+- `proxmox create_vlan_bridge`/`delete_vlan_bridge`: Endet das Neuladen des Netzes mit „WARNINGS“ (etwa wegen der fehlenden SDN-Zeile in `/etc/network/interfaces`), gilt es als gelungen; ob die Bridge aktiv ist bzw. entfernt wurde, wird weiterhin nachgelesen.
+
 ### Added — Arbeitsspeicher/Kerne einer VM und DNS-Server eines Windows-Rechners per Change (v1778)
 
 - `proxmox set_vm_resources` (nur in Changes) ändert Arbeitsspeicher und Kerne einer VM, liest die Werte nach und nennt die alten für den Rückweg. Bei laufender VM wird die Änderung mit `reboot_vm` wirksam.

@@ -345,6 +345,60 @@ describe('v1644 provision_vm auf lokalen Speicher eines anderen Nodes (Realfall 
   });
 });
 
+describe('v1779 provision_windows_vm auf lokalen Speicher eines anderen Nodes (Realfall 3103ec4c)', () => {
+  function welt(zielSpeicher: { type: string; shared?: number }) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const aufrufe: string[] = [];
+    const vms = [{ vmid: 9100, name: 'win-vorlage', node: 'pve', type: 'qemu', status: 'stopped' }];
+    const platten: Record<string, string> = { scsi0: 'nvme-cs001:vm-152-disk-1', efidisk0: 'nvme-cs001:vm-152-disk-0', tpmstate0: 'nvme-cs001:vm-152-disk-2', ide0: 'nvme-cs001:vm-152-cloudinit,media=cdrom' };
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => {
+      if (p === '/storage/data2-pve1') return zielSpeicher;
+      if (p.endsWith('/qemu/9100/config')) return { template: 1, description: 'Windows-Vorlage von Alfred (I8a): server-standard-core, gebaut …' };
+      if (p.endsWith('/qemu/152/config')) return { ...platten };
+      if (p === '/storage/local') return { path: '/var/lib/vz' };
+      return {};
+    };
+    a.post = async (p: string, b: Record<string, unknown>) => {
+      aufrufe.push(`POST ${p} ${JSON.stringify(b)}`);
+      if (p.endsWith('/clone')) vms.push({ vmid: 152, name: 'dc01', node: 'pve1', type: 'qemu', status: 'stopped' });
+      if (p.endsWith('/move_disk')) platten[String(b.disk)] = `${String(b.storage)}:vm-152-${String(b.disk)}`;
+      return 'UPID:x';
+    };
+    a.api = async () => 'UPID:x';
+    a.aufgabeOderFehler = async () => undefined;
+    a.vmidFrei = async () => true;
+    a.cloudInitLoesen = async () => undefined;
+    px.setVmFabrik({
+      vorpruefung: async () => [], hostSchluessel: async () => ({ privat: HOST_PRIV, oeffentlich: HOST_PUB }), alfredSchluessel: async () => ALFRED,
+      snippetSchreiben: async () => undefined, snippetEntfernen: async () => undefined, kennwortSichern: async () => 'win-dc01-admin',
+      // Anmeldung scheitert absichtlich: der Test endet nach Klon, Verschieben und Konfiguration
+      anmelden: async () => ({ ok: false, meldung: 'Anmeldung (Test) aus' }), fortsetzen: async () => ({ ok: true, meldung: 'x' }), abmelden: async () => '',
+    } as never);
+    return { px, aufrufe, platten };
+  }
+  const eingabe = { action: 'provision_windows_vm', template: 9100, node: 'pve1', storage: 'data2-pve1', hostname: 'dc01', ip: '10.203.29.2/27', gateway: '10.203.29.1', new_vmid: 152, extra_disk_size: 64, owner_konto: '' };
+  it('lvmthin auf anderem Node: Klon ohne storage, System-, EFI- und TPM-Platte nach data2-pve1, Cloud-Init bleibt', async () => {
+    const w = welt({ type: 'lvmthin' });
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(w.aufrufe.find(x => x.includes('/clone'))).not.toContain('"storage"');
+    for (const d of ['scsi0', 'efidisk0', 'tpmstate0']) {
+      expect(w.aufrufe.some(x => x.includes('/move_disk') && x.includes(`"disk":"${d}"`) && x.includes('"storage":"data2-pve1"') && x.includes('"delete":1'))).toBe(true);
+      expect(w.platten[d]).toMatch(/^data2-pve1:/);
+    }
+    expect(w.aufrufe.some(x => x.includes('/move_disk') && x.includes('"disk":"ide0"'))).toBe(false);
+    expect(w.aufrufe.some(x => x.includes('"scsi1":"data2-pve1:64'))).toBe(true);
+    expect(r.error ?? '').toContain('scsi0, efidisk0, tpmstate0 nach data2-pve1 auf pve1 verschoben');
+  });
+  it('gemeinsamer Speicher (rbd): direkt dorthin klonen, kein move_disk', async () => {
+    const w = welt({ type: 'rbd' });
+    await w.px.execute({ ...eingabe, storage: 'data2-pve1' }, { ausChange: true } as never);
+    expect(w.aufrufe.find(x => x.includes('/clone'))).toContain('"storage":"data2-pve1"');
+    expect(w.aufrufe.some(x => x.includes('/move_disk'))).toBe(false);
+  });
+});
+
 describe('v1689 delete_vm einer Restore-Kopie mit dem Namen des Originals', () => {
   function welt() {
     const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
