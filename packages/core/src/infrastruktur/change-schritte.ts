@@ -12,7 +12,7 @@
  *   owner    — Handgriff oder Entscheidung des Owners mitten im Change (z. B. solange eine Skill-Aktion fehlt)
  */
 import { createHash } from 'node:crypto';
-import { befehlsklasse } from '../fernzugriff/regeln.js';
+import { befehlsklasse, windowsBefehlsklasse, windowsKaefigGrund, WIN_KAEFIG_CMDLETS } from '../fernzugriff/regeln.js';
 import { nurMetadaten, geheimnisGrund } from '../fernzugriff/kaefig.js';
 import { pruefePfad } from '../fernzugriff/uebertragung.js';
 import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
@@ -114,7 +114,31 @@ export const DIENST_START = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(start|
  */
 // Am Anfang eines Befehls (auch nach ;, &&, ||, |, sudo): Werkzeuge, die schreiben, löschen, Dienste steuern oder Pakete ändern; dazu Umleitungen
 const VERAENDERND = /(^|[;&|]\s*|\bsudo\s+(-\S+\s+)*)(rm|rmdir|mv|cp|tee|touch|truncate|mkdir|ln|install|chmod|chown|chgrp|dd|kill|pkill|killall|reboot|shutdown|halt|poweroff|useradd|userdel|usermod|passwd|apt|apt-get|dnf|yum|pip|npm|systemctl\s+(?!(status|is-active|is-enabled|is-failed|show|cat|list-\S+)\b)\S+|service|docker\s+(?!(ps|logs|inspect|images|image\s+(ls|inspect)|network\s+(ls|inspect)|volume\s+(ls|inspect)|version|info|stats|top|port|compose\s+(ls|ps|version|images))\b)\S+|sed\s+(-\S+\s+)*-i|crontab|mount|umount|psql|mysql|redis-cli)\b|>\s*[^&]|>>/;
+/**
+ * v1782 — Realfall 09.11. (I8c C fec4e344 Schritt 5): „powershell -NoProfile -Command "if(@(Get-ADReplicationFailure …)…"“ bestand die
+ * Planprüfung (sie kannte nur Linux-Regeln) und wartete 30 min im Windows-Lese-Käfig, der den Befehl nie annehmen kann. Prüfbefehle
+ * für Windows prüft der Plan wie die Laufzeit: feste Leseliste oder genau eine Pipeline aus freigegebenen Cmdlets mit festen Werten.
+ */
+const WIN_PRUEF_HINWEIS = 'Windows-Prüfbefehle laufen im Lese-Käfig: kein powershell-Aufruf, keine Variablen, kein if, keine Skriptblöcke, kein AD-Modul — nur eine Pipeline aus Get-Cmdlets der Freigabeliste (z. B. „Get-Service -Name NTDS“). AD-Zustand (Domänencontroller, Replikation, DNS-Client) als pruefung {typ:"skill", skill:"windows_ad", aktion:"status", parameter:{zugang}, erwartet:"Replikation fehlerfrei" bzw. "DNS-Client 10.0.0.2,10.0.0.3"}';
+export function istWindowsBefehl(befehl: string): boolean {
+  return /^\s*(powershell|pwsh)(\.exe)?\b/i.test(befehl) || /(^|[\s(|;{@])(Get|Select|Where|Sort|Format|Measure|Group|ConvertTo|ConvertFrom|Out|Set|New|Remove|Invoke|Add|Enable|Disable|Install|Uninstall|Test|Start|Stop|Restart|Import|Resolve)-[A-Z][A-Za-z]+\b/.test(befehl);
+}
+function windowsPruefbefehlFehler(befehl: string): string | undefined {
+  const k = windowsBefehlsklasse(befehl);
+  if (k === 'nie') return 'ist nie erlaubt';
+  if (k === 'lesen') return undefined;
+  if (/^\s*(powershell|pwsh)(\.exe)?\b/i.test(befehl)) return `ist ein powershell-Aufruf — ${WIN_PRUEF_HINWEIS}`;
+  const g = windowsKaefigGrund(befehl.trim());
+  if (g) return `— ${g}. ${WIN_PRUEF_HINWEIS}`;
+  if (/[$`{};@]|\bif\s*\(/.test(befehl)) return `enthält Variablen, Skriptblöcke oder mehrere Anweisungen — ${WIN_PRUEF_HINWEIS}`;
+  const erlaubt = new Set<string>(WIN_KAEFIG_CMDLETS.map(c => c.toLowerCase()));
+  const fremd = befehl.split('|').map(t => t.trim().split(/\s+/)[0] ?? '').filter(c => c && !erlaubt.has(c.toLowerCase()));
+  if (fremd.length) return `nutzt ${fremd.join(', ')} — nicht im Lese-Käfig. ${WIN_PRUEF_HINWEIS}`;
+  return undefined;
+}
+
 export function pruefbefehlFehler(befehl: string): string | undefined {
+  if (istWindowsBefehl(befehl)) return windowsPruefbefehlFehler(befehl);
   const k = befehlsklasse(befehl);
   if (k === 'nie') return 'ist nie erlaubt';
   if (k === 'lesen' || nurMetadaten(befehl)) return undefined;

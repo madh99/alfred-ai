@@ -31,6 +31,10 @@ const neustart = (grund: string) => `shutdown.exe /r /t 20 /d p:4:1 /c ${psText(
 export interface AdStatus {
   rechner: string; domaene: string; mitglied: boolean; rolle: number;
   dienste?: Record<string, string>; pdc?: string; dcs?: string[]; netbios?: string; papierkorb?: boolean; adFehler?: string;
+  /** v1782 — eingehende Replikation dieses DCs: Partner, davon mit Fehler, erste Fehlermeldung */
+  replPartner?: number; replFehler?: number; replMeldung?: string; replAbfrage?: string;
+  /** v1782 — DNS-Server des ersten Adapters mit Einträgen (IPv4, Reihenfolge wie konfiguriert) */
+  dnsClient?: string[];
 }
 
 /** Lesend: Rolle (0/2 allein, 1/3 Mitglied, 4/5 DC), bei DCs Dienste, PDC, DCs, Papierkorb */
@@ -42,7 +46,11 @@ export function adStatusSkript(): string {
     'if ($cs.DomainRole -ge 4) {',
     "  $r.dienste = [ordered]@{}; foreach ($n in 'NTDS','DNS','ADWS','Netlogon','Kdc','W32Time') { $s = Get-Service -Name $n -ErrorAction SilentlyContinue; $r.dienste[$n] = if ($s) { [string]$s.Status } else { 'fehlt' } }",
     "  try { Import-Module ActiveDirectory; $d = Get-ADDomain; $r.pdc = [string]$d.PDCEmulator; $r.netbios = [string]$d.NetBIOSName; $r.dcs = @(Get-ADDomainController -Filter * | ForEach-Object { [string]$_.HostName }); $r.papierkorb = [bool]((Get-ADOptionalFeature -Filter \"Name -eq 'Recycle Bin Feature'\").EnabledScopes.Count) } catch { $r.adFehler = $_.Exception.Message }",
+    // v1782 — Realfall 09.11. (fec4e344 Schritt 5): die Replikation war nur über einen Käfig-fremden Prüfbefehl lesbar. Eingehende
+    // Partner dieses DCs (lokal über ADWS, braucht keine Domänengruppen) und deren letztes Ergebnis.
+    "  try { $pm = @(Get-ADReplicationPartnerMetadata -Target $env:COMPUTERNAME -Scope Server -ErrorAction Stop); $r.replPartner = $pm.Count; $bad = @($pm | Where-Object { $_.LastReplicationResult -ne 0 }); $r.replFehler = $bad.Count; if ($bad.Count) { $f = @(Get-ADReplicationFailure -Target $env:COMPUTERNAME -ErrorAction SilentlyContinue | Where-Object { $_.FailureCount -gt 0 } | Select-Object -First 1); $r.replMeldung = if ($f.Count) { [string]$f[0].LastError + ' (' + [string]$f[0].Partner + ')' } else { 'Ergebnis ' + [string]$bad[0].LastReplicationResult + ' von ' + [string]$bad[0].Partner } } } catch { $r.replAbfrage = $_.Exception.Message }",
     '}',
+    "try { $a = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.ServerAddresses.Count -gt 0 -and $_.InterfaceAlias -notlike 'Loopback*' } | Select-Object -First 1); if ($a.Count) { $r.dnsClient = @($a[0].ServerAddresses | ForEach-Object { [string]$_ }) } } catch { }",
     'Ergebnis $r',
   ].join('\n');
 }
@@ -56,12 +64,23 @@ export function mitgliedBereit(s: AdStatus | undefined, domaene: string): boolea
   return !!s && s.mitglied && s.domaene.toLowerCase() === domaene.toLowerCase();
 }
 
+/** v1782 — Wortlaut für Prüfungen: „Replikation fehlerfrei“ nur mit mindestens einem Partner und ohne Fehler */
+export function replikationText(s: AdStatus): string | undefined {
+  if (s.replAbfrage) return `Replikation nicht lesbar: ${s.replAbfrage}`;
+  if (s.replPartner === undefined) return undefined;
+  if (s.replPartner === 0) return 'Replikation: noch kein Partner';
+  if (s.replFehler) return `Replikation FEHLER bei ${s.replFehler} von ${s.replPartner} Partner(n)${s.replMeldung ? `: ${s.replMeldung}` : ''}`;
+  return `Replikation fehlerfrei (${s.replPartner} Partner)`;
+}
+
 export function adStatusText(s: AdStatus): string {
+  const dns = s.dnsClient?.length ? `; DNS-Client ${s.dnsClient.join(',')}` : '';
   if (s.rolle >= 4) {
     const dienste = Object.entries(s.dienste ?? {}).filter(([, z]) => z !== 'Running').map(([n, z]) => `${n} ${z}`);
-    return `${s.rechner}: Domänencontroller von ${s.domaene}${s.pdc ? ` (PDC ${s.pdc})` : ''}${s.dcs?.length ? `, DCs: ${s.dcs.join(', ')}` : ''}${s.papierkorb ? ', AD-Papierkorb an' : ''}; Dienste ${dienste.length ? `NICHT alle laufend: ${dienste.join(', ')}` : 'laufen'}${s.adFehler ? `; AD-Abfrage: ${s.adFehler}` : ''}`;
+    const repl = replikationText(s);
+    return `${s.rechner}: Domänencontroller von ${s.domaene}${s.pdc ? ` (PDC ${s.pdc})` : ''}${s.dcs?.length ? `, DCs: ${s.dcs.join(', ')}` : ''}${s.papierkorb ? ', AD-Papierkorb an' : ''}; Dienste ${dienste.length ? `NICHT alle laufend: ${dienste.join(', ')}` : 'laufen'}${s.adFehler ? `; AD-Abfrage: ${s.adFehler}` : ''}${repl ? `; ${repl}` : ''}${dns}`;
   }
-  return s.mitglied ? `${s.rechner}: Mitglied der Domäne ${s.domaene}` : `${s.rechner}: keiner Domäne beigetreten (Arbeitsgruppe ${s.domaene})`;
+  return (s.mitglied ? `${s.rechner}: Mitglied der Domäne ${s.domaene}` : `${s.rechner}: keiner Domäne beigetreten (Arbeitsgruppe ${s.domaene})`) + dns;
 }
 
 export function pruefeWald(p: { domaene: string; netbios: string }): string | undefined {

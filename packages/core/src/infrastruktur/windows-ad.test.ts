@@ -148,3 +148,28 @@ describe('I8c dns_client (DCs gegenseitig als DNS)', () => {
     expect(r.display).toContain('Rückweg: dns_client mit dns ["10.203.29.2"]');
   });
 });
+
+// v1782 — Realfall 09.11. (I8c C fec4e344 Schritt 5): Replikation und DNS-Client im Status, Windows-Prüfbefehle wie im Käfig
+describe('v1782 Replikation und DNS-Client im AD-Status, Windows-Prüfbefehle in der Planprüfung', () => {
+  const dc = (x: Partial<AdStatus>): AdStatus => ({ rechner: 'DC02', domaene: 'ad.3033.at', mitglied: true, rolle: 4, dienste: { NTDS: 'Running' }, pdc: 'dc01.ad.3033.at', dcs: ['dc01.ad.3033.at', 'dc02.ad.3033.at'], ...x });
+  it('Statustext nennt Replikation und DNS-Client im prüfbaren Wortlaut', () => {
+    expect(adStatusText(dc({ replPartner: 1, replFehler: 0, dnsClient: ['10.203.29.2', '10.203.29.3'] }))).toContain('Replikation fehlerfrei (1 Partner); DNS-Client 10.203.29.2,10.203.29.3');
+    expect(adStatusText(dc({ replPartner: 1, replFehler: 1, replMeldung: '8453 (dc01)' }))).toContain('Replikation FEHLER bei 1 von 1 Partner(n): 8453 (dc01)');
+    expect(adStatusText(dc({ replPartner: 0 }))).toContain('Replikation: noch kein Partner');
+    expect(adStatusText(dc({ replAbfrage: 'ADWS nicht erreichbar' }))).not.toContain('fehlerfrei');
+    expect(adStatusText({ rechner: 'P', domaene: 'ad.3033.at', mitglied: true, rolle: 3, dnsClient: ['10.203.29.2'] })).toBe('P: Mitglied der Domäne ad.3033.at; DNS-Client 10.203.29.2');
+    const s = adStatusSkript();
+    expect(s).toContain('Get-ADReplicationPartnerMetadata -Target $env:COMPUTERNAME -Scope Server');
+    expect(s).toContain('Get-DnsClientServerAddress -AddressFamily IPv4');
+  });
+  it('Planprüfung weist Windows-Prüfbefehle ab, die im Lese-Käfig nie bestehen', async () => {
+    const { pruefbefehlFehler } = await import('./change-schritte.js');
+    const realfall = `powershell -NoProfile -Command "if(@(Get-ADReplicationFailure -Scope Domain -Target ad.3033.at -ErrorAction Stop).Count -eq 0){'REPL_OK'}else{'REPL_FEHLER'}"`;
+    expect(pruefbefehlFehler(realfall)).toMatch(/powershell-Aufruf.*windows_ad/);
+    expect(pruefbefehlFehler('(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses.Count -gt 0}).ServerAddresses')).toBeDefined();
+    expect(pruefbefehlFehler('Get-ADReplicationFailure -Target dc02')).toMatch(/nicht erlaubt|nicht im Lese-Käfig/);
+    for (const ok of ['Get-Service -Name sshd', 'Get-Service -Name NTDS | Select-Object -Property Status', 'Get-DnsClientServerAddress -AddressFamily IPv4']) expect(pruefbefehlFehler(ok), ok).toBeUndefined();
+    expect(pruefbefehlFehler('cat /etc/os-release')).toBeUndefined();
+    expect(pruefbefehlFehler("grep -c Content-Type /etc/nginx/nginx.conf")).toBeUndefined();
+  });
+});

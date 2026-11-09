@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Prüfbefehle im Plan wie im Lese-Käfig, Replikation im AD-Status (v1782)
+
+- Die Planprüfung eines Changes kannte für Prüfbefehle nur Linux-Regeln: ein `powershell -NoProfile -Command "if(…Get-ADReplicationFailure…)"` wurde angenommen und konnte im Windows-Lese-Käfig nie bestehen (Wartezeit bis zum Zeitlimit). Windows-Prüfbefehle werden jetzt wie zur Laufzeit geprüft: feste Leseliste oder genau eine Pipeline aus freigegebenen Cmdlets, ohne powershell-Aufruf, Variablen und Skriptblöcke; der Hinweis nennt `windows_ad status` als Prüfung.
+- `windows_ad status` meldet bei Domänencontrollern die eingehende Replikation („Replikation fehlerfrei (n Partner)“ bzw. „Replikation FEHLER …“) und bei allen Rechnern die DNS-Server des Netzadapters („DNS-Client a,b“).
+
 ### Fixed — KDS-Schlüssel und Papierkorb-Beweis mit vollem Domänen-Token (v1781)
 
 - Die SSH-Anmeldung per Schlüssel ist unter Windows ein S4U-Token ohne Domänengruppen; die Aufnahme in Domänen-Admins wirkt dort nicht. `windows_ad grundstruktur` legt den KDS-Stammschlüssel deshalb über WinRM am eigenen Rechner mit dem Domänen-Administrator an (`Add-KdsRootKey` kennt kein `-Credential`).
