@@ -552,3 +552,20 @@ describe('v1784 create_snapshot mit vorhandenem Namen', () => {
     expect(posts).toEqual(['/nodes/pve/qemu/9102/snapshot']);
   });
 });
+
+// v1785 — Realfall 10.11. (12d82a15 Schritt 3, Wiederholung): „vorher“ ist der wirksame Wert, nicht der ausstehende
+describe('v1785 set_vm_resources: vorher = wirksamer Wert', () => {
+  it('bei schon ausstehendem RAM nennt das Ergebnis den laufenden Wert als vorher und Rückweg', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const pending: Array<Record<string, unknown>> = [{ key: 'memory', value: 4096, pending: '6144' }, { key: 'cores', value: 2 }];
+    a.getAllVms = async () => [{ vmid: 9102, name: 'probe-win25b', node: 'pve', type: 'qemu' }];
+    a.get = async (p: string) => (p.endsWith('/config') ? { memory: '6144', cores: 2 } : p.endsWith('/pending') ? pending : {});
+    a.post = async () => null;
+    const r = await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 6144 }, { ausChange: true } as never);
+    expect(r.error).toBeUndefined();
+    expect(r.data).toMatchObject({ vorher: { memory: 4096, cores: 2 } });
+    expect(r.display).toContain('RAM 4096 → 6144 MiB');
+    expect(r.display).toContain('Rückweg: set_vm_resources mit memory 4096');
+  });
+});

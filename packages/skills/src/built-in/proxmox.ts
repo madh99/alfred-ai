@@ -1973,7 +1973,12 @@ export class ProxmoxSkill extends Skill {
     if (mem !== undefined && (!Number.isInteger(mem) || mem < 512 || mem > 524_288)) return { success: false, error: 'memory: MiB 512–524288' };
     if (cores !== undefined && (!Number.isInteger(cores) || cores < 1 || cores > 64)) return { success: false, error: 'cores: 1–64' };
     const cfg = await this.get<{ memory?: string | number; cores?: number; balloon?: number }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
-    const vorher = { memory: Number(cfg.memory ?? 512), cores: Number(cfg.cores ?? 1) };
+    // v1785 — Realfall 10.11. (12d82a15 Schritt 3, Wiederholung): /config liefert ausstehende Werte schon eingerechnet („RAM 6144 → 6144“,
+    // Rückweg 6144) — „vorher“ ist der wirksame Wert (Feld value aus /pending)
+    type Pend = Array<{ key: string; value?: unknown; pending?: unknown }>;
+    const pend0 = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
+    const wirksam = (k: string, alt: unknown) => { const e = (pend0 ?? []).find(x => x.key === k); return Number(e?.value ?? alt); };
+    const vorher = { memory: wirksam('memory', cfg.memory ?? 512), cores: wirksam('cores', cfg.cores ?? 1) };
     if (mem !== undefined && cfg.balloon && Number(cfg.balloon) > mem) return { success: false, error: `Ballon-Minimum ${cfg.balloon} MiB liegt über ${mem} MiB` };
     const neu: Record<string, unknown> = { ...(mem !== undefined ? { memory: mem } : {}), ...(cores !== undefined ? { cores } : {}) };
     // v1783 — Realfall 10.11. (I8c D 12d82a15 Schritt 3): POST …/config läuft als Aufgabe; sofort nachgelesen stand noch der alte Wert

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — set_vm_resources nennt den wirksamen Wert als „vorher“ (v1785)
+
+- Stand bei einer VM schon eine ausstehende Änderung (z. B. RAM vor dem Neustart), las `proxmox set_vm_resources` den ausstehenden Wert als „vorher“ („RAM 6144 → 6144“, Rückweg mit 6144). Jetzt gilt der wirksame Wert aus der Pending-Liste als „vorher“ und als Rückweg.
+
 ### Fixed — Korrektur am Haltepunkt nach angelegter Sicherung, Snapshot wiederholbar (v1784)
 
 - Ein angehaltener Change, der schon eine Sicherung angelegt hatte (z. B. Snapshot), galt bei der Korrektur als „ohne Wirkung“ und startete nach der neuen Freigabe wieder bei Schritt 1. Angelegte Sicherungen zählen jetzt als Wirkung: der Change läuft nach der Korrektur am Haltepunkt weiter.
