@@ -1,6 +1,6 @@
 {
   "name": "@madh-io/alfred-ai",
-  "version": "0.19.0-jarvis.1785",
+  "version": "0.19.0-jarvis.1786",
   "description": "Alfred — Personal AI Assistant across Telegram, Discord, WhatsApp, Matrix & Signal",
   "type": "module",
   "bin": {

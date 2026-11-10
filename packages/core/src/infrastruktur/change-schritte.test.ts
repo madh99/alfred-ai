@@ -345,6 +345,24 @@ describe('v1622 Stilllegung: Entfernen per Fernzugriff ohne Rückweg (Realfall R
   });
 });
 
+describe('v1786 PBS-GC und Sicherungslauf nachholen ohne Rückweg (Realfall pbs-pve2 voll, Change bc771a88)', () => {
+  const mit = (befehl: string) => pruefeChangePlan({ titel: 'PBS-GC nachholen', begruendung: 'Datastore voll', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'], ohneSicherungGrund: 'räumt nur Unreferenziertes auf',
+    schritte: [
+      { titel: 'Lesen', art: 'aktion', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehl: 'df -h' } },
+      { titel: 'Start', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'dockerhost', als_root: true, befehl }, pruefung: { typ: 'skill', skill: 'fernzugriff', aktion: 'lesen', parameter: { name: 'dockerhost', befehl: 'systemctl status alfred-pbs-gc --no-pager' }, erwartet: 'active (exited)' }, rueckweg: { keiner: 'GC und Sicherung wirken nur additiv' } },
+    ] }, ctx()).fehler;
+  it('GC-Start und vzdump mit harmlosen Optionen zulässig, auch über systemd-run', () => {
+    for (const ok of ['proxmox-backup-manager garbage-collection start backup', 'systemd-run --unit=alfred-pbs-gc -r proxmox-backup-manager garbage-collection start backup',
+      'systemd-run --unit=alfred-vzdump-nachholen --remain-after-exit vzdump --all 1 --exclude 100,137 --storage pbs-pve2 --mode snapshot', 'vzdump 101 102 --storage pbs-pve2 --mode snapshot'])
+      expect(mit(ok), ok).toEqual([]);
+  });
+  it('vzdump mit --remove/--script/--stop und andere Befehle brauchen weiter einen Rückweg', () => {
+    for (const nein of ['vzdump --all 1 --storage pbs-pve2 --remove 1', 'vzdump --all 1 --script /tmp/x.sh', 'vzdump 101 --stop 1', 'proxmox-backup-manager garbage-collection start backup; rm -rf /x',
+      'systemd-run --unit=fremd -r proxmox-backup-manager garbage-collection start backup', 'proxmox-backup-manager datastore remove backup'])
+      expect(mit(nein).join(' | '), nein).toContain('ohne Rückweg nur bei');
+  });
+});
+
 describe('I6 Planprüfung: Go-Templates und selbstprüfende Aktionen', () => {
   it('docker --format mit range/println/end ist kein Platzhalter; kopieren ohne eigene Prüfung zulässig', () => {
     const plan = {

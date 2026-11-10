@@ -12,7 +12,7 @@
  *   owner    — Handgriff oder Entscheidung des Owners mitten im Change (z. B. solange eine Skill-Aktion fehlt)
  */
 import { createHash } from 'node:crypto';
-import { befehlsklasse, windowsBefehlsklasse, windowsKaefigGrund, WIN_KAEFIG_CMDLETS } from '../fernzugriff/regeln.js';
+import { befehlsklasse, normalisiereBefehl, windowsBefehlsklasse, windowsKaefigGrund, WIN_KAEFIG_CMDLETS } from '../fernzugriff/regeln.js';
 import { nurMetadaten, geheimnisGrund } from '../fernzugriff/kaefig.js';
 import { pruefePfad } from '../fernzugriff/uebertragung.js';
 import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
@@ -83,6 +83,19 @@ const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_con
 // v1757 — pvesm free (einzelne Sicherungen/Volumes auf einem Speicher; Realfall 02.11. backupshare 2024er Sicherungen)
 // v1758 — Snapshots eines Gasts (Realfall 02.11.: CT-Snapshot aaa von 2024 hielt mp1 in der Replikation)
 const STILLLEGUNG_ENTFERNEN = /^(rm|qm destroy|pct destroy|qm delsnapshot|pct delsnapshot|pvesm remove|pvesm free|lvremove|vgremove|pvremove)\s/;
+
+/**
+ * v1786 — Realfall 10.11. (pbs-pve2 voll, Change bc771a88): GC-Start und das Nachholen eines Sicherungslaufs hatten keinen Rückweg und
+ * wurden deshalb als Owner-Handgriff geplant — der Owner hat keinen Zugang zu pve2. Beide wirken nur additiv bzw. räumen nur
+ * Unreferenziertes nach PBS-eigenen Schutzfristen auf; ein erfundener Rückweg wäre schlechter als keiner. Zulässig nur genau diese
+ * Formen, wahlweise über systemd-run (länger als das Fernzugriff-Zeitlimit von 900 s; Ergebnis per systemctl status nachlesen).
+ * vzdump nur mit harmlosen Optionen — kein --remove, --stop, --script, --dumpdir.
+ */
+const EINWEG_KERN = String.raw`(proxmox-backup-manager garbage-collection start [\w.-]{1,64}|vzdump( \d{1,9})*( --(all|exclude|storage|mode|compress|zstd|pool|bwlimit|ionice|fleecing|notification-mode|quiet) [\w.,:=/-]{1,200})+)`;
+const EINWEG_BEFEHL = new RegExp(String.raw`^(systemd-run --unit=alfred-[\w-]{1,60} (-r|--remain-after-exit) )?${EINWEG_KERN}$`);
+export function einwegBefehl(befehl: string): boolean {
+  return EINWEG_BEFEHL.test(normalisiereBefehl(befehl));
+}
 
 /** Endgültiges Entfernen von Bestehendem — nur in einem eigenen Stilllegungs-Change (Owner 22.10.: Altes mindestens 7 Tage) */
 const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|delete_lxc|delete_container|remove_container|purge|wipe|format|delete_volume|remove_volume|prune|decommission)/;
@@ -401,7 +414,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const bef = String(schritt.parameter.befehl ?? '').trim();
           const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && STILLLEGUNG_ENTFERNEN.test(bef);
           if (schritt.skill === 'fernzugriff' && /--destroy-unreferenced-disks/.test(bef)) f.push(`${wo}: --destroy-unreferenced-disks löscht auch gleichnamige Disks auf geteilten Speichern (andere Hosts/Cluster) — nur die Volumes der Gast-Konfiguration löschen (qm/pct destroy <id> --purge)`);
-          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
+          const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
+          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen && !einweg) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {
           const rs = ctx.skill(txt(rw.skill));

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PBS-Garbage-Collection und Sicherungslauf nachholen im Change ohne Owner-Handgriff (v1786)
+
+- Ein Change-Schritt, der etwas ändert, brauchte bisher einen Rückweg. Ein GC-Start auf dem PBS und ein nachgeholter Sicherungslauf haben keinen sinnvollen Rückweg und wurden deshalb als Handgriff des Owners geplant — auch auf Hosts, für die der Owner keine Zugangsdaten hat. Jetzt sind genau diese Formen ohne Rückweg zulässig: `proxmox-backup-manager garbage-collection start <datastore>` und `vzdump` mit harmlosen Optionen (kein `--remove`, `--script`, `--stop`), wahlweise über `systemd-run --unit=alfred-… -r` für Läufe über 15 Minuten. Der Abschluss wird über `systemctl status` geprüft.
+
 ### Fixed — set_vm_resources nennt den wirksamen Wert als „vorher“ (v1785)
 
 - Stand bei einer VM schon eine ausstehende Änderung (z. B. RAM vor dem Neustart), las `proxmox set_vm_resources` den ausstehenden Wert als „vorher“ („RAM 6144 → 6144“, Rückweg mit 6144). Jetzt gilt der wirksame Wert aus der Pending-Liste als „vorher“ und als Rückweg.
