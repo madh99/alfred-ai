@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Lange Change-Aktionen warten mit ihrer Prüfung bis zum Zeitlimit (v1787)
+
+- Die Prüfung einer Aktion lief mit fester Versuchszahl (rund eine halbe Minute), auch wenn der Schritt ein Zeitlimit von Stunden hatte. Eine im Hintergrund gestartete Garbage Collection galt so nach 26 Sekunden als gescheitert; der Rückweg setzte währenddessen eine Voraussetzung zurück und brachte den laufenden Vorgang zum Scheitern. Bei einem Zeitlimit über dem Standard wartet die Prüfung jetzt wie ein Warte-Schritt bis zum Zeitlimit; eine Abbruch-Bedingung endet sofort.
+- Ein Change, der bei einem Owner-Schritt wartet und noch nichts verändert hat, lässt sich jetzt wie ein angehaltener neu planen, statt nur abgebrochen zu werden.
+
 ### Fixed — PBS-Garbage-Collection und Sicherungslauf nachholen im Change ohne Owner-Handgriff (v1786)
 
 - Ein Change-Schritt, der etwas ändert, brauchte bisher einen Rückweg. Ein GC-Start auf dem PBS und ein nachgeholter Sicherungslauf haben keinen sinnvollen Rückweg und wurden deshalb als Handgriff des Owners geplant — auch auf Hosts, für die der Owner keine Zugangsdaten hat. Jetzt sind genau diese Formen ohne Rückweg zulässig: `proxmox-backup-manager garbage-collection start <datastore>` und `vzdump` mit harmlosen Optionen (kein `--remove`, `--script`, `--stop`), wahlweise über `systemd-run --unit=alfred-… -r` für Läufe über 15 Minuten. Der Abschluss wird über `systemctl status` geprüft.

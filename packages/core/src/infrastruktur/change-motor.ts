@@ -13,7 +13,7 @@ import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
 import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
-import { aktionsArt, type ChangeSchritt, type Pruefung } from './change-schritte.js';
+import { aktionsArt, ZEITLIMIT_STANDARD_S, type ChangeSchritt, type Pruefung } from './change-schritte.js';
 
 export interface MotorDeps {
   owner: () => string | undefined;
@@ -283,6 +283,16 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (!r.ok) return fertig({ fehler: r.fehler, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}), ...(r.teilweise ? { teilweise: true, daten: kuerzeDaten(r.daten) } : {}) });
         const basis = { aktionOk: true, ausgabe: r.ausgabe?.slice(0, MAX_AUSGABE), daten: kuerzeDaten(r.daten) };
         if (!s.pruefung) return fertig({ ...basis, ok: true });
+        // v1787 — Realfall 10.11. (a053cec2 Schritt 5): GC per systemd-run lief im Hintergrund, die Prüfung „active (exited)“ gab nach
+        // 26 s auf (feste Versuchszahl) — trotz zeitlimitS 14400. Der Rückweg setzte die ZFS-Reserve zurück, der laufende GC scheiterte.
+        // Bei einem langen Zeitlimit (über dem Standard) wartet die Prüfung jetzt wie ein Warte-Schritt bis zum Zeitlimit; „abbruch“ endet sofort.
+        if (s.zeitlimitS > ZEITLIMIT_STANDARD_S) {
+          const wb = this.takt.wartenAbstandMs, t0 = Date.now();
+          const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / wb)) + WARTEN_STAFFEL.length;
+          const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], versuche, i => Math.min(wb, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * wb)), t0 + s.zeitlimitS * 1000);
+          const sek = Math.round((Date.now() - t0) / 1000);
+          return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Prüfung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
+        }
         const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs);
         return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Prüfung nicht erfüllt: ${pr.text}` }) });
       }

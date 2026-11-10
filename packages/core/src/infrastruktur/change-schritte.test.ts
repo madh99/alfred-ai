@@ -178,6 +178,12 @@ describe('v1644 angehaltenen Change ohne Wirkung neu planen (Realfall 5d960660)'
     const r4 = await pl.aendern('o', d.id, snapshotChange());
     expect(r4.ok).toBe(false);
     if (!r4.ok) expect(r4.fehler.join(' ')).toContain('läuft gerade');
+    // v1787 — Realfall bc771a88: wartet bei einem Owner-Schritt, nur gelesen → neu planbar
+    Object.assign(it3.db.get(d.id)!, { status: 'in_progress', lauf: { phase: 'wartet_owner', schritt: 2, ergebnisse: [{ nr: 1, ok: true }] } });
+    haltFlag = undefined;
+    const r5 = await pl.aendern('o', d.id, snapshotChange());
+    expect(r5.ok).toBe(true);
+    expect(haltFlag).toBe(true);
   });
 });
 

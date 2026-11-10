@@ -297,6 +297,29 @@ describe('I4 Ausführungsmotor', () => {
     expect(abstaende).toEqual([2000, 2000, 3000, 5000, 10_000, 10_000]);
   });
 
+  it('v1787 Realfall a053cec2 Schritt 5: Aktion mit langem Zeitlimit wartet mit ihrer Prüfung bis zum Abschluss', async () => {
+    const pr = { typ: 'befehl' as const, zugang: 'pve2', befehl: 'systemctl status alfred-pbs-gc --no-pager', erwartet: 'active (exited)', abbruch: 'Active: failed' };
+    const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'ausfuehren', zeitlimitS: 14400, einordnung: 'aendern', parameter: { name: 'pve2', befehl: 'systemd-run --unit=alfred-pbs-gc -r proxmox-backup-manager garbage-collection start backup' }, pruefung: pr, rueckweg: { keiner: 'Test' } })]);
+    w.deps.takt = { pruefAbstandMs: 0, pruefVersuche: 2, taskAbstandMs: 0, wartenAbstandMs: 10_000 };
+    w.deps.schlafe = async () => undefined;
+    w.deps.fernAusfuehren = async () => ({ code: 0, stdout: '', stderr: '' });
+    let n = 0;
+    w.deps.fernLesen = async () => (++n >= 9 ? 'Active: active (exited)\n' : 'Active: active (running)\n');
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(n).toBe(9);
+    // abbruch endet sofort
+    const w2 = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'ausfuehren', zeitlimitS: 14400, einordnung: 'aendern', parameter: { name: 'pve2', befehl: 'systemd-run --unit=alfred-pbs-gc -r proxmox-backup-manager garbage-collection start backup' }, pruefung: pr, rueckweg: { keiner: 'Test' } })]);
+    w2.deps.takt = w.deps.takt; w2.deps.schlafe = async () => undefined; w2.deps.fernAusfuehren = async () => ({ code: 0, stdout: '', stderr: '' });
+    let k = 0;
+    w2.deps.fernLesen = async () => { k++; return 'Active: failed (Result: exit-code)\n'; };
+    const m2 = new ChangeMotor(w2.deps);
+    await m2.anstossen(); await warte(m2);
+    expect((w2.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect(k).toBe(1);
+  });
+
   it('v1719 Realfall 8a26aed6 Schritt 73: Fernzugriff-Aktion bekommt das Schrittlimit als timeout_s', async () => {
     const w = welt([S({ nr: 1, skill: 'fernzugriff', aktion: 'kopieren', zeitlimitS: 10800, einordnung: 'aendern', parameter: { quelle: 'pg-repo-01', quelle_pfad: '/a', ziel: 'pg-restore-01', ziel_pfad: '/b' }, rueckweg: { keiner: 'Test' } })]);
     const eingaben: Array<Record<string, unknown>> = [];

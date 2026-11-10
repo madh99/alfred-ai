@@ -243,7 +243,8 @@ export class ChangePlanung {
     // v1644 — Realfall 24.10. (5d960660: Klon auf falschen Speicher, nichts angelegt): ein angehaltener Change ohne Wirkung darf unter
     // derselben ID neu geplant werden — abhängige Changes behalten ihren Bezug; die Freigabe verfällt
     const lauf = alt.lauf as { phase?: string; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
-    const haltOhneWirkung = alt.status === 'in_progress' && lauf?.phase === 'angehalten'
+    // v1787 — auch ein bei einem Owner-Schritt wartender Change ohne Wirkung (Realfall bc771a88) ist neu planbar
+    const haltOhneWirkung = alt.status === 'in_progress' && (lauf?.phase === 'angehalten' || lauf?.phase === 'wartet_owner')
       && !(lauf.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && WIRKUNG.has(s.einordnung ?? '')));
     if (alt.status === 'in_progress' && !haltOhneWirkung && korrekturAb === undefined) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} läuft gerade — nicht änderbar (erst angehalten ist er ab dem Haltepunkt korrigierbar)`] };
     const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung, ...(korrekturAb !== undefined ? { korrekturAb } : {}) });

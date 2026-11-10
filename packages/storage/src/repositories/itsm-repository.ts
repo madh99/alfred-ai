@@ -956,7 +956,9 @@ export class ItsmRepository {
       return (await this.getChangeRequestById(userId, e.id))!;
     }
     // v1644 — angehalten, aber noch ohne Wirkung (der Aufrufer prüft das): Plan überarbeiten, Lauf verwerfen, neue Freigabe nötig
-    const haltNeu = o.haltOhneWirkung === true && angehalten;
+    // v1787 — Realfall 10.11. (bc771a88 wartete bei Schritt 2 auf den Owner, nur Schritt 1 hatte gelesen): auch ein wartender Change ohne Wirkung
+    const wartetOhneWirkung = e.status === 'in_progress' && (e.lauf as { phase?: string } | undefined)?.phase === 'wartet_owner';
+    const haltNeu = o.haltOhneWirkung === true && (angehalten || wartetOhneWirkung);
     if (!haltNeu && !['draft', 'submitted', 'approved'].includes(e.status)) throw new Error(`Change ist ${e.status} — Plan nicht mehr änderbar`);
     if (haltNeu) await this.db.execute('UPDATE cmdb_change_requests SET lauf = NULL, started_at = NULL, completed_at = NULL, status = ? WHERE id = ? AND user_id = ?', ['submitted', e.id, userId]);
     const freigabeBleibt = e.status === 'approved' && e.freigabeFingerabdruck === d.fingerabdruck && !d.pruefung.fehler.length;
