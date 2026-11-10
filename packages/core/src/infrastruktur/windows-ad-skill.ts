@@ -8,7 +8,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
-  pruefeDnsEintrag, dnsClientSkript, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
+  pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
 } from './windows-ad.js';
 
 export interface WindowsAdDeps {
@@ -21,6 +21,8 @@ export interface WindowsAdDeps {
 }
 
 const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen', 'dns_client']);
+/** v1783 — lesende Aktionen (auch außerhalb eines Changes) */
+export const LESEND = new Set(['status', 'dns_aufloesen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const KENNWORT_ZEICHEN = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 /** wie die Windows-Fabrik: erfüllt die Komplexitätsregeln (groß, klein, Ziffer, Sonderzeichen) */
@@ -34,6 +36,7 @@ export class WindowsAdSkill extends Skill {
     description:
       'Active Directory (I8c) über feste, geprüfte PowerShell-Bausteine auf Windows-Fernzugängen (zugang = Name des Fernzugangs). '
       + 'status (lesend, auch außerhalb von Changes): Rolle, Domäne, bei DCs Dienste, PDC, DCs, Papierkorb — als Prüfung mit erwartet „Domänencontroller von <domäne>“ bzw. „Mitglied der Domäne <domäne>“. '
+      + 'dns_aufloesen (lesend, auch außerhalb von Changes; zugang, fqdn, server optional = IPv4 eines DNS-Servers, sonst der eigene Resolver des Rechners, ohne_cache optional) — A-Auflösung auf dem Windows-Rechner selbst, Ergebnis „<fqdn> → <ip> (über …)“ bzw. „<fqdn>: keine A-Antwort …“; als Prüfung mit erwartet = IP (Name löst auf) bzw. nichtEnthalten = IP (Name ist weg). DNS-Proben nie als powershell-Prüfbefehl (Resolve-DnsName ist im Lese-Käfig gesperrt). '
       + 'NUR als Schritte freigegebener Changes: wald_anlegen (zugang, domaene, netbios) — neuer Wald mit DNS auf einem Server der Arbeitsgruppe, DSRM-Kennwort erzeugt Alfred im Tresor (ad-<domäne>-dsrm-<zugang>), Neustart, wartet bis die AD-Dienste laufen (bis 25 min); lokale Konten werden Domänenkonten, der Fernzugang bleibt „alfred“. '
       + 'dc_hinzufuegen (zugang, domaene, netbios, dns = IPs vorhandener DCs, konto_tresor = Tresor-Eintrag mit dem Kennwort von <NETBIOS>\\alfred, z. B. win-dc01-admin) — weiterer DC mit DNS/GC, vorher grundstruktur am ersten DC (alfred in Domänen-Admins). '
       + 'beitreten (zugang, domaene, netbios, dns, konto_tresor, ou optional z. B. Server) — Mitgliedsserver, Neustart, wartet bis beigetreten. '
@@ -48,7 +51,7 @@ export class WindowsAdSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['status', ...NUR_IM_CHANGE] },
+        action: { type: 'string', enum: [...LESEND, ...NUR_IM_CHANGE] },
         zugang: { type: 'string', description: 'Name des Windows-Fernzugangs (z. B. dc01)' },
         domaene: { type: 'string', description: 'z. B. ad.3033.at' },
         netbios: { type: 'string', description: 'z. B. AD3033' },
@@ -62,6 +65,7 @@ export class WindowsAdSkill extends Skill {
         groesse_gb: { type: 'number' },
         uhrzeit: { type: 'string', description: 'HH:MM' },
         zone: { type: 'string' }, name: { type: 'string' }, ip: { type: 'string' },
+        fqdn: { type: 'string', description: 'dns_aufloesen: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers' }, ohne_cache: { type: 'boolean' },
       },
       required: ['action'],
     },
@@ -72,7 +76,7 @@ export class WindowsAdSkill extends Skill {
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
     const zugang = String(input.zugang ?? '').trim();
-    if (action !== 'status' && !NUR_IM_CHANGE.has(action)) return { success: false, error: `Unbekannte Aktion ${action}` };
+    if (!LESEND.has(action) && !NUR_IM_CHANGE.has(action)) return { success: false, error: `Unbekannte Aktion ${action}` };
     if (NUR_IM_CHANGE.has(action) && (context as { ausChange?: boolean } | undefined)?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
     if (!ZUGANG.test(zugang)) return { success: false, error: 'zugang: Name des Windows-Fernzugangs' };
     try {
@@ -86,6 +90,12 @@ export class WindowsAdSkill extends Skill {
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input);
         case 'papierkorb_beweis': return await this.papierkorb(zugang, input);
         case 'dns_eintrag': case 'dns_eintrag_loeschen': return await this.dnsEintrag(zugang, action, input);
+        case 'dns_aufloesen': {
+          const p = { fqdn: String(input.fqdn ?? '').trim().toLowerCase().replace(/\.$/, ''), ...(input.server ? { server: String(input.server).trim() } : {}) };
+          const f = pruefeAufloesen(p); if (f) throw new Error(f);
+          const r = await this.lauf<{ adressen?: string[]; fehler?: string }>(zugang, dnsAufloesenSkript({ ...p, ohneCache: input.ohne_cache === true }), 'DNS-Auflösung', 60_000);
+          return { success: true, data: { ...p, ...r }, display: aufloesenText(p, r) };
+        }
         case 'dns_client': {
           const dns = pruefeDns(input.dns); if (typeof dns === 'string') throw new Error(dns);
           const r = await this.lauf<{ vorher: string[]; nachher: string[] }>(zugang, dnsClientSkript({ dns }), 'DNS-Server setzen', 120_000);

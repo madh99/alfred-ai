@@ -514,3 +514,22 @@ describe('I8c set_vm_resources', () => {
     expect((await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 100 }, imChange)).error).toContain('512');
   });
 });
+
+// v1783 — Realfall 10.11. (I8c D 12d82a15 Schritt 3): POST …/config ist eine Aufgabe — erst nach ihrem Ende nachlesen
+describe('v1783 set_vm_resources wartet auf die Proxmox-Aufgabe', () => {
+  it('liest erst nach dem Ende der Aufgabe nach', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const pending: Array<Record<string, unknown>> = [{ key: 'memory', value: 4096 }, { key: 'cores', value: 2 }];
+    let wert: unknown;
+    a.getAllVms = async () => [{ vmid: 9102, name: 'probe-win25b', node: 'pve', type: 'qemu' }];
+    a.get = async (p: string) => (p.endsWith('/config') ? { memory: '4096', cores: 2 } : p.endsWith('/pending') ? pending : {});
+    a.post = async (_p: string, b: Record<string, unknown>) => { wert = b.memory; return 'UPID:pve:1:2:3:qmconfig:9102:root@pam:'; };
+    const gewartet: string[] = [];
+    a.warteAufgabe = async (upid: string) => { gewartet.push(upid); pending[0] = { key: 'memory', value: 4096, pending: String(wert) }; return { ok: true, fertig: true, status: 'OK' }; };
+    const r = await px.execute({ action: 'set_vm_resources', vmid: 9102, memory: 6144 }, { ausChange: true } as never);
+    expect(r.error).toBeUndefined();
+    expect(gewartet).toEqual(['UPID:pve:1:2:3:qmconfig:9102:root@pam:']);
+    expect(r.data).toMatchObject({ ausstehend: true, vorher: { memory: 4096 } });
+  });
+});

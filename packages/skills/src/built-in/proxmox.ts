@@ -1969,8 +1969,9 @@ export class ProxmoxSkill extends Skill {
     const vorher = { memory: Number(cfg.memory ?? 512), cores: Number(cfg.cores ?? 1) };
     if (mem !== undefined && cfg.balloon && Number(cfg.balloon) > mem) return { success: false, error: `Ballon-Minimum ${cfg.balloon} MiB liegt über ${mem} MiB` };
     const neu: Record<string, unknown> = { ...(mem !== undefined ? { memory: mem } : {}), ...(cores !== undefined ? { cores } : {}) };
-    await this.post(`/nodes/${vm.node}/qemu/${vmid}/config`, neu);
-    const pend = await this.get<Array<{ key: string; value?: unknown; pending?: unknown }>>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Array<{ key: string; value?: unknown; pending?: unknown }>);
+    // v1783 — Realfall 10.11. (I8c D 12d82a15 Schritt 3): POST …/config läuft als Aufgabe; sofort nachgelesen stand noch der alte Wert
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, neu), 120_000, 'VM-Ressourcen ändern');
+    const pend =await this.get<Array<{ key: string; value?: unknown; pending?: unknown }>>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Array<{ key: string; value?: unknown; pending?: unknown }>);
     const wert = (k: string) => { const e = pend.find(x => x.key === k); return e ? Number(e.pending ?? e.value) : undefined; };
     if ((mem !== undefined && wert('memory') !== mem) || (cores !== undefined && wert('cores') !== cores)) return { success: false, error: `nach dem Ändern gelesen: memory ${wert('memory')}, cores ${wert('cores')}` };
     const ausstehend = pend.some(x => (x.key === 'memory' || x.key === 'cores') && x.pending !== undefined);

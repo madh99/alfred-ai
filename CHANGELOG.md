@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — VM-Ressourcen nach der Proxmox-Aufgabe nachlesen, DNS-Proben als windows_ad-Aktion (v1783)
+
+- `proxmox set_vm_resources` wartet auf die Aufgabe hinter `POST …/config`, bevor es die Werte nachliest; vorher stand beim sofortigen Nachlesen noch der alte Wert und der Schritt galt als gescheitert.
+- Neue lesende Aktion `windows_ad dns_aufloesen` (zugang, fqdn, server optional, ohne_cache optional): A-Auflösung auf dem Windows-Rechner selbst über einen bestimmten DNS-Server oder den eigenen Resolver. Ersetzt Prüfbefehle mit `Resolve-DnsName`, die im Windows-Lese-Käfig gesperrt sind; als Prüfung mit `erwartet` bzw. `nichtEnthalten` = IP.
+
 ### Fixed — Windows-Prüfbefehle im Plan wie im Lese-Käfig, Replikation im AD-Status (v1782)
 
 - Die Planprüfung eines Changes kannte für Prüfbefehle nur Linux-Regeln: ein `powershell -NoProfile -Command "if(…Get-ADReplicationFailure…)"` wurde angenommen und konnte im Windows-Lese-Käfig nie bestehen (Wartezeit bis zum Zeitlimit). Windows-Prüfbefehle werden jetzt wie zur Laufzeit geprüft: feste Leseliste oder genau eine Pipeline aus freigegebenen Cmdlets, ohne powershell-Aufruf, Variablen und Skriptblöcke; der Hinweis nennt `windows_ad status` als Prüfung.

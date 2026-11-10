@@ -173,3 +173,21 @@ describe('v1782 Replikation und DNS-Client im AD-Status, Windows-Prüfbefehle in
     expect(pruefbefehlFehler("grep -c Content-Type /etc/nginx/nginx.conf")).toBeUndefined();
   });
 });
+
+// v1783 — Realfall 10.11. (I8c D 12d82a15): DNS-Proben als lesende Aktion statt Resolve-DnsName-Prüfbefehl
+describe('v1783 windows_ad dns_aufloesen', () => {
+  it('lesend auch außerhalb eines Changes, über Server oder eigenen Resolver, prüfbarer Wortlaut', async () => {
+    const aufrufe: string[] = [];
+    const antwort = (b: string) => Buffer.from(b, 'base64').toString('utf16le');
+    const skill = new WindowsAdSkill({ skript: async (_z, befehl) => { const t = antwort(befehl.split(' ').pop()!); aufrufe.push(t); return { code: 0, stderr: '', stdout: t.includes('10.203.29.3') ? 'ALFRED-AD {"adressen":["10.203.29.30"]}' : 'ALFRED-AD {"adressen":[],"fehler":"DNS name does not exist"}' }; } });
+    const r = await skill.execute({ action: 'dns_aufloesen', zugang: 'probe-win25b', fqdn: 'alfred-ausfall-20261108.ad.3033.at', server: '10.203.29.3' }, {} as never);
+    expect(r.error).toBeUndefined();
+    expect(r.display).toBe('alfred-ausfall-20261108.ad.3033.at → 10.203.29.30 (über 10.203.29.3)');
+    const n = await skill.execute({ action: 'dns_aufloesen', zugang: 'probe-win25b', fqdn: 'alfred-ausfall-20261108.ad.3033.at', ohne_cache: true }, {} as never);
+    expect(n.display).toContain('keine A-Antwort über den eigenen Resolver');
+    expect(n.display).not.toContain('10.203.29.30');
+    expect(aufrufe[1]).toContain('Clear-DnsClientCache');
+    expect((await skill.execute({ action: 'dns_aufloesen', zugang: 'probe-win25b', fqdn: 'x', server: '1.2.3.4' }, {} as never)).error).toContain('fqdn');
+    expect(aktionsArt('windows_ad', 'dns_aufloesen')).toBe('lesen');
+  });
+});

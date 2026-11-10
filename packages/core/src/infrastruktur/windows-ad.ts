@@ -263,6 +263,30 @@ export function pruefeDnsEintrag(p: { zone: string; name: string; ip?: string })
   if (p.ip !== undefined && !IPV4.test(p.ip)) return 'ip: IPv4-Adresse';
   return undefined;
 }
+/**
+ * v1783 — Realfall 10.11. (I8c D 12d82a15 Schritte 8/10/11/14): DNS-Proben waren als „powershell … Resolve-DnsName“-Prüfbefehle geplant,
+ * die im Lese-Käfig nie bestehen (Resolve-DnsName ist dort bewusst gesperrt: Netzverkehr zu frei wählbaren Zielen). Lesender Baustein:
+ * A-Auflösung eines Namens auf dem Rechner selbst, wahlweise über einen bestimmten Server oder über den eigenen Resolver ohne Cache.
+ */
+export function pruefeAufloesen(p: { fqdn: string; server?: string }): string | undefined {
+  if (!AD_DOMAENE.test(p.fqdn)) return 'fqdn: vollständiger DNS-Name in Kleinbuchstaben, z. B. alfred-test.ad.3033.at';
+  if (p.server !== undefined && !IPV4.test(p.server)) return 'server: IPv4-Adresse eines DNS-Servers (weglassen = eigener Resolver des Rechners)';
+  return undefined;
+}
+export function dnsAufloesenSkript(p: { fqdn: string; server?: string; ohneCache?: boolean }): string {
+  return [
+    ...kopf(p, false),
+    'if ($p.ohneCache) { Clear-DnsClientCache }',
+    "$a = @{ Name = $p.fqdn; Type = 'A'; DnsOnly = $true; QuickTimeout = $true }; if ($p.server) { $a.Server = $p.server }",
+    "try { $r = @(Resolve-DnsName @a -ErrorAction Stop | Where-Object { $_.Type -eq 'A' } | ForEach-Object { [string]$_.IPAddress }); Ergebnis @{ adressen = $r } }",
+    'catch { Ergebnis @{ adressen = @(); fehler = $_.Exception.Message } }',
+  ].join('\n');
+}
+export function aufloesenText(p: { fqdn: string; server?: string }, r: { adressen?: string[]; fehler?: string }): string {
+  const ueber = p.server ? `über ${p.server}` : 'über den eigenen Resolver';
+  return r.adressen?.length ? `${p.fqdn} → ${r.adressen.join(', ')} (${ueber})` : `${p.fqdn}: keine A-Antwort ${ueber}${r.fehler ? ` — ${r.fehler.replace(/\s+/g, ' ').slice(0, 200)}` : ''}`;
+}
+
 /** A-Eintrag in einer AD-Zone (z. B. frischer Name für den DNS-Ausfalltest — kein Cache kennt ihn) */
 export function dnsEintragSkript(p: { zone: string; name: string; ip: string }): string {
   return [

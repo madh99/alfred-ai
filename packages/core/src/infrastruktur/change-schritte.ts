@@ -119,7 +119,7 @@ const VERAENDERND = /(^|[;&|]\s*|\bsudo\s+(-\S+\s+)*)(rm|rmdir|mv|cp|tee|touch|t
  * Planprüfung (sie kannte nur Linux-Regeln) und wartete 30 min im Windows-Lese-Käfig, der den Befehl nie annehmen kann. Prüfbefehle
  * für Windows prüft der Plan wie die Laufzeit: feste Leseliste oder genau eine Pipeline aus freigegebenen Cmdlets mit festen Werten.
  */
-const WIN_PRUEF_HINWEIS = 'Windows-Prüfbefehle laufen im Lese-Käfig: kein powershell-Aufruf, keine Variablen, kein if, keine Skriptblöcke, kein AD-Modul — nur eine Pipeline aus Get-Cmdlets der Freigabeliste (z. B. „Get-Service -Name NTDS“). AD-Zustand (Domänencontroller, Replikation, DNS-Client) als pruefung {typ:"skill", skill:"windows_ad", aktion:"status", parameter:{zugang}, erwartet:"Replikation fehlerfrei" bzw. "DNS-Client 10.0.0.2,10.0.0.3"}';
+const WIN_PRUEF_HINWEIS = 'Windows-Prüfbefehle laufen im Lese-Käfig: kein powershell-Aufruf, keine Variablen, kein if, keine Skriptblöcke, kein AD-Modul — nur eine Pipeline aus Get-Cmdlets der Freigabeliste (z. B. „Get-Service -Name NTDS“). AD-Zustand (Domänencontroller, Replikation, DNS-Client) als pruefung {typ:"skill", skill:"windows_ad", aktion:"status", parameter:{zugang}, erwartet:"Replikation fehlerfrei" bzw. "DNS-Client 10.0.0.2,10.0.0.3"}; DNS-Auflösung als pruefung {typ:"skill", skill:"windows_ad", aktion:"dns_aufloesen", parameter:{zugang, fqdn, server}, erwartet:"<ip>"}';
 export function istWindowsBefehl(befehl: string): boolean {
   return /^\s*(powershell|pwsh)(\.exe)?\b/i.test(befehl) || /(^|[\s(|;{@])(Get|Select|Where|Sort|Format|Measure|Group|ConvertTo|ConvertFrom|Out|Set|New|Remove|Invoke|Add|Enable|Disable|Install|Uninstall|Test|Start|Stop|Restart|Import|Resolve)-[A-Z][A-Za-z]+\b/.test(befehl);
 }
@@ -174,7 +174,7 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   // v1676 — Realfall 26.10. (Matrix E): der GitLab-Skill liest nur (Projekte, Registry-Tags mit Digest) — „gitlab.registry ist nicht lesend“
   if (skill === 'gitlab') return 'lesen';
   // I8c — windows_ad: nur status liest; alle Bausteine ändern
-  if (skill === 'windows_ad') return aktion === 'status' ? 'lesen' : 'aendern';
+  if (skill === 'windows_ad') return aktion === 'status' || aktion === 'dns_aufloesen' ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';
