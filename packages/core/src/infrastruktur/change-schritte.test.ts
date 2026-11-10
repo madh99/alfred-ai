@@ -635,3 +635,22 @@ describe('v1753 Käfig-Grenzen der Prüfbefehle', () => {
     expect(f).toContain('Schritt 2: Lesebefehl „zpool list -H -o name,health backup“ zpool/zfs finden');
   });
 });
+
+// v1784 — Realfall 10.11. (I8c D 12d82a15): angelegter Snapshot ist Wirkung → Korrektur am Haltepunkt statt Neustart bei Schritt 1
+describe('v1784 Sicherung zählt als Wirkung für die Korrektur am Haltepunkt', () => {
+  it('Halt bei Schritt 3 nach gelungenem Snapshot in Schritt 2 → korrekturAb 3, kein Halt ohne Wirkung', async () => {
+    const it3 = speicher();
+    let haltFlag: boolean | undefined; let korrekturAb: number | undefined;
+    const orig = it3.setzeSchritte;
+    it3.setzeSchritte = async (o: string, id: string, d: ChangeSchrittDaten, x?: { haltOhneWirkung?: boolean; korrekturAb?: number }) => { haltFlag = x?.haltOhneWirkung; korrekturAb = x?.korrekturAb; return orig(o, id, d); };
+    const pl = new ChangePlanung({ itsm: it3 as never, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const ok = await pl.planen('o', [snapshotChange()]);
+    if (!ok.ok) throw new Error('planen');
+    const c = it3.db.get(ok.changes[0]!.id)!;
+    Object.assign(c, { status: 'in_progress', lauf: { phase: 'angehalten', schritt: 3, ergebnisse: [{ nr: 1, ok: true }, { nr: 2, ok: true }, { nr: 3, ok: false }] } });
+    const r = await pl.aendern('o', c.id, snapshotChange());
+    expect(r.ok).toBe(true);
+    expect(haltFlag).toBe(false);
+    expect(korrekturAb).toBe(3);
+  });
+});

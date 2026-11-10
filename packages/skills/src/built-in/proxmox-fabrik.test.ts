@@ -533,3 +533,22 @@ describe('v1783 set_vm_resources wartet auf die Proxmox-Aufgabe', () => {
     expect(r.data).toMatchObject({ ausstehend: true, vorher: { memory: 4096 } });
   });
 });
+
+// v1784 — Realfall 10.11. (I8c D 12d82a15 Schritt 2): vorhandener Snapshot gleichen Namens → nichts zu tun
+describe('v1784 create_snapshot mit vorhandenem Namen', () => {
+  it('meldet den vorhandenen Snapshot mit Zeitpunkt und legt keinen neuen an', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const posts: string[] = [];
+    a.resolveVm = async () => ({ node: 'pve', type: 'qemu' });
+    a.get = async (p: string) => (p.endsWith('/snapshot') ? [{ name: 'i8c_d_vor_beitritt', snaptime: 1794304620 }, { name: 'current' }] : {});
+    a.post = async (p: string) => { posts.push(p); return 'UPID:x'; };
+    const r = await px.execute({ action: 'create_snapshot', vmid: 9102, name: 'i8c_d_vor_beitritt' }, {} as never);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('schon vorhanden (angelegt 2026-11-10');
+    expect(posts).toEqual([]);
+    const n = await px.execute({ action: 'create_snapshot', vmid: 9102, name: 'neu_snap' }, {} as never);
+    expect(n.success).toBe(true);
+    expect(posts).toEqual(['/nodes/pve/qemu/9102/snapshot']);
+  });
+});

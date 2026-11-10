@@ -19,6 +19,12 @@ export interface ChangeSpeicher {
 }
 /** Gültigkeit einer Freigabe-Frage (das Ja kann auch Stunden später kommen; der Fingerabdruck bindet sie an den Plan) */
 export const FREIGABE_FRAGE_GUELTIG_MS = 24 * 3_600_000;
+/**
+ * v1784 — Realfall 10.11. (I8c D 12d82a15): Schritt 2 hatte einen Snapshot angelegt (Einordnung „sicherung“), Schritt 3 hielt an. Die
+ * Korrektur galt als „Halt ohne Wirkung“, der Change startete nach der Freigabe bei Schritt 1 neu und scheiterte am vorhandenen Snapshot.
+ * Auch eine angelegte Sicherung ist Wirkung — dann geht es nach der Korrektur am Haltepunkt weiter.
+ */
+const WIRKUNG = new Set(['aendern', 'loeschen', 'sicherung']);
 const hash = (nonce: string) => createHash('sha256').update(nonce).digest('hex');
 export interface ChangeDeps {
   itsm: ChangeSpeicher;
@@ -216,7 +222,7 @@ export class ChangePlanung {
     // Wirkung ist ab dem Haltepunkt korrigierbar. Die schon gelaufenen Schritte übernimmt der Server unverändert aus dem gespeicherten Plan,
     // der Lauf mit seinen Ergebnissen bleibt; die Freigabe verfällt, nach dem neuen Ja geht es am Haltepunkt weiter.
     const lauf0 = alt.lauf as { phase?: string; schritt?: number; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
-    const hatGewirkt = (lauf0?.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
+    const hatGewirkt = (lauf0?.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && WIRKUNG.has(s.einordnung ?? '')));
     // v1685 — auch bei wartendem Owner-Schritt (dessen Frage verfällt; der Repository-Teil setzt den Lauf auf angehalten)
     const korrekturAb = alt.status === 'in_progress' && (lauf0?.phase === 'angehalten' || lauf0?.phase === 'wartet_owner') && hatGewirkt && typeof lauf0.schritt === 'number' ? lauf0.schritt : undefined;
     if (korrekturAb !== undefined) {
@@ -238,7 +244,7 @@ export class ChangePlanung {
     // derselben ID neu geplant werden — abhängige Changes behalten ihren Bezug; die Freigabe verfällt
     const lauf = alt.lauf as { phase?: string; ergebnisse?: Array<{ nr: number; ok?: boolean; aktionOk?: boolean; teilweise?: boolean }> } | undefined;
     const haltOhneWirkung = alt.status === 'in_progress' && lauf?.phase === 'angehalten'
-      && !(lauf.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && (s.einordnung === 'aendern' || s.einordnung === 'loeschen')));
+      && !(lauf.ergebnisse ?? []).some(x => (x.ok || x.aktionOk || x.teilweise) && ((alt.schritte ?? []) as ChangeSchritt[]).some(s => s.nr === x.nr && WIRKUNG.has(s.einordnung ?? '')));
     if (alt.status === 'in_progress' && !haltOhneWirkung && korrekturAb === undefined) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} läuft gerade — nicht änderbar (erst angehalten ist er ab dem Haltepunkt korrigierbar)`] };
     const neu = await this.d.itsm.setzeSchritte(owner, alt.id, this.daten(e.plan, e.betroffeneIds, e.plan.abhaengigVon, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], alt.vorhabenId), { haltOhneWirkung, ...(korrekturAb !== undefined ? { korrekturAb } : {}) });
     if (ew.antworten.length) await this.d.einwand!.speichereAntworten(owner, ew.antworten);

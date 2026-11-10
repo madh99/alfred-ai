@@ -1095,6 +1095,13 @@ export class ProxmoxSkill extends Skill {
     }
 
     const resolved = await this.resolveVm(vmid, input.node as string | undefined);
+    // v1784 — Realfall 10.11. (I8c D 12d82a15 Schritt 2): nach einem Neustart des Changes gab es den Snapshot aus dem ersten Lauf schon
+    // („snapshot name already used“) — ein vorhandener Snapshot gleichen Namens ist der gewollte Sicherungspunkt; Zeitpunkt wird genannt
+    const da = ((await this.get<Array<{ name: string; snaptime?: number }>>(`/nodes/${resolved.node}/${resolved.type}/${vmid}/snapshot`).catch(() => [])) ?? []).find(s => s.name === snapname);
+    if (da) {
+      const seit = da.snaptime ? new Date(da.snaptime * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'unbekannt';
+      return { success: true, data: { vmid, node: resolved.node, type: resolved.type, snapname, vorhanden: true, snaptime: da.snaptime }, display: `Snapshot **"${snapname}"** für VM ${vmid} auf **${resolved.node}** ist schon vorhanden (angelegt ${seit}) — nichts zu tun.` };
+    }
     const body: Record<string, unknown> = { snapname };
     if (input.description) body.description = input.description;
 

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Korrektur am Haltepunkt nach angelegter Sicherung, Snapshot wiederholbar (v1784)
+
+- Ein angehaltener Change, der schon eine Sicherung angelegt hatte (z. B. Snapshot), galt bei der Korrektur als „ohne Wirkung“ und startete nach der neuen Freigabe wieder bei Schritt 1. Angelegte Sicherungen zählen jetzt als Wirkung: der Change läuft nach der Korrektur am Haltepunkt weiter.
+- `proxmox create_snapshot` meldet einen vorhandenen Snapshot gleichen Namens mit seinem Zeitpunkt als erledigt, statt an „snapshot name already used“ zu scheitern.
+
 ### Fixed — VM-Ressourcen nach der Proxmox-Aufgabe nachlesen, DNS-Proben als windows_ad-Aktion (v1783)
 
 - `proxmox set_vm_resources` wartet auf die Aufgabe hinter `POST …/config`, bevor es die Werte nachliest; vorher stand beim sofortigen Nachlesen noch der alte Wert und der Schritt galt als gescheitert.
