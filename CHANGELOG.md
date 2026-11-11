@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Wiederherstellungstest räumt die Testkopie wieder ab (v1796)
+
+- Der Wiederherstellungstest stellte die Sicherung erfolgreich her und prüfte sie, konnte die Testkopie danach aber nicht löschen („in use“): Die Verbindung, mit der die Prüfzeilen gezählt wurden, blieb im Verbindungspool offen. Die SQL-Bausteine verbinden sich jetzt ohne Pooling; jede Verbindung ist nach dem Befehl wirklich geschlossen.
+
 ### Fixed — SQL-Installationsmedien aus dem ISO kopieren (v1795)
 
 - `sql_server sql_medien_laden` lud das ISO erfolgreich, scheiterte aber beim Kopieren der Installationsdateien: Ohne vorhandenen Zielordner legte das Kopieren die erste Datei unter dem Ordnernamen an, danach ließen sich die Unterordner nicht mehr kopieren. Der Zielordner wird jetzt vorher angelegt. Ein bereits geladenes ISO aus einem früheren Lauf wird wiederverwendet; die Signaturprüfung von setup.exe bleibt.

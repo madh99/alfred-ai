@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   pruefeMedien, pruefeInstallation, installierenSkript, pruefeKonfiguration, konfigurierenSkript, endpunktSkript, pruefeAg, agAnlegenSkript, pruefeListener, failoverSkript,
-  pruefeSicherung, sicherungTsql, pruefeJobs, jobsSkript, pruefeWiederherstellung, wiederherstellungSkript, pruefdatenSchreibenSkript as pruefdatenSchreiben, sqlStatusText, nText, psDq, medienSkript, type SqlStatus,
+  pruefeSicherung, sicherungTsql, pruefeJobs, jobsSkript, pruefeWiederherstellung, wiederherstellungSkript, pruefdatenSchreibenSkript as pruefdatenSchreiben, sqlStatusText, nText, psDq, medienSkript, SQL_FN, type SqlStatus,
 } from './sql-server.js';
 import { SqlServerSkill } from './sql-server-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
@@ -74,6 +74,8 @@ describe('I8d Bausteine sql_server', () => {
     expect(w).toContain('xp_dirtree');
     expect(w).toContain('zu wenig Platz');
     expect(w).toContain('DBCC CHECKDB');
+    // v1796 Realfall E3 1e1cdb4e Schritt 21: gepoolte Verbindung hielt die Test-Kopie offen (DROP „in use“)
+    expect(SQL_FN).toContain('Pooling=false');
     expect(w).toContain('WITH CHECKSUM, NORECOVERY');
     expect(psDq('a$b"c')).toBe('a`$b`"c');
     // freie Notiz kann weder aus dem T-SQL- noch aus dem PowerShell-String ausbrechen

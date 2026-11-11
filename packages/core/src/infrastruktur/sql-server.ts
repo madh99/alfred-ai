@@ -30,7 +30,7 @@ const pfadOk = (p: string) => (LOKAL_PFAD.test(p) || UNC.test(p)) && !p.includes
 /** PowerShell-Funktion Sql: führt T-SQL lokal aus und liefert alle Zeilen aller Ergebnismengen */
 export const SQL_FN = [
   "function Sql([string]$q, [int]$t = 120, [string]$db = 'master') {",
-  "  $cn = New-Object System.Data.SqlClient.SqlConnection ('Server=' + $srv + ';Database=' + $db + ';Integrated Security=SSPI;Application Name=Alfred;Connect Timeout=30')",
+  "  $cn = New-Object System.Data.SqlClient.SqlConnection ('Server=' + $srv + ';Database=' + $db + ';Integrated Security=SSPI;Application Name=Alfred;Connect Timeout=30;Pooling=false')",
   '  $cn.Open()',
   '  try {',
   '    $cmd = $cn.CreateCommand(); $cmd.CommandText = $q; $cmd.CommandTimeout = $t',
