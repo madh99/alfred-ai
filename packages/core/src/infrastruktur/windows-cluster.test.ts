@@ -76,6 +76,8 @@ describe('I8d Bausteine windows_cluster', () => {
     expect(v).toContain('Remove-Item -LiteralPath $skript, $aus');
     expect(MIT_KONTO).toContain("'S-1-5-18', 'S-1-5-32-544'"); // Skriptordner nur SYSTEM + Administratoren
     expect(clusterAnlegenSkript({ name: 'sqlcl01', knoten: ['sql01', 'sql02'], ip: '10.203.30.4' })).toContain('-NoStorage -AdministrativeAccessPoint ActiveDirectoryAndDns');
+    // v1797 Realfall F1 229965b1: direkt nach New-Cluster ist der Clustername noch nicht öffnbar — Knoten lokal abfragen
+    expect(clusterAnlegenSkript({ name: 'sqlcl01', knoten: ['sql01', 'sql02'], ip: '10.203.30.4' })).not.toContain('Get-ClusterNode -Cluster');
     expect(zeugeSkript({ freigabe: '\\\\fs01\\Witness$' })).toContain('Set-ClusterQuorum -FileShareWitness $p.freigabe');
     expect(gmsaPruefenSkript({ name: 'gmsa-sqleng' })).toContain("MitKonto 'SYSTEM' ''");
     // das innere Skript sieht nie das Kennwort

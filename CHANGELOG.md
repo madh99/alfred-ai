@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Cluster-Anlage meldet Erfolg auch direkt nach dem Anlegen (v1797)
+
+- `windows_cluster cluster_anlegen` legte den Cluster erfolgreich an, meldete aber einen Fehler: Die anschließende Abfrage der Knoten lief über den neuen Clusternamen, der unmittelbar nach dem Anlegen noch nicht erreichbar war. Die Knoten werden jetzt lokal abgefragt; ein erneuter Lauf erkennt den vorhandenen Cluster.
+
 ### Fixed — Wiederherstellungstest räumt die Testkopie wieder ab (v1796)
 
 - Der Wiederherstellungstest stellte die Sicherung erfolgreich her und prüfte sie, konnte die Testkopie danach aber nicht löschen („in use“): Die Verbindung, mit der die Prüfzeilen gezählt wurden, blieb im Verbindungspool offen. Die SQL-Bausteine verbinden sich jetzt ohne Pooling; jede Verbindung ist nach dem Befehl wirklich geschlossen.

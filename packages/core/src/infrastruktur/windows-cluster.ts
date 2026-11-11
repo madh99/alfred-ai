@@ -527,7 +527,7 @@ export function clusterAnlegenSkript(p: { name: string; knoten: string[]; ip: st
     "$alt = $null; try { $alt = Get-Cluster -ErrorAction Stop } catch { }",
     "if ($alt) { if ($alt.Name -ine $p.name) { throw ('Knoten gehört schon zum Cluster ' + $alt.Name) }; return [ordered]@{ name = [string]$alt.Name; zustand = 'schon'; knoten = @(Get-ClusterNode | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State }) } }",
     'New-Cluster -Name $p.name -Node @($p.knoten) -StaticAddress $p.ip -NoStorage -AdministrativeAccessPoint ActiveDirectoryAndDns -WarningAction SilentlyContinue | Out-Null',
-    "[ordered]@{ name = $p.name; zustand = 'neu'; ip = $p.ip; knoten = @(Get-ClusterNode -Cluster $p.name | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State }) }",
+    "[ordered]@{ name = $p.name; zustand = 'neu'; ip = $p.ip; knoten = @(Get-ClusterNode | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State }) }",
   ], 1200);
 }
 
