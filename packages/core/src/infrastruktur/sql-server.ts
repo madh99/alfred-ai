@@ -261,10 +261,13 @@ export function konfigurierenSkript(p: { max_speicher_mb?: number; maxdop?: numb
  * v1801 — Realfall F2 Schritt 11 (12.11.): Add-ClusterResourceType greift auf \\<knoten>\admin$ aller Knoten zu; über die
  * SSH-Anmeldung (S4U, ohne Netz-Anmeldedaten) „Access denied“. Dieses Skript meldet deshalb nur ressourcentyp „fehlt“ + dll;
  * registriert wird mit ressourcentypSkript als Domänenkonto (Kennwort-Anmeldung).
+ * v1802 — Realfall F2 Schritt 12 (12.11.): nach der Registrierung CREATE AVAILABILITY GROUP mit Fehler 35222 („does not have
+ * permissions to access the WSFC cluster … restart the SQL Server service“) — SQL lief seit vor der Registrierung. neustart = true
+ * startet den Dienst auch im Schon-Fall neu und wartet wieder auf HadrManagerStatus 1.
  * Wiederholbar: ist alles da, „schon“.
  */
-export function hadrSkript(instanz?: string): string {
-  return skript(nurInstanz(instanz), [
+export function hadrSkript(instanz?: string, neustart = false): string {
+  return skript({ ...nurInstanz(instanz), ...(neustart ? { neustart: true } : {}) }, [
     "if (-not (Get-Service -Name ClusSvc -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')) { throw 'Clusterdienst läuft nicht — erst den Failover-Cluster anlegen' }",
     'Import-Module FailoverClusters',
     "$konto = 'NT SERVICE\\' + $svc",
@@ -275,7 +278,7 @@ export function hadrSkript(instanz?: string): string {
     '$hatTyp = [bool](Get-ClusterResourceType -Name $rtName -ErrorAction SilentlyContinue)',
     "function DllPfad { $bin = [string](Get-ItemProperty ('HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\Setup')).SQLBinRoot; $dll = Join-Path $bin 'hadrres.dll'; if (-not (Test-Path $dll)) { throw ('hadrres.dll fehlt: ' + $dll) }; return $dll }",
     "$s = (Sql \"SELECT CAST(SERVERPROPERTY('IsHadrEnabled') AS int) h, CAST(SERVERPROPERTY('HadrManagerStatus') AS int) m\")[0]",
-    "if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) { if ($hatTyp) { Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'schon' }; exit 0 }; Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'fehlt'; dll = (DllPfad) }; exit 0 }",
+    "if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff -and -not $p.neustart) { if ($hatTyp) { Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'schon' }; exit 0 }; Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'fehlt'; dll = (DllPfad) }; exit 0 }",
     "$r = [ordered]@{ konto = $konto; zugriff = $(if ($hatZugriff) { 'schon' } else { 'neu' }) }",
     'if (-not $hatZugriff) { Grant-ClusterAccess -User $konto -Full | Out-Null }',
     "$k = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\MSSQLServer\\HADR'",
@@ -287,7 +290,7 @@ export function hadrSkript(instanz?: string): string {
     "do { Start-Sleep -Seconds 5; try { $x = (Sql \"SELECT CAST(SERVERPROPERTY('IsHadrEnabled') AS int) h, CAST(SERVERPROPERTY('HadrManagerStatus') AS int) m\")[0]; $h = $x.h; $m = $x.m } catch { } } while (($h -ne 1 -or $m -ne 1) -and (Get-Date) -lt $bis)",
     "if ($h -ne 1 -or $m -ne 1) { throw ('HADR nach dem Neustart nicht bereit (IsHadrEnabled ' + $h + ', HadrManagerStatus ' + $m + ' — 1 = gestartet)') }",
     "if (Get-ClusterResourceType -Name $rtName -ErrorAction SilentlyContinue) { $r.ressourcentyp = 'schon' } else { $r.ressourcentyp = 'fehlt'; $r.dll = (DllPfad) }",
-    "$r.zustand = 'eingeschaltet'; $r.instanz = $instId; $r.hadrManager = 'gestartet'",
+    "$r.zustand = $(if ($s.h -eq 1 -and $p.neustart) { 'neu gestartet' } else { 'eingeschaltet' }); $r.instanz = $instId; $r.hadrManager = 'gestartet'",
     'Ergebnis $r',
   ]);
 }

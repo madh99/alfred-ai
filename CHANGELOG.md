@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-Neustart nach Registrierung des AG-Ressourcentyps (v1802)
+
+- Nach der Registrierung des Cluster-Ressourcentyps scheiterte das Anlegen der Verfügbarkeitsgruppe mit Fehler 35222 (kein Zugriff auf den Cluster). SQL Server lief seit der Zeit vor der Registrierung. `sql_server hadr_aktivieren` startet den Dienst nach einer Registrierung jetzt neu und wartet, bis der HADR-Manager wieder läuft. Mit `neustart: true` lässt sich der Neustart auch erzwingen, etwa auf dem Partnerknoten.
+
 ### Fixed — AG-Ressourcentyp wird mit Kennwort-Anmeldung registriert (v1801)
 
 - Die Registrierung des Cluster-Ressourcentyps aus v1800 scheiterte über die SSH-Anmeldung mit „Access denied“, weil `Add-ClusterResourceType` auf die Verwaltungsfreigabe aller Clusterknoten zugreift. `sql_server hadr_aktivieren` meldet einen fehlenden Typ jetzt aus der SSH-Sitzung. Registriert wird er anschließend als Domänenkonto mit Kennwort-Anmeldung (`konto_tresor`), so wie bei Cluster-Anlage und Validierung.

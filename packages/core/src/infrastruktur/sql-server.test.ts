@@ -179,7 +179,7 @@ describe('v1799 hadr_aktivieren mit Clusterzugriff', () => {
     expect(s).toContain('Grant-ClusterAccess -User $konto -Full');
     expect(s.indexOf('Grant-ClusterAccess')).toBeLessThan(s.indexOf('Restart-Service -Name $svc'));
     expect(s).toContain("HadrManagerStatus");
-    expect(s).toContain("if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) {");
+    expect(s).toContain("if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff -and -not $p.neustart) {");
     expect(hadrSkript('PROD')).toContain('"instanz":"PROD"');
   });
 });
@@ -203,5 +203,18 @@ describe('v1800 hadr_aktivieren registriert den AG-Ressourcentyp', () => {
     expect(r).toContain('MitKonto');
     expect(r).toContain('Add-ClusterResourceType -Name $rt -Dll $p.dll');
     expect(() => ressourcentypSkript({ dll: "C:\\x\\evil'.dll" })).toThrow();
+  });
+});
+
+// v1802 — Realfall F2 863292a9 Schritt 12: Fehler 35222, SQL lief seit vor der Registrierung des AG-Ressourcentyps
+describe('v1802 hadr_aktivieren mit Neustart', () => {
+  it('neustart überspringt den Schon-Fall und startet den Dienst neu', async () => {
+    const { hadrSkript } = await import('./sql-server.js');
+    expect(hadrSkript()).not.toContain('"neustart":true');
+    const s = hadrSkript(undefined, true);
+    expect(s).toContain('"neustart":true');
+    expect(s).toContain('$hatZugriff -and -not $p.neustart)');
+    expect(s).toContain("'neu gestartet'");
+    expect(hadrSkript('PROD', true)).toContain('"instanz":"PROD"');
   });
 });
