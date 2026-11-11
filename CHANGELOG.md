@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-Installationsmedien aus dem ISO kopieren (v1795)
+
+- `sql_server sql_medien_laden` lud das ISO erfolgreich, scheiterte aber beim Kopieren der Installationsdateien: Ohne vorhandenen Zielordner legte das Kopieren die erste Datei unter dem Ordnernamen an, danach ließen sich die Unterordner nicht mehr kopieren. Der Zielordner wird jetzt vorher angelegt. Ein bereits geladenes ISO aus einem früheren Lauf wird wiederverwendet; die Signaturprüfung von setup.exe bleibt.
+
 ### Added — Verbindungsprüfung von Windows-Rechnern aus, Umlaute in Windows-Ergebnissen (v1794)
 
 - `windows_cluster verbindung_pruefen` (lesend, auch außerhalb von Changes): prüft vom Windows-Rechner aus Namensauflösung, TCP-Verbindung und optional eine HTTPS-Anfrage zu einem Ziel. Gedacht als Prüfung eines Warte-Schritts nach dem Öffnen einer Firewall-Freigabe: Das Gateway übernimmt neue Regeln mit Verzögerung, ein sofortiger Download scheiterte deshalb.

@@ -19,6 +19,9 @@ describe('I8d Bausteine sql_server', () => {
     expect(m).toContain("O=Microsoft Corporation");
     expect(m).toContain("'/ACTION=Download'");
     expect(m).not.toContain('ReadAllBytes'); // ISO nicht komplett in den Speicher
+    // v1795 Realfall E2: Zielordner vor Copy-Item anlegen; ISO eines früheren Laufs wiederverwenden
+    expect(m.indexOf("New-Item -ItemType Directory -Path $setup -Force")).toBeLessThan(m.indexOf('Copy-Item -Path ($lw'));
+    expect(m).toContain('$r.isoWiederverwendet = $true');
   });
   it('Installation: gMSA-Dienste, getrennte Platten, Werte der Architektur als Standard, als Domänenkonto', () => {
     const p = pruefeInstallation(INST);

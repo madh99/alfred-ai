@@ -146,7 +146,8 @@ export function medienSkript(p: { url: string; art: 'installation' | 'cu'; sha25
     "if ($istExe) { $exe = [IO.Path]::ChangeExtension($datei, '.exe'); Move-Item $datei $exe -Force; $datei = $exe; $r.signatur = Signiert $datei; $r.version = [string](Get-Item $datei).VersionInfo.ProductVersion; $r.produkt = [string](Get-Item $datei).VersionInfo.FileDescription }",
     "if ($p.art -eq 'cu') { if (-not $istExe) { throw 'CU ist keine signierte .exe' }; $r.datei = $datei; Ergebnis $r; exit 0 }",
     '$iso = $null',
-    "if ($istExe) { $isoDir = Join-Path $basis 'iso'; New-Item -ItemType Directory -Path $isoDir -Force | Out-Null; $pr = Start-Process -FilePath $datei -ArgumentList @('/ACTION=Download', ('/MEDIAPATH=' + $isoDir), '/MEDIATYPE=ISO', '/QUIET', '/LANGUAGE=en-US') -Wait -PassThru; if ($pr.ExitCode -ne 0) { throw ('SSEI-Download Exit ' + $pr.ExitCode) }; $iso = @(Get-ChildItem $isoDir -Filter *.iso | Sort-Object LastWriteTime -Descending)[0] }",
+    // v1795 — ein ISO aus einem früheren Lauf wiederverwenden (setup.exe wird unten ohnehin auf die Microsoft-Signatur geprüft)
+    "if ($istExe) { $isoDir = Join-Path $basis 'iso'; New-Item -ItemType Directory -Path $isoDir -Force | Out-Null; $alt = @(Get-ChildItem $isoDir -Filter *.iso -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending); if ($alt.Count) { $iso = $alt[0]; $r.isoWiederverwendet = $true } else { $pr = Start-Process -FilePath $datei -ArgumentList @('/ACTION=Download', ('/MEDIAPATH=' + $isoDir), '/MEDIATYPE=ISO', '/QUIET', '/LANGUAGE=en-US') -Wait -PassThru; if ($pr.ExitCode -ne 0) { throw ('SSEI-Download Exit ' + $pr.ExitCode) }; $iso = @(Get-ChildItem $isoDir -Filter *.iso | Sort-Object LastWriteTime -Descending)[0] } }",
     "else { $iso = Get-Item ([IO.Path]::ChangeExtension($datei, '.iso')) -ErrorAction SilentlyContinue; if (-not $iso) { Move-Item $datei ([IO.Path]::ChangeExtension($datei, '.iso')) -Force; $iso = Get-Item ([IO.Path]::ChangeExtension($datei, '.iso')) } }",
     "if (-not $iso) { throw 'kein ISO nach dem Download' }",
     "$r.iso = $iso.Name; $r.isoSha256 = (Get-FileHash -Path $iso.FullName -Algorithm SHA256).Hash.ToLower()",
@@ -154,6 +155,9 @@ export function medienSkript(p: { url: string; art: 'installation' | 'cu'; sha25
     'try {',
     "  $lw = [string]($m | Get-Volume).DriveLetter + ':\\'",
     "  $setup = Join-Path $basis 'setup'; if (Test-Path $setup) { Remove-Item $setup -Recurse -Force }",
+    // v1795 — Realfall 11.11. E2 3857bbd0: ohne vorhandenen Zielordner legte Copy-Item die erste Datei als „setup“ an, danach
+    // „Container cannot be copied onto existing leaf item“ (E:\\redist). Ordner zuerst anlegen.
+    '  New-Item -ItemType Directory -Path $setup -Force | Out-Null',
     '  Copy-Item -Path ($lw + \'*\') -Destination $setup -Recurse -Force',
     '} finally { Dismount-DiskImage -ImagePath $iso.FullName | Out-Null }',
     "$se = Join-Path $setup 'setup.exe'",
