@@ -23,7 +23,9 @@ export const kopf = (p: unknown, mitEingabe: boolean) => [
   "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'",
   `$p = ${psText(JSON.stringify(p))} | ConvertFrom-Json`,
   ...(mitEingabe ? ['$e = [Console]::In.ReadToEnd() | ConvertFrom-Json'] : []),
-  `function Ergebnis($o) { [Console]::Out.WriteLine(${psText(AD_ERGEBNIS)} + ($o | ConvertTo-Json -Compress -Depth 5)) }`,
+  // v1794 — Realfall 11.11. C3: „vergr��ert“ — die Windows-Konsole schreibt in der OEM-Codepage. Nicht-ASCII als \\uXXXX ausgeben
+  // (gültiges JSON, unabhängig von Codepage und SSH)
+  `function Ergebnis($o) { $j = $o | ConvertTo-Json -Compress -Depth 5; $j = [regex]::Replace($j, '[^\\x00-\\x7F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value }); [Console]::Out.WriteLine(${psText(AD_ERGEBNIS)} + $j) }`,
 ];
 const dnsSetzen = "Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @($p.dns) }";
 /** v1789 — frei wählbares Ausführungskonto: „name“ oder „NETBIOS\\name“; ohne Angabe der Standard (alfred bzw. Administrator) */

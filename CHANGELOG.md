@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Verbindungsprüfung von Windows-Rechnern aus, Umlaute in Windows-Ergebnissen (v1794)
+
+- `windows_cluster verbindung_pruefen` (lesend, auch außerhalb von Changes): prüft vom Windows-Rechner aus Namensauflösung, TCP-Verbindung und optional eine HTTPS-Anfrage zu einem Ziel. Gedacht als Prüfung eines Warte-Schritts nach dem Öffnen einer Firewall-Freigabe: Das Gateway übernimmt neue Regeln mit Verzögerung, ein sofortiger Download scheiterte deshalb.
+- Ergebnisse der Windows-Bausteine kamen mit verstümmelten Umlauten an, weil die Windows-Konsole in ihrer eigenen Codepage schreibt. Nicht-ASCII-Zeichen werden jetzt als JSON-Escape übertragen und kommen unverändert an.
+
 ### Fixed — Vorab angelegte Computerobjekte bekommen ihre Rechte (v1793)
 
 - `windows_cluster computerobjekt_vorbereiten` legte das Computerobjekt an, scheiterte aber beim Setzen der objektgenauen Rechte: PowerShell liefert bei Verzeichniseinträgen Verzeichnisattribute statt der .NET-Eigenschaften, Sicherheitsoptionen, Zugriffsliste und Speichern sind nur über `psbase` erreichbar. Ein erneuter Lauf setzt die Rechte am schon vorhandenen Objekt.

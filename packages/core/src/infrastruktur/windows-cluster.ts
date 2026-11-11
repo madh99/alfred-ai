@@ -126,6 +126,40 @@ export function clusterStatusText(s: ClusterStatus): string {
 }
 
 /** Lesend (SYSTEM = Computerkonto): darf dieser Rechner das Kennwort der gMSA abrufen? Test-ADServiceAccount */
+/** v1794 — Realfall 11.11. E 1d741562: Download scheiterte Sekunden nach dem Öffnen der Firewall (Gateway noch nicht provisioniert). */
+export const ZIEL_HOST = /^(?=.{3,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/i;
+
+export function pruefeVerbindung(o: Record<string, unknown>): { ziel: string; port: number; url?: string } | string {
+  const ziel = String(o.ziel ?? '').trim().toLowerCase();
+  const port = o.port === undefined ? 443 : Number(o.port);
+  const url = typeof o.url === 'string' && o.url.trim() ? o.url.trim() : undefined;
+  if (!ZIEL_HOST.test(ziel) && !IPV4.test(ziel)) return 'ziel: Hostname oder IPv4, z. B. download.microsoft.com';
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return 'port: 1–65535 (Standard 443)';
+  if (url && (!/^https:\/\/[^\s'"]{3,400}$/.test(url) || new URL(url).hostname.toLowerCase() !== ziel)) return 'url: https-Adresse auf genau diesem ziel (HEAD-Anfrage)';
+  return { ziel, port, ...(url ? { url } : {}) };
+}
+
+/** Lesend: DNS, TCP-Verbindung (8 s) und optional HTTPS-HEAD vom Windows-Rechner aus — ändert nichts */
+export function verbindungSkript(p: { ziel: string; port: number; url?: string }): string {
+  return [
+    ...kopf(p, false),
+    '$r = [ordered]@{ ziel = $p.ziel; port = [int]$p.port; tcp = $false }',
+    "try { $r.ip = [string](@([Net.Dns]::GetHostAddresses($p.ziel) | Where-Object { $_.AddressFamily -eq 'InterNetwork' })[0]) } catch { $r.fehler = 'DNS: ' + $_.Exception.InnerException.Message }",
+    'if (-not $r.fehler) {',
+    '  $c = New-Object System.Net.Sockets.TcpClient; $sw = [Diagnostics.Stopwatch]::StartNew()',
+    '  try { $a = $c.BeginConnect($p.ziel, [int]$p.port, $null, $null); if ($a.AsyncWaitHandle.WaitOne(8000) -and $c.Connected) { $c.EndConnect($a); $r.tcp = $true; $r.ms = $sw.ElapsedMilliseconds } else { $r.fehler = \'TCP: keine Verbindung in 8 s\' } } catch { $r.fehler = \'TCP: \' + $_.Exception.InnerException.Message } finally { $c.Close() }',
+    '}',
+    "if ($r.tcp -and $p.url) { try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $w = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $p.url -TimeoutSec 20; $r.https = [int]$w.StatusCode } catch { $r.https = 0; $r.fehler = 'HTTPS: ' + $_.Exception.Message } }",
+    'Ergebnis $r',
+  ].join('\n');
+}
+
+export function verbindungText(r: { ziel: string; port: number; tcp: boolean; ip?: string; ms?: number; https?: number; fehler?: string }): string {
+  const ok = r.tcp && !r.fehler && (r.https === undefined || (r.https >= 200 && r.https < 400));
+  return ok ? `Verbindung ${r.ziel}:${r.port} ok (${r.ip ?? '?'}, ${r.ms ?? '?'} ms${r.https !== undefined ? `, HTTPS ${r.https}` : ''})`
+    : `Verbindung ${r.ziel}:${r.port} NICHT erreichbar${r.ip ? ` (${r.ip})` : ''}: ${r.fehler ?? `HTTPS ${r.https}`}`;
+}
+
 export function gmsaPruefenSkript(p: { name: string }): string {
   const innen = innenSkript(p, [
     'Import-Module ActiveDirectory',

@@ -10,7 +10,7 @@ import {
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
   computerobjektSkript, computerobjektEntfernenSkript, pruefeSpn, spnSkript, pruefeKnoten, validierenSkript, pruefeCluster, clusterAnlegenSkript,
-  clusterEntfernenSkript, pruefeZeuge, zeugeSkript, systemplatteSkript, FEATURES, type ClusterStatus, type Platte,
+  clusterEntfernenSkript, pruefeZeuge, zeugeSkript, systemplatteSkript, pruefeVerbindung, verbindungSkript, verbindungText, FEATURES, type ClusterStatus, type Platte,
 } from './windows-cluster.js';
 
 export interface WindowsClusterDeps {
@@ -21,7 +21,7 @@ export interface WindowsClusterDeps {
 }
 
 /** lesend, auch außerhalb eines Changes */
-export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen']);
+export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
   'cluster_entfernen', 'zeuge_setzen']);
@@ -38,6 +38,7 @@ export class WindowsClusterSkill extends Skill {
     description:
       'Windows-Failover-Cluster und Vorbereitung für SQL Server (I8d) über feste PowerShell-Bausteine auf Windows-Fernzugängen (zugang = Name des Fernzugangs). '
       + 'status (lesend, auch außerhalb von Changes): Features, Volumes mit Blockgröße, SMB-Freigaben, Cluster mit Knoten, Quorum/Zeuge und Ressourcen — als Prüfung z. B. erwartet „Cluster sqlcl01“, „sql02 Up“, „FileShareWitness“, „L: SQL-Log 20 GB (64 KB)“, „SQLBackup$=S:\\SQLBackup“. '
+      + 'verbindung_pruefen (lesend, auch außerhalb von Changes; zugang, ziel = Hostname/IPv4, port Standard 443, url optional = https-Adresse auf diesem ziel für eine HEAD-Anfrage) — DNS, TCP (8 s) und HTTPS vom Windows-Rechner aus; Ergebnis „Verbindung <ziel>:<port> ok (…)“ bzw. „NICHT erreichbar: …“ — als Prüfung eines warten-Schritts mit erwartet „ok“, z. B. nach dem Öffnen einer Firewall-Freigabe (das Gateway übernimmt neue Regeln mit Verzögerung). '
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
       + 'NUR als Schritte freigegebener Changes: systemplatte_erweitern (zugang) — C: auf die volle Plattengröße in Proxmox; liegt die Wiederherstellungspartition dahinter, wandert WinRE nach C: und nur diese Partition wird entfernt (ohne Rückweg; Ergebnis „C: … 63 → 100 GB“). platten_einrichten (zugang, platten [{groesse_gb, laufwerk, name, block_kb 4|64}] — rohe Platten über die Größe zugeordnet, Größen verschieden; SQL-Daten/Log/TempDB 64 KB; ein CD-Laufwerk auf dem Buchstaben weicht aus; ohne Rückweg). '
       + `features_installieren (zugang, features aus ${[...FEATURES].join(', ')}; Neustart falls nötig, wartet bis 20 min; ohne Rückweg). `
@@ -67,7 +68,7 @@ export class WindowsClusterSkill extends Skill {
         berechtigte: { type: 'array', items: { type: 'string' } }, ou: { type: 'string' },
         konto: { type: 'string' }, spns: { type: 'array', items: { type: 'string' } },
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
-        freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' },
+        freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
       },
@@ -94,6 +95,11 @@ export class WindowsClusterSkill extends Skill {
       const fehler = (f: unknown) => { if (typeof f === 'string') throw new Error(f); return f; };
       switch (action) {
         case 'status': { const s = await this.status(zugang); return { success: true, data: s, display: clusterStatusText(s) }; }
+        case 'verbindung_pruefen': {
+          const p = fehler(pruefeVerbindung(input)) as Parameters<typeof verbindungSkript>[0];
+          const r = await this.lauf<Parameters<typeof verbindungText>[0]>(zugang, verbindungSkript(p), 'Verbindung prüfen', 50_000);
+          return { success: true, data: r, display: verbindungText(r) };
+        }
         case 'gmsa_pruefen': {
           const g = fehler(pruefeGmsa({ name: input.name, berechtigte: 'x' })) as { name: string };
           const r = await this.lauf<{ name: string; nutzbar: boolean }>(zugang, gmsaPruefenSkript({ name: g.name }), 'gMSA prüfen', 240_000);

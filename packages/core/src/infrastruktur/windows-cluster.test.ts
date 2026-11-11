@@ -180,3 +180,23 @@ describe('v1791 systemplatte_erweitern', () => {
     expect(aktionsArt('windows_cluster', 'systemplatte_erweitern')).toBe('aendern');
   });
 });
+
+// v1794 — Realfall 11.11. E 1d741562: Download Sekunden nach dem Öffnen der Firewall gescheitert; Umlaute verstümmelt
+describe('v1794 verbindung_pruefen und Umlaute', () => {
+  it('lesend, prüft Ziel/URL, Text als Prüfung nutzbar', async () => {
+    const { pruefeVerbindung, verbindungText } = await import('./windows-cluster.js');
+    expect(pruefeVerbindung({ ziel: 'download.microsoft.com', url: 'https://download.microsoft.com/x.exe' })).toEqual({ ziel: 'download.microsoft.com', port: 443, url: 'https://download.microsoft.com/x.exe' });
+    expect(pruefeVerbindung({ ziel: 'download.microsoft.com', url: 'https://evil.example/x' })).toContain('url');
+    expect(pruefeVerbindung({ ziel: 'a b' })).toContain('ziel');
+    expect(verbindungText({ ziel: 'download.microsoft.com', port: 443, tcp: true, ip: '2.18.69.191', ms: 16, https: 200 })).toBe('Verbindung download.microsoft.com:443 ok (2.18.69.191, 16 ms, HTTPS 200)');
+    expect(verbindungText({ ziel: 'x.at', port: 443, tcp: false, ip: '1.2.3.4', fehler: 'TCP: keine Verbindung in 8 s' })).toBe('Verbindung x.at:443 NICHT erreichbar (1.2.3.4): TCP: keine Verbindung in 8 s');
+    expect(aktionsArt('windows_cluster', 'verbindung_pruefen')).toBe('lesen');
+    const skill = new WindowsClusterSkill({ skript: async () => ({ code: 0, stdout: 'ALFRED-AD {"ziel":"download.microsoft.com","port":443,"tcp":true,"ip":"2.18.69.191","ms":16}', stderr: '' }) });
+    expect((await skill.execute({ action: 'verbindung_pruefen', zugang: 'sql01', ziel: 'download.microsoft.com' }, {} as never)).display).toContain(' ok (');
+  });
+  it('Ergebnis gibt Nicht-ASCII als \\uXXXX aus; der Parser liest es zurück', async () => {
+    const { kopf, adErgebnis } = await import('./windows-ad.js');
+    expect(kopf({}, false).join('\n')).toContain("[regex]::Replace($j, '[^\\x00-\\x7F]'");
+    expect(adErgebnis<{ zustand: string }>('ALFRED-AD {"zustand":"vergr\\u00f6\\u00dfert"}')?.zustand).toBe('vergrößert');
+  });
+});
