@@ -191,6 +191,45 @@ export function pruefeFeatures(f: unknown): string[] | string {
 }
 
 /** Windows-Features installieren; braucht Windows einen Neustart, startet das Skript ihn (der Skill wartet danach) */
+/**
+ * v1791 — Realfall 11.11. fs01 (I8d B): Platte in Proxmox 100 GB, C: nur 63 GB. Windows-Setup legt die Wiederherstellungspartition
+ * (WinRE) HINTER C: an; Cloudbase-Init (ExtendVolumesPlugin) kann C: deshalb nicht vergrößern (SizeMax = aktuelle Größe). Ablauf:
+ * Speicher neu einlesen; ist Platz direkt hinter C:, nur vergrößern. Sonst — genau eine Wiederherstellungspartition hinter C: und
+ * dahinter freier Platz — WinRE nach C: zurücklegen (reagentc /disable kopiert winre.wim nach C:\Windows\System32\Recovery),
+ * nur diese Partition entfernen, C: auf das Maximum vergrößern, WinRE wieder einschalten (liegt dann auf C:). Andere Partitionen
+ * und Daten werden nie angefasst; ohne freien Platz geschieht nichts.
+ */
+export function systemplatteSkript(): string {
+  return [
+    ...kopf({}, false),
+    'Update-HostStorageCache',
+    "$c = Get-Partition -DriveLetter C; $vorher = [math]::Round($c.Size / 1GB, 1); $r = [ordered]@{ vorherGb = $vorher; winre = '' }",
+    '$max = (Get-PartitionSupportedSize -DriveLetter C).SizeMax',
+    "if ($max - $c.Size -gt 1GB) { Resize-Partition -DriveLetter C -Size $max; $r.zustand = 'vergrößert' }",
+    'else {',
+    '  $d = Get-Disk -Number $c.DiskNumber',
+    '  $teile = @(Get-Partition -DiskNumber $c.DiskNumber | Sort-Object Offset)',
+    '  $hinter = @($teile | Where-Object { $_.Offset -gt $c.Offset })',
+    '  $letzte = $teile[-1]',
+    '  $frei = $d.Size - ($letzte.Offset + $letzte.Size)',
+    "  if ($frei -lt 1GB) { $r.zustand = 'schon voll' }",
+    "  elseif ($hinter.Count -ne 1 -or $hinter[0].Type -ne 'Recovery') { throw ('hinter C: liegt nicht genau eine Wiederherstellungspartition (' + (($hinter | ForEach-Object { [string]$_.PartitionNumber + ':' + [string]$_.Type }) -join ', ') + ') — nichts geändert') }",
+    '  else {',
+    "    $aus = & reagentc.exe /disable 2>&1 | Out-String; if ($LASTEXITCODE -ne 0) { throw ('reagentc /disable Exit ' + $LASTEXITCODE + ': ' + $aus.Trim()) }",
+    "    if (-not (Test-Path 'C:\\Windows\\System32\\Recovery\\winre.wim')) { & reagentc.exe /enable | Out-Null; throw 'winre.wim nach reagentc /disable nicht auf C: — Wiederherstellungspartition bleibt' }",
+    '    Remove-Partition -DiskNumber $c.DiskNumber -PartitionNumber $hinter[0].PartitionNumber -Confirm:$false',
+    '    $max = (Get-PartitionSupportedSize -DriveLetter C).SizeMax',
+    '    Resize-Partition -DriveLetter C -Size $max',
+    "    $aus = & reagentc.exe /enable 2>&1 | Out-String; $r.winreEin = ($LASTEXITCODE -eq 0)",
+    "    $r.zustand = 'vergrößert (Wiederherstellungspartition entfernt, WinRE auf C:)'",
+    '  }',
+    '}',
+    "$info = & reagentc.exe /info 2>&1 | Out-String; $m = [regex]::Match($info, '(?im)^\\s*Windows RE (status|Status):\\s*(\\S+)'); $r.winre = $(if ($m.Success) { $m.Groups[2].Value } else { '?' })",
+    "$r.nachherGb = [math]::Round((Get-Partition -DriveLetter C).Size / 1GB, 1); $r.freiGb = [math]::Round((Get-Volume -DriveLetter C).SizeRemaining / 1GB, 1)",
+    'Ergebnis $r',
+  ].join('\n');
+}
+
 export function featuresSkript(p: { features: string[] }): string {
   return [
     ...kopf(p, false),

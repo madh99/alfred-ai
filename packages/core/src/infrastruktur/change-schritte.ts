@@ -104,7 +104,7 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   // I8c — Active Directory: Hochstufen, Beitritt, Papierkorb sind nicht sinnvoll zurückzunehmen (Herabstufen/Austritt = eigener Change); Sicherung und Beweis wirken nur additiv
   'wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis',
   // I8d — windows_cluster: Platten einrichten und Features installieren wirken additiv (Entfernen = eigener Change), Validieren schreibt nur einen Bericht
-  'platten_einrichten', 'features_installieren', 'cluster_validieren',
+  'platten_einrichten', 'features_installieren', 'cluster_validieren', 'systemplatte_erweitern',
   // I8d — sql_server: Medien/Installation/HADR additiv (Deinstallation = eigener Change); Prüfzeile, Sicherung und Wiederherstellungstest wirken nur additiv
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */

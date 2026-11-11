@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Systemplatte nutzt die volle Plattengröße (v1791)
+
+- Neue VMs aus der Windows-Vorlage hatten auf C: nur rund 63 GB, auch wenn die Platte in Proxmox größer war: Windows-Setup legt die Wiederherstellungspartition hinter C:, das automatische Vergrößern beim ersten Start scheitert daran. Neue Aktion `windows_cluster systemplatte_erweitern` (nur in freigegebenen Changes): Ist Platz direkt hinter C:, wird nur vergrößert. Sonst wird die Wiederherstellungsumgebung nach C: verlegt, ausschließlich die Wiederherstellungspartition hinter C: entfernt, C: auf die volle Größe gebracht und die Wiederherstellungsumgebung wieder eingeschaltet. Liegt etwas anderes hinter C: oder gibt es keinen freien Platz, ändert die Aktion nichts.
+
 ### Added — Clientbeweis über den Listener einer Verfügbarkeitsgruppe (I8d, v1790)
 
 - `sql_server listener_testen` (lesend, auch außerhalb von Changes): echte Anmeldung als Domänenkonto über den Listener per TCP mit Verschlüsselung. Das Ergebnis nennt Server und Rolle des Replikats dahinter, das Anmeldeverfahren (Kerberos oder NTLM), die Verschlüsselung, Zieladresse und Dauer und eignet sich als Prüfung in Changes. Solange kein Zertifikat einer eigenen Zertifizierungsstelle vorhanden ist, wird das Serverzertifikat nicht geprüft; das Ergebnis weist darauf hin.

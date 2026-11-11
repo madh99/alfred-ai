@@ -159,3 +159,20 @@ describe('v1789 Ausführungskonto wählbar', () => {
     expect((await skill.execute({ action: 'gmsa_anlegen', zugang: 'dc01', name: 'g', berechtigte: ['a'], ausfuehrungskonto: 'a;b', konto_tresor: 'fremd-admin' }, { ausChange: true } as never)).error).toContain('ausfuehrungskonto');
   });
 });
+
+// v1791 — Realfall 11.11. fs01: C: 63 statt 100 GB (Wiederherstellungspartition hinter C:)
+describe('v1791 systemplatte_erweitern', () => {
+  it('WinRE erst nach C:, nur eine Recovery-Partition hinter C: entfernen, sonst Abbruch ohne Änderung', async () => {
+    const { systemplatteSkript } = await import('./windows-cluster.js');
+    const s = systemplatteSkript();
+    expect(s.indexOf('reagentc.exe /disable')).toBeGreaterThan(-1);
+    expect(s.indexOf('reagentc.exe /disable')).toBeLessThan(s.indexOf('Remove-Partition'));
+    expect(s).toContain("$hinter.Count -ne 1 -or $hinter[0].Type -ne 'Recovery'");
+    expect(s).toContain("Test-Path 'C:\\Windows\\System32\\Recovery\\winre.wim'");
+    expect(s).toContain("if ($frei -lt 1GB) { $r.zustand = 'schon voll' }");
+    const skill = new WindowsClusterSkill({ skript: async () => ({ code: 0, stdout: 'ALFRED-AD {"vorherGb":63,"nachherGb":99.1,"freiGb":91.6,"zustand":"vergrößert (Wiederherstellungspartition entfernt, WinRE auf C:)","winre":"Enabled"}', stderr: '' }) });
+    expect((await skill.execute({ action: 'systemplatte_erweitern', zugang: 'fs01' }, {} as never)).error).toContain('nur als Schritt');
+    expect((await skill.execute({ action: 'systemplatte_erweitern', zugang: 'fs01' }, { ausChange: true } as never)).display).toBe('✅ C: auf fs01: vergrößert (Wiederherstellungspartition entfernt, WinRE auf C:), 63 → 99.1 GB (91.6 GB frei); WinRE Enabled');
+    expect(aktionsArt('windows_cluster', 'systemplatte_erweitern')).toBe('aendern');
+  });
+});

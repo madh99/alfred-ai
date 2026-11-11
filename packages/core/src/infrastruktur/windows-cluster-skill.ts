@@ -10,7 +10,7 @@ import {
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
   computerobjektSkript, computerobjektEntfernenSkript, pruefeSpn, spnSkript, pruefeKnoten, validierenSkript, pruefeCluster, clusterAnlegenSkript,
-  clusterEntfernenSkript, pruefeZeuge, zeugeSkript, FEATURES, type ClusterStatus, type Platte,
+  clusterEntfernenSkript, pruefeZeuge, zeugeSkript, systemplatteSkript, FEATURES, type ClusterStatus, type Platte,
 } from './windows-cluster.js';
 
 export interface WindowsClusterDeps {
@@ -22,7 +22,7 @@ export interface WindowsClusterDeps {
 
 /** lesend, auch außerhalb eines Changes */
 export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen']);
-const NUR_IM_CHANGE = new Set(['platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
+const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
   'cluster_entfernen', 'zeuge_setzen']);
 /** am DC mit dem Domänen-Administrator (Tresor Standard win-<zugang>-admin, wie windows_ad grundstruktur) */
@@ -39,7 +39,7 @@ export class WindowsClusterSkill extends Skill {
       'Windows-Failover-Cluster und Vorbereitung für SQL Server (I8d) über feste PowerShell-Bausteine auf Windows-Fernzugängen (zugang = Name des Fernzugangs). '
       + 'status (lesend, auch außerhalb von Changes): Features, Volumes mit Blockgröße, SMB-Freigaben, Cluster mit Knoten, Quorum/Zeuge und Ressourcen — als Prüfung z. B. erwartet „Cluster sqlcl01“, „sql02 Up“, „FileShareWitness“, „L: SQL-Log 20 GB (64 KB)“, „SQLBackup$=S:\\SQLBackup“. '
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
-      + 'NUR als Schritte freigegebener Changes: platten_einrichten (zugang, platten [{groesse_gb, laufwerk, name, block_kb 4|64}] — rohe Platten über die Größe zugeordnet, Größen verschieden; SQL-Daten/Log/TempDB 64 KB; ein CD-Laufwerk auf dem Buchstaben weicht aus; ohne Rückweg). '
+      + 'NUR als Schritte freigegebener Changes: systemplatte_erweitern (zugang) — C: auf die volle Plattengröße in Proxmox; liegt die Wiederherstellungspartition dahinter, wandert WinRE nach C: und nur diese Partition wird entfernt (ohne Rückweg; Ergebnis „C: … 63 → 100 GB“). platten_einrichten (zugang, platten [{groesse_gb, laufwerk, name, block_kb 4|64}] — rohe Platten über die Größe zugeordnet, Größen verschieden; SQL-Daten/Log/TempDB 64 KB; ein CD-Laufwerk auf dem Buchstaben weicht aus; ohne Rückweg). '
       + `features_installieren (zugang, features aus ${[...FEATURES].join(', ')}; Neustart falls nötig, wartet bis 20 min; ohne Rückweg). `
       + 'firewall_regel (zugang, name, protokoll TCP|UDP|ICMPv4, ports, von = exakte IPv4/Netze) ↔ firewall_regel_entfernen (zugang, name) — eingehend, Profil Any, Name „Alfred <name>“. '
       + 'freigabe_anlegen (zugang, name z. B. Witness$, pfad z. B. W:\\Witness, vollzugriff/aendern = Konten NETBIOS\\name, Computer/gMSA mit $) ↔ freigabe_entfernen (zugang, name; Ordner und Daten bleiben) — NTFS ohne Vererbung, nur SYSTEM, Administratoren und die Konten. '
@@ -103,6 +103,10 @@ export class WindowsClusterSkill extends Skill {
           const platten = fehler(pruefePlatten(input.platten)) as Platte[];
           const r = await this.lauf<{ platten: Array<{ laufwerk: string; zustand: string; groesseGb: number; blockKb?: number }> }>(zugang, plattenSkript({ platten }), 'Platten einrichten', 900_000);
           return { success: true, data: r, display: `✅ Platten auf ${zugang}: ${r.platten.map(x => `${x.laufwerk}: ${x.zustand} ${x.groesseGb} GB${x.blockKb ? ` (${x.blockKb} KB)` : ''}`).join(', ')}` };
+        }
+        case 'systemplatte_erweitern': {
+          const r = await this.lauf<{ vorherGb: number; nachherGb: number; freiGb: number; zustand: string; winre: string }>(zugang, systemplatteSkript(), 'Systemplatte erweitern', 600_000);
+          return { success: true, data: r, display: `✅ C: auf ${zugang}: ${r.zustand}, ${r.vorherGb} → ${r.nachherGb} GB (${r.freiGb} GB frei); WinRE ${r.winre}` };
         }
         case 'features_installieren': {
           const features = fehler(pruefeFeatures(input.features)) as string[];
