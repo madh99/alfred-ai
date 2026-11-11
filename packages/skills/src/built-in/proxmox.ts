@@ -57,6 +57,16 @@ interface VmEntry {
  * `vm_status` mit `{"vm":"git-server"}` vor, der Skill kannte nur `vmid` → „Missing required vmid“ bei jedem Klick.
  * Genau gleichnamig (ohne Groß/Klein) gewinnt, sonst — nur bei lesenden Aktionen — ein eindeutiger Teiltreffer; mehrdeutig oder unbekannt → klare Meldung.
  */
+/** I8d — Zusatzplatten für provision_windows_vm: extra_disks [GB, …] oder (älter) extra_disk_size; höchstens 6, je 1–4096 GB, verschieden */
+export function zusatzPlatten(input: Record<string, unknown>): number[] {
+  const roh = Array.isArray(input.extra_disks) ? input.extra_disks : typeof input.extra_disk_size === 'number' && input.extra_disk_size > 0 ? [input.extra_disk_size] : [];
+  const l = roh.map(x => Math.floor(Number(x)));
+  if (Array.isArray(input.extra_disks) && typeof input.extra_disk_size === 'number' && input.extra_disk_size > 0) throw new Error('extra_disks oder extra_disk_size, nicht beides');
+  if (l.length > 6 || l.some(x => !Number.isFinite(x) || x < 1 || x > 4096)) throw new Error('extra_disks: höchstens 6 Platten, je 1–4096 GB');
+  if (new Set(l).size !== l.length) throw new Error('extra_disks: Größen müssen verschieden sein (Windows ordnet die rohen Platten über die Größe zu)');
+  return l;
+}
+
 export function vmNameAufloesen(entries: { vmid: number; name?: string; node: string }[], name: string, opts: { nurGenau?: boolean } = {}): { vmid: number } | { fehler: string } {
   const n = name.trim().toLowerCase();
   if (!n) return { fehler: 'Leerer VM-Name' };
@@ -165,7 +175,7 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
-      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1). ' +
+      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
       'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
@@ -321,6 +331,7 @@ export class ProxmoxSkill extends Skill {
         vlan: { type: 'number', description: 'create_vlan_bridge: VLAN-ID' },
         ueber: { type: 'string', description: 'create_vlan_bridge: nicht VLAN-fähige Bridge/Netzkarte des Knotens, über die das VLAN läuft (z. B. vmbr0)' },
         extra_disk_size: { type: 'number', description: 'provision_windows_vm: zweite Platte in GB (scsi1, gleicher Speicher wie storage), z. B. Sicherungsplatte' },
+        extra_disks: { type: 'array', items: { type: 'number' }, description: 'provision_windows_vm: Zusatzplatten in GB als scsi1…scsiN (gleicher Speicher wie storage), z. B. [50, 20, 15, 30] für SQL D/L/T/B; Größen verschieden (Zuordnung in Windows über die Größe)' },
         schedule: { type: 'string', description: 'create_backup_job: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“' },
         keep_last: { type: 'number', description: 'create_backup_job: so viele Sicherungen je VM behalten (1–30)' },
         bwlimit: { type: 'number', description: 'create_backup_job: Bandbreitengrenze in KiB/s (optional, schont den Zielspeicher)' },
@@ -1815,6 +1826,7 @@ export class ProxmoxSkill extends Skill {
     const name = String(input.hostname ?? ''); const ip = String(input.ip ?? ''); const tpl = Number(input.template);
     if (!VM_NAME.test(name) || name.length > 15) return { success: false, error: 'hostname: Kleinbuchstaben, Ziffern, -, höchstens 15 Zeichen (Windows-Computername)' };
     if (!/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(ip) || typeof input.gateway !== 'string') return { success: false, error: 'ip als CIDR (z. B. 10.203.28.5/28) und gateway angeben' };
+    try { zusatzPlatten(input); } catch (err) { return { success: false, error: (err as Error).message }; }
     const alle = await this.getAllVms();
     const vorlage = alle.find(v => v.vmid === tpl);
     if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
@@ -1883,11 +1895,15 @@ export class ProxmoxSkill extends Skill {
       await this.post(`/nodes/${node}/qemu/${vmid}/config`, konfig);
       if (typeof input.disk_size === 'number' && input.disk_size > 0) await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
       // I8c — zweite Platte (z. B. Systemstatus-Sicherung eines DC); Windows sieht sie roh, Einrichten macht der AD-Baustein
-      if (typeof input.extra_disk_size === 'number' && input.extra_disk_size > 0) {
+      // I8d — mehrere Datenplatten (SQL: D/L/T/B, fs01: W/S) als scsi1…scsiN; Windows sieht sie roh, Einrichten macht windows_cluster platten_einrichten
+      const zusatz = zusatzPlatten(input);
+      if (zusatz.length) {
         const st = (typeof input.storage === 'string' && input.storage) || /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
-        if (!st) throw new Error('Speicher für die zweite Platte unbekannt (storage angeben)');
-        await this.post(`/nodes/${node}/qemu/${vmid}/config`, { scsi1: `${st}:${Math.floor(input.extra_disk_size)},discard=on,iothread=1,ssd=1` });
-        schritte.push(`zweite Platte ${Math.floor(input.extra_disk_size)} GB (scsi1, ${st})`);
+        if (!st) throw new Error('Speicher für die Zusatzplatten unbekannt (storage angeben)');
+        const neu: Record<string, string> = {};
+        zusatz.forEach((gb, i) => { neu[`scsi${i + 1}`] = `${st}:${gb},discard=on,iothread=1,ssd=1`; });
+        await this.post(`/nodes/${node}/qemu/${vmid}/config`, neu);
+        schritte.push(`${zusatz.length === 1 ? 'zweite Platte' : `${zusatz.length} Zusatzplatten`} ${zusatz.map((gb, i) => `scsi${i + 1} ${gb} GB`).join(', ')} (${st})`);
       }
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
       schritte.push(`gestartet mit ${ip}; Windows richtet sich ein (Name, Netz, Schlüssel) — mit Neustart`);

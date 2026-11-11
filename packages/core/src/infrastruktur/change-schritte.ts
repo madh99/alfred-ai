@@ -102,7 +102,9 @@ const LOESCH_MUSTER = /^(delete_vm|delete_backup(?!_job)|destroy|destroy_vm|dele
 /** Ändernde Aktionen, für die es keinen Rückweg geben kann (Grund ist anzugeben) */
 const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'isolate_vm', 'image_hochladen', 'image_holen',
   // I8c — Active Directory: Hochstufen, Beitritt, Papierkorb sind nicht sinnvoll zurückzunehmen (Herabstufen/Austritt = eigener Change); Sicherung und Beweis wirken nur additiv
-  'wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
+  'wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis',
+  // I8d — windows_cluster: Platten einrichten und Features installieren wirken additiv (Entfernen = eigener Change), Validieren schreibt nur einen Bericht
+  'platten_einrichten', 'features_installieren', 'cluster_validieren']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
 const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
@@ -188,6 +190,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'gitlab') return 'lesen';
   // I8c — windows_ad: nur status liest; alle Bausteine ändern
   if (skill === 'windows_ad') return aktion === 'status' || aktion === 'dns_aufloesen' ? 'lesen' : 'aendern';
+  // I8d — windows_cluster: status und gmsa_pruefen lesen; alle Bausteine ändern
+  if (skill === 'windows_cluster') return aktion === 'status' || aktion === 'gmsa_pruefen' ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
   return LESE_MUSTER.test(aktion) ? 'lesen' : 'aendern';

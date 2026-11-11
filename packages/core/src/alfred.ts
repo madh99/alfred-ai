@@ -7168,6 +7168,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         }));
         this.logger.info('I8c Windows-AD-Skill registriert');
+        // I8d — Failover-Cluster und SQL-Vorbereitung über feste Bausteine (nur in Changes außer status/gmsa_pruefen)
+        const { WindowsClusterSkill } = await import('./infrastruktur/windows-cluster-skill.js');
+        skillRegistry.register(new WindowsClusterSkill({
+          skript: (zugang, befehl, eingabe, timeoutMs, zweck) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.windowsSkript(zugang, befehl, eingabe, timeoutMs, zweck); },
+          tresor: {
+            namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
+            lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        }));
+        this.logger.info('I8d Windows-Cluster-Skill registriert');
       }
       // v1658 — GitLab und seine Container-Registry, nur lesend (Owner 25.10.)
       const gl = this.config.codeAgents?.forge?.gitlab;

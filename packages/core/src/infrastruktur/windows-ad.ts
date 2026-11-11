@@ -12,21 +12,21 @@ export const AD_ERGEBNIS = 'ALFRED-AD ';
 /** Domänenname wie ad.3033.at; NetBIOS höchstens 15 Zeichen, Großbuchstaben/Ziffern/Bindestrich */
 export const AD_DOMAENE = /^(?=.{3,64}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
 export const AD_NETBIOS = /^[A-Z0-9][A-Z0-9-]{0,14}$/;
-const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+export const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const OU_NAME = /^[\p{L}\p{N} ._-]{1,60}$/u;
 const DNS_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
 const NTP = /^[a-z0-9.-]{3,80}$/i;
 
 /** PowerShell-Literal in einfachen Anführungszeichen (nur ' verdoppeln) */
-const psText = (s: string) => `'${s.replace(/'/g, "''")}'`;
-const kopf = (p: unknown, mitEingabe: boolean) => [
+export const psText = (s: string) => `'${s.replace(/'/g, "''")}'`;
+export const kopf = (p: unknown, mitEingabe: boolean) => [
   "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'",
   `$p = ${psText(JSON.stringify(p))} | ConvertFrom-Json`,
   ...(mitEingabe ? ['$e = [Console]::In.ReadToEnd() | ConvertFrom-Json'] : []),
   `function Ergebnis($o) { [Console]::Out.WriteLine(${psText(AD_ERGEBNIS)} + ($o | ConvertTo-Json -Compress -Depth 5)) }`,
 ];
 const dnsSetzen = "Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @($p.dns) }";
-const neustart = (grund: string) => `shutdown.exe /r /t 20 /d p:4:1 /c ${psText(`Alfred: ${grund}`)}`;
+export const neustart = (grund: string) => `shutdown.exe /r /t 20 /d p:4:1 /c ${psText(`Alfred: ${grund}`)}`;
 
 export interface AdStatus {
   rechner: string; domaene: string; mitglied: boolean; rolle: number;

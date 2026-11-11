@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bausteine für Windows-Failover-Cluster (I8d, v1788)
+
+- Neuer Skill `windows_cluster` mit festen, geprüften PowerShell-Bausteinen, die nur als Schritte freigegebener Changes laufen: Datenplatten einrichten (NTFS mit wählbarer Blockgröße, 64 KB für SQL-Daten, -Log und -TempDB), Windows-Features aus einer festen Liste, eingehende Firewall-Regeln nur für exakt genannte Gegenstellen, SMB-Freigaben mit eigenem NTFS-Schutz, gMSA mit genau den berechtigten Computern, vorab angelegte Computerobjekte für Cluster und Listener mit Rechten nur auf das einzelne Objekt, SPNs mit Dublettenprüfung, Cluster-Validierung, Cluster ohne gemeinsamen Speicher und Dateifreigabe-Zeuge. Zu jeder Änderung mit möglichem Rückweg gibt es die Gegenaktion.
+- Doppel-Hop ohne Delegation: Schritte, die andere Rechner erreichen müssen, laufen als einmalige geplante Aufgabe mit Kennwort-Anmeldung des Domänenkontos. Das Kennwort kommt nur über die Standardeingabe, der Skriptordner ist auf SYSTEM und Administratoren beschränkt, Aufgabe und Dateien werden immer entfernt.
+- Lesend auch außerhalb von Changes: Cluster-Status (Features, Volumes mit Blockgröße, Freigaben, Knoten, Quorum und Zeuge, Ressourcen) und die Prüfung, ob ein Rechner das Kennwort einer gMSA abrufen darf.
+- `provision_windows_vm` legt mit `extra_disks` mehrere Zusatzplatten auf einmal an.
+
 ### Fixed — Lange Change-Aktionen warten mit ihrer Prüfung bis zum Zeitlimit (v1787)
 
 - Die Prüfung einer Aktion lief mit fester Versuchszahl (rund eine halbe Minute), auch wenn der Schritt ein Zeitlimit von Stunden hatte. Eine im Hintergrund gestartete Garbage Collection galt so nach 26 Sekunden als gescheitert; der Rückweg setzte währenddessen eine Voraussetzung zurück und brachte den laufenden Vorgang zum Scheitern. Bei einem Zeitlimit über dem Standard wartet die Prüfung jetzt wie ein Warte-Schritt bis zum Zeitlimit; eine Abbruch-Bedingung endet sofort.
