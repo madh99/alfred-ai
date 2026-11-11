@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Vorab angelegte Computerobjekte bekommen ihre Rechte (v1793)
+
+- `windows_cluster computerobjekt_vorbereiten` legte das Computerobjekt an, scheiterte aber beim Setzen der objektgenauen Rechte: PowerShell liefert bei Verzeichniseinträgen Verzeichnisattribute statt der .NET-Eigenschaften, Sicherheitsoptionen, Zugriffsliste und Speichern sind nur über `psbase` erreichbar. Ein erneuter Lauf setzt die Rechte am schon vorhandenen Objekt.
+
 ### Fixed — Cluster-Status nennt die Systemplatte (v1792)
 
 - `windows_cluster status` ließ C: in der Volumeliste aus. Die Größe der Systemplatte war damit nach `systemplatte_erweitern` nicht als Prüfung in einem Change belegbar. C: steht jetzt mit Größe und Blockgröße am Anfang der Liste.

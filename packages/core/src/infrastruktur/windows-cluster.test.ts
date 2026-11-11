@@ -53,6 +53,10 @@ describe('I8d Bausteine windows_cluster', () => {
     expect(c).toContain('-Enabled $false');
     expect(c).toContain("ActiveDirectoryAccessRule($sid, 'GenericAll', 'Allow')");
     expect(c).not.toMatch(/OU=.*GenericAll/); // keine OU-weiten Rechte
+    // v1793 Realfall 11.11. D 29b174b5: DirectoryEntry-Eigenschaften in PowerShell nur über psbase (Adapter liefert LDAP-Attribute)
+    expect(c).toContain('$de.psbase.ObjectSecurity.AddAccessRule');
+    expect(c).toContain('$de.psbase.CommitChanges()');
+    expect(c).not.toMatch(/\$de\.(Options|ObjectSecurity|CommitChanges)/);
     expect(pruefeSpn({ konto: 'gmsa-sqleng$', spns: ['MSSQLSvc/sql01.ad.3033.at:1433', 'MSSQLSvc/sql01.ad.3033.at'] })).toMatchObject({ konto: 'gmsa-sqleng$' });
     expect(pruefeSpn({ konto: 'gmsa-sqleng$', spns: ['kein spn'] })).toContain('spns');
     expect(spnSkript({ konto: 'gmsa-sqleng$', spns: ['MSSQLSvc/sql01.ad.3033.at:1433'] })).toContain("throw ('SPN ' + $s + ' hängt schon an '");
