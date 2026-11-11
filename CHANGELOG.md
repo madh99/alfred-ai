@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — HADR einschalten gibt dem SQL-Dienst Zugriff auf den Cluster (v1799)
+
+- `sql_server hadr_aktivieren` setzte nur den Registry-Schalter. Der SQL-Dienst wartete danach dauerhaft auf den Clusterdienst, und das Anlegen einer Verfügbarkeitsgruppe scheiterte, weil sein Dienstkonto keinen Zugriff auf den Cluster hatte. Die Aktion gibt dem Dienstkonto der Instanz jetzt wie das Microsoft-Werkzeug Vollzugriff auf den Cluster, startet den Dienst neu und meldet erst Erfolg, wenn die Verbindung zum Cluster steht.
+
 ### Fixed — Cluster-Status nennt den Zeugentyp (v1798)
 
 - Windows Server 2025 meldet den Quorumtyp eines Clusters mit Dateifreigabe-Zeuge nur als „Majority“. Prüfungen auf „FileShareWitness“ schlugen deshalb fehl, obwohl der Zeuge online war. `windows_cluster status` nennt den Zeugen jetzt mit seinem Typ, z. B. „Zeuge FileShareWitness \\fs01…\Witness$ Online“.

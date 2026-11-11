@@ -169,3 +169,17 @@ describe('v1790 listener_testen', () => {
     expect((await skill.execute({ action: 'listener_testen', zugang: 'x', listener: 'sqlag01', konto_tresor: 'win-dc01-admin' }, {} as never)).error).toContain('listener');
   });
 });
+
+// v1799 — Realfall F2 863292a9 Schritt 9: SQL-Dienst-SID fehlte in Get-ClusterAccess (HadrManagerStatus 0)
+describe('v1799 hadr_aktivieren mit Clusterzugriff', () => {
+  it('gibt dem Dienstkonto Clusterzugriff, startet neu und wartet auf HadrManagerStatus 1', async () => {
+    const { hadrSkript } = await import('./sql-server.js');
+    const s = hadrSkript();
+    expect(s).toContain("$konto = 'NT SERVICE\\' + $svc");
+    expect(s).toContain('Grant-ClusterAccess -User $konto -Full');
+    expect(s.indexOf('Grant-ClusterAccess')).toBeLessThan(s.indexOf('Restart-Service -Name $svc'));
+    expect(s).toContain("HadrManagerStatus");
+    expect(s).toContain("if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) { Ergebnis @{ zustand = 'schon'");
+    expect(hadrSkript('PROD')).toContain('"instanz":"PROD"');
+  });
+});
