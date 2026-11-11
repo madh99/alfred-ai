@@ -108,7 +108,8 @@ export function clusterStatusSkript(): string {
     '    Import-Module FailoverClusters',
     '    $cl = Get-Cluster; $q = Get-ClusterQuorum',
     "    $k = [ordered]@{ name = [string]$cl.Name; knoten = @(Get-ClusterNode | ForEach-Object { [ordered]@{ name = [string]$_.Name; zustand = [string]$_.State } }); quorum = [string]$q.QuorumType; ressourcen = @(Get-ClusterResource | ForEach-Object { [ordered]@{ name = [string]$_.Name; typ = [string]$_.ResourceType; zustand = [string]$_.State; gruppe = [string]$_.OwnerGroup } }) }",
-    "    if ($q.QuorumResource) { $k.zeuge = [string]$q.QuorumResource.Name + ' ' + [string]$q.QuorumResource.State; $pa = @(Get-ClusterResource -Name $q.QuorumResource.Name | Get-ClusterParameter -Name SharePath -ErrorAction SilentlyContinue); if ($pa.Count -and $pa[0].Value) { $k.zeuge = [string]$pa[0].Value + ' ' + [string]$q.QuorumResource.State } }",
+    "    if ($q.QuorumResource) { $typ = ([string]$q.QuorumResource.ResourceType) -replace ' ', ''; $k.zeuge = $typ + ' ' + [string]$q.QuorumResource.Name + ' ' + [string]$q.QuorumResource.State; $pa = @(Get-ClusterResource -Name $q.QuorumResource.Name | Get-ClusterParameter -Name SharePath -ErrorAction SilentlyContinue); if ($pa.Count -and $pa[0].Value) { $k.zeuge = $typ + ' ' + [string]$pa[0].Value + ' ' + [string]$q.QuorumResource.State } }",
+    // v1798 Realfall F1 229965b1: Server 2025 meldet den Quorumtyp nur als „Majority“ — Zeugentyp (FileShareWitness/CloudWitness/DiskWitness) mit ausgeben
     '    $r.cluster = $k',
     '  } catch { $r.clusterFehler = $_.Exception.Message }',
     '}',

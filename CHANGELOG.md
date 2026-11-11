@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Cluster-Status nennt den Zeugentyp (v1798)
+
+- Windows Server 2025 meldet den Quorumtyp eines Clusters mit Dateifreigabe-Zeuge nur als „Majority“. Prüfungen auf „FileShareWitness“ schlugen deshalb fehl, obwohl der Zeuge online war. `windows_cluster status` nennt den Zeugen jetzt mit seinem Typ, z. B. „Zeuge FileShareWitness \\fs01…\Witness$ Online“.
+
 ### Fixed — Cluster-Anlage meldet Erfolg auch direkt nach dem Anlegen (v1797)
 
 - `windows_cluster cluster_anlegen` legte den Cluster erfolgreich an, meldete aber einen Fehler: Die anschließende Abfrage der Knoten lief über den neuen Clusternamen, der unmittelbar nach dem Anlegen noch nicht erreichbar war. Die Knoten werden jetzt lokal abgefragt; ein erneuter Lauf erkennt den vorhandenen Cluster.

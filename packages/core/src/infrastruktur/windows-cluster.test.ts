@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pruefePlatten, plattenSkript, pruefeFeatures, pruefeFirewall, firewallSkript, pruefeFreigabe, freigabeSkript, pruefeGmsa, gmsaSkript, pruefeComputerobjekt,
   computerobjektSkript, pruefeSpn, spnSkript, pruefeKnoten, pruefeCluster, pruefeZeuge, validierenSkript, clusterAnlegenSkript, zeugeSkript, gmsaPruefenSkript,
-  clusterStatusText, innenSkript, MIT_KONTO, type ClusterStatus,
+  clusterStatusText, clusterStatusSkript, innenSkript, MIT_KONTO, type ClusterStatus,
 } from './windows-cluster.js';
 import { WindowsClusterSkill } from './windows-cluster-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
@@ -78,6 +78,8 @@ describe('I8d Bausteine windows_cluster', () => {
     expect(clusterAnlegenSkript({ name: 'sqlcl01', knoten: ['sql01', 'sql02'], ip: '10.203.30.4' })).toContain('-NoStorage -AdministrativeAccessPoint ActiveDirectoryAndDns');
     // v1797 Realfall F1 229965b1: direkt nach New-Cluster ist der Clustername noch nicht öffnbar — Knoten lokal abfragen
     expect(clusterAnlegenSkript({ name: 'sqlcl01', knoten: ['sql01', 'sql02'], ip: '10.203.30.4' })).not.toContain('Get-ClusterNode -Cluster');
+    // v1798 Realfall F1: Zeugentyp im Status
+    expect(clusterStatusSkript()).toContain("$typ = ([string]$q.QuorumResource.ResourceType) -replace ' ', ''");
     expect(zeugeSkript({ freigabe: '\\\\fs01\\Witness$' })).toContain('Set-ClusterQuorum -FileShareWitness $p.freigabe');
     expect(gmsaPruefenSkript({ name: 'gmsa-sqleng' })).toContain("MitKonto 'SYSTEM' ''");
     // das innere Skript sieht nie das Kennwort
