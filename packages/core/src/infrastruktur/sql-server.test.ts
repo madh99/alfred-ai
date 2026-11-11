@@ -218,3 +218,16 @@ describe('v1802 hadr_aktivieren mit Neustart', () => {
     expect(hadrSkript('PROD', true)).toContain('"instanz":"PROD"');
   });
 });
+
+// v1803 — Realfall F2 863292a9 Schritt 14: 35222 trotz Neustart, Clusterprotokoll HadrAgNameToIdMap error 5
+describe('v1803 hadr_aktivieren über WMI ChangeHADRService', () => {
+  it('schaltet wie der Configuration Manager aus und ein, Registry nur als Rückfall', async () => {
+    const { hadrSkript } = await import('./sql-server.js');
+    const s = hadrSkript(undefined, true);
+    expect(s).toContain("$ns = 'root\\Microsoft\\SqlServer\\ComputerManagement' + ($instId -replace '^MSSQL(\\d+)\\..*$', '$1')");
+    expect(s).toContain('-MethodName ChangeHADRService');
+    expect(s).toContain("if ($p.neustart -and (Hs)[0].HADRServiceEnabled) { Hadr 0; $r.ausUndEin = $true }; Hadr 1; $r.weg = 'wmi'");
+    expect(s.indexOf('Hadr 1')).toBeLessThan(s.indexOf("Set-ItemProperty -Path $k -Name 'HADR_Enabled'"));
+    expect(s.indexOf("$r.weg = 'registry'")).toBeLessThan(s.indexOf('Restart-Service -Name $svc'));
+  });
+});

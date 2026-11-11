@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — HADR wird wie im SQL Server Configuration Manager eingeschaltet (v1803)
+
+- Das Anlegen der Verfügbarkeitsgruppe scheiterte auch nach einem Neustart mit Fehler 35222. Laut Clusterprotokoll durfte SQL einen Schlüssel der Cluster-Datenbank nicht öffnen (`HadrAgNameToIdMap`, Fehler 5). `sql_server hadr_aktivieren` schaltet Always On jetzt über die SQL-eigene WMI-Schnittstelle `ChangeHADRService` ein. Mit `neustart: true` wird es erst aus- und dann wieder eingeschaltet, wie es die Fehlertexte 41105 und 35222 verlangen. Der Registry-Schalter dient nur noch als Rückfall, wenn die Schnittstelle fehlt.
+
 ### Fixed — SQL-Neustart nach Registrierung des AG-Ressourcentyps (v1802)
 
 - Nach der Registrierung des Cluster-Ressourcentyps scheiterte das Anlegen der Verfügbarkeitsgruppe mit Fehler 35222 (kein Zugriff auf den Cluster). SQL Server lief seit der Zeit vor der Registrierung. `sql_server hadr_aktivieren` startet den Dienst nach einer Registrierung jetzt neu und wartet, bis der HADR-Manager wieder läuft. Mit `neustart: true` lässt sich der Neustart auch erzwingen, etwa auf dem Partnerknoten.

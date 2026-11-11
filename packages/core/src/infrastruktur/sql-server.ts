@@ -264,6 +264,9 @@ export function konfigurierenSkript(p: { max_speicher_mb?: number; maxdop?: numb
  * v1802 — Realfall F2 Schritt 12 (12.11.): nach der Registrierung CREATE AVAILABILITY GROUP mit Fehler 35222 („does not have
  * permissions to access the WSFC cluster … restart the SQL Server service“) — SQL lief seit vor der Registrierung. neustart = true
  * startet den Dienst auch im Schon-Fall neu und wartet wieder auf HadrManagerStatus 1.
+ * v1803 — Realfall F2 Schritt 14: trotz Neustart wieder 35222; Clusterprotokoll „s_ApiOpenKey: HadrAgNameToIdMap failed with
+ * error 5“. Eingeschaltet wird jetzt wie im SQL Server Configuration Manager über WMI HADRServiceSettings.ChangeHADRService
+ * (bei neustart erst aus, dann ein — so verlangen es die Fehlertexte 41105/35222); Registry-Schalter nur, wenn die Klasse fehlt.
  * Wiederholbar: ist alles da, „schon“.
  */
 export function hadrSkript(instanz?: string, neustart = false): string {
@@ -281,9 +284,14 @@ export function hadrSkript(instanz?: string, neustart = false): string {
     "if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff -and -not $p.neustart) { if ($hatTyp) { Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'schon' }; exit 0 }; Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'fehlt'; dll = (DllPfad) }; exit 0 }",
     "$r = [ordered]@{ konto = $konto; zugriff = $(if ($hatZugriff) { 'schon' } else { 'neu' }) }",
     'if (-not $hatZugriff) { Grant-ClusterAccess -User $konto -Full | Out-Null }',
-    "$k = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\MSSQLServer\\HADR'",
-    'if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }',
-    "Set-ItemProperty -Path $k -Name 'HADR_Enabled' -Value 1 -Type DWord",
+    "$ns = 'root\\Microsoft\\SqlServer\\ComputerManagement' + ($instId -replace '^MSSQL(\\d+)\\..*$', '$1')",
+    "function Hs { @(Get-CimInstance -Namespace $ns -ClassName HADRServiceSettings -ErrorAction SilentlyContinue | Where-Object { [string]$_.InstanceName -eq $inst }) }",
+    "function Hadr([uint32]$an) { $x = Invoke-CimMethod -InputObject (Hs)[0] -MethodName ChangeHADRService -Arguments @{ HADRServiceEnabled = $an }; if ($x.ReturnValue -ne 0) { throw ('ChangeHADRService(' + $an + ') ReturnValue ' + $x.ReturnValue) } }",
+    "if ((Hs).Count) { if ($p.neustart -and (Hs)[0].HADRServiceEnabled) { Hadr 0; $r.ausUndEin = $true }; Hadr 1; $r.weg = 'wmi' } else {",
+    "  $k = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\MSSQLServer\\HADR'",
+    '  if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }',
+    "  Set-ItemProperty -Path $k -Name 'HADR_Enabled' -Value 1 -Type DWord; $r.weg = 'registry'",
+    '}',
     'Restart-Service -Name $svc -Force',
     "Start-Service -Name $agt -ErrorAction SilentlyContinue",
     '$bis = (Get-Date).AddMinutes(5); $h = 0; $m = 0',
