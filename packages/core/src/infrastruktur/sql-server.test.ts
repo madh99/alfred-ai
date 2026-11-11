@@ -226,8 +226,19 @@ describe('v1803 hadr_aktivieren über WMI ChangeHADRService', () => {
     const s = hadrSkript(undefined, true);
     expect(s).toContain("$ns = 'root\\Microsoft\\SqlServer\\ComputerManagement' + ($instId -replace '^MSSQL(\\d+)\\..*$', '$1')");
     expect(s).toContain('-MethodName ChangeHADRService');
-    expect(s).toContain("if ($p.neustart -and (Hs)[0].HADRServiceEnabled) { Hadr 0; $r.ausUndEin = $true }; Hadr 1; $r.weg = 'wmi'");
+    expect(s).toContain("if ($p.neustart -and @(Hs)[0].HADRServiceEnabled) { Hadr 0; $r.ausUndEin = $true }; Hadr 1; $r.weg = 'wmi'");
     expect(s.indexOf('Hadr 1')).toBeLessThan(s.indexOf("Set-ItemProperty -Path $k -Name 'HADR_Enabled'"));
     expect(s.indexOf("$r.weg = 'registry'")).toBeLessThan(s.indexOf('Restart-Service -Name $svc'));
+  });
+});
+
+// v1804 — Realfall F2 Schritt 14/15: (Hs).Count war leer (PS 5.1 entrollt das Ein-Element-Array, CimInstance ohne Count) → Registry-Weg
+describe('v1804 HADRServiceSettings als Array zählen', () => {
+  it('nutzt @(Hs) für Count und Index', async () => {
+    const { hadrSkript } = await import('./sql-server.js');
+    const s = hadrSkript(undefined, true);
+    expect(s).toContain('if (@(Hs).Count)');
+    expect(s).toContain('-InputObject @(Hs)[0]');
+    expect(s).not.toMatch(/[^@]\(Hs\)(\.Count|\[0\])/);
   });
 });

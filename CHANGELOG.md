@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — HADR-WMI-Schnittstelle wird zuverlässig erkannt (v1804)
+
+- `sql_server hadr_aktivieren` fiel trotz vorhandener WMI-Schnittstelle auf den Registry-Schalter zurück. In Windows PowerShell 5.1 wird ein einzelnes Ergebnis aus einer Funktion entpackt, und die Anzahl einer einzelnen CIM-Instanz war danach leer. Die Abfrage wird jetzt ausdrücklich als Liste gezählt.
+
 ### Fixed — HADR wird wie im SQL Server Configuration Manager eingeschaltet (v1803)
 
 - Das Anlegen der Verfügbarkeitsgruppe scheiterte auch nach einem Neustart mit Fehler 35222. Laut Clusterprotokoll durfte SQL einen Schlüssel der Cluster-Datenbank nicht öffnen (`HadrAgNameToIdMap`, Fehler 5). `sql_server hadr_aktivieren` schaltet Always On jetzt über die SQL-eigene WMI-Schnittstelle `ChangeHADRService` ein. Mit `neustart: true` wird es erst aus- und dann wieder eingeschaltet, wie es die Fehlertexte 41105 und 35222 verlangen. Der Registry-Schalter dient nur noch als Rückfall, wenn die Schnittstelle fehlt.
