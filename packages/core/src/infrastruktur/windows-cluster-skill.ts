@@ -5,7 +5,7 @@
  */
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import { kodiert, adErgebnis, clixmlFehler } from './windows-ad.js';
+import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
@@ -50,6 +50,7 @@ export class WindowsClusterSkill extends Skill {
       + 'cluster_validieren (zugang = ein Knoten, knoten) — Test-Cluster Inventory/Network/System Configuration, Ergebnis „Validierung bestanden|Warnungen|fehlgeschlagen“ (ohne Rückweg); '
       + 'cluster_anlegen (zugang = ein Knoten, name = CNO, knoten, ip) — ohne Speicher, AD+DNS ↔ cluster_entfernen (zugang, name; CNO bleibt deaktiviert im AD); '
       + 'zeuge_setzen (zugang = Knoten, freigabe = UNC \\\\fs01.ad.3033.at\\Witness$ oder ohne_zeuge true) — Ergebnis nennt den vorherigen Zustand (Rückweg: zeuge_setzen mit dem vorherigen Pfad bzw. ohne_zeuge). '
+      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor (fremde Domäne, umbenannter Administrator). '
       + 'Reihenfolge Cluster: Features (Failover-Clustering, RSAT-Clustering-PowerShell) auf allen Knoten → Firewall-Regeln zwischen den Knoten → CNO vorab (vollzugriff alfred) → cluster_validieren → cluster_anlegen → Zeugen-Freigabe auf fs01 mit vollzugriff <NETBIOS>\\<CNO>$ → zeuge_setzen.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -68,6 +69,7 @@ export class WindowsClusterSkill extends Skill {
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
+        ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
       },
       required: ['action', 'zugang'],
     },
@@ -85,6 +87,10 @@ export class WindowsClusterSkill extends Skill {
       const kw = AM_DC.has(action) ? await this.kennwort(input.konto_tresor ?? `win-${zugang}-admin`, `${action} auf ${zugang} (Domänen-Administrator)`)
         : ALS_ALFRED.has(action) ? await this.kennwort(input.konto_tresor, `${action} auf ${zugang} (Domänenkonto alfred)`) : undefined;
       const ein = kw ? { kennwort: kw } : undefined;
+      // v1789 — optionales Ausführungskonto; wird nur bei Aktionen mit Kennwort in die Skriptparameter übernommen
+      const k = String(input.ausfuehrungskonto ?? '').trim();
+      if (k && !KONTO_FREI.test(k)) throw new Error('ausfuehrungskonto: „name“ oder „NETBIOS\\name“');
+      const mk = <T extends object>(p: T): T => (k && kw ? Object.assign({}, p, { ausKonto: k }) : p);
       const fehler = (f: unknown) => { if (typeof f === 'string') throw new Error(f); return f; };
       switch (action) {
         case 'status': { const s = await this.status(zugang); return { success: true, data: s, display: clusterStatusText(s) }; }
@@ -129,33 +135,33 @@ export class WindowsClusterSkill extends Skill {
         }
         case 'gmsa_anlegen': {
           const p = fehler(pruefeGmsa(input)) as Parameters<typeof gmsaSkript>[0];
-          const r = await this.lauf<{ name: string; zustand: string; berechtigte: string[] }>(zugang, gmsaSkript(p), 'gMSA anlegen', 180_000, ein);
+          const r = await this.lauf<{ name: string; zustand: string; berechtigte: string[] }>(zugang, gmsaSkript(mk(p)), 'gMSA anlegen', 180_000, ein);
           return { success: true, data: r, display: `✅ gMSA ${r.name} (${r.zustand}); Kennwort abrufen dürfen: ${r.berechtigte.join(', ')} — Rückweg gmsa_entfernen name ${p.name}` };
         }
         case 'gmsa_entfernen': {
           const g = fehler(pruefeGmsa({ name: input.name, berechtigte: 'x' })) as { name: string };
-          const r = await this.lauf<{ zustand: string }>(zugang, gmsaEntfernenSkript({ name: g.name }), 'gMSA entfernen', 180_000, ein);
+          const r = await this.lauf<{ zustand: string }>(zugang, gmsaEntfernenSkript(mk({ name: g.name })), 'gMSA entfernen', 180_000, ein);
           return { success: true, data: r, display: `✅ gMSA ${g.name}: ${r.zustand}` };
         }
         case 'computerobjekt_vorbereiten': {
           const p = fehler(pruefeComputerobjekt(input)) as Parameters<typeof computerobjektSkript>[0];
-          const r = await this.lauf<{ dn: string; zustand: string; vollzugriff: string[] }>(zugang, computerobjektSkript(p), 'Computerobjekt vorab anlegen', 180_000, ein);
+          const r = await this.lauf<{ dn: string; zustand: string; vollzugriff: string[] }>(zugang, computerobjektSkript(mk(p)), 'Computerobjekt vorab anlegen', 180_000, ein);
           return { success: true, data: r, display: `✅ Computerobjekt ${r.dn} (${r.zustand})${r.vollzugriff.length ? `; Vollzugriff ${r.vollzugriff.join(', ')}` : ''} — Rückweg computerobjekt_entfernen name ${p.name}` };
         }
         case 'computerobjekt_entfernen': {
           const p = fehler(pruefeComputerobjekt({ name: input.name })) as { name: string };
-          const r = await this.lauf<{ zustand: string }>(zugang, computerobjektEntfernenSkript({ name: p.name }), 'Computerobjekt entfernen', 180_000, ein);
+          const r = await this.lauf<{ zustand: string }>(zugang, computerobjektEntfernenSkript(mk({ name: p.name })), 'Computerobjekt entfernen', 180_000, ein);
           return { success: true, data: r, display: `✅ Computerobjekt ${p.name}: ${r.zustand}` };
         }
         case 'spn_setzen': case 'spn_entfernen': {
           const p = fehler(pruefeSpn(input)) as Parameters<typeof spnSkript>[0];
           const weg = action === 'spn_entfernen';
-          const r = await this.lauf<{ neu?: string[]; entfernt?: string[]; schon?: string[]; nichtVorhanden?: string[]; spns: string[] }>(zugang, spnSkript(p, weg), weg ? 'SPN entfernen' : 'SPN setzen', 180_000, ein);
+          const r = await this.lauf<{ neu?: string[]; entfernt?: string[]; schon?: string[]; nichtVorhanden?: string[]; spns: string[] }>(zugang, spnSkript(mk(p), weg), weg ? 'SPN entfernen' : 'SPN setzen', 180_000, ein);
           return { success: true, data: r, display: `✅ SPNs an ${p.konto}: ${weg ? `entfernt ${(r.entfernt ?? []).join(', ') || 'keine'}` : `neu ${(r.neu ?? []).join(', ') || 'keine'}, schon ${(r.schon ?? []).join(', ') || 'keine'}`}; jetzt ${(r.spns ?? []).join(', ') || 'keine'}` };
         }
         case 'cluster_validieren': {
           const knoten = fehler(pruefeKnoten(input.knoten)) as string[];
-          const r = await this.lauf<{ ergebnis: string; warnungen: string[]; bericht: string }>(zugang, validierenSkript({ knoten }), 'Cluster-Validierung', 2_000_000, ein);
+          const r = await this.lauf<{ ergebnis: string; warnungen: string[]; bericht: string }>(zugang, validierenSkript(mk({ knoten })), 'Cluster-Validierung', 2_000_000, ein);
           this.d.protokoll?.('I8d Cluster validiert', { zugang, knoten, ergebnis: r.ergebnis });
           const text = `Validierung ${r.ergebnis} (${knoten.join(', ')})${r.warnungen.length ? `; Warnungen: ${r.warnungen.join(' | ').slice(0, 900)}` : ''}; Bericht ${r.bericht}`;
           if (r.ergebnis === 'fehlgeschlagen') return { success: false, error: text, data: r };
@@ -163,19 +169,19 @@ export class WindowsClusterSkill extends Skill {
         }
         case 'cluster_anlegen': {
           const p = fehler(pruefeCluster(input)) as Parameters<typeof clusterAnlegenSkript>[0];
-          const r = await this.lauf<{ name: string; zustand: string; knoten: string[] }>(zugang, clusterAnlegenSkript(p), 'Cluster anlegen', 1_400_000, ein);
+          const r = await this.lauf<{ name: string; zustand: string; knoten: string[] }>(zugang, clusterAnlegenSkript(mk(p)), 'Cluster anlegen', 1_400_000, ein);
           this.d.protokoll?.('I8d Cluster angelegt', { zugang, name: p.name, zustand: r.zustand });
           return { success: true, data: r, display: `✅ Cluster ${r.name} (${r.zustand}), ${p.ip}: ${r.knoten.join(', ')} — Rückweg cluster_entfernen name ${p.name}` };
         }
         case 'cluster_entfernen': {
           const name = String(input.name ?? '').trim().toLowerCase();
           fehler(pruefeComputerobjekt({ name }));
-          const r = await this.lauf<{ zustand: string }>(zugang, clusterEntfernenSkript({ name }), 'Cluster auflösen', 1_100_000, ein);
+          const r = await this.lauf<{ zustand: string }>(zugang, clusterEntfernenSkript(mk({ name })), 'Cluster auflösen', 1_100_000, ein);
           return { success: true, data: r, display: `✅ Cluster ${name}: ${r.zustand}` };
         }
         case 'zeuge_setzen': {
           const p = fehler(pruefeZeuge(input)) as { freigabe?: string };
-          const r = await this.lauf<{ vorher: string; vorherFreigabe: string; nachher: string }>(zugang, zeugeSkript(p), 'Cluster-Zeuge', 800_000, ein);
+          const r = await this.lauf<{ vorher: string; vorherFreigabe: string; nachher: string }>(zugang, zeugeSkript(mk(p)), 'Cluster-Zeuge', 800_000, ein);
           const rueck = r.vorherFreigabe ? `zeuge_setzen freigabe ${r.vorherFreigabe}` : 'zeuge_setzen ohne_zeuge true';
           return { success: true, data: r, display: `✅ Quorum ${r.nachher}${p.freigabe ? ` mit ${p.freigabe}` : ''} (vorher ${r.vorher}${r.vorherFreigabe ? ` ${r.vorherFreigabe}` : ''}) — Rückweg ${rueck}` };
         }

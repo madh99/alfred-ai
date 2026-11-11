@@ -26,6 +26,10 @@ export const kopf = (p: unknown, mitEingabe: boolean) => [
   `function Ergebnis($o) { [Console]::Out.WriteLine(${psText(AD_ERGEBNIS)} + ($o | ConvertTo-Json -Compress -Depth 5)) }`,
 ];
 const dnsSetzen = "Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @($p.dns) }";
+/** v1789 — frei wählbares Ausführungskonto: „name“ oder „NETBIOS\\name“; ohne Angabe der Standard (alfred bzw. Administrator) */
+export const KONTO_FREI = /^([A-Za-z0-9][A-Za-z0-9-]{0,14}\\)?[A-Za-z0-9][A-Za-z0-9 ._-]{0,19}$/;
+/** PowerShell-Ausdruck für das Konto aus $p.konto, sonst <netbios>\\<standard> */
+export const kontoAusdruck = (standard: string, netbios: string) => `$(if ([string]$p.ausKonto -like '*\\*') { [string]$p.ausKonto } elseif ($p.ausKonto) { ${netbios} + '\\' + [string]$p.ausKonto } else { ${netbios} + '\\${standard}' })`;
 export const neustart = (grund: string) => `shutdown.exe /r /t 20 /d p:4:1 /c ${psText(`Alfred: ${grund}`)}`;
 
 export interface AdStatus {
@@ -115,7 +119,7 @@ export function pruefeDns(dns: unknown): string[] | string {
 }
 
 /** Weiterer DC (eingabe: { dsrm, kennwort } — Kennwort des Domänenkontos <NETBIOS>\alfred). DNS des Rechners zuerst auf die vorhandenen DCs. */
-export function dcSkript(p: { domaene: string; netbios: string; dns: string[] }): string {
+export function dcSkript(p: { domaene: string; netbios: string; dns: string[]; ausKonto?: string }): string {
   return [
     ...kopf(p, true),
     '$cs = Get-CimInstance -ClassName Win32_ComputerSystem',
@@ -125,7 +129,7 @@ export function dcSkript(p: { domaene: string; netbios: string; dns: string[] })
     "if (-not (Resolve-DnsName -Name ('_ldap._tcp.dc._msdcs.' + $p.domaene) -Type SRV -DnsOnly -ErrorAction SilentlyContinue)) { throw ('Domäne ' + $p.domaene + ' über ' + ($p.dns -join ', ') + ' nicht auflösbar') }",
     'Install-WindowsFeature -Name AD-Domain-Services -IncludeManagementTools | Out-Null',
     'Import-Module ADDSDeployment',
-    "$cred = New-Object System.Management.Automation.PSCredential(($p.netbios + '\\alfred'), (ConvertTo-SecureString -String $e.kennwort -AsPlainText -Force))",
+    "$cred = New-Object System.Management.Automation.PSCredential((" + kontoAusdruck('alfred', '$p.netbios') + "), (ConvertTo-SecureString -String $e.kennwort -AsPlainText -Force))",
     '$pw = ConvertTo-SecureString -String $e.dsrm -AsPlainText -Force',
     'Install-ADDSDomainController -DomainName $p.domaene -Credential $cred -InstallDns -SafeModeAdministratorPassword $pw -NoRebootOnCompletion -Force -WarningAction SilentlyContinue | Out-Null',
     neustart('Hochstufen zum weiteren Domänencontroller'),
@@ -134,14 +138,14 @@ export function dcSkript(p: { domaene: string; netbios: string; dns: string[] })
 }
 
 /** Mitgliedsserver beitreten (eingabe: { kennwort }); DNS auf die DCs; optional OU (relativ, z. B. „Server“) */
-export function beitrittSkript(p: { domaene: string; netbios: string; dns: string[]; ou?: string }): string {
+export function beitrittSkript(p: { domaene: string; netbios: string; dns: string[]; ou?: string; ausKonto?: string }): string {
   return [
     ...kopf(p, true),
     '$cs = Get-CimInstance -ClassName Win32_ComputerSystem',
     "if ($cs.PartOfDomain) { if ($cs.Domain -ieq $p.domaene) { Ergebnis @{ zustand = 'schon'; domaene = [string]$cs.Domain }; exit 0 } else { throw ('Mitglied einer anderen Domäne: ' + $cs.Domain) } }",
     dnsSetzen,
     "if (-not (Resolve-DnsName -Name ('_ldap._tcp.dc._msdcs.' + $p.domaene) -Type SRV -DnsOnly -ErrorAction SilentlyContinue)) { throw ('Domäne ' + $p.domaene + ' über ' + ($p.dns -join ', ') + ' nicht auflösbar') }",
-    "$cred = New-Object System.Management.Automation.PSCredential(($p.netbios + '\\alfred'), (ConvertTo-SecureString -String $e.kennwort -AsPlainText -Force))",
+    "$cred = New-Object System.Management.Automation.PSCredential((" + kontoAusdruck('alfred', '$p.netbios') + "), (ConvertTo-SecureString -String $e.kennwort -AsPlainText -Force))",
     "$ziel = @{ DomainName = $p.domaene; Credential = $cred; Force = $true }",
     "if ($p.ou) { $ziel.OUPath = 'OU=' + $p.ou + ',' + (($p.domaene -split '\\.' | ForEach-Object { 'DC=' + $_ }) -join ',') }",
     'Add-Computer @ziel -WarningAction SilentlyContinue',
@@ -164,14 +168,14 @@ export function pruefeGrundstruktur(p: { ous: string[]; ntp: string[]; weiterlei
  * Grundstruktur am PDC: OUs (mit Löschschutz), AD-Papierkorb (lässt sich nicht wieder abschalten), alfred in Domänen-Admins (Konto der
  * Automatisierung; nötig für weitere DCs), externe NTP-Quellen am PDC, DNS-Weiterleiter, KDS-Stammschlüssel für gMSA. Wiederholbar.
  */
-export function grundstrukturSkript(p: { ous: string[]; ntp: string[]; weiterleiter: string[] }): string {
+export function grundstrukturSkript(p: { ous: string[]; ntp: string[]; weiterleiter: string[]; ausKonto?: string }): string {
   return [
     ...kopf(p, true),
     'Import-Module ActiveDirectory',
     '$d = Get-ADDomain; $dn = $d.DistinguishedName; $r = [ordered]@{ ous = @(); papierkorb = $false }',
     // Realfall 3103ec4c (09.11.): alfred ist nach dem Hochstufen nur in BUILTIN\Administrators — der Papierkorb braucht Organisations-
     // Admins. Papierkorb und Domänen-Admins daher mit dem Domänen-Administrator (Kennwort über die Standardeingabe).
-    "$cred = New-Object System.Management.Automation.PSCredential (($d.NetBIOSName + '\\Administrator'), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
+    "$cred = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
     "if ($env:COMPUTERNAME -ine ($d.PDCEmulator -split '\\.')[0]) { throw ('nur am PDC-Emulator ' + $d.PDCEmulator) }",
     "foreach ($ou in $p.ous) { if (-not (Get-ADOrganizationalUnit -LDAPFilter ('(ou=' + $ou + ')') -SearchBase $dn -SearchScope OneLevel)) { New-ADOrganizationalUnit -Name $ou -Path $dn -ProtectedFromAccidentalDeletion $true; $r.ous += $ou } }",
     "$f = Get-ADOptionalFeature -Filter \"Name -eq 'Recycle Bin Feature'\"",
@@ -235,14 +239,14 @@ export function sicherungJetztSkript(p: { laufwerk: string }): string {
 }
 
 /** Beweis AD-Papierkorb: Testkonto anlegen, löschen, aus dem Papierkorb wiederherstellen, prüfen, danach wieder entfernen */
-export function papierkorbSkript(p: { kennung: string }): string {
+export function papierkorbSkript(p: { kennung: string; ausKonto?: string }): string {
   return [
     ...kopf(p, true),
     'Import-Module ActiveDirectory',
     "$n = 'alfred-pk-' + $p.kennung",
     '$d = Get-ADDomain; $dn = $d.UsersContainer',
     // Realfall 3103ec4c: SSH-Token ohne Domänengruppen — alle AD-Befehle mit dem Domänen-Administrator (Kennwort über die Standardeingabe)
-    "$c = New-Object System.Management.Automation.PSCredential (($d.NetBIOSName + '\\Administrator'), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
+    "$c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))",
     'New-ADUser -Name $n -SamAccountName $n -Path $dn -Enabled $false -Description "Alfred: Beweis AD-Papierkorb (I8c)" -Credential $c',
     '$guid = (Get-ADUser -Identity $n -Credential $c).ObjectGUID',
     'Remove-ADUser -Identity $guid -Confirm:$false -Credential $c',

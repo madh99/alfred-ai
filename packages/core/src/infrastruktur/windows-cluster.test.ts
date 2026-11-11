@@ -67,7 +67,7 @@ describe('I8d Bausteine windows_cluster', () => {
     expect(pruefeZeuge({ freigabe: 'C:\\x' })).toContain('UNC');
     const v = validierenSkript({ knoten: ['sql01', 'sql02'] });
     expect(v).toContain(MIT_KONTO);
-    expect(v).toContain("MitKonto ($nb + '\\alfred') $e.kennwort");
+    expect(v).toContain("elseif ($p.ausKonto) { $nb + '\\' + [string]$p.ausKonto } else { $nb + '\\alfred' })) $e.kennwort");
     expect(v).toContain('Unregister-ScheduledTask');
     expect(v).toContain('Remove-Item -LiteralPath $skript, $aus');
     expect(MIT_KONTO).toContain("'S-1-5-18', 'S-1-5-32-544'"); // Skriptordner nur SYSTEM + Administratoren
@@ -141,5 +141,21 @@ describe('I8d Skill windows_cluster', () => {
     const ctx = { skill: (n: string) => (n === 'windows_cluster' ? sk as never : undefined), asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
     expect(pruefeChangePlan(plan({ skill: 'windows_cluster', aktion: 'cluster_entfernen', parameter: { zugang: 'sql01', name: 'sqlcl01', konto_tresor: 'win-dc01-admin' } }), ctx).fehler.filter(x => /Rückweg|windows_cluster|rueckweg/.test(x))).toEqual([]);
     expect(pruefeChangePlan(plan({ keiner: 'egal' }), ctx).fehler.some(x => x.includes('Schritt 2') && x.includes('ohne Rückweg nur bei'))).toBe(true);
+  });
+});
+
+// v1789 — Owner 11.11.: Ausführungskonto wählbar (fremde Domäne), benannte Instanzen
+describe('v1789 Ausführungskonto wählbar', () => {
+  it('ausfuehrungskonto landet als ausKonto im Skript; spn_setzen behält sein Zielkonto', async () => {
+    const aufrufe: string[] = [];
+    const skill = new WindowsClusterSkill({
+      skript: async (_z, befehl) => { aufrufe.push(Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le')); return { code: 0, stdout: 'ALFRED-AD {"konto":"gmsa-sqleng$","neu":[],"schon":[],"spns":[]}', stderr: '' }; },
+      tresor: { namen: async () => new Set(['fremd-admin']), lies: async () => 'x' },
+    });
+    const r = await skill.execute({ action: 'spn_setzen', zugang: 'dc01', konto: 'gmsa-sqleng$', spns: ['MSSQLSvc/a.b.at:1433'], ausfuehrungskonto: 'FREMD\\adm-sql', konto_tresor: 'fremd-admin' }, { ausChange: true } as never);
+    expect(r.success).toBe(true);
+    expect(aufrufe[0]).toContain('"konto":"gmsa-sqleng$"');
+    expect(aufrufe[0]).toContain('"ausKonto":"FREMD\\\\adm-sql"');
+    expect((await skill.execute({ action: 'gmsa_anlegen', zugang: 'dc01', name: 'g', berechtigte: ['a'], ausfuehrungskonto: 'a;b', konto_tresor: 'fremd-admin' }, { ausChange: true } as never)).error).toContain('ausfuehrungskonto');
   });
 });

@@ -8,7 +8,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
-  pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, type AdStatus,
+  pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, KONTO_FREI, type AdStatus,
 } from './windows-ad.js';
 
 export interface WindowsAdDeps {
@@ -45,7 +45,7 @@ export class WindowsAdSkill extends Skill {
       + 'papierkorb_beweis (zugang, konto_tresor optional wie grundstruktur) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
       + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
-      + 'Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
+      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -56,7 +56,8 @@ export class WindowsAdSkill extends Skill {
         domaene: { type: 'string', description: 'z. B. ad.3033.at' },
         netbios: { type: 'string', description: 'z. B. AD3033' },
         dns: { type: 'array', items: { type: 'string' }, description: 'IPv4 der Domänencontroller (DNS des Rechners)' },
-        konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort des Domänenkontos alfred (z. B. win-dc01-admin)' },
+        konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort des Ausführungskontos (z. B. win-dc01-admin)' },
+        ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard: alfred für dc_hinzufuegen/beitreten, Administrator für grundstruktur/papierkorb_beweis) — z. B. für eine fremde Domäne' },
         ou: { type: 'string', description: 'beitreten: OU unterhalb der Domäne, z. B. Server' },
         ous: { type: 'array', items: { type: 'string' } },
         ntp: { type: 'array', items: { type: 'string' } },
@@ -131,6 +132,14 @@ export class WindowsAdSkill extends Skill {
     throw new Error(`${zugang} nach ${Math.round(grenzeMs / 60_000)} min nicht bereit — zuletzt: ${letzter ? adStatusText(letzter) : fehler || 'kein Status'}`);
   }
 
+  /** v1789 — optionales Ausführungskonto (fremde Domäne, umbenannter Administrator) */
+  private konto(input: Record<string, unknown>): { ausKonto?: string } {
+    const k = String(input.ausfuehrungskonto ?? '').trim();
+    if (!k) return {};
+    if (!KONTO_FREI.test(k)) throw new Error('ausfuehrungskonto: „name“ oder „NETBIOS\\name“');
+    return { ausKonto: k };
+  }
+
   private tresor() { if (!this.d.tresor) throw new Error('Tresor nicht verfügbar'); return this.d.tresor; }
 
   private domaeneUndNetbios(input: Record<string, unknown>): { domaene: string; netbios: string } {
@@ -172,7 +181,7 @@ export class WindowsAdSkill extends Skill {
     if (dcBereit(vorher, p.domaene)) return { success: true, data: vorher, display: `${adStatusText(vorher)} — nichts zu tun` };
     const kennwort = await this.kontoKennwort(input, `weiterer Domänencontroller ${zugang}`);
     const k = await this.dsrm(p.domaene, zugang);
-    const r = await this.lauf<{ zustand: string }>(zugang, dcSkript({ ...p, dns }), 'Weiterer Domänencontroller', 1_800_000, { dsrm: k.wert, kennwort });
+    const r = await this.lauf<{ zustand: string }>(zugang, dcSkript({ ...p, dns, ...this.konto(input) }), 'Weiterer Domänencontroller', 1_800_000, { dsrm: k.wert, kennwort });
     this.d.protokoll?.('I8c DC hinzugefügt', { zugang, domaene: p.domaene, zustand: r.zustand });
     const s = r.zustand === 'schon' ? await this.status(zugang) : await this.warte(zugang, x => dcBereit(x, p.domaene), 25 * 60_000);
     return { success: true, data: { ...s, dsrmTresor: k.name }, display: `✅ ${zugang} ist weiterer Domänencontroller — ${adStatusText(s)}. DSRM-Kennwort im Tresor (${k.name}).` };
@@ -186,7 +195,7 @@ export class WindowsAdSkill extends Skill {
     const vorher = await this.status(zugang);
     if (mitgliedBereit(vorher, p.domaene)) return { success: true, data: vorher, display: `${adStatusText(vorher)} — nichts zu tun` };
     const kennwort = await this.kontoKennwort(input, `Domänenbeitritt ${zugang}`);
-    const r = await this.lauf<{ zustand: string }>(zugang, beitrittSkript({ ...p, dns, ...(ou ? { ou } : {}) }), 'Domänenbeitritt', 600_000, { kennwort });
+    const r = await this.lauf<{ zustand: string }>(zugang, beitrittSkript({ ...p, dns, ...(ou ? { ou } : {}), ...this.konto(input) }), 'Domänenbeitritt', 600_000, { kennwort });
     const s = r.zustand === 'schon' ? await this.status(zugang) : await this.warte(zugang, x => mitgliedBereit(x, p.domaene), 15 * 60_000);
     return { success: true, data: s, display: `✅ ${adStatusText(s)}${ou ? ` (OU ${ou})` : ''}` };
   }
@@ -198,7 +207,7 @@ export class WindowsAdSkill extends Skill {
     // Domänen-Administrator für Papierkorb und Domänen-Admins: provision_windows_vm legt das Kennwort von alfred und Administrator
     // gemeinsam als win-<zugang>-admin ab; nach dem Hochstufen gilt es für den Domänen-Administrator
     const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `AD-Grundstruktur ${zugang} (Domänen-Administrator)`);
-    const r = await this.lauf<Record<string, unknown>>(zugang, grundstrukturSkript(p), 'AD-Grundstruktur', 600_000, { kennwort });
+    const r = await this.lauf<Record<string, unknown>>(zugang, grundstrukturSkript({ ...p, ...this.konto(input) }), 'AD-Grundstruktur', 600_000, { kennwort });
     if (r.papierkorb !== true) throw new Error('AD-Papierkorb nach dem Einschalten nicht aktiv');
     return { success: true, data: r, display: `✅ Grundstruktur auf ${zugang}: OUs ${p.ous.join(', ')}${(r.ous as string[] | undefined)?.length ? ` (neu: ${(r.ous as string[]).join(', ')})` : ' (vorhanden)'}, AD-Papierkorb an, alfred in Domänen-Admins (${String(r.alfredAdmin)}), NTP ${p.ntp.join(', ')}${p.weiterleiter.length ? `, DNS-Weiterleiter ${(r.weiterleiter as string[] | undefined)?.join(', ')}` : ''}, KDS-Schlüssel ${String(r.kds)}` };
   }
@@ -222,7 +231,7 @@ export class WindowsAdSkill extends Skill {
   private async papierkorb(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
     const kennung = Date.now().toString(36);
     const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `Papierkorb-Beweis ${zugang} (Domänen-Administrator)`);
-    const r = await this.lauf<Record<string, unknown>>(zugang, papierkorbSkript({ kennung }), 'Papierkorb-Beweis', 300_000, { kennwort });
+    const r = await this.lauf<Record<string, unknown>>(zugang, papierkorbSkript({ kennung, ...this.konto(input) }), 'Papierkorb-Beweis', 300_000, { kennwort });
     return { success: true, data: r, display: `✅ AD-Papierkorb belegt: Testkonto ${String(r.konto)} gelöscht, aus dem Papierkorb wiederhergestellt, geprüft und wieder entfernt` };
   }
 

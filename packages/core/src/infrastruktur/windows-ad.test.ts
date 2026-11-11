@@ -26,7 +26,7 @@ describe('I8c Bausteine', () => {
     expect(w).toContain(`$p = '{"domaene":"ad.3033.at","netbios":"AD3033"}' | ConvertFrom-Json`);
     expect(w).toContain('Install-ADDSForest -DomainName $p.domaene -DomainNetbiosName $p.netbios -InstallDns');
     expect(w).toContain('shutdown.exe /r /t 20');
-    expect(dcSkript({ domaene: 'ad.3033.at', netbios: 'AD3033', dns: ['10.203.29.2'] })).toContain("($p.netbios + '\\alfred')");
+    expect(dcSkript({ domaene: 'ad.3033.at', netbios: 'AD3033', dns: ['10.203.29.2'] })).toContain("else { $p.netbios + '\\alfred' }");
     expect(beitrittSkript({ domaene: 'ad.3033.at', netbios: 'AD3033', dns: ['10.203.29.2', '10.203.29.3'], ou: 'Server' })).toContain('Add-Computer @ziel');
     expect(adStatusSkript()).not.toContain('ReadToEnd');
     // einfache Anführungszeichen in Werten werden verdoppelt (kein Ausbruch aus dem Literal)
@@ -110,7 +110,7 @@ describe('I8c Skill windows_ad', () => {
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin' });
     const skript = Buffer.from(w.aufrufe[0]!.befehl.split(' ').pop()!, 'base64').toString('utf16le');
     expect(skript).toContain('[Console]::In.ReadToEnd()');
-    expect(skript).toContain("($d.NetBIOSName + '\\Administrator')");
+    expect(skript).toContain("else { $d.NetBIOSName + '\\Administrator' }");
     expect(skript).toMatch(/Enable-ADOptionalFeature [^\n]*-Credential \$cred/);
     expect(skript).toMatch(/Add-ADGroupMember [^\n]*-Credential \$cred/);
     expect(skript).not.toContain('wert-win-dc01-admin');

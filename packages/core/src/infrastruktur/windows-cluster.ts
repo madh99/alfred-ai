@@ -9,7 +9,7 @@
  * und Administratoren, Aufgabe und Dateien werden immer entfernt. Gleiche Form wie windows-ad.ts: Parameter als JSON-Literal, genau eine
  * Ergebniszeile „ALFRED-AD {json}“, Fehler → Exit ≠ 0.
  */
-import { IPV4, kopf, psText, neustart } from './windows-ad.js';
+import { IPV4, kopf, psText, neustart, kontoAusdruck } from './windows-ad.js';
 
 const LAUFWERK = /^[BD-Z]$/; // Architektur v3: Sicherungsplatte B:
 const NAME_VOLUME = /^[\p{L}\p{N} ._-]{1,32}$/u;
@@ -82,7 +82,7 @@ export function innenSkript(p: unknown, rumpf: string[]): string {
 }
 
 /** Domänen-Administrator für AD-Änderungen am DC (wie papierkorbSkript; Kennwort über die Standardeingabe) */
-const adCred = "$d = Get-ADDomain; $c = New-Object System.Management.Automation.PSCredential (($d.NetBIOSName + '\\Administrator'), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
+const adCred = "$d = Get-ADDomain; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
 
 // ── Lesen ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -426,8 +426,8 @@ export function pruefeKnoten(k: unknown): string[] | string {
 }
 
 /** Skript mit Kennwort-Anmeldung als <NETBIOS>\alfred (Kennwort aus der Standardeingabe) */
-function alsDomaenenkonto(p: unknown, rumpf: string[], sekunden: number): string {
-  return [...kopf(p, true), MIT_KONTO, "$nb = DomaeneNetbios", `$w = MitKonto ($nb + '\\alfred') $e.kennwort ${psText(innenSkript(p, rumpf))} ${sekunden}`, 'Ergebnis $w'].join('\n');
+export function alsDomaenenkonto(p: unknown, rumpf: string[], sekunden: number): string {
+  return [...kopf(p, true), MIT_KONTO, "$nb = DomaeneNetbios", `$w = MitKonto (${kontoAusdruck('alfred', '$nb')}) $e.kennwort ${psText(innenSkript(p, rumpf))} ${sekunden}`, 'Ergebnis $w'].join('\n');
 }
 
 /**

@@ -76,7 +76,7 @@ export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: 
   const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
   await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
   const args = ['-i', ziel.schluesselPfad, '-p', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
-    '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`, befehl];
+    '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`, befehl];
   const { spawn } = await import('node:child_process');
   return new Promise(resolve => {
     const p = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });

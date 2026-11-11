@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL Server auf Windows mit Verfügbarkeitsgruppe (I8d, v1789)
+
+- Neuer Skill `sql_server` mit festen Bausteinen statt freiem T-SQL: Installationsmedien von Microsoft laden (Signatur und optional SHA-256 geprüft), unbeaufsichtigte Installation mit gMSA-Diensten, getrennten Platten für Daten, Log, TempDB und Sicherung, mehreren TempDB-Dateien, Instant File Initialization, Speichergrenze und MAXDOP sowie kumulativem Update per Slipstream. Die Installation läuft als Domänenkonto mit Kennwort-Anmeldung.
+- Verfügbarkeitsgruppe: HADR einschalten, Endpunkte mit AES-Verschlüsselung, Gruppe mit synchronem Commit, automatischem Failover und automatischem Seeding, Beitritt des sekundären Replikats bis zur Synchronisierung, Listener. Der geplante Failover setzt ein synchronisiertes Ziel voraus und nutzt nie die Option mit Datenverlust.
+- Sicherung und Wiederherstellung: Sicherungen mit Prüfsumme in einen Ordner je Datenbank, Agent-Jobs für Voll-, Differenz- und Log-Sicherung nur auf dem bevorzugten Replikat und ohne automatisches Löschen, Wiederherstellungstest der jüngsten Kette neben der Gruppe mit Platzprüfung und DBCC CHECKDB.
+- Prüfzeilen für den Commit-Beweis über einen Failover hinweg; Status lesend auch außerhalb von Changes.
+- Ausführungskonto wählbar: `windows_ad`, `windows_cluster` und `sql_server` nehmen optional `ausfuehrungskonto` („name“ oder „DOMÄNE\name“) mit dem passenden Tresor-Eintrag, etwa für eine bestehende fremde Domäne oder einen umbenannten Administrator; ohne Angabe gelten weiter alfred bzw. Administrator.
+- Benannte Instanzen: alle `sql_server`-Aktionen nehmen optional `instanz`; Dienstnamen, lokale Verbindung, Setup, HADR und Agent-Jobs richten sich danach, AG-Replikate dürfen „SERVER\INSTANZ“ heißen.
+- SSH-Aufrufe mit Übergabe über die Standardeingabe halten lange Verbindungen jetzt mit Keepalive offen.
+
 ### Added — Bausteine für Windows-Failover-Cluster (I8d, v1788)
 
 - Neuer Skill `windows_cluster` mit festen, geprüften PowerShell-Bausteinen, die nur als Schritte freigegebener Changes laufen: Datenplatten einrichten (NTFS mit wählbarer Blockgröße, 64 KB für SQL-Daten, -Log und -TempDB), Windows-Features aus einer festen Liste, eingehende Firewall-Regeln nur für exakt genannte Gegenstellen, SMB-Freigaben mit eigenem NTFS-Schutz, gMSA mit genau den berechtigten Computern, vorab angelegte Computerobjekte für Cluster und Listener mit Rechten nur auf das einzelne Objekt, SPNs mit Dublettenprüfung, Cluster-Validierung, Cluster ohne gemeinsamen Speicher und Dateifreigabe-Zeuge. Zu jeder Änderung mit möglichem Rückweg gibt es die Gegenaktion.
