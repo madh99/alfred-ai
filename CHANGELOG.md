@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — AG-Ressourcentyp wird mit Kennwort-Anmeldung registriert (v1801)
+
+- Die Registrierung des Cluster-Ressourcentyps aus v1800 scheiterte über die SSH-Anmeldung mit „Access denied“, weil `Add-ClusterResourceType` auf die Verwaltungsfreigabe aller Clusterknoten zugreift. `sql_server hadr_aktivieren` meldet einen fehlenden Typ jetzt aus der SSH-Sitzung. Registriert wird er anschließend als Domänenkonto mit Kennwort-Anmeldung (`konto_tresor`), so wie bei Cluster-Anlage und Validierung.
+
 ### Fixed — HADR einschalten registriert den Cluster-Ressourcentyp für Verfügbarkeitsgruppen (v1800)
 
 - Das Anlegen einer Verfügbarkeitsgruppe scheiterte mit Fehler 41105, weil der Cluster-Ressourcentyp „SQL Server Availability Group“ nicht registriert war. `sql_server hadr_aktivieren` prüft den Typ jetzt und registriert ihn bei Bedarf mit `hadrres.dll` aus dem Programmverzeichnis der Instanz. Ein Neustart ist dafür nicht nötig. Die Rückmeldung „schon“ kommt erst, wenn auch der Ressourcentyp vorhanden ist.

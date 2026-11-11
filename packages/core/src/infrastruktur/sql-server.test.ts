@@ -190,10 +190,18 @@ describe('v1800 hadr_aktivieren registriert den AG-Ressourcentyp', () => {
     const { hadrSkript } = await import('./sql-server.js');
     const s = hadrSkript();
     expect(s).toContain("$rtName = 'SQL Server Availability Group'");
-    expect(s).toContain("Add-ClusterResourceType -Name $rtName -Dll $dll");
     expect(s).toContain("Join-Path $bin 'hadrres.dll'");
-    // „schon“ nur, wenn auch der Ressourcentyp da ist
+    // v1801: das SSH-Skript registriert nicht selbst (Doppel-Hop), sondern meldet „fehlt“ + dll
+    expect(s).not.toContain('Add-ClusterResourceType');
+    expect(s).toContain("ressourcentyp = 'fehlt'; dll = (DllPfad)");
     expect(s).toContain("if ($hatTyp) { Ergebnis @{ zustand = 'schon'");
-    expect(s.indexOf('$instId =')).toBeLessThan(s.indexOf('function TypRegistrieren'));
+    expect(s.indexOf('$instId =')).toBeLessThan(s.indexOf('function DllPfad'));
+  });
+  it('v1801 registriert per Kennwort-Anmeldung und prüft den dll-Pfad', async () => {
+    const { ressourcentypSkript } = await import('./sql-server.js');
+    const r = ressourcentypSkript({ dll: 'C:\\Program Files\\Microsoft SQL Server\\MSSQL17.MSSQLSERVER\\MSSQL\\Binn\\hadrres.dll' });
+    expect(r).toContain('MitKonto');
+    expect(r).toContain('Add-ClusterResourceType -Name $rt -Dll $p.dll');
+    expect(() => ressourcentypSkript({ dll: "C:\\x\\evil'.dll" })).toThrow();
   });
 });

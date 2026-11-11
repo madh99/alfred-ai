@@ -7,7 +7,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler } from './windows-ad.js';
 import {
   sqlStatusSkript, sqlStatusText, pruefdatenLesenSkript, pruefeMedien, medienSkript, pruefeInstallation, installierenSkript, pruefeKonfiguration, konfigurierenSkript,
-  hadrSkript, endpunktSkript, endpunktEntfernenSkript, pruefeAg, agAnlegenSkript, agBeitretenSkript, agEntfernenSkript, pruefeListener, listenerSkript, listenerEntfernenSkript,
+  hadrSkript, ressourcentypSkript, endpunktSkript, endpunktEntfernenSkript, pruefeAg, agAnlegenSkript, agBeitretenSkript, agEntfernenSkript, pruefeListener, listenerSkript, listenerEntfernenSkript,
   failoverSkript, datenbankSkript, datenbankEntfernenSkript, pruefdatenSchreibenSkript, pruefeSicherung, sicherungSkript, pruefeJobs, jobsSkript, jobsEntfernenSkript,
   pruefeWiederherstellung, wiederherstellungSkript, BEZEICHNER, INSTANZ, listenerTestSkript, listenerTestText, type SqlStatus, type ListenerTest,
 } from './sql-server.js';
@@ -40,7 +40,7 @@ export class SqlServerSkill extends Skill {
       + 'NUR als Schritte freigegebener Changes: sql_medien_laden (zugang, url = Microsoft-Download: SSEI-Downloader/ISO bzw. CU, art installation|cu, sha256 optional) — Signatur Microsoft geprüft, nach C:\\SQLMedia (braucht befristeten Internetzugang; ohne Rückweg). '
       + 'sql_installieren (zugang, engine_konto/agent_konto = gMSA NETBIOS\\name$, sysadmins, daten D:\\SQLData, log L:\\SQLLog, tempdb T:\\TempDB, sicherung B:\\SQLBackup, tempdb_dateien 4, tempdb_mb 1024, tempdb_log_mb 2048, max_speicher_mb 12288, maxdop 4, pid optional, konto_tresor Pflicht = Kennwort des Domänenkontos alfred, z. B. win-dc01-admin; zeitlimitS 5400–7200) — als Domänenkonto per Kennwort-Anmeldung, CU aus C:\\SQLMedia\\CU per Slipstream, Neustart bei Bedarf (ohne Rückweg; Deinstallation = eigener Change). '
       + 'konfigurieren (zugang, max_speicher_mb, maxdop, kostenschwelle) — Ergebnis nennt die vorherigen Werte (Rückweg: konfigurieren mit diesen). '
-      + 'hadr_aktivieren (zugang; erst nach windows_cluster cluster_anlegen) — Dienstneustart (ohne Rückweg). '
+      + 'hadr_aktivieren (zugang, konto_tresor = Kennwort des Domänenkontos alfred — nötig, falls der Cluster-Ressourcentyp „SQL Server Availability Group“ fehlt, dann Registrierung per Kennwort-Anmeldung; erst nach windows_cluster cluster_anlegen) — Clusterzugriff, Dienstneustart (ohne Rückweg); Ergebnis „AG-Ressourcentyp registriert/schon“. '
       + 'endpunkt_anlegen (zugang, partner_konto = Engine-gMSA, port 5022) ↔ endpunkt_entfernen — auf JEDEM Replikat. '
       + 'ag_anlegen (zugang = primär, name, datenbanken, replikate [{server SQL01, fqdn sql01.ad.3033.at}, …] primär zuerst) ↔ ag_entfernen — synchron, automatischer Failover, automatisches Seeding, Vollsicherung falls nötig. '
       + 'ag_beitreten (zugang = sekundär, name, datenbanken) — wartet bis SYNCHRONIZED (bis 30 min; Rückweg ag_entfernen am primären). '
@@ -120,8 +120,15 @@ export class SqlServerSkill extends Skill {
           return { success: true, data: r, display: `✅ ${zugang}: ${fmt(r.nachher)} (vorher ${fmt(r.vorher)}) — Rückweg konfigurieren mit ${JSON.stringify(r.vorher)}` };
         }
         case 'hadr_aktivieren': {
-          const r = await this.lauf<{ zustand: string }>(zugang, hadrSkript(inst), 'HADR einschalten', 600_000);
-          return { success: true, data: r, display: `✅ HADR auf ${zugang}: ${r.zustand}` };
+          const r = await this.lauf<{ zustand: string; ressourcentyp?: string; dll?: string }>(zugang, hadrSkript(inst), 'HADR einschalten', 600_000);
+          // v1801 — AG-Ressourcentyp über alle Knoten registrieren braucht die Kennwort-Anmeldung (Doppel-Hop)
+          if (r.ressourcentyp === 'fehlt') {
+            if (!input.konto_tresor) throw new Error(`HADR auf ${zugang} an, aber Cluster-Ressourcentyp „SQL Server Availability Group“ fehlt — zum Registrieren konto_tresor angeben (Kennwort des Domänenkontos alfred, z. B. win-dc01-admin)`);
+            const kw = await this.kennwort(input.konto_tresor, `AG-Ressourcentyp im Cluster registrieren von ${zugang} (Domänenkonto)`);
+            const t = await this.lauf<{ ressourcentyp: string }>(zugang, ressourcentypSkript(mk({ dll: String(r.dll) })), 'AG-Ressourcentyp registrieren', 420_000, { kennwort: kw });
+            r.ressourcentyp = t.ressourcentyp === 'schon' ? 'schon' : 'registriert';
+          }
+          return { success: true, data: r, display: `✅ HADR auf ${zugang}: ${r.zustand}${r.ressourcentyp ? `; AG-Ressourcentyp ${r.ressourcentyp}` : ''}` };
         }
         case 'endpunkt_anlegen': {
           const partner = String(input.partner_konto ?? '').trim();
