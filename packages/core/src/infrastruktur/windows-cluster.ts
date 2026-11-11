@@ -118,7 +118,7 @@ export function clusterStatusSkript(): string {
 
 export function clusterStatusText(s: ClusterStatus): string {
   const f = Object.entries(s.features ?? {}).filter(([, x]) => x).map(([n]) => n);
-  const vol = (s.volumes ?? []).filter(v => v.laufwerk !== 'C').map(v => `${v.laufwerk}: ${v.name || '—'} ${v.groesseGb} GB (${v.blockKb} KB)`);
+  const vol = (s.volumes ?? []).map(v => `${v.laufwerk}: ${v.name || '—'} ${v.groesseGb} GB (${v.blockKb} KB)`);
   const fr = (s.freigaben ?? []).map(x => `${x.name}=${x.pfad}`);
   const c = s.cluster;
   const cl = c ? `Cluster ${c.name}: Knoten ${c.knoten.map(k => `${k.name} ${k.zustand}`).join(', ')}; Quorum ${c.quorum}${c.zeuge ? `, Zeuge ${c.zeuge}` : ''}; Ressourcen ${c.ressourcen.map(x => `${x.name} ${x.zustand}`).join(', ')}` : s.clusterFehler ? `Cluster nicht lesbar: ${s.clusterFehler}` : 'kein Cluster';

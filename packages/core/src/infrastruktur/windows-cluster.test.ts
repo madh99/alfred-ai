@@ -81,7 +81,7 @@ describe('I8d Bausteine windows_cluster', () => {
     const s: ClusterStatus = { rechner: 'SQL01', domaene: 'ad.3033.at', features: { 'Failover-Clustering': true, 'FS-FileServer': false },
       volumes: [{ laufwerk: 'C', name: '', groesseGb: 100, freiGb: 70, blockKb: 4 }, { laufwerk: 'L', name: 'SQL-Log', groesseGb: 20, freiGb: 20, blockKb: 64 }], freigaben: [],
       cluster: { name: 'sqlcl01', knoten: [{ name: 'sql01', zustand: 'Up' }, { name: 'sql02', zustand: 'Up' }], quorum: 'NodeAndFileShareMajority', zeuge: '\\\\fs01.ad.3033.at\\Witness$ Online', ressourcen: [{ name: 'Cluster IP Address', typ: 'IP Address', zustand: 'Online', gruppe: 'Cluster Group' }] } };
-    expect(clusterStatusText(s)).toBe('SQL01 (ad.3033.at): Features Failover-Clustering; Volumes L: SQL-Log 20 GB (64 KB); Freigaben keine; Cluster sqlcl01: Knoten sql01 Up, sql02 Up; Quorum NodeAndFileShareMajority, Zeuge \\\\fs01.ad.3033.at\\Witness$ Online; Ressourcen Cluster IP Address Online');
+    expect(clusterStatusText(s)).toBe('SQL01 (ad.3033.at): Features Failover-Clustering; Volumes C: — 100 GB (4 KB), L: SQL-Log 20 GB (64 KB); Freigaben keine; Cluster sqlcl01: Knoten sql01 Up, sql02 Up; Quorum NodeAndFileShareMajority, Zeuge \\\\fs01.ad.3033.at\\Witness$ Online; Ressourcen Cluster IP Address Online');
   });
 });
 

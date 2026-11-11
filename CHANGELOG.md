@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Cluster-Status nennt die Systemplatte (v1792)
+
+- `windows_cluster status` ließ C: in der Volumeliste aus. Die Größe der Systemplatte war damit nach `systemplatte_erweitern` nicht als Prüfung in einem Change belegbar. C: steht jetzt mit Größe und Blockgröße am Anfang der Liste.
+
 ### Fixed — Windows-Systemplatte nutzt die volle Plattengröße (v1791)
 
 - Neue VMs aus der Windows-Vorlage hatten auf C: nur rund 63 GB, auch wenn die Platte in Proxmox größer war: Windows-Setup legt die Wiederherstellungspartition hinter C:, das automatische Vergrößern beim ersten Start scheitert daran. Neue Aktion `windows_cluster systemplatte_erweitern` (nur in freigegebenen Changes): Ist Platz direkt hinter C:, wird nur vergrößert. Sonst wird die Wiederherstellungsumgebung nach C: verlegt, ausschließlich die Wiederherstellungspartition hinter C: entfernt, C: auf die volle Größe gebracht und die Wiederherstellungsumgebung wieder eingeschaltet. Liegt etwas anderes hinter C: oder gibt es keinen freien Platz, ändert die Aktion nichts.
