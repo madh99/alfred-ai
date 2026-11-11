@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — HADR einschalten registriert den Cluster-Ressourcentyp für Verfügbarkeitsgruppen (v1800)
+
+- Das Anlegen einer Verfügbarkeitsgruppe scheiterte mit Fehler 41105, weil der Cluster-Ressourcentyp „SQL Server Availability Group“ nicht registriert war. `sql_server hadr_aktivieren` prüft den Typ jetzt und registriert ihn bei Bedarf mit `hadrres.dll` aus dem Programmverzeichnis der Instanz. Ein Neustart ist dafür nicht nötig. Die Rückmeldung „schon“ kommt erst, wenn auch der Ressourcentyp vorhanden ist.
+
 ### Fixed — HADR einschalten gibt dem SQL-Dienst Zugriff auf den Cluster (v1799)
 
 - `sql_server hadr_aktivieren` setzte nur den Registry-Schalter. Der SQL-Dienst wartete danach dauerhaft auf den Clusterdienst, und das Anlegen einer Verfügbarkeitsgruppe scheiterte, weil sein Dienstkonto keinen Zugriff auf den Cluster hatte. Die Aktion gibt dem Dienstkonto der Instanz jetzt wie das Microsoft-Werkzeug Vollzugriff auf den Cluster, startet den Dienst neu und meldet erst Erfolg, wenn die Verbindung zum Cluster steht.

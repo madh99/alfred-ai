@@ -255,6 +255,9 @@ export function konfigurierenSkript(p: { max_speicher_mb?: number; maxdop?: numb
  * (NT SERVICE\MSSQLSERVER bzw. NT SERVICE\MSSQL$<inst>). v1799 — Realfall 11.11. F2 863292a9 Schritt 9: nur mit dem Registry-
  * Schalter blieb SQL bei „Waiting for local Windows Server Failover Clustering service to start“ (HadrManagerStatus 0), weil der
  * Dienst-SID in Get-ClusterAccess fehlte. Danach Dienstneustart; fertig erst, wenn HADR an und der HADR-Manager gestartet ist (1).
+ * v1800 — Realfall 11.11. F2 863292a9 Schritt 11: CREATE AVAILABILITY GROUP mit Fehler 41105, weil der Cluster-Ressourcentyp
+ * „SQL Server Availability Group“ nicht registriert war (Get-ClusterResourceType ohne SQL-Eintrag). Die Aktion registriert ihn
+ * jetzt mit hadrres.dll aus dem Binn-Verzeichnis der Instanz (ohne Neustart), wenn er fehlt.
  * Wiederholbar: ist alles da, „schon“.
  */
 export function hadrSkript(instanz?: string): string {
@@ -264,11 +267,14 @@ export function hadrSkript(instanz?: string): string {
     "$konto = 'NT SERVICE\\' + $svc",
     '$sid = (New-Object System.Security.Principal.NTAccount $konto).Translate([System.Security.Principal.SecurityIdentifier]).Value',
     '$hatZugriff = [bool]@(Get-ClusterAccess | Where-Object { ([string]$_.IdentityReference -ieq $konto -or [string]$_.IdentityReference -eq $sid) -and [string]$_.ClusterRights -eq \'Full\' }).Count',
+    "$instId = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL').$inst",
+    "$rtName = 'SQL Server Availability Group'",
+    '$hatTyp = [bool](Get-ClusterResourceType -Name $rtName -ErrorAction SilentlyContinue)',
+    "function TypRegistrieren { $bin = [string](Get-ItemProperty ('HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\Setup')).SQLBinRoot; $dll = Join-Path $bin 'hadrres.dll'; if (-not (Test-Path $dll)) { throw ('hadrres.dll fehlt: ' + $dll) }; Add-ClusterResourceType -Name $rtName -Dll $dll | Out-Null; if (-not (Get-ClusterResourceType -Name $rtName -ErrorAction SilentlyContinue)) { throw ('Cluster-Ressourcentyp ' + $rtName + ' nach der Registrierung nicht vorhanden') }; return $dll }",
     "$s = (Sql \"SELECT CAST(SERVERPROPERTY('IsHadrEnabled') AS int) h, CAST(SERVERPROPERTY('HadrManagerStatus') AS int) m\")[0]",
-    "if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) { Ergebnis @{ zustand = 'schon'; konto = $konto }; exit 0 }",
+    "if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) { if ($hatTyp) { Ergebnis @{ zustand = 'schon'; konto = $konto; ressourcentyp = 'schon' }; exit 0 }; $dll = TypRegistrieren; Ergebnis @{ zustand = 'ressourcentyp registriert'; konto = $konto; ressourcentyp = 'neu'; dll = $dll }; exit 0 }",
     "$r = [ordered]@{ konto = $konto; zugriff = $(if ($hatZugriff) { 'schon' } else { 'neu' }) }",
     'if (-not $hatZugriff) { Grant-ClusterAccess -User $konto -Full | Out-Null }',
-    "$instId = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL').$inst",
     "$k = 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\' + $instId + '\\MSSQLServer\\HADR'",
     'if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }',
     "Set-ItemProperty -Path $k -Name 'HADR_Enabled' -Value 1 -Type DWord",
@@ -277,6 +283,7 @@ export function hadrSkript(instanz?: string): string {
     '$bis = (Get-Date).AddMinutes(5); $h = 0; $m = 0',
     "do { Start-Sleep -Seconds 5; try { $x = (Sql \"SELECT CAST(SERVERPROPERTY('IsHadrEnabled') AS int) h, CAST(SERVERPROPERTY('HadrManagerStatus') AS int) m\")[0]; $h = $x.h; $m = $x.m } catch { } } while (($h -ne 1 -or $m -ne 1) -and (Get-Date) -lt $bis)",
     "if ($h -ne 1 -or $m -ne 1) { throw ('HADR nach dem Neustart nicht bereit (IsHadrEnabled ' + $h + ', HadrManagerStatus ' + $m + ' — 1 = gestartet)') }",
+    "if (Get-ClusterResourceType -Name $rtName -ErrorAction SilentlyContinue) { $r.ressourcentyp = 'schon' } else { $r.dll = TypRegistrieren; $r.ressourcentyp = 'neu' }",
     "$r.zustand = 'eingeschaltet'; $r.instanz = $instId; $r.hadrManager = 'gestartet'",
     'Ergebnis $r',
   ]);

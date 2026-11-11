@@ -179,7 +179,21 @@ describe('v1799 hadr_aktivieren mit Clusterzugriff', () => {
     expect(s).toContain('Grant-ClusterAccess -User $konto -Full');
     expect(s.indexOf('Grant-ClusterAccess')).toBeLessThan(s.indexOf('Restart-Service -Name $svc'));
     expect(s).toContain("HadrManagerStatus");
-    expect(s).toContain("if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) { Ergebnis @{ zustand = 'schon'");
+    expect(s).toContain("if ($s.h -eq 1 -and $s.m -eq 1 -and $hatZugriff) {");
     expect(hadrSkript('PROD')).toContain('"instanz":"PROD"');
+  });
+});
+
+// v1800 — Realfall F2 863292a9 Schritt 11: Fehler 41105, Cluster-Ressourcentyp „SQL Server Availability Group“ fehlte
+describe('v1800 hadr_aktivieren registriert den AG-Ressourcentyp', () => {
+  it('prüft den Typ im Schon-Fall und registriert hadrres.dll aus dem Binn-Verzeichnis', async () => {
+    const { hadrSkript } = await import('./sql-server.js');
+    const s = hadrSkript();
+    expect(s).toContain("$rtName = 'SQL Server Availability Group'");
+    expect(s).toContain("Add-ClusterResourceType -Name $rtName -Dll $dll");
+    expect(s).toContain("Join-Path $bin 'hadrres.dll'");
+    // „schon“ nur, wenn auch der Ressourcentyp da ist
+    expect(s).toContain("if ($hatTyp) { Ergebnis @{ zustand = 'schon'");
+    expect(s.indexOf('$instId =')).toBeLessThan(s.indexOf('function TypRegistrieren'));
   });
 });
