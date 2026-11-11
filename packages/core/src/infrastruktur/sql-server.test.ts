@@ -144,3 +144,23 @@ describe('v1789 benannte Instanzen', () => {
     expect((await skill.execute({ action: 'status', zugang: 'sql01', instanz: 'a b' }, {} as never)).error).toContain('instanz');
   });
 });
+
+describe('v1790 listener_testen', () => {
+  it('lesend auch außerhalb von Changes, als Domänenkonto per Kennwort-Anmeldung, Text mit Kerberos-Nachweis', async () => {
+    const { listenerTestSkript } = await import('./sql-server.js');
+    const s = listenerTestSkript({ listener: 'sqlag01.ad.3033.at', port: 1433 });
+    expect(s).toContain('MitKonto');
+    expect(s).toContain("Server=tcp:'' + $p.listener");
+    expect(s).toContain('auth_scheme');
+    expect(aktionsArt('sql_server', 'listener_testen')).toBe('lesen');
+    const aufrufe: Array<{ eingabe?: string }> = [];
+    const skill = new SqlServerSkill({
+      skript: async (_z, _b, eingabe) => { aufrufe.push({ ...(eingabe !== undefined ? { eingabe } : {}) }); return { code: 0, stdout: 'ALFRED-AD {"server":"SQL01","rolle":"PRIMARY","anmeldung":"KERBEROS","konto":"AD3033\\\\alfred","verschluesselt":true,"transport":"TCP","adresse":"10.203.30.5","port":1433,"ms":85}', stderr: '' }; },
+      tresor: { namen: async () => new Set(['win-dc01-admin']), lies: async () => 'pw' },
+    });
+    const r = await skill.execute({ action: 'listener_testen', zugang: 'probe-win25b', listener: 'sqlag01.ad.3033.at', konto_tresor: 'win-dc01-admin' }, {} as never);
+    expect(r.display).toBe('Listener sqlag01.ad.3033.at:1433 → SQL01 (PRIMARY), Anmeldung AD3033\\alfred über KERBEROS, verschlüsselt (Zertifikat nicht geprüft), TCP 10.203.30.5:1433, 85 ms');
+    expect(aufrufe[0]!.eingabe).toBe('{"kennwort":"pw"}');
+    expect((await skill.execute({ action: 'listener_testen', zugang: 'x', listener: 'sqlag01', konto_tresor: 'win-dc01-admin' }, {} as never)).error).toContain('listener');
+  });
+});

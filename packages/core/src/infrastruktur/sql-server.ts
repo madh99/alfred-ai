@@ -380,6 +380,32 @@ export function listenerEntfernenSkript(p: { ag: string; name: string }): string
  * Geplanter Failover auf DIESEN Rechner (sekundär, synchron, alle Datenbanken SYNCHRONIZED) — nie FORCE_ALLOW_DATA_LOSS. Wartet, bis
  * der Rechner primär ist, und misst die Dauer.
  */
+export interface ListenerTest { server: string; rolle: string; anmeldung: string; konto: string; verschluesselt: boolean; transport: string; adresse: string; port: number; ms: number }
+
+/**
+ * v1790 — Owner 11.11.: Clientbeweis über den Listener. Anmeldung als Domänenkonto (Kennwort-Anmeldung, echter Netz-Client mit
+ * Kerberos) über TCP an <listener>:<port>, verschlüsselt (Zertifikat vorerst selbstsigniert, daher nicht geprüft). Liest aus der
+ * eigenen Verbindung Authentifizierung, Verschlüsselung, Zieladresse sowie Server und Rolle des Replikats dahinter. Ändert nichts.
+ */
+export function listenerTestSkript(p: { listener: string; port: number }): string {
+  return alsDomaenenkonto(p, [
+    "$sw = [Diagnostics.Stopwatch]::StartNew()",
+    "$cn = New-Object System.Data.SqlClient.SqlConnection ('Server=tcp:' + $p.listener + ',' + $p.port + ';Database=master;Integrated Security=SSPI;Encrypt=True;TrustServerCertificate=True;MultiSubnetFailover=True;Connect Timeout=20;Application Name=Alfred-Listenertest')",
+    '$cn.Open()',
+    'try {',
+    '  $cmd = $cn.CreateCommand()',
+    "  $cmd.CommandText = \"SELECT CAST(@@SERVERNAME AS nvarchar(128)) s, c.auth_scheme a, c.encrypt_option e, c.net_transport t, CAST(c.local_net_address AS nvarchar(48)) l, c.local_tcp_port p, SUSER_SNAME() u, (SELECT TOP 1 rs.role_desc FROM sys.dm_hadr_availability_replica_states rs WHERE rs.is_local = 1) r FROM sys.dm_exec_connections c WHERE c.session_id = @@SPID\"",
+    '  $rd = $cmd.ExecuteReader(); [void]$rd.Read()',
+    "  $w = [ordered]@{ server = [string]$rd['s']; rolle = [string]$rd['r']; anmeldung = [string]$rd['a']; konto = [string]$rd['u']; verschluesselt = ([string]$rd['e'] -eq 'TRUE'); transport = [string]$rd['t']; adresse = [string]$rd['l']; port = [int]$rd['p']; ms = $sw.ElapsedMilliseconds }",
+    '  $rd.Close(); $w',
+    '} finally { $cn.Close() }',
+  ], 120);
+}
+
+export function listenerTestText(p: { listener: string; port: number }, r: ListenerTest): string {
+  return `Listener ${p.listener}:${p.port} → ${r.server} (${r.rolle || 'ohne AG-Rolle'}), Anmeldung ${r.konto} über ${r.anmeldung}, ${r.verschluesselt ? 'verschlüsselt (Zertifikat nicht geprüft)' : 'UNVERSCHLÜSSELT'}, ${r.transport} ${r.adresse}:${r.port}, ${r.ms} ms`;
+}
+
 export function failoverSkript(p: { ag: string }): string {
   return skript(p, [
     `$x = @(Sql "SELECT rs.role_desc o, ar.availability_mode_desc m FROM sys.availability_groups ag JOIN sys.dm_hadr_availability_replica_states rs ON rs.group_id = ag.group_id AND rs.is_local = 1 JOIN sys.availability_replicas ar ON ar.replica_id = rs.replica_id WHERE ag.name = ${nText(p.ag)}")`,

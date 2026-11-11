@@ -9,7 +9,7 @@ import {
   sqlStatusSkript, sqlStatusText, pruefdatenLesenSkript, pruefeMedien, medienSkript, pruefeInstallation, installierenSkript, pruefeKonfiguration, konfigurierenSkript,
   hadrSkript, endpunktSkript, endpunktEntfernenSkript, pruefeAg, agAnlegenSkript, agBeitretenSkript, agEntfernenSkript, pruefeListener, listenerSkript, listenerEntfernenSkript,
   failoverSkript, datenbankSkript, datenbankEntfernenSkript, pruefdatenSchreibenSkript, pruefeSicherung, sicherungSkript, pruefeJobs, jobsSkript, jobsEntfernenSkript,
-  pruefeWiederherstellung, wiederherstellungSkript, BEZEICHNER, INSTANZ, type SqlStatus,
+  pruefeWiederherstellung, wiederherstellungSkript, BEZEICHNER, INSTANZ, listenerTestSkript, listenerTestText, type SqlStatus, type ListenerTest,
 } from './sql-server.js';
 import { KONTO } from './windows-cluster.js';
 import { KONTO_FREI } from './windows-ad.js';
@@ -21,7 +21,7 @@ export interface SqlServerDeps {
   schlafe?: (ms: number) => Promise<void>;
 }
 
-export const SQL_LESEND = new Set(['status', 'pruefdaten_lesen']);
+export const SQL_LESEND = new Set(['status', 'pruefdaten_lesen', 'listener_testen']);
 const NUR_IM_CHANGE = new Set(['sql_medien_laden', 'sql_installieren', 'konfigurieren', 'hadr_aktivieren', 'endpunkt_anlegen', 'endpunkt_entfernen', 'ag_anlegen', 'ag_beitreten',
   'ag_entfernen', 'listener_anlegen', 'listener_entfernen', 'failover', 'datenbank_anlegen', 'datenbank_entfernen', 'pruefdaten_schreiben', 'sql_sicherung',
   'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen']);
@@ -35,6 +35,7 @@ export class SqlServerSkill extends Skill {
       'SQL Server auf Windows (I8d) über feste Bausteine auf Windows-Fernzugängen (zugang = Name des Fernzugangs), kein freies T-SQL. '
       + 'status (lesend, auch außerhalb von Changes): Version/CU/Edition, HADR, max Speicher, MAXDOP, Kostenschwelle, TempDB-Dateien, IFI, Dienste mit Konten, Datenbanken, AG-Replikate mit Rolle/Gesundheit, AG-Datenbanken mit Synchronisierung, Listener — als Prüfung z. B. erwartet „HADR an“, „SQL02 SECONDARY HEALTHY“, „alfredtest@SQL02 SYNCHRONIZED“, „Listener sqlag01:1433“, „SQL01 PRIMARY“. '
       + 'Alle Aktionen nehmen optional instanz (benannte Instanz, Standard MSSQLSERVER; bei AG-Replikaten server SQL01\\INSTANZ und je Instanz eigener Endpunkt-Port). '
+      + 'listener_testen (lesend, auch außerhalb von Changes; zugang = Client-Rechner in der Domäne, z. B. probe-win25b oder ein Knoten, listener = FQDN, port 1433, konto_tresor = Kennwort des Domänenkontos alfred, ausfuehrungskonto optional) — echte Anmeldung über den Listener per TCP, verschlüsselt; Ergebnis „Listener … → SQL01 (PRIMARY), Anmeldung AD3033\\alfred über KERBEROS, verschlüsselt …“ — als Prüfung erwartet „über KERBEROS“ bzw. „SQL02 (PRIMARY)“. '
       + 'pruefdaten_lesen (lesend; zugang, datenbank) — Zeilen/letzte Id der Prüftabelle dbo.alfred_pruef. '
       + 'NUR als Schritte freigegebener Changes: sql_medien_laden (zugang, url = Microsoft-Download: SSEI-Downloader/ISO bzw. CU, art installation|cu, sha256 optional) — Signatur Microsoft geprüft, nach C:\\SQLMedia (braucht befristeten Internetzugang; ohne Rückweg). '
       + 'sql_installieren (zugang, engine_konto/agent_konto = gMSA NETBIOS\\name$, sysadmins, daten D:\\SQLData, log L:\\SQLLog, tempdb T:\\TempDB, sicherung B:\\SQLBackup, tempdb_dateien 4, tempdb_mb 1024, tempdb_log_mb 2048, max_speicher_mb 12288, maxdop 4, pid optional, konto_tresor Pflicht = Kennwort des Domänenkontos alfred, z. B. win-dc01-admin; zeitlimitS 5400–7200) — als Domänenkonto per Kennwort-Anmeldung, CU aus C:\\SQLMedia\\CU per Slipstream, Neustart bei Bedarf (ohne Rückweg; Deinstallation = eigener Change). '
@@ -67,7 +68,7 @@ export class SqlServerSkill extends Skill {
         replikate: { type: 'array', items: { type: 'object', properties: { server: { type: 'string' }, fqdn: { type: 'string' } } } },
         ip: { type: 'string' }, maske: { type: 'string' }, datenbank: { type: 'string' }, notiz: { type: 'string' }, ziel: { type: 'string' },
         voll_uhrzeit: { type: 'string' }, diff_stunden: { type: 'number' }, log_minuten: { type: 'number' },
-        ordner: { type: 'string' }, ziel_name: { type: 'string' }, entfernen_danach: { type: 'boolean' },
+        ordner: { type: 'string' }, listener: { type: 'string', description: 'listener_testen: FQDN des Listeners' }, ziel_name: { type: 'string' }, entfernen_danach: { type: 'boolean' },
       },
       required: ['action', 'zugang'],
     },
@@ -154,6 +155,16 @@ export class SqlServerSkill extends Skill {
           const p = pr(pruefeListener({ ...input, ip: '0.0.0.0', maske: '0.0.0.0' }));
           const r = await this.lauf<{ zustand: string }>(zugang, listenerEntfernenSkript(mi({ ag: p.ag, name: p.name })), 'AG-Listener entfernen', 600_000);
           return { success: true, data: r, display: `✅ Listener ${p.name}: ${r.zustand}` };
+        }
+        case 'listener_testen': {
+          const listener = String(input.listener ?? '').trim().toLowerCase();
+          if (!/^(?=.{3,120}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(listener)) throw new Error('listener: vollständiger DNS-Name, z. B. sqlag01.ad.3033.at');
+          const port = input.port === undefined ? 1433 : Number(input.port);
+          if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port: Standard 1433');
+          const kw = await this.kennwort(input.konto_tresor, `Listener-Test ${listener} von ${zugang} (Domänenkonto)`);
+          const p = { listener, port };
+          const r = await this.lauf<ListenerTest>(zugang, listenerTestSkript(mk(p)), 'Listener-Test', 300_000, { kennwort: kw });
+          return { success: true, data: { ...p, ...r }, display: listenerTestText(p, r) };
         }
         case 'failover': {
           const ag = name('ag');

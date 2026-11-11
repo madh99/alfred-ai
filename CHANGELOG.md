@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Clientbeweis über den Listener einer Verfügbarkeitsgruppe (I8d, v1790)
+
+- `sql_server listener_testen` (lesend, auch außerhalb von Changes): echte Anmeldung als Domänenkonto über den Listener per TCP mit Verschlüsselung. Das Ergebnis nennt Server und Rolle des Replikats dahinter, das Anmeldeverfahren (Kerberos oder NTLM), die Verschlüsselung, Zieladresse und Dauer und eignet sich als Prüfung in Changes. Solange kein Zertifikat einer eigenen Zertifizierungsstelle vorhanden ist, wird das Serverzertifikat nicht geprüft; das Ergebnis weist darauf hin.
+
 ### Added — SQL Server auf Windows mit Verfügbarkeitsgruppe (I8d, v1789)
 
 - Neuer Skill `sql_server` mit festen Bausteinen statt freiem T-SQL: Installationsmedien von Microsoft laden (Signatur und optional SHA-256 geprüft), unbeaufsichtigte Installation mit gMSA-Diensten, getrennten Platten für Daten, Log, TempDB und Sicherung, mehreren TempDB-Dateien, Instant File Initialization, Speichergrenze und MAXDOP sowie kumulativem Update per Slipstream. Die Installation läuft als Domänenkonto mit Kennwort-Anmeldung.
