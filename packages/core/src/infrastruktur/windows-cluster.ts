@@ -800,11 +800,15 @@ export function defenderStatusSkript(): string {
     "$ids = @($m.ThreatIDDefaultAction_Ids | Where-Object { $_ } | ForEach-Object { [string]$_ }); $akt = @($m.ThreatIDDefaultAction_Actions | ForEach-Object { [string]$_ })",
     "$paare = @(for ($i = 0; $i -lt $ids.Count; $i++) { [ordered]@{ id = $ids[$i]; aktion = $(if ($i -lt $akt.Count) { $akt[$i] } else { '' }) } })",
     "$ev = @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object { $_.Id -in 1116, 1117 -and $_.TimeCreated -gt (Get-Date).AddDays(-7) } | Select-Object -First 10 | ForEach-Object { [ordered]@{ zeit = $_.TimeCreated.ToString('s'); id = $_.Id; name = $(if ($_.Message -match 'Name:\\s*([^\\r\\n]+)') { $Matches[1].Trim() } else { '' }) } })",
-    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; echtzeit = [bool]$s.RealTimeProtectionEnabled; signaturen = [string]$s.AntivirusSignatureVersion; ausnahmen = $paare; ereignisse = $ev })",
+    // v1819 — Realfall 12.11. PKI-A Schritt 15 zweimal „Failed to execute helper program (Permission denied)“ ohne 1116/1117: auch
+    // Verhaltens-/ASR-/Blockier-Ereignisse und Defenders eigene Bedrohungsliste zeigen, damit die Ursache belegt statt vermutet wird.
+    "$verlauf = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; StartTime = (Get-Date).AddDays(-2) } -MaxEvents 400 -ErrorAction SilentlyContinue | Where-Object { $_.Id -in 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119, 1121, 1122, 1123, 1124, 1125, 1126, 5007 } | Select-Object -First 15 | ForEach-Object { $t = ($_.Message -replace '\\s+', ' '); [ordered]@{ zeit = $_.TimeCreated.ToString('s'); id = $_.Id; text = $t.Substring(0, [Math]::Min(300, $t.Length)) } })",
+    "$erk = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10 | ForEach-Object { [ordered]@{ zeit = ([datetime]$_.InitialDetectionTime).ToString('s'); id = [string]$_.ThreatID; aktion = [string]$_.ActionSuccess; prozess = [string]$_.ProcessName; quelle = ([string]($_.Resources -join ' ')).Substring(0, [Math]::Min(160, ([string]($_.Resources -join ' ')).Length)) } })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; echtzeit = [bool]$s.RealTimeProtectionEnabled; signaturen = [string]$s.AntivirusSignatureVersion; ausnahmen = $paare; ereignisse = $ev; verlauf = $verlauf; erkennungen = $erk })",
   ].join('\n');
 }
 
-export interface DefenderStatus { rechner: string; echtzeit: boolean; signaturen: string; ausnahmen: { id: string; aktion: string }[]; ereignisse: { zeit: string; id: number; name: string }[] }
+export interface DefenderStatus { rechner: string; echtzeit: boolean; signaturen: string; ausnahmen: { id: string; aktion: string }[]; ereignisse: { zeit: string; id: number; name: string }[]; verlauf?: { zeit: string; id: number; text: string }[]; erkennungen?: { zeit: string; id: string; aktion: string; prozess: string; quelle: string }[] }
 
 export function pruefeFehlalarm(v: unknown): string | { id: string } {
   const id = String(v ?? '').trim();

@@ -309,3 +309,13 @@ describe('v1815 Defender-Fehlalarm (Owner 12.11.)', () => {
     expect(m.defenderAusnahmeSkript({ id: '2147942983', entfernen: true })).toContain('Remove-MpPreference -ThreatIDDefaultAction_Ids');
   });
 });
+
+describe('v1819 Defender-Diagnose', () => {
+  it('liest auch Verhaltens-/ASR-/Blockier-Ereignisse und die Bedrohungsliste (nur lesend)', async () => {
+    const { defenderStatusSkript } = await import('./windows-cluster.js');
+    const s = defenderStatusSkript();
+    expect(s).toContain('1121, 1122, 1123');
+    expect(s).toContain('Get-MpThreatDetection');
+    expect(s).not.toMatch(/Set-MpPreference|Add-MpPreference|Remove-MpPreference/);
+  });
+});

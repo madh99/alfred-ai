@@ -51,7 +51,7 @@ export class WindowsClusterSkill extends Skill {
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
       + 'ereignisse_status (lesend; zugang, event_ids Standard [1650], minuten optional) — Cluster-Ereignisse mit RecordId. '
       + 'stabilitaet_pruefen (lesend; zugaenge = alle Knoten z. B. [sql01, sql02], dauer_s Standard 900 (300–1800), intervall_s Standard 60, ag optional z. B. ag01, event_ids Standard [1650]) — beobachtet die volle Dauer: je Messung neue Ereignisse seit Beginn, Knoten Up, alle Ressourcen Online, lokal AG HEALTHY/CONNECTED und Datenbanken SYNCHRONIZED; Ergebnis „CLUSTER_STABLE“ nur ohne neues Ereignis und ohne Lücke, sonst „FAIL“ bzw. „UNKNOWN“ (Pflicht nach Firewall-/Netzänderungen an Clustern; Schritt-zeitlimitS ≥ dauer_s + 300). '
-      + 'defender_status (lesend; zugang oder vmid + vm_name) — Echtzeitschutz, Signaturstand, gesetzte Erkennungs-Ausnahmen, Erkennungen 1116/1117 der letzten 7 Tage. '
+      + 'defender_status (lesend; zugang oder vmid + vm_name) — Echtzeitschutz, Signaturstand, gesetzte Erkennungs-Ausnahmen, Erkennungen 1116/1117 der letzten 7 Tage, Defender-Protokoll der letzten 2 Tage (Verhalten, ASR, Blockaden, Konfiguration) und Defenders Bedrohungsliste. '
       + `defender_fehlalarm_zulassen (zugang oder vmid + vm_name, threat_id NUR ${Object.keys(DEFENDER_FEHLALARME).join('/')} = Fehlalarm auf Alfreds Baustein-Befehlszeilen, Owner-Entscheidung 12.11.) — Aktion Allow für genau diese Erkennung (wird weiter protokolliert), Echtzeitschutz bleibt an; Rückweg defender_fehlalarm_entfernen (gleiche Parameter). `
       + 'firewall_lesen (lesend; zugang, nur_any optional true) — alle aktiven eingehenden Erlauben-Regeln mit regel (Name/InstanceID), Anzeige, Gruppe, Protokoll, lokalen Ports und Gegenstellen (von). '
       + 'spn_lesen (lesend; zugang = Mitglied oder DC, konto = sAMAccountName z. B. gmsa-sqleng$) — servicePrincipalName des Kontos (als Computerkonto gelesen). '
@@ -145,7 +145,9 @@ export class WindowsClusterSkill extends Skill {
         case 'stabilitaet_pruefen': return await this.stabilitaet(input);
         case 'defender_status': {
           const r = await this.lauf<DefenderStatus>(zugang, defenderStatusSkript(), 'Defender-Status', 120_000);
-          return { success: true, data: r, display: `${r.rechner}: Echtzeitschutz ${r.echtzeit ? 'an' : 'AUS'}, Signaturen ${r.signaturen}; Ausnahmen ${r.ausnahmen.length ? r.ausnahmen.map(x => `${x.id}=${x.aktion}`).join(', ') : 'keine'}; Erkennungen 7 Tage: ${r.ereignisse.length ? r.ereignisse.map(x => `${x.zeit} ${x.id} ${x.name}`).join(' | ') : 'keine'}` };
+          return { success: true, data: r, display: `${r.rechner}: Echtzeitschutz ${r.echtzeit ? 'an' : 'AUS'}, Signaturen ${r.signaturen}; Ausnahmen ${r.ausnahmen.length ? r.ausnahmen.map(x => `${x.id}=${x.aktion}`).join(', ') : 'keine'}; Erkennungen 7 Tage: ${r.ereignisse.length ? r.ereignisse.map(x => `${x.zeit} ${x.id} ${x.name}`).join(' | ') : 'keine'}`
+            + `\nDefender-Protokoll 2 Tage (Erkennung/Verhalten/ASR/Blockade/Konfiguration): ${r.verlauf?.length ? r.verlauf.map(x => `${x.zeit} ${x.id} ${x.text}`).join(' | ') : 'nichts'}`
+            + `\nBedrohungsliste: ${r.erkennungen?.length ? r.erkennungen.map(x => `${x.zeit} ${x.id} ${x.aktion} ${x.prozess} ${x.quelle}`).join(' | ') : 'leer'}` };
         }
         case 'defender_fehlalarm_zulassen': case 'defender_fehlalarm_entfernen': {
           const f = fehler(pruefeFehlalarm(input.threat_id)) as { id: string };

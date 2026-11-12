@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Defender-Diagnose (v1819)
+
+- `windows_cluster defender_status` zeigt zusätzlich das Defender-Protokoll der letzten zwei Tage (Verhaltens-, ASR-, Blockier- und Konfigurationsereignisse) und Defenders Bedrohungsliste. Damit lässt sich belegen, ob Defender einen vom Gastagenten gestarteten Prozess blockiert hat. Die Abfrage ist nur lesend.
+
 ### Fixed — Lokaler CRL-Ablageort der CA (v1818)
 
 - `windows_pki publication_setzen` setzte den lokalen Ablageort als `%windir%\…`. Die CA kennt aber nur ihre eigenen Platzhalter, deshalb scheiterte das Ausstellen der CRL („Verzeichnisname ungültig“). Der Ablageort steht jetzt wie der Standardeintrag der CA als wörtlicher Pfad.
