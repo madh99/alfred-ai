@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — URL-Unterpfad für die PKI-Website (v1829)
+
+- `windows_pki pki_web_einrichten` legt mit dem neuen Parameter `alias` (z. B. `pki`) ein virtuelles Verzeichnis auf denselben Ordner an, sodass die Dateien unter `http://<host>/pki/` erreichbar sind. Der Schritt ist wiederholbar und bricht ab, wenn der Alias bereits auf einen anderen Ordner zeigt.
+
 ### Fixed — Bindung der PKI-Website (v1828)
 
 - `windows_pki pki_web_einrichten` scheiterte beim Anlegen der IIS-Site mit „ungültiger Parameter“, weil PowerShell die Bindungsangabe in zwei Argumente zerlegte. Name, Bindung und Pfad werden jetzt vorab als vollständige Argumente gebildet.

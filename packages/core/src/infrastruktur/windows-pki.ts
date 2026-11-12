@@ -451,12 +451,19 @@ export function aktivierenSkript(r: AktivierParameter): string {
 
 const HOST = /^[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))+$/;
 const ORDNER = /^[A-Za-z]:\\[A-Za-z0-9 ._-]{1,80}(\\[A-Za-z0-9 ._-]{1,80}){0,3}$/;
-export interface PkiWeb { host: string; pfad: string; site: string }
+export interface PkiWeb { host: string; pfad: string; site: string; alias?: string }
 export function pruefeWeb(o: Record<string, unknown>): PkiWeb | string {
   const r = { host: String(o.host_header ?? '').trim().toLowerCase(), pfad: String(o.pfad ?? '').trim(), site: String(o.site ?? 'Alfred-PKI').trim() };
   if (!HOST.test(r.host)) return 'host_header: FQDN, z. B. pki.ad.3033.at';
   if (!ORDNER.test(r.pfad)) return 'pfad: lokaler Ordner, z. B. W:\\PKI (vorher mit windows_cluster freigabe_anlegen als pki$ anlegen, aendern = Issuing-CA-Computerkonto)';
   if (!/^[A-Za-z][A-Za-z0-9-]{2,40}$/.test(r.site)) return 'site: Name der IIS-Site';
+  // v1829 — Realfall 12.11. PKI-B Schritt 17: der Alias /pki war als freier PowerShell-Befehl geplant; die SSH-Shell ersetzte dessen
+  // $-Variablen vorab → Parserfehler. Jetzt Teil des Bausteins: virtuelles Verzeichnis /<alias> auf denselben Ordner, wiederholbar.
+  if (o.alias !== undefined && o.alias !== '') {
+    const a = String(o.alias).trim().replace(/^\/+/, '');
+    if (!/^[a-z][a-z0-9-]{1,30}$/.test(a)) return 'alias: URL-Unterpfad, z. B. pki (→ http://<host>/pki/)';
+    return { ...r, alias: a };
+  }
   return r;
 }
 
@@ -484,9 +491,11 @@ export function webSkript(w: PkiWeb): string {
     '$acl = Get-Acl $p.pfad',
     "$iusr = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-17'",
     "if (-not ($acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-17' })) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($iusr, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); Set-Acl -Path $p.pfad -AclObject $acl }",
+    "$aliasZustand = ''",
+    "if ($p.alias) { $vd = $p.site + '/' + $p.alias; $ist = (& $ac list vdir $vd /text:physicalPath) -join ''; if ($ist) { if ($ist.TrimEnd('\\') -ne $p.pfad.TrimEnd('\\')) { throw ('Alias-Konflikt: /' + $p.alias + ' zeigt auf ' + $ist) }; $aliasZustand = 'schon' } else { $aApp = '/app.name:' + $p.site + '/'; $aVd = '/path:/' + $p.alias; & $ac add vdir $aApp $aVd $aPfad | Out-Null; if ($LASTEXITCODE -ne 0) { throw ('appcmd add vdir Exit ' + $LASTEXITCODE) }; $aliasZustand = 'neu' }; $ist = (& $ac list vdir $vd /text:physicalPath) -join ''; if ($ist.TrimEnd('\\') -ne $p.pfad.TrimEnd('\\')) { throw ('Alias-Nachprüfung: /' + $p.alias + ' -> ' + $ist) } }",
     "& $ac start site /site.name:$($p.site) | Out-Null",
     "$st = (& $ac list site /name:$($p.site)) -join ''",
-    "Ergebnis ([ordered]@{ zustand = $zustand; site = $st; pfad = $p.pfad; host = $p.host; listing = $(try { [string](Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1/' -Headers @{ Host = $p.host } -ErrorAction Stop).StatusCode } catch { [string]$_.Exception.Response.StatusCode.value__ }) })",
+    "Ergebnis ([ordered]@{ zustand = $zustand; site = $st; pfad = $p.pfad; host = $p.host; alias = $(if ($p.alias) { '/' + $p.alias + ' (' + $aliasZustand + ')' } else { '' }); listing = $(try { [string](Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1/' -Headers @{ Host = $p.host } -ErrorAction Stop).StatusCode } catch { [string]$_.Exception.Response.StatusCode.value__ }) })",
   ].join('\n');
 }
 

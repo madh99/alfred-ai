@@ -183,3 +183,17 @@ describe('v1828 appcmd-Argumente', () => {
     expect(s).toContain('& $ac add site $aName $aBind $aPfad');
   });
 });
+
+describe('v1829 PKI-Alias im Baustein', () => {
+  it('alias wird geprüft und als virtuelles Verzeichnis angelegt, Konflikt bricht ab', async () => {
+    const { pruefeWeb, webSkript } = await import('./windows-pki.js');
+    expect(typeof pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\\PKI', alias: '../x' })).toBe('string');
+    const w = pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\\PKI', alias: '/pki' }) as { alias?: string };
+    expect(w.alias).toBe('pki');
+    const s = webSkript(w as never);
+    expect(s).toContain("$aVd = '/path:/' + $p.alias");
+    expect(s).toContain('& $ac add vdir $aApp $aVd $aPfad');
+    expect(s).toContain('Alias-Konflikt');
+    expect(webSkript(pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\\PKI' }) as never)).toContain('if ($p.alias)');
+  });
+});
