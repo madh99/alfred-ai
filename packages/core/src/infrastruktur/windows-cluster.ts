@@ -843,6 +843,30 @@ export function pruefeFehlalarm(v: unknown): string | { id: string } {
 }
 
 /** Fehlalarm-ID auf „Allow“ (6) setzen bzw. (entfernen) die Ausnahme wieder löschen; Ergebnis mit vorher/nachher; Echtzeitschutz muss an bleiben */
+/** v1821 — Owner-Entscheidung 12.11. (PKI-A a5b1175e): befristete Defender-Ausnahme NUR für den QEMU-Gastagenten auf NETZLOSEN VMs.
+ *  Beleg: MPLog „command line reported as threat“ auf gspawn-win64-helper.exe → powershell -EncodedCommand, trotz ThreatID-Allow,
+ *  ohne Ereignis. Feste Einträge (keine Parameter): Prozess-Ausnahme für qemu-ga.exe und den Helfer, Pfad-Ausnahme nur für die
+ *  Helfer-Datei. Echtzeitschutz bleibt an; Rückweg entfernt genau diese Einträge. */
+export const QEMU_GA_PROZESSE = ['C:\\Program Files\\Qemu-ga\\qemu-ga.exe', 'C:\\Program Files\\Qemu-ga\\gspawn-win64-helper.exe'];
+export const QEMU_GA_PFADE = ['C:\\Program Files\\Qemu-ga\\gspawn-win64-helper.exe'];
+
+export function defenderAgentAusnahmeSkript(a: { entfernen: boolean }): string {
+  return [
+    ...kopf({ entfernen: a.entfernen, prozesse: QEMU_GA_PROZESSE, pfade: QEMU_GA_PFADE }, false),
+    "foreach ($x in @($p.prozesse) + @($p.pfade)) { if (-not (Test-Path -LiteralPath $x)) { throw ('nicht vorhanden: ' + $x) } }",
+    "function Stand { $m = Get-MpPreference; [ordered]@{ prozesse = @($m.ExclusionProcess | Where-Object { $_ } | ForEach-Object { [string]$_ }); pfade = @($m.ExclusionPath | Where-Object { $_ } | ForEach-Object { [string]$_ }) } }",
+    '$vorher = Stand',
+    "if ($p.entfernen) { Remove-MpPreference -ExclusionProcess @($p.prozesse) -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath @($p.pfade) -ErrorAction SilentlyContinue }",
+    "else { Add-MpPreference -ExclusionProcess @($p.prozesse); Add-MpPreference -ExclusionPath @($p.pfade) }",
+    '$nachher = Stand',
+    "$da = @(@($p.prozesse) | Where-Object { $nachher.prozesse -contains $_ }) + @(@($p.pfade) | Where-Object { $nachher.pfade -contains $_ })",
+    "$soll = $(if ($p.entfernen) { $da.Count -eq 0 } else { $da.Count -eq (@($p.prozesse).Count + @($p.pfade).Count) })",
+    "if (-not $soll) { throw ('Defender-Ausnahmen nicht im Zielzustand: Prozesse ' + ($nachher.prozesse -join ', ') + '; Pfade ' + ($nachher.pfade -join ', ')) }",
+    "if (-not (Get-MpComputerStatus).RealTimeProtectionEnabled) { throw 'Echtzeitschutz ist AUS — das ist nicht Teil dieser Ausnahme, bitte prüfen' }",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; vorher = $vorher; nachher = $nachher; echtzeit = $true })",
+  ].join('\n');
+}
+
 export function defenderAusnahmeSkript(a: { id: string; entfernen: boolean }): string {
   return [
     ...kopf(a, false),

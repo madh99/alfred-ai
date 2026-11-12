@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Befristete Defender-Ausnahme für den Gastagenten (v1821)
+
+- Neue Change-Aktionen `windows_cluster defender_agent_ausnahme_setzen` und `defender_agent_ausnahme_entfernen`. Sie gelten nur für netzlose VMs, die über den QEMU-Gastagenten verwaltet werden. Gesetzt werden feste Einträge: eine Prozess-Ausnahme für `qemu-ga.exe` und dessen Startprogramm sowie eine Pfad-Ausnahme nur für die Datei des Startprogramms. Der Echtzeitschutz muss eingeschaltet bleiben. Der Rückweg entfernt genau diese Einträge.
+
 ### Added — Defender-Diagnoseprotokoll (v1820)
 
 - Neue lesende Aktion `windows_cluster defender_protokoll` (auch für netzlose VMs über den Gastagenten). Sie zeigt Treffer aus Defenders Diagnoseprotokoll MPLog, in dem auch Blockaden ohne Ereignis 1116/1117 stehen. Ein eigenes Suchmuster ist optional.

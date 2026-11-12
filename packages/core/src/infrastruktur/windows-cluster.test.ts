@@ -331,3 +331,25 @@ describe('v1820 Defender-Diagnoseprotokoll', () => {
     expect(typeof pruefeMuster('(')).toBe('string');
   });
 });
+
+describe('v1821 befristete Defender-Ausnahme für den Gastagenten', () => {
+  it('feste Einträge, Rückweg entfernt genau diese, Echtzeitschutz-Pflicht', async () => {
+    const { defenderAgentAusnahmeSkript, QEMU_GA_PROZESSE, QEMU_GA_PFADE } = await import('./windows-cluster.js');
+    expect(QEMU_GA_PROZESSE).toEqual(['C:\\Program Files\\Qemu-ga\\qemu-ga.exe', 'C:\\Program Files\\Qemu-ga\\gspawn-win64-helper.exe']);
+    expect(QEMU_GA_PFADE).toEqual(['C:\\Program Files\\Qemu-ga\\gspawn-win64-helper.exe']);
+    const s = defenderAgentAusnahmeSkript({ entfernen: false });
+    expect(s).toContain('Add-MpPreference -ExclusionProcess @($p.prozesse)');
+    expect(s).toContain('RealTimeProtectionEnabled');
+    expect(s).not.toMatch(/DisableRealtimeMonitoring|DisableBehaviorMonitoring/);
+    expect(defenderAgentAusnahmeSkript({ entfernen: true })).toContain('Remove-MpPreference -ExclusionProcess @($p.prozesse)');
+  });
+  it('nur über den Gastagenten', async () => {
+    const { WindowsClusterSkill } = await import('./windows-cluster-skill.js');
+    let gerufen = false;
+    const sk = new WindowsClusterSkill({ skript: async () => { gerufen = true; return { code: 0, stdout: 'ALFRED-AD {}', stderr: '' }; }, tresor: { namen: async () => new Set<string>(), lies: async () => '' }, schlafe: async () => undefined });
+    const r = await sk.execute({ action: 'defender_agent_ausnahme_setzen', zugang: 'sql01' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Gastagenten');
+    expect(gerufen).toBe(false);
+  });
+});
