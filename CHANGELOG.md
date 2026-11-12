@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Zeitgrenzen der Windows-Skills und Agent-Abfrage (v1811)
+
+- `windows_cluster`, `sql_server` und `windows_pki` brachen bei direkten Aufrufen nach der allgemeinen Grenze von 30 Sekunden ab. Betroffen war zum Beispiel das 5-minütige Stabilitätsfenster. Die Skills haben jetzt eigene Zeitgrenzen: 40, 15 und 10 Minuten.
+- `proxmox check_offline_isolation` meldete einen laufenden Gastagenten als „antwortet nicht“, weil die Abfrage mit der falschen HTTP-Methode lief (Proxmox verlangt POST).
+
 ### Added — Netzlose Windows-VMs und PKI-Status (v1810)
 
 - `proxmox provision_windows_offline` legt eine Windows-VM aus der Vorlage ohne jede Netzwerkkarte an, zum Beispiel für eine Offline-Root-CA:

@@ -2046,7 +2046,7 @@ export class ProxmoxSkill extends Skill {
       .filter(j => j.all ? !String(j.exclude ?? '').split(',').includes(String(vmid)) : String(j.vmid ?? '').split(',').includes(String(vmid)))
       .map(j => String(j.id ?? '?'));
     let agent = false;
-    if (st.status === 'running') { try { await this.get(`/nodes/${vm.node}/qemu/${vmid}/agent/ping`); agent = true; } catch { agent = false; } }
+    if (st.status === 'running') { try { await this.post(`/nodes/${vm.node}/qemu/${vmid}/agent/ping`, {}); agent = true; } catch { agent = false; } } // v1811: Proxmox verlangt POST für agent/ping
     const ok = nics.length === 0 && Number(cfg.onboot ?? 0) === 0;
     const data = { vmid, name: vm.name, node: vm.node, nics, onboot: Number(cfg.onboot ?? 0), status: st.status, agent, wechselmedien: medien, sicherungsjobs: jobs, isoliert: ok };
     const text = `${ok ? 'ROOT_ISOLATED' : 'NICHT ISOLIERT'}: VM ${vmid} ${vm.name ?? ''} (${vm.node}) — Netzwerkkarten ${nics.length ? nics.join(', ') : 'keine'}, Autostart ${Number(cfg.onboot ?? 0) ? 'AN' : 'aus'}, ${st.status ?? '?'}${st.status === 'running' ? `, Agent ${agent ? 'antwortet' : 'antwortet nicht'}` : ''}, Wechselmedien ${medien.length ? medien.join(', ') : 'keine'}, Sicherungsjobs ${jobs.length ? jobs.join(', ') : 'keine'}`;

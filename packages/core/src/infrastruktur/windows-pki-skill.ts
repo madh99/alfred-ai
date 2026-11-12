@@ -27,6 +27,7 @@ export class WindowsPkiSkill extends Skill {
       + 'Ergebnis beginnt mit „PKI_STATUS_OK“, sobald eine CA eingerichtet ist; vorher „keine CA“ bzw. „Rolle installiert, keine CA eingerichtet“. Offline-Ergebnisse tragen die Erhebungszeit.',
     riskLevel: 'admin',
     version: '1.0.0',
+    timeoutMs: 600_000,
     inputSchema: {
       type: 'object',
       properties: {

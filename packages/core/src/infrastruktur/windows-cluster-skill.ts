@@ -66,6 +66,8 @@ export class WindowsClusterSkill extends Skill {
       + 'Reihenfolge Cluster: Features (Failover-Clustering, RSAT-Clustering-PowerShell) auf allen Knoten → Firewall-Regeln zwischen den Knoten → CNO vorab (vollzugriff alfred) → cluster_validieren → cluster_anlegen → Zeugen-Freigabe auf fs01 mit vollzugriff <NETBIOS>\\<CNO>$ → zeuge_setzen.',
     riskLevel: 'admin',
     version: '1.0.0',
+    // v1811 — Realfall 12.11.: stabilitaet_pruefen (bis 1800 s) brach bei direkten Aufrufen am Standard von 30 s ab
+    timeoutMs: 2_400_000,
     inputSchema: {
       type: 'object',
       properties: {

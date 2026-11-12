@@ -52,6 +52,8 @@ export class SqlServerSkill extends Skill {
       + 'wiederherstellung_testen (zugang, datenbank, ordner = <ziel>\\<db>, ziel_name, entfernen_danach Standard true) — Kette voll+diff+log neben der AG, Platzprüfung, DBCC CHECKDB, Prüfdaten zählen (ohne Rückweg).',
     riskLevel: 'admin',
     version: '1.0.0',
+    // v1811 — direkte Aufrufe (listener_testen, status) nicht am Standard von 30 s abbrechen
+    timeoutMs: 900_000,
     inputSchema: {
       type: 'object',
       properties: {
