@@ -644,7 +644,8 @@ export function caSicherungSkript(z: { ziel_ordner: string }): string {
     "if (-not ($dateien | Where-Object { $_.datei -like 'Database*' })) { throw 'Sicherung ohne Datenbank' }",
     "$m = [ordered]@{ ca = $aktiv; satz = $satz; zeit = (Get-Date).ToString('s'); rechner = $env:COMPUTERNAME; dateien = $dateien }",
     "[IO.File]::WriteAllText((Join-Path $d 'manifest.json'), ($m | ConvertTo-Json -Depth 5))",
-    "Ergebnis ([ordered]@{ ca = $aktiv; satz = $satz; ordner = $d; dateien = $dateien.Count; bytes = ($dateien | Measure-Object -Property bytes -Sum).Sum; zeit = $m.zeit })",
+    // v1822 — Realfall 12.11. PKI-A Schritt 18: Measure-Object -Property findet Schlüssel geordneter Hashtables nicht (PS 5.1) → Werte vorher herausziehen
+    "Ergebnis ([ordered]@{ ca = $aktiv; satz = $satz; ordner = $d; dateien = $dateien.Count; bytes = [long](@($dateien | ForEach-Object { [long]$_['bytes'] }) | Measure-Object -Sum).Sum; zeit = $m.zeit })",
   ].join('\n');
 }
 

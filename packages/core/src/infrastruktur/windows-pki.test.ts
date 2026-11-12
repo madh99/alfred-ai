@@ -164,3 +164,12 @@ describe('v1818 lokaler CDP/AIA-Pfad', () => {
     expect(p.cdp[0]).toBe('1:C:\\Windows\\System32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl');
   });
 });
+
+describe('v1822 CA-Sicherung Summe', () => {
+  it('summiert die Dateigrößen ohne Measure-Object -Property auf Hashtables', async () => {
+    const m = await import('./windows-pki.js') as Record<string, unknown>;
+    const quelle = Object.values(m).filter(f => typeof f === 'function').map(f => String(f)).join('\n');
+    expect(quelle).not.toContain('Measure-Object -Property bytes');
+    expect(quelle).toContain("[long]$_['bytes']");
+  });
+});

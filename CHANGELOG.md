@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Größensumme der CA-Sicherung (v1822)
+
+- `windows_pki ca_sicherung` scheiterte nach erfolgreicher Sicherung beim Aufsummieren der Dateigrößen („property bytes cannot be found“), weil Windows PowerShell 5.1 Schlüssel geordneter Hashtables nicht als Eigenschaften auswertet. Die Summe wird jetzt aus den einzelnen Werten gebildet.
+
 ### Added — Befristete Defender-Ausnahme für den Gastagenten (v1821)
 
 - Neue Change-Aktionen `windows_cluster defender_agent_ausnahme_setzen` und `defender_agent_ausnahme_entfernen`. Sie gelten nur für netzlose VMs, die über den QEMU-Gastagenten verwaltet werden. Gesetzt werden feste Einträge: eine Prozess-Ausnahme für `qemu-ga.exe` und dessen Startprogramm sowie eine Pfad-Ausnahme nur für die Datei des Startprogramms. Der Echtzeitschutz muss eingeschaltet bleiben. Der Rückweg entfernt genau diese Einträge.
