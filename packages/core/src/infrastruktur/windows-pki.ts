@@ -145,7 +145,12 @@ export function rootInitSkript(r: RootParameter): string {
     // v1816 — Realfall 12.11. PKI-A a5b1175e Schritt 13: ohne Netzwerkkarte „0x800704cf ERROR_NETWORK_UNREACHABLE“ — ohne ausdrückliche
     // lokale Pfade nutzt das Cmdlet UNC-Pfade (braucht TCP/IP). Datenbank und Log daher lokal angeben.
     "  $db = Join-Path $env:SystemRoot 'System32\\CertLog'; New-Item -ItemType Directory -Path $db -Force | Out-Null",
-    "  Install-AdcsCertificationAuthority -CAType StandaloneRootCA -CACommonName $p.ca_name -KeyLength ([int]$p.key_bits) -HashAlgorithmName $p.hash -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' -ValidityPeriod Years -ValidityPeriodUnits ([int]$p.validity_years) -DatabaseDirectory $db -LogDirectory $db -Force | Out-Null",
+    // v1817 — Realfall 12.11. PKI-A Wiederholung: der abgebrochene erste Versuch hinterließ „The Certification Authority is already
+    // installed“, obwohl keine CA konfiguriert ist (Active leer). Nur in GENAU diesem Fall: CA-Konfiguration entfernen (Rolle bleibt) und
+    // mit -OverwriteExistingKey neu anlegen — der Schlüssel des abgebrochenen Versuchs hat nie etwas signiert.
+    "  $ia = @{ CAType = 'StandaloneRootCA'; CACommonName = $p.ca_name; KeyLength = [int]$p.key_bits; HashAlgorithmName = $p.hash; CryptoProviderName = 'RSA#Microsoft Software Key Storage Provider'; ValidityPeriod = 'Years'; ValidityPeriodUnits = [int]$p.validity_years; DatabaseDirectory = $db; LogDirectory = $db; Force = $true }",
+    "  $bereinigt = $false",
+    "  try { Install-AdcsCertificationAuthority @ia | Out-Null } catch { if ($_.Exception.Message -notmatch 'already installed') { throw }; Uninstall-AdcsCertificationAuthority -Force | Out-Null; $bereinigt = $true; Install-AdcsCertificationAuthority @ia -OverwriteExistingKey | Out-Null }",
     '}',
     "& certutil.exe -setreg CA\\CRLPeriod Weeks | Out-Null; & certutil.exe -setreg CA\\CRLPeriodUnits ([int]$p.crl_wochen) | Out-Null",
     "& certutil.exe -setreg CA\\CRLOverlapPeriod Weeks | Out-Null; & certutil.exe -setreg CA\\CRLOverlapUnits ([int]$p.crl_ueberlappung_wochen) | Out-Null",
@@ -156,7 +161,7 @@ export function rootInitSkript(r: RootParameter): string {
     "$bis = (Get-Date).AddMinutes(2); do { Start-Sleep -Seconds 3 } while ((Get-Service CertSvc).Status -ne 'Running' -and (Get-Date) -lt $bis)",
     "& certutil.exe -crl | Out-Null",
     "if ($LASTEXITCODE -ne 0) { throw ('certutil -crl Exit ' + $LASTEXITCODE) }",
-    "Ergebnis ([ordered]@{ zustand = $(if ($schon) { 'schon' } else { 'angelegt' }); ca = $p.ca_name; dienst = [string](Get-Service CertSvc).Status })",
+    "Ergebnis ([ordered]@{ zustand = $(if ($schon) { 'schon' } elseif ($bereinigt) { 'angelegt (Rest des abgebrochenen Versuchs bereinigt, Schlüssel ersetzt)' } else { 'angelegt' }); ca = $p.ca_name; dienst = [string](Get-Service CertSvc).Status })",
   ].join('\n');
 }
 

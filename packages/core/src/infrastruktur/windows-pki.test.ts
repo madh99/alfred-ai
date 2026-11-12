@@ -44,7 +44,7 @@ describe('v1812 Rolle, Offline-Root, Artefakte', () => {
     const s = rootInitSkript(r);
     expect(s).toContain("Offline-Root nur OHNE Netzwerkkarte");
     expect(s).toContain("if ($cs.PartOfDomain)");
-    expect(s).toContain('-CAType StandaloneRootCA');
+    expect(s).toContain("CAType = 'StandaloneRootCA'");
     expect(s.indexOf('PhysicalAdapter=TRUE')).toBeLessThan(s.indexOf('Install-AdcsCertificationAuthority'));
     const c = rootCapolicy(r);
     expect(c).toContain('PathLength=1');
@@ -137,9 +137,21 @@ describe('v1816 Offline-Root ohne Netzwerkkarte', () => {
   it('lokale Datenbank-/Logpfade, halbe CA ist nicht „schon“', async () => {
     const { pruefeRoot, rootInitSkript } = await import('./windows-pki.js');
     const s = rootInitSkript(pruefeRoot({ ca_name: 'AD3033 Root CA 01' }) as never);
-    expect(s).toContain("-DatabaseDirectory $db -LogDirectory $db");
+    expect(s).toContain('DatabaseDirectory = $db; LogDirectory = $db');
     expect(s).toContain("System32\\CertLog");
     expect(s).toContain('nur halb eingerichtet');
     expect(s.indexOf('nur halb eingerichtet')).toBeLessThan(s.indexOf('Install-AdcsCertificationAuthority'));
+  });
+});
+
+describe('v1817 Rest eines abgebrochenen Root-Versuchs', () => {
+  it('nur bei „already installed“ ohne konfigurierte CA: Konfiguration entfernen und Schlüssel ersetzen', async () => {
+    const { pruefeRoot, rootInitSkript } = await import('./windows-pki.js');
+    const s = rootInitSkript(pruefeRoot({ ca_name: 'AD3033 Root CA 01' }) as never);
+    expect(s).toContain("if ($_.Exception.Message -notmatch 'already installed') { throw }");
+    expect(s).toContain('Uninstall-AdcsCertificationAuthority -Force');
+    expect(s).toContain('Install-AdcsCertificationAuthority @ia -OverwriteExistingKey');
+    // die Bereinigung steht innerhalb von „if (-not $schon)“ — eine eingerichtete CA wird nie angefasst
+    expect(s.indexOf("'if (-not $schon) {'".slice(1, -1))).toBeLessThan(s.indexOf('Uninstall-AdcsCertificationAuthority'));
   });
 });

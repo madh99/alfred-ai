@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rest eines abgebrochenen Root-Versuchs bereinigen (v1817)
+
+- Ein abgebrochener Versuch, die Offline-Root anzulegen, ließ die Einrichtung „already installed“ melden, obwohl keine CA konfiguriert war.
+- `windows_pki root_initialisieren` entfernt in genau diesem Fall die CA-Konfiguration. Die Rolle bleibt dabei installiert.
+- Danach legt der Baustein die CA neu an und ersetzt den unbenutzten Schlüssel des abgebrochenen Versuchs.
+- Eine vollständig eingerichtete CA wird nie angefasst.
+
 ### Fixed — Offline-Root ohne Netzwerkkarte anlegen (v1816)
 
 - `windows_pki root_initialisieren` brach auf einer VM ohne Netzwerkkarte mit `ERROR_NETWORK_UNREACHABLE` ab. Ohne ausdrückliche lokale Pfade für Datenbank und Log greift die Einrichtung über Netzwerkpfade zu. Beide Pfade werden jetzt lokal angegeben.
