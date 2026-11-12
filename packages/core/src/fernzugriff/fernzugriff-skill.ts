@@ -7,6 +7,7 @@ import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
+import { ausKodiertemBefehl, skriptDatei } from './windows-skriptdatei.js';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
 import { kopiere, kopiereDatenbank, datenbankInventar, sqliteInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
@@ -43,6 +44,8 @@ export interface FernzugriffDeps {
   ssh: (ziel: SshZiel, befehl: string, timeoutMs?: number) => Promise<SshErgebnis>;
   /** I4c — SSH mit Eingabe über stdin (Geheimnisse nie in der Befehlszeile); I6: `max` für große Dateilisten */
   sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number, max?: number) => Promise<SshErgebnis>;
+  /** v1823 — Datei per SFTP ablegen (Windows-Bausteine als Skriptdatei statt -EncodedCommand) */
+  sftp?: (ziel: SshZiel, inhalt: string, entfernterPfad: string, timeoutMs?: number) => Promise<SshErgebnis>;
   /** I6 — Strom Quelle → Server → Ziel (tar, pg_dump) */
   sshStrom?: (q: SshZiel, qBefehl: string, qEingabe: string, z: SshZiel, zBefehl: string, o: { timeoutMs: number; kbps?: number; fortschritt?: (bytes: number) => void }) => Promise<StromErgebnis & { hostSchluesselGeaendert: boolean }>;
   /** I6 (E4-G) — Geheimnis vom Quell-Host direkt in den Tresor (Wert erreicht nie das Modell) */
@@ -535,11 +538,23 @@ export class FernzugriffSkill extends Skill {
     const z = await this.zugang(owner, { name });
     if (z.system !== 'windows') throw new Error(`${name} ist kein Windows-Zugang`);
     let r: SshErgebnis;
+    // v1823 — als Skriptdatei statt langer -EncodedCommand-Befehlszeile (Defender-Fehlalarm „ClickFix“, Owner-Entscheidung 12.11.)
+    const skript = ausKodiertemBefehl(befehl);
+    let datei: string | undefined;
+    if (skript !== null) {
+      if (!this.deps.sftp) throw new Error('Skriptdatei-Übertragung (SFTP) nicht verfügbar');
+      const d = skriptDatei(skript, randomBytes(8).toString('hex'));
+      const ziel = { id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel };
+      const h = await this.deps.sftp(ziel, d.inhalt, d.pfadSftp, 60_000);
+      if (h.hostSchluesselGeaendert) { await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt'); throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`); }
+      if (h.code !== 0) throw new Error(`Skriptdatei auf ${z.name} nicht abgelegt (SFTP Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);
+      befehl = d.befehl; datei = d.name;
+    }
     if (eingabe !== undefined) {
       if (!this.deps.sshEingabe) throw new Error('Übergabe per Standardeingabe nicht verfügbar');
       r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, befehl, eingabe, timeoutMs);
     } else r = await this.lauf(owner, z, befehl, timeoutMs);
-    this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined });
+    this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, ...(datei ? { skriptdatei: datei } : {}) });
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
   }
 

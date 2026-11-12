@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Windows-Bausteine als Skriptdatei (v1823)
+
+- Windows-Bausteine laufen nicht mehr als lange Befehlszeile `powershell -EncodedCommand`. Microsoft Defender hatte diese Aufrufform aus Fernsitzungen als Bedrohung gewertet und blockiert. Jedes Skript wird jetzt als Datei mit zufälligem Namen unter `C:\Windows\Temp` abgelegt (über SSH per SFTP, bei netzlosen VMs über den Gastagenten) und mit `powershell -File` ausgeführt. Die Datei löscht sich beim Start selbst. Defender prüft Datei und Inhalt weiterhin vollständig. Geheimnisse gehen unverändert nur über die Standardeingabe.
+
 ### Fixed — Größensumme der CA-Sicherung (v1822)
 
 - `windows_pki ca_sicherung` scheiterte nach erfolgreicher Sicherung beim Aufsummieren der Dateigrößen („property bytes cannot be found“), weil Windows PowerShell 5.1 Schlüssel geordneter Hashtables nicht als Eigenschaften auswertet. Die Summe wird jetzt aus den einzelnen Werten gebildet.

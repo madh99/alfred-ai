@@ -7097,6 +7097,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         },
         ssh: (ziel, befehl, timeoutMs) => sshAusfuehren(ziel, befehl, datenOrdner, timeoutMs),
         sshEingabe: async (ziel, befehl, eingabe, timeoutMs, max) => (await import('./fernzugriff/ssh.js')).sshMitEingabe(ziel, befehl, datenOrdner, eingabe, timeoutMs, max),
+        sftp: async (ziel, inhalt, entfernterPfad, timeoutMs) => (await import('./fernzugriff/ssh.js')).sftpHochladen(ziel, inhalt, entfernterPfad, datenOrdner, timeoutMs),
         // I6 — Daten von Host zu Host über den Server (nie über das Modell) und Geheimnisse direkt in den Tresor
         sshStrom: async (q, qb, qe, z, zb, o) => (await import('./fernzugriff/ssh.js')).sshStrom(q, qb, qe, z, zb, datenOrdner, o),
         tresorSetzen: async (name, wert, herkunft, zweck) => {

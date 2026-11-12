@@ -93,6 +93,37 @@ export async function sshMitEingabe(ziel: SshZiel, befehl: string, datenOrdner: 
 }
 
 /**
+ * v1823 — eine Datei per SFTP ablegen (Windows-Bausteine als Skriptdatei, siehe windows-skriptdatei.ts). Gleiche Schutzoptionen
+ * wie sshAusfuehren; der Inhalt liegt nur kurz in einer 0600-Datei im Datenordner und wird danach immer gelöscht.
+ */
+export async function sftpHochladen(ziel: SshZiel, inhalt: string, entfernterPfad: string, datenOrdner: string, timeoutMs = 60_000): Promise<SshErgebnis> {
+  if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
+  if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
+  if (!/^\/[A-Za-z]:\/[A-Za-z0-9 ._/-]{1,200}$/.test(entfernterPfad) || entfernterPfad.includes('..')) throw new Error('ungültiger Zielpfad');
+  const ordner = path.join(datenOrdner, 'fernzugriff');
+  await mkdir(ordner, { recursive: true, mode: 0o700 });
+  const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
+  await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
+  const tmp = await mkdtemp(path.join(ordner, 'sftp-'));
+  try {
+    const lokal = path.join(tmp, 'datei');
+    await writeFile(lokal, inhalt, { encoding: 'utf8', mode: 0o600 });
+    const stapel = path.join(tmp, 'stapel');
+    await writeFile(stapel, `put "${lokal}" "${entfernterPfad}"\n`, { mode: 0o600 });
+    const args = ['-b', stapel, '-i', ziel.schluesselPfad, '-P', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+      '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`];
+    try {
+      const { stdout, stderr } = await execFileAsync('sftp', args, { timeout: timeoutMs, maxBuffer: AUSGABE_MAX });
+      return { code: 0, stdout, stderr, hostSchluesselGeaendert: false };
+    } catch (err) {
+      const e = err as { code?: number | string; stdout?: string; stderr?: string; message: string; killed?: boolean };
+      const stderr = e.stderr ?? e.message;
+      return { code: typeof e.code === 'number' ? e.code : e.killed ? 124 : 255, stdout: e.stdout ?? '', stderr, hostSchluesselGeaendert: schluesselGeaendert(stderr) };
+    }
+  } finally { await rm(tmp, { recursive: true, force: true }); }
+}
+
+/**
  * I6 — Strom von Host zu Host über den Server: stdout der Quelle → (Bandbreitengrenze) → stdin des Ziels. Die Daten berühren weder
  * die Platte des Servers noch das Modell; `eingabe` geht an stdin der Quelle (z. B. die Dateiliste für tar -T -).
  */

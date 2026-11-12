@@ -2062,8 +2062,17 @@ export class ProxmoxSkill extends Skill {
     const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
     if (!vm || vm.type !== 'qemu') throw new Error(`QEMU-VM ${vmid} nicht gefunden`);
     if (vm.name !== vmName) throw new Error(`VMID ${vmid} heißt ${vm.name ?? '?'}, nicht ${vmName} — nichts ausgeführt`);
-    const b64 = Buffer.from(skript, 'utf16le').toString('base64');
-    const { pid } = await this.post<{ pid: number }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec`, { command: ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', b64], ...(eingabe !== undefined ? { 'input-data': eingabe } : {}) });
+    // v1823 — als Skriptdatei statt -EncodedCommand (Defender-Fehlalarm „ClickFix“ auf der Befehlszeile, Owner-Entscheidung 12.11.):
+    // zufälliger Name in C:\Windows\Temp, die Datei löscht sich als erste Zeile selbst; Defender prüft Datei und Inhalt (AMSI) weiter.
+    const zufall = randomBytes(8).toString('hex');
+    const name = `alfred-s-${zufall}.ps1`;
+    const pfad = `C:\\Windows\\Temp\\${name}`;
+    const inhalt = `\uFEFFRemove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n${skript}\n`;
+    // selbst Base64 (encode 0): PVE würde Zeichen außerhalb Latin-1 (BOM, Umlaute) nicht kodieren können; PVE-Grenze 61 440 Zeichen
+    const inhaltB64 = Buffer.from(inhalt, 'utf8').toString('base64');
+    if (inhaltB64.length > 61_440) throw new Error('Skript zu groß für die Ablage über den Gastagenten (Base64 > 61 440 Zeichen)');
+    await this.post(`/nodes/${vm.node}/qemu/${vmid}/agent/file-write`, { file: pfad, content: inhaltB64, encode: 0 });
+    const { pid } = await this.post<{ pid: number }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec`, { command: ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfad], ...(eingabe !== undefined ? { 'input-data': eingabe } : {}) });
     const ende = Date.now() + timeoutMs;
     while (Date.now() < ende) {
       await new Promise(r => setTimeout(r, 2_000));
