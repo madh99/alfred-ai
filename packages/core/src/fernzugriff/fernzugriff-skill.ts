@@ -7,7 +7,7 @@ import type { SshErgebnis, SshZiel } from './ssh.js';
 import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
-import { ausKodiertemBefehl, skriptDatei } from './windows-skriptdatei.js';
+import { ausKodiertemBefehl, skriptDatei, EINGABE_DATEI_AB } from './windows-skriptdatei.js';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
 import { kopiere, kopiereDatenbank, datenbankInventar, sqliteInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
@@ -543,8 +543,14 @@ export class FernzugriffSkill extends Skill {
     let datei: string | undefined;
     if (skript !== null) {
       if (!this.deps.sftp) throw new Error('Skriptdatei-Übertragung (SFTP) nicht verfügbar');
-      const d = skriptDatei(skript, randomBytes(8).toString('hex'));
+      const gross = eingabe !== undefined && Buffer.byteLength(eingabe, 'utf8') > EINGABE_DATEI_AB;
+      const d = skriptDatei(skript, randomBytes(8).toString('hex'), gross);
       const ziel = { id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel };
+      if (gross && d.eingabe) {
+        const he = await this.deps.sftp(ziel, eingabe!, d.eingabe.pfadSftp, Math.max(60_000, Math.min(timeoutMs, 600_000)));
+        if (he.code !== 0) throw new Error(`Eingabe-Datei auf ${z.name} nicht abgelegt (SFTP Exit ${he.code}: ${schwaerze(he.stderr).text.trim().slice(-200)})`);
+        eingabe = undefined;
+      }
       const h = await this.deps.sftp(ziel, d.inhalt, d.pfadSftp, 60_000);
       if (h.hostSchluesselGeaendert) { await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt'); throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`); }
       if (h.code !== 0) throw new Error(`Skriptdatei auf ${z.name} nicht abgelegt (SFTP Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);

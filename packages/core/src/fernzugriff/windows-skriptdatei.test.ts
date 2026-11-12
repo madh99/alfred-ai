@@ -23,3 +23,14 @@ describe('v1823 Windows-Bausteine als Skriptdatei', () => {
     expect(() => skriptDatei(skript, 'xyz')).toThrow();
   });
 });
+
+describe('v1824 große Eingaben als Datei', () => {
+  it('Skriptdatei liest die Eingabe-Datei zuerst ein und löscht sie; ohne Flag unverändert', async () => {
+    const { skriptDatei, eingabeZeile } = await import('./windows-skriptdatei.js');
+    const d = skriptDatei('Write-Output 1', '0123456789abcdef', true);
+    expect(d.eingabe).toEqual({ pfadWindows: 'C:\\Windows\\Temp\\alfred-e-0123456789abcdef.txt', pfadSftp: '/C:/Windows/Temp/alfred-e-0123456789abcdef.txt' });
+    expect(d.inhalt).toContain(eingabeZeile('0123456789abcdef'));
+    expect(d.inhalt.indexOf('[Console]::SetIn')).toBeLessThan(d.inhalt.indexOf('Write-Output 1'));
+    expect(skriptDatei('Write-Output 1', '0123456789abcdef').eingabe).toBeUndefined();
+  });
+});

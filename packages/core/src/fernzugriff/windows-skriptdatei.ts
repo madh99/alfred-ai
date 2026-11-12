@@ -22,18 +22,31 @@ export function ausKodiertemBefehl(befehl: string): string | null {
 export const SKRIPT_NAME = /^alfred-s-[0-9a-f]{16}\.ps1$/;
 export const SELBST_LOESCHEN = "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue";
 
-export interface SkriptDatei { name: string; pfadWindows: string; pfadSftp: string; inhalt: string; befehl: string; befehlArgumente: string[] }
+/**
+ * v1824 — Realfall 12.11. PKI-A Schritt 19: mehrere MB Standardeingabe (ZIP der CA-Sicherung) kamen über die Windows-SSH-Shell
+ * nie vollständig an — das Skript lief an und hing beim Lesen, bis Alfred nach 10 min abbrach. Große Eingaben (keine Geheimnisse,
+ * die sind klein) gehen deshalb als eigene Datei; die Skriptdatei liest sie als Erstes über [Console]::SetIn ein und löscht sie.
+ */
+export const EINGABE_DATEI_AB = 32 * 1024;
 
-export function skriptDatei(skript: string, zufallHex: string): SkriptDatei {
+export interface SkriptDatei { name: string; pfadWindows: string; pfadSftp: string; inhalt: string; befehl: string; befehlArgumente: string[]; eingabe?: { pfadWindows: string; pfadSftp: string } }
+
+export function skriptDatei(skript: string, zufallHex: string, eingabeAlsDatei = false): SkriptDatei {
   if (!/^[0-9a-f]{16}$/.test(zufallHex)) throw new Error('Zufallsname: 16 Hex-Zeichen');
   const name = `alfred-s-${zufallHex}.ps1`;
   const pfadWindows = `C:\\Windows\\Temp\\${name}`;
   const befehlArgumente = ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfadWindows];
   return {
     name, pfadWindows, pfadSftp: `/C:/Windows/Temp/${name}`,
-    // Zeilenenden bleiben, wie der Baustein sie erzeugt (Inhalte von Here-Strings/INF-Dateien \u00E4ndern sich nicht)
-    inhalt: `\uFEFF${SELBST_LOESCHEN}\n${skript}\n`,
+    // Zeilenenden bleiben, wie der Baustein sie erzeugt (Inhalte von Here-Strings/INF-Dateien ändern sich nicht)
+    inhalt: `\uFEFF${SELBST_LOESCHEN}\n${eingabeAlsDatei ? `${eingabeZeile(zufallHex)}\n` : ''}${skript}\n`,
+    ...(eingabeAlsDatei ? { eingabe: { pfadWindows: `C:\\Windows\\Temp\\alfred-e-${zufallHex}.txt`, pfadSftp: `/C:/Windows/Temp/alfred-e-${zufallHex}.txt` } } : {}),
     befehl: `powershell -NoProfile -NonInteractive -File ${pfadWindows}`,
     befehlArgumente,
   };
+}
+
+/** liest die Eingabe-Datei vollständig in [Console]::In und löscht sie sofort */
+export function eingabeZeile(zufallHex: string): string {
+  return `$__e = 'C:\\Windows\\Temp\\alfred-e-${zufallHex}.txt'; [Console]::SetIn((New-Object System.IO.StringReader([System.IO.File]::ReadAllText($__e, [System.Text.Encoding]::UTF8)))); Remove-Item -LiteralPath $__e -Force -ErrorAction SilentlyContinue`;
 }

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Große Eingaben für Windows-Bausteine (v1824)
+
+- Mehrere Megabyte große Eingaben (z. B. eine CA-Sicherung) kamen über die SSH-Standardeingabe nicht vollständig im Windows-Skript an, sodass es hängen blieb. Eingaben über 32 KB werden jetzt als eigene Datei abgelegt, vom Skript als Erstes eingelesen und sofort gelöscht. Geheimnisse gehen weiterhin nur über die Standardeingabe.
+
 ### Changed — Windows-Bausteine als Skriptdatei (v1823)
 
 - Windows-Bausteine laufen nicht mehr als lange Befehlszeile `powershell -EncodedCommand`. Microsoft Defender hatte diese Aufrufform aus Fernsitzungen als Bedrohung gewertet und blockiert. Jedes Skript wird jetzt als Datei mit zufälligem Namen unter `C:\Windows\Temp` abgelegt (über SSH per SFTP, bei netzlosen VMs über den Gastagenten) und mit `powershell -File` ausgeführt. Die Datei löscht sich beim Start selbst. Defender prüft Datei und Inhalt weiterhin vollständig. Geheimnisse gehen unverändert nur über die Standardeingabe.
