@@ -367,10 +367,11 @@ describe('v1825 hängende Baustein-Prozesse', () => {
   });
 });
 
-describe('v1826 Defender-Allow entfernen', () => {
-  it('entfernt das Paar aus ID und gesetzter Aktion', async () => {
+describe('v1827 Defender-Allow entfernen', () => {
+  it('toleriert nur 0x57 und verlässt sich auf den Ist-Stand danach', async () => {
     const { defenderAusnahmeSkript } = await import('./windows-cluster.js');
     const s = defenderAusnahmeSkript({ id: '2147942983', entfernen: true });
-    expect(s).toContain('Remove-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) -ThreatIDDefaultAction_Actions $akt');
+    expect(s).toContain("catch { if ($_.Exception.Message -notmatch '0x57') { throw } }");
+    expect(s).toContain('Defender-Einstellung nicht im Zielzustand');
   });
 });

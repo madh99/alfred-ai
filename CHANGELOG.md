@@ -5,9 +5,9 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed — Defender-Allow entfernen (v1826)
+### Fixed — Defender-Allow entfernen (v1826, v1827)
 
-- `windows_cluster defender_fehlalarm_entfernen` scheiterte mit Fehler 0x57, weil Defender beim Entfernen einer Erkennungs-Aktion das Paar aus ID und Aktion erwartet. Die gesetzte Aktion wird jetzt aus dem Ist-Stand gelesen und mit übergeben.
+- `windows_cluster defender_fehlalarm_entfernen` brach mit Fehler 0x57 ab, obwohl Defender den Eintrag entfernt hatte. Diese Meldung wird jetzt toleriert. Ob der Eintrag wirklich weg ist, entscheidet weiterhin die Prüfung des Ist-Stands danach.
 
 ### Added — Hängende Baustein-Prozesse beenden (v1825)
 
