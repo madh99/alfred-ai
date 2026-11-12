@@ -663,6 +663,29 @@ export function diagnoseEntfernenSkript(p: { pfad: string }): string {
   ].join('\n');
 }
 
+/** v1825 — hängengebliebene Baustein-Prozesse beenden (Realfall 12.11. fs01: zwei PowerShell-Prozesse des abgebrochenen PKI-A-Schritts 19).
+ *  Nur powershell.exe des eigenen Kontos, deren Befehlszeile ein Alfred-Baustein ist (Skriptdatei alfred-s-<16 Hex>.ps1 oder
+ *  -EncodedCommand), älter als `minuten` (mindestens 30), nie der eigene Prozess oder seine Eltern. */
+export function haengendeBeendenSkript(p: { minuten: number }): string {
+  return [
+    ...kopf(p, false),
+    "$ich = [Security.Principal.WindowsIdentity]::GetCurrent().Name.Split('\\')[-1]",
+    '$eigene = @(); $x = $PID; while ($x) { $eigene += $x; $x = [int](Get-CimInstance Win32_Process -Filter ("ProcessId=" + $x) -ErrorAction SilentlyContinue).ParentProcessId; if ($eigene -contains $x) { break } }',
+    "$grenze = (Get-Date).AddMinutes(-[int]$p.minuten)",
+    "$t = @(Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $eigene -notcontains [int]$_.ProcessId -and $_.CreationDate -lt $grenze -and ([string]$_.CommandLine -match '-File C:\\\\Windows\\\\Temp\\\\alfred-s-[0-9a-f]{16}\\.ps1|-EncodedCommand ') -and ((Invoke-CimMethod -InputObject $_ -MethodName GetOwner).User -eq $ich) })",
+    "$beendet = @(foreach ($q in $t) { Stop-Process -Id ([int]$q.ProcessId) -Force -ErrorAction SilentlyContinue; [ordered]@{ pid = [int]$q.ProcessId; start = $q.CreationDate.ToString('s'); befehl = ([string]$q.CommandLine).Substring(0, [Math]::Min(120, ([string]$q.CommandLine).Length)) } })",
+    "Start-Sleep -Seconds 2",
+    "$rest = @($beendet | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue })",
+    "if ($rest.Count) { throw ('nicht beendet: ' + (($rest | ForEach-Object { $_.pid }) -join ', ')) }",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; konto = $ich; beendet = $beendet })",
+  ].join('\n');
+}
+
+export function pruefeHaengend(v: unknown): string | { minuten: number } {
+  const m = v === undefined ? 60 : Number(v);
+  return Number.isInteger(m) && m >= 30 && m <= 10_080 ? { minuten: m } : 'minuten: 30–10080 (nur Prozesse, die älter sind)';
+}
+
 /** Gegenstellen einer BESTEHENDEN eingehenden Regel setzen (regel = Name/InstanceID aus firewall_lesen); Ergebnis nennt den vorherigen Wert */
 // v1808 — Sicherheitsprüfung: -Name akzeptiert Platzhalter (* ? [ ]) → ein „*“ hätte alle Regeln getroffen. Nur wörtliche Namen,
 // im Skript exakt per Where-Object -eq aufgelöst und genau eine Regel verlangt.

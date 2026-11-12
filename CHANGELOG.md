@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Hängende Baustein-Prozesse beenden (v1825)
+
+- Neue Change-Aktion `windows_cluster haengende_bausteine_beenden`. Sie beendet nur PowerShell-Prozesse des eigenen Kontos, die aus einem Alfred-Baustein stammen und älter als die angegebene Zeit sind (mindestens 30 Minuten). Der eigene Prozess und seine Elternprozesse bleiben unberührt.
+
 ### Fixed — Große Eingaben für Windows-Bausteine (v1824)
 
 - Mehrere Megabyte große Eingaben (z. B. eine CA-Sicherung) kamen über die SSH-Standardeingabe nicht vollständig im Windows-Skript an, sodass es hängen blieb. Eingaben über 32 KB werden jetzt als eigene Datei abgelegt, vom Skript als Erstes eingelesen und sofort gelöscht. Geheimnisse gehen weiterhin nur über die Standardeingabe.

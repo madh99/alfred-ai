@@ -353,3 +353,16 @@ describe('v1821 befristete Defender-Ausnahme für den Gastagenten', () => {
     expect(gerufen).toBe(false);
   });
 });
+
+describe('v1825 hängende Baustein-Prozesse', () => {
+  it('nur eigenes Konto, nur Baustein-Befehlszeilen, Mindestalter 30 min', async () => {
+    const { haengendeBeendenSkript, pruefeHaengend } = await import('./windows-cluster.js');
+    expect(pruefeHaengend(undefined)).toEqual({ minuten: 60 });
+    expect(typeof pruefeHaengend(5)).toBe('string');
+    const s = haengendeBeendenSkript({ minuten: 60 });
+    expect(s).toContain("Name='powershell.exe'");
+    expect(s).toContain('alfred-s-[0-9a-f]{16}');
+    expect(s).toContain('GetOwner');
+    expect(s).toContain('$eigene -notcontains');
+  });
+});

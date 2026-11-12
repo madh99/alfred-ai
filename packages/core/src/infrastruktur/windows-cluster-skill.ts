@@ -9,7 +9,7 @@ import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
   pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript, pruefeAktiv, firewallAktivSkript,
-  defenderStatusSkript, type DefenderStatus, defenderAgentAusnahmeSkript, QEMU_GA_PROZESSE, QEMU_GA_PFADE, defenderProtokollSkript, type DefenderProtokoll, pruefeMuster, pruefeFehlalarm, defenderAusnahmeSkript, DEFENDER_FEHLALARME,
+  defenderStatusSkript, type DefenderStatus, haengendeBeendenSkript, pruefeHaengend, defenderAgentAusnahmeSkript, QEMU_GA_PROZESSE, QEMU_GA_PFADE, defenderProtokollSkript, type DefenderProtokoll, pruefeMuster, pruefeFehlalarm, defenderAusnahmeSkript, DEFENDER_FEHLALARME,
   ereignisseSkript, type ClusterEreignisse, pruefeEreignisIds, stabilMessSkript, stabilitaetBewerten, type StabilMessung,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
@@ -30,7 +30,7 @@ export interface WindowsClusterDeps {
 export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status', 'defender_protokoll']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
-  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen', 'defender_agent_ausnahme_setzen', 'defender_agent_ausnahme_entfernen']);
+  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen', 'defender_agent_ausnahme_setzen', 'defender_agent_ausnahme_entfernen', 'haengende_bausteine_beenden']);
 /** am DC mit dem Domänen-Administrator (Tresor Standard win-<zugang>-admin, wie windows_ad grundstruktur) */
 const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen']);
 /** als Domänenkonto <NETBIOS>\alfred mit Kennwort-Anmeldung (Doppel-Hop) — konto_tresor ist Pflicht */
@@ -52,6 +52,7 @@ export class WindowsClusterSkill extends Skill {
       + 'ereignisse_status (lesend; zugang, event_ids Standard [1650], minuten optional) — Cluster-Ereignisse mit RecordId. '
       + 'stabilitaet_pruefen (lesend; zugaenge = alle Knoten z. B. [sql01, sql02], dauer_s Standard 900 (300–1800), intervall_s Standard 60, ag optional z. B. ag01, event_ids Standard [1650]) — beobachtet die volle Dauer: je Messung neue Ereignisse seit Beginn, Knoten Up, alle Ressourcen Online, lokal AG HEALTHY/CONNECTED und Datenbanken SYNCHRONIZED; Ergebnis „CLUSTER_STABLE“ nur ohne neues Ereignis und ohne Lücke, sonst „FAIL“ bzw. „UNKNOWN“ (Pflicht nach Firewall-/Netzänderungen an Clustern; Schritt-zeitlimitS ≥ dauer_s + 300). '
       + 'NUR im Change, NUR netzlose VMs (vmid + vm_name): defender_agent_ausnahme_setzen ↔ defender_agent_ausnahme_entfernen — befristete Defender-Ausnahme für den QEMU-Gastagenten (Prozesse qemu-ga.exe + gspawn-win64-helper.exe, Pfad nur Helfer-Datei; feste Einträge, Echtzeitschutz bleibt an; Owner-Entscheidung 12.11., weil Defender die Baustein-Befehlszeilen trotz ThreatID-Allow blockiert). '
+      + 'NUR im Change: haengende_bausteine_beenden (zugang, minuten Standard 60, mindestens 30) — beendet nur powershell.exe des eigenen Kontos mit Alfred-Baustein-Befehlszeile (alfred-s-…ps1 oder -EncodedCommand), die älter sind (ohne Rückweg). '
       + 'defender_protokoll (lesend; zugang oder vmid + vm_name, muster optional = Regex) — Treffer aus Defenders Diagnoseprotokoll MPLog (letzte 4000 Zeilen; zeigt auch Blockaden ohne Ereignis). '
       + 'defender_status (lesend; zugang oder vmid + vm_name) — Echtzeitschutz, Signaturstand, gesetzte Erkennungs-Ausnahmen, Erkennungen 1116/1117 der letzten 7 Tage, Defender-Protokoll der letzten 2 Tage (Verhalten, ASR, Blockaden, Konfiguration) und Defenders Bedrohungsliste. '
       + `defender_fehlalarm_zulassen (zugang oder vmid + vm_name, threat_id NUR ${Object.keys(DEFENDER_FEHLALARME).join('/')} = Fehlalarm auf Alfreds Baustein-Befehlszeilen, Owner-Entscheidung 12.11.) — Aktion Allow für genau diese Erkennung (wird weiter protokolliert), Echtzeitschutz bleibt an; Rückweg defender_fehlalarm_entfernen (gleiche Parameter). `
@@ -193,6 +194,11 @@ export class WindowsClusterSkill extends Skill {
           const r = await this.lauf<{ regel: string; anzeige: string; gruppe: string; vorher: boolean; nachher: boolean }>(zugang, firewallAktivSkript(p), 'Firewall-Regel schalten', 120_000);
           const w = (b: boolean) => (b ? 'aktiv' : 'inaktiv');
           return { success: true, data: r, display: `✅ Firewall ${zugang}: ${r.anzeige} [${r.regel}] ${w(r.vorher)} → ${w(r.nachher)} — Rückweg firewall_regel_aktiv regel ${r.regel} aktiv ${r.vorher}` };
+        }
+        case 'haengende_bausteine_beenden': {
+          const h = fehler(pruefeHaengend(input.minuten)) as { minuten: number };
+          const r = await this.lauf<{ rechner: string; konto: string; beendet: { pid: number; start: string; befehl: string }[] }>(zugang, haengendeBeendenSkript(h), 'Hängende Baustein-Prozesse beenden', 120_000);
+          return { success: true, data: r, display: `✅ ${r.rechner}: ${r.beendet.length ? `${r.beendet.length} hängende Baustein-Prozesse von ${r.konto} beendet: ${r.beendet.map(x => `PID ${x.pid} seit ${x.start}`).join(', ')}` : 'keine hängenden Baustein-Prozesse'} (älter als ${h.minuten} min)` };
         }
         case 'diagnose_entfernen': {
           const p = fehler(pruefeDiagnose(input.pfad)) as { pfad: string };

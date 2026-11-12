@@ -104,7 +104,7 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   // I8c — Active Directory: Hochstufen, Beitritt, Papierkorb sind nicht sinnvoll zurückzunehmen (Herabstufen/Austritt = eigener Change); Sicherung und Beweis wirken nur additiv
   'wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis',
   // I8d — windows_cluster: Platten einrichten und Features installieren wirken additiv (Entfernen = eigener Change), Validieren schreibt nur einen Bericht
-  'platten_einrichten', 'features_installieren', 'cluster_validieren', 'systemplatte_erweitern', 'diagnose_entfernen',
+  'platten_einrichten', 'features_installieren', 'cluster_validieren', 'systemplatte_erweitern', 'diagnose_entfernen', 'haengende_bausteine_beenden',
   // I8d — sql_server: Medien/Installation/HADR additiv (Deinstallation = eigener Change); Prüfzeile, Sicherung und Wiederherstellungstest wirken nur additiv
   // v1812 — windows_pki: Root-Anlage ohne Rückweg (CA-Identität), Rolle wirkt additiv (Rückweg features_entfernen nur ohne CA)
   'root_initialisieren', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
