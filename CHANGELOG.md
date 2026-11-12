@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — PKI-Aufbau: Offline-Root und Issuing-CA (v1812)
+
+- `windows_pki` hat neue Bausteine. Sie laufen nur als Schritte freigegebener Changes, außer den lesenden.
+- **Rolle und Root:**
+  - `features_installieren` installiert die Rolle ADCS-Cert-Authority, ohne Web-Registrierung und ohne NDES. `features_entfernen` ist der Rückweg und wird abgelehnt, sobald eine CA eingerichtet ist.
+  - `root_initialisieren` legt die Offline-Root an. Das geht nur über den Gastagenten, und der Baustein bricht ab, wenn die VM eine Netzwerkkarte hat, in einer Domäne ist oder schon eine andere CA trägt.
+  - Die Root wird mit CAPolicy angelegt (pathLen kritisch, ohne CDP/AIA im Root-Zertifikat) und bekommt CRL-Fristen und die Laufzeit für ausgestellte Zertifikate.
+- **Lesend:** `artefakte_lesen` liefert das CA-Zertifikat und die aktuelle CRL samt SHA-256 für die hashgeprüfte Übertragung.
+- **Veröffentlichung:**
+  - `publication_setzen` setzt CDP/AIA lokal, per HTTP und wahlweise auf einer UNC-Freigabe, ohne LDAP, und meldet den vorherigen Stand für den Rückweg.
+  - `crl_erzeugen` stellt eine neue Basis-CRL aus.
+- **Issuing-CA:**
+  - `issuer_anfordern` richtet eine Enterprise-Subordinate-CA bis zur Zertifikatsanforderung ein (pathLen 0, keine Standardvorlagen). Ein wiederholter Aufruf liefert dieselbe Anforderung.
+  - `subordinate_signieren` signiert auf der Offline-Root, prüft dabei Hash, Subject, Aussteller und pathLen und stellt nie doppelt aus.
+  - `issuer_aktivieren` installiert Root-Zertifikat, Root-CRL und das signierte Zertifikat hashgeprüft und startet die CA.
+
 ### Fixed — Zeitgrenzen der Windows-Skills und Agent-Abfrage (v1811)
 
 - `windows_cluster`, `sql_server` und `windows_pki` brachen bei direkten Aufrufen nach der allgemeinen Grenze von 30 Sekunden ab. Betroffen war zum Beispiel das 5-minütige Stabilitätsfenster. Die Skills haben jetzt eigene Zeitgrenzen: 40, 15 und 10 Minuten.

@@ -28,3 +28,67 @@ describe('v1810 windows_pki status', () => {
     expect(r.display).toContain('über Gastagent');
   });
 });
+
+describe('v1812 Rolle, Offline-Root, Artefakte', () => {
+  it('Root-Parameter: Standardwerte aus f583a405 und Grenzen', async () => {
+    const { pruefeRoot } = await import('./windows-pki.js');
+    const r = pruefeRoot({ ca_name: 'AD3033 Root CA' });
+    expect(r).toEqual({ ca_name: 'AD3033 Root CA', key_bits: 4096, hash: 'SHA256', validity_years: 20, path_length: 1, crl_wochen: 26, crl_ueberlappung_wochen: 4, ausgestellt_jahre: 10 });
+    expect(typeof pruefeRoot({ ca_name: 'CN=x,O=y' })).toBe('string');
+    expect(typeof pruefeRoot({ ca_name: 'AD3033 Root CA', ausgestellt_jahre: 20 })).toBe('string');
+    expect(typeof pruefeRoot({ ca_name: 'AD3033 Root CA', key_bits: 2048 })).toBe('string');
+  });
+  it('Root-Skript bricht bei Netzwerkkarte, Domäne oder fremder CA ab; CAPolicy ohne CDP/AIA mit kritischem pathLen', async () => {
+    const { pruefeRoot, rootInitSkript, rootCapolicy } = await import('./windows-pki.js');
+    const r = pruefeRoot({ ca_name: 'AD3033 Root CA' }) as Exclude<ReturnType<typeof pruefeRoot>, string>;
+    const s = rootInitSkript(r);
+    expect(s).toContain("Offline-Root nur OHNE Netzwerkkarte");
+    expect(s).toContain("if ($cs.PartOfDomain)");
+    expect(s).toContain('-CAType StandaloneRootCA');
+    expect(s.indexOf('PhysicalAdapter=TRUE')).toBeLessThan(s.indexOf('Install-AdcsCertificationAuthority'));
+    const c = rootCapolicy(r);
+    expect(c).toContain('PathLength=1');
+    expect(c).toContain('Critical=Yes');
+    expect(c).not.toMatch(/CDP|AIA|URL/i);
+  });
+  it('Skill: ändernde Aktionen nur im Change, root_initialisieren nur über den Gastagenten', async () => {
+    const { WindowsPkiSkill } = await import('./windows-pki-skill.js');
+    const sk = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    expect((await sk.execute({ action: 'root_initialisieren', vmid: 150, vm_name: 'pkiroot01', ca_name: 'AD3033 Root CA' })).error).toContain('nur als Schritt');
+    expect((await sk.execute({ action: 'root_initialisieren', zugang: 'pkiroot01', ca_name: 'AD3033 Root CA' }, { ausChange: true } as never)).error).toContain('nur über den Gastagenten');
+  });
+});
+
+describe('v1812 Issuing-Kette', () => {
+  it('Publikation: lokal + HTTP (+ UNC), kein LDAP; Rückweg roh; Grenzen', async () => {
+    const { pruefePublikation } = await import('./windows-pki.js');
+    const p = pruefePublikation({ datei_name: 'ad3033-root', http_basis: 'http://pki.ad.3033.at/pki/' });
+    expect(p).toEqual({ cdp: ['1:%windir%\\system32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl', '2:http://pki.ad.3033.at/pki/ad3033-root%8%9.crl'], aia: ['1:%windir%\\system32\\CertSrv\\CertEnroll\\ad3033-root%4.crt', '2:http://pki.ad.3033.at/pki/ad3033-root%4.crt'] });
+    expect(JSON.stringify(p)).not.toMatch(/ldap/i);
+    const u = pruefePublikation({ datei_name: 'ad3033-issuing1', http_basis: 'http://pki.ad.3033.at/pki/', unc_ziel: '\\\\fs01.ad.3033.at\\pki$\\', crl_einheit: 'Days', crl_anzahl: 1, ueberlappung_einheit: 'Days', ueberlappung_anzahl: 6 }) as { cdp: string[]; crl: unknown };
+    expect(u.cdp[2]).toBe('1:file://\\\\fs01.ad.3033.at\\pki$\\ad3033-issuing1%8%9.crl');
+    expect(u.crl).toEqual({ periode: 'Days', anzahl: 1, ueberlappungPeriode: 'Days', ueberlappungAnzahl: 6 });
+    expect(pruefePublikation({ cdp_roh: ['1:C:\\x.crl'], aia_roh: ['2:http://a/b.crt'] })).toEqual({ cdp: ['1:C:\\x.crl'], aia: ['2:http://a/b.crt'] });
+    expect(typeof pruefePublikation({ datei_name: 'AD 3033', http_basis: 'http://pki.ad.3033.at/pki/' })).toBe('string');
+    expect(typeof pruefePublikation({ datei_name: 'x1', http_basis: 'https://pki/' })).toBe('string');
+  });
+  it('Signieren: Hash, Subject und pathLen werden geprüft; Base64 nur über stdin', async () => {
+    const { pruefeSignieren, signierenSkript, pruefeAktivieren, aktivierenSkript, issuerAnfordernSkript, pruefeIssuer, issuerCapolicy } = await import('./windows-pki.js');
+    const sha = 'a'.repeat(64);
+    expect(typeof pruefeSignieren({ erwartet_csr_sha256: 'x', erwartet_subject: 'AD3033 Issuing CA 1', csr_base64: 'A'.repeat(200) })).toBe('string');
+    const sp = pruefeSignieren({ erwartet_csr_sha256: sha, erwartet_subject: 'AD3033 Issuing CA 1', csr_base64: 'A'.repeat(200) }) as never;
+    const s = signierenSkript(sp);
+    expect(s).toContain('$e.csr_base64');
+    expect(s).not.toContain('AAAAAAAAAA');
+    expect(s).toContain("if ((Hex $der) -ne $p.erwartet_csr_sha256)");
+    expect(s).toContain('Zertifikat NICHT übergeben');
+    expect(typeof pruefeAktivieren({ erwartet_zert_sha256: sha, erwartet_root_sha256: sha, erwartet_crl_sha256: 'kurz', zert_base64: 'A'.repeat(200), root_base64: 'A'.repeat(200), crl_base64: 'A'.repeat(200) })).toBe('string');
+    const ap = pruefeAktivieren({ erwartet_zert_sha256: sha, erwartet_root_sha256: sha, erwartet_crl_sha256: sha, zert_base64: 'A'.repeat(200), root_base64: 'A'.repeat(200), crl_base64: 'A'.repeat(200) }) as never;
+    expect(aktivierenSkript(ap)).toContain('-addstore Root $cd');
+    const ip = pruefeIssuer({ ca_name: 'AD3033 Issuing CA 1' }) as never;
+    expect(issuerAnfordernSkript(ip)).toContain('-CAType EnterpriseSubordinateCA');
+    expect(issuerAnfordernSkript(ip)).toContain('$e.kennwort');
+    expect(issuerCapolicy(ip)).toContain('LoadDefaultTemplates=0');
+    expect(typeof pruefeIssuer({ ca_name: 'AD3033 Issuing CA 1', path_length: 1 })).toBe('string');
+  });
+});

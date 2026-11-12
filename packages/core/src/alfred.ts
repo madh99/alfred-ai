@@ -7198,6 +7198,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (!px?.gastPowershell) throw new Error('Proxmox-Skill mit Gastagent nicht verfügbar');
             return px.gastPowershell(vmid, vmName, skript, eingabe, timeoutMs);
           },
+          tresor: {
+            namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
+            lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
+          },
         }));
         this.logger.info('PKI-Skill registriert');
       }
