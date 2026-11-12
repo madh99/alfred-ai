@@ -132,3 +132,14 @@ describe('v1814 CA-Sicherung und Issuer-Pfade', () => {
     expect(m.CA_SATZ.test('..\\x')).toBe(false);
   });
 });
+
+describe('v1816 Offline-Root ohne Netzwerkkarte', () => {
+  it('lokale Datenbank-/Logpfade, halbe CA ist nicht „schon“', async () => {
+    const { pruefeRoot, rootInitSkript } = await import('./windows-pki.js');
+    const s = rootInitSkript(pruefeRoot({ ca_name: 'AD3033 Root CA 01' }) as never);
+    expect(s).toContain("-DatabaseDirectory $db -LogDirectory $db");
+    expect(s).toContain("System32\\CertLog");
+    expect(s).toContain('nur halb eingerichtet');
+    expect(s.indexOf('nur halb eingerichtet')).toBeLessThan(s.indexOf('Install-AdcsCertificationAuthority'));
+  });
+});

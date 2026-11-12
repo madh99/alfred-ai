@@ -138,9 +138,14 @@ export function rootInitSkript(r: RootParameter): string {
     "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
     "if ($aktiv -and $aktiv -ne $p.ca_name) { throw ('Es gibt bereits die CA „' + $aktiv + '“ — nichts verändert') }",
     '$schon = [bool]$aktiv',
+    // v1816 — eine halb eingerichtete CA (Name gesetzt, kein CA-Zertifikat) ist NICHT „schon“
+    "if ($schon) { $h = @((Get-ItemProperty (Join-Path $k $aktiv) -ErrorAction SilentlyContinue).CACertHash | ForEach-Object { ([string]$_) -replace '\\s', '' }) | Select-Object -Last 1; if (-not $h -or -not (Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Thumbprint -eq $h })) { throw ('CA „' + $aktiv + '“ ist nur halb eingerichtet (kein CA-Zertifikat) — Bereinigung ist ein eigener Schritt') } }",
     'if (-not $schon) {',
     `  [IO.File]::WriteAllText((Join-Path $env:SystemRoot 'CAPolicy.inf'), ${psText(rootCapolicy(r))}, [Text.Encoding]::ASCII)`,
-    "  Install-AdcsCertificationAuthority -CAType StandaloneRootCA -CACommonName $p.ca_name -KeyLength ([int]$p.key_bits) -HashAlgorithmName $p.hash -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' -ValidityPeriod Years -ValidityPeriodUnits ([int]$p.validity_years) -Force | Out-Null",
+    // v1816 — Realfall 12.11. PKI-A a5b1175e Schritt 13: ohne Netzwerkkarte „0x800704cf ERROR_NETWORK_UNREACHABLE“ — ohne ausdrückliche
+    // lokale Pfade nutzt das Cmdlet UNC-Pfade (braucht TCP/IP). Datenbank und Log daher lokal angeben.
+    "  $db = Join-Path $env:SystemRoot 'System32\\CertLog'; New-Item -ItemType Directory -Path $db -Force | Out-Null",
+    "  Install-AdcsCertificationAuthority -CAType StandaloneRootCA -CACommonName $p.ca_name -KeyLength ([int]$p.key_bits) -HashAlgorithmName $p.hash -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' -ValidityPeriod Years -ValidityPeriodUnits ([int]$p.validity_years) -DatabaseDirectory $db -LogDirectory $db -Force | Out-Null",
     '}',
     "& certutil.exe -setreg CA\\CRLPeriod Weeks | Out-Null; & certutil.exe -setreg CA\\CRLPeriodUnits ([int]$p.crl_wochen) | Out-Null",
     "& certutil.exe -setreg CA\\CRLOverlapPeriod Weeks | Out-Null; & certutil.exe -setreg CA\\CRLOverlapUnits ([int]$p.crl_ueberlappung_wochen) | Out-Null",

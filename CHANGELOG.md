@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Offline-Root ohne Netzwerkkarte anlegen (v1816)
+
+- `windows_pki root_initialisieren` brach auf einer VM ohne Netzwerkkarte mit `ERROR_NETWORK_UNREACHABLE` ab. Ohne ausdrückliche lokale Pfade für Datenbank und Log greift die Einrichtung über Netzwerkpfade zu. Beide Pfade werden jetzt lokal angegeben.
+- Eine nur halb eingerichtete CA, deren Name gesetzt ist, die aber kein CA-Zertifikat hat, gilt nicht mehr als „schon vorhanden“. Der Baustein bricht dann ab.
+
 ### Added — Defender-Fehlalarm gezielt zulassen (v1815)
 
 - Microsoft Defender erkannte die Befehlszeile eines Windows-Bausteins fälschlich als `Trojan:Win32/ClickFix.ZZH!MTB` und blockierte sie.
