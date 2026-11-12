@@ -115,3 +115,20 @@ describe('v1813 Veröffentlichung, AD und Vertrauen', () => {
     expect(s).not.toMatch(/NTAuthCA|dspublish[^\n]*\.crl/);
   });
 });
+
+describe('v1814 CA-Sicherung und Issuer-Pfade', () => {
+  it('Issuer-Pfade nur auf Datenplatten; Sicherung mit Manifest, Kennwort nur über stdin', async () => {
+    const m = await import('./windows-pki.js');
+    expect(m.pruefeIssuer({ ca_name: 'AD3033 Issuing CA 01', db_pfad: 'D:\\CertDB', log_pfad: 'D:\\CertLog' })).toMatchObject({ db_pfad: 'D:\\CertDB', log_pfad: 'D:\\CertLog' });
+    expect(typeof m.pruefeIssuer({ ca_name: 'AD3033 Issuing CA 01', db_pfad: 'C:\\CertDB' })).toBe('string');
+    expect(m.issuerAnfordernSkript(m.pruefeIssuer({ ca_name: 'AD3033 Issuing CA 01', db_pfad: 'D:\\CertDB' }) as never)).toContain('@pfade');
+    expect(typeof m.pruefeSicherungsziel({ ziel_ordner: 'C:\\Sicherung' })).toBe('string');
+    const s = m.caSicherungSkript({ ziel_ordner: 'B:\\CA-Sicherung' });
+    expect(s).toContain('Backup-CARoleService -Path $d -Password $pw');
+    expect(s).toContain('$e.kennwort');
+    expect(s).toContain("Sicherung ohne Schlüsseldatei (.p12)");
+    expect(m.caSatzAblegenSkript({ ziel_ordner: 'S:\\PKI-Sicherung', satz: 'ca-20261112-120000', sha256: 'a'.repeat(64) })).toContain("Kopie unvollständig");
+    expect(m.CA_SATZ.test('ca-20261112-120000')).toBe(true);
+    expect(m.CA_SATZ.test('..\\x')).toBe(false);
+  });
+});

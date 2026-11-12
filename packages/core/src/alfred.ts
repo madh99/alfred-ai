@@ -7172,6 +7172,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const { WindowsClusterSkill } = await import('./infrastruktur/windows-cluster-skill.js');
         skillRegistry.register(new WindowsClusterSkill({
           skript: (zugang, befehl, eingabe, timeoutMs, zweck) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.windowsSkript(zugang, befehl, eingabe, timeoutMs, zweck); },
+          gast: (vmid, vmName, skript, eingabe, timeoutMs) => {
+            const px = skillRegistry.get('proxmox') as unknown as { gastPowershell?: (v: number, n: string, s: string, e: string | undefined, t: number) => Promise<{ code: number; stdout: string; stderr: string }> } | undefined;
+            if (!px?.gastPowershell) throw new Error('Proxmox-Skill mit Gastagent nicht verfügbar');
+            return px.gastPowershell(vmid, vmName, skript, eingabe, timeoutMs);
+          },
           tresor: {
             namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
             lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },

@@ -268,13 +268,16 @@ export function crlSkript(): string {
   ].join('\n');
 }
 
-export interface IssuerParameter { ca_name: string; key_bits: number; hash: string; path_length: number; ausKonto?: string }
+const ORDNER_PKI = /^[A-Za-z]:\\[A-Za-z0-9 ._-]{1,80}(\\[A-Za-z0-9 ._-]{1,80}){0,3}$/;
+export interface IssuerParameter { ca_name: string; key_bits: number; hash: string; path_length: number; ausKonto?: string; db_pfad?: string; log_pfad?: string }
 export function pruefeIssuer(o: Record<string, unknown>): IssuerParameter | string {
   const r: IssuerParameter = { ca_name: String(o.ca_name ?? '').trim(), key_bits: o.key_bits === undefined ? 4096 : Number(o.key_bits), hash: String(o.hash ?? 'SHA256').toUpperCase(), path_length: o.path_length === undefined ? 0 : Number(o.path_length) };
   if (!CA_NAME.test(r.ca_name)) return 'ca_name: 3–63 Zeichen, z. B. „AD3033 Issuing CA 1“';
   if (![3072, 4096].includes(r.key_bits)) return 'key_bits: 3072 oder 4096';
   if (!['SHA256', 'SHA384', 'SHA512'].includes(r.hash)) return 'hash: SHA256, SHA384 oder SHA512';
   if (r.path_length !== 0) return 'path_length: 0 (Issuing-CA stellt keine weiteren CAs aus)';
+  // v1814 — Architektur 440c13c0: CA-Datenbank und -Logs auf D: (eigene Platte)
+  for (const f of ['db_pfad', 'log_pfad'] as const) { if (o[f] !== undefined) { const v = String(o[f]).trim(); if (!ORDNER_PKI.test(v) || /^C:/i.test(v)) return `${f}: Ordner auf einer Datenplatte, z. B. D:\\CertDB bzw. D:\\CertLog`; r[f] = v; } }
   return r;
 }
 
@@ -308,14 +311,16 @@ export function issuerAnfordernSkript(r: IssuerParameter): string {
     "  $nb = (Get-CimInstance -ClassName Win32_NTDomain | Where-Object { $_.DnsForestName } | Select-Object -First 1).DomainName",
     `  $cred = New-Object System.Management.Automation.PSCredential ((${kontoAusdruck('Administrator', '$nb')}), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))`,
     `  [IO.File]::WriteAllText((Join-Path $env:SystemRoot 'CAPolicy.inf'), ${psText(issuerCapolicy(r))}, [Text.Encoding]::ASCII)`,
-    "  Install-AdcsCertificationAuthority -CAType EnterpriseSubordinateCA -CACommonName $p.ca_name -KeyLength ([int]$p.key_bits) -HashAlgorithmName $p.hash -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' -OutputCertRequestFile $req -Credential $cred -Force | Out-Null",
+    "  $pfade = @{}; if ($p.db_pfad) { New-Item -ItemType Directory -Path $p.db_pfad -Force | Out-Null; $pfade.DatabaseDirectory = $p.db_pfad }; if ($p.log_pfad) { New-Item -ItemType Directory -Path $p.log_pfad -Force | Out-Null; $pfade.LogDirectory = $p.log_pfad }",
+    "  Install-AdcsCertificationAuthority -CAType EnterpriseSubordinateCA -CACommonName $p.ca_name -KeyLength ([int]$p.key_bits) -HashAlgorithmName $p.hash -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' -OutputCertRequestFile $req -Credential $cred @pfade -Force | Out-Null",
     "  $zustand = 'angefordert'",
     '}',
     "if (-not (Test-Path $req)) { throw ('Anforderungsdatei fehlt: ' + $req + ' — CA steht nicht auf Anforderung') }",
     "$txt = [IO.File]::ReadAllText($req); $b64 = ($txt -replace '-----[^-]+-----', '' -replace '\\s', '')",
     "$der = [Convert]::FromBase64String($b64)",
     "$sha = (([Security.Cryptography.SHA256]::Create().ComputeHash($der)) | ForEach-Object { $_.ToString('x2') }) -join ''",
-    "Ergebnis ([ordered]@{ zustand = $zustand; ca = $p.ca_name; csrBase64 = $b64; csrSha256 = $sha; datei = $req; domaene = [string]$cs.Domain })",
+    "$db = [string](Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration' -ErrorAction SilentlyContinue).DBDirectory",
+    "Ergebnis ([ordered]@{ zustand = $zustand; ca = $p.ca_name; csrBase64 = $b64; csrSha256 = $sha; datei = $req; domaene = [string]$cs.Domain; dbPfad = $db })",
   ].join('\n');
 }
 
@@ -591,4 +596,99 @@ export function trustPruefenSkript(a: { root: string[]; zwischen: string[] }): s
     "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; zeit = (Get-Date).ToString('s'); root = @(@($p.root) | ForEach-Object { [ordered]@{ thumbprint = $_; da = ($r -contains $_) } }); zwischen = @(@($p.zwischen) | ForEach-Object { [ordered]@{ thumbprint = $_; da = ($z -contains $_ -or $r -contains $_) } }) })",
   ].join('\n');
 }
+
+// ── v1814 Spec-Position 18 (vorgezogen, Alfred 12.11.): native CA-Sicherung mit Manifest und unabhängiger Kopie ─────────────────────
+
+const SATZ = /^ca-\d{8}-\d{6}$/;
+export function pruefeSicherungsziel(o: Record<string, unknown>): { ziel_ordner: string } | string {
+  const z = String(o.ziel_ordner ?? '').trim();
+  if (!ORDNER_PKI.test(z) || /^C:/i.test(z)) return 'ziel_ordner: Ordner auf der Sicherungsplatte, z. B. B:\\CA-Sicherung';
+  return { ziel_ordner: z };
+}
+
+/**
+ * Backup-CARoleService (Datenbank + privater Schlüssel als kennwortgeschütztes PKCS#12) in <ziel>\ca-<zeit>, dazu Export der
+ * CA-Konfiguration (Registry) und CAPolicy.inf; Manifest mit SHA-256 je Datei. Kennwort nur über stdin, nie im Ergebnis.
+ */
+export function caSicherungSkript(z: { ziel_ordner: string }): string {
+  return [
+    ...kopf(z, true),
+    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
+    "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
+    "if (-not $aktiv) { throw 'keine CA eingerichtet' }",
+    "if (-not (Test-Path (Split-Path $p.ziel_ordner -Qualifier))) { throw ('Laufwerk ' + (Split-Path $p.ziel_ordner -Qualifier) + ' fehlt') }",
+    "$satz = 'ca-' + (Get-Date -Format 'yyyyMMdd-HHmmss'); $d = Join-Path $p.ziel_ordner $satz",
+    'New-Item -ItemType Directory -Path $d -Force | Out-Null',
+    '$acl = New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true, $false)',
+    "foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }",
+    'Set-Acl -Path $p.ziel_ordner -AclObject $acl',
+    '$pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
+    'Backup-CARoleService -Path $d -Password $pw',
+    "& reg.exe export 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration' (Join-Path $d 'certsvc-konfiguration.reg') /y | Out-Null",
+    "$cp = Join-Path $env:SystemRoot 'CAPolicy.inf'; if (Test-Path $cp) { Copy-Item $cp (Join-Path $d 'CAPolicy.inf') }",
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "$dateien = @(Get-ChildItem $d -Recurse -File | ForEach-Object { [ordered]@{ datei = $_.FullName.Substring($d.Length + 1); bytes = $_.Length; sha256 = (($shaF.ComputeHash([IO.File]::ReadAllBytes($_.FullName)) | ForEach-Object { $_.ToString('x2') }) -join '') } })",
+    "if (-not ($dateien | Where-Object { $_.datei -like '*.p12' })) { throw 'Sicherung ohne Schlüsseldatei (.p12)' }",
+    "if (-not ($dateien | Where-Object { $_.datei -like 'Database*' })) { throw 'Sicherung ohne Datenbank' }",
+    "$m = [ordered]@{ ca = $aktiv; satz = $satz; zeit = (Get-Date).ToString('s'); rechner = $env:COMPUTERNAME; dateien = $dateien }",
+    "[IO.File]::WriteAllText((Join-Path $d 'manifest.json'), ($m | ConvertTo-Json -Depth 5))",
+    "Ergebnis ([ordered]@{ ca = $aktiv; satz = $satz; ordner = $d; dateien = $dateien.Count; bytes = ($dateien | Measure-Object -Property bytes -Sum).Sum; zeit = $m.zeit })",
+  ].join('\n');
+}
+
+/** Lesend: vorhandene Sicherungssätze mit Manifest, Alter und Vollständigkeit (Hash-Abgleich) */
+export function caSicherungStatusSkript(z: { ziel_ordner: string }): string {
+  return [
+    ...kopf(z, false),
+    "if (-not (Test-Path $p.ziel_ordner)) { Ergebnis ([ordered]@{ ordner = $p.ziel_ordner; saetze = @() }); exit 0 }",
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    '$l = @()',
+    "foreach ($s in @(Get-ChildItem $p.ziel_ordner -Directory | Where-Object { $_.Name -match '^ca-\\d{8}-\\d{6}$' } | Sort-Object Name -Descending)) {",
+    "  $mf = Join-Path $s.FullName 'manifest.json'",
+    "  if (-not (Test-Path $mf)) { $l += [ordered]@{ satz = $s.Name; ok = $false; grund = 'kein Manifest' }; continue }",
+    '  $m = [IO.File]::ReadAllText($mf) | ConvertFrom-Json',
+    "  $falsch = @(@($m.dateien) | Where-Object { $f = Join-Path $s.FullName $_.datei; -not (Test-Path $f) -or ((($shaF.ComputeHash([IO.File]::ReadAllBytes($f)) | ForEach-Object { $_.ToString('x2') }) -join '') -ne $_.sha256) } | ForEach-Object { $_.datei })",
+    "  $l += [ordered]@{ satz = $s.Name; ca = [string]$m.ca; zeit = [string]$m.zeit; alterStunden = [math]::Round(((Get-Date) - [datetime]$m.zeit).TotalHours, 1); dateien = @($m.dateien).Count; ok = ($falsch.Count -eq 0); falsch = $falsch }",
+    '}',
+    "Ergebnis ([ordered]@{ ordner = $p.ziel_ordner; rechner = $env:COMPUTERNAME; saetze = $l })",
+  ].join('\n');
+}
+
+/** Quelle: einen Sicherungssatz als ZIP (Base64 + SHA-256) liefern — nur den genannten Satz */
+export function caSatzPackenSkript(z: { ziel_ordner: string; satz: string }): string {
+  return [
+    ...kopf(z, false),
+    '$d = Join-Path $p.ziel_ordner $p.satz',
+    "if (-not (Test-Path (Join-Path $d 'manifest.json'))) { throw ('Sicherungssatz ' + $p.satz + ' ohne Manifest') }",
+    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    "$zip = Join-Path $env:TEMP ('alfred-' + $p.satz + '.zip'); if (Test-Path $zip) { Remove-Item $zip -Force }",
+    '[IO.Compression.ZipFile]::CreateFromDirectory($d, $zip)',
+    '$b = [IO.File]::ReadAllBytes($zip); Remove-Item $zip -Force',
+    "if ($b.Length -gt 40MB) { throw ('Satz zu groß für die Übertragung (' + [math]::Round($b.Length / 1MB, 1) + ' MB)') }",
+    "$sha = (([Security.Cryptography.SHA256]::Create().ComputeHash($b)) | ForEach-Object { $_.ToString('x2') }) -join ''",
+    "Ergebnis ([ordered]@{ satz = $p.satz; bytes = $b.Length; sha256 = $sha; base64 = [Convert]::ToBase64String($b) })",
+  ].join('\n');
+}
+
+/** Ziel: ZIP hashgeprüft ablegen und entpacken; Manifest-Hashes nachprüfen; vorhandener Satz gleichen Namens wird nicht überschrieben */
+export function caSatzAblegenSkript(z: { ziel_ordner: string; satz: string; sha256: string }): string {
+  return [
+    ...kopf(z, true),
+    '$b = [Convert]::FromBase64String([string]$e.base64)',
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "function Hex($x) { ($shaF.ComputeHash($x) | ForEach-Object { $_.ToString('x2') }) -join '' }",
+    "if ((Hex $b) -ne $p.sha256) { throw 'Übertragung passt nicht zum Hash' }",
+    'New-Item -ItemType Directory -Path $p.ziel_ordner -Force | Out-Null',
+    '$acl = New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true, $false)',
+    "foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }",
+    'Set-Acl -Path $p.ziel_ordner -AclObject $acl',
+    '$d = Join-Path $p.ziel_ordner $p.satz',
+    "if (Test-Path $d) { $schon = $true } else { $schon = $false; $zip = Join-Path $env:TEMP ('alfred-' + $p.satz + '.zip'); [IO.File]::WriteAllBytes($zip, $b); Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($zip, $d); Remove-Item $zip -Force }",
+    "$m = [IO.File]::ReadAllText((Join-Path $d 'manifest.json')) | ConvertFrom-Json",
+    "$falsch = @(@($m.dateien) | Where-Object { $f = Join-Path $d $_.datei; -not (Test-Path $f) -or (Hex ([IO.File]::ReadAllBytes($f))) -ne $_.sha256 } | ForEach-Object { $_.datei })",
+    "if ($falsch.Count) { throw ('Kopie unvollständig: ' + ($falsch -join ', ')) }",
+    "Ergebnis ([ordered]@{ zustand = $(if ($schon) { 'schon vorhanden, geprüft' } else { 'kopiert, geprüft' }); ordner = $d; dateien = @($m.dateien).Count; ca = [string]$m.ca; rechner = $env:COMPUTERNAME })",
+  ].join('\n');
+}
+export { SATZ as CA_SATZ };
 

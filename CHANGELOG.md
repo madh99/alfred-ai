@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Netzlose Platten, CA-Sicherung und Pfade der Issuing-CA (v1814)
+
+- `windows_cluster status`, `platten_einrichten` und `systemplatte_erweitern` laufen auch auf netzlosen VMs über den Gastagenten (vmid + vm_name statt zugang), zum Beispiel auf der Offline-Root.
+- `windows_pki issuer_anfordern` legt CA-Datenbank und Logs auf Wunsch auf eine Datenplatte (`db_pfad`, `log_pfad`).
+- Neue Bausteine für die CA-Sicherung:
+  - `ca_sicherung` sichert die Datenbank, den privaten Schlüssel als kennwortgeschütztes PKCS#12 und die Konfiguration, mit Manifest und SHA-256 je Datei.
+  - `ca_sicherung_status` prüft die vorhandenen Sätze lesend gegen das Manifest.
+  - `ca_sicherung_kopieren` legt hashgeprüft eine unabhängige Kopie auf einem anderen Rechner ab.
+
 ### Added — PKI-Veröffentlichung über HTTP, im AD und Prüfung des Vertrauens (v1813)
 
 - **HTTP-Veröffentlichung:**

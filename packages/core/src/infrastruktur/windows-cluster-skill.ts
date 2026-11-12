@@ -19,6 +19,8 @@ import {
 export interface WindowsClusterDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
   tresor?: { namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string> };
+  /** v1814 — netzlose VMs (Offline-Root) über den QEMU-Gastagenten des Proxmox-Skills */
+  gast?: (vmid: number, vmName: string, skript: string, eingabe: string | undefined, timeoutMs: number) => Promise<{ code: number; stdout: string; stderr: string }>;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   schlafe?: (ms: number) => Promise<void>;
 }
@@ -33,6 +35,8 @@ const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbere
 /** als Domänenkonto <NETBIOS>\alfred mit Kennwort-Anmeldung (Doppel-Hop) — konto_tresor ist Pflicht */
 const ALS_ALFRED = new Set(['cluster_validieren', 'cluster_anlegen', 'cluster_entfernen', 'zeuge_setzen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
+/** v1814 — diese Aktionen auch für netzlose VMs über den Gastagenten (vmid + vm_name statt zugang) */
+const GAST_ERLAUBT = new Set(['status', 'platten_einrichten', 'systemplatte_erweitern']);
 
 export class WindowsClusterSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -40,6 +44,7 @@ export class WindowsClusterSkill extends Skill {
     category: 'infrastructure',
     description:
       'Windows-Failover-Cluster und Vorbereitung für SQL Server (I8d) über feste PowerShell-Bausteine auf Windows-Fernzugängen (zugang = Name des Fernzugangs). '
+      + 'NETZLOSE VMs (v1814, z. B. Offline-Root pkiroot01): status, platten_einrichten und systemplatte_erweitern auch mit vmid + vm_name statt zugang — über den QEMU-Gastagenten, ohne Netz. '
       + 'status (lesend, auch außerhalb von Changes): Features, Volumes mit Blockgröße, SMB-Freigaben, Cluster mit Knoten, Quorum/Zeuge und Ressourcen — als Prüfung z. B. erwartet „Cluster sqlcl01“, „sql02 Up“, „FileShareWitness“, „L: SQL-Log 20 GB (64 KB)“, „SQLBackup$=S:\\SQLBackup“. '
       + 'verbindung_pruefen (lesend, auch außerhalb von Changes; zugang, ziel = Hostname/IPv4, port Standard 443, url optional = https-Adresse auf diesem ziel für eine HEAD-Anfrage) — DNS, TCP (8 s) und HTTPS vom Windows-Rechner aus; Ergebnis „Verbindung <ziel>:<port> ok (…)“ bzw. „NICHT erreichbar: …“ — als Prüfung eines warten-Schritts mit erwartet „ok“, z. B. nach dem Öffnen einer Firewall-Freigabe (das Gateway übernimmt neue Regeln mit Verzögerung). '
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
@@ -84,9 +89,10 @@ export class WindowsClusterSkill extends Skill {
         regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' }, zugaenge: { type: 'array', items: { type: 'string' } }, event_ids: { type: 'array', items: { type: 'number' } }, minuten: { type: 'number' }, dauer_s: { type: 'number' }, intervall_s: { type: 'number' }, ag: { type: 'string' }, aktiv: { type: 'boolean', description: 'firewall_regel_aktiv: Zielzustand' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
+        vmid: { type: 'number', description: 'netzlose VM (Offline-Root): VMID statt zugang — nur status, platten_einrichten, systemplatte_erweitern' }, vm_name: { type: 'string' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
       },
-      required: ['action', 'zugang'],
+      required: ['action'],
     },
   };
 
@@ -94,10 +100,16 @@ export class WindowsClusterSkill extends Skill {
 
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
-    const zugang = String(input.zugang ?? '').trim().toLowerCase();
+    let zugang = String(input.zugang ?? '').trim().toLowerCase();
     if (!CLUSTER_LESEND.has(action) && !NUR_IM_CHANGE.has(action)) return { success: false, error: `Unbekannte Aktion ${action}` };
     if (NUR_IM_CHANGE.has(action) && (context as { ausChange?: boolean } | undefined)?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
-    if (!ZUGANG.test(zugang)) return { success: false, error: 'zugang: Name des Windows-Fernzugangs' };
+    if (input.vmid !== undefined) {
+      if (zugang) return { success: false, error: 'entweder zugang ODER vmid + vm_name' };
+      if (!GAST_ERLAUBT.has(action)) return { success: false, error: `${action} nur über einen Fernzugang; über den Gastagenten gehen nur ${[...GAST_ERLAUBT].join(', ')}` };
+      const vmid = Number(input.vmid); const name = String(input.vm_name ?? '').trim();
+      if (!Number.isInteger(vmid) || vmid < 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) return { success: false, error: 'vmid und vm_name der netzlosen VM angeben' };
+      zugang = `gast:${vmid}:${name}`;
+    } else if (!ZUGANG.test(zugang)) return { success: false, error: 'zugang: Name des Windows-Fernzugangs' };
     try {
       const kw = AM_DC.has(action) ? await this.kennwort(input.konto_tresor ?? `win-${zugang}-admin`, `${action} auf ${zugang} (Domänen-Administrator)`)
         : ALS_ALFRED.has(action) ? await this.kennwort(input.konto_tresor, `${action} auf ${zugang} (Domänenkonto alfred)`) : undefined;
@@ -294,7 +306,9 @@ export class WindowsClusterSkill extends Skill {
   }
 
   private async lauf<T>(zugang: string, skript: string, zweck: string, timeoutMs: number, eingabe?: Record<string, string>): Promise<T> {
-    const r = await this.d.skript(zugang, kodiert(skript), eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck);
+    const g = /^gast:(\d+):([a-z0-9-]+)$/.exec(zugang);
+    if (g && !this.d.gast) throw new Error('Gastagent nicht verfügbar (Proxmox-Skill fehlt)');
+    const r = g ? await this.d.gast!(Number(g[1]), g[2]!, skript, eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs) : await this.d.skript(zugang, kodiert(skript), eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck);
     const e = adErgebnis<T>(r.stdout);
     if (r.code !== 0 || !e) {
       const klar = `${r.stderr}\n${r.stdout}`.split(/\r?\n/).filter(z => z.trim() && !z.startsWith('#< CLIXML') && !z.startsWith('<Objs')).join(' ');

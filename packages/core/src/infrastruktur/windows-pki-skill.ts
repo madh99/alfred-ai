@@ -7,7 +7,8 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler } from './windows-ad.js';
 import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkript, featuresSkript, featuresEntfernenSkript, artefakteSkript, type PkiArtefakte,
   pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript,
-  pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript } from './windows-pki.js';
+  pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
+  pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
 
 export interface WindowsPkiDeps {
@@ -16,9 +17,9 @@ export interface WindowsPkiDeps {
   tresor?: { namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string> };
 }
 
-export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen']);
+export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status']);
 /** nur als Schritte freigegebener Changes */
-export const PKI_AENDERND = new Set(['features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren']);
+export const PKI_AENDERND = new Set(['features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -43,6 +44,10 @@ export class WindowsPkiSkill extends Skill {
       + 'datei_ablegen (zugang = fs01; ordner W:\\PKI, datei z. B. ad3033-root.crl/.crt passend zu datei_name, base64 + erwartet_sha256 aus artefakte_lesen bzw. subordinate_signieren) — hashgeprüft, ersetzt nie eine CRL durch eine ältere Nummer; meldet den vorherigen Hash. '
       + 'publication_pruefen (lesend; zugang = Client, z. B. sql01 oder pkiiss01; urls; erwartet optional {url: sha256}) — HTTP-Status ohne Umleitung, SHA-256, Typ, bei CRLs Nummer und NextUpdate; Ergebnis „PKI_PUBLICATION_VERIFIED“ nur bei 200 und passenden Hashes. '
       + 'ad_veroeffentlichen (zugang = Issuing-CA oder Mitglied mit RSAT; root_base64 + erwartet_root_sha256, optional sub_base64 + erwartet_sub_sha256, dcs = [dc01.ad.3033.at, dc02.ad.3033.at], konto_tresor Standard win-dc01-admin) — certutil -dspublish RootCA/SubCA als Enterprise Admin, NTAuth unverändert, keine CRL ins AD; Beleg je DC; Ergebnis „AD_PKI_PUBLISHED“. '
+      + 'issuer_anfordern zusätzlich db_pfad/log_pfad (z. B. D:\\CertDB, D:\\CertLog; nicht C:). '
+      + 'ca_sicherung (zugang oder vmid + vm_name; ziel_ordner auf der Sicherungsplatte z. B. B:\\CA-Sicherung; passwort_tresor = Tresor-Eintrag für das PKCS#12-Kennwort, z. B. pki-root-sicherung) — Backup-CARoleService (Datenbank + privater Schlüssel kennwortgeschützt), CA-Konfiguration, CAPolicy.inf, Manifest mit SHA-256; additiv, ohne Rückweg; Ergebnis „CA_BACKUP_VERIFIED“ erst nach Hash-Abgleich. '
+      + 'ca_sicherung_status (lesend; zugang oder vmid + vm_name; ziel_ordner) — Sätze mit Alter und Hash-Abgleich. '
+      + 'ca_sicherung_kopieren (Quelle zugang oder vmid + vm_name, ziel_ordner der Quelle, satz = ca-JJJJMMTT-HHMMSS aus ca_sicherung; ziel_zugang = anderer Windows-Fernzugang, ziel_ziel_ordner dort) — hashgeprüfte unabhängige Kopie (ZIP über Alfred, entpackt, Manifest nachgeprüft); additiv. '
       + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -62,6 +67,8 @@ export class WindowsPkiSkill extends Skill {
         csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
         host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
         urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
+        ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
+        db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
@@ -202,6 +209,30 @@ export class WindowsPkiSkill extends Skill {
           const ok = [...r.root, ...r.zwischen].every(x => x.da);
           const text = `${ok ? 'TRUST_APPLIED' : 'Vertrauen NICHT vollständig'} auf ${r.rechner} (${r.zeit}): ${[...r.root.map(x => `Root ${x.thumbprint} ${x.da ? 'da' : 'FEHLT'}`), ...r.zwischen.map(x => `Issuing ${x.thumbprint} ${x.da ? 'da' : 'FEHLT'}`)].join(', ')}`;
           return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'ca_sicherung': {
+          const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
+          const kw = await this.kennwort(input.passwort_tresor, 'CA-Sicherung (PKCS#12-Kennwort)');
+          const { r, weg } = await this.lauf<{ ca: string; satz: string; ordner: string; dateien: number; bytes: number; zeit: string }>(input, caSicherungSkript(z), 'CA sichern', 1_200_000, { kennwort: kw });
+          const { r: st } = await this.lauf<{ saetze: { satz: string; ok: boolean; falsch?: string[] }[] }>(input, caSicherungStatusSkript(z), 'CA-Sicherung prüfen', 300_000);
+          const s2 = st.saetze.find(x => x.satz === r.satz);
+          const ok = !!s2?.ok;
+          const text = `${ok ? '✅ CA_BACKUP_VERIFIED' : 'CA-Sicherung NICHT geprüft'} „${r.ca}“ (${weg}): Satz ${r.satz} in ${r.ordner}, ${r.dateien} Dateien, ${Math.round(r.bytes / 1024)} KB, ${r.zeit}${s2?.falsch?.length ? `; abweichend: ${s2.falsch.join(', ')}` : ''}`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'ca_sicherung_status': {
+          const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
+          const { r, weg } = await this.lauf<{ ordner: string; rechner?: string; saetze: { satz: string; ca?: string; zeit?: string; alterStunden?: number; dateien?: number; ok: boolean; grund?: string; falsch?: string[] }[] }>(input, caSicherungStatusSkript(z), 'CA-Sicherung prüfen', 300_000);
+          return { success: true, data: { ...r, weg }, display: `CA-Sicherungen ${r.ordner} (${weg}): ${r.saetze.length ? r.saetze.map(x => `${x.satz} ${x.ok ? 'ok' : `FEHLERHAFT (${x.grund ?? x.falsch?.join(', ')})`}${x.alterStunden !== undefined ? `, ${x.alterStunden} h alt` : ''}`).join('; ') : 'keine'}` };
+        }
+        case 'ca_sicherung_kopieren': {
+          const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
+          const satz = String(input.satz ?? '').trim(); if (!CA_SATZ.test(satz)) return { success: false, error: 'satz: ca-JJJJMMTT-HHMMSS aus ca_sicherung' };
+          const zz = String(input.ziel_zugang ?? '').trim().toLowerCase(); if (!ZUGANG.test(zz)) return { success: false, error: 'ziel_zugang: Windows-Fernzugang für die unabhängige Kopie' };
+          const zo = pruefeSicherungsziel({ ziel_ordner: input.ziel_ziel_ordner }); if (typeof zo === 'string') return { success: false, error: 'ziel_ziel_ordner: Ordner auf dem Ziel (nicht C:)' };
+          const { r: pk, weg } = await this.lauf<{ satz: string; bytes: number; sha256: string; base64: string }>(input, caSatzPackenSkript({ ...z, satz }), 'CA-Sicherung packen', 600_000);
+          const { r } = await this.lauf<{ zustand: string; ordner: string; dateien: number; ca: string; rechner: string }>({ zugang: zz }, caSatzAblegenSkript({ ziel_ordner: zo.ziel_ordner, satz, sha256: pk.sha256 }), 'CA-Sicherung ablegen', 600_000, { base64: pk.base64 });
+          return { success: true, data: { satz, bytes: pk.bytes, sha256: pk.sha256, quelle: weg, ziel: r }, display: `✅ CA_BACKUP_COPY_VERIFIED „${r.ca}“: Satz ${satz} (${Math.round(pk.bytes / 1024)} KB, SHA-256 ${pk.sha256}) → ${r.rechner} ${r.ordner}, ${r.dateien} Dateien, Manifest nachgeprüft (${r.zustand})` };
         }
       }
       return { success: false, error: `Unbekannte Aktion ${action}` };
