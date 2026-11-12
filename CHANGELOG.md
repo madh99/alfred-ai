@@ -13,9 +13,9 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 - Die PKI-Website lieferte HTTP 500, weil der IIS-Arbeitsprozess den Veröffentlichungsordner mit geschützter Berechtigung nicht lesen durfte. `windows_pki pki_web_einrichten` gibt jetzt neben dem anonymen Benutzer auch der Gruppe IIS_IUSRS Leserecht.
 
-### Fixed — Base64-Inhalte zwischen Change-Schritten (v1830)
+### Fixed — Base64-Inhalte zwischen Change-Schritten (v1830, v1833)
 
-- Ein Change-Schritt konnte den Base64-Inhalt eines früheren Schritts (z. B. ein Zertifikat) nicht übernehmen, weil die Zeichen `+` und `=` gesperrt waren. Striktes Base64 ist jetzt erlaubt, aber nur als vollständiger Wert im Feld `base64`. Für alle anderen Felder gelten die bisherigen strengen Regeln unverändert.
+- Ein Change-Schritt konnte den Base64-Inhalt eines früheren Schritts (z. B. ein Zertifikat oder eine Zertifikatsanforderung) nicht übernehmen, weil die Zeichen `+` und `=` gesperrt waren. Striktes Base64 ist jetzt erlaubt, aber nur als vollständiger Wert in den Feldern `base64` und `<name>_base64`. Für alle anderen Felder gelten die bisherigen strengen Regeln unverändert.
 
 ### Added — URL-Unterpfad für die PKI-Website (v1829)
 

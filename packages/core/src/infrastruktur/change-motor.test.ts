@@ -723,3 +723,13 @@ describe('v1830 Base64-Verweis nur im Feld base64', () => {
     expect(loeseAuf({ base64: '{{schritt25.boese}}' }, erg).fehler).toContain('unzulässigen Wert');
   });
 });
+
+describe('v1833 Base64-Felder mit Präfix', () => {
+  it('csr_base64 & Co. nehmen striktes Base64 als ganzen Wert an, andere Felder nicht', async () => {
+    const { loeseAuf } = await import('./change-lauf.js');
+    const erg = [{ nr: 32, ok: true, daten: { csrBase64: 'MIIB+w==' } }] as never;
+    for (const f of ['csr_base64', 'crl_base64', 'root_base64', 'zert_base64', 'sub_base64']) expect(loeseAuf({ [f]: '{{schritt32.csrBase64}}' }, erg).fehler).toBeUndefined();
+    expect(loeseAuf({ befehl_base64x: '{{schritt32.csrBase64}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ name: '{{schritt32.csrBase64}}' }, erg).fehler).toContain('unzulässigen Wert');
+  });
+});

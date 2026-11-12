@@ -89,6 +89,8 @@ const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript'])
  * striktes Base64 zulässig (keine Leerzeichen, Anführungszeichen oder Shell-Zeichen; Länge Vielfaches von 4, höchstens 16 MB).
  */
 export const BASE64_FELDER = new Set(['base64']);
+/** v1833 — Realfall 13.11. PKI-B Schritt 34: die PKI-Bausteine heißen auch csr_base64, crl_base64, root_base64, zert_base64, sub_base64 */
+export const istBase64Feld = (feld: string): boolean => BASE64_FELDER.has(feld) || /^[a-z]{2,12}_base64$/.test(feld);
 export const STRIKTES_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /**
@@ -119,7 +121,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
         const e = ergebnisse.find(x => x.nr === Number(allein[1]) && nutzbar(x));
         const w = e ? pfadWert(e.daten, allein[2]!) : undefined;
         if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
-        if (feld && BASE64_FELDER.has(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
+        if (feld && istBase64Feld(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
         return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
       }
       return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
