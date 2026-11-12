@@ -622,7 +622,8 @@ export function wiederherstellungSkript(p: { datenbank: string; ordner: string; 
     "$daten = [string](Sql \"SELECT CAST(SERVERPROPERTY('InstanceDefaultDataPath') AS nvarchar(260)) d, CAST(SERVERPROPERTY('InstanceDefaultLogPath') AS nvarchar(260)) l\")[0].d",
     "$logp = [string](Sql \"SELECT CAST(SERVERPROPERTY('InstanceDefaultLogPath') AS nvarchar(260)) l\")[0].l",
     "$brauchtD = [double](($fl | Where-Object Type -ne 'L' | Measure-Object -Property Size -Sum).Sum); $brauchtL = [double](($fl | Where-Object Type -eq 'L' | Measure-Object -Property Size -Sum).Sum)",
-    "$freiD = (Get-Volume -DriveLetter $daten.Substring(0, 1)).SizeRemaining; $freiL = (Get-Volume -DriveLetter $logp.Substring(0, 1)).SizeRemaining",
+    // v1805 — Realfall F3 4a7be151 Schritt 19: Get-Volume -DriveLetter lieferte auf sql02 zwei Objekte (Vergleich mit Object[]); DriveInfo ist eindeutig
+    "$freiD = [double]([System.IO.DriveInfo]::new($daten.Substring(0, 1))).AvailableFreeSpace; $freiL = [double]([System.IO.DriveInfo]::new($logp.Substring(0, 1))).AvailableFreeSpace",
     "if ($brauchtD * 1.1 -gt $freiD -or $brauchtL * 1.1 -gt $freiL) { throw ('zu wenig Platz: Daten braucht ' + [math]::Round($brauchtD / 1GB, 2) + ' GB (frei ' + [math]::Round($freiD / 1GB, 2) + '), Log ' + [math]::Round($brauchtL / 1GB, 2) + ' GB (frei ' + [math]::Round($freiL / 1GB, 2) + ')') }",
     "$i = 0; $move = @($fl | ForEach-Object { $i++; $z = $(if ($_.Type -eq 'L') { Join-Path $logp ($p.ziel_name + '_' + $i + '.ldf') } else { Join-Path $daten ($p.ziel_name + '_' + $i + '.mdf') }); \"MOVE N'\" + ([string]$_.LogicalName).Replace(\"'\", \"''\") + \"' TO N'\" + $z + \"'\" }) -join ', '",
     "$kette = @($voll[0]) + @($diff) + @($logs)",

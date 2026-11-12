@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Platzprüfung im Wiederherstellungstest (v1805)
+
+- `sql_server wiederherstellung_testen` brach vor der Wiederherstellung mit „Cannot convert System.Object[] to System.Double“ ab. Die Abfrage des freien Platzes lieferte für einen Laufwerksbuchstaben zwei Datenträger zurück. Der freie Platz wird jetzt eindeutig je Laufwerk ermittelt.
+
 ### Fixed — HADR-WMI-Schnittstelle wird zuverlässig erkannt (v1804)
 
 - `sql_server hadr_aktivieren` fiel trotz vorhandener WMI-Schnittstelle auf den Registry-Schalter zurück. In Windows PowerShell 5.1 wird ein einzelnes Ergebnis aus einer Funktion entpackt, und die Anzahl einer einzelnen CIM-Instanz war danach leer. Die Abfrage wird jetzt ausdrücklich als Liste gezählt.

@@ -242,3 +242,13 @@ describe('v1804 HADRServiceSettings als Array zählen', () => {
     expect(s).not.toMatch(/[^@]\(Hs\)(\.Count|\[0\])/);
   });
 });
+
+// v1805 — Realfall F3 4a7be151 Schritt 19: Get-Volume lieferte zwei Objekte → „Cannot convert System.Object[] to System.Double“
+describe('v1805 Platzprüfung im Wiederherstellungstest', () => {
+  it('liest den freien Platz eindeutig über DriveInfo', async () => {
+    const m = await import('./sql-server.js');
+    const src = m.wiederherstellungSkript.toString() + (await import('node:fs')).readFileSync(new URL('./sql-server.ts', import.meta.url), 'utf-8');
+    expect(src).toContain('$freiD = [double]([System.IO.DriveInfo]::new($daten.Substring(0, 1))).AvailableFreeSpace');
+    expect(src).not.toContain('(Get-Volume -DriveLetter $daten');
+  });
+});
