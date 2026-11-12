@@ -7,6 +7,8 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
+  firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
+  pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
   computerobjektSkript, computerobjektEntfernenSkript, pruefeSpn, spnSkript, pruefeKnoten, validierenSkript, pruefeCluster, clusterAnlegenSkript,
@@ -21,10 +23,10 @@ export interface WindowsClusterDeps {
 }
 
 /** lesend, auch außerhalb eines Changes */
-export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen']);
+export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
-  'cluster_entfernen', 'zeuge_setzen']);
+  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'diagnose_entfernen']);
 /** am DC mit dem Domänen-Administrator (Tresor Standard win-<zugang>-admin, wie windows_ad grundstruktur) */
 const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen']);
 /** als Domänenkonto <NETBIOS>\alfred mit Kennwort-Anmeldung (Doppel-Hop) — konto_tresor ist Pflicht */
@@ -40,6 +42,9 @@ export class WindowsClusterSkill extends Skill {
       + 'status (lesend, auch außerhalb von Changes): Features, Volumes mit Blockgröße, SMB-Freigaben, Cluster mit Knoten, Quorum/Zeuge und Ressourcen — als Prüfung z. B. erwartet „Cluster sqlcl01“, „sql02 Up“, „FileShareWitness“, „L: SQL-Log 20 GB (64 KB)“, „SQLBackup$=S:\\SQLBackup“. '
       + 'verbindung_pruefen (lesend, auch außerhalb von Changes; zugang, ziel = Hostname/IPv4, port Standard 443, url optional = https-Adresse auf diesem ziel für eine HEAD-Anfrage) — DNS, TCP (8 s) und HTTPS vom Windows-Rechner aus; Ergebnis „Verbindung <ziel>:<port> ok (…)“ bzw. „NICHT erreichbar: …“ — als Prüfung eines warten-Schritts mit erwartet „ok“, z. B. nach dem Öffnen einer Firewall-Freigabe (das Gateway übernimmt neue Regeln mit Verzögerung). '
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
+      + 'firewall_lesen (lesend; zugang, nur_any optional true) — alle aktiven eingehenden Erlauben-Regeln mit regel (Name/InstanceID), Anzeige, Gruppe, Protokoll, lokalen Ports und Gegenstellen (von). '
+      + 'spn_lesen (lesend; zugang = Mitglied oder DC, konto = sAMAccountName z. B. gmsa-sqleng$) — servicePrincipalName des Kontos (als Computerkonto gelesen). '
+      + 'verzeichnis_lesen (lesend; zugang, pfad = lokaler Pfad z. B. S:\\SQLBackup) — Dateien rekursiv mit Größe/Zeit (neueste 500) und Summe. '
       + 'NUR als Schritte freigegebener Changes: systemplatte_erweitern (zugang) — C: auf die volle Plattengröße in Proxmox; liegt die Wiederherstellungspartition dahinter, wandert WinRE nach C: und nur diese Partition wird entfernt (ohne Rückweg; Ergebnis „C: … 63 → 100 GB“). platten_einrichten (zugang, platten [{groesse_gb, laufwerk, name, block_kb 4|64}] — rohe Platten über die Größe zugeordnet, Größen verschieden; SQL-Daten/Log/TempDB 64 KB; ein CD-Laufwerk auf dem Buchstaben weicht aus; ohne Rückweg). '
       + `features_installieren (zugang, features aus ${[...FEATURES].join(', ')}; Neustart falls nötig, wartet bis 20 min; ohne Rückweg). `
       + 'firewall_regel (zugang, name, protokoll TCP|UDP|ICMPv4, ports, von = exakte IPv4/Netze) ↔ firewall_regel_entfernen (zugang, name) — eingehend, Profil Any, Name „Alfred <name>“. '
@@ -51,6 +56,8 @@ export class WindowsClusterSkill extends Skill {
       + 'cluster_validieren (zugang = ein Knoten, knoten) — Test-Cluster Inventory/Network/System Configuration, Ergebnis „Validierung bestanden|Warnungen|fehlgeschlagen“ (ohne Rückweg); '
       + 'cluster_anlegen (zugang = ein Knoten, name = CNO, knoten, ip) — ohne Speicher, AD+DNS ↔ cluster_entfernen (zugang, name; CNO bleibt deaktiviert im AD); '
       + 'zeuge_setzen (zugang = Knoten, freigabe = UNC \\\\fs01.ad.3033.at\\Witness$ oder ohne_zeuge true) — Ergebnis nennt den vorherigen Zustand (Rückweg: zeuge_setzen mit dem vorherigen Pfad bzw. ohne_zeuge). '
+      + 'firewall_filter_setzen (zugang, regel = Name aus firewall_lesen, von = IPv4/Netze) — Gegenstellen einer BESTEHENDEN eingehenden Regel einschränken; Ergebnis nennt „vorher“ (Rückweg: firewall_filter_setzen mit von = vorher, „Any“ nur dafür). '
+      + 'diagnose_entfernen (zugang, pfad = C:\\Windows\\Temp\\alfred-<name>) — von Alfred angelegten Diagnoseordner löschen (ohne Rückweg). '
       + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor (fremde Domäne, umbenannter Administrator). '
       + 'Reihenfolge Cluster: Features (Failover-Clustering, RSAT-Clustering-PowerShell) auf allen Knoten → Firewall-Regeln zwischen den Knoten → CNO vorab (vollzugriff alfred) → cluster_validieren → cluster_anlegen → Zeugen-Freigabe auf fs01 mit vollzugriff <NETBIOS>\\<CNO>$ → zeuge_setzen.',
     riskLevel: 'admin',
@@ -68,6 +75,7 @@ export class WindowsClusterSkill extends Skill {
         berechtigte: { type: 'array', items: { type: 'string' } }, ou: { type: 'string' },
         konto: { type: 'string' }, spns: { type: 'array', items: { type: 'string' } },
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
+        regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
@@ -104,6 +112,31 @@ export class WindowsClusterSkill extends Skill {
           const g = fehler(pruefeGmsa({ name: input.name, berechtigte: 'x' })) as { name: string };
           const r = await this.lauf<{ name: string; nutzbar: boolean }>(zugang, gmsaPruefenSkript({ name: g.name }), 'gMSA prüfen', 240_000);
           return { success: true, data: r, display: r.nutzbar ? `gMSA ${r.name} nutzbar auf ${zugang}` : `gMSA ${r.name} auf ${zugang} NICHT nutzbar (Kennwort nicht abrufbar)` };
+        }
+        case 'firewall_lesen': {
+          const nurAny = input.nur_any === true;
+          const r = await this.lauf<FirewallLesen>(zugang, firewallLesenSkript(nurAny ? { nur_any: true } : {}), 'Firewall lesen', 180_000);
+          return { success: true, data: r, display: firewallLesenText(r, nurAny) };
+        }
+        case 'spn_lesen': {
+          const p = fehler(pruefeSamKonto(input.konto)) as { konto: string };
+          const r = await this.lauf<{ konto: string; dn: string; spns: string[] }>(zugang, spnLesenSkript(p), 'SPN lesen', 180_000);
+          return { success: true, data: r, display: `SPNs ${r.konto} (${r.dn}): ${r.spns.length ? r.spns.join(', ') : 'keine'}` };
+        }
+        case 'verzeichnis_lesen': {
+          const p = fehler(pruefePfad(input.pfad)) as { pfad: string };
+          const r = await this.lauf<Parameters<typeof verzeichnisText>[1]>(zugang, verzeichnisLesenSkript(p), 'Verzeichnis lesen', 180_000);
+          return { success: true, data: r, display: verzeichnisText(zugang, r) };
+        }
+        case 'firewall_filter_setzen': {
+          const p = fehler(pruefeFilter(input)) as { regel: string; von: string[] };
+          const r = await this.lauf<{ regel: string; anzeige: string; vorher: string; nachher: string }>(zugang, firewallFilterSkript(p), 'Firewall-Filter setzen', 120_000);
+          return { success: true, data: r, display: `✅ Firewall ${zugang}: ${r.anzeige} [${r.regel}] von ${r.vorher} → ${r.nachher} — Rückweg firewall_filter_setzen regel ${r.regel} von ${r.vorher}` };
+        }
+        case 'diagnose_entfernen': {
+          const p = fehler(pruefeDiagnose(input.pfad)) as { pfad: string };
+          const r = await this.lauf<{ pfad: string; zustand: string; mb?: number }>(zugang, diagnoseEntfernenSkript(p), 'Diagnoseordner entfernen', 120_000);
+          return { success: true, data: r, display: `✅ ${zugang}: ${r.pfad} ${r.zustand}${r.mb !== undefined ? ` (${r.mb} MB)` : ''}` };
         }
         case 'platten_einrichten': {
           const platten = fehler(pruefePlatten(input.platten)) as Platte[];

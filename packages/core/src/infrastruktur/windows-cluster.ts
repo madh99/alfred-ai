@@ -575,3 +575,114 @@ export function pruefeZeuge(o: Record<string, unknown>): { freigabe?: string } |
 }
 
 export { FQDN };
+
+// ── v1806 Nachpflege I8d: lesende Erhebung + eng begrenzte Änderungen (Realfall 12.11.: Lese-Käfig sperrte Get-NetFirewallAddressFilter,
+// setspn und Get-ChildItem für die Planung von I8d-G/H) ─────────────────────────────────────────────────────────────────────────────
+
+/** Eingehende, aktive Erlauben-Regeln mit Protokoll, lokalen Ports und Gegenstellen (nur_any: nur RemoteAddress Any) */
+export function firewallLesenSkript(p: { nur_any?: boolean }): string {
+  return [
+    ...kopf(p, false),
+    '$pf = @{}; foreach ($x in @(Get-NetFirewallPortFilter -All)) { $pf[[string]$x.InstanceID] = $x }',
+    '$af = @{}; foreach ($x in @(Get-NetFirewallAddressFilter -All)) { $af[[string]$x.InstanceID] = $x }',
+    '$l = New-Object System.Collections.ArrayList',
+    'foreach ($r in @(Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow)) {',
+    '  $id = [string]$r.InstanceID; $a = $af[$id]; $q = $pf[$id]; $ra = (@($a.RemoteAddress) | ForEach-Object { [string]$_ }) -join \',\'',
+    "  if ($p.nur_any -and $ra -ne 'Any') { continue }",
+    '  [void]$l.Add([ordered]@{ regel = [string]$r.Name; anzeige = [string]$r.DisplayName; gruppe = [string]$r.DisplayGroup; profil = [string]$r.Profile; protokoll = [string]$q.Protocol; ports = ((@($q.LocalPort) | ForEach-Object { [string]$_ }) -join \',\'); von = $ra })',
+    '}',
+    'Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; anzahl = $l.Count; regeln = @($l) })',
+  ].join('\n');
+}
+
+export interface FirewallLesen { rechner: string; anzahl: number; regeln: { regel: string; anzeige: string; gruppe: string; profil: string; protokoll: string; ports: string; von: string }[] }
+
+export function firewallLesenText(r: FirewallLesen, nurAny: boolean): string {
+  const z = (r.regeln ?? []).map(x => `${x.anzeige} [${x.regel}] ${x.protokoll || 'Any'} ${x.ports || 'Any'} von ${x.von || 'Any'}${x.gruppe ? ` (${x.gruppe})` : ''}`);
+  return `${r.rechner}: ${r.anzahl} aktive eingehende Erlauben-Regeln${nurAny ? ' mit Gegenstelle Any' : ''}${z.length ? `:\n${z.slice(0, 200).join('\n')}${z.length > 200 ? `\n… ${z.length - 200} weitere (vollständig in data)` : ''}` : ''}`;
+}
+
+const SAM_KONTO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}\$?$/;
+export function pruefeSamKonto(k: unknown): string | { konto: string } {
+  const konto = String(k ?? '').trim();
+  return SAM_KONTO.test(konto) ? { konto } : 'konto: sAMAccountName, z. B. gmsa-sqleng$ oder sql01$';
+}
+
+/** servicePrincipalName eines Kontos lesen — als SYSTEM (Computerkonto liest AD; das SSH-Token hat keine Netz-Anmeldedaten) */
+export function spnLesenSkript(p: { konto: string }): string {
+  const innen = innenSkript(p, [
+    '$s = New-Object System.DirectoryServices.DirectorySearcher',
+    "$s.Filter = '(sAMAccountName=' + $p.konto + ')'",
+    "[void]$s.PropertiesToLoad.Add('servicePrincipalName'); [void]$s.PropertiesToLoad.Add('distinguishedName')",
+    '$e = $s.FindOne()',
+    "if (-not $e) { throw ('Konto ' + $p.konto + ' nicht gefunden') }",
+    "[ordered]@{ konto = $p.konto; dn = [string]$e.Properties['distinguishedname'][0]; spns = @($e.Properties['serviceprincipalname'] | ForEach-Object { [string]$_ } | Sort-Object) }",
+  ]);
+  return [...kopf(p, false), MIT_KONTO, `$w = MitKonto 'SYSTEM' '' ${psText(innen)} 120`, 'Ergebnis $w'].join('\n');
+}
+
+const LOKALER_PFAD = /^[A-Za-z]:\\[^"'`$\r\n*?<>|]{0,240}$/;
+export function pruefePfad(v: unknown): string | { pfad: string } {
+  const pfad = String(v ?? '').trim();
+  return LOKALER_PFAD.test(pfad) && !pfad.includes('..') ? { pfad } : 'pfad: lokaler Pfad mit Laufwerksbuchstabe, z. B. S:\\SQLBackup (ohne Platzhalter und „..“)';
+}
+
+/** Dateien unter einem lokalen Pfad (rekursiv, höchstens 500, neueste zuerst) mit Größe und Zeit; Summe über alle */
+export function verzeichnisLesenSkript(p: { pfad: string }): string {
+  return [
+    ...kopf(p, false),
+    "if (-not (Test-Path -LiteralPath $p.pfad)) { Ergebnis ([ordered]@{ pfad = $p.pfad; vorhanden = $false }); exit 0 }",
+    '$alle = @(Get-ChildItem -LiteralPath $p.pfad -Recurse -Force -File -ErrorAction SilentlyContinue)',
+    '$sum = ($alle | Measure-Object -Property Length -Sum).Sum',
+    '$n = $p.pfad.TrimEnd(\'\\\').Length',
+    "$d = @($alle | Sort-Object LastWriteTime -Descending | Select-Object -First 500 | ForEach-Object { [ordered]@{ datei = $_.FullName.Substring([Math]::Min($n + 1, $_.FullName.Length)); mb = [math]::Round($_.Length / 1MB, 2); zeit = $_.LastWriteTime.ToString('s') } })",
+    'Ergebnis ([ordered]@{ pfad = $p.pfad; vorhanden = $true; anzahl = $alle.Count; summeMb = [math]::Round([double]$sum / 1MB, 2); dateien = $d })',
+  ].join('\n');
+}
+
+export function verzeichnisText(zugang: string, r: { pfad: string; vorhanden: boolean; anzahl?: number; summeMb?: number; dateien?: { datei: string; mb: number; zeit: string }[] }): string {
+  if (!r.vorhanden) return `${zugang}: ${r.pfad} nicht vorhanden`;
+  const d = r.dateien ?? [];
+  return `${zugang}: ${r.pfad} — ${r.anzahl} Dateien, ${r.summeMb} MB${d.length ? `:\n${d.slice(0, 60).map(x => `${x.zeit} ${x.mb} MB ${x.datei}`).join('\n')}${d.length > 60 ? `\n… ${d.length - 60} weitere (in data)` : ''}` : ''}`;
+}
+
+/** Diagnoseverzeichnis entfernen — ausschließlich C:\Windows\Temp\alfred-<name> (von Alfred angelegt) */
+const DIAGNOSE = /^C:\\Windows\\Temp\\alfred-[A-Za-z0-9-]{1,40}$/i;
+export function pruefeDiagnose(v: unknown): string | { pfad: string } {
+  const pfad = String(v ?? '').trim();
+  return DIAGNOSE.test(pfad) ? { pfad } : 'pfad: nur C:\\Windows\\Temp\\alfred-<name> (von Alfred angelegte Diagnoseordner)';
+}
+export function diagnoseEntfernenSkript(p: { pfad: string }): string {
+  return [
+    ...kopf(p, false),
+    "if (-not (Test-Path -LiteralPath $p.pfad)) { Ergebnis ([ordered]@{ pfad = $p.pfad; zustand = 'schon entfernt' }); exit 0 }",
+    '$mb = [math]::Round([double](@(Get-ChildItem -LiteralPath $p.pfad -Recurse -Force -File) | Measure-Object -Property Length -Sum).Sum / 1MB, 2)',
+    'Remove-Item -LiteralPath $p.pfad -Recurse -Force',
+    "if (Test-Path -LiteralPath $p.pfad) { throw ('nach dem Entfernen noch vorhanden: ' + $p.pfad) }",
+    "Ergebnis ([ordered]@{ pfad = $p.pfad; zustand = 'entfernt'; mb = $mb })",
+  ].join('\n');
+}
+
+/** Gegenstellen einer BESTEHENDEN eingehenden Regel setzen (regel = Name/InstanceID aus firewall_lesen); Ergebnis nennt den vorherigen Wert */
+const REGEL_ID = /^[^"'`$\r\n]{1,200}$/;
+export function pruefeFilter(o: Record<string, unknown>): string | { regel: string; von: string[] } {
+  const regel = String(o.regel ?? '').trim();
+  const von = (Array.isArray(o.von) ? o.von.map(x => String(x).trim()) : typeof o.von === 'string' ? o.von.split(',').map(x => x.trim()) : []).filter(Boolean);
+  if (!REGEL_ID.test(regel)) return 'regel: Regelname (Name/InstanceID aus firewall_lesen)';
+  const any = von.length === 1 && /^any$/i.test(von[0]!);
+  if (!any && (!von.length || von.length > 32 || von.some(x => !IPV4.test(x.split('/')[0]!) || (x.includes('/') && !/^\d{1,2}$/.test(x.split('/')[1]!))))) return 'von: 1–32 IPv4-Adressen oder Netze, oder „Any“ (nur als Rückweg auf den vorherigen Wert)';
+  return { regel, von: any ? ['Any'] : von };
+}
+export function firewallFilterSkript(p: { regel: string; von: string[] }): string {
+  return [
+    ...kopf(p, false),
+    '$r = Get-NetFirewallRule -Name $p.regel -ErrorAction SilentlyContinue',
+    "if (-not $r) { throw ('Regel nicht gefunden: ' + $p.regel) }",
+    "if ([string]$r.Direction -ne 'Inbound') { throw 'nur eingehende Regeln' }",
+    '$vorher = @(($r | Get-NetFirewallAddressFilter).RemoteAddress | ForEach-Object { [string]$_ })',
+    'Set-NetFirewallRule -Name $p.regel -RemoteAddress @($p.von)',
+    '$nachher = @((Get-NetFirewallRule -Name $p.regel | Get-NetFirewallAddressFilter).RemoteAddress | ForEach-Object { [string]$_ })',
+    "Ergebnis ([ordered]@{ regel = [string]$r.Name; anzeige = [string]$r.DisplayName; vorher = ($vorher -join ','); nachher = ($nachher -join ',') })",
+  ].join('\n');
+}
+

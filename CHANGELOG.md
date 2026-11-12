@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Cluster: lesende Erhebung und begrenzte Nacharbeiten (v1806)
+
+- `windows_cluster` hat drei neue lesende Aktionen, die auch außerhalb von Changes laufen:
+  - `firewall_lesen` liefert die aktiven eingehenden Erlauben-Regeln mit Ports und Gegenstellen. Mit `nur_any` liefert es nur die offenen Regeln.
+  - `spn_lesen` liefert die Service Principal Names eines Kontos.
+  - `verzeichnis_lesen` liefert die Dateien unter einem lokalen Pfad mit Größe und Zeit.
+- Zwei neue Change-Bausteine:
+  - `firewall_filter_setzen` schränkt die Gegenstellen einer bestehenden Regel ein. Die Rückmeldung nennt den vorherigen Wert, damit der Rückweg möglich ist.
+  - `diagnose_entfernen` löscht ausschließlich von Alfred angelegte Ordner unter `C:\Windows\Temp\alfred-*`.
+
 ### Fixed — Platzprüfung im Wiederherstellungstest (v1805)
 
 - `sql_server wiederherstellung_testen` brach vor der Wiederherstellung mit „Cannot convert System.Object[] to System.Double“ ab. Die Abfrage des freien Platzes lieferte für einen Laufwerksbuchstaben zwei Datenträger zurück. Der freie Platz wird jetzt eindeutig je Laufwerk ermittelt.

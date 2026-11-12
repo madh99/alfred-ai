@@ -204,3 +204,38 @@ describe('v1794 verbindung_pruefen und Umlaute', () => {
     expect(adErgebnis<{ zustand: string }>('ALFRED-AD {"zustand":"vergr\\u00f6\\u00dfert"}')?.zustand).toBe('vergrößert');
   });
 });
+
+// v1806 — Nachpflege I8d: lesende Erhebung (Firewall, SPN, Verzeichnis) + eng begrenzte Änderungen
+describe('v1806 Nachpflege-Bausteine', () => {
+  it('firewall_lesen verbindet Port- und Adressfilter über die InstanceID', async () => {
+    const m = await import('./windows-cluster.js');
+    const s = m.firewallLesenSkript({ nur_any: true });
+    expect(s).toContain('Get-NetFirewallAddressFilter -All');
+    expect(s).toContain("if ($p.nur_any -and $ra -ne 'Any') { continue }");
+  });
+  it('spn_lesen läuft als SYSTEM, Konto wird geprüft', async () => {
+    const m = await import('./windows-cluster.js');
+    expect(m.spnLesenSkript({ konto: 'gmsa-sqleng$' })).toContain("MitKonto 'SYSTEM'");
+    expect(m.pruefeSamKonto('gmsa-sqleng$')).toEqual({ konto: 'gmsa-sqleng$' });
+    expect(typeof m.pruefeSamKonto('x)(cn=*')).toBe('string');
+  });
+  it('Pfade: verzeichnis_lesen nur lokal, diagnose_entfernen nur C:\\Windows\\Temp\\alfred-*', async () => {
+    const m = await import('./windows-cluster.js');
+    expect(m.pruefePfad('S:\\SQLBackup')).toEqual({ pfad: 'S:\\SQLBackup' });
+    expect(typeof m.pruefePfad('\\\\fs01\\x')).toBe('string');
+    expect(typeof m.pruefePfad('C:\\x\\..\\y')).toBe('string');
+    expect(m.pruefeDiagnose('C:\\Windows\\Temp\\alfred-clusterlog')).toEqual({ pfad: 'C:\\Windows\\Temp\\alfred-clusterlog' });
+    expect(typeof m.pruefeDiagnose('C:\\Windows\\Temp')).toBe('string');
+    expect(typeof m.pruefeDiagnose('C:\\Windows\\System32')).toBe('string');
+    expect(m.diagnoseEntfernenSkript({ pfad: 'C:\\Windows\\Temp\\alfred-x' })).toContain('Remove-Item -LiteralPath $p.pfad -Recurse -Force');
+  });
+  it('firewall_filter_setzen nennt den vorherigen Wert, Any nur allein', async () => {
+    const m = await import('./windows-cluster.js');
+    expect(m.pruefeFilter({ regel: 'MSSQLSERVER', von: ['10.203.30.0/24', '192.168.1.223'] })).toEqual({ regel: 'MSSQLSERVER', von: ['10.203.30.0/24', '192.168.1.223'] });
+    expect(m.pruefeFilter({ regel: 'X', von: 'Any' })).toEqual({ regel: 'X', von: ['Any'] });
+    expect(typeof m.pruefeFilter({ regel: 'X', von: ['Any', '10.0.0.1'] })).toBe('string');
+    expect(typeof m.pruefeFilter({ regel: "x'; Remove", von: ['10.0.0.1'] })).toBe('string');
+    const s = m.firewallFilterSkript({ regel: 'X', von: ['10.0.0.1'] });
+    expect(s.indexOf('$vorher =')).toBeLessThan(s.indexOf('Set-NetFirewallRule'));
+  });
+});
