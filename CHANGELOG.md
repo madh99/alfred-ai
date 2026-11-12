@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Lokaler CRL-Ablageort der CA (v1818)
+
+- `windows_pki publication_setzen` setzte den lokalen Ablageort als `%windir%\…`. Die CA kennt aber nur ihre eigenen Platzhalter, deshalb scheiterte das Ausstellen der CRL („Verzeichnisname ungültig“). Der Ablageort steht jetzt wie der Standardeintrag der CA als wörtlicher Pfad.
+
 ### Fixed — Rest eines abgebrochenen Root-Versuchs bereinigen (v1817)
 
 - Ein abgebrochener Versuch, die Offline-Root anzulegen, ließ die Einrichtung „already installed“ melden, obwohl keine CA konfiguriert war.

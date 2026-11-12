@@ -63,7 +63,7 @@ describe('v1812 Issuing-Kette', () => {
   it('Publikation: lokal + HTTP (+ UNC), kein LDAP; Rückweg roh; Grenzen', async () => {
     const { pruefePublikation } = await import('./windows-pki.js');
     const p = pruefePublikation({ datei_name: 'ad3033-root', http_basis: 'http://pki.ad.3033.at/pki/' });
-    expect(p).toEqual({ cdp: ['1:%windir%\\system32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl', '2:http://pki.ad.3033.at/pki/ad3033-root%8%9.crl'], aia: ['1:%windir%\\system32\\CertSrv\\CertEnroll\\ad3033-root%4.crt', '2:http://pki.ad.3033.at/pki/ad3033-root%4.crt'] });
+    expect(p).toEqual({ cdp: ['1:C:\\Windows\\System32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl', '2:http://pki.ad.3033.at/pki/ad3033-root%8%9.crl'], aia: ['1:C:\\Windows\\System32\\CertSrv\\CertEnroll\\ad3033-root%4.crt', '2:http://pki.ad.3033.at/pki/ad3033-root%4.crt'] });
     expect(JSON.stringify(p)).not.toMatch(/ldap/i);
     const u = pruefePublikation({ datei_name: 'ad3033-issuing1', http_basis: 'http://pki.ad.3033.at/pki/', unc_ziel: '\\\\fs01.ad.3033.at\\pki$\\', crl_einheit: 'Days', crl_anzahl: 1, ueberlappung_einheit: 'Days', ueberlappung_anzahl: 6 }) as { cdp: string[]; crl: unknown };
     expect(u.cdp[2]).toBe('1:file://\\\\fs01.ad.3033.at\\pki$\\ad3033-issuing1%8%9.crl');
@@ -153,5 +153,14 @@ describe('v1817 Rest eines abgebrochenen Root-Versuchs', () => {
     expect(s).toContain('Install-AdcsCertificationAuthority @ia -OverwriteExistingKey');
     // die Bereinigung steht innerhalb von „if (-not $schon)“ — eine eingerichtete CA wird nie angefasst
     expect(s.indexOf("'if (-not $schon) {'".slice(1, -1))).toBeLessThan(s.indexOf('Uninstall-AdcsCertificationAuthority'));
+  });
+});
+
+describe('v1818 lokaler CDP/AIA-Pfad', () => {
+  it('kein %windir% (die CA kennt nur %1–%11)', async () => {
+    const { pruefePublikation } = await import('./windows-pki.js');
+    const p = pruefePublikation({ datei_name: 'ad3033-root', http_basis: 'http://pki.ad.3033.at/pki/' }) as { cdp: string[]; aia: string[] };
+    expect(JSON.stringify(p)).not.toContain('%windir%');
+    expect(p.cdp[0]).toBe('1:C:\\Windows\\System32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl');
   });
 });

@@ -227,7 +227,9 @@ export function pruefePublikation(o: Record<string, unknown>): Publikation | str
     if (!DATEI_NAME.test(name)) return 'datei_name: Kleinbuchstaben/Ziffern/-, z. B. ad3033-root';
     if (!HTTP_BASIS.test(http)) return 'http_basis: http://<host>/<pfad>/ mit abschließendem /, z. B. http://pki.ad.3033.at/pki/';
     if (unc && !UNC_BASIS.test(unc)) return 'unc_ziel: \\\\server\\freigabe\\ mit abschließendem \\';
-    const lokal = '%windir%\\system32\\CertSrv\\CertEnroll\\';
+    // v1818 — Realfall 12.11. PKI-A Schritt 14: die CA kennt nur %1–%11; „%windir%“ ergab beim CRL-Schreiben 0x8007010B (Verzeichnis
+    // ungültig). Ihr eigener Standardeintrag steht als wörtlicher Pfad da — die Vorlagen-VMs liegen alle unter C:\Windows.
+    const lokal = 'C:\\Windows\\System32\\CertSrv\\CertEnroll\\';
     cdp = [`1:${lokal}${name}%8%9.crl`, `2:${http}${name}%8%9.crl`, ...(unc ? [`1:file://${unc}${name}%8%9.crl`] : [])];
     aia = [`1:${lokal}${name}%4.crt`, `2:${http}${name}%4.crt`, ...(unc ? [`1:file://${unc}${name}%4.crt`] : [])];
   }
