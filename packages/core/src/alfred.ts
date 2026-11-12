@@ -7189,6 +7189,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         }));
         this.logger.info('I8d SQL-Server-Skill registriert');
+        // v1810 — Vorhaben 3bb8c058: eigene PKI; die netzlose Offline-Root nur über den QEMU-Gastagenten des Proxmox-Skills
+        const { WindowsPkiSkill } = await import('./infrastruktur/windows-pki-skill.js');
+        skillRegistry.register(new WindowsPkiSkill({
+          skript: (zugang, befehl, eingabe, timeoutMs, zweck) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.windowsSkript(zugang, befehl, eingabe, timeoutMs, zweck); },
+          gast: (vmid, vmName, skript, eingabe, timeoutMs) => {
+            const px = skillRegistry.get('proxmox') as unknown as { gastPowershell?: (v: number, n: string, s: string, e: string | undefined, t: number) => Promise<{ code: number; stdout: string; stderr: string }> } | undefined;
+            if (!px?.gastPowershell) throw new Error('Proxmox-Skill mit Gastagent nicht verfügbar');
+            return px.gastPowershell(vmid, vmName, skript, eingabe, timeoutMs);
+          },
+        }));
+        this.logger.info('PKI-Skill registriert');
       }
       // v1658 — GitLab und seine Container-Registry, nur lesend (Owner 25.10.)
       const gl = this.config.codeAgents?.forge?.gitlab;

@@ -82,15 +82,15 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 
 /** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
-const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status']);
+const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'check_offline_isolation'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
 const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -176,6 +176,7 @@ export class ProxmoxSkill extends Skill {
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
       'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
+      'NETZLOS (v1810, Offline-Root-CA): "provision_windows_offline" (template, hostname, node, storage, memory, cores, disk_size, extra_disks, new_vmid; KEINE ip/gateway/bridge; zeitlimitS 3000; Rückweg delete_vm mit force_stop) — entfernt net0 der Vorlage vor dem ersten Start, Autostart aus, Kennwort im Tresor, kein Fernzugang; Nachweis Rechnername über den Gastagenten. "check_offline_isolation" (vmid, vm_name; lesend) — Ergebnis „ROOT_ISOLATED“ nur ohne Netzwerkkarte und ohne Autostart, dazu Agent, Wechselmedien und erfassende Sicherungsjobs. ' +
       'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
@@ -540,6 +541,10 @@ export class ProxmoxSkill extends Skill {
           return await this.finishWindowsTemplate(input);
         case 'provision_windows_vm':
           return await this.provisionWindowsVm(input);
+        case 'provision_windows_offline':
+          return await this.provisionWindowsOffline(input);
+        case 'check_offline_isolation':
+          return await this.offlineIsolationPruefen(input);
         case 'create_vlan_bridge':
           return await this.vlanBridgeAnlegen(input);
         case 'delete_vlan_bridge':
@@ -1919,6 +1924,156 @@ export class ProxmoxSkill extends Skill {
     }
     schritte.push('Benutzerdaten-Snippet entfernt, Konfigurationslaufwerk vorgemerkt');
     return { success: true, data: { vmid, name, node, ip: nackt, vorlage: tpl, variante, tresor: tresorName, hostSchluessel: hs.oeffentlich }, display: schritte.map(x => `- ${x}`).join('\n') };
+  }
+
+
+  /**
+   * v1810 — Offline-Root-CA (Vorhaben 3bb8c058): Windows-VM aus der Vorlage OHNE jede Netzwerkkarte. net0 der Vorlage wird vor dem
+   * ersten Start entfernt (die VM hatte nie ein Netz), Autostart aus; Einrichtung (Name, Kennwort) über das Konfigurationslaufwerk,
+   * Nachweis über den QEMU-Gastagenten (Rechnername). Kein Fernzugang — verwaltet wird nur über den Gastagenten. Rückweg delete_vm.
+   */
+  private async provisionWindowsOffline(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.fabrik?.kennwortSichern) return { success: false, error: 'Windows-Fabrik ist nicht eingerichtet (Tresor fehlt)' };
+    const name = String(input.hostname ?? ''); const tpl = Number(input.template);
+    if (!VM_NAME.test(name) || name.length > 15) return { success: false, error: 'hostname: Kleinbuchstaben, Ziffern, -, höchstens 15 Zeichen (Windows-Computername)' };
+    if (input.ip || input.gateway || input.bridge || input.vlan_tag) return { success: false, error: 'provision_windows_offline legt eine VM OHNE Netz an — keine ip/gateway/bridge/vlan_tag angeben' };
+    try { zusatzPlatten(input); } catch (err) { return { success: false, error: (err as Error).message }; }
+    const alle = await this.getAllVms();
+    const vorlage = alle.find(v => v.vmid === tpl);
+    if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
+    const tplCfg = await this.get<{ description?: string; template?: number }>(`/nodes/${vorlage.node}/qemu/${tpl}/config`);
+    const variante = /Windows-Vorlage von Alfred \(I8a\): ([\w-]+),/.exec(String(tplCfg.description ?? ''))?.[1];
+    if (!tplCfg.template || !istWinVariante(variante)) return { success: false, error: `${tpl} ist keine Windows-Vorlage von Alfred` };
+    if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
+    const node = (input.node as string) ?? vorlage.node;
+    const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
+    if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
+    const clone: Record<string, unknown> = { newid: vmid, name, full: 1, target: node };
+    const wunsch = typeof input.storage === 'string' && input.storage ? input.storage : undefined;
+    let verschiebenNach: string | undefined;
+    if (wunsch) {
+      const st = await this.get<{ type?: string; shared?: number }>(`/storage/${encodeURIComponent(wunsch)}`).catch(() => ({} as { type?: string; shared?: number }));
+      const gemeinsam = !!st.shared || ['rbd', 'cephfs', 'nfs', 'cifs', 'glusterfs', 'iscsi', 'iscsidirect', 'pbs'].includes(String(st.type ?? ''));
+      if (node !== vorlage.node && !gemeinsam) verschiebenNach = wunsch; else clone.storage = wunsch;
+    }
+    const schritte: string[] = [];
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vorlage.node}/qemu/${tpl}/clone`, clone), 1_800_000, 'Klonen');
+    this.vmCache = null;
+    schritte.push(`VM ${name} (VMID ${vmid}) aus Windows-Vorlage ${tpl} (${variante}) auf ${node} geklont`);
+    // Netzwerkkarten SOFORT entfernen — vor jeder weiteren Einstellung und vor dem ersten Start
+    const roh = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+    const karten = Object.keys(roh).filter(k => /^net\d+$/.test(k));
+    await this.post(`/nodes/${node}/qemu/${vmid}/config`, { ...(karten.length ? { delete: karten.join(',') } : {}), onboot: 0 });
+    const ohne = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+    if (Object.keys(ohne).some(k => /^net\d+$/.test(k))) return { success: false, error: `VMID ${vmid}: Netzwerkkarten ließen sich nicht entfernen — VM NICHT gestartet`, data: { vmid, name, node } };
+    schritte.push(`Netzwerkkarten entfernt (${karten.join(', ') || 'keine vorhanden'}), Autostart aus — die VM hatte nie ein Netz`);
+    if (verschiebenNach) {
+      const platten = ['scsi0', 'efidisk0', 'tpmstate0'].filter(k => typeof ohne[k] === 'string' && !String(ohne[k]).startsWith(`${verschiebenNach}:`));
+      for (const disk of platten) await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/move_disk`, { disk, storage: verschiebenNach, delete: 1 }), 1_800_000, `Platte ${disk} verschieben`);
+      schritte.push(`${platten.join(', ')} nach ${verschiebenNach} verschoben`);
+    }
+    const hs = await this.fabrik.hostSchluessel();
+    const kennwort = zufallsKennwort(n => randomBytes(n));
+    const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
+    schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName}) — Anmeldung nur an der Konsole`);
+    const ownerName = typeof input.owner_konto === 'string' ? input.owner_konto.trim().toLowerCase() : 'madh';
+    const ownerKonto = ownerName ? { name: ownerName, kennwort: zufallsKennwort(n => randomBytes(n)) } : undefined;
+    if (ownerKonto) schritte.push(`Konto ${ownerKonto.name} (Administrator), Kennwort im Tresor (${await this.fabrik.kennwortSichern(name, ownerKonto.kennwort, ownerKonto.name)})`);
+    const daten = windowsBenutzerDaten({ variante, hostname: name, alfredSchluessel: await this.fabrik.alfredSchluessel(), weitereSchluessel: [], hostPrivat: hs.privat, hostOeffentlich: hs.oeffentlich, kennwort, ...(ownerKonto ? { ownerKonto } : {}) });
+    const sp = await this.get<{ path?: string }>('/storage/local');
+    const pfad = `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(vmid)}`;
+    await this.fabrik.snippetSchreiben(node, pfad, daten);
+    try {
+      const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+      const konfig: Record<string, unknown> = {
+        cicustom: `user=local:snippets/${snippetDatei(vmid)}`, citype: 'configdrive2', agent: 'enabled=1', onboot: 0,
+        description: `OFFLINE (netzlos) — angelegt von Alfred aus Windows-Vorlage ${tpl} (${variante}) am ${new Date().toISOString().slice(0, 10)}. Keine Netzwerkkarte hinzufügen; Verwaltung nur über den QEMU-Gastagenten. Kennwort im Tresor ${tresorName}`,
+      };
+      if (!Object.values(cfg).some(v => String(v).includes('cloudinit'))) { const st = /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1]; if (st) konfig.ide0 = `${st}:cloudinit`; }
+      if (typeof input.memory === 'number') konfig.memory = input.memory;
+      if (typeof input.cores === 'number') konfig.cores = input.cores;
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, konfig);
+      if (typeof input.disk_size === 'number' && input.disk_size > 0) await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
+      const zusatz = zusatzPlatten(input);
+      if (zusatz.length) {
+        const st = (typeof input.storage === 'string' && input.storage) || /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
+        if (!st) throw new Error('Speicher für die Zusatzplatten unbekannt (storage angeben)');
+        const neuPl: Record<string, string> = {};
+        zusatz.forEach((gb, i) => { neuPl[`scsi${i + 1}`] = `${st}:${gb},discard=on,iothread=1,ssd=1`; });
+        await this.post(`/nodes/${node}/qemu/${vmid}/config`, neuPl);
+        schritte.push(`${zusatz.length} Zusatzplatte(n) ${zusatz.map((gb, i) => `scsi${i + 1} ${gb} GB`).join(', ')} (${st})`);
+      }
+      const vorStart = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+      if (Object.keys(vorStart).some(k => /^net\d+$/.test(k))) return { success: false, error: `VMID ${vmid}: vor dem Start ist doch eine Netzwerkkarte konfiguriert — NICHT gestartet`, data: { vmid, name, node } };
+      await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
+      schritte.push('gestartet ohne Netz; Windows richtet sich über das Konfigurationslaufwerk ein (Name, Konten) — mit Neustart');
+      // Nachweis: Gastagent antwortet UND meldet den neuen Rechnernamen (Cloudbase-Init benennt um und startet neu)
+      const ende = Date.now() + 2_400_000; let letzter = ''; let fertig = false;
+      while (Date.now() < ende) {
+        await new Promise(r => setTimeout(r, AGENT_ABSTAND_MS));
+        try {
+          const h = await this.get<{ result?: { 'host-name'?: string } }>(`/nodes/${node}/qemu/${vmid}/agent/get-host-name`);
+          letzter = String(h.result?.['host-name'] ?? '');
+          if (letzter.toLowerCase() === name.toLowerCase()) { fertig = true; break; }
+        } catch (err) { letzter = `Agent: ${(err as Error).message.slice(0, 80)}`; }
+      }
+      if (!fertig) return { success: false, error: `${schritte.join('\n')}\nRechnername nach 40 min nicht „${name}“ (zuletzt: ${letzter || '—'})`, data: { vmid, name, node } };
+      schritte.push(`Gastagent antwortet, Rechnername ${letzter}`);
+    } finally {
+      await this.fabrik.snippetEntfernen(node, pfad).catch(() => undefined);
+      await this.cloudInitLoesen(node, vmid);
+    }
+    const nach = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+    const netze = Object.keys(nach).filter(k => /^net\d+$/.test(k));
+    if (netze.length) return { success: false, error: `VMID ${vmid}: nach der Einrichtung Netzwerkkarte(n) ${netze.join(', ')} vorhanden`, data: { vmid, name, node } };
+    schritte.push('Benutzerdaten-Snippet entfernt; keine Netzwerkkarte, kein Autostart (nachgelesen)');
+    return { success: true, data: { vmid, name, node, netzlos: true, onboot: Number(nach.onboot ?? 0), vorlage: tpl, variante, tresor: tresorName }, display: `✅ ${name} (VMID ${vmid}) netzlos auf ${node} — Rückweg delete_vm\n${schritte.map(x => `- ${x}`).join('\n')}` };
+  }
+
+  /** v1810 — lesend: hat die VM wirklich kein Netz, keinen Autostart, antwortet der Agent, und welche Sicherungsjobs erfassen sie? */
+  private async offlineIsolationPruefen(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid); const erwartet = String(input.vm_name ?? '').trim();
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm || vm.type !== 'qemu') return { success: false, error: `QEMU-VM ${vmid} nicht gefunden` };
+    if (erwartet && vm.name !== erwartet) return { success: false, error: `VMID ${vmid} heißt ${vm.name ?? '?'}, nicht ${erwartet}` };
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
+    const nics = Object.keys(cfg).filter(k => /^net\d+$/.test(k));
+    const medien = Object.entries(cfg).filter(([k, v]) => /^(ide|sata|scsi)\d+$/.test(k) && /media=cdrom/.test(String(v)) && !/^none/.test(String(v))).map(([k, v]) => `${k}=${String(v).split(',')[0]}`);
+    const jobs = ((await this.get<Array<{ id?: string; enabled?: number | string; all?: number; vmid?: string; exclude?: string }>>('/cluster/backup')) ?? [])
+      .filter(j => String(j.enabled ?? '1') !== '0')
+      .filter(j => j.all ? !String(j.exclude ?? '').split(',').includes(String(vmid)) : String(j.vmid ?? '').split(',').includes(String(vmid)))
+      .map(j => String(j.id ?? '?'));
+    let agent = false;
+    if (st.status === 'running') { try { await this.get(`/nodes/${vm.node}/qemu/${vmid}/agent/ping`); agent = true; } catch { agent = false; } }
+    const ok = nics.length === 0 && Number(cfg.onboot ?? 0) === 0;
+    const data = { vmid, name: vm.name, node: vm.node, nics, onboot: Number(cfg.onboot ?? 0), status: st.status, agent, wechselmedien: medien, sicherungsjobs: jobs, isoliert: ok };
+    const text = `${ok ? 'ROOT_ISOLATED' : 'NICHT ISOLIERT'}: VM ${vmid} ${vm.name ?? ''} (${vm.node}) — Netzwerkkarten ${nics.length ? nics.join(', ') : 'keine'}, Autostart ${Number(cfg.onboot ?? 0) ? 'AN' : 'aus'}, ${st.status ?? '?'}${st.status === 'running' ? `, Agent ${agent ? 'antwortet' : 'antwortet nicht'}` : ''}, Wechselmedien ${medien.length ? medien.join(', ') : 'keine'}, Sicherungsjobs ${jobs.length ? jobs.join(', ') : 'keine'}`;
+    return ok ? { success: true, data, display: text } : { success: false, data, error: text };
+  }
+
+  /**
+   * v1810 — PowerShell über den QEMU-Gastagenten (netzlose VMs, z. B. Offline-Root-CA). Nur für feste Bausteine anderer Skills
+   * (windows_pki); stdin über input-data (Geheimnisse nie in der Befehlszeile). Prüft den VM-Namen, damit keine falsche VM getroffen wird.
+   */
+  async gastPowershell(vmid: number, vmName: string, skript: string, eingabe: string | undefined, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm || vm.type !== 'qemu') throw new Error(`QEMU-VM ${vmid} nicht gefunden`);
+    if (vm.name !== vmName) throw new Error(`VMID ${vmid} heißt ${vm.name ?? '?'}, nicht ${vmName} — nichts ausgeführt`);
+    const b64 = Buffer.from(skript, 'utf16le').toString('base64');
+    const { pid } = await this.post<{ pid: number }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec`, { command: ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', b64], ...(eingabe !== undefined ? { 'input-data': eingabe } : {}) });
+    const ende = Date.now() + timeoutMs;
+    while (Date.now() < ende) {
+      await new Promise(r => setTimeout(r, 2_000));
+      const st = await this.get<{ exited?: number | boolean; exitcode?: number; 'out-data'?: string; 'err-data'?: string; 'out-truncated'?: number | boolean }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec-status?pid=${pid}`);
+      if (st.exited) {
+        if (st['out-truncated']) throw new Error('Ausgabe des Gastagenten abgeschnitten');
+        return { code: Number(st.exitcode ?? -1), stdout: String(st['out-data'] ?? ''), stderr: String(st['err-data'] ?? '') };
+      }
+    }
+    throw new Error(`Gastagent: nach ${Math.round(timeoutMs / 1000)} s nicht fertig (PID ${pid})`);
   }
 
   /** Antwort mit allen Feldern (Proxmox meldet ausstehende Netzänderungen als `changes` neben `data`) */

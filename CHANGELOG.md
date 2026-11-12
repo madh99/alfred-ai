@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Netzlose Windows-VMs und PKI-Status (v1810)
+
+- `proxmox provision_windows_offline` legt eine Windows-VM aus der Vorlage ohne jede Netzwerkkarte an, zum Beispiel für eine Offline-Root-CA:
+  - Die Netzwerkkarte der Vorlage wird vor dem ersten Start entfernt, der Autostart ist aus.
+  - Das Kennwort liegt im Tresor.
+  - Den Nachweis liefert der Rechnername, gelesen über den QEMU-Gastagenten.
+- `proxmox check_offline_isolation` prüft lesend, ob eine VM ohne Netzwerkkarte und ohne Autostart läuft. Dazu meldet es den Agenten, eingelegte Medien und die Sicherungsjobs, die die VM erfassen.
+- Neuer Skill `windows_pki` mit der lesenden Aktion `status`. Er läuft für Online-CAs über den Windows-Fernzugang und für die netzlose Offline-Root über den Gastagenten, mit Prüfung des VM-Namens. Er meldet CA-Typ und -Name, das CA-Zertifikat samt Kette und pathLen, CRL-Fristen, CDP/AIA, Domäne oder Workgroup und die Zahl der Netzwerkkarten.
+
 ### Added — Netzlose VMs in der Architektur und Stabilitätsfenster für Cluster (v1809)
 
 - Architekturvorschläge kennen netzlose VMs (`netzlos: true`), zum Beispiel für eine Offline-Root-CA. Eine solche VM hat keine Netzwerkkarte, wird nur über den QEMU-Gastagenten verwaltet und kann nicht Ziel einer Firewall-Regel sein.
