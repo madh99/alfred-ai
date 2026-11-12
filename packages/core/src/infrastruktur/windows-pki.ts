@@ -433,11 +433,20 @@ export function aktivierenSkript(r: AktivierParameter): string {
     "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
     "$aktiv = [string](Get-ItemProperty $k -ErrorAction Stop).Active",
     "if (-not $aktiv) { throw 'keine CA eingerichtet (erst issuer_anfordern)' }",
+    MIT_KONTO,
     "$hatSchon = @((Get-ItemProperty (Join-Path $k $aktiv)).CACertHash | ForEach-Object { ([string]$_) -replace '\\s', '' }) -contains $z.Thumbprint",
     "$zustand = 'schon aktiv'",
     'if (-not $hatSchon) {',
-    "  $aus = (& certutil.exe -installcert $zd) -join ' '",
-    "  if ($LASTEXITCODE -ne 0) { throw ('certutil -installcert Exit ' + $LASTEXITCODE + ': ' + $aus) }",
+    // v1834 — Realfall 13.11. PKI-B Schritt 36: certutil -installcert über SSH (Schlüssel-Anmeldung, keine Netzwerk-Anmeldedaten)
+    // → 0x800704DC „user has not been authenticated“: eine Enterprise-CA prüft/schreibt dabei im AD. Jetzt mit Kennwort-Anmeldung
+    // als Domänen-Administrator (wie ad_veroeffentlichen, Kennwort aus dem Tresor über die Standardeingabe).
+    "  $nb = DomaeneNetbios",
+    `  $w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innenSkript(r, [
+      "$zd = Join-Path $env:ProgramData 'Alfred\\pki\\issuer.cer'",
+      "$aus = (& certutil.exe -installcert $zd) -join ' '",
+      "if ($LASTEXITCODE -ne 0) { throw ('certutil -installcert Exit ' + $LASTEXITCODE + ': ' + $aus) }",
+      "[ordered]@{ installiert = $true }",
+    ]))} 300`,
     "  $zustand = 'aktiviert'",
     '}',
     "Start-Service -Name CertSvc -ErrorAction SilentlyContinue",

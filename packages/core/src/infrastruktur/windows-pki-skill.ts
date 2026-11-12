@@ -147,7 +147,8 @@ export class WindowsPkiSkill extends Skill {
           if (input.vmid !== undefined) return { success: false, error: 'issuer_aktivieren nur über den Fernzugang der Issuing-CA (zugang)' };
           const ap = pruefeAktivieren(input);
           if (typeof ap === 'string') return { success: false, error: ap };
-          const { r } = await this.lauf<{ zustand: string; ca: string; thumbprint: string }>(input, aktivierenSkript(ap), 'Issuing-CA aktivieren', 600_000, { zert_base64: String(input.zert_base64), root_base64: String(input.root_base64), crl_base64: String(input.crl_base64) });
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Issuing-CA ${String(input.zugang)} aktivieren (Domänen-Administrator)`);
+          const { r } = await this.lauf<{ zustand: string; ca: string; thumbprint: string }>(input, aktivierenSkript(ap), 'Issuing-CA aktivieren', 600_000, { kennwort: kw, zert_base64: String(input.zert_base64), root_base64: String(input.root_base64), crl_base64: String(input.crl_base64) });
           const { r: st } = await this.lauf<PkiStatus>(input, pkiStatusSkript(), 'PKI-Status', 180_000);
           const z = st.ca?.zertifikat;
           const ok = !!z && st.ca?.typ === 'EnterpriseSubordinate' && z.pathLen === '0' && z.ketteOk && z.privaterSchluessel && st.dienst === 'Running' && z.thumbprint === r.thumbprint;

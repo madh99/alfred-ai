@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Aktivierung der Issuing-CA (v1834)
+
+- `windows_pki issuer_aktivieren` scheiterte mit „Benutzer nicht authentifiziert“, weil eine Enterprise-CA beim Installieren ihres Zertifikats auf das Active Directory zugreift und die SSH-Sitzung dafür keine Anmeldedaten hat. Das Zertifikat wird jetzt mit Kennwort-Anmeldung als Domänen-Administrator installiert. Das Kennwort kommt aus dem Tresor und wird nur über die Standardeingabe übergeben.
+
 ### Fixed — Alias der PKI-Website (v1832)
 
 - `windows_pki pki_web_einrichten` hielt den Unterpfad `/pki` fälschlich für vorhanden, weil die Abfrage den Pfad des übergeordneten Verzeichnisses zurückgab. Existenz und Nachprüfung vergleichen jetzt den exakten Namen. Fehlt der Alias nach dem Anlegen, bricht der Schritt ab.

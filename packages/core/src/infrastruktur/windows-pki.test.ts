@@ -216,3 +216,14 @@ describe('v1832 exakte Alias-Prüfung', () => {
     expect(s).toContain('if (-not $ist -or $ist.TrimEnd(');
   });
 });
+
+describe('v1834 Issuer-Aktivierung mit Domänen-Anmeldung', () => {
+  it('certutil -installcert läuft über MitKonto als Administrator, Kennwort nur aus der Eingabe', async () => {
+    const { aktivierenSkript } = await import('./windows-pki.js');
+    const s = aktivierenSkript({ erwartet_zert_sha256: 'a'.repeat(64), erwartet_root_sha256: 'b'.repeat(64), erwartet_crl_sha256: 'c'.repeat(64) });
+    expect(s).toContain('function MitKonto');
+    expect(s).toContain('$e.kennwort');
+    expect(s).toMatch(/MitKonto \(.*Administrator/);
+    expect(s).not.toMatch(/\n {2}\$aus = \(& certutil\.exe -installcert/);
+  });
+});
