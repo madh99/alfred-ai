@@ -9,6 +9,7 @@ import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
   pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript, pruefeAktiv, firewallAktivSkript,
+  defenderStatusSkript, type DefenderStatus, pruefeFehlalarm, defenderAusnahmeSkript, DEFENDER_FEHLALARME,
   ereignisseSkript, type ClusterEreignisse, pruefeEreignisIds, stabilMessSkript, stabilitaetBewerten, type StabilMessung,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
@@ -26,17 +27,17 @@ export interface WindowsClusterDeps {
 }
 
 /** lesend, auch außerhalb eines Changes */
-export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen']);
+export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
-  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen']);
+  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen']);
 /** am DC mit dem Domänen-Administrator (Tresor Standard win-<zugang>-admin, wie windows_ad grundstruktur) */
 const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen']);
 /** als Domänenkonto <NETBIOS>\alfred mit Kennwort-Anmeldung (Doppel-Hop) — konto_tresor ist Pflicht */
 const ALS_ALFRED = new Set(['cluster_validieren', 'cluster_anlegen', 'cluster_entfernen', 'zeuge_setzen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 /** v1814 — diese Aktionen auch für netzlose VMs über den Gastagenten (vmid + vm_name statt zugang) */
-const GAST_ERLAUBT = new Set(['status', 'platten_einrichten', 'systemplatte_erweitern']);
+const GAST_ERLAUBT = new Set(['status', 'platten_einrichten', 'systemplatte_erweitern', 'defender_status', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen']);
 
 export class WindowsClusterSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -50,6 +51,8 @@ export class WindowsClusterSkill extends Skill {
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
       + 'ereignisse_status (lesend; zugang, event_ids Standard [1650], minuten optional) — Cluster-Ereignisse mit RecordId. '
       + 'stabilitaet_pruefen (lesend; zugaenge = alle Knoten z. B. [sql01, sql02], dauer_s Standard 900 (300–1800), intervall_s Standard 60, ag optional z. B. ag01, event_ids Standard [1650]) — beobachtet die volle Dauer: je Messung neue Ereignisse seit Beginn, Knoten Up, alle Ressourcen Online, lokal AG HEALTHY/CONNECTED und Datenbanken SYNCHRONIZED; Ergebnis „CLUSTER_STABLE“ nur ohne neues Ereignis und ohne Lücke, sonst „FAIL“ bzw. „UNKNOWN“ (Pflicht nach Firewall-/Netzänderungen an Clustern; Schritt-zeitlimitS ≥ dauer_s + 300). '
+      + 'defender_status (lesend; zugang oder vmid + vm_name) — Echtzeitschutz, Signaturstand, gesetzte Erkennungs-Ausnahmen, Erkennungen 1116/1117 der letzten 7 Tage. '
+      + `defender_fehlalarm_zulassen (zugang oder vmid + vm_name, threat_id NUR ${Object.keys(DEFENDER_FEHLALARME).join('/')} = Fehlalarm auf Alfreds Baustein-Befehlszeilen, Owner-Entscheidung 12.11.) — Aktion Allow für genau diese Erkennung (wird weiter protokolliert), Echtzeitschutz bleibt an; Rückweg defender_fehlalarm_entfernen (gleiche Parameter). `
       + 'firewall_lesen (lesend; zugang, nur_any optional true) — alle aktiven eingehenden Erlauben-Regeln mit regel (Name/InstanceID), Anzeige, Gruppe, Protokoll, lokalen Ports und Gegenstellen (von). '
       + 'spn_lesen (lesend; zugang = Mitglied oder DC, konto = sAMAccountName z. B. gmsa-sqleng$) — servicePrincipalName des Kontos (als Computerkonto gelesen). '
       + 'verzeichnis_lesen (lesend; zugang, pfad = lokaler Pfad z. B. S:\\SQLBackup) — Dateien rekursiv mit Größe/Zeit (neueste 500) und Summe. '
@@ -89,6 +92,7 @@ export class WindowsClusterSkill extends Skill {
         regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' }, zugaenge: { type: 'array', items: { type: 'string' } }, event_ids: { type: 'array', items: { type: 'number' } }, minuten: { type: 'number' }, dauer_s: { type: 'number' }, intervall_s: { type: 'number' }, ag: { type: 'string' }, aktiv: { type: 'boolean', description: 'firewall_regel_aktiv: Zielzustand' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
+        threat_id: { type: 'string', description: 'defender_fehlalarm_*: nur die fest hinterlegte Fehlalarm-ID 2147942983' },
         vmid: { type: 'number', description: 'netzlose VM (Offline-Root): VMID statt zugang — nur status, platten_einrichten, systemplatte_erweitern' }, vm_name: { type: 'string' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
       },
@@ -139,6 +143,16 @@ export class WindowsClusterSkill extends Skill {
           return { success: true, data: r, display: `${r.rechner}: ${r.anzahl} Ereignisse ${ids.join(',')} in ${min} min (bis ${r.jetzt})${r.ereignisse.length ? `:\n${r.ereignisse.slice(0, 20).map(e => `${e.zeit} ${e.id} ${e.text}`).join('\n')}` : ''}` };
         }
         case 'stabilitaet_pruefen': return await this.stabilitaet(input);
+        case 'defender_status': {
+          const r = await this.lauf<DefenderStatus>(zugang, defenderStatusSkript(), 'Defender-Status', 120_000);
+          return { success: true, data: r, display: `${r.rechner}: Echtzeitschutz ${r.echtzeit ? 'an' : 'AUS'}, Signaturen ${r.signaturen}; Ausnahmen ${r.ausnahmen.length ? r.ausnahmen.map(x => `${x.id}=${x.aktion}`).join(', ') : 'keine'}; Erkennungen 7 Tage: ${r.ereignisse.length ? r.ereignisse.map(x => `${x.zeit} ${x.id} ${x.name}`).join(' | ') : 'keine'}` };
+        }
+        case 'defender_fehlalarm_zulassen': case 'defender_fehlalarm_entfernen': {
+          const f = fehler(pruefeFehlalarm(input.threat_id)) as { id: string };
+          const weg = action === 'defender_fehlalarm_entfernen';
+          const r = await this.lauf<{ rechner: string; id: string; vorher: string[]; nachher: string[] }>(zugang, defenderAusnahmeSkript({ id: f.id, entfernen: weg }), weg ? 'Defender-Ausnahme entfernen' : 'Defender-Ausnahme setzen', 180_000);
+          return { success: true, data: r, display: `✅ ${r.rechner}: Defender ${DEFENDER_FEHLALARME[f.id]} (${f.id}) ${weg ? 'Ausnahme entfernt' : 'auf Allow (wird weiter protokolliert)'}; vorher ${r.vorher.join(', ') || 'keine'} → nachher ${r.nachher.join(', ') || 'keine'}; Echtzeitschutz an${weg ? '' : ` — Rückweg defender_fehlalarm_entfernen threat_id ${f.id}`}` };
+        }
         case 'firewall_lesen': {
           const nurAny = input.nur_any === true;
           const r = await this.lauf<FirewallLesen>(zugang, firewallLesenSkript(nurAny ? { nur_any: true } : {}), 'Firewall lesen', 180_000);

@@ -784,3 +784,46 @@ export function stabilMessSkript(p: { ids: number[]; seit_record: number; ag?: s
   ].join('\n');
 }
 
+// ── v1815 Owner-Entscheidung 12.11.: Defender-Fehlalarm auf Alfreds Baustein-Befehlszeilen ─────────────────────────────────────────
+// Realfall 12.11. 13:40 sql01: „Trojan:Win32/ClickFix.ZZH!MTB“ (ThreatID 2147942983) blockierte einen Baustein (-EncodedCommand).
+// Owner wählte: gezielte Ausnahme NUR für diese Erkennung (Aktion „Allow“ = 6, Erkennung wird weiter protokolliert) + Meldung an
+// Microsoft. Keine anderen IDs, keine Pfad-/Prozess-Ausnahmen, Echtzeitschutz bleibt an.
+
+/** Erlaubte Fehlalarm-IDs (fest, nicht per Parameter erweiterbar) */
+export const DEFENDER_FEHLALARME: Record<string, string> = { '2147942983': 'Trojan:Win32/ClickFix.ZZH!MTB' };
+
+export function defenderStatusSkript(): string {
+  return [
+    ...kopf({}, false),
+    '$m = Get-MpPreference',
+    '$s = Get-MpComputerStatus',
+    "$ids = @($m.ThreatIDDefaultAction_Ids | Where-Object { $_ } | ForEach-Object { [string]$_ }); $akt = @($m.ThreatIDDefaultAction_Actions | ForEach-Object { [string]$_ })",
+    "$paare = @(for ($i = 0; $i -lt $ids.Count; $i++) { [ordered]@{ id = $ids[$i]; aktion = $(if ($i -lt $akt.Count) { $akt[$i] } else { '' }) } })",
+    "$ev = @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object { $_.Id -in 1116, 1117 -and $_.TimeCreated -gt (Get-Date).AddDays(-7) } | Select-Object -First 10 | ForEach-Object { [ordered]@{ zeit = $_.TimeCreated.ToString('s'); id = $_.Id; name = $(if ($_.Message -match 'Name:\\s*([^\\r\\n]+)') { $Matches[1].Trim() } else { '' }) } })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; echtzeit = [bool]$s.RealTimeProtectionEnabled; signaturen = [string]$s.AntivirusSignatureVersion; ausnahmen = $paare; ereignisse = $ev })",
+  ].join('\n');
+}
+
+export interface DefenderStatus { rechner: string; echtzeit: boolean; signaturen: string; ausnahmen: { id: string; aktion: string }[]; ereignisse: { zeit: string; id: number; name: string }[] }
+
+export function pruefeFehlalarm(v: unknown): string | { id: string } {
+  const id = String(v ?? '').trim();
+  return DEFENDER_FEHLALARME[id] ? { id } : `threat_id: nur ${Object.entries(DEFENDER_FEHLALARME).map(([k, n]) => `${k} (${n})`).join(', ')}`;
+}
+
+/** Fehlalarm-ID auf „Allow“ (6) setzen bzw. (entfernen) die Ausnahme wieder löschen; Ergebnis mit vorher/nachher; Echtzeitschutz muss an bleiben */
+export function defenderAusnahmeSkript(a: { id: string; entfernen: boolean }): string {
+  return [
+    ...kopf(a, false),
+    "function Paare { $m = Get-MpPreference; $i = @($m.ThreatIDDefaultAction_Ids | Where-Object { $_ } | ForEach-Object { [string]$_ }); $x = @($m.ThreatIDDefaultAction_Actions | ForEach-Object { [string]$_ }); @(for ($k = 0; $k -lt $i.Count; $k++) { $i[$k] + '=' + $(if ($k -lt $x.Count) { $x[$k] } else { '' }) }) }",
+    '$vorher = @(Paare)',
+    "if ($p.entfernen) { if ($vorher | Where-Object { $_ -like ($p.id + '=*') }) { Remove-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) } }",
+    "else { Add-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) -ThreatIDDefaultAction_Actions 6 }",
+    '$nachher = @(Paare)',
+    "$soll = $(if ($p.entfernen) { -not ($nachher | Where-Object { $_ -like ($p.id + '=*') }) } else { [bool]($nachher | Where-Object { $_ -eq ($p.id + '=6') }) })",
+    "if (-not $soll) { throw ('Defender-Einstellung nicht im Zielzustand: ' + ($nachher -join ', ')) }",
+    "if (-not (Get-MpComputerStatus).RealTimeProtectionEnabled) { throw 'Echtzeitschutz ist AUS — das ist nicht Teil dieser Ausnahme, bitte prüfen' }",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; id = $p.id; vorher = $vorher; nachher = $nachher; echtzeit = $true })",
+  ].join('\n');
+}
+

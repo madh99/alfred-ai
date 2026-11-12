@@ -296,3 +296,16 @@ describe('v1809 Stabilitätsfenster', () => {
     expect(typeof pruefeEreignisIds(['x'])).toBe('string');
   });
 });
+
+describe('v1815 Defender-Fehlalarm (Owner 12.11.)', () => {
+  it('nur die fest hinterlegte ID, Allow mit Rückweg, Echtzeitschutz bleibt Pflicht', async () => {
+    const m = await import('./windows-cluster.js');
+    expect(m.pruefeFehlalarm('2147942983')).toEqual({ id: '2147942983' });
+    expect(typeof m.pruefeFehlalarm('2147519003')).toBe('string');
+    const s = m.defenderAusnahmeSkript({ id: '2147942983', entfernen: false });
+    expect(s).toContain('-ThreatIDDefaultAction_Actions 6');
+    expect(s).toContain('RealTimeProtectionEnabled');
+    expect(s).not.toMatch(/ExclusionPath|ExclusionProcess|DisableRealtime/);
+    expect(m.defenderAusnahmeSkript({ id: '2147942983', entfernen: true })).toContain('Remove-MpPreference -ThreatIDDefaultAction_Ids');
+  });
+});

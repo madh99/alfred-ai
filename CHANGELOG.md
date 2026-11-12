@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Defender-Fehlalarm gezielt zulassen (v1815)
+
+- Microsoft Defender erkannte die Befehlszeile eines Windows-Bausteins fälschlich als `Trojan:Win32/ClickFix.ZZH!MTB` und blockierte sie.
+- `windows_cluster defender_fehlalarm_zulassen` setzt für genau diese fest hinterlegte Erkennung die Aktion „Zulassen“. Die Erkennung wird weiter protokolliert, der Echtzeitschutz bleibt Pflicht. Es gibt keine Pfad- oder Prozessausnahmen und keine anderen IDs.
+- Der Rückweg ist `defender_fehlalarm_entfernen`.
+- `defender_status` zeigt lesend den Echtzeitschutz, die gesetzten Ausnahmen und die Erkennungen der letzten sieben Tage.
+- Alle drei Aktionen laufen auch über den Gastagenten.
+
 ### Added — Netzlose Platten, CA-Sicherung und Pfade der Issuing-CA (v1814)
 
 - `windows_cluster status`, `platten_einrichten` und `systemplatte_erweitern` laufen auch auf netzlosen VMs über den Gastagenten (vmid + vm_name statt zugang), zum Beispiel auf der Offline-Root.
