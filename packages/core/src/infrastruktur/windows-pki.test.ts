@@ -92,3 +92,26 @@ describe('v1812 Issuing-Kette', () => {
     expect(typeof pruefeIssuer({ ca_name: 'AD3033 Issuing CA 1', path_length: 1 })).toBe('string');
   });
 });
+
+describe('v1813 Veröffentlichung, AD und Vertrauen', () => {
+  it('Web, Ablage und Abruf prüfen Eingaben; Ablage nur über stdin und ohne ältere CRL', async () => {
+    const { pruefeWeb, webSkript, pruefeAblage, ablageSkript, abrufSkript } = await import('./windows-pki.js');
+    expect(typeof pruefeWeb({ host_header: 'pki', pfad: 'W:\\PKI' })).toBe('string');
+    const w = pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\\PKI' }) as never;
+    expect(webSkript(w)).toContain('/allowDoubleEscaping:true');
+    expect(webSkript(w)).toContain("'S-1-5-17'");
+    expect(typeof pruefeAblage({ ordner: 'W:\\PKI', datei: '..\\x.crl', erwartet_sha256: 'a'.repeat(64), base64: 'A'.repeat(200) })).toBe('string');
+    const a = pruefeAblage({ ordner: 'W:\\PKI', datei: 'ad3033-root.crl', erwartet_sha256: 'a'.repeat(64), base64: 'A'.repeat(200) }) as never;
+    const s = ablageSkript(a);
+    expect(s).toContain('$e.base64');
+    expect(s).toContain('ist älter als die veröffentlichte');
+    expect(abrufSkript({ urls: ['http://pki.ad.3033.at/pki/ad3033-root.crl'], erwartet: {} })).toContain('-MaximumRedirection 0');
+  });
+  it('AD-Veröffentlichung als Enterprise Admin per Kennwort-Anmeldung, ohne NTAuth und ohne CRL', async () => {
+    const { adVeroeffentlichenSkript } = await import('./windows-pki.js');
+    const s = adVeroeffentlichenSkript({ dcs: ['dc01.ad.3033.at'], erwartet_root_sha256: 'a'.repeat(64), mit_sub: false });
+    expect(s).toContain('MitKonto');
+    expect(s).toContain('-dspublish -f $rd RootCA');
+    expect(s).not.toMatch(/NTAuthCA|dspublish[^\n]*\.crl/);
+  });
+});

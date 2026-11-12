@@ -4,6 +4,7 @@
  * v1810: nur der lesende Status (Spec-Position 1); die ändernden Bausteine folgen in Etappe 2.
  */
 import { kopf, psText, kontoAusdruck } from './windows-ad.js';
+import { MIT_KONTO, innenSkript } from './windows-cluster.js';
 
 /** CA-Status: Rolle, CA-Typ und -Name, Zertifikat (Kette, pathLen, Laufzeit), CDP/AIA, CRL-Fristen, Domäne/Workgroup, Netzwerkkarten */
 export function pkiStatusSkript(): string {
@@ -426,6 +427,168 @@ export function aktivierenSkript(r: AktivierParameter): string {
     "$bis = (Get-Date).AddMinutes(2); do { Start-Sleep -Seconds 3 } while ((Get-Service CertSvc).Status -ne 'Running' -and (Get-Date) -lt $bis)",
     "if ((Get-Service CertSvc).Status -ne 'Running') { throw 'CertSvc startet nicht' }",
     "Ergebnis ([ordered]@{ zustand = $zustand; ca = $aktiv; thumbprint = $z.Thumbprint; dienst = 'Running' })",
+  ].join('\n');
+}
+
+// ── v1813 Etappe 2c: HTTP-Veröffentlichung auf fs01, Übertragung, Prüfung, AD und Vertrauen ───────────────────────────────────────
+
+const HOST = /^[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))+$/;
+const ORDNER = /^[A-Za-z]:\\[A-Za-z0-9 ._-]{1,80}(\\[A-Za-z0-9 ._-]{1,80}){0,3}$/;
+export interface PkiWeb { host: string; pfad: string; site: string }
+export function pruefeWeb(o: Record<string, unknown>): PkiWeb | string {
+  const r = { host: String(o.host_header ?? '').trim().toLowerCase(), pfad: String(o.pfad ?? '').trim(), site: String(o.site ?? 'Alfred-PKI').trim() };
+  if (!HOST.test(r.host)) return 'host_header: FQDN, z. B. pki.ad.3033.at';
+  if (!ORDNER.test(r.pfad)) return 'pfad: lokaler Ordner, z. B. W:\\PKI (vorher mit windows_cluster freigabe_anlegen als pki$ anlegen, aendern = Issuing-CA-Computerkonto)';
+  if (!/^[A-Za-z][A-Za-z0-9-]{2,40}$/.test(r.site)) return 'site: Name der IIS-Site';
+  return r;
+}
+
+/**
+ * Statischer Webdienst für CRT/CRL: IIS nur mit statischem Inhalt und Anforderungsfilter, eigene Site mit Host-Header auf Port 80,
+ * kein Verzeichnislisting, doppelte Escape-Sequenzen erlaubt (Delta-CRL-„+“), MIME .crl/.crt, anonymes Leserecht (IUSR) zusätzlich
+ * zur vorhandenen Ordner-ACL. Andere Sites/Freigaben (Witness$, SQLBackup$) bleiben unberührt. Wiederholbar.
+ */
+export function webSkript(w: PkiWeb): string {
+  return [
+    ...kopf(w, false),
+    "if (-not (Test-Path $p.pfad)) { throw ('Ordner ' + $p.pfad + ' fehlt (erst windows_cluster freigabe_anlegen)') }",
+    "$f = Install-WindowsFeature -Name Web-WebServer, Web-Static-Content, Web-Filtering",
+    "if (-not $f.Success) { throw ('Install-WindowsFeature Web: ' + [string]$f.ExitCode) }",
+    "$ac = Join-Path $env:windir 'System32\\inetsrv\\appcmd.exe'",
+    "$da = (& $ac list site /name:$($p.site)) -join ''",
+    "$zustand = $(if ($da) { 'schon' } else { 'neu' })",
+    "if (-not $da) { & $ac add site /name:$($p.site) /bindings:(\"http/*:80:\" + $p.host) /physicalPath:$($p.pfad) | Out-Null; if ($LASTEXITCODE -ne 0) { throw ('appcmd add site Exit ' + $LASTEXITCODE) } }",
+    "& $ac set config $p.site /section:system.webServer/directoryBrowse /enabled:false | Out-Null",
+    "& $ac set config $p.site /section:system.webServer/security/requestFiltering /allowDoubleEscaping:true | Out-Null",
+    "foreach ($m in @(@('.crl', 'application/pkix-crl'), @('.crt', 'application/pkix-cert'))) { if (-not ((& $ac list config $p.site /section:staticContent) -match [regex]::Escape($m[0]))) { & $ac set config $p.site /section:staticContent /+\"[fileExtension='$($m[0])',mimeType='$($m[1])']\" | Out-Null } }",
+    '$acl = Get-Acl $p.pfad',
+    "$iusr = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-17'",
+    "if (-not ($acl.Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-17' })) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($iusr, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))); Set-Acl -Path $p.pfad -AclObject $acl }",
+    "& $ac start site /site.name:$($p.site) | Out-Null",
+    "$st = (& $ac list site /name:$($p.site)) -join ''",
+    "Ergebnis ([ordered]@{ zustand = $zustand; site = $st; pfad = $p.pfad; host = $p.host; listing = $(try { [string](Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1/' -Headers @{ Host = $p.host } -ErrorAction Stop).StatusCode } catch { [string]$_.Exception.Response.StatusCode.value__ }) })",
+  ].join('\n');
+}
+
+/** Rückweg: nur die eigene Site entfernen (Features, Ordner, Dateien und Freigabe bleiben) */
+export function webEntfernenSkript(w: { site: string }): string {
+  return [
+    ...kopf(w, false),
+    "$ac = Join-Path $env:windir 'System32\\inetsrv\\appcmd.exe'",
+    "if (-not (Test-Path $ac) -or -not ((& $ac list site /name:$($p.site)) -join '')) { Ergebnis ([ordered]@{ zustand = 'schon entfernt' }); exit 0 }",
+    "& $ac delete site /site.name:$($p.site) | Out-Null",
+    "if ($LASTEXITCODE -ne 0) { throw ('appcmd delete site Exit ' + $LASTEXITCODE) }",
+    "Ergebnis ([ordered]@{ zustand = 'entfernt'; site = $p.site })",
+  ].join('\n');
+}
+
+const ARTEFAKT_DATEI = /^[a-z0-9][a-z0-9-]{1,40}(\(\d{1,2}\))?\.(crl|crt)$/;
+export function pruefeAblage(o: Record<string, unknown>): { ordner: string; datei: string; erwartet_sha256: string } | string {
+  const r = { ordner: String(o.ordner ?? '').trim(), datei: String(o.datei ?? '').trim(), erwartet_sha256: String(o.erwartet_sha256 ?? '').trim().toLowerCase() };
+  if (!ORDNER.test(r.ordner)) return 'ordner: lokaler Ordner der Veröffentlichung, z. B. W:\\PKI';
+  if (!ARTEFAKT_DATEI.test(r.datei)) return 'datei: <name>.crl oder <name>.crt passend zu datei_name aus publication_setzen (z. B. ad3033-root.crl)';
+  if (!/^[0-9a-f]{64}$/.test(r.erwartet_sha256)) return 'erwartet_sha256: SHA-256 aus artefakte_lesen/subordinate_signieren';
+  if (typeof o.base64 !== 'string' || !/^[A-Za-z0-9+/=]{100,2000000}$/.test(o.base64)) return 'base64: Inhalt aus artefakte_lesen/subordinate_signieren';
+  return r;
+}
+/** Datei hashgeprüft ablegen; CRLs nie durch eine ältere CRL-Nummer ersetzen; meldet den vorherigen Hash */
+export function ablageSkript(a: { ordner: string; datei: string; erwartet_sha256: string }): string {
+  return [
+    ...kopf(a, true),
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "function Hex($b) { ($shaF.ComputeHash($b) | ForEach-Object { $_.ToString('x2') }) -join '' }",
+    "function CrlNr($pfad) { $d = (& certutil.exe -dump $pfad) -join \"`n\"; if ($d -match 'CRL Number[^\\n]*\\n\\s*(?:CRL Number=)?([0-9a-fA-F]+)') { [Convert]::ToInt64($Matches[1], 16) } else { -1 } }",
+    '$b = [Convert]::FromBase64String([string]$e.base64)',
+    "if ((Hex $b) -ne $p.erwartet_sha256) { throw ('Inhalt passt nicht zum erwarteten Hash (' + (Hex $b) + ')') }",
+    "if (-not (Test-Path $p.ordner)) { throw ('Ordner fehlt: ' + $p.ordner) }",
+    '$ziel = Join-Path $p.ordner $p.datei',
+    "$vorher = $(if (Test-Path $ziel) { Hex ([IO.File]::ReadAllBytes($ziel)) } else { '' })",
+    "if ($vorher -eq $p.erwartet_sha256) { Ergebnis ([ordered]@{ zustand = 'schon aktuell'; datei = $ziel; sha256 = $vorher; vorher = $vorher }); exit 0 }",
+    "$tmp = $ziel + '.alfred-neu'; [IO.File]::WriteAllBytes($tmp, $b)",
+    "if ($p.datei -like '*.crl' -and $vorher) { $alt = CrlNr $ziel; $neu = CrlNr $tmp; if ($neu -lt $alt) { Remove-Item $tmp -Force; throw ('CRL-Nummer ' + $neu + ' ist älter als die veröffentlichte ' + $alt + ' — nicht ersetzt') } }",
+    'Move-Item -Path $tmp -Destination $ziel -Force',
+    "$nach = Hex ([IO.File]::ReadAllBytes($ziel)); if ($nach -ne $p.erwartet_sha256) { throw 'nach dem Schreiben anderer Hash' }",
+    "Ergebnis ([ordered]@{ zustand = 'abgelegt'; datei = $ziel; sha256 = $nach; vorher = $vorher })",
+  ].join('\n');
+}
+
+/** Von einem Client aus per HTTP abrufen (lesend): Status, keine Umleitung, Hash, bei CRLs Nummer/NextUpdate und Signaturprüfung gegen den Aussteller */
+export function abrufSkript(a: { urls: string[]; erwartet: Record<string, string> }): string {
+  return [
+    ...kopf(a, false),
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "function Hex($b) { ($shaF.ComputeHash($b) | ForEach-Object { $_.ToString('x2') }) -join '' }",
+    '$l = @()',
+    'foreach ($u in @($p.urls)) {',
+    "  $x = [ordered]@{ url = $u }",
+    '  try {',
+    "    $r = Invoke-WebRequest -UseBasicParsing -Uri $u -MaximumRedirection 0 -TimeoutSec 15 -ErrorAction Stop",
+    "    $x.status = [int]$r.StatusCode; $b = $r.Content; if ($b -is [string]) { $b = [Text.Encoding]::GetEncoding(28591).GetBytes($b) }",
+    "    $x.sha256 = Hex $b; $x.bytes = $b.Length; $x.typ = [string]$r.Headers['Content-Type']",
+    "    $w = $p.erwartet.$u; if ($w) { $x.passt = ($x.sha256 -eq $w) }",
+    "    if ($u -like '*.crl') { $t = [IO.Path]::GetTempFileName(); [IO.File]::WriteAllBytes($t, $b); $d = (& certutil.exe -dump $t) -join \"`n\"; Remove-Item $t -Force",
+    "      $x.nummer = $(if ($d -match 'CRL Number[^\\n]*\\n\\s*(?:CRL Number=)?([0-9a-fA-F]+)') { $Matches[1] } else { '' }); $x.nextUpdate = $(if ($d -match 'NextUpdate:\\s*([^\\n]+)') { $Matches[1].Trim() } else { '' }) }",
+    "  } catch { $x.status = $(try { [int]$_.Exception.Response.StatusCode } catch { 0 }); $x.fehler = $_.Exception.Message }",
+    '  $l += $x',
+    '}',
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; zeit = (Get-Date).ToString('s'); abrufe = $l })",
+  ].join('\n');
+}
+
+/**
+ * Root- (und optional Issuing-)Zertifikat im AD veröffentlichen (certutil -dspublish RootCA/SubCA) als Enterprise Admin per
+ * Kennwort-Anmeldung; danach je DC lesend belegen, dass der Fingerprint im Container „Certification Authorities“ bzw. AIA steht.
+ * NTAuth wird NICHT erweitert. Keine CRL ins AD (Architektur: nur HTTP).
+ */
+export function adVeroeffentlichenSkript(a: { dcs: string[]; erwartet_root_sha256: string; mit_sub: boolean; erwartet_sub_sha256?: string; ausKonto?: string }): string {
+  const innen = innenSkript(a, [
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "function Hex($b) { ($shaF.ComputeHash($b) | ForEach-Object { $_.ToString('x2') }) -join '' }",
+    "$dir = Join-Path $env:ProgramData 'Alfred\\pki'",
+    "$rd = Join-Path $dir 'ad-root.cer'; $rb = [IO.File]::ReadAllBytes($rd); if ((Hex $rb) -ne $p.erwartet_root_sha256) { throw 'Root-Zertifikat passt nicht zum Hash' }",
+    "$aus = (& certutil.exe -dspublish -f $rd RootCA) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('dspublish RootCA: ' + $aus) }",
+    "$rt = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,$rb)).Thumbprint",
+    "if ($p.mit_sub) { $sd = Join-Path $dir 'ad-sub.cer'; $sb = [IO.File]::ReadAllBytes($sd); if ((Hex $sb) -ne $p.erwartet_sub_sha256) { throw 'Issuing-Zertifikat passt nicht zum Hash' }; $aus = (& certutil.exe -dspublish -f $sd SubCA) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('dspublish SubCA: ' + $aus) }; $st = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,$sb)).Thumbprint }",
+    "$cfg = ([adsi]'LDAP://RootDSE').configurationNamingContext",
+    '$beleg = @()',
+    'foreach ($dc in @($p.dcs)) {',
+    "  function Fp($pfad) { $o = [adsi]('LDAP://' + $dc + '/' + $pfad); $f = @(); foreach ($ch in @($o.Children)) { foreach ($c in @($ch.cACertificate)) { $f += (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,[byte[]]$c)).Thumbprint } }; $f }",
+    "  $root = @(Fp ('CN=Certification Authorities,CN=Public Key Services,CN=Services,' + $cfg))",
+    "  $aia = @(Fp ('CN=AIA,CN=Public Key Services,CN=Services,' + $cfg))",
+    "  $beleg += [ordered]@{ dc = $dc; rootDa = ($root -contains $rt); subDa = $(if ($p.mit_sub) { $aia -contains $st } else { $null }) }",
+    '}',
+    "[ordered]@{ rootThumbprint = $rt; subThumbprint = $(if ($p.mit_sub) { $st } else { $null }); belege = $beleg }",
+  ]);
+  return [
+    ...kopf(a, true),
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    "$dir = Join-Path $env:ProgramData 'Alfred\\pki'; New-Item -ItemType Directory -Path $dir -Force | Out-Null",
+    "[IO.File]::WriteAllBytes((Join-Path $dir 'ad-root.cer'), [Convert]::FromBase64String([string]$e.root_base64))",
+    "if ($p.mit_sub) { [IO.File]::WriteAllBytes((Join-Path $dir 'ad-sub.cer'), [Convert]::FromBase64String([string]$e.sub_base64)) }",
+    MIT_KONTO,
+    "$nb = DomaeneNetbios",
+    `$w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innen)} 300`,
+    'Ergebnis $w',
+  ].join('\n');
+}
+
+/** Vertrauen nachladen (Gruppenrichtlinie, Autoenrollment-Puls) — wirkt nur additiv; danach trust_pruefen */
+export function trustAktualisierenSkript(): string {
+  return [
+    ...kopf({}, false),
+    "& gpupdate.exe /target:computer /force | Out-Null",
+    "& certutil.exe -pulse | Out-Null",
+    "Ergebnis ([ordered]@{ zustand = 'aktualisiert'; zeit = (Get-Date).ToString('s') })",
+  ].join('\n');
+}
+
+/** Lesend: stehen die erwarteten Fingerprints im LocalMachine-Root- bzw. Zwischenspeicher dieses Rechners? */
+export function trustPruefenSkript(a: { root: string[]; zwischen: string[] }): string {
+  return [
+    ...kopf(a, false),
+    "$r = @(Get-ChildItem Cert:\\LocalMachine\\Root | ForEach-Object { $_.Thumbprint })",
+    "$z = @(Get-ChildItem Cert:\\LocalMachine\\CA | ForEach-Object { $_.Thumbprint })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; zeit = (Get-Date).ToString('s'); root = @(@($p.root) | ForEach-Object { [ordered]@{ thumbprint = $_; da = ($r -contains $_) } }); zwischen = @(@($p.zwischen) | ForEach-Object { [ordered]@{ thumbprint = $_; da = ($z -contains $_ -or $r -contains $_) } }) })",
   ].join('\n');
 }
 

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — PKI-Veröffentlichung über HTTP, im AD und Prüfung des Vertrauens (v1813)
+
+- **HTTP-Veröffentlichung:**
+  - `windows_pki pki_web_einrichten` richtet auf dem Dateiserver eine eigene IIS-Site für Zertifikate und Sperrlisten ein: nur statischer Inhalt, Host-Header, kein Verzeichnislisting, anonymes Leserecht. Der Rückweg `pki_web_entfernen` entfernt nur diese Site.
+  - `datei_ablegen` legt Zertifikate und Sperrlisten hashgeprüft ab und ersetzt nie eine Sperrliste durch eine ältere.
+  - `publication_pruefen` ruft die Adressen lesend von einem Client ab und prüft Status, Hash, Sperrlisten-Nummer und NextUpdate.
+- **AD:** `ad_veroeffentlichen` veröffentlicht das Root- und optional das Issuing-Zertifikat als Enterprise Admin im AD und belegt das je Domänencontroller. NTAuth bleibt unverändert, Sperrlisten kommen nicht ins AD.
+- **Vertrauen:**
+  - `trust_aktualisieren` lädt Gruppenrichtlinie und Autoenrollment nach.
+  - `trust_pruefen` belegt lesend, ob die erwarteten Fingerprints im Zertifikatsspeicher des Rechners stehen.
+
 ### Added — PKI-Aufbau: Offline-Root und Issuing-CA (v1812)
 
 - `windows_pki` hat neue Bausteine. Sie laufen nur als Schritte freigegebener Changes, außer den lesenden.

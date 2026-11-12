@@ -6,7 +6,8 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler } from './windows-ad.js';
 import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkript, featuresSkript, featuresEntfernenSkript, artefakteSkript, type PkiArtefakte,
-  pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript } from './windows-pki.js';
+  pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript,
+  pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
 
 export interface WindowsPkiDeps {
@@ -15,9 +16,9 @@ export interface WindowsPkiDeps {
   tresor?: { namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string> };
 }
 
-export const PKI_LESEND = new Set(['status', 'artefakte_lesen']);
+export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen']);
 /** nur als Schritte freigegebener Changes */
-export const PKI_AENDERND = new Set(['features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren']);
+export const PKI_AENDERND = new Set(['features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -37,7 +38,12 @@ export class WindowsPkiSkill extends Skill {
       + 'crl_erzeugen (zugang oder vmid + vm_name) — neue Basis-CRL (CRL-Nummern steigen nur; ohne Rückweg). '
       + 'issuer_anfordern (zugang = Issuing-CA, Domänenmitglied; ca_name z. B. „AD3033 Issuing CA 1“, key_bits 4096, hash SHA256; konto_tresor Standard win-dc01-admin = Kennwort des Domänen-Administrators/Enterprise Admins) — Enterprise Subordinate bis zur Anforderung, CAPolicy pathLen 0 kritisch, keine Standardvorlagen; wiederholbar mit DERSELBEN Anforderung; Ergebnis „ISSUER_CSR_READY“ mit csrSha256, csrBase64 in data. '
       + 'subordinate_signieren (NUR vmid + vm_name der Root; csr_base64 und erwartet_csr_sha256 aus issuer_anfordern, erwartet_subject = CA-Name der Issuing-CA) — hashgeprüft einreichen, ausstellen, abholen; prüft Aussteller, Subject und pathLen 0; wiederholbar ohne zweite Ausstellung; Ergebnis „ISSUER_CERT_SIGNED“ mit Zertifikat-, Root- und Root-CRL-Hashes (Base64 in data); ohne Rückweg (Widerruf ist ein eigener Vorgang). '
-      + 'issuer_aktivieren (zugang = Issuing-CA; zert_base64, root_base64, crl_base64 und erwartet_zert_sha256, erwartet_root_sha256, erwartet_crl_sha256 aus subordinate_signieren) — Root und Root-CRL hashgeprüft in LocalMachine\\Root, CA-Zertifikat installieren, Dienst starten; Ergebnis „ISSUER_CA_READY“ mit Status (EnterpriseSubordinate, pathLen 0, Kette ok); ohne Rückweg (Stilllegung eigener Change).',
+      + 'issuer_aktivieren (zugang = Issuing-CA; zert_base64, root_base64, crl_base64 und erwartet_zert_sha256, erwartet_root_sha256, erwartet_crl_sha256 aus subordinate_signieren) — Root und Root-CRL hashgeprüft in LocalMachine\\Root, CA-Zertifikat installieren, Dienst starten; Ergebnis „ISSUER_CA_READY“ mit Status (EnterpriseSubordinate, pathLen 0, Kette ok); ohne Rückweg (Stilllegung eigener Change). '
+      + 'pki_web_einrichten (zugang = fs01; host_header pki.ad.3033.at, pfad z. B. W:\\PKI — vorher windows_cluster freigabe_anlegen name pki$ mit aendern = Issuing-CA-Computerkonto; site Standard Alfred-PKI) — IIS nur statisch + Anforderungsfilter, eigene Site Port 80 mit Host-Header, kein Listing, MIME .crl/.crt, IUSR lesend; Witness$/SQLBackup$ unberührt; Rückweg pki_web_entfernen (site). Firewall-Freigabe TCP 80 und DNS pki.ad.3033.at sind eigene Schritte (windows_cluster firewall_regel, windows_ad dns_eintrag). '
+      + 'datei_ablegen (zugang = fs01; ordner W:\\PKI, datei z. B. ad3033-root.crl/.crt passend zu datei_name, base64 + erwartet_sha256 aus artefakte_lesen bzw. subordinate_signieren) — hashgeprüft, ersetzt nie eine CRL durch eine ältere Nummer; meldet den vorherigen Hash. '
+      + 'publication_pruefen (lesend; zugang = Client, z. B. sql01 oder pkiiss01; urls; erwartet optional {url: sha256}) — HTTP-Status ohne Umleitung, SHA-256, Typ, bei CRLs Nummer und NextUpdate; Ergebnis „PKI_PUBLICATION_VERIFIED“ nur bei 200 und passenden Hashes. '
+      + 'ad_veroeffentlichen (zugang = Issuing-CA oder Mitglied mit RSAT; root_base64 + erwartet_root_sha256, optional sub_base64 + erwartet_sub_sha256, dcs = [dc01.ad.3033.at, dc02.ad.3033.at], konto_tresor Standard win-dc01-admin) — certutil -dspublish RootCA/SubCA als Enterprise Admin, NTAuth unverändert, keine CRL ins AD; Beleg je DC; Ergebnis „AD_PKI_PUBLISHED“. '
+      + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen.',
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 600_000,
@@ -54,6 +60,9 @@ export class WindowsPkiSkill extends Skill {
         crl_einheit: { type: 'string' }, crl_anzahl: { type: 'number' }, ueberlappung_einheit: { type: 'string' }, ueberlappung_anzahl: { type: 'number' },
         konto_tresor: { type: 'string' }, ausfuehrungskonto: { type: 'string' },
         csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
+        host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
+        urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
+        root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
       required: ['action'],
@@ -137,6 +146,62 @@ export class WindowsPkiSkill extends Skill {
           const ok = !!z && st.ca?.typ === 'EnterpriseSubordinate' && z.pathLen === '0' && z.ketteOk && z.privaterSchluessel && st.dienst === 'Running' && z.thumbprint === r.thumbprint;
           const text = `${ok ? '✅ ISSUER_CA_READY' : 'ISSUING-CA NICHT wie verlangt'} (${r.zustand}): ${pkiStatusText(st, 'ssh')}`;
           return ok ? { success: true, data: { ...r, status: st }, display: text } : { success: false, data: { ...r, status: st }, error: text };
+        }
+        case 'pki_web_einrichten': {
+          const w = pruefeWeb(input); if (typeof w === 'string') return { success: false, error: w };
+          const { r } = await this.lauf<{ zustand: string; site: string; pfad: string; host: string; listing: string }>(input, webSkript(w), 'PKI-Webdienst', 1_200_000);
+          const ok = /Started/i.test(r.site) && r.listing !== '200';
+          const text = `${ok ? '✅ PKI_HTTP_READY' : 'PKI-Webdienst NICHT wie verlangt'} (${r.zustand}): ${r.site}; Stammverzeichnis ohne Listing (HTTP ${r.listing}); Ordner ${r.pfad} — Rückweg pki_web_entfernen site ${w.site}`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'pki_web_entfernen': {
+          const site = String(input.site ?? 'Alfred-PKI'); if (!/^[A-Za-z][A-Za-z0-9-]{2,40}$/.test(site)) return { success: false, error: 'site: Name der IIS-Site' };
+          const { r } = await this.lauf<{ zustand: string }>(input, webEntfernenSkript({ site }), 'PKI-Webdienst entfernen', 300_000);
+          return { success: true, data: r, display: `✅ IIS-Site ${site} ${r.zustand}` };
+        }
+        case 'datei_ablegen': {
+          const a = pruefeAblage(input); if (typeof a === 'string') return { success: false, error: a };
+          const { r } = await this.lauf<{ zustand: string; datei: string; sha256: string; vorher: string }>(input, ablageSkript(a), 'Artefakt ablegen', 300_000, { base64: String(input.base64) });
+          return { success: true, data: r, display: `✅ ${r.datei} ${r.zustand}, SHA-256 ${r.sha256}${r.vorher && r.vorher !== r.sha256 ? ` (vorher ${r.vorher})` : r.vorher ? '' : ' (neu)'}` };
+        }
+        case 'publication_pruefen': {
+          const urls = (Array.isArray(input.urls) ? input.urls.map(String) : []).map(x => x.trim());
+          if (!urls.length || urls.length > 10 || urls.some(x => !/^http:\/\/[a-z0-9.-]+\/[A-Za-z0-9._\/%()-]+\.(crl|crt)$/.test(x))) return { success: false, error: 'urls: 1–10 http-URLs auf .crl/.crt' };
+          const erw: Record<string, string> = {};
+          for (const [u2, h] of Object.entries((input.erwartet ?? {}) as Record<string, unknown>)) { if (urls.includes(u2) && /^[0-9a-f]{64}$/.test(String(h).toLowerCase())) erw[u2] = String(h).toLowerCase(); }
+          const { r } = await this.lauf<{ rechner: string; zeit: string; abrufe: { url: string; status: number; sha256?: string; passt?: boolean; typ?: string; nummer?: string; nextUpdate?: string; fehler?: string }[] }>(input, abrufSkript({ urls, erwartet: erw }), 'PKI-Abruf', 180_000);
+          const ok = r.abrufe.every(x => x.status === 200 && x.passt !== false);
+          const text = `${ok ? 'PKI_PUBLICATION_VERIFIED' : 'PKI-Abruf NICHT ok'} von ${r.rechner} (${r.zeit}):\n${r.abrufe.map(x => `${x.url} → HTTP ${x.status}${x.sha256 ? `, SHA-256 ${x.sha256}${x.passt === undefined ? '' : x.passt ? ' (passt)' : ' (PASST NICHT)'}` : ''}${x.nummer ? `, CRL-Nummer ${x.nummer}, NextUpdate ${x.nextUpdate}` : ''}${x.fehler ? `, ${x.fehler}` : ''}`).join('\n')}`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'ad_veroeffentlichen': {
+          if (input.vmid !== undefined) return { success: false, error: 'ad_veroeffentlichen nur über einen Fernzugang in der Domäne' };
+          const dcs = (Array.isArray(input.dcs) ? input.dcs.map(String) : []).map(x => x.trim().toLowerCase());
+          if (!dcs.length || dcs.length > 6 || dcs.some(x => !/^[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9-]{1,63})+$/.test(x))) return { success: false, error: 'dcs: FQDNs der DCs, z. B. [dc01.ad.3033.at, dc02.ad.3033.at]' };
+          const rs = String(input.erwartet_root_sha256 ?? '').toLowerCase(); const ss = String(input.erwartet_sub_sha256 ?? '').toLowerCase();
+          if (!/^[0-9a-f]{64}$/.test(rs) || typeof input.root_base64 !== 'string') return { success: false, error: 'root_base64 und erwartet_root_sha256 angeben' };
+          const mitSub = input.sub_base64 !== undefined;
+          if (mitSub && (!/^[0-9a-f]{64}$/.test(ss) || typeof input.sub_base64 !== 'string')) return { success: false, error: 'sub_base64 und erwartet_sub_sha256 zusammen angeben' };
+          const konto = String(input.ausfuehrungskonto ?? '').trim();
+          if (konto && !KONTO_FREI.test(konto)) return { success: false, error: 'ausfuehrungskonto: „name“ oder „NETBIOS\\name“' };
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `PKI im AD veröffentlichen (${String(input.zugang)})`);
+          const { r } = await this.lauf<{ rootThumbprint: string; subThumbprint: string | null; belege: { dc: string; rootDa: boolean; subDa: boolean | null }[] }>(input, adVeroeffentlichenSkript({ dcs, erwartet_root_sha256: rs, mit_sub: mitSub, ...(mitSub ? { erwartet_sub_sha256: ss } : {}), ...(konto ? { ausKonto: konto } : {}) }), 'PKI im AD veröffentlichen', 600_000, { kennwort: kw, root_base64: String(input.root_base64), ...(mitSub ? { sub_base64: String(input.sub_base64) } : {}) });
+          const ok = r.belege.length === dcs.length && r.belege.every(b => b.rootDa && b.subDa !== false);
+          const text = `${ok ? '✅ AD_PKI_PUBLISHED' : 'AD-Veröffentlichung NICHT auf allen DCs belegt'}: Root ${r.rootThumbprint}${r.subThumbprint ? `, Issuing ${r.subThumbprint}` : ''}; ${r.belege.map(b => `${b.dc}: Root ${b.rootDa ? 'da' : 'FEHLT'}${b.subDa === null ? '' : `, AIA ${b.subDa ? 'da' : 'FEHLT'}`}`).join('; ')} — NTAuth unverändert`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'trust_aktualisieren': {
+          const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);
+          return { success: true, data: r, display: `✅ Gruppenrichtlinie und Autoenrollment-Puls auf ${String(input.zugang ?? '')} ${r.zeit}` };
+        }
+        case 'trust_pruefen': {
+          const fp = (v: unknown) => (Array.isArray(v) ? v.map(x => String(x).replace(/\s/g, '').toUpperCase()) : []);
+          const root = fp(input.root_thumbprints); const zw = fp(input.zwischen_thumbprints);
+          if (!root.length || [...root, ...zw].some(x => !/^[0-9A-F]{40}$/.test(x))) return { success: false, error: 'root_thumbprints (und optional zwischen_thumbprints): SHA-1-Thumbprints (40 Hex)' };
+          const { r } = await this.lauf<{ rechner: string; zeit: string; root: { thumbprint: string; da: boolean }[]; zwischen: { thumbprint: string; da: boolean }[] }>(input, trustPruefenSkript({ root, zwischen: zw }), 'Vertrauen prüfen', 120_000);
+          const ok = [...r.root, ...r.zwischen].every(x => x.da);
+          const text = `${ok ? 'TRUST_APPLIED' : 'Vertrauen NICHT vollständig'} auf ${r.rechner} (${r.zeit}): ${[...r.root.map(x => `Root ${x.thumbprint} ${x.da ? 'da' : 'FEHLT'}`), ...r.zwischen.map(x => `Issuing ${x.thumbprint} ${x.da ? 'da' : 'FEHLT'}`)].join(', ')}`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
         }
       }
       return { success: false, error: `Unbekannte Aktion ${action}` };
