@@ -474,7 +474,10 @@ export function webSkript(w: PkiWeb): string {
     "$ac = Join-Path $env:windir 'System32\\inetsrv\\appcmd.exe'",
     "$da = (& $ac list site /name:$($p.site)) -join ''",
     "$zustand = $(if ($da) { 'schon' } else { 'neu' })",
-    "if (-not $da) { & $ac add site /name:$($p.site) /bindings:(\"http/*:80:\" + $p.host) /physicalPath:$($p.pfad) | Out-Null; if ($LASTEXITCODE -ne 0) { throw ('appcmd add site Exit ' + $LASTEXITCODE) } }",
+    // v1828 — Realfall 12.11. PKI-B Schritt 16: „/bindings:(…)“ zerlegt PowerShell in ZWEI Argumente („/bindings:“ und den Wert) → appcmd
+    // Exit 87. Argumente vorher als ganze Zeichenketten bilden.
+    "$aName = '/name:' + $p.site; $aBind = '/bindings:http/*:80:' + $p.host; $aPfad = '/physicalPath:' + $p.pfad",
+    "if (-not $da) { & $ac add site $aName $aBind $aPfad | Out-Null; if ($LASTEXITCODE -ne 0) { throw ('appcmd add site Exit ' + $LASTEXITCODE) } }",
     "& $ac set config $p.site /section:system.webServer/directoryBrowse /enabled:false | Out-Null",
     "& $ac set config $p.site /section:system.webServer/security/requestFiltering /allowDoubleEscaping:true | Out-Null",
     "foreach ($m in @(@('.crl', 'application/pkix-crl'), @('.crt', 'application/pkix-cert'))) { if (-not ((& $ac list config $p.site /section:staticContent) -match [regex]::Escape($m[0]))) { & $ac set config $p.site /section:staticContent /+\"[fileExtension='$($m[0])',mimeType='$($m[1])']\" | Out-Null } }",

@@ -173,3 +173,13 @@ describe('v1822 CA-Sicherung Summe', () => {
     expect(quelle).toContain("[long]$_['bytes']");
   });
 });
+
+describe('v1828 appcmd-Argumente', () => {
+  it('Bindung als EIN Argument (kein „/bindings:(…)“)', async () => {
+    const { webSkript } = await import('./windows-pki.js');
+    const s = webSkript({ site: 'Alfred-PKI', pfad: 'W:\\PKI', host: 'pki.ad.3033.at' } as never);
+    expect(s).not.toContain('/bindings:(');
+    expect(s).toContain("$aBind = '/bindings:http/*:80:' + $p.host");
+    expect(s).toContain('& $ac add site $aName $aBind $aPfad');
+  });
+});

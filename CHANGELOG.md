@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bindung der PKI-Website (v1828)
+
+- `windows_pki pki_web_einrichten` scheiterte beim Anlegen der IIS-Site mit „ungültiger Parameter“, weil PowerShell die Bindungsangabe in zwei Argumente zerlegte. Name, Bindung und Pfad werden jetzt vorab als vollständige Argumente gebildet.
+
 ### Fixed — Defender-Allow entfernen (v1826, v1827)
 
 - `windows_cluster defender_fehlalarm_entfernen` brach mit Fehler 0x57 ab, obwohl Defender den Eintrag entfernt hatte. Diese Meldung wird jetzt toleriert. Ob der Eintrag wirklich weg ist, entscheidet weiterhin die Prüfung des Ist-Stands danach.
