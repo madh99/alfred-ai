@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Firewall-Bausteine treffen genau eine Regel (v1808)
+
+- `firewall_filter_setzen` und `firewall_regel_aktiv` akzeptieren nur noch wörtliche Regelnamen ohne Platzhalter. Die Regel wird exakt aufgelöst; gibt es nicht genau eine, bricht der Baustein ab. Vorher hätte ein `*` alle Regeln getroffen.
+- Beide Bausteine ändern nur lokale, eingehende Erlauben-Regeln. Sperr-Regeln und Regeln aus Gruppenrichtlinien bleiben unangetastet.
+- Core Networking wird unabhängig von der Systemsprache erkannt: über Name, Gruppen-Ressource und Anzeige.
+
 ### Added — Firewall-Regeln mit Rückweg ein- und ausschalten (v1807)
 
 - `windows_cluster firewall_regel_aktiv` schaltet eine bestehende eingehende Regel ein oder aus und meldet den vorherigen Zustand, damit der Rückweg möglich ist. Regeln aus Core Networking (DHCP, Nachbarerkennung, ICMP-Fehlermeldungen) sind ausgeschlossen.

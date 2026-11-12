@@ -664,7 +664,9 @@ export function diagnoseEntfernenSkript(p: { pfad: string }): string {
 }
 
 /** Gegenstellen einer BESTEHENDEN eingehenden Regel setzen (regel = Name/InstanceID aus firewall_lesen); Ergebnis nennt den vorherigen Wert */
-const REGEL_ID = /^[^"'`$\r\n]{1,200}$/;
+// v1808 — Sicherheitsprüfung: -Name akzeptiert Platzhalter (* ? [ ]) → ein „*“ hätte alle Regeln getroffen. Nur wörtliche Namen,
+// im Skript exakt per Where-Object -eq aufgelöst und genau eine Regel verlangt.
+const REGEL_ID = /^[A-Za-z0-9{][A-Za-z0-9 ._:{}()-]{0,199}$/;
 export function pruefeFilter(o: Record<string, unknown>): string | { regel: string; von: string[] } {
   const regel = String(o.regel ?? '').trim();
   const von = (Array.isArray(o.von) ? o.von.map(x => String(x).trim()) : typeof o.von === 'string' ? o.von.split(',').map(x => x.trim()) : []).filter(Boolean);
@@ -676,12 +678,15 @@ export function pruefeFilter(o: Record<string, unknown>): string | { regel: stri
 export function firewallFilterSkript(p: { regel: string; von: string[] }): string {
   return [
     ...kopf(p, false),
-    '$r = Get-NetFirewallRule -Name $p.regel -ErrorAction SilentlyContinue',
-    "if (-not $r) { throw ('Regel nicht gefunden: ' + $p.regel) }",
+    '$r = @(Get-NetFirewallRule -All | Where-Object { [string]$_.Name -ceq $p.regel })',
+    "if ($r.Count -ne 1) { throw ('Regel nicht gefunden oder nicht eindeutig: ' + $p.regel + ' (' + $r.Count + ')') }",
+    '$r = $r[0]',
     "if ([string]$r.Direction -ne 'Inbound') { throw 'nur eingehende Regeln' }",
+    "if ([string]$r.Action -ne 'Allow') { throw 'nur Erlauben-Regeln (Sperr-Regeln bleiben unangetastet)' }",
+    "if ([string]$r.PolicyStoreSourceType -ne 'Local') { throw 'nur lokale Regeln (keine Gruppenrichtlinie)' }",
     '$vorher = @(($r | Get-NetFirewallAddressFilter).RemoteAddress | ForEach-Object { [string]$_ })',
-    'Set-NetFirewallRule -Name $p.regel -RemoteAddress @($p.von)',
-    '$nachher = @((Get-NetFirewallRule -Name $p.regel | Get-NetFirewallAddressFilter).RemoteAddress | ForEach-Object { [string]$_ })',
+    'Set-NetFirewallRule -InputObject $r -RemoteAddress @($p.von)',
+    '$nachher = @((@(Get-NetFirewallRule -All | Where-Object { [string]$_.Name -ceq $p.regel })[0] | Get-NetFirewallAddressFilter).RemoteAddress | ForEach-Object { [string]$_ })',
     "Ergebnis ([ordered]@{ regel = [string]$r.Name; anzeige = [string]$r.DisplayName; vorher = ($vorher -join ','); nachher = ($nachher -join ',') })",
   ].join('\n');
 }
@@ -698,12 +703,17 @@ export function pruefeAktiv(o: Record<string, unknown>): string | { regel: strin
 export function firewallAktivSkript(p: { regel: string; aktiv: boolean }): string {
   return [
     ...kopf(p, false),
-    '$r = Get-NetFirewallRule -Name $p.regel -ErrorAction SilentlyContinue',
-    "if (-not $r) { throw ('Regel nicht gefunden: ' + $p.regel) }",
-    "if ([string]$r.DisplayGroup -eq 'Core Networking') { throw 'Core-Networking-Regeln bleiben unangetastet' }",
+    '$r = @(Get-NetFirewallRule -All | Where-Object { [string]$_.Name -ceq $p.regel })',
+    "if ($r.Count -ne 1) { throw ('Regel nicht gefunden oder nicht eindeutig: ' + $p.regel + ' (' + $r.Count + ')') }",
+    '$r = $r[0]',
+    "if ([string]$r.Direction -ne 'Inbound') { throw 'nur eingehende Regeln' }",
+    "if ([string]$r.Action -ne 'Allow') { throw 'nur Erlauben-Regeln (Sperr-Regeln bleiben unangetastet)' }",
+    "if ([string]$r.PolicyStoreSourceType -ne 'Local') { throw 'nur lokale Regeln (keine Gruppenrichtlinie)' }",
+    // Core Networking nicht über den (übersetzten) Anzeigetext erkennen: Name, Gruppen-Ressource und Anzeige — im Zweifel ablehnen
+    "if ([string]$r.Name -like 'CoreNet-*' -or [string]$r.Group -like '@FirewallAPI.dll,-25000*' -or [string]$r.Group -like '*Core Networking*' -or [string]$r.DisplayGroup -like '*Core Networking*' -or [string]$r.DisplayGroup -like '*Kernnetzwerk*') { throw 'Core-Networking-Regeln bleiben unangetastet' }",
     "$vorher = ([string]$r.Enabled -eq 'True')",
-    "if ($vorher -ne [bool]$p.aktiv) { Set-NetFirewallRule -Name $p.regel -Enabled $(if ($p.aktiv) { 'True' } else { 'False' }) }",
-    "$nachher = ([string](Get-NetFirewallRule -Name $p.regel).Enabled -eq 'True')",
+    "if ($vorher -ne [bool]$p.aktiv) { Set-NetFirewallRule -InputObject $r -Enabled $(if ($p.aktiv) { 'True' } else { 'False' }) }",
+    "$nachher = ([string]@(Get-NetFirewallRule -All | Where-Object { [string]$_.Name -ceq $p.regel })[0].Enabled -eq 'True')",
     "if ($nachher -ne [bool]$p.aktiv) { throw ('Regel ' + $p.regel + ' nicht im Zielzustand') }",
     "Ergebnis ([ordered]@{ regel = [string]$r.Name; anzeige = [string]$r.DisplayName; gruppe = [string]$r.DisplayGroup; vorher = $vorher; nachher = $nachher })",
   ].join('\n');

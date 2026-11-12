@@ -247,7 +247,29 @@ describe('v1807 firewall_regel_aktiv', () => {
     expect(typeof m.pruefeAktiv({ regel: 'CoreNet-DHCP-In', aktiv: false })).toBe('string');
     expect(typeof m.pruefeAktiv({ regel: 'X', aktiv: 'nein' })).toBe('string');
     const s = m.firewallAktivSkript({ regel: 'X', aktiv: false });
-    expect(s).toContain("if ([string]$r.DisplayGroup -eq 'Core Networking')");
+    expect(s).toContain("[string]$r.DisplayGroup -like '*Core Networking*'");
     expect(s.indexOf('$vorher =')).toBeLessThan(s.indexOf('Set-NetFirewallRule'));
+  });
+});
+
+// v1808 — Sicherheitsprüfung: Platzhalter in -Name, fehlende Richtung/Aktion/Quelle, übersetzter Anzeigetext
+describe('v1808 Firewall-Bausteine gehärtet', () => {
+  it('lehnt Platzhalter ab und löst exakt genau eine lokale eingehende Erlauben-Regel auf', async () => {
+    const m = await import('./windows-cluster.js');
+    for (const r of ['*', 'File*', 'a?b', '[a]*']) {
+      expect(typeof m.pruefeAktiv({ regel: r, aktiv: false })).toBe('string');
+      expect(typeof m.pruefeFilter({ regel: r, von: ['10.0.0.1'] })).toBe('string');
+    }
+    expect(m.pruefeAktiv({ regel: '{CA16D5CF-6633-498E-B75E-A30076E6AA37}', aktiv: false })).toEqual({ regel: '{CA16D5CF-6633-498E-B75E-A30076E6AA37}', aktiv: false });
+    expect(m.pruefeFilter({ regel: 'FailoverClustering-ClusSvc-TCP-In', von: ['10.203.30.3'] })).toEqual({ regel: 'FailoverClustering-ClusSvc-TCP-In', von: ['10.203.30.3'] });
+    for (const s of [m.firewallAktivSkript({ regel: 'X', aktiv: false }), m.firewallFilterSkript({ regel: 'X', von: ['10.0.0.1'] })]) {
+      expect(s).toContain('Where-Object { [string]$_.Name -ceq $p.regel }');
+      expect(s).toContain('if ($r.Count -ne 1)');
+      expect(s).toContain("if ([string]$r.Action -ne 'Allow')");
+      expect(s).toContain("if ([string]$r.PolicyStoreSourceType -ne 'Local')");
+      expect(s).toContain('-InputObject $r');
+      expect(s).not.toContain('-Name $p.regel');
+    }
+    expect(m.firewallAktivSkript({ regel: 'X', aktiv: false })).toContain("[string]$r.Name -like 'CoreNet-*'");
   });
 });
