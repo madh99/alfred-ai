@@ -197,3 +197,12 @@ describe('v1829 PKI-Alias im Baustein', () => {
     expect(webSkript(pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\\PKI' }) as never)).toContain('if ($p.alias)');
   });
 });
+
+describe('v1831 IIS-Leserecht', () => {
+  it('IUSR und IIS_IUSRS bekommen Lesen auf den Ordner', async () => {
+    const { webSkript } = await import('./windows-pki.js');
+    const s = webSkript({ site: 'Alfred-PKI', pfad: 'W:\PKI', host: 'pki.ad.3033.at' } as never);
+    expect(s).toContain("@('S-1-5-17', 'S-1-5-32-568')");
+    expect(s).toContain("'ReadAndExecute'");
+  });
+});
