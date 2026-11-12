@@ -206,3 +206,13 @@ describe('v1831 IIS-Leserecht', () => {
     expect(s).toContain("'ReadAndExecute'");
   });
 });
+
+describe('v1832 exakte Alias-Prüfung', () => {
+  it('prüft das virtuelle Verzeichnis über den exakten Namen in der Liste', async () => {
+    const { webSkript, pruefeWeb } = await import('./windows-pki.js');
+    const s = webSkript(pruefeWeb({ host_header: 'pki.ad.3033.at', pfad: 'W:\PKI', alias: 'pki' }) as never);
+    expect(s).toContain('function VdirPfad($name)');
+    expect(s).not.toContain('list vdir $vd /text:physicalPath');
+    expect(s).toContain('if (-not $ist -or $ist.TrimEnd(');
+  });
+});

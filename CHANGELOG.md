@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Alias der PKI-Website (v1832)
+
+- `windows_pki pki_web_einrichten` hielt den Unterpfad `/pki` fälschlich für vorhanden, weil die Abfrage den Pfad des übergeordneten Verzeichnisses zurückgab. Existenz und Nachprüfung vergleichen jetzt den exakten Namen. Fehlt der Alias nach dem Anlegen, bricht der Schritt ab.
+
 ### Fixed — Leserecht der PKI-Website (v1831)
 
 - Die PKI-Website lieferte HTTP 500, weil der IIS-Arbeitsprozess den Veröffentlichungsordner mit geschützter Berechtigung nicht lesen durfte. `windows_pki pki_web_einrichten` gibt jetzt neben dem anonymen Benutzer auch der Gruppe IIS_IUSRS Leserecht.
