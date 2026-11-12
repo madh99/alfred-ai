@@ -712,3 +712,14 @@ describe('v1683 DNS-Prüfung ohne lokalen Cache', () => {
     expect(w.c.status).not.toBe('completed');
   });
 });
+
+describe('v1830 Base64-Verweis nur im Feld base64', () => {
+  it('striktes Base64 als ganzer Wert im Feld base64 erlaubt, sonst nicht', async () => {
+    const { loeseAuf } = await import('./change-lauf.js');
+    const erg = [{ nr: 25, ok: true, daten: { zertifikat: { base64: 'MIIB+w==', sha256: 'ab12' }, boese: 'a;b' } }] as never;
+    expect(loeseAuf({ base64: '{{schritt25.zertifikat.base64}}' }, erg)).toEqual({ wert: { base64: 'MIIB+w==' } });
+    expect(loeseAuf({ datei: '{{schritt25.zertifikat.base64}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ base64: 'x{{schritt25.zertifikat.base64}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ base64: '{{schritt25.boese}}' }, erg).fehler).toContain('unzulässigen Wert');
+  });
+});

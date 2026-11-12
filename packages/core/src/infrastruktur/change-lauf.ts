@@ -83,6 +83,13 @@ export const SICHERER_WERT = /^[\w.:\/@-]{1,253}$/;
 export const PROXMOX_UPID = /^UPID:[\w.-]{1,63}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[\w.-]{1,40}:[\w.-]{0,40}:[\w.-]{1,64}@[\w.-]{1,32}(?:![\w.-]{1,64})?:$/;
 /** Felder, in die ein Verweis nie als ganzer Wert eingesetzt werden darf (ganzer Befehl aus fremder Ausgabe) */
 const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
+/**
+ * v1830 — Realfall 12.11. PKI-B e44e8270 Schritt 26: windows_pki datei_ablegen bekommt das Root-Zertifikat aus Schritt 25 als Base64
+ * ({{schritt25.zertifikat.base64}}); „+“ und „=“ fielen durch SICHERER_WERT. Nur als GANZER Wert und nur im Datenfeld „base64“ ist
+ * striktes Base64 zulässig (keine Leerzeichen, Anführungszeichen oder Shell-Zeichen; Länge Vielfaches von 4, höchstens 16 MB).
+ */
+export const BASE64_FELDER = new Set(['base64']);
+export const STRIKTES_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /**
  * Verweise auflösen: `{{schrittN.feld}}` aus den Daten früherer Schritte; steht der Verweis allein, bleibt der Typ erhalten
@@ -112,6 +119,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
         const e = ergebnisse.find(x => x.nr === Number(allein[1]) && nutzbar(x));
         const w = e ? pfadWert(e.daten, allein[2]!) : undefined;
         if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
+        if (feld && BASE64_FELDER.has(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
         return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
       }
       return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {

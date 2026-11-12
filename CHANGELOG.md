@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Base64-Inhalte zwischen Change-Schritten (v1830)
+
+- Ein Change-Schritt konnte den Base64-Inhalt eines früheren Schritts (z. B. ein Zertifikat) nicht übernehmen, weil die Zeichen `+` und `=` gesperrt waren. Striktes Base64 ist jetzt erlaubt, aber nur als vollständiger Wert im Feld `base64`. Für alle anderen Felder gelten die bisherigen strengen Regeln unverändert.
+
 ### Added — URL-Unterpfad für die PKI-Website (v1829)
 
 - `windows_pki pki_web_einrichten` legt mit dem neuen Parameter `alias` (z. B. `pki`) ein virtuelles Verzeichnis auf denselben Ordner an, sodass die Dateien unter `http://<host>/pki/` erreichbar sind. Der Schritt ist wiederholbar und bricht ab, wenn der Alias bereits auf einen anderen Ordner zeigt.
