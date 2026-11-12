@@ -686,3 +686,26 @@ export function firewallFilterSkript(p: { regel: string; von: string[] }): strin
   ].join('\n');
 }
 
+/** v1807 — bestehende Regel aktivieren/deaktivieren (Owner 12.11.: ungenutzte offene Regeln deaktivieren statt Adressen zu erfinden);
+ *  Ergebnis nennt den vorherigen Zustand (Rückweg: firewall_regel_aktiv mit aktiv = vorher). Core Networking ist ausgeschlossen. */
+export function pruefeAktiv(o: Record<string, unknown>): string | { regel: string; aktiv: boolean } {
+  const regel = String(o.regel ?? '').trim();
+  if (!REGEL_ID.test(regel)) return 'regel: Regelname (Name/InstanceID aus firewall_lesen)';
+  if (/^CoreNet-/i.test(regel)) return 'regel: Core-Networking-Regeln (DHCP, Nachbarerkennung, ICMP-Fehler) bleiben unangetastet';
+  if (typeof o.aktiv !== 'boolean') return 'aktiv: true oder false';
+  return { regel, aktiv: o.aktiv };
+}
+export function firewallAktivSkript(p: { regel: string; aktiv: boolean }): string {
+  return [
+    ...kopf(p, false),
+    '$r = Get-NetFirewallRule -Name $p.regel -ErrorAction SilentlyContinue',
+    "if (-not $r) { throw ('Regel nicht gefunden: ' + $p.regel) }",
+    "if ([string]$r.DisplayGroup -eq 'Core Networking') { throw 'Core-Networking-Regeln bleiben unangetastet' }",
+    "$vorher = ([string]$r.Enabled -eq 'True')",
+    "if ($vorher -ne [bool]$p.aktiv) { Set-NetFirewallRule -Name $p.regel -Enabled $(if ($p.aktiv) { 'True' } else { 'False' }) }",
+    "$nachher = ([string](Get-NetFirewallRule -Name $p.regel).Enabled -eq 'True')",
+    "if ($nachher -ne [bool]$p.aktiv) { throw ('Regel ' + $p.regel + ' nicht im Zielzustand') }",
+    "Ergebnis ([ordered]@{ regel = [string]$r.Name; anzeige = [string]$r.DisplayName; gruppe = [string]$r.DisplayGroup; vorher = $vorher; nachher = $nachher })",
+  ].join('\n');
+}
+

@@ -8,7 +8,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
-  pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript,
+  pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript, pruefeAktiv, firewallAktivSkript,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
   computerobjektSkript, computerobjektEntfernenSkript, pruefeSpn, spnSkript, pruefeKnoten, validierenSkript, pruefeCluster, clusterAnlegenSkript,
@@ -26,7 +26,7 @@ export interface WindowsClusterDeps {
 export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
-  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'diagnose_entfernen']);
+  'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen']);
 /** am DC mit dem Domänen-Administrator (Tresor Standard win-<zugang>-admin, wie windows_ad grundstruktur) */
 const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen']);
 /** als Domänenkonto <NETBIOS>\alfred mit Kennwort-Anmeldung (Doppel-Hop) — konto_tresor ist Pflicht */
@@ -57,6 +57,7 @@ export class WindowsClusterSkill extends Skill {
       + 'cluster_anlegen (zugang = ein Knoten, name = CNO, knoten, ip) — ohne Speicher, AD+DNS ↔ cluster_entfernen (zugang, name; CNO bleibt deaktiviert im AD); '
       + 'zeuge_setzen (zugang = Knoten, freigabe = UNC \\\\fs01.ad.3033.at\\Witness$ oder ohne_zeuge true) — Ergebnis nennt den vorherigen Zustand (Rückweg: zeuge_setzen mit dem vorherigen Pfad bzw. ohne_zeuge). '
       + 'firewall_filter_setzen (zugang, regel = Name aus firewall_lesen, von = IPv4/Netze) — Gegenstellen einer BESTEHENDEN eingehenden Regel einschränken; Ergebnis nennt „vorher“ (Rückweg: firewall_filter_setzen mit von = vorher, „Any“ nur dafür). '
+      + 'firewall_regel_aktiv (zugang, regel = Name aus firewall_lesen, aktiv true|false) — bestehende Regel ein-/ausschalten (Core Networking ausgeschlossen); Ergebnis nennt „vorher“ (Rückweg: firewall_regel_aktiv mit aktiv = vorher). '
       + 'diagnose_entfernen (zugang, pfad = C:\\Windows\\Temp\\alfred-<name>) — von Alfred angelegten Diagnoseordner löschen (ohne Rückweg). '
       + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor (fremde Domäne, umbenannter Administrator). '
       + 'Reihenfolge Cluster: Features (Failover-Clustering, RSAT-Clustering-PowerShell) auf allen Knoten → Firewall-Regeln zwischen den Knoten → CNO vorab (vollzugriff alfred) → cluster_validieren → cluster_anlegen → Zeugen-Freigabe auf fs01 mit vollzugriff <NETBIOS>\\<CNO>$ → zeuge_setzen.',
@@ -75,7 +76,7 @@ export class WindowsClusterSkill extends Skill {
         berechtigte: { type: 'array', items: { type: 'string' } }, ou: { type: 'string' },
         konto: { type: 'string' }, spns: { type: 'array', items: { type: 'string' } },
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
-        regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' },
+        regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' }, aktiv: { type: 'boolean', description: 'firewall_regel_aktiv: Zielzustand' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
@@ -132,6 +133,12 @@ export class WindowsClusterSkill extends Skill {
           const p = fehler(pruefeFilter(input)) as { regel: string; von: string[] };
           const r = await this.lauf<{ regel: string; anzeige: string; vorher: string; nachher: string }>(zugang, firewallFilterSkript(p), 'Firewall-Filter setzen', 120_000);
           return { success: true, data: r, display: `✅ Firewall ${zugang}: ${r.anzeige} [${r.regel}] von ${r.vorher} → ${r.nachher} — Rückweg firewall_filter_setzen regel ${r.regel} von ${r.vorher}` };
+        }
+        case 'firewall_regel_aktiv': {
+          const p = fehler(pruefeAktiv(input)) as { regel: string; aktiv: boolean };
+          const r = await this.lauf<{ regel: string; anzeige: string; gruppe: string; vorher: boolean; nachher: boolean }>(zugang, firewallAktivSkript(p), 'Firewall-Regel schalten', 120_000);
+          const w = (b: boolean) => (b ? 'aktiv' : 'inaktiv');
+          return { success: true, data: r, display: `✅ Firewall ${zugang}: ${r.anzeige} [${r.regel}] ${w(r.vorher)} → ${w(r.nachher)} — Rückweg firewall_regel_aktiv regel ${r.regel} aktiv ${r.vorher}` };
         }
         case 'diagnose_entfernen': {
           const p = fehler(pruefeDiagnose(input.pfad)) as { pfad: string };

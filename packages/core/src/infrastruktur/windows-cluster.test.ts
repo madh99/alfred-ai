@@ -239,3 +239,15 @@ describe('v1806 Nachpflege-Bausteine', () => {
     expect(s.indexOf('$vorher =')).toBeLessThan(s.indexOf('Set-NetFirewallRule'));
   });
 });
+
+describe('v1807 firewall_regel_aktiv', () => {
+  it('schaltet bestehende Regeln mit vorher-Zustand, Core Networking ausgeschlossen', async () => {
+    const m = await import('./windows-cluster.js');
+    expect(m.pruefeAktiv({ regel: '{6A75FC77-3480-4DC0-A7A2-F9E1B7C51777}', aktiv: false })).toEqual({ regel: '{6A75FC77-3480-4DC0-A7A2-F9E1B7C51777}', aktiv: false });
+    expect(typeof m.pruefeAktiv({ regel: 'CoreNet-DHCP-In', aktiv: false })).toBe('string');
+    expect(typeof m.pruefeAktiv({ regel: 'X', aktiv: 'nein' })).toBe('string');
+    const s = m.firewallAktivSkript({ regel: 'X', aktiv: false });
+    expect(s).toContain("if ([string]$r.DisplayGroup -eq 'Core Networking')");
+    expect(s.indexOf('$vorher =')).toBeLessThan(s.indexOf('Set-NetFirewallRule'));
+  });
+});

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Firewall-Regeln mit Rückweg ein- und ausschalten (v1807)
+
+- `windows_cluster firewall_regel_aktiv` schaltet eine bestehende eingehende Regel ein oder aus und meldet den vorherigen Zustand, damit der Rückweg möglich ist. Regeln aus Core Networking (DHCP, Nachbarerkennung, ICMP-Fehlermeldungen) sind ausgeschlossen.
+
 ### Added — Windows-Cluster: lesende Erhebung und begrenzte Nacharbeiten (v1806)
 
 - `windows_cluster` hat drei neue lesende Aktionen, die auch außerhalb von Changes laufen:
