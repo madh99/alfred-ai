@@ -895,7 +895,9 @@ export function defenderAusnahmeSkript(a: { id: string; entfernen: boolean }): s
     ...kopf(a, false),
     "function Paare { $m = Get-MpPreference; $i = @($m.ThreatIDDefaultAction_Ids | Where-Object { $_ } | ForEach-Object { [string]$_ }); $x = @($m.ThreatIDDefaultAction_Actions | ForEach-Object { [string]$_ }); @(for ($k = 0; $k -lt $i.Count; $k++) { $i[$k] + '=' + $(if ($k -lt $x.Count) { $x[$k] } else { '' }) }) }",
     '$vorher = @(Paare)',
-    "if ($p.entfernen) { if ($vorher | Where-Object { $_ -like ($p.id + '=*') }) { Remove-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) } }",
+    // v1826 — Realfall 12.11. Aufräum-Change 0390ab31: Remove-MpPreference nur mit _Ids → Fehler 0x57 (ungültiger Parameter). Defender erwartet
+    // das Paar aus ID und gesetzter Aktion; die tatsächlich gesetzte Aktion wird aus dem Ist-Stand genommen.
+    "if ($p.entfernen) { $paar = @($vorher | Where-Object { $_ -like ($p.id + '=*') }); if ($paar.Count) { $akt = [int]($paar[0].Split('=')[1]); Remove-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) -ThreatIDDefaultAction_Actions $akt } }",
     "else { Add-MpPreference -ThreatIDDefaultAction_Ids ([long]$p.id) -ThreatIDDefaultAction_Actions 6 }",
     '$nachher = @(Paare)',
     "$soll = $(if ($p.entfernen) { -not ($nachher | Where-Object { $_ -like ($p.id + '=*') }) } else { [bool]($nachher | Where-Object { $_ -eq ($p.id + '=6') }) })",

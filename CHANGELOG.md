@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Defender-Allow entfernen (v1826)
+
+- `windows_cluster defender_fehlalarm_entfernen` scheiterte mit Fehler 0x57, weil Defender beim Entfernen einer Erkennungs-Aktion das Paar aus ID und Aktion erwartet. Die gesetzte Aktion wird jetzt aus dem Ist-Stand gelesen und mit übergeben.
+
 ### Added — Hängende Baustein-Prozesse beenden (v1825)
 
 - Neue Change-Aktion `windows_cluster haengende_bausteine_beenden`. Sie beendet nur PowerShell-Prozesse des eigenen Kontos, die aus einem Alfred-Baustein stammen und älter als die angegebene Zeit sind (mindestens 30 Minuten). Der eigene Prozess und seine Elternprozesse bleiben unberührt.
