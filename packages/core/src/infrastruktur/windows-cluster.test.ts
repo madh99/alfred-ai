@@ -319,3 +319,15 @@ describe('v1819 Defender-Diagnose', () => {
     expect(s).not.toMatch(/Set-MpPreference|Add-MpPreference|Remove-MpPreference/);
   });
 });
+
+describe('v1820 Defender-Diagnoseprotokoll', () => {
+  it('liest MPLog nur lesend und prüft das Muster', async () => {
+    const { defenderProtokollSkript, pruefeMuster } = await import('./windows-cluster.js');
+    const s = defenderProtokollSkript({});
+    expect(s).toContain("'MPLog-*.log'");
+    expect(s).toContain("'Open', 'Read', 'ReadWrite'");
+    expect(s).not.toMatch(/Set-Content|Remove-Item|Set-MpPreference|Add-MpPreference/);
+    expect(pruefeMuster('(?i)block')).toEqual({ muster: '(?i)block' });
+    expect(typeof pruefeMuster('(')).toBe('string');
+  });
+});

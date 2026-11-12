@@ -808,6 +808,33 @@ export function defenderStatusSkript(): string {
   ].join('\n');
 }
 
+/** v1820 — Defenders eigenes Diagnoseprotokoll (MPLog) lesen: dort stehen auch Blockaden ohne Ereignis 1116/1117.
+ *  Nur lesend (FileShare ReadWrite, Defender hält die Datei offen); letzte 4000 Zeilen der neuesten MPLog-Datei, nur Treffer. */
+export function defenderProtokollSkript(p: { muster?: string }): string {
+  return [
+    ...kopf(p, false),
+    "$d = Join-Path $env:ProgramData 'Microsoft\\Windows Defender\\Support'",
+    "$f = @(Get-ChildItem -LiteralPath $d -Filter 'MPLog-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)",
+    "if (-not $f.Count) { Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; datei = ''; zeilen = 0; treffer = @() }); return }",
+    "$fs = [System.IO.File]::Open($f[0].FullName, 'Open', 'Read', 'ReadWrite')",
+    "try { $sr = New-Object System.IO.StreamReader($fs, $true); $alle = $sr.ReadToEnd() -split \"`r?`n\" } finally { $fs.Dispose() }",
+    "$rest = @($alle | Select-Object -Last 4000)",
+    "$m = $(if ($p.muster) { [string]$p.muster } else { '(?i)block|threat|detect|denied|deny|\\bBM\\b|asr|cmdline|helper|powershell|certutil' })",
+    "$t = @($rest | Where-Object { $_ -match $m } | Select-Object -Last 60 | ForEach-Object { $_.Substring(0, [Math]::Min(300, $_.Length)) })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; datei = $f[0].Name; geaendert = $f[0].LastWriteTime.ToString('s'); zeilen = $alle.Count; treffer = $t })",
+  ].join('\n');
+}
+
+export interface DefenderProtokoll { rechner: string; datei: string; geaendert?: string; zeilen: number; treffer: string[] }
+
+export function pruefeMuster(v: unknown): string | { muster?: string } {
+  if (v === undefined || v === '') return {};
+  const m = String(v);
+  if (m.length > 120) return 'muster: höchstens 120 Zeichen (Regex)';
+  try { new RegExp(m.replace(/^\(\?i\)/, '')); } catch { return 'muster: kein gültiger regulärer Ausdruck'; }
+  return { muster: m };
+}
+
 export interface DefenderStatus { rechner: string; echtzeit: boolean; signaturen: string; ausnahmen: { id: string; aktion: string }[]; ereignisse: { zeit: string; id: number; name: string }[]; verlauf?: { zeit: string; id: number; text: string }[]; erkennungen?: { zeit: string; id: string; aktion: string; prozess: string; quelle: string }[] }
 
 export function pruefeFehlalarm(v: unknown): string | { id: string } {

@@ -9,7 +9,7 @@ import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
   pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript, pruefeAktiv, firewallAktivSkript,
-  defenderStatusSkript, type DefenderStatus, pruefeFehlalarm, defenderAusnahmeSkript, DEFENDER_FEHLALARME,
+  defenderStatusSkript, type DefenderStatus, defenderProtokollSkript, type DefenderProtokoll, pruefeMuster, pruefeFehlalarm, defenderAusnahmeSkript, DEFENDER_FEHLALARME,
   ereignisseSkript, type ClusterEreignisse, pruefeEreignisIds, stabilMessSkript, stabilitaetBewerten, type StabilMessung,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
@@ -27,7 +27,7 @@ export interface WindowsClusterDeps {
 }
 
 /** lesend, auch außerhalb eines Changes */
-export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status']);
+export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status', 'defender_protokoll']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
   'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen']);
@@ -37,7 +37,7 @@ const AM_DC = new Set(['gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbere
 const ALS_ALFRED = new Set(['cluster_validieren', 'cluster_anlegen', 'cluster_entfernen', 'zeuge_setzen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 /** v1814 — diese Aktionen auch für netzlose VMs über den Gastagenten (vmid + vm_name statt zugang) */
-const GAST_ERLAUBT = new Set(['status', 'platten_einrichten', 'systemplatte_erweitern', 'defender_status', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen']);
+const GAST_ERLAUBT = new Set(['status', 'platten_einrichten', 'systemplatte_erweitern', 'defender_status', 'defender_protokoll', 'defender_fehlalarm_zulassen', 'defender_fehlalarm_entfernen']);
 
 export class WindowsClusterSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -51,6 +51,7 @@ export class WindowsClusterSkill extends Skill {
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
       + 'ereignisse_status (lesend; zugang, event_ids Standard [1650], minuten optional) — Cluster-Ereignisse mit RecordId. '
       + 'stabilitaet_pruefen (lesend; zugaenge = alle Knoten z. B. [sql01, sql02], dauer_s Standard 900 (300–1800), intervall_s Standard 60, ag optional z. B. ag01, event_ids Standard [1650]) — beobachtet die volle Dauer: je Messung neue Ereignisse seit Beginn, Knoten Up, alle Ressourcen Online, lokal AG HEALTHY/CONNECTED und Datenbanken SYNCHRONIZED; Ergebnis „CLUSTER_STABLE“ nur ohne neues Ereignis und ohne Lücke, sonst „FAIL“ bzw. „UNKNOWN“ (Pflicht nach Firewall-/Netzänderungen an Clustern; Schritt-zeitlimitS ≥ dauer_s + 300). '
+      + 'defender_protokoll (lesend; zugang oder vmid + vm_name, muster optional = Regex) — Treffer aus Defenders Diagnoseprotokoll MPLog (letzte 4000 Zeilen; zeigt auch Blockaden ohne Ereignis). '
       + 'defender_status (lesend; zugang oder vmid + vm_name) — Echtzeitschutz, Signaturstand, gesetzte Erkennungs-Ausnahmen, Erkennungen 1116/1117 der letzten 7 Tage, Defender-Protokoll der letzten 2 Tage (Verhalten, ASR, Blockaden, Konfiguration) und Defenders Bedrohungsliste. '
       + `defender_fehlalarm_zulassen (zugang oder vmid + vm_name, threat_id NUR ${Object.keys(DEFENDER_FEHLALARME).join('/')} = Fehlalarm auf Alfreds Baustein-Befehlszeilen, Owner-Entscheidung 12.11.) — Aktion Allow für genau diese Erkennung (wird weiter protokolliert), Echtzeitschutz bleibt an; Rückweg defender_fehlalarm_entfernen (gleiche Parameter). `
       + 'firewall_lesen (lesend; zugang, nur_any optional true) — alle aktiven eingehenden Erlauben-Regeln mit regel (Name/InstanceID), Anzeige, Gruppe, Protokoll, lokalen Ports und Gegenstellen (von). '
@@ -143,6 +144,11 @@ export class WindowsClusterSkill extends Skill {
           return { success: true, data: r, display: `${r.rechner}: ${r.anzahl} Ereignisse ${ids.join(',')} in ${min} min (bis ${r.jetzt})${r.ereignisse.length ? `:\n${r.ereignisse.slice(0, 20).map(e => `${e.zeit} ${e.id} ${e.text}`).join('\n')}` : ''}` };
         }
         case 'stabilitaet_pruefen': return await this.stabilitaet(input);
+        case 'defender_protokoll': {
+          const m = fehler(pruefeMuster(input.muster)) as { muster?: string };
+          const r = await this.lauf<DefenderProtokoll>(zugang, defenderProtokollSkript(m), 'Defender-Diagnoseprotokoll', 120_000);
+          return { success: true, data: r, display: `${r.rechner}: ${r.datei || 'kein MPLog'}${r.geaendert ? ` (geändert ${r.geaendert}, ${r.zeilen} Zeilen)` : ''}; Treffer ${r.treffer.length}:\n${r.treffer.join('\n') || '—'}` };
+        }
         case 'defender_status': {
           const r = await this.lauf<DefenderStatus>(zugang, defenderStatusSkript(), 'Defender-Status', 120_000);
           return { success: true, data: r, display: `${r.rechner}: Echtzeitschutz ${r.echtzeit ? 'an' : 'AUS'}, Signaturen ${r.signaturen}; Ausnahmen ${r.ausnahmen.length ? r.ausnahmen.map(x => `${x.id}=${x.aktion}`).join(', ') : 'keine'}; Erkennungen 7 Tage: ${r.ereignisse.length ? r.ereignisse.map(x => `${x.zeit} ${x.id} ${x.name}`).join(' | ') : 'keine'}`

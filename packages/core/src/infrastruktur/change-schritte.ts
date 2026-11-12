@@ -195,7 +195,7 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   // I8c — windows_ad: nur status liest; alle Bausteine ändern
   if (skill === 'windows_ad') return aktion === 'status' || aktion === 'dns_aufloesen' ? 'lesen' : 'aendern';
   // I8d — windows_cluster: status und gmsa_pruefen lesen; alle Bausteine ändern
-  if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status'].includes(aktion) ? 'lesen' : 'aendern';
+  if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status', 'defender_protokoll'].includes(aktion) ? 'lesen' : 'aendern';
   // v1810 — windows_pki: status liest; alle späteren Bausteine ändern
   if (skill === 'windows_pki') return ['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status'].includes(aktion) ? 'lesen' : 'aendern';
   if (skill === 'sql_server') return aktion === 'status' || aktion === 'pruefdaten_lesen' || aktion === 'listener_testen' ? 'lesen' : 'aendern';

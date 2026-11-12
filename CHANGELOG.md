@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Defender-Diagnoseprotokoll (v1820)
+
+- Neue lesende Aktion `windows_cluster defender_protokoll` (auch für netzlose VMs über den Gastagenten). Sie zeigt Treffer aus Defenders Diagnoseprotokoll MPLog, in dem auch Blockaden ohne Ereignis 1116/1117 stehen. Ein eigenes Suchmuster ist optional.
+
 ### Added — Defender-Diagnose (v1819)
 
 - `windows_cluster defender_status` zeigt zusätzlich das Defender-Protokoll der letzten zwei Tage (Verhaltens-, ASR-, Blockier- und Konfigurationsereignisse) und Defenders Bedrohungsliste. Damit lässt sich belegen, ob Defender einen vom Gastagenten gestarteten Prozess blockiert hat. Die Abfrage ist nur lesend.
