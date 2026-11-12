@@ -719,3 +719,68 @@ export function firewallAktivSkript(p: { regel: string; aktiv: boolean }): strin
   ].join('\n');
 }
 
+// ── v1809 Lehre aus H dd0c0b10 (12.11.): Firewall-Changes an Clustern brauchen ein Stabilitätsfenster mit Ereignis 1650 auf BEIDEN Knoten ──
+
+/** Cluster-Ereignisse (Microsoft-Windows-FailoverClustering/Operational) mit RecordId, damit ein späterer Aufruf nur Neue zählt */
+export function ereignisseSkript(p: { ids: number[]; seit_record?: number; minuten?: number }): string {
+  return [
+    ...kopf(p, false),
+    "$log = 'Microsoft-Windows-FailoverClustering/Operational'",
+    '$f = @{ LogName = $log; Id = @($p.ids | ForEach-Object { [int]$_ }) }',
+    'if ($p.minuten) { $f.StartTime = (Get-Date).AddMinutes(-[int]$p.minuten) }',
+    '$e = @(Get-WinEvent -FilterHashtable $f -MaxEvents 500 -ErrorAction SilentlyContinue)',
+    'if ($p.seit_record) { $e = @($e | Where-Object { $_.RecordId -gt [long]$p.seit_record }) }',
+    "$letzte = @(Get-WinEvent -LogName $log -MaxEvents 1 -ErrorAction SilentlyContinue)",
+    "$d = @($e | Select-Object -First 50 | ForEach-Object { [ordered]@{ record = [long]$_.RecordId; id = [int]$_.Id; zeit = $_.TimeCreated.ToString('s'); text = (($_.Message -replace '\\s+', ' ').Substring(0, [Math]::Min(200, ($_.Message -replace '\\s+', ' ').Length))) } })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; jetzt = (Get-Date).ToString('s'); anzahl = $e.Count; hoechsterRecord = $(if ($letzte.Count) { [long]$letzte[0].RecordId } else { 0 }); ereignisse = $d })",
+  ].join('\n');
+}
+
+export interface ClusterEreignisse { rechner: string; jetzt: string; anzahl: number; hoechsterRecord: number; ereignisse: { record: number; id: number; zeit: string; text: string }[] }
+
+export function pruefeEreignisIds(v: unknown): number[] | string {
+  const l = (Array.isArray(v) ? v : v === undefined ? [1650] : String(v).split(',')).map(x => Number(String(x).trim()));
+  return l.length && l.length <= 10 && l.every(x => Number.isInteger(x) && x > 0 && x < 65536) ? l : 'event_ids: 1–10 Ereignis-IDs, z. B. [1650]';
+}
+
+/**
+ * Bewertung eines Stabilitätsfensters aus den Einzelmessungen (rein, testbar): stabil nur, wenn die beobachtete Dauer erreicht ist,
+ * jede Messung jedes Knotens gelang, keine neuen Ereignisse kamen und Cluster/AG/Zeuge in JEDER Messung gesund waren.
+ */
+export interface StabilMessung { zeit: string; knoten: string; ok: boolean; neu: number; fehler?: string; gesund?: boolean; detail?: string }
+export function stabilitaetBewerten(m: StabilMessung[], knoten: string[], sollSekunden: number, istSekunden: number): { ergebnis: 'CLUSTER_STABLE' | 'FAIL' | 'UNKNOWN'; gruende: string[] } {
+  const g: string[] = [];
+  if (istSekunden < sollSekunden) g.push(`beobachtet ${Math.round(istSekunden)} s < ${sollSekunden} s`);
+  for (const k of knoten) {
+    const mk = m.filter(x => x.knoten === k);
+    if (!mk.length) g.push(`${k}: keine Messung`);
+    if (mk.some(x => !x.ok)) g.push(`${k}: ${mk.filter(x => !x.ok).length} Messung(en) gescheitert (${mk.find(x => !x.ok)?.fehler ?? '?'})`);
+  }
+  const neu = m.reduce((s, x) => s + (x.ok ? x.neu : 0), 0);
+  const krank = m.filter(x => x.ok && x.gesund === false);
+  if (neu > 0) return { ergebnis: 'FAIL', gruende: [...g, `${neu} neue Ereignisse (${[...new Set(m.filter(x => x.neu).map(x => x.knoten))].join(', ')})`] };
+  if (krank.length) return { ergebnis: 'FAIL', gruende: [...g, `nicht gesund: ${krank.map(x => `${x.zeit} ${x.knoten} ${x.detail ?? ''}`.trim()).slice(0, 3).join('; ')}`] };
+  return g.length ? { ergebnis: 'UNKNOWN', gruende: g } : { ergebnis: 'CLUSTER_STABLE', gruende: [] };
+}
+
+/** Eine Messung des Stabilitätsfensters auf einem Knoten: neue Ereignisse seit dem Ausgangs-Record, Knoten/Ressourcen, optional lokaler AG-Zustand */
+export function stabilMessSkript(p: { ids: number[]; seit_record: number; ag?: string }): string {
+  return [
+    ...kopf(p, false),
+    'Import-Module FailoverClusters',
+    "$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-FailoverClustering/Operational'; Id = @($p.ids | ForEach-Object { [int]$_ }) } -MaxEvents 200 -ErrorAction SilentlyContinue | Where-Object { $_.RecordId -gt [long]$p.seit_record })",
+    "$kn = @(Get-ClusterNode | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State })",
+    "$res = @(Get-ClusterResource | Where-Object { [string]$_.State -ne 'Online' } | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State })",
+    "$r = [ordered]@{ rechner = $env:COMPUTERNAME; neu = $e.Count; knoten = $kn; nichtOnline = $res; gesund = (-not ($kn | Where-Object { $_ -notlike '* Up' }) -and -not $res.Count) }",
+    'if ($p.ag) {',
+    "  $c = New-Object System.Data.SqlClient.SqlConnection 'Server=lpc:.;Integrated Security=SSPI;Pooling=false;Connect Timeout=10'; $c.Open()",
+    "  $m = $c.CreateCommand(); $m.CommandText = \"SELECT ar.replica_server_name + ' ' + rs.role_desc + ' ' + rs.synchronization_health_desc + ' ' + rs.connected_state_desc FROM sys.dm_hadr_availability_replica_states rs JOIN sys.availability_replicas ar ON ar.replica_id = rs.replica_id JOIN sys.availability_groups ag ON ag.group_id = rs.group_id WHERE ag.name = @ag AND rs.is_local = 1; SELECT DB_NAME(database_id) + ' ' + synchronization_state_desc + ' ' + synchronization_health_desc FROM sys.dm_hadr_database_replica_states WHERE is_local = 1\"",
+    "  [void]$m.Parameters.AddWithValue('@ag', [string]$p.ag)",
+    '  $rd = $m.ExecuteReader(); $rep = @(); while ($rd.Read()) { $rep += [string]$rd[0] }; [void]$rd.NextResult(); $dbs = @(); while ($rd.Read()) { $dbs += [string]$rd[0] }; $c.Close()',
+    "  $r.ag = $rep; $r.datenbanken = $dbs",
+    "  if (-not $rep.Count -or ($rep | Where-Object { $_ -notmatch ' HEALTHY CONNECTED$' }) -or ($dbs | Where-Object { $_ -notmatch ' SYNCHRONIZED HEALTHY$' })) { $r.gesund = $false }",
+    '}',
+    'Ergebnis $r',
+  ].join('\n');
+}
+

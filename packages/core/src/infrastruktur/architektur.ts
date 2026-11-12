@@ -64,7 +64,9 @@ export interface ArchitekturGruppe {
   vmName?: string; knoten?: string; vcpu?: number; ramGb?: number; diskGb?: number; speicher?: string;
   distribution?: string; distributionBegruendung?: string;
   netz?: string;
-  verwaltung?: 'fernzugriff' | 'satellit';
+  verwaltung?: 'fernzugriff' | 'satellit' | 'gastagent';
+  /** v1809 — Offline-Root-CA (Vorhaben 3bb8c058): VM ohne jede Netzwerkkarte, verwaltet nur über den QEMU-Gastagenten; kein netz, keine Firewall-Zone */
+  netzlos?: boolean;
   /** I8c — neuer Dienst ohne Einheiten im Bestand (z. B. Domänencontroller); nur mit ziel vm/lxc */
   neubau?: boolean;
 }
@@ -266,6 +268,11 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage, bisher?: B
       if (vcpu !== undefined) gr.vcpu = vcpu; if (ram !== undefined) gr.ramGb = ram; if (disk !== undefined) gr.diskGb = disk;
       if (txt(x.speicher)) gr.speicher = txt(x.speicher);
       gr.verwaltung = txt(x.verwaltung) === 'satellit' ? 'satellit' : 'fernzugriff';
+      if (x.netzlos === true || x.netzlos === 'true') {
+        gr.netzlos = true; gr.verwaltung = 'gastagent';
+        if (gr.ziel !== 'vm') f.push(`Gruppe „${n}“: netzlos nur mit ziel vm (Gastagent gibt es nur bei QEMU-VMs)`);
+        if (gr.netz) f.push(`Gruppe „${n}“: netzlos und netz „${gr.netz}“ schließen sich aus — netzlose VMs haben keine Netzwerkkarte`);
+      }
       if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(gr.vmName)) f.push(`Gruppe „${n}“: vmName „${gr.vmName}“ ungültig (Kleinbuchstaben, Ziffern, Bindestrich)`);
       else if (vmNamen.has(gr.vmName) && !bisher?.vmNamen.includes(gr.vmName.toLowerCase())) f.push(`Gruppe „${n}“: VM-Name „${gr.vmName}“ ist bereits vergeben`);
       else if (a.gruppen.some(y => y.vmName === gr.vmName)) f.push(`Gruppe „${n}“: VM-Name „${gr.vmName}“ doppelt`);
@@ -277,8 +284,8 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage, bisher?: B
       if (!(DISTRIBUTIONEN as readonly string[]).includes(gr.distribution)) f.push(`Gruppe „${n}“: distribution muss eine von ${DISTRIBUTIONEN.join(', ')} sein`);
       else if (gr.ziel === 'lxc' && gr.distribution.startsWith('windows')) f.push(`Gruppe „${n}“: Windows geht nicht als LXC`);
       if (!gr.distributionBegruendung) f.push(`Gruppe „${n}“: distributionBegruendung fehlt (warum diese Distribution)`);
-      if (!gr.netz) f.push(`Gruppe „${n}“: netz fehlt (Netz/VLAN der neuen ${gr.ziel.toUpperCase()})`);
-      else if (!netzBekannt(gr.netz)) f.push(`Gruppe „${n}“: Netz „${gr.netz}“ ist weder vorhanden noch unter netze geplant`);
+      if (!gr.netz && !gr.netzlos) f.push(`Gruppe „${n}“: netz fehlt (Netz/VLAN der neuen ${gr.ziel.toUpperCase()}; ohne jede Netzwerkkarte: netzlos: true)`);
+      else if (gr.netz && !netzBekannt(gr.netz)) f.push(`Gruppe „${n}“: Netz „${gr.netz}“ ist weder vorhanden noch unter netze geplant`);
       if (gr.speicher) {
         const s = speicherNamen.get(gr.speicher.toLowerCase());
         if (!s) f.push(`Gruppe „${n}“: Speicher „${gr.speicher}“ unbekannt oder nicht aktiv (${g.speicher.map(y => y.name).join(', ') || 'keine bekannt'})`);
@@ -327,7 +334,7 @@ export function pruefeArchitektur(roh: unknown, g: PlanungsGrundlage, bisher?: B
     const netz = a.netze.find(n => n.name.toLowerCase() === k) ?? (vorhandeneNetze.get(k) ? { name: vorhandeneNetze.get(k)!.name } : undefined);
     if (netz) return netz.name;
     const gr = a.gruppen.find(y => y.name.toLowerCase() === k);
-    if (gr) return gr.name;
+    if (gr) return gr.netzlos ? undefined : gr.name;
     return (ZONEN_WORTE as readonly string[]).includes(k) ? k : undefined;
   };
   for (const [i, w0] of liste(r.firewall).entries()) {
@@ -400,12 +407,12 @@ export function architekturDokument(v: { titel: string; ziel: string; id: string
   for (const x of a.gruppen) {
     const ziel = x.ziel === 'vm' || x.ziel === 'lxc' ? `${x.ziel.toUpperCase()} ${x.vmName} auf ${x.knoten}` : x.ziel === 'bleibt' ? 'bleibt' : 'stilllegen';
     const groesse = x.vcpu ? `${x.vcpu} vCPU, ${x.ramGb} GB RAM, ${x.diskGb} GB${x.speicher ? ` (${x.speicher})` : ''}` : '—';
-    z.push(`| ${zelle(x.name)} | ${ziel} | ${groesse} | ${x.distribution ?? '—'} | ${x.netz ?? '—'} | ${x.einheiten.join(', ')} |`);
+    z.push(`| ${zelle(x.name)} | ${ziel} | ${groesse} | ${x.distribution ?? '—'} | ${x.netzlos ? 'keins (netzlos)' : x.netz ?? '—'} | ${x.einheiten.join(', ')} |`);
   }
   z.push('', '## 3. Gruppen im Einzelnen');
   for (const x of a.gruppen) {
     z.push('', `### ${x.name}`, '', `**Zweck:** ${x.zweck}`, '', `**Begründung:** ${x.begruendung}`);
-    if (x.distribution) z.push('', `**Distribution ${x.distribution}:** ${x.distributionBegruendung}`, '', `**Verwaltung:** ${x.verwaltung === 'satellit' ? 'Alfred-Satellit' : x.distribution.startsWith('windows') ? 'Fernzugriff (Konto alfred, OpenSSH mit PowerShell, Schlüssel aus der Vorlagen-Fabrik)' : 'Fernzugriff (Benutzer alfred, Schlüssel per Cloud-Init)'}`);
+    if (x.distribution) z.push('', `**Distribution ${x.distribution}:** ${x.distributionBegruendung}`, '', `**Verwaltung:** ${x.verwaltung === 'gastagent' ? 'nur über den QEMU-Gastagenten von Proxmox (keine Netzwerkkarte, Dateien hashgeprüft über den Agenten)' : x.verwaltung === 'satellit' ? 'Alfred-Satellit' : x.distribution.startsWith('windows') ? 'Fernzugriff (Konto alfred, OpenSSH mit PowerShell, Schlüssel aus der Vorlagen-Fabrik)' : 'Fernzugriff (Benutzer alfred, Schlüssel per Cloud-Init)'}`);
     const es = x.einheiten.map(e => einheit.get(e)!).filter(Boolean);
     z.push('', '| Einheit | Container | RAM gemessen | Daten | Ports | Proxy-Domains |', '|---|---|---|---|---|---|');
     for (const e of es) z.push(`| ${e.name}${e.art === 'host' ? ' (Host)' : ''} | ${e.art === 'host' ? '—' : e.container.map(c => `${c.name}${c.gesundheit === 'unhealthy' ? ' ⚠️' : ''}`).join(', ')} | ${mb(e.ramBytes)} | ${e.datenBytes ? gb(e.datenBytes) : '—'} | ${e.ports.slice(0, 10).join(', ') || '—'} | ${e.proxy.join(', ') || '—'} |`);

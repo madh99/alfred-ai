@@ -273,3 +273,26 @@ describe('v1808 Firewall-Bausteine gehärtet', () => {
     expect(m.firewallAktivSkript({ regel: 'X', aktiv: false })).toContain("[string]$r.Name -like 'CoreNet-*'");
   });
 });
+
+// v1809 — Lehre aus H dd0c0b10: Stabilitätsfenster mit Ereignis 1650 auf beiden Knoten
+describe('v1809 Stabilitätsfenster', () => {
+  it('bewertet nur volle, lückenlose, ereignisfreie und gesunde Beobachtung als stabil', async () => {
+    const { stabilitaetBewerten } = await import('./windows-cluster.js');
+    const ok = (knoten: string, neu = 0, gesund = true) => ({ zeit: 't', knoten, ok: true, neu, gesund });
+    expect(stabilitaetBewerten([ok('sql01'), ok('sql02')], ['sql01', 'sql02'], 900, 905).ergebnis).toBe('CLUSTER_STABLE');
+    expect(stabilitaetBewerten([ok('sql01'), ok('sql02')], ['sql01', 'sql02'], 900, 600).ergebnis).toBe('UNKNOWN');
+    expect(stabilitaetBewerten([ok('sql01')], ['sql01', 'sql02'], 900, 905).ergebnis).toBe('UNKNOWN');
+    expect(stabilitaetBewerten([ok('sql01'), { zeit: 't', knoten: 'sql02', ok: false, neu: 0, fehler: 'ssh' }], ['sql01', 'sql02'], 900, 905).ergebnis).toBe('UNKNOWN');
+    expect(stabilitaetBewerten([ok('sql01'), ok('sql02', 1)], ['sql01', 'sql02'], 900, 120).ergebnis).toBe('FAIL');
+    expect(stabilitaetBewerten([ok('sql01'), ok('sql02', 0, false)], ['sql01', 'sql02'], 900, 905).ergebnis).toBe('FAIL');
+  });
+  it('Messskript zählt nur Records nach dem Ausgangsstand und prüft AG lokal', async () => {
+    const { stabilMessSkript, ereignisseSkript, pruefeEreignisIds } = await import('./windows-cluster.js');
+    const s = stabilMessSkript({ ids: [1650], seit_record: 42, ag: 'ag01' });
+    expect(s).toContain('$_.RecordId -gt [long]$p.seit_record');
+    expect(s).toContain("AddWithValue('@ag', [string]$p.ag)");
+    expect(ereignisseSkript({ ids: [1650], minuten: 5 })).toContain('hoechsterRecord');
+    expect(pruefeEreignisIds(undefined)).toEqual([1650]);
+    expect(typeof pruefeEreignisIds(['x'])).toBe('string');
+  });
+});

@@ -9,6 +9,7 @@ import { kodiert, adErgebnis, clixmlFehler, KONTO_FREI } from './windows-ad.js';
 import {
   firewallLesenSkript, firewallLesenText, type FirewallLesen, pruefeSamKonto, spnLesenSkript, pruefePfad, verzeichnisLesenSkript, verzeichnisText,
   pruefeDiagnose, diagnoseEntfernenSkript, pruefeFilter, firewallFilterSkript, pruefeAktiv, firewallAktivSkript,
+  ereignisseSkript, type ClusterEreignisse, pruefeEreignisIds, stabilMessSkript, stabilitaetBewerten, type StabilMessung,
   clusterStatusSkript, clusterStatusText, gmsaPruefenSkript, pruefePlatten, plattenSkript, pruefeFeatures, featuresSkript, pruefeFirewall, firewallSkript,
   firewallEntfernenSkript, pruefeFreigabe, freigabeSkript, freigabeEntfernenSkript, pruefeGmsa, gmsaSkript, gmsaEntfernenSkript, pruefeComputerobjekt,
   computerobjektSkript, computerobjektEntfernenSkript, pruefeSpn, spnSkript, pruefeKnoten, validierenSkript, pruefeCluster, clusterAnlegenSkript,
@@ -23,7 +24,7 @@ export interface WindowsClusterDeps {
 }
 
 /** lesend, auch außerhalb eines Changes */
-export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen']);
+export const CLUSTER_LESEND = new Set(['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen']);
 const NUR_IM_CHANGE = new Set(['systemplatte_erweitern', 'platten_einrichten', 'features_installieren', 'firewall_regel', 'firewall_regel_entfernen', 'freigabe_anlegen', 'freigabe_entfernen',
   'gmsa_anlegen', 'gmsa_entfernen', 'computerobjekt_vorbereiten', 'computerobjekt_entfernen', 'spn_setzen', 'spn_entfernen', 'cluster_validieren', 'cluster_anlegen',
   'cluster_entfernen', 'zeuge_setzen', 'firewall_filter_setzen', 'firewall_regel_aktiv', 'diagnose_entfernen']);
@@ -42,6 +43,8 @@ export class WindowsClusterSkill extends Skill {
       + 'status (lesend, auch außerhalb von Changes): Features, Volumes mit Blockgröße, SMB-Freigaben, Cluster mit Knoten, Quorum/Zeuge und Ressourcen — als Prüfung z. B. erwartet „Cluster sqlcl01“, „sql02 Up“, „FileShareWitness“, „L: SQL-Log 20 GB (64 KB)“, „SQLBackup$=S:\\SQLBackup“. '
       + 'verbindung_pruefen (lesend, auch außerhalb von Changes; zugang, ziel = Hostname/IPv4, port Standard 443, url optional = https-Adresse auf diesem ziel für eine HEAD-Anfrage) — DNS, TCP (8 s) und HTTPS vom Windows-Rechner aus; Ergebnis „Verbindung <ziel>:<port> ok (…)“ bzw. „NICHT erreichbar: …“ — als Prüfung eines warten-Schritts mit erwartet „ok“, z. B. nach dem Öffnen einer Firewall-Freigabe (das Gateway übernimmt neue Regeln mit Verzögerung). '
       + 'gmsa_pruefen (lesend; zugang = Mitglied, name) — Test-ADServiceAccount als Computerkonto, Ergebnis „gMSA <name> nutzbar“. '
+      + 'ereignisse_status (lesend; zugang, event_ids Standard [1650], minuten optional) — Cluster-Ereignisse mit RecordId. '
+      + 'stabilitaet_pruefen (lesend; zugaenge = alle Knoten z. B. [sql01, sql02], dauer_s Standard 900 (300–1800), intervall_s Standard 60, ag optional z. B. ag01, event_ids Standard [1650]) — beobachtet die volle Dauer: je Messung neue Ereignisse seit Beginn, Knoten Up, alle Ressourcen Online, lokal AG HEALTHY/CONNECTED und Datenbanken SYNCHRONIZED; Ergebnis „CLUSTER_STABLE“ nur ohne neues Ereignis und ohne Lücke, sonst „FAIL“ bzw. „UNKNOWN“ (Pflicht nach Firewall-/Netzänderungen an Clustern; Schritt-zeitlimitS ≥ dauer_s + 300). '
       + 'firewall_lesen (lesend; zugang, nur_any optional true) — alle aktiven eingehenden Erlauben-Regeln mit regel (Name/InstanceID), Anzeige, Gruppe, Protokoll, lokalen Ports und Gegenstellen (von). '
       + 'spn_lesen (lesend; zugang = Mitglied oder DC, konto = sAMAccountName z. B. gmsa-sqleng$) — servicePrincipalName des Kontos (als Computerkonto gelesen). '
       + 'verzeichnis_lesen (lesend; zugang, pfad = lokaler Pfad z. B. S:\\SQLBackup) — Dateien rekursiv mit Größe/Zeit (neueste 500) und Summe. '
@@ -76,7 +79,7 @@ export class WindowsClusterSkill extends Skill {
         berechtigte: { type: 'array', items: { type: 'string' } }, ou: { type: 'string' },
         konto: { type: 'string' }, spns: { type: 'array', items: { type: 'string' } },
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
-        regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' }, aktiv: { type: 'boolean', description: 'firewall_regel_aktiv: Zielzustand' },
+        regel: { type: 'string', description: 'firewall_filter_setzen: Regelname (Name/InstanceID aus firewall_lesen)' }, nur_any: { type: 'boolean' }, zugaenge: { type: 'array', items: { type: 'string' } }, event_ids: { type: 'array', items: { type: 'number' } }, minuten: { type: 'number' }, dauer_s: { type: 'number' }, intervall_s: { type: 'number' }, ag: { type: 'string' }, aktiv: { type: 'boolean', description: 'firewall_regel_aktiv: Zielzustand' },
         freigabe: { type: 'string' }, ohne_zeuge: { type: 'boolean' }, ziel: { type: 'string' }, url: { type: 'string' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort (DC: Domänen-Administrator, Cluster: Domänenkonto alfred)' },
         ausfuehrungskonto: { type: 'string', description: 'optional: Ausführungskonto „name“ oder „NETBIOS\\name“ (Standard am DC Administrator, für Cluster alfred) — z. B. fremde Domäne' },
@@ -114,6 +117,14 @@ export class WindowsClusterSkill extends Skill {
           const r = await this.lauf<{ name: string; nutzbar: boolean }>(zugang, gmsaPruefenSkript({ name: g.name }), 'gMSA prüfen', 240_000);
           return { success: true, data: r, display: r.nutzbar ? `gMSA ${r.name} nutzbar auf ${zugang}` : `gMSA ${r.name} auf ${zugang} NICHT nutzbar (Kennwort nicht abrufbar)` };
         }
+        case 'ereignisse_status': {
+          const ids = fehler(pruefeEreignisIds(input.event_ids)) as number[];
+          const min = input.minuten === undefined ? 60 : Number(input.minuten);
+          if (!Number.isInteger(min) || min < 1 || min > 10080) throw new Error('minuten: 1–10080');
+          const r = await this.lauf<ClusterEreignisse>(zugang, ereignisseSkript({ ids, minuten: min }), 'Cluster-Ereignisse', 120_000);
+          return { success: true, data: r, display: `${r.rechner}: ${r.anzahl} Ereignisse ${ids.join(',')} in ${min} min (bis ${r.jetzt})${r.ereignisse.length ? `:\n${r.ereignisse.slice(0, 20).map(e => `${e.zeit} ${e.id} ${e.text}`).join('\n')}` : ''}` };
+        }
+        case 'stabilitaet_pruefen': return await this.stabilitaet(input);
         case 'firewall_lesen': {
           const nurAny = input.nur_any === true;
           const r = await this.lauf<FirewallLesen>(zugang, firewallLesenSkript(nurAny ? { nur_any: true } : {}), 'Firewall lesen', 180_000);
@@ -238,6 +249,46 @@ export class WindowsClusterSkill extends Skill {
       }
     } catch (err) { return { success: false, error: (err as Error).message.slice(0, 900) }; }
     return { success: false, error: 'Unbekannte Aktion' };
+  }
+
+  /** v1809 — Stabilitätsfenster nach Firewall-/Netzänderungen (Lehre H dd0c0b10): volle Dauer beobachten, jede Lücke ist „UNKNOWN“ */
+  private async stabilitaet(input: Record<string, unknown>): Promise<SkillResult> {
+    const zugaenge = (Array.isArray(input.zugaenge) ? input.zugaenge.map(String) : String(input.zugaenge ?? '').split(',')).map(z => z.trim()).filter(Boolean);
+    if (zugaenge.length < 1 || zugaenge.length > 4 || zugaenge.some(z => !ZUGANG.test(z))) return { success: false, error: 'zugaenge: 1–4 Knoten-Fernzugänge, z. B. [sql01, sql02]' };
+    const ids = pruefeEreignisIds(input.event_ids); if (typeof ids === 'string') return { success: false, error: ids };
+    const dauer = input.dauer_s === undefined ? 900 : Number(input.dauer_s);
+    const takt = input.intervall_s === undefined ? 60 : Number(input.intervall_s);
+    if (!Number.isInteger(dauer) || dauer < 300 || dauer > 1800) return { success: false, error: 'dauer_s: 300–1800 (Standard 900)' };
+    if (!Number.isInteger(takt) || takt < 20 || takt > 300) return { success: false, error: 'intervall_s: 20–300 (Standard 60)' };
+    const ag = input.ag === undefined ? undefined : String(input.ag).trim();
+    if (ag !== undefined && !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(ag)) return { success: false, error: 'ag: Name der Verfügbarkeitsgruppe' };
+    const schlafe = this.d.schlafe ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+    // Ausgangsstand je Knoten: höchster Record — nur Ereignisse danach zählen als neu
+    const basis = new Map<string, number>();
+    for (const z of zugaenge) {
+      const r = await this.lauf<ClusterEreignisse>(z, ereignisseSkript({ ids, minuten: 1 }), 'Cluster-Ereignisse (Beginn)', 120_000);
+      basis.set(z, r.hoechsterRecord);
+    }
+    const start = Date.now(); const beginn = new Date(start).toISOString();
+    const m: StabilMessung[] = [];
+    for (;;) {
+      for (const z of zugaenge) {
+        const zeit = new Date().toISOString();
+        try {
+          const r = await this.lauf<{ neu: number; gesund: boolean; knoten: string[]; nichtOnline: string[]; ag?: string[]; datenbanken?: string[] }>(z, stabilMessSkript({ ids, seit_record: basis.get(z)!, ...(ag ? { ag } : {}) }), 'Stabilität messen', 120_000);
+          m.push({ zeit, knoten: z, ok: true, neu: r.neu, gesund: r.gesund, detail: [r.knoten.join(', '), r.nichtOnline.length ? `nicht Online: ${r.nichtOnline.join(', ')}` : '', r.ag?.join(', ') ?? '', r.datenbanken?.join(', ') ?? ''].filter(Boolean).join('; ') });
+        } catch (err) { m.push({ zeit, knoten: z, ok: false, neu: 0, fehler: (err as Error).message.slice(0, 200) }); }
+      }
+      const ist = (Date.now() - start) / 1000;
+      if (m.some(x => x.ok && x.neu > 0) || ist >= dauer) break;
+      await schlafe(takt * 1000);
+    }
+    const ist = (Date.now() - start) / 1000;
+    const b = stabilitaetBewerten(m, zugaenge, dauer, ist);
+    const letzte = zugaenge.map(z => [...m].reverse().find(x => x.knoten === z && x.ok)).filter((x): x is StabilMessung => !!x);
+    const data = { ergebnis: b.ergebnis, beginn, ende: new Date().toISOString(), beobachtetS: Math.round(ist), sollS: dauer, messungen: m.length, gruende: b.gruende, letzte, verlauf: m.slice(-40) };
+    const text = `${b.ergebnis === 'CLUSTER_STABLE' ? `CLUSTER_STABLE ${Math.round(ist)} s` : `${b.ergebnis} nach ${Math.round(ist)} s`} (${zugaenge.join(', ')}, ${m.length} Messungen, Ereignisse ${ids.join(',')} neu: ${m.reduce((s, x) => s + x.neu, 0)})${b.gruende.length ? ` — ${b.gruende.join('; ')}` : ''}${letzte.length ? `\nzuletzt: ${letzte.map(x => `${x.knoten}: ${x.detail}`).join(' | ')}` : ''}`;
+    return b.ergebnis === 'CLUSTER_STABLE' ? { success: true, data, display: text } : { success: false, data, error: text };
   }
 
   private async lauf<T>(zugang: string, skript: string, zweck: string, timeoutMs: number, eingabe?: Record<string, string>): Promise<T> {

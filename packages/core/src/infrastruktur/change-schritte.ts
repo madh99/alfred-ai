@@ -193,7 +193,7 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   // I8c — windows_ad: nur status liest; alle Bausteine ändern
   if (skill === 'windows_ad') return aktion === 'status' || aktion === 'dns_aufloesen' ? 'lesen' : 'aendern';
   // I8d — windows_cluster: status und gmsa_pruefen lesen; alle Bausteine ändern
-  if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen'].includes(aktion) ? 'lesen' : 'aendern';
+  if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen'].includes(aktion) ? 'lesen' : 'aendern';
   if (skill === 'sql_server') return aktion === 'status' || aktion === 'pruefdaten_lesen' || aktion === 'listener_testen' ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';

@@ -239,3 +239,26 @@ describe('I8c Neubau-Gruppen und Windows', () => {
     expect(pruefeArchitektur(d, grundlage()).fehler.join('\n')).toContain('Windows geht nicht als LXC');
   });
 });
+
+// v1809 — Offline-Root-CA (Vorhaben 3bb8c058): Validator verlangte ein Netz für jede VM
+describe('v1809 netzlose VM', () => {
+  const root = (x: Record<string, unknown> = {}) => ({ name: 'Root-CA', zweck: 'Offline-Root', begruendung: 'nie im Netz', einheiten: [], ziel: 'vm', neubau: true, netzlos: true,
+    vmName: 'pkiroot01', knoten: 'pve1', vcpu: 2, ramGb: 4, diskGb: 100, speicher: 'local-zfs', distribution: 'windows-server-2025-core', distributionBegruendung: 'Vorlage, Core', ...x });
+  it('ohne netz gültig, Verwaltung Gastagent; netz dazu, LXC oder Firewall-Zone werden abgewiesen', () => {
+    const a = gueltig(); a.gruppen.push(root() as never); a.reihenfolge.push({ gruppe: 'Root-CA', ausfallMinuten: 0 });
+    const p = pruefeArchitektur(a, grundlage());
+    expect(p.fehler).toEqual([]);
+    expect(p.architektur.gruppen.find(g => g.name === 'Root-CA')?.verwaltung).toBe('gastagent');
+    const d = architekturDokument({ titel: 'PKI', ziel: 'CA', id: 'x', version: 1 }, p.architektur, grundlage(), []);
+    expect(d).toContain('keins (netzlos)');
+    expect(d).toContain('QEMU-Gastagenten');
+    const b = gueltig(); b.gruppen.push(root({ netz: 'Server' }) as never);
+    expect(pruefeArchitektur(b, grundlage()).fehler.join('\n')).toContain('schließen sich aus');
+    const c = gueltig(); c.gruppen.push(root({ ziel: 'lxc', distribution: 'debian-13' }) as never);
+    expect(pruefeArchitektur(c, grundlage()).fehler.join('\n')).toContain('netzlos nur mit ziel vm');
+    const e = gueltig(); e.gruppen.push(root() as never); (e as unknown as { firewall: unknown[] }).firewall = [{ von: 'alfred', nach: 'Root-CA', protokoll: 'tcp', ports: '22', begruendung: 'x' }];
+    expect(pruefeArchitektur(e, grundlage()).fehler.join('\n')).toContain('nach „Root-CA“ ist weder Netz noch Gruppe');
+    const f = gueltig(); f.gruppen.push(root({ netzlos: undefined }) as never);
+    expect(pruefeArchitektur(f, grundlage()).fehler.join('\n')).toContain('netzlos: true');
+  });
+});

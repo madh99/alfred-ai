@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Netzlose VMs in der Architektur und Stabilitätsfenster für Cluster (v1809)
+
+- Architekturvorschläge kennen netzlose VMs (`netzlos: true`), zum Beispiel für eine Offline-Root-CA. Eine solche VM hat keine Netzwerkkarte, wird nur über den QEMU-Gastagenten verwaltet und kann nicht Ziel einer Firewall-Regel sein.
+- `windows_cluster` hat zwei neue lesende Aktionen:
+  - `ereignisse_status` liefert die Cluster-Ereignisse samt Record-Nummer.
+  - `stabilitaet_pruefen` beobachtet die Clusterknoten über die volle Dauer (Standard 15 Minuten). Dabei zählt es neue Ereignisse (Standard 1650, Heartbeat-Abbrüche) und prüft Knoten, Ressourcen, Verfügbarkeitsgruppe und Synchronisierung. Stabil heißt es nur, wenn die Beobachtung lückenlos, ohne neues Ereignis und durchgehend gesund war.
+
 ### Security — Firewall-Bausteine treffen genau eine Regel (v1808)
 
 - `firewall_filter_setzen` und `firewall_regel_aktiv` akzeptieren nur noch wörtliche Regelnamen ohne Platzhalter. Die Regel wird exakt aufgelöst; gibt es nicht genau eine, bricht der Baustein ab. Vorher hätte ein `*` alle Regeln getroffen.
