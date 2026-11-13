@@ -440,7 +440,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         return { ok: r.ok, text: r.ok ? `ok (${t.trim().split('\n').slice(-1)[0]?.slice(0, 80) ?? ''})` : r.grund!, ausgabe: t.slice(0, MAX_AUSGABE) };
       }
       case 'skill': {
-        const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, 60_000);
+        // v1843 — Realfall 13.11. (2ee9634f Schritt 2): windows_cluster.stabilitaet_pruefen beobachtet dauer_s (300 s) am Stück,
+        // als Prüfung lief der Aufruf mit festen 60 s ins Zeitlimit. Beobachtende Prüfungen bekommen ihre Dauer plus Reserve.
+        const dauer = Number((p.parameter as Record<string, unknown> | undefined)?.dauer_s);
+        const grenze = Number.isFinite(dauer) && dauer > 0 ? Math.max(60_000, Math.min(dauer + 300, 2_400) * 1000) : 60_000;
+        const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, grenze);
         if (!r.success) return { ok: false, text: `${p.skill}.${p.aktion}: ${String(r.error ?? 'Fehler').slice(0, 160)}` };
         // v1717 — Realfall 30.10. (8a26aed6 Schritte 55–57): fernzugriff.lesen als Prüfung — die Anzeige enthält den Befehl selbst, und
         // der stand „print("ZEIT_ERREICHT" if … else "WARTEN")“; erwartet „ZEIT_ERREICHT“ traf den Befehlstext, Exit 1 zählte nicht.

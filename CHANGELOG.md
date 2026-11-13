@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Zeitgrenze beobachtender Prüfungen (v1843)
+
+- Change-Prüfungen über Skills mit einer Beobachtungsdauer (`dauer_s`, z. B. `windows_cluster stabilitaet_pruefen`) erhalten diese Dauer plus Reserve als Zeitgrenze statt fester 60 Sekunden.
+
 ### Fixed — Cluster-Stabilitätsprüfung und Aufräumen der CA-Sicherung (v1842)
 
 - `windows_cluster stabilitaet_pruefen` läuft mit der Knotenliste `zugaenge`, ohne zusätzlich einen einzelnen `zugang` zu verlangen.

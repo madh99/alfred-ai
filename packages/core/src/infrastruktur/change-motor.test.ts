@@ -733,3 +733,17 @@ describe('v1833 Base64-Felder mit Präfix', () => {
     expect(loeseAuf({ name: '{{schritt32.csrBase64}}' }, erg).fehler).toContain('unzulässigen Wert');
   });
 });
+
+// v1843 — Realfall 13.11. 2ee9634f Schritt 2: beobachtende Skill-Prüfung lief mit festen 60 s ins Zeitlimit
+describe('v1843 Zeitgrenze beobachtender Skill-Prüfungen', () => {
+  it('dauer_s bestimmt die Grenze, sonst 60 s', async () => {
+    const w = welt([]);
+    const grenzen: number[] = [];
+    w.deps.fuehreAus = async (_s, _i, t) => { grenzen.push(t); return { success: true, display: 'CLUSTER_STABLE' }; };
+    const m = new ChangeMotor(w.deps);
+    await m.pruefe({ typ: 'skill', skill: 'windows_cluster', aktion: 'stabilitaet_pruefen', parameter: { zugaenge: ['sql01'], dauer_s: 300 }, erwartet: 'CLUSTER_STABLE' });
+    await m.pruefe({ typ: 'skill', skill: 'windows_cluster', aktion: 'status', parameter: { zugang: 'fs01' } });
+    await m.pruefe({ typ: 'skill', skill: 'x', aktion: 'y', parameter: { dauer_s: 99999 } });
+    expect(grenzen).toEqual([600_000, 60_000, 2_400_000]);
+  });
+});
