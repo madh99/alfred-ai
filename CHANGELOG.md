@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Issuing-CA neu aufsetzen (v1838)
+
+- `windows_pki issuer_zuruecksetzen` setzt eine **unvollständig** eingerichtete Issuing-CA zurück: Konfiguration, altes CA-Zertifikat samt Schlüssel, Datenbankdateien und alte Anforderung. Eine vollständig eingerichtete CA wird abgelehnt.
+- `windows_pki zertifikat_sperren` sperrt auf der Offline-Root genau ein ausgestelltes Zertifikat. Seriennummer und Name werden geprüft, der Sperrstatus wird danach nachgeprüft.
+
 ### Fixed — Hängende Windows-Bausteine bei Eingaben über SSH (v1835)
 
 - Windows-Bausteine blieben gelegentlich beim Einlesen ihrer Eingabe stehen, weil Windows-OpenSSH das Ende der Standardeingabe nicht zuverlässig weitergibt. Die Bausteine lesen jetzt bis zu einer festen Endmarke, die Alfred mitschickt, statt auf das Eingabeende zu warten. Geheimnisse werden weiterhin nur über die Standardeingabe übergeben.

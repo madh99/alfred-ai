@@ -236,3 +236,27 @@ describe('v1836 unvollständige Issuer-Installation', () => {
     expect(s).toContain('$hatSchon = (-not $offen) -and');
   });
 });
+
+describe('v1838 Issuer neu aufsetzen', () => {
+  it('Zurücksetzen nur bei unvollständiger CA, als Domänen-Administrator, genau dieses Zertifikat', async () => {
+    const { pruefeIssuerReset, issuerResetSkript } = await import('./windows-pki.js');
+    expect(typeof pruefeIssuerReset({ ca_name: 'AD3033 Issuing CA 01', erwartet_thumbprint: 'xyz' })).toBe('string');
+    const r = pruefeIssuerReset({ ca_name: 'AD3033 Issuing CA 01', erwartet_thumbprint: 'a314af14351e5cf613ec60f834fbfca74a3de3a6' }) as { erwartet_thumbprint: string };
+    expect(r.erwartet_thumbprint).toBe('A314AF14351E5CF613EC60F834FBFCA74A3DE3A6');
+    const s = issuerResetSkript(r as never);
+    expect(s).toContain("-band 0xC) -eq 0) { throw");
+    expect(s).toContain('Uninstall-AdcsCertificationAuthority -Force');
+    expect(s).toMatch(/MitKonto \(.*Administrator/);
+    expect(s).toContain('-DeleteKey');
+  });
+  it('Sperren nur mit eindeutiger Seriennummer und passendem CN, Nachprüfung auf 21', async () => {
+    const { pruefeSperre, sperrSkript } = await import('./windows-pki.js');
+    expect(typeof pruefeSperre({ seriennummer: 'zz', erwartet_cn: 'AD3033 Issuing CA 01' })).toBe('string');
+    const r = pruefeSperre({ seriennummer: '7C00000003ADBEB3A610CF3D09000000000003', erwartet_cn: 'AD3033 Issuing CA 01' }) as { grund: number; seriennummer: string };
+    expect(r.grund).toBe(4);
+    expect(r.seriennummer).toBe('7c00000003adbeb3a610cf3d09000000000003');
+    const s = sperrSkript(r as never);
+    expect(s).toContain('certutil.exe -revoke');
+    expect(s).toContain('nicht eindeutig');
+  });
+});

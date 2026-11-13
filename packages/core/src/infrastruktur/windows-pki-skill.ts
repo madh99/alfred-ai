@@ -7,6 +7,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { kodiert, adErgebnis, clixmlFehler } from './windows-ad.js';
 import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkript, featuresSkript, featuresEntfernenSkript, artefakteSkript, type PkiArtefakte,
   pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript,
+  pruefeIssuerReset, issuerResetSkript, pruefeSperre, sperrSkript,
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
   pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
@@ -19,7 +20,7 @@ export interface WindowsPkiDeps {
 
 export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status']);
 /** nur als Schritte freigegebener Changes */
-export const PKI_AENDERND = new Set(['features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren']);
+export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -36,6 +37,8 @@ export class WindowsPkiSkill extends Skill {
       + 'NUR als Schritte freigegebener Changes: features_installieren (zugang oder vmid + vm_name) — Rolle ADCS-Cert-Authority ohne Web Enrollment/NDES (ohne Rückweg nur, solange keine CA; Rückweg features_entfernen, verweigert bei eingerichteter CA). '
       + 'root_initialisieren (NUR vmid + vm_name über den Gastagenten; ca_name z. B. „AD3033 Root CA“, key_bits 4096, hash SHA256, validity_years 20, path_length 1, crl_wochen 26, crl_ueberlappung_wochen 4, ausgestellt_jahre 10) — bricht ab bei Netzwerkkarte, Domänenmitgliedschaft oder anderer vorhandener CA; Standalone Root mit CAPolicy.inf (pathLen kritisch, kein CDP/AIA im Root-Zertifikat), CRL-Fristen, Laufzeit ausgestellter Zertifikate, erste CRL; wiederholbar („schon“); OHNE Rückweg (CA-Identität), Stilllegung ist ein eigener Change. Ergebnis „ROOT_CA_READY“ mit Fingerprint aus dem anschließenden Status. '
       + 'publication_setzen (zugang oder vmid + vm_name; datei_name z. B. ad3033-root, http_basis http://pki.ad.3033.at/pki/, unc_ziel optional \\\\fs01.ad.3033.at\\pki$\\ für die automatische CRL-Ablage der Issuing-CA; optional crl_einheit Hours|Days|Weeks + crl_anzahl, ueberlappung_einheit + ueberlappung_anzahl) — CDP/AIA nur lokal + HTTP (kein LDAP), Dienstneustart, neue CRL; Ergebnis nennt vorher/nachher; Rückweg publication_setzen mit cdp_roh/aia_roh = gemeldetes vorher. VOR subordinate_signieren auf der Root setzen, sonst stehen falsche CDP/AIA im Issuing-Zertifikat. '
+      + 'issuer_zuruecksetzen (NUR zugang der Issuing-CA; ca_name, erwartet_thumbprint = Thumbprint des alten CA-Zertifikats, konto_tresor Standard win-dc01-admin) — NUR eine UNVOLLSTÄNDIG eingerichtete CA (SetupStatus 0x4/0x8): Konfiguration als Domänen-Administrator entfernen, altes Zertifikat samt Schlüssel, CA-Datenbankdateien und alte Anforderung löschen; danach issuer_anfordern (ohne Rückweg). '
+      + 'zertifikat_sperren (NUR vmid + vm_name der Root; seriennummer aus subordinate_signieren, erwartet_cn, grund superseded|cessationOfOperation|keyCompromise|caCompromise) — genau dieses Zertifikat sperren und nachprüfen; danach crl_erzeugen (ohne Rückweg). '
       + 'crl_erzeugen (zugang oder vmid + vm_name) — neue Basis-CRL (CRL-Nummern steigen nur; ohne Rückweg). '
       + 'issuer_anfordern (zugang = Issuing-CA, Domänenmitglied; ca_name z. B. „AD3033 Issuing CA 1“, key_bits 4096, hash SHA256; konto_tresor Standard win-dc01-admin = Kennwort des Domänen-Administrators/Enterprise Admins) — Enterprise Subordinate bis zur Anforderung, CAPolicy pathLen 0 kritisch, keine Standardvorlagen; wiederholbar mit DERSELBEN Anforderung; Ergebnis „ISSUER_CSR_READY“ mit csrSha256, csrBase64 in data. '
       + 'subordinate_signieren (NUR vmid + vm_name der Root; csr_base64 und erwartet_csr_sha256 aus issuer_anfordern, erwartet_subject = CA-Name der Issuing-CA) — hashgeprüft einreichen, ausstellen, abholen; prüft Aussteller, Subject und pathLen 0; wiederholbar ohne zweite Ausstellung; Ergebnis „ISSUER_CERT_SIGNED“ mit Zertifikat-, Root- und Root-CRL-Hashes (Base64 in data); ohne Rückweg (Widerruf ist ein eigener Vorgang). '
@@ -63,7 +66,7 @@ export class WindowsPkiSkill extends Skill {
         crl_wochen: { type: 'number' }, crl_ueberlappung_wochen: { type: 'number' }, ausgestellt_jahre: { type: 'number' },
         datei_name: { type: 'string' }, http_basis: { type: 'string' }, unc_ziel: { type: 'string' }, cdp_roh: { type: 'array', items: { type: 'string' } }, aia_roh: { type: 'array', items: { type: 'string' } },
         crl_einheit: { type: 'string' }, crl_anzahl: { type: 'number' }, ueberlappung_einheit: { type: 'string' }, ueberlappung_anzahl: { type: 'number' },
-        konto_tresor: { type: 'string' }, ausfuehrungskonto: { type: 'string' },
+        konto_tresor: { type: 'string' }, erwartet_thumbprint: { type: 'string' }, seriennummer: { type: 'string' }, erwartet_cn: { type: 'string' }, grund: { type: 'string' }, ausfuehrungskonto: { type: 'string' },
         csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
         host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, alias: { type: 'string', description: 'pki_web_einrichten: URL-Unterpfad, z. B. pki' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
         urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
@@ -142,6 +145,19 @@ export class WindowsPkiSkill extends Skill {
           if (!r.rootCrl) return { success: false, data: r, error: 'Root hat keine CRL-Datei — erst crl_erzeugen/publication_setzen auf der Root' };
           const z = r.zertifikat;
           return { success: true, data: r, display: `✅ ISSUER_CERT_SIGNED (${r.zustand}): ${z.subject} von ${z.aussteller}, Seriennummer ${z.seriennummer}, pathLen ${z.pathLen}, ${z.von} – ${z.bis}; Zertifikat SHA-256 ${z.sha256}; Root SHA-256 ${r.root.sha256}; Root-CRL ${r.rootCrl.datei} SHA-256 ${r.rootCrl.sha256}; CDP ${z.cdp || '—'}; AIA ${z.aia || '—'}` };
+        }
+        case 'issuer_zuruecksetzen': {
+          if (input.vmid !== undefined) return { success: false, error: 'issuer_zuruecksetzen nur über den Fernzugang der Issuing-CA (zugang)' };
+          const ir = pruefeIssuerReset(input); if (typeof ir === 'string') return { success: false, error: ir };
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Issuing-CA ${String(input.zugang)} zurücksetzen (Domänen-Administrator)`);
+          const { r } = await this.lauf<{ ca: string; vorherSetupStatus: string; konfiguration: string; zertifikat: string; dbDateien: number; dbOrdner: string }>(input, issuerResetSkript(ir), 'Issuing-CA zurücksetzen', 600_000, { kennwort: kw });
+          return { success: true, data: r, display: `✅ ISSUER_RESET „${r.ca}“ (vorher SetupStatus ${r.vorherSetupStatus}): Konfiguration ${r.konfiguration}, Zertifikat ${ir.erwartet_thumbprint} ${r.zertifikat}, ${r.dbDateien} DB-Dateien entfernt (${r.dbOrdner || '—'}); jetzt neu mit issuer_anfordern` };
+        }
+        case 'zertifikat_sperren': {
+          if (input.zugang !== undefined) return { success: false, error: 'zertifikat_sperren nur auf der Offline-Root über den Gastagenten (vmid + vm_name)' };
+          const sp = pruefeSperre(input); if (typeof sp === 'string') return { success: false, error: sp };
+          const { r } = await this.lauf<{ zustand: string; seriennummer: string; cn: string; grund: number; zeile: string }>(input, sperrSkript(sp), 'Zertifikat sperren', 300_000);
+          return { success: true, data: r, display: `✅ CERT_REVOKED ${r.cn} (Seriennummer ${r.seriennummer}, Grund ${r.grund}) ${r.zustand} — danach crl_erzeugen und die Root-CRL veröffentlichen` };
         }
         case 'issuer_aktivieren': {
           if (input.vmid !== undefined) return { success: false, error: 'issuer_aktivieren nur über den Fernzugang der Issuing-CA (zugang)' };

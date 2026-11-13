@@ -336,6 +336,74 @@ export function issuerAnfordernSkript(r: IssuerParameter): string {
   ].join('\n');
 }
 
+/**
+ * v1838 — Owner-Entscheidung 13.11. (PKI-B e44e8270 Schritt 36): die Issuing-CA blieb nach dem abgebrochenen ersten
+ * Aktivierungsversuch „unvollständig“ (SetupStatus 0x20d), certutil -installcert meldet danach 0x8007000d. Neu aufsetzen:
+ * NUR eine unvollständig eingerichtete CA (Flag 0x4 oder 0x8) mit genau diesem Namen; Konfiguration als Domänen-Administrator
+ * entfernen (Enterprise-CA, AD), dann das Zertifikat mit dem erwarteten Thumbprint samt Schlüssel, die CA-Datenbankdateien und die
+ * alten Anforderungsdateien. Eine laufende/vollständige CA wird nie angefasst. Ohne Rückweg.
+ */
+export interface IssuerReset { ca_name: string; erwartet_thumbprint: string }
+export function pruefeIssuerReset(o: Record<string, unknown>): IssuerReset | string {
+  const r = { ca_name: String(o.ca_name ?? '').trim(), erwartet_thumbprint: String(o.erwartet_thumbprint ?? '').replace(/\s/g, '').toUpperCase() };
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{2,62}$/.test(r.ca_name)) return 'ca_name: Name der Issuing-CA, z. B. „AD3033 Issuing CA 01“';
+  if (!/^[0-9A-F]{40}$/.test(r.erwartet_thumbprint)) return 'erwartet_thumbprint: SHA-1-Thumbprint des zu entfernenden CA-Zertifikats (40 Hex)';
+  return r;
+}
+export function issuerResetSkript(r: IssuerReset): string {
+  return [
+    ...kopf(r, true),
+    MIT_KONTO,
+    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
+    "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
+    "if (-not $aktiv) { throw 'keine CA eingerichtet — nichts zurückzusetzen' }",
+    "if ($aktiv -ne $p.ca_name) { throw ('eingerichtet ist „' + $aktiv + '“, nicht „' + $p.ca_name + '“ — nichts verändert') }",
+    "$cfg = Get-ItemProperty (Join-Path $k $aktiv); $ss = [int]$cfg.SetupStatus",
+    "if (($ss -band 0xC) -eq 0) { throw ('CA ist vollständig eingerichtet (SetupStatus 0x' + $ss.ToString('x') + ') — Zurücksetzen nur bei unvollständiger Einrichtung') }",
+    "$dbDirs = @(@([string]$cfg.DBDirectory, [string]$cfg.DBLogDirectory, [string](Get-ItemProperty $k).DBDirectory, [string](Get-ItemProperty $k).DBLogDirectory) | Where-Object { $_ -and $_ -match '^[A-Za-z]:\\\\[^\\\\]+' } | Select-Object -Unique)",
+    "Stop-Service -Name CertSvc -Force -ErrorAction SilentlyContinue",
+    "$nb = DomaeneNetbios",
+    `$w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innenSkript(r, [
+      "Uninstall-AdcsCertificationAuthority -Force | Out-Null",
+      "[ordered]@{ entfernt = $true }",
+    ]))} 300`,
+    "$nach = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
+    "if ($nach) { throw ('CA-Konfiguration noch vorhanden: ' + $nach) }",
+    "$zert = 'nicht vorhanden'",
+    "$c = Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Thumbprint -eq $p.erwartet_thumbprint }",
+    "if ($c) { if ($c.Subject -notlike ('CN=' + $p.ca_name + '*')) { throw ('Zertifikat ' + $p.erwartet_thumbprint + ' gehört zu ' + $c.Subject + ' — nicht entfernt') }; Remove-Item -Path ('Cert:\\LocalMachine\\My\\' + $c.Thumbprint) -DeleteKey; $zert = 'entfernt (mit Schlüssel)' }",
+    "$dateien = 0",
+    "foreach ($d in $dbDirs) { if (Test-Path $d) { foreach ($f in @(Get-ChildItem -LiteralPath $d -File | Where-Object { $_.Extension -in @('.edb', '.log', '.chk', '.jrs', '.jfm') })) { Remove-Item -LiteralPath $f.FullName -Force; $dateien++ } } }",
+    "$pk = Join-Path $env:ProgramData 'Alfred\\pki'",
+    "foreach ($f in @(Get-ChildItem -LiteralPath $pk -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'issuer*' })) { Remove-Item -LiteralPath $f.FullName -Force }",
+    "Ergebnis ([ordered]@{ ca = $p.ca_name; vorherSetupStatus = ('0x' + $ss.ToString('x')); konfiguration = 'entfernt'; zertifikat = $zert; dbDateien = $dateien; dbOrdner = ($dbDirs -join ', ') })",
+  ].join('\n');
+}
+
+/** v1838 — auf der Root genau ein ausgestelltes Zertifikat sperren (Seriennummer + erwarteter Subject-CN), danach Status nachprüfen; ohne Rückweg */
+export interface Sperre { seriennummer: string; erwartet_cn: string; grund: number }
+const SPERRGRUENDE: Record<string, number> = { superseded: 4, cessationOfOperation: 5, keyCompromise: 1, caCompromise: 2 };
+export function pruefeSperre(o: Record<string, unknown>): Sperre | string {
+  const r = { seriennummer: String(o.seriennummer ?? '').replace(/\s/g, '').toLowerCase(), erwartet_cn: String(o.erwartet_cn ?? '').trim(), grund: SPERRGRUENDE[String(o.grund ?? 'superseded')] ?? -1 };
+  if (!/^[0-9a-f]{8,64}$/.test(r.seriennummer)) return 'seriennummer: Hex-Seriennummer aus subordinate_signieren';
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{2,62}$/.test(r.erwartet_cn)) return 'erwartet_cn: CN des gesperrten Zertifikats, z. B. „AD3033 Issuing CA 01“';
+  if (r.grund < 0) return `grund: ${Object.keys(SPERRGRUENDE).join(', ')}`;
+  return r;
+}
+export function sperrSkript(r: Sperre): string {
+  return [
+    ...kopf(r, false),
+    "function Zeile { $v = (& certutil.exe -view -restrict ('SerialNumber=' + $p.seriennummer) -out 'SerialNumber,CommonName,Disposition' csv) -join \"`n\"; $z = @($v -split \"`n\" | Where-Object { $_ -match $p.seriennummer }); if ($z.Count -ne 1) { throw ('Seriennummer ' + $p.seriennummer + ' nicht eindeutig in der CA-Datenbank (' + $z.Count + ' Treffer)') }; $z[0] }",
+    "$vor = Zeile",
+    "if ($vor -notmatch [regex]::Escape($p.erwartet_cn)) { throw ('Seriennummer gehört nicht zu „' + $p.erwartet_cn + '“: ' + $vor) }",
+    "$zustand = 'gesperrt'",
+    "if ($vor -match ',\"?21( -- [^\"]*)?\"?\\s*$') { $zustand = 'schon gesperrt' } else { $aus = (& certutil.exe -revoke $p.seriennummer ([string]$p.grund)) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('certutil -revoke Exit ' + $LASTEXITCODE + ': ' + $aus) } }",
+    "$nach = Zeile",
+    "if ($nach -notmatch ',\"?21( -- [^\"]*)?\"?\\s*$') { throw ('nach dem Sperren nicht als gesperrt (21) geführt: ' + $nach) }",
+    "Ergebnis ([ordered]@{ zustand = $zustand; seriennummer = $p.seriennummer; cn = $p.erwartet_cn; grund = $p.grund; zeile = $nach.Trim() })",
+  ].join('\n');
+}
+
 const HEX64 = /^[0-9a-f]{64}$/;
 export interface SignierParameter { erwartet_csr_sha256: string; erwartet_subject: string; path_length: number }
 export function pruefeSignieren(o: Record<string, unknown>): SignierParameter | string {
