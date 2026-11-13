@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Selbsttest der Codesignatur (v1850)
+
+- `windows_pki codesignatur_selbsttest` belegt auf einem Windows-Rechner, dass eine signierte Probe läuft und dieselbe Probe nach einer Veränderung abgewiesen, entfernt und nicht ausgeführt wird.
+
 ### Fixed — CA-Zertifikat beim Ausstellen der Codesignatur lesen (v1849)
 
 - `windows_pki codesignatur_einrichten` liest das CA-Zertifikat unter Windows PowerShell 5.1 wieder korrekt (Argument mit Punkt in Anführungszeichen).

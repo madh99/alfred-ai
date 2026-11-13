@@ -8,7 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ausKodiertemBefehl, skriptDatei, EINGABE_DATEI_AB } from './windows-skriptdatei.js';
-import { Codesignierer } from '../infrastruktur/windows-codesignatur.js';
+import { Codesignierer, SIGNATUR_STATUS, SIGNATUR_ABBRUCH } from '../infrastruktur/windows-codesignatur.js';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
 import { kopiere, kopiereDatenbank, datenbankInventar, sqliteInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
@@ -58,7 +58,7 @@ export interface FernzugriffDeps {
   melde?: (text: string) => void;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
   /** PKI Etappe 3a — Skriptdateien vor dem Hochladen signieren (null = aus) und den vor dem Start gelesenen Status bewerten */
-  codesignatur?: { signiere: (inhalt: string) => Promise<string | null>; bewerte: (status: string, wo: string) => string };
+  codesignatur?: { signiere: (inhalt: string, erzwingen?: boolean) => Promise<string | null>; bewerte: (status: string, wo: string) => string };
   /** v1543 (F4) — Sicherungen betroffener VMs aus allen Quellen (Proxmox-Speicher, Commvault) als Textabschnitt */
   wiederherstellbarkeit?: (vmids: number[]) => Promise<string | undefined>;
   /** v1550 (S4c) — was Fachskills zum selben Host zusätzlich können (Hinweis im Ergebnis) */
@@ -535,6 +535,44 @@ export class FernzugriffSkill extends Skill {
    * I8c — festes PowerShell-Skript eines Kern-Bausteins (Active Directory) auf einem Windows-Zugang, Geheimnisse nur über die
    * Standardeingabe (nie in Befehlszeile oder Protokoll). Nur aus dem Kern aufrufbar; die Freigabe des Changes deckt den Baustein.
    */
+  /**
+   * PKI Etappe 3a — Selbsttest der Codesignatur auf einem Windows-Zugang (signiert auch bei ausgeschaltetem Schalter):
+   * 1) signierte Probe hochladen, Status von außen lesen, ausführen (Marke in der Ausgabe);
+   * 2) dieselbe Probe nach dem Signieren um ein Zeichen verändert hochladen: Status muss HashMismatch/NotSigned sein, die Datei wird
+   *    entfernt und nicht ausgeführt. Die Probe gibt nur eine Marke aus.
+   */
+  async signaturSelbsttest(name: string): Promise<{ rechner: string; unveraendert: { status: string; ausgefuehrt: boolean }; veraendert: { status: string; abgewiesen: boolean; ausgefuehrt: boolean; entfernt: boolean } }> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    if (!this.deps.codesignatur || !this.deps.sftp) throw new Error('Codesignatur oder SFTP nicht verfügbar');
+    const z = await this.zugang(owner, { name });
+    if (z.system !== 'windows') throw new Error(`${name} ist kein Windows-Zugang`);
+    const ziel = { id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel };
+    const marke = `ALFRED-SIGNATUR-PROBE-${randomBytes(4).toString('hex')}`;
+    const lauf = async (veraendern: boolean) => {
+      const d = skriptDatei(`Write-Output '${marke}'; Write-Output $env:COMPUTERNAME`, randomBytes(8).toString('hex'));
+      let s = await this.deps.codesignatur!.signiere(d.inhalt, true);
+      if (s === null) throw new Error('Signieren lieferte nichts');
+      if (veraendern) s = s.replace(marke, marke.replace('PROBE', 'PR0BE'));
+      const h = await this.deps.sftp!(ziel, s, d.pfadSftp, 60_000);
+      if (h.code !== 0) throw new Error(`Probe auf ${z.name} nicht abgelegt (SFTP Exit ${h.code})`);
+      const pr = await this.lauf(owner, z, Codesignierer.pruefAusdruck(d.pfadWindows), 60_000);
+      // nicht über bewerte(): der Test soll die Zähler des Betriebs nicht verfälschen
+      const roh = pr.stdout.trim().split(/\r?\n/).map(x => x.trim()).filter(Boolean).pop() ?? '';
+      const status = SIGNATUR_STATUS.has(roh) ? roh : 'unbekannt';
+      const abgewiesen = SIGNATUR_ABBRUCH.has(status);
+      let ausgefuehrt = false; let rechner = '';
+      if (!abgewiesen) { const r = await this.lauf(owner, z, d.befehl, 60_000); ausgefuehrt = r.stdout.includes(marke); rechner = r.stdout.split(/\r?\n/).map(x => x.trim()).filter(Boolean).pop() ?? ''; }
+      else await this.lauf(owner, z, `Remove-Item -LiteralPath ${d.pfadWindows} -Force -ErrorAction SilentlyContinue`, 30_000);
+      const rest = await this.lauf(owner, z, `Test-Path -LiteralPath ${d.pfadWindows}`, 30_000);
+      return { status, abgewiesen, ausgefuehrt, entfernt: /False/i.test(rest.stdout), rechner };
+    };
+    const a = await lauf(false);
+    const b = await lauf(true);
+    this.deps.protokoll?.('Codesignatur-Selbsttest', { name: z.name, unveraendert: a.status, veraendert: b.status, abgewiesen: b.abgewiesen });
+    return { rechner: a.rechner || z.name, unveraendert: { status: a.status, ausgefuehrt: a.ausgefuehrt }, veraendert: { status: b.status, abgewiesen: b.abgewiesen, ausgefuehrt: b.ausgefuehrt, entfernt: b.entfernt } };
+  }
+
   async windowsSkript(name: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string): Promise<{ code: number; stdout: string; stderr: string }> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');

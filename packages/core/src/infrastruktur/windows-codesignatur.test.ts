@@ -239,3 +239,32 @@ describe('v1848 Abholen wiederholbar, Schlüssel vor dem Einreichen abgelegt', (
     expect(s).toContain("gehört zu „");
   });
 });
+
+// v1850 — Selbsttest für den Livebeweis (unverändert ausgeführt, verändert abgewiesen)
+describe('v1850 Codesignatur-Selbsttest', () => {
+  it('unveränderte Probe läuft, veränderte wird abgewiesen und entfernt, Zähler bleiben unberührt', async () => {
+    const zug = { id: 'w1', userId: 'owner', name: 'cstest01', host: '10.0.0.9', port: 22, benutzer: 'alfred', status: 'aktiv', system: 'windows', schluesselPfad: '/k', hostSchluessel: 'x', erstellt: 't', geaendert: 't' } as unknown as Fernzugang;
+    const repo = { liste: async () => [zug], finde: async () => zug, hole: async () => zug, speichere: async () => zug, setzeStatus: async () => undefined, merkeErgebnis: async () => undefined, entferne: async () => true, setzeKaefig: async () => undefined } as unknown as FernzugriffRepo;
+    const dateien = new Map<string, string>(); const befehle: string[] = [];
+    const signierer = new Codesignierer({ aktiv: async () => false, material: async () => ({ schluesselPem: TEST_SCHLUESSEL_PEM, kettePem: KETTE }), lokal: attrappe().lokal });
+    const winPfad = (b: string) => /C:\\Windows\\Temp\\alfred-s-[0-9a-f]{16}\.ps1/.exec(b)?.[0] ?? '';
+    const skill = new FernzugriffSkill({
+      repo, owner: () => 'owner', istOwner: () => true, bestaetigung: async () => true,
+      sftp: async (_z, inhalt, pfad) => { dateien.set(pfad.replace(/^\/C:\//, 'C:\\').replace(/\//g, '\\'), inhalt); return { code: 0, stdout: '', stderr: '', hostSchluesselGeaendert: false }; },
+      ssh: async (_z, b) => {
+        befehle.push(b); const p = winPfad(b); const inhalt = dateien.get(p) ?? '';
+        if (b.startsWith('(Get-AuthenticodeSignature')) return { code: 0, stdout: inhalt.includes('PR0BE') ? 'HashMismatch\r\n' : 'UnknownError\r\n', stderr: '', hostSchluesselGeaendert: false };
+        if (b.includes('-File')) { dateien.delete(p); const m = /'(ALFRED-SIGNATUR-PROBE-[0-9a-f]+)'/.exec(inhalt); return { code: 0, stdout: `${m?.[1] ?? ''}\r\nCSTEST01\r\n`, stderr: '', hostSchluesselGeaendert: false }; }
+        if (b.startsWith('Remove-Item')) { dateien.delete(p); return { code: 0, stdout: '', stderr: '', hostSchluesselGeaendert: false }; }
+        if (b.startsWith('Test-Path')) return { code: 0, stdout: dateien.has(p) ? 'True\r\n' : 'False\r\n', stderr: '', hostSchluesselGeaendert: false };
+        return { code: 1, stdout: '', stderr: 'unerwartet', hostSchluesselGeaendert: false };
+      },
+      keyscan: async () => '', schluessel: async () => ({ pfad: '/k', oeffentlich: 'x', neu: false }),
+      codesignatur: { signiere: (i, e) => signierer.signiere(i, e), bewerte: (s, w) => signierer.bewerte(s, w) },
+    });
+    const r = await skill.signaturSelbsttest('cstest01');
+    expect(r).toEqual({ rechner: 'CSTEST01', unveraendert: { status: 'UnknownError', ausgefuehrt: true }, veraendert: { status: 'HashMismatch', abgewiesen: true, ausgefuehrt: false, entfernt: true } });
+    expect(befehle.filter(b => b.includes('-File'))).toHaveLength(1);
+    expect(signierer.zaehler).toEqual({});
+  });
+});

@@ -7072,7 +7072,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }
       const signierer = this.codesignierer!;
       skillRegistry.register(new FernzugriffSkill({
-        codesignatur: { signiere: (i) => signierer.signiere(i), bewerte: (s, w) => signierer.bewerte(s, w) },
+        codesignatur: { signiere: (i, erzwingen) => signierer.signiere(i, erzwingen), bewerte: (s, w) => signierer.bewerte(s, w) },
         repo: repoFz,
         owner: ownerFz,
         beiAenderung: () => { void this.fernzugangNamenAuffrischen?.().catch(() => undefined); }, // v1550 (S4a)
@@ -7234,7 +7234,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // PKI Etappe 3a — Codesignatur
           ...(this.codesignaturAblage !== undefined && this.codesignaturLokal !== undefined && this.codesignierer !== undefined ? {
             lokal: this.codesignaturLokal,
-            codesignatur: { ablage: this.codesignaturAblage, zaehler: () => ({ ...this.codesignierer!.zaehler }), vergiss: () => this.codesignierer!.vergiss() },
+            codesignatur: {
+              ablage: this.codesignaturAblage, zaehler: () => ({ ...this.codesignierer!.zaehler }), vergiss: () => this.codesignierer!.vergiss(),
+              selbsttest: (zugang) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.signaturSelbsttest(zugang); },
+            },
           } : {}),
         }));
         // Gastagent-Skripte (netzlose Root) ebenso signieren

@@ -21,10 +21,12 @@ export interface WindowsPkiDeps {
   /** Etappe 3a — openssl/osslsigncode auf dem Alfred-Server */
   lokal?: Lokal;
   /** Etappe 3a — Ablage (Schlüssel, Kette, Schalter im Datenordner), Zähler der Prüfungen seit dem Start, Zwischenspeicher leeren */
-  codesignatur?: { ablage: CodesignaturAblage; zaehler: () => Record<string, number>; vergiss: () => void };
+  codesignatur?: { ablage: CodesignaturAblage; zaehler: () => Record<string, number>; vergiss: () => void;
+    /** Selbsttest auf einem Windows-Fernzugang (unverändert ausgeführt, verändert abgewiesen) */
+    selbsttest?: (zugang: string) => Promise<{ rechner: string; unveraendert: { status: string; ausgefuehrt: boolean }; veraendert: { status: string; abgewiesen: boolean; ausgefuehrt: boolean; entfernt: boolean } }> };
 }
 
-export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status']);
+export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest']);
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten']);
@@ -64,6 +66,7 @@ export class WindowsPkiSkill extends Skill {
       + 'codesignatur_einrichten (zugang = Issuing-CA; vorlage, cn Standard „Alfred Codesignatur“, o optional, erwartet_aussteller_thumbprint = Thumbprint der Issuing-CA, schluessel_bits 3072, konto_tresor) — Schlüssel und Anforderung auf dem Alfred-Server, an der CA ausstellen, Schlüssel/Name/Verwendung/Aussteller prüfen, Schlüssel und Kette im Datenordner des Alfred-Servers ablegen; liefert das vorhandene, solange ein gültiges Zertifikat abgelegt ist (erneuern true für die Erneuerung); Ergebnis „CODESIGN_CERT_OK“ mit seriennummer; Rückweg codesignatur_sperren (zugang, seriennummer, grund cessationOfOperation). '
       + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer ODER anforderung = RequestId, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
       + 'codesignatur_schalten (an true|false) — Signieren beim Hochladen ein/aus; ein nur mit gültigem Material; Rückweg codesignatur_schalten an false. '
+      + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
       + 'codesignatur_status (lesend) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -312,6 +315,15 @@ export class WindowsPkiSkill extends Skill {
           const vorher = await cs.ablage.an();
           await cs.ablage.setzeAn(input.an); cs.vergiss();
           return { success: true, data: { an: input.an, vorher }, display: `✅ CODESIGN_SWITCH ${input.an ? 'an' : 'aus'} (vorher ${vorher ? 'an' : 'aus'})${input.an ? ' — Rückweg codesignatur_schalten an false' : ''}` };
+        }
+        case 'codesignatur_selbsttest': {
+          const st = this.d.codesignatur?.selbsttest; if (!st) return { success: false, error: 'Codesignatur-Selbsttest auf diesem Server nicht verfügbar' };
+          if (!(await this.d.codesignatur!.ablage.kette())) return { success: false, error: 'kein Codesignatur-Zertifikat abgelegt (erst codesignatur_einrichten)' };
+          const zg = String(input.zugang ?? '').trim().toLowerCase(); if (!ZUGANG.test(zg)) return { success: false, error: 'zugang: Windows-Fernzugang' };
+          const r = await st(zg);
+          const ok = r.unveraendert.ausgefuehrt && !['HashMismatch', 'NotSigned'].includes(r.unveraendert.status) && r.veraendert.abgewiesen && !r.veraendert.ausgefuehrt && r.veraendert.entfernt;
+          const text = `${ok ? '✅ CODESIGN_SELFTEST_OK' : 'Codesignatur-Selbsttest NICHT bestanden'} ${r.rechner} (${zg}): unverändert ${r.unveraendert.status}, ${r.unveraendert.ausgefuehrt ? 'ausgeführt' : 'NICHT ausgeführt'}; verändert ${r.veraendert.status}, ${r.veraendert.abgewiesen ? 'abgewiesen' : 'NICHT abgewiesen'}, ${r.veraendert.ausgefuehrt ? 'AUSGEFÜHRT' : 'nicht ausgeführt'}, Datei ${r.veraendert.entfernt ? 'entfernt' : 'NOCH DA'}`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
         }
         case 'codesignatur_status': {
           const cs = this.d.codesignatur; if (!cs) return { success: false, error: 'Codesignatur auf diesem Server nicht verfügbar' };

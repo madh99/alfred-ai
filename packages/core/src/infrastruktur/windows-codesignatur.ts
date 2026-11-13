@@ -328,9 +328,9 @@ export class Codesignierer {
     return m;
   }
 
-  /** Signierter Inhalt, oder null, wenn die Codesignatur ausgeschaltet ist */
-  async signiere(inhalt: string): Promise<string | null> {
-    if (!(await this.d.aktiv())) return null;
+  /** Signierter Inhalt, oder null, wenn die Codesignatur ausgeschaltet ist (erzwingen: Selbsttest vor dem Einschalten) */
+  async signiere(inhalt: string, erzwingen = false): Promise<string | null> {
+    if (!erzwingen && !(await this.d.aktiv())) return null;
     const m = await this.stoff();
     const tage = Math.floor((this.cache!.gueltigBis - this.jetzt()) / 86_400_000);
     if (tage < 0) throw new Error('Codesignatur-Zertifikat ist abgelaufen — erst erneuern (Change) oder die Codesignatur ausschalten');
