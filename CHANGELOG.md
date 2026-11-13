@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rückweg der CA-Publikationspfade (v1844)
+
+- Change-Rückwege können die zuvor gemeldeten CDP/AIA-Listen (`cdp_roh`/`aia_roh`) aus früheren Schritten übernehmen. Zulässig ist nur eine Liste im CA-Format `<Flags>:<Ort>` als ganzer Wert in Feldern `<name>_roh`.
+
 ### Fixed — Zeitgrenze beobachtender Prüfungen (v1843)
 
 - Change-Prüfungen über Skills mit einer Beobachtungsdauer (`dauer_s`, z. B. `windows_cluster stabilitaet_pruefen`) erhalten diese Dauer plus Reserve als Zeitgrenze statt fester 60 Sekunden.

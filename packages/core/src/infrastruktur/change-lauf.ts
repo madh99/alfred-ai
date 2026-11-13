@@ -94,6 +94,16 @@ export const istBase64Feld = (feld: string): boolean => BASE64_FELDER.has(feld) 
 export const STRIKTES_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /**
+ * v1844 — Rückweg windows_pki publication_setzen mit cdp_roh/aia_roh = {{schrittN.vorher.cdp}} (PKI-A 14, PKI-B 33/44): der Verweis
+ * liefert eine Liste wie ["1:C:\Windows\System32\CertSrv\CertEnroll\%3%8%9.crl", "2:http://…"]; Liste, „%“ und „\“ fielen durch
+ * SICHERER_WERT — der Rückweg wäre abgewiesen worden. Nur als GANZER Wert, nur in Feldern <name>_roh und nur eine Liste von höchstens
+ * 20 Einträgen im CA-Format <Flags>:<Ort> ohne Zeilenumbruch, Anführungszeichen oder Backtick (der Baustein prüft erneut).
+ */
+export const istRohListenFeld = (feld: string): boolean => /^[a-z]{2,12}_roh$/.test(feld);
+// „$“ bleibt erlaubt: versteckte Freigaben wie \\fs01.ad.3033.at\pki$\ (Realwert PKI-B Schritt 44)
+export const ROH_EINTRAG = /^\d{1,3}:[^\r\n"`;|&<>]{1,400}$/;
+
+/**
  * Verweise auflösen: `{{schrittN.feld}}` aus den Daten früherer Schritte; steht der Verweis allein, bleibt der Typ erhalten
  * (Zahl bleibt Zahl). Jeder eingesetzte Text muss SICHERER_WERT entsprechen (keine Leerzeichen, Shell-Zeichen, Anführungszeichen);
  * in Befehlsfeldern ist ein Verweis als ganzer Wert verboten. `{{geheim:…}}` geht erst mit dem Tresor (I4c) → Fehler.
@@ -122,6 +132,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
         const w = e ? pfadWert(e.daten, allein[2]!) : undefined;
         if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
         if (feld && istBase64Feld(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
+        if (feld && istRohListenFeld(feld) && Array.isArray(w) && w.length >= 1 && w.length <= 20 && w.every(x => typeof x === 'string' && ROH_EINTRAG.test(x))) return [...w];
         return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
       }
       return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
