@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Zertifikat beim Ausstellen der Codesignatur lesen (v1849)
+
+- `windows_pki codesignatur_einrichten` liest das CA-Zertifikat unter Windows PowerShell 5.1 wieder korrekt (Argument mit Punkt in Anführungszeichen).
+
 ### Fixed — Codesignatur-Zertifikat wiederholbar ausstellen (v1848)
 
 - `windows_pki codesignatur_einrichten` legt Schlüssel und Anforderung vor dem Einreichen ab und holt beim Wiederholen dieselbe Anforderung ab; vorhandene Antwortdateien werden überschrieben.

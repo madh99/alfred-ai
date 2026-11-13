@@ -105,7 +105,9 @@ describe('Etappe 3a Codesignatur — Bausteine', () => {
   it('Ausstellen: Hash der Anforderung vor dem Einreichen, Freigabe als CA-Verwalter, Abholen', () => {
     const s = ausstellenSkript({ vorlage: 'AD3033AlfredCodesignatur', csr_sha256: 'a'.repeat(64), erwartet_cn: 'Alfred Codesignatur' });
     expect(s.indexOf("passt nicht zum Hash")).toBeLessThan(s.indexOf('function MitKonto'));
-    for (const t of ['certreq.exe -submit', '-resubmit', 'certreq.exe -retrieve', '-ca.cert']) expect(s).toContain(t);
+    for (const t of ['certreq.exe -submit', '-resubmit', 'certreq.exe -retrieve', "certutil.exe ''-ca.cert''"]) expect(s).toContain(t);
+    // v1849 — PS 5.1 zerlegt -ca.cert ungequotet in -ca und .cert
+    expect(s).not.toMatch(/certutil.exe -ca.cert/);
   });
 });
 

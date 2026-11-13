@@ -172,7 +172,9 @@ export function ausstellenSkript(a: AusstellParameter): string {
     "  $f = (& certutil.exe -config $konfig -resubmit $id) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('certutil -resubmit ' + $id + ': ' + $f) }",
     "  $g = (& certreq.exe -retrieve -f -q -config $konfig $id $cer) -join ' '; if (-not (Test-Path -LiteralPath $cer)) { throw ('certreq -retrieve ' + $id + ': ' + $g) }",
     '}',
-    "$h = (& certutil.exe -ca.cert $cacer) -join ' '; if (-not (Test-Path -LiteralPath $cacer)) { throw ('certutil -ca.cert: ' + $h) }",
+    // v1849 — Realfall 13.11. e850f204 Schritt 5 (2. Lauf): Windows PowerShell 5.1 zerlegt -ca.cert bei externen Programmen in
+    // „-ca“ und „.cert“ — certutil gab nur seine Hilfe aus. Argumente mit Punkt immer in Anführungszeichen.
+    "$h = (& certutil.exe '-ca.cert' $cacer) -join ' '; if (-not (Test-Path -LiteralPath $cacer)) { throw ('certutil -ca.cert: ' + $h) }",
     "function Der($f) { $t = [IO.File]::ReadAllText($f); if ($t -match '-----BEGIN') { ($t -replace '-----[^-]+-----', '' -replace '\\s', '') } else { [Convert]::ToBase64String([IO.File]::ReadAllBytes($f)) } }",
     "$z = Der $cer; $c = Der $cacer",
     "Remove-Item -LiteralPath $req, $cer, $cacer, ($cer -replace '\\.cer$', '.rsp') -Force -ErrorAction SilentlyContinue",
