@@ -11,7 +11,7 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
   pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
-import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
+import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, SIGNATUR_STATUS, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
 
 export interface WindowsPkiDeps {
@@ -62,12 +62,12 @@ export class WindowsPkiSkill extends Skill {
       + 'ca_sicherung_kopieren (Quelle zugang oder vmid + vm_name, ziel_ordner der Quelle, satz = ca-JJJJMMTT-HHMMSS aus ca_sicherung; ziel_zugang = anderer Windows-Fernzugang, ziel_ziel_ordner dort) — hashgeprüfte unabhängige Kopie (ZIP über Alfred, entpackt, Manifest nachgeprüft); additiv. '
       + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen. '
       + 'CODESIGNATUR (Etappe 3a, Owner 13.11.: Schlüssel auf dem Alfred-Server, 1 Jahr, nur signieren und prüfen): '
-      + 'codesignatur_vorlage_anlegen (zugang = Issuing-CA; vorlage z. B. AD3033AlfredCodesignatur, anzeige „AD3033 Alfred Codesignatur“, gueltig_tage 365, schluessel_bits 3072, konto_tresor Standard win-dc01-admin) — Vorlage nur Codesignatur, Name aus der Anforderung, jede Anforderung wartet auf CA-Freigabe, Registrieren nur Domänen-Admins; auf der CA ausgestellt; Ergebnis „CODESIGN_TEMPLATE_OK“; Rückweg codesignatur_vorlage_entfernen (zugang, vorlage, anzeige). '
+      + 'codesignatur_vorlage_anlegen (zugang = Issuing-CA; vorlage z. B. AD3033AlfredCodesignatur, anzeige „AD3033 Alfred Codesignatur“, gueltig_tage 365, schluessel_bits 3072, konto_tresor Standard win-dc01-admin) — Vorlage nur Codesignatur, Name aus der Anforderung, jede Anforderung wartet auf CA-Freigabe, Registrieren nur Domänen-Admins; auf der CA ausgestellt; Ergebnis „CODESIGN_TEMPLATE_OK“ nur ohne breite Gruppen (Authenticated Users, Domain Users, Everyone …) bei den Registrierrechten; Rückweg codesignatur_vorlage_entfernen (zugang, vorlage, anzeige). '
       + 'codesignatur_einrichten (zugang = Issuing-CA; vorlage, cn Standard „Alfred Codesignatur“, o optional, erwartet_aussteller_thumbprint = Thumbprint der Issuing-CA, schluessel_bits 3072, konto_tresor) — Schlüssel und Anforderung auf dem Alfred-Server, an der CA ausstellen, Schlüssel/Name/Verwendung/Aussteller prüfen, Schlüssel und Kette im Datenordner des Alfred-Servers ablegen; liefert das vorhandene, solange ein gültiges Zertifikat abgelegt ist (erneuern true für die Erneuerung); Ergebnis „CODESIGN_CERT_OK“ mit seriennummer; Rückweg codesignatur_sperren (zugang, seriennummer, grund cessationOfOperation). '
       + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer ODER anforderung = RequestId, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
       + 'codesignatur_schalten (an true|false) — Signieren beim Hochladen ein/aus; ein nur mit gültigem Material; Rückweg codesignatur_schalten an false. '
-      + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
-      + 'codesignatur_status (lesend) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
+      + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; optional erwartet_status [Valid] bzw. [UnknownError, NotTrusted]; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte (mit erwartetem Status) läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
+      + 'codesignatur_status (lesend; optional erwartet_an true|false, mindest_valid n — schlägt sonst fehl, für Prüfschritte) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 600_000,
@@ -91,6 +91,8 @@ export class WindowsPkiSkill extends Skill {
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
+        erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
+        erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
       required: ['action'],
@@ -243,8 +245,10 @@ export class WindowsPkiSkill extends Skill {
             return r.nochDa ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
           }
           const { r } = await this.lauf<{ zustand: string; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number }>(input, vorlageAnlegenSkript(v), 'Codesignatur-Vorlage anlegen', 720_000, { kennwort: kw });
-          const ok = r.aufCa && (r.namensFlag & 1) === 1 && (r.anmeldeFlag & 2) === 2 && r.minSchluessel >= v.schluessel_bits;
-          const text = `${ok ? '✅ CODESIGN_TEMPLATE_OK' : 'Codesignatur-Vorlage NICHT wie verlangt'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: ${r.aufCa ? 'ausgestellt' : 'NICHT ausgestellt'}; Name aus der Anforderung ${(r.namensFlag & 1) ? 'ja' : 'NEIN'}, Freigabe an der CA ${(r.anmeldeFlag & 2) ? 'ja' : 'NEIN'}, Mindestschlüssel ${r.minSchluessel}; registrieren dürfen: ${r.registrieren.join(', ') || '—'} — Rückweg codesignatur_vorlage_entfernen`;
+          // v1851 — breite Gruppen dürfen eine Codesignatur-Vorlage nie registrieren (Owner-Vorgabe: nur Domänen-Admins)
+          const breit = r.registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
+          const ok = r.aufCa && (r.namensFlag & 1) === 1 && (r.anmeldeFlag & 2) === 2 && r.minSchluessel >= v.schluessel_bits && breit.length === 0;
+          const text = `${ok ? '✅ CODESIGN_TEMPLATE_OK' : 'Codesignatur-Vorlage NICHT wie verlangt'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: ${r.aufCa ? 'ausgestellt' : 'NICHT ausgestellt'}; Name aus der Anforderung ${(r.namensFlag & 1) ? 'ja' : 'NEIN'}, Freigabe an der CA ${(r.anmeldeFlag & 2) ? 'ja' : 'NEIN'}, Mindestschlüssel ${r.minSchluessel}; registrieren dürfen: ${r.registrieren.join(', ') || '—'}${breit.length ? ` — ZU BREIT: ${breit.join(', ')}` : ''} — Rückweg codesignatur_vorlage_entfernen`;
           return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
         }
         case 'codesignatur_einrichten': {
@@ -320,9 +324,13 @@ export class WindowsPkiSkill extends Skill {
           const st = this.d.codesignatur?.selbsttest; if (!st) return { success: false, error: 'Codesignatur-Selbsttest auf diesem Server nicht verfügbar' };
           if (!(await this.d.codesignatur!.ablage.kette())) return { success: false, error: 'kein Codesignatur-Zertifikat abgelegt (erst codesignatur_einrichten)' };
           const zg = String(input.zugang ?? '').trim().toLowerCase(); if (!ZUGANG.test(zg)) return { success: false, error: 'zugang: Windows-Fernzugang' };
+          // v1851 — erwarteter Status der unveränderten Probe (z. B. Valid in der Domäne, UnknownError/NotTrusted ohne Domäne)
+          const erw = (Array.isArray(input.erwartet_status) ? input.erwartet_status : input.erwartet_status === undefined ? [] : [input.erwartet_status]).map(x => String(x).trim()).filter(Boolean);
+          if (erw.some(x => !SIGNATUR_STATUS.has(x))) return { success: false, error: `erwartet_status: ${[...SIGNATUR_STATUS].join(', ')}` };
           const r = await st(zg);
-          const ok = r.unveraendert.ausgefuehrt && !['HashMismatch', 'NotSigned'].includes(r.unveraendert.status) && r.veraendert.abgewiesen && !r.veraendert.ausgefuehrt && r.veraendert.entfernt;
-          const text = `${ok ? '✅ CODESIGN_SELFTEST_OK' : 'Codesignatur-Selbsttest NICHT bestanden'} ${r.rechner} (${zg}): unverändert ${r.unveraendert.status}, ${r.unveraendert.ausgefuehrt ? 'ausgeführt' : 'NICHT ausgeführt'}; verändert ${r.veraendert.status}, ${r.veraendert.abgewiesen ? 'abgewiesen' : 'NICHT abgewiesen'}, ${r.veraendert.ausgefuehrt ? 'AUSGEFÜHRT' : 'nicht ausgeführt'}, Datei ${r.veraendert.entfernt ? 'entfernt' : 'NOCH DA'}`;
+          const passt = !erw.length || erw.includes(r.unveraendert.status);
+          const ok = passt && r.unveraendert.ausgefuehrt && !['HashMismatch', 'NotSigned'].includes(r.unveraendert.status) && r.veraendert.abgewiesen && !r.veraendert.ausgefuehrt && r.veraendert.entfernt;
+          const text = `${ok ? '✅ CODESIGN_SELFTEST_OK' : 'Codesignatur-Selbsttest NICHT bestanden'} ${r.rechner} (${zg}): unverändert ${r.unveraendert.status}${erw.length ? ` (erwartet ${erw.join(' oder ')}${passt ? '' : ' — WEICHT AB'})` : ''}, ${r.unveraendert.ausgefuehrt ? 'ausgeführt' : 'NICHT ausgeführt'}; verändert ${r.veraendert.status}, ${r.veraendert.abgewiesen ? 'abgewiesen' : 'NICHT abgewiesen'}, ${r.veraendert.ausgefuehrt ? 'AUSGEFÜHRT' : 'nicht ausgeführt'}, Datei ${r.veraendert.entfernt ? 'entfernt' : 'NOCH DA'}`;
           return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
         }
         case 'codesignatur_status': {
@@ -332,7 +340,13 @@ export class WindowsPkiSkill extends Skill {
           const tage = z ? Math.floor((new Date(z.validTo).getTime() - Date.now()) / 86_400_000) : undefined;
           const zert = z ? { name: z.subject.replace(/\n/g, ', '), seriennummer: z.serialNumber.toLowerCase(), thumbprint: z.fingerprint.replace(/:/g, ''), gueltigBis: new Date(z.validTo).toISOString(), tage, aussteller: z.issuer.replace(/\n/g, ', ') } : null;
           const pr = Object.entries(zaehler).map(([s, n]) => `${s} ${n}`).join(', ') || 'keine';
-          return { success: true, data: { an, zertifikat: zert, pruefungen: zaehler }, display: `Codesignatur ${an ? 'AN' : 'aus'}; ${zert ? `Zertifikat ${zert.name}, Seriennummer ${zert.seriennummer}, gültig bis ${zert.gueltigBis.slice(0, 10)} (${tage} Tage), Aussteller ${zert.aussteller}` : 'kein Zertifikat abgelegt'}; Prüfungen seit dem Start: ${pr}` };
+          const display = `Codesignatur ${an ? 'AN' : 'aus'}; ${zert ? `Zertifikat ${zert.name}, Seriennummer ${zert.seriennummer}, gültig bis ${zert.gueltigBis.slice(0, 10)} (${tage} Tage), Aussteller ${zert.aussteller}` : 'kein Zertifikat abgelegt'}; Prüfungen seit dem Start: ${pr}`;
+          // v1851 — Erwartungen für Prüfschritte: Schalter und Mindestzahl gültiger Prüfungen (statt Textauswertung im Plan)
+          const fehlt: string[] = [];
+          if (typeof input.erwartet_an === 'boolean' && input.erwartet_an !== an) fehlt.push(`Schalter ${an ? 'an' : 'aus'} statt ${input.erwartet_an ? 'an' : 'aus'}`);
+          if (input.mindest_valid !== undefined) { const m = Number(input.mindest_valid); if (!Number.isInteger(m) || m < 0) return { success: false, error: 'mindest_valid: ganze Zahl ≥ 0' }; if ((zaehler.Valid ?? 0) < m) fehlt.push(`Valid ${zaehler.Valid ?? 0} < ${m}`); }
+          const data = { an, zertifikat: zert, pruefungen: zaehler };
+          return fehlt.length ? { success: false, data, error: `${display} — NICHT wie erwartet: ${fehlt.join('; ')}` } : { success: true, data, display };
         }
         case 'trust_aktualisieren': {
           const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);

@@ -294,6 +294,10 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'container_healthy') fehlt(['zugang', 'container']);
   if (typ === 'datei') { fehlt(['zugang', 'pfad']); if (aus.pfad && !/^\/[\w./-]+$/.test(aus.pfad)) f.push(`${wo}: pfad muss ein einfacher absoluter Pfad sein`); }
   if (typ === 'befehl') { fehlt(['zugang', 'befehl']); const g = aus.befehl ? pruefbefehlFehler(ersetzeVerweise(aus.befehl)) : undefined; if (g) f.push(`${wo}: Prüfbefehl „${aus.befehl!.slice(0, 60)}“ ${g}`); }
+  // v1851 — Realfall 4a876c4e: python3 -c 's = """{{schritt5.text}}"""; …' — Freitext eines Ergebnisses in einem Befehl scheitert zur
+  // Laufzeit an SICHERER_WERT (und wäre ein Einschleusweg). Erwartungen gehören in die Prüfung des Bausteins (erwartet/nichtEnthalten,
+  // Parameter wie erwartet_status) oder in eine skill-Prüfung.
+  if (aus.befehl && /\{\{\s*schritt\d+\.(text|display|ausgabe|fehler|stdout|stderr)\s*\}\}/.test(aus.befehl)) f.push(`${wo}: Prüfbefehl setzt den Freitext eines Ergebnisses ein ({{schrittN.text}} u. ä.) — das scheitert zur Laufzeit; Erwartung als erwartet/nichtEnthalten einer skill-Prüfung oder über Parameter des Bausteins ausdrücken`);
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;

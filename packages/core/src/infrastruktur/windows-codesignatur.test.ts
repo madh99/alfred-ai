@@ -268,3 +268,54 @@ describe('v1850 Codesignatur-Selbsttest', () => {
     expect(signierer.zaehler).toEqual({});
   });
 });
+
+// v1851 — Erwartungen in den Bausteinen statt Textauswertung im Plan (Realfall 4a876c4e: python3 mit {{schrittN.text}})
+describe('v1851 Erwartungen der Codesignatur-Bausteine', () => {
+  const ausChange = { ausChange: true } as never;
+  it('codesignatur_status: erwartet_an und mindest_valid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-cs-test-'));
+    try {
+      const ablage = new CodesignaturAblage(join(dir, 'codesignatur'));
+      await ablage.speichere({ schluesselPem: TEST_SCHLUESSEL_PEM, kettePem: KETTE }); await ablage.setzeAn(true);
+      const skill = new WindowsPkiSkill({ skript: async () => ({ code: 1, stdout: '', stderr: '' }), codesignatur: { ablage, zaehler: () => ({ Valid: 1 }), vergiss: () => undefined } });
+      expect((await skill.execute({ action: 'codesignatur_status', erwartet_an: true, mindest_valid: 1 })).success).toBe(true);
+      const r = await skill.execute({ action: 'codesignatur_status', erwartet_an: true, mindest_valid: 2 });
+      expect(r.success).toBe(false); expect(r.error).toContain('Valid 1 < 2');
+      expect((await skill.execute({ action: 'codesignatur_status', erwartet_an: false })).error).toContain('Schalter an statt aus');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('codesignatur_selbsttest: erwartet_status muss passen', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-cs-test-'));
+    try {
+      const ablage = new CodesignaturAblage(join(dir, 'codesignatur'));
+      await ablage.speichere({ schluesselPem: TEST_SCHLUESSEL_PEM, kettePem: KETTE });
+      const ergebnis = { rechner: 'FS01', unveraendert: { status: 'UnknownError', ausgefuehrt: true }, veraendert: { status: 'HashMismatch', abgewiesen: true, ausgefuehrt: false, entfernt: true } };
+      const skill = new WindowsPkiSkill({ skript: async () => ({ code: 1, stdout: '', stderr: '' }), codesignatur: { ablage, zaehler: () => ({}), vergiss: () => undefined, selbsttest: async () => ergebnis } });
+      expect((await skill.execute({ action: 'codesignatur_selbsttest', zugang: 'fs01', erwartet_status: ['UnknownError', 'NotTrusted'] })).success).toBe(true);
+      const r = await skill.execute({ action: 'codesignatur_selbsttest', zugang: 'fs01', erwartet_status: ['Valid'] });
+      expect(r.success).toBe(false); expect(r.error).toContain('WEICHT AB');
+      expect((await skill.execute({ action: 'codesignatur_selbsttest', zugang: 'fs01', erwartet_status: ['Gut'] })).error).toContain('erwartet_status');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('codesignatur_vorlage_anlegen: breite Gruppen bei den Registrierrechten = nicht bestanden', async () => {
+    const antwort = (registrieren: string[]) => `ALFRED-AD ${JSON.stringify({ zustand: 'schon vorhanden', vorlage: 'AD3033AlfredCodesignatur', anzeige: 'AD3033 Alfred Codesignatur', oid: '1.2', ca: 'CA', aufCa: true, registrieren, namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072 })}\n`;
+    let reg = ['AD3033\\Domain Admins', 'AD3033\\Enterprise Admins', 'NT AUTHORITY\\SYSTEM'];
+    const skill = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: antwort(reg), stderr: '' }), tresor: { namen: async () => new Set(['win-dc01-admin']), lies: async () => 'pw' } });
+    const p = { action: 'codesignatur_vorlage_anlegen', zugang: 'pkiiss01', vorlage: 'AD3033AlfredCodesignatur', anzeige: 'AD3033 Alfred Codesignatur' };
+    expect((await skill.execute(p, ausChange)).display).toContain('CODESIGN_TEMPLATE_OK');
+    reg = [...reg, 'NT AUTHORITY\\Authenticated Users'];
+    const r = await skill.execute(p, ausChange);
+    expect(r.success).toBe(false); expect(r.error).toContain('ZU BREIT: NT AUTHORITY\\Authenticated Users');
+  });
+});
+
+describe('v1851 Planer lehnt Freitext-Verweise in Prüfbefehlen ab', () => {
+  it('{{schrittN.text}} in einem Befehl ist ein Planfehler', async () => {
+    const { pruefeChangePlan } = await import('./change-schritte.js');
+    const sk = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const plan = { titel: 'x', begruendung: 'y', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['pkiiss01'],
+      schritte: [{ titel: 'Status', art: 'aktion', skill: 'windows_pki', aktion: 'codesignatur_status', parameter: {}, pruefung: { typ: 'befehl', zugang: 'pve', befehl: "python3 -c 's = \"{{schritt1.text}}\"; print(1)'", erwartet: '1' } }] };
+    const ctx = { skill: (n: string) => (n === 'windows_pki' ? sk as never : undefined), asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    expect(pruefeChangePlan(plan, ctx as never).fehler.some(x => x.includes('Freitext eines Ergebnisses'))).toBe(true);
+  });
+});

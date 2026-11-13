@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Erwartungen der Codesignatur-Bausteine (v1851)
+
+- `codesignatur_selbsttest` (`erwartet_status`) und `codesignatur_status` (`erwartet_an`, `mindest_valid`) prüfen Erwartungen selbst; `codesignatur_vorlage_anlegen` schlägt fehl, wenn breite Gruppen registrieren dürfen.
+- Change-Pläne, die den Freitext eines Schrittergebnisses in einen Prüfbefehl einsetzen, werden schon bei der Planung abgewiesen.
+
 ### Added — Selbsttest der Codesignatur (v1850)
 
 - `windows_pki codesignatur_selbsttest` belegt auf einem Windows-Rechner, dass eine signierte Probe läuft und dieselbe Probe nach einer Veränderung abgewiesen, entfernt und nicht ausgeführt wird.
