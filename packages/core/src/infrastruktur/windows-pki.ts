@@ -447,10 +447,17 @@ export function aktivierenSkript(r: AktivierParameter): string {
     "  $nb = DomaeneNetbios",
     `  $w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innenSkript(r, [
       "$zd = Join-Path $env:ProgramData 'Alfred\\pki\\issuer.cer'",
-      "$aus = (& certutil.exe -installcert $zd) -join ' '",
-      "if ($LASTEXITCODE -ne 0) { throw ('certutil -installcert Exit ' + $LASTEXITCODE + ': ' + $aus) }",
-      "[ordered]@{ installiert = $true }",
-    ]))} 300`,
+      // v1837 — Realfall 13.11. PKI-B Schritt 36: certutil -installcert hing als Domänen-Administrator 300 s (vermutlich eine
+      // Rückfrage ohne Fenster). Jetzt -silent, Ausgabe in Dateien, eigene Zeitgrenze 180 s mit Abbruch und mitgelieferter Ausgabe.
+      "$ao = Join-Path $env:TEMP ('alfred-ic-' + [guid]::NewGuid().ToString('N') + '.txt'); $ae = $ao + '.err'",
+      "$pr = Start-Process -FilePath (Join-Path $env:windir 'System32\\certutil.exe') -ArgumentList @('-f', '-silent', '-installcert', ('\"' + $zd + '\"')) -NoNewWindow -PassThru -RedirectStandardOutput $ao -RedirectStandardError $ae",
+      "$fertig = $pr.WaitForExit(180000)",
+      "$aus = ((Get-Content $ao -Raw -ErrorAction SilentlyContinue) + ' ' + (Get-Content $ae -Raw -ErrorAction SilentlyContinue)) -replace '\\s+', ' '",
+      "Remove-Item $ao, $ae -Force -ErrorAction SilentlyContinue",
+      "if (-not $fertig) { try { $pr.Kill() } catch {}; throw ('certutil -installcert nach 180 s abgebrochen: ' + $aus) }",
+      "if ($pr.ExitCode -ne 0) { throw ('certutil -installcert Exit ' + $pr.ExitCode + ': ' + $aus) }",
+      "[ordered]@{ installiert = $true; ausgabe = $aus.Substring(0, [Math]::Min(400, $aus.Length)) }",
+    ]))} 240`,
     "  $zustand = 'aktiviert'",
     '}',
     "Start-Service -Name CertSvc -ErrorAction SilentlyContinue",

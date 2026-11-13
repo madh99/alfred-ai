@@ -13,6 +13,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 - `windows_pki issuer_aktivieren` scheiterte mit „Benutzer nicht authentifiziert“, weil eine Enterprise-CA beim Installieren ihres Zertifikats auf das Active Directory zugreift und die SSH-Sitzung dafür keine Anmeldedaten hat. Das Zertifikat wird jetzt mit Kennwort-Anmeldung als Domänen-Administrator installiert. Das Kennwort kommt aus dem Tresor und wird nur über die Standardeingabe übergeben.
 - Eine abgebrochene Installation wird jetzt erkannt und fortgesetzt. Bisher galt die CA schon als aktiv, sobald der Zertifikats-Hash eingetragen war, auch wenn die Einrichtung noch offen war.
+- Das Installieren des CA-Zertifikats läuft jetzt ohne Rückfragen und mit eigener Zeitgrenze (v1837). Bei einem Fehler enthält die Meldung die Ausgabe von certutil.
 
 ### Fixed — Alias der PKI-Website (v1832)
 
