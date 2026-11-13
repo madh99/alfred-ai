@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-TLS-Zertifikat am Anzeigenamen der Vorlage erkennen (v1855)
+
+- Erneuerungsstatus und Anforderung erkennen Zertifikate der Vorlage auch am Anzeigenamen, wie Windows ihn im Zertifikat führt.
+
 ### Fixed — SQL-TLS-Vorlage im Computerkontext (v1854)
 
 - Die SQL-TLS-Vorlage wird als Computer-Vorlage angelegt bzw. angeglichen; Anforderungen nennen die Vorlage erst beim Einreichen.

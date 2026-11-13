@@ -20,6 +20,12 @@ const CA_KONFIG = /^[a-z0-9.-]{3,253}\\[A-Za-z0-9][A-Za-z0-9 ._-]{2,62}$/i;
 const VORLAGE = /^[A-Za-z][A-Za-z0-9-]{2,39}$/;
 const KONTO = /^[A-Za-z0-9-]{1,15}\\[A-Za-z0-9._-]{1,20}\$?$/;
 
+/**
+ * v1855 — Vorlagen-Erweiterung (1.3.6.1.4.1.311.21.7) zeigt Windows als „Template=<Anzeigename>(<OID>), …“: der Anzeigename hat
+ * Leerzeichen statt Bindestrichen (Realfall fad4b31b: „AD3033 SQL TLS v1“). Treffer = technischer Name ODER Anzeigename, exakt.
+ */
+const VORLAGE_TREFFER = "$_.Oid.Value -eq '1.3.6.1.4.1.311.21.7' -and (($_.Format($false) -replace '^Template=([^(]*)\\(.*$', '$1').Trim() -in @($p.vorlage, ($p.vorlage -replace '-', ' ')))";
+
 export interface SqlTlsAnforderung { vorlage: string; cn: string; sans: string[]; ca: string; erneuerung: boolean }
 export function pruefeAnforderung(o: Record<string, unknown>): SqlTlsAnforderung | string {
   const sans = (Array.isArray(o.sans) ? o.sans : []).map(x => String(x).trim().toLowerCase());
@@ -57,7 +63,7 @@ export function anfordernSkript(a: SqlTlsAnforderung): string {
     "$sanText = ($p.sans | Sort-Object) -join ','",
     "if (Test-Path -LiteralPath $merk) { $m = [IO.File]::ReadAllText($merk) | ConvertFrom-Json; if ($m.vorlage -eq $p.vorlage -and $m.cn -eq $p.cn -and $m.sans -eq $sanText -and -not $m.installiert) { return [ordered]@{ zustand = 'schon angefordert'; requestId = [int]$m.requestId; cn = $p.cn; sans = $sanText; zeit = $m.zeit } } }",
     // ein gültiges Zertifikat dieser Vorlage (Name im Zertifikat) für diesen Knoten gilt als vorhanden
-    "$vorh = @(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Subject -eq ('CN=' + $p.cn) -and $_.NotAfter -gt (Get-Date) -and ($_.Extensions | Where-Object { $_.Oid.Value -eq '1.3.6.1.4.1.311.21.7' -and $_.Format($false) -match [regex]::Escape($p.vorlage) }) })",
+    `$vorh = @(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Subject -eq ('CN=' + $p.cn) -and $_.NotAfter -gt (Get-Date) -and ($_.Extensions | Where-Object { ${VORLAGE_TREFFER} }) })`,
     "if ($vorh.Count -and -not $p.erneuerung) { return [ordered]@{ zustand = 'schon vorhanden'; requestId = 0; cn = $p.cn; sans = $sanText; thumbprint = $vorh[0].Thumbprint; gueltigBis = $vorh[0].NotAfter.ToString('s') } }",
     "$inf = Join-Path $dir 'sqltls.inf'; $req = Join-Path $dir 'sqltls.req'; $cer = Join-Path $dir 'sqltls-sofort.cer'",
     "[IO.File]::WriteAllText($inf, [string]$p.inf, [Text.Encoding]::ASCII)",
@@ -217,7 +223,7 @@ export function bewerteZertifikat(b: ZertifikatBefund, e: ZertifikatErwartung, j
 export function erneuerungStatusSkript(e: { vorlage: string }): string {
   return [
     ...kopf(e, false),
-    "$z = @(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Extensions | Where-Object { $_.Oid.Value -eq '1.3.6.1.4.1.311.21.7' -and $_.Format($false) -match [regex]::Escape($p.vorlage) } } | Sort-Object NotAfter -Descending | ForEach-Object { [ordered]@{ thumbprint = $_.Thumbprint; subjekt = $_.Subject; bis = $_.NotAfter.ToString('s'); tage = [int][Math]::Floor(($_.NotAfter - (Get-Date)).TotalDays) } })",
+    `$z = @(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Extensions | Where-Object { ${VORLAGE_TREFFER} } } | Sort-Object NotAfter -Descending | ForEach-Object { [ordered]@{ thumbprint = $_.Thumbprint; subjekt = $_.Subject; bis = $_.NotAfter.ToString('s'); tage = [int][Math]::Floor(($_.NotAfter - (Get-Date)).TotalDays) } })`,
     "$merk = Join-Path $env:ProgramData 'Alfred\\pki\\sqltls-anforderung.json'; $offen = $null",
     "if (Test-Path -LiteralPath $merk) { $m = [IO.File]::ReadAllText($merk) | ConvertFrom-Json; if (-not $m.installiert) { $offen = [int]$m.requestId } }",
     "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; zeit = (Get-Date).ToString('s'); zertifikate = $z; offeneAnforderung = $offen })",

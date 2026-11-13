@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { anforderungInf, pruefeAnforderung, pruefeGenehmigung, genehmigenSkript, anfordernSkript, installierenSkript, bewerteZertifikat, warnstufe, SQL_TLS_PROVIDER, type ZertifikatBefund } from './windows-sqltls.js';
+import { anforderungInf, pruefeAnforderung, pruefeGenehmigung, genehmigenSkript, anfordernSkript, installierenSkript, erneuerungStatusSkript, bewerteZertifikat, warnstufe, SQL_TLS_PROVIDER, type ZertifikatBefund } from './windows-sqltls.js';
 import { vorlageAnlegenSkript, profilSqlTls } from './windows-codesignatur.js';
 import { WindowsPkiSkill } from './windows-pki-skill.js';
 import { aktionsArt } from './change-schritte.js';
@@ -111,6 +111,17 @@ describe('v1854 Computer-Vorlage und Vorlage beim Einreichen', () => {
     expect(s).toContain("if ([int]$t.flags.Value -ne $sollFlags)");
     const a = anfordernSkript(pruefeAnforderung({ cn: 'sql01.ad.3033.at', sans: SANS, ca: CA }) as never).replace(/''/g, "'");
     expect(a).toContain("-attrib ('CertificateTemplate:' + $p.vorlage)");
+  });
+  it('v1855: Zertifikat der Vorlage wird über technischen Namen ODER Anzeigenamen erkannt (Windows zeigt den Anzeigenamen)', () => {
+    const treffer = "-replace '^Template=([^(]*)\\(.*$', '$1').Trim() -in @($p.vorlage, ($p.vorlage -replace '-', ' '))";
+    expect(erneuerungStatusSkript({ vorlage: 'AD3033-SQL-TLS-v1' })).toContain(treffer);
+    const a = anfordernSkript(pruefeAnforderung({ cn: 'sql01.ad.3033.at', sans: SANS, ca: CA }) as never).replace(/''/g, "'");
+    expect(a).toContain(treffer);
+    expect(a).not.toContain('-match [regex]::Escape($p.vorlage)');
+    // Realfall-Format von sql01: dieselbe Regel in JS nachgebildet
+    const format = 'Template=AD3033 SQL TLS v1(1.3.6.1.4.1.311.21.8.15542962.14400190), Major Version Number=100, Minor Version Number=2';
+    const name = format.replace(/^Template=([^(]*)\(.*$/, '$1').trim();
+    expect(['AD3033-SQL-TLS-v1', 'AD3033 SQL TLS v1']).toContain(name);
   });
   it('Vorlage ohne Computer-Kennzeichen ist ein Befund', async () => {
     const r = { zustand: 'schon vorhanden', flags: 131616, vorlage: 'AD3033-SQL-TLS-v1', anzeige: 'AD3033 SQL TLS v1', oid: '1.2', ca: 'CA', aufCa: true, registrieren: ['AD3033\PKI-SQL-TLS-Registrieren'], namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072, eku: ['1.3.6.1.5.5.7.3.1'], keySpec: 1, csp: ['1,Microsoft RSA SChannel Cryptographic Provider'], privatFlag: 0, gruppeMitglieder: ['SQL01$', 'SQL02$'] };
