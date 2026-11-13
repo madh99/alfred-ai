@@ -177,3 +177,19 @@ describe('Etappe 3a Codesignatur — Hochladen über SSH', () => {
     expect(t.befehle.some(b => b.includes('-File'))).toBe(false);
   });
 });
+
+// v1847 — Realfall 13.11. Entwurf e850f204: der Planer verlangte eine Prüfung; Alfred behalf sich mit „Write-Output '{{schritt3.text}}'“
+describe('v1847 Codesignatur-Bausteine prüfen sich selbst', () => {
+  it('Plan ohne eigene Prüfung bei Vorlage und Zertifikat wird angenommen', async () => {
+    const { pruefeChangePlan } = await import('./change-schritte.js');
+    const sk = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const plan = {
+      titel: 'PKI 3a Codesignatur', begruendung: 'Owner 13.11.', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['pkiiss01'],
+      schritte: [
+        { titel: 'Vorlage', art: 'aktion', skill: 'windows_pki', aktion: 'codesignatur_vorlage_anlegen', parameter: { zugang: 'pkiiss01', vorlage: 'AD3033AlfredCodesignatur', anzeige: 'AD3033 Alfred Codesignatur' }, rueckweg: { skill: 'windows_pki', aktion: 'codesignatur_vorlage_entfernen', parameter: { zugang: 'pkiiss01', vorlage: 'AD3033AlfredCodesignatur', anzeige: 'AD3033 Alfred Codesignatur' } } },
+        { titel: 'Zertifikat', art: 'aktion', skill: 'windows_pki', aktion: 'codesignatur_einrichten', parameter: { zugang: 'pkiiss01', vorlage: 'AD3033AlfredCodesignatur', erwartet_aussteller_thumbprint: TEST_CA_THUMBPRINT }, rueckweg: { skill: 'windows_pki', aktion: 'codesignatur_sperren', parameter: { zugang: 'pkiiss01', seriennummer: '{{schritt2.seriennummer}}', grund: 'cessationOfOperation' } } },
+      ] };
+    const ctx = { skill: (n: string) => (n === 'windows_pki' ? sk as never : undefined), asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    expect(pruefeChangePlan(plan, ctx as never).fehler.filter(x => /Prüfung|pruefung/i.test(x))).toEqual([]);
+  });
+});

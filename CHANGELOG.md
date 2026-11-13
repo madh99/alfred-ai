@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planung der Codesignatur-Changes (v1847)
+
+- Die Codesignatur-Bausteine von `windows_pki` prüfen ihr Ergebnis selbst; Changes brauchen dafür keine zusätzliche Prüfung mehr.
+
 ### Added — Codesignatur der Windows-Bausteine (PKI Etappe 3a, v1846)
 
 - `windows_pki` erhält die Change-Bausteine `codesignatur_vorlage_anlegen`, `codesignatur_vorlage_entfernen`, `codesignatur_einrichten`, `codesignatur_sperren` und `codesignatur_schalten` sowie das lesende `codesignatur_status`.

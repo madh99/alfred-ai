@@ -112,7 +112,10 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   'codesignatur_sperren',
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
-const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
+const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',
+  // v1847 — PKI Etappe 3a: die Codesignatur-Bausteine prüfen ihr Ergebnis selbst (Vorlage auf der CA mit Flags; Zertifikat kryptografisch
+  // gegen Schlüssel, Name, Verwendung, Aussteller; Sperrung in der CA-Datenbank; Schalter mit gültigem Material) und schlagen sonst fehl
+  'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
