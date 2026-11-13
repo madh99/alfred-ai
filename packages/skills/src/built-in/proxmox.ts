@@ -2068,11 +2068,31 @@ export class ProxmoxSkill extends Skill {
     const name = `alfred-s-${zufall}.ps1`;
     const pfad = `C:\\Windows\\Temp\\${name}`;
     const inhalt = `\uFEFFRemove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n${skript}\n`;
+    // PKI Etappe 3a — signieren (Schalter aus: unverändert wie bisher)
+    const signiert = this.codesignatur ? await this.codesignatur.signiere(inhalt) : null;
     // selbst Base64 (encode 0): PVE würde Zeichen außerhalb Latin-1 (BOM, Umlaute) nicht kodieren können; PVE-Grenze 61 440 Zeichen
-    const inhaltB64 = Buffer.from(inhalt, 'utf8').toString('base64');
+    const inhaltB64 = Buffer.from(signiert ?? inhalt, 'utf8').toString('base64');
     if (inhaltB64.length > 61_440) throw new Error('Skript zu groß für die Ablage über den Gastagenten (Base64 > 61 440 Zeichen)');
     await this.post(`/nodes/${vm.node}/qemu/${vmid}/agent/file-write`, { file: pfad, content: inhaltB64, encode: 0 });
-    const { pid } = await this.post<{ pid: number }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec`, { command: ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfad], ...(eingabe !== undefined ? { 'input-data': eingabe } : {}) });
+    if (signiert !== null && this.codesignatur) {
+      // von außen prüfen, bevor das Skript startet
+      const pr = await this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `(Get-AuthenticodeSignature -LiteralPath ${pfad}).Status.ToString()`], undefined, 60_000);
+      try { this.codesignatur.bewerte(pr.stdout, `${vmName} (Gastagent)`); }
+      catch (err) {
+        await this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Remove-Item -LiteralPath ${pfad} -Force -ErrorAction SilentlyContinue`], undefined, 30_000).catch(() => undefined);
+        throw err;
+      }
+    }
+    return this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfad], eingabe, timeoutMs);
+  }
+
+  /** PKI Etappe 3a — Signatur der Gastagent-Skripte (vom Kern gesetzt; ohne: unsigniert wie bisher) */
+  codesignatur?: { signiere: (inhalt: string) => Promise<string | null>; bewerte: (status: string, wo: string) => string };
+
+  /** Befehl über den Gastagenten starten und auf das Ende warten */
+  private async gastAusfuehren(node: string, vmid: number, command: string[], eingabe: string | undefined, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+    const vm = { node };
+    const { pid } = await this.post<{ pid: number }>(`/nodes/${vm.node}/qemu/${vmid}/agent/exec`, { command, ...(eingabe !== undefined ? { 'input-data': eingabe } : {}) });
     const ende = Date.now() + timeoutMs;
     while (Date.now() < ende) {
       await new Promise(r => setTimeout(r, 2_000));

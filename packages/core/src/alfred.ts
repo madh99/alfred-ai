@@ -469,6 +469,10 @@ export class Alfred {
   private fernzugangNamenAuffrischen?: () => Promise<void>;
   /** I1 — Fernzugriff-Skill (Sammler) und letzte Host-Bestände der Discovery */
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+  /** PKI Etappe 3a — Codesignatur der Windows-Skripte */
+  private codesignaturAblage?: import('./infrastruktur/windows-codesignatur.js').CodesignaturAblage;
+  private codesignaturLokal?: import('./infrastruktur/windows-codesignatur.js').Lokal;
+  private codesignierer?: import('./infrastruktur/windows-codesignatur.js').Codesignierer;
   /** I3 — Planung/Freigabe von Changes mit Schritten (auch für Web-Freigabe) */
   private changePlanung?: import('./infrastruktur/change-planung.js').ChangePlanung;
   /** I4b Teil 5 — Soll/Ist-Abgleich angenommener Architekturen */
@@ -7049,7 +7053,26 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const datenOrdner = path.resolve(process.cwd(), 'data');
       const cmdbFz = new CmdbRepository(adapter);
       const ownerFz = () => this.ownerMasterUserId ?? this.tryOwner();
+      // PKI Etappe 3a — Codesignatur der Windows-Skripte (Schlüssel, Kette, Schalter in data/codesignatur; Standard aus)
+      {
+        const { CodesignaturAblage, Codesignierer } = await import('./infrastruktur/windows-codesignatur.js');
+        const { execFile } = await import('node:child_process');
+        this.codesignaturAblage = new CodesignaturAblage(path.join(datenOrdner, 'codesignatur'));
+        this.codesignaturLokal = (befehl, args) => new Promise(resolve => {
+          execFile(befehl, args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+            const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
+            resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') || (err && code === 1 ? err.message : '') });
+          });
+        });
+        const ablage = this.codesignaturAblage;
+        this.codesignierer = new Codesignierer({
+          aktiv: () => ablage.an(), material: () => ablage.material(), lokal: this.codesignaturLokal,
+          melde: (t) => { void this.sendeAnOwner(t); }, protokoll: (msg, daten) => this.logger.info(daten, msg),
+        });
+      }
+      const signierer = this.codesignierer!;
       skillRegistry.register(new FernzugriffSkill({
+        codesignatur: { signiere: (i) => signierer.signiere(i), bewerte: (s, w) => signierer.bewerte(s, w) },
         repo: repoFz,
         owner: ownerFz,
         beiAenderung: () => { void this.fernzugangNamenAuffrischen?.().catch(() => undefined); }, // v1550 (S4a)
@@ -7208,7 +7231,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
             lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
           },
+          // PKI Etappe 3a — Codesignatur
+          ...(this.codesignaturAblage !== undefined && this.codesignaturLokal !== undefined && this.codesignierer !== undefined ? {
+            lokal: this.codesignaturLokal,
+            codesignatur: { ablage: this.codesignaturAblage, zaehler: () => ({ ...this.codesignierer!.zaehler }), vergiss: () => this.codesignierer!.vergiss() },
+          } : {}),
         }));
+        // Gastagent-Skripte (netzlose Root) ebenso signieren
+        {
+          const px = skillRegistry.get('proxmox') as unknown as { codesignatur?: { signiere: (i: string) => Promise<string | null>; bewerte: (s: string, w: string) => string } } | undefined;
+          const sg = this.codesignierer;
+          if (px && sg) px.codesignatur = { signiere: (i) => sg.signiere(i), bewerte: (s, w) => sg.bewerte(s, w) };
+        }
         this.logger.info('PKI-Skill registriert');
       }
       // v1658 — GitLab und seine Container-Registry, nur lesend (Owner 25.10.)

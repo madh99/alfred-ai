@@ -11,16 +11,23 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
   pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
+import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
+import { createHash } from 'node:crypto';
 
 export interface WindowsPkiDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
   gast?: (vmid: number, vmName: string, skript: string, eingabe: string | undefined, timeoutMs: number) => Promise<{ code: number; stdout: string; stderr: string }>;
   tresor?: { namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string> };
+  /** Etappe 3a — openssl/osslsigncode auf dem Alfred-Server */
+  lokal?: Lokal;
+  /** Etappe 3a — Ablage (Schlüssel, Kette, Schalter im Datenordner), Zähler der Prüfungen seit dem Start, Zwischenspeicher leeren */
+  codesignatur?: { ablage: CodesignaturAblage; zaehler: () => Record<string, number>; vergiss: () => void };
 }
 
-export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status']);
+export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status']);
 /** nur als Schritte freigegebener Changes */
-export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren']);
+export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
+  'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -51,7 +58,13 @@ export class WindowsPkiSkill extends Skill {
       + 'ca_sicherung (zugang oder vmid + vm_name; ziel_ordner auf der Sicherungsplatte z. B. B:\\CA-Sicherung; passwort_tresor = Tresor-Eintrag für das PKCS#12-Kennwort, z. B. pki-root-sicherung) — Backup-CARoleService (Datenbank + privater Schlüssel kennwortgeschützt), CA-Konfiguration, CAPolicy.inf, Manifest mit SHA-256; additiv, ohne Rückweg; Ergebnis „CA_BACKUP_VERIFIED“ erst nach Hash-Abgleich. '
       + 'ca_sicherung_status (lesend; zugang oder vmid + vm_name; ziel_ordner) — Sätze mit Alter und Hash-Abgleich. '
       + 'ca_sicherung_kopieren (Quelle zugang oder vmid + vm_name, ziel_ordner der Quelle, satz = ca-JJJJMMTT-HHMMSS aus ca_sicherung; ziel_zugang = anderer Windows-Fernzugang, ziel_ziel_ordner dort) — hashgeprüfte unabhängige Kopie (ZIP über Alfred, entpackt, Manifest nachgeprüft); additiv. '
-      + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen.',
+      + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen. '
+      + 'CODESIGNATUR (Etappe 3a, Owner 13.11.: Schlüssel auf dem Alfred-Server, 1 Jahr, nur signieren und prüfen): '
+      + 'codesignatur_vorlage_anlegen (zugang = Issuing-CA; vorlage z. B. AD3033AlfredCodesignatur, anzeige „AD3033 Alfred Codesignatur“, gueltig_tage 365, schluessel_bits 3072, konto_tresor Standard win-dc01-admin) — Vorlage nur Codesignatur, Name aus der Anforderung, jede Anforderung wartet auf CA-Freigabe, Registrieren nur Domänen-Admins; auf der CA ausgestellt; Ergebnis „CODESIGN_TEMPLATE_OK“; Rückweg codesignatur_vorlage_entfernen (zugang, vorlage, anzeige). '
+      + 'codesignatur_einrichten (zugang = Issuing-CA; vorlage, cn Standard „Alfred Codesignatur“, o optional, erwartet_aussteller_thumbprint = Thumbprint der Issuing-CA, schluessel_bits 3072, konto_tresor) — Schlüssel und Anforderung auf dem Alfred-Server, an der CA ausstellen, Schlüssel/Name/Verwendung/Aussteller prüfen, Schlüssel und Kette im Datenordner des Alfred-Servers ablegen; liefert das vorhandene, solange ein gültiges Zertifikat abgelegt ist (erneuern true für die Erneuerung); Ergebnis „CODESIGN_CERT_OK“ mit seriennummer; Rückweg codesignatur_sperren (zugang, seriennummer, grund cessationOfOperation). '
+      + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
+      + 'codesignatur_schalten (an true|false) — Signieren beim Hochladen ein/aus; ein nur mit gültigem Material; Rückweg codesignatur_schalten an false. '
+      + 'codesignatur_status (lesend) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 600_000,
@@ -73,6 +86,8 @@ export class WindowsPkiSkill extends Skill {
         ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
         db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
+        vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
+        erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
       required: ['action'],
@@ -213,6 +228,83 @@ export class WindowsPkiSkill extends Skill {
           const ok = r.belege.length === dcs.length && r.belege.every(b => b.rootDa && b.subDa !== false);
           const text = `${ok ? '✅ AD_PKI_PUBLISHED' : 'AD-Veröffentlichung NICHT auf allen DCs belegt'}: Root ${r.rootThumbprint}${r.subThumbprint ? `, Issuing ${r.subThumbprint}` : ''}; ${r.belege.map(b => `${b.dc}: Root ${b.rootDa ? 'da' : 'FEHLT'}${b.subDa === null ? '' : `, AIA ${b.subDa ? 'da' : 'FEHLT'}`}`).join('; ')} — NTAuth unverändert`;
           return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        // ── Etappe 3a — Codesignatur ──────────────────────────────────────────────────────────────────────────────
+        case 'codesignatur_vorlage_anlegen': case 'codesignatur_vorlage_entfernen': {
+          if (input.vmid !== undefined) return { success: false, error: `${action} nur über den Fernzugang der Issuing-CA` };
+          const v = pruefeVorlage(input); if (typeof v === 'string') return { success: false, error: v };
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Codesignatur-Vorlage ${v.vorlage} (${String(input.zugang)})`);
+          if (action === 'codesignatur_vorlage_entfernen') {
+            const { r } = await this.lauf<{ vorlage: string; vonCa: boolean; geloescht: boolean; oidWeg: boolean; nochDa: boolean }>(input, vorlageEntfernenSkript(v), 'Codesignatur-Vorlage entfernen', 420_000, { kennwort: kw });
+            const text = `${r.nochDa ? 'Codesignatur-Vorlage NICHT entfernt' : '✅ CODESIGN_TEMPLATE_REMOVED'} ${r.vorlage}: von der CA ${r.vonCa ? 'genommen' : 'war nicht ausgestellt'}, Vorlage ${r.geloescht ? 'gelöscht' : 'war nicht da'}, OID ${r.oidWeg ? 'gelöscht' : '—'}`;
+            return r.nochDa ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+          }
+          const { r } = await this.lauf<{ zustand: string; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number }>(input, vorlageAnlegenSkript(v), 'Codesignatur-Vorlage anlegen', 720_000, { kennwort: kw });
+          const ok = r.aufCa && (r.namensFlag & 1) === 1 && (r.anmeldeFlag & 2) === 2 && r.minSchluessel >= v.schluessel_bits;
+          const text = `${ok ? '✅ CODESIGN_TEMPLATE_OK' : 'Codesignatur-Vorlage NICHT wie verlangt'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: ${r.aufCa ? 'ausgestellt' : 'NICHT ausgestellt'}; Name aus der Anforderung ${(r.namensFlag & 1) ? 'ja' : 'NEIN'}, Freigabe an der CA ${(r.anmeldeFlag & 2) ? 'ja' : 'NEIN'}, Mindestschlüssel ${r.minSchluessel}; registrieren dürfen: ${r.registrieren.join(', ') || '—'} — Rückweg codesignatur_vorlage_entfernen`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'codesignatur_einrichten': {
+          if (input.vmid !== undefined) return { success: false, error: 'codesignatur_einrichten nur über den Fernzugang der Issuing-CA' };
+          const cs = this.d.codesignatur; const lokal = this.d.lokal;
+          if (!cs || !lokal) return { success: false, error: 'Codesignatur auf diesem Server nicht verfügbar (openssl/Ablage)' };
+          const vorlage = String(input.vorlage ?? '').trim(); if (!/^[A-Za-z][A-Za-z0-9]{2,39}$/.test(vorlage)) return { success: false, error: 'vorlage: interner Name der Codesignatur-Vorlage' };
+          const cn = String(input.cn ?? 'Alfred Codesignatur').trim(); const o = input.o === undefined ? undefined : String(input.o).trim();
+          const tp = String(input.erwartet_aussteller_thumbprint ?? '').replace(/\s/g, '').toUpperCase(); if (!/^[0-9A-F]{40}$/.test(tp)) return { success: false, error: 'erwartet_aussteller_thumbprint: SHA-1-Thumbprint der Issuing-CA (40 Hex)' };
+          const bits = input.schluessel_bits === undefined ? 3072 : Number(input.schluessel_bits); if (![3072, 4096].includes(bits)) return { success: false, error: 'schluessel_bits: 3072 oder 4096' };
+          // wiederholbar: ein abgelegtes, gültiges Zertifikat mit diesem Namen gilt als eingerichtet (kein zweites Zertifikat)
+          const altPem = await cs.ablage.kette();
+          let altSerie: string | undefined;
+          if (altPem) {
+            const alt = ersteZertifikat(altPem); altSerie = alt.serialNumber.toLowerCase();
+            const tage = Math.floor((new Date(alt.validTo).getTime() - Date.now()) / 86_400_000);
+            if (input.erneuern !== true && tage > 0 && alt.subject.split('\n').includes(`CN=${cn}`)) {
+              return { success: true, data: { zustand: 'schon eingerichtet', seriennummer: altSerie, thumbprint: alt.fingerprint.replace(/:/g, ''), gueltigBis: new Date(alt.validTo).toISOString(), tage }, display: `✅ CODESIGN_CERT_OK „${cn}“ schon eingerichtet: Seriennummer ${altSerie}, gültig bis ${new Date(alt.validTo).toISOString().slice(0, 10)} (${tage} Tage) — für eine Erneuerung erneuern true` };
+            }
+          }
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Codesignatur-Zertifikat ausstellen (${String(input.zugang)})`);
+          const { schluesselPem, csrDer } = await schluesselUndAnforderung(lokal, cn, o, bits);
+          const sha = createHash('sha256').update(csrDer).digest('hex');
+          const { r } = await this.lauf<{ requestId: number; ca: string; zertBase64: string; caBase64: string }>(input, ausstellenSkript({ vorlage, csr_sha256: sha, erwartet_cn: cn }), 'Codesignatur-Zertifikat ausstellen', 600_000, { kennwort: kw, csr_base64: csrDer.toString('base64') });
+          let g: ReturnType<typeof pruefeAusgestellt>;
+          try { g = pruefeAusgestellt({ schluesselPem, zertBase64: r.zertBase64, caBase64: r.caBase64, erwartet_cn: cn, erwartet_aussteller_thumbprint: tp }); }
+          catch (err) { throw new Error(`${(err as Error).message} — Anforderung ${r.requestId} an „${r.ca}“ wurde ausgestellt, das Zertifikat ist NICHT übernommen (Seriennummer aus der CA-Datenbank sperren)`); }
+          await cs.ablage.speichere({ schluesselPem, kettePem: g.kettePem });
+          cs.vergiss();
+          const data = { zustand: altPem ? 'erneuert' : 'eingerichtet', requestId: r.requestId, ca: r.ca, seriennummer: g.seriennummer, thumbprint: g.thumbprint, gueltigBis: g.gueltigBis, tage: g.tage, aussteller: g.aussteller, ...(altSerie ? { alteSeriennummer: altSerie } : {}) };
+          return { success: true, data, display: `✅ CODESIGN_CERT_OK „${cn}“ ${data.zustand}: Seriennummer ${g.seriennummer}, Thumbprint ${g.thumbprint}, gültig bis ${g.gueltigBis.slice(0, 10)} (${g.tage} Tage), Aussteller ${g.aussteller}, Anforderung ${r.requestId}; Schlüssel nur auf dem Alfred-Server${altSerie ? `; das alte Zertifikat ${altSerie} danach sperren` : ''} — Rückweg codesignatur_sperren seriennummer ${g.seriennummer}` };
+        }
+        case 'codesignatur_sperren': {
+          if (input.vmid !== undefined) return { success: false, error: 'codesignatur_sperren nur über den Fernzugang der Issuing-CA' };
+          const sp = pruefeSperre({ seriennummer: input.seriennummer, erwartet_cn: input.cn ?? 'Alfred Codesignatur', grund: input.grund ?? 'cessationOfOperation' }); if (typeof sp === 'string') return { success: false, error: sp };
+          const { r } = await this.lauf<{ zustand: string; seriennummer: string; cn: string; grund: number; zeile: string }>(input, sperrSkript(sp), 'Codesignatur-Zertifikat sperren', 300_000);
+          await this.lauf<{ zustand: string; zeit: string }>(input, crlSkript(), 'CRL ausstellen', 300_000);
+          let entfernt = false;
+          const cs = this.d.codesignatur; const k = cs ? await cs.ablage.kette() : undefined;
+          if (cs && k && ersteZertifikat(k).serialNumber.toLowerCase() === sp.seriennummer) { await cs.ablage.setzeAn(false); await cs.ablage.entferne(); cs.vergiss(); entfernt = true; }
+          return { success: true, data: { ...r, materialEntfernt: entfernt }, display: `✅ CERT_REVOKED ${r.cn} (Seriennummer ${r.seriennummer}, Grund ${r.grund}) ${r.zustand}, neue CRL ausgestellt; ${entfernt ? 'Schlüssel und Kette auf dem Alfred-Server entfernt, Codesignatur aus' : 'abgelegtes Material gehört zu einem anderen Zertifikat — unverändert'}` };
+        }
+        case 'codesignatur_schalten': {
+          const cs = this.d.codesignatur; if (!cs) return { success: false, error: 'Codesignatur auf diesem Server nicht verfügbar' };
+          if (typeof input.an !== 'boolean') return { success: false, error: 'an: true oder false' };
+          if (input.an) {
+            const m = await cs.ablage.material();
+            const z = ersteZertifikat(m.kettePem);
+            if (new Date(z.validTo).getTime() <= Date.now()) return { success: false, error: `Codesignatur-Zertifikat ${z.serialNumber} ist abgelaufen — nicht eingeschaltet` };
+            if (!(z.keyUsage ?? []).includes(EKU_CODESIGNATUR)) return { success: false, error: 'abgelegtes Zertifikat ohne Verwendung Codesignatur — nicht eingeschaltet' };
+          }
+          const vorher = await cs.ablage.an();
+          await cs.ablage.setzeAn(input.an); cs.vergiss();
+          return { success: true, data: { an: input.an, vorher }, display: `✅ CODESIGN_SWITCH ${input.an ? 'an' : 'aus'} (vorher ${vorher ? 'an' : 'aus'})${input.an ? ' — Rückweg codesignatur_schalten an false' : ''}` };
+        }
+        case 'codesignatur_status': {
+          const cs = this.d.codesignatur; if (!cs) return { success: false, error: 'Codesignatur auf diesem Server nicht verfügbar' };
+          const an = await cs.ablage.an(); const k = await cs.ablage.kette(); const zaehler = cs.zaehler();
+          const z = k ? ersteZertifikat(k) : undefined;
+          const tage = z ? Math.floor((new Date(z.validTo).getTime() - Date.now()) / 86_400_000) : undefined;
+          const zert = z ? { name: z.subject.replace(/\n/g, ', '), seriennummer: z.serialNumber.toLowerCase(), thumbprint: z.fingerprint.replace(/:/g, ''), gueltigBis: new Date(z.validTo).toISOString(), tage, aussteller: z.issuer.replace(/\n/g, ', ') } : null;
+          const pr = Object.entries(zaehler).map(([s, n]) => `${s} ${n}`).join(', ') || 'keine';
+          return { success: true, data: { an, zertifikat: zert, pruefungen: zaehler }, display: `Codesignatur ${an ? 'AN' : 'aus'}; ${zert ? `Zertifikat ${zert.name}, Seriennummer ${zert.seriennummer}, gültig bis ${zert.gueltigBis.slice(0, 10)} (${tage} Tage), Aussteller ${zert.aussteller}` : 'kein Zertifikat abgelegt'}; Prüfungen seit dem Start: ${pr}` };
         }
         case 'trust_aktualisieren': {
           const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);

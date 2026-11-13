@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Codesignatur der Windows-Bausteine (PKI Etappe 3a, v1846)
+
+- `windows_pki` erhält die Change-Bausteine `codesignatur_vorlage_anlegen`, `codesignatur_vorlage_entfernen`, `codesignatur_einrichten`, `codesignatur_sperren` und `codesignatur_schalten` sowie das lesende `codesignatur_status`.
+- Der Signaturschlüssel entsteht auf dem Alfred-Server und verlässt ihn nicht; die Issuing-CA stellt ein Zertifikat nur für Codesignatur aus einer eigenen Vorlage mit CA-Freigabe aus.
+- Eingeschaltet wird jede hochgeladene Windows-Skriptdatei (SSH und Gastagent) signiert und vor dem Start von außen geprüft; eine nach dem Signieren veränderte Datei wird nicht ausgeführt. Standard: aus.
+
 ### Security — strengere Prüfung übernommener CA-Pfade (v1845)
 
 - Übernommene CDP/AIA-Einträge in `<name>_roh` werden gegen eine Positivliste der in CA-Pfaden üblichen Zeichen geprüft; `$` ist nur als Endung versteckter Freigaben zulässig.

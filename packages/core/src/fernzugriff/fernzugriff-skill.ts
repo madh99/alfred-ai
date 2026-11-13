@@ -8,6 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ausKodiertemBefehl, skriptDatei, EINGABE_DATEI_AB } from './windows-skriptdatei.js';
+import { Codesignierer } from '../infrastruktur/windows-codesignatur.js';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
 import { kopiere, kopiereDatenbank, datenbankInventar, sqliteInventar, volumePfad, pruefePfad, gueltigerName, type Wege, type StromErgebnis } from './uebertragung.js';
@@ -56,6 +57,8 @@ export interface FernzugriffDeps {
   schluessel: () => Promise<{ pfad: string; oeffentlich: string; neu: boolean }>;
   melde?: (text: string) => void;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
+  /** PKI Etappe 3a — Skriptdateien vor dem Hochladen signieren (null = aus) und den vor dem Start gelesenen Status bewerten */
+  codesignatur?: { signiere: (inhalt: string) => Promise<string | null>; bewerte: (status: string, wo: string) => string };
   /** v1543 (F4) — Sicherungen betroffener VMs aus allen Quellen (Proxmox-Speicher, Commvault) als Textabschnitt */
   wiederherstellbarkeit?: (vmids: number[]) => Promise<string | undefined>;
   /** v1550 (S4c) — was Fachskills zum selben Host zusätzlich können (Hinweis im Ergebnis) */
@@ -541,6 +544,7 @@ export class FernzugriffSkill extends Skill {
     // v1823 — als Skriptdatei statt langer -EncodedCommand-Befehlszeile (Defender-Fehlalarm „ClickFix“, Owner-Entscheidung 12.11.)
     const skript = ausKodiertemBefehl(befehl);
     let datei: string | undefined;
+    let sigStatus: string | undefined;
     if (skript !== null) {
       if (!this.deps.sftp) throw new Error('Skriptdatei-Übertragung (SFTP) nicht verfügbar');
       const gross = eingabe !== undefined && Buffer.byteLength(eingabe, 'utf8') > EINGABE_DATEI_AB;
@@ -551,9 +555,20 @@ export class FernzugriffSkill extends Skill {
         if (he.code !== 0) throw new Error(`Eingabe-Datei auf ${z.name} nicht abgelegt (SFTP Exit ${he.code}: ${schwaerze(he.stderr).text.trim().slice(-200)})`);
         eingabe = undefined;
       }
-      const h = await this.deps.sftp(ziel, d.inhalt, d.pfadSftp, 60_000);
+      // PKI Etappe 3a — signieren (Schalter aus: unverändert wie bisher)
+      const signiert = this.deps.codesignatur ? await this.deps.codesignatur.signiere(d.inhalt) : null;
+      const h = await this.deps.sftp(ziel, signiert ?? d.inhalt, d.pfadSftp, 60_000);
       if (h.hostSchluesselGeaendert) { await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt'); throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`); }
       if (h.code !== 0) throw new Error(`Skriptdatei auf ${z.name} nicht abgelegt (SFTP Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);
+      if (signiert !== null && this.deps.codesignatur) {
+        // von außen prüfen, bevor das Skript startet (eine Prüfung im Skript selbst würde mit ausgetauscht)
+        const pr = await this.lauf(owner, z, Codesignierer.pruefAusdruck(d.pfadWindows), 60_000);
+        try { sigStatus = this.deps.codesignatur.bewerte(`${pr.stdout}`, z.name); }
+        catch (err) {
+          await this.lauf(owner, z, `Remove-Item -LiteralPath ${[d.pfadWindows, ...(d.eingabe ? [d.eingabe.pfadWindows] : [])].join(',')} -Force -ErrorAction SilentlyContinue`, 30_000).catch(() => undefined);
+          throw err;
+        }
+      }
       befehl = d.befehl; datei = d.name;
     }
     if (eingabe !== undefined) {
@@ -561,7 +576,7 @@ export class FernzugriffSkill extends Skill {
       // v1835 — Endmarke anhängen: Windows-OpenSSH reicht das Eingabeende nicht zuverlässig weiter (siehe kopf in windows-ad.ts)
       r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, befehl, `${eingabe}\nALFRED-ENDE\n`, timeoutMs);
     } else r = await this.lauf(owner, z, befehl, timeoutMs);
-    this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, ...(datei ? { skriptdatei: datei } : {}) });
+    this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, ...(datei ? { skriptdatei: datei } : {}), ...(sigStatus ? { signatur: sigStatus } : {}) });
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
   }
 
