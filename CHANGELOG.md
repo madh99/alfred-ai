@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Cluster-Stabilitätsprüfung und Aufräumen der CA-Sicherung (v1842)
+
+- `windows_cluster stabilitaet_pruefen` läuft mit der Knotenliste `zugaenge`, ohne zusätzlich einen einzelnen `zugang` zu verlangen.
+- `windows_pki ca_sichern` entfernt bei einem Fehler den eigenen, noch unvollständigen Sicherungssatz (ohne Manifest), damit keine Schlüsselkopie ohne Prüfsummen zurückbleibt.
+
 ### Fixed — AD-Replikation und Sicherung der Issuing-CA (v1841)
 
 - `windows_pki ad_veroeffentlichen` wartet bis zu vier Minuten, bis alle Domänencontroller die veröffentlichten Zertifikate zeigen, statt unmittelbar nach der Veröffentlichung zu prüfen.

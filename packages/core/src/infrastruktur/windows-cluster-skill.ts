@@ -116,7 +116,12 @@ export class WindowsClusterSkill extends Skill {
       const vmid = Number(input.vmid); const name = String(input.vm_name ?? '').trim();
       if (!Number.isInteger(vmid) || vmid < 100 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) return { success: false, error: 'vmid und vm_name der netzlosen VM angeben' };
       zugang = `gast:${vmid}:${name}`;
-    } else if (!ZUGANG.test(zugang)) return { success: false, error: 'zugang: Name des Windows-Fernzugangs' };
+    // v1842 — Realfall 13.11. PKI-B Schritt 59: stabilitaet_pruefen arbeitet mit zugaenge (alle Knoten) und prüft sie selbst;
+    // die allgemeine zugang-Pflicht hielt den Schritt an, bevor die Knotenliste gelesen wurde.
+    } else if (action === 'stabilitaet_pruefen' && !zugang) {
+      try { return await this.stabilitaet(input); } catch (err) { return { success: false, error: (err as Error).message.slice(0, 900) }; }
+    }
+    else if (!ZUGANG.test(zugang)) return { success: false, error: 'zugang: Name des Windows-Fernzugangs' };
     try {
       const kw = AM_DC.has(action) ? await this.kennwort(input.konto_tresor ?? `win-${zugang}-admin`, `${action} auf ${zugang} (Domänen-Administrator)`)
         : ALS_ALFRED.has(action) ? await this.kennwort(input.konto_tresor, `${action} auf ${zugang} (Domänenkonto alfred)`) : undefined;

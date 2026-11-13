@@ -126,6 +126,15 @@ describe('v1813 Veröffentlichung, AD und Vertrauen', () => {
     expect(innen).not.toContain('$e.kennwort');
     expect(innen).toContain("Remove-Item -LiteralPath ''__KDATEI__'' -Force");
   });
+  it('v1842 gescheiterte Sicherung entfernt den eigenen Satz ohne Manifest', async () => {
+    const { caSicherungSkript } = await import('./windows-pki.js');
+    const s = caSicherungSkript({ ziel_ordner: 'B:\\CA-Sicherung' });
+    const t = s.indexOf('try {\nif ([Security.Principal.WindowsIdentity]');
+    const c = s.indexOf("} catch { if (-not (Test-Path -LiteralPath (Join-Path $d 'manifest.json'))) { Remove-Item -LiteralPath $d -Recurse -Force");
+    expect(t).toBeGreaterThan(s.indexOf('New-Item -ItemType Directory -Path $d'));
+    expect(c).toBeGreaterThan(s.indexOf("WriteAllText((Join-Path $d 'manifest.json')"));
+    expect(s.slice(c)).toMatch(/; throw \}/);
+  });
   it('v1841 Belege bis zu 4 Minuten auf Replikation warten, MitKonto-Grenze darüber', async () => {
     const { adVeroeffentlichenSkript } = await import('./windows-pki.js');
     const s = adVeroeffentlichenSkript({ dcs: ['dc01.ad.3033.at', 'dc02.ad.3033.at'], erwartet_root_sha256: 'a'.repeat(64), mit_sub: true, erwartet_sub_sha256: 'b'.repeat(64) });

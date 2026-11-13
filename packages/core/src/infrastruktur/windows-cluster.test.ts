@@ -152,6 +152,20 @@ describe('I8d Skill windows_cluster', () => {
   });
 });
 
+// v1842 — Realfall 13.11. PKI-B Schritt 59: stabilitaet_pruefen nur mit zugaenge
+describe('v1842 stabilitaet_pruefen ohne zugang', () => {
+  it('liest die Knotenliste statt an der zugang-Pflicht anzuhalten', async () => {
+    const ziele: string[] = [];
+    const skill = new WindowsClusterSkill({ skript: async (z: string) => { ziele.push(z); throw new Error('Probe-Ende'); } } as never);
+    const r = await skill.execute({ action: 'stabilitaet_pruefen', zugaenge: ['sql01', 'sql02'], dauer_s: 900 });
+    expect(r.success).toBe(false);
+    expect(r.error).not.toContain('zugang: Name des Windows-Fernzugangs');
+    expect(ziele[0]).toBe('sql01');
+    const leer = await skill.execute({ action: 'stabilitaet_pruefen' });
+    expect(leer.error).toContain('zugaenge');
+  });
+});
+
 // v1789 — Owner 11.11.: Ausführungskonto wählbar (fremde Domäne), benannte Instanzen
 describe('v1789 Ausführungskonto wählbar', () => {
   it('ausfuehrungskonto landet als ausKonto im Skript; spn_setzen behält sein Zielkonto', async () => {

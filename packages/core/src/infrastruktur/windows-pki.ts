@@ -765,6 +765,9 @@ export function caSicherungSkript(z: { ziel_ordner: string }): string {
     // v1841 — Realfall 13.11. PKI-B Schritt 56: auf pkiiss01 meldete Backup-CARoleService im SSH-Token (Schlüssel-Anmeldung, NETWORK)
     // E_ACCESSDENIED; auf der Root lief dieselbe Sicherung als SYSTEM (Gastagent). Läuft das Skript nicht als SYSTEM, sichert eine
     // geplante Aufgabe als SYSTEM. Das Kennwort geht DPAPI-geschützt in eine Datei im geschützten Aufgabenordner und wird sofort gelöscht.
+    // v1842 — Realfall 13.11. PKI-B Schritt 56: der gescheiterte erste Versuch ließ einen Satz ohne Manifest (mit .p12) zurück; die
+    // Prüfung meldete ihn danach als FEHLERHAFT. Scheitert die Sicherung, wird der eigene Satz ohne Manifest wieder entfernt.
+    'try {',
     'if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {',
     '  $pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
     '  Backup-CARoleService -Path $d -Password $pw',
@@ -796,6 +799,7 @@ export function caSicherungSkript(z: { ziel_ordner: string }): string {
     "if (-not ($dateien | Where-Object { $_.datei -like 'Database*' })) { throw 'Sicherung ohne Datenbank' }",
     "$m = [ordered]@{ ca = $aktiv; satz = $satz; zeit = (Get-Date).ToString('s'); rechner = $env:COMPUTERNAME; dateien = $dateien }",
     "[IO.File]::WriteAllText((Join-Path $d 'manifest.json'), ($m | ConvertTo-Json -Depth 5))",
+    "} catch { if (-not (Test-Path -LiteralPath (Join-Path $d 'manifest.json'))) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }; throw }",
     // v1822 — Realfall 12.11. PKI-A Schritt 18: Measure-Object -Property findet Schlüssel geordneter Hashtables nicht (PS 5.1) → Werte vorher herausziehen
     "Ergebnis ([ordered]@{ ca = $aktiv; satz = $satz; ordner = $d; dateien = $dateien.Count; bytes = [long](@($dateien | ForEach-Object { [long]$_['bytes'] }) | Measure-Object -Sum).Sum; zeit = $m.zeit })",
   ].join('\n');
