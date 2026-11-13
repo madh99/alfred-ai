@@ -100,8 +100,9 @@ export const STRIKTES_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Z
  * 20 Einträgen im CA-Format <Flags>:<Ort> ohne Zeilenumbruch, Anführungszeichen oder Backtick (der Baustein prüft erneut).
  */
 export const istRohListenFeld = (feld: string): boolean => /^[a-z]{2,12}_roh$/.test(feld);
-// „$“ bleibt erlaubt: versteckte Freigaben wie \\fs01.ad.3033.at\pki$\ (Realwert PKI-B Schritt 44)
-export const ROH_EINTRAG = /^\d{1,3}:[^\r\n"`;|&<>]{1,400}$/;
+// Positivliste der Zeichen in CA-Pfaden; „$“ nur als Endung versteckter Freigaben (\\fs01.ad.3033.at\pki$\, Realwert PKI-B Schritt 44),
+// also direkt vor „\“ oder am Ende — „$(…)“ und „${…}“ sind damit ausgeschlossen
+export const ROH_EINTRAG = /^\d{1,3}:(?:[A-Za-z0-9 .:/\\%_@-]|\$(?=\\|$)){1,400}$/;
 
 /**
  * Verweise auflösen: `{{schrittN.feld}}` aus den Daten früherer Schritte; steht der Verweis allein, bleibt der Typ erhalten

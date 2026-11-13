@@ -755,13 +755,15 @@ describe('v1844 Listen-Verweis in <name>_roh', () => {
     // Realwerte aus PKI-A Schritt 14 und PKI-B Schritt 44 (inkl. %windir% und versteckter Freigabe pki$)
     const cdp = ['1:%windir%\\system32\\CertSrv\\CertEnroll\\ad3033-root%8%9.crl', '2:http://pki.ad.3033.at/pki/ad3033-issuing1%8%9.crl', '1:file://\\\\fs01.ad.3033.at\\pki$\\ad3033-issuing1%8%9.crl'];
     const aia = ['1:C:\\Windows\\System32\\CertSrv\\CertEnroll\\ad3033-issuing1%4.crt', '1:file://\\\\fs01.ad.3033.at\\pki$\\ad3033-issuing1%4.crt'];
-    const erg = [{ nr: 14, ok: true, daten: { vorher: { cdp, aia, leer: [], boese: ['1:C:/x"; rm -rf /'], zahl: [1] } } }] as never;
+    const erg = [{ nr: 14, ok: true, daten: { vorher: { cdp, aia, leer: [], boese: ['1:C:/x"; rm -rf /'], ps: ['1:C:\\$(Get-Process)\\x.crl'], ps2: ['1:${env:windir}\\x.crl'], zahl: [1] } } }] as never;
     const r = loeseAuf({ vmid: 154, cdp_roh: '{{schritt14.vorher.cdp}}', aia_roh: '{{schritt14.vorher.aia}}' }, erg);
     expect(r.fehler).toBeUndefined();
     expect(r.wert).toEqual({ vmid: 154, cdp_roh: cdp, aia_roh: aia });
     expect(loeseAuf({ ziel: '{{schritt14.vorher.cdp}}' }, erg).fehler).toContain('unzulässigen Wert');
     expect(loeseAuf({ cdp_roh: '{{schritt14.vorher.boese}}' }, erg).fehler).toContain('unzulässigen Wert');
     expect(loeseAuf({ cdp_roh: '{{schritt14.vorher.leer}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ cdp_roh: '{{schritt14.vorher.ps}}' }, erg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ cdp_roh: '{{schritt14.vorher.ps2}}' }, erg).fehler).toContain('unzulässigen Wert');
     expect(loeseAuf({ cdp_roh: '{{schritt14.vorher.zahl}}' }, erg).fehler).toContain('unzulässigen Wert');
     expect(loeseAuf({ cdp_roh: 'x{{schritt14.vorher.cdp}}' }, erg).fehler).toBeTruthy();
   });

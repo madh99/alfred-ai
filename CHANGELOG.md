@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — strengere Prüfung übernommener CA-Pfade (v1845)
+
+- Übernommene CDP/AIA-Einträge in `<name>_roh` werden gegen eine Positivliste der in CA-Pfaden üblichen Zeichen geprüft; `$` ist nur als Endung versteckter Freigaben zulässig.
+
 ### Fixed — Rückweg der CA-Publikationspfade (v1844)
 
 - Change-Rückwege können die zuvor gemeldeten CDP/AIA-Listen (`cdp_roh`/`aia_roh`) aus früheren Schritten übernehmen. Zulässig ist nur eine Liste im CA-Format `<Flags>:<Ort>` als ganzer Wert in Feldern `<name>_roh`.
