@@ -185,6 +185,61 @@ export function engineNeustartSkript(n: Neustart & { instanz?: string }): string
   ]);
 }
 
+/**
+ * v1857 — bewachter Wiederanlauf (Spec „Rückweg exakt alte Bindung … auf sekundärem Knoten, gezielter Restart, gesunden Primär
+ * unangetastet“): für den Fall, dass SQL mit der neuen Bindung NICHT mehr hochkommt — dann greifen die Eingangsprüfungen von
+ * engine_neustart (lokal SECONDARY/HEALTHY) nicht. Prüft deshalb über den Cluster (nicht über die lokale Instanz): AG-Gruppe online
+ * beim erwarteten Primär (nie dieser Knoten), alle Knoten Up, Zeuge online; die Bindung muss dem gemerkten Zustand vor der letzten
+ * Bindung entsprechen (erst zertifikat_bindung_wiederherstellen). Dann Dienst (neu) starten und warten bis SECONDARY/CONNECTED/
+ * HEALTHY/SYNCHRONIZED; geladen muss die wiederhergestellte Bindung sein (leer = selbst erzeugtes Ersatzzertifikat).
+ */
+export interface Wiederanlauf { ag: string; erwarteter_primaer: string; zeitlimit_s: number }
+export function pruefeWiederanlauf(o: Record<string, unknown>): Wiederanlauf | string {
+  const ag = String(o.ag ?? '').trim(); if (!BEZEICHNER.test(ag)) return 'ag: Name der Verfügbarkeitsgruppe, z. B. ag01';
+  const pr = String(o.erwarteter_primaer ?? '').trim().toUpperCase(); if (!SERVER.test(pr)) return 'erwarteter_primaer: Pflicht — gesundes Primärreplikat, das unangetastet bleibt, z. B. SQL01';
+  const z = o.zeitlimit_s === undefined ? 900 : Number(o.zeitlimit_s); if (!Number.isInteger(z) || z < 120 || z > 3600) return 'zeitlimit_s: 120–3600 (Standard 900)';
+  return { ag, erwarteter_primaer: pr, zeitlimit_s: z };
+}
+
+export function engineWiederanlaufSkript(w: Wiederanlauf & { instanz?: string }): string {
+  return skript(w, [
+    "if (-not (Get-Service -Name ClusSvc -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running')) { throw 'Clusterdienst läuft nicht' }",
+    'Import-Module FailoverClusters',
+    "$primKnoten = ([string]$p.erwarteter_primaer -split '\\\\')[0]",
+    "if ($primKnoten -ieq $env:COMPUTERNAME) { throw ('erwarteter Primär ist dieser Knoten — Wiederanlauf nur auf dem Nicht-Primärknoten') }",
+    "$gr = Get-ClusterGroup -Name $p.ag -ErrorAction SilentlyContinue; if (-not $gr) { throw ('Clustergruppe ' + $p.ag + ' nicht gefunden') }",
+    "if ([string]$gr.State -ne 'Online' -or [string]$gr.OwnerNode.Name -ine $primKnoten) { throw ('AG ' + $p.ag + ' ' + $gr.State + ' bei ' + $gr.OwnerNode.Name + ' statt Online bei ' + $primKnoten + ' — Halt, Primär nicht wie erwartet') }",
+    "$weg = @(Get-ClusterNode | Where-Object { [string]$_.State -ne 'Up' }); if ($weg.Count) { throw ('Knoten nicht Up: ' + (($weg | ForEach-Object { [string]$_.Name + ' ' + [string]$_.State }) -join ', ')) }",
+    "$q = Get-ClusterQuorum; if ($q.QuorumResource -and [string]$q.QuorumResource.State -ne 'Online') { throw ('Zeuge ' + $q.QuorumResource.Name + ' ' + $q.QuorumResource.State) }",
+    // lokale Rolle nur, wenn die Instanz antwortet — PRIMARY ist ausgeschlossen
+    "$vorStart = $null; try { $x = @(Sql \"" + AG_LOKAL(w.ag) + "\"); if ($x.Count -and [string]$x[0].o -eq 'PRIMARY') { throw 'ROLLE: dieser Knoten ist PRIMARY — kein Wiederanlauf' }; $vorStart = SqlStart } catch { if ([string]$_.Exception.Message -like 'ROLLE:*') { throw }; }",
+    "if (-not (Test-Path -LiteralPath $merk)) { throw 'kein gemerkter Zustand vor einer Bindung — nichts wiederherzustellen' }",
+    '$m = [IO.File]::ReadAllText($merk) | ConvertFrom-Json; $b = Bindung',
+    "$sollZ = ([string]$m.vorher.zertifikat).Trim().ToUpper(); $sollF = [int]$m.vorher.force",
+    "if ($b.zertifikat -ne $sollZ -or $b.force -ne $sollF) { throw ('Bindung ' + $(if ($b.zertifikat) { $b.zertifikat } else { 'keins' }) + '/' + $b.force + ' entspricht nicht dem gemerkten Zustand ' + $(if ($sollZ) { $sollZ } else { 'keins' }) + '/' + $sollF + ' — erst zertifikat_bindung_wiederherstellen') }",
+    '$sw = [Diagnostics.Stopwatch]::StartNew()',
+    "$dienst = Get-Service -Name $svc; if ([string]$dienst.Status -eq 'Running') { Restart-Service -Name $svc -Force } else { Start-Service -Name $svc }",
+    "Start-Service -Name $agt -ErrorAction SilentlyContinue",
+    "$bis = (Get-Date).AddSeconds($p.zeitlimit_s); $letzt = ''; $ok = $false",
+    'do {',
+    '  Start-Sleep -Seconds 5',
+    '  try {',
+    "    $st = SqlStart; $y = @(Sql \"" + AG_LOKAL(w.ag) + "\"); $d = @(Sql \"" + AG_DBS(w.ag) + "\")",
+    "    $offen = @($d | Where-Object { [string]$_.z -ne 'SYNCHRONIZED' })",
+    "    if ($y.Count -and [string]$y[0].o -eq 'PRIMARY') { throw 'ROLLE: nach dem Wiederanlauf PRIMARY — unerwarteter Rollenwechsel, Halt' }",
+    "    $letzt = $(if ($y.Count) { [string]$y[0].o + ' ' + [string]$y[0].c + ' ' + [string]$y[0].h } else { 'ohne AG-Zustand' }) + '; nicht synchron: ' + $offen.Count",
+    "    $ok = (-not $vorStart -or $st -gt $vorStart) -and $y.Count -and [string]$y[0].o -eq 'SECONDARY' -and [string]$y[0].c -eq 'CONNECTED' -and [string]$y[0].h -eq 'HEALTHY' -and $d.Count -and -not $offen.Count",
+    "  } catch { if ([string]$_.Exception.Message -like 'ROLLE:*') { throw }; $letzt = $_.Exception.Message }",
+    '} while (-not $ok -and (Get-Date) -lt $bis)',
+    "if (-not $ok) { throw ('nach ' + $p.zeitlimit_s + ' s nicht wieder SECONDARY/CONNECTED/HEALTHY/SYNCHRONIZED — zuletzt: ' + $letzt) }",
+    '$g = Geladen',
+    "if ($sollZ -and $g.thumbprint -ne $sollZ) { throw ('geladen ' + $(if ($g.thumbprint) { $g.thumbprint } else { $g.art }) + ' statt wiederhergestelltem ' + $sollZ) }",
+    "if (-not $sollZ -and $g.art -ne 'selbsterzeugt') { throw ('geladen ' + $g.art + ' ' + $g.thumbprint + ' statt selbst erzeugtem Ersatzzertifikat (Bindung leer)') }",
+    "$gr2 = Get-ClusterGroup -Name $p.ag",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; ag = $p.ag; primaer = [string]$gr2.OwnerNode.Name; agZustand = [string]$gr2.State; vorherStart = $(if ($vorStart) { $vorStart.ToString('s') } else { 'nicht erreichbar' }); start = (SqlStart).ToString('s'); sekunden = [int]$sw.Elapsed.TotalSeconds; datenbanken = @($d | ForEach-Object { [string]$_.d + ' ' + [string]$_.z }); agent = [string](Get-Service -Name $agt -ErrorAction SilentlyContinue).Status; konfiguriert = $b.zertifikat; force = $b.force; geladen = $g })",
+  ]);
+}
+
 // ── Pos. 24/25 — echte TLS-Prüfung (Listener oder Knoten) ──────────────────────────────────────────────────────────────────────────
 
 /**

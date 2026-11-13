@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, sqlTlsStatusSkript, sqlTlsStatusText, TDS_PROBE, type TlsBefund, type SqlTlsStatus } from './sql-tls-bindung.js';
+import { pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeWiederanlauf, engineWiederanlaufSkript, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, sqlTlsStatusSkript, sqlTlsStatusText, TDS_PROBE, type TlsBefund, type SqlTlsStatus } from './sql-tls-bindung.js';
 import { anforderungListeSkript, anforderungEntfernenSkript } from './windows-sqltls.js';
 import { SqlServerSkill } from './sql-server-skill.js';
 import { WindowsPkiSkill } from './windows-pki-skill.js';
@@ -45,6 +45,29 @@ describe('Etappe 4 Bausteine', () => {
     expect(s).toContain('$g.thumbprint -ne $p.erwarteter_thumbprint');
     // Alias „start“ = Start-Process darf die Funktion nicht verdecken
     expect(s).not.toMatch(/function Start \{/);
+  });
+  it('v1857 Wiederanlauf: Gates über den Cluster (Primär erwartet, nie dieser Knoten), Bindung = gemerkter Zustand, nie Failover', () => {
+    expect(pruefeWiederanlauf({ ag: 'ag01' })).toContain('erwarteter_primaer');
+    expect(pruefeWiederanlauf({ ag: 'ag01', erwarteter_primaer: 'sql01' })).toEqual({ ag: 'ag01', erwarteter_primaer: 'SQL01', zeitlimit_s: 900 });
+    const s = engineWiederanlaufSkript(pruefeWiederanlauf({ ag: 'ag01', erwarteter_primaer: 'SQL01' }) as never);
+    const vor = s.slice(0, s.indexOf('Restart-Service'));
+    for (const g of ['$primKnoten -ieq $env:COMPUTERNAME', 'Get-ClusterGroup -Name $p.ag', "[string]$_.State -ne 'Up'", 'QuorumResource.State', 'erst zertifikat_bindung_wiederherstellen', "ROLLE: dieser Knoten ist PRIMARY"]) expect(vor).toContain(g);
+    expect(s).toContain("Start-Service -Name $svc");
+    expect(s).toContain("statt selbst erzeugtem Ersatzzertifikat");
+    expect(s).not.toMatch(/ALTER AVAILABILITY GROUP|ALLOW_DATA_LOSS|Move-ClusterGroup|Restart-Computer/i);
+  });
+  it('v1857 Rückweg mit ag: Wiederherstellen und danach Wiederanlauf in einem Schritt', async () => {
+    const antworten = [
+      { zustand: 'wiederhergestellt', rechner: 'SQL02', instanz: 'MSSQLSERVER', vorher: { zertifikat: T2, force: 1 }, nachher: { zertifikat: '', force: 0 } },
+      { rechner: 'SQL02', ag: 'ag01', primaer: 'SQL01', agZustand: 'Online', vorherStart: 'nicht erreichbar', start: '2026-11-14T01:00:00', sekunden: 40, datenbanken: ['i8d_ag01 SYNCHRONIZED'], agent: 'Running', konfiguriert: '', force: 0, geladen: { art: 'selbsterzeugt', thumbprint: '' } },
+    ];
+    const befehle: string[] = [];
+    const skill = new SqlServerSkill({ skript: async (_z, b) => { befehle.push(Buffer.from(b.split(' ').pop()!, 'base64').toString('utf16le')); return ad(antworten.shift()); } });
+    const r = await skill.execute({ action: 'zertifikat_bindung_wiederherstellen', zugang: 'sql02', ag: 'ag01', erwarteter_primaer: 'SQL01' }, imChange);
+    expect(r.display).toMatch(/SQL_TLS_BINDING_RESTORED .*SQL_SECONDARY_RECOVERED_AND_SYNCED SQL02 .*Primär SQL01 \(Online\) unberührt/);
+    expect(befehle).toHaveLength(2);
+    expect((await skill.execute({ action: 'engine_wiederanlauf', zugang: 'sql02', ag: 'ag01' }, imChange)).error).toContain('erwarteter_primaer');
+    expect(aktionsArt('sql_server', 'engine_wiederanlauf')).toBe('aendern');
   });
   it('TLS-Test: TDS-Probe + Anmeldung nur mit TrustServerCertificate=False', () => {
     expect(pruefeTlsTest({ ziel: 'sqlag01' })).toContain('DNS-Name');

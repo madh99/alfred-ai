@@ -114,7 +114,7 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern',
   // v1856 — Etappe 4: ein Dienstneustart ist nicht zurückzunehmen (bei Fehler Halt, Bindung separat zurück); das Wiederherstellen ist selbst
   // der Rückweg; ein entfernter ungesendeter Schlüssel ist nicht wiederherstellbar
-  'engine_neustart', 'zertifikat_bindung_wiederherstellen', 'anforderung_entfernen',
+  'engine_neustart', 'engine_wiederanlauf', 'zertifikat_bindung_wiederherstellen', 'anforderung_entfernen',
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
 const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',
@@ -123,7 +123,7 @@ const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_ueber
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
   'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern',
   // v1856 — Etappe 4: Bindung lesen sie nach dem Schreiben zurück, der Neustart wartet auf SECONDARY/HEALTHY/SYNCHRONIZED, das Entfernen prüft Speicher und Schlüsseldatei
-  'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'anforderung_entfernen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
+  'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf', 'anforderung_entfernen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;

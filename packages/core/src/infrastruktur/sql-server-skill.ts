@@ -12,7 +12,7 @@ import {
   pruefeWiederherstellung, wiederherstellungSkript, BEZEICHNER, INSTANZ, listenerTestSkript, listenerTestText, type SqlStatus, type ListenerTest,
 } from './sql-server.js';
 import { KONTO } from './windows-cluster.js';
-import { sqlTlsStatusSkript, sqlTlsStatusText, pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, tlsTestText, type SqlTlsStatus, type TlsBefund } from './sql-tls-bindung.js';
+import { sqlTlsStatusSkript, sqlTlsStatusText, pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeWiederanlauf, engineWiederanlaufSkript, type Wiederanlauf, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, tlsTestText, type SqlTlsStatus, type TlsBefund } from './sql-tls-bindung.js';
 import { KONTO_FREI } from './windows-ad.js';
 
 export interface SqlServerDeps {
@@ -25,7 +25,7 @@ export interface SqlServerDeps {
 export const SQL_LESEND = new Set(['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen']);
 const NUR_IM_CHANGE = new Set(['sql_medien_laden', 'sql_installieren', 'konfigurieren', 'hadr_aktivieren', 'endpunkt_anlegen', 'endpunkt_entfernen', 'ag_anlegen', 'ag_beitreten',
   'ag_entfernen', 'listener_anlegen', 'listener_entfernen', 'failover', 'datenbank_anlegen', 'datenbank_entfernen', 'pruefdaten_schreiben', 'sql_sicherung',
-  'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen', 'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart']);
+  'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen', 'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 
 export class SqlServerSkill extends Skill {
@@ -40,7 +40,8 @@ export class SqlServerSkill extends Skill {
       + 'pruefdaten_lesen (lesend; zugang, datenbank) — Zeilen/letzte Id der Prüftabelle dbo.alfred_pruef. '
       + 'PKI Etappe 4 (SQL-TLS): zertifikat_status (lesend; zugang = SQL-Knoten) — konfiguriertes UND tatsächlich geladenes Zertifikat getrennt, ForceEncryption, Neustart ausstehend, Zertifikats-Gates, Bindungs-Hash; Ergebnis „SQL_TLS_STATUS …“. '
       + 'tls_testen (lesend; zugang = Client in der Domäne, z. B. probe-win25b für den Listener oder der Partnerknoten für einen Knoten; ziel = FQDN von Listener oder Knoten, port 1433, konto_tresor = Kennwort des Domänenkontos alfred; optional erwarteter_thumbprint, erwarteter_server z. B. SQL02, erwartete_rolle PRIMARY|SECONDARY, erzwungen true|false) — holt per TDS das tatsächlich vorgelegte Zertifikat (Thumbprint, Name im SAN, Kette mit Online-Sperrprüfung), prüft per unverschlüsselter Anfrage, ob der Server Verschlüsselung erzwingt, und meldet sich echt mit Encrypt=True;TrustServerCertificate=False an (Kerberos, Server, Rolle); Ergebnis „SQL_TLS_VERIFIED“ nur ohne Befund, sonst Fehler. '
-      + 'NUR in Changes: zertifikat_binden (zugang = SQL-Knoten, thumbprint, force_encryption Standard true, optional erwarteter_vorher_hash aus zertifikat_status) — vorher alle Gates (My, privater Schlüssel, Laufzeit, ServerAuth, eigener FQDN im SAN, Kette online, Engine-Konto liest den Schlüssel), merkt den Zustand davor, KEIN Neustart; Ergebnis „SQL_TLS_BINDING_CONFIGURED … restart_required“; Rückweg zertifikat_bindung_wiederherstellen (zugang) — stellt genau den gemerkten Zustand wieder her (auch leer/ForceEncryption 0), ebenfalls ohne Neustart. '
+      + 'NUR in Changes: zertifikat_binden (zugang = SQL-Knoten, thumbprint, force_encryption Standard true, optional erwarteter_vorher_hash aus zertifikat_status) — vorher alle Gates (My, privater Schlüssel, Laufzeit, ServerAuth, eigener FQDN im SAN, Kette online, Engine-Konto liest den Schlüssel), merkt den Zustand davor, KEIN Neustart; Ergebnis „SQL_TLS_BINDING_CONFIGURED … restart_required“; Rückweg zertifikat_bindung_wiederherstellen (zugang) — stellt genau den gemerkten Zustand wieder her (auch leer/ForceEncryption 0), ohne Neustart — MIT ag + erwarteter_primaer startet es danach gleich bewacht wieder an (wie engine_wiederanlauf), damit ist es auch der Rückweg eines engine_neustart-Schritts. '
+      + 'engine_wiederanlauf (zugang = Nicht-Primärknoten, ag, erwarteter_primaer Pflicht, zeitlimit_s Standard 900) — für den Fall, dass SQL mit der neuen Bindung nicht hochkommt: prüft über den Cluster (AG-Gruppe online beim erwarteten Primär, nie dieser Knoten; alle Knoten Up; Zeuge online) und dass die Bindung dem gemerkten Zustand entspricht (erst zertifikat_bindung_wiederherstellen), startet den Dienst und wartet bis SECONDARY/CONNECTED/HEALTHY/SYNCHRONIZED; geladen muss die wiederhergestellte Bindung sein; Ergebnis „SQL_SECONDARY_RECOVERED_AND_SYNCED“ (ohne Rückweg; nie Failover). '
       + 'engine_neustart (zugang = SEKUNDÄRER Knoten, ag, zeitlimit_s Standard 900, optional erwarteter_primaer z. B. SQL01, erwarteter_thumbprint) — nur wenn lokal SECONDARY/CONNECTED/HEALTHY, alle lokalen AG-Datenbanken SYNCHRONIZED, Quorum normal und alle Clustermitglieder UP; startet nur den SQL-Dienst (und den Agent) neu und wartet bis wieder SECONDARY/CONNECTED/HEALTHY/SYNCHRONIZED; nie Failover, nie Primär-Neustart; Ergebnis „SQL_SECONDARY_RESTARTED_AND_SYNCED“ mit geladenem Thumbprint (ohne Rückweg; bei Fehler Halt). '
       + 'NUR als Schritte freigegebener Changes: sql_medien_laden (zugang, url = Microsoft-Download: SSEI-Downloader/ISO bzw. CU, art installation|cu, sha256 optional) — Signatur Microsoft geprüft, nach C:\\SQLMedia (braucht befristeten Internetzugang; ohne Rückweg). '
       + 'sql_installieren (zugang, engine_konto/agent_konto = gMSA NETBIOS\\name$, sysadmins, daten D:\\SQLData, log L:\\SQLLog, tempdb T:\\TempDB, sicherung B:\\SQLBackup, tempdb_dateien 4, tempdb_mb 1024, tempdb_log_mb 2048, max_speicher_mb 12288, maxdop 4, pid optional, konto_tresor Pflicht = Kennwort des Domänenkontos alfred, z. B. win-dc01-admin; zeitlimitS 5400–7200) — als Domänenkonto per Kennwort-Anmeldung, CU aus C:\\SQLMedia\\CU per Slipstream, Neustart bei Bedarf (ohne Rückweg; Deinstallation = eigener Change). '
@@ -195,8 +196,17 @@ export class SqlServerSkill extends Skill {
           return { success: true, data: { ...r, restart_required: true }, display: `✅ SQL_TLS_BINDING_CONFIGURED ${r.rechner}\\${r.instanz} (${r.zustand}): Zertifikat ${r.nachher.zertifikat}, ForceEncryption ${r.nachher.force} (vorher ${r.vorher.zertifikat || 'keins'}, ForceEncryption ${r.vorher.force}; Hash vorher ${r.vorherHash}) — restart_required=true, geladen ist weiter ${r.geladen.thumbprint || r.geladen.art}; TLS ist erst nach engine_neustart aktiv — Rückweg zertifikat_bindung_wiederherstellen` };
         }
         case 'zertifikat_bindung_wiederherstellen': {
+          // v1857 — mit ag + erwarteter_primaer gleich danach bewachter Wiederanlauf (ein Rückweg-Schritt auch nach einem gescheiterten Neustart)
+          const w = input.ag !== undefined ? pr(pruefeWiederanlauf(input)) : undefined;
           const r = await this.lauf<{ zustand: string; rechner: string; instanz: string; vorher: { zertifikat: string; force: number }; nachher: { zertifikat: string; force: number } }>(zugang, bindungWiederherstellenSkript(inst), 'SQL-TLS-Bindung wiederherstellen', 180_000);
-          return { success: true, data: { ...r, restart_required: true }, display: `✅ SQL_TLS_BINDING_RESTORED ${r.rechner}\\${r.instanz} (${r.zustand}): Zertifikat ${r.nachher.zertifikat || 'keins'}, ForceEncryption ${r.nachher.force} (vorher ${r.vorher.zertifikat || 'keins'}/${r.vorher.force}) — wirksam erst nach engine_neustart` };
+          const text = `✅ SQL_TLS_BINDING_RESTORED ${r.rechner}\\${r.instanz} (${r.zustand}): Zertifikat ${r.nachher.zertifikat || 'keins'}, ForceEncryption ${r.nachher.force} (vorher ${r.vorher.zertifikat || 'keins'}/${r.vorher.force})`;
+          if (!w) return { success: true, data: { ...r, restart_required: true }, display: `${text} — wirksam erst nach engine_neustart bzw. engine_wiederanlauf` };
+          const a = await this.wiederanlauf(zugang, w, inst);
+          return { success: true, data: { ...r, wiederanlauf: a.data }, display: `${text}; ${a.display}` };
+        }
+        case 'engine_wiederanlauf': {
+          const a = await this.wiederanlauf(zugang, pr(pruefeWiederanlauf(input)), inst);
+          return { success: true, data: a.data, display: a.display };
         }
         case 'engine_neustart': {
           const n = pr(pruefeNeustart(input));
@@ -256,6 +266,12 @@ export class SqlServerSkill extends Skill {
       throw new Error(`${zweck} auf ${zugang} gescheitert (Exit ${r.code}): ${fehler || 'keine Ausgabe'}`);
     }
     return e;
+  }
+
+  private async wiederanlauf(zugang: string, w: Wiederanlauf, instanz?: string): Promise<{ data: unknown; display: string }> {
+    const r = await this.lauf<{ rechner: string; ag: string; primaer: string; agZustand: string; vorherStart: string; start: string; sekunden: number; datenbanken: string[]; agent: string; konfiguriert: string; force: number; geladen: { art: string; thumbprint: string } }>(zugang, engineWiederanlaufSkript(instanz ? { ...w, instanz } : w), 'SQL-Wiederanlauf (sekundär)', (w.zeitlimit_s + 300) * 1000);
+    this.d.protokoll?.('Etappe 4 Wiederanlauf', { zugang, sekunden: r.sekunden, geladen: r.geladen });
+    return { data: r, display: `✅ SQL_SECONDARY_RECOVERED_AND_SYNCED ${r.rechner} in ${r.ag} nach ${r.sekunden} s (Start ${r.vorherStart} → ${r.start}): SECONDARY CONNECTED HEALTHY, ${r.datenbanken.join(', ')}; Primär ${r.primaer} (${r.agZustand}) unberührt; Agent ${r.agent}; geladen ${r.geladen.thumbprint || r.geladen.art} = wiederhergestellte Bindung ${r.konfiguriert || 'keins'}, ForceEncryption ${r.force}` };
   }
 
   private status(zugang: string, instanz?: string): Promise<SqlStatus> { return this.lauf<SqlStatus>(zugang, sqlStatusSkript(instanz), 'SQL-Status', 180_000); }

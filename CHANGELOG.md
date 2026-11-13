@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bewachter Wiederanlauf nach Rücknahme der SQL-TLS-Bindung (v1857)
+
+- Nach dem Zurücksetzen der Bindung startet das sekundäre Replikat bewacht wieder an, auch wenn SQL zuvor nicht mehr hochkam; der gesunde Primär bleibt unberührt.
+
 ### Added — SQL-TLS-Aktivierung (PKI Etappe 4, v1856)
 
 - SQL-Server-Bausteine für den TLS-Status (konfiguriert und geladen getrennt), das Binden eines Zertifikats mit Force Encryption samt Rückweg, den bewachten Neustart des sekundären Replikats und eine echte TLS-Prüfung über TDS mit strenger Zertifikatsprüfung.
