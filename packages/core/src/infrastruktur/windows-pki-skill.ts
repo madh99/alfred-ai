@@ -150,8 +150,8 @@ export class WindowsPkiSkill extends Skill {
           if (input.vmid !== undefined) return { success: false, error: 'issuer_zuruecksetzen nur über den Fernzugang der Issuing-CA (zugang)' };
           const ir = pruefeIssuerReset(input); if (typeof ir === 'string') return { success: false, error: ir };
           const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Issuing-CA ${String(input.zugang)} zurücksetzen (Domänen-Administrator)`);
-          const { r } = await this.lauf<{ ca: string; vorherSetupStatus: string; konfiguration: string; zertifikat: string; dbDateien: number; dbOrdner: string }>(input, issuerResetSkript(ir), 'Issuing-CA zurücksetzen', 600_000, { kennwort: kw });
-          return { success: true, data: r, display: `✅ ISSUER_RESET „${r.ca}“ (vorher SetupStatus ${r.vorherSetupStatus}): Konfiguration ${r.konfiguration}, Zertifikat ${ir.erwartet_thumbprint} ${r.zertifikat}, ${r.dbDateien} DB-Dateien entfernt (${r.dbOrdner || '—'}); jetzt neu mit issuer_anfordern` };
+          const { r } = await this.lauf<{ ca: string; vorherSetupStatus: string; konfiguration: string; zertifikat: string; schluessel?: number; dbDateien: number; dbOrdner: string }>(input, issuerResetSkript(ir), 'Issuing-CA zurücksetzen', 600_000, { kennwort: kw });
+          return { success: true, data: r, display: `✅ ISSUER_RESET „${r.ca}“ (vorher SetupStatus ${r.vorherSetupStatus}): Konfiguration ${r.konfiguration}, Zertifikat ${ir.erwartet_thumbprint} ${r.zertifikat}, ${r.schluessel ?? 0} verwaiste(r) Schlüssel, ${r.dbDateien} DB-Dateien entfernt (${r.dbOrdner || '—'}); jetzt neu mit issuer_anfordern` };
         }
         case 'zertifikat_sperren': {
           if (input.zugang !== undefined) return { success: false, error: 'zertifikat_sperren nur auf der Offline-Root über den Gastagenten (vmid + vm_name)' };

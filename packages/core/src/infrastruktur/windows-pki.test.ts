@@ -249,6 +249,18 @@ describe('v1838 Issuer neu aufsetzen', () => {
     expect(s).toMatch(/MitKonto \(.*Administrator/);
     expect(s).toContain('-DeleteKey');
   });
+  it('v1839 verwaister Schlüssel: nur exakter Name, nur ohne Zertifikat dieses CN, danach nachgeprüft', async () => {
+    const { issuerResetSkript } = await import('./windows-pki.js');
+    const s = issuerResetSkript({ ca_name: 'AD3033 Issuing CA 01', erwartet_thumbprint: 'A314AF14351E5CF613EC60F834FBFCA74A3DE3A6' });
+    expect(s).toContain("([string]$_).Trim() -eq $p.ca_name");
+    expect(s).toContain('Schlüssel nicht entfernt');
+    expect(s).toContain('-delkey $p.ca_name');
+    expect(s).toContain('noch vorhanden');
+    expect(s).toContain("keine CA eingerichtet und kein Schlüssel dieses Namens");
+    // beide Zweige rufen das Entfernen, Klammern ausgeglichen
+    expect(s.split('$n = SchluesselEntfernen').length - 1).toBe(2);
+    expect((s.match(/\{/g) ?? []).length).toBe((s.match(/\}/g) ?? []).length);
+  });
   it('Sperren nur mit eindeutiger Seriennummer und passendem CN, Nachprüfung auf 21', async () => {
     const { pruefeSperre, sperrSkript } = await import('./windows-pki.js');
     expect(typeof pruefeSperre({ seriennummer: 'zz', erwartet_cn: 'AD3033 Issuing CA 01' })).toBe('string');

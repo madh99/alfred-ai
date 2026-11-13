@@ -356,7 +356,17 @@ export function issuerResetSkript(r: IssuerReset): string {
     MIT_KONTO,
     "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
     "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
-    "if (-not $aktiv) { throw 'keine CA eingerichtet — nichts zurückzusetzen' }",
+    // v1839 — Realfall 13.11. PKI-B Schritt 39: Uninstall-AdcsCertificationAuthority entfernte Konfiguration UND Zertifikat, der private
+    // Schlüssel „<CA-Name>“ blieb verwaist im KSP — Install-AdcsCertificationAuthority meldet dann „The private key … already exists“.
+    // Verwaiste Schlüssel genau dieses Namens werden entfernt, aber nur, wenn kein Zertifikat mit diesem CN mehr im Speicher liegt.
+    "$ksp = 'Microsoft Software Key Storage Provider'",
+    "function NameDa([string]$csp) { $a = $(if ($csp) { @(certutil.exe -csp $csp -key) } else { @(certutil.exe -key) }); return (@($a | Where-Object { ([string]$_).Trim() -eq $p.ca_name }).Count -gt 0) }",
+    "function SchluesselEntfernen { if (@(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Subject -eq ('CN=' + $p.ca_name) -or $_.Subject -like ('CN=' + $p.ca_name + ',*') }).Count -gt 0) { throw ('im Speicher liegt noch ein Zertifikat „' + $p.ca_name + '“ — Schlüssel nicht entfernt') }; $n = 0; foreach ($csp in @($ksp, '')) { for ($i = 0; $i -lt 5 -and (NameDa $csp); $i++) { $o = $(if ($csp) { certutil.exe -csp $csp -delkey $p.ca_name } else { certutil.exe -delkey $p.ca_name }); if ($LASTEXITCODE -ne 0) { throw ('certutil -delkey: ' + ((@($o) | Select-Object -Last 3) -join ' ')) }; $n++ }; if (NameDa $csp) { throw ('Schlüssel „' + $p.ca_name + '“ noch vorhanden') } }; return $n }",
+    "if (-not $aktiv) {",
+    "  if (-not ((NameDa $ksp) -or (NameDa ''))) { throw 'keine CA eingerichtet und kein Schlüssel dieses Namens — nichts zurückzusetzen' }",
+    "  $n = SchluesselEntfernen",
+    "  Ergebnis ([ordered]@{ ca = $p.ca_name; vorherSetupStatus = 'nicht eingerichtet'; konfiguration = 'nicht vorhanden'; zertifikat = 'nicht vorhanden'; schluessel = $n; dbDateien = 0; dbOrdner = '' })",
+    "} else {",
     "if ($aktiv -ne $p.ca_name) { throw ('eingerichtet ist „' + $aktiv + '“, nicht „' + $p.ca_name + '“ — nichts verändert') }",
     "$cfg = Get-ItemProperty (Join-Path $k $aktiv); $ss = [int]$cfg.SetupStatus",
     "if (($ss -band 0xC) -eq 0) { throw ('CA ist vollständig eingerichtet (SetupStatus 0x' + $ss.ToString('x') + ') — Zurücksetzen nur bei unvollständiger Einrichtung') }",
@@ -372,11 +382,13 @@ export function issuerResetSkript(r: IssuerReset): string {
     "$zert = 'nicht vorhanden'",
     "$c = Get-ChildItem Cert:\\LocalMachine\\My | Where-Object { $_.Thumbprint -eq $p.erwartet_thumbprint }",
     "if ($c) { if ($c.Subject -notlike ('CN=' + $p.ca_name + '*')) { throw ('Zertifikat ' + $p.erwartet_thumbprint + ' gehört zu ' + $c.Subject + ' — nicht entfernt') }; Remove-Item -Path ('Cert:\\LocalMachine\\My\\' + $c.Thumbprint) -DeleteKey; $zert = 'entfernt (mit Schlüssel)' }",
+    "$n = SchluesselEntfernen",
     "$dateien = 0",
     "foreach ($d in $dbDirs) { if (Test-Path $d) { foreach ($f in @(Get-ChildItem -LiteralPath $d -File | Where-Object { $_.Extension -in @('.edb', '.log', '.chk', '.jrs', '.jfm') })) { Remove-Item -LiteralPath $f.FullName -Force; $dateien++ } } }",
     "$pk = Join-Path $env:ProgramData 'Alfred\\pki'",
     "foreach ($f in @(Get-ChildItem -LiteralPath $pk -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'issuer*' })) { Remove-Item -LiteralPath $f.FullName -Force }",
-    "Ergebnis ([ordered]@{ ca = $p.ca_name; vorherSetupStatus = ('0x' + $ss.ToString('x')); konfiguration = 'entfernt'; zertifikat = $zert; dbDateien = $dateien; dbOrdner = ($dbDirs -join ', ') })",
+    "Ergebnis ([ordered]@{ ca = $p.ca_name; vorherSetupStatus = ('0x' + $ss.ToString('x')); konfiguration = 'entfernt'; zertifikat = $zert; schluessel = $n; dbDateien = $dateien; dbOrdner = ($dbDirs -join ', ') })",
+    "}",
   ].join('\n');
 }
 

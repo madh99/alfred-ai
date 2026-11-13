@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Verwaister CA-Schlüssel beim Zurücksetzen (v1839)
+
+- `windows_pki issuer_zuruecksetzen` entfernt zusätzlich einen verbliebenen privaten Schlüssel mit genau dem CA-Namen, sofern kein Zertifikat dieses Namens mehr vorhanden ist. Ohne diesen Schritt scheiterte die neue Anforderung mit „The private key … already exists“.
+- Ist die CA-Konfiguration bereits entfernt, aber der Schlüssel noch vorhanden, entfernt der Baustein nur den Schlüssel.
+
 ### Added — Issuing-CA neu aufsetzen (v1838)
 
 - `windows_pki issuer_zuruecksetzen` setzt eine **unvollständig** eingerichtete Issuing-CA zurück: Konfiguration, altes CA-Zertifikat samt Schlüssel, Datenbankdateien und alte Anforderung. Eine vollständig eingerichtete CA wird abgelehnt.
