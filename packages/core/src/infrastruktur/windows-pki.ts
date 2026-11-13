@@ -262,8 +262,9 @@ export function publikationSkript(pb: Publikation): string {
     '}',
     "Restart-Service -Name CertSvc -Force",
     "$bis = (Get-Date).AddMinutes(2); do { Start-Sleep -Seconds 3 } while ((Get-Service CertSvc).Status -ne 'Running' -and (Get-Date) -lt $bis)",
-    "& certutil.exe -crl | Out-Null",
-    "$crlExit = $LASTEXITCODE",
+    // v1840 — Realfall 13.11. PKI-B Schritt 44: CertSvc meldete „Running“, die RPC-Schnittstelle war aber noch nicht bereit →
+    // certutil -crl Exit 0x800706BA (RPC-Server nicht verfügbar). Bis zu 90 s wiederholen, der letzte Exit-Code zählt.
+    "$bis = (Get-Date).AddSeconds(90); do { & certutil.exe -crl | Out-Null; $crlExit = $LASTEXITCODE; if ($crlExit -eq 0) { break }; Start-Sleep -Seconds 5 } while ((Get-Date) -lt $bis)",
     '$n = Get-ItemProperty (Join-Path $k $aktiv)',
     "Ergebnis ([ordered]@{ ca = $aktiv; vorher = $vorher; nachher = [ordered]@{ cdp = @($n.CRLPublicationURLs | ForEach-Object { [string]$_ }); aia = @($n.CACertPublicationURLs | ForEach-Object { [string]$_ }) }; dienst = [string](Get-Service CertSvc).Status; crlExit = $crlExit })",
   ].join('\n');
@@ -531,11 +532,15 @@ export function aktivierenSkript(r: AktivierParameter): string {
       // Rückfrage ohne Fenster). Jetzt -silent, Ausgabe in Dateien, eigene Zeitgrenze 180 s mit Abbruch und mitgelieferter Ausgabe.
       "$ao = Join-Path $env:TEMP ('alfred-ic-' + [guid]::NewGuid().ToString('N') + '.txt'); $ae = $ao + '.err'",
       "$pr = Start-Process -FilePath (Join-Path $env:windir 'System32\\certutil.exe') -ArgumentList @('-f', '-silent', '-installcert', ('\"' + $zd + '\"')) -NoNewWindow -PassThru -RedirectStandardOutput $ao -RedirectStandardError $ae",
+      // v1840 — Realfall 13.11. PKI-B Schritt 43: ExitCode blieb leer („Exit : ()“), obwohl certutil erfolgreich war — Start-Process
+      // -PassThru + WaitForExit(ms) liefert den ExitCode nur, wenn das Prozess-Handle vorher abgefragt wurde.
+      "$null = $pr.Handle",
       "$fertig = $pr.WaitForExit(180000)",
+      "if ($fertig) { $pr.WaitForExit() }",
       "$aus = ((Get-Content $ao -Raw -ErrorAction SilentlyContinue) + ' ' + (Get-Content $ae -Raw -ErrorAction SilentlyContinue)) -replace '\\s+', ' '",
       "Remove-Item $ao, $ae -Force -ErrorAction SilentlyContinue",
       "if (-not $fertig) { try { $pr.Kill() } catch {}; throw ('certutil -installcert nach 180 s abgebrochen: ' + $aus) }",
-      "if ($pr.ExitCode -ne 0) { throw ('certutil -installcert Exit ' + $pr.ExitCode + ': ' + $aus) }",
+      "if ($null -eq $pr.ExitCode -or $pr.ExitCode -ne 0) { throw ('certutil -installcert Exit ' + $pr.ExitCode + ': ' + $aus) }",
       "[ordered]@{ installiert = $true; ausgabe = $aus.Substring(0, [Math]::Min(400, $aus.Length)) }",
     ]))} 240`,
     "  $zustand = 'aktiviert'",

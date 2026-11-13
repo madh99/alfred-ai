@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Aktivierung und CRL-Veröffentlichung (v1840)
+
+- `windows_pki issuer_aktivieren` wertet den Exit-Code von `certutil -installcert` jetzt zuverlässig aus. Eine erfolgreiche Installation wurde bisher als Fehler mit leerem Exit-Code gemeldet.
+- `windows_pki publication_setzen` wiederholt `certutil -crl` nach dem Neustart der Zertifizierungsstelle bis zu 90 Sekunden lang, bis die RPC-Schnittstelle bereit ist.
+
 ### Fixed — Verwaister CA-Schlüssel beim Zurücksetzen (v1839)
 
 - `windows_pki issuer_zuruecksetzen` entfernt zusätzlich einen verbliebenen privaten Schlüssel mit genau dem CA-Namen, sofern kein Zertifikat dieses Namens mehr vorhanden ist. Ohne diesen Schritt scheiterte die neue Anforderung mit „The private key … already exists“.

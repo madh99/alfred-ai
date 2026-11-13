@@ -226,6 +226,20 @@ describe('v1834 Issuer-Aktivierung mit Domänen-Anmeldung', () => {
     expect(s).toMatch(/MitKonto \(.*Administrator/);
     expect(s).not.toMatch(/\n {2}\$aus = \(& certutil\.exe -installcert/);
   });
+  it('v1840 ExitCode: Handle vor dem Warten abfragen, leerer ExitCode zählt als Fehler', async () => {
+    const { aktivierenSkript } = await import('./windows-pki.js');
+    const s = aktivierenSkript({ erwartet_zert_sha256: 'a'.repeat(64), erwartet_root_sha256: 'b'.repeat(64), erwartet_crl_sha256: 'c'.repeat(64) });
+    expect(s.indexOf('$null = $pr.Handle')).toBeGreaterThan(-1);
+    expect(s.indexOf('$null = $pr.Handle')).toBeLessThan(s.indexOf('$pr.WaitForExit(180000)'));
+  });
+  it('v1840 certutil -crl nach dem Neustart bis zu 90 s wiederholen', async () => {
+    const { publikationSkript, pruefePublikation } = await import('./windows-pki.js');
+    const pb = pruefePublikation({ zugang: 'pkiiss01', unc_ziel: '\\\\fs01.ad.3033.at\\pki$\\', crl_anzahl: 1, datei_name: 'ad3033-issuing1', http_basis: 'http://pki.ad.3033.at/pki/', crl_einheit: 'Days', ueberlappung_anzahl: 6, ueberlappung_einheit: 'Days' });
+    expect(typeof pb).not.toBe('string');
+    const s = publikationSkript(pb as never);
+    expect(s).toContain('AddSeconds(90); do { & certutil.exe -crl');
+    expect(s).toContain('if ($crlExit -eq 0) { break }');
+  });
 });
 
 describe('v1836 unvollständige Issuer-Installation', () => {
