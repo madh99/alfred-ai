@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL-TLS-Zertifikate (PKI Etappe 3b, v1852)
+
+- `windows_pki` erhält Bausteine für TLS-Zertifikate der SQL-Knoten: Vorlage mit enger Registrier-Gruppe und CA-Freigabe, Anforderung mit Schlüssel auf dem Knoten, Genehmigung erst nach Prüfung aller Namen gegen eine feste Liste, Installation mit Leserecht nur für das Engine-Konto.
+- Lesend: `zertifikat_pruefen` (vollständige Prüfung einschließlich Kette und Sperrstatus) und `erneuerung_status` (Restlaufzeit und Warnstufen).
+- Die Bausteine binden kein Zertifikat an SQL Server und starten keinen Dienst neu.
+
 ### Fixed — Erwartungen der Codesignatur-Bausteine (v1851)
 
 - `codesignatur_selbsttest` (`erwartet_status`) und `codesignatur_status` (`erwartet_an`, `mindest_valid`) prüfen Erwartungen selbst; `codesignatur_vorlage_anlegen` schlägt fehl, wenn breite Gruppen registrieren dürfen.

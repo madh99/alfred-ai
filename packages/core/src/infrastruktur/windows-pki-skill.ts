@@ -13,6 +13,8 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
 import { KONTO_FREI } from './windows-ad.js';
 import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, SIGNATUR_STATUS, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
+import { profilSqlTls } from './windows-codesignatur.js';
+import { SQL_TLS_VORLAGE, SQL_TLS_PROVIDER, pruefeAnforderung, anfordernSkript, pruefeGenehmigung, genehmigenSkript, pruefeInstallation, installierenSkript, zertifikatPruefenSkript, bewerteZertifikat, erneuerungStatusSkript, warnstufe, type ZertifikatBefund } from './windows-sqltls.js';
 
 export interface WindowsPkiDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -26,10 +28,12 @@ export interface WindowsPkiDeps {
     selbsttest?: (zugang: string) => Promise<{ rechner: string; unveraendert: { status: string; ausgefuehrt: boolean }; veraendert: { status: string; abgewiesen: boolean; ausgefuehrt: boolean; entfernt: boolean } }> };
 }
 
-export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest']);
+export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest',
+  'zertifikat_pruefen', 'erneuerung_status']);
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
-  'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten']);
+  'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
+  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -66,6 +70,13 @@ export class WindowsPkiSkill extends Skill {
       + 'codesignatur_einrichten (zugang = Issuing-CA; vorlage, cn Standard „Alfred Codesignatur“, o optional, erwartet_aussteller_thumbprint = Thumbprint der Issuing-CA, schluessel_bits 3072, konto_tresor) — Schlüssel und Anforderung auf dem Alfred-Server, an der CA ausstellen, Schlüssel/Name/Verwendung/Aussteller prüfen, Schlüssel und Kette im Datenordner des Alfred-Servers ablegen; liefert das vorhandene, solange ein gültiges Zertifikat abgelegt ist (erneuern true für die Erneuerung); Ergebnis „CODESIGN_CERT_OK“ mit seriennummer; Rückweg codesignatur_sperren (zugang, seriennummer, grund cessationOfOperation). '
       + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer ODER anforderung = RequestId, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
       + 'codesignatur_schalten (an true|false) — Signieren beim Hochladen ein/aus; ein nur mit gültigem Material; Rückweg codesignatur_schalten an false. '
+      + 'SQL-TLS (Etappe 3b, Spec 252217f3 Pos. 11–15; keine Bindung an SQL, kein Neustart — das ist Etappe 4): '
+      + 'sql_tls_vorlage_anlegen (zugang = Issuing-CA; vorlage Standard AD3033-SQL-TLS-v1, anzeige Standard „AD3033 SQL TLS v1“, gruppe Standard PKI-SQL-TLS-Registrieren in ou Standard Server, mitglieder [SQL01$, SQL02$], gueltig_tage 365, konto_tresor) — nur ServerAuthentication, KU DigitalSignature+KeyEncipherment, RSA ≥ 3072, SChannel-CSP, AT_KEYEXCHANGE, nicht exportierbar, Renewal 8 Wochen, Name aus der Anforderung nur mit CA-Freigabe, Registrieren nur die Gruppe; Ergebnis „SQL_TLS_TEMPLATE_OK“; Rückweg sql_tls_vorlage_entfernen (zugang, vorlage, anzeige). '
+      + 'sql_tls_anfordern (zugang = SQL-Knoten; cn = eigener FQDN, sans = Allowlist, ca = „pkiiss01.ad.3033.at\\\\AD3033 Issuing CA 01“; erneuerung true nur zur Erneuerung) — Schlüssel auf dem Knoten, als Computerkonto einreichen; Ergebnis „SQL_TLS_REQUESTED“ mit requestId (wiederholbar). '
+      + 'sql_tls_genehmigen (zugang = Issuing-CA; request_id, cn, sans = Allowlist) — Anforderer = Computerkonto aus cn, Vorlage, Subject, Schlüssellänge und genau die SAN-Allowlist prüfen, dann ausstellen; Ergebnis „SQL_TLS_APPROVED“. '
+      + 'sql_tls_installieren (zugang = SQL-Knoten; request_id, ca, cn, dienstkonto z. B. AD3033\\\\gmsa-sqleng$) — abholen, in LocalMachine\\\\My annehmen, Engine-Konto Lesen auf genau diesen Schlüssel; Ergebnis „SQL_TLS_INSTALLED“ mit thumbprint. '
+      + 'zertifikat_pruefen (lesend; zugang, thumbprint, cn, sans; Standard eku ServerAuthentication, Anbieter SChannel, KeySpec Exchange, 3072 Bit) — Ergebnis „CERT_VALID“ nur ohne jeden Befund (Kette und Sperrprüfung online; unbekannt/offline ist kein OK). '
+      + 'erneuerung_status (lesend; zugaenge, vorlage, schwellen Standard [90, 60, 30, 14]) — „RENEWAL_STATUS“ je Knoten mit Restlaufzeit und Warnstufe. erneuerung_anfordern (zugang, alter_thumbprint, cn, sans, ca) — neuer Schlüssel, altes Zertifikat bleibt; „RENEWAL_PENDING“ mit requestId. '
       + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; optional erwartet_status [Valid] bzw. [UnknownError, NotTrusted]; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte (mit erwartetem Status) läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
       + 'codesignatur_status (lesend; optional erwartet_an true|false, mindest_valid n — schlägt sonst fehl, für Prüfschritte) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
@@ -92,6 +103,8 @@ export class WindowsPkiSkill extends Skill {
         vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
+        gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } }, sans: { type: 'array', items: { type: 'string' } }, ca: { type: 'string' },
+        request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } },
         erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
@@ -347,6 +360,89 @@ export class WindowsPkiSkill extends Skill {
           if (input.mindest_valid !== undefined) { const m = Number(input.mindest_valid); if (!Number.isInteger(m) || m < 0) return { success: false, error: 'mindest_valid: ganze Zahl ≥ 0' }; if ((zaehler.Valid ?? 0) < m) fehlt.push(`Valid ${zaehler.Valid ?? 0} < ${m}`); }
           const data = { an, zertifikat: zert, pruefungen: zaehler };
           return fehlt.length ? { success: false, data, error: `${display} — NICHT wie erwartet: ${fehlt.join('; ')}` } : { success: true, data, display };
+        }
+        // ── Etappe 3b — SQL-TLS (Spec 252217f3 Pos. 11–15) ───────────────────────────────────────────────────────────
+        case 'sql_tls_vorlage_anlegen': case 'sql_tls_vorlage_entfernen': {
+          if (input.vmid !== undefined) return { success: false, error: `${action} nur über den Fernzugang der Issuing-CA` };
+          const v = pruefeVorlage({ ...input, vorlage: input.vorlage ?? SQL_TLS_VORLAGE, anzeige: input.anzeige ?? 'AD3033 SQL TLS v1', schluessel_bits: input.schluessel_bits ?? 3072 }); if (typeof v === 'string') return { success: false, error: v };
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `SQL-TLS-Vorlage ${v.vorlage} (${String(input.zugang)})`);
+          if (action === 'sql_tls_vorlage_entfernen') {
+            const { r } = await this.lauf<{ vorlage: string; vonCa: boolean; geloescht: boolean; oidWeg: boolean; nochDa: boolean }>(input, vorlageEntfernenSkript(v), 'SQL-TLS-Vorlage entfernen', 420_000, { kennwort: kw });
+            const text = `${r.nochDa ? 'SQL-TLS-Vorlage NICHT entfernt' : '✅ SQL_TLS_TEMPLATE_REMOVED'} ${r.vorlage}: von der CA ${r.vonCa ? 'genommen' : 'war nicht ausgestellt'}, Vorlage ${r.geloescht ? 'gelöscht' : 'war nicht da'} (Registrier-Gruppe bleibt)`;
+            return r.nochDa ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+          }
+          const gruppe = String(input.gruppe ?? 'PKI-SQL-TLS-Registrieren').trim(); const ou = String(input.ou ?? 'Server').trim();
+          const mitglieder = (Array.isArray(input.mitglieder) ? input.mitglieder : ['SQL01$', 'SQL02$']).map(x => String(x).trim().toUpperCase());
+          if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{2,63}$/.test(gruppe) || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$/.test(ou)) return { success: false, error: 'gruppe/ou: Namen ohne Sonderzeichen' };
+          if (!mitglieder.length || mitglieder.length > 8 || mitglieder.some(m => !/^[A-Z0-9-]{1,15}\$$/.test(m))) return { success: false, error: 'mitglieder: Computerkonten wie SQL01$ (höchstens 8)' };
+          const { r } = await this.lauf<{ zustand: string; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number; eku: string[]; keySpec: number; csp: string[]; privatFlag: number; gruppeMitglieder: string[] }>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTls({ name: gruppe, ou, mitglieder }) }), 'SQL-TLS-Vorlage anlegen', 720_000, { kennwort: kw });
+          const breit = r.registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
+          const befunde: string[] = [];
+          if (!r.aufCa) befunde.push('nicht auf der CA ausgestellt');
+          if ((r.namensFlag & 1) !== 1 || (r.anmeldeFlag & 2) !== 2) befunde.push('Name aus der Anforderung ohne CA-Freigabe');
+          if (r.minSchluessel < v.schluessel_bits) befunde.push(`Mindestschlüssel ${r.minSchluessel}`);
+          if (r.eku.join(',') !== '1.3.6.1.5.5.7.3.1') befunde.push(`EKU ${r.eku.join(',')}`);
+          if (r.keySpec !== 1) befunde.push(`KeySpec ${r.keySpec}`);
+          if (!r.csp.some(c => c.includes(SQL_TLS_PROVIDER))) befunde.push(`CSP ${r.csp.join(', ')}`);
+          if ((r.privatFlag & 0x10) !== 0) befunde.push('Schlüssel exportierbar');
+          if (!r.registrieren.some(x => x.toLowerCase().endsWith(`\\${gruppe.toLowerCase()}`))) befunde.push(`Gruppe ${gruppe} darf nicht registrieren`);
+          if (breit.length) befunde.push(`ZU BREIT: ${breit.join(', ')}`);
+          if ([...r.gruppeMitglieder].map(x => x.toUpperCase()).sort().join(',') !== [...mitglieder].sort().join(',')) befunde.push(`Gruppe hat ${r.gruppeMitglieder.join(', ') || 'keine'} statt ${mitglieder.join(', ')}`);
+          const text = `${befunde.length ? `SQL-TLS-Vorlage NICHT wie verlangt (${befunde.join('; ')})` : '✅ SQL_TLS_TEMPLATE_OK'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: EKU ${r.eku.join(',')}, KeySpec ${r.keySpec}, ${r.csp.join(', ')}, Mindestschlüssel ${r.minSchluessel}, nicht exportierbar ${(r.privatFlag & 0x10) === 0 ? 'ja' : 'NEIN'}, Name aus der Anforderung mit CA-Freigabe; registrieren dürfen: ${r.registrieren.join(', ')}; Gruppe ${gruppe}: ${r.gruppeMitglieder.join(', ')} — Rückweg sql_tls_vorlage_entfernen`;
+          return befunde.length ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+        }
+        case 'sql_tls_anfordern': case 'erneuerung_anfordern': {
+          if (input.vmid !== undefined) return { success: false, error: `${action} nur über den Fernzugang des SQL-Knotens` };
+          const a = pruefeAnforderung({ ...input, erneuerung: action === 'erneuerung_anfordern' || input.erneuerung === true }); if (typeof a === 'string') return { success: false, error: a };
+          if (action === 'erneuerung_anfordern') {
+            const alt = String(input.alter_thumbprint ?? '').replace(/\s/g, '').toUpperCase(); if (!/^[0-9A-F]{40}$/.test(alt)) return { success: false, error: 'alter_thumbprint: Thumbprint des zu erneuernden Zertifikats (40 Hex)' };
+            const { r: b } = await this.lauf<ZertifikatBefund>(input, zertifikatPruefenSkript({ thumbprint: alt }), 'altes Zertifikat lesen', 120_000);
+            if (!b.gefunden || b.subjekt !== `CN=${a.cn}`) return { success: false, error: `altes Zertifikat ${alt} nicht mit CN=${a.cn} auf ${String(input.zugang)} gefunden` };
+          }
+          const { r } = await this.lauf<{ zustand: string; requestId: number; cn: string; sans: string; csrSha256?: string; thumbprint?: string; gueltigBis?: string }>(input, anfordernSkript(a), 'SQL-TLS-Zertifikat anfordern', 420_000);
+          const marke = action === 'erneuerung_anfordern' ? 'RENEWAL_PENDING' : 'SQL_TLS_REQUESTED';
+          if (r.zustand === 'schon vorhanden') return { success: true, data: r, display: `✅ ${marke} ${a.cn}: gültiges Zertifikat ${r.thumbprint} bis ${r.gueltigBis} vorhanden — nichts angefordert` };
+          return { success: true, data: r, display: `✅ ${marke} ${a.cn} (${r.zustand}): Anforderung ${r.requestId} an ${a.ca} wartet auf Genehmigung; SAN ${r.sans}${r.csrSha256 ? `, CSR-SHA-256 ${r.csrSha256}` : ''}${action === 'erneuerung_anfordern' ? '; das alte Zertifikat bleibt unverändert, keine Bindung' : ''} — weiter mit sql_tls_genehmigen request_id ${r.requestId}` };
+        }
+        case 'sql_tls_genehmigen': {
+          if (input.vmid !== undefined) return { success: false, error: 'sql_tls_genehmigen nur über den Fernzugang der Issuing-CA' };
+          const g = pruefeGenehmigung(input); if (typeof g === 'string') return { success: false, error: g };
+          const { r } = await this.lauf<{ zustand: string; requestId: number; anforderer: string; subjekt: string; sans: string; bits: number }>(input, genehmigenSkript(g), 'SQL-TLS-Anforderung genehmigen', 420_000);
+          return { success: true, data: r, display: `✅ SQL_TLS_APPROVED Anforderung ${r.requestId} (${r.zustand}): ${r.subjekt}, Anforderer ${r.anforderer}, ${r.bits} Bit, SAN ${r.sans} = Allowlist` };
+        }
+        case 'sql_tls_installieren': {
+          if (input.vmid !== undefined) return { success: false, error: 'sql_tls_installieren nur über den Fernzugang des SQL-Knotens' };
+          const i = pruefeInstallation(input); if (typeof i === 'string') return { success: false, error: i };
+          const { r } = await this.lauf<{ zustand: string; thumbprint: string; subjekt: string; gueltigBis: string; schluessel: string; schluesselRechte: string[] }>(input, installierenSkript(i), 'SQL-TLS-Zertifikat installieren', 420_000);
+          const lesen = r.schluesselRechte.some(x => x.toLowerCase().startsWith(i.dienstkonto.toLowerCase() + ':') && /Read/.test(x));
+          const zuViel = r.schluesselRechte.filter(x => /^(Everyone|Jeder|.*\\(Users|Authenticated Users|Benutzer))\:/i.test(x) || (/FullControl/.test(x) && !/^(NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators|VORDEFINIERT\\Administratoren)\:/i.test(x)));
+          const ok = lesen && !zuViel.length;
+          const text = `${ok ? '✅ SQL_TLS_INSTALLED' : 'SQL-TLS-Zertifikat installiert, Schlüsselrechte NICHT wie verlangt'} ${r.subjekt} (${r.zustand}): Thumbprint ${r.thumbprint}, gültig bis ${r.gueltigBis}; Schlüssel ${r.schluessel}: ${r.schluesselRechte.join('; ')}${zuViel.length ? ` — ZU VIEL: ${zuViel.join(', ')}` : ''} — keine Bindung an SQL (Etappe 4)`;
+          return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'zertifikat_pruefen': {
+          const tp = String(input.thumbprint ?? '').replace(/\s/g, '').toUpperCase(); if (!/^[0-9A-F]{40}$/.test(tp)) return { success: false, error: 'thumbprint: 40 Hex' };
+          const cn = String(input.cn ?? '').trim().toLowerCase(); const sans = (Array.isArray(input.sans) ? input.sans : []).map(x => String(x).trim().toLowerCase());
+          if (!cn || !sans.length) return { success: false, error: 'cn und sans (erwartet) angeben' };
+          const { r } = await this.lauf<ZertifikatBefund>(input, zertifikatPruefenSkript({ thumbprint: tp }), 'Zertifikat prüfen', 180_000);
+          const b = bewerteZertifikat(r, { subjekt: `CN=${cn}`, sans, eku: String(input.eku ?? '1.3.6.1.5.5.7.3.1'), anbieter: String(input.anbieter ?? SQL_TLS_PROVIDER), keySpec: String(input.key_spec ?? 'Exchange'), bits: Number(input.key_bits ?? 3072) });
+          const text = `${b.ok ? '✅ CERT_VALID' : 'Zertifikat NICHT gültig'} ${r.rechner} ${tp} (${r.zeit}): ${r.gefunden ? `${r.subjekt}, SAN ${(r.sans ?? []).join(',')}, EKU ${(r.eku ?? []).join(',')}, KU ${r.ku}, ${r.anbieter}, KeySpec ${r.keySpec}, ${r.bits} Bit, exportierbar ${String(r.exportierbar)}, PrivateKeyPresent ${String(r.privat)}, ${r.von} – ${r.bis}, Kette ${r.kette ? 'ok' : 'NICHT ok'} (${(r.glieder ?? []).length} Glieder, Sperrprüfung online: ${(r.kettenStatus ?? []).join(', ') || 'ohne Befund'}), CRL ${r.cdp}` : 'nicht gefunden'}${b.gruende.length ? ` — BEFUNDE: ${b.gruende.join('; ')}` : ''}`;
+          return b.ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
+        }
+        case 'erneuerung_status': {
+          const zg = (Array.isArray(input.zugaenge) ? input.zugaenge : [input.zugang]).map(x => String(x ?? '').trim().toLowerCase()).filter(Boolean);
+          if (!zg.length || zg.length > 8 || zg.some(x => !ZUGANG.test(x))) return { success: false, error: 'zugaenge: Windows-Fernzugänge, z. B. [sql01, sql02]' };
+          const vorlage = String(input.vorlage ?? SQL_TLS_VORLAGE).trim();
+          const schwellen = (Array.isArray(input.schwellen) ? input.schwellen.map(Number) : [90, 60, 30, 14]).filter(n => Number.isInteger(n) && n > 0);
+          const zeilen: string[] = []; const daten: unknown[] = [];
+          for (const z of zg) {
+            const { r } = await this.lauf<{ rechner: string; zeit: string; zertifikate: { thumbprint: string; subjekt: string; bis: string; tage: number }[]; offeneAnforderung: number | null }>({ zugang: z }, erneuerungStatusSkript({ vorlage }), 'Erneuerungsstand', 120_000);
+            const n = r.zertifikate[0];
+            const stufe = n ? warnstufe(n.tage, schwellen) : null;
+            daten.push({ zugang: z, ...r, warnstufe: stufe, erneuerungsfenster: n ? n.tage <= 56 : null });
+            zeilen.push(`${r.rechner}: ${n ? `${n.thumbprint} bis ${n.bis.slice(0, 10)} (${n.tage} Tage)${stufe ? `, Warnstufe ${stufe} Tage` : ''}${n.tage <= 56 ? ', im Erneuerungsfenster (8 Wochen)' : ''}` : 'KEIN Zertifikat der Vorlage'}${r.offeneAnforderung ? `, offene Anforderung ${r.offeneAnforderung}` : ''}`);
+          }
+          return { success: true, data: daten, display: `RENEWAL_STATUS ${vorlage}: ${zeilen.join(' | ')}` };
         }
         case 'trust_aktualisieren': {
           const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);

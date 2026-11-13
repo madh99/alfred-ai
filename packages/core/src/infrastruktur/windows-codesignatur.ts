@@ -24,7 +24,19 @@ export const ENROLL_RECHT = '0e10c968-78fb-11d2-90d4-00c04f79dc55';
 export const SIGNATUR_ABBRUCH = new Set(['HashMismatch', 'NotSigned']);
 export const SIGNATUR_STATUS = new Set(['Valid', 'UnknownError', 'NotTrusted', 'HashMismatch', 'NotSigned', 'NotSupportedFileFormat', 'Incompatible']);
 
-const VORLAGE = /^[A-Za-z][A-Za-z0-9]{2,39}$/;
+const VORLAGE = /^[A-Za-z][A-Za-z0-9-]{2,39}$/;
+
+/**
+ * v1852 — Vorlagenprofile: Codesignatur (3a) und SQL-TLS (3b, Spec 252217f3 Pos. 11). Die Werte gehen als JSON ins Skript ($p.profil),
+ * nicht als Text in die Befehle.
+ */
+export interface VorlagenProfil { eku: string; ku: [number, number]; keySpec: 1 | 2; csp: string; ueberlappungTage: number; adminsRegistrieren: boolean; gruppe?: { name: string; ou: string; mitglieder: string[] } }
+export const PROFIL_CODESIGNATUR: VorlagenProfil = { eku: EKU_CODESIGNATUR, ku: [0x80, 0x00], keySpec: 2, csp: '1,Microsoft Enhanced RSA and AES Cryptographic Provider', ueberlappungTage: 42, adminsRegistrieren: true };
+export const EKU_SERVER = '1.3.6.1.5.5.7.3.1';
+/** Spec Pos. 11: nur ServerAuthentication, KU DigitalSignature+KeyEncipherment, Legacy-CSP SChannel, AT_KEYEXCHANGE, Renewal 8 Wochen, Registrieren nur SQL01$/SQL02$ */
+export function profilSqlTls(gruppe: { name: string; ou: string; mitglieder: string[] }): VorlagenProfil {
+  return { eku: EKU_SERVER, ku: [0xa0, 0x00], keySpec: 1, csp: '1,Microsoft RSA SChannel Cryptographic Provider', ueberlappungTage: 56, adminsRegistrieren: false, gruppe };
+}
 const CN_FREI = /^[A-Za-z0-9][A-Za-z0-9 ._-]{2,62}$/;
 
 export interface VorlageParameter { vorlage: string; anzeige: string; gueltig_tage: number; schluessel_bits: number }
@@ -44,8 +56,25 @@ const PERIODE = (tage: string) => `[BitConverter]::GetBytes([long](-1 * ${tage} 
  * Vorlage anlegen (falls nicht vorhanden) und auf der CA ausstellen — als Domänen-Administrator (ADSI in der Konfigurations-
  * partition, certutil -SetCATemplates). Wiederholbar: eine vorhandene Vorlage mit demselben Anzeigenamen bleibt unverändert.
  */
-export function vorlageAnlegenSkript(v: VorlageParameter & { ausKonto?: string }): string {
+export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string; profil?: VorlagenProfil }): string {
+  const v = { ...v0, profil: v0.profil ?? PROFIL_CODESIGNATUR };
   const innen = innenSkript(v, [
+    // v1852 — Registrier-Gruppe (SQL-TLS): anlegen, falls nötig; Mitglieder müssen genau die vorgesehenen Computerkonten sein
+    '$gruppeSid = $null; $gruppeMitglieder = @()',
+    'if ($p.profil.gruppe) {',
+    "  $domDn = ([adsi]'LDAP://RootDSE').defaultNamingContext",
+    "  function Finde($sam) { $s = New-Object DirectoryServices.DirectorySearcher([adsi]('LDAP://' + $domDn), ('(sAMAccountName=' + $sam + ')')); $r = $s.FindOne(); if ($r) { $r.GetDirectoryEntry() } else { $null } }",
+    '  $g = Finde $p.profil.gruppe.name',
+    '  if (-not $g) {',
+    "    $ou = [adsi]('LDAP://OU=' + $p.profil.gruppe.ou + ',' + $domDn)",
+    "    $g = $ou.Create('group', ('CN=' + $p.profil.gruppe.name)); $g.Put('sAMAccountName', $p.profil.gruppe.name); $g.Put('groupType', -2147483646)",
+    "    $g.Put('description', ('Registrieren der Vorlage ' + $p.vorlage + ' (Alfred PKI)')); $g.SetInfo()",
+    '  }',
+    "  foreach ($m in @($p.profil.gruppe.mitglieder)) { $c = Finde $m; if (-not $c) { throw ('Computerkonto ' + $m + ' nicht gefunden') }; $mdn = [string]$c.distinguishedName.Value; if (@($g.Properties['member']) -notcontains $mdn) { [void]$g.Properties['member'].Add($mdn); $g.CommitChanges() } }",
+    "  $g.RefreshCache(); $gruppeMitglieder = @($g.Properties['member'] | ForEach-Object { [string]([adsi]('LDAP://' + $_)).Properties['sAMAccountName'].Value })",
+    "  $fremd = @($gruppeMitglieder | Where-Object { @($p.profil.gruppe.mitglieder) -notcontains $_ }); if ($fremd.Count) { throw ('Gruppe ' + $p.profil.gruppe.name + ' hat weitere Mitglieder: ' + ($fremd -join ', ') + ' — nichts verändert') }",
+    "  $gruppeSid = New-Object Security.Principal.SecurityIdentifier ([byte[]]$g.Properties['objectSid'].Value, 0)",
+    '}',
     "$cfg = ([adsi]'LDAP://RootDSE').configurationNamingContext",
     "$pks = 'CN=Public Key Services,CN=Services,' + $cfg",
     "$dn = 'CN=' + $p.vorlage + ',CN=Certificate Templates,' + $pks",
@@ -70,15 +99,15 @@ export function vorlageAnlegenSkript(v: VorlageParameter & { ausKonto?: string }
     "  $t.Put('revision', 100)",
     "  $t.Put('msPKI-Template-Schema-Version', 2)",
     "  $t.Put('msPKI-Template-Minor-Revision', 1)",
-    "  $t.Put('pKIDefaultKeySpec', 2)",
-    "  $t.Put('pKIKeyUsage', [byte[]](0x80, 0x00))",
+    "  $t.Put('pKIDefaultKeySpec', [int]$p.profil.keySpec)",
+    "  $t.Put('pKIKeyUsage', [byte[]]@([byte]$p.profil.ku[0], [byte]$p.profil.ku[1]))",
     "  $t.Put('pKIMaxIssuingDepth', 0)",
     "  $t.Put('pKICriticalExtensions', @('2.5.29.15'))",
-    `  $t.Put('pKIExtendedKeyUsage', @('${EKU_CODESIGNATUR}'))`,
-    `  $t.Put('msPKI-Certificate-Application-Policy', @('${EKU_CODESIGNATUR}'))`,
+    "  $t.Put('pKIExtendedKeyUsage', @([string]$p.profil.eku))",
+    "  $t.Put('msPKI-Certificate-Application-Policy', @([string]$p.profil.eku))",
     `  $t.Put('pKIExpirationPeriod', ${PERIODE('[int]$p.gueltig_tage')})`,
-    `  $t.Put('pKIOverlapPeriod', ${PERIODE('42')})`,
-    "  $t.Put('pKIDefaultCSPs', @('1,Microsoft Enhanced RSA and AES Cryptographic Provider'))",
+    `  $t.Put('pKIOverlapPeriod', ${PERIODE('[int]$p.profil.ueberlappungTage')})`,
+    "  $t.Put('pKIDefaultCSPs', @([string]$p.profil.csp))",
     "  $t.Put('msPKI-RA-Signature', 0)",
     // 0x2 CT_FLAG_PEND_ALL_REQUESTS: jede Anforderung wartet auf Freigabe an der CA
     "  $t.Put('msPKI-Enrollment-Flag', 2)",
@@ -92,7 +121,8 @@ export function vorlageAnlegenSkript(v: VorlageParameter & { ausKonto?: string }
     '  $dom = [Security.Principal.WindowsIdentity]::GetCurrent().User.AccountDomainSid',
     '  $da = New-Object Security.Principal.SecurityIdentifier ([Security.Principal.WellKnownSidType]::AccountDomainAdminsSid, $dom)',
     '  $t = [adsi](\'LDAP://\' + $dn); $sec = $t.ObjectSecurity',
-    `  $sec.AddAccessRule((New-Object DirectoryServices.ActiveDirectoryAccessRule($da, [DirectoryServices.ActiveDirectoryRights]::ExtendedRight, [Security.AccessControl.AccessControlType]::Allow, [guid]'${ENROLL_RECHT}')))`,
+    `  if ($p.profil.adminsRegistrieren) { $sec.AddAccessRule((New-Object DirectoryServices.ActiveDirectoryAccessRule($da, [DirectoryServices.ActiveDirectoryRights]::ExtendedRight, [Security.AccessControl.AccessControlType]::Allow, [guid]'${ENROLL_RECHT}'))) }`,
+    `  if ($gruppeSid) { $sec.AddAccessRule((New-Object DirectoryServices.ActiveDirectoryAccessRule($gruppeSid, [DirectoryServices.ActiveDirectoryRights]::GenericRead, [Security.AccessControl.AccessControlType]::Allow))); $sec.AddAccessRule((New-Object DirectoryServices.ActiveDirectoryAccessRule($gruppeSid, [DirectoryServices.ActiveDirectoryRights]::ExtendedRight, [Security.AccessControl.AccessControlType]::Allow, [guid]'${ENROLL_RECHT}'))) }`,
     '  $t.ObjectSecurity = $sec; $t.CommitChanges()',
     "  $zustand = 'angelegt'",
     '}',
@@ -115,7 +145,7 @@ export function vorlageAnlegenSkript(v: VorlageParameter & { ausKonto?: string }
     "$liste = (& certutil.exe -CATemplates) -join \"`n\"",
     "$aufCa = $liste -match ('(?m)^' + [regex]::Escape($p.vorlage) + ':')",
     "if (-not $aufCa) { throw ('Vorlage nicht auf der CA ausgestellt: ' + $aus) }",
-    "[ordered]@{ zustand = $zustand; vorlage = $p.vorlage; anzeige = [string]$t.displayName.Value; oid = [string]$t.Properties['msPKI-Cert-Template-OID'].Value; ca = $ca; aufCa = $aufCa; registrieren = $enroll; namensFlag = [int]$t.Properties['msPKI-Certificate-Name-Flag'].Value; anmeldeFlag = [int]$t.Properties['msPKI-Enrollment-Flag'].Value; minSchluessel = [int]$t.Properties['msPKI-Minimal-Key-Size'].Value }",
+    "[ordered]@{ zustand = $zustand; vorlage = $p.vorlage; anzeige = [string]$t.displayName.Value; oid = [string]$t.Properties['msPKI-Cert-Template-OID'].Value; ca = $ca; aufCa = $aufCa; registrieren = $enroll; namensFlag = [int]$t.Properties['msPKI-Certificate-Name-Flag'].Value; anmeldeFlag = [int]$t.Properties['msPKI-Enrollment-Flag'].Value; minSchluessel = [int]$t.Properties['msPKI-Minimal-Key-Size'].Value; eku = @($t.Properties['pKIExtendedKeyUsage'] | ForEach-Object { [string]$_ }); keySpec = [int]$t.Properties['pKIDefaultKeySpec'].Value; csp = @($t.Properties['pKIDefaultCSPs'] | ForEach-Object { [string]$_ }); privatFlag = [int]$t.Properties['msPKI-Private-Key-Flag'].Value; gruppeMitglieder = $gruppeMitglieder }",
   ]);
   return domaenenAdmin(v, innen, 600);
 }
