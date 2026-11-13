@@ -688,13 +688,20 @@ export function adVeroeffentlichenSkript(a: { dcs: string[]; erwartet_root_sha25
     "$rt = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,$rb)).Thumbprint",
     "if ($p.mit_sub) { $sd = Join-Path $dir 'ad-sub.cer'; $sb = [IO.File]::ReadAllBytes($sd); if ((Hex $sb) -ne $p.erwartet_sub_sha256) { throw 'Issuing-Zertifikat passt nicht zum Hash' }; $aus = (& certutil.exe -dspublish -f $sd SubCA) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('dspublish SubCA: ' + $aus) }; $st = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,$sb)).Thumbprint }",
     "$cfg = ([adsi]'LDAP://RootDSE').configurationNamingContext",
-    '$beleg = @()',
-    'foreach ($dc in @($p.dcs)) {',
-    "  function Fp($pfad) { $o = [adsi]('LDAP://' + $dc + '/' + $pfad); $f = @(); foreach ($ch in @($o.Children)) { foreach ($c in @($ch.cACertificate)) { $f += (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,[byte[]]$c)).Thumbprint } }; $f }",
-    "  $root = @(Fp ('CN=Certification Authorities,CN=Public Key Services,CN=Services,' + $cfg))",
-    "  $aia = @(Fp ('CN=AIA,CN=Public Key Services,CN=Services,' + $cfg))",
-    "  $beleg += [ordered]@{ dc = $dc; rootDa = ($root -contains $rt); subDa = $(if ($p.mit_sub) { $aia -contains $st } else { $null }) }",
-    '}',
+    // v1841 — Realfall 13.11. PKI-B Schritt 50: geprüft wurde unmittelbar nach dspublish; dc02 hatte die Root noch nicht repliziert
+    // (eine Minute später da). Belege bis zu 4 Minuten lang alle 15 s erneut lesen, bis alle DCs alles zeigen.
+    "function Fp($dc, $pfad) { $o = [adsi]('LDAP://' + $dc + '/' + $pfad); $f = @(); foreach ($ch in @($o.Children)) { foreach ($c in @($ch.cACertificate)) { $f += (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (,[byte[]]$c)).Thumbprint } }; $f }",
+    '$bis = (Get-Date).AddMinutes(4)',
+    'do {',
+    '  $beleg = @()',
+    '  foreach ($dc in @($p.dcs)) {',
+    "    $root = @(Fp $dc ('CN=Certification Authorities,CN=Public Key Services,CN=Services,' + $cfg))",
+    "    $aia = @(Fp $dc ('CN=AIA,CN=Public Key Services,CN=Services,' + $cfg))",
+    "    $beleg += [ordered]@{ dc = $dc; rootDa = ($root -contains $rt); subDa = $(if ($p.mit_sub) { $aia -contains $st } else { $null }) }",
+    '  }',
+    "  $alle = @($beleg | Where-Object { -not $_.rootDa -or ($p.mit_sub -and -not $_.subDa) }).Count -eq 0",
+    '  if (-not $alle) { Start-Sleep -Seconds 15 }',
+    '} while (-not $alle -and (Get-Date) -lt $bis)',
     "[ordered]@{ rootThumbprint = $rt; subThumbprint = $(if ($p.mit_sub) { $st } else { $null }); belege = $beleg }",
   ]);
   return [
@@ -705,7 +712,7 @@ export function adVeroeffentlichenSkript(a: { dcs: string[]; erwartet_root_sha25
     "if ($p.mit_sub) { [IO.File]::WriteAllBytes((Join-Path $dir 'ad-sub.cer'), [Convert]::FromBase64String([string]$e.sub_base64)) }",
     MIT_KONTO,
     "$nb = DomaeneNetbios",
-    `$w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innen)} 300`,
+    `$w = MitKonto (${kontoAusdruck('Administrator', '$nb')}) $e.kennwort ${psText(innen)} 420`,
     'Ergebnis $w',
   ].join('\n');
 }
@@ -755,8 +762,32 @@ export function caSicherungSkript(z: { ziel_ordner: string }): string {
     '$acl = New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true, $false)',
     "foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }",
     'Set-Acl -Path $p.ziel_ordner -AclObject $acl',
-    '$pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
-    'Backup-CARoleService -Path $d -Password $pw',
+    // v1841 — Realfall 13.11. PKI-B Schritt 56: auf pkiiss01 meldete Backup-CARoleService im SSH-Token (Schlüssel-Anmeldung, NETWORK)
+    // E_ACCESSDENIED; auf der Root lief dieselbe Sicherung als SYSTEM (Gastagent). Läuft das Skript nicht als SYSTEM, sichert eine
+    // geplante Aufgabe als SYSTEM. Das Kennwort geht DPAPI-geschützt in eine Datei im geschützten Aufgabenordner und wird sofort gelöscht.
+    'if ([Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) {',
+    '  $pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
+    '  Backup-CARoleService -Path $d -Password $pw',
+    '} else {',
+    MIT_KONTO,
+    "  Add-Type -AssemblyName System.Security",
+    // Ordner zuerst nur für SYSTEM und Administratoren (wie in MitKonto), erst dann die Kennwortdatei schreiben
+    "  $ad = Join-Path $env:ProgramData 'Alfred\\aufgaben'; New-Item -ItemType Directory -Path $ad -Force | Out-Null",
+    '  $aa = New-Object System.Security.AccessControl.DirectorySecurity; $aa.SetAccessRuleProtection($true, $false)',
+    "  foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) { $aa.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule((New-Object System.Security.Principal.SecurityIdentifier $sid), 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }",
+    '  Set-Acl -Path $ad -AclObject $aa',
+    "  $kd = Join-Path $ad ('k-' + [guid]::NewGuid().ToString('N') + '.bin')",
+    "  [IO.File]::WriteAllBytes($kd, [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes([string]$e.kennwort), $null, 'LocalMachine'))",
+    `  $innen = ${psText(innenSkript({}, [
+      "Add-Type -AssemblyName System.Security",
+      "$t = [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes('__KDATEI__'), $null, 'LocalMachine'))",
+      "Remove-Item -LiteralPath '__KDATEI__' -Force",
+      "Backup-CARoleService -Path '__ZIEL__' -Password (ConvertTo-SecureString $t -AsPlainText -Force)",
+      "[ordered]@{ gesichert = $true }",
+    ]))}`,
+    "  $innen = $innen.Replace('__KDATEI__', $kd).Replace('__ZIEL__', $d)",
+    "  try { $w = MitKonto 'SYSTEM' '' $innen 900 } finally { Remove-Item -LiteralPath $kd -Force -ErrorAction SilentlyContinue }",
+    '}',
     "& reg.exe export 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration' (Join-Path $d 'certsvc-konfiguration.reg') /y | Out-Null",
     "$cp = Join-Path $env:SystemRoot 'CAPolicy.inf'; if (Test-Path $cp) { Copy-Item $cp (Join-Path $d 'CAPolicy.inf') }",
     '$shaF = [Security.Cryptography.SHA256]::Create()',

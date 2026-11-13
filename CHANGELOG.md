@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — AD-Replikation und Sicherung der Issuing-CA (v1841)
+
+- `windows_pki ad_veroeffentlichen` wartet bis zu vier Minuten, bis alle Domänencontroller die veröffentlichten Zertifikate zeigen, statt unmittelbar nach der Veröffentlichung zu prüfen.
+- `windows_pki ca_sichern` führt die Sicherung auf Mitgliedsservern als SYSTEM aus. Das Sicherungskennwort wird dabei nur kurzzeitig geschützt abgelegt und sofort gelöscht.
+
 ### Fixed — CA-Aktivierung und CRL-Veröffentlichung (v1840)
 
 - `windows_pki issuer_aktivieren` wertet den Exit-Code von `certutil -installcert` jetzt zuverlässig aus. Eine erfolgreiche Installation wurde bisher als Fehler mit leerem Exit-Code gemeldet.

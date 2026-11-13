@@ -114,6 +114,25 @@ describe('v1813 Veröffentlichung, AD und Vertrauen', () => {
     expect(s).toContain('-dspublish -f $rd RootCA');
     expect(s).not.toMatch(/NTAuthCA|dspublish[^\n]*\.crl/);
   });
+  it('v1841 CA-Sicherung außerhalb von SYSTEM als SYSTEM-Aufgabe, Kennwort nie im Aufgabenskript', async () => {
+    const { caSicherungSkript } = await import('./windows-pki.js');
+    const s = caSicherungSkript({ ziel_ordner: 'B:\\CA-Sicherung' });
+    expect(s).toContain('GetCurrent().IsSystem');
+    expect(s).toContain("MitKonto 'SYSTEM' '' $innen 900");
+    expect(s).toContain("ProtectedData]::Protect(");
+    expect(s.indexOf('Set-Acl -Path $ad')).toBeLessThan(s.indexOf('WriteAllBytes($kd'));
+    // das innere Skript enthält nur den Dateiverweis, nicht $e.kennwort
+    const innen = s.slice(s.indexOf('$innen = '), s.indexOf("$innen = $innen.Replace"));
+    expect(innen).not.toContain('$e.kennwort');
+    expect(innen).toContain("Remove-Item -LiteralPath ''__KDATEI__'' -Force");
+  });
+  it('v1841 Belege bis zu 4 Minuten auf Replikation warten, MitKonto-Grenze darüber', async () => {
+    const { adVeroeffentlichenSkript } = await import('./windows-pki.js');
+    const s = adVeroeffentlichenSkript({ dcs: ['dc01.ad.3033.at', 'dc02.ad.3033.at'], erwartet_root_sha256: 'a'.repeat(64), mit_sub: true, erwartet_sub_sha256: 'b'.repeat(64) });
+    expect(s).toContain('AddMinutes(4)');
+    expect(s).toContain('while (-not $alle -and (Get-Date) -lt $bis)');
+    expect(s).toMatch(/' 420\n/);
+  });
 });
 
 describe('v1814 CA-Sicherung und Issuer-Pfade', () => {
