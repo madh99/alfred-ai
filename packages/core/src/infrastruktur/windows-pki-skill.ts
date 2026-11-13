@@ -76,7 +76,7 @@ export class WindowsPkiSkill extends Skill {
       + 'sql_tls_genehmigen (zugang = Issuing-CA; request_id, cn, sans = Allowlist) — Anforderer = Computerkonto aus cn, Vorlage, Subject, Schlüssellänge und genau die SAN-Allowlist prüfen, dann ausstellen; Ergebnis „SQL_TLS_APPROVED“. '
       + 'sql_tls_installieren (zugang = SQL-Knoten; request_id, ca, cn, dienstkonto z. B. AD3033\\\\gmsa-sqleng$) — abholen, in LocalMachine\\\\My annehmen, Engine-Konto Lesen auf genau diesen Schlüssel; Ergebnis „SQL_TLS_INSTALLED“ mit thumbprint. '
       + 'zertifikat_pruefen (lesend; zugang, thumbprint, cn, sans; Standard eku ServerAuthentication, Anbieter SChannel, KeySpec Exchange, 3072 Bit) — Ergebnis „CERT_VALID“ nur ohne jeden Befund (Kette und Sperrprüfung online; unbekannt/offline ist kein OK). '
-      + 'erneuerung_status (lesend; zugaenge, vorlage, schwellen Standard [90, 60, 30, 14]) — „RENEWAL_STATUS“ je Knoten mit Restlaufzeit und Warnstufe. erneuerung_anfordern (zugang, alter_thumbprint, cn, sans, ca) — neuer Schlüssel, altes Zertifikat bleibt; „RENEWAL_PENDING“ mit requestId. '
+      + 'erneuerung_status (lesend; zugaenge, vorlage, schwellen Standard [90, 60, 30, 14], optional erwartet_zertifikat true|false für Prüfschritte) — „RENEWAL_STATUS“ je Knoten mit Restlaufzeit und Warnstufe. erneuerung_anfordern (zugang, alter_thumbprint, cn, sans, ca) — neuer Schlüssel, altes Zertifikat bleibt; „RENEWAL_PENDING“ mit requestId. '
       + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; optional erwartet_status [Valid] bzw. [UnknownError, NotTrusted]; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte (mit erwartetem Status) läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
       + 'codesignatur_status (lesend; optional erwartet_an true|false, mindest_valid n — schlägt sonst fehl, für Prüfschritte) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
@@ -104,7 +104,7 @@ export class WindowsPkiSkill extends Skill {
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
         gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } }, sans: { type: 'array', items: { type: 'string' } }, ca: { type: 'string' },
-        request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } },
+        request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } }, erwartet_zertifikat: { type: 'boolean', description: 'erneuerung_status: true = je Knoten muss ein Zertifikat da sein, false = keines (schlägt sonst fehl)' },
         erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
@@ -442,7 +442,13 @@ export class WindowsPkiSkill extends Skill {
             daten.push({ zugang: z, ...r, warnstufe: stufe, erneuerungsfenster: n ? n.tage <= 56 : null });
             zeilen.push(`${r.rechner}: ${n ? `${n.thumbprint} bis ${n.bis.slice(0, 10)} (${n.tage} Tage)${stufe ? `, Warnstufe ${stufe} Tage` : ''}${n.tage <= 56 ? ', im Erneuerungsfenster (8 Wochen)' : ''}` : 'KEIN Zertifikat der Vorlage'}${r.offeneAnforderung ? `, offene Anforderung ${r.offeneAnforderung}` : ''}`);
           }
-          return { success: true, data: daten, display: `RENEWAL_STATUS ${vorlage}: ${zeilen.join(' | ')}` };
+          // v1853 — Erwartung im Baustein (Planer lehnt „KEIN …“ als erwartet-Text ab): erwartet_zertifikat true/false je Knoten
+          const display = `RENEWAL_STATUS ${vorlage}: ${zeilen.join(' | ')}`;
+          if (typeof input.erwartet_zertifikat === 'boolean') {
+            const abweichend = (daten as { zugang: string; zertifikate: unknown[] }[]).filter(d => (d.zertifikate.length > 0) !== input.erwartet_zertifikat).map(d => d.zugang);
+            if (abweichend.length) return { success: false, data: daten, error: `${display} — NICHT wie erwartet (${input.erwartet_zertifikat ? 'Zertifikat erwartet' : 'kein Zertifikat erwartet'}): ${abweichend.join(', ')}` };
+          }
+          return { success: true, data: daten, display };
         }
         case 'trust_aktualisieren': {
           const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);

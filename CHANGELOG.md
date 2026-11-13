@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Erwartung beim Erneuerungsstand (v1853)
+
+- `windows_pki erneuerung_status` prüft mit `erwartet_zertifikat` selbst, ob je Knoten ein Zertifikat vorhanden sein soll oder nicht.
+
 ### Added — SQL-TLS-Zertifikate (PKI Etappe 3b, v1852)
 
 - `windows_pki` erhält Bausteine für TLS-Zertifikate der SQL-Knoten: Vorlage mit enger Registrier-Gruppe und CA-Freigabe, Anforderung mit Schlüssel auf dem Knoten, Genehmigung erst nach Prüfung aller Namen gegen eine feste Liste, Installation mit Leserecht nur für das Engine-Konto.

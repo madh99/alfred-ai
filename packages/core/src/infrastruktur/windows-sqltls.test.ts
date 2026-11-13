@@ -89,3 +89,15 @@ describe('Etappe 3b SQL-TLS — Skill', () => {
     expect(r.display).toContain('CERT_VALID');
   });
 });
+
+describe('v1853 erneuerung_status mit Erwartung', () => {
+  it('erwartet_zertifikat false/true schlägt bei Abweichung fehl', async () => {
+    let zert: unknown[] = [];
+    const skill = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: ad({ rechner: 'SQL01', zeit: 't', zertifikate: zert, offeneAnforderung: null }), stderr: '' }) });
+    expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: false })).success).toBe(true);
+    expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: true })).error).toContain('Zertifikat erwartet');
+    zert = [{ thumbprint: 'A'.repeat(40), subjekt: 'CN=sql01.ad.3033.at', bis: '2027-11-13T00:00:00', tage: 364 }];
+    expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: true })).success).toBe(true);
+    expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: false })).success).toBe(false);
+  });
+});
