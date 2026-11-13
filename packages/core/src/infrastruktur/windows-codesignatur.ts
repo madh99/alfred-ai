@@ -30,12 +30,14 @@ const VORLAGE = /^[A-Za-z][A-Za-z0-9-]{2,39}$/;
  * v1852 — Vorlagenprofile: Codesignatur (3a) und SQL-TLS (3b, Spec 252217f3 Pos. 11). Die Werte gehen als JSON ins Skript ($p.profil),
  * nicht als Text in die Befehle.
  */
-export interface VorlagenProfil { eku: string; ku: [number, number]; keySpec: 1 | 2; csp: string; ueberlappungTage: number; adminsRegistrieren: boolean; gruppe?: { name: string; ou: string; mitglieder: string[] } }
+/** maschine: CT_FLAG_MACHINE_TYPE (0x40) — v1854, Realfall fad4b31b Schritt 4: ohne das Kennzeichen ist die Vorlage eine Benutzer-Vorlage,
+ *  certreq -new im Computerkontext meldet „Machine context template conflicts“ */
+export interface VorlagenProfil { eku: string; ku: [number, number]; keySpec: 1 | 2; csp: string; ueberlappungTage: number; adminsRegistrieren: boolean; maschine?: boolean; gruppe?: { name: string; ou: string; mitglieder: string[] } }
 export const PROFIL_CODESIGNATUR: VorlagenProfil = { eku: EKU_CODESIGNATUR, ku: [0x80, 0x00], keySpec: 2, csp: '1,Microsoft Enhanced RSA and AES Cryptographic Provider', ueberlappungTage: 42, adminsRegistrieren: true };
 export const EKU_SERVER = '1.3.6.1.5.5.7.3.1';
 /** Spec Pos. 11: nur ServerAuthentication, KU DigitalSignature+KeyEncipherment, Legacy-CSP SChannel, AT_KEYEXCHANGE, Renewal 8 Wochen, Registrieren nur SQL01$/SQL02$ */
 export function profilSqlTls(gruppe: { name: string; ou: string; mitglieder: string[] }): VorlagenProfil {
-  return { eku: EKU_SERVER, ku: [0xa0, 0x00], keySpec: 1, csp: '1,Microsoft RSA SChannel Cryptographic Provider', ueberlappungTage: 56, adminsRegistrieren: false, gruppe };
+  return { eku: EKU_SERVER, ku: [0xa0, 0x00], keySpec: 1, csp: '1,Microsoft RSA SChannel Cryptographic Provider', ueberlappungTage: 56, adminsRegistrieren: false, maschine: true, gruppe };
 }
 const CN_FREI = /^[A-Za-z0-9][A-Za-z0-9 ._-]{2,62}$/;
 
@@ -79,9 +81,12 @@ export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string;
     "$pks = 'CN=Public Key Services,CN=Services,' + $cfg",
     "$dn = 'CN=' + $p.vorlage + ',CN=Certificate Templates,' + $pks",
     "$zustand = 'schon vorhanden'",
+    "$sollFlags = 131616 -bor $(if ($p.profil.maschine) { 0x40 } else { 0 })",
     "if ([adsi]::Exists('LDAP://' + $dn)) {",
     "  $t = [adsi]('LDAP://' + $dn)",
     "  if ([string]$t.displayName.Value -ne $p.anzeige) { throw ('Vorlage ' + $p.vorlage + ' gibt es schon mit anderem Anzeigenamen („' + [string]$t.displayName.Value + '“) — nichts verändert') }",
+    // v1854 — nur das Benutzer/Computer-Kennzeichen wird an einer vorhandenen Vorlage angeglichen (Revision hoch), sonst nichts
+    "  if ([int]$t.flags.Value -ne $sollFlags) { $t.Put('flags', $sollFlags); $t.Put('msPKI-Template-Minor-Revision', ([int]$t.Properties['msPKI-Template-Minor-Revision'].Value + 1)); $t.SetInfo(); $zustand = 'angeglichen (Kennzeichen ' + $sollFlags + ')' }",
     '} else {',
     "  $oidC = [adsi]('LDAP://CN=OID,' + $pks)",
     "  $basis = [string]$oidC.Properties['msPKI-Cert-Template-OID'].Value",
@@ -95,7 +100,7 @@ export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string;
     "  $tc = [adsi]('LDAP://CN=Certificate Templates,' + $pks)",
     "  $t = $tc.Create('pKICertificateTemplate', ('CN=' + $p.vorlage))",
     "  $t.Put('displayName', $p.anzeige)",
-    "  $t.Put('flags', 131616)",
+    "  $t.Put('flags', $sollFlags)",
     "  $t.Put('revision', 100)",
     "  $t.Put('msPKI-Template-Schema-Version', 2)",
     "  $t.Put('msPKI-Template-Minor-Revision', 1)",
@@ -145,7 +150,8 @@ export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string;
     "$liste = (& certutil.exe -CATemplates) -join \"`n\"",
     "$aufCa = $liste -match ('(?m)^' + [regex]::Escape($p.vorlage) + ':')",
     "if (-not $aufCa) { throw ('Vorlage nicht auf der CA ausgestellt: ' + $aus) }",
-    "[ordered]@{ zustand = $zustand; vorlage = $p.vorlage; anzeige = [string]$t.displayName.Value; oid = [string]$t.Properties['msPKI-Cert-Template-OID'].Value; ca = $ca; aufCa = $aufCa; registrieren = $enroll; namensFlag = [int]$t.Properties['msPKI-Certificate-Name-Flag'].Value; anmeldeFlag = [int]$t.Properties['msPKI-Enrollment-Flag'].Value; minSchluessel = [int]$t.Properties['msPKI-Minimal-Key-Size'].Value; eku = @($t.Properties['pKIExtendedKeyUsage'] | ForEach-Object { [string]$_ }); keySpec = [int]$t.Properties['pKIDefaultKeySpec'].Value; csp = @($t.Properties['pKIDefaultCSPs'] | ForEach-Object { [string]$_ }); privatFlag = [int]$t.Properties['msPKI-Private-Key-Flag'].Value; gruppeMitglieder = $gruppeMitglieder }",
+    "$t.RefreshCache()",
+    "[ordered]@{ zustand = $zustand; flags = [int]$t.flags.Value; vorlage = $p.vorlage; anzeige = [string]$t.displayName.Value; oid = [string]$t.Properties['msPKI-Cert-Template-OID'].Value; ca = $ca; aufCa = $aufCa; registrieren = $enroll; namensFlag = [int]$t.Properties['msPKI-Certificate-Name-Flag'].Value; anmeldeFlag = [int]$t.Properties['msPKI-Enrollment-Flag'].Value; minSchluessel = [int]$t.Properties['msPKI-Minimal-Key-Size'].Value; eku = @($t.Properties['pKIExtendedKeyUsage'] | ForEach-Object { [string]$_ }); keySpec = [int]$t.Properties['pKIDefaultKeySpec'].Value; csp = @($t.Properties['pKIDefaultCSPs'] | ForEach-Object { [string]$_ }); privatFlag = [int]$t.Properties['msPKI-Private-Key-Flag'].Value; gruppeMitglieder = $gruppeMitglieder }",
   ]);
   return domaenenAdmin(v, innen, 600);
 }

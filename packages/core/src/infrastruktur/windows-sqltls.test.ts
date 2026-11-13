@@ -19,7 +19,8 @@ describe('Etappe 3b SQL-TLS — Bausteine', () => {
   });
   it('INF nach Spec: SChannel-CSP, AT_KEYEXCHANGE, 3072, nicht exportierbar, Maschinenschlüssel, nur ServerAuth, SAN-Allowlist, Vorlage', () => {
     const inf = anforderungInf({ vorlage: 'AD3033-SQL-TLS-v1', cn: 'sql01.ad.3033.at', sans: SANS });
-    for (const t of ['Subject = "CN=sql01.ad.3033.at"', 'KeyLength = 3072', 'KeySpec = 1', 'Exportable = FALSE', 'MachineKeySet = TRUE', `ProviderName = "${SQL_TLS_PROVIDER}"`, 'KeyUsage = 0xa0', 'OID=1.3.6.1.5.5.7.3.1', 'CertificateTemplate = AD3033-SQL-TLS-v1']) expect(inf).toContain(t);
+    for (const t of ['Subject = "CN=sql01.ad.3033.at"', 'KeyLength = 3072', 'KeySpec = 1', 'Exportable = FALSE', 'MachineKeySet = TRUE', `ProviderName = "${SQL_TLS_PROVIDER}"`, 'KeyUsage = 0xa0', 'OID=1.3.6.1.5.5.7.3.1']) expect(inf).toContain(t);
+    expect(inf).not.toContain('RequestAttributes'); // v1854 — Vorlage erst beim Einreichen
     expect(inf).toContain('2.5.29.17 = "{text}dns=sql01.ad.3033.at&dns=sql02.ad.3033.at&dns=sqlag01.ad.3033.at&dns=sql01&dns=sql02&dns=sqlag01"');
     expect(inf).toContain('\r\n');
   });
@@ -74,7 +75,7 @@ describe('Etappe 3b SQL-TLS — Zertifikatsprüfung (Pos. 13) und Warnstufen (Po
 
 describe('Etappe 3b SQL-TLS — Skill', () => {
   it('Vorlage: SQL_TLS_TEMPLATE_OK nur mit Gruppe, ohne breite Gruppen, nicht exportierbar, SChannel', async () => {
-    let r: Record<string, unknown> = { zustand: 'angelegt', vorlage: 'AD3033-SQL-TLS-v1', anzeige: 'AD3033 SQL TLS v1', oid: '1.2', ca: 'CA', aufCa: true, registrieren: ['AD3033\\Enterprise Admins', 'AD3033\\PKI-SQL-TLS-Registrieren'], namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072, eku: ['1.3.6.1.5.5.7.3.1'], keySpec: 1, csp: ['1,Microsoft RSA SChannel Cryptographic Provider'], privatFlag: 0, gruppeMitglieder: ['SQL01$', 'SQL02$'] };
+    let r: Record<string, unknown> = { zustand: 'angelegt', flags: 131680, vorlage: 'AD3033-SQL-TLS-v1', anzeige: 'AD3033 SQL TLS v1', oid: '1.2', ca: 'CA', aufCa: true, registrieren: ['AD3033\\Enterprise Admins', 'AD3033\\PKI-SQL-TLS-Registrieren'], namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072, eku: ['1.3.6.1.5.5.7.3.1'], keySpec: 1, csp: ['1,Microsoft RSA SChannel Cryptographic Provider'], privatFlag: 0, gruppeMitglieder: ['SQL01$', 'SQL02$'] };
     const skill = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: ad(r), stderr: '' }), tresor: { namen: async () => new Set(['win-dc01-admin']), lies: async () => 'pw' } });
     const p = { action: 'sql_tls_vorlage_anlegen', zugang: 'pkiiss01' };
     expect((await skill.execute(p, ausChange)).display).toContain('SQL_TLS_TEMPLATE_OK');
@@ -99,5 +100,22 @@ describe('v1853 erneuerung_status mit Erwartung', () => {
     zert = [{ thumbprint: 'A'.repeat(40), subjekt: 'CN=sql01.ad.3033.at', bis: '2027-11-13T00:00:00', tage: 364 }];
     expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: true })).success).toBe(true);
     expect((await skill.execute({ action: 'erneuerung_status', zugaenge: ['sql01'], erwartet_zertifikat: false })).success).toBe(false);
+  });
+});
+
+describe('v1854 Computer-Vorlage und Vorlage beim Einreichen', () => {
+  it('SQL-TLS-Profil setzt 0x40, vorhandene Vorlage wird nur im Kennzeichen angeglichen; Einreichen mit -attrib', () => {
+    const s = vorlageAnlegenSkript({ vorlage: 'AD3033-SQL-TLS-v1', anzeige: 'AD3033 SQL TLS v1', gueltig_tage: 365, schluessel_bits: 3072, profil: profilSqlTls({ name: 'G', ou: 'Server', mitglieder: ['SQL01$'] }) }).replace(/''/g, "'");
+    expect(s).toContain('"maschine":true');
+    expect(s).toContain('$sollFlags = 131616 -bor $(if ($p.profil.maschine) { 0x40 } else { 0 })');
+    expect(s).toContain("if ([int]$t.flags.Value -ne $sollFlags)");
+    const a = anfordernSkript(pruefeAnforderung({ cn: 'sql01.ad.3033.at', sans: SANS, ca: CA }) as never).replace(/''/g, "'");
+    expect(a).toContain("-attrib ('CertificateTemplate:' + $p.vorlage)");
+  });
+  it('Vorlage ohne Computer-Kennzeichen ist ein Befund', async () => {
+    const r = { zustand: 'schon vorhanden', flags: 131616, vorlage: 'AD3033-SQL-TLS-v1', anzeige: 'AD3033 SQL TLS v1', oid: '1.2', ca: 'CA', aufCa: true, registrieren: ['AD3033\PKI-SQL-TLS-Registrieren'], namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072, eku: ['1.3.6.1.5.5.7.3.1'], keySpec: 1, csp: ['1,Microsoft RSA SChannel Cryptographic Provider'], privatFlag: 0, gruppeMitglieder: ['SQL01$', 'SQL02$'] };
+    const skill = new WindowsPkiSkill({ skript: async () => ({ code: 0, stdout: ad(r), stderr: '' }), tresor: { namen: async () => new Set(['win-dc01-admin']), lies: async () => 'pw' } });
+    const f = await skill.execute({ action: 'sql_tls_vorlage_anlegen', zugang: 'pkiiss01' }, ausChange);
+    expect(f.error).toContain('keine Computer-Vorlage');
   });
 });

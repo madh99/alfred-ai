@@ -40,7 +40,8 @@ export function anforderungInf(a: { vorlage: string; cn: string; sans: string[] 
     `ProviderName = "${SQL_TLS_PROVIDER}"`, 'ProviderType = 12', 'HashAlgorithm = sha256', 'RequestType = PKCS10', 'KeyUsage = 0xa0', 'SMIME = FALSE', '',
     '[EnhancedKeyUsageExtension]', 'OID=1.3.6.1.5.5.7.3.1', '',
     '[Extensions]', `2.5.29.17 = "{text}${a.sans.map(s => `dns=${s}`).join('&')}"`, '',
-    '[RequestAttributes]', `CertificateTemplate = ${a.vorlage}`, '',
+    // v1854 — keine [RequestAttributes]: certreq -new prüfte die Vorlage gegen den lokalen Richtlinien-Zwischenspeicher („Machine
+    // context template conflicts“); die Vorlage kommt beim Einreichen über -attrib dazu, die CA prüft sie.
   ].join('\r\n');
 }
 
@@ -64,7 +65,7 @@ export function anfordernSkript(a: SqlTlsAnforderung): string {
     // frisches Computer-Ticket: die Mitgliedschaft in der Registrier-Gruppe wirkt erst im neuen Ticket
     "$null = & klist.exe -li 0x3e7 purge",
     "$n = (& certreq.exe -new -q -f $inf $req) -join ' '; if (-not (Test-Path -LiteralPath $req)) { throw ('certreq -new: ' + $n) }",
-    "$s = (& certreq.exe -submit -q -f -config $p.ca $req $cer) -join ' '",
+    "$s = (& certreq.exe -submit -q -f -config $p.ca -attrib ('CertificateTemplate:' + $p.vorlage) $req $cer) -join ' '",
     "$id = [regex]::Match($s, 'RequestId:\\s*\"?(\\d+)').Groups[1].Value",
     "if (-not $id) { throw ('certreq -submit: ' + $s) }",
     "$shaF = [Security.Cryptography.SHA256]::Create(); $t = [IO.File]::ReadAllText($req) -replace '-----[^-]+-----', '' -replace '\\s', ''",

@@ -375,7 +375,7 @@ export class WindowsPkiSkill extends Skill {
           const mitglieder = (Array.isArray(input.mitglieder) ? input.mitglieder : ['SQL01$', 'SQL02$']).map(x => String(x).trim().toUpperCase());
           if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{2,63}$/.test(gruppe) || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$/.test(ou)) return { success: false, error: 'gruppe/ou: Namen ohne Sonderzeichen' };
           if (!mitglieder.length || mitglieder.length > 8 || mitglieder.some(m => !/^[A-Z0-9-]{1,15}\$$/.test(m))) return { success: false, error: 'mitglieder: Computerkonten wie SQL01$ (höchstens 8)' };
-          const { r } = await this.lauf<{ zustand: string; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number; eku: string[]; keySpec: number; csp: string[]; privatFlag: number; gruppeMitglieder: string[] }>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTls({ name: gruppe, ou, mitglieder }) }), 'SQL-TLS-Vorlage anlegen', 720_000, { kennwort: kw });
+          const { r } = await this.lauf<{ zustand: string; flags?: number; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number; eku: string[]; keySpec: number; csp: string[]; privatFlag: number; gruppeMitglieder: string[] }>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTls({ name: gruppe, ou, mitglieder }) }), 'SQL-TLS-Vorlage anlegen', 720_000, { kennwort: kw });
           const breit = r.registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
           const befunde: string[] = [];
           if (!r.aufCa) befunde.push('nicht auf der CA ausgestellt');
@@ -383,6 +383,7 @@ export class WindowsPkiSkill extends Skill {
           if (r.minSchluessel < v.schluessel_bits) befunde.push(`Mindestschlüssel ${r.minSchluessel}`);
           if (r.eku.join(',') !== '1.3.6.1.5.5.7.3.1') befunde.push(`EKU ${r.eku.join(',')}`);
           if (r.keySpec !== 1) befunde.push(`KeySpec ${r.keySpec}`);
+          if (((r.flags ?? 0) & 0x40) === 0) befunde.push('keine Computer-Vorlage (Kennzeichen 0x40 fehlt)');
           if (!r.csp.some(c => c.includes(SQL_TLS_PROVIDER))) befunde.push(`CSP ${r.csp.join(', ')}`);
           if ((r.privatFlag & 0x10) !== 0) befunde.push('Schlüssel exportierbar');
           if (!r.registrieren.some(x => x.toLowerCase().endsWith(`\\${gruppe.toLowerCase()}`))) befunde.push(`Gruppe ${gruppe} darf nicht registrieren`);

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-TLS-Vorlage im Computerkontext (v1854)
+
+- Die SQL-TLS-Vorlage wird als Computer-Vorlage angelegt bzw. angeglichen; Anforderungen nennen die Vorlage erst beim Einreichen.
+
 ### Fixed — Erwartung beim Erneuerungsstand (v1853)
 
 - `windows_pki erneuerung_status` prüft mit `erwartet_zertifikat` selbst, ob je Knoten ein Zertifikat vorhanden sein soll oder nicht.
