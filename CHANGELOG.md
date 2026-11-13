@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL-TLS-Aktivierung (PKI Etappe 4, v1856)
+
+- SQL-Server-Bausteine für den TLS-Status (konfiguriert und geladen getrennt), das Binden eines Zertifikats mit Force Encryption samt Rückweg, den bewachten Neustart des sekundären Replikats und eine echte TLS-Prüfung über TDS mit strenger Zertifikatsprüfung.
+- PKI-Bausteine zum Auflisten und gezielten Entfernen ungesendeter Zertifikatsanforderungen.
+
 ### Fixed — SQL-TLS-Zertifikat am Anzeigenamen der Vorlage erkennen (v1855)
 
 - Erneuerungsstatus und Anforderung erkennen Zertifikate der Vorlage auch am Anzeigenamen, wie Windows ihn im Zertifikat führt.

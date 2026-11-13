@@ -14,7 +14,7 @@ import { KONTO_FREI } from './windows-ad.js';
 import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, SIGNATUR_STATUS, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
 import { profilSqlTls } from './windows-codesignatur.js';
-import { SQL_TLS_VORLAGE, SQL_TLS_PROVIDER, pruefeAnforderung, anfordernSkript, pruefeGenehmigung, genehmigenSkript, pruefeInstallation, installierenSkript, zertifikatPruefenSkript, bewerteZertifikat, erneuerungStatusSkript, warnstufe, type ZertifikatBefund } from './windows-sqltls.js';
+import { SQL_TLS_VORLAGE, SQL_TLS_PROVIDER, pruefeAnforderung, anfordernSkript, pruefeGenehmigung, genehmigenSkript, pruefeInstallation, installierenSkript, zertifikatPruefenSkript, bewerteZertifikat, erneuerungStatusSkript, warnstufe, anforderungListeSkript, anforderungEntfernenSkript, type ZertifikatBefund } from './windows-sqltls.js';
 
 export interface WindowsPkiDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -29,11 +29,11 @@ export interface WindowsPkiDeps {
 }
 
 export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest',
-  'zertifikat_pruefen', 'erneuerung_status']);
+  'zertifikat_pruefen', 'erneuerung_status', 'anforderung_liste']);
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
-  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern']);
+  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -78,6 +78,7 @@ export class WindowsPkiSkill extends Skill {
       + 'zertifikat_pruefen (lesend; zugang, thumbprint, cn, sans; Standard eku ServerAuthentication, Anbieter SChannel, KeySpec Exchange, 3072 Bit) — Ergebnis „CERT_VALID“ nur ohne jeden Befund (Kette und Sperrprüfung online; unbekannt/offline ist kein OK). '
       + 'erneuerung_status (lesend; zugaenge, vorlage, schwellen Standard [90, 60, 30, 14], optional erwartet_zertifikat true|false für Prüfschritte) — „RENEWAL_STATUS“ je Knoten mit Restlaufzeit und Warnstufe. erneuerung_anfordern (zugang, alter_thumbprint, cn, sans, ca) — neuer Schlüssel, altes Zertifikat bleibt; „RENEWAL_PENDING“ mit requestId. '
       + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; optional erwartet_status [Valid] bzw. [UnknownError, NotTrusted]; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte (mit erwartetem Status) läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
+      + 'anforderung_liste (lesend; zugang) — ungesendete Anforderungen in LocalMachine\\\\REQUEST mit Thumbprint, Subject, NotBefore, Schlüsseldatei und inMy (Zertifikate in My mit demselben Schlüssel); Ergebnis „REQUEST_LIST“. anforderung_entfernen (nur im Change; zugang, thumbprint, subjekt = exakt aus anforderung_liste) — genau diesen Eintrag samt privatem Schlüssel entfernen, nur wenn kein Zertifikat in My denselben Schlüssel benutzt; Ergebnis „REQUEST_REMOVED“ (ohne Rückweg: ein ungesendeter Schlüssel ist nicht wiederherstellbar). '
       + 'codesignatur_status (lesend; optional erwartet_an true|false, mindest_valid n — schlägt sonst fehl, für Prüfschritte) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -104,7 +105,7 @@ export class WindowsPkiSkill extends Skill {
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
         gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } }, sans: { type: 'array', items: { type: 'string' } }, ca: { type: 'string' },
-        request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } }, erwartet_zertifikat: { type: 'boolean', description: 'erneuerung_status: true = je Knoten muss ein Zertifikat da sein, false = keines (schlägt sonst fehl)' },
+        request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, subjekt: { type: 'string', description: 'anforderung_entfernen: Subject exakt aus anforderung_liste' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } }, erwartet_zertifikat: { type: 'boolean', description: 'erneuerung_status: true = je Knoten muss ein Zertifikat da sein, false = keines (schlägt sonst fehl)' },
         erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
@@ -450,6 +451,21 @@ export class WindowsPkiSkill extends Skill {
             if (abweichend.length) return { success: false, data: daten, error: `${display} — NICHT wie erwartet (${input.erwartet_zertifikat ? 'Zertifikat erwartet' : 'kein Zertifikat erwartet'}): ${abweichend.join(', ')}` };
           }
           return { success: true, data: daten, display };
+        }
+        // v1856 — ungesendete Anforderungen (Realfall fad4b31b: certreq -submit scheiterte, Schlüssel blieb im REQUEST-Speicher)
+        case 'anforderung_liste': {
+          if (input.vmid !== undefined) return { success: false, error: 'anforderung_liste nur über den Windows-Fernzugang' };
+          const { r } = await this.lauf<{ rechner: string; zeit: string; anforderungen: { thumbprint: string; subjekt: string; notBefore: string; privat: boolean; anbieter: string; schluesselDatei: string; inMy: string[] }[] }>(input, anforderungListeSkript(), 'Anforderungen lesen', 120_000);
+          const l = r.anforderungen ?? [];
+          return { success: true, data: r, display: `REQUEST_LIST ${r.rechner} (${r.zeit}): ${l.length ? l.map(a => `${a.thumbprint} ${a.subjekt} (NotBefore ${a.notBefore}, ${a.privat ? `Schlüssel ${a.anbieter} ${a.schluesselDatei}` : 'ohne Schlüssel'}${a.inMy.length ? `, Schlüssel benutzt von My ${a.inMy.join(',')}` : ', von keinem Zertifikat in My benutzt'})`).join(' | ') : 'keine Anforderungen'}` };
+        }
+        case 'anforderung_entfernen': {
+          if (input.vmid !== undefined) return { success: false, error: 'anforderung_entfernen nur über den Windows-Fernzugang' };
+          const tp = String(input.thumbprint ?? '').replace(/\s/g, '').toUpperCase(); if (!/^[0-9A-F]{40}$/.test(tp)) return { success: false, error: 'thumbprint: 40 Hex aus anforderung_liste' };
+          const subjekt = String(input.subjekt ?? '').trim(); if (!/^CN=[A-Za-z0-9.-]{1,120}$/.test(subjekt)) return { success: false, error: 'subjekt: exakt aus anforderung_liste, z. B. CN=sql01.ad.3033.at' };
+          const { r } = await this.lauf<{ zustand: string; thumbprint: string; subjekt?: string; rechner: string; schluesselDatei?: string; schluesselEntfernt?: boolean; myVorher?: number; myNachher?: number }>(input, anforderungEntfernenSkript({ thumbprint: tp, subjekt }), 'Anforderung entfernen', 120_000);
+          if (r.zustand === 'schon entfernt') return { success: true, data: r, display: `✅ REQUEST_REMOVED ${tp} auf ${r.rechner}: schon entfernt` };
+          return { success: true, data: r, display: `✅ REQUEST_REMOVED ${tp} ${r.subjekt} auf ${r.rechner}: Anforderung und Schlüssel ${r.schluesselDatei || '—'} entfernt (${r.schluesselEntfernt ? 'Schlüsseldatei weg' : 'ohne Schlüssel'}); LocalMachine\\My unverändert ${r.myNachher}/${r.myVorher} Zertifikate` };
         }
         case 'trust_aktualisieren': {
           const { r } = await this.lauf<{ zustand: string; zeit: string }>(input, trustAktualisierenSkript(), 'Vertrauen nachladen', 300_000);

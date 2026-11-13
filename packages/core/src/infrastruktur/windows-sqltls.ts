@@ -244,3 +244,51 @@ function alsSystem(p: unknown, innen: string, sekunden: number): string {
     'Ergebnis $w',
   ].join('\n');
 }
+
+// ── v1856 — ungesendete Anforderungen im Speicher LocalMachine\REQUEST (Spec Pos. 12: offenen, unsignierten Request abbrechen) ─────
+
+/** gemeinsame Teile: öffentlicher Schlüssel als SHA-256, Schlüsselcontainer, Abgleich mit LocalMachine\My */
+const REQUEST_VOR = [
+  "function PkHash($c) { -join ([Security.Cryptography.SHA256]::Create().ComputeHash($c.PublicKey.EncodedKeyValue.RawData) | ForEach-Object { $_.ToString('x2') }) }",
+  "function Container($c) { try { $k = $c.PrivateKey.CspKeyContainerInfo; [ordered]@{ name = [string]$k.KeyContainerName; datei = [string]$k.UniqueKeyContainerName; anbieter = [string]$k.ProviderName; typ = [int]$k.ProviderType } } catch { $null } }",
+  "$my = @(Get-ChildItem Cert:\\LocalMachine\\My | ForEach-Object { [ordered]@{ thumbprint = $_.Thumbprint; pk = (PkHash $_); datei = $(if ($_.HasPrivateKey) { [string](Container $_).datei } else { '' }) } })",
+];
+
+/** Lesend: alle Einträge in LocalMachine\REQUEST mit Schlüssel und ob ein Zertifikat in My denselben Schlüssel benutzt */
+export function anforderungListeSkript(): string {
+  return [
+    ...kopf({}, false), ...REQUEST_VOR,
+    "$l = @(Get-ChildItem Cert:\\LocalMachine\\REQUEST | ForEach-Object { $pk = PkHash $_; $k = $(if ($_.HasPrivateKey) { Container $_ } else { $null }); $mit = @($my | Where-Object { $_.pk -eq $pk -or ($k -and $k.datei -and $_.datei -eq $k.datei) } | ForEach-Object { $_.thumbprint }); [ordered]@{ thumbprint = $_.Thumbprint; subjekt = $_.Subject; notBefore = $_.NotBefore.ToString('s'); privat = $_.HasPrivateKey; anbieter = $(if ($k) { $k.anbieter } else { '' }); schluesselDatei = $(if ($k) { $k.datei } else { '' }); inMy = $mit } })",
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; zeit = (Get-Date).ToString('s'); anforderungen = $l })",
+  ].join('\n');
+}
+
+/**
+ * Genau EINE ungesendete Anforderung samt privatem Schlüssel entfernen — nur wenn kein Zertifikat in LocalMachine\My denselben
+ * öffentlichen Schlüssel oder dieselbe Schlüsseldatei benutzt, und nur Legacy-CSP-Schlüssel (so erzeugt sql_tls_anfordern sie).
+ */
+export function anforderungEntfernenSkript(a: { thumbprint: string; subjekt: string }): string {
+  return [
+    ...kopf(a, false), ...REQUEST_VOR,
+    "$c = Get-Item ('Cert:\\LocalMachine\\REQUEST\\' + $p.thumbprint) -ErrorAction SilentlyContinue",
+    "if (-not $c) { Ergebnis ([ordered]@{ zustand = 'schon entfernt'; thumbprint = $p.thumbprint; rechner = $env:COMPUTERNAME }); exit 0 }",
+    "if ($c.Subject -ne $p.subjekt) { throw ('Anforderung ' + $p.thumbprint + ' hat Subject ' + $c.Subject + ' statt ' + $p.subjekt) }",
+    '$pk = PkHash $c; $k = $(if ($c.HasPrivateKey) { Container $c } else { $null })',
+    "$mit = @($my | Where-Object { $_.pk -eq $pk -or ($k -and $k.datei -and $_.datei -eq $k.datei) })",
+    "if ($mit.Count) { throw ('Schlüssel wird von Zertifikat ' + (($mit | ForEach-Object { $_.thumbprint }) -join ', ') + ' in LocalMachine\\My benutzt — nicht entfernt') }",
+    "$datei = ''; $dateiWeg = $null",
+    'if ($k) {',
+    "  if ($k.typ -ne 1 -and $k.typ -ne 12 -and $k.typ -ne 24) { throw ('Schlüssel von ' + $k.anbieter + ' (Typ ' + $k.typ + ') — nur Legacy-CSP unterstützt') }",
+    "  $datei = Join-Path $env:ProgramData ('Microsoft\\Crypto\\RSA\\MachineKeys\\' + $k.datei)",
+    '  $cp = New-Object Security.Cryptography.CspParameters($k.typ, $k.anbieter, $k.name)',
+    '  $cp.Flags = [Security.Cryptography.CspProviderFlags]::UseMachineKeyStore -bor [Security.Cryptography.CspProviderFlags]::UseExistingKey',
+    '  $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider($cp); $rsa.PersistKeyInCsp = $false; $rsa.Clear()',
+    '  $dateiWeg = -not (Test-Path -LiteralPath $datei)',
+    '}',
+    "$st = New-Object Security.Cryptography.X509Certificates.X509Store('REQUEST', 'LocalMachine'); $st.Open('ReadWrite'); try { $st.Remove($c) } finally { $st.Close() }",
+    "if (Test-Path ('Cert:\\LocalMachine\\REQUEST\\' + $p.thumbprint)) { throw 'Anforderung nach dem Entfernen noch im Speicher' }",
+    "if ($k -and -not $dateiWeg) { throw ('Schlüsseldatei nach dem Entfernen noch vorhanden: ' + $datei) }",
+    "$rest = @($my | ForEach-Object { $_.thumbprint } | Where-Object { Test-Path ('Cert:\\LocalMachine\\My\\' + $_) })",
+    "Ergebnis ([ordered]@{ zustand = 'entfernt'; thumbprint = $p.thumbprint; subjekt = $c.Subject; rechner = $env:COMPUTERNAME; schluesselDatei = $(if ($k) { $k.datei } else { '' }); schluesselEntfernt = [bool]$dateiWeg; myVorher = $my.Count; myNachher = $rest.Count })",
+  ].join('\n');
+}
