@@ -97,7 +97,10 @@ export function vorlageAnlegenSkript(v: VorlageParameter & { ausKonto?: string }
     "  $zustand = 'angelegt'",
     '}',
     "$t = [adsi]('LDAP://' + $dn)",
-    `$enroll = @($t.ObjectSecurity.GetAccessRules($true, $true, [Security.Principal.NTAccount]) | Where-Object { $_.AccessControlType -eq 'Allow' -and ($_.ObjectType -eq [guid]'${ENROLL_RECHT}' -or ($_.ActiveDirectoryRights -band [DirectoryServices.ActiveDirectoryRights]::GenericAll)) } | ForEach-Object { [string]$_.IdentityReference } | Sort-Object -Unique)`,
+    // v1848 — Realfall 13.11. e850f204 Schritt 4: „-band GenericAll“ traf auch reines Lesen (GenericRead überschneidet sich mit
+    // GenericAll) und listete Authenticated Users. Registrieren darf, wer Vollzugriff hat oder das erweiterte Recht „Enroll“ (bzw. alle
+    // erweiterten Rechte, ObjectType leer).
+    `$enroll = @($t.ObjectSecurity.GetAccessRules($true, $true, [Security.Principal.NTAccount]) | Where-Object { $_.AccessControlType -eq 'Allow' -and ((($_.ActiveDirectoryRights -band [DirectoryServices.ActiveDirectoryRights]::GenericAll) -eq [DirectoryServices.ActiveDirectoryRights]::GenericAll) -or ((($_.ActiveDirectoryRights -band [DirectoryServices.ActiveDirectoryRights]::ExtendedRight) -ne 0) -and ($_.ObjectType -eq [guid]'${ENROLL_RECHT}' -or $_.ObjectType -eq [guid]::Empty))) } | ForEach-Object { [string]$_.IdentityReference } | Sort-Object -Unique)`,
     // auf der CA ausstellen; die CA liest die Vorlage aus dem AD — nach dem Anlegen bis zu 5 min warten (Replikation)
     "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
     "$ca = [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active",
@@ -148,23 +151,32 @@ export function ausstellenSkript(a: AusstellParameter): string {
   const innen = innenSkript(a, [
     "$dir = Join-Path $env:ProgramData 'Alfred\\pki'",
     "$req = Join-Path $dir 'codesignatur.req'; $cer = Join-Path $dir 'codesignatur.cer'; $cacer = Join-Path $dir 'codesignatur-ca.cer'",
-    "Remove-Item -LiteralPath $cer, $cacer -Force -ErrorAction SilentlyContinue",
+    // v1848 — Realfall 13.11. e850f204 Schritt 5: certreq -retrieve -q weigerte sich, die beim Einreichen entstandene .rsp zu
+    // überschreiben (ERROR_FILE_EXISTS) — die Anforderung war ausgestellt, aber nicht abgeholt. -f überschreibt; die RequestId wird
+    // je Anforderung (Hash) gemerkt, ein Wiederholen holt dieselbe Anforderung ab statt eine neue einzureichen.
+    "Remove-Item -LiteralPath $cer, $cacer, ($cer -replace '\\.cer$', '.rsp') -Force -ErrorAction SilentlyContinue",
+    "$idf = Join-Path $dir ('codesignatur-' + $p.csr_sha256.Substring(0, 16) + '.id')",
     "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
     "$ca = [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active",
     "if (-not $ca) { throw 'auf diesem Rechner läuft keine CA' }",
     "$konfig = [Net.Dns]::GetHostEntry('').HostName + '\\' + $ca",
-    "$aus = (& certreq.exe -submit -q -config $konfig -attrib ('CertificateTemplate:' + $p.vorlage) $req $cer) -join ' '",
-    "$id = [regex]::Match($aus, 'RequestId:\\s*\"?(\\d+)').Groups[1].Value",
-    "if (-not $id) { throw ('certreq -submit: ' + $aus) }",
+    "$wieder = Test-Path -LiteralPath $idf",
+    "if ($wieder) { $id = ([IO.File]::ReadAllText($idf)).Trim() } else {",
+    "  $aus = (& certreq.exe -submit -f -q -config $konfig -attrib ('CertificateTemplate:' + $p.vorlage) $req $cer) -join ' '",
+    "  $id = [regex]::Match($aus, 'RequestId:\\s*\"?(\\d+)').Groups[1].Value",
+    "  if (-not $id) { throw ('certreq -submit: ' + $aus) }",
+    "  [IO.File]::WriteAllText($idf, $id)",
+    '}',
+    "if (-not (Test-Path -LiteralPath $cer)) { $null = & certreq.exe -retrieve -f -q -config $konfig $id $cer }",
     "if (-not (Test-Path -LiteralPath $cer)) {",
     "  $f = (& certutil.exe -config $konfig -resubmit $id) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('certutil -resubmit ' + $id + ': ' + $f) }",
-    "  $g = (& certreq.exe -retrieve -q -config $konfig $id $cer) -join ' '; if (-not (Test-Path -LiteralPath $cer)) { throw ('certreq -retrieve ' + $id + ': ' + $g) }",
+    "  $g = (& certreq.exe -retrieve -f -q -config $konfig $id $cer) -join ' '; if (-not (Test-Path -LiteralPath $cer)) { throw ('certreq -retrieve ' + $id + ': ' + $g) }",
     '}',
     "$h = (& certutil.exe -ca.cert $cacer) -join ' '; if (-not (Test-Path -LiteralPath $cacer)) { throw ('certutil -ca.cert: ' + $h) }",
     "function Der($f) { $t = [IO.File]::ReadAllText($f); if ($t -match '-----BEGIN') { ($t -replace '-----[^-]+-----', '' -replace '\\s', '') } else { [Convert]::ToBase64String([IO.File]::ReadAllBytes($f)) } }",
     "$z = Der $cer; $c = Der $cacer",
-    "Remove-Item -LiteralPath $req, $cer, $cacer -Force -ErrorAction SilentlyContinue",
-    "[ordered]@{ requestId = [int]$id; ca = $ca; zertBase64 = $z; caBase64 = $c }",
+    "Remove-Item -LiteralPath $req, $cer, $cacer, ($cer -replace '\\.cer$', '.rsp') -Force -ErrorAction SilentlyContinue",
+    "[ordered]@{ requestId = [int]$id; ca = $ca; zertBase64 = $z; caBase64 = $c; wiederholt = $wieder }",
   ]);
   return [
     ...kopf(a, true),
@@ -257,6 +269,24 @@ export class CodesignaturAblage {
   }
   async speichere(m: SignaturMaterial): Promise<void> { await this.schreibe('schluessel.pem', m.schluesselPem); await this.schreibe('kette.pem', m.kettePem); }
   async entferne(): Promise<void> { for (const n of ['schluessel.pem', 'kette.pem']) await rm(this.pfad(n), { force: true }); }
+  /** v1848 — Schlüssel + Anforderung VOR dem Einreichen ablegen: scheitert das Abholen, holt ein Wiederholen dieselbe Anforderung ab */
+  async ausstehend(): Promise<Ausstehend | undefined> { const t = await this.lies('ausstehend.json'); return t ? JSON.parse(t) as Ausstehend : undefined; }
+  async speichereAusstehend(a: Ausstehend): Promise<void> { await this.schreibe('ausstehend.json', JSON.stringify(a)); }
+  async loescheAusstehend(): Promise<void> { await rm(this.pfad('ausstehend.json'), { force: true }); }
+}
+export interface Ausstehend { cn: string; o?: string; bits: number; schluesselPem: string; csrBase64: string; erstellt: string }
+
+/** v1848 — Seriennummer zu einer RequestId (Realfall e850f204: Anforderung 3 ausgestellt, Schlüssel verloren → sperren) */
+export function seriennummerSkript(a: { request_id: number; erwartet_cn: string }): string {
+  return [
+    ...kopf(a, false),
+    "$v = (& certutil.exe -view -restrict ('RequestId=' + [int]$p.request_id) -out 'RequestId,SerialNumber,CommonName,Disposition' csv) -join \"`n\"",
+    "$z = @($v -split \"`n\" | Where-Object { $_ -match ('^\"?' + [int]$p.request_id + '\"?,') })",
+    "if ($z.Count -ne 1) { throw ('Anforderung ' + $p.request_id + ' nicht eindeutig in der CA-Datenbank (' + $z.Count + ' Treffer): ' + $v) }",
+    "$f = @($z[0] -split ',' | ForEach-Object { $_.Trim().Trim('\"') })",
+    "if ($f[2] -ne $p.erwartet_cn) { throw ('Anforderung ' + $p.request_id + ' gehört zu „' + $f[2] + '“, nicht „' + $p.erwartet_cn + '“') }",
+    "Ergebnis ([ordered]@{ requestId = [int]$f[0]; seriennummer = ($f[1] -replace '\\s', '').ToLower(); cn = $f[2]; zustand = $f[3] })",
+  ].join('\n');
 }
 
 /** Erstes Zertifikat einer PEM-Kette */

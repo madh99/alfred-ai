@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Codesignatur-Zertifikat wiederholbar ausstellen (v1848)
+
+- `windows_pki codesignatur_einrichten` legt Schlüssel und Anforderung vor dem Einreichen ab und holt beim Wiederholen dieselbe Anforderung ab; vorhandene Antwortdateien werden überschrieben.
+- `windows_pki codesignatur_sperren` kann ein Zertifikat auch über die Anforderungsnummer der CA sperren.
+- Die Anzeige der Registrierrechte einer Codesignatur-Vorlage nennt nur noch Konten mit Vollzugriff oder dem Recht „Registrieren“.
+
 ### Fixed — Planung der Codesignatur-Changes (v1847)
 
 - Die Codesignatur-Bausteine von `windows_pki` prüfen ihr Ergebnis selbst; Changes brauchen dafür keine zusätzliche Prüfung mehr.

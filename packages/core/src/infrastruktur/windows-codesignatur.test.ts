@@ -193,3 +193,47 @@ describe('v1847 Codesignatur-Bausteine prüfen sich selbst', () => {
     expect(pruefeChangePlan(plan, ctx as never).fehler.filter(x => /Prüfung|pruefung/i.test(x))).toEqual([]);
   });
 });
+
+// v1848 — Realfall 13.11. e850f204 Schritt 5: Anforderung 3 ausgestellt, Abholen scheiterte (.rsp existierte), Schlüssel verloren
+describe('v1848 Abholen wiederholbar, Schlüssel vor dem Einreichen abgelegt', () => {
+  it('Ausstellen: -f beim Einreichen und Abholen, RequestId je Anforderung gemerkt und wiederverwendet', async () => {
+    const s = ausstellenSkript({ vorlage: 'AD3033AlfredCodesignatur', csr_sha256: 'b'.repeat(64), erwartet_cn: 'Alfred Codesignatur' }).replace(/''/g, "'");
+    expect(s).toContain('certreq.exe -submit -f -q');
+    expect(s.match(/certreq\.exe -retrieve -f -q/g)).toHaveLength(2);
+    expect(s).toContain("('codesignatur-' + $p.csr_sha256.Substring(0, 16) + '.id')");
+    expect(s.indexOf('$wieder = Test-Path')).toBeLessThan(s.indexOf('certreq.exe -submit'));
+  });
+  it('einrichten legt Schlüssel und Anforderung ab, bevor die CA gefragt wird, und nutzt sie beim Wiederholen', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-cs-test-'));
+    try {
+      const ablage = new CodesignaturAblage(join(dir, 'codesignatur'));
+      const eingaben: string[] = [];
+      let n = 0;
+      const lokal: Lokal = async (befehl, args) => {
+        n++;
+        const { writeFile } = await import('node:fs/promises');
+        if (args[0] === 'genpkey') await writeFile(args[args.indexOf('-out') + 1]!, TEST_SCHLUESSEL_PEM);
+        if (args[0] === 'req') await writeFile(args[args.indexOf('-out') + 1]!, Buffer.from(`csr-${n}`));
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      const skill = new WindowsPkiSkill({
+        skript: async (_z, _b, e) => { eingaben.push(e ?? ''); return { code: 1, stdout: '', stderr: 'certreq -retrieve 3: Datei existiert' }; },
+        lokal, tresor: { namen: async () => new Set(['win-dc01-admin']), lies: async () => 'pw' },
+        codesignatur: { ablage, zaehler: () => ({}), vergiss: () => undefined },
+      });
+      const p = { action: 'codesignatur_einrichten', zugang: 'pkiiss01', vorlage: 'AD3033AlfredCodesignatur', o: 'AD3033', erwartet_aussteller_thumbprint: TEST_CA_THUMBPRINT };
+      expect((await skill.execute(p, { ausChange: true } as never)).success).toBe(false);
+      const a = await ablage.ausstehend();
+      expect(a?.schluesselPem).toBe(TEST_SCHLUESSEL_PEM);
+      expect((await skill.execute(p, { ausChange: true } as never)).success).toBe(false);
+      expect(n).toBe(2); // genpkey + req nur beim ersten Mal
+      expect(JSON.parse(eingaben[0]!).csr_base64).toBe(JSON.parse(eingaben[1]!).csr_base64);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('Seriennummer zur Anforderung prüft den Namen', async () => {
+    const { seriennummerSkript } = await import('./windows-codesignatur.js');
+    const s = seriennummerSkript({ request_id: 3, erwartet_cn: 'Alfred Codesignatur' });
+    expect(s).toContain("-restrict ('RequestId=' + [int]$p.request_id)");
+    expect(s).toContain("gehört zu „");
+  });
+});

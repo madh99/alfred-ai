@@ -11,7 +11,7 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
   pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
-import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
+import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
 
 export interface WindowsPkiDeps {
@@ -62,7 +62,7 @@ export class WindowsPkiSkill extends Skill {
       + 'CODESIGNATUR (Etappe 3a, Owner 13.11.: Schlüssel auf dem Alfred-Server, 1 Jahr, nur signieren und prüfen): '
       + 'codesignatur_vorlage_anlegen (zugang = Issuing-CA; vorlage z. B. AD3033AlfredCodesignatur, anzeige „AD3033 Alfred Codesignatur“, gueltig_tage 365, schluessel_bits 3072, konto_tresor Standard win-dc01-admin) — Vorlage nur Codesignatur, Name aus der Anforderung, jede Anforderung wartet auf CA-Freigabe, Registrieren nur Domänen-Admins; auf der CA ausgestellt; Ergebnis „CODESIGN_TEMPLATE_OK“; Rückweg codesignatur_vorlage_entfernen (zugang, vorlage, anzeige). '
       + 'codesignatur_einrichten (zugang = Issuing-CA; vorlage, cn Standard „Alfred Codesignatur“, o optional, erwartet_aussteller_thumbprint = Thumbprint der Issuing-CA, schluessel_bits 3072, konto_tresor) — Schlüssel und Anforderung auf dem Alfred-Server, an der CA ausstellen, Schlüssel/Name/Verwendung/Aussteller prüfen, Schlüssel und Kette im Datenordner des Alfred-Servers ablegen; liefert das vorhandene, solange ein gültiges Zertifikat abgelegt ist (erneuern true für die Erneuerung); Ergebnis „CODESIGN_CERT_OK“ mit seriennummer; Rückweg codesignatur_sperren (zugang, seriennummer, grund cessationOfOperation). '
-      + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
+      + 'codesignatur_sperren (zugang = Issuing-CA; seriennummer ODER anforderung = RequestId, cn, grund superseded|cessationOfOperation|keyCompromise) — sperren, neue CRL, abgelegtes Material dieser Seriennummer entfernen, Codesignatur aus (ohne Rückweg). '
       + 'codesignatur_schalten (an true|false) — Signieren beim Hochladen ein/aus; ein nur mit gültigem Material; Rückweg codesignatur_schalten an false. '
       + 'codesignatur_status (lesend) — Schalter, Zertifikat (Name, Seriennummer, Ablauf, Resttage) und Prüfergebnisse seit dem Start.',
     riskLevel: 'admin',
@@ -87,7 +87,7 @@ export class WindowsPkiSkill extends Skill {
         db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
-        erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' },
+        erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
       },
       required: ['action'],
@@ -263,20 +263,36 @@ export class WindowsPkiSkill extends Skill {
             }
           }
           const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `Codesignatur-Zertifikat ausstellen (${String(input.zugang)})`);
-          const { schluesselPem, csrDer } = await schluesselUndAnforderung(lokal, cn, o, bits);
-          const sha = createHash('sha256').update(csrDer).digest('hex');
-          const { r } = await this.lauf<{ requestId: number; ca: string; zertBase64: string; caBase64: string }>(input, ausstellenSkript({ vorlage, csr_sha256: sha, erwartet_cn: cn }), 'Codesignatur-Zertifikat ausstellen', 600_000, { kennwort: kw, csr_base64: csrDer.toString('base64') });
+          // v1848 — Schlüssel + Anforderung vor dem Einreichen ablegen; ein Wiederholen nutzt dieselbe Anforderung (die CA-Seite merkt die RequestId)
+          let a = await cs.ablage.ausstehend();
+          if (!a || a.cn !== cn || a.o !== o || a.bits !== bits) {
+            const n = await schluesselUndAnforderung(lokal, cn, o, bits);
+            a = { cn, ...(o !== undefined ? { o } : {}), bits, schluesselPem: n.schluesselPem, csrBase64: n.csrDer.toString('base64'), erstellt: new Date().toISOString() };
+            await cs.ablage.speichereAusstehend(a);
+          }
+          const schluesselPem = a.schluesselPem;
+          const sha = createHash('sha256').update(Buffer.from(a.csrBase64, 'base64')).digest('hex');
+          const { r } = await this.lauf<{ requestId: number; ca: string; zertBase64: string; caBase64: string; wiederholt: boolean }>(input, ausstellenSkript({ vorlage, csr_sha256: sha, erwartet_cn: cn }), 'Codesignatur-Zertifikat ausstellen', 600_000, { kennwort: kw, csr_base64: a.csrBase64 });
           let g: ReturnType<typeof pruefeAusgestellt>;
           try { g = pruefeAusgestellt({ schluesselPem, zertBase64: r.zertBase64, caBase64: r.caBase64, erwartet_cn: cn, erwartet_aussteller_thumbprint: tp }); }
           catch (err) { throw new Error(`${(err as Error).message} — Anforderung ${r.requestId} an „${r.ca}“ wurde ausgestellt, das Zertifikat ist NICHT übernommen (Seriennummer aus der CA-Datenbank sperren)`); }
           await cs.ablage.speichere({ schluesselPem, kettePem: g.kettePem });
+          await cs.ablage.loescheAusstehend();
           cs.vergiss();
           const data = { zustand: altPem ? 'erneuert' : 'eingerichtet', requestId: r.requestId, ca: r.ca, seriennummer: g.seriennummer, thumbprint: g.thumbprint, gueltigBis: g.gueltigBis, tage: g.tage, aussteller: g.aussteller, ...(altSerie ? { alteSeriennummer: altSerie } : {}) };
           return { success: true, data, display: `✅ CODESIGN_CERT_OK „${cn}“ ${data.zustand}: Seriennummer ${g.seriennummer}, Thumbprint ${g.thumbprint}, gültig bis ${g.gueltigBis.slice(0, 10)} (${g.tage} Tage), Aussteller ${g.aussteller}, Anforderung ${r.requestId}; Schlüssel nur auf dem Alfred-Server${altSerie ? `; das alte Zertifikat ${altSerie} danach sperren` : ''} — Rückweg codesignatur_sperren seriennummer ${g.seriennummer}` };
         }
         case 'codesignatur_sperren': {
           if (input.vmid !== undefined) return { success: false, error: 'codesignatur_sperren nur über den Fernzugang der Issuing-CA' };
-          const sp = pruefeSperre({ seriennummer: input.seriennummer, erwartet_cn: input.cn ?? 'Alfred Codesignatur', grund: input.grund ?? 'cessationOfOperation' }); if (typeof sp === 'string') return { success: false, error: sp };
+          // v1848 — alternativ über die Anforderungsnummer (anforderung), z. B. ein ausgestelltes, nie abgeholtes Zertifikat
+          let serie = input.seriennummer;
+          const cnSp = String(input.cn ?? 'Alfred Codesignatur').trim();
+          if (serie === undefined && input.anforderung !== undefined) {
+            const id = Number(input.anforderung); if (!Number.isInteger(id) || id < 1) return { success: false, error: 'anforderung: RequestId der CA (Zahl)' };
+            const { r: s } = await this.lauf<{ requestId: number; seriennummer: string; cn: string; zustand: string }>(input, seriennummerSkript({ request_id: id, erwartet_cn: cnSp }), 'Seriennummer zur Anforderung', 120_000);
+            serie = s.seriennummer;
+          }
+          const sp = pruefeSperre({ seriennummer: serie, erwartet_cn: cnSp, grund: input.grund ?? 'cessationOfOperation' }); if (typeof sp === 'string') return { success: false, error: sp };
           const { r } = await this.lauf<{ zustand: string; seriennummer: string; cn: string; grund: number; zeile: string }>(input, sperrSkript(sp), 'Codesignatur-Zertifikat sperren', 300_000);
           await this.lauf<{ zustand: string; zeit: string }>(input, crlSkript(), 'CRL ausstellen', 300_000);
           let entfernt = false;
