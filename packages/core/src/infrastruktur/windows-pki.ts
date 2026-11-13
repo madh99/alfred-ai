@@ -434,7 +434,11 @@ export function aktivierenSkript(r: AktivierParameter): string {
     "$aktiv = [string](Get-ItemProperty $k -ErrorAction Stop).Active",
     "if (-not $aktiv) { throw 'keine CA eingerichtet (erst issuer_anfordern)' }",
     MIT_KONTO,
-    "$hatSchon = @((Get-ItemProperty (Join-Path $k $aktiv)).CACertHash | ForEach-Object { ([string]$_) -replace '\\s', '' }) -contains $z.Thumbprint",
+    // v1836 — Realfall 13.11. PKI-B Schritt 36: der abgebrochene erste Versuch trug den Hash schon ein, SetupStatus blieb aber 0x20d
+    // (0x4 unterbrochen, 0x8 Anforderung offen) → CertSvc „Hierarchical setup is incomplete“. „Schon aktiv“ nur, wenn der Hash passt
+    // UND keines der beiden Flags mehr gesetzt ist; sonst -installcert (setzt die Installation fort).
+    "$cfgCa = Get-ItemProperty (Join-Path $k $aktiv); $offen = (([int]$cfgCa.SetupStatus) -band 0xC) -ne 0",
+    "$hatSchon = (-not $offen) -and (@($cfgCa.CACertHash | ForEach-Object { ([string]$_) -replace '\\s', '' }) -contains $z.Thumbprint)",
     "$zustand = 'schon aktiv'",
     'if (-not $hatSchon) {',
     // v1834 — Realfall 13.11. PKI-B Schritt 36: certutil -installcert über SSH (Schlüssel-Anmeldung, keine Netzwerk-Anmeldedaten)

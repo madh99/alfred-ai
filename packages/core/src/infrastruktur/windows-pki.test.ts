@@ -227,3 +227,12 @@ describe('v1834 Issuer-Aktivierung mit Domänen-Anmeldung', () => {
     expect(s).not.toMatch(/\n {2}\$aus = \(& certutil\.exe -installcert/);
   });
 });
+
+describe('v1836 unvollständige Issuer-Installation', () => {
+  it('„schon aktiv“ nur ohne offene SetupStatus-Flags 0x4/0x8', async () => {
+    const { aktivierenSkript } = await import('./windows-pki.js');
+    const s = aktivierenSkript({ erwartet_zert_sha256: 'a'.repeat(64), erwartet_root_sha256: 'b'.repeat(64), erwartet_crl_sha256: 'c'.repeat(64) });
+    expect(s).toContain('-band 0xC) -ne 0');
+    expect(s).toContain('$hatSchon = (-not $offen) -and');
+  });
+});
