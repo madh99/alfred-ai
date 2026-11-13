@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Hängende Windows-Bausteine bei Eingaben über SSH (v1835)
+
+- Windows-Bausteine blieben gelegentlich beim Einlesen ihrer Eingabe stehen, weil Windows-OpenSSH das Ende der Standardeingabe nicht zuverlässig weitergibt. Die Bausteine lesen jetzt bis zu einer festen Endmarke, die Alfred mitschickt, statt auf das Eingabeende zu warten. Geheimnisse werden weiterhin nur über die Standardeingabe übergeben.
+
 ### Fixed — Aktivierung der Issuing-CA (v1834)
 
 - `windows_pki issuer_aktivieren` scheiterte mit „Benutzer nicht authentifiziert“, weil eine Enterprise-CA beim Installieren ihres Zertifikats auf das Active Directory zugreift und die SSH-Sitzung dafür keine Anmeldedaten hat. Das Zertifikat wird jetzt mit Kennwort-Anmeldung als Domänen-Administrator installiert. Das Kennwort kommt aus dem Tresor und wird nur über die Standardeingabe übergeben.

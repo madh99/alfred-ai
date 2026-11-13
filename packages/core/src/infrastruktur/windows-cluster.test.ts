@@ -47,7 +47,7 @@ describe('I8d Bausteine windows_cluster', () => {
     expect(pruefeGmsa({ name: 'gmsa-viel-zu-lang', berechtigte: ['sql01'] })).toContain('14');
     const g = gmsaSkript({ name: 'gmsa-sqleng', ou: 'Dienstkonten', berechtigte: ['sql01', 'sql02'] });
     expect(g).toContain('-PrincipalsAllowedToRetrieveManagedPassword $wer');
-    expect(g).toContain('[Console]::In.ReadToEnd()');
+    expect(g).toContain('[Console]::In.ReadLine()');
     expect(pruefeComputerobjekt({ name: 'sqlag01', vollzugriff: ['sqlcl01$'] })).toEqual({ name: 'sqlag01', ou: 'Server', vollzugriff: ['sqlcl01$'] });
     const c = computerobjektSkript({ name: 'sqlcl01', ou: 'Server', vollzugriff: ['alfred'] });
     expect(c).toContain('-Enabled $false');

@@ -18,11 +18,17 @@ const DNS_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
 const NTP = /^[a-z0-9.-]{3,80}$/i;
 
 /** PowerShell-Literal in einfachen Anführungszeichen (nur ' verdoppeln) */
+/** v1835 — Endmarke der Standardeingabe für Windows-Bausteine (siehe kopf) */
+export const EINGABE_ENDE = 'ALFRED-ENDE';
+
 export const psText = (s: string) => `'${s.replace(/'/g, "''")}'`;
 export const kopf = (p: unknown, mitEingabe: boolean) => [
   "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'",
   `$p = ${psText(JSON.stringify(p))} | ConvertFrom-Json`,
-  ...(mitEingabe ? ['$e = [Console]::In.ReadToEnd() | ConvertFrom-Json'] : []),
+  // v1835 — Realfall 13.11. PKI-B Schritt 36 (pkiiss01) und PKI-A Schritt 19 (fs01): Windows-OpenSSH gibt das Ende der Standardeingabe
+  // nicht zuverlässig weiter (nachgestellt: 5–6 KB hängen in etwa jedem vierten Lauf, mit Endmarke 10/10). Gelesen wird bis zur
+  // Endmarke ALFRED-ENDE (der Absender hängt sie an) oder bis zum Dateiende (Gastagent, Eingabe-Datei) — nie mehr auf EOF warten.
+  ...(mitEingabe ? ["$__z = New-Object System.Text.StringBuilder; while ($true) { $__l = [Console]::In.ReadLine(); if ($null -eq $__l -or $__l -eq 'ALFRED-ENDE') { break }; [void]$__z.AppendLine($__l) }; $e = $__z.ToString() | ConvertFrom-Json"] : []),
   // v1794 — Realfall 11.11. C3: „vergr��ert“ — die Windows-Konsole schreibt in der OEM-Codepage. Nicht-ASCII als \\uXXXX ausgeben
   // (gültiges JSON, unabhängig von Codepage und SSH)
   `function Ergebnis($o) { $j = $o | ConvertTo-Json -Compress -Depth 5; $j = [regex]::Replace($j, '[^\\x00-\\x7F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value }); [Console]::Out.WriteLine(${psText(AD_ERGEBNIS)} + $j) }`,

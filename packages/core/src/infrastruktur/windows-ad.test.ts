@@ -21,7 +21,7 @@ describe('I8c Bausteine', () => {
   });
   it('Geheimnisse nur über die Standardeingabe, Parameter als JSON-Literal, Neustart im Skript', () => {
     const w = waldSkript({ domaene: 'ad.3033.at', netbios: 'AD3033' });
-    expect(w).toContain('[Console]::In.ReadToEnd()');
+    expect(w).toContain('[Console]::In.ReadLine()');
     expect(w).toContain('$e.dsrm');
     expect(w).toContain(`$p = '{"domaene":"ad.3033.at","netbios":"AD3033"}' | ConvertFrom-Json`);
     expect(w).toContain('Install-ADDSForest -DomainName $p.domaene -DomainNetbiosName $p.netbios -InstallDns');
@@ -109,7 +109,7 @@ describe('I8c Skill windows_ad', () => {
     expect(r.error).toBeUndefined();
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin' });
     const skript = Buffer.from(w.aufrufe[0]!.befehl.split(' ').pop()!, 'base64').toString('utf16le');
-    expect(skript).toContain('[Console]::In.ReadToEnd()');
+    expect(skript).toContain('[Console]::In.ReadLine()');
     expect(skript).toContain("else { $d.NetBIOSName + '\\Administrator' }");
     expect(skript).toMatch(/Enable-ADOptionalFeature [^\n]*-Credential \$cred/);
     expect(skript).toMatch(/Add-ADGroupMember [^\n]*-Credential \$cred/);
@@ -189,5 +189,16 @@ describe('v1783 windows_ad dns_aufloesen', () => {
     expect(aufrufe[1]).toContain('Clear-DnsClientCache');
     expect((await skill.execute({ action: 'dns_aufloesen', zugang: 'probe-win25b', fqdn: 'x', server: '1.2.3.4' }, {} as never)).error).toContain('fqdn');
     expect(aktionsArt('windows_ad', 'dns_aufloesen')).toBe('lesen');
+  });
+});
+
+describe('v1835 Standardeingabe bis Endmarke', () => {
+  it('kopf liest zeilenweise bis ALFRED-ENDE oder Dateiende, nicht bis EOF', async () => {
+    const { kopf, EINGABE_ENDE } = await import('./windows-ad.js');
+    const k = kopf({}, true).join('\n');
+    expect(EINGABE_ENDE).toBe('ALFRED-ENDE');
+    expect(k).toContain("$__l -eq 'ALFRED-ENDE'");
+    expect(k).toContain('$null -eq $__l');
+    expect(k).not.toMatch(/\$e = \[Console\]::In\.ReadToEnd\(\)/);
   });
 });

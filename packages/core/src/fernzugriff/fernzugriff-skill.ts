@@ -558,7 +558,8 @@ export class FernzugriffSkill extends Skill {
     }
     if (eingabe !== undefined) {
       if (!this.deps.sshEingabe) throw new Error('Übergabe per Standardeingabe nicht verfügbar');
-      r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, befehl, eingabe, timeoutMs);
+      // v1835 — Endmarke anhängen: Windows-OpenSSH reicht das Eingabeende nicht zuverlässig weiter (siehe kopf in windows-ad.ts)
+      r = await this.deps.sshEingabe({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel }, befehl, `${eingabe}\nALFRED-ENDE\n`, timeoutMs);
     } else r = await this.lauf(owner, z, befehl, timeoutMs);
     this.deps.protokoll?.('I8c Windows-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, ...(datei ? { skriptdatei: datei } : {}) });
     return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
