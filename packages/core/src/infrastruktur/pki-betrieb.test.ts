@@ -105,6 +105,8 @@ describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () =>
     const nach = s.slice(s.indexOf('$s.Install()'));
     expect(nach.indexOf("+CRLF_REVCHECK_IGNORE_OFFLINE")).toBeLessThan(nach.indexOf('Restore-CARoleService'));
     expect(nach.indexOf('Restore-CARoleService')).toBeLessThan(nach.indexOf('Start-Service CertSvc'));
+    // v1863 — Merkdatei: Ordner fehlt in der frischen VM
+    expect(nach.indexOf('New-Item -ItemType Directory -Force -Path (Split-Path $merk)')).toBeLessThan(nach.indexOf('WriteAllText($merk'));
     expect(s).toContain('Restore-CARoleService -Path $d -DatabaseOnly -Force');
     expect(s).toContain("certutil.exe '-ca.cert'");
     expect(s).toContain('certutil.exe -verifykeys');

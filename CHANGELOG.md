@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Restore-Test: Merkdatei in frischer VM (v1863)
+
+- Der Ablageordner für den Restore-Vermerk wird angelegt, falls er in der Test-VM noch fehlt.
+
 ### Fixed — CA-Restore-Test: Dienststart ohne Netz (v1862)
 
 - In der netzlosen Test-VM nimmt die wiederhergestellte CA eine nicht abrufbare Sperrliste der Root-CA hin, damit der Dienst startet; eine Wiederholung nach abgebrochenem Setup erkennt die bereits eingerichtete CA am Zertifikat.

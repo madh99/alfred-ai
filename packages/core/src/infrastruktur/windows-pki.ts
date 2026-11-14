@@ -948,6 +948,8 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     "  Stop-Service CertSvc -Force -ErrorAction SilentlyContinue",
     "  Restore-CARoleService -Path $d -DatabaseOnly -Force -ErrorAction Stop",
     "  Start-Service CertSvc",
+    // v1863 — Realfall 14.11. 21:53: in der frischen VM gibt es C:\ProgramData\Alfred noch nicht
+    "  New-Item -ItemType Directory -Force -Path (Split-Path $merk) | Out-Null",
     "  [IO.File]::WriteAllText($merk, (@{ satz = $p.satz; zeit = (Get-Date).ToString('s') } | ConvertTo-Json -Compress))",
     '}',
     "$bis = (Get-Date).AddMinutes(2); do { Start-Sleep -Seconds 3; $ok = (& certutil.exe -ping 2>&1 | Out-String) -match 'interface is alive|Schnittstelle ist aktiv' } while (-not $ok -and (Get-Date) -lt $bis)",
