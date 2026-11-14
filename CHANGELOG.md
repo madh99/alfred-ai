@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Große Eingaben über den Proxmox-Gastagenten (v1860)
+
+- Eingaben über der Grenze der Proxmox-API werden in Teilen als Dateien übertragen und als Standardeingabe weitergereicht.
+
 ### Added — Isolierter CA-Restore-Test (v1859)
 
 - Wiederherstellung einer CA-Sicherung in einer netzlosen Test-VM mit Abnahme von CA-Identität, Schlüssel und Datenbankinhalt.

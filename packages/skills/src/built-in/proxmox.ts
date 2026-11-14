@@ -82,6 +82,9 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 
 /** Aktionen, deren `vmid` eine vorhandene VM meint (bei clone_vm/create_lxc ist `name` der Name der NEUEN Maschine). */
 /** v1538 — nur lesende VM-Aktionen dürfen einen eindeutigen Teiltreffer im Namen verwenden. */
+/** v1860 — PVE begrenzt input-data von agent/exec auf 65 536 Zeichen; darüber geht die Eingabe als Dateiteile in den Gast */
+export const GAST_EINGABE_MAX = 60_000;
+const GAST_TEIL_BYTES = 45_000;
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation']);
 /** I5 — Vorlagen-Fabrik */
 const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'check_offline_isolation'] as const;
@@ -2065,25 +2068,53 @@ export class ProxmoxSkill extends Skill {
     // v1823 — als Skriptdatei statt -EncodedCommand (Defender-Fehlalarm „ClickFix“ auf der Befehlszeile, Owner-Entscheidung 12.11.):
     // zufälliger Name in C:\Windows\Temp, die Datei löscht sich als erste Zeile selbst; Defender prüft Datei und Inhalt (AMSI) weiter.
     const zufall = randomBytes(8).toString('hex');
-    const name = `alfred-s-${zufall}.ps1`;
-    const pfad = `C:\\Windows\\Temp\\${name}`;
+    const pfad = `C:\\Windows\\Temp\\alfred-s-${zufall}.ps1`;
+    await this.gastSkriptAblegen(vm.node, vmid, vmName, pfad, skript);
+    // v1860 — Realfall 14.11. ba47581f Schritt 12: input-data ist bei PVE auf 65 536 Zeichen begrenzt (CA-Satz als Base64 ≈ 175 000).
+    // Große Eingaben: in Teilen als Dateien ablegen (je ≤ 45 000 Bytes), ein ebenfalls signiertes Startskript setzt sie zusammen, löscht sie
+    // und reicht den Inhalt als Standardeingabe an das Skript. Nicht-ASCII im JSON als \uXXXX (PS 5.1 leitet an native Programme ASCII weiter).
+    if (eingabe !== undefined && eingabe.length > GAST_EINGABE_MAX) {
+      const ascii = eingabe.replace(/[^\x00-\x7f]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+      const roh = Buffer.from(ascii, 'utf8');
+      const teile: string[] = [];
+      for (let i = 0; i * GAST_TEIL_BYTES < roh.length; i++) {
+        const t = `C:\\Windows\\Temp\\alfred-e-${zufall}-${i}.part`;
+        await this.post(`/nodes/${vm.node}/qemu/${vmid}/agent/file-write`, { file: t, content: roh.subarray(i * GAST_TEIL_BYTES, (i + 1) * GAST_TEIL_BYTES).toString('base64'), encode: 0 });
+        teile.push(t);
+      }
+      const start = `C:\\Windows\\Temp\\alfred-t-${zufall}.ps1`;
+      await this.gastSkriptAblegen(vm.node, vmid, vmName, start, [
+        "$ErrorActionPreference = 'Stop'",
+        `$teile = @(${teile.map(t => `'${t}'`).join(', ')})`,
+        '$ms = New-Object IO.MemoryStream; foreach ($t in $teile) { $b = [IO.File]::ReadAllBytes($t); $ms.Write($b, 0, $b.Length); Remove-Item -LiteralPath $t -Force }',
+        '$text = [Text.Encoding]::ASCII.GetString($ms.ToArray())',
+        '$OutputEncoding = [Text.Encoding]::ASCII',
+        `$text | & powershell.exe -NoProfile -NonInteractive -File '${pfad}'`,
+        'exit $LASTEXITCODE',
+      ].join('\n'));
+      return this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', start], undefined, timeoutMs);
+    }
+    return this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfad], eingabe, timeoutMs);
+  }
+
+  /** Skriptdatei im Gast ablegen (löscht sich beim Start selbst), signiert und von außen geprüft, falls die Codesignatur an ist */
+  private async gastSkriptAblegen(node: string, vmid: number, vmName: string, pfad: string, skript: string): Promise<void> {
     const inhalt = `\uFEFFRemove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n${skript}\n`;
     // PKI Etappe 3a — signieren (Schalter aus: unverändert wie bisher)
     const signiert = this.codesignatur ? await this.codesignatur.signiere(inhalt) : null;
     // selbst Base64 (encode 0): PVE würde Zeichen außerhalb Latin-1 (BOM, Umlaute) nicht kodieren können; PVE-Grenze 61 440 Zeichen
     const inhaltB64 = Buffer.from(signiert ?? inhalt, 'utf8').toString('base64');
     if (inhaltB64.length > 61_440) throw new Error('Skript zu groß für die Ablage über den Gastagenten (Base64 > 61 440 Zeichen)');
-    await this.post(`/nodes/${vm.node}/qemu/${vmid}/agent/file-write`, { file: pfad, content: inhaltB64, encode: 0 });
+    await this.post(`/nodes/${node}/qemu/${vmid}/agent/file-write`, { file: pfad, content: inhaltB64, encode: 0 });
     if (signiert !== null && this.codesignatur) {
       // von außen prüfen, bevor das Skript startet
-      const pr = await this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `(Get-AuthenticodeSignature -LiteralPath ${pfad}).Status.ToString()`], undefined, 60_000);
+      const pr = await this.gastAusfuehren(node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `(Get-AuthenticodeSignature -LiteralPath ${pfad}).Status.ToString()`], undefined, 60_000);
       try { this.codesignatur.bewerte(pr.stdout, `${vmName} (Gastagent)`); }
       catch (err) {
-        await this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Remove-Item -LiteralPath ${pfad} -Force -ErrorAction SilentlyContinue`], undefined, 30_000).catch(() => undefined);
+        await this.gastAusfuehren(node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Remove-Item -LiteralPath ${pfad} -Force -ErrorAction SilentlyContinue`], undefined, 30_000).catch(() => undefined);
         throw err;
       }
     }
-    return this.gastAusfuehren(vm.node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', pfad], eingabe, timeoutMs);
   }
 
   /** PKI Etappe 3a — Signatur der Gastagent-Skripte (vom Kern gesetzt; ohne: unsigniert wie bisher) */
