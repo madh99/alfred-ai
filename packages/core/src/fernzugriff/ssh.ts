@@ -124,6 +124,63 @@ export async function sftpHochladen(ziel: SshZiel, inhalt: string, entfernterPfa
 }
 
 /**
+ * v1865 — eine Datei per SFTP vom Zugang in eine lokale Datei holen (große Medien, z. B. ein SQL-ISO von einem Windows-Rechner).
+ * Gleiche Schutzoptionen wie sshAusfuehren; der Quellpfad ist ein SFTP-Pfad (/C:/…).
+ */
+export async function sftpHolen(ziel: SshZiel, entfernterPfad: string, lokal: string, datenOrdner: string, timeoutMs = 3_600_000): Promise<SshErgebnis> {
+  if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
+  if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
+  if (!/^\/[A-Za-z]:\/[A-Za-z0-9 ._/-]{1,200}$/.test(entfernterPfad) || entfernterPfad.includes('..')) throw new Error('ungültiger Quellpfad');
+  const ordner = path.join(datenOrdner, 'fernzugriff');
+  await mkdir(ordner, { recursive: true, mode: 0o700 });
+  const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
+  await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
+  const tmp = await mkdtemp(path.join(ordner, 'sftp-'));
+  try {
+    const stapel = path.join(tmp, 'stapel');
+    await writeFile(stapel, `get "${entfernterPfad}" "${lokal}"\n`, { mode: 0o600 });
+    const args = ['-b', stapel, '-i', ziel.schluesselPfad, '-P', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+      '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`];
+    try {
+      const { stdout, stderr } = await execFileAsync('sftp', args, { timeout: timeoutMs, maxBuffer: AUSGABE_MAX });
+      return { code: 0, stdout, stderr, hostSchluesselGeaendert: false };
+    } catch (err) {
+      const e = err as { code?: number | string; stdout?: string; stderr?: string; message: string; killed?: boolean };
+      const stderr = e.stderr ?? e.message;
+      return { code: typeof e.code === 'number' ? e.code : e.killed ? 124 : 255, stdout: e.stdout ?? '', stderr, hostSchluesselGeaendert: schluesselGeaendert(stderr) };
+    }
+  } finally { await rm(tmp, { recursive: true, force: true }); }
+}
+
+/** v1865 — eine lokale Datei als Standardeingabe an einen Befehl am Zugang streamen (ohne sie in den Speicher zu laden). */
+export async function sshDateiSenden(ziel: SshZiel, befehl: string, lokal: string, datenOrdner: string, timeoutMs = 3_600_000): Promise<SshErgebnis> {
+  if (!gueltigerHost(ziel.host) || !gueltigerBenutzer(ziel.benutzer)) throw new Error('Ungültiger Host oder Benutzer');
+  if (!ziel.hostSchluessel) throw new Error('Kein bestätigter Host-Schlüssel');
+  const ordner = path.join(datenOrdner, 'fernzugriff');
+  await mkdir(ordner, { recursive: true, mode: 0o700 });
+  const knownHosts = path.join(ordner, `known_hosts_${ziel.id.replace(/[^a-zA-Z0-9-]/g, '')}`);
+  await schreibeKnownHosts(knownHosts, ziel.hostSchluessel);
+  const args = ['-i', ziel.schluesselPfad, '-p', String(ziel.port), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+    '-o', `UserKnownHostsFile=${knownHosts}`, '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'LogLevel=ERROR', `${ziel.benutzer}@${ziel.host}`, befehl];
+  const { spawn } = await import('node:child_process');
+  const { createReadStream } = await import('node:fs');
+  return new Promise(resolve => {
+    const p = spawn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    const t = setTimeout(() => { stderr += `\nZeitlimit ${Math.round(timeoutMs / 1000)} s erreicht`; p.kill('SIGKILL'); }, timeoutMs);
+    p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8');
+    p.stdout.on('data', d => { if (stdout.length < AUSGABE_MAX) stdout += d; });
+    p.stderr.on('data', d => { if (stderr.length < AUSGABE_MAX) stderr += d; });
+    p.on('close', code => { clearTimeout(t); resolve({ code: code ?? 124, stdout, stderr, hostSchluesselGeaendert: schluesselGeaendert(stderr) }); });
+    p.on('error', err => { clearTimeout(t); resolve({ code: 255, stdout, stderr: err.message, hostSchluesselGeaendert: false }); });
+    p.stdin.on('error', () => undefined);
+    const q = createReadStream(lokal);
+    q.on('error', err => { stderr += `\nlokale Datei: ${err.message}`; p.stdin.destroy(); p.kill('SIGKILL'); });
+    q.pipe(p.stdin);
+  });
+}
+
+/**
  * I6 — Strom von Host zu Host über den Server: stdout der Quelle → (Bandbreitengrenze) → stdin des Ziels. Die Daten berühren weder
  * die Platte des Servers noch das Modell; `eingabe` geht an stdin der Quelle (z. B. die Dateiliste für tar -T -).
  */

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — ISO-Medien für Lab-VMs (v1865)
+
+- Fernzugriff `iso_ablegen`: eine ISO-Datei von einem Windows-Rechner hashgeprüft (Quelle, Server, Ziel) in den ISO-Speicher eines Proxmox-Knotens übertragen.
+- Proxmox `attach_iso` / `detach_iso`: ein ISO als CD-Laufwerk einlegen und wieder entfernen; Platten werden nie angefasst.
+
 ### Fixed — CA-Restore-Test: RequestID und Fremd-CA-Sperre (v1864)
 
 - Die höchste RequestID der wiederhergestellten Datenbank wird sprachunabhängig gelesen; eine unplausible RequestID gilt nicht mehr als Beweis.

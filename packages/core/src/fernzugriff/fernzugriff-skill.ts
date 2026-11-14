@@ -47,6 +47,9 @@ export interface FernzugriffDeps {
   sshEingabe?: (ziel: SshZiel, befehl: string, eingabe: string, timeoutMs?: number, max?: number) => Promise<SshErgebnis>;
   /** v1823 — Datei per SFTP ablegen (Windows-Bausteine als Skriptdatei statt -EncodedCommand) */
   sftp?: (ziel: SshZiel, inhalt: string, entfernterPfad: string, timeoutMs?: number) => Promise<SshErgebnis>;
+  /** v1865 — große Datei vom Zugang holen (lokale Zwischendatei im Datenordner) und als Standardeingabe an einen Befehl streamen */
+  sftpHolen?: (ziel: SshZiel, entfernterPfad: string, timeoutMs?: number) => Promise<SshErgebnis & { lokal: string }>;
+  dateiSenden?: (ziel: SshZiel, befehl: string, lokal: string, timeoutMs?: number) => Promise<SshErgebnis>;
   /** I6 — Strom Quelle → Server → Ziel (tar, pg_dump) */
   sshStrom?: (q: SshZiel, qBefehl: string, qEingabe: string, z: SshZiel, zBefehl: string, o: { timeoutMs: number; kbps?: number; fortschritt?: (bytes: number) => void }) => Promise<StromErgebnis & { hostSchluesselGeaendert: boolean }>;
   /** I6 (E4-G) — Geheimnis vom Quell-Host direkt in den Tresor (Wert erreicht nie das Modell) */
@@ -70,9 +73,9 @@ export interface FernzugriffDeps {
 /** v1542 (F3) — so viel geht ans Modell; vorher 6000 → SMART-Werte fehlten. v1548 (K1, Realfall 22.10.: `docker ps` mit 40 Containern
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
-const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen'] as const;
+const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen', 'iso_ablegen'] as const;
 /** I6 — Datenübertragung und Geheimnis-Übernahme nur als Schritte freigegebener Changes */
-const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen']); // v1658 Registry
+const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'iso_ablegen']); // v1658 Registry
 
 /** v1549 (S3) — vollständige lange Ausgaben bleiben 2 h abrufbar (höchstens 30, je 5 MB), seitenweise oder per Suche. */
 const SEITEN_GUELTIG_MS = 2 * 3_600_000;
@@ -90,6 +93,18 @@ function kuerze(t: string, max = ANZEIGE_MAX): string {
 export const LESEBUENDEL_MAX = 12;
 const LESEBUENDEL_JE = 6_000;
 const LESEBUENDEL_GESAMT = 40_000;
+/** v1865 — iso_ablegen: fester Zielordner (ISO-Speicher „local“ eines Proxmox-Knotens) */
+const ISO_ORDNER = '/var/lib/vz/template/iso';
+const ISO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.iso$/;
+export function isoAblegenFehler(input: Record<string, unknown>): string | undefined {
+  if (!(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return 'iso_ablegen braucht quelle (Windows-Zugang) und ziel (Proxmox-Knoten)';
+  const p = typeof input.quelle_pfad === 'string' ? input.quelle_pfad : '';
+  if (!/^[A-Za-z]:\\[A-Za-z0-9 ._\\-]{1,200}\.iso$/i.test(p) || p.includes('..')) return 'iso_ablegen braucht quelle_pfad = Windows-Pfad einer .iso-Datei (z. B. C:\\SQLMedia\\iso\\x.iso)';
+  if (input.dateiname !== undefined && !(typeof input.dateiname === 'string' && ISO_NAME.test(input.dateiname))) return 'dateiname: nur Buchstaben, Ziffern, . _ -; Endung .iso';
+  if (input.sha256 !== undefined && !(typeof input.sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(input.sha256))) return 'sha256: 64 Hex-Zeichen';
+  return undefined;
+}
+
 export function lesebuendelFehler(befehle: unknown): string | undefined {
   if (!Array.isArray(befehle) || befehle.length === 0) return 'befehle: Liste mit mindestens einem Befehl';
   if (befehle.length > LESEBUENDEL_MAX) return `befehle: höchstens ${LESEBUENDEL_MAX} je Aufruf`;
@@ -108,6 +123,7 @@ export class FernzugriffSkill extends Skill {
       'pruefen: Verbindung und sudo testen. anlegen: neuen Zugang (name, host oder CMDB-Name, benutzer alfred) — Host-Schlüssel wird gelesen und vom Owner bestätigt. ' +
       'schluessel: Alfreds öffentlichen Schlüssel und die Einrichtung auf dem Host zeigen. entfernen: Zugang löschen (mit Bestätigung). ' +
       'LESE-KÄFIG: Jeder andere Befehl mit action=lesen (cat/less von Konfigs, tail/grep von Logs unter /var/log, find, du, ls, ss, sed -n, awk …) läuft ebenfalls ohne Rückfrage — in einem Käfig auf dem Host: Dateisystem schreibgeschützt, kein Docker/D-Bus/Netz. Für ALLE Analysen action=lesen nehmen; nur echte Änderungen mit ausfuehren. Ausnahme: Geheimnisse (Schlüssel, .env, Passwort-Dateien) nur mit Bestätigung. ' +
+      'iso_ablegen (NUR in Changes; quelle = Windows-Zugang, quelle_pfad = C:\\…\\x.iso, ziel = Proxmox-Knoten-Zugang, dateiname optional, sha256 optional): ISO hashgeprüft (Quelle, Server, Ziel) in den ISO-Speicher local des Knotens; Ergebnis „ISO_STORED … Volume local:iso/<name>“; Rückweg proxmox delete_iso. ' +
       `${ABWAEGUNG} ` +
       'seite: lange Ausgaben sind vollständig gespeichert — weitere Seiten (id, seite) oder Suche darin (id, suche=<regex>) ohne den Befehl erneut auszuführen. kaefig: Lese-Käfig eines Zugangs an/aus (an=false sofort, an=true nur mit Bestätigung). ' +
       'datenbank_inventar (name, container — PostgreSQL nativ auf dem Host: container=host —, art=postgres|mysql|redis, optional datenbank = nur diese zählen — oder art=sqlite mit pfad = Datei auf dem Host, gezählt auf einer Kopie als root, auch bei beschädigten Seiten): festes, nur lesendes Inventar ohne Rückfrage — Version, Datenbanken mit Größe, Tabellen und Zeilenzahl, Rollennamen, Fingerabdruck; in Changes als Vorher/Nachher-Nachweis (Prüfung erwartet {{schrittN.fingerabdruck}}). ' +
@@ -132,9 +148,11 @@ export class FernzugriffSkill extends Skill {
         suche: { type: 'string', description: 'seite: Suchmuster (Regex, ohne Groß/Klein) in der gespeicherten Ausgabe' },
         an: { type: 'boolean', description: 'kaefig: an (true) oder aus (false)' },
         // I6 — Datenübertragung (nur in Changes)
-        quelle: { type: 'string', description: 'kopieren/datenbank_kopieren: Zugang der Quelle' },
-        ziel: { type: 'string', description: 'kopieren/datenbank_kopieren: Zugang des Ziels' },
-        quelle_pfad: { type: 'string', description: 'kopieren: Ordner an der Quelle (absolut)' },
+        quelle: { type: 'string', description: 'kopieren/datenbank_kopieren/iso_ablegen: Zugang der Quelle' },
+        ziel: { type: 'string', description: 'kopieren/datenbank_kopieren: Zugang des Ziels; iso_ablegen: Proxmox-Knoten (z. B. pve)' },
+        dateiname: { type: 'string', description: 'iso_ablegen: Name im ISO-Speicher (Standard: Name der Quelldatei)' },
+        sha256: { type: 'string', description: 'iso_ablegen: erwarteter SHA-256 der Quelldatei (optional)' },
+        quelle_pfad: { type: 'string', description: 'kopieren: Ordner an der Quelle (absolut); iso_ablegen: Windows-Pfad der .iso-Datei' },
         ziel_pfad: { type: 'string', description: 'kopieren: Ordner am Ziel (/srv/…, /opt/…, /data/…, /mnt/…, /home/<b>/…)' },
         quelle_volume: { type: 'string', description: 'kopieren: Docker-Volume an der Quelle statt quelle_pfad' },
         ziel_volume: { type: 'string', description: 'kopieren: Docker-Volume am Ziel (wird angelegt) statt ziel_pfad' },
@@ -175,6 +193,7 @@ export class FernzugriffSkill extends Skill {
     // v1659 — Realfall 25.10.: beim Planen steht der Digest oft noch als Verweis auf den Hochlade-Schritt da (@{{schrittN.digest}}); geprüft wird nach dem Auflösen
     if (a === 'image_holen' && !(typeof input.image === 'string' && /@(sha256:[0-9a-f]{64}|\{\{\s*schritt\d+\.digest\s*\}\})$/.test(input.image))) return 'image_holen braucht image mit @sha256-Digest oder @{{schrittN.digest}}';
     if (['lesen', 'ausfuehren', 'pruefen', 'entfernen', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen'].includes(a) && !zugangName) return `${a} braucht name (Zugang)`;
+    if (a === 'iso_ablegen') return isoAblegenFehler(input);
     if (['kopieren', 'datenbank_kopieren'].includes(a) && !(typeof input.quelle === 'string' && input.quelle.trim() && typeof input.ziel === 'string' && input.ziel.trim())) return `${a} braucht quelle und ziel (Zugänge)`;
     if (a === 'datenbank_inventar' && input.art === 'sqlite' && !(typeof input.pfad === 'string' && input.pfad.startsWith('/'))) return 'datenbank_inventar mit art=sqlite braucht pfad (Datei der Datenbank)'; // v1663
     if (a === 'datenbank_inventar' && input.art !== 'sqlite' && !(typeof input.container === 'string' && input.container.trim())) return 'datenbank_inventar braucht container';
@@ -211,6 +230,7 @@ export class FernzugriffSkill extends Skill {
         case 'geheim_uebernehmen': return await this.geheimUebernehmen(owner, input);
         case 'image_hochladen': return await this.imageHochladen(owner, input);
         case 'image_holen': return await this.imageHolen(owner, input);
+        case 'iso_ablegen': return await this.isoAblegen(owner, input);
         default: return { success: false, error: `Unbekannte Aktion „${action}“ (${AKTIONEN.filter(a => !a.endsWith('_bestaetigen')).join(', ')})` };
       }
     } catch (err) {
@@ -682,6 +702,68 @@ export class FernzugriffSkill extends Skill {
     ];
     const ok = !e.summe || e.summe.gleich;
     return { success: ok, data: { ...e, quelle_pfad: qPfad, ziel_pfad: zPfad, gleich: e.summe?.gleich ?? null }, display: zeilen.join('\n'), ...(ok ? {} : { error: zeilen.join('\n') }) };
+  }
+
+  /**
+   * v1865 — PKI-Lab (Owner 14.11.: vorhandene SQL-ISO kopieren): eine ISO-Datei von einem Windows-Zugang in den ISO-Speicher eines
+   * Proxmox-Knotens (fest /var/lib/vz/template/iso). SHA-256 an der Quelle, nach dem Holen auf dem Server und am Ziel — erst bei
+   * Gleichheit wird die Teildatei umbenannt. Gibt es die Datei mit gleichem Inhalt schon, nur Abnahme. Rückweg: proxmox delete_iso.
+   */
+  private async isoAblegen(owner: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.deps.sftpHolen || !this.deps.dateiSenden) return { success: false, error: 'Dateiübertragung (SFTP) nicht verfügbar' };
+    const q = await this.zugang(owner, { name: input.quelle });
+    const z = await this.zugang(owner, { name: input.ziel });
+    if (q.system !== 'windows') return { success: false, error: `${q.name} ist kein Windows-Zugang` };
+    if (z.system === 'windows') return { success: false, error: `${z.name} ist kein Linux-Zugang (Proxmox-Knoten)` };
+    const qPfad = String(input.quelle_pfad);
+    const name = typeof input.dateiname === 'string' && input.dateiname.trim() ? input.dateiname.trim() : qPfad.split('\\').pop()!;
+    if (!ISO_NAME.test(name)) return { success: false, error: `ungültiger Dateiname „${name}“ (nur Buchstaben, Ziffern, . _ -; Endung .iso)` };
+    const zielPfad = `${ISO_ORDNER}/${name}`, teil = `${ISO_ORDNER}/.alfred-${randomBytes(6).toString('hex')}.part`;
+    const zz = (x: Fernzugang): SshZiel => ({ id: x.id, host: x.host, port: x.port, benutzer: x.benutzer, schluesselPfad: x.schluesselPfad, hostSchluessel: x.hostSchluessel });
+    const t0 = Date.now();
+    // 1. Quelle: Größe und SHA-256
+    const qh = await this.lauf(owner, q, `$f = Get-Item -LiteralPath '${qPfad.replace(/'/g, "''")}' -ErrorAction Stop; [string]$f.Length + ' ' + (Get-FileHash -Algorithm SHA256 -LiteralPath $f.FullName).Hash`, 900_000);
+    const qm = /(\d+)\s+([0-9A-Fa-f]{64})/.exec(qh.stdout);
+    if (qh.code !== 0 || !qm) return { success: false, error: `Quelle ${q.name}:${qPfad} nicht lesbar (Exit ${qh.code}: ${schwaerze(qh.stderr).text.trim().slice(-200)})` };
+    const bytes = Number(qm[1]), hash = qm[2]!.toLowerCase();
+    const erwartet = typeof input.sha256 === 'string' && input.sha256.trim() ? input.sha256.trim().toLowerCase() : '';
+    if (erwartet && erwartet !== hash) return { success: false, error: `SHA-256 der Quelle ${hash} statt erwartet ${erwartet}` };
+    // 2. Ziel: schon da? Platz?
+    const vor = await this.lauf(owner, z, fernBefehl(`sh -c 'test -e ${zielPfad} && sha256sum ${zielPfad} | cut -c1-64; df -B1 --output=avail ${ISO_ORDNER} | tail -1'`, true), 300_000);
+    const zeilen = vor.stdout.trim().split('\n').map(x => x.trim()).filter(Boolean);
+    const frei = Number(zeilen.at(-1) ?? 0), schon = zeilen.length > 1 ? zeilen[0]!.toLowerCase() : '';
+    if (vor.code !== 0 || !Number.isFinite(frei) || frei <= 0) return { success: false, error: `Ziel ${z.name}:${ISO_ORDNER} nicht prüfbar (Exit ${vor.code}: ${schwaerze(vor.stderr).text.trim().slice(-200)})` };
+    if (schon && schon !== hash) return { success: false, error: `${z.name}:${zielPfad} gibt es schon mit anderem Inhalt (${schon.slice(0, 16)}…) — nicht überschrieben` };
+    if (schon === hash) return { success: true, data: { zustand: 'schon vorhanden', ziel: zielPfad, volid: `local:iso/${name}`, bytes, sha256: hash }, display: `✅ ISO_STORED ${z.name}:${zielPfad} (schon vorhanden, SHA-256 ${hash} = Quelle ${q.name}:${qPfad}, ${bytes} Bytes) — Volume local:iso/${name}` };
+    if (frei < bytes * 1.1 + 1_073_741_824) return { success: false, error: `zu wenig Platz in ${z.name}:${ISO_ORDNER}: frei ${(frei / 1e9).toFixed(1)} GB, nötig ${(bytes / 1e9).toFixed(1)} GB + Reserve` };
+    // 3. holen (Zwischendatei auf dem Server), prüfen
+    const h = await this.deps.sftpHolen(zz(q), `/${qPfad.replace(/\\/g, '/')}`, this.timeoutLang(input));
+    try {
+      if (h.code !== 0) throw new Error(`Holen von ${q.name} gescheitert (SFTP Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);
+      const { createReadStream } = await import('node:fs');
+      const { stat } = await import('node:fs/promises');
+      const { createHash } = await import('node:crypto');
+      const lokalBytes = (await stat(h.lokal)).size;
+      const lokalHash = await new Promise<string>((ok, nein) => { const x = createHash('sha256'); createReadStream(h.lokal).on('data', d => x.update(d)).on('end', () => ok(x.digest('hex'))).on('error', nein); });
+      if (lokalBytes !== bytes || lokalHash !== hash) throw new Error(`nach dem Holen abweichend: ${lokalBytes} Bytes / ${lokalHash.slice(0, 16)}… statt ${bytes} / ${hash.slice(0, 16)}…`);
+      // 4. ans Ziel streamen, prüfen, erst dann umbenennen
+      const s = await this.deps.dateiSenden(zz(z), fernBefehl(`sh -c 'umask 022; cat > ${teil}'`, true), h.lokal, this.timeoutLang(input));
+      if (s.code !== 0) { await this.lauf(owner, z, fernBefehl(`rm -f ${teil}`, true), 60_000).catch(() => undefined); throw new Error(`Übertragung zu ${z.name} gescheitert (Exit ${s.code}: ${schwaerze(s.stderr).text.trim().slice(-200)})`); }
+      const nach = await this.lauf(owner, z, fernBefehl(`sh -c 'stat -c %s ${teil}; sha256sum ${teil} | cut -c1-64'`, true), 900_000);
+      const [zb, zh] = nach.stdout.trim().split('\n').map(x => x.trim());
+      if (nach.code !== 0 || Number(zb) !== bytes || zh?.toLowerCase() !== hash) {
+        await this.lauf(owner, z, fernBefehl(`rm -f ${teil}`, true), 60_000).catch(() => undefined);
+        throw new Error(`am Ziel abweichend (${zb ?? '—'} Bytes / ${(zh ?? '—').slice(0, 16)}…) — Teildatei entfernt`);
+      }
+      const mv = await this.lauf(owner, z, fernBefehl(`mv -n ${teil} ${zielPfad}`, true), 60_000);
+      if (mv.code !== 0) { await this.lauf(owner, z, fernBefehl(`rm -f ${teil}`, true), 60_000).catch(() => undefined); throw new Error(`Umbenennen gescheitert (Exit ${mv.code}: ${schwaerze(mv.stderr).text.trim().slice(-200)})`); }
+    } finally {
+      const { rm } = await import('node:fs/promises');
+      await rm(h.lokal, { force: true }).catch(() => undefined);
+    }
+    const sek = Math.round((Date.now() - t0) / 1000);
+    this.deps.protokoll?.('v1865 ISO abgelegt', { quelle: `${q.name}:${qPfad}`, ziel: `${z.name}:${zielPfad}`, bytes, sha256: hash, sekunden: sek });
+    return { success: true, data: { zustand: 'abgelegt', ziel: zielPfad, volid: `local:iso/${name}`, bytes, sha256: hash, sekunden: sek }, display: `✅ ISO_STORED ${q.name}:${qPfad} → ${z.name}:${zielPfad} in ${sek} s (${bytes} Bytes, SHA-256 ${hash} an Quelle, Server und Ziel gleich) — Volume local:iso/${name}; Rückweg proxmox delete_iso` };
   }
 
   private async datenbankKopieren(owner: string, input: Record<string, unknown>): Promise<SkillResult> {

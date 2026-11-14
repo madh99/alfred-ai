@@ -87,13 +87,13 @@ export const GAST_EINGABE_MAX = 60_000;
 const GAST_TEIL_BYTES = 45_000;
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'check_offline_isolation'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'check_offline_isolation', 'attach_iso', 'detach_iso'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
 const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'attach_iso', 'detach_iso']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -180,7 +180,8 @@ export class ProxmoxSkill extends Skill {
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
       'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
       'NETZLOS (v1810, Offline-Root-CA): "provision_windows_offline" (template, hostname, node, storage, memory, cores, disk_size, extra_disks, new_vmid; KEINE ip/gateway/bridge; zeitlimitS 3000; Rückweg delete_vm mit force_stop) — entfernt net0 der Vorlage vor dem ersten Start, Autostart aus, Kennwort im Tresor, kein Fernzugang; Nachweis Rechnername über den Gastagenten. "check_offline_isolation" (vmid, vm_name; lesend) — Ergebnis „ROOT_ISOLATED“ nur ohne Netzwerkkarte und ohne Autostart, dazu Agent, Wechselmedien und erfassende Sicherungsjobs. ' +
-      'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
+      'v1865 (nur in Changes): "attach_iso" (vmid, volid = ISO im Speicher des Knotens der VM, laufwerk ide2|ide3) legt das ISO als CD ein — fehlt das Laufwerk an einer laufenden VM, wirksam erst nach "reboot_vm" (Ergebnis sagt es); Rückweg "detach_iso" (vmid, laufwerk) entfernt nur ein CD-Laufwerk. ' +
+    'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -324,7 +325,8 @@ export class ProxmoxSkill extends Skill {
         owner_konto: { type: 'string', description: 'provision_vm/provision_windows_vm: eigenes Konto des Owners (Standard madh, leer = keins). Linux: nur Schlüssel-Anmeldung mit dem Tresor-Schlüssel owner-ssh-oeffentlich, sudo. Windows: Administrator, Kennwort im Tresor win-<name>-<konto>' },
         rdp: { type: 'boolean', description: 'provision_windows_vm: Remotedesktop einschalten (nur auf Wunsch des Owners; mit NLA)' },
         image: { type: 'string', description: 'create_template: Volume des Images, z. B. backupshare:import/ubuntu-24.04-20261017.qcow2' },
-        volid: { type: 'string', description: 'delete_image: Volume im import-Speicher' },
+        volid: { type: 'string', description: 'delete_image: Volume im import-Speicher; attach_iso: ISO-Volume (z. B. local:iso/x.iso)' },
+        laufwerk: { type: 'string', description: 'attach_iso/detach_iso: ide2 (Standard) oder ide3' },
         nameserver: { type: 'string', description: 'provision_vm: DNS-Server (IP, mehrere mit Leerzeichen)' },
         vm_name: { type: 'string', description: 'delete_vm: Name der VM zur Bestätigung (muss zur vmid passen)' },
         force_stop: { type: 'boolean', description: 'delete_vm: laufende VM vorher hart stoppen (nur für Rückwege frisch angelegter VMs)' },
@@ -556,6 +558,10 @@ export class ProxmoxSkill extends Skill {
           return await this.sicherungAusnehmen(input);
         case 'set_vm_resources':
           return await this.vmRessourcen(input);
+        case 'attach_iso':
+          return await this.isoEinlegen(input);
+        case 'detach_iso':
+          return await this.isoAuswerfen(input);
 
         case 'api_raw': {
           const rawPath = input.path as string;
@@ -2219,6 +2225,52 @@ export class ProxmoxSkill extends Skill {
     if ((mem !== undefined && wert('memory') !== mem) || (cores !== undefined && wert('cores') !== cores)) return { success: false, error: `nach dem Ändern gelesen: memory ${wert('memory')}, cores ${wert('cores')}` };
     const ausstehend = pend.some(x => (x.key === 'memory' || x.key === 'cores') && x.pending !== undefined);
     return { success: true, data: { vmid, node: vm.node, vorher, nachher: { ...vorher, ...neu }, ausstehend }, display: `✅ VM ${vmid} (${vm.name}): ${mem !== undefined ? `RAM ${vorher.memory} → ${mem} MiB` : ''}${mem !== undefined && cores !== undefined ? ', ' : ''}${cores !== undefined ? `Kerne ${vorher.cores} → ${cores}` : ''}${ausstehend ? ' — wirksam nach reboot_vm (Proxmox wendet ausstehende Änderungen beim Neustart an)' : ''}. Rückweg: set_vm_resources mit memory ${vorher.memory}, cores ${vorher.cores}` };
+  }
+
+  /** v1865 — PKI-Lab: SQL-ISO als CD einlegen (Laufwerk ide2/ide3); nur ISO-Volumes, die im Speicher des Knotens der VM liegen */
+  private async isoEinlegen(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid && v.type === 'qemu');
+    if (!vm) return { success: false, error: `VM ${input.vmid} gibt es nicht` };
+    const lw = String(input.laufwerk ?? 'ide2');
+    if (!/^ide[23]$/.test(lw)) return { success: false, error: 'laufwerk: ide2 oder ide3' };
+    const volid = String(input.volid ?? '');
+    const m = /^([a-z0-9][a-z0-9_-]*):iso\/([A-Za-z0-9][A-Za-z0-9._-]*\.iso)$/i.exec(volid);
+    if (!m) return { success: false, error: 'volid: ISO-Volume <speicher>:iso/<name>.iso' };
+    const inhalt = await this.get<Array<{ volid: string; size?: number }>>(`/nodes/${vm.node}/storage/${m[1]}/content?content=iso`).catch(() => [] as Array<{ volid: string }>);
+    if (!inhalt.some(x => x.volid === volid)) return { success: false, error: `${volid} liegt nicht im Speicher ${m[1]} auf ${vm.node}` };
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const alt = typeof cfg[lw] === 'string' ? cfg[lw] as string : '';
+    if (alt && !/media=cdrom/.test(alt)) return { success: false, error: `${lw} ist an VM ${vmid} kein CD-Laufwerk (${alt}) — nicht angefasst` };
+    const wert = `${volid},media=cdrom`;
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, { [lw]: wert }), 120_000, 'ISO einlegen');
+    type Pend = Array<{ key: string; value?: unknown; pending?: unknown }>;
+    const pend = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
+    const e = pend.find(x => x.key === lw);
+    const wirksam = String(e?.value ?? ''), ausstehend = e?.pending !== undefined ? String(e.pending) : '';
+    if (!wirksam.startsWith(volid) && !ausstehend.startsWith(volid)) return { success: false, error: `nach dem Einlegen gelesen: ${lw} = ${wirksam || '—'}${ausstehend ? ` (ausstehend ${ausstehend})` : ''}` };
+    const nachNeustart = !wirksam.startsWith(volid);
+    return { success: true, data: { vmid, node: vm.node, laufwerk: lw, volid, vorher: alt, nachNeustart }, display: `✅ ISO_ATTACHED ${volid} an VM ${vmid} (${vm.name}) als ${lw}${nachNeustart ? ' — wirksam erst nach reboot_vm (Laufwerk an laufender VM neu)' : ''}${alt ? `; vorher ${alt}` : ''}; Rückweg detach_iso` };
+  }
+
+  /** v1865 — CD-Laufwerk entfernen (nie eine Platte) */
+  private async isoAuswerfen(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid && v.type === 'qemu');
+    if (!vm) return { success: false, error: `VM ${input.vmid} gibt es nicht` };
+    const lw = String(input.laufwerk ?? 'ide2');
+    if (!/^ide[23]$/.test(lw)) return { success: false, error: 'laufwerk: ide2 oder ide3' };
+    type Pend = Array<{ key: string; value?: unknown; pending?: unknown; delete?: number }>;
+    const vor = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
+    const e = vor.find(x => x.key === lw);
+    if (!e) return { success: true, data: { vmid, laufwerk: lw, zustand: 'schon weg' }, display: `✅ ISO_DETACHED VM ${vmid} (${vm.name}): ${lw} gibt es nicht (schon weg)` };
+    const werte = [e.value, e.pending].filter(x => x !== undefined).map(String);
+    if (werte.some(w => !/media=cdrom/.test(w))) return { success: false, error: `${lw} ist an VM ${vmid} kein CD-Laufwerk (${werte.join(' / ')}) — nicht angefasst` };
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, { delete: lw }), 120_000, 'ISO auswerfen');
+    const nach = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
+    const n = nach.find(x => x.key === lw);
+    if (n && !n.delete) return { success: false, error: `${lw} nach dem Auswerfen noch da: ${String(n.value ?? n.pending)}` };
+    return { success: true, data: { vmid, laufwerk: lw, vorher: werte[0], nachNeustart: !!n }, display: `✅ ISO_DETACHED VM ${vmid} (${vm.name}): ${lw} entfernt${n ? ' — wirksam nach reboot_vm' : ''}` };
   }
 
   private async vmidFrei(vmid: number): Promise<boolean> {

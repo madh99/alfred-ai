@@ -7121,6 +7121,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         ssh: (ziel, befehl, timeoutMs) => sshAusfuehren(ziel, befehl, datenOrdner, timeoutMs),
         sshEingabe: async (ziel, befehl, eingabe, timeoutMs, max) => (await import('./fernzugriff/ssh.js')).sshMitEingabe(ziel, befehl, datenOrdner, eingabe, timeoutMs, max),
         sftp: async (ziel, inhalt, entfernterPfad, timeoutMs) => (await import('./fernzugriff/ssh.js')).sftpHochladen(ziel, inhalt, entfernterPfad, datenOrdner, timeoutMs),
+        // v1865 — große Dateien (ISO) über eine Zwischendatei im Datenordner (0600, wird vom Aufrufer gelöscht)
+        sftpHolen: async (ziel, entfernterPfad, timeoutMs) => {
+          const { mkdir } = await import('node:fs/promises');
+          const ordner = path.join(datenOrdner, 'fernzugriff', 'transfer');
+          await mkdir(ordner, { recursive: true, mode: 0o700 });
+          const lokal = path.join(ordner, `holen-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+          return { ...(await (await import('./fernzugriff/ssh.js')).sftpHolen(ziel, entfernterPfad, lokal, datenOrdner, timeoutMs)), lokal };
+        },
+        dateiSenden: async (ziel, befehl, lokal, timeoutMs) => (await import('./fernzugriff/ssh.js')).sshDateiSenden(ziel, befehl, lokal, datenOrdner, timeoutMs),
         // I6 — Daten von Host zu Host über den Server (nie über das Modell) und Geheimnisse direkt in den Tresor
         sshStrom: async (q, qb, qe, z, zb, o) => (await import('./fernzugriff/ssh.js')).sshStrom(q, qb, qe, z, zb, datenOrdner, o),
         tresorSetzen: async (name, wert, herkunft, zweck) => {
