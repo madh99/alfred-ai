@@ -98,6 +98,13 @@ describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () =>
     expect(vor).toContain('$s.CAImportPFX($p12.FullName');
     expect(vor).toContain("$s.SetDatabaseInformation($db, $db, '', $true)");
     expect(vor).toContain("if ([string]$s.GetCASetupProperty(11)) { throw");
+    // v1862 — Dienststart scheitert offline an der Root-Sperrliste: nur hingenommen, wenn danach genau DIESE CA eingerichtet ist;
+    // Wiederholung nach abgebrochenem Setup erkennt die CA am CACertHash; Sperrprüfung offline nur in der Wegwerf-VM hinnehmen
+    expect(s).toContain('(CaHash $neu) -contains $p.erwartet_ca)) {');
+    expect(s).toContain('elseif ((CaHash $aktiv) -contains $p.erwartet_ca) { $eingerichtet = $true }');
+    const nach = s.slice(s.indexOf('$s.Install()'));
+    expect(nach.indexOf("+CRLF_REVCHECK_IGNORE_OFFLINE")).toBeLessThan(nach.indexOf('Restore-CARoleService'));
+    expect(nach.indexOf('Restore-CARoleService')).toBeLessThan(nach.indexOf('Start-Service CertSvc'));
     expect(s).toContain('Restore-CARoleService -Path $d -DatabaseOnly -Force');
     expect(s).toContain("certutil.exe '-ca.cert'");
     expect(s).toContain('certutil.exe -verifykeys');

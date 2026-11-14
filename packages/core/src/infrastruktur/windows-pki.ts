@@ -916,7 +916,10 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     "$merk = Join-Path $env:ProgramData 'Alfred\\restore-test.json'",
     "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
     "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
-    "$schon = $false; if ($aktiv) { if ((Test-Path $merk) -and ([IO.File]::ReadAllText($merk) | ConvertFrom-Json).satz -eq $p.satz) { $schon = $true } else { throw ('auf dieser VM ist schon eine fremde CA eingerichtet: ' + $aktiv) } }",
+    // v1862 — CA-Zertifikat der eingerichteten CA (Registry CACertHash, „4b 07 58 …“) normalisiert; erkennt ein abgebrochenes Setup DIESER CA
+    "function CaHash($n) { @((Get-ItemProperty (Join-Path $k $n) -ErrorAction SilentlyContinue).CACertHash | ForEach-Object { ([string]$_ -replace '[^0-9A-Fa-f]', '').ToUpper() }) }",
+    "$schon = $false; $eingerichtet = $false",
+    "if ($aktiv) { if ((Test-Path $merk) -and ([IO.File]::ReadAllText($merk) | ConvertFrom-Json).satz -eq $p.satz) { $schon = $true } elseif ((CaHash $aktiv) -contains $p.erwartet_ca) { $eingerichtet = $true } else { throw ('auf dieser VM ist schon eine fremde CA eingerichtet: ' + $aktiv) } }",
     'if (-not $schon) {',
     // Root ins Vertrauen, damit die Kette der Issuing-CA ohne Netz aufgebaut werden kann
     "  $rb = [Convert]::FromBase64String([string]$e.root_base64); $r = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$rb)",
@@ -925,6 +928,7 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     "  if (-not (Get-WindowsFeature ADCS-Cert-Authority).Installed) { throw 'Rolle ADCS-Cert-Authority fehlt — erst features_installieren' }",
     // v1861 — Realfall 14.11. ba47581f: Install-AdcsCertificationAuthority setzt ohne Domäne den Freigabeordner C:\CAConfig und schreibt
     // über \\<rechner>\CertConfig — ohne Netz ERROR_NETNAME_DELETED 0x80070040. Daher direkt über CertOCM.CertSrvSetup mit leerem Freigabeordner.
+    'if (-not $eingerichtet) {',
     '  $s = New-Object -ComObject CertOCM.CertSrvSetup',
     '  try {',
     '    $s.InitializeDefaults($true, $false)',
@@ -935,8 +939,13 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     "    $s.SetDatabaseInformation($db, $db, '', $true)",
     "    if ([string]$s.GetCASetupProperty(11)) { throw 'Freigabeordner ließ sich nicht abschalten' }", // ENUM_SETUPPROP_SHAREDFOLDER
     '    $s.Install()',
-    "  } catch { $z = $(try { [string]$s.CAErrorString } catch { '' }); throw ('CA-Setup: ' + $_.Exception.Message + $(if ($z) { ' — ' + $z } else { '' })) }",
-    "  Stop-Service CertSvc -Force",
+    // v1862 — Realfall 14.11. 21:36: Install richtet die CA ein, scheitert aber beim Dienststart (ohne Netz ist die Sperrliste der Root
+    // nicht abrufbar, CRYPT_E_REVOCATION_OFFLINE → ERROR_SERVICE_NEVER_STARTED). Hingenommen nur, wenn danach genau DIESE CA eingerichtet ist.
+    "  } catch { $f = $_.Exception.Message; $neu = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' }); if (-not ($neu -and (CaHash $neu) -contains $p.erwartet_ca)) { $z = $(try { [string]$s.CAErrorString } catch { '' }); throw ('CA-Setup: ' + $f + $(if ($z) { ' — ' + $z } else { '' })) } }",
+    '  }',
+    // Nur in dieser netzlosen Wegwerf-VM: Sperrprüfung offline hinnehmen (CRLF_REVCHECK_IGNORE_OFFLINE), sonst startet CertSvc nie
+    "  $cf = (& certutil.exe -setreg 'ca\\CRLFlags' '+CRLF_REVCHECK_IGNORE_OFFLINE' 2>&1 | Out-String); if ($LASTEXITCODE -ne 0) { throw ('CRLFlags: ' + $cf.Trim()) }",
+    "  Stop-Service CertSvc -Force -ErrorAction SilentlyContinue",
     "  Restore-CARoleService -Path $d -DatabaseOnly -Force -ErrorAction Stop",
     "  Start-Service CertSvc",
     "  [IO.File]::WriteAllText($merk, (@{ satz = $p.satz; zeit = (Get-Date).ToString('s') } | ConvertTo-Json -Compress))",

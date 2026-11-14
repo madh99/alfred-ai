@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Restore-Test: Dienststart ohne Netz (v1862)
+
+- In der netzlosen Test-VM nimmt die wiederhergestellte CA eine nicht abrufbare Sperrliste der Root-CA hin, damit der Dienst startet; eine Wiederholung nach abgebrochenem Setup erkennt die bereits eingerichtete CA am Zertifikat.
+
 ### Fixed — CA-Restore-Test ohne Netz (v1861)
 
 - Die Wiederherstellung der Issuing-CA in der netzlosen Test-VM richtet die CA über die Setup-Schnittstelle ohne Freigabeordner ein; der Standard-Freigabeordner ist ohne Netz nicht erreichbar und brach das Setup ab.
