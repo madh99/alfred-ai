@@ -88,11 +88,16 @@ describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () =>
   it('Skript: nur netzlos und als SYSTEM, Root ins Vertrauen, Standalone aus der .p12, DatabaseOnly, Abnahme', async () => {
     const { caRestoreSkript } = await import('./windows-pki.js');
     const s = caRestoreSkript({ ordner: 'C:\\Alfred-Restore', satz: 'ca-20261113-114935', erwartet_ca: CA, erwartet_root: ROOT, erwartete_zertifikate: [] });
-    const vor = s.slice(0, s.indexOf('Install-AdcsCertificationAuthority'));
+    const vor = s.slice(0, s.indexOf('$s.Install()'));
     expect(vor).toContain("Where-Object { $_.Status -eq 'Up' }).Count) { throw 'aktiver Netzadapter");
     expect(vor).toContain('IsSystem');
     expect(vor).toContain('schon eine fremde CA eingerichtet');
-    expect(s).toContain('-CAType StandaloneSubordinateCA -CertFile $p12.FullName');
+    // v1861 — ohne Netz kein Freigabeordner (\\<rechner>\CertConfig → 0x80070040): Setup-Schnittstelle mit leerem Freigabeordner
+    expect(s).not.toContain('Install-AdcsCertificationAuthority');
+    expect(vor).toContain('$s.SetCASetupProperty(0, 4)');
+    expect(vor).toContain('$s.CAImportPFX($p12.FullName');
+    expect(vor).toContain("$s.SetDatabaseInformation($db, $db, '', $true)");
+    expect(vor).toContain("if ([string]$s.GetCASetupProperty(11)) { throw");
     expect(s).toContain('Restore-CARoleService -Path $d -DatabaseOnly -Force');
     expect(s).toContain("certutil.exe '-ca.cert'");
     expect(s).toContain('certutil.exe -verifykeys');

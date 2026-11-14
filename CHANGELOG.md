@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Restore-Test ohne Netz (v1861)
+
+- Die Wiederherstellung der Issuing-CA in der netzlosen Test-VM richtet die CA über die Setup-Schnittstelle ohne Freigabeordner ein; der Standard-Freigabeordner ist ohne Netz nicht erreichbar und brach das Setup ab.
+
 ### Fixed — Große Eingaben über den Proxmox-Gastagenten (v1860)
 
 - Eingaben über der Grenze der Proxmox-API werden in Teilen als Dateien übertragen und als Standardeingabe weitergereicht.

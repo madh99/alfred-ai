@@ -923,8 +923,19 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     "  if ($r.Thumbprint -ne $p.erwartet_root) { throw ('Root ' + $r.Thumbprint + ' statt ' + $p.erwartet_root) }",
     "  $st = New-Object Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine'); $st.Open('ReadWrite'); $st.Add($r); $st.Close()",
     "  if (-not (Get-WindowsFeature ADCS-Cert-Authority).Installed) { throw 'Rolle ADCS-Cert-Authority fehlt — erst features_installieren' }",
-    '  $pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
-    "  Install-AdcsCertificationAuthority -CAType StandaloneSubordinateCA -CertFile $p12.FullName -CertFilePassword $pw -Force -ErrorAction Stop | Out-Null",
+    // v1861 — Realfall 14.11. ba47581f: Install-AdcsCertificationAuthority setzt ohne Domäne den Freigabeordner C:\CAConfig und schreibt
+    // über \\<rechner>\CertConfig — ohne Netz ERROR_NETNAME_DELETED 0x80070040. Daher direkt über CertOCM.CertSrvSetup mit leerem Freigabeordner.
+    '  $s = New-Object -ComObject CertOCM.CertSrvSetup',
+    '  try {',
+    '    $s.InitializeDefaults($true, $false)',
+    '    $s.SetCASetupProperty(0, 4)', // ENUM_SETUPPROP_CATYPE = ENUM_STANDALONE_SUBCA
+    '    $ki = $s.CAImportPFX($p12.FullName, [string]$e.kennwort, $true)',
+    '    $s.SetCASetupProperty(1, $ki)', // ENUM_SETUPPROP_CAKEYINFORMATION
+    "    $db = Join-Path $env:windir 'System32\\CertLog'",
+    "    $s.SetDatabaseInformation($db, $db, '', $true)",
+    "    if ([string]$s.GetCASetupProperty(11)) { throw 'Freigabeordner ließ sich nicht abschalten' }", // ENUM_SETUPPROP_SHAREDFOLDER
+    '    $s.Install()',
+    "  } catch { $z = $(try { [string]$s.CAErrorString } catch { '' }); throw ('CA-Setup: ' + $_.Exception.Message + $(if ($z) { ' — ' + $z } else { '' })) }",
     "  Stop-Service CertSvc -Force",
     "  Restore-CARoleService -Path $d -DatabaseOnly -Force -ErrorAction Stop",
     "  Start-Service CertSvc",
