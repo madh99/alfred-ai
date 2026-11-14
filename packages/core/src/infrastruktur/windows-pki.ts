@@ -887,5 +887,66 @@ export function caSatzAblegenSkript(z: { ziel_ordner: string; satz: string; sha2
     "Ergebnis ([ordered]@{ zustand = $(if ($schon) { 'schon vorhanden, geprüft' } else { 'kopiert, geprüft' }); ordner = $d; dateien = @($m.dateien).Count; ca = [string]$m.ca; rechner = $env:COMPUTERNAME })",
   ].join('\n');
 }
+/** v1859 — Quelle: ein Zertifikat aus LocalMachine\Root nach Thumbprint als Base64 (für den Restore-Test ohne Netz) */
+export function rootExportSkript(z: { thumbprint: string }): string {
+  return [
+    ...kopf(z, false),
+    "$c = Get-Item ('Cert:\\LocalMachine\\Root\\' + $p.thumbprint) -ErrorAction SilentlyContinue",
+    "if (-not $c) { throw ('Root-Zertifikat ' + $p.thumbprint + ' nicht in LocalMachine\\Root') }",
+    "Ergebnis ([ordered]@{ thumbprint = $c.Thumbprint; subjekt = $c.Subject; base64 = [Convert]::ToBase64String($c.RawData) })",
+  ].join('\n');
+}
+
+/**
+ * v1859 — PKI Etappe 5, Spec Pos. 18 „ca_wiederherstellung_testen“ (Owner 14.11.: netzlose Wegwerf-VM): NUR in einer VM ohne aktiven
+ * Netzadapter (Gastagent, SYSTEM). Der hashgeprüft abgelegte Satz (caSatzAblegenSkript) wird wiederhergestellt: Root-Zertifikat in
+ * LocalMachine\Root, CA aus der .p12 (Schlüssel + Zertifikat) als Standalone-Subordinate eingerichtet (ohne Domäne geht Enterprise nicht;
+ * die CA-Identität — Schlüssel, Zertifikat, Name — ist dieselbe), Datenbank mit Restore-CARoleService -DatabaseOnly zurückgespielt.
+ * Abnahme: CA-Zertifikat = erwarteter Thumbprint, Schlüssel passt (certutil -verifykeys), erwartete ausgestellte Zertifikate in der
+ * Datenbank, höchste RequestID und Sperrlistennummer. Wiederholbar: ist die CA schon aus diesem Satz eingerichtet, nur die Abnahme.
+ */
+export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: string; erwartet_root: string; erwartete_zertifikate: string[] }): string {
+  return [
+    ...kopf(z, true),
+    "if (@(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }).Count) { throw 'aktiver Netzadapter — der Restore-Test läuft nur in einer netzlosen VM (keine zweite erreichbare CA-Identität)' }",
+    "if (-not [Security.Principal.WindowsIdentity]::GetCurrent().IsSystem) { throw 'Restore-Test nur über den Gastagent (SYSTEM)' }",
+    '$d = Join-Path $p.ordner $p.satz',
+    "$m = [IO.File]::ReadAllText((Join-Path $d 'manifest.json')) | ConvertFrom-Json",
+    "$p12 = @(Get-ChildItem $d -Filter '*.p12' -File)[0]; if (-not $p12) { throw 'Satz ohne .p12' }",
+    "$merk = Join-Path $env:ProgramData 'Alfred\\restore-test.json'",
+    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
+    "$aktiv = $(if (Test-Path $k) { [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active } else { '' })",
+    "$schon = $false; if ($aktiv) { if ((Test-Path $merk) -and ([IO.File]::ReadAllText($merk) | ConvertFrom-Json).satz -eq $p.satz) { $schon = $true } else { throw ('auf dieser VM ist schon eine fremde CA eingerichtet: ' + $aktiv) } }",
+    'if (-not $schon) {',
+    // Root ins Vertrauen, damit die Kette der Issuing-CA ohne Netz aufgebaut werden kann
+    "  $rb = [Convert]::FromBase64String([string]$e.root_base64); $r = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$rb)",
+    "  if ($r.Thumbprint -ne $p.erwartet_root) { throw ('Root ' + $r.Thumbprint + ' statt ' + $p.erwartet_root) }",
+    "  $st = New-Object Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine'); $st.Open('ReadWrite'); $st.Add($r); $st.Close()",
+    "  if (-not (Get-WindowsFeature ADCS-Cert-Authority).Installed) { throw 'Rolle ADCS-Cert-Authority fehlt — erst features_installieren' }",
+    '  $pw = ConvertTo-SecureString ([string]$e.kennwort) -AsPlainText -Force',
+    "  Install-AdcsCertificationAuthority -CAType StandaloneSubordinateCA -CertFile $p12.FullName -CertFilePassword $pw -Force -ErrorAction Stop | Out-Null",
+    "  Stop-Service CertSvc -Force",
+    "  Restore-CARoleService -Path $d -DatabaseOnly -Force -ErrorAction Stop",
+    "  Start-Service CertSvc",
+    "  [IO.File]::WriteAllText($merk, (@{ satz = $p.satz; zeit = (Get-Date).ToString('s') } | ConvertTo-Json -Compress))",
+    '}',
+    "$bis = (Get-Date).AddMinutes(2); do { Start-Sleep -Seconds 3; $ok = (& certutil.exe -ping 2>&1 | Out-String) -match 'interface is alive|Schnittstelle ist aktiv' } while (-not $ok -and (Get-Date) -lt $bis)",
+    "$caName = [string](Get-ItemProperty $k).Active",
+    // v1849 — PS 5.1 zerlegt ein ungequotetes -ca.cert in „-ca .cert“
+    "$cf = Join-Path $env:TEMP 'alfred-restore-ca.cer'; Remove-Item $cf -Force -ErrorAction SilentlyContinue; & certutil.exe '-ca.cert' $cf 2>&1 | Out-Null",
+    "$hash = $(if (Test-Path $cf) { (New-Object Security.Cryptography.X509Certificates.X509Certificate2 $cf).Thumbprint } else { '' }); Remove-Item $cf -Force -ErrorAction SilentlyContinue",
+    "$vk = (& certutil.exe -verifykeys 2>&1 | Out-String)",
+    "$schluessel = $LASTEXITCODE -eq 0 -and $vk -notmatch 'FAILED|FEHLER'",
+    // Datenbank: ausgestellte Zertifikate (Hash), höchste RequestID, höchste Sperrlistennummer
+    "$csv = Join-Path $env:TEMP 'alfred-restore-view.csv'; & certutil.exe -view -out 'RequestID,CertificateHash' csv > $csv 2>$null",
+    "$zeilen = @(Import-Csv $csv -ErrorAction SilentlyContinue); Remove-Item $csv -Force -ErrorAction SilentlyContinue",
+    "$ids = @($zeilen | ForEach-Object { [int]($_.'Request ID' -replace '[^0-9]', '') } | Where-Object { $_ })",
+    "$hashes = @($zeilen | ForEach-Object { (([string]$_.'Certificate Hash') -replace '[^0-9A-Fa-f]', '').ToUpper() } | Where-Object { $_.Length -eq 40 })",
+    "$crl = Join-Path $env:TEMP 'alfred-restore-crl.csv'; & certutil.exe -view CRL -out 'CRLNumber' csv > $crl 2>$null",
+    "$nummern = @(Import-Csv $crl -ErrorAction SilentlyContinue | ForEach-Object { [int](([string]$_.PSObject.Properties.Value[0]) -replace '[^0-9]', '') }); Remove-Item $crl -Force -ErrorAction SilentlyContinue",
+    "$fehlen = @($p.erwartete_zertifikate | Where-Object { $hashes -notcontains $_ })",
+    "Ergebnis ([ordered]@{ zustand = $(if ($schon) { 'schon wiederhergestellt' } else { 'wiederhergestellt' }); rechner = $env:COMPUTERNAME; satz = $p.satz; satzZeit = [string]$m.zeit; ca = $caName; caThumbprint = $hash.ToUpper(); dienst = ([string](Get-Service CertSvc).Status); schluesselPasst = [bool]$schluessel; zertifikate = $hashes.Count; hoechsteRequestId = $(if ($ids.Count) { ($ids | Measure-Object -Maximum).Maximum } else { 0 }); crlNummer = $(if ($nummern.Count) { ($nummern | Measure-Object -Maximum).Maximum } else { 0 }); fehlen = $fehlen })",
+  ].join('\n');
+}
 export { SATZ as CA_SATZ };
 

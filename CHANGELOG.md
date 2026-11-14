@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Isolierter CA-Restore-Test (v1859)
+
+- Wiederherstellung einer CA-Sicherung in einer netzlosen Test-VM mit Abnahme von CA-Identität, Schlüssel und Datenbankinhalt.
+
 ### Added — PKI-Betrieb: tägliche Prüfung und wöchentliche CA-Sicherung (v1858)
 
 - Tägliche Prüfung der SQL-TLS-Zertifikatsfristen, der Sperrlisten und des Alters der CA-Sicherungen mit Problems und Benachrichtigung.

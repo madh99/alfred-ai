@@ -81,3 +81,41 @@ describe('PKI-Betrieb: wöchentliche CA-Sicherung (Vorlage k)', () => {
     expect((await sk.execute({ action: 'ca_sicherung_aufraeumen', zugang: 'pkiiss01', ziel_ordner: 'B:\\CA-Sicherung', behalten: 0 }, { ausChange: true } as never)).error).toContain('behalten');
   });
 });
+
+describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () => {
+  const CA = '4B07588C254F9705E924EB6349F10DA38C0CCA51'; const ROOT = '2AA90DF95DD62A6A44CD3995EBC59C0F341DE64C';
+  const P = { action: 'ca_wiederherstellung_testen', vmid: 160, vm_name: 'pkirestore01', quelle_zugang: 'fs01', quelle_ordner: 'S:\\PKI-Sicherung\\Issuer', satz: 'ca-20261113-114935', passwort_tresor: 'pki-iss-sicherung', erwartet_ca_thumbprint: CA, erwartet_root_thumbprint: ROOT, erwartete_zertifikate: ['4E073ED074CAB15E515ECD4471B0820C45E440E1'] };
+  it('Skript: nur netzlos und als SYSTEM, Root ins Vertrauen, Standalone aus der .p12, DatabaseOnly, Abnahme', async () => {
+    const { caRestoreSkript } = await import('./windows-pki.js');
+    const s = caRestoreSkript({ ordner: 'C:\\Alfred-Restore', satz: 'ca-20261113-114935', erwartet_ca: CA, erwartet_root: ROOT, erwartete_zertifikate: [] });
+    const vor = s.slice(0, s.indexOf('Install-AdcsCertificationAuthority'));
+    expect(vor).toContain("Where-Object { $_.Status -eq 'Up' }).Count) { throw 'aktiver Netzadapter");
+    expect(vor).toContain('IsSystem');
+    expect(vor).toContain('schon eine fremde CA eingerichtet');
+    expect(s).toContain('-CAType StandaloneSubordinateCA -CertFile $p12.FullName');
+    expect(s).toContain('Restore-CARoleService -Path $d -DatabaseOnly -Force');
+    expect(s).toContain("certutil.exe '-ca.cert'");
+    expect(s).toContain('certutil.exe -verifykeys');
+  });
+  it('Skill: nur mit vmid (Gastagent), nie über einen Fernzugang; Abnahme schlägt bei falschem CA-Thumbprint fehl', async () => {
+    const aufrufe: string[] = [];
+    const ad = (o: unknown) => ({ code: 0, stdout: `ALFRED-AD ${JSON.stringify(o)}\n`, stderr: '' });
+    const restore = { zustand: 'wiederhergestellt', rechner: 'PKIRESTORE01', satz: P.satz, satzZeit: '2026-11-13T11:49:35', ca: 'AD3033 Issuing CA 01', caThumbprint: CA, dienst: 'Running', schluesselPasst: true, zertifikate: 6, hoechsteRequestId: 6, crlNummer: 9, fehlen: [] as string[] };
+    const sk = (r: unknown) => new WindowsPkiSkill({
+      skript: async (z, _b) => { aufrufe.push(`ssh:${z}`); return ad(aufrufe.length === 1 ? { satz: P.satz, bytes: 1000, sha256: 'a'.repeat(64), base64: 'QQ==' } : { thumbprint: ROOT, base64: 'QQ==' }); },
+      gast: async (vmid, name) => { aufrufe.push(`gast:${vmid}:${name}`); return ad(aufrufe.filter(x => x.startsWith('gast')).length === 1 ? { zustand: 'kopiert, geprüft', dateien: 5, ca: 'AD3033 Issuing CA 01' } : r); },
+      tresor: { namen: async () => new Set(['pki-iss-sicherung']), lies: async () => 'pw' },
+    });
+    expect((await sk(restore).execute({ ...P, vmid: undefined, zugang: 'pkiiss01' }, { ausChange: true } as never)).error).toContain('netzlosen VM');
+    expect((await sk(restore).execute(P, {} as never)).success).toBe(false);
+    aufrufe.length = 0;
+    const ok = await sk(restore).execute(P, { ausChange: true } as never);
+    expect(ok.display, String(ok.error)).toContain('CA_RESTORE_VERIFIED');
+    expect(aufrufe).toEqual(['ssh:fs01', 'ssh:fs01', 'gast:160:pkirestore01', 'gast:160:pkirestore01']);
+    aufrufe.length = 0;
+    const falsch = await sk({ ...restore, caThumbprint: 'BC3FAC56D2FB27863A0218CDD8E5D16B587570F1', fehlen: ['4E073ED074CAB15E515ECD4471B0820C45E440E1'] }).execute(P, { ausChange: true } as never);
+    expect(falsch.success).toBe(false);
+    expect(falsch.error).toMatch(/CA-Zertifikat BC3F.*nicht in der Datenbank: 4E07/);
+    expect(aktionsArt('windows_pki', 'ca_wiederherstellung_testen')).toBe('aendern');
+  });
+});

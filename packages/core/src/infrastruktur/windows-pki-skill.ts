@@ -9,7 +9,7 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
   pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript,
   pruefeIssuerReset, issuerResetSkript, pruefeSperre, sperrSkript,
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
-  pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSicherungAufraeumenSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
+  pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSicherungAufraeumenSkript, caRestoreSkript, rootExportSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
 import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, SIGNATUR_STATUS, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
@@ -33,7 +33,7 @@ export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pru
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
-  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen', 'ca_sicherung_aufraeumen']);
+  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -64,6 +64,7 @@ export class WindowsPkiSkill extends Skill {
       + 'ca_sicherung (zugang oder vmid + vm_name; ziel_ordner auf der Sicherungsplatte z. B. B:\\CA-Sicherung; passwort_tresor = Tresor-Eintrag für das PKCS#12-Kennwort, z. B. pki-root-sicherung) — Backup-CARoleService (Datenbank + privater Schlüssel kennwortgeschützt), CA-Konfiguration, CAPolicy.inf, Manifest mit SHA-256; additiv, ohne Rückweg; Ergebnis „CA_BACKUP_VERIFIED“ erst nach Hash-Abgleich. '
       + 'ca_sicherung_status (lesend; zugang oder vmid + vm_name; ziel_ordner) — Sätze mit Alter und Hash-Abgleich. '
       + 'ca_sicherung_aufraeumen (nur im Change; zugang, ziel_ordner, behalten Standard 12, schuetzen = Sätze, die nie gelöscht werden) — von den geprüften Sätzen bleiben die neuesten „behalten“ und die geschützten, ältere geprüfte werden gelöscht; fehlerhafte bleiben liegen; Ergebnis „CA_BACKUP_RETENTION“ (ohne Rückweg). '
+      + 'ca_wiederherstellung_testen (nur im Change; NUR vmid + vm_name einer NETZLOSEN Wegwerf-VM — vorher proxmox provision_windows_offline, check_offline_isolation, windows_pki features_installieren; quelle_zugang z. B. fs01, quelle_ordner z. B. S:\\\\PKI-Sicherung\\\\Issuer, satz ca-JJJJMMTT-HHMMSS, passwort_tresor z. B. pki-iss-sicherung, erwartet_ca_thumbprint, erwartet_root_thumbprint, erwartete_zertifikate = Thumbprints von Zertifikaten, die die CA ausgestellt hat) — Satz hashgeprüft in die VM, Root ins Vertrauen, CA aus der .p12 als Standalone-Subordinate einrichten (ohne Domäne), Datenbank zurückspielen; bricht ab, sobald in der VM ein Netzadapter aktiv ist; Ergebnis „CA_RESTORE_VERIFIED“ (CA-Thumbprint, Schlüssel passt, erwartete Zertifikate in der Datenbank, höchste RequestID, Sperrlistennummer); ohne Rückweg — danach die Test-VM löschen (proxmox delete_vm). '
       + 'ca_sicherung_kopieren (Quelle zugang oder vmid + vm_name, ziel_ordner der Quelle, satz = ca-JJJJMMTT-HHMMSS aus ca_sicherung; ziel_zugang = anderer Windows-Fernzugang, ziel_ziel_ordner dort) — hashgeprüfte unabhängige Kopie (ZIP über Alfred, entpackt, Manifest nachgeprüft); additiv. '
       + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen. '
       + 'CODESIGNATUR (Etappe 3a, Owner 13.11.: Schlüssel auf dem Alfred-Server, 1 Jahr, nur signieren und prüfen): '
@@ -99,7 +100,7 @@ export class WindowsPkiSkill extends Skill {
         csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
         host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, alias: { type: 'string', description: 'pki_web_einrichten: URL-Unterpfad, z. B. pki' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
         urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
-        ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, behalten: { type: 'number', description: 'ca_sicherung_aufraeumen: so viele neueste geprüfte Sätze bleiben (1–52)' }, schuetzen: { type: 'array', items: { type: 'string' }, description: 'ca_sicherung_aufraeumen: Sätze, die nie gelöscht werden (ca-JJJJMMTT-HHMMSS)' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
+        ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, behalten: { type: 'number', description: 'ca_sicherung_aufraeumen: so viele neueste geprüfte Sätze bleiben (1–52)' }, quelle_zugang: { type: 'string' }, quelle_ordner: { type: 'string' }, erwartet_ca_thumbprint: { type: 'string' }, erwartet_root_thumbprint: { type: 'string' }, erwartete_zertifikate: { type: 'array', items: { type: 'string' } }, schuetzen: { type: 'array', items: { type: 'string' }, description: 'ca_sicherung_aufraeumen: Sätze, die nie gelöscht werden (ca-JJJJMMTT-HHMMSS)' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
         db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
@@ -495,6 +496,32 @@ export class WindowsPkiSkill extends Skill {
           const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
           const { r, weg } = await this.lauf<{ ordner: string; rechner?: string; saetze: { satz: string; ca?: string; zeit?: string; alterStunden?: number; dateien?: number; ok: boolean; grund?: string; falsch?: string[] }[] }>(input, caSicherungStatusSkript(z), 'CA-Sicherung prüfen', 300_000);
           return { success: true, data: { ...r, weg }, display: `CA-Sicherungen ${r.ordner} (${weg}): ${r.saetze.length ? r.saetze.map(x => `${x.satz} ${x.ok ? 'ok' : `FEHLERHAFT (${x.grund ?? x.falsch?.join(', ')})`}${x.alterStunden !== undefined ? `, ${x.alterStunden} h alt` : ''}`).join('; ') : 'keine'}` };
+        }
+        // v1859 — PKI Etappe 5, Spec Pos. 18: isolierter Restore-Test (Owner 14.11.: netzlose Wegwerf-VM)
+        case 'ca_wiederherstellung_testen': {
+          if (input.vmid === undefined || input.zugang !== undefined) return { success: false, error: 'ca_wiederherstellung_testen nur in einer netzlosen VM über den Gastagenten: vmid + vm_name, kein zugang' };
+          const qz = String(input.quelle_zugang ?? '').trim().toLowerCase(); if (!ZUGANG.test(qz)) return { success: false, error: 'quelle_zugang: Windows-Fernzugang mit dem Sicherungssatz, z. B. fs01' };
+          const qo = pruefeSicherungsziel({ ziel_ordner: input.quelle_ordner }); if (typeof qo === 'string') return { success: false, error: 'quelle_ordner: Ordner der Sätze auf der Quelle, z. B. S:\\PKI-Sicherung\\Issuer' };
+          const satz = String(input.satz ?? '').trim(); if (!CA_SATZ.test(satz)) return { success: false, error: 'satz: ca-JJJJMMTT-HHMMSS' };
+          const tp = (f: string) => String(input[f] ?? '').replace(/\s/g, '').toUpperCase();
+          const ca = tp('erwartet_ca_thumbprint'); const root = tp('erwartet_root_thumbprint');
+          if (!/^[0-9A-F]{40}$/.test(ca) || !/^[0-9A-F]{40}$/.test(root)) return { success: false, error: 'erwartet_ca_thumbprint und erwartet_root_thumbprint: je 40 Hex' };
+          const erw = (Array.isArray(input.erwartete_zertifikate) ? input.erwartete_zertifikate : []).map(x => String(x).replace(/\s/g, '').toUpperCase());
+          if (!erw.length || erw.length > 20 || erw.some(x => !/^[0-9A-F]{40}$/.test(x))) return { success: false, error: 'erwartete_zertifikate: 1–20 Thumbprints, die die CA ausgestellt hat (müssen in der wiederhergestellten Datenbank stehen)' };
+          const kw = await this.kennwort(input.passwort_tresor, `CA-Restore-Test ${satz} (PKCS#12-Kennwort)`);
+          const vm = { vmid: input.vmid, vm_name: input.vm_name };
+          const { r: pk } = await this.lauf<{ satz: string; bytes: number; sha256: string; base64: string }>({ zugang: qz }, caSatzPackenSkript({ ...qo, satz }), 'CA-Sicherung packen', 600_000);
+          const { r: rt } = await this.lauf<{ thumbprint: string; base64: string }>({ zugang: qz }, rootExportSkript({ thumbprint: root }), 'Root-Zertifikat lesen', 120_000);
+          const ordner = 'C:\\Alfred-Restore';
+          const { r: ab } = await this.lauf<{ zustand: string; dateien: number; ca: string }>(vm, caSatzAblegenSkript({ ziel_ordner: ordner, satz, sha256: pk.sha256 }), 'Satz in die Test-VM', 900_000, { base64: pk.base64 });
+          const { r } = await this.lauf<{ zustand: string; rechner: string; satz: string; satzZeit: string; ca: string; caThumbprint: string; dienst: string; schluesselPasst: boolean; zertifikate: number; hoechsteRequestId: number; crlNummer: number; fehlen: string[] }>(vm, caRestoreSkript({ ordner, satz, erwartet_ca: ca, erwartet_root: root, erwartete_zertifikate: erw }), 'CA wiederherstellen', 1_800_000, { kennwort: kw, root_base64: rt.base64 });
+          const g: string[] = [];
+          if (r.caThumbprint !== ca) g.push(`CA-Zertifikat ${r.caThumbprint || '—'} statt ${ca}`);
+          if (!r.schluesselPasst) g.push('Schlüssel passt nicht zum CA-Zertifikat (certutil -verifykeys)');
+          if (r.dienst !== 'Running') g.push(`CertSvc ${r.dienst}`);
+          if (r.fehlen.length) g.push(`nicht in der Datenbank: ${r.fehlen.join(', ')}`);
+          const text = `${g.length ? 'CA-Wiederherstellung NICHT bewiesen' : '✅ CA_RESTORE_VERIFIED'} „${r.ca}“ aus ${satz} (gesichert ${r.satzZeit}, ${pk.bytes} Bytes, SHA-256 ${pk.sha256}; ${ab.zustand}, ${ab.dateien} Dateien) in ${r.rechner} (netzlos, ${r.zustand}): CA-Zertifikat ${r.caThumbprint}, Schlüssel ${r.schluesselPasst ? 'passt' : 'PASST NICHT'}, CertSvc ${r.dienst}, ${r.zertifikate} Zertifikate in der Datenbank (höchste RequestID ${r.hoechsteRequestId}, erwartete ${erw.length - r.fehlen.length}/${erw.length}), Sperrlistennummer ${r.crlNummer}${g.length ? ` — BEFUNDE: ${g.join('; ')}` : ''} — Test-VM danach löschen (delete_vm)`;
+          return g.length ? { success: false, data: r, error: text } : { success: true, data: { ...r, sha256: pk.sha256 }, display: text };
         }
         case 'ca_sicherung_aufraeumen': {
           const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
