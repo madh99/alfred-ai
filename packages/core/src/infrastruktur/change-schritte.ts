@@ -119,9 +119,14 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   'ca_sicherung_aufraeumen',
   // v1859 — Restore-Test richtet eine CA in einer netzlosen Wegwerf-VM ein; Rückweg ist das Löschen der VM (eigener Schritt)
   'ca_wiederherstellung_testen',
+  // v1866 — PKI-Lab: Bausteine nur auf Wegwerf-Lab-Rechnern; Rückweg ist der Abbau des Labs (VMs löschen, eigener Schritt/Change)
+  'lab_namen_setzen', 'lab_ca_einrichten', 'lab_root_vertrauen', 'lab_sql_installieren', 'lab_zertifikat_ausstellen', 'lab_zertifikat_sperren', 'lab_crl_dienst', 'lab_zertifikat_binden', 'tls_negativtest',
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
-const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',
+const SELBST_GEPRUEFT = new Set([
+  // v1865/v1866 — ISO hashgeprüft, CD-Laufwerk nachgelesen; PKI-Lab-Bausteine weisen ihr Ergebnis selbst nach (Marker LAB_…/EXPECTED_TLS_FAILURE)
+  'iso_ablegen', 'attach_iso', 'detach_iso', 'lab_namen_setzen', 'lab_ca_einrichten', 'lab_root_vertrauen', 'lab_sql_installieren', 'lab_zertifikat_ausstellen', 'lab_zertifikat_sperren', 'lab_crl_dienst', 'lab_zertifikat_binden', 'tls_negativtest',
+  'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',
   // v1847 — PKI Etappe 3a: die Codesignatur-Bausteine prüfen ihr Ergebnis selbst (Vorlage auf der CA mit Flags; Zertifikat kryptografisch
   // gegen Schlüssel, Name, Verwendung, Aussteller; Sperrung in der CA-Datenbank; Schalter mit gültigem Material) und schlagen sonst fehl
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
@@ -215,6 +220,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status', 'defender_protokoll'].includes(aktion) ? 'lesen' : 'aendern';
   // v1810 — windows_pki: status liest; alle späteren Bausteine ändern
   if (skill === 'windows_pki') return ['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest', 'zertifikat_pruefen', 'erneuerung_status', 'anforderung_liste'].includes(aktion) ? 'lesen' : 'aendern';
+  // v1866 — pki_lab: alle Bausteine ändern (nur auf Lab-Rechnern)
+  if (skill === 'pki_lab') return 'aendern';
   if (skill === 'sql_server') return ['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen'].includes(aktion) ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';

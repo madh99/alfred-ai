@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — PKI-Lab für TLS-Negativtests (v1866)
+
+- Neuer Skill `pki_lab`: Wegwerf-Lab-CA mit HTTP-Sperrliste, Test-SQL-Instanz ohne Verfügbarkeitsgruppe, Fixture-Zertifikate und Bindung für die Fälle unbekannte CA, falscher Name, abgelaufen, gesperrt und nicht erreichbare Sperrliste.
+- `tls_negativtest` meldet `EXPECTED_TLS_FAILURE` nur mit dem passenden Grund und nur, wenn der Server das erwartete Fixture vorgelegt hat; ein Verbindungsfehler gilt nie als Beweis.
+- Alle Bausteine laufen nur in freigegebenen Changes und nur auf Lab-Rechnern ohne Domäne mit Adresse im Lab-Netz.
+
 ### Added — ISO-Medien für Lab-VMs (v1865)
 
 - Fernzugriff `iso_ablegen`: eine ISO-Datei von einem Windows-Rechner hashgeprüft (Quelle, Server, Ziel) in den ISO-Speicher eines Proxmox-Knotens übertragen.
