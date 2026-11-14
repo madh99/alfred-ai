@@ -9,7 +9,7 @@ import { pkiStatusSkript, pkiStatusText, type PkiStatus, pruefeRoot, rootInitSkr
   pruefePublikation, publikationSkript, crlSkript, pruefeIssuer, issuerAnfordernSkript, pruefeSignieren, signierenSkript, type Signiert, pruefeAktivieren, aktivierenSkript,
   pruefeIssuerReset, issuerResetSkript, pruefeSperre, sperrSkript,
   pruefeWeb, webSkript, webEntfernenSkript, pruefeAblage, ablageSkript, abrufSkript, adVeroeffentlichenSkript, trustAktualisierenSkript, trustPruefenSkript,
-  pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
+  pruefeSicherungsziel, caSicherungSkript, caSicherungStatusSkript, caSicherungAufraeumenSkript, caSatzPackenSkript, caSatzAblegenSkript, CA_SATZ } from './windows-pki.js';
 import { KONTO_FREI } from './windows-ad.js';
 import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellenSkript, seriennummerSkript, schluesselUndAnforderung, pruefeAusgestellt, ersteZertifikat, EKU_CODESIGNATUR, SIGNATUR_STATUS, type CodesignaturAblage, type Lokal } from './windows-codesignatur.js';
 import { createHash } from 'node:crypto';
@@ -33,7 +33,7 @@ export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pru
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
-  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen']);
+  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen', 'ca_sicherung_aufraeumen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -63,6 +63,7 @@ export class WindowsPkiSkill extends Skill {
       + 'issuer_anfordern zusätzlich db_pfad/log_pfad (z. B. D:\\CertDB, D:\\CertLog; nicht C:). '
       + 'ca_sicherung (zugang oder vmid + vm_name; ziel_ordner auf der Sicherungsplatte z. B. B:\\CA-Sicherung; passwort_tresor = Tresor-Eintrag für das PKCS#12-Kennwort, z. B. pki-root-sicherung) — Backup-CARoleService (Datenbank + privater Schlüssel kennwortgeschützt), CA-Konfiguration, CAPolicy.inf, Manifest mit SHA-256; additiv, ohne Rückweg; Ergebnis „CA_BACKUP_VERIFIED“ erst nach Hash-Abgleich. '
       + 'ca_sicherung_status (lesend; zugang oder vmid + vm_name; ziel_ordner) — Sätze mit Alter und Hash-Abgleich. '
+      + 'ca_sicherung_aufraeumen (nur im Change; zugang, ziel_ordner, behalten Standard 12, schuetzen = Sätze, die nie gelöscht werden) — von den geprüften Sätzen bleiben die neuesten „behalten“ und die geschützten, ältere geprüfte werden gelöscht; fehlerhafte bleiben liegen; Ergebnis „CA_BACKUP_RETENTION“ (ohne Rückweg). '
       + 'ca_sicherung_kopieren (Quelle zugang oder vmid + vm_name, ziel_ordner der Quelle, satz = ca-JJJJMMTT-HHMMSS aus ca_sicherung; ziel_zugang = anderer Windows-Fernzugang, ziel_ziel_ordner dort) — hashgeprüfte unabhängige Kopie (ZIP über Alfred, entpackt, Manifest nachgeprüft); additiv. '
       + 'trust_aktualisieren (zugang) — gpupdate Computer + certutil -pulse (additiv). trust_pruefen (lesend; zugang, root_thumbprints, zwischen_thumbprints) — Ergebnis „TRUST_APPLIED“ je Ziel nur, wenn alle Fingerprints in LocalMachine stehen. '
       + 'CODESIGNATUR (Etappe 3a, Owner 13.11.: Schlüssel auf dem Alfred-Server, 1 Jahr, nur signieren und prüfen): '
@@ -98,7 +99,7 @@ export class WindowsPkiSkill extends Skill {
         csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
         host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, alias: { type: 'string', description: 'pki_web_einrichten: URL-Unterpfad, z. B. pki' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
         urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
-        ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
+        ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, behalten: { type: 'number', description: 'ca_sicherung_aufraeumen: so viele neueste geprüfte Sätze bleiben (1–52)' }, schuetzen: { type: 'array', items: { type: 'string' }, description: 'ca_sicherung_aufraeumen: Sätze, die nie gelöscht werden (ca-JJJJMMTT-HHMMSS)' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
         db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
         vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
@@ -494,6 +495,14 @@ export class WindowsPkiSkill extends Skill {
           const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
           const { r, weg } = await this.lauf<{ ordner: string; rechner?: string; saetze: { satz: string; ca?: string; zeit?: string; alterStunden?: number; dateien?: number; ok: boolean; grund?: string; falsch?: string[] }[] }>(input, caSicherungStatusSkript(z), 'CA-Sicherung prüfen', 300_000);
           return { success: true, data: { ...r, weg }, display: `CA-Sicherungen ${r.ordner} (${weg}): ${r.saetze.length ? r.saetze.map(x => `${x.satz} ${x.ok ? 'ok' : `FEHLERHAFT (${x.grund ?? x.falsch?.join(', ')})`}${x.alterStunden !== undefined ? `, ${x.alterStunden} h alt` : ''}`).join('; ') : 'keine'}` };
+        }
+        case 'ca_sicherung_aufraeumen': {
+          const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };
+          const behalten = Number(input.behalten ?? 12); if (!Number.isInteger(behalten) || behalten < 1 || behalten > 52) return { success: false, error: 'behalten: 1–52 (Standard 12)' };
+          const schuetzen = (Array.isArray(input.schuetzen) ? input.schuetzen.map(String) : []).map(x => x.trim());
+          if (schuetzen.some(x => !CA_SATZ.test(x))) return { success: false, error: 'schuetzen: Sätze ca-JJJJMMTT-HHMMSS' };
+          const { r, weg } = await this.lauf<{ ordner: string; rechner: string; geloescht: string[]; behalten: string[]; fehlerhaft: string[] }>(input, caSicherungAufraeumenSkript({ ...z, behalten, schuetzen }), 'CA-Sicherungen aufräumen', 300_000);
+          return { success: true, data: { ...r, weg }, display: `✅ CA_BACKUP_RETENTION ${r.rechner ?? weg} ${r.ordner}: gelöscht ${r.geloescht.length ? r.geloescht.join(', ') : 'keine'}; behalten ${r.behalten.join(', ')}${r.fehlerhaft.length ? `; fehlerhaft (nicht gelöscht) ${r.fehlerhaft.join(', ')}` : ''}` };
         }
         case 'ca_sicherung_kopieren': {
           const z = pruefeSicherungsziel(input); if (typeof z === 'string') return { success: false, error: z };

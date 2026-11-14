@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — PKI-Betrieb: tägliche Prüfung und wöchentliche CA-Sicherung (v1858)
+
+- Tägliche Prüfung der SQL-TLS-Zertifikatsfristen, der Sperrlisten und des Alters der CA-Sicherungen mit Problems und Benachrichtigung.
+- Standard-Vorlage für die wöchentliche Sicherung der Issuing-CA mit unabhängiger Kopie und Aufbewahrung von zwölf Wochen.
+
 ### Added — Bewachter Wiederanlauf nach Rücknahme der SQL-TLS-Bindung (v1857)
 
 - Nach dem Zurücksetzen der Bindung startet das sekundäre Replikat bewacht wieder an, auch wenn SQL zuvor nicht mehr hochkam; der gesunde Primär bleibt unberührt.

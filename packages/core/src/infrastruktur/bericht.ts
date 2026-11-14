@@ -37,7 +37,7 @@ export interface BackupStand {
   unerreichbar: Array<{ speicher: string; grund: string }>;
 }
 /** I4b Teil 3 — `schluessel` ist stabil über Läufe (für Problems ohne Doppelte), `kategorie` steuert die Übernahme ins ITSM */
-export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz' | 'grundlinie' | 'ueberwachung';
+export type BefundKategorie = 'container' | 'platte' | 'updates' | 'os' | 'paketverwaltung' | 'erfassung' | 'sicherung' | 'proxy' | 'lizenz' | 'grundlinie' | 'ueberwachung' | 'pki';
 /** I8 3b-4 — Zertifikatsablauf: ab so vielen Resttagen mittel, ab 7 hoch */
 export const ZERTIFIKAT_WARN_TAGE = 30;
 /** I8 3b-4 — so viele Fehler einer Quelle in 24 h sind ein Problem (darunter nur im Bericht) */

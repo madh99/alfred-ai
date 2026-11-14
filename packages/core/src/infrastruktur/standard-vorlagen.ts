@@ -319,6 +319,29 @@ export const VORLAGEN: Vorlage[] = [
         ] } };
     },
   },
+  {
+    key: 'ca_sicherung', version: 1, titel: '(k) Wöchentliche Sicherung der Issuing-CA',
+    beschreibung: 'PKI Etappe 5 (Owner 14.11.): native Sicherung der Issuing-CA pkiiss01 (Datenbank, privater Schlüssel kennwortgeschützt mit dem Tresor-Eintrag pki-iss-sicherung, Konfiguration, Manifest mit SHA-256) nach B:\\CA-Sicherung → hashgeprüfte unabhängige Kopie nach fs01 S:\\PKI-Sicherung\\Issuer → Aufbewahrung auf beiden Seiten: die 12 neuesten geprüften Sätze bleiben, die Erstsicherung ca-20261113-114935 bleibt immer, fehlerhafte Sätze werden nie gelöscht. Root-CA und Offsite nicht enthalten. Kein Ausfall (die CA läuft während der Sicherung weiter). Höchstens 1× in 5 Tagen.',
+    parameter: {}, verfuegbar: true,
+    async erzeuge(_p, k) {
+      if (await k.anzahl('ca_sicherung', 'pkiiss01', k.jetzt.getTime() - 5 * 86_400_000) > 0) return { fehler: 'pkiiss01: höchstens 1× in 5 Tagen' };
+      const za = await k.zugangAsset('pkiiss01');
+      const quelle = { zugang: 'pkiiss01', ziel_ordner: 'B:\\CA-Sicherung' };
+      const kopie = { zugang: 'fs01', ziel_ordner: 'S:\\PKI-Sicherung\\Issuer' };
+      const geschuetzt = ['ca-20261113-114935'];
+      const status = (z: { zugang: string; ziel_ordner: string }) => ({ typ: 'skill' as const, skill: 'windows_pki', aktion: 'ca_sicherung_status', parameter: z, erwartet: '{{schritt1.satz}} ok', nichtEnthalten: 'FEHLERHAFT' });
+      return { merkmal: 'pkiiss01', plan: {
+        titel: `Standard: wöchentliche Sicherung der Issuing-CA (${tag(k.jetzt)})`, begruendung: 'Standard-Change (k) — PKI Etappe 5: wöchentliche native CA-Sicherung mit unabhängiger Kopie und Aufbewahrung 12 Wochen.',
+        typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: za ? [za] : [],
+        ohneSicherungGrund: 'die Vorlage IST die Sicherung; gelöscht werden nur ältere geprüfte Sätze über der Aufbewahrung',
+        schritte: [
+          { titel: 'Issuing-CA sichern (pkiiss01)', art: 'aktion', skill: 'windows_pki', aktion: 'ca_sicherung', parameter: { ...quelle, passwort_tresor: 'pki-iss-sicherung' }, pruefung: status(quelle), rueckweg: { keiner: 'additive Sicherung' }, zeitlimitS: 1800 },
+          { titel: 'Unabhängige Kopie nach fs01', art: 'aktion', skill: 'windows_pki', aktion: 'ca_sicherung_kopieren', parameter: { ...quelle, satz: '{{schritt1.satz}}', ziel_zugang: kopie.zugang, ziel_ziel_ordner: kopie.ziel_ordner }, pruefung: status(kopie), rueckweg: { keiner: 'additive Kopie' }, zeitlimitS: 1800 },
+          { titel: 'Aufbewahrung auf pkiiss01 (12 neueste + Erstsicherung)', art: 'aktion', skill: 'windows_pki', aktion: 'ca_sicherung_aufraeumen', parameter: { ...quelle, behalten: 12, schuetzen: geschuetzt }, pruefung: status(quelle), rueckweg: { keiner: 'gelöscht werden nur ältere geprüfte Sätze über der Aufbewahrung' }, zeitlimitS: 600 },
+          { titel: 'Aufbewahrung auf fs01 (12 neueste + Erstsicherung)', art: 'aktion', skill: 'windows_pki', aktion: 'ca_sicherung_aufraeumen', parameter: { ...kopie, behalten: 12, schuetzen: geschuetzt }, pruefung: status(kopie), rueckweg: { keiner: 'gelöscht werden nur ältere geprüfte Sätze über der Aufbewahrung' }, zeitlimitS: 600 },
+        ] } };
+    },
+  },
   { key: 'testvm', version: 1, titel: '(g) Test-VM anlegen und nach Ablauf löschen', beschreibung: 'Wegwerf-VM aus Vorlage im Test-VLAN (2 vCPU/4 GB/32 GB, höchstens 3).', parameter: {}, verfuegbar: false, folgt: 'mit I5 (der Proxmox-Skill kann VMs noch nicht löschen)' },
 ];
 

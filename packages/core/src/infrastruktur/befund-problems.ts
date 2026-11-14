@@ -9,7 +9,7 @@ import type { Auffaelligkeit, BefundKategorie } from './bericht.js';
 
 export const METHODE = 'infrastruktur-bestand';
 const AUSGENOMMEN: ReadonlySet<BefundKategorie> = new Set(['sicherung', 'erfassung']);
-const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security', ueberwachung: 'software' };
+const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security', ueberwachung: 'software', pki: 'security' };
 
 export interface ProblemZugriff {
   liste(): Promise<Array<{ id: string; title: string; status: string; detectionMethod?: string }>>;
@@ -30,12 +30,13 @@ export interface Erfassung {
   kategorien?: ReadonlySet<string>;
 }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
-const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung)$/;
+const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung|pki)$/;
 /**
  * I8 3b-4 — wiederkehrende Befunde: ein Dienst kann nächsten Monat wieder ausfallen. Von Alfred gelöste Problems (resolved) blockieren
  * den Schlüssel daher nicht — ein neues Auftreten wird ein neues Problem. Vom Owner geschlossene (closed) gelten weiter als entschieden.
  */
-const WIEDERKEHREND = /^ueberwachung$/;
+// v1858 — PKI-Betrieb: Fristen (Zertifikat, Sperrliste, Sicherungsalter) kehren mit jedem Zyklus wieder
+const WIEDERKEHREND = /^(ueberwachung|pki)$/;
 
 const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
 

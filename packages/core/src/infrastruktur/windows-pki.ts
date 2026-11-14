@@ -823,6 +823,34 @@ export function caSicherungStatusSkript(z: { ziel_ordner: string }): string {
   ].join('\n');
 }
 
+/**
+ * v1858 — Aufbewahrung (Owner 14.11., Spec: wöchentlich 12 Wochen): von den GEPRÜFTEN Sätzen (Manifest, alle Hashes passen) bleiben
+ * die neuesten `behalten`; ältere geprüfte werden gelöscht — außer geschützte (Zeremonie-/Erstsicherungen). Fehlerhafte Sätze bleiben
+ * liegen (Befund, Mensch entscheidet). Nur Ordner ca-JJJJMMTT-HHMMSS direkt im Zielordner.
+ */
+export function caSicherungAufraeumenSkript(z: { ziel_ordner: string; behalten: number; schuetzen: string[] }): string {
+  return [
+    ...kopf(z, false),
+    "if (-not (Test-Path $p.ziel_ordner)) { throw ('Zielordner ' + $p.ziel_ordner + ' fehlt') }",
+    '$shaF = [Security.Cryptography.SHA256]::Create()',
+    '$gut = @(); $defekt = @()',
+    "foreach ($s in @(Get-ChildItem $p.ziel_ordner -Directory | Where-Object { $_.Name -match '^ca-\\d{8}-\\d{6}$' } | Sort-Object Name -Descending)) {",
+    "  $mf = Join-Path $s.FullName 'manifest.json'",
+    "  if (-not (Test-Path $mf)) { $defekt += $s.Name; continue }",
+    '  $m = [IO.File]::ReadAllText($mf) | ConvertFrom-Json',
+    "  $falsch = @(@($m.dateien) | Where-Object { $f = Join-Path $s.FullName $_.datei; -not (Test-Path $f) -or ((($shaF.ComputeHash([IO.File]::ReadAllBytes($f)) | ForEach-Object { $_.ToString('x2') }) -join '') -ne $_.sha256) })",
+    "  if ($falsch.Count -or -not @($m.dateien).Count) { $defekt += $s.Name } else { $gut += $s.Name }",
+    '}',
+    "if ($gut.Count -lt 1) { throw 'kein geprüfter Sicherungssatz vorhanden — nichts gelöscht' }",
+    '$bleibt = @($gut | Select-Object -First $p.behalten) + @($gut | Where-Object { @($p.schuetzen) -contains $_ })',
+    '$weg = @($gut | Where-Object { $bleibt -notcontains $_ })',
+    "foreach ($n in $weg) { $d = Join-Path $p.ziel_ordner $n; if ((Split-Path $d -Parent) -ne (Resolve-Path $p.ziel_ordner).Path.TrimEnd('\\')) { throw ('unerwarteter Pfad ' + $d) }; Remove-Item -LiteralPath $d -Recurse -Force }",
+    "$rest = @(Get-ChildItem $p.ziel_ordner -Directory | Where-Object { $_.Name -match '^ca-\\d{8}-\\d{6}$' } | ForEach-Object { $_.Name })",
+    "$noch = @($weg | Where-Object { $rest -contains $_ }); if ($noch.Count) { throw ('nicht gelöscht: ' + ($noch -join ', ')) }",
+    "Ergebnis ([ordered]@{ ordner = $p.ziel_ordner; rechner = $env:COMPUTERNAME; geloescht = $weg; behalten = @($bleibt | Select-Object -Unique); fehlerhaft = $defekt })",
+  ].join('\n');
+}
+
 /** Quelle: einen Sicherungssatz als ZIP (Base64 + SHA-256) liefern — nur den genannten Satz */
 export function caSatzPackenSkript(z: { ziel_ordner: string; satz: string }): string {
   return [

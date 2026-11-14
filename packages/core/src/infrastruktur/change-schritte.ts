@@ -115,6 +115,8 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   // v1856 — Etappe 4: ein Dienstneustart ist nicht zurückzunehmen (bei Fehler Halt, Bindung separat zurück); das Wiederherstellen ist selbst
   // der Rückweg; ein entfernter ungesendeter Schlüssel ist nicht wiederherstellbar
   'engine_neustart', 'engine_wiederanlauf', 'zertifikat_bindung_wiederherstellen', 'anforderung_entfernen',
+  // v1858 — Aufbewahrung löscht nur ältere geprüfte Sicherungssätze über der Grenze
+  'ca_sicherung_aufraeumen',
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
 const SELBST_GEPRUEFT = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',

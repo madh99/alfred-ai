@@ -7785,6 +7785,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { ok: true, zaehler: { hosts: win.length, befunde: auff.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
           },
         });
+        // v1858 — PKI Etappe 5 Betrieb (Owner 14.11. „Alfred-Job + Telegram“): täglich SQL-TLS-Fristen, Sperrlisten, CA-Sicherungsalter
+        this.registriereJob({
+          key: 'pki-betrieb', beschreibung: 'PKI Etappe 5 — SQL-TLS-Zertifikate (90/60/30/14), Sperrlisten-NextUpdate, Alter der CA-Sicherungen → Problems + Telegram',
+          takt: { art: 'taeglich', um: '07:15' }, bereich: 'global', slot: true, timeoutMin: 20,
+          run: async () => {
+            const sk = skillRegistry.get('windows_pki');
+            if (!sk || !ownerFz()) return { ok: true, zaehler: { befunde: 0, neu: 0, geloest: 0, fehler: 0 } };
+            const { pkiBefunde } = await import('./infrastruktur/pki-betrieb.js');
+            const r = await pkiBefunde((aktion, parameter) => skillSandbox.execute(sk, { action: aktion, ...parameter }, ctxIntern()));
+            const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
+            const pr = await infraProblems(r.befunde, { docId: 'tägliche PKI-Prüfung', datum }, { hosts: r.erfasst, alle: false, kategorien: new Set(['pki']) });
+            const neu = r.befunde.filter(b => b.schwere !== 'niedrig');
+            if (pr.neu.length || r.fehler.length) {
+              await this.meldeOhneModell(`🔐 PKI-Prüfung ${datum}: ${pr.neu.length} neue Befunde${r.fehler.length ? `, ${r.fehler.length} Prüfungen gescheitert` : ''}\n${neu.map(b => `• ${b.schwere === 'hoch' ? '🔴' : '🟠'} ${b.bereich}: ${b.text}`).join('\n')}${r.fehler.length ? `\n${r.fehler.map(f => `• ⚠️ ${f}`).join('\n')}` : ''}`).catch(() => undefined);
+            }
+            this.logger.info({ befunde: r.befunde.length, neu: pr.neu.length, bekannt: pr.bekannt, geloest: pr.geloest.length, erfasst: [...r.erfasst], fehler: r.fehler, stand: r.zeilen }, 'v1858 PKI-Betrieb');
+            return { ok: true, zaehler: { befunde: r.befunde.length, neu: pr.neu.length, geloest: pr.geloest.length, fehler: r.fehler.length } };
+          },
+        });
         skillRegistry.register(new InfrastrukturSkill({
           istOwner: istOwnerFz,
           entdecke: async (quellen) => {
@@ -7990,6 +8009,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const w = await standardRef.serie(o, 'windows_updates', { geplantAb: naechsteNacht(new Date()) });
             if (!w.ok && !w.fehler.some(f => f.startsWith('keine Hosts'))) await this.meldeOhneModell(`📋 Wöchentliche Windows-Updates: keine Serie angelegt — ${w.fehler.join('; ')}`).catch(() => undefined);
             return { ok: true, zaehler: { changes: (r.ok ? r.ids.length : 0) + (w.ok ? w.ids.length : 0) } };
+          },
+        });
+        // v1858 — PKI Etappe 5 (Owner 14.11.): wöchentliche Sicherung der Issuing-CA aus der freigegebenen Standard-Vorlage (k)
+        this.registriereJob({
+          key: 'pki-ca-sicherung', beschreibung: 'PKI Etappe 5 — sonntags Standard-Change (k): Issuing-CA sichern, Kopie nach fs01, Aufbewahrung 12 Wochen',
+          takt: { art: 'woechentlich', tag: 0, um: '03:30' }, bereich: 'global', slot: true, timeoutMin: 10,
+          run: async () => {
+            const o = ownerFz(); if (!o || !standardRef) return { ok: true, zaehler: { changes: 0 } };
+            const r = await standardRef.anlegen(o, 'ca_sicherung', {});
+            if (!r.ok) {
+              this.logger.warn({ fehler: r.fehler }, 'v1858 CA-Sicherung: kein Standard-Change angelegt');
+              if (!r.fehler.some(f => f.includes('höchstens 1×'))) await this.meldeOhneModell(`🔐 Wöchentliche CA-Sicherung: kein Change angelegt — ${r.fehler.join('; ')}`).catch(() => undefined);
+              return { ok: true, zaehler: { changes: 0 } };
+            }
+            this.logger.info({ change: r.change.id }, 'v1858 CA-Sicherung: Standard-Change angelegt');
+            return { ok: true, zaehler: { changes: 1 } };
           },
         });
         // I4b — Pflege von Wartungsfenstern/Sperrzeiten/Benachrichtigungen im Web über dieselben Skill-Aktionen (nur Owner);
