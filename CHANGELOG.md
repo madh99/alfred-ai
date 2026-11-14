@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CA-Restore-Test: RequestID und Fremd-CA-Sperre (v1864)
+
+- Die höchste RequestID der wiederhergestellten Datenbank wird sprachunabhängig gelesen; eine unplausible RequestID gilt nicht mehr als Beweis.
+- Ein Vermerk in der Test-VM hebt die Sperre gegen eine fremde CA nicht mehr auf; maßgeblich ist das eingerichtete CA-Zertifikat.
+
 ### Fixed — CA-Restore-Test: Merkdatei in frischer VM (v1863)
 
 - Der Ablageordner für den Restore-Vermerk wird angelegt, falls er in der Test-VM noch fehlt.

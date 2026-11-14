@@ -919,7 +919,8 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     // v1862 — CA-Zertifikat der eingerichteten CA (Registry CACertHash, „4b 07 58 …“) normalisiert; erkennt ein abgebrochenes Setup DIESER CA
     "function CaHash($n) { @((Get-ItemProperty (Join-Path $k $n) -ErrorAction SilentlyContinue).CACertHash | ForEach-Object { ([string]$_ -replace '[^0-9A-Fa-f]', '').ToUpper() }) }",
     "$schon = $false; $eingerichtet = $false",
-    "if ($aktiv) { if ((Test-Path $merk) -and ([IO.File]::ReadAllText($merk) | ConvertFrom-Json).satz -eq $p.satz) { $schon = $true } elseif ((CaHash $aktiv) -contains $p.erwartet_ca) { $eingerichtet = $true } else { throw ('auf dieser VM ist schon eine fremde CA eingerichtet: ' + $aktiv) } }",
+    // v1864 — Security-Review: die Merkdatei allein hebt die Sperre gegen eine fremde CA nie auf; maßgeblich ist das CA-Zertifikat
+    "if ($aktiv) { if (-not ((CaHash $aktiv) -contains $p.erwartet_ca)) { throw ('auf dieser VM ist schon eine fremde CA eingerichtet: ' + $aktiv) } elseif ((Test-Path $merk) -and ([IO.File]::ReadAllText($merk) | ConvertFrom-Json).satz -eq $p.satz) { $schon = $true } else { $eingerichtet = $true } }",
     'if (-not $schon) {',
     // Root ins Vertrauen, damit die Kette der Issuing-CA ohne Netz aufgebaut werden kann
     "  $rb = [Convert]::FromBase64String([string]$e.root_base64); $r = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (,$rb)",
@@ -962,7 +963,9 @@ export function caRestoreSkript(z: { ordner: string; satz: string; erwartet_ca: 
     // Datenbank: ausgestellte Zertifikate (Hash), höchste RequestID, höchste Sperrlistennummer
     "$csv = Join-Path $env:TEMP 'alfred-restore-view.csv'; & certutil.exe -view -out 'RequestID,CertificateHash' csv > $csv 2>$null",
     "$zeilen = @(Import-Csv $csv -ErrorAction SilentlyContinue); Remove-Item $csv -Force -ErrorAction SilentlyContinue",
-    "$ids = @($zeilen | ForEach-Object { [int]($_.'Request ID' -replace '[^0-9]', '') } | Where-Object { $_ })",
+    // v1864 — Realfall 14.11. ba47581f: die Spalte heißt „Issued Request ID“ (Kopfzeile auf pkiiss01 gelesen), nicht „Request ID“ →
+    // höchste RequestID 0. Sprachunabhängig: erste Spalte (Reihenfolge wie in -out angegeben)
+    "$ids = @($zeilen | ForEach-Object { [int](([string]@($_.PSObject.Properties)[0].Value) -replace '[^0-9]', '') } | Where-Object { $_ })",
     "$hashes = @($zeilen | ForEach-Object { (([string]$_.'Certificate Hash') -replace '[^0-9A-Fa-f]', '').ToUpper() } | Where-Object { $_.Length -eq 40 })",
     "$crl = Join-Path $env:TEMP 'alfred-restore-crl.csv'; & certutil.exe -view CRL -out 'CRLNumber' csv > $crl 2>$null",
     "$nummern = @(Import-Csv $crl -ErrorAction SilentlyContinue | ForEach-Object { [int](([string]$_.PSObject.Properties.Value[0]) -replace '[^0-9]', '') }); Remove-Item $crl -Force -ErrorAction SilentlyContinue",

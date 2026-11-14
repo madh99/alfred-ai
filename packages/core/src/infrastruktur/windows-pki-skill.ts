@@ -520,6 +520,8 @@ export class WindowsPkiSkill extends Skill {
           if (!r.schluesselPasst) g.push('Schlüssel passt nicht zum CA-Zertifikat (certutil -verifykeys)');
           if (r.dienst !== 'Running') g.push(`CertSvc ${r.dienst}`);
           if (r.fehlen.length) g.push(`nicht in der Datenbank: ${r.fehlen.join(', ')}`);
+          // v1864 — Realfall 14.11.: 6 Zertifikate, aber höchste RequestID 0 (Spalte falsch gelesen) — unplausibel heißt nicht bewiesen
+          if (r.zertifikate > 0 && !(r.hoechsteRequestId >= r.zertifikate)) g.push(`höchste RequestID ${r.hoechsteRequestId} bei ${r.zertifikate} Zertifikaten unplausibel`);
           const text = `${g.length ? 'CA-Wiederherstellung NICHT bewiesen' : '✅ CA_RESTORE_VERIFIED'} „${r.ca}“ aus ${satz} (gesichert ${r.satzZeit}, ${pk.bytes} Bytes, SHA-256 ${pk.sha256}; ${ab.zustand}, ${ab.dateien} Dateien) in ${r.rechner} (netzlos, ${r.zustand}): CA-Zertifikat ${r.caThumbprint}, Schlüssel ${r.schluesselPasst ? 'passt' : 'PASST NICHT'}, CertSvc ${r.dienst}, ${r.zertifikate} Zertifikate in der Datenbank (höchste RequestID ${r.hoechsteRequestId}, erwartete ${erw.length - r.fehlen.length}/${erw.length}), Sperrlistennummer ${r.crlNummer}${g.length ? ` — BEFUNDE: ${g.join('; ')}` : ''} — Test-VM danach löschen (delete_vm)`;
           return g.length ? { success: false, data: r, error: text } : { success: true, data: { ...r, sha256: pk.sha256 }, display: text };
         }

@@ -101,7 +101,13 @@ describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () =>
     // v1862 — Dienststart scheitert offline an der Root-Sperrliste: nur hingenommen, wenn danach genau DIESE CA eingerichtet ist;
     // Wiederholung nach abgebrochenem Setup erkennt die CA am CACertHash; Sperrprüfung offline nur in der Wegwerf-VM hinnehmen
     expect(s).toContain('(CaHash $neu) -contains $p.erwartet_ca)) {');
-    expect(s).toContain('elseif ((CaHash $aktiv) -contains $p.erwartet_ca) { $eingerichtet = $true }');
+    // v1864 — Merkdatei hebt die Fremd-CA-Sperre nie auf: zuerst CACertHash, erst dann der Vermerk
+    const gate = s.slice(s.indexOf('if ($aktiv) {'));
+    expect(gate.indexOf("if (-not ((CaHash $aktiv) -contains $p.erwartet_ca)) { throw")).toBeLessThan(gate.indexOf('$schon = $true'));
+    expect(gate).toContain('else { $eingerichtet = $true } }');
+    // v1864 — RequestID aus der ersten Spalte („Issued Request ID“, sprachunabhängig)
+    expect(s).toContain('@($_.PSObject.Properties)[0].Value');
+    expect(s).not.toContain("$_.'Request ID'");
     const nach = s.slice(s.indexOf('$s.Install()'));
     expect(nach.indexOf("+CRLF_REVCHECK_IGNORE_OFFLINE")).toBeLessThan(nach.indexOf('Restore-CARoleService'));
     expect(nach.indexOf('Restore-CARoleService')).toBeLessThan(nach.indexOf('Start-Service CertSvc'));
@@ -130,6 +136,10 @@ describe('PKI Etappe 5: Restore-Test (Spec Pos. 18, netzlose Wegwerf-VM)', () =>
     const falsch = await sk({ ...restore, caThumbprint: 'BC3FAC56D2FB27863A0218CDD8E5D16B587570F1', fehlen: ['4E073ED074CAB15E515ECD4471B0820C45E440E1'] }).execute(P, { ausChange: true } as never);
     expect(falsch.success).toBe(false);
     expect(falsch.error).toMatch(/CA-Zertifikat BC3F.*nicht in der Datenbank: 4E07/);
+    // v1864 — Realfall 14.11.: höchste RequestID 0 bei 6 Zertifikaten ist kein Beweis
+    const null0 = await sk({ ...restore, hoechsteRequestId: 0 }).execute(P, { ausChange: true } as never);
+    expect(null0.success).toBe(false);
+    expect(null0.error).toContain('höchste RequestID 0 bei 6 Zertifikaten unplausibel');
     expect(aktionsArt('windows_pki', 'ca_wiederherstellung_testen')).toBe('aendern');
   });
 });
