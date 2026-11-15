@@ -174,7 +174,10 @@ export function labAusstellenSkript(a: LabAusstellen): string {
     String.raw`  try {`,
     String.raw`    $o = (& certreq.exe -new -q -machine $inf $req 2>&1 | Out-String); if ($LASTEXITCODE -ne 0) { throw ('certreq -new: ' + $o.Trim()) }`,
     String.raw`    $cfg = $env:COMPUTERNAME + '\' + $p.ca_name`,
-    String.raw`    $at = $(if ($p.art -eq 'kurzlebig') { @('-attrib', ('ValidityPeriod:Minutes\nValidityPeriodUnits:' + $p.minuten)) } else { @() })`,
+    // die CA datiert NotBefore um ClockSkewMinutes (Standard 10) zurück und rechnet eine angeforderte Laufzeit ab NotBefore —
+    // ohne Ausgleich ist ein 10-Minuten-Zertifikat schon bei der Ausstellung abgelaufen (Realfall 15.11.: CERT_E_EXPIRED)
+    String.raw`    $skew = 10; $r = (& certutil.exe -getreg 'ca\ClockSkewMinutes' 2>&1 | Out-String); $m = [regex]::Match($r, 'ClockSkewMinutes\s+REG_DWORD\s*=\s*[0-9a-fA-F]+\s*\((\d+)\)'); if ($m.Success) { $skew = [int]$m.Groups[1].Value }`,
+    String.raw`    $at = $(if ($p.art -eq 'kurzlebig') { @('-attrib', ('ValidityPeriod:Minutes\nValidityPeriodUnits:' + ([int]$p.minuten + $skew))) } else { @() })`,
     String.raw`    $o = (& certreq.exe -submit -q -config $cfg @at $req $cer 2>&1 | Out-String); if ($LASTEXITCODE -ne 0 -or -not (Test-Path $cer)) { throw ('certreq -submit: ' + $o.Trim()) }`,
     String.raw`    $o = (& certreq.exe -accept -q -machine $cer 2>&1 | Out-String); if ($LASTEXITCODE -ne 0) { throw ('certreq -accept: ' + $o.Trim()) }`,
     String.raw`    $t = (New-Object Security.Cryptography.X509Certificates.X509Certificate2 $cer).Thumbprint`,

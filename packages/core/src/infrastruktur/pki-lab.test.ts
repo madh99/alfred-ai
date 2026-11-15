@@ -107,6 +107,12 @@ describe('PKI-Lab: Bewertung je Fall', () => {
     const c = { probe: b(['Revoked'], {}).probe, anmeldung: {}, cacheGeleert: false, cache: 'Exit 5: FAILED' };
     expect(bewerteLabTest(t('gesperrt'), c).befunde.join()).toContain('Exit 5: FAILED');
   });
+  it('kurzlebig: angeforderte Laufzeit gleicht die Rückdatierung der CA aus (Realfall 15.11. CERT_E_EXPIRED)', () => {
+    const s = labAusstellenSkript({ art: 'kurzlebig', dns: ['labsrv01.pkilab.test'], minuten: 10 }).replace(/''/g, "'");
+    expect(s).toContain(String.raw`certutil.exe -getreg 'ca\ClockSkewMinutes'`);
+    expect(s).toContain("ValidityPeriodUnits:' + ([int]$p.minuten + $skew)");
+    expect(s.indexOf('ClockSkewMinutes')).toBeLessThan(s.indexOf('certreq.exe -submit'));
+  });
   it('kein Beweis aus einem Verbindungsfehler oder mit fremdem Zertifikat', () => {
     expect(bewerteLabTest(t('unbekannte_ca'), { probe: { zeit: 'x', fehler: 'keine Verbindung zu labsrv01.pkilab.test:1433' }, anmeldung: { fehler: 'network-related' }, cacheGeleert: true }).ergebnis).toBe('NICHT_BEWIESEN');
     expect(bewerteLabTest(t('unbekannte_ca'), b(['UntrustedRoot'], { fehler: 'not trusted' }, { thumbprint: 'B'.repeat(40) })).befunde.join()).toContain('statt Fixture');

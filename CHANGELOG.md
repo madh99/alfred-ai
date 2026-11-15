@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — kurzlebiges PKI-Lab-Zertifikat (v1870)
+
+- `lab_zertifikat_ausstellen` mit `art: kurzlebig` berücksichtigt die Rückdatierung der Lab-CA, sodass das Zertifikat ab der Ausstellung die angeforderten Minuten gültig ist.
+
 ### Fixed — PKI-Lab-Cache-Nachweis (v1869)
 
 - Der Nachweis, dass der Sperrlisten-Zwischenspeicher des Lab-Clients geleert ist, scheitert jetzt bei jedem Fehler beim Löschen oder Zählen und berücksichtigt alle Cache-Verzeichnisse.
