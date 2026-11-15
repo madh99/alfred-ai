@@ -145,7 +145,7 @@ function schwaerzeNachSchluessel(t: string, schluessel: RegExp, wert: RegExp, sc
     const v = wert.exec(t);
     if (!v) continue;
     const w = v[1] ?? v[2] ?? v[3] ?? '';
-    if (!schalter && istPwdPfad(k, w)) continue; // PWD-Ausnahme nur für KEY=Wert, nicht für --pwd /x
+    if (!schalter && !m.groups!.k!.startsWith('-') && istPwdPfad(k, w)) continue; // PWD-Ausnahme nur für KEY=Wert, nicht für --pwd /x oder --pwd=/x
     const z = v[1] !== undefined ? '"' : v[2] !== undefined ? "'" : '';
     aus += `${t.slice(pos, ende)}${z}${GESCHWAERZT}${z}`;
     pos = ende + v[0].length;
@@ -182,11 +182,12 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
   t = t.replace(/\b(sshpass[^\S\n]+-p[^\S\n]*)(?!["']?\[geschwärzt\])("[^"\n]*"|'[^'\n]*'|\S+)/g, (_m, a: string, w: string) => zitiert(a, w));
   // mysql/mariadb: Passwort direkt am Schalter (-pX); nur in Zeilen, die den Client aufrufen (zeilenweise → linear)
   t = t.replace(/^[^\n]*\b(?:mysql|mariadb)[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-p)(?!["']?\[geschwärzt\])("[^"\n]*"|'[^'\n]*'|\S+)/g, (_m, a: string, w: string) => zitiert(a, w)));
-  // curl/wget -u/--user benutzer:kennwort — nur der Teil nach dem ersten Doppelpunkt (ohne Doppelpunkt fragt curl nach)
-  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u|--user|--http-user)([^\S\n]+|=)("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, tr: string, w: string) => {
+  // curl/wget -u/--user benutzer:kennwort — nur der Teil nach dem ersten Doppelpunkt (ohne Doppelpunkt fragt curl nach);
+  // -u auch angehängt (-uadmin:x); reine UID:GID (docker run -u 1000:1000 … curl) bleibt lesbar
+  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u(?=[^\s-])|-u[^\S\n]+|(?:--user|--http-user)(?:[^\S\n]+|=))("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, w: string) => {
     const z = /^["']/.test(w) ? w[0] : '', innen = z ? w.slice(1, -1) : w, i = innen.indexOf(':');
-    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT) return m;
-    anzahl++; return `${s}${tr}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
+    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT || /^\d+:\d+$/.test(innen)) return m;
+    anzahl++; return `${s}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
   }));
   // URL-Zugangsdaten am Trenner :// verankert (jedes Schema, auch +postgres:// oder 1-redis://)
   t = t.replace(/(:\/\/[^:\s/@]+:)(?!\[geschwärzt\]@)([^@\s/]{3,})@/g, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });

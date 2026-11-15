@@ -125,6 +125,17 @@ describe('Schwärzung — Runde 1', () => {
     weg('tool --pwd /secretvalue', ['/secretvalue']);
     weg('tool -pw /secretvalue', ['/secretvalue']);
   });
+  it('Runde 2: curl -uX:Y angehängt, UID:GID bleibt', () => {
+    weg('curl -uadmin:Dummy1234 https://h', ['Dummy1234'], ['-uadmin:', 'https://h']);
+    weg('curl -u"admin:Dummy 1234" https://h', ['Dummy 1234'], ['admin:']);
+    const r = schwaerze('docker run -u 1000:1000 curlimages/curl https://h');
+    expect(r.text).toBe('docker run -u 1000:1000 curlimages/curl https://h');
+    expect(r.anzahl).toBe(0);
+  });
+  it('Runde 2: --pwd=/x ist ein Schalterwert, keine PWD-Pfadangabe', () => {
+    weg('tool --pwd=/secretvalue', ['/secretvalue']);
+    expect(schwaerze('PWD=/home/madh').anzahl).toBe(0);
+  });
   it('linear: 200 000 Zeichen in < 1 s', () => {
     const muster = ['a'.repeat(200_000), ' '.repeat(200_000), 'a=' + ' '.repeat(200_000), ';a'.repeat(100_000), '-p'.repeat(100_000), 'mysql ' + '-'.repeat(200_000),
       'password'.repeat(25_000), '"'.repeat(200_000), 'x:'.repeat(100_000), '--password '.repeat(18_000), 'Authorization: Basic ' + 'A'.repeat(200_000),
