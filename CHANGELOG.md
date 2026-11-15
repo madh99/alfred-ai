@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — UniFi-Zonenbereinigung abgesichert (v1872)
+
+- `remove_orphan_zone_networks` arbeitet nur noch mit genau einer angegebenen Netz-ID, bricht bei leerer oder unlesbarer Netzliste ohne Änderung ab und prüft nach dem Schreiben, dass alle übrigen Netze der Zone unverändert sind.
+- `delete_network` ist nur noch als Schritt eines freigegebenen Changes möglich.
+
 ### Fixed — UniFi-Zonen nach dem Löschen eines Netzes (v1871)
 
 - Neue UniFi-Aktion `remove_orphan_zone_networks` entfernt Zonenverweise auf nicht mehr existierende Netze, die die Firewall-Schnittstelle des Gateways blockieren; vorhandene Netze bleiben unberührt, das Ergebnis wird nachgelesen.

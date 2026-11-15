@@ -179,7 +179,7 @@ export class UniFiSkill extends Skill {
         destination_ip: { type: 'string', description: 'Ziel-Adressen statt Zielnetz: IP, Subnetz (CIDR) oder Bereich a-b, kommagetrennt' },
         allow_return_traffic: { type: 'boolean', description: 'create_firewall_policy ALLOW: Antworten ausdrücklich zulassen (in Changes immer true)' },
         zone_name: { type: 'string', description: 'create_zone/delete_zone: Name der eigenen Firewall-Zone (z. B. Docker-Dev)' },
-        network_id: { type: 'string', description: 'remove_orphan_zone_networks: nur diese verwaiste interne Netz-ID entfernen (ohne Angabe: alle verwaisten). Nur im Change; entfernt ausschließlich IDs, deren Netz nicht mehr existiert.' },
+        network_id: { type: 'string', description: 'remove_orphan_zone_networks (Pflicht): genau die eine verwaiste interne Netz-ID, die aus den Zonen entfernt wird. Nur im Change; existiert das Netz noch, wird nichts geändert.' },
         client_ip: { type: 'string', description: 'trunk_path: IP eines Geräts im Netz (z. B. des Proxmox-Knotens), von dessen Switch-Port bis zur UDM' },
         client_mac: { type: 'string', description: 'trunk_path: MAC statt IP' },
         fixed_ip: { type: 'string', description: 'set_fixed_ip: feste IP (DHCP-Reservierung) für das Gerät mit mac, z. B. 192.168.1.111 — Netz ergibt sich aus der Adresse' },
@@ -310,7 +310,7 @@ export class UniFiSkill extends Skill {
           return action === 'create_zone' ? await this.zoneAnlegen(input) : await this.zoneLoeschen(input);
         case 'remove_orphan_zone_networks':
           if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
-          return await this.verwaisteZonenNetze(input.network_id ? String(input.network_id) : undefined);
+          return await this.verwaisteZonenNetze(String(input.network_id ?? '').trim());
         case 'export_config':
           return await this.konfigSichern();
         case 'trunk_path':
@@ -328,6 +328,8 @@ export class UniFiSkill extends Skill {
         case 'create_network':
           return await this.netzAnlegen(input);
         case 'delete_network':
+          // Review v1871: Löschen schreibt jetzt auch die Firewall-Zonen — wie delete_zone nur als Change-Schritt
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
           return await this.netzLoeschen(input);
         case 'list_dns_records':
           return await this.dnsListe();
@@ -1298,23 +1300,29 @@ export class UniFiSkill extends Skill {
    * und Policies. Entfernt aus network_ids NUR IDs, die es in rest/networkconf nicht gibt (optional nur eine bestimmte ID), schreibt die
    * Zone sonst unverändert zurück und liest nach. Ein Rückweg ist sinnlos (die IDs zeigen auf nichts).
    */
-  private async verwaisteZonenNetze(nurId?: string): Promise<SkillResult> {
-    const zonen = ((await this.v2('GET', 'firewall/zone')) as Array<Record<string, unknown> & { _id: string; name: string; network_ids?: string[] }> | undefined) ?? [];
-    const netzIds = new Set(((await this.request<any[]>('GET', 'rest/networkconf')) ?? []).map(x => String(x._id)));
+  private async verwaisteZonenNetze(nurId: string): Promise<SkillResult> {
+    type Z = Record<string, unknown> & { _id: string; name: string; network_ids?: string[] };
+    // fail-closed (Review v1871): genau EINE benannte ID; eine leere/unlesbare Netzliste würde sonst jedes Netz für verwaist halten
+    if (!/^[0-9a-f]{24}$|^[0-9a-f-]{36}$/i.test(nurId)) return { success: false, error: 'network_id: genau eine interne Netz-ID angeben' };
+    const netze = await this.request<any[]>('GET', 'rest/networkconf');
+    if (!Array.isArray(netze) || netze.length === 0) return { success: false, error: 'Netzliste leer oder unlesbar — keine Zonenänderung' };
+    if (netze.some(x => String(x._id) === nurId)) return { success: true, data: { entfernt: [] }, display: `Netz ${nurId} existiert — kein verwaister Verweis, nichts geändert` };
+    const zonen = ((await this.v2('GET', 'firewall/zone')) as Z[] | undefined) ?? [];
     const entfernt: Array<{ zone: string; ids: string[] }> = [];
-    for (const z of zonen) {
-      const ids = z.network_ids ?? [];
-      const weg = ids.filter(i => !netzIds.has(i) && (!nurId || i === nurId));
-      if (!weg.length) continue;
-      await this.v2('PUT', `firewall/zone/${z._id}`, { ...z, network_ids: ids.filter(i => !weg.includes(i)) });
-      entfernt.push({ zone: z.name, ids: weg });
+    for (const z0 of zonen.filter(z => (z.network_ids ?? []).includes(nurId))) {
+      // unmittelbar vor dem Schreiben frisch lesen und nur die eine ID entfernen (kein Überschreiben fremder Änderungen)
+      const z = (((await this.v2('GET', 'firewall/zone')) as Z[] | undefined) ?? []).find(x => x._id === z0._id);
+      if (!z) continue;
+      const soll = (z.network_ids ?? []).filter(i => i !== nurId);
+      await this.v2('PUT', `firewall/zone/${z._id}`, { ...z, network_ids: soll });
+      const nach = (((await this.v2('GET', 'firewall/zone')) as Z[] | undefined) ?? []).find(x => x._id === z._id);
+      const ist = nach?.network_ids ?? [];
+      if (ist.includes(nurId) || ist.length !== soll.length || soll.some(i => !ist.includes(i))) {
+        return { success: false, error: `Zone ${z.name} nach dem Schreiben nicht wie erwartet (soll ${soll.length} Netze ohne ${nurId}, ist ${ist.length}: ${ist.join(', ')})${entfernt.length ? ` — bereits geändert: ${entfernt.map(e => e.zone).join(', ')}` : ''}` };
+      }
+      entfernt.push({ zone: z.name, ids: [nurId] });
     }
-    if (entfernt.length) {
-      const nachher = ((await this.v2('GET', 'firewall/zone')) as Array<{ name: string; network_ids?: string[] }> | undefined) ?? [];
-      const rest = nachher.flatMap(z => (z.network_ids ?? []).filter(i => entfernt.some(e => e.ids.includes(i))).map(i => `${z.name}:${i}`));
-      if (rest.length) return { success: false, error: `verwaiste Netz-IDs nach dem Schreiben noch vorhanden: ${rest.join(', ')}` };
-    }
-    return { success: true, data: { entfernt }, display: entfernt.length ? `✅ Verwaiste Netzverweise entfernt: ${entfernt.map(e => `${e.zone} (${e.ids.join(', ')})`).join('; ')}` : 'Keine verwaisten Netzverweise in den Zonen' };
+    return { success: true, data: { entfernt }, display: entfernt.length ? `✅ Verwaister Netzverweis ${nurId} entfernt aus: ${entfernt.map(e => e.zone).join(', ')} (übrige Netze unverändert, nachgelesen)` : `Kein Zonenverweis auf ${nurId}` };
   }
 
   /** Pilot cf82f3f2 — eigene Firewall-Zone mit ihren Netzen: zwischen eigenen Zonen und den übrigen gilt, was die Policies erlauben */

@@ -3,17 +3,21 @@ import { UniFiSkill } from '../built-in/unifi.js';
 
 // Realfall 15.11. (Change 288c3716): nach delete_zone lag PKI-Lab in „Internal“; delete_network ließ die ID in network_ids stehen →
 // Integration-API /firewall/zones und /firewall/policies global 422 network-does-not-exist
-function welt(o: { putIgnoriert?: boolean } = {}) {
+const AD = 'aaaaaaaaaaaaaaaaaaaaaaaa', LAB = '855e212f-4c48-4b10-b559-f6b8e5fca822', DEF = 'dddddddddddddddddddddddd', ALT = 'eeeeeeee-0000-4000-8000-000000000001';
+function welt(o: { putIgnoriert?: boolean; netzListeLeer?: boolean } = {}) {
   const s = new UniFiSkill({ baseUrl: 'https://udm', apiKey: 'k', verifyTls: false } as never);
-  const netze = [{ _id: 'nAD', name: 'AD-Identity', vlan: 829, vlan_enabled: true, purpose: 'corporate' }, { _id: 'nLab', name: 'PKI-Lab', vlan: 832, vlan_enabled: true, purpose: 'corporate' }];
-  const zonen = [
-    { _id: 'zInt', name: 'Internal', zone_key: 'internal', network_ids: ['nDefault', 'nLab', 'nAlt'] },
-    { _id: 'zAd', name: 'AD-Identity', network_ids: ['nAD'] },
+  const netze = [
+    { _id: AD, name: 'AD-Identity', vlan: 829, vlan_enabled: true, purpose: 'corporate' },
+    { _id: LAB, name: 'PKI-Lab', vlan: 832, vlan_enabled: true, purpose: 'corporate' },
+    { _id: DEF, name: 'Default', vlan: 0, vlan_enabled: false, purpose: 'corporate' },
   ];
-  netze.push({ _id: 'nDefault', name: 'Default', vlan: 0, vlan_enabled: false, purpose: 'corporate' } as never);
+  const zonen = [
+    { _id: 'zInt', name: 'Internal', zone_key: 'internal', network_ids: [DEF, LAB, ALT] },
+    { _id: 'zAd', name: 'AD-Identity', network_ids: [AD] },
+  ];
   const puts: Array<{ pfad: string; body: Record<string, unknown> }> = [];
   (s as unknown as { request: (m: string, p: string) => Promise<unknown> }).request = async (m, p) => {
-    if (p === 'rest/networkconf' && m === 'GET') return netze;
+    if (p === 'rest/networkconf' && m === 'GET') return o.netzListeLeer ? [] : netze;
     if (p === 'stat/sta') return [];
     if (p.startsWith('rest/networkconf/') && m === 'DELETE') { const id = p.split('/')[2]; netze.splice(netze.findIndex(n => n._id === id), 1); return []; }
     throw new Error(`unerwartet ${m} ${p}`);
@@ -32,34 +36,45 @@ function welt(o: { putIgnoriert?: boolean } = {}) {
 const imChange = { ausChange: true } as never;
 
 describe('UniFi: verwaiste Netzverweise in Zonen (Realfall 15.11.)', () => {
-  it('nur im Change', async () => {
-    const r = await welt().s.execute({ action: 'remove_orphan_zone_networks' }, {} as never);
-    expect(r.error).toContain('freigegebenen Changes');
+  it('nur im Change; delete_network ebenso', async () => {
+    expect((await welt().s.execute({ action: 'remove_orphan_zone_networks', network_id: ALT }, {} as never)).error).toContain('freigegebenen Changes');
+    expect((await welt().s.execute({ action: 'delete_network', network_name: 'PKI-Lab' }, {} as never)).error).toContain('freigegebenen Changes');
+  });
+  it('ohne genau eine ID keine Änderung', async () => {
+    const w = welt();
+    expect((await w.s.execute({ action: 'remove_orphan_zone_networks' }, imChange)).success).toBe(false);
+    expect(w.puts).toHaveLength(0);
   });
   it('entfernt nur die genannte verwaiste ID, Zone sonst unverändert', async () => {
     const w = welt();
-    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: 'nAlt' }, imChange);
+    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: ALT }, imChange);
     expect(r.success, r.error).toBe(true);
     expect(w.puts).toHaveLength(1);
-    expect(w.puts[0]!.body).toMatchObject({ _id: 'zInt', name: 'Internal', zone_key: 'internal', network_ids: ['nDefault', 'nLab'] });
+    expect(w.puts[0]!.body).toMatchObject({ _id: 'zInt', name: 'Internal', zone_key: 'internal', network_ids: [DEF, LAB] });
   });
-  it('vorhandene Netze werden nie entfernt; ohne Verwaiste kein Schreiben', async () => {
+  it('vorhandenes Netz wird nie entfernt', async () => {
     const w = welt();
-    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: 'nLab' }, imChange);
+    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: LAB }, imChange);
     expect(r.success).toBe(true);
+    expect(w.puts).toHaveLength(0);
+  });
+  it('leere Netzliste → fail-closed, nichts geschrieben (Review v1871)', async () => {
+    const w = welt({ netzListeLeer: true });
+    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: ALT }, imChange);
+    expect(r.success).toBe(false);
     expect(w.puts).toHaveLength(0);
   });
   it('Schreiben ohne Wirkung → Fehler statt Erfolg', async () => {
     const w = welt({ putIgnoriert: true });
-    const r = await w.s.execute({ action: 'remove_orphan_zone_networks' }, imChange);
+    const r = await w.s.execute({ action: 'remove_orphan_zone_networks', network_id: ALT }, imChange);
     expect(r.success).toBe(false);
-    expect(r.error).toContain('noch vorhanden');
+    expect(r.error).toContain('nicht wie erwartet');
   });
   it('delete_network bereinigt den Verweis der gelöschten ID gleich mit', async () => {
     const w = welt();
     const r = await w.s.execute({ action: 'delete_network', network_name: 'PKI-Lab' }, imChange);
     expect(r.success, r.error).toBe(true);
-    expect(w.zonen[0]!.network_ids).toEqual(['nDefault', 'nAlt']);
+    expect(w.zonen[0]!.network_ids).toEqual([DEF, ALT]);
     expect(r.display).toContain('Internal');
   });
 });
