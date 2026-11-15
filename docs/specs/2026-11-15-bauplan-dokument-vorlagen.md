@@ -158,3 +158,10 @@ Nur als zusätzlicher Beleg für Oberflächen (UniFi, Proxmox) über den vorhand
 ## 9. Dem Umsetzer überlassen
 
 Interne Struktur der Module, Mermaid-Erzeugung, PDF/DOCX-Layout im Rahmen der Kapitel, Namen der Aktionen, Tests.
+
+## 10. Umsetzungsstand
+
+- **V1 (v1873, 15.11.2026)** live: Skill `dokumentation` mit Abnahme- und Testprotokoll, CMDB-Versionierung (Struktur + Markdown), PDF/DOCX, geschwärzter Rohlauf mit `PRUEFUNG.txt`, Ablage lokal und auf pve2, Instanzen. Live-Beweis: drei Abnahmen (2cfde1a2, 7335dfeb, 288c3716) und Testprotokoll `pki-lab-2026-11-15`, `sha256sum -c` lokal und auf pve2 OK. Schwärzung (`schwaerze()`) gehärtet.
+- **V2 (v1874)**: Abnahmeprotokoll automatisch nach jedem Change-Ende (Sammelprotokoll je Standard-Serie, sofort bei abgebrochener Serie), PDF/DOCX an den Owner, Zeitgrenze 25 s mit Folgemeldung. `PRUEFUNG.txt` nur Prüfzeilen; Verlauf im Motor; für Läufe vor v1873 nur der erste Halt je Lauf belegt (steht so im Dokument).
+- **Abweichung vom Etappenplan §6:** D-BETRIEB ist in V1 nur als Definition enthalten; Builder und Live-Sammler (Proxmox/UniFi) folgen im Nachzieh-Plan (PKI → AD → SQL-AG).
+- **Offen (geparkt):** gemeinsamer Versionszähler Einzel-/Sammelprotokoll; Beweis-Tabelle ohne Erwartung/Versuche (nur im Rohlauf); Halte vor v1873 ließen sich zusätzlich aus dem Log („I4 Change angehalten“) rekonstruieren — Owner-Entscheidung.

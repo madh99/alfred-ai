@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Abnahmeprotokoll automatisch nach jedem Change (v1874)
+
+- Nach jedem Change-Ende (abgeschlossen, gescheitert, zurückgerollt, abgebrochen) entsteht das Abnahmeprotokoll selbst; PDF und Word kommen mit der Abschlussmeldung an den Owner, Kopie lokal und auf pve2.
+- Standard-Changes einer Serie bekommen ein gemeinsames Sammelprotokoll mit dem letzten Glied; endet ein Glied nicht erfolgreich, sofort.
+- Die Erzeugung hält den Change-Motor höchstens 25 s auf; dauert sie länger, folgt das Protokoll in einer eigenen Meldung.
+
+### Fixed — Dokument-Vorlagen (v1874)
+
+- `PRUEFUNG.txt` enthält nur noch Prüfzeilen, `sha256sum -c` meldet keine Formatwarnung mehr; die Erklärung steht im Kapitel Beweise.
+- Aus Halte-Incidents rekonstruierte Verläufe sagen offen, dass für ältere Läufe nur der erste Halt belegt ist.
+- Ablage auf pve2 mit Rechten 0600/0700 wie lokal; Freitextgrenzen gelten für den geschwärzten Text.
+
 ### Added — Dokument-Vorlagen V1: Abnahme- und Testprotokolle (v1873)
 
 - Neuer Skill `dokumentation`: feste Dokumentarten Abnahmeprotokoll und Testprotokoll (Betriebsdokument als Definition) werden deterministisch aus Change-Läufen erzeugt; nur Freitextfelder (Zweck, Abweichungen, Befunde) sind frei und längenbegrenzt.
