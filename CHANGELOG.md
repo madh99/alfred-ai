@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PKI-Lab-Sperrlisten-Cache (v1868)
+
+- `tls_negativtest` leert den Sperrlisten-Zwischenspeicher des Lab-Clients auch in Fernsitzungen ohne WinINet zuverlässig, indem die Cache-Dateien direkt entfernt werden; als geleert gilt er nur, wenn kein Eintrag übrig bleibt.
+
 ### Fixed — PKI-Lab-Positivtest (v1867)
 
 - `tls_negativtest` wertet eine fehlende Berechtigung für `sys.dm_exec_connections` nicht mehr als abgelehnte Anmeldung; ohne dieses Recht gilt die Sitzung nur bei vom Server erzwungener Verschlüsselung und erfolgreicher Zertifikatsprüfung des Treibers als verschlüsselt.

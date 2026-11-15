@@ -96,6 +96,9 @@ describe('PKI-Lab: Bewertung je Fall', () => {
     const s = labTestSkript({ ziel: 'labsrv01.pkilab.test', fall: 'gesperrt', erwarteter_thumbprint: T });
     expect(s).toContain('$anm.dmvFehler');
     expect(s).toContain(String.raw`($rest -notmatch 'pkilab\.test')`);
+    // Realfall 15.11.: -urlcache delete über SSH 0x80070078 → Benutzer-Zwischenspeicher direkt leeren, vor der Kettenprüfung
+    expect(s).toContain(String.raw`AppData\LocalLow\Microsoft\CryptnetUrlCache`);
+    expect(s.indexOf('CryptnetUrlCache')).toBeLessThan(s.indexOf('$ch.Build'));
     expect(labSqlInstallierenSkript()).toContain('GRANT VIEW SERVER PERFORMANCE STATE TO');
     const c = { probe: b(['Revoked'], {}).probe, anmeldung: {}, cacheGeleert: false, cache: 'Exit 5: FAILED' };
     expect(bewerteLabTest(t('gesperrt'), c).befunde.join()).toContain('Exit 5: FAILED');

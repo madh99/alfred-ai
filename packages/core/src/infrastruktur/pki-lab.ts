@@ -260,9 +260,14 @@ export function labTestSkript(t: LabTest): string {
     // Sperrlisten-Zwischenspeicher leeren (nur Lab-Client), sonst prüft die Kette gegen eine alte Sperrliste
     // leerer Zwischenspeicher meldet „nicht gefunden“ — maßgeblich ist, dass danach kein Eintrag zum Lab mehr übrig ist
     String.raw`$cache = (& certutil.exe -urlcache * delete 2>&1 | Out-String); $cacheCode = $LASTEXITCODE`,
+    // über SSH (ohne WinINet-Sitzung) bricht -urlcache delete mit 0x80070078 ab (Realfall 15.11.) — dann die Dateien des
+    // Benutzer-Zwischenspeichers direkt löschen; die Kettenprüfung unten läuft im selben Benutzerkontext
+    String.raw`$cu = Join-Path $env:USERPROFILE 'AppData\LocalLow\Microsoft\CryptnetUrlCache'`,
+    String.raw`foreach ($u in @('Content', 'MetaData')) { Get-ChildItem -LiteralPath (Join-Path $cu $u) -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }`,
+    String.raw`$uebrig = @(Get-ChildItem -LiteralPath (Join-Path $cu 'Content') -File -Force -ErrorAction SilentlyContinue).Count`,
     String.raw`$rest = (& certutil.exe -urlcache * 2>&1 | Out-String)`,
-    String.raw`$geleert = (($cacheCode -eq 0) -or ($cache -match '0x80092004|0x80070002|CRYPT_E_NOT_FOUND|ERROR_FILE_NOT_FOUND')) -and ($rest -notmatch 'pkilab\.test')`,
-    String.raw`$cacheText = ('Exit ' + $cacheCode + ': ' + (($cache -replace '\s+', ' ').Trim())); if ($cacheText.Length -gt 300) { $cacheText = $cacheText.Substring(0, 300) }`,
+    String.raw`$geleert = ($uebrig -eq 0) -and ($rest -notmatch 'pkilab\.test')`,
+    String.raw`$cacheText = ('Dateien übrig ' + $uebrig + '; certutil Exit ' + $cacheCode + ': ' +(($cache -replace '\s+', ' ').Trim())); if ($cacheText.Length -gt 300) { $cacheText = $cacheText.Substring(0, 300) }`,
     String.raw`& certutil.exe -setreg chain\ChainCacheResyncFiletime '@now' 2>&1 | Out-Null`,
     String.raw`function Sans($c) { $x = $c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }; if (-not $x) { return @() }; @(($x.Format($false) -split ',\s*') | Where-Object { $_ -match '^(DNS Name|DNS-Name)=' } | ForEach-Object { ($_ -replace '^(DNS Name|DNS-Name)=', '').Trim().ToLower() }) }`,
     String.raw`$probe = [ordered]@{ zeit = (Get-Date).ToString('s') }`,
