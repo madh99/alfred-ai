@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Dokument-Vorlagen V1: Abnahme- und Testprotokolle (v1873)
+
+- Neuer Skill `dokumentation`: feste Dokumentarten Abnahmeprotokoll und Testprotokoll (Betriebsdokument als Definition) werden deterministisch aus Change-Läufen erzeugt; nur Freitextfelder (Zweck, Abweichungen, Befunde) sind frei und längenbegrenzt.
+- Jedes Dokument wird in der CMDB versioniert (Struktur und Markdown), als PDF und Word exportiert, mit geschwärztem Rohlauf und Prüfanleitung (`sha256sum -c PRUEFUNG.txt`) zugestellt, lokal abgelegt und auf pve2 unter `/srv/alfred-dokumente/` kopiert.
+- Instanzen bündeln mehrere Changes eines Aufbaus (z. B. ein Lab) zu einem Testprotokoll.
+- Der Change-Motor führt jetzt einen Verlauf je Lauf (Halte, Wiederholungen, Überspringen, Planänderungen); für ältere Changes wird er aus den Halte-Incidents rekonstruiert und so gekennzeichnet. Lücken (offene Korrektur, abgeschnittene Incident-Liste) stehen offen im Dokument.
+
+### Security — Schwärzung gehärtet (v1873)
+
+- Geheimnisse werden jetzt auch mitten in der Zeile erkannt: Verbindungszeichenfolgen (`;Password=`), JSON, Kommandozeilen-Schalter (`--password`, `-p`, `-Password`), `Authorization: Basic`, curl/wget `-u`, Abfrageparameter und URL-Zugangsdaten nach jedem Präfix.
+- Strukturierte Daten werden zusätzlich nach Schlüsselnamen geschwärzt, samt ganzem Teilbaum.
+- Zwei bisher quadratische Suchmuster laufen jetzt linear.
+
 ### Security — UniFi-Zonenbereinigung abgesichert (v1872)
 
 - `remove_orphan_zone_networks` arbeitet nur noch mit genau einer angegebenen Netz-ID, bricht bei leerer oder unlesbarer Netzliste ohne Änderung ab und prüft nach dem Schreiben, dass alle übrigen Netze der Zone unverändert sind.
