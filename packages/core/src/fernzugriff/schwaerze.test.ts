@@ -160,3 +160,31 @@ describe('Schwärzung — Runde 1', () => {
     }
   });
 });
+
+describe('Schwärzung — deutsche Geheimnis-Namen', () => {
+  const namen = ['kennwort', 'Passwort', 'PASSPHRASE', 'Geheimnis', 'db_kennwort'];
+  for (const n of namen) {
+    it(`${n}: am Zeilenanfang und mitten in der Zeile geschwärzt`, () => {
+      expect(schwaerze(`${n}=Abc12345xyz`).text).not.toContain('Abc12345xyz');
+      expect(schwaerze(`${n}: Abc12345xyz`).text).not.toContain('Abc12345xyz');
+      expect(schwaerze(`Dienst läuft; ${n}=Abc12345xyz weiter`).text).not.toContain('Abc12345xyz');
+      expect(schwaerze(`Dienst läuft
+${n}: Abc12345xyz
+ende`).text).not.toContain('Abc12345xyz');
+    });
+    it(`${n} als Schlüsselname`, () => { expect(GEHEIM_NAME.test(n), n).toBe(true); });
+  }
+  it('Kennwortrichtlinie aktiv (ohne Trennzeichen) bleibt unverändert', () => {
+    expect(schwaerze('Kennwortrichtlinie aktiv').text).toBe('Kennwortrichtlinie aktiv');
+  });
+  it('Beweistext „schluessel pki:…“ bleibt unverändert', () => {
+    expect(schwaerze('schluessel pki:root').text).toBe('schluessel pki:root');
+  });
+  it('linear: 200 000 Zeichen mit deutschen Namen < 1 s', () => {
+    for (const m of ['kennwort: '.repeat(20_000), 'Geheimnis='.repeat(20_000), 'passphrase '.repeat(18_000), 'Kennwort'.repeat(25_000)]) {
+      const t0 = performance.now();
+      schwaerze(m);
+      expect(performance.now() - t0, m.slice(0, 20)).toBeLessThan(1000);
+    }
+  });
+});

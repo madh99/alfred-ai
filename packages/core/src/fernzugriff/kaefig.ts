@@ -110,7 +110,7 @@ export const GEHEIM_PFADE = [
 
 /** Namen von Geheimnis-Feldern (Schlüssel/Variablen); gemeinsam für Schwärzung nach Text und nach Schlüssel. */
 // PWD/PW nur als eigenständiger Namensteil (DB_PWD, mysql_pw, PW) — nicht in cwd, pwdLastSet, upward.
-export const GEHEIM_NAME = /(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT|(?<![A-Za-z])PWD?(?![A-Za-z]))/i;
+export const GEHEIM_NAME = /(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|KENNWORT|PASSWORT|PASSPHRASE|GEHEIMNIS|AUTH[_-]?KEY|SALT|(?<![A-Za-z])PWD?(?![A-Za-z]))/i;
 
 const GESCHWAERZT = '[geschwärzt]';
 /** `PWD=/home/madh` ist das Arbeitsverzeichnis der Shell, kein Geheimnis. */
