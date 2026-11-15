@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PKI-Lab-Cache-Nachweis (v1869)
+
+- Der Nachweis, dass der Sperrlisten-Zwischenspeicher des Lab-Clients geleert ist, scheitert jetzt bei jedem Fehler beim Löschen oder Zählen und berücksichtigt alle Cache-Verzeichnisse.
+
 ### Fixed — PKI-Lab-Sperrlisten-Cache (v1868)
 
 - `tls_negativtest` leert den Sperrlisten-Zwischenspeicher des Lab-Clients auch in Fernsitzungen ohne WinINet zuverlässig, indem die Cache-Dateien direkt entfernt werden; als geleert gilt er nur, wenn kein Eintrag übrig bleibt.

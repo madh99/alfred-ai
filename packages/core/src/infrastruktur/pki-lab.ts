@@ -263,11 +263,13 @@ export function labTestSkript(t: LabTest): string {
     // über SSH (ohne WinINet-Sitzung) bricht -urlcache delete mit 0x80070078 ab (Realfall 15.11.) — dann die Dateien des
     // Benutzer-Zwischenspeichers direkt löschen; die Kettenprüfung unten läuft im selben Benutzerkontext
     String.raw`$cu = Join-Path $env:USERPROFILE 'AppData\LocalLow\Microsoft\CryptnetUrlCache'`,
-    String.raw`foreach ($u in @('Content', 'MetaData')) { Get-ChildItem -LiteralPath (Join-Path $cu $u) -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }`,
-    String.raw`$uebrig = @(Get-ChildItem -LiteralPath (Join-Path $cu 'Content') -File -Force -ErrorAction SilentlyContinue).Count`,
+    // fail-closed: jeder Fehler beim Auflisten/Löschen gilt als „nicht geleert“; gezählt werden Content UND MetaData,
+    // ein fehlendes Verzeichnis ist wirklich leer
+    String.raw`$uebrig = 0; $pruefbar = $true; $cacheFehler = ''`,
+    String.raw`try { foreach ($u in @('Content', 'MetaData')) { $d = Join-Path $cu $u; if (-not (Test-Path -LiteralPath $d)) { continue }; Get-ChildItem -LiteralPath $d -File -Force -ErrorAction Stop | Remove-Item -Force -ErrorAction Stop; $uebrig += @(Get-ChildItem -LiteralPath $d -File -Force -ErrorAction Stop).Count } } catch { $pruefbar = $false; $cacheFehler = [string]$_.Exception.Message }`,
     String.raw`$rest = (& certutil.exe -urlcache * 2>&1 | Out-String)`,
-    String.raw`$geleert = ($uebrig -eq 0) -and ($rest -notmatch 'pkilab\.test')`,
-    String.raw`$cacheText = ('Dateien übrig ' + $uebrig + '; certutil Exit ' + $cacheCode + ': ' +(($cache -replace '\s+', ' ').Trim())); if ($cacheText.Length -gt 300) { $cacheText = $cacheText.Substring(0, 300) }`,
+    String.raw`$geleert = $pruefbar -and ($uebrig -eq 0) -and ($rest -notmatch 'pkilab\.test')`,
+    String.raw`$cacheText = ('Dateien übrig ' + $uebrig + $(if ($pruefbar) { '' } else { ' (Fehler: ' + $cacheFehler + ')' }) + '; certutil Exit ' + $cacheCode + ': ' +(($cache -replace '\s+', ' ').Trim())); if ($cacheText.Length -gt 300) { $cacheText = $cacheText.Substring(0, 300) }`,
     String.raw`& certutil.exe -setreg chain\ChainCacheResyncFiletime '@now' 2>&1 | Out-Null`,
     String.raw`function Sans($c) { $x = $c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }; if (-not $x) { return @() }; @(($x.Format($false) -split ',\s*') | Where-Object { $_ -match '^(DNS Name|DNS-Name)=' } | ForEach-Object { ($_ -replace '^(DNS Name|DNS-Name)=', '').Trim().ToLower() }) }`,
     String.raw`$probe = [ordered]@{ zeit = (Get-Date).ToString('s') }`,
