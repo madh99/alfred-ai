@@ -190,20 +190,30 @@ export function filterLesbar(f: Record<string, unknown> | undefined, netzName: (
   const ports: string[] = [];
   const bekannt = new Set(['type', 'ipAddressFilter', 'networkFilter', 'portFilter', 'macAddressFilter', 'domainFilter']);
   const neg = (o: unknown) => ((o as { matchOpposite?: boolean } | undefined)?.matchOpposite ? 'nicht ' : '');
+  const liste = (items: Array<Record<string, unknown>>) => items.length ? items.map(eintrag).join(', ') : '(leer)';
   const eintrag = (i: Record<string, unknown>) => i.value !== undefined ? String(i.value) : i.start !== undefined ? `${String(i.start)}-${String(i.stop)}` : kurzJson(i);
 
   const ipf = f.ipAddressFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
-  if (ipf) adr.push(ipf.items ? `${neg(ipf)}${ipf.items.map(eintrag).join(', ')}` : `IP-Liste ${ipf.trafficMatchingListId ?? kurzJson(ipf)}`);
+  if (ipf) adr.push(ipf.items ? `${neg(ipf)}${liste(ipf.items)}` : `IP-Liste ${ipf.trafficMatchingListId ?? kurzJson(ipf)}`);
   const nf = f.networkFilter as { networkIds?: string[]; matchOpposite?: boolean } | undefined;
-  if (nf) adr.push(nf.networkIds ? `${neg(nf)}Netz ${nf.networkIds.map(netzName).join(', ')}` : kurzJson(nf));
-  const mf = f.macAddressFilter as { macAddresses?: string[] } | undefined;
-  if (mf) adr.push(mf.macAddresses ? `MAC ${mf.macAddresses.join(', ')}` : kurzJson(mf));
-  const df = f.domainFilter as { domains?: string[] } | undefined;
-  if (df) adr.push(df.domains ? `Domain ${df.domains.join(', ')}` : kurzJson(df));
+  if (nf) adr.push(nf.networkIds ? `${neg(nf)}Netz ${nf.networkIds.length ? nf.networkIds.map(netzName).join(', ') : '(leer)'}` : kurzJson(nf));
+  const mf = f.macAddressFilter as { macAddresses?: string[]; matchOpposite?: boolean } | undefined;
+  if (mf) adr.push(mf.macAddresses ? `${neg(mf)}MAC ${mf.macAddresses.length ? mf.macAddresses.join(', ') : '(leer)'}` : kurzJson(mf));
+  const df = f.domainFilter as { domains?: string[]; matchOpposite?: boolean } | undefined;
+  if (df) adr.push(df.domains ? `${neg(df)}Domain ${df.domains.length ? df.domains.join(', ') : '(leer)'}` : kurzJson(df));
   const pf = f.portFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
-  if (pf) ports.push(pf.items ? `${neg(pf)}${pf.items.map(eintrag).join(', ')}` : `Port-Liste ${pf.trafficMatchingListId ?? kurzJson(pf)}`);
+  if (pf) ports.push(pf.items ? `${neg(pf)}${liste(pf.items)}` : `Port-Liste ${pf.trafficMatchingListId ?? kurzJson(pf)}`);
   const unbekannt = Object.keys(f).filter(k => !bekannt.has(k));
   if (unbekannt.length) adr.push(kurzJson({ type: f.type, ...Object.fromEntries(unbekannt.map(k => [k, f[k]])) }));
   if (!adr.length && !ports.length && f.type !== undefined && f.type !== 'ANY') adr.push(kurzJson(f));
   return { adresse: adr.join('; '), ports: ports.join('; ') };
+}
+
+/** Protokoll einer Policy im Klartext; unbekannte Form als Kurz-JSON (nie stillschweigend „alle“), „nicht“ bei matchOpposite. */
+export function protokollLesbar(scope: { protocolFilter?: Record<string, unknown> } | undefined): string {
+  const pf = scope?.protocolFilter as { protocol?: { name?: string }; preset?: { name?: string }; matchOpposite?: boolean } | undefined;
+  if (!pf) return 'alle';
+  const name = pf.protocol?.name ?? pf.preset?.name;
+  if (!name) return kurzJson(pf);
+  return `${pf.matchOpposite ? 'nicht ' : ''}${name}`;
 }

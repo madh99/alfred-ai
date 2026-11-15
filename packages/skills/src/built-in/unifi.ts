@@ -4,7 +4,7 @@ import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
 import { tlsFetch } from './social/tls-fetch.js';
 import { randomUUID } from 'node:crypto';
-import { baueRegel, filterLesbar, neueReihenfolge, netzadresse, policyZeile, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { baueRegel, filterLesbar, neueReihenfolge, netzadresse, policyZeile, protokollLesbar, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -421,6 +421,7 @@ export class UniFiSkill extends Skill {
   public async firewallLesen(): Promise<{
     zonen: Array<{ id: string; name: string; netzIds: string[] }>;
     netze: Array<{ id: string; name: string; vlan?: number; subnetz?: string; zoneId?: string }>;
+    /** quelleZone/zielZone sind Zonen-NAMEN und joinen auf zonen[].name (Zonennamen je Site eindeutig); unbekannte IDs als `?unbekannt:<id>`. */
     policies: Array<{ id: string; name: string; aktiv: boolean; aktion: string; quelleZone: string; zielZone: string; quelle: string; ziel: string; ports: string; protokoll: string; herkunft: string }>;
   }> {
     if (!this.config.apiKey) throw new Error('Firewall lesen braucht den UniFi-API-Schlüssel (Integration-API)');
@@ -440,21 +441,20 @@ export class UniFiSkill extends Skill {
       const zoneId = zonen.find(z => z.netzIds.includes(n._id))?.id;
       return { id: n._id, name: n.name ?? n._id, ...(vlan !== undefined && !Number.isNaN(vlan) ? { vlan } : {}), ...(subnetz ? { subnetz } : {}), ...(zoneId ? { zoneId } : {}) };
     });
-    const zoneName = (id: string) => iZonen.find(z => z.id === id)?.name ?? id;
-    const netzName = (id: string) => iNetze.find(n => n.id === id)?.name ?? id;
+    const zoneName = (id: string) => iZonen.find(z => z.id === id)?.name ?? `?unbekannt:${id}`;
+    const netzName = (id: string) => iNetze.find(n => n.id === id)?.name ?? `?unbekannt:${id}`;
     return {
       zonen, netze,
       policies: policies.map((p) => {
         const q = filterLesbar(p.source.trafficFilter, netzName);
         const z = filterLesbar(p.destination.trafficFilter, netzName);
         const portTeile = [z.ports, q.ports ? `Quellport ${q.ports}` : ''].filter(Boolean);
-        const pr = p.ipProtocolScope?.protocolFilter as { protocol?: { name?: string }; preset?: { name?: string } } | undefined;
         return {
           id: p.id, name: p.name ?? '', aktiv: p.enabled !== false, aktion: p.action?.type ?? '?',
           quelleZone: zoneName(p.source.zoneId), zielZone: zoneName(p.destination.zoneId),
           quelle: q.adresse || 'beliebig', ziel: z.adresse || 'beliebig',
           ports: portTeile.join(', ') || 'beliebig',
-          protokoll: pr?.protocol?.name ?? pr?.preset?.name ?? 'alle',
+          protokoll: protokollLesbar(p.ipProtocolScope),
           herkunft: p.metadata?.origin ?? '',
         };
       }),

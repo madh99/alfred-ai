@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { UniFiSkill } from '../built-in/unifi.js';
-import { netzadresse } from '../built-in/unifi-policies.js';
+import { filterLesbar, netzadresse, protokollLesbar } from '../built-in/unifi-policies.js';
 
 const NETZ_SQL = 'bbbbbbbbbbbbbbbbbbbbbbbb', ZONE_SQL = 'zSql';
 function welt(apiKey: string | null = 'k') {
@@ -9,7 +9,7 @@ function welt(apiKey: string | null = 'k') {
   const x = s as unknown as Record<string, unknown>;
   x.request = async (m: string, p: string) => {
     aufrufe.push(`${m} ${p}`);
-    if (m === 'GET' && p === 'rest/networkconf') return [{ _id: NETZ_SQL, name: 'SQL-Lab', vlan: 832, vlan_enabled: true, ip_subnet: '10.203.32.1/27' }];
+    if (m === 'GET' && p === 'rest/networkconf') return [{ _id: NETZ_SQL, name: 'SQL-Lab', vlan: 832, vlan_enabled: true, ip_subnet: '10.203.32.1/27' }, { _id: 'cccccccccccccccccccccccc', name: 'Ohne-Subnetz', vlan_enabled: false }];
     throw new Error(`unerwartet ${m} ${p}`);
   };
   x.v2 = async (m: string, p: string) => {
@@ -55,7 +55,7 @@ describe('UniFi firewallLesen', () => {
     const p = (await welt().s.firewallLesen()).policies[1]!;
     expect(p.aktiv).toBe(false);
     expect(p.quelle).toContain('NEUARTIG');
-    expect(p.zielZone).toBe('unbekannt');
+    expect(p.zielZone).toBe('?unbekannt:unbekannt');
   });
   it('ohne API-Schlüssel: Fehler mit Hinweis auf die Integration-API', async () => {
     await expect(welt(null).s.firewallLesen()).rejects.toThrow('Integration-API');
@@ -70,5 +70,32 @@ describe('UniFi firewallLesen', () => {
     expect(netzadresse('192.168.1.1/24')).toBe('192.168.1.0/24');
     expect(netzadresse('10.203.24.17/28')).toBe('10.203.24.16/28');
     expect(netzadresse('kaputt')).toBe('kaputt');
+  });
+  it('netzadresse: /32 bleibt die Adresse, /0 wird 0.0.0.0/0', () => {
+    expect(netzadresse('10.1.2.3/32')).toBe('10.1.2.3/32');
+    expect(netzadresse('10.1.2.3/0')).toBe('0.0.0.0/0');
+  });
+  it('Netz ohne ip_subnet/VLAN: keine Felder erfunden', async () => {
+    const n = (await welt().s.firewallLesen()).netze[1]!;
+    expect(n.subnetz).toBeUndefined();
+    expect(n.vlan).toBeUndefined();
+  });
+  it('Negation bleibt bei Netz, MAC, Domain, IP und Ports sichtbar', () => {
+    const f = filterLesbar({ type: 'X', networkFilter: { networkIds: ['a'], matchOpposite: true }, macAddressFilter: { macAddresses: ['aa'], matchOpposite: true }, domainFilter: { domains: ['x.de'], matchOpposite: true }, ipAddressFilter: { items: [{ value: '1.2.3.4' }], matchOpposite: true }, portFilter: { items: [{ value: 53 }], matchOpposite: true } }, id => id);
+    expect(f.adresse).toContain('nicht Netz a');
+    expect(f.adresse).toContain('nicht MAC aa');
+    expect(f.adresse).toContain('nicht Domain x.de');
+    expect(f.adresse).toContain('nicht 1.2.3.4');
+    expect(f.ports).toBe('nicht 53');
+  });
+  it('leere Listen heißen (leer), nicht beliebig', () => {
+    const f = filterLesbar({ type: 'IP_ADDRESS', ipAddressFilter: { items: [] }, portFilter: { items: [] } }, id => id);
+    expect(f.adresse).toBe('(leer)');
+    expect(f.ports).toBe('(leer)');
+  });
+  it('Protokoll: unbekannte Form als JSON, Negation sichtbar, ohne Filter alle', () => {
+    expect(protokollLesbar({ protocolFilter: { type: 'NEU', x: 1 } })).toContain('NEU');
+    expect(protokollLesbar({ protocolFilter: { protocol: { name: 'TCP' }, matchOpposite: true } })).toBe('nicht TCP');
+    expect(protokollLesbar({})).toBe('alle');
   });
 });
