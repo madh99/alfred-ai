@@ -88,11 +88,49 @@ describe('Schwärzung — neue Fälle', () => {
     }
     weg('passwordLastSet: 2026-11-15', ['2026-11-15']);
   });
+});
+
+describe('Schwärzung — Runde 1', () => {
+  it('URL-Zugangsdaten mit Zeichen vor dem Schema (Regression)', () => {
+    for (const e of ['+postgres://app:dummypass@db/x', '-postgres://app:dummypass@db/x', '.https://u:dummypass@h', '1-redis://u:dummypass@h']) expect(weg(e, ['dummypass']).anzahl, e).toBe(1);
+  });
+  it('Basic in JSON, Hashtable, ohne Kopfzeile', () => {
+    weg('{"Authorization": "Basic ZHVtbXk6ZHVtbXk="}', ['ZHVtbXk6ZHVtbXk=']);
+    weg('$h = @{ Authorization = "Basic ZHVtbXk6ZHVtbXk=" }', ['ZHVtbXk6ZHVtbXk=']);
+    weg('header Basic dXNlcjpwYXNz', ['dXNlcjpwYXNz']);
+    expect(schwaerze('Basic Settings').anzahl).toBe(0);
+  });
+  it('curl -u / --user: Teil nach dem Doppelpunkt', () => {
+    weg('curl -u admin:Dummy1234 https://h', ['Dummy1234'], ['admin:', 'https://h']);
+    weg('curl --user admin:Dummy1234 https://h', ['Dummy1234'], ['admin:']);
+    weg("curl --user='admin:Dummy 1234' https://h", ['Dummy 1234'], ['admin:']);
+    expect(schwaerze('curl -u admin https://h').anzahl).toBe(0);
+  });
+  it('mysql/sshpass mit Anführungszeichen', () => {
+    weg("mysql -u root -p'Dummy 1234' db", ['Dummy', '1234'], ['db']);
+    weg('sshpass -p "Dummy 1234" ssh h', ['Dummy', '1234'], ['ssh h']);
+  });
+  it('erkannter Schlüssel: Wert läuft über , und #', () => {
+    expect(weg('x password=ab#cdefgh', ['ab', 'cdefgh']).text).toBe('x password=[geschwärzt]');
+    weg('x secret=ab,cdefgh y', ['ab', 'cdefgh'], [' y']);
+  });
+  it('Schalter ohne Wert verschlucken keine Trennzeichen', () => {
+    for (const e of ['Get-Item x -PassThru | Format-List', 'docker login --password-stdin < datei', 'tool --password-file /run/secrets/x', 'tool --password-file=/run/secrets/x', 'cmd --token | grep x', 'cmd --token > out']) {
+      const r = schwaerze(e);
+      expect(r.text, e).toBe(e);
+      expect(r.anzahl, e).toBe(0);
+    }
+  });
+  it('PWD-Pfad-Ausnahme nicht für Schalter', () => {
+    weg('tool --pwd /secretvalue', ['/secretvalue']);
+    weg('tool -pw /secretvalue', ['/secretvalue']);
+  });
   it('linear: 200 000 Zeichen in < 1 s', () => {
     const muster = ['a'.repeat(200_000), ' '.repeat(200_000), 'a=' + ' '.repeat(200_000), ';a'.repeat(100_000), '-p'.repeat(100_000), 'mysql ' + '-'.repeat(200_000),
       'password'.repeat(25_000), '"'.repeat(200_000), 'x:'.repeat(100_000), '--password '.repeat(18_000), 'Authorization: Basic ' + 'A'.repeat(200_000),
       'a.'.repeat(100_000), '\n'.repeat(200_000), '(a='.repeat(66_000), 'x="'.repeat(66_000), " -pw '".repeat(33_000), 'mysql '.repeat(33_000), 'p=a '.repeat(50_000),
-      'token: '.repeat(28_000), 'sshpass -p '.repeat(18_000)];
+      'token: '.repeat(28_000), 'sshpass -p '.repeat(18_000), 'curl -u '.repeat(25_000), 'Basic '.repeat(33_000), 'Authorization: ' + ' '.repeat(200_000),
+      '://a'.repeat(50_000), 'a://' + 'b'.repeat(200_000), 'Basic ' + 'a'.repeat(200_000)];
     for (const m of muster) {
       const t0 = performance.now();
       schwaerze(m);

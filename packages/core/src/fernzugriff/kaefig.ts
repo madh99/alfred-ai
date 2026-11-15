@@ -120,29 +120,32 @@ const nurName = (s: string) => s.replace(/^\s*(?:export\s+)?/i, '').replace(/^["
 
 // Schlüssel nach Trennzeichen (Leerzeichen ; , & ? { ( [ : | " '; „:“ für grep-Ausgaben datei:key=wert), optional in Anführungszeichen, dann = oder :
 const MITTE_SCHLUESSEL = /(?<=^|[\s;,&?{([:|"'])(["']?)(?<k>[A-Za-z0-9_.-]+)\1\s*[=:]\s*/gm;
-// Wert: in Anführungszeichen (Leerzeichen erlaubt) oder bis zum nächsten Trennzeichen; mindestens 4 Zeichen
-const MITTE_WERT = /(?!["']?\[geschwärzt\])(?:"([^"\n]{4,})"|'([^'\n]{4,})'|([^\s'"#;,&]{4,}))/y;
+// Wert: in Anführungszeichen (Leerzeichen erlaubt) oder bis Leerraum, ; & oder Anführungszeichen (`,` und `#` gehören zum Wert); mindestens 4 Zeichen
+const MITTE_WERT = /(?!["']?\[geschwärzt\])(?:"([^"\n]{4,})"|'([^'\n]{4,})'|([^\s'";&]{4,}))/y;
 // Schalter: --name WERT / -Name WERT (Leerzeichen-getrennt; --name=WERT fängt MITTE_SCHLUESSEL)
 const SCHALTER_SCHLUESSEL = /(?<=^|[\s"'(])(?<k>--?[A-Za-z][A-Za-z0-9_-]*)[^\S\n]+/gm;
-const SCHALTER_WERT = /(?!-|["']?\[geschwärzt\])(?:"([^"\n]+)"|'([^'\n]+)'|([^\s'"]+))/y;
+// Kein Wert: nächster Schalter oder Shell-Trennzeichen (| > < ; & )) — `-PassThru | Format-List` bleibt
+const SCHALTER_WERT = /(?![-|<>;&)]|["']?\[geschwärzt\])(?:"([^"\n]+)"|'([^'\n]+)'|([^\s'"]+))/y;
+/** Schalter ohne geheimen Wert: -PassThru, --password-stdin, --password-file/-path (Dateipfad bleibt lesbar). */
+const OHNE_GEHEIMWERT = /^(?:passthru|[A-Za-z0-9_-]*-(?:stdin|file|path))$/i;
 
 /**
  * Schwärzt den Wert hinter jedem Schlüssel, dessen Name GEHEIM_NAME trifft. Nicht-geheime Schlüssel verbrauchen ihren Wert
  * NICHT — sonst verschluckte `conn: password='…'` den geheimen Schlüssel im Wert. Linear: Startpunkte nur nach Trennzeichen,
  * der Wert wird per Sticky-Regex genau an einer Stelle geprüft.
  */
-function schwaerzeNachSchluessel(t: string, schluessel: RegExp, wert: RegExp): { text: string; anzahl: number } {
+function schwaerzeNachSchluessel(t: string, schluessel: RegExp, wert: RegExp, schalter: boolean): { text: string; anzahl: number } {
   let aus = '', pos = 0, anzahl = 0;
   schluessel.lastIndex = 0;
   for (let m = schluessel.exec(t); m; m = schluessel.exec(t)) {
     const k = nurName(m.groups!.k!);
-    if (!GEHEIM_NAME.test(k)) continue;
+    if (!GEHEIM_NAME.test(k) || ((schalter || m.groups!.k!.startsWith('-')) && OHNE_GEHEIMWERT.test(k))) continue;
     const ende = m.index + m[0].length;
     wert.lastIndex = ende;
     const v = wert.exec(t);
     if (!v) continue;
     const w = v[1] ?? v[2] ?? v[3] ?? '';
-    if (istPwdPfad(k, w)) continue;
+    if (!schalter && istPwdPfad(k, w)) continue; // PWD-Ausnahme nur für KEY=Wert, nicht für --pwd /x
     const z = v[1] !== undefined ? '"' : v[2] !== undefined ? "'" : '';
     aus += `${t.slice(pos, ende)}${z}${GESCHWAERZT}${z}`;
     pos = ende + v[0].length;
@@ -171,15 +174,27 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
     anzahl++; return `${a}${k}${s}${q}${GESCHWAERZT}${q}`;
   });
   // KEY=Wert / KEY: Wert / "key": "Wert" auch mitten in der Zeile nach Trennzeichen; Werte in Anführungszeichen dürfen Leerzeichen enthalten
-  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, MITTE_SCHLUESSEL, MITTE_WERT)); anzahl += n;
+  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, MITTE_SCHLUESSEL, MITTE_WERT, false)); anzahl += n;
   // Kommandozeilen-Schalter mit Leerzeichen: --password X, --token X, -Password X (PowerShell); eindeutiger Schalter → keine Mindestlänge
-  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, SCHALTER_SCHLUESSEL, SCHALTER_WERT)); anzahl += n;
-  t = t.replace(/\b(sshpass[^\S\n]+-p[^\S\n]*)(?!\[geschwärzt\])(\S+)/g, (_m, a: string) => { anzahl++; return `${a}${GESCHWAERZT}`; });
+  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, SCHALTER_SCHLUESSEL, SCHALTER_WERT, true)); anzahl += n;
+  // Wert mit Anführungszeichen behält sie: -p'a b' → -p'[geschwärzt]'
+  const zitiert = (a: string, w: string) => { anzahl++; const z = /^["']/.test(w) ? w[0] : ''; return `${a}${z}${GESCHWAERZT}${z}`; };
+  t = t.replace(/\b(sshpass[^\S\n]+-p[^\S\n]*)(?!["']?\[geschwärzt\])("[^"\n]*"|'[^'\n]*'|\S+)/g, (_m, a: string, w: string) => zitiert(a, w));
   // mysql/mariadb: Passwort direkt am Schalter (-pX); nur in Zeilen, die den Client aufrufen (zeilenweise → linear)
-  t = t.replace(/^[^\n]*\b(?:mysql|mariadb)[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-p)(?!\[geschwärzt\])(\S+)/g, (_m, a: string) => { anzahl++; return `${a}${GESCHWAERZT}`; }));
-  t = t.replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]{3,})@/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
+  t = t.replace(/^[^\n]*\b(?:mysql|mariadb)[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-p)(?!["']?\[geschwärzt\])("[^"\n]*"|'[^'\n]*'|\S+)/g, (_m, a: string, w: string) => zitiert(a, w)));
+  // curl/wget -u/--user benutzer:kennwort — nur der Teil nach dem ersten Doppelpunkt (ohne Doppelpunkt fragt curl nach)
+  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u|--user|--http-user)([^\S\n]+|=)("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, tr: string, w: string) => {
+    const z = /^["']/.test(w) ? w[0] : '', innen = z ? w.slice(1, -1) : w, i = innen.indexOf(':');
+    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT) return m;
+    anzahl++; return `${s}${tr}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
+  }));
+  // URL-Zugangsdaten am Trenner :// verankert (jedes Schema, auch +postgres:// oder 1-redis://)
+  t = t.replace(/(:\/\/[^:\s/@]+:)(?!\[geschwärzt\]@)([^@\s/]{3,})@/g, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
   t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
-  t = t.replace(/\b(Authorization:[^\S\n]*Basic[^\S\n]+)[A-Za-z0-9+/]{4,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  // Authorization: Basic … auch als JSON/Hashtable ("Authorization": "Basic …", Authorization = "Basic …")
+  t = t.replace(/\b(Authorization["']?[^\S\n]*[:=][^\S\n]*(?:["'][^\S\n]*)?Basic[^\S\n]+)[A-Za-z0-9+/]{4,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  // Basic ohne Kopfzeile: nur base64-artige Werte (Ziffer, + / = oder Klein-Groß-Wechsel), damit „Basic Settings“ lesbar bleibt
+  t = t.replace(/\b(Basic[^\S\n]+)(?=[A-Za-z0-9+/]*(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}/g, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
   return { text: t, anzahl };
 }
 
