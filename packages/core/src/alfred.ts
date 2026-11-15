@@ -7713,9 +7713,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               // Realfall 22.10.: Fertigmeldungen kamen nur über Telegram/Push, nicht in den App-Verlauf (Freigabe-Fragen schon) — jetzt wie alle
               // Meldungen ohne Modell: Telegram UND im Verlauf gespeichert (die App zeigt sie im Hauptgespräch)
               await this.meldeOhneModell(text);
-              // Dokument-Vorlagen V2 — PDF/DOCX des Abnahmeprotokolls als Dateien an den Owner (wie Skill-Anhänge im Chat)
-              if (anhaenge?.length) await this.dateienAnOwner(anhaenge);
               await this.pushDienst?.anOwner({ titel: dringend ? 'Change braucht dich' : 'Change', text: text.slice(0, 180), art: 'hinweis', stufe: dringend ? 'time-sensitive' : 'active' }).catch(() => undefined);
+              // Dokument-Vorlagen V2 — PDF/DOCX des Abnahmeprotokolls als Dateien an den Owner (wie Skill-Anhänge im Chat); nicht abgewartet:
+              // melde läuft in beende(), ein hängender Dateiversand darf den Motor nicht aufhalten
+              if (anhaenge?.length) void this.dateienAnOwner(anhaenge).catch((err: Error) => this.logger.warn({ err: err.message }, 'Dokument-Dateien an den Owner fehlgeschlagen'));
             },
             frage: async (description, params) => {
               if (!this.confirmationQueue) return false;
