@@ -10,6 +10,8 @@ export interface BauplanInstanz {
   name: string;
   dokumentart: 'testprotokoll' | 'betrieb';
   changeIds: string[];
+  /** JSON, unverändert gespeichert (Betriebsdokument: Systemabgrenzung) */
+  parameter?: string;
   status: string;
   createdAt: string;
 }
@@ -25,6 +27,7 @@ function zuInstanz(r: Record<string, unknown>): BauplanInstanz {
     name: r.name as string,
     dokumentart: r.dokumentart as BauplanInstanz['dokumentart'],
     changeIds,
+    ...(typeof r.parameter === 'string' && r.parameter ? { parameter: r.parameter } : {}),
     status: r.status as string,
     createdAt: r.created_at as string,
   };
@@ -33,15 +36,15 @@ function zuInstanz(r: Record<string, unknown>): BauplanInstanz {
 export class BauplanInstanzRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
-  async anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[] }): Promise<BauplanInstanz> {
+  async anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanz> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.db.execute(
-      `INSERT INTO infra_bauplan_instanzen (id, user_id, name, dokumentart, change_ids, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'aktiv', ?, ?)`,
-      [id, userId, d.name, d.dokumentart, JSON.stringify(d.changeIds), now, now],
+      `INSERT INTO infra_bauplan_instanzen (id, user_id, name, dokumentart, change_ids, parameter, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'aktiv', ?, ?)`,
+      [id, userId, d.name, d.dokumentart, JSON.stringify(d.changeIds), d.parameter ?? null, now, now],
     );
-    return { id, name: d.name, dokumentart: d.dokumentart, changeIds: [...d.changeIds], status: 'aktiv', createdAt: now };
+    return { id, name: d.name, dokumentart: d.dokumentart, changeIds: [...d.changeIds], ...(d.parameter !== undefined ? { parameter: d.parameter } : {}), status: 'aktiv', createdAt: now };
   }
 
   /** Nach id oder Name. */

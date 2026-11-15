@@ -386,3 +386,87 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     expect(t.gespeichert).toHaveLength(0);
   });
 });
+
+describe('Skill dokumentation — Betriebs-Instanz', () => {
+  const VID = 'a1b2c3d4-0000-0000-0000-000000000001';
+  const DID = 'd0c0d0c0-0000-0000-0000-000000000009';
+  const assets = [
+    { id: 'aaaaaaaa-1111', name: 'pkiiss01', assetType: 'vm' },
+    { id: 'bbbbbbbb-2222', name: 'pkiroot01', assetType: 'vm' },
+    { id: 'cccccccc-3333', name: 'dopp', assetType: 'vm' },
+    { id: 'dddddddd-4444', name: 'dopp', assetType: 'service' },
+  ];
+  function mitBetrieb() {
+    const t = aufbau();
+    t.deps.betrieb = {
+      assetsNachName: async (_u, n) => assets.filter(a => a.name === n),
+      assetNachId: async (_u, id) => assets.find(a => a.id.startsWith(id)) ?? null,
+      vorhaben: async (_u, k) => (VID.startsWith(k) ? { id: VID, changeIds: [A.id, C.id] } : null),
+      dokument: async (_u, k) => (DID.startsWith(k) ? { id: DID } : null),
+    };
+    return t;
+  }
+
+  it('unbekanntes Asset: Fehler nennt den Namen, nichts gespeichert', async () => {
+    const t = mitBetrieb();
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'pki-betrieb', dokumentart: 'betrieb', assets: ['pkiiss01', 'gibtsnicht'] }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('gibtsnicht');
+    expect(r.error).not.toContain('„pkiiss01“ unbekannt');
+    expect(await t.deps.instanzen.finde('o', 'pki-betrieb')).toBeUndefined();
+  });
+
+  it('mehrdeutiger Name: Fehler listet die Kandidaten, nichts gespeichert', async () => {
+    const t = mitBetrieb();
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'x1', dokumentart: 'betrieb', assets: ['dopp'] }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('mehrdeutig');
+    expect(r.error).toContain('cccccccc');
+    expect(r.error).toContain('dddddddd');
+    expect(await t.deps.instanzen.finde('o', 'x1')).toBeUndefined();
+  });
+
+  it('eindeutige Namen und IDs: gespeichert mit aufgelösten IDs, Change-IDs des Vorhabens, ohne Changes-Eingabe', async () => {
+    const t = mitBetrieb();
+    const r = await t.skill.execute({
+      action: 'instanz_anlegen', name: 'pki-betrieb', dokumentart: 'betrieb', assets: ['pkiiss01', 'bbbbbbbb'],
+      vorhaben: 'a1b2c3', architektur_doc: 'd0c0d0', jobs: ['pki-betrieb'], standard_vorlagen: ['k'], restore_change: '7335dfeb',
+    }, CTX);
+    expect(r.success, r.error).toBe(true);
+    const i = await t.deps.instanzen.finde('o', 'pki-betrieb');
+    expect(i?.dokumentart).toBe('betrieb');
+    expect(i?.changeIds).toEqual([A.id, C.id]);
+    expect(JSON.parse(i!.parameter!)).toEqual({
+      assets: ['aaaaaaaa-1111', 'bbbbbbbb-2222'], vorhabenId: VID, architekturDocId: DID, jobs: ['pki-betrieb'], standardVorlagen: ['k'], restoreChangeId: C.id,
+    });
+  });
+
+  it('unbekanntes Vorhaben, Dokument und Restore-Change werden gemeldet, nichts gespeichert', async () => {
+    const t = mitBetrieb();
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'y', dokumentart: 'betrieb', assets: ['pkiiss01'], vorhaben: 'zzzzzz', architektur_doc: 'zzzzzz', restore_change: 'ffffffff' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Vorhaben');
+    expect(r.error).toContain('Architektur-Dokument');
+    expect(r.error).toContain('restore_change');
+    expect(t.deps.instanzen.finde).toBeDefined();
+    expect(await t.deps.instanzen.finde('o', 'y')).toBeUndefined();
+  });
+
+  it('keine Assets, zu viele Assets, ungültiger Job-Schlüssel, change-Präfix und doppelter Name werden abgewiesen', async () => {
+    const t = mitBetrieb();
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'z', dokumentart: 'betrieb', assets: [] }, CTX)).error).toContain('mindestens ein Asset');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'z', dokumentart: 'betrieb', assets: Array.from({ length: 41 }, (_, k) => `a${k}`) }, CTX)).error).toContain('höchstens 40');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'z', dokumentart: 'betrieb', assets: ['pkiiss01'], jobs: ['a b'] }, CTX)).success).toBe(false);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'change-x', dokumentart: 'betrieb', assets: ['pkiiss01'] }, CTX)).success).toBe(false);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'ok', dokumentart: 'betrieb', assets: ['pkiiss01'] }, CTX)).success).toBe(true);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'ok', dokumentart: 'betrieb', assets: ['pkiiss01'] }, CTX)).error).toContain('gibt es schon');
+  });
+
+  it('ohne CMDB-Anbindung: klarer Fehler; Testprotokoll-Instanz ohne parameter bleibt unverändert', async () => {
+    const t = aufbau();
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'b', dokumentart: 'betrieb', assets: ['x'] }, CTX)).error).toContain('nicht verfügbar');
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'tp', dokumentart: 'testprotokoll', changes: [A.id] }, CTX);
+    expect(r.success).toBe(true);
+    expect((await t.deps.instanzen.finde('o', 'tp'))?.parameter).toBeUndefined();
+  });
+});

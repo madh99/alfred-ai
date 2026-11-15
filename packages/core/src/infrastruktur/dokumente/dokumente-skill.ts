@@ -11,6 +11,7 @@ import { baueAbnahme, baueTestprotokoll } from './builder.js';
 import { alsMarkdown } from './markdown.js';
 import { alsPdf } from './pdf.js';
 import { alsDocx } from './docx.js';
+import { pruefeBetriebParameter, type BetriebParameter } from './betrieb-parameter.js';
 import { findeChange, verlaufVon, type DokuQuellen } from './sammler.js';
 import { lege, pruefeAblageNamen, PVE2_WURZEL, type AblageDeps } from './ablage.js';
 import { schwaerze } from '../../fernzugriff/kaefig.js';
@@ -22,7 +23,18 @@ export const MAX_INHALT = 500_000;
 const INSTANZ_NAME = /^(?!\.+$)[\w.-]{1,80}$/;
 const MAX_CHANGES = 20;
 
-export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; status: string; createdAt: string }
+export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string; status: string; createdAt: string }
+
+/** Nachschlagen für Betriebs-Instanzen (alles je Owner); fehlt es, kann keine Betriebs-Instanz angelegt werden */
+export interface BetriebQuellen {
+  /** alle Assets mit genau diesem Namen (über Asset-Typen hinweg) — mehr als eines heißt mehrdeutig */
+  assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string }>>;
+  assetNachId(userId: string, id: string): Promise<{ id: string; name: string } | null>;
+  /** Vorhaben nach ID, eindeutigem ID-Anfang oder Titel */
+  vorhaben(userId: string, schluessel: string): Promise<{ id: string; changeIds: string[] } | null>;
+  /** CMDB-Dokument nach ID oder eindeutigem ID-Anfang (ab 6 Zeichen) */
+  dokument(userId: string, schluessel: string): Promise<{ id: string } | null>;
+}
 
 export interface DokumenteDeps {
   owner: () => string | undefined;
@@ -33,9 +45,10 @@ export interface DokumenteDeps {
     getDocumentById(userId: string, id: string): Promise<CmdbDocument | null>;
   };
   instanzen: {
-    anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[] }): Promise<BauplanInstanzDaten>;
+    anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanzDaten>;
     finde(userId: string, idOderName: string): Promise<BauplanInstanzDaten | undefined>;
   };
+  betrieb?: BetriebQuellen;
   ablage: AblageDeps;
   datenOrdner: string;
   jetzt?: () => string;
@@ -261,6 +274,63 @@ export class DokumenteDienst {
     return this.d.instanzen.anlegen(o, { name, dokumentart: 'testprotokoll', changeIds: ids });
   }
 
+  /**
+   * Betriebs-Instanz: grenzt ein bestehendes System ab (CMDB-Assets, optional Vorhaben, Architektur-Dokument, Jobs, Standard-Vorlagen,
+   * Restore-Change). Jeder Verweis wird aufgelöst und geprüft; ein Fehler (unbekannt, mehrdeutig) nennt alle Problemfälle, gespeichert wird dann nichts.
+   */
+  async betriebAnlegen(o: string, name: string, e: {
+    assets: string[]; vorhaben?: string; architekturDoc?: string; jobs?: string[]; standardVorlagen?: string[]; restoreChange?: string;
+  }): Promise<BauplanInstanzDaten> {
+    if (!INSTANZ_NAME.test(name)) throw new Error('name: nur Buchstaben, Ziffern, _ . - (höchstens 80 Zeichen)');
+    if (/^(change|serie)-/i.test(name)) throw new Error('name: darf nicht mit change- oder serie- beginnen (Ordner der Abnahmeprotokolle)');
+    const q = this.d.betrieb;
+    if (!q) throw new Error('Betriebs-Instanzen sind hier nicht verfügbar (keine CMDB-Anbindung)');
+    // Form zuerst prüfen (Anzahl, Schlüssel); aufgelöst wird danach
+    const form = pruefeBetriebParameter({
+      assets: e.assets, ...(e.jobs ? { jobs: e.jobs } : {}), ...(e.standardVorlagen ? { standardVorlagen: e.standardVorlagen } : {}),
+    });
+    if (typeof form === 'string') throw new Error(form);
+    if (await this.d.instanzen.finde(o, name)) throw new Error(`Bauplan-Instanz „${name}“ gibt es schon`);
+    const probleme: string[] = [];
+    const ids: string[] = [];
+    for (const ref of form.assets) {
+      const treffer = await q.assetsNachName(o, ref);
+      let id: string | undefined;
+      if (treffer.length > 1) {
+        probleme.push(`Asset „${ref}“ ist mehrdeutig: ${treffer.map(t => `${t.id.slice(0, 8)} (${t.assetType ?? 'Typ unbekannt'})`).join(', ')} — mit der ID angeben`);
+        continue;
+      }
+      if (treffer.length === 1) id = treffer[0]!.id;
+      else { const a = await q.assetNachId(o, ref); if (a) id = a.id; }
+      if (!id) { probleme.push(`Asset „${ref}“ unbekannt`); continue; }
+      if (ids.includes(id)) { probleme.push(`Asset „${ref}“ doppelt angegeben (gleiches Asset ${id.slice(0, 8)})`); continue; }
+      ids.push(id);
+    }
+    const p: BetriebParameter = { assets: ids };
+    let changeIds: string[] = [];
+    if (e.vorhaben) {
+      const v = await q.vorhaben(o, e.vorhaben);
+      if (!v) probleme.push(`Vorhaben „${e.vorhaben}“ nicht gefunden oder nicht eindeutig`);
+      else { p.vorhabenId = v.id; changeIds = [...v.changeIds]; }
+    }
+    if (e.architekturDoc) {
+      const d = await q.dokument(o, e.architekturDoc);
+      if (!d) probleme.push(`Architektur-Dokument „${e.architekturDoc}“ nicht gefunden oder nicht eindeutig`);
+      else p.architekturDocId = d.id;
+    }
+    if (e.restoreChange) {
+      const c = await findeChange(this.d.quellen, o, e.restoreChange);
+      if (typeof c === 'string') probleme.push(`restore_change: ${c}`);
+      else p.restoreChangeId = c.id;
+    }
+    if (form.jobs) p.jobs = form.jobs;
+    if (form.standardVorlagen) p.standardVorlagen = form.standardVorlagen;
+    if (probleme.length) throw new Error(`Betriebs-Instanz nicht angelegt: ${probleme.join('; ')}`);
+    const geprueft = pruefeBetriebParameter(p);
+    if (typeof geprueft === 'string') throw new Error(geprueft);
+    return this.d.instanzen.anlegen(o, { name, dokumentart: 'betrieb', changeIds, parameter: JSON.stringify(geprueft) });
+  }
+
   /** Export aus der gespeicherten Struktur (nie aus dem Markdown); legt erneut ab. */
   async exportiere(o: string, docId: string): Promise<Erzeugt> {
     const doc = await this.d.cmdb.getDocumentById(o, docId);
@@ -292,6 +362,7 @@ export class DokumentationSkill extends Skill {
       + 'als PDF, DOCX, Rohlauf-JSON und PRUEFUNG.txt zugestellt und abgelegt (data/dokumente/… und Kopie auf pve2 /srv/alfred-dokumente/…). '
       + 'abnahme_erzeugen (change = ID oder eindeutiges Präfix; optional zweck ≤ 600, abweichungen ≤ 600 Zeichen) — Change-Abnahmeprotokoll. '
       + 'instanz_anlegen (name [A-Za-z0-9_.-], dokumentart testprotokoll, changes = Change-IDs in Reihenfolge Aufbau … Abbau) — bündelt Changes für ein Testprotokoll. '
+      + 'instanz_anlegen mit dokumentart betrieb (name, assets = Namen oder IDs der CMDB-Assets des Systems; optional vorhaben, architektur_doc, jobs, standard_vorlagen, restore_change) — grenzt ein bestehendes System für ein Betriebsdokument ab. '
       + 'testprotokoll_erzeugen (instanz = Name oder ID; optional zweck ≤ 600, befunde_produktion ≤ 1200) — Lab-/Testprotokoll über alle Changes der Instanz. '
       + 'dokument_exportieren (doc_id) — gespeichertes Vorlagen-Dokument erneut als Dateien (aus der Struktur) zustellen und ablegen. '
       + 'Freitexte nur mit Belegen füllen oder leer lassen; alles andere entsteht aus den Daten.',
@@ -305,7 +376,13 @@ export class DokumentationSkill extends Skill {
         zweck: { type: 'string', description: 'Freitext Zweck (≤ 600 Zeichen)' },
         abweichungen: { type: 'string', description: 'abnahme_erzeugen: Abweichungen und offene Punkte (≤ 600 Zeichen)' },
         name: { type: 'string', description: 'instanz_anlegen: Name der Bauplan-Instanz (z. B. pki-lab-2026-11-15)' },
-        dokumentart: { type: 'string', enum: ['testprotokoll'] },
+        dokumentart: { type: 'string', enum: ['testprotokoll', 'betrieb'] },
+        assets: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): CMDB-Assets des Systems, Namen oder IDs (1 bis 40)' },
+        vorhaben: { type: 'string', description: 'instanz_anlegen (betrieb): Vorhaben-ID, eindeutiger ID-Anfang oder Titel' },
+        architektur_doc: { type: 'string', description: 'instanz_anlegen (betrieb): ID des Architektur-Dokuments in der CMDB' },
+        jobs: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Job-Schlüssel, z. B. pki-betrieb' },
+        standard_vorlagen: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Schlüssel der Standard-Vorlagen, z. B. k' },
+        restore_change: { type: 'string', description: 'instanz_anlegen (betrieb): Change mit dem letzten Restore-Beweis' },
         changes: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen: Change-IDs in Reihenfolge' },
         instanz: { type: 'string', description: 'testprotokoll_erzeugen: Name oder ID der Instanz' },
         befunde_produktion: { type: 'string', description: 'testprotokoll_erzeugen: Befunde für die Produktion (≤ 1200 Zeichen)' },
@@ -342,7 +419,15 @@ export class DokumentationSkill extends Skill {
           return erg(await this.dienst.abnahme(o, c, frei));
         }
         case 'instanz_anlegen': {
-          if (input.dokumentart !== undefined && input.dokumentart !== 'testprotokoll') return { success: false, error: 'dokumentart: nur testprotokoll' };
+          if (input.dokumentart !== undefined && input.dokumentart !== 'testprotokoll' && input.dokumentart !== 'betrieb') return { success: false, error: 'dokumentart: testprotokoll oder betrieb' };
+          if (input.dokumentart === 'betrieb') {
+            const liste = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : undefined);
+            const i = await this.dienst.betriebAnlegen(o, String(input.name ?? '').trim(), {
+              assets: liste(input.assets) ?? [], vorhaben: text(input.vorhaben), architekturDoc: text(input.architektur_doc),
+              jobs: liste(input.jobs), standardVorlagen: liste(input.standard_vorlagen), restoreChange: text(input.restore_change),
+            });
+            return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) für ein Betriebsdokument; Parameter: ${i.parameter ?? '{}'}` };
+          }
           const refs = Array.isArray(input.changes) ? input.changes.map(x => String(x).trim()).filter(Boolean) : [];
           const i = await this.dienst.instanzAnlegen(o, String(input.name ?? '').trim(), refs);
           return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) für ein Testprotokoll mit ${i.changeIds.length} Changes: ${i.changeIds.map(x => x.slice(0, 8)).join(', ')}` };

@@ -52,6 +52,16 @@ describe.skipIf(!hasBetterSqlite3)('BauplanInstanzRepository und Dokumentstruktu
     expect((await repo.liste('u1')).map(i => i.name)).toEqual(['a']);
   });
 
+  it('speichert den parameter-JSON unverändert (Roundtrip) und lässt ihn ohne Angabe weg', async () => {
+    const { repo } = await setup();
+    const p = JSON.stringify({ assets: ['a-1', 'b-2'], jobs: ['pki-betrieb'] });
+    const neu = await repo.anlegen('u1', { name: 'betrieb-pki', dokumentart: 'betrieb', changeIds: [], parameter: p });
+    expect(neu.parameter).toBe(p);
+    expect((await repo.finde('u1', 'betrieb-pki'))?.parameter).toBe(p);
+    await repo.anlegen('u1', { name: 'ohne', dokumentart: 'testprotokoll', changeIds: ['x'] });
+    expect((await repo.finde('u1', 'ohne'))?.parameter).toBeUndefined();
+  });
+
   it('wirft bei doppeltem Namen', async () => {
     const { repo } = await setup();
     await repo.anlegen('u1', { name: 'dup', dokumentart: 'betrieb', changeIds: ['x'] });
