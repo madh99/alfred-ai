@@ -63,6 +63,7 @@ export class UniFiSkill extends Skill {
             'clear_fixed_ip',
             'create_zone',
             'delete_zone',
+            'remove_orphan_zone_networks',
             'export_config',
             'trunk_path',
             'allow_network_on_port',
@@ -178,6 +179,7 @@ export class UniFiSkill extends Skill {
         destination_ip: { type: 'string', description: 'Ziel-Adressen statt Zielnetz: IP, Subnetz (CIDR) oder Bereich a-b, kommagetrennt' },
         allow_return_traffic: { type: 'boolean', description: 'create_firewall_policy ALLOW: Antworten ausdrücklich zulassen (in Changes immer true)' },
         zone_name: { type: 'string', description: 'create_zone/delete_zone: Name der eigenen Firewall-Zone (z. B. Docker-Dev)' },
+        network_id: { type: 'string', description: 'remove_orphan_zone_networks: nur diese verwaiste interne Netz-ID entfernen (ohne Angabe: alle verwaisten). Nur im Change; entfernt ausschließlich IDs, deren Netz nicht mehr existiert.' },
         client_ip: { type: 'string', description: 'trunk_path: IP eines Geräts im Netz (z. B. des Proxmox-Knotens), von dessen Switch-Port bis zur UDM' },
         client_mac: { type: 'string', description: 'trunk_path: MAC statt IP' },
         fixed_ip: { type: 'string', description: 'set_fixed_ip: feste IP (DHCP-Reservierung) für das Gerät mit mac, z. B. 192.168.1.111 — Netz ergibt sich aus der Adresse' },
@@ -306,6 +308,9 @@ export class UniFiSkill extends Skill {
         case 'delete_zone':
           if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
           return action === 'create_zone' ? await this.zoneAnlegen(input) : await this.zoneLoeschen(input);
+        case 'remove_orphan_zone_networks':
+          if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
+          return await this.verwaisteZonenNetze(input.network_id ? String(input.network_id) : undefined);
         case 'export_config':
           return await this.konfigSichern();
         case 'trunk_path':
@@ -1280,7 +1285,36 @@ export class UniFiSkill extends Skill {
     const drin = clients.filter(c => c.network_id === n._id || c.network === n.name);
     if (drin.length) return { success: false, error: `Im Netz „${n.name}“ sind noch ${drin.length} Geräte — nicht gelöscht` };
     await this.request('DELETE', `rest/networkconf/${n._id}`);
-    return { success: true, data: { id: n._id, name: n.name, vlan: n.vlan }, display: `✅ Netz „${n.name}“ (VLAN ${n.vlan}) gelöscht` };
+    // Realfall 15.11. (288c3716): nach delete_zone lag das Netz in „Internal“; die UDM ließ die ID nach dem Löschen in network_ids
+    // der Zone stehen → Integration-API /firewall/zones und /firewall/policies antworteten global mit 422. Sofort mitbereinigen.
+    const r = await this.verwaisteZonenNetze(String(n._id));
+    if (!r.success) return { success: false, error: `Netz „${n.name}“ gelöscht, aber verwaister Zonenverweis bleibt: ${r.error}` };
+    const z = (r.data as { entfernt: Array<{ zone: string }> }).entfernt;
+    return { success: true, data: { id: n._id, name: n.name, vlan: n.vlan, zonenBereinigt: z }, display: `✅ Netz „${n.name}“ (VLAN ${n.vlan}) gelöscht${z.length ? ` — Verweis aus Zone ${z.map(x => x.zone).join(', ')} entfernt` : ''}` };
+  }
+
+  /**
+   * Realfall 15.11.: Zonen (interne v2-API) verweisen auf gelöschte Netze → Integration-API 422 network-does-not-exist für alle Zonen
+   * und Policies. Entfernt aus network_ids NUR IDs, die es in rest/networkconf nicht gibt (optional nur eine bestimmte ID), schreibt die
+   * Zone sonst unverändert zurück und liest nach. Ein Rückweg ist sinnlos (die IDs zeigen auf nichts).
+   */
+  private async verwaisteZonenNetze(nurId?: string): Promise<SkillResult> {
+    const zonen = ((await this.v2('GET', 'firewall/zone')) as Array<Record<string, unknown> & { _id: string; name: string; network_ids?: string[] }> | undefined) ?? [];
+    const netzIds = new Set(((await this.request<any[]>('GET', 'rest/networkconf')) ?? []).map(x => String(x._id)));
+    const entfernt: Array<{ zone: string; ids: string[] }> = [];
+    for (const z of zonen) {
+      const ids = z.network_ids ?? [];
+      const weg = ids.filter(i => !netzIds.has(i) && (!nurId || i === nurId));
+      if (!weg.length) continue;
+      await this.v2('PUT', `firewall/zone/${z._id}`, { ...z, network_ids: ids.filter(i => !weg.includes(i)) });
+      entfernt.push({ zone: z.name, ids: weg });
+    }
+    if (entfernt.length) {
+      const nachher = ((await this.v2('GET', 'firewall/zone')) as Array<{ name: string; network_ids?: string[] }> | undefined) ?? [];
+      const rest = nachher.flatMap(z => (z.network_ids ?? []).filter(i => entfernt.some(e => e.ids.includes(i))).map(i => `${z.name}:${i}`));
+      if (rest.length) return { success: false, error: `verwaiste Netz-IDs nach dem Schreiben noch vorhanden: ${rest.join(', ')}` };
+    }
+    return { success: true, data: { entfernt }, display: entfernt.length ? `✅ Verwaiste Netzverweise entfernt: ${entfernt.map(e => `${e.zone} (${e.ids.join(', ')})`).join('; ')}` : 'Keine verwaisten Netzverweise in den Zonen' };
   }
 
   /** Pilot cf82f3f2 — eigene Firewall-Zone mit ihren Netzen: zwischen eigenen Zonen und den übrigen gilt, was die Policies erlauben */

@@ -121,11 +121,13 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   'ca_wiederherstellung_testen',
   // v1866 — PKI-Lab: Bausteine nur auf Wegwerf-Lab-Rechnern; Rückweg ist der Abbau des Labs (VMs löschen, eigener Schritt/Change)
   'lab_namen_setzen', 'lab_ca_einrichten', 'lab_root_vertrauen', 'lab_sql_installieren', 'lab_zertifikat_ausstellen', 'lab_zertifikat_sperren', 'lab_crl_dienst', 'lab_zertifikat_binden', 'tls_negativtest',
+  // v1871 — UniFi: entfernt nur Zonenverweise auf nicht mehr existierende Netze; ein Rückweg zeigte wieder auf nichts
+  'remove_orphan_zone_networks',
   'sql_medien_laden', 'sql_installieren', 'hadr_aktivieren', 'pruefdaten_schreiben', 'sql_sicherung', 'wiederherstellung_testen']); // v1658 Registry: zusätzliches Image, kein laufender Dienst betroffen; // v1614 isolate_vm macht eine Rettungskopie nur sicherer
 /** Aktionen, die ihr Ergebnis selbst prüfen (Prüfsumme, Zeilenzahl, Größe, Datei) — eigene Prüfung optional */
 const SELBST_GEPRUEFT = new Set([
   // v1865/v1866 — ISO hashgeprüft, CD-Laufwerk nachgelesen; PKI-Lab-Bausteine weisen ihr Ergebnis selbst nach (Marker LAB_…/EXPECTED_TLS_FAILURE)
-  'iso_ablegen', 'attach_iso', 'detach_iso', 'lab_namen_setzen', 'lab_ca_einrichten', 'lab_root_vertrauen', 'lab_sql_installieren', 'lab_zertifikat_ausstellen', 'lab_zertifikat_sperren', 'lab_crl_dienst', 'lab_zertifikat_binden', 'tls_negativtest',
+  'iso_ablegen', 'attach_iso', 'detach_iso', 'remove_orphan_zone_networks', 'lab_namen_setzen', 'lab_ca_einrichten', 'lab_root_vertrauen', 'lab_sql_installieren', 'lab_zertifikat_ausstellen', 'lab_zertifikat_sperren', 'lab_crl_dienst', 'lab_zertifikat_binden', 'tls_negativtest',
   'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'export_config', 'create_backup_job', 'delete_backup_job', 'set_fixed_ip', 'clear_fixed_ip', 'create_rule', 'delete_rule', 'create_static_route', 'delete_static_route', 'restore_backup', 'isolate_vm',
   // v1847 — PKI Etappe 3a: die Codesignatur-Bausteine prüfen ihr Ergebnis selbst (Vorlage auf der CA mit Flags; Zertifikat kryptografisch
   // gegen Schlüssel, Name, Verwendung, Aussteller; Sperrung in der CA-Datenbank; Schalter mit gültigem Material) und schlagen sonst fehl

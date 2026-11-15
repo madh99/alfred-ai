@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — UniFi-Zonen nach dem Löschen eines Netzes (v1871)
+
+- Neue UniFi-Aktion `remove_orphan_zone_networks` entfernt Zonenverweise auf nicht mehr existierende Netze, die die Firewall-Schnittstelle des Gateways blockieren; vorhandene Netze bleiben unberührt, das Ergebnis wird nachgelesen.
+- `delete_network` bereinigt einen solchen Verweis sofort beim Löschen.
+
 ### Fixed — kurzlebiges PKI-Lab-Zertifikat (v1870)
 
 - `lab_zertifikat_ausstellen` mit `art: kurzlebig` berücksichtigt die Rückdatierung der Lab-CA, sodass das Zertifikat ab der Ausstellung die angeforderten Minuten gültig ist.

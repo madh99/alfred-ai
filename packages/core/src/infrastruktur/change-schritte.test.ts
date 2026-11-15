@@ -678,3 +678,9 @@ describe('v1784 Sicherung zählt als Wirkung für die Korrektur am Haltepunkt', 
     expect(korrekturAb).toBe(3);
   });
 });
+
+describe('v1871 UniFi verwaiste Zonenverweise', () => {
+  it('ändernd, nur im Change ohne Rückweg erlaubt', () => {
+    expect(aktionsArt('unifi', 'remove_orphan_zone_networks')).not.toBe('lesen');
+  });
+});
