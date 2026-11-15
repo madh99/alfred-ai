@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { ChangeMotor, ownerFrageVeraltet, ueberspringbar, type MotorDeps } from './change-motor.js';
-import { loeseAuf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
+import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
 // I4 — Ausführungsmotor gegen Attrappen (kein echter Host)
@@ -809,5 +809,28 @@ describe('Dokument-Vorlagen: Verlauf im Lauf', () => {
     const v = (k.c.lauf as ChangeLauf).verlauf!;
     expect(v.map(e => e.art)).toEqual(['halt', 'plan_geaendert', 'wiederholen']);
     expect(v[1]).toMatchObject({ zeit: '2026-11-15T08:00:00.000Z', schritt: 2 });
+    expect(v[2]!.text).toContain('nach Freigabe der Korrektur fortgesetzt');
+  });
+
+  it('merkeVerlauf schwärzt vor dem Kürzen', () => {
+    const l = { phase: 'angehalten', schritt: 1, start: 'x', ergebnisse: [] } as ChangeLauf;
+    merkeVerlauf(l, { zeit: 'z', art: 'halt', schritt: 1, text: 'a'.repeat(280) + '\npassword=Geheim123!' });
+    expect(l.verlauf![0]!.text).not.toContain('Geheim');
+    expect(l.verlauf![0]!.text.length).toBeLessThanOrEqual(300);
+  });
+
+  it('merkeVerlauf kappt bei 200: die ersten 50, Platzhalter mit richtiger Zahl, die neuesten', () => {
+    const l = { phase: 'laeuft', schritt: 1, start: 'x', ergebnisse: [] } as ChangeLauf;
+    for (let i = 1; i <= 250; i++) merkeVerlauf(l, { zeit: `z${i}`, art: 'wiederholen', schritt: 1, text: `E${i}` });
+    expect(l.verlauf).toHaveLength(200);
+    expect(l.verlauf![49]!.text).toBe('E50');
+    expect(l.verlauf![50]).toMatchObject({ art: 'ausgelassen', anzahl: 51, text: '… 51 Einträge ausgelassen' });
+    expect(l.verlauf![51]!.text).toBe('E102');
+    expect(l.verlauf![199]!.text).toBe('E250');
+    merkeVerlauf(l, { zeit: 'z251', art: 'halt', schritt: 1, text: 'E251' });
+    expect(l.verlauf).toHaveLength(200);
+    expect(l.verlauf![50]).toMatchObject({ art: 'ausgelassen', anzahl: 52 });
+    expect(l.verlauf![51]!.text).toBe('E103');
+    expect(l.verlauf![199]!.text).toBe('E251');
   });
 });

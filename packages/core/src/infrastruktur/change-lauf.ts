@@ -3,6 +3,7 @@
  * Laufzustand je Change, Auflösen der Verweise auf frühere Schritte, Auswerten von Prüfungen. Ohne I/O, ohne Modell.
  */
 import type { ChangeSchritt, Pruefung } from './change-schritte.js';
+import { schwaerze } from '../fernzugriff/kaefig.js';
 
 export type LaufPhase = 'laeuft' | 'wartet_owner' | 'angehalten' | 'rueckweg' | 'fertig';
 export interface SchrittErgebnis {
@@ -40,12 +41,28 @@ export interface ChangeLauf {
   verlauf?: VerlaufEintrag[];
 }
 
-export interface VerlaufEintrag { zeit: string; art: 'halt' | 'wiederholen' | 'ueberspringen' | 'plan_geaendert'; schritt: number; text: string }
+/** art „ausgelassen“ = Platzhalter für gekappte Einträge (anzahl = wie viele insgesamt fehlen) */
+export interface VerlaufEintrag { zeit: string; art: 'halt' | 'wiederholen' | 'ueberspringen' | 'plan_geaendert' | 'ausgelassen'; schritt: number; text: string; anzahl?: number }
 export const MAX_VERLAUF_TEXT = 300;
+export const MAX_VERLAUF = 200;
+const VERLAUF_ANFANG = 50;
 
-/** Verlaufseintrag anhängen; der Text wird auf MAX_VERLAUF_TEXT Zeichen begrenzt. */
+/**
+ * Verlaufseintrag anhängen; der Text wird erst geschwärzt, dann auf MAX_VERLAUF_TEXT Zeichen begrenzt (ein Geheimnis an der
+ * Schnittstelle bleibt so nicht halb stehen). Höchstens MAX_VERLAUF Einträge: die ersten 50 und die neuesten bleiben, dazwischen
+ * ein Platzhalter „… N Einträge ausgelassen“, dessen Zahl bei jedem weiteren Kappen mitwächst.
+ */
 export function merkeVerlauf(l: ChangeLauf, e: VerlaufEintrag): void {
-  l.verlauf = [...(l.verlauf ?? []), { ...e, text: e.text.slice(0, MAX_VERLAUF_TEXT) }];
+  let neu = [...(l.verlauf ?? []), { ...e, text: schwaerze(e.text).text.slice(0, MAX_VERLAUF_TEXT) }];
+  if (neu.length > MAX_VERLAUF) {
+    const marke = neu[VERLAUF_ANFANG]?.art === 'ausgelassen' ? neu[VERLAUF_ANFANG] : undefined;
+    const rest = neu.slice(VERLAUF_ANFANG + (marke ? 1 : 0));
+    const behalten = rest.slice(rest.length - (MAX_VERLAUF - VERLAUF_ANFANG - 1));
+    const weg = rest.slice(0, rest.length - behalten.length);
+    const anzahl = (marke?.anzahl ?? 0) + weg.length;
+    neu = [...neu.slice(0, VERLAUF_ANFANG), { zeit: weg.at(-1)?.zeit ?? marke?.zeit ?? e.zeit, art: 'ausgelassen', schritt: 0, text: `… ${anzahl} Einträge ausgelassen`, anzahl }, ...behalten];
+  }
+  l.verlauf = neu;
 }
 
 export const MAX_AUSGABE = 2000;

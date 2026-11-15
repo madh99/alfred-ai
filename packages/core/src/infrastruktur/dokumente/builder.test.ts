@@ -152,4 +152,34 @@ describe('Sammler', () => {
 
     expect(await verlaufVon(quellen([]), 'o', aufbau)).toEqual({ eintraege: [], quelle: 'keine' });
   });
+
+  it('verlaufVon: Lauf-Verlauf ohne Halt + Halte-Incidents → eingereiht, ohne Doppel, geschwärzt', async () => {
+    const c = { ...aufbau, lauf: { ...(aufbau.lauf as object), verlauf: [{ zeit: '2026-11-15T10:00:00.000Z', art: 'wiederholen', schritt: 3, text: 'Schritt 3 wird wiederholt' }] } } as CmdbChangeRequest;
+    const halt = { id: 'i1', createdAt: '2026-11-14T08:10:00.000Z', text: `Change ${aufbau.id} (PKI-Lab aufbauen) angehalten.
+Schritt 3: Fehler ${'a'.repeat(270)}
+password=Geheim123!` };
+    const r = await verlaufVon(quellen([], [halt, halt]), 'o', c);
+    expect(r.quelle).toBe('lauf+incidents');
+    expect(r.eintraege.map(e => e.art)).toEqual(['halt', 'wiederholen']);
+    expect(JSON.stringify(r)).not.toContain('Geheim');
+    // mit Halt im Lauf: nur der Lauf
+    const mitHalt = { ...aufbau, lauf: { ...(aufbau.lauf as object), verlauf: [{ zeit: 'z', art: 'halt', schritt: 3, text: 'x' }] } } as CmdbChangeRequest;
+    expect((await verlaufVon(quellen([], [halt]), 'o', mitHalt)).quelle).toBe('lauf');
+  });
+
+  it('Builder: offene Plan-Korrektur wird genannt statt „kein Verlauf erfasst“; entschiedene nicht', () => {
+    const korrektur = { abSchritt: 2, zeit: '2026-11-14T08:20:00.000Z' };
+    const offen = { ...aufbau, status: 'in_progress', lauf: { ...(aufbau.lauf as object), phase: 'angehalten', korrektur } } as CmdbChangeRequest;
+    const d = baueAbnahme([offen], leer, {}, JETZT);
+    const t = text(kap(d, 'verlauf').bloecke);
+    expect(t).toContain('Plan ab Schritt 2 am 2026-11-14 08:20:00 UTC');
+    expect(t).toContain('noch nicht entschieden (nur die letzte Korrektur ist erfasst)');
+    expect(t).not.toContain('kein Verlauf erfasst');
+    const tp = baueTestprotokoll('lab', [offen], leer, {}, JETZT);
+    expect(text(kap(tp, 'faelle').bloecke)).toContain('noch nicht entschieden');
+    const entschieden = new Map([[offen.id, { eintraege: [{ zeit: korrektur.zeit, art: 'plan_geaendert' as const, schritt: 2, text: 'Plan ab Schritt 2 korrigiert' }], quelle: 'lauf' }]]);
+    expect(text(kap(baueAbnahme([offen], entschieden, {}, JETZT), 'verlauf').bloecke)).not.toContain('noch nicht entschieden');
+    const gemischt = new Map([[offen.id, { eintraege: [{ zeit: 'z', art: 'halt' as const, schritt: 2, text: 'h' }], quelle: 'lauf+incidents' }]]);
+    expect(text(kap(baueAbnahme([aufbau], gemischt, {}, JETZT), 'verlauf').bloecke)).toContain('rekonstruiert aus Halte-Incidents');
+  });
 });

@@ -11,7 +11,7 @@ import type { Anhang, Block, DokuArtKey, Dokument, Kapitel } from './modell.js';
 type VerlaufMap = Map<string, { eintraege: VerlaufEintrag[]; quelle: string }>;
 
 const ANGELEGT = new Set(['create_network', 'create_zone', 'create_firewall_policy', 'provision_windows_vm', 'allow_network_on_port']);
-const VERLAUF_ART: Record<VerlaufEintrag['art'], string> = { halt: 'Halt', wiederholen: 'Wiederholt', ueberspringen: 'Übersprungen', plan_geaendert: 'Plan geändert' };
+const VERLAUF_ART: Record<VerlaufEintrag['art'], string> = { halt: 'Halt', wiederholen: 'Wiederholt', ueberspringen: 'Übersprungen', plan_geaendert: 'Plan geändert', ausgelassen: 'Ausgelassen' };
 
 /** geschwärzt und danach gekürzt (ein Geheimnis an der Schnittstelle bleibt so nicht halb stehen) */
 const g = (s: unknown, max?: number): string => {
@@ -57,11 +57,25 @@ function schrittTabelle(c: CmdbChangeRequest): Block[] {
   return bloecke;
 }
 
+/**
+ * Hinweise zum Verlauf eines Changes: Herkunft (Halte-Incidents) und eine gespeicherte, noch nicht entschiedene Plan-Korrektur
+ * (lauf.korrektur — die Ablage überschreibt sie bei jeder neuen Korrektur, frühere sind nicht erhalten).
+ */
+function verlaufHinweise(c: CmdbChangeRequest, v?: { eintraege: VerlaufEintrag[]; quelle: string }): Block[] {
+  const bloecke: Block[] = [];
+  if (v?.quelle === 'incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Quelle: rekonstruiert aus Halte-Incidents (dort stehen nur Halte, keine Wiederholungen oder Planänderungen).` });
+  if (v?.quelle === 'lauf+incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Halte rekonstruiert aus Halte-Incidents (vor Einführung des Verlaufs im Lauf), übrige Einträge aus dem Lauf.` });
+  const k = laufVon(c)?.korrektur;
+  if (k && !(v?.eintraege ?? []).some(e => e.art === 'plan_geaendert' && e.zeit === k.zeit)) {
+    bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Plan ab Schritt ${k.abSchritt} am ${zeitText(k.zeit)} korrigiert, noch nicht entschieden (nur die letzte Korrektur ist erfasst).` });
+  }
+  return bloecke;
+}
+
 function verlaufBloecke(c: CmdbChangeRequest, verlauf: VerlaufMap): Block[] {
   const v = verlauf.get(c.id);
-  if (!v || !v.eintraege.length) return [{ art: 'nichtBelegt', grund: 'kein Verlauf erfasst' }];
-  const bloecke: Block[] = [];
-  if (v.quelle === 'incidents') bloecke.push({ art: 'absatz', text: 'Quelle: rekonstruiert aus Halte-Incidents (dort stehen nur Halte, keine Wiederholungen oder Planänderungen).' });
+  const bloecke = verlaufHinweise(c, v);
+  if (!v || !v.eintraege.length) return bloecke.length ? bloecke : [{ art: 'nichtBelegt', grund: 'kein Verlauf erfasst' }];
   bloecke.push({
     art: 'tabelle', kopf: ['Zeit', 'Art', 'Schritt', 'Text'],
     zeilen: v.eintraege.map(e => [zeitText(e.zeit), VERLAUF_ART[e.art] ?? g(e.art), e.schritt > 0 ? String(e.schritt) : '—', g(e.text, 300)]),
@@ -156,8 +170,9 @@ export function baueTestprotokoll(name: string, changes: CmdbChangeRequest[], ve
       }]
     : [{ art: 'nichtBelegt', grund: 'keine Schritte mit Testergebnis (daten.ergebnis) im Lauf' }];
   const halte = changes.flatMap(c => (verlauf.get(c.id)?.eintraege ?? []).map(v => ({ c, v })));
+  const hinweise = changes.flatMap(c => verlaufHinweise(c, verlauf.get(c.id)));
+  if (halte.length || hinweise.length) faelleBloecke.push({ art: 'absatz', text: 'Halte, Wiederholungen und Planänderungen während der Tests:' }, ...hinweise);
   if (halte.length) {
-    faelleBloecke.push({ art: 'absatz', text: 'Halte, Wiederholungen und Planänderungen während der Tests:' });
     faelleBloecke.push({ art: 'tabelle', kopf: ['Change', 'Zeit', 'Art', 'Schritt', 'Text'], zeilen: halte.map(({ c, v }) => [id8(c), zeitText(v.zeit), VERLAUF_ART[v.art] ?? g(v.art), v.schritt > 0 ? String(v.schritt) : '—', g(v.text, 300)]) });
   }
 

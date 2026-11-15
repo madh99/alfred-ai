@@ -151,7 +151,7 @@ export class ChangeMotor {
       if (c.status === 'in_progress' && l?.phase === 'angehalten' && l.korrektur && c.freigabeFingerabdruck && c.freigabeFingerabdruck === c.fingerabdruck) {
         this.log('I4 Korrigierter Change läuft weiter', { id: c.id, abSchritt: l.korrektur.abSchritt });
         await this.d.melde?.(`▶️ Korrektur freigegeben: ${c.title} (${c.id.slice(0, 8)}) läuft ab Schritt ${l.korrektur.abSchritt} weiter`, false);
-        await this.steuern(o, c.id, 'wiederholen');
+        await this.steuern(o, c.id, 'wiederholen', 'freigabe');
         gestartet.push(c.id);
         continue;
       }
@@ -537,13 +537,14 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   /** Owner im Chat: angehaltenen Schritt wiederholen, abbrechen (ohne Rückweg) oder den Rückweg ausdrücklich ausführen. */
-  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen'): Promise<string> {
-    const r = await this.steuernIntern(o, id, wahl);
+  async steuern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen', anlass?: 'freigabe'): Promise<string> {
+    const r = await this.steuernIntern(o, id, wahl, anlass);
     await this.d.fragenAufraeumen?.().catch(() => undefined); // v1688 — Owner-Fragen eines abgebrochenen/wiederholten Schritts verschwinden
     return r;
   }
 
-  private async steuernIntern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen'): Promise<string> {
+  /** anlass „freigabe“: der Motor setzt nach der Freigabe einer Korrektur selbst fort (kein Wiederholen durch den Owner) */
+  private async steuernIntern(o: string, id: string, wahl: 'wiederholen' | 'abbrechen' | 'rueckweg' | 'ueberspringen', anlass?: 'freigabe'): Promise<string> {
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
     // Rückweg nach einer Störung: abgeschlossener Change mit verknüpfter Störung
@@ -611,7 +612,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     }
     const nurPruefung = !aktionNeu && !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
     if (nurPruefung) l.nurPruefung = { nr: l.schritt, ...(alt!.ausgabe !== undefined ? { ausgabe: alt!.ausgabe } : {}), ...(alt!.daten !== undefined ? { daten: alt!.daten } : {}) };
-    merkeVerlauf(l, { zeit: this.iso(), art: 'wiederholen', schritt: l.schritt, text: nurPruefung ? `Schritt ${l.schritt}: nur die Prüfung erneut (Aktion war gelungen)` : `Schritt ${l.schritt} wird wiederholt` });
+    merkeVerlauf(l, { zeit: this.iso(), art: 'wiederholen', schritt: l.schritt, text: anlass === 'freigabe' ? `Schritt ${l.schritt}: nach Freigabe der Korrektur fortgesetzt` : nurPruefung ? `Schritt ${l.schritt}: nur die Prüfung erneut (Aktion war gelungen)` : `Schritt ${l.schritt} wird wiederholt` });
     l.ergebnisse = l.ergebnisse.filter(e => e.nr !== l.schritt); l.phase = 'laeuft'; delete l.grund;
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });
     void this.weiter(o, c, l).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
