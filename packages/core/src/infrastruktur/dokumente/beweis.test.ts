@@ -119,6 +119,7 @@ describe('Beweis-Anhang', () => {
     expect(PRUEF_HINWEIS).toContain('sha256sum -c PRUEFUNG.txt');
     expect(PRUEF_HINWEIS).toContain('CMDB');
     expect(PRUEF_HINWEIS).toContain('Die Prüfsummen belegen, dass die Dateien');
-    expect(PRUEF_HINWEIS).toContain('geschwärzten Rohläufe');
+    expect(PRUEF_HINWEIS).toContain('geschwärzte Form');
+    expect(PRUEF_HINWEIS).toContain('lassen sich aus dem Lauf in der Datenbank nicht nachrechnen');
   });
 });

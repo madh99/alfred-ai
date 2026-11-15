@@ -7,7 +7,7 @@
  * Owner-Schritte warten auf das Ja des Owners. Höchstens ein laufender Change je betroffenem Asset.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import type { CmdbChangeRequest } from '@alfred/types';
+import type { CmdbChangeRequest, SkillResultAttachment } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { schwaerze } from '../fernzugriff/kaefig.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
@@ -46,7 +46,8 @@ export interface MotorDeps {
     /** v1620 — Change-Ende ohne Restwirkung: eigenen Incident lösen (Lösung = Bericht) bzw. bei Restwirkung hochstufen */
     loese?(o: string, id: string, loesung: string): Promise<void>; hochstufen?(o: string, id: string): Promise<void>;
   };
-  melde?: (text: string, dringend: boolean) => Promise<void>;
+  /** Owner-Meldung; `anhaenge` (Dokument-Vorlagen V2: PDF/DOCX des Abnahmeprotokolls) gehen als Dateien mit */
+  melde?: (text: string, dringend: boolean, anhaenge?: SkillResultAttachment[]) => Promise<void>;
   /** Frage an den Owner (Button); nach dem Ja ruft die Queue den Skill infrastruktur mit `params` auf */
   frage?: (description: string, params: Record<string, unknown>) => Promise<boolean>;
   /** v1688 — veraltete Owner-Fragen in App/Telegram zurückziehen (nach Steuern und vor einer neuen Frage) */
@@ -62,7 +63,7 @@ export interface MotorDeps {
    * Dokument-Vorlagen V2 — nach dem Ende jedes Changes (gespeicherter Stand): Abnahmeprotokoll erzeugen; Rückgabe = Zusatzzeile der
    * Abschlussmeldung. Darf den Abschluss nie scheitern lassen: Fehler werden zur Zeile, nach `nachEndeZeitMs` meldet der Motor trotzdem.
    */
-  nachEnde?: (o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled') => Promise<string | undefined>;
+  nachEnde?: (o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled') => Promise<string | { zeile: string; anhaenge?: SkillResultAttachment[] } | undefined>;
   /** Zeitgrenze für nachEnde (Standard 25 s); danach kommt das Ergebnis als eigene Meldung */
   nachEndeZeitMs?: number;
   /** I4b Teil 2 — IDs der Assets, die von den gegebenen abhängen (CMDB, eingehende Beziehungen) */
@@ -720,17 +721,17 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     // Empfänger der Benachrichtigungsregeln warten nicht auf das Protokoll
     await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
     const doku = await this.dokumentNachEnde(o, gespeichert ?? { ...c, lauf }, status);
-    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}${doku ? `\n\n📄 ${doku}` : ''}`, status === 'failed');
+    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}${doku ? `\n\n📄 ${doku.zeile}` : ''}`, status === 'failed', doku?.anhaenge?.length ? doku.anhaenge : undefined);
   }
 
   /** Dokument-Vorlagen V2 — Abnahmeprotokoll nach dem Ende; wirft nie, wartet höchstens nachEndeZeitMs (danach folgt das Ergebnis als eigene Meldung). */
-  private async dokumentNachEnde(o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled'): Promise<string | undefined> {
+  private async dokumentNachEnde(o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled'): Promise<{ zeile: string; anhaenge?: SkillResultAttachment[] } | undefined> {
     const hook = this.d.nachEnde;
     if (!hook) return undefined;
     const ms = this.d.nachEndeZeitMs ?? NACH_ENDE_ZEIT_MS;
     const fehler = (err: unknown) => schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300);
     // auch ein synchroner Wurf wird zur abgelehnten Promise
-    const erzeugung = Promise.resolve().then(() => hook(o, c, status));
+    const erzeugung = Promise.resolve().then(() => hook(o, c, status)).then(r => (typeof r === 'string' ? { zeile: r } : r));
     let zeitgeber: ReturnType<typeof setTimeout> | undefined;
     const grenze = new Promise<typeof ZEIT>(r => { zeitgeber = setTimeout(() => r(ZEIT), ms); });
     try {
@@ -740,18 +741,18 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const kopf = `📄 ${c.title} (${c.id.slice(0, 8)}): `;
       void erzeugung.then(
         async zeile => {
-          this.log('Abnahmeprotokoll nach Zeitüberschreitung fertig', { id: c.id, zeile });
-          if (zeile) await this.d.melde?.(kopf + zeile, false);
+          this.log('Abnahmeprotokoll nach Zeitüberschreitung fertig', { id: c.id, zeile: zeile?.zeile });
+          if (zeile) await this.d.melde?.(kopf + zeile.zeile, false, zeile.anhaenge?.length ? zeile.anhaenge : undefined);
         },
         async err => {
           this.log('Abnahmeprotokoll nach Zeitüberschreitung fehlgeschlagen', { id: c.id, fehler: fehler(err) });
           await this.d.melde?.(`${kopf}Abnahmeprotokoll nicht erstellt: ${fehler(err)}`, false);
         },
       ).catch(err => this.log('Abnahmeprotokoll-Folgemeldung fehlgeschlagen', { id: c.id, fehler: fehler(err) }));
-      return `Abnahmeprotokoll folgt in einer eigenen Meldung (Erzeugung dauert länger als ${Math.round(ms / 1000)} s)`;
+      return { zeile: `Abnahmeprotokoll folgt in einer eigenen Meldung (Erzeugung dauert länger als ${Math.round(ms / 1000)} s)` };
     } catch (err) {
       this.log('Abnahmeprotokoll nach Change-Ende fehlgeschlagen', { id: c.id, fehler: fehler(err) });
-      return `Abnahmeprotokoll nicht erstellt: ${fehler(err)}`;
+      return { zeile: `Abnahmeprotokoll nicht erstellt: ${fehler(err)}` };
     } finally {
       clearTimeout(zeitgeber);
     }

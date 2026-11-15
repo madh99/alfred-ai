@@ -248,7 +248,11 @@ password=Geheim123!` };
     const entschieden = new Map([[offen.id, { eintraege: [{ zeit: korrektur.zeit, art: 'plan_geaendert' as const, schritt: 2, text: 'Plan ab Schritt 2 korrigiert' }], quelle: 'lauf' }]]);
     expect(text(kap(baueAbnahme([offen], entschieden, {}, JETZT), 'verlauf').bloecke)).not.toContain('noch nicht entschieden');
     const gemischt = new Map([[offen.id, { eintraege: [{ zeit: 'z', art: 'halt' as const, schritt: 2, text: 'h' }], quelle: 'lauf+incidents' }]]);
-    const gemischtText = text(kap(baueAbnahme([aufbau], gemischt, {}, JETZT), 'verlauf').bloecke);
+    const gemischtDok = baueAbnahme([aufbau], gemischt, {}, JETZT);
+    // Quelle Halte-Incidents auch bei lauf+incidents im Kopf
+    expect(gemischtDok.kopf.quellen.map(q => q.quelle)).toEqual(['Change 288c3716', 'Halte-Incidents 288c3716']);
+    expect(baueAbnahme([aufbau], entschieden, {}, JETZT).kopf.quellen.map(q => q.quelle)).toEqual(['Change 288c3716']);
+    const gemischtText = text(kap(gemischtDok, 'verlauf').bloecke);
     expect(gemischtText).toContain('rekonstruiert aus Halte-Incidents');
     expect(gemischtText).toContain('Halte-Incidents erfassen nur den ersten Halt eines Laufs; weitere Halte vor Einführung des Verlaufs (v1873) sind nicht belegt.');
     // Verlauf nur aus dem Lauf: kein Lückenhinweis

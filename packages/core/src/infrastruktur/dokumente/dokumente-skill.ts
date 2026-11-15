@@ -51,15 +51,26 @@ export interface Erzeugt {
 
 type Freitext = Record<string, string | undefined>;
 
-/** Freitexte gegen die Grenzen der Dokumentart (vor jedem Lesen/Schreiben). */
+/**
+ * Freitexte gegen die Grenzen der Dokumentart (vor jedem Lesen/Schreiben). Gemessen wird der geschwärzte Text — so steht er im
+ * Dokument; die Schwärzung kann ihn verlängern, sonst scheiterte ein Text knapp unter der Grenze erst später an „Dokument ungültig“.
+ */
 function pruefeFreitext(art: DokuArtKey, f: Freitext): string | undefined {
   for (const k of DOKU_ARTEN[art].kapitel) {
     if (!k.frei) continue;
     const t = f[k.frei.feld];
-    if (t !== undefined && t.length > k.frei.max) return `${k.frei.feld} zu lang: ${t.length} Zeichen, höchstens ${k.frei.max} erlaubt`;
+    if (t === undefined) continue;
+    const n = schwaerze(t).text.length;
+    if (n > k.frei.max) return `${k.frei.feld} zu lang: ${n} Zeichen nach der Schwärzung, höchstens ${k.frei.max} erlaubt`;
   }
   return undefined;
 }
+
+/** Ergebnis für den Change-Motor: Zeile der Abschlussmeldung und die Dateien für den Owner (PDF, DOCX) */
+export interface NachEndeErgebnis { zeile: string; anhaenge?: SkillResultAttachment[] }
+type EndStatus = 'completed' | 'failed' | 'rolled_back' | 'cancelled';
+/** an den Owner gehen die lesbaren Fassungen; Rohläufe und PRUEFUNG.txt liegen in der Ablage (lokal, pve2) und im Export */
+const ZUSTELLEN = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
 
 /**
  * Prüfung eines gespeicherten Dokuments für den Export: Struktur ja, aber eine ältere, bekannte Version der Dokumentart wird nicht
@@ -174,8 +185,10 @@ export class DokumenteDienst {
    * V2 — Abnahmeprotokoll nach dem Ende eines Changes (Hook des Change-Motors); liefert die Zeile für die Abschlussmeldung, wirft nie.
    * normal/emergency: Abnahme für den neu geladenen Change (gespeicherter Lauf). standard: kein Einzelprotokoll — erst wenn das letzte
    * Glied einer Serie endet (kein anderer Standard-Change hängt von ihm ab), ein Sammelprotokoll über die Serie; mittlere Glieder → Hinweiszeile.
+   * Endet ein Glied nicht abgeschlossen (gescheitert, zurückgerollt, abgebrochen), startet sein Nachfolger nie (Abhängigkeit nicht erfüllt)
+   * und kann ohne Ende verworfen werden — dann sofort das Sammelprotokoll über die Serie bis hierher.
    */
-  async abnahmeNachEnde(o: string, c: CmdbChangeRequest): Promise<string | undefined> {
+  async abnahmeNachEnde(o: string, c: CmdbChangeRequest, status?: EndStatus): Promise<NachEndeErgebnis | undefined> {
     try {
       let q: Awaited<ReturnType<DokuQuellen['changes']>> | undefined;
       try { q = await this.d.quellen.changes(o); } catch (err) {
@@ -186,25 +199,30 @@ export class DokumenteDienst {
       const alle = new Map((q?.changes ?? []).map(x => [x.id, x]));
       // nicht in der Liste (Grenze): der vom Motor übergebene, gerade gespeicherte Stand
       const frisch = alle.get(c.id) ?? c;
-      if (frisch.type !== 'standard' || !q) return this.zeileNachEnde('Abnahmeprotokoll erstellt', await this.abnahme(o, frisch, {}));
+      if (frisch.type !== 'standard' || !q) return this.ergebnisNachEnde('Abnahmeprotokoll erstellt', await this.abnahme(o, frisch, {}));
       // ohne vollständige Liste ist weder „letztes Glied“ noch die Serie belegt — nie raten
       if (q.abgeschnitten) throw new Error('die Change-Liste hat die Abfragegrenze erreicht — Serie und Nachfolger nicht sicher bestimmbar');
-      const nachfolger = q.changes.find(x => x.id !== frisch.id && x.type === 'standard' && (x.abhaengigVon ?? []).includes(frisch.id) && !vorStartVerworfen(x));
-      if (nachfolger) return `Sammelprotokoll folgt mit dem letzten Glied der Serie (${nachfolger.id.slice(0, 8)})`;
+      const nachfolger = status === undefined || status === 'completed'
+        ? q.changes.find(x => x.id !== frisch.id && x.type === 'standard' && (x.abhaengigVon ?? []).includes(frisch.id) && !vorStartVerworfen(x))
+        : undefined;
+      if (nachfolger) return { zeile: `Sammelprotokoll folgt mit dem letzten Glied der Serie (${nachfolger.id.slice(0, 8)})` };
       const serie = serieVon(frisch, alle);
       const dok = baueAbnahme(serie, await this.verlauf(o, serie), {}, this.jetzt());
       const e = await this.speichere(o, dok, { typ: 'change_request', id: frisch.id });
-      return this.zeileNachEnde(serie.length > 1 ? 'Sammelprotokoll erstellt' : 'Abnahmeprotokoll erstellt', e);
+      return this.ergebnisNachEnde(serie.length > 1 ? 'Sammelprotokoll erstellt' : 'Abnahmeprotokoll erstellt', e);
     } catch (err) {
       const grund = schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300);
       this.d.protokoll?.('Abnahmeprotokoll nach Change-Ende nicht erstellt', { changeId: c.id, fehler: grund });
-      return `Abnahmeprotokoll nicht erstellt: ${grund}`;
+      return { zeile: `Abnahmeprotokoll nicht erstellt: ${grund}` };
     }
   }
 
-  private zeileNachEnde(wort: string, e: Erzeugt): string {
+  private ergebnisNachEnde(wort: string, e: Erzeugt): NachEndeErgebnis {
     const pve2 = e.display.split('\n').find(z => z.startsWith('pve2: fehlgeschlagen'));
-    return `${wort}: ${e.dokument.kopf.titel} — Version ${e.doc.version}, Dokument ${e.doc.id}${pve2 ? `; ${pve2}` : ''}`;
+    return {
+      zeile: `${wort}: ${e.dokument.kopf.titel} — Version ${e.doc.version}, Dokument ${e.doc.id}${pve2 ? `; ${pve2}` : ''}`,
+      anhaenge: e.attachments.filter(a => ZUSTELLEN.has(a.mimeType)),
+    };
   }
 
   async testprotokoll(o: string, instanz: string, frei: { zweck?: string; befunde_produktion?: string }): Promise<Erzeugt> {
@@ -229,6 +247,8 @@ export class DokumenteDienst {
 
   async instanzAnlegen(o: string, name: string, refs: string[]): Promise<BauplanInstanzDaten> {
     if (!INSTANZ_NAME.test(name)) throw new Error('name: nur Buchstaben, Ziffern, _ . - (höchstens 80 Zeichen)');
+    // gleicher Ablage-Ordner wie die Abnahmeprotokolle (change-<id8>, serie-<id8>) — Versionen würden sich überschreiben
+    if (/^(change|serie)-/i.test(name)) throw new Error('name: darf nicht mit change- oder serie- beginnen (Ordner der Abnahmeprotokolle)');
     if (!refs.length || refs.length > MAX_CHANGES) throw new Error(`changes: 1 bis ${MAX_CHANGES} Change-IDs`);
     if (await this.d.instanzen.finde(o, name)) throw new Error(`Bauplan-Instanz „${name}“ gibt es schon`);
     const ids: string[] = [];

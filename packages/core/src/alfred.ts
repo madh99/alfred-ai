@@ -7709,10 +7709,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               loese: async (o, id, loesung) => { await itsmI3.updateIncident(o, id, { status: 'resolved', resolution: loesung } as never); },
               hochstufen: async (o, id) => { await itsmI3.updateIncident(o, id, { severity: 'high' } as never); },
             },
-            melde: async (text, dringend) => {
+            melde: async (text, dringend, anhaenge) => {
               // Realfall 22.10.: Fertigmeldungen kamen nur über Telegram/Push, nicht in den App-Verlauf (Freigabe-Fragen schon) — jetzt wie alle
               // Meldungen ohne Modell: Telegram UND im Verlauf gespeichert (die App zeigt sie im Hauptgespräch)
               await this.meldeOhneModell(text);
+              // Dokument-Vorlagen V2 — PDF/DOCX des Abnahmeprotokolls als Dateien an den Owner (wie Skill-Anhänge im Chat)
+              if (anhaenge?.length) await this.dateienAnOwner(anhaenge);
               await this.pushDienst?.anOwner({ titel: dringend ? 'Change braucht dich' : 'Change', text: text.slice(0, 180), art: 'hinweis', stufe: dringend ? 'time-sensitive' : 'active' }).catch(() => undefined);
             },
             frage: async (description, params) => {
@@ -7727,7 +7729,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             // S1 — hält ein Change aus einer Standard-Vorlage an oder rollt zurück, wird die Vorlage gesperrt (überprüfen)
             nachStoerung: async (o, c, grund) => { const v = c.freigegebenUeber?.startsWith('standard:') ? c.freigegebenUeber.slice(9) : /^Standard-Serie ([a-z_]+)/.exec(c.description ?? '')?.[1]; if (v) await standardRef?.sperre(o, v, `${c.title} (${c.id.slice(0, 8)}) ${grund}`); },
             // Dokument-Vorlagen V2 — Abnahmeprotokoll nach jedem Change-Ende; dieselbe Dienst-Instanz wie der Skill (gemeinsame Versions-Kette)
-            nachEnde: async (o, c) => this.dokumenteDienst ? this.dokumenteDienst.abnahmeNachEnde(o, c) : undefined,
+            nachEnde: async (o, c, status) => this.dokumenteDienst ? this.dokumenteDienst.abnahmeNachEnde(o, c, status) : undefined,
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
             tresor: this.tresor,
@@ -19390,6 +19392,18 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!text) { const { auftragMeldung } = await import('./geraete/auftrag-meldung.js'); text = auftragMeldung(geraet, { ...e, titel: `Frage: ${f.frage.length > 70 ? `${f.frage.slice(0, 69)}…` : f.frage}` }); }
     const zugestellt = await this.meldeOhneModell(text, h);
     this.logger.info({ geraet, auftrag: e.auftragId, status: e.status, projekt: f.akteId, herkunft: h.chatId, zugestellt }, 'v1432 Projektfrage nachgeliefert');
+  }
+
+  /** Dokument-Vorlagen V2 — Dateien an den Owner-Kanal (gleiche Plattformwahl wie meldeOhneModell); ein Fehler je Datei wird geloggt. */
+  private async dateienAnOwner(anhaenge: import('@alfred/types').SkillResultAttachment[]): Promise<void> {
+    const platform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
+    const chatId = this.config.security?.ownerUserId ?? '';
+    const adapter = this.adapters.get(platform);
+    if (!chatId || !adapter) { this.logger.warn({ platform, dateien: anhaenge.map(a => a.fileName) }, 'Dokument-Dateien nicht zustellbar: kein Owner-Kanal'); return; }
+    for (const a of anhaenge) {
+      try { await adapter.sendFile(chatId, a.data, a.fileName); }
+      catch (err) { this.logger.warn({ err: (err as Error).message, datei: a.fileName, platform }, 'Dokument-Datei nicht zugestellt'); }
+    }
   }
 
   private async meldeOhneModell(text: string, herkunft?: { chatId: string; platform: string }): Promise<string[]> {

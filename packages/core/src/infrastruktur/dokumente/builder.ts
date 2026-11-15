@@ -110,7 +110,10 @@ function abschluss(d: Dokument): Dokument {
 
 function quellenVon(changes: CmdbChangeRequest[], verlauf: VerlaufMap, jetzt: string): Dokument['kopf']['quellen'] {
   const q: Dokument['kopf']['quellen'] = changes.map(c => ({ quelle: `Change ${id8(c)}`, stand: c.updatedAt }));
-  for (const c of changes) if (verlauf.get(c.id)?.quelle === 'incidents') q.push({ quelle: `Halte-Incidents ${id8(c)}`, stand: jetzt });
+  for (const c of changes) {
+    const quelle = verlauf.get(c.id)?.quelle;
+    if (quelle === 'incidents' || quelle === 'lauf+incidents') q.push({ quelle: `Halte-Incidents ${id8(c)}`, stand: jetzt });
+  }
   return q;
 }
 

@@ -679,7 +679,7 @@ export class FernzugriffSkill extends Skill {
       const z = await this.zugang(owner, { name: zugangName });
       if (z.system === 'windows') return { ok: false, fehler: `${z.name} ist kein Linux-Zugang` };
       const ordner = zielPfad.slice(0, zielPfad.lastIndexOf('/'));
-      const r = await this.deps.dateiSenden(this.sshZiel(z), fernBefehl(`umask 022; mkdir -p ${ordner} && cat > ${zielPfad}`, true), lokalPfad, 300_000);
+      const r = await this.deps.dateiSenden(this.sshZiel(z), fernBefehl(`umask 077; mkdir -p ${ordner} && cat > ${zielPfad}`, true), lokalPfad, 300_000);
       if (r.hostSchluesselGeaendert) {
         await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt');
         await this.deps.repo.merkeErgebnis(owner, z.id, false, 'Host-Schlüssel hat sich geändert');

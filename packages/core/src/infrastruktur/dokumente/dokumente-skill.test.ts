@@ -123,6 +123,17 @@ describe('Skill dokumentation', () => {
     expect(createHash('sha256').update(lokal).digest('hex')).toBe(summe);
   });
 
+  it('Freitextgrenze gilt nach der Schwärzung: verlängert sie den Text über die Grenze, klare Meldung statt „Dokument ungültig“', async () => {
+    const t = aufbau();
+    const frei = 'password=Geheim123! ' + 'x'.repeat(580); // 600 Zeichen, geschwärzt 602
+    expect(frei.length).toBeLessThanOrEqual(600);
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id, zweck: frei }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/zweck zu lang: \d+ Zeichen nach der Schwärzung/);
+    expect(r.error).not.toContain('Dokument ungültig');
+    expect(t.gespeichert).toHaveLength(0);
+  });
+
   it('(c) zweck mit 601 Zeichen → Fehler, nichts gespeichert', async () => {
     const t = aufbau();
     const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id, zweck: 'x'.repeat(601) }, CTX);
@@ -162,6 +173,13 @@ describe('Skill dokumentation', () => {
   it('instanz_anlegen: ungültiger Name, mehrdeutiger Change und doppelter Name werden abgewiesen', async () => {
     const t = aufbau();
     expect((await t.skill.execute({ action: 'instanz_anlegen', name: '../x', dokumentart: 'testprotokoll', changes: [A.id] }, CTX)).success).toBe(false);
+    // Ordner der Abnahmeprotokolle (change-…, serie-…) sind für Instanzen gesperrt
+    for (const name of ['change-288c3716', 'serie-51515151', 'Change-x', 'SERIE-x']) {
+      const r = await t.skill.execute({ action: 'instanz_anlegen', name, dokumentart: 'testprotokoll', changes: [A.id] }, CTX);
+      expect(r.success, name).toBe(false);
+      expect(r.error).toContain('change-');
+    }
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'changes-lab', dokumentart: 'testprotokoll', changes: [A.id] }, CTX)).success).toBe(true);
     const m = await t.skill.execute({ action: 'instanz_anlegen', name: 'lab', dokumentart: 'testprotokoll', changes: ['288c'] }, CTX);
     expect(m.success).toBe(false);
     expect(m.error).toContain('mehrdeutig');
@@ -259,6 +277,7 @@ describe('Skill dokumentation', () => {
 });
 
 describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
+  const zeileVon = async (d: DokumenteDienst, o: string, c: CmdbChangeRequest, s?: 'completed' | 'failed' | 'rolled_back' | 'cancelled') => (await d.abnahmeNachEnde(o, c, s))?.zeile;
   const std = (id: string, title: string, abhaengigVon: string[] = []) => change(id, title, { type: 'standard', abhaengigVon });
   const S1 = std('51515151-1111-2222-3333-444444444444', 'Serie Teil 1');
   const S2 = std('52525252-1111-2222-3333-444444444444', 'Serie Teil 2', [S1.id]);
@@ -268,7 +287,7 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     const t = aufbau();
     // der Motor übergibt einen Stand ohne Lauf; maßgeblich ist der gespeicherte Change
     const veraltet = { ...C, lauf: undefined } as CmdbChangeRequest;
-    const zeile = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', veraltet);
+    const zeile = await zeileVon(new DokumenteDienst(t.deps), 'o', veraltet);
     expect(zeile).toContain('Abnahmeprotokoll erstellt');
     expect(zeile).toContain('7335dfeb');
     expect(t.gespeichert).toHaveLength(1);
@@ -281,10 +300,10 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
   it('(b) mittleres Glied einer Standard-Serie → Hinweiszeile, nichts gespeichert; letztes Glied → ein Sammelprotokoll über alle Glieder', async () => {
     const t = aufbau({ changes: [A, S1, S2, S3] });
     const dienst = new DokumenteDienst(t.deps);
-    expect(await dienst.abnahmeNachEnde('o', S1)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (52525252)');
-    expect(await dienst.abnahmeNachEnde('o', S2)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (53535353)');
+    expect(await zeileVon(dienst, 'o', S1)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (52525252)');
+    expect(await zeileVon(dienst, 'o', S2)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (53535353)');
     expect(t.cmdbSave).not.toHaveBeenCalled();
-    const zeile = await dienst.abnahmeNachEnde('o', S3);
+    const zeile = await zeileVon(dienst, 'o', S3);
     expect(zeile).toContain('Sammelprotokoll');
     expect(t.gespeichert).toHaveLength(1);
     const d = JSON.parse(t.gespeichert[0]!.struktur!) as Dokument;
@@ -294,12 +313,37 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     expect(t.gespeichert[0]!.linkedEntityId).toBe(S3.id);
   });
 
+  it('mittleres Glied endet gescheitert/zurückgerollt/abgebrochen → Sammelprotokoll sofort über die Serie bis hierher (Nachfolger startet nie)', async () => {
+    for (const s of ['failed', 'rolled_back', 'cancelled'] as const) {
+      const t = aufbau({ changes: [S1, S2, S3] });
+      const zeile = await zeileVon(new DokumenteDienst(t.deps), 'o', { ...S2, status: s } as CmdbChangeRequest, s);
+      expect(zeile).toContain('Sammelprotokoll erstellt');
+      expect(t.gespeichert).toHaveLength(1);
+      const d = JSON.parse(t.gespeichert[0]!.struktur!) as Dokument;
+      expect(d.kopf.verweise).toEqual([`change:${S1.id}`, `change:${S2.id}`]);
+      expect(t.gespeichert[0]!.linkedEntityId).toBe(S2.id);
+    }
+    // abgeschlossen → weiter Hinweis auf das letzte Glied
+    const t = aufbau({ changes: [S1, S2, S3] });
+    expect(await zeileVon(new DokumenteDienst(t.deps), 'o', S2, 'completed')).toContain('Sammelprotokoll folgt');
+  });
+
+  it('Zustellung an den Owner: Ergebnis trägt PDF und DOCX als Anhänge', async () => {
+    const t = aufbau();
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', C, 'completed');
+    expect(r!.anhaenge!.map(a => a.fileName)).toEqual(['abnahme-7335dfeb-v1.pdf', 'abnahme-7335dfeb-v1.docx']);
+    expect(r!.anhaenge![0]!.data.subarray(0, 5).toString()).toBe('%PDF-');
+    // Hinweis- und Fehlerzeilen tragen keine Anhänge
+    const t2 = aufbau({ changes: [S1, S2] });
+    expect((await new DokumenteDienst(t2.deps).abnahmeNachEnde('o', S1, 'completed'))!.anhaenge).toBeUndefined();
+  });
+
   it('Standard-Serie mit Zyklus in den Vorgängern bricht ab und nimmt jedes Glied einmal', async () => {
     const Z1 = std('61616161-1111-2222-3333-444444444444', 'Z1', ['62626262-1111-2222-3333-444444444444']);
     const Z2 = std('62626262-1111-2222-3333-444444444444', 'Z2', [Z1.id]);
     const Z3 = std('63636363-1111-2222-3333-444444444444', 'Z3', [Z2.id]);
     const t = aufbau({ changes: [Z1, Z2, Z3] });
-    expect(await new DokumenteDienst(t.deps).abnahmeNachEnde('o', Z3)).toContain('Sammelprotokoll');
+    expect(await zeileVon(new DokumenteDienst(t.deps), 'o', Z3)).toContain('Sammelprotokoll');
     const d = JSON.parse(t.gespeichert[0]!.struktur!) as Dokument;
     expect(d.kopf.verweise).toEqual([`change:${Z1.id}`, `change:${Z2.id}`, `change:${Z3.id}`]);
   });
@@ -307,7 +351,7 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
   it('einzelner Standard-Change ohne Nachfolger → Sammelprotokoll über ihn allein; vor dem Start verworfener Nachfolger zählt nicht', async () => {
     const verworfen = { ...std('70707070-1111-2222-3333-444444444444', 'verworfen', [S1.id]), status: 'cancelled', lauf: undefined } as CmdbChangeRequest;
     const t = aufbau({ changes: [S1, verworfen] });
-    expect(await new DokumenteDienst(t.deps).abnahmeNachEnde('o', S1)).toContain('Abnahmeprotokoll erstellt');
+    expect(await zeileVon(new DokumenteDienst(t.deps), 'o', S1)).toContain('Abnahmeprotokoll erstellt');
     expect(t.gespeichert).toHaveLength(1);
     expect(t.gespeichert[0]!.linkedEntityId).toBe(S1.id);
   });
@@ -317,27 +361,27 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     t.deps.cmdb.saveDocument = async () => { throw new Error('DB weg'); };
     const log: string[] = [];
     t.deps.protokoll = (m) => { log.push(m); };
-    expect(await new DokumenteDienst(t.deps).abnahmeNachEnde('o', C)).toBe('Abnahmeprotokoll nicht erstellt: DB weg');
+    expect(await zeileVon(new DokumenteDienst(t.deps), 'o', C)).toBe('Abnahmeprotokoll nicht erstellt: DB weg');
     expect(log.some(m => m.includes('nicht erstellt'))).toBe(true);
     const t2 = aufbau({ pve2: async () => ({ ok: false, fehler: 'Fernzugriff nicht verfügbar' }) });
-    const z = await new DokumenteDienst(t2.deps).abnahmeNachEnde('o', C);
+    const z = await zeileVon(new DokumenteDienst(t2.deps), 'o', C);
     expect(z).toContain('Abnahmeprotokoll erstellt');
     expect(z).toContain('pve2: fehlgeschlagen');
     expect(z).toContain('Fernzugriff nicht verfügbar');
     // Change-Liste nicht ladbar: normaler Change → aus dem übergebenen, gerade gespeicherten Stand; Standard → nicht erstellt
     const t3 = aufbau();
     t3.deps.quellen = { ...t3.deps.quellen, changes: async () => { throw new Error('Liste weg'); } };
-    const z3 = await new DokumenteDienst(t3.deps).abnahmeNachEnde('o', C);
+    const z3 = await zeileVon(new DokumenteDienst(t3.deps), 'o', C);
     expect(z3).toContain('Abnahmeprotokoll erstellt');
     expect(t3.gespeichert).toHaveLength(1);
     expect(t3.gespeichert[0]!.linkedEntityId).toBe(C.id);
-    expect(await new DokumenteDienst(t3.deps).abnahmeNachEnde('o', change('80808080-1111-2222-3333-444444444444', 'Std', { type: 'standard' }))).toBe('Abnahmeprotokoll nicht erstellt: Liste weg');
+    expect(await zeileVon(new DokumenteDienst(t3.deps), 'o', change('80808080-1111-2222-3333-444444444444', 'Std', { type: 'standard' }))).toBe('Abnahmeprotokoll nicht erstellt: Liste weg');
     expect(t3.gespeichert).toHaveLength(1);
   });
 
   it('Standard-Change, abgeschnittene Change-Liste → nicht erstellt (Nachfolger nicht sicher prüfbar), nie geglättet', async () => {
     const t = aufbau({ changes: [S1], abgeschnitten: true });
-    const z = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', S1);
+    const z = await zeileVon(new DokumenteDienst(t.deps), 'o', S1);
     expect(z).toMatch(/^Abnahmeprotokoll nicht erstellt: .*Abfragegrenze/);
     expect(t.gespeichert).toHaveLength(0);
   });

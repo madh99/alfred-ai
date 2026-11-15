@@ -576,6 +576,32 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.at(-1)).toBe('📄 Probe (chg-1): Abnahmeprotokoll erstellt: Probe — Version 1, Dokument d1');
   });
 
+  it('V2: Anhänge des Hooks (PDF/DOCX) gehen mit der Abschlussmeldung bzw. der Folgemeldung an den Owner', async () => {
+    const w = welt(probe());
+    const mitAnhang: Array<{ text: string; dateien: string[] }> = [];
+    w.deps.melde = async (t, _d, anhaenge) => { w.meldungen.push(t); if (anhaenge?.length) mitAnhang.push({ text: t, dateien: anhaenge.map(a => a.fileName) }); };
+    const pdf = { fileName: 'abnahme-chg-1-v1.pdf', mimeType: 'application/pdf', data: Buffer.from('%PDF-') };
+    w.deps.nachEnde = async () => ({ zeile: 'Abnahmeprotokoll erstellt: Probe', anhaenge: [pdf] });
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(mitAnhang).toHaveLength(1);
+    expect(mitAnhang[0]!.text).toContain('✅');
+    expect(mitAnhang[0]!.text).toContain('Abnahmeprotokoll erstellt: Probe');
+    expect(mitAnhang[0]!.dateien).toEqual(['abnahme-chg-1-v1.pdf']);
+    // nach der Zeitgrenze: Anhänge an der Folgemeldung, nicht an der Abschlussmeldung
+    const w2 = welt(probe());
+    const mit2: Array<{ text: string; dateien: string[] }> = [];
+    w2.deps.melde = async (t, _d, anhaenge) => { w2.meldungen.push(t); mit2.push({ text: t, dateien: (anhaenge ?? []).map(a => a.fileName) }); };
+    let fertig!: (z: { zeile: string; anhaenge: typeof pdf[] }) => void;
+    w2.deps.nachEnde = () => new Promise(r => { fertig = r; });
+    w2.deps.nachEndeZeitMs = 10;
+    await w2.motor.anstossen();
+    for (let i = 0; i < 200 && !w2.meldungen.some(m => m.startsWith('✅')); i++) await new Promise(r => setTimeout(r, 5));
+    expect(mit2.find(m => m.text.startsWith('✅'))!.dateien).toEqual([]);
+    fertig({ zeile: 'Abnahmeprotokoll erstellt: spät', anhaenge: [pdf] });
+    await new Promise(r => setTimeout(r, 5));
+    expect(mit2.at(-1)).toEqual({ text: '📄 Probe (chg-1): Abnahmeprotokoll erstellt: spät', dateien: ['abnahme-chg-1-v1.pdf'] });
+  });
+
   it('V2: langsamer Hook, der später scheitert → Folgemeldung „nicht erstellt“', async () => {
     const w = welt(probe());
     let scheitere!: (e: Error) => void;
