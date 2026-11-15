@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { UniFiSkill } from '../built-in/unifi.js';
-import { filterLesbar, netzadresse, protokollLesbar } from '../built-in/unifi-policies.js';
+import { bedingungLesbar, filterLesbar, netzadresse, protokollLesbar } from '../built-in/unifi-policies.js';
 
 const NETZ_SQL = 'bbbbbbbbbbbbbbbbbbbbbbbb', ZONE_SQL = 'zSql';
 function welt(apiKey: string | null = 'k') {
@@ -116,5 +116,9 @@ describe('UniFi firewallLesen', () => {
     expect(f.adresse).toContain('nicht IP-Liste L1');
     expect(f.ports).toBe('nicht Port-Liste L2');
     expect(f.adresse).toContain('nicht {');
+  });
+  it('unbekannte Policy-Felder erscheinen in der Bedingung', () => {
+    expect(bedingungLesbar({ id: 'x', name: 'n', foo: { x: 1 }, leer: [] })).toBe('weitere: {"foo":{"x":1}}');
+    expect(bedingungLesbar({ id: 'x', enabled: true, description: 'd' })).toBe('');
   });
 });

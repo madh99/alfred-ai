@@ -231,5 +231,10 @@ export function bedingungLesbar(p: unknown): string {
     teile.push(`nur Verbindungszustand ${Array.isArray(c) ? (c.length ? c.map(String).join(', ') : '(leer)') : kurzJson(c)}`);
   }
   if (x.ipsecFilter !== undefined && x.ipsecFilter !== null) teile.push(`nur IPsec ${typeof x.ipsecFilter === 'string' ? x.ipsecFilter : kurzJson(x.ipsecFilter)}`);
+  const bekannt = new Set(['id', 'name', 'enabled', 'index', 'action', 'source', 'destination', 'ipProtocolScope', 'loggingEnabled', 'metadata', 'schedule', 'connectionStateFilter', 'ipsecFilter', 'description']);
+  const leer = (v: unknown) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0);
+  for (const [k, v] of Object.entries((p ?? {}) as Record<string, unknown>)) {
+    if (!bekannt.has(k) && !leer(v)) teile.push(`weitere: ${kurzJson({ [k]: v })}`);
+  }
   return teile.join('; ');
 }
