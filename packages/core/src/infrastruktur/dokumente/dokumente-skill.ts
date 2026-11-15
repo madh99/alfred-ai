@@ -11,7 +11,7 @@ import { baueAbnahme, baueTestprotokoll } from './builder.js';
 import { alsMarkdown } from './markdown.js';
 import { alsPdf } from './pdf.js';
 import { alsDocx } from './docx.js';
-import { pruefeBetriebParameter, type BetriebParameter } from './betrieb-parameter.js';
+import { MAX_ASSET_IDS, pruefeBetriebParameter, type BetriebParameter } from './betrieb-parameter.js';
 import { findeChange, verlaufVon, type DokuQuellen } from './sammler.js';
 import { lege, pruefeAblageNamen, PVE2_WURZEL, type AblageDeps } from './ablage.js';
 import { schwaerze } from '../../fernzugriff/kaefig.js';
@@ -28,7 +28,7 @@ export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 't
 /** Nachschlagen für Betriebs-Instanzen (alles je Owner); fehlt es, kann keine Betriebs-Instanz angelegt werden */
 export interface BetriebQuellen {
   /** alle Assets mit genau diesem Namen (über Asset-Typen hinweg) — mehr als eines heißt mehrdeutig */
-  assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string; status?: string }>>;
+  assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string; status?: string; sourceSkill?: string }>>;
   assetNachId(userId: string, id: string): Promise<{ id: string; name: string; status?: string } | null>;
   /** Vorhaben nach ID, eindeutigem ID-Anfang oder Titel */
   vorhaben(userId: string, schluessel: string): Promise<{ id: string; changeIds: string[] } | null>;
@@ -294,24 +294,26 @@ export class DokumenteDienst {
     const probleme: string[] = [];
     const ids: string[] = [];
     for (const ref of form.assets) {
-      let treffer = await q.assetsNachName(o, ref);
-      // mehrere Treffer: genau ein nicht außer Betrieb genommenes Asset gilt als gemeint
-      if (treffer.length > 1) {
-        const aktiv = treffer.filter(t => t.status !== 'decommissioned');
-        if (aktiv.length === 1) treffer = aktiv;
-      }
-      if (treffer.length > 1) {
-        probleme.push(`Asset „${ref}“ ist mehrdeutig: ${treffer.map(t => `${t.id.slice(0, 8)} (${t.assetType ?? 'Typ unbekannt'}, ${t.status ?? 'Status unbekannt'})`).join(', ')} — mit der ID angeben`);
+      // ein Name steht für alle Bausteine des Systems (z. B. VM aus Proxmox und Server aus dem Fernzugang); außer Betrieb Genommene zählen nicht
+      const alle = await q.assetsNachName(o, ref);
+      const aktiv = alle.filter(t => t.status !== 'decommissioned');
+      let treffer: Array<{ id: string; status?: string }> = aktiv;
+      if (aktiv.length) {
+        const beschr = (t: (typeof aktiv)[number]) => `${t.id.slice(0, 8)} (${t.assetType ?? 'Typ unbekannt'}, ${t.status ?? 'Status unbekannt'}, ${t.sourceSkill ?? 'Quelle unbekannt'})`;
+        const doppelt = aktiv.filter(t => aktiv.some(u => u !== t && u.assetType === t.assetType));
+        if (doppelt.length) { probleme.push(`Asset „${ref}“ ist mehrdeutig (mehrere gleichen Typs): ${doppelt.map(beschr).join(', ')} — mit der ID angeben`); continue; }
+      } else if (alle.length) {
+        probleme.push(`Asset „${ref}“ ist außer Betrieb (${alle.map(t => t.id.slice(0, 8)).join(', ')})`);
         continue;
+      } else {
+        const a = await q.assetNachId(o, ref);
+        if (!a) { probleme.push(`Asset „${ref}“ unbekannt`); continue; }
+        if (a.status === 'decommissioned') { probleme.push(`Asset „${ref}“ (${a.id.slice(0, 8)}) ist außer Betrieb`); continue; }
+        treffer = [a];
       }
-      let id: string | undefined;
-      let status: string | undefined;
-      if (treffer.length === 1) { id = treffer[0]!.id; status = treffer[0]!.status; }
-      else { const a = await q.assetNachId(o, ref); if (a) { id = a.id; status = a.status; } }
-      if (!id) { probleme.push(`Asset „${ref}“ unbekannt`); continue; }
-      if (status === 'decommissioned') { probleme.push(`Asset „${ref}“ (${id.slice(0, 8)}) ist außer Betrieb`); continue; }
-      if (ids.includes(id)) { probleme.push(`Asset „${ref}“ doppelt angegeben (gleiches Asset ${id.slice(0, 8)})`); continue; }
-      ids.push(id);
+      const neue = treffer.map(t => t.id).filter(id => !ids.includes(id));
+      if (!neue.length) { probleme.push(`Asset „${ref}“ doppelt angegeben (bereits enthalten)`); continue; }
+      ids.push(...neue);
     }
     const p: BetriebParameter = { assets: ids };
     let changeIds: string[] = [];
@@ -333,7 +335,7 @@ export class DokumenteDienst {
     if (form.jobs) p.jobs = form.jobs;
     if (form.standardVorlagen) p.standardVorlagen = form.standardVorlagen;
     if (probleme.length) throw new Error(`Betriebs-Instanz nicht angelegt: ${probleme.join('; ')}`);
-    const geprueft = pruefeBetriebParameter(p);
+    const geprueft = pruefeBetriebParameter(p, MAX_ASSET_IDS);
     if (typeof geprueft === 'string') throw new Error(geprueft);
     return this.d.instanzen.anlegen(o, { name, dokumentart: 'betrieb', changeIds, parameter: JSON.stringify(geprueft) });
   }

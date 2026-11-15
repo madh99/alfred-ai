@@ -393,18 +393,21 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
   const assets = [
     { id: 'aaaaaaaa-1111', name: 'pkiiss01', assetType: 'vm' },
     { id: 'bbbbbbbb-2222', name: 'pkiroot01', assetType: 'vm' },
-    { id: 'cccccccc-3333', name: 'dopp', assetType: 'vm' },
-    { id: 'dddddddd-4444', name: 'dopp', assetType: 'service' },
+    { id: 'cccccccc-3333', name: 'dopp', assetType: 'vm', status: 'active', sourceSkill: 'proxmox' },
+    { id: 'dddddddd-4444', name: 'Dopp', assetType: 'vm', status: 'active', sourceSkill: 'infrastruktur' },
     { id: 'eeeeeeee-5555', name: 'alt', assetType: 'vm', status: 'decommissioned' },
-    { id: 'ffffffff-6666', name: 'neu', assetType: 'vm', status: 'decommissioned' },
-    { id: 'ffffffff-7777', name: 'neu', assetType: 'vm', status: 'active' },
     { id: '99999999-8888', name: 'beide', assetType: 'vm', status: 'decommissioned' },
-    { id: '99999999-9999', name: 'beide', assetType: 'service', status: 'decommissioned' },
+    { id: '99999999-9999', name: 'beide', assetType: 'server', status: 'decommissioned' },
+    // echtes Muster: VM (Proxmox) und Server (Fernzugang) gleichen Namens aktiv, dazu alte VM außer Betrieb
+    { id: 'dc010000-0001', name: 'dc01', assetType: 'vm', status: 'active', sourceSkill: 'proxmox' },
+    { id: 'dc010000-0002', name: 'dc01', assetType: 'server', status: 'active', sourceSkill: 'fernzugriff' },
+    { id: 'dc010000-0003', name: 'dc01', assetType: 'vm', status: 'decommissioned', sourceSkill: 'infrastruktur' },
+    { id: 'dc010000-0004', name: 'DC02', assetType: 'vm', status: 'inactive', sourceSkill: 'proxmox' },
   ];
   function mitBetrieb() {
     const t = aufbau();
     t.deps.betrieb = {
-      assetsNachName: async (_u, n) => assets.filter(a => a.name === n),
+      assetsNachName: async (_u, n) => assets.filter(a => a.name.toLowerCase() === n.toLowerCase()),
       assetNachId: async (_u, id) => assets.find(a => a.id.startsWith(id)) ?? null,
       vorhaben: async (_u, k) => (VID.startsWith(k) ? { id: VID, changeIds: [A.id, C.id] } : null),
       dokument: async (_u, k) => (DID.startsWith(k) ? { id: DID } : null),
@@ -421,13 +424,15 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     expect(await t.deps.instanzen.finde('o', 'pki-betrieb')).toBeUndefined();
   });
 
-  it('mehrdeutiger Name: Fehler listet die Kandidaten, nichts gespeichert', async () => {
+  it('mehrdeutiger Name (zwei aktive gleichen Typs, nur Schreibung verschieden): Fehler listet Kandidaten mit Typ, Status, Quelle', async () => {
     const t = mitBetrieb();
     const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'x1', dokumentart: 'betrieb', assets: ['dopp'] }, CTX);
     expect(r.success).toBe(false);
     expect(r.error).toContain('mehrdeutig');
     expect(r.error).toContain('cccccccc');
     expect(r.error).toContain('dddddddd');
+    expect(r.error).toContain('proxmox');
+    expect(r.error).toContain('active');
     expect(await t.deps.instanzen.finde('o', 'x1')).toBeUndefined();
   });
 
@@ -446,20 +451,39 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     });
   });
 
-  it('Status: ein aktives neben außer Betrieb gilt, einzelnes außer Betrieb wird abgewiesen, mehrere außer Betrieb sind mehrdeutig mit Status', async () => {
+  it('VM und Server gleichen Namens: alle aktiven Assets gehören dazu, außer Betrieb Genommenes nicht, Name ohne Groß/Klein', async () => {
     const t = mitBetrieb();
-    const ok = await t.skill.execute({ action: 'instanz_anlegen', name: 's1', dokumentart: 'betrieb', assets: ['neu'] }, CTX);
-    expect(ok.success, ok.error).toBe(true);
-    expect(JSON.parse((await t.deps.instanzen.finde('o', 's1'))!.parameter!).assets).toEqual(['ffffffff-7777']);
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 's1', dokumentart: 'betrieb', assets: ['DC01', 'dc02'] }, CTX);
+    expect(r.success, r.error).toBe(true);
+    expect(JSON.parse((await t.deps.instanzen.finde('o', 's1'))!.parameter!).assets).toEqual(['dc010000-0001', 'dc010000-0002', 'dc010000-0004']);
+  });
+
+  it('nur außer Betrieb: abgewiesen (Name und ID), nichts gespeichert', async () => {
+    const t = mitBetrieb();
     const alt = await t.skill.execute({ action: 'instanz_anlegen', name: 's2', dokumentart: 'betrieb', assets: ['pkiiss01', 'alt'] }, CTX);
     expect(alt.success).toBe(false);
     expect(alt.error).toContain('außer Betrieb');
     expect(await t.deps.instanzen.finde('o', 's2')).toBeUndefined();
-    const beide = await t.skill.execute({ action: 'instanz_anlegen', name: 's3', dokumentart: 'betrieb', assets: ['beide'] }, CTX);
-    expect(beide.error).toContain('mehrdeutig');
-    expect(beide.error).toContain('decommissioned');
-    const perId = await t.skill.execute({ action: 'instanz_anlegen', name: 's4', dokumentart: 'betrieb', assets: ['eeeeeeee'] }, CTX);
-    expect(perId.error).toContain('außer Betrieb');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 's3', dokumentart: 'betrieb', assets: ['beide'] }, CTX)).error).toContain('außer Betrieb');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 's4', dokumentart: 'betrieb', assets: ['eeeeeeee'] }, CTX)).error).toContain('außer Betrieb');
+  });
+
+  it('Name und ID desselben Systems: keine doppelten IDs, doppelte Angabe wird gemeldet', async () => {
+    const t = mitBetrieb();
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 's5', dokumentart: 'betrieb', assets: ['dc01', 'dc010000-0001'] }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('doppelt');
+  });
+
+  it('bis 40 Namen mit mehreren IDs erlaubt (bis 80 IDs), 41 Namen nicht', async () => {
+    const t = mitBetrieb();
+    const viele = Array.from({ length: 40 }, (_, k) => "sys" + k);
+    const gross = [...assets, ...viele.flatMap(n => [{ id: `${n}-v`, name: n, assetType: 'vm', status: 'active' }, { id: `${n}-s`, name: n, assetType: 'server', status: 'active' }])];
+    t.deps.betrieb!.assetsNachName = async (_u, n) => gross.filter(a => a.name === n);
+    const r = await t.skill.execute({ action: 'instanz_anlegen', name: 's6', dokumentart: 'betrieb', assets: viele }, CTX);
+    expect(r.success, r.error).toBe(true);
+    expect(JSON.parse((await t.deps.instanzen.finde('o', 's6'))!.parameter!).assets).toHaveLength(80);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 's7', dokumentart: 'betrieb', assets: [...viele, 'dc01'] }, CTX)).error).toContain('höchstens 40');
   });
 
   it('unbekanntes Vorhaben, Dokument und Restore-Change werden gemeldet, nichts gespeichert', async () => {

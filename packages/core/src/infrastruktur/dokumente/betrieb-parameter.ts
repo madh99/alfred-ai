@@ -17,7 +17,9 @@ export interface BetriebParameter {
   restoreChangeId?: string;
 }
 
+/** Bausteine (Namen) je System; ein Name kann mehrere Assets umfassen (VM und Server), gespeichert werden bis zu MAX_ASSET_IDS IDs */
 export const MAX_ASSETS = 40;
+export const MAX_ASSET_IDS = 80;
 const MAX_LISTE = 40;
 const SCHLUESSEL = /^[\w.-]{1,80}$/;
 const ERLAUBT = new Set(['assets', 'vorhabenId', 'architekturDocId', 'jobs', 'standardVorlagen', 'restoreChangeId']);
@@ -41,12 +43,12 @@ function id(feld: string, v: unknown): string | undefined | { fehler: string } {
 }
 
 /** string = Fehlertext */
-export function pruefeBetriebParameter(p: unknown): BetriebParameter | string {
+export function pruefeBetriebParameter(p: unknown, maxAssets: number = MAX_ASSETS): BetriebParameter | string {
   if (!p || typeof p !== 'object' || Array.isArray(p)) return 'parameter: Objekt erwartet';
   const o = p as Record<string, unknown>;
   for (const k of Object.keys(o)) if (!ERLAUBT.has(k)) return `parameter: unbekannter Schlüssel „${k}“`;
   if (!Array.isArray(o.assets) || o.assets.length < 1) return 'assets: mindestens ein Asset angeben';
-  if (o.assets.length > MAX_ASSETS) return `assets: höchstens ${MAX_ASSETS} Assets`;
+  if (o.assets.length > maxAssets) return `assets: höchstens ${maxAssets} Assets`;
   const assets: string[] = [];
   for (const a of o.assets) {
     if (typeof a !== 'string' || !a.trim()) return 'assets: nur nichtleere Texte (ID)';
