@@ -768,3 +768,46 @@ describe('v1844 Listen-Verweis in <name>_roh', () => {
     expect(loeseAuf({ cdp_roh: 'x{{schritt14.vorher.cdp}}' }, erg).fehler).toBeTruthy();
   });
 });
+
+describe('Dokument-Vorlagen: Verlauf im Lauf', () => {
+  it('Halt schreibt genau einen Eintrag „halt“; wiederholen hängt an, der Halt bleibt', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    await w.motor.anstossen(); await warte(w.motor);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    expect(l.verlauf).toHaveLength(1);
+    expect(l.verlauf![0]).toMatchObject({ art: 'halt', schritt: 2 });
+    expect(l.verlauf![0]!.text.length).toBeLessThanOrEqual(300);
+    w.snaps.add('i3probe');
+    await w.motor.steuern('o', 'chg-1', 'wiederholen'); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    expect((w.c.lauf as ChangeLauf).verlauf!.map(e => [e.art, e.schritt])).toEqual([['halt', 2], ['wiederholen', 2]]);
+  });
+
+  it('überspringen und freigegebene Plan-Korrektur landen im Verlauf', async () => {
+    const plan: ChangeSchritt[] = [
+      { ...probe()[1]!, nr: 1 },
+      S({ nr: 2, skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 999 }, einordnung: 'lesen' }),
+    ];
+    const w = welt(plan);
+    const fuehre = w.deps.fuehreAus;
+    w.deps.fuehreAus = async (skill, input, ctx) => (input.action === 'vm_status' && input.vmid === 999 ? { success: false, error: 'I/O error' } : fuehre(skill, input, ctx));
+    await w.motor.anstossen(); await warte(w.motor);
+    await w.motor.steuern('o', 'chg-1', 'ueberspringen'); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).verlauf!.map(e => e.art)).toEqual(['halt', 'ueberspringen']);
+
+    const k = welt(probe(), { snapshotFehlt: true });
+    await k.motor.anstossen(); await warte(k.motor);
+    const l = k.c.lauf as ChangeLauf;
+    l.korrektur = { abSchritt: l.schritt, zeit: '2026-11-15T08:00:00.000Z' };
+    Object.assign(k.c, { fingerabdruck: 'neu', freigabeFingerabdruck: 'alt' });
+    await k.motor.steuern('o', 'chg-1', 'wiederholen'); // ohne Freigabe: kein Eintrag gespeichert
+    expect(((k.c.lauf as ChangeLauf).verlauf ?? []).map(e => e.art)).toEqual(['halt']);
+    k.c.freigabeFingerabdruck = 'neu'; k.snaps.add('i3probe');
+    await k.motor.anstossen(); await warte(k.motor);
+    expect(k.c.status).toBe('completed');
+    const v = (k.c.lauf as ChangeLauf).verlauf!;
+    expect(v.map(e => e.art)).toEqual(['halt', 'plan_geaendert', 'wiederholen']);
+    expect(v[1]).toMatchObject({ zeit: '2026-11-15T08:00:00.000Z', schritt: 2 });
+  });
+});

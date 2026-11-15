@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
 import { aktionsArt, ZEITLIMIT_STANDARD_S, type ChangeSchritt, type Pruefung } from './change-schritte.js';
@@ -99,6 +99,16 @@ export function ownerFrageVeraltet(c: CmdbChangeRequest | undefined | null, para
 
 /** v1729 — Anteile des Grundtakts für die ersten Prüfungen eines Warte-Schritts (10 s → 2, 2, 3, 5 s, danach 10 s) */
 const WARTEN_STAFFEL = [0.2, 0.2, 0.3, 0.5];
+
+/**
+ * Dokument-Vorlagen: eine gespeicherte Plan-Korrektur (lauf.korrektur, gesetzt von der ITSM-Ablage) als Verlaufseintrag merken, sobald der
+ * Owner über den korrigierten Change entscheidet (weiter, abbrechen, Rückweg). Gleiche Korrektur (Zeitpunkt) nur einmal.
+ */
+function merkeKorrektur(l: ChangeLauf): void {
+  const k = l.korrektur;
+  if (!k || (l.verlauf ?? []).some(e => e.art === 'plan_geaendert' && e.zeit === k.zeit)) return;
+  merkeVerlauf(l, { zeit: k.zeit, art: 'plan_geaendert', schritt: k.abSchritt, text: `Plan ab Schritt ${k.abSchritt} korrigiert${k.aktionGeaendert ? ' (Aktion am Haltepunkt geändert)' : ''}` });
+}
 
 export class ChangeMotor {
   private readonly laufend = new Set<string>();
@@ -470,6 +480,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   private async halte(o: string, c: CmdbChangeRequest, lauf: ChangeLauf, grund: string): Promise<void> {
     await this.d.nachStoerung?.(o, c, `angehalten: ${grund.slice(0, 200)}`).catch(() => undefined);
     lauf.phase = 'angehalten'; lauf.grund = grund;
+    merkeVerlauf(lauf, { zeit: this.iso(), art: 'halt', schritt: lauf.schritt, text: grund }); // Dokument-Vorlagen: gespeichert mit dem Lauf unten
     if (!lauf.incidentId && this.d.incident) {
       lauf.incidentId = await this.d.incident.anlegen(o, { titel: `Change angehalten: ${c.title}`, text: `Change ${c.id} (${c.title}) angehalten.\n${grund}`, schwere: c.riskLevel === 'critical' || c.riskLevel === 'high' ? 'high' : 'medium', assetIds: c.affectedAssetIds }).catch(() => undefined);
     }
@@ -556,6 +567,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     if (l.phase !== 'angehalten' && l.phase !== 'wartet_owner') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
     delete l.frage;
     if (wahl === 'abbrechen') {
+      merkeKorrektur(l);
       await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen (ohne Rückweg)');
       // v1605 — Realfall 23.10.: nach dem Abbruch von 4f2642ab startete der wartende 9527d97f erst beim nächsten 10-Minuten-Takt
       void this.anstossen().catch(err => this.log('I4 Motorfehler', { id: c.id, fehler: (err as Error).message }));
@@ -563,6 +575,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     }
     if (wahl === 'rueckweg') {
       if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Es gibt nichts zurückzunehmen — „abbrechen“ beendet den Change.';
+      merkeKorrektur(l);
       void this.rueckweg(o, c, l, l.grund ?? 'vom Owner gewählt').catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
       return 'Rückweg läuft — ich melde das Ergebnis.';
     }
@@ -572,6 +585,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     if (l.korrektur) {
       if (!c.freigabeFingerabdruck || c.freigabeFingerabdruck !== c.fingerabdruck) return `Der Plan wurde ab Schritt ${l.korrektur.abSchritt} korrigiert — er wartet auf deine Freigabe, danach geht es dort weiter.`;
       aktionNeu = !!l.korrektur.aktionGeaendert && l.korrektur.abSchritt === l.schritt;
+      merkeKorrektur(l);
       delete l.korrektur;
     }
     const alt = l.ergebnisse.find(e => e.nr === l.schritt);
@@ -587,6 +601,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       if (verwendet.length) return `Schritt ${s.nr} kann nicht übersprungen werden: Schritt ${verwendet.join(', ')} verwendet sein Ergebnis.`;
       const jetzt = this.iso();
       l.ergebnisse = [...l.ergebnisse.filter(e => e.nr !== s.nr), { nr: s.nr, ok: true, uebersprungen: true, start: alt?.start ?? jetzt, ende: jetzt, ausgabe: `vom Owner übersprungen (vorher: ${(l.grund ?? alt?.fehler ?? 'gescheitert').slice(0, 200)})` }];
+      merkeVerlauf(l, { zeit: jetzt, art: 'ueberspringen', schritt: s.nr, text: `Schritt ${s.nr} „${s.titel}“ vom Owner übersprungen` });
       l.phase = 'laeuft'; delete l.grund;
       await this.d.itsm.motorSetze(o, c.id, { lauf: l });
       this.log('I4 Schritt übersprungen', { id: c.id, nr: s.nr });
@@ -596,6 +611,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     }
     const nurPruefung = !aktionNeu && !!(alt?.aktionOk && !alt.ok && s?.art === 'aktion' && s.pruefung);
     if (nurPruefung) l.nurPruefung = { nr: l.schritt, ...(alt!.ausgabe !== undefined ? { ausgabe: alt!.ausgabe } : {}), ...(alt!.daten !== undefined ? { daten: alt!.daten } : {}) };
+    merkeVerlauf(l, { zeit: this.iso(), art: 'wiederholen', schritt: l.schritt, text: nurPruefung ? `Schritt ${l.schritt}: nur die Prüfung erneut (Aktion war gelungen)` : `Schritt ${l.schritt} wird wiederholt` });
     l.ergebnisse = l.ergebnisse.filter(e => e.nr !== l.schritt); l.phase = 'laeuft'; delete l.grund;
     await this.d.itsm.motorSetze(o, c.id, { lauf: l });
     void this.weiter(o, c, l).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));

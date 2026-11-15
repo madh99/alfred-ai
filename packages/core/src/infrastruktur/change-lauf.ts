@@ -36,6 +36,16 @@ export interface ChangeLauf {
   nurPruefung?: { nr: number; ausgabe?: string; daten?: unknown };
   /** v1661 — Plan ab dem Haltepunkt korrigiert; weiter erst mit der Freigabe des neuen Plans */
   korrektur?: { abSchritt: number; zeit: string; aktionGeaendert?: boolean };
+  /** Dokument-Vorlagen — Halte, Wiederholungen, Überspringen und Planänderungen in Reihenfolge (nur angehängt, nie überschrieben) */
+  verlauf?: VerlaufEintrag[];
+}
+
+export interface VerlaufEintrag { zeit: string; art: 'halt' | 'wiederholen' | 'ueberspringen' | 'plan_geaendert'; schritt: number; text: string }
+export const MAX_VERLAUF_TEXT = 300;
+
+/** Verlaufseintrag anhängen; der Text wird auf MAX_VERLAUF_TEXT Zeichen begrenzt. */
+export function merkeVerlauf(l: ChangeLauf, e: VerlaufEintrag): void {
+  l.verlauf = [...(l.verlauf ?? []), { ...e, text: e.text.slice(0, MAX_VERLAUF_TEXT) }];
 }
 
 export const MAX_AUSGABE = 2000;
