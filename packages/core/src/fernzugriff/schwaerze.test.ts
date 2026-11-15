@@ -151,6 +151,7 @@ describe('Schwärzung — Runde 1', () => {
       'password'.repeat(25_000), '"'.repeat(200_000), 'x:'.repeat(100_000), '--password '.repeat(18_000), 'Authorization: Basic ' + 'A'.repeat(200_000),
       'a.'.repeat(100_000), '\n'.repeat(200_000), '(a='.repeat(66_000), 'x="'.repeat(66_000), " -pw '".repeat(33_000), 'mysql '.repeat(33_000), 'p=a '.repeat(50_000),
       'token: '.repeat(28_000), 'sshpass -p '.repeat(18_000), 'curl -u '.repeat(25_000), 'Basic '.repeat(33_000), 'Authorization: ' + ' '.repeat(200_000),
+      'curl ' + '-u 1:1 '.repeat(25_000), 'curl ' + '-u a:b '.repeat(25_000), 'docker run ' + '-u 1:1 '.repeat(25_000) + 'curl',
       '://a'.repeat(50_000), 'a://' + 'b'.repeat(200_000), 'Basic ' + 'a'.repeat(200_000)];
     for (const m of muster) {
       const t0 = performance.now();

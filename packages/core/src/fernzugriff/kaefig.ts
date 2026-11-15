@@ -185,13 +185,16 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
   // curl/wget -u/--user benutzer:kennwort — nur der Teil nach dem ersten Doppelpunkt (ohne Doppelpunkt fragt curl nach);
   // -u auch angehängt (-uadmin:x). UID:GID bleibt nur lesbar, wenn der Schalter zu einem Container-Aufruf gehört
   // (docker/podman/nerdctl davor, kein curl/wget davor) — sonst fail-closed: curl -u 48213:91047 wird geschwärzt
-  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u(?=[^\s-])|-u[^\S\n]+|(?:--user|--http-user)(?:[^\S\n]+|=))("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, w: string, ab: number) => {
-    const z = /^["']/.test(w) ? w[0] : '', innen = z ? w.slice(1, -1) : w, i = innen.indexOf(':');
-    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT) return m;
-    const davor = zeile.slice(0, ab);
-    if (/^\d{1,6}:\d{1,6}$/.test(innen) && /\b(?:docker|podman|nerdctl)\b/.test(davor) && !/\b(?:curl|wget)\b/.test(davor)) return m;
-    anzahl++; return `${s}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
-  }));
+  // Container-/Client-Position je Zeile EINMAL bestimmen (linear auch bei vielen -u in einer Zeile)
+  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => {
+    const idxC = zeile.search(/\b(?:docker|podman|nerdctl)\b/), idxW = zeile.search(/\b(?:curl|wget)\b/);
+    return zeile.replace(/(?<=\s)(-u(?=[^\s-])|-u[^\S\n]+|(?:--user|--http-user)(?:[^\S\n]+|=))("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, w: string, ab: number) => {
+      const z = /^["']/.test(w) ? w[0] : '', innen = z ? w.slice(1, -1) : w, i = innen.indexOf(':');
+      if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT) return m;
+      if (/^\d{1,6}:\d{1,6}$/.test(innen) && idxC >= 0 && idxC < ab && (idxW < 0 || idxW > ab)) return m;
+      anzahl++; return `${s}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
+    });
+  });
   // URL-Zugangsdaten am Trenner :// verankert (jedes Schema, auch +postgres:// oder 1-redis://)
   t = t.replace(/(:\/\/[^:\s/@]+:)(?!\[geschwärzt\]@)([^@\s/]{3,})@/g, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
   t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
