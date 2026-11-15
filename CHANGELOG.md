@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PKI-Lab-Positivtest (v1867)
+
+- `tls_negativtest` wertet eine fehlende Berechtigung für `sys.dm_exec_connections` nicht mehr als abgelehnte Anmeldung; ohne dieses Recht gilt die Sitzung nur bei vom Server erzwungener Verschlüsselung und erfolgreicher Zertifikatsprüfung des Treibers als verschlüsselt.
+- Ein bereits leerer Sperrlisten-Zwischenspeicher gilt als geleert; geprüft wird, dass kein Lab-Eintrag übrig bleibt.
+- Das Lab-Login erhält bei der Installation das Recht zum Lesen der Verbindungsdaten.
+
 ### Added — PKI-Lab für TLS-Negativtests (v1866)
 
 - Neuer Skill `pki_lab`: Wegwerf-Lab-CA mit HTTP-Sperrliste, Test-SQL-Instanz ohne Verfügbarkeitsgruppe, Fixture-Zertifikate und Bindung für die Fälle unbekannte CA, falscher Name, abgelaufen, gesperrt und nicht erreichbare Sperrliste.

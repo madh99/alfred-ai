@@ -138,6 +138,8 @@ export function labSqlInstallierenSkript(): string {
     String.raw`$cn.Open(); try {`,
     String.raw`  $cmd = $cn.CreateCommand(); $cmd.Parameters.AddWithValue('@k', $k) | Out-Null`,
     String.raw`  $cmd.CommandText = "DECLARE @s nvarchar(max); IF SUSER_ID(N'" + $p.login + "') IS NULL SET @s = N'CREATE LOGIN [" + $p.login + "] WITH PASSWORD = ' + QUOTENAME(@k, '''') + N', CHECK_POLICY = ON, DEFAULT_DATABASE = master' ELSE SET @s = N'ALTER LOGIN [" + $p.login + "] WITH PASSWORD = ' + QUOTENAME(@k, '''') + N', CHECK_POLICY = ON'; EXEC (@s); ALTER LOGIN [sa] DISABLE;"`,
+    // ab SQL 2022 braucht sys.dm_exec_connections (Nachweis „verschlüsselt“ im Test) VIEW SERVER PERFORMANCE STATE — auch für die eigene Sitzung
+    String.raw`  $cmd.CommandText += " IF EXISTS (SELECT 1 FROM sys.fn_builtin_permissions('SERVER') WHERE permission_name = N'VIEW SERVER PERFORMANCE STATE') EXEC (N'GRANT VIEW SERVER PERFORMANCE STATE TO [" + $p.login + "]') ELSE EXEC (N'GRANT VIEW SERVER STATE TO [" + $p.login + "]');"`,
     String.raw`  [void]$cmd.ExecuteNonQuery()`,
     String.raw`  $cmd.Parameters.Clear(); $cmd.CommandText = "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(40)) v, CAST(SERVERPROPERTY('Edition') AS nvarchar(80)) e, CAST(SERVERPROPERTY('IsHadrEnabled') AS int) h, (SELECT is_disabled FROM sys.server_principals WHERE name = N'sa') sa"`,
     String.raw`  $rd = $cmd.ExecuteReader(); [void]$rd.Read(); $info = [ordered]@{ version = [string]$rd['v']; edition = [string]$rd['e']; hadr = [int]$rd['h']; saGesperrt = [bool]$rd['sa'] }; $rd.Close()`,
@@ -248,14 +250,19 @@ export function pruefeLabTest(o: Record<string, unknown>): LabTest | string {
 }
 export interface LabBefund {
   probe: { thumbprint?: string; subjekt?: string; aussteller?: string; sans?: string[]; von?: string; bis?: string; kette?: boolean; kettenStatus?: string[]; antwortUnverschluesselt?: number; zeit: string; fehler?: string };
-  anmeldung: { server?: string; verschluesselt?: boolean; fehler?: string };
+  anmeldung: { server?: string; verschluesselt?: boolean; fehler?: string; dmvFehler?: string };
   cacheGeleert: boolean;
+  cache?: string;
 }
 export function labTestSkript(t: LabTest): string {
   return lab({ ...t, login: LAB_LOGIN }, true, [
     ...TDS_PROBE,
     // Sperrlisten-Zwischenspeicher leeren (nur Lab-Client), sonst prüft die Kette gegen eine alte Sperrliste
-    String.raw`$cache = (& certutil.exe -urlcache * delete 2>&1 | Out-String); $geleert = ($LASTEXITCODE -eq 0)`,
+    // leerer Zwischenspeicher meldet „nicht gefunden“ — maßgeblich ist, dass danach kein Eintrag zum Lab mehr übrig ist
+    String.raw`$cache = (& certutil.exe -urlcache * delete 2>&1 | Out-String); $cacheCode = $LASTEXITCODE`,
+    String.raw`$rest = (& certutil.exe -urlcache * 2>&1 | Out-String)`,
+    String.raw`$geleert = (($cacheCode -eq 0) -or ($cache -match '0x80092004|0x80070002|CRYPT_E_NOT_FOUND|ERROR_FILE_NOT_FOUND')) -and ($rest -notmatch 'pkilab\.test')`,
+    String.raw`$cacheText = ('Exit ' + $cacheCode + ': ' + (($cache -replace '\s+', ' ').Trim())); if ($cacheText.Length -gt 300) { $cacheText = $cacheText.Substring(0, 300) }`,
     String.raw`& certutil.exe -setreg chain\ChainCacheResyncFiletime '@now' 2>&1 | Out-Null`,
     String.raw`function Sans($c) { $x = $c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }; if (-not $x) { return @() }; @(($x.Format($false) -split ',\s*') | Where-Object { $_ -match '^(DNS Name|DNS-Name)=' } | ForEach-Object { ($_ -replace '^(DNS Name|DNS-Name)=', '').Trim().ToLower() }) }`,
     String.raw`$probe = [ordered]@{ zeit = (Get-Date).ToString('s') }`,
@@ -272,9 +279,12 @@ export function labTestSkript(t: LabTest): string {
     String.raw`  $b = New-Object System.Data.SqlClient.SqlConnectionStringBuilder; $b['Data Source'] = 'tcp:' + $p.ziel + ',1433'; $b['Initial Catalog'] = 'master'; $b['User ID'] = $p.login; $b['Password'] = [string]$e.kennwort`,
     String.raw`  $b['Encrypt'] = $true; $b['TrustServerCertificate'] = $false; $b['Connect Timeout'] = 20; $b['Pooling'] = $false; $b['Application Name'] = 'Alfred-PKI-Lab'`,
     String.raw`  $cn = New-Object System.Data.SqlClient.SqlConnection $b.ConnectionString; $cn.Open()`,
-    String.raw`  try { $cmd = $cn.CreateCommand(); $cmd.CommandText = 'SELECT CAST(@@SERVERNAME AS nvarchar(128)) s, encrypt_option e FROM sys.dm_exec_connections WHERE session_id = @@SPID'; $rd = $cmd.ExecuteReader(); [void]$rd.Read(); $anm.server = [string]$rd['s']; $anm.verschluesselt = ([string]$rd['e'] -eq 'TRUE'); $rd.Close() } finally { $cn.Close() }`,
+    // Fehler nach dem Öffnen sind keine Treiber-Ablehnung: die DMV-Abfrage hat einen eigenen Befund
+    String.raw`  try { $cmd = $cn.CreateCommand(); $cmd.CommandText = 'SELECT CAST(@@SERVERNAME AS nvarchar(128))'; $anm.server = [string]$cmd.ExecuteScalar()`,
+    String.raw`    try { $cmd.CommandText = 'SELECT CAST(encrypt_option AS nvarchar(10)) FROM sys.dm_exec_connections WHERE session_id = @@SPID'; $anm.verschluesselt = ([string]$cmd.ExecuteScalar() -eq 'TRUE') } catch { $anm.dmvFehler = ([string]$_.Exception.Message -replace '\s+', ' ') }`,
+    String.raw`  } finally { $cn.Close() }`,
     String.raw`} catch { $anm.fehler = ([string]$_.Exception.Message -replace '\s+', ' ') }`,
-    String.raw`Ergebnis ([ordered]@{ probe = $probe; anmeldung = $anm; cacheGeleert = $geleert })`,
+    String.raw`Ergebnis ([ordered]@{ probe = $probe; anmeldung = $anm; cacheGeleert = $geleert; cache = $cacheText })`,
   ]);
 }
 
@@ -293,7 +303,7 @@ export function bewerteLabTest(t: LabTest, b: LabBefund): { ok: boolean; ergebni
   const st = p.kettenStatus ?? [];
   if (p.fehler || !p.thumbprint) return { ok: false, ergebnis: 'NICHT_BEWIESEN', grund: '', befunde: [`TDS-Probe ohne Zertifikat (${p.fehler ?? 'keins'}) — ein Verbindungsfehler ist kein Beweis`] };
   if (p.thumbprint.toUpperCase() !== t.erwarteter_thumbprint) g.push(`vorgelegt ${p.thumbprint} statt Fixture ${t.erwarteter_thumbprint}`);
-  if (!b.cacheGeleert && ['gesperrt', 'crl_unerreichbar'].includes(t.fall)) g.push('Sperrlisten-Zwischenspeicher des Clients nicht geleert');
+  if (!b.cacheGeleert && ['gesperrt', 'crl_unerreichbar'].includes(t.fall)) g.push(`Sperrlisten-Zwischenspeicher des Clients nicht geleert (${b.cache ?? 'ohne Ausgabe'})`);
   const imSan = (p.sans ?? []).includes(t.ziel);
   const ketteOk = !!p.kette && st.every(s => s === 'NoError');
   let grund = '';
@@ -301,8 +311,11 @@ export function bewerteLabTest(t: LabTest, b: LabBefund): { ok: boolean; ergebni
     case 'gueltig':
       if (!imSan) g.push(`${t.ziel} nicht im SAN (${(p.sans ?? []).join(',')})`);
       if (!ketteOk) g.push(`Kette/Sperrprüfung: ${st.join(', ') || 'nicht aufgebaut'}`);
-      if (a.fehler) g.push(`Anmeldung: ${a.fehler}`); else if (a.verschluesselt !== true) g.push('Verbindung nicht verschlüsselt');
-      return g.length ? { ok: false, ergebnis: 'NICHT_BEWIESEN', grund: '', befunde: g } : { ok: true, ergebnis: 'LAB_TLS_OK', grund: 'Name im SAN, Kette und Online-Sperrprüfung ohne Befund, Anmeldung verschlüsselt', befunde: [] };
+      // ohne DMV-Recht: Server verlangt Verschlüsselung (Prelogin ENCRYPT_REQ auf ein ENCRYPT_OFF-Angebot) UND der Treiber hat mit
+      // Encrypt=True/TrustServerCertificate=False geöffnet — dann ist die Sitzung zwingend TLS-gesichert
+      const prelogin = a.verschluesselt === undefined && !!a.dmvFehler && p.antwortUnverschluesselt === 3;
+      if (a.fehler) g.push(`Anmeldung: ${a.fehler}`); else if (a.verschluesselt !== true && !prelogin) g.push(`Verbindung nicht als verschlüsselt nachgewiesen${a.dmvFehler ? ` (${a.dmvFehler}; Prelogin-Antwort ${p.antwortUnverschluesselt})` : ''}`);
+      return g.length ? { ok: false, ergebnis: 'NICHT_BEWIESEN', grund: '', befunde: g } : { ok: true, ergebnis: 'LAB_TLS_OK', grund: `Name im SAN, Kette und Online-Sperrprüfung ohne Befund, Anmeldung verschlüsselt (${prelogin ? 'Server erzwingt Verschlüsselung, Treiber mit Zertifikatsprüfung verbunden' : 'sys.dm_exec_connections'})`, befunde: [] };
     case 'falscher_name':
       if (imSan) g.push(`${t.ziel} steht doch im SAN`); if (!ketteOk) g.push(`Kette sollte in Ordnung sein: ${st.join(', ')}`);
       grund = `Name ${t.ziel} nicht im SAN (${(p.sans ?? []).join(',')})`; break;
@@ -331,7 +344,7 @@ export function bewerteLabTest(t: LabTest, b: LabBefund): { ok: boolean; ergebni
 export function labTestText(t: LabTest, b: LabBefund, e: ReturnType<typeof bewerteLabTest>): string {
   const p = b.probe; const a = b.anmeldung ?? {};
   const zert = p.thumbprint ? `vorgelegt ${p.thumbprint} ${p.subjekt} (Aussteller ${p.aussteller}, ${p.von} – ${p.bis}), SAN ${(p.sans ?? []).join(',')}, Kette ${p.kette ? 'ok' : 'NICHT ok'} (online: ${(p.kettenStatus ?? []).join(', ') || 'ohne Befund'})` : `Probe ohne Zertifikat: ${p.fehler}`;
-  const treiber = a.fehler ? `SqlClient (Encrypt=True, TrustServerCertificate=False) abgelehnt: ${a.fehler}` : `SqlClient verbunden (${a.server}, ${a.verschluesselt ? 'verschlüsselt' : 'UNVERSCHLÜSSELT'})${['gesperrt', 'crl_unerreichbar'].includes(t.fall) ? ' — System.Data.SqlClient prüft keinen Widerruf; maßgeblich ist die Online-Kettenprüfung' : ''}`;
+  const treiber = a.fehler ? `SqlClient (Encrypt=True, TrustServerCertificate=False) abgelehnt: ${a.fehler}` : `SqlClient verbunden (${a.server}, ${a.verschluesselt === true ? 'verschlüsselt' : a.verschluesselt === false ? 'UNVERSCHLÜSSELT' : `ohne DMV-Recht, Prelogin-Antwort ${p.antwortUnverschluesselt}${p.antwortUnverschluesselt === 3 ? ' = Server erzwingt Verschlüsselung' : ''}`})${['gesperrt', 'crl_unerreichbar'].includes(t.fall) ? ' — System.Data.SqlClient prüft keinen Widerruf; maßgeblich ist die Online-Kettenprüfung' : ''}`;
   const kopfz = e.ergebnis === 'LAB_TLS_OK' ? '✅ LAB_TLS_OK' : e.ergebnis === 'EXPECTED_TLS_FAILURE' ? `✅ EXPECTED_TLS_FAILURE (${t.fall}: ${e.grund})` : `Negativtest ${t.fall} NICHT bewiesen`;
   return `${kopfz} ${t.ziel}:1433 (${p.zeit}): ${zert}; ${treiber}${e.befunde.length ? ` — BEFUNDE: ${e.befunde.join('; ')}` : ''}`;
 }

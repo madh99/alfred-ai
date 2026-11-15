@@ -84,6 +84,22 @@ describe('PKI-Lab: Bewertung je Fall', () => {
     expect(bewerteLabTest(t('crl_unerreichbar'), b(['RevocationStatusUnknown', 'OfflineRevocation'], {})).ergebnis).toBe('EXPECTED_TLS_FAILURE');
     expect(bewerteLabTest(t('crl_unerreichbar'), b(['Revoked'], {})).ergebnis).toBe('NICHT_BEWIESEN');
   });
+  it('gueltig ohne DMV-Recht: nur mit erzwungener Verschlüsselung (Prelogin 3) bewiesen (Realfall 15.11.)', () => {
+    const dmv = "The user does not have ... permission 'VIEW SERVER PERFORMANCE STATE' to perform this action.";
+    expect(bewerteLabTest(t('gueltig'), b([], { server: 'LABSRV01', dmvFehler: dmv })).ergebnis).toBe('LAB_TLS_OK');
+    expect(bewerteLabTest(t('gueltig'), b([], { server: 'LABSRV01', dmvFehler: dmv }, { antwortUnverschluesselt: 0 })).ergebnis).toBe('NICHT_BEWIESEN');
+    expect(bewerteLabTest(t('gueltig'), b([], { server: 'LABSRV01', verschluesselt: false })).ergebnis).toBe('NICHT_BEWIESEN');
+    // ein DMV-Fehler ist keine Treiber-Ablehnung
+    expect(bewerteLabTest(t('falscher_name', 'labalias.pkilab.test'), b([], { server: 'LABSRV01', dmvFehler: dmv })).ergebnis).toBe('NICHT_BEWIESEN');
+  });
+  it('Test-Skript: DMV getrennt von der Anmeldung, Cache-Leerung über den Rest geprüft; Lab-Login darf die DMV lesen', () => {
+    const s = labTestSkript({ ziel: 'labsrv01.pkilab.test', fall: 'gesperrt', erwarteter_thumbprint: T });
+    expect(s).toContain('$anm.dmvFehler');
+    expect(s).toContain(String.raw`($rest -notmatch 'pkilab\.test')`);
+    expect(labSqlInstallierenSkript()).toContain('GRANT VIEW SERVER PERFORMANCE STATE TO');
+    const c = { probe: b(['Revoked'], {}).probe, anmeldung: {}, cacheGeleert: false, cache: 'Exit 5: FAILED' };
+    expect(bewerteLabTest(t('gesperrt'), c).befunde.join()).toContain('Exit 5: FAILED');
+  });
   it('kein Beweis aus einem Verbindungsfehler oder mit fremdem Zertifikat', () => {
     expect(bewerteLabTest(t('unbekannte_ca'), { probe: { zeit: 'x', fehler: 'keine Verbindung zu labsrv01.pkilab.test:1433' }, anmeldung: { fehler: 'network-related' }, cacheGeleert: true }).ergebnis).toBe('NICHT_BEWIESEN');
     expect(bewerteLabTest(t('unbekannte_ca'), b(['UntrustedRoot'], { fehler: 'not trusted' }, { thumbprint: 'B'.repeat(40) })).befunde.join()).toContain('statt Fixture');
