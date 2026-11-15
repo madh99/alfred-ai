@@ -7279,6 +7279,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const itsmDoku = new ItsmDoku(adapter);
           const instanzenDoku = new BauplanInstanzRepository(adapter);
           const vorhabenDoku = new (await import('@alfred/storage')).VorhabenRepository(adapter);
+          const { betriebQuellen } = await import('./infrastruktur/dokumente/betrieb-quellen.js');
+          const { VORLAGEN: STANDARD_VORLAGEN } = await import('./infrastruktur/standard-vorlagen.js');
+          const { regelText: wartungRegelText } = await import('./infrastruktur/wartung.js');
+          const { ProblemRepository: ProblemDoku, WartungRepository: WartungDoku, JobRunsRepository: JobRunsDoku } = await import('@alfred/storage');
+          const problemDoku = new ProblemDoku(adapter);
+          const wartungDoku = new WartungDoku(adapter);
+          const jobRunsDoku = new JobRunsDoku(adapter);
           this.dokumenteDienst = new DokumenteDienst({
             owner: ownerAd,
             istOwner: (ctx) => {
@@ -7300,6 +7307,41 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 return treffer.length === 1 ? { id: treffer[0]!.id } : null;
               },
             },
+            // D-BETRIEB — lesende Sammler über die bestehenden Lesewege (Spec §5.2); fehlt ein Skill, scheitert nur seine Quelle
+            betriebQuellen: betriebQuellen({
+              cmdb: { getAssetById: (u, id) => cmdbFz.getAssetById(u, id), getRelationsForAsset: (u, id) => cmdbFz.getRelationsForAsset(u, id), listAssets: (u, f) => cmdbFz.listAssets(u, f) },
+              itsm: { listChangeRequests: (u, f) => itsmDoku.listChangeRequests(u, f) },
+              problems: { listProblems: (u, f) => problemDoku.listProblems(u, f) },
+              dokumente: { getDocumentById: (u, id) => cmdbFz.getDocumentById(u, id), getDocumentsForEntity: (u, t, id) => cmdbFz.getDocumentsForEntity(u, t, id), listDocuments: (u, f) => cmdbFz.listDocuments(u, f) },
+              // nur Namen, Herkunft, Zweck — nie Werte
+              tresor: { liste: async (u) => { if (!this.tresor) throw new Error('Tresor nicht verfügbar'); return (await this.tresor.liste(u)).map(e => ({ name: e.name, herkunft: e.herkunft, ...(e.zweck ? { zweck: e.zweck } : {}) })); } },
+              fernzugaenge: { liste: async (u) => (await repoFz.liste(u)).map(z => ({ name: z.name, host: z.host, benutzer: z.benutzer, status: z.status, ...(z.system ? { system: z.system } : {}), ...(z.cmdbAssetId ? { cmdbAssetId: z.cmdbAssetId } : {}) })) },
+              jobRuns: { letzterLauf: async (key) => { const l = await jobRunsDoku.letzterLauf(key); return l ? { startedAt: l.startedAt, ...(l.finishedAt ? { finishedAt: l.finishedAt } : {}), ...(l.ok !== undefined && l.ok !== null ? { ok: l.ok } : {}), ...(l.fehler ? { fehler: l.fehler } : {}) } : undefined; } },
+              jobDefinitionen: () => (this.jobRegister?.definitionen() ?? []).map(d => ({ key: d.key, beschreibung: d.beschreibung, takt: d.takt })),
+              wartung: { kalender: (u) => wartungDoku.kalender(u), standardStand: (u) => wartungDoku.standardStand(u) },
+              standard: () => STANDARD_VORLAGEN.map(v => ({ key: v.key, titel: v.titel })),
+              regelText: (r) => wartungRegelText(r as Parameters<typeof wartungRegelText>[0]),
+              proxmox: async (i) => {
+                const px = skillRegistry.get('proxmox');
+                if (!px) return { success: false, error: 'Proxmox-Skill nicht konfiguriert' };
+                return skillSandbox.execute(px, i, { userId: this.config.security?.ownerUserId ?? '', platform: 'api', chatId: '', conversationId: '' } as never);
+              },
+              proxmoxBackups: async () => {
+                const px = skillRegistry.get('proxmox') as unknown as { alleBackupsDaten?: () => Promise<{ jeVm: Record<number, { neueste?: string; anzahl: number }>; unerreichbar: Array<{ speicher: string; grund: string }> }> } | undefined;
+                if (!px?.alleBackupsDaten) throw new Error('Proxmox-Skill nicht konfiguriert');
+                return px.alleBackupsDaten();
+              },
+              unifiLesen: async () => {
+                const u = skillRegistry.get('unifi') as unknown as { firewallLesen?: () => Promise<import('./infrastruktur/dokumente/betrieb-quellen.js').FirewallStand> } | undefined;
+                if (!u?.firewallLesen) throw new Error('UniFi-Skill nicht konfiguriert');
+                return u.firewallLesen();
+              },
+              unifiDns: async () => {
+                const u = skillRegistry.get('unifi') as unknown as { dnsLesen?: () => Promise<{ eintraege: Array<{ key?: string; value?: string; record_type?: string; enabled?: boolean }>; weiterleitungenFehler?: string }> } | undefined;
+                if (!u?.dnsLesen) throw new Error('UniFi-Skill nicht konfiguriert');
+                return u.dnsLesen();
+              },
+            }, () => new Date().toISOString()),
             ablage: {
               schreibeLokal: schreibeLokalDatei,
               sendeAnPve2: async (zielPfad, lokalPfad) => this.fernzugriffRef ? this.fernzugriffRef.ablageSenden('pve2', zielPfad, lokalPfad) : { ok: false, fehler: 'Fernzugriff nicht verfügbar' },

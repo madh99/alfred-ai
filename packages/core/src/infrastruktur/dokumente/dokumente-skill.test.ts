@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { CmdbChangeRequest, CmdbDocument, SkillContext } from '@alfred/types';
+import type { CmdbAsset, CmdbChangeRequest, CmdbDocument, SkillContext } from '@alfred/types';
 import { DokumentationSkill, DokumenteDienst, type DokumenteDeps } from './dokumente-skill.js';
 import { lege, type AblageDeps } from './ablage.js';
 import type { Dokument } from './modell.js';
+import type { BetriebQuellen } from './betrieb-quellen.js';
 
 const JETZT = '2026-11-15T09:27:53.000Z';
 const CTX = { userId: 'o', platform: 'api', chatId: 'c' } as unknown as SkillContext;
@@ -513,5 +514,115 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     const r = await t.skill.execute({ action: 'instanz_anlegen', name: 'tp', dokumentart: 'testprotokoll', changes: [A.id] }, CTX);
     expect(r.success).toBe(true);
     expect((await t.deps.instanzen.finde('o', 'tp'))?.parameter).toBeUndefined();
+  });
+});
+
+describe('Skill dokumentation — betrieb_erzeugen', () => {
+  const STAND = '2026-11-15T09:27:00.000Z';
+  const VM = {
+    id: 'a-iss-vm', userId: 'o', assetType: 'vm', name: 'pkiiss01', sourceSkill: 'proxmox', status: 'active', ipAddress: '10.203.29.10',
+    attributes: { vmid: 821, node: 'pve' }, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-15T05:31:00.000Z',
+  } as CmdbAsset;
+  /** Fake-Quellen: alles leer, aber belegt; einzelne Quellen per `fehler` scheitern lassen */
+  function quellen(fehler: Partial<Record<keyof BetriebQuellen, string>> = {}): BetriebQuellen {
+    const q = <T>(k: keyof BetriebQuellen, daten: T) => async () => (fehler[k] ? { stand: STAND, fehler: fehler[k] } : { stand: STAND, daten });
+    return {
+      assets: q('assets', { gefunden: [VM], fehlend: [] }),
+      beziehungen: q('beziehungen', { relationen: [], fremde: {} }),
+      proxmox: q('proxmox', [{ vmid: 821, node: 'pve', name: 'pkiiss01', status: 'running', platten: ['scsi0 local-zfs 80G'], ips: ['10.203.29.10'], snapshots: [] }]),
+      sicherung: q('sicherung', { jobs: [], letzte: {}, unerreichbar: [] }),
+      unifi: q('unifi', { zonen: [], netze: [], policies: [], dnsWeiterleitungen: [] }),
+      tresor: q('tresor', []),
+      fernzugaenge: q('fernzugaenge', []),
+      jobs: q('jobs', []),
+      wartung: q('wartung', { fenster: [], vorlagen: [] }),
+      problems: q('problems', []),
+      changes: q('changes', []),
+      abnahmen: q('abnahmen', {}),
+      dokument: q('dokument', { id: 'arch', titel: 'Architektur', version: 1 }),
+      netzBestand: q('netzBestand', { stand: {}, firewallRegeln: [], netze: [], proxyHosts: [], dnsEintraege: [] }),
+    } as BetriebQuellen;
+  }
+  async function mitInstanz(fehler: Partial<Record<keyof BetriebQuellen, string>> = {}) {
+    const t = aufbau();
+    t.deps.betriebQuellen = quellen(fehler);
+    await t.deps.instanzen.anlegen('o', { name: 'pki-ad3033', dokumentart: 'betrieb', changeIds: [], parameter: JSON.stringify({ assets: [VM.id] }) });
+    return t;
+  }
+
+  it('(a) Instanz der Art testprotokoll → klare Ablehnung, nichts gespeichert', async () => {
+    const t = await mitInstanz();
+    await t.deps.instanzen.anlegen('o', { name: 'lab', dokumentart: 'testprotokoll', changeIds: [A.id] });
+    const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'lab' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('nicht für ein Betriebsdokument');
+    expect(t.gespeichert).toHaveLength(0);
+    expect(t.ablage.schreibeLokal).not.toHaveBeenCalled();
+    // unbekannte Instanz und fehlende Quellen ebenso klar
+    expect((await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'gibtsnicht' }, CTX)).error).toContain('nicht gefunden');
+    const ohne = aufbau();
+    expect((await ohne.skill.execute({ action: 'betrieb_erzeugen', instanz: 'x' }, CTX)).error).toContain('nicht verfügbar');
+  });
+
+  it('(b) gültige Betriebs-Instanz → gespeichert als betrieb an der Instanz, Anhänge nur PDF und DOCX, Ablage <instanz>/v1', async () => {
+    const t = await mitInstanz();
+    const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'pki-ad3033', zweck: 'PKI der Domäne ad.3033.at' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    expect(t.gespeichert).toHaveLength(1);
+    const g = t.gespeichert[0]!;
+    expect(g.docType).toBe('betrieb');
+    expect(g.linkedEntityType).toBe('bauplan_instanz');
+    expect(g.linkedEntityId).toBe('inst-1');
+    expect(g.generatedBy).toBe('vorlage:betrieb@1');
+    const d = JSON.parse(g.struktur!) as Dokument;
+    expect(d.kapitel).toHaveLength(13);
+    expect(d.anhaenge).toEqual([]);
+    expect(g.content).toContain('PKI der Domäne ad.3033.at');
+    expect(r.attachments!.map(a => a.fileName)).toEqual(['betrieb-pki-ad3033-v1.pdf', 'betrieb-pki-ad3033-v1.docx']);
+    expect(r.attachments![0]!.data.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(t.pve2.map(p => p.ziel)).toEqual(['/srv/alfred-dokumente/pki-ad3033/v1/betrieb-pki-ad3033-v1.pdf', '/srv/alfred-dokumente/pki-ad3033/v1/betrieb-pki-ad3033-v1.docx']);
+    expect(r.display).toContain(d.kopf.titel);
+    expect(r.display).toContain('Version 1');
+    expect(r.display).toContain(path.join('/daten', 'dokumente', 'pki-ad3033', 'v1'));
+    expect(r.display).toContain('pve2: ok');
+    expect(r.display).toContain('- proxmox: ok');
+    expect(r.display).not.toContain('Prüfsummen');
+    // zweiter Lauf über die Instanz-ID → Version 2
+    const r2 = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'inst-1' }, CTX);
+    expect(r2.attachments!.map(a => a.fileName)).toEqual(['betrieb-pki-ad3033-v2.pdf', 'betrieb-pki-ad3033-v2.docx']);
+  });
+
+  it('(c) eine Quelle mit Fehler → trotzdem erfolgreich, display nennt die Quelle und „nicht belegt“, Fehler geschwärzt', async () => {
+    const t = await mitInstanz({ unifi: 'UniFi nicht erreichbar (password=Geheim123!)' });
+    const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'pki-ad3033' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    const zeile = r.display!.split('\n').find(z => z.startsWith('- unifi:'));
+    expect(zeile).toContain('UniFi nicht erreichbar');
+    expect(zeile).toContain('nicht belegt');
+    expect(r.display).not.toContain('Geheim123!');
+    expect(JSON.stringify(t.gespeichert[0])).not.toContain('Geheim123!');
+    expect(r.display).toContain('- proxmox: ok');
+  });
+
+  it('(d) Freitext mit 601 Zeichen → Fehler, nichts gelesen oder gespeichert', async () => {
+    const t = await mitInstanz();
+    const assets = vi.spyOn(t.deps.betriebQuellen!, 'assets');
+    for (const feld of ['zweck', 'abweichungen']) {
+      const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'pki-ad3033', [feld]: 'x'.repeat(601) }, CTX);
+      expect(r.success).toBe(false);
+      expect(r.error).toContain(`${feld} zu lang`);
+    }
+    expect(assets).not.toHaveBeenCalled();
+    expect(t.gespeichert).toHaveLength(0);
+  });
+
+  it('beschädigte Parameter der Instanz → klare Meldung, nichts gespeichert', async () => {
+    const t = aufbau();
+    t.deps.betriebQuellen = quellen();
+    await t.deps.instanzen.anlegen('o', { name: 'kaputt', dokumentart: 'betrieb', changeIds: [], parameter: '{kein json' });
+    const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'kaputt' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('kein gültiges JSON');
+    expect(t.gespeichert).toHaveLength(0);
   });
 });

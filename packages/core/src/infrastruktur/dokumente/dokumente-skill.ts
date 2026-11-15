@@ -13,6 +13,8 @@ import { alsPdf } from './pdf.js';
 import { alsDocx } from './docx.js';
 import { MAX_ASSET_IDS, pruefeBetriebParameter, type BetriebParameter } from './betrieb-parameter.js';
 import { findeChange, verlaufVon, type DokuQuellen } from './sammler.js';
+import { sammleBetrieb, type BetriebQuellen } from './betrieb-quellen.js';
+import { baueBetrieb } from './betrieb-builder.js';
 import { lege, pruefeAblageNamen, PVE2_WURZEL, type AblageDeps } from './ablage.js';
 import { schwaerze } from '../../fernzugriff/kaefig.js';
 import type { DokuArtKey, Dokument } from './modell.js';
@@ -49,6 +51,8 @@ export interface DokumenteDeps {
     finde(userId: string, idOderName: string): Promise<BauplanInstanzDaten | undefined>;
   };
   betrieb?: BetriebNachschlagen;
+  /** lesende Sammler für das Betriebsdokument; fehlt es, kann kein Betriebsdokument erzeugt werden */
+  betriebQuellen?: BetriebQuellen;
   ablage: AblageDeps;
   datenOrdner: string;
   jetzt?: () => string;
@@ -146,9 +150,15 @@ export class DokumenteDienst {
 
   private anzeige(doc: CmdbDocument, dok: Dokument, dateien: SkillResultAttachment[], a: { lokal: string; pve2: { ok: boolean; fehler?: string } }, wort: string): string {
     const summen = dateien.filter(x => x.fileName.startsWith('rohlauf-')).map(x => `${x.fileName} ${sha(x.data)}`);
+    // Betriebsdokument: keine Rohläufe — statt der Prüfsummen je Quelle ok oder Fehler (betroffene Kapitel nicht belegt)
+    const herkunft = dok.kopf.art === 'betrieb'
+      ? ['Quellen:', ...dok.kopf.quellen.filter(q => !q.quelle.startsWith('cmdb:')).map(q => (q.fehler
+        ? `- ${q.quelle}: Fehler (${q.fehler}) — betroffene Kapitel nicht belegt`
+        : `- ${q.quelle}: ok (${q.stand})`))]
+      : [`Prüfsummen (SHA-256): ${summen.length ? summen.join(', ') : 'keine (kein Lauf)'}`];
     return [
       `✅ ${dok.kopf.titel} — Version ${doc.version} ${wort} (Dokument ${doc.id})`,
-      `Prüfsummen (SHA-256): ${summen.length ? summen.join(', ') : 'keine (kein Lauf)'}`,
+      ...herkunft,
       `Lokal: ${a.lokal}`,
       a.pve2.ok ? `pve2: ok (${PVE2_WURZEL}/${dok.kopf.ordner}/v${doc.version})` : `pve2: fehlgeschlagen (${a.pve2.fehler ?? 'unbekannt'}) — lokale Ablage bleibt`,
       `Dateien: ${dateien.map(x => x.fileName).join(', ')}`,
@@ -258,6 +268,23 @@ export class DokumenteDienst {
     return this.speichere(o, dok, { typ: 'bauplan_instanz', id: i.id });
   }
 
+  /**
+   * Betriebsdokument (D-BETRIEB) zu einer Betriebs-Instanz: alle Sammler lesen (nur lesend; ein Sammlerfehler macht nur die betroffenen
+   * Kapitel „nicht belegt“), deterministisch bauen, speichern, als PDF/DOCX zustellen und unter <instanzname>/v<n>/ ablegen.
+   */
+  async betriebErzeugen(o: string, instanz: string, frei: { zweck?: string; abweichungen?: string }): Promise<Erzeugt> {
+    const f = pruefeFreitext('betrieb', frei);
+    if (f) throw new Error(f);
+    const q = this.d.betriebQuellen;
+    if (!q) throw new Error('Betriebsdokumente sind hier nicht verfügbar (keine Quellen angebunden)');
+    const i = await this.d.instanzen.finde(o, instanz);
+    if (!i) throw new Error(`Bauplan-Instanz „${instanz}“ nicht gefunden — zuerst instanz_anlegen mit dokumentart betrieb`);
+    if (i.dokumentart !== 'betrieb') throw new Error(`Instanz „${i.name}“ ist für ${i.dokumentart}, nicht für ein Betriebsdokument — Betriebs-Instanz mit dokumentart betrieb anlegen`);
+    const { p, g } = await sammleBetrieb(q, o, i.parameter);
+    const dok = baueBetrieb(i.name, p, g, frei, this.jetzt());
+    return this.speichere(o, dok, { typ: 'bauplan_instanz', id: i.id });
+  }
+
   async instanzAnlegen(o: string, name: string, refs: string[]): Promise<BauplanInstanzDaten> {
     if (!INSTANZ_NAME.test(name)) throw new Error('name: nur Buchstaben, Ziffern, _ . - (höchstens 80 Zeichen)');
     // gleicher Ablage-Ordner wie die Abnahmeprotokolle (change-<id8>, serie-<id8>) — Versionen würden sich überschreiben
@@ -360,7 +387,7 @@ export class DokumenteDienst {
   }
 }
 
-const AKTIONEN = ['abnahme_erzeugen', 'instanz_anlegen', 'testprotokoll_erzeugen', 'dokument_exportieren'] as const;
+const AKTIONEN = ['abnahme_erzeugen', 'instanz_anlegen', 'testprotokoll_erzeugen', 'betrieb_erzeugen', 'dokument_exportieren'] as const;
 
 export class DokumentationSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -373,6 +400,8 @@ export class DokumentationSkill extends Skill {
       + 'instanz_anlegen (name [A-Za-z0-9_.-], dokumentart testprotokoll, changes = Change-IDs in Reihenfolge Aufbau … Abbau) — bündelt Changes für ein Testprotokoll. '
       + 'instanz_anlegen mit dokumentart betrieb (name, assets = Namen oder IDs der CMDB-Assets des Systems; optional vorhaben, architektur_doc, jobs, standard_vorlagen, restore_change) — grenzt ein bestehendes System für ein Betriebsdokument ab. '
       + 'testprotokoll_erzeugen (instanz = Name oder ID; optional zweck ≤ 600, befunde_produktion ≤ 1200) — Lab-/Testprotokoll über alle Changes der Instanz. '
+      + 'betrieb_erzeugen (instanz = Name oder ID einer Betriebs-Instanz; optional zweck ≤ 600, abweichungen ≤ 600) — Betriebsdokument (As-built, 13 Kapitel) '
+      + 'nur lesend aus CMDB, Proxmox, UniFi, Tresor-Namen, Jobs, Wartung, Changes und Abnahmeprotokollen; nicht Belegtes steht als „nicht belegt“ mit Grund. '
       + 'dokument_exportieren (doc_id) — gespeichertes Vorlagen-Dokument erneut als Dateien (aus der Struktur) zustellen und ablegen. '
       + 'Freitexte nur mit Belegen füllen oder leer lassen; alles andere entsteht aus den Daten.',
     riskLevel: 'read',
@@ -383,7 +412,7 @@ export class DokumentationSkill extends Skill {
         action: { type: 'string', enum: [...AKTIONEN] },
         change: { type: 'string', description: 'abnahme_erzeugen: Change-ID oder eindeutiges Präfix' },
         zweck: { type: 'string', description: 'Freitext Zweck (≤ 600 Zeichen)' },
-        abweichungen: { type: 'string', description: 'abnahme_erzeugen: Abweichungen und offene Punkte (≤ 600 Zeichen)' },
+        abweichungen: { type: 'string', description: 'abnahme_erzeugen, betrieb_erzeugen: Abweichungen und offene Punkte (≤ 600 Zeichen)' },
         name: { type: 'string', description: 'instanz_anlegen: Name der Bauplan-Instanz (z. B. pki-lab-2026-11-15)' },
         dokumentart: { type: 'string', enum: ['testprotokoll', 'betrieb'] },
         assets: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): CMDB-Assets des Systems, Namen oder IDs (1 bis 40)' },
@@ -393,7 +422,7 @@ export class DokumentationSkill extends Skill {
         standard_vorlagen: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Schlüssel der Standard-Vorlagen, z. B. k' },
         restore_change: { type: 'string', description: 'instanz_anlegen (betrieb): Change mit dem letzten Restore-Beweis' },
         changes: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen: Change-IDs in Reihenfolge' },
-        instanz: { type: 'string', description: 'testprotokoll_erzeugen: Name oder ID der Instanz' },
+        instanz: { type: 'string', description: 'testprotokoll_erzeugen, betrieb_erzeugen: Name oder ID der Instanz' },
         befunde_produktion: { type: 'string', description: 'testprotokoll_erzeugen: Befunde für die Produktion (≤ 1200 Zeichen)' },
         doc_id: { type: 'string', description: 'dokument_exportieren: ID des CMDB-Dokuments' },
       },
@@ -445,6 +474,14 @@ export class DokumentationSkill extends Skill {
           const instanz = text(input.instanz);
           if (!instanz) return { success: false, error: 'instanz: Name oder ID angeben' };
           return erg(await this.dienst.testprotokoll(o, instanz, { zweck: text(input.zweck), befunde_produktion: text(input.befunde_produktion) }));
+        }
+        case 'betrieb_erzeugen': {
+          const instanz = text(input.instanz);
+          if (!instanz) return { success: false, error: 'instanz: Name oder ID angeben' };
+          const frei = { zweck: text(input.zweck), abweichungen: text(input.abweichungen) };
+          const f = pruefeFreitext('betrieb', frei);
+          if (f) return { success: false, error: f };
+          return erg(await this.dienst.betriebErzeugen(o, instanz, frei));
         }
         case 'dokument_exportieren': {
           const id = text(input.doc_id);
