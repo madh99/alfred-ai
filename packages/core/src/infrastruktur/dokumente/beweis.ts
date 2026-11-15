@@ -106,8 +106,8 @@ export function beweisAnhang(c: CmdbChangeRequest, maxAusgabe = 1500): { bloecke
 export function pruefAnleitung(eintraege: Array<{ name: string; pruefsumme: string }>): Anhang {
   const zeilen = eintraege.map(e => `${e.pruefsumme}  ${e.name}`).join('\n');
   const text = [
-    'Prüfung der Rohlauf-Dateien: Im Ordner dieser Datei `sha256sum -c PRUEFUNG.txt` ausführen.',
-    'Jede Datei muss mit „OK“ bestätigt werden; die Prüfsumme gilt für den geschwärzten Rohlauf, wie er zum Erzeugungszeitpunkt festgehalten wurde.',
+    'Die Prüfsumme belegt, dass die Datei seit der Erzeugung unverändert ist, sofern die Prüfsumme mit der in Alfreds CMDB hinterlegten übereinstimmt.',
+    'Sie gilt für den geschwärzten Rohlauf zum Erzeugungszeitpunkt.',
     '',
     zeilen,
     '',
