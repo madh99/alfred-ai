@@ -1,0 +1,215 @@
+import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import type { CmdbChangeRequest, CmdbDocument, SkillContext } from '@alfred/types';
+import { DokumentationSkill, DokumenteDienst, type DokumenteDeps } from './dokumente-skill.js';
+import { lege, type AblageDeps } from './ablage.js';
+import type { Dokument } from './modell.js';
+
+const JETZT = '2026-11-15T09:27:53.000Z';
+const CTX = { userId: 'o', platform: 'api', chatId: 'c' } as unknown as SkillContext;
+
+function change(id: string, title: string, extra: Partial<CmdbChangeRequest> = {}): CmdbChangeRequest {
+  return {
+    id, userId: 'o', title, type: 'normal', status: 'completed', riskLevel: 'low', affectedAssetIds: [], affectedServiceIds: [],
+    createdAt: '2026-11-14T07:00:00.000Z', updatedAt: '2026-11-14T09:00:00.000Z',
+    fingerabdruck: 'abcdef0123456789abcdef', freigabeFingerabdruck: 'abcdef0123456789abcdef', freigegebenAt: '2026-11-14T07:30:00.000Z', freigegebenUeber: 'frage',
+    schritte: [
+      { nr: 1, titel: 'Lab-Netz anlegen', art: 'aktion', skill: 'unifi', aktion: 'create_network', zeitlimitS: 60, beiFehler: 'anhalten' },
+      { nr: 2, titel: 'TLS prüfen', art: 'aktion', skill: 'pki_lab', aktion: 'tls_negativtest', zeitlimitS: 60, beiFehler: 'anhalten' },
+    ],
+    lauf: {
+      phase: 'fertig', schritt: 2, start: '2026-11-14T08:00:00.000Z', ende: '2026-11-14T08:30:00.000Z',
+      ergebnisse: [
+        { nr: 1, ok: true, start: '2026-11-14T08:00:00.000Z', ende: '2026-11-14T08:01:00.000Z', ausgabe: 'Netz pki-lab angelegt — Größe „ok“' },
+        { nr: 2, ok: true, start: '2026-11-14T08:02:00.000Z', ende: '2026-11-14T08:03:00.000Z', ausgabe: 'password=Geheim123!', daten: { ergebnis: 'EXPECTED_TLS_FAILURE' } },
+      ],
+    },
+    ...extra,
+  } as CmdbChangeRequest;
+}
+
+const A = change('288c3716-1111-2222-3333-444444444444', 'PKI-Lab aufbauen');
+const B = change('288c9999-1111-2222-3333-444444444444', 'Anderer Change');
+const C = change('7335dfeb-1111-2222-3333-444444444444', 'PKI-Lab abbauen');
+
+function aufbau(opts: { changes?: CmdbChangeRequest[]; pve2?: (z: string, l: string) => Promise<{ ok: boolean; fehler?: string }> } = {}) {
+  const gespeichert: Array<Parameters<DokumenteDeps['cmdb']['saveDocument']>[1] & { id: string; version: number }> = [];
+  const lokal = new Map<string, Buffer>();
+  const pve2: Array<{ ziel: string; lokal: string }> = [];
+  const instanzen: Array<{ id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; status: string; createdAt: string }> = [];
+  const ablage: AblageDeps = {
+    schreibeLokal: vi.fn(async (p: string, b: Buffer) => { lokal.set(p, b); }),
+    sendeAnPve2: vi.fn(async (z: string, l: string) => { pve2.push({ ziel: z, lokal: l }); return opts.pve2 ? opts.pve2(z, l) : { ok: true }; }),
+  };
+  const deps: DokumenteDeps = {
+    owner: () => 'o',
+    istOwner: () => true,
+    quellen: { changes: async () => opts.changes ?? [A, B, C], haltIncidents: async () => [] },
+    cmdb: {
+      saveDocument: vi.fn(async (_u, doc) => {
+        const version = gespeichert.filter(g => g.docType === doc.docType && g.linkedEntityId === doc.linkedEntityId).length + 1;
+        const e = { ...doc, id: `doc-${gespeichert.length + 1}`, version };
+        gespeichert.push(e);
+        return { ...e, userId: 'o', format: 'markdown', createdAt: JETZT } as CmdbDocument;
+      }),
+      getDocumentById: async (_u, id) => {
+        const e = gespeichert.find(g => g.id === id);
+        return e ? ({ ...e, userId: 'o', format: 'markdown', createdAt: JETZT } as CmdbDocument) : null;
+      },
+    },
+    instanzen: {
+      anlegen: async (_u, d) => { const i = { id: `inst-${instanzen.length + 1}`, ...d, status: 'aktiv', createdAt: JETZT }; instanzen.push(i); return i; },
+      finde: async (_u, x) => instanzen.find(i => i.id === x || i.name === x),
+    },
+    ablage,
+    datenOrdner: '/daten',
+    jetzt: () => JETZT,
+  };
+  return { skill: new DokumentationSkill(new DokumenteDienst(deps)), deps, gespeichert, lokal, pve2, ablage };
+}
+
+describe('Skill dokumentation', () => {
+  it('(a) mehrdeutige Change-ID: Fehler nennt beide, nichts gespeichert, nichts abgelegt', async () => {
+    const t = aufbau();
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: '288c' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('288c3716');
+    expect(r.error).toContain('288c9999');
+    expect(t.gespeichert).toHaveLength(0);
+    expect(t.ablage.schreibeLokal).not.toHaveBeenCalled();
+    expect(t.ablage.sendeAnPve2).not.toHaveBeenCalled();
+  });
+
+  it('(b) eindeutiger Change: gespeichert als abnahme mit Struktur, Anhänge PDF/DOCX/Rohlauf/PRUEFUNG, Ablage lokal und pve2', async () => {
+    const t = aufbau();
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: '288c3716', zweck: 'Lab für TLS-Tests' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    expect(t.gespeichert).toHaveLength(1);
+    const g = t.gespeichert[0]!;
+    expect(g.docType).toBe('abnahme');
+    expect(g.linkedEntityType).toBe('change_request');
+    expect(g.linkedEntityId).toBe(A.id);
+    expect(g.generatedBy).toBe('vorlage:abnahme@1');
+    const d = JSON.parse(g.struktur!) as Dokument;
+    expect(d.kopf.art).toBe('abnahme');
+    expect(g.content).toContain('Lab für TLS-Tests');
+    expect(JSON.stringify(g)).not.toContain('Geheim123!');
+    expect(r.attachments!.map(a => a.fileName)).toEqual(['abnahme-288c3716-v1.pdf', 'abnahme-288c3716-v1.docx', 'rohlauf-288c3716.json', 'PRUEFUNG.txt']);
+    expect(r.attachments![0]!.data.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(r.attachments![1]!.data.subarray(0, 2).toString()).toBe('PK');
+    const lokal = path.join('/daten', 'dokumente', 'change-288c3716', 'v1');
+    expect([...t.lokal.keys()]).toEqual(r.attachments!.map(a => path.join(lokal, a.fileName)));
+    expect(t.pve2.map(p => p.ziel)).toEqual(r.attachments!.map(a => `/srv/alfred-dokumente/change-288c3716/v1/${a.fileName}`));
+    expect(r.display).toContain(d.kopf.titel);
+    expect(r.display).toContain('Version 1');
+    expect(r.display).toContain(lokal);
+    expect(r.display).toContain('pve2: ok');
+  });
+
+  it('Rohlauf-Datei: SHA-256 der Bytes = Zeile in PRUEFUNG.txt (sha256sum -c), ohne BOM', async () => {
+    const t = aufbau();
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    const roh = r.attachments!.find(a => a.fileName === 'rohlauf-288c3716.json')!;
+    const pruef = r.attachments!.find(a => a.fileName === 'PRUEFUNG.txt')!.data.toString('utf8');
+    expect(roh.data[0]).not.toBe(0xef);
+    const summe = createHash('sha256').update(roh.data).digest('hex');
+    expect(pruef.split('\n')).toContain(`${summe}  rohlauf-288c3716.json`);
+    expect(r.display).toContain(summe);
+    // lokal abgelegt sind exakt dieselben Bytes
+    const lokal = [...t.lokal.entries()].find(([p]) => p.endsWith('rohlauf-288c3716.json'))![1];
+    expect(createHash('sha256').update(lokal).digest('hex')).toBe(summe);
+  });
+
+  it('(c) zweck mit 601 Zeichen → Fehler, nichts gespeichert', async () => {
+    const t = aufbau();
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id, zweck: 'x'.repeat(601) }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/zweck/);
+    expect(t.gespeichert).toHaveLength(0);
+  });
+
+  it('Markdown über 500 000 Zeichen → Fehler statt gekürzt zu speichern', async () => {
+    const riesig = change(A.id, 'Riesig', {
+      schritte: Array.from({ length: 400 }, (_, i) => ({ nr: i + 1, titel: `Schritt ${i + 1} ${'t'.repeat(1500)}`, art: 'aktion', skill: 'x', aktion: 'y', zeitlimitS: 60, beiFehler: 'anhalten' })) as never,
+      lauf: { phase: 'fertig', schritt: 400, ergebnisse: Array.from({ length: 400 }, (_, i) => ({ nr: i + 1, ok: true, ausgabe: 'a'.repeat(1400) })) } as never,
+    });
+    const t = aufbau({ changes: [riesig] });
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/500.?000/);
+    expect(t.gespeichert).toHaveLength(0);
+    expect(t.ablage.schreibeLokal).not.toHaveBeenCalled();
+  });
+
+  it('(d) instanz_anlegen + testprotokoll_erzeugen → an die Bauplan-Instanz gebunden', async () => {
+    const t = aufbau();
+    const i = await t.skill.execute({ action: 'instanz_anlegen', name: 'pki-lab-2026-11-15', dokumentart: 'testprotokoll', changes: ['288c3716', '7335dfeb'] }, CTX);
+    expect(i.success, i.error).toBe(true);
+    const r = await t.skill.execute({ action: 'testprotokoll_erzeugen', instanz: 'pki-lab-2026-11-15', befunde_produktion: 'SqlClient prüft keinen Widerruf' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    const g = t.gespeichert[0]!;
+    expect(g.docType).toBe('testprotokoll');
+    expect(g.linkedEntityType).toBe('bauplan_instanz');
+    expect(g.linkedEntityId).toBe('inst-1');
+    expect(g.generatedBy).toBe('vorlage:testprotokoll@1');
+    expect(r.attachments!.map(a => a.fileName)).toEqual(['testprotokoll-pki-lab-2026-11-15-v1.pdf', 'testprotokoll-pki-lab-2026-11-15-v1.docx', 'rohlauf-288c3716.json', 'rohlauf-7335dfeb.json', 'PRUEFUNG.txt']);
+    expect(t.pve2[0]!.ziel).toBe('/srv/alfred-dokumente/pki-lab-2026-11-15/v1/testprotokoll-pki-lab-2026-11-15-v1.pdf');
+  });
+
+  it('instanz_anlegen: ungültiger Name, mehrdeutiger Change und doppelter Name werden abgewiesen', async () => {
+    const t = aufbau();
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: '../x', dokumentart: 'testprotokoll', changes: [A.id] }, CTX)).success).toBe(false);
+    const m = await t.skill.execute({ action: 'instanz_anlegen', name: 'lab', dokumentart: 'testprotokoll', changes: ['288c'] }, CTX);
+    expect(m.success).toBe(false);
+    expect(m.error).toContain('mehrdeutig');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'lab', dokumentart: 'testprotokoll', changes: [A.id] }, CTX)).success).toBe(true);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'lab', dokumentart: 'testprotokoll', changes: [A.id] }, CTX)).success).toBe(false);
+  });
+
+  it('(e) Ablage-Name ../x → Fehler, sendeAnPve2 und schreibeLokal nie aufgerufen', async () => {
+    const t = aufbau();
+    const d = { kopf: { art: 'abnahme', artVersion: 1, titel: 't', ordner: '../x', erzeugt: JETZT, quellen: [], verweise: [] }, kapitel: [], anhaenge: [] } as Dokument;
+    await expect(lege(d, 1, [{ name: 'a.pdf', inhalt: Buffer.from('x') }], t.ablage, '/daten')).rejects.toThrow(/ungültig/);
+    await expect(lege({ ...d, kopf: { ...d.kopf, ordner: 'ok' } }, 1, [{ name: '../x', inhalt: Buffer.from('x') }], t.ablage, '/daten')).rejects.toThrow(/ungültig/);
+    await expect(lege({ ...d, kopf: { ...d.kopf, ordner: '..' } }, 1, [{ name: 'a', inhalt: Buffer.from('x') }], t.ablage, '/daten')).rejects.toThrow(/ungültig/);
+    expect(t.ablage.sendeAnPve2).not.toHaveBeenCalled();
+    expect(t.ablage.schreibeLokal).not.toHaveBeenCalled();
+  });
+
+  it('(f) pve2-Fehler → trotzdem erfolgreich, display meldet „pve2: fehlgeschlagen“, lokale Ablage bleibt', async () => {
+    const t = aufbau({ pve2: async () => ({ ok: false, fehler: 'Fernzugriff nicht verfügbar' }) });
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('pve2: fehlgeschlagen');
+    expect(r.display).toContain('Fernzugriff nicht verfügbar');
+    expect(t.lokal.size).toBe(4);
+    expect(t.gespeichert).toHaveLength(1);
+  });
+
+  it('dokument_exportieren rendert aus der Struktur (nicht aus Markdown) und legt erneut ab', async () => {
+    const t = aufbau();
+    await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    t.gespeichert[0]!.content = 'VERFÄLSCHT';
+    const r = await t.skill.execute({ action: 'dokument_exportieren', doc_id: 'doc-1' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    expect(r.attachments!.map(a => a.fileName)).toEqual(['abnahme-288c3716-v1.pdf', 'abnahme-288c3716-v1.docx', 'rohlauf-288c3716.json', 'PRUEFUNG.txt']);
+    expect(t.pve2).toHaveLength(8);
+    expect((await t.skill.execute({ action: 'dokument_exportieren', doc_id: 'fehlt' }, CTX)).success).toBe(false);
+  });
+
+  it('nur für den Owner', async () => {
+    const t = aufbau();
+    t.deps.istOwner = () => false;
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    expect(r.success).toBe(false);
+    expect(t.gespeichert).toHaveLength(0);
+  });
+
+  it('DokumenteDienst.abnahmeNachEnde liefert die Anzeigezeile', async () => {
+    const t = aufbau();
+    const zeile = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', C);
+    expect(zeile).toContain('7335dfeb');
+    expect(t.gespeichert[0]!.linkedEntityId).toBe(C.id);
+  });
+});

@@ -662,6 +662,38 @@ export class FernzugriffSkill extends Skill {
     return r.code === 0;
   }
 
+  /** Dokument-Vorlagen — Zielpfad der Dokumentablage (fester Wurzelordner, Segmente nur [\w.-], nie „.“/„..“) */
+  static readonly ABLAGE_PFAD = /^\/srv\/alfred-dokumente(\/(?!\.+(\/|$))[\w.-]{1,120}){1,6}$/;
+
+  /**
+   * Dokument-Vorlagen — eine lokale Datei (Abnahme-/Testprotokoll, Rohlauf, PRUEFUNG.txt) in die Dokumentablage eines Linux-Zugangs
+   * kopieren. Nur unter /srv/alfred-dokumente/; der Zugang muss aktiv sein (wartend/gesperrt → Fehler wie bei jedem Aufruf), Windows-Zugänge
+   * nie. Fehler kommen als Ergebnis zurück, nie als Ausnahme — das Dokument selbst bleibt davon unberührt.
+   */
+  async ablageSenden(zugangName: string, zielPfad: string, lokalPfad: string): Promise<{ ok: boolean; fehler?: string }> {
+    const owner = this.deps.owner();
+    if (!owner) return { ok: false, fehler: 'Kein Owner bekannt.' };
+    if (!this.deps.dateiSenden) return { ok: false, fehler: 'Dateiübertragung nicht verfügbar' };
+    if (!FernzugriffSkill.ABLAGE_PFAD.test(zielPfad)) return { ok: false, fehler: `ungültiger Ablage-Pfad ${zielPfad}` };
+    try {
+      const z = await this.zugang(owner, { name: zugangName });
+      if (z.system === 'windows') return { ok: false, fehler: `${z.name} ist kein Linux-Zugang` };
+      const ordner = zielPfad.slice(0, zielPfad.lastIndexOf('/'));
+      const r = await this.deps.dateiSenden(this.sshZiel(z), fernBefehl(`sh -c 'umask 022; mkdir -p ${ordner} && cat > ${zielPfad}'`, true), lokalPfad, 300_000);
+      if (r.hostSchluesselGeaendert) {
+        await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt');
+        await this.deps.repo.merkeErgebnis(owner, z.id, false, 'Host-Schlüssel hat sich geändert');
+        this.deps.protokoll?.('v1539 Host-Schlüssel geändert — Zugang gesperrt', { name: z.name, host: z.host });
+        return { ok: false, fehler: `Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt` };
+      }
+      await this.deps.repo.merkeErgebnis(owner, z.id, r.code === 0, r.code === 0 ? undefined : schwaerze(r.stderr).text.trim().split('\n').slice(-2).join(' '));
+      this.deps.protokoll?.('Dokumentablage geschrieben', { name: z.name, pfad: zielPfad, code: r.code });
+      return r.code === 0 ? { ok: true } : { ok: false, fehler: `Exit ${r.code}: ${schwaerze(r.stderr).text.trim().slice(-200)}` };
+    } catch (err) {
+      return { ok: false, fehler: (err as Error).message };
+    }
+  }
+
   // ── I6 — Daten übertragen ───────────────────────────────────────────────────────────────────────────────────
   private wege(owner: string): Wege<Fernzugang> {
     const ziel = (z: Fernzugang): SshZiel => ({ id: z.id, host: z.host, port: z.port, benutzer: z.benutzer, schluesselPfad: z.schluesselPfad, hostSchluessel: z.hostSchluessel });
