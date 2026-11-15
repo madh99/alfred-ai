@@ -49,7 +49,7 @@ describe('Beweis-Anhang', () => {
     expect(code).toHaveLength(1);
     const kopf = 'Schritt 1 — Dienst starten\n';
     expect(code[0]!.text.startsWith(kopf)).toBe(true);
-    expect(code[0]!.text.length).toBeLessThanOrEqual(1500 + hinweis.length + kopf.length);
+    expect(code[0]!.text.length).toBeLessThanOrEqual(1500 + hinweis.length);
     expect(code[0]!.text.endsWith('[gekürzt — Volltext im Rohlauf]')).toBe(true);
   });
 
@@ -74,6 +74,15 @@ describe('Beweis-Anhang', () => {
     expect(alles).toContain('"host":"srv1"');
     expect(alles).toContain('"credentials":{"p":"[geschwärzt]","tief":[{"x":"[geschwärzt]"}],"user":"[geschwärzt]"}');
     expect(r.schwaerzungen).toBe(3);
+  });
+
+  it('Schrittkopf zählt ins Längenbudget, auch bei riesigem Titel', () => {
+    const hinweis = '\n[gekürzt — Volltext im Rohlauf]';
+    const c = change('y'.repeat(5000));
+    (c.schritte as Array<{ titel: string }>)[0]!.titel = 'T'.repeat(10000);
+    const code = beweisAnhang(c, 1500).bloecke.find(b => b.art === 'code') as { text: string };
+    expect(code.text.length).toBeLessThanOrEqual(1500 + hinweis.length);
+    expect(code.text.split('\n')[0]!.length).toBeLessThanOrEqual('Schritt 1 — '.length + 121);
   });
 
   it('Change ohne Lauf: nichtBelegt, keine Prüfsumme', () => {

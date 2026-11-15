@@ -96,7 +96,9 @@ export function beweisAnhang(c: CmdbChangeRequest, maxAusgabe = 1500): { bloecke
     const teile = [e.ausgabe, e.fehler ? `Fehler: ${e.fehler}` : undefined, e.pruefung?.ausgabe ? `Prüfung: ${e.pruefung.ausgabe}` : undefined].filter((x): x is string => !!x);
     if (teile.length === 0) continue;
     // bereits geschwärzt (l.wert), erst danach kürzen — ein Geheimnis an der Schnittstelle kann so nicht halb stehen bleiben
-    bloecke.push({ art: 'code', text: `Schritt ${e.nr} — ${planNr.get(e.nr)?.titel ?? '—'}\n${kuerze(teile.join('\n'), maxAusgabe)}` });
+    const titel = planNr.get(e.nr)?.titel ?? '—';
+    const kopf = `Schritt ${e.nr} — ${titel.length > 120 ? titel.slice(0, 120) + '…' : titel}\n`;
+    bloecke.push({ art: 'code', text: kopf + kuerze(teile.join('\n'),Math.max(0, maxAusgabe - kopf.length)) });
   }
 
   const inhalt = kanonisch(l.wert);
