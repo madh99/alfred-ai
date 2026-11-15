@@ -26,7 +26,7 @@ const MAX_CHANGES = 20;
 export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string; status: string; createdAt: string }
 
 /** Nachschlagen für Betriebs-Instanzen (alles je Owner); fehlt es, kann keine Betriebs-Instanz angelegt werden */
-export interface BetriebQuellen {
+export interface BetriebNachschlagen {
   /** alle Assets mit genau diesem Namen (über Asset-Typen hinweg) — mehr als eines heißt mehrdeutig */
   assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string; status?: string; sourceSkill?: string }>>;
   assetNachId(userId: string, id: string): Promise<{ id: string; name: string; status?: string } | null>;
@@ -48,7 +48,7 @@ export interface DokumenteDeps {
     anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanzDaten>;
     finde(userId: string, idOderName: string): Promise<BauplanInstanzDaten | undefined>;
   };
-  betrieb?: BetriebQuellen;
+  betrieb?: BetriebNachschlagen;
   ablage: AblageDeps;
   datenOrdner: string;
   jetzt?: () => string;

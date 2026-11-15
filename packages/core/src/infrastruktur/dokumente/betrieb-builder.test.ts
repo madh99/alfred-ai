@@ -62,10 +62,10 @@ function gesammelt(): Gesammelt {
       { vmid: 820, node: 'pve', name: 'pkiroot01', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ostype: 'win11', ips: [], agentFehler: 'Gast-Agent antwortet nicht: QEMU guest agent is not running' },
       { vmid: 821, node: 'pve2', name: 'pkiiss01', status: 'running', cores: 4, speicherMiB: 8192, platten: ['scsi0 local-zfs 80G', 'tpmstate0 local-zfs 4M'], ostype: 'win11', ips: ['10.203.29.10'] },
       { vmid: 822, node: 'pve', name: 'fs01', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ips: ['10.203.29.12'] },
-      { vmid: 823, node: 'pve', name: 'dc01', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ips: ['10.203.29.4'] },
-      { vmid: 824, node: 'pve2', name: 'dc02', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ips: ['10.203.29.5'] },
+      { vmid: 823, node: 'pve', name: 'dc01', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ips: ['10.203.29.4'], snapshots: [] },
+      { vmid: 824, node: 'pve2', name: 'dc02', status: 'running', cores: 2, speicherMiB: 4096, platten: ['scsi0 local-zfs 60G'], ips: ['10.203.29.5'], snapshots: [] },
     ] },
-    sicherung: { stand: STAND, daten: { jobs: [{ id: 'backup-pki', zeitplan: '21:00', speicher: 'pbs-pve2', enthaelt: [820, 821, 822], ausgenommen: [823, 824], aktiv: true, alle: false }], letzte: { 820: '2026-11-14T20:10:00.000Z', 821: '2026-11-14T20:20:00.000Z', 822: '2026-11-14T20:30:00.000Z' }, unerreichbar: [] } },
+    sicherung: { stand: STAND, daten: { jobs: [{ id: 'backup-pki', zeitplan: '21:00', speicher: 'pbs-pve2', enthaelt: [820, 821, 822], ausgenommen: [823, 824], aktiv: true, alle: false, ungeprueft: [] }], letzte: { 820: '2026-11-14T20:10:00.000Z', 821: '2026-11-14T20:20:00.000Z', 822: '2026-11-14T20:30:00.000Z' }, unerreichbar: [] } },
     unifi: { stand: STAND, daten: {
       zonen: [{ id: 'z1', name: 'AD', netzIds: ['n1'] }, { id: 'z2', name: 'Internal', netzIds: ['n0'] }],
       netze: [{ id: 'n1', name: 'AD-Identity', vlan: 829, subnetz: '10.203.29.0/27', zoneId: 'z1' }, { id: 'n0', name: 'Default', subnetz: '192.168.1.0/24', zoneId: 'z2' }],
@@ -74,7 +74,7 @@ function gesammelt(): Gesammelt {
         { id: 'pol00000002', name: 'Updates nachts', aktiv: 'unbekannt', index: 2, bedingung: 'Zeitplan Mo–Fr 02:00–04:00', aktion: 'ALLOW', quelleZone: 'AD', zielZone: 'External', quelle: 'beliebig', ziel: 'beliebig', ports: '443', protokoll: 'TCP', herkunft: 'USER_DEFINED' },
         { id: 'pol00000003', name: 'Fremd', aktiv: true, index: 3, bedingung: '', aktion: 'BLOCK', quelleZone: 'Internal', zielZone: 'External', quelle: 'beliebig', ziel: 'beliebig', ports: 'beliebig', protokoll: 'alle', herkunft: 'USER_DEFINED' },
       ],
-      dnsWeiterleitungen: [{ domain: 'ad.3033.at', server: '10.203.29.4' }, { domain: 'andere.lan', server: '192.168.1.53' }],
+      dnsWeiterleitungen: [{ domain: 'ad.3033.at', server: '10.203.29.4', aktiv: true }, { domain: 'ad.3033.at', server: '10.203.29.5', aktiv: false }, { domain: 'andere.lan', server: '192.168.1.53', aktiv: true }],
     } },
     tresor: { stand: STAND, daten: [{ name: 'pkiiss01-admin', herkunft: 'pki-lab', zweck: 'kennwort=Geheim123' }, { name: 'fremd-dienst', herkunft: 'manuell' }] },
     fernzugaenge: { stand: STAND, daten: [{ name: 'pkiiss01', host: '10.203.29.10', benutzer: 'alfred', status: 'aktiv', system: 'windows', cmdbAssetId: 'a-iss-srv' }, { name: 'docker01', host: '192.168.1.40', benutzer: 'madh', status: 'aktiv' }] },
@@ -212,6 +212,48 @@ describe('Betriebsdokument (D-BETRIEB)', () => {
     expect(zeileMit(kap(d, 'sicherung').bloecke, 'fs01')!.join(' ')).toMatch(/Lücke/);
   });
 
+  it('(f2) Kapitel 7: nur Nicht-Standard-Changes, höchstens 40, Rest als Hinweis; 120 Changes < 500 000 Zeichen', () => {
+    const g = gesammelt();
+    const viele = Array.from({ length: 120 }, (_, i) => change(`c${String(i).padStart(7, '0')}-0000`, `Change Nummer ${i} mit einem längeren Titel für die Historie`, 30,
+      i % 3 === 0 ? {} : { type: 'standard', freigegebenUeber: 'standard:k' }));
+    g.changes = { stand: STAND, daten: viele };
+    const d = baueBetrieb('pki', P, g, {}, JETZT);
+    expect(alsMarkdown(d).length).toBeLessThan(500_000);
+    const k7 = kap(d, 'wiederaufbau').bloecke;
+    expect(tabellen(k7)).toHaveLength(40);
+    expect(text(k7)).not.toContain('Change Nummer 1 mit');
+    expect(text(k7)).toContain('Hinweis: 80 abgeschlossene Standard-Changes');
+    const g2 = gesammelt();
+    g2.changes = { stand: STAND, daten: Array.from({ length: 45 }, (_, i) => change(`n${String(i).padStart(7, '0')}-0000`, `Aufbau ${i}`, 2)) };
+    const k7b = kap(baueBetrieb('pki', P, g2, {}, JETZT), 'wiederaufbau').bloecke;
+    expect(tabellen(k7b)).toHaveLength(40);
+    expect(text(k7b)).toContain('Hinweis: 5 weitere abgeschlossene Changes nicht aufgeführt');
+    expect(tabellen(kap(baueBetrieb('pki', P, g2, {}, JETZT), 'historie').bloecke)[0]!.zeilen).toHaveLength(45);
+  });
+
+  it('(g3) DC-Snapshots gelesen: keine = Regel eingehalten, vorhanden = Abweichung, nicht gelesen = nichtBelegt; VM ohne Windows-Bestand keine Lücke', () => {
+    const g = gesammelt();
+    const vms = g.proxmox.daten!.map(v => (v.vmid === 823 ? { ...v, snapshots: ['vor-update'] } : v.vmid === 824 ? { ...v, snapshots: undefined, snapshotFehler: 'Snapshots nicht lesbar: 500' } : v));
+    g.proxmox = { stand: STAND, daten: vms };
+    g.sicherung = { stand: STAND, daten: { jobs: [], letzte: {}, unerreichbar: [] } };
+    const d = baueBetrieb('pki', P, g, {}, JETZT);
+    const k8 = kap(d, 'sicherung').bloecke;
+    expect(zeileMit(k8, 'dc01')!.join(' ')).toContain('Snapshots vorhanden, abweichend von der Owner-Regel');
+    expect(nichtBelegt(k8).some(b => b.grund.includes('Snapshot-Stand nicht gelesen') && b.grund.includes('dc02'))).toBe(true);
+    expect(text(k8)).toContain('Owner-Regel: Domänencontroller (dc01, dc02) erhalten keine PBS-Sicherung und keine Snapshots');
+    const root = zeileMit(k8, 'pkiroot01')!.join(' ');
+    expect(root).toContain('Rolle nicht belegt (kein Windows-Bestand)');
+    expect(root).not.toMatch(/Lücke/);
+    expect(zeileMit(kap(d, 'komponenten').bloecke, 'pkiroot01')).toContain('nicht belegt (kein Windows-Bestand)');
+  });
+
+  it('Tresor und Fernzugänge sortiert', () => {
+    const g = gesammelt();
+    g.tresor = { stand: STAND, daten: [{ name: 'pkiiss01-z', herkunft: 'a' }, { name: 'dc01-b', herkunft: 'a' }, { name: 'fs01-a', herkunft: 'a' }] };
+    const t = tabellen(kap(baueBetrieb('pki', P, g, {}, JETZT), 'identitaeten').bloecke).find(x => x.kopf[0]!.startsWith('Tresor'))!;
+    expect(t.zeilen.map(z => z[0])).toEqual(['dc01-b', 'fs01-a', 'pkiiss01-z']);
+  });
+
   it('(h) Kapitel 7: nichtBelegt V3 und Change-Reihenfolge mit Schritten', () => {
     const d = baueBetrieb('pki', P, gesammelt(), {}, JETZT);
     const k7 = kap(d, 'wiederaufbau').bloecke;
@@ -273,7 +315,7 @@ describe('Sammler (betriebQuellen)', () => {
     proxmox: async () => { throw new Error('ECONNREFUSED 192.168.1.10:8006'); },
     proxmoxBackups: async () => { throw new Error('nicht erreichbar'); },
     unifiLesen: async () => { throw new Error('kein Schlüssel'); },
-    unifiDns: async () => ({ success: true, data: [] }),
+    unifiDns: async () => ({ eintraege: [] }),
   });
 
   it('(j) werfender Proxmox-Dep → proxmox() liefert fehler, wirft nicht', async () => {
@@ -282,7 +324,7 @@ describe('Sammler (betriebQuellen)', () => {
     expect(r.fehler).toContain('ECONNREFUSED');
     expect(r.stand).toBe(JETZT);
     expect(r.daten).toBeUndefined();
-    const s = await q.sicherung('u', [821]);
+    const s = await q.sicherung('u', [{ vmid: 821 }]);
     expect(s.fehler).toBeDefined();
   });
 
@@ -295,6 +337,8 @@ describe('Sammler (betriebQuellen)', () => {
       const p = String(i.path);
       if (p.endsWith('/config')) return { success: true, data: { cores: 2, sockets: 2, memory: '8192', ostype: 'win11', scsi0: 'local-zfs:vm-821-disk-0,size=80G', ide2: 'local:iso/x.iso,media=cdrom' } };
       if (p.includes('/820/agent')) return { success: false, error: 'Proxmox API error: QEMU guest agent is not running' };
+      if (p.endsWith('/820/snapshot')) return { success: false, error: 'Proxmox API error: 500' };
+      if (p.endsWith('/snapshot')) return { success: true, data: [{ name: 'vor-update' }, { name: 'current' }] };
       return { success: true, data: { result: [{ name: 'lo', 'ip-addresses': [{ 'ip-address': '127.0.0.1', 'ip-address-type': 'ipv4' }] }, { name: 'Ethernet', 'ip-addresses': [{ 'ip-address': '10.203.29.10', 'ip-address-type': 'ipv4' }, { 'ip-address': 'fe80::1', 'ip-address-type': 'ipv6' }] }] } };
     };
     const r = await betriebQuellen(deps, () => JETZT).proxmox('u', [{ node: 'pve', vmid: 820 }, { node: 'pve', vmid: 821 }, { node: 'pve', vmid: 830 }]);
@@ -308,14 +352,84 @@ describe('Sammler (betriebQuellen)', () => {
     expect(iss!.ips).toEqual(['10.203.29.10']);
     expect(aus!.agentFehler).toContain('läuft nicht');
     expect(aufrufe.some(a => a.includes('/830/agent'))).toBe(false);
+    expect(iss!.snapshots).toEqual(['vor-update']);
+    expect(root!.snapshots).toBeUndefined();
+    expect(root!.snapshotFehler).toContain('500');
+  });
+
+  it('Sicherung: Pool-Job liest Mitglieder; Pool nicht lesbar → ungeprüft statt Lücke', async () => {
+    const deps = basisDeps();
+    let poolOk = true;
+    deps.proxmox = async (i) => {
+      if (i.action === 'list_backup_jobs') return { success: true, data: [{ id: 'pool-job', pool: 'pki', schedule: '21:00', storage: 'pbs' }] };
+      if (i.path === '/pools/pki') return poolOk ? { success: true, data: { members: [{ vmid: 821, type: 'qemu' }] } } : { success: false, error: 'Permission check failed' };
+      throw new Error(`unerwartet ${String(i.path)}`);
+    };
+    deps.proxmoxBackups = async () => ({ jeVm: {}, unerreichbar: [] });
+    const q = betriebQuellen(deps, () => JETZT);
+    const r = await q.sicherung('u', [{ vmid: 821, node: 'pve' }, { vmid: 822, node: 'pve' }]);
+    expect(r.daten!.jobs[0]).toMatchObject({ id: 'pool-job', pool: 'pki', enthaelt: [821], ungeprueft: [] });
+    poolOk = false;
+    const f = await q.sicherung('u', [{ vmid: 821, node: 'pve' }, { vmid: 822, node: 'pve' }]);
+    expect(f.daten!.jobs[0]!.enthaelt).toEqual([]);
+    expect(f.daten!.jobs[0]!.ungeprueft.map(u => u.vmid)).toEqual([821, 822]);
+    expect(f.daten!.jobs[0]!.ungeprueft[0]!.grund).toContain('Pool-Mitgliedschaft von pki nicht geprüft');
+    // im Dokument: nicht belegt statt Lücke
+    const g = gesammelt();
+    g.sicherung = f;
+    const d = baueBetrieb('pki', P, g, {}, JETZT);
+    const k8 = kap(d, 'sicherung').bloecke;
+    const fs = zeileMit(k8, 'fs01')!.join(' ');
+    expect(fs).not.toMatch(/Lücke/);
+    expect(fs).toContain('nicht belegt');
+    expect(nichtBelegt(k8).some(b => b.grund.includes('Pool-Mitgliedschaft von pki nicht geprüft'))).toBe(true);
+  });
+
+  it('Sicherung: Job mit node gilt nur für VMs auf diesem Node; Node unbekannt → ungeprüft', async () => {
+    const deps = basisDeps();
+    deps.proxmox = async () => ({ success: true, data: [{ id: 'nur-pve2', all: 1, node: 'pve2', schedule: '21:00', storage: 'pbs' }] });
+    deps.proxmoxBackups = async () => ({ jeVm: {}, unerreichbar: [] });
+    const r = await betriebQuellen(deps, () => JETZT).sicherung('u', [{ vmid: 821, node: 'pve2' }, { vmid: 822, node: 'pve' }, { vmid: 823 }]);
+    const j = r.daten!.jobs[0]!;
+    expect(j.node).toBe('pve2');
+    expect(j.enthaelt).toEqual([821]);
+    expect(j.ungeprueft.map(u => u.vmid)).toEqual([823]);
+    expect(j.ungeprueft[0]!.grund).toContain('Node von VMID 823 unbekannt');
+  });
+
+  it('UniFi: nicht lesbare Weiterleitungen werden Hinweis (Kapitel 4 nichtBelegt), deaktivierte markiert', async () => {
+    const deps = basisDeps();
+    deps.unifiLesen = async () => ({ zonen: [], netze: [], policies: [] });
+    deps.unifiDns = async () => ({ eintraege: [{ key: 'ad.3033.at', value: '10.203.29.5', record_type: 'FORWARD', enabled: false }, { key: 'ad.3033.at', value: '10.203.29.4', record_type: 'FORWARD', enabled: true }], weiterleitungenFehler: 'Weiterleitungen nicht lesbar: HTTP 401' });
+    const r = await betriebQuellen(deps, () => JETZT).unifi('u');
+    expect(r.fehler).toBeUndefined();
+    expect(r.hinweis).toContain('HTTP 401');
+    expect(r.daten!.dnsWeiterleitungen).toEqual([{ domain: 'ad.3033.at', server: '10.203.29.4', aktiv: true }, { domain: 'ad.3033.at', server: '10.203.29.5', aktiv: false }]);
+    const g = gesammelt();
+    g.unifi = { ...r, daten: { ...gesammelt().unifi.daten!, dnsWeiterleitungen: r.daten!.dnsWeiterleitungen } };
+    const k4 = kap(baueBetrieb('pki', P, g, {}, JETZT), 'netz').bloecke;
+    expect(nichtBelegt(k4).some(b => b.grund.includes('HTTP 401'))).toBe(true);
+    expect(tabellen(k4).flatMap(t => t.zeilen).filter(z => z[0] === 'ad.3033.at').map(z => z[2])).toEqual(['ja', 'nein (deaktiviert)']);
+  });
+
+  it('Wartung: Fenster über giltFuer (global oder Asset), fremde nicht', async () => {
+    const deps = basisDeps();
+    deps.wartung.kalender = async () => [
+      { art: 'fenster', name: 'global', geltung: { global: true }, regel: {}, aktiv: true },
+      { art: 'sperre', name: 'nur pki', geltung: { assetIds: ['a-iss-vm'] }, regel: {}, aktiv: true },
+      { art: 'fenster', name: 'fremd', geltung: { assetIds: ['x'] }, regel: {}, aktiv: true },
+      { art: 'fenster', name: 'aus', geltung: { global: true }, regel: {}, aktiv: false },
+    ];
+    const r = await betriebQuellen(deps, () => JETZT).wartung('u', [], ['a-iss-vm']);
+    expect(r.daten!.fenster.map(f => f.name)).toEqual(['global', 'nur pki']);
   });
 
   it('Sicherung: Job mit all+exclude, Ausnahmen und letzte Sicherung', async () => {
     const deps = basisDeps();
     deps.proxmox = async () => ({ success: true, data: [{ id: 'backup-alle', all: 1, exclude: '823,824', schedule: '21:00', storage: 'pbs-pve2' }, { id: 'fremd', vmid: '100', schedule: '22:00', storage: 'x' }] });
     deps.proxmoxBackups = async () => ({ jeVm: { 821: { neueste: '2026-11-14T20:00:00.000Z', anzahl: 3 } }, unerreichbar: [] });
-    const r = await betriebQuellen(deps, () => JETZT).sicherung('u', [821, 823]);
-    expect(r.daten!.jobs).toEqual([{ id: 'backup-alle', zeitplan: '21:00', speicher: 'pbs-pve2', enthaelt: [821], ausgenommen: [823], aktiv: true, alle: true }]);
+    const r = await betriebQuellen(deps, () => JETZT).sicherung('u', [{ vmid: 821, node: 'pve' }, { vmid: 823, node: 'pve' }]);
+    expect(r.daten!.jobs).toEqual([{ id: 'backup-alle', zeitplan: '21:00', speicher: 'pbs-pve2', enthaelt: [821], ausgenommen: [823], aktiv: true, alle: true, ungeprueft: [] }]);
     expect(r.daten!.letzte[821]).toBe('2026-11-14T20:00:00.000Z');
   });
 
@@ -369,6 +483,7 @@ describe('(k) netzBestand: pfSense, NPM, Cloudflare aus der CMDB', () => {
     cloudflare_dns: [
       na('cf1', 'cloudflare_dns', 'dns_record', 'ado.3033.at (CNAME)', { type: 'CNAME', content: 'pki.3033.at' }, { fqdn: 'ado.3033.at' }),
       na('cf2', 'cloudflare_dns', 'dns_record', 'x.3033.at (A)', { type: 'A', content: '203.0.113.9' }, { fqdn: 'x.3033.at' }),
+      na('cf3', 'cloudflare_dns', 'dns_record', 'pki.3033.at (A)', { type: 'A', content: '198.51.100.7' }, { fqdn: 'pki.3033.at' }),
     ],
   };
   const ziele = { ips: ['10.203.29.10', '10.203.29.4'], namen: ['pkiiss01', 'dc01'] };
@@ -379,10 +494,28 @@ describe('(k) netzBestand: pfSense, NPM, Cloudflare aus der CMDB', () => {
     expect(nb.firewallRegeln).toHaveLength(1);
     expect(nb.firewallRegeln[0]).toMatchObject({ quelle: 'pfsense', name: 'AD nach LAN blocken', aktion: 'block', schnittstelle: 'opt8' });
     expect(nb.firewallRegeln[0]!.grund).toContain('opt8');
-    expect(nb.proxyHosts).toEqual([{ domains: ['pki.3033.at'], ziel: '10.203.29.10', port: 80, schema: 'http', zertifikat: 'pki.3033.at (gültig bis 2027-02-01)' }]);
-    expect(nb.dnsEintraege).toEqual([{ name: 'ado.3033.at', typ: 'CNAME', wert: 'pki.3033.at' }]);
+    expect(nb.proxyHosts).toEqual([{ domains: ['pki.3033.at'], ziel: '10.203.29.10', port: 80, schema: 'http', zertifikat: 'pki.3033.at (gültig bis 2027-02-01, Zuordnung über Domain)' }]);
+    expect(nb.dnsEintraege).toEqual([
+      { name: 'ado.3033.at', typ: 'CNAME', wert: 'pki.3033.at', grund: 'Wert = Proxy-Domain pki.3033.at' },
+      { name: 'pki.3033.at', typ: 'A', wert: '198.51.100.7', grund: 'Name = Proxy-Domain pki.3033.at' },
+    ]);
     expect(nb.stand.pfsense).toBe('2026-11-15T04:32:00.000Z');
     expect(nb.stand.mikrotik).toBe('keine Daten erfasst');
+  });
+
+  it('NPM-Zertifikat über certificate_id (vor Domain), Listen sortiert', () => {
+    const b = {
+      nginx_proxy_manager: [
+        na('np9', 'nginx_proxy_manager', 'proxy_host', 'z.3033.at', { domain_names: ['z.3033.at'], forward_host: '10.203.29.4', forward_port: 443, forward_scheme: 'https', certificate_id: 7 }),
+        na('np1', 'nginx_proxy_manager', 'proxy_host', 'a.3033.at', { domain_names: ['a.3033.at'], forward_host: '10.203.29.10', forward_port: 80, forward_scheme: 'http' }),
+        na('c7', 'nginx_proxy_manager', 'certificate', 'wild', { domain_names: ['*.3033.at'], expires_on: '2027-03-01' }, { sourceId: 'cert:7' }),
+        na('c8', 'nginx_proxy_manager', 'certificate', 'z.3033.at', { domain_names: ['z.3033.at'] }, { sourceId: 'cert:8' }),
+      ],
+    };
+    const nb = ordneNetzBestand(b, ziele);
+    expect(nb.proxyHosts.map(p => p.domains[0])).toEqual(['a.3033.at', 'z.3033.at']);
+    expect(nb.proxyHosts[1]!.zertifikat).toBe('wild (gültig bis 2027-03-01)');
+    expect(nb.proxyHosts[0]!.zertifikat).toBe('wild (gültig bis 2027-03-01, Zuordnung über Domain)');
   });
 
   it('Kapitel 4 zeigt die Zuordnung; Kopf-Quellen nennen je source_skill den Datenstand', async () => {

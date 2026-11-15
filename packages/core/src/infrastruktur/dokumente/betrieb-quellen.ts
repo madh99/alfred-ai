@@ -8,6 +8,7 @@ import type {
   CmdbAsset, CmdbAssetRelation, CmdbChangeRequest, CmdbDocType, CmdbDocument, CmdbLinkedEntityType, CmdbProblem, ProblemStatus, SkillResult,
 } from '@alfred/types';
 import { schwaerze } from '../../fernzugriff/kaefig.js';
+import { giltFuer, type Geltung } from '../wartung.js';
 import { MAX_ASSET_IDS, pruefeBetriebParameter, type BetriebParameter } from './betrieb-parameter.js';
 import { QUELLEN_GRENZE } from './sammler.js';
 
@@ -16,11 +17,20 @@ export interface Quelle<T> { daten?: T; stand: string; fehler?: string; /** bele
 export interface ProxmoxVm {
   vmid: number; node: string; name?: string; status?: string; cores?: number; speicherMiB?: number; platten: string[]; ostype?: string; ips: string[];
   agentFehler?: string;
+  /** Snapshot-Namen (ohne „current“); fehlt das Feld und steht snapshotFehler, ist der Stand nicht gelesen */
+  snapshots?: string[];
+  snapshotFehler?: string;
   /** Konfiguration dieser VM nicht lesbar (die übrigen VMs bleiben belegt) */
   fehler?: string;
 }
 
-export interface SicherungsJob { id: string; zeitplan: string; speicher: string; enthaelt: number[]; ausgenommen: number[]; aktiv: boolean; alle: boolean; pool?: string }
+export interface SicherungsJob {
+  id: string; zeitplan: string; speicher: string; enthaelt: number[]; ausgenommen: number[]; aktiv: boolean; alle: boolean; pool?: string;
+  /** Job läuft nur auf diesem Node (vzdump `node`) */
+  node?: string;
+  /** VMs, deren Zugehörigkeit nicht belegt ist (Pool nicht lesbar, Node unbekannt) — nie als „Lücke“ werten */
+  ungeprueft: Array<{ vmid: number; grund: string }>;
+}
 export interface SicherungDaten { jobs: SicherungsJob[]; letzte: Record<number, string | undefined>; unerreichbar: Array<{ speicher: string; grund: string }> }
 
 /** Rückgabe von UniFiSkill.firewallLesen() (Task 1) — strukturell, damit core nicht vom Skill-Typ abhängt */
@@ -29,7 +39,7 @@ export interface FirewallStand {
   netze: Array<{ id: string; name: string; vlan?: number; subnetz?: string; zoneId?: string }>;
   policies: Array<{ id: string; name: string; aktiv: boolean | 'unbekannt'; index?: number; bedingung: string; aktion: string; quelleZone: string; zielZone: string; quelle: string; ziel: string; ports: string; protokoll: string; herkunft: string }>;
 }
-export interface UnifiDaten extends FirewallStand { dnsWeiterleitungen: Array<{ domain: string; server: string }> }
+export interface UnifiDaten extends FirewallStand { dnsWeiterleitungen: Array<{ domain: string; server: string; aktiv: boolean }> }
 
 export interface TresorEintrag { name: string; herkunft: string; zweck?: string }
 export interface FernzugangEintrag { name: string; host: string; benutzer: string; status: string; system?: string; cmdbAssetId?: string }
@@ -50,14 +60,15 @@ export interface NetzBestand {
   firewallRegeln: Array<{ quelle: 'pfsense' | 'mikrotik'; name: string; aktion: string; schnittstelle: string; von: string; nach: string; protokoll: string; grund: string }>;
   netze: Array<{ quelle: 'pfsense' | 'mikrotik'; name: string; subnetz: string; schnittstelle?: string }>;
   proxyHosts: Array<{ domains: string[]; ziel: string; port: number; schema: string; zertifikat?: string }>;
-  dnsEintraege: Array<{ name: string; typ: string; wert: string }>;
+  dnsEintraege: Array<{ name: string; typ: string; wert: string; grund: string }>;
 }
 
 export interface BetriebQuellen {
   assets(o: string, ids: string[]): Promise<Quelle<{ gefunden: CmdbAsset[]; fehlend: string[] }>>;
   beziehungen(o: string, ids: string[]): Promise<Quelle<BeziehungenDaten>>;
   proxmox(o: string, vms: Array<{ node: string; vmid: number }>): Promise<Quelle<ProxmoxVm[]>>;
-  sicherung(o: string, vmids: number[]): Promise<Quelle<SicherungDaten>>;
+  /** node = Live-Node der VM (Jobs mit `node` gelten nur dort) */
+  sicherung(o: string, vms: Array<{ vmid: number; node?: string }>): Promise<Quelle<SicherungDaten>>;
   unifi(o: string): Promise<Quelle<UnifiDaten>>;
   tresor(o: string): Promise<Quelle<TresorEintrag[]>>;
   fernzugaenge(o: string): Promise<Quelle<FernzugangEintrag[]>>;
@@ -98,7 +109,8 @@ export interface BetriebQuellenDeps {
   proxmox: (input: Record<string, unknown>) => Promise<SkillResult>;
   proxmoxBackups: () => Promise<{ jeVm: Record<number, { neueste?: string; anzahl: number }>; unerreichbar: Array<{ speicher: string; grund: string }> }>;
   unifiLesen: () => Promise<FirewallStand>;
-  unifiDns: () => Promise<SkillResult>;
+  /** UniFiSkill.dnsLesen(): lokale Einträge und Weiterleitungen; weiterleitungenFehler = Weiterleitungen nicht lesbar */
+  unifiDns: () => Promise<{ eintraege: Array<{ key?: string; value?: string; record_type?: string; enabled?: boolean }>; weiterleitungenFehler?: string }>;
   /** Wartungsregel lesbar (wartung.ts regelText); ohne Angabe JSON */
   regelText?: (regel: unknown) => string;
 }
@@ -181,6 +193,8 @@ export function ordneNetzBestand(bestand: Partial<Record<NetzQuelle, CmdbAsset[]
     }
   }
 
+  const nachQuelleName = (a: { quelle: string; name: string }, b: { quelle: string; name: string }) => a.quelle.localeCompare(b.quelle) || a.name.localeCompare(b.name);
+  netze.sort(nachQuelleName);
   const firewallRegeln: NetzBestand['firewallRegeln'] = [];
   for (const q of ['pfsense', 'mikrotik'] as const) {
     for (const a of aktiv(q).filter(x => x.assetType === 'firewall_rule')) {
@@ -205,6 +219,7 @@ export function ordneNetzBestand(bestand: Partial<Record<NetzQuelle, CmdbAsset[]
     }
   }
 
+  firewallRegeln.sort(nachQuelleName);
   const zertifikate = aktiv('nginx_proxy_manager').filter(x => x.assetType === 'certificate');
   const passt = (muster: string, domain: string) => {
     const m = ohnePunkt(muster), d = ohnePunkt(domain);
@@ -216,21 +231,28 @@ export function ordneNetzBestand(bestand: Partial<Record<NetzQuelle, CmdbAsset[]
     const ziel = txt(at.forward_host);
     if (!ziel || !(ips.includes(ziel) || namen.has(ohnePunkt(ziel)))) continue;
     const domains = liste(at.domain_names).length ? liste(at.domain_names) : [a.name];
-    const z = zertifikate.find(c => liste(c.attributes.domain_names).some(m => domains.some(d => passt(m, d))));
-    proxyHosts.push({
-      domains, ziel, port: Number(at.forward_port ?? 0), schema: txt(at.forward_scheme) || '?',
-      ...(z ? { zertifikat: `${z.name}${z.attributes.expires_on ? ` (gültig bis ${txt(z.attributes.expires_on)})` : ''}` } : {}),
-    });
+    // Zertifikat über certificate_id des Proxy-Hosts (sourceId cert:<id>), sonst über den Domainnamen (so gekennzeichnet)
+    const certId = Number(at.certificate_id);
+    const perId = Number.isInteger(certId) && certId > 0 ? zertifikate.find(c => c.sourceId === `cert:${certId}`) : undefined;
+    const z = perId ?? zertifikate.find(c => liste(c.attributes.domain_names).some(m => domains.some(d => passt(m, d))));
+    const bis = z?.attributes.expires_on ? `gültig bis ${txt(z.attributes.expires_on)}` : '';
+    const zertifikat = z ? `${z.name} (${[bis, perId ? '' : 'Zuordnung über Domain'].filter(Boolean).join(', ')})` : undefined;
+    proxyHosts.push({ domains, ziel, port: Number(at.forward_port ?? 0), schema: txt(at.forward_scheme) || '?', ...(zertifikat ? { zertifikat } : {}) });
   }
+  proxyHosts.sort((a, b) => (a.domains[0] ?? '').localeCompare(b.domains[0] ?? '') || a.ziel.localeCompare(b.ziel));
 
   const proxyDomains = new Set(proxyHosts.flatMap(p => p.domains.map(ohnePunkt)));
   const dnsEintraege: NetzBestand['dnsEintraege'] = [];
   for (const a of aktiv('cloudflare_dns').filter(x => x.assetType === 'dns_record')) {
     const wert = txt(a.attributes.content);
     const w = ohnePunkt(wert);
-    if (!wert || !(ips.includes(wert) || namen.has(w) || proxyDomains.has(w))) continue;
-    dnsEintraege.push({ name: a.fqdn ?? a.name, typ: txt(a.attributes.type) || '?', wert });
+    const name = a.fqdn ?? a.name.replace(/\s*\([A-Z]+\)$/, '');
+    const grund = ips.includes(wert) ? `Wert = Asset-IP ${wert}` : namen.has(w) ? `Wert = Asset-Name ${wert}` : proxyDomains.has(w) ? `Wert = Proxy-Domain ${wert}`
+      : proxyDomains.has(ohnePunkt(name)) ? `Name = Proxy-Domain ${name}` : undefined;
+    if (!grund) continue;
+    dnsEintraege.push({ name, typ: txt(a.attributes.type) || '?', wert, grund });
   }
+  dnsEintraege.sort((a, b) => a.name.localeCompare(b.name) || a.typ.localeCompare(b.typ) || a.wert.localeCompare(b.wert));
   return { stand, firewallRegeln, netze, proxyHosts, dnsEintraege };
 }
 
@@ -324,6 +346,10 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
           if (typeof cfg.ostype === 'string') e.ostype = cfg.ostype;
           e.platten = platten(cfg);
         } catch (err) { e.fehler = `Konfiguration nicht lesbar: ${fehlerText(err)}`; }
+        try {
+          const sn = ((await skill({ action: 'api_raw', path: `/nodes/${node}/qemu/${vm.vmid}/snapshot` })) ?? []) as Array<{ name?: string }>;
+          e.snapshots = sn.map(x => String(x.name ?? '')).filter(n => n && n !== 'current').sort();
+        } catch (err) { e.snapshotFehler = `Snapshots nicht lesbar: ${fehlerText(err)}`; }
         if (l.status !== 'running') e.agentFehler = `VM läuft nicht (${l.status ?? 'Status unbekannt'}) — Gast-Agent nicht abgefragt`;
         else {
           try {
@@ -336,33 +362,56 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
       return { daten: aus };
     }),
 
-    sicherung: (_o, vmids) => fang(async () => {
+    sicherung: (_o, vms) => fang(async () => {
       const roh = ((await skill({ action: 'list_backup_jobs' })) ?? []) as Array<Record<string, unknown>>;
       const zahlen = (v: unknown) => String(v ?? '').split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0);
       const jobs: SicherungsJob[] = [];
       for (const j of roh) {
+        const id = String(j.id ?? '?');
         const alle = Number(j.all ?? 0) === 1;
         const pool = typeof j.pool === 'string' && j.pool ? j.pool : undefined;
+        const node = typeof j.node === 'string' && j.node ? j.node : undefined;
         const ausgeschlossen = zahlen(j.exclude);
         const explizit = zahlen(j.vmid);
-        const enthaelt = vmids.filter(v => (alle ? !ausgeschlossen.includes(v) : explizit.includes(v)));
-        const ausgenommen = vmids.filter(v => ausgeschlossen.includes(v));
-        if (!enthaelt.length && !ausgenommen.length && !pool) continue;
-        jobs.push({ id: String(j.id ?? '?'), zeitplan: String(j.schedule ?? '—'), speicher: String(j.storage ?? '—'), enthaelt, ausgenommen, aktiv: String(j.enabled ?? '1') !== '0', alle, ...(pool ? { pool } : {}) });
+        const perPool = !!pool && !alle && !explizit.length;
+        let mitglieder: number[] | undefined; let poolFehler: string | undefined;
+        if (perPool) {
+          try {
+            const d = (await skill({ action: 'api_raw', path: `/pools/${encodeURIComponent(pool!)}` })) as { members?: Array<{ vmid?: number | string }> } | undefined;
+            mitglieder = (d?.members ?? []).map(m => Number(m.vmid)).filter(n => Number.isInteger(n));
+          } catch (err) { poolFehler = fehlerText(err); }
+        }
+        const enthaelt: number[] = []; const ausgenommen: number[] = []; const ungeprueft: SicherungsJob['ungeprueft'] = [];
+        for (const v of vms) {
+          if (ausgeschlossen.includes(v.vmid)) { ausgenommen.push(v.vmid); continue; }
+          // vzdump-Auswahl: alle, ausgewählte VMIDs oder Pool; Text = Zugehörigkeit nicht belegt
+          let auswahl: boolean | string = alle || explizit.includes(v.vmid);
+          if (perPool) auswahl = mitglieder ? mitglieder.includes(v.vmid) : `Pool-Mitgliedschaft von ${pool} nicht geprüft (${poolFehler ?? 'nicht lesbar'})`;
+          if (auswahl === false) continue;
+          // Job mit node: läuft nur auf diesem Node
+          if (node) {
+            if (!v.node) { ungeprueft.push({ vmid: v.vmid, grund: `Job ${id} gilt nur auf Node ${node}, Node von VMID ${v.vmid} unbekannt` }); continue; }
+            if (v.node !== node) continue;
+          }
+          if (typeof auswahl === 'string') ungeprueft.push({ vmid: v.vmid, grund: auswahl });
+          else enthaelt.push(v.vmid);
+        }
+        if (!enthaelt.length && !ausgenommen.length && !ungeprueft.length) continue;
+        jobs.push({ id, zeitplan: String(j.schedule ?? '—'), speicher: String(j.storage ?? '—'), enthaelt, ausgenommen, aktiv: String(j.enabled ?? '1') !== '0', alle, ...(pool ? { pool } : {}), ...(node ? { node } : {}), ungeprueft });
       }
       const b = await deps.proxmoxBackups();
       const letzte: Record<number, string | undefined> = {};
-      for (const v of vmids) letzte[v] = b.jeVm[v]?.neueste;
+      for (const v of vms) letzte[v.vmid] = b.jeVm[v.vmid]?.neueste;
       return { daten: { jobs, letzte, unerreichbar: b.unerreichbar }, ...(b.unerreichbar.length ? { hinweis: `Sicherungsspeicher nicht erreichbar: ${b.unerreichbar.map(u => `${u.speicher} (${u.grund})`).join(', ')}` } : {}) };
     }),
 
     unifi: () => fang(async () => {
       const fw = await deps.unifiLesen();
       const dns = await deps.unifiDns();
-      if (!dns.success) throw new Error(`DNS-Einträge nicht lesbar: ${dns.error ?? 'unbekannt'}`);
-      const l = (Array.isArray(dns.data) ? dns.data : []) as Array<{ key?: string; value?: string; record_type?: string }>;
-      const dnsWeiterleitungen = l.filter(e => /forward/i.test(e.record_type ?? '')).map(e => ({ domain: String(e.key ?? ''), server: String(e.value ?? '') }));
-      return { daten: { ...fw, dnsWeiterleitungen } };
+      const dnsWeiterleitungen = dns.eintraege.filter(e => /forward/i.test(e.record_type ?? '')).map(e => ({ domain: String(e.key ?? ''), server: String(e.value ?? ''), aktiv: e.enabled !== false }))
+        .sort((a, b) => a.domain.localeCompare(b.domain) || a.server.localeCompare(b.server));
+      // nicht lesbare Weiterleitungen dürfen nicht wie „keine Weiterleitungen“ aussehen
+      return { daten: { ...fw, dnsWeiterleitungen }, ...(dns.weiterleitungenFehler ? { hinweis: `DNS-Weiterleitungen: ${dns.weiterleitungenFehler}` } : {}) };
     }),
 
     tresor: (o) => fang(async () => ({ daten: (await deps.tresor.liste(o)).map(e => ({ name: e.name, herkunft: e.herkunft, ...(e.zweck ? { zweck: e.zweck } : {}) })) })),
@@ -384,10 +433,7 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
 
     wartung: (o, vorlagen, assetIds = []) => fang(async () => {
       const kal = await deps.wartung.kalender(o);
-      const fenster = kal.filter(e => e.aktiv).filter(e => {
-        const g = (e.geltung ?? {}) as { global?: boolean; assetIds?: string[] };
-        return g.global === true || (g.assetIds ?? []).some(a => assetIds.includes(a));
-      }).map(e => ({ name: e.name, art: e.art, regel: deps.regelText ? deps.regelText(e.regel) : JSON.stringify(e.regel) }));
+      const fenster = kal.filter(e => e.aktiv && giltFuer((e.geltung ?? {}) as Geltung, assetIds)).map(e => ({ name: e.name, art: e.art, regel: deps.regelText ? deps.regelText(e.regel) : JSON.stringify(e.regel) }));
       const titel = new Map(deps.standard().map(v => [v.key, v.titel]));
       const stand = new Map((await deps.wartung.standardStand(o)).map(s => [s.vorlage, s.status]));
       let changes: CmdbChangeRequest[] = [];
@@ -506,10 +552,12 @@ export async function sammleBetrieb(q: BetriebQuellen, o: string, parameter: str
   const ids = gefunden.map(a => a.id);
   const vms = [...new Map(gefunden.filter(a => a.assetType === 'vm').map(vmVon).filter((v): v is { vmid: number; node: string } => !!v).map(v => [v.vmid, v])).values()];
   const proxmox = await q.proxmox(o, vms);
+  // Sicherungsjobs mit node gelten nur dort: Live-Node aus Proxmox; ohne Live-Stand unbekannt (nie den Node der Erfassung raten)
+  const liveNode = new Map((proxmox.daten ?? []).filter(v => v.status !== undefined).map(v => [v.vmid, v.node]));
   const ips = [...new Set([...gefunden.map(a => a.ipAddress ?? ''), ...(proxmox.daten ?? []).flatMap(v => v.ips)].filter(istNutzIp))];
   const namen = [...new Set(gefunden.flatMap(a => [a.name, a.hostname ?? '', a.fqdn ?? '']).filter(Boolean))];
   const [beziehungen, sicherung, unifi, tresor, fernzugaenge, jobs, wartung, problems, changes, netzBestand, architektur] = await Promise.all([
-    q.beziehungen(o, ids), q.sicherung(o, vms.map(v => v.vmid)), q.unifi(o), q.tresor(o), q.fernzugaenge(o), q.jobs(o, p.jobs ?? []),
+    q.beziehungen(o, ids), q.sicherung(o, vms.map(v => ({ vmid: v.vmid, ...(liveNode.has(v.vmid) ? { node: liveNode.get(v.vmid)! } : {}) }))), q.unifi(o), q.tresor(o), q.fernzugaenge(o), q.jobs(o, p.jobs ?? []),
     q.wartung(o, p.standardVorlagen ?? [], ids), q.problems(o, ids), q.changes(o, ids, p.vorhabenId, p.restoreChangeId ? [p.restoreChangeId] : []),
     q.netzBestand(o, { ips, namen }), p.architekturDocId ? q.dokument(o, p.architekturDocId) : Promise.resolve(undefined),
   ]);

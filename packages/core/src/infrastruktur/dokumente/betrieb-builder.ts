@@ -17,6 +17,8 @@ import type { Block, Dokument, Kapitel } from './modell.js';
 export type { Gesammelt } from './betrieb-quellen.js';
 
 const MAX_KANTEN = 150;
+/** Kapitel 7: höchstens so viele Changes mit Schritten (Größe des Dokuments) */
+const MAX_WIEDERAUFBAU = 40;
 const ordnerName = (s: string) => s.replace(/[^\w.-]/g, '_');
 const laufVon = (c: CmdbChangeRequest) => c.lauf as ChangeLauf | undefined;
 const gestartet = (c: CmdbChangeRequest) => !!laufVon(c)?.start;
@@ -34,7 +36,7 @@ function kapitelZweck(ks: Komponente[], p: BetriebParameter, zweck?: string): Bl
   bloecke.push(p.vorhabenId ? { art: 'absatz', text: `Vorhaben: ${g(p.vorhabenId)}` } : { art: 'nichtBelegt', grund: 'Vorhaben: keines angegeben' });
   const regeln: string[] = [];
   const dcs = ks.filter(k => k.dc);
-  if (dcs.length) regeln.push(`Domänencontroller (${dcs.map(k => g(k.name)).join(', ')}) bewusst ohne PBS-Sicherung und ohne Snapshots (Kapitel 8).`);
+  if (dcs.length) regeln.push(`Domänencontroller (${dcs.map(k => g(k.name)).join(', ')}) erhalten keine PBS-Sicherung und keine Snapshots (gelesener Stand: Kapitel 8).`);
   regeln.push('Proxmox-Cluster-Firewall bleibt auf „Any“ (Kapitel 4).');
   bloecke.push({ art: 'absatz', text: 'Owner-Entscheidungen, die dieses Dokument abbildet:' }, { art: 'liste', punkte: regeln });
   return bloecke;
@@ -117,8 +119,14 @@ const pruefText = (s: ChangeSchritt) => (s.pruefung ? `${s.pruefung.typ}${s.prue
 function kapitelWiederaufbau(gs: Gesammelt): Block[] {
   const bloecke: Block[] = [{ art: 'nichtBelegt', grund: 'Bauplan-Vorlage folgt mit V3 — bis dahin aus den durchgeführten Changes (Reihenfolge, Schritte, Prüfung)' }];
   if (gs.changes.fehler || !gs.changes.daten) return [...bloecke, nichtLesbar('Changes', gs.changes)];
-  const fertig = gs.changes.daten.filter(c => c.status === 'completed');
-  if (!fertig.length) return [...bloecke, { art: 'nichtBelegt', grund: 'keine abgeschlossenen Changes zu diesen Assets' }];
+  const abgeschlossen = gs.changes.daten.filter(c => c.status === 'completed');
+  // Standard-Changes (Routine: Updates, Snapshots) bauen nichts auf — nur in Kapitel 11
+  const standard = abgeschlossen.filter(c => (c.freigegebenUeber ?? '').startsWith('standard:'));
+  const aufbau = abgeschlossen.filter(c => !(c.freigegebenUeber ?? '').startsWith('standard:'));
+  const fertig = aufbau.slice(0, MAX_WIEDERAUFBAU);
+  if (!fertig.length) {
+    bloecke.push({ art: 'nichtBelegt', grund: 'keine abgeschlossenen Changes (außer Standard-Changes) zu diesen Assets' });
+  }
   fertig.forEach((c, i) => {
     bloecke.push({ art: 'absatz', text: `${i + 1}. Change ${id8(c.id)} — ${g(c.title, 200)} (abgeschlossen ${zeitText(laufVon(c)?.ende ?? c.completedAt)})` });
     const plan = (c.schritte ?? []) as ChangeSchritt[];
@@ -126,7 +134,9 @@ function kapitelWiederaufbau(gs: Gesammelt): Block[] {
       ? { art: 'tabelle', kopf: ['Nr', 'Was', 'Womit', 'Prüfung'], zeilen: plan.map(s => [String(s.nr), g(s.titel, 120), g(aktionText(s), 80), g(pruefText(s), 120)]) }
       : { art: 'nichtBelegt', grund: `Change ${id8(c.id)} ohne Schritte` });
   });
-  bloecke.push({ art: 'absatz', text: 'Parameterwerte dieser Instanz (Namen, VMIDs, IPs, Netze): Kapitel 3 und 4.' });
+  if (aufbau.length > fertig.length) bloecke.push({ art: 'absatz', text: `Hinweis: ${aufbau.length - fertig.length} weitere abgeschlossene Changes nicht aufgeführt (höchstens ${MAX_WIEDERAUFBAU}) — vollständige Liste in Kapitel 11.` });
+  if (standard.length) bloecke.push({ art: 'absatz', text: `Hinweis: ${standard.length} abgeschlossene Standard-Changes (Routine) sind kein Wiederaufbau-Schritt — siehe Kapitel 11.` });
+  if (fertig.length) bloecke.push({ art: 'absatz', text: 'Parameterwerte dieser Instanz (Namen, VMIDs, IPs, Netze): Kapitel 3 und 4.' });
   return bloecke;
 }
 

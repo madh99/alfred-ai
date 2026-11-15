@@ -40,6 +40,22 @@ describe('I8c UniFi DNS-Weiterleitung', () => {
     expect((await w.s.execute({ action: 'delete_dns_record', hostname: 'ad.3033.at' }, {} as never)).success).toBe(true);
     expect(w.pol.map(p => p.id)).toEqual(['a1']);
   });
+  it('dnsLesen: zwei Ziele derselben Domäne bleiben beide, deaktivierte markiert, Lesefehler sichtbar statt leer', async () => {
+    const w = welt();
+    w.pol.push({ id: 'f1', type: 'FORWARD_DOMAIN', domain: 'ad.3033.at', ipAddress: '10.203.29.2', enabled: true }, { id: 'f2', type: 'FORWARD_DOMAIN', domain: 'ad.3033.at', ipAddress: '10.203.29.3', enabled: false });
+    const r = await w.s.dnsLesen();
+    expect(r.weiterleitungenFehler).toBeUndefined();
+    expect(r.eintraege.filter(e => e.record_type === 'FORWARD').map(e => [e.value, e.enabled])).toEqual([['10.203.29.2', true], ['10.203.29.3', false]]);
+    const d = (await w.s.execute({ action: 'list_dns_records' }, {} as never)).display!;
+    expect(d).toContain('| ad.3033.at | FORWARD | 10.203.29.2 | ja |');
+    expect(d).toContain('| ad.3033.at | FORWARD | 10.203.29.3 | nein |');
+    const x = w.s as unknown as { integ: (m: string, p: string) => Promise<unknown> };
+    x.integ = async () => { throw new Error('HTTP 401'); };
+    const f = await w.s.dnsLesen();
+    expect(f.weiterleitungenFehler).toContain('HTTP 401');
+    expect(f.eintraege.map(e => e.key)).toEqual(['pve.dohnal.co']);
+    expect((await w.s.execute({ action: 'list_dns_records' }, {} as never)).display).toContain('Weiterleitungen nicht lesbar');
+  });
   it('liest die Steuerung etwas anderes zurück, ist das ein Fehler (Feldnamen nicht offiziell belegt)', async () => {
     const w = welt('0.0.0.0');
     const r = await w.s.execute({ action: 'create_dns_record', hostname: 'ad.3033.at', ip: '10.203.29.2', record_type: 'FORWARD' }, {} as never);

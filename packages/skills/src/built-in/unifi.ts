@@ -1546,14 +1546,30 @@ export class UniFiSkill extends Skill {
     return (await this.liste<{ id: string; type: string; domain: string; ipAddress?: string; enabled?: boolean }>('/dns/policies')).filter(x => x.type === 'FORWARD_DOMAIN');
   }
 
-  private async dnsListe(): Promise<SkillResult> {
+  /**
+   * Nur lesend (GET) — lokale DNS-Einträge (static-dns) und Weiterleitungen (Integration-API). Eine Weiterleitung zählt je Domäne UND
+   * Ziel (ausfallsicher: ad.3033.at an zwei DCs = zwei Einträge). Sind die Weiterleitungen nicht lesbar (kein API-Schlüssel, Fehler),
+   * steht das in `weiterleitungenFehler` — eine Liste ohne Weiterleitungen darf nicht wie „keine Weiterleitungen“ aussehen.
+   */
+  public async dnsLesen(): Promise<{ eintraege: Array<{ _id: string; key: string; value: string; record_type: string; enabled: boolean }>; weiterleitungenFehler?: string }> {
     const l = ((await this.v2('GET', 'static-dns')) as Array<{ _id: string; key: string; value: string; record_type: string; enabled: boolean }> | undefined) ?? [];
-    // I8c — Weiterleitungen aus der Integration-API ergänzen (nur mit API-Schlüssel; fehlt er, bleibt die Liste wie bisher)
-    if (this.config.apiKey) {
-      const w = await this.weiterleitungen().catch(() => []);
-      for (const x of w) if (!l.some(e => e.key.toLowerCase() === x.domain.toLowerCase() && /forward/i.test(e.record_type))) l.push({ _id: x.id, key: x.domain, value: x.ipAddress ?? '', record_type: 'FORWARD', enabled: x.enabled !== false });
+    if (!this.config.apiKey) return { eintraege: l, weiterleitungenFehler: 'ohne UniFi-API-Schlüssel sind die Weiterleitungen (Integration-API) nicht lesbar' };
+    let w: Awaited<ReturnType<UniFiSkill['weiterleitungen']>>;
+    try { w = await this.weiterleitungen(); } catch (err) {
+      return { eintraege: l, weiterleitungenFehler: `Weiterleitungen nicht lesbar: ${(err as Error)?.message?.slice(0, 200) ?? String(err)}` };
     }
-    return { success: true, data: l, display: l.length ? ['| Name | Typ | Ziel | aktiv |', '|---|---|---|---|', ...l.map(e => `| ${e.key} | ${e.record_type} | ${e.value} | ${e.enabled ? 'ja' : 'nein'} |`)].join('\n') : 'Keine lokalen DNS-Einträge.' };
+    const gleich = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    for (const x of w) {
+      const ziel = x.ipAddress ?? '';
+      if (!l.some(e => /forward/i.test(e.record_type) && gleich(e.key, x.domain) && gleich(e.value, ziel))) l.push({ _id: x.id, key: x.domain, value: ziel, record_type: 'FORWARD', enabled: x.enabled !== false });
+    }
+    return { eintraege: l };
+  }
+
+  private async dnsListe(): Promise<SkillResult> {
+    const { eintraege: l, weiterleitungenFehler } = await this.dnsLesen();
+    const tabelle = l.length ? ['| Name | Typ | Ziel | aktiv |', '|---|---|---|---|', ...l.map(e => `| ${e.key} | ${e.record_type} | ${e.value} | ${e.enabled ? 'ja' : 'nein'} |`)].join('\n') : 'Keine lokalen DNS-Einträge.';
+    return { success: true, data: l, display: weiterleitungenFehler ? `${tabelle}\n\n⚠️ ${weiterleitungenFehler}` : tabelle };
   }
 
   private async dnsAnlegen(input: Record<string, unknown>): Promise<SkillResult> {

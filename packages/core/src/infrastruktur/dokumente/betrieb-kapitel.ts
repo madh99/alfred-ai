@@ -74,7 +74,7 @@ export function komponentenZeile(k: Komponente): string[] {
   const status = [...new Set(k.assets.map(a => a.status))].join('/') + (k.live?.status ? `; Proxmox ${k.live.status}` : '');
   return [
     g(k.name), k.assets.map(a => `${a.assetType} (${a.sourceSkill ?? '?'})`).join(', '), k.vmid !== undefined ? String(k.vmid) : '—', g(k.node),
-    g(speicher), ressourcen, g(os), k.ips.join(', ') || '—', g(k.rollen.join(', ')), g(lizenz), g(status),
+    g(speicher), ressourcen, g(os), k.ips.join(', ') || '—', k.server ? g(k.rollen.join(', ')) : 'nicht belegt (kein Windows-Bestand)', g(lizenz), g(status),
   ];
 }
 
@@ -120,9 +120,10 @@ export function kapitelNetz(gs: Gesammelt, ks: Komponente[]): Block[] {
         zeilen: pol.map(p => [p.index !== undefined ? String(p.index) : '—', g(p.name), `${g(p.quelleZone)} → ${g(p.zielZone)}`, g(p.quelle), g(p.ziel), g(p.ports), g(p.protokoll), g(p.aktion), g(aktivText(p)), g(p.herkunft), g(p.id)]),
       });
     } else bloecke.push({ art: 'absatz', text: 'Keine UniFi-Policy betrifft diese Zonen oder Asset-IPs.' });
+    if (u.hinweis) bloecke.push({ art: 'nichtBelegt', grund: g(u.hinweis, 400) });
     bloecke.push(d.dnsWeiterleitungen.length
-      ? { art: 'tabelle', kopf: ['Domäne', 'DNS-Server', 'Komponente'], zeilen: d.dnsWeiterleitungen.map(w => [g(w.domain), g(w.server), g(ks.filter(k => k.ips.includes(w.server)).map(k => k.name).join(', '))]) }
-      : { art: 'absatz', text: 'Keine DNS-Weiterleitungen in UniFi.' });
+      ? { art: 'tabelle', kopf: ['Domäne', 'DNS-Server', 'aktiv', 'Komponente'], zeilen: d.dnsWeiterleitungen.map(w => [g(w.domain), g(w.server), w.aktiv ? 'ja' : 'nein (deaktiviert)', g(ks.filter(k => k.ips.includes(w.server)).map(k => k.name).join(', '))]) }
+      : { art: 'absatz', text: u.hinweis ? 'Keine lokalen DNS-Weiterleitungen gelesen.' : 'Keine DNS-Weiterleitungen in UniFi.' });
     bloecke.push({ art: 'nichtBelegt', grund: 'Trunk-Ports: keine Lesequelle (Switch-Port-Profile werden nicht gesammelt)' });
   }
   bloecke.push({ art: 'absatz', text: 'Owner-Entscheidung: Die Proxmox-Cluster-Firewall bleibt auf „Any“.' });
@@ -140,7 +141,7 @@ export function kapitelNetz(gs: Gesammelt, ks: Komponente[]): Block[] {
       if (d.netze.length) bloecke.push({ art: 'tabelle', kopf: ['Quelle', 'Netz', 'Subnetz', 'Schnittstelle'], zeilen: d.netze.map(n => [n.quelle, g(n.name), g(n.subnetz), g(n.schnittstelle)]) });
       if (d.firewallRegeln.length) bloecke.push({ art: 'tabelle', kopf: ['Quelle', 'Regel', 'Aktion', 'Schnittstelle', 'Von', 'Nach', 'Protokoll', 'Grund der Zuordnung'], zeilen: d.firewallRegeln.map(r => [r.quelle, g(r.name), g(r.aktion), g(r.schnittstelle), g(r.von), g(r.nach), g(r.protokoll), g(r.grund)]) });
       if (d.proxyHosts.length) bloecke.push({ art: 'tabelle', kopf: ['Domains (NPM)', 'Ziel', 'Port', 'Schema', 'Zertifikat'], zeilen: d.proxyHosts.map(p => [g(p.domains.join(', ')), g(p.ziel), String(p.port), g(p.schema), g(p.zertifikat ?? 'keines zugeordnet')]) });
-      if (d.dnsEintraege.length) bloecke.push({ art: 'tabelle', kopf: ['DNS-Name (Cloudflare)', 'Typ', 'Wert'], zeilen: d.dnsEintraege.map(e => [g(e.name), g(e.typ), g(e.wert)]) });
+      if (d.dnsEintraege.length) bloecke.push({ art: 'tabelle', kopf: ['DNS-Name (Cloudflare)', 'Typ', 'Wert', 'Grund der Zuordnung'], zeilen: d.dnsEintraege.map(e => [g(e.name), g(e.typ), g(e.wert), g(e.grund)]) });
     }
   }
   return bloecke;
@@ -156,7 +157,7 @@ export function kapitelIdentitaeten(gs: Gesammelt, ks: Komponente[]): Block[] {
   const namen = ks.map(k => k.name.toLowerCase());
   if (gs.tresor.fehler || !gs.tresor.daten) bloecke.push(nichtLesbar('Tresor', gs.tresor));
   else {
-    const t = gs.tresor.daten.filter(e => namen.some(n => e.name.toLowerCase().includes(n)));
+    const t = gs.tresor.daten.filter(e => namen.some(n => e.name.toLowerCase().includes(n))).sort((a, b) => a.name.localeCompare(b.name));
     // nur Name und Herkunft — Werte und Zweck nie (Zweck ist Freitext und kann Geheimes enthalten)
     bloecke.push(t.length
       ? { art: 'tabelle', kopf: ['Tresor-Eintrag (nur Name)', 'Herkunft'], zeilen: t.map(e => [g(e.name), g(e.herkunft)]) }
@@ -165,7 +166,8 @@ export function kapitelIdentitaeten(gs: Gesammelt, ks: Komponente[]): Block[] {
   const ids = new Set(ks.flatMap(k => k.assets.map(a => a.id)));
   if (gs.fernzugaenge.fehler || !gs.fernzugaenge.daten) bloecke.push(nichtLesbar('Fernzugänge', gs.fernzugaenge));
   else {
-    const f = gs.fernzugaenge.daten.filter(z => (z.cmdbAssetId && ids.has(z.cmdbAssetId)) || namen.includes(z.name.toLowerCase()));
+    const f = gs.fernzugaenge.daten.filter(z => (z.cmdbAssetId && ids.has(z.cmdbAssetId)) || namen.includes(z.name.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.host.localeCompare(b.host));
     bloecke.push(f.length
       ? { art: 'tabelle', kopf: ['Fernzugang', 'Host', 'Benutzer', 'System', 'Status'], zeilen: f.map(z => [g(z.name), g(z.host), g(z.benutzer), g(z.system ?? 'linux'), g(z.status)]) }
       : { art: 'absatz', text: 'Kein Fernzugang ist einer Komponente zugeordnet.' });
@@ -177,25 +179,45 @@ export function kapitelSicherung(gs: Gesammelt, ks: Komponente[], p: BetriebPara
   const bloecke: Block[] = [];
   const s = gs.sicherung;
   const dcs = ks.filter(k => k.dc);
+  // Snapshot-Stand je VM aus Proxmox (nur gelesen, nie angenommen)
+  const snap = (k: Komponente): string | undefined => (k.live?.snapshots && !k.live.snapshotFehler ? (k.live.snapshots.length ? k.live.snapshots.join(', ') : 'keine') : undefined);
   if (s.fehler || !s.daten) bloecke.push(nichtLesbar('Proxmox-Sicherung', s));
   else {
     const d = s.daten;
+    const umfang = (j: typeof d.jobs[number]) => (j.alle ? 'alle VMs außer Ausnahmen' : j.pool ? `Pool ${g(j.pool)}` : 'ausgewählte VMs') + (j.node ? ` auf Node ${g(j.node)}` : '');
     if (d.jobs.length) {
-      bloecke.push({ art: 'tabelle', kopf: ['Sicherungsjob', 'Zeitplan', 'Speicher', 'aktiv', 'Umfang'], zeilen: d.jobs.map(j => [g(j.id), g(j.zeitplan), g(j.speicher), j.aktiv ? 'ja' : 'nein', j.alle ? 'alle VMs außer Ausnahmen' : j.pool ? `Pool ${g(j.pool)} (Mitglieder nicht geprüft)` : 'ausgewählte VMs']) });
+      bloecke.push({ art: 'tabelle', kopf: ['Sicherungsjob', 'Zeitplan', 'Speicher', 'aktiv', 'Umfang'], zeilen: d.jobs.map(j => [g(j.id), g(j.zeitplan), g(j.speicher), j.aktiv ? 'ja' : 'nein', umfang(j)]) });
     }
+    const offen: string[] = [];
     const zeilen = ks.map(k => {
-      if (k.vmid === undefined) return [g(k.name), '—', '—', '—', '—', 'keine VM — PBS-Sicherung nicht anwendbar'];
-      const drin = d.jobs.filter(j => j.aktiv && j.enthaelt.includes(k.vmid!));
-      const aus = d.jobs.filter(j => j.ausgenommen.includes(k.vmid!));
-      const bewertung = k.dc
-        ? (drin.length ? 'gesichert — abweichend von der Owner-Entscheidung (DCs ohne PBS-Sicherung)' : 'bewusst ohne PBS-Sicherung (Owner-Entscheidung)')
-        : drin.length ? 'gesichert' : 'Lücke: in keinem aktiven Sicherungsjob';
-      return [g(k.name), String(k.vmid), g(drin.map(j => j.id).join(', ')), g(aus.map(j => j.id).join(', ')), zeitText(d.letzte[k.vmid]), bewertung];
+      if (k.vmid === undefined) return [g(k.name), '—', '—', '—', '—', '—', 'keine VM — PBS-Sicherung nicht anwendbar'];
+      const vmid = k.vmid;
+      const drin = d.jobs.filter(j => j.aktiv && j.enthaelt.includes(vmid));
+      const aus = d.jobs.filter(j => j.ausgenommen.includes(vmid));
+      // Zugehörigkeit nicht belegt (Pool nicht lesbar, Node unbekannt): nie als Lücke werten
+      const ungeprueft = d.jobs.filter(j => j.aktiv).flatMap(j => j.ungeprueft.filter(u => u.vmid === vmid).map(u => u.grund));
+      if (!drin.length && ungeprueft.length) offen.push(`${g(k.name)}: ${ungeprueft.map(x => g(x, 200)).join('; ')}`);
+      const s8 = snap(k);
+      let bewertung: string;
+      if (k.dc) {
+        bewertung = drin.length ? 'gesichert — abweichend von der Owner-Regel (DCs ohne PBS-Sicherung)'
+          : ungeprueft.length ? 'nicht belegt: Job-Zugehörigkeit nicht geprüft (Owner-Regel: DCs ohne PBS-Sicherung)' : 'bewusst ohne PBS-Sicherung (Owner-Entscheidung)';
+        if (s8 && s8 !== 'keine') bewertung += ' — Snapshots vorhanden, abweichend von der Owner-Regel';
+      } else if (drin.length) bewertung = 'gesichert';
+      else if (ungeprueft.length) bewertung = 'nicht belegt: Job-Zugehörigkeit nicht geprüft';
+      else if (!k.server) bewertung = 'Rolle nicht belegt (kein Windows-Bestand) — in keinem aktiven Sicherungsjob';
+      else bewertung = 'Lücke: in keinem aktiven Sicherungsjob';
+      return [g(k.name), String(vmid), g(drin.map(j => j.id).join(', ')), g(aus.map(j => j.id).join(', ')), zeitText(d.letzte[vmid]), g(s8 ?? 'nicht gelesen'), bewertung];
     });
-    bloecke.push({ art: 'tabelle', kopf: ['Komponente', 'VMID', 'Sicherungsjob', 'Ausgenommen in', 'Letzte Sicherung', 'Bewertung'], zeilen });
+    bloecke.push({ art: 'tabelle', kopf: ['Komponente', 'VMID', 'Sicherungsjob', 'Ausgenommen in', 'Letzte Sicherung', 'Snapshots', 'Bewertung'], zeilen });
+    if (offen.length) bloecke.push({ art: 'nichtBelegt', grund: `Sicherungsjob-Zugehörigkeit nicht geprüft — ${offen.join(' | ')}` });
     bloecke.push(...hinweis(s));
   }
-  if (dcs.length) bloecke.push({ art: 'absatz', text: `Owner-Entscheidung: Domänencontroller (${dcs.map(k => g(k.name)).join(', ')}) werden bewusst ohne PBS-Sicherung und ohne Snapshots betrieben.` });
+  if (dcs.length) {
+    bloecke.push({ art: 'absatz', text: `Owner-Regel: Domänencontroller (${dcs.map(k => g(k.name)).join(', ')}) erhalten keine PBS-Sicherung und keine Snapshots.` });
+    const ungelesen = dcs.filter(k => snap(k) === undefined);
+    if (ungelesen.length) bloecke.push({ art: 'nichtBelegt', grund: `Snapshot-Stand nicht gelesen: ${ungelesen.map(k => `${g(k.name)}${k.live?.snapshotFehler ? ` (${g(k.live.snapshotFehler, 200)})` : ''}`).join(', ')}` });
+  }
   bloecke.push({ art: 'nichtBelegt', grund: 'Systemstatus- und SQL-Sicherungen: keine Lesequelle im Betriebsdokument' });
 
   if (!p.restoreChangeId) bloecke.push({ art: 'nichtBelegt', grund: 'Restore-Beweis: kein Restore-Change angegeben' });
