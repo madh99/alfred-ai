@@ -109,20 +109,77 @@ export const GEHEIM_PFADE = [
 ];
 
 /** Namen von Geheimnis-Feldern (Schlüssel/Variablen); gemeinsam für Schwärzung nach Text und nach Schlüssel. */
-export const GEHEIM_NAME = /(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT)/i;
+// PWD/PW nur als eigenständiger Namensteil (DB_PWD, mysql_pw, PW) — nicht in cwd, pwdLastSet, upward.
+export const GEHEIM_NAME = /(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT|(?<![A-Za-z])PWD?(?![A-Za-z]))/i;
+
+const GESCHWAERZT = '[geschwärzt]';
+/** `PWD=/home/madh` ist das Arbeitsverzeichnis der Shell, kein Geheimnis. */
+const istPwdPfad = (schluessel: string, wert: string) => /^PWD$/i.test(schluessel) && wert.startsWith('/');
+/** Schlüssel ohne Schalter-Striche, Anführungszeichen und `export`. */
+const nurName = (s: string) => s.replace(/^\s*(?:export\s+)?/i, '').replace(/^["'-]+|["']+$/g, '');
+
+// Schlüssel nach Trennzeichen (Leerzeichen ; , & ? { ( [ : | " '; „:“ für grep-Ausgaben datei:key=wert), optional in Anführungszeichen, dann = oder :
+const MITTE_SCHLUESSEL = /(?<=^|[\s;,&?{([:|"'])(["']?)(?<k>[A-Za-z0-9_.-]+)\1\s*[=:]\s*/gm;
+// Wert: in Anführungszeichen (Leerzeichen erlaubt) oder bis zum nächsten Trennzeichen; mindestens 4 Zeichen
+const MITTE_WERT = /(?!["']?\[geschwärzt\])(?:"([^"\n]{4,})"|'([^'\n]{4,})'|([^\s'"#;,&]{4,}))/y;
+// Schalter: --name WERT / -Name WERT (Leerzeichen-getrennt; --name=WERT fängt MITTE_SCHLUESSEL)
+const SCHALTER_SCHLUESSEL = /(?<=^|[\s"'(])(?<k>--?[A-Za-z][A-Za-z0-9_-]*)[^\S\n]+/gm;
+const SCHALTER_WERT = /(?!-|["']?\[geschwärzt\])(?:"([^"\n]+)"|'([^'\n]+)'|([^\s'"]+))/y;
+
+/**
+ * Schwärzt den Wert hinter jedem Schlüssel, dessen Name GEHEIM_NAME trifft. Nicht-geheime Schlüssel verbrauchen ihren Wert
+ * NICHT — sonst verschluckte `conn: password='…'` den geheimen Schlüssel im Wert. Linear: Startpunkte nur nach Trennzeichen,
+ * der Wert wird per Sticky-Regex genau an einer Stelle geprüft.
+ */
+function schwaerzeNachSchluessel(t: string, schluessel: RegExp, wert: RegExp): { text: string; anzahl: number } {
+  let aus = '', pos = 0, anzahl = 0;
+  schluessel.lastIndex = 0;
+  for (let m = schluessel.exec(t); m; m = schluessel.exec(t)) {
+    const k = nurName(m.groups!.k!);
+    if (!GEHEIM_NAME.test(k)) continue;
+    const ende = m.index + m[0].length;
+    wert.lastIndex = ende;
+    const v = wert.exec(t);
+    if (!v) continue;
+    const w = v[1] ?? v[2] ?? v[3] ?? '';
+    if (istPwdPfad(k, w)) continue;
+    const z = v[1] !== undefined ? '"' : v[2] !== undefined ? "'" : '';
+    aus += `${t.slice(pos, ende)}${z}${GESCHWAERZT}${z}`;
+    pos = ende + v[0].length;
+    schluessel.lastIndex = pos;
+    anzahl++;
+  }
+  return { text: aus + t.slice(pos), anzahl };
+}
 
 /**
  * v1551 — Geheimnisse in einer Ausgabe schwärzen, bevor sie das Modell sieht — egal, auf welchem Weg sie gelesen wurden.
- * Private Schlüssel, Passwort-Hashes, KEY=Wert-Paare mit Geheimnis-Namen, Zugangsdaten in URLs, Bearer-Tokens.
+ * Private Schlüssel, Passwort-Hashes, KEY=Wert-Paare mit Geheimnis-Namen, Zugangsdaten in URLs, Bearer-/Basic-Kopfzeilen.
+ * Dokumente-Vorhaben (15.11.) — auch mitten in der Zeile (Verbindungszeichenfolgen, JSON, Query-Parameter, set -x),
+ * Kommandozeilen-Schalter (--password, -Password, sshpass -p, mysql -p…). Jede Regex ist linear: der Schlüssel wird als
+ * ganzer Lauf gelesen und erst im Rückruf gegen GEHEIM_NAME geprüft (keine verschachtelten Quantoren).
+ * Nur mehr schwärzen, nie weniger: bereits Geschwärztes wird übersprungen, damit `anzahl` nicht doppelt zählt.
  */
 export function schwaerze(text: string): { text: string; anzahl: number } {
-  let anzahl = 0;
+  let anzahl = 0, n = 0;
   const zaehle = (ersatz: string) => () => { anzahl++; return ersatz; };
   let t = text.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, zaehle('[privater Schlüssel geschwärzt]'));
   t = t.replace(/\$(1|2[abxy]?|5|6|7|y|gy|apr1)\$[^\s:]{8,}/g, zaehle('[Passwort-Hash geschwärzt]')); // v1602 apr1 (htpasswd, z. B. Proxy-Labels)
-  t = t.replace(new RegExp(String.raw`^(\s*(?:export\s+)?[A-Za-z0-9_.-]*${GEHEIM_NAME.source}[A-Za-z0-9_.-]*\s*[=:]\s*)(['"]?)([^\s'"#]{4,})\2`, 'gim'), (_m, a: string, q: string) => { anzahl++; return `${a}${q}[geschwärzt]${q}`; });
-  t = t.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]{3,})@/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
+  // KEY=Wert am Zeilenanfang (wie v1551, Wert darf ; , & enthalten); Schlüssel als ganzer Lauf, Namensprüfung im Rückruf
+  t = t.replace(/^([^\S\n]*(?:export\s+)?)([A-Za-z0-9_.-]+)(\s*[=:]\s*)(['"]?)([^\s'"#]{4,})\4/gim, (m, a: string, k: string, s: string, q: string, w: string) => {
+    if (!GEHEIM_NAME.test(k) || istPwdPfad(k, w)) return m;
+    anzahl++; return `${a}${k}${s}${q}${GESCHWAERZT}${q}`;
+  });
+  // KEY=Wert / KEY: Wert / "key": "Wert" auch mitten in der Zeile nach Trennzeichen; Werte in Anführungszeichen dürfen Leerzeichen enthalten
+  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, MITTE_SCHLUESSEL, MITTE_WERT)); anzahl += n;
+  // Kommandozeilen-Schalter mit Leerzeichen: --password X, --token X, -Password X (PowerShell); eindeutiger Schalter → keine Mindestlänge
+  ({ text: t, anzahl: n } = schwaerzeNachSchluessel(t, SCHALTER_SCHLUESSEL, SCHALTER_WERT)); anzahl += n;
+  t = t.replace(/\b(sshpass[^\S\n]+-p[^\S\n]*)(?!\[geschwärzt\])(\S+)/g, (_m, a: string) => { anzahl++; return `${a}${GESCHWAERZT}`; });
+  // mysql/mariadb: Passwort direkt am Schalter (-pX); nur in Zeilen, die den Client aufrufen (zeilenweise → linear)
+  t = t.replace(/^[^\n]*\b(?:mysql|mariadb)[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-p)(?!\[geschwärzt\])(\S+)/g, (_m, a: string) => { anzahl++; return `${a}${GESCHWAERZT}`; }));
+  t = t.replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]{3,})@/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
   t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  t = t.replace(/\b(Authorization:[^\S\n]*Basic[^\S\n]+)[A-Za-z0-9+/]{4,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
   return { text: t, anzahl };
 }
 

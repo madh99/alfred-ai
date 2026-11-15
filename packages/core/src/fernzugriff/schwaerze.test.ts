@@ -1,0 +1,102 @@
+import { describe, it, expect } from 'vitest';
+import { schwaerze, GEHEIM_NAME } from './kaefig.js';
+
+// Alle Werte sind offensichtliche Platzhalter — keine echten Geheimnisse.
+const weg = (eingabe: string, geheim: string[], bleibt: string[] = []) => {
+  const r = schwaerze(eingabe);
+  for (const g of geheim) expect(r.text, `${eingabe} → ${g}`).not.toContain(g);
+  for (const b of bleibt) expect(r.text, `${eingabe} → ${b}`).toContain(b);
+  expect(r.anzahl, eingabe).toBeGreaterThanOrEqual(geheim.length > 0 ? 1 : 0);
+  return r;
+};
+
+describe('Schwärzung — bisherige Fälle bleiben geschwärzt (Regression)', () => {
+  it('privater Schlüssel', () => {
+    const r = weg('-----BEGIN RSA PRIVATE KEY-----\nTUlJRHVtbXlEdW1teQ==\n-----END RSA PRIVATE KEY-----', ['TUlJRHVtbXlEdW1teQ==']);
+    expect(r.anzahl).toBe(1);
+  });
+  it('Passwort-Hash', () => { expect(weg('admin:$apr1$dummysalt$abcdefghijklmnop', ['$apr1$dummysalt']).anzahl).toBe(1); });
+  it('export KEY=Wert am Zeilenanfang (auch mit Komma im Wert)', () => {
+    const r = weg('export DB_PASSWORD=platzhalter,teil2', ['platzhalter', 'teil2'], ['DB_PASSWORD=']);
+    expect(r.anzahl).toBe(1);
+  });
+  it('export KEY="Wert" zählt genau einmal', () => { expect(weg('export API_KEY="dummy1234abcd"', ['dummy1234abcd']).anzahl).toBe(1); });
+  it('URL-Zugangsdaten', () => { expect(weg('postgres://app:dummypass@db:5432/app', ['dummypass'], ['@db:5432']).anzahl).toBe(1); });
+  it('Bearer', () => { expect(weg('Authorization: Bearer dummyTokenAbcdefgh123456', ['dummyTokenAbcdefgh123456']).anzahl).toBe(1); });
+});
+
+describe('Schwärzung — neue Fälle', () => {
+  it('1: KEY=Wert mitten in der Zeile (Verbindungszeichenfolge)', () => {
+    const r = weg('Server=sql01;User Id=sa;Password=Dummy123;Encrypt=True', ['Dummy123'], ['Server=sql01', 'Encrypt=True', 'User Id=sa']);
+    expect(r.anzahl).toBe(1);
+  });
+  it('1: nach weiteren Trennzeichen', () => {
+    for (const [e, g] of [['a=1, secret=Dummy123x', 'Dummy123x'], ['f(token: Dummy123y)', 'Dummy123y'], ["x 'passwd'='Dummy123z'", 'Dummy123z'], ['{api_key=Dummy123w}', 'Dummy123w']] as const) weg(e, [g]);
+  });
+  it('2: Wert mit Leerzeichen in Anführungszeichen', () => {
+    weg('Password="Mein Dummy Wort"', ['Mein', 'Dummy Wort']);
+    weg("conn: password='Mein Dummy Wort' host=x", ['Mein', 'Dummy Wort'], ['host=x']);
+  });
+  it('nicht-geheimer Schlüssel verschluckt keinen geheimen dahinter', () => {
+    weg('conn: password=Dummy123', ['Dummy123'], ['conn: password=']);
+    weg('cmd -v x=1 --token abcd1234', ['abcd1234'], ['-v x=1']);
+  });
+  it('grep-Ausgabe datei:key=wert', () => {
+    weg('/opt/app/.env:DB_PASSWORD=Dummy123', ['Dummy123'], ['/opt/app/.env:DB_PASSWORD=']);
+    weg('config.yml:12:  secret: Dummy123', ['Dummy123']);
+  });
+  it('3: JSON in Textausgaben', () => {
+    const r = weg('{"password": "Dummy123", "user": "sa"}', ['Dummy123'], ['"user": "sa"']);
+    expect(r.anzahl).toBe(1);
+  });
+  it('4: Kommandozeilen-Argumente', () => {
+    weg('mytool --password Dummy123 --host x', ['Dummy123'], ['--host x']);
+    weg('mytool --password=Dummy123', ['Dummy123']);
+    weg('cli --token abcdef123456', ['abcdef123456']);
+    weg('New-Thing -Password Dummy123 -Name x', ['Dummy123'], ['-Name x']);
+    weg('sshpass -p Dummy123 ssh root@host', ['Dummy123'], ['ssh root@host']);
+    weg('mysql -u root -pDummy123 db', ['Dummy123'], ['-u root']);
+    weg('mytool --password "Mein Dummy" -v', ['Mein', 'Dummy"']);
+  });
+  it('5: Authorization Basic', () => {
+    weg('Authorization: Basic ZHVtbXk6ZHVtbXk=', ['ZHVtbXk6ZHVtbXk=']);
+    weg('Proxy-Authorization: basic ZHVtbXk6ZHVtbXk=', ['ZHVtbXk6ZHVtbXk=']);
+  });
+  it('6: Query-Parameter', () => {
+    const r = weg('GET /api?token=abc123456&api_key=def123456&x=1', ['abc123456', 'def123456'], ['x=1']);
+    expect(r.anzahl).toBe(2);
+  });
+  it('7: set -x-Präfix', () => { weg('+ PGPASSWORD=Dummy123 psql -h db', ['Dummy123'], ['psql -h db']); });
+  it('8: PWD/PW als eigenständige Schlüssel, PWD-Pfad bleibt', () => {
+    weg('pwd=Dummy123', ['Dummy123']);
+    weg('PW: Dummy123', ['Dummy123']);
+    weg('MYSQL_PWD=Dummy123', ['Dummy123']);
+    const pfad = schwaerze('PWD=/home/madh\nOLDPWD=/root');
+    expect(pfad.text).toBe('PWD=/home/madh\nOLDPWD=/root');
+    expect(pfad.anzahl).toBe(0);
+    expect(schwaerze('x PWD=/srv/app').anzahl).toBe(0);
+  });
+  it('8: GEHEIM_NAME — PWD/PW nur eigenständig', () => {
+    for (const k of ['pwd', 'PW', 'DB_PWD', 'mysql_pw', 'password', 'passwordLastSet']) expect(GEHEIM_NAME.test(k), k).toBe(true);
+    for (const k of ['cwd', 'pwdLastSet', 'upward', 'Encrypt', 'user', 'powershell']) expect(GEHEIM_NAME.test(k), k).toBe(false);
+  });
+  it('9: Nicht-Geheimnisse bleiben lesbar', () => {
+    for (const e of ['Encrypt=True;TrustServerCertificate=False', 'token_count: 42', 'user=sa host=db port=5432', '"user": "sa"']) {
+      const r = schwaerze(e);
+      expect(r.text, e).toBe(e);
+      expect(r.anzahl, e).toBe(0);
+    }
+    weg('passwordLastSet: 2026-11-15', ['2026-11-15']);
+  });
+  it('linear: 200 000 Zeichen in < 1 s', () => {
+    const muster = ['a'.repeat(200_000), ' '.repeat(200_000), 'a=' + ' '.repeat(200_000), ';a'.repeat(100_000), '-p'.repeat(100_000), 'mysql ' + '-'.repeat(200_000),
+      'password'.repeat(25_000), '"'.repeat(200_000), 'x:'.repeat(100_000), '--password '.repeat(18_000), 'Authorization: Basic ' + 'A'.repeat(200_000),
+      'a.'.repeat(100_000), '\n'.repeat(200_000), '(a='.repeat(66_000), 'x="'.repeat(66_000), " -pw '".repeat(33_000), 'mysql '.repeat(33_000), 'p=a '.repeat(50_000),
+      'token: '.repeat(28_000), 'sshpass -p '.repeat(18_000)];
+    for (const m of muster) {
+      const t0 = performance.now();
+      schwaerze(m);
+      expect(performance.now() - t0, m.slice(0, 20)).toBeLessThan(1000);
+    }
+  });
+});
