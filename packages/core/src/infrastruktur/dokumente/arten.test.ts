@@ -95,6 +95,12 @@ describe('alsMarkdown (Härtung)', () => {
     expect(md).toContain('````\na ``` b\n````');
     expect(md).toContain('`````mermaid\nx ```` y\n`````');
   });
+  it('sehr viele getrennte Backticks werfen nicht, Zaun bleibt 3', () => {
+    const text = '`a'.repeat(200000);
+    const md = mitBloecken([{ art: 'code', text }]);
+    expect(md).toContain('```\n`a');
+    expect(md).not.toContain('````\n');
+  });
   it('mehrzeiliger Grund bleibt im Zitat', () => {
     const md = mitBloecken([{ art: 'nichtBelegt', grund: 'eins\r\nzwei\n\ndrei' }]);
     expect(md).toContain('> **Nicht belegt:** eins\n> zwei\n>\n> drei');

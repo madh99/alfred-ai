@@ -6,7 +6,16 @@ function zelle(s: string): string {
 
 /** Zaun länger als jede Backtick-Folge im Inhalt (mindestens drei). */
 function zaun(text: string): string {
-  const laengste = Math.max(0, ...(text.match(/`+/g) ?? []).map((m) => m.length));
+  let laengste = 0;
+  let lauf = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 96) {
+      lauf++;
+      if (lauf > laengste) laengste = lauf;
+    } else {
+      lauf = 0;
+    }
+  }
   return '`'.repeat(Math.max(3, laengste + 1));
 }
 
