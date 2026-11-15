@@ -20,12 +20,13 @@ describe('CmdbRepository — eindeutige Auflösung', () => {
     expect(aufrufe[0]!.p).toEqual(['u', 'pkiiss01']);
   });
 
-  it('findDocumentsByIdPrefix: LIKE auf den ID-Anfang, je Benutzer, höchstens 2, Platzhalter im Anfang entschärft', async () => {
+  it('findDocumentsByIdPrefix: LIKE auf den ID-Anfang, je Benutzer, höchstens 2, ungültiger Anfang ergibt []', async () => {
     const { r, aufrufe } = repo([dok('d0c0d0c0-1'), dok('d0c0d0c0-2')]);
     expect((await r.findDocumentsByIdPrefix('u', 'd0c0d0')).map(d => d.id)).toEqual(['d0c0d0c0-1', 'd0c0d0c0-2']);
     expect(aufrufe[0]!.sql).toMatch(/user_id = \? AND id LIKE \? LIMIT 2/);
     expect(aufrufe[0]!.p).toEqual(['u', 'd0c0d0%']);
-    await r.findDocumentsByIdPrefix('u', 'ab%_cd');
-    expect(aufrufe[1]!.p).toEqual(['u', 'abcd%']);
+    // ungültige Anfänge: leere Liste, ohne Datenbankzugriff, nichts wird bereinigt
+    for (const x of ['%%%%%%', 'abc', 'ab%_cd1', 'ABCDEF%', '', 'g'.repeat(8), 'a'.repeat(37)]) expect(await r.findDocumentsByIdPrefix('u', x)).toEqual([]);
+    expect(aufrufe).toHaveLength(1);
   });
 });
