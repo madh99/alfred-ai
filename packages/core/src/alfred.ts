@@ -7324,7 +7324,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               proxmox: async (i) => {
                 const px = skillRegistry.get('proxmox');
                 if (!px) return { success: false, error: 'Proxmox-Skill nicht konfiguriert' };
-                return skillSandbox.execute(px, i, { userId: this.config.security?.ownerUserId ?? '', platform: 'api', chatId: '', conversationId: '' } as never);
+                // Identitäts-Regel: interner Aufruf unter der Master-UUID des Owners
+                const o = ownerAd() ?? '';
+                return skillSandbox.execute(px, i, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never);
               },
               proxmoxBackups: async () => {
                 const px = skillRegistry.get('proxmox') as unknown as { alleBackupsDaten?: () => Promise<{ jeVm: Record<number, { neueste?: string; anzahl: number }>; unerreichbar: Array<{ speicher: string; grund: string }> }> } | undefined;

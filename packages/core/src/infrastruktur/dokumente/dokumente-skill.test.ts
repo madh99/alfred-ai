@@ -604,6 +604,18 @@ describe('Skill dokumentation — betrieb_erzeugen', () => {
     expect(r.display).toContain('- proxmox: ok');
   });
 
+  it('Quelle mit Hinweis → Anzeige nennt ihn hinter „ok“, geschwärzt', async () => {
+    const t = await mitInstanz();
+    const q = t.deps.betriebQuellen!;
+    q.sicherung = async () => ({ stand: STAND, daten: { jobs: [], letzte: {}, unerreichbar: [{ speicher: 'pbs-unas', grund: 'token=Geheim123!' }] }, hinweis: 'Sicherungsspeicher nicht erreichbar: pbs-unas (token=Geheim123!)' });
+    const r = await t.skill.execute({ action: 'betrieb_erzeugen', instanz: 'pki-ad3033' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    const zeile = r.display!.split('\n').find(z => z.startsWith('- sicherung:'))!;
+    expect(zeile).toMatch(/^- sicherung: ok \(.+\) — Hinweis: Sicherungsspeicher nicht erreichbar: pbs-unas/);
+    expect(r.display).not.toContain('Geheim123!');
+    expect(r.display!.split('\n').find(z => z.startsWith('- proxmox:'))).not.toContain('Hinweis');
+  });
+
   it('(d) Freitext mit 601 Zeichen → Fehler, nichts gelesen oder gespeichert', async () => {
     const t = await mitInstanz();
     const assets = vi.spyOn(t.deps.betriebQuellen!, 'assets');

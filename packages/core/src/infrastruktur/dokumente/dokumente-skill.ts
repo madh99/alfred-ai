@@ -148,13 +148,13 @@ export class DokumenteDienst {
     return lege(dok, version, dateien.map(x => ({ name: x.fileName, inhalt: x.data })), this.d.ablage, this.d.datenOrdner);
   }
 
-  private anzeige(doc: CmdbDocument, dok: Dokument, dateien: SkillResultAttachment[], a: { lokal: string; pve2: { ok: boolean; fehler?: string } }, wort: string): string {
+  private anzeige(doc: CmdbDocument, dok: Dokument, dateien: SkillResultAttachment[], a: { lokal: string; pve2: { ok: boolean; fehler?: string } }, wort: string, hinweise: Record<string, string> = {}): string {
     const summen = dateien.filter(x => x.fileName.startsWith('rohlauf-')).map(x => `${x.fileName} ${sha(x.data)}`);
     // Betriebsdokument: keine Rohläufe — statt der Prüfsummen je Quelle ok oder Fehler (betroffene Kapitel nicht belegt)
     const herkunft = dok.kopf.art === 'betrieb'
       ? ['Quellen:', ...dok.kopf.quellen.filter(q => !q.quelle.startsWith('cmdb:')).map(q => (q.fehler
         ? `- ${q.quelle}: Fehler (${q.fehler}) — betroffene Kapitel nicht belegt`
-        : `- ${q.quelle}: ok (${q.stand})`))]
+        : `- ${q.quelle}: ok (${q.stand})${hinweise[q.quelle] ? ` — Hinweis: ${hinweise[q.quelle]}` : ''}`))]
       : [`Prüfsummen (SHA-256): ${summen.length ? summen.join(', ') : 'keine (kein Lauf)'}`];
     return [
       `✅ ${dok.kopf.titel} — Version ${doc.version} ${wort} (Dokument ${doc.id})`,
@@ -166,7 +166,8 @@ export class DokumenteDienst {
   }
 
   /** speichert (nie gekürzt), rendert und legt ab */
-  async speichere(o: string, dok: Dokument, link: { typ: CmdbLinkedEntityType; id: string }): Promise<Erzeugt> {
+  /** hinweise: belegte Einschränkungen je Quelle (nur für die Anzeige, geschwärzt) */
+  async speichere(o: string, dok: Dokument, link: { typ: CmdbLinkedEntityType; id: string }, hinweise: Record<string, string> = {}): Promise<Erzeugt> {
     const md = alsMarkdown(dok);
     if (md.length > MAX_INHALT) throw new Error(`Dokument zu groß: ${md.length} Zeichen Markdown, höchstens ${MAX_INHALT} — nicht gespeichert`);
     // Namen vor dem Speichern prüfen: ein gespeichertes Dokument ohne Ablage soll es nicht geben
@@ -182,7 +183,7 @@ export class DokumenteDienst {
       const dateien = await this.dateien(dok, doc.version);
       const a = await this.ablegen(dok, doc.version, dateien);
       this.d.protokoll?.('Dokument erzeugt', { docId: doc.id, art: dok.kopf.art, version: doc.version, ordner: dok.kopf.ordner, lokal: a.lokal, pve2: a.pve2.ok, pve2Fehler: a.pve2.fehler });
-      return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'gespeichert') };
+      return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'gespeichert', hinweise) };
     });
   }
 
@@ -282,7 +283,10 @@ export class DokumenteDienst {
     if (i.dokumentart !== 'betrieb') throw new Error(`Instanz „${i.name}“ ist für ${i.dokumentart}, nicht für ein Betriebsdokument — Betriebs-Instanz mit dokumentart betrieb anlegen`);
     const { p, g } = await sammleBetrieb(q, o, i.parameter);
     const dok = baueBetrieb(i.name, p, g, frei, this.jetzt());
-    return this.speichere(o, dok, { typ: 'bauplan_instanz', id: i.id });
+    // Quellen-Hinweise (z. B. Sicherungsspeicher nicht erreichbar) unter dem Namen, den der Kopf führt (assets → cmdb)
+    const hinweise: Record<string, string> = {};
+    for (const [k, v] of Object.entries(g)) if (v?.hinweis) hinweise[k === 'assets' ? 'cmdb' : k] = schwaerze(v.hinweis).text.slice(0, 300);
+    return this.speichere(o, dok, { typ: 'bauplan_instanz', id: i.id }, hinweise);
   }
 
   async instanzAnlegen(o: string, name: string, refs: string[]): Promise<BauplanInstanzDaten> {
