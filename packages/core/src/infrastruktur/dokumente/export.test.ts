@@ -88,6 +88,18 @@ describe('Dokument-Export', () => {
     for (const c of [7, 27]) expect(xml.includes(String.fromCharCode(c))).toBe(false);
   });
 
+  it('DOCX entfernt verwaiste Surrogate und U+FFFE/U+FFFF, behält Emoji', async () => {
+    const d = beispiel();
+    const lone = String.fromCharCode(0xd83d);
+    const fffe = String.fromCharCode(0xfffe);
+    const ffff = String.fromCharCode(0xffff);
+    d.kapitel[0]!.bloecke = [{ art: 'absatz', text: 'a' + lone + 'b' + fffe + ffff + 'c' + String.fromCodePoint(0x1f600) }];
+    const xml = await dokumentXml(await alsDocx(d));
+    expect(xml).toContain('abc' + String.fromCodePoint(0x1f600));
+    const ohneEmoji = xml.split(String.fromCodePoint(0x1f600)).join('');
+    for (const c of [lone, fffe, ffff]) expect(ohneEmoji.includes(c)).toBe(false);
+  });
+
   it('DOCX-Tabelle hat 100 Prozent Breite', async () => {
     const xml = await dokumentXml(await alsDocx(beispiel()));
     expect(xml).toContain(`<w:tblW w:type="pct" w:w="100%"/>`);

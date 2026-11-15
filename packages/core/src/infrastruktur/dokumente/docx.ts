@@ -1,13 +1,19 @@
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import type { Block, Dokument } from './modell.js';
 
-/** Steuerzeichen, die in XML 1.0 unzulässig sind (Word meldet die Datei sonst als beschädigt). */
+/** Behält nur Zeichen der XML-1.0-Produktion Char (Word meldet die Datei sonst als beschädigt); verwaiste Surrogate entfallen. */
 function sauber(t: string): string {
   let aus = '';
   for (const z of t) {
-    const c = z.charCodeAt(0);
-    if (c <= 8 || c === 11 || c === 12 || (c >= 14 && c <= 31)) continue;
-    aus += z;
+    const c = z.codePointAt(0) ?? 0;
+    const ok =
+      c === 0x9 ||
+      c === 0xa ||
+      c === 0xd ||
+      (c >= 0x20 && c <= 0xd7ff) ||
+      (c >= 0xe000 && c <= 0xfffd) ||
+      (c >= 0x10000 && c <= 0x10ffff);
+    if (ok) aus += z;
   }
   return aus;
 }
