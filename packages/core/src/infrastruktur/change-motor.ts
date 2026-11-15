@@ -9,6 +9,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
+import { schwaerze } from '../fernzugriff/kaefig.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
 import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
@@ -57,6 +58,13 @@ export interface MotorDeps {
   zeitplan?: (o: string, c: CmdbChangeRequest) => Promise<{ jetzt: boolean; grund: string; startAb?: string }>;
   /** I4b Teil 5 — nach Abschluss eines Changes eines Vorhabens: Soll/Ist-Abgleich (Text für die Meldung) */
   nachAbschluss?: (o: string, c: CmdbChangeRequest) => Promise<string | undefined>;
+  /**
+   * Dokument-Vorlagen V2 — nach dem Ende jedes Changes (gespeicherter Stand): Abnahmeprotokoll erzeugen; Rückgabe = Zusatzzeile der
+   * Abschlussmeldung. Darf den Abschluss nie scheitern lassen: Fehler werden zur Zeile, nach `nachEndeZeitMs` meldet der Motor trotzdem.
+   */
+  nachEnde?: (o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled') => Promise<string | undefined>;
+  /** Zeitgrenze für nachEnde (Standard 120 s) */
+  nachEndeZeitMs?: number;
   /** I4b Teil 2 — IDs der Assets, die von den gegebenen abhängen (CMDB, eingehende Beziehungen) */
   abhaengigeIds?: (o: string, ids: string[]) => Promise<string[]>;
   /** I4b — Start/Ende/Störung an die Empfänger der Benachrichtigungsregeln */
@@ -73,6 +81,8 @@ export interface MotorDeps {
 /** Skills, deren Discovery-Quelle nach einem Change neu gelesen wird (Skill → CMDB-Quelle) */
 const QUELLE: Record<string, string> = { proxmox: 'proxmox', docker: 'docker', unifi: 'unifi', nginx_proxy_manager: 'nginx_proxy_manager', pfsense: 'pfsense', mikrotik: 'mikrotik', cloudflare_dns: 'cloudflare_dns', fernzugriff: 'fernzugriff' };
 const FRAGE_GUELTIG_MS = 24 * 3_600_000;
+/** PDF, DOCX und Kopie auf pve2 dauern Sekunden — ein hängender Fernzugang darf die Abschlussmeldung nicht länger aufhalten */
+const NACH_ENDE_ZEIT_MS = 120_000;
 const hash = (n: string) => createHash('sha256').update(n).digest('hex');
 
 /**
@@ -99,6 +109,7 @@ export function ownerFrageVeraltet(c: CmdbChangeRequest | undefined | null, para
 
 /** v1729 — Anteile des Grundtakts für die ersten Prüfungen eines Warte-Schritts (10 s → 2, 2, 3, 5 s, danach 10 s) */
 const WARTEN_STAFFEL = [0.2, 0.2, 0.3, 0.5];
+const ZEIT = Symbol('zeitueberschreitung');
 
 /**
  * Dokument-Vorlagen: eine gespeicherte Plan-Korrektur (lauf.korrektur, gesetzt von der ITSM-Ablage) als Verlaufseintrag merken, sobald der
@@ -699,12 +710,40 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     if (status === 'failed' || status === 'rolled_back') await this.d.nachStoerung?.(o, c, `${status === 'failed' ? 'fehlgeschlagen' : 'zurückgerollt'}${grund ? `: ${grund.slice(0, 200)}` : ''}`).catch(() => undefined);
     lauf.phase = 'fertig'; lauf.ende = this.iso(); if (grund) lauf.grund = grund; delete lauf.frage;
     const bericht = laufBericht(c.title, (c.schritte ?? []) as ChangeSchritt[], lauf, status) + (discovery.length ? `\nDiscovery danach: ${discovery.join('; ')}` : '');
-    await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht, linkedIncidentId: lauf.incidentId });
+    const gespeichert = await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht, linkedIncidentId: lauf.incidentId });
     if (this.d.incident && lauf.incidentId) await this.incidentZumEnde(o, c, lauf, status, bericht);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
     const sollIst = status === 'completed' && c.vorhabenId ? await this.d.nachAbschluss?.(o, c).catch(() => undefined) : undefined;
-    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}`, status === 'failed');
+    const doku = await this.dokumentNachEnde(o, gespeichert ?? { ...c, lauf }, status);
+    await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}${doku ? `\n\n📄 ${doku}` : ''}`, status === 'failed');
     await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
+  }
+
+  /** Dokument-Vorlagen V2 — Abnahmeprotokoll nach dem Ende; wirft nie, wartet höchstens nachEndeZeitMs (danach läuft es im Hintergrund weiter). */
+  private async dokumentNachEnde(o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled'): Promise<string | undefined> {
+    const hook = this.d.nachEnde;
+    if (!hook) return undefined;
+    const ms = this.d.nachEndeZeitMs ?? NACH_ENDE_ZEIT_MS;
+    const fehler = (err: unknown) => schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300);
+    // auch ein synchroner Wurf wird zur abgelehnten Promise
+    const erzeugung = Promise.resolve().then(() => hook(o, c, status));
+    let zeitgeber: ReturnType<typeof setTimeout> | undefined;
+    const grenze = new Promise<typeof ZEIT>(r => { zeitgeber = setTimeout(() => r(ZEIT), ms); });
+    try {
+      const r = await Promise.race([erzeugung, grenze]);
+      if (r !== ZEIT) return r;
+      this.log('Abnahmeprotokoll Zeitüberschreitung', { id: c.id, ms });
+      void erzeugung.then(
+        zeile => this.log('Abnahmeprotokoll nach Zeitüberschreitung fertig', { id: c.id, zeile }),
+        err => this.log('Abnahmeprotokoll nach Zeitüberschreitung fehlgeschlagen', { id: c.id, fehler: fehler(err) }),
+      );
+      return `Abnahmeprotokoll noch nicht fertig: Zeitüberschreitung nach ${Math.round(ms / 1000)} s — die Erzeugung läuft im Hintergrund weiter (Ergebnis im Log)`;
+    } catch (err) {
+      this.log('Abnahmeprotokoll nach Change-Ende fehlgeschlagen', { id: c.id, fehler: fehler(err) });
+      return `Abnahmeprotokoll nicht erstellt: ${fehler(err)}`;
+    } finally {
+      clearTimeout(zeitgeber);
+    }
   }
 
   /**

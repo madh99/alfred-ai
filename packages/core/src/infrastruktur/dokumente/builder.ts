@@ -5,7 +5,7 @@ import { schwaerze } from '../../fernzugriff/kaefig.js';
 import type { ChangeLauf, SchrittErgebnis, VerlaufEintrag } from '../change-lauf.js';
 import type { ChangeSchritt } from '../change-schritte.js';
 import { DOKU_ARTEN, pruefeDokument } from './arten.js';
-import { beweisAnhang, pruefAnleitung, zeitText } from './beweis.js';
+import { beweisAnhang, pruefAnleitung, PRUEF_HINWEIS, zeitText } from './beweis.js';
 import { ABGESCHNITTEN_GRUND } from './sammler.js';
 import type { Anhang, Block, DokuArtKey, Dokument, Kapitel } from './modell.js';
 
@@ -13,6 +13,7 @@ type VerlaufInfo = { eintraege: VerlaufEintrag[]; quelle: string; abgeschnitten?
 type VerlaufMap = Map<string, VerlaufInfo>;
 
 const ANGELEGT = new Set(['create_network', 'create_zone', 'create_firewall_policy', 'provision_windows_vm', 'allow_network_on_port']);
+const HALT_LUECKE = 'Halte-Incidents erfassen nur den ersten Halt eines Laufs; weitere Halte vor Einführung des Verlaufs (v1873) sind nicht belegt.';
 const VERLAUF_ART: Record<VerlaufEintrag['art'], string> = { halt: 'Halt', wiederholen: 'Wiederholt', ueberspringen: 'Übersprungen', plan_geaendert: 'Plan geändert', ausgelassen: 'Ausgelassen' };
 
 /** geschwärzt und danach gekürzt (ein Geheimnis an der Schnittstelle bleibt so nicht halb stehen) */
@@ -67,8 +68,9 @@ function verlaufHinweise(c: CmdbChangeRequest, v?: VerlaufInfo): Block[] {
   const bloecke: Block[] = [];
   // Abfragegrenze der Incidents erreicht: es kann weitere Halte geben — offen belegen, nie glätten
   if (v?.abgeschnitten) bloecke.push({ art: 'nichtBelegt', grund: `Change ${id8(c)}: ${ABGESCHNITTEN_GRUND}` });
-  if (v?.quelle === 'incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Quelle: rekonstruiert aus Halte-Incidents (dort stehen nur Halte, keine Wiederholungen oder Planänderungen).` });
-  if (v?.quelle === 'lauf+incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Halte rekonstruiert aus Halte-Incidents (vor Einführung des Verlaufs im Lauf), übrige Einträge aus dem Lauf.` });
+  // Live-Beweis V1 (288c3716: 4 Halte, 1 Incident): der Motor legte vor dem Verlauf nur beim ERSTEN Halt eines Laufs einen Incident an
+  if (v?.quelle === 'incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Quelle: rekonstruiert aus Halte-Incidents (dort stehen nur Halte, keine Wiederholungen oder Planänderungen). ${HALT_LUECKE}` });
+  if (v?.quelle === 'lauf+incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Halte rekonstruiert aus Halte-Incidents (vor Einführung des Verlaufs im Lauf), übrige Einträge aus dem Lauf. ${HALT_LUECKE}` });
   const k = laufVon(c)?.korrektur;
   if (k && !(v?.eintraege ?? []).some(e => e.art === 'plan_geaendert' && e.zeit === k.zeit)) {
     bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Plan ab Schritt ${k.abSchritt} am ${zeitText(k.zeit)} korrigiert, noch nicht entschieden (nur die letzte Korrektur ist erfasst).` });
@@ -96,7 +98,7 @@ function beweise(changes: CmdbChangeRequest[]): { bloecke: Block[]; anhaenge: An
     bloecke.push(...b.bloecke);
     if (b.rohlauf && b.pruefsumme) { anhaenge.push(b.rohlauf); summen.push({ name: b.rohlauf.name, pruefsumme: b.pruefsumme }); }
   }
-  if (summen.length) anhaenge.push(pruefAnleitung(summen));
+  if (summen.length) { bloecke.push({ art: 'absatz', text: PRUEF_HINWEIS }); anhaenge.push(pruefAnleitung(summen)); }
   return { bloecke, anhaenge };
 }
 

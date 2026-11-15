@@ -13,6 +13,7 @@ import { alsPdf } from './pdf.js';
 import { alsDocx } from './docx.js';
 import { findeChange, verlaufVon, type DokuQuellen } from './sammler.js';
 import { lege, pruefeAblageNamen, PVE2_WURZEL, type AblageDeps } from './ablage.js';
+import { schwaerze } from '../../fernzugriff/kaefig.js';
 import type { DokuArtKey, Dokument } from './modell.js';
 import type { VerlaufEintrag } from '../change-lauf.js';
 
@@ -72,6 +73,22 @@ export function pruefeGespeichert(dok: Dokument): string[] {
   const v = dok.kopf.artVersion;
   if (!Number.isInteger(v) || v < 1 || v > art.version) return [`Version der Dokumentart ${String(v)} unbekannt (bekannt: 1–${art.version})`];
   return pruefeDokument({ ...dok, kopf: { ...dok.kopf, artVersion: art.version } });
+}
+
+/** vor dem Start verworfen (status cancelled ohne Laufbeginn) — läuft nie, beendet also auch keine Serie */
+const vorStartVerworfen = (x: CmdbChangeRequest) => x.status === 'cancelled' && !(x.lauf as { start?: string } | undefined)?.start;
+
+/** Standard-Serie: c und rekursiv alle Vorgänger (abhaengigVon) vom Typ standard, Vorgänger zuerst; jedes Glied einmal (Zyklen enden). */
+function serieVon(c: CmdbChangeRequest, alle: Map<string, CmdbChangeRequest>): CmdbChangeRequest[] {
+  const serie: CmdbChangeRequest[] = []; const gesehen = new Set<string>();
+  const besuche = (x: CmdbChangeRequest) => {
+    if (gesehen.has(x.id)) return;
+    gesehen.add(x.id);
+    for (const id of x.abhaengigVon ?? []) { const v = alle.get(id); if (v?.type === 'standard') besuche(v); }
+    serie.push(x);
+  };
+  besuche(c);
+  return serie;
 }
 
 const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
@@ -153,10 +170,35 @@ export class DokumenteDienst {
     return this.speichere(o, dok, { typ: 'change_request', id: c.id });
   }
 
-  /** Abnahmeprotokoll nach dem Ende eines Changes (Task 7 ergänzt die Standard-Serien); liefert die Anzeigezeile. */
+  /**
+   * V2 — Abnahmeprotokoll nach dem Ende eines Changes (Hook des Change-Motors); liefert die Zeile für die Abschlussmeldung, wirft nie.
+   * normal/emergency: Abnahme für den neu geladenen Change (gespeicherter Lauf). standard: kein Einzelprotokoll — erst wenn das letzte
+   * Glied einer Serie endet (kein anderer Standard-Change hängt von ihm ab), ein Sammelprotokoll über die Serie; sonst undefined.
+   */
   async abnahmeNachEnde(o: string, c: CmdbChangeRequest): Promise<string | undefined> {
-    const e = await this.abnahme(o, c, {});
-    return e.display.split('\n')[0];
+    try {
+      const q = await this.d.quellen.changes(o);
+      const alle = new Map(q.changes.map(x => [x.id, x]));
+      // nicht in der Liste (Grenze): der vom Motor übergebene, gerade gespeicherte Stand
+      const frisch = alle.get(c.id) ?? c;
+      if (frisch.type !== 'standard') return this.zeileNachEnde('Abnahmeprotokoll erstellt', await this.abnahme(o, frisch, {}));
+      // ohne vollständige Liste ist weder „letztes Glied“ noch die Serie belegt — nie raten
+      if (q.abgeschnitten) throw new Error('die Change-Liste hat die Abfragegrenze erreicht — Serie und Nachfolger nicht sicher bestimmbar');
+      if (q.changes.some(x => x.id !== frisch.id && x.type === 'standard' && (x.abhaengigVon ?? []).includes(frisch.id) && !vorStartVerworfen(x))) return undefined;
+      const serie = serieVon(frisch, alle);
+      const dok = baueAbnahme(serie, await this.verlauf(o, serie), {}, this.jetzt());
+      const e = await this.speichere(o, dok, { typ: 'change_request', id: frisch.id });
+      return this.zeileNachEnde(serie.length > 1 ? 'Sammelprotokoll erstellt' : 'Abnahmeprotokoll erstellt', e);
+    } catch (err) {
+      const grund = schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300);
+      this.d.protokoll?.('Abnahmeprotokoll nach Change-Ende nicht erstellt', { changeId: c.id, fehler: grund });
+      return `Abnahmeprotokoll nicht erstellt: ${grund}`;
+    }
+  }
+
+  private zeileNachEnde(wort: string, e: Erzeugt): string {
+    const pve2 = e.display.split('\n').find(z => z.startsWith('pve2: fehlgeschlagen'));
+    return `${wort}: ${e.dokument.kopf.titel} — Version ${e.doc.version}, Dokument ${e.doc.id}${pve2 ? `; ${pve2}` : ''}`;
   }
 
   async testprotokoll(o: string, instanz: string, frei: { zweck?: string; befunde_produktion?: string }): Promise<Erzeugt> {

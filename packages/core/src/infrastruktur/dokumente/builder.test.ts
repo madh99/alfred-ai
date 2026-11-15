@@ -54,6 +54,10 @@ describe('Abnahmeprotokoll', () => {
     expect(text(kap(d, 'kopf').bloecke)).toContain('288c3716');
     expect(text(kap(d, 'kopf').bloecke)).toContain('abcdef012345');
     expect(d.anhaenge.map(a => a.name)).toEqual(['rohlauf-288c3716.json', 'PRUEFUNG.txt']);
+    // Live-Beweis V1: Erklärung nicht in PRUEFUNG.txt (sonst „improperly formatted“), sondern im Kapitel Beweise
+    for (const z of d.anhaenge.find(a => a.name === 'PRUEFUNG.txt')!.inhalt.trimEnd().split('\n')) expect(z).toMatch(/^[0-9a-f]{64}  [\w.-]+$/);
+    expect(text(kap(d, 'beweise').bloecke)).toContain('sha256sum -c PRUEFUNG.txt');
+    expect(text(kap(d, 'beweise').bloecke)).toContain('CMDB');
     expect(kap(d, 'zweck').bloecke).toEqual([{ art: 'frei', feld: 'zweck', text: 'Lab für TLS-Tests' }]);
     expect(kap(d, 'abweichungen').bloecke).toEqual([{ art: 'frei', feld: 'abweichungen' }]);
     expect(kap(d, 'verlauf').bloecke).toEqual([{ art: 'nichtBelegt', grund: 'kein Verlauf erfasst' }]);
@@ -79,6 +83,8 @@ describe('Abnahmeprotokoll', () => {
     expect(tabellen(kap(d, 'schritte').bloecke)).toHaveLength(2);
     const verlauf = text(kap(d, 'verlauf').bloecke);
     expect(verlauf).toContain('rekonstruiert aus Halte-Incidents');
+    // Live-Beweis V1 (288c3716, 4 Halte, 1 Incident): die Lücke wird offen genannt
+    expect(verlauf).toContain('Halte-Incidents erfassen nur den ersten Halt eines Laufs; weitere Halte vor Einführung des Verlaufs (v1873) sind nicht belegt.');
     expect(verlauf).toContain('kein Verlauf erfasst');
     expect(verlauf).not.toContain('abc123geheim');
     expect(d.anhaenge.map(a => a.name)).toEqual(['rohlauf-288c3716.json', 'rohlauf-9f8e7d6c.json', 'PRUEFUNG.txt']);
@@ -111,6 +117,8 @@ describe('Testprotokoll', () => {
     expect(abbauText).not.toContain('Lab-Netz anlegen');
     expect(kap(d, 'befunde').bloecke).toEqual([{ art: 'frei', feld: 'befunde_produktion' }]);
     expect(d.anhaenge.map(a => a.name)).toEqual(['rohlauf-288c3716.json', 'rohlauf-3a5b7c9d.json', 'rohlauf-9f8e7d6c.json', 'PRUEFUNG.txt']);
+    expect(text(kap(d, 'beweise').bloecke)).toContain('sha256sum -c PRUEFUNG.txt');
+    for (const z of d.anhaenge.find(a => a.name === 'PRUEFUNG.txt')!.inhalt.trimEnd().split('\n')) expect(z).toMatch(/^[0-9a-f]{64}  [\w.-]+$/);
   });
 
   it('ohne Testfälle und Verbindungsprüfung → nicht belegt statt geglättet', () => {
@@ -240,6 +248,10 @@ password=Geheim123!` };
     const entschieden = new Map([[offen.id, { eintraege: [{ zeit: korrektur.zeit, art: 'plan_geaendert' as const, schritt: 2, text: 'Plan ab Schritt 2 korrigiert' }], quelle: 'lauf' }]]);
     expect(text(kap(baueAbnahme([offen], entschieden, {}, JETZT), 'verlauf').bloecke)).not.toContain('noch nicht entschieden');
     const gemischt = new Map([[offen.id, { eintraege: [{ zeit: 'z', art: 'halt' as const, schritt: 2, text: 'h' }], quelle: 'lauf+incidents' }]]);
-    expect(text(kap(baueAbnahme([aufbau], gemischt, {}, JETZT), 'verlauf').bloecke)).toContain('rekonstruiert aus Halte-Incidents');
+    const gemischtText = text(kap(baueAbnahme([aufbau], gemischt, {}, JETZT), 'verlauf').bloecke);
+    expect(gemischtText).toContain('rekonstruiert aus Halte-Incidents');
+    expect(gemischtText).toContain('Halte-Incidents erfassen nur den ersten Halt eines Laufs; weitere Halte vor Einführung des Verlaufs (v1873) sind nicht belegt.');
+    // Verlauf nur aus dem Lauf: kein Lückenhinweis
+    expect(text(kap(baueAbnahme([offen], entschieden, {}, JETZT), 'verlauf').bloecke)).not.toContain('erfassen nur den ersten Halt');
   });
 });

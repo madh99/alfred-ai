@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
-import { kanonisch, geschwaerzt, zeitText, beweisAnhang, pruefAnleitung } from './beweis.js';
+import { kanonisch, geschwaerzt, zeitText, beweisAnhang, pruefAnleitung, PRUEF_HINWEIS } from './beweis.js';
 
 function change(ausgabe: string, extra: Record<string, unknown> = {}): CmdbChangeRequest {
   return {
@@ -107,10 +107,17 @@ describe('Beweis-Anhang', () => {
     expect(zeitText(undefined)).toBe('—');
   });
 
-  it('pruefAnleitung im sha256sum-Format', () => {
-    const a = pruefAnleitung([{ name: 'rohlauf-288c3716.json', pruefsumme: 'ab' }]);
+  it('pruefAnleitung: PRUEFUNG.txt enthält nur Zeilen im sha256sum-Format (sha256sum -c meldet keine Formatfehler)', () => {
+    const h1 = 'a'.repeat(64); const h2 = '0123456789abcdef'.repeat(4);
+    const a = pruefAnleitung([{ name: 'rohlauf-288c3716.json', pruefsumme: h1 }, { name: 'rohlauf-9f8e7d6c.json', pruefsumme: h2 }]);
     expect(a.name).toBe('PRUEFUNG.txt');
-    expect(a.inhalt).toContain('ab  rohlauf-288c3716.json');
-    expect(a.inhalt).toContain('sha256sum -c');
+    expect(a.inhalt.endsWith('\n')).toBe(true);
+    const zeilen = a.inhalt.slice(0, -1).split('\n');
+    expect(zeilen).toEqual([`${h1}  rohlauf-288c3716.json`, `${h2}  rohlauf-9f8e7d6c.json`]);
+    for (const z of zeilen) expect(z).toMatch(/^[0-9a-f]{64}  [\w.-]+$/);
+    // die Erklärung steht im Dokument (Kapitel Beweise), nicht in der Prüfdatei
+    expect(PRUEF_HINWEIS).toContain('sha256sum -c PRUEFUNG.txt');
+    expect(PRUEF_HINWEIS).toContain('CMDB');
+    expect(PRUEF_HINWEIS).toContain('geschwärzten Rohlauf');
   });
 });

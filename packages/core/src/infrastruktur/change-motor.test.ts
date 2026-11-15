@@ -529,6 +529,58 @@ describe('I4 Ausführungsmotor', () => {
     expect(await v.motor.steuern('o', 'chg-1', 'ueberspringen')).toContain('Schritt 2 verwendet');
   });
 
+  it('V2: nachEnde genau einmal mit completed und dem gespeicherten Stand; Zeile steht in der Abschlussmeldung', async () => {
+    const w = welt(probe());
+    const aufrufe: Array<{ id: string; status: string; phase?: string; cStatus: string }> = [];
+    w.deps.nachEnde = async (_o, c, status) => { aufrufe.push({ id: c.id, status, phase: (c.lauf as ChangeLauf | undefined)?.phase, cStatus: c.status }); return 'Abnahmeprotokoll erstellt: Probe (Dokument d1)'; };
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    expect(aufrufe).toEqual([{ id: 'chg-1', status: 'completed', phase: 'fertig', cStatus: 'completed' }]);
+    const m = w.meldungen.at(-1)!;
+    expect(m).toContain('✅');
+    expect(m).toContain('Abnahmeprotokoll erstellt: Probe (Dokument d1)');
+  });
+
+  it('V2: wirft nachEnde, bleibt der Change completed und die Meldung nennt „Abnahmeprotokoll nicht erstellt“', async () => {
+    const w = welt(probe());
+    let n = 0;
+    w.deps.nachEnde = async () => { n++; throw new Error('PDF kaputt'); };
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(n).toBe(1);
+    expect(w.c.status).toBe('completed');
+    expect(w.meldungen.at(-1)).toContain('✅');
+    expect(w.meldungen.at(-1)).toContain('Abnahmeprotokoll nicht erstellt: PDF kaputt');
+  });
+
+  it('V2: hängt nachEnde, meldet der Motor nach der Zeitgrenze trotzdem ab (Erzeugung läuft im Hintergrund weiter)', async () => {
+    const w = welt(probe());
+    const log: string[] = [];
+    let fertig!: (z: string) => void;
+    w.deps.nachEnde = () => new Promise<string>(r => { fertig = r; });
+    w.deps.nachEndeZeitMs = 10;
+    w.deps.protokoll = (msg) => { log.push(msg); };
+    await w.motor.anstossen();
+    // warte() sieht den Lauf erst nach dem Start; die Zeitgrenze läuft echt (10 ms)
+    for (let i = 0; i < 200 && !w.meldungen.some(m => m.startsWith('✅')); i++) await new Promise(r => setTimeout(r, 5));
+    expect(w.c.status).toBe('completed');
+    expect(w.meldungen.at(-1)).toContain('✅');
+    expect(w.meldungen.at(-1)).toContain('Abnahmeprotokoll noch nicht fertig: Zeitüberschreitung nach 0 s');
+    fertig('Abnahmeprotokoll erstellt: spät');
+    await new Promise(r => setTimeout(r, 5));
+    expect(log).toContain('Abnahmeprotokoll nach Zeitüberschreitung fertig');
+  });
+
+  it('V2: nachEnde auch bei Rückweg/Abbruch mit dem jeweiligen Status', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    const st: string[] = [];
+    w.deps.nachEnde = async (_o, _c, s) => { st.push(s); return undefined; };
+    await w.motor.anstossen(); await warte(w.motor);
+    expect(st).toEqual([]); // angehalten ist kein Ende
+    await w.motor.steuern('o', 'chg-1', 'rueckweg'); await warte(w.motor);
+    expect(st).toEqual(['rolled_back']);
+    expect(w.meldungen.at(-1)).not.toContain('Abnahmeprotokoll');
+  });
+
   it('S1: Halt und Rückweg melden sich an nachStoerung (Sperre der Standard-Vorlage)', async () => {
     const w = welt(probe(), { snapshotFehlt: true });
     const gemeldet: string[] = [];

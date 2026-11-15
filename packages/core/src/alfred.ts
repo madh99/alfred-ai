@@ -7726,6 +7726,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             fragenAufraeumen: ownerFragenAufraeumen,
             // S1 — hält ein Change aus einer Standard-Vorlage an oder rollt zurück, wird die Vorlage gesperrt (überprüfen)
             nachStoerung: async (o, c, grund) => { const v = c.freigegebenUeber?.startsWith('standard:') ? c.freigegebenUeber.slice(9) : /^Standard-Serie ([a-z_]+)/.exec(c.description ?? '')?.[1]; if (v) await standardRef?.sperre(o, v, `${c.title} (${c.id.slice(0, 8)}) ${grund}`); },
+            // Dokument-Vorlagen V2 — Abnahmeprotokoll nach jedem Change-Ende; dieselbe Dienst-Instanz wie der Skill (gemeinsame Versions-Kette)
+            nachEnde: async (o, c) => this.dokumenteDienst ? this.dokumenteDienst.abnahmeNachEnde(o, c) : undefined,
             protokoll: (msg, daten) => this.logger.info(daten, msg),
             zeitplan: (o, c) => wartungsDienst.zeitplan(o, c),
             tresor: this.tresor,
