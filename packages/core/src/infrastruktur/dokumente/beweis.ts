@@ -115,6 +115,7 @@ export function pruefAnleitung(eintraege: Array<{ name: string; pruefsumme: stri
   const text = [
     'Die Prüfsumme belegt, dass die Datei seit der Erzeugung unverändert ist, sofern die Prüfsumme mit der in Alfreds CMDB hinterlegten übereinstimmt.',
     'Sie gilt für den geschwärzten Rohlauf zum Erzeugungszeitpunkt.',
+    'Prüfen: im Ordner der Dateien `sha256sum -c PRUEFUNG.txt` ausführen; jede Datei muss „OK“ melden.',
     '',
     zeilen,
     '',

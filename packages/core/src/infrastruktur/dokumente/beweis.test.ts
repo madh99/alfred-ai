@@ -102,5 +102,6 @@ describe('Beweis-Anhang', () => {
     const a = pruefAnleitung([{ name: 'rohlauf-288c3716.json', pruefsumme: 'ab' }]);
     expect(a.name).toBe('PRUEFUNG.txt');
     expect(a.inhalt).toContain('ab  rohlauf-288c3716.json');
+    expect(a.inhalt).toContain('sha256sum -c');
   });
 });
