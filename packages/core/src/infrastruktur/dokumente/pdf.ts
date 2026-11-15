@@ -18,7 +18,7 @@ export function winAnsi(t: string): string {
     '→': '->',
   };
   let aus = '';
-  for (const z of t) {
+  for (const z of t.normalize('NFC')) {
     const ersatz = fest[z];
     if (ersatz !== undefined) {
       aus += ersatz;
@@ -66,6 +66,10 @@ export async function alsPdf(d: Dokument): Promise<Buffer> {
         for (const p of b.punkte) text(`- ${p}`);
         break;
       case 'tabelle': {
+        if (b.kopf.length === 0) {
+          text('(Tabelle ohne Spalten)');
+          break;
+        }
         code([b.kopf, ...b.zeilen].map((z) => z.map(kuerzen).join(' | ')).join('\n'));
         break;
       }

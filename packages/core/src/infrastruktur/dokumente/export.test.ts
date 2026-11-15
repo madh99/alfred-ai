@@ -1,8 +1,16 @@
+import { createRequire } from 'node:module';
 import { describe, it, expect } from 'vitest';
 import type { Dokument } from './modell.js';
 import { alsPdf } from './pdf.js';
 import { alsDocx } from './docx.js';
 import { winAnsi } from './pdf.js';
+
+async function dokumentXml(b: Buffer): Promise<string> {
+  const req = createRequire(createRequire(import.meta.url).resolve('docx'));
+  const JSZip = req('jszip');
+  const z = await JSZip.loadAsync(b);
+  return z.file('word/document.xml').async('string');
+}
 
 function beispiel(): Dokument {
   return {
@@ -71,5 +79,29 @@ describe('Dokument-Export', () => {
   it('winAnsi ersetzt Zeichen außerhalb von Latin-1', () => {
     expect(winAnsi('✅ „x“ — ü→')).toBe('[OK] "x" - ü->');
     expect(winAnsi('❌ ‚a‘ ’ – … ß 😀')).toBe('[FEHLER] \'a\' \' - ... ß ?');
+  });
+  it('DOCX entfernt unzulässige Steuerzeichen', async () => {
+    const d = beispiel();
+    d.kapitel[0]!.bloecke.push({ art: 'code', text: 'a' + String.fromCharCode(7) + 'b' + String.fromCharCode(27) + 'c' });
+    const xml = await dokumentXml(await alsDocx(d));
+    expect(xml).toContain('abc');
+    for (const c of [7, 27]) expect(xml.includes(String.fromCharCode(c))).toBe(false);
+  });
+
+  it('DOCX-Tabelle hat 100 Prozent Breite', async () => {
+    const xml = await dokumentXml(await alsDocx(beispiel()));
+    expect(xml).toContain(`<w:tblW w:type="pct" w:w="100%"/>`);
+    expect(xml).toContain(`<w:gridCol w:w="2256"/>`);
+  });
+
+  it('Tabelle ohne Kopf wird als Platzhalter gerendert', async () => {
+    const d = beispiel();
+    d.kapitel[0]!.bloecke = [{ art: 'tabelle', kopf: [], zeilen: [] }];
+    expect(await dokumentXml(await alsDocx(d))).toContain('Tabelle ohne Spalten');
+    expect((await alsPdf(d)).subarray(0, 4).toString()).toBe('%PDF');
+  });
+
+  it('winAnsi normalisiert kombinierende Umlaute', () => {
+    expect(winAnsi('u' + String.fromCharCode(0x308))).toBe('ü');
   });
 });

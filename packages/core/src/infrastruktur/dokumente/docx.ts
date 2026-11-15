@@ -1,19 +1,30 @@
 import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import type { Block, Dokument } from './modell.js';
 
+/** Steuerzeichen, die in XML 1.0 unzulässig sind (Word meldet die Datei sonst als beschädigt). */
+function sauber(t: string): string {
+  let aus = '';
+  for (const z of t) {
+    const c = z.charCodeAt(0);
+    if (c <= 8 || c === 11 || c === 12 || (c >= 14 && c <= 31)) continue;
+    aus += z;
+  }
+  return aus;
+}
+
 const CODE_SCHRIFT = 'Courier New';
 const CODE_GROESSE = 16; // halbe Punkt: 8 pt
 
 function codeAbsaetze(t: string): Paragraph[] {
   return t.split(/\r\n|\r|\n/).map(
-    (z) => new Paragraph({ children: [new TextRun({ text: z, font: CODE_SCHRIFT, size: CODE_GROESSE })] }),
+    (z) => new Paragraph({ children: [new TextRun({ text: sauber(z), font: CODE_SCHRIFT, size: CODE_GROESSE })] }),
   );
 }
 
 function absatz(t: string, fett = false): Paragraph[] {
   return t
     .split(/\r\n|\r|\n/)
-    .map((z) => new Paragraph({ children: [new TextRun({ text: z, bold: fett })], spacing: { after: 80 } }));
+    .map((z) => new Paragraph({ children: [new TextRun({ text: sauber(z), bold: fett })], spacing: { after: 80 } }));
 }
 
 function zeile(zellen: string[], fett: boolean): TableRow {
@@ -22,7 +33,7 @@ function zeile(zellen: string[], fett: boolean): TableRow {
     children: zellen.map(
       (z) =>
         new TableCell({
-          children: [new Paragraph({ children: [new TextRun({ text: z, bold: fett, size: 18 })] })],
+          children: [new Paragraph({ children: [new TextRun({ text: sauber(z), bold: fett, size: 18 })] })],
         }),
     ),
   });
@@ -33,11 +44,13 @@ function blockDocx(b: Block): Array<Paragraph | Table> {
     case 'absatz':
       return absatz(b.text);
     case 'liste':
-      return b.punkte.map((p) => new Paragraph({ text: p, bullet: { level: 0 } }));
+      return b.punkte.map((p) => new Paragraph({ text: sauber(p), bullet: { level: 0 } }));
     case 'tabelle':
+      if (b.kopf.length === 0) return absatz('(Tabelle ohne Spalten)');
       return [
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
+          columnWidths: b.kopf.map(() => Math.floor(9026 / b.kopf.length)),
           rows: [zeile(b.kopf, true), ...b.zeilen.map((z) => zeile(z, false))],
         }),
         new Paragraph({ text: '' }),
@@ -54,22 +67,22 @@ function blockDocx(b: Block): Array<Paragraph | Table> {
 
 export async function alsDocx(d: Dokument): Promise<Buffer> {
   const k = d.kopf;
-  const kinder: Array<Paragraph | Table> = [new Paragraph({ text: k.titel, heading: HeadingLevel.HEADING_1 })];
+  const kinder: Array<Paragraph | Table> = [new Paragraph({ text: sauber(k.titel), heading: HeadingLevel.HEADING_1 })];
   kinder.push(...absatz(`Dokumentart: ${k.art} (Version ${k.artVersion})`));
   kinder.push(...absatz(`Instanz: ${k.ordner}`));
   kinder.push(...absatz(`Erzeugt: ${k.erzeugt}`));
   if (k.quellen.length > 0) {
     kinder.push(...absatz('Datenstand:'));
     for (const q of k.quellen) {
-      kinder.push(new Paragraph({ text: `${q.quelle}: ${q.stand}${q.fehler ? ` (Fehler: ${q.fehler})` : ''}`, bullet: { level: 0 } }));
+      kinder.push(new Paragraph({ text: sauber(`${q.quelle}: ${q.stand}${q.fehler ? ` (Fehler: ${q.fehler})` : ''}`), bullet: { level: 0 } }));
     }
   }
   if (k.verweise.length > 0) {
     kinder.push(...absatz('Verweise:'));
-    for (const v of k.verweise) kinder.push(new Paragraph({ text: v, bullet: { level: 0 } }));
+    for (const v of k.verweise) kinder.push(new Paragraph({ text: sauber(v), bullet: { level: 0 } }));
   }
   for (const kap of d.kapitel) {
-    kinder.push(new Paragraph({ text: `${kap.nr}. ${kap.titel}`, heading: HeadingLevel.HEADING_2 }));
+    kinder.push(new Paragraph({ text: sauber(`${kap.nr}. ${kap.titel}`), heading: HeadingLevel.HEADING_2 }));
     for (const b of kap.bloecke) kinder.push(...blockDocx(b));
   }
   const doc = new Document({ sections: [{ children: kinder }] });
