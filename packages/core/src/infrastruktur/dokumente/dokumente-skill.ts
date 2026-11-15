@@ -173,18 +173,24 @@ export class DokumenteDienst {
   /**
    * V2 — Abnahmeprotokoll nach dem Ende eines Changes (Hook des Change-Motors); liefert die Zeile für die Abschlussmeldung, wirft nie.
    * normal/emergency: Abnahme für den neu geladenen Change (gespeicherter Lauf). standard: kein Einzelprotokoll — erst wenn das letzte
-   * Glied einer Serie endet (kein anderer Standard-Change hängt von ihm ab), ein Sammelprotokoll über die Serie; sonst undefined.
+   * Glied einer Serie endet (kein anderer Standard-Change hängt von ihm ab), ein Sammelprotokoll über die Serie; mittlere Glieder → Hinweiszeile.
    */
   async abnahmeNachEnde(o: string, c: CmdbChangeRequest): Promise<string | undefined> {
     try {
-      const q = await this.d.quellen.changes(o);
-      const alle = new Map(q.changes.map(x => [x.id, x]));
+      let q: Awaited<ReturnType<DokuQuellen['changes']>> | undefined;
+      try { q = await this.d.quellen.changes(o); } catch (err) {
+        // normal/emergency brauchen die Liste nur zum Neuladen: der Motor übergibt den gerade gespeicherten Stand
+        if (c.type === 'standard') throw err;
+        this.d.protokoll?.('Abnahme nach Change-Ende: Change-Liste nicht ladbar, Stand des Motors verwendet', { changeId: c.id, fehler: (err as Error)?.message });
+      }
+      const alle = new Map((q?.changes ?? []).map(x => [x.id, x]));
       // nicht in der Liste (Grenze): der vom Motor übergebene, gerade gespeicherte Stand
       const frisch = alle.get(c.id) ?? c;
-      if (frisch.type !== 'standard') return this.zeileNachEnde('Abnahmeprotokoll erstellt', await this.abnahme(o, frisch, {}));
+      if (frisch.type !== 'standard' || !q) return this.zeileNachEnde('Abnahmeprotokoll erstellt', await this.abnahme(o, frisch, {}));
       // ohne vollständige Liste ist weder „letztes Glied“ noch die Serie belegt — nie raten
       if (q.abgeschnitten) throw new Error('die Change-Liste hat die Abfragegrenze erreicht — Serie und Nachfolger nicht sicher bestimmbar');
-      if (q.changes.some(x => x.id !== frisch.id && x.type === 'standard' && (x.abhaengigVon ?? []).includes(frisch.id) && !vorStartVerworfen(x))) return undefined;
+      const nachfolger = q.changes.find(x => x.id !== frisch.id && x.type === 'standard' && (x.abhaengigVon ?? []).includes(frisch.id) && !vorStartVerworfen(x));
+      if (nachfolger) return `Sammelprotokoll folgt mit dem letzten Glied der Serie (${nachfolger.id.slice(0, 8)})`;
       const serie = serieVon(frisch, alle);
       const dok = baueAbnahme(serie, await this.verlauf(o, serie), {}, this.jetzt());
       const e = await this.speichere(o, dok, { typ: 'change_request', id: frisch.id });

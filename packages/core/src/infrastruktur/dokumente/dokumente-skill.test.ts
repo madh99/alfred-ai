@@ -278,11 +278,11 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     expect((JSON.parse(t.gespeichert[0]!.struktur!) as Dokument).anhaenge.map(a => a.name)).toContain('rohlauf-7335dfeb.json');
   });
 
-  it('(b) mittleres Glied einer Standard-Serie → undefined, nichts gespeichert; letztes Glied → ein Sammelprotokoll über alle Glieder', async () => {
+  it('(b) mittleres Glied einer Standard-Serie → Hinweiszeile, nichts gespeichert; letztes Glied → ein Sammelprotokoll über alle Glieder', async () => {
     const t = aufbau({ changes: [A, S1, S2, S3] });
     const dienst = new DokumenteDienst(t.deps);
-    expect(await dienst.abnahmeNachEnde('o', S1)).toBeUndefined();
-    expect(await dienst.abnahmeNachEnde('o', S2)).toBeUndefined();
+    expect(await dienst.abnahmeNachEnde('o', S1)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (52525252)');
+    expect(await dienst.abnahmeNachEnde('o', S2)).toBe('Sammelprotokoll folgt mit dem letzten Glied der Serie (53535353)');
     expect(t.cmdbSave).not.toHaveBeenCalled();
     const zeile = await dienst.abnahmeNachEnde('o', S3);
     expect(zeile).toContain('Sammelprotokoll');
@@ -324,10 +324,15 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
     expect(z).toContain('Abnahmeprotokoll erstellt');
     expect(z).toContain('pve2: fehlgeschlagen');
     expect(z).toContain('Fernzugriff nicht verfügbar');
-    // Change-Liste nicht ladbar → ebenfalls nur eine Zeile
+    // Change-Liste nicht ladbar: normaler Change → aus dem übergebenen, gerade gespeicherten Stand; Standard → nicht erstellt
     const t3 = aufbau();
     t3.deps.quellen = { ...t3.deps.quellen, changes: async () => { throw new Error('Liste weg'); } };
-    expect(await new DokumenteDienst(t3.deps).abnahmeNachEnde('o', C)).toBe('Abnahmeprotokoll nicht erstellt: Liste weg');
+    const z3 = await new DokumenteDienst(t3.deps).abnahmeNachEnde('o', C);
+    expect(z3).toContain('Abnahmeprotokoll erstellt');
+    expect(t3.gespeichert).toHaveLength(1);
+    expect(t3.gespeichert[0]!.linkedEntityId).toBe(C.id);
+    expect(await new DokumenteDienst(t3.deps).abnahmeNachEnde('o', change('80808080-1111-2222-3333-444444444444', 'Std', { type: 'standard' }))).toBe('Abnahmeprotokoll nicht erstellt: Liste weg');
+    expect(t3.gespeichert).toHaveLength(1);
   });
 
   it('Standard-Change, abgeschnittene Change-Liste → nicht erstellt (Nachfolger nicht sicher prüfbar), nie geglättet', async () => {

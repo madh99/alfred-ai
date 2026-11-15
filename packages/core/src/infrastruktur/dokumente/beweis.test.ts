@@ -118,6 +118,7 @@ describe('Beweis-Anhang', () => {
     // die Erklärung steht im Dokument (Kapitel Beweise), nicht in der Prüfdatei
     expect(PRUEF_HINWEIS).toContain('sha256sum -c PRUEFUNG.txt');
     expect(PRUEF_HINWEIS).toContain('CMDB');
-    expect(PRUEF_HINWEIS).toContain('geschwärzten Rohlauf');
+    expect(PRUEF_HINWEIS).toContain('Die Prüfsummen belegen, dass die Dateien');
+    expect(PRUEF_HINWEIS).toContain('geschwärzten Rohläufe');
   });
 });

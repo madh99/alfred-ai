@@ -63,7 +63,7 @@ export interface MotorDeps {
    * Abschlussmeldung. Darf den Abschluss nie scheitern lassen: Fehler werden zur Zeile, nach `nachEndeZeitMs` meldet der Motor trotzdem.
    */
   nachEnde?: (o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled') => Promise<string | undefined>;
-  /** Zeitgrenze für nachEnde (Standard 120 s) */
+  /** Zeitgrenze für nachEnde (Standard 25 s); danach kommt das Ergebnis als eigene Meldung */
   nachEndeZeitMs?: number;
   /** I4b Teil 2 — IDs der Assets, die von den gegebenen abhängen (CMDB, eingehende Beziehungen) */
   abhaengigeIds?: (o: string, ids: string[]) => Promise<string[]>;
@@ -81,8 +81,11 @@ export interface MotorDeps {
 /** Skills, deren Discovery-Quelle nach einem Change neu gelesen wird (Skill → CMDB-Quelle) */
 const QUELLE: Record<string, string> = { proxmox: 'proxmox', docker: 'docker', unifi: 'unifi', nginx_proxy_manager: 'nginx_proxy_manager', pfsense: 'pfsense', mikrotik: 'mikrotik', cloudflare_dns: 'cloudflare_dns', fernzugriff: 'fernzugriff' };
 const FRAGE_GUELTIG_MS = 24 * 3_600_000;
-/** PDF, DOCX und Kopie auf pve2 dauern Sekunden — ein hängender Fernzugang darf die Abschlussmeldung nicht länger aufhalten */
-const NACH_ENDE_ZEIT_MS = 120_000;
+/**
+ * PDF, DOCX und Kopie auf pve2 dauern Sekunden. beende() hält bis dahin abhängige Changes (nächstes Serien-Glied), den Takt nach einem
+ * Abbruch und die Chat-Antwort auf „abbrechen“ auf — darum knapp; was länger dauert, folgt als eigene Meldung.
+ */
+const NACH_ENDE_ZEIT_MS = 25_000;
 const hash = (n: string) => createHash('sha256').update(n).digest('hex');
 
 /**
@@ -714,12 +717,13 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     if (this.d.incident && lauf.incidentId) await this.incidentZumEnde(o, c, lauf, status, bericht);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
     const sollIst = status === 'completed' && c.vorhabenId ? await this.d.nachAbschluss?.(o, c).catch(() => undefined) : undefined;
+    // Empfänger der Benachrichtigungsregeln warten nicht auf das Protokoll
+    await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
     const doku = await this.dokumentNachEnde(o, gespeichert ?? { ...c, lauf }, status);
     await this.d.melde?.(`${status === 'completed' ? '✅' : status === 'rolled_back' ? '⏪' : status === 'cancelled' ? '🚫' : '❌'} ${bericht}${sollIst ? `\n\n${sollIst}` : ''}${doku ? `\n\n📄 ${doku}` : ''}`, status === 'failed');
-    await this.d.ereignis?.(o, c, status === 'failed' ? 'stoerung' : 'ende', `Die Wartung „${c.title}“ ist ${{ completed: 'abgeschlossen', failed: 'gescheitert', rolled_back: 'zurückgenommen', cancelled: 'abgebrochen' }[status]}.`).catch(() => undefined);
   }
 
-  /** Dokument-Vorlagen V2 — Abnahmeprotokoll nach dem Ende; wirft nie, wartet höchstens nachEndeZeitMs (danach läuft es im Hintergrund weiter). */
+  /** Dokument-Vorlagen V2 — Abnahmeprotokoll nach dem Ende; wirft nie, wartet höchstens nachEndeZeitMs (danach folgt das Ergebnis als eigene Meldung). */
   private async dokumentNachEnde(o: string, c: CmdbChangeRequest, status: 'completed' | 'failed' | 'rolled_back' | 'cancelled'): Promise<string | undefined> {
     const hook = this.d.nachEnde;
     if (!hook) return undefined;
@@ -733,11 +737,18 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const r = await Promise.race([erzeugung, grenze]);
       if (r !== ZEIT) return r;
       this.log('Abnahmeprotokoll Zeitüberschreitung', { id: c.id, ms });
+      const kopf = `📄 ${c.title} (${c.id.slice(0, 8)}): `;
       void erzeugung.then(
-        zeile => this.log('Abnahmeprotokoll nach Zeitüberschreitung fertig', { id: c.id, zeile }),
-        err => this.log('Abnahmeprotokoll nach Zeitüberschreitung fehlgeschlagen', { id: c.id, fehler: fehler(err) }),
-      );
-      return `Abnahmeprotokoll noch nicht fertig: Zeitüberschreitung nach ${Math.round(ms / 1000)} s — die Erzeugung läuft im Hintergrund weiter (Ergebnis im Log)`;
+        async zeile => {
+          this.log('Abnahmeprotokoll nach Zeitüberschreitung fertig', { id: c.id, zeile });
+          if (zeile) await this.d.melde?.(kopf + zeile, false);
+        },
+        async err => {
+          this.log('Abnahmeprotokoll nach Zeitüberschreitung fehlgeschlagen', { id: c.id, fehler: fehler(err) });
+          await this.d.melde?.(`${kopf}Abnahmeprotokoll nicht erstellt: ${fehler(err)}`, false);
+        },
+      ).catch(err => this.log('Abnahmeprotokoll-Folgemeldung fehlgeschlagen', { id: c.id, fehler: fehler(err) }));
+      return `Abnahmeprotokoll folgt in einer eigenen Meldung (Erzeugung dauert länger als ${Math.round(ms / 1000)} s)`;
     } catch (err) {
       this.log('Abnahmeprotokoll nach Change-Ende fehlgeschlagen', { id: c.id, fehler: fehler(err) });
       return `Abnahmeprotokoll nicht erstellt: ${fehler(err)}`;

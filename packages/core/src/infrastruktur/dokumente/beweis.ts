@@ -114,8 +114,8 @@ export function beweisAnhang(c: CmdbChangeRequest, maxAusgabe = 1500): { bloecke
 
 /** Erklärung zur Prüfdatei — steht im Kapitel Beweise des Dokuments, nicht in PRUEFUNG.txt. */
 export const PRUEF_HINWEIS = [
-  'Prüfanleitung: Die Prüfsumme belegt, dass die Datei seit der Erzeugung unverändert ist, sofern die Prüfsumme mit der in Alfreds CMDB hinterlegten übereinstimmt.',
-  'Sie gilt für den geschwärzten Rohlauf zum Erzeugungszeitpunkt.',
+  'Prüfanleitung: Die Prüfsummen belegen, dass die Dateien seit der Erzeugung unverändert sind, sofern die Prüfsummen mit den in Alfreds CMDB hinterlegten übereinstimmen.',
+  'Sie gelten für die geschwärzten Rohläufe zum Erzeugungszeitpunkt.',
   'Prüfen: im Ordner der Dateien `sha256sum -c PRUEFUNG.txt` ausführen; jede Datei muss „OK“ melden.',
 ].join(' ');
 

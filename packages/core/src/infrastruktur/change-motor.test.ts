@@ -552,22 +552,40 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.meldungen.at(-1)).toContain('Abnahmeprotokoll nicht erstellt: PDF kaputt');
   });
 
-  it('V2: hängt nachEnde, meldet der Motor nach der Zeitgrenze trotzdem ab (Erzeugung läuft im Hintergrund weiter)', async () => {
+  it('V2: langsamer Hook → Abschlussmeldung nach der Zeitgrenze, das Protokoll folgt als eigene Meldung; ereignis vor dem Hook', async () => {
     const w = welt(probe());
-    const log: string[] = [];
+    const reihenfolge: string[] = [];
     let fertig!: (z: string) => void;
-    w.deps.nachEnde = () => new Promise<string>(r => { fertig = r; });
+    w.deps.ereignis = async (_o, _c, z) => { reihenfolge.push(`ereignis:${z}`); };
+    w.deps.nachEnde = () => { reihenfolge.push('nachEnde'); return new Promise<string>(r => { fertig = r; }); };
     w.deps.nachEndeZeitMs = 10;
-    w.deps.protokoll = (msg) => { log.push(msg); };
+    const t0 = Date.now();
     await w.motor.anstossen();
     // warte() sieht den Lauf erst nach dem Start; die Zeitgrenze läuft echt (10 ms)
     for (let i = 0; i < 200 && !w.meldungen.some(m => m.startsWith('✅')); i++) await new Promise(r => setTimeout(r, 5));
+    expect(Date.now() - t0).toBeLessThan(1000);
     expect(w.c.status).toBe('completed');
-    expect(w.meldungen.at(-1)).toContain('✅');
-    expect(w.meldungen.at(-1)).toContain('Abnahmeprotokoll noch nicht fertig: Zeitüberschreitung nach 0 s');
-    fertig('Abnahmeprotokoll erstellt: spät');
+    expect(reihenfolge).toEqual(['ereignis:start', 'ereignis:ende', 'nachEnde']);
+    const abschluss = w.meldungen.at(-1)!;
+    expect(abschluss).toContain('✅');
+    expect(abschluss).toContain('Abnahmeprotokoll folgt in einer eigenen Meldung (Erzeugung dauert länger als 0 s)');
+    const vorher = w.meldungen.length;
+    fertig('Abnahmeprotokoll erstellt: Probe — Version 1, Dokument d1');
     await new Promise(r => setTimeout(r, 5));
-    expect(log).toContain('Abnahmeprotokoll nach Zeitüberschreitung fertig');
+    expect(w.meldungen).toHaveLength(vorher + 1);
+    expect(w.meldungen.at(-1)).toBe('📄 Probe (chg-1): Abnahmeprotokoll erstellt: Probe — Version 1, Dokument d1');
+  });
+
+  it('V2: langsamer Hook, der später scheitert → Folgemeldung „nicht erstellt“', async () => {
+    const w = welt(probe());
+    let scheitere!: (e: Error) => void;
+    w.deps.nachEnde = () => new Promise<string>((_r, f) => { scheitere = f; });
+    w.deps.nachEndeZeitMs = 10;
+    await w.motor.anstossen();
+    for (let i = 0; i < 200 && !w.meldungen.some(m => m.startsWith('✅')); i++) await new Promise(r => setTimeout(r, 5));
+    scheitere(new Error('pve2 hängt'));
+    await new Promise(r => setTimeout(r, 5));
+    expect(w.meldungen.at(-1)).toBe('📄 Probe (chg-1): Abnahmeprotokoll nicht erstellt: pve2 hängt');
   });
 
   it('V2: nachEnde auch bei Rückweg/Abbruch mit dem jeweiligen Status', async () => {
