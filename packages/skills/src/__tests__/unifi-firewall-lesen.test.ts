@@ -24,10 +24,12 @@ function welt(apiKey: string | null = 'k') {
     if (p.includes('/firewall/zones')) return { data: [{ id: 'iZ1', name: 'SQL' }, { id: 'iZ2', name: 'Internal' }] };
     if (p.includes('/networks')) return { data: [{ id: 'iN1', name: 'SQL-Lab' }] };
     if (p.includes('/firewall/policies')) return { data: [
-      { id: 'p1', name: 'Web an SQL', enabled: true, action: { type: 'ALLOW' },
+      { id: 'p1', name: 'Web an SQL', enabled: true, index: 5, action: { type: 'ALLOW' },
         source: { zoneId: 'iZ2', trafficFilter: { type: 'IP_ADDRESS', ipAddressFilter: { type: 'IP_ADDRESSES', items: [{ type: 'IP_ADDRESS', value: '10.203.30.2' }] } } },
         destination: { zoneId: 'iZ1', trafficFilter: { type: 'PORT', portFilter: { type: 'PORTS', items: [{ type: 'PORT_NUMBER', value: 1433 }] } } },
         ipProtocolScope: { ipVersion: 'IPV4', protocolFilter: { type: 'NAMED_PROTOCOL', protocol: { name: 'TCP' } } }, metadata: { origin: 'USER_DEFINED' } },
+      { id: 'p3', name: 'Frueh', action: { type: 'BLOCK' }, index: 2, schedule: { mode: 'EVERY_WEEK', days: ['MON'] }, connectionStateFilter: ['NEW'],
+        source: { zoneId: 'iZ2' }, destination: { zoneId: 'iZ1' } },
       { id: 'p2', name: 'Seltsam', enabled: false, action: { type: 'BLOCK' },
         source: { zoneId: 'iZ2', trafficFilter: { type: 'NEUARTIG', foo: 1 } }, destination: { zoneId: 'unbekannt' }, metadata: { origin: 'SYSTEM_DEFINED' } },
     ] };
@@ -46,13 +48,13 @@ describe('UniFi firewallLesen', () => {
     expect(r.netze[0]).toMatchObject({ id: NETZ_SQL, name: 'SQL-Lab', vlan: 832, subnetz: '10.203.32.0/27', zoneId: ZONE_SQL });
   });
   it('Policy: Quelle-IP, Ziel-Port 1433, TCP, Zonennamen, Herkunft', async () => {
-    const p = (await welt().s.firewallLesen()).policies[0]!;
+    const p = (await welt().s.firewallLesen()).policies.find(x => x.id === 'p1')!;
     expect(p).toMatchObject({ aktiv: true, aktion: 'ALLOW', quelleZone: 'Internal', zielZone: 'SQL', protokoll: 'TCP', herkunft: 'USER_DEFINED', ziel: 'beliebig' });
     expect(p.quelle).toContain('10.203.30.2');
     expect(p.ports).toContain('1433');
   });
   it('unbekannte Filterform wird als JSON-Kurzfassung gezeigt, nicht verschluckt', async () => {
-    const p = (await welt().s.firewallLesen()).policies[1]!;
+    const p = (await welt().s.firewallLesen()).policies.find(x => x.id === 'p2')!;
     expect(p.aktiv).toBe(false);
     expect(p.quelle).toContain('NEUARTIG');
     expect(p.zielZone).toBe('?unbekannt:unbekannt');
@@ -97,5 +99,22 @@ describe('UniFi firewallLesen', () => {
     expect(protokollLesbar({ protocolFilter: { type: 'NEU', x: 1 } })).toContain('NEU');
     expect(protokollLesbar({ protocolFilter: { protocol: { name: 'TCP' }, matchOpposite: true } })).toBe('nicht TCP');
     expect(protokollLesbar({})).toBe('alle');
+  });
+  it('Reihenfolge nach (Quellzone, Zielzone, index), Bedingung und aktiv unbekannt', async () => {
+    const ps = (await welt().s.firewallLesen()).policies;
+    const paar = ps.filter(x => x.id === 'p1' || x.id === 'p3').map(x => x.id);
+    expect(paar).toEqual(['p3', 'p1']);
+    const p3 = ps.find(x => x.id === 'p3')!;
+    expect(p3.aktiv).toBe('unbekannt');
+    expect(p3.index).toBe(2);
+    expect(p3.bedingung).toContain('nur nach Zeitplan');
+    expect(p3.bedingung).toContain('nur Verbindungszustand NEW');
+    expect(ps.find(x => x.id === 'p1')!.bedingung).toBe('');
+  });
+  it('Negation auch bei Listen-IDs und unbekannten Formen', () => {
+    const f = filterLesbar({ type: 'X', ipAddressFilter: { trafficMatchingListId: 'L1', matchOpposite: true }, portFilter: { trafficMatchingListId: 'L2', matchOpposite: true }, networkFilter: { matchOpposite: true } }, id => id);
+    expect(f.adresse).toContain('nicht IP-Liste L1');
+    expect(f.ports).toBe('nicht Port-Liste L2');
+    expect(f.adresse).toContain('nicht {');
   });
 });

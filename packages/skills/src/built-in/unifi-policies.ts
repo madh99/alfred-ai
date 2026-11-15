@@ -194,18 +194,18 @@ export function filterLesbar(f: Record<string, unknown> | undefined, netzName: (
   const eintrag = (i: Record<string, unknown>) => i.value !== undefined ? String(i.value) : i.start !== undefined ? `${String(i.start)}-${String(i.stop)}` : kurzJson(i);
 
   const ipf = f.ipAddressFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
-  if (ipf) adr.push(ipf.items ? `${neg(ipf)}${liste(ipf.items)}` : `IP-Liste ${ipf.trafficMatchingListId ?? kurzJson(ipf)}`);
+  if (ipf) adr.push(ipf.items ? `${neg(ipf)}${liste(ipf.items)}` : `${neg(ipf)}IP-Liste ${ipf.trafficMatchingListId ?? kurzJson(ipf)}`);
   const nf = f.networkFilter as { networkIds?: string[]; matchOpposite?: boolean } | undefined;
-  if (nf) adr.push(nf.networkIds ? `${neg(nf)}Netz ${nf.networkIds.length ? nf.networkIds.map(netzName).join(', ') : '(leer)'}` : kurzJson(nf));
+  if (nf) adr.push(nf.networkIds ? `${neg(nf)}Netz ${nf.networkIds.length ? nf.networkIds.map(netzName).join(', ') : '(leer)'}` : `${neg(nf)}${kurzJson(nf)}`);
   const mf = f.macAddressFilter as { macAddresses?: string[]; matchOpposite?: boolean } | undefined;
-  if (mf) adr.push(mf.macAddresses ? `${neg(mf)}MAC ${mf.macAddresses.length ? mf.macAddresses.join(', ') : '(leer)'}` : kurzJson(mf));
+  if (mf) adr.push(mf.macAddresses ? `${neg(mf)}MAC ${mf.macAddresses.length ? mf.macAddresses.join(', ') : '(leer)'}` : `${neg(mf)}${kurzJson(mf)}`);
   const df = f.domainFilter as { domains?: string[]; matchOpposite?: boolean } | undefined;
-  if (df) adr.push(df.domains ? `${neg(df)}Domain ${df.domains.length ? df.domains.join(', ') : '(leer)'}` : kurzJson(df));
+  if (df) adr.push(df.domains ? `${neg(df)}Domain ${df.domains.length ? df.domains.join(', ') : '(leer)'}` : `${neg(df)}${kurzJson(df)}`);
   const pf = f.portFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
-  if (pf) ports.push(pf.items ? `${neg(pf)}${liste(pf.items)}` : `Port-Liste ${pf.trafficMatchingListId ?? kurzJson(pf)}`);
+  if (pf) ports.push(pf.items ? `${neg(pf)}${liste(pf.items)}` : `${neg(pf)}Port-Liste ${pf.trafficMatchingListId ?? kurzJson(pf)}`);
   const unbekannt = Object.keys(f).filter(k => !bekannt.has(k));
-  if (unbekannt.length) adr.push(kurzJson({ type: f.type, ...Object.fromEntries(unbekannt.map(k => [k, f[k]])) }));
-  if (!adr.length && !ports.length && f.type !== undefined && f.type !== 'ANY') adr.push(kurzJson(f));
+  if (unbekannt.length) adr.push(neg(f) + kurzJson({ type: f.type, ...Object.fromEntries(unbekannt.map(k => [k, f[k]])) }));
+  if (!adr.length && !ports.length && f.type !== undefined && f.type !== 'ANY') adr.push(neg(f) + kurzJson(f));
   return { adresse: adr.join('; '), ports: ports.join('; ') };
 }
 
@@ -216,4 +216,20 @@ export function protokollLesbar(scope: { protocolFilter?: Record<string, unknown
   const name = pf.protocol?.name ?? pf.preset?.name;
   if (!name) return kurzJson(pf);
   return `${pf.matchOpposite ? 'nicht ' : ''}${name}`;
+}
+
+/** Zusatzbedingungen einer Policy (Zeitplan, Verbindungszustand, IPsec) als Text; leer, wenn keine gesetzt sind. */
+export function bedingungLesbar(p: unknown): string {
+  const x = p as { schedule?: unknown; connectionStateFilter?: unknown; ipsecFilter?: unknown };
+  const teile: string[] = [];
+  if (x.schedule !== undefined && x.schedule !== null) {
+    const m = (x.schedule as { mode?: string }).mode;
+    if (!(m === 'ALWAYS' && Object.keys(x.schedule as object).length === 1)) teile.push(`nur nach Zeitplan ${kurzJson(x.schedule)}`);
+  }
+  if (x.connectionStateFilter !== undefined && x.connectionStateFilter !== null) {
+    const c = x.connectionStateFilter;
+    teile.push(`nur Verbindungszustand ${Array.isArray(c) ? (c.length ? c.map(String).join(', ') : '(leer)') : kurzJson(c)}`);
+  }
+  if (x.ipsecFilter !== undefined && x.ipsecFilter !== null) teile.push(`nur IPsec ${typeof x.ipsecFilter === 'string' ? x.ipsecFilter : kurzJson(x.ipsecFilter)}`);
+  return teile.join('; ');
 }

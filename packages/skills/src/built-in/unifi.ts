@@ -4,7 +4,7 @@ import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
 import { tlsFetch } from './social/tls-fetch.js';
 import { randomUUID } from 'node:crypto';
-import { baueRegel, filterLesbar, neueReihenfolge, netzadresse, policyZeile, protokollLesbar, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { baueRegel, filterLesbar, neueReihenfolge, netzadresse, policyZeile, protokollLesbar, bedingungLesbar, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -421,8 +421,8 @@ export class UniFiSkill extends Skill {
   public async firewallLesen(): Promise<{
     zonen: Array<{ id: string; name: string; netzIds: string[] }>;
     netze: Array<{ id: string; name: string; vlan?: number; subnetz?: string; zoneId?: string }>;
-    /** quelleZone/zielZone sind Zonen-NAMEN und joinen auf zonen[].name (Zonennamen je Site eindeutig); unbekannte IDs als `?unbekannt:<id>`. */
-    policies: Array<{ id: string; name: string; aktiv: boolean; aktion: string; quelleZone: string; zielZone: string; quelle: string; ziel: string; ports: string; protokoll: string; herkunft: string }>;
+    /** `aktiv`: 'unbekannt', wenn die API kein `enabled` liefert. `index` = Auswertungsposition im Zonenpaar (erste passende Regel gewinnt); Liste sortiert nach (quelleZone, zielZone, index). `bedingung`: Zeitplan/Verbindungszustand/IPsec, sonst ''. quelleZone/zielZone sind Zonen-NAMEN und joinen auf zonen[].name (Zonennamen je Site eindeutig); unbekannte IDs als `?unbekannt:<id>`. */
+    policies: Array<{ id: string; name: string; aktiv: boolean | 'unbekannt'; index?: number; bedingung: string; aktion: string; quelleZone: string; zielZone: string; quelle: string; ziel: string; ports: string; protokoll: string; herkunft: string }>;
   }> {
     if (!this.config.apiKey) throw new Error('Firewall lesen braucht den UniFi-API-Schlüssel (Integration-API)');
     type RawZone = { _id: string; name: string; network_ids?: string[] };
@@ -450,14 +450,14 @@ export class UniFiSkill extends Skill {
         const z = filterLesbar(p.destination.trafficFilter, netzName);
         const portTeile = [z.ports, q.ports ? `Quellport ${q.ports}` : ''].filter(Boolean);
         return {
-          id: p.id, name: p.name ?? '', aktiv: p.enabled !== false, aktion: p.action?.type ?? '?',
+          id: p.id, name: p.name ?? '', aktiv: typeof p.enabled === 'boolean' ? p.enabled : 'unbekannt' as const, ...(p.index !== undefined ? { index: p.index } : {}), bedingung: bedingungLesbar(p), aktion: p.action?.type ?? '?',
           quelleZone: zoneName(p.source.zoneId), zielZone: zoneName(p.destination.zoneId),
           quelle: q.adresse || 'beliebig', ziel: z.adresse || 'beliebig',
           ports: portTeile.join(', ') || 'beliebig',
           protokoll: protokollLesbar(p.ipProtocolScope),
           herkunft: p.metadata?.origin ?? '',
         };
-      }),
+      }).sort((a, b) => a.quelleZone.localeCompare(b.quelleZone) || a.zielZone.localeCompare(b.zielZone) || (a.index ?? 1e9) - (b.index ?? 1e9)),
     };
   }
 
