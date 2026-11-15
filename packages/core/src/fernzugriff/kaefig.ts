@@ -183,10 +183,13 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
   // mysql/mariadb: Passwort direkt am Schalter (-pX); nur in Zeilen, die den Client aufrufen (zeilenweise → linear)
   t = t.replace(/^[^\n]*\b(?:mysql|mariadb)[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-p)(?!["']?\[geschwärzt\])("[^"\n]*"|'[^'\n]*'|\S+)/g, (_m, a: string, w: string) => zitiert(a, w)));
   // curl/wget -u/--user benutzer:kennwort — nur der Teil nach dem ersten Doppelpunkt (ohne Doppelpunkt fragt curl nach);
-  // -u auch angehängt (-uadmin:x); reine UID:GID (docker run -u 1000:1000 … curl) bleibt lesbar
-  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u(?=[^\s-])|-u[^\S\n]+|(?:--user|--http-user)(?:[^\S\n]+|=))("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, w: string) => {
+  // -u auch angehängt (-uadmin:x). UID:GID bleibt nur lesbar, wenn der Schalter zu einem Container-Aufruf gehört
+  // (docker/podman/nerdctl davor, kein curl/wget davor) — sonst fail-closed: curl -u 48213:91047 wird geschwärzt
+  t = t.replace(/^[^\n]*\b(?:curl|wget)\b[^\n]*/gm, zeile => zeile.replace(/(?<=\s)(-u(?=[^\s-])|-u[^\S\n]+|(?:--user|--http-user)(?:[^\S\n]+|=))("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/g, (m, s: string, w: string, ab: number) => {
     const z = /^["']/.test(w) ? w[0] : '', innen = z ? w.slice(1, -1) : w, i = innen.indexOf(':');
-    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT || /^\d+:\d+$/.test(innen)) return m;
+    if (i < 0 || innen.slice(i + 1) === '' || innen.slice(i + 1) === GESCHWAERZT) return m;
+    const davor = zeile.slice(0, ab);
+    if (/^\d{1,6}:\d{1,6}$/.test(innen) && /\b(?:docker|podman|nerdctl)\b/.test(davor) && !/\b(?:curl|wget)\b/.test(davor)) return m;
     anzahl++; return `${s}${z}${innen.slice(0, i + 1)}${GESCHWAERZT}${z}`;
   }));
   // URL-Zugangsdaten am Trenner :// verankert (jedes Schema, auch +postgres:// oder 1-redis://)

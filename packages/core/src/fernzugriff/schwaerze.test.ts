@@ -132,6 +132,16 @@ describe('Schwärzung — Runde 1', () => {
     expect(r.text).toBe('docker run -u 1000:1000 curlimages/curl https://h');
     expect(r.anzahl).toBe(0);
   });
+  it('Runde 3: UID:GID-Ausnahme nur bei Container-Aufruf (fail-closed)', () => {
+    expect(weg('curl -u 48213:91047 https://h', ['91047']).anzahl).toBe(1);
+    expect(weg('curl --user 1000:1000 https://h', [':1000 ']).anzahl).toBe(1);
+    expect(weg('docker run --rm curlimages/curl -u 1000:1000 https://h', [':1000 ']).anzahl).toBe(1);
+    for (const e of ['docker run -u 1000:1000 curlimages/curl', 'podman run -u 0:0 alpine wget https://h']) {
+      const r = schwaerze(e);
+      expect(r.text, e).toBe(e);
+      expect(r.anzahl, e).toBe(0);
+    }
+  });
   it('Runde 2: --pwd=/x ist ein Schalterwert, keine PWD-Pfadangabe', () => {
     weg('tool --pwd=/secretvalue', ['/secretvalue']);
     expect(schwaerze('PWD=/home/madh').anzahl).toBe(0);
