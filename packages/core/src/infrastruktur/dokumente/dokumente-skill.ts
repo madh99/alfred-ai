@@ -60,6 +60,20 @@ function pruefeFreitext(art: DokuArtKey, f: Freitext): string | undefined {
   return undefined;
 }
 
+/**
+ * Prüfung eines gespeicherten Dokuments für den Export: Struktur ja, aber eine ältere, bekannte Version der Dokumentart wird nicht
+ * abgewiesen (ein gespeichertes Protokoll bleibt exportierbar, wenn die Vorlage später eine neue Version bekommt). Heute gibt es je Art
+ * nur Version 1, deshalb wird gegen die aktuelle Kapiteldefinition geprüft. Kommt eine Version 2 hinzu, muss DOKU_ARTEN die früheren
+ * Kapiteldefinitionen behalten und hier die der gespeicherten Version verwenden. Unbekannte (neuere) oder ungültige Versionen → Fehler.
+ */
+export function pruefeGespeichert(dok: Dokument): string[] {
+  const art = DOKU_ARTEN[dok.kopf.art];
+  if (!art) return [`Unbekannte Dokumentart: ${String(dok.kopf.art)}`];
+  const v = dok.kopf.artVersion;
+  if (!Number.isInteger(v) || v < 1 || v > art.version) return [`Version der Dokumentart ${String(v)} unbekannt (bekannt: 1–${art.version})`];
+  return pruefeDokument({ ...dok, kopf: { ...dok.kopf, artVersion: art.version } });
+}
+
 const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
@@ -69,8 +83,8 @@ export class DokumenteDienst {
 
   private jetzt(): string { return this.d.jetzt ? this.d.jetzt() : new Date().toISOString(); }
 
-  private async verlauf(o: string, changes: CmdbChangeRequest[]): Promise<Map<string, { eintraege: VerlaufEintrag[]; quelle: string }>> {
-    const m = new Map<string, { eintraege: VerlaufEintrag[]; quelle: string }>();
+  private async verlauf(o: string, changes: CmdbChangeRequest[]): Promise<Map<string, { eintraege: VerlaufEintrag[]; quelle: string; abgeschnitten?: boolean }>> {
+    const m = new Map<string, { eintraege: VerlaufEintrag[]; quelle: string; abgeschnitten?: boolean }>();
     for (const c of changes) m.set(c.id, await verlaufVon(this.d.quellen, o, c));
     return m;
   }
@@ -107,14 +121,29 @@ export class DokumenteDienst {
     // Namen vor dem Speichern prüfen: ein gespeichertes Dokument ohne Ablage soll es nicht geben
     const f = pruefeAblageNamen(dok.kopf.ordner, dok.anhaenge.map(a => a.name));
     if (f) throw new Error(f);
-    const doc = await this.d.cmdb.saveDocument(o, {
-      docType: dok.kopf.art, title: dok.kopf.titel, content: md, struktur: JSON.stringify(dok),
-      linkedEntityType: link.typ, linkedEntityId: link.id, generatedBy: `vorlage:${dok.kopf.art}@${dok.kopf.artVersion}`,
+    // Speichern (Version) und Ablage (Ordner v<n>) je (Art, Bezug) nacheinander: ein manueller Aufruf und der Hook am Change-Ende
+    // dürfen nicht dieselbe Version bekommen und denselben Ordner überschreiben
+    return this.seriell(`${o}|${dok.kopf.art}|${link.id}`, async () => {
+      const doc = await this.d.cmdb.saveDocument(o, {
+        docType: dok.kopf.art, title: dok.kopf.titel, content: md, struktur: JSON.stringify(dok),
+        linkedEntityType: link.typ, linkedEntityId: link.id, generatedBy: `vorlage:${dok.kopf.art}@${dok.kopf.artVersion}`,
+      });
+      const dateien = await this.dateien(dok, doc.version);
+      const a = await this.ablegen(dok, doc.version, dateien);
+      this.d.protokoll?.('Dokument erzeugt', { docId: doc.id, art: dok.kopf.art, version: doc.version, ordner: dok.kopf.ordner, lokal: a.lokal, pve2: a.pve2.ok, pve2Fehler: a.pve2.fehler });
+      return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'gespeichert') };
     });
-    const dateien = await this.dateien(dok, doc.version);
-    const a = await this.ablegen(dok, doc.version, dateien);
-    this.d.protokoll?.('Dokument erzeugt', { docId: doc.id, art: dok.kopf.art, version: doc.version, ordner: dok.kopf.ordner, lokal: a.lokal, pve2: a.pve2.ok, pve2Fehler: a.pve2.fehler });
-    return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'gespeichert') };
+  }
+
+  /** In-Prozess-Kette je Schlüssel; ein Fehler bricht die Kette nicht ab. Einträge verschwinden, sobald die Kette leer ist. */
+  private readonly ketten = new Map<string, Promise<unknown>>();
+  private seriell<T>(schluessel: string, f: () => Promise<T>): Promise<T> {
+    const vorher = this.ketten.get(schluessel) ?? Promise.resolve();
+    const lauf = vorher.then(f, f);
+    const ende = lauf.then(() => undefined, () => undefined);
+    this.ketten.set(schluessel, ende);
+    void ende.then(() => { if (this.ketten.get(schluessel) === ende) this.ketten.delete(schluessel); });
+    return lauf;
   }
 
   async abnahme(o: string, c: CmdbChangeRequest, frei: { zweck?: string; abweichungen?: string }): Promise<Erzeugt> {
@@ -136,10 +165,15 @@ export class DokumenteDienst {
     const i = await this.d.instanzen.finde(o, instanz);
     if (!i) throw new Error(`Bauplan-Instanz „${instanz}“ nicht gefunden — zuerst instanz_anlegen`);
     if (i.dokumentart !== 'testprotokoll') throw new Error(`Instanz „${i.name}“ ist für ${i.dokumentart}, nicht für ein Testprotokoll`);
-    const alle = new Map((await this.d.quellen.changes(o)).map(c => [c.id, c]));
+    const q = await this.d.quellen.changes(o);
+    const alle = new Map(q.changes.map(c => [c.id, c]));
     const changes = i.changeIds.map(id => alle.get(id));
     const fehlt = i.changeIds.filter((_, k) => !changes[k]);
-    if (fehlt.length) throw new Error(`Changes der Instanz nicht gefunden: ${fehlt.join(', ')}`);
+    if (fehlt.length) {
+      throw new Error(q.abgeschnitten
+        ? `Changes der Instanz nicht in der geladenen Liste: ${fehlt.join(', ')} — die Change-Liste hat die Abfragegrenze erreicht, sie können trotzdem existieren`
+        : `Changes der Instanz nicht gefunden: ${fehlt.join(', ')}`);
+    }
     const cs = changes as CmdbChangeRequest[];
     const dok = baueTestprotokoll(i.name, cs, await this.verlauf(o, cs), frei, this.jetzt());
     return this.speichere(o, dok, { typ: 'bauplan_instanz', id: i.id });
@@ -167,12 +201,15 @@ export class DokumenteDienst {
     let dok: Dokument;
     try { dok = JSON.parse(doc.struktur) as Dokument; } catch { throw new Error(`Struktur von Dokument ${docId} ist kein gültiges JSON`); }
     if (!dok?.kopf || !Array.isArray(dok.kapitel) || !Array.isArray(dok.anhaenge)) throw new Error(`Struktur von Dokument ${docId} ist unvollständig`);
-    const m = pruefeDokument(dok);
+    const m = pruefeGespeichert(dok);
     if (m.length) throw new Error(`Struktur von Dokument ${docId} ungültig: ${m.join('; ')}`);
-    const dateien = await this.dateien(dok, doc.version);
-    const a = await this.ablegen(dok, doc.version, dateien);
-    this.d.protokoll?.('Dokument exportiert', { docId: doc.id, version: doc.version, lokal: a.lokal, pve2: a.pve2.ok, pve2Fehler: a.pve2.fehler });
-    return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'exportiert') };
+    // gleiche Kette wie beim Erzeugen: ein Export darf den Ordner v<n> nicht gleichzeitig mit einer Erzeugung beschreiben
+    return this.seriell(`${o}|${doc.docType}|${doc.linkedEntityId ?? ''}`, async () => {
+      const dateien = await this.dateien(dok, doc.version);
+      const a = await this.ablegen(dok, doc.version, dateien);
+      this.d.protokoll?.('Dokument exportiert', { docId: doc.id, version: doc.version, lokal: a.lokal, pve2: a.pve2.ok, pve2Fehler: a.pve2.fehler });
+      return { doc, dokument: dok, attachments: dateien, display: this.anzeige(doc, dok, dateien, a, 'exportiert') };
+    });
   }
 }
 

@@ -6,9 +6,11 @@ import type { ChangeLauf, SchrittErgebnis, VerlaufEintrag } from '../change-lauf
 import type { ChangeSchritt } from '../change-schritte.js';
 import { DOKU_ARTEN, pruefeDokument } from './arten.js';
 import { beweisAnhang, pruefAnleitung, zeitText } from './beweis.js';
+import { ABGESCHNITTEN_GRUND } from './sammler.js';
 import type { Anhang, Block, DokuArtKey, Dokument, Kapitel } from './modell.js';
 
-type VerlaufMap = Map<string, { eintraege: VerlaufEintrag[]; quelle: string }>;
+type VerlaufInfo = { eintraege: VerlaufEintrag[]; quelle: string; abgeschnitten?: boolean };
+type VerlaufMap = Map<string, VerlaufInfo>;
 
 const ANGELEGT = new Set(['create_network', 'create_zone', 'create_firewall_policy', 'provision_windows_vm', 'allow_network_on_port']);
 const VERLAUF_ART: Record<VerlaufEintrag['art'], string> = { halt: 'Halt', wiederholen: 'Wiederholt', ueberspringen: 'Übersprungen', plan_geaendert: 'Plan geändert', ausgelassen: 'Ausgelassen' };
@@ -61,8 +63,10 @@ function schrittTabelle(c: CmdbChangeRequest): Block[] {
  * Hinweise zum Verlauf eines Changes: Herkunft (Halte-Incidents) und eine gespeicherte, noch nicht entschiedene Plan-Korrektur
  * (lauf.korrektur — die Ablage überschreibt sie bei jeder neuen Korrektur, frühere sind nicht erhalten).
  */
-function verlaufHinweise(c: CmdbChangeRequest, v?: { eintraege: VerlaufEintrag[]; quelle: string }): Block[] {
+function verlaufHinweise(c: CmdbChangeRequest, v?: VerlaufInfo): Block[] {
   const bloecke: Block[] = [];
+  // Abfragegrenze der Incidents erreicht: es kann weitere Halte geben — offen belegen, nie glätten
+  if (v?.abgeschnitten) bloecke.push({ art: 'nichtBelegt', grund: `Change ${id8(c)}: ${ABGESCHNITTEN_GRUND}` });
   if (v?.quelle === 'incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Quelle: rekonstruiert aus Halte-Incidents (dort stehen nur Halte, keine Wiederholungen oder Planänderungen).` });
   if (v?.quelle === 'lauf+incidents') bloecke.push({ art: 'absatz', text: `Change ${id8(c)} — Halte rekonstruiert aus Halte-Incidents (vor Einführung des Verlaufs im Lauf), übrige Einträge aus dem Lauf.` });
   const k = laufVon(c)?.korrektur;

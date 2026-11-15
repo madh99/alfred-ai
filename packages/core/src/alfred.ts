@@ -7274,6 +7274,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         {
           const { DokumentationSkill, DokumenteDienst } = await import('./infrastruktur/dokumente/dokumente-skill.js');
           const { schreibeLokalDatei } = await import('./infrastruktur/dokumente/ablage.js');
+          const { itsmQuellen } = await import('./infrastruktur/dokumente/sammler.js');
           const { BauplanInstanzRepository, ItsmRepository: ItsmDoku } = await import('@alfred/storage');
           const itsmDoku = new ItsmDoku(adapter);
           const instanzenDoku = new BauplanInstanzRepository(adapter);
@@ -7283,13 +7284,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
               return [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].some(id => !!id && owner.has(id));
             },
-            quellen: {
-              changes: (o) => itsmDoku.listChangeRequests(o, { limit: 5000 }),
-              // Halte-Incidents des Change-Motors: Text „Change <id> (<Titel>) angehalten.\n<Grund>“
-              haltIncidents: async (o, changeId) => (await itsmDoku.listIncidents(o, { limit: 5000 }))
-                .map(i => ({ id: i.id, createdAt: i.createdAt, text: i.description ?? i.symptoms ?? '' }))
-                .filter(i => i.text.includes(`Change ${changeId}`) && i.text.includes('angehalten.')),
-            },
+            quellen: itsmQuellen(itsmDoku),
             cmdb: { saveDocument: (u, d) => cmdbFz.saveDocument(u, d), getDocumentById: (u, id) => cmdbFz.getDocumentById(u, id) },
             instanzen: { anlegen: (u, d) => instanzenDoku.anlegen(u, d), finde: (u, x) => instanzenDoku.finde(u, x) },
             ablage: {

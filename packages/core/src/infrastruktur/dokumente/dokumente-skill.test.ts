@@ -33,7 +33,7 @@ const A = change('288c3716-1111-2222-3333-444444444444', 'PKI-Lab aufbauen');
 const B = change('288c9999-1111-2222-3333-444444444444', 'Anderer Change');
 const C = change('7335dfeb-1111-2222-3333-444444444444', 'PKI-Lab abbauen');
 
-function aufbau(opts: { changes?: CmdbChangeRequest[]; pve2?: (z: string, l: string) => Promise<{ ok: boolean; fehler?: string }> } = {}) {
+function aufbau(opts: { changes?: CmdbChangeRequest[]; abgeschnitten?: boolean; langsam?: boolean; pve2?: (z: string, l: string) => Promise<{ ok: boolean; fehler?: string }> } = {}) {
   const gespeichert: Array<Parameters<DokumenteDeps['cmdb']['saveDocument']>[1] & { id: string; version: number }> = [];
   const lokal = new Map<string, Buffer>();
   const pve2: Array<{ ziel: string; lokal: string }> = [];
@@ -45,10 +45,12 @@ function aufbau(opts: { changes?: CmdbChangeRequest[]; pve2?: (z: string, l: str
   const deps: DokumenteDeps = {
     owner: () => 'o',
     istOwner: () => true,
-    quellen: { changes: async () => opts.changes ?? [A, B, C], haltIncidents: async () => [] },
+    quellen: { changes: async () => ({ changes: opts.changes ?? [A, B, C], abgeschnitten: opts.abgeschnitten ?? false }), haltIncidents: async () => ({ incidents: [], abgeschnitten: false }) },
     cmdb: {
       saveDocument: vi.fn(async (_u, doc) => {
         const version = gespeichert.filter(g => g.docType === doc.docType && g.linkedEntityId === doc.linkedEntityId).length + 1;
+        // langsam: Version wird vor dem Einfügen bestimmt (wie MAX(version)+1 ohne Sperre) — ohne Serialisierung bekämen beide v1
+        if (opts.langsam) await new Promise(r => setTimeout(r, 20));
         const e = { ...doc, id: `doc-${gespeichert.length + 1}`, version };
         gespeichert.push(e);
         return { ...e, userId: 'o', format: 'markdown', createdAt: JETZT } as CmdbDocument;
@@ -204,6 +206,54 @@ describe('Skill dokumentation', () => {
     const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
     expect(r.success).toBe(false);
     expect(t.gespeichert).toHaveLength(0);
+  });
+
+  it('zwei gleichzeitige abnahme_erzeugen für denselben Change → Versionen 1 und 2, getrennte Ordner', async () => {
+    const t = aufbau({ langsam: true });
+    const [r1, r2] = await Promise.all([
+      t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX),
+      t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX),
+    ]);
+    expect(r1.success && r2.success).toBe(true);
+    expect(t.gespeichert.map(g => g.version).sort()).toEqual([1, 2]);
+    const ordner = new Set([...t.lokal.keys()].map(p => path.basename(path.dirname(p))));
+    expect([...ordner].sort()).toEqual(['v1', 'v2']);
+    expect(r1.attachments![0]!.fileName).not.toBe(r2.attachments![0]!.fileName);
+    // ein Fehler in der Kette blockiert die nächste Erzeugung nicht
+    const t2 = aufbau();
+    const [f, ok] = await Promise.all([
+      t2.skill.execute({ action: 'abnahme_erzeugen', change: A.id, zweck: 'x'.repeat(601) }, CTX),
+      t2.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX),
+    ]);
+    expect(f.success).toBe(false);
+    expect(ok.success).toBe(true);
+  });
+
+  it('abgeschnittene Change-Liste: Präfix wird nicht als „nicht gefunden“ gemeldet, Testprotokoll nennt die Grenze', async () => {
+    const t = aufbau({ abgeschnitten: true });
+    const r = await t.skill.execute({ action: 'abnahme_erzeugen', change: 'ffff' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Abfragegrenze');
+    expect((await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX)).success).toBe(true);
+    await t.deps.instanzen.anlegen('o', { name: 'lab', dokumentart: 'testprotokoll', changeIds: ['nicht-geladen'] });
+    const tp = await t.skill.execute({ action: 'testprotokoll_erzeugen', instanz: 'lab' }, CTX);
+    expect(tp.error).toContain('Abfragegrenze');
+  });
+
+  it('dokument_exportieren: gespeicherte artVersion 1 (= aktuell) wird exportiert, unbekannte Versionen nicht', async () => {
+    // Heute gibt es je Art nur Version 1; der Export prüft die Struktur, weist aber eine ältere bekannte Version nicht ab.
+    // Mit erzwungener artVersion 1 muss er gelingen; 0 und eine neuere (unbekannte) Version werden abgewiesen.
+    const t = aufbau();
+    await t.skill.execute({ action: 'abnahme_erzeugen', change: A.id }, CTX);
+    const setze = (v: number) => { const d = JSON.parse(t.gespeichert[0]!.struktur!) as Dokument; d.kopf.artVersion = v; t.gespeichert[0]!.struktur = JSON.stringify(d); };
+    setze(1);
+    expect((await t.skill.execute({ action: 'dokument_exportieren', doc_id: 'doc-1' }, CTX)).success).toBe(true);
+    for (const v of [0, 99]) {
+      setze(v);
+      const r = await t.skill.execute({ action: 'dokument_exportieren', doc_id: 'doc-1' }, CTX);
+      expect(r.success).toBe(false);
+      expect(r.error).toContain('unbekannt');
+    }
   });
 
   it('DokumenteDienst.abnahmeNachEnde liefert die Anzeigezeile', async () => {

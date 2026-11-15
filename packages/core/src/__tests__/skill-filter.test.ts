@@ -17,6 +17,15 @@ describe('selectCategories', () => {
     expect(result.has('core')).toBe(true);
   });
 
+  it('Dokument-Vorlagen: Protokoll-Arten wählen infrastructure, das bloße Wort „Protokoll“ nicht', () => {
+    for (const msg of ['erstelle das Abnahmeprotokoll', 'Testprotokoll für das Lab', 'wo ist das Labprotokoll', 'Sammelprotokoll der Serie', 'Betriebsprotokoll bitte', 'Betriebsdokument für den SQL-Cluster']) {
+      expect(selectCategoriesOhneRueckfall(msg, available(...ALL_CATEGORIES))?.has('infrastructure') ?? false, msg).toBe(true);
+    }
+    for (const msg of ['schreib ein Protokoll der Elternversammlung', 'Gesprächsprotokoll von gestern']) {
+      expect(selectCategoriesOhneRueckfall(msg, available(...ALL_CATEGORIES))?.has('infrastructure') ?? false, msg).toBe(false);
+    }
+  });
+
   it('matches productivity keywords', () => {
     for (const msg of ['add a todo', 'set a reminder', 'list calendar events', 'send an email', 'find contact']) {
       const result = selectCategories(msg, available(...ALL_CATEGORIES));

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { baueAbnahme, baueTestprotokoll } from './builder.js';
-import { findeChange, verlaufVon, type DokuQuellen } from './sammler.js';
+import { findeChange, verlaufVon, itsmQuellen, type DokuQuellen, type ItsmLesend } from './sammler.js';
 import { pruefeDokument } from './arten.js';
 import type { Block, Dokument } from './modell.js';
 import type { VerlaufEintrag } from '../change-lauf.js';
@@ -122,10 +122,57 @@ describe('Testprotokoll', () => {
 });
 
 function quellen(changes: CmdbChangeRequest[], incidents: Array<{ id: string; createdAt: string; text: string }> = []): DokuQuellen {
-  return { changes: async () => changes, haltIncidents: async () => incidents };
+  return { changes: async () => ({ changes, abgeschnitten: false }), haltIncidents: async () => ({ incidents, abgeschnitten: false }) };
 }
 
 describe('Sammler', () => {
+  it('itsmQuellen: Incidents ab Anlage des Changes, Grenze erreicht → abgeschnitten', async () => {
+    const aufrufe: Array<{ since?: string; limit: number }> = [];
+    const halt = { id: 'i1', createdAt: '2026-11-14T08:10:00.000Z', description: `Change ${aufbau.id} (x) angehalten.\nSchritt 1: Fehler` };
+    const fremd = { id: 'i2', createdAt: '2026-11-14T08:11:00.000Z', description: 'Platte voll' };
+    const itsm = (incidents: typeof halt[] | Array<typeof fremd>, changes: CmdbChangeRequest[]): ItsmLesend => ({
+      listChangeRequests: async () => changes,
+      listIncidents: async (_o, f) => { aufrufe.push(f); return incidents.slice(0, f.limit); },
+    });
+    const q = itsmQuellen(itsm([halt, fremd], [aufbau]), 3);
+    expect(await q.haltIncidents('o', aufbau.id, aufbau.createdAt)).toEqual({ incidents: [{ id: 'i1', createdAt: halt.createdAt, text: halt.description }], abgeschnitten: false });
+    expect(aufrufe[0]).toEqual({ since: aufbau.createdAt, limit: 3 });
+    expect(await q.changes('o')).toEqual({ changes: [aufbau], abgeschnitten: false });
+    // Grenze erreicht (auch wenn die Treffer selbst wenige sind)
+    const voll = itsmQuellen(itsm([halt, fremd, fremd], [aufbau, abbau]), 2);
+    expect((await voll.haltIncidents('o', aufbau.id, aufbau.createdAt)).abgeschnitten).toBe(true);
+    expect((await voll.changes('o')).abgeschnitten).toBe(true);
+  });
+
+  it('abgeschnittene Change-Liste: volle ID wird gefunden, sonst Hinweis auf die Grenze statt „nicht gefunden“/„eindeutig“', async () => {
+    const q: DokuQuellen = { changes: async () => ({ changes: [aufbau, abbau], abgeschnitten: true }), haltIncidents: async () => ({ incidents: [], abgeschnitten: false }) };
+    expect(await findeChange(q, 'o', aufbau.id)).toBe(aufbau);
+    for (const ref of ['9f8e', 'deadbeef']) {
+      const r = await findeChange(q, 'o', ref);
+      expect(typeof r).toBe('string');
+      expect(r).toContain('Abfragegrenze');
+      expect(r).not.toContain('nicht gefunden');
+    }
+  });
+
+  it('abgeschnittene Incident-Liste: seit = Anlage des Changes, Verlauf trägt die Grenze, Dokument belegt sie offen', async () => {
+    const seit: string[] = [];
+    const inc = [{ id: 'i1', createdAt: '2026-11-14T08:10:00.000Z', text: `Change ${aufbau.id} (PKI-Lab aufbauen) angehalten.\nSchritt 3: Fehler` }];
+    const q: DokuQuellen = { changes: async () => ({ changes: [], abgeschnitten: false }), haltIncidents: async (_o, _id, s) => { seit.push(s); return { incidents: inc, abgeschnitten: true }; } };
+    const r = await verlaufVon(q, 'o', aufbau);
+    expect(seit).toEqual([aufbau.createdAt]);
+    expect(r).toMatchObject({ quelle: 'incidents', abgeschnitten: true });
+    const leerAb = await verlaufVon({ ...q, haltIncidents: async () => ({ incidents: [], abgeschnitten: true }) }, 'o', aufbau);
+    expect(leerAb).toEqual({ eintraege: [], quelle: 'keine', abgeschnitten: true });
+    const grund = `Change 288c3716: Incident-Liste abgeschnitten — Verlauf möglicherweise unvollständig`;
+    const d = baueAbnahme([aufbau], new Map([[aufbau.id, leerAb]]), {}, JETZT);
+    expect(kap(d, 'verlauf').bloecke).toEqual([{ art: 'nichtBelegt', grund }]);
+    const t = baueTestprotokoll('lab', [aufbau], new Map([[aufbau.id, r]]), {}, JETZT);
+    expect(kap(t, 'faelle').bloecke).toContainEqual({ art: 'nichtBelegt', grund });
+    // ohne Grenze kein Hinweis
+    expect(await verlaufVon(quellen([], inc), 'o', aufbau)).not.toHaveProperty('abgeschnitten');
+  });
+
   it('findeChange: volle ID, eindeutiges Präfix, mehrdeutig, unbekannt', async () => {
     const x = change('288c3716-9999-2222-3333-444444444444', 'Zweiter', []);
     const q = quellen([aufbau, x, abbau]);

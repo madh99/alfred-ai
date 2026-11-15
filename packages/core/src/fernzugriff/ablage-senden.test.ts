@@ -25,7 +25,7 @@ describe('ablageSenden', () => {
     expect(r).toEqual({ ok: true });
     expect(w.gesendet).toHaveLength(1);
     expect(w.gesendet[0]!.lokal).toBe('/daten/x');
-    expect(w.gesendet[0]!.b).toMatch(/^sudo -n sh -c .*umask 022; mkdir -p \/srv\/alfred-dokumente\/change-288c3716\/v1 && cat > \/srv\/alfred-dokumente\/change-288c3716\/v1\/PRUEFUNG\.txt/);
+    expect(w.gesendet[0]!.b).toBe("sudo -n sh -c 'umask 022; mkdir -p /srv/alfred-dokumente/change-288c3716/v1 && cat > /srv/alfred-dokumente/change-288c3716/v1/PRUEFUNG.txt'");
   });
   it('fremde Pfade, Pfad-Tricks und Windows-Zugänge werden abgewiesen, ohne zu senden', async () => {
     const w = welt();
