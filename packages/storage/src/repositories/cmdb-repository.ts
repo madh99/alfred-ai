@@ -79,6 +79,7 @@ function rowToDocument(r: DbRow): CmdbDocument {
     linkedEntityId: r.linked_entity_id as string | undefined,
     version: r.version as number,
     generatedBy: r.generated_by as string | undefined,
+    struktur: (r.struktur as string | null | undefined) ?? undefined,
     createdAt: r.created_at as string,
   };
 }
@@ -466,11 +467,11 @@ export class CmdbRepository {
   async saveDocument(userId: string, doc: {
     docType: CmdbDocType; title: string; content: string;
     format?: CmdbDocFormat; linkedEntityType?: CmdbLinkedEntityType;
-    linkedEntityId?: string; generatedBy?: string;
+    linkedEntityId?: string; generatedBy?: string; struktur?: string;
   }): Promise<CmdbDocument> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    const contentTrimmed = doc.content.slice(0, 50_000);
+    const contentTrimmed = doc.content.slice(0, 500_000);
 
     // Use transaction to prevent version race condition
     return this.db.transaction(async (tx) => {
@@ -491,15 +492,15 @@ export class CmdbRepository {
       }
 
       await tx.execute(
-        `INSERT INTO cmdb_documents (id, user_id, doc_type, title, content, format, linked_entity_type, linked_entity_id, version, generated_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cmdb_documents (id, user_id, doc_type, title, content, format, linked_entity_type, linked_entity_id, version, generated_by, struktur, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [id, userId, doc.docType, doc.title, contentTrimmed, doc.format ?? 'markdown',
-       doc.linkedEntityType ?? null, doc.linkedEntityId ?? null, version, doc.generatedBy ?? 'infra_docs', now],
+       doc.linkedEntityType ?? null, doc.linkedEntityId ?? null, version, doc.generatedBy ?? 'infra_docs', doc.struktur ?? null, now],
       );
 
       return { id, userId, docType: doc.docType, title: doc.title, content: contentTrimmed,
         format: (doc.format ?? 'markdown') as CmdbDocFormat, linkedEntityType: doc.linkedEntityType,
-        linkedEntityId: doc.linkedEntityId, version, generatedBy: doc.generatedBy ?? 'infra_docs', createdAt: now };
+        linkedEntityId: doc.linkedEntityId, version, generatedBy: doc.generatedBy ?? 'infra_docs', struktur: doc.struktur, createdAt: now };
     });
   }
 

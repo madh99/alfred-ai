@@ -3234,4 +3234,26 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE fernzugaenge ADD COLUMN system TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 157,
+    description: 'Dokument-Vorlagen V1 — cmdb_documents.struktur, infra_bauplan_instanzen (SQLite-Spiegel zu PG v161).',
+    up(db) {
+      const spalten = db.prepare('PRAGMA table_info(cmdb_documents)').all() as Array<{ name: string }>;
+      if (!spalten.some(s => s.name === 'struktur')) db.exec('ALTER TABLE cmdb_documents ADD COLUMN struktur TEXT');
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_bauplan_instanzen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          dokumentart TEXT NOT NULL,
+          change_ids TEXT NOT NULL,
+          vorlage_key TEXT,
+          vorlage_version INTEGER,
+          parameter TEXT,
+          status TEXT NOT NULL DEFAULT 'aktiv',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (user_id, name)
+        )`);
+    },
+  },
 ];

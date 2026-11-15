@@ -2543,4 +2543,25 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE fernzugaenge ADD COLUMN IF NOT EXISTS system TEXT', []);
     },
   },
+  {
+    version: 161,
+    description: 'Dokument-Vorlagen V1 — cmdb_documents.struktur, infra_bauplan_instanzen (PG-Spiegel zu SQLite v157).',
+    async up(db) {
+      await db.execute('ALTER TABLE cmdb_documents ADD COLUMN IF NOT EXISTS struktur TEXT', []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_bauplan_instanzen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          dokumentart TEXT NOT NULL,
+          change_ids TEXT NOT NULL,
+          vorlage_key TEXT,
+          vorlage_version INTEGER,
+          parameter TEXT,
+          status TEXT NOT NULL DEFAULT 'aktiv',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (user_id, name)
+        )`, []);
+    },
+  },
 ];
