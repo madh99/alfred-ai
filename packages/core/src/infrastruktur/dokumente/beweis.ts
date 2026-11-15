@@ -1,11 +1,12 @@
 // Beweis-Anhang: geschwärzter Rohlauf mit Prüfsumme (deterministisch, ohne I/O).
 import { createHash } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
-import { schwaerze } from '../../fernzugriff/kaefig.js';
+import { schwaerze, GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
 import type { ChangeLauf, SchrittErgebnis } from '../change-lauf.js';
 import type { ChangeSchritt } from '../change-schritte.js';
 import type { Anhang, Block } from './modell.js';
 
+const SCHLUESSEL_GEHEIM = new RegExp(`${GEHEIM_NAME.source}|ticket|cookie|authorization`, 'i');
 const KUERZUNG = '\n[gekürzt — Volltext im Rohlauf]';
 
 /** Kanonische JSON-Form: Schlüssel rekursiv sortiert, ohne Leerraum. */
@@ -33,7 +34,10 @@ function schwaerzeZaehlend<T>(v: T): { wert: T; anzahl: number } {
     if (Array.isArray(x)) return x.map(geh);
     if (x && typeof x === 'object') {
       const o: Record<string, unknown> = {};
-      for (const [k, w] of Object.entries(x as Record<string, unknown>)) o[k] = geh(w);
+      for (const [k, w] of Object.entries(x as Record<string, unknown>)) {
+        // Schwärzung nach Schlüsselname: strukturierte Daten tragen Geheimnisse ohne KEY=Wert-Text
+        if ((typeof w === 'string' || typeof w === 'number') && SCHLUESSEL_GEHEIM.test(k)) { anzahl++; o[k] = '[geschwärzt]'; } else o[k] = geh(w);
+      }
       return o;
     }
     return x;
@@ -85,7 +89,7 @@ export function beweisAnhang(c: CmdbChangeRequest, maxAusgabe = 1500): { bloecke
     const teile = [e.ausgabe, e.fehler ? `Fehler: ${e.fehler}` : undefined, e.pruefung?.ausgabe ? `Prüfung: ${e.pruefung.ausgabe}` : undefined].filter((x): x is string => !!x);
     if (teile.length === 0) continue;
     // bereits geschwärzt (l.wert), erst danach kürzen — ein Geheimnis an der Schnittstelle kann so nicht halb stehen bleiben
-    bloecke.push({ art: 'code', text: kuerze(teile.join('\n'), maxAusgabe) });
+    bloecke.push({ art: 'code', text: `Schritt ${e.nr} — ${planNr.get(e.nr)?.titel ?? '—'}\n${kuerze(teile.join('\n'), maxAusgabe)}` });
   }
 
   const inhalt = kanonisch(l.wert);

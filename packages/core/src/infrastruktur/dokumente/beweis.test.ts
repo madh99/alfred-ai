@@ -47,13 +47,23 @@ describe('Beweis-Anhang', () => {
     const r = beweisAnhang(change('x'.repeat(100000)));
     const code = r.bloecke.filter(b => b.art === 'code') as Array<{ art: 'code'; text: string }>;
     expect(code).toHaveLength(1);
-    expect(code[0]!.text.length).toBeLessThanOrEqual(1500 + hinweis.length);
+    const kopf = 'Schritt 1 — Dienst starten\n';
+    expect(code[0]!.text.startsWith(kopf)).toBe(true);
+    expect(code[0]!.text.length).toBeLessThanOrEqual(1500 + hinweis.length + kopf.length);
     expect(code[0]!.text.endsWith('[gekürzt — Volltext im Rohlauf]')).toBe(true);
   });
 
   it('Geheimnis an der Kürzungsgrenze leckt nicht', () => {
     const r = beweisAnhang(change('a'.repeat(1490) + '\npassword=Geheim123!'), 1500);
     expect(JSON.stringify(r.bloecke)).not.toContain('Geheim');
+  });
+
+  it('schwärzt strukturierte Daten nach Schlüsselnamen', () => {
+    const r = beweisAnhang(change('ok', { nurPruefung: { nr: 1, daten: { auth: { password: 'Geheim123!' }, list: [{ apiToken: 'abc12345' }] } } }));
+    const alles = r.rohlauf!.inhalt + JSON.stringify(r.bloecke);
+    expect(alles).not.toContain('Geheim123!');
+    expect(alles).not.toContain('abc12345');
+    expect(r.schwaerzungen).toBe(2);
   });
 
   it('Change ohne Lauf: nichtBelegt, keine Prüfsumme', () => {

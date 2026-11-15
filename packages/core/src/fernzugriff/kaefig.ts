@@ -108,6 +108,9 @@ export const GEHEIM_PFADE = [
   '/var/lib/vaultwarden', '/opt/vaultwarden',
 ];
 
+/** Namen von Geheimnis-Feldern (Schlüssel/Variablen); gemeinsam für Schwärzung nach Text und nach Schlüssel. */
+export const GEHEIM_NAME = /(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT)/i;
+
 /**
  * v1551 — Geheimnisse in einer Ausgabe schwärzen, bevor sie das Modell sieht — egal, auf welchem Weg sie gelesen wurden.
  * Private Schlüssel, Passwort-Hashes, KEY=Wert-Paare mit Geheimnis-Namen, Zugangsdaten in URLs, Bearer-Tokens.
@@ -117,7 +120,7 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
   const zaehle = (ersatz: string) => () => { anzahl++; return ersatz; };
   let t = text.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, zaehle('[privater Schlüssel geschwärzt]'));
   t = t.replace(/\$(1|2[abxy]?|5|6|7|y|gy|apr1)\$[^\s:]{8,}/g, zaehle('[Passwort-Hash geschwärzt]')); // v1602 apr1 (htpasswd, z. B. Proxy-Labels)
-  t = t.replace(/^(\s*(?:export\s+)?[A-Za-z0-9_.-]*(?:PASS(?:WORD|WD)?|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH[_-]?KEY|SALT)[A-Za-z0-9_.-]*\s*[=:]\s*)(['"]?)([^\s'"#]{4,})\2/gim, (_m, a: string, q: string) => { anzahl++; return `${a}${q}[geschwärzt]${q}`; });
+  t = t.replace(new RegExp(String.raw`^(\s*(?:export\s+)?[A-Za-z0-9_.-]*${GEHEIM_NAME.source}[A-Za-z0-9_.-]*\s*[=:]\s*)(['"]?)([^\s'"#]{4,})\2`, 'gim'), (_m, a: string, q: string) => { anzahl++; return `${a}${q}[geschwärzt]${q}`; });
   t = t.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]{3,})@/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
   t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
   return { text: t, anzahl };
