@@ -193,7 +193,9 @@ export class CmdbRepository {
 
   /** Dokumente, deren ID mit dem Anfang beginnt (höchstens 2 — mehr braucht die Eindeutigkeitsprüfung nicht). Nur Hex-Ziffern und Bindestrich, 6 bis 36 Zeichen; alles andere ergibt eine leere Liste (kein Bereinigen, keine Platzhalter). */
   async findDocumentsByIdPrefix(userId: string, prefix: string): Promise<CmdbDocument[]> {
-    const rows = await this.db.query(`SELECT * FROM cmdb_documents WHERE user_id = ? AND id LIKE ? LIMIT 2`, [userId, prefix.replace(/[\\%_]/g, '') + '%']);
+    // nur Hex-Ziffern und Bindestrich, 6 bis 36 Zeichen — alles andere (auch Platzhalter) ergibt eine leere Liste, nichts wird bereinigt
+    if (!/^[0-9a-f-]{6,36}$/i.test(prefix)) return [];
+    const rows = await this.db.query(`SELECT * FROM cmdb_documents WHERE user_id = ? AND id LIKE ? LIMIT 2`, [userId, prefix + '%']);
     return rows.map(rowToDocument);
   }
 
