@@ -4,7 +4,7 @@ import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
 import { tlsFetch } from './social/tls-fetch.js';
 import { randomUUID } from 'node:crypto';
-import { baueRegel, neueReihenfolge, policyZeile, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { baueRegel, filterLesbar, neueReihenfolge, netzadresse, policyZeile, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -411,6 +411,54 @@ export class UniFiSkill extends Skill {
     const sid = await this.siteId();
     const [zonen, netze, policies] = await Promise.all([this.liste<Zone>('/firewall/zones'), this.liste<Netz>('/networks'), this.liste<Policy>('/firewall/policies')]);
     return { sid, zonen, netze, policies };
+  }
+
+  /**
+   * Nur lesend (GET) — Firewall-Stand in lesbarer Form für Betriebsdokumente: Zonen (mit Netzen), Netze (VLAN, Netzadresse) und
+   * Policies mit Quelle/Ziel/Ports/Protokoll im Klartext. Zonen und Netze kommen aus der internen API (dort stehen network_ids,
+   * vlan, ip_subnet); die Policies aus der Integration-API, deren Zonen-IDs über deren Zonenliste aufgelöst werden.
+   */
+  public async firewallLesen(): Promise<{
+    zonen: Array<{ id: string; name: string; netzIds: string[] }>;
+    netze: Array<{ id: string; name: string; vlan?: number; subnetz?: string; zoneId?: string }>;
+    policies: Array<{ id: string; name: string; aktiv: boolean; aktion: string; quelleZone: string; zielZone: string; quelle: string; ziel: string; ports: string; protokoll: string; herkunft: string }>;
+  }> {
+    if (!this.config.apiKey) throw new Error('Firewall lesen braucht den UniFi-API-Schlüssel (Integration-API)');
+    type RawZone = { _id: string; name: string; network_ids?: string[] };
+    type RawNetz = { _id: string; name?: string; vlan?: number | string; vlan_enabled?: boolean; ip_subnet?: string };
+    const [rawZonen, rawNetze, iZonen, iNetze, policies] = await Promise.all([
+      this.v2('GET', 'firewall/zone') as Promise<RawZone[] | undefined>,
+      this.request<RawNetz[]>('GET', 'rest/networkconf'),
+      this.liste<Zone>('/firewall/zones'),
+      this.liste<Netz>('/networks'),
+      this.liste<Policy>('/firewall/policies'),
+    ]);
+    const zonen = (rawZonen ?? []).map(z => ({ id: z._id, name: z.name, netzIds: [...(z.network_ids ?? [])] }));
+    const netze = (Array.isArray(rawNetze) ? rawNetze : []).map((n) => {
+      const vlan = n.vlan_enabled === false || n.vlan === undefined || n.vlan === '' ? undefined : Number(n.vlan);
+      const subnetz = n.ip_subnet ? netzadresse(n.ip_subnet) : undefined;
+      const zoneId = zonen.find(z => z.netzIds.includes(n._id))?.id;
+      return { id: n._id, name: n.name ?? n._id, ...(vlan !== undefined && !Number.isNaN(vlan) ? { vlan } : {}), ...(subnetz ? { subnetz } : {}), ...(zoneId ? { zoneId } : {}) };
+    });
+    const zoneName = (id: string) => iZonen.find(z => z.id === id)?.name ?? id;
+    const netzName = (id: string) => iNetze.find(n => n.id === id)?.name ?? id;
+    return {
+      zonen, netze,
+      policies: policies.map((p) => {
+        const q = filterLesbar(p.source.trafficFilter, netzName);
+        const z = filterLesbar(p.destination.trafficFilter, netzName);
+        const portTeile = [z.ports, q.ports ? `Quellport ${q.ports}` : ''].filter(Boolean);
+        const pr = p.ipProtocolScope?.protocolFilter as { protocol?: { name?: string }; preset?: { name?: string } } | undefined;
+        return {
+          id: p.id, name: p.name ?? '', aktiv: p.enabled !== false, aktion: p.action?.type ?? '?',
+          quelleZone: zoneName(p.source.zoneId), zielZone: zoneName(p.destination.zoneId),
+          quelle: q.adresse || 'beliebig', ziel: z.adresse || 'beliebig',
+          ports: portTeile.join(', ') || 'beliebig',
+          protokoll: pr?.protocol?.name ?? pr?.preset?.name ?? 'alle',
+          herkunft: p.metadata?.origin ?? '',
+        };
+      }),
+    };
   }
 
   private async reihenfolge(sid: string, quelle: string, ziel: string): Promise<Reihenfolge> {

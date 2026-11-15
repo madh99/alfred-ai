@@ -160,3 +160,50 @@ export function policyZeile(p: Policy, zonen: Zone[], netze: Netz[], pos?: numbe
   const proto = pr?.protocol?.name ?? pr?.preset?.name ?? 'alle';
   return `${pos !== undefined ? `${pos}. ` : ''}${p.enabled ? '' : '(aus) '}${p.action.type} „${p.name || '(ohne Name)'}" — ${zn(p.source.zoneId)} [${filterText(p.source.trafficFilter, netze)}] → ${zn(p.destination.zoneId)} [${filterText(p.destination.trafficFilter, netze)}], ${proto}${p.metadata?.origin === 'SYSTEM_DEFINED' ? ', System' : ''} · ${p.id}`;
 }
+
+
+/** „10.203.32.1/27“ (Gateway/Präfix, wie networkconf.ip_subnet) → Netzadresse „10.203.32.0/27“; Unlesbares bleibt unverändert. */
+export function netzadresse(gatewayCidr: string): string {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(gatewayCidr.trim());
+  if (!m) return gatewayCidr;
+  const teile = [m[1], m[2], m[3], m[4]].map(Number);
+  const praefix = Number(m[5]);
+  if (praefix > 32 || teile.some(t => t > 255)) return gatewayCidr;
+  const ip = ((teile[0]! << 24) | (teile[1]! << 16) | (teile[2]! << 8) | teile[3]!) >>> 0;
+  const maske = praefix === 0 ? 0 : (0xffffffff << (32 - praefix)) >>> 0;
+  const netz = (ip & maske) >>> 0;
+  return `${netz >>> 24}.${(netz >>> 16) & 255}.${(netz >>> 8) & 255}.${netz & 255}/${praefix}`;
+}
+
+function kurzJson(w: unknown): string {
+  const t = JSON.stringify(w) ?? '?';
+  return t.length > 120 ? `${t.slice(0, 117)}...` : t;
+}
+
+/**
+ * Traffic-Filter einer Policy-Seite als Klartext für Betriebsdokumente. Adresse und Ports getrennt; unbekannte Formen werden als
+ * kurze JSON-Zusammenfassung ausgegeben, nie verschwiegen.
+ */
+export function filterLesbar(f: Record<string, unknown> | undefined, netzName: (id: string) => string): { adresse: string; ports: string } {
+  if (!f) return { adresse: '', ports: '' };
+  const adr: string[] = [];
+  const ports: string[] = [];
+  const bekannt = new Set(['type', 'ipAddressFilter', 'networkFilter', 'portFilter', 'macAddressFilter', 'domainFilter']);
+  const neg = (o: unknown) => ((o as { matchOpposite?: boolean } | undefined)?.matchOpposite ? 'nicht ' : '');
+  const eintrag = (i: Record<string, unknown>) => i.value !== undefined ? String(i.value) : i.start !== undefined ? `${String(i.start)}-${String(i.stop)}` : kurzJson(i);
+
+  const ipf = f.ipAddressFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
+  if (ipf) adr.push(ipf.items ? `${neg(ipf)}${ipf.items.map(eintrag).join(', ')}` : `IP-Liste ${ipf.trafficMatchingListId ?? kurzJson(ipf)}`);
+  const nf = f.networkFilter as { networkIds?: string[]; matchOpposite?: boolean } | undefined;
+  if (nf) adr.push(nf.networkIds ? `${neg(nf)}Netz ${nf.networkIds.map(netzName).join(', ')}` : kurzJson(nf));
+  const mf = f.macAddressFilter as { macAddresses?: string[] } | undefined;
+  if (mf) adr.push(mf.macAddresses ? `MAC ${mf.macAddresses.join(', ')}` : kurzJson(mf));
+  const df = f.domainFilter as { domains?: string[] } | undefined;
+  if (df) adr.push(df.domains ? `Domain ${df.domains.join(', ')}` : kurzJson(df));
+  const pf = f.portFilter as { items?: Array<Record<string, unknown>>; trafficMatchingListId?: string; matchOpposite?: boolean } | undefined;
+  if (pf) ports.push(pf.items ? `${neg(pf)}${pf.items.map(eintrag).join(', ')}` : `Port-Liste ${pf.trafficMatchingListId ?? kurzJson(pf)}`);
+  const unbekannt = Object.keys(f).filter(k => !bekannt.has(k));
+  if (unbekannt.length) adr.push(kurzJson({ type: f.type, ...Object.fromEntries(unbekannt.map(k => [k, f[k]])) }));
+  if (!adr.length && !ports.length && f.type !== undefined && f.type !== 'ANY') adr.push(kurzJson(f));
+  return { adresse: adr.join('; '), ports: ports.join('; ') };
+}
