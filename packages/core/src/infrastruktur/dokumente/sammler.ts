@@ -39,15 +39,17 @@ async function halteAusIncidents(q: DokuQuellen, o: string, c: CmdbChangeRequest
 
 /**
  * Verlauf eines Changes: aus lauf.verlauf (seit den Dokument-Vorlagen vom Motor geführt); für ältere Läufe rekonstruiert aus den
- * Halte-Incidents — dort stehen nur Halte, keine Wiederholungen. Enthält lauf.verlauf keinen Halt, gibt es aber Halte-Incidents
- * (z. B. vor Einführung des Verlaufs angehalten, danach wiederholt), werden diese Halte zeitlich eingereiht (Quelle lauf+incidents).
+ * Halte-Incidents — dort stehen nur Halte, keine Wiederholungen. Halte aus Incidents, die im Lauf fehlen (lauf.verlauf ohne Halt
+ * oder Incident älter als der erste Laufeintrag), werden zeitlich eingereiht (Quelle lauf+incidents).
  */
 export async function verlaufVon(q: DokuQuellen, o: string, c: CmdbChangeRequest): Promise<{ eintraege: VerlaufEintrag[]; quelle: VerlaufQuelle }> {
   const lauf = c.lauf as ChangeLauf | undefined;
   const ausLauf = Array.isArray(lauf?.verlauf) ? lauf.verlauf : [];
-  if (ausLauf.some(e => e.art === 'halt')) return { eintraege: ausLauf, quelle: 'lauf' };
-
-  const halte = await halteAusIncidents(q, o, c);
+  // Der Motor legt den Halte-Incident nur beim ERSTEN Halt an: liegt er vor dem ersten Laufeintrag (vor Einführung des Verlaufs
+  // angehalten, danach wiederholt und erneut angehalten), fehlt dieser Halt im Lauf und wird ergänzt. Ohne Halt im Lauf zählen alle.
+  const ersterImLauf = ausLauf.reduce<string | undefined>((m, e) => (m === undefined || e.zeit < m ? e.zeit : m), undefined);
+  const ohneHalt = !ausLauf.some(e => e.art === 'halt');
+  const halte = (await halteAusIncidents(q, o, c)).filter(h => ohneHalt || (ersterImLauf !== undefined && h.zeit < ersterImLauf));
   if (!halte.length) return ausLauf.length ? { eintraege: ausLauf, quelle: 'lauf' } : { eintraege: [], quelle: 'keine' };
   const schluessel = (e: VerlaufEintrag) => `${e.zeit}|${e.art}|${e.text}`;
   const gesehen = new Set<string>();

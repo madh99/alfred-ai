@@ -162,9 +162,22 @@ password=Geheim123!` };
     expect(r.quelle).toBe('lauf+incidents');
     expect(r.eintraege.map(e => e.art)).toEqual(['halt', 'wiederholen']);
     expect(JSON.stringify(r)).not.toContain('Geheim');
-    // mit Halt im Lauf: nur der Lauf
-    const mitHalt = { ...aufbau, lauf: { ...(aufbau.lauf as object), verlauf: [{ zeit: 'z', art: 'halt', schritt: 3, text: 'x' }] } } as CmdbChangeRequest;
-    expect((await verlaufVon(quellen([], [halt]), 'o', mitHalt)).quelle).toBe('lauf');
+    // derselbe Halt im Lauf (Motor merkt ihn kurz vor dem Anlegen des Incidents): nur der Lauf, kein Doppel
+    const mitHalt = { ...aufbau, lauf: { ...(aufbau.lauf as object), verlauf: [{ zeit: '2026-11-14T08:09:59.900Z', art: 'halt', schritt: 3, text: 'x' }] } } as CmdbChangeRequest;
+    expect(await verlaufVon(quellen([], [halt]), 'o', mitHalt)).toMatchObject({ quelle: 'lauf', eintraege: [{ text: 'x' }] });
+  });
+
+  it('verlaufVon: Halt vor dem Deploy nur im Incident, danach wiederholt und erneut angehalten → alle drei in Reihenfolge', async () => {
+    const t0 = '2026-11-14T08:10:00.000Z'; const t1 = '2026-11-15T07:00:00.000Z'; const t2 = '2026-11-15T07:05:00.000Z';
+    const c = { ...aufbau, lauf: { ...(aufbau.lauf as object), verlauf: [
+      { zeit: t1, art: 'wiederholen', schritt: 3, text: 'Schritt 3 wird wiederholt' },
+      { zeit: t2, art: 'halt', schritt: 3, text: 'Schritt 3: wieder Fehler' },
+    ] } } as CmdbChangeRequest;
+    const inc = [{ id: 'i1', createdAt: t0, text: `Change ${aufbau.id} (PKI-Lab aufbauen) angehalten.\nSchritt 3: erster Fehler` }];
+    const r = await verlaufVon(quellen([], inc), 'o', c);
+    expect(r.quelle).toBe('lauf+incidents');
+    expect(r.eintraege.map(e => [e.zeit, e.art])).toEqual([[t0, 'halt'], [t1, 'wiederholen'], [t2, 'halt']]);
+    expect(r.eintraege[0]!.text).toBe('Schritt 3: erster Fehler');
   });
 
   it('Builder: offene Plan-Korrektur wird genannt statt „kein Verlauf erfasst“; entschiedene nicht', () => {
