@@ -66,6 +66,16 @@ describe('Beweis-Anhang', () => {
     expect(r.schwaerzungen).toBe(2);
   });
 
+  it('schwärzt unter einem Geheimnis-Schlüssel den ganzen Teilbaum', () => {
+    const r = beweisAnhang(change('ok', { nurPruefung: { nr: 1, daten: { credentials: { user: 'sa', p: 'Geheim', tief: [{ x: 42 }] }, host: 'srv1' } } }));
+    const alles = r.rohlauf!.inhalt;
+    expect(alles).not.toContain('Geheim');
+    expect(alles).not.toContain('"sa"');
+    expect(alles).toContain('"host":"srv1"');
+    expect(alles).toContain('"credentials":{"p":"[geschwärzt]","tief":[{"x":"[geschwärzt]"}],"user":"[geschwärzt]"}');
+    expect(r.schwaerzungen).toBe(3);
+  });
+
   it('Change ohne Lauf: nichtBelegt, keine Prüfsumme', () => {
     const c = change('x'); delete (c as { lauf?: unknown }).lauf;
     const r = beweisAnhang(c);

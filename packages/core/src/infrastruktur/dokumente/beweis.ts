@@ -28,6 +28,13 @@ export function kanonisch(v: unknown): string {
 
 /** Tiefe Kopie, jeder String durch schwaerze(); liefert zusätzlich die Zahl der Schwärzungen. */
 function schwaerzeZaehlend<T>(v: T): { wert: T; anzahl: number } {
+  // alle Blätter (Text/Zahl) unterhalb eines Geheimnis-Schlüssels, Struktur bleibt
+  const alle = (x: unknown): unknown => {
+    if (typeof x === 'string' || typeof x === 'number') { anzahl++; return '[geschwärzt]'; }
+    if (Array.isArray(x)) return x.map(alle);
+    if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([k, w]) => [k, alle(w)]));
+    return x;
+  };
   let anzahl = 0;
   const geh = (x: unknown): unknown => {
     if (typeof x === 'string') { const s = schwaerze(x); anzahl += s.anzahl; return s.text; }
@@ -36,7 +43,7 @@ function schwaerzeZaehlend<T>(v: T): { wert: T; anzahl: number } {
       const o: Record<string, unknown> = {};
       for (const [k, w] of Object.entries(x as Record<string, unknown>)) {
         // Schwärzung nach Schlüsselname: strukturierte Daten tragen Geheimnisse ohne KEY=Wert-Text
-        if ((typeof w === 'string' || typeof w === 'number') && SCHLUESSEL_GEHEIM.test(k)) { anzahl++; o[k] = '[geschwärzt]'; } else o[k] = geh(w);
+        o[k] = SCHLUESSEL_GEHEIM.test(k) ? alle(w) : geh(w);
       }
       return o;
     }
