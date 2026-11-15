@@ -1,7 +1,13 @@
 import type { Block, Dokument } from './modell.js';
 
 function zelle(s: string): string {
-  return s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, ' ');
+}
+
+/** Zaun länger als jede Backtick-Folge im Inhalt (mindestens drei). */
+function zaun(text: string): string {
+  const laengste = Math.max(0, ...(text.match(/`+/g) ?? []).map((m) => m.length));
+  return '`'.repeat(Math.max(3, laengste + 1));
 }
 
 function blockMd(b: Block): string {
@@ -16,12 +22,18 @@ function blockMd(b: Block): string {
       const zeilen = b.zeilen.map((z) => `| ${z.map(zelle).join(' | ')} |`);
       return [kopf, trenn, ...zeilen].join('\n');
     }
-    case 'code':
-      return '```\n' + b.text + '\n```';
-    case 'mermaid':
-      return '```mermaid\n' + b.text + '\n```';
-    case 'nichtBelegt':
-      return `> **Nicht belegt:** ${b.grund}`;
+    case 'code': {
+      const z = zaun(b.text);
+      return `${z}\n${b.text}\n${z}`;
+    }
+    case 'mermaid': {
+      const z = zaun(b.text);
+      return `${z}mermaid\n${b.text}\n${z}`;
+    }
+    case 'nichtBelegt': {
+      const [erste, ...rest] = b.grund.split(/\r\n|\r|\n/);
+      return [`> **Nicht belegt:** ${erste}`, ...rest.map((z) => (z === '' ? '>' : `> ${z}`))].join('\n');
+    }
     case 'frei':
       return b.text && b.text.trim() ? b.text : '_(nicht ausgefüllt)_';
   }

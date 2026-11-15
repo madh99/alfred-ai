@@ -58,6 +58,54 @@ describe('pruefeDokument', () => {
   });
 });
 
+describe('pruefeDokument (Härtung)', () => {
+  it('meldet falsche Version der Dokumentart', () => {
+    const d = abnahme();
+    d.kopf.artVersion = 2;
+    expect(pruefeDokument(d).join('\n')).toMatch(/Version/);
+  });
+  it('meldet doppelte Kapitel-IDs', () => {
+    const d = abnahme();
+    d.kapitel.push({ ...d.kapitel[5]! });
+    expect(pruefeDokument(d).join('\n')).toMatch(/Doppeltes Kapitel: beweise/);
+  });
+  it('meldet freies Feld mit falschem Namen', () => {
+    const d = abnahme();
+    d.kapitel[1]!.bloecke = [{ art: 'frei', feld: 'anderes', text: 'x' }];
+    expect(pruefeDokument(d).join('\n')).toContain('anderes');
+  });
+  it('meldet freien Block in Kapitel ohne freie Definition', () => {
+    const d = abnahme();
+    d.kapitel[2]!.bloecke = [{ art: 'frei', feld: 'zweck', text: 'x' }];
+    expect(pruefeDokument(d).join('\n')).toMatch(/nicht vorgesehen/);
+  });
+});
+
+describe('alsMarkdown (Härtung)', () => {
+  function mitBloecken(bloecke: Dokument['kapitel'][number]['bloecke']): string {
+    const d = abnahme();
+    d.kapitel[5]!.bloecke = bloecke;
+    return alsMarkdown(d);
+  }
+  it('Zaun ist länger als Backtick-Folgen im Inhalt', () => {
+    const md = mitBloecken([
+      { art: 'code', text: 'a ``` b' },
+      { art: 'mermaid', text: 'x ```` y' },
+    ]);
+    expect(md).toContain('````\na ``` b\n````');
+    expect(md).toContain('`````mermaid\nx ```` y\n`````');
+  });
+  it('mehrzeiliger Grund bleibt im Zitat', () => {
+    const md = mitBloecken([{ art: 'nichtBelegt', grund: 'eins\r\nzwei\n\ndrei' }]);
+    expect(md).toContain('> **Nicht belegt:** eins\n> zwei\n>\n> drei');
+  });
+  it('Tabellenzelle: Backslash vor Pipe, einzelnes CR', () => {
+    const md = mitBloecken([{ art: 'tabelle', kopf: ['A'], zeilen: [['a\\|b'], ['x\ry']] }]);
+    expect(md).toContain('| a\\\\\\|b |');
+    expect(md).toContain('| x y |');
+  });
+});
+
 describe('alsMarkdown', () => {
   it('rendert Kapitel, Nicht-belegt, leeres freies Feld, Tabelle und Mermaid', () => {
     const d = abnahme();

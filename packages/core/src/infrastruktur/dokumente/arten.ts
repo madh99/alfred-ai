@@ -68,8 +68,18 @@ export function pruefeDokument(d: Dokument): string[] {
     }
   }
 
+  if (d.kopf.artVersion !== art.version) {
+    meldungen.push(`Version der Dokumentart stimmt nicht: ${d.kopf.artVersion}, erwartet ${art.version}`);
+  }
+
+  const gesehen = new Set<string>();
   let letzte = -1;
   for (const k of d.kapitel) {
+    if (gesehen.has(k.id)) {
+      meldungen.push(`Doppeltes Kapitel: ${k.id}`);
+      continue;
+    }
+    gesehen.add(k.id);
     const pos = bekannt.get(k.id);
     if (pos === undefined) {
       meldungen.push(`Unbekanntes Kapitel: ${k.id}`);
@@ -85,7 +95,12 @@ export function pruefeDokument(d: Dokument): string[] {
       meldungen.push(`Pflichtkapitel ohne Inhalt: ${k.id}`);
     }
     for (const b of k.bloecke) {
-      if (b.art === 'frei' && def.frei && b.text !== undefined && b.text.length > def.frei.max) {
+      if (b.art !== 'frei') continue;
+      if (!def.frei) {
+        meldungen.push(`Freies Feld ${b.feld} im Kapitel ${k.id} nicht vorgesehen`);
+      } else if (b.feld !== def.frei.feld) {
+        meldungen.push(`Freies Feld ${b.feld} im Kapitel ${k.id} falsch, erwartet: ${def.frei.feld}`);
+      } else if (b.text !== undefined && b.text.length > def.frei.max) {
         meldungen.push(
           `Freies Feld ${b.feld} im Kapitel ${k.id} zu lang: ${b.text.length} Zeichen, höchstens ${def.frei.max} erlaubt`,
         );
