@@ -7289,14 +7289,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             cmdb: { saveDocument: (u, d) => cmdbFz.saveDocument(u, d), getDocumentById: (u, id) => cmdbFz.getDocumentById(u, id) },
             instanzen: { anlegen: (u, d) => instanzenDoku.anlegen(u, d), finde: (u, x) => instanzenDoku.finde(u, x) },
             betrieb: {
-              assetsNachName: async (u, name) => (await cmdbFz.listAssets(u, { search: name })).filter(a => a.name === name).map(a => ({ id: a.id, name: a.name, assetType: a.assetType })),
-              assetNachId: async (u, id) => { const a = await cmdbFz.getAssetById(u, id); return a ? { id: a.id, name: a.name } : null; },
+              assetsNachName: async (u, name) => (await cmdbFz.findAssetsByNameAll(u, name)).map(a => ({ id: a.id, name: a.name, assetType: a.assetType, status: a.status })),
+              assetNachId: async (u, id) => { const a = await cmdbFz.getAssetById(u, id); return a ? { id: a.id, name: a.name, status: a.status } : null; },
               vorhaben: async (u, k) => { const v = await vorhabenDoku.finde(u, k); return v ? { id: v.id, changeIds: v.changeIds } : null; },
               dokument: async (u, k) => {
                 const genau = await cmdbFz.getDocumentById(u, k);
                 if (genau) return { id: genau.id };
                 if (k.length < 6) return null;
-                const treffer = (await cmdbFz.listDocuments(u, { limit: 500 })).filter(d => d.id.startsWith(k));
+                const treffer = await cmdbFz.findDocumentsByIdPrefix(u, k);
                 return treffer.length === 1 ? { id: treffer[0]!.id } : null;
               },
             },

@@ -185,6 +185,18 @@ export class CmdbRepository {
     return null;
   }
 
+  /** Alle Assets mit diesem Namen, Groß-/Kleinschreibung egal (Eindeutigkeitsprüfung; findAssetByName liefert nur eines). */
+  async findAssetsByNameAll(userId: string, name: string): Promise<CmdbAsset[]> {
+    const rows = await this.db.query(`SELECT * FROM cmdb_assets WHERE user_id = ? AND LOWER(name) = LOWER(?) ORDER BY created_at, id LIMIT 20`, [userId, name]);
+    return rows.map(rowToAsset);
+  }
+
+  /** Dokumente, deren ID mit dem Anfang beginnt (höchstens 2 — mehr braucht die Eindeutigkeitsprüfung nicht). */
+  async findDocumentsByIdPrefix(userId: string, prefix: string): Promise<CmdbDocument[]> {
+    const rows = await this.db.query(`SELECT * FROM cmdb_documents WHERE user_id = ? AND id LIKE ? LIMIT 2`, [userId, prefix.replace(/[\\%_]/g, '') + '%']);
+    return rows.map(rowToDocument);
+  }
+
   async findAssetByName(userId: string, name: string, assetType?: CmdbAssetType): Promise<CmdbAsset | null> {
     const sql = assetType
       ? `SELECT * FROM cmdb_assets WHERE user_id = ? AND name = ? AND asset_type = ? LIMIT 1`

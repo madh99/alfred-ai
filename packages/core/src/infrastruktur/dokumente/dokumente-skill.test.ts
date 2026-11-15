@@ -395,6 +395,11 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     { id: 'bbbbbbbb-2222', name: 'pkiroot01', assetType: 'vm' },
     { id: 'cccccccc-3333', name: 'dopp', assetType: 'vm' },
     { id: 'dddddddd-4444', name: 'dopp', assetType: 'service' },
+    { id: 'eeeeeeee-5555', name: 'alt', assetType: 'vm', status: 'decommissioned' },
+    { id: 'ffffffff-6666', name: 'neu', assetType: 'vm', status: 'decommissioned' },
+    { id: 'ffffffff-7777', name: 'neu', assetType: 'vm', status: 'active' },
+    { id: '99999999-8888', name: 'beide', assetType: 'vm', status: 'decommissioned' },
+    { id: '99999999-9999', name: 'beide', assetType: 'service', status: 'decommissioned' },
   ];
   function mitBetrieb() {
     const t = aufbau();
@@ -439,6 +444,22 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     expect(JSON.parse(i!.parameter!)).toEqual({
       assets: ['aaaaaaaa-1111', 'bbbbbbbb-2222'], vorhabenId: VID, architekturDocId: DID, jobs: ['pki-betrieb'], standardVorlagen: ['k'], restoreChangeId: C.id,
     });
+  });
+
+  it('Status: ein aktives neben außer Betrieb gilt, einzelnes außer Betrieb wird abgewiesen, mehrere außer Betrieb sind mehrdeutig mit Status', async () => {
+    const t = mitBetrieb();
+    const ok = await t.skill.execute({ action: 'instanz_anlegen', name: 's1', dokumentart: 'betrieb', assets: ['neu'] }, CTX);
+    expect(ok.success, ok.error).toBe(true);
+    expect(JSON.parse((await t.deps.instanzen.finde('o', 's1'))!.parameter!).assets).toEqual(['ffffffff-7777']);
+    const alt = await t.skill.execute({ action: 'instanz_anlegen', name: 's2', dokumentart: 'betrieb', assets: ['pkiiss01', 'alt'] }, CTX);
+    expect(alt.success).toBe(false);
+    expect(alt.error).toContain('außer Betrieb');
+    expect(await t.deps.instanzen.finde('o', 's2')).toBeUndefined();
+    const beide = await t.skill.execute({ action: 'instanz_anlegen', name: 's3', dokumentart: 'betrieb', assets: ['beide'] }, CTX);
+    expect(beide.error).toContain('mehrdeutig');
+    expect(beide.error).toContain('decommissioned');
+    const perId = await t.skill.execute({ action: 'instanz_anlegen', name: 's4', dokumentart: 'betrieb', assets: ['eeeeeeee'] }, CTX);
+    expect(perId.error).toContain('außer Betrieb');
   });
 
   it('unbekanntes Vorhaben, Dokument und Restore-Change werden gemeldet, nichts gespeichert', async () => {

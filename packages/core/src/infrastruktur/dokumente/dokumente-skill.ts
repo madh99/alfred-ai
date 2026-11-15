@@ -28,8 +28,8 @@ export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 't
 /** Nachschlagen für Betriebs-Instanzen (alles je Owner); fehlt es, kann keine Betriebs-Instanz angelegt werden */
 export interface BetriebQuellen {
   /** alle Assets mit genau diesem Namen (über Asset-Typen hinweg) — mehr als eines heißt mehrdeutig */
-  assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string }>>;
-  assetNachId(userId: string, id: string): Promise<{ id: string; name: string } | null>;
+  assetsNachName(userId: string, name: string): Promise<Array<{ id: string; name: string; assetType?: string; status?: string }>>;
+  assetNachId(userId: string, id: string): Promise<{ id: string; name: string; status?: string } | null>;
   /** Vorhaben nach ID, eindeutigem ID-Anfang oder Titel */
   vorhaben(userId: string, schluessel: string): Promise<{ id: string; changeIds: string[] } | null>;
   /** CMDB-Dokument nach ID oder eindeutigem ID-Anfang (ab 6 Zeichen) */
@@ -294,15 +294,22 @@ export class DokumenteDienst {
     const probleme: string[] = [];
     const ids: string[] = [];
     for (const ref of form.assets) {
-      const treffer = await q.assetsNachName(o, ref);
-      let id: string | undefined;
+      let treffer = await q.assetsNachName(o, ref);
+      // mehrere Treffer: genau ein nicht außer Betrieb genommenes Asset gilt als gemeint
       if (treffer.length > 1) {
-        probleme.push(`Asset „${ref}“ ist mehrdeutig: ${treffer.map(t => `${t.id.slice(0, 8)} (${t.assetType ?? 'Typ unbekannt'})`).join(', ')} — mit der ID angeben`);
+        const aktiv = treffer.filter(t => t.status !== 'decommissioned');
+        if (aktiv.length === 1) treffer = aktiv;
+      }
+      if (treffer.length > 1) {
+        probleme.push(`Asset „${ref}“ ist mehrdeutig: ${treffer.map(t => `${t.id.slice(0, 8)} (${t.assetType ?? 'Typ unbekannt'}, ${t.status ?? 'Status unbekannt'})`).join(', ')} — mit der ID angeben`);
         continue;
       }
-      if (treffer.length === 1) id = treffer[0]!.id;
-      else { const a = await q.assetNachId(o, ref); if (a) id = a.id; }
+      let id: string | undefined;
+      let status: string | undefined;
+      if (treffer.length === 1) { id = treffer[0]!.id; status = treffer[0]!.status; }
+      else { const a = await q.assetNachId(o, ref); if (a) { id = a.id; status = a.status; } }
       if (!id) { probleme.push(`Asset „${ref}“ unbekannt`); continue; }
+      if (status === 'decommissioned') { probleme.push(`Asset „${ref}“ (${id.slice(0, 8)}) ist außer Betrieb`); continue; }
       if (ids.includes(id)) { probleme.push(`Asset „${ref}“ doppelt angegeben (gleiches Asset ${id.slice(0, 8)})`); continue; }
       ids.push(id);
     }
