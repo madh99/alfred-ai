@@ -114,6 +114,8 @@ export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] 
     // I8e Task 4: optionale Funktion alfred_aufraeumen (z. B. Zugangsdatei, Einhängepunkt, Wegwerf-Datenbank) läuft zuerst
     `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\"}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC"; fi' EXIT`,
     `feld() { python3 -c ${shQ(PY_FELD)} "$1" <<<"$ALFRED_EINGABE"; }`,
+    // Fix-Welle M-6: liegengebliebene Zugangsdateien abgebrochener Läufe (älter als jede Zeitgrenze, 120 min) entfernen
+    "find /run -maxdepth 1 -type f -name 'alfred-c-*' -mmin +120 -delete 2>/dev/null || true",
   ];
 }
 
@@ -273,6 +275,8 @@ export interface InstallParameter {
   version: string; edition: 'EnterpriseDeveloper'; werkzeugVersion?: string; odbcVersion?: string;
   /** vor setup Pflicht-Einhängepunkte (Standard: alle vier Plattenziele); data immer dabei */
   einhaengepunkte?: LinuxSqlZiel[];
+  /** Fix-Welle I-2: das sa-Kennwort ist neu erzeugt (noch nicht im Tresor) — eine vorhandene Installation bricht dann ohne Änderung ab */
+  saNeu?: boolean;
 }
 const SQL_VERSION = /^17\.0\.(\d{4})\.\d{1,3}-\d{1,3}$/;
 const WERKZEUG_VERSION = /^18\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{1,2}$/;
@@ -285,6 +289,7 @@ export function pruefeInstallation(p: unknown): string | undefined {
   if (x.edition !== 'EnterpriseDeveloper') return 'edition: nur EnterpriseDeveloper';
   if (x.werkzeugVersion !== undefined && !(typeof x.werkzeugVersion === 'string' && WERKZEUG_VERSION.test(x.werkzeugVersion))) return 'werkzeugVersion: wie 18.6.2.1-1';
   if (x.odbcVersion !== undefined && !(typeof x.odbcVersion === 'string' && WERKZEUG_VERSION.test(x.odbcVersion))) return 'odbcVersion: wie 18.6.2.1-1';
+  if (x.saNeu !== undefined && typeof x.saNeu !== 'boolean') return 'saNeu: true oder false';
   if (x.einhaengepunkte !== undefined) {
     const e = x.einhaengepunkte;
     if (!Array.isArray(e) || !e.every(istZiel) || new Set(e).size !== e.length || !e.includes('/var/opt/mssql/data')) {
@@ -298,6 +303,10 @@ const INSTALL_KOERPER = `export DEBIAN_FRONTEND=noninteractive
 paket_version() { dpkg-query -W -f='\${Status}|\${Version}' "$1" 2>/dev/null | awk -F'|' '$1 == "install ok installed" { print $2 }' || true; }
 schreibe_wenn_anders() { if [ "$(cat "$1" 2>/dev/null || true)" != "$2" ]; then printf '%s\\n' "$2" >"$1.alfred-neu"; chmod 0644 "$1.alfred-neu"; mv -f "$1.alfred-neu" "$1"; GEAENDERT=1; fi; }
 GEAENDERT=0
+# Fix-Welle I-2: neues sa-Kennwort, aber SQL Server schon installiert → das alte Kennwort nie still ersetzen
+if [ "$SA_NEU" = 1 ] && { [ -n "$(paket_version mssql-server)" ] || [ -f /var/opt/mssql/data/master.mdf ]; }; then
+  abbruch "SQL Server ist schon installiert, sa-Kennwort nicht im Tresor — nichts geändert; bitte bewusst entscheiden (Kennwort in den Tresor übernehmen)"
+fi
 # vorhandene, abweichende Version wird hier nie geändert (Update = eigener Change)
 for pv in "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO"; do
   pk=\${pv%%=*}; sv=\${pv#*=}; iv=$(paket_version "$pk")
@@ -339,6 +348,8 @@ else
     if ! MSSQL_SA_PASSWORD="$SA" MSSQL_PID="$PID" /opt/mssql/bin/mssql-conf -n setup accept-eula >"$ALFRED_TMP/setup.log" 2>&1; then
       abbruch "mssql-conf setup fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/setup.log")")"
     fi
+    # Marke für den Skill: ab hier gilt das neue sa-Kennwort (auch wenn ein späterer Schritt scheitert → trotzdem in den Tresor)
+    printf 'ALFRED-SA-GESETZT\\n'
   fi
   systemctl enable --now mssql-server >/dev/null 2>&1 || abbruch "mssql-server lässt sich nicht aktivieren/starten"
   Z=geaendert
@@ -358,8 +369,9 @@ export function installSkript(p: InstallParameter): string {
   return [
     ...sqlKopf(LINUX_SQL_BAUSTEINE.installation, {
       version: p.version, edition: p.edition, werkzeugVersion: p.werkzeugVersion ?? MSSQL_TOOLS18_VERSION,
-      odbcVersion: p.odbcVersion ?? MSODBCSQL18_VERSION, einhaengepunkte: p.einhaengepunkte ?? [...LINUX_SQL_ZIELE],
+      odbcVersion: p.odbcVersion ?? MSODBCSQL18_VERSION, einhaengepunkte: p.einhaengepunkte ?? [...LINUX_SQL_ZIELE], saNeu: p.saNeu === true,
     }),
+    `SA_NEU=${p.saNeu === true ? 1 : 0}`,
     `V=${shQ(p.version)}`,
     `VT=${shQ(p.werkzeugVersion ?? MSSQL_TOOLS18_VERSION)}`,
     `VO=${shQ(p.odbcVersion ?? MSODBCSQL18_VERSION)}`,
@@ -457,7 +469,7 @@ export function konfigSkript(p: KonfigParameter): string {
 
 export interface TempdbParameter { dateien: number; groesseMB: number; wachstumMB: number; logGroesseMB: number }
 export interface MaxSpeicherParameter { mb: number }
-export interface LoginParameter { name: string; serverrollen?: string[] }
+export interface LoginParameter { name: string; serverrollen?: string[]; /** Fix-Welle I-2: Kennwort neu erzeugt — ein bestehender Login bricht ab */ nurNeu?: boolean }
 export interface PruefdatenParameter { datenbank: string }
 export type SqlBausteinName = 'tempdb' | 'maxspeicher' | 'login' | 'status' | 'pruefdaten';
 
@@ -483,6 +495,7 @@ export function pruefeLogin(p: unknown): string | undefined {
   if (x.serverrollen !== undefined) {
     if (!Array.isArray(x.serverrollen) || x.serverrollen.some(r => typeof r !== 'string' || !SERVERROLLEN.includes(r))) return `serverrollen: nur ${SERVERROLLEN.join(', ')}`;
   }
+  if (x.nurNeu !== undefined && typeof x.nurNeu !== 'boolean') return 'nurNeu: true oder false';
   return undefined;
 }
 
@@ -537,6 +550,8 @@ function tempdbSkript(p: TempdbParameter): string {
     `N=${p.dateien}`,
     `mountpoint -q ${shQ(TEMPDB_PFAD.replace(/\/$/, ''))} || abbruch "${TEMPDB_PFAD} ist kein eigener Einhängepunkt — nichts geändert"`,
     'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    // Fix-Welle M-5: bisherige Lage der tempdb-Dateien merken — nach der Verlegung meldet das Ergebnis die alten Dateien (nie löschen)
+    `alt=$(sql "SET NOCOUNT ON; SELECT N'ALFRED-ALT|' + physical_name FROM sys.master_files WHERE database_id = 2 AND physical_name NOT LIKE N'${TEMPDB_PFAD}%'" 2>/dev/null | grep '^ALFRED-ALT|' | tr -d '\r' || true)`,
     'aus=$(sql "$TSQL" 2>&1) || abbruch "tempdb-Anpassung fehlgeschlagen: $(kurz "$aus")"',
     'IFS="|" read -r _ c verschoben <<<"$(alfred_zeile "$aus")"',
     '[[ "$c" =~ ^[0-9]+$ ]] || abbruch "tempdb: keine Ergebniszeile: $(kurz "$aus")"',
@@ -553,7 +568,8 @@ function tempdbSkript(p: TempdbParameter): string {
     'fi',
     `{ [ "$anzahl" = "$N" ] && [ "$aussen" = 0 ]; } || abbruch "tempdb hat $anzahl Datendateien, $aussen außerhalb ${TEMPDB_PFAD} (erwartet $N, 0)"`,
     'if [ "$c" = 0 ] && [ "$NS" = false ]; then Z=schon; else Z=geaendert; fi',
-    'ergebnis "{\\"zustand\\":\\"$Z\\",\\"dateien\\":$anzahl,\\"aenderungen\\":$c,\\"neustart\\":$NS}"',
+    'AD=""; while IFS= read -r f; do f=${f#ALFRED-ALT|}; if [ -n "$f" ] && [ -e "$f" ]; then AD+="${AD:+,}$(printf "%s" "$f" | json_text)"; fi; done <<<"$alt"',
+    'ergebnis "{\\"zustand\\":\\"$Z\\",\\"dateien\\":$anzahl,\\"aenderungen\\":$c,\\"neustart\\":$NS,\\"altdateien\\":[$AD]}"',
   ].join('\n');
 }
 
@@ -604,16 +620,18 @@ function loginSkript(p: LoginParameter): string {
     `  SELECT @extra = @extra + N' ' + r.name FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = N'${n}' AND ${ausgenommen};`,
     `  IF @extra <> N'' BEGIN DECLARE @msg nvarchar(2048) = N'Login ${n} hat zusaetzlich' + @extra + N' - nicht still entfernt; bitte bewusst entscheiden'; THROW 50003, @msg, 1; END`,
     'END',
+    // Fix-Welle I-2: ein bestehender Login wird nie still auf ein anderes Kennwort gesetzt
+    ...(p.nurNeu ? [`IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${n}') THROW 50006, N'Login ${n} besteht schon, Kennwort nicht im Tresor - nichts geändert; bitte bewusst entscheiden', 1;`] : []),
+    `IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${n}') AND PWDCOMPARE(N'@@KW@@', (SELECT password_hash FROM sys.sql_logins WHERE name = N'${n}')) = 0`,
+    `  THROW 50005, N'Login besteht mit anderem Kennwort (${n}) - nicht still zurückgesetzt; bitte bewusst entscheiden', 1;`,
     `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${n}')`,
     `BEGIN CREATE LOGIN [${n}] WITH PASSWORD = N'@@KW@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @z = N'angelegt'; END`,
-    `ELSE IF PWDCOMPARE(N'@@KW@@', (SELECT password_hash FROM sys.sql_logins WHERE name = N'${n}')) = 0`,
-    `BEGIN ALTER LOGIN [${n}] WITH PASSWORD = N'@@KW@@'; SET @z = N'geaendert'; END`,
     `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${n}') = 1 BEGIN ALTER LOGIN [${n}] ENABLE; IF @z = N'schon' SET @z = N'geaendert'; END`,
     ...rollen,
     `SELECT N'ALFRED|' + @z + N'|' + CAST((SELECT COUNT(*) FROM sys.sql_logins WHERE name = N'${n}' AND is_disabled = 0 AND PWDCOMPARE(N'@@KW@@', password_hash) = 1) AS nvarchar(5)) + N'|' + CAST(${fehlend} AS nvarchar(5));`,
   ].join('\n');
   return [
-    ...sqlKopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [] }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [], nurNeu: p.nurNeu === true }),
     ...SQL_HILFE,
     ...SA_LESEN,
     'KW=$(feld kennwort) || abbruch "Kennwort enthält nicht druckbare Zeichen"',
@@ -814,6 +832,15 @@ export const PY_STATUS = [
   'except Exception:',
   '    sich["letzteKopie"] = None',
   'r["sicherung"] = sich',
+  // Fix-Welle M-5/M-6: Reste (nur melden, nie löschen): alte tempdb-Dateien im Datenordner, Wegwerf-Ordner des Restore-Beweises, Zugangsdateien
+  'import glob, re as _re',
+  'reste = []',
+  'try:',
+  '    reste += sorted(os.path.join("/var/opt/mssql/data", n) for n in os.listdir("/var/opt/mssql/data") if _re.match(r"^temp.*\\.(mdf|ndf|ldf)$", n))',
+  'except OSError:',
+  '    pass',
+  'reste += sorted(glob.glob("/var/opt/mssql/backup/.alfred-wh-*")) + sorted(glob.glob("/run/alfred-c-*"))',
+  'r["reste"] = reste[:20]',
   'if not sa:',
   '    r["sql"] = None',
   '    r["sqlHinweis"] = "ohne sa-Kennwort nur Betriebssystem-Sicht"',

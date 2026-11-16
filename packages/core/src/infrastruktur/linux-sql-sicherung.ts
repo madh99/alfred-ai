@@ -21,14 +21,17 @@
  *   Manifest geprüft), unter alfred_wh_… mit MOVE, NORECOVERY bis zum Schluss, dann RECOVERY, DBCC CHECKDB, Prüfdaten-Vergleich →
  *   RESTORE_VERIFIED nur wenn alles stimmt; die Ziel-Datenbank wird danach (und bei jedem Fehler) entfernt.
  */
+import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import { sqlKopf, SQL_HILFE, SA_LESEN, shQ, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, SQLLNX_KOPIE_STATUS, SQLLNX_ZUGANGSDATEI } from './linux-sql.js';
 
 export const LINUX_SQL_SICHERUNG_BAUSTEINE = {
   einrichten: 'sql.sicherung_einrichten', jetzt: 'sql.sicherung_jetzt', liste: 'sql.sicherungen', wiederherstellen: 'sql.wiederherstellen',
+  // Fix-Welle M-1 — Kettengrenzen aus der Kopie auf fs01 übernehmen (nur im Change, nach Prüfung)
+  grenzen: 'sql.kettengrenzen',
 } as const;
 /** Zeitgrenzen für linuxSkript (am Host bis timeoutMs − 20 s) */
-export const LINUX_SQL_SICHERUNG_ZEIT_MS = { einrichten: 1_200_000, jetzt: 3_000_000, liste: 300_000, wiederherstellen: 3_500_000 } as const;
+export const LINUX_SQL_SICHERUNG_ZEIT_MS = { einrichten: 1_200_000, jetzt: 3_000_000, liste: 300_000, wiederherstellen: 3_500_000, grenzen: 300_000 } as const;
 
 /** cifs-utils aus noble-updates/noble-security (geprüft 16.11.2026 per apt-cache madison auf Ubuntu 24.04.5) */
 export const CIFS_UTILS_VERSION = '2:7.0-2ubuntu0.6';
@@ -447,9 +450,11 @@ def aufbewahrung(ks, waisen, jetzt):
 
 
 def grenze(k, dateien):
-    """Grenze einer (vollständigen) Kette für das Manifest, bevor sie gelöscht wird"""
+    """Grenze einer (vollständigen) Kette, bevor sie gelöscht wird - mit dem auf fs01 belegten SHA-256 jeder Datei (Beleg für das spätere
+    lokale Entfernen derselben Dateien, Fix-Welle M-2)"""
     return {'full': k['zeit'], 'ersterBezug': dateien[k['logs'][0]]['bezug'] if k['logs'] else None,
-            'letztes': dateien[k['logs'][-1]]['zeit'] if k['logs'] else None}
+            'letztes': dateien[k['logs'][-1]]['zeit'] if k['logs'] else None,
+            'dateien': {n: dateien[n]['sha256'] for n in [k['full']] + k['diffs'] + k['logs'] if isinstance(dateien[n].get('sha256'), str)}}
 
 
 def manifest_lesen(ziel, host):
@@ -597,7 +602,9 @@ def entferne(ziel, mpfad, man, rels, erg, grenzen=None, gdir=None, lokal_g=None)
 def gueltige_grenzen(liste_):
     return isinstance(liste_, list) and all(
         isinstance(e, dict) and isinstance(e.get('full'), str) and zeit_ok(e['full'])
-        and all(e.get(x) is None or (isinstance(e.get(x), str) and zeit_ok(e[x])) for x in ('ersterBezug', 'letztes')) for e in liste_)
+        and all(e.get(x) is None or (isinstance(e.get(x), str) and zeit_ok(e[x])) for x in ('ersterBezug', 'letztes'))
+        and (e.get('dateien') is None or (isinstance(e['dateien'], dict) and all(isinstance(n, str) and isinstance(h, str) and re.match(r'^[0-9a-f]{64}$', h) for n, h in e['dateien'].items())))
+        for e in liste_)
 
 
 def lies_grenzen(gdir):
@@ -647,6 +654,38 @@ def grenzen_kuerzen(man, gdir, lokal_g, lok):
             man['entfernteKetten'].pop(db, None)
 
 
+def lokal_entfernen(lokal, db, n, cache, erg):
+    os.remove(os.path.join(lokal, db, n))
+    marke = os.path.join(lokal, db, n + '.fertig')
+    if os.path.isdir(marke):
+        os.rmdir(marke)
+    cache.pop(db + '/' + n, None)
+    erg['lokalEntfernt'].append(db + '/' + n)
+
+
+def grenzen_uebernehmen(mnt, host, gdir):
+    """Fix-Welle M-1: Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung übernehmen (nur im Change, nach Prüfung
+    durch den Owner); Datenbanken, die fs01 nicht nennt, bleiben lokal unverändert. Ergebnis: Unterschied je Datenbank."""
+    if not HOST.match(host):
+        raise Fehler('Rechnername %r ungültig' % host)
+    man = manifest_lesen(os.path.join(mnt, host), host)
+    if man is None:
+        raise Fehler('auf fs01 gibt es kein Manifest für %s - nichts übernommen' % host)
+    lokal_g = lies_grenzen(gdir)
+    unterschied = []
+    for db, liste_ in sorted(man['entfernteKetten'].items()):
+        neu = sorted(liste_, key=lambda e: e['full'])
+        if [e['full'] for e in lokal_g.get(db, [])] != [e['full'] for e in neu] or lokal_g.get(db, []) != neu:
+            unterschied.append({'datenbank': db, 'lokal': len(lokal_g.get(db, [])), 'fs01': len(neu)})
+            schreibe_grenzen(gdir, db, neu)
+    nachher = lies_grenzen(gdir)
+    for db, liste_ in man['entfernteKetten'].items():
+        if [e['full'] for e in nachher.get(db, [])] != sorted(e['full'] for e in liste_):
+            raise Fehler('%s: lokale Kettengrenzen nach der Übernahme abweichend' % db)
+    print('ALFRED-GRENZEN ' + json.dumps({'zustand': 'geaendert' if unterschied else 'schon', 'unterschied': unterschied}, ensure_ascii=True))
+    return 0
+
+
 def entfernt_ketten_start(zeit, fulls_alle):
     """Beginn der Kette (Vollsicherung), zu der ein Zeitstempel gehört - aus allen bekannten Vollsicherungen"""
     k = None
@@ -684,9 +723,18 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
         # 0) Grenzen gelöschter Ketten: maßgeblich ist die lokale root-only Aufzeichnung; die Kopie auf fs01 ist nur Auskunft
         gdir = os.path.join(os.path.dirname(os.path.abspath(cache_pfad)), 'sqllnx')
         lokal_g = lies_grenzen(gdir)
+        ausgesetzt = set()
+        # Fix-Welle M-1: fehlt die lokale Aufzeichnung, während fs01 Grenzen kennt, wird nichts überschrieben und die Aufbewahrung für die
+        # Datenbank ausgesetzt; die Grenzen auf fs01 dürfen dann NUR das erneute Kopieren gelöschter Ketten sperren (nie Brücke, nie Löschen)
+        nur_kopiersperre = {}
         for db in sorted(set(lokal_g) | set(man['entfernteKetten'])):
             l_ = [e['full'] for e in lokal_g.get(db, [])]
             f_ = sorted(e['full'] for e in man['entfernteKetten'].get(db, []))
+            if not l_ and f_:
+                erg['befunde'].append('%s: lokale Kettengrenzen fehlen — Aufbewahrung ausgesetzt; Wiederherstellung siehe Doku (nach Prüfung linux_sql kettengrenzen_uebernehmen)' % db)
+                ausgesetzt.add(db)
+                nur_kopiersperre[db] = set(f_)
+                continue
             if l_ != f_:
                 erg['befunde'].append('%s: Grenzen gelöschter Ketten auf fs01 weichen von der lokalen Aufzeichnung ab (fs01 %d, lokal %d) - es gilt die lokale' % (db, len(f_), len(l_)))
             if lokal_g.get(db):
@@ -697,8 +745,9 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
         if man['entfernen']:
             entferne(ziel, mpfad, man, list(man['entfernen']), erg, gdir=gdir, lokal_g=lokal_g)
         # 2) Aufbewahrung auf fs01 - nur Dateien aus dem Manifest, nur ganze vollständige Ketten
-        ausgesetzt = set()
         for db, dd in sorted(je_db(man).items()):
+            if db in nur_kopiersperre:
+                continue
             ks, waisen = ketten(dd, lokal_g.get(db))
             vorhanden_pruefen(ziel, db, dd, ks)
             weg, grund = aufbewahrung(ks, waisen, jetzt)
@@ -716,7 +765,7 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
             belegt = belegung(mnt)
             off = offen()
             for db in sorted(lok):
-                entfernt_ = {e['full'] for e in lokal_g.get(db, [])}
+                entfernt_ = {e['full'] for e in lokal_g.get(db, [])} | nur_kopiersperre.get(db, set())
                 fulls_alle = sorted(entfernt_ | {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'}
                                     | {i['zeit'] for i in lok[db].values() if i['art'] == 'FULL'})
                 for n in sorted(lok[db], key=lambda x: (lok[db][x]['zeit'], x)):
@@ -795,14 +844,31 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                 erg['befunde'].append('%s: Inhalt auf fs01 weicht vom Manifest ab (%s) - lokal nichts entfernt' % (db, ', '.join(abweichend[:3])))
                 continue
             for n in belegt_:
-                rel = db + '/' + n
-                if True:
-                    os.remove(os.path.join(lokal, db, n))
-                    marke = os.path.join(lokal, db, n + '.fertig')
-                    if os.path.isdir(marke):
-                        os.rmdir(marke)
-                    cache.pop(rel, None)
-                    erg['lokalEntfernt'].append(rel)
+                lokal_entfernen(lokal, db, n, cache, erg)
+        # 6) Fix-Welle M-2: lokale Dateien von Ketten, die die Aufbewahrung auf fs01 gelöscht hat - nur mit Beleg entfernen (die lokale Grenze
+        #    trägt den bei der Löschung auf fs01 belegten SHA-256; die lokale Datei muss ihn haben), sonst Befund und nichts löschen
+        for db, dd in lok.items():
+            gl = lokal_g.get(db, [])
+            if not gl or db in nur_kopiersperre:
+                continue
+            entfernt_ = {e['full']: e for e in gl}
+            fulls_alle = sorted(set(entfernt_) | {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'} | {i['zeit'] for i in dd.values() if i['art'] == 'FULL'})
+            unbelegt = 0
+            for n, i in sorted(dd.items()):
+                start = entfernt_ketten_start(i['zeit'], fulls_alle)
+                if start not in entfernt_ or not os.path.isfile(os.path.join(lokal, db, n)):
+                    continue
+                beleg = (entfernt_[start].get('dateien') or {}).get(n)
+                src = os.path.join(lokal, db, n)
+                stt = os.stat(src)
+                c = cache.get(db + '/' + n) or {}
+                lokal_sha = c.get('sha256') if c.get('bytes') == stt.st_size and c.get('mtime_ns') == stt.st_mtime_ns else sha(src)
+                if beleg and lokal_sha == beleg:
+                    lokal_entfernen(lokal, db, n, cache, erg)
+                else:
+                    unbelegt += 1
+            if unbelegt:
+                erg['befunde'].append('%s: lokal liegen %d Dateien gelöschter Ketten ohne Beleg auf fs01 - nichts gelöscht' % (db, unbelegt))
         if erg['befunde'] and not erg['fehler']:
             erg['fehler'] = '; '.join(erg['befunde'])[:500]
         erg['ok'] = not erg['fehler']
@@ -888,6 +954,11 @@ def liste(lokal, host, cache_pfad, status_pfad, konf_pfad):
         ausstehend = sum(1 for n in dd if not (cache.get(db + '/' + n) or {}).get('fs01'))
         d.update(lokalDateien=len(dd), lokalBytes=sum(os.path.getsize(os.path.join(lokal, db, n)) for n in dd), ausstehend=ausstehend)
     erg['datenbanken'] = dbs
+    # Fix-Welle M-6: Reste (nur melden): Wegwerf-Ordner des Restore-Beweises, liegengebliebene Zugangsdateien
+    reste = [os.path.join(lokal, n) for n in sorted(os.listdir(lokal)) if n.startswith('.alfred-wh-')]
+    if os.path.isdir('/run'):
+        reste += sorted(os.path.join('/run', n) for n in os.listdir('/run') if n.startswith('alfred-c-'))
+    erg['reste'] = reste[:20]
     print('ALFRED-LISTE ' + json.dumps(erg, ensure_ascii=True))
     return 0
 
@@ -918,6 +989,8 @@ def main(argv):
             return liste(*a)
         if m == 'geprueft' and len(a) == 2:
             return geprueft(*a)
+        if m == 'grenzen_uebernehmen' and len(a) == 3:
+            return grenzen_uebernehmen(*a)
         if m == 'konf' and len(a) == 2:
             print(konf_feld(*a))
             return 0
@@ -961,6 +1034,19 @@ RECHNER=$(hostname -s | tr 'A-Z' 'a-z')
 MNT=$(mktemp -d /run/alfred-sqllnx-m.XXXXXX)
 aus=$(mount -t cifs "$UNC" "$MNT" -o "credentials=$CRED,$OPTIONEN" 2>&1) || fehler "fs01 nicht einhaengbar ($UNC): $aus"
 python3 -I "$PY" kopie "$LOKAL" "$MNT" "$RECHNER" "$KONF" "$STATUS" "$CACHE"`;
+
+/**
+ * Fix-Welle M-8 — Fassung des fest installierten Kopier-Skripts (SHA-256 der Dateien, wie sicherung_einrichten sie schreibt: Inhalt + \n).
+ * sicherungen, sicherung_jetzt und wiederherstellen brechen bei Abweichung ab („Sicherung neu einrichten“).
+ */
+export const KOPIE_FASSUNG = {
+  kette: createHash('sha256').update(`${PY_KETTE}\n`).digest('hex'),
+  kopie: createHash('sha256').update(`${KOPIE_SH}\n`).digest('hex'),
+} as const;
+const FASSUNG_PRUEFEN = [
+  'installiert_sha() { sha256sum "$1" 2>/dev/null | cut -c1-64; }',
+  `fassung_pruefen() { local a b; a=$(installiert_sha ${KETTE_PY_PFAD}); b=$(installiert_sha ${KOPIE_SH_PFAD}); if [ "$a" != ${KOPIE_FASSUNG.kette} ] || [ "$b" != ${KOPIE_FASSUNG.kopie} ]; then abbruch "Sicherung neu einrichten (Fassung installiert \${a:0:12}/\${b:0:12}, erwartet ${KOPIE_FASSUNG.kette.slice(0, 12)}/${KOPIE_FASSUNG.kopie.slice(0, 12)}) — sicherung_einrichten erneut ausführen"; fi; }`,
+];
 
 export const KOPIE_DIENST_UNIT = `[Unit]
 Description=Alfred: SQL-Sicherungen nach fs01 kopieren und Aufbewahrung (I8e)
@@ -1138,8 +1224,10 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
     `pruefe_datei() { [[ "$1" =~ ^${SICHERUNG_WURZEL}/${db}/${db}_${p.art}_[0-9]{14}(_[0-9]{14})?\\.(bak|trn)$ ]] && [ -f "$1" ]; }`,
     // die Kopie nimmt Dateien erst nach 60 s Schreibruhe
     'warte_schreibruhe() { local a; a=$(( $(date +%s) - $(stat -c %Y "$1") )); if [ "$a" -lt 61 ]; then sleep $(( 61 - a )); fi; }',
+    ...FASSUNG_PRUEFEN,
     ...SA_LESEN,
     `systemctl cat ${KOPIE_DIENST}.service >/dev/null 2>&1 || abbruch "Kopie nach fs01 ist nicht eingerichtet (zuerst sicherung_einrichten) — nichts gesichert"`,
+    'fassung_pruefen',
     'bereit || abbruch "SQL Server antwortet nicht als sa"',
     `aus=$(sql "EXEC msdb.dbo.alfred_sicherung @art = N'${p.art}', @db = N'${db}', @streng = 1;" 2>&1) || abbruch "Sicherung ${p.art} von ${db}: $(kurz "$aus")"`,
     'datei=$(alfred_zeile "$aus"); datei=${datei#ALFRED|}',
@@ -1184,7 +1272,9 @@ export function sicherungenSkript(): string {
     "rechnername() { hostname -s | tr 'A-Z' 'a-z'; }",
     ZUSTAND_ZUGANGSDATEI,
     `PY_ZUSAMMEN=${shQ(PY_ZUSAMMEN)}`,
+    ...FASSUNG_PRUEFEN,
     '# ALFRED-ABLAUF',
+    'fassung_pruefen',
     'HOST=$(rechnername)',
     '[[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || abbruch "Rechnername $HOST ungültig"',
     '[ -f "$KONF_DATEI" ] || abbruch "Sicherung ist nicht eingerichtet ($KONF_DATEI fehlt — sicherung_einrichten)"',
@@ -1233,7 +1323,9 @@ export function wiederherstellenSkript(p: WiederherstellenParameter): string {
     '  IFS="|" read -r _ _ typ _ _ _ _ _ _ dbname _ <<<"$h"',
     '  { [ "$typ" = "$2" ] && [ "$dbname" = "$DB" ]; } || abbruch "$(basename "$1"): Sicherungstyp $typ, Datenbank $dbname — erwartet $2, $DB"',
     '}',
+    ...FASSUNG_PRUEFEN,
     ...SA_LESEN,
+    'fassung_pruefen',
     'HOST=$(rechnername)',
     '[[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || abbruch "Rechnername $HOST ungültig"',
     'mountpoint -q "$SICHERUNG_WURZEL" || abbruch "$SICHERUNG_WURZEL ist kein eigener Einhängepunkt — nichts geändert"',
@@ -1301,9 +1393,32 @@ export function wiederherstellenSkript(p: WiederherstellenParameter): string {
   ].join('\n');
 }
 
+// ── kettengrenzen_uebernehmen (Fix-Welle M-1) ──────────────────────────────────────────────────────────────────────────────────
+
+/** fs01 nur lesend einhängen, Grenzen aus dem Manifest in die lokale root-only Aufzeichnung übernehmen, Unterschied melden. Eingabe: { kennwort } */
+export function kettengrenzenSkript(): string {
+  return [
+    ...sqlKopf(LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen, {}),
+    'kurz() { printf "%s" "$1" | tail -n 6 | tr "\\r\\n" "  "; }',
+    ...FS01_HILFE(),
+    `GRENZEN_DIR=${shQ('/var/lib/alfred/sqllnx')}`,
+    '# ALFRED-ABLAUF',
+    'HOST=$(rechnername)',
+    '[[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || abbruch "Rechnername $HOST ungültig"',
+    '[ -f "$KONF_DATEI" ] || abbruch "Sicherung ist nicht eingerichtet ($KONF_DATEI fehlt — sicherung_einrichten)"',
+    'fs01_einhaengen ro',
+    'g=$(kette_py grenzen_uebernehmen "$MNT" "$HOST" "$GRENZEN_DIR") || abbruch "Kettengrenzen übernehmen: $(kurz "$g")"',
+    'fs01_aushaengen',
+    'g=$(grep "^ALFRED-GRENZEN " <<<"$g" | head -n 1)',
+    '[ -n "$g" ] || abbruch "Kettengrenzen: kein Ergebnis"',
+    'ergebnis "${g#ALFRED-GRENZEN }"',
+  ].join('\n');
+}
+
 // ── Register ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<SicherungEinrichtenParameter>(LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten, sicherungEinrichtenSkript);
 registriereLinuxBaustein<SicherungJetztParameter>(LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, sicherungJetztSkript);
 registriereLinuxBaustein(LINUX_SQL_SICHERUNG_BAUSTEINE.liste, () => sicherungenSkript());
 registriereLinuxBaustein<WiederherstellenParameter>(LINUX_SQL_SICHERUNG_BAUSTEINE.wiederherstellen, wiederherstellenSkript);
+registriereLinuxBaustein(LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen, () => kettengrenzenSkript());

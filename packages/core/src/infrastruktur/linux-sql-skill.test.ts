@@ -307,7 +307,7 @@ describe('I8e Task 3 Fix 1 — bestehende VM, Wortlaut, Tresor-Namen', () => {
   const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : n === 'proxmox' ? proxmox : undefined) as never, asset: (n: string) => (cmdb.has(n.toLowerCase()) ? { id: `a-${n}`, name: n } : undefined), changes: [] };
   const snap = { titel: 'Snapshot', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 150, name: 'vor_sql' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: 150 } } };
   const prov = (hostname: string) => ({ titel: 'VM', art: 'aktion', skill: 'proxmox', aktion: 'provision_vm', parameter: { hostname }, rueckweg: { skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: 160 } }, pruefung: { typ: 'ping', ziel: '10.0.0.1' } });
-  const inst = (zugang: string) => ({ titel: 'Installieren', art: 'aktion', skill: 'linux_sql', aktion: 'installieren', parameter: { zugang, version: '17.0.4006.2-1' }, rueckweg: { keiner: 'Neuaufbau' } });
+  const inst = (zugang: string) => ({ titel: 'Installieren', art: 'aktion', skill: 'linux_sql', aktion: 'installieren', parameter: { zugang, version: '17.0.4006.2-1' }, zeitlimitS: 1800, rueckweg: { keiner: 'Neuaufbau' } });
   const plan = (schritte: unknown[]) => ({ titel: 'SQL aufbauen', begruendung: 'I8e Paket 1 Fix-Runde 1', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['pve1'], schritte });
 
   it('provision_vm für einen Namen, den die CMDB schon kennt, zählt nicht als Neuaufbau → Rückweg verlangt', () => {

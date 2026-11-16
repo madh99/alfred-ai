@@ -63,14 +63,19 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
-    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | vollständig auf fs01',
+    // Fix-Welle M-9: positives Stück nur je Datenbank („pruefdb01: vollständig auf fs01“); „~“ = nur als ganzes Muster, nie als Teilstück
+    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
   if (!vorlage) return undefined;
   const e = p.erwartet!;
   const werte = Object.values(p.parameter ?? {}).map(v => String(v));
-  if (vorlage.replace(/\{[a-z]+\}/g, '\u0000').split('\u0000').some(t => t.includes(e)) || werte.some(w => w.includes(e) || e.includes(w) && w.length > 2) || /^\d{1,3}(\.\d{1,3}){3}$/.test(e)
+  // „~…“-Teile gelten nur als ganzes Muster ({x} = ein Name aus Buchstaben/Ziffern/_.-), nie als Teilstück
+  const teile = vorlage.split(' | ');
+  const muster = teile.filter(t => t.startsWith('~')).map(t => new RegExp(`^${t.slice(1).split(/\{[a-z]+\}/).map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[A-Za-z0-9_.-]+')}$`));
+  if (muster.some(m => m.test(e))) return undefined;
+  if (teile.filter(t => !t.startsWith('~')).join(' | ').replace(/\{[a-z]+\}/g, '\u0000').split('\u0000').some(t => t.includes(e)) || werte.some(w => w.includes(e) || e.includes(w) && w.length > 2) || /^\d{1,3}(\.\d{1,3}){3}$/.test(e)
     // Host-/VM-Namen ({name}, {hostname}) sind erst zur Laufzeit bekannt — namensartige Stücke mit Ziffer oder Bindestrich gelten
     || /^(?=.*[-\d])[a-z0-9][a-z0-9.-]*$/i.test(e)) return undefined;
   return `erwartet „${e.slice(0, 60)}“ kommt in der Antwort von ${p.skill}.${p.aktion} nicht vor — sie lautet „${vorlage.slice(0, 160)}…“; ein Fehlschlag meldet die Aktion selbst, erwartet also weglassen oder ein Stück davon wählen (z. B. „${vorlage.split(/[:—(]/)[0]!.replace(/\{[a-z]+\}/g, '').trim()}“)`;
@@ -157,7 +162,7 @@ const SELBST_GEPRUEFT = new Set([
  */
 const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
   // I8e Task 4: Sicherung (Jobs + Probe-Kopie mit fester Zugangsdatei), Sicherung jetzt (auf fs01 bestätigt), Restore-Beweis (RESTORE_VERIFIED)
-  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen']),
+  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
 };
@@ -172,7 +177,8 @@ const NEUAUFBAU_SKILLS = new Set(['linux_sql']);
  * Datei in derselben Kette), der Restore-Beweis legt nur eine Wegwerf-Datenbank alfred_wh_… an und entfernt sie wieder.
  */
 const OHNE_RUECKWEG_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
-  linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen']),
+  // Fix-Welle M-1: kettengrenzen_uebernehmen schreibt nur die lokale Aufzeichnung nach Owner-Prüfung (Unterschied steht im Ergebnis)
+  linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
 };
 
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
@@ -538,6 +544,9 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const schema = (sk.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties;
       const ersatz = verweise(schritt.parameter, nr, aktionsNummern, f, wo, schema, { befehlErlaubt: schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });
       const fe = eingabeFehler(sk, { ...ersatz, action: schritt.aktion });
+      // Fix-Welle I-1: Skills mit fester Baustein-Laufzeit nennen ein Mindest-zeitlimitS je Aktion
+      const minZl = (sk as { mindestZeitlimitS?: (a: string) => number | undefined }).mindestZeitlimitS?.(schritt.aktion);
+      if (minZl !== undefined && schritt.zeitlimitS < minZl) f.push(`${wo}: zeitlimitS ${schritt.zeitlimitS} zu klein für ${schritt.skill}.${schritt.aktion} — mindestens ${minZl} s (Baustein-Zeitgrenze + 60 s)`);
       if (fe) f.push(`${wo}: ${fe}`);
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
       schritt.einordnung = einordnung;

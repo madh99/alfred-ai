@@ -19,6 +19,25 @@ import {
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
 } from './linux-sql-sicherung.js';
 
+/**
+ * Fix-Welle I-1 — Mindest-zeitlimitS je Aktion (Sekunden): Baustein-Zeitgrenzen (am Host läuft jeder Baustein bis zu seiner Grenze)
+ * + 60 s Puffer; konfigurieren = Summe der bis zu vier Bausteine (Status, mssql-conf, tempdb, max server memory).
+ */
+const sek = (ms: number) => Math.ceil(ms / 1000);
+export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
+  status: sek(LINUX_SQL_ZEIT_MS.status) + 60,
+  platten_einrichten: sek(LINUX_SQL_ZEIT_MS.platten) + 60,
+  installieren: sek(LINUX_SQL_ZEIT_MS.installation) + 60,
+  konfigurieren: sek(LINUX_SQL_ZEIT_MS.status + LINUX_SQL_ZEIT_MS.konfiguration + LINUX_SQL_ZEIT_MS.tempdb + LINUX_SQL_ZEIT_MS.maxspeicher) + 60,
+  login_anlegen: sek(LINUX_SQL_ZEIT_MS.login) + 60,
+  pruefdaten_anlegen: sek(LINUX_SQL_ZEIT_MS.pruefdaten) + 60,
+  sicherung_einrichten: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.einrichten) + 60,
+  sicherung_jetzt: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt) + 60,
+  sicherungen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.liste) + 60,
+  wiederherstellen_pruefen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.wiederherstellen) + 60,
+  kettengrenzen_uebernehmen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen) + 60,
+};
+
 export interface LinuxSqlDeps {
   /** Fernzugriff: registrierter Linux-Baustein auf einem Zugang (Geheimnisse nur in `eingabe`, eine Zeile JSON) */
   skript: (zugang: string, baustein: string, parameter: unknown, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -30,7 +49,9 @@ export interface LinuxSqlDeps {
 export const LESEND = new Set(['status', 'sicherungen']);
 const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen',
   // I8e Task 4 — Sicherung nach fs01 und Wiederherstellungs-Beweis
-  'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen']);
+  'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen',
+  // Fix-Welle M-1 — Kettengrenzen nach Prüfung aus der Kopie auf fs01 übernehmen
+  'kettengrenzen_uebernehmen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -75,14 +96,20 @@ export interface LinuxSqlStatus {
   sqlHinweis?: string; sqlFehler?: string;
   /** I8e Task 4 — Zugangsdatei (nur Rechte), Kopier-Timer, letzter Kopierlauf */
   sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
+  /** Fix-Welle M-5/M-6 — Reste (alte tempdb-Dateien, Wegwerf-Ordner, Zugangsdateien): nur gemeldet, nie gelöscht */
+  reste?: string[];
 }
+
+/** Zustand eines Berichtsalters: ok, zu alt (> 45 min oder unbekannt), Uhrzeit abweichend (aus der Zukunft, > 5 min) */
+const altersText = (alterMin: number | null | undefined) => (typeof alterMin !== 'number' ? 'ZU ALT' : alterMin < -5 ? 'UHRZEIT ABWEICHEND' : alterMin > 45 ? 'ZU ALT' : undefined);
+const resteText = (r: string[] | undefined) => (r?.length ? `; Reste: ${r.slice(0, 5).join(', ')}${r.length > 5 ? ` (+${r.length - 5})` : ''}` : '');
 
 /** I8e Task 4 — Sicherungsteil des Statustexts (fester Wortlaut; Stücke in FESTE_AUSGABEN['linux_sql.status']) */
 function sicherungText(s: LinuxSqlStatus): string {
   const x = s.sicherung;
   if (!x || (x.zugangsdatei === 'fehlt' && x.timer !== 'active')) return 'Sicherung: nicht eingerichtet';
   const k = x.letzteKopie;
-  return `Sicherung: Zugangsdatei ${x.zugangsdatei ?? 'unbekannt'}, Kopie-Timer ${x.timer === 'active' ? 'aktiv' : x.timer ?? 'unbekannt'}, letzte Kopie ${k ? `${k.zeit ?? '?'} ${typeof k.alterMin !== 'number' || k.alterMin > 45 ? 'ZU ALT' : k.ok ? 'ok' : `FEHLER ${(k.fehler ?? '').slice(0, 160)}`}` : 'noch keine'}`;
+  return `Sicherung: Zugangsdatei ${x.zugangsdatei ?? 'unbekannt'}, Kopie-Timer ${x.timer === 'active' ? 'aktiv' : x.timer ?? 'unbekannt'}, letzte Kopie ${k ? `${k.zeit ?? '?'} ${altersText(k.alterMin) ?? (k.ok ? 'ok' : `FEHLER ${(k.fehler ?? '').slice(0, 160)}`)}` : 'noch keine'}`;
 }
 
 const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
@@ -90,7 +117,7 @@ const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
 export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
   const ein = (s.platz ?? []).filter(p => p.eingehaengt && (LINUX_SQL_ZIELE as readonly string[]).includes(p.pfad)).map(p => p.pfad.split('/').pop());
   const eingehaengt = `eingehängt: ${ein.length ? ein.join(', ') : 'keine Plattenziele'}`;
-  const sich = sicherungText(s);
+  const sich = sicherungText(s) + resteText(s.reste);
   if (!s.installiert) return `${zugang}: SQL Server nicht installiert; ${eingehaengt}; ${sich}`;
   const dienst = `Dienst ${s.dienst === 'active' ? 'aktiv' : s.dienst ?? 'unbekannt'}, ${s.aktiviert === 'enabled' ? 'aktiviert' : s.aktiviert ?? 'unbekannt'}`;
   const limit = `Speicherlimit ${s.konfig?.memorylimitmb ?? '-'} MB`;
@@ -106,6 +133,7 @@ export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
 export interface LinuxSqlSicherungen {
   zustand: string; host?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number | null; timer?: string; zugangsdatei?: string;
   status?: { zeit?: string; ok?: boolean; fehler?: string | null; befunde?: string[]; frisch?: boolean; alterMin?: number | null } | null;
+  reste?: string[];
   datenbanken?: Record<string, { ketten: Array<{ full: string; diffs: number; logs: number; vollstaendig: boolean; fehler?: string[] }>; waisen?: string[];
     fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number }>;
 }
@@ -119,12 +147,13 @@ function hashText(st: LinuxSqlSicherungen['status'], d: NonNullable<LinuxSqlSich
   // Fix-Runde 2 (Sicherheit): der Bericht des Timers zählt nur frisch (≤ 45 min) und mit aktivem Timer
   if (timer !== 'active') return 'Hash unbekannt (Kopie-Timer nicht aktiv)';
   if (!st.ok) return 'Hash unbekannt (letzter Kopierlauf fehlgeschlagen)';
+  if (typeof st.alterMin === 'number' && st.alterMin < -5) return `Hash unbekannt (Uhrzeit abweichend: ${st.zeit ?? '?'})`;
   if (st.frisch !== true) return `Hash unbekannt (Kopierlauf zu alt: ${st.zeit ?? '?'})`;
   if (!d.fs01Dateien) return 'Hash unbekannt (nichts auf fs01)';
   if (d.fehlend) return `FEHLT auf fs01: ${d.fehlend}`;
   if (d.ausstehend) return `ausstehend: ${d.ausstehend}`;
   const voll = d.ketten.length > 0 && d.ketten.every(k => k.vollstaendig) && !d.waisen?.length;
-  return voll ? 'Hash ok, vollständig auf fs01' : 'Hash ok, Ketten unvollständig';
+  return voll ? 'Hash ok' : 'Hash ok, Ketten unvollständig';
 }
 /** Fester Wortlaut — Stücke in FESTE_AUSGABEN['linux_sql.sicherungen'] (change-schritte.ts) */
 export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen): string {
@@ -134,9 +163,11 @@ export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen):
   const dbs = Object.entries(r.datenbanken ?? {}).map(([db, d]) => {
     const voll = d.ketten.filter(k => k.vollstaendig).length;
     const letzte = d.ketten.length ? d.ketten[d.ketten.length - 1]!.full : 'keine';
-    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${hashText(st, d, r.timer)}`;
+    // Fix-Welle M-9: das positive Prüfstück nennt die Datenbank („<db>: vollständig auf fs01“)
+    const h = hashText(st, d, r.timer);
+    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${h}${h === 'Hash ok' ? ` — ${db}: vollständig auf fs01` : ''}`;
   });
-  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}`;
+  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}${resteText(r.reste)}`;
 }
 
 /** \\server.fqdn\Freigabe$ → { server, freigabe } */
@@ -217,8 +248,10 @@ interface KonfigWerte { konfig: KonfigParameter; maxMb: number; tempdb: Omit<Tem
 function konfigWerte(input: Record<string, unknown>): KonfigWerte {
   const konfig: KonfigParameter = {
     speicherLimitMB: ganzzahl(input.speicher_limit_mb ?? STANDARD.speicherLimitMB) as number,
-    datenPfad: KURZZIEL.data!, logPfad: KURZZIEL.log!, sicherungsPfad: KURZZIEL.backup!, agent: input.agent === undefined ? true : input.agent === true,
+    datenPfad: KURZZIEL.data!, logPfad: KURZZIEL.log!, sicherungsPfad: KURZZIEL.backup!, agent: input.agent === undefined ? true : input.agent as boolean,
   };
+  // Fix-Welle M-4: Wahrheitswerte nur als true/false — „false“ als Text würde sonst still als true/false gedeutet
+  if (input.agent !== undefined && typeof input.agent !== 'boolean') throw new Error('agent: nur true oder false (Wahrheitswert, kein Text)');
   const maxMb = ganzzahl(input.max_server_memory_mb ?? STANDARD.maxServerMemoryMB) as number;
   const fk = pruefeKonfig(konfig); if (fk) throw new Error(fk.replace('speicherLimitMB', 'speicher_limit_mb'));
   const fm = pruefeMaxSpeicher({ mb: maxMb }); if (fm) throw new Error(`max_server_memory_mb: ${fm}`);
@@ -266,6 +299,8 @@ export class LinuxSqlSkill extends Skill {
       + 'sicherung_jetzt (zugang, art full|diff|log, datenbank) — eine Sicherung in derselben Kette, danach auf fs01 bestätigt. '
       + 'wiederherstellen_pruefen (zugang, datenbank, ziel_name Standard alfred_wh_<datenbank>) — letzte vollständige Kette FULL+DIFF+LOGs AUS DER fs01-KOPIE unter ziel_name, DBCC CHECKDB, Prüfdaten-Vergleich → „RESTORE_VERIFIED“ nur wenn alles stimmt; ziel_name wird danach entfernt (Schritt-zeitlimitS großzügig, z. B. 3600). '
       + 'sicherungen (lesend, auch außerhalb von Changes; zugang; liest keinen Tresor und nicht fs01 — lokaler Stand und Bericht des letzten Kopierlaufs, der fs01 prüft) — Wortlaut „<zugang>: Sicherung nach //fs01.ad.3033.at/<freigabe> (belegt <x> GiB von <y> GiB); Kopie zuletzt <zeit> ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; <db>: <n> Ketten (<m> vollständig), letzte FULL …, lokal <a>, fs01 <b>, Hash ok, vollständig auf fs01“ (sonst „Hash unbekannt …“, „ausstehend: <n>“, „FEHLT auf fs01: <n>“; Befunde des Kopierlaufs stehen hinter „Kopie zuletzt <zeit> FEHLER:“), als Prüfung z. B. erwartet „vollständig auf fs01“ oder „Kopie-Timer aktiv“. Ziel ist nur fs01.ad.3033.at, konto_tresor nur ad-svc-sqllnx-…. '
+      + `Mindest-zeitlimitS je Schritt (Baustein-Zeitgrenzen + 60 s): ${Object.entries(LINUX_SQL_MIN_ZEITLIMIT_S).map(([a, sk]) => `${a} ${sk} s`).join(', ')}. `
+      + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -290,6 +325,7 @@ export class LinuxSqlSkill extends Skill {
         budget_gib: { type: 'number', description: 'sicherung_einrichten: Budget auf fs01 in GiB (Standard 63, unter dem FSRM-Kontingent 64)' },
         cifs_version: { type: 'string', description: 'sicherung_einrichten: apt-Version von cifs-utils (Standard fest)' },
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
+        // (kettengrenzen_uebernehmen nutzt zugang und konto_tresor)
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
       },
       required: ['action', 'zugang'],
@@ -297,6 +333,9 @@ export class LinuxSqlSkill extends Skill {
   };
 
   constructor(private readonly d: LinuxSqlDeps) { super(); }
+
+  /** Fix-Welle I-1: Mindest-zeitlimitS eines Change-Schritts (Planprüfung) */
+  mindestZeitlimitS(aktion: string): number | undefined { return LINUX_SQL_MIN_ZEITLIMIT_S[aktion]; }
 
   /** Planprüfung (rein, ohne Tresor und Fernaufruf); Verweise {{…}} bleiben bis zur Laufzeit ungeprüft */
   pruefeEingabe(input: Record<string, unknown>): string | undefined {
@@ -313,6 +352,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'sicherung_einrichten') sicherungEinrichtenParameter(input);
       else if (action === 'sicherung_jetzt') sicherungJetztParameter(input);
       else if (action === 'wiederherstellen_pruefen') { wiederherstellenParameter(input); kontoTresorName(input); }
+      else if (action === 'kettengrenzen_uebernehmen') kontoTresorName(input);
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -337,13 +377,17 @@ export class LinuxSqlSkill extends Skill {
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input, geheim);
         case 'sicherungen': return await this.sicherungen(zugang);
         case 'wiederherstellen_pruefen': return await this.wiederherstellen(zugang, input, geheim);
+        case 'kettengrenzen_uebernehmen': return await this.kettengrenzen(zugang, input, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
   }
 
   private async lauf<T extends Record<string, unknown>>(zugang: string, baustein: string, parameter: unknown, zweck: string, timeoutMs: number, eingabe?: Record<string, string>): Promise<T> {
-    const r = await this.d.skript(zugang, baustein, parameter, eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck);
+    return this.pruefeLauf<T>(zugang, zweck, await this.d.skript(zugang, baustein, parameter, eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck));
+  }
+
+  private pruefeLauf<T extends Record<string, unknown>>(zugang: string, zweck: string, r: { code: number; stdout: string; stderr: string }): T {
     const e = sqlErgebnis<T>(r.stdout);
     if (r.code !== 0 || !e || e.zustand === 'fehler') {
       const grund = e && typeof e.fehler === 'string' ? e.fehler : `${r.stderr}\n${r.stdout}`.replace(/\s+/g, ' ').trim().slice(-500);
@@ -354,12 +398,11 @@ export class LinuxSqlSkill extends Skill {
 
   private tresor() { if (!this.d.tresor) throw new Error('Tresor nicht verfügbar'); return this.d.tresor; }
 
-  /** vorhandenen Eintrag lesen oder einmalig erzeugen */
-  private async kennwort(name: string, wofuer: string, zweck: string, geheim: string[]): Promise<{ wert: string; neu: boolean }> {
+  /** vorhandenen Eintrag lesen oder ein neues Kennwort erzeugen — der Aufrufer legt es erst nach Erfolg im Tresor ab (Fix-Welle I-2) */
+  private async vorhandenOderNeu(name: string, wofuer: string, geheim: string[]): Promise<{ wert: string; neu: boolean }> {
     const t = this.tresor();
     if ((await t.namen()).has(name)) { const wert = await t.lies(name, wofuer); geheim.push(wert); return { wert, neu: false }; }
     const wert = linuxSqlKennwort(); geheim.push(wert);
-    await t.setze(name, wert, zweck);
     return { wert, neu: true };
   }
 
@@ -390,8 +433,14 @@ export class LinuxSqlSkill extends Skill {
   private async installieren(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = installParameter(input);
     const name = pruefeTresorName(saName(zugang));
-    const k = await this.kennwort(name, `SQL-Installation ${zugang}`, `sa-Kennwort von SQL Server auf ${zugang.toLowerCase()} (Linux)`, geheim);
-    const r = await this.lauf<{ zustand: string; version?: string; edition?: string }>(zugang, LINUX_SQL_BAUSTEINE.installation, p, 'SQL Server installieren', LINUX_SQL_ZEIT_MS.installation, { sa: k.wert });
+    // Fix-Welle I-2: ein neues sa-Kennwort kommt erst nach gelungenem Setup in den Tresor (Marke ALFRED-SA-GESETZT, auch wenn ein späterer
+    // Schritt scheitert); ist SQL Server schon installiert und fehlt der Tresor-Eintrag, bricht der Baustein ohne Änderung ab
+    const k = await this.vorhandenOderNeu(name, `SQL-Installation ${zugang}`, geheim);
+    const roh = await this.d.skript(zugang, LINUX_SQL_BAUSTEINE.installation, { ...p, saNeu: k.neu }, JSON.stringify({ sa: k.wert }), LINUX_SQL_ZEIT_MS.installation, 'SQL Server installieren');
+    const gesetzt = roh.stdout.split(/\r?\n/).some(z => z.trim() === 'ALFRED-SA-GESETZT');
+    const ok = roh.code === 0 && sqlErgebnis<{ zustand?: string }>(roh.stdout)?.zustand !== 'fehler' && !!sqlErgebnis(roh.stdout);
+    if (k.neu && (ok || gesetzt)) await this.tresor().setze(name, k.wert, `sa-Kennwort von SQL Server auf ${zugang.toLowerCase()} (Linux)`);
+    const r = this.pruefeLauf<{ zustand: string; version?: string; edition?: string }>(zugang, 'SQL Server installieren', roh);
     this.d.protokoll?.('I8e SQL Server installiert', { zugang, zustand: r.zustand, version: r.version, saNeu: k.neu });
     const text = `SQL Server ${r.version ?? p.version} (${r.edition ?? 'Enterprise Developer'}) auf ${zugang}, Dienst aktiv; sa-Kennwort im Tresor (${name})`;
     return { success: true, data: { ...r, saTresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
@@ -410,10 +459,10 @@ export class LinuxSqlSkill extends Skill {
     const tempdb: TempdbParameter = { ...w.tempdb, dateien };
     const ft = pruefeTempdb(tempdb); if (ft) throw new Error(`tempdb: ${ft}`);
     const k = await this.lauf<{ zustand: string; neustart?: boolean }>(zugang, LINUX_SQL_BAUSTEINE.konfiguration, w.konfig, 'SQL-Konfiguration (mssql-conf)', LINUX_SQL_ZEIT_MS.konfiguration);
-    const t = await this.lauf<{ zustand: string; dateien?: number }>(zugang, LINUX_SQL_BAUSTEINE.tempdb, tempdb, 'tempdb einrichten', LINUX_SQL_ZEIT_MS.tempdb, { sa });
+    const t = await this.lauf<{ zustand: string; dateien?: number; altdateien?: string[] }>(zugang, LINUX_SQL_BAUSTEINE.tempdb, tempdb, 'tempdb einrichten', LINUX_SQL_ZEIT_MS.tempdb, { sa });
     const m = await this.lauf<{ zustand: string; maxSpeicherMb?: number }>(zugang, LINUX_SQL_BAUSTEINE.maxspeicher, { mb: w.maxMb }, 'max server memory', LINUX_SQL_ZEIT_MS.maxspeicher, { sa });
     const schon = [k, t, m].every(x => x.zustand === 'schon');
-    const text = `SQL-Konfiguration auf ${zugang}: Speicherlimit ${w.konfig.speicherLimitMB} MB, max server memory ${m.maxSpeicherMb ?? w.maxMb} MB, tempdb ${t.dateien ?? dateien} Datendateien, Agent ${w.konfig.agent ? 'an' : 'aus'}${k.neustart ? ', Dienst neu gestartet' : ''}`;
+    const text = `SQL-Konfiguration auf ${zugang}: Speicherlimit ${w.konfig.speicherLimitMB} MB, max server memory ${m.maxSpeicherMb ?? w.maxMb} MB, tempdb ${t.dateien ?? dateien} Datendateien, Agent ${w.konfig.agent ? 'an' : 'aus'}${k.neustart ? ', Dienst neu gestartet' : ''}${t.altdateien?.length ? `; alte tempdb-Dateien liegen noch (nicht gelöscht): ${t.altdateien.join(', ')}` : ''}`;
     return { success: true, data: { konfiguration: k, tempdb: t, maxSpeicher: m }, display: schon ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
@@ -421,8 +470,10 @@ export class LinuxSqlSkill extends Skill {
     const p = loginParameter(input);
     const name = loginTresorName(zugang, p.name);
     const sa = await this.sa(zugang, `SQL-Login ${p.name} auf ${zugang}`, geheim);
-    const k = await this.kennwort(name, `SQL-Login ${p.name} auf ${zugang}`, `Kennwort des SQL-Logins ${p.name} auf ${zugang.toLowerCase()} (Linux)`, geheim);
-    const r = await this.lauf<{ zustand: string }>(zugang, LINUX_SQL_BAUSTEINE.login, p, `SQL-Login ${p.name}`, LINUX_SQL_ZEIT_MS.login, { sa, kennwort: k.wert });
+    // Fix-Welle I-2: fehlt der Tresor-Eintrag, darf es den Login noch nicht geben (nurNeu); das Kennwort kommt erst nach Erfolg in den Tresor
+    const k = await this.vorhandenOderNeu(name, `SQL-Login ${p.name} auf ${zugang}`, geheim);
+    const r = await this.lauf<{ zustand: string }>(zugang, LINUX_SQL_BAUSTEINE.login, { ...p, nurNeu: k.neu }, `SQL-Login ${p.name}`, LINUX_SQL_ZEIT_MS.login, { sa, kennwort: k.wert });
+    if (k.neu) await this.tresor().setze(name, k.wert, `Kennwort des SQL-Logins ${p.name} auf ${zugang.toLowerCase()} (Linux)`);
     const text = `SQL-Login ${p.name} auf ${zugang} (${p.serverrollen?.length ? p.serverrollen.join(', ') : 'ohne Serverrolle'}), Kennwort im Tresor (${name})`;
     return { success: true, data: { ...r, login: p.name, serverrollen: p.serverrollen, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand}` };
   }
@@ -464,6 +515,15 @@ export class LinuxSqlSkill extends Skill {
     const r = await this.lauf<{ zustand: string; datei?: string; sha256?: string; fs01?: boolean }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, p, `Sicherung ${p.art} ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt, { sa });
     if (r.fs01 !== true || !r.datei) throw new Error(`Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: Kopie auf fs01 nicht bestätigt`);
     return { success: true, data: r, display: `✅ Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: ${r.datei} — auf fs01 geprüft (SHA-256 ${String(r.sha256 ?? '').slice(0, 16)}…)` };
+  }
+
+  /** Fix-Welle M-1 — lokale Kettengrenzen aus der Kopie auf fs01 übernehmen (nur im Change, nach Prüfung); zeigt den Unterschied */
+  private async kettengrenzen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const name = kontoTresorName(input);
+    const kennwort = await this.fs01Kennwort(name, `Kettengrenzen ${zugang} (fs01 lesen)`, geheim);
+    const r = await this.lauf<{ zustand: string; unterschied?: Array<{ datenbank: string; lokal: number; fs01: number }> }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen, {}, 'Kettengrenzen übernehmen', LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen, { kennwort });
+    const u = (r.unterschied ?? []).map(x => `${x.datenbank}: lokal ${x.lokal} → fs01 ${x.fs01}`);
+    return { success: true, data: r, display: u.length ? `✅ Kettengrenzen auf ${zugang} übernommen: ${u.join('; ')}` : `Kettengrenzen auf ${zugang} stimmen mit fs01 überein — nichts zu tun` };
   }
 
   /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */

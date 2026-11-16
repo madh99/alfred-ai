@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, CIFS_UTILS_VERSION, ZUGANGSDATEI_FEST, PY_KETTE, KOPIE_SH, SICHERUNG_PROZEDUR, PRUEF_SELECT,
   pruefeSicherungEinrichten, sicherungEinrichtenSkript, pruefeSicherungJetzt, sicherungJetztSkript, sicherungenSkript, pruefeWiederherstellen, wiederherstellenSkript,
-  sicherungJobsTsql, CIFS_OPTIONEN,
+  sicherungJobsTsql, CIFS_OPTIONEN, kettengrenzenSkript,
 } from './linux-sql-sicherung.js';
 import { sqlErgebnis, shQ, sqlSkript, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN } from './linux-sql.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
@@ -36,6 +36,7 @@ function alleSkripte(): Array<[string, string]> {
     ['jetzt', sicherungJetztSkript({ art: 'LOG', datenbank: 'pruefdb01' })],
     ['liste', sicherungenSkript()],
     ['wiederherstellen', wiederherstellenSkript({ datenbank: 'pruefdb01', ziel: 'alfred_wh_pruefdb01' })],
+    ['kettengrenzen', kettengrenzenSkript()],
   ];
 }
 
@@ -559,6 +560,9 @@ describe.skipIf(!PYTHON)('I8e Task 4 Fix-Runde 2 — Inhalt vor lokalem Löschen
     const m = JSON.parse(readFileSync(mp, 'utf8'));
     m.entfernteKetten = { pruefdb01: [{ full: stempel(T - 2 * TAG + 2 * 3600), ersterBezug: b.letzte, letztes: fehlt }] };
     writeFileSync(mp, JSON.stringify(m));
+    // lokal gibt es eine (andere, nicht überbrückende) Aufzeichnung — es gilt nur sie (Fix-Welle: ohne lokale Aufzeichnung greift M-1)
+    mkdirSync(join(w.wurzel, 'sqllnx'), { recursive: true });
+    writeFileSync(grenzenDatei(w), JSON.stringify([{ full: stempel(T - 5 * TAG), ersterBezug: null, letztes: null }]));
     const r = kopie(w, T);
     expect(r.json.ok).toBe(false);
     expect(r.json.befunde.join(' ')).toContain(`Protokollsicherung ${fehlt} fehlt`);
@@ -626,6 +630,74 @@ describe.skipIf(!PYTHON)('I8e Task 4 Fix-Runde 2 — Inhalt vor lokalem Löschen
   });
 });
 
+describe.skipIf(!PYTHON)('I8e Fix-Welle — lokale Grenzen fehlen (M-1), Dateien gelöschter Ketten (M-2), Reste (M-6)', { timeout: 120_000 }, () => {
+  const START = Date.UTC(2026, 10, 2, 0, 0, 0) / 1000; // Montag
+  const grenzenDatei = (w: Welt) => join(w.wurzel, 'sqllnx', 'pruefdb01-entfernt.json');
+  /** a (Mo) und b (Di) kopiert, dann 40 Tage später: a per Aufbewahrung gelöscht, lokal noch vorhanden */
+  function zweiKetten() {
+    const w = welt();
+    const a = kette(w, 'pruefdb01', START + 1800, 2);
+    kette(w, 'pruefdb01', START + TAG + 1800, 2, a.letzte);
+    expect(kopie(w, START + TAG + 23 * 3600).json.ok).toBe(true);
+    return { w, a };
+  }
+  it('M-2: Dateien einer gelöschten Kette, deren Hash bei der Löschung auf fs01 belegt war, werden lokal entfernt', () => {
+    const { w, a } = zweiKetten();
+    const r = kopie(w, START + 40 * TAG);
+    expect(r.json.ok, r.json.fehler).toBe(true);
+    const g = JSON.parse(readFileSync(grenzenDatei(w), 'utf8'));
+    expect(Object.keys(g[0].dateien).sort()).toEqual([`pruefdb01_FULL_${a.full}.bak`, ...a.logs].sort());
+    expect(r.json.lokalEntfernt.sort()).toEqual([`pruefdb01/pruefdb01_FULL_${a.full}.bak`, ...a.logs.map(n => `pruefdb01/${n}`)].sort());
+    expect(existsSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${a.full}.bak`))).toBe(false);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('M-2: ohne Hash-Beleg in der lokalen Grenze (oder abweichende lokale Datei) → nichts entfernt, Befund „lokal liegen n Dateien gelöschter Ketten“', () => {
+    // Beleg verfälscht: lokale Datei weicht vom bei der Löschung belegten Hash ab
+    const w2 = zweiKetten();
+    writeFileSync(join(w2.w.lokal, 'pruefdb01', w2.a.logs[0]!), 'anders');
+    utimesSync(join(w2.w.lokal, 'pruefdb01', w2.a.logs[0]!), Date.now() / 1000 - 3600, Date.now() / 1000 - 3600);
+    const r = kopie(w2.w, START + 40 * TAG);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.befunde.join(' ')).toMatch(/lokal liegen \d+ Dateien gelöschter Ketten/);
+    expect(existsSync(join(w2.w.lokal, 'pruefdb01', w2.a.logs[0]!))).toBe(true);
+    rmSync(w2.w.wurzel, { recursive: true, force: true });
+  });
+  it('M-1: lokale Grenzdatei verloren, fs01 hat Grenzen → Befund, Grenzen auf fs01 bleiben, gelöschte Ketten werden nicht neu kopiert', () => {
+    const w = welt();
+    const a = kette(w, 'pruefdb01', START + 1800, 2);
+    kette(w, 'pruefdb01', START + TAG + 1800, 2, a.letzte);
+    kopie(w, START + TAG + 23 * 3600);
+    const r1 = kopie(w, START + 40 * TAG);
+    expect(r1.json.geloescht.length).toBeGreaterThan(0);
+    // lokale Kopie der a-Dateien wiederherstellen (wie vor dem Aufräumen) und die lokale Grenzdatei verlieren
+    for (const n of [`pruefdb01_FULL_${a.full}.bak`, ...a.logs]) if (!existsSync(join(w.lokal, 'pruefdb01', n))) lokal(w, 'pruefdb01', n, `x-${n}`);
+    rmSync(grenzenDatei(w));
+    const r = kopie(w, START + 40 * TAG);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.befunde.join(' ')).toContain('lokale Kettengrenzen fehlen — Aufbewahrung ausgesetzt');
+    expect(r.json.kopiert).toEqual([]);
+    expect(manifest(w).entfernteKetten.pruefdb01.map((e: { full: string }) => e.full)).toEqual([a.full]);
+    // Übernahme (nach Prüfung): schreibt die lokale Datei aus der Kopie auf fs01 und nennt den Unterschied
+    const u = py(['grenzen_uebernehmen', w.mnt, 'sqllnx01', join(w.wurzel, 'sqllnx')]);
+    expect(u.rc, u.aus).toBe(0);
+    expect(u.json.unterschied).toEqual([{ datenbank: 'pruefdb01', lokal: 0, fs01: 1 }]);
+    expect(JSON.parse(readFileSync(grenzenDatei(w), 'utf8')).map((e: { full: string }) => e.full)).toEqual([a.full]);
+    const r3 = kopie(w, START + 40 * TAG);
+    expect(r3.json.befunde.join(' ')).not.toContain('lokale Kettengrenzen fehlen');
+    expect(r3.json.kopiert).toEqual([]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('M-6: liste meldet Reste .alfred-wh-* im Sicherungsordner', () => {
+    const w = welt();
+    kette(w, 'pruefdb01', START + 1800, 1);
+    kopie(w, START + TAG);
+    mkdirSync(join(w.lokal, '.alfred-wh-abc123'));
+    const l = py(['liste', w.lokal, 'sqllnx01', w.cache, w.status, w.konf]);
+    expect(l.json.reste.some((x: string) => x.endsWith('.alfred-wh-abc123'))).toBe(true);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+});
+
 // ── Bash-Bausteine mit Stubs ausführen ─────────────────────────────────────────────────────────────────────────────────────────
 function bashLauf(skript: string, stubs: string[], eingabe = '') {
   // Ersetzung als Funktion: „$'“ im Stub-Text wäre sonst ein Ersetzungsmuster von String.replace
@@ -645,6 +717,7 @@ const GEMEINSAM = [
   'umount() { echo "umount $*" >>"$T/log"; }',
   'mountpoint() { return 0; }',
   'rechnername() { echo sqllnx01; }',
+  'fassung_pruefen() { :; }',
   'frei_kb() { echo 999999999; }',
   'geraet() { echo "$1"; }',
 ];

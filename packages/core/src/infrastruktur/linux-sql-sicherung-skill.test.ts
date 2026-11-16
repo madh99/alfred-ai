@@ -149,7 +149,7 @@ describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
   it('sicherungen: fester Wortlaut mit Ziel, Budget, letzter Kopie, Zugangsdatei, Timer, Ketten und Hash-Status', () => {
     const t = linuxSqlSicherungenText('sqllnx01', LISTE as never);
     expect(t).toBe('sqllnx01: Sicherung nach //fs01.ad.3033.at/SQLLinuxBackup$ (belegt 3.0 GiB von 64 GiB); Kopie zuletzt 2026-11-16T12:07:00Z ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; '
-      + 'pruefdb01: 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, Hash ok, vollständig auf fs01');
+      + 'pruefdb01: 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, Hash ok — pruefdb01: vollständig auf fs01');
     const kaputt = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { zeit: 'x', ok: false, fehler: 'Budget überschritten' }, datenbanken: { pruefdb01: { ...LISTE.datenbanken.pruefdb01, ketten: [{ ...LISTE.datenbanken.pruefdb01.ketten[0]!, vollstaendig: false }] } } } as never);
     expect(kaputt).toContain('FEHLER: Budget überschritten');
     expect(kaputt).toContain('Hash unbekannt (letzter Kopierlauf fehlgeschlagen)');
@@ -228,7 +228,8 @@ describe('I8e Task 4 — Planregeln', () => {
   });
   it('sicherungen als Prüfung: erwartet nur aus dem festen Wortlaut', () => {
     const pr = (erwartet: string) => ({ titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'sicherungen', parameter: { zugang: 'sqllnx01' }, erwartet } });
-    expect(pruefeChangePlan(plan([pr('vollständig auf fs01')]), ctx).fehler).toEqual([]);
+    expect(pruefeChangePlan(plan([pr('pruefdb01: vollständig auf fs01')]), ctx).fehler).toEqual([]);
+    expect(pruefeChangePlan(plan([pr('vollständig auf fs01')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
     expect(pruefeChangePlan(plan([pr('Hash ok')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
     expect(pruefeChangePlan(plan([pr('alles bestens gesichert')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
   });
