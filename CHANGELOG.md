@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bauplan ableiten: Sammel-Entscheidungen (v1883)
+
+- Entscheidungen lassen sich in Gruppen treffen (`fest:*`, `anlage:*`, `veraendert:*`, `tresor:*`, `teil:wert|<wert>` nur „fest“); Ersetzen geht nur je Wort (`teil:wort|<wert>|<wort>`), damit ein Wert nie blind in Wörtern anderer Bedeutung (z. B. Pfaden oder Befehlsnamen) ersetzt wird. Einzelentscheidungen gehen immer vor; die Tresor-Sperre bleibt.
+- Vorschlag und Fehlermeldung nennen die Gruppen-Schlüssel ganz oben; die Freigabe-Frage zeigt jede Sammel-Entscheidung mit Anzahl und jedes ersetzte Wort.
+
 ### Fixed — Bauplan ableiten: Entscheidungspflicht lückenlos (v1882)
 
 - Jeder Wert in einem verändernden Schritt, der weder vom Paket angelegt noch als Parameter gewählt ist, braucht eine ausdrückliche Entscheidung — auch IP-Adressen, verschachtelte Felder, Rückwege und mehrere Werte in einem Feld. Ausgenommen sind nur dokumentierte Trägerfelder (Knoten, Speicher, Gerät, Port, Sicherungsjob).
