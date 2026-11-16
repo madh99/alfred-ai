@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { LinuxSqlSkill, linuxSqlStatusText, linuxSqlSicherungenText, LINUX_SQL_MIN_ZEITLIMIT_S, type LinuxSqlStatus } from './linux-sql-skill.js';
 import { LINUX_SQL_BAUSTEINE, sqlSkript, installSkript, sqlKopf, shQ, sqlErgebnis } from './linux-sql.js';
 import { LINUX_SQL_SICHERUNG_BAUSTEINE, sicherungJetztSkript, sicherungenSkript, wiederherstellenSkript, kettengrenzenSkript, KOPIE_FASSUNG } from './linux-sql-sicherung.js';
@@ -38,7 +39,8 @@ describe('I-1: Mindest-zeitlimitS je linux_sql-Aktion', () => {
   const inst = { titel: 'Installieren', art: 'aktion', skill: 'linux_sql', aktion: 'installieren', parameter: { zugang: 'sqllnx01', version: '17.0.4006.2-1' }, rueckweg: { keiner: 'neu' } };
   it('Werte aus den Baustein-Zeitgrenzen + 60 s; Standard 600 s bei installieren → Fehler mit dem Mindestwert', () => {
     expect(LINUX_SQL_MIN_ZEITLIMIT_S.installieren).toBe(1560);
-    expect(LINUX_SQL_MIN_ZEITLIMIT_S.konfigurieren).toBe(840);
+    // Nachtrag: Summe der Baustein-Grenzen + 60 s je Baustein (4 Bausteine)
+    expect(LINUX_SQL_MIN_ZEITLIMIT_S.konfigurieren).toBe(1020);
     expect(LINUX_SQL_MIN_ZEITLIMIT_S.sicherung_einrichten).toBe(1260);
     expect(LINUX_SQL_MIN_ZEITLIMIT_S.sicherung_jetzt).toBe(3060);
     expect(LINUX_SQL_MIN_ZEITLIMIT_S.wiederherstellen_pruefen).toBe(3560);
@@ -178,6 +180,29 @@ describe('M-9: Prüfstück je Datenbank', () => {
     expect(linuxSqlSicherungenText('x', l as never)).toContain('pruefdb01: vollständig auf fs01');
     expect(pruefeChangePlan(pr('pruefdb01: vollständig auf fs01'), ctx).fehler).toEqual([]);
     expect(pruefeChangePlan(pr('vollständig auf fs01'), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
+  });
+});
+
+describe('Nachtrag N-1 / Restpunkte', () => {
+  it('kettengrenzen prüft die Fassung; Anzeige nennt die übernommenen Grenzen', async () => {
+    const s = kettengrenzenSkript();
+    expect(s).toContain(KOPIE_FASSUNG.kette);
+    expect(s.split('# ALFRED-ABLAUF')[1]).toContain('fassung_pruefen');
+    const w = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen]: [{ zustand: 'geaendert', unterschied: [{ datenbank: 'pruefdb01', lokal: 0, fs01: 1, grenzen: [{ full: '20261103003000', ersterBezug: '20261102180500', letztes: '20261103180500' }] }] }] }, { 'ad-svc-sqllnx-backup': 'Fs-1' });
+    const r = await w.skill.execute({ action: 'kettengrenzen_uebernehmen', zugang: 'sqllnx01' }, imChange);
+    expect(r.display).toContain('übernommen: 20261103003000 (Bezug 20261102180500, letztes 20261103180500)');
+    expect(r.display).toContain('Aufbewahrung');
+  });
+  it.skipIf(!BASH)('Ergebniszeile nennt entfernte alte Zugangsdateien (nur wenn welche entfernt wurden)', () => {
+    const kopf = sqlKopf('sql.status', {}).join('\n');
+    const lauf = (n: number) => spawnSync('bash', [], { input: `ALFRED_EINGABE=''\n( ${kopf}\nALFRED_RESTE=${n}\nergebnis '{"zustand":"schon"}'\n)`, encoding: 'utf8' }).stdout;
+    expect(sqlErgebnis(lauf(2))).toEqual({ zustand: 'schon', alteZugangsdateienEntfernt: 2 });
+    expect(sqlErgebnis(lauf(0))).toEqual({ zustand: 'schon' });
+  });
+  it('Modulkopf dokumentiert sa-Wiederherstellung nach SSH-Verlust', () => {
+    const quelle = readFileSync(new URL('./linux-sql.ts', import.meta.url), 'utf8');
+    expect(quelle).toContain('mssql-conf set-sa-password');
+    expect(quelle).toContain('älter als 120 min');
   });
 });
 

@@ -16,6 +16,13 @@
  *   `'` wäre im Login-Baustein sicher verdoppelt, wird aber ebenfalls nicht benötigt.
  * - Genau eine Ergebniszeile `ALFRED-SQL {json}`; Fehler → `{"zustand":"fehler","fehler":…}` und Exit 1.
  * - Jeder Baustein ist idempotent (`zustand: 'schon'`) und prüft sein Ergebnis selbst.
+ * - Neues sa-Kennwort (Fix-Welle I-2): es kommt erst nach gelungenem `mssql-conf setup` in den Tresor (Marke ALFRED-SA-GESETZT). Reißt die
+ *   SSH-Verbindung nach dem Setup ab, bevor der Skill die Marke sieht, ist das sa-Kennwort unbekannt; der nächste installieren-Lauf bricht
+ *   mit „schon installiert, sa-Kennwort nicht im Tresor“ ab (nichts still). Wiederherstellung durch den Owner: auf der VM
+ *   `sudo systemctl stop mssql-server && sudo /opt/mssql/bin/mssql-conf set-sa-password && sudo systemctl start mssql-server` mit einem neuen
+ *   Kennwort, dieses Kennwort als Tresor-Eintrag sqllnx-<zugang>-sa anlegen, danach installieren erneut (meldet „nichts zu tun“).
+ * - Aufräumen: der Kopf jedes Bausteins entfernt eigene Zugangsdateien /run/alfred-c-* älter als 120 min (Rest abgebrochener Läufe; länger
+ *   läuft kein Baustein) und nennt ihre Zahl in der Ergebniszeile (`alteZugangsdateienEntfernt`); der Status meldet vorhandene als Reste.
  */
 import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
@@ -108,14 +115,15 @@ export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] 
     `ALFRED_P=${shQ(JSON.stringify(p))}`,
     "ALFRED_ZEILE=''",
     "ALFRED_TMP=''",
-    `ergebnis() { ALFRED_ZEILE=1; printf 'ALFRED-SQL %s\\n' "$1"; }`,
+    // Nachtrag: entfernte alte Zugangsdateien (siehe unten) stehen in der Ergebniszeile, wenn es welche gab
+    `ergebnis() { ALFRED_ZEILE=1; local j="$1"; if [[ "\${ALFRED_RESTE:-0}" =~ ^[1-9][0-9]*$ ]] && [[ "$j" == *'}' ]]; then j="\${j%?},\\"alteZugangsdateienEntfernt\\":$ALFRED_RESTE}"; fi; printf 'ALFRED-SQL %s\\n' "$j"; }`,
     `json_text() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'; }`,
     `abbruch() { local t; t=$(printf '%s' "$1" | json_text); ergebnis "{\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"$ALFRED_BAUSTEIN\\",\\"fehler\\":$t}"; exit 1; }`,
     // I8e Task 4: optionale Funktion alfred_aufraeumen (z. B. Zugangsdatei, Einhängepunkt, Wegwerf-Datenbank) läuft zuerst
     `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\"}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC"; fi' EXIT`,
     `feld() { python3 -c ${shQ(PY_FELD)} "$1" <<<"$ALFRED_EINGABE"; }`,
     // Fix-Welle M-6: liegengebliebene Zugangsdateien abgebrochener Läufe (älter als jede Zeitgrenze, 120 min) entfernen
-    "find /run -maxdepth 1 -type f -name 'alfred-c-*' -mmin +120 -delete 2>/dev/null || true",
+    "ALFRED_RESTE=$( { find /run -maxdepth 1 -type f -name 'alfred-c-*' -mmin +120 -delete -print 2>/dev/null || true; } | wc -l | tr -d ' ')",
   ];
 }
 

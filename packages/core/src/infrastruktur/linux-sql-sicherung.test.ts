@@ -680,7 +680,7 @@ describe.skipIf(!PYTHON)('I8e Fix-Welle — lokale Grenzen fehlen (M-1), Dateien
     // Übernahme (nach Prüfung): schreibt die lokale Datei aus der Kopie auf fs01 und nennt den Unterschied
     const u = py(['grenzen_uebernehmen', w.mnt, 'sqllnx01', join(w.wurzel, 'sqllnx')]);
     expect(u.rc, u.aus).toBe(0);
-    expect(u.json.unterschied).toEqual([{ datenbank: 'pruefdb01', lokal: 0, fs01: 1 }]);
+    expect(u.json.unterschied).toMatchObject([{ datenbank: 'pruefdb01', lokal: 0, fs01: 1 }]);
     expect(JSON.parse(readFileSync(grenzenDatei(w), 'utf8')).map((e: { full: string }) => e.full)).toEqual([a.full]);
     const r3 = kopie(w, START + 40 * TAG);
     expect(r3.json.befunde.join(' ')).not.toContain('lokale Kettengrenzen fehlen');
@@ -694,6 +694,96 @@ describe.skipIf(!PYTHON)('I8e Fix-Welle — lokale Grenzen fehlen (M-1), Dateien
     mkdirSync(join(w.lokal, '.alfred-wh-abc123'));
     const l = py(['liste', w.lokal, 'sqllnx01', w.cache, w.status, w.konf]);
     expect(l.json.reste.some((x: string) => x.endsWith('.alfred-wh-abc123'))).toBe(true);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+});
+
+describe.skipIf(!PYTHON)('I8e Nachtrag N-1 — kettengrenzen_uebernehmen nur bei fehlender Aufzeichnung, geprüft, ohne Löschwirkung', { timeout: 120_000 }, () => {
+  const START = Date.UTC(2026, 10, 2, 0, 0, 0) / 1000; // Montag
+  const gdir = (w: Welt) => join(w.wurzel, 'sqllnx');
+  const gdatei = (w: Welt) => join(gdir(w), 'pruefdb01-entfernt.json');
+  const mpfad = (w: Welt) => join(w.mnt, 'sqllnx01', 'alfred-sqllnx-manifest.json');
+  /** drei Ketten a, b, c kopiert; dann b „gelöscht“ (fs01 + Manifest), Grenze von b nur auf fs01 */
+  function aufbau() {
+    const w = welt();
+    const a = kette(w, 'pruefdb01', START + 1800, 2);
+    const b = kette(w, 'pruefdb01', START + TAG + 1800, 2, a.letzte);
+    const c = kette(w, 'pruefdb01', START + 2 * TAG + 1800, 2, b.letzte);
+    expect(kopie(w, START + 2 * TAG + 23 * 3600).json.ok).toBe(true);
+    const m = JSON.parse(readFileSync(mpfad(w), 'utf8'));
+    const bDateien: Record<string, string> = {};
+    for (const n of [`pruefdb01_FULL_${b.full}.bak`, ...b.logs]) {
+      bDateien[n] = m.dateien[`pruefdb01/${n}`].sha256;
+      delete m.dateien[`pruefdb01/${n}`];
+      rmSync(join(w.mnt, 'sqllnx01', 'pruefdb01', n), { force: true });
+      rmSync(join(w.lokal, 'pruefdb01', n), { force: true });
+      rmSync(join(w.lokal, 'pruefdb01', `${n}.fertig`), { recursive: true, force: true });
+    }
+    const gb = { full: b.full, ersterBezug: a.letzte, letztes: b.letzte, dateien: bDateien };
+    m.entfernteKetten = { pruefdb01: [gb] };
+    writeFileSync(mpfad(w), JSON.stringify(m));
+    return { w, a, b, c, m, gb };
+  }
+  const uebernehmen = (w: Welt) => py(['grenzen_uebernehmen', w.mnt, 'sqllnx01', gdir(w)]);
+  it('übernommene Grenzen: markiert, ohne Hash-Belege, im Ergebnis aufgeführt', () => {
+    const { w, a, b } = aufbau();
+    const u = uebernehmen(w);
+    expect(u.rc, u.aus).toBe(0);
+    expect(u.json.unterschied).toEqual([{ datenbank: 'pruefdb01', lokal: 0, fs01: 1, grenzen: [{ full: b.full, ersterBezug: a.letzte, letztes: b.letzte }] }]);
+    const g = JSON.parse(readFileSync(gdatei(w), 'utf8'));
+    expect(g).toEqual([{ full: b.full, ersterBezug: a.letzte, letztes: b.letzte, uebernommen: true }]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('vorhandene, abweichende lokale Aufzeichnung → Abbruch ohne Änderung („es gilt die lokale“)', () => {
+    const { w } = aufbau();
+    mkdirSync(gdir(w), { recursive: true });
+    const alt = JSON.stringify([{ full: stempel(START - 5 * TAG), ersterBezug: null, letztes: null }]);
+    writeFileSync(gdatei(w), alt);
+    const u = uebernehmen(w);
+    expect(u.rc).not.toBe(0);
+    expect(u.json.fehler).toContain('lokale Aufzeichnung vorhanden — es gilt die lokale');
+    expect(readFileSync(gdatei(w), 'utf8')).toBe(alt);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('ungültige Einträge auf fs01 → Abbruch ohne Änderung: Kette noch im Manifest, fremde Dateinamen, Überlappung/Reihenfolge', () => {
+    for (const faelschen of [
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, full: x.c.full }]; },
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, dateien: { 'boese.bak': 'a'.repeat(64) } }]; },
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, letztes: stempel(START) }]; },
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [x.gb, { full: stempel(START + TAG + 1800 + 900), ersterBezug: x.b.logs[0]!.split('_')[2]!, letztes: stempel(START + TAG + 4 * 3600) }]; },
+    ]) {
+      const x = aufbau();
+      faelschen(x);
+      writeFileSync(mpfad(x.w), JSON.stringify(x.m));
+      const u = uebernehmen(x.w);
+      expect(u.rc, JSON.stringify(x.m.entfernteKetten)).not.toBe(0);
+      expect(existsSync(gdatei(x.w))).toBe(false);
+      rmSync(x.w.wurzel, { recursive: true, force: true });
+    }
+  });
+  it('übernommene Grenzen überbrücken keine Lücke und ermöglichen kein Löschen: ältere Ketten bleiben unangetastet, neuere normal', () => {
+    const { w, a } = aufbau();
+    expect(uebernehmen(w).rc).toBe(0);
+    // Brücke: ketten() mit der übernommenen Grenze meldet das Ende von a weiterhin als Lücke
+    const r = kopie(w, START + 40 * TAG);
+    expect(r.json.ok, r.json.fehler).toBe(true);
+    expect(r.json.befunde).toEqual([]);
+    expect(r.json.geloescht.join(' ')).not.toContain(a.full);
+    expect(existsSync(join(w.mnt, 'sqllnx01', 'pruefdb01', `pruefdb01_FULL_${a.full}.bak`))).toBe(true);
+    expect(r.json.hinweise.join(' ')).toContain('vor übernommenen Kettengrenzen');
+    expect(r.json.kopiert).toEqual([]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('lokale Dateien einer übernommenen Kette werden nie gelöscht (kein Beleg aus fs01-Daten) — Befund', () => {
+    const { w, b, gb } = aufbau();
+    expect(uebernehmen(w).rc).toBe(0);
+    // lokale Kopie von b wieder da (Inhalt wie früher kopiert)
+    lokal(w, 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`, `full-pruefdb01-${b.full}`);
+    void gb;
+    const r = kopie(w, START + 2 * TAG + 23 * 3600);
+    expect(r.json.lokalEntfernt).toEqual([]);
+    expect(existsSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`))).toBe(true);
+    expect(r.json.befunde.join(' ')).toMatch(/lokal liegen 1 Dateien gelöschter Ketten/);
     rmSync(w.wurzel, { recursive: true, force: true });
   });
 });

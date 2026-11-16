@@ -671,27 +671,75 @@ def lokal_entfernen(lokal, db, n, cache, erg):
     erg['lokalEntfernt'].append(db + '/' + n)
 
 
+def pruefe_uebernahme(db, neu, man):
+    """Nachtrag N-1: Grenzen von fs01 nur, wenn sie zu gelöschten Ketten passen - sonst Fehler, nichts übernommen"""
+    vorhanden = {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'}
+    basen = {i['bezug'] for i in je_db(man).get(db, {}).values() if i['art'] == 'DIFF'}
+    for idx, e in enumerate(neu):
+        f = e['full']
+        if f in vorhanden or f in basen:
+            raise Fehler('%s: Kette %s ist auf fs01 noch vorhanden (nicht gelöscht) - nichts übernommen' % (db, f))
+        if (e.get('ersterBezug') is not None and e['ersterBezug'] > f) or (e.get('letztes') is not None and e['letztes'] <= f):
+            raise Fehler('%s: Grenze %s widersprüchlich (Bezug/letztes) - nichts übernommen' % (db, f))
+        naechste = neu[idx + 1] if idx + 1 < len(neu) else None
+        if naechste is not None:
+            if naechste['full'] <= f or (e.get('letztes') is not None and e['letztes'] >= naechste['full']):
+                raise Fehler('%s: Grenzen %s und %s überlappen - nichts übernommen' % (db, f, naechste['full']))
+            if e.get('letztes') is not None and naechste.get('ersterBezug') is not None and naechste['ersterBezug'] < e['letztes']:
+                raise Fehler('%s: Grenzen %s und %s nicht monoton - nichts übernommen' % (db, f, naechste['full']))
+        for n in (e.get('dateien') or {}):
+            i = zerlege(db, n)
+            ende = naechste['full'] if naechste is not None else None
+            if i is None or (i['art'] == 'FULL' and i['zeit'] != f) or (i['art'] != 'FULL' and (i['zeit'] <= f or (ende is not None and i['zeit'] >= ende))):
+                raise Fehler('%s: Grenze %s nennt die fremde Datei %r - nichts übernommen' % (db, f, n[:80]))
+
+
 def grenzen_uebernehmen(mnt, host, gdir):
-    """Fix-Welle M-1: Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung übernehmen (nur im Change, nach Prüfung
-    durch den Owner); Datenbanken, die fs01 nicht nennt, bleiben lokal unverändert. Ergebnis: Unterschied je Datenbank."""
+    """Fix-Welle M-1 / Nachtrag N-1: Grenzen gelöschter Ketten aus der Kopie auf fs01 übernehmen (nur im Change, nach Prüfung durch den
+    Owner) - NUR für Datenbanken ohne lokale Aufzeichnung; eine vorhandene, abweichende lokale Aufzeichnung → Abbruch ohne Änderung.
+    Übernommene Einträge tragen uebernommen=True und KEINE Hash-Belege: sie sperren nur das erneute Kopieren und beenden den Befund
+    „Grenzen fehlen“ - sie überbrücken keine Lücke und erlauben kein lokales Löschen; Ketten bis zur neuesten übernommenen Grenze
+    bleiben unangetastet (Aufbewahrung dort ausgesetzt), neuere werden normal beurteilt."""
     if not HOST.match(host):
         raise Fehler('Rechnername %r ungültig' % host)
     man = manifest_lesen(os.path.join(mnt, host), host)
     if man is None:
         raise Fehler('auf fs01 gibt es kein Manifest für %s - nichts übernommen' % host)
     lokal_g = lies_grenzen(gdir)
-    unterschied = []
+    plan = []
     for db, liste_ in sorted(man['entfernteKetten'].items()):
         neu = sorted(liste_, key=lambda e: e['full'])
-        if [e['full'] for e in lokal_g.get(db, [])] != [e['full'] for e in neu] or lokal_g.get(db, []) != neu:
-            unterschied.append({'datenbank': db, 'lokal': len(lokal_g.get(db, [])), 'fs01': len(neu)})
-            schreibe_grenzen(gdir, db, neu)
+        lok = lokal_g.get(db, [])
+        if lok:
+            if [e['full'] for e in lok] != [e['full'] for e in neu]:
+                raise Fehler('%s: lokale Aufzeichnung vorhanden — es gilt die lokale; nichts übernommen' % db)
+            continue
+        pruefe_uebernahme(db, neu, man)
+        plan.append((db, neu))
+    unterschied = []
+    for db, neu in plan:
+        rein = [{'full': e['full'], 'ersterBezug': e.get('ersterBezug'), 'letztes': e.get('letztes'), 'uebernommen': True} for e in neu]
+        schreibe_grenzen(gdir, db, rein)
+        unterschied.append({'datenbank': db, 'lokal': 0, 'fs01': len(neu), 'grenzen': [{k: e[k] for k in ('full', 'ersterBezug', 'letztes')} for e in rein]})
     nachher = lies_grenzen(gdir)
-    for db, liste_ in man['entfernteKetten'].items():
-        if [e['full'] for e in nachher.get(db, [])] != sorted(e['full'] for e in liste_):
+    for db, neu in plan:
+        if [e['full'] for e in nachher.get(db, [])] != [e['full'] for e in neu] or not all(e.get('uebernommen') and 'dateien' not in e for e in nachher[db]):
             raise Fehler('%s: lokale Kettengrenzen nach der Übernahme abweichend' % db)
     print('ALFRED-GRENZEN ' + json.dumps({'zustand': 'geaendert' if unterschied else 'schon', 'unterschied': unterschied}, ensure_ascii=True))
     return 0
+
+
+def bewerten(dd, liste_):
+    """Ketten einer Datenbank zur Beurteilung: Brücken nur aus eigenen (nicht übernommenen) Grenzen; Ketten bis zur neuesten übernommenen
+    Grenze bleiben unangetastet (eingefroren) - sie werden weder gelöscht noch beurteilt (Nachtrag N-1)"""
+    eigene = [e for e in (liste_ or []) if not e.get('uebernommen')]
+    ueber = [e['full'] for e in (liste_ or []) if e.get('uebernommen')]
+    ks, waisen = ketten(dd, eigene)
+    if not ueber:
+        return ks, waisen, 0
+    grenze_ = max(ueber)
+    beurteilt = [k for k in ks if k['zeit'] > grenze_]
+    return beurteilt, waisen, len(ks) - len(beurteilt)
 
 
 def entfernt_ketten_start(zeit, fulls_alle):
@@ -707,9 +755,9 @@ def zustand_fs01(ziel, man, lokal_g):
     """Ketten und Vorhandensein je Datenbank nach dem Lauf (für Bericht und lokales Aufräumen); Brücken nur aus der lokalen Aufzeichnung"""
     erg = {}
     for db, dd in sorted(je_db(man).items()):
-        ks, waisen = ketten(dd, lokal_g.get(db))
+        ks, waisen, eingefroren = bewerten(dd, lokal_g.get(db))
         fehlend = vorhanden_pruefen(ziel, db, dd, ks)
-        erg[db] = {'dd': dd, 'ks': ks, 'waisen': waisen, 'fehlend': fehlend}
+        erg[db] = {'dd': dd, 'ks': ks, 'waisen': waisen, 'fehlend': fehlend, 'eingefroren': eingefroren}
     return erg
 
 
@@ -756,7 +804,9 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
         for db, dd in sorted(je_db(man).items()):
             if db in nur_kopiersperre:
                 continue
-            ks, waisen = ketten(dd, lokal_g.get(db))
+            ks, waisen, eingefroren = bewerten(dd, lokal_g.get(db))
+            if eingefroren:
+                erg['hinweise'].append('%s: %d ältere Ketten vor übernommenen Kettengrenzen bleiben unangetastet (Aufbewahrung dort ausgesetzt)' % (db, eingefroren))
             vorhanden_pruefen(ziel, db, dd, ks)
             weg, grund = aufbewahrung(ks, waisen, jetzt)
             if grund:
@@ -822,7 +872,8 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                 erg['befunde'].append('%s: %s' % (db, '; '.join((mangel + ['ohne Vollsicherung: ' + w for w in x['waisen']])[:3])))
             erg['datenbanken'][db] = {
                 'ketten': [{'full': k['zeit'], 'diffs': len(k['diffs']), 'logs': len(k['logs']), 'vollstaendig': not k['fehler'], 'fehler': k['fehler'][:3]} for k in x['ks']],
-                'waisen': x['waisen'][:5], 'fs01Dateien': len(x['dd']), 'fs01Bytes': sum(i['bytes'] or 0 for i in x['dd'].values()), 'fehlend': x['fehlend']}
+                'waisen': x['waisen'][:5], 'fs01Dateien': len(x['dd']), 'fs01Bytes': sum(i['bytes'] or 0 for i in x['dd'].values()), 'fehlend': x['fehlend'],
+                'eingefroren': x['eingefroren']}
         # 5) lokal aufräumen (auch nach einem Kopier- oder Budgetfehler) - nur Dateien vor der vorletzten lokalen Vollsicherung, deren
         #    Kopie auf fs01 mit Manifest-Größe vorhanden ist, deren Kette auf fs01 vollständig ist, mit gleichem SHA-256, und nur ohne
         #    Befund für diese Datenbank
@@ -1410,7 +1461,9 @@ export function kettengrenzenSkript(): string {
     'kurz() { printf "%s" "$1" | tail -n 6 | tr "\\r\\n" "  "; }',
     ...FS01_HILFE(),
     `GRENZEN_DIR=${shQ('/var/lib/alfred/sqllnx')}`,
+    ...FASSUNG_PRUEFEN,
     '# ALFRED-ABLAUF',
+    'fassung_pruefen',
     'HOST=$(rechnername)',
     '[[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || abbruch "Rechnername $HOST ungültig"',
     '[ -f "$KONF_DATEI" ] || abbruch "Sicherung ist nicht eingerichtet ($KONF_DATEI fehlt — sicherung_einrichten)"',

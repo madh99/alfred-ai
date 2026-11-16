@@ -235,7 +235,7 @@ describe('I8e Task 3 — Change „sqllnx01 aufbauen“', () => {
   const aufbau = [
     { titel: 'Platten einrichten', art: 'aktion', skill: 'linux_sql', aktion: 'platten_einrichten', parameter: { zugang: 'sqllnx01', platten: PLATTEN }, zeitlimitS: 300, rueckweg: keiner, pruefung: status('eingehängt: data, log, tempdb, backup') },
     { titel: 'SQL Server installieren', art: 'aktion', skill: 'linux_sql', aktion: 'installieren', parameter: { zugang: 'sqllnx01', version: '17.0.4006.2-1' }, zeitlimitS: 1800, rueckweg: keiner, pruefung: status('Dienst aktiv, aktiviert') },
-    { titel: 'Konfigurieren', art: 'aktion', skill: 'linux_sql', aktion: 'konfigurieren', parameter: { zugang: 'sqllnx01', speicher_limit_mb: 12288, max_server_memory_mb: 10240 }, zeitlimitS: 900, rueckweg: keiner, pruefung: status('Dienst aktiv') },
+    { titel: 'Konfigurieren', art: 'aktion', skill: 'linux_sql', aktion: 'konfigurieren', parameter: { zugang: 'sqllnx01', speicher_limit_mb: 12288, max_server_memory_mb: 10240 }, zeitlimitS: 1200, rueckweg: keiner, pruefung: status('Dienst aktiv') },
     { titel: 'Login anlegen', art: 'aktion', skill: 'linux_sql', aktion: 'login_anlegen', parameter: { zugang: 'sqllnx01', login: 'app_kunden', rolle: 'dbcreator' }, zeitlimitS: 300, rueckweg: keiner, pruefung: status('Dienst aktiv') },
     { titel: 'Prüfdaten anlegen', art: 'aktion', skill: 'linux_sql', aktion: 'pruefdaten_anlegen', parameter: { zugang: 'sqllnx01', datenbank: 'pruefdb01' }, zeitlimitS: 300, rueckweg: keiner, pruefung: status('pruefdb01') },
     { titel: 'Abschluss', art: 'pruefung', pruefung: status('Dienst aktiv, aktiviert') },

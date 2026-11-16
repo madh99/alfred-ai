@@ -28,7 +28,8 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   status: sek(LINUX_SQL_ZEIT_MS.status) + 60,
   platten_einrichten: sek(LINUX_SQL_ZEIT_MS.platten) + 60,
   installieren: sek(LINUX_SQL_ZEIT_MS.installation) + 60,
-  konfigurieren: sek(LINUX_SQL_ZEIT_MS.status + LINUX_SQL_ZEIT_MS.konfiguration + LINUX_SQL_ZEIT_MS.tempdb + LINUX_SQL_ZEIT_MS.maxspeicher) + 60,
+  // Nachtrag: bis zu vier Bausteine nacheinander — je Baustein 60 s Puffer
+  konfigurieren: sek(LINUX_SQL_ZEIT_MS.status + LINUX_SQL_ZEIT_MS.konfiguration + LINUX_SQL_ZEIT_MS.tempdb + LINUX_SQL_ZEIT_MS.maxspeicher) + 4 * 60,
   login_anlegen: sek(LINUX_SQL_ZEIT_MS.login) + 60,
   pruefdaten_anlegen: sek(LINUX_SQL_ZEIT_MS.pruefdaten) + 60,
   sicherung_einrichten: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.einrichten) + 60,
@@ -521,9 +522,11 @@ export class LinuxSqlSkill extends Skill {
   private async kettengrenzen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const name = kontoTresorName(input);
     const kennwort = await this.fs01Kennwort(name, `Kettengrenzen ${zugang} (fs01 lesen)`, geheim);
-    const r = await this.lauf<{ zustand: string; unterschied?: Array<{ datenbank: string; lokal: number; fs01: number }> }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen, {}, 'Kettengrenzen übernehmen', LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen, { kennwort });
-    const u = (r.unterschied ?? []).map(x => `${x.datenbank}: lokal ${x.lokal} → fs01 ${x.fs01}`);
-    return { success: true, data: r, display: u.length ? `✅ Kettengrenzen auf ${zugang} übernommen: ${u.join('; ')}` : `Kettengrenzen auf ${zugang} stimmen mit fs01 überein — nichts zu tun` };
+    type Grenze = { full: string; ersterBezug?: string | null; letztes?: string | null };
+    const r = await this.lauf<{ zustand: string; unterschied?: Array<{ datenbank: string; lokal: number; fs01: number; grenzen?: Grenze[] }> }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.grenzen, {}, 'Kettengrenzen übernehmen', LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen, { kennwort });
+    // Nachtrag N-1: übernommene Grenzen einzeln nennen; sie sperren nur das erneute Kopieren
+    const u = (r.unterschied ?? []).map(x => `${x.datenbank}: lokal ${x.lokal} → fs01 ${x.fs01} (übernommen: ${(x.grenzen ?? []).map(g => `${g.full} (Bezug ${g.ersterBezug ?? '-'}, letztes ${g.letztes ?? '-'})`).join(', ')})`);
+    return { success: true, data: r, display: u.length ? `✅ Kettengrenzen auf ${zugang} übernommen: ${u.join('; ')} — sie sperren nur das erneute Kopieren; Ketten bis zur neuesten übernommenen Grenze bleiben unangetastet (Aufbewahrung dort ausgesetzt), lokale Dateien dieser Ketten werden nie auf dieser Grundlage gelöscht` : `Kettengrenzen auf ${zugang} stimmen mit fs01 überein — nichts zu tun` };
   }
 
   /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */
