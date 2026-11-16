@@ -92,7 +92,7 @@ export function pfadWert(o: unknown, pfad: string): unknown {
   return x;
 }
 
-const VERWEIS = /\{\{\s*(?:schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+const VERWEIS = /\{\{\s*(?:(?:change:([A-Za-z0-9_-]{1,64})\.)?schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
 
 /** I4c — Namen der Tresor-Verweise in einem Wert (für das Vorab-Lesen im Motor) */
 export function geheimNamen(wert: unknown): { werte: string[]; dateien: string[] } {
@@ -135,8 +135,10 @@ export const ROH_EINTRAG = /^\d{1,3}:(?:[A-Za-z0-9 .:/\\%_@-]|\$(?=\\|$)){1,400}
  * Verweise auflösen: `{{schrittN.feld}}` aus den Daten früherer Schritte; steht der Verweis allein, bleibt der Typ erhalten
  * (Zahl bleibt Zahl). Jeder eingesetzte Text muss SICHERER_WERT entsprechen (keine Leerzeichen, Shell-Zeichen, Anführungszeichen);
  * in Befehlsfeldern ist ein Verweis als ganzer Wert verboten. `{{geheim:…}}` geht erst mit dem Tresor (I4c) → Fehler.
+ * V3 — `{{change:<id>.schrittN.feld}}` nur aus `vorgaenger` (Ergebnisse abgeschlossener Changes der Abhängigkeits-Hülle, vom Motor
+ * bereitgestellt); fehlt die ID dort → Fehler. Dieselbe Wert-Sicherheit und dieselben Ganzwert-Ausnahmen wie bei `{{schrittN.feld}}`.
  */
-export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }): { wert: T; fehler?: string } {
+export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }, vorgaenger?: Map<string, SchrittErgebnis[]>): { wert: T; fehler?: string } {
   let fehler: string | undefined;
   // v1735 — Realfall 94959771 (01.11.): provision_windows_vm scheiterte nach dem Anlegen der VM (teilweise, Daten mit vmid); der
   // Rückweg delete_vm {{schritt1.vmid}} fand keinen Wert, weil nur erfolgreiche Schritte zählten — die VM blieb stehen. Werte aus
@@ -148,28 +150,41 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
     fehler ??= `Verweis {{${verweis}}} liefert einen unzulässigen Wert (nur Buchstaben, Ziffern und . : / @ - erlaubt)`;
     return false;
   };
+  // V3 — Ergebnisse, aus denen ein Verweis liest: ohne Change-ID dieser Lauf, sonst nur ein bereitgestellter Vorgänger
+  const herkunft = (cid: string | undefined): SchrittErgebnis[] | undefined => {
+    if (!cid) return ergebnisse;
+    const q = vorgaenger?.get(cid);
+    if (!q) fehler ??= `Verweis auf Change ${cid.slice(0, 8)}: nicht abgeschlossen oder keine Abhängigkeit`;
+    return q;
+  };
   const ersetze = (v: unknown, feld?: string): unknown => {
     if (typeof v === 'string') {
       // I4c — {{geheim:x}} als ganzer Wert → Tresor-Wert (nur im Motor, nie im Lauf gespeichert)
       const g = /^\{\{\s*geheim:([a-z0-9][\w.-]{1,60})\s*\}\}$/.exec(v.trim());
       if (g) { const w = geheim?.werte.get(g[1]!); if (w === undefined) fehler ??= `Tresor-Eintrag ${g[1]} nicht verfügbar`; return w ?? ''; }
-      const allein = /^\{\{\s*schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}$/.exec(v.trim());
+      const allein = /^\{\{\s*(?:change:([A-Za-z0-9_-]{1,64})\.)?schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}$/.exec(v.trim());
       if (allein) {
         if (feld && BEFEHLS_FELDER.has(feld.toLowerCase())) { fehler ??= `Verweis als ganzer Befehl ist nicht erlaubt (${feld})`; return ''; }
-        const e = ergebnisse.find(x => x.nr === Number(allein[1]) && nutzbar(x));
-        const w = e ? pfadWert(e.daten, allein[2]!) : undefined;
-        if (w === undefined) { fehler ??= `Verweis {{schritt${allein[1]}.${allein[2]}}} hat keinen Wert (Schritt ${allein[1]} lieferte kein Feld „${allein[2]}“)`; return w; }
+        const quelle = herkunft(allein[1]);
+        if (!quelle) return '';
+        const name = `${allein[1] ? `change:${allein[1]}.` : ''}schritt${allein[2]}.${allein[3]}`;
+        const e = quelle.find(x => x.nr === Number(allein[2]) && nutzbar(x));
+        const w = e ? pfadWert(e.daten, allein[3]!) : undefined;
+        if (w === undefined) { fehler ??= `Verweis {{${name}}} hat keinen Wert (Schritt ${allein[2]}${allein[1] ? ` von Change ${allein[1].slice(0, 8)}` : ''} lieferte kein Feld „${allein[3]}“)`; return allein[1] ? '' : w; }
         if (feld && istBase64Feld(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
         if (feld && istRohListenFeld(feld) && Array.isArray(w) && w.length >= 1 && w.length <= 20 && w.every(x => typeof x === 'string' && ROH_EINTRAG.test(x))) return [...w];
-        return sicher(w, `schritt${allein[1]}.${allein[2]}`) ? w : '';
+        return sicher(w, name) ? w : '';
       }
-      return v.replace(VERWEIS, (_m, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
+      return v.replace(VERWEIS, (_m, cid: string | undefined, nr: string | undefined, f2: string | undefined, gName: string | undefined, gDatei: string | undefined) => {
         if (gName) { fehler ??= `{{geheim:${gName}}} nur als ganzer Wert erlaubt`; return ''; }
         if (gDatei) { const pfad = geheim?.dateien.get(gDatei); if (!pfad) fehler ??= `Geheimnis-Datei ${gDatei} nicht bereit`; return pfad ?? ''; }
-        const e = ergebnisse.find(x => x.nr === Number(nr) && nutzbar(x));
+        const quelle = herkunft(cid);
+        if (!quelle) return '';
+        const name = `${cid ? `change:${cid}.` : ''}schritt${nr}.${f2}`;
+        const e = quelle.find(x => x.nr === Number(nr) && nutzbar(x));
         const w = e ? pfadWert(e.daten, f2!) : undefined;
-        if (w === undefined || (typeof w === 'object' && w !== null)) { fehler ??= `Verweis {{schritt${nr}.${f2}}} hat keinen einfachen Wert`; return ''; }
-        return sicher(w, `schritt${nr}.${f2}`) ? String(w) : '';
+        if (w === undefined || (typeof w === 'object' && w !== null)) { fehler ??= `Verweis {{${name}}} hat keinen einfachen Wert`; return ''; }
+        return sicher(w, name) ? String(w) : '';
       });
     }
     if (Array.isArray(v)) return v.map(x => ersetze(x, feld));

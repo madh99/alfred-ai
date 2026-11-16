@@ -160,22 +160,45 @@ export class ChangePlanung {
     return h;
   }
 
-  /** Paket planen. `vorhaben` nur mit angenommener Architektur. */
-  async planen(owner: string, roh: unknown[], vorhaben?: { id: string; status: string; titel: string }): Promise<{ ok: true; changes: CmdbChangeRequest[] } | { ok: false; fehler: string[] }> {
-    if (vorhaben && vorhaben.status !== 'angenommen') return { ok: false, fehler: [`Vorhaben „${vorhaben.titel}“: Architektur ist noch nicht angenommen — erst entscheidet der Owner`] };
-    if (!roh.length) return { ok: false, fehler: ['changes fehlt'] };
-    if (roh.length > 30) return { ok: false, fehler: ['höchstens 30 Changes je Paket'] };
+  /**
+   * Prüfungen eines Pakets ohne Speichern: Anzahl, eindeutige Schlüssel, Validator je Plan (mit Abhängigkeiten im Paket für
+   * {{change:…}}), Zyklen. `fehler` = Paket als Ganzes unbrauchbar; `je` = Fehler je Change; `allgemein` = Zyklen.
+   */
+  private async pruefePaket(owner: string, roh: unknown[]): Promise<{ fehler: string[] } | { schluessel: string[]; ergebnisse: Array<ReturnType<typeof pruefeChangePlan>>; je: Array<{ k: string; titel: string; text: string }>; allgemein: string[] }> {
+    if (!roh.length) return { fehler: ['changes fehlt'] };
+    if (roh.length > 30) return { fehler: ['höchstens 30 Changes je Paket'] };
     const ctx = await this.kontext(owner);
     const schluessel = roh.map((r, i) => String((r as Record<string, unknown>)?.schluessel ?? `c${i + 1}`));
-    if (new Set(schluessel).size !== schluessel.length) return { ok: false, fehler: ['schluessel der Changes müssen eindeutig sein'] };
-    const ergebnisse = roh.map((r, i) => pruefeChangePlan({ ...(r as object), schluessel: schluessel[i] }, ctx, schluessel));
-    const fehler = ergebnisse.flatMap((e, i) => e.fehler.map(x => `Change ${schluessel[i]} (${e.plan.titel || '?'}): ${x}`));
+    if (new Set(schluessel).size !== schluessel.length) return { fehler: ['schluessel der Changes müssen eindeutig sein'] };
+    // abhaengigVon je Schlüssel (roh) — für Verweise über mehrere Stufen; der Validator löst Paket-Schlüssel und Change-IDs selbst auf
+    const paket = new Map(roh.map((r, i) => {
+      const a = (r as Record<string, unknown>)?.abhaengigVon;
+      return [schluessel[i]!, Array.isArray(a) ? a.map(x => (typeof x === 'string' ? x.trim() : '')).filter(Boolean) : []] as [string, string[]];
+    }));
+    const ergebnisse = roh.map((r, i) => pruefeChangePlan({ ...(r as object), schluessel: schluessel[i] }, ctx, schluessel, paket));
+    const je = ergebnisse.flatMap((e, i) => e.fehler.map(text => ({ k: schluessel[i]!, titel: e.plan.titel, text })));
     const kanten = new Map<string, string[]>();
     for (const c of ctx.changes) kanten.set(c.id, c.abhaengigVon);
     ergebnisse.forEach((e, i) => kanten.set(schluessel[i]!, e.plan.abhaengigVon));
     const z = zyklus(kanten);
-    if (z) fehler.push(`Abhängigkeiten im Kreis: ${z.join(' → ')}`);
+    return { schluessel, ergebnisse, je, allgemein: z ? [`Abhängigkeiten im Kreis: ${z.join(' → ')}`] : [] };
+  }
+
+  /** V3 — Probe: dieselben Prüfungen wie planen, nichts wird gespeichert. Fehler je Change mit „Change <schlüssel>: …“. */
+  async pruefeNur(owner: string, roh: unknown[]): Promise<string[]> {
+    const p = await this.pruefePaket(owner, roh);
+    if ('fehler' in p) return p.fehler;
+    return [...p.je.map(x => `Change ${x.k}: ${x.text}`), ...p.allgemein];
+  }
+
+  /** Paket planen. `vorhaben` nur mit angenommener Architektur. */
+  async planen(owner: string, roh: unknown[], vorhaben?: { id: string; status: string; titel: string }): Promise<{ ok: true; changes: CmdbChangeRequest[] } | { ok: false; fehler: string[] }> {
+    if (vorhaben && vorhaben.status !== 'angenommen') return { ok: false, fehler: [`Vorhaben „${vorhaben.titel}“: Architektur ist noch nicht angenommen — erst entscheidet der Owner`] };
+    const p = await this.pruefePaket(owner, roh);
+    if ('fehler' in p) return { ok: false, fehler: p.fehler };
+    const fehler = [...p.je.map(x => `Change ${x.k} (${x.titel || '?'}): ${x.text}`), ...p.allgemein];
     if (fehler.length) return { ok: false, fehler };
+    const { schluessel, ergebnisse } = p;
     // Reihenfolge: Abhängigkeiten innerhalb des Pakets zuerst anlegen (kein Kreis → terminiert)
     const ids = new Map<string, string>();
     const angelegt: CmdbChangeRequest[] = [];
@@ -184,6 +207,11 @@ export class ChangePlanung {
       const idx = offen.findIndex(o => o.e.plan.abhaengigVon.every(d => !schluessel.includes(d) || ids.has(d)));
       const { e, k } = offen.splice(idx < 0 ? 0 : idx, 1)[0]!;
       const abh = e.plan.abhaengigVon.map(d => ids.get(d) ?? d);
+      // V3 — {{change:<schlüssel>…}} auf die volle ID der (schon angelegten) Vorgänger umschreiben, bevor Fingerabdruck und Speichern
+      // den Plan festhalten; der Validator hat geprüft, dass nur Changes der Abhängigkeits-Hülle gemeint sind (die zuerst angelegt werden)
+      e.plan.schritte = JSON.parse(JSON.stringify(e.plan.schritte).replace(/\{\{(\s*)change:([A-Za-z0-9_-]{1,64})\./g, (m, ws: string, sk: string) => (schluessel.includes(sk) ? `{{${ws}change:${ids.get(sk) ?? sk}.` : m))) as ChangeSchritt[];
+      // Wächter (nach der Prüfung unerreichbar): nie einen Schlüssel-Verweis speichern
+      if ([...JSON.stringify(e.plan.schritte).matchAll(/\{\{\s*change:([A-Za-z0-9_-]{1,64})\./g)].some(m => schluessel.includes(m[1]!))) throw new Error(`Change ${k}: Verweis auf einen noch nicht angelegten Vorgänger`);
       const aus = await this.d.auswirkung(e.betroffeneIds);
       const c = await this.d.itsm.legeAn(owner, this.daten(e.plan, e.betroffeneIds, abh, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], vorhaben?.id));
       ids.set(k, c.id); angelegt.push(c);

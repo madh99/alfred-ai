@@ -137,13 +137,15 @@ const SELBST_GEPRUEFT = new Set([
   'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
-const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60}))\s*\}\}/g;
+const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60})|change:([A-Za-z0-9_-]{1,64})\.schritt(\d+)\.([a-zA-Z_][\w.]*))\s*\}\}/g;
+/** Felder, in die ein Verweis nie als ganzer Wert eingesetzt werden darf (wie BEFEHLS_FELDER in change-lauf.ts) */
+const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
 /** I4c — {{geheim:x}} nur als ganzer Wert in Feldern, die die Skill-Sandbox im Log schwärzt (oberste Ebene, exakte Schreibweise) */
 const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessToken|refreshToken|clientSecret)$/;
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
 // v1716 — Realfall 30.10. (Paket B, Überwachungstext „frei <20GiB oder … Backupdauer>“): ein Vergleich ist kein Platzhalter; „<…>“
 // zählt nur, wenn es mit einem Buchstaben beginnt (<IP>, <host-id>, <Passwort>)
-const PLATZHALTER = /<[A-Za-zÄÖÜäöüß_][^<>\n]{1,39}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
+const PLATZHALTER = /<[A-Za-zÄÖÜäöüß_][^<>\n]{1,39}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|change:[A-Za-z0-9_-]{1,64}\.schritt\d+\.[a-zA-Z_]|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
 /** v1664 — Befehle, die einen Dienst anhalten bzw. wieder starten (für die Regel „nach dem Stopp nur mit Rückweg“) */
 export const DIENST_STOPP = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(stop|kill|down|pause)|docker\s+container\s+(stop|kill)|systemctl\s+(stop|kill)|service\s+\S+\s+stop)\b/;
@@ -288,6 +290,38 @@ function verweise(parameter: Record<string, unknown>, nr: number, aktionsNummern
   return kopie;
 }
 
+/**
+ * V3 — Hülle der Abhängigkeiten eines Plans: Paket-Schlüssel (über `paket` weiter) und vorhandene Change-IDs (über ctx.changes weiter).
+ * Liefert Schlüssel bzw. volle IDs; ein Verweis {{change:x…}} ist nur auf diese erlaubt.
+ */
+function abhaengigkeitsHuelle(start: string[], ctx: PruefKontext, paket?: Map<string, string[]>): Set<string> {
+  const huelle = new Set<string>();
+  const offen = [...start];
+  while (offen.length) {
+    const d = offen.pop()!;
+    if (paket?.has(d)) { if (!huelle.has(d)) { huelle.add(d); offen.push(...paket.get(d)!); } continue; }
+    const c = ctx.changes.find(x => x.id === d || (d.length >= 8 && x.id.startsWith(d)));
+    if (c && !huelle.has(c.id)) { huelle.add(c.id); offen.push(...c.abhaengigVon); }
+  }
+  return huelle;
+}
+
+const CHANGE_VERWEIS_G = /\{\{\s*change:([A-Za-z0-9_-]{1,64})\.schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}/g;
+/** V3 — alle {{change:…}}-Verweise eines Schritts prüfen (Parameter, Prüfung, Rückweg — in jeder Tiefe). */
+function changeVerweise(wert: unknown, wo: string, f: string[], bekannt: (x: string) => boolean, erlaubt: Set<string>, feld?: string): void {
+  if (typeof wert === 'string') {
+    for (const m of wert.matchAll(CHANGE_VERWEIS_G)) {
+      const v = m[0].replace(/\s+/g, '');
+      if (!bekannt(m[1]!)) f.push(`${wo}: Verweis ${v} — Change „${m[1]}“ unbekannt (nur Schlüssel dieses Pakets oder volle Change-IDs)`);
+      else if (!erlaubt.has(m[1]!)) f.push(`${wo}: Verweis ${v} — keine Abhängigkeit (Change ${m[1]} muss in abhaengigVon stehen)`);
+      if (feld && BEFEHLS_FELDER.has(feld.toLowerCase()) && wert.trim() === m[0]) f.push(`${wo}: Verweis ${v} als ganzer Wert im Befehlsfeld „${feld}“ ist nicht erlaubt`);
+    }
+    return;
+  }
+  if (Array.isArray(wert)) { for (const x of wert) changeVerweise(x, wo, f, bekannt, erlaubt, feld); return; }
+  if (wert && typeof wert === 'object') for (const [k, x] of Object.entries(wert as Record<string, unknown>)) changeVerweise(x, wo, f, bekannt, erlaubt, k);
+}
+
 function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext): Pruefung | undefined {
   const p = obj(p0);
   if (!p) { f.push(`${wo}: pruefung fehlt`); return undefined; }
@@ -318,7 +352,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   // v1851 — Realfall 4a876c4e: python3 -c 's = """{{schritt5.text}}"""; …' — Freitext eines Ergebnisses in einem Befehl scheitert zur
   // Laufzeit an SICHERER_WERT (und wäre ein Einschleusweg). Erwartungen gehören in die Prüfung des Bausteins (erwartet/nichtEnthalten,
   // Parameter wie erwartet_status) oder in eine skill-Prüfung.
-  if (aus.befehl && /\{\{\s*schritt\d+\.(text|display|ausgabe|fehler|stdout|stderr)\s*\}\}/.test(aus.befehl)) f.push(`${wo}: Prüfbefehl setzt den Freitext eines Ergebnisses ein ({{schrittN.text}} u. ä.) — das scheitert zur Laufzeit; Erwartung als erwartet/nichtEnthalten einer skill-Prüfung oder über Parameter des Bausteins ausdrücken`);
+  if (aus.befehl && /\{\{\s*(change:[A-Za-z0-9_-]{1,64}\.)?schritt\d+\.(text|display|ausgabe|fehler|stdout|stderr)\s*\}\}/.test(aus.befehl)) f.push(`${wo}: Prüfbefehl setzt den Freitext eines Ergebnisses ein ({{schrittN.text}} u. ä.) — das scheitert zur Laufzeit; Erwartung als erwartet/nichtEnthalten einer skill-Prüfung oder über Parameter des Bausteins ausdrücken`);
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;
@@ -332,8 +366,9 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
 /**
  * Prüft einen Plan (ein Change) — reine Regeln. `fehler` → nicht freigebbar; `hinweise` → stehen im Change.
  * `alleSchluessel` sind die Schlüssel der im selben Paket geplanten Changes (Abhängigkeiten innerhalb des Pakets).
+ * `paket` (V3) — abhaengigVon je Paket-Schlüssel, für {{change:…}}-Verweise über mehrere Stufen (ohne: nur direkte Abhängigkeiten im Paket).
  */
-export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = []): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
+export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = [], paket?: Map<string, string[]>): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
   const f: string[] = []; const h: string[] = [];
   const r = obj(roh) ?? {};
   const typ = txt(r.typ) || 'normal';
@@ -377,6 +412,12 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   // Schritte
   const roheSchritte = Array.isArray(r.schritte) ? r.schritte : [];
   if (!roheSchritte.length) f.push('schritte fehlen');
+  // V3 — {{change:x.schrittN.feld}} nur auf Changes in der Abhängigkeits-Hülle (Paket-Schlüssel oder volle ID, kein Präfix)
+  {
+    const erlaubt = abhaengigkeitsHuelle(plan.abhaengigVon, ctx, new Map([...(paket ?? new Map<string, string[]>()), ...alleSchluessel.filter(k => !paket?.has(k)).map(k => [k, [] as string[]] as [string, string[]])]));
+    const bekannt = (x: string) => alleSchluessel.includes(x) || ctx.changes.some(c => c.id === x);
+    for (const [i, s0] of roheSchritte.entries()) changeVerweise(s0, `Schritt ${i + 1}`, f, bekannt, erlaubt);
+  }
   const aktionsNummern = new Set<number>();
   // v1684 — Zugänge, die dieser Plan selbst anlegt (VM-Fabrik legt den Fernzugang mit dem VM-Namen an, fernzugriff anlegen), gelten als vorhanden
   const neueZugaenge = new Set<string>();

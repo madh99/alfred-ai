@@ -235,7 +235,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (s.art === 'owner') { await this.frageOwner(o, c0, lauf, s); return; }
         const vorher = lauf.nurPruefung?.nr === s.nr ? lauf.nurPruefung : undefined;
         delete lauf.nurPruefung;
-        const e = await this.schritt(s, lauf.ergebnisse, { o, wofuer: `Change ${c0.id.slice(0, 8)} Schritt ${s.nr}` }, vorher);
+        // V3 — Ergebnisse abgeschlossener Vorgänger für {{change:<id>.schrittN.feld}} (vor jedem Schritt frisch gelesen)
+        const vorgaenger = await this.vorgaenger(o, c0);
+        const e = await this.schritt(s, lauf.ergebnisse, { o, wofuer: `Change ${c0.id.slice(0, 8)} Schritt ${s.nr}`, vorgaenger }, vorher);
         lauf.ergebnisse = [...lauf.ergebnisse.filter(x => x.nr !== s.nr), e];
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         this.log('I4 Schritt', { id: c0.id, nr: s.nr, ok: e.ok, pruefung: e.pruefung?.ok, fehler: e.fehler?.slice(0, 200) });
@@ -264,7 +266,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
    * I4c — Aktion mit Tresor-Werten: Werte erst jetzt lesen, Geheimnis-Dateien am Host anlegen (stdin, 600) und danach in jedem Fall
    * entfernen; Ausgaben ohne die Werte. Ohne Tresor-Verweise ist das ein gewöhnlicher Aufruf.
    */
-  private async mitGeheimnissen(z: { o: string; wofuer: string } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
+  private async mitGeheimnissen(z: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[]> } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
     const namen = geheimNamen(parameter);
     const werte = new Map<string, string>(); const dateien = new Map<string, string>(); const angelegt: Array<{ zugang: string; pfad: string }> = [];
     try {
@@ -281,7 +283,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
           }
         }
       }
-      const p = loeseAuf(parameter, ergebnisse, { werte, dateien });
+      const p = loeseAuf(parameter, ergebnisse, { werte, dateien }, z?.vorgaenger);
       if (p.fehler) return { ok: false, fehler: p.fehler };
       const r = await this.aktion(skill, aktion, p.wert, timeoutMs);
       const geheim = [...werte.values()];
@@ -297,7 +299,28 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     }
   }
 
-  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
+  /**
+   * V3 — Ergebnisse der abgeschlossenen Changes in der Abhängigkeits-Hülle (abhaengigVon, transitiv) für {{change:<id>…}}. Nur Changes
+   * mit Status completed; alle anderen fehlen in der Map, ein Verweis darauf hält den Schritt an. Ohne Verweis im Plan: leer, kein Lesen.
+   */
+  private async vorgaenger(o: string, c: CmdbChangeRequest): Promise<Map<string, SchrittErgebnis[]>> {
+    const aus = new Map<string, SchrittErgebnis[]>();
+    if (!/\{\{\s*change:/.test(JSON.stringify(c.schritte ?? []))) return aus;
+    const gesehen = new Set<string>([c.id]);
+    const offen = [...(c.abhaengigVon ?? [])];
+    while (offen.length) {
+      const id = offen.pop()!;
+      if (gesehen.has(id)) continue;
+      gesehen.add(id);
+      const v = await this.d.itsm.hole(o, id).catch(() => null);
+      if (!v || v.id !== id) continue;
+      offen.push(...(v.abhaengigVon ?? []));
+      if (v.status === 'completed') aus.set(id, (v.lauf as ChangeLauf | undefined)?.ergebnisse ?? []);
+    }
+    return aus;
+  }
+
+  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[]> }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
     const e: SchrittErgebnis = { nr: s.nr, ok: false, start: this.iso() };
     const fertig = (x: Partial<SchrittErgebnis>): SchrittErgebnis => ({ ...e, ...x, ende: this.iso() });
     try {
@@ -314,15 +337,15 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (s.zeitlimitS > ZEITLIMIT_STANDARD_S) {
           const wb = this.takt.wartenAbstandMs, t0 = Date.now();
           const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / wb)) + WARTEN_STAFFEL.length;
-          const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], versuche, i => Math.min(wb, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * wb)), t0 + s.zeitlimitS * 1000);
+          const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], versuche, i => Math.min(wb, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * wb)), t0 + s.zeitlimitS * 1000, z?.vorgaenger);
           const sek = Math.round((Date.now() - t0) / 1000);
           return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Prüfung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
         }
-        const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs);
+        const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger);
         return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Prüfung nicht erfüllt: ${pr.text}` }) });
       }
       if (s.art === 'pruefung') {
-        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, this.takt.pruefVersuche, this.takt.pruefAbstandMs);
+        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger);
         return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Prüfung nicht erfüllt: ${pr.text}` }) });
       }
       if (s.art === 'warten') {
@@ -333,7 +356,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         const basis = this.takt.wartenAbstandMs;
         const versuche = Math.max(1, Math.floor((s.zeitlimitS * 1000) / basis)) + WARTEN_STAFFEL.length;
         const t0 = Date.now();
-        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, versuche, i => Math.min(basis, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * basis)), t0 + s.zeitlimitS * 1000);
+        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, versuche, i => Math.min(basis, Math.round((WARTEN_STAFFEL[i - 1] ?? 1) * basis)), t0 + s.zeitlimitS * 1000, z?.vorgaenger);
         // v1723 — Realfall 01.11. (a4c1b1e8 Schritte 59/69): ein Abbruch nach 10 s hieß „Bedingung nach 14400 s nicht erfüllt“
         const sek = Math.round((Date.now() - t0) / 1000);
         return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Bedingung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
@@ -398,8 +421,8 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return { ok: true, ...(r.display ? { ausgabe: r.display } : {}), daten: r.data };
   }
 
-  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
-    const aufgeloest = loeseAuf(p0, ergebnisse);
+  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number, vorgaenger?: Map<string, SchrittErgebnis[]>): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
+    const aufgeloest = loeseAuf(p0, ergebnisse, undefined, vorgaenger);
     if (aufgeloest.fehler) return { ok: false, text: aufgeloest.fehler, versuche: 0 };
     const p = aufgeloest.wert;
     let letzter = ''; let ausgabe: string | undefined;
@@ -684,7 +707,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       for (const s of rw) {
         const frisch = await this.d.itsm.hole(o, c.id);
         if (!frisch || !this.freigabeDeckt(frisch, c)) { lauf.rueckweg = [...lauf.rueckweg!, { zuSchritt: s.nr, ok: false, text: 'Freigabe deckt den Plan nicht mehr — Rückweg nicht ausgeführt', zeit: this.iso() }]; allesOk = false; break; }
-        const r = await this.mitGeheimnissen({ o, wofuer: `Change ${c.id.slice(0, 8)} Rückweg zu Schritt ${s.nr}` }, s.rueckweg!.skill!, s.rueckweg!.aktion!, s.rueckweg!.parameter ?? {}, lauf.ergebnisse, s.zeitlimitS * 1000).catch(err => ({ ok: false, fehler: (err as Error).message }));
+        const r = await this.mitGeheimnissen({ o, wofuer: `Change ${c.id.slice(0, 8)} Rückweg zu Schritt ${s.nr}`, vorgaenger: await this.vorgaenger(o, c) }, s.rueckweg!.skill!, s.rueckweg!.aktion!, s.rueckweg!.parameter ?? {}, lauf.ergebnisse, s.zeitlimitS * 1000).catch(err => ({ ok: false, fehler: (err as Error).message }));
         const eintrag = { zuSchritt: s.nr, ok: r.ok, text: r.ok ? `${s.rueckweg!.skill}.${s.rueckweg!.aktion} ok` : String(r.fehler ?? 'gescheitert').slice(0, 300), zeit: this.iso() };
         lauf.rueckweg = [...lauf.rueckweg!, eintrag];
         await this.d.itsm.motorSetze(o, c.id, { lauf });

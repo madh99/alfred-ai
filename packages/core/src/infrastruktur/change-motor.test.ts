@@ -930,3 +930,69 @@ describe('Dokument-Vorlagen: Verlauf im Lauf', () => {
     expect(l.verlauf![199]!.text).toBe('E251');
   });
 });
+
+// V3 Task 3 — Verweis über Change-Grenzen zur Laufzeit
+describe('V3 Verweis über Change-Grenzen', () => {
+  const VOR = 'chg-vor-0000-0000-000000000001';
+  const erg = [{ nr: 2, ok: true, start: 'x', daten: { policy_id: 'pol-42', vmid: 142, frei: 'a b', liste: ['x'], base64: 'QUJD' } }];
+  it('loeseAuf: aus vorgaenger aufgelöst (Typ bleibt), fehlender Vorgänger → Fehler mit Grund, unsichere Werte und ganzer Befehl abgewiesen', () => {
+    const vg = new Map([[VOR, erg]]);
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}`, vmid: `{{ change:${VOR}.schritt2.vmid }}`, url: `http://h/{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, vg))
+      .toEqual({ wert: { id: 'pol-42', vmid: 142, url: 'http://h/pol-42' } });
+    const fehlt = loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, new Map());
+    expect(fehlt.fehler).toBe(`Verweis auf Change ${VOR.slice(0, 8)}: nicht abgeschlossen oder keine Abhängigkeit`);
+    expect(fehlt.wert).toEqual({ id: '' });
+    expect(loeseAuf({ id: `x{{change:${VOR}.schritt2.policy_id}}` }, [], undefined).fehler).toContain('nicht abgeschlossen oder keine Abhängigkeit');
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.frei}}` }, [], undefined, vg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ id: `p-{{change:${VOR}.schritt2.frei}}` }, [], undefined, vg).fehler).toContain('unzulässigen Wert');
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.gibtsnicht}}` }, [], undefined, vg).fehler).toContain('hat keinen Wert');
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt3.policy_id}}` }, [], undefined, vg).fehler).toContain('hat keinen Wert');
+    for (const feld of ['befehl', 'Command', 'cmd', 'SCRIPT', 'skript']) expect(loeseAuf({ [feld]: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, vg).fehler).toContain('ganzer Befehl');
+    // Ganzwert-Ausnahmen wie bei {{schrittN.feld}}
+    expect(loeseAuf({ base64: `{{change:${VOR}.schritt2.base64}}` }, [], undefined, vg).wert).toEqual({ base64: 'QUJD' });
+    // nur Ergebnisse, die etwas bewirkt haben
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, new Map([[VOR, [{ ...erg[0]!, ok: false }]]])).fehler).toContain('hat keinen Wert');
+  });
+
+  function zweiChanges(vorStatus: string) {
+    const schritte = [
+      S({ nr: 1, skill: 'unifi', aktion: 'delete_policy', parameter: { policy_id: `{{change:${VOR}.schritt2.policy_id}}` }, einordnung: 'aendern', rueckweg: { keiner: 'Test' } }),
+    ];
+    const w = welt(schritte);
+    w.c.abhaengigVon = [VOR];
+    const vor: CmdbChangeRequest = { id: VOR, userId: 'o', title: 'Vorgänger', type: 'normal', status: vorStatus as never, riskLevel: 'low', affectedAssetIds: ['a-x'], affectedServiceIds: [], schritte: [S({ nr: 2, skill: 'unifi', aktion: 'create_policy' })], lauf: { phase: 'fertig', schritt: 2, start: 'x', ergebnisse: erg }, createdAt: 'x', updatedAt: 'x' };
+    const eingaben: Array<Record<string, unknown>> = [];
+    w.deps.itsm.liste = async () => [w.c, vor];
+    w.deps.itsm.hole = async (_o, id) => (id === VOR ? vor : id === w.c.id ? w.c : null);
+    const fa = w.deps.fuehreAus;
+    w.deps.fuehreAus = async (skill, input, t) => { eingaben.push(input); return fa(skill, input, t); };
+    return { ...w, motor: new ChangeMotor(w.deps), eingaben, vor };
+  }
+  it('Motor: Vorgänger completed → Wert eingesetzt', async () => {
+    const w = zweiChanges('completed');
+    expect(await w.motor.anstossen()).toEqual(['chg-1']);
+    await warte(w.motor);
+    expect(w.c.status).toBe('completed');
+    expect(w.eingaben).toContainEqual(expect.objectContaining({ action: 'delete_policy', policy_id: 'pol-42' }));
+  });
+  it('Motor: Vorgänger failed → Schritt hält mit Grund an, kein Skill bekommt den Platzhaltertext', async () => {
+    const w = zweiChanges('failed');
+    // anstossen startet ihn nicht (Abhängigkeit nicht abgeschlossen) — direkt weiter (z. B. Wiederaufnahme nach Statuswechsel)
+    expect(await w.motor.anstossen()).toEqual([]);
+    w.c.status = 'in_progress' as never;
+    await w.motor.weiter('o', w.c, { phase: 'laeuft', schritt: 1, start: 'x', ergebnisse: [] });
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    expect(l.grund).toContain(`Verweis auf Change ${VOR.slice(0, 8)}: nicht abgeschlossen oder keine Abhängigkeit`);
+    expect(w.eingaben).toEqual([]);
+    expect(JSON.stringify(w.eingaben)).not.toContain('{{');
+  });
+  it('Motor: Vorgänger completed, aber nicht in abhaengigVon → hält an', async () => {
+    const w = zweiChanges('completed');
+    w.c.abhaengigVon = [];
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
+    expect((w.c.lauf as ChangeLauf).grund).toContain('nicht abgeschlossen oder keine Abhängigkeit');
+    expect(w.eingaben).toEqual([]);
+  });
+});

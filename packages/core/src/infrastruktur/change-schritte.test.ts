@@ -684,3 +684,76 @@ describe('v1871 UniFi verwaiste Zonenverweise', () => {
     expect(aktionsArt('unifi', 'remove_orphan_zone_networks')).not.toBe('lesen');
   });
 });
+
+// V3 Task 3 — Verweis über Change-Grenzen {{change:<schluessel>.schrittN.feld}} und Probe-Prüfung
+describe('V3 Verweis über Change-Grenzen', () => {
+  const lesePlan = (schluessel: string, abhaengigVon: string[], vmid: unknown, extra: Record<string, unknown> = {}) => ({
+    titel: `Lesen ${schluessel}`, begruendung: 'Verweis über Change-Grenzen prüfen', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['pve'], schluessel, abhaengigVon,
+    schritte: [{ titel: 'Status', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid, ...extra } }],
+  });
+  it('Validator: Schlüssel in Abhängigkeit ok (auch Zahlfeld und transitiv), ohne Abhängigkeit oder unbekannt → Fehler', () => {
+    expect(pruefeChangePlan(lesePlan('b', ['a'], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b']).fehler).toEqual([]);
+    expect(pruefeChangePlan(lesePlan('b', ['a'], 9001, { name: 'x-{{change:a.schritt1.name}}' }), ctx(), ['a', 'b']).fehler).toEqual([]);
+    // transitiv: c → b → a
+    expect(pruefeChangePlan(lesePlan('c', ['b'], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b', 'c'], new Map([['a', []], ['b', ['a']], ['c', ['b']]])).fehler).toEqual([]);
+    const ohne = pruefeChangePlan(lesePlan('b', [], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b']).fehler.join('\n');
+    expect(ohne).toContain('{{change:a.schritt1.vmid}}');
+    expect(ohne).toContain('keine Abhängigkeit');
+    const unbekannt = pruefeChangePlan(lesePlan('b', ['a'], '{{change:zz.schritt1.vmid}}'), ctx(), ['a', 'b']).fehler.join('\n');
+    expect(unbekannt).toContain('Change „zz“ unbekannt');
+    // in einer Prüfung ebenso
+    const pr = lesePlan('b', [], 9001); (pr.schritte as unknown[]).push({ titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'ping', ziel: '{{change:a.schritt1.ip}}' } });
+    expect(pruefeChangePlan(pr, ctx(), ['a', 'b']).fehler.join('\n')).toContain('keine Abhängigkeit');
+  });
+  it('Validator: gespeicherte volle Change-ID gilt, wenn sie in abhaengigVon liegt; Präfix nicht', () => {
+    const vorh = [{ id: 'chg-0001-0000', abhaengigVon: [], status: 'completed' }];
+    expect(pruefeChangePlan(lesePlan('x', ['chg-0001-0000'], '{{change:chg-0001-0000.schritt1.vmid}}'), ctx(vorh)).fehler).toEqual([]);
+    expect(pruefeChangePlan(lesePlan('x', ['chg-0001-0000'], '{{change:chg-0001.schritt1.vmid}}'), ctx(vorh)).fehler.join('\n')).toContain('unbekannt');
+    expect(pruefeChangePlan(lesePlan('x', [], '{{change:chg-0001-0000.schritt1.vmid}}'), ctx(vorh)).fehler.join('\n')).toContain('keine Abhängigkeit');
+  });
+  it('Validator: Verweis als ganzer Befehl verboten (auch Groß-/Kleinschreibung), Freitext im Prüfbefehl verboten', () => {
+    const p = {
+      titel: 'Befehl aus Vorgänger', begruendung: 'darf nie als ganzer Befehl laufen', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['pve'], schluessel: 'b', abhaengigVon: ['a'],
+      schritte: [
+        { titel: 'Lesen', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve', befehl: '{{change:a.schritt1.befehl}}' } },
+        { titel: 'Lesen2', art: 'aktion', skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'pve', Command: ' {{change:a.schritt1.cmd}} ' } },
+        { titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'pve', befehl: 'echo {{change:a.schritt1.text}}' } },
+      ],
+    };
+    const f = pruefeChangePlan(p, ctx(), ['a', 'b']).fehler.join('\n');
+    expect(f).toContain('Schritt 1: Verweis {{change:a.schritt1.befehl}} als ganzer Wert im Befehlsfeld „befehl“');
+    expect(f).toContain('Befehlsfeld „Command“');
+    expect(f).toContain('Freitext eines Ergebnisses');
+  });
+  it('planen schreibt {{change:<schlüssel>…}} vor dem Speichern auf die volle ID um; Freigabe-Prüfung besteht danach', async () => {
+    const it3 = speicher();
+    let frage: { description: string } | undefined;
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung, bestaetigung: async f => { frage = f; return true; } });
+    const r = await pl.planen('o', [
+      lesePlan('c2', ['c1'], '{{change:c1.schritt1.vmid}}', { name: '{{ change:c1.schritt2.policy_id }}' }),
+      { ...snapshotChange(), schluessel: 'c1' },
+    ]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const c1 = r.changes.find(c => c.title.startsWith('Snapshot'))!;
+    const c2 = r.changes.find(c => c.title === 'Lesen c2')!;
+    expect(c2.abhaengigVon).toEqual([c1.id]);
+    expect((c2.schritte as ChangeSchritt[])[0]!.parameter).toEqual({ vmid: `{{change:${c1.id}.schritt1.vmid}}`, name: `{{ change:${c1.id}.schritt2.policy_id }}` });
+    expect(JSON.stringify(c2.schritte)).not.toContain('change:c1.');
+    // Fingerabdruck über den umgeschriebenen Plan; erneute Prüfung vor der Freigabe besteht
+    expect((await pl.freigabeAnfragen('o', [c2.id])).ok).toBe(true);
+    expect(frage!.description).toContain('Lesen c2');
+  });
+  it('pruefeNur: dieselben Prüfungen wie planen ohne Speichern, Fehler mit „Change <schlüssel>:“', async () => {
+    const it3 = speicher();
+    let angelegt = 0; const orig = it3.legeAn; it3.legeAn = async (o, d) => { angelegt++; return orig(o, d); };
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    expect(await pl.pruefeNur('o', [{ ...snapshotChange(), schluessel: 'c1' }, lesePlan('c2', ['c1'], '{{change:c1.schritt1.vmid}}')])).toEqual([]);
+    const f = await pl.pruefeNur('o', [{ ...snapshotChange(), schluessel: 'c1' }, lesePlan('c2', [], '{{change:c1.schritt1.vmid}}'), { titel: 'x', schluessel: 'c3' }]);
+    expect(f.some(x => x.startsWith('Change c2: ') && x.includes('keine Abhängigkeit'))).toBe(true);
+    expect(f.some(x => x.startsWith('Change c3: '))).toBe(true);
+    expect((await pl.pruefeNur('o', [{ ...snapshotChange(), schluessel: 'a', abhaengigVon: ['b'] }, { ...snapshotChange(), schluessel: 'b', abhaengigVon: ['a'] }])).join('\n')).toContain('Abhängigkeiten im Kreis');
+    expect(await pl.pruefeNur('o', [{ ...snapshotChange(), schluessel: 'a' }, { ...snapshotChange(), schluessel: 'a' }])).toEqual(['schluessel der Changes müssen eindeutig sein']);
+    expect(angelegt).toBe(0);
+    expect(it3.db.size).toBe(0);
+  });
+});
