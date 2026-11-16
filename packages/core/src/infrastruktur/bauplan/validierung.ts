@@ -7,7 +7,7 @@
  */
 import { GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
 import { ANNAHMEN_SCHLUESSEL, pruefeSchema, type BauplanParameter, type BauplanVorlage } from './schema.js';
-import { loeseParameter, setzeEin, setzeEinWert } from './parameter.js';
+import { loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
 
 /** Wie change-lauf.ts BEFEHLS_FELDER: Felder, die als Befehl/Skript ausgeführt werden */
 export const BEFEHLS_FELDER: ReadonlySet<string> = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
@@ -157,7 +157,7 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
     // Plan-Kopf wie ein echter Change (pruefeChangePlan verlangt ausfallMinuten und betroffen): betroffen = Vereinigung der
     // betroffenen Assets aller Changes NACH dem Einsetzen ({{param.node}} → pve); ist sie leer, scheitern die echten Changes am selben Punkt (gleiche Meldung)
     typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: [...new Set(eingesetzt.flatMap(c => c.betroffen ?? []))],
-    schritte: v.annahmen.map((a, i) => ({ nr: i + 1, titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: setzeEinWert(a.pruefung, werte), beiFehler: 'anhalten' })),
+    schritte: v.annahmen.map((a, i) => ({ nr: i + 1, titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: setzeEinPruefung(a.pruefung, werte), beiFehler: 'anhalten' })),
   });
   return plaene;
 }

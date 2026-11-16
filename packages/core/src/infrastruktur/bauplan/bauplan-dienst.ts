@@ -10,7 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BauplanVorlageZeile, BauplanVorlageStatus } from '@alfred/storage';
 import { aktionsArt, type Pruefung } from '../change-schritte.js';
 import { abdruck, type BauplanChange, type BauplanVorlage } from './schema.js';
-import { loeseParameter, setzeEin, setzeEinWert } from './parameter.js';
+import { loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
 import { pruefeVorlage } from './validierung.js';
 
 export interface BauplanDeps {
@@ -208,7 +208,7 @@ export class BauplanDienst {
 
     // Annahmen live (Platzhalter {{param.*}} vorher eingesetzt)
     const annahmen: Array<{ text: string; pruefung: Pruefung }> = [];
-    try { for (const an of v.annahmen) annahmen.push({ text: an.text, pruefung: setzeEinWert(an.pruefung, werte) }); }
+    try { for (const an of v.annahmen) annahmen.push({ text: an.text, pruefung: setzeEinPruefung(an.pruefung, werte) }); }
     catch (e) { return { ok: false, fehler: [(e as Error).message] }; }
     const abw: string[] = [];
     for (const an of annahmen) {

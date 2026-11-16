@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pruefeWert, ableiten, loeseParameter, setzeEin } from './parameter.js';
+import { pruefeWert, ableiten, loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
 import { pruefeSchema, type BauplanParameter, type BauplanVorlage } from './schema.js';
 import { testVorlage } from './testvorlage.fixture.js';
 
@@ -178,5 +178,27 @@ describe('Fix-Runde 1 — Parameter', () => {
   });
   it('I3: Regex wird nur auf begrenzte Werte angewandt', () => {
     expect(pruefeWert(p('text', { grenzen: { regex: '^a+$' } }), 'a'.repeat(201))).toBeTypeOf('string');
+  });
+});
+
+describe('Task 6 Fix-Runde 1 — Prüftexte bleiben Text', () => {
+  it('in pruefung wird ein ganzer Verweis als Text eingesetzt, in parameter behält er den Typ', () => {
+    const v = vorlage();
+    v.changes[0]!.schritte[1]!.pruefung = {
+      typ: 'befehl', zugang: 'pve', befehl: 'qm config {{param.vmid}}', erwartet: '{{param.vmid}}', nichtEnthalten: '{{param.vlan}}', abbruch: '{{param.vmid}}',
+    };
+    v.changes[0]!.schritte[1]!.rueckweg = { skill: 'proxmox', aktion: 'shutdown_vm', parameter: { vmid: '{{param.vmid}}' } };
+    const [c] = setzeEin(v, { vlan: 832, netz: '10.203.32.0/28', gateway: '10.203.32.1', vmid: 157, name_server: 'labsrv01' });
+    const s = c!.schritte[1] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(s.parameter.vmid).toBe(157);
+    expect(s.rueckweg.parameter.vmid).toBe(157);
+    expect(s.pruefung).toEqual({ typ: 'befehl', zugang: 'pve', befehl: 'qm config 157', erwartet: '157', nichtEnthalten: '832', abbruch: '157' });
+  });
+  it('pruefung typ skill: parameter und port behalten den Typ, Texte werden Text', () => {
+    const p0 = { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{param.vmid}}', liste: ['{{param.vmid}}'] }, erwartet: '{{param.vmid}}', port: '{{param.vlan}}' };
+    expect(setzeEinPruefung(p0, { vmid: 157, vlan: 832 })).toEqual({ typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 157, liste: [157] }, erwartet: '157', port: 832 });
+  });
+  it('fehlender optionaler Wert lässt das Prüffeld wie bisher entfallen', () => {
+    expect(setzeEinPruefung({ typ: 'befehl', zugang: 'pve', befehl: 'uptime', erwartet: '{{param.fehlt}}' }, {})).toEqual({ typ: 'befehl', zugang: 'pve', befehl: 'uptime' });
   });
 });

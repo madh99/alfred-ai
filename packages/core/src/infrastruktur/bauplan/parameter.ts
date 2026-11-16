@@ -155,16 +155,29 @@ function ohneNeuePlatzhalter(vorher: string, nachher: unknown): unknown {
   return nachher;
 }
 
-function ersetze(x: unknown, werte: Record<string, unknown>): unknown {
+/**
+ * Modus beim Einsetzen: 'typ' = ganzer Verweis behält den Typ (Aktions-Parameter, Rückweg); 'pruefung' = das Objekt ist eine Prüfung;
+ * 'text' = ganzer Verweis wird Text. Task 6 Fix-Runde 1 (C1): die Prüftexte (erwartet, nichtEnthalten, befehl …) nimmt der
+ * Change-Validator nur als Text (txt()) — eine eingesetzte Zahl (erwartet „{{param.vmid}}“ → 157) wäre still aus dem Plan gefallen.
+ * In einer Prüfung behalten nur parameter (typ skill) und port ihren Typ.
+ */
+type Modus = 'typ' | 'pruefung' | 'text';
+const PRUEFUNG_TYPTREU = new Set(['parameter', 'port']);
+
+function ersetze(x: unknown, werte: Record<string, unknown>, modus: Modus = 'typ'): unknown {
   if (typeof x === 'string') {
     const ganz = PARAM_GANZ.exec(x);
-    if (ganz) { const w = werte[ganz[1]]; return ohneNeuePlatzhalter(x, Array.isArray(w) ? [...w] : w); }
+    if (ganz && modus !== 'text') { const w = werte[ganz[1]]; return ohneNeuePlatzhalter(x, Array.isArray(w) ? [...w] : w); }
+    if (ganz && werte[ganz[1]] === undefined) return undefined; // fehlender optionaler Wert: Feld entfällt wie bisher
     return ohneNeuePlatzhalter(x, x.replace(PARAM_VERWEIS, (_m, name: string) => (werte[name] === undefined ? '' : textVon(werte[name]))));
   }
-  if (Array.isArray(x)) return x.map(e => ersetze(e, werte)).filter(e => e !== undefined);
+  if (Array.isArray(x)) return x.map(e => ersetze(e, werte, modus === 'pruefung' ? 'text' : modus)).filter(e => e !== undefined);
   if (x && typeof x === 'object') {
     const o: Record<string, unknown> = {};
-    for (const [k, w] of Object.entries(x as Record<string, unknown>)) { const n = ersetze(w, werte); if (n !== undefined) o[k] = n; }
+    for (const [k, w] of Object.entries(x as Record<string, unknown>)) {
+      const m: Modus = modus === 'pruefung' ? (PRUEFUNG_TYPTREU.has(k) ? 'typ' : 'text') : modus === 'typ' && k === 'pruefung' ? 'pruefung' : modus;
+      const n = ersetze(w, werte, m); if (n !== undefined) o[k] = n;
+    }
     return o;
   }
   return x;
@@ -180,7 +193,12 @@ export function setzeEin(v: BauplanVorlage, werte: Record<string, unknown>): Bau
   return v.changes.map(c => ersetze(c, werte) as BauplanChange);
 }
 
-/** Wie setzeEin für einen beliebigen Wert (z. B. die Prüfung einer Annahme); Vorlage bleibt unverändert. */
+/** Wie setzeEin für einen beliebigen Wert; Vorlage bleibt unverändert. Ein Feld „pruefung“ darin wird wie eine Prüfung behandelt. */
 export function setzeEinWert<T>(wert: T, werte: Record<string, unknown>): T {
   return ersetze(wert, werte) as T;
+}
+
+/** Wie setzeEinWert für eine Prüfung (Annahme): Texte bleiben Text, nur parameter und port behalten den Typ. */
+export function setzeEinPruefung<T>(pruefung: T, werte: Record<string, unknown>): T {
+  return ersetze(pruefung, werte, 'pruefung') as T;
 }

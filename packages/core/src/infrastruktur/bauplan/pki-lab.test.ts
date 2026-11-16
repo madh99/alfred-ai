@@ -12,6 +12,7 @@ import { pruefeVorlage } from './validierung.js';
 import { loeseParameter, setzeEin } from './parameter.js';
 import { ProxmoxSkill, UniFiSkill } from '@alfred/skills';
 import { ChangePlanung } from '../change-planung.js';
+import { pruefeChangePlan, type PruefKontext } from '../change-schritte.js';
 import { PkiLabSkill } from '../pki-lab-skill.js';
 import { WindowsClusterSkill } from '../windows-cluster-skill.js';
 import { WindowsAdSkill } from '../windows-ad-skill.js';
@@ -117,8 +118,23 @@ describe('Bauplan-Vorlage pki_lab', () => {
       assets: async () => [{ id: 'a-pve', name: 'pve' }, { id: 'a-udm', name: 'UDMPRO' }, { id: 'a-sql', name: 'sql01' }] as never,
       auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
     });
-    const r = await pruefeVorlage(roh(), { probe: p => pl.pruefeNur('o', p) });
+    let plaene: Array<Record<string, unknown>> = [];
+    const r = await pruefeVorlage(roh(), { probe: p => { plaene = p as Array<Record<string, unknown>>; return pl.pruefeNur('o', p); } });
     expect(r.fehler).toEqual([]);
+    // Fix-Runde 1 (C1) — die PBS-Prüftexte kommen als Text beim Validator an und bleiben im geprüften Plan (txt(157) wäre still entfallen)
+    const kontext: PruefKontext = { skill: n => skills[n] as never, asset: () => ({ id: 'a', name: 'a' }), changes: [] };
+    const erwartet: Array<[string, number, 'erwartet' | 'nichtEnthalten', string]> = [
+      ['aufbau', 13, 'erwartet', ',157,'], ['aufbau', 14, 'erwartet', ',158,'], ['abbau', 11, 'nichtEnthalten', ',157,'], ['abbau', 12, 'nichtEnthalten', ',158,'],
+    ];
+    for (const [k, nr, feld, wert] of erwartet) {
+      const plan = plaene.find(p => p.schluessel === k)!;
+      expect((plan.schritte as Array<{ pruefung: Record<string, unknown> }>)[nr - 1]!.pruefung[feld], `${k} ${nr} roh`).toBe(wert);
+      const geprueft = pruefeChangePlan(plan, kontext, ['aufbau', 'test', 'abbau']).plan.schritte[nr - 1]!.pruefung as unknown as Record<string, unknown>;
+      expect(geprueft[feld], `${k} ${nr} geprüft`).toBe(wert);
+      if (k === 'abbau') expect(geprueft.erwartet).toBe('vzdump: alfred-pbs-taeglich');
+    }
+    // M1 — Rückweg des Aufbau-Ausnahmeschritts entfernt die Ausnahmen wieder
+    expect((plaene[0]!.schritte as Array<Record<string, any>>)[12]!.rueckweg.parameter).toEqual({ job_id: 'alfred-pbs-taeglich', remove_vmids: [157, 158] }); // eslint-disable-line @typescript-eslint/no-explicit-any
     // delete_vm im Abbau braucht zweck stilllegung — ohne ihn meldet der echte Validator genau die beiden Lösch-Schritte
     const ohneZweck = roh(); delete (ohneZweck.changes as Array<Record<string, unknown>>)[2]!.zweck;
     expect((await pruefeVorlage(ohneZweck, { probe: p => pl.pruefeNur('o', p) })).fehler).toEqual([7, 8].map(n => `Probe: Change abbau: Schritt ${n}: proxmox.delete_vm entfernt Bestehendes endgültig — nur in einem eigenen Change mit zweck stilllegung`));

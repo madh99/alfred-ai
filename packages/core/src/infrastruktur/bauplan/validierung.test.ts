@@ -318,3 +318,16 @@ describe('Task 6 — zweck stilllegung in der Vorlage', () => {
     expect((await pruefeVorlage(roh('migration'), { probe: p => pl.pruefeNur('o', p) })).fehler.join('\n')).toMatch(/zweck/);
   });
 });
+
+describe('Task 6 Fix-Runde 1 — Prüftexte bleiben Text in der Probe', () => {
+  it('ganzer {{param.vmid}} in erwartet von Schritt- und Annahme-Prüfung kommt als Text an, parameter.vmid als Zahl', async () => {
+    let plaene: Array<Record<string, any>> = [];
+    const r = await pruefe(v => {
+      v.changes[0].schritte[1].pruefung = { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{param.vmid}}' }, erwartet: '{{param.vmid}}' };
+      v.annahmen[0].pruefung.erwartet = '{{param.vmid}}';
+    }, { probe: async p => { plaene = p as Array<Record<string, any>>; return []; } });
+    expect(r.fehler).toEqual([]);
+    const s = plaene[0]!.schritte[1].pruefung; const a = plaene.find(p => p.schluessel === 'annahmen')!.schritte[0].pruefung;
+    for (const x of [s, a]) { expect(x.erwartet).toBe('157'); expect(x.parameter.vmid).toBe(157); }
+  });
+});

@@ -616,16 +616,16 @@
           },
           "pruefung": {
             "typ": "befehl",
-            "erwartet": "{{param.vmid_server}}",
+            "erwartet": ",{{param.vmid_server}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/p'"
           },
           "rueckweg": {
             "skill": "proxmox",
             "aktion": "backup_job_exclude",
             "parameter": {
               "job_id": "alfred-pbs-taeglich",
-              "add_vmids": [
+              "remove_vmids": [
                 "{{param.vmid_server}}",
                 "{{param.vmid_client}}"
               ]
@@ -640,9 +640,9 @@
           "beiFehler": "anhalten",
           "pruefung": {
             "typ": "befehl",
-            "erwartet": "{{param.vmid_client}}",
+            "erwartet": ",{{param.vmid_client}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/p'"
           }
         },
         {
@@ -1778,9 +1778,9 @@
           "pruefung": {
             "typ": "befehl",
             "erwartet": "vzdump: alfred-pbs-taeglich",
-            "nichtEnthalten": "{{param.vmid_server}}",
+            "nichtEnthalten": ",{{param.vmid_server}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/'"
           },
           "rueckweg": {
             "skill": "proxmox",
@@ -1803,9 +1803,9 @@
           "pruefung": {
             "typ": "befehl",
             "erwartet": "vzdump: alfred-pbs-taeglich",
-            "nichtEnthalten": "{{param.vmid_client}}",
+            "nichtEnthalten": ",{{param.vmid_client}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/'"
           }
         },
         {
