@@ -357,8 +357,11 @@ export class ChangePlanung {
     return { ok: true, auswirkung: aus, hinweise: [...(c.pruefung?.hinweise ?? []), ...this.auswirkungsHinweise(aus, c.type === 'emergency' ? 'notfall' : 'normal')] };
   }
 
-  /** Freigabe-Frage an den Owner (App/Telegram-Button) für einen oder mehrere Changes — Einmal-Freigabe über Fingerabdrücke. */
-  async freigabeAnfragen(owner: string, keys: string[]): Promise<{ ok: true; text: string } | { ok: false; fehler: string[] }> {
+  /**
+   * Freigabe-Frage an den Owner (App/Telegram-Button) für einen oder mehrere Changes — Einmal-Freigabe über Fingerabdrücke.
+   * V3 — `zusatz` (Bauplan: Herkunft, Netz/Firewall/Löschung, Werte über Change-Grenzen) steht direkt nach der Kopfzeile.
+   */
+  async freigabeAnfragen(owner: string, keys: string[], zusatz?: string): Promise<{ ok: true; text: string } | { ok: false; fehler: string[] }> {
     if (!this.d.bestaetigung) return { ok: false, fehler: ['Freigabe-Fragen sind nicht verfügbar'] };
     const fehler: string[] = []; const teile: string[] = []; const changes: Array<{ id: string; fingerabdruck: string }> = []; const titel: string[] = [];
     for (const k of keys) {
@@ -380,7 +383,7 @@ export class ChangePlanung {
     for (const c of changes) await this.d.itsm.setzeFreigabeAnfrage(owner, c.id, { hash: hash(nonce), bis, fingerabdruck: c.fingerabdruck });
     // v1600 — Realfall 22.10.: Die App zeigt nur die ersten 80–100 Zeichen („Freigegeben: Change freigeben: **Übergangss…“) → Titel in die erste Zeile
     const kopf = changes.length > 1 ? `${changes.length} Changes freigeben: ${titel.join(' · ')}` : `Change freigeben: ${titel[0]}`;
-    const ok = await this.d.bestaetigung({ description: `${kopf}\n\n${teile.join('\n\n')}\n\nNach dem Ja startet der Ausführungsmotor den Change — sofort oder im nächsten passenden Wartungsfenster (nie in einer Sperrzeit) und meldet das Ergebnis. „Nein, weil …“ wird ein Einwand.`, params: { ...params, freigabe: nonce } });
+    const ok = await this.d.bestaetigung({ description: `${kopf}\n\n${zusatz?.trim() ? `${zusatz.trim()}\n\n` : ''}${teile.join('\n\n')}\n\nNach dem Ja startet der Ausführungsmotor den Change — sofort oder im nächsten passenden Wartungsfenster (nie in einer Sperrzeit) und meldet das Ergebnis. „Nein, weil …“ wird ein Einwand.`, params: { ...params, freigabe: nonce } });
     if (!ok) return { ok: false, fehler: ['Freigabe-Frage konnte nicht gestellt werden'] };
     this.d.protokoll?.('I3 Freigabe angefragt', { changes: changes.map(c => c.id) });
     return { ok: true, text: `Freigabe-Frage gestellt (${changes.length} Change${changes.length > 1 ? 's' : ''}) — der Owner bestätigt in der App oder in Telegram.` };

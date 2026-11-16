@@ -245,6 +245,21 @@ describe('I3 Paket planen und Owner-Freigabe', () => {
     expect((await pl.freigebenNachJa('o', alteFrage.params)).ok).toBe(false);
   });
 
+  it('V3 — Zusatztext der Freigabe-Frage steht nach dem Kopf (Bauplan: Werte über Change-Grenzen); ohne Zusatz unverändert', async () => {
+    const it3 = speicher();
+    const fragen: string[] = [];
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung, bestaetigung: async f => { fragen.push(f.description); return true; } });
+    const r = await pl.planen('o', [snapshotChange()]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const id = r.changes[0]!.id;
+    expect((await pl.freigabeAnfragen('o', [id], 'Werte über Change-Grenzen:\n- Wert id aus Change a Schritt 2 (unifi.create_network)')).ok).toBe(true);
+    expect(fragen[0]).toMatch(/^Change freigeben: /);
+    expect(fragen[0]).toContain('Wert id aus Change a Schritt 2 (unifi.create_network)');
+    expect(fragen[0]!.indexOf('Werte über Change-Grenzen')).toBeLessThan(fragen[0]!.indexOf('Nach dem Ja startet'));
+    await pl.freigabeAnfragen('o', [id]);
+    expect(fragen[1]).not.toContain('Werte über Change-Grenzen');
+  });
+
   it('Web-Freigabe prüft erneut; offener kritischer Incident blockiert Normal-Changes', async () => {
     const it3 = speicher();
     let incidents: string[] = [];

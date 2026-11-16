@@ -8096,6 +8096,37 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
         }));
         this.logger.info('I1 Infrastruktur-Skill registriert');
+        // Bauplan-Vorlagen V3 — Vorlagen speichern (voll validiert), Owner-Freigabe per Button, Anwenden = normale Changes + EINE Freigabe-Frage
+        {
+          const { BauplanDienst } = await import('./infrastruktur/bauplan/bauplan-dienst.js');
+          const { BauplanSkill } = await import('./infrastruktur/bauplan/bauplan-skill.js');
+          const { BauplanVorlageRepository, BauplanInstanzRepository: BauplanInstanzV3 } = await import('@alfred/storage');
+          const vorlagenV3 = new BauplanVorlageRepository(adapter);
+          const instanzenV3 = new BauplanInstanzV3(adapter);
+          const bauplanDienst = new BauplanDienst({
+            repo: { speichere: (u, d) => vorlagenV3.speichere(u, d), finde: (u, k, v) => vorlagenV3.finde(u, k, v), liste: (u) => vorlagenV3.liste(u), setze: (u, id, d) => vorlagenV3.setze(u, id, d) },
+            instanzen: { anlegen: (u, d) => instanzenV3.anlegen(u, d), finde: (u, n) => instanzenV3.finde(u, n) },
+            pruefeNur: (u, roh) => this.changePlanung!.pruefeNur(u, roh),
+            planen: async (u, roh) => { const r = await this.changePlanung!.planen(u, roh); return r.ok ? { ok: true as const, ids: r.changes.map(c => c.id) } : r; },
+            freigabeAnfragen: (u, ids, zusatz) => this.changePlanung!.freigabeAnfragen(u, ids, zusatz),
+            pruefe: (p) => this.changeMotor ? this.changeMotor.pruefe(p) : Promise.resolve({ ok: false, text: 'Motor nicht verfügbar' }),
+            frage: async (description, params) => {
+              if (!this.confirmationQueue) return false;
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (!chatId) return false;
+              const platform = this.config.telegram?.enabled ? 'telegram' : 'api';
+              // ältere offene Freigabe-Fragen zur selben Vorlage zurückziehen (ihr Hash gilt nicht mehr)
+              await this.confirmationQueue.zurueckziehenWenn(chatId, platform, p => p.skillName === 'bauplan' && (p.skillParams as { action?: string; key?: string })?.action === 'bauplan_freigeben'
+                && (p.skillParams as { key?: string }).key === params.key, 'durch neue Freigabe-Frage ersetzt').catch(() => 0);
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `bauplan-freigabe-${Date.now()}`, description, skillName: 'bauplan', skillParams: params, timeoutMinutes: 24 * 60 } as never);
+              return ok !== false;
+            },
+            melde: async (_u, t) => { await this.meldeOhneModell(t); },
+            protokoll: (msg, daten) => this.logger.info(daten, msg),
+          });
+          skillRegistry.register(new BauplanSkill(bauplanDienst, { istOwner: istOwnerFz, owner: () => ownerFz() }));
+          this.logger.info('Bauplan-Skill registriert');
+        }
         // v1707 — Anwendungs-Update-Bericht (Owner 29.10.): native Pakete (apt, auch Datenbanken wie PostgreSQL) und Container-Images
         // aller Hosts mit Fernzugang, nur lesend; Registry-Abfragen von hier aus mit normaler TLS-Prüfung. Montags 09:00 als Meldung + CMDB-Dokument.
         this.registriereJob({

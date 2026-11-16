@@ -17,6 +17,12 @@ describe('selectCategories', () => {
     expect(result.has('core')).toBe(true);
   });
 
+  it('Bauplan-Vorlagen V3: „Bauplan“ wählt infrastructure (sonst fehlt der Skill bauplan in der Tool-Liste)', () => {
+    for (const msg of ['wende den Bauplan test_lab an', 'zeig mir die Baupläne', 'Bauplan-Vorlage speichern']) {
+      expect(selectCategoriesOhneRueckfall(msg, available(...ALL_CATEGORIES))?.has('infrastructure') ?? false, msg).toBe(true);
+    }
+  });
+
   it('Dokument-Vorlagen: Protokoll-Arten wählen infrastructure, das bloße Wort „Protokoll“ nicht', () => {
     for (const msg of ['erstelle das Abnahmeprotokoll', 'Testprotokoll für das Lab', 'wo ist das Labprotokoll', 'Sammelprotokoll der Serie', 'Betriebsprotokoll bitte', 'Betriebsdokument für den SQL-Cluster']) {
       expect(selectCategoriesOhneRueckfall(msg, available(...ALL_CATEGORIES))?.has('infrastructure') ?? false, msg).toBe(true);
