@@ -675,8 +675,14 @@ def pruefe_uebernahme(db, neu, man):
     """Nachtrag N-1: Grenzen von fs01 nur, wenn sie zu gelöschten Ketten passen - sonst Fehler, nichts übernommen"""
     vorhanden = {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'}
     basen = {i['bezug'] for i in je_db(man).get(db, {}).values() if i['art'] == 'DIFF'}
+    neueste = max(vorhanden) if vorhanden else None
     for idx, e in enumerate(neu):
         f = e['full']
+        # Nachtrag 2 (M-A): eine gelöschte Kette liegt vor der neuesten vorhandenen Vollsicherung und nie in der Zukunft
+        if neueste is None or f >= neueste:
+            raise Fehler('%s: Grenze %s ist nicht älter als die neueste Vollsicherung auf fs01 (%s) - nichts übernommen' % (db, f, neueste))
+        if sekunden(f) > time.time():
+            raise Fehler('%s: Grenze %s liegt in der Zukunft - nichts übernommen' % (db, f))
         if f in vorhanden or f in basen:
             raise Fehler('%s: Kette %s ist auf fs01 noch vorhanden (nicht gelöscht) - nichts übernommen' % (db, f))
         if (e.get('ersterBezug') is not None and e['ersterBezug'] > f) or (e.get('letztes') is not None and e['letztes'] <= f):
@@ -731,7 +737,10 @@ def grenzen_uebernehmen(mnt, host, gdir):
 
 def bewerten(dd, liste_):
     """Ketten einer Datenbank zur Beurteilung: Brücken nur aus eigenen (nicht übernommenen) Grenzen; Ketten bis zur neuesten übernommenen
-    Grenze bleiben unangetastet (eingefroren) - sie werden weder gelöscht noch beurteilt (Nachtrag N-1)"""
+    Grenze bleiben unangetastet (eingefroren) - sie werden weder gelöscht noch beurteilt (Nachtrag N-1).
+    Abwägung (Nachtrag 2, M-C): der Übergang vom eingefrorenen Bereich zur ersten beurteilten Kette wird NICHT geprüft - dafür bräuchte es
+    eine Brücke über übernommene Grenzen, die gerade ausgeschlossen ist. Die erste beurteilte Kette muss nur in sich lückenlos sein (ihr erstes
+    LOG beginnt vor ihrer Vollsicherung); für ihre Wiederherstellung genügt das, die eingefrorenen Ketten werden ohnehin nicht gelöscht."""
     eigene = [e for e in (liste_ or []) if not e.get('uebernommen')]
     ueber = [e['full'] for e in (liste_ or []) if e.get('uebernommen')]
     ks, waisen = ketten(dd, eigene)
@@ -824,6 +833,8 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
             off = offen()
             for db in sorted(lok):
                 entfernt_ = {e['full'] for e in lokal_g.get(db, [])} | nur_kopiersperre.get(db, set())
+                fremd_gesperrt = {e['full'] for e in lokal_g.get(db, []) if e.get('uebernommen')} | nur_kopiersperre.get(db, set())
+                uebersprungen = 0
                 fulls_alle = sorted(entfernt_ | {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'}
                                     | {i['zeit'] for i in lok[db].values() if i['art'] == 'FULL'})
                 for n in sorted(lok[db], key=lambda x: (lok[db][x]['zeit'], x)):
@@ -831,7 +842,10 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                     src = os.path.join(lokal, db, n)
                     st = os.stat(src)
                     # Kette per Aufbewahrung gelöscht (lokale Aufzeichnung) → nie erneut kopieren
-                    if entfernt_ketten_start(lok[db][n]['zeit'], fulls_alle) in entfernt_:
+                    start_ = entfernt_ketten_start(lok[db][n]['zeit'], fulls_alle)
+                    if start_ in entfernt_:
+                        if start_ in fremd_gesperrt:
+                            uebersprungen += 1
                         continue
                     if not os.path.isdir(src + '.fertig'):
                         if time.time() - st.st_mtime > 6 * 3600:
@@ -861,6 +875,9 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                     cache[rel] = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': h, 'fs01': True}
                     belegt += st.st_size
                     erg['kopiert'].append(rel)
+                # Nachtrag 2 (M-A): nicht still - Dateien, die nur wegen übernommener (bzw. nur auf fs01 bekannter) Grenzen nicht kopiert werden
+                if uebersprungen:
+                    erg['befunde'].append('%s: %d Dateien wegen übernommener Grenzen nicht kopiert (Owner prüfen: gehören sie zu gelöschten Ketten?)' % (db, uebersprungen))
         except (Fehler, OSError) as e:
             # auch Kontingent voll (ENOSPC/EDQUOT) und andere E/A-Fehler: Befund, danach trotzdem nur Belegtes aufräumen
             erg['fehler'] = str(e)
@@ -1311,6 +1328,8 @@ const PY_ZUSAMMEN = [
   'l = json.loads(sys.argv[1])',
   'l["timer"] = sys.argv[2]',
   'l["zugangsdatei"] = sys.argv[3]',
+  'if sys.argv[4].isdigit() and int(sys.argv[4]) > 0:',
+  '    l["alteZugangsdateienEntfernt"] = int(sys.argv[4])',
   'print("ALFRED-SQL " + json.dumps(l, ensure_ascii=True))',
 ].join('\n');
 
@@ -1341,7 +1360,7 @@ export function sicherungenSkript(): string {
     'l=$(grep "^ALFRED-LISTE " <<<"$l" | head -n 1)',
     `timer=$(systemctl is-active ${KOPIE_DIENST}.timer 2>/dev/null || true)`,
     `zd=$(zugangsdatei_zustand ${ZUGANGSDATEI_FEST})`,
-    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "${timer:-unbekannt}" "$zd"',
+    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "${timer:-unbekannt}" "$zd" "${ALFRED_RESTE:-0}"',
     'ALFRED_ZEILE=1',
   ].join('\n');
 }

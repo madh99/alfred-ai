@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { LinuxSqlSkill, linuxSqlStatusText, linuxSqlSicherungenText, LINUX_SQL_MIN_ZEITLIMIT_S, type LinuxSqlStatus } from './linux-sql-skill.js';
-import { LINUX_SQL_BAUSTEINE, sqlSkript, installSkript, sqlKopf, shQ, sqlErgebnis } from './linux-sql.js';
+import { LINUX_SQL_BAUSTEINE, sqlSkript, installSkript, sqlKopf, shQ, sqlErgebnis, statusSkript, PY_STATUS } from './linux-sql.js';
 import { LINUX_SQL_SICHERUNG_BAUSTEINE, sicherungJetztSkript, sicherungenSkript, wiederherstellenSkript, kettengrenzenSkript, KOPIE_FASSUNG } from './linux-sql-sicherung.js';
 import { pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 import { freigabeSkript } from './windows-cluster.js';
@@ -198,6 +198,20 @@ describe('Nachtrag N-1 / Restpunkte', () => {
     const lauf = (n: number) => spawnSync('bash', [], { input: `ALFRED_EINGABE=''\n( ${kopf}\nALFRED_RESTE=${n}\nergebnis '{"zustand":"schon"}'\n)`, encoding: 'utf8' }).stdout;
     expect(sqlErgebnis(lauf(2))).toEqual({ zustand: 'schon', alteZugangsdateienEntfernt: 2 });
     expect(sqlErgebnis(lauf(0))).toEqual({ zustand: 'schon' });
+  });
+  it('Nachtrag 2 (M-B): status und sicherungen tragen alteZugangsdateienEntfernt; Notfallzeile auch; Anzeige ab 1', async () => {
+    expect(statusSkript()).toContain('ALFRED_RESTE="${ALFRED_RESTE:-0}" python3 -c "$PY_STATUS"');
+    expect(PY_STATUS).toContain('alteZugangsdateienEntfernt');
+    expect(sicherungenSkript()).toContain('"${ALFRED_RESTE:-0}"');
+    expect(sqlKopf('x', {}).join('\n')).toMatch(/trap '[^\n]*alteZugangsdateienEntfernt/);
+    const st = { zustand: 'gelesen', installiert: false, platz: [], alteZugangsdateienEntfernt: 3 } as unknown as LinuxSqlStatus;
+    expect(linuxSqlStatusText('x', st)).toContain('alte Zugangsdateien entfernt: 3');
+    expect(linuxSqlStatusText('x', { ...st, alteZugangsdateienEntfernt: 0 } as LinuxSqlStatus)).not.toContain('alte Zugangsdateien');
+    const l = { zustand: 'gelesen', ziel: '//fs01.ad.3033.at/X$', budgetBytes: 1, timer: 'active', zugangsdatei: 'vorhanden (0600)', datenbanken: {}, alteZugangsdateienEntfernt: 2 };
+    expect(linuxSqlSicherungenText('x', l as never)).toContain('alte Zugangsdateien entfernt: 2');
+    const w = welt({ [LINUX_SQL_BAUSTEINE.platten]: [{ zustand: 'schon', platten: [], alteZugangsdateienEntfernt: 4 }] });
+    const r = await w.skill.execute({ action: 'platten_einrichten', zugang: 'sqllnx01', platten: [{ scsi: 1, groesse_gib: 160, ziel: 'data' }] }, imChange);
+    expect(r.display).toContain('alte Zugangsdateien entfernt: 4');
   });
   it('Modulkopf dokumentiert sa-Wiederherstellung nach SSH-Verlust', () => {
     const quelle = readFileSync(new URL('./linux-sql.ts', import.meta.url), 'utf8');

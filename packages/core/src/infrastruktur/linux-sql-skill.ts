@@ -99,7 +99,12 @@ export interface LinuxSqlStatus {
   sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
   /** Fix-Welle M-5/M-6 — Reste (alte tempdb-Dateien, Wegwerf-Ordner, Zugangsdateien): nur gemeldet, nie gelöscht */
   reste?: string[];
+  /** Nachtrag 2 (M-B): vom Baustein-Kopf entfernte alte Zugangsdateien (/run/alfred-c-*, älter als 120 min) */
+  alteZugangsdateienEntfernt?: number;
 }
+
+/** Nachtrag 2 (M-B): Anzeige der entfernten alten Zugangsdateien (nur ab 1) */
+const altZugangText = (n: unknown) => (typeof n === 'number' && n > 0 ? `; alte Zugangsdateien entfernt: ${n}` : '');
 
 /** Zustand eines Berichtsalters: ok, zu alt (> 45 min oder unbekannt), Uhrzeit abweichend (aus der Zukunft, > 5 min) */
 const altersText = (alterMin: number | null | undefined) => (typeof alterMin !== 'number' ? 'ZU ALT' : alterMin < -5 ? 'UHRZEIT ABWEICHEND' : alterMin > 45 ? 'ZU ALT' : undefined);
@@ -118,7 +123,7 @@ const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
 export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
   const ein = (s.platz ?? []).filter(p => p.eingehaengt && (LINUX_SQL_ZIELE as readonly string[]).includes(p.pfad)).map(p => p.pfad.split('/').pop());
   const eingehaengt = `eingehängt: ${ein.length ? ein.join(', ') : 'keine Plattenziele'}`;
-  const sich = sicherungText(s) + resteText(s.reste);
+  const sich = sicherungText(s) + resteText(s.reste) + altZugangText(s.alteZugangsdateienEntfernt);
   if (!s.installiert) return `${zugang}: SQL Server nicht installiert; ${eingehaengt}; ${sich}`;
   const dienst = `Dienst ${s.dienst === 'active' ? 'aktiv' : s.dienst ?? 'unbekannt'}, ${s.aktiviert === 'enabled' ? 'aktiviert' : s.aktiviert ?? 'unbekannt'}`;
   const limit = `Speicherlimit ${s.konfig?.memorylimitmb ?? '-'} MB`;
@@ -135,6 +140,7 @@ export interface LinuxSqlSicherungen {
   zustand: string; host?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number | null; timer?: string; zugangsdatei?: string;
   status?: { zeit?: string; ok?: boolean; fehler?: string | null; befunde?: string[]; frisch?: boolean; alterMin?: number | null } | null;
   reste?: string[];
+  alteZugangsdateienEntfernt?: number;
   datenbanken?: Record<string, { ketten: Array<{ full: string; diffs: number; logs: number; vollstaendig: boolean; fehler?: string[] }>; waisen?: string[];
     fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number }>;
 }
@@ -168,7 +174,7 @@ export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen):
     const h = hashText(st, d, r.timer);
     return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${h}${h === 'Hash ok' ? ` — ${db}: vollständig auf fs01` : ''}`;
   });
-  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}${resteText(r.reste)}`;
+  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}${resteText(r.reste)}${altZugangText(r.alteZugangsdateienEntfernt)}`;
 }
 
 /** \\server.fqdn\Freigabe$ → { server, freigabe } */
@@ -360,6 +366,15 @@ export class LinuxSqlSkill extends Skill {
   }
 
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
+    // Nachtrag 2 (M-B): entfernte alte Zugangsdateien in jeder Anzeige (status/sicherungen nennen sie schon im festen Wortlaut)
+    this.altZugang = 0;
+    const r = await this.ausfuehren(input, context);
+    const zusatz = String(input.action ?? '') === 'status' || String(input.action ?? '') === 'sicherungen' ? '' : altZugangText(this.altZugang);
+    if (!zusatz) return r;
+    return r.success ? { ...r, display: `${r.display ?? ''}${zusatz}` } : { ...r, error: `${r.error ?? ''}${zusatz}` };
+  }
+
+  private async ausfuehren(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
     const zugang = String(input.zugang ?? '').trim();
     if (!LESEND.has(action) && !NUR_IM_CHANGE.has(action)) return { success: false, error: `Unbekannte Aktion ${action}` };
@@ -388,8 +403,12 @@ export class LinuxSqlSkill extends Skill {
     return this.pruefeLauf<T>(zugang, zweck, await this.d.skript(zugang, baustein, parameter, eingabe ? JSON.stringify(eingabe) : undefined, timeoutMs, zweck));
   }
 
+  /** Nachtrag 2 (M-B): Summe der vom Baustein-Kopf entfernten alten Zugangsdateien im laufenden execute (für die Anzeige) */
+  private altZugang = 0;
+
   private pruefeLauf<T extends Record<string, unknown>>(zugang: string, zweck: string, r: { code: number; stdout: string; stderr: string }): T {
     const e = sqlErgebnis<T>(r.stdout);
+    if (e && typeof (e as Record<string, unknown>).alteZugangsdateienEntfernt === 'number') this.altZugang += (e as Record<string, unknown>).alteZugangsdateienEntfernt as number;
     if (r.code !== 0 || !e || e.zustand === 'fehler') {
       const grund = e && typeof e.fehler === 'string' ? e.fehler : `${r.stderr}\n${r.stdout}`.replace(/\s+/g, ' ').trim().slice(-500);
       throw new Error(`${zweck} auf ${zugang} gescheitert (Exit ${r.code}): ${grund || 'keine Ausgabe'}`);

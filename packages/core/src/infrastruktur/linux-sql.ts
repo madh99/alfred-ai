@@ -120,7 +120,7 @@ export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] 
     `json_text() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'; }`,
     `abbruch() { local t; t=$(printf '%s' "$1" | json_text); ergebnis "{\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"$ALFRED_BAUSTEIN\\",\\"fehler\\":$t}"; exit 1; }`,
     // I8e Task 4: optionale Funktion alfred_aufraeumen (z. B. Zugangsdatei, Einhängepunkt, Wegwerf-Datenbank) läuft zuerst
-    `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\"}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC"; fi' EXIT`,
+    `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\",\\"alteZugangsdateienEntfernt\\":%s}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC" "\${ALFRED_RESTE:-0}"; fi' EXIT`,
     `feld() { python3 -c ${shQ(PY_FELD)} "$1" <<<"$ALFRED_EINGABE"; }`,
     // Fix-Welle M-6: liegengebliebene Zugangsdateien abgebrochener Läufe (älter als jede Zeitgrenze, 120 min) entfernen
     "ALFRED_RESTE=$( { find /run -maxdepth 1 -type f -name 'alfred-c-*' -mmin +120 -delete -print 2>/dev/null || true; } | wc -l | tr -d ' ')",
@@ -867,6 +867,13 @@ export const PY_STATUS = [
   '    except Exception as e:',
   '        r["sql"] = None',
   '        r["sqlFehler"] = type(e).__name__',
+  // Nachtrag 2 (M-B): vom Kopf entfernte alte Zugangsdateien auch im Status
+  'try:',
+  '    _n = int(os.environ.get("ALFRED_RESTE") or "0")',
+  'except ValueError:',
+  '    _n = 0',
+  'if _n > 0:',
+  '    r["alteZugangsdateienEntfernt"] = _n',
   'print("ALFRED-SQL " + json.dumps(r))',
 ].join('\n');
 
@@ -875,7 +882,7 @@ export function statusSkript(): string {
   return [
     ...sqlKopf(LINUX_SQL_BAUSTEINE.status, {}),
     `PY_STATUS=${shQ(PY_STATUS)}`,
-    'python3 -c "$PY_STATUS" <<<"$ALFRED_EINGABE"',
+    'ALFRED_RESTE="${ALFRED_RESTE:-0}" python3 -c "$PY_STATUS" <<<"$ALFRED_EINGABE"',
     'ALFRED_ZEILE=1',
   ].join('\n');
 }

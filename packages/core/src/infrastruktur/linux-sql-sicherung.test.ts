@@ -750,6 +750,9 @@ describe.skipIf(!PYTHON)('I8e Nachtrag N-1 — kettengrenzen_uebernehmen nur bei
       (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, full: x.c.full }]; },
       (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, dateien: { 'boese.bak': 'a'.repeat(64) } }]; },
       (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, letztes: stempel(START) }]; },
+      // Nachtrag 2 (M-A): Grenze nicht älter als die neueste Vollsicherung bzw. in der Zukunft
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, full: stempel(START + 3 * TAG + 1800), ersterBezug: null, letztes: null, dateien: {} }]; },
+      (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [{ ...x.gb, full: stempel(Date.now() / 1000 + 400 * TAG), ersterBezug: null, letztes: null, dateien: {} }]; },
       (x: ReturnType<typeof aufbau>) => { x.m.entfernteKetten.pruefdb01 = [x.gb, { full: stempel(START + TAG + 1800 + 900), ersterBezug: x.b.logs[0]!.split('_')[2]!, letztes: stempel(START + TAG + 4 * 3600) }]; },
     ]) {
       const x = aufbau();
@@ -784,6 +787,9 @@ describe.skipIf(!PYTHON)('I8e Nachtrag N-1 — kettengrenzen_uebernehmen nur bei
     expect(r.json.lokalEntfernt).toEqual([]);
     expect(existsSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`))).toBe(true);
     expect(r.json.befunde.join(' ')).toMatch(/lokal liegen 1 Dateien gelöschter Ketten/);
+    // Nachtrag 2 (M-A): das Überspringen wegen übernommener Grenzen ist sichtbar (Befund, Lauf nicht ok)
+    expect(r.json.befunde.join(' ')).toContain('1 Dateien wegen übernommener Grenzen nicht kopiert');
+    expect(r.json.ok).toBe(false);
     rmSync(w.wurzel, { recursive: true, force: true });
   });
 });
