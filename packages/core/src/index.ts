@@ -17,6 +17,7 @@ export { GeraeteGateway } from './geraete/gateway.js'; // v1224
 export { istGesperrteUrl, istGesperrteBeschriftung, formatiereSeite } from './geraete/browser-regeln.js'; // v1229
 export { schwaerze as schwaerzeGeheimnisse } from './fernzugriff/kaefig.js'; // v1885 — eine Schwärzung für Fernzugriff und Satelliten-Aufträge
 export { registriereLinuxBaustein, linuxBausteinBekannt, type LinuxBausteinErzeuger } from './fernzugriff/linux-bausteine.js'; // I8e — Register der Linux-Bausteinskripte
+export { LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, sqlErgebnis as linuxSqlErgebnis } from './infrastruktur/linux-sql.js'; // I8e — SQL Server 2025 auf Linux (Laden meldet die Bausteine an)
 export { TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, TRANSFER_BLOCK_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from './geraete/protokoll.js'; // v1235, v1249
 export { kanonisch, signiereBefehl, pruefeBefehl, spkiHex, ladeOderErzeugeBefehlsSchluessel, SIGNIERTE_TYPEN, BEFEHL_ZEIT_TOLERANZ_MS, type BefehlPruefung, type BefehlsSchluessel } from './geraete/befehl-signatur.js'; // v1531
 export { sprachfassung, audioMimeAusBytes, sprachBloecke, schneideSaetze } from './interaktion/sprache.js'; // v1241, v1247, v1248
