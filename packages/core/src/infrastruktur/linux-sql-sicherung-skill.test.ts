@@ -38,9 +38,12 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
       expect(r.error, action).toContain('nur als Schritt eines freigegebenen Changes');
     }
     expect(w.aufrufe).toEqual([]);
-    const s = await w.skill.execute({ action: 'sicherungen', zugang: 'sqllnx01' }, {} as never);
+    // Fix-Runde 1 (Sicherheit): sicherungen liest keinen Tresor — auch ohne jeden Tresor-Eintrag, ohne Eingabe
+    const leer = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.liste]: [{ zustand: 'gelesen', datenbanken: {} }] }, {});
+    const s = await leer.skill.execute({ action: 'sicherungen', zugang: 'sqllnx01' }, {} as never);
     expect(s.success, s.error).toBe(true);
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: SA, kennwort: FS });
+    expect(leer.aufrufe[0]!.eingabe).toBeUndefined();
+    expect(leer.aufrufe[0]!.parameter).toEqual({});
   });
   it('sicherung_einrichten: Ziel, Konto und Domäne aus ziel_freigabe/konto_tresor; Kennwörter nur über stdin', async () => {
     const w = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten]: [{ zustand: 'geaendert', jobs: 3, agent: 1, timer: 'aktiv', zugangsdatei: 'vorhanden (0600)', ziel: '//fs01.ad.3033.at/SQLLinuxBackup$', budgetBytes: 64 * 2 ** 30, belegtBytes: 300 }] });
@@ -59,6 +62,20 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
     const r2 = await w2.skill.execute({ ...EINRICHTEN, konto: 'AD3033\\svc-sqllnx-backup' }, imChange);
     expect(w2.aufrufe[0]!.parameter).toMatchObject({ konto: 'svc-sqllnx-backup', domaene: 'AD3033' });
     expect(r2.display).toContain('nichts zu tun');
+  });
+  it('Fix-Runde 1 (Sicherheit): nur fs01 als Ziel, konto_tresor nur ad-svc-sqllnx-…, passend zum Konto — Fehler vor jedem Aufruf', async () => {
+    const w = welt({});
+    for (const zf of ['\\\\fs02.ad.3033.at\\SQLLinuxBackup$', '\\\\boese.example.com\\x$', '\\\\10.0.0.5\\SQLLinuxBackup$', '\\\\fs01\\SQLLinuxBackup$']) {
+      const r = await w.skill.execute({ ...EINRICHTEN, ziel_freigabe: zf }, imChange);
+      expect(r.error, zf).toContain('fs01.ad.3033.at');
+      expect(w.skill.pruefeEingabe({ ...EINRICHTEN, ziel_freigabe: zf }), zf).toContain('fs01.ad.3033.at');
+    }
+    for (const kt of ['win-dc01-admin', 'sqllnx-sqllnx01-sa', 'ad-administrator', 'ad-svc-sqllnx-']) {
+      expect((await w.skill.execute({ ...EINRICHTEN, konto_tresor: kt }, imChange)).error, kt).toContain('konto_tresor');
+      expect((await w.skill.execute({ action: 'wiederherstellen_pruefen', zugang: 'sqllnx01', datenbank: 'pruefdb01', konto_tresor: kt }, imChange)).error, kt).toContain('konto_tresor');
+    }
+    expect((await w.skill.execute({ ...EINRICHTEN, konto: 'AD3033\\svc-sqllnx-andere' }, imChange)).error).toContain('ad-svc-sqllnx-andere');
+    expect(w.aufrufe).toEqual([]);
   });
   it('sicherung_einrichten: fehlender Tresor-Eintrag des Dienstkontos → klarer Fehler ohne Fernaufruf', async () => {
     const w = welt({}, { 'sqllnx-sqllnx01-sa': SA });
@@ -121,24 +138,33 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
 describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
   const LISTE = {
     zustand: 'gelesen', host: 'sqllnx01', ziel: '//fs01.ad.3033.at/SQLLinuxBackup$', budgetBytes: 64 * 2 ** 30, belegtBytes: 3 * 2 ** 30,
-    status: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: null }, timer: 'active', zugangsdatei: 'vorhanden (0600)',
-    datenbanken: { pruefdb01: { ketten: [{ full: '20261115003000', diffs: 3, logs: 96, vollstaendig: true, fehler: [] }, { full: '20261116003000', diffs: 1, logs: 40, vollstaendig: true, fehler: [] }], waisen: [], fs01Dateien: 142, fs01Bytes: 2 ** 30, lokalDateien: 142, lokalBytes: 2 ** 30, nochNichtAufFs01: 0, hashAbweichend: 0 } },
-    msdb: { jobs: [] },
+    status: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: null, befunde: [] }, timer: 'active', zugangsdatei: 'vorhanden (0600)',
+    datenbanken: { pruefdb01: { ketten: [{ full: '20261115003000', diffs: 3, logs: 96, vollstaendig: true, fehler: [] }, { full: '20261116003000', diffs: 1, logs: 40, vollstaendig: true, fehler: [] }], waisen: [], fs01Dateien: 142, fs01Bytes: 2 ** 30, fehlend: 0, lokalDateien: 142, lokalBytes: 2 ** 30, ausstehend: 0 } },
   };
   it('sicherungen: fester Wortlaut mit Ziel, Budget, letzter Kopie, Zugangsdatei, Timer, Ketten und Hash-Status', () => {
     const t = linuxSqlSicherungenText('sqllnx01', LISTE as never);
     expect(t).toBe('sqllnx01: Sicherung nach //fs01.ad.3033.at/SQLLinuxBackup$ (belegt 3.0 GiB von 64 GiB); Kopie zuletzt 2026-11-16T12:07:00Z ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; '
-      + 'pruefdb01: 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, noch nicht auf fs01 0, Hash ok');
-    const kaputt = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { zeit: 'x', ok: false, fehler: 'Budget überschritten' }, datenbanken: { pruefdb01: { ...LISTE.datenbanken.pruefdb01, hashAbweichend: 2, ketten: [{ ...LISTE.datenbanken.pruefdb01.ketten[0]!, vollstaendig: false }] } } } as never);
+      + 'pruefdb01: 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, Hash ok, vollständig auf fs01');
+    const kaputt = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { zeit: 'x', ok: false, fehler: 'Budget überschritten' }, datenbanken: { pruefdb01: { ...LISTE.datenbanken.pruefdb01, ketten: [{ ...LISTE.datenbanken.pruefdb01.ketten[0]!, vollstaendig: false }] } } } as never);
     expect(kaputt).toContain('FEHLER: Budget überschritten');
-    expect(kaputt).toContain('Hash ABWEICHEND (2)');
+    expect(kaputt).toContain('Hash unbekannt (letzter Kopierlauf fehlgeschlagen)');
     expect(kaputt).toContain('1 Ketten (0 vollständig)');
+    expect(kaputt).not.toContain('vollständig auf fs01');
+    // Fix-Runde 1 (Medium c): „Hash ok“ nur mit Dateien auf fs01 und ohne Ausstehendes
+    const d0 = LISTE.datenbanken.pruefdb01;
+    const tx = (d: Record<string, unknown>) => linuxSqlSicherungenText('sqllnx01', { ...LISTE, datenbanken: { pruefdb01: { ...d0, ...d } } } as never);
+    expect(tx({ fs01Dateien: 0, ketten: [] })).toContain('Hash unbekannt (nichts auf fs01)');
+    expect(tx({ ausstehend: 3 })).toContain('ausstehend: 3');
+    expect(tx({ ausstehend: 3 })).not.toContain('Hash ok');
+    expect(tx({ fehlend: 1 })).toContain('FEHLT auf fs01: 1');
+    expect(tx({ ketten: [{ ...d0.ketten[0]!, vollstaendig: false }] })).toContain('Hash ok, Ketten unvollständig');
+    expect(linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: null } as never)).toContain('Hash unbekannt (kein Kopierlauf)');
   });
   it('FESTE_AUSGABEN: sicherungen und status (mit Sicherungsteil) passen auf genau eine Vorlage; feste Stücke bestehen die Planprüfung', () => {
     const alsMuster = (v: string) => new RegExp(`^${v.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
     const sv = FESTE_AUSGABEN['linux_sql.sicherungen']!.split(' | ');
     expect(sv.filter(v => alsMuster(v).test(linuxSqlSicherungenText('sqllnx01', LISTE as never)))).toHaveLength(1);
-    for (const e of ['Zugangsdatei vorhanden (0600)', 'Kopie-Timer aktiv', 'Hash ok']) expect(FESTE_AUSGABEN['linux_sql.sicherungen']).toContain(e);
+    for (const e of ['Zugangsdatei vorhanden (0600)', 'Kopie-Timer aktiv', 'vollständig auf fs01']) expect(FESTE_AUSGABEN['linux_sql.sicherungen']).toContain(e);
     const st: LinuxSqlStatus = { zustand: 'gelesen', installiert: false, platz: [], sicherung: { zugangsdatei: 'vorhanden (0600)', timer: 'active', letzteKopie: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: '' } } };
     const text = linuxSqlStatusText('sqllnx01', st);
     expect(text).toBe('sqllnx01: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: Zugangsdatei vorhanden (0600), Kopie-Timer aktiv, letzte Kopie 2026-11-16T12:07:00Z ok');
@@ -181,7 +207,8 @@ describe('I8e Task 4 — Planregeln', () => {
   });
   it('sicherungen als Prüfung: erwartet nur aus dem festen Wortlaut', () => {
     const pr = (erwartet: string) => ({ titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'sicherungen', parameter: { zugang: 'sqllnx01' }, erwartet } });
-    expect(pruefeChangePlan(plan([pr('Hash ok')]), ctx).fehler).toEqual([]);
+    expect(pruefeChangePlan(plan([pr('vollständig auf fs01')]), ctx).fehler).toEqual([]);
+    expect(pruefeChangePlan(plan([pr('Hash ok')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
     expect(pruefeChangePlan(plan([pr('alles bestens gesichert')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
   });
 });

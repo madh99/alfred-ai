@@ -56,6 +56,9 @@ describe('I8e Task 4 — Register, Validatoren, Einschleusung', () => {
       expect(pruefeSicherungEinrichten({ ...EINRICHTEN, cifsVersion: `2:7.0${b}` }), b).toContain('cifsVersion');
     }
     expect(pruefeSicherungEinrichten({ ...EINRICHTEN, server: 'fs01' })).toContain('server');
+    // Fix-Runde 1 (Sicherheit): nur fs01, kein anderer Server; Freigabename ohne führende Sonderzeichen-Regel, höchstens 40 + $
+    for (const fremd of ['fs02.ad.3033.at', 'boese.example.com', 'fs01.ad.3033.at.example.com', 'FS01.ad.3033.at']) expect(pruefeSicherungEinrichten({ ...EINRICHTEN, server: fremd }), fremd).toContain('nur der Dateiserver fs01.ad.3033.at');
+    expect(pruefeSicherungEinrichten({ ...EINRICHTEN, freigabe: 'x'.repeat(41) })).toContain('freigabe');
     for (const g of [0, 0.5, 2000, '64', -1]) expect(pruefeSicherungEinrichten({ ...EINRICHTEN, budgetGiB: g }), String(g)).toContain('budgetGiB');
     expect(() => sicherungEinrichtenSkript({ ...EINRICHTEN, server: 'fs01.ad.3033.at;id' })).toThrow(/server/);
   });
@@ -101,7 +104,7 @@ describe('I8e Task 4 — Skripttext', () => {
     }
   });
   it('Zugangsdatei unter /run (mktemp, 0600) nur per printf geschrieben und im Aufräumen (trap) entfernt', () => {
-    for (const [name, s] of alleSkripte().filter(([n]) => n === 'liste' || n === 'wiederherstellen')) {
+    for (const [name, s] of alleSkripte().filter(([n]) => n === 'wiederherstellen')) {
       expect(s, name).toContain('ZUGANGSDATEI=$(mktemp "$RUN_DIR/alfred-c-XXXXXXXXXXXX")');
       expect(s, name).toMatch(/alfred_aufraeumen\(\) \{[^\n]*rm -f -- "\$ZUGANGSDATEI"/);
     }
@@ -113,6 +116,12 @@ describe('I8e Task 4 — Skripttext', () => {
     expect(e).toContain('t=$(mktemp "$(dirname "$1")/.alfred-neu.XXXXXX")');
     expect(e).toContain('[ "$zd" = "vorhanden (0600)" ]');
     expect(e).not.toMatch(/echo[^\n]*\$KW/);
+    // Fix-Runde 1 (Sicherheit): sicherungen liest weder Tresor-Eingabe noch fs01
+    const l = sicherungenSkript().split('# ALFRED-ABLAUF')[1]!;
+    expect(l).not.toContain('ALFRED_EINGABE');
+    expect(l).not.toContain('feld ');
+    expect(l).not.toContain('mount ');
+    expect(l).not.toContain('SA=');
     expect(KOPIE_SH).toContain('credentials=$CRED');
     expect(KOPIE_SH).toContain("stat -c '%u:%a' \"$CRED\"");
     expect(KOPIE_SH).not.toMatch(/password/i);
@@ -135,6 +144,10 @@ describe('I8e Task 4 — Skripttext', () => {
     expect(SICHERUNG_PROZEDUR).toContain('THROW 50014');
     expect(SICHERUNG_PROZEDUR).toContain('THROW 50015');
     expect(SICHERUNG_PROZEDUR).toContain('sp_getapplock');
+    // Fix-Runde 1: Fertig-Marke erst nach erfolgreichem BACKUP
+    const marke = SICHERUNG_PROZEDUR.indexOf('EXEC master.sys.xp_create_subdir @fertig');
+    expect(marke).toBeGreaterThan(SICHERUNG_PROZEDUR.indexOf("EXEC sp_executesql @sql, N'@d nvarchar(600)'"));
+    expect(SICHERUNG_PROZEDUR).toContain("SET @fertig = @datei + N'.fertig'");
     expect(SICHERUNG_PROZEDUR).toContain("NOT LIKE N'alfred[_]wh[_]%'");
   });
   it('Restore-Skript: RESTORE_VERIFIED steht erst nach CHECKDB ohne Meldung, gleichen Prüfdaten und entfernter Ziel-DB', () => {
@@ -187,10 +200,11 @@ function welt(budgetBytes = 64 * 2 ** 30): Welt {
   writeFileSync(w.konf, JSON.stringify({ fassung: 1, server: 'fs01.ad.3033.at', freigabe: 'SQLLinuxBackup$', konto: 'svc-sqllnx-backup', domaene: 'AD3033', budgetBytes }));
   return w;
 }
-function lokal(w: Welt, db: string, name: string, inhalt: string, alterS = 3600) {
+function lokal(w: Welt, db: string, name: string, inhalt: string, alterS = 3600, fertig = true) {
   mkdirSync(join(w.lokal, db), { recursive: true });
   const p = join(w.lokal, db, name);
   writeFileSync(p, inhalt);
+  if (fertig) mkdirSync(`${p}.fertig`, { recursive: true });
   const t = Date.now() / 1000 - alterS;
   utimesSync(p, t, t);
 }
@@ -271,8 +285,9 @@ describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)
     expect(r.rc).not.toBe(0);
     expect(r.json.fehler).toContain('Budget');
     expect(r.json.geloescht).toEqual([]);
+    expect(r.json.lokalEntfernt).toEqual([]);
     expect(existsSync(join(w.mnt, 'fremd.txt'))).toBe(true);
-    expect(readdirSync(join(w.lokal, 'pruefdb01'))).toHaveLength(3);
+    expect(readdirSync(join(w.lokal, 'pruefdb01')).filter(n => !n.endsWith('.fertig'))).toHaveLength(3);
     rmSync(w.wurzel, { recursive: true, force: true });
   });
   it('Aufbewahrung: alte vollständige Ketten weg (ganz), 7 Tage + 4 Sonntage bleiben, fremde Dateien bleiben', () => {
@@ -291,6 +306,7 @@ describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)
     expect(r1.json.ok, r1.json.fehler).toBe(true);
     const r2 = kopie(w, JETZT);
     expect(r2.json.ok, r2.json.fehler).toBe(true);
+    expect(r2.json.befunde).toEqual([]);
     const bleiben = new Set(Object.keys(manifest(w).dateien).filter(n => n.includes('_FULL_')).map(n => /_FULL_(\d{14})/.exec(n)![1]!));
     // jüngste 8 Ketten (Ende innerhalb von 7 Tagen) + 4 Sonntage davor
     const sonntage = fulls.filter(f => new Date(Date.UTC(+f.slice(0, 4), +f.slice(4, 6) - 1, +f.slice(6, 8))).getUTCDay() === 0);
@@ -320,7 +336,10 @@ describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)
     kopie(w, JETZT);
     const r = kopie(w, JETZT);
     expect(r.json.geloescht).toEqual([]);
-    expect(r.json.hinweise.join(' ')).toContain('unvollständig');
+    // Fix-Runde 1: sichtbar — Befund macht den Lauf nicht ok und steht im Fehlertext
+    expect(r.json.befunde.join(' ')).toContain('unvollständig');
+    expect(r.json.ok).toBe(false);
+    expect(r.json.fehler).toContain('Aufbewahrung ausgesetzt');
     expect(Object.keys(manifest(w).dateien).filter(n => n.includes('_FULL_'))).toHaveLength(21);
     rmSync(w.wurzel, { recursive: true, force: true });
   });
@@ -392,7 +411,114 @@ describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)
     const rest = readdirSync(join(w.lokal, 'pruefdb01'));
     expect(rest.some(n => n.includes(a.full))).toBe(false);
     expect(rest.some(n => n.includes(`FULL_${b.full}`))).toBe(true);
-    expect(rest).toHaveLength(6);
+    expect(rest.filter(n => !n.endsWith('.fertig'))).toHaveLength(6);
+    expect(rest.filter(n => n.endsWith('.fertig'))).toHaveLength(6);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+});
+
+describe.skipIf(!PYTHON)('I8e Task 4 Fix-Runde 1 — Aufbewahrung über Wochen, lokales Aufräumen, Fertig-Marke, Platz', { timeout: 120_000 }, () => {
+  const START = Date.UTC(2026, 10, 2, 0, 0, 0) / 1000; // Montag
+  it('KRITISCH 1: 7 Wochen täglich (FULL 00:30, LOGs 6/12/18 Uhr, DIFF 12:30) — jeden Tag ohne Befund/Hinweis, am Ende 8 + 4 Ketten', () => {
+    const w = welt();
+    // eine Python-Sitzung über alle Tage: Sicherungen wie die Prozedur anlegen, dann ein Kopierlauf mit „jetzt“ = 23:00 des Tages
+    const prog = [
+      'import os, time, json, datetime',
+      `lokal, mnt, konf, st, ca = ${JSON.stringify([w.lokal, w.mnt, w.konf, w.status, w.cache])}`,
+      'db = "pruefdb01"; os.makedirs(os.path.join(lokal, db), exist_ok=True)',
+      "z = lambda t: datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime('%Y%m%d%H%M%S')",
+      'def neu(n):',
+      '    p = os.path.join(lokal, db, n); open(p, "w").write("inhalt " + n); os.makedirs(p + ".fertig"); t = time.time() - 3600; os.utime(p, (t, t))',
+      'vor = None; probleme = []; ketten_am_ende = None',
+      `for tag in range(49):`,
+      `    b = ${START} + tag * 86400`,
+      '    full = z(b + 1800); neu("%s_FULL_%s.bak" % (db, full))',
+      '    for h in (6, 12, 18):',
+      '        t = z(b + h * 3600 + 300); neu("%s_LOG_%s_%s.trn" % (db, t, vor or full)); vor = t',
+      '        if h == 12: neu("%s_DIFF_%s_%s.bak" % (db, z(b + h * 3600 + 1800), full))',
+      '    r = ns["kopie"](lokal, mnt, "sqllnx01", konf, st, ca, jetzt=b + 23 * 3600)',
+      '    s = json.load(open(st))',
+      '    if s["befunde"] or s["hinweise"] or not s["ok"]: probleme.append((tag, s["befunde"][:1], s["hinweise"][:1], s["fehler"]))',
+      'm = json.load(open(os.path.join(mnt, "sqllnx01", "alfred-sqllnx-manifest.json")))',
+      'fulls = sorted(r.split("_FULL_")[1][:14] for r in m["dateien"] if "_FULL_" in r)',
+      'print("ERGEBNIS " + json.dumps({"probleme": probleme[:3], "fulls": fulls, "grenzen": len(m["entfernteKetten"].get(db, []))}))',
+    ].join('\n');
+    const r = py(['geprueft', w.cache, 'x/y'], prog);
+    const zeile = r.aus.split(/\r?\n/).find(x => x.startsWith('ERGEBNIS '));
+    expect(zeile, r.aus + r.err).toBeDefined();
+    const e = JSON.parse(zeile!.slice(9));
+    expect(e.probleme).toEqual([]);
+    // 8 jüngste (Ende innerhalb von 7 Tagen) + 4 Sonntage davor
+    expect(e.fulls).toHaveLength(12);
+    const sonntage = e.fulls.slice(0, 4).map((f: string) => new Date(Date.UTC(+f.slice(0, 4), +f.slice(4, 6) - 1, +f.slice(6, 8))).getUTCDay());
+    expect(sonntage).toEqual([0, 0, 0, 0]);
+    expect(e.grenzen).toBeGreaterThan(0);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('KRITISCH 2 (sim2): FULL auf fs01 verschwunden, Manifest unverändert → lokal nichts entfernt, Befund sichtbar, Lauf nicht ok', () => {
+    const w = welt();
+    const T = 1_793_000_000;
+    const a = kette(w, 'pruefdb01', T - 3 * TAG, 1);
+    const b = kette(w, 'pruefdb01', T - 2 * TAG, 1, a.letzte);
+    const c = kette(w, 'pruefdb01', T - TAG, 1, b.letzte);
+    expect(kopie(w, T).json.ok).toBe(true); // a lokal entfernt (vor der vorletzten FULL, auf fs01 belegt)
+    kette(w, 'pruefdb01', T, 1, c.letzte);
+    rmSync(join(w.mnt, 'sqllnx01', 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`));
+    const r = kopie(w, T + 3600);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.lokalEntfernt).toEqual([]);
+    expect(existsSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`))).toBe(true);
+    expect(r.json.befunde.join(' ')).toContain('fehlt auf fs01');
+    expect(r.json.befunde.join(' ')).toContain('lokal nichts entfernt');
+    expect(JSON.parse(readFileSync(w.status, 'utf8')).fehler).toContain('fehlt auf fs01');
+    expect(r.json.datenbanken.pruefdb01.fehlend).toBe(1);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('lokales Aufräumen läuft auch nach einem Budgetfehler — aber nur für auf fs01 belegte Dateien', () => {
+    const w = welt();
+    const T = 1_793_000_000;
+    const a = kette(w, 'pruefdb01', T - 3 * TAG, 1);
+    const b = kette(w, 'pruefdb01', T - 2 * TAG, 1, a.letzte);
+    expect(kopie(w, T).json.ok).toBe(true);
+    kette(w, 'pruefdb01', T - TAG, 1, b.letzte);
+    // Budget knapp unter dem, was die neue Kette braucht
+    const k = JSON.parse(readFileSync(w.konf, 'utf8'));
+    writeFileSync(w.konf, JSON.stringify({ ...k, budgetBytes: JSON.parse(readFileSync(w.status, 'utf8')).belegtBytes + 5 }));
+    const r = kopie(w, T);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.fehler).toContain('Budget');
+    expect(r.json.lokalEntfernt).toEqual([`pruefdb01/pruefdb01_FULL_${a.full}.bak`, `pruefdb01/${a.logs[0]}`].sort());
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('WICHTIG 3: ohne Fertig-Marke nie kopiert (spätere Dateien der DB warten); nach 6 h ohne Marke ein Befund', () => {
+    const w = welt();
+    const T = 1_793_000_000;
+    lokal(w, 'pruefdb01', `pruefdb01_FULL_${stempel(T - 7200)}.bak`, 'halb fertig', 3600, false);
+    lokal(w, 'pruefdb01', `pruefdb01_LOG_${stempel(T - 3600)}_${stempel(T - 7200)}.trn`, 'log', 3600, true);
+    const r = kopie(w, T);
+    expect(r.json.kopiert).toEqual([]);
+    expect(r.json.hinweise.join(' ')).toContain('wird noch geschrieben');
+    expect(r.json.ok).toBe(true);
+    mkdirSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${stempel(T - 7200)}.bak.fertig`));
+    expect(kopie(w, T).json.kopiert).toHaveLength(2);
+    const w2 = welt();
+    lokal(w2, 'pruefdb01', `pruefdb01_FULL_${stempel(T - 90000)}.bak`, 'abgebrochen', 7 * 3600, false);
+    const r2 = kopie(w2, T);
+    expect(r2.json.ok).toBe(false);
+    expect(r2.json.befunde.join(' ')).toContain('ohne Fertig-Marke');
+    rmSync(w.wurzel, { recursive: true, force: true });
+    rmSync(w2.wurzel, { recursive: true, force: true });
+  });
+  it('WICHTIG 4: hole prüft den freien Platz vor dem Holen (Kette + 1 GiB), sonst nichts geholt', () => {
+    const w = welt();
+    const T = 1_793_000_000;
+    kette(w, 'pruefdb01', T - TAG, 2);
+    kopie(w, T);
+    const ziel = join(w.wurzel, 'wh'); mkdirSync(ziel);
+    const r = py(['hole', w.mnt, 'sqllnx01', 'pruefdb01', ziel], "ns['frei_bytes'] = lambda p: 1000");
+    expect(r.rc).not.toBe(0);
+    expect(r.json.fehler).toContain('zu wenig Platz');
+    expect(readdirSync(ziel)).toEqual([]);
     rmSync(w.wurzel, { recursive: true, force: true });
   });
 });
@@ -416,6 +542,8 @@ const GEMEINSAM = [
   'umount() { echo "umount $*" >>"$T/log"; }',
   'mountpoint() { return 0; }',
   'rechnername() { echo sqllnx01; }',
+  'frei_kb() { echo 999999999; }',
+  'geraet() { echo "$1"; }',
 ];
 
 describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', () => {
@@ -431,7 +559,7 @@ describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', () => {
     expect(r.vorne).not.toContain('Fs01-Geheim');
     expect(r.vorne).not.toContain('Sa-Geheim');
   });
-  function restoreLauf(checkdb: string, pruef: string, mitDiff = true, checkdbExit0 = false) {
+  function restoreLauf(checkdb: string, pruef: string, mitDiff = true, checkdbExit0 = false, extra: string[] = []) {
     const hole = JSON.stringify({ kette: '20261115003000', full: 'pruefdb01_FULL_20261115003000.bak', diff: mitDiff ? 'pruefdb01_DIFF_20261115063000_20261115003000.bak' : null, logs: ['pruefdb01_LOG_20261115064500_20261115060500.trn'] });
     return bashLauf(wiederherstellenSkript({ datenbank: 'pruefdb01', ziel: 'alfred_wh_pruefdb01' }), [
       ...GEMEINSAM,
@@ -440,9 +568,23 @@ describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', () => {
       `kette_py() { if [ "$1" = hole ]; then for n in pruefdb01_FULL_20261115003000.bak pruefdb01_DIFF_20261115063000_20261115003000.bak pruefdb01_LOG_20261115064500_20261115060500.trn; do : >"$5/$n"; done; echo 'ALFRED-DATEI|FULL|pruefdb01_FULL_20261115003000.bak'; ${mitDiff ? "echo 'ALFRED-DATEI|DIFF|pruefdb01_DIFF_20261115063000_20261115003000.bak';" : ''} echo 'ALFRED-DATEI|LOG|pruefdb01_LOG_20261115064500_20261115060500.trn'; echo ${shQ(`ALFRED-HOLE ${hole}`)}; fi; }`,
       'mktemp() { if [ "${1:-}" = -d ]; then local d; d="$T/wh.$RANDOM"; command mkdir -p "$d"; echo "$d"; else command mktemp "$@"; fi; }',
       `sql() { echo "$1" >>"$T/log"; case "$1" in *"DB_ID(N'alfred_wh_pruefdb01') IS NULL THEN"*) if grep -q 'DROP DATABASE' "$T/log"; then echo 'ALFRED|frei'; else echo 'ALFRED|frei'; fi ;; *DBCC*) printf '%s' ${shQ(checkdb)}; ${checkdbExit0 ? ':' : `[ -z ${shQ(checkdb)} ]`} ;; *alfred_pruefung*) echo ${shQ(pruef)} ;; *) : ;; esac; }`,
-      `sqls() { echo "$1" >>"$T/log"; case "$1" in *FILELISTONLY*) echo 'pruefdb01|/var/opt/mssql/data/pruefdb01.mdf|D|PRIMARY'; echo 'pruefdb01_log|/var/opt/mssql/log/pruefdb01_log.ldf|L|NULL' ;; *HEADERONLY*) case "$1" in *FULL*) t=1 ;; *DIFF*) t=5 ;; *) t=2 ;; esac; echo "alfred|Alfred I8e|$t|NULL|1|1|2|sa|SQLLNX01|pruefdb01" ;; esac; }`,
+      `sqls() { echo "$1" >>"$T/log"; case "$1" in *FILELISTONLY*) echo 'pruefdb01|/var/opt/mssql/data/pruefdb01.mdf|D|PRIMARY|8388608|35184372080640|1|0|0'; echo 'pruefdb01_log|/var/opt/mssql/log/pruefdb01_log.ldf|L|NULL|8388608|2199023255552|2|0|0' ;; *HEADERONLY*) case "$1" in *FULL*) t=1 ;; *DIFF*) t=5 ;; *) t=2 ;; esac; echo "alfred|Alfred I8e|$t|NULL|1|1|2|sa|SQLLNX01|pruefdb01" ;; esac; }`,
+      ...extra,
     ]);
   }
+  it('WICHTIG 4: zu wenig Platz auf der Daten- oder Logplatte → Abbruch vor dem ersten RESTORE, nichts angelegt', () => {
+    for (const frei of ["frei_kb() { case \"$1\" in *data) echo 8000 ;; *) echo 999999999 ;; esac; }", "frei_kb() { case \"$1\" in *log) echo 8000 ;; *) echo 999999999 ;; esac; }"]) {
+      const r = restoreLauf('', `ALFRED|${PRUEFDATEN_ZEILEN}|${PRUEFDATEN_SHA256}`, true, false, [frei]);
+      expect(r.rc, r.vorne).toBe(1);
+      expect(String(r.e?.fehler)).toContain('zu wenig Platz');
+      expect(r.log).not.toContain('RESTORE DATABASE');
+      expect(r.log).not.toContain('DROP DATABASE');
+      expect(r.run).toBe('');
+    }
+    // Daten und Log auf derselben Platte: Summe zählt
+    const gemeinsam = restoreLauf('', `ALFRED|${PRUEFDATEN_ZEILEN}|${PRUEFDATEN_SHA256}`, true, false, ['geraet() { echo 1; }', 'frei_kb() { echo 532000; }']);
+    expect(String(gemeinsam.e?.fehler)).toContain('zu wenig Platz');
+  });
   it('wiederherstellen: CHECKDB still, Prüfdaten gleich → RESTORE_VERIFIED, Reihenfolge NORECOVERY…RECOVERY, Ziel-DB entfernt', () => {
     const r = restoreLauf('', `ALFRED|${PRUEFDATEN_ZEILEN}|${PRUEFDATEN_SHA256}`);
     expect(r.rc, r.vorne + r.err).toBe(0);

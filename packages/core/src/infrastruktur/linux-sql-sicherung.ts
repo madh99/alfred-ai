@@ -42,14 +42,15 @@ export const KETTE_PY_PFAD = '/usr/local/lib/alfred/sqllnx_kette.py';
 export const KOPIE_SH_PFAD = '/usr/local/lib/alfred/sqllnx-kopie.sh';
 export const KOPIE_DIENST = 'alfred-sqllnx-kopie';
 const SICHERUNG_WURZEL = '/var/opt/mssql/backup';
+/** Fix-Runde 1 (Sicherheit): Ziel der Sicherungskopie ist ausschließlich der Dateiserver fs01 (kein frei wählbarer Server) */
+export const FS01_FQDN = 'fs01.ad.3033.at';
 const JOB_BESCHREIBUNG = 'Alfred I8e';
 
 // ── Validatoren ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const obj = (p: unknown): Record<string, unknown> => (p && typeof p === 'object' && !Array.isArray(p) ? p as Record<string, unknown> : {});
 const pruefe = (f: string | undefined) => { if (f) throw new Error(f); };
-const SERVER = /^(?=.{3,120}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/;
-const FREIGABE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}\$?$/;
+const FREIGABE = /^[A-Za-z0-9_-]{1,40}\$?$/;
 const KONTO = /^[A-Za-z][A-Za-z0-9-]{2,19}$/;
 const DOMAENE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$/;
 const CIFS_V = /^\d{1,2}:[0-9A-Za-z.+~]{1,20}-[0-9A-Za-z.+~]{1,30}$/;
@@ -64,7 +65,7 @@ export interface WiederherstellenParameter { datenbank: string; ziel: string }
 
 export function pruefeSicherungEinrichten(p: unknown): string | undefined {
   const x = obj(p);
-  if (typeof x.server !== 'string' || !SERVER.test(x.server)) return 'server: vollständiger DNS-Name in Kleinbuchstaben, z. B. fs01.ad.3033.at';
+  if (x.server !== FS01_FQDN) return `server: nur der Dateiserver ${FS01_FQDN}`;
   if (typeof x.freigabe !== 'string' || !FREIGABE.test(x.freigabe)) return 'freigabe: Freigabename (Buchstaben, Ziffern, _ -, optional $), z. B. SQLLinuxBackup$';
   if (typeof x.konto !== 'string' || !KONTO.test(x.konto)) return 'konto: sAMAccountName des Dienstkontos, z. B. svc-sqllnx-backup';
   if (typeof x.domaene !== 'string' || !DOMAENE.test(x.domaene)) return 'domaene: NetBIOS- oder DNS-Name der Domäne, z. B. AD3033';
@@ -104,7 +105,7 @@ BEGIN
   DECLARE @wurzel nvarchar(100) = N'${SICHERUNG_WURZEL}/';
   DECLARE @n sysname, @dbid int, @guid uniqueidentifier, @modell nvarchar(60), @zeit nchar(14), @ordner nvarchar(400), @datei nvarchar(600),
           @bezug nchar(14), @dev nvarchar(600), @pre nvarchar(600), @f numeric(25,0), @dbl numeric(25,0), @lf numeric(25,0), @sql nvarchar(max),
-          @sperre nvarchar(200), @rc int, @fehler nvarchar(max) = N'', @msg nvarchar(2048), @grund nvarchar(400);
+          @sperre nvarchar(200), @fertig nvarchar(620), @rc int, @fehler nvarchar(max) = N'', @msg nvarchar(2048), @grund nvarchar(400);
   DECLARE @r TABLE (zeile nvarchar(800));
   DECLARE d CURSOR LOCAL FAST_FORWARD FOR
     SELECT name FROM sys.databases
@@ -174,6 +175,9 @@ BEGIN
             WHEN N'DIFF' THEN N'BACKUP DATABASE ' + QUOTENAME(@n) + N' TO DISK = @d WITH DIFFERENTIAL, CHECKSUM, COMPRESSION, NAME = N''alfred'', DESCRIPTION = N''${JOB_BESCHREIBUNG}'''
             ELSE N'BACKUP LOG ' + QUOTENAME(@n) + N' TO DISK = @d WITH CHECKSUM, COMPRESSION, NAME = N''alfred'', DESCRIPTION = N''${JOB_BESCHREIBUNG}''' END;
           EXEC sp_executesql @sql, N'@d nvarchar(600)', @d = @datei;
+          -- Fertig-Marke (T-SQL schreibt unter Linux keine Dateien; xp_create_subdir legt einen Ordner an): die Kopie nimmt nur markierte Dateien
+          SET @fertig = @datei + N'.fertig';
+          EXEC master.sys.xp_create_subdir @fertig;
           INSERT @r VALUES (N'ALFRED|' + @datei);
         END
       END TRY
@@ -264,8 +268,8 @@ import datetime, hashlib, json, os, re, sys, time
 DATEI = re.compile(r'^(FULL|DIFF|LOG)_(\d{14})(?:_(\d{14}))?\.(bak|trn)$')
 DB = re.compile(r'^[A-Za-z][A-Za-z0-9_]{2,63}$')
 HOST = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')
-SERVER = re.compile(r'^(?=.{3,120}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$')
-FREIGABE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,39}\$?$')
+FS01 = '${FS01_FQDN}'
+FREIGABE = re.compile(r'^[A-Za-z0-9_-]{1,40}\$?$')
 KONTO = re.compile(r'^[A-Za-z][A-Za-z0-9-]{2,19}$')
 DOMAENE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$')
 MANIFEST = 'alfred-sqllnx-manifest.json'
@@ -342,7 +346,9 @@ def konf_lesen(pfad):
     k = lies_json(pfad, None)
     if not isinstance(k, dict):
         raise Fehler('Konfiguration %s fehlt oder ist beschädigt' % pfad)
-    for feld, muster in (('server', SERVER), ('freigabe', FREIGABE), ('konto', KONTO), ('domaene', DOMAENE)):
+    if k.get('server') != FS01:
+        raise Fehler('Konfiguration %s: server muss %s sein' % (pfad, FS01))
+    for feld, muster in (('freigabe', FREIGABE), ('konto', KONTO), ('domaene', DOMAENE)):
         if not isinstance(k.get(feld), str) or not muster.match(k[feld]):
             raise Fehler('Konfiguration %s: Feld %s ungültig' % (pfad, feld))
     b = k.get('budgetBytes')
@@ -360,8 +366,10 @@ def konf_feld(pfad, feld):
     raise Fehler('unbekanntes Feld %s' % feld)
 
 
-def ketten(dateien):
-    """dateien {name: info} einer Datenbank -> (ketten, waisen). Kette = Vollsicherung + DIFF/LOG bis zur nächsten Vollsicherung."""
+def ketten(dateien, entfernt=None):
+    """dateien {name: info} einer Datenbank -> (ketten, waisen). Kette = Vollsicherung + DIFF/LOG bis zur nächsten Vollsicherung.
+    entfernt: Grenzen gelöschter Ketten [{full, ersterBezug, letztes}] - der Übergang über eine gelöschte Kette hinweg bleibt prüfbar."""
+    entfernt = sorted(entfernt or [], key=lambda e: e['full'])
     voll = sorted((i['zeit'], n) for n, i in dateien.items() if i['art'] == 'FULL')
     ks = [{'full': n, 'zeit': z, 'diffs': [], 'logs': [], 'fehler': []} for z, n in voll]
     waisen = []
@@ -390,10 +398,18 @@ def ketten(dateien):
             elif b != dateien[vor]['zeit']:
                 k['fehler'].append('%s: Lücke, Vorgänger %s fehlt' % (n, b))
             vor = n
-        if vor is not None and idx + 1 < len(ks) and ks[idx + 1]['logs']:
-            b = dateien[ks[idx + 1]['logs'][0]]['bezug']
-            if b != dateien[vor]['zeit']:
-                k['fehler'].append('Ende: Protokollsicherung %s fehlt' % b)
+        if idx + 1 < len(ks) and ks[idx + 1]['logs']:
+            soll = dateien[ks[idx + 1]['logs'][0]]['bezug']
+            kand = dateien[vor]['zeit'] if vor is not None else None
+            # Übergang über dazwischen gelöschte Ketten (deren Kontinuität beim Löschen geprüft war)
+            for e in entfernt:
+                if not (k['zeit'] < e['full'] < ks[idx + 1]['zeit']) or not e.get('letztes'):
+                    continue
+                if kand is not None and e.get('ersterBezug') != kand:
+                    k['fehler'].append('Übergang zur gelöschten Kette %s: Protokollsicherung %s fehlt' % (e['full'], e.get('ersterBezug')))
+                kand = e['letztes']
+            if kand is not None and soll != kand:
+                k['fehler'].append('Ende: Protokollsicherung %s fehlt' % soll)
     return ks, waisen
 
 
@@ -410,7 +426,7 @@ def satz(k, dateien):
 
 
 def aufbewahrung(ks, waisen, jetzt):
-    """-> (zu löschende Ketten, Grund für das Aussetzen). Nur ganze vollstaendige Ketten, nie die neueste, nichts bei Lücken."""
+    """-> (zu löschende Ketten, Grund für das Aussetzen). Nur ganze vollständige Ketten, nie die neueste, nichts bei Lücken."""
     if waisen:
         return [], 'Dateien ohne Vollsicherung (%s) - Aufbewahrung ausgesetzt, nichts gelöscht' % ', '.join(waisen[:3])
     for k in ks:
@@ -428,15 +444,29 @@ def aufbewahrung(ks, waisen, jetzt):
     return [k for k in ks if k['zeit'] not in behalten], None
 
 
+def grenze(k, dateien):
+    """Grenze einer (vollständigen) Kette für das Manifest, bevor sie gelöscht wird"""
+    return {'full': k['zeit'], 'ersterBezug': dateien[k['logs'][0]]['bezug'] if k['logs'] else None,
+            'letztes': dateien[k['logs'][-1]]['zeit'] if k['logs'] else None}
+
+
 def manifest_lesen(ziel, host):
     m = lies_json(os.path.join(ziel, MANIFEST), None)
     if m is None:
         return None
-    if not isinstance(m, dict) or m.get('host') != host or not isinstance(m.get('dateien'), dict) or not isinstance(m.get('entfernen', []), list):
+    if not isinstance(m, dict) or m.get('host') != host or not isinstance(m.get('dateien'), dict) or not isinstance(m.get('entfernen', []), list) \
+            or not isinstance(m.get('entfernteKetten', {}), dict):
         raise Fehler('Manifest %s/%s gehört nicht zu %s oder ist beschädigt - nichts geändert' % (host, MANIFEST, host))
     for rel in list(m['dateien']) + list(m.get('entfernen', [])):
         if not rel_ok(rel):
             raise Fehler('Manifest enthält den ungültigen Eintrag %r - nichts geändert' % str(rel)[:80])
+    for db, liste_ in m.get('entfernteKetten', {}).items():
+        if not DB.match(db) or not isinstance(liste_, list) or not all(
+                isinstance(e, dict) and isinstance(e.get('full'), str) and zeit_ok(e['full'])
+                and all(e.get(x) is None or (isinstance(e.get(x), str) and zeit_ok(e[x])) for x in ('ersterBezug', 'letztes')) for e in liste_):
+            raise Fehler('Manifest: Grenzen gelöschter Ketten von %r beschädigt - nichts geändert' % str(db)[:40])
+    m.setdefault('entfernteKetten', {})
+    m.setdefault('entfernen', [])
     return m
 
 
@@ -452,11 +482,14 @@ def je_db(man):
 
 
 def vorhanden_pruefen(ziel, db, dd, ks):
+    fehlend = 0
     for k in ks:
         for n in [k['full']] + k['diffs'] + k['logs']:
             fp = os.path.join(ziel, db, n)
             if not os.path.isfile(fp) or os.path.getsize(fp) != dd[n]['bytes']:
                 k['fehler'].append('%s fehlt auf fs01 oder Größe weicht ab' % n)
+                fehlend += 1
+    return fehlend
 
 
 def belegung(pfad):
@@ -468,6 +501,14 @@ def belegung(pfad):
             except OSError:
                 pass
     return s
+
+
+def frei_bytes(pfad):
+    st = os.statvfs(pfad) if hasattr(os, 'statvfs') else None
+    if st is None:
+        import shutil
+        return shutil.disk_usage(pfad).free
+    return st.f_bavail * st.f_frsize
 
 
 def offen():
@@ -531,7 +572,12 @@ def kopiere(src, ziel, db, n):
             os.remove(tmp)
 
 
-def entferne(ziel, mpfad, man, rels, erg):
+def entferne(ziel, mpfad, man, rels, erg, grenzen=None):
+    """Absicht (Dateien + Grenzen der Ketten) zuerst ins Manifest, dann löschen, dann Absicht austragen"""
+    for db, g in grenzen or []:
+        bekannt = man['entfernteKetten'].setdefault(db, [])
+        if not any(e['full'] == g['full'] for e in bekannt):
+            bekannt.append(g)
     man['entfernen'] = rels
     schreibe_json(mpfad, man)
     for rel in rels:
@@ -545,8 +591,30 @@ def entferne(ziel, mpfad, man, rels, erg):
     schreibe_json(mpfad, man)
 
 
+def grenzen_kuerzen(man):
+    """Grenzen vor der ältesten vorhandenen Vollsicherung einer Datenbank braucht keine Prüfung mehr"""
+    for db, liste_ in list(man['entfernteKetten'].items()):
+        fulls = [zerlege(*rel.split('/'))['zeit'] for rel in man['dateien'] if rel.split('/')[0] == db and '_FULL_' in rel]
+        erste = min(fulls) if fulls else None
+        rest = [e for e in liste_ if erste is not None and e['full'] > erste]
+        if rest:
+            man['entfernteKetten'][db] = sorted(rest, key=lambda e: e['full'])
+        else:
+            man['entfernteKetten'].pop(db)
+
+
+def zustand_fs01(ziel, man):
+    """Ketten und Vorhandensein je Datenbank nach dem Lauf (für Bericht und lokales Aufräumen)"""
+    erg = {}
+    for db, dd in sorted(je_db(man).items()):
+        ks, waisen = ketten(dd, man['entfernteKetten'].get(db))
+        fehlend = vorhanden_pruefen(ziel, db, dd, ks)
+        erg[db] = {'dd': dd, 'ks': ks, 'waisen': waisen, 'fehlend': fehlend}
+    return erg
+
+
 def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
-    erg = {'zeit': iso(time.time()), 'ok': False, 'kopiert': [], 'geloescht': [], 'lokalEntfernt': [], 'hinweise': [], 'fehler': None}
+    erg = {'zeit': iso(time.time()), 'ok': False, 'kopiert': [], 'geloescht': [], 'lokalEntfernt': [], 'hinweise': [], 'befunde': [], 'fehler': None, 'datenbanken': {}}
     cache = lies_json(cache_pfad, {})
     try:
         if not HOST.match(host):
@@ -558,62 +626,103 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
         mpfad = os.path.join(ziel, MANIFEST)
         man = manifest_lesen(ziel, host)
         if man is None:
-            man = {'fassung': 1, 'host': host, 'dateien': {}, 'entfernen': []}
+            man = {'fassung': 1, 'host': host, 'dateien': {}, 'entfernen': [], 'entfernteKetten': {}}
             schreibe_json(mpfad, man)
         # 1) angefangenes Entfernen abschließen (Absicht steht vorher im Manifest)
-        if man.get('entfernen'):
+        if man['entfernen']:
             entferne(ziel, mpfad, man, list(man['entfernen']), erg)
-        # 2) Aufbewahrung auf fs01 - nur Dateien aus dem Manifest, nur ganze vollstaendige Ketten
+        # 2) Aufbewahrung auf fs01 - nur Dateien aus dem Manifest, nur ganze vollständige Ketten
+        ausgesetzt = set()
         for db, dd in sorted(je_db(man).items()):
-            ks, waisen = ketten(dd)
+            ks, waisen = ketten(dd, man['entfernteKetten'].get(db))
             vorhanden_pruefen(ziel, db, dd, ks)
             weg, grund = aufbewahrung(ks, waisen, jetzt)
             if grund:
-                erg['hinweise'].append('%s: %s' % (db, grund))
+                erg['befunde'].append('%s: %s' % (db, grund))
+                ausgesetzt.add(db)
             if weg:
-                entferne(ziel, mpfad, man, [db + '/' + n for k in weg for n in k['logs'] + k['diffs'] + [k['full']]], erg)
-        # 3) kopieren, älteste zuerst; Budget vor jeder Datei
-        belegt = belegung(mnt)
-        off = offen()
+                entferne(ziel, mpfad, man, [db + '/' + n for k in weg for n in k['logs'] + k['diffs'] + [k['full']]], erg,
+                         [(db, grenze(k, dd)) for k in weg])
+        grenzen_kuerzen(man)
+        schreibe_json(mpfad, man)
+        # 3) kopieren, je Datenbank älteste zuerst; nur fertige Dateien (Fertig-Marke der Prozedur + Schreibruhe); Budget vor jeder Datei
         lok = lokale(lokal)
-        for _, db, n in sorted((i['zeit'], db, n) for db, dd in lok.items() for n, i in dd.items()):
-            rel = db + '/' + n
-            src = os.path.join(lokal, db, n)
-            st = os.stat(src)
-            if src in off or time.time() - st.st_mtime < SCHREIBRUHE:
-                erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
-                continue
-            c = cache.get(rel)
-            frisch = isinstance(c, dict) and c.get('bytes') == st.st_size and c.get('mtime_ns') == st.st_mtime_ns and c.get('sha256')
-            if rel in man['dateien']:
-                if not frisch:
-                    c = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': sha(src)}
-                if c['sha256'] != man['dateien'][rel]['sha256']:
-                    raise Fehler('%s: lokale Datei weicht von der geprüften Kopie auf fs01 ab - nichts überschrieben' % rel)
-                c['fs01'] = True
-                cache[rel] = c
-                continue
-            if belegt + st.st_size > budget:
-                raise Fehler('Budget überschritten: belegt %d + %s (%d Bytes) > %d Bytes - nichts gelöscht, Kopie angehalten (Befund)' % (belegt, rel, st.st_size, budget))
-            h = kopiere(src, ziel, db, n)
-            man['dateien'][rel] = {'sha256': h, 'bytes': st.st_size, 'kopiert': iso(time.time())}
-            schreibe_json(mpfad, man)
-            cache[rel] = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': h, 'fs01': True}
-            belegt += st.st_size
-            erg['kopiert'].append(rel)
-        # 4) lokal: nur auf fs01 geprüfte Dateien vor der vorletzten Vollsicherung entfernen
+        try:
+            belegt = belegung(mnt)
+            off = offen()
+            for db in sorted(lok):
+                for n in sorted(lok[db], key=lambda x: (lok[db][x]['zeit'], x)):
+                    rel = db + '/' + n
+                    src = os.path.join(lokal, db, n)
+                    st = os.stat(src)
+                    if not os.path.isdir(src + '.fertig'):
+                        if time.time() - st.st_mtime > 6 * 3600:
+                            erg['befunde'].append('%s: seit über 6 h ohne Fertig-Marke (abgebrochene Sicherung?) - spätere Dateien dieser Datenbank warten' % rel)
+                        else:
+                            erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
+                        break
+                    if src in off or time.time() - st.st_mtime < SCHREIBRUHE:
+                        erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
+                        break
+                    c = cache.get(rel)
+                    frisch = isinstance(c, dict) and c.get('bytes') == st.st_size and c.get('mtime_ns') == st.st_mtime_ns and c.get('sha256')
+                    if rel in man['dateien']:
+                        if not frisch:
+                            c = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': sha(src)}
+                        if c['sha256'] != man['dateien'][rel]['sha256']:
+                            raise Fehler('%s: lokale Datei weicht von der geprüften Kopie auf fs01 ab - nichts überschrieben' % rel)
+                        c['fs01'] = True
+                        cache[rel] = c
+                        continue
+                    if belegt + st.st_size > budget:
+                        raise Fehler('Budget überschritten: belegt %d + %s (%d Bytes) > %d Bytes - nichts gelöscht, Kopie angehalten (Befund)' % (belegt, rel, st.st_size, budget))
+                    h = kopiere(src, ziel, db, n)
+                    man['dateien'][rel] = {'sha256': h, 'bytes': st.st_size, 'kopiert': iso(time.time())}
+                    schreibe_json(mpfad, man)
+                    cache[rel] = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': h, 'fs01': True}
+                    belegt += st.st_size
+                    erg['kopiert'].append(rel)
+        except Fehler as e:
+            erg['fehler'] = str(e)
+        # 4) Zustand auf fs01 nach dem Lauf: Ketten, fehlende Dateien → Bericht; Grundlage fürs lokale Aufräumen
+        z = zustand_fs01(ziel, man)
+        for db, x in z.items():
+            mangel = [f for k in x['ks'] for f in k['fehler']]
+            if (mangel or x['waisen']) and db not in ausgesetzt:
+                erg['befunde'].append('%s: %s' % (db, '; '.join((mangel + ['ohne Vollsicherung: ' + w for w in x['waisen']])[:3])))
+            erg['datenbanken'][db] = {
+                'ketten': [{'full': k['zeit'], 'diffs': len(k['diffs']), 'logs': len(k['logs']), 'vollstaendig': not k['fehler'], 'fehler': k['fehler'][:3]} for k in x['ks']],
+                'waisen': x['waisen'][:5], 'fs01Dateien': len(x['dd']), 'fs01Bytes': sum(i['bytes'] or 0 for i in x['dd'].values()), 'fehlend': x['fehlend']}
+        # 5) lokal aufräumen (auch nach einem Kopier- oder Budgetfehler) - nur Dateien vor der vorletzten lokalen Vollsicherung, deren
+        #    Kopie auf fs01 mit Manifest-Größe vorhanden ist, deren Kette auf fs01 vollständig ist, mit gleichem SHA-256, und nur ohne
+        #    Befund für diese Datenbank
         for db, dd in lok.items():
             vz = sorted(i['zeit'] for i in dd.values() if i['art'] == 'FULL')
             if len(vz) < 2:
                 continue
-            for n, i in sorted(dd.items()):
+            kandidaten = [n for n, i in sorted(dd.items()) if i['zeit'] < vz[-2]]
+            if not kandidaten:
+                continue
+            x = z.get(db)
+            if db in ausgesetzt or x is None or x['waisen'] or any(k['fehler'] for k in x['ks']):
+                erg['befunde'].append('%s: lokal nichts entfernt (%d Dateien) - Ketten auf fs01 nicht vollständig belegt' % (db, len(kandidaten)))
+                continue
+            vollstaendig = {n for k in x['ks'] for n in [k['full']] + k['diffs'] + k['logs']}
+            for n in kandidaten:
                 rel = db + '/' + n
                 c = cache.get(rel) or {}
-                if i['zeit'] < vz[-2] and c.get('fs01') and rel in man['dateien'] and c.get('sha256') == man['dateien'][rel]['sha256']:
+                m = man['dateien'].get(rel)
+                fp = os.path.join(ziel, db, n)
+                if m and n in vollstaendig and c.get('fs01') and c.get('sha256') == m['sha256'] and os.path.isfile(fp) and os.path.getsize(fp) == m['bytes']:
                     os.remove(os.path.join(lokal, db, n))
+                    marke = os.path.join(lokal, db, n + '.fertig')
+                    if os.path.isdir(marke):
+                        os.rmdir(marke)
                     cache.pop(rel, None)
                     erg['lokalEntfernt'].append(rel)
-        erg['ok'] = True
+        if erg['befunde'] and not erg['fehler']:
+            erg['fehler'] = '; '.join(erg['befunde'])[:500]
+        erg['ok'] = not erg['fehler']
     except (Fehler, OSError, ValueError, KeyError, TypeError) as e:
         erg['fehler'] = str(e)
     finally:
@@ -640,7 +749,7 @@ def hole(mnt, host, db, ziel_dir):
         fp = os.path.join(ziel, db, n)
         if not os.path.isfile(fp) or os.path.getsize(fp) != i['bytes']:
             raise Fehler('%s/%s: auf fs01 fehlt die Datei oder ihre Größe weicht vom Manifest ab' % (db, n))
-    ks, _ = ketten(dd)
+    ks, _ = ketten(dd, man['entfernteKetten'].get(db))
     s = None
     for k in reversed(ks):
         s = satz(k, dd)
@@ -650,6 +759,10 @@ def hole(mnt, host, db, ziel_dir):
         gruende = '; '.join(f for k in ks for f in k['fehler'])[:300] or 'keine Vollsicherung oder kein LOG nach der letzten Sicherung'
         raise Fehler('keine vollständige Kette mit Protokollsicherung für %s auf fs01 (%s)' % (db, gruende))
     namen = [('FULL', s['full'])] + ([('DIFF', s['diff'])] if s['diff'] else []) + [('LOG', n) for n in s['logs']]
+    noetig = sum(dd[n]['bytes'] for _, n in namen)
+    frei = frei_bytes(ziel_dir)
+    if frei < noetig + (1 << 30):
+        raise Fehler('zu wenig Platz für die Kette in %s: %d Bytes frei, nötig %d + 1 GiB Reserve - nichts geholt' % (ziel_dir, frei, noetig))
     for art, n in namen:
         q = os.path.join(ziel, db, n)
         z = os.path.join(ziel_dir, n)
@@ -667,32 +780,25 @@ def hole(mnt, host, db, ziel_dir):
     return 0
 
 
-def liste(lokal, mnt, host, cache_pfad, status_pfad, konf_pfad):
-    erg = {'zustand': 'gelesen', 'host': host, 'status': lies_json(status_pfad, None)}
+def liste(lokal, host, cache_pfad, status_pfad, konf_pfad):
+    """Lesend ohne fs01-Zugang: lokale Dateien, ausstehende Kopien und der Bericht des letzten Kopierlaufs (Manifest, Vorhandensein)"""
+    st = lies_json(status_pfad, None)
+    erg = {'zustand': 'gelesen', 'host': host, 'status': None}
     k = konf_lesen(konf_pfad)
     erg['ziel'] = '//%s/%s' % (k['server'], k['freigabe'])
     erg['budgetBytes'] = k['budgetBytes']
-    erg['belegtBytes'] = belegung(mnt)
+    if isinstance(st, dict):
+        erg['status'] = {'zeit': st.get('zeit'), 'ok': bool(st.get('ok')), 'fehler': st.get('fehler'), 'befunde': (st.get('befunde') or [])[:5]}
+        erg['belegtBytes'] = st.get('belegtBytes')
     cache = lies_json(cache_pfad, {})
-    ziel = os.path.join(mnt, host)
-    man = manifest_lesen(ziel, host) or {'dateien': {}}
     dbs = {}
-    for db, dd in sorted(je_db(man).items()):
-        ks, waisen = ketten(dd)
-        vorhanden_pruefen(ziel, db, dd, ks)
-        dbs[db] = {'ketten': [{'full': x['zeit'], 'diffs': len(x['diffs']), 'logs': len(x['logs']), 'vollstaendig': not x['fehler'], 'fehler': x['fehler'][:3]} for x in ks],
-                   'waisen': waisen[:5], 'fs01Dateien': len(dd), 'fs01Bytes': sum(i['bytes'] or 0 for i in dd.values())}
+    if isinstance(st, dict):
+        for db, d in (st.get('datenbanken') or {}).items():
+            dbs[db] = dict(d)
     for db, dd in lokale(lokal).items():
-        d = dbs.setdefault(db, {'ketten': [], 'waisen': [], 'fs01Dateien': 0, 'fs01Bytes': 0})
-        offen_ = abweichend = 0
-        for n in dd:
-            rel = db + '/' + n
-            c = cache.get(rel) or {}
-            if rel not in man['dateien']:
-                offen_ += 1
-            elif c.get('sha256') and c['sha256'] != man['dateien'][rel]['sha256']:
-                abweichend += 1
-        d.update(lokalDateien=len(dd), lokalBytes=sum(os.path.getsize(os.path.join(lokal, db, n)) for n in dd), nochNichtAufFs01=offen_, hashAbweichend=abweichend)
+        d = dbs.setdefault(db, {'ketten': [], 'waisen': [], 'fs01Dateien': 0, 'fs01Bytes': 0, 'fehlend': 0})
+        ausstehend = sum(1 for n in dd if not (cache.get(db + '/' + n) or {}).get('fs01'))
+        d.update(lokalDateien=len(dd), lokalBytes=sum(os.path.getsize(os.path.join(lokal, db, n)) for n in dd), ausstehend=ausstehend)
     erg['datenbanken'] = dbs
     print('ALFRED-LISTE ' + json.dumps(erg, ensure_ascii=True))
     return 0
@@ -705,7 +811,7 @@ def geprueft(cache_pfad, rel):
 
 
 def status_fehler(status_pfad, text):
-    schreibe_json(status_pfad, {'zeit': iso(time.time()), 'ok': False, 'fehler': text[:500], 'kopiert': [], 'geloescht': [], 'hinweise': []})
+    schreibe_json(status_pfad, {'zeit': iso(time.time()), 'ok': False, 'fehler': text[:500], 'kopiert': [], 'geloescht': [], 'hinweise': [], 'befunde': [text[:500]]})
     return 0
 
 
@@ -720,7 +826,7 @@ def main(argv):
             return kopie(*a, jetzt=jetzt)
         if m == 'hole' and len(a) == 4:
             return hole(*a)
-        if m == 'liste' and len(a) == 6:
+        if m == 'liste' and len(a) == 5:
             return liste(*a)
         if m == 'geprueft' and len(a) == 2:
             return geprueft(*a)
@@ -965,69 +1071,40 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
 
 // ── sicherungen (lesend) ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const MSDB_TSQL = [
-  'SET NOCOUNT ON;',
-  'SELECT (SELECT j.name, CAST(j.enabled AS int) AS aktiv,',
-  '   (SELECT TOP (1) h.run_status AS ergebnis, h.run_date AS datum, h.run_time AS zeit FROM msdb.dbo.sysjobhistory h WHERE h.job_id = j.job_id AND h.step_id = 0 ORDER BY h.instance_id DESC FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) AS letzterLauf',
-  "  FROM msdb.dbo.sysjobs j WHERE j.name LIKE N'alfred-sqllnx-%' ORDER BY j.name FOR JSON PATH) AS jobs,",
-  ' (SELECT b.database_name AS datenbank, b.type AS art, MAX(b.backup_finish_date) AS zuletzt, COUNT(*) AS anzahl',
-  '  FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = b.media_set_id',
-  `  WHERE mf.physical_device_name LIKE N'${SICHERUNG_WURZEL}/%' GROUP BY b.database_name, b.type ORDER BY b.database_name, b.type FOR JSON PATH) AS historie`,
-  'FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES;',
-].join('\n');
-
-/** python3: msdb-Historie und Agent-Jobs; stdin = Eingabe-JSON (sa) */
-const PY_MSDB = [
-  'import json, os, subprocess, sys',
-  `TSQL = ${JSON.stringify(MSDB_TSQL)}`,
-  'try:',
-  '    sa = json.loads(sys.stdin.read() or "{}").get("sa")',
-  'except Exception:',
-  '    sa = None',
-  'if not isinstance(sa, str) or not sa:',
-  '    print(json.dumps({"fehler": "ohne sa-Kennwort keine msdb-Sicht"}))',
-  '    sys.exit(0)',
-  'try:',
-  '    p = subprocess.run(["/opt/mssql-tools18/bin/sqlcmd", "-C", "-b", "-x", "-S", "localhost", "-U", "sa", "-l", "30", "-h", "-1", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
-  '    aus = "".join(z.strip() for z in p.stdout.splitlines())',
-  '    print(aus if p.returncode == 0 and aus.startswith("{") else json.dumps({"fehler": ((p.stderr or "") + " " + (p.stdout or "")).strip()[-300:]}))',
-  'except Exception as e:',
-  '    print(json.dumps({"fehler": type(e).__name__}))',
-].join('\n');
-
 const PY_ZUSAMMEN = [
   'import json, sys',
   'l = json.loads(sys.argv[1])',
-  'try:',
-  '    l["msdb"] = json.loads(sys.argv[2])',
-  'except Exception:',
-  '    l["msdb"] = {"fehler": "msdb-Antwort unlesbar"}',
-  'l["timer"] = sys.argv[3]',
-  'l["zugangsdatei"] = sys.argv[4]',
+  'l["timer"] = sys.argv[2]',
+  'l["zugangsdatei"] = sys.argv[3]',
   'print("ALFRED-SQL " + json.dumps(l, ensure_ascii=True))',
 ].join('\n');
 
-/** Lesend: Dateien lokal und auf fs01 (Manifest, Ketten, Größen, Hash-Abgleich), Budget, letzter Kopierlauf, Timer, Zugangsdatei, msdb. Eingabe: { sa, kennwort } */
+/**
+ * Lesend, ohne Tresor und ohne fs01-Zugang (Fix-Runde 1, Sicherheit): lokale Dateien, ausstehende Kopien und der Bericht des letzten
+ * Kopierlaufs (Manifest-Ketten, Vorhandensein/Größe auf fs01, Befunde, Budget), Timer, Zugangsdatei (nur Rechte). Keine Eingabe.
+ */
 export function sicherungenSkript(): string {
   return [
     ...sqlKopf(LINUX_SQL_SICHERUNG_BAUSTEINE.liste, {}),
     'kurz() { printf "%s" "$1" | tail -n 6 | tr "\\r\\n" "  "; }',
-    ...FS01_HILFE(),
+    `SICHERUNG_WURZEL=${SICHERUNG_WURZEL}`,
+    `KONF_DATEI=${KOPIE_KONF}`,
+    `CACHE=${KOPIE_CACHE}`,
+    `STATUS_DATEI=${KOPIE_STATUS}`,
+    `PY_KETTE=${shQ(PY_KETTE)}`,
+    'kette_py() { python3 -I -c "$PY_KETTE" "$@"; }',
+    "rechnername() { hostname -s | tr 'A-Z' 'a-z'; }",
     ZUSTAND_ZUGANGSDATEI,
-    `PY_MSDB=${shQ(PY_MSDB)}`,
     `PY_ZUSAMMEN=${shQ(PY_ZUSAMMEN)}`,
     '# ALFRED-ABLAUF',
     'HOST=$(rechnername)',
     '[[ "$HOST" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || abbruch "Rechnername $HOST ungültig"',
     '[ -f "$KONF_DATEI" ] || abbruch "Sicherung ist nicht eingerichtet ($KONF_DATEI fehlt — sicherung_einrichten)"',
-    'fs01_einhaengen ro',
-    'l=$(kette_py liste "$SICHERUNG_WURZEL" "$MNT" "$HOST" "$CACHE" "$STATUS_DATEI" "$KONF_DATEI") || abbruch "Sicherungen lesen: $(kurz "$l")"',
-    'fs01_aushaengen',
+    'l=$(kette_py liste "$SICHERUNG_WURZEL" "$HOST" "$CACHE" "$STATUS_DATEI" "$KONF_DATEI") || abbruch "Sicherungen lesen: $(kurz "$l")"',
     'l=$(grep "^ALFRED-LISTE " <<<"$l" | head -n 1)',
-    'm=$(python3 -I -c "$PY_MSDB" <<<"$ALFRED_EINGABE") || m=\'{"fehler":"msdb nicht lesbar"}\'',
     `timer=$(systemctl is-active ${KOPIE_DIENST}.timer 2>/dev/null || true)`,
     `zd=$(zugangsdatei_zustand ${ZUGANGSDATEI_FEST})`,
-    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "$m" "${timer:-unbekannt}" "$zd"',
+    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "${timer:-unbekannt}" "$zd"',
     'ALFRED_ZEILE=1',
   ].join('\n');
 }
@@ -1056,6 +1133,9 @@ export function wiederherstellenSkript(p: WiederherstellenParameter): string {
     `N_SOLL=${PRUEFDATEN_ZEILEN}`,
     'DATEN=/var/opt/mssql/data; LOGD=/var/opt/mssql/log',
     'r() { local a; a=$(sql "$1" 2>&1) || abbruch "$2: $(kurz "$a")"; }',
+    // Fix-Runde 1: freier Platz je Dateisystem (KiB) und Gerätenummer (Daten und Log auf derselben Platte → gemeinsam rechnen)
+    "frei_kb() { df -Pk \"$1\" | awk 'NR == 2 { print $4 }'; }",
+    'geraet() { stat -c %d "$1"; }',
     // genau ein Sicherungssatz, Typ (1 FULL, 5 DIFF, 2 LOG) und Datenbank wie erwartet
     'kopf_pruefen() {',
     '  local h n typ dbname',
@@ -1092,19 +1172,29 @@ export function wiederherstellenSkript(p: WiederherstellenParameter): string {
     'for l in "${LOGS[@]}"; do kopf_pruefen "$l" 2; done',
     // Dateien der Ziel-DB auf die Daten-/Log-Platte, nie über Bestehendes
     'fl=$(sqls "SET NOCOUNT ON; RESTORE FILELISTONLY FROM DISK = N\'$FULL\'" 2>&1) || abbruch "RESTORE FILELISTONLY: $(kurz "$fl")"',
-    "MOVE=''; nd=0",
-    'while IFS="|" read -r logisch _ typ _; do',
+    "MOVE=''; nd=0; NEED_D=0; NEED_L=0",
+    'while IFS="|" read -r logisch _ typ _ groesse _; do',
     '  [ -n "$logisch" ] || continue',
     '  [[ "$logisch" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] || abbruch "logischer Dateiname $(kurz "$logisch") wird nicht unterstützt"',
+    '  [[ "$groesse" =~ ^[0-9]{1,15}$ ]] || abbruch "Größe der Datei $logisch nicht lesbar ($(kurz "$groesse"))"',
     '  case "$typ" in',
-    '    D) nd=$((nd + 1)); if [ "$nd" = 1 ]; then e=mdf; else e=ndf; fi; zd="$DATEN/${ZIEL}_${logisch}.$e" ;;',
-    '    L) zd="$LOGD/${ZIEL}_${logisch}.ldf" ;;',
+    '    D) nd=$((nd + 1)); if [ "$nd" = 1 ]; then e=mdf; else e=ndf; fi; zd="$DATEN/${ZIEL}_${logisch}.$e"; NEED_D=$((NEED_D + groesse)) ;;',
+    '    L) zd="$LOGD/${ZIEL}_${logisch}.ldf"; NEED_L=$((NEED_L + groesse)) ;;',
     '    *) abbruch "Dateityp $typ ($logisch) wird nicht unterstützt" ;;',
     '  esac',
     '  [ ! -e "$zd" ] || abbruch "$zd besteht schon — nichts überschrieben"',
     '  MOVE+="${MOVE:+, }MOVE N\'$logisch\' TO N\'$zd\'"',
     'done <<<"$fl"',
     '[ "$nd" -ge 1 ] || abbruch "RESTORE FILELISTONLY ohne Datendatei"',
+    // vor dem ersten RESTORE: Platz für Daten- und Logdateien (+ 512 MiB Reserve je Platte), sonst Abbruch ohne Änderung
+    'RESERVE=$((512 * 1048576))',
+    'fd=$(( $(frei_kb "$DATEN") * 1024 )); fl_=$(( $(frei_kb "$LOGD") * 1024 ))',
+    'if [ "$(geraet "$DATEN")" = "$(geraet "$LOGD")" ]; then',
+    '  [ "$fd" -ge $((NEED_D + NEED_L + RESERVE)) ] || abbruch "zu wenig Platz für die Wiederherstellung: $fd Bytes frei auf $DATEN, nötig $((NEED_D + NEED_L)) + 512 MiB — nichts geändert"',
+    'else',
+    '  [ "$fd" -ge $((NEED_D + RESERVE)) ] || abbruch "zu wenig Platz für die Wiederherstellung: $fd Bytes frei auf $DATEN, nötig $NEED_D + 512 MiB — nichts geändert"',
+    '  [ "$fl_" -ge $((NEED_L + RESERVE)) ] || abbruch "zu wenig Platz für die Wiederherstellung: $fl_ Bytes frei auf $LOGD, nötig $NEED_L + 512 MiB — nichts geändert"',
+    'fi',
     'WH_ANGELEGT=1',
     'r "RESTORE DATABASE [$ZIEL] FROM DISK = N\'$FULL\' WITH FILE = 1, $MOVE, NORECOVERY, CHECKSUM" "Wiederherstellen FULL"',
     '[ -z "$DIFF" ] || r "RESTORE DATABASE [$ZIEL] FROM DISK = N\'$DIFF\' WITH FILE = 1, NORECOVERY, CHECKSUM" "Wiederherstellen DIFF"',

@@ -62,7 +62,8 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
-    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Hash ok',
+    // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
+    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | vollständig auf fs01',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;

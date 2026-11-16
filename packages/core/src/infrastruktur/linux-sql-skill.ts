@@ -15,7 +15,7 @@ import {
 } from './linux-sql.js';
 import { NAME as TRESOR_NAME } from './tresor.js';
 import {
-  LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
+  LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, FS01_FQDN, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
 } from './linux-sql-sicherung.js';
 
@@ -104,43 +104,58 @@ export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
 // ── Sicherungen (I8e Task 4) ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface LinuxSqlSicherungen {
-  zustand: string; host?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number; timer?: string; zugangsdatei?: string;
-  status?: { zeit?: string; ok?: boolean; fehler?: string | null } | null;
+  zustand: string; host?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number | null; timer?: string; zugangsdatei?: string;
+  status?: { zeit?: string; ok?: boolean; fehler?: string | null; befunde?: string[] } | null;
   datenbanken?: Record<string, { ketten: Array<{ full: string; diffs: number; logs: number; vollstaendig: boolean; fehler?: string[] }>; waisen?: string[];
-    fs01Dateien: number; fs01Bytes?: number; lokalDateien?: number; lokalBytes?: number; nochNichtAufFs01?: number; hashAbweichend?: number }>;
-  msdb?: unknown;
+    fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number }>;
 }
-const gib = (b: number | undefined) => (typeof b === 'number' ? (b / 2 ** 30).toFixed(1) : '?');
+const gib = (b: number | null | undefined) => (typeof b === 'number' ? (b / 2 ** 30).toFixed(1) : '?');
+/**
+ * Hash-Zustand je Datenbank (Fix-Runde 1): „Hash ok“ nur, wenn der letzte Kopierlauf gelang, mindestens eine Datei auf fs01 liegt, nichts
+ * aussteht und nichts fehlt; „vollständig auf fs01“ zusätzlich nur mit lauter vollständigen Ketten.
+ */
+function hashText(st: LinuxSqlSicherungen['status'], d: NonNullable<LinuxSqlSicherungen['datenbanken']>[string]): string {
+  if (!st) return 'Hash unbekannt (kein Kopierlauf)';
+  if (!st.ok) return 'Hash unbekannt (letzter Kopierlauf fehlgeschlagen)';
+  if (!d.fs01Dateien) return 'Hash unbekannt (nichts auf fs01)';
+  if (d.fehlend) return `FEHLT auf fs01: ${d.fehlend}`;
+  if (d.ausstehend) return `ausstehend: ${d.ausstehend}`;
+  const voll = d.ketten.length > 0 && d.ketten.every(k => k.vollstaendig) && !d.waisen?.length;
+  return voll ? 'Hash ok, vollständig auf fs01' : 'Hash ok, Ketten unvollständig';
+}
 /** Fester Wortlaut — Stücke in FESTE_AUSGABEN['linux_sql.sicherungen'] (change-schritte.ts) */
 export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen): string {
   const st = r.status;
-  const kopie = st ? `${st.zeit ?? '?'} ${st.ok ? 'ok' : `FEHLER: ${String(st.fehler ?? '').slice(0, 200)}`}` : 'noch keine';
+  const kopie = st ? `${st.zeit ?? '?'} ${st.ok ? 'ok' : `FEHLER: ${String(st.fehler ?? (st.befunde ?? []).join('; ')).slice(0, 300)}`}` : 'noch keine';
   const budget = typeof r.budgetBytes === 'number' ? String(Math.round(r.budgetBytes / 2 ** 30)) : '?';
   const dbs = Object.entries(r.datenbanken ?? {}).map(([db, d]) => {
     const voll = d.ketten.filter(k => k.vollstaendig).length;
     const letzte = d.ketten.length ? d.ketten[d.ketten.length - 1]!.full : 'keine';
-    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, noch nicht auf fs01 ${d.nochNichtAufFs01 ?? 0}, Hash ${d.hashAbweichend ? `ABWEICHEND (${d.hashAbweichend})` : 'ok'}`;
+    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${hashText(st, d)}`;
   });
   return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}`;
 }
 
 /** \\server.fqdn\Freigabe$ → { server, freigabe } */
-const ZIEL_FREIGABE = /^\\\\([A-Za-z0-9.-]{3,120})\\([A-Za-z0-9][A-Za-z0-9_-]{0,39}\$?)$/;
+const ZIEL_FREIGABE = /^\\\\([A-Za-z0-9.-]{3,120})\\([A-Za-z0-9_-]{1,40}\$?)$/;
+/** Fix-Runde 1 (Sicherheit): nur Tresor-Einträge der fs01-Dienstkonten dieses Bausteins */
+const KONTO_TRESOR = /^ad-svc-sqllnx-[a-z0-9-]{1,40}$/;
 function sicherungEinrichtenParameter(input: Record<string, unknown>): { p: SicherungEinrichtenParameter; kontoTresor: string } {
   const zf = String(input.ziel_freigabe ?? '').trim();
   const m = ZIEL_FREIGABE.exec(zf);
   if (!m) throw new Error('ziel_freigabe: UNC-Pfad mit vollständigem Servernamen, z. B. \\\\fs01.ad.3033.at\\SQLLinuxBackup$');
   const server = m[1]!.toLowerCase(); const freigabe = m[2]!;
-  const kontoTresor = String(input.konto_tresor ?? SICHERUNG_KONTO_TRESOR).trim();
-  if (!TRESOR_NAME.test(kontoTresor)) throw new Error('konto_tresor: Tresor-Eintrag mit dem Kennwort des fs01-Dienstkontos, z. B. ad-svc-sqllnx-backup');
+  if (server !== FS01_FQDN) throw new Error(`ziel_freigabe: nur der Dateiserver ${FS01_FQDN} (kein anderer Server)`);
+  const kontoTresor = kontoTresorName(input);
   const k = String(input.konto ?? '').trim();
   let konto: string; let domaene: string;
   if (k) {
     const km = /^(?:([A-Za-z0-9][A-Za-z0-9.-]{0,62})\\)?([^\\]+)$/.exec(k);
     if (!km) throw new Error('konto: „name“ oder „NETBIOS\\name“ des Dienstkontos');
     konto = km[2]!; domaene = km[1] ?? server.slice(server.indexOf('.') + 1);
+    // der Tresor-Eintrag gehört genau zu diesem Konto (ad-<konto>, wie windows_ad dienstkonto_anlegen)
+    if (`ad-${konto.toLowerCase()}` !== kontoTresor) throw new Error(`konto_tresor: muss ad-${konto.toLowerCase()} sein (Tresor-Eintrag des Kontos ${konto})`);
   } else {
-    if (!kontoTresor.startsWith('ad-')) throw new Error('konto: angeben, wenn konto_tresor nicht ad-<konto> heißt');
     konto = kontoTresor.slice(3); domaene = server.slice(server.indexOf('.') + 1);
   }
   const budgetGiB = ganzzahl(input.budget_gib ?? 64) as number;
@@ -166,7 +181,7 @@ function wiederherstellenParameter(input: Record<string, unknown>): Wiederherste
 
 function kontoTresorName(input: Record<string, unknown>): string {
   const n = String(input.konto_tresor ?? SICHERUNG_KONTO_TRESOR).trim();
-  if (!TRESOR_NAME.test(n)) throw new Error('konto_tresor: Tresor-Eintrag mit dem Kennwort des fs01-Dienstkontos, z. B. ad-svc-sqllnx-backup');
+  if (!KONTO_TRESOR.test(n) || !TRESOR_NAME.test(n)) throw new Error('konto_tresor: nur ad-svc-sqllnx-… (Tresor-Eintrag des fs01-Dienstkontos, Standard ad-svc-sqllnx-backup)');
   return n;
 }
 
@@ -245,7 +260,7 @@ export class LinuxSqlSkill extends Skill {
       + 'sicherung_einrichten (zugang, ziel_freigabe = \\\\fs01.ad.3033.at\\SQLLinuxBackup$, konto_tresor Standard ad-svc-sqllnx-backup, konto optional „NETBIOS\\name“, budget_gib Standard 64) — SQL-Agent-Jobs FULL täglich 00:30, DIFF alle 6 h, LOG alle 15 min (CHECKSUM, COMPRESSION) nach /var/opt/mssql/backup/<db>/, Kopier-Timer alle 15 min nach fs01 (SMB 3.1.1 verschlüsselt, SHA-256 zurückgelesen, nie überschrieben), Aufbewahrung 7 Tage + 4 Sonntage nur ganzer vollständiger Ketten, Budget-Überschreitung = Fehler ohne Löschen; einzige dauerhafte Zugangsdatei /etc/alfred/sqllnx-cifs.cred (0600 root); prüft sich selbst mit einem Kopierlauf. '
       + 'sicherung_jetzt (zugang, art full|diff|log, datenbank) — eine Sicherung in derselben Kette, danach auf fs01 bestätigt. '
       + 'wiederherstellen_pruefen (zugang, datenbank, ziel_name Standard alfred_wh_<datenbank>) — letzte vollständige Kette FULL+DIFF+LOGs AUS DER fs01-KOPIE unter ziel_name, DBCC CHECKDB, Prüfdaten-Vergleich → „RESTORE_VERIFIED“ nur wenn alles stimmt; ziel_name wird danach entfernt (Schritt-zeitlimitS großzügig, z. B. 3600). '
-      + 'sicherungen (lesend, auch außerhalb von Changes; zugang, konto_tresor optional) — Wortlaut „<zugang>: Sicherung nach //<server>/<freigabe> (belegt <x> GiB von <y> GiB); Kopie zuletzt <zeit> ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; <db>: <n> Ketten (<m> vollständig), …, Hash ok“, als Prüfung z. B. erwartet „Hash ok“ oder „Kopie-Timer aktiv“. '
+      + 'sicherungen (lesend, auch außerhalb von Changes; zugang; liest keinen Tresor und nicht fs01 — lokaler Stand und Bericht des letzten Kopierlaufs, der fs01 prüft) — Wortlaut „<zugang>: Sicherung nach //fs01.ad.3033.at/<freigabe> (belegt <x> GiB von <y> GiB); Kopie zuletzt <zeit> ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; <db>: <n> Ketten (<m> vollständig), letzte FULL …, lokal <a>, fs01 <b>, Hash ok, vollständig auf fs01“ (sonst „Hash unbekannt …“, „ausstehend: <n>“, „FEHLT auf fs01: <n>“; Befunde des Kopierlaufs stehen hinter „Kopie zuletzt <zeit> FEHLER:“), als Prüfung z. B. erwartet „vollständig auf fs01“ oder „Kopie-Timer aktiv“. Ziel ist nur fs01.ad.3033.at, konto_tresor nur ad-svc-sqllnx-…. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -293,8 +308,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'sicherung_einrichten') sicherungEinrichtenParameter(input);
       else if (action === 'sicherung_jetzt') sicherungJetztParameter(input);
       else if (action === 'wiederherstellen_pruefen') { wiederherstellenParameter(input); kontoTresorName(input); }
-      else if (action === 'sicherungen') kontoTresorName(input);
-      if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'sicherungen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
+      if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
   }
@@ -316,7 +330,7 @@ export class LinuxSqlSkill extends Skill {
         case 'pruefdaten_anlegen': return await this.pruefdaten(zugang, input, geheim);
         case 'sicherung_einrichten': return await this.sicherungEinrichten(zugang, input, geheim);
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input, geheim);
-        case 'sicherungen': return await this.sicherungen(zugang, input, geheim);
+        case 'sicherungen': return await this.sicherungen(zugang);
         case 'wiederherstellen_pruefen': return await this.wiederherstellen(zugang, input, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
@@ -447,11 +461,9 @@ export class LinuxSqlSkill extends Skill {
     return { success: true, data: r, display: `✅ Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: ${r.datei} — auf fs01 geprüft (SHA-256 ${String(r.sha256 ?? '').slice(0, 16)}…)` };
   }
 
-  private async sicherungen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
-    const name = kontoTresorName(input);
-    const sa = await this.sa(zugang, `Sicherungen ${zugang}`, geheim);
-    const kennwort = await this.fs01Kennwort(name, `Sicherungen ${zugang} (fs01 lesen)`, geheim);
-    const r = await this.lauf<LinuxSqlSicherungen & Record<string, unknown>>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.liste, {}, 'Sicherungen lesen', LINUX_SQL_SICHERUNG_ZEIT_MS.liste, { sa, kennwort });
+  /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */
+  private async sicherungen(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<LinuxSqlSicherungen & Record<string, unknown>>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.liste, {}, 'Sicherungen lesen', LINUX_SQL_SICHERUNG_ZEIT_MS.liste);
     return { success: true, data: r, display: linuxSqlSicherungenText(zugang, r) };
   }
 
