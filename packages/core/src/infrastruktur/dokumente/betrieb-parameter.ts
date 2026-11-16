@@ -15,6 +15,10 @@ export interface BetriebParameter {
   standardVorlagen?: string[];
   /** Change mit dem letzten Restore-Beweis */
   restoreChangeId?: string;
+  /** ausdrücklich zugeordnete Tresor-Einträge (nur Namen; systemweite Geheimnisse ohne Asset-Namen) */
+  tresor?: string[];
+  /** kuratierte Aufbau-Changes für Kapitel 7, in dieser Reihenfolge (≤ 40, beim Anlegen aufgelöst) */
+  aufbauChangeIds?: string[];
 }
 
 /** Bausteine (Namen) je System; ein Name kann mehrere Assets umfassen (VM und Server), gespeichert werden bis zu MAX_ASSET_IDS IDs */
@@ -22,7 +26,7 @@ export const MAX_ASSETS = 40;
 export const MAX_ASSET_IDS = 80;
 const MAX_LISTE = 40;
 const SCHLUESSEL = /^[\w.-]{1,80}$/;
-const ERLAUBT = new Set(['assets', 'vorhabenId', 'architekturDocId', 'jobs', 'standardVorlagen', 'restoreChangeId']);
+const ERLAUBT = new Set(['assets', 'vorhabenId', 'architekturDocId', 'jobs', 'standardVorlagen', 'restoreChangeId', 'tresor', 'aufbauChangeIds']);
 
 function schluesselListe(feld: string, v: unknown): string[] | string {
   if (!Array.isArray(v)) return `${feld}: Liste erwartet`;
@@ -61,7 +65,7 @@ export function pruefeBetriebParameter(p: unknown, maxAssets: number = MAX_ASSET
     if (typeof w === 'object') return w.fehler;
     if (w !== undefined) erg[feld] = w;
   }
-  for (const feld of ['jobs', 'standardVorlagen'] as const) {
+  for (const feld of ['jobs', 'standardVorlagen', 'tresor', 'aufbauChangeIds'] as const) {
     if (o[feld] === undefined) continue;
     const l = schluesselListe(feld, o[feld]);
     if (typeof l === 'string') return l;

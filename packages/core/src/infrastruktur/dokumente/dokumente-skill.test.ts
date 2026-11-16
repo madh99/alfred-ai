@@ -412,9 +412,42 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
       assetNachId: async (_u, id) => assets.find(a => a.id.startsWith(id)) ?? null,
       vorhaben: async (_u, k) => (VID.startsWith(k) ? { id: VID, changeIds: [A.id, C.id] } : null),
       dokument: async (_u, k) => (DID.startsWith(k) ? { id: DID } : null),
+      standardVorlagen: () => [{ key: 'os_updates', titel: '(h) Betriebssystem-Updates (Updates v2)' }, { key: 'ca_sicherung', titel: '(k) Wöchentliche Sicherung der Issuing-CA' }],
+      jobKeys: () => ['pki-betrieb', 'os-updates'],
+      tresorNamen: async () => ['pki-iss-sicherung', 'dc01-admin'],
     };
     return t;
   }
+
+  it('aufbau_changes: über ID-Anfang aufgelöst, Reihenfolge bleibt; Unbekanntes und Doppeltes abgewiesen', async () => {
+    const t = mitBetrieb();
+    const ok = await t.skill.execute({ action: 'instanz_anlegen', name: 'a1', dokumentart: 'betrieb', assets: ['pkiiss01'], aufbau_changes: ['7335dfeb', '288c3716'] }, CTX);
+    expect(ok.success, ok.error).toBe(true);
+    expect(JSON.parse((await t.deps.instanzen.finde('o', 'a1'))!.parameter!).aufbauChangeIds).toEqual([C.id, A.id]);
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'a2', dokumentart: 'betrieb', assets: ['pkiiss01'], aufbau_changes: ['ffffffff'] }, CTX)).error).toContain('aufbau_changes');
+    expect((await t.skill.execute({ action: 'instanz_anlegen', name: 'a3', dokumentart: 'betrieb', assets: ['pkiiss01'], aufbau_changes: ['288c3716', A.id] }, CTX)).error).toContain('doppelt');
+    expect(await t.deps.instanzen.finde('o', 'a2')).toBeUndefined();
+  });
+
+  it('standard_vorlagen: Buchstabe „k“ wird zum echten Schlüssel, Unbekanntes nennt die gültigen; jobs und tresor gegen die Bestände geprüft', async () => {
+    const t = mitBetrieb();
+    const ok = await t.skill.execute({ action: 'instanz_anlegen', name: 'v1', dokumentart: 'betrieb', assets: ['pkiiss01'], standard_vorlagen: ['k', 'os_updates'], jobs: ['pki-betrieb'], tresor: ['pki-iss-sicherung'] }, CTX);
+    expect(ok.success, ok.error).toBe(true);
+    const par = JSON.parse((await t.deps.instanzen.finde('o', 'v1'))!.parameter!);
+    expect(par.standardVorlagen).toEqual(['ca_sicherung', 'os_updates']);
+    expect(par.tresor).toEqual(['pki-iss-sicherung']);
+    const v = await t.skill.execute({ action: 'instanz_anlegen', name: 'v2', dokumentart: 'betrieb', assets: ['pkiiss01'], standard_vorlagen: ['z'] }, CTX);
+    expect(v.error).toContain('Standard-Vorlage „z“ unbekannt');
+    expect(v.error).toContain('ca_sicherung (k)');
+    const d = await t.skill.execute({ action: 'instanz_anlegen', name: 'v3', dokumentart: 'betrieb', assets: ['pkiiss01'], standard_vorlagen: ['k', 'ca_sicherung'] }, CTX);
+    expect(d.error).toContain('doppelt');
+    const j = await t.skill.execute({ action: 'instanz_anlegen', name: 'v4', dokumentart: 'betrieb', assets: ['pkiiss01'], jobs: ['pki-betreib'] }, CTX);
+    expect(j.error).toContain('„pki-betreib“');
+    expect(j.error).toContain('gültig: os-updates, pki-betrieb');
+    const tr = await t.skill.execute({ action: 'instanz_anlegen', name: 'v5', dokumentart: 'betrieb', assets: ['pkiiss01'], tresor: ['gibtsnicht'] }, CTX);
+    expect(tr.error).toContain('„gibtsnicht“ gibt es nicht');
+    for (const n of ['v2', 'v3', 'v4', 'v5']) expect(await t.deps.instanzen.finde('o', n)).toBeUndefined();
+  });
 
   it('unbekanntes Asset: Fehler nennt den Namen, nichts gespeichert', async () => {
     const t = mitBetrieb();
@@ -441,14 +474,14 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     const t = mitBetrieb();
     const r = await t.skill.execute({
       action: 'instanz_anlegen', name: 'pki-betrieb', dokumentart: 'betrieb', assets: ['pkiiss01', 'bbbbbbbb'],
-      vorhaben: 'a1b2c3', architektur_doc: 'd0c0d0', jobs: ['pki-betrieb'], standard_vorlagen: ['k'], restore_change: '7335dfeb',
+      vorhaben: 'a1b2c3', architektur_doc: 'd0c0d0', jobs: ['pki-betrieb'], standard_vorlagen: ['ca_sicherung'], restore_change: '7335dfeb',
     }, CTX);
     expect(r.success, r.error).toBe(true);
     const i = await t.deps.instanzen.finde('o', 'pki-betrieb');
     expect(i?.dokumentart).toBe('betrieb');
     expect(i?.changeIds).toEqual([A.id, C.id]);
     expect(JSON.parse(i!.parameter!)).toEqual({
-      assets: ['aaaaaaaa-1111', 'bbbbbbbb-2222'], vorhabenId: VID, architekturDocId: DID, jobs: ['pki-betrieb'], standardVorlagen: ['k'], restoreChangeId: C.id,
+      assets: ['aaaaaaaa-1111', 'bbbbbbbb-2222'], vorhabenId: VID, architekturDocId: DID, jobs: ['pki-betrieb'], standardVorlagen: ['ca_sicherung'], restoreChangeId: C.id,
     });
   });
 

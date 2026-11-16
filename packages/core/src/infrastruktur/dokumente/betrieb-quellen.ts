@@ -46,7 +46,7 @@ export interface FernzugangEintrag { name: string; host: string; benutzer: strin
 export interface JobEintrag { key: string; beschreibung?: string; takt?: string; letzterLauf?: { start: string; ok?: boolean; fehler?: string } }
 export interface WartungDaten {
   fenster: Array<{ name: string; regel: string; art: string }>;
-  vorlagen: Array<{ key: string; titel?: string; status?: string; letzterLauf?: string }>;
+  vorlagen: Array<{ key: string; titel?: string; status?: string; laeufe?: number; letzterLauf?: string }>;
 }
 export interface AbnahmeVerweis { docId: string; version: number; pruefsummen: string[] }
 export interface BeziehungenDaten {
@@ -68,7 +68,7 @@ export interface BetriebQuellen {
   beziehungen(o: string, ids: string[]): Promise<Quelle<BeziehungenDaten>>;
   proxmox(o: string, vms: Array<{ node: string; vmid: number }>): Promise<Quelle<ProxmoxVm[]>>;
   /** node = Live-Node der VM (Jobs mit `node` gelten nur dort) */
-  sicherung(o: string, vms: Array<{ vmid: number; node?: string }>): Promise<Quelle<SicherungDaten>>;
+  sicherung(o: string, vms: Array<{ vmid: number; node?: string; fehlt?: boolean }>): Promise<Quelle<SicherungDaten>>;
   unifi(o: string): Promise<Quelle<UnifiDaten>>;
   tresor(o: string): Promise<Quelle<TresorEintrag[]>>;
   fernzugaenge(o: string): Promise<Quelle<FernzugangEintrag[]>>;
@@ -103,9 +103,10 @@ export interface BetriebQuellenDeps {
   jobDefinitionen: () => Array<{ key: string; beschreibung: string; takt: { art: 'taeglich'; um: string } | { art: 'woechentlich'; tag: number; um: string } | { art: 'intervall'; minuten: number } }>;
   wartung: {
     kalender(o: string): Promise<Array<{ art: string; name: string; geltung: unknown; regel: unknown; aktiv: boolean }>>;
-    standardStand(o: string): Promise<Array<{ vorlage: string; status: string }>>;
+    standardStand(o: string): Promise<Array<{ vorlage: string; status: string; abdruck?: string; freigegebenAt?: string }>>;
   };
-  standard: () => Array<{ key: string; titel: string }>;
+  /** Standard-Vorlagen mit aktuellem Abdruck (vorlagenAbdruck) — weicht der freigegebene ab, gilt die Freigabe nicht mehr */
+  standard: () => Array<{ key: string; titel: string; abdruck: string }>;
   proxmox: (input: Record<string, unknown>) => Promise<SkillResult>;
   proxmoxBackups: () => Promise<{ jeVm: Record<number, { neueste?: string; anzahl: number }>; unerreichbar: Array<{ speicher: string; grund: string }> }>;
   unifiLesen: () => Promise<FirewallStand>;
@@ -114,6 +115,27 @@ export interface BetriebQuellenDeps {
   /** Wartungsregel lesbar (wartung.ts regelText); ohne Angabe JSON */
   regelText?: (regel: unknown) => string;
 }
+
+/** Standard-Change: einzeln (freigegebenUeber standard:<key>) oder Glied einer Serie (Beschreibung „Standard-Serie <key> …“) */
+export function standardKey(c: Pick<CmdbChangeRequest, 'freigegebenUeber' | 'description'>): string | undefined {
+  if (c.freigegebenUeber?.startsWith('standard:')) return c.freigegebenUeber.slice('standard:'.length);
+  return /^Standard-Serie ([a-z_]+) /.exec(c.description ?? '')?.[1];
+}
+export const istStandard = (c: Pick<CmdbChangeRequest, 'freigegebenUeber' | 'description'>): boolean => standardKey(c) !== undefined;
+
+/** Freigabestand wie StandardChanges.liste(): eine Freigabe gilt nur für den Abdruck, den der Owner bestätigt hat */
+export function freigabeText(s: { status: string; abdruck?: string; freigegebenAt?: string } | undefined, abdruck: string | undefined): string {
+  if (!s) return 'nicht freigegeben';
+  if (s.status === 'freigegeben') return abdruck !== undefined && s.abdruck === abdruck ? `freigegeben ${s.freigegebenAt?.slice(0, 10) ?? ''}`.trim() : 'Vorlage geändert — neue Freigabe nötig';
+  if (s.status === 'angefragt') return 'Freigabe angefragt';
+  if (s.status === 'widerrufen') return 'widerrufen';
+  if (s.status === 'ueberpruefen') return 'überprüfen — gesperrt, neue Freigabe nötig';
+  return 'nicht freigegeben';
+}
+
+/** Sicherungsspeicher, die der Owner bewusst ausgeschaltet hat (pbs-unas, Owner 10.11.) — kein Ausfall, keine Störung */
+export const BEWUSST_AUS = ['pbs-unas'];
+const bewusstAus = (speicher: string) => BEWUSST_AUS.includes(speicher.split('/').pop() ?? speicher);
 
 const fehlerText = (e: unknown) => schwaerze(e instanceof Error ? e.message : String(e)).text.slice(0, 300);
 const OFFEN: ProblemStatus[] = ['logged', 'analyzing', 'root_cause_identified', 'fix_in_progress'];
@@ -272,13 +294,17 @@ function platten(cfg: Record<string, unknown>): string[] {
   return aus.sort();
 }
 
-function pruefsummenAus(doc: CmdbDocument): string[] {
+/** Prüfsumme(n) des Rohlaufs genau dieses Changes (rohlauf-<id8>.json) — ein Sammelprotokoll führt die aller Glieder */
+function pruefsummenAus(doc: CmdbDocument, changeId: string): string[] {
+  const datei = `rohlauf-${changeId.slice(0, 8)}.json`;
   try {
     const s = doc.struktur ? (JSON.parse(doc.struktur) as { anhaenge?: Array<{ name: string; inhalt: string }> }) : undefined;
     const p = s?.anhaenge?.find(a => a.name === 'PRUEFUNG.txt');
-    if (p) return p.inhalt.split('\n').map(z => /^([0-9a-f]{64}) {2}rohlauf-/.exec(z)?.[1]).filter((x): x is string => !!x);
+    if (p) return p.inhalt.split('\n').map(z => /^([0-9a-f]{64}) {2}(\S+)$/.exec(z.trim())).filter(m => m?.[2] === datei).map(m => m![1]!);
   } catch { /* Struktur unlesbar — Markdown versuchen */ }
-  return [...doc.content.matchAll(/Prüfsumme \(SHA-256[^)]*\): ([0-9a-f]{64})/g)].map(m => m[1]!);
+  // ohne Struktur nur eindeutig: genau eine Prüfsumme im Text (Einzelprotokoll); bei mehreren ist die Zuordnung nicht belegt
+  const alle = [...doc.content.matchAll(/Prüfsumme \(SHA-256[^)]*\): ([0-9a-f]{64})/g)].map(m => m[1]!);
+  return alle.length === 1 ? alle : [];
 }
 const verweistAuf = (doc: CmdbDocument, changeId: string) => {
   try { return ((JSON.parse(doc.struktur ?? '{}') as { kopf?: { verweise?: string[] } }).kopf?.verweise ?? []).includes(`change:${changeId}`); } catch { return false; }
@@ -388,6 +414,8 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
           let auswahl: boolean | string = alle || explizit.includes(v.vmid);
           if (perPool) auswahl = mitglieder ? mitglieder.includes(v.vmid) : `Pool-Mitgliedschaft von ${pool} nicht geprüft (${poolFehler ?? 'nicht lesbar'})`;
           if (auswahl === false) continue;
+          // in Proxmox nicht gefunden: ein Job kann sie nicht sichern — nie „gesichert“
+          if (v.fehlt) { ungeprueft.push({ vmid: v.vmid, grund: 'VM in Proxmox nicht gefunden' }); continue; }
           // Job mit node: läuft nur auf diesem Node
           if (node) {
             if (!v.node) { ungeprueft.push({ vmid: v.vmid, grund: `Job ${id} gilt nur auf Node ${node}, Node von VMID ${v.vmid} unbekannt` }); continue; }
@@ -402,12 +430,19 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
       const b = await deps.proxmoxBackups();
       const letzte: Record<number, string | undefined> = {};
       for (const v of vms) letzte[v.vmid] = b.jeVm[v.vmid]?.neueste;
-      return { daten: { jobs, letzte, unerreichbar: b.unerreichbar }, ...(b.unerreichbar.length ? { hinweis: `Sicherungsspeicher nicht erreichbar: ${b.unerreichbar.map(u => `${u.speicher} (${u.grund})`).join(', ')}` } : {}) };
+      const aus = b.unerreichbar.filter(u => bewusstAus(u.speicher));
+      const gestoert = b.unerreichbar.filter(u => !bewusstAus(u.speicher));
+      const hinweis = [
+        ...(gestoert.length ? [`Sicherungsspeicher nicht erreichbar: ${gestoert.map(u => `${u.speicher} (${u.grund})`).join(', ')}`] : []),
+        ...(aus.length ? [`nicht gelesen (bewusst aus): ${aus.map(u => u.speicher).join(', ')}`] : []),
+      ].join('; ');
+      return { daten: { jobs, letzte, unerreichbar: gestoert }, ...(hinweis ? { hinweis } : {}) };
     }),
 
     unifi: () => fang(async () => {
       const fw = await deps.unifiLesen();
-      const dns = await deps.unifiDns();
+      let dns: Awaited<ReturnType<BetriebQuellenDeps['unifiDns']>>;
+      try { dns = await deps.unifiDns(); } catch (err) { dns = { eintraege: [], weiterleitungenFehler: `DNS-Einträge nicht lesbar: ${fehlerText(err)}` }; }
       const dnsWeiterleitungen = dns.eintraege.filter(e => /forward/i.test(e.record_type ?? '')).map(e => ({ domain: String(e.key ?? ''), server: String(e.value ?? ''), aktiv: e.enabled !== false }))
         .sort((a, b) => a.domain.localeCompare(b.domain) || a.server.localeCompare(b.server));
       // nicht lesbare Weiterleitungen dürfen nicht wie „keine Weiterleitungen“ aussehen
@@ -434,19 +469,19 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
     wartung: (o, vorlagen, assetIds = []) => fang(async () => {
       const kal = await deps.wartung.kalender(o);
       const fenster = kal.filter(e => e.aktiv && giltFuer((e.geltung ?? {}) as Geltung, assetIds)).map(e => ({ name: e.name, art: e.art, regel: deps.regelText ? deps.regelText(e.regel) : JSON.stringify(e.regel) }));
-      const titel = new Map(deps.standard().map(v => [v.key, v.titel]));
-      const stand = new Map((await deps.wartung.standardStand(o)).map(s => [s.vorlage, s.status]));
+      const vorlagenListe = new Map(deps.standard().map(v => [v.key, v]));
+      const stand = new Map((await deps.wartung.standardStand(o)).map(s => [s.vorlage, s]));
       let changes: CmdbChangeRequest[] = [];
       if (vorlagen.length) changes = (await alleChanges(o)).l;
       const ids = new Set(assetIds);
       const daten: WartungDaten = {
         fenster,
         vorlagen: vorlagen.map(key => {
-          // jüngster Standard-Change dieser Vorlage an einem Asset der Instanz (freigegebenUeber = standard:<key>)
-          const c = changes.filter(x => x.freigegebenUeber === `standard:${key}` && x.affectedAssetIds.some(a => ids.has(a)))
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-          const lauf = c ? ((c.lauf as { start?: string } | undefined)?.start ?? c.startedAt ?? c.createdAt) : undefined;
-          return { key, ...(titel.has(key) ? { titel: titel.get(key) } : {}), ...(stand.has(key) ? { status: stand.get(key) } : {}), ...(lauf ? { letzterLauf: lauf } : {}) };
+          // abgeschlossene Läufe dieser Vorlage an Assets der Instanz — einzeln und als Serien-Glied (wie StandardChanges.laeufe)
+          const l = changes.filter(x => standardKey(x) === key && x.status === 'completed' && x.affectedAssetIds.some(a => ids.has(a)));
+          const letzter = l.map(c => String((c.lauf as { ende?: string } | undefined)?.ende ?? c.completedAt ?? c.updatedAt)).sort().at(-1);
+          const v = vorlagenListe.get(key);
+          return { key, ...(v ? { titel: v.titel } : {}), status: freigabeText(stand.get(key), v?.abdruck), laeufe: l.length, ...(letzter ? { letzterLauf: letzter } : {}) };
         }),
       };
       return { daten };
@@ -478,7 +513,7 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
       const offen: string[] = [];
       for (const id of changeIds) {
         const d = juengste((await deps.dokumente.getDocumentsForEntity(o, 'change_request', id)).filter(x => x.docType === 'abnahme'));
-        if (d) aus[id] = { docId: d.id, version: d.version, pruefsummen: pruefsummenAus(d) };
+        if (d) aus[id] = { docId: d.id, version: d.version, pruefsummen: pruefsummenAus(d, id) };
         else offen.push(id);
       }
       let hinweis: string | undefined;
@@ -488,7 +523,7 @@ export function betriebQuellen(deps: BetriebQuellenDeps, jetzt: () => string): B
         if (l.length >= ABNAHME_SUCHE) hinweis = `Suche nach Sammelprotokollen über die jüngsten ${ABNAHME_SUCHE} Abnahmeprotokolle begrenzt`;
         for (const id of offen) {
           const d = juengste(l.filter(x => verweistAuf(x, id)));
-          if (d) aus[id] = { docId: d.id, version: d.version, pruefsummen: pruefsummenAus(d) };
+          if (d) aus[id] = { docId: d.id, version: d.version, pruefsummen: pruefsummenAus(d, id) };
         }
       }
       return { daten: aus, ...(hinweis ? { hinweis } : {}) };
@@ -557,8 +592,8 @@ export async function sammleBetrieb(q: BetriebQuellen, o: string, parameter: str
   const ips = [...new Set([...gefunden.map(a => a.ipAddress ?? ''), ...(proxmox.daten ?? []).flatMap(v => v.ips)].filter(istNutzIp))];
   const namen = [...new Set(gefunden.flatMap(a => [a.name, a.hostname ?? '', a.fqdn ?? '']).filter(Boolean))];
   const [beziehungen, sicherung, unifi, tresor, fernzugaenge, jobs, wartung, problems, changes, netzBestand, architektur] = await Promise.all([
-    q.beziehungen(o, ids), q.sicherung(o, vms.map(v => ({ vmid: v.vmid, ...(liveNode.has(v.vmid) ? { node: liveNode.get(v.vmid)! } : {}) }))), q.unifi(o), q.tresor(o), q.fernzugaenge(o), q.jobs(o, p.jobs ?? []),
-    q.wartung(o, p.standardVorlagen ?? [], ids), q.problems(o, ids), q.changes(o, ids, p.vorhabenId, p.restoreChangeId ? [p.restoreChangeId] : []),
+    q.beziehungen(o, ids), q.sicherung(o, vms.map(v => ({ vmid: v.vmid, ...(liveNode.has(v.vmid) ? { node: liveNode.get(v.vmid)! } : {}), ...(proxmox.daten && !liveNode.has(v.vmid) ? { fehlt: true } : {}) }))), q.unifi(o), q.tresor(o), q.fernzugaenge(o), q.jobs(o, p.jobs ?? []),
+    q.wartung(o, p.standardVorlagen ?? [], ids), q.problems(o, ids), q.changes(o, ids, p.vorhabenId, [...(p.restoreChangeId ? [p.restoreChangeId] : []), ...(p.aufbauChangeIds ?? [])]),
     q.netzBestand(o, { ips, namen }), p.architekturDocId ? q.dokument(o, p.architekturDocId) : Promise.resolve(undefined),
   ]);
   const abnahmen = await q.abnahmen(o, (changes.daten ?? []).map(c => c.id));

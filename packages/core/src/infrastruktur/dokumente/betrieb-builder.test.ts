@@ -21,7 +21,7 @@ function asset(id: string, name: string, assetType: 'vm' | 'server', extra: Part
 const vm = (id: string, name: string, vmid: number, ip?: string, extra: Partial<CmdbAsset> = {}) =>
   asset(id, name, 'vm', { ...(ip ? { ipAddress: ip } : {}), attributes: { vmid, node: 'pve', cpus: 2, maxmem: 4 * GiB, maxdisk: 60 * GiB }, ...extra });
 const srv = (id: string, name: string, ip: string, roles: string[]) =>
-  asset(id, name, 'server', { ipAddress: ip, attributes: { os: 'Microsoft Windows Server 2025 Standard', os_version: '10.0.26100', roles, domain: 'ad.3033.at', license_status: 'testversion', license_expires: '2027-05-01', services: 112, cpus: 2, ram_total: 4 * GiB } });
+  asset(id, name, 'server', { ipAddress: ip, attributes: { os: 'Microsoft Windows Server 2025 Standard', os_version: '10.0.26100', roles, domain: 'ad.3033.at', license_status: 'testversion', license_expires: '2027-05-01', services: 112, cpus: 2, ram_total: 4 * GiB, system: 'windows' } });
 
 const ASSETS: CmdbAsset[] = [
   vm('a-root-vm', 'pkiroot01', 820, undefined, { status: 'inactive' }),
@@ -30,7 +30,7 @@ const ASSETS: CmdbAsset[] = [
   vm('a-dc1-vm', 'dc01', 823, '10.203.29.4'), srv('a-dc1-srv', 'dc01', '10.203.29.4', ['AD-Domain-Services', 'DNS']),
   vm('a-dc2-vm', 'dc02', 824, '10.203.29.5'), srv('a-dc2-srv', 'dc02', '10.203.29.5', ['AD-Domain-Services', 'DNS']),
 ];
-const P: BetriebParameter = { assets: ASSETS.map(a => a.id), vorhabenId: 'vh-pki-1', architekturDocId: 'arch1234-0000', jobs: ['pki-betrieb'], standardVorlagen: ['k'], restoreChangeId: 'rest5678-0000' };
+const P: BetriebParameter = { assets: ASSETS.map(a => a.id), vorhabenId: 'vh-pki-1', architekturDocId: 'arch1234-0000', jobs: ['pki-betrieb'], standardVorlagen: ['ca_sicherung'], restoreChangeId: 'rest5678-0000' };
 
 function change(id: string, title: string, nSchritte: number, extra: Partial<CmdbChangeRequest> = {}): CmdbChangeRequest {
   const schritte = Array.from({ length: nSchritte }, (_, i) => ({ nr: i + 1, titel: `Schritt ${i + 1} von ${title}`, art: 'aktion', skill: 'windows_pki', aktion: 'pruefen', pruefung: { typ: 'ausgabe', erwartet: 'OK' }, zeitlimitS: 60, beiFehler: 'anhalten' }));
@@ -79,7 +79,7 @@ function gesammelt(): Gesammelt {
     tresor: { stand: STAND, daten: [{ name: 'pkiiss01-admin', herkunft: 'pki-lab', zweck: 'kennwort=Geheim123' }, { name: 'fremd-dienst', herkunft: 'manuell' }] },
     fernzugaenge: { stand: STAND, daten: [{ name: 'pkiiss01', host: '10.203.29.10', benutzer: 'alfred', status: 'aktiv', system: 'windows', cmdbAssetId: 'a-iss-srv' }, { name: 'docker01', host: '192.168.1.40', benutzer: 'madh', status: 'aktiv' }] },
     jobs: { stand: STAND, daten: [{ key: 'pki-betrieb', beschreibung: 'PKI Etappe 5 — Zertifikate, Sperrlisten, CA-Sicherungen', takt: 'täglich 06:00', letzterLauf: { start: '2026-11-15T05:00:00.000Z', ok: true } }] },
-    wartung: { stand: STAND, daten: { fenster: [{ name: 'Sonntag früh', regel: 'So 02:00–05:00', art: 'fenster' }], vorlagen: [{ key: 'k', titel: 'Windows-Updates', status: 'freigegeben', letzterLauf: '2026-11-09T02:00:00.000Z' }] } },
+    wartung: { stand: STAND, daten: { fenster: [{ name: 'Sonntag früh', regel: 'So 02:00–05:00', art: 'fenster' }], vorlagen: [{ key: 'ca_sicherung', titel: '(k) Wöchentliche Sicherung der Issuing-CA', status: 'freigegeben 2026-11-01', laeufe: 2, letzterLauf: '2026-11-09T02:00:00.000Z' }] } },
     problems: { stand: STAND, daten: [problem] },
     changes: { stand: STAND, daten: [aufbau, restore] },
     abnahmen: { stand: STAND, daten: { [aufbau.id]: { docId: 'd0c12345-0000', version: 2, pruefsummen: [SUMME] } } },
@@ -102,7 +102,7 @@ describe('Betriebsdokument (D-BETRIEB)', () => {
     expect(d.kopf.art).toBe('betrieb');
     expect(d.kopf.ordner).toBe('pki');
     expect(d.kopf.erzeugt).toBe(JETZT);
-    expect(d.kopf.verweise).toEqual(expect.arrayContaining(['vorhaben:vh-pki-1', 'dokument:arch1234', 'change:aufb1234', 'change:rest5678']));
+    expect(d.kopf.verweise).toEqual(expect.arrayContaining(['vorhaben:vh-pki-1', 'dokument:arch1234-0000', 'change:aufb1234-0000', 'change:rest5678-0000']));
     expect(d.kopf.quellen.map(q => q.quelle)).toEqual(expect.arrayContaining(['cmdb', 'proxmox', 'sicherung', 'unifi', 'tresor', 'netzBestand']));
     // Kapitel 2: Mermaid aus Beziehungen, Verweis auf das Architektur-Dokument
     const k2 = kap(d, 'architektur').bloecke;
@@ -260,8 +260,85 @@ describe('Betriebsdokument (D-BETRIEB)', () => {
     expect(nichtBelegt(k7).some(b => b.grund.includes('V3'))).toBe(true);
     const t = text(k7);
     expect(t.indexOf('PKI aufbauen')).toBeGreaterThan(-1);
-    expect(t.indexOf('PKI aufbauen')).toBeLessThan(t.indexOf('Restore-Probe'));
     expect(t).toContain('windows_pki.pruefen');
+    // Restore-Beweis nicht als Aufbau-Schritt, nur Hinweis
+    expect(tabellen(k7)).toHaveLength(1);
+    expect(t).not.toContain('Restore-Probe');
+    expect(t).toContain('Change rest5678 ist der Restore-Beweis — siehe Kapitel 8');
+    // Reihenfolge der Aufbau-Changes nach Anlage
+    const g = gesammelt();
+    g.changes = { stand: STAND, daten: [aufbau, change('zwei0000-0000', 'Zweiter Aufbau', 1, { createdAt: '2026-11-11T08:00:00.000Z' }), restore] };
+    const t2 = text(kap(baueBetrieb('pki', P, g, {}, JETZT), 'wiederaufbau').bloecke);
+    expect(t2.indexOf('PKI aufbauen')).toBeLessThan(t2.indexOf('Zweiter Aufbau'));
+  });
+
+  it('aufbau_changes: Kapitel 7 zeigt genau diese in der angegebenen Reihenfolge; ohne Parameter „Nicht kuratiert“ zuerst', () => {
+    const ohne = kap(baueBetrieb('pki', P, gesammelt(), {}, JETZT), 'wiederaufbau').bloecke;
+    expect(ohne[0]).toEqual({ art: 'absatz', text: 'Nicht kuratiert: alle abgeschlossenen Nicht-Standard-Changes des Systems — Aufbau-Changes per Instanz-Parameter aufbau_changes festlegen' });
+    const g = gesammelt();
+    const lab = change('labx0000-0000', 'Lab A aufräumen', 2);
+    g.changes = { stand: STAND, daten: [aufbau, lab, restore] };
+    const k7 = kap(baueBetrieb('pki', { ...P, aufbauChangeIds: [restore.id, aufbau.id, 'fehlt000-0000'] }, g, {}, JETZT), 'wiederaufbau').bloecke;
+    const t = text(k7);
+    expect(t).not.toContain('Nicht kuratiert');
+    expect(t).not.toContain('Lab A aufräumen');
+    expect(t.indexOf('1. Change rest5678')).toBeGreaterThan(-1);
+    expect(t.indexOf('1. Change rest5678')).toBeLessThan(t.indexOf('2. Change aufb1234'));
+    expect(tabellen(k7)).toHaveLength(2);
+    expect(nichtBelegt(k7).some(b => b.grund.includes('Aufbau-Changes nicht gefunden: fehlt000'))).toBe(true);
+    expect(nichtBelegt(k7).some(b => b.grund.includes('V3'))).toBe(true);
+  });
+
+  it('(I2) Serien-Glieder (Beschreibung „Standard-Serie <key> …“) zählen als Standard-Change, nicht als Wiederaufbau', () => {
+    const g = gesammelt();
+    const serie = change('serie001-0000', 'CA-Sicherung pkiiss01', 4, { description: 'Standard-Serie ca_sicherung ((k) Wöchentliche Sicherung): Sicherung' });
+    g.changes = { stand: STAND, daten: [aufbau, serie] };
+    const t = text(kap(baueBetrieb('pki', P, g, {}, JETZT), 'wiederaufbau').bloecke);
+    expect(t).not.toContain('CA-Sicherung pkiiss01');
+    expect(t).toContain('Hinweis: 1 abgeschlossene Standard-Changes');
+  });
+
+  it('(M5) Windows-Server mit Erfassungsfehlern oder ohne Rollen: Rolle nicht belegt statt Lücke', () => {
+    const g = gesammelt();
+    g.assets = { stand: STAND, daten: { gefunden: ASSETS.map(a => (a.id === 'a-fs-srv' ? { ...a, attributes: { ...a.attributes, roles: [], erfassungsfehler: ['rollen: Zeitüberschreitung'] } } : a)), fehlend: [] } };
+    g.sicherung = { stand: STAND, daten: { jobs: [], letzte: {}, unerreichbar: [] } };
+    const d = baueBetrieb('pki', P, g, {}, JETZT);
+    const fs = zeileMit(kap(d, 'sicherung').bloecke, 'fs01')!.join(' ');
+    expect(fs).toContain('Rolle nicht belegt (Windows-Bestand mit Erfassungsfehlern)');
+    expect(fs).not.toMatch(/Lücke/);
+    expect(zeileMit(kap(d, 'komponenten').bloecke, 'fs01')!.join(' ')).toContain('nicht belegt (Windows-Bestand mit Erfassungsfehlern)');
+    // DC bleibt DC, auch mit Erfassungsfehlern
+    expect(zeileMit(kap(d, 'sicherung').bloecke, 'dc01')!.join(' ')).toContain('bewusst ohne PBS-Sicherung (Owner-Entscheidung)');
+  });
+
+  it('(M6) Kapitel 12: gelaufener Change ohne lesbare Prüfsumme', () => {
+    const g = gesammelt();
+    g.abnahmen = { stand: STAND, daten: { [aufbau.id]: { docId: 'd0c12345-0000', version: 2, pruefsummen: [] } } };
+    expect(zeileMit(kap(baueBetrieb('pki', P, g, {}, JETZT), 'beweise').bloecke, 'aufb1234')!.join(' ')).toContain('keine Prüfsumme lesbar');
+  });
+
+  it('(M7) Tresor: Name als ganzes Wort, ausdrücklich zugeordnete Einträge, fehlende nicht belegt', () => {
+    const g = gesammelt();
+    g.tresor = { stand: STAND, daten: [{ name: 'nfs01-admin', herkunft: 'x' }, { name: 'fs01-admin', herkunft: 'x' }, { name: 'pki-iss-sicherung', herkunft: 'pki' }] };
+    const k5 = kap(baueBetrieb('pki', { ...P, tresor: ['pki-iss-sicherung', 'weg-eintrag'] }, g, {}, JETZT), 'identitaeten').bloecke;
+    const t = tabellen(k5).find(x => x.kopf[0]!.startsWith('Tresor'))!;
+    expect(t.zeilen.map(z => z[0])).toEqual(['fs01-admin', 'pki-iss-sicherung']);
+    expect(zeileMit(k5, 'pki-iss-sicherung')).toContain('ausdrücklich zugeordnet');
+    expect(nichtBelegt(k5).some(b => b.grund.includes('weg-eintrag'))).toBe(true);
+  });
+
+  it('(M9) Zonen ohne Groß/Klein: Policy mit Zone „ad“ betrifft Zone „AD“', () => {
+    const g = gesammelt();
+    g.unifi.daten!.policies = [{ ...g.unifi.daten!.policies[0]!, id: 'polklein1', zielZone: 'ad' }];
+    expect(zeileMit(kap(baueBetrieb('pki', P, g, {}, JETZT), 'netz').bloecke, 'polklein1')).toBeDefined();
+  });
+
+  it('(M11) VM in Proxmox nicht gefunden: nie gesichert, auch wenn ein Job sie nennt', () => {
+    const g = gesammelt();
+    g.proxmox = { stand: STAND, daten: g.proxmox.daten!.map(v => (v.vmid === 822 ? { vmid: 822, node: 'pve', platten: [], ips: [], fehler: 'VMID 822 in Proxmox nicht gefunden' } : v)) };
+    const fs = zeileMit(kap(baueBetrieb('pki', P, g, {}, JETZT), 'sicherung').bloecke, 'fs01')!.join(' ');
+    expect(fs).toContain('nicht belegt (VM in Proxmox nicht gefunden)');
+    expect(fs).not.toContain('gesichert');
   });
 
   it('(i) Kapitel 12: Abnahme-Dokument mit Prüfsumme bzw. nichtBelegt kein Abnahmeprotokoll', () => {
@@ -279,7 +356,7 @@ describe('Betriebsdokument (D-BETRIEB)', () => {
     expect(zeileMit(k9, 'pki-betrieb')).toBeDefined();
     expect(nichtBelegt(k9).some(b => b.grund.includes('Schwellen'))).toBe(true);
     const k10 = kap(d, 'betrieb').bloecke;
-    expect(zeileMit(k10, 'k')!.join(' ')).toContain('freigegeben');
+    expect(zeileMit(k10, 'ca_sicherung')!.join(' ')).toContain('freigegeben 2026-11-01');
     expect(zeileMit(k10, 'Sonntag früh')).toBeDefined();
     expect(text(k10)).toContain('prob0001');
     const k13 = kap(d, 'abweichungen').bloecke;
@@ -444,11 +521,67 @@ describe('Sammler (betriebQuellen)', () => {
   it('Abnahmen: jüngstes Protokoll am Change, Sammelprotokoll über kopf.verweise, Prüfsummen aus PRUEFUNG.txt', async () => {
     const deps = basisDeps();
     const doc = (id: string, version: number, createdAt: string, verweise: string[]) => ({ id, userId: 'u', docType: 'abnahme', title: 't', content: '', format: 'markdown', version, createdAt,
-      struktur: JSON.stringify({ kopf: { verweise }, anhaenge: [{ name: 'PRUEFUNG.txt', inhalt: `${'b'.repeat(64)}  rohlauf-x.json\n` }] }) }) as never;
+      struktur: JSON.stringify({ kopf: { verweise }, anhaenge: [{ name: 'PRUEFUNG.txt', inhalt: verweise.map((v, i) => `${String(i + 1).repeat(64)}  rohlauf-${v.slice(7, 15)}.json\n`).join('') }] }) }) as never;
     deps.dokumente.getDocumentsForEntity = async (_o, _t, id) => (id === 'c1' ? [doc('d-alt', 1, '2026-11-01T00:00:00Z', ['change:c1']), doc('d-neu', 2, '2026-11-02T00:00:00Z', ['change:c1'])] : []);
     deps.dokumente.listDocuments = async () => [doc('d-serie', 1, '2026-11-03T00:00:00Z', ['change:c2', 'change:c3'])];
     const r = await betriebQuellen(deps, () => JETZT).abnahmen('u', ['c1', 'c2', 'c9']);
-    expect(r.daten).toEqual({ c1: { docId: 'd-neu', version: 2, pruefsummen: ['b'.repeat(64)] }, c2: { docId: 'd-serie', version: 1, pruefsummen: ['b'.repeat(64)] } });
+    // je Change nur die Prüfsumme seines eigenen Rohlaufs (Sammelprotokoll führt beide Glieder)
+    expect(r.daten).toEqual({ c1: { docId: 'd-neu', version: 2, pruefsummen: ['1'.repeat(64)] }, c2: { docId: 'd-serie', version: 1, pruefsummen: ['1'.repeat(64)] } });
+    deps.dokumente.listDocuments = async () => [doc('d-serie', 1, '2026-11-03T00:00:00Z', ['change:c2', 'change:c3'])];
+    expect((await betriebQuellen(deps, () => JETZT).abnahmen('u', ['c3'])).daten).toEqual({ c3: { docId: 'd-serie', version: 1, pruefsummen: ['2'.repeat(64)] } });
+  });
+
+  it('(I2/I4) Wartung: Läufe inkl. Serien-Glieder je Vorlage, Freigabestand mit Abdruck-Vergleich', async () => {
+    const deps = basisDeps();
+    const c = (id: string, extra: Partial<CmdbChangeRequest>) => ({ id, userId: 'u', title: id, type: 'standard', status: 'completed', riskLevel: 'low', affectedAssetIds: ['a-iss-vm'], affectedServiceIds: [], createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T01:00:00.000Z', ...extra }) as CmdbChangeRequest;
+    deps.itsm.listChangeRequests = async () => [
+      c('s1', { freigegebenUeber: 'standard:ca_sicherung', completedAt: '2026-11-02T00:00:00.000Z' }),
+      c('s2', { description: 'Standard-Serie ca_sicherung ((k) …): x', completedAt: '2026-11-09T00:00:00.000Z' }),
+      c('s3', { freigegebenUeber: 'standard:os_updates' }),
+      c('s4', { freigegebenUeber: 'standard:ca_sicherung', affectedAssetIds: ['fremd'] }),
+    ];
+    deps.standard = () => [{ key: 'ca_sicherung', titel: '(k) CA-Sicherung', abdruck: 'neu' }, { key: 'os_updates', titel: '(h) OS', abdruck: 'gleich' }];
+    deps.wartung.standardStand = async () => [{ vorlage: 'ca_sicherung', status: 'freigegeben', abdruck: 'alt', freigegebenAt: '2026-10-01T00:00:00Z' }, { vorlage: 'os_updates', status: 'freigegeben', abdruck: 'gleich', freigegebenAt: '2026-10-05T00:00:00Z' }];
+    const r = await betriebQuellen(deps, () => JETZT).wartung('u', ['ca_sicherung', 'os_updates'], ['a-iss-vm']);
+    expect(r.daten!.vorlagen).toEqual([
+      { key: 'ca_sicherung', titel: '(k) CA-Sicherung', status: 'Vorlage geändert — neue Freigabe nötig', laeufe: 2, letzterLauf: '2026-11-09T00:00:00.000Z' },
+      { key: 'os_updates', titel: '(h) OS', status: 'freigegeben 2026-10-05', laeufe: 1, letzterLauf: '2026-11-01T01:00:00.000Z' },
+    ]);
+  });
+
+  it('(M10) DNS-Lesefehler verwirft den Firewall-Stand nicht', async () => {
+    const deps = basisDeps();
+    deps.unifiLesen = async () => ({ zonen: [{ id: 'z', name: 'AD', netzIds: [] }], netze: [], policies: [] });
+    deps.unifiDns = async () => { throw new Error('static-dns 500'); };
+    const r = await betriebQuellen(deps, () => JETZT).unifi('u');
+    expect(r.fehler).toBeUndefined();
+    expect(r.daten!.zonen).toHaveLength(1);
+    expect(r.hinweis).toContain('static-dns 500');
+  });
+
+  it('(M11) sammleBetrieb: VM fehlt in Proxmox → im Alle-Job ungeprüft statt enthalten', async () => {
+    const deps = basisDeps();
+    deps.proxmox = async (i) => {
+      if (i.action === 'list_vms') return { success: true, data: [{ vmid: 821, node: 'pve', name: 'pkiiss01', status: 'stopped' }] };
+      if (i.action === 'list_backup_jobs') return { success: true, data: [{ id: 'alle', all: 1, schedule: '21:00', storage: 'pbs' }] };
+      return { success: true, data: {} };
+    };
+    deps.proxmoxBackups = async () => ({ jeVm: {}, unerreichbar: [] });
+    deps.cmdb.getAssetById = async (_o, id) => ({ 'v1': vm('v1', 'pkiiss01', 821), 'v2': vm('v2', 'weg01', 899) } as Record<string, CmdbAsset>)[id] ?? null;
+    const { g } = await sammleBetrieb(betriebQuellen(deps, () => JETZT), 'u', { assets: ['v1', 'v2'] });
+    const j = g.sicherung.daten!.jobs[0]!;
+    expect(j.enthaelt).toEqual([821]);
+    expect(j.ungeprueft).toEqual([{ vmid: 899, grund: 'VM in Proxmox nicht gefunden' }]);
+  });
+
+  it('(M12) pbs-unas bewusst aus: kein „nicht erreichbar“, Hinweis „nicht gelesen (bewusst aus)“', async () => {
+    const deps = basisDeps();
+    deps.proxmox = async () => ({ success: true, data: [] });
+    deps.proxmoxBackups = async () => ({ jeVm: {}, unerreichbar: [{ speicher: 'pbs-unas', grund: 'nicht aktiv (nicht erreichbar)' }, { speicher: 'pve2/nas', grund: 'Zeitüberschreitung' }] });
+    const r = await betriebQuellen(deps, () => JETZT).sicherung('u', [{ vmid: 821, node: 'pve' }]);
+    expect(r.daten!.unerreichbar).toEqual([{ speicher: 'pve2/nas', grund: 'Zeitüberschreitung' }]);
+    expect(r.hinweis).toContain('nicht gelesen (bewusst aus): pbs-unas');
+    expect(r.hinweis).not.toMatch(/pbs-unas \(/);
   });
 
   it('sammleBetrieb: ungültige gespeicherte Parameter werfen, gültige laufen alle Sammler', async () => {

@@ -36,6 +36,23 @@ export interface BetriebNachschlagen {
   vorhaben(userId: string, schluessel: string): Promise<{ id: string; changeIds: string[] } | null>;
   /** CMDB-Dokument nach ID oder eindeutigem ID-Anfang (ab 6 Zeichen) */
   dokument(userId: string, schluessel: string): Promise<{ id: string } | null>;
+  /** Standard-Vorlagen (key, titel wie „(k) …“) zum Prüfen von standard_vorlagen */
+  standardVorlagen(): Array<{ key: string; titel: string }>;
+  /** registrierte Job-Schlüssel zum Prüfen von jobs */
+  jobKeys(): string[];
+  /** Namen der Tresor-Einträge (nie Werte) zum Prüfen von tresor */
+  tresorNamen(userId: string): Promise<string[]>;
+}
+
+/**
+ * Standard-Vorlage aus Schlüssel oder Buchstabe: „ca_sicherung“ oder „k“ (Titel beginnt mit „(k)“) → echter Schlüssel; Text = Fehler mit
+ * den gültigen Angaben.
+ */
+export function loeseVorlage(ref: string, vorlagen: Array<{ key: string; titel: string }>): string | { fehler: string } {
+  const r = ref.trim().toLowerCase();
+  const v = vorlagen.find(x => x.key.toLowerCase() === r) ?? vorlagen.find(x => x.titel.toLowerCase().startsWith(`(${r})`));
+  if (v) return v.key;
+  return { fehler: `Standard-Vorlage „${ref}“ unbekannt — gültig: ${vorlagen.map(x => `${x.key}${/^\((\w+)\)/.exec(x.titel)?.[1] ? ` (${/^\((\w+)\)/.exec(x.titel)![1]})` : ''}`).join(', ')}` };
 }
 
 export interface DokumenteDeps {
@@ -310,7 +327,7 @@ export class DokumenteDienst {
    * Restore-Change). Jeder Verweis wird aufgelöst und geprüft; ein Fehler (unbekannt, mehrdeutig) nennt alle Problemfälle, gespeichert wird dann nichts.
    */
   async betriebAnlegen(o: string, name: string, e: {
-    assets: string[]; vorhaben?: string; architekturDoc?: string; jobs?: string[]; standardVorlagen?: string[]; restoreChange?: string;
+    assets: string[]; vorhaben?: string; architekturDoc?: string; jobs?: string[]; standardVorlagen?: string[]; restoreChange?: string; tresor?: string[]; aufbauChanges?: string[];
   }): Promise<BauplanInstanzDaten> {
     if (!INSTANZ_NAME.test(name)) throw new Error('name: nur Buchstaben, Ziffern, _ . - (höchstens 80 Zeichen)');
     if (/^(change|serie)-/i.test(name)) throw new Error('name: darf nicht mit change- oder serie- beginnen (Ordner der Abnahmeprotokolle)');
@@ -318,8 +335,9 @@ export class DokumenteDienst {
     if (!q) throw new Error('Betriebs-Instanzen sind hier nicht verfügbar (keine CMDB-Anbindung)');
     // Form zuerst prüfen (Anzahl, Schlüssel); aufgelöst wird danach
     const form = pruefeBetriebParameter({
-      assets: e.assets, ...(e.jobs ? { jobs: e.jobs } : {}), ...(e.standardVorlagen ? { standardVorlagen: e.standardVorlagen } : {}),
+      assets: e.assets, ...(e.jobs ? { jobs: e.jobs } : {}), ...(e.standardVorlagen ? { standardVorlagen: e.standardVorlagen } : {}), ...(e.tresor ? { tresor: e.tresor } : {}),
     });
+    if (e.aufbauChanges && (!e.aufbauChanges.length || e.aufbauChanges.length > 40)) throw new Error('aufbau_changes: 1 bis 40 Change-IDs');
     if (typeof form === 'string') throw new Error(form);
     if (await this.d.instanzen.finde(o, name)) throw new Error(`Bauplan-Instanz „${name}“ gibt es schon`);
     const probleme: string[] = [];
@@ -363,8 +381,42 @@ export class DokumenteDienst {
       if (typeof c === 'string') probleme.push(`restore_change: ${c}`);
       else p.restoreChangeId = c.id;
     }
-    if (form.jobs) p.jobs = form.jobs;
-    if (form.standardVorlagen) p.standardVorlagen = form.standardVorlagen;
+    if (form.jobs) {
+      // nur registrierte Jobs — ein Tippfehler stünde sonst im Dokument als „nicht registriert“
+      const bekannt = q.jobKeys();
+      const fremd = form.jobs.filter(j => !bekannt.includes(j));
+      if (fremd.length) probleme.push(`jobs: unbekannt ${fremd.map(j => `„${j}“`).join(', ')} — gültig: ${[...bekannt].sort().join(', ') || 'keine registriert'}`);
+      else p.jobs = form.jobs;
+    }
+    if (form.standardVorlagen) {
+      // Buchstabe („k“) oder Schlüssel; gespeichert wird immer der echte Schlüssel
+      const vorlagen = q.standardVorlagen(); const keys: string[] = [];
+      for (const ref of form.standardVorlagen) {
+        const k = loeseVorlage(ref, vorlagen);
+        if (typeof k !== 'string') probleme.push(k.fehler);
+        else if (keys.includes(k)) probleme.push(`standard_vorlagen: „${ref}“ doppelt (${k})`);
+        else keys.push(k);
+      }
+      p.standardVorlagen = keys;
+    }
+    if (e.aufbauChanges) {
+      // kuratierte Aufbau-Changes (Kapitel 7) in der angegebenen Reihenfolge; ID oder eindeutiger Anfang
+      const auf: string[] = [];
+      for (const r of e.aufbauChanges) {
+        const c = await findeChange(this.d.quellen, o, r);
+        if (typeof c === 'string') probleme.push(`aufbau_changes: ${c}`);
+        else if (auf.includes(c.id)) probleme.push(`aufbau_changes: Change ${c.id.slice(0, 8)} doppelt angegeben`);
+        else auf.push(c.id);
+      }
+      p.aufbauChangeIds = auf;
+    }
+    if (form.tresor) {
+      // ausdrücklich zugeordnete Tresor-Einträge (systemweite Geheimnisse ohne Asset-Namen); nur Namen, nie Werte
+      const namen = await q.tresorNamen(o);
+      const fremd = form.tresor.filter(n => !namen.includes(n));
+      if (fremd.length) probleme.push(`tresor: Eintrag ${fremd.map(n => `„${n}“`).join(', ')} gibt es nicht`);
+      else p.tresor = form.tresor;
+    }
     if (probleme.length) throw new Error(`Betriebs-Instanz nicht angelegt: ${probleme.join('; ')}`);
     const geprueft = pruefeBetriebParameter(p, MAX_ASSET_IDS);
     if (typeof geprueft === 'string') throw new Error(geprueft);
@@ -402,7 +454,7 @@ export class DokumentationSkill extends Skill {
       + 'als PDF, DOCX, Rohlauf-JSON und PRUEFUNG.txt zugestellt und abgelegt (data/dokumente/… und Kopie auf pve2 /srv/alfred-dokumente/…). '
       + 'abnahme_erzeugen (change = ID oder eindeutiges Präfix; optional zweck ≤ 600, abweichungen ≤ 600 Zeichen) — Change-Abnahmeprotokoll. '
       + 'instanz_anlegen (name [A-Za-z0-9_.-], dokumentart testprotokoll, changes = Change-IDs in Reihenfolge Aufbau … Abbau) — bündelt Changes für ein Testprotokoll. '
-      + 'instanz_anlegen mit dokumentart betrieb (name, assets = Namen oder IDs der CMDB-Assets des Systems; optional vorhaben, architektur_doc, jobs, standard_vorlagen, restore_change) — grenzt ein bestehendes System für ein Betriebsdokument ab. '
+      + 'instanz_anlegen mit dokumentart betrieb (name, assets = Namen oder IDs der CMDB-Assets des Systems; optional vorhaben, architektur_doc, jobs, standard_vorlagen, restore_change, tresor, aufbau_changes) — grenzt ein bestehendes System für ein Betriebsdokument ab. '
       + 'testprotokoll_erzeugen (instanz = Name oder ID; optional zweck ≤ 600, befunde_produktion ≤ 1200) — Lab-/Testprotokoll über alle Changes der Instanz. '
       + 'betrieb_erzeugen (instanz = Name oder ID einer Betriebs-Instanz; optional zweck ≤ 600, abweichungen ≤ 600) — Betriebsdokument (As-built, 13 Kapitel) '
       + 'nur lesend aus CMDB, Proxmox, UniFi, Tresor-Namen, Jobs, Wartung, Changes und Abnahmeprotokollen; nicht Belegtes steht als „nicht belegt“ mit Grund. '
@@ -423,7 +475,9 @@ export class DokumentationSkill extends Skill {
         vorhaben: { type: 'string', description: 'instanz_anlegen (betrieb): Vorhaben-ID, eindeutiger ID-Anfang oder Titel' },
         architektur_doc: { type: 'string', description: 'instanz_anlegen (betrieb): ID des Architektur-Dokuments in der CMDB' },
         jobs: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Job-Schlüssel, z. B. pki-betrieb' },
-        standard_vorlagen: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Schlüssel der Standard-Vorlagen, z. B. k' },
+        standard_vorlagen: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Standard-Vorlagen als Schlüssel (ca_sicherung) oder Buchstabe (k)' },
+        aufbau_changes: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): die Changes, die das System aufgebaut haben, in Aufbau-Reihenfolge (IDs oder eindeutige Anfänge, höchstens 40) — Kapitel Wiederaufbau zeigt genau diese' },
+        tresor: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Namen von Tresor-Einträgen, die zum System gehören, ohne einen Asset-Namen zu tragen (nur Namen, nie Werte)' },
         restore_change: { type: 'string', description: 'instanz_anlegen (betrieb): Change mit dem letzten Restore-Beweis' },
         changes: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen: Change-IDs in Reihenfolge' },
         instanz: { type: 'string', description: 'testprotokoll_erzeugen, betrieb_erzeugen: Name oder ID der Instanz' },
@@ -466,7 +520,7 @@ export class DokumentationSkill extends Skill {
             const liste = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : undefined);
             const i = await this.dienst.betriebAnlegen(o, String(input.name ?? '').trim(), {
               assets: liste(input.assets) ?? [], vorhaben: text(input.vorhaben), architekturDoc: text(input.architektur_doc),
-              jobs: liste(input.jobs), standardVorlagen: liste(input.standard_vorlagen), restoreChange: text(input.restore_change),
+              jobs: liste(input.jobs), standardVorlagen: liste(input.standard_vorlagen), restoreChange: text(input.restore_change), tresor: liste(input.tresor), aufbauChanges: liste(input.aufbau_changes),
             });
             return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) für ein Betriebsdokument; Parameter: ${i.parameter ?? '{}'}` };
           }

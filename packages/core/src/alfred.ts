@@ -7280,7 +7280,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const instanzenDoku = new BauplanInstanzRepository(adapter);
           const vorhabenDoku = new (await import('@alfred/storage')).VorhabenRepository(adapter);
           const { betriebQuellen } = await import('./infrastruktur/dokumente/betrieb-quellen.js');
-          const { VORLAGEN: STANDARD_VORLAGEN } = await import('./infrastruktur/standard-vorlagen.js');
+          const { VORLAGEN: STANDARD_VORLAGEN, vorlagenAbdruck: standardAbdruck } = await import('./infrastruktur/standard-vorlagen.js');
           const { regelText: wartungRegelText } = await import('./infrastruktur/wartung.js');
           const { ProblemRepository: ProblemDoku, WartungRepository: WartungDoku, JobRunsRepository: JobRunsDoku } = await import('@alfred/storage');
           const problemDoku = new ProblemDoku(adapter);
@@ -7306,6 +7306,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const treffer = await cmdbFz.findDocumentsByIdPrefix(u, k);
                 return treffer.length === 1 ? { id: treffer[0]!.id } : null;
               },
+              standardVorlagen: () => STANDARD_VORLAGEN.map(v => ({ key: v.key, titel: v.titel })),
+              jobKeys: () => (this.jobRegister?.definitionen() ?? []).map(d => d.key),
+              tresorNamen: async (u) => { if (!this.tresor) throw new Error('Tresor nicht verfügbar'); return (await this.tresor.liste(u)).map(e => e.name); },
             },
             // D-BETRIEB — lesende Sammler über die bestehenden Lesewege (Spec §5.2); fehlt ein Skill, scheitert nur seine Quelle
             betriebQuellen: betriebQuellen({
@@ -7319,7 +7322,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               jobRuns: { letzterLauf: async (key) => { const l = await jobRunsDoku.letzterLauf(key); return l ? { startedAt: l.startedAt, ...(l.finishedAt ? { finishedAt: l.finishedAt } : {}), ...(l.ok !== undefined && l.ok !== null ? { ok: l.ok } : {}), ...(l.fehler ? { fehler: l.fehler } : {}) } : undefined; } },
               jobDefinitionen: () => (this.jobRegister?.definitionen() ?? []).map(d => ({ key: d.key, beschreibung: d.beschreibung, takt: d.takt })),
               wartung: { kalender: (u) => wartungDoku.kalender(u), standardStand: (u) => wartungDoku.standardStand(u) },
-              standard: () => STANDARD_VORLAGEN.map(v => ({ key: v.key, titel: v.titel })),
+              standard: () => STANDARD_VORLAGEN.map(v => ({ key: v.key, titel: v.titel, abdruck: standardAbdruck(v) })),
               regelText: (r) => wartungRegelText(r as Parameters<typeof wartungRegelText>[0]),
               proxmox: async (i) => {
                 const px = skillRegistry.get('proxmox');

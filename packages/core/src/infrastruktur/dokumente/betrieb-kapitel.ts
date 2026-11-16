@@ -32,6 +32,8 @@ export interface Komponente {
   ips: string[];
   rollen: string[];
   dc: boolean;
+  /** Rollen nicht belegt: kein Windows-Bestand, oder Windows-Bestand ohne Rollen bzw. mit Erfassungsfehlern — DC dann nicht ausschließbar */
+  rolleOffen?: string;
 }
 
 const istNutzIp = (ip: string) => ipZahl(ip) !== undefined && !ip.startsWith('127.') && !ip.startsWith('169.254.');
@@ -55,9 +57,18 @@ export function komponenten(gs: Gesammelt): Komponente[] {
     return {
       name: assets[0]!.name, assets, ...(vm ? { vm } : {}), ...(server ? { server } : {}),
       ...(v ? { vmid: v.vmid, node: l?.node ?? (v.node || undefined) } : {}), ...(l ? { live: l } : {}),
-      ips, rollen, dc: rollen.includes(DC_ROLLE),
+      ips, rollen, dc: rollen.includes(DC_ROLLE), ...(rollen.includes(DC_ROLLE) ? {} : rolleOffenVon(server, rollen)),
     };
   });
+}
+
+function rolleOffenVon(server: CmdbAsset | undefined, rollen: string[]): { rolleOffen?: string } {
+  if (!server) return { rolleOffen: 'kein Windows-Bestand' };
+  if (server.attributes.system !== 'windows') return {};
+  const fehler = server.attributes.erfassungsfehler;
+  if (Array.isArray(fehler) ? fehler.length > 0 : !!fehler) return { rolleOffen: 'Windows-Bestand mit Erfassungsfehlern' };
+  if (!rollen.length) return { rolleOffen: 'Windows-Bestand ohne Rollen' };
+  return {};
 }
 
 const gib = (bytes: unknown) => (Number.isFinite(Number(bytes)) && Number(bytes) > 0 ? `${Math.round((Number(bytes) / 1024 ** 3) * 10) / 10} GiB` : undefined);
@@ -74,7 +85,7 @@ export function komponentenZeile(k: Komponente): string[] {
   const status = [...new Set(k.assets.map(a => a.status))].join('/') + (k.live?.status ? `; Proxmox ${k.live.status}` : '');
   return [
     g(k.name), k.assets.map(a => `${a.assetType} (${a.sourceSkill ?? '?'})`).join(', '), k.vmid !== undefined ? String(k.vmid) : '—', g(k.node),
-    g(speicher), ressourcen, g(os), k.ips.join(', ') || '—', k.server ? g(k.rollen.join(', ')) : 'nicht belegt (kein Windows-Bestand)', g(lizenz), g(status),
+    g(speicher), ressourcen, g(os), k.ips.join(', ') || '—', k.rolleOffen ? `${k.rollen.length ? `${g(k.rollen.join(', '))}; ` : ''}nicht belegt (${k.rolleOffen})` : g(k.rollen.join(', ')), g(lizenz), g(status),
   ];
 }
 
@@ -107,12 +118,12 @@ export function kapitelNetz(gs: Gesammelt, ks: Komponente[]): Block[] {
     const d = u.daten;
     const netze = d.netze.filter(n => n.subnetz && ips.some(ip => imNetz(n.subnetz!, ip)));
     const zoneVon = (n: typeof netze[number]) => d.zonen.find(z => z.id === n.zoneId || z.netzIds.includes(n.id))?.name;
-    const zonen = new Set(netze.map(zoneVon).filter((x): x is string => !!x));
+    const zonen = new Set(netze.map(zoneVon).filter((x): x is string => !!x).map(z => z.toLowerCase()));
     bloecke.push(netze.length
       ? { art: 'tabelle', kopf: ['Netz', 'VLAN', 'Subnetz', 'Zone', 'Asset-IPs'], zeilen: netze.map(n => [g(n.name), n.vlan !== undefined ? String(n.vlan) : '—', g(n.subnetz), g(zoneVon(n)), ips.filter(ip => imNetz(n.subnetz!, ip)).join(', ')]) }
       : { art: 'absatz', text: 'Kein UniFi-Netz enthält eine IP der Komponenten.' });
     const textNenntIp = (t: string) => ipTokens(t).some(tok => ips.some(ip => imNetz(tok, ip)));
-    const pol = d.policies.filter(p => zonen.has(p.quelleZone) || zonen.has(p.zielZone) || textNenntIp(`${p.quelle} ${p.ziel}`));
+    const pol = d.policies.filter(p => zonen.has(p.quelleZone.toLowerCase()) || zonen.has(p.zielZone.toLowerCase()) || textNenntIp(`${p.quelle} ${p.ziel}`));
     if (pol.length) {
       bloecke.push({ art: 'absatz', text: 'UniFi-Policies dieser Zonen bzw. mit einer Asset-IP — je Zonenpaar in Auswertungsreihenfolge (die erste passende Regel gewinnt):' });
       bloecke.push({
@@ -147,7 +158,11 @@ export function kapitelNetz(gs: Gesammelt, ks: Komponente[]): Block[] {
   return bloecke;
 }
 
-export function kapitelIdentitaeten(gs: Gesammelt, ks: Komponente[]): Block[] {
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Name als ganzes Wort (fs01 trifft „fs01-admin“, nicht „nfs01“) */
+export const nenntNamen = (text: string, name: string) => new RegExp(`(^|[^a-z0-9])${esc(name.toLowerCase())}($|[^a-z0-9])`).test(text.toLowerCase());
+
+export function kapitelIdentitaeten(gs: Gesammelt, ks: Komponente[], p: BetriebParameter): Block[] {
   const bloecke: Block[] = [];
   const domaenen = ks.filter(k => k.server?.attributes.domain).map(k => `${g(k.name)}: Domäne ${g(k.server!.attributes.domain)}`);
   if (domaenen.length) bloecke.push({ art: 'liste', punkte: domaenen });
@@ -157,11 +172,14 @@ export function kapitelIdentitaeten(gs: Gesammelt, ks: Komponente[]): Block[] {
   const namen = ks.map(k => k.name.toLowerCase());
   if (gs.tresor.fehler || !gs.tresor.daten) bloecke.push(nichtLesbar('Tresor', gs.tresor));
   else {
-    const t = gs.tresor.daten.filter(e => namen.some(n => e.name.toLowerCase().includes(n))).sort((a, b) => a.name.localeCompare(b.name));
+    const ausdruecklich = new Set(p.tresor ?? []);
+    const t = gs.tresor.daten.filter(e => ausdruecklich.has(e.name) || namen.some(n => nenntNamen(e.name, n))).sort((a, b) => a.name.localeCompare(b.name));
     // nur Name und Herkunft — Werte und Zweck nie (Zweck ist Freitext und kann Geheimes enthalten)
     bloecke.push(t.length
-      ? { art: 'tabelle', kopf: ['Tresor-Eintrag (nur Name)', 'Herkunft'], zeilen: t.map(e => [g(e.name), g(e.herkunft)]) }
+      ? { art: 'tabelle', kopf: ['Tresor-Eintrag (nur Name)', 'Herkunft', 'Zuordnung'], zeilen: t.map(e => [g(e.name), g(e.herkunft), ausdruecklich.has(e.name) ? 'ausdrücklich zugeordnet' : 'trägt einen Komponentennamen']) }
       : { art: 'absatz', text: 'Kein Tresor-Eintrag trägt den Namen einer Komponente.' });
+    const weg = [...ausdruecklich].filter(n => !gs.tresor.daten!.some(e => e.name === n));
+    if (weg.length) bloecke.push({ art: 'nichtBelegt', grund: `Tresor-Einträge der Instanz nicht (mehr) vorhanden: ${weg.map(n => g(n)).join(', ')}` });
   }
   const ids = new Set(ks.flatMap(k => k.assets.map(a => a.id)));
   if (gs.fernzugaenge.fehler || !gs.fernzugaenge.daten) bloecke.push(nichtLesbar('Fernzugänge', gs.fernzugaenge));
@@ -198,16 +216,19 @@ export function kapitelSicherung(gs: Gesammelt, ks: Komponente[], p: BetriebPara
       const ungeprueft = d.jobs.filter(j => j.aktiv).flatMap(j => j.ungeprueft.filter(u => u.vmid === vmid).map(u => u.grund));
       if (!drin.length && ungeprueft.length) offen.push(`${g(k.name)}: ${ungeprueft.map(x => g(x, 200)).join('; ')}`);
       const s8 = snap(k);
+      // in Proxmox nicht gefunden: kein Job kann sie sichern — nie „gesichert“
+      const fehltLive = !!k.live && k.live.status === undefined;
       let bewertung: string;
-      if (k.dc) {
+      if (fehltLive) bewertung = 'nicht belegt (VM in Proxmox nicht gefunden)';
+      else if (k.dc) {
         bewertung = drin.length ? 'gesichert — abweichend von der Owner-Regel (DCs ohne PBS-Sicherung)'
           : ungeprueft.length ? 'nicht belegt: Job-Zugehörigkeit nicht geprüft (Owner-Regel: DCs ohne PBS-Sicherung)' : 'bewusst ohne PBS-Sicherung (Owner-Entscheidung)';
         if (s8 && s8 !== 'keine') bewertung += ' — Snapshots vorhanden, abweichend von der Owner-Regel';
       } else if (drin.length) bewertung = 'gesichert';
-      else if (ungeprueft.length) bewertung = 'nicht belegt: Job-Zugehörigkeit nicht geprüft';
-      else if (!k.server) bewertung = 'Rolle nicht belegt (kein Windows-Bestand) — in keinem aktiven Sicherungsjob';
+      else if (ungeprueft.length) bewertung = `nicht belegt (${g(ungeprueft[0]!, 200)})`;
+      else if (k.rolleOffen) bewertung = `Rolle nicht belegt (${k.rolleOffen}) — in keinem aktiven Sicherungsjob`;
       else bewertung = 'Lücke: in keinem aktiven Sicherungsjob';
-      return [g(k.name), String(vmid), g(drin.map(j => j.id).join(', ')), g(aus.map(j => j.id).join(', ')), zeitText(d.letzte[vmid]), g(s8 ?? 'nicht gelesen'), bewertung];
+      return [g(k.name), String(vmid), fehltLive ? '—' : g(drin.map(j => j.id).join(', ')), g(aus.map(j => j.id).join(', ')), zeitText(d.letzte[vmid]), g(s8 ?? 'nicht gelesen'), bewertung];
     });
     bloecke.push({ art: 'tabelle', kopf: ['Komponente', 'VMID', 'Sicherungsjob', 'Ausgenommen in', 'Letzte Sicherung', 'Snapshots', 'Bewertung'], zeilen });
     if (offen.length) bloecke.push({ art: 'nichtBelegt', grund: `Sicherungsjob-Zugehörigkeit nicht geprüft — ${offen.join(' | ')}` });
@@ -266,7 +287,7 @@ export function kapitelBetrieb(gs: Gesammelt, p: BetriebParameter): Block[] {
   if (w.fehler || !w.daten) bloecke.push(nichtLesbar('Wartung', w));
   else {
     bloecke.push(p.standardVorlagen?.length
-      ? { art: 'tabelle', kopf: ['Standard-Vorlage', 'Titel', 'Freigabe', 'Letzter Lauf an diesen Assets'], zeilen: w.daten.vorlagen.map(v => [g(v.key), v.titel ? g(v.titel) : 'unbekannte Vorlage', g(v.status ?? 'nicht angefragt'), v.letzterLauf ? zeitText(v.letzterLauf) : 'kein Lauf erfasst']) }
+      ? { art: 'tabelle', kopf: ['Standard-Vorlage', 'Titel', 'Freigabe', 'Läufe an diesen Assets', 'Letzter Lauf'], zeilen: w.daten.vorlagen.map(v => [g(v.key), v.titel ? g(v.titel) : 'unbekannte Vorlage', g(v.status ?? 'nicht freigegeben'), v.laeufe !== undefined ? String(v.laeufe) : '—', v.letzterLauf ? zeitText(v.letzterLauf) : 'kein Lauf erfasst']) }
       : { art: 'nichtBelegt', grund: 'Standard-Vorlagen: keine angegeben' });
     bloecke.push(w.daten.fenster.length
       ? { art: 'tabelle', kopf: ['Wartungsfenster', 'Art', 'Regel'], zeilen: w.daten.fenster.map(f => [g(f.name), g(f.art), g(f.regel)]) }

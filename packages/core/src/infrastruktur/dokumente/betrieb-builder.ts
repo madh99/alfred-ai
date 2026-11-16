@@ -7,7 +7,7 @@ import type { ChangeSchritt } from '../change-schritte.js';
 import { DOKU_ARTEN, pruefeDokument } from './arten.js';
 import { zeitText } from './beweis.js';
 import type { BetriebParameter } from './betrieb-parameter.js';
-import type { Gesammelt, Quelle } from './betrieb-quellen.js';
+import { istStandard, type Gesammelt, type Quelle } from './betrieb-quellen.js';
 import {
   g, id8, kapitelBetrieb, kapitelIdentitaeten, kapitelNetz, kapitelSicherung, kapitelUeberwachung, komponenten, komponentenHinweise, komponentenZeile,
   nichtLesbar, problemTabelle, type Komponente,
@@ -116,25 +116,46 @@ function kapitelAbhaengigkeiten(gs: Gesammelt, ks: Komponente[]): Block[] {
 const aktionText = (s: ChangeSchritt) => (s.skill ? (s.aktion ? `${s.skill}.${s.aktion}` : s.skill) : (s.aktion ?? s.art ?? '—'));
 const pruefText = (s: ChangeSchritt) => (s.pruefung ? `${s.pruefung.typ}${s.pruefung.erwartet ? `: erwartet „${s.pruefung.erwartet}“` : ''}` : '—');
 
-function kapitelWiederaufbau(gs: Gesammelt): Block[] {
+/** ein Aufbau-Change: Überschrift (Nr., ID, Titel, Status/Ende) und Schritt-Tabelle */
+function aufbauBloecke(c: CmdbChangeRequest, i: number): Block[] {
+  const ende = c.status === 'completed' ? `abgeschlossen ${zeitText(laufVon(c)?.ende ?? c.completedAt)}` : `Status ${c.status}`;
+  const plan = (c.schritte ?? []) as ChangeSchritt[];
+  return [
+    { art: 'absatz', text: `${i + 1}. Change ${id8(c.id)} — ${g(c.title, 200)} (${ende})` },
+    plan.length
+      ? { art: 'tabelle', kopf: ['Nr', 'Was', 'Womit', 'Prüfung'], zeilen: plan.map(s => [String(s.nr), g(s.titel, 120), g(aktionText(s), 80), g(pruefText(s), 120)]) }
+      : { art: 'nichtBelegt', grund: `Change ${id8(c.id)} ohne Schritte` },
+  ];
+}
+
+function kapitelWiederaufbau(gs: Gesammelt, p: BetriebParameter): Block[] {
   const bloecke: Block[] = [{ art: 'nichtBelegt', grund: 'Bauplan-Vorlage folgt mit V3 — bis dahin aus den durchgeführten Changes (Reihenfolge, Schritte, Prüfung)' }];
   if (gs.changes.fehler || !gs.changes.daten) return [...bloecke, nichtLesbar('Changes', gs.changes)];
-  const abgeschlossen = gs.changes.daten.filter(c => c.status === 'completed');
-  // Standard-Changes (Routine: Updates, Snapshots) bauen nichts auf — nur in Kapitel 11
-  const standard = abgeschlossen.filter(c => (c.freigegebenUeber ?? '').startsWith('standard:'));
-  const aufbau = abgeschlossen.filter(c => !(c.freigegebenUeber ?? '').startsWith('standard:'));
+  if (p.aufbauChangeIds?.length) {
+    // kuratiert: genau diese Changes in der angegebenen Reihenfolge
+    const nachId = new Map(gs.changes.daten.map(c => [c.id, c]));
+    bloecke.push({ art: 'absatz', text: `Kuratiert: ${p.aufbauChangeIds.length} Aufbau-Changes in festgelegter Reihenfolge (Instanz-Parameter aufbau_changes).` });
+    const fehlt = p.aufbauChangeIds.filter(id => !nachId.has(id));
+    p.aufbauChangeIds.filter(id => nachId.has(id)).forEach((id, i) => bloecke.push(...aufbauBloecke(nachId.get(id)!, i)));
+    if (fehlt.length) bloecke.push({ art: 'nichtBelegt', grund: `Aufbau-Changes nicht gefunden: ${fehlt.map(id8).join(', ')}${gs.changes.hinweis ? ` (${g(gs.changes.hinweis)})` : ''}` });
+    bloecke.push({ art: 'absatz', text: 'Parameterwerte dieser Instanz (Namen, VMIDs, IPs, Netze): Kapitel 3 und 4.' });
+    return bloecke;
+  }
+  bloecke.unshift({ art: 'absatz', text: 'Nicht kuratiert: alle abgeschlossenen Nicht-Standard-Changes des Systems — Aufbau-Changes per Instanz-Parameter aufbau_changes festlegen' });
+  const alleFertig = gs.changes.daten.filter(c => c.status === 'completed');
+  // der Restore-Beweis ist kein Aufbau-Schritt (Kapitel 8)
+  const restore = alleFertig.find(c => c.id === p.restoreChangeId);
+  const abgeschlossen = alleFertig.filter(c => c !== restore);
+  // Standard-Changes (Routine, auch als Serie) bauen nichts auf — nur in Kapitel 11
+  const standard = abgeschlossen.filter(istStandard);
+  const aufbau = abgeschlossen.filter(c => !istStandard(c));
   const fertig = aufbau.slice(0, MAX_WIEDERAUFBAU);
   if (!fertig.length) {
     bloecke.push({ art: 'nichtBelegt', grund: 'keine abgeschlossenen Changes (außer Standard-Changes) zu diesen Assets' });
   }
-  fertig.forEach((c, i) => {
-    bloecke.push({ art: 'absatz', text: `${i + 1}. Change ${id8(c.id)} — ${g(c.title, 200)} (abgeschlossen ${zeitText(laufVon(c)?.ende ?? c.completedAt)})` });
-    const plan = (c.schritte ?? []) as ChangeSchritt[];
-    bloecke.push(plan.length
-      ? { art: 'tabelle', kopf: ['Nr', 'Was', 'Womit', 'Prüfung'], zeilen: plan.map(s => [String(s.nr), g(s.titel, 120), g(aktionText(s), 80), g(pruefText(s), 120)]) }
-      : { art: 'nichtBelegt', grund: `Change ${id8(c.id)} ohne Schritte` });
-  });
+  fertig.forEach((c, i) => bloecke.push(...aufbauBloecke(c, i)));
   if (aufbau.length > fertig.length) bloecke.push({ art: 'absatz', text: `Hinweis: ${aufbau.length - fertig.length} weitere abgeschlossene Changes nicht aufgeführt (höchstens ${MAX_WIEDERAUFBAU}) — vollständige Liste in Kapitel 11.` });
+  if (restore) bloecke.push({ art: 'absatz', text: `Hinweis: Change ${id8(restore.id)} ist der Restore-Beweis — siehe Kapitel 8.` });
   if (standard.length) bloecke.push({ art: 'absatz', text: `Hinweis: ${standard.length} abgeschlossene Standard-Changes (Routine) sind kein Wiederaufbau-Schritt — siehe Kapitel 11.` });
   if (fertig.length) bloecke.push({ art: 'absatz', text: 'Parameterwerte dieser Instanz (Namen, VMIDs, IPs, Netze): Kapitel 3 und 4.' });
   return bloecke;
@@ -162,7 +183,7 @@ function kapitelBeweise(gs: Gesammelt): Block[] {
   if (mit.length) {
     bloecke.push({ art: 'tabelle', kopf: ['Change', 'Titel', 'Abnahmeprotokoll', 'Version', 'Prüfsumme(n) SHA-256'], zeilen: mit.map(c => {
       const v = a[c.id]!;
-      return [id8(c.id), g(c.title, 120), id8(v.docId), String(v.version), v.pruefsummen.length ? v.pruefsummen.join(', ') : 'keine (Change ohne Lauf)'];
+      return [id8(c.id), g(c.title, 120), id8(v.docId), String(v.version), v.pruefsummen.length ? v.pruefsummen.join(', ') : 'keine Prüfsumme lesbar'];
     }) });
   }
   if (ohne.length) bloecke.push({ art: 'nichtBelegt', grund: `kein Abnahmeprotokoll: ${ohne.map(c => id8(c.id)).join(', ')}` });
@@ -214,8 +235,8 @@ export function baueBetrieb(name: string, p: BetriebParameter, gs: Gesammelt, fr
       quellen: quellen(gs),
       verweise: [
         ...(p.vorhabenId ? [`vorhaben:${p.vorhabenId}`] : []),
-        ...(p.architekturDocId ? [`dokument:${id8(p.architekturDocId)}`] : []),
-        ...(gs.changes.daten ?? []).map(c => `change:${id8(c.id)}`),
+        ...(p.architekturDocId ? [`dokument:${p.architekturDocId}`] : []),
+        ...(gs.changes.daten ?? []).map(c => `change:${c.id}`),
       ],
     },
     kapitel: [
@@ -223,9 +244,9 @@ export function baueBetrieb(name: string, p: BetriebParameter, gs: Gesammelt, fr
       kapitel('architektur', kapitelArchitektur(gs, ks, p)),
       kapitel('komponenten', kapitelKomponenten(gs, ks)),
       kapitel('netz', kapitelNetz(gs, ks)),
-      kapitel('identitaeten', kapitelIdentitaeten(gs, ks)),
+      kapitel('identitaeten', kapitelIdentitaeten(gs, ks, p)),
       kapitel('abhaengigkeiten', kapitelAbhaengigkeiten(gs, ks)),
-      kapitel('wiederaufbau', kapitelWiederaufbau(gs)),
+      kapitel('wiederaufbau', kapitelWiederaufbau(gs, p)),
       kapitel('sicherung', kapitelSicherung(gs, ks, p)),
       kapitel('ueberwachung', kapitelUeberwachung(gs, ks, p)),
       kapitel('betrieb', kapitelBetrieb(gs, p)),
