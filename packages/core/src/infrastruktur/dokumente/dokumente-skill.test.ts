@@ -64,6 +64,7 @@ function aufbau(opts: { changes?: CmdbChangeRequest[]; abgeschnitten?: boolean; 
     instanzen: {
       anlegen: async (_u, d) => { const i = { id: `inst-${instanzen.length + 1}`, ...d, status: 'aktiv', createdAt: JETZT }; instanzen.push(i); return i; },
       finde: async (_u, x) => instanzen.find(i => i.id === x || i.name === x),
+      aendern: async (_u, id, d) => { const i = instanzen.find(z => z.id === id); if (i) Object.assign(i, d); },
     },
     ablage,
     datenOrdner: '/daten',
@@ -391,6 +392,7 @@ describe('abnahmeNachEnde (Automatik nach Change-Ende, V2)', () => {
 describe('Skill dokumentation — Betriebs-Instanz', () => {
   const VID = 'a1b2c3d4-0000-0000-0000-000000000001';
   const DID = 'd0c0d0c0-0000-0000-0000-000000000009';
+  const DID2 = 'e1e1e1e1-0000-0000-0000-000000000002';
   const assets = [
     { id: 'aaaaaaaa-1111', name: 'pkiiss01', assetType: 'vm' },
     { id: 'bbbbbbbb-2222', name: 'pkiroot01', assetType: 'vm' },
@@ -411,7 +413,7 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
       assetsNachName: async (_u, n) => assets.filter(a => a.name.toLowerCase() === n.toLowerCase()),
       assetNachId: async (_u, id) => assets.find(a => a.id.startsWith(id)) ?? null,
       vorhaben: async (_u, k) => (VID.startsWith(k) ? { id: VID, changeIds: [A.id, C.id] } : null),
-      dokument: async (_u, k) => (DID.startsWith(k) ? { id: DID } : null),
+      dokument: async (_u, k) => (DID.startsWith(k) ? { id: DID } : DID2.startsWith(k) ? { id: DID2 } : null),
       standardVorlagen: () => [{ key: 'os_updates', titel: '(h) Betriebssystem-Updates (Updates v2)' }, { key: 'ca_sicherung', titel: '(k) Wöchentliche Sicherung der Issuing-CA' }],
       jobKeys: () => ['pki-betrieb', 'os-updates'],
       tresorNamen: async () => ['pki-iss-sicherung', 'dc01-admin'],
@@ -447,6 +449,36 @@ describe('Skill dokumentation — Betriebs-Instanz', () => {
     const tr = await t.skill.execute({ action: 'instanz_anlegen', name: 'v5', dokumentart: 'betrieb', assets: ['pkiiss01'], tresor: ['gibtsnicht'] }, CTX);
     expect(tr.error).toContain('„gibtsnicht“ gibt es nicht');
     for (const n of ['v2', 'v3', 'v4', 'v5']) expect(await t.deps.instanzen.finde('o', n)).toBeUndefined();
+  });
+
+  it('instanz_aendern: nur das angegebene Feld wird ersetzt, alles andere bleibt; id und Name gleich', async () => {
+    const t = mitBetrieb();
+    const r0 = await t.skill.execute({
+      action: 'instanz_anlegen', name: 'pki', dokumentart: 'betrieb', assets: ['pkiiss01', 'bbbbbbbb'],
+      vorhaben: 'a1b2c3', architektur_doc: 'd0c0d0', jobs: ['pki-betrieb'], standard_vorlagen: ['k'], restore_change: '7335dfeb', aufbau_changes: ['288c3716'],
+    }, CTX);
+    expect(r0.success, r0.error).toBe(true);
+    const vorher = (await t.deps.instanzen.finde('o', 'pki'))!;
+    const r = await t.skill.execute({ action: 'instanz_aendern', instanz: 'pki', architektur_doc: 'e1e1e1' }, CTX);
+    expect(r.success, r.error).toBe(true);
+    const nachher = (await t.deps.instanzen.finde('o', 'pki'))!;
+    expect(nachher.id).toBe(vorher.id);
+    expect(nachher.changeIds).toEqual([A.id, C.id]);
+    expect(JSON.parse(nachher.parameter!)).toEqual({ ...JSON.parse(vorher.parameter!), architekturDocId: DID2 });
+  });
+
+  it('instanz_aendern: Fehler bei unbekanntem Verweis ändert nichts; ohne Felder, unbekannte und Testprotokoll-Instanz abgewiesen', async () => {
+    const t = mitBetrieb();
+    await t.skill.execute({ action: 'instanz_anlegen', name: 'pki', dokumentart: 'betrieb', assets: ['pkiiss01'], architektur_doc: 'd0c0d0' }, CTX);
+    const vorher = (await t.deps.instanzen.finde('o', 'pki'))!.parameter;
+    const f = await t.skill.execute({ action: 'instanz_aendern', instanz: 'pki', architektur_doc: 'zzzzzz' }, CTX);
+    expect(f.error).toContain('nicht geändert');
+    expect(f.error).toContain('Architektur-Dokument');
+    expect((await t.deps.instanzen.finde('o', 'pki'))!.parameter).toBe(vorher);
+    expect((await t.skill.execute({ action: 'instanz_aendern', instanz: 'pki' }, CTX)).error).toContain('Nichts zu ändern');
+    expect((await t.skill.execute({ action: 'instanz_aendern', instanz: 'gibtsnicht', architektur_doc: 'd0c0d0' }, CTX)).error).toContain('nicht gefunden');
+    await t.deps.instanzen.anlegen('o', { name: 'lab', dokumentart: 'testprotokoll', changeIds: [] });
+    expect((await t.skill.execute({ action: 'instanz_aendern', instanz: 'lab', architektur_doc: 'd0c0d0' }, CTX)).error).toContain('keine Betriebs-Instanz');
   });
 
   it('unbekanntes Asset: Fehler nennt den Namen, nichts gespeichert', async () => {

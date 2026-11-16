@@ -55,6 +55,11 @@ export function loeseVorlage(ref: string, vorlagen: Array<{ key: string; titel: 
   return { fehler: `Standard-Vorlage „${ref}“ unbekannt — gültig: ${vorlagen.map(x => `${x.key}${/^\((\w+)\)/.exec(x.titel)?.[1] ? ` (${/^\((\w+)\)/.exec(x.titel)![1]})` : ''}`).join(', ')}` };
 }
 
+/** Eingabe einer Betriebs-Instanz (Namen, IDs oder ID-Anfänge — aufgelöst wird bei der Prüfung). */
+export interface BetriebEingabe {
+  assets: string[]; vorhaben?: string; architekturDoc?: string; jobs?: string[]; standardVorlagen?: string[]; restoreChange?: string; tresor?: string[]; aufbauChanges?: string[];
+}
+
 export interface DokumenteDeps {
   owner: () => string | undefined;
   istOwner: (ctx: SkillContext) => boolean;
@@ -66,6 +71,7 @@ export interface DokumenteDeps {
   instanzen: {
     anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanzDaten>;
     finde(userId: string, idOderName: string): Promise<BauplanInstanzDaten | undefined>;
+    aendern(userId: string, id: string, d: { changeIds: string[]; parameter?: string }): Promise<void>;
   };
   betrieb?: BetriebNachschlagen;
   /** lesende Sammler für das Betriebsdokument; fehlt es, kann kein Betriebsdokument erzeugt werden */
@@ -326,11 +332,41 @@ export class DokumenteDienst {
    * Betriebs-Instanz: grenzt ein bestehendes System ab (CMDB-Assets, optional Vorhaben, Architektur-Dokument, Jobs, Standard-Vorlagen,
    * Restore-Change). Jeder Verweis wird aufgelöst und geprüft; ein Fehler (unbekannt, mehrdeutig) nennt alle Problemfälle, gespeichert wird dann nichts.
    */
-  async betriebAnlegen(o: string, name: string, e: {
-    assets: string[]; vorhaben?: string; architekturDoc?: string; jobs?: string[]; standardVorlagen?: string[]; restoreChange?: string; tresor?: string[]; aufbauChanges?: string[];
-  }): Promise<BauplanInstanzDaten> {
+  async betriebAnlegen(o: string, name: string, e: BetriebEingabe): Promise<BauplanInstanzDaten> {
     if (!INSTANZ_NAME.test(name)) throw new Error('name: nur Buchstaben, Ziffern, _ . - (höchstens 80 Zeichen)');
     if (/^(change|serie)-/i.test(name)) throw new Error('name: darf nicht mit change- oder serie- beginnen (Ordner der Abnahmeprotokolle)');
+    if (await this.d.instanzen.finde(o, name)) throw new Error(`Bauplan-Instanz „${name}“ gibt es schon`);
+    const g = await this.pruefeBetrieb(o, e, 'angelegt');
+    return this.d.instanzen.anlegen(o, { name, dokumentart: 'betrieb', ...g });
+  }
+
+  /**
+   * v1877 — Betriebs-Instanz ändern: angegebene Felder ersetzen die gespeicherten, die übrigen bleiben; danach dieselbe Prüfung
+   * wie beim Anlegen. id und Name bleiben, das nächste Betriebsdokument wird die nächste Version.
+   */
+  async betriebAendern(o: string, ref: string, e: Partial<BetriebEingabe>): Promise<BauplanInstanzDaten> {
+    const i = await this.d.instanzen.finde(o, ref);
+    if (!i) throw new Error(`Bauplan-Instanz „${ref}“ nicht gefunden`);
+    if (i.dokumentart !== 'betrieb') throw new Error(`Bauplan-Instanz „${i.name}“ ist keine Betriebs-Instanz`);
+    if (!Object.values(e).some(v => v !== undefined)) throw new Error('Nichts zu ändern — mindestens ein Feld angeben');
+    let alt: BetriebParameter;
+    try { alt = JSON.parse(i.parameter ?? '{}') as BetriebParameter; } catch { throw new Error(`Parameter von „${i.name}“ sind kein gültiges JSON`); }
+    const g = await this.pruefeBetrieb(o, {
+      assets: e.assets ?? alt.assets ?? [],
+      vorhaben: e.vorhaben ?? alt.vorhabenId,
+      architekturDoc: e.architekturDoc ?? alt.architekturDocId,
+      jobs: e.jobs ?? alt.jobs,
+      standardVorlagen: e.standardVorlagen ?? alt.standardVorlagen,
+      restoreChange: e.restoreChange ?? alt.restoreChangeId,
+      tresor: e.tresor ?? alt.tresor,
+      aufbauChanges: e.aufbauChanges ?? alt.aufbauChangeIds,
+    }, 'geändert');
+    await this.d.instanzen.aendern(o, i.id, g);
+    return { ...i, ...g };
+  }
+
+  /** Form prüfen, jeden Verweis auflösen; ein Fehler nennt alle Problemfälle (gespeichert wird dann nichts). */
+  private async pruefeBetrieb(o: string, e: BetriebEingabe, wie: 'angelegt' | 'geändert'): Promise<{ changeIds: string[]; parameter: string }> {
     const q = this.d.betrieb;
     if (!q) throw new Error('Betriebs-Instanzen sind hier nicht verfügbar (keine CMDB-Anbindung)');
     // Form zuerst prüfen (Anzahl, Schlüssel); aufgelöst wird danach
@@ -339,7 +375,6 @@ export class DokumenteDienst {
     });
     if (e.aufbauChanges && (!e.aufbauChanges.length || e.aufbauChanges.length > 40)) throw new Error('aufbau_changes: 1 bis 40 Change-IDs');
     if (typeof form === 'string') throw new Error(form);
-    if (await this.d.instanzen.finde(o, name)) throw new Error(`Bauplan-Instanz „${name}“ gibt es schon`);
     const probleme: string[] = [];
     const ids: string[] = [];
     for (const ref of form.assets) {
@@ -417,10 +452,10 @@ export class DokumenteDienst {
       if (fremd.length) probleme.push(`tresor: Eintrag ${fremd.map(n => `„${n}“`).join(', ')} gibt es nicht`);
       else p.tresor = form.tresor;
     }
-    if (probleme.length) throw new Error(`Betriebs-Instanz nicht angelegt: ${probleme.join('; ')}`);
+    if (probleme.length) throw new Error(`Betriebs-Instanz nicht ${wie}: ${probleme.join('; ')}`);
     const geprueft = pruefeBetriebParameter(p, MAX_ASSET_IDS);
     if (typeof geprueft === 'string') throw new Error(geprueft);
-    return this.d.instanzen.anlegen(o, { name, dokumentart: 'betrieb', changeIds, parameter: JSON.stringify(geprueft) });
+    return { changeIds, parameter: JSON.stringify(geprueft) };
   }
 
   /** Export aus der gespeicherten Struktur (nie aus dem Markdown); legt erneut ab. */
@@ -443,7 +478,16 @@ export class DokumenteDienst {
   }
 }
 
-const AKTIONEN = ['abnahme_erzeugen', 'instanz_anlegen', 'testprotokoll_erzeugen', 'betrieb_erzeugen', 'dokument_exportieren'] as const;
+/** Felder einer Betriebs-Instanz aus der Werkzeug-Eingabe; nicht angegebene bleiben undefined. */
+function betriebEingabe(input: Record<string, unknown>): Partial<BetriebEingabe> {
+  const liste = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : undefined);
+  return {
+    assets: liste(input.assets), vorhaben: text(input.vorhaben), architekturDoc: text(input.architektur_doc),
+    jobs: liste(input.jobs), standardVorlagen: liste(input.standard_vorlagen), restoreChange: text(input.restore_change), tresor: liste(input.tresor), aufbauChanges: liste(input.aufbau_changes),
+  };
+}
+
+const AKTIONEN = ['abnahme_erzeugen', 'instanz_anlegen', 'instanz_aendern', 'testprotokoll_erzeugen', 'betrieb_erzeugen', 'dokument_exportieren'] as const;
 
 export class DokumentationSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -455,6 +499,7 @@ export class DokumentationSkill extends Skill {
       + 'abnahme_erzeugen (change = ID oder eindeutiges Präfix; optional zweck ≤ 600, abweichungen ≤ 600 Zeichen) — Change-Abnahmeprotokoll. '
       + 'instanz_anlegen (name [A-Za-z0-9_.-], dokumentart testprotokoll, changes = Change-IDs in Reihenfolge Aufbau … Abbau) — bündelt Changes für ein Testprotokoll. '
       + 'instanz_anlegen mit dokumentart betrieb (name, assets = Namen oder IDs der CMDB-Assets des Systems; optional vorhaben, architektur_doc, jobs, standard_vorlagen, restore_change, tresor, aufbau_changes) — grenzt ein bestehendes System für ein Betriebsdokument ab. '
+      + 'instanz_aendern (instanz = Name oder ID einer Betriebs-Instanz; dieselben Felder wie instanz_anlegen betrieb, nur die zu ändernden) — angegebene Felder ersetzen die gespeicherten, alles wird neu geprüft; das nächste betrieb_erzeugen schreibt die nächste Version. '
       + 'testprotokoll_erzeugen (instanz = Name oder ID; optional zweck ≤ 600, befunde_produktion ≤ 1200) — Lab-/Testprotokoll über alle Changes der Instanz. '
       + 'betrieb_erzeugen (instanz = Name oder ID einer Betriebs-Instanz; optional zweck ≤ 600, abweichungen ≤ 600) — Betriebsdokument (As-built, 13 Kapitel) '
       + 'nur lesend aus CMDB, Proxmox, UniFi, Tresor-Namen, Jobs, Wartung, Changes und Abnahmeprotokollen; nicht Belegtes steht als „nicht belegt“ mit Grund. '
@@ -480,7 +525,7 @@ export class DokumentationSkill extends Skill {
         tresor: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen (betrieb): Namen von Tresor-Einträgen, die zum System gehören, ohne einen Asset-Namen zu tragen (nur Namen, nie Werte)' },
         restore_change: { type: 'string', description: 'instanz_anlegen (betrieb): Change mit dem letzten Restore-Beweis' },
         changes: { type: 'array', items: { type: 'string' }, description: 'instanz_anlegen: Change-IDs in Reihenfolge' },
-        instanz: { type: 'string', description: 'testprotokoll_erzeugen, betrieb_erzeugen: Name oder ID der Instanz' },
+        instanz: { type: 'string', description: 'testprotokoll_erzeugen, betrieb_erzeugen, instanz_aendern: Name oder ID der Instanz' },
         befunde_produktion: { type: 'string', description: 'testprotokoll_erzeugen: Befunde für die Produktion (≤ 1200 Zeichen)' },
         doc_id: { type: 'string', description: 'dokument_exportieren: ID des CMDB-Dokuments' },
       },
@@ -517,16 +562,19 @@ export class DokumentationSkill extends Skill {
         case 'instanz_anlegen': {
           if (input.dokumentart !== undefined && input.dokumentart !== 'testprotokoll' && input.dokumentart !== 'betrieb') return { success: false, error: 'dokumentart: testprotokoll oder betrieb' };
           if (input.dokumentart === 'betrieb') {
-            const liste = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : undefined);
-            const i = await this.dienst.betriebAnlegen(o, String(input.name ?? '').trim(), {
-              assets: liste(input.assets) ?? [], vorhaben: text(input.vorhaben), architekturDoc: text(input.architektur_doc),
-              jobs: liste(input.jobs), standardVorlagen: liste(input.standard_vorlagen), restoreChange: text(input.restore_change), tresor: liste(input.tresor), aufbauChanges: liste(input.aufbau_changes),
-            });
+            const e = betriebEingabe(input);
+            const i = await this.dienst.betriebAnlegen(o, String(input.name ?? '').trim(), { ...e, assets: e.assets ?? [] });
             return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) für ein Betriebsdokument; Parameter: ${i.parameter ?? '{}'}` };
           }
           const refs = Array.isArray(input.changes) ? input.changes.map(x => String(x).trim()).filter(Boolean) : [];
           const i = await this.dienst.instanzAnlegen(o, String(input.name ?? '').trim(), refs);
           return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) für ein Testprotokoll mit ${i.changeIds.length} Changes: ${i.changeIds.map(x => x.slice(0, 8)).join(', ')}` };
+        }
+        case 'instanz_aendern': {
+          const instanz = text(input.instanz) ?? text(input.name);
+          if (!instanz) return { success: false, error: 'instanz: Name oder ID angeben' };
+          const i = await this.dienst.betriebAendern(o, instanz, betriebEingabe(input));
+          return { success: true, data: i, display: `✅ Bauplan-Instanz „${i.name}“ (${i.id}) geändert; Parameter: ${i.parameter ?? '{}'}` };
         }
         case 'testprotokoll_erzeugen': {
           const instanz = text(input.instanz);

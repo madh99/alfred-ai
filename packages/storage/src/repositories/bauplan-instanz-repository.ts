@@ -47,6 +47,14 @@ export class BauplanInstanzRepository {
     return { id, name: d.name, dokumentart: d.dokumentart, changeIds: [...d.changeIds], ...(d.parameter !== undefined ? { parameter: d.parameter } : {}), status: 'aktiv', createdAt: now };
   }
 
+  /** v1877 — Changes und Parameter einer bestehenden Instanz ersetzen (id und Name bleiben; Dokument-Versionen laufen weiter). */
+  async aendern(userId: string, id: string, d: { changeIds: string[]; parameter?: string }): Promise<void> {
+    await this.db.execute(
+      'UPDATE infra_bauplan_instanzen SET change_ids = ?, parameter = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [JSON.stringify(d.changeIds), d.parameter ?? null, new Date().toISOString(), id, userId],
+    );
+  }
+
   /** Nach id oder Name. */
   async finde(userId: string, idOderName: string): Promise<BauplanInstanz | undefined> {
     const r = await this.db.queryOne(

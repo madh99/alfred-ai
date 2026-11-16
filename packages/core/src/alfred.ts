@@ -7294,7 +7294,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
             quellen: itsmQuellen(itsmDoku),
             cmdb: { saveDocument: (u, d) => cmdbFz.saveDocument(u, d), getDocumentById: (u, id) => cmdbFz.getDocumentById(u, id) },
-            instanzen: { anlegen: (u, d) => instanzenDoku.anlegen(u, d), finde: (u, x) => instanzenDoku.finde(u, x) },
+            instanzen: { anlegen: (u, d) => instanzenDoku.anlegen(u, d), finde: (u, x) => instanzenDoku.finde(u, x), aendern: (u, id, d) => instanzenDoku.aendern(u, id, d) },
             betrieb: {
               assetsNachName: async (u, name) => (await cmdbFz.findAssetsByNameAll(u, name)).map(a => ({ id: a.id, name: a.name, assetType: a.assetType, status: a.status, sourceSkill: a.sourceSkill })),
               assetNachId: async (u, id) => { const a = await cmdbFz.getAssetById(u, id); return a ? { id: a.id, name: a.name, status: a.status } : null; },

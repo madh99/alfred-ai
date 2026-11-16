@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Betriebs-Instanz ändern (v1877)
+
+- Neue Aktion `instanz_aendern` im Skill `dokumentation`: ersetzt bei einer Betriebs-Instanz nur die angegebenen Felder (z. B. Architekturdokument), alle Verweise werden wie beim Anlegen neu geprüft. Kennung und Name bleiben, das nächste Betriebsdokument wird die nächste Version.
+
 ### Fixed — Problem-Dubletten aus der Mustererkennung (v1876)
 
 - Beim automatischen Anlegen eines Problems wird die Verknüpfung jetzt auch am Incident gesetzt. Vorher sah die Mustererkennung dieselben Incidents bei jedem Lauf (alle 30 min) wieder als unverknüpft und legte ein weiteres gleiches Problem an.
