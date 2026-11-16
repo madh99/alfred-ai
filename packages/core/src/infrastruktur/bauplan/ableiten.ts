@@ -27,12 +27,26 @@ export interface QuellChange {
 }
 /** pfad z. B. parameter.vmid, parameter.add_vmids[0], pruefung.erwartet, rueckweg.parameter.vmid, titel; schritt 0 = Change-Titel */
 export interface Fundstelle { change: string; schritt: number; pfad: string; ganz: boolean }
+/**
+ * Vorkommen als Teil eines zusammengesetzten Tokens (157 in /etc/pve/qemu-server/157.conf, 829 in vmbr829, dc01 in
+ * win-dc01-admin) in parameter, pruefung, rueckweg — nie in Titeln. id = <change8>:<schritt>:<pfad>:<index> (index = Nummer
+ * des Vorkommens im Text); token = umgebendes Wort. Für gewählte Werte entscheidet der Aufrufer je id „ersetzen“ oder „fest“;
+ * tresor gesetzt = Teil eines Tresor-Namens, nie ersetzbar.
+ */
+export interface Teilvorkommen extends Fundstelle { id: string; token: string; tresor?: string }
 export interface Kandidat {
   nr: number; wert: string | number; typ: ParamTyp; vorschlag: string; fundstellen: Fundstelle[];
-  /** Vorkommen als Teil eines zusammengesetzten Tokens (win-dc01-admin, 157.conf) — keine Fundstelle, wird nie ersetzt */
-  teilvorkommen: Fundstelle[];
+  teilvorkommen: Teilvorkommen[];
 }
-export interface Verweis { change: string; schritt: number; pfad: string; wert: string; quelle: { change: string; schritt: number; feld: string } }
+/**
+ * art „praefix“: in einer Prüfung steht nur der Anfang (≥ 8 Zeichen) der erzeugten ID — ganz (wert = Präfix) oder als
+ * durch Leerraum getrenntes Wort (start/ende im Text); ersetzt wird durch den Verweis auf die volle ID.
+ */
+export interface Verweis {
+  change: string; schritt: number; pfad: string; wert: string; quelle: { change: string; schritt: number; feld: string };
+  art?: 'praefix'; start?: number; ende?: number;
+}
+export type TeilEntscheid = Record<string, 'ersetzen' | 'fest'>;
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
@@ -43,6 +57,8 @@ const VMID_LISTE = /(^|_)vmids$/;
 const VLAN_LISTE = /(^|_)vlans$/;
 const NAME_SCHLUESSEL = /name|zugang|zone|domain|domaene/i;
 const TRESOR_FELD = /tresor|konto/i;
+/** Zahl-Felder anderer Bedeutung: dort ist 152 nie VMID/VLAN (destination_port "152") */
+const ZAHL_FREMD = /port|anzahl|count|limit|timeout|sekunden|groesse|size/i;
 const PLATZHALTER = /\{\{[^{}]*\}\}/g;
 const GEHEIM_IN_PLATZHALTER = /^\{\{\s*(?:geheim|geheimdatei):([^\s{}]+)\s*\}\}$/;
 /** daten-Felder, deren Werte als erzeugte IDs gelten (keine Namen/Domänen) */
@@ -127,7 +143,15 @@ function treffer(text: string, wert: string): Treffer[] {
 }
 
 interface Ort { blatt: Blatt; ganz: boolean }
-interface Teil { blatt: Blatt; tresor?: string }
+interface Teil { blatt: Blatt; start: number; ende: number; id: string; token: string; tresor?: string; platzhalter?: string }
+
+/** Umgebendes Wort eines Vorkommens (bis Leerraum oder Anführungszeichen) */
+function tokenUm(text: string, start: number, ende: number): string {
+  let a = start; let e = ende;
+  while (a > 0 && !/[\s"'„“]/.test(text[a - 1]!)) a--;
+  while (e < text.length && !/[\s"'„“]/.test(text[e]!)) e++;
+  return text.slice(a, e);
+}
 interface KandidatIntern { kandidat: Kandidat; orte: Ort[]; teile: Teil[]; erkannt: Blatt }
 
 /** Fundstellen und Teilvorkommen eines Werts (typ, wert) über alle Blätter */
@@ -140,6 +164,7 @@ function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort
       continue;
     }
     if (typeof b.wert !== 'string') continue;
+    if ((typ === 'vmid' || typ === 'vlan') && ZAHL_FREMD.test(b.schluessel)) continue;
     const tresorFeld = TRESOR_FELD.test(b.schluessel);
     if (b.wert === text) {
       const t = typVon(b.schluessel, b.wert, b.inListe);
@@ -149,21 +174,25 @@ function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort
     }
     const tr = treffer(b.wert, text);
     if (!tr.length) continue;
+    const titel = b.pfad === 'titel';
     // Im Tresor-Feld ist jedes Vorkommen außer dem ganzen Wert ein Teil des Tresor-Namens
-    if (tresorFeld) { teile.push({ blatt: b, tresor: b.wert }); continue; }
-    if (tr.some(t => t.token)) orte.push({ blatt: b, ganz: false });
-    for (const t of tr.filter(x => !x.token)) {
+    if (!tresorFeld && tr.some(t => t.token)) orte.push({ blatt: b, ganz: false });
+    tr.forEach((t, i) => {
+      if (!tresorFeld && t.token) return;
+      if (titel) return; // Titel sind Beschreibung: Teilvorkommen dort werden weder gelistet noch entschieden
       const g = t.platzhalter ? GEHEIM_IN_PLATZHALTER.exec(t.platzhalter) : null;
-      teile.push({ blatt: b, ...(g ? { tresor: g[1] } : {}) });
-    }
+      const tresor = tresorFeld ? b.wert as string : g ? g[1] : undefined;
+      teile.push({
+        blatt: b, start: t.start, ende: t.ende, id: `${kurz(b.change)}:${b.schritt}:${b.pfad}:${i}`, token: tokenUm(b.wert as string, t.start, t.ende),
+        ...(tresor ? { tresor } : {}), ...(t.platzhalter ? { platzhalter: t.platzhalter } : {}),
+      });
+    });
   }
-  // je Blatt ein Teilvorkommen (Tresor-Treffer zuerst)
-  const einmal = new Map<string, Teil>();
-  for (const t of teile) { const k = `${t.blatt.change}|${t.blatt.schritt}|${t.blatt.pfad}`; if (!einmal.has(k) || (t.tresor && !einmal.get(k)!.tresor)) einmal.set(k, t); }
-  return { orte, teile: [...einmal.values()] };
+  return { orte, teile };
 }
 
 const fundstelle = (b: Blatt, ganz: boolean): Fundstelle => ({ change: b.change, schritt: b.schritt, pfad: b.pfad, ganz });
+const teilvorkommen = (t: Teil): Teilvorkommen => ({ ...fundstelle(t.blatt, false), id: t.id, token: t.token, ...(t.tresor ? { tresor: t.tresor } : {}) });
 
 function snake(s: string): string {
   let n = s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -192,7 +221,7 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
     for (let n = 2; vergeben.has(vorschlag); n++) vorschlag = `${basis.slice(0, 31 - String(n).length - 1)}_${n}`;
     vergeben.add(vorschlag);
     aus.push({
-      kandidat: { nr: aus.length + 1, wert, typ, vorschlag, fundstellen: orte.map(o => fundstelle(o.blatt, o.ganz)), teilvorkommen: teile.map(t => fundstelle(t.blatt, false)) },
+      kandidat: { nr: aus.length + 1, wert, typ, vorschlag, fundstellen: orte.map(o => fundstelle(o.blatt, o.ganz)), teilvorkommen: teile.map(teilvorkommen) },
       orte, teile, erkannt: quelle,
     });
   }
@@ -233,8 +262,8 @@ function erzeugteIds(q: QuellChange[]): Map<string, Quelle[]> {
         if (!ID_FELD.test(feld) || !FELD_NAME.test(feld)) continue;
         const wert = typeof w === 'string' ? w : typeof w === 'number' && Number.isInteger(w) && w >= 1000 ? String(w) : undefined;
         if (!wert || wert.length < 8) continue;
-        // Echo: der Wert stand schon im Plan dieses Change (Eingabe, z. B. job_id) — nicht vom Lauf erzeugt
-        if (planTexte.some(t => t.includes(wert))) continue;
+        // Echo: der Wert stand schon als ganzer Wert im Plan dieses Change (Eingabe, z. B. job_id) — nicht vom Lauf erzeugt
+        if (planTexte.some(t => t === wert)) continue;
         // im selben Change zählt nur der erste erzeugende Schritt (spätere Schritte geben ihn nur wieder)
         if (gesehen.has(wert)) continue;
         gesehen.add(wert);
@@ -281,10 +310,35 @@ export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise
         hinweise.add(`${ort(b)}: feste ID ${wert} stammt aus keinem gewählten Change — kein Verweis, Wert bleibt fest`);
         continue;
       }
-      // ID als Teil eines Texts (Titel „Policy e5d24ae1 entfernen“, nichtEnthalten-Präfix) — wird nie ersetzt
+      // Prüfungen: Anfang (≥ 8 Zeichen) einer erzeugten ID — ganz oder als Wort — wird Verweis auf die volle ID
+      // (nichtEnthalten/erwartet sind Teiltext-Prüfungen: die volle ID trägt dieselbe Aussage, wie in pki_lab)
+      const erledigt = new Set<string>();
+      if (b.schritt > 0 && b.pfad.startsWith('pruefung.')) {
+        const woerter = [...wert.matchAll(/\S+/g)].map(m => ({ wort: m[0], start: m.index!, ende: m.index! + m[0].length }));
+        for (const w of woerter) {
+          if (w.wort.length < 8) continue;
+          const passend = [...ids].filter(([id]) => id !== w.wort && id.startsWith(w.wort))
+            .flatMap(([id, qs]) => qs.filter(s => s.change !== c.id).map(s => ({ id, s })));
+          if (!passend.length) continue;
+          passend.forEach(p => erledigt.add(p.id));
+          const inHuelle = passend.filter(p => vor.has(p.s.change) && (reihe.get(p.s.change) ?? Infinity) < (reihe.get(c.id) ?? -1));
+          if (inHuelle.length === 1) {
+            const s = inHuelle[0]!.s;
+            verweise.push({
+              change: c.id, schritt: b.schritt, pfad: b.pfad, wert: w.wort, quelle: { change: s.change, schritt: s.schritt, feld: s.feld }, art: 'praefix',
+              ...(w.wort === wert ? {} : { start: w.start, ende: w.ende }),
+            });
+          } else if (inHuelle.length > 1) {
+            hinweise.add(`${ort(b)}: Anfang ${w.wort} ist mehrdeutig (${inHuelle.map(p => quellText(p.s)).join(', ')}) — kein Verweis, Wert bleibt fest`);
+          } else {
+            hinweise.add(`${ort(b)}: Anfang ${w.wort} stammt aus ${passend.map(p => quellText(p.s)).join(', ')}, kein Vorgänger von ${kurz(c.id)} laut abhaengigVon — kein Verweis, Wert bleibt fest`);
+          }
+        }
+      }
+      // ID als Teil eines Texts (Titel „Policy e5d24ae1 entfernen“) — wird nie ersetzt
       for (const [id, qs] of ids) {
         const fremd = qs.filter(s => s.change !== c.id);
-        if (!fremd.length || wert === id) continue;
+        if (!fremd.length || wert === id || erledigt.has(id)) continue;
         const teil = wert.includes(id) ? id : UUID_FORM.test(id) && treffer(wert, id.slice(0, 8)).some(t => t.token) ? id.slice(0, 8) : undefined;
         if (teil) hinweise.add(`${ort(b)}: enthält ${teil === id ? 'die ID' : 'den Anfang der ID'} ${id} aus ${fremd.map(quellText).join(', ')} im Text — bleibt fest, bei Bedarf von Hand anpassen`);
       }
@@ -316,6 +370,7 @@ function annahmeFuer(k: KandidatIntern, name: string, schritt: (b: Blatt) => Rec
 export function baueEntwurf(
   q: QuellChange[], auswahl: Record<number, string>,
   kopf: { key: string; titel: string; zweck: string; dokumentart: 'testprotokoll' | 'betrieb' },
+  teilEntscheid: TeilEntscheid = {},
 ): { vorlage?: BauplanVorlage; fehler: string[]; hinweise: string[] } {
   const fehler: string[] = [];
   const hinweise: string[] = [];
@@ -345,6 +400,17 @@ export function baueEntwurf(
     fehler.push(`${String(k.kandidat.wert)} steckt im Tresor-Namen ${t.tresor} — die Vorlage würde die Geheimnisse der Original-Instanz wiederverwenden; Wert fest lassen oder Vorlage von Hand anpassen`);
   if (fehler.length) return { fehler: [...new Set(fehler)], hinweise };
 
+  // 3b. Jedes übrige Teilvorkommen eines gewählten Werts braucht eine ausdrückliche Entscheidung (nie stilles Festlassen)
+  const teilNachId = new Map<string, { k: KandidatIntern; name: string; t: Teil }>();
+  for (const g of gewaehlt) for (const t of g.k.teile) teilNachId.set(t.id, { ...g, t });
+  for (const [id, e] of Object.entries(teilEntscheid)) {
+    if (!teilNachId.has(id)) fehler.push(`Teilvorkommen ${id}: gehört zu keinem gewählten Wert`);
+    else if (e !== 'ersetzen' && e !== 'fest') fehler.push(`Teilvorkommen ${id}: Entscheidung muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`);
+  }
+  const offen = [...teilNachId.values()].filter(x => teilEntscheid[x.t.id] === undefined);
+  if (offen.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offen.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
+  if (fehler.length) return { fehler, hinweise };
+
   const verw = findeVerweise(q);
   hinweise.push(...verw.hinweise);
 
@@ -358,7 +424,10 @@ export function baueEntwurf(
   const merke = (key: string, e: Ersatz) => { const l = ersetzungen.get(key) ?? []; l.push(e); ersetzungen.set(key, l); };
   for (const v of verw.verweise) {
     const s = nachId.get(v.quelle.change)!;
-    merke(ortKey(v.change, v.schritt, v.pfad), { wer: `Verweis auf ${kurz(s.id)} Schritt ${v.quelle.schritt}`, ganz: `{{change:${s.schluessel}.schritt${v.quelle.schritt}.${v.quelle.feld}}}` });
+    const ref = `{{change:${s.schluessel}.schritt${v.quelle.schritt}.${v.quelle.feld}}}`;
+    const wer = `Verweis auf ${kurz(s.id)} Schritt ${v.quelle.schritt}`;
+    if (v.start !== undefined && v.ende !== undefined) merke(ortKey(v.change, v.schritt, v.pfad), { wer, text: [{ start: v.start, ende: v.ende, durch: ref }] });
+    else merke(ortKey(v.change, v.schritt, v.pfad), { wer, ganz: ref });
   }
   for (const { k, name } of gewaehlt) {
     const p = `{{param.${name}}}`;
@@ -367,7 +436,15 @@ export function baueEntwurf(
       if (o.ganz || typeof o.blatt.wert !== 'string') merke(key, { wer: name, ganz: p });
       else merke(key, { wer: name, text: treffer(o.blatt.wert, String(k.kandidat.wert)).filter(t => t.token).map(t => ({ start: t.start, ende: t.ende, durch: p })) });
     }
+    // Teilvorkommen nur nach ausdrücklicher Entscheidung (Tresor-Teile sind oben schon abgelehnt)
+    for (const t of k.teile) {
+      const wo = `${kurz(t.blatt.change)} Schritt ${t.blatt.schritt} ${t.blatt.pfad}`;
+      if (teilEntscheid[t.id] === 'fest') { hinweise.push(`bewusst fest: ${t.token} in ${wo}`); continue; }
+      if (t.platzhalter) { fehler.push(`Teilvorkommen ${t.id}: ${String(k.kandidat.wert)} steht im Platzhalter ${t.platzhalter} — nur „fest“ möglich`); continue; }
+      merke(ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), { wer: name, text: [{ start: t.start, ende: t.ende, durch: p }] });
+    }
   }
+  if (fehler.length) return { fehler, hinweise };
   for (const [key, liste] of ersetzungen) {
     const ziel = ziele.get(key);
     const [change, schritt, pfad] = key.split('|') as [string, string, string];
@@ -379,7 +456,11 @@ export function baueEntwurf(
     const teile = liste.flatMap(e => (e.text ?? []).map(t => ({ ...t, wer: e.wer }))).sort((a, b) => a.start - b.start);
     const ueberlappt = teile.find((t, i) => i > 0 && t.start < teile[i - 1]!.ende);
     if (ueberlappt) { fehler.push(`${wo}: Werte überlappen im Text (${[...new Set(teile.map(t => t.wer))].join(', ')}) — nur einen davon wählen`); continue; }
-    let text = String(ziel.wert);
+    const alt = String(ziel.wert);
+    // „{“ davor oder „}“ danach würde mit dem eingesetzten {{…}} einen ungültigen Platzhalter bilden
+    const klammer = teile.find(t => alt[t.start - 1] === '{' || alt[t.ende] === '}');
+    if (klammer) { fehler.push(`${wo}: Ersetzen in „${tokenUm(alt, klammer.start, klammer.ende)}“ würde einen ungültigen Platzhalter bilden — Wert hier nicht als Parameter möglich`); continue; }
+    let text = alt;
     for (const t of [...teile].reverse()) text = text.slice(0, t.start) + t.durch + text.slice(t.ende);
     (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = text;
   }
