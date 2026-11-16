@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — UniFi subnet_pruefen, Netz-Vorabkontrolle beim Ableiten (v1884)
+
+- Neue lesende UniFi-Aktion `subnet_pruefen` (subnet): meldet `FREI` oder `BELEGT: <Netz>`, wenn sich das Netz mit einem vorhandenen überschneidet (auch bei Gateway-Formen wie .2/24).
+- Abgeleitete Bauplan-Vorlagen, die ein Netz anlegen, bekommen automatisch die Vorab-Kontrolle „Netz überschneidet sich mit keinem vorhandenen Netz“.
+- Begründungstexte abgeleiteter Changes werden wie Titel angepasst; Werte werden in Titel und Begründung nie mitten in längeren Zahlen ersetzt.
+
 ### Added — Bauplan ableiten: Sammel-Entscheidungen (v1883)
 
 - Entscheidungen lassen sich in Gruppen treffen (`fest:*`, `anlage:*`, `veraendert:*`, `tresor:*`, `teil:wert|<wert>` nur „fest“); Ersetzen geht nur je Wort (`teil:wort|<wert>|<wort>`), damit ein Wert nie blind in Wörtern anderer Bedeutung (z. B. Pfaden oder Befehlsnamen) ersetzt wird. Einzelentscheidungen gehen immer vor; die Tresor-Sperre bleibt.
