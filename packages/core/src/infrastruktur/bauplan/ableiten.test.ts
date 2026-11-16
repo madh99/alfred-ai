@@ -1046,3 +1046,74 @@ describe('Ersetzen nur je Wort', () => {
     expect(baueEntwurf(q, { 2: 'vlan' }, kopf, { 'teil:wort|829|vmbr999': 'ersetzen', 'fest:*': 'fest' }).fehler.join('\n')).toMatch(/Sammel-Schlüssel teil:wort\|829\|vmbr999: trifft keinen offenen Punkt/);
   });
 });
+
+// ── Nach V4: Begründungen wie Titel, automatische Vorab-Kontrolle „Netz frei“ (unifi.subnet_pruefen) ──
+describe('Nach V4 — Begründung und Netz-Annahme', () => {
+  const I8C = (): QuellChange[] => JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
+  const AUSWAHL = { 23: 'vmid_dc01', 28: 'vmid_dc02', 2: 'vlan', 3: 'netz', 8: 'ip_dc01', 9: 'ip_dc02', 26: 'gateway', 37: 'ip_probe' };
+  const SAMMEL: Entscheid = { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' };
+
+  it('gewählte Werte in begruendung werden ersetzt wie im Titel; nicht gewählte bleiben', () => {
+    const q = I8C();
+    q[0]!.plan.begruendung = 'VLAN 829 AD-Identity (10.203.29.0/27, Gateway 10.203.29.1, Bridge vmbr829) neben VLAN 817; Ziel 192.168.1.92';
+    q[1]!.plan.begruendung = 'dc01 (VM 152) auf 10.203.29.2/27, Probe 10.203.29.30 — Grundlage 10.203.29.3 für dc02';
+    q[2]!.plan.begruendung = 'dc02 (VM 153, 10.203.29.3) als zweiter DC';
+    const r = baueEntwurf(q, AUSWAHL, kopf, SAMMEL);
+    expect(r.fehler).toEqual([]);
+    const b = r.vorlage!.changes.map(c => c.begruendung);
+    expect(b[0]).toBe('VLAN {{param.vlan}} AD-Identity ({{param.netz}}, Gateway {{param.gateway}}, Bridge vmbr{{param.vlan}}) neben VLAN 817; Ziel 192.168.1.92');
+    expect(b[1]).toBe('dc01 (VM {{param.vmid_dc01}}) auf {{param.ip_dc01}}/27, Probe {{param.ip_probe}} — Grundlage {{param.ip_dc02}} für dc02');
+    expect(b[2]).toContain('dc02 (VM {{param.vmid_dc02}}, {{param.ip_dc02}}) als zweiter DC');
+    for (const t of b) {
+      expect(t).not.toMatch(/(?<![\d.])829(?!\d)/);
+      expect(t).not.toMatch(/10\.203\.29\./);
+    }
+    // unveränderte Fixture-Begründung: VLAN 829 ersetzt
+    expect(baueEntwurf(I8C(), AUSWAHL, kopf, SAMMEL).vorlage!.changes[0]!.begruendung).toBe('Quelle I8c A: VLAN {{param.vlan}} AD-Identity, Trunks, Firewall, pve1-Bridge');
+    // nichts gewählt → begruendung unverändert
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'proxmox', aktion: 'start_vm', parameter: { vmid: 300, node: 'pve1' } }]);
+    a.plan.begruendung = 'VM 300 muss laufen';
+    const nichts = baueEntwurf([a], {}, kopf, { 'fest:*': 'fest' });
+    expect(nichts.fehler).toEqual([]);
+    expect(nichts.vorlage!.changes[0]!.begruendung).toBe('VM 300 muss laufen');
+    const mit = baueEntwurf([a], { [kand(findeKandidaten([a]), 'vmid', 300).nr]: 'vmid' }, kopf);
+    expect(mit.fehler).toEqual([]);
+    expect(mit.vorlage!.changes[0]!.begruendung).toBe('VM {{param.vmid}} muss laufen');
+  });
+
+  it('I8c: angelegtes Netz gewählt → Annahme netz_frei mit unifi.subnet_pruefen, kein Hinweis „keine automatische Vorab-Kontrolle“; besteht den echten Validator offline', async () => {
+    const r = baueEntwurf(I8C(), AUSWAHL, kopf, SAMMEL);
+    expect(r.fehler).toEqual([]);
+    const v = r.vorlage!;
+    expect(v.annahmen.find(a => a.id === 'netz_frei')).toEqual({
+      id: 'netz_frei', text: 'Netz netz überschneidet sich mit keinem vorhandenen Netz',
+      pruefung: { typ: 'skill', skill: 'unifi', aktion: 'subnet_pruefen', parameter: { subnet: '{{param.netz}}' }, erwartet: 'FREI', nichtEnthalten: 'BELEGT' },
+    });
+    expect(r.hinweise.some(h => h.includes('keine automatische Vorab-Kontrolle für netz'))).toBe(false);
+    expect(r.ohneAnnahme).not.toContain('netz');
+    const namen: Record<string, string> = Object.assign({}, ...I8C_QUELLEN.map(x => x.betroffenNamen));
+    const skills: Record<string, unknown> = {
+      proxmox: new ProxmoxSkill({ baseUrl: 'https://proxmox.invalid', tokenId: 't', tokenSecret: 's' } as never),
+      unifi: new UniFiSkill({ baseUrl: 'https://unifi.invalid', apiKey: 'k' } as never),
+      pki_lab: new PkiLabSkill({} as never), windows_cluster: new WindowsClusterSkill({} as never),
+      windows_ad: new WindowsAdSkill({} as never), fernzugriff: new FernzugriffSkill({} as never),
+    };
+    const pl = new ChangePlanung({
+      itsm: { liste: async () => [], hole: async () => null, legeAn: async () => { throw new Error('nie speichern'); } } as never,
+      skill: n => skills[n] as never,
+      assets: async () => Object.entries(namen).map(([id, name]) => ({ id, name })) as never,
+      auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
+    });
+    const voll = await pruefeVorlage(v, { probe: p => pl.pruefeNur('o', p) });
+    expect(voll.fehler).toEqual([]);
+  });
+
+  it('Netz nur benutzt, nicht angelegt → keine Netz-Annahme, Hinweis bleibt', () => {
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'unifi', aktion: 'create_firewall_policy', parameter: { policy_name: 'Netz-Regel', policy_action: 'BLOCK', source_ip: '10.9.0.0/24' } }]);
+    const k = findeKandidaten([a]);
+    const r = baueEntwurf([a], { [kand(k, 'cidr', '10.9.0.0/24').nr]: 'quellnetz' }, kopf, { 'fest:*': 'fest' });
+    expect(r.fehler).toEqual([]);
+    expect(r.vorlage!.annahmen.some(x => x.id === 'quellnetz_frei')).toBe(false);
+    expect(r.hinweise).toContain('keine automatische Vorab-Kontrolle für quellnetz (cidr)');
+  });
+});

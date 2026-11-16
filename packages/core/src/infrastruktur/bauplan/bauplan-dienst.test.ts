@@ -733,7 +733,9 @@ describe('V4 ableiten — Final-Welle', () => {
     expect(v.text).toContain('veraendert:name|probe-win25b');
     // record_type ist kein angelegter Wert; 10.203.29.3 in 10.203.29.30 trägt den Parameter der .30 — nicht als „fest“ gemeldet
     expect(frage).not.toContain('FORWARD:');
-    expect(frage).toContain('Ohne automatische Vorab-Kontrolle (1): netz');
+    // Nach V4: das angelegte Netz hat jetzt eine automatische Vorab-Kontrolle (unifi.subnet_pruefen)
+    expect(frage).not.toContain('Ohne automatische Vorab-Kontrolle');
+    expect(frage).toContain('- Netz netz überschneidet sich mit keinem vorhandenen Netz');
     expect(frage).not.toMatch(/\nTeilvorkommen \(/);
     expect(frage).toContain('Ersetzte Teilvorkommen (1 Wort):\n- vmbr829 → vmbr{{param.vlan}} (4 Stellen)');
   });

@@ -710,6 +710,10 @@ function annahmeFuer(k: KandidatIntern, name: string, schritt: (b: Blatt) => Rec
     return { id: `${name}_frei`, text: `VMID ${name} ist clusterweit frei`, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', parameter: {}, erwartet: '| VMID |', nichtEnthalten: `| ${p} |` } as never };
   if (k.kandidat.typ === 'vlan' && angelegt((f, s) => /^(vlan|vlan_id)$/.test(f) && s.skill === 'unifi' && s.aktion === 'create_network'))
     return { id: `${name}_frei`, text: `VLAN ${name} ist in UniFi keinem Netz zugeordnet`, pruefung: { typ: 'skill', skill: 'unifi', aktion: 'list_networks', parameter: {}, nichtEnthalten: `| ${p} |` } as never };
+  // Nach V4 — ein Netz, das das Paket in UniFi anlegt, darf sich mit keinem vorhandenen überschneiden (unifi.subnet_pruefen liest nur);
+  // nichtEnthalten „BELEGT“ zusätzlich, damit ein vorhandenes Netz mit „FREI“ im Namen die Prüfung nicht besteht
+  if (k.kandidat.typ === 'cidr' && angelegt((f, s) => f === 'subnet' && s.skill === 'unifi' && s.aktion === 'create_network'))
+    return { id: `${name}_frei`, text: `Netz ${name} überschneidet sich mit keinem vorhandenen Netz`, pruefung: { typ: 'skill', skill: 'unifi', aktion: 'subnet_pruefen', parameter: { subnet: p }, erwartet: 'FREI', nichtEnthalten: 'BELEGT' } as never };
   if (angelegt((f, s) => f === 'network_name' && s.skill === 'unifi' && s.aktion === 'create_network'))
     return { id: `${name}_frei`, text: `Netzname ${name} ist in UniFi frei`, pruefung: { typ: 'skill', skill: 'unifi', aktion: 'list_networks', parameter: {}, nichtEnthalten: `| ${p} |` } as never };
   return undefined;
@@ -1005,10 +1009,7 @@ export function baueEntwurf(
     fest.push(f.eintrag);
   }
   // Titel: längste Werte zuerst, nichts Überlappendes, nie an „{“/„}“ — Titel haben keine Wirkung, darum ohne Fehler
-  for (const [key, liste] of titelSpannen) {
-    const ziel = ziele.get(key);
-    if (!ziel || typeof ziel.wert !== 'string') continue;
-    const alt = ziel.wert;
+  const beschreibung = (alt: string, liste: Spanne[]): string => {
     const gewaehltT: Spanne[] = [];
     for (const s of [...liste].sort((a, b) => (b.ende - b.start) - (a.ende - a.start) || a.start - b.start)) {
       if (alt[s.start - 1] === '{' || alt[s.ende] === '}') continue;
@@ -1017,7 +1018,20 @@ export function baueEntwurf(
     }
     let text = alt;
     for (const t of gewaehltT.sort((a, b) => b.start - a.start)) text = text.slice(0, t.start) + t.durch + text.slice(t.ende);
-    (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = text;
+    return text;
+  };
+  for (const [key, liste] of titelSpannen) {
+    const ziel = ziele.get(key);
+    if (!ziel || typeof ziel.wert !== 'string') continue;
+    (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = beschreibung(ziel.wert, liste);
+  }
+  // Nach V4 — begruendung ist wie der Titel reine Beschreibung (steht aber in späteren Freigaben): gewählte Werte genauso ersetzen —
+  // jedes Vorkommen außerhalb eines {{…}}-Platzhalters (ganzer Wert, Token und Teil eines Worts), längster Wert gewinnt, ohne Entscheidung
+  for (const plan of kopien.values()) {
+    if (typeof plan.begruendung !== 'string') continue;
+    const alt = plan.begruendung;
+    const liste: Spanne[] = gewaehlt.flatMap(({ k, name }) => treffer(alt, String(k.kandidat.wert)).filter(t => !t.platzhalter).map(t => ({ start: t.start, ende: t.ende, durch: `{{param.${name}}}` })));
+    if (liste.length) plan.begruendung = beschreibung(alt, liste);
   }
 
   // 6. Offene Entscheidungen — alle Kategorien auf einmal
