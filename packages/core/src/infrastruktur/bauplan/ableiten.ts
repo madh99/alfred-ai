@@ -233,6 +233,19 @@ function treffer(text: string, wert: string): Treffer[] {
   return aus;
 }
 
+/**
+ * Ziffern-Grenze für Zahl- und Adresswerte in Beschreibungen (Titel, begruendung): nie Teil einer längeren Zahl — 829 nicht in 8290/1829,
+ * 10.203.29.3 nicht in 10.203.29.31, 10.203.29.3.5 oder 210.203.29.3. Davor keine Ziffer (und kein Punkt nach einer Ziffer), danach keine
+ * Ziffer und kein „.<Ziffer>“ (ein Satzende-Punkt bleibt erlaubt). Namen (node, storage, name) bleiben unberührt.
+ */
+function zahlGrenze(text: string, start: number, ende: number, typ: ParamTyp): boolean {
+  if (typ !== 'vmid' && typ !== 'vlan' && typ !== 'zahl' && typ !== 'ipv4' && typ !== 'cidr') return true;
+  const vor = text[start - 1] ?? '';
+  if (/\d/.test(vor) || (vor === '.' && /\d/.test(text[start - 2] ?? ''))) return false;
+  const nach = text[ende] ?? '';
+  return !/\d/.test(nach) && !(nach === '.' && /\d/.test(text[ende + 1] ?? ''));
+}
+
 interface Ort { blatt: Blatt; ganz: boolean }
 interface Teil { blatt: Blatt; start: number; ende: number; id: string; token: string; tresor?: string; platzhalter?: string }
 /** Teilvorkommen in einem Titel (M-e) — ohne Entscheidung ersetzt */
@@ -279,7 +292,7 @@ function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort
     tr.forEach((t, i) => {
       if (!tresorFeld && t.token) return;
       // M-e: Titel sind Beschreibung — Teilvorkommen dort ersetzt die Ableitung ohne Entscheidung (außer in Platzhaltern)
-      if (titel) { if (!t.platzhalter) titelTeile.push({ blatt: b, start: t.start, ende: t.ende }); return; }
+      if (titel) { if (!t.platzhalter && zahlGrenze(b.wert as string, t.start, t.ende, typ)) titelTeile.push({ blatt: b, start: t.start, ende: t.ende }); return; }
       const g = t.platzhalter ? GEHEIM_IN_PLATZHALTER.exec(t.platzhalter) : null;
       const tresor = tresorFeld ? b.wert as string : g ? g[1] : undefined;
       teile.push({
@@ -1030,7 +1043,7 @@ export function baueEntwurf(
   for (const plan of kopien.values()) {
     if (typeof plan.begruendung !== 'string') continue;
     const alt = plan.begruendung;
-    const liste: Spanne[] = gewaehlt.flatMap(({ k, name }) => treffer(alt, String(k.kandidat.wert)).filter(t => !t.platzhalter).map(t => ({ start: t.start, ende: t.ende, durch: `{{param.${name}}}` })));
+    const liste: Spanne[] = gewaehlt.flatMap(({ k, name }) => treffer(alt, String(k.kandidat.wert)).filter(t => !t.platzhalter && zahlGrenze(alt, t.start, t.ende, k.kandidat.typ)).map(t => ({ start: t.start, ende: t.ende, durch: `{{param.${name}}}` })));
     if (liste.length) plan.begruendung = beschreibung(alt, liste);
   }
 

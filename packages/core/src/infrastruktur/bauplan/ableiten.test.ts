@@ -1108,6 +1108,21 @@ describe('Nach V4 — Begründung und Netz-Annahme', () => {
     expect(voll.fehler).toEqual([]);
   });
 
+  it('keine Teilzahlen: 829 in 8290 und 10.203.29.3 in 10.203.29.31 bleiben in Titel und Begründung; normale Fälle ersetzt', () => {
+    const q = I8C();
+    q[0]!.plan.titel = 'VLAN 829 neben VLAN 8290 und 1829, Netz 10.203.29.0/27 nicht 110.203.29.0/27';
+    q[0]!.plan.begruendung = 'VLAN 829 neben VLAN 8290 und 1829; vmbr829 bleibt Wortteil';
+    q[2]!.plan.titel = 'dc02 auf 10.203.29.3, Nachbar 10.203.29.31 und 210.203.29.3, VM 153 nicht 1530';
+    q[2]!.plan.begruendung = 'dc02 (VM 153) auf 10.203.29.3/27; 10.203.29.31 und VM 1530 und 10.203.29.3.5 bleiben; Ende 10.203.29.3.';
+    const r = baueEntwurf(q, AUSWAHL, kopf, SAMMEL);
+    expect(r.fehler).toEqual([]);
+    const [a, , c] = r.vorlage!.changes;
+    expect(a!.titel).toBe('VLAN {{param.vlan}} neben VLAN 8290 und 1829, Netz {{param.netz}} nicht 110.203.29.0/27');
+    expect(a!.begruendung).toBe('VLAN {{param.vlan}} neben VLAN 8290 und 1829; vmbr{{param.vlan}} bleibt Wortteil');
+    expect(c!.titel).toBe('dc02 auf {{param.ip_dc02}}, Nachbar 10.203.29.31 und 210.203.29.3, VM {{param.vmid_dc02}} nicht 1530');
+    expect(c!.begruendung).toBe('dc02 (VM {{param.vmid_dc02}}) auf {{param.ip_dc02}}/27; 10.203.29.31 und VM 1530 und 10.203.29.3.5 bleiben; Ende {{param.ip_dc02}}.');
+  });
+
   it('Netz nur benutzt, nicht angelegt → keine Netz-Annahme, Hinweis bleibt', () => {
     const a = change('aaaaaaaa-1', 'c1', [{ skill: 'unifi', aktion: 'create_firewall_policy', parameter: { policy_name: 'Netz-Regel', policy_action: 'BLOCK', source_ip: '10.9.0.0/24' } }]);
     const k = findeKandidaten([a]);
