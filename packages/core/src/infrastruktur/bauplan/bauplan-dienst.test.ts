@@ -395,7 +395,7 @@ describe('Fix-Runde 1', () => {
       expect(t.meldungen.length).toBeGreaterThan(0);
     }
   });
-  it('Annahmen nur am ersten Change ohne Abhängigkeit (Vorlagen-Reihenfolge); zweite Wurzel unverändert', async () => {
+  it('Annahmen nur am ersten Change ohne Abhängigkeit; zweite Wurzel startet nach der ersten (Eingangskontrolle zuerst)', async () => {
     const t = aufbau();
     await freigegeben(t, vorlage(r => {
       r.changes.push({ schluessel: 'zwei', titel: 'Zweite Wurzel', begruendung: 'Unabhängig', typ: 'normal', risiko: 'low', abhaengigVon: [],
@@ -411,6 +411,30 @@ describe('Fix-Runde 1', () => {
     expect(zwei!.schritte).toHaveLength(2);
     expect(zwei!.schritte[0].titel).toBe('VM anlegen');
     expect(zwei!.schritte[1].parameter.id).toBe('{{schritt1.id}}');
+    // Final-Welle P1 — jede weitere Wurzel hängt an der ersten, damit die Eingangskontrolle nachweislich zuerst läuft
+    expect(zwei!.abhaengigVon).toEqual(['aufbau']);
+    expect(a!.abhaengigVon).toEqual([]);
+    const z = t.anfragen[0]!.zusatz!;
+    expect(z).toContain('zwei startet nach aufbau (Eingangskontrolle)');
+    // M4 — Schrittzahl je Change inkl. vorangestellter Eingangskontrolle
+    expect(z).toContain('- aufbau: 4 Schritte (davon 1 Eingangskontrolle)');
+    expect(z).toContain('- abbau: 2 Schritte');
+    expect(z).toContain('- zwei: 2 Schritte');
+    // Vorlagen-Frage nennt die Reihenfolge ebenfalls
+    expect(t.fragen[0]!.text).toContain('zwei startet nach aufbau (Eingangskontrolle)');
+  });
+  it('ohne Annahmen keine erzwungene Reihenfolge der Wurzeln', async () => {
+    const t = aufbau();
+    await freigegeben(t, vorlage(r => {
+      r.annahmen = [];
+      r.changes.push({ schluessel: 'zwei', titel: 'Zweite Wurzel', begruendung: 'Unabhängig', typ: 'normal', risiko: 'low', abhaengigVon: [],
+        schritte: [{ titel: 'VM anlegen', art: 'aktion', skill: 'proxmox', aktion: 'create_vm', parameter: { vmid: '{{param.vmid}}' }, zeitlimitS: 60, beiFehler: 'anhalten' }] });
+    }));
+    const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-1');
+    if (!r.ok) throw new Error(r.fehler.join(' '));
+    const [, , zwei] = t.geplant[0] as Roh[];
+    expect(zwei!.abhaengigVon).toEqual([]);
+    expect(t.anfragen[0]!.zusatz!).not.toContain('startet nach');
   });
   it('Löschungen über aktionsArt erkannt (destroy_vm im Rückweg)', () => {
     const h = heikleAktionen([{ schluessel: 'a', titel: 'a', begruendung: 'a', typ: 'normal', risiko: 'low', abhaengigVon: [],

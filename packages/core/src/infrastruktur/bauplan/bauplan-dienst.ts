@@ -133,6 +133,7 @@ export class BauplanDienst {
       ...(v.annahmen.length ? ['Eingangskontrolle (vor dem Anlegen und als erster Schritt):', ...v.annahmen.map(a => `- ${a.text}`)] : []),
       'Changes:',
       ...v.changes.map(c => `- ${c.schluessel}: ${c.titel} — ${c.schritte.length} Schritte, Risiko ${c.risiko}${c.abhaengigVon.length ? `, nach ${c.abhaengigVon.join(', ')}` : ''}`),
+      ...reihenfolgeZeilen(v.changes, v.annahmen.length),
       ...[heikleZeile(v.changes)].filter((x): x is string => !!x),
       `Abdruck: ${z.abdruck.slice(0, 12)}`,
       '',
@@ -235,7 +236,13 @@ export class BauplanDienst {
       const m = (e as Error).message;
       return this.abbrechen(o, key, z.version, r.ids, EINDEUTIG_VERLETZT.test(m) ? `Instanzname schon vergeben („${name}“)` : `Instanz nicht angelegt: ${m}`);
     }
-    const zusatz = [`📐 Bauplan ${key} v${z.version}, Instanz ${name}`, ...[heikleZeile(eingesetzt)].filter((x): x is string => !!x), ...wertVerweise(plaene)].join('\n');
+    const zusatz = [
+      `📐 Bauplan ${key} v${z.version}, Instanz ${name}`,
+      ...schrittZeilen(plaene, annahmen.length, ersteWurzel(eingesetzt)),
+      ...reihenfolgeZeilen(eingesetzt, annahmen.length),
+      ...[heikleZeile(eingesetzt)].filter((x): x is string => !!x),
+      ...wertVerweise(plaene),
+    ].join('\n');
     const f = await this.d.freigabeAnfragen(o, r.ids, zusatz).catch((e: Error) => ({ ok: false as const, fehler: [e.message] }));
     if (!f.ok) return this.abbrechen(o, key, z.version, r.ids, `Freigabe-Frage nicht gestellt: ${f.fehler.join('; ')}`, instanzId);
     this.d.protokoll?.('V3 Bauplan angewendet', { key, version: z.version, instanz: name, ids: r.ids });
@@ -271,11 +278,32 @@ export class BauplanDienst {
   zeigen(o: string, key: string, version?: number): Promise<BauplanVorlageZeile | undefined> { return this.d.repo.finde(o, key, version); }
 }
 
+/** Erster Change ohne abhaengigVon (Vorlagen-Reihenfolge) — trägt die Eingangskontrolle */
+const ersteWurzel = (changes: BauplanChange[]): string | undefined => changes.find(c => c.abhaengigVon.length === 0)?.schluessel;
+
+/**
+ * Final-Welle P1 — mit Eingangskontrolle startet jede weitere Wurzel erst nach der ersten (abhaengigVon [erste]), damit die
+ * Annahmen nachweislich vor jedem anderen Change laufen. Liefert „<schluessel> startet nach <erste> (Eingangskontrolle)“.
+ */
+function reihenfolgeZeilen(changes: BauplanChange[], annahmen: number): string[] {
+  const erster = ersteWurzel(changes);
+  if (!annahmen || !erster) return [];
+  return changes.filter(c => c.schluessel !== erster && c.abhaengigVon.length === 0).map(c => `${c.schluessel} startet nach ${erster} (Eingangskontrolle)`);
+}
+
+/** M4 — Schrittzahl je Change im Paket, inkl. vorangestellter Eingangskontrolle */
+function schrittZeilen(plaene: Array<Record<string, unknown>>, annahmen: number, erster: string | undefined): string[] {
+  return ['Schritte je Change:', ...plaene.map(p => {
+    const n = (p.schritte as unknown[]).length;
+    return `- ${String(p.schluessel)}: ${n} Schritte${annahmen && p.schluessel === erster ? ` (davon ${annahmen} Eingangskontrolle)` : ''}`;
+  })];
+}
+
 /** Plan-Form wie die Probe, Annahmen als erste Schritte des ersten Change ohne abhaengigVon, Verweise verschoben, kapitel entfernt. */
 function baueplaene(changes: BauplanChange[], annahmen: Array<{ text: string; pruefung: Pruefung }>, praefix: string): Array<Record<string, unknown>> {
   const n = annahmen.length;
   // Fix-Runde 1 (I-2) — Eingangskontrolle nur am ERSTEN Change ohne Abhängigkeit (Vorlagen-Reihenfolge)
-  const erster = changes.find(c => c.abhaengigVon.length === 0)?.schluessel;
+  const erster = ersteWurzel(changes);
   return changes.map(c => {
     let schritte: Array<Record<string, unknown>> = c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return rest; });
     if (n && erster) {
@@ -293,7 +321,8 @@ function baueplaene(changes: BauplanChange[], annahmen: Array<{ text: string; pr
       ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
       ...(c.ohneSicherungGrund !== undefined ? { ohneSicherungGrund: c.ohneSicherungGrund } : {}),
       ...(c.zweck !== undefined ? { zweck: c.zweck } : {}),
-      abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
+      // P1 — weitere Wurzeln hängen an der ersten, damit die Eingangskontrolle zuerst läuft
+      abhaengigVon: n && erster && c.schluessel !== erster && c.abhaengigVon.length === 0 ? [erster] : [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
       schritte,
     };
   });
