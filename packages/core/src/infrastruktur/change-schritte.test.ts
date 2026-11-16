@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
 import { aktionsArt, changeFingerabdruck, plaeneAusSchritten, pruefeChangePlan, zyklus, type PruefKontext, type ChangeSchritt } from './change-schritte.js';
-import { ChangePlanung, planAusChange, FREIGABE_FRAGE_GUELTIG_MS } from './change-planung.js';
+import { ChangePlanung, planAusChange, vorgaengerAbdruckVon, FREIGABE_FRAGE_GUELTIG_MS } from './change-planung.js';
 
 // I3 — Changes mit Schritten: Prüfung beim Anlegen, Fingerabdruck, Paket, Owner-Freigabe
 const skill = (name: string, aktionen: string[], props: Record<string, { type?: string }> = {}, pruefe?: (i: Record<string, unknown>) => string | undefined) =>
@@ -790,9 +790,10 @@ describe('V3 Change-Verweise — Fix-Runde 1', () => {
     const [c1, c2] = r.changes;
     const zusatz = (c: CmdbChangeRequest) => (c.pruefung as unknown as { zusatz?: { vorgaengerAbdruck?: Record<string, string> } }).zusatz;
     expect(zusatz(c2!)?.vorgaengerAbdruck).toEqual({ [c1!.id]: c1!.fingerabdruck });
-    expect(planAusChange(c2!).vorgaengerAbdruck).toEqual({ [c1!.id]: c1!.fingerabdruck });
+    expect(vorgaengerAbdruckVon(c2!)).toEqual({ [c1!.id]: c1!.fingerabdruck });
+    expect('vorgaengerAbdruck' in planAusChange(c2!)).toBe(false); // N-2: nie über die Roh-Eingabe
     // der Abdruck gehört zum Fingerabdruck des Abhängigen
-    const e = pruefeChangePlan(planAusChange(c2!), ctx([{ id: c1!.id, abhaengigVon: [], status: 'submitted' }]));
+    const e = pruefeChangePlan(planAusChange(c2!), ctx([{ id: c1!.id, abhaengigVon: [], status: 'submitted' }]), [], undefined, vorgaengerAbdruckVon(c2!));
     expect(changeFingerabdruck(e.plan, e.betroffeneIds, c2!.abhaengigVon!)).toBe(c2!.fingerabdruck);
     expect(changeFingerabdruck({ ...e.plan, vorgaengerAbdruck: { [c1!.id]: 'anders' } }, e.betroffeneIds, c2!.abhaengigVon!)).not.toBe(c2!.fingerabdruck);
     // Vorgänger ändern → Hinweis auf den Abhängigen
@@ -807,5 +808,14 @@ describe('V3 Change-Verweise — Fix-Runde 1', () => {
     expect(zusatz(b.change)?.vorgaengerAbdruck).toEqual({ [c1!.id]: it3.db.get(c1!.id)!.fingerabdruck });
     expect(b.freigabeVerfallen === false || b.change.fingerabdruck !== c2!.fingerabdruck).toBe(true);
     expect(b.change.fingerabdruck).not.toBe(c2!.fingerabdruck);
+  });
+});
+
+// V3 Task 3 Fix-Runde 2
+describe('V3 Change-Verweise — Fix-Runde 2', () => {
+  it('N-2: vorgaengerAbdruck aus der Roh-Eingabe wird ignoriert, nur der ausdrückliche Wert gilt', () => {
+    const roh = { ...snapshotChange(), vorgaengerAbdruck: { 'chg-x': 'erfunden' } };
+    expect(pruefeChangePlan(roh, ctx()).plan.vorgaengerAbdruck).toBeUndefined();
+    expect(pruefeChangePlan(snapshotChange(), ctx(), [], undefined, { 'chg-x': 'fp' }).plan.vorgaengerAbdruck).toEqual({ 'chg-x': 'fp' });
   });
 });

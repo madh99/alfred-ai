@@ -49,13 +49,17 @@ export interface ChangeDeps {
 const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', high: 'hoch', critical: 'kritisch' };
 
 /** Gespeicherten Change wieder in die Planform bringen (für die erneute Prüfung vor der Freigabe). */
+/** V3 — beim Planen festgehaltener Stand der Vorgänger eines gespeicherten Change (für die erneute Prüfung, nie aus Modell-Eingaben) */
+export function vorgaengerAbdruckVon(c: CmdbChangeRequest): Record<string, string> | undefined {
+  return (c.pruefung as { zusatz?: { vorgaengerAbdruck?: Record<string, string> } } | undefined)?.zusatz?.vorgaengerAbdruck;
+}
+
 export function planAusChange(c: CmdbChangeRequest): Record<string, unknown> {
-  const z = (c.pruefung as { zusatz?: { zweck?: string; ohneSicherungGrund?: string; vorgaengerAbdruck?: Record<string, string> } } | undefined)?.zusatz ?? {};
+  const z = (c.pruefung as { zusatz?: { zweck?: string; ohneSicherungGrund?: string } } | undefined)?.zusatz ?? {};
   return {
     titel: c.title, begruendung: c.description ?? '', typ: c.type === 'emergency' ? 'notfall' : 'normal', risiko: c.riskLevel,
     ausfallMinuten: c.ausfallMinuten, ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), betroffen: c.affectedAssetIds,
     abhaengigVon: c.abhaengigVon ?? [], ...(z.zweck ? { zweck: z.zweck } : {}), ...(z.ohneSicherungGrund ? { ohneSicherungGrund: z.ohneSicherungGrund } : {}),
-    ...(z.vorgaengerAbdruck ? { vorgaengerAbdruck: z.vorgaengerAbdruck } : {}),
     schritte: (c.schritte ?? []) as unknown[],
   };
 }
@@ -283,13 +287,8 @@ export class ChangePlanung {
       roh = { ...r, schritte: [...gelaufen, ...neue.slice(korrekturAb - 1)] };
     }
     // V3 Fix 1 (C-1) — Neu planen bindet an den JETZIGEN Stand der Vorgänger, auf deren Schritte verwiesen wird
-    if (roh && typeof roh === 'object' && !Array.isArray(roh)) {
-      const r0 = roh as Record<string, unknown>;
-      const va = vorgaengerAbdruecke(r0.schritte, x => ctx.changes.find(c => c.id === x)?.fingerabdruck);
-      const { vorgaengerAbdruck: _alt, ...rest } = r0;
-      roh = va ? { ...rest, vorgaengerAbdruck: va } : rest;
-    }
-    const e = pruefeChangePlan(roh, ctx);
+    const va = roh && typeof roh === 'object' && !Array.isArray(roh) ? vorgaengerAbdruecke((roh as Record<string, unknown>).schritte, x => ctx.changes.find(c => c.id === x)?.fingerabdruck) : undefined;
+    const e = pruefeChangePlan(roh, ctx, [], undefined, va);
     const fehler = [...e.fehler];
     const kanten = new Map(ctx.changes.map(c => [c.id, c.abhaengigVon] as [string, string[]]));
     kanten.set(alt.id, e.plan.abhaengigVon);
@@ -350,7 +349,7 @@ export class ChangePlanung {
     if (offen.length) return { ok: false, grund: `${offen.length} offene Einwände des Owners — erst beantworten (change_aendern mit antworten)` };
     const ctx = await this.kontext(owner);
     ctx.changes = ctx.changes.filter(x => x.id !== c.id);
-    const e = pruefeChangePlan(planAusChange(c), ctx);
+    const e = pruefeChangePlan(planAusChange(c), ctx, [], undefined, vorgaengerAbdruckVon(c));
     if (e.fehler.length) return { ok: false, grund: `Prüfung jetzt nicht bestanden: ${e.fehler.slice(0, 5).join('; ')}` };
     if (changeFingerabdruck(e.plan, e.betroffeneIds, c.abhaengigVon ?? []) !== c.fingerabdruck) return { ok: false, grund: 'Gespeicherter Plan und Fingerabdruck passen nicht zusammen — Change neu planen' };
     const aus = await this.d.auswirkung(c.affectedAssetIds, c.id);

@@ -395,8 +395,9 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
  * `alleSchluessel` sind die Schlüssel der im selben Paket geplanten Changes (Abhängigkeiten innerhalb des Pakets).
  * `paket` (V3) — abhaengigVon und rohe Schritte je Paket-Schlüssel, für {{change:…}}-Verweise über mehrere Stufen und die Prüfung
  * des Ziel-Schritts (ohne: nur direkte Abhängigkeiten im Paket, Ziel-Schritt ungeprüft).
+ * `vorgaengerAbdruck` (V3) — festgehaltener Stand der Vorgänger; nur vom Server übergeben, ein Feld gleichen Namens in `roh` zählt nicht.
  */
-export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = [], paket?: Map<string, { abhaengigVon: string[]; schritte: unknown[] }>): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
+export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = [], paket?: Map<string, { abhaengigVon: string[]; schritte: unknown[] }>, vorgaengerAbdruck?: Record<string, string>): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
   const f: string[] = []; const h: string[] = [];
   const r = obj(roh) ?? {};
   const typ = txt(r.typ) || 'normal';
@@ -416,7 +417,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   if (txt(r.geplantAb)) { const t = Date.parse(txt(r.geplantAb)); if (Number.isNaN(t)) f.push('geplantAb ist kein Zeitpunkt'); else { plan.geplantAb = new Date(t).toISOString(); if (t < (ctx.jetzt ?? new Date()).getTime()) h.push('geplantAb liegt in der Vergangenheit'); } }
   if (txt(r.zweck) === 'stilllegung') plan.zweck = 'stilllegung';
   if (txt(r.ohneSicherungGrund)) plan.ohneSicherungGrund = txt(r.ohneSicherungGrund);
-  { const va = obj(r.vorgaengerAbdruck); if (va && Object.keys(va).length && Object.values(va).every(x => typeof x === 'string')) plan.vorgaengerAbdruck = { ...(va as Record<string, string>) }; }
+  // V3 Fix 2 (N-2) — nie aus der Roh-Eingabe (Modell), nur ausdrücklich von den Server-Pfaden (planen, aendern, freigabeBereit)
+  if (vorgaengerAbdruck && Object.keys(vorgaengerAbdruck).length) plan.vorgaengerAbdruck = { ...vorgaengerAbdruck };
 
   // Betroffene Assets aus der CMDB
   const betroffeneIds: string[] = [];

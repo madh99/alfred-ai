@@ -204,8 +204,9 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
 export function unaufgeloesterVerweis(wert: unknown): string | undefined {
   let t: string;
   try { t = JSON.stringify(wert ?? null); } catch { return 'unaufgelöster Verweis (Eingabe nicht lesbar)'; }
-  const m = /\{\{\s*(change|schritt\d)[^}]{0,60}/i.exec(t);
-  return m ? `unaufgelöster Verweis „${m[0].slice(0, 70)}“ — Schritt nicht ausgeführt` : undefined;
+  // V3 Fix 2 (N-4) — nur der Anfang des Verweises, keine eingesetzten Werte
+  const m = /\{\{\s*(change|schritt\d)[^}]{0,30}/i.exec(t);
+  return m ? `unaufgelöster Verweis „${m[0].slice(0, 30)}…“ — Schritt nicht ausgeführt` : undefined;
 }
 
 /** v1643 — alle einfachen Werte eines Datenobjekts (ohne Feldnamen), für Textprüfungen gegen Skill-Daten */

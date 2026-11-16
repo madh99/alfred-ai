@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { ChangeMotor, ownerFrageVeraltet, ueberspringbar, type MotorDeps } from './change-motor.js';
-import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, type ChangeLauf } from './change-lauf.js';
+import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, unaufgeloesterVerweis, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
 // I4 — Ausführungsmotor gegen Attrappen (kein echter Host)
@@ -992,14 +992,17 @@ describe('V3 Verweis über Change-Grenzen', () => {
   it('Motor: Vorgänger completed, aber nicht in abhaengigVon → hält an', async () => {
     const w = zweiChanges('completed');
     w.c.abhaengigVon = [];
-    await w.motor.anstossen(); await warte(w.motor);
+    expect(await w.motor.anstossen()).toEqual([]);
+    w.c.status = 'in_progress' as never; await w.motor.weiter('o', w.c, { phase: 'laeuft', schritt: 1, start: 'x', ergebnisse: [] });
     expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
     expect((w.c.lauf as ChangeLauf).grund).toContain('nicht abgeschlossen oder keine Abhängigkeit');
     expect(w.eingaben).toEqual([]);
   });
 
+  // Laufzeit-Halt als zweite Sicherung: direkt weiter (anstossen startet solche Changes seit Fix-Runde 2 gar nicht erst)
+  const direkt = async (w: ReturnType<typeof zweiChanges>) => { w.c.status = 'in_progress' as never; await w.motor.weiter('o', w.c, { phase: 'laeuft', schritt: 1, start: 'x', ergebnisse: [] }); };
   const haltGrund = async (w: ReturnType<typeof zweiChanges>) => {
-    await w.motor.anstossen(); await warte(w.motor);
+    await direkt(w);
     const l = w.c.lauf as ChangeLauf;
     expect(l.phase).toBe('angehalten');
     expect(w.eingaben).toEqual([]);
@@ -1029,5 +1032,34 @@ describe('V3 Verweis über Change-Grenzen', () => {
     for (const v of [`{{Change:${VOR}.schritt2.policy_id}}`, `{{change:${VOR}.schritt2.a b}}`, `{{change:${VOR}.schritt2.policy_id }x}}`, '{{Schritt2.policy_id}}']) {
       expect(await haltGrund(zweiChanges('completed', v)), v).toContain('unaufgelöster Verweis');
     }
+  });
+
+  it('N-1: Change mit geändertem Vorgänger startet nicht (kein Schritt läuft), Meldung einmal', async () => {
+    const w = zweiChanges('completed');
+    // Schritt 1 wirkt, erst Schritt 2 verweist auf den Vorgänger
+    w.c.schritte = [
+      S({ nr: 1, skill: 'unifi', aktion: 'create_rule', parameter: { name: 'r1' }, einordnung: 'aendern', rueckweg: { keiner: 'Test' } }),
+      S({ nr: 2, skill: 'unifi', aktion: 'delete_policy', parameter: { policy_id: `{{change:${VOR}.schritt2.policy_id}}` }, einordnung: 'aendern', rueckweg: { keiner: 'Test' } }),
+    ];
+    w.vor.fingerabdruck = 'fp-neu'; w.vor.freigabeFingerabdruck = 'fp-neu';
+    expect(await w.motor.anstossen()).toEqual([]);
+    expect(await w.motor.anstossen()).toEqual([]);
+    await warte(w.motor);
+    expect(w.eingaben).toEqual([]);
+    expect(w.c.status).toBe('approved');
+    const m = w.meldungen.filter(x => x.includes('wartet'));
+    expect(m).toHaveLength(1);
+    expect(m[0]).toContain(`Vorgänger ${VOR.slice(0, 8)} nach der Planung geändert`);
+    // Vorgänger nicht fertig (Rückweg) → ebenso nicht starten
+    const w2 = zweiChanges('completed');
+    w2.vor.lauf = { phase: 'rueckweg', schritt: 2, start: 'x', ergebnisse: erg };
+    expect(await w2.motor.anstossen()).toEqual([]);
+    expect(w2.eingaben).toEqual([]);
+    expect(w2.meldungen.filter(x => x.includes('wartet'))).toHaveLength(1);
+  });
+  it('N-4: Wächter-Meldung nennt nur den Anfang des Verweises, keine Werte', () => {
+    const t = unaufgeloesterVerweis({ x: '{{Change:abcdef.schritt2.policy_id geheimwert12345}}' })!;
+    expect(t).toContain('{{Change:abcdef');
+    expect(t).not.toContain('geheimwert');
   });
 });

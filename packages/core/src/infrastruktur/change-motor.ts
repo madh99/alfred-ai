@@ -174,6 +174,18 @@ export class ChangeMotor {
       if (c.scheduledAt && Date.parse(c.scheduledAt) > this.jetzt()) continue;
       const abh = (c.abhaengigVon ?? []).map(id => alle.find(x => x.id === id));
       if (abh.some(x => !x || x.status !== 'completed')) continue;
+      // V3 Fix 2 (N-1) — ein Change, dessen {{change:<id>…}} sicher anhalten würde, startet gar nicht erst (sonst liefen die Schritte
+      // davor und hinterließen einen halb umgesetzten Change)
+      const gesperrt = await this.vorgaengerGrund(o, c);
+      if (gesperrt) {
+        this.log('V3 Change wartet (Vorgänger)', { id: c.id, vorgaenger: gesperrt.id, grund: gesperrt.grund });
+        const k = `${c.id}:vorgaenger:${gesperrt.id}:${gesperrt.grund}`;
+        if (!this.wartenGemeldet.has(k)) {
+          this.wartenGemeldet.add(k);
+          await this.d.melde?.(`⏸️ Change ${c.id.slice(0, 8)} („${c.title}“) wartet: Vorgänger ${gesperrt.id.slice(0, 8)} ${gesperrt.grund.replace(/^Vorgänger /, '').replace(/ — abhängigen Change neu planen$/, '')} — ${c.id.slice(0, 8)} neu planen (change_aendern) und neu freigeben.`, true);
+        }
+        continue;
+      }
       // Realfall 22.10. (B hielt an einer reinen Prüfung an und sperrte damit T und A3, auf die er selbst wartet): ein angehaltener Change
       // belegt seine Assets nur, wenn er schon etwas verändert hat
       const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk || e.teilweise) && st.some(s => s.nr === e.nr && wirkt(s))); };
@@ -328,6 +340,19 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       aus.set(id, l.ergebnisse ?? []);
     }
     return aus;
+  }
+
+  /** V3 Fix 2 (N-1) — erster Vorgänger, auf den der Plan verweist und der keine Werte liefern darf (mit Grund) */
+  private async vorgaengerGrund(o: string, c: CmdbChangeRequest): Promise<{ id: string; grund: string } | undefined> {
+    const ids = [...new Set([...JSON.stringify(c.schritte ?? []).matchAll(/\{\{\s*change:([A-Za-z0-9_-]{1,64})\./g)].map(m => m[1]!))];
+    if (!ids.length) return undefined;
+    const vg = await this.vorgaenger(o, c);
+    for (const id of ids) {
+      const v = vg.get(id);
+      if (typeof v === 'string') return { id, grund: v };
+      if (!v) return { id, grund: 'nicht abgeschlossen oder keine Abhängigkeit' };
+    }
+    return undefined;
   }
 
   async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[] | string> }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
