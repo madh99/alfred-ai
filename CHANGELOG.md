@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bauplan ableiten: Entscheidungspflicht lückenlos (v1882)
+
+- Jeder Wert in einem verändernden Schritt, der weder vom Paket angelegt noch als Parameter gewählt ist, braucht eine ausdrückliche Entscheidung — auch IP-Adressen, verschachtelte Felder, Rückwege und mehrere Werte in einem Feld. Ausgenommen sind nur dokumentierte Trägerfelder (Knoten, Speicher, Gerät, Port, Sicherungsjob).
+- Tresor-Einträge der Original-Instanz werden nie still weiterverwendet: entweder bewusst „fest“ (in der Freigabe-Frage unter „Verwendet bestehende Tresor-Einträge“) oder als Parameter.
+- Abgelegte ISO-Dateien zählen als vom Paket angelegt.
+
 ### Added — Bauplan aus Changes ableiten (v1881)
 
 - Neue Aktion `bauplan_ableiten` im Skill `bauplan`: `vorschlag` zeigt aus erfolgreich gelaufenen Changes Parameter-Kandidaten (VMIDs, VLANs, Netze, IPs, Namen) mit jeder Fundstelle sowie Werte, die ein früherer Change im Lauf erzeugt hat; `erzeugen` baut daraus einen Entwurf und speichert ihn über die übliche Prüfung.
