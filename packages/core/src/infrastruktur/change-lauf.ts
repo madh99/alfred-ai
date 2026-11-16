@@ -198,6 +198,44 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
 }
 
 /**
+ * Final-Welle I1 — Start-Wächter: jeden `{{change:<id>.schrittN.feld}}` eines Plans (Schritte inkl. Prüfung und Rückweg, jede Tiefe)
+ * gegen die bereitgestellten Vorgänger-Ergebnisse prüfen — nach denselben Regeln wie zur Laufzeit (nur Ergebnisse mit ok, Wert
+ * vorhanden, sicher bzw. Ganzwert-Ausnahme des Felds). Vorgänger ohne Ergebnisliste (Grund-Text oder fehlend) prüft der Aufrufer.
+ * Liefert den ersten Mangel oder undefined.
+ */
+export function vorgaengerWertMangel(wert: unknown, vorgaenger: Map<string, SchrittErgebnis[] | string>): { cid: string; nr: number; feld: string; art: 'fehlt' | 'unzulaessig'; text: string } | undefined {
+  let mangel: ReturnType<typeof vorgaengerWertMangel>;
+  const string = (v: string, feld?: string) => {
+    for (const m of v.matchAll(/\{\{\s*change:([A-Za-z0-9_-]{1,64})\.schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}/g)) {
+      if (mangel) return;
+      const [ref, cid, nrT, f] = m as unknown as [string, string, string, string];
+      const q = vorgaenger.get(cid);
+      if (!Array.isArray(q)) continue;
+      const nr = Number(nrT);
+      const e = q.find(x => x.nr === nr && x.ok);
+      if (!e || pfadWert(e.daten, f) === undefined) {
+        const grund = !e ? 'der Schritt ist nicht erfolgreich abgeschlossen (gescheitert oder nur teilweise)' : e.uebersprungen ? 'der Schritt wurde übersprungen' : `der Schritt lieferte kein Feld „${f}“`;
+        mangel = { cid, nr, feld: f, art: 'fehlt', text: grund };
+        return;
+      }
+      // dieselbe Wert-Sicherheit wie zur Laufzeit: als ganzer Wert bzw. eingebettet, im selben Feld
+      const ganz = v.trim() === ref;
+      const probe = ganz ? ref : `x${ref}`;
+      const r = loeseAuf(feld ? { [feld]: probe } : probe, [], undefined, new Map([[cid, q]]));
+      if (r.fehler) { mangel = { cid, nr, feld: f, art: 'unzulaessig', text: r.fehler }; return; }
+    }
+  };
+  const lauf = (v: unknown, feld?: string): void => {
+    if (mangel) return;
+    if (typeof v === 'string') string(v, feld);
+    else if (Array.isArray(v)) for (const x of v) lauf(x, feld);
+    else if (v && typeof v === 'object') for (const [k, w] of Object.entries(v as Record<string, unknown>)) lauf(w, k);
+  };
+  lauf(wert);
+  return mangel;
+}
+
+/**
  * V3 Fix 1 (I-2) — nach dem Auflösen darf kein Verweis-Text übrig sein ({{Change:…}}, {{Schritt1.x}}, kaputte Verweise): sonst ginge
  * der Platzhalter roh an einen Skill. Liefert den Fehlertext oder undefined.
  */

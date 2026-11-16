@@ -11,7 +11,7 @@ import type { CmdbChangeRequest, SkillResultAttachment } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { schwaerze } from '../fernzugriff/kaefig.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { unaufgeloesterVerweis, datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { unaufgeloesterVerweis, vorgaengerWertMangel, datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
 import { aktionsArt, ZEITLIMIT_STANDARD_S, type ChangeSchritt, type Pruefung } from './change-schritte.js';
@@ -88,6 +88,22 @@ const FRAGE_GUELTIG_MS = 24 * 3_600_000;
  */
 const NACH_ENDE_ZEIT_MS = 25_000;
 const hash = (n: string) => createHash('sha256').update(n).digest('hex');
+
+/** Warum ein Change mit {{change:…}}-Verweisen nicht startet */
+type VorgaengerSperre = { id: string; art: 'geaendert' | 'zurueck' | 'offen' | 'keine' | 'wert'; grund: string };
+
+/** Final-Welle N-6 — Meldungstext je Grund (nur wo Neuplanung hilft, wird sie genannt) */
+function wartenText(c: CmdbChangeRequest, s: VorgaengerSperre): string {
+  const k = c.id.slice(0, 8); const v = s.id.slice(0, 8);
+  const kopf = `⏸️ Change ${k} („${c.title}“)`;
+  switch (s.art) {
+    case 'geaendert': return `${kopf} wartet: Vorgänger ${v} nach der Planung geändert — ${k} neu planen (change_aendern) und neu freigeben.`;
+    case 'zurueck': return `${kopf} wartet: Vorgänger ${v} zurückgenommen (Rückweg begonnen) — seine Werte gelten nicht mehr. ${k} startet nicht; abbrechen oder nach erneutem Aufbau neu planen.`;
+    case 'offen': return `${kopf} wartet, bis Vorgänger ${v} fertig ist (Lauf noch nicht abgeschlossen).`;
+    case 'keine': return `${kopf} wartet: verweist auf Change ${v}, der nicht in seinen Abhängigkeiten steht — ${k} neu planen (change_aendern) und neu freigeben.`;
+    case 'wert': return `${kopf} startet nicht: ${s.grund}. Kein Schritt ausgeführt. ${k} abbrechen oder neu planen; was der Vorgänger nicht angelegt hat, von Hand klären.`;
+  }
+}
 
 /**
  * v1688 — Realfall 26.10. (Matrix J): Nach Korrekturen ab dem Haltepunkt standen in der App weiter die Fragen „Schritt 30 … erledigt?“
@@ -178,11 +194,12 @@ export class ChangeMotor {
       // davor und hinterließen einen halb umgesetzten Change)
       const gesperrt = await this.vorgaengerGrund(o, c);
       if (gesperrt) {
-        this.log('V3 Change wartet (Vorgänger)', { id: c.id, vorgaenger: gesperrt.id, grund: gesperrt.grund });
-        const k = `${c.id}:vorgaenger:${gesperrt.id}:${gesperrt.grund}`;
+        this.log('V3 Change wartet (Vorgänger)', { id: c.id, vorgaenger: gesperrt.id, art: gesperrt.art, grund: gesperrt.grund });
+        // Final-Welle N-5 — Fingerabdruck des wartenden Change im Schlüssel: nach Neuplanung wird erneut gemeldet
+        const k = `${c.id}:${c.fingerabdruck ?? ''}:vorgaenger:${gesperrt.id}:${gesperrt.grund}`;
         if (!this.wartenGemeldet.has(k)) {
           this.wartenGemeldet.add(k);
-          await this.d.melde?.(`⏸️ Change ${c.id.slice(0, 8)} („${c.title}“) wartet: Vorgänger ${gesperrt.id.slice(0, 8)} ${gesperrt.grund.replace(/^Vorgänger /, '').replace(/ — abhängigen Change neu planen$/, '')} — ${c.id.slice(0, 8)} neu planen (change_aendern) und neu freigeben.`, true);
+          await this.d.melde?.(wartenText(c, gesperrt), true);
         }
         continue;
       }
@@ -342,16 +359,31 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return aus;
   }
 
-  /** V3 Fix 2 (N-1) — erster Vorgänger, auf den der Plan verweist und der keine Werte liefern darf (mit Grund) */
-  private async vorgaengerGrund(o: string, c: CmdbChangeRequest): Promise<{ id: string; grund: string } | undefined> {
+  /**
+   * V3 Fix 2 (N-1) — erster Vorgänger, auf den der Plan verweist und der keine Werte liefern darf (mit Grund).
+   * Final-Welle I1 — zusätzlich jeder referenzierte WERT (Schritte, Prüfung, Rückweg) nach den Laufzeit-Regeln: fehlt einer oder ist er
+   * unzulässig, startet der Change nicht (sonst liefen z. B. Lösch-Schritte davor und erst ein späterer Schritt hielte an).
+   */
+  private async vorgaengerGrund(o: string, c: CmdbChangeRequest): Promise<VorgaengerSperre | undefined> {
     const ids = [...new Set([...JSON.stringify(c.schritte ?? []).matchAll(/\{\{\s*change:([A-Za-z0-9_-]{1,64})\./g)].map(m => m[1]!))];
     if (!ids.length) return undefined;
     const vg = await this.vorgaenger(o, c);
     for (const id of ids) {
       const v = vg.get(id);
-      if (typeof v === 'string') return { id, grund: v };
-      if (!v) return { id, grund: 'nicht abgeschlossen oder keine Abhängigkeit' };
+      if (typeof v === 'string') return { id, art: 'geaendert', grund: v };
+      if (!v) {
+        // N-6 — Grund unterscheiden: zurückgenommen, noch nicht fertig, keine Abhängigkeit
+        const x = await this.d.itsm.hole(o, id).catch(() => null);
+        const l = x?.lauf as ChangeLauf | undefined;
+        if (!x || x.id !== id) return { id, art: 'keine', grund: 'nicht abgeschlossen oder keine Abhängigkeit' };
+        if ((l?.rueckweg?.length ?? 0) > 0 || l?.phase === 'rueckweg') return { id, art: 'zurueck', grund: 'zurückgenommen (Rückweg begonnen)' };
+        // abgeschlossen und fertig, aber nicht in der Abhängigkeits-Hülle → nur durch Neuplanung lösbar
+        if (x.status === 'completed' && l?.phase === 'fertig') return { id, art: 'keine', grund: 'keine Abhängigkeit (nicht in abhaengigVon)' };
+        return { id, art: 'offen', grund: 'nicht abgeschlossen' };
+      }
     }
+    const m = vorgaengerWertMangel(c.schritte ?? [], vg);
+    if (m) return { id: m.cid, art: 'wert', grund: `Wert ${m.feld} aus Change ${m.cid.slice(0, 8)} Schritt ${m.nr} ${m.art === 'fehlt' ? 'fehlt' : 'ist unzulässig'} — ${m.text}` };
     return undefined;
   }
 

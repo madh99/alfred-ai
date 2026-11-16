@@ -1057,6 +1057,66 @@ describe('V3 Verweis über Change-Grenzen', () => {
     expect(w2.eingaben).toEqual([]);
     expect(w2.meldungen.filter(x => x.includes('wartet'))).toHaveLength(1);
   });
+  // Final-Welle I1 — Realfall-Szenario pki_lab: Vorgänger fertig, aber der referenzierte Schritt lieferte keinen Wert (gescheitert, vom
+  // Owner übersprungen) → der abhängige Change startet gar nicht (sonst liefen Lösch-Schritte davor = halber Abbau)
+  const halberAbbau = (vorErg: unknown[], ref: Record<string, unknown> = { parameter: { policy_id: `{{change:${VOR}.schritt2.policy_id}}` } }) => {
+    const w = zweiChanges('completed');
+    w.c.schritte = [
+      S({ nr: 1, skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: 157 }, einordnung: 'loeschen', rueckweg: { keiner: 'Test' } }),
+      S({ nr: 2, skill: 'unifi', aktion: 'delete_policy', einordnung: 'aendern', rueckweg: { keiner: 'Test' }, ...ref }),
+    ];
+    w.vor.lauf = { phase: 'fertig', schritt: 2, start: 'x', ergebnisse: vorErg as never };
+    return w;
+  };
+  it('I1: referenzierter Vorgänger-Schritt gescheitert → startet nicht, kein Schritt läuft, Meldung nennt Wert, Change und Schritt', async () => {
+    const w = halberAbbau([{ nr: 2, ok: false, start: 'x', fehler: 'success:false' }]);
+    expect(await w.motor.anstossen()).toEqual([]);
+    expect(await w.motor.anstossen()).toEqual([]);
+    await warte(w.motor);
+    expect(w.eingaben).toEqual([]);
+    expect(w.c.status).toBe('approved');
+    const m = w.meldungen.filter(x => x.includes('⏸️'));
+    expect(m).toHaveLength(1);
+    expect(m[0]).toContain(`Wert policy_id aus Change ${VOR.slice(0, 8)} Schritt 2 fehlt`);
+    // N-5 — neu geplant (anderer Fingerabdruck) → wieder gemeldet
+    w.c.fingerabdruck = 'fp-neu-geplant';
+    expect(await w.motor.anstossen()).toEqual([]);
+    expect(w.meldungen.filter(x => x.includes('⏸️'))).toHaveLength(2);
+  });
+  it('I1: übersprungener Schritt, fehlendes Feld, unsicherer Wert, Verweis nur im Rückweg oder in der Prüfung → startet nicht', async () => {
+    const fall: Array<[unknown[], Record<string, unknown> | undefined, string]> = [
+      [[{ nr: 2, ok: true, uebersprungen: true, start: 'x', ausgabe: 'vom Owner übersprungen' }], undefined, 'Schritt 2 fehlt'],
+      [[{ nr: 2, ok: true, start: 'x', daten: { anders: 1 } }], undefined, 'Schritt 2 fehlt'],
+      [[{ nr: 2, ok: true, start: 'x', daten: { policy_id: 'a b' } }], undefined, 'Schritt 2 ist unzulässig'],
+      [[{ nr: 2, ok: false, start: 'x' }], { parameter: { x: 1 }, rueckweg: { skill: 'unifi', aktion: 'create_policy', parameter: { id: `{{change:${VOR}.schritt2.policy_id}}` } } }, 'Schritt 2 fehlt'],
+      [[{ nr: 2, ok: false, start: 'x' }], { parameter: { x: 1 }, pruefung: { typ: 'skill', skill: 'unifi', aktion: 'list_policies', erwartet: `{{change:${VOR}.schritt2.policy_id}}` } }, 'Schritt 2 fehlt'],
+    ];
+    for (const [erg2, ref, erwartet] of fall) {
+      const w = halberAbbau(erg2, ref);
+      expect(await w.motor.anstossen(), erwartet).toEqual([]);
+      expect(w.eingaben).toEqual([]);
+      expect(w.meldungen.join('\n')).toContain(erwartet);
+    }
+    // Gegenprobe: Wert vorhanden und sicher → startet
+    const ok = halberAbbau([{ nr: 2, ok: true, start: 'x', daten: { policy_id: 'pol-42' } }]);
+    expect(await ok.motor.anstossen()).toEqual(['chg-1']);
+  });
+  it('N-6: Meldung je Grund — geändert / zurückgenommen / nicht fertig', async () => {
+    const g = zweiChanges('completed');
+    g.vor.fingerabdruck = 'fp-neu'; g.vor.freigabeFingerabdruck = 'fp-neu';
+    await g.motor.anstossen();
+    expect(g.meldungen.join('\n')).toContain('neu planen (change_aendern) und neu freigeben');
+    const r = zweiChanges('completed');
+    r.vor.lauf = { phase: 'fertig', schritt: 2, start: 'x', ergebnisse: erg, rueckweg: [{ zuSchritt: 2, ok: true, text: 'x', zeit: 'x' }] };
+    await r.motor.anstossen();
+    expect(r.meldungen.join('\n')).toContain(`Vorgänger ${VOR.slice(0, 8)} zurückgenommen`);
+    expect(r.meldungen.join('\n')).not.toContain('change_aendern');
+    const n = zweiChanges('completed');
+    n.vor.lauf = { phase: 'angehalten', schritt: 2, start: 'x', ergebnisse: erg };
+    await n.motor.anstossen();
+    expect(n.meldungen.join('\n')).toContain(`wartet, bis Vorgänger ${VOR.slice(0, 8)} fertig ist`);
+    expect(n.meldungen.join('\n')).not.toContain('change_aendern');
+  });
   it('N-4: Wächter-Meldung nennt nur den Anfang des Verweises, keine Werte', () => {
     const t = unaufgeloesterVerweis({ x: '{{Change:abcdef.schritt2.policy_id geheimwert12345}}' })!;
     expect(t).toContain('{{Change:abcdef');
