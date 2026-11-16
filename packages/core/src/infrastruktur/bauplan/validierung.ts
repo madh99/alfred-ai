@@ -153,7 +153,8 @@ function ersetzeChangeVerweise(x: unknown): unknown {
  * kommt ein zusätzlicher Change „annahmen“ mit je einem Prüfschritt dazu — so gelten für sie dieselben Prüf-/Käfig-Regeln.
  */
 export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): unknown[] {
-  const plaene: unknown[] = setzeEin(v, werte).map(c => ({
+  const eingesetzt = setzeEin(v, werte);
+  const plaene: unknown[] = eingesetzt.map(c => ({
     schluessel: c.schluessel, titel: c.titel, begruendung: c.begruendung, typ: c.typ, risiko: c.risiko,
     ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
     abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
@@ -162,8 +163,8 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
   if (v.annahmen.length) plaene.push({
     schluessel: ANNAHMEN_SCHLUESSEL, titel: 'Eingangskontrolle der Vorlage', begruendung: 'Vorab-Prüfungen der Bauplan-Vorlage',
     // Plan-Kopf wie ein echter Change (pruefeChangePlan verlangt ausfallMinuten und betroffen): betroffen = Vereinigung der
-    // betroffenen Assets aller Changes; ist sie leer, scheitern die echten Changes am selben Punkt (gleiche Meldung)
-    typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: [...new Set(v.changes.flatMap(c => c.betroffen ?? []))],
+    // betroffenen Assets aller Changes NACH dem Einsetzen ({{param.node}} → pve); ist sie leer, scheitern die echten Changes am selben Punkt (gleiche Meldung)
+    typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: [...new Set(eingesetzt.flatMap(c => c.betroffen ?? []))],
     schritte: v.annahmen.map((a, i) => ({ nr: i + 1, titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: setzeEinWert(a.pruefung, werte), beiFehler: 'anhalten' })),
   });
   return plaene;

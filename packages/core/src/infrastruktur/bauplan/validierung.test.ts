@@ -201,3 +201,33 @@ describe('Fix-Runde 2 — Annahmen-Change besteht den echten Change-Validator', 
     expect(echt.fehler).toEqual([]);
   });
 });
+
+describe('Fix-Runde 3 — betroffen nach dem Einsetzen', () => {
+  const fakeSkill = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['vm_status'] }, vmid: { type: 'number' } }, required: ['action'] } } };
+  const kontext: PruefKontext = {
+    skill: n => (n === 'proxmox' ? fakeSkill : undefined),
+    asset: k => (k === 'pve' ? { id: 'a-pve', name: 'pve' } : undefined),
+    changes: [], jetzt: new Date('2026-11-16T10:00:00Z'),
+  };
+  it('{{param.node}} in betroffen ist in beiden Probe-Changes eingesetzt und besteht den echten Validator', async () => {
+    const roh = {
+      schema: 1, key: 'lese_probe', titel: 'Lese-Probe', zweck: 'Nur lesen', dokumentart: 'testprotokoll',
+      parameter: [
+        { name: 'node', typ: 'node', pflicht: true, beschreibung: 'Knoten', beispiel: 'pve' },
+        { name: 'vmid', typ: 'vmid', pflicht: true, beschreibung: 'VMID', beispiel: 157 },
+      ],
+      annahmen: [{ id: 'vm_da', text: 'VM antwortet', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{param.vmid}}' } } }],
+      changes: [{
+        schluessel: 'lesen', titel: 'Status lesen', begruendung: 'Nur den Zustand der VM lesen', typ: 'normal', risiko: 'low', ausfallMinuten: 0,
+        abhaengigVon: [], betroffen: ['{{param.node}}'],
+        schritte: [{ titel: 'Status', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{param.vmid}}' }, zeitlimitS: 60, beiFehler: 'anhalten' }],
+      }],
+    };
+    let plaene: Array<Record<string, any>> = [];
+    const r = await pruefeVorlage(roh, { probe: async p => { plaene = p as Array<Record<string, any>>; return []; } });
+    expect(r.fehler).toEqual([]);
+    expect(plaene.map(p => p.betroffen)).toEqual([['pve'], ['pve']]);
+    const schluessel = plaene.map(p => p.schluessel as string);
+    for (const p of plaene) expect(pruefeChangePlan(p, kontext, schluessel).fehler, p.schluessel).toEqual([]);
+  });
+});
