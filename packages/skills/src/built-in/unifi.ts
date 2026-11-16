@@ -1362,7 +1362,9 @@ export class UniFiSkill extends Skill {
       const z = (((await this.v2('GET', 'firewall/zone')) as Z[] | undefined) ?? []).find(x => x._id === z0._id);
       if (!z) continue;
       const soll = (z.network_ids ?? []).filter(i => i !== nurId);
-      await this.v2('PUT', `firewall/zone/${z._id}`, { ...z, network_ids: soll });
+      // Realfall 16.11. (a500a79d): schreibgeschützte attr_*-Felder (z. B. attr_no_edit der Zone Internal) lehnt die UDM beim PUT mit 400 ab
+      const schreibbar = Object.fromEntries(Object.entries(z).filter(([k]) => !k.startsWith('attr_')));
+      await this.v2('PUT', `firewall/zone/${z._id}`, { ...schreibbar, network_ids: soll });
       const nach = (((await this.v2('GET', 'firewall/zone')) as Z[] | undefined) ?? []).find(x => x._id === z._id);
       const ist = nach?.network_ids ?? [];
       if (ist.includes(nurId) || ist.length !== soll.length || soll.some(i => !ist.includes(i))) {

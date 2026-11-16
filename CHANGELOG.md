@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — UniFi: verwaiste Netzverweise in Zonen bereinigen (v1880)
+
+- Beim Entfernen eines gelöschten Netzes aus einer Firewall-Zone schreibt Alfred die Zone ohne die schreibgeschützten `attr_*`-Felder zurück. Die UniFi-Konsole lehnte das Zurückschreiben der Systemzone „Internal“ sonst mit HTTP 400 ab, der verwaiste Verweis blieb stehen und das Lesen aller Firewall-Zonen und -Richtlinien scheiterte mit 422.
+
 ### Fixed — Bauplan-Vorlage pki_lab (v1879)
 
 - Die mitgelieferte Vorlage `pki_lab` nennt die betroffenen Assets (Proxmox-Knoten, Gateway, SQL-Server) mit ihrer eindeutigen Kennung; die Namen waren in der CMDB mehrdeutig (Fernzugriffs- und Proxmox-Eintrag gleichen Namens), die Probe beim Speichern wies die Vorlage deshalb ab.

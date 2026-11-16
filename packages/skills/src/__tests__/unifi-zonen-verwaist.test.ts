@@ -12,7 +12,7 @@ function welt(o: { putIgnoriert?: boolean; netzListeLeer?: boolean } = {}) {
     { _id: DEF, name: 'Default', vlan: 0, vlan_enabled: false, purpose: 'corporate' },
   ];
   const zonen = [
-    { _id: 'zInt', name: 'Internal', zone_key: 'internal', network_ids: [DEF, LAB, ALT] },
+    { _id: 'zInt', name: 'Internal', zone_key: 'internal', attr_no_edit: true, attr_hidden_id: 'internal', network_ids: [DEF, LAB, ALT] },
     { _id: 'zAd', name: 'AD-Identity', network_ids: [AD] },
   ];
   const puts: Array<{ pfad: string; body: Record<string, unknown> }> = [];
@@ -26,6 +26,9 @@ function welt(o: { putIgnoriert?: boolean; netzListeLeer?: boolean } = {}) {
     if (m === 'GET' && p === 'firewall/zone') return JSON.parse(JSON.stringify(zonen));
     if (m === 'PUT' && p.startsWith('firewall/zone/')) {
       puts.push({ pfad: p, body: b as Record<string, unknown> });
+      // Realfall 16.11. (a500a79d): die UDM lehnt schreibgeschützte Felder ab — HTTP 400 „Unrecognized field attr_no_edit“
+      const fremd = Object.keys(b as Record<string, unknown>).find(k => k.startsWith('attr_'));
+      if (fremd) throw new Error(`UniFi v2 ${p} HTTP 400: JSON parse error: Unrecognized field "${fremd}"`);
       if (!o.putIgnoriert) { const z = zonen.find(x => x._id === p.split('/')[2])!; z.network_ids = (b as { network_ids: string[] }).network_ids; }
       return {};
     }
