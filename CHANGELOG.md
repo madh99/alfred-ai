@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bauplan aus Changes ableiten (v1881)
+
+- Neue Aktion `bauplan_ableiten` im Skill `bauplan`: `vorschlag` zeigt aus erfolgreich gelaufenen Changes Parameter-Kandidaten (VMIDs, VLANs, Netze, IPs, Namen) mit jeder Fundstelle sowie Werte, die ein früherer Change im Lauf erzeugt hat; `erzeugen` baut daraus einen Entwurf und speichert ihn über die übliche Prüfung.
+- Was nicht Parameter wird, aber auf die Original-Instanz zeigt, braucht eine ausdrückliche Entscheidung: Teilstellen eines gewählten Werts, feste IDs von Original-Objekten, vom Paket angelegte Namen (auch NetBIOS) und vom Paket veränderte vorhandene VMs. Ohne Entscheidung entsteht kein Entwurf; die Entscheidungen stehen in der Freigabe-Frage.
+- Vorab-Kontrollen (VMID, VLAN, Netzname frei) entstehen automatisch für Werte, die das Paket selbst anlegt; IPs im gewählten Netz werden aus dem Netz abgeleitet; Werte in Tresor-Namen sind gesperrt.
+
 ### Fixed — UniFi: verwaiste Netzverweise in Zonen bereinigen (v1880)
 
 - Beim Entfernen eines gelöschten Netzes aus einer Firewall-Zone schreibt Alfred die Zone ohne die schreibgeschützten `attr_*`-Felder zurück. Die UniFi-Konsole lehnte das Zurückschreiben der Systemzone „Internal“ sonst mit HTTP 400 ab, der verwaiste Verweis blieb stehen und das Lesen aller Firewall-Zonen und -Richtlinien scheiterte mit 422.
