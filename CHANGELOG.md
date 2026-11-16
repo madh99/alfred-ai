@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL Server 2025 auf Linux: Einzelinstanz mit Sicherung und Wiederherstellungsbeweis (v1886)
+
+- Neuer Skill linux_sql: Platten einrichten (XFS), SQL Server 2025 aus der Microsoft-Paketquelle installieren (Version fest, gehalten), konfigurieren (Speicher, tempdb, SQL Agent), Logins und Prüfdaten anlegen, Status. Ändernde Aktionen nur im freigegebenen Change; Kennwörter entstehen im Tresor und gehen nur über die Standardeingabe an den Server.
+- Linux-Bausteine laufen nur aus einem festen Register mit Zeitgrenze am Host; Geheimnisse werden aus allen Ausgaben entfernt.
+- provision_vm kann zusätzliche Platten anlegen; das Cloud-Init-Laufwerk wird sichtbar verlegt.
+- Sicherung: FULL täglich, DIFF alle 6 Stunden, LOG alle 15 Minuten; Kopie nach fs01 mit SMB-Verschlüsselung, Prüfsumme der Rückleseprobe und Manifest. Aufbewahrung 7 Tage plus 4 Sonntage nur für vollständige Ketten; lokal gelöscht wird nur, was auf fs01 inhaltlich belegt ist. Budget überschritten oder Lücke in der Kette ergeben einen sichtbaren Befund, nie ein Löschen.
+- Wiederherstellungsbeweis aus der fs01-Kopie unter neuem Namen mit DBCC CHECKDB und Prüfdatenvergleich; die Wegwerf-Datenbank wird immer entfernt.
+- fs01-Seite: Dienstkonto (windows_ad.dienstkonto_anlegen) und Freigabe mit hartem FSRM-Kontingent und exakt geprüften Rechten.
+
+### Changed — Planprüfung für SQL auf Linux
+
+- Ändernde linux_sql-Schritte ohne Rückweg nur, wenn derselbe Change die VM neu bereitstellt oder ein Grund ohne Sicherung angegeben ist; Mindest-Zeitlimit je Aktion; feste Prüfstücke je Datenbank.
+
 ### Security — Eine gehärtete Schwärzung für Fernzugriff und Satelliten-Aufträge (v1885)
 
 - Satelliten-Aufträge (Claude-Code-Berichte und Fortschritt) nutzen dieselbe gehärtete Schwärzung wie der Fernzugriff statt einer eigenen, schwächeren Kopie: jetzt auch curl -u, JSON-Felder, deutsche Namen (Kennwort, Passwort), Basic-Kopfzeilen und mysql -p.
