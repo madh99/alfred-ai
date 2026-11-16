@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Betriebsdokument aus Live-Daten (v1875)
+
+- Neue Aktion `betrieb_erzeugen` im Skill `dokumentation`: erzeugt das Betriebsdokument eines Systems (13 Kapitel, PDF und Word, Ablage lokal und auf pve2) aus CMDB, Proxmox (VMs, Sicherungsjobs, Pools, Snapshots), UniFi (Firewall-Zonen, Richtlinien, DNS), pfSense/MikroTik/NPM/Cloudflare-Bestand, Changes, Standard-Vorlagen und Tresor-Namen.
+- `instanz_anlegen` mit Dokumentart `betrieb`: Komponenten über Namen (alle gleichnamigen Assets), Vorhaben, Architekturdokument, Jobs, Standard-Vorlagen (Schlüssel oder Buchstabe), Restore-Change, optional `aufbau_changes` und `tresor`; alle Angaben werden beim Anlegen geprüft.
+- UniFi-Skill liest Firewall-Richtlinien in lesbarer Form und DNS-Weiterleitungen mit Fehlerhinweis.
+- Was nicht gelesen werden konnte, steht im Dokument als „nicht belegt“ mit Grund — nie als Lücke oder als gesichert; pbs-unas gilt als bewusst aus.
+- Standard-Serien, Restore-Beweis und geänderte Vorlagen (neue Freigabe nötig) werden korrekt ausgewiesen.
+
 ### Added — Abnahmeprotokoll automatisch nach jedem Change (v1874)
 
 - Nach jedem Change-Ende (abgeschlossen, gescheitert, zurückgerollt, abgebrochen) entsteht das Abnahmeprotokoll selbst; PDF und Word kommen mit der Abschlussmeldung an den Owner, Kopie lokal und auf pve2.
