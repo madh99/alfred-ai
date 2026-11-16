@@ -8124,6 +8124,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             melde: async (_u, t) => { await this.meldeOhneModell(t); },
             // Fix-Runde 1 — Abbruch nach planen: nie gestartete Changes über ITSM verwerfen (cancelled mit Grund, Zeile bleibt)
             verwerfen: async (u, id, grund) => { await itsmI3.verwerfen(u, id, grund); },
+            // V4 — Ableiten aus ausgeführten Changes: ITSM-Liste wie bei den Dokument-Vorlagen (abgeschnitten → findeChange meldet es), CMDB-Namen
+            ableitenQuellen: (await import('./infrastruktur/dokumente/sammler.js')).itsmQuellen(itsmI3),
+            assetName: async (u, id) => (await cmdbFz.getAssetById(u, id).catch(() => null))?.name,
             protokoll: (msg, daten) => this.logger.info(daten, msg),
           });
           skillRegistry.register(new BauplanSkill(bauplanDienst, { istOwner: istOwnerFz, owner: () => ownerFz() }));

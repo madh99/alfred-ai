@@ -18,7 +18,7 @@ export const ABGESCHNITTEN_GRUND = 'Incident-Liste abgeschnitten — Verlauf mö
 export type VerlaufQuelle = 'lauf' | 'incidents' | 'lauf+incidents' | 'keine';
 
 /** Change über volle ID oder ID-Präfix; Text = Fehlermeldung (unbekannt oder mehrdeutig mit Kandidaten). */
-export async function findeChange(q: DokuQuellen, o: string, ref: string): Promise<CmdbChangeRequest | string> {
+export async function findeChange(q: Pick<DokuQuellen, 'changes'>, o: string, ref: string): Promise<CmdbChangeRequest | string> {
   const r = ref.trim().toLowerCase();
   if (!r) return 'Change nicht gefunden: keine ID angegeben.';
   const { changes: alle, abgeschnitten } = await q.changes(o);

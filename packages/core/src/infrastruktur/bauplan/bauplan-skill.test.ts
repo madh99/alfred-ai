@@ -14,6 +14,8 @@ function dienst() {
     widerrufen: merke('widerrufen', { ok: true, text: 'widerrufen' }),
     anwenden: merke('anwenden', { ok: true, text: 'angewendet', ids: ['c1'] }),
     liste: merke('liste', [{ key: 'test_lab', titel: 'Test-Lab', version: 2, status: 'entwurf', freigegebeneVersion: 1 }]),
+    ableitenVorschlag: merke('ableitenVorschlag', { ok: true, text: 'Vorschlag-Tabelle', kandidaten: [], verweise: [], hinweise: [] }),
+    ableitenErzeugen: merke('ableitenErzeugen', { ok: true, text: 'Entwurf gespeichert' }),
     zeigen: merke('zeigen', { key: 'test_lab', version: 1, status: 'freigegeben', abdruck: 'b'.repeat(64), json: '{"titel":"Test-Lab"}' }),
   };
   return { d: d as unknown as BauplanDienst, aufrufe };
@@ -87,6 +89,34 @@ describe('BauplanSkill', () => {
     expect(r.success, r.error).toBe(true);
     expect(zeilen).toHaveLength(1);
     expect((zeilen[0] as { key: string }).key).toBe('pki_lab');
+  });
+  it('V4 bauplan_ableiten: vorschlag und erzeugen gehen mit den Eingaben an den Dienst; Modus und Felder geprüft', async () => {
+    const { skill, aufrufe } = neu();
+    const v = await skill.execute({ action: 'bauplan_ableiten', modus: 'vorschlag', changes: ['2cfde1a2', '7335dfeb'] }, owner);
+    expect(v.success).toBe(true);
+    expect(v.display).toBe('Vorschlag-Tabelle');
+    expect(aufrufe.at(-1)).toEqual(['ableitenVorschlag', ['o', ['2cfde1a2', '7335dfeb']]]);
+    const e = await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['2cfde1a2'], auswahl: { 5: 'vlan' }, teil: { 'x:1:p:0': 'fest' }, key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, owner);
+    expect(e.success).toBe(true);
+    expect(aufrufe.at(-1)).toEqual(['ableitenErzeugen', ['o', ['2cfde1a2'], { 5: 'vlan' }, { key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, { 'x:1:p:0': 'fest' }]]);
+    const n = aufrufe.length;
+    expect((await skill.execute({ action: 'bauplan_ableiten', changes: ['a'] }, owner)).success).toBe(false);
+    expect((await skill.execute({ action: 'bauplan_ableiten', modus: 'vorschlag' }, owner)).success).toBe(false);
+    expect((await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['a'], key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, owner)).success).toBe(false);
+    expect((await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['a'], auswahl: { 1: 'x' }, key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'anderes' }, owner)).success).toBe(false);
+    expect(aufrufe).toHaveLength(n);
+    expect(skill.metadata.description).toContain('bauplan_ableiten');
+    expect(JSON.stringify(skill.metadata.inputSchema)).toContain('auswahl');
+  });
+  it('V4 bauplan_ableiten (auch vorschlag) aus Unteragent oder Change-Schritt abgewiesen; nur Owner', async () => {
+    const { skill, aufrufe } = neu();
+    for (const modus of ['vorschlag', 'erzeugen']) {
+      expect((await skill.execute({ action: 'bauplan_ableiten', modus, changes: ['a'] }, { ...owner, unteragent: true } as SkillContext)).success).toBe(false);
+      expect((await skill.execute({ action: 'bauplan_ableiten', modus, changes: ['a'] }, { ...owner, ausChange: true } as SkillContext)).success).toBe(false);
+      expect((await skill.execute({ action: 'bauplan_ableiten', modus, changes: ['a'] }, fremd)).success).toBe(false);
+    }
+    expect(aufrufe).toHaveLength(0);
+    expect(BAUPLAN_SCHREIBEND).toContain('bauplan_ableiten');
   });
   it('liste und zeigen lesen nur', async () => {
     const { skill } = neu();

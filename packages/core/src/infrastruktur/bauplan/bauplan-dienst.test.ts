@@ -9,6 +9,8 @@ import type { Pruefung } from '../change-schritte.js';
 import { ChangePlanung } from '../change-planung.js';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
+import { findeKandidaten, findeVerweise, type QuellChange } from './ableiten.js';
+import { PKI_QUELLEN } from './ableiten.fixture.js';
 
 type Roh = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const sha = (n: string) => createHash('sha256').update(n).digest('hex');
@@ -23,7 +25,7 @@ function vorlage(aendern: (r: Roh) => void = () => {}): Roh {
   return r;
 }
 
-function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: boolean; text: string } } = {}) {
+function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: boolean; text: string }; changes?: CmdbChangeRequest[]; assetNamen?: Record<string, string> } = {}) {
   const zeilen: BauplanVorlageZeile[] = [];
   const instanzen: Array<{ name: string; dokumentart: string; changeIds: string[]; parameter?: string; vorlageKey?: string; vorlageVersion?: number }> = [];
   const geplant: unknown[][] = [];
@@ -63,6 +65,7 @@ function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: b
     melde: async (_u, t) => { meldungen.push(t); },
     verwerfen: async (_u, id, grund) => { verworfen.push({ id, grund }); },
     jetzt: () => jetzt,
+    ...(o.changes ? { ableitenQuellen: { changes: async () => ({ changes: o.changes!, abgeschnitten: false }) }, assetName: async (_u: string, id: string) => o.assetNamen?.[id] } : {}),
   };
   const dienst = new BauplanDienst(deps);
   return { dienst, zeilen, instanzen, geplant, anfragen, fragen, meldungen, pruefungen, verworfen, zustand, setzeJetzt: (t: number) => { jetzt = t; } };
@@ -458,5 +461,141 @@ describe('Fix-Runde 1', () => {
     const r = await skill.execute(t.fragen[0]!.params, { userId: 'owner' } as SkillContext);
     expect(r.success).toBe(true);
     expect(t.zeilen[0]!.status).toBe('freigegeben');
+  });
+});
+
+// ── V4 — Bauplan aus erfolgreich ausgeführten Changes ableiten ──
+const ALLE = PKI_QUELLEN.map(q => q.id) as [string, string, string];
+const NAMEN: Record<string, string> = Object.assign({}, ...PKI_QUELLEN.map(q => q.betroffenNamen));
+/** QuellChange (Planform) zurück in einen gespeicherten Change mit Lauf */
+function alsChange(q: QuellChange, mehr: Partial<CmdbChangeRequest> & { ohneLauf?: boolean } = {}): CmdbChangeRequest {
+  const p = q.plan as Roh;
+  const { ohneLauf, ...rest } = mehr;
+  return {
+    id: q.id, userId: 'o', title: p.titel, description: p.begruendung, type: p.typ === 'notfall' ? 'emergency' : 'normal', status: 'completed', riskLevel: p.risiko,
+    affectedAssetIds: p.betroffen, affectedServiceIds: [], abhaengigVon: p.abhaengigVon, ausfallMinuten: p.ausfallMinuten, schritte: p.schritte,
+    ...(p.ohneSicherungGrund ? { pruefung: { fehler: [], hinweise: [], zeit: 'x', zusatz: { ohneSicherungGrund: p.ohneSicherungGrund } } } : {}),
+    ...(ohneLauf ? {} : { lauf: { phase: 'fertig', schritt: 0, start: 'x', ergebnisse: q.ergebnisse.map(e => ({ ...e, start: 'x', ausgabe: 'lang' })) } }),
+    createdAt: '2026-11-15T10:00:00Z', updatedAt: 'x', ...rest,
+  } as unknown as CmdbChangeRequest;
+}
+const pkiChanges = () => PKI_QUELLEN.map(q => alsChange(q));
+const KOPF = { key: 'pki_lab_abgeleitet', titel: 'PKI-Lab abgeleitet', zweck: 'Abgeleitet aus den PKI-Lab-Changes', dokumentart: 'testprotokoll' as const };
+/** Auswahl VLAN + beide VMIDs; alle Teilvorkommen von 157 ersetzen, 158 bewusst fest */
+function pkiAuswahl() {
+  const k = findeKandidaten(PKI_QUELLEN);
+  const nr = (typ: string, wert: unknown) => k.find(c => c.typ === typ && c.wert === wert)!;
+  const vlan = nr('vlan', 832), v157 = nr('vmid', 157), v158 = nr('vmid', 158);
+  const teil: Record<string, 'ersetzen' | 'fest'> = {};
+  for (const t of v157.teilvorkommen) teil[t.id] = 'ersetzen';
+  for (const t of v158.teilvorkommen) teil[t.id] = 'fest';
+  for (const t of vlan.teilvorkommen) teil[t.id] = 'ersetzen';
+  return { auswahl: { [String(vlan.nr)]: 'vlan', [String(v157.nr)]: 'vmid_server', [String(v158.nr)]: 'vmid_client' }, teil };
+}
+const fehlerText = (r: { ok: boolean }) => ((r as { fehler?: string[] }).fehler ?? []).join('\n');
+
+describe('V4 ableiten', () => {
+  it('vorschlag: Reihenfolge nach abhaengigVon (Eingabe egal), Präfixe, Kandidaten wie die reine Ableitung; nichts gespeichert', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const r = await t.dienst.ableitenVorschlag('o', [ALLE[2].slice(0, 8), ALLE[0], ALLE[1].slice(0, 10)]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(r.kandidaten).toEqual(findeKandidaten(PKI_QUELLEN));
+    expect(r.verweise).toEqual(findeVerweise(PKI_QUELLEN).verweise);
+    expect(r.text).toContain('| Nr | Typ | Wert | Vorschlag | Fundstellen |');
+    expect(r.text).toMatch(/\| \d+ \| vlan \| 832 \| vlan \| \d+:/);
+    // Teilvorkommen gruppiert nach Change, Schritt, Wort — mit ids
+    const v157 = r.kandidaten.find(k => k.typ === 'vmid' && k.wert === 157)!;
+    expect(r.text).toContain('/etc/pve/qemu-server/157.conf');
+    expect(r.text).toContain(v157.teilvorkommen[0]!.id);
+    // Verweise Change/Schritt/Feld ← Quelle
+    expect(r.text).toMatch(/288c3716 Schritt 13 parameter\.policy_id ← 2cfde1a2 Schritt 7\.id/);
+    // gleicher Wert in mehreren Kandidaten (pve als zugang und als node)
+    expect(r.hinweise.some(h => /gleicher Wert pve in mehreren Kandidaten.*nur einen wählen/.test(h))).toBe(true);
+    // Rechnername und FQDN getrennt
+    expect(r.hinweise.some(h => /labsrv01 und labsrv01\.pkilab\.test getrennt — beide wählen oder beide fest/.test(h))).toBe(true);
+    expect(r.text).toContain('beide wählen oder beide fest');
+    expect(t.zeilen).toHaveLength(0);
+  });
+  it('vorschlag: Teil eines Tresor-Namens wird als gesperrt gezeigt', async () => {
+    const q = PKI_QUELLEN.map(x => JSON.parse(JSON.stringify(x)) as QuellChange);
+    const s = (q[0]!.plan.schritte as Roh[]).find(x => x.parameter?.konto_tresor)!;
+    s.parameter.konto_tresor = 'labsrv01-admin';
+    const t = aufbau({ changes: q.map(x => alsChange(x)), assetNamen: NAMEN });
+    const r = await t.dienst.ableitenVorschlag('o', ALLE);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(r.text).toMatch(/labsrv01-admin.*gesperrt \(Tresor\)/);
+  });
+  it('Change nicht completed oder ohne Lauf → Fehler mit voller ID; nichts gespeichert', async () => {
+    const c = pkiChanges();
+    c[1] = { ...c[1]!, status: 'in_progress' } as CmdbChangeRequest;
+    c[2] = alsChange(PKI_QUELLEN[2]!, { ohneLauf: true });
+    const t = aufbau({ changes: c, assetNamen: NAMEN });
+    const r = await t.dienst.ableitenVorschlag('o', ALLE);
+    expect(r.ok).toBe(false);
+    const f = fehlerText(r);
+    expect(f).toContain(ALLE[1]);
+    expect(f).toMatch(/in_progress/);
+    expect(f).toContain(ALLE[2]);
+    expect(f).toMatch(/ohne Lauf/);
+    const e = await t.dienst.ableitenErzeugen('o', ALLE, pkiAuswahl().auswahl, KOPF, pkiAuswahl().teil);
+    expect(e.ok).toBe(false);
+    expect(t.zeilen).toHaveLength(0);
+  });
+  it('Vorgänger außerhalb der Auswahl → Fehler mit ID; Zyklus → Fehler; mehr als 30 / leer / unbekannt / doppelt / mehrdeutig', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const r = await t.dienst.ableitenVorschlag('o', [ALLE[1]]);
+    expect(r.ok).toBe(false);
+    expect(fehlerText(r)).toMatch(new RegExp(`${ALLE[1]}.*Vorgänger ${ALLE[0]}.*nicht in der Auswahl`));
+    const a = alsChange(PKI_QUELLEN[0]!, { id: 'aaaaaaaa-0000-0000-0000-000000000001', abhaengigVon: ['bbbbbbbb-0000-0000-0000-000000000002'] });
+    const b = alsChange(PKI_QUELLEN[0]!, { id: 'bbbbbbbb-0000-0000-0000-000000000002', abhaengigVon: ['aaaaaaaa-0000-0000-0000-000000000001'] });
+    const z = aufbau({ changes: [a, b], assetNamen: NAMEN });
+    const rz = await z.dienst.ableitenVorschlag('o', ['aaaaaaaa', 'bbbbbbbb']);
+    expect(rz.ok).toBe(false);
+    expect(fehlerText(rz)).toMatch(/Zyklus.*aaaaaaaa-0000-0000-0000-000000000001/);
+    expect(fehlerText(await t.dienst.ableitenVorschlag('o', Array.from({ length: 31 }, (_, i) => `x${i}`)))).toMatch(/höchstens 30/);
+    expect((await t.dienst.ableitenVorschlag('o', [])).ok).toBe(false);
+    expect(fehlerText(await t.dienst.ableitenVorschlag('o', ['deadbeef']))).toMatch(/deadbeef.*nicht gefunden/);
+    expect(fehlerText(await t.dienst.ableitenVorschlag('o', [ALLE[0], ALLE[0].slice(0, 8)]))).toMatch(/doppelt/);
+    const m1 = alsChange(PKI_QUELLEN[0]!, { id: 'cccccccc-1000-0000-0000-000000000001' });
+    const m2 = alsChange(PKI_QUELLEN[0]!, { id: 'cccccccc-2000-0000-0000-000000000002' });
+    const m = aufbau({ changes: [m1, m2], assetNamen: NAMEN });
+    expect(fehlerText(await m.dienst.ableitenVorschlag('o', ['cccccccc']))).toMatch(/mehrdeutig/);
+  });
+  it('erzeugen: speichert über speichern mit abgeleitetAus (volle IDs in Reihenfolge), Status entwurf, Anzeige mit Parametern, Annahmen, bewusst fest', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const { auswahl, teil } = pkiAuswahl();
+    const r = await t.dienst.ableitenErzeugen('o', [ALLE[2], ALLE[1], ALLE[0]], auswahl, KOPF, teil);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(t.zeilen).toHaveLength(1);
+    const z = t.zeilen[0]!;
+    expect(z.abgeleitetAus).toBe(ALLE.join(','));
+    expect(z.status).toBe('entwurf');
+    const v = JSON.parse(z.json) as Roh;
+    expect(v.parameter.map((p: Roh) => p.name)).toEqual(expect.arrayContaining(['vlan', 'vmid_server', 'vmid_client']));
+    expect(v.changes.map((c: Roh) => c.schluessel)).toEqual(['c1', 'c2', 'c3']);
+    expect(r.text).toContain(`${KOPF.key} v1`);
+    expect(r.text).toContain('entwurf');
+    expect(r.text).toContain(z.abdruck.slice(0, 12));
+    expect(r.text).toMatch(/vmid_server \(vmid/);
+    expect(r.text).toMatch(/vlan_frei/);
+    expect(r.text).toMatch(/bewusst fest: .*158/);
+    expect(r.text).toMatch(/bauplan_freigabe_anfragen/);
+  });
+  it('erzeugen: Probe-Fehler und baueEntwurf-Fehler kommen unverändert durch, nichts gespeichert', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN, probeFehler: ['Probe: Schritt 3 kaputt'] });
+    const { auswahl, teil } = pkiAuswahl();
+    const r = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil);
+    expect(r.ok).toBe(false);
+    expect(fehlerText(r)).toContain('Probe: Schritt 3 kaputt');
+    expect(t.zeilen).toHaveLength(0);
+    t.zustand.probeFehler = [];
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, { ...auswahl, [Object.keys(auswahl)[0]!]: 'Kein Name' }, KOPF, teil))).toMatch(/Parametername/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, Object.fromEntries(Object.keys(auswahl).map(k => [k, 'gleich'])), KOPF, teil))).toMatch(/doppelt vergeben/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, {}))).toMatch(/ohne Entscheidung/);
+    expect(t.zeilen).toHaveLength(0);
+  });
+  it('ohne verdrahtete Change-Quelle → Fehler statt Absturz', async () => {
+    const t = aufbau();
+    expect((await t.dienst.ableitenVorschlag('o', ALLE)).ok).toBe(false);
   });
 });

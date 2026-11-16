@@ -8,8 +8,13 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { BauplanVorlageZeile, BauplanVorlageStatus } from '@alfred/storage';
+import type { CmdbChangeRequest } from '@alfred/types';
 import { aktionsArt, type Pruefung } from '../change-schritte.js';
-import { abdruck, type BauplanChange, type BauplanVorlage } from './schema.js';
+import { planAusChange } from '../change-planung.js';
+import type { ChangeLauf } from '../change-lauf.js';
+import { findeChange, type DokuQuellen } from '../dokumente/sammler.js';
+import { baueEntwurf, findeKandidaten, findeVerweise, type Fundstelle, type Kandidat, type QuellChange, type TeilEntscheid, type Verweis } from './ableiten.js';
+import { abdruck, GRENZEN, type BauplanChange, type BauplanVorlage } from './schema.js';
 import { loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
 import { pruefeVorlage } from './validierung.js';
 
@@ -37,6 +42,10 @@ export interface BauplanDeps {
   melde(u: string, text: string): Promise<void>;
   /** Fix-Runde 1 — nie gestarteten Change verwerfen (ITSM verwerfen → cancelled mit Grund), für den Abbruch nach planen */
   verwerfen(u: string, id: string, grund: string): Promise<void>;
+  /** V4 — gespeicherte Changes für das Ableiten (ITSM-Liste wie bei den Dokument-Vorlagen; findeChange: ID oder eindeutiger Anfang) */
+  ableitenQuellen?: Pick<DokuQuellen, 'changes'>;
+  /** V4 — CMDB-Name eines betroffenen Assets (für die betroffen-Bereinigung des Entwurfs) */
+  assetName?: (u: string, id: string) => Promise<string | undefined>;
   jetzt?: () => number;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
 }
@@ -276,6 +285,165 @@ export class BauplanDienst {
   }
 
   zeigen(o: string, key: string, version?: number): Promise<BauplanVorlageZeile | undefined> { return this.d.repo.finde(o, key, version); }
+
+  /**
+   * V4 (§5.6) — gewählte Changes laden: ID oder eindeutiger Anfang, nur completed mit Lauf, höchstens GRENZEN.changes; Reihenfolge nach
+   * abhaengigVon (gleichrangig nach Anlage, dann ID — unabhängig von der Eingabe-Reihenfolge, damit Kandidaten-Nummern stabil bleiben);
+   * Vorgänger außerhalb der Auswahl oder Zyklus → Fehler. Schlüssel c1…cn in dieser Reihenfolge.
+   */
+  private async ladeQuellen(o: string, refs: unknown): Promise<{ ok: true; q: QuellChange[] } | { ok: false; fehler: string[] }> {
+    const quelle = this.d.ableitenQuellen;
+    const assetName = this.d.assetName;
+    if (!quelle || !assetName) return { ok: false, fehler: ['Ableiten nicht verfügbar: keine Change-Quelle verdrahtet'] };
+    const liste = (Array.isArray(refs) ? refs : []).filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(Boolean);
+    if (!liste.length) return { ok: false, fehler: ['changes: mindestens eine Change-ID (oder ihren eindeutigen Anfang) angeben'] };
+    if (liste.length > GRENZEN.changes) return { ok: false, fehler: [`changes: höchstens ${GRENZEN.changes} Changes je Ableitung (erhalten ${liste.length})`] };
+    const fehler: string[] = [];
+    const gefunden: CmdbChangeRequest[] = [];
+    for (const ref of liste) {
+      const c = await findeChange(quelle, o, ref);
+      if (typeof c === 'string') { fehler.push(c); continue; }
+      const wer = `Change ${c.id} („${c.title.slice(0, 80)}“)`;
+      if (gefunden.some(g => g.id === c.id)) { fehler.push(`${wer} ist doppelt angegeben („${ref}“)`); continue; }
+      if (c.status !== 'completed') fehler.push(`${wer}: Status ${c.status} — ableiten nur aus abgeschlossenen (completed) Changes`);
+      const lauf = c.lauf as ChangeLauf | undefined;
+      if (!lauf || !Array.isArray(lauf.ergebnisse)) fehler.push(`${wer}: ohne Lauf — ableiten nur aus ausgeführten Changes`);
+      gefunden.push(c);
+    }
+    if (fehler.length) return { ok: false, fehler };
+    const ids = new Set(gefunden.map(c => c.id));
+    for (const c of gefunden) for (const a of c.abhaengigVon ?? [])
+      if (!ids.has(a)) fehler.push(`Change ${c.id} („${c.title.slice(0, 80)}“): Vorgänger ${a} liegt nicht in der Auswahl — mitwählen oder diesen Change weglassen`);
+    if (fehler.length) return { ok: false, fehler };
+    const sortiert: CmdbChangeRequest[] = [];
+    const fertig = new Set<string>();
+    const rest = [...gefunden];
+    while (rest.length) {
+      const bereit = rest.filter(c => (c.abhaengigVon ?? []).every(a => fertig.has(a)))
+        .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')) || a.id.localeCompare(b.id));
+      if (!bereit.length) return { ok: false, fehler: [`Zyklus in abhaengigVon zwischen ${rest.map(c => c.id).join(', ')} — so nicht ableitbar`] };
+      const n = bereit[0]!;
+      sortiert.push(n); fertig.add(n.id); rest.splice(rest.indexOf(n), 1);
+    }
+    const q: QuellChange[] = [];
+    for (const [i, c] of sortiert.entries()) {
+      const betroffenNamen: Record<string, string> = {};
+      for (const a of c.affectedAssetIds ?? []) {
+        const n = await assetName(o, a).catch(() => undefined);
+        if (n) betroffenNamen[a] = n;
+      }
+      // nur nr/ok/daten — Ausgaben, Fehlertexte und Prüfungsausgaben gehören nicht in die Ableitung
+      const ergebnisse = (c.lauf as ChangeLauf).ergebnisse.map(e => ({
+        nr: e.nr, ok: e.ok === true, ...(e.daten && typeof e.daten === 'object' && !Array.isArray(e.daten) ? { daten: e.daten as Record<string, unknown> } : {}),
+      }));
+      q.push({ id: c.id, schluessel: `c${i + 1}`, plan: planAusChange(c), ergebnisse, betroffenNamen });
+    }
+    return { ok: true, q };
+  }
+
+  /** V4 — Vorschlag (nur lesend): Kandidaten, Teilvorkommen je Gruppe mit ids, Verweise, Hinweise. Speichert nichts. */
+  async ableitenVorschlag(o: string, changeRefs: string[]): Promise<{ ok: true; text: string; kandidaten: Kandidat[]; verweise: Verweis[]; hinweise: string[] } | { ok: false; fehler: string[] }> {
+    const l = await this.ladeQuellen(o, changeRefs);
+    if (!l.ok) return l;
+    const kandidaten = findeKandidaten(l.q);
+    const v = findeVerweise(l.q);
+    const hinweise = [...v.hinweise, ...kandidatenHinweise(kandidaten)];
+    this.d.protokoll?.('V4 Bauplan-Ableitung Vorschlag', { changes: l.q.map(c => c.id), kandidaten: kandidaten.length, verweise: v.verweise.length });
+    return { ok: true, text: vorschlagText(l.q, kandidaten, v.verweise, hinweise), kandidaten, verweise: v.verweise, hinweise };
+  }
+
+  /**
+   * V4 — Entwurf erzeugen: Auswahl (Kandidaten-Nr → Parametername) und Teil-Entscheidungen → baueEntwurf → speichern (volle V3-Validierung
+   * inkl. Probe, Status entwurf, abgeleitetAus = volle IDs). Jeder Fehler kommt unverändert zurück; dann ist nichts gespeichert.
+   */
+  async ableitenErzeugen(
+    o: string, changeRefs: string[], auswahl: Record<string, string>,
+    kopf: { key: string; titel: string; zweck: string; dokumentart: 'testprotokoll' | 'betrieb' }, teil: TeilEntscheid = {},
+  ): Promise<{ ok: true; text: string } | { ok: false; fehler: string[] }> {
+    if (!auswahl || typeof auswahl !== 'object' || !Object.keys(auswahl).length) return { ok: false, fehler: ['auswahl: mindestens einen Kandidaten wählen (Nr → Parametername)'] };
+    const l = await this.ladeQuellen(o, changeRefs);
+    if (!l.ok) return l;
+    const e = baueEntwurf(l.q, auswahl as unknown as Record<number, string>, kopf, teil);
+    if (!e.vorlage) return { ok: false, fehler: e.fehler.length ? e.fehler : ['Entwurf ungültig'] };
+    const abgeleitetAus = l.q.map(c => c.id).join(',');
+    const s = await this.speichern(o, e.vorlage, abgeleitetAus);
+    if (!s.ok) return s;
+    const v = e.vorlage;
+    this.d.protokoll?.('V4 Bauplan-Entwurf abgeleitet', { key: v.key, version: s.zeile.version, abdruck: s.zeile.abdruck, abgeleitetAus });
+    const hinweise = [...e.hinweise, ...s.hinweise];
+    const zeilen = [
+      `✅ Bauplan-Entwurf ${v.key} v${s.zeile.version} gespeichert — Status ${s.zeile.status}, Abdruck ${s.zeile.abdruck.slice(0, 12)}`,
+      `Abgeleitet aus: ${l.q.map(c => `${c.schluessel} = ${kurzId(c.id)}`).join(', ')}`,
+      `Parameter:`,
+      ...v.parameter.map(p => `- ${p.name} (${p.typ}, Beispiel ${String(p.beispiel)}) — ${p.beschreibung}`),
+      ...(v.annahmen.length ? ['Eingangskontrolle (automatisch erzeugt):', ...v.annahmen.map(a => `- ${a.id}: ${a.text}`)] : ['Eingangskontrolle: keine automatisch erzeugt']),
+      ...(hinweise.length ? ['Hinweise:', ...hinweise.map(h => `- ${h}`)] : []),
+      '',
+      `Freigabe nur über bauplan_freigabe_anfragen (key ${v.key}); angewendet wird erst danach auf ausdrücklichen Auftrag.`,
+    ];
+    return { ok: true, text: zeilen.join('\n') };
+  }
+}
+
+const kurzId = (id: string) => id.slice(0, 8);
+const ortText = (f: Fundstelle) => (f.schritt === 0 ? `${kurzId(f.change)} Titel` : `${kurzId(f.change)} S${f.schritt} ${f.pfad}`);
+const zelle = (x: unknown) => String(x).replace(/\|/g, '\\|');
+
+/**
+ * V4 — Hinweise zur Auswahl: gleicher Wert in mehreren Kandidaten (pve als zugang und node → nur einen wählen, sonst Fehler beim Erzeugen);
+ * Rechnername und FQDN sind getrennte Kandidaten (labsrv01 / labsrv01.pkilab.test → beide wählen oder beide fest).
+ */
+export function kandidatenHinweise(k: Kandidat[]): string[] {
+  const h: string[] = [];
+  const nachWert = new Map<string, Kandidat[]>();
+  for (const c of k) { const l = nachWert.get(String(c.wert)) ?? []; l.push(c); nachWert.set(String(c.wert), l); }
+  for (const [w, l] of nachWert) if (l.length > 1) h.push(`gleicher Wert ${w} in mehreren Kandidaten (${l.map(c => `#${c.nr} ${c.typ}`).join(', ')}) — nur einen wählen`);
+  const namen = k.filter(c => c.typ === 'name');
+  for (const n of namen) {
+    const w = String(n.wert).toLowerCase();
+    if (w.includes('.')) continue;
+    for (const f of namen) {
+      const fw = String(f.wert);
+      if (fw.includes('.') && fw.split('.')[0]!.toLowerCase() === w) h.push(`${String(n.wert)} und ${fw} getrennt — beide wählen oder beide fest (Kandidaten ${n.nr} und ${f.nr})`);
+    }
+  }
+  return h;
+}
+
+/** V4 — Anzeige des Vorschlags: Reihenfolge, Kandidaten-Tabelle, Teilvorkommen je (Change, Schritt, Wort) mit ids, Verweise, Hinweise. */
+function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], hinweise: string[]): string {
+  const z: string[] = [
+    `📐 Bauplan ableiten — Vorschlag aus ${q.length} Change${q.length === 1 ? '' : 's'} (nichts gespeichert)`,
+    'Reihenfolge:', ...q.map(c => `- ${c.schluessel} = ${c.id} („${String(c.plan.titel).slice(0, 80)}“)`),
+    '',
+    `Kandidaten (${k.length}):`,
+    '| Nr | Typ | Wert | Vorschlag | Fundstellen |',
+    '|---|---|---|---|---|',
+    ...k.map(c => `| ${c.nr} | ${c.typ} | ${zelle(c.wert)} | ${zelle(c.vorschlag)} | ${c.fundstellen.length}: ${c.fundstellen.slice(0, 3).map(ortText).map(zelle).join(', ')}${c.fundstellen.length > 3 ? ', …' : ''} |`),
+  ];
+  const teil = k.filter(c => c.teilvorkommen.length);
+  if (teil.length) {
+    z.push('', 'Teilvorkommen (Wert als Teil eines Worts) — wird ein Kandidat gewählt, braucht jede seiner ids eine Entscheidung in teil: „ersetzen“ oder „fest“; gleiches Wort im selben Schritt gleich entscheiden:');
+    for (const c of teil) {
+      const gruppen = new Map<string, Kandidat['teilvorkommen']>();
+      for (const t of c.teilvorkommen) { const g = `${t.change}|${t.schritt}|${t.token}`; const l = gruppen.get(g) ?? []; l.push(t); gruppen.set(g, l); }
+      z.push(`#${c.nr} ${c.typ} ${String(c.wert)}:`);
+      for (const l of gruppen.values()) {
+        const t0 = l[0]!;
+        const pfade = [...new Set(l.map(t => t.pfad))].join(', ');
+        const wo = `${kurzId(t0.change)} Schritt ${t0.schritt} „${t0.token}“ (${pfade})`;
+        if (l.some(t => t.tresor)) z.push(`- ${wo}: gesperrt (Tresor) — Teil des Tresor-Namens ${l.find(t => t.tresor)!.tresor}; diesen Wert nicht wählen (nie ersetzbar)`);
+        else z.push(`- ${wo}: ${l.map(t => t.id).join(', ')}`);
+      }
+    }
+  }
+  if (verweise.length) {
+    z.push('', 'Verweise über Change-Grenzen (automatisch, im Lauf erzeugte IDs):');
+    for (const v of verweise) z.push(`- ${kurzId(v.change)} Schritt ${v.schritt} ${v.pfad} ← ${kurzId(v.quelle.change)} Schritt ${v.quelle.schritt}.${v.quelle.feld}${v.art === 'praefix' ? ' (ID-Anfang → volle ID)' : ''}`);
+  }
+  if (hinweise.length) z.push('', 'Hinweise:', ...hinweise.map(h => `- ${h}`));
+  z.push('', 'Erzeugen: bauplan_ableiten mit modus erzeugen, denselben changes, auswahl {Nr: Parametername}, teil {id: "ersetzen"|"fest"} für jedes Teilvorkommen der gewählten Kandidaten, key, titel, zweck, dokumentart (testprotokoll|betrieb). Der Entwurf braucht danach die Owner-Freigabe.');
+  return z.join('\n');
 }
 
 /** Erster Change ohne abhaengigVon (Vorlagen-Reihenfolge) — trägt die Eingangskontrolle */
