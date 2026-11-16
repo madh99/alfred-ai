@@ -11,8 +11,6 @@ import { loeseParameter, setzeEin, setzeEinWert } from './parameter.js';
 
 /** Wie change-lauf.ts BEFEHLS_FELDER: Felder, die als Befehl/Skript ausgeführt werden */
 export const BEFEHLS_FELDER: ReadonlySet<string> = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
-/** Ersatzwert für `{{change:…}}` in der Probe (zur Probezeit gibt es keinen Vorgänger-Lauf) */
-export const PROBE_WERT = 'probe';
 
 const JEDER_PLATZHALTER = /\{\{([^{}]*)\}\}/g;
 const P_PARAM = /^param\.([a-z][a-z0-9_]{0,30})$/;
@@ -22,8 +20,6 @@ const P_GEHEIM = /^geheim:[a-z0-9][\w.-]{1,60}$/;
 const P_GEHEIMDATEI = /^geheimdatei:[a-z0-9][\w.-]{1,60}$/;
 /** Go-Templates von `docker --format` (wie PLATZHALTER in change-schritte.ts) — kein Verweis, bleibt Text */
 const P_GO_TEMPLATE = /^(\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b)/;
-const CHANGE_VERWEIS = /\{\{\s*change:[a-z][a-z0-9_]{0,20}\.schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}/g;
-const CHANGE_VERWEIS_GANZ = /^\{\{\s*change:[a-z][a-z0-9_]{0,20}\.schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}$/;
 /** Ein Geheimnis-Feld darf nur einen Tresor-Verweis tragen, nie einen Wert */
 const GEHEIM_VERWEIS_GANZ = /^\{\{\s*(geheim|geheimdatei):[a-z0-9][\w.-]{1,60}\s*\}\}$/;
 
@@ -141,15 +137,8 @@ function pruefeGeheimnisse(v: BauplanVorlage, fehler: string[]): void {
   }
 }
 
-function ersetzeChangeVerweise(x: unknown): unknown {
-  if (typeof x === 'string') return CHANGE_VERWEIS_GANZ.test(x) ? PROBE_WERT : x.replace(CHANGE_VERWEIS, PROBE_WERT);
-  if (Array.isArray(x)) return x.map(ersetzeChangeVerweise);
-  if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([k, w]) => [k, ersetzeChangeVerweise(w)]));
-  return x;
-}
-
 /**
- * Probe-Pläne: Beispielwerte eingesetzt, Change-Verweise durch „probe“, ohne kapitel, im ChangePlan-Format. Gibt es Annahmen,
+ * Probe-Pläne: Beispielwerte eingesetzt, Change-Verweise unverändert, ohne kapitel, im ChangePlan-Format. Gibt es Annahmen,
  * kommt ein zusätzlicher Change „annahmen“ mit je einem Prüfschritt dazu — so gelten für sie dieselben Prüf-/Käfig-Regeln.
  */
 export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): unknown[] {
@@ -158,7 +147,8 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
     schluessel: c.schluessel, titel: c.titel, begruendung: c.begruendung, typ: c.typ, risiko: c.risiko,
     ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
     abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
-    schritte: c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return ersetzeChangeVerweise(rest); }),
+    // Task 3 Fix-Runde 1 — {{change:<schluessel>…}} bleibt stehen: der Change-Validator (pruefeNur) prüft ihn echt (Hülle, Ziel-Schritt, Typ)
+    schritte: c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return rest; }),
   }));
   if (v.annahmen.length) plaene.push({
     schluessel: ANNAHMEN_SCHLUESSEL, titel: 'Eingangskontrolle der Vorlage', begruendung: 'Vorab-Prüfungen der Bauplan-Vorlage',

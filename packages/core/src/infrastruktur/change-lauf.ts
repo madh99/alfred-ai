@@ -138,7 +138,7 @@ export const ROH_EINTRAG = /^\d{1,3}:(?:[A-Za-z0-9 .:/\\%_@-]|\$(?=\\|$)){1,400}
  * V3 — `{{change:<id>.schrittN.feld}}` nur aus `vorgaenger` (Ergebnisse abgeschlossener Changes der Abhängigkeits-Hülle, vom Motor
  * bereitgestellt); fehlt die ID dort → Fehler. Dieselbe Wert-Sicherheit und dieselben Ganzwert-Ausnahmen wie bei `{{schrittN.feld}}`.
  */
-export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }, vorgaenger?: Map<string, SchrittErgebnis[]>): { wert: T; fehler?: string } {
+export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { werte: Map<string, string>; dateien: Map<string, string> }, vorgaenger?: Map<string, SchrittErgebnis[] | string>): { wert: T; fehler?: string } {
   let fehler: string | undefined;
   // v1735 — Realfall 94959771 (01.11.): provision_windows_vm scheiterte nach dem Anlegen der VM (teilweise, Daten mit vmid); der
   // Rückweg delete_vm {{schritt1.vmid}} fand keinen Wert, weil nur erfolgreiche Schritte zählten — die VM blieb stehen. Werte aus
@@ -154,6 +154,8 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
   const herkunft = (cid: string | undefined): SchrittErgebnis[] | undefined => {
     if (!cid) return ergebnisse;
     const q = vorgaenger?.get(cid);
+    // V3 Fix 1 — Text statt Ergebnissen = Grund, warum der Vorgänger nicht gilt (z. B. nach der Planung geändert)
+    if (typeof q === 'string') { fehler ??= `Verweis auf Change ${cid.slice(0, 8)}: ${q}`; return undefined; }
     if (!q) fehler ??= `Verweis auf Change ${cid.slice(0, 8)}: nicht abgeschlossen oder keine Abhängigkeit`;
     return q;
   };
@@ -168,7 +170,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
         const quelle = herkunft(allein[1]);
         if (!quelle) return '';
         const name = `${allein[1] ? `change:${allein[1]}.` : ''}schritt${allein[2]}.${allein[3]}`;
-        const e = quelle.find(x => x.nr === Number(allein[2]) && nutzbar(x));
+        const e = quelle.find(x => x.nr === Number(allein[2]) && (allein[1] ? x.ok : nutzbar(x)));
         const w = e ? pfadWert(e.daten, allein[3]!) : undefined;
         if (w === undefined) { fehler ??= `Verweis {{${name}}} hat keinen Wert (Schritt ${allein[2]}${allein[1] ? ` von Change ${allein[1].slice(0, 8)}` : ''} lieferte kein Feld „${allein[3]}“)`; return allein[1] ? '' : w; }
         if (feld && istBase64Feld(feld) && typeof w === 'string' && w.length > 0 && w.length <= 16 * 1024 * 1024 && STRIKTES_BASE64.test(w)) return w;
@@ -181,7 +183,7 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
         const quelle = herkunft(cid);
         if (!quelle) return '';
         const name = `${cid ? `change:${cid}.` : ''}schritt${nr}.${f2}`;
-        const e = quelle.find(x => x.nr === Number(nr) && nutzbar(x));
+        const e = quelle.find(x => x.nr === Number(nr) && (cid ? x.ok : nutzbar(x)));
         const w = e ? pfadWert(e.daten, f2!) : undefined;
         if (w === undefined || (typeof w === 'object' && w !== null)) { fehler ??= `Verweis {{${name}}} hat keinen einfachen Wert`; return ''; }
         return sicher(w, name) ? String(w) : '';
@@ -193,6 +195,17 @@ export function loeseAuf<T>(wert: T, ergebnisse: SchrittErgebnis[], geheim?: { w
   };
   const neu = ersetze(wert) as T;
   return fehler ? { wert: neu, fehler } : { wert: neu };
+}
+
+/**
+ * V3 Fix 1 (I-2) — nach dem Auflösen darf kein Verweis-Text übrig sein ({{Change:…}}, {{Schritt1.x}}, kaputte Verweise): sonst ginge
+ * der Platzhalter roh an einen Skill. Liefert den Fehlertext oder undefined.
+ */
+export function unaufgeloesterVerweis(wert: unknown): string | undefined {
+  let t: string;
+  try { t = JSON.stringify(wert ?? null); } catch { return 'unaufgelöster Verweis (Eingabe nicht lesbar)'; }
+  const m = /\{\{\s*(change|schritt\d)[^}]{0,60}/i.exec(t);
+  return m ? `unaufgelöster Verweis „${m[0].slice(0, 70)}“ — Schritt nicht ausgeführt` : undefined;
 }
 
 /** v1643 — alle einfachen Werte eines Datenobjekts (ohne Feldnamen), für Textprüfungen gegen Skill-Daten */

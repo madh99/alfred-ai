@@ -954,13 +954,15 @@ describe('V3 Verweis über Change-Grenzen', () => {
     expect(loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, new Map([[VOR, [{ ...erg[0]!, ok: false }]]])).fehler).toContain('hat keinen Wert');
   });
 
-  function zweiChanges(vorStatus: string) {
+  function zweiChanges(vorStatus: string, policy: unknown = `{{change:${VOR}.schritt2.policy_id}}`) {
     const schritte = [
-      S({ nr: 1, skill: 'unifi', aktion: 'delete_policy', parameter: { policy_id: `{{change:${VOR}.schritt2.policy_id}}` }, einordnung: 'aendern', rueckweg: { keiner: 'Test' } }),
+      S({ nr: 1, skill: 'unifi', aktion: 'delete_policy', parameter: { policy_id: policy }, einordnung: 'aendern', rueckweg: { keiner: 'Test' } }),
     ];
     const w = welt(schritte);
     w.c.abhaengigVon = [VOR];
-    const vor: CmdbChangeRequest = { id: VOR, userId: 'o', title: 'Vorgänger', type: 'normal', status: vorStatus as never, riskLevel: 'low', affectedAssetIds: ['a-x'], affectedServiceIds: [], schritte: [S({ nr: 2, skill: 'unifi', aktion: 'create_policy' })], lauf: { phase: 'fertig', schritt: 2, start: 'x', ergebnisse: erg }, createdAt: 'x', updatedAt: 'x' };
+    // C-1 — beim Planen festgehaltener Abdruck des Vorgängers
+    w.c.pruefung = { fehler: [], hinweise: [], zeit: 'x', zusatz: { vorgaengerAbdruck: { [VOR]: 'fp-vor' } } } as never;
+    const vor: CmdbChangeRequest = { id: VOR, userId: 'o', title: 'Vorgänger', type: 'normal', status: vorStatus as never, riskLevel: 'low', affectedAssetIds: ['a-x'], affectedServiceIds: [], schritte: [S({ nr: 2, skill: 'unifi', aktion: 'create_policy' })], lauf: { phase: 'fertig', schritt: 2, start: 'x', ergebnisse: erg }, fingerabdruck: 'fp-vor', freigabeFingerabdruck: 'fp-vor', createdAt: 'x', updatedAt: 'x' };
     const eingaben: Array<Record<string, unknown>> = [];
     w.deps.itsm.liste = async () => [w.c, vor];
     w.deps.itsm.hole = async (_o, id) => (id === VOR ? vor : id === w.c.id ? w.c : null);
@@ -994,5 +996,38 @@ describe('V3 Verweis über Change-Grenzen', () => {
     expect((w.c.lauf as ChangeLauf).phase).toBe('angehalten');
     expect((w.c.lauf as ChangeLauf).grund).toContain('nicht abgeschlossen oder keine Abhängigkeit');
     expect(w.eingaben).toEqual([]);
+  });
+
+  const haltGrund = async (w: ReturnType<typeof zweiChanges>) => {
+    await w.motor.anstossen(); await warte(w.motor);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    expect(w.eingaben).toEqual([]);
+    return l.grund ?? '';
+  };
+  it('C-1: Vorgänger nach der Planung geändert (anderer Abdruck) → Schritt hält an', async () => {
+    const w = zweiChanges('completed');
+    w.vor.fingerabdruck = 'fp-neu'; w.vor.freigabeFingerabdruck = 'fp-neu';
+    expect(await haltGrund(w)).toContain(`Verweis auf Change ${VOR.slice(0, 8)}: Vorgänger nach der Planung geändert — abhängigen Change neu planen`);
+    const w2 = zweiChanges('completed');
+    w2.c.pruefung = { fehler: [], hinweise: [], zeit: 'x' } as never; // kein festgehaltener Abdruck
+    expect(await haltGrund(w2)).toContain('Vorgänger nach der Planung geändert');
+  });
+  it('I-1: completed, aber Rückweg begonnen oder nicht fertig → hält an', async () => {
+    for (const lauf of [{ phase: 'rueckweg' }, { phase: 'angehalten' }, { phase: 'fertig', rueckweg: [{ zuSchritt: 2, ok: true, text: 'x', zeit: 'x' }] }]) {
+      const w = zweiChanges('completed');
+      w.vor.lauf = { schritt: 2, start: 'x', ergebnisse: erg, ...lauf };
+      expect(await haltGrund(w), JSON.stringify(lauf)).toContain('nicht abgeschlossen oder keine Abhängigkeit');
+    }
+  });
+  it('M-1: über Change-Grenzen nur Ergebnisse mit ok', () => {
+    const vg = new Map([[VOR, [{ ...erg[0]!, ok: false, aktionOk: true }]]]);
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, vg).fehler).toContain('hat keinen Wert');
+    expect(loeseAuf({ id: `{{change:${VOR}.schritt2.policy_id}}` }, [], undefined, new Map([[VOR, [{ ...erg[0]!, ok: false, teilweise: true }]]])).fehler).toContain('hat keinen Wert');
+  });
+  it('I-2: unaufgelöster oder kaputter Verweis erreicht nie einen Skill', async () => {
+    for (const v of [`{{Change:${VOR}.schritt2.policy_id}}`, `{{change:${VOR}.schritt2.a b}}`, `{{change:${VOR}.schritt2.policy_id }x}}`, '{{Schritt2.policy_id}}']) {
+      expect(await haltGrund(zweiChanges('completed', v)), v).toContain('unaufgelöster Verweis');
+    }
   });
 });

@@ -35,6 +35,8 @@ export interface ChangePlan {
   typ: 'normal' | 'notfall'; risiko: 'low' | 'medium' | 'high' | 'critical';
   ausfallMinuten?: number; geplantAb?: string; betroffen: string[]; abhaengigVon: string[];
   zweck?: 'stilllegung'; ohneSicherungGrund?: string;
+  /** V3 — Fingerabdruck je Vorgänger-Change, auf dessen Schritte {{change:<id>…}} verweist (beim Planen festgehalten; Teil des Fingerabdrucks) */
+  vorgaengerAbdruck?: Record<string, string>;
   schritte: ChangeSchritt[];
 }
 
@@ -145,7 +147,7 @@ const GEHEIM_FELDER = /^(password|secret|token|git_token|apiKey|api_key|accessTo
 /** Vergessene Platzhalter („<host-id>“, „{{host_id}}“) — nicht Verweise und nicht Go-Template-Felder von Docker („{{.Image}}“, „{{json .State}}“) */
 // v1716 — Realfall 30.10. (Paket B, Überwachungstext „frei <20GiB oder … Backupdauer>“): ein Vergleich ist kein Platzhalter; „<…>“
 // zählt nur, wenn es mit einem Buchstaben beginnt (<IP>, <host-id>, <Passwort>)
-const PLATZHALTER = /<[A-Za-zÄÖÜäöüß_][^<>\n]{1,39}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_]|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|change:[A-Za-z0-9_-]{1,64}\.schritt\d+\.[a-zA-Z_]|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/i; // Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
+const PLATZHALTER = /<[A-Za-zÄÖÜäöüß_][^<>\n]{1,39}>|\{\{(?!\s*(schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}|geheim:[a-z0-9][\w.-]{1,60}\s*\}\}|geheimdatei:[a-z0-9][\w.-]{1,60}\s*\}\}|change:[A-Za-z0-9_-]{1,64}\.schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}|\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b))[^}]*\}\}/; // V3 Fix 1: Verweise bis „}}“ verankert und ohne /i ({{Change:…}}, {{Schritt1.x}} sind Platzhalter); Go-Templates von docker --format (Pilot cf82f3f2: {{range .Config.Env}}…{{end}})
 
 /** v1664 — Befehle, die einen Dienst anhalten bzw. wieder starten (für die Regel „nach dem Stopp nur mit Rückweg“) */
 export const DIENST_STOPP = /\b(docker(\s+compose)?(\s+-\S+(\s+\S+)?)*\s+(stop|kill|down|pause)|docker\s+container\s+(stop|kill)|systemctl\s+(stop|kill)|service\s+\S+\s+stop)\b/;
@@ -242,7 +244,7 @@ export interface PruefKontext {
   /** v1684 — Namen der Fernzugänge (klein geschrieben); fehlt die Angabe, wird nicht geprüft */
   zugaenge?: Set<string>;
   /** vorhandene Changes (für Abhängigkeiten und Zyklen) */
-  changes: Array<{ id: string; abhaengigVon: string[]; status: string }>;
+  changes: Array<{ id: string; abhaengigVon: string[]; status: string; fingerabdruck?: string; schritte?: unknown[] }>;
   jetzt?: Date;
 }
 
@@ -307,19 +309,44 @@ function abhaengigkeitsHuelle(start: string[], ctx: PruefKontext, paket?: Map<st
 }
 
 const CHANGE_VERWEIS_G = /\{\{\s*change:([A-Za-z0-9_-]{1,64})\.schritt(\d+)\.([a-zA-Z_][\w.]*)\s*\}\}/g;
+/** Anfang eines Verweises in beliebiger Schreibweise — jeder muss genau einem gültigen Verweis entsprechen */
+const VERWEIS_ANFANG = /\{\{\s*(?:change|schritt)/gi;
+const VERWEIS_GENAU = /\{\{\s*(?:change:[A-Za-z0-9_-]{1,64}\.)?schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}/y;
+interface VerweisKontext {
+  f: string[]; erlaubt: Set<string>;
+  bekannt: (x: string) => boolean;
+  /** Schritte eines Vorgängers (Paket: roh nach Position; gespeichert: mit nr), falls bekannt */
+  schritte: (x: string) => unknown[] | undefined;
+}
 /** V3 — alle {{change:…}}-Verweise eines Schritts prüfen (Parameter, Prüfung, Rückweg — in jeder Tiefe). */
-function changeVerweise(wert: unknown, wo: string, f: string[], bekannt: (x: string) => boolean, erlaubt: Set<string>, feld?: string): void {
+function changeVerweise(wert: unknown, wo: string, k: VerweisKontext, feld?: string): void {
+  const { f } = k;
   if (typeof wert === 'string') {
+    // V3 Fix 1 (I-2) — {{Change:…}}, {{Schritt1.x}}, {{change:a.schritt1.a b}}, {{change:…policy_id }x}} kämen sonst roh beim Skill an
+    for (const m of wert.matchAll(VERWEIS_ANFANG)) {
+      VERWEIS_GENAU.lastIndex = m.index!;
+      if (!VERWEIS_GENAU.test(wert)) f.push(`${wo}: fehlerhafter Verweis „${wert.slice(m.index!, m.index! + 60)}“ — nur genau {{schrittN.feld}} bzw. {{change:<schluessel>.schrittN.feld}} (klein geschrieben)`);
+    }
     for (const m of wert.matchAll(CHANGE_VERWEIS_G)) {
       const v = m[0].replace(/\s+/g, '');
-      if (!bekannt(m[1]!)) f.push(`${wo}: Verweis ${v} — Change „${m[1]}“ unbekannt (nur Schlüssel dieses Pakets oder volle Change-IDs)`);
-      else if (!erlaubt.has(m[1]!)) f.push(`${wo}: Verweis ${v} — keine Abhängigkeit (Change ${m[1]} muss in abhaengigVon stehen)`);
+      const id = m[1]!; const n = Number(m[2]);
+      if (!k.bekannt(id)) f.push(`${wo}: Verweis ${v} — Change „${id}“ unbekannt (nur Schlüssel dieses Pakets oder volle Change-IDs)`);
+      else if (!k.erlaubt.has(id)) f.push(`${wo}: Verweis ${v} — keine Abhängigkeit (Change ${id} muss in abhaengigVon stehen)`);
+      else {
+        // V3 Fix 1 (M-4) — der Schritt muss im Vorgänger existieren und eine Aktion sein (nur Aktionen liefern Daten)
+        const st = k.schritte(id);
+        if (st) {
+          const s = st.map(obj).find((x, i) => (typeof x?.nr === 'number' ? x.nr === n : i + 1 === n));
+          if (!s) f.push(`${wo}: Verweis ${v} — Change ${id} hat keinen Schritt ${n}`);
+          else if (s.art !== 'aktion') f.push(`${wo}: Verweis ${v} — Schritt ${n} von Change ${id} ist keine Aktion (nur Aktionen liefern Werte)`);
+        }
+      }
       if (feld && BEFEHLS_FELDER.has(feld.toLowerCase()) && wert.trim() === m[0]) f.push(`${wo}: Verweis ${v} als ganzer Wert im Befehlsfeld „${feld}“ ist nicht erlaubt`);
     }
     return;
   }
-  if (Array.isArray(wert)) { for (const x of wert) changeVerweise(x, wo, f, bekannt, erlaubt, feld); return; }
-  if (wert && typeof wert === 'object') for (const [k, x] of Object.entries(wert as Record<string, unknown>)) changeVerweise(x, wo, f, bekannt, erlaubt, k);
+  if (Array.isArray(wert)) { for (const x of wert) changeVerweise(x, wo, k, feld); return; }
+  if (wert && typeof wert === 'object') for (const [key, x] of Object.entries(wert as Record<string, unknown>)) changeVerweise(x, wo, k, key);
 }
 
 function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext): Pruefung | undefined {
@@ -366,9 +393,10 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
 /**
  * Prüft einen Plan (ein Change) — reine Regeln. `fehler` → nicht freigebbar; `hinweise` → stehen im Change.
  * `alleSchluessel` sind die Schlüssel der im selben Paket geplanten Changes (Abhängigkeiten innerhalb des Pakets).
- * `paket` (V3) — abhaengigVon je Paket-Schlüssel, für {{change:…}}-Verweise über mehrere Stufen (ohne: nur direkte Abhängigkeiten im Paket).
+ * `paket` (V3) — abhaengigVon und rohe Schritte je Paket-Schlüssel, für {{change:…}}-Verweise über mehrere Stufen und die Prüfung
+ * des Ziel-Schritts (ohne: nur direkte Abhängigkeiten im Paket, Ziel-Schritt ungeprüft).
  */
-export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = [], paket?: Map<string, string[]>): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
+export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel: string[] = [], paket?: Map<string, { abhaengigVon: string[]; schritte: unknown[] }>): { fehler: string[]; hinweise: string[]; plan: ChangePlan; betroffeneIds: string[] } {
   const f: string[] = []; const h: string[] = [];
   const r = obj(roh) ?? {};
   const typ = txt(r.typ) || 'normal';
@@ -388,6 +416,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   if (txt(r.geplantAb)) { const t = Date.parse(txt(r.geplantAb)); if (Number.isNaN(t)) f.push('geplantAb ist kein Zeitpunkt'); else { plan.geplantAb = new Date(t).toISOString(); if (t < (ctx.jetzt ?? new Date()).getTime()) h.push('geplantAb liegt in der Vergangenheit'); } }
   if (txt(r.zweck) === 'stilllegung') plan.zweck = 'stilllegung';
   if (txt(r.ohneSicherungGrund)) plan.ohneSicherungGrund = txt(r.ohneSicherungGrund);
+  { const va = obj(r.vorgaengerAbdruck); if (va && Object.keys(va).length && Object.values(va).every(x => typeof x === 'string')) plan.vorgaengerAbdruck = { ...(va as Record<string, string>) }; }
 
   // Betroffene Assets aus der CMDB
   const betroffeneIds: string[] = [];
@@ -414,9 +443,14 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   if (!roheSchritte.length) f.push('schritte fehlen');
   // V3 — {{change:x.schrittN.feld}} nur auf Changes in der Abhängigkeits-Hülle (Paket-Schlüssel oder volle ID, kein Präfix)
   {
-    const erlaubt = abhaengigkeitsHuelle(plan.abhaengigVon, ctx, new Map([...(paket ?? new Map<string, string[]>()), ...alleSchluessel.filter(k => !paket?.has(k)).map(k => [k, [] as string[]] as [string, string[]])]));
-    const bekannt = (x: string) => alleSchluessel.includes(x) || ctx.changes.some(c => c.id === x);
-    for (const [i, s0] of roheSchritte.entries()) changeVerweise(s0, `Schritt ${i + 1}`, f, bekannt, erlaubt);
+    const kanten = new Map<string, string[]>(alleSchluessel.map(k => [k, paket?.get(k)?.abhaengigVon ?? []]));
+    const erlaubt = abhaengigkeitsHuelle(plan.abhaengigVon, ctx, kanten);
+    const vk: VerweisKontext = {
+      f, erlaubt,
+      bekannt: x => alleSchluessel.includes(x) || ctx.changes.some(c => c.id === x),
+      schritte: x => (alleSchluessel.includes(x) ? paket?.get(x)?.schritte : ctx.changes.find(c => c.id === x)?.schritte),
+    };
+    for (const [i, s0] of roheSchritte.entries()) changeVerweise(s0, `Schritt ${i + 1}`, vk);
   }
   const aktionsNummern = new Set<number>();
   // v1684 — Zugänge, die dieser Plan selbst anlegt (VM-Fabrik legt den Fernzugang mit dem VM-Namen an, fernzugriff anlegen), gelten als vorhanden
@@ -612,7 +646,9 @@ export function zyklus(kanten: Map<string, string[]>): string[] | undefined {
 /** Fingerabdruck über alles, was die Freigabe deckt (Reihenfolge der Objekt-Schlüssel egal). */
 export function changeFingerabdruck(plan: ChangePlan, betroffeneIds: string[], abhaengigIds: string[]): string {
   const sortiert = (v: unknown): unknown => Array.isArray(v) ? v.map(sortiert) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map(k => [k, sortiert((v as Record<string, unknown>)[k])])) : v;
-  const inhalt = { titel: plan.titel, typ: plan.typ, risiko: plan.risiko, zweck: plan.zweck ?? null, geplantAb: plan.geplantAb ?? null, betroffen: [...betroffeneIds].sort(), abhaengig: [...abhaengigIds].sort(), schritte: plan.schritte.map(({ einordnung: _e, ...s }) => s) };
+  const inhalt = { titel: plan.titel, typ: plan.typ, risiko: plan.risiko, zweck: plan.zweck ?? null, geplantAb: plan.geplantAb ?? null, betroffen: [...betroffeneIds].sort(), abhaengig: [...abhaengigIds].sort(), schritte: plan.schritte.map(({ einordnung: _e, ...s }) => s),
+    // V3 Fix 1 (C-1) — nur wenn vorhanden (bestehende Fingerabdrücke bleiben gleich): die Freigabe des Abhängigen deckt genau diesen Vorgänger-Stand
+    ...(plan.vorgaengerAbdruck && Object.keys(plan.vorgaengerAbdruck).length ? { vorgaenger: plan.vorgaengerAbdruck } : {}) };
   return createHash('sha256').update(JSON.stringify(sortiert(inhalt))).digest('hex');
 }
 

@@ -11,7 +11,7 @@ import type { CmdbChangeRequest, SkillResultAttachment } from '@alfred/types';
 import { befehlsklasse } from '../fernzugriff/regeln.js';
 import { schwaerze } from '../fernzugriff/kaefig.js';
 import { leseDocker, LINUX_BEFEHLE } from './sammler.js';
-import { datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
+import { unaufgeloesterVerweis, datenWerte, geheimNamen, kuerzeDaten, laufBericht, loeseAuf, merkeVerlauf, restWirkung, rueckwegSchritte, textErfuellt, wirkt, MAX_AUSGABE, type ChangeLauf, type SchrittErgebnis } from './change-lauf.js';
 import { ohneGeheimnisse } from './tresor.js';
 import { randomBytes } from 'node:crypto';
 import { aktionsArt, ZEITLIMIT_STANDARD_S, type ChangeSchritt, type Pruefung } from './change-schritte.js';
@@ -266,7 +266,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
    * I4c — Aktion mit Tresor-Werten: Werte erst jetzt lesen, Geheimnis-Dateien am Host anlegen (stdin, 600) und danach in jedem Fall
    * entfernen; Ausgaben ohne die Werte. Ohne Tresor-Verweise ist das ein gewöhnlicher Aufruf.
    */
-  private async mitGeheimnissen(z: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[]> } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
+  private async mitGeheimnissen(z: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[] | string> } | undefined, skill: string, aktion: string, parameter: Record<string, unknown>, ergebnisse: SchrittErgebnis[], timeoutMs: number): Promise<{ ok: boolean; ausgabe?: string; daten?: unknown; fehler?: string; teilweise?: boolean }> {
     const namen = geheimNamen(parameter);
     const werte = new Map<string, string>(); const dateien = new Map<string, string>(); const angelegt: Array<{ zugang: string; pfad: string }> = [];
     try {
@@ -285,6 +285,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       }
       const p = loeseAuf(parameter, ergebnisse, { werte, dateien }, z?.vorgaenger);
       if (p.fehler) return { ok: false, fehler: p.fehler };
+      // V3 Fix 1 (I-2) — harter Wächter direkt vor dem Skill-Aufruf
+      const rest = unaufgeloesterVerweis(p.wert);
+      if (rest) return { ok: false, fehler: rest };
       const r = await this.aktion(skill, aktion, p.wert, timeoutMs);
       const geheim = [...werte.values()];
       if (!geheim.length) return r;
@@ -300,12 +303,15 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   /**
-   * V3 — Ergebnisse der abgeschlossenen Changes in der Abhängigkeits-Hülle (abhaengigVon, transitiv) für {{change:<id>…}}. Nur Changes
-   * mit Status completed; alle anderen fehlen in der Map, ein Verweis darauf hält den Schritt an. Ohne Verweis im Plan: leer, kein Lesen.
+   * V3 — Ergebnisse der abgeschlossenen Changes in der Abhängigkeits-Hülle (abhaengigVon, transitiv) für {{change:<id>…}}.
+   * Gilt nur ein Vorgänger, der completed ist, dessen Lauf fertig ist und keinen Rückweg begonnen hat (Fix 1, I-1) und dessen
+   * freigegebener Plan genau dem beim Planen festgehaltenen Abdruck entspricht (Fix 1, C-1) — sonst fehlt er bzw. trägt den Grund;
+   * ein Verweis darauf hält den Schritt an. Ohne Verweis im Plan: leer, kein Lesen.
    */
-  private async vorgaenger(o: string, c: CmdbChangeRequest): Promise<Map<string, SchrittErgebnis[]>> {
-    const aus = new Map<string, SchrittErgebnis[]>();
+  private async vorgaenger(o: string, c: CmdbChangeRequest): Promise<Map<string, SchrittErgebnis[] | string>> {
+    const aus = new Map<string, SchrittErgebnis[] | string>();
     if (!/\{\{\s*change:/.test(JSON.stringify(c.schritte ?? []))) return aus;
+    const festgehalten = (c.pruefung as { zusatz?: { vorgaengerAbdruck?: Record<string, string> } } | undefined)?.zusatz?.vorgaengerAbdruck ?? {};
     const gesehen = new Set<string>([c.id]);
     const offen = [...(c.abhaengigVon ?? [])];
     while (offen.length) {
@@ -315,12 +321,16 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       const v = await this.d.itsm.hole(o, id).catch(() => null);
       if (!v || v.id !== id) continue;
       offen.push(...(v.abhaengigVon ?? []));
-      if (v.status === 'completed') aus.set(id, (v.lauf as ChangeLauf | undefined)?.ergebnisse ?? []);
+      const l = v.lauf as ChangeLauf | undefined;
+      if (v.status !== 'completed' || l?.phase !== 'fertig' || (l.rueckweg?.length ?? 0) > 0) continue;
+      const fp = festgehalten[id];
+      if (!fp || v.fingerabdruck !== fp || v.freigabeFingerabdruck !== fp) { aus.set(id, 'Vorgänger nach der Planung geändert — abhängigen Change neu planen'); continue; }
+      aus.set(id, l.ergebnisse ?? []);
     }
     return aus;
   }
 
-  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[]> }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
+  async schritt(s: ChangeSchritt, ergebnisse: SchrittErgebnis[], z?: { o: string; wofuer: string; vorgaenger?: Map<string, SchrittErgebnis[] | string> }, vorher?: { ausgabe?: string; daten?: unknown }): Promise<SchrittErgebnis> {
     const e: SchrittErgebnis = { nr: s.nr, ok: false, start: this.iso() };
     const fertig = (x: Partial<SchrittErgebnis>): SchrittErgebnis => ({ ...e, ...x, ende: this.iso() });
     try {
@@ -421,9 +431,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return { ok: true, ...(r.display ? { ausgabe: r.display } : {}), daten: r.data };
   }
 
-  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number, vorgaenger?: Map<string, SchrittErgebnis[]>): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
+  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number, vorgaenger?: Map<string, SchrittErgebnis[] | string>): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
     const aufgeloest = loeseAuf(p0, ergebnisse, undefined, vorgaenger);
     if (aufgeloest.fehler) return { ok: false, text: aufgeloest.fehler, versuche: 0 };
+    const rest = unaufgeloesterVerweis(aufgeloest.wert);
+    if (rest) return { ok: false, text: rest, versuche: 0 };
     const p = aufgeloest.wert;
     let letzter = ''; let ausgabe: string | undefined;
     for (let i = 1; i <= versuche; i++) {

@@ -695,7 +695,7 @@ describe('V3 Verweis über Change-Grenzen', () => {
     expect(pruefeChangePlan(lesePlan('b', ['a'], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b']).fehler).toEqual([]);
     expect(pruefeChangePlan(lesePlan('b', ['a'], 9001, { name: 'x-{{change:a.schritt1.name}}' }), ctx(), ['a', 'b']).fehler).toEqual([]);
     // transitiv: c → b → a
-    expect(pruefeChangePlan(lesePlan('c', ['b'], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b', 'c'], new Map([['a', []], ['b', ['a']], ['c', ['b']]])).fehler).toEqual([]);
+    expect(pruefeChangePlan(lesePlan('c', ['b'], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b', 'c'], new Map([['a', { abhaengigVon: [], schritte: [{ art: 'aktion' }] }], ['b', { abhaengigVon: ['a'], schritte: [] }], ['c', { abhaengigVon: ['b'], schritte: [] }]])).fehler).toEqual([]);
     const ohne = pruefeChangePlan(lesePlan('b', [], '{{change:a.schritt1.vmid}}'), ctx(), ['a', 'b']).fehler.join('\n');
     expect(ohne).toContain('{{change:a.schritt1.vmid}}');
     expect(ohne).toContain('keine Abhängigkeit');
@@ -755,5 +755,57 @@ describe('V3 Verweis über Change-Grenzen', () => {
     expect(await pl.pruefeNur('o', [{ ...snapshotChange(), schluessel: 'a' }, { ...snapshotChange(), schluessel: 'a' }])).toEqual(['schluessel der Changes müssen eindeutig sein']);
     expect(angelegt).toBe(0);
     expect(it3.db.size).toBe(0);
+  });
+});
+
+// V3 Task 3 Fix-Runde 1
+describe('V3 Change-Verweise — Fix-Runde 1', () => {
+  const lesePlan = (schluessel: string, abhaengigVon: string[], vmid: unknown, extra: Record<string, unknown> = {}) => ({
+    titel: `Lesen ${schluessel}`, begruendung: 'Verweis über Change-Grenzen prüfen', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['pve'], schluessel, abhaengigVon,
+    schritte: [{ titel: 'Status', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid, ...extra } }],
+  });
+  it('I-2: andere Schreibweise oder kaputter Verweis wird abgewiesen (Parameter und Prüfung)', () => {
+    for (const v of ['{{Change:a.schritt1.policy_id}}', '{{change:a.schritt1.a b}}', '{{change:a.schritt1.policy_id }x}}', '{{Schritt1.vmid}}']) {
+      const p = lesePlan('b', ['a'], 9001, { name: v });
+      expect(pruefeChangePlan(p, ctx(), ['a', 'b']).fehler.join('\n'), v).toMatch(/fehlerhafter Verweis|Platzhalter/);
+      const q = lesePlan('b', ['a'], 9001); (q.schritte as unknown[]).push({ titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'ping', ziel: v } });
+      expect(pruefeChangePlan(q, ctx(), ['a', 'b']).fehler.join('\n'), v).toContain('fehlerhafter Verweis');
+    }
+  });
+  it('M-4: Schritt muss im Vorgänger existieren und eine Aktion sein (Paket und gespeicherte Changes)', async () => {
+    const pl = new ChangePlanung({ itsm: speicher(), skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const c1 = { ...snapshotChange(), schluessel: 'c1' }; // 4 Schritte, Schritt 4 ist eine Prüfung
+    expect(await pl.pruefeNur('o', [c1, lesePlan('c2', ['c1'], '{{change:c1.schritt2.vmid}}')])).toEqual([]);
+    expect((await pl.pruefeNur('o', [c1, lesePlan('c2', ['c1'], '{{change:c1.schritt9.vmid}}')])).join('\n')).toContain('Change c1 hat keinen Schritt 9');
+    expect((await pl.pruefeNur('o', [c1, lesePlan('c2', ['c1'], '{{change:c1.schritt4.vmid}}')])).join('\n')).toContain('Schritt 4 von Change c1 ist keine Aktion');
+    const vorh = [{ id: 'chg-0001-0000', abhaengigVon: [], status: 'completed', schritte: [{ nr: 1, art: 'pruefung' }] }];
+    expect(pruefeChangePlan(lesePlan('x', ['chg-0001-0000'], '{{change:chg-0001-0000.schritt1.vmid}}'), ctx(vorh as never)).fehler.join('\n')).toContain('ist keine Aktion');
+    expect(pruefeChangePlan(lesePlan('x', ['chg-0001-0000'], '{{change:chg-0001-0000.schritt2.vmid}}'), ctx(vorh as never)).fehler.join('\n')).toContain('hat keinen Schritt 2');
+  });
+  it('C-1: planen hält den Abdruck des Vorgängers fest (im Fingerabdruck); aendern des Vorgängers nennt die Abhängigen; aendern des Abhängigen nimmt den neuen Abdruck', async () => {
+    const it3 = speicher();
+    const pl = new ChangePlanung({ itsm: it3, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung });
+    const r = await pl.planen('o', [{ ...snapshotChange(), schluessel: 'c1' }, lesePlan('c2', ['c1'], '{{change:c1.schritt2.vmid}}')]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const [c1, c2] = r.changes;
+    const zusatz = (c: CmdbChangeRequest) => (c.pruefung as unknown as { zusatz?: { vorgaengerAbdruck?: Record<string, string> } }).zusatz;
+    expect(zusatz(c2!)?.vorgaengerAbdruck).toEqual({ [c1!.id]: c1!.fingerabdruck });
+    expect(planAusChange(c2!).vorgaengerAbdruck).toEqual({ [c1!.id]: c1!.fingerabdruck });
+    // der Abdruck gehört zum Fingerabdruck des Abhängigen
+    const e = pruefeChangePlan(planAusChange(c2!), ctx([{ id: c1!.id, abhaengigVon: [], status: 'submitted' }]));
+    expect(changeFingerabdruck(e.plan, e.betroffeneIds, c2!.abhaengigVon!)).toBe(c2!.fingerabdruck);
+    expect(changeFingerabdruck({ ...e.plan, vorgaengerAbdruck: { [c1!.id]: 'anders' } }, e.betroffeneIds, c2!.abhaengigVon!)).not.toBe(c2!.fingerabdruck);
+    // Vorgänger ändern → Hinweis auf den Abhängigen
+    const neu = snapshotChange(); neu.schritte[1]!.parameter = { vmid: 142, name: 'i3probe' };
+    const a = await pl.aendern('o', c1!.id, neu);
+    if (!a.ok) throw new Error(a.fehler.join('\n'));
+    expect(a.hinweis).toContain(c2!.id.slice(0, 8));
+    expect(a.hinweis).toContain('halten an, bis sie neu geplant sind');
+    // Abhängigen neu planen → frischer Abdruck des geänderten Vorgängers
+    const b = await pl.aendern('o', c2!.id, planAusChange(it3.db.get(c2!.id)!));
+    if (!b.ok) throw new Error(b.fehler.join('\n'));
+    expect(zusatz(b.change)?.vorgaengerAbdruck).toEqual({ [c1!.id]: it3.db.get(c1!.id)!.fingerabdruck });
+    expect(b.freigabeVerfallen === false || b.change.fingerabdruck !== c2!.fingerabdruck).toBe(true);
+    expect(b.change.fingerabdruck).not.toBe(c2!.fingerabdruck);
   });
 });

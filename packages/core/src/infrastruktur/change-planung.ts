@@ -50,11 +50,12 @@ const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', 
 
 /** Gespeicherten Change wieder in die Planform bringen (für die erneute Prüfung vor der Freigabe). */
 export function planAusChange(c: CmdbChangeRequest): Record<string, unknown> {
-  const z = (c.pruefung as { zusatz?: { zweck?: string; ohneSicherungGrund?: string } } | undefined)?.zusatz ?? {};
+  const z = (c.pruefung as { zusatz?: { zweck?: string; ohneSicherungGrund?: string; vorgaengerAbdruck?: Record<string, string> } } | undefined)?.zusatz ?? {};
   return {
     titel: c.title, begruendung: c.description ?? '', typ: c.type === 'emergency' ? 'notfall' : 'normal', risiko: c.riskLevel,
     ausfallMinuten: c.ausfallMinuten, ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), betroffen: c.affectedAssetIds,
     abhaengigVon: c.abhaengigVon ?? [], ...(z.zweck ? { zweck: z.zweck } : {}), ...(z.ohneSicherungGrund ? { ohneSicherungGrund: z.ohneSicherungGrund } : {}),
+    ...(z.vorgaengerAbdruck ? { vorgaengerAbdruck: z.vorgaengerAbdruck } : {}),
     schritte: (c.schritte ?? []) as unknown[],
   };
 }
@@ -110,6 +111,16 @@ export function planMitSchrittAenderungen(plan: Record<string, unknown>, ersetze
   return { plan: { ...plan, schritte: schritte.map((s, i) => ({ ...s, nr: i + 1 })) } };
 }
 
+/** {{change:<schlüssel>.  (Gruppe 1: Leerraum, Gruppe 2: Schlüssel bzw. ID) */
+const VERWEIS_SCHLUESSEL = /\{\{(\s*)change:([A-Za-z0-9_-]{1,64})\./g;
+const ENDE = new Set(['completed', 'cancelled', 'failed', 'rolled_back', 'closed']);
+/** V3 Fix 1 (C-1) — Fingerabdruck je Vorgänger-ID, auf den {{change:<id>…}} verweist (undefined, wenn keiner) */
+function vorgaengerAbdruecke(schritte: unknown, fp: (id: string) => string | undefined): Record<string, string> | undefined {
+  const aus: Record<string, string> = {};
+  for (const m of JSON.stringify(schritte ?? []).matchAll(VERWEIS_SCHLUESSEL)) { const f = fp(m[2]!); if (f) aus[m[2]!] = f; }
+  return Object.keys(aus).length ? aus : undefined;
+}
+
 export class ChangePlanung {
   constructor(private readonly d: ChangeDeps) {}
 
@@ -119,7 +130,7 @@ export class ChangePlanung {
       ...(tresorNamen ? { tresorNamen } : {}),
       ...(zugaenge ? { zugaenge: new Set(zugaenge.map(z => z.toLowerCase())) } : {}),
       skill: this.d.skill,
-      changes: changes.map(c => ({ id: c.id, abhaengigVon: c.abhaengigVon ?? [], status: c.status })),
+      changes: changes.map(c => ({ id: c.id, abhaengigVon: c.abhaengigVon ?? [], status: c.status, ...(c.fingerabdruck ? { fingerabdruck: c.fingerabdruck } : {}), ...(c.schritte ? { schritte: c.schritte as unknown[] } : {}) })),
       // I3 (Realfall 22.10.: „test-ubuntu“ = Deploy-Anwendung und VM) — ID, ID-Anfang ab 8 Zeichen, sourceId (z. B. pve3:142), Name/Hostname;
       // bei mehreren Treffern mit gleichem Namen nur die aktiven; bleibt es mehrdeutig, nennt der Hinweis volle IDs mit Typ und Quelle.
       asset: (k: string) => {
@@ -147,7 +158,7 @@ export class ChangePlanung {
       ...(plan.geplantAb ? { scheduledAt: plan.geplantAb } : {}), schritte: plan.schritte, ...(vorhabenId ? { vorhabenId } : {}),
       abhaengigVon: abhaengigIds, ...(plan.ausfallMinuten !== undefined ? { ausfallMinuten: plan.ausfallMinuten } : {}),
       ...(auswirkung ? { auswirkung } : {}),
-      pruefung: { fehler: [], hinweise, zeit: new Date().toISOString(), ...({ zusatz: { ...(plan.zweck ? { zweck: plan.zweck } : {}), ...(plan.ohneSicherungGrund ? { ohneSicherungGrund: plan.ohneSicherungGrund } : {}) } }) } as ChangeSchrittDaten['pruefung'],
+      pruefung: { fehler: [], hinweise, zeit: new Date().toISOString(), ...({ zusatz: { ...(plan.zweck ? { zweck: plan.zweck } : {}), ...(plan.ohneSicherungGrund ? { ohneSicherungGrund: plan.ohneSicherungGrund } : {}), ...(plan.vorgaengerAbdruck ? { vorgaengerAbdruck: plan.vorgaengerAbdruck } : {}) } }) } as ChangeSchrittDaten['pruefung'],
       fingerabdruck: fp,
     };
   }
@@ -164,7 +175,7 @@ export class ChangePlanung {
    * Prüfungen eines Pakets ohne Speichern: Anzahl, eindeutige Schlüssel, Validator je Plan (mit Abhängigkeiten im Paket für
    * {{change:…}}), Zyklen. `fehler` = Paket als Ganzes unbrauchbar; `je` = Fehler je Change; `allgemein` = Zyklen.
    */
-  private async pruefePaket(owner: string, roh: unknown[]): Promise<{ fehler: string[] } | { schluessel: string[]; ergebnisse: Array<ReturnType<typeof pruefeChangePlan>>; je: Array<{ k: string; titel: string; text: string }>; allgemein: string[] }> {
+  private async pruefePaket(owner: string, roh: unknown[]): Promise<{ fehler: string[] } | { ctx: PruefKontext; schluessel: string[]; ergebnisse: Array<ReturnType<typeof pruefeChangePlan>>; je: Array<{ k: string; titel: string; text: string }>; allgemein: string[] }> {
     if (!roh.length) return { fehler: ['changes fehlt'] };
     if (roh.length > 30) return { fehler: ['höchstens 30 Changes je Paket'] };
     const ctx = await this.kontext(owner);
@@ -172,8 +183,8 @@ export class ChangePlanung {
     if (new Set(schluessel).size !== schluessel.length) return { fehler: ['schluessel der Changes müssen eindeutig sein'] };
     // abhaengigVon je Schlüssel (roh) — für Verweise über mehrere Stufen; der Validator löst Paket-Schlüssel und Change-IDs selbst auf
     const paket = new Map(roh.map((r, i) => {
-      const a = (r as Record<string, unknown>)?.abhaengigVon;
-      return [schluessel[i]!, Array.isArray(a) ? a.map(x => (typeof x === 'string' ? x.trim() : '')).filter(Boolean) : []] as [string, string[]];
+      const a = (r as Record<string, unknown>)?.abhaengigVon; const st = (r as Record<string, unknown>)?.schritte;
+      return [schluessel[i]!, { abhaengigVon: Array.isArray(a) ? a.map(x => (typeof x === 'string' ? x.trim() : '')).filter(Boolean) : [], schritte: Array.isArray(st) ? st : [] }] as [string, { abhaengigVon: string[]; schritte: unknown[] }];
     }));
     const ergebnisse = roh.map((r, i) => pruefeChangePlan({ ...(r as object), schluessel: schluessel[i] }, ctx, schluessel, paket));
     const je = ergebnisse.flatMap((e, i) => e.fehler.map(text => ({ k: schluessel[i]!, titel: e.plan.titel, text })));
@@ -181,7 +192,7 @@ export class ChangePlanung {
     for (const c of ctx.changes) kanten.set(c.id, c.abhaengigVon);
     ergebnisse.forEach((e, i) => kanten.set(schluessel[i]!, e.plan.abhaengigVon));
     const z = zyklus(kanten);
-    return { schluessel, ergebnisse, je, allgemein: z ? [`Abhängigkeiten im Kreis: ${z.join(' → ')}`] : [] };
+    return { ctx, schluessel, ergebnisse, je, allgemein: z ? [`Abhängigkeiten im Kreis: ${z.join(' → ')}`] : [] };
   }
 
   /** V3 — Probe: dieselben Prüfungen wie planen, nichts wird gespeichert. Fehler je Change mit „Change <schlüssel>: …“. */
@@ -198,23 +209,34 @@ export class ChangePlanung {
     if ('fehler' in p) return { ok: false, fehler: p.fehler };
     const fehler = [...p.je.map(x => `Change ${x.k} (${x.titel || '?'}): ${x.text}`), ...p.allgemein];
     if (fehler.length) return { ok: false, fehler };
-    const { schluessel, ergebnisse } = p;
+    const { ctx, schluessel, ergebnisse } = p;
     // Reihenfolge: Abhängigkeiten innerhalb des Pakets zuerst anlegen (kein Kreis → terminiert)
-    const ids = new Map<string, string>();
-    const angelegt: CmdbChangeRequest[] = [];
+    const reihe: Array<{ e: (typeof ergebnisse)[number]; k: string }> = [];
     const offen = ergebnisse.map((e, i) => ({ e, k: schluessel[i]! }));
     while (offen.length) {
-      const idx = offen.findIndex(o => o.e.plan.abhaengigVon.every(d => !schluessel.includes(d) || ids.has(d)));
-      const { e, k } = offen.splice(idx < 0 ? 0 : idx, 1)[0]!;
+      const idx = offen.findIndex(o => o.e.plan.abhaengigVon.every(d => !schluessel.includes(d) || reihe.some(r => r.k === d)));
+      reihe.push(offen.splice(idx < 0 ? 0 : idx, 1)[0]!);
+    }
+    // V3 Fix 1 (M-3) — Wächter VOR dem Anlegen (nie ein halb angelegtes Paket): jeder Schlüssel-Verweis zeigt auf einen früher angelegten Change
+    for (const [i, { e, k }] of reihe.entries()) {
+      for (const m of JSON.stringify(e.plan.schritte).matchAll(VERWEIS_SCHLUESSEL)) {
+        if (schluessel.includes(m[2]!) && !reihe.slice(0, i).some(r => r.k === m[2])) return { ok: false, fehler: [`Change ${k}: Verweis auf Change ${m[2]}, der nicht vorher angelegt wird`] };
+      }
+    }
+    const ids = new Map<string, string>(); const abdruck = new Map<string, string>();
+    for (const c of ctx.changes) if (c.fingerabdruck) abdruck.set(c.id, c.fingerabdruck);
+    const angelegt: CmdbChangeRequest[] = [];
+    for (const { e, k } of reihe) {
       const abh = e.plan.abhaengigVon.map(d => ids.get(d) ?? d);
       // V3 — {{change:<schlüssel>…}} auf die volle ID der (schon angelegten) Vorgänger umschreiben, bevor Fingerabdruck und Speichern
       // den Plan festhalten; der Validator hat geprüft, dass nur Changes der Abhängigkeits-Hülle gemeint sind (die zuerst angelegt werden)
-      e.plan.schritte = JSON.parse(JSON.stringify(e.plan.schritte).replace(/\{\{(\s*)change:([A-Za-z0-9_-]{1,64})\./g, (m, ws: string, sk: string) => (schluessel.includes(sk) ? `{{${ws}change:${ids.get(sk) ?? sk}.` : m))) as ChangeSchritt[];
-      // Wächter (nach der Prüfung unerreichbar): nie einen Schlüssel-Verweis speichern
-      if ([...JSON.stringify(e.plan.schritte).matchAll(/\{\{\s*change:([A-Za-z0-9_-]{1,64})\./g)].some(m => schluessel.includes(m[1]!))) throw new Error(`Change ${k}: Verweis auf einen noch nicht angelegten Vorgänger`);
+      e.plan.schritte = JSON.parse(JSON.stringify(e.plan.schritte).replace(VERWEIS_SCHLUESSEL, (m, ws: string, sk: string) => (ids.has(sk) ? `{{${ws}change:${ids.get(sk)}.` : m))) as ChangeSchritt[];
+      // V3 Fix 1 (C-1) — Stand jedes Vorgängers festhalten, auf dessen Schritte verwiesen wird (Teil des eigenen Fingerabdrucks)
+      const va = vorgaengerAbdruecke(e.plan.schritte, id => abdruck.get(id));
+      if (va) e.plan.vorgaengerAbdruck = va; else delete e.plan.vorgaengerAbdruck;
       const aus = await this.d.auswirkung(e.betroffeneIds);
       const c = await this.d.itsm.legeAn(owner, this.daten(e.plan, e.betroffeneIds, abh, aus, [...e.hinweise, ...this.auswirkungsHinweise(aus, e.plan.typ)], vorhaben?.id));
-      ids.set(k, c.id); angelegt.push(c);
+      ids.set(k, c.id); angelegt.push(c); if (c.fingerabdruck) abdruck.set(c.id, c.fingerabdruck);
     }
     this.d.protokoll?.('I3 Changes geplant', { anzahl: angelegt.length, vorhaben: vorhaben?.id, ids: angelegt.map(c => c.id) });
     return { ok: true, changes: angelegt };
@@ -239,7 +261,7 @@ export class ChangePlanung {
   }
 
   /** Plan eines vorhandenen Changes ersetzen (neue Prüfung; Freigabe verfällt bei geändertem Fingerabdruck). */
-  async aendern(owner: string, id: string, roh: unknown, antwortenRoh?: unknown): Promise<{ ok: true; change: CmdbChangeRequest; freigabeVerfallen: boolean } | { ok: false; fehler: string[] }> {
+  async aendern(owner: string, id: string, roh: unknown, antwortenRoh?: unknown): Promise<{ ok: true; change: CmdbChangeRequest; freigabeVerfallen: boolean; hinweis?: string } | { ok: false; fehler: string[] }> {
     const alt = await this.finde(owner, id);
     if (!alt?.schritte?.length) return { ok: false, fehler: [`Change ${id} nicht gefunden oder ohne Schritte`] };
     const ew = this.d.einwand ? await this.d.einwand.pruefeAntworten(owner, 'change', alt.id, antwortenRoh) : { fehler: [], antworten: [] };
@@ -259,6 +281,13 @@ export class ChangePlanung {
       if (neue.length < korrekturAb) return { ok: false, fehler: [`Change ${alt.id.slice(0, 8)} ist bei Schritt ${korrekturAb} angehalten und hat schon gewirkt — nur ab Schritt ${korrekturAb} änderbar; die vollständige Schrittliste mit gleicher Nummerierung senden`] };
       const gelaufen = [...((alt.schritte ?? []) as ChangeSchritt[])].filter(s => s.nr < korrekturAb).sort((a, b) => a.nr - b.nr);
       roh = { ...r, schritte: [...gelaufen, ...neue.slice(korrekturAb - 1)] };
+    }
+    // V3 Fix 1 (C-1) — Neu planen bindet an den JETZIGEN Stand der Vorgänger, auf deren Schritte verwiesen wird
+    if (roh && typeof roh === 'object' && !Array.isArray(roh)) {
+      const r0 = roh as Record<string, unknown>;
+      const va = vorgaengerAbdruecke(r0.schritte, x => ctx.changes.find(c => c.id === x)?.fingerabdruck);
+      const { vorgaengerAbdruck: _alt, ...rest } = r0;
+      roh = va ? { ...rest, vorgaengerAbdruck: va } : rest;
     }
     const e = pruefeChangePlan(roh, ctx);
     const fehler = [...e.fehler];
@@ -280,7 +309,12 @@ export class ChangePlanung {
     const verfallen = (alt.status === 'approved' || haltOhneWirkung || korrekturAb !== undefined) && neu.freigabeFingerabdruck !== neu.fingerabdruck;
     if (korrekturAb !== undefined) this.d.nachAenderung?.();
     this.d.protokoll?.('I3 Change geändert', { id: alt.id, freigabeVerfallen: verfallen, fingerabdruck: neu.fingerabdruck?.slice(0, 12) });
-    return { ok: true, change: neu, freigabeVerfallen: verfallen };
+    // V3 Fix 1 (C-1) — nicht beendete Changes, die auf Schritte dieses Changes verweisen, sind an den alten Stand gebunden
+    const abhaengige = neu.fingerabdruck !== alt.fingerabdruck
+      ? ctx.changes.filter(c => !ENDE.has(c.status) && JSON.stringify(c.schritte ?? []).includes(`change:${alt.id}.`)).map(c => c.id.slice(0, 8))
+      : [];
+    const hinweis = abhaengige.length ? `Abhängige Changes ${abhaengige.join(', ')} verweisen auf Schritte dieses Changes — sie halten an, bis sie neu geplant sind (change_aendern).` : undefined;
+    return { ok: true, change: neu, freigabeVerfallen: verfallen, ...(hinweis ? { hinweis } : {}) };
   }
 
   liste(owner: string): Promise<CmdbChangeRequest[]> { return this.d.itsm.liste(owner); }

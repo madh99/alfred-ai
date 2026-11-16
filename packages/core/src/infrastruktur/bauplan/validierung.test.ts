@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { pruefeChangePlan, type PruefKontext } from '../change-schritte.js';
+import { ChangePlanung } from '../change-planung.js';
 import { pruefeVorlage } from './validierung.js';
 import { testVorlage } from './testvorlage.fixture.js';
 
@@ -121,7 +122,7 @@ describe('pruefeVorlage — Probe', () => {
     const r = await pruefe(v => { v.parameter[0].beispiel = 5000; });
     expect(r.fehler.join('\n')).toMatch(/vlan/);
   });
-  it('Probe erhält eingesetzte Pläne ohne kapitel, change-Verweise als „probe“', async () => {
+  it('Probe erhält eingesetzte Pläne ohne kapitel, change-Verweise unverändert (Task 3 Fix-Runde 1)', async () => {
     let plaene: unknown[] = [];
     const r = await pruefe(undefined, { probe: async p => { plaene = p; return []; } });
     expect(r.fehler).toEqual([]);
@@ -136,7 +137,7 @@ describe('pruefeVorlage — Probe', () => {
     expect(a.schritte[0].parameter.gateway).toBe('10.203.32.1');
     expect(a.schritte[1].parameter.netz_id).toBe('{{schritt1.id}}');
     expect(b.abhaengigVon).toEqual(['aufbau']);
-    expect(b.schritte[0].parameter.id).toBe('probe');
+    expect(b.schritte[0].parameter.id).toBe('{{change:aufbau.schritt1.id}}');
   });
   it('Probe-Fehler kommen mit Präfix', async () => {
     const r = await pruefe(undefined, { probe: async () => ['Schritt 1: Aktion unifi.create_network unbekannt'] });
@@ -229,5 +230,33 @@ describe('Fix-Runde 3 — betroffen nach dem Einsetzen', () => {
     expect(plaene.map(p => p.betroffen)).toEqual([['pve'], ['pve']]);
     const schluessel = plaene.map(p => p.schluessel as string);
     for (const p of plaene) expect(pruefeChangePlan(p, kontext, schluessel).fehler, p.schluessel).toEqual([]);
+  });
+});
+
+describe('Task 3 Fix-Runde 1 — change-Verweis bleibt in der Probe erhalten', () => {
+  it('Zahlfeld mit {{change:…}} besteht die Probe über ChangePlanung.pruefeNur', async () => {
+    const fakeSkill = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['vm_status', 'clone_vm'] }, vmid: { type: 'number' }, name: { type: 'string' } }, required: ['action'] } } };
+    const pl = new ChangePlanung({
+      itsm: { liste: async () => [], hole: async () => null, legeAn: async () => { throw new Error('nie speichern'); } } as never,
+      skill: n => (n === 'proxmox' ? fakeSkill : undefined) as never,
+      assets: async () => [{ id: 'a-pve', name: 'pve' }] as never,
+      auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
+    });
+    const roh = {
+      schema: 1, key: 'klon_probe', titel: 'Klon-Probe', zweck: 'Klonen und lesen', dokumentart: 'testprotokoll',
+      parameter: [{ name: 'name', typ: 'name', pflicht: true, beschreibung: 'VM-Name', beispiel: 'probe-vm' }],
+      annahmen: [],
+      changes: [
+        { schluessel: 'aufbau', titel: 'VM klonen', begruendung: 'Neue VM aus Vorlage klonen', typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: ['pve'],
+          schritte: [{ titel: 'Klonen', art: 'aktion', skill: 'proxmox', aktion: 'clone_vm', parameter: { name: '{{param.name}}' }, zeitlimitS: 60, beiFehler: 'anhalten', rueckweg: { keiner: 'Probe' } }] },
+        { schluessel: 'lesen', titel: 'VM lesen', begruendung: 'Zustand der neuen VM lesen', typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: ['aufbau'], betroffen: ['pve'],
+          schritte: [{ titel: 'Status', art: 'aktion', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{change:aufbau.schritt1.vmid}}' }, zeitlimitS: 60, beiFehler: 'anhalten' }] },
+      ],
+    };
+    let plaene: Array<Record<string, any>> = [];
+    const r = await pruefeVorlage(roh, { probe: async p => { plaene = p as Array<Record<string, any>>; return pl.pruefeNur('o', p); } });
+    expect(plaene.find(p => p.schluessel === 'lesen')!.schritte[0].parameter.vmid).toBe('{{change:aufbau.schritt1.vmid}}');
+    expect(r.fehler.filter(x => /vmid|change/.test(x))).toEqual([]);
+    expect(await pl.pruefeNur('o', plaene).then(f => f.filter(x => /vmid|change:/.test(x)))).toEqual([]);
   });
 });

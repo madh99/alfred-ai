@@ -494,7 +494,7 @@ export class InfrastrukturSkill extends Skill {
       }
       const r = await ch.aendern(owner, String(input.change ?? ''), plan, input.antworten);
       if (!r.ok) return { success: false, error: `Änderung nicht gespeichert:\n${r.fehler.map(x => `- ${x}`).join('\n')}` };
-      return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Change **${r.change.title}** geändert (Plan ${r.change.fingerabdruck?.slice(0, 12)}).${r.freigabeVerfallen ? ' Die bisherige Freigabe ist verfallen — neue Freigabe nötig.' : ''}` };
+      return { success: true, data: { id: r.change.id, status: r.change.status }, display: `Change **${r.change.title}** geändert (Plan ${r.change.fingerabdruck?.slice(0, 12)}).${r.freigabeVerfallen ? ' Die bisherige Freigabe ist verfallen — neue Freigabe nötig.' : ''}${r.hinweis ? `\n⚠️ ${r.hinweis}` : ''}` };
     }
     if (action === 'freigabe_anfragen') {
       const ids = (Array.isArray(input.ids) ? input.ids : Array.isArray(input.changes) ? input.changes : typeof input.change === 'string' ? [input.change] : []).map(x => typeof x === 'string' ? x : String((x as { id?: string })?.id ?? '')).filter(Boolean);
