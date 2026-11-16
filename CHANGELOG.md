@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Bauplan-Vorlage pki_lab (v1879)
+
+- Die mitgelieferte Vorlage `pki_lab` nennt die betroffenen Assets (Proxmox-Knoten, Gateway, SQL-Server) mit ihrer eindeutigen Kennung; die Namen waren in der CMDB mehrdeutig (Fernzugriffs- und Proxmox-Eintrag gleichen Namens), die Probe beim Speichern wies die Vorlage deshalb ab.
+
 ### Added — Bauplan-Vorlagen (v1878)
 
 - Neuer Skill `bauplan`: versionierte, parametrisierte Change-Pakete (z. B. Aufbau → Test → Abbau) als geprüfte Daten. Speichern prüft Schema, Parameter, Platzhalter und Geheimnisse und schickt die Pläne mit Beispielwerten probeweise durch den Change-Validator.

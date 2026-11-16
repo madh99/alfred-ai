@@ -245,9 +245,9 @@ const PKI_LAB: Record<string, unknown> = {
       "ausfallMinuten": 0,
       "abhaengigVon": [],
       "betroffen": [
-        "{{param.node}}",
-        "UDMPRO",
-        "sql01"
+        "b4e48d79-2872-45aa-9a45-6843a2a85c0f",
+        "3c4f9a1b-ce68-4bf0-95b1-3d9635d09c5e",
+        "460657cf-7370-4cef-8a46-61b7a3560694"
       ],
       "schritte": [
         {
@@ -1223,7 +1223,7 @@ const PKI_LAB: Record<string, unknown> = {
         "aufbau"
       ],
       "betroffen": [
-        "{{param.node}}"
+        "b4e48d79-2872-45aa-9a45-6843a2a85c0f"
       ],
       "ohneSicherungGrund": "Es entstehen nur neue Lab-Fixtures und Bindungen auf den Wegwerf-Rechnern {{param.name_server}}/{{param.name_client}}; keine produktive Konfiguration wird verändert.",
       "schritte": [
@@ -1585,8 +1585,8 @@ const PKI_LAB: Record<string, unknown> = {
         "test"
       ],
       "betroffen": [
-        "{{param.node}}",
-        "UDMPRO"
+        "b4e48d79-2872-45aa-9a45-6843a2a85c0f",
+        "3c4f9a1b-ce68-4bf0-95b1-3d9635d09c5e"
       ],
       "zweck": "stilllegung",
       "schritte": [

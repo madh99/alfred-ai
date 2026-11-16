@@ -58,7 +58,7 @@ describe('Bauplan-Vorlage pki_lab', () => {
       ['proxmox', 'list_vms', '| 157 |'], ['proxmox', 'list_vms', '| 158 |'], ['unifi', 'list_networks', '| 832 |'],
       ['unifi', 'list_networks', '| PKI-Lab |'], ['unifi', 'list_firewall_policies', '→'],
     ]);
-    expect(plaene[3]!.betroffen).toEqual(['pve', 'UDMPRO', 'sql01']);
+    expect(plaene[3]!.betroffen).toEqual(['b4e48d79-2872-45aa-9a45-6843a2a85c0f', '3c4f9a1b-ce68-4bf0-95b1-3d9635d09c5e', '460657cf-7370-4cef-8a46-61b7a3560694']);
   });
 
   it('Abbau löscht die Policies und bereinigt das Netz über die IDs der erzeugenden Aufbau-Schritte', () => {
@@ -116,7 +116,7 @@ describe('Bauplan-Vorlage pki_lab', () => {
     const pl = new ChangePlanung({
       itsm: { liste: async () => [], hole: async () => null, legeAn: async () => { throw new Error('nie speichern'); } } as never,
       skill: n => skills[n] as never,
-      assets: async () => [{ id: 'a-pve', name: 'pve' }, { id: 'a-udm', name: 'UDMPRO' }, { id: 'a-sql', name: 'sql01' }] as never,
+      assets: async () => [{ id: 'b4e48d79-2872-45aa-9a45-6843a2a85c0f', name: 'pve' }, { id: '3c4f9a1b-ce68-4bf0-95b1-3d9635d09c5e', name: 'UDMPRO' }, { id: '460657cf-7370-4cef-8a46-61b7a3560694', name: 'sql01' }] as never,
       auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
     });
     let plaene: Array<Record<string, unknown>> = [];
@@ -178,7 +178,7 @@ describe('Bauplan-Vorlage pki_lab', () => {
     const pl = new ChangePlanung({
       itsm: itsm as never,
       skill: nm => skills[nm] as never,
-      assets: async () => [{ id: 'a-pve', name: 'pve' }, { id: 'a-udm', name: 'UDMPRO' }, { id: 'a-sql', name: 'sql01' }] as never,
+      assets: async () => [{ id: 'b4e48d79-2872-45aa-9a45-6843a2a85c0f', name: 'pve' }, { id: '3c4f9a1b-ce68-4bf0-95b1-3d9635d09c5e', name: 'UDMPRO' }, { id: '460657cf-7370-4cef-8a46-61b7a3560694', name: 'sql01' }] as never,
       auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
       bestaetigung: async () => true,
     });
