@@ -73,6 +73,14 @@ export class ProblemRepository {
        JSON.stringify(data.affectedServiceIds ?? []), data.detectedBy ?? 'manual',
        data.detectionMethod ?? null, data.workaround ?? null, now, now, now],
     );
+    // v1876 — problem_id am Incident gleich mitsetzen: sonst findet detectPatterns (problem_id IS NULL)
+    // dieselben Incidents beim nächsten Lauf wieder (Realfall 16.11.: 2731 Dubletten).
+    for (const incidentId of data.linkedIncidentIds ?? []) {
+      await this.db.execute(
+        `UPDATE cmdb_incidents SET problem_id = ? WHERE id = ? AND user_id = ?`,
+        [id, incidentId, userId],
+      );
+    }
     return (await this.getProblemById(userId, id))!;
   }
 
@@ -179,13 +187,13 @@ export class ProblemRepository {
   async linkIncident(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
     const problem = await this.getProblemById(userId, problemId);
     if (!problem) return null;
-    if (problem.linkedIncidentIds.includes(incidentId)) return problem;
-
-    const newIds = [...problem.linkedIncidentIds, incidentId];
-    await this.db.execute(
-      `UPDATE cmdb_problems SET linked_incident_ids = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [JSON.stringify(newIds), new Date().toISOString(), problemId, userId],
-    );
+    if (!problem.linkedIncidentIds.includes(incidentId)) {
+      const newIds = [...problem.linkedIncidentIds, incidentId];
+      await this.db.execute(
+        `UPDATE cmdb_problems SET linked_incident_ids = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+        [JSON.stringify(newIds), new Date().toISOString(), problemId, userId],
+      );
+    }
     // Denormalized: set problem_id on incident
     await this.db.execute(
       `UPDATE cmdb_incidents SET problem_id = ? WHERE id = ? AND user_id = ?`,

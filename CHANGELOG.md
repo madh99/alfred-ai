@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Problem-Dubletten aus der Mustererkennung (v1876)
+
+- Beim automatischen Anlegen eines Problems wird die Verknüpfung jetzt auch am Incident gesetzt. Vorher sah die Mustererkennung dieselben Incidents bei jedem Lauf (alle 30 min) wieder als unverknüpft und legte ein weiteres gleiches Problem an.
+- `linkIncident` setzt die Verknüpfung am Incident auch dann, wenn der Incident im Problem bereits eingetragen ist.
+
 ### Added — Betriebsdokument aus Live-Daten (v1875)
 
 - Neue Aktion `betrieb_erzeugen` im Skill `dokumentation`: erzeugt das Betriebsdokument eines Systems (13 Kapitel, PDF und Word, Ablage lokal und auf pve2) aus CMDB, Proxmox (VMs, Sicherungsjobs, Pools, Snapshots), UniFi (Firewall-Zonen, Richtlinien, DNS), pfSense/MikroTik/NPM/Cloudflare-Bestand, Changes, Standard-Vorlagen und Tresor-Namen.
