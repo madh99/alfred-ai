@@ -38,7 +38,7 @@ function aufbau(opts: { changes?: CmdbChangeRequest[]; abgeschnitten?: boolean; 
   const gespeichert: Array<Parameters<DokumenteDeps['cmdb']['saveDocument']>[1] & { id: string; version: number }> = [];
   const lokal = new Map<string, Buffer>();
   const pve2: Array<{ ziel: string; lokal: string }> = [];
-  const instanzen: Array<{ id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; status: string; createdAt: string }> = [];
+  const instanzen: Array<{ id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; status: string; createdAt: string; vorlageKey?: string; vorlageVersion?: number }> = [];
   const ablage: AblageDeps = {
     schreibeLokal: vi.fn(async (p: string, b: Buffer) => { lokal.set(p, b); }),
     sendeAnPve2: vi.fn(async (z: string, l: string) => { pve2.push({ ziel: z, lokal: l }); return opts.pve2 ? opts.pve2(z, l) : { ok: true }; }),
@@ -62,9 +62,10 @@ function aufbau(opts: { changes?: CmdbChangeRequest[]; abgeschnitten?: boolean; 
       },
     },
     instanzen: {
-      anlegen: async (_u, d) => { const i = { id: `inst-${instanzen.length + 1}`, ...d, status: 'aktiv', createdAt: JETZT }; instanzen.push(i); return i; },
+      anlegen: async (_u, d: Parameters<DokumenteDeps['instanzen']['anlegen']>[1] & { vorlageKey?: string; vorlageVersion?: number }) => { const i = { id: `inst-${instanzen.length + 1}`, ...d, status: 'aktiv', createdAt: JETZT }; instanzen.push(i); return i; },
       finde: async (_u, x) => instanzen.find(i => i.id === x || i.name === x),
       aendern: async (_u, id, d) => { const i = instanzen.find(z => z.id === id); if (i) Object.assign(i, d); },
+      findeNachChange: async (_u, cid) => instanzen.find(i => i.changeIds.includes(cid)),
     },
     ablage,
     datenOrdner: '/daten',
@@ -701,5 +702,69 @@ describe('Skill dokumentation — betrieb_erzeugen', () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain('kein gültiges JSON');
     expect(t.gespeichert).toHaveLength(0);
+  });
+});
+
+describe('Testprotokoll am Ende eines Bauplan-Pakets (V3)', () => {
+  const P1 = change('a1a1a1a1-1111-2222-3333-444444444444', 'Paket Teil 1');
+  const P2 = change('a2a2a2a2-1111-2222-3333-444444444444', 'Paket Teil 2');
+  const laeuft = change('a3a3a3a3-1111-2222-3333-444444444444', 'Paket Teil 3', { status: 'in_progress' as CmdbChangeRequest['status'] });
+  const paket = async (t: ReturnType<typeof aufbau>, ids: string[], art: 'testprotokoll' | 'betrieb' = 'testprotokoll', vorlageKey: string | null = 'pki-lab') =>
+    t.deps.instanzen.anlegen('o', { name: 'lab1', dokumentart: art, changeIds: ids, ...(vorlageKey ? { vorlageKey, vorlageVersion: 1 } : {}) } as never);
+
+  it('letzter Change endet: Testprotokoll an der Instanz, Dateien an den Owner', async () => {
+    const t = aufbau({ changes: [P1, P2] });
+    const i = await paket(t, [P1.id, P2.id]);
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P2, 'completed');
+    const tp = t.gespeichert.filter(g => g.docType === 'testprotokoll');
+    expect(tp).toHaveLength(1);
+    expect(tp[0]!.linkedEntityType).toBe('bauplan_instanz');
+    expect(tp[0]!.linkedEntityId).toBe(i.id);
+    expect(r!.zeile).toContain('Abnahmeprotokoll erstellt');
+    expect(r!.zeile).toContain('Testprotokoll');
+    expect(r!.anhaenge!.some(a => a.fileName.startsWith('testprotokoll'))).toBe(true);
+  });
+
+  it('vorletzter Change: nur Hinweis „noch n Changes offen“, kein Testprotokoll', async () => {
+    const t = aufbau({ changes: [P1, laeuft] });
+    await paket(t, [P1.id, laeuft.id]);
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P1, 'completed');
+    expect(t.gespeichert.filter(g => g.docType === 'testprotokoll')).toHaveLength(0);
+    expect(r!.zeile).toContain('Bauplan-Paket lab1: noch 1 Changes offen');
+  });
+
+  it('Betriebs-Paket: nur Hinweiszeile, kein Dokument', async () => {
+    const t = aufbau({ changes: [P1, P2] });
+    await paket(t, [P1.id, P2.id], 'betrieb');
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P2, 'completed');
+    expect(r!.zeile).toContain('Betriebsdokument: mit betrieb_erzeugen nach instanz_aendern (assets) erzeugen');
+    expect(t.gespeichert.filter(g => g.docType === 'betrieb')).toHaveLength(0);
+  });
+
+  it('Change ohne Instanz und Instanz ohne vorlageKey: Verhalten wie bisher', async () => {
+    const t = aufbau({ changes: [P1, P2] });
+    const r0 = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P1, 'completed');
+    expect(r0!.zeile).not.toContain('Bauplan-Paket');
+    await paket(t, [P1.id, P2.id], 'testprotokoll', null);
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P2, 'completed');
+    expect(r!.zeile).not.toContain('Bauplan-Paket');
+    expect(t.gespeichert.filter(g => g.docType === 'testprotokoll')).toHaveLength(0);
+  });
+
+  it('zwei Changes enden fast gleichzeitig: Testprotokoll nur einmal', async () => {
+    const t = aufbau({ changes: [P1, P2], langsam: true });
+    await paket(t, [P1.id, P2.id]);
+    const d = new DokumenteDienst(t.deps);
+    await Promise.all([d.abnahmeNachEnde('o', P1, 'completed'), d.abnahmeNachEnde('o', P2, 'completed')]);
+    expect(t.gespeichert.filter(g => g.docType === 'testprotokoll')).toHaveLength(1);
+  });
+
+  it('Fehler beim Testprotokoll verliert die Abnahme nicht', async () => {
+    const t = aufbau({ changes: [P1, P2] });
+    await paket(t, [P1.id, P2.id]);
+    t.deps.instanzen.finde = async () => { throw new Error('db weg'); };
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P2, 'completed');
+    expect(r!.zeile).toContain('Abnahmeprotokoll erstellt');
+    expect(r!.zeile).toContain('Testprotokoll nicht erstellt');
   });
 });

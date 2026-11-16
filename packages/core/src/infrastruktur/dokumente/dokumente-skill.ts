@@ -25,7 +25,7 @@ export const MAX_INHALT = 500_000;
 const INSTANZ_NAME = /^(?!\.+$)[\w.-]{1,80}$/;
 const MAX_CHANGES = 20;
 
-export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string; status: string; createdAt: string }
+export interface BauplanInstanzDaten { id: string; name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string; status: string; createdAt: string; vorlageKey?: string; vorlageVersion?: number }
 
 /** Nachschlagen für Betriebs-Instanzen (alles je Owner); fehlt es, kann keine Betriebs-Instanz angelegt werden */
 export interface BetriebNachschlagen {
@@ -72,6 +72,8 @@ export interface DokumenteDeps {
     anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanzDaten>;
     finde(userId: string, idOderName: string): Promise<BauplanInstanzDaten | undefined>;
     aendern(userId: string, id: string, d: { changeIds: string[]; parameter?: string }): Promise<void>;
+    /** Instanz, deren Changes den Change enthalten (Bauplan-Pakete V3) */
+    findeNachChange(userId: string, changeId: string): Promise<BauplanInstanzDaten | undefined>;
   };
   betrieb?: BetriebNachschlagen;
   /** lesende Sammler für das Betriebsdokument; fehlt es, kann kein Betriebsdokument erzeugt werden */
@@ -236,6 +238,49 @@ export class DokumenteDienst {
    * und kann ohne Ende verworfen werden — dann sofort das Sammelprotokoll über die Serie bis hierher.
    */
   async abnahmeNachEnde(o: string, c: CmdbChangeRequest, status?: EndStatus): Promise<NachEndeErgebnis | undefined> {
+    const abnahme = await this.abnahmeEinzel(o, c, status);
+    // Bauplan-Paket erst NACH der Abnahme: sie geht nie verloren, ein Fehler im Paket ändert sie nicht
+    const paket = await this.paketNachEnde(o, c, status);
+    if (!paket) return abnahme;
+    if (!abnahme) return paket;
+    return { zeile: `${abnahme.zeile}
+${paket.zeile}`, ...(abnahme.anhaenge || paket.anhaenge ? { anhaenge: [...(abnahme.anhaenge ?? []), ...(paket.anhaenge ?? [])] } : {}) };
+  }
+
+  /** zuletzt erzeugter Stand des Testprotokolls je Instanz (Menge der beendeten Changes mit Status) — gegen doppelte Erzeugung bei gleichzeitigem Ende */
+  private readonly paketStand = new Map<string, string>();
+
+  /**
+   * Bauplan-Paket (Instanz mit vorlageKey): haben alle Changes ein Ende, Testprotokoll (bzw. Hinweis beim Betriebsdokument); sonst Hinweiszeile.
+   * Instanzen ohne vorlageKey und Changes ohne Instanz bleiben unberührt. Wirft nie.
+   */
+  private async paketNachEnde(o: string, c: CmdbChangeRequest, status?: EndStatus): Promise<NachEndeErgebnis | undefined> {
+    try {
+      const inst = await this.d.instanzen.findeNachChange(o, c.id);
+      if (!inst?.vorlageKey) return undefined;
+      return await this.seriell(`paket|${o}|${inst.id}`, async () => {
+        const q = await this.d.quellen.changes(o);
+        const alle = new Map(q.changes.map(x => [x.id, x]));
+        const ende = new Set<string>(['completed', 'failed', 'rolled_back', 'cancelled']);
+        const stand = inst.changeIds.map(id => ({ id, st: id === c.id ? (status ?? alle.get(id)?.status) : alle.get(id)?.status }));
+        const offen = stand.filter(x => !x.st || !ende.has(x.st)).length;
+        if (offen > 0) return { zeile: `Bauplan-Paket ${inst.name}: noch ${offen} Changes offen` };
+        if (inst.dokumentart === 'betrieb') return { zeile: 'Betriebsdokument: mit betrieb_erzeugen nach instanz_aendern (assets) erzeugen' };
+        const signatur = stand.map(x => `${x.id}:${x.st}`).sort().join('|');
+        // gleichzeitig endende Changes: der zweite Aufruf sieht denselben Stand und erzeugt nichts doppelt
+        if (this.paketStand.get(inst.id) === signatur) return undefined;
+        const e = await this.testprotokoll(o, inst.id, {});
+        this.paketStand.set(inst.id, signatur);
+        return this.ergebnisNachEnde('Testprotokoll erstellt', e);
+      });
+    } catch (err) {
+      const grund = schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300);
+      this.d.protokoll?.('Testprotokoll am Paket-Ende nicht erstellt', { changeId: c.id, fehler: grund });
+      return { zeile: `Testprotokoll nicht erstellt: ${grund}` };
+    }
+  }
+
+  private async abnahmeEinzel(o: string, c: CmdbChangeRequest, status?: EndStatus): Promise<NachEndeErgebnis | undefined> {
     try {
       let q: Awaited<ReturnType<DokuQuellen['changes']>> | undefined;
       try { q = await this.d.quellen.changes(o); } catch (err) {
