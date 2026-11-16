@@ -1,4 +1,4 @@
-import { HOSTNAME, festeIpPruefung, ipZahl, neuesNetzFehler, netzWerte, type FestIpClient, type FestIpNetz, type NetzVorhanden } from './netz-regeln.js';
+import { HOSTNAME, festeIpPruefung, ipZahl, zahlIp, neuesNetzFehler, netzWerte, type FestIpClient, type FestIpNetz, type NetzVorhanden } from './netz-regeln.js';
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
@@ -51,6 +51,7 @@ export class UniFiSkill extends Skill {
             'forget_client',
             'adopt_device',
             'next_free_ip',
+            'subnet_pruefen',
             'list_firewall_rules',
             'create_firewall_rule',
             'list_firewall_policies',
@@ -75,7 +76,7 @@ export class UniFiSkill extends Skill {
             'create_port_forward',
             'delete_port_forward',
           ],
-          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME|FORWARD — FORWARD leitet alle Anfragen für die Domäne hostname an den DNS-Server ip weiter, z. B. AD-Zone an den DC; ausfallsicher: je DNS-Server ein eigener Aufruf, gleiche Domäne) / delete_dns_record (hostname; bei FORWARD optional ip = nur dieses Ziel). Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
+          description: 'The UniFi action to perform. Netz-Aktionen (Owner 22.10.): create_network (network_name, vlan, subnet, dhcp, dhcp_start, dhcp_stop) / delete_network (network_name) — Rückweg zueinander; lokales DNS: list_dns_records, create_dns_record (hostname, ip, record_type A|AAAA|CNAME|FORWARD — FORWARD leitet alle Anfragen für die Domäne hostname an den DNS-Server ip weiter, z. B. AD-Zone an den DC; ausfallsicher: je DNS-Server ein eigener Aufruf, gleiche Domäne) / delete_dns_record (hostname; bei FORWARD optional ip = nur dieses Ziel). Netz-Vorabkontrolle (nur lesen): subnet_pruefen (subnet in Netzform, z. B. 10.203.29.0/27) — erste Zeile FREI oder je überschneidendem Netz „BELEGT: <name> (<ip_subnet>)“. Port-Weiterleitungen (WAN → intern): list_port_forwards; create_port_forward (forward_name, protocol tcp|udp|tcp_udp, port = außen, forward_ip, forward_port, source optional) / delete_port_forward (forward_name oder forward_id) nur in Changes, Rückweg zueinander.',
         },
         mac: {
           type: 'string',
@@ -130,7 +131,7 @@ export class UniFiSkill extends Skill {
           description: 'Netzwerk/VLAN Name für next_free_ip, create_network, delete_network (z.B. "Default", "Keller", "VLAN 10")',
         },
         vlan: { type: 'number', description: 'create_network: VLAN-ID 2–4094' },
-        subnet: { type: 'string', description: 'create_network: Subnetz, z. B. 10.203.21.0/28 (Gateway = erste Adresse)' },
+        subnet: { type: 'string', description: 'create_network: Subnetz, z. B. 10.203.21.0/28 (Gateway = erste Adresse); subnet_pruefen: zu prüfendes Netz in Netzform (Netzadresse/Präfix 8–30), z. B. 10.203.29.0/27' },
         dhcp: { type: 'boolean', description: 'create_network: DHCP an (Standard true)' },
         dhcp_start: { type: 'string', description: 'create_network: erste DHCP-Adresse (optional)' },
         dhcp_stop: { type: 'string', description: 'create_network: letzte DHCP-Adresse (optional)' },
@@ -327,6 +328,8 @@ export class UniFiSkill extends Skill {
           return action === 'set_fixed_ip' ? await this.festeIpSetzen(input) : await this.festeIpEntfernen(input);
         case 'create_network':
           return await this.netzAnlegen(input);
+        case 'subnet_pruefen':
+          return await this.subnetPruefen(input.subnet);
         case 'delete_network':
           // Review v1871: Löschen schreibt jetzt auch die Firewall-Zonen — wie delete_zone nur als Change-Schritt
           if (_context?.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes` };
@@ -1286,6 +1289,34 @@ export class UniFiSkill extends Skill {
     return { success: true, data: { id, name: neu.name, verteilt, vlan: neu.vlan, gateway: w.gateway, ip_subnet: w.ipSubnet, ...(neu.dhcp ? { dhcp_start: w.dhcpStart, dhcp_stop: w.dhcpStop } : {}) }, display: `✅ Netz „${neu.name}“ angelegt: VLAN ${neu.vlan}, Gateway ${w.ipSubnet}${neu.dhcp ? `, DHCP ${w.dhcpStart}–${w.dhcpStop}` : ', ohne DHCP'}` };
   }
 
+  /**
+   * Bauplan V4 (Vorab-Kontrolle „Netz frei“): überschneidet sich subnet mit einem vorhandenen Netz? Liest nur rest/networkconf.
+   * ip_subnet steht in UniFi als Gateway/Präfix (10.203.28.1/28, 192.168.3.2/24) und wird auf den Netzbereich normalisiert.
+   * Ein Befund ist kein Fehler (success true); nur eine unlesbare Netzliste oder ein unlesbares ip_subnet ist einer — nie still FREI.
+   */
+  private async subnetPruefen(roh: unknown): Promise<SkillResult> {
+    const m = typeof roh === 'string' ? /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/.exec(roh) : null;
+    const start = m ? ipZahl(m[1]!) : undefined;
+    const laenge = m ? Number(m[2]) : NaN;
+    if (!m || start === undefined || laenge < 8 || laenge > 30 || m[2]!.length > 1 && m[2]!.startsWith('0'))
+      return { success: false, error: 'subnet: Netz in Netzform mit Präfix 8–30, z. B. 10.203.29.0/27' };
+    const groesse = 2 ** (32 - laenge);
+    if (start % groesse !== 0) return { success: false, error: `subnet: ${roh as string} ist keine Netzadresse (Host-Bits gesetzt) — Netzform, z. B. ${zahlIp(Math.floor(start / groesse) * groesse)}/${laenge}` };
+    const neu = { netz: start, broadcast: start + groesse - 1 };
+    const netze = await this.request<Array<Record<string, unknown>>>('GET', 'rest/networkconf');
+    if (!Array.isArray(netze)) return { success: false, error: 'Netzliste (rest/networkconf) nicht lesbar' };
+    const ueberlappt: Array<{ name: string; ip_subnet: string }> = [];
+    for (const n of netze) {
+      if (n.ip_subnet === undefined || n.ip_subnet === null || n.ip_subnet === '') continue; // WAN/VPN ohne eigenes Subnetz
+      const name = String(n.name ?? n._id ?? '?');
+      const b = bereichVon(n.ip_subnet);
+      if (!b) return { success: false, error: `ip_subnet von Netz ${name} nicht lesbar: ${JSON.stringify(n.ip_subnet)}` };
+      if (b.netz <= neu.broadcast && neu.netz <= b.broadcast) ueberlappt.push({ name, ip_subnet: String(n.ip_subnet) });
+    }
+    const display = ueberlappt.length ? ueberlappt.map(u => `BELEGT: ${u.name} (${u.ip_subnet})`).join('\n') : `FREI\n${roh as string} überschneidet sich mit keinem der ${netze.length} Netze`;
+    return { success: true, data: { frei: !ueberlappt.length, ueberlappt }, display };
+  }
+
   private async festeIpLesen(mac: string): Promise<FestIpClient | undefined> {
     const alle = (await this.request<FestIpClient[]>('GET', 'rest/user')) ?? [];
     return alle.find(c => String(c.mac ?? '').toLowerCase() === mac);
@@ -1790,4 +1821,15 @@ ${zeilen.join('\n')}` : 'Keine Port-Weiterleitungen eingerichtet.' };
     parts.push(`${m}m`);
     return parts.join(' ');
   }
+}
+
+/** UniFi-ip_subnet (Adresse/Präfix 0–32, meist Gateway-Form) → Netzbereich; undefined = nicht lesbar */
+function bereichVon(x: unknown): { netz: number; broadcast: number } | undefined {
+  const m = typeof x === 'string' ? /^\s*(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})\s*$/.exec(x) : null;
+  const ip = m ? ipZahl(m[1]!) : undefined;
+  const laenge = m ? Number(m[2]) : NaN;
+  if (ip === undefined || !(laenge >= 0 && laenge <= 32)) return undefined;
+  const groesse = 2 ** (32 - laenge);
+  const netz = Math.floor(ip / groesse) * groesse;
+  return { netz, broadcast: netz + groesse - 1 };
 }

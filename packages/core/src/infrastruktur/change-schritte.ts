@@ -229,6 +229,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'windows_pki') return ['status', 'artefakte_lesen', 'publication_pruefen', 'trust_pruefen', 'ca_sicherung_status', 'codesignatur_status', 'codesignatur_selbsttest', 'zertifikat_pruefen', 'erneuerung_status', 'anforderung_liste'].includes(aktion) ? 'lesen' : 'aendern';
   // v1866 — pki_lab: alle Bausteine ändern (nur auf Lab-Rechnern)
   if (skill === 'pki_lab') return 'aendern';
+  // Bauplan V4 — unifi.subnet_pruefen liest nur die Netzliste (Vorab-Kontrolle „Netz frei“); LESE_MUSTER greift nur am Anfang
+  if (skill === 'unifi' && aktion === 'subnet_pruefen') return 'lesen';
   if (skill === 'sql_server') return ['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen'].includes(aktion) ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
