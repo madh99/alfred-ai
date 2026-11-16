@@ -176,7 +176,7 @@ describe('I8e Linux-SQL — Skripttext', () => {
     expect(s).toContain('blkid -p -o export "$dev"');
     expect(s).toContain('wipefs --noheadings --output TYPE "$dev"');
     expect(s).toContain('[ "$(lsblk -nro NAME "$dev" | wc -l)" -eq 1 ]');
-    expect(s).toContain('mkfs.xfs -q -L "${LABEL[$i]}" "$dev"');
+    expect(s).toContain('mkfs.xfs -q -K -L "${LABEL[$i]}" "$dev"');
     expect(s).not.toMatch(/mkfs\.xfs[^\n]* -f/);
     expect(s).toContain("printf 'UUID=%s %s xfs defaults,noatime,nofail 0 0\\n'");
     // Prüfphase vollständig vor der ersten Änderung
@@ -192,10 +192,18 @@ describe('I8e Linux-SQL — Skripttext', () => {
     expect(MS_QUELLE_WERKZEUGE).toBe('deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main');
     expect(s).toContain("V='17.0.4006.2-1'");
     expect(s).toContain('"mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO"');
-    expect(s).toContain('apt-mark hold mssql-server mssql-tools18 msodbcsql18');
+    expect(s).toContain('apt-mark -o DPkg::Lock::Timeout=300 hold mssql-server mssql-tools18 msodbcsql18');
+    expect(s).toContain('apt-get -o DPkg::Lock::Timeout=300 update');
+    expect(s).toContain('ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install');
+    expect(s).not.toMatch(/(^\s*|ACCEPT_EULA=Y )apt-(get|mark) (?!-o DPkg::Lock::Timeout=300 )/m);
+    // Einhängepunkte vor jeder Änderung (und damit vor setup) Pflicht
+    expect(s).toContain("EINHAENGEN=('/var/opt/mssql/data' '/var/opt/mssql/log' '/var/opt/mssql/tempdb' '/var/opt/mssql/backup')");
+    expect(s.indexOf('mountpoint -q "$d" || abbruch')).toBeGreaterThan(0);
+    expect(s.indexOf('mountpoint -q "$d" || abbruch')).toBeLessThan(s.indexOf('curl -fsSL'));
+    expect(s.indexOf('mountpoint -q "$d" || abbruch')).toBeLessThan(s.indexOf('mssql-conf -n setup'));
+    expect(installSkript({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data'] })).toContain("EINHAENGEN=('/var/opt/mssql/data')");
     expect(s).toContain("PID='EnterpriseDeveloper'");
-    expect(s).toContain('ACCEPT_EULA=Y apt-get install');
-    expect(s).not.toMatch(/apt-get install[^\n]*mssql-server(?!=)/);
+    expect(s).not.toMatch(/apt-get [^\n]*install[^\n]*mssql-server(?!=)/);
     expect(s).toContain('Z=schon');
     expect(s).toContain('[ "$ee" = 3 ]');
   });
@@ -223,12 +231,45 @@ describe('I8e Linux-SQL — Skripttext', () => {
     const m = sqlSkript('maxspeicher', { mb: 10240 });
     expect(m).toContain("EXEC sp_configure N'\\''max server memory (MB)'\\'', 10240");
     expect(m).toContain('[ "$neu" = 10240 ]');
+    expect(m).toContain("IF @adv = 0 BEGIN EXEC sp_configure N'\\''show advanced options'\\'', 0; RECONFIGURE; END");
   });
   it.skipIf(!BASH)('bash -n: jedes erzeugte Skript ist syntaktisch gültig', () => {
     for (const [name, s] of alleSkripte()) {
       const r = spawnSync('bash', ['-n'], { input: s, encoding: 'utf8' });
       expect(r.stderr, name).toBe('');
       expect(r.status, name).toBe(0);
+    }
+  });
+  it('ALFRED_P enthält nur geprüfte Felder — fremde Schlüssel (z. B. kennwort) nie im Skripttext', () => {
+    const G = 'GEHEIM-xyz-123';
+    const skripte = [
+      plattenSkript({ platten: PLATTEN.platten.map(x => ({ ...x, kennwort: G })), kennwort: G } as never),
+      installSkript({ ...INSTALL, kennwort: G } as never),
+      konfigSkript({ ...KONFIG, kennwort: G } as never),
+      sqlSkript('tempdb', { ...TEMPDB, kennwort: G } as never),
+      sqlSkript('maxspeicher', { mb: 10240, kennwort: G } as never),
+      sqlSkript('login', { ...LOGIN, kennwort: G } as never),
+      linuxBausteinSkript(LINUX_SQL_BAUSTEINE.status, { kennwort: G }),
+    ];
+    for (const s of skripte) { expect(s).not.toContain(G); expect(s).not.toContain('"kennwort"'); }
+    expect(plattenSkript(PLATTEN)).toContain(`ALFRED_P='${JSON.stringify(PLATTEN)}'`);
+  });
+  it('Installation: Einhängepunkte nur aus der festen Liste, data Pflicht', () => {
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/log'] })).toBeUndefined();
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/log'] })).toContain('einhaengepunkte');
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/tmp'] })).toContain('einhaengepunkte');
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/data'] })).toContain('einhaengepunkte');
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: '/var/opt/mssql/data' })).toContain('einhaengepunkte');
+  });
+  it.skipIf(!PYTHON)('PY_FELD: Wert mit nicht druckbaren Zeichen (auch \\n am Ende, NUL) → Exit ≠ 0 statt still kürzen', () => {
+    const feld = (json: string) => spawnSync(PYTHON!, ['-c', PY_FELD, 'sa'], { input: json, encoding: 'utf8' });
+    expect(feld('{"sa":"abc"}').stdout).toBe('abc');
+    expect(feld('{"sa":"abc"}').status).toBe(0);
+    expect(feld('{"x":1}').status).toBe(0);
+    for (const j of ['{"sa":"abc\\n"}', '{"sa":"a\\u0000b"}', '{"sa":"a\\tb"}', '{"sa":"\\n!!rm -rf /"}']) {
+      const r = feld(j);
+      expect(r.status, j).not.toBe(0);
+      expect(r.stdout, j).toBe('');
     }
   });
   it.skipIf(!PYTHON)('eingebettete Python-Programme sind syntaktisch gültig', () => {
@@ -279,14 +320,14 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Login-Skript ausgeführt', () => {
 // ── Platten-Skript mit nachgebildeten Geräten ausführen (bash) ────────────────────────────────────────────────────────────────────
 interface FakePlatte { scsi: number; dev: string; bytes: number; typ?: string; label?: string; uuid?: string; teile?: number; eingehaengt?: string; treffer?: number }
 
-function plattenLauf(platten: FakePlatte[], p = PLATTEN, fstab = 'UUID=aaaa / ext4 defaults 0 1') {
+function plattenLauf(platten: FakePlatte[], p = PLATTEN, fstab = 'UUID=aaaa / ext4 defaults 0 1', ende = '\n') {
   const skript = plattenSkript(p);
   const marke = '# ALFRED-ABLAUF';
   expect(skript).toContain(marke);
   const a = (o: Record<string, string | number | undefined>) => Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => `[${k}]=${shQ(String(v))}`).join(' ');
   const stubs = [
     'FSTAB="$T/fstab"; LOG="$T/log"; : >"$LOG"',
-    `printf '%s\\n' ${shQ(fstab)} >"$FSTAB"`,
+    `printf '%s' ${shQ(fstab + ende)} >"$FSTAB"`,
     `declare -A SCSIDEV=(${a(Object.fromEntries(platten.map(x => [x.scsi, x.dev])))})`,
     `declare -A TREFFER=(${a(Object.fromEntries(platten.map(x => [x.scsi, x.treffer])))})`,
     `declare -A HCTLN=(${a(Object.fromEntries(platten.map(x => [x.dev, x.scsi])))})`,
@@ -308,7 +349,7 @@ function plattenLauf(platten: FakePlatte[], p = PLATTEN, fstab = 'UUID=aaaa / ex
     'blockdev() { echo "${GROESSE[${@: -1}]}"; }',
     'blkid() { local d=${@: -1}; case "$*" in *"-s TYPE"*) echo "${TYP[$d]:-}" ;; *"-s LABEL"*) echo "${LAB[$d]:-}" ;; *"-s UUID"*) echo "${UUIDM[$d]:-}" ;; *export*) if [ -n "${TYP[$d]:-}" ]; then echo "TYPE=${TYP[$d]}"; fi ;; esac; return 0; }',
     'wipefs() { local d=${@: -1}; if [ -n "${TYP[$d]:-}" ]; then echo "${TYP[$d]}"; fi; }',
-    'mkfs.xfs() { echo "mkfs $*" >>"$LOG"; local d=${@: -1}; TYP[$d]=xfs; LAB[$d]=$3; UUIDM[$d]=0123abcd-0000-4000-8000-00000000000${HCTLN[$d]}; }',
+    'mkfs.xfs() { echo "mkfs $*" >>"$LOG"; local d=${@: -1}; TYP[$d]=xfs; LAB[$d]=$4; UUIDM[$d]=0123abcd-0000-4000-8000-00000000000${HCTLN[$d]}; }',
     'mount() { echo "mount $*" >>"$LOG"; local z=${@: -1} u d; u=$(awk -v z="$z" \'$2 == z { sub(/^UUID=/, "", $1); print $1 }\' "$FSTAB"); for d in "${!UUIDM[@]}"; do [ "${UUIDM[$d]}" != "$u" ] || MNT[$z]=$d; done; }',
     'findmnt() { case "$*" in *"-o SOURCE --mountpoint"*) echo "${MNT[${@: -1}]:-}" ;; *"-o FSTYPE --mountpoint"*) [ -z "${MNT[${@: -1}]:-}" ] || echo xfs ;; *"-o TARGET -S"*) local z; for z in "${!MNT[@]}"; do [ "${MNT[$z]}" != "${@: -1}" ] || echo "$z"; done ;; esac; }',
   ].join('\n');
@@ -336,8 +377,8 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Ger�
     expect(r.rc, r.aus + r.stderr).toBe(0);
     expect(r.ergebnis?.zustand).toBe('geaendert');
     expect((r.ergebnis?.platten as Array<{ aktion: string }>).map(x => x.aktion)).toEqual(['formatiert', 'formatiert', 'formatiert', 'formatiert']);
-    expect(r.log).toContain('mkfs -q -L mssql-data /dev/sdb');
-    expect(r.log).toContain('mkfs -q -L mssql-backup /dev/sde');
+    expect(r.log).toContain('mkfs -q -K -L mssql-data /dev/sdb');
+    expect(r.log).toContain('mkfs -q -K -L mssql-backup /dev/sde');
     expect(r.fstab).toContain('UUID=0123abcd-0000-4000-8000-000000000001 /var/opt/mssql/data xfs defaults,noatime,nofail 0 0');
     expect(r.fstab).toContain('/var/opt/mssql/backup xfs defaults,noatime,nofail 0 0');
     expect(r.log).toContain('systemctl daemon-reload');
@@ -390,6 +431,19 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Ger�
   });
   it('fstab hängt das Ziel schon mit fremder UUID ein → Abbruch', () => {
     const r = plattenLauf(LEER, PLATTEN, 'UUID=aaaa / ext4 defaults 0 1\nUUID=ffff /var/opt/mssql/data xfs defaults 0 0');
+    expect(r.rc).toBe(1);
+    expect(r.log).not.toContain('mkfs');
+  });
+  it('fstab ohne Zeilenende: letzte Zeile bleibt unverändert, neue Einträge in eigenen Zeilen', () => {
+    const r = plattenLauf(LEER, PLATTEN, 'UUID=aaaa / ext4 defaults 0 1', '');
+    expect(r.rc, r.aus).toBe(0);
+    const zeilen = r.fstab.trimEnd().split('\n');
+    expect(zeilen[0]).toBe('UUID=aaaa / ext4 defaults 0 1');
+    expect(zeilen).toHaveLength(5);
+    expect(zeilen[1]).toBe('UUID=0123abcd-0000-4000-8000-000000000001 /var/opt/mssql/data xfs defaults,noatime,nofail 0 0');
+  });
+  it('fstab hängt ein anderes Ziel mit fremder UUID ein → Abbruch', () => {
+    const r = plattenLauf(LEER, PLATTEN, 'UUID=ffff /var/opt/mssql/log xfs defaults 0 0');
     expect(r.rc).toBe(1);
     expect(r.log).not.toContain('mkfs');
   });

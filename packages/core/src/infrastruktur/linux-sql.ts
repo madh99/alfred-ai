@@ -75,7 +75,12 @@ export const PY_FELD = [
   '    v = json.loads(sys.stdin.read() or "{}").get(sys.argv[1])',
   'except Exception:',
   '    v = None',
-  'sys.stdout.write(v if isinstance(v, str) else "")',
+  'if not isinstance(v, str):',
+  '    v = ""',
+  '# nie still kürzen: Zeilenumbruch, NUL, Tab, Steuerzeichen → Exit 3 ohne Ausgabe',
+  'if not all(c.isprintable() for c in v):',
+  '    sys.exit(3)',
+  'sys.stdout.write(v)',
 ].join('\n');
 
 /** python3: Wert [argv[1]] argv[2] aus /var/opt/mssql/mssql.conf */
@@ -86,13 +91,17 @@ export const PY_CONF = [
   'sys.stdout.write(c.get(sys.argv[1], sys.argv[2], fallback=""))',
 ].join('\n');
 
-/** gemeinsamer Kopf: strikter Modus, Parameter-Literal, Ergebnis-/Fehlerzeile, Aufräumen */
-function kopf(baustein: string, p: unknown): string[] {
+/**
+ * gemeinsamer Kopf: strikter Modus, Parameter-Literal, Ergebnis-/Fehlerzeile, Aufräumen.
+ * `p` ist immer der vom Erzeuger neu gebaute Satz NUR geprüfter Felder — nie das Eingabeobjekt (fremde Schlüssel wie
+ * `kennwort` dürfen nie in den Skripttext).
+ */
+function kopf(baustein: string, p: Record<string, unknown>): string[] {
   return [
     'set -euo pipefail',
     'export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
     `ALFRED_BAUSTEIN=${shQ(baustein)}`,
-    `ALFRED_P=${shQ(JSON.stringify(p ?? {}))}`,
+    `ALFRED_P=${shQ(JSON.stringify(p))}`,
     "ALFRED_ZEILE=''",
     "ALFRED_TMP=''",
     `ergebnis() { ALFRED_ZEILE=1; printf 'ALFRED-SQL %s\\n' "$1"; }`,
@@ -115,7 +124,7 @@ const SQL_HILFE = [
 const MARKE = '# ALFRED-ABLAUF';
 const SA_LESEN = [
   MARKE,
-  'SA=$(feld sa)',
+  'SA=$(feld sa) || abbruch "sa-Kennwort enthält nicht druckbare Zeichen"',
   '[ -n "$SA" ] || abbruch "sa-Kennwort fehlt in der Eingabe (erste stdin-Zeile, JSON-Feld sa)"',
   // nur druckbare Zeichen: kein Zeilenumbruch (sqlcmd-Befehle wie !! am Zeilenanfang), keine Steuerzeichen
   '[[ "$SA" =~ ^[[:print:]]+$ ]] || abbruch "sa-Kennwort enthält nicht druckbare Zeichen"',
@@ -206,14 +215,18 @@ GEAENDERT=0; FSTAB_NEU=0
 for i in "\${!SCSI[@]}"; do
   dev=\${GERAET[$i]}; z=\${ZIEL[$i]}
   if [ "\${AKTION[$i]}" = leer ]; then
-    mkfs.xfs -q -L "\${LABEL[$i]}" "$dev"
+    mkfs.xfs -q -K -L "\${LABEL[$i]}" "$dev"
     udevadm settle || true
     UUIDS[i]=$(blkid -p -s UUID -o value "$dev" 2>/dev/null || true)
     [[ "\${UUIDS[$i]}" =~ ^[0-9a-f-]{36}$ ]] || abbruch "scsi\${SCSI[$i]}: nach mkfs.xfs keine UUID auf $dev"
     AKTION[i]=formatiert; GEAENDERT=1
   fi
   if [ -z "$(fstab_eintrag "$z")" ]; then
-    [ "$FSTAB_NEU" = 1 ] || cp -p "$FSTAB" "$FSTAB.alfred-$(date +%Y%m%d%H%M%S)"
+    if [ "$FSTAB_NEU" = 0 ]; then
+      cp -p "$FSTAB" "$FSTAB.alfred-$(date +%Y%m%d%H%M%S)"
+      # letzte Zeile ohne Zeilenende nie mit dem neuen Eintrag verschmelzen
+      [ -z "$(tail -c1 "$FSTAB")" ] || printf '\\n' >>"$FSTAB"
+    fi
     printf 'UUID=%s %s xfs defaults,noatime,nofail 0 0\\n' "\${UUIDS[$i]}" "$z" >>"$FSTAB"
     FSTAB_NEU=1; GEAENDERT=1
     [ "\${AKTION[$i]}" != unser ] || AKTION[i]=eingetragen
@@ -240,7 +253,7 @@ export function plattenSkript(p: PlattenParameter): string {
   pruefe(pruefePlatten(p));
   const ps = p.platten;
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.platten, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.platten, { platten: ps.map(x => ({ scsi: x.scsi, groesseGiB: x.groesseGiB, ziel: x.ziel })) }),
     `SCSI=(${ps.map(x => x.scsi).join(' ')})`,
     `GIB=(${ps.map(x => x.groesseGiB).join(' ')})`,
     `ZIEL=(${ps.map(x => shQ(x.ziel)).join(' ')})`,
@@ -251,7 +264,11 @@ export function plattenSkript(p: PlattenParameter): string {
 
 // ── Installation ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface InstallParameter { version: string; edition: 'EnterpriseDeveloper'; werkzeugVersion?: string; odbcVersion?: string }
+export interface InstallParameter {
+  version: string; edition: 'EnterpriseDeveloper'; werkzeugVersion?: string; odbcVersion?: string;
+  /** vor setup Pflicht-Einhängepunkte (Standard: alle vier Plattenziele); data immer dabei */
+  einhaengepunkte?: LinuxSqlZiel[];
+}
 const SQL_VERSION = /^17\.0\.(\d{4})\.\d{1,3}-\d{1,3}$/;
 const WERKZEUG_VERSION = /^18\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{1,2}$/;
 
@@ -263,6 +280,12 @@ export function pruefeInstallation(p: unknown): string | undefined {
   if (x.edition !== 'EnterpriseDeveloper') return 'edition: nur EnterpriseDeveloper';
   if (x.werkzeugVersion !== undefined && !(typeof x.werkzeugVersion === 'string' && WERKZEUG_VERSION.test(x.werkzeugVersion))) return 'werkzeugVersion: wie 18.6.2.1-1';
   if (x.odbcVersion !== undefined && !(typeof x.odbcVersion === 'string' && WERKZEUG_VERSION.test(x.odbcVersion))) return 'odbcVersion: wie 18.6.2.1-1';
+  if (x.einhaengepunkte !== undefined) {
+    const e = x.einhaengepunkte;
+    if (!Array.isArray(e) || !e.every(istZiel) || new Set(e).size !== e.length || !e.includes('/var/opt/mssql/data')) {
+      return `einhaengepunkte: Teilmenge von ${LINUX_SQL_ZIELE.join(', ')} ohne Dubletten, /var/opt/mssql/data Pflicht`;
+    }
+  }
   return undefined;
 }
 
@@ -279,6 +302,8 @@ if [ "$(paket_version mssql-server)" = "$V" ] && [ "$(paket_version mssql-tools1
    && [ -f /var/opt/mssql/data/master.mdf ] && systemctl is-active --quiet mssql-server && systemctl is-enabled --quiet mssql-server; then
   Z=schon
 else
+  # Plattenziele müssen eingehängt sein, bevor setup die Systemdatenbanken anlegt (sonst landen sie auf der OS-Platte)
+  for d in "\${EINHAENGEN[@]}"; do mountpoint -q "$d" || abbruch "$d ist kein eigener Einhängepunkt (Platten-Schritt fehlt) — nichts geändert"; done
   command -v curl >/dev/null && command -v gpg >/dev/null || abbruch "curl oder gpg fehlt"
   ALFRED_TMP=$(mktemp -d /run/alfred-sql.XXXXXX)
   # Microsoft-Schlüssel: genau ein Primärschlüssel mit festem Fingerabdruck
@@ -290,16 +315,16 @@ else
   if ! cmp -s "$ALFRED_TMP/microsoft-prod.gpg" "$KEYRING"; then install -m 0644 -o root -g root "$ALFRED_TMP/microsoft-prod.gpg" "$KEYRING"; GEAENDERT=1; fi
   schreibe_wenn_anders /etc/apt/sources.list.d/mssql-server-2025.list "$Q_SERVER"
   schreibe_wenn_anders /etc/apt/sources.list.d/mssql-release.list "$Q_WERKZEUGE"
-  apt-get update -q >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get update fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
+  apt-get -o DPkg::Lock::Timeout=300 update -q >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get update fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   for pv in "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO"; do
     pk=\${pv%%=*}; sv=\${pv#*=}
     vs=$(apt-cache madison "$pk" | awk -F'|' '{ gsub(/ /, "", $2); print $2 }')
     grep -qxF "$sv" <<<"$vs" || abbruch "$pk=$sv ist in der Paketquelle nicht verfügbar — nichts installiert"
   done
-  if ! ACCEPT_EULA=Y apt-get install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO" >"$ALFRED_TMP/apt.log" 2>&1; then
+  if ! ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO" >"$ALFRED_TMP/apt.log" 2>&1; then
     abbruch "apt-get install fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   fi
-  apt-mark hold mssql-server mssql-tools18 msodbcsql18 >/dev/null
+  apt-mark -o DPkg::Lock::Timeout=300 hold mssql-server mssql-tools18 msodbcsql18 >/dev/null
   GEAENDERT=1
   id mssql >/dev/null 2>&1 || abbruch "Benutzer mssql fehlt nach der Installation"
   # Plattenziele (schon eingehängt, root-eigen) dem Dienstkonto geben, bevor setup die Systemdatenbanken anlegt
@@ -326,7 +351,10 @@ ergebnis "{\\"zustand\\":\\"$Z\\",\\"paket\\":\\"$V\\",\\"version\\":\\"$pv\\",\
 export function installSkript(p: InstallParameter): string {
   pruefe(pruefeInstallation(p));
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.installation, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.installation, {
+      version: p.version, edition: p.edition, werkzeugVersion: p.werkzeugVersion ?? MSSQL_TOOLS18_VERSION,
+      odbcVersion: p.odbcVersion ?? MSODBCSQL18_VERSION, einhaengepunkte: p.einhaengepunkte ?? [...LINUX_SQL_ZIELE],
+    }),
     `V=${shQ(p.version)}`,
     `VT=${shQ(p.werkzeugVersion ?? MSSQL_TOOLS18_VERSION)}`,
     `VO=${shQ(p.odbcVersion ?? MSODBCSQL18_VERSION)}`,
@@ -337,6 +365,7 @@ export function installSkript(p: InstallParameter): string {
     `Q_SERVER=${shQ(MS_QUELLE_SERVER)}`,
     `Q_WERKZEUGE=${shQ(MS_QUELLE_WERKZEUGE)}`,
     `ZIELE=(${LINUX_SQL_ZIELE.map(shQ).join(' ')})`,
+    `EINHAENGEN=(${(p.einhaengepunkte ?? [...LINUX_SQL_ZIELE]).map(shQ).join(' ')})`,
     ...SQL_HILFE,
     ...SA_LESEN,
     INSTALL_KOERPER,
@@ -404,7 +433,9 @@ ergebnis "{\\"zustand\\":\\"$Z\\",\\"neustart\\":$N,\\"speicherLimitMB\\":$MEM,\
 export function konfigSkript(p: KonfigParameter): string {
   pruefe(pruefeKonfig(p));
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.konfiguration, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.konfiguration, {
+      speicherLimitMB: p.speicherLimitMB, datenPfad: p.datenPfad, logPfad: p.logPfad, sicherungsPfad: p.sicherungsPfad, agent: p.agent,
+    }),
     `MEM=${p.speicherLimitMB}`,
     `DATEN=${shQ(p.datenPfad)}`,
     `LOGD=${shQ(p.logPfad)}`,
@@ -492,7 +523,7 @@ function tempdbSkript(p: TempdbParameter): string {
   ].join('\n');
   const lage = `SET NOCOUNT ON; SELECT N'ALFRED|' + CAST(SUM(CASE WHEN type = 0 THEN 1 ELSE 0 END) AS nvarchar(5)) + N'|' + CAST(SUM(CASE WHEN physical_name LIKE N'${TEMPDB_PFAD}%' THEN 0 ELSE 1 END) AS nvarchar(5)) FROM tempdb.sys.database_files`;
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.tempdb, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.tempdb, { dateien: p.dateien, groesseMB: p.groesseMB, wachstumMB: p.wachstumMB, logGroesseMB: p.logGroesseMB }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
@@ -526,15 +557,17 @@ function maxSpeicherSkript(p: MaxSpeicherParameter): string {
   const tsql = [
     'SET NOCOUNT ON;',
     `DECLARE @alt int = ${wert};`,
+    "DECLARE @adv int = (SELECT CAST(value_in_use AS int) FROM sys.configurations WHERE name = N'show advanced options');",
     `IF @alt <> ${p.mb}`,
     'BEGIN',
-    "  EXEC sp_configure N'show advanced options', 1; RECONFIGURE;",
+    "  IF @adv = 0 BEGIN EXEC sp_configure N'show advanced options', 1; RECONFIGURE; END",
     `  EXEC sp_configure N'max server memory (MB)', ${p.mb}; RECONFIGURE;`,
+    "  IF @adv = 0 BEGIN EXEC sp_configure N'show advanced options', 0; RECONFIGURE; END",
     'END',
     `SELECT N'ALFRED|' + CASE WHEN @alt = ${p.mb} THEN N'schon' ELSE N'geaendert' END + N'|' + CAST(${wert} AS nvarchar(20));`,
   ].join('\n');
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.maxspeicher, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.maxspeicher, { mb: p.mb }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
@@ -564,10 +597,10 @@ function loginSkript(p: LoginParameter): string {
     `SELECT N'ALFRED|' + @z + N'|' + CAST((SELECT COUNT(*) FROM sys.sql_logins WHERE name = N'${n}' AND is_disabled = 0 AND PWDCOMPARE(N'@@KW@@', password_hash) = 1) AS nvarchar(5));`,
   ].join('\n');
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.login, p),
+    ...kopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [] }),
     ...SQL_HILFE,
     ...SA_LESEN,
-    'KW=$(feld kennwort)',
+    'KW=$(feld kennwort) || abbruch "Kennwort enthält nicht druckbare Zeichen"',
     '[ -n "$KW" ] || abbruch "Kennwort fehlt in der Eingabe (JSON-Feld kennwort)"',
     '[[ "$KW" =~ ^[[:print:]]+$ ]] || abbruch "Kennwort enthält nicht druckbare Zeichen"',
     "Q1=\"'\"",
