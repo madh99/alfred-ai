@@ -634,7 +634,7 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
 describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {
     const { FESTE_AUSGABEN } = await import('./change-schritte.js');
-    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status']);
+    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen']);
     const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Probe prüfen', begruendung: 'Realfall 6f7b0b99', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['probe-win25b'],
       schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
     const fz = (erwartet?: string) => pruefeChangePlan(plan({ typ: 'skill', skill: 'fernzugriff', aktion: 'pruefen', parameter: { name: 'probe-win25b' }, ...(erwartet ? { erwartet } : {}) }), ctx());

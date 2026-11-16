@@ -42,6 +42,9 @@ export const MSSQL_TOOLS18_VERSION = '18.6.2.1-1';
 export const MSODBCSQL18_VERSION = '18.6.2.1-1';
 /** erster CU-Build von SQL Server 2025 (CU1 = 17.0.4006.2, KB5078298) */
 export const SQL2025_CU1_BUILD = 4006;
+/** I8e Task 4 — einziges dauerhaftes Geheimnis auf der VM (Zugang des Kopier-Timers zu fs01, 0600 root) und Status des Kopierlaufs */
+export const SQLLNX_ZUGANGSDATEI = '/etc/alfred/sqllnx-cifs.cred';
+export const SQLLNX_KOPIE_STATUS = '/var/lib/alfred/sqllnx-kopie-status.json';
 
 export const LINUX_SQL_BAUSTEINE = {
   platten: 'sql.platten', installation: 'sql.installation', konfiguration: 'sql.konfiguration',
@@ -97,7 +100,7 @@ export const PY_CONF = [
  * `p` ist immer der vom Erzeuger neu gebaute Satz NUR geprüfter Felder — nie das Eingabeobjekt (fremde Schlüssel wie
  * `kennwort` dürfen nie in den Skripttext).
  */
-function kopf(baustein: string, p: Record<string, unknown>): string[] {
+export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] {
   return [
     'set -euo pipefail',
     'export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -108,13 +111,14 @@ function kopf(baustein: string, p: Record<string, unknown>): string[] {
     `ergebnis() { ALFRED_ZEILE=1; printf 'ALFRED-SQL %s\\n' "$1"; }`,
     `json_text() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'; }`,
     `abbruch() { local t; t=$(printf '%s' "$1" | json_text); ergebnis "{\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"$ALFRED_BAUSTEIN\\",\\"fehler\\":$t}"; exit 1; }`,
-    `trap 'ALFRED_RC=$?; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\"}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC"; fi' EXIT`,
+    // I8e Task 4: optionale Funktion alfred_aufraeumen (z. B. Zugangsdatei, Einhängepunkt, Wegwerf-Datenbank) läuft zuerst
+    `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\"}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC"; fi' EXIT`,
     `feld() { python3 -c ${shQ(PY_FELD)} "$1" <<<"$ALFRED_EINGABE"; }`,
   ];
 }
 
 /** sqlcmd lokal als sa: Kennwort nur in SQLCMDPASSWORD des einen Prozesses, T-SQL über stdin, ohne Variablenersetzung (-x) */
-const SQL_HILFE = [
+export const SQL_HILFE = [
   `SQLCMD=${shQ(SQLCMD)}`,
   'sql() { SQLCMDPASSWORD="$SA" "$SQLCMD" -C -b -x -S localhost -U sa -l 30 -h -1 -W -w 65535 <<<"$1"; }',
   'bereit() { local i; for i in $(seq 1 60); do if sql "SELECT 1" >/dev/null 2>&1; then return 0; fi; sleep 2; done; return 1; }',
@@ -123,7 +127,7 @@ const SQL_HILFE = [
 ];
 /** Stubs für Tests setzen hier ein (nach den Hilfsfunktionen, vor dem Lesen der Eingabe) */
 const MARKE = '# ALFRED-ABLAUF';
-const SA_LESEN = [
+export const SA_LESEN = [
   MARKE,
   'SA=$(feld sa) || abbruch "sa-Kennwort enthält nicht druckbare Zeichen"',
   '[ -n "$SA" ] || abbruch "sa-Kennwort fehlt in der Eingabe (erste stdin-Zeile, JSON-Feld sa)"',
@@ -254,7 +258,7 @@ export function plattenSkript(p: PlattenParameter): string {
   pruefe(pruefePlatten(p));
   const ps = p.platten;
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.platten, { platten: ps.map(x => ({ scsi: x.scsi, groesseGiB: x.groesseGiB, ziel: x.ziel })) }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.platten, { platten: ps.map(x => ({ scsi: x.scsi, groesseGiB: x.groesseGiB, ziel: x.ziel })) }),
     `SCSI=(${ps.map(x => x.scsi).join(' ')})`,
     `GIB=(${ps.map(x => x.groesseGiB).join(' ')})`,
     `ZIEL=(${ps.map(x => shQ(x.ziel)).join(' ')})`,
@@ -352,7 +356,7 @@ ergebnis "{\\"zustand\\":\\"$Z\\",\\"paket\\":\\"$V\\",\\"version\\":\\"$pv\\",\
 export function installSkript(p: InstallParameter): string {
   pruefe(pruefeInstallation(p));
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.installation, {
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.installation, {
       version: p.version, edition: p.edition, werkzeugVersion: p.werkzeugVersion ?? MSSQL_TOOLS18_VERSION,
       odbcVersion: p.odbcVersion ?? MSODBCSQL18_VERSION, einhaengepunkte: p.einhaengepunkte ?? [...LINUX_SQL_ZIELE],
     }),
@@ -434,7 +438,7 @@ ergebnis "{\\"zustand\\":\\"$Z\\",\\"neustart\\":$N,\\"speicherLimitMB\\":$MEM,\
 export function konfigSkript(p: KonfigParameter): string {
   pruefe(pruefeKonfig(p));
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.konfiguration, {
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.konfiguration, {
       speicherLimitMB: p.speicherLimitMB, datenPfad: p.datenPfad, logPfad: p.logPfad, sicherungsPfad: p.sicherungsPfad, agent: p.agent,
     }),
     `MEM=${p.speicherLimitMB}`,
@@ -525,7 +529,7 @@ function tempdbSkript(p: TempdbParameter): string {
   ].join('\n');
   const lage = `SET NOCOUNT ON; SELECT N'ALFRED|' + CAST(SUM(CASE WHEN type = 0 THEN 1 ELSE 0 END) AS nvarchar(5)) + N'|' + CAST(SUM(CASE WHEN physical_name LIKE N'${TEMPDB_PFAD}%' THEN 0 ELSE 1 END) AS nvarchar(5)) FROM tempdb.sys.database_files`;
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.tempdb, { dateien: p.dateien, groesseMB: p.groesseMB, wachstumMB: p.wachstumMB, logGroesseMB: p.logGroesseMB }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.tempdb, { dateien: p.dateien, groesseMB: p.groesseMB, wachstumMB: p.wachstumMB, logGroesseMB: p.logGroesseMB }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
@@ -569,7 +573,7 @@ function maxSpeicherSkript(p: MaxSpeicherParameter): string {
     `SELECT N'ALFRED|' + CASE WHEN @alt = ${p.mb} THEN N'schon' ELSE N'geaendert' END + N'|' + CAST(${wert} AS nvarchar(20));`,
   ].join('\n');
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.maxspeicher, { mb: p.mb }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.maxspeicher, { mb: p.mb }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
@@ -609,7 +613,7 @@ function loginSkript(p: LoginParameter): string {
     `SELECT N'ALFRED|' + @z + N'|' + CAST((SELECT COUNT(*) FROM sys.sql_logins WHERE name = N'${n}' AND is_disabled = 0 AND PWDCOMPARE(N'@@KW@@', password_hash) = 1) AS nvarchar(5)) + N'|' + CAST(${fehlend} AS nvarchar(5));`,
   ].join('\n');
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [] }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [] }),
     ...SQL_HILFE,
     ...SA_LESEN,
     'KW=$(feld kennwort) || abbruch "Kennwort enthält nicht druckbare Zeichen"',
@@ -707,7 +711,7 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
     `SELECT N'ALFRED|' + @z + N'|' + CAST(@anzahl AS nvarchar(10)) + N'|' + ISNULL(@hash, N'-') + N'|' + (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}');`,
   ].join('\n');
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.pruefdaten, { datenbank: n }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.pruefdaten, { datenbank: n }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
@@ -787,6 +791,23 @@ export const PY_STATUS = [
   '        st = os.statvfs(z)',
   '        platz.append({"pfad": z, "eingehaengt": os.path.ismount(z), "gesamtMB": st.f_blocks * st.f_frsize // 1048576, "freiMB": st.f_bavail * st.f_frsize // 1048576})',
   'r["platz"] = platz',
+  // I8e Task 4 — Sicherung: Zugangsdatei (nur Rechte, nie Inhalt), Kopier-Timer, letzter Kopierlauf
+  'sich = {}',
+  'try:',
+  `    st = os.stat(${JSON.stringify(SQLLNX_ZUGANGSDATEI)})`,
+  '    sich["zugangsdatei"] = "vorhanden (0600)" if st.st_uid == 0 and (st.st_mode & 0o777) == 0o600 else "Rechte %o, Besitzer %d" % (st.st_mode & 0o777, st.st_uid)',
+  'except FileNotFoundError:',
+  '    sich["zugangsdatei"] = "fehlt"',
+  'except Exception:',
+  '    sich["zugangsdatei"] = "unlesbar"',
+  'sich["timer"] = lauf("systemctl", "is-active", "alfred-sqllnx-kopie.timer")[1] or "unbekannt"',
+  'try:',
+  `    with open(${JSON.stringify(SQLLNX_KOPIE_STATUS)}) as f:`,
+  '        k = json.load(f)',
+  '    sich["letzteKopie"] = {"zeit": k.get("zeit"), "ok": bool(k.get("ok")), "fehler": str(k.get("fehler") or "")[:200]}',
+  'except Exception:',
+  '    sich["letzteKopie"] = None',
+  'r["sicherung"] = sich',
   'if not sa:',
   '    r["sql"] = None',
   '    r["sqlHinweis"] = "ohne sa-Kennwort nur Betriebssystem-Sicht"',
@@ -811,7 +832,7 @@ export const PY_STATUS = [
 /** Version, Edition, Dienst, mssql.conf, Platz je Einhängepunkt; mit sa (stdin) zusätzlich tempdb, Datenbanken, letzte Sicherungen. Zeit: LINUX_SQL_ZEIT_MS.status */
 export function statusSkript(): string {
   return [
-    ...kopf(LINUX_SQL_BAUSTEINE.status, {}),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.status, {}),
     `PY_STATUS=${shQ(PY_STATUS)}`,
     'python3 -c "$PY_STATUS" <<<"$ALFRED_EINGABE"',
     'ALFRED_ZEILE=1',

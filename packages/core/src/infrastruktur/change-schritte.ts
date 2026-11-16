@@ -55,10 +55,14 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // I8e — Wortlaut aus linuxSqlStatusText (linux-sql-skill.ts)
   // Fix 1: die drei Formen genau wie ausgegeben, dazu die festen Werte der Platzhalter (Dienst, eingehängt) als prüfbare Stücke;
   // verneinende Formen („nicht installiert“, „keine eigenen“, „keine Plattenziele“) sind als erwartet ohnehin unzulässig (VERNEINUNG) → nichtEnthalten
-  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}'
-    + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}'
-    + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}'
-    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup',
+  // I8e Task 4: jede Form endet mit „; Sicherung: …“ (Zugangsdatei, Kopier-Timer, letzte Kopie bzw. „nicht eingerichtet“)
+  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}; Sicherung: {sicherung}'
+    + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}; Sicherung: {sicherung}'
+    + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}; Sicherung: {sicherung}'
+    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv',
+  // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
+  'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
+    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Hash ok',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -151,7 +155,8 @@ const SELBST_GEPRUEFT = new Set([
  * Prüfdaten (Zeilen, SHA-256, FULL).
  */
 const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
-  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen']),
+  // I8e Task 4: Sicherung (Jobs + Probe-Kopie mit fester Zugangsdatei), Sicherung jetzt (auf fs01 bestätigt), Restore-Beweis (RESTORE_VERIFIED)
+  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
 };
@@ -161,6 +166,13 @@ const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) =
  * = VM löschen) oder ohneSicherungGrund gesetzt ist; sonst gilt wie überall: erst sichern, dann mit Rückweg ändern.
  */
 const NEUAUFBAU_SKILLS = new Set(['linux_sql']);
+/**
+ * I8e Task 4 — innerhalb der Neuaufbau-Regel ohne Rückweg zulässig, auch auf bestehenden VMs: eine Sicherung wirkt nur additiv (neue
+ * Datei in derselben Kette), der Restore-Beweis legt nur eine Wegwerf-Datenbank alfred_wh_… an und entfernt sie wieder.
+ */
+const OHNE_RUECKWEG_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
+  linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen']),
+};
 
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 // Final-Welle M2 — bauplan: Vorlagen speichern/freigeben/anwenden nur der Owner im Hauptgespräch, nie ein Change-Schritt
@@ -257,7 +269,7 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   // Bauplan V4 — unifi.subnet_pruefen liest nur die Netzliste (Vorab-Kontrolle „Netz frei“); LESE_MUSTER greift nur am Anfang
   if (skill === 'unifi' && aktion === 'subnet_pruefen') return 'lesen';
   // I8e — linux_sql: nur status liest; alle Aufbau-Bausteine ändern
-  if (skill === 'linux_sql') return aktion === 'status' ? 'lesen' : 'aendern';
+  if (skill === 'linux_sql') return aktion === 'status' || aktion === 'sicherungen' ? 'lesen' : 'aendern';
   if (skill === 'sql_server') return ['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen'].includes(aktion) ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
@@ -567,7 +579,9 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && STILLLEGUNG_ENTFERNEN.test(bef);
           if (schritt.skill === 'fernzugriff' && /--destroy-unreferenced-disks/.test(bef)) f.push(`${wo}: --destroy-unreferenced-disks löscht auch gleichnamige Disks auf geteilten Speichern (andere Hosts/Cluster) — nur die Volumes der Gast-Konfiguration löschen (qm/pct destroy <id> --purge)`);
           const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
-          if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
+          if (OHNE_RUECKWEG_JE_SKILL[schritt.skill]?.has(schritt.aktion)) {
+            // additiv bzw. ohne bleibende Wirkung — kein Rückweg nötig
+          } else if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
             const z = txt(schritt.parameter.zugang).toLowerCase();
             if (!(z && bereitgestellt.has(z)) && !plan.ohneSicherungGrund) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} ohne Rückweg nur beim Neuaufbau — derselbe Change stellt die VM „${z}“ vorher mit proxmox.provision_vm neu bereit (Name noch nicht in der CMDB; Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt; sonst vorher sichern (proxmox create_snapshot/backup_vm) und rueckweg angeben (z. B. proxmox rollback_snapshot)`);
           } else if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen && !einweg) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);

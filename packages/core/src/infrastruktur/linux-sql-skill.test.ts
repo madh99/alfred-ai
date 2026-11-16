@@ -81,11 +81,11 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     const w = welt({ [LINUX_SQL_BAUSTEINE.status]: [STATUS_VOLL] }, { 'sqllnx-sqllnx01-sa': 'Sa-Wert-1' });
     const r = await w.skill.execute({ action: 'status', zugang: 'sqllnx01' }, {} as never);
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-Wert-1' });
-    expect(r.display).toBe('sqllnx01: SQL Server 17.0.4006.2 CU1 Enterprise Developer Edition (64-bit); Dienst aktiv, aktiviert; Speicherlimit 12288 MB; max server memory 10240 MB; tempdb 2 Datendateien; Datenbanken: pruefdb01; eingehängt: data, log, tempdb, backup');
+    expect(r.display).toBe('sqllnx01: SQL Server 17.0.4006.2 CU1 Enterprise Developer Edition (64-bit); Dienst aktiv, aktiviert; Speicherlimit 12288 MB; max server memory 10240 MB; tempdb 2 Datendateien; Datenbanken: pruefdb01; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet');
     expect(JSON.stringify(r.data)).not.toContain('Sa-Wert-1');
-    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele');
+    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet');
     expect(linuxSqlStatusText('x', { ...STATUS_VOLL, sql: null, sqlHinweis: 'Dienst nicht aktiv', dienst: 'failed', aktiviert: 'enabled' }))
-      .toBe('x: SQL Server 17.0.4006.2-1 (Paket); Dienst failed, aktiviert; Speicherlimit 12288 MB; SQL-Sicht: Dienst nicht aktiv; eingehängt: data, log, tempdb, backup');
+      .toBe('x: SQL Server 17.0.4006.2-1 (Paket); Dienst failed, aktiviert; Speicherlimit 12288 MB; SQL-Sicht: Dienst nicht aktiv; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet');
     // jedes Stück des festen Wortlauts steht in FESTE_AUSGABEN (Planprüfung erwartet)
     for (const t of ['Dienst aktiv, aktiviert', 'eingehängt: data, log, tempdb, backup', 'SQL Server nicht installiert']) expect(FESTE_AUSGABEN['linux_sql.status']).toContain(t);
   });
