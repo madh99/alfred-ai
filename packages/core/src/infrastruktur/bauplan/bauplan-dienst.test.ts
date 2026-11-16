@@ -707,7 +707,7 @@ describe('V4 ableiten — Final-Welle', () => {
     const alle: Entscheid = { ...teil };
     for (const p of v.entscheidungen) if (p.art !== 'teil') alle[p.id] = 'fest';
     // nicht nötige Entscheidungen (gewählte Werte) wieder weg — erzeugen meldet sie sonst
-    for (const id of ['anlage:vmid|152', 'anlage:vmid|153', 'anlage:vlan|829', 'anlage:ipv4|10.203.29.1', 'anlage:ipv4|10.203.29.2', 'anlage:ipv4|10.203.29.3', 'anlage:ipv4|10.203.29.30']) delete alle[id];
+    for (const id of ['anlage:vmid|152', 'anlage:vmid|153', 'anlage:vlan|829', 'anlage:ipv4|10.203.29.1', 'anlage:ipv4|10.203.29.2', 'anlage:ipv4|10.203.29.3', 'anlage:ipv4|10.203.29.30', 'anlage:name|vmbr829']) delete alle[id];
     const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, auswahl, kopf, alle, v.stand);
     if (!r.ok) throw new Error(r.fehler.join('\n'));
     expect(t.zeilen).toHaveLength(1);
@@ -719,7 +719,13 @@ describe('V4 ableiten — Final-Welle', () => {
     expect(frage).toMatch(/\n- ad\.3033\.at: \d+ Stellen/);
     expect(frage).toMatch(/\n- AD-Identity: \d+ Stellen/);
     // mehr als 15 angelegte Werte → die ersten 15 wörtlich, Rest gezählt
-    expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(16 Werte\):[\s\S]*\n {2}… und 1 weitere/);
+    expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(17 Werte\):[\s\S]*\n {2}… und 2 weitere/);
+    // Restpunkte: NetBIOS ist angelegt; dc01-Zeile nennt den Tresor-Namen; veränderte vorhandene Objekte eigene Überschrift
+    expect(frage).toMatch(/\n- AD3033: \d+ Stellen/);
+    expect(frage).toMatch(/\n- dc01: \d+ Stellen \([^\n]*\) — steckt auch im Tresor-Namen win-dc01-admin/);
+    expect(frage).toMatch(/Verändert vorhandene Objekte \(nicht vom Paket angelegt, nicht als Parameter; 2 Werte\):\n- 9102: \d+ Stellen[^\n]*\n- probe-win25b: \d+ Stellen/);
+    expect(v.text).toContain('Verändert vorhandene Objekte');
+    expect(v.text).toContain('veraendert:name|probe-win25b');
     // record_type ist kein angelegter Wert; 10.203.29.3 in 10.203.29.30 trägt den Parameter der .30 — nicht als „fest“ gemeldet
     expect(frage).not.toContain('FORWARD:');
     expect(frage).toContain('Ohne automatische Vorab-Kontrolle (1): netz');

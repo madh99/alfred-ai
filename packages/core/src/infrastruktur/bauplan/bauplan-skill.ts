@@ -46,7 +46,7 @@ export class BauplanSkill extends Skill {
       + 'bauplan_ableiten — Vorlage aus erfolgreich ausgeführten (completed) Changes ableiten (changes = Liste von IDs oder eindeutigen Anfängen, höchstens 30): '
       + 'zuerst modus vorschlag (nur lesend: Kandidaten mit allen Fundstellen, Entscheidungspunkte mit ids, Verweise, Hinweise, stand), dann modus erzeugen mit denselben changes, '
       + 'stand aus dem Vorschlag, auswahl = Objekt Kandidaten-Nr → Parametername (oder {name, wert}; gleicher Wert darf auf denselben Namen), '
-      + 'entscheid = Objekt id → "ersetzen"|"fest" für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID und jeden vom Paket angelegten, nicht gewählten Wert (nur "fest"), '
+      + 'entscheid = Objekt id → "ersetzen"|"fest" für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID, jeden vom Paket angelegten und jedes veränderte vorhandene Objekt, die nicht gewählt sind (nur "fest"), '
       + 'key, titel, zweck, dokumentart — speichert einen Entwurf (volle Prüfung); fehlende Entscheidungen nennt erzeugen auf einmal; '
       + 'bewusst feste Stellen stehen in der Freigabe-Frage; Freigabe danach nur über bauplan_freigabe_anfragen.',
     riskLevel: 'write',

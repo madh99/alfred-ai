@@ -497,6 +497,11 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
     z.push('', 'Vom Paket angelegt — solange der Wert nicht als Parameter gewählt ist, zielen diese Stellen auf die Original-Instanz: je id „fest“ oder den Kandidaten wählen:');
     for (const p of anlage) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (kein Kandidat — nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
   }
+  const veraendert = punkte.filter(p => p.art === 'veraendert');
+  if (veraendert.length) {
+    z.push('', 'Verändert vorhandene Objekte (nicht vom Paket angelegt) — solange der Wert nicht als Parameter gewählt ist, träfe jede Anwendung wieder dasselbe Objekt: je id „fest“ oder den Kandidaten wählen. Knoten, Speicher, UniFi-Geräte/Ports und Backup-Jobs (node, storage, device, switch_port, job_id) zählen als Träger der Aktion nicht dazu:');
+    for (const p of veraendert) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (kein Kandidat — nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
+  }
   const netz = punkte.filter(p => p.art === 'anlage' && p.grund.startsWith('Adresse im Netz'));
   if (netz.length) {
     z.push('', 'Adressen in Netz-Kandidaten — nötig, wenn das Netz gewählt und die Adresse nicht gewählt ist (dann „fest“); gewählte Adressen folgen dem Netz automatisch:');
@@ -507,7 +512,7 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
     for (const v of verweise) z.push(`- ${kurzId(v.change)} Schritt ${v.schritt} ${v.pfad} ← ${kurzId(v.quelle.change)} Schritt ${v.quelle.schritt}.${v.quelle.feld}${v.art === 'praefix' ? ' (ID-Anfang → volle ID)' : ''}`);
   }
   if (hinweise.length) z.push('', 'Hinweise:', ...hinweise.map(h => `- ${h}`));
-  z.push('', `Erzeugen: bauplan_ableiten mit modus erzeugen, denselben changes, stand "${stand}", auswahl {Nr: Parametername} (gleicher Wert darf auf denselben Namen), entscheid {id: "ersetzen"|"fest"} für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID und jeden angelegten, nicht gewählten Wert, key, titel, zweck, dokumentart (testprotokoll|betrieb). Fehlende Entscheidungen nennt erzeugen auf einmal. Der Entwurf braucht danach die Owner-Freigabe; bewusst feste Stellen stehen in der Freigabe-Frage.`);
+  z.push('', `Erzeugen: bauplan_ableiten mit modus erzeugen, denselben changes, stand "${stand}", auswahl {Nr: Parametername} (gleicher Wert darf auf denselben Namen), entscheid {id: "ersetzen"|"fest"} für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID, jeden angelegten und jedes veränderte vorhandene Objekt, das nicht gewählt ist, key, titel, zweck, dokumentart (testprotokoll|betrieb). Fehlende Entscheidungen nennt erzeugen auf einmal. Der Entwurf braucht danach die Owner-Freigabe; bewusst feste Stellen stehen in der Freigabe-Frage.`);
   return z.join('\n');
 }
 
@@ -526,15 +531,19 @@ function ableitungZeilen(roh: string | undefined, abgeleitetAus: string | undefi
   if (a.ersetzt) z.push(`ℹ️ ${a.ersetzt}`);
   if (fest.length) {
     z.push(`⚠️ Bewusst fest (${fest.length} Stelle${fest.length === 1 ? '' : 'n'}) — bleiben wie in den Quell-Changes und zielen damit auf dieselben Objekte:`);
-    const anlage = new Map<string, FestEintrag[]>();
-    for (const f of fest.filter(x => x.art === 'anlage')) { const l = anlage.get(f.id) ?? []; l.push(f); anlage.set(f.id, l); }
-    if (anlage.size) {
-      z.push(`Vom Paket angelegt, nicht als Parameter (${anlage.size} Wert${anlage.size === 1 ? '' : 'e'}):`);
-      for (const l of [...anlage.values()].slice(0, JE_KATEGORIE)) {
+    // je Wert eine Zeile; Tresor-Namen, in denen der feste Wert außerdem steckt, in derselben Zeile (Restpunkt)
+    for (const [art, titel] of [['anlage', 'Vom Paket angelegt, nicht als Parameter'], ['veraendert', 'Verändert vorhandene Objekte (nicht vom Paket angelegt, nicht als Parameter']] as const) {
+      const werte = new Map<string, FestEintrag[]>();
+      for (const f of fest.filter(x => x.art === art)) { const l = werte.get(f.id) ?? []; l.push(f); werte.set(f.id, l); }
+      if (!werte.size) continue;
+      const anzahl = `${werte.size} Wert${werte.size === 1 ? '' : 'e'}`;
+      z.push(art === 'anlage' ? `${titel} (${anzahl}):` : `${titel}; ${anzahl}):`);
+      for (const l of [...werte.values()].slice(0, JE_KATEGORIE)) {
         const orte = l.map(f => `${f.change8} S${f.schritt} ${f.pfad}`);
-        z.push(`- ${l[0]!.wort}: ${l.length} Stelle${l.length === 1 ? '' : 'n'} (${orte.slice(0, 6).join(', ')}${orte.length > 6 ? ', …' : ''})`);
+        const tresor = l.find(f => f.tresor)?.tresor;
+        z.push(`- ${l[0]!.wort}: ${l.length} Stelle${l.length === 1 ? '' : 'n'} (${orte.slice(0, 6).join(', ')}${orte.length > 6 ? ', …' : ''})${tresor ? ` — steckt auch im Tresor-Namen ${tresor}` : ''}`);
       }
-      z.push(...mehr(anlage.size));
+      z.push(...mehr(werte.size));
     }
     for (const [art, titel] of [['id', 'Feste IDs der Original-Instanz'], ['teil', 'Teilvorkommen']] as const) {
       const l = fest.filter(f => f.art === art);

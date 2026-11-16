@@ -698,3 +698,81 @@ describe('Final-Welle — Entscheidungen', () => {
     expect(voll.fehler).toEqual([]);
   });
 });
+
+// ── Restpunkte nach dem Re-Review: NetBIOS, veränderte vorhandene Objekte (d), Bridge, Tresor-Hinweis ──
+describe('Restpunkte — NetBIOS, verändert vorhandene Objekte, Bridge', () => {
+  const I8C = (): QuellChange[] => JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
+  /** Live-Beweis-Auswahl (VMIDs, VLAN, Netz, IPs); vmbr829 ersetzen, .3 in .30 fest */
+  const live = (k: Kandidat[]) => {
+    const auswahl: Record<number, string> = {
+      [kand(k, 'vmid', 152).nr]: 'vmid_dc1', [kand(k, 'vmid', 153).nr]: 'vmid_dc2', [kand(k, 'vlan', 829).nr]: 'vlan',
+      [kand(k, 'cidr', '10.203.29.0/27').nr]: 'netz', [kand(k, 'ipv4', '10.203.29.1').nr]: 'gateway', [kand(k, 'ipv4', '10.203.29.2').nr]: 'ip_dc1',
+      [kand(k, 'ipv4', '10.203.29.3').nr]: 'ip_dc2', [kand(k, 'ipv4', '10.203.29.30').nr]: 'ip_test',
+    };
+    const teil: Entscheid = {};
+    for (const t of kand(k, 'vlan', 829).teilvorkommen) teil[t.id] = 'ersetzen';
+    for (const t of kand(k, 'ipv4', '10.203.29.3').teilvorkommen) teil[t.id] = 'fest';
+    return { auswahl, teil };
+  };
+
+  it('NEU-1: Domäne als Parameter, NetBIOS AD3033 nicht → offene Entscheidung; „fest“ steht in der fest-Liste', () => {
+    const q = I8C();
+    const k = findeKandidaten(q);
+    const { auswahl, teil } = live(k);
+    const dom = kand(k, 'name', 'ad.3033.at');
+    auswahl[dom.nr] = 'domaene';
+    for (const t of dom.teilvorkommen) teil[t.id] = 'ersetzen';
+    const ohne = baueEntwurf(q, auswahl, kopf, teil);
+    expect(ohne.offen.map(p => p.id)).toContain('anlage:name|AD3033');
+    // als Parameter wählbar
+    expect(kand(k, 'name', 'AD3033')).toBeDefined();
+    const { r } = mitFest(q, auswahl, teil);
+    expect(r.fehler).toEqual([]);
+    expect(r.fest.filter(f => f.id === 'anlage:name|AD3033').map(f => `${f.change8} S${f.schritt} ${f.pfad}`)).toEqual(expect.arrayContaining([
+      `${I8C_QUELLEN[1]!.id.slice(0, 8)} S3 parameter.netbios`, `${I8C_QUELLEN[2]!.id.slice(0, 8)} S4 parameter.netbios`, `${I8C_QUELLEN[3]!.id.slice(0, 8)} S6 parameter.netbios`,
+    ]));
+  });
+
+  it('(d): vorhandene VM probe-win25b / 9102, die Change D verändert (Snapshot, RAM, Neustart, Beitritt) → ausdrücklich entscheiden; Knoten, Speicher, Backup-Job nicht', () => {
+    const q = I8C();
+    const k = findeKandidaten(q);
+    const { auswahl, teil } = live(k);
+    const ohne = baueEntwurf(q, auswahl, kopf, teil);
+    const ver = ohne.offen.filter(p => p.art === 'veraendert');
+    expect(ver.map(p => p.id).sort()).toEqual(['veraendert:name|probe-win25b', 'veraendert:vmid|9102']);
+    expect(ohne.fehler.join('\n')).toMatch(/Verändert vorhandene Objekte.*veraendert:vmid\|9102.*proxmox\.set_vm_resources/);
+    // Hosts der Aktion (node pve1/pve3/pve, storage, Backup-Job) sind keine veränderten Objekte
+    expect(findeEntscheidungen(q).filter(p => p.art === 'veraendert').map(p => p.wert).sort()).toEqual(['9102', 'probe-win25b']);
+    // „ersetzen“ gibt es nicht
+    expect(baueEntwurf(q, auswahl, kopf, { ...teil, 'veraendert:vmid|9102': 'ersetzen' }).fehler.join('\n')).toMatch(/veraendert:vmid\|9102.*nur „fest“ — oder den Wert als Parameter wählen/);
+    const { r } = mitFest(q, auswahl, teil);
+    expect(r.fehler).toEqual([]);
+    expect(r.fest.some(f => f.art === 'veraendert' && f.wort === '9102' && f.pfad === 'parameter.vmid')).toBe(true);
+    expect(r.hinweise.some(h => h.startsWith('bewusst fest (verändert vorhandenes Objekt): probe-win25b'))).toBe(true);
+    // als Parameter gewählt → keine Entscheidung mehr nötig
+    const mit = mitFest(q, { ...auswahl, [kand(k, 'vmid', 9102).nr]: 'vmid_probe', [kand(k, 'name', 'probe-win25b').nr]: 'probe' }, teil).r;
+    expect(mit.fehler).toEqual([]);
+    expect(mit.fest.some(f => f.art === 'veraendert')).toBe(false);
+  });
+
+  it('Bridge von create_vlan_bridge ist angelegt (vmbr829 fest → Entscheidung); bridge in provision (vmbr0) nicht', () => {
+    const q = I8C();
+    const k = findeKandidaten(q);
+    const { auswahl, teil } = live(k);
+    const fest: Entscheid = { ...teil };
+    for (const t of kand(k, 'vlan', 829).teilvorkommen) fest[t.id] = 'fest';
+    expect(baueEntwurf(q, auswahl, kopf, fest).offen.map(p => p.id)).toContain('anlage:name|vmbr829');
+    expect(baueEntwurf(q, auswahl, kopf, teil).offen.map(p => p.id)).not.toContain('anlage:name|vmbr829');
+    expect(findeEntscheidungen(q).some(p => p.id === 'anlage:name|vmbr0')).toBe(false);
+  });
+
+  it('Tresor-Vorkommen eines festen Werts stehen an seinem fest-Eintrag (dc01 → win-dc01-admin)', () => {
+    const q = I8C();
+    const { r } = mitFest(q, live(findeKandidaten(q)).auswahl, live(findeKandidaten(q)).teil);
+    expect(r.fehler).toEqual([]);
+    const dc01 = r.fest.filter(f => f.id === 'anlage:name|dc01');
+    expect(dc01.length).toBeGreaterThan(0);
+    expect(dc01.every(f => f.tresor?.includes('win-dc01-admin'))).toBe(true);
+    expect(r.hinweise.find(h => h.startsWith('bewusst fest (vom Paket angelegt): dc01'))).toMatch(/Tresor-Namen win-dc01-admin/);
+  });
+});

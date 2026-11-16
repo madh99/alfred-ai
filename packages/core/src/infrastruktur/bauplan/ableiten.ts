@@ -10,7 +10,8 @@
  * Final-Welle (Owner-Regel: nichts ändert sich still): jeder nicht parametrisierte Wert, der auf Objekte der Original-Instanz
  * zielt, braucht eine ausdrückliche Entscheidung (Entscheid, id → „ersetzen“|„fest“), die auch in der Freigabe-Frage steht:
  * (a) Teilvorkommen gewählter Werte, (b) feste IDs ohne Verweis, (c) vom Paket angelegte, aber nicht gewählte Werte
- * (samt allen Stellen, die auf sie zielen) und Adressen in einem gewählten Netz. Fehlt eine, entsteht nichts.
+ * (samt allen Stellen, die auf sie zielen) und Adressen in einem gewählten Netz, (d) vorhandene Objekte, die das Paket verändert,
+ * aber nicht anlegt (VM 9102 / probe-win25b: Snapshot, RAM, Neustart, Beitritt). Fehlt eine, entsteht nichts.
  *
  * Schutzregeln: ein gewählter Wert, der als Teil eines Tresor-Namens vorkommt, lehnt den Entwurf ab (sonst nutzte jede
  * neue Instanz die Geheimnisse der Original-Instanz); Assets, die das Paket selbst anlegt, fallen aus betroffen; „frei“-
@@ -18,7 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import { GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
-import { ZEITLIMIT_STANDARD_S } from '../change-schritte.js';
+import { aktionsArt, ZEITLIMIT_STANDARD_S } from '../change-schritte.js';
 import { NAME_WERT, pruefeWert } from './parameter.js';
 import { PARAM_NAME_MUSTER, pruefeSchema, type AbleitungsFunktion, type BauplanChange, type BauplanParameter, type BauplanVorlage, type ParamTyp } from './schema.js';
 
@@ -66,11 +67,11 @@ export type AuswahlEintrag = string | { name: string; wert?: unknown };
  * (id anlage:<typ>|<wert>) bzw. Adresse in einem Netz-Kandidaten. nurFest: „ersetzen“ gibt es nicht (Ausweg: als Parameter wählen).
  */
 export interface Entscheidungspunkt {
-  id: string; art: 'teil' | 'id' | 'anlage'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
+  id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
   orte: Fundstelle[]; grund: string; nurFest: boolean;
 }
-/** Bewusst feste Stelle (für Anzeige und die Spalte ableitung) */
-export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage'; wort: string; change8: string; schritt: number; pfad: string; grund: string }
+/** Bewusst feste Stelle (für Anzeige und die Spalte ableitung); tresor = Tresor-Namen, in denen der feste Wert außerdem steckt */
+export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string }
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
@@ -99,9 +100,15 @@ const ID_IM_TEXT = /(?<![0-9a-z])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const HEX_ID = (id: string): boolean => UUID_FORM.test(id) || /^[0-9a-f]{8,}$/i.test(id);
 const ANLEGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (/^(create_|provision_)/.test(aktion) || aktion === 'clone_vm');
 /** I4 — Schritte, die ein Objekt anlegen (auch Wald, DNS-Eintrag); weiter als ANLEGE_AKTION, die nur Annahmen/betroffen steuert */
-const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag');
-/** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne) */
-const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$/;
+const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag' || aktion === 'dc_hinzufuegen');
+/** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne, NetBIOS-Name); bridge nur bei *bridge*-Aktionen */
+const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$|^netbios/;
+/**
+ * (d) — Ziel-Felder einer verändernden Aktion (aktionsArt ≠ lesen): das Objekt, das sie verändert. Bewusst NICHT darunter sind die
+ * Felder, die nur den Ort/Träger der Aktion nennen — node, storage (Proxmox-Knoten/Speicher), device, switch_port (UniFi-Geräte),
+ * job_id (Backup-Job) —, weil diese gemeinsame Infrastruktur jede Anwendung ohnehin benutzt.
+ */
+const ZIEL_FELD = /^(vmid|vm_id|vm_name|zugang|hostname)$/;
 const IPV4_IM_TEXT = /(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g;
 
 const kurz = (id: string): string => id.slice(0, 8);
@@ -256,12 +263,38 @@ function anlagen(q: QuellChange[]): Anlage[] {
       if (typeof b.wert === 'number') {
         if (((f === 'new_vmid' && ANLEGE_AKTION(s.aktion)) || (/^(vmid|vm_id)$/.test(f) && /^create_(vm|lxc)$/.test(String(s.aktion)))) && gueltig('vmid', b.wert)) typ = 'vmid';
         else if (/^(vlan|vlan_id)$/.test(f) && s.skill === 'unifi' && s.aktion === 'create_network' && gueltig('vlan', b.wert)) typ = 'vlan';
-      } else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{') && ANLAGE_NAME_FELD.test(f)) {
+      } else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{') && (ANLAGE_NAME_FELD.test(f) || (f === 'bridge' && /bridge/.test(String(s.aktion))))) {
         typ = typVon(f, b.wert, false) ?? 'name';
       }
       if (!typ) continue;
       const id = `anlage:${typ}|${String(b.wert)}`;
       if (!aus.has(id)) aus.set(id, { id, typ, wert: b.wert as string | number, blatt: b, skillAktion: `${String(s.skill)}.${String(s.aktion)}` });
+    }
+  }
+  return [...aus.values()];
+}
+
+interface Veraendert { id: string; typ: ParamTyp; wert: string | number; erste: Blatt; aktionen: string[] }
+/** (d) — vorhandene Objekte, die ein gewählter Change verändert, aber kein gewählter Change anlegt. id = veraendert:<typ>|<wert> */
+function veraenderte(q: QuellChange[]): Veraendert[] {
+  const angelegt = new Set(anlagen(q).map(a => a.id.slice('anlage:'.length)));
+  const aus = new Map<string, Veraendert>();
+  for (const c of q) {
+    const schritte = schritteVon(c);
+    for (const b of blaetter(c)) {
+      const f = b.schritt > 0 ? /^parameter\.([A-Za-z0-9_]+)$/.exec(b.pfad)?.[1] : undefined;
+      const s = f ? schritte[b.schritt - 1] : undefined;
+      if (!f || !s || !ZIEL_FELD.test(f) || typeof s.skill !== 'string' || typeof s.aktion !== 'string') continue;
+      if (aktionsArt(s.skill, s.aktion, istObjekt(s.parameter) ? s.parameter : undefined) === 'lesen') continue;
+      let typ: ParamTyp | undefined;
+      if (typeof b.wert === 'number') typ = typVon(f, b.wert, false);
+      else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{')) typ = typVon(f, b.wert, false) ?? 'name';
+      if (!typ) continue;
+      const k = `${typ}|${String(b.wert)}`;
+      if (angelegt.has(k)) continue;
+      const sa = `${s.skill}.${s.aktion}`;
+      const v = aus.get(k);
+      if (v) { if (!v.aktionen.includes(sa)) v.aktionen.push(sa); } else aus.set(k, { id: `veraendert:${k}`, typ, wert: b.wert as string | number, erste: b, aktionen: [sa] });
     }
   }
   return [...aus.values()];
@@ -505,6 +538,14 @@ export function findeEntscheidungen(q: QuellChange[]): Entscheidungspunkt[] {
       grund: `vom Paket angelegt in ${ortText(a.blatt.change, a.blatt.schritt, a.blatt.pfad)} (${a.skillAktion})`, nurFest: true,
     });
   }
+  for (const v of veraenderte(q)) {
+    const nr = kandNr(v.typ, v.wert);
+    punkte.set(v.id, {
+      id: v.id, art: 'veraendert', wert: String(v.wert), typ: v.typ, ...(nr ? { kandidat: nr } : {}),
+      orte: suche(ohneTitel, v.typ, v.wert).orte.map(o => fundstelle(o.blatt, o.ganz)),
+      grund: `vorhandenes Objekt, verändert durch ${v.aktionen.join(', ')} (zuerst ${ortText(v.erste.change, v.erste.schritt, v.erste.pfad)})`, nurFest: true,
+    });
+  }
   for (const k of intern) {
     if (k.kandidat.typ !== 'cidr') continue;
     for (const ip of ipsImNetz(q, String(k.kandidat.wert))) {
@@ -617,6 +658,7 @@ export function baueEntwurf(
     if (e !== 'ersetzen' && e !== 'fest') { fehler.push(`Entscheidung ${id}: muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`); continue; }
     if (!p || (p.art === 'teil' && !teilNachId.has(id))) { fehler.push(`Entscheidung ${id}: gehört zu keinem gewählten Wert und keinem Entscheidungspunkt dieses Vorschlags`); continue; }
     if (e === 'ersetzen' && p.art === 'id') fehler.push(`Entscheidung ${id}: feste ID ${p.wert} der Original-Instanz — nur „fest“ möglich (sonst den Change mitwählen, der sie erzeugt)`);
+    if (e === 'ersetzen' && p.art === 'veraendert') fehler.push(`Entscheidung ${id}: ${p.wert} ist ein vorhandenes Objekt, das das Paket verändert — nur „fest“ — oder den Wert als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}`);
     if (e === 'ersetzen' && p.art === 'anlage') fehler.push(`Entscheidung ${id}: ${p.wert} ist vom Paket angelegt — nur „fest“ — oder den Wert als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}`);
   }
   // gleiches Wort im selben Schritt (VM157_ABWESEND in befehl und erwartet) muss gleich entschieden sein, sonst passt die Prüfung nicht mehr
@@ -785,31 +827,39 @@ export function baueEntwurf(
   // (c) angelegte Werte und Adressen gewählter Netze, die nach dem Ersetzen noch irgendwo (außer Titeln) stehen
   const nachher = q.flatMap(c => blaetter(c, kopien.get(c.id))).filter(b => b.pfad !== 'titel');
   const offenAnlage: Entscheidungspunkt[] = [];
+  const offenVeraendert: Entscheidungspunkt[] = [];
   for (const p of punkte.values()) {
-    if (p.art !== 'anlage' || !p.typ) continue;
+    if ((p.art !== 'anlage' && p.art !== 'veraendert') || !p.typ) continue;
     if (p.typ === 'ipv4' && !p.id.startsWith('anlage:ipv4|') ) continue;
     const anlageWert = p.typ === 'vmid' || p.typ === 'vlan' ? Number(p.wert) : p.wert;
     const istNetzAdresse = p.grund.startsWith('Adresse im Netz');
     if (istNetzAdresse && !netzFuer(p.wert)) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — kein gewähltes Netz enthält ${p.wert}`); continue; }
-    const rest = suche(nachher, p.typ, anlageWert).orte.map(o => fundstelle(o.blatt, o.ganz));
+    const gefunden = suche(nachher, p.typ, anlageWert);
+    const rest = gefunden.orte.map(o => fundstelle(o.blatt, o.ganz));
+    // Tresor-Namen, in denen der feste Wert außerdem steckt (win-dc01-admin bei dc01) — am fest-Eintrag sichtbar
+    const tresorOrte = new Map<string, string[]>();
+    for (const t of gefunden.teile.filter(x => x.tresor)) { const l = tresorOrte.get(t.tresor!) ?? []; l.push(ortText(t.blatt.change, t.blatt.schritt, t.blatt.pfad)); tresorOrte.set(t.tresor!, l); }
+    const tresor = tresorOrte.size ? [...tresorOrte].map(([n, o]) => `${n} (${[...new Set(o)].join(', ')})`).join('; ') : undefined;
     if (!rest.length) {
       if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`);
       continue;
     }
     if (entscheid[p.id] === 'fest') {
-      hinweise.push(`bewusst fest (vom Paket angelegt): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — ${p.grund}`);
-      for (const o of rest) fest.push({ id: p.id, art: 'anlage', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+      const art = p.art === 'veraendert' ? 'verändert vorhandenes Objekt' : 'vom Paket angelegt';
+      hinweise.push(`bewusst fest (${art}): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — ${p.grund}${tresor ? ` — steckt auch im Tresor-Namen ${tresor}` : ''}`);
+      for (const o of rest) fest.push({ id: p.id, art: p.art, wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund, ...(tresor ? { tresor } : {}) });
       continue;
     }
-    if (entscheid[p.id] === undefined) offenAnlage.push({ ...p, orte: rest });
+    if (entscheid[p.id] === undefined) (p.art === 'veraendert' ? offenVeraendert : offenAnlage).push({ ...p, orte: rest });
   }
   const offen: Entscheidungspunkt[] = [
     ...offenTeil.map(x => punkte.get(x.t.id)!).filter(Boolean),
-    ...offenId, ...offenAnlage,
+    ...offenId, ...offenAnlage, ...offenVeraendert,
   ];
   if (offenTeil.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offenTeil.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
   if (offenId.length) fehler.push(`Feste IDs der Original-Instanz ohne Entscheidung (je id nur „fest“ — oder den erzeugenden Change mitwählen): ${offenId.map(p => `${p.id} (${ortListe(q, p.orte)}: ${p.grund})`).join('; ')}`);
   if (offenAnlage.length) fehler.push(`Vom Paket angelegt, aber nicht als Parameter gewählt — diese Stellen zielen sonst auf die Original-Instanz (je id „fest“ oder den Wert als Parameter wählen): ${offenAnlage.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; noch an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
+  if (offenVeraendert.length) fehler.push(`Verändert vorhandene Objekte, die das Paket nicht anlegt und die nicht als Parameter gewählt sind — jede Anwendung träfe wieder dasselbe Objekt (je id „fest“ oder den Wert als Parameter wählen): ${offenVeraendert.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (fehler.length) return ende(offen);
 
   // 7. Changes bauen: Laufzeitfelder weg, abhaengigVon auf Schlüssel, betroffen ohne selbst angelegte Assets
