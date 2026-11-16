@@ -255,9 +255,13 @@ ${paket.zeile}`, ...(abnahme.anhaenge || paket.anhaenge ? { anhaenge: [...(abnah
    * Instanzen ohne vorlageKey und Changes ohne Instanz bleiben unberührt. Wirft nie.
    */
   private async paketNachEnde(o: string, c: CmdbChangeRequest, status?: EndStatus): Promise<NachEndeErgebnis | undefined> {
+    // Final-Welle T5(1) — ein Fehler beim Suchen der Instanz darf hand-gemachte Changes nicht verändern: protokollieren, als „kein Paket“ behandeln
+    const inst = await this.d.instanzen.findeNachChange(o, c.id).catch((err: unknown) => {
+      this.d.protokoll?.('Bauplan-Instanz zum Change nicht lesbar — kein Paket angenommen', { changeId: c.id, fehler: schwaerze((err as Error)?.message ?? String(err)).text.slice(0, 300) });
+      return undefined;
+    });
+    if (!inst?.vorlageKey) return undefined;
     try {
-      const inst = await this.d.instanzen.findeNachChange(o, c.id);
-      if (!inst?.vorlageKey) return undefined;
       return await this.seriell(`paket|${o}|${inst.id}`, async () => {
         const q = await this.d.quellen.changes(o);
         const alle = new Map(q.changes.map(x => [x.id, x]));

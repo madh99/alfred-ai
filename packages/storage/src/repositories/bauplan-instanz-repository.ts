@@ -69,17 +69,18 @@ export class BauplanInstanzRepository {
     return r ? zuInstanz(r as Record<string, unknown>) : undefined;
   }
 
-  /** Bauplan-Vorlagen V3 — Instanz, deren change_ids die Change-ID enthalten (jüngste zuerst). */
+  /**
+   * Bauplan-Vorlagen V3 — Instanz, deren change_ids die Change-ID enthalten (jüngste zuerst). Final-Welle T5(2): steckt der Change in
+   * mehreren Instanzen (z. B. von Hand angelegte Instanz für dieselben Changes), gewinnt eine MIT vorlageKey — sonst entfiele das
+   * Testprotokoll am Paket-Ende, weil die jüngere Hand-Instanz es verdeckt.
+   */
   async findeNachChange(userId: string, changeId: string): Promise<BauplanInstanz | undefined> {
     const rows = await this.db.query(
       'SELECT * FROM infra_bauplan_instanzen WHERE user_id = ? AND change_ids LIKE ? ORDER BY created_at DESC',
       [userId, `%"${changeId}"%`],
     );
-    for (const r of rows) {
-      const i = zuInstanz(r as Record<string, unknown>);
-      if (i.changeIds.includes(changeId)) return i;
-    }
-    return undefined;
+    const treffer = rows.map(r => zuInstanz(r as Record<string, unknown>)).filter(i => i.changeIds.includes(changeId));
+    return treffer.find(i => i.vorlageKey) ?? treffer[0];
   }
 
   async liste(userId: string): Promise<BauplanInstanz[]> {

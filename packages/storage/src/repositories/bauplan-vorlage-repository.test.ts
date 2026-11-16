@@ -88,4 +88,16 @@ describe('BauplanInstanzRepository — Vorlage-Spalten und findeNachChange', () 
     expect((await r.findeNachChange('u', 'c-2'))?.id).toBe(i.id);
     expect(await r.findeNachChange('u', 'c-9')).toBeUndefined();
   });
+  it('Final-Welle T5(2): mehrere Instanzen mit dem Change → die mit vorlageKey zuerst, auch wenn die ohne jünger ist', async () => {
+    const { db } = fakeDb();
+    const r = new BauplanInstanzRepository(db as never);
+    const mit = await r.anlegen('u', { name: 'paket', dokumentart: 'testprotokoll', changeIds: ['c-1', 'c-2'], vorlageKey: 'pki_lab', vorlageVersion: 1 });
+    await r.anlegen('u', { name: 'hand', dokumentart: 'betrieb', changeIds: ['c-2'] }); // jünger, ohne Vorlage
+    expect((await r.findeNachChange('u', 'c-2'))?.id).toBe(mit.id);
+    // nur ohne Vorlage → die jüngste ohne
+    const o = await r.findeNachChange('u', 'c-2');
+    expect(o?.vorlageKey).toBe('pki_lab');
+    const nurHand = await r.anlegen('u', { name: 'hand2', dokumentart: 'betrieb', changeIds: ['c-7'] });
+    expect((await r.findeNachChange('u', 'c-7'))?.id).toBe(nurHand.id);
+  });
 });

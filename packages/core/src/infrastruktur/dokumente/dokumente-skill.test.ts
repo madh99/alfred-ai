@@ -759,6 +759,19 @@ describe('Testprotokoll am Ende eines Bauplan-Pakets (V3)', () => {
     expect(t.gespeichert.filter(g => g.docType === 'testprotokoll')).toHaveLength(1);
   });
 
+  it('Final-Welle T5(1): Fehler beim Suchen der Instanz ändert hand-gemachte Changes nicht (kein Paket, nur Protokoll)', async () => {
+    const t = aufbau({ changes: [P1, P2] });
+    const log: Array<{ msg: string; daten: Record<string, unknown> }> = [];
+    (t.deps as { protokoll?: unknown }).protokoll = (msg: string, daten: Record<string, unknown>) => { log.push({ msg, daten }); };
+    t.deps.instanzen.findeNachChange = async () => { throw new Error('db weg'); };
+    const vorher = await new DokumenteDienst({ ...t.deps, instanzen: { ...t.deps.instanzen, findeNachChange: async () => undefined } }).abnahmeNachEnde('o', P1, 'completed');
+    const r = await new DokumenteDienst(t.deps).abnahmeNachEnde('o', P2, 'completed');
+    expect(r!.zeile).toContain('Abnahmeprotokoll erstellt');
+    expect(r!.zeile).not.toContain('Testprotokoll nicht erstellt');
+    expect(r!.zeile.split('\n')).toHaveLength(vorher!.zeile.split('\n').length);
+    expect(log.some(l => /Bauplan-Instanz/.test(l.msg) && String(l.daten.fehler).includes('db weg'))).toBe(true);
+  });
+
   it('Fehler beim Testprotokoll verliert die Abnahme nicht', async () => {
     const t = aufbau({ changes: [P1, P2] });
     await paket(t, [P1.id, P2.id]);

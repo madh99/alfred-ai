@@ -540,7 +540,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         } else {
           const rs = ctx.skill(txt(rw.skill));
           const rueck: Rueckweg = { skill: txt(rw.skill), aktion: txt(rw.aktion), parameter: obj(rw.parameter) ?? {} };
-          if (NIE_SKILLS.has(rueck.skill)) f.push(`${wo}: Skill ${rueck.skill} ist in Changes nicht erlaubt (Rückweg)`);
+          if (NIE_SKILLS.has(rueck.skill ?? '')) f.push(`${wo}: Skill ${rueck.skill} ist in Changes nicht erlaubt (Rückweg)`);
           else if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);
           else {
