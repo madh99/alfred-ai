@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Bauplan-Vorlagen (v1878)
+
+- Neuer Skill `bauplan`: versionierte, parametrisierte Change-Pakete (z. B. Aufbau → Test → Abbau) als geprüfte Daten. Speichern prüft Schema, Parameter, Platzhalter und Geheimnisse und schickt die Pläne mit Beispielwerten probeweise durch den Change-Validator.
+- Freigabe einer Vorlage einmal per Button, gebunden an ihren Abdruck; jede Änderung ist eine neue Version mit neuer Freigabe. Die Frage nennt Netz-, Firewall- und Lösch-Schritte ausdrücklich.
+- Anwenden prüft die Vorlage erneut, führt die Vorab-Prüfungen live aus, legt normale Changes an und stellt eine einzige Freigabe-Frage für das Paket. Scheitert etwas nach dem Planen, werden die neuen Changes verworfen.
+- Mitgelieferte Vorlage `pki_lab` (isoliertes TLS-Lab VLAN, zwei Windows-VMs, sechs TLS-Fälle, Abbau); speichern mit `eingebaut: pki_lab`.
+- Changes können Ergebnisse früherer Changes desselben Pakets verwenden (`{{change:<schlüssel>.schrittN.feld}}`). Der Verweis ist an den geplanten Stand des Vorgängers gebunden; ein Change startet nicht, wenn der Vorgänger geändert, nicht fertig oder zurückgenommen ist oder ein übernommener Wert fehlt.
+- Endet der letzte Change eines Bauplan-Pakets, entsteht das Testprotokoll der Instanz automatisch.
+
 ### Added — Betriebs-Instanz ändern (v1877)
 
 - Neue Aktion `instanz_aendern` im Skill `dokumentation`: ersetzt bei einer Betriebs-Instanz nur die angegebenen Felder (z. B. Architekturdokument), alle Verweise werden wie beim Anlegen neu geprüft. Kennung und Name bleiben, das nächste Betriebsdokument wird die nächste Version.
