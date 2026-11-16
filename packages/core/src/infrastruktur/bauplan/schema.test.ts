@@ -93,3 +93,11 @@ describe('Fix-Runde 1 — Schema', () => {
     expect(fehlerVon(r => { r.changes[1].schluessel = 'annahmen'; r.changes[1].abhaengigVon = ['aufbau']; })).toMatch(/reserviert/);
   });
 });
+
+describe('Task 6 — zweck stilllegung je Change', () => {
+  it('zweck „stilllegung“ wird angenommen, jeder andere Wert abgewiesen', () => {
+    expect(fehlerVon(r => { r.changes[1].zweck = 'stilllegung'; })).toBe('');
+    for (const z of ['migration', '', 'Stilllegung', 1, true])
+      expect(fehlerVon(r => { r.changes[1].zweck = z; }), String(z)).toMatch(/zweck/);
+  });
+});

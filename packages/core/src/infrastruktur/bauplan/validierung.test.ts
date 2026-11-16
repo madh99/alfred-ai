@@ -288,3 +288,33 @@ describe('Task 4 Fix-Runde 1 — ohneSicherungGrund in der Vorlage', () => {
     expect((await pruefeVorlage(roh(''), { probe: p => pl.pruefeNur('o', p) })).fehler.join('\n')).toMatch(/ohneSicherungGrund/);
   });
 });
+
+describe('Task 6 — zweck stilllegung in der Vorlage', () => {
+  it('Vorlage mit proxmox.delete_vm besteht die echte Probe nur mit zweck stilllegung; zweck wandert in den Probe-Plan', async () => {
+    const fakeSkill = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['vm_status', 'backup_vm', 'delete_vm'] }, vmid: { type: 'number' } }, required: ['action'] } } };
+    const pl = new ChangePlanung({
+      itsm: { liste: async () => [], hole: async () => null, legeAn: async () => { throw new Error('nie speichern'); } } as never,
+      skill: n => (n === 'proxmox' ? fakeSkill : undefined) as never,
+      assets: async () => [{ id: 'a-pve', name: 'pve' }] as never,
+      auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
+    });
+    const roh = (zweck?: string) => ({
+      schema: 1, key: 'vm_weg', titel: 'VM weg', zweck: 'Wegwerf-VM löschen', dokumentart: 'testprotokoll',
+      parameter: [{ name: 'vmid', typ: 'vmid', pflicht: true, beschreibung: 'VMID', beispiel: 157 }],
+      annahmen: [],
+      changes: [{ schluessel: 'abbau', titel: 'VM löschen', begruendung: 'Wegwerf-VM endgültig entfernen', typ: 'normal', risiko: 'high', ausfallMinuten: 0, abhaengigVon: [], betroffen: ['pve'],
+        ...(zweck !== undefined ? { zweck } : {}),
+        schritte: [
+          { titel: 'Sicherung', art: 'aktion', skill: 'proxmox', aktion: 'backup_vm', parameter: { vmid: '{{param.vmid}}' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{param.vmid}}' } }, zeitlimitS: 600, beiFehler: 'anhalten' },
+          { titel: 'Löschen', art: 'aktion', skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: '{{param.vmid}}' }, pruefung: { typ: 'befehl', zugang: 'pve', befehl: 'qm list', nichtEnthalten: ' {{param.vmid}} ' }, zeitlimitS: 600, beiFehler: 'anhalten', rueckweg: { keiner: 'endgültig' } },
+        ] }],
+    });
+    let plaene: Array<Record<string, any>> = [];
+    const mit = await pruefeVorlage(roh('stilllegung'), { probe: async p => { plaene = p as Array<Record<string, any>>; return pl.pruefeNur('o', p); } });
+    expect(mit.fehler).toEqual([]);
+    expect(plaene[0]!.zweck).toBe('stilllegung');
+    const ohne = await pruefeVorlage(roh(), { probe: p => pl.pruefeNur('o', p) });
+    expect(ohne.fehler.join('\n')).toMatch(/delete_vm.*zweck stilllegung/);
+    expect((await pruefeVorlage(roh('migration'), { probe: p => pl.pruefeNur('o', p) })).fehler.join('\n')).toMatch(/zweck/);
+  });
+});

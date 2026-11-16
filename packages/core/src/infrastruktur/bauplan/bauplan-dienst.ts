@@ -292,6 +292,7 @@ function baueplaene(changes: BauplanChange[], annahmen: Array<{ text: string; pr
       schluessel: c.schluessel, titel: c.titel, begruendung: `${praefix}${c.begruendung}`, typ: c.typ, risiko: c.risiko,
       ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
       ...(c.ohneSicherungGrund !== undefined ? { ohneSicherungGrund: c.ohneSicherungGrund } : {}),
+      ...(c.zweck !== undefined ? { zweck: c.zweck } : {}),
       abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
       schritte,
     };

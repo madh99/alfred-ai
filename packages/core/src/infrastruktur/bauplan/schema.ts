@@ -21,6 +21,8 @@ export interface BauplanChange {
   ausfallMinuten?: number; abhaengigVon: string[]; betroffen?: string[];
   /** Task 4 Fix-Runde 1 — wie im Change-Plan: nur Neues entsteht, darum keine Sicherung vor der ersten Änderung ({{param.*}} erlaubt) */
   ohneSicherungGrund?: string;
+  /** Task 6 — wie ChangePlan.zweck: nur „stilllegung“; Pflicht für endgültig löschende Schritte (z. B. proxmox.delete_vm) */
+  zweck?: 'stilllegung';
   schritte: Array<Record<string, unknown> & { kapitel?: string }>;
 }
 export interface BauplanVorlage {
@@ -90,7 +92,7 @@ const PARAM_FELDER = ['name', 'typ', 'pflicht', 'beschreibung', 'beispiel', 'gre
 const GRENZ_FELDER = ['regex', 'min', 'max', 'laenge'];
 const ABLEITUNG_FELDER = ['funktion', 'von', 'n'];
 const ANNAHME_FELDER = ['id', 'text', 'pruefung'];
-const CHANGE_FELDER = ['schluessel', 'titel', 'begruendung', 'typ', 'risiko', 'ausfallMinuten', 'abhaengigVon', 'betroffen', 'ohneSicherungGrund', 'schritte'];
+const CHANGE_FELDER = ['schluessel', 'titel', 'begruendung', 'typ', 'risiko', 'ausfallMinuten', 'abhaengigVon', 'betroffen', 'ohneSicherungGrund', 'zweck', 'schritte'];
 
 const istObjekt = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const istText = (x: unknown): x is string => typeof x === 'string' && x.trim().length > 0;
@@ -170,6 +172,7 @@ function pruefeChange(roh: unknown, i: number, fehler: string[]): void {
   if (!RISIKEN.includes(roh.risiko as string)) fehler.push(`${wo}: risiko muss einer von ${RISIKEN.join(', ')} sein`);
   if (roh.ausfallMinuten !== undefined && !(istZahl(roh.ausfallMinuten) && roh.ausfallMinuten >= 0)) fehler.push(`${wo}: ausfallMinuten muss eine Zahl ≥ 0 sein`);
   if (roh.ohneSicherungGrund !== undefined && !(istText(roh.ohneSicherungGrund) && roh.ohneSicherungGrund.length <= 500)) fehler.push(`${wo}: ohneSicherungGrund muss ein Text (≤ 500 Zeichen) sein`);
+  if (roh.zweck !== undefined && roh.zweck !== 'stilllegung') fehler.push(`${wo}: zweck darf nur „stilllegung“ sein`);
   if (!Array.isArray(roh.abhaengigVon) || roh.abhaengigVon.some(x => typeof x !== 'string')) fehler.push(`${wo}: abhaengigVon muss eine Liste von Schlüsseln sein`);
   if (roh.betroffen !== undefined && (!Array.isArray(roh.betroffen) || roh.betroffen.some(x => typeof x !== 'string'))) fehler.push(`${wo}: betroffen muss eine Liste von Texten sein`);
   if (!Array.isArray(roh.schritte) || roh.schritte.length === 0) { fehler.push(`${wo}: schritte muss eine nicht leere Liste sein`); return; }

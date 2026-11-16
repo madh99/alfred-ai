@@ -362,6 +362,15 @@ describe('Fix-Runde 1', () => {
     expect(a!.ohneSicherungGrund).toBe('Neues Lab VLAN 832');
     expect(b!.ohneSicherungGrund).toBeUndefined();
   });
+  it('Task 6 — zweck stilllegung wird in den echten Plan übernommen, nur am Change, der ihn trägt', async () => {
+    const t = aufbau();
+    await freigegeben(t, vorlage(r => { r.changes[1].zweck = 'stilllegung'; }));
+    const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-z');
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const [a, b] = t.geplant[0] as Roh[];
+    expect(a!.zweck).toBeUndefined();
+    expect(b!.zweck).toBe('stilllegung');
+  });
   it('Freigabe-Frage scheitert → alle neuen Changes verworfen, ok:false, Owner-Meldung', async () => {
     const t = aufbau();
     await freigegeben(t);

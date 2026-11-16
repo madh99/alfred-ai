@@ -104,7 +104,7 @@ describe('Bauplan-Vorlage pki_lab', () => {
     expect(json).toContain('"konto_tresor":"pkilab-sql"');
   });
 
-  it('echter Change-Validator offline (Metadaten der echten Skills): einzig offen ist zweck stilllegung für delete_vm im Abbau', async () => {
+  it('echter Change-Validator offline (Metadaten der echten Skills): ganzes Paket samt Eingangskontrolle ohne Fehler', async () => {
     const skills: Record<string, unknown> = {
       proxmox: new ProxmoxSkill({ baseUrl: 'https://proxmox.invalid', tokenId: 't', tokenSecret: 's' } as never),
       unifi: new UniFiSkill({ baseUrl: 'https://unifi.invalid', apiKey: 'k' } as never),
@@ -118,14 +118,13 @@ describe('Bauplan-Vorlage pki_lab', () => {
       auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
     });
     const r = await pruefeVorlage(roh(), { probe: p => pl.pruefeNur('o', p) });
-    // Das Bauplan-Schema kennt (noch) kein zweck je Change; der Validator verlangt für delete_vm zweck „stilllegung“
-    expect(r.fehler).toEqual([7, 8].map(n => `Probe: Change abbau: Schritt ${n}: proxmox.delete_vm entfernt Bestehendes endgültig — nur in einem eigenen Change mit zweck stilllegung`));
-    // mit zweck stilllegung am Abbau besteht das ganze Paket samt Eingangskontrolle
-    const mitZweck = await pruefeVorlage(roh(), { probe: p => pl.pruefeNur('o', (p as Array<Record<string, unknown>>).map(x => (x.schluessel === 'abbau' ? { ...x, zweck: 'stilllegung' } : x))) });
-    expect(mitZweck.fehler).toEqual([]);
+    expect(r.fehler).toEqual([]);
+    // delete_vm im Abbau braucht zweck stilllegung — ohne ihn meldet der echte Validator genau die beiden Lösch-Schritte
+    const ohneZweck = roh(); delete (ohneZweck.changes as Array<Record<string, unknown>>)[2]!.zweck;
+    expect((await pruefeVorlage(ohneZweck, { probe: p => pl.pruefeNur('o', p) })).fehler).toEqual([7, 8].map(n => `Probe: Change abbau: Schritt ${n}: proxmox.delete_vm entfernt Bestehendes endgültig — nur in einem eigenen Change mit zweck stilllegung`));
   });
 
-  it('enge Parameter:Werte außerhalb dessen, was die pki_lab-Bausteine annehmen, werden abgewiesen', () => {
+  it('enge Parameter: Werte außerhalb dessen, was die pki_lab-Bausteine annehmen, werden abgewiesen', () => {
     const v = pruefeSchema(roh()).vorlage!;
     const basis: Record<string, unknown> = {};
     for (const p of v.parameter) if (!p.ableitung) basis[p.name] = p.beispiel;

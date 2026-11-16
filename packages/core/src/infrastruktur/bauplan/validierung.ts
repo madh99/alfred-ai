@@ -147,6 +147,7 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
     schluessel: c.schluessel, titel: c.titel, begruendung: c.begruendung, typ: c.typ, risiko: c.risiko,
     ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
     ...(c.ohneSicherungGrund !== undefined ? { ohneSicherungGrund: c.ohneSicherungGrund } : {}),
+    ...(c.zweck !== undefined ? { zweck: c.zweck } : {}),
     abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
     // Task 3 Fix-Runde 1 — {{change:<schluessel>…}} bleibt stehen: der Change-Validator (pruefeNur) prüft ihn echt (Hülle, Ziel-Schritt, Typ)
     schritte: c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return rest; }),

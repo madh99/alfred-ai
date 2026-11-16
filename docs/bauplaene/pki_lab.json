@@ -1581,6 +1581,7 @@
         "{{param.node}}",
         "UDMPRO"
       ],
+      "zweck": "stilllegung",
       "schritte": [
         {
           "nr": 1,
