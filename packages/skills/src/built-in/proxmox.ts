@@ -2336,7 +2336,7 @@ export class ProxmoxSkill extends Skill {
       if (!vonAlfred || !this.fabrik.fortsetzen) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
       // I8e — Zusatzplatten werden bei der Fortsetzung nicht neu angelegt, nur geprüft (Position und Größe)
       const abweichend = zusatz.map((gb, i) => ({ k: `scsi${i + 1}`, gb })).filter(p => laufwerkGb(cfg[p.k]) !== p.gb || String(cfg[p.k]).includes('cloudinit'));
-      if (abweichend.length) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): Zusatzplatten passen nicht — ${abweichend.map(p => `${p.k} erwartet ${p.gb} GB, ist ${cfg[p.k] === undefined ? 'leer' : `${laufwerkGb(cfg[p.k]) ?? '?'} GB`}`).join('; ')}`, data: { vmid: da.vmid, name, node: da.node } };
+      if (abweichend.length) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): Zusatzplatten passen nicht — ${abweichend.map(p => `${p.k} erwartet ${p.gb} GB, ist ${cfg[p.k] === undefined ? 'leer' : `${laufwerkGb(cfg[p.k]) ?? '?'} GB`}`).join('; ')} — nichts geändert; neu anlegen nur nach delete_vm (vmid ${da.vmid}, vm_name ${name})`, data: { vmid: da.vmid, name, node: da.node } };
       if (da.status !== 'running') await this.aufgabeOderFehler(await this.post<string>(`/nodes/${da.node}/qemu/${da.vmid}/status/start`, {}), 120_000, 'Starten');
       const a = await this.fabrik.fortsetzen({ name, ip: ip.replace(/\/\d+$/, ''), node: da.node, vmid: da.vmid, zeitlimitMs: 600_000 });
       if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
@@ -2445,7 +2445,9 @@ export class ProxmoxSkill extends Skill {
       const frei = Array.from({ length: 24 }, (_, i) => `scsi${i + 7}`).find(k => cfg[k] === undefined);
       if (!frei) return 'Zusatzplatten: kein freier SCSI-Platz für das Cloud-Init-Laufwerk';
       const ciSpeicher = /^([\w-]+):/.exec(String(cfg[ci[0]!]))?.[1] ?? st;
-      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: ci.join(','), [frei]: `${ciSpeicher}:cloudinit` });
+      // zwei Aufrufe: Löschen und Neuanlegen im selben Aufruf hängt von der Reihenfolge in Proxmox ab (pending-Änderungen)
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: ci.join(',') });
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { [frei]: `${ciSpeicher}:cloudinit` });
     }
     const neu: Record<string, string> = {};
     zusatz.forEach((gb, i) => { neu[`scsi${i + 1}`] = `${st}:${gb},discard=on,iothread=1,ssd=1`; });

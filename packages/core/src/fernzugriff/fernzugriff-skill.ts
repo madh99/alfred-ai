@@ -8,6 +8,7 @@ import { betroffeneVmids } from './wiederherstellbarkeit.js';
 import { geheimnisGrund, nurMetadaten, kaefigBefehl, KAEFIG_SELBSTTEST, KAEFIG_STUFEN, werteSelbsttest, kaefigGrenze, schwaerze, type KaefigModus } from './kaefig.js';
 import { randomBytes } from 'node:crypto';
 import { ausKodiertemBefehl, skriptDatei, EINGABE_DATEI_AB } from './windows-skriptdatei.js';
+import { linuxBausteinSkript } from './linux-bausteine.js';
 import { Codesignierer, SIGNATUR_STATUS, SIGNATUR_ABBRUCH } from '../infrastruktur/windows-codesignatur.js';
 import { ABWAEGUNG } from './weg-wahl.js';
 import { zielReferenz, holReferenz, lokaleReferenz, hochladenBefehl, holenBefehl, ausgabeWert, type RegistryZugang } from './registry.js';
@@ -915,23 +916,31 @@ export class FernzugriffSkill extends Skill {
   }
 
   /**
-   * I8e Paket 1 — festes Bausteinskript als root auf einem Linux-Zugang (nie Modelltext; die Verdrahtung wählt Skripte aus dem Code).
-   * Weder Skripttext noch Eingabe stehen je in einer Befehlszeile (ps, sudo-Log, Protokoll):
+   * I8e Paket 1 — Bausteinskript als root auf einem Linux-Zugang. Nur registrierte Bausteine (linux-bausteine.ts): der Aufrufer nennt
+   * Schlüssel und typisierte Parameter, das Skript baut der registrierte Erzeuger — nie freier Text. Weder Skripttext noch Eingabe stehen
+   * je in einer Befehlszeile (ps, sudo-Log, Protokoll):
    *  1) `sudo -n sh -c 'umask 077; cat > /run/alfred-s-<16hex>.sh'` — Skript über stdin, Datei root:root 0600 auf tmpfs. Gleiches
    *     Muster wie geheimDateiSchreiben (I4c, live erprobt); `install /dev/stdin` hängt vom Zeichengerät-Verhalten unter sudo ab und
    *     bringt nichts dazu (ausgeführt wird per `bash <datei>`, ein Ausführrecht ist nicht nötig).
-   *  2) `sudo -n bash /run/alfred-s-<hex>.sh` — `eingabe` (Geheimnisse) über stdin.
-   * Die Datei entfernt sich selbst (feste Kopfzeilen: trap EXIT und sofortiges rm — bash liest die geöffnete Datei weiter, auch wenn das
-   * Skript später einen eigenen trap setzt oder hart beendet wird); bei Fehler, Zeitüberschreitung oder Abbruch zusätzlich von außen.
+   *  2) `sudo -n timeout --kill-after=15s <N>s bash /run/alfred-s-<hex>.sh` — Zeitgrenze am Host (N = Gesamtzeit − 20 s, mind. 30 s),
+   *     damit ein abgerissener Lauf nicht weiterläuft; `eingabe` (eine Zeile, meist JSON mit Geheimnissen) über stdin.
+   * Fester Kopf: Selbstlöschung (trap EXIT und sofortiges rm — bash liest die geöffnete Datei weiter), erste stdin-Zeile in die nicht
+   * exportierte Variable ALFRED_EINGABE, danach `exec </dev/null` (kein Kindprozess liest die Eingabe). Bei Fehler, Zeitüberschreitung
+   * oder Abbruch wird die Datei zusätzlich von außen entfernt. Jeder Wert der Eingabe (≥ 6 Zeichen) wird in stdout, stderr und im
+   * gemerkten Fehlertext wörtlich geschwärzt, danach die allgemeine Schwärzung.
    */
-  async linuxSkript(name: string, skript: string, eingabe: string | undefined, timeoutMs: number, zweck: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  async linuxSkript(name: string, baustein: string, parameter: unknown, eingabe: string | undefined, timeoutMs: number, zweck: string): Promise<{ code: number; stdout: string; stderr: string }> {
     const owner = this.deps.owner();
     if (!owner) throw new Error('Kein Owner bekannt.');
     if (!this.deps.sshEingabe) throw new Error('Übergabe per Standardeingabe nicht verfügbar');
+    const skript = linuxBausteinSkript(baustein, parameter);
+    if (eingabe !== undefined && /[\r\n]/.test(eingabe)) throw new Error('Eingabe eines Linux-Bausteins muss eine Zeile sein (JSON)');
     const z = await this.zugang(owner, { name });
     if (z.system === 'windows') throw new Error(`${name} ist kein Linux-Zugang`);
     const datei = `/run/alfred-s-${randomBytes(8).toString('hex')}.sh`;
     const ziel = this.sshZiel(z);
+    const werte = eingabeWerte(eingabe);
+    const sauber = (t: string) => schwaerze(werte.reduce((a, w) => a.split(w).join('[geschwärzt]'), t)).text;
     const pruefeSchluessel = async (r: SshErgebnis) => {
       if (!r.hostSchluesselGeaendert) return;
       await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt');
@@ -940,22 +949,24 @@ export class FernzugriffSkill extends Skill {
       throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`);
     };
     const aufraeumen = async () => { await this.deps.ssh(ziel, fernBefehl(`rm -f -- ${datei}`, true), 30_000).catch(() => undefined); };
-    const inhalt = `#!/bin/bash\ntrap 'rm -f -- ${datei}' EXIT\nrm -f -- ${datei}\n${skript}`;
+    const inhalt = `#!/bin/bash\ntrap 'rm -f -- ${datei}' EXIT\nrm -f -- ${datei}\nALFRED_EINGABE=''\nIFS= read -r ALFRED_EINGABE || true\nexec </dev/null\n${skript}`;
+    const grenze = Math.max(30, Math.floor(timeoutMs / 1000) - 20);
     let r: SshErgebnis;
     try {
       const h = await this.deps.sshEingabe(ziel, fernBefehl(`umask 077; cat > ${datei}`, true), inhalt, 60_000);
       await pruefeSchluessel(h);
       if (h.code !== 0) throw new Error(`Skriptdatei auf ${z.name} nicht abgelegt (Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);
-      r = await this.deps.sshEingabe(ziel, fernBefehl(`bash ${datei}`, true), eingabe ?? '', timeoutMs);
+      r = await this.deps.sshEingabe(ziel, fernBefehl(`timeout --kill-after=15s ${grenze}s bash ${datei}`, true), eingabe === undefined ? '' : `${eingabe}\n`, timeoutMs);
       await pruefeSchluessel(r);
     } catch (err) {
       if (!/Zugang gesperrt/.test((err as Error).message)) await aufraeumen();
-      throw err;
+      throw new Error(sauber((err as Error).message));
     }
     if (r.code !== 0) await aufraeumen();
-    await this.deps.repo.merkeErgebnis(owner, z.id, r.code === 0, r.code === 0 ? undefined : schwaerze(r.stderr).text.trim().split('\n').slice(-2).join(' '));
-    this.deps.protokoll?.('I8e Linux-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, skriptdatei: datei });
-    return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
+    const stdout = sauber(r.stdout), stderr = sauber(r.stderr);
+    await this.deps.repo.merkeErgebnis(owner, z.id, r.code === 0, r.code === 0 ? undefined : stderr.trim().split('\n').slice(-2).join(' '));
+    this.deps.protokoll?.('I8e Linux-Baustein ausgeführt', { name: z.name, baustein, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, skriptdatei: datei });
+    return { code: r.code, stdout, stderr };
   }
 
   async snippetEntfernen(knoten: string, pfad: string): Promise<boolean> {
@@ -1160,4 +1171,24 @@ export class FernzugriffSkill extends Skill {
 export function kaefigText(roh: unknown, normalisiert: string): string {
   if (typeof roh !== 'string' || !roh.includes('\n')) return normalisiert;
   return roh.trim().replace(/^sudo\s+(-n\s+)?/, '');
+}
+
+/** I8e — wörtlich zu schwärzende Werte einer Baustein-Eingabe: je Zeile JSON → alle Zeichenketten ≥ 6 Zeichen, sonst die Zeile selbst (≥ 6). */
+export function eingabeWerte(eingabe: string | undefined): string[] {
+  if (!eingabe) return [];
+  const out = new Set<string>();
+  const sammle = (v: unknown): void => {
+    if (typeof v === 'string') { if (v.length >= 6) out.add(v); }
+    else if (Array.isArray(v)) v.forEach(sammle);
+    else if (v && typeof v === 'object') Object.values(v).forEach(sammle);
+  };
+  for (const zeile of eingabe.split(/\r?\n/)) {
+    const t = zeile.trim();
+    if (!t) continue;
+    let j: unknown; let istJson = false;
+    try { j = JSON.parse(t); istJson = true; } catch { /* keine JSON-Zeile */ }
+    if (istJson && ((j !== null && typeof j === 'object') || typeof j === 'string')) sammle(j);
+    else if (t.length >= 6) out.add(t);
+  }
+  return [...out].sort((a, b) => b.length - a.length);
 }

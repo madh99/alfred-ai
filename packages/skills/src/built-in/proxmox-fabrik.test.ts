@@ -366,7 +366,10 @@ describe('I8e provision_vm mit Zusatzplatten (SQL Server auf Linux: Daten/Log/Te
       if (p.endsWith('/clone')) vms.push({ vmid: 160, name: 'sql-lx01', node: 'pve1', type: 'qemu', status: 'stopped' });
       if (p.endsWith('/qemu/160/config')) {
         if (gestartet) return null;
-        for (const k of String(b.delete ?? '').split(',').filter(Boolean)) delete cfg[k];
+        // Proxmox: Löschen (pending) und Anlegen im selben Aufruf ist unzuverlässig — immer getrennt
+        const weg = String(b.delete ?? '').split(',').filter(Boolean);
+        if (weg.length && Object.keys(b).some(k => /^(scsi|ide|sata)\d+$/.test(k))) throw new Error('delete und neues Laufwerk im selben Aufruf');
+        for (const k of weg) delete cfg[k];
         for (const [k, v] of Object.entries(b)) if (/^(scsi|ide|sata)\d+$/.test(k)) { if (cfg[k]) throw new Error(`${k} ist belegt`); cfg[k] = String(v); }
       }
       if (p.endsWith('/status/start')) gestartet = true;
@@ -396,9 +399,11 @@ describe('I8e provision_vm mit Zusatzplatten (SQL Server auf Linux: Daten/Log/Te
     expect(w.aufrufe[platten]).toContain('"scsi3":"data2:64,');
     expect(w.aufrufe[platten]).toContain('"scsi4":"data2:128,');
     // Cloud-Init bleibt ein SCSI-Laufwerk (v1629), aber hinter den möglichen Zusatzplatten
-    const verlegt = w.aufrufe.find(x => x.includes('"delete":"scsi1"') && x.includes('"scsi7":"data2:cloudinit"'));
-    expect(verlegt).toBeDefined();
-    expect(w.aufrufe.indexOf(verlegt!)).toBeLessThan(platten);
+    const loeschen = w.aufrufe.findIndex(x => x.endsWith('/qemu/160/config {"delete":"scsi1"}'));
+    const verlegt = w.aufrufe.findIndex(x => x.endsWith('/qemu/160/config {"scsi7":"data2:cloudinit"}'));
+    expect(loeschen).toBeGreaterThan(-1);
+    expect(verlegt).toBeGreaterThan(loeschen);
+    expect(verlegt).toBeLessThan(platten);
     expect(r.data).toMatchObject({ zusatzplatten: [{ laufwerk: 'scsi1', gb: 160 }, { laufwerk: 'scsi2', gb: 80 }, { laufwerk: 'scsi3', gb: 64 }, { laufwerk: 'scsi4', gb: 128 }] });
     expect(r.display).toContain('scsi1 160 GB, scsi2 80 GB, scsi3 64 GB, scsi4 128 GB');
   });
@@ -444,6 +449,7 @@ describe('I8e provision_vm mit Zusatzplatten (SQL Server auf Linux: Daten/Log/Te
     const f = await falsch.px.execute(eingabe, { ausChange: true } as never);
     expect(f.success).toBe(false);
     expect(f.error).toMatch(/scsi3/);
+    expect(f.error).toMatch(/delete_vm/);
   });
 });
 
