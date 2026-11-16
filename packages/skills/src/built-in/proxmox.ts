@@ -67,6 +67,21 @@ export function zusatzPlatten(input: Record<string, unknown>): number[] {
   return l;
 }
 
+/** I8e — Zusatzplatten für provision_vm (Linux): nur extra_disks, gleiche Regeln wie Windows (scsi1…scsiN, höchstens 6, 1–4096 GB, verschieden) */
+export function linuxZusatzPlatten(input: Record<string, unknown>): number[] {
+  if (input.extra_disks === undefined) return [];
+  if (!Array.isArray(input.extra_disks)) throw new Error('extra_disks: Liste von Größen in GB, z. B. [160, 80, 64, 128]');
+  return zusatzPlatten({ extra_disks: input.extra_disks });
+}
+
+/** I8e — Größe eines Proxmox-Laufwerks in GB aus „…,size=160G“ (K/M/T umgerechnet), sonst undefined */
+function laufwerkGb(wert: unknown): number | undefined {
+  const m = /(?:^|,)size=(\d+(?:\.\d+)?)([KMGT])(?:,|$)/.exec(String(wert ?? ''));
+  if (!m) return undefined;
+  const f: Record<string, number> = { K: 1 / 1048576, M: 1 / 1024, G: 1, T: 1024 };
+  return Number(m[1]) * f[m[2]!]!;
+}
+
 export function vmNameAufloesen(entries: { vmid: number; name?: string; node: string }[], name: string, opts: { nurGenau?: boolean } = {}): { vmid: number } | { fehler: string } {
   const n = name.trim().toLowerCase();
   if (!n) return { fehler: 'Leerer VM-Name' };
@@ -337,7 +352,7 @@ export class ProxmoxSkill extends Skill {
         vlan: { type: 'number', description: 'create_vlan_bridge: VLAN-ID' },
         ueber: { type: 'string', description: 'create_vlan_bridge: nicht VLAN-fähige Bridge/Netzkarte des Knotens, über die das VLAN läuft (z. B. vmbr0)' },
         extra_disk_size: { type: 'number', description: 'provision_windows_vm: zweite Platte in GB (scsi1, gleicher Speicher wie storage), z. B. Sicherungsplatte' },
-        extra_disks: { type: 'array', items: { type: 'number' }, description: 'provision_windows_vm: Zusatzplatten in GB als scsi1…scsiN (gleicher Speicher wie storage), z. B. [50, 20, 15, 30] für SQL D/L/T/B; Größen verschieden (Zuordnung in Windows über die Größe)' },
+        extra_disks: { type: 'array', items: { type: 'number' }, description: 'provision_windows_vm/provision_vm: Zusatzplatten in GB als scsi1…scsiN (gleicher Speicher wie storage), z. B. [50, 20, 15, 30] für SQL D/L/T/B; Größen verschieden (Zuordnung in Windows über die Größe)' },
         schedule: { type: 'string', description: 'create_backup_job: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“' },
         keep_last: { type: 'number', description: 'create_backup_job: so viele Sicherungen je VM behalten (1–30)' },
         bwlimit: { type: 'number', description: 'create_backup_job: Bandbreitengrenze in KiB/s (optional, schont den Zielspeicher)' },
@@ -387,6 +402,7 @@ export class ProxmoxSkill extends Skill {
       if (typeof input.ip !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(input.ip)) return 'provision_vm: ip als CIDR (z. B. 192.168.1.140/24) — feste Adresse, damit Alfred den Host sicher erreicht';
       if (typeof input.gateway !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}$/.test(input.gateway)) return 'provision_vm braucht gateway';
       if (input.template === undefined || !/^\d+$/.test(String(input.template))) return 'provision_vm: template als VMID';
+      try { linuxZusatzPlatten(input); } catch (err) { return (err as Error).message; }
       return undefined;
     }
     if (action === 'delete_image' && (typeof input.volid !== 'string' || !IMPORT_VOLUME.test(input.volid))) return 'delete_image: volid eines import-Volumes';
@@ -2306,6 +2322,7 @@ export class ProxmoxSkill extends Skill {
     const name = input.hostname as string;
     const ip = input.ip as string;
     const tpl = Number(input.template);
+    const zusatz = linuxZusatzPlatten(input);
     const alle = await this.getAllVms();
     const vorlage = alle.find(v => v.vmid === tpl);
     if (!vorlage) return { success: false, error: `Vorlage ${tpl} gibt es nicht` };
@@ -2314,9 +2331,12 @@ export class ProxmoxSkill extends Skill {
     // dieser IP wird fortgesetzt statt neu angelegt — der Fernzugang mit ihrem Host-Schlüssel besteht schon
     const da = alle.find(v => v.name === name && v.type === 'qemu');
     if (da) {
-      const cfg = await this.get<{ description?: string; ipconfig0?: string }>(`/nodes/${da.node}/qemu/${da.vmid}/config`).catch(() => ({} as { description?: string; ipconfig0?: string }));
+      const cfg = await this.get<Record<string, unknown> & { description?: string; ipconfig0?: string }>(`/nodes/${da.node}/qemu/${da.vmid}/config`).catch(() => ({} as Record<string, unknown> & { description?: string; ipconfig0?: string }));
       const vonAlfred = String(cfg.description ?? '').includes('Angelegt von Alfred (I5)') && String(cfg.ipconfig0 ?? '').includes(`ip=${ip},`);
       if (!vonAlfred || !this.fabrik.fortsetzen) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
+      // I8e — Zusatzplatten werden bei der Fortsetzung nicht neu angelegt, nur geprüft (Position und Größe)
+      const abweichend = zusatz.map((gb, i) => ({ k: `scsi${i + 1}`, gb })).filter(p => laufwerkGb(cfg[p.k]) !== p.gb || String(cfg[p.k]).includes('cloudinit'));
+      if (abweichend.length) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): Zusatzplatten passen nicht — ${abweichend.map(p => `${p.k} erwartet ${p.gb} GB, ist ${cfg[p.k] === undefined ? 'leer' : `${laufwerkGb(cfg[p.k]) ?? '?'} GB`}`).join('; ')}`, data: { vmid: da.vmid, name, node: da.node } };
       if (da.status !== 'running') await this.aufgabeOderFehler(await this.post<string>(`/nodes/${da.node}/qemu/${da.vmid}/status/start`, {}), 120_000, 'Starten');
       const a = await this.fabrik.fortsetzen({ name, ip: ip.replace(/\/\d+$/, ''), node: da.node, vmid: da.vmid, zeitlimitMs: 600_000 });
       if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
@@ -2325,7 +2345,7 @@ export class ProxmoxSkill extends Skill {
       await this.cloudInitLoesen(da.node, da.vmid);
       const sp = await this.get<{ path?: string }>('/storage/local').catch(() => ({} as { path?: string }));
       await this.fabrik.snippetEntfernen(da.node, `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(da.vmid)}`).catch(() => undefined);
-      return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
+      return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true, ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
     }
     if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
     const hindernisse = await this.fabrik.vorpruefung({ name, ip: ip.replace(/\/\d+$/, '') });
@@ -2381,6 +2401,11 @@ export class ProxmoxSkill extends Skill {
       if (typeof input.disk_size === 'number' && input.disk_size > 0) {
         await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
       }
+      if (zusatz.length) {
+        const f = await this.linuxZusatzPlattenAnlegen(node, vmid, zusatz, wunsch);
+        if (f) return { success: false, error: [...schritte, f].join('\n'), data: { vmid, name, node, ip } };
+        schritte.push(`${zusatz.length === 1 ? 'Zusatzplatte' : `${zusatz.length} Zusatzplatten`} ${zusatz.map((gb, i) => `scsi${i + 1} ${gb} GB`).join(', ')}`);
+      }
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
       schritte.push(`gestartet mit ${ip}, Benutzer alfred, Host-Schlüssel von Alfred`);
       const a = await this.fabrik.anmelden({ name, ip: ip.replace(/\/\d+$/, ''), node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 600_000 });
@@ -2400,7 +2425,32 @@ export class ProxmoxSkill extends Skill {
       await this.cloudInitLoesen(node, vmid);
     }
     schritte.push('Snippet am Knoten entfernt');
-    return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich }, display: schritte.map(s => `- ${s}`).join('\n') };
+    return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich, ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: schritte.map(s => `- ${s}`).join('\n') };
+  }
+
+  /**
+   * I8e — Zusatzplatten einer neuen Linux-VM (vor dem ersten Start) als scsi1…scsiN. Linux-Vorlagen tragen das Cloud-Init-Laufwerk auf
+   * scsi1 (v1629: SCSI-CD, weil IDE/AHCI im schlanken Debian-Kernel fehlt) — es wird hinter die möglichen Zusatzplatten verlegt (erster
+   * freier Platz ab scsi7), bleibt aber SCSI. Ein anderes Laufwerk auf einem der Plätze → Abbruch ohne Änderung (Meldung zurück).
+   */
+  private async linuxZusatzPlattenAnlegen(node: string, vmid: number, zusatz: number[], wunsch?: string): Promise<string | undefined> {
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+    const st = wunsch ?? /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
+    if (!st) return 'Speicher für die Zusatzplatten unbekannt (storage angeben)';
+    const plaetze = zusatz.map((_, i) => `scsi${i + 1}`);
+    const fremd = plaetze.filter(k => cfg[k] !== undefined && !String(cfg[k]).includes('cloudinit'));
+    if (fremd.length) return `Zusatzplatten: ${fremd.join(', ')} schon belegt (${fremd.map(k => String(cfg[k]).slice(0, 60)).join('; ')}) — nichts angehängt`;
+    const ci = plaetze.filter(k => cfg[k] !== undefined);
+    if (ci.length) {
+      const frei = Array.from({ length: 24 }, (_, i) => `scsi${i + 7}`).find(k => cfg[k] === undefined);
+      if (!frei) return 'Zusatzplatten: kein freier SCSI-Platz für das Cloud-Init-Laufwerk';
+      const ciSpeicher = /^([\w-]+):/.exec(String(cfg[ci[0]!]))?.[1] ?? st;
+      await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: ci.join(','), [frei]: `${ciSpeicher}:cloudinit` });
+    }
+    const neu: Record<string, string> = {};
+    zusatz.forEach((gb, i) => { neu[`scsi${i + 1}`] = `${st}:${gb},discard=on,iothread=1,ssd=1`; });
+    await this.post(`/nodes/${node}/qemu/${vmid}/config`, neu);
+    return undefined;
   }
 
   /** v1629 — Snippet-Verweis und Cloud-Init-Laufwerk entfernen, egal an welchem Anschluss es hängt (alte Vorlagen ide2, neue scsi1) */

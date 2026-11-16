@@ -914,6 +914,50 @@ export class FernzugriffSkill extends Skill {
     return { code: r.code, stdout: r.stdout, stderr: schwaerze(r.stderr).text };
   }
 
+  /**
+   * I8e Paket 1 — festes Bausteinskript als root auf einem Linux-Zugang (nie Modelltext; die Verdrahtung wählt Skripte aus dem Code).
+   * Weder Skripttext noch Eingabe stehen je in einer Befehlszeile (ps, sudo-Log, Protokoll):
+   *  1) `sudo -n sh -c 'umask 077; cat > /run/alfred-s-<16hex>.sh'` — Skript über stdin, Datei root:root 0600 auf tmpfs. Gleiches
+   *     Muster wie geheimDateiSchreiben (I4c, live erprobt); `install /dev/stdin` hängt vom Zeichengerät-Verhalten unter sudo ab und
+   *     bringt nichts dazu (ausgeführt wird per `bash <datei>`, ein Ausführrecht ist nicht nötig).
+   *  2) `sudo -n bash /run/alfred-s-<hex>.sh` — `eingabe` (Geheimnisse) über stdin.
+   * Die Datei entfernt sich selbst (feste Kopfzeilen: trap EXIT und sofortiges rm — bash liest die geöffnete Datei weiter, auch wenn das
+   * Skript später einen eigenen trap setzt oder hart beendet wird); bei Fehler, Zeitüberschreitung oder Abbruch zusätzlich von außen.
+   */
+  async linuxSkript(name: string, skript: string, eingabe: string | undefined, timeoutMs: number, zweck: string): Promise<{ code: number; stdout: string; stderr: string }> {
+    const owner = this.deps.owner();
+    if (!owner) throw new Error('Kein Owner bekannt.');
+    if (!this.deps.sshEingabe) throw new Error('Übergabe per Standardeingabe nicht verfügbar');
+    const z = await this.zugang(owner, { name });
+    if (z.system === 'windows') throw new Error(`${name} ist kein Linux-Zugang`);
+    const datei = `/run/alfred-s-${randomBytes(8).toString('hex')}.sh`;
+    const ziel = this.sshZiel(z);
+    const pruefeSchluessel = async (r: SshErgebnis) => {
+      if (!r.hostSchluesselGeaendert) return;
+      await this.deps.repo.setzeStatus(owner, z.id, 'gesperrt');
+      await this.deps.repo.merkeErgebnis(owner, z.id, false, 'Host-Schlüssel hat sich geändert');
+      this.deps.protokoll?.('v1539 Host-Schlüssel geändert — Zugang gesperrt', { name: z.name, host: z.host });
+      throw new Error(`Host-Schlüssel von ${z.name} hat sich geändert — Zugang gesperrt`);
+    };
+    const aufraeumen = async () => { await this.deps.ssh(ziel, fernBefehl(`rm -f -- ${datei}`, true), 30_000).catch(() => undefined); };
+    const inhalt = `#!/bin/bash\ntrap 'rm -f -- ${datei}' EXIT\nrm -f -- ${datei}\n${skript}`;
+    let r: SshErgebnis;
+    try {
+      const h = await this.deps.sshEingabe(ziel, fernBefehl(`umask 077; cat > ${datei}`, true), inhalt, 60_000);
+      await pruefeSchluessel(h);
+      if (h.code !== 0) throw new Error(`Skriptdatei auf ${z.name} nicht abgelegt (Exit ${h.code}: ${schwaerze(h.stderr).text.trim().slice(-200)})`);
+      r = await this.deps.sshEingabe(ziel, fernBefehl(`bash ${datei}`, true), eingabe ?? '', timeoutMs);
+      await pruefeSchluessel(r);
+    } catch (err) {
+      if (!/Zugang gesperrt/.test((err as Error).message)) await aufraeumen();
+      throw err;
+    }
+    if (r.code !== 0) await aufraeumen();
+    await this.deps.repo.merkeErgebnis(owner, z.id, r.code === 0, r.code === 0 ? undefined : schwaerze(r.stderr).text.trim().split('\n').slice(-2).join(' '));
+    this.deps.protokoll?.('I8e Linux-Baustein ausgeführt', { name: z.name, zweck, code: r.code, mitGeheimnis: eingabe !== undefined, skriptdatei: datei });
+    return { code: r.code, stdout: schwaerze(r.stdout).text, stderr: schwaerze(r.stderr).text };
+  }
+
   async snippetEntfernen(knoten: string, pfad: string): Promise<boolean> {
     const owner = this.deps.owner();
     if (!owner || !FernzugriffSkill.SNIPPET_PFAD.test(pfad)) return false;

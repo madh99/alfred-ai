@@ -345,6 +345,108 @@ describe('v1644 provision_vm auf lokalen Speicher eines anderen Nodes (Realfall 
   });
 });
 
+describe('I8e provision_vm mit Zusatzplatten (SQL Server auf Linux: Daten/Log/TempDB/Sicherung)', () => {
+  function welt(o: { start?: Record<string, string>; vorhanden?: Record<string, string> } = {}) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const aufrufe: string[] = [];
+    const vms: Array<{ vmid: number; name: string; node: string; type: string; status: string }> = [{ vmid: 9020, name: 'ubuntu-2404', node: 'pve1', type: 'qemu', status: 'stopped' }];
+    // Klon der Linux-Vorlage: Cloud-Init-Laufwerk als SCSI-CD auf scsi1 (vorlagenKonfig, v1629)
+    const cfg: Record<string, string> = { scsi0: 'data2:vm-160-disk-0,discard=on,iothread=1,ssd=1,size=8G', scsi1: 'data2:vm-160-cloudinit,media=cdrom', ...(o.start ?? {}) };
+    let gestartet = false;
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => {
+      if (p.endsWith('/qemu/9020/config')) return { description: 'Vorlage von Alfred (I5) aus backupshare%3Aimport/ubuntu-24.04-20261017.qcow2' };
+      if (p.endsWith('/qemu/160/config')) return o.vorhanden ?? { ...cfg };
+      if (p === '/storage/local') return { path: '/var/lib/vz' };
+      return {};
+    };
+    a.post = async (p: string, b: Record<string, unknown>) => {
+      aufrufe.push(`POST ${p} ${JSON.stringify(b)}`);
+      if (p.endsWith('/clone')) vms.push({ vmid: 160, name: 'sql-lx01', node: 'pve1', type: 'qemu', status: 'stopped' });
+      if (p.endsWith('/qemu/160/config')) {
+        if (gestartet) return null;
+        for (const k of String(b.delete ?? '').split(',').filter(Boolean)) delete cfg[k];
+        for (const [k, v] of Object.entries(b)) if (/^(scsi|ide|sata)\d+$/.test(k)) { if (cfg[k]) throw new Error(`${k} ist belegt`); cfg[k] = String(v); }
+      }
+      if (p.endsWith('/status/start')) gestartet = true;
+      return 'UPID:x';
+    };
+    a.api = async () => 'UPID:x';
+    a.aufgabeOderFehler = async () => undefined;
+    a.vmidFrei = async () => true;
+    a.warteAufAgent = async () => ({ ok: true, meldung: 'Gast-Agent antwortet' });
+    px.setVmFabrik({
+      vorpruefung: async () => [], hostSchluessel: async () => ({ privat: HOST_PRIV, oeffentlich: HOST_PUB }), alfredSchluessel: async () => ALFRED,
+      snippetSchreiben: async () => undefined, snippetEntfernen: async () => undefined,
+      anmelden: async () => ({ ok: true, meldung: 'SSH ok' }), fortsetzen: async () => ({ ok: true, meldung: 'SSH ok' }), abmelden: async () => '',
+    } as never);
+    return { px, aufrufe, cfg, startIndex: () => aufrufe.findIndex(x => x.includes('/status/start')) };
+  }
+  const eingabe = { action: 'provision_vm', template: 9020, node: 'pve1', storage: 'data2', hostname: 'sql-lx01', ip: '10.203.28.10/28', gateway: '10.203.28.1', new_vmid: 160, extra_disks: [160, 80, 64, 128] };
+
+  it('setzt scsi1–scsi4 vor dem Start, verlegt das Cloud-Init-Laufwerk und nennt die Platten im Ergebnis', async () => {
+    const w = welt();
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    const platten = w.aufrufe.findIndex(x => x.includes('"scsi1":"data2:160,discard=on,iothread=1,ssd=1"'));
+    expect(platten).toBeGreaterThan(-1);
+    expect(platten).toBeLessThan(w.startIndex());
+    expect(w.aufrufe[platten]).toContain('"scsi2":"data2:80,');
+    expect(w.aufrufe[platten]).toContain('"scsi3":"data2:64,');
+    expect(w.aufrufe[platten]).toContain('"scsi4":"data2:128,');
+    // Cloud-Init bleibt ein SCSI-Laufwerk (v1629), aber hinter den möglichen Zusatzplatten
+    const verlegt = w.aufrufe.find(x => x.includes('"delete":"scsi1"') && x.includes('"scsi7":"data2:cloudinit"'));
+    expect(verlegt).toBeDefined();
+    expect(w.aufrufe.indexOf(verlegt!)).toBeLessThan(platten);
+    expect(r.data).toMatchObject({ zusatzplatten: [{ laufwerk: 'scsi1', gb: 160 }, { laufwerk: 'scsi2', gb: 80 }, { laufwerk: 'scsi3', gb: 64 }, { laufwerk: 'scsi4', gb: 128 }] });
+    expect(r.display).toContain('scsi1 160 GB, scsi2 80 GB, scsi3 64 GB, scsi4 128 GB');
+  });
+
+  it('ohne extra_disks bleibt alles wie bisher (kein Verlegen, keine Platten)', async () => {
+    const w = welt();
+    const { extra_disks: _x, ...ohne } = eingabe;
+    const r = await w.px.execute(ohne, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.some(x => x.includes('scsi7') || x.includes('"scsi2"'))).toBe(false);
+    expect((r.data as Record<string, unknown>).zusatzplatten).toBeUndefined();
+  });
+
+  it('ungültige Größen werden vor jedem Proxmox-Aufruf abgewiesen', async () => {
+    for (const extra_disks of [[0], [5000], [160, 160], [1, 2, 3, 4, 5, 6, 7], [-3], ['x'], '160,80']) {
+      const w = welt();
+      const r = await w.px.execute({ ...eingabe, extra_disks }, { ausChange: true } as never);
+      expect(r.success, JSON.stringify(extra_disks)).toBe(false);
+      expect(r.error).toMatch(/extra_disks/);
+      expect(w.aufrufe).toHaveLength(0);
+    }
+  });
+
+  it('belegter Platz für eine Zusatzplatte (fremdes Laufwerk) → Abbruch vor dem Start', async () => {
+    const w = welt({ start: { scsi2: 'data2:vm-160-disk-9,size=4G' } });
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/scsi2/);
+    expect(w.startIndex()).toBe(-1);
+  });
+
+  it('Fortsetzung einer vorhandenen VM prüft die Zusatzplatten statt sie neu anzulegen', async () => {
+    const beschreibung = 'Angelegt von Alfred (I5) aus Vorlage 9020';
+    const passend = { description: beschreibung, ipconfig0: 'ip=10.203.28.10/28,gw=10.203.28.1', scsi0: 'data2:vm-160-disk-0,size=80G', scsi1: 'data2:vm-160-disk-1,discard=on,size=160G', scsi2: 'data2:vm-160-disk-2,size=80G', scsi3: 'data2:vm-160-disk-3,size=64G', scsi4: 'data2:vm-160-disk-4,size=128G' };
+    const ok = welt({ vorhanden: passend });
+    (ok.px as unknown as { getAllVms: () => Promise<unknown[]> }).getAllVms = async () => [{ vmid: 9020, name: 'ubuntu-2404', node: 'pve1', type: 'qemu', status: 'stopped' }, { vmid: 160, name: 'sql-lx01', node: 'pve1', type: 'qemu', status: 'running' }];
+    const r = await ok.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(r.data).toMatchObject({ fortgesetzt: true, zusatzplatten: [{ laufwerk: 'scsi1', gb: 160 }, { laufwerk: 'scsi2', gb: 80 }, { laufwerk: 'scsi3', gb: 64 }, { laufwerk: 'scsi4', gb: 128 }] });
+    expect(ok.aufrufe.some(x => x.includes('"scsi1":"data2:160'))).toBe(false);
+    const falsch = welt({ vorhanden: { ...passend, scsi3: 'data2:vm-160-disk-3,size=32G' } });
+    (falsch.px as unknown as { getAllVms: () => Promise<unknown[]> }).getAllVms = async () => [{ vmid: 9020, name: 'ubuntu-2404', node: 'pve1', type: 'qemu', status: 'stopped' }, { vmid: 160, name: 'sql-lx01', node: 'pve1', type: 'qemu', status: 'running' }];
+    const f = await falsch.px.execute(eingabe, { ausChange: true } as never);
+    expect(f.success).toBe(false);
+    expect(f.error).toMatch(/scsi3/);
+  });
+});
+
 describe('v1779 provision_windows_vm auf lokalen Speicher eines anderen Nodes (Realfall 3103ec4c)', () => {
   function welt(zielSpeicher: { type: string; shared?: number }) {
     const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
