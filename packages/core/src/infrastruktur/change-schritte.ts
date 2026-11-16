@@ -53,8 +53,12 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + '| Verbindung ok: {hostname} ({benutzer}@{host}). sudo ohne Passwort: ja | nein — Befehle laufen dann ohne root. Lese-Käfig: aktiv | nicht verfügbar '
     + '(eingeschränkt: schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok | braucht sudo ohne Passwort | vom Owner abgeschaltet | Selbsttest gescheitert).',
   // I8e — Wortlaut aus linuxSqlStatusText (linux-sql-skill.ts)
-  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst aktiv, aktiviert; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; '
-    + 'Datenbanken: {liste}; eingehängt: data, log, tempdb, backup | {zugang}: SQL Server nicht installiert; eingehängt: {ziele} | {zugang}: SQL Server {paket} (Paket); Dienst {zustand}, {aktiviert}; SQL-Sicht: {hinweis}',
+  // Fix 1: die drei Formen genau wie ausgegeben, dazu die festen Werte der Platzhalter (Dienst, eingehängt) als prüfbare Stücke;
+  // verneinende Formen („nicht installiert“, „keine eigenen“, „keine Plattenziele“) sind als erwartet ohnehin unzulässig (VERNEINUNG) → nichtEnthalten
+  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}'
+    + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}'
+    + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}'
+    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -492,7 +496,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   // I6 — Tresor-Einträge, die ein früherer Schritt dieses Plans per geheim_uebernehmen anlegt, gelten für spätere Schritte als vorhanden
   const tresorNamen = ctx.tresorNamen ? new Set(ctx.tresorNamen) : undefined;
   let ersteAenderung: number | undefined; let ersteSicherung: number | undefined;
-  // I8e — Hostnamen, die ein früherer Schritt dieses Changes per proxmox.provision_vm neu bereitstellt
+  // I8e — Hostnamen, die ein früherer Schritt dieses Changes per proxmox.provision_vm neu bereitstellt (Fix 1: nur Namen, die die CMDB
+  // noch nicht kennt — eine bestehende VM ist kein Neuaufbau, dort braucht linux_sql Sicherung und Rückweg)
   const bereitgestellt = new Set<string>();
   for (const [i, s0] of roheSchritte.entries()) {
     const s = obj(s0) ?? {};
@@ -562,7 +567,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
           if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
             const z = txt(schritt.parameter.zugang).toLowerCase();
-            if (!(z && bereitgestellt.has(z)) && !plan.ohneSicherungGrund) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} ohne Rückweg nur beim Neuaufbau — derselbe Change stellt die VM „${z}“ vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt; sonst vorher sichern (proxmox create_snapshot/backup_vm) und rueckweg angeben (z. B. proxmox rollback_snapshot)`);
+            if (!(z && bereitgestellt.has(z)) && !plan.ohneSicherungGrund) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} ohne Rückweg nur beim Neuaufbau — derselbe Change stellt die VM „${z}“ vorher mit proxmox.provision_vm neu bereit (Name noch nicht in der CMDB; Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt; sonst vorher sichern (proxmox create_snapshot/backup_vm) und rueckweg angeben (z. B. proxmox rollback_snapshot)`);
           } else if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen && !einweg) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {
@@ -590,7 +595,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         }
       }
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'geheim_uebernehmen' && typeof schritt.parameter.tresor_name === 'string') tresorNamen?.add(schritt.parameter.tresor_name);
-      if (schritt.skill === 'proxmox' && schritt.aktion === 'provision_vm') { const h = txt(schritt.parameter.hostname); if (h && !h.includes('{{')) bereitgestellt.add(h.toLowerCase()); }
+      if (schritt.skill === 'proxmox' && schritt.aktion === 'provision_vm') { const h = txt(schritt.parameter.hostname); if (h && !h.includes('{{') && !ctx.asset(h)) bereitgestellt.add(h.toLowerCase()); }
       aktionsNummern.add(nr);
     } else if (art === 'pruefung') {
       const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p;

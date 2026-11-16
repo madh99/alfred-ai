@@ -224,7 +224,9 @@ describe('I8e Task 3 — Change „sqllnx01 aufbauen“', () => {
     template: { type: 'number' }, node: { type: 'string' }, storage: { type: 'string' }, hostname: { type: 'string' }, ip: { type: 'string' }, gateway: { type: 'string' },
     new_vmid: { type: 'number' }, vmid: { type: 'number' }, extra_disks: { type: 'array' }, name: { type: 'string' },
   }, required: ['action'] } } };
-  const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : n === 'proxmox' ? proxmox : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  /** gefälschte CMDB: alles existiert außer den neu bereitgestellten VMs */
+  const NEUE_VMS = new Set(['sqllnx01', 'anderevm']);
+  const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : n === 'proxmox' ? proxmox : undefined) as never, asset: (n: string) => (NEUE_VMS.has(n.toLowerCase()) ? undefined : { id: `a-${n}`, name: n }), changes: [] };
   const status = (erwartet: string) => ({ typ: 'skill', skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnx01' }, erwartet });
   const keiner = { keiner: 'Neuaufbau, Rückweg = VM löschen (Change-Ebene proxmox.delete_vm)' };
   const provision = { titel: 'VM bereitstellen', art: 'aktion', skill: 'proxmox', aktion: 'provision_vm', zeitlimitS: 1800,
@@ -292,5 +294,65 @@ describe('I8e Task 3 — Werkzeugwahl', () => {
     const alle = new Set(['core', 'automation', 'infrastructure', 'productivity'] as never[]);
     expect([...(selectCategoriesOhneRueckfall('Was meldet linux_sql für vm7?', alle as never) ?? [])]).toContain('infrastructure');
     expect([...(selectCategoriesOhneRueckfall('Wie geht es der Ubuntu-Maschine?', alle as never) ?? [])]).toContain('infrastructure');
+  });
+});
+
+// ── Fix-Runde 1: keine stillen Änderungen an bestehenden Instanzen ─────────────────────────────────────────────────────────────
+describe('I8e Task 3 Fix 1 — bestehende VM, Wortlaut, Tresor-Namen', () => {
+  const skill = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const proxmox = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: {
+    action: { type: 'string', enum: ['provision_vm', 'delete_vm', 'create_snapshot', 'agent_status'] }, hostname: { type: 'string' }, vmid: { type: 'number' }, name: { type: 'string' },
+  }, required: ['action'] } } };
+  const cmdb = new Set(['pve1', 'pve2', 'sqlalt01']);
+  const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : n === 'proxmox' ? proxmox : undefined) as never, asset: (n: string) => (cmdb.has(n.toLowerCase()) ? { id: `a-${n}`, name: n } : undefined), changes: [] };
+  const snap = { titel: 'Snapshot', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 150, name: 'vor_sql' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'agent_status', parameter: { vmid: 150 } } };
+  const prov = (hostname: string) => ({ titel: 'VM', art: 'aktion', skill: 'proxmox', aktion: 'provision_vm', parameter: { hostname }, rueckweg: { skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: 160 } }, pruefung: { typ: 'ping', ziel: '10.0.0.1' } });
+  const inst = (zugang: string) => ({ titel: 'Installieren', art: 'aktion', skill: 'linux_sql', aktion: 'installieren', parameter: { zugang, version: '17.0.4006.2-1' }, rueckweg: { keiner: 'Neuaufbau' } });
+  const plan = (schritte: unknown[]) => ({ titel: 'SQL aufbauen', begruendung: 'I8e Paket 1 Fix-Runde 1', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['pve1'], schritte });
+
+  it('provision_vm für einen Namen, den die CMDB schon kennt, zählt nicht als Neuaufbau → Rückweg verlangt', () => {
+    expect(pruefeChangePlan(plan([snap, prov('sqlneu01'), inst('sqlneu01')]), ctx).fehler).toEqual([]);
+    const f = pruefeChangePlan(plan([snap, prov('SQLALT01'), inst('sqlalt01')]), ctx).fehler;
+    expect(f.some(x => x.startsWith('Schritt 3:') && x.includes('ohne Rückweg nur beim Neuaufbau') && x.includes('CMDB'))).toBe(true);
+  });
+
+  it('FESTE_AUSGABEN: jede Variante des Statustexts passt genau auf eine Vorlage, ihre festen Stücke bestehen die erwartet-Prüfung', () => {
+    const vorlagen = FESTE_AUSGABEN['linux_sql.status']!.split(' | ');
+    const alsMuster = (v: string) => new RegExp(`^${v.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
+    const varianten: Array<[string, string[]]> = [
+      [linuxSqlStatusText('sqllnx01', STATUS_VOLL), ['Dienst aktiv, aktiviert', 'Speicherlimit', 'max server memory', 'Datendateien', 'eingehängt: data, log, tempdb, backup']],
+      [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, sql: { ...STATUS_VOLL.sql, datenbanken: [{ name: 'master' }] } }), ['Datenbanken:', 'Dienst aktiv, aktiviert']],
+      [linuxSqlStatusText('sqllnx01', { zustand: 'gelesen', installiert: false, platz: [] }), ['SQL Server', 'eingehängt:']],
+      [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, sql: null, sqlHinweis: 'ohne sa-Kennwort nur Betriebssystem-Sicht' }), ['(Paket)', 'SQL-Sicht:', 'Dienst aktiv, aktiviert', 'Speicherlimit']],
+      [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, dienst: 'failed', aktiviert: 'disabled', sql: null, sqlHinweis: 'Dienst nicht aktiv' }), ['(Paket)', 'SQL-Sicht:']],
+    ];
+    for (const [text, stuecke] of varianten) {
+      expect(vorlagen.filter(v => alsMuster(v).test(text)), text).toHaveLength(1);
+      for (const e of stuecke) {
+        expect(text, e).toContain(e);
+        const schritt = { titel: 'Abschluss', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnx01' }, erwartet: e } };
+        expect(pruefeChangePlan(plan([schritt]), ctx).fehler, e).toEqual([]);
+      }
+    }
+  });
+
+  it('pruefeEingabe: Tresor-Name des sa-Kennworts zu lang → abgewiesen (installieren, login_anlegen)', () => {
+    const lang = `s${'q'.repeat(55)}`;
+    expect(skill.pruefeEingabe({ action: 'installieren', zugang: lang, version: '17.0.4006.2-1' })).toContain('Tresor');
+    expect(skill.pruefeEingabe({ action: 'login_anlegen', zugang: lang, login: 'app', rolle: 'lesen' })).toContain('Tresor');
+    expect(skill.pruefeEingabe({ action: 'installieren', zugang: 'sqllnx01', version: '17.0.4006.2-1' })).toBeUndefined();
+  });
+
+  it('Abweichungen der Bausteine (zusätzliche Serverrolle, fremde Datenbank) kommen als Fehler, nie als „nichts zu tun“', async () => {
+    const w = welt({
+      [LINUX_SQL_BAUSTEINE.login]: [{ zustand: 'fehler', fehler: 'Login: Msg 50003 Login app hat zusaetzlich sysadmin - nicht still entfernt; bitte bewusst entscheiden' }],
+      [LINUX_SQL_BAUSTEINE.pruefdaten]: [{ zustand: 'fehler', fehler: 'Prüfdaten: Msg 50004 Datenbank kunden ist eine fremde Datenbank - nichts geaendert' }],
+    }, { 'sqllnx-sqllnx01-sa': 'Sa-F', 'sqllnx-sqllnx01-app': 'Kw-F' });
+    const l = await w.skill.execute({ action: 'login_anlegen', zugang: 'sqllnx01', login: 'app', rolle: 'lesen' }, imChange);
+    expect(l.success).toBe(false);
+    expect(l.error).toContain('zusaetzlich sysadmin');
+    const p = await w.skill.execute({ action: 'pruefdaten_anlegen', zugang: 'sqllnx01', datenbank: 'kunden' }, imChange);
+    expect(p.success).toBe(false);
+    expect(p.error).toContain('fremde Datenbank');
   });
 });

@@ -586,12 +586,20 @@ function loginSkript(p: LoginParameter): string {
   const n = p.name; // geprüft: [A-Za-z][A-Za-z0-9_]* — sicher in [] und N'…'
   // Nachprüfung der Rollen: Anzahl der verlangten Serverrollen, in denen der Login danach NICHT Mitglied ist (soll 0)
   const fehlend = (p.serverrollen ?? []).map(r => `(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'${r}', N'${n}'), 0) = 1 THEN 0 ELSE 1 END)`).join(' + ') || '0';
+  const ausgenommen = p.serverrollen?.length ? `r.name NOT IN (${p.serverrollen.map(r => `N'${r}'`).join(', ')})` : '1 = 1';
   const rollen = (p.serverrollen ?? []).map(r => `IF ISNULL(IS_SRVROLEMEMBER(N'${r}', N'${n}'), 0) <> 1 BEGIN ALTER SERVER ROLE [${r}] ADD MEMBER [${n}]; IF @z = N'schon' SET @z = N'geaendert'; END`);
   // T-SQL entsteht erst im Skript: Kennwort (verdoppelte ') wird dort eingesetzt; Vorlage mit Platzhalter @@KW@@
   const vorlage = [
     'SET NOCOUNT ON;',
     "DECLARE @z nvarchar(20) = N'schon';",
     `IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${n}' AND type <> 'S') THROW 50002, N'${n} ist kein SQL-Login', 1;`,
+    // Task 3 Fix 1 — Rollen werden nie still entfernt: hat ein bestehender Login mehr Serverrollen als verlangt, Abbruch vor jeder Änderung
+    `IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${n}')`,
+    'BEGIN',
+    "  DECLARE @extra nvarchar(1000) = N'';",
+    `  SELECT @extra = @extra + N' ' + r.name FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = N'${n}' AND ${ausgenommen};`,
+    `  IF @extra <> N'' BEGIN DECLARE @msg nvarchar(2048) = N'Login ${n} hat zusaetzlich' + @extra + N' - nicht still entfernt; bitte bewusst entscheiden'; THROW 50003, @msg, 1; END`,
+    'END',
     `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${n}')`,
     `BEGIN CREATE LOGIN [${n}] WITH PASSWORD = N'@@KW@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @z = N'angelegt'; END`,
     `ELSE IF PWDCOMPARE(N'@@KW@@', (SELECT password_hash FROM sys.sql_logins WHERE name = N'${n}')) = 0`,
@@ -661,7 +669,8 @@ export function pruefePruefdaten(p: unknown): string | undefined {
 }
 
 /**
- * Datenbank (falls fehlend) mit Wiederherstellungsmodell FULL, darin die Prüftabelle — nur wenn sie fehlt, in einer Transaktion.
+ * Datenbank (falls fehlend, markiert mit der Eigenschaft alfred_pruefdaten=1) mit Wiederherstellungsmodell FULL, darin die Prüftabelle —
+ * nur wenn sie fehlt, in einer Transaktion. Eine bestehende Datenbank ohne Markierung wird nie verändert (ohne Prüftabelle: Abbruch).
  * Eine vorhandene Tabelle wird nie verändert: weicht sie ab (Zeilen/Prüfsumme), bricht der Baustein ab. Zeit: LINUX_SQL_ZEIT_MS.pruefdaten
  */
 function pruefdatenSkript(p: PruefdatenParameter): string {
@@ -670,7 +679,7 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
   // läuft per sp_executesql in der Ziel-Datenbank (Text steht in N'…', daher verdoppelte ')
   const innen = [
     'SET NOCOUNT ON; SET XACT_ABORT ON;',
-    "IF OBJECT_ID(N''dbo.alfred_pruefung'', N''U'') IS NULL",
+    "IF @darf = 1 AND OBJECT_ID(N''dbo.alfred_pruefung'', N''U'') IS NULL",
     'BEGIN',
     '  BEGIN TRAN;',
     '  CREATE TABLE dbo.alfred_pruefung (id int NOT NULL PRIMARY KEY, wert nvarchar(100) NOT NULL, zahl int NOT NULL);',
@@ -683,12 +692,17 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
   ].join('\n');
   const tsql = [
     'SET NOCOUNT ON; SET XACT_ABORT ON;',
-    "DECLARE @z nvarchar(20) = N'schon', @neu bit = 0, @anzahl int, @hash nvarchar(64), @sql nvarchar(max);",
-    `IF DB_ID(N'${n}') IS NULL BEGIN CREATE DATABASE [${n}]; SET @z = N'geaendert'; END`,
-    `IF (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}') <> N'FULL' BEGIN ALTER DATABASE [${n}] SET RECOVERY FULL; SET @z = N'geaendert'; END`,
+    "DECLARE @z nvarchar(20) = N'schon', @neuDb bit = 0, @eigen int = 0, @tab int = 0, @neu bit = 0, @anzahl int, @hash nvarchar(64), @sql nvarchar(max);",
+    `IF DB_ID(N'${n}') IS NULL BEGIN CREATE DATABASE [${n}]; SET @neuDb = 1; SET @z = N'geaendert'; END`,
+    // Fix 1 — eigene Datenbanken tragen die Markierung alfred_pruefdaten=1 (beim Anlegen gesetzt); fremde werden nie verändert
+    `EXEC [${n}].sys.sp_executesql N'SELECT @eigen = COUNT(*) FROM sys.extended_properties WHERE class = 0 AND name = N''alfred_pruefdaten'' AND CAST(value AS nvarchar(10)) = N''1''; SET @tab = CASE WHEN OBJECT_ID(N''dbo.alfred_pruefung'', N''U'') IS NULL THEN 0 ELSE 1 END;', N'@eigen int OUTPUT, @tab int OUTPUT', @eigen = @eigen OUTPUT, @tab = @tab OUTPUT;`,
+    `IF @neuDb = 1 AND @eigen = 0 BEGIN EXEC [${n}].sys.sp_addextendedproperty @name = N'alfred_pruefdaten', @value = N'1'; SET @eigen = 1; END`,
+    `IF @eigen = 0 AND @tab = 0 THROW 50004, N'Datenbank ${n} ist eine fremde Datenbank (ohne Alfred-Markierung und ohne dbo.alfred_pruefung) - nichts geaendert', 1;`,
+    // eine fremde Datenbank mit Prüftabelle (z. B. Kopie) wird nur gelesen — Wiederherstellungsmodell und Tabelle nur bei eigenen
+    `IF @eigen = 1 AND (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}') <> N'FULL' BEGIN ALTER DATABASE [${n}] SET RECOVERY FULL; SET @z = N'geaendert'; END`,
     `SET @sql = N'${innen}';`,
     // Prozedur der Ziel-Datenbank: der Name wird erst zur Laufzeit aufgelöst (die Datenbank kann in diesem Batch entstanden sein)
-    `EXEC [${n}].sys.sp_executesql @sql, N'@neu bit OUTPUT, @anzahl int OUTPUT, @hash nvarchar(64) OUTPUT', @neu = @neu OUTPUT, @anzahl = @anzahl OUTPUT, @hash = @hash OUTPUT;`,
+    `EXEC [${n}].sys.sp_executesql @sql, N'@darf bit, @neu bit OUTPUT, @anzahl int OUTPUT, @hash nvarchar(64) OUTPUT', @darf = @eigen, @neu = @neu OUTPUT, @anzahl = @anzahl OUTPUT, @hash = @hash OUTPUT;`,
     "IF @neu = 1 SET @z = N'geaendert';",
     `SELECT N'ALFRED|' + @z + N'|' + CAST(@anzahl AS nvarchar(10)) + N'|' + ISNULL(@hash, N'-') + N'|' + (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}');`,
   ].join('\n');

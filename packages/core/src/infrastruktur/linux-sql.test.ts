@@ -479,7 +479,7 @@ describe('I8e Linux-SQL — Prüfdaten', () => {
     expect(s).toContain('SET RECOVERY FULL');
     expect(s).toContain('EXEC [pruefdb01].sys.sp_executesql');
     // vorhandene Tabelle wird nie verändert: Anlage nur, wenn sie fehlt
-    expect(s).toContain(String.raw`IF OBJECT_ID(N'\'''\''dbo.alfred_pruefung'\'''\'', N'\'''\''U'\'''\'') IS NULL`);
+    expect(s).toContain(String.raw`IF @darf = 1 AND OBJECT_ID(N'\'''\''dbo.alfred_pruefung'\'''\'', N'\'''\''U'\'''\'') IS NULL`);
   });
   function lauf(antwort: string) {
     const stubs = [
@@ -503,5 +503,36 @@ describe('I8e Linux-SQL — Prüfdaten', () => {
     expect(String(falsch.e?.fehler)).toContain('weicht ab');
     expect(lauf(`ALFRED|schon|1000|${'0'.repeat(64)}|FULL`).rc).toBe(1);
     expect(lauf(`ALFRED|schon|1000|${PRUEFDATEN_SHA256}|SIMPLE`).rc).toBe(1);
+  });
+});
+
+// ── Task 3 Fix-Runde 1: keine stillen Änderungen an bestehenden Logins und fremden Datenbanken ─────────────────────────────────
+describe('I8e Linux-SQL — Fix 1: Abweichungen statt stiller Änderungen', () => {
+  const tsqlVon = (s: string) => {
+    const m = /^(?:VORLAGE|TSQL)=('(?:[^']|'\\'')*')$/m.exec(s);
+    const r = spawnSync('bash', ['-c', `X=${m![1]}; printf '%s' "$X"`], { encoding: 'utf8' });
+    return r.stdout;
+  };
+  it.skipIf(!BASH)('Login: zusätzliche Serverrollen eines bestehenden Logins → THROW vor jeder Änderung, nie „schon“', () => {
+    for (const [p, ausgenommen] of [[{ name: 'app_kunden', serverrollen: [] }, '1 = 1'], [LOGIN, "r.name NOT IN (N'dbcreator')"]] as const) {
+      const t = tsqlVon(sqlSkript('login', { name: p.name, serverrollen: [...p.serverrollen] }));
+      const pruef = t.indexOf('THROW 50003');
+      expect(pruef, t).toBeGreaterThan(0);
+      expect(t).toContain(ausgenommen);
+      expect(t).toContain("nicht still entfernt; bitte bewusst entscheiden");
+      // vor CREATE/ALTER LOGIN und vor ALTER SERVER ROLE
+      for (const x of ['CREATE LOGIN', 'ALTER LOGIN', 'ALTER SERVER ROLE']) if (t.includes(x)) expect(t.indexOf(x), x).toBeGreaterThan(pruef);
+    }
+  });
+  it.skipIf(!BASH)('Prüfdaten: eigene Datenbanken markiert; fremde ohne Prüftabelle → THROW, Wiederherstellungsmodell und Tabelle nur bei eigenen', () => {
+    const t = tsqlVon(sqlSkript('pruefdaten', { datenbank: 'pruefdb01' }));
+    expect(t).toContain("EXEC [pruefdb01].sys.sp_addextendedproperty @name = N'alfred_pruefdaten', @value = N'1';");
+    expect(t).toMatch(/IF @neuDb = 1 AND @eigen = 0 BEGIN EXEC \[pruefdb01\]\.sys\.sp_addextendedproperty/);
+    expect(t).toContain('IF @eigen = 0 AND @tab = 0 THROW 50004');
+    expect(t).toContain('fremde Datenbank');
+    expect(t).toMatch(/IF @eigen = 1 AND \(SELECT recovery_model_desc[^\n]*ALTER DATABASE \[pruefdb01\] SET RECOVERY FULL/);
+    expect(t.match(/SET RECOVERY FULL/g)).toHaveLength(1);
+    expect(t).toContain("IF @darf = 1 AND OBJECT_ID(N''dbo.alfred_pruefung'', N''U'') IS NULL"); // im sp_executesql-Text, daher verdoppelt
+    expect(t.indexOf('THROW 50004')).toBeLessThan(t.indexOf('SET RECOVERY FULL'));
   });
 });

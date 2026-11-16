@@ -48,10 +48,13 @@ export function linuxSqlKennwort(): string {
 }
 
 export const saName = (zugang: string) => `sqllnx-${zugang.toLowerCase()}-sa`;
-export function loginTresorName(zugang: string, login: string): string {
-  const n = `sqllnx-${zugang.toLowerCase()}-${login.toLowerCase()}`;
-  if (!TRESOR_NAME.test(n)) throw new Error(`Tresor-Name ${n.slice(0, 80)} ist ungültig (höchstens 61 Zeichen) — kürzeren Login wählen`);
+/** Fix 1 — Tresor-Regel schon beim Planen und vor jedem Fernaufruf prüfen (langer Zugangsname → Name über 61 Zeichen) */
+function pruefeTresorName(n: string): string {
+  if (!TRESOR_NAME.test(n)) throw new Error(`Tresor-Name ${n.slice(0, 80)} ist ungültig (höchstens 61 Zeichen) — kürzeren Zugangs- bzw. Login-Namen wählen`);
   return n;
+}
+export function loginTresorName(zugang: string, login: string): string {
+  return pruefeTresorName(`sqllnx-${zugang.toLowerCase()}-${login.toLowerCase()}`);
 }
 
 // ── Status ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -181,6 +184,7 @@ export class LinuxSqlSkill extends Skill {
     if (!istVerweis(input.zugang) && !ZUGANG.test(String(input.zugang ?? '').trim())) return 'zugang: Name des Linux-Fernzugangs';
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
+      if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
       if (action === 'platten_einrichten') plattenParameter(input);
       else if (action === 'installieren') installParameter(input);
       else if (action === 'konfigurieren') konfigWerte(input);
@@ -232,7 +236,7 @@ export class LinuxSqlSkill extends Skill {
   }
 
   private async sa(zugang: string, wofuer: string, geheim: string[]): Promise<string> {
-    const t = this.tresor(); const name = saName(zugang);
+    const t = this.tresor(); const name = pruefeTresorName(saName(zugang));
     if (!(await t.namen()).has(name)) throw new Error(`Tresor-Eintrag ${name} fehlt — zuerst installieren`);
     const wert = await t.lies(name, wofuer); geheim.push(wert);
     return wert;
@@ -257,7 +261,7 @@ export class LinuxSqlSkill extends Skill {
 
   private async installieren(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = installParameter(input);
-    const name = saName(zugang);
+    const name = pruefeTresorName(saName(zugang));
     const k = await this.kennwort(name, `SQL-Installation ${zugang}`, `sa-Kennwort von SQL Server auf ${zugang.toLowerCase()} (Linux)`, geheim);
     const r = await this.lauf<{ zustand: string; version?: string; edition?: string }>(zugang, LINUX_SQL_BAUSTEINE.installation, p, 'SQL Server installieren', LINUX_SQL_ZEIT_MS.installation, { sa: k.wert });
     this.d.protokoll?.('I8e SQL Server installiert', { zugang, zustand: r.zustand, version: r.version, saNeu: k.neu });
