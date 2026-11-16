@@ -705,9 +705,9 @@ describe('V4 ableiten — Final-Welle', () => {
     expect(t.zeilen).toHaveLength(0);
     // alle offenen „fest“ (ids aus dem Vorschlag)
     const alle: Entscheid = { ...teil };
-    for (const p of v.entscheidungen) if (p.art !== 'teil') alle[p.id] = 'fest';
-    // nicht nötige Entscheidungen (gewählte Werte) wieder weg — erzeugen meldet sie sonst
-    for (const id of ['anlage:vmid|152', 'anlage:vmid|153', 'anlage:vlan|829', 'anlage:ipv4|10.203.29.1', 'anlage:ipv4|10.203.29.2', 'anlage:ipv4|10.203.29.3', 'anlage:ipv4|10.203.29.30', 'anlage:name|vmbr829']) delete alle[id];
+    // nicht nötige Entscheidungen (gewählte, vollständig ersetzte Werte) auslassen — erzeugen meldet sie sonst
+    const gewaehlt = new Set(Object.keys(auswahl).map(n => String(v.kandidaten.find(c => String(c.nr) === n)!.wert)));
+    for (const p of v.entscheidungen) if (p.art !== 'teil' && !gewaehlt.has(p.wert) && p.id !== 'anlage:name|vmbr829') alle[p.id] = 'fest';
     const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, auswahl, kopf, alle, v.stand);
     if (!r.ok) throw new Error(r.fehler.join('\n'));
     expect(t.zeilen).toHaveLength(1);
@@ -723,7 +723,10 @@ describe('V4 ableiten — Final-Welle', () => {
     // Restpunkte: NetBIOS ist angelegt; dc01-Zeile nennt den Tresor-Namen; veränderte vorhandene Objekte eigene Überschrift
     expect(frage).toMatch(/\n- AD3033: \d+ Stellen/);
     expect(frage).toMatch(/\n- dc01: \d+ Stellen \([^\n]*\) — steckt auch im Tresor-Namen win-dc01-admin/);
-    expect(frage).toMatch(/Verändert vorhandene Objekte \(nicht vom Paket angelegt, nicht als Parameter; 2 Werte\):\n- 9102: \d+ Stellen[^\n]*\n- probe-win25b: \d+ Stellen/);
+    // Sicherheitsbefund v1881 (fail-closed): außer 9102/probe-win25b auch vorhandene Zonen und Quell-IPs der Policies; nie die Träger
+    expect(frage).toMatch(/Verändert vorhandene Objekte \(nicht vom Paket angelegt, nicht als Parameter; 7 Werte\):[\s\S]*\n- 9102: \d+ Stellen[^\n]*\n- probe-win25b: \d+ Stellen/);
+    for (const w of ['Internal', '192.168.1.223', '192.168.1.92', 'Gateway', 'External']) expect(frage).toContain(`\n- ${w}: `);
+    for (const t of ['pve1', 'pve3', 'alfred-pbs-taeglich']) expect(frage).not.toContain(`\n- ${t}: `);
     expect(v.text).toContain('Verändert vorhandene Objekte');
     expect(v.text).toContain('veraendert:name|probe-win25b');
     // record_type ist kein angelegter Wert; 10.203.29.3 in 10.203.29.30 trägt den Parameter der .30 — nicht als „fest“ gemeldet

@@ -492,17 +492,17 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
     z.push('', 'Feste IDs der Original-Instanz (kein Verweis möglich) — immer nötig, nur „fest“ (oder den erzeugenden Change mitwählen):');
     for (const p of ids) z.push(`- ${p.id}: ${p.wert} in ${p.orte.map(ortText).join(', ')} — ${p.grund}`);
   }
-  const anlage = punkte.filter(p => p.art === 'anlage' && !p.grund.startsWith('Adresse im Netz'));
+  const anlage = punkte.filter(p => p.art === 'anlage' && p.netz === undefined);
   if (anlage.length) {
     z.push('', 'Vom Paket angelegt — solange der Wert nicht als Parameter gewählt ist, zielen diese Stellen auf die Original-Instanz: je id „fest“ oder den Kandidaten wählen:');
     for (const p of anlage) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (kein Kandidat — nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
   }
   const veraendert = punkte.filter(p => p.art === 'veraendert');
   if (veraendert.length) {
-    z.push('', 'Verändert vorhandene Objekte (nicht vom Paket angelegt) — solange der Wert nicht als Parameter gewählt ist, träfe jede Anwendung wieder dasselbe Objekt: je id „fest“ oder den Kandidaten wählen. Knoten, Speicher, UniFi-Geräte/Ports und Backup-Jobs (node, storage, device, switch_port, job_id) zählen als Träger der Aktion nicht dazu:');
+    z.push('', 'Verändert vorhandene Objekte (nicht vom Paket angelegt) — solange der Wert nicht als Parameter gewählt ist, träfe jede Anwendung wieder dasselbe Objekt: je id „fest“ oder den Kandidaten wählen. Knoten, Speicher, UniFi-Geräte/Ports und Backup-Jobs (node, storage, device, switch_port, job_id, job) zählen als Träger der Aktion nicht dazu:');
     for (const p of veraendert) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (kein Kandidat — nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
   }
-  const netz = punkte.filter(p => p.art === 'anlage' && p.grund.startsWith('Adresse im Netz'));
+  const netz = punkte.filter(p => p.art === 'anlage' && p.netz !== undefined);
   if (netz.length) {
     z.push('', 'Adressen in Netz-Kandidaten — nötig, wenn das Netz gewählt und die Adresse nicht gewählt ist (dann „fest“); gewählte Adressen folgen dem Netz automatisch:');
     for (const p of netz) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}: ${p.grund}`);

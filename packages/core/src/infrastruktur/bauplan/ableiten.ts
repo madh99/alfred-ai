@@ -69,6 +69,8 @@ export type AuswahlEintrag = string | { name: string; wert?: unknown };
 export interface Entscheidungspunkt {
   id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
   orte: Fundstelle[]; grund: string; nurFest: boolean;
+  /** nur bei Adress-Punkten eines Netz-Kandidaten (art anlage): das Netz — nötig nur, wenn dieses Netz gewählt ist */
+  netz?: string;
 }
 /** Bewusst feste Stelle (für Anzeige und die Spalte ableitung); tresor = Tresor-Namen, in denen der feste Wert außerdem steckt */
 export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string }
@@ -102,13 +104,18 @@ const ANLEGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' &
 /** I4 — Schritte, die ein Objekt anlegen (auch Wald, DNS-Eintrag); weiter als ANLEGE_AKTION, die nur Annahmen/betroffen steuert */
 const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag' || aktion === 'dc_hinzufuegen');
 /** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne, NetBIOS-Name); bridge nur bei *bridge*-Aktionen */
-const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$|^netbios/;
+const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$|^netbios|^subnet$/;
 /**
- * (d) — Ziel-Felder einer verändernden Aktion (aktionsArt ≠ lesen): das Objekt, das sie verändert. Bewusst NICHT darunter sind die
- * Felder, die nur den Ort/Träger der Aktion nennen — node, storage (Proxmox-Knoten/Speicher), device, switch_port (UniFi-Geräte),
- * job_id (Backup-Job) —, weil diese gemeinsame Infrastruktur jede Anwendung ohnehin benutzt.
+ * (d) fail-closed (Sicherheitsbefund v1881) — in einer verändernden Aktion (aktionsArt ≠ lesen; ohne skill/aktion gilt sie als
+ * verändernd) braucht JEDER typisierte Wert in parameter.* und rueckweg.parameter.* (auch Listen und verschachtelte Felder) eine
+ * Entscheidung, sofern das Paket ihn nicht selbst anlegt und er nicht als Parameter gewählt ist. Ausgenommen sind nur die
+ * Träger-Felder: sie nennen den Ort der Aktion, nicht das veränderte Objekt, und sind gemeinsame Infrastruktur jeder Anwendung —
+ * node, storage (Proxmox-Knoten/Speicher), device, switch_port (UniFi-Gerät/Port), job_id, job (Backup-Job).
  */
-const ZIEL_FELD = /^(vmid|vm_id|vm_name|zugang|hostname)$/;
+const TRAEGER_FELD = /^(node|storage|device|switch_port|job_id|job)$/;
+const PARAM_PFAD = /^(rueckweg\.)?parameter(\.[A-Za-z0-9_]+|\[\d+\])+$/;
+/** Felder, deren Wert ein Objekt benennt, auch wenn er keine gültige Namensform hat (früher die Ziel-Felder) */
+const OBJEKT_FELD = /^(vmid|vm_id|vm_name|zugang|hostname)$/;
 const IPV4_IM_TEXT = /(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g;
 
 const kurz = (id: string): string => id.slice(0, 8);
@@ -277,22 +284,26 @@ function anlagen(q: QuellChange[]): Anlage[] {
 interface Veraendert { id: string; typ: ParamTyp; wert: string | number; erste: Blatt; aktionen: string[] }
 /** (d) — vorhandene Objekte, die ein gewählter Change verändert, aber kein gewählter Change anlegt. id = veraendert:<typ>|<wert> */
 function veraenderte(q: QuellChange[]): Veraendert[] {
-  const angelegt = new Set(anlagen(q).map(a => a.id.slice('anlage:'.length)));
+  const angelegt = new Set(anlagen(q).map(x => x.id.slice('anlage:'.length)));
   const aus = new Map<string, Veraendert>();
   for (const c of q) {
     const schritte = schritteVon(c);
     for (const b of blaetter(c)) {
-      const f = b.schritt > 0 ? /^parameter\.([A-Za-z0-9_]+)$/.exec(b.pfad)?.[1] : undefined;
-      const s = f ? schritte[b.schritt - 1] : undefined;
-      if (!f || !s || !ZIEL_FELD.test(f) || typeof s.skill !== 'string' || typeof s.aktion !== 'string') continue;
-      if (aktionsArt(s.skill, s.aktion, istObjekt(s.parameter) ? s.parameter : undefined) === 'lesen') continue;
+      if (b.schritt === 0 || !PARAM_PFAD.test(b.pfad)) continue;
+      const s = schritte[b.schritt - 1];
+      const traeger = b.pfad.startsWith('rueckweg.') ? s?.rueckweg : s;
+      if (!istObjekt(traeger)) continue;
+      const skill = traeger.skill; const aktion = traeger.aktion;
+      const bekannt = typeof skill === 'string' && typeof aktion === 'string';
+      if (bekannt && aktionsArt(skill, aktion, istObjekt(traeger.parameter) ? traeger.parameter : undefined) === 'lesen') continue;
+      if (TRAEGER_FELD.test(b.schluessel)) continue;
       let typ: ParamTyp | undefined;
-      if (typeof b.wert === 'number') typ = typVon(f, b.wert, false);
-      else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{')) typ = typVon(f, b.wert, false) ?? 'name';
+      if (typeof b.wert === 'number') typ = typVon(b.schluessel, b.wert, b.inListe);
+      else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{')) typ = typVon(b.schluessel, b.wert, b.inListe) ?? (OBJEKT_FELD.test(b.schluessel) ? 'name' : undefined);
       if (!typ) continue;
       const k = `${typ}|${String(b.wert)}`;
       if (angelegt.has(k)) continue;
-      const sa = `${s.skill}.${s.aktion}`;
+      const sa = bekannt ? `${String(skill)}.${String(aktion)}` : 'unbekannte Aktion';
       const v = aus.get(k);
       if (v) { if (!v.aktionen.includes(sa)) v.aktionen.push(sa); } else aus.set(k, { id: `veraendert:${k}`, typ, wert: b.wert as string | number, erste: b, aktionen: [sa] });
     }
@@ -311,7 +322,8 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
   }
   // I4 — angelegte Werte sind immer Kandidat (wählbar statt nur „fest“), auch mit nur einer Fundstelle
   const angelegt = new Set<string>();
-  for (const a of anlagen(q)) {
+  // (d) — veränderte vorhandene Objekte ebenso: der Ausweg „als Parameter wählen“ muss es immer geben
+  for (const a of [...anlagen(q), ...veraenderte(q).map(v => ({ typ: v.typ, wert: v.wert, blatt: v.erste }))]) {
     const k = `${a.typ}|${typeof a.wert}|${String(a.wert)}`;
     if (!gueltig(a.typ, a.wert)) continue;
     angelegt.add(k);
@@ -543,7 +555,7 @@ export function findeEntscheidungen(q: QuellChange[]): Entscheidungspunkt[] {
     punkte.set(v.id, {
       id: v.id, art: 'veraendert', wert: String(v.wert), typ: v.typ, ...(nr ? { kandidat: nr } : {}),
       orte: suche(ohneTitel, v.typ, v.wert).orte.map(o => fundstelle(o.blatt, o.ganz)),
-      grund: `vorhandenes Objekt, verändert durch ${v.aktionen.join(', ')} (zuerst ${ortText(v.erste.change, v.erste.schritt, v.erste.pfad)})`, nurFest: true,
+      grund: `vorhandener Wert, nicht vom Paket angelegt — in verändernder Aktion ${v.aktionen.join(', ')} (zuerst ${ortText(v.erste.change, v.erste.schritt, v.erste.pfad)})`, nurFest: true,
     });
   }
   for (const k of intern) {
@@ -553,7 +565,7 @@ export function findeEntscheidungen(q: QuellChange[]): Entscheidungspunkt[] {
       if (punkte.has(id)) continue;
       const nr = kandNr('ipv4', ip);
       punkte.set(id, {
-        id, art: 'anlage', wert: ip, typ: 'ipv4', ...(nr ? { kandidat: nr } : {}), orte: suche(ohneTitel, 'ipv4', ip).orte.map(o => fundstelle(o.blatt, o.ganz)),
+        id, art: 'anlage', wert: ip, typ: 'ipv4', netz: String(k.kandidat.wert), ...(nr ? { kandidat: nr } : {}), orte: suche(ohneTitel, 'ipv4', ip).orte.map(o => fundstelle(o.blatt, o.ganz)),
         grund: `Adresse im Netz ${String(k.kandidat.wert)} (Kandidat #${k.kandidat.nr}) — nur nötig, wenn das Netz gewählt und diese Adresse nicht gewählt ist`, nurFest: true,
       });
     }
@@ -829,10 +841,12 @@ export function baueEntwurf(
   const offenAnlage: Entscheidungspunkt[] = [];
   const offenVeraendert: Entscheidungspunkt[] = [];
   for (const p of punkte.values()) {
-    if ((p.art !== 'anlage' && p.art !== 'veraendert') || !p.typ) continue;
-    if (p.typ === 'ipv4' && !p.id.startsWith('anlage:ipv4|') ) continue;
+    if (p.art !== 'anlage' && p.art !== 'veraendert') continue;
+    // fail-closed: ein Punkt ohne Typ kann nicht geprüft werden → nie still überspringen
+    if (!p.typ) { if (entscheid[p.id] !== 'fest') fehler.push(`Entscheidungspunkt ${p.id}: ohne Typ nicht prüfbar — nur „fest“ möglich`); continue; }
     const anlageWert = p.typ === 'vmid' || p.typ === 'vlan' ? Number(p.wert) : p.wert;
-    const istNetzAdresse = p.grund.startsWith('Adresse im Netz');
+    // einzige Ausnahme, ausdrücklich und art-gebunden: Adress-Punkt eines Netz-Kandidaten, dessen Netz nicht gewählt ist
+    const istNetzAdresse = p.art === 'anlage' && p.netz !== undefined;
     if (istNetzAdresse && !netzFuer(p.wert)) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — kein gewähltes Netz enthält ${p.wert}`); continue; }
     const gefunden = suche(nachher, p.typ, anlageWert);
     const rest = gefunden.orte.map(o => fundstelle(o.blatt, o.ganz));

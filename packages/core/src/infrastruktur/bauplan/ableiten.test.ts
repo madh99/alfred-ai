@@ -739,10 +739,12 @@ describe('Restpunkte — NetBIOS, verändert vorhandene Objekte, Bridge', () => 
     const { auswahl, teil } = live(k);
     const ohne = baueEntwurf(q, auswahl, kopf, teil);
     const ver = ohne.offen.filter(p => p.art === 'veraendert');
-    expect(ver.map(p => p.id).sort()).toEqual(['veraendert:name|probe-win25b', 'veraendert:vmid|9102']);
+    expect(ver.map(p => p.id)).toEqual(expect.arrayContaining(['veraendert:name|probe-win25b', 'veraendert:vmid|9102']));
     expect(ohne.fehler.join('\n')).toMatch(/Verändert vorhandene Objekte.*veraendert:vmid\|9102.*proxmox\.set_vm_resources/);
     // Hosts der Aktion (node pve1/pve3/pve, storage, Backup-Job) sind keine veränderten Objekte
-    expect(findeEntscheidungen(q).filter(p => p.art === 'veraendert').map(p => p.wert).sort()).toEqual(['9102', 'probe-win25b']);
+    const verWerte = findeEntscheidungen(q).filter(p => p.art === 'veraendert').map(p => p.wert);
+    expect(verWerte).toEqual(expect.arrayContaining(['9102', 'probe-win25b']));
+    for (const traeger of ['pve', 'pve1', 'pve3', 'data2-pve1', 'data2-pve3', 'alfred-pbs-taeglich', 'US XG 16']) expect(verWerte).not.toContain(traeger);
     // „ersetzen“ gibt es nicht
     expect(baueEntwurf(q, auswahl, kopf, { ...teil, 'veraendert:vmid|9102': 'ersetzen' }).fehler.join('\n')).toMatch(/veraendert:vmid\|9102.*nur „fest“ — oder den Wert als Parameter wählen/);
     const { r } = mitFest(q, auswahl, teil);
@@ -752,7 +754,7 @@ describe('Restpunkte — NetBIOS, verändert vorhandene Objekte, Bridge', () => 
     // als Parameter gewählt → keine Entscheidung mehr nötig
     const mit = mitFest(q, { ...auswahl, [kand(k, 'vmid', 9102).nr]: 'vmid_probe', [kand(k, 'name', 'probe-win25b').nr]: 'probe' }, teil).r;
     expect(mit.fehler).toEqual([]);
-    expect(mit.fest.some(f => f.art === 'veraendert')).toBe(false);
+    expect(mit.fest.some(f => f.art === 'veraendert' && (f.wort === '9102' || f.wort === 'probe-win25b'))).toBe(false);
   });
 
   it('Bridge von create_vlan_bridge ist angelegt (vmbr829 fest → Entscheidung); bridge in provision (vmbr0) nicht', () => {
@@ -774,5 +776,55 @@ describe('Restpunkte — NetBIOS, verändert vorhandene Objekte, Bridge', () => 
     expect(dc01.length).toBeGreaterThan(0);
     expect(dc01.every(f => f.tresor?.includes('win-dc01-admin'))).toBe(true);
     expect(r.hinweise.find(h => h.startsWith('bewusst fest (vom Paket angelegt): dc01'))).toMatch(/Tresor-Namen win-dc01-admin/);
+  });
+});
+
+// ── Sicherheitsbefund v1881: Entscheidungspflicht schließt fail-closed ──
+describe('Sicherheitsbefund — (d) fail-closed', () => {
+  it('HIGH: verändernder Schritt mit IP als zugang/hostname → ohne Entscheidung abgelehnt; „fest“ landet in der fest-Liste', () => {
+    const a = change('aaaaaaaa-1', 'c1', [
+      { skill: 'windows_ad', aktion: 'beitreten', parameter: { zugang: '10.9.9.9', domaene: 'ad.beispiel.at' } },
+      { skill: 'proxmox', aktion: 'set_vm_resources', parameter: { vmid: 777, node: 'pve1', hostname: '10.9.9.10' } },
+    ]);
+    const ohne = baueEntwurf([a], {}, kopf);
+    expect(ohne.vorlage).toBeUndefined();
+    expect(ohne.offen.map(p => p.id)).toEqual(expect.arrayContaining(['veraendert:ipv4|10.9.9.9', 'veraendert:ipv4|10.9.9.10']));
+    const { r } = mitFest([a], {});
+    expect(r.fehler).toEqual([]);
+    expect(r.fest.some(f => f.art === 'veraendert' && f.wort === '10.9.9.9' && f.pfad === 'parameter.zugang')).toBe(true);
+    expect(r.fest.some(f => f.art === 'veraendert' && f.wort === '10.9.9.10' && f.pfad === 'parameter.hostname')).toBe(true);
+  });
+
+  it('MEDIUM: jeder typisierte Wert in parameter.* (auch Listen/verschachtelt) und rueckweg.parameter.* einer verändernden Aktion braucht eine Entscheidung — außer Träger-Feldern und lesenden Aktionen', () => {
+    const a = change('aaaaaaaa-1', 'c1', [
+      // Liste (dns) und verschachtelter Eintrag; Rückweg mit eigener Aktion
+      { skill: 'windows_ad', aktion: 'dns_client', parameter: { dns: ['10.8.8.8'], eintraege: [{ ziel_zone: 'Zone-Alt' }] },
+        rueckweg: { skill: 'windows_ad', aktion: 'dns_client', parameter: { zugang: 'srv-alt', dns: ['10.8.8.9'] } } },
+      // unbekannte Aktion (kein skill) zählt als verändernd
+      { art: 'aktion', parameter: { vm_name: 'vm-unbekannt' } },
+      // Träger: node, storage, device, switch_port, job_id — keine Entscheidung
+      { skill: 'proxmox', aktion: 'backup_job_exclude', parameter: { job_id: 'job-x', node: 'pve9', storage: 'data9', add_vmids: [] } },
+      { skill: 'unifi', aktion: 'allow_network_on_port', parameter: { device: 'switch-9', switch_port: 3, network_name: 'Netz-Alt' } },
+      // lesende Aktion — keine Entscheidung
+      { skill: 'proxmox', aktion: 'list_vms', parameter: { vmid: 888, zugang: 'nur-lesen' } },
+    ]);
+    const ids = findeEntscheidungen([a]).filter(p => p.art === 'veraendert').map(p => p.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      'veraendert:ipv4|10.8.8.8', 'veraendert:name|Zone-Alt', 'veraendert:name|srv-alt', 'veraendert:ipv4|10.8.8.9', 'veraendert:name|vm-unbekannt', 'veraendert:name|Netz-Alt',
+    ]));
+    for (const nicht of ['pve9', 'data9', 'job-x', 'switch-9', '888', 'nur-lesen']) expect(ids.some(id => id.endsWith(`|${nicht}`))).toBe(false);
+    const r = baueEntwurf([a], {}, kopf);
+    expect(r.vorlage).toBeUndefined();
+    expect(r.offen.filter(p => p.art === 'veraendert').map(p => p.id).sort()).toEqual([...ids].sort());
+    // als Parameter gewählt → keine Entscheidung mehr für diesen Wert
+    const k = findeKandidaten([a]);
+    expect(mitFest([a], { [kand(k, 'name', 'srv-alt').nr]: 'server' }).r.fest.some(f => f.wort === 'srv-alt')).toBe(false);
+  });
+
+  it('angelegtes Netz (subnet in create_network) ist angelegt, nicht verändert', () => {
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'unifi', aktion: 'create_network', parameter: { network_name: 'Netz-Neu', vlan: 60, subnet: '10.0.6.0/24' } }]);
+    const p = findeEntscheidungen([a]);
+    expect(p.some(x => x.id === 'anlage:cidr|10.0.6.0/24')).toBe(true);
+    expect(p.some(x => x.art === 'veraendert')).toBe(false);
   });
 });
