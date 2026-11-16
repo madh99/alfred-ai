@@ -47,7 +47,8 @@ export class BauplanSkill extends Skill {
       + 'zuerst modus vorschlag (nur lesend: Kandidaten mit allen Fundstellen, Entscheidungspunkte mit ids, Verweise, Hinweise, stand), dann modus erzeugen mit denselben changes, '
       + 'stand aus dem Vorschlag, auswahl = Objekt Kandidaten-Nr → Parametername (oder {name, wert}; gleicher Wert darf auf denselben Namen), '
       + 'entscheid = Objekt id → "ersetzen"|"fest" für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID, jeden vom Paket angelegten und jedes veränderte vorhandene Objekt, die nicht gewählt sind (nur "fest"), '
-      + 'key, titel, zweck, dokumentart — speichert einen Entwurf (volle Prüfung); fehlende Entscheidungen nennt erzeugen auf einmal; '
+      + 'Sammel-Schlüssel in entscheid: teil:wert|<wert> ("ersetzen"|"fest"), anlage:*, veraendert:*, tresor:*, fest:* (nur "fest"; einzelne ids gehen vor), '
+      + 'key, titel, zweck, dokumentart — speichert einen Entwurf (volle Prüfung); fehlende Entscheidungen nennt erzeugen auf einmal, Sammel-Schlüssel zuerst; '
       + 'bewusst feste Stellen stehen in der Freigabe-Frage; Freigabe danach nur über bauplan_freigabe_anfragen.',
     riskLevel: 'write',
     version: '1.0.0',

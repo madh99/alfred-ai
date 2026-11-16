@@ -73,7 +73,19 @@ export interface Entscheidungspunkt {
   netz?: string;
 }
 /** Bewusst feste Stelle (für Anzeige und die Spalte ableitung); tresor = Tresor-Namen, in denen der feste Wert außerdem steckt */
-export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert' | 'tresor'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string }
+export interface FestEintrag {
+  id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert' | 'tresor'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string;
+  /** Sammel-Schlüssel, aus dem die Entscheidung stammt (fehlt = einzelne id) */
+  gruppe?: string;
+}
+/** Sammel-Entscheidung, die tatsächlich Punkte entschieden hat (für Anzeige und Freigabe-Frage) */
+export interface SammelEintrag { schluessel: string; entscheidung: 'ersetzen' | 'fest'; anzahl: number; arten: Record<string, number> }
+/**
+ * Sammel-Schlüssel in entscheid: teil:wert|<wert> (alle Teilvorkommen dieses gewählten Werts, „ersetzen“ oder „fest“),
+ * anlage:*, veraendert:*, tresor:* (alle offenen Punkte der Kategorie) und fest:* (alle offenen Punkte aller Kategorien) — nur „fest“.
+ * Eine einzelne id geht immer vor; teil:wert|… und Kategorie-Schlüssel gehen vor fest:*.
+ */
+export const SAMMEL_SCHLUESSEL = /^(teil:wert\|.+|anlage:\*|veraendert:\*|tresor:\*|fest:\*)$/;
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
@@ -694,6 +706,29 @@ function annahmeFuer(k: KandidatIntern, name: string, schritt: (b: Blatt) => Rec
   return undefined;
 }
 
+/**
+ * Kurzfassung der offenen Entscheidungen — steht als ERSTE Fehlerzeile, damit die Sammel-Schlüssel auch bei gekürzter Ausgabe
+ * sichtbar bleiben: je Kategorie der Schlüssel, die Anzahl und die ersten Werte.
+ */
+export function offenUebersicht(offen: Entscheidungspunkt[]): string {
+  const werte = (l: Entscheidungspunkt[], wert: (p: Entscheidungspunkt) => string) => {
+    const w = [...new Set(l.map(wert))];
+    return `${w.slice(0, 5).join(', ')}${w.length > 5 ? `, … (+${w.length - 5})` : ''}`;
+  };
+  const z = [`Offene Entscheidungen: ${offen.length}. Am einfachsten mit Sammel-Schlüsseln in entscheid (einzelne ids gehen vor; alle offenen Punkte auf einmal fest: {"fest:*": "fest"}):`];
+  const teil = new Map<string, Entscheidungspunkt[]>();
+  for (const p of offen.filter(x => x.art === 'teil')) { const l = teil.get(p.wert) ?? []; l.push(p); teil.set(p.wert, l); }
+  for (const [w, l] of teil) z.push(`- teil:wert|${w} — ${l.length} offen („ersetzen“ oder „fest“): ${werte(l, p => p.token ?? p.wert)}`);
+  for (const [art, text] of [['anlage', 'vom Paket angelegt'], ['veraendert', 'verändert vorhandene Objekte'], ['tresor', 'bestehende Tresor-Einträge']] as const) {
+    const l = offen.filter(p => p.art === art);
+    if (l.length) z.push(`- ${art}:* — ${l.length} offen (${text}, nur „fest“): ${werte(l, p => p.wert)}`);
+  }
+  const ids = offen.filter(p => p.art === 'id');
+  if (ids.length) z.push(`- fest:* — ${ids.length} feste IDs der Original-Instanz offen (nur „fest“): ${werte(ids, p => p.wert)}`);
+  z.push('Einzelheiten je id folgen unten.');
+  return z.join('\n');
+}
+
 export interface EntwurfErgebnis {
   vorlage?: BauplanVorlage; fehler: string[]; hinweise: string[];
   /** fehlende Entscheidungen (alle Kategorien auf einmal) */
@@ -702,6 +737,8 @@ export interface EntwurfErgebnis {
   fest: FestEintrag[];
   /** Parameter ohne automatische Vorab-Kontrolle (abgeleitete ausgenommen) */
   ohneAnnahme: string[];
+  /** benutzte Sammel-Entscheidungen */
+  sammel: SammelEintrag[];
 }
 
 const ortListe = (q: QuellChange[], orte: Fundstelle[]): string => orte.map(o => {
@@ -716,12 +753,12 @@ const ortListe = (q: QuellChange[], orte: Fundstelle[]): string => orte.map(o =>
 export function baueEntwurf(
   q: QuellChange[], auswahl: Record<number | string, AuswahlEintrag>,
   kopf: { key: string; titel: string; zweck: string; dokumentart: 'testprotokoll' | 'betrieb' },
-  entscheid: Entscheid = {},
+  eingabe: Entscheid = {},
 ): EntwurfErgebnis {
   const fehler: string[] = [];
   const hinweise: string[] = [];
   const fest: FestEintrag[] = [];
-  const ende = (offen: Entscheidungspunkt[] = []): EntwurfErgebnis => ({ fehler: [...new Set(fehler)], hinweise, offen, fest: [], ohneAnnahme: [] });
+  const ende = (offen: Entscheidungspunkt[] = []): EntwurfErgebnis => ({ fehler: [...new Set(fehler)], hinweise, offen, fest: [], ohneAnnahme: [], sammel: [] });
   const intern = kandidatenIntern(q);
   const nachNr = new Map(intern.map(k => [k.kandidat.nr, k]));
 
@@ -761,7 +798,35 @@ export function baueEntwurf(
 
   // 4. Entscheidungen prüfen: bekannte id, gültiger Wert, „ersetzen“ nur wo möglich
   const punkte = new Map(findeEntscheidungen(q).map(p => [p.id, p]));
-  for (const [id, e] of Object.entries(entscheid)) {
+  // Sammel-Schlüssel auflösen: einzelne ids gehen vor, dann teil:wert|… bzw. Kategorie, dann fest:*
+  const spezifisch: Entscheid = {};
+  const sammel: Record<string, 'ersetzen' | 'fest'> = {};
+  for (const [id, e] of Object.entries(eingabe ?? {})) {
+    if (!SAMMEL_SCHLUESSEL.test(id)) { spezifisch[id] = e; continue; }
+    if (e !== 'ersetzen' && e !== 'fest') { fehler.push(`Sammel-Schlüssel ${id}: muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`); continue; }
+    if (e === 'ersetzen' && !id.startsWith('teil:wert|')) { fehler.push(`Sammel-Schlüssel ${id}: nur „fest“ möglich („ersetzen“ gibt es nur für teil:wert|…)`); continue; }
+    sammel[id] = e;
+  }
+  const entscheid: Entscheid = { ...spezifisch };
+  const ausGruppe = new Map<string, string>();
+  for (const p of punkte.values()) {
+    if (entscheid[p.id] !== undefined) continue;
+    if (p.art === 'teil' && (!teilNachId.has(p.id) || p.tresor)) continue;
+    const reihe = p.art === 'teil' ? [`teil:wert|${p.wert}`, 'fest:*'] : p.art === 'id' ? ['fest:*'] : [`${p.art}:*`, 'fest:*'];
+    const key = reihe.find(k => sammel[k] !== undefined);
+    if (!key) continue;
+    entscheid[p.id] = sammel[key]!;
+    ausGruppe.set(p.id, key);
+  }
+  /** Sammel-Schlüssel → ids, die er tatsächlich entschieden hat (ungenutzt = Fehler) */
+  const genutzt = new Map<string, Set<string>>();
+  const nutze = (id: string): { gruppe?: string } => {
+    const k = ausGruppe.get(id);
+    if (!k) return {};
+    const l = genutzt.get(k) ?? new Set<string>(); l.add(id); genutzt.set(k, l);
+    return { gruppe: k };
+  };
+  for (const [id, e] of Object.entries(spezifisch)) {
     const p = punkte.get(id);
     if (e !== 'ersetzen' && e !== 'fest') { fehler.push(`Entscheidung ${id}: muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`); continue; }
     if (!p || (p.art === 'teil' && !teilNachId.has(id))) { fehler.push(`Entscheidung ${id}: gehört zu keinem gewählten Wert und keinem Entscheidungspunkt dieses Vorschlags`); continue; }
@@ -863,11 +928,12 @@ export function baueEntwurf(
     for (const t of k.teile) {
       const e = entscheid[t.id];
       if (e === undefined) continue; // fehlt → unten als offen gemeldet
+      const g = nutze(t.id);
       const wo = ortText(t.blatt.change, t.blatt.schritt, t.blatt.pfad);
       if (e === 'fest') {
         festTeile.push({
           key: ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), start: t.start, ende: t.ende, hinweis: `bewusst fest: ${t.token} in ${wo}`,
-          eintrag: { id: t.id, art: 'teil', wort: t.token, change8: kurz(t.blatt.change), schritt: t.blatt.schritt, pfad: t.blatt.pfad, grund: `Teil mit ${wert} (Parameter ${name}) bleibt unverändert` },
+          eintrag: { id: t.id, art: 'teil', wort: t.token, change8: kurz(t.blatt.change), schritt: t.blatt.schritt, pfad: t.blatt.pfad, grund: `Teil mit ${wert} (Parameter ${name}) bleibt unverändert`, ...g },
         });
         continue;
       }
@@ -931,7 +997,7 @@ export function baueEntwurf(
   for (const p of punkte.values()) if (p.art === 'id' && entscheid[p.id] === 'fest') {
     const o = p.orte[0]!;
     hinweise.push(`bewusst fest (feste ID): ${p.wert} in ${ortText(o.change, o.schritt, o.pfad)} — ${p.grund}`);
-    fest.push({ id: p.id, art: 'id', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+    fest.push({ id: p.id, art: 'id', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund, ...nutze(p.id) });
   }
   // (c) angelegte Werte und Adressen gewählter Netze, die nach dem Ersetzen noch irgendwo (außer Titeln) stehen
   const nachher = q.flatMap(c => blaetter(c, kopien.get(c.id))).filter(b => b.pfad !== 'titel');
@@ -941,10 +1007,11 @@ export function baueEntwurf(
   for (const p of punkte.values()) {
     if (p.art === 'tresor') {
       const rest = tresorStellen(nachher, p.wert);
-      if (!rest.length) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`); continue; }
+      if (!rest.length) { if (spezifisch[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`); continue; }
       if (entscheid[p.id] === 'fest') {
         hinweise.push(`bewusst fest (bestehender Tresor-Eintrag): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — jede Anwendung nutzt denselben Tresor-Eintrag`);
-        for (const o of rest) fest.push({ id: p.id, art: 'tresor', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+        const g = nutze(p.id);
+        for (const o of rest) fest.push({ id: p.id, art: 'tresor', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund, ...g });
       } else if (entscheid[p.id] === undefined) offenTresor.push({ ...p, orte: rest });
       continue;
     }
@@ -954,7 +1021,7 @@ export function baueEntwurf(
     const anlageWert = p.typ === 'vmid' || p.typ === 'vlan' ? Number(p.wert) : p.wert;
     // einzige Ausnahme, ausdrücklich und art-gebunden: Adress-Punkt eines Netz-Kandidaten, dessen Netz nicht gewählt ist
     const istNetzAdresse = p.art === 'anlage' && p.netz !== undefined;
-    if (istNetzAdresse && !netzFuer(p.wert)) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — kein gewähltes Netz enthält ${p.wert}`); continue; }
+    if (istNetzAdresse && !netzFuer(p.wert)) { if (spezifisch[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — kein gewähltes Netz enthält ${p.wert}`); continue; }
     const gefunden = suche(nachher, p.typ, anlageWert);
     const rest = gefunden.orte.map(o => fundstelle(o.blatt, o.ganz));
     // Tresor-Namen, in denen der feste Wert außerdem steckt (win-dc01-admin bei dc01) — am fest-Eintrag sichtbar
@@ -962,13 +1029,14 @@ export function baueEntwurf(
     for (const t of gefunden.teile.filter(x => x.tresor)) { const l = tresorOrte.get(t.tresor!) ?? []; l.push(ortText(t.blatt.change, t.blatt.schritt, t.blatt.pfad)); tresorOrte.set(t.tresor!, l); }
     const tresor = tresorOrte.size ? [...tresorOrte].map(([n, o]) => `${n} (${[...new Set(o)].join(', ')})`).join('; ') : undefined;
     if (!rest.length) {
-      if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`);
+      if (spezifisch[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`);
       continue;
     }
     if (entscheid[p.id] === 'fest') {
       const art = p.art === 'veraendert' ? 'verändert vorhandenes Objekt' : 'vom Paket angelegt';
       hinweise.push(`bewusst fest (${art}): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — ${p.grund}${tresor ? ` — steckt auch im Tresor-Namen ${tresor}` : ''}`);
-      for (const o of rest) fest.push({ id: p.id, art: p.art, wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund, ...(tresor ? { tresor } : {}) });
+      const g = nutze(p.id);
+      for (const o of rest) fest.push({ id: p.id, art: p.art, wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund, ...(tresor ? { tresor } : {}), ...g });
       continue;
     }
     if (entscheid[p.id] === undefined) (p.art === 'veraendert' ? offenVeraendert : offenAnlage).push({ ...p, orte: rest });
@@ -977,12 +1045,15 @@ export function baueEntwurf(
     ...offenTeil.map(x => punkte.get(x.t.id)!).filter(Boolean),
     ...offenId, ...offenAnlage, ...offenVeraendert, ...offenTresor,
   ];
+  for (const k of Object.keys(sammel)) if (!genutzt.has(k)) fehler.push(`Sammel-Schlüssel ${k}: trifft keinen offenen Punkt — entfernen`);
+  if (offen.length) fehler.unshift(offenUebersicht(offen));
   if (offenTeil.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offenTeil.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
   if (offenId.length) fehler.push(`Feste IDs der Original-Instanz ohne Entscheidung (je id nur „fest“ — oder den erzeugenden Change mitwählen): ${offenId.map(p => `${p.id} (${ortListe(q, p.orte)}: ${p.grund})`).join('; ')}`);
   if (offenAnlage.length) fehler.push(`Vom Paket angelegt, aber nicht als Parameter gewählt — diese Stellen zielen sonst auf die Original-Instanz (je id „fest“ oder den Wert als Parameter wählen): ${offenAnlage.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; noch an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (offenVeraendert.length) fehler.push(`Verändert vorhandene Objekte, die das Paket nicht anlegt und die nicht als Parameter gewählt sind — jede Anwendung träfe wieder dasselbe Objekt (je id „fest“ oder den Wert als Parameter wählen): ${offenVeraendert.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (offenTresor.length) fehler.push(`Verwendet bestehende Tresor-Einträge — eine neue Instanz nutzte sonst still das Geheimnis der Original-Instanz (je id „fest“ oder den Namen als Parameter wählen): ${offenTresor.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ', nur „fest“'}; ${p.grund}; an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (fehler.length) return ende(offen);
+  for (const [k, ids] of genutzt) hinweise.push(`Sammel-Entscheidung ${k} = ${sammel[k]}: ${ids.size} Punkt${ids.size === 1 ? '' : 'e'}`);
 
   // 7. Changes bauen: Laufzeitfelder weg, abhaengigVon auf Schlüssel, betroffen ohne selbst angelegte Assets
   const schrittVon = (b: Blatt): Record<string, unknown> | undefined => b.schritt > 0 ? schritteVon(nachId.get(b.change)!)[b.schritt - 1] : undefined;
@@ -1046,6 +1117,11 @@ export function baueEntwurf(
   for (const [netz, name] of praefixName) parameter.push({ name, typ: 'zahl', pflicht: false, beschreibung: `Präfixlänge des Netzes ${netz} (abgeleitet)`, ableitung: { funktion: 'praefix', von: netz } });
 
   const schema = pruefeSchema({ schema: 1, key: kopf.key, titel: kopf.titel, zweck: kopf.zweck, dokumentart: kopf.dokumentart, parameter, annahmen, changes });
-  if (!schema.vorlage) return { fehler: schema.fehler, hinweise, offen: [], fest: [], ohneAnnahme: [] };
-  return { vorlage: schema.vorlage, fehler: [], hinweise, offen: [], fest, ohneAnnahme };
+  if (!schema.vorlage) return { fehler: schema.fehler, hinweise, offen: [], fest: [], ohneAnnahme: [], sammel: [] };
+  const sammelListe: SammelEintrag[] = [...genutzt].map(([schluessel, ids]) => {
+    const arten: Record<string, number> = {};
+    for (const id of ids) { const a = punkte.get(id)?.art ?? 'teil'; arten[a] = (arten[a] ?? 0) + 1; }
+    return { schluessel, entscheidung: sammel[schluessel]!, anzahl: ids.size, arten };
+  });
+  return { vorlage: schema.vorlage, fehler: [], hinweise, offen: [], fest, ohneAnnahme, sammel: sammelListe };
 }

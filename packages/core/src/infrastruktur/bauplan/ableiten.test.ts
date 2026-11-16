@@ -947,3 +947,60 @@ describe('Tresor-Einträge', () => {
     expect(baueEntwurf(qi, { [kand(findeKandidaten(qi), 'name', 'dc01').nr]: 'dc' }, kopf).fehler.join('\n')).toMatch(/dc01 steckt im Tresor-Namen win-dc01-admin/);
   });
 });
+
+// ── Sammel-Entscheidungen (teil:wert|…, anlage:*, veraendert:*, tresor:*, fest:*) ──
+describe('Sammel-Entscheidungen', () => {
+  const I8C = (): QuellChange[] => JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
+  /** Live-Auswahl laut Auftrag (Nummern der aktuellen Kandidatenliste) */
+  const AUSWAHL = { 23: 'vmid_dc01', 28: 'vmid_dc02', 2: 'vlan', 3: 'netz', 8: 'ip_dc01', 9: 'ip_dc02', 26: 'gateway', 37: 'ip_probe' };
+  const SAMMEL: Entscheid = { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' };
+
+  it('Nummern der Live-Auswahl zeigen auf die erwarteten Werte', () => {
+    const k = findeKandidaten(I8C());
+    expect([23, 28, 2, 3, 8, 9, 26, 37].map(n => String(k.find(c => c.nr === n)!.wert))).toEqual(['152', '153', '829', '10.203.29.0/27', '10.203.29.2', '10.203.29.3', '10.203.29.1', '10.203.29.30']);
+  });
+
+  it('I8c: teil:wert|829 ersetzen, teil:wert|10.203.29.3 fest, fest:* → Entwurf; fest-Einträge tragen die Gruppe; sammel nennt die Schlüssel', () => {
+    const r = baueEntwurf(I8C(), AUSWAHL, kopf, SAMMEL);
+    expect(r.fehler).toEqual([]);
+    expect((r.vorlage!.changes[0]!.schritte[15]!.parameter as Record<string, unknown>).bridge).toBe('vmbr{{param.vlan}}');
+    expect(r.fest.filter(f => f.id === 'anlage:name|dc01').every(f => f.gruppe === 'fest:*')).toBe(true);
+    expect(r.fest.some(f => f.id === 'tresor:name|win-dc01-admin' && f.gruppe === 'fest:*')).toBe(true);
+    expect(r.sammel.map(s => [s.schluessel, s.entscheidung])).toEqual(expect.arrayContaining([['teil:wert|829', 'ersetzen'], ['teil:wert|10.203.29.3', 'fest'], ['fest:*', 'fest']]));
+    expect(r.sammel.find(s => s.schluessel === 'fest:*')!.anzahl).toBe(25);
+  });
+
+  it('eine einzelne id geht vor der Gruppe', () => {
+    const q = I8C();
+    const k = findeKandidaten(q);
+    const b2 = kand(k, 'vlan', 829).teilvorkommen.find(t => t.change === I8C_QUELLEN[1]!.id && t.pfad === 'parameter.bridge')!;
+    const r = baueEntwurf(q, AUSWAHL, kopf, { ...SAMMEL, [b2.id]: 'fest' });
+    expect(r.fehler).toEqual([]);
+    expect((r.vorlage!.changes[1]!.schritte[1]!.parameter as Record<string, unknown>).bridge).toBe('vmbr829');
+    expect((r.vorlage!.changes[0]!.schritte[15]!.parameter as Record<string, unknown>).bridge).toBe('vmbr{{param.vlan}}');
+    const e = r.fest.find(f => f.id === b2.id)!;
+    expect(e.gruppe).toBeUndefined();
+  });
+
+  it('Fehler: Gruppe mit „ersetzen“ (außer teil:wert), ungenutzter Schlüssel, Wort-Konsistenz gilt auf aufgelösten Entscheidungen, Tresor-Sperre unberührt', () => {
+    const q = I8C();
+    expect(baueEntwurf(q, AUSWAHL, kopf, { ...SAMMEL, 'anlage:*': 'ersetzen' }).fehler.join('\n')).toMatch(/anlage:\*.*nur „fest“/);
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'proxmox', aktion: 'provision_windows_vm', parameter: { new_vmid: 300, hostname: 'srvneu', node: 'pve1' } }]);
+    expect(baueEntwurf([a], {}, kopf, { 'fest:*': 'fest', 'tresor:*': 'fest' }).fehler.join('\n')).toMatch(/Sammel-Schlüssel tresor:\*: trifft keinen offenen Punkt/);
+    expect(baueEntwurf([a], {}, kopf, { 'fest:*': 'fest', 'teil:wert|999': 'fest' }).fehler.join('\n')).toMatch(/Sammel-Schlüssel teil:wert\|999: trifft keinen offenen Punkt/);
+    // gleiches Wort im selben Schritt: Gruppe ersetzen, eine Stelle einzeln fest → Konflikt
+    const p = quellen();
+    const v157 = kand(findeKandidaten(p), 'vmid', 157);
+    const abw = v157.teilvorkommen.find(t => t.token === 'VM157_ABWESEND')!;
+    expect(baueEntwurf(p, { [v157.nr]: 'vmid_server' }, kopf, { 'teil:wert|157': 'ersetzen', [abw.id]: 'fest', 'fest:*': 'fest' }).fehler.join('\n')).toMatch(/VM157_ABWESEND.*gleich entscheiden/);
+    // Tresor-Sperre: dc01 gewählt → abgelehnt, egal welche Gruppe
+    expect(baueEntwurf(q, { ...AUSWAHL, [kand(findeKandidaten(q), 'name', 'dc01').nr]: 'dc' }, kopf, SAMMEL).fehler.join('\n')).toMatch(/dc01 steckt im Tresor-Namen win-dc01-admin/);
+  });
+
+  it('kompakte Fehlermeldung: Sammel-Schlüssel stehen in den ersten 2 KB', () => {
+    const r = baueEntwurf(I8C(), AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' });
+    expect(r.vorlage).toBeUndefined();
+    const anfang = r.fehler.join('\n').slice(0, 2000);
+    for (const s of ['anlage:* — 17 offen', 'veraendert:* — 7 offen', 'tresor:* — 1 offen', '"fest:*"']) expect(anfang).toContain(s);
+  });
+});

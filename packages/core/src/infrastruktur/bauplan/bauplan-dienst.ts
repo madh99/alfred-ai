@@ -15,7 +15,7 @@ import type { ChangeLauf } from '../change-lauf.js';
 import { findeChange, type DokuQuellen } from '../dokumente/sammler.js';
 import {
   baueEntwurf, findeEntscheidungen, findeKandidaten, findeVerweise, standVon,
-  type AuswahlEintrag, type Entscheid, type Entscheidungspunkt, type FestEintrag, type Fundstelle, type Kandidat, type QuellChange, type Verweis,
+  type AuswahlEintrag, type Entscheid, type Entscheidungspunkt, type FestEintrag, type SammelEintrag, type Fundstelle, type Kandidat, type QuellChange, type Verweis,
 } from './ableiten.js';
 import { abdruck, GRENZEN, type BauplanChange, type BauplanVorlage } from './schema.js';
 import { loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
@@ -395,7 +395,7 @@ export class BauplanDienst {
     const ableitung: AbleitungInfo = {
       quellen: l.q.map(c => c.id), fest: e.fest,
       hinweise: e.hinweise.filter(h => !h.startsWith('bewusst fest') && !h.startsWith('keine automatische Vorab-Kontrolle')),
-      ohneAnnahme: e.ohneAnnahme, ...(ersetzt ? { ersetzt } : {}),
+      ohneAnnahme: e.ohneAnnahme, ...(ersetzt ? { ersetzt } : {}), ...(e.sammel.length ? { sammel: e.sammel } : {}),
     };
     const s = await this.speichern(o, e.vorlage, abgeleitetAus, JSON.stringify(ableitung));
     if (!s.ok) return s;
@@ -443,6 +443,31 @@ export function kandidatenHinweise(k: Kandidat[]): string[] {
   return h;
 }
 
+/**
+ * Kurzfassung der Entscheidungen ganz oben im Vorschlag (die Ausgabe wird beim Modell gekürzt): Sammel-Schlüssel je Kategorie
+ * mit Anzahl, Teilvorkommen je Kandidaten-Wert, Aufruf mit stand. Einzelheiten je id folgen weiter unten.
+ */
+function entscheidungenKurz(k: Kandidat[], punkte: Entscheidungspunkt[], stand: string): string[] {
+  const z = ['Entscheidungen kurz — Sammel-Schlüssel in entscheid (einzelne ids gehen vor; alle übrigen offenen Punkte fest: {"fest:*": "fest"}):'];
+  // ein Schlüssel je Wert (pve1 als node und als Name: teil:wert|pve1 deckt beide)
+  const jeWert = new Map<string, { nr: number[]; n: number }>();
+  for (const c of k) {
+    const n = c.teilvorkommen.filter(t => !t.tresor).length;
+    if (!n) continue;
+    const x = jeWert.get(String(c.wert)) ?? { nr: [], n: 0 };
+    x.nr.push(c.nr); x.n += n; jeWert.set(String(c.wert), x);
+  }
+  const teil = [...jeWert].map(([w, x]) => `teil:wert|${w} (#${x.nr.join("/#")}, ${x.n})`);
+  if (teil.length) z.push(`- Teilvorkommen = „ersetzen“|„fest“ je Wert, nur für gewählte Kandidaten: ${teil.slice(0, 12).join(', ')}${teil.length > 12 ? `, … (+${teil.length - 12})` : ''}`);
+  const zahl = (f: (p: Entscheidungspunkt) => boolean) => punkte.filter(f).length;
+  z.push(`- anlage:* = „fest“ — ${zahl(p => p.art === 'anlage' && p.netz === undefined)} vom Paket angelegte Werte (gewählte entfallen; Adressen in Netz-Kandidaten: ${zahl(p => p.art === 'anlage' && p.netz !== undefined)})`);
+  z.push(`- veraendert:* = „fest“ — ${zahl(p => p.art === 'veraendert')} veränderte vorhandene Objekte`);
+  z.push(`- tresor:* = „fest“ — ${zahl(p => p.art === 'tresor')} bestehende Tresor-Einträge`);
+  z.push(`- fest:* = „fest“ — alle übrigen offenen Punkte, auch ${zahl(p => p.art === 'id')} feste IDs`);
+  z.push(`Aufruf: bauplan_ableiten modus erzeugen, stand "${stand}", auswahl {Nr: Name}, entscheid {…}, key, titel, zweck, dokumentart. Fehlende Entscheidungen meldet erzeugen kompakt mit Sammel-Schlüsseln.`);
+  return z;
+}
+
 /** M-d — alle Fundstellen eines Kandidaten; mehr als 40 gruppiert nach Change und Schritt */
 function fundstellenText(f: Fundstelle[]): string {
   if (f.length <= 40) return f.map(ortText).join(', ');
@@ -461,6 +486,8 @@ function fundstellenText(f: Fundstelle[]): string {
 function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], punkte: Entscheidungspunkt[], hinweise: string[], stand: string): string {
   const z: string[] = [
     `📐 Bauplan ableiten — Vorschlag aus ${q.length} Change${q.length === 1 ? '' : 's'} (nichts gespeichert), Stand ${stand}`,
+    ...entscheidungenKurz(k, punkte, stand),
+    '',
     'Reihenfolge:', ...q.map(c => `- ${c.schluessel} = ${c.id} („${String(c.plan.titel).slice(0, 80)}“)`),
     '',
     `Kandidaten (${k.length}):`,
@@ -522,7 +549,19 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
 }
 
 /** I2 — Begleitinformation einer Ableitung (Spalte ableitung): nur beim Speichern gesetzt, nicht Teil des Abdrucks */
-interface AbleitungInfo { quellen: string[]; fest: FestEintrag[]; hinweise: string[]; ohneAnnahme: string[]; ersetzt?: string }
+interface AbleitungInfo { quellen: string[]; fest: FestEintrag[]; hinweise: string[]; ohneAnnahme: string[]; ersetzt?: string; sammel?: SammelEintrag[] }
+
+/** Sammel-Entscheidung in Worten — für Anzeige und Freigabe-Frage */
+function sammelZeile(s: SammelEintrag): string {
+  const was = s.schluessel === 'fest:*' ? 'alle offenen Punkte fest'
+    : s.schluessel === 'anlage:*' ? 'alle vom Paket angelegten Werte fest'
+      : s.schluessel === 'veraendert:*' ? 'alle veränderten vorhandenen Objekte fest'
+        : s.schluessel === 'tresor:*' ? 'alle bestehenden Tresor-Einträge fest'
+          : `alle Teilvorkommen von ${s.schluessel.slice('teil:wert|'.length)}`;
+  const arten = Object.entries(s.arten ?? {});
+  const genauer = s.schluessel === 'fest:*' && arten.length ? `: ${arten.map(([a, n]) => `${a} ${n}`).join(', ')}` : '';
+  return `Sammel-Entscheidung ${s.schluessel} = ${s.entscheidung}: ${was} (${s.anzahl}${genauer})`;
+}
 const JE_KATEGORIE = 15;
 const mehr = (n: number): string[] => (n > JE_KATEGORIE ? [`  … und ${n - JE_KATEGORIE} weitere`] : []);
 
@@ -534,6 +573,8 @@ function ableitungZeilen(roh: string | undefined, abgeleitetAus: string | undefi
   const fest = Array.isArray(a.fest) ? a.fest : [];
   const z: string[] = [`Abgeleitet aus: ${(a.quellen ?? []).map(kurzId).join(', ')}`];
   if (a.ersetzt) z.push(`ℹ️ ${a.ersetzt}`);
+  // Sammel-Entscheidungen ausdrücklich — die Einzelliste folgt wie bisher
+  for (const s of Array.isArray(a.sammel) ? a.sammel : []) z.push(sammelZeile(s));
   if (fest.length) {
     z.push(`⚠️ Bewusst fest (${fest.length} Stelle${fest.length === 1 ? '' : 'n'}) — bleiben wie in den Quell-Changes und zielen damit auf dieselben Objekte:`);
     // je Wert eine Zeile; Tresor-Namen, in denen der feste Wert außerdem steckt, in derselben Zeile (Restpunkt)

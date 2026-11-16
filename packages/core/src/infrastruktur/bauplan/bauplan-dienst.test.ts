@@ -763,3 +763,37 @@ describe('V4 ableiten — Final-Welle', () => {
     expect(m.ladungen.changes).toBe(1);
   });
 });
+
+describe('V4 ableiten — Sammel-Entscheidungen im Dienst', () => {
+  const I8C_IDS = I8C_QUELLEN.map(q => q.id);
+  const I8C_NAMEN: Record<string, string> = Object.assign({}, ...I8C_QUELLEN.map(q => q.betroffenNamen));
+  const AUSWAHL = { 23: 'vmid_dc01', 28: 'vmid_dc02', 2: 'vlan', 3: 'netz', 8: 'ip_dc01', 9: 'ip_dc02', 26: 'gateway', 37: 'ip_probe' };
+  const kopf = { key: 'ad_wald', titel: 'AD-Wald', zweck: 'Wald mit zwei DCs', dokumentart: 'betrieb' as const };
+
+  it('vorschlag: Kurzfassung mit Sammel-Schlüsseln ganz oben (erste 2 KB)', async () => {
+    const t = aufbau({ changes: I8C_QUELLEN.map(q => alsChange(q)), assetNamen: I8C_NAMEN });
+    const v = await t.dienst.ableitenVorschlag('o', I8C_IDS);
+    if (!v.ok) throw new Error(v.fehler.join('\n'));
+    const anfang = v.text.slice(0, 2000);
+    for (const s of ['Entscheidungen kurz', '"fest:*"', 'anlage:*', 'veraendert:*', 'tresor:*', 'teil:wert|829', `stand "${v.stand}"`]) expect(anfang).toContain(s);
+  });
+
+  it('erzeugen: offene Punkte kompakt mit Sammel-Schlüsseln vorn; mit Sammel-Entscheidungen → Entwurf, Freigabe-Frage zeigt sie ausdrücklich', async () => {
+    const t = aufbau({ changes: I8C_QUELLEN.map(q => alsChange(q)), assetNamen: I8C_NAMEN });
+    const v = await t.dienst.ableitenVorschlag('o', I8C_IDS);
+    if (!v.ok) throw new Error(v.fehler.join('\n'));
+    const ohne = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' }, v.stand);
+    expect(ohne.ok).toBe(false);
+    expect(fehlerText(ohne).slice(0, 2000)).toMatch(/anlage:\* — 17 offen[\s\S]*veraendert:\* — 7 offen[\s\S]*tresor:\* — 1 offen/);
+    const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' }, v.stand);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(r.text).toContain('Sammel-Entscheidung fest:* = fest');
+    await t.dienst.freigabeAnfragen('o', 'ad_wald');
+    const frage = t.fragen.at(-1)!.text;
+    expect(frage).toContain('Sammel-Entscheidung fest:* = fest: alle offenen Punkte fest (25: anlage 17, veraendert 7, tresor 1)');
+    expect(frage).toContain('Sammel-Entscheidung teil:wert|829 = ersetzen: alle Teilvorkommen von 829 (4)');
+    // Einzelliste wie bisher
+    expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(17 Werte\)/);
+    expect(JSON.parse(t.zeilen[0]!.ableitung!).sammel.map((s: { schluessel: string }) => s.schluessel)).toEqual(expect.arrayContaining(['fest:*', 'teil:wert|829']));
+  });
+});
