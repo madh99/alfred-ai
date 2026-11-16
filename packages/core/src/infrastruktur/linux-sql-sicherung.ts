@@ -20,6 +20,14 @@
  * - Wiederherstellungs-Beweis: letzte vollständige Kette FULL (+ letzte DIFF) + LOGs aus der fs01-KOPIE (zurückgeholt und gegen das
  *   Manifest geprüft), unter alfred_wh_… mit MOVE, NORECOVERY bis zum Schluss, dann RECOVERY, DBCC CHECKDB, Prüfdaten-Vergleich →
  *   RESTORE_VERIFIED nur wenn alles stimmt; die Ziel-Datenbank wird danach (und bei jedem Fehler) entfernt.
+ * - Grenzen gelöschter Ketten: maßgeblich ist die lokale root-only Aufzeichnung /var/lib/alfred/sqllnx/<db>-entfernt.json (mit dem bei
+ *   der Löschung auf fs01 belegten SHA-256 jeder Datei); das Manifest auf fs01 trägt nur eine Kopie.
+ *   WIEDERHERSTELLUNG, wenn die lokale Aufzeichnung verloren ist (Befund „lokale Kettengrenzen fehlen — Aufbewahrung ausgesetzt“):
+ *   1. Nichts wird überschrieben oder gelöscht; die Aufbewahrung der Datenbank steht, die Grenzen auf fs01 sperren nur das erneute Kopieren.
+ *   2. Owner prüft die Grenzen im Manifest auf fs01 (<rechner>/alfred-sqllnx-manifest.json, Feld entfernteKetten) gegen die Erwartung
+ *      (gelöschte Ketten = Vollsicherungen, die per Aufbewahrung entfernt wurden; Verlauf in den Kopierberichten).
+ *   3. Erst dann im freigegebenen Change linux_sql kettengrenzen_uebernehmen — schreibt die lokale Aufzeichnung aus der Kopie auf fs01 und
+ *      nennt den Unterschied je Datenbank; danach läuft die Aufbewahrung wieder.
  */
 import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
