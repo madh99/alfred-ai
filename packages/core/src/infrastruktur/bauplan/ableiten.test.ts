@@ -887,3 +887,63 @@ describe('iso_ablegen legt eine Datei an', () => {
     for (const z of ['Internal', 'External', 'Gateway']) expect(p.some(x => x.id === `veraendert:name|${z}`)).toBe(true);
   });
 });
+
+// ── Tresor-Einträge ausdrücklich entscheiden (konto_tresor, {{geheim:…}}) ──
+describe('Tresor-Einträge', () => {
+  const basisAuswahl = (k: Kandidat[]) => ({ [kand(k, 'vmid', 157).nr]: 'vmid_server', [kand(k, 'vmid', 158).nr]: 'vmid_client', [kand(k, 'vlan', 832).nr]: 'vlan' });
+
+  it('PKI: konto_tresor pkilab-sql (8 Stellen) ist Entscheidungspunkt; „ersetzen“ gibt es nicht; „fest“ steht in der fest-Liste', () => {
+    const q = quellen();
+    const p = findeEntscheidungen(q).find(x => x.id === 'tresor:name|pkilab-sql')!;
+    expect(p).toBeDefined();
+    expect(p.art).toBe('tresor');
+    expect(p.orte).toHaveLength(8);
+    const k = findeKandidaten(q);
+    const auswahl = basisAuswahl(k);
+    const leer = baueEntwurf(q, auswahl, kopf);
+    expect(leer.offen.map(x => x.id)).toContain('tresor:name|pkilab-sql');
+    const { r, e } = mitFest(q, auswahl);
+    expect(e['tresor:name|pkilab-sql']).toBe('fest');
+    expect(r.fehler).toEqual([]);
+    const fest = r.fest.filter(f => f.id === 'tresor:name|pkilab-sql');
+    expect(fest).toHaveLength(8);
+    expect(fest.every(f => f.art === 'tresor' && f.wort === 'pkilab-sql' && f.pfad === 'parameter.konto_tresor')).toBe(true);
+    expect(r.hinweise.some(h => h.startsWith('bewusst fest (bestehender Tresor-Eintrag): pkilab-sql an 8 Stellen'))).toBe(true);
+    expect(baueEntwurf(q, auswahl, kopf, { ...e, 'tresor:name|pkilab-sql': 'ersetzen' }).fehler.join('\n')).toMatch(/tresor:name\|pkilab-sql.*nur „fest“ — oder den Namen als Parameter wählen/);
+  });
+
+  it('PKI: pkilab-sql als Parameter (Name, nie Wert) → {{param.sql_konto}} an allen 8 Stellen, V3-Prüfung besteht; Geheimnis-artiger Parametername abgelehnt', async () => {
+    const q = quellen();
+    const k = findeKandidaten(q);
+    const konto = kand(k, 'name', 'pkilab-sql');
+    const { r } = mitFest(q, { ...basisAuswahl(k), [konto.nr]: 'sql_konto' });
+    expect(r.fehler).toEqual([]);
+    const v = r.vorlage!;
+    const stellen = JSON.stringify(v.changes).match(/"konto_tresor":"[^"]*"/g)!;
+    expect(stellen).toHaveLength(8);
+    expect(new Set(stellen)).toEqual(new Set(['"konto_tresor":"{{param.sql_konto}}"']));
+    expect(v.parameter.find(p => p.name === 'sql_konto')).toMatchObject({ typ: 'name', beispiel: 'pkilab-sql' });
+    expect(r.fest.some(f => f.art === 'tresor')).toBe(false);
+    expect((await pruefeVorlage(v, { probe: async () => [] })).fehler).toEqual([]);
+    expect(baueEntwurf(q, { ...basisAuswahl(k), [konto.nr]: 'sql_passwort' }, kopf).fehler.join('\n')).toMatch(/klingt nach einem Geheimnis/);
+  });
+
+  it('Name in {{geheim:…}} einer verändernden Aktion → nur „fest“ (kein Kandidat); enthält er einen gewählten Wert, bleibt die Ablehnung', () => {
+    const a = change('aaaaaaaa-1', 'c1', [
+      { skill: 'proxmox', aktion: 'provision_windows_vm', parameter: { new_vmid: 152, hostname: 'dcx', node: 'pve1' } },
+      { skill: 'windows_ad', aktion: 'wald_anlegen', parameter: { zugang: 'dcx', domaene: 'ad.x.at', dsrm: '{{geheim:ad-alt-dsrm}}' } },
+    ]);
+    const p = findeEntscheidungen([a]).find(x => x.id === 'tresor:name|ad-alt-dsrm')!;
+    expect(p).toMatchObject({ art: 'tresor', nurFest: true });
+    expect(findeKandidaten([a]).some(c => c.wert === 'ad-alt-dsrm')).toBe(false);
+    expect(baueEntwurf([a], {}, kopf).offen.map(x => x.id)).toContain('tresor:name|ad-alt-dsrm');
+    const { r } = mitFest([a], {});
+    expect(r.fehler).toEqual([]);
+    expect(r.fest.some(f => f.id === 'tresor:name|ad-alt-dsrm' && f.pfad === 'parameter.dsrm')).toBe(true);
+    expect(baueEntwurf([a], {}, kopf, { 'tresor:name|ad-alt-dsrm': 'ersetzen' }).fehler.join('\n')).toMatch(/nur „fest“/);
+    // I8c: win-dc01-admin ist Entscheidungspunkt; mit dc01 gewählt greift wie bisher die Tresor-Ablehnung
+    const qi = JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
+    expect(findeEntscheidungen(qi).some(x => x.id === 'tresor:name|win-dc01-admin')).toBe(true);
+    expect(baueEntwurf(qi, { [kand(findeKandidaten(qi), 'name', 'dc01').nr]: 'dc' }, kopf).fehler.join('\n')).toMatch(/dc01 steckt im Tresor-Namen win-dc01-admin/);
+  });
+});

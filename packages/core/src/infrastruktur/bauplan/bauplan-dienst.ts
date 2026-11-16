@@ -502,6 +502,11 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
     z.push('', 'Verändert vorhandene Objekte (nicht vom Paket angelegt) — solange der Wert nicht als Parameter gewählt ist, träfe jede Anwendung wieder dasselbe Objekt: je id „fest“ oder den Kandidaten wählen. Knoten, Speicher, UniFi-Geräte/Ports und Backup-Jobs (node, storage, device, switch_port, job_id, job) zählen als Träger der Aktion nicht dazu:');
     for (const p of veraendert) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (kein Kandidat — nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
   }
+  const tresor = punkte.filter(p => p.art === 'tresor');
+  if (tresor.length) {
+    z.push('', 'Verwendet bestehende Tresor-Einträge — sonst nutzt jede Anwendung still das Geheimnis der Original-Instanz: je id „fest“ (bewusst denselben Eintrag) oder den Namen als Parameter wählen (Name, nie Wert; im {{geheim:…}}-Platzhalter nur „fest“):');
+    for (const p of tresor) z.push(`- ${p.id}${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (nur „fest“)'}: ${p.grund}; ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}${p.orte.length ? `: ${fundstellenText(p.orte)}` : ''}`);
+  }
   const netz = punkte.filter(p => p.art === 'anlage' && p.netz !== undefined);
   if (netz.length) {
     z.push('', 'Adressen in Netz-Kandidaten — nötig, wenn das Netz gewählt und die Adresse nicht gewählt ist (dann „fest“); gewählte Adressen folgen dem Netz automatisch:');
@@ -532,7 +537,7 @@ function ableitungZeilen(roh: string | undefined, abgeleitetAus: string | undefi
   if (fest.length) {
     z.push(`⚠️ Bewusst fest (${fest.length} Stelle${fest.length === 1 ? '' : 'n'}) — bleiben wie in den Quell-Changes und zielen damit auf dieselben Objekte:`);
     // je Wert eine Zeile; Tresor-Namen, in denen der feste Wert außerdem steckt, in derselben Zeile (Restpunkt)
-    for (const [art, titel] of [['anlage', 'Vom Paket angelegt, nicht als Parameter'], ['veraendert', 'Verändert vorhandene Objekte (nicht vom Paket angelegt, nicht als Parameter']] as const) {
+    for (const [art, titel] of [['anlage', 'Vom Paket angelegt, nicht als Parameter'], ['veraendert', 'Verändert vorhandene Objekte (nicht vom Paket angelegt, nicht als Parameter'], ['tresor', 'Verwendet bestehende Tresor-Einträge (dasselbe Geheimnis wie die Original-Instanz']] as const) {
       const werte = new Map<string, FestEintrag[]>();
       for (const f of fest.filter(x => x.art === art)) { const l = werte.get(f.id) ?? []; l.push(f); werte.set(f.id, l); }
       if (!werte.size) continue;

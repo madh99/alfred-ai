@@ -67,13 +67,13 @@ export type AuswahlEintrag = string | { name: string; wert?: unknown };
  * (id anlage:<typ>|<wert>) bzw. Adresse in einem Netz-Kandidaten. nurFest: „ersetzen“ gibt es nicht (Ausweg: als Parameter wählen).
  */
 export interface Entscheidungspunkt {
-  id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
+  id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert' | 'tresor'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
   orte: Fundstelle[]; grund: string; nurFest: boolean;
   /** nur bei Adress-Punkten eines Netz-Kandidaten (art anlage): das Netz — nötig nur, wenn dieses Netz gewählt ist */
   netz?: string;
 }
 /** Bewusst feste Stelle (für Anzeige und die Spalte ableitung); tresor = Tresor-Namen, in denen der feste Wert außerdem steckt */
-export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string }
+export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage' | 'veraendert' | 'tresor'; wort: string; change8: string; schritt: number; pfad: string; grund: string; tresor?: string }
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
@@ -348,6 +348,50 @@ function veraenderte(q: QuellChange[]): Veraendert[] {
   return [...aus.values()];
 }
 
+const GEHEIM_NAMEN = /\{\{\s*(?:geheim|geheimdatei):([^\s{}]+)\s*\}\}/g;
+interface TresorWert { id: string; wert: string; feld: boolean; geheim: boolean; erste: Blatt; aktionen: string[] }
+/**
+ * Tresor-Einträge: Werte in Tresor-Feldern (TRESOR_FELD, z. B. konto_tresor „pkilab-sql“) und Namen in {{geheim:…}}/{{geheimdatei:…}}
+ * in parameter.* / rueckweg.parameter.* einer verändernden Aktion. Eine neue Instanz nutzte sonst still das Geheimnis der Original-Instanz.
+ * Entscheidung tresor:name|<wert>: „fest“ (bewusst denselben Eintrag nutzen) oder — nur bei Tresor-Feldern — als Parameter (Name, nie Wert).
+ */
+function tresorWerte(q: QuellChange[]): TresorWert[] {
+  const aus = new Map<string, TresorWert>();
+  const merke = (wert: string, b: Blatt, sa: string, feld: boolean) => {
+    const id = `tresor:name|${wert}`;
+    const v = aus.get(id);
+    if (!v) { aus.set(id, { id, wert, feld, geheim: !feld, erste: b, aktionen: [sa] }); return; }
+    if (!v.aktionen.includes(sa)) v.aktionen.push(sa);
+    if (feld) v.feld = true; else v.geheim = true;
+  };
+  for (const c of q) {
+    const schritte = schritteVon(c);
+    for (const b of blaetter(c)) {
+      if (b.schritt === 0 || !PARAM_PFAD.test(b.pfad) || typeof b.wert !== 'string') continue;
+      const s = schritte[b.schritt - 1];
+      const traeger = b.pfad.startsWith('rueckweg.') ? s?.rueckweg : s;
+      if (!istObjekt(traeger)) continue;
+      const skill = traeger.skill; const aktion = traeger.aktion;
+      const bekannt = typeof skill === 'string' && typeof aktion === 'string';
+      if (bekannt && aktionsArt(skill, aktion, istObjekt(traeger.parameter) ? traeger.parameter : undefined) === 'lesen') continue;
+      const sa = bekannt ? `${String(skill)}.${String(aktion)}` : 'unbekannte Aktion';
+      if (TRESOR_FELD.test(b.schluessel) && b.wert.trim() && !b.wert.includes('{{')) merke(b.wert.trim(), b, sa, true);
+      for (const m of b.wert.matchAll(GEHEIM_NAMEN)) merke(m[1]!, b, sa, false);
+    }
+  }
+  return [...aus.values()];
+}
+/** Stellen eines Tresor-Namens: als Wert (ganz/Token) und in {{geheim:<name>}}/{{geheimdatei:<name>}} */
+function tresorStellen(alle: Blatt[], name: string): Fundstelle[] {
+  const aus = new Map<string, Fundstelle>();
+  for (const o of suche(alle, 'name', name).orte) aus.set(`${o.blatt.change}|${o.blatt.schritt}|${o.blatt.pfad}`, fundstelle(o.blatt, o.ganz));
+  for (const b of alle) {
+    if (typeof b.wert !== 'string') continue;
+    if ([...b.wert.matchAll(GEHEIM_NAMEN)].some(m => m[1] === name)) aus.set(`${b.change}|${b.schritt}|${b.pfad}`, fundstelle(b, false));
+  }
+  return [...aus.values()];
+}
+
 function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
   const alle = q.flatMap(c => blaetter(c));
   const erkannt = new Map<string, { typ: ParamTyp; wert: string | number; blatt: Blatt }>();
@@ -367,7 +411,8 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
   // I4 — angelegte Werte sind immer Kandidat (wählbar statt nur „fest“), auch mit nur einer Fundstelle
   const angelegt = new Set<string>();
   // (d) — veränderte vorhandene Objekte ebenso: der Ausweg „als Parameter wählen“ muss es immer geben
-  for (const a of [...anlagen(q), ...veraenderte(q).map(v => ({ typ: v.typ, wert: v.wert, blatt: v.erste }))]) {
+  const tresorKandidaten = tresorWerte(q).filter(t => t.feld && NAME_WERT.test(t.wert)).map(t => ({ typ: 'name' as ParamTyp, wert: t.wert as string | number, blatt: t.erste }));
+  for (const a of [...anlagen(q), ...veraenderte(q).map(v => ({ typ: v.typ, wert: v.wert, blatt: v.erste })), ...tresorKandidaten]) {
     const k = `${a.typ}|${typeof a.wert}|${String(a.wert)}`;
     if (!gueltig(a.typ, a.wert)) continue;
     angelegt.add(k);
@@ -602,6 +647,13 @@ export function findeEntscheidungen(q: QuellChange[]): Entscheidungspunkt[] {
       grund: `vorhandener Wert, nicht vom Paket angelegt — in verändernder Aktion ${v.aktionen.join(', ')} (zuerst ${ortText(v.erste.change, v.erste.schritt, v.erste.pfad)})`, nurFest: true,
     });
   }
+  for (const t of tresorWerte(q)) {
+    const nr = t.feld ? kandNr('name', t.wert) : undefined;
+    punkte.set(t.id, {
+      id: t.id, art: 'tresor', wert: t.wert, typ: 'name', ...(nr ? { kandidat: nr } : {}), orte: tresorStellen(ohneTitel, t.wert),
+      grund: `bestehender Tresor-Eintrag, benutzt von ${t.aktionen.join(', ')} (zuerst ${ortText(t.erste.change, t.erste.schritt, t.erste.pfad)})`, nurFest: !nr,
+    });
+  }
   for (const k of intern) {
     if (k.kandidat.typ !== 'cidr') continue;
     for (const ip of ipsImNetz(q, String(k.kandidat.wert))) {
@@ -715,6 +767,7 @@ export function baueEntwurf(
     if (!p || (p.art === 'teil' && !teilNachId.has(id))) { fehler.push(`Entscheidung ${id}: gehört zu keinem gewählten Wert und keinem Entscheidungspunkt dieses Vorschlags`); continue; }
     if (e === 'ersetzen' && p.art === 'id') fehler.push(`Entscheidung ${id}: feste ID ${p.wert} der Original-Instanz — nur „fest“ möglich (sonst den Change mitwählen, der sie erzeugt)`);
     if (e === 'ersetzen' && p.art === 'veraendert') fehler.push(`Entscheidung ${id}: ${p.wert} ist ein vorhandenes Objekt, das das Paket verändert — nur „fest“ — oder den Wert als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}`);
+    if (e === 'ersetzen' && p.art === 'tresor') fehler.push(`Entscheidung ${id}: ${p.wert} ist ein Tresor-Eintrag — nur „fest“ — oder den Namen als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ' (im Platzhalter nicht möglich)'}`);
     if (e === 'ersetzen' && p.art === 'anlage') fehler.push(`Entscheidung ${id}: ${p.wert} ist vom Paket angelegt — nur „fest“ — oder den Wert als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}`);
   }
   // gleiches Wort im selben Schritt (VM157_ABWESEND in befehl und erwartet) muss gleich entschieden sein, sonst passt die Prüfung nicht mehr
@@ -884,7 +937,17 @@ export function baueEntwurf(
   const nachher = q.flatMap(c => blaetter(c, kopien.get(c.id))).filter(b => b.pfad !== 'titel');
   const offenAnlage: Entscheidungspunkt[] = [];
   const offenVeraendert: Entscheidungspunkt[] = [];
+  const offenTresor: Entscheidungspunkt[] = [];
   for (const p of punkte.values()) {
+    if (p.art === 'tresor') {
+      const rest = tresorStellen(nachher, p.wert);
+      if (!rest.length) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`); continue; }
+      if (entscheid[p.id] === 'fest') {
+        hinweise.push(`bewusst fest (bestehender Tresor-Eintrag): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — jede Anwendung nutzt denselben Tresor-Eintrag`);
+        for (const o of rest) fest.push({ id: p.id, art: 'tresor', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+      } else if (entscheid[p.id] === undefined) offenTresor.push({ ...p, orte: rest });
+      continue;
+    }
     if (p.art !== 'anlage' && p.art !== 'veraendert') continue;
     // fail-closed: ein Punkt ohne Typ kann nicht geprüft werden → nie still überspringen
     if (!p.typ) { if (entscheid[p.id] !== 'fest') fehler.push(`Entscheidungspunkt ${p.id}: ohne Typ nicht prüfbar — nur „fest“ möglich`); continue; }
@@ -912,12 +975,13 @@ export function baueEntwurf(
   }
   const offen: Entscheidungspunkt[] = [
     ...offenTeil.map(x => punkte.get(x.t.id)!).filter(Boolean),
-    ...offenId, ...offenAnlage, ...offenVeraendert,
+    ...offenId, ...offenAnlage, ...offenVeraendert, ...offenTresor,
   ];
   if (offenTeil.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offenTeil.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
   if (offenId.length) fehler.push(`Feste IDs der Original-Instanz ohne Entscheidung (je id nur „fest“ — oder den erzeugenden Change mitwählen): ${offenId.map(p => `${p.id} (${ortListe(q, p.orte)}: ${p.grund})`).join('; ')}`);
   if (offenAnlage.length) fehler.push(`Vom Paket angelegt, aber nicht als Parameter gewählt — diese Stellen zielen sonst auf die Original-Instanz (je id „fest“ oder den Wert als Parameter wählen): ${offenAnlage.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; noch an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (offenVeraendert.length) fehler.push(`Verändert vorhandene Objekte, die das Paket nicht anlegt und die nicht als Parameter gewählt sind — jede Anwendung träfe wieder dasselbe Objekt (je id „fest“ oder den Wert als Parameter wählen): ${offenVeraendert.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
+  if (offenTresor.length) fehler.push(`Verwendet bestehende Tresor-Einträge — eine neue Instanz nutzte sonst still das Geheimnis der Original-Instanz (je id „fest“ oder den Namen als Parameter wählen): ${offenTresor.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ', nur „fest“'}; ${p.grund}; an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
   if (fehler.length) return ende(offen);
 
   // 7. Changes bauen: Laufzeitfelder weg, abhaengigVon auf Schlüssel, betroffen ohne selbst angelegte Assets

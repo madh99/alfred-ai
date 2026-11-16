@@ -676,6 +676,8 @@ describe('V4 ableiten — Final-Welle', () => {
     expect(frage).toMatch(/⚠️ Bewusst fest \(\d+ Stellen\)/);
     expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(\d+ Werte\):\n- SQLServer2025-x64-ENU-EntDev\.iso: \d+ Stellen[^\n]*\n- PKI-Lab: \d+ Stellen/);
     expect(frage).toMatch(/Teilvorkommen \(\d+\):\n- \/etc\/pve\/qemu-server\/158\.conf in 2cfde1a2 S1 pruefung\.befehl/);
+    // Tresor-Einträge unter eigener Überschrift (pkilab-sql bewusst wiederverwendet)
+    expect(frage).toMatch(/Verwendet bestehende Tresor-Einträge \(dasselbe Geheimnis wie die Original-Instanz; 1 Wert\):\n- pkilab-sql: 8 Stellen/);
     // vlan/vmid_server/vmid_client haben alle eine automatische Annahme
     expect(frage).not.toContain('Ohne automatische Vorab-Kontrolle');
   });
