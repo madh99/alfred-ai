@@ -953,20 +953,20 @@ describe('Sammel-Entscheidungen', () => {
   const I8C = (): QuellChange[] => JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
   /** Live-Auswahl laut Auftrag (Nummern der aktuellen Kandidatenliste) */
   const AUSWAHL = { 23: 'vmid_dc01', 28: 'vmid_dc02', 2: 'vlan', 3: 'netz', 8: 'ip_dc01', 9: 'ip_dc02', 26: 'gateway', 37: 'ip_probe' };
-  const SAMMEL: Entscheid = { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' };
+  const SAMMEL: Entscheid = { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' };
 
   it('Nummern der Live-Auswahl zeigen auf die erwarteten Werte', () => {
     const k = findeKandidaten(I8C());
     expect([23, 28, 2, 3, 8, 9, 26, 37].map(n => String(k.find(c => c.nr === n)!.wert))).toEqual(['152', '153', '829', '10.203.29.0/27', '10.203.29.2', '10.203.29.3', '10.203.29.1', '10.203.29.30']);
   });
 
-  it('I8c: teil:wert|829 ersetzen, teil:wert|10.203.29.3 fest, fest:* → Entwurf; fest-Einträge tragen die Gruppe; sammel nennt die Schlüssel', () => {
+  it('I8c: teil:wort|829|vmbr829 ersetzen, teil:wert|10.203.29.3 fest, fest:* → Entwurf; fest-Einträge tragen die Gruppe; sammel nennt die Schlüssel', () => {
     const r = baueEntwurf(I8C(), AUSWAHL, kopf, SAMMEL);
     expect(r.fehler).toEqual([]);
     expect((r.vorlage!.changes[0]!.schritte[15]!.parameter as Record<string, unknown>).bridge).toBe('vmbr{{param.vlan}}');
     expect(r.fest.filter(f => f.id === 'anlage:name|dc01').every(f => f.gruppe === 'fest:*')).toBe(true);
     expect(r.fest.some(f => f.id === 'tresor:name|win-dc01-admin' && f.gruppe === 'fest:*')).toBe(true);
-    expect(r.sammel.map(s => [s.schluessel, s.entscheidung])).toEqual(expect.arrayContaining([['teil:wert|829', 'ersetzen'], ['teil:wert|10.203.29.3', 'fest'], ['fest:*', 'fest']]));
+    expect(r.sammel.map(s => [s.schluessel, s.entscheidung])).toEqual(expect.arrayContaining([['teil:wort|829|vmbr829', 'ersetzen'], ['teil:wert|10.203.29.3', 'fest'], ['fest:*', 'fest']]));
     expect(r.sammel.find(s => s.schluessel === 'fest:*')!.anzahl).toBe(25);
   });
 
@@ -992,15 +992,57 @@ describe('Sammel-Entscheidungen', () => {
     const p = quellen();
     const v157 = kand(findeKandidaten(p), 'vmid', 157);
     const abw = v157.teilvorkommen.find(t => t.token === 'VM157_ABWESEND')!;
-    expect(baueEntwurf(p, { [v157.nr]: 'vmid_server' }, kopf, { 'teil:wert|157': 'ersetzen', [abw.id]: 'fest', 'fest:*': 'fest' }).fehler.join('\n')).toMatch(/VM157_ABWESEND.*gleich entscheiden/);
+    expect(baueEntwurf(p, { [v157.nr]: 'vmid_server' }, kopf, { 'teil:wort|157|VM157_ABWESEND': 'ersetzen', [abw.id]: 'fest', 'fest:*': 'fest' }).fehler.join('\n')).toMatch(/VM157_ABWESEND.*gleich entscheiden/);
     // Tresor-Sperre: dc01 gewählt → abgelehnt, egal welche Gruppe
     expect(baueEntwurf(q, { ...AUSWAHL, [kand(findeKandidaten(q), 'name', 'dc01').nr]: 'dc' }, kopf, SAMMEL).fehler.join('\n')).toMatch(/dc01 steckt im Tresor-Namen win-dc01-admin/);
   });
 
   it('kompakte Fehlermeldung: Sammel-Schlüssel stehen in den ersten 2 KB', () => {
-    const r = baueEntwurf(I8C(), AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' });
+    const r = baueEntwurf(I8C(), AUSWAHL, kopf, { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' });
     expect(r.vorlage).toBeUndefined();
     const anfang = r.fehler.join('\n').slice(0, 2000);
     for (const s of ['anlage:* — 17 offen', 'veraendert:* — 7 offen', 'tresor:* — 1 offen', '"fest:*"']) expect(anfang).toContain(s);
+  });
+});
+
+// ── Ersetzen nur je Wort (teil:wort|<wert>|<wort>); teil:wert|… nur „fest“ ──
+describe('Ersetzen nur je Wort', () => {
+  const pkiAuswahl = (k: Kandidat[]) => ({ [kand(k, 'node', 'pve').nr]: 'node', [kand(k, 'vmid', 157).nr]: 'vmid_server', [kand(k, 'vmid', 158).nr]: 'vmid_client' });
+
+  it('teil:wert|pve mit „ersetzen“ → Fehler nennt die verschiedenen Wörter samt teil:wort-Schlüsseln', () => {
+    const q = quellen();
+    const f = baueEntwurf(q, pkiAuswahl(findeKandidaten(q)), kopf, { 'teil:wert|pve': 'ersetzen', 'fest:*': 'fest' }).fehler.join('\n');
+    expect(f).toMatch(/teil:wert\|pve.*nur „fest“/);
+    for (const w of ['teil:wort|pve|/etc/pve/qemu-server/157.conf', 'teil:wort|pve|pvesm', 'teil:wort|pve|data2-pve']) expect(f).toContain(w);
+  });
+
+  it('je Wort ersetzen, Rest fest: /etc/pve bleibt, nur das gewählte Wort wird ersetzt; ersetzte Wörter stehen im Ergebnis', () => {
+    const q = quellen();
+    const r = baueEntwurf(q, pkiAuswahl(findeKandidaten(q)), kopf, {
+      'teil:wort|157|/etc/pve/qemu-server/157.conf': 'ersetzen', 'teil:wert|pve': 'fest', 'fest:*': 'fest',
+    });
+    expect(r.fehler).toEqual([]);
+    expect((r.vorlage!.changes[0]!.schritte[0]!.pruefung as Record<string, string>).befehl)
+      .toBe('test ! -e /etc/pve/qemu-server/{{param.vmid_server}}.conf && test ! -e /etc/pve/lxc/157.conf && test ! -e /etc/pve/qemu-server/158.conf && test ! -e /etc/pve/lxc/158.conf && echo PKILAB_IDS_FREI');
+    expect(r.ersetzt).toEqual([{ wert: '157', wort: '/etc/pve/qemu-server/157.conf', nach: '/etc/pve/qemu-server/{{param.vmid_server}}.conf', anzahl: 3 }]);
+    expect(JSON.stringify(r.vorlage)).not.toMatch(/\/etc\/\{\{param\.node\}\}|\{\{param\.node\}\}sm/);
+  });
+
+  it('Kurzfassung der offenen Teilvorkommen nennt die Wort-Schlüssel', () => {
+    const q = quellen();
+    const r = baueEntwurf(q, pkiAuswahl(findeKandidaten(q)), kopf, {});
+    const anfang = r.fehler.join('\n').slice(0, 2000);
+    expect(anfang).toContain('teil:wert|157');
+    expect(anfang).toContain('teil:wort|157|VM157_ABWESEND');
+  });
+
+  it('I8c-Live-Aufruf: teil:wort|829|vmbr829 ersetzen, teil:wert|10.203.29.3 fest, fest:* → Entwurf', () => {
+    const q = JSON.parse(JSON.stringify(I8C_QUELLEN)) as QuellChange[];
+    const r = baueEntwurf(q, { 23: 'vmid_dc01', 28: 'vmid_dc02', 2: 'vlan', 3: 'netz', 8: 'ip_dc01', 9: 'ip_dc02', 26: 'gateway', 37: 'ip_probe' }, kopf,
+      { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' });
+    expect(r.fehler).toEqual([]);
+    expect(r.ersetzt).toEqual([{ wert: '829', wort: 'vmbr829', nach: 'vmbr{{param.vlan}}', anzahl: 4 }]);
+    // unbekanntes Wort → ungenutzter Schlüssel
+    expect(baueEntwurf(q, { 2: 'vlan' }, kopf, { 'teil:wort|829|vmbr999': 'ersetzen', 'fest:*': 'fest' }).fehler.join('\n')).toMatch(/Sammel-Schlüssel teil:wort\|829\|vmbr999: trifft keinen offenen Punkt/);
   });
 });

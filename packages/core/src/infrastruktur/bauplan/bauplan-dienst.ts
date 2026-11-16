@@ -15,7 +15,7 @@ import type { ChangeLauf } from '../change-lauf.js';
 import { findeChange, type DokuQuellen } from '../dokumente/sammler.js';
 import {
   baueEntwurf, findeEntscheidungen, findeKandidaten, findeVerweise, standVon,
-  type AuswahlEintrag, type Entscheid, type Entscheidungspunkt, type FestEintrag, type SammelEintrag, type Fundstelle, type Kandidat, type QuellChange, type Verweis,
+  type AuswahlEintrag, type Entscheid, type Entscheidungspunkt, type ErsetztesWort, type FestEintrag, type SammelEintrag, type Fundstelle, type Kandidat, type QuellChange, type Verweis,
 } from './ableiten.js';
 import { abdruck, GRENZEN, type BauplanChange, type BauplanVorlage } from './schema.js';
 import { loeseParameter, setzeEin, setzeEinPruefung } from './parameter.js';
@@ -395,7 +395,7 @@ export class BauplanDienst {
     const ableitung: AbleitungInfo = {
       quellen: l.q.map(c => c.id), fest: e.fest,
       hinweise: e.hinweise.filter(h => !h.startsWith('bewusst fest') && !h.startsWith('keine automatische Vorab-Kontrolle')),
-      ohneAnnahme: e.ohneAnnahme, ...(ersetzt ? { ersetzt } : {}), ...(e.sammel.length ? { sammel: e.sammel } : {}),
+      ohneAnnahme: e.ohneAnnahme, ...(ersetzt ? { ersetzt } : {}), ...(e.sammel.length ? { sammel: e.sammel } : {}), ...(e.ersetzt.length ? { woerter: e.ersetzt } : {}),
     };
     const s = await this.speichern(o, e.vorlage, abgeleitetAus, JSON.stringify(ableitung));
     if (!s.ok) return s;
@@ -408,6 +408,7 @@ export class BauplanDienst {
       `Abgeleitet aus: ${l.q.map(c => `${c.schluessel} = ${kurzId(c.id)}`).join(', ')}`,
       `Parameter:`,
       ...v.parameter.map(p => `- ${p.name} (${p.typ}${p.ableitung ? `, abgeleitet: ${p.ableitung.funktion}${p.ableitung.n !== undefined ? ` ${p.ableitung.n}` : ''} von ${p.ableitung.von}` : ''}, Beispiel ${String(p.beispiel ?? '–')}) — ${p.beschreibung}`),
+      ...(e.ersetzt.length ? ['Ersetzte Teilvorkommen:', ...e.ersetzt.map(w => `- ${w.wort} → ${w.nach} (${w.anzahl} Stelle${w.anzahl === 1 ? '' : 'n'})`)] : []),
       ...(e.fest.length ? [`Bewusst fest: ${e.fest.length} Stelle${e.fest.length === 1 ? '' : 'n'} (stehen in der Freigabe-Frage)`] : []),
       ...(v.annahmen.length ? ['Eingangskontrolle (automatisch erzeugt):', ...v.annahmen.map(a => `- ${a.id}: ${a.text}`)] : ['Eingangskontrolle: keine automatisch erzeugt']),
       ...(hinweise.length ? ['Hinweise:', ...hinweise.map(h => `- ${h}`)] : []),
@@ -449,16 +450,11 @@ export function kandidatenHinweise(k: Kandidat[]): string[] {
  */
 function entscheidungenKurz(k: Kandidat[], punkte: Entscheidungspunkt[], stand: string): string[] {
   const z = ['Entscheidungen kurz — Sammel-Schlüssel in entscheid (einzelne ids gehen vor; alle übrigen offenen Punkte fest: {"fest:*": "fest"}):'];
-  // ein Schlüssel je Wert (pve1 als node und als Name: teil:wert|pve1 deckt beide)
-  const jeWert = new Map<string, { nr: number[]; n: number }>();
-  for (const c of k) {
-    const n = c.teilvorkommen.filter(t => !t.tresor).length;
-    if (!n) continue;
-    const x = jeWert.get(String(c.wert)) ?? { nr: [], n: 0 };
-    x.nr.push(c.nr); x.n += n; jeWert.set(String(c.wert), x);
-  }
-  const teil = [...jeWert].map(([w, x]) => `teil:wert|${w} (#${x.nr.join("/#")}, ${x.n})`);
-  if (teil.length) z.push(`- Teilvorkommen = „ersetzen“|„fest“ je Wert, nur für gewählte Kandidaten: ${teil.slice(0, 12).join(', ')}${teil.length > 12 ? `, … (+${teil.length - 12})` : ''}`);
+  // Teilvorkommen je Wort: teil:wort|<wert>|<wort> (ersetzen|fest); teil:wert|<wert> nur „fest“ (pve als node und Name: ein Schlüssel deckt beide)
+  const jeWort = new Map<string, number>();
+  for (const c of k) for (const t of c.teilvorkommen) if (!t.tresor) { const key = `teil:wort|${String(c.wert)}|${t.token}`; jeWort.set(key, (jeWort.get(key) ?? 0) + 1); }
+  const teil = [...jeWort].map(([key, n]) => `${key} (${n})`);
+  if (teil.length) z.push(`- Teilvorkommen gewählter Kandidaten — „ersetzen“ nur je Wort (teil:wort|<wert>|<wort>), „fest“ auch für alle Wörter eines Werts (teil:wert|<wert>): ${teil.slice(0, 25).join(', ')}${teil.length > 25 ? `, … (+${teil.length - 25}, Einzelheiten unten)` : ''}`);
   const zahl = (f: (p: Entscheidungspunkt) => boolean) => punkte.filter(f).length;
   z.push(`- anlage:* = „fest“ — ${zahl(p => p.art === 'anlage' && p.netz === undefined)} vom Paket angelegte Werte (gewählte entfallen; Adressen in Netz-Kandidaten: ${zahl(p => p.art === 'anlage' && p.netz !== undefined)})`);
   z.push(`- veraendert:* = „fest“ — ${zahl(p => p.art === 'veraendert')} veränderte vorhandene Objekte`);
@@ -549,7 +545,7 @@ function vorschlagText(q: QuellChange[], k: Kandidat[], verweise: Verweis[], pun
 }
 
 /** I2 — Begleitinformation einer Ableitung (Spalte ableitung): nur beim Speichern gesetzt, nicht Teil des Abdrucks */
-interface AbleitungInfo { quellen: string[]; fest: FestEintrag[]; hinweise: string[]; ohneAnnahme: string[]; ersetzt?: string; sammel?: SammelEintrag[] }
+interface AbleitungInfo { quellen: string[]; fest: FestEintrag[]; hinweise: string[]; ohneAnnahme: string[]; ersetzt?: string; sammel?: SammelEintrag[]; woerter?: ErsetztesWort[] }
 
 /** Sammel-Entscheidung in Worten — für Anzeige und Freigabe-Frage */
 function sammelZeile(s: SammelEintrag): string {
@@ -557,7 +553,8 @@ function sammelZeile(s: SammelEintrag): string {
     : s.schluessel === 'anlage:*' ? 'alle vom Paket angelegten Werte fest'
       : s.schluessel === 'veraendert:*' ? 'alle veränderten vorhandenen Objekte fest'
         : s.schluessel === 'tresor:*' ? 'alle bestehenden Tresor-Einträge fest'
-          : `alle Teilvorkommen von ${s.schluessel.slice('teil:wert|'.length)}`;
+          : s.schluessel.startsWith('teil:wort|') ? (() => { const [w, ...t] = s.schluessel.slice('teil:wort|'.length).split('|'); return `alle Teilvorkommen von ${w} im Wort ${t.join('|')}`; })()
+            : `alle Teilvorkommen von ${s.schluessel.slice('teil:wert|'.length)}`;
   const arten = Object.entries(s.arten ?? {});
   const genauer = s.schluessel === 'fest:*' && arten.length ? `: ${arten.map(([a, n]) => `${a} ${n}`).join(', ')}` : '';
   return `Sammel-Entscheidung ${s.schluessel} = ${s.entscheidung}: ${was} (${s.anzahl}${genauer})`;
@@ -575,6 +572,9 @@ function ableitungZeilen(roh: string | undefined, abgeleitetAus: string | undefi
   if (a.ersetzt) z.push(`ℹ️ ${a.ersetzt}`);
   // Sammel-Entscheidungen ausdrücklich — die Einzelliste folgt wie bisher
   for (const s of Array.isArray(a.sammel) ? a.sammel : []) z.push(sammelZeile(s));
+  // jedes ersetzte Wort ausdrücklich (fest gebliebene Wörter stehen in der fest-Liste)
+  const woerter = Array.isArray(a.woerter) ? a.woerter : [];
+  if (woerter.length) z.push(`Ersetzte Teilvorkommen (${woerter.length} ${woerter.length === 1 ? 'Wort' : 'Wörter'}):`, ...woerter.slice(0, JE_KATEGORIE).map(w => `- ${w.wort} → ${w.nach} (${w.anzahl} Stelle${w.anzahl === 1 ? '' : 'n'})`), ...mehr(woerter.length));
   if (fest.length) {
     z.push(`⚠️ Bewusst fest (${fest.length} Stelle${fest.length === 1 ? '' : 'n'}) — bleiben wie in den Quell-Changes und zielen damit auf dieselben Objekte:`);
     // je Wert eine Zeile; Tresor-Namen, in denen der feste Wert außerdem steckt, in derselben Zeile (Restpunkt)

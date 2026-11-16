@@ -734,7 +734,8 @@ describe('V4 ableiten — Final-Welle', () => {
     // record_type ist kein angelegter Wert; 10.203.29.3 in 10.203.29.30 trägt den Parameter der .30 — nicht als „fest“ gemeldet
     expect(frage).not.toContain('FORWARD:');
     expect(frage).toContain('Ohne automatische Vorab-Kontrolle (1): netz');
-    expect(frage).not.toMatch(/Teilvorkommen \(/);
+    expect(frage).not.toMatch(/\nTeilvorkommen \(/);
+    expect(frage).toContain('Ersetzte Teilvorkommen (1 Wort):\n- vmbr829 → vmbr{{param.vlan}} (4 Stellen)');
   });
 
   it('M5: vorhandener Key → Anzeige und Freigabe-Frage nennen die neue Version und was sie ersetzt', async () => {
@@ -775,25 +776,45 @@ describe('V4 ableiten — Sammel-Entscheidungen im Dienst', () => {
     const v = await t.dienst.ableitenVorschlag('o', I8C_IDS);
     if (!v.ok) throw new Error(v.fehler.join('\n'));
     const anfang = v.text.slice(0, 2000);
-    for (const s of ['Entscheidungen kurz', '"fest:*"', 'anlage:*', 'veraendert:*', 'tresor:*', 'teil:wert|829', `stand "${v.stand}"`]) expect(anfang).toContain(s);
+    for (const s of ['Entscheidungen kurz', '"fest:*"', 'anlage:*', 'veraendert:*', 'tresor:*', 'teil:wort|829|vmbr829 (4)', `stand "${v.stand}"`]) expect(anfang).toContain(s);
   });
 
   it('erzeugen: offene Punkte kompakt mit Sammel-Schlüsseln vorn; mit Sammel-Entscheidungen → Entwurf, Freigabe-Frage zeigt sie ausdrücklich', async () => {
     const t = aufbau({ changes: I8C_QUELLEN.map(q => alsChange(q)), assetNamen: I8C_NAMEN });
     const v = await t.dienst.ableitenVorschlag('o', I8C_IDS);
     if (!v.ok) throw new Error(v.fehler.join('\n'));
-    const ohne = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' }, v.stand);
+    const ohne = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest' }, v.stand);
     expect(ohne.ok).toBe(false);
     expect(fehlerText(ohne).slice(0, 2000)).toMatch(/anlage:\* — 17 offen[\s\S]*veraendert:\* — 7 offen[\s\S]*tresor:\* — 1 offen/);
-    const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wert|829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' }, v.stand);
+    const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, AUSWAHL, kopf, { 'teil:wort|829|vmbr829': 'ersetzen', 'teil:wert|10.203.29.3': 'fest', 'fest:*': 'fest' }, v.stand);
     if (!r.ok) throw new Error(r.fehler.join('\n'));
     expect(r.text).toContain('Sammel-Entscheidung fest:* = fest');
     await t.dienst.freigabeAnfragen('o', 'ad_wald');
     const frage = t.fragen.at(-1)!.text;
     expect(frage).toContain('Sammel-Entscheidung fest:* = fest: alle offenen Punkte fest (25: anlage 17, veraendert 7, tresor 1)');
-    expect(frage).toContain('Sammel-Entscheidung teil:wert|829 = ersetzen: alle Teilvorkommen von 829 (4)');
+    expect(frage).toContain('Sammel-Entscheidung teil:wort|829|vmbr829 = ersetzen: alle Teilvorkommen von 829 im Wort vmbr829 (4)');
+    expect(frage).toContain('vmbr829 → vmbr{{param.vlan}} (4 Stellen)');
     // Einzelliste wie bisher
     expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(17 Werte\)/);
-    expect(JSON.parse(t.zeilen[0]!.ableitung!).sammel.map((s: { schluessel: string }) => s.schluessel)).toEqual(expect.arrayContaining(['fest:*', 'teil:wert|829']));
+    expect(JSON.parse(t.zeilen[0]!.ableitung!).sammel.map((s: { schluessel: string }) => s.schluessel)).toEqual(expect.arrayContaining(['fest:*', 'teil:wort|829|vmbr829']));
+  });
+});
+
+describe('V4 ableiten — Ersetzen je Wort im Dienst', () => {
+  it('PKI: nur das gewählte Wort ersetzt, /etc/pve fest; Freigabe-Frage zeigt Wort → neues Wort', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const v = await t.dienst.ableitenVorschlag('o', ALLE);
+    if (!v.ok) throw new Error(v.fehler.join('\n'));
+    const nr = (typ: string, wert: unknown) => String(v.kandidaten.find(c => c.typ === typ && c.wert === wert)!.nr);
+    const auswahl = { [nr('node', 'pve')]: 'node', [nr('vmid', 157)]: 'vmid_server', [nr('vmid', 158)]: 'vmid_client' };
+    const falsch = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, { 'teil:wert|pve': 'ersetzen', 'fest:*': 'fest' }, v.stand);
+    expect(fehlerText(falsch)).toMatch(/teil:wort\|pve\|pvesm/);
+    const r = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, { 'teil:wort|157|/etc/pve/qemu-server/157.conf': 'ersetzen', 'teil:wert|pve': 'fest', 'fest:*': 'fest' }, v.stand);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(r.text).toContain('/etc/pve/qemu-server/157.conf → /etc/pve/qemu-server/{{param.vmid_server}}.conf (3 Stellen)');
+    await t.dienst.freigabeAnfragen('o', KOPF.key);
+    const frage = t.fragen.at(-1)!.text;
+    expect(frage).toContain('Ersetzte Teilvorkommen (1 Wort):\n- /etc/pve/qemu-server/157.conf → /etc/pve/qemu-server/{{param.vmid_server}}.conf (3 Stellen)');
+    expect(frage).toContain('Sammel-Entscheidung teil:wert|pve = fest');
   });
 });

@@ -81,11 +81,14 @@ export interface FestEintrag {
 /** Sammel-Entscheidung, die tatsächlich Punkte entschieden hat (für Anzeige und Freigabe-Frage) */
 export interface SammelEintrag { schluessel: string; entscheidung: 'ersetzen' | 'fest'; anzahl: number; arten: Record<string, number> }
 /**
- * Sammel-Schlüssel in entscheid: teil:wert|<wert> (alle Teilvorkommen dieses gewählten Werts, „ersetzen“ oder „fest“),
- * anlage:*, veraendert:*, tresor:* (alle offenen Punkte der Kategorie) und fest:* (alle offenen Punkte aller Kategorien) — nur „fest“.
- * Eine einzelne id geht immer vor; teil:wert|… und Kategorie-Schlüssel gehen vor fest:*.
+ * Sammel-Schlüssel in entscheid: teil:wort|<wert>|<wort> (alle Teilvorkommen dieses gewählten Werts in genau diesem Wort, „ersetzen“
+ * oder „fest“), teil:wert|<wert> (alle Teilvorkommen des Werts — nur „fest“: „ersetzen“ nur je Wort, weil derselbe Wert in
+ * verschiedenen Wörtern Verschiedenes bedeutet, /etc/pve ↔ pvesm ↔ data2-pve), anlage:*, veraendert:*, tresor:*, fest:* — nur „fest“.
+ * Vorrang: einzelne id, teil:wort, teil:wert bzw. Kategorie, zuletzt fest:*.
  */
-export const SAMMEL_SCHLUESSEL = /^(teil:wert\|.+|anlage:\*|veraendert:\*|tresor:\*|fest:\*)$/;
+export const SAMMEL_SCHLUESSEL = /^(teil:wort\|.+|teil:wert\|.+|anlage:\*|veraendert:\*|tresor:\*|fest:\*)$/;
+/** Ersetztes Wort (für Anzeige und Freigabe-Frage): vmbr829 → vmbr{{param.vlan}} an n Stellen */
+export interface ErsetztesWort { wert: string; wort: string; nach: string; anzahl: number }
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
@@ -235,6 +238,12 @@ interface Teil { blatt: Blatt; start: number; ende: number; id: string; token: s
 /** Teilvorkommen in einem Titel (M-e) — ohne Entscheidung ersetzt */
 interface TitelTeil { blatt: Blatt; start: number; ende: number }
 
+/** Anfang des umgebenden Worts (wie tokenUm) */
+function tokenAnfang(text: string, start: number): number {
+  let a = start;
+  while (a > 0 && !/[\s"'„“]/.test(text[a - 1]!)) a--;
+  return a;
+}
 /** Umgebendes Wort eines Vorkommens (bis Leerraum oder Anführungszeichen) */
 function tokenUm(text: string, start: number, ende: number): string {
   let a = start; let e = ende;
@@ -718,7 +727,12 @@ export function offenUebersicht(offen: Entscheidungspunkt[]): string {
   const z = [`Offene Entscheidungen: ${offen.length}. Am einfachsten mit Sammel-Schlüsseln in entscheid (einzelne ids gehen vor; alle offenen Punkte auf einmal fest: {"fest:*": "fest"}):`];
   const teil = new Map<string, Entscheidungspunkt[]>();
   for (const p of offen.filter(x => x.art === 'teil')) { const l = teil.get(p.wert) ?? []; l.push(p); teil.set(p.wert, l); }
-  for (const [w, l] of teil) z.push(`- teil:wert|${w} — ${l.length} offen („ersetzen“ oder „fest“): ${werte(l, p => p.token ?? p.wert)}`);
+  for (const [w, l] of teil) {
+    const woerter = new Map<string, number>();
+    for (const p of l) woerter.set(p.token ?? p.wert, (woerter.get(p.token ?? p.wert) ?? 0) + 1);
+    const liste = [...woerter].map(([t, n]) => `teil:wort|${w}|${t} (${n})`);
+    z.push(`- teil:wert|${w} — ${l.length} offen („fest“ für alle; „ersetzen“ nur je Wort): ${liste.slice(0, 6).join(', ')}${liste.length > 6 ? `, … (+${liste.length - 6})` : ''}`);
+  }
   for (const [art, text] of [['anlage', 'vom Paket angelegt'], ['veraendert', 'verändert vorhandene Objekte'], ['tresor', 'bestehende Tresor-Einträge']] as const) {
     const l = offen.filter(p => p.art === art);
     if (l.length) z.push(`- ${art}:* — ${l.length} offen (${text}, nur „fest“): ${werte(l, p => p.wert)}`);
@@ -739,6 +753,8 @@ export interface EntwurfErgebnis {
   ohneAnnahme: string[];
   /** benutzte Sammel-Entscheidungen */
   sammel: SammelEintrag[];
+  /** ersetzte Teilvorkommen je Wort */
+  ersetzt: ErsetztesWort[];
 }
 
 const ortListe = (q: QuellChange[], orte: Fundstelle[]): string => orte.map(o => {
@@ -758,7 +774,7 @@ export function baueEntwurf(
   const fehler: string[] = [];
   const hinweise: string[] = [];
   const fest: FestEintrag[] = [];
-  const ende = (offen: Entscheidungspunkt[] = []): EntwurfErgebnis => ({ fehler: [...new Set(fehler)], hinweise, offen, fest: [], ohneAnnahme: [], sammel: [] });
+  const ende = (offen: Entscheidungspunkt[] = []): EntwurfErgebnis => ({ fehler: [...new Set(fehler)], hinweise, offen, fest: [], ohneAnnahme: [], sammel: [], ersetzt: [] });
   const intern = kandidatenIntern(q);
   const nachNr = new Map(intern.map(k => [k.kandidat.nr, k]));
 
@@ -804,7 +820,14 @@ export function baueEntwurf(
   for (const [id, e] of Object.entries(eingabe ?? {})) {
     if (!SAMMEL_SCHLUESSEL.test(id)) { spezifisch[id] = e; continue; }
     if (e !== 'ersetzen' && e !== 'fest') { fehler.push(`Sammel-Schlüssel ${id}: muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`); continue; }
-    if (e === 'ersetzen' && !id.startsWith('teil:wert|')) { fehler.push(`Sammel-Schlüssel ${id}: nur „fest“ möglich („ersetzen“ gibt es nur für teil:wert|…)`); continue; }
+    if (e === 'ersetzen' && id.startsWith('teil:wert|')) {
+      const w = id.slice('teil:wert|'.length);
+      const woerter = new Map<string, number>();
+      for (const x of teilNachId.values()) if (!x.t.tresor && String(x.k.kandidat.wert) === w) woerter.set(x.t.token, (woerter.get(x.t.token) ?? 0) + 1);
+      fehler.push(`Sammel-Schlüssel ${id}: nur „fest“ möglich — „ersetzen“ nur je Wort, weil derselbe Wert in verschiedenen Wörtern Verschiedenes bedeuten kann: ${[...woerter].map(([t, n]) => `teil:wort|${w}|${t} (${n})`).join(', ') || 'keine Teilvorkommen'}`);
+      continue;
+    }
+    if (e === 'ersetzen' && !id.startsWith('teil:wort|')) { fehler.push(`Sammel-Schlüssel ${id}: nur „fest“ möglich („ersetzen“ gibt es nur je Wort: teil:wort|<wert>|<wort>)`); continue; }
     sammel[id] = e;
   }
   const entscheid: Entscheid = { ...spezifisch };
@@ -812,7 +835,7 @@ export function baueEntwurf(
   for (const p of punkte.values()) {
     if (entscheid[p.id] !== undefined) continue;
     if (p.art === 'teil' && (!teilNachId.has(p.id) || p.tresor)) continue;
-    const reihe = p.art === 'teil' ? [`teil:wert|${p.wert}`, 'fest:*'] : p.art === 'id' ? ['fest:*'] : [`${p.art}:*`, 'fest:*'];
+    const reihe = p.art === 'teil' ? [`teil:wort|${p.wert}|${p.token ?? ''}`, `teil:wert|${p.wert}`, 'fest:*'] : p.art === 'id' ? ['fest:*'] : [`${p.art}:*`, 'fest:*'];
     const key = reihe.find(k => sammel[k] !== undefined);
     if (!key) continue;
     entscheid[p.id] = sammel[key]!;
@@ -889,6 +912,7 @@ export function baueEntwurf(
   const merke = (key: string, e: Ersatz) => { const l = ersetzungen.get(key) ?? []; l.push(e); ersetzungen.set(key, l); };
   /** „fest“ entschiedene Teilvorkommen — gemeldet nur, wenn die Stelle danach wirklich unverändert steht (nicht von einem längeren Wert ersetzt) */
   const festTeile: Array<{ key: string; start: number; ende: number; hinweis: string; eintrag: FestEintrag }> = [];
+  const ersetzteWoerter = new Map<string, ErsetztesWort>();
   const angewandt = new Map<string, Array<{ start: number; ende: number }>>();
   /** Titel (M-e): ohne Entscheidung, längster Wert gewinnt, nie Fehler */
   const titelSpannen = new Map<string, Spanne[]>();
@@ -939,6 +963,11 @@ export function baueEntwurf(
       }
       if (t.platzhalter) { fehler.push(`Teilvorkommen ${t.id}: ${wert} steht im Platzhalter ${t.platzhalter} — nur „fest“ möglich`); continue; }
       merke(ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), { wer: name, text: [{ start: t.start, ende: t.ende, durch: p, info: `${wert} in ${t.token} (${t.id})` }] });
+      const a = tokenAnfang(String(t.blatt.wert), t.start);
+      const nach = t.token.slice(0, t.start - a) + p + t.token.slice(t.ende - a);
+      const kw = `${wert}|${t.token}|${nach}`;
+      const x = ersetzteWoerter.get(kw) ?? { wert, wort: t.token, nach, anzahl: 0 };
+      x.anzahl++; ersetzteWoerter.set(kw, x);
     }
   }
   for (const [key, liste] of ersetzungen) {
@@ -1117,11 +1146,11 @@ export function baueEntwurf(
   for (const [netz, name] of praefixName) parameter.push({ name, typ: 'zahl', pflicht: false, beschreibung: `Präfixlänge des Netzes ${netz} (abgeleitet)`, ableitung: { funktion: 'praefix', von: netz } });
 
   const schema = pruefeSchema({ schema: 1, key: kopf.key, titel: kopf.titel, zweck: kopf.zweck, dokumentart: kopf.dokumentart, parameter, annahmen, changes });
-  if (!schema.vorlage) return { fehler: schema.fehler, hinweise, offen: [], fest: [], ohneAnnahme: [], sammel: [] };
+  if (!schema.vorlage) return { fehler: schema.fehler, hinweise, offen: [], fest: [], ohneAnnahme: [], sammel: [], ersetzt: [] };
   const sammelListe: SammelEintrag[] = [...genutzt].map(([schluessel, ids]) => {
     const arten: Record<string, number> = {};
     for (const id of ids) { const a = punkte.get(id)?.art ?? 'teil'; arten[a] = (arten[a] ?? 0) + 1; }
     return { schluessel, entscheidung: sammel[schluessel]!, anzahl: ids.size, arten };
   });
-  return { vorlage: schema.vorlage, fehler: [], hinweise, offen: [], fest, ohneAnnahme, sammel: sammelListe };
+  return { vorlage: schema.vorlage, fehler: [], hinweise, offen: [], fest, ohneAnnahme, sammel: sammelListe, ersetzt: [...ersetzteWoerter.values()] };
 }
