@@ -35,6 +35,9 @@ describe('pruefeSchema', () => {
   it('Parameter', () => {
     expect(fehlerVon(r => { r.parameter[0].name = 'Vlan'; })).toMatch(/name/);
     expect(fehlerVon(r => { r.parameter[1].name = 'vlan'; })).toMatch(/doppelt/);
+    // Final-Welle M3 — Parameter mit Geheimnis-Namen (Wert käme sonst als Klartext in die Eingabe) abgewiesen
+    for (const n of ['passwort', 'admin_password', 'api_token', 'secret', 'pwd', 'kennwort']) expect(fehlerVon(r => { r.parameter[0].name = n; }), n).toMatch(/Geheimnis/);
+    expect(fehlerVon(r => { r.parameter[0].name = 'vlan_pfad'; })).not.toMatch(/Geheimnis/);
     expect(fehlerVon(r => { r.parameter[0].typ = 'datum'; })).toMatch(/typ/);
     expect(fehlerVon(r => { r.parameter[0].pflicht = 'ja'; })).toMatch(/pflicht/);
     expect(fehlerVon(r => { r.parameter[0].grenzen = { regex: '(' }; })).toMatch(/regex/);

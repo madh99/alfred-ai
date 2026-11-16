@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import { kanonisch } from '../dokumente/beweis.js';
 import type { Pruefung, PruefTyp } from '../change-schritte.js';
+import { GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
 
 export type ParamTyp = 'name' | 'ipv4' | 'cidr' | 'vlan' | 'vmid' | 'node' | 'storage' | 'zahl' | 'text' | 'liste';
 export type AbleitungsFunktion = 'netzadresse' | 'erste_adresse' | 'adresse' | 'praefix';
@@ -107,6 +108,8 @@ function pruefeParameter(roh: unknown, i: number, fehler: string[]): void {
   if (!istObjekt(roh)) { fehler.push(`${wo}: muss ein Objekt sein`); return; }
   unbekannte(roh, PARAM_FELDER, wo, fehler);
   if (typeof roh.name !== 'string' || !PARAM_NAME_MUSTER.test(roh.name)) fehler.push(`${wo}: name muss ${PARAM_NAME_MUSTER} entsprechen`);
+  // Final-Welle M3 — ein Parameter mit Geheimnis-Namen trüge den Wert im Klartext durch Eingabe, Instanz und Plan; Geheimnisse nur als {{geheim:<tresorname>}}
+  else if (GEHEIM_NAME.test(roh.name)) fehler.push(`${wo}: name „${roh.name}“ klingt nach einem Geheimnis — Parameter dürfen keine Geheimnisse tragen; im Schritt {{geheim:<tresorname>}} verwenden`);
   if (!PARAM_TYPEN.includes(roh.typ as ParamTyp)) fehler.push(`${wo}: typ muss einer von ${PARAM_TYPEN.join(', ')} sein`);
   if (typeof roh.pflicht !== 'boolean') fehler.push(`${wo}: pflicht muss true oder false sein`);
   if (!istText(roh.beschreibung)) fehler.push(`${wo}: beschreibung fehlt`);

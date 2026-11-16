@@ -138,7 +138,8 @@ const SELBST_GEPRUEFT = new Set([
   // v1856 — Etappe 4: Bindung lesen sie nach dem Schreiben zurück, der Neustart wartet auf SECONDARY/HEALTHY/SYNCHRONIZED, das Entfernen prüft Speicher und Schlüsseldatei
   'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
-const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code']);
+// Final-Welle M2 — bauplan: Vorlagen speichern/freigeben/anwenden nur der Owner im Hauptgespräch, nie ein Change-Schritt
+const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code', 'bauplan']);
 const VERWEIS = /\{\{\s*(schritt(\d+)\.([a-zA-Z_][\w.]*)|geheim:([a-z0-9][\w.-]{1,60})|geheimdatei:([a-z0-9][\w.-]{1,60})|change:([A-Za-z0-9_-]{1,64})\.schritt(\d+)\.([a-zA-Z_][\w.]*))\s*\}\}/g;
 /** Felder, in die ein Verweis nie als ganzer Wert eingesetzt werden darf (wie BEFEHLS_FELDER in change-lauf.ts) */
 const BEFEHLS_FELDER = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
@@ -383,7 +384,8 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
   if (typ === 'skill') {
     fehlt(['skill', 'aktion']);
     const s = aus.skill ? ctx.skill(aus.skill) : undefined;
-    if (aus.skill && !s) f.push(`${wo}: Prüf-Skill ${aus.skill} gibt es nicht`);
+    if (aus.skill && NIE_SKILLS.has(aus.skill)) f.push(`${wo}: Skill ${aus.skill} ist in Changes nicht erlaubt`);
+    else if (aus.skill && !s) f.push(`${wo}: Prüf-Skill ${aus.skill} gibt es nicht`);
     else if (s && aus.aktion && aktionsArt(aus.skill!, aus.aktion, aus.parameter) !== 'lesen') f.push(`${wo}: Prüf-Aktion ${aus.skill}.${aus.aktion} ist nicht lesend`);
     if (aus.skill === 'fernzugriff' && aus.aktion === 'lesen') for (const b of lesebefehle(aus.parameter)) { const g = kaefigGrenze(ersetzeVerweise(b)); if (g) f.push(`${wo}: Prüfbefehl „${b.slice(0, 60)}“ ${g}`); }
   }
@@ -538,7 +540,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         } else {
           const rs = ctx.skill(txt(rw.skill));
           const rueck: Rueckweg = { skill: txt(rw.skill), aktion: txt(rw.aktion), parameter: obj(rw.parameter) ?? {} };
-          if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
+          if (NIE_SKILLS.has(rueck.skill)) f.push(`${wo}: Skill ${rueck.skill} ist in Changes nicht erlaubt (Rückweg)`);
+          else if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);
           else {
             const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });

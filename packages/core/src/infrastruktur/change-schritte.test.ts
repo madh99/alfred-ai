@@ -76,6 +76,18 @@ describe('I3 Prüfung beim Anlegen', () => {
     for (const t of ['Standard-Changes', 'ausfallMinuten fehlt', '„dockerhost“ ist mehrdeutig', '„gibtsnicht“ ist kein CMDB-Asset', 'Schritt 1: rueckweg fehlt', 'Skill „unifi“ gibt es nicht', 'proxmox kennt die Aktion „create_vlan“ nicht', 'als owner-Schritt planen', 'Skill itsm ist in Changes nicht erlaubt', 'entfernt Bestehendes endgültig', 'Verweis {{schritt9.ip}} zeigt nicht auf eine frühere Aktion', 'Platzhalter', 'Nie-Liste', 'kein reiner Lesebefehl', 'Schritt 8: titel fehlt', 'warten braucht sekunden oder eine pruefung', 'Vor der ersten ändernden Aktion (Schritt 1) fehlt eine Sicherung'])
       expect(f).toContain(t);
   });
+  it('Final-Welle M2: Skill bauplan ist als Change-Schritt nicht erlaubt (Vorlagen wenden nur der Owner im Hauptgespräch an)', () => {
+    const f = pruefeChangePlan({ titel: 'Bauplan im Change', begruendung: 'darf nicht', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+      schritte: [{ titel: 'Anwenden', art: 'aktion', skill: 'bauplan', aktion: 'bauplan_anwenden', parameter: { key: 'pki_lab' }, rueckweg: { keiner: 'x' } }] }, { ...ctx(), skill: n => (n === 'bauplan' ? skill('bauplan', ['bauplan_anwenden']) : SKILLS[n]) as never }).fehler.join('\n');
+    expect(f).toContain('Skill bauplan ist in Changes nicht erlaubt');
+    // auch nicht als Prüfung oder Rückweg
+    const g = pruefeChangePlan({ titel: 'Bauplan versteckt', begruendung: 'darf nicht', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['test-vm'],
+      schritte: [
+        { titel: 'Start', art: 'aktion', skill: 'proxmox', aktion: 'start_vm', parameter: { vmid: 9001 }, pruefung: { typ: 'skill', skill: 'bauplan', aktion: 'bauplan_liste' }, rueckweg: { skill: 'bauplan', aktion: 'bauplan_anwenden' } },
+      ] }, { ...ctx(), skill: n => (n === 'bauplan' ? skill('bauplan', ['bauplan_liste', 'bauplan_anwenden']) : SKILLS[n]) as never }).fehler.join('\n');
+    expect(g.split('\n')).toContainEqual(expect.stringMatching(/^Schritt 1\S*: Skill bauplan ist in Changes nicht erlaubt$/));
+    expect(g).toContain('Skill bauplan ist in Changes nicht erlaubt (Rückweg)');
+  });
   it('ohneSicherungGrund erlaubt reine Neuanlage; Verweis auf frühere Aktion ist gültig; Owner-Schritt für fehlende Fähigkeiten', () => {
     const p = pruefeChangePlan({
       titel: 'Neue VM matrix', begruendung: 'Zielarchitektur Gruppe Kommunikation', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['pve'], ohneSicherungGrund: 'legt nur eine neue VM an',
