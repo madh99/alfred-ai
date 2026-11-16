@@ -828,3 +828,52 @@ describe('Sicherheitsbefund — (d) fail-closed', () => {
     expect(p.some(x => x.art === 'veraendert')).toBe(false);
   });
 });
+
+// ── Wertlisten in einem Feld („192.168.1.92,192.168.1.223“) einzeln entscheiden ──
+describe('Wertlisten in einem Feld', () => {
+  const policy = () => change('aaaaaaaa-1', 'c1', [
+    { skill: 'unifi', aktion: 'create_firewall_policy', parameter: {
+      policy_name: 'Regel-Neu', policy_action: 'ALLOW', source_ip: '192.168.50.7,192.168.50.8', destination_ip: '10.1.1.0/24 10.1.2.0/24',
+      destination_port: '53,88,135', notiz: 'Zugriff von 192.168.50.7 und Freunden',
+    } },
+    { skill: 'proxmox', aktion: 'backup_job_exclude', parameter: { job_id: 'job-x', exclude_vmids: '157;158' } },
+  ]);
+
+  it('jedes Element einer typisierten Liste ist Kandidat und eigener (d)-Punkt; Ports und Freitext bleiben ungeteilt', () => {
+    const q = [policy()];
+    const k = findeKandidaten(q);
+    for (const [typ, w] of [['ipv4', '192.168.50.7'], ['ipv4', '192.168.50.8'], ['cidr', '10.1.1.0/24'], ['cidr', '10.1.2.0/24'], ['vmid', 157], ['vmid', 158]] as const) kand(k, typ, w);
+    // Ports sind keine VMIDs/VLANs, Freitext wird nicht zerlegt
+    expect(k.some(c => c.wert === 53 || c.wert === 88 || c.wert === 135)).toBe(false);
+    const ids = findeEntscheidungen(q).filter(p => p.art === 'veraendert').map(p => p.id);
+    expect(ids).toEqual(expect.arrayContaining(['veraendert:ipv4|192.168.50.7', 'veraendert:ipv4|192.168.50.8', 'veraendert:cidr|10.1.1.0/24', 'veraendert:cidr|10.1.2.0/24', 'veraendert:vmid|157', 'veraendert:vmid|158']));
+    expect(ids.some(id => /\|(53|88|135)$/.test(id))).toBe(false);
+    const r = baueEntwurf(q, {}, kopf);
+    expect(r.vorlage).toBeUndefined();
+    expect(r.offen.map(p => p.id)).toEqual(expect.arrayContaining(['veraendert:ipv4|192.168.50.7', 'veraendert:cidr|10.1.2.0/24', 'veraendert:vmid|158']));
+  });
+
+  it('ein Element als Parameter gewählt → genau dort ersetzt, das andere braucht weiter seine Entscheidung', () => {
+    const q = [policy()];
+    const k = findeKandidaten(q);
+    const auswahl = { [kand(k, 'ipv4', '192.168.50.7').nr]: 'quelle', [kand(k, 'vmid', 157).nr]: 'vmid_a' };
+    const ohne = baueEntwurf(q, auswahl, kopf);
+    expect(ohne.offen.map(p => p.id)).toContain('veraendert:ipv4|192.168.50.8');
+    expect(ohne.offen.map(p => p.id)).not.toContain('veraendert:ipv4|192.168.50.7');
+    const { r } = mitFest(q, auswahl);
+    expect(r.fehler).toEqual([]);
+    const p = r.vorlage!.changes[0]!.schritte[0]!.parameter as Record<string, string>;
+    expect(p.source_ip).toBe('{{param.quelle}},192.168.50.8');
+    expect(p.destination_port).toBe('53,88,135');
+    expect(p.notiz).toBe('Zugriff von {{param.quelle}} und Freunden');
+    expect((r.vorlage!.changes[0]!.schritte[1]!.parameter as Record<string, string>).exclude_vmids).toBe('{{param.vmid_a}};158');
+    expect(r.fest.some(f => f.art === 'veraendert' && f.wort === '192.168.50.8' && f.pfad === 'parameter.source_ip')).toBe(true);
+  });
+
+  it('Liste in einem Anlage-Feld (subnet mit zwei Netzen) → je Element angelegt', () => {
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'unifi', aktion: 'create_network', parameter: { network_name: 'Netz-Zwei', vlan: 61, subnet: '10.0.7.0/24,10.0.8.0/24' } }]);
+    const p = findeEntscheidungen([a]).map(x => x.id);
+    expect(p).toEqual(expect.arrayContaining(['anlage:cidr|10.0.7.0/24', 'anlage:cidr|10.0.8.0/24']));
+    expect(p.some(id => id.startsWith('veraendert:'))).toBe(false);
+  });
+});

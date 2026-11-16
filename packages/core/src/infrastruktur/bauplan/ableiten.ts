@@ -172,6 +172,32 @@ function typVon(schluessel: string, wert: unknown, inListe: boolean): ParamTyp |
   return undefined;
 }
 
+/**
+ * Wertliste in einem Feld („192.168.1.92,192.168.1.223“, „10.0.0.0/24 10.0.1.0/24“, exclude_vmids „157;158“): getrennt durch Komma,
+ * Semikolon oder Leerraum. Nur wenn JEDES Element typisiert ist (ipv4, cidr; Zahlen nur als vmid/vlan nach Feldname, nie unter
+ * Port-/Zähl-Feldern) — sonst undefined (Freitext, Portlisten „53,88“ bleiben ungeteilt).
+ */
+function listenElemente(schluessel: string, wert: unknown): Array<{ typ: ParamTyp; wert: string | number }> | undefined {
+  if (typeof wert !== 'string' || wert.includes('{{')) return undefined;
+  const teile = wert.trim().split(/[,;\s]+/).filter(Boolean);
+  if (teile.length < 2) return undefined;
+  const aus: Array<{ typ: ParamTyp; wert: string | number }> = [];
+  for (const t of teile) {
+    if (/^\d+$/.test(t)) {
+      const n = Number(t);
+      if (ZAHL_FREMD.test(schluessel)) return undefined;
+      const typ: ParamTyp | undefined = /vmid/i.test(schluessel) && gueltig('vmid', n) ? 'vmid' : /vlan/i.test(schluessel) && gueltig('vlan', n) ? 'vlan' : undefined;
+      if (!typ) return undefined;
+      aus.push({ typ, wert: n });
+    } else if (/^[0-9.]+\/\d{1,2}$/.test(t)) {
+      if (!gueltig('cidr', t)) return undefined;
+      aus.push({ typ: 'cidr', wert: t });
+    } else if (gueltig('ipv4', t)) aus.push({ typ: 'ipv4', wert: t });
+    else return undefined;
+  }
+  return aus;
+}
+
 interface Treffer { start: number; ende: number; token: boolean; platzhalter?: string }
 /** Alle Vorkommen von wert in text; token = an Token-Grenze und außerhalb eines {{…}}-Platzhalters */
 function treffer(text: string, wert: string): Treffer[] {
@@ -266,6 +292,14 @@ function anlagen(q: QuellChange[]): Anlage[] {
       const f = b.schritt > 0 ? /^parameter\.([A-Za-z0-9_]+)$/.exec(b.pfad)?.[1] : undefined;
       const s = f ? schritte[b.schritt - 1] : undefined;
       if (!f || !s || !ANLAGE_AKTION(s.aktion)) continue;
+      const liste = typeof b.wert === 'string' && ANLAGE_NAME_FELD.test(f) ? listenElemente(f, b.wert) : undefined;
+      if (liste) {
+        for (const el of liste) {
+          const id = `anlage:${el.typ}|${String(el.wert)}`;
+          if (!aus.has(id)) aus.set(id, { id, typ: el.typ, wert: el.wert, blatt: b, skillAktion: `${String(s.skill)}.${String(s.aktion)}` });
+        }
+        continue;
+      }
       let typ: ParamTyp | undefined;
       if (typeof b.wert === 'number') {
         if (((f === 'new_vmid' && ANLEGE_AKTION(s.aktion)) || (/^(vmid|vm_id)$/.test(f) && /^create_(vm|lxc)$/.test(String(s.aktion)))) && gueltig('vmid', b.wert)) typ = 'vmid';
@@ -299,13 +333,16 @@ function veraenderte(q: QuellChange[]): Veraendert[] {
       if (TRAEGER_FELD.test(b.schluessel)) continue;
       let typ: ParamTyp | undefined;
       if (typeof b.wert === 'number') typ = typVon(b.schluessel, b.wert, b.inListe);
-      else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{')) typ = typVon(b.schluessel, b.wert, b.inListe) ?? (OBJEKT_FELD.test(b.schluessel) ? 'name' : undefined);
-      if (!typ) continue;
-      const k = `${typ}|${String(b.wert)}`;
-      if (angelegt.has(k)) continue;
+      else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{')) typ = typVon(b.schluessel, b.wert, b.inListe) ?? (OBJEKT_FELD.test(b.schluessel) && !listenElemente(b.schluessel, b.wert) ? 'name' : undefined);
+      // Wertliste in einem Feld: jedes typisierte Element ist ein eigener Wert
+      const werte = typ ? [{ typ, wert: b.wert as string | number }] : listenElemente(b.schluessel, b.wert) ?? [];
       const sa = bekannt ? `${String(skill)}.${String(aktion)}` : 'unbekannte Aktion';
-      const v = aus.get(k);
-      if (v) { if (!v.aktionen.includes(sa)) v.aktionen.push(sa); } else aus.set(k, { id: `veraendert:${k}`, typ, wert: b.wert as string | number, erste: b, aktionen: [sa] });
+      for (const el of werte) {
+        const k = `${el.typ}|${String(el.wert)}`;
+        if (angelegt.has(k)) continue;
+        const v = aus.get(k);
+        if (v) { if (!v.aktionen.includes(sa)) v.aktionen.push(sa); } else aus.set(k, { id: `veraendert:${k}`, typ: el.typ, wert: el.wert, erste: b, aktionen: [sa] });
+      }
     }
   }
   return [...aus.values()];
@@ -316,7 +353,14 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
   const erkannt = new Map<string, { typ: ParamTyp; wert: string | number; blatt: Blatt }>();
   for (const b of alle) {
     const typ = typVon(b.schluessel, b.wert, b.inListe);
-    if (!typ) continue;
+    if (!typ) {
+      // Wertliste in einem Feld: jedes Element ist ein eigener Kandidat (Fundstellen = Token im Text)
+      if (b.pfad !== 'titel') for (const el of listenElemente(b.schluessel, b.wert) ?? []) {
+        const k = `${el.typ}|${typeof el.wert}|${String(el.wert)}`;
+        if (!erkannt.has(k)) erkannt.set(k, { typ: el.typ, wert: el.wert, blatt: b });
+      }
+      continue;
+    }
     const k = `${typ}|${typeof b.wert}|${String(b.wert)}`;
     if (!erkannt.has(k)) erkannt.set(k, { typ, wert: b.wert as string | number, blatt: b });
   }
