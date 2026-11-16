@@ -3281,4 +3281,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_bauplan_vorlagen_key ON infra_bauplan_vorlagen (user_id, key)');
     },
   },
+  {
+    version: 159,
+    description: 'Bauplan ableiten V4 — infra_bauplan_vorlagen.ableitung: Begleitinformation der Ableitung (bewusst feste Werte, Hinweise) für die Freigabe-Frage (SQLite-Spiegel zu PG v163).',
+    up(db) {
+      const spalten = db.prepare('PRAGMA table_info(infra_bauplan_vorlagen)').all() as Array<{ name: string }>;
+      if (!spalten.some(s => s.name === 'ableitung')) db.exec('ALTER TABLE infra_bauplan_vorlagen ADD COLUMN ableitung TEXT');
+    },
+  },
 ];

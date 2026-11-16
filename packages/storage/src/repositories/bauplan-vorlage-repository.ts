@@ -20,6 +20,8 @@ export interface BauplanVorlageZeile {
   widerrufenAt?: string;
   grund?: string;
   abgeleitetAus?: string;
+  /** V4 Final-Welle — Begleitinformation der Ableitung (JSON: quellen, fest, hinweise, ohneAnnahme); nur beim Speichern gesetzt, nicht im Abdruck */
+  ableitung?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +45,7 @@ function zuZeile(r: Record<string, unknown>): BauplanVorlageZeile {
   const w = opt(r.widerrufen_at); if (w) z.widerrufenAt = w;
   const gr = opt(r.grund); if (gr) z.grund = gr;
   const a = opt(r.abgeleitet_aus); if (a) z.abgeleitetAus = a;
+  const ab = opt(r.ableitung); if (ab) z.ableitung = ab;
   return z;
 }
 
@@ -61,19 +64,20 @@ export class BauplanVorlageRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
   /** Neue Version (bisherige höchste + 1), Status `entwurf`. */
-  async speichere(userId: string, d: { key: string; json: string; abdruck: string; abgeleitetAus?: string }): Promise<BauplanVorlageZeile> {
+  async speichere(userId: string, d: { key: string; json: string; abdruck: string; abgeleitetAus?: string; ableitung?: string }): Promise<BauplanVorlageZeile> {
     const m = await this.db.queryOne('SELECT MAX(version) AS v FROM infra_bauplan_vorlagen WHERE user_id = ? AND key = ?', [userId, d.key]);
     const version = Number((m as Record<string, unknown> | undefined)?.v ?? 0) + 1;
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.db.execute(
-      `INSERT INTO infra_bauplan_vorlagen (id, user_id, key, version, json, abdruck, status, abgeleitet_aus, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'entwurf', ?, ?, ?)`,
-      [id, userId, d.key, version, d.json, d.abdruck, d.abgeleitetAus ?? null, now, now],
+      `INSERT INTO infra_bauplan_vorlagen (id, user_id, key, version, json, abdruck, status, abgeleitet_aus, ableitung, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'entwurf', ?, ?, ?, ?)`,
+      [id, userId, d.key, version, d.json, d.abdruck, d.abgeleitetAus ?? null, d.ableitung ?? null, now, now],
     );
     return {
       id, key: d.key, version, json: d.json, abdruck: d.abdruck, status: 'entwurf',
       ...(d.abgeleitetAus ? { abgeleitetAus: d.abgeleitetAus } : {}),
+      ...(d.ableitung ? { ableitung: d.ableitung } : {}),
       createdAt: now, updatedAt: now,
     };
   }

@@ -32,7 +32,12 @@ function fakeDb() {
     },
     execute: async (sql: string, p: unknown[]) => {
       if (sql.startsWith('INSERT INTO infra_bauplan_vorlagen')) {
-        vorlagen.push({ id: p[0], user_id: p[1], key: p[2], version: p[3], json: p[4], abdruck: p[5], status: 'entwurf', abgeleitet_aus: p[6], created_at: p[7], updated_at: p[8] });
+        // Spalten in der Reihenfolge des INSERT (Final-Welle V4: ableitung hinter abgeleitet_aus)
+        const spalten = /\(([^)]*)\)/.exec(sql)![1]!.split(',').map(s => s.trim());
+        const r: Record<string, unknown> = { status: 'entwurf' };
+        let i = 0;
+        for (const s of spalten) if (s !== 'status') r[s] = p[i++];
+        vorlagen.push(r);
       } else if (sql.includes('INSERT INTO infra_bauplan_instanzen')) {
         instanzen.push({ id: p[0], user_id: p[1], name: p[2], dokumentart: p[3], change_ids: p[4], parameter: p[5], vorlage_key: p[6], vorlage_version: p[7], status: 'aktiv', created_at: p[8] });
       } else updates.push({ sql, p });
@@ -52,6 +57,18 @@ describe('BauplanVorlageRepository', () => {
     expect(b.status).toBe('entwurf');
     expect(b.abgeleitetAus).toBe('k@1');
     expect((await r.speichere('u', { key: 'anderer', json: '{}', abdruck: 'z' })).version).toBe(1);
+  });
+  it('V4 Final-Welle: ableitung wird beim Speichern gesetzt und gelesen (unveränderlich: setze kennt die Spalte nicht)', async () => {
+    const { db, updates } = fakeDb();
+    const r = new BauplanVorlageRepository(db as never);
+    const ab = JSON.stringify({ quellen: ['a'], fest: [], hinweise: [], ohneAnnahme: [] });
+    const z = await r.speichere('u', { key: 'k', json: '{}', abdruck: 'x', abgeleitetAus: 'a', ableitung: ab });
+    expect(z.ableitung).toBe(ab);
+    expect((await r.finde('u', 'k'))?.ableitung).toBe(ab);
+    expect((await r.speichere('u', { key: 'k', json: '{}', abdruck: 'y' })).ableitung).toBeUndefined();
+    expect((await r.finde('u', 'k'))?.ableitung).toBeUndefined();
+    await r.setze('u', z.id, { ableitung: 'x' } as never);
+    expect(updates).toHaveLength(0);
   });
   it('finde: ohne Version die höchste, mit Version genau diese', async () => {
     const { db } = fakeDb();

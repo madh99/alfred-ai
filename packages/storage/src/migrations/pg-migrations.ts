@@ -2589,4 +2589,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_bauplan_vorlagen_key ON infra_bauplan_vorlagen (user_id, key)', []);
     },
   },
+  {
+    version: 163,
+    description: 'Bauplan ableiten V4 — infra_bauplan_vorlagen.ableitung: Begleitinformation der Ableitung (bewusst feste Werte, Hinweise) für die Freigabe-Frage (PG-Spiegel zu SQLite v159).',
+    async up(db) {
+      await db.execute('ALTER TABLE infra_bauplan_vorlagen ADD COLUMN IF NOT EXISTS ableitung TEXT', []);
+    },
+  },
 ];
