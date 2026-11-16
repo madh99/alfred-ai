@@ -166,6 +166,23 @@ describe('findeVerweise', () => {
     expect((e.vorlage!.changes[1]!.schritte[0]!.pruefung as Record<string, unknown>).nichtEnthalten).toBe('Policy {{change:c1.schritt1.id}} aktiv');
     expect((e.vorlage!.changes[1]!.schritte[0]!.parameter as Record<string, unknown>).notiz).toBe('e5d24ae1');
   });
+
+  it('ID-Anfang nur bei Hex-IDs: name-artige IDs (alfred-pbs-taeglich) und UPIDs bleiben unberührt', () => {
+    const a = change('aaaaaaaa-1', 'c1', [{ skill: 'proxmox', aktion: 'create_backup_job', parameter: { storage: 'pbs' } }],
+      { ergebnisse: [{ nr: 1, ok: true, daten: { id: 'alfred-pbs-taeglich', upid: 'UPID:pve:0022BB1C:0458B354:6AF969C2:qmreboot:157:root@pam!alfred-ai:' } }] });
+    const c = change('cccccccc-3', 'c2', [
+      { art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'pve', befehl: 'cat /etc/pve/jobs.cfg', nichtEnthalten: 'alfred-pbs', erwartet: 'UPID:pve:0022BB1C' } },
+    ], { abhaengigVon: ['aaaaaaaa-1'] });
+    expect(findeVerweise([a, c]).verweise).toEqual([]);
+    const e = baueEntwurf([a, c], {}, kopf);
+    expect(e.fehler).toEqual([]);
+    expect(e.vorlage!.changes[1]!.schritte[0]!.pruefung).toMatchObject({ nichtEnthalten: 'alfred-pbs', erwartet: 'UPID:pve:0022BB1C' });
+    // Thumbprint (Hex ohne Bindestriche) zählt als Hex-ID
+    const t = change('aaaaaaaa-1', 'c1', [{ skill: 'pki_lab', aktion: 'lab_zertifikat_ausstellen', parameter: { zugang: 'lab' } }],
+      { ergebnisse: [{ nr: 1, ok: true, daten: { thumbprint: 'D28A26DF743C1F200630618CE835DC80FBB98946' } }] });
+    const u = change('cccccccc-3', 'c2', [{ art: 'pruefung', pruefung: { typ: 'befehl', zugang: 'lab', befehl: 'x', erwartet: 'D28A26DF743C' } }], { abhaengigVon: ['aaaaaaaa-1'] });
+    expect(findeVerweise([t, u]).verweise.map(v => [v.pfad, v.art])).toEqual([['pruefung.erwartet', 'praefix']]);
+  });
 });
 
 describe('Teilvorkommen ausdrücklich entscheiden', () => {
@@ -179,8 +196,8 @@ describe('Teilvorkommen ausdrücklich entscheiden', () => {
     const k = findeKandidaten(quellen());
     const v157 = kand(k, 'vmid', 157);
     const conf = tv(v157, '/etc/pve/qemu-server/157.conf');
-    expect(conf.map(t => t.id)).toContain(`${AUFBAU.slice(0, 8)}:1:pruefung.befehl:0`);
-    expect(tv(v157, 'vm-157-').map(t => t.id)).toContain(`${ABBAU.slice(0, 8)}:8:pruefung.nichtEnthalten:0`);
+    expect(conf.map(t => t.id)).toContain(`${AUFBAU}:1:pruefung.befehl:0`);
+    expect(tv(v157, 'vm-157-').map(t => t.id)).toContain(`${ABBAU}:8:pruefung.nichtEnthalten:0`);
     expect(v157.teilvorkommen.some(t => t.pfad === 'titel')).toBe(false);
     expect(new Set(v157.teilvorkommen.map(t => t.id)).size).toBe(v157.teilvorkommen.length);
     const srv = kand(k, 'name', 'labsrv01');
@@ -191,7 +208,7 @@ describe('Teilvorkommen ausdrücklich entscheiden', () => {
       { skill: 'proxmox', aktion: 'create_vlan_bridge', parameter: { node: 'pve1', vlan: 829, ueber: 'vmbr0', bridge: 'vmbr829' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_networks', parameter: { node: 'pve1' }, erwartet: 'vmbr829' } },
     ]);
     const vlan = kand(findeKandidaten([i8c]), 'vlan', 829);
-    expect(vlan.teilvorkommen.map(t => [t.id, t.token])).toEqual([['b0e35618:2:parameter.bridge:0', 'vmbr829'], ['b0e35618:2:pruefung.erwartet:0', 'vmbr829']]);
+    expect(vlan.teilvorkommen.map(t => [t.id, t.token])).toEqual([['b0e35618-x:2:parameter.bridge:0', 'vmbr829'], ['b0e35618-x:2:pruefung.erwartet:0', 'vmbr829']]);
   });
 
   it('fehlende Entscheidung → Fehler mit allen offenen Teilvorkommen, keine Vorlage', () => {
@@ -214,8 +231,8 @@ describe('Teilvorkommen ausdrücklich entscheiden', () => {
     const k = findeKandidaten(q);
     const v157 = kand(k, 'vmid', 157);
     const ids = v157.teilvorkommen.map(t => t.id);
-    const confId = `${AUFBAU.slice(0, 8)}:1:pruefung.befehl:0`;
-    const vmId = `${ABBAU.slice(0, 8)}:8:pruefung.nichtEnthalten:0`;
+    const confId = `${AUFBAU}:1:pruefung.befehl:0`;
+    const vmId = `${ABBAU}:8:pruefung.nichtEnthalten:0`;
     const entscheid = Object.fromEntries(ids.map(id => [id, id === confId || id === vmId ? 'ersetzen' as const : 'fest' as const]));
     const r = baueEntwurf(q, { [v157.nr]: 'vmid_server' }, kopf, entscheid);
     expect(r.fehler).toEqual([]);
@@ -255,6 +272,36 @@ describe('Teilvorkommen ausdrücklich entscheiden', () => {
     const r = baueEntwurf([a], { [v.nr]: 'vmid_neu' }, kopf);
     expect(r.vorlage).toBeUndefined();
     expect(r.fehler.join('\n')).toMatch(/ungültigen Platzhalter/);
+  });
+
+  it('gleiches Wort im selben Schritt braucht die gleiche Entscheidung (VM157_ABWESEND in befehl und erwartet)', () => {
+    const q = quellen();
+    const k = findeKandidaten(q);
+    const v157 = kand(k, 'vmid', 157);
+    const abw = v157.teilvorkommen.filter(t => t.token === 'VM157_ABWESEND');
+    expect(abw.map(t => t.pfad).sort()).toEqual(['pruefung.befehl', 'pruefung.erwartet']);
+    const basis = Object.fromEntries(v157.teilvorkommen.map(t => [t.id, 'fest' as const]));
+    const r = baueEntwurf(q, { [v157.nr]: 'vmid_server' }, kopf, { ...basis, [abw[0]!.id]: 'ersetzen' });
+    expect(r.vorlage).toBeUndefined();
+    expect(r.fehler.join('\n')).toContain(abw[0]!.id);
+    expect(r.fehler.join('\n')).toContain(abw[1]!.id);
+    expect(r.fehler.join('\n')).toMatch(/VM157_ABWESEND.*gleich entscheiden/);
+    // beide gleich → ok, Prüftext passt weiter zum Befehl
+    const ok = baueEntwurf(q, { [v157.nr]: 'vmid_server' }, kopf, { ...basis, [abw[0]!.id]: 'ersetzen', [abw[1]!.id]: 'ersetzen' });
+    expect(ok.fehler).toEqual([]);
+    const s = ok.vorlage!.changes[2]!.schritte.find(x => JSON.stringify(x).includes('VM{{param.vmid_server}}_ABWESEND'))!;
+    expect((s.pruefung as Record<string, string>).erwartet).toBe('VM{{param.vmid_server}}_ABWESEND');
+  });
+
+  it('ids tragen die volle Change-ID (gleicher 8-Zeichen-Anfang kollidiert nicht)', () => {
+    const a = change('aaaaaaaa-1111', 'c1', [{ skill: 'proxmox', aktion: 'provision_windows_vm', parameter: { new_vmid: 300, hostname: 'srvneu', node: 'pve1' }, pruefung: { typ: 'befehl', zugang: 'pve1', befehl: 'ls vm-300-disk', erwartet: 'x' } }]);
+    const b = change('aaaaaaaa-2222', 'c2', [{ skill: 'proxmox', aktion: 'start_vm', parameter: { vmid: 300, node: 'pve1' }, pruefung: { typ: 'befehl', zugang: 'pve1', befehl: 'ls vm-300-disk', erwartet: 'x' } }], { abhaengigVon: ['aaaaaaaa-1111'] });
+    const v = kand(findeKandidaten([a, b]), 'vmid', 300);
+    expect(v.teilvorkommen.map(t => t.id)).toEqual(['aaaaaaaa-1111:1:pruefung.befehl:0', 'aaaaaaaa-2222:1:pruefung.befehl:0']);
+    const r = baueEntwurf([a, b], { [v.nr]: 'vmid_neu' }, kopf, { 'aaaaaaaa-1111:1:pruefung.befehl:0': 'ersetzen', 'aaaaaaaa-2222:1:pruefung.befehl:0': 'fest' });
+    expect(r.fehler).toEqual([]);
+    expect((r.vorlage!.changes[0]!.schritte[0]!.pruefung as Record<string, string>).befehl).toBe('ls vm-{{param.vmid_neu}}-disk');
+    expect((r.vorlage!.changes[1]!.schritte[0]!.pruefung as Record<string, string>).befehl).toBe('ls vm-300-disk');
   });
 
   it('VMID/VLAN nie unter Port-/Zähl-Schlüsseln (destination_port "152")', () => {

@@ -29,7 +29,7 @@ export interface QuellChange {
 export interface Fundstelle { change: string; schritt: number; pfad: string; ganz: boolean }
 /**
  * Vorkommen als Teil eines zusammengesetzten Tokens (157 in /etc/pve/qemu-server/157.conf, 829 in vmbr829, dc01 in
- * win-dc01-admin) in parameter, pruefung, rueckweg — nie in Titeln. id = <change8>:<schritt>:<pfad>:<index> (index = Nummer
+ * win-dc01-admin) in parameter, pruefung, rueckweg — nie in Titeln. id = <change-id>:<schritt>:<pfad>:<index> (volle ID; index = Nummer
  * des Vorkommens im Text); token = umgebendes Wort. Für gewählte Werte entscheidet der Aufrufer je id „ersetzen“ oder „fest“;
  * tresor gesetzt = Teil eines Tresor-Namens, nie ersetzbar.
  */
@@ -67,6 +67,8 @@ const FELD_NAME = /^[a-zA-Z_]\w*$/;
 /** Werte, die nach erzeugter ID aussehen (UUID, Thumbprint, UPID) — für Hinweise auf feste IDs ohne Quelle */
 const ID_FORM = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32,}|UPID:.+)$/i;
 const UUID_FORM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Nur bei Hex-IDs (UUID, Thumbprint) ist ein Anfang ≥ 8 Zeichen eindeutig genug für einen Verweis — nie bei Namen (alfred-pbs-taeglich) oder UPIDs */
+const HEX_ID = (id: string): boolean => UUID_FORM.test(id) || /^[0-9a-f]{8,}$/i.test(id);
 const ANLEGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (/^(create_|provision_)/.test(aktion) || aktion === 'clone_vm');
 
 const kurz = (id: string): string => id.slice(0, 8);
@@ -183,7 +185,7 @@ function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort
       const g = t.platzhalter ? GEHEIM_IN_PLATZHALTER.exec(t.platzhalter) : null;
       const tresor = tresorFeld ? b.wert as string : g ? g[1] : undefined;
       teile.push({
-        blatt: b, start: t.start, ende: t.ende, id: `${kurz(b.change)}:${b.schritt}:${b.pfad}:${i}`, token: tokenUm(b.wert as string, t.start, t.ende),
+        blatt: b, start: t.start, ende: t.ende, id: `${b.change}:${b.schritt}:${b.pfad}:${i}`, token: tokenUm(b.wert as string, t.start, t.ende),
         ...(tresor ? { tresor } : {}), ...(t.platzhalter ? { platzhalter: t.platzhalter } : {}),
       });
     });
@@ -317,7 +319,7 @@ export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise
         const woerter = [...wert.matchAll(/\S+/g)].map(m => ({ wort: m[0], start: m.index!, ende: m.index! + m[0].length }));
         for (const w of woerter) {
           if (w.wort.length < 8) continue;
-          const passend = [...ids].filter(([id]) => id !== w.wort && id.startsWith(w.wort))
+          const passend = [...ids].filter(([id]) => HEX_ID(id) && id !== w.wort && id.startsWith(w.wort))
             .flatMap(([id, qs]) => qs.filter(s => s.change !== c.id).map(s => ({ id, s })));
           if (!passend.length) continue;
           passend.forEach(p => erledigt.add(p.id));
@@ -409,6 +411,20 @@ export function baueEntwurf(
   }
   const offen = [...teilNachId.values()].filter(x => teilEntscheid[x.t.id] === undefined);
   if (offen.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offen.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
+  // gleiches Wort im selben Schritt (VM157_ABWESEND in befehl und erwartet) muss gleich entschieden sein, sonst passt die Prüfung nicht mehr
+  const gruppen = new Map<string, Array<{ id: string; e: string | undefined }>>();
+  for (const x of teilNachId.values()) {
+    if (x.t.tresor) continue;
+    const g = `${x.t.blatt.change}|${x.t.blatt.schritt}|${x.k.kandidat.typ}|${String(x.k.kandidat.wert)}|${x.t.token}`;
+    const l = gruppen.get(g) ?? []; l.push({ id: x.t.id, e: teilEntscheid[x.t.id] }); gruppen.set(g, l);
+  }
+  for (const [g, l] of gruppen) {
+    const arten = new Set(l.map(x => x.e).filter(e => e !== undefined));
+    if (arten.size > 1) {
+      const [change, schritt, , , token] = g.split('|') as [string, string, string, string, string];
+      fehler.push(`Teilvorkommen ${l.map(x => `${x.id} (${String(x.e)})`).join(', ')}: gleiches Wort ${token} in ${kurz(change)} Schritt ${schritt} — gleich entscheiden`);
+    }
+  }
   if (fehler.length) return { fehler, hinweise };
 
   const verw = findeVerweise(q);
