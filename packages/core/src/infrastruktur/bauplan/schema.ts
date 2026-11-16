@@ -37,7 +37,52 @@ export const PARAM_NAME_MUSTER = /^[a-z][a-z0-9_]{0,30}$/;
 export const SCHLUESSEL_MUSTER = /^[a-z][a-z0-9_]{0,20}$/;
 export const GRENZEN = { changes: 30, parameter: 40, annahmen: 20, jsonZeichen: 500_000 } as const;
 
-const VORLAGE_FELDER = ['schema', 'key', 'titel', 'zweck', 'dokumentart', 'abbauVorlage', 'parameter', 'annahmen', 'changes'];
+/** Höchstlänge eines text-Parameters (auch Obergrenze für grenzen.laenge) — begrenzt zugleich den Aufwand von grenzen.regex */
+export const TEXT_MAX_LAENGE = 200;
+/** Reservierter Change-Schlüssel: unter ihm laufen die Annahmen in der Probe */
+export const ANNAHMEN_SCHLUESSEL = 'annahmen';
+
+/**
+ * ReDoS-Schutz für grenzen.regex: keine Rückverweise, keine Lookarounds, keine quantifizierte Gruppe, die selbst einen
+ * Quantifizierer oder eine Alternative enthält ((a+)+, (a*)*, (a|aa)+). Zeichenklassen und Escapes zählen nicht.
+ */
+export function regexRisiko(src: string): string | undefined {
+  if (/\\[1-9]|\\k</.test(src)) return 'Rückverweise (\\1, \\k<…>) sind nicht erlaubt';
+  const stapel: Array<{ riskant: boolean }> = [];
+  let oben = { riskant: false };
+  const quantorAb = (i: number): boolean => /^(\*|\+|\?|\{\d+(,\d*)?\})/.test(src.slice(i));
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') { i++; if (quantorAb(i + 1)) oben.riskant = true; continue; }
+    if (c === '[') { // Zeichenklasse überspringen
+      i++; if (src[i] === '^') i++; if (src[i] === ']') i++;
+      while (i < src.length && src[i] !== ']') { if (src[i] === '\\') i++; i++; }
+      if (quantorAb(i + 1)) oben.riskant = true;
+      continue;
+    }
+    if (c === '(') {
+      if (/^\(\?(=|!|<=|<!)/.test(src.slice(i))) return 'Lookahead/Lookbehind sind nicht erlaubt';
+      stapel.push(oben); oben = { riskant: false };
+      const praefix = /^\(\?(:|<[A-Za-z_]\w*>)/.exec(src.slice(i)); // (?:…) und (?<name>…) — das „?“ ist kein Quantifizierer
+      if (praefix) i += praefix[0].length - 1;
+      continue;
+    }
+    if (c === ')') {
+      const innen = oben; oben = stapel.pop() ?? { riskant: false };
+      if (quantorAb(i + 1)) {
+        if (innen.riskant) return 'verschachtelte Quantifizierer bzw. quantifizierte Alternative (z. B. (a+)+, (a|aa)+) sind nicht erlaubt';
+        oben.riskant = true;
+      } else if (innen.riskant) oben.riskant = true;
+      continue;
+    }
+    if (c === '|') { oben.riskant = true; continue; }
+    if (quantorAb(i)) { oben.riskant = true; const m = /^(\{\d+(,\d*)?\}|[*+?])\??/.exec(src.slice(i)); i += (m?.[0].length ?? 1) - 1; continue; }
+    if (quantorAb(i + 1)) oben.riskant = true;
+  }
+  return undefined;
+}
+
+const VORLAGE_FELDER =['schema', 'key', 'titel', 'zweck', 'dokumentart', 'abbauVorlage', 'parameter', 'annahmen', 'changes'];
 const PARAM_FELDER = ['name', 'typ', 'pflicht', 'beschreibung', 'beispiel', 'grenzen', 'ableitung'];
 const GRENZ_FELDER = ['regex', 'min', 'max', 'laenge'];
 const ABLEITUNG_FELDER = ['funktion', 'von', 'n'];
@@ -67,10 +112,15 @@ function pruefeParameter(roh: unknown, i: number, fehler: string[]): void {
       unbekannte(g, GRENZ_FELDER, `${wo}.grenzen`, fehler);
       if (g.regex !== undefined) {
         if (typeof g.regex !== 'string' || g.regex.length > 200) fehler.push(`${wo}: grenzen.regex muss ein Text (≤ 200 Zeichen) sein`);
-        else { try { new RegExp(g.regex); } catch { fehler.push(`${wo}: grenzen.regex ist kein gültiger regulärer Ausdruck`); } }
+        else {
+          let gueltig = true;
+          try { new RegExp(g.regex); } catch { gueltig = false; fehler.push(`${wo}: grenzen.regex ist kein gültiger regulärer Ausdruck`); }
+          const grund = gueltig ? regexRisiko(g.regex) : undefined;
+          if (grund) fehler.push(`${wo}: grenzen.regex nicht erlaubt — ${grund}`);
+        }
       }
       for (const k of ['min', 'max'] as const) if (g[k] !== undefined && !istZahl(g[k])) fehler.push(`${wo}: grenzen.${k} muss eine Zahl sein`);
-      if (g.laenge !== undefined && !(Number.isInteger(g.laenge) && (g.laenge as number) >= 1 && (g.laenge as number) <= 10_000)) fehler.push(`${wo}: grenzen.laenge muss eine ganze Zahl 1–10000 sein`);
+      if (g.laenge !== undefined && !(Number.isInteger(g.laenge) && (g.laenge as number) >= 1 && (g.laenge as number) <= TEXT_MAX_LAENGE)) fehler.push(`${wo}: grenzen.laenge muss eine ganze Zahl 1–${TEXT_MAX_LAENGE} sein`);
       if (istZahl(g.min) && istZahl(g.max) && g.min > g.max) fehler.push(`${wo}: grenzen.min ist größer als grenzen.max`);
     }
   }
@@ -110,6 +160,7 @@ function pruefeChange(roh: unknown, i: number, fehler: string[]): void {
   if (!istObjekt(roh)) { fehler.push(`${wo}: muss ein Objekt sein`); return; }
   unbekannte(roh, CHANGE_FELDER, wo, fehler);
   if (typeof roh.schluessel !== 'string' || !SCHLUESSEL_MUSTER.test(roh.schluessel)) fehler.push(`${wo}: schluessel muss ${SCHLUESSEL_MUSTER} entsprechen`);
+  else if (roh.schluessel === ANNAHMEN_SCHLUESSEL) fehler.push(`${wo}: schluessel „${ANNAHMEN_SCHLUESSEL}“ ist reserviert (Eingangskontrolle der Probe)`);
   if (!istText(roh.titel)) fehler.push(`${wo}: titel fehlt`);
   if (!istText(roh.begruendung)) fehler.push(`${wo}: begruendung fehlt`);
   if (roh.typ !== 'normal') fehler.push(`${wo}: typ muss „normal“ sein (Bauplan-Changes laufen immer über die normale Freigabe)`);

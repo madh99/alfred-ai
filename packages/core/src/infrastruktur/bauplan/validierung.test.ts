@@ -124,7 +124,7 @@ describe('pruefeVorlage — Probe', () => {
     let plaene: unknown[] = [];
     const r = await pruefe(undefined, { probe: async p => { plaene = p; return []; } });
     expect(r.fehler).toEqual([]);
-    expect(plaene).toHaveLength(2);
+    expect(plaene).toHaveLength(3); // zwei Changes + Eingangskontrolle der Annahmen (Fix-Runde 1, I4)
     const [a, b] = plaene as Array<Record<string, any>>;
     expect(a.schluessel).toBe('aufbau');
     expect(a.titel).toBe('Aufbau VLAN 832');
@@ -141,5 +141,43 @@ describe('pruefeVorlage — Probe', () => {
     const r = await pruefe(undefined, { probe: async () => ['Schritt 1: Aktion unifi.create_network unbekannt'] });
     expect(r.fehler).toEqual(['Probe: Schritt 1: Aktion unifi.create_network unbekannt']);
     expect(r.vorlage).toBeUndefined();
+  });
+});
+
+describe('Fix-Runde 1 — Validierung', () => {
+  it('I2: eigener Schritt in pruefung und rueckweg erlaubt, in parameter nicht', async () => {
+    expect((await pruefe(v => { v.changes[0].schritte[1].pruefung = { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: '{{schritt2.vmid}}' } }; })).fehler).toEqual([]);
+    expect((await pruefe(v => { v.changes[0].schritte[0].rueckweg = { skill: 'unifi', aktion: 'delete_network', parameter: { id: '{{schritt1.id}}' } }; })).fehler).toEqual([]);
+    expect((await pruefe(v => { v.changes[0].schritte[0].rueckweg = { skill: 'unifi', aktion: 'x', parameter: { id: '{{schritt2.id}}' } }; })).fehler.join('\n')).toMatch(/schritt2/);
+    expect((await pruefe(v => { v.changes[0].schritte[1].parameter.x = '{{schritt2.id}}'; })).fehler.join('\n')).toMatch(/schritt2/);
+  });
+  it('I4: Annahmen gehen als eigener Change in die Probe', async () => {
+    let plaene: Array<Record<string, any>> = [];
+    const r = await pruefe(undefined, { probe: async p => { plaene = p as Array<Record<string, any>>; return ['Schritt 1: Befehl steht auf der Nie-Liste'] ; } });
+    expect(r.fehler).toEqual(['Probe: Schritt 1: Befehl steht auf der Nie-Liste']);
+    expect(plaene).toHaveLength(3);
+    const a = plaene[2];
+    expect(a).toMatchObject({ schluessel: 'annahmen', titel: 'Eingangskontrolle der Vorlage', begruendung: 'Vorab-Prüfungen der Bauplan-Vorlage', typ: 'normal', risiko: 'low', abhaengigVon: [] });
+    expect(a.schritte).toHaveLength(1);
+    expect(a.schritte[0]).toMatchObject({ titel: 'Eingangskontrolle: VMID ist frei', art: 'pruefung', beiFehler: 'anhalten' });
+    expect(a.schritte[0].pruefung.parameter.vmid).toBe(157);
+  });
+  it('I4: ohne Annahmen kein zusätzlicher Change', async () => {
+    let n = 0;
+    await pruefe(v => { v.annahmen = []; }, { probe: async p => { n = p.length; return []; } });
+    expect(n).toBe(2);
+  });
+  it('Minor 1: Befehlsfelder ohne Groß-/Kleinschreibung', async () => {
+    const r = await pruefe(v => {
+      v.parameter.push({ name: 'frei_text', typ: 'text', pflicht: false, beschreibung: 'x' });
+      v.changes[0].schritte[0].parameter.Befehl = 'echo {{param.frei_text}}';
+      v.changes[0].schritte[1].parameter.COMMAND = 'echo {{param.frei_text}}';
+    });
+    expect(r.fehler.join('\n')).toMatch(/Befehl/);
+    expect(r.fehler.join('\n')).toMatch(/COMMAND/);
+  });
+  it('Minor 2: {{geheim:…}} nur als ganzer Wert, geheimdatei auch im Text', async () => {
+    expect((await pruefe(v => { v.changes[0].schritte[0].parameter.notiz = 'pw={{geheim:pkilab-sql}}'; })).fehler.join('\n')).toMatch(/geheim:pkilab-sql/);
+    expect((await pruefe(v => { v.changes[0].schritte[0].parameter.befehl = 'cat {{geheimdatei:lab-ca}}'; })).fehler).toEqual([]);
   });
 });

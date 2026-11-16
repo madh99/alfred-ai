@@ -150,3 +150,33 @@ describe('setzeEin', () => {
     expect(out.text).toBe('Hosts: a,b');
   });
 });
+
+describe('Fix-Runde 1 — Parameter', () => {
+  it('I1: text ohne geschweifte Klammern', () => {
+    expect(pruefeWert(p('text'), 'x{')).toMatch(/Klammer/);
+    expect(pruefeWert(p('text'), '{schritt9.x}}')).toMatch(/Klammer/);
+    expect(pruefeWert(p('text'), 'a}')).toMatch(/Klammer/);
+  });
+  it('I1: setzeEin bricht ab, wenn durch Einsetzen ein neuer Platzhalter entsteht', () => {
+    const roh = testVorlage();
+    (roh.parameter as unknown[]).push({ name: 'a', typ: 'text', pflicht: false, beschreibung: 'a' }, { name: 'b', typ: 'text', pflicht: false, beschreibung: 'b' });
+    const par = (roh.changes as Array<{ schritte: Array<{ parameter: Record<string, unknown> }> }>)[0].schritte[1].parameter;
+    par.notiz = '{{param.a}}{schritt9.geheim}}';
+    const v = pruefeSchema(roh).vorlage!;
+    const basis = { vlan: 832, vmid: 157, name_server: 'a', netz: '10.0.0.0/24', gateway: '10.0.0.1' };
+    // Werte, die loeseParameter abweisen würde, direkt eingesetzt (Schutz in der Tiefe)
+    expect(() => setzeEin(v, { ...basis, a: 'x{' })).toThrow(/neuer Platzhalter|Platzhalter/);
+    par.notiz = '{{param.a}}{{param.b}}';
+    const v2 = pruefeSchema(roh).vorlage!;
+    expect(() => setzeEin(v2, { ...basis, a: '{', b: '{schritt9.x}}' })).toThrow(/Platzhalter/);
+    par.notiz = '{{{param.a}}}';
+    const v3 = pruefeSchema(roh).vorlage!;
+    expect(() => setzeEin(v3, { ...basis, a: 'x' })).not.toThrow();
+    expect(() => setzeEin(v3, { ...basis, a: '{schritt1.x}' })).toThrow(/Platzhalter/);
+    // vorhandene Nicht-Parameter-Platzhalter bleiben erlaubt
+    expect(() => setzeEin(v, { ...basis, a: 'x' })).not.toThrow();
+  });
+  it('I3: Regex wird nur auf begrenzte Werte angewandt', () => {
+    expect(pruefeWert(p('text', { grenzen: { regex: '^a+$' } }), 'a'.repeat(201))).toBeTypeOf('string');
+  });
+});

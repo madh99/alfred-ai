@@ -78,3 +78,18 @@ describe('abdruck', () => {
     expect(abdruck({ ...v, titel: 'anders' })).not.toBe(abdruck(v));
   });
 });
+
+describe('Fix-Runde 1 — Schema', () => {
+  it('I3: gefährliche Regex beim Speichern abgewiesen', () => {
+    for (const rx of ['^(a+)+$', '(a*)*', '(x{2,})+', '^(a|aa)+$', '(a)\\1', '(?=a)a', '(?<!b)a', '(?<n>a)\\k<n>', 'a'.repeat(201)])
+      expect(fehlerVon(r => { r.parameter[4].grenzen = { regex: rx }; }), rx).toMatch(/regex/);
+    for (const rx of ['^lab[0-9]+$', '^(srv|cli)[0-9]{2}$', '^(?:ab)+$', '^[a-z+*]+$', '^\\(a+\\)+$'])
+      expect(fehlerVon(r => { r.parameter[4].grenzen = { regex: rx }; }), rx).toBe('');
+  });
+  it('I3: laenge höchstens 200', () => {
+    expect(fehlerVon(r => { r.parameter[4].grenzen = { laenge: 201 }; })).toMatch(/laenge/);
+  });
+  it('Schlüssel „annahmen“ ist reserviert', () => {
+    expect(fehlerVon(r => { r.changes[1].schluessel = 'annahmen'; r.changes[1].abhaengigVon = ['aufbau']; })).toMatch(/reserviert/);
+  });
+});

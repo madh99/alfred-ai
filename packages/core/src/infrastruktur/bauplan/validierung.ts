@@ -6,8 +6,8 @@
  * dieser Baustein rein bleibt). Ergebnis ohne Fehler = speicherbar; unbenutzte Parameter sind nur ein Hinweis.
  */
 import { GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
-import { pruefeSchema, type BauplanParameter, type BauplanVorlage } from './schema.js';
-import { loeseParameter, setzeEin } from './parameter.js';
+import { ANNAHMEN_SCHLUESSEL, pruefeSchema, type BauplanParameter, type BauplanVorlage } from './schema.js';
+import { loeseParameter, setzeEin, setzeEinWert } from './parameter.js';
 
 /** Wie change-lauf.ts BEFEHLS_FELDER: Felder, die als Befehl/Skript ausgeführt werden */
 export const BEFEHLS_FELDER: ReadonlySet<string> = new Set(['befehl', 'command', 'cmd', 'script', 'skript']);
@@ -18,7 +18,8 @@ const JEDER_PLATZHALTER = /\{\{([^{}]*)\}\}/g;
 const P_PARAM = /^param\.([a-z][a-z0-9_]{0,30})$/;
 const P_SCHRITT = /^schritt(\d+)\.[a-zA-Z_][\w.]*$/;
 const P_CHANGE = /^change:([a-z][a-z0-9_]{0,20})\.schritt(\d+)\.[a-zA-Z_][\w.]*$/;
-const P_GEHEIM = /^(geheim|geheimdatei):[a-z0-9][\w.-]{1,60}$/;
+const P_GEHEIM = /^geheim:[a-z0-9][\w.-]{1,60}$/;
+const P_GEHEIMDATEI = /^geheimdatei:[a-z0-9][\w.-]{1,60}$/;
 /** Go-Templates von `docker --format` (wie PLATZHALTER in change-schritte.ts) — kein Verweis, bleibt Text */
 const P_GO_TEMPLATE = /^(\.|json \.|(range|with|if|index|println|printf|print|join|len|lower|upper|title|else|end)\b)/;
 const CHANGE_VERWEIS = /\{\{\s*change:[a-z][a-z0-9_]{0,20}\.schritt\d+\.[a-zA-Z_][\w.]*\s*\}\}/g;
@@ -29,7 +30,8 @@ const GEHEIM_VERWEIS_GANZ = /^\{\{\s*(geheim|geheimdatei):[a-z0-9][\w.-]{1,60}\s
 type Bereich =
   | { art: 'kopf'; change: string }
   | { art: 'annahme' }
-  | { art: 'schritt'; change: string; position: number };
+  /** teil = oberstes Feld des Schritts (parameter, pruefung, rueckweg, …) */
+  | { art: 'schritt'; change: string; position: number; teil?: string };
 interface Kontext { wo: string; feld?: string; bereich: Bereich }
 
 function durchlaufe(x: unknown, k: Kontext, besuche: (s: string, k: Kontext) => void): void {
@@ -65,7 +67,7 @@ function pruefePlatzhalter(v: BauplanVorlage, fehler: string[]): Set<string> {
         const par = params.get(p[1]);
         if (!par) { fehler.push(`${k.wo}: {{param.${p[1]}}} — kein Parameter der Vorlage`); continue; }
         benutzt.add(par.name);
-        if (k.feld && BEFEHLS_FELDER.has(k.feld) && (par.typ === 'text' || par.typ === 'liste'))
+        if (k.feld && BEFEHLS_FELDER.has(k.feld.toLowerCase()) && (par.typ === 'text' || par.typ === 'liste'))
           fehler.push(`${k.wo}: {{param.${par.name}}} vom Typ ${par.typ} ist im Befehlsfeld „${k.feld}“ verboten (nur enge Typen wie name, ipv4, vmid)`);
         continue;
       }
@@ -73,7 +75,12 @@ function pruefePlatzhalter(v: BauplanVorlage, fehler: string[]): Set<string> {
       if (sch) {
         const n = Number(sch[1]);
         if (b.art !== 'schritt') fehler.push(`${k.wo}: {{${inhalt}}} — Schritt-Verweise nur in Schritten (${b.art === 'annahme' ? 'Annahme' : 'Change-Kopf'})`);
-        else if (n < 1 || n >= b.position) fehler.push(`${k.wo}: {{${inhalt}}} — Schritt ${b.position} darf nur auf frühere Schritte (1–${b.position - 1}) desselben Change verweisen`);
+        else {
+          // wie change-schritte.ts: in parameter nur frühere Schritte; pruefung und rueckweg laufen nach dem eigenen Schritt
+          const eigenErlaubt = b.teil === 'pruefung' || b.teil === 'rueckweg';
+          const hoechst = eigenErlaubt ? b.position : b.position - 1;
+          if (n < 1 || n > hoechst) fehler.push(`${k.wo}: {{${inhalt}}} — ${eigenErlaubt ? `${b.teil} von Schritt ${b.position} darf auf Schritte 1–${hoechst}` : `Schritt ${b.position} darf nur auf frühere Schritte (1–${hoechst})`} desselben Change verweisen`);
+        }
         continue;
       }
       const ch = P_CHANGE.exec(inhalt);
@@ -84,7 +91,12 @@ function pruefePlatzhalter(v: BauplanVorlage, fehler: string[]): Set<string> {
         else if (n < 1 || n > (schrittZahl.get(ziel) ?? 0)) fehler.push(`${k.wo}: {{${inhalt}}} — „${ziel}“ hat nur ${schrittZahl.get(ziel)} Schritte`);
         continue;
       }
-      if (P_GEHEIM.test(inhalt) || P_GO_TEMPLATE.test(inhalt)) continue;
+      if (P_GEHEIM.test(inhalt)) {
+        // zur Laufzeit nur als ganzer Wert (change-lauf.ts) — im Text würde er still leer
+        if (s.trim() !== m[0]) fehler.push(`${k.wo}: {{${inhalt}}} nur als ganzer Wert erlaubt (in Befehlen {{geheimdatei:…}} verwenden)`);
+        continue;
+      }
+      if (P_GEHEIMDATEI.test(inhalt) || P_GO_TEMPLATE.test(inhalt)) continue;
       fehler.push(`${k.wo}: Platzhalter {{${inhalt}}} ist nicht erlaubt (nur {{param.x}}, {{schrittN.feld}}, {{change:<schluessel>.schrittN.feld}}, {{geheim:<name>}})`);
     }
   };
@@ -92,7 +104,10 @@ function pruefePlatzhalter(v: BauplanVorlage, fehler: string[]): Set<string> {
   for (const c of v.changes) {
     const wo = `changes „${c.schluessel}“`;
     for (const f of ['titel', 'begruendung', 'betroffen'] as const) durchlaufe(c[f], { wo: `${wo}.${f}`, feld: f, bereich: { art: 'kopf', change: c.schluessel } }, besuche);
-    c.schritte.forEach((s, i) => durchlaufe(s, { wo: `${wo} Schritt ${i + 1}`, bereich: { art: 'schritt', change: c.schluessel, position: i + 1 } }, besuche));
+    c.schritte.forEach((s, i) => {
+      for (const [teil, w] of Object.entries(s))
+        durchlaufe(w, { wo: `${wo} Schritt ${i + 1}.${teil}`, feld: teil, bereich: { art: 'schritt', change: c.schluessel, position: i + 1, teil } }, besuche);
+    });
   }
   for (const a of v.annahmen) durchlaufe(a.pruefung, { wo: `Annahme „${a.id}“`, bereich: { art: 'annahme' } }, besuche);
 
@@ -133,14 +148,23 @@ function ersetzeChangeVerweise(x: unknown): unknown {
   return x;
 }
 
-/** Probe-Pläne: Beispielwerte eingesetzt, Change-Verweise durch „probe“, ohne kapitel, im ChangePlan-Format */
+/**
+ * Probe-Pläne: Beispielwerte eingesetzt, Change-Verweise durch „probe“, ohne kapitel, im ChangePlan-Format. Gibt es Annahmen,
+ * kommt ein zusätzlicher Change „annahmen“ mit je einem Prüfschritt dazu — so gelten für sie dieselben Prüf-/Käfig-Regeln.
+ */
 export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): unknown[] {
-  return setzeEin(v, werte).map(c => ({
+  const plaene: unknown[] = setzeEin(v, werte).map(c => ({
     schluessel: c.schluessel, titel: c.titel, begruendung: c.begruendung, typ: c.typ, risiko: c.risiko,
     ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
     abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
     schritte: c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return ersetzeChangeVerweise(rest); }),
   }));
+  if (v.annahmen.length) plaene.push({
+    schluessel: ANNAHMEN_SCHLUESSEL, titel: 'Eingangskontrolle der Vorlage', begruendung: 'Vorab-Prüfungen der Bauplan-Vorlage',
+    typ: 'normal', risiko: 'low', abhaengigVon: [], betroffen: [],
+    schritte: v.annahmen.map((a, i) => ({ nr: i + 1, titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: setzeEinWert(a.pruefung, werte), beiFehler: 'anhalten' })),
+  });
+  return plaene;
 }
 
 /**
@@ -168,7 +192,9 @@ export async function pruefeVorlage(roh: unknown, ctx: { probe: (roh: unknown[])
   const beispiel = loeseParameter(v, eingabe);
   if (beispiel.fehler.length) return { fehler: beispiel.fehler.map(f => `Beispiel: ${f}`), hinweise };
 
-  const probeFehler = await ctx.probe(probePlaene(v, beispiel.werte));
+  let plaene: unknown[];
+  try { plaene = probePlaene(v, beispiel.werte); } catch (e) { return { fehler: [`Beispiel: ${(e as Error).message}`], hinweise }; }
+  const probeFehler = await ctx.probe(plaene);
   if (probeFehler.length) return { fehler: probeFehler.map(f => `Probe: ${f}`), hinweise };
   return { vorlage: v, fehler: [], hinweise };
 }

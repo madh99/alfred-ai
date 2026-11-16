@@ -4,12 +4,12 @@
  * Die Typen sind bewusst eng (Sicherheitsbefund 22.10.: eingesetzte Werte dürfen nie als Shell-Code wandern): Namen nur aus
  * Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich; Text ohne „{{“ und ohne Zeilenumbruch. Ableitungen sind feste Funktionen.
  */
-import type { AbleitungsFunktion, BauplanChange, BauplanParameter, BauplanVorlage } from './schema.js';
+import { TEXT_MAX_LAENGE, type AbleitungsFunktion, type BauplanChange, type BauplanParameter, type BauplanVorlage } from './schema.js';
 
 export const NAME_WERT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 const OKTETT = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
 const IPV4 = new RegExp(`^${OKTETT}(\\.${OKTETT}){3}$`);
-const TEXT_STANDARD_LAENGE = 200;
+const TEXT_STANDARD_LAENGE = TEXT_MAX_LAENGE;
 const LISTE_MAX = 20;
 /** `{{param.<name>}}` — ganzer Wert behält den Typ, sonst Textersetzung */
 export const PARAM_VERWEIS = /\{\{\s*param\.([a-z][a-z0-9_]{0,30})\s*\}\}/g;
@@ -36,6 +36,8 @@ export function pruefeWert(p: BauplanParameter, wert: unknown): string | undefin
     if (g.max !== undefined && z > g.max) return fehler(`${z} ist größer als ${g.max}`);
   };
   const regexGrenze = (s: string): string | undefined => {
+    // Typprüfung kommt vorher, Werte sind dadurch kurz; zusätzlich harte Grenze vor dem Abgleich (ReDoS-Schutz)
+    if (g.regex !== undefined && s.length > TEXT_MAX_LAENGE) return fehler(`zu lang für die Prüfung gegen ${g.regex}`);
     if (g.regex !== undefined && !new RegExp(g.regex).test(s)) return fehler(`„${s}“ entspricht nicht ${g.regex}`);
   };
   switch (p.typ) {
@@ -64,7 +66,8 @@ export function pruefeWert(p: BauplanParameter, wert: unknown): string | undefin
       if (typeof wert !== 'string') return fehler(`muss ein Text sein — erhalten ${JSON.stringify(wert)}`);
       const laenge = g.laenge ?? TEXT_STANDARD_LAENGE;
       if (wert.length > laenge) return fehler(`höchstens ${laenge} Zeichen (erhalten ${wert.length})`);
-      if (wert.includes('{{')) return fehler('darf kein „{{“ enthalten');
+      // auch einzelne Klammern: sonst setzt das Einsetzen neue Platzhalter zusammen („x{“ + „{schritt9.geheim}}“)
+      if (/[{}]/.test(wert)) return fehler('darf keine geschweifte Klammer „{“ oder „}“ enthalten');
       if (/[\r\n]/.test(wert)) return fehler('darf keinen Zeilenumbruch enthalten');
       return regexGrenze(wert);
     }
@@ -138,11 +141,25 @@ export function loeseParameter(v: BauplanVorlage, eingabe: Record<string, unknow
 
 const textVon = (w: unknown): string => Array.isArray(w) ? w.map(String).join(',') : String(w);
 
+const ALLE_PLATZHALTER = /\{\{[^{}]*\}\}/g;
+/** Platzhalter eines Werts nach dem Einsetzen (Strings auch in Listen) */
+const platzhalterIn = (w: unknown): string[] => typeof w === 'string' ? (w.match(ALLE_PLATZHALTER) ?? [])
+  : Array.isArray(w) ? w.flatMap(platzhalterIn) : [];
+
+/** Einsetzen darf keinen Platzhalter erzeugen, der nicht schon in der Vorlage stand (Schutz in der Tiefe zu pruefeWert) */
+function ohneNeuePlatzhalter(vorher: string, nachher: unknown): unknown {
+  const soll = vorher.replace(PARAM_VERWEIS, ' ').match(ALLE_PLATZHALTER) ?? [];
+  const ist = platzhalterIn(nachher);
+  if (ist.length !== soll.length || ist.some((p, i) => p !== soll[i]))
+    throw new Error(`Einsetzen der Parameter erzeugt einen neuen Platzhalter in „${vorher.slice(0, 80)}“ — abgewiesen`);
+  return nachher;
+}
+
 function ersetze(x: unknown, werte: Record<string, unknown>): unknown {
   if (typeof x === 'string') {
     const ganz = PARAM_GANZ.exec(x);
-    if (ganz) { const w = werte[ganz[1]]; return Array.isArray(w) ? [...w] : w; }
-    return x.replace(PARAM_VERWEIS, (_m, name: string) => (werte[name] === undefined ? '' : textVon(werte[name])));
+    if (ganz) { const w = werte[ganz[1]]; return ohneNeuePlatzhalter(x, Array.isArray(w) ? [...w] : w); }
+    return ohneNeuePlatzhalter(x, x.replace(PARAM_VERWEIS, (_m, name: string) => (werte[name] === undefined ? '' : textVon(werte[name]))));
   }
   if (Array.isArray(x)) return x.map(e => ersetze(e, werte)).filter(e => e !== undefined);
   if (x && typeof x === 'object') {
@@ -157,7 +174,13 @@ function ersetze(x: unknown, werte: Record<string, unknown>): unknown {
  * Setzt `{{param.x}}` in die Changes ein (Kopie, Vorlage bleibt unverändert). Ist der ganze Wert ein Verweis, behält er den Typ
  * (Zahl bleibt Zahl, Liste bleibt Liste); in einem längeren Text wird als Text eingesetzt (Liste kommagetrennt). Fehlt ein
  * optionaler Wert, entfällt ein ganzer Wert (Feld/Listeneintrag) bzw. wird im Text leer. Andere Platzhalter bleiben stehen.
+ * Wirft einen Fehler, wenn durch das Einsetzen ein Platzhalter entsteht, der in der Vorlage nicht stand.
  */
 export function setzeEin(v: BauplanVorlage, werte: Record<string, unknown>): BauplanChange[] {
   return v.changes.map(c => ersetze(c, werte) as BauplanChange);
+}
+
+/** Wie setzeEin für einen beliebigen Wert (z. B. die Prüfung einer Annahme); Vorlage bleibt unverändert. */
+export function setzeEinWert<T>(wert: T, werte: Record<string, unknown>): T {
+  return ersetze(wert, werte) as T;
 }
