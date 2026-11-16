@@ -1,0 +1,2256 @@
+{
+  "schema": 1,
+  "key": "pki_lab",
+  "titel": "PKI-Lab: isoliertes TLS-Negativtest-Lab",
+  "zweck": "Isoliertes Wegwerf-Lab (eigenes VLAN, eigene Zone, zwei Workgroup-Windows-VMs mit Lab-CA und Test-SQL) aufbauen, die sechs TLS-Fälle (gueltig, falscher_name, crl_unerreichbar, unbekannte_ca, gesperrt, abgelaufen) mit Zertifikats- und Fehlergrundnachweis durchlaufen und das Lab danach wieder vollständig abbauen. Entstanden aus den Changes 2cfde1a2 (Aufbau), 7335dfeb (Test) und 288c3716 (Abbau) vom 15.11.2026.",
+  "dokumentart": "testprotokoll",
+  "parameter": [
+    {
+      "name": "vlan",
+      "typ": "vlan",
+      "pflicht": true,
+      "beschreibung": "VLAN-ID des Lab-Netzes (muss frei sein)",
+      "beispiel": 832
+    },
+    {
+      "name": "netz",
+      "typ": "cidr",
+      "pflicht": true,
+      "beschreibung": "Lab-Netz ohne DHCP; die pki_lab-Bausteine prüfen fest auf 10.203.32.0/28 (Wächter in jedem Skript), darum nur dieser Wert",
+      "beispiel": "10.203.32.0/28",
+      "grenzen": {
+        "regex": "^10\\.203\\.32\\.0/28$"
+      }
+    },
+    {
+      "name": "gateway",
+      "typ": "ipv4",
+      "pflicht": false,
+      "beschreibung": "Gateway des Lab-Netzes (erste Adresse); in den Lab-VMs auch als Nameserver eingetragen, per Policy gesperrt",
+      "ableitung": {
+        "funktion": "erste_adresse",
+        "von": "netz"
+      }
+    },
+    {
+      "name": "praefix",
+      "typ": "zahl",
+      "pflicht": false,
+      "beschreibung": "Präfixlänge des Lab-Netzes für die statischen VM-Adressen",
+      "ableitung": {
+        "funktion": "praefix",
+        "von": "netz"
+      }
+    },
+    {
+      "name": "ip_server",
+      "typ": "ipv4",
+      "pflicht": false,
+      "beschreibung": "Adresse des Lab-Servers (Netz + 2)",
+      "ableitung": {
+        "funktion": "adresse",
+        "von": "netz",
+        "n": 2
+      }
+    },
+    {
+      "name": "ip_client",
+      "typ": "ipv4",
+      "pflicht": false,
+      "beschreibung": "Adresse des Lab-Clients (Netz + 3)",
+      "ableitung": {
+        "funktion": "adresse",
+        "von": "netz",
+        "n": 3
+      }
+    },
+    {
+      "name": "netzname",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Name des UniFi-Netzes (muss frei sein)",
+      "beispiel": "PKI-Lab"
+    },
+    {
+      "name": "zone",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Name der eigenen UniFi-Firewall-Zone des Labs",
+      "beispiel": "PKI-Lab"
+    },
+    {
+      "name": "richtlinien_praefix",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Namensanfang der drei Lab-Policies; der Abbau weist über ihn nach, dass keine Lab-Policy (auch keine Rückverkehrsregel) bleibt — darf vorher keine Policy tragen",
+      "beispiel": "PKILAB"
+    },
+    {
+      "name": "vmid_server",
+      "typ": "vmid",
+      "pflicht": true,
+      "beschreibung": "VMID des Lab-Servers (clusterweit frei)",
+      "beispiel": 157
+    },
+    {
+      "name": "vmid_client",
+      "typ": "vmid",
+      "pflicht": true,
+      "beschreibung": "VMID des Lab-Clients (clusterweit frei, ungleich vmid_server)",
+      "beispiel": 158
+    },
+    {
+      "name": "name_server",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Rechner- und Fernzugangsname des Lab-Servers (CA, IIS-Sperrliste, SQL); pki_lab verlangt lab… (Wächter Name LAB…), höchstens 15 Zeichen",
+      "beispiel": "labsrv01",
+      "grenzen": {
+        "regex": "^lab[a-z0-9-]{1,12}$"
+      }
+    },
+    {
+      "name": "name_client",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Rechner- und Fernzugangsname des Lab-Clients; pki_lab verlangt lab…, höchstens 15 Zeichen",
+      "beispiel": "labcli01",
+      "grenzen": {
+        "regex": "^lab[a-z0-9-]{1,12}$"
+      }
+    },
+    {
+      "name": "name_alias",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Zweiter Name des Lab-Servers, bewusst nicht im SAN (Fall falscher_name)",
+      "beispiel": "labalias",
+      "grenzen": {
+        "regex": "^[a-z0-9][a-z0-9-]{0,29}$"
+      }
+    },
+    {
+      "name": "node",
+      "typ": "node",
+      "pflicht": true,
+      "beschreibung": "Proxmox-Knoten der Lab-VMs und gleichnamiger Fernzugang; nur pve, weil Trunk-Weg (US XG 16 Port 5/9, C DB Switch XG 16 Port 3/4, Knoten-IP 192.168.1.30) fest auf pve zugeschnitten ist",
+      "beispiel": "pve",
+      "grenzen": {
+        "regex": "^pve$"
+      }
+    },
+    {
+      "name": "storage",
+      "typ": "storage",
+      "pflicht": true,
+      "beschreibung": "Speicher der VM-Platten auf dem Knoten",
+      "beispiel": "data2-pve"
+    },
+    {
+      "name": "domaene",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "DNS-Suffix des Labs (hosts-Einträge, SAN, Sperrlisten-URL); pki_lab kennt nur pkilab.test",
+      "beispiel": "pkilab.test",
+      "grenzen": {
+        "regex": "^pkilab\\.test$"
+      }
+    },
+    {
+      "name": "sql_konto",
+      "typ": "name",
+      "pflicht": true,
+      "beschreibung": "Tresorname (nicht Kennwort) des Lab-SQL-Logins; den Eintrag legt lab_sql_installieren bei Bedarf an",
+      "beispiel": "pkilab-sql",
+      "grenzen": {
+        "regex": "^pkilab-[a-z0-9-]{1,40}$"
+      }
+    }
+  ],
+  "annahmen": [
+    {
+      "id": "vmid_server_frei",
+      "text": "VMID des Lab-Servers ist clusterweit frei",
+      "pruefung": {
+        "typ": "skill",
+        "skill": "proxmox",
+        "aktion": "list_vms",
+        "parameter": {},
+        "erwartet": "| VMID |",
+        "nichtEnthalten": "| {{param.vmid_server}} |"
+      }
+    },
+    {
+      "id": "vmid_client_frei",
+      "text": "VMID des Lab-Clients ist clusterweit frei",
+      "pruefung": {
+        "typ": "skill",
+        "skill": "proxmox",
+        "aktion": "list_vms",
+        "parameter": {},
+        "erwartet": "| VMID |",
+        "nichtEnthalten": "| {{param.vmid_client}} |"
+      }
+    },
+    {
+      "id": "vlan_frei",
+      "text": "VLAN ist in UniFi keinem Netz zugeordnet",
+      "pruefung": {
+        "typ": "skill",
+        "skill": "unifi",
+        "aktion": "list_networks",
+        "parameter": {},
+        "nichtEnthalten": "| {{param.vlan}} |"
+      }
+    },
+    {
+      "id": "netzname_frei",
+      "text": "Netzname ist in UniFi frei",
+      "pruefung": {
+        "typ": "skill",
+        "skill": "unifi",
+        "aktion": "list_networks",
+        "parameter": {},
+        "nichtEnthalten": "| {{param.netzname}} |"
+      }
+    },
+    {
+      "id": "richtlinien_frei",
+      "text": "Keine Firewall-Policy trägt schon den Lab-Namensanfang",
+      "pruefung": {
+        "typ": "skill",
+        "skill": "unifi",
+        "aktion": "list_firewall_policies",
+        "parameter": {
+          "policy_name": "{{param.richtlinien_praefix}}"
+        },
+        "nichtEnthalten": "→"
+      }
+    }
+  ],
+  "changes": [
+    {
+      "schluessel": "aufbau",
+      "titel": "PKI-Lab A – isoliertes TLS-Lab VLAN {{param.vlan}} mit {{param.name_server}}/{{param.name_client}} aufbauen",
+      "begruendung": "Wegwerf-Lab für TLS-Negativtests: Workgroup-VMs {{param.name_server}} (VM {{param.vmid_server}}, {{param.ip_server}}) und {{param.name_client}} (VM {{param.vmid_client}}, {{param.ip_client}}) auf {{param.node}}/{{param.storage}}, vmbr0 VLAN {{param.vlan}}. Keine Domäne, kein RDP, kein Produktivtrust. Server 4 CPU/8 GiB, Client 2 CPU/4 GiB, je C: 100 GB, Windows-Vorlage 9100. Netz {{param.netz}} ohne DHCP in eigener Zone {{param.zone}}; ausdrückliche BLOCK-Policies zu External und Gateway, übrige Zonen UniFi-Default-Deny. Nur Alfred 192.168.1.92 TCP 22 samt Antworten. HTTP 80/SQL 1433 nur innerhalb des VLAN. Keine produktive CA/Sperrliste/Truststore-Änderung; SQL-ISO von sql01 nur hashgeprüft kopiert, sie bleibt liegen. Kein Internet, kein DNS/NTP über das Gateway, Namen per hosts unter {{param.domaene}}. Bei Fehler Halt, kein automatischer Rückweg; Rückweg delete_iso nur bei ausdrücklichem Owner-Rückweg eines gescheiterten Aufbaus.",
+      "typ": "normal",
+      "risiko": "high",
+      "ausfallMinuten": 0,
+      "abhaengigVon": [],
+      "betroffen": [
+        "{{param.node}}",
+        "UDMPRO",
+        "sql01"
+      ],
+      "schritte": [
+        {
+          "nr": 1,
+          "titel": "Quell-ISO auf SQL01 lesend vorhanden",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "SQLServer2025-x64-ENU-EntDev.iso",
+            "skill": "windows_cluster",
+            "aktion": "verzeichnis_lesen",
+            "parameter": {
+              "zugang": "sql01",
+              "pfad": "C:\\SQLMedia\\iso"
+            }
+          }
+        },
+        {
+          "nr": 2,
+          "titel": "UniFi-Konfiguration vor Änderungen exportieren",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "export_config",
+          "parameter": {}
+        },
+        {
+          "nr": 3,
+          "titel": "SQL-ISO hashgeprüft SQL01 → {{param.node}} local, kein Internet",
+          "art": "aktion",
+          "zeitlimitS": 3600,
+          "beiFehler": "anhalten",
+          "skill": "fernzugriff",
+          "aktion": "iso_ablegen",
+          "parameter": {
+            "quelle": "sql01",
+            "quelle_pfad": "C:\\SQLMedia\\iso\\SQLServer2025-x64-ENU-EntDev.iso",
+            "ziel": "{{param.node}}",
+            "dateiname": "SQLServer2025-x64-ENU-EntDev.iso"
+          },
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "SQLServer2025-x64-ENU-EntDev.iso",
+            "zugang": "{{param.node}}",
+            "befehl": "ls -l /var/lib/vz/template/iso/SQLServer2025-x64-ENU-EntDev.iso"
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "delete_iso",
+            "parameter": {
+              "volid": "{{schritt3.volid}}"
+            }
+          }
+        },
+        {
+          "nr": 4,
+          "titel": "Netz {{param.netzname}} (VLAN {{param.vlan}}) ohne DHCP anlegen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "create_network",
+          "parameter": {
+            "network_name": "{{param.netzname}}",
+            "vlan": "{{param.vlan}}",
+            "subnet": "{{param.netz}}",
+            "dhcp": false
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "| {{param.netzname}} |",
+            "skill": "unifi",
+            "aktion": "list_networks",
+            "parameter": {}
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "delete_network",
+            "parameter": {
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 5,
+          "titel": "Eigene Zone {{param.zone}}",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "create_zone",
+          "parameter": {
+            "zone_name": "{{param.zone}}",
+            "networks": [
+              "{{param.netzname}}"
+            ]
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "{{param.zone}}",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "External"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "delete_zone",
+            "parameter": {
+              "zone_name": "{{param.zone}}"
+            }
+          }
+        },
+        {
+          "nr": 6,
+          "titel": "Ausschließlich Alfred SSH ins Lab mit Rückverkehr",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "create_firewall_policy",
+          "parameter": {
+            "policy_name": "{{param.richtlinien_praefix}} Alfred SSH",
+            "policy_action": "ALLOW",
+            "source_zone": "Internal",
+            "source_ip": "192.168.1.92",
+            "destination_zone": "{{param.zone}}",
+            "destination_ip": "{{param.ip_server}},{{param.ip_client}}",
+            "destination_port": "22",
+            "policy_protocol": "TCP",
+            "allow_return_traffic": true
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "{{param.richtlinien_praefix}} Alfred SSH",
+            "nichtEnthalten": "(aus)",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "Internal",
+              "destination_zone": "{{param.zone}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "delete_firewall_policy",
+            "parameter": {
+              "policy_id": "{{schritt6.id}}"
+            }
+          }
+        },
+        {
+          "nr": 7,
+          "titel": "Explizit Lab → Internet sperren",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "create_firewall_policy",
+          "parameter": {
+            "policy_name": "{{param.richtlinien_praefix}} BLOCK Internet",
+            "policy_action": "BLOCK",
+            "source_zone": "{{param.zone}}",
+            "destination_zone": "External"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "BLOCK „{{param.richtlinien_praefix}} BLOCK Internet",
+            "nichtEnthalten": "ALLOW",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "External"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "delete_firewall_policy",
+            "parameter": {
+              "policy_id": "{{schritt7.id}}"
+            }
+          }
+        },
+        {
+          "nr": 8,
+          "titel": "Explizit Lab → Gateway sperren (auch DNS/NTP)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "create_firewall_policy",
+          "parameter": {
+            "policy_name": "{{param.richtlinien_praefix}} BLOCK Gateway",
+            "policy_action": "BLOCK",
+            "source_zone": "{{param.zone}}",
+            "destination_zone": "Gateway"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "BLOCK „{{param.richtlinien_praefix}} BLOCK Gateway",
+            "nichtEnthalten": "ALLOW",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "Gateway"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "delete_firewall_policy",
+            "parameter": {
+              "policy_id": "{{schritt8.id}}"
+            }
+          }
+        },
+        {
+          "nr": 9,
+          "titel": "Trunk US XG 16 Port5 VLAN{{param.vlan}} öffnen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "allow_network_on_port",
+          "parameter": {
+            "device": "US XG 16",
+            "switch_port": 5,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "US XG 16 Port 5",
+            "nichtEnthalten": "US XG 16 Port 5 (Gerät): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "exclude_network_on_port",
+            "parameter": {
+              "device": "US XG 16",
+              "switch_port": 5,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 10,
+          "titel": "Trunk US XG 16 Port9 VLAN{{param.vlan}} öffnen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "allow_network_on_port",
+          "parameter": {
+            "device": "US XG 16",
+            "switch_port": 9,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "US XG 16 Port 9",
+            "nichtEnthalten": "US XG 16 Port 9 (Uplink): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "exclude_network_on_port",
+            "parameter": {
+              "device": "US XG 16",
+              "switch_port": 9,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 11,
+          "titel": "Trunk C DB Switch XG 16 Port4 VLAN{{param.vlan}} öffnen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "allow_network_on_port",
+          "parameter": {
+            "device": "C DB Switch XG 16",
+            "switch_port": 4,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "C DB Switch XG 16 Port 4",
+            "nichtEnthalten": "C DB Switch XG 16 Port 4 (Gegenstelle): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "exclude_network_on_port",
+            "parameter": {
+              "device": "C DB Switch XG 16",
+              "switch_port": 4,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 12,
+          "titel": "Trunk C DB Switch XG 16 Port3 VLAN{{param.vlan}} öffnen, ganzer Weg frei",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "allow_network_on_port",
+          "parameter": {
+            "device": "C DB Switch XG 16",
+            "switch_port": 3,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "UDMPRO Port 11",
+            "nichtEnthalten": "GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "exclude_network_on_port",
+            "parameter": {
+              "device": "C DB Switch XG 16",
+              "switch_port": 3,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 13,
+          "titel": "VMIDs{{param.vmid_server}}/{{param.vmid_client}} VOR Anlage aus PBS ausnehmen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "backup_job_exclude",
+          "parameter": {
+            "job_id": "alfred-pbs-taeglich",
+            "add_vmids": [
+              "{{param.vmid_server}}",
+              "{{param.vmid_client}}"
+            ]
+          },
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "{{param.vmid_server}}",
+            "zugang": "{{param.node}}",
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "backup_job_exclude",
+            "parameter": {
+              "job_id": "alfred-pbs-taeglich",
+              "add_vmids": [
+                "{{param.vmid_server}}",
+                "{{param.vmid_client}}"
+              ]
+            }
+          }
+        },
+        {
+          "nr": 14,
+          "titel": "PBS lässt auch VM{{param.vmid_client}} aus",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "{{param.vmid_client}}",
+            "zugang": "{{param.node}}",
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+          }
+        },
+        {
+          "nr": 15,
+          "titel": "{{param.name_server}} VM{{param.vmid_server}} ohne Domäne, VLAN{{param.vlan}}",
+          "art": "aktion",
+          "zeitlimitS": 3000,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "provision_windows_vm",
+          "parameter": {
+            "template": "9100",
+            "hostname": "{{param.name_server}}",
+            "new_vmid": "{{param.vmid_server}}",
+            "node": "{{param.node}}",
+            "storage": "{{param.storage}}",
+            "ip": "{{param.ip_server}}/{{param.praefix}}",
+            "gateway": "{{param.gateway}}",
+            "nameserver": "{{param.gateway}}",
+            "bridge": "vmbr0",
+            "vlan_tag": "{{param.vlan}}",
+            "memory": 8192,
+            "cores": 4,
+            "disk_size": 100,
+            "owner_konto": "",
+            "rdp": false
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "Mitglied der Domäne",
+            "skill": "windows_ad",
+            "aktion": "status",
+            "parameter": {
+              "zugang": "{{param.name_server}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "shutdown_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 16,
+          "titel": "{{param.name_client}} VM{{param.vmid_client}} ohne Domäne, VLAN{{param.vlan}}",
+          "art": "aktion",
+          "zeitlimitS": 3000,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "provision_windows_vm",
+          "parameter": {
+            "template": "9100",
+            "hostname": "{{param.name_client}}",
+            "new_vmid": "{{param.vmid_client}}",
+            "node": "{{param.node}}",
+            "storage": "{{param.storage}}",
+            "ip": "{{param.ip_client}}/{{param.praefix}}",
+            "gateway": "{{param.gateway}}",
+            "nameserver": "{{param.gateway}}",
+            "bridge": "vmbr0",
+            "vlan_tag": "{{param.vlan}}",
+            "memory": 4096,
+            "cores": 2,
+            "disk_size": 100,
+            "owner_konto": "",
+            "rdp": false
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "Mitglied der Domäne",
+            "skill": "windows_ad",
+            "aktion": "status",
+            "parameter": {
+              "zugang": "{{param.name_client}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "shutdown_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_client}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 17,
+          "titel": "{{param.name_server}} C erweitern falls nötig (SQL-Platz)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "windows_cluster",
+          "aktion": "systemplatte_erweitern",
+          "parameter": {
+            "zugang": "{{param.name_server}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "C: Windows",
+            "skill": "windows_cluster",
+            "aktion": "status",
+            "parameter": {
+              "zugang": "{{param.name_server}}"
+            }
+          },
+          "rueckweg": {
+            "keiner": "Nur neuer Lab-Rechner, Erweiterung irreversibel."
+          }
+        },
+        {
+          "nr": 18,
+          "titel": "{{param.name_server}} Lab-Namen und DNS-Suffix",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_namen_setzen",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "eintraege": [
+              {
+                "name": "{{param.name_server}}.{{param.domaene}}",
+                "ip": "{{param.ip_server}}"
+              },
+              {
+                "name": "{{param.name_alias}}.{{param.domaene}}",
+                "ip": "{{param.ip_server}}"
+              },
+              {
+                "name": "{{param.name_client}}.{{param.domaene}}",
+                "ip": "{{param.ip_client}}"
+              }
+            ]
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-Rechner, kein produktives DNS."
+          }
+        },
+        {
+          "nr": 19,
+          "titel": "{{param.name_client}} Lab-Namen und DNS-Suffix",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_namen_setzen",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "eintraege": [
+              {
+                "name": "{{param.name_server}}.{{param.domaene}}",
+                "ip": "{{param.ip_server}}"
+              },
+              {
+                "name": "{{param.name_alias}}.{{param.domaene}}",
+                "ip": "{{param.ip_server}}"
+              },
+              {
+                "name": "{{param.name_client}}.{{param.domaene}}",
+                "ip": "{{param.ip_client}}"
+              }
+            ]
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-Rechner, kein produktives DNS."
+          }
+        },
+        {
+          "nr": 20,
+          "titel": "SQL-ISO an {{param.name_server}} ide2 einlegen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "attach_iso",
+          "parameter": {
+            "vmid": "{{param.vmid_server}}",
+            "volid": "{{schritt3.volid}}",
+            "laufwerk": "ide2"
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "detach_iso",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}",
+              "laufwerk": "ide2"
+            }
+          }
+        },
+        {
+          "nr": 21,
+          "titel": "{{param.name_server}} neu starten (Suffix + CD-Laufwerk) – ein Neustart für beides",
+          "art": "aktion",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "reboot_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_server}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "running",
+            "skill": "proxmox",
+            "aktion": "vm_status",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "shutdown_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 22,
+          "titel": "{{param.name_client}} neu starten (Suffix)",
+          "art": "aktion",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "reboot_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_client}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "running",
+            "skill": "proxmox",
+            "aktion": "vm_status",
+            "parameter": {
+              "vmid": "{{param.vmid_client}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "shutdown_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_client}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 23,
+          "titel": "Warten bis {{param.name_server}} per SSH bereit",
+          "art": "warten",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "Mitglied der Domäne",
+            "skill": "windows_ad",
+            "aktion": "status",
+            "parameter": {
+              "zugang": "{{param.name_server}}"
+            }
+          }
+        },
+        {
+          "nr": 24,
+          "titel": "Warten bis {{param.name_client}} per SSH bereit",
+          "art": "warten",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "Mitglied der Domäne",
+            "skill": "windows_ad",
+            "aktion": "status",
+            "parameter": {
+              "zugang": "{{param.name_client}}"
+            }
+          }
+        },
+        {
+          "nr": 25,
+          "titel": "Lab-CA und HTTP-Sperrliste auf {{param.name_server}}",
+          "art": "aktion",
+          "zeitlimitS": 1800,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_ca_einrichten",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "crl_host": "{{param.name_server}}.{{param.domaene}}"
+          },
+          "rueckweg": {
+            "keiner": "Wegwerf-Lab-CA, Identität irreversibel; Stilllegung separat."
+          }
+        },
+        {
+          "nr": 26,
+          "titel": "Nur {{param.name_client}} vertraut der Lab-Root",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_root_vertrauen",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "quelle": "{{param.name_server}}"
+          },
+          "rueckweg": {
+            "keiner": "Nur Workgroup-Labclient; produktive Truststores unberührt."
+          }
+        },
+        {
+          "nr": 27,
+          "titel": "SQL Developer vom eingelegten Microsoft-signierten ISO",
+          "art": "aktion",
+          "zeitlimitS": 7200,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_sql_installieren",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Isolierte Wegwerf-Instanz; Kennwort erzeugt der Baustein im Tresor. Stilllegung separat."
+          }
+        },
+        {
+          "nr": 28,
+          "titel": "ISO aushängen, Volume bleibt auf {{param.node}}",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "detach_iso",
+          "parameter": {
+            "vmid": "{{param.vmid_server}}",
+            "laufwerk": "ide2"
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "attach_iso",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}",
+              "volid": "{{schritt3.volid}}",
+              "laufwerk": "ide2"
+            }
+          }
+        },
+        {
+          "nr": 29,
+          "titel": "Abschluss: Internet-Sperre aktiv, kein ALLOW",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "BLOCK „{{param.richtlinien_praefix}} BLOCK Internet",
+            "nichtEnthalten": "ALLOW",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "External"
+            }
+          }
+        },
+        {
+          "nr": 30,
+          "titel": "Abschluss: Gateway-Sperre aktiv, kein ALLOW",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "BLOCK „{{param.richtlinien_praefix}} BLOCK Gateway",
+            "nichtEnthalten": "ALLOW",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "Gateway"
+            }
+          }
+        },
+        {
+          "nr": 31,
+          "titel": "Gegenprobe: {{param.name_client}} → {{param.name_server}}.{{param.domaene}}:1433 ok",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": ":1433 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_client}}",
+              "ziel": "{{param.name_server}}.{{param.domaene}}",
+              "port": 1433
+            }
+          }
+        },
+        {
+          "nr": 32,
+          "titel": "Abschottung echt: {{param.name_server}} → sql01 10.203.30.2:1433 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":1433 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "ziel": "10.203.30.2",
+              "port": 1433
+            }
+          }
+        },
+        {
+          "nr": 33,
+          "titel": "Abschottung echt: {{param.name_server}} → dc01 10.203.29.2:445 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":445 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "ziel": "10.203.29.2",
+              "port": 445
+            }
+          }
+        },
+        {
+          "nr": 34,
+          "titel": "Abschottung echt: {{param.name_server}} → Gateway {{param.gateway}}:443 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":443 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "ziel": "{{param.gateway}}",
+              "port": 443
+            }
+          }
+        },
+        {
+          "nr": 35,
+          "titel": "Abschottung echt: {{param.name_server}} → Internet 1.1.1.1:443 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":443 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "ziel": "1.1.1.1",
+              "port": 443
+            }
+          }
+        },
+        {
+          "nr": 36,
+          "titel": "Abschottung echt: {{param.name_client}} → sql01 10.203.30.2:1433 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":1433 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_client}}",
+              "ziel": "10.203.30.2",
+              "port": 1433
+            }
+          }
+        },
+        {
+          "nr": 37,
+          "titel": "Abschottung echt: {{param.name_client}} → dc01 10.203.29.2:445 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":445 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_client}}",
+              "ziel": "10.203.29.2",
+              "port": 445
+            }
+          }
+        },
+        {
+          "nr": 38,
+          "titel": "Abschottung echt: {{param.name_client}} → Gateway {{param.gateway}}:443 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":443 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_client}}",
+              "ziel": "{{param.gateway}}",
+              "port": 443
+            }
+          }
+        },
+        {
+          "nr": 39,
+          "titel": "Abschottung echt: {{param.name_client}} → Internet 1.1.1.1:443 gesperrt",
+          "art": "pruefung",
+          "zeitlimitS": 120,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "erreichbar",
+            "nichtEnthalten": ":443 ok",
+            "skill": "windows_cluster",
+            "aktion": "verbindung_pruefen",
+            "parameter": {
+              "zugang": "{{param.name_client}}",
+              "ziel": "1.1.1.1",
+              "port": 443
+            }
+          }
+        }
+      ]
+    },
+    {
+      "schluessel": "test",
+      "titel": "PKI-Lab B – sechs TLS-Fälle mit Zertifikats- und Fehlergrundnachweis",
+      "begruendung": "Nur {{param.name_server}}/{{param.name_client}} im VLAN {{param.vlan}}. tls_negativtest prüft den vorgelegten Thumbprint gegen das Fixture, die Kette online und meldet sich echt mit Encrypt=True/TrustServerCertificate=False an; LAB_TLS_OK nur bei fall gueltig, EXPECTED_TLS_FAILURE nur mit zum Fall passendem Grund, nie aus bloßem Verbindungsfehler — sonst Fehler und Halt. Nach crl_unerreichbar Lab-Sperrliste sofort wieder an und zusätzliche positive Kontrolle. Ablauf mit echtem 10-Minuten-Fixture und 660 s Wartezeit ab Bindung, keine Uhrmanipulation. Kein automatischer Abbau, keine Produktiv-PKI-/Truständerung.",
+      "typ": "normal",
+      "risiko": "medium",
+      "ausfallMinuten": 0,
+      "abhaengigVon": [
+        "aufbau"
+      ],
+      "betroffen": [
+        "{{param.node}}"
+      ],
+      "ohneSicherungGrund": "Es entstehen nur neue Lab-Fixtures und Bindungen auf den Wegwerf-Rechnern {{param.name_server}}/{{param.name_client}}; keine produktive Konfiguration wird verändert.",
+      "schritte": [
+        {
+          "nr": 1,
+          "titel": "Gültiges Fixture, SAN nur {{param.name_server}} (bewusst ohne Alias)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_ausstellen",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "art": "gueltig",
+            "dns": [
+              "{{param.name_server}}.{{param.domaene}}"
+            ]
+          },
+          "rueckweg": {
+            "keiner": "Lab-Ausstellung."
+          }
+        },
+        {
+          "nr": 2,
+          "titel": "Gültiges Fixture binden",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_binden",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "thumbprint": "{{schritt1.thumbprint}}"
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-SQL."
+          }
+        },
+        {
+          "nr": 3,
+          "titel": "Fall gueltig → LAB_TLS_OK",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "gueltig",
+            "erwarteter_thumbprint": "{{schritt1.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf ohne Zustandsänderung außer CRL-Cache des Labclients."
+          }
+        },
+        {
+          "nr": 4,
+          "titel": "Fall falscher_name über {{param.name_alias}} → EXPECTED_TLS_FAILURE",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_alias}}.{{param.domaene}}",
+            "fall": "falscher_name",
+            "erwarteter_thumbprint": "{{schritt1.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf."
+          }
+        },
+        {
+          "nr": 5,
+          "titel": "Lab-CRL-Webserver aus",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_crl_dienst",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "an": false,
+            "crl_host": "{{param.name_server}}.{{param.domaene}}"
+          },
+          "rueckweg": {
+            "skill": "pki_lab",
+            "aktion": "lab_crl_dienst",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "an": true,
+              "crl_host": "{{param.name_server}}.{{param.domaene}}"
+            }
+          }
+        },
+        {
+          "nr": 6,
+          "titel": "Fall crl_unerreichbar → EXPECTED_TLS_FAILURE",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "crl_unerreichbar",
+            "erwarteter_thumbprint": "{{schritt1.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf; CRL-Dienst über Rückweg von Schritt5."
+          }
+        },
+        {
+          "nr": 7,
+          "titel": "Lab-CRL-Webserver wieder an",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_crl_dienst",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "an": true,
+            "crl_host": "{{param.name_server}}.{{param.domaene}}"
+          },
+          "rueckweg": {
+            "skill": "pki_lab",
+            "aktion": "lab_crl_dienst",
+            "parameter": {
+              "zugang": "{{param.name_server}}",
+              "an": true,
+              "crl_host": "{{param.name_server}}.{{param.domaene}}"
+            }
+          }
+        },
+        {
+          "nr": 8,
+          "titel": "Zusätzliche Kontrolle gueltig nach CRL-Wiederanlauf",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "gueltig",
+            "erwarteter_thumbprint": "{{schritt1.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf."
+          }
+        },
+        {
+          "nr": 9,
+          "titel": "Selbstsigniertes Fixture (nie ins Vertrauen)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_ausstellen",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "art": "selbstsigniert",
+            "dns": [
+              "{{param.name_server}}.{{param.domaene}}"
+            ]
+          },
+          "rueckweg": {
+            "keiner": "Lab-Fixture."
+          }
+        },
+        {
+          "nr": 10,
+          "titel": "Selbstsigniertes Fixture binden",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_binden",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "thumbprint": "{{schritt9.thumbprint}}"
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-SQL."
+          }
+        },
+        {
+          "nr": 11,
+          "titel": "Fall unbekannte_ca → EXPECTED_TLS_FAILURE",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "unbekannte_ca",
+            "erwarteter_thumbprint": "{{schritt9.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf."
+          }
+        },
+        {
+          "nr": 12,
+          "titel": "Neues gültiges Fixture für den Sperrfall",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_ausstellen",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "art": "gueltig",
+            "dns": [
+              "{{param.name_server}}.{{param.domaene}}"
+            ]
+          },
+          "rueckweg": {
+            "keiner": "Lab-Ausstellung."
+          }
+        },
+        {
+          "nr": 13,
+          "titel": "Sperr-Fixture binden",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_binden",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "thumbprint": "{{schritt12.thumbprint}}"
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-SQL."
+          }
+        },
+        {
+          "nr": 14,
+          "titel": "Nur dieses Lab-Fixture sperren, Seriennummer in Lab-CRL",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_sperren",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "thumbprint": "{{schritt12.thumbprint}}"
+          },
+          "rueckweg": {
+            "keiner": "Widerruf irreversibel, nur Lab-CA."
+          }
+        },
+        {
+          "nr": 15,
+          "titel": "Fall gesperrt → EXPECTED_TLS_FAILURE",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "gesperrt",
+            "erwarteter_thumbprint": "{{schritt12.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf."
+          }
+        },
+        {
+          "nr": 16,
+          "titel": "Kurzlebiges 10-Minuten-Fixture",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_ausstellen",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "art": "kurzlebig",
+            "dns": [
+              "{{param.name_server}}.{{param.domaene}}"
+            ],
+            "minuten": 10
+          },
+          "rueckweg": {
+            "keiner": "Lab-Fixture, keine Uhränderung."
+          }
+        },
+        {
+          "nr": 17,
+          "titel": "Kurzlebiges Fixture binden",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "lab_zertifikat_binden",
+          "parameter": {
+            "zugang": "{{param.name_server}}",
+            "thumbprint": "{{schritt16.thumbprint}}"
+          },
+          "rueckweg": {
+            "keiner": "Nur Lab-SQL."
+          }
+        },
+        {
+          "nr": 18,
+          "titel": "Echten Ablauf abwarten: 660 s ab Bindung",
+          "art": "warten",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "sekunden": 660
+        },
+        {
+          "nr": 19,
+          "titel": "Fall abgelaufen → EXPECTED_TLS_FAILURE",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "pki_lab",
+          "aktion": "tls_negativtest",
+          "parameter": {
+            "zugang": "{{param.name_client}}",
+            "ziel": "{{param.name_server}}.{{param.domaene}}",
+            "fall": "abgelaufen",
+            "erwarteter_thumbprint": "{{schritt16.thumbprint}}",
+            "konto_tresor": "{{param.sql_konto}}"
+          },
+          "rueckweg": {
+            "keiner": "Testlauf."
+          }
+        }
+      ]
+    },
+    {
+      "schluessel": "abbau",
+      "titel": "PKI-Lab C – {{param.name_server}}/{{param.name_client}} und VLAN {{param.vlan}} abbauen, ISO und Tresoreinträge erhalten",
+      "begruendung": "Endgültiger Abbau nach Durchsicht der Testergebnisse (Owner-Schritt zuerst): ausschließlich VM {{param.vmid_server}} {{param.name_server}} und VM {{param.vmid_client}} {{param.name_client}} samt Platten auf {{param.storage}}. Erst nach VM-/Plattenabwesenheit die PBS-Ausnahmen idempotent entfernen. Die drei Policies (IDs aus dem Aufbau; die abgeleitete Rückverkehrsregel fällt mit der SSH-Policy), Zone {{param.zone}}, vier Trunk-Freigaben und Netz {{param.netzname}} entfernen. Port-Nachweise vor der Netzlöschung, weil trunk_path das Netz noch auflösen muss. SQL-ISO bleibt erhalten. Tresoreinträge (Lab-Admins, {{param.sql_konto}}) bleiben; spätere Einzelbereinigung außerhalb des Changes mit Owner-Bestätigung. Produktiv-PKI/Truststores unberührt. Fehler Halt, kein automatischer Rückweg. VM-Löschung irreversibel.",
+      "typ": "normal",
+      "risiko": "high",
+      "ausfallMinuten": 0,
+      "abhaengigVon": [
+        "aufbau",
+        "test"
+      ],
+      "betroffen": [
+        "{{param.node}}",
+        "UDMPRO"
+      ],
+      "schritte": [
+        {
+          "nr": 1,
+          "titel": "Owner: Testergebnisse durchgesehen, Lab jetzt endgültig abbauen?",
+          "art": "owner",
+          "beiFehler": "anhalten",
+          "frage": "Die TLS-Fälle sind gelaufen (Change test). Ergebnisse durchgesehen? Nach deinem Ja werden VM {{param.vmid_server}} {{param.name_server}} und VM {{param.vmid_client}} {{param.name_client}} endgültig gelöscht und Netz, Zone, Policies und Trunk-Freigaben von VLAN {{param.vlan}} entfernt."
+        },
+        {
+          "nr": 2,
+          "titel": "UniFi-Konfiguration sichern",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "export_config",
+          "parameter": {}
+        },
+        {
+          "nr": 3,
+          "titel": "Identität VM{{param.vmid_server}} {{param.name_server}} prüfen",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "name: {{param.name_server}}",
+            "zugang": "{{param.node}}",
+            "befehl": "qm config {{param.vmid_server}}"
+          }
+        },
+        {
+          "nr": 4,
+          "titel": "Identität VM{{param.vmid_client}} {{param.name_client}} prüfen",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "name: {{param.name_client}}",
+            "zugang": "{{param.node}}",
+            "befehl": "qm config {{param.vmid_client}}"
+          }
+        },
+        {
+          "nr": 5,
+          "titel": "VM{{param.vmid_server}} geordnet stoppen, getrennt vom Löschen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "shutdown_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_server}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "stopped",
+            "skill": "proxmox",
+            "aktion": "vm_status",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "start_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_server}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 6,
+          "titel": "VM{{param.vmid_client}} geordnet stoppen, getrennt vom Löschen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "shutdown_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_client}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "stopped",
+            "skill": "proxmox",
+            "aktion": "vm_status",
+            "parameter": {
+              "vmid": "{{param.vmid_client}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "start_vm",
+            "parameter": {
+              "vmid": "{{param.vmid_client}}",
+              "node": "{{param.node}}"
+            }
+          }
+        },
+        {
+          "nr": 7,
+          "titel": "VM{{param.vmid_server}} {{param.name_server}} samt Platten endgültig zerstören",
+          "art": "aktion",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "delete_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_server}}",
+            "vm_name": "{{param.name_server}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "VM{{param.vmid_server}}_ABWESEND",
+            "zugang": "{{param.node}}",
+            "befehl": "test ! -e /etc/pve/qemu-server/{{param.vmid_server}}.conf && test ! -e /etc/pve/lxc/{{param.vmid_server}}.conf && echo VM{{param.vmid_server}}_ABWESEND"
+          },
+          "rueckweg": {
+            "keiner": "Explizite endgültige Stilllegung des Wegwerf-Labs. Nicht wiederherstellbar."
+          }
+        },
+        {
+          "nr": 8,
+          "titel": "VM{{param.vmid_client}} {{param.name_client}} samt Platten endgültig zerstören",
+          "art": "aktion",
+          "zeitlimitS": 900,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "delete_vm",
+          "parameter": {
+            "vmid": "{{param.vmid_client}}",
+            "vm_name": "{{param.name_client}}",
+            "node": "{{param.node}}"
+          },
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "VM{{param.vmid_client}}_ABWESEND",
+            "zugang": "{{param.node}}",
+            "befehl": "test ! -e /etc/pve/qemu-server/{{param.vmid_client}}.conf && test ! -e /etc/pve/lxc/{{param.vmid_client}}.conf && echo VM{{param.vmid_client}}_ABWESEND"
+          },
+          "rueckweg": {
+            "keiner": "Explizite endgültige Stilllegung. Nicht wiederherstellbar."
+          }
+        },
+        {
+          "nr": 9,
+          "titel": "Keine Platten{{param.vmid_server}} auf belegtem Speicher",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "Volid",
+            "nichtEnthalten": "vm-{{param.vmid_server}}-",
+            "zugang": "{{param.node}}",
+            "befehl": "pvesm list {{param.storage}} --vmid {{param.vmid_server}}"
+          }
+        },
+        {
+          "nr": 10,
+          "titel": "Keine Platten{{param.vmid_client}} auf belegtem Speicher",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "Volid",
+            "nichtEnthalten": "vm-{{param.vmid_client}}-",
+            "zugang": "{{param.node}}",
+            "befehl": "pvesm list {{param.storage}} --vmid {{param.vmid_client}}"
+          }
+        },
+        {
+          "nr": 11,
+          "titel": "Erst jetzt PBS-Ausnahmen{{param.vmid_server}}/{{param.vmid_client}} idempotent entfernen, übrige erhalten",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "proxmox",
+          "aktion": "backup_job_exclude",
+          "parameter": {
+            "job_id": "alfred-pbs-taeglich",
+            "remove_vmids": [
+              "{{param.vmid_server}}",
+              "{{param.vmid_client}}"
+            ]
+          },
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "vzdump: alfred-pbs-taeglich",
+            "nichtEnthalten": "{{param.vmid_server}}",
+            "zugang": "{{param.node}}",
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+          },
+          "rueckweg": {
+            "skill": "proxmox",
+            "aktion": "backup_job_exclude",
+            "parameter": {
+              "job_id": "alfred-pbs-taeglich",
+              "add_vmids": [
+                "{{param.vmid_server}}",
+                "{{param.vmid_client}}"
+              ]
+            }
+          }
+        },
+        {
+          "nr": 12,
+          "titel": "PBS auch ohne{{param.vmid_client}} nachweisen",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "vzdump: alfred-pbs-taeglich",
+            "nichtEnthalten": "{{param.vmid_client}}",
+            "zugang": "{{param.node}}",
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg"
+          }
+        },
+        {
+          "nr": 13,
+          "titel": "Lesende Bestandsaufnahme {{param.zone}} ↔ Internal einschließlich abgeleiteter SSH-Rückverkehrsregel",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          }
+        },
+        {
+          "nr": 14,
+          "titel": "Policy „{{param.richtlinien_praefix}} Alfred SSH“ entfernen (ID aus dem Aufbau)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "delete_firewall_policy",
+          "parameter": {
+            "policy_id": "{{change:aufbau.schritt6.id}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "{{change:aufbau.schritt6.id}}",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "create_firewall_policy",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}} Alfred SSH",
+              "policy_action": "ALLOW",
+              "source_zone": "Internal",
+              "source_ip": "192.168.1.92",
+              "destination_zone": "{{param.zone}}",
+              "destination_ip": "{{param.ip_server}},{{param.ip_client}}",
+              "destination_port": "22",
+              "policy_protocol": "TCP",
+              "allow_return_traffic": true
+            }
+          }
+        },
+        {
+          "nr": 15,
+          "titel": "Lesend nachweisen: weder Ursprungsregel „{{param.richtlinien_praefix}} Alfred SSH“ noch die abgeleitete Rückverkehrsregel zwischen Internal und {{param.zone}} verblieben",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "→",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}} Alfred SSH"
+            }
+          }
+        },
+        {
+          "nr": 16,
+          "titel": "Policy „{{param.richtlinien_praefix}} BLOCK Internet“ entfernen (ID aus dem Aufbau)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "delete_firewall_policy",
+          "parameter": {
+            "policy_id": "{{change:aufbau.schritt7.id}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "{{change:aufbau.schritt7.id}}",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "create_firewall_policy",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}} BLOCK Internet",
+              "policy_action": "BLOCK",
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "External"
+            }
+          }
+        },
+        {
+          "nr": 17,
+          "titel": "Policy „{{param.richtlinien_praefix}} BLOCK Gateway“ entfernen (ID aus dem Aufbau)",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "delete_firewall_policy",
+          "parameter": {
+            "policy_id": "{{change:aufbau.schritt8.id}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "→",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "create_firewall_policy",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}} BLOCK Gateway",
+              "policy_action": "BLOCK",
+              "source_zone": "{{param.zone}}",
+              "destination_zone": "Gateway"
+            }
+          }
+        },
+        {
+          "nr": 18,
+          "titel": "Zone {{param.zone}} löschen, erfolgreichen API-Löschbeleg verlangen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "delete_zone",
+          "parameter": {
+            "zone_name": "{{param.zone}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "→",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "create_zone",
+            "parameter": {
+              "zone_name": "{{param.zone}}",
+              "networks": [
+                "{{param.netzname}}"
+              ]
+            }
+          }
+        },
+        {
+          "nr": 19,
+          "titel": "US XG16 Port5 VLAN{{param.vlan}} entfernen und prüfen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "exclude_network_on_port",
+          "parameter": {
+            "device": "US XG 16",
+            "switch_port": 5,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "US XG 16 Port 5 (Gerät): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "allow_network_on_port",
+            "parameter": {
+              "device": "US XG 16",
+              "switch_port": 5,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 20,
+          "titel": "US XG16 Port9 VLAN{{param.vlan}} entfernen und prüfen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "exclude_network_on_port",
+          "parameter": {
+            "device": "US XG 16",
+            "switch_port": 9,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "US XG 16 Port 9 (Uplink): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "allow_network_on_port",
+            "parameter": {
+              "device": "US XG 16",
+              "switch_port": 9,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 21,
+          "titel": "C DB Switch XG16 Port3 VLAN{{param.vlan}} entfernen und prüfen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "exclude_network_on_port",
+          "parameter": {
+            "device": "C DB Switch XG 16",
+            "switch_port": 3,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "C DB Switch XG 16 Port 3 (Uplink): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "allow_network_on_port",
+            "parameter": {
+              "device": "C DB Switch XG 16",
+              "switch_port": 3,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 22,
+          "titel": "C DB Switch XG16 Port4 VLAN{{param.vlan}} entfernen und prüfen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "exclude_network_on_port",
+          "parameter": {
+            "device": "C DB Switch XG 16",
+            "switch_port": 4,
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "erwartet": "C DB Switch XG 16 Port 4 (Gegenstelle): custom — GESPERRT",
+            "skill": "unifi",
+            "aktion": "trunk_path",
+            "parameter": {
+              "client_ip": "192.168.1.30",
+              "network_name": "{{param.netzname}}"
+            }
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "allow_network_on_port",
+            "parameter": {
+              "device": "C DB Switch XG 16",
+              "switch_port": 4,
+              "network_name": "{{param.netzname}}"
+            }
+          }
+        },
+        {
+          "nr": 23,
+          "titel": "Netz {{param.netzname}} VLAN{{param.vlan}} löschen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "delete_network",
+          "parameter": {
+            "network_name": "{{param.netzname}}"
+          },
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "| {{param.netzname}} |",
+            "skill": "unifi",
+            "aktion": "list_networks",
+            "parameter": {}
+          },
+          "rueckweg": {
+            "skill": "unifi",
+            "aktion": "create_network",
+            "parameter": {
+              "network_name": "{{param.netzname}}",
+              "vlan": "{{param.vlan}}",
+              "subnet": "{{param.netz}}",
+              "dhcp": false
+            }
+          }
+        },
+        {
+          "nr": 24,
+          "titel": "Abschluss beide VM-Konfigurationen fehlen",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "LAB_C_OK",
+            "zugang": "{{param.node}}",
+            "befehl": "test ! -e /etc/pve/qemu-server/{{param.vmid_server}}.conf && test ! -e /etc/pve/qemu-server/{{param.vmid_client}}.conf && echo LAB_C_OK"
+          }
+        },
+        {
+          "nr": 25,
+          "titel": "Abschluss keine Platten{{param.vmid_server}}",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "Volid",
+            "nichtEnthalten": "vm-{{param.vmid_server}}-",
+            "zugang": "{{param.node}}",
+            "befehl": "pvesm list {{param.storage}} --vmid {{param.vmid_server}}"
+          }
+        },
+        {
+          "nr": 26,
+          "titel": "Abschluss keine Platten{{param.vmid_client}}",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "Volid",
+            "nichtEnthalten": "vm-{{param.vmid_client}}-",
+            "zugang": "{{param.node}}",
+            "befehl": "pvesm list {{param.storage}} --vmid {{param.vmid_client}}"
+          }
+        },
+        {
+          "nr": 27,
+          "titel": "Abschluss Netz {{param.netzname}} fehlt",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "| {{param.netzname}} |",
+            "skill": "unifi",
+            "aktion": "list_networks",
+            "parameter": {}
+          }
+        },
+        {
+          "nr": 28,
+          "titel": "UniFi-Konfiguration vor Bereinigung verwaister Netzreferenz sichern",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "export_config",
+          "parameter": {}
+        },
+        {
+          "nr": 29,
+          "titel": "Ausschließlich die verwaiste Netz-ID des Lab-Netzes (aus dem Aufbau) aus Zonen bereinigen",
+          "art": "aktion",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "skill": "unifi",
+          "aktion": "remove_orphan_zone_networks",
+          "parameter": {
+            "network_id": "{{change:aufbau.schritt4.id}}"
+          },
+          "rueckweg": {
+            "keiner": "Entfernt ausschließlich Referenzen auf nicht mehr existierende Netze; der Skill prüft den Bestand und liest das Ergebnis nach. Rückweg laut Owner nicht nötig."
+          }
+        },
+        {
+          "nr": 30,
+          "titel": "Firewall-Policies nach Bereinigung lesend fehlerfrei abrufen",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {}
+          }
+        },
+        {
+          "nr": 31,
+          "titel": "Abschluss keine Lab-Policies inklusive Return",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "skill",
+            "nichtEnthalten": "→",
+            "skill": "unifi",
+            "aktion": "list_firewall_policies",
+            "parameter": {
+              "policy_name": "{{param.richtlinien_praefix}}"
+            }
+          }
+        },
+        {
+          "nr": 32,
+          "titel": "Abschluss SQL-ISO bleibt vorhanden",
+          "art": "pruefung",
+          "zeitlimitS": 600,
+          "beiFehler": "anhalten",
+          "pruefung": {
+            "typ": "befehl",
+            "erwartet": "SQLServer2025-x64-ENU-EntDev.iso",
+            "zugang": "{{param.node}}",
+            "befehl": "ls -l /var/lib/vz/template/iso/SQLServer2025-x64-ENU-EntDev.iso"
+          }
+        }
+      ]
+    }
+  ]
+}
