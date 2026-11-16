@@ -99,7 +99,7 @@ function pruefePlatzhalter(v: BauplanVorlage, fehler: string[]): Set<string> {
 
   for (const c of v.changes) {
     const wo = `changes „${c.schluessel}“`;
-    for (const f of ['titel', 'begruendung', 'betroffen'] as const) durchlaufe(c[f], { wo: `${wo}.${f}`, feld: f, bereich: { art: 'kopf', change: c.schluessel } }, besuche);
+    for (const f of ['titel', 'begruendung', 'betroffen', 'ohneSicherungGrund'] as const) durchlaufe(c[f], { wo: `${wo}.${f}`, feld: f, bereich: { art: 'kopf', change: c.schluessel } }, besuche);
     c.schritte.forEach((s, i) => {
       for (const [teil, w] of Object.entries(s))
         durchlaufe(w, { wo: `${wo} Schritt ${i + 1}.${teil}`, feld: teil, bereich: { art: 'schritt', change: c.schluessel, position: i + 1, teil } }, besuche);
@@ -146,6 +146,7 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
   const plaene: unknown[] = eingesetzt.map(c => ({
     schluessel: c.schluessel, titel: c.titel, begruendung: c.begruendung, typ: c.typ, risiko: c.risiko,
     ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
+    ...(c.ohneSicherungGrund !== undefined ? { ohneSicherungGrund: c.ohneSicherungGrund } : {}),
     abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
     // Task 3 Fix-Runde 1 — {{change:<schluessel>…}} bleibt stehen: der Change-Validator (pruefeNur) prüft ihn echt (Hülle, Ziel-Schritt, Typ)
     schritte: c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return rest; }),

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { BauplanVorlageZeile, BauplanVorlageStatus } from '@alfred/storage';
-import { BauplanDienst, type BauplanDeps } from './bauplan-dienst.js';
+import { BauplanDienst, heikleAktionen, type BauplanDeps } from './bauplan-dienst.js';
+import { BauplanSkill, bauplanNachJa } from './bauplan-skill.js';
+import type { SkillContext } from '@alfred/types';
 import { testVorlage } from './testvorlage.fixture.js';
 import type { Pruefung } from '../change-schritte.js';
 import { ChangePlanung } from '../change-planung.js';
@@ -29,6 +31,7 @@ function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: b
   const fragen: Array<{ text: string; params: Record<string, unknown> }> = [];
   const meldungen: string[] = [];
   const pruefungen: Pruefung[] = [];
+  const verworfen: Array<{ id: string; grund: string }> = [];
   let jetzt = Date.parse('2026-11-16T10:00:00Z');
   const zustand = { probeFehler: o.probeFehler ?? [] as string[] };
   const deps: BauplanDeps = {
@@ -58,10 +61,11 @@ function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: b
     pruefe: async (p) => { pruefungen.push(p); return o.pruefung ? o.pruefung(p) : { ok: true, text: 'passt' }; },
     frage: async (text, params) => { fragen.push({ text, params }); return true; },
     melde: async (_u, t) => { meldungen.push(t); },
+    verwerfen: async (_u, id, grund) => { verworfen.push({ id, grund }); },
     jetzt: () => jetzt,
   };
   const dienst = new BauplanDienst(deps);
-  return { dienst, zeilen, instanzen, geplant, anfragen, fragen, meldungen, pruefungen, zustand, setzeJetzt: (t: number) => { jetzt = t; } };
+  return { dienst, zeilen, instanzen, geplant, anfragen, fragen, meldungen, pruefungen, verworfen, zustand, setzeJetzt: (t: number) => { jetzt = t; } };
 }
 
 /** Speichern, anfragen, Ja — liefert die freigegebene Version */
@@ -345,5 +349,81 @@ describe('BauplanDienst — mit echter ChangePlanung (Probe, Planen, Freigabe-Fr
     expect(fragen[0]).toContain('Wert vmid aus Change aufbau Schritt 3 (proxmox.clone_vm)');
     expect(fragen[0]).toContain('📐 Bauplan klon_probe v1, Instanz klon-1');
     expect(t.instanzen[0]).toMatchObject({ name: 'klon-1', changeIds: r.ids, vorlageKey: 'klon_probe', vorlageVersion: 1 });
+  });
+});
+
+describe('Fix-Runde 1', () => {
+  it('ohneSicherungGrund wird eingesetzt und in den echten Plan übernommen', async () => {
+    const t = aufbau();
+    await freigegeben(t, vorlage(r => { r.changes[0].ohneSicherungGrund = 'Neues Lab VLAN {{param.vlan}}'; }));
+    const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-1');
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const [a, b] = t.geplant[0] as Roh[];
+    expect(a!.ohneSicherungGrund).toBe('Neues Lab VLAN 832');
+    expect(b!.ohneSicherungGrund).toBeUndefined();
+  });
+  it('Freigabe-Frage scheitert → alle neuen Changes verworfen, ok:false, Owner-Meldung', async () => {
+    const t = aufbau();
+    await freigegeben(t);
+    t.dienst.d.freigabeAnfragen = async () => ({ ok: false, fehler: ['Prüfung jetzt nicht bestanden'] });
+    const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-1');
+    expect(r.ok).toBe(false);
+    if (!r.ok) { expect(r.fehler.join(' ')).toContain('Prüfung jetzt nicht bestanden'); expect(r.fehler.join(' ')).toContain('chg-1'); }
+    expect(t.verworfen.map(v => v.id)).toEqual(['chg-1', 'chg-2']);
+    expect(t.verworfen[0]!.grund).toMatch(/^Bauplan-Anwendung abgebrochen: /);
+    expect(t.meldungen.join('\n')).toContain('abgebrochen');
+  });
+  it('Instanz scheitert → Changes verworfen, keine Frage; Eindeutigkeitsverletzung → „Instanzname schon vergeben“', async () => {
+    for (const [fehler, erwartet] of [['Datenbank weg', 'Datenbank weg'], ['duplicate key value violates unique constraint "infra_bauplan_instanzen_user_id_name_key"', 'Instanzname schon vergeben'], ['UNIQUE constraint failed: infra_bauplan_instanzen.user_id, infra_bauplan_instanzen.name', 'Instanzname schon vergeben']] as const) {
+      const t = aufbau();
+      await freigegeben(t);
+      t.dienst.d.instanzen.anlegen = async () => { throw new Error(fehler); };
+      const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-1');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.fehler.join(' ')).toContain(erwartet);
+      expect(t.verworfen.map(v => v.id)).toEqual(['chg-1', 'chg-2']);
+      expect(t.anfragen).toHaveLength(0);
+      expect(t.meldungen.length).toBeGreaterThan(0);
+    }
+  });
+  it('Annahmen nur am ersten Change ohne Abhängigkeit (Vorlagen-Reihenfolge); zweite Wurzel unverändert', async () => {
+    const t = aufbau();
+    await freigegeben(t, vorlage(r => {
+      r.changes.push({ schluessel: 'zwei', titel: 'Zweite Wurzel', begruendung: 'Unabhängig', typ: 'normal', risiko: 'low', abhaengigVon: [],
+        schritte: [
+          { titel: 'VM anlegen', art: 'aktion', skill: 'proxmox', aktion: 'create_vm', parameter: { vmid: '{{param.vmid}}' }, zeitlimitS: 60, beiFehler: 'anhalten' },
+          { titel: 'VM starten', art: 'aktion', skill: 'proxmox', aktion: 'start_vm', parameter: { id: '{{schritt1.id}}' }, zeitlimitS: 60, beiFehler: 'anhalten' },
+        ] });
+    }));
+    const r = await t.dienst.anwenden('o', 'test_lab', eingabe, 'lab-1');
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const [a, , zwei] = t.geplant[0] as Roh[];
+    expect(a!.schritte[0].titel).toBe('Eingangskontrolle: VMID ist frei');
+    expect(zwei!.schritte).toHaveLength(2);
+    expect(zwei!.schritte[0].titel).toBe('VM anlegen');
+    expect(zwei!.schritte[1].parameter.id).toBe('{{schritt1.id}}');
+  });
+  it('Löschungen über aktionsArt erkannt (destroy_vm im Rückweg)', () => {
+    const h = heikleAktionen([{ schluessel: 'a', titel: 'a', begruendung: 'a', typ: 'normal', risiko: 'low', abhaengigVon: [],
+      schritte: [{ titel: 'VM', art: 'aktion', skill: 'proxmox', aktion: 'clone_vm', rueckweg: { skill: 'proxmox', aktion: 'destroy_vm' } }, { titel: 'P', art: 'aktion', skill: 'proxmox', aktion: 'purge_backups' }] }]);
+    expect(h).toEqual(['proxmox.destroy_vm (Rückweg)', 'proxmox.purge_backups']);
+  });
+  it('Frage verspricht kein Anwenden; nach dem Ja feste Meldung statt Modellrunde', async () => {
+    const t = aufbau();
+    await t.dienst.speichern('o', vorlage());
+    await t.dienst.freigabeAnfragen('o', 'test_lab');
+    expect(t.fragen[0]!.text).not.toContain('darf Alfred diese Version anwenden');
+    expect(t.fragen[0]!.text).toContain('Angewendet wird nur auf ausdrücklichen Auftrag; jede Anwendung braucht die normale Change-Freigabe.');
+    expect(bauplanNachJa({ success: true, display: 'Bauplan-Vorlage test_lab v1 ist freigegeben' })).toEqual({ meldung: expect.stringContaining('ist freigegeben') });
+    expect(bauplanNachJa({ success: false, error: 'Keine gültige Freigabe' })).toEqual({ meldung: '✗ Keine gültige Freigabe' });
+  });
+  it('Bestätigungsweg: Skill mit den Button-Parametern (echter Nonce) gibt frei', async () => {
+    const t = aufbau();
+    await t.dienst.speichern('o', vorlage());
+    await t.dienst.freigabeAnfragen('o', 'test_lab');
+    const skill = new BauplanSkill(t.dienst, { istOwner: () => true, owner: () => 'o' });
+    const r = await skill.execute(t.fragen[0]!.params, { userId: 'owner' } as SkillContext);
+    expect(r.success).toBe(true);
+    expect(t.zeilen[0]!.status).toBe('freigegeben');
   });
 });

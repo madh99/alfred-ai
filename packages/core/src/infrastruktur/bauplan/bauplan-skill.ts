@@ -11,6 +11,15 @@ const AKTIONEN = ['bauplan_speichern', 'bauplan_liste', 'bauplan_zeigen', 'baupl
 /** Wie NUR_HAUPTGESPRAECH im Infrastruktur-Skill: nie aus einem Unteragenten oder einem Change-Schritt */
 export const BAUPLAN_SCHREIBEND: readonly string[] = ['bauplan_speichern', 'bauplan_freigabe_anfragen', 'bauplan_freigeben', 'bauplan_widerrufen', 'bauplan_anwenden'];
 
+/**
+ * Fix-Runde 1 (M-1) — nach dem Owner-Ja auf eine Bauplan-Frage: feste Meldung, KEINE Modellrunde (sie könnte sonst von sich aus
+ * bauplan_anwenden aufrufen). Wird in alfred.ts von setNachAusfuehrung genutzt.
+ */
+export function bauplanNachJa(result: { success?: boolean; display?: string; error?: string } | undefined): { meldung: string } {
+  if (result?.success && result.display) return { meldung: `✓ ${result.display}\n\nAngewendet wird nur auf ausdrücklichen Auftrag.` };
+  return { meldung: `✗ ${String(result?.error ?? 'Freigabe nicht übernommen')}` };
+}
+
 const text = (x: unknown): string => (typeof x === 'string' ? x.trim() : '');
 const objekt = (x: unknown): Record<string, unknown> | undefined => (x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : undefined);
 

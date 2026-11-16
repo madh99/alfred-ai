@@ -8,7 +8,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { BauplanVorlageZeile, BauplanVorlageStatus } from '@alfred/storage';
-import type { Pruefung } from '../change-schritte.js';
+import { aktionsArt, type Pruefung } from '../change-schritte.js';
 import { abdruck, type BauplanChange, type BauplanVorlage } from './schema.js';
 import { loeseParameter, setzeEin, setzeEinWert } from './parameter.js';
 import { pruefeVorlage } from './validierung.js';
@@ -35,6 +35,8 @@ export interface BauplanDeps {
   /** Button-Frage an den Owner (Bestätigungs-Queue, skill bauplan) */
   frage(text: string, params: Record<string, unknown>): Promise<boolean | void>;
   melde(u: string, text: string): Promise<void>;
+  /** Fix-Runde 1 — nie gestarteten Change verwerfen (ITSM verwerfen → cancelled mit Grund), für den Abbruch nach planen */
+  verwerfen(u: string, id: string, grund: string): Promise<void>;
   jetzt?: () => number;
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
 }
@@ -45,7 +47,11 @@ const hash = (n: string) => createHash('sha256').update(n).digest('hex');
 const INSTANZ_NAME = /^(?!\.+$)[\w.-]{1,80}$/;
 /** §7b/§8.4 — Kategorien, die die Freigabe-Frage ausdrücklich nennt */
 const NETZ_FIREWALL = /network|zone|firewall|policy/i;
+/** Löschungen: Einordnung des Change-Validators (destroy, purge, wipe, prune …) und zusätzlich jedes delete/remove/löschen im Namen */
 const LOESCHEN = /delete|loeschen|löschen|remove/i;
+const istLoeschung = (skill: string, aktion: string): boolean => aktionsArt(skill, aktion) === 'loeschen' || LOESCHEN.test(aktion);
+/** Eindeutigkeit (user_id, name) der Instanzen verletzt — PG 23505 bzw. SQLite UNIQUE constraint */
+const EINDEUTIG_VERLETZT = /duplicate key|unique constraint|23505|SQLITE_CONSTRAINT/i;
 
 type Ergebnis<T = object> = ({ ok: true; text: string } & T) | { ok: false; fehler: string[] };
 
@@ -55,7 +61,7 @@ export function heikleAktionen(changes: BauplanChange[]): string[] {
   const pruefe = (skill: unknown, aktion: unknown, zusatz = '') => {
     if (typeof skill !== 'string' || typeof aktion !== 'string') return;
     const sa = `${skill}.${aktion}`;
-    if (NETZ_FIREWALL.test(sa) || LOESCHEN.test(aktion)) treffer.add(`${sa}${zusatz}`);
+    if (NETZ_FIREWALL.test(sa) || istLoeschung(skill, aktion)) treffer.add(`${sa}${zusatz}`);
   };
   for (const c of changes) for (const s of c.schritte) {
     pruefe(s.skill, s.aktion);
@@ -130,7 +136,7 @@ export class BauplanDienst {
       ...[heikleZeile(v.changes)].filter((x): x is string => !!x),
       `Abdruck: ${z.abdruck.slice(0, 12)}`,
       '',
-      `Nach dem Ja darf Alfred diese Version anwenden — jede Anwendung legt normale Changes an, die du wie jeden Change freigibst (ein Ja je Paket). Jede Änderung der Vorlage ist eine neue Version mit neuer Freigabe. Widerruf jederzeit („Bauplan ${v.key} widerrufen“).`,
+      `Angewendet wird nur auf ausdrücklichen Auftrag; jede Anwendung braucht die normale Change-Freigabe. Jede Änderung der Vorlage ist eine neue Version mit neuer Freigabe. Widerruf jederzeit („Bauplan ${v.key} widerrufen“).`,
     ];
     const ok = await this.d.frage(zeilen.join('\n'), { action: 'bauplan_freigeben', key: v.key, version: z.version, freigabe: nonce });
     this.d.protokoll?.('V3 Bauplan-Vorlage Freigabe angefragt', { key, version: z.version, frage: ok !== false });
@@ -220,18 +226,32 @@ export class BauplanDienst {
 
     const r = await this.d.planen(o, plaene);
     if (!r.ok) return { ok: false, fehler: r.fehler };
+    // Fix-Runde 1 — kein halber Stand: scheitert Instanz oder Freigabe-Frage, werden alle eben angelegten Changes verworfen
     let instanzId: string | undefined;
     try {
       const i = await this.d.instanzen.anlegen(o, { name, dokumentart: v.dokumentart, changeIds: r.ids, vorlageKey: key, vorlageVersion: z.version, parameter: JSON.stringify(werte) });
       instanzId = i.id;
     } catch (e) {
-      return { ok: false, fehler: [`Changes angelegt (${r.ids.map(x => x.slice(0, 8)).join(', ')}), aber die Instanz nicht: ${(e as Error).message} — keine Freigabe-Frage gestellt`] };
+      const m = (e as Error).message;
+      return this.abbrechen(o, key, z.version, r.ids, EINDEUTIG_VERLETZT.test(m) ? `Instanzname schon vergeben („${name}“)` : `Instanz nicht angelegt: ${m}`);
     }
     const zusatz = [`📐 Bauplan ${key} v${z.version}, Instanz ${name}`, ...[heikleZeile(eingesetzt)].filter((x): x is string => !!x), ...wertVerweise(plaene)].join('\n');
-    const f = await this.d.freigabeAnfragen(o, r.ids, zusatz);
-    this.d.protokoll?.('V3 Bauplan angewendet', { key, version: z.version, instanz: name, ids: r.ids, frage: f.ok });
+    const f = await this.d.freigabeAnfragen(o, r.ids, zusatz).catch((e: Error) => ({ ok: false as const, fehler: [e.message] }));
+    if (!f.ok) return this.abbrechen(o, key, z.version, r.ids, `Freigabe-Frage nicht gestellt: ${f.fehler.join('; ')}`, instanzId);
+    this.d.protokoll?.('V3 Bauplan angewendet', { key, version: z.version, instanz: name, ids: r.ids });
     const kopf = `Bauplan ${key} v${z.version} angewendet: ${r.ids.length} Changes (${r.ids.map(x => x.slice(0, 8)).join(', ')}), Instanz „${name}“.`;
-    return { ok: true, ids: r.ids, ...(instanzId ? { instanzId } : {}), text: f.ok ? `${kopf} ${f.text}` : `${kopf} Freigabe-Frage nicht gestellt: ${f.fehler.join('; ')}` };
+    return { ok: true, ids: r.ids, ...(instanzId ? { instanzId } : {}), text: `${kopf} ${f.text}` };
+  }
+
+  /** Nach planen gescheitert: alle neuen Changes verwerfen (cancelled mit Grund), Owner melden, ok:false mit Grund und IDs. */
+  private async abbrechen(o: string, key: string, version: number, ids: string[], grund: string, instanzId?: string): Promise<{ ok: false; fehler: string[] }> {
+    const nicht: string[] = [];
+    for (const id of ids) await this.d.verwerfen(o, id, `Bauplan-Anwendung abgebrochen: ${grund}`).catch((e: Error) => { nicht.push(`${id.slice(0, 8)} (${e.message})`); });
+    const kurz = ids.map(x => x.slice(0, 8)).join(', ');
+    this.d.protokoll?.('V3 Bauplan-Anwendung abgebrochen', { key, version, grund, ids, nichtVerworfen: nicht, instanzId });
+    const text = `Bauplan ${key} v${version}: Anwendung abgebrochen — ${grund}. Verworfen: ${kurz}${nicht.length ? `; NICHT verworfen: ${nicht.join(', ')}` : ''}${instanzId ? ` (Instanz ${instanzId} bleibt ohne laufende Changes stehen)` : ''}.`;
+    await this.d.melde(o, `📐 ${text}`).catch(() => undefined);
+    return { ok: false, fehler: [text] };
   }
 
   /** Übersicht: je Key neueste Version mit Status, ggf. ältere freigegebene. */
@@ -251,18 +271,19 @@ export class BauplanDienst {
   zeigen(o: string, key: string, version?: number): Promise<BauplanVorlageZeile | undefined> { return this.d.repo.finde(o, key, version); }
 }
 
-/** Plan-Form wie die Probe, Annahmen als erste Schritte jedes Change ohne abhaengigVon, Verweise verschoben, kapitel entfernt. */
+/** Plan-Form wie die Probe, Annahmen als erste Schritte des ersten Change ohne abhaengigVon, Verweise verschoben, kapitel entfernt. */
 function baueplaene(changes: BauplanChange[], annahmen: Array<{ text: string; pruefung: Pruefung }>, praefix: string): Array<Record<string, unknown>> {
   const n = annahmen.length;
-  const wurzeln = new Set(changes.filter(c => c.abhaengigVon.length === 0).map(c => c.schluessel));
+  // Fix-Runde 1 (I-2) — Eingangskontrolle nur am ERSTEN Change ohne Abhängigkeit (Vorlagen-Reihenfolge)
+  const erster = changes.find(c => c.abhaengigVon.length === 0)?.schluessel;
   return changes.map(c => {
     let schritte: Array<Record<string, unknown>> = c.schritte.map(s => { const { kapitel: _k, ...rest } = s; return rest; });
-    if (n) {
+    if (n && erster) {
       let json = JSON.stringify(schritte);
-      if (wurzeln.has(c.schluessel)) json = json.replace(/\{\{(\s*)schritt(\d+)\./g, (_m, ws: string, z: string) => `{{${ws}schritt${Number(z) + n}.`);
-      for (const w of wurzeln) if (w !== c.schluessel) json = json.replace(new RegExp(`\\{\\{(\\s*)change:${w}\\.schritt(\\d+)\\.`, 'g'), (_m, ws: string, z: string) => `{{${ws}change:${w}.schritt${Number(z) + n}.`);
+      if (c.schluessel === erster) json = json.replace(/\{\{(\s*)schritt(\d+)\./g, (_m, ws: string, z: string) => `{{${ws}schritt${Number(z) + n}.`);
+      else json = json.replace(new RegExp(`\\{\\{(\\s*)change:${erster}\\.schritt(\\d+)\\.`, 'g'), (_m, ws: string, z: string) => `{{${ws}change:${erster}.schritt${Number(z) + n}.`);
       schritte = JSON.parse(json) as Array<Record<string, unknown>>;
-      if (wurzeln.has(c.schluessel)) {
+      if (c.schluessel === erster) {
         schritte = [...annahmen.map(a => ({ titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: a.pruefung, beiFehler: 'anhalten' })), ...schritte];
         schritte = schritte.map((s, i) => ({ ...s, nr: i + 1 }));
       }
@@ -270,6 +291,7 @@ function baueplaene(changes: BauplanChange[], annahmen: Array<{ text: string; pr
     return {
       schluessel: c.schluessel, titel: c.titel, begruendung: `${praefix}${c.begruendung}`, typ: c.typ, risiko: c.risiko,
       ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}),
+      ...(c.ohneSicherungGrund !== undefined ? { ohneSicherungGrund: c.ohneSicherungGrund } : {}),
       abhaengigVon: [...c.abhaengigVon], betroffen: [...(c.betroffen ?? [])],
       schritte,
     };

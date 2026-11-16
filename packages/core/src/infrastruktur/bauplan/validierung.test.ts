@@ -260,3 +260,31 @@ describe('Task 3 Fix-Runde 1 — change-Verweis bleibt in der Probe erhalten', (
     expect(await pl.pruefeNur('o', plaene).then(f => f.filter(x => /vmid|change:/.test(x)))).toEqual([]);
   });
 });
+
+describe('Task 4 Fix-Runde 1 — ohneSicherungGrund in der Vorlage', () => {
+  it('Vorlage, die nur Neues anlegt: mit ohneSicherungGrund besteht sie die echte Probe, ohne meldet der Validator die fehlende Sicherung', async () => {
+    const fakeSkill = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['vm_status', 'clone_vm', 'delete_vm'] }, vmid: { type: 'number' }, name: { type: 'string' } }, required: ['action'] } } };
+    const pl = new ChangePlanung({
+      itsm: { liste: async () => [], hole: async () => null, legeAn: async () => { throw new Error('nie speichern'); } } as never,
+      skill: n => (n === 'proxmox' ? fakeSkill : undefined) as never,
+      assets: async () => [{ id: 'a-pve', name: 'pve' }] as never,
+      auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
+    });
+    const roh = (grund?: string) => ({
+      schema: 1, key: 'nur_neu', titel: 'Nur Neues', zweck: 'Neue VM klonen', dokumentart: 'testprotokoll',
+      parameter: [{ name: 'name', typ: 'name', pflicht: true, beschreibung: 'VM-Name', beispiel: 'probe-vm' }],
+      annahmen: [],
+      changes: [{ schluessel: 'aufbau', titel: 'VM klonen', begruendung: 'Neue VM aus Vorlage klonen', typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: ['pve'],
+        ...(grund ? { ohneSicherungGrund: grund } : {}),
+        schritte: [{ titel: 'Klonen', art: 'aktion', skill: 'proxmox', aktion: 'clone_vm', parameter: { name: '{{param.name}}' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', parameter: { vmid: 1 } }, zeitlimitS: 60, beiFehler: 'anhalten', rueckweg: { skill: 'proxmox', aktion: 'delete_vm', parameter: { vmid: '{{schritt1.vmid}}' } } }] }],
+    });
+    let plaene: Array<Record<string, any>> = [];
+    const mit = await pruefeVorlage(roh('Nur neue VM {{param.name}}, nichts Bestehendes betroffen'), { probe: async p => { plaene = p as Array<Record<string, any>>; return pl.pruefeNur('o', p); } });
+    expect(mit.fehler).toEqual([]);
+    expect(plaene[0]!.ohneSicherungGrund).toBe('Nur neue VM probe-vm, nichts Bestehendes betroffen');
+    const ohne = await pruefeVorlage(roh(), { probe: p => pl.pruefeNur('o', p) });
+    expect(ohne.fehler.join('\n')).toMatch(/Sicherung.*ohneSicherungGrund/);
+    expect((await pruefeVorlage(roh('{{param.gibtsnicht}}'), { probe: p => pl.pruefeNur('o', p) })).fehler.join('\n')).toMatch(/gibtsnicht/);
+    expect((await pruefeVorlage(roh(''), { probe: p => pl.pruefeNur('o', p) })).fehler.join('\n')).toMatch(/ohneSicherungGrund/);
+  });
+});

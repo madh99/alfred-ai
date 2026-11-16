@@ -8122,6 +8122,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return ok !== false;
             },
             melde: async (_u, t) => { await this.meldeOhneModell(t); },
+            // Fix-Runde 1 — Abbruch nach planen: nie gestartete Changes über ITSM verwerfen (cancelled mit Grund, Zeile bleibt)
+            verwerfen: async (u, id, grund) => { await itsmI3.verwerfen(u, id, grund); },
             protokoll: (msg, daten) => this.logger.info(daten, msg),
           });
           skillRegistry.register(new BauplanSkill(bauplanDienst, { istOwner: istOwnerFz, owner: () => ownerFz() }));
@@ -8612,6 +8614,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const z = result?.display ?? (result?.success === false ? `✗ ${String(result.error ?? 'Freigabe nicht übernommen')}` : '');
         return { meldung: z.includes('✓') ? `${z}\n\nDer Ausführungsmotor meldet Start und Ergebnis.` : z || '✗ Freigabe nicht übernommen' };
       }
+      // Bauplan-Vorlagen V3 Fix-Runde 1 (M-1) — nach dem Ja feste Meldung, keine Modellrunde (sie könnte von sich aus anwenden)
+      if (pending.skillName === 'bauplan') return (await import('./infrastruktur/bauplan/bauplan-skill.js')).bauplanNachJa(result as never);
       if (pending.skillParams?.action === 'vorhaben_freigeben') return false;
       if (pending.skillName === 'selbstupdate') return false; // v1266 — deterministische Meldung statt LLM-Runde
       // v1450 — Fehlschlag: tatsächlichen Stand feststellen statt still zu enden (Realfall 14.10.: „fehlgeschlagen“, App lief aber)
