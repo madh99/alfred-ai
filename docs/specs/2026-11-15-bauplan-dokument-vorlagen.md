@@ -128,7 +128,7 @@ Nur als zusätzlicher Beleg für Oberflächen (UniFi, Proxmox) über den vorhand
 - **V2 Automatik:** Hook im Change-Motor. *Beweis:* nächster echter Change erzeugt sein Abnahmeprotokoll selbst.
 - **V3 Bauplan-Vorlagen:** Schema, Tabelle, Validierung, Freigabe, Anwenden. *Beweis:* Vorlage „PKI-Lab“ (Aufbau+Test+Abbau) von Hand aus den drei Changes, freigegeben, erneut angewendet → Lab neu aufgebaut, getestet, abgebaut; D-TEST entsteht automatisch.
 - **V4 Ableiten:** `bauplan_ableiten`. *Beweis:* Vorlage aus den I8c-Changes (AD-Wald) abgeleitet und validiert (Anwenden nur auf Wegwerf-Umgebung und nur mit Owner-Freigabe).
-- **V5 (optional) Bildschirmfotos.**
+- **V5 (optional) Bildschirmfotos.** — **Zurückgestellt (Owner 16.11.2026):** braucht je ein Web-Lesekonto (UniFi lokal „View Only“, Proxmox-Benutzer mit PVEAuditor; API-Schlüssel/-Token taugen nicht für die Weboberfläche), zusätzlicher Beweiswert gering, weil dieselben Daten geprüft per API in den Dokumenten stehen. Nachholen: Owner legt die Konten an und trägt sie in den Tresor ein → V5 planen (Fotos fester Ansichten am Change-Ende als Anhang des Abnahmeprotokolls, Browser = vorhandenes puppeteer).
 - **Nachziehen bestehender Systeme:** D-BETRIEB für AD ad.3033.at, SQL-AG, PKI aus Bestand + alten Change-Läufen — Reihenfolge nach Owner (§8).
 
 ## 7. Randbedingungen
