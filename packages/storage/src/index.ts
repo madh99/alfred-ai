@@ -107,6 +107,8 @@ export type { Messwert } from './repositories/messwerte-repository.js';
 export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export { BauplanInstanzRepository } from './repositories/bauplan-instanz-repository.js'; // Dokument-Vorlagen V1
 export type { BauplanInstanz } from './repositories/bauplan-instanz-repository.js';
+export { BauplanVorlageRepository } from './repositories/bauplan-vorlage-repository.js'; // Bauplan-Vorlagen V3
+export type { BauplanVorlageZeile, BauplanVorlageStatus } from './repositories/bauplan-vorlage-repository.js';
 export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
 export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
 export { WartungRepository } from './repositories/wartung-repository.js'; // I4b

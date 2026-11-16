@@ -2564,4 +2564,29 @@ export const PG_MIGRATIONS: PgMigration[] = [
         )`, []);
     },
   },
+  {
+    version: 162,
+    description: 'Bauplan-Vorlagen V3 — infra_bauplan_vorlagen: versionierte, per Abdruck freigegebene Vorlagen (PG-Spiegel zu SQLite v158).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_bauplan_vorlagen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          json TEXT NOT NULL,
+          abdruck TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'entwurf',
+          frage_hash TEXT,
+          frage_bis TEXT,
+          freigegeben_at TEXT,
+          widerrufen_at TEXT,
+          grund TEXT,
+          abgeleitet_aus TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (user_id, key, version)
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_bauplan_vorlagen_key ON infra_bauplan_vorlagen (user_id, key)', []);
+    },
+  },
 ];

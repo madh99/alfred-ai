@@ -3256,4 +3256,29 @@ export const MIGRATIONS: Migration[] = [
         )`);
     },
   },
+  {
+    version: 158,
+    description: 'Bauplan-Vorlagen V3 — infra_bauplan_vorlagen: versionierte, per Abdruck freigegebene Vorlagen (SQLite-Spiegel zu PG v162).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_bauplan_vorlagen (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          json TEXT NOT NULL,
+          abdruck TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'entwurf',
+          frage_hash TEXT,
+          frage_bis TEXT,
+          freigegeben_at TEXT,
+          widerrufen_at TEXT,
+          grund TEXT,
+          abgeleitet_aus TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (user_id, key, version)
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_bauplan_vorlagen_key ON infra_bauplan_vorlagen (user_id, key)');
+    },
+  },
 ];

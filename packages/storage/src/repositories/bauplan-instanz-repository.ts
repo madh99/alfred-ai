@@ -12,6 +12,9 @@ export interface BauplanInstanz {
   changeIds: string[];
   /** JSON, unverändert gespeichert (Betriebsdokument: Systemabgrenzung) */
   parameter?: string;
+  /** Bauplan-Vorlagen V3 — Vorlage, aus der die Instanz angewendet wurde */
+  vorlageKey?: string;
+  vorlageVersion?: number;
   status: string;
   createdAt: string;
 }
@@ -28,6 +31,8 @@ function zuInstanz(r: Record<string, unknown>): BauplanInstanz {
     dokumentart: r.dokumentart as BauplanInstanz['dokumentart'],
     changeIds,
     ...(typeof r.parameter === 'string' && r.parameter ? { parameter: r.parameter } : {}),
+    ...(typeof r.vorlage_key === 'string' && r.vorlage_key ? { vorlageKey: r.vorlage_key } : {}),
+    ...(r.vorlage_version != null ? { vorlageVersion: Number(r.vorlage_version) } : {}),
     status: r.status as string,
     createdAt: r.created_at as string,
   };
@@ -36,15 +41,15 @@ function zuInstanz(r: Record<string, unknown>): BauplanInstanz {
 export class BauplanInstanzRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
-  async anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string }): Promise<BauplanInstanz> {
+  async anlegen(userId: string, d: { name: string; dokumentart: 'testprotokoll' | 'betrieb'; changeIds: string[]; parameter?: string; vorlageKey?: string; vorlageVersion?: number }): Promise<BauplanInstanz> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.db.execute(
-      `INSERT INTO infra_bauplan_instanzen (id, user_id, name, dokumentart, change_ids, parameter, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'aktiv', ?, ?)`,
-      [id, userId, d.name, d.dokumentart, JSON.stringify(d.changeIds), d.parameter ?? null, now, now],
+      `INSERT INTO infra_bauplan_instanzen (id, user_id, name, dokumentart, change_ids, parameter, vorlage_key, vorlage_version, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aktiv', ?, ?)`,
+      [id, userId, d.name, d.dokumentart, JSON.stringify(d.changeIds), d.parameter ?? null, d.vorlageKey ?? null, d.vorlageVersion ?? null, now, now],
     );
-    return { id, name: d.name, dokumentart: d.dokumentart, changeIds: [...d.changeIds], ...(d.parameter !== undefined ? { parameter: d.parameter } : {}), status: 'aktiv', createdAt: now };
+    return { id, name: d.name, dokumentart: d.dokumentart, changeIds: [...d.changeIds], ...(d.parameter !== undefined ? { parameter: d.parameter } : {}), ...(d.vorlageKey ? { vorlageKey: d.vorlageKey } : {}), ...(d.vorlageVersion !== undefined ? { vorlageVersion: d.vorlageVersion } : {}), status: 'aktiv', createdAt: now };
   }
 
   /** v1877 — Changes und Parameter einer bestehenden Instanz ersetzen (id und Name bleiben; Dokument-Versionen laufen weiter). */
@@ -62,6 +67,19 @@ export class BauplanInstanzRepository {
       [userId, idOderName, idOderName],
     );
     return r ? zuInstanz(r as Record<string, unknown>) : undefined;
+  }
+
+  /** Bauplan-Vorlagen V3 — Instanz, deren change_ids die Change-ID enthalten (jüngste zuerst). */
+  async findeNachChange(userId: string, changeId: string): Promise<BauplanInstanz | undefined> {
+    const rows = await this.db.query(
+      'SELECT * FROM infra_bauplan_instanzen WHERE user_id = ? AND change_ids LIKE ? ORDER BY created_at DESC',
+      [userId, `%"${changeId}"%`],
+    );
+    for (const r of rows) {
+      const i = zuInstanz(r as Record<string, unknown>);
+      if (i.changeIds.includes(changeId)) return i;
+    }
+    return undefined;
   }
 
   async liste(userId: string): Promise<BauplanInstanz[]> {
