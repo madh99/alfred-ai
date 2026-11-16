@@ -9,8 +9,9 @@ import type { Pruefung } from '../change-schritte.js';
 import { ChangePlanung } from '../change-planung.js';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
-import { findeKandidaten, findeVerweise, type QuellChange } from './ableiten.js';
+import { baueEntwurf, findeKandidaten, findeVerweise, standVon, type Entscheid, type QuellChange } from './ableiten.js';
 import { PKI_QUELLEN } from './ableiten.fixture.js';
+import { I8C_QUELLEN } from './ableiten-i8c.fixture.js';
 
 type Roh = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const sha = (n: string) => createHash('sha256').update(n).digest('hex');
@@ -25,7 +26,8 @@ function vorlage(aendern: (r: Roh) => void = () => {}): Roh {
   return r;
 }
 
-function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: boolean; text: string }; changes?: CmdbChangeRequest[]; assetNamen?: Record<string, string> } = {}) {
+function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: boolean; text: string }; changes?: CmdbChangeRequest[]; assetNamen?: Record<string, string>; assetFehler?: string } = {}) {
+  const ladungen = { changes: 0 };
   const zeilen: BauplanVorlageZeile[] = [];
   const instanzen: Array<{ name: string; dokumentart: string; changeIds: string[]; parameter?: string; vorlageKey?: string; vorlageVersion?: number }> = [];
   const geplant: unknown[][] = [];
@@ -40,7 +42,7 @@ function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: b
     repo: {
       speichere: async (_u, d) => {
         const version = Math.max(0, ...zeilen.filter(z => z.key === d.key).map(z => z.version)) + 1;
-        const z: BauplanVorlageZeile = { id: `id-${d.key}-${version}`, key: d.key, version, json: d.json, abdruck: d.abdruck, status: 'entwurf', ...(d.abgeleitetAus ? { abgeleitetAus: d.abgeleitetAus } : {}), createdAt: 'x', updatedAt: 'x' };
+        const z: BauplanVorlageZeile = { id: `id-${d.key}-${version}`, key: d.key, version, json: d.json, abdruck: d.abdruck, status: 'entwurf', ...(d.abgeleitetAus ? { abgeleitetAus: d.abgeleitetAus } : {}), ...(d.ableitung ? { ableitung: d.ableitung } : {}), createdAt: 'x', updatedAt: 'x' };
         zeilen.push(z); return { ...z };
       },
       finde: async (_u, key, version) => {
@@ -65,10 +67,13 @@ function aufbau(o: { probeFehler?: string[]; pruefung?: (p: Pruefung) => { ok: b
     melde: async (_u, t) => { meldungen.push(t); },
     verwerfen: async (_u, id, grund) => { verworfen.push({ id, grund }); },
     jetzt: () => jetzt,
-    ...(o.changes ? { ableitenQuellen: { changes: async () => ({ changes: o.changes!, abgeschnitten: false }) }, assetName: async (_u: string, id: string) => o.assetNamen?.[id] } : {}),
+    ...(o.changes ? {
+      ableitenQuellen: { changes: async () => { ladungen.changes++; return { changes: o.changes!, abgeschnitten: false }; } },
+      assetName: async (_u: string, id: string) => { if (o.assetFehler) throw new Error(o.assetFehler); return o.assetNamen?.[id]; },
+    } : {}),
   };
   const dienst = new BauplanDienst(deps);
-  return { dienst, zeilen, instanzen, geplant, anfragen, fragen, meldungen, pruefungen, verworfen, zustand, setzeJetzt: (t: number) => { jetzt = t; } };
+  return { dienst, zeilen, instanzen, geplant, anfragen, fragen, meldungen, pruefungen, verworfen, zustand, ladungen, setzeJetzt: (t: number) => { jetzt = t; } };
 }
 
 /** Speichern, anfragen, Ja — liefert die freigegebene Version */
@@ -490,7 +495,14 @@ function pkiAuswahl() {
   for (const t of v157.teilvorkommen) teil[t.id] = 'ersetzen';
   for (const t of v158.teilvorkommen) teil[t.id] = 'fest';
   for (const t of vlan.teilvorkommen) teil[t.id] = 'ersetzen';
-  return { auswahl: { [String(vlan.nr)]: 'vlan', [String(v157.nr)]: 'vmid_server', [String(v158.nr)]: 'vmid_client' }, teil };
+  const auswahl = { [String(vlan.nr)]: 'vlan', [String(v157.nr)]: 'vmid_server', [String(v158.nr)]: 'vmid_client' };
+  return { auswahl, teil: allesFest(PKI_QUELLEN, auswahl, teil), stand: standVon(PKI_QUELLEN) };
+}
+/** Final-Welle: übrige offene Entscheidungen (feste IDs, vom Paket angelegte Werte) „fest“ — basis gewinnt */
+function allesFest(q: QuellChange[], auswahl: Record<string, unknown>, basis: Entscheid): Entscheid {
+  const e: Entscheid = { ...basis };
+  for (const p of baueEntwurf(q, auswahl as never, KOPF, e).offen) e[p.id] ??= 'fest';
+  return e;
 }
 const fehlerText = (r: { ok: boolean }) => ((r as { fehler?: string[] }).fehler ?? []).join('\n');
 
@@ -502,7 +514,7 @@ describe('V4 ableiten', () => {
     expect(r.kandidaten).toEqual(findeKandidaten(PKI_QUELLEN));
     expect(r.verweise).toEqual(findeVerweise(PKI_QUELLEN).verweise);
     expect(r.text).toContain('| Nr | Typ | Wert | Vorschlag | Fundstellen |');
-    expect(r.text).toMatch(/\| \d+ \| vlan \| 832 \| vlan \| \d+:/);
+    expect(r.text).toMatch(/\| \d+ \| vlan \| 832 \| vlan \| \d+ \|/);
     // Teilvorkommen gruppiert nach Change, Schritt, Wort — mit ids
     const v157 = r.kandidaten.find(k => k.typ === 'vmid' && k.wert === 157)!;
     expect(r.text).toContain('/etc/pve/qemu-server/157.conf');
@@ -510,7 +522,7 @@ describe('V4 ableiten', () => {
     // Verweise Change/Schritt/Feld ← Quelle
     expect(r.text).toMatch(/288c3716 Schritt 13 parameter\.policy_id ← 2cfde1a2 Schritt 7\.id/);
     // gleicher Wert in mehreren Kandidaten (pve als zugang und als node)
-    expect(r.hinweise.some(h => /gleicher Wert pve in mehreren Kandidaten.*nur einen wählen/.test(h))).toBe(true);
+    expect(r.hinweise.some(h => /gleicher Wert pve in mehreren Kandidaten.*auf denselben Parameter legen oder Stellen fest/.test(h))).toBe(true);
     // Rechnername und FQDN getrennt
     expect(r.hinweise.some(h => /labsrv01 und labsrv01\.pkilab\.test getrennt — beide wählen oder beide fest/.test(h))).toBe(true);
     expect(r.text).toContain('beide wählen oder beide fest');
@@ -537,7 +549,7 @@ describe('V4 ableiten', () => {
     expect(f).toMatch(/in_progress/);
     expect(f).toContain(ALLE[2]);
     expect(f).toMatch(/ohne Lauf/);
-    const e = await t.dienst.ableitenErzeugen('o', ALLE, pkiAuswahl().auswahl, KOPF, pkiAuswahl().teil);
+    const e = await t.dienst.ableitenErzeugen('o', ALLE, pkiAuswahl().auswahl, KOPF, pkiAuswahl().teil, pkiAuswahl().stand);
     expect(e.ok).toBe(false);
     expect(t.zeilen).toHaveLength(0);
   });
@@ -563,8 +575,8 @@ describe('V4 ableiten', () => {
   });
   it('erzeugen: speichert über speichern mit abgeleitetAus (volle IDs in Reihenfolge), Status entwurf, Anzeige mit Parametern, Annahmen, bewusst fest', async () => {
     const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
-    const { auswahl, teil } = pkiAuswahl();
-    const r = await t.dienst.ableitenErzeugen('o', [ALLE[2], ALLE[1], ALLE[0]], auswahl, KOPF, teil);
+    const { auswahl, teil, stand } = pkiAuswahl();
+    const r = await t.dienst.ableitenErzeugen('o', [ALLE[2], ALLE[1], ALLE[0]], auswahl, KOPF, teil, stand);
     if (!r.ok) throw new Error(r.fehler.join('\n'));
     expect(t.zeilen).toHaveLength(1);
     const z = t.zeilen[0]!;
@@ -583,19 +595,160 @@ describe('V4 ableiten', () => {
   });
   it('erzeugen: Probe-Fehler und baueEntwurf-Fehler kommen unverändert durch, nichts gespeichert', async () => {
     const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN, probeFehler: ['Probe: Schritt 3 kaputt'] });
-    const { auswahl, teil } = pkiAuswahl();
-    const r = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil);
+    const { auswahl, teil, stand } = pkiAuswahl();
+    const r = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, stand);
     expect(r.ok).toBe(false);
     expect(fehlerText(r)).toContain('Probe: Schritt 3 kaputt');
     expect(t.zeilen).toHaveLength(0);
     t.zustand.probeFehler = [];
-    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, { ...auswahl, [Object.keys(auswahl)[0]!]: 'Kein Name' }, KOPF, teil))).toMatch(/Parametername/);
-    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, Object.fromEntries(Object.keys(auswahl).map(k => [k, 'gleich'])), KOPF, teil))).toMatch(/doppelt vergeben/);
-    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, {}))).toMatch(/ohne Entscheidung/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, { ...auswahl, [Object.keys(auswahl)[0]!]: 'Kein Name' }, KOPF, teil, stand))).toMatch(/Parametername/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, Object.fromEntries(Object.keys(auswahl).map(k => [k, 'gleich'])), KOPF, teil, stand))).toMatch(/doppelt vergeben/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, {}, stand))).toMatch(/ohne Entscheidung/);
     expect(t.zeilen).toHaveLength(0);
   });
   it('ohne verdrahtete Change-Quelle → Fehler statt Absturz', async () => {
     const t = aufbau();
     expect((await t.dienst.ableitenVorschlag('o', ALLE)).ok).toBe(false);
+  });
+});
+
+// ── V4 Final-Welle: Stand, Ableitung in der Freigabe-Frage, alle Fundstellen, Lesefehler, eine Change-Liste, neue Version ──
+describe('V4 ableiten — Final-Welle', () => {
+  const I8C_IDS = I8C_QUELLEN.map(q => q.id) as [string, string, string, string];
+  const I8C_NAMEN: Record<string, string> = Object.assign({}, ...I8C_QUELLEN.map(q => q.betroffenNamen));
+
+  it('vorschlag: Stand, alle Fundstellen mit Pfad (nicht nur drei), Entscheidungspunkte mit ids', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const r = await t.dienst.ableitenVorschlag('o', ALLE);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(r.stand).toBe(standVon(PKI_QUELLEN));
+    expect(r.text).toContain(`Stand ${r.stand}`);
+    expect(r.text).toContain(`stand "${r.stand}"`);
+    // M-d: alle Fundstellen der VLAN 832 einzeln mit Pfad
+    const vlan = r.kandidaten.find(k => k.typ === 'vlan' && k.wert === 832)!;
+    expect(vlan.fundstellen.length).toBeGreaterThan(3);
+    const zeile = r.text.split('\n').find(z => z.startsWith(`- #${vlan.nr} 832:`))!;
+    for (const f of vlan.fundstellen) expect(zeile).toContain(f.schritt === 0 ? `${f.change.slice(0, 8)} Titel` : `${f.change.slice(0, 8)} S${f.schritt} ${f.pfad}`);
+    // > 40 Fundstellen gruppiert nach Change/Schritt (PKI-Lab: 56)
+    const netz = r.kandidaten.find(k => k.wert === 'PKI-Lab')!;
+    expect(netz.fundstellen.length).toBeGreaterThan(40);
+    expect(r.text.split('\n').find(z => z.startsWith(`- #${netz.nr} PKI-Lab:`))).toMatch(/2cfde1a2 S5 \(parameter\.network_name, pruefung\.erwartet, rueckweg\.parameter\.network_name\)/);
+    // Entscheidungspunkte: angelegte Werte mit id
+    expect(r.text).toContain('Vom Paket angelegt');
+    expect(r.text).toContain('anlage:name|labsrv01');
+    expect(r.entscheidungen.some(p => p.id === 'anlage:name|labsrv01')).toBe(true);
+  });
+
+  it('erzeugen verlangt den Stand des Vorschlags; abweichender Stand → „Vorschlag neu holen“, nichts gespeichert', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const { auswahl, teil, stand } = pkiAuswahl();
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil))).toMatch(/stand: den Stand aus dem Vorschlag/);
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, 'abcdef012345'))).toMatch(/Stand abcdef012345 passt nicht.*Vorschlag neu holen/);
+    expect(t.zeilen).toHaveLength(0);
+    // geänderter Change zwischen Vorschlag und erzeugen (Kandidaten verschieben sich) → Stand weicht ab
+    const c = JSON.parse(JSON.stringify(pkiChanges())) as CmdbChangeRequest[];
+    (c[0]!.schritte as unknown as Roh[])[4]!.parameter.vlan = 833;
+    const t2 = aufbau({ changes: c, assetNamen: NAMEN });
+    expect(fehlerText(await t2.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, stand))).toMatch(/Vorschlag neu holen/);
+    expect(t2.zeilen).toHaveLength(0);
+    // Wertvergleich in der Auswahl
+    const nr = Object.keys(auswahl).find(k => auswahl[k] === 'vlan')!;
+    expect(fehlerText(await t.dienst.ableitenErzeugen('o', ALLE, { ...auswahl, [nr]: { name: 'vlan', wert: 830 } }, KOPF, teil, stand))).toMatch(/hat den Wert 832, nicht 830/);
+  });
+
+  it('I2: ableitung wird gespeichert und die Freigabe-Frage zeigt Quellen, bewusst feste Stellen und fehlende Vorab-Kontrollen', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const { auswahl, teil, stand } = pkiAuswahl();
+    const r = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, stand);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const z = t.zeilen[0]!;
+    const ab = JSON.parse(z.ableitung!) as { quellen: string[]; fest: Array<{ id: string; art: string; wort: string }>; ohneAnnahme: string[] };
+    expect(ab.quellen).toEqual(ALLE);
+    expect(ab.fest.some(f => f.art === 'teil' && f.wort.includes('158'))).toBe(true);
+    expect(ab.fest.some(f => f.id === 'anlage:name|labsrv01')).toBe(true);
+    // ableitung gehört nicht in den Abdruck
+    expect(z.json).not.toContain('anlage:');
+    expect(r.text).toMatch(/Bewusst fest: \d+ Stellen \(stehen in der Freigabe-Frage\)/);
+    const a = await t.dienst.freigabeAnfragen('o', KOPF.key);
+    if (!a.ok) throw new Error(a.fehler.join('\n'));
+    const frage = t.fragen.at(-1)!.text;
+    expect(frage).toContain(`Abgeleitet aus: ${ALLE.map(x => x.slice(0, 8)).join(', ')}`);
+    expect(frage).toMatch(/⚠️ Bewusst fest \(\d+ Stellen\)/);
+    expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(\d+ Werte\):\n- PKI-Lab: \d+ Stellen/);
+    expect(frage).toMatch(/Teilvorkommen \(\d+\):\n- \/etc\/pve\/qemu-server\/158\.conf in 2cfde1a2 S1 pruefung\.befehl/);
+    // vlan/vmid_server/vmid_client haben alle eine automatische Annahme
+    expect(frage).not.toContain('Ohne automatische Vorab-Kontrolle');
+  });
+
+  it('I8c über den Dienst: VMIDs/VLAN/IPs gewählt, Namen nicht → Fehler mit angelegten Werten; alle „fest“ → Entwurf, Freigabe-Frage mit „bewusst fest“', async () => {
+    const t = aufbau({ changes: I8C_QUELLEN.map(q => alsChange(q)), assetNamen: I8C_NAMEN });
+    const v = await t.dienst.ableitenVorschlag('o', I8C_IDS.map(x => x.slice(0, 8)));
+    if (!v.ok) throw new Error(v.fehler.join('\n'));
+    const nr = (typ: string, wert: unknown) => String(v.kandidaten.find(c => c.typ === typ && c.wert === wert)!.nr);
+    const auswahl = {
+      [nr('vmid', 152)]: 'vmid_dc1', [nr('vmid', 153)]: 'vmid_dc2', [nr('vlan', 829)]: 'vlan', [nr('cidr', '10.203.29.0/27')]: 'netz',
+      [nr('ipv4', '10.203.29.1')]: 'gateway', [nr('ipv4', '10.203.29.2')]: 'ip_dc1', [nr('ipv4', '10.203.29.3')]: 'ip_dc2', [nr('ipv4', '10.203.29.30')]: 'ip_test',
+    };
+    const teil: Entscheid = {};
+    for (const k of v.kandidaten) {
+      if (k.typ === 'vlan' && k.wert === 829) for (const x of k.teilvorkommen) teil[x.id] = 'ersetzen';
+      if (k.typ === 'ipv4' && k.wert === '10.203.29.3') for (const x of k.teilvorkommen) teil[x.id] = 'fest';
+    }
+    const kopf = { key: 'ad_wald', titel: 'AD-Wald', zweck: 'Wald mit zwei DCs', dokumentart: 'betrieb' as const };
+    const ohne = await t.dienst.ableitenErzeugen('o', I8C_IDS, auswahl, kopf, teil, v.stand);
+    expect(ohne.ok).toBe(false);
+    const f = fehlerText(ohne);
+    expect(f).toContain(`${I8C_IDS[2].slice(0, 8)} Schritt 6 parameter.zugang (windows_ad.dns_client)`);
+    expect(f).toContain('anlage:name|ad.3033.at');
+    expect(f).toContain('anlage:name|AD-Identity');
+    expect(f).toContain('anlage:name|I8c-Block-Gateway');
+    expect(t.zeilen).toHaveLength(0);
+    // alle offenen „fest“ (ids aus dem Vorschlag)
+    const alle: Entscheid = { ...teil };
+    for (const p of v.entscheidungen) if (p.art !== 'teil') alle[p.id] = 'fest';
+    // nicht nötige Entscheidungen (gewählte Werte) wieder weg — erzeugen meldet sie sonst
+    for (const id of ['anlage:vmid|152', 'anlage:vmid|153', 'anlage:vlan|829', 'anlage:ipv4|10.203.29.1', 'anlage:ipv4|10.203.29.2', 'anlage:ipv4|10.203.29.3', 'anlage:ipv4|10.203.29.30']) delete alle[id];
+    const r = await t.dienst.ableitenErzeugen('o', I8C_IDS, auswahl, kopf, alle, v.stand);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect(t.zeilen).toHaveLength(1);
+    const a = await t.dienst.freigabeAnfragen('o', 'ad_wald');
+    if (!a.ok) throw new Error(a.fehler.join('\n'));
+    const frage = t.fragen.at(-1)!.text;
+    expect(frage).toMatch(/⚠️ Bewusst fest \(\d+ Stellen\)/);
+    expect(frage).toMatch(/\n- dc01: \d+ Stellen/);
+    expect(frage).toMatch(/\n- ad\.3033\.at: \d+ Stellen/);
+    expect(frage).toMatch(/\n- AD-Identity: \d+ Stellen/);
+    // mehr als 15 angelegte Werte → die ersten 15 wörtlich, Rest gezählt
+    expect(frage).toMatch(/Vom Paket angelegt, nicht als Parameter \(16 Werte\):[\s\S]*\n {2}… und 1 weitere/);
+    // record_type ist kein angelegter Wert; 10.203.29.3 in 10.203.29.30 trägt den Parameter der .30 — nicht als „fest“ gemeldet
+    expect(frage).not.toContain('FORWARD:');
+    expect(frage).toContain('Ohne automatische Vorab-Kontrolle (1): netz');
+    expect(frage).not.toMatch(/Teilvorkommen \(/);
+  });
+
+  it('M5: vorhandener Key → Anzeige und Freigabe-Frage nennen die neue Version und was sie ersetzt', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    const { auswahl, teil, stand } = pkiAuswahl();
+    const r1 = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, stand);
+    if (!r1.ok) throw new Error(r1.fehler.join('\n'));
+    expect(r1.text).not.toMatch(/neue Version von/);
+    await t.dienst.freigabeAnfragen('o', KOPF.key);
+    const p = t.fragen.at(-1)!.params;
+    expect((await t.dienst.freigebenNachJa('o', KOPF.key, p.version as number, p.freigabe)).ok).toBe(true);
+    const r2 = await t.dienst.ableitenErzeugen('o', ALLE, auswahl, KOPF, teil, stand);
+    if (!r2.ok) throw new Error(r2.fehler.join('\n'));
+    expect(r2.text).toContain(`neue Version von ${KOPF.key}, ersetzt nach Freigabe v1 (freigegeben)`);
+    await t.dienst.freigabeAnfragen('o', KOPF.key);
+    expect(t.fragen.at(-1)!.text).toContain(`neue Version von ${KOPF.key}, ersetzt nach Freigabe v1 (freigegeben)`);
+  });
+
+  it('M2: Asset-Name nicht lesbar → Fehler mit Asset-ID, kein stilles Weitermachen; M3: Change-Liste einmal je Ableitung', async () => {
+    const t = aufbau({ changes: pkiChanges(), assetNamen: NAMEN, assetFehler: 'DB weg' });
+    const r = await t.dienst.ableitenVorschlag('o', ALLE);
+    expect(r.ok).toBe(false);
+    expect(fehlerText(r)).toMatch(/Asset b4e48d79-2872-45aa-9a45-6843a2a85c0f: Name nicht lesbar \(DB weg\)/);
+    const m = aufbau({ changes: pkiChanges(), assetNamen: NAMEN });
+    await m.dienst.ableitenVorschlag('o', [ALLE[0].slice(0, 8), ALLE[1].slice(0, 8), ALLE[2].slice(0, 8)]);
+    expect(m.ladungen.changes).toBe(1);
   });
 });

@@ -14,7 +14,7 @@ function dienst() {
     widerrufen: merke('widerrufen', { ok: true, text: 'widerrufen' }),
     anwenden: merke('anwenden', { ok: true, text: 'angewendet', ids: ['c1'] }),
     liste: merke('liste', [{ key: 'test_lab', titel: 'Test-Lab', version: 2, status: 'entwurf', freigegebeneVersion: 1 }]),
-    ableitenVorschlag: merke('ableitenVorschlag', { ok: true, text: 'Vorschlag-Tabelle', kandidaten: [], verweise: [], hinweise: [] }),
+    ableitenVorschlag: merke('ableitenVorschlag', { ok: true, text: 'Vorschlag-Tabelle', stand: 'st4nd', kandidaten: [], verweise: [], entscheidungen: [], hinweise: [] }),
     ableitenErzeugen: merke('ableitenErzeugen', { ok: true, text: 'Entwurf gespeichert' }),
     zeigen: merke('zeigen', { key: 'test_lab', version: 1, status: 'freigegeben', abdruck: 'b'.repeat(64), json: '{"titel":"Test-Lab"}' }),
   };
@@ -96,9 +96,14 @@ describe('BauplanSkill', () => {
     expect(v.success).toBe(true);
     expect(v.display).toBe('Vorschlag-Tabelle');
     expect(aufrufe.at(-1)).toEqual(['ableitenVorschlag', ['o', ['2cfde1a2', '7335dfeb']]]);
-    const e = await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['2cfde1a2'], auswahl: { 5: 'vlan' }, teil: { 'x:1:p:0': 'fest' }, key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, owner);
+    const e = await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['2cfde1a2'], auswahl: { 5: 'vlan', 7: { name: 'netz', wert: '10.0.0.0/24' } }, entscheid: { 'x:1:p:vmid|1#0': 'fest', 'anlage:name|dc01': 'fest' }, stand: 'abcdef012345', key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, owner);
     expect(e.success).toBe(true);
-    expect(aufrufe.at(-1)).toEqual(['ableitenErzeugen', ['o', ['2cfde1a2'], { 5: 'vlan' }, { key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, { 'x:1:p:0': 'fest' }]]);
+    expect(aufrufe.at(-1)).toEqual(['ableitenErzeugen', ['o', ['2cfde1a2'], { 5: 'vlan', 7: { name: 'netz', wert: '10.0.0.0/24' } }, { key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, { 'x:1:p:vmid|1#0': 'fest', 'anlage:name|dc01': 'fest' }, 'abcdef012345']]);
+    // teil (Name aus Fix-Runde 1) wird mit entscheid zusammengeführt
+    await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['2cfde1a2'], auswahl: { 5: 'vlan' }, teil: { a: 'fest' }, entscheid: { b: 'fest' }, stand: 's', key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'testprotokoll' }, owner);
+    expect(aufrufe.at(-1)![1][4]).toEqual({ a: 'fest', b: 'fest' });
+    // vorschlag liefert den Stand in data
+    expect(v.data).toMatchObject({ stand: 'st4nd' });
     const n = aufrufe.length;
     expect((await skill.execute({ action: 'bauplan_ableiten', changes: ['a'] }, owner)).success).toBe(false);
     expect((await skill.execute({ action: 'bauplan_ableiten', modus: 'vorschlag' }, owner)).success).toBe(false);
@@ -107,6 +112,10 @@ describe('BauplanSkill', () => {
     expect(aufrufe).toHaveLength(n);
     expect(skill.metadata.description).toContain('bauplan_ableiten');
     expect(JSON.stringify(skill.metadata.inputSchema)).toContain('auswahl');
+    expect(JSON.stringify(skill.metadata.inputSchema)).toContain('entscheid');
+    expect(JSON.stringify(skill.metadata.inputSchema)).toContain('stand');
+    // erzeugen ohne stand → Fehler ohne Dienstaufruf
+    expect((await skill.execute({ action: 'bauplan_ableiten', modus: 'erzeugen', changes: ['a'], auswahl: { 1: 'x' }, key: 'lab', titel: 'Lab', zweck: 'Test', dokumentart: 'betrieb' }, owner)).error).toMatch(/stand/);
   });
   it('V4 bauplan_ableiten (auch vorschlag) aus Unteragent oder Change-Schritt abgewiesen; nur Owner', async () => {
     const { skill, aufrufe } = neu();

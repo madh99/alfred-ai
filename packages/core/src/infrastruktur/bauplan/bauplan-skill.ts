@@ -6,6 +6,7 @@
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { BauplanDienst } from './bauplan-dienst.js';
+import type { AuswahlEintrag, Entscheid } from './ableiten.js';
 import { EINGEBAUTE_VORLAGEN, eingebauteVorlage } from './vorlagen/index.js';
 
 const AKTIONEN = ['bauplan_speichern', 'bauplan_liste', 'bauplan_zeigen', 'bauplan_freigabe_anfragen', 'bauplan_freigeben', 'bauplan_widerrufen', 'bauplan_anwenden', 'bauplan_ableiten'] as const;
@@ -43,9 +44,11 @@ export class BauplanSkill extends Skill {
       + 'bauplan_anwenden (key, parameter = Objekt mit den Werten, instanz = neuer Name [A-Za-z0-9_.-]) — nur die neueste, freigegebene Version: '
       + 'prüft erneut, kontrolliert die Annahmen live, legt normale Changes an und stellt EINE Freigabe-Frage für das Paket. Nichts läuft ohne Owner-Ja. '
       + 'bauplan_ableiten — Vorlage aus erfolgreich ausgeführten (completed) Changes ableiten (changes = Liste von IDs oder eindeutigen Anfängen, höchstens 30): '
-      + 'zuerst modus vorschlag (nur lesend: Kandidaten-Tabelle, Teilvorkommen mit ids, Verweise, Hinweise), dann modus erzeugen mit denselben changes, '
-      + 'auswahl = Objekt Kandidaten-Nr → Parametername, teil = Objekt Teilvorkommen-id → "ersetzen"|"fest" (für jedes Teilvorkommen der gewählten Kandidaten), '
-      + 'key, titel, zweck, dokumentart — speichert einen Entwurf (volle Prüfung); Freigabe danach nur über bauplan_freigabe_anfragen.',
+      + 'zuerst modus vorschlag (nur lesend: Kandidaten mit allen Fundstellen, Entscheidungspunkte mit ids, Verweise, Hinweise, stand), dann modus erzeugen mit denselben changes, '
+      + 'stand aus dem Vorschlag, auswahl = Objekt Kandidaten-Nr → Parametername (oder {name, wert}; gleicher Wert darf auf denselben Namen), '
+      + 'entscheid = Objekt id → "ersetzen"|"fest" für jedes Teilvorkommen der gewählten Kandidaten, jede feste ID und jeden vom Paket angelegten, nicht gewählten Wert (nur "fest"), '
+      + 'key, titel, zweck, dokumentart — speichert einen Entwurf (volle Prüfung); fehlende Entscheidungen nennt erzeugen auf einmal; '
+      + 'bewusst feste Stellen stehen in der Freigabe-Frage; Freigabe danach nur über bauplan_freigabe_anfragen.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
@@ -60,8 +63,10 @@ export class BauplanSkill extends Skill {
         instanz: { type: 'string', description: 'bauplan_anwenden: Name der neuen Bauplan-Instanz, z. B. pki-lab-2026-11-20' },
         modus: { type: 'string', enum: ['vorschlag', 'erzeugen'], description: 'bauplan_ableiten: vorschlag (nur lesend) oder erzeugen (Entwurf speichern)' },
         changes: { type: 'array', items: { type: 'string' }, description: 'bauplan_ableiten: Change-IDs oder eindeutige Anfänge, z. B. ["2cfde1a2", "7335dfeb"]' },
-        auswahl: { type: 'object', description: 'bauplan_ableiten erzeugen: Kandidaten-Nr → Parametername, z. B. {"5": "vlan", "12": "vmid_server"}' },
-        teil: { type: 'object', description: 'bauplan_ableiten erzeugen: Teilvorkommen-id (aus dem Vorschlag) → "ersetzen" oder "fest"' },
+        auswahl: { type: 'object', description: 'bauplan_ableiten erzeugen: Kandidaten-Nr → Parametername oder {name, wert}, z. B. {"5": "vlan", "12": "vmid_server"}' },
+        entscheid: { type: 'object', description: 'bauplan_ableiten erzeugen: Entscheidungs-id (aus dem Vorschlag oder der Fehlermeldung) → "ersetzen" oder "fest" (feste IDs und angelegte Werte nur "fest")' },
+        teil: { type: 'object', description: 'bauplan_ableiten erzeugen: älterer Name für entscheid (wird zusammengeführt)' },
+        stand: { type: 'string', description: 'bauplan_ableiten erzeugen: Stand aus dem Vorschlag (bindet Kandidaten-Nummern und ids)' },
         titel: { type: 'string', description: 'bauplan_ableiten erzeugen: Titel der neuen Vorlage' },
         zweck: { type: 'string', description: 'bauplan_ableiten erzeugen: Zweck der neuen Vorlage' },
         dokumentart: { type: 'string', enum: ['testprotokoll', 'betrieb'], description: 'bauplan_ableiten erzeugen: Dokumentart der neuen Vorlage' },
@@ -146,20 +151,24 @@ export class BauplanSkill extends Skill {
           if (modus === 'vorschlag') {
             const r = await this.dienst.ableitenVorschlag(o, changes);
             return r.ok
-              ? { success: true, data: { kandidaten: r.kandidaten.length, verweise: r.verweise.length, hinweise: r.hinweise.length }, display: r.text }
+              ? { success: true, data: { stand: r.stand, kandidaten: r.kandidaten.length, verweise: r.verweise.length, entscheidungen: r.entscheidungen.length, hinweise: r.hinweise.length }, display: r.text }
               : { success: false, error: `Kein Vorschlag:\n${r.fehler.map(f => `- ${f}`).join('\n')}` };
           }
           const auswahlRoh = objekt(input.auswahl);
           if (!auswahlRoh || !Object.keys(auswahlRoh).length) return { success: false, error: 'auswahl: Objekt Kandidaten-Nr → Parametername (aus dem Vorschlag)' };
-          const auswahl = Object.fromEntries(Object.entries(auswahlRoh).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])) as Record<string, string>;
-          const teil = objekt(input.teil) ?? (input.teil === undefined || input.teil === null ? {} : undefined);
-          if (!teil) return { success: false, error: 'teil: Objekt Teilvorkommen-id → "ersetzen" oder "fest"' };
+          const auswahl = Object.fromEntries(Object.entries(auswahlRoh).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v])) as Record<string, AuswahlEintrag>;
+          const leerOk = (x: unknown) => objekt(x) ?? (x === undefined || x === null ? {} : undefined);
+          const teil = leerOk(input.teil);
+          const entscheidRoh = leerOk(input.entscheid);
+          if (!teil || !entscheidRoh) return { success: false, error: 'entscheid: Objekt id → "ersetzen" oder "fest"' };
+          const stand = text(input.stand);
+          if (!stand) return { success: false, error: 'stand: den Stand aus dem Vorschlag angeben (zuerst modus vorschlag)' };
           const dokumentart = text(input.dokumentart);
           if (dokumentart !== 'testprotokoll' && dokumentart !== 'betrieb') return { success: false, error: 'dokumentart: testprotokoll oder betrieb' };
           const kopf: { key: string; titel: string; zweck: string; dokumentart: 'testprotokoll' | 'betrieb' } = { key, titel: text(input.titel), zweck: text(input.zweck), dokumentart };
           if (!kopf.key || !kopf.titel || !kopf.zweck) return { success: false, error: 'key, titel und zweck der neuen Vorlage angeben' };
-          // teil geht unverändert an baueEntwurf — ungültige Entscheidungen meldet die Ableitung selbst
-          const r = await this.dienst.ableitenErzeugen(o, changes, auswahl, kopf, teil as Record<string, 'ersetzen' | 'fest'>);
+          // Entscheidungen gehen unverändert an baueEntwurf — ungültige meldet die Ableitung selbst
+          const r = await this.dienst.ableitenErzeugen(o, changes, auswahl, kopf, { ...teil, ...entscheidRoh } as Entscheid, stand);
           return r.ok ? { success: true, display: r.text } : { success: false, error: `Nicht erzeugt (nichts gespeichert):\n${r.fehler.map(f => `- ${f}`).join('\n')}` };
         }
       }

@@ -3,18 +3,24 @@
  *
  * Aus den Plänen der gewählten Changes entstehen Parameter-Kandidaten (typisierte Werte an genau benannten Fundstellen),
  * Verweise über Change-Grenzen (fest eingetragene IDs, die ein früherer Change im Lauf erzeugt hat) und daraus ein Entwurf,
- * der pruefeSchema besteht. Das Modell liefert nur die Auswahl (Kandidat → Parametername) und die Kopfdaten; alles andere
- * ist Code. Ersetzt wird nur an den Fundstellen (ganzer Wert oder Token-Grenze im Text), nie per globalem Suchen/Ersetzen.
- * Werte aus Laufergebnissen dienen nur zum Erkennen von Verweisen und werden nie in den Entwurf kopiert.
+ * der pruefeSchema besteht. Das Modell liefert nur die Auswahl (Kandidat → Parametername), die Entscheidungen und die
+ * Kopfdaten; alles andere ist Code. Ersetzt wird nur an den Fundstellen (ganzer Wert oder Token-Grenze im Text), nie per
+ * globalem Suchen/Ersetzen. Werte aus Laufergebnissen dienen nur zum Erkennen von Verweisen und werden nie in den Entwurf kopiert.
  *
- * Schutzregeln: ein gewählter Wert, der nur als Teil eines Tresor-Namens vorkommt, lehnt den Entwurf ab (sonst nutzte jede
+ * Final-Welle (Owner-Regel: nichts ändert sich still): jeder nicht parametrisierte Wert, der auf Objekte der Original-Instanz
+ * zielt, braucht eine ausdrückliche Entscheidung (Entscheid, id → „ersetzen“|„fest“), die auch in der Freigabe-Frage steht:
+ * (a) Teilvorkommen gewählter Werte, (b) feste IDs ohne Verweis, (c) vom Paket angelegte, aber nicht gewählte Werte
+ * (samt allen Stellen, die auf sie zielen) und Adressen in einem gewählten Netz. Fehlt eine, entsteht nichts.
+ *
+ * Schutzregeln: ein gewählter Wert, der als Teil eines Tresor-Namens vorkommt, lehnt den Entwurf ab (sonst nutzte jede
  * neue Instanz die Geheimnisse der Original-Instanz); Assets, die das Paket selbst anlegt, fallen aus betroffen; „frei“-
  * Annahmen nur für Werte, die ein gewählter Change selbst anlegt.
  */
+import { createHash } from 'node:crypto';
 import { GEHEIM_NAME } from '../../fernzugriff/kaefig.js';
 import { ZEITLIMIT_STANDARD_S } from '../change-schritte.js';
 import { NAME_WERT, pruefeWert } from './parameter.js';
-import { PARAM_NAME_MUSTER, pruefeSchema, type BauplanChange, type BauplanParameter, type BauplanVorlage, type ParamTyp } from './schema.js';
+import { PARAM_NAME_MUSTER, pruefeSchema, type AbleitungsFunktion, type BauplanChange, type BauplanParameter, type BauplanVorlage, type ParamTyp } from './schema.js';
 
 export interface QuellChange {
   id: string;
@@ -29,9 +35,10 @@ export interface QuellChange {
 export interface Fundstelle { change: string; schritt: number; pfad: string; ganz: boolean }
 /**
  * Vorkommen als Teil eines zusammengesetzten Tokens (157 in /etc/pve/qemu-server/157.conf, 829 in vmbr829, dc01 in
- * win-dc01-admin) in parameter, pruefung, rueckweg — nie in Titeln. id = <change-id>:<schritt>:<pfad>:<index> (volle ID; index = Nummer
- * des Vorkommens im Text); token = umgebendes Wort. Für gewählte Werte entscheidet der Aufrufer je id „ersetzen“ oder „fest“;
- * tresor gesetzt = Teil eines Tresor-Namens, nie ersetzbar.
+ * win-dc01-admin) in parameter, pruefung, rueckweg — nie in Titeln (dort ersetzt die Ableitung ohne Entscheidung).
+ * id = <change-id>:<schritt>:<pfad>:<typ>|<wert>#<index> (volle ID; Typ und Wert, weil an derselben Stelle mehrere Werte
+ * stecken können — pve und 157 in /etc/pve/qemu-server/157.conf; index = Nummer des Vorkommens des Werts im Text);
+ * token = umgebendes Wort. tresor gesetzt = Teil eines Tresor-Namens, nie ersetzbar.
  */
 export interface Teilvorkommen extends Fundstelle { id: string; token: string; tresor?: string }
 export interface Kandidat {
@@ -46,11 +53,30 @@ export interface Verweis {
   change: string; schritt: number; pfad: string; wert: string; quelle: { change: string; schritt: number; feld: string };
   art?: 'praefix'; start?: number; ende?: number;
 }
-export type TeilEntscheid = Record<string, 'ersetzen' | 'fest'>;
+/** Feste ID außerhalb eines Titels, die auf ein Objekt der Original-Instanz zeigt (kein Verweis möglich) — id = <change-id>:<schritt>:<pfad>:id|<wert> */
+export interface FesteId { id: string; change: string; schritt: number; pfad: string; wert: string; grund: string }
+/** Entscheidung je id: „ersetzen“ (nur Teilvorkommen) oder „fest“ (bewusst unverändert, steht in der Freigabe-Frage) */
+export type Entscheid = Record<string, 'ersetzen' | 'fest'>;
+/** Name aus Fix-Runde 1 — heute Teil des einheitlichen Entscheid */
+export type TeilEntscheid = Entscheid;
+/** Auswahl je Kandidaten-Nummer: Parametername oder {name, wert} (wert wird gegen den Kandidaten geprüft) */
+export type AuswahlEintrag = string | { name: string; wert?: unknown };
+/**
+ * Entscheidungspunkt: art teil (a) = Teilvorkommen eines Kandidaten, id (b) = feste ID, anlage (c) = vom Paket angelegter Wert
+ * (id anlage:<typ>|<wert>) bzw. Adresse in einem Netz-Kandidaten. nurFest: „ersetzen“ gibt es nicht (Ausweg: als Parameter wählen).
+ */
+export interface Entscheidungspunkt {
+  id: string; art: 'teil' | 'id' | 'anlage'; wert: string; typ?: ParamTyp; kandidat?: number; token?: string; tresor?: string;
+  orte: Fundstelle[]; grund: string; nurFest: boolean;
+}
+/** Bewusst feste Stelle (für Anzeige und die Spalte ableitung) */
+export interface FestEintrag { id: string; art: 'teil' | 'id' | 'anlage'; wort: string; change8: string; schritt: number; pfad: string; grund: string }
 
 /** Durchsuchte Teile eines Schritts (dazu der Change-Titel) */
 const SUCH_TEILE = new Set(['parameter', 'pruefung', 'rueckweg', 'titel']);
 const IMMER_KANDIDAT = new Set<ParamTyp>(['vmid', 'vlan', 'cidr', 'ipv4']);
+/** M-b — bei gleichem Wert auf einem Parameter gewinnt der strengere Typ */
+const TYP_RANG: ParamTyp[] = ['vmid', 'vlan', 'cidr', 'ipv4', 'node', 'storage', 'name'];
 const VMID_SCHLUESSEL = /^(vmid|new_vmid|vm_id)$/;
 const VLAN_SCHLUESSEL = /^(vlan|vlan_id|vlan_tag)$/;
 const VMID_LISTE = /(^|_)vmids$/;
@@ -67,13 +93,21 @@ const FELD_NAME = /^[a-zA-Z_]\w*$/;
 /** Werte, die nach erzeugter ID aussehen (UUID, Thumbprint, UPID) — für Hinweise auf feste IDs ohne Quelle */
 const ID_FORM = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32,}|UPID:.+)$/i;
 const UUID_FORM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** I1 — UUID oder lange Hex-Kette (≥ 32) als Wort im Text */
+const ID_IM_TEXT = /(?<![0-9a-z])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32,})(?![0-9a-z])/gi;
 /** Nur bei Hex-IDs (UUID, Thumbprint) ist ein Anfang ≥ 8 Zeichen eindeutig genug für einen Verweis — nie bei Namen (alfred-pbs-taeglich) oder UPIDs */
 const HEX_ID = (id: string): boolean => UUID_FORM.test(id) || /^[0-9a-f]{8,}$/i.test(id);
 const ANLEGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (/^(create_|provision_)/.test(aktion) || aktion === 'clone_vm');
+/** I4 — Schritte, die ein Objekt anlegen (auch Wald, DNS-Eintrag); weiter als ANLEGE_AKTION, die nur Annahmen/betroffen steuert */
+const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag');
+/** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne) */
+const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$/;
+const IPV4_IM_TEXT = /(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g;
 
 const kurz = (id: string): string => id.slice(0, 8);
 const istObjekt = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const schritteVon = (c: QuellChange): Array<Record<string, unknown>> => (Array.isArray(c.plan.schritte) ? c.plan.schritte : []).filter(istObjekt);
+const ortText = (change: string, schritt: number, pfad: string): string => schritt === 0 ? `${kurz(change)} Titel` : `${kurz(change)} Schritt ${schritt} ${pfad}`;
 
 interface Blatt {
   change: string; schritt: number; pfad: string;
@@ -146,6 +180,8 @@ function treffer(text: string, wert: string): Treffer[] {
 
 interface Ort { blatt: Blatt; ganz: boolean }
 interface Teil { blatt: Blatt; start: number; ende: number; id: string; token: string; tresor?: string; platzhalter?: string }
+/** Teilvorkommen in einem Titel (M-e) — ohne Entscheidung ersetzt */
+interface TitelTeil { blatt: Blatt; start: number; ende: number }
 
 /** Umgebendes Wort eines Vorkommens (bis Leerraum oder Anführungszeichen) */
 function tokenUm(text: string, start: number, ende: number): string {
@@ -154,11 +190,11 @@ function tokenUm(text: string, start: number, ende: number): string {
   while (e < text.length && !/[\s"'„“]/.test(text[e]!)) e++;
   return text.slice(a, e);
 }
-interface KandidatIntern { kandidat: Kandidat; orte: Ort[]; teile: Teil[]; erkannt: Blatt }
+interface KandidatIntern { kandidat: Kandidat; orte: Ort[]; teile: Teil[]; titelTeile: TitelTeil[]; erkannt: Blatt }
 
 /** Fundstellen und Teilvorkommen eines Werts (typ, wert) über alle Blätter */
-function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort[]; teile: Teil[] } {
-  const orte: Ort[] = []; const teile: Teil[] = [];
+function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort[]; teile: Teil[]; titelTeile: TitelTeil[] } {
+  const orte: Ort[] = []; const teile: Teil[] = []; const titelTeile: TitelTeil[] = [];
   const text = String(wert);
   for (const b of alle) {
     if (typeof b.wert === 'number') {
@@ -181,16 +217,17 @@ function suche(alle: Blatt[], typ: ParamTyp, wert: string | number): { orte: Ort
     if (!tresorFeld && tr.some(t => t.token)) orte.push({ blatt: b, ganz: false });
     tr.forEach((t, i) => {
       if (!tresorFeld && t.token) return;
-      if (titel) return; // Titel sind Beschreibung: Teilvorkommen dort werden weder gelistet noch entschieden
+      // M-e: Titel sind Beschreibung — Teilvorkommen dort ersetzt die Ableitung ohne Entscheidung (außer in Platzhaltern)
+      if (titel) { if (!t.platzhalter) titelTeile.push({ blatt: b, start: t.start, ende: t.ende }); return; }
       const g = t.platzhalter ? GEHEIM_IN_PLATZHALTER.exec(t.platzhalter) : null;
       const tresor = tresorFeld ? b.wert as string : g ? g[1] : undefined;
       teile.push({
-        blatt: b, start: t.start, ende: t.ende, id: `${b.change}:${b.schritt}:${b.pfad}:${i}`, token: tokenUm(b.wert as string, t.start, t.ende),
+        blatt: b, start: t.start, ende: t.ende, id: `${b.change}:${b.schritt}:${b.pfad}:${typ}|${text}#${i}`, token: tokenUm(b.wert as string, t.start, t.ende),
         ...(tresor ? { tresor } : {}), ...(t.platzhalter ? { platzhalter: t.platzhalter } : {}),
       });
     });
   }
-  return { orte, teile };
+  return { orte, teile, titelTeile };
 }
 
 const fundstelle = (b: Blatt, ganz: boolean): Fundstelle => ({ change: b.change, schritt: b.schritt, pfad: b.pfad, ganz });
@@ -202,6 +239,34 @@ function snake(s: string): string {
   return n.slice(0, 31).replace(/_+$/, '') || 'wert';
 }
 
+interface Anlage { id: string; typ: ParamTyp; wert: string | number; blatt: Blatt; skillAktion: string }
+/**
+ * I4 — Werte, die ein gewählter Change selbst anlegt: Namen/Hostnamen/Zonen/Policies/DNS-Records/Domänen in Anlege-Schritten,
+ * VMIDs über new_vmid (bzw. vmid in create_vm/create_lxc), VLANs über unifi.create_network. id = anlage:<typ>|<wert>.
+ */
+function anlagen(q: QuellChange[]): Anlage[] {
+  const aus = new Map<string, Anlage>();
+  for (const c of q) {
+    const schritte = schritteVon(c);
+    for (const b of blaetter(c)) {
+      const f = b.schritt > 0 ? /^parameter\.([A-Za-z0-9_]+)$/.exec(b.pfad)?.[1] : undefined;
+      const s = f ? schritte[b.schritt - 1] : undefined;
+      if (!f || !s || !ANLAGE_AKTION(s.aktion)) continue;
+      let typ: ParamTyp | undefined;
+      if (typeof b.wert === 'number') {
+        if (((f === 'new_vmid' && ANLEGE_AKTION(s.aktion)) || (/^(vmid|vm_id)$/.test(f) && /^create_(vm|lxc)$/.test(String(s.aktion)))) && gueltig('vmid', b.wert)) typ = 'vmid';
+        else if (/^(vlan|vlan_id)$/.test(f) && s.skill === 'unifi' && s.aktion === 'create_network' && gueltig('vlan', b.wert)) typ = 'vlan';
+      } else if (typeof b.wert === 'string' && b.wert.trim() && !b.wert.includes('{{') && ANLAGE_NAME_FELD.test(f)) {
+        typ = typVon(f, b.wert, false) ?? 'name';
+      }
+      if (!typ) continue;
+      const id = `anlage:${typ}|${String(b.wert)}`;
+      if (!aus.has(id)) aus.set(id, { id, typ, wert: b.wert as string | number, blatt: b, skillAktion: `${String(s.skill)}.${String(s.aktion)}` });
+    }
+  }
+  return [...aus.values()];
+}
+
 function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
   const alle = q.flatMap(c => blaetter(c));
   const erkannt = new Map<string, { typ: ParamTyp; wert: string | number; blatt: Blatt }>();
@@ -211,11 +276,19 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
     const k = `${typ}|${typeof b.wert}|${String(b.wert)}`;
     if (!erkannt.has(k)) erkannt.set(k, { typ, wert: b.wert as string | number, blatt: b });
   }
+  // I4 — angelegte Werte sind immer Kandidat (wählbar statt nur „fest“), auch mit nur einer Fundstelle
+  const angelegt = new Set<string>();
+  for (const a of anlagen(q)) {
+    const k = `${a.typ}|${typeof a.wert}|${String(a.wert)}`;
+    if (!gueltig(a.typ, a.wert)) continue;
+    angelegt.add(k);
+    if (!erkannt.has(k)) erkannt.set(k, { typ: a.typ, wert: a.wert, blatt: a.blatt });
+  }
   const aus: KandidatIntern[] = [];
   const vergeben = new Set<string>();
-  for (const { typ, wert, blatt } of erkannt.values()) {
-    const { orte, teile } = suche(alle, typ, wert);
-    if (orte.length < 2 && !IMMER_KANDIDAT.has(typ)) continue;
+  for (const [key, { typ, wert, blatt }] of erkannt) {
+    const { orte, teile, titelTeile } = suche(alle, typ, wert);
+    if (orte.length < 2 && !IMMER_KANDIDAT.has(typ) && !angelegt.has(key)) continue;
     // Vorschlag: Schlüssel der ersten typisierten Einzelwert-Fundstelle (new_vmid statt add_vmids), sonst der erkennenden
     const quelle = orte.find(o => o.ganz && !o.blatt.inListe && typVon(o.blatt.schluessel, o.blatt.wert, false) === typ)?.blatt ?? blatt;
     const basis = snake(quelle.schluessel);
@@ -224,7 +297,7 @@ function kandidatenIntern(q: QuellChange[]): KandidatIntern[] {
     vergeben.add(vorschlag);
     aus.push({
       kandidat: { nr: aus.length + 1, wert, typ, vorschlag, fundstellen: orte.map(o => fundstelle(o.blatt, o.ganz)), teilvorkommen: teile.map(teilvorkommen) },
-      orte, teile, erkannt: quelle,
+      orte, teile, titelTeile, erkannt: quelle,
     });
   }
   return aus;
@@ -280,16 +353,24 @@ function erzeugteIds(q: QuellChange[]): Map<string, Quelle[]> {
 
 /**
  * Verweise über Change-Grenzen: jeder ganze String-Wert eines Schritts, der genau einer erzeugten ID eines früheren gewählten
- * Change in der abhaengigVon-Hülle gleicht. Mehrdeutig, außerhalb der Hülle oder ohne Quelle → kein Verweis, Hinweis.
+ * Change in der abhaengigVon-Hülle gleicht. Mehrdeutig, außerhalb der Hülle oder ohne Quelle → kein Verweis: in Titeln ein
+ * Hinweis, sonst (I1) eine feste ID, die ausdrücklich „fest“ entschieden werden muss.
  */
-export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise: string[] } {
+export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise: string[]; feste: FesteId[] } {
   const ids = erzeugteIds(q);
   const huelle = huellen(q);
   const reihe = new Map(q.map((c, i) => [c.id, i]));
   const verweise: Verweis[] = [];
   const hinweise = new Set<string>();
-  const ort = (b: Blatt) => b.schritt === 0 ? `${kurz(b.change)} Titel` : `${kurz(b.change)} Schritt ${b.schritt} ${b.pfad}`;
+  const feste = new Map<string, FesteId>();
+  const ort = (b: Blatt) => ortText(b.change, b.schritt, b.pfad);
   const quellText = (s: Quelle) => `${kurz(s.change)} Schritt ${s.schritt}.${s.feld}`;
+  /** Titel → Hinweis (keine Wirkung); sonst feste ID als Entscheidungspunkt */
+  const melde = (b: Blatt, wert: string, grund: string): void => {
+    if (b.pfad === 'titel') { hinweise.add(`${ort(b)}: ${grund}`); return; }
+    const id = `${b.change}:${b.schritt}:${b.pfad}:id|${wert}`;
+    if (!feste.has(id)) feste.set(id, { id, change: b.change, schritt: b.schritt, pfad: b.pfad, wert, grund });
+  };
   for (const c of q) {
     const vor = huelle.get(c.id) ?? new Set<string>();
     for (const b of blaetter(c)) {
@@ -302,14 +383,16 @@ export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise
           const s = inHuelle[0]!;
           verweise.push({ change: c.id, schritt: b.schritt, pfad: b.pfad, wert, quelle: { change: s.change, schritt: s.schritt, feld: s.feld } });
         } else if (inHuelle.length > 1) {
-          hinweise.add(`${ort(b)}: ${wert} ist mehrdeutig (${inHuelle.map(quellText).join(', ')}) — kein Verweis, Wert bleibt fest`);
+          melde(b, wert, `${wert} ist mehrdeutig (${inHuelle.map(quellText).join(', ')}) — kein Verweis, Wert bleibt fest`);
         } else {
-          hinweise.add(`${ort(b)}: ${wert} stammt aus ${quellen.map(quellText).join(', ')}, kein Vorgänger von ${kurz(c.id)} laut abhaengigVon — kein Verweis, Wert bleibt fest`);
+          melde(b, wert, `${wert} stammt aus ${quellen.map(quellText).join(', ')}, kein Vorgänger von ${kurz(c.id)} laut abhaengigVon — kein Verweis, Wert bleibt fest`);
         }
         continue;
       }
       if (b.schritt > 0 && ID_FORM.test(wert) && !quellen.length) {
-        hinweise.add(`${ort(b)}: feste ID ${wert} stammt aus keinem gewählten Change — kein Verweis, Wert bleibt fest`);
+        const text = `feste ID ${wert} stammt aus keinem gewählten Change — kein Verweis, Wert bleibt fest`;
+        // UPID u. ä.: nur Hinweis; UUID/Hex (≥ 32) zeigt auf ein Objekt der Original-Instanz → Entscheidung
+        if (UUID_FORM.test(wert) || /^[0-9a-f]{32,}$/i.test(wert)) melde(b, wert, text); else hinweise.add(`${ort(b)}: ${text}`);
         continue;
       }
       // Prüfungen: Anfang (≥ 8 Zeichen) einer erzeugten ID — ganz oder als Wort — wird Verweis auf die volle ID
@@ -331,23 +414,120 @@ export function findeVerweise(q: QuellChange[]): { verweise: Verweis[]; hinweise
               ...(w.wort === wert ? {} : { start: w.start, ende: w.ende }),
             });
           } else if (inHuelle.length > 1) {
-            hinweise.add(`${ort(b)}: Anfang ${w.wort} ist mehrdeutig (${inHuelle.map(p => quellText(p.s)).join(', ')}) — kein Verweis, Wert bleibt fest`);
+            melde(b, w.wort, `Anfang ${w.wort} ist mehrdeutig (${inHuelle.map(p => quellText(p.s)).join(', ')}) — kein Verweis, Wert bleibt fest`);
           } else {
-            hinweise.add(`${ort(b)}: Anfang ${w.wort} stammt aus ${passend.map(p => quellText(p.s)).join(', ')}, kein Vorgänger von ${kurz(c.id)} laut abhaengigVon — kein Verweis, Wert bleibt fest`);
+            melde(b, w.wort, `Anfang ${w.wort} stammt aus ${passend.map(p => quellText(p.s)).join(', ')}, kein Vorgänger von ${kurz(c.id)} laut abhaengigVon — kein Verweis, Wert bleibt fest`);
           }
         }
       }
-      // ID als Teil eines Texts (Titel „Policy e5d24ae1 entfernen“) — wird nie ersetzt
+      // ID als Teil eines Texts (Titel „Policy e5d24ae1 entfernen“, Befehl mit voller ID) — wird nie ersetzt
+      const gemeldet = new Set<string>();
       for (const [id, qs] of ids) {
         const fremd = qs.filter(s => s.change !== c.id);
         if (!fremd.length || wert === id || erledigt.has(id)) continue;
         const teil = wert.includes(id) ? id : UUID_FORM.test(id) && treffer(wert, id.slice(0, 8)).some(t => t.token) ? id.slice(0, 8) : undefined;
-        if (teil) hinweise.add(`${ort(b)}: enthält ${teil === id ? 'die ID' : 'den Anfang der ID'} ${id} aus ${fremd.map(quellText).join(', ')} im Text — bleibt fest, bei Bedarf von Hand anpassen`);
+        if (!teil) continue;
+        gemeldet.add(id.toLowerCase());
+        melde(b, teil, `enthält ${teil === id ? 'die ID' : 'den Anfang der ID'} ${id} aus ${fremd.map(quellText).join(', ')} im Text — bleibt fest, bei Bedarf von Hand anpassen`);
+      }
+      // I1 — UUID/Hex-ID im Text ohne Quelle in der Auswahl (Titel bleiben Hinweis-frei wie bisher)
+      if (b.schritt > 0 && b.pfad !== 'titel') {
+        const spannen = [...wert.matchAll(PLATZHALTER)].map(m => ({ a: m.index!, e: m.index! + m[0].length }));
+        for (const m of wert.matchAll(ID_IM_TEXT)) {
+          const a = m.index!; const e = a + m[0].length;
+          if (spannen.some(s => a < s.e && e > s.a) || gemeldet.has(m[0].toLowerCase()) || erledigt.has(m[0])) continue;
+          if ((ids.get(m[0]) ?? []).some(s => s.change !== c.id)) continue;
+          melde(b, m[0], `feste ID ${m[0]} im Text stammt aus keinem gewählten Change — kein Verweis, Wert bleibt fest`);
+        }
       }
     }
   }
   verweise.sort((a, b) => (reihe.get(a.change)! - reihe.get(b.change)!) || a.schritt - b.schritt);
-  return { verweise, hinweise: [...hinweise] };
+  return { verweise, hinweise: [...hinweise], feste: [...feste.values()] };
+}
+
+/** Skill.Aktion an einer Stelle (Schritt, Prüfung oder Rückweg) — für Meldungen „… (windows_ad.dns_client)“ */
+function aktionAm(q: QuellChange[], change: string, schritt: number, pfad: string): string {
+  const s = schritt > 0 ? schritteVon(q.find(c => c.id === change)!)[schritt - 1] : undefined;
+  if (!s) return '';
+  const teil = pfad.startsWith('pruefung') ? s.pruefung : pfad.startsWith('rueckweg') ? s.rueckweg : s;
+  const t = istObjekt(teil) ? teil : s;
+  return typeof t.skill === 'string' ? `${t.skill}.${String(t.aktion ?? '?')}` : typeof s.skill === 'string' ? `${s.skill}.${String(s.aktion ?? '?')}` : String(s.art ?? '');
+}
+
+const zuZahl = (ip: string): number => ip.split('.').reduce((s, o) => s * 256 + Number(o), 0);
+function netzVon(cidr: string): { netz: number; praefix: number } | undefined {
+  const m = /^([0-9.]+)\/(\d{1,2})$/.exec(cidr);
+  return m && gueltig('ipv4', m[1]) ? { netz: zuZahl(m[1]!), praefix: Number(m[2]) } : undefined;
+}
+const imNetz = (ip: string, n: { netz: number; praefix: number }): boolean => {
+  const g = 2 ** (32 - n.praefix);
+  return zuZahl(ip) >= n.netz && zuZahl(ip) < n.netz + g;
+};
+/** IPv4-Adressen in parameter/pruefung/rueckweg, die im Netz liegen — auch mit Präfix (10.0.5.7/24); nur Netzangaben (10.0.5.0/24) zählen nicht */
+function ipsImNetz(q: QuellChange[], cidr: string): string[] {
+  const n = netzVon(cidr);
+  if (!n) return [];
+  const aus = new Set<string>();
+  for (const b of q.flatMap(c => blaetter(c))) {
+    if (b.pfad === 'titel' || typeof b.wert !== 'string') continue;
+    for (const m of b.wert.matchAll(IPV4_IM_TEXT)) {
+      const pr = /^\/(\d{1,2})(?!\d)/.exec(b.wert.slice(m.index! + m[0].length));
+      if (pr && gueltig('cidr', `${m[0]}/${pr[1]}`)) continue; // Netzangabe, keine Host-Adresse
+      if (gueltig('ipv4', m[0]) && imNetz(m[0], n)) aus.add(m[0]);
+    }
+  }
+  return [...aus];
+}
+
+/**
+ * Alle Entscheidungspunkte der gewählten Changes, unabhängig von der Auswahl: (a) Teilvorkommen aller Kandidaten, (b) feste IDs,
+ * (c) vom Paket angelegte Werte (orte = alle Stellen außerhalb von Titeln) und Adressen in jedem Netz-Kandidaten. Welche davon
+ * beim Erzeugen nötig sind, hängt von der Auswahl ab (Teilvorkommen nur gewählter Werte; angelegte Werte nur, wo sie stehen bleiben).
+ */
+export function findeEntscheidungen(q: QuellChange[]): Entscheidungspunkt[] {
+  const intern = kandidatenIntern(q);
+  const punkte = new Map<string, Entscheidungspunkt>();
+  for (const k of intern) for (const t of k.teile) {
+    punkte.set(t.id, {
+      id: t.id, art: 'teil', wert: String(k.kandidat.wert), typ: k.kandidat.typ, kandidat: k.kandidat.nr, token: t.token, ...(t.tresor ? { tresor: t.tresor } : {}),
+      orte: [fundstelle(t.blatt, false)], grund: `Teil von „${t.token}“`, nurFest: !!t.tresor || !!t.platzhalter,
+    });
+  }
+  for (const f of findeVerweise(q).feste) punkte.set(f.id, { id: f.id, art: 'id', wert: f.wert, orte: [{ change: f.change, schritt: f.schritt, pfad: f.pfad, ganz: false }], grund: f.grund, nurFest: true });
+  const ohneTitel = q.flatMap(c => blaetter(c)).filter(b => b.pfad !== 'titel');
+  const kandNr = (typ: ParamTyp, wert: string | number) => intern.find(k => k.kandidat.typ === typ && String(k.kandidat.wert) === String(wert))?.kandidat.nr;
+  for (const a of anlagen(q)) {
+    const nr = kandNr(a.typ, a.wert);
+    punkte.set(a.id, {
+      id: a.id, art: 'anlage', wert: String(a.wert), typ: a.typ, ...(nr ? { kandidat: nr } : {}),
+      orte: suche(ohneTitel, a.typ, a.wert).orte.map(o => fundstelle(o.blatt, o.ganz)),
+      grund: `vom Paket angelegt in ${ortText(a.blatt.change, a.blatt.schritt, a.blatt.pfad)} (${a.skillAktion})`, nurFest: true,
+    });
+  }
+  for (const k of intern) {
+    if (k.kandidat.typ !== 'cidr') continue;
+    for (const ip of ipsImNetz(q, String(k.kandidat.wert))) {
+      const id = `anlage:ipv4|${ip}`;
+      if (punkte.has(id)) continue;
+      const nr = kandNr('ipv4', ip);
+      punkte.set(id, {
+        id, art: 'anlage', wert: ip, typ: 'ipv4', ...(nr ? { kandidat: nr } : {}), orte: suche(ohneTitel, 'ipv4', ip).orte.map(o => fundstelle(o.blatt, o.ganz)),
+        grund: `Adresse im Netz ${String(k.kandidat.wert)} (Kandidat #${k.kandidat.nr}) — nur nötig, wenn das Netz gewählt und diese Adresse nicht gewählt ist`, nurFest: true,
+      });
+    }
+  }
+  return [...punkte.values()];
+}
+
+/** I3 — Stand eines Vorschlags: sha256 (12) über sortierte volle Change-IDs, Kandidaten (nr|typ|wert) und alle Entscheidungspunkt-ids */
+export function standVon(q: QuellChange[]): string {
+  const roh = JSON.stringify([
+    q.map(c => c.id).sort(),
+    findeKandidaten(q).map(k => `${k.nr}|${k.typ}|${String(k.wert)}`),
+    findeEntscheidungen(q).map(p => p.id).sort(),
+  ]);
+  return createHash('sha256').update(roh).digest('hex').slice(0, 12);
 }
 
 /** Annahme „frei“ je gewähltem Parameter — Muster exakt wie die live bewiesene Vorlage pki_lab */
@@ -365,31 +545,59 @@ function annahmeFuer(k: KandidatIntern, name: string, schritt: (b: Blatt) => Rec
   return undefined;
 }
 
+export interface EntwurfErgebnis {
+  vorlage?: BauplanVorlage; fehler: string[]; hinweise: string[];
+  /** fehlende Entscheidungen (alle Kategorien auf einmal) */
+  offen: Entscheidungspunkt[];
+  /** bewusst feste Stellen (Teilvorkommen, feste IDs, angelegte Werte) */
+  fest: FestEintrag[];
+  /** Parameter ohne automatische Vorab-Kontrolle (abgeleitete ausgenommen) */
+  ohneAnnahme: string[];
+}
+
+const ortListe = (q: QuellChange[], orte: Fundstelle[]): string => orte.map(o => {
+  const a = aktionAm(q, o.change, o.schritt, o.pfad);
+  return `${ortText(o.change, o.schritt, o.pfad)}${a ? ` (${a})` : ''}`;
+}).join(', ');
+
 /**
- * Entwurf einer Bauplan-Vorlage aus den gewählten Changes (Reihenfolge wie übergeben, Schlüssel aus QuellChange.schluessel)
- * und der Auswahl Kandidaten-Nummer → Parametername. Ohne Fehler besteht das Ergebnis pruefeSchema.
+ * Entwurf einer Bauplan-Vorlage aus den gewählten Changes (Reihenfolge wie übergeben, Schlüssel aus QuellChange.schluessel),
+ * der Auswahl Kandidaten-Nummer → Parametername (oder {name, wert}) und den Entscheidungen. Ohne Fehler besteht das Ergebnis pruefeSchema.
  */
 export function baueEntwurf(
-  q: QuellChange[], auswahl: Record<number, string>,
+  q: QuellChange[], auswahl: Record<number | string, AuswahlEintrag>,
   kopf: { key: string; titel: string; zweck: string; dokumentart: 'testprotokoll' | 'betrieb' },
-  teilEntscheid: TeilEntscheid = {},
-): { vorlage?: BauplanVorlage; fehler: string[]; hinweise: string[] } {
+  entscheid: Entscheid = {},
+): EntwurfErgebnis {
   const fehler: string[] = [];
   const hinweise: string[] = [];
+  const fest: FestEintrag[] = [];
+  const ende = (offen: Entscheidungspunkt[] = []): EntwurfErgebnis => ({ fehler: [...new Set(fehler)], hinweise, offen, fest: [], ohneAnnahme: [] });
   const intern = kandidatenIntern(q);
   const nachNr = new Map(intern.map(k => [k.kandidat.nr, k]));
 
-  // 1. Auswahl prüfen
+  // 1. Auswahl prüfen (M-b: gleicher Name nur bei gleichem Wert)
   const gewaehlt: Array<{ k: KandidatIntern; name: string }> = [];
-  const namen = new Set<string>();
-  for (const [nrText, name] of Object.entries(auswahl)) {
+  const namen = new Map<string, KandidatIntern>();
+  for (const [nrText, roh] of Object.entries(auswahl)) {
     const k = nachNr.get(Number(nrText));
     if (!k) { fehler.push(`Auswahl: Kandidat ${nrText} gibt es nicht (1–${intern.length})`); continue; }
+    const name = istObjekt(roh) ? roh.name : roh;
+    if (istObjekt(roh) && roh.wert !== undefined && String(roh.wert) !== String(k.kandidat.wert)) {
+      fehler.push(`Auswahl ${nrText}: Kandidat ${nrText} hat den Wert ${String(k.kandidat.wert)}, nicht ${String(roh.wert)} — Vorschlag neu holen`); continue;
+    }
     if (typeof name !== 'string' || !PARAM_NAME_MUSTER.test(name)) { fehler.push(`Auswahl ${nrText}: Parametername ${JSON.stringify(name)} muss ${PARAM_NAME_MUSTER} entsprechen`); continue; }
     if (GEHEIM_NAME.test(name)) { fehler.push(`Auswahl ${nrText}: Parametername „${name}“ klingt nach einem Geheimnis — Parameter dürfen keine Geheimnisse tragen`); continue; }
-    if (namen.has(name)) { fehler.push(`Auswahl ${nrText}: Parametername „${name}“ ist doppelt vergeben`); continue; }
-    namen.add(name);
+    const vorher = namen.get(name);
+    if (vorher && String(vorher.kandidat.wert) !== String(k.kandidat.wert)) { fehler.push(`Auswahl ${nrText}: Parametername „${name}“ ist doppelt vergeben (Kandidat ${vorher.kandidat.nr} hat einen anderen Wert)`); continue; }
+    namen.set(name, vorher ?? k);
     gewaehlt.push({ k, name });
+  }
+  // C1 — jede Teilvorkommen-id gehört genau einer Stelle eines gewählten Werts
+  const teilNachId = new Map<string, { k: KandidatIntern; name: string; t: Teil }>();
+  for (const g of gewaehlt) for (const t of g.k.teile) {
+    if (teilNachId.has(t.id)) fehler.push(`Teilvorkommen ${t.id}: id doppelt (Kandidaten ${teilNachId.get(t.id)!.k.kandidat.nr} und ${g.k.kandidat.nr}) — Vorschlag neu holen`);
+    else teilNachId.set(t.id, { ...g, t });
   }
 
   // 2. Vorgänger nur aus der Auswahl
@@ -400,23 +608,23 @@ export function baueEntwurf(
   // 3. Teilvorkommen in Tresor-Namen → ablehnen
   for (const { k } of gewaehlt) for (const t of k.teile) if (t.tresor)
     fehler.push(`${String(k.kandidat.wert)} steckt im Tresor-Namen ${t.tresor} — die Vorlage würde die Geheimnisse der Original-Instanz wiederverwenden; Wert fest lassen oder Vorlage von Hand anpassen`);
-  if (fehler.length) return { fehler: [...new Set(fehler)], hinweise };
+  if (fehler.length) return ende();
 
-  // 3b. Jedes übrige Teilvorkommen eines gewählten Werts braucht eine ausdrückliche Entscheidung (nie stilles Festlassen)
-  const teilNachId = new Map<string, { k: KandidatIntern; name: string; t: Teil }>();
-  for (const g of gewaehlt) for (const t of g.k.teile) teilNachId.set(t.id, { ...g, t });
-  for (const [id, e] of Object.entries(teilEntscheid)) {
-    if (!teilNachId.has(id)) fehler.push(`Teilvorkommen ${id}: gehört zu keinem gewählten Wert`);
-    else if (e !== 'ersetzen' && e !== 'fest') fehler.push(`Teilvorkommen ${id}: Entscheidung muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`);
+  // 4. Entscheidungen prüfen: bekannte id, gültiger Wert, „ersetzen“ nur wo möglich
+  const punkte = new Map(findeEntscheidungen(q).map(p => [p.id, p]));
+  for (const [id, e] of Object.entries(entscheid)) {
+    const p = punkte.get(id);
+    if (e !== 'ersetzen' && e !== 'fest') { fehler.push(`Entscheidung ${id}: muss „ersetzen“ oder „fest“ sein (erhalten ${JSON.stringify(e)})`); continue; }
+    if (!p || (p.art === 'teil' && !teilNachId.has(id))) { fehler.push(`Entscheidung ${id}: gehört zu keinem gewählten Wert und keinem Entscheidungspunkt dieses Vorschlags`); continue; }
+    if (e === 'ersetzen' && p.art === 'id') fehler.push(`Entscheidung ${id}: feste ID ${p.wert} der Original-Instanz — nur „fest“ möglich (sonst den Change mitwählen, der sie erzeugt)`);
+    if (e === 'ersetzen' && p.art === 'anlage') fehler.push(`Entscheidung ${id}: ${p.wert} ist vom Paket angelegt — nur „fest“ — oder den Wert als Parameter wählen${p.kandidat ? ` (Kandidat #${p.kandidat})` : ''}`);
   }
-  const offen = [...teilNachId.values()].filter(x => teilEntscheid[x.t.id] === undefined);
-  if (offen.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offen.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
   // gleiches Wort im selben Schritt (VM157_ABWESEND in befehl und erwartet) muss gleich entschieden sein, sonst passt die Prüfung nicht mehr
   const gruppen = new Map<string, Array<{ id: string; e: string | undefined }>>();
   for (const x of teilNachId.values()) {
     if (x.t.tresor) continue;
     const g = `${x.t.blatt.change}|${x.t.blatt.schritt}|${x.k.kandidat.typ}|${String(x.k.kandidat.wert)}|${x.t.token}`;
-    const l = gruppen.get(g) ?? []; l.push({ id: x.t.id, e: teilEntscheid[x.t.id] }); gruppen.set(g, l);
+    const l = gruppen.get(g) ?? []; l.push({ id: x.t.id, e: entscheid[x.t.id] }); gruppen.set(g, l);
   }
   for (const [g, l] of gruppen) {
     const arten = new Set(l.map(x => x.e).filter(e => e !== undefined));
@@ -425,19 +633,50 @@ export function baueEntwurf(
       fehler.push(`Teilvorkommen ${l.map(x => `${x.id} (${String(x.e)})`).join(', ')}: gleiches Wort ${token} in ${kurz(change)} Schritt ${schritt} — gleich entscheiden`);
     }
   }
-  if (fehler.length) return { fehler, hinweise };
+  // M-b — dieselbe Stelle als Teil zweier gewählter Kandidaten (zugang pve / node pve) braucht dieselbe Entscheidung
+  const spanne = new Map<string, Array<{ id: string; e: string | undefined }>>();
+  for (const x of teilNachId.values()) {
+    const s = `${x.t.blatt.change}|${x.t.blatt.schritt}|${x.t.blatt.pfad}|${x.t.start}|${x.t.ende}`;
+    const l = spanne.get(s) ?? []; l.push({ id: x.t.id, e: entscheid[x.t.id] }); spanne.set(s, l);
+  }
+  for (const l of spanne.values()) if (new Set(l.map(x => x.e).filter(e => e !== undefined)).size > 1)
+    fehler.push(`Teilvorkommen ${l.map(x => `${x.id} (${String(x.e)})`).join(', ')}: gleiche Stelle — gleich entscheiden`);
+  if (fehler.length) return ende();
 
   const verw = findeVerweise(q);
   hinweise.push(...verw.hinweise);
 
-  // 4. Kopien und Orte darin; Ersetzungen je Ort sammeln
+  // M-c — gewählte Netze: Adressen darin werden Ableitungen, „/<praefix>“ dahinter wird praefix(netz)
+  const netze = gewaehlt.filter(g => g.k.kandidat.typ === 'cidr').map(g => ({ name: g.name, cidr: String(g.k.kandidat.wert), n: netzVon(String(g.k.kandidat.wert))! }))
+    .filter(n => n.n).sort((a, b) => b.n.praefix - a.n.praefix);
+  const netzFuer = (ip: string) => netze.find(n => imNetz(ip, n.n));
+  const praefixName = new Map<string, string>();
+  const vergebeneNamen = new Set(gewaehlt.map(g => g.name));
+  const praefixParam = (netz: string): string => {
+    let n = praefixName.get(netz);
+    if (n) return n;
+    const basis = `${netz.slice(0, 23)}_praefix`;
+    n = basis;
+    for (let i = 2; vergebeneNamen.has(n); i++) n = `${basis.slice(0, 29)}_${i}`;
+    vergebeneNamen.add(n); praefixName.set(netz, n);
+    return n;
+  };
+
+  // 5. Kopien und Orte darin; Ersetzungen je Ort sammeln
   const kopien = new Map(q.map(c => [c.id, JSON.parse(JSON.stringify(c.plan)) as Record<string, unknown>]));
   const ortKey = (change: string, schritt: number, pfad: string) => `${change}|${schritt}|${pfad}`;
   const ziele = new Map<string, Blatt>();
   for (const c of q) for (const b of blaetter(c, kopien.get(c.id))) ziele.set(ortKey(c.id, b.schritt, b.pfad), b);
-  type Ersatz = { wer: string; ganz?: string; text?: Array<{ start: number; ende: number; durch: string }> };
+  type Spanne = { start: number; ende: number; durch: string; info?: string };
+  type Ersatz = { wer: string; ganz?: string; text?: Spanne[] };
   const ersetzungen = new Map<string, Ersatz[]>();
   const merke = (key: string, e: Ersatz) => { const l = ersetzungen.get(key) ?? []; l.push(e); ersetzungen.set(key, l); };
+  /** „fest“ entschiedene Teilvorkommen — gemeldet nur, wenn die Stelle danach wirklich unverändert steht (nicht von einem längeren Wert ersetzt) */
+  const festTeile: Array<{ key: string; start: number; ende: number; hinweis: string; eintrag: FestEintrag }> = [];
+  const angewandt = new Map<string, Array<{ start: number; ende: number }>>();
+  /** Titel (M-e): ohne Entscheidung, längster Wert gewinnt, nie Fehler */
+  const titelSpannen = new Map<string, Spanne[]>();
+  const merkeTitel = (key: string, s: Spanne) => { const l = titelSpannen.get(key) ?? []; l.push(s); titelSpannen.set(key, l); };
   for (const v of verw.verweise) {
     const s = nachId.get(v.quelle.change)!;
     const ref = `{{change:${s.schluessel}.schritt${v.quelle.schritt}.${v.quelle.feld}}}`;
@@ -447,31 +686,64 @@ export function baueEntwurf(
   }
   for (const { k, name } of gewaehlt) {
     const p = `{{param.${name}}}`;
+    const wert = String(k.kandidat.wert);
+    const netz = k.kandidat.typ === 'ipv4' ? netzFuer(wert) : undefined;
     for (const o of k.orte) {
       const key = ortKey(o.blatt.change, o.blatt.schritt, o.blatt.pfad);
-      if (o.ganz || typeof o.blatt.wert !== 'string') merke(key, { wer: name, ganz: p });
-      else merke(key, { wer: name, text: treffer(o.blatt.wert, String(k.kandidat.wert)).filter(t => t.token).map(t => ({ start: t.start, ende: t.ende, durch: p })) });
+      if (o.blatt.pfad === 'titel') {
+        const t = String(o.blatt.wert);
+        if (o.ganz) merkeTitel(key, { start: 0, ende: t.length, durch: p });
+        else for (const x of treffer(t, wert).filter(x => x.token)) merkeTitel(key, { start: x.start, ende: x.ende, durch: p });
+        continue;
+      }
+      if (o.ganz || typeof o.blatt.wert !== 'string') { merke(key, { wer: name, ganz: p }); continue; }
+      const alt = o.blatt.wert;
+      merke(key, {
+        wer: name, text: treffer(alt, wert).filter(t => t.token).map(t => {
+          // „10.203.29.2/27“: Präfix des gewählten Netzes hinter einer abgeleiteten Adresse folgt dem Netz
+          const pr = netz ? /^\/(\d{1,2})(?!\d)/.exec(alt.slice(t.ende)) : null;
+          if (netz && pr && Number(pr[1]) === netz.n.praefix) return { start: t.start, ende: t.ende + pr[0].length, durch: `${p}/{{param.${praefixParam(netz.name)}}}` };
+          return { start: t.start, ende: t.ende, durch: p };
+        }),
+      });
     }
+    for (const t of k.titelTeile) merkeTitel(ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), { start: t.start, ende: t.ende, durch: p });
     // Teilvorkommen nur nach ausdrücklicher Entscheidung (Tresor-Teile sind oben schon abgelehnt)
     for (const t of k.teile) {
-      const wo = `${kurz(t.blatt.change)} Schritt ${t.blatt.schritt} ${t.blatt.pfad}`;
-      if (teilEntscheid[t.id] === 'fest') { hinweise.push(`bewusst fest: ${t.token} in ${wo}`); continue; }
-      if (t.platzhalter) { fehler.push(`Teilvorkommen ${t.id}: ${String(k.kandidat.wert)} steht im Platzhalter ${t.platzhalter} — nur „fest“ möglich`); continue; }
-      merke(ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), { wer: name, text: [{ start: t.start, ende: t.ende, durch: p }] });
+      const e = entscheid[t.id];
+      if (e === undefined) continue; // fehlt → unten als offen gemeldet
+      const wo = ortText(t.blatt.change, t.blatt.schritt, t.blatt.pfad);
+      if (e === 'fest') {
+        festTeile.push({
+          key: ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), start: t.start, ende: t.ende, hinweis: `bewusst fest: ${t.token} in ${wo}`,
+          eintrag: { id: t.id, art: 'teil', wort: t.token, change8: kurz(t.blatt.change), schritt: t.blatt.schritt, pfad: t.blatt.pfad, grund: `Teil mit ${wert} (Parameter ${name}) bleibt unverändert` },
+        });
+        continue;
+      }
+      if (t.platzhalter) { fehler.push(`Teilvorkommen ${t.id}: ${wert} steht im Platzhalter ${t.platzhalter} — nur „fest“ möglich`); continue; }
+      merke(ortKey(t.blatt.change, t.blatt.schritt, t.blatt.pfad), { wer: name, text: [{ start: t.start, ende: t.ende, durch: p, info: `${wert} in ${t.token} (${t.id})` }] });
     }
   }
-  if (fehler.length) return { fehler, hinweise };
   for (const [key, liste] of ersetzungen) {
     const ziel = ziele.get(key);
     const [change, schritt, pfad] = key.split('|') as [string, string, string];
-    const wo = Number(schritt) === 0 ? `${kurz(change)} Titel` : `${kurz(change)} Schritt ${schritt} ${pfad}`;
+    const wo = ortText(change, Number(schritt), pfad);
     if (!ziel) { fehler.push(`${wo}: Fundstelle nicht gefunden`); continue; }
-    const ganze = liste.filter(e => e.ganz !== undefined);
-    if (ganze.length > 1 || (ganze.length && liste.length > 1)) { fehler.push(`${wo}: gehört zu mehreren gewählten Werten (${liste.map(e => e.wer).join(', ')}) — nur einen davon wählen`); continue; }
-    if (ganze.length) { (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = ganze[0]!.ganz; continue; }
-    const teile = liste.flatMap(e => (e.text ?? []).map(t => ({ ...t, wer: e.wer }))).sort((a, b) => a.start - b.start);
+    // M-b: gleicher Wert über zwei Kandidaten auf demselben Parameter → identische Ersetzung nur einmal
+    const ganze = [...new Map(liste.filter(e => e.ganz !== undefined).map(e => [e.ganz!, e])).values()];
+    const texte = liste.filter(e => e.ganz === undefined);
+    const infos = texte.flatMap(e => (e.text ?? []).map(t => t.info).filter((x): x is string => !!x));
+    const ausweg = infos.length ? ` — nur einen davon wählen oder die Stelle auf „fest“ setzen (${infos.join('; ')})` : ' — nur einen davon wählen';
+    if (ganze.length > 1) { fehler.push(`${wo}: gehört zu mehreren gewählten Werten (${liste.map(e => e.wer).join(', ')}) — nur einen davon wählen`); continue; }
+    if (ganze.length && texte.length) { fehler.push(`${wo}: Werte überlappen (${[...new Set(liste.map(e => e.wer))].join(', ')})${ausweg}`); continue; }
+    if (ganze.length) { (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = ganze[0]!.ganz; angewandt.set(key, [{ start: 0, ende: Infinity }]); continue; }
+    const teile = [...new Map(texte.flatMap(e => (e.text ?? []).map(t => ({ ...t, wer: e.wer }))).map(t => [`${t.start}|${t.ende}|${t.durch}`, t])).values()]
+      .sort((a, b) => a.start - b.start);
     const ueberlappt = teile.find((t, i) => i > 0 && t.start < teile[i - 1]!.ende);
-    if (ueberlappt) { fehler.push(`${wo}: Werte überlappen im Text (${[...new Set(teile.map(t => t.wer))].join(', ')}) — nur einen davon wählen`); continue; }
+    if (ueberlappt) {
+      fehler.push(`${wo}: Werte überlappen im Text (${[...new Set(teile.map(t => t.wer))].join(', ')})${ausweg}`);
+      continue;
+    }
     const alt = String(ziel.wert);
     // „{“ davor oder „}“ danach würde mit dem eingesetzten {{…}} einen ungültigen Platzhalter bilden
     const klammer = teile.find(t => alt[t.start - 1] === '{' || alt[t.ende] === '}');
@@ -479,10 +751,68 @@ export function baueEntwurf(
     let text = alt;
     for (const t of [...teile].reverse()) text = text.slice(0, t.start) + t.durch + text.slice(t.ende);
     (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = text;
+    angewandt.set(key, teile.map(t => ({ start: t.start, ende: t.ende })));
   }
-  if (fehler.length) return { fehler, hinweise };
+  for (const f of festTeile) {
+    if ((angewandt.get(f.key) ?? []).some(a => f.start < a.ende && f.ende > a.start)) continue; // 10.203.29.3 in 10.203.29.30: dort steht der Parameter der .30
+    hinweise.push(f.hinweis);
+    fest.push(f.eintrag);
+  }
+  // Titel: längste Werte zuerst, nichts Überlappendes, nie an „{“/„}“ — Titel haben keine Wirkung, darum ohne Fehler
+  for (const [key, liste] of titelSpannen) {
+    const ziel = ziele.get(key);
+    if (!ziel || typeof ziel.wert !== 'string') continue;
+    const alt = ziel.wert;
+    const gewaehltT: Spanne[] = [];
+    for (const s of [...liste].sort((a, b) => (b.ende - b.start) - (a.ende - a.start) || a.start - b.start)) {
+      if (alt[s.start - 1] === '{' || alt[s.ende] === '}') continue;
+      if (gewaehltT.some(g => s.start < g.ende && s.ende > g.start)) continue;
+      gewaehltT.push(s);
+    }
+    let text = alt;
+    for (const t of gewaehltT.sort((a, b) => b.start - a.start)) text = text.slice(0, t.start) + t.durch + text.slice(t.ende);
+    (ziel.behaelter as Record<string | number, unknown>)[ziel.index] = text;
+  }
 
-  // 5. Changes bauen: Laufzeitfelder weg, abhaengigVon auf Schlüssel, betroffen ohne selbst angelegte Assets
+  // 6. Offene Entscheidungen — alle Kategorien auf einmal
+  const offenTeil = [...teilNachId.values()].filter(x => !x.t.tresor && entscheid[x.t.id] === undefined);
+  const offenId = [...punkte.values()].filter(p => p.art === 'id' && entscheid[p.id] === undefined);
+  for (const p of punkte.values()) if (p.art === 'id' && entscheid[p.id] === 'fest') {
+    const o = p.orte[0]!;
+    hinweise.push(`bewusst fest (feste ID): ${p.wert} in ${ortText(o.change, o.schritt, o.pfad)} — ${p.grund}`);
+    fest.push({ id: p.id, art: 'id', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+  }
+  // (c) angelegte Werte und Adressen gewählter Netze, die nach dem Ersetzen noch irgendwo (außer Titeln) stehen
+  const nachher = q.flatMap(c => blaetter(c, kopien.get(c.id))).filter(b => b.pfad !== 'titel');
+  const offenAnlage: Entscheidungspunkt[] = [];
+  for (const p of punkte.values()) {
+    if (p.art !== 'anlage' || !p.typ) continue;
+    if (p.typ === 'ipv4' && !p.id.startsWith('anlage:ipv4|') ) continue;
+    const anlageWert = p.typ === 'vmid' || p.typ === 'vlan' ? Number(p.wert) : p.wert;
+    const istNetzAdresse = p.grund.startsWith('Adresse im Netz');
+    if (istNetzAdresse && !netzFuer(p.wert)) { if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — kein gewähltes Netz enthält ${p.wert}`); continue; }
+    const rest = suche(nachher, p.typ, anlageWert).orte.map(o => fundstelle(o.blatt, o.ganz));
+    if (!rest.length) {
+      if (entscheid[p.id] !== undefined) fehler.push(`Entscheidung ${p.id}: nicht nötig — ${p.wert} ist als Parameter gewählt und steht nirgends mehr fest`);
+      continue;
+    }
+    if (entscheid[p.id] === 'fest') {
+      hinweise.push(`bewusst fest (vom Paket angelegt): ${p.wert} an ${rest.length} Stelle${rest.length === 1 ? '' : 'n'} (${ortListe(q, rest.slice(0, 5))}${rest.length > 5 ? ', …' : ''}) — ${p.grund}`);
+      for (const o of rest) fest.push({ id: p.id, art: 'anlage', wort: p.wert, change8: kurz(o.change), schritt: o.schritt, pfad: o.pfad, grund: p.grund });
+      continue;
+    }
+    if (entscheid[p.id] === undefined) offenAnlage.push({ ...p, orte: rest });
+  }
+  const offen: Entscheidungspunkt[] = [
+    ...offenTeil.map(x => punkte.get(x.t.id)!).filter(Boolean),
+    ...offenId, ...offenAnlage,
+  ];
+  if (offenTeil.length) fehler.push(`Teilvorkommen ohne Entscheidung (je id „ersetzen“ oder „fest“): ${offenTeil.map(x => `${x.t.id} (${String(x.k.kandidat.wert)} in ${x.t.token})`).join('; ')}`);
+  if (offenId.length) fehler.push(`Feste IDs der Original-Instanz ohne Entscheidung (je id nur „fest“ — oder den erzeugenden Change mitwählen): ${offenId.map(p => `${p.id} (${ortListe(q, p.orte)}: ${p.grund})`).join('; ')}`);
+  if (offenAnlage.length) fehler.push(`Vom Paket angelegt, aber nicht als Parameter gewählt — diese Stellen zielen sonst auf die Original-Instanz (je id „fest“ oder den Wert als Parameter wählen): ${offenAnlage.map(p => `${p.id} (${p.wert}${p.kandidat ? `, Kandidat #${p.kandidat}` : ''}; ${p.grund}; noch an ${p.orte.length} Stelle${p.orte.length === 1 ? '' : 'n'}: ${ortListe(q, p.orte)})`).join('; ')}`);
+  if (fehler.length) return ende(offen);
+
+  // 7. Changes bauen: Laufzeitfelder weg, abhaengigVon auf Schlüssel, betroffen ohne selbst angelegte Assets
   const schrittVon = (b: Blatt): Record<string, unknown> | undefined => b.schritt > 0 ? schritteVon(nachId.get(b.change)!)[b.schritt - 1] : undefined;
   const angelegteNamen = new Set<string>();
   for (const { k } of gewaehlt) if (k.kandidat.typ === 'name' && k.orte.some(o => {
@@ -517,21 +847,33 @@ export function baueEntwurf(
       schritte,
     });
   }
-  if (fehler.length) return { fehler, hinweise };
+  if (fehler.length) return ende();
 
-  // 6. Parameter und automatische Annahmen
-  const parameter: BauplanParameter[] = gewaehlt.map(({ k, name }) => ({
-    name, typ: k.kandidat.typ, pflicht: true,
-    beschreibung: `abgeleitet aus ${kurz(k.erkannt.change)} ${k.erkannt.schritt ? `schritt${k.erkannt.schritt}.` : ''}${k.erkannt.pfad}`,
-    beispiel: k.kandidat.wert,
-  }));
+  // 8. Parameter (je Name einer; strengerer Typ gewinnt), Ableitungen im gewählten Netz, automatische Annahmen
+  const parameter: BauplanParameter[] = [];
+  const ohneAnnahme: string[] = [];
   const annahmen: BauplanVorlage['annahmen'] = [];
-  for (const { k, name } of gewaehlt) {
-    const a = annahmeFuer(k, name, schrittVon);
-    if (a) annahmen.push(a); else hinweise.push(`keine automatische Vorab-Kontrolle für ${name} (${k.kandidat.typ})`);
+  for (const name of [...new Set(gewaehlt.map(g => g.name))]) {
+    const ks = gewaehlt.filter(g => g.name === name).map(g => g.k);
+    const typ = TYP_RANG.find(t => ks.some(k => k.kandidat.typ === t)) ?? ks[0]!.kandidat.typ;
+    const k0 = ks.find(k => k.kandidat.typ === typ)!;
+    const beschreibung = `abgeleitet aus ${kurz(k0.erkannt.change)} ${k0.erkannt.schritt ? `schritt${k0.erkannt.schritt}.` : ''}${k0.erkannt.pfad}`;
+    const netz = typ === 'ipv4' ? netzFuer(String(k0.kandidat.wert)) : undefined;
+    if (netz) {
+      const off = zuZahl(String(k0.kandidat.wert)) - netz.n.netz;
+      const ableitung: { funktion: AbleitungsFunktion; von: string; n?: number } = off === 0 ? { funktion: 'netzadresse', von: netz.name }
+        : off === 1 ? { funktion: 'erste_adresse', von: netz.name } : { funktion: 'adresse', von: netz.name, n: off };
+      parameter.push({ name, typ: 'ipv4', pflicht: false, beschreibung: `${beschreibung} — folgt dem Netz ${netz.name} (Netz+${off})`, beispiel: k0.kandidat.wert, ableitung });
+      continue;
+    }
+    parameter.push({ name, typ, pflicht: true, beschreibung, beispiel: k0.kandidat.wert });
+    const a = ks.map(k => annahmeFuer(k, name, schrittVon)).find(x => x);
+    if (a) annahmen.push(a);
+    else { ohneAnnahme.push(name); hinweise.push(`keine automatische Vorab-Kontrolle für ${name} (${typ})`); }
   }
+  for (const [netz, name] of praefixName) parameter.push({ name, typ: 'zahl', pflicht: false, beschreibung: `Präfixlänge des Netzes ${netz} (abgeleitet)`, ableitung: { funktion: 'praefix', von: netz } });
 
   const schema = pruefeSchema({ schema: 1, key: kopf.key, titel: kopf.titel, zweck: kopf.zweck, dokumentart: kopf.dokumentart, parameter, annahmen, changes });
-  if (!schema.vorlage) return { fehler: schema.fehler, hinweise };
-  return { vorlage: schema.vorlage, fehler: [], hinweise };
+  if (!schema.vorlage) return { fehler: schema.fehler, hinweise, offen: [], fest: [], ohneAnnahme: [] };
+  return { vorlage: schema.vorlage, fehler: [], hinweise, offen: [], fest, ohneAnnahme };
 }

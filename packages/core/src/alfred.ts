@@ -8126,7 +8126,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             verwerfen: async (u, id, grund) => { await itsmI3.verwerfen(u, id, grund); },
             // V4 — Ableiten aus ausgeführten Changes: ITSM-Liste wie bei den Dokument-Vorlagen (abgeschnitten → findeChange meldet es), CMDB-Namen
             ableitenQuellen: (await import('./infrastruktur/dokumente/sammler.js')).itsmQuellen(itsmI3),
-            assetName: async (u, id) => (await cmdbFz.getAssetById(u, id).catch(() => null))?.name,
+            // Final-Welle M2 — Lesefehler nicht verschlucken: der Dienst meldet „Asset <id>: Name nicht lesbar“ (nicht gefunden = null bleibt ohne Namen)
+            assetName: async (u, id) => (await cmdbFz.getAssetById(u, id))?.name,
             protokoll: (msg, daten) => this.logger.info(daten, msg),
           });
           skillRegistry.register(new BauplanSkill(bauplanDienst, { istOwner: istOwnerFz, owner: () => ownerFz() }));
