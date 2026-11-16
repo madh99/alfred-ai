@@ -102,9 +102,9 @@ const ID_IM_TEXT = /(?<![0-9a-z])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const HEX_ID = (id: string): boolean => UUID_FORM.test(id) || /^[0-9a-f]{8,}$/i.test(id);
 const ANLEGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (/^(create_|provision_)/.test(aktion) || aktion === 'clone_vm');
 /** I4 — Schritte, die ein Objekt anlegen (auch Wald, DNS-Eintrag); weiter als ANLEGE_AKTION, die nur Annahmen/betroffen steuert */
-const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag' || aktion === 'dc_hinzufuegen');
-/** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne, NetBIOS-Name); bridge nur bei *bridge*-Aktionen */
-const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$|^netbios|^subnet$/;
+const ANLAGE_AKTION = (aktion: unknown): boolean => typeof aktion === 'string' && (ANLEGE_AKTION(aktion) || /_anlegen$/.test(aktion) || aktion === 'dns_eintrag' || aktion === 'dc_hinzufuegen' || aktion === 'iso_ablegen');
+/** I4 — Felder, deren Wert das Paket anlegt (Name, Hostname, Zone, Policy, DNS-Record, Domäne, NetBIOS-Name, Netz, Dateiname — z. B. fernzugriff.iso_ablegen); bridge nur bei *bridge*-Aktionen */
+const ANLAGE_NAME_FELD = /(^|_)name$|^hostname$|^domaene$|^domain$|^record$|^netbios|^subnet$|^dateiname$/;
 /**
  * (d) fail-closed (Sicherheitsbefund v1881) — in einer verändernden Aktion (aktionsArt ≠ lesen; ohne skill/aktion gilt sie als
  * verändernd) braucht JEDER typisierte Wert in parameter.* und rueckweg.parameter.* (auch Listen und verschachtelte Felder) eine

@@ -877,3 +877,13 @@ describe('Wertlisten in einem Feld', () => {
     expect(p.some(id => id.startsWith('veraendert:'))).toBe(false);
   });
 });
+
+describe('iso_ablegen legt eine Datei an', () => {
+  it('PKI: dateiname aus fernzugriff.iso_ablegen ist angelegt (c), nicht verändert (d); Standard-Zonen bleiben Entscheidungspunkte', () => {
+    const p = findeEntscheidungen(quellen());
+    const iso = 'SQLServer2025-x64-ENU-EntDev.iso';
+    expect(p.find(x => x.id === `anlage:name|${iso}`)?.grund).toMatch(/fernzugriff\.iso_ablegen/);
+    expect(p.some(x => x.id === `veraendert:name|${iso}`)).toBe(false);
+    for (const z of ['Internal', 'External', 'Gateway']) expect(p.some(x => x.id === `veraendert:name|${z}`)).toBe(true);
+  });
+});
