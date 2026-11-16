@@ -27,7 +27,8 @@ const UNC = /^\\\\[A-Za-z0-9.-]{1,120}\\[A-Za-z0-9_-]{1,40}\$?$/;
 const REGEL = /^[\p{L}\p{N} ._-]{1,60}$/u;
 
 /** Erlaubte Windows-Features (Rollen/Werkzeuge für I8d) — alles andere ist ein eigener Auftrag */
-export const FEATURES = new Set(['Failover-Clustering', 'RSAT-Clustering-PowerShell', 'RSAT-Clustering-CmdInterface', 'RSAT-AD-PowerShell', 'FS-FileServer', 'NET-Framework-45-Core']);
+// I8e Task 4 — FS-Resource-Manager (FSRM-Kontingente) nur ausdrücklich als eigener Schritt, nie still durch freigabe_anlegen
+export const FEATURES = new Set(['Failover-Clustering', 'RSAT-Clustering-PowerShell', 'RSAT-Clustering-CmdInterface', 'RSAT-AD-PowerShell', 'FS-FileServer', 'NET-Framework-45-Core', 'FS-Resource-Manager']);
 
 // ── Ausführung mit Kennwort-Anmeldung (Doppel-Hop) ────────────────────────────────────────────────────────────────────────────────
 
@@ -314,7 +315,7 @@ export function firewallEntfernenSkript(p: { name: string }): string {
   ].join('\n');
 }
 
-export interface Freigabe { name: string; pfad: string; vollzugriff: string[]; aendern: string[] }
+export interface Freigabe { name: string; pfad: string; vollzugriff: string[]; aendern: string[]; /** I8e Task 4 — hartes FSRM-Kontingent in GiB (nur wenn die Rolle da ist) */ kontingentGib?: number }
 
 export function pruefeFreigabe(o: Record<string, unknown>): Freigabe | string {
   const liste = (v: unknown) => (Array.isArray(v) ? v.map(x => String(x).trim()) : typeof v === 'string' ? v.split(',').map(s => s.trim()) : []).filter(Boolean);
@@ -324,24 +325,38 @@ export function pruefeFreigabe(o: Record<string, unknown>): Freigabe | string {
   if (!p.vollzugriff.length && !p.aendern.length) return 'vollzugriff/aendern: mindestens ein Konto (NETBIOS\\name, Computer/gMSA mit $)';
   if ([...p.vollzugriff, ...p.aendern].some(k => !KONTO.test(k))) return 'Konten im Format NETBIOS\\name (z. B. AD3033\\SQLCL01$, AD3033\\gmsa-sqleng$)';
   if (p.vollzugriff.length + p.aendern.length > 12) return 'höchstens 12 Konten';
+  if (o.kontingent_gib !== undefined || o.kontingentGib !== undefined) {
+    const roh = o.kontingent_gib ?? o.kontingentGib;
+    const k = typeof roh === 'string' && /^\d{1,5}$/.test(roh.trim()) ? Number(roh.trim()) : roh;
+    if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > 16384) return 'kontingent_gib: ganze Zahl 1–16384 (hartes FSRM-Kontingent des Ordners)';
+    p.kontingentGib = k;
+  }
   return p;
 }
 
 /**
- * SMB-Freigabe mit eigenem NTFS-Schutz: Vererbung aus, SYSTEM und Administratoren Vollzugriff, sonst nur die genannten Konten
- * (vollzugriff = FullControl, aendern = Modify) — Freigabe- und NTFS-Rechte gleich. Wiederholbar: Rechte werden neu gesetzt.
+ * SMB-Freigabe mit eigenem NTFS-Schutz: Vererbung aus (geerbte Rechte wie Benutzer/Jeder entfallen), SYSTEM und Administratoren
+ * Vollzugriff, sonst nur die genannten Konten (vollzugriff = FullControl, aendern = Modify) — Freigabe- und NTFS-Rechte gleich.
+ * Wiederholbar: Rechte werden neu gesetzt; sind NTFS- und Freigaberechte (und das Kontingent) danach unverändert, lautet der Zustand
+ * „schon“. Selbstprüfung: NTFS ohne Vererbung mit genau diesen Konten, Freigabe genau mit diesen Konten.
+ * I8e Task 4 — optional kontingentGib: hartes FSRM-Kontingent, NUR wenn die Rolle FS-Resource-Manager installiert ist (nie still
+ * installiert; sonst kontingent = 'fehlt' im Ergebnis — die Größe begrenzt dann nur der Aufrufer, z. B. das Kopier-Skript von linux_sql).
  */
 export function freigabeSkript(p: Freigabe): string {
   return [
     ...kopf(p, false),
     'New-Item -ItemType Directory -Path $p.pfad -Force | Out-Null',
+    "function AclText { $a = Get-Acl -Path $p.pfad; ([string]$a.AreAccessRulesProtected) + '#' + ((@($a.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference + ':' + [int]$_.FileSystemRights + ':' + [string]$_.AccessControlType + ':' + [int]$_.InheritanceFlags }) | Sort-Object) -join ',') }",
+    "function FreigabeText { (@(Get-SmbShareAccess -Name $p.name -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight + ':' + [string]$_.AccessControlType }) | Sort-Object) -join ',' }",
+    '$aclVorher = AclText; $frVorher = FreigabeText',
     '$acl = New-Object System.Security.AccessControl.DirectorySecurity',
     '$acl.SetAccessRuleProtection($true, $false)',
     "function Recht($wer, $was) { $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($wer, $was, 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }",
+    "$soll = @('S-1-5-18', 'S-1-5-32-544')",
     "Recht (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18') 'FullControl'",
     "Recht (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544') 'FullControl'",
-    "foreach ($k in @($p.vollzugriff)) { Recht (New-Object System.Security.Principal.NTAccount $k) 'FullControl' }",
-    "foreach ($k in @($p.aendern)) { Recht (New-Object System.Security.Principal.NTAccount $k) 'Modify' }",
+    "foreach ($k in @($p.vollzugriff)) { $o = New-Object System.Security.Principal.NTAccount $k; $soll += [string]$o.Translate([System.Security.Principal.SecurityIdentifier]); Recht $o 'FullControl' }",
+    "foreach ($k in @($p.aendern)) { $o = New-Object System.Security.Principal.NTAccount $k; $soll += [string]$o.Translate([System.Security.Principal.SecurityIdentifier]); Recht $o 'Modify' }",
     'Set-Acl -Path $p.pfad -AclObject $acl',
     '$s = Get-SmbShare -Name $p.name -ErrorAction SilentlyContinue',
     "if ($s -and $s.Path -ne $p.pfad) { throw ('Freigabe ' + $p.name + ' zeigt schon auf ' + $s.Path) }",
@@ -354,10 +369,32 @@ export function freigabeSkript(p: Freigabe): string {
     "  foreach ($x in @(Get-SmbShareAccess -Name $p.name)) { Revoke-SmbShareAccess -Name $p.name -AccountName $x.AccountName -Force | Out-Null }",
     "  Grant-SmbShareAccess -Name $p.name -AccountName $voll -AccessRight Full -Force | Out-Null",
     "  if (@($p.aendern).Count) { Grant-SmbShareAccess -Name $p.name -AccountName @($p.aendern) -AccessRight Change -Force | Out-Null }",
-    "  $z = 'Rechte erneuert'",
+    "  $z = if ((AclText) -eq $aclVorher -and (FreigabeText) -eq $frVorher) { 'schon' } else { 'Rechte erneuert' }",
     '}',
-    "$unc = '\\\\' + $env:COMPUTERNAME.ToLower() + '.' + (Get-CimInstance -ClassName Win32_ComputerSystem).Domain + '\\' + $p.name",
-    "Ergebnis @{ freigabe = $p.name; pfad = $p.pfad; unc = $unc; zustand = $z; rechte = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight }) }",
+    // Selbstprüfung: NTFS ohne Vererbung mit genau den Soll-Konten; Freigabe genau Administratoren + Konten
+    '$ist = Get-Acl -Path $p.pfad',
+    "$istSid = @($ist.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object -Unique)",
+    "if (-not $ist.AreAccessRulesProtected -or (($istSid -join ',') -ne ((@($soll | Sort-Object -Unique)) -join ','))) { throw ('NTFS-Rechte nach dem Setzen weichen ab: ' + ($istSid -join ', ')) }",
+    "$frSoll = @(@($voll) + @($p.aendern) | ForEach-Object { [string](New-Object System.Security.Principal.NTAccount $_).Translate([System.Security.Principal.SecurityIdentifier]) } | Sort-Object -Unique)",
+    "$frIst = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string](New-Object System.Security.Principal.NTAccount $_.AccountName).Translate([System.Security.Principal.SecurityIdentifier]) } | Sort-Object -Unique)",
+    "if (($frIst -join ',') -ne ($frSoll -join ',')) { throw ('Freigaberechte nach dem Setzen weichen ab: ' + ((@(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName })) -join ', ')) }",
+    "$r = [ordered]@{ freigabe = $p.name; pfad = $p.pfad; zustand = $z; rechte = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight }) }",
+    ...(p.kontingentGib !== undefined ? [
+      '$r.kontingentGib = $p.kontingentGib',
+      "$fs = Get-WindowsFeature -Name 'FS-Resource-Manager' -ErrorAction SilentlyContinue",
+      "if (-not $fs -or -not $fs.Installed -or -not (Get-Command -Name New-FsrmQuota -ErrorAction SilentlyContinue)) { $r.kontingent = 'fehlt' }",
+      'else {',
+      '  $groesse = [uint64]$p.kontingentGib * 1GB',
+      '  $q = Get-FsrmQuota -Path $p.pfad -ErrorAction SilentlyContinue',
+      "  if (-not $q) { New-FsrmQuota -Path $p.pfad -Size $groesse -SoftLimit:$false -Description 'Alfred I8e' | Out-Null; if ($z -eq 'schon') { $z = 'Kontingent gesetzt'; $r.zustand = $z } }",
+      "  elseif ($q.Size -ne $groesse -or $q.SoftLimit) { Set-FsrmQuota -Path $p.pfad -Size $groesse -SoftLimit:$false | Out-Null; if ($z -eq 'schon') { $z = 'Kontingent angepasst'; $r.zustand = $z } }",
+      '  $q = Get-FsrmQuota -Path $p.pfad',
+      "  if ($q.Size -ne $groesse -or $q.SoftLimit) { throw ('Kontingent nach dem Setzen: ' + $q.Size + ' Bytes, weich ' + $q.SoftLimit) }",
+      "  $r.kontingent = 'hart'; $r.belegtGib = [math]::Round($q.Usage / 1GB, 2)",
+      '}',
+    ] : []),
+    "$r.unc = '\\\\' + $env:COMPUTERNAME.ToLower() + '.' + (Get-CimInstance -ClassName Win32_ComputerSystem).Domain + '\\' + $p.name",
+    'Ergebnis $r',
   ].join('\n');
 }
 

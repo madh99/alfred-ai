@@ -333,6 +333,69 @@ export function dnsClientSkript(p: { dns: string[] }): string {
   ].join('\n');
 }
 
+// ── I8e Task 4 — Domänen-Dienstkonto (z. B. svc-sqllnx-backup für die Linux-SQL-Sicherung nach fs01) ─────────────────────────────
+
+/** sAMAccountName eines Benutzer-Dienstkontos (kein $, höchstens 20 Zeichen) */
+const DIENSTKONTO = /^[A-Za-z][A-Za-z0-9-]{2,19}$/;
+export const DIENSTKONTO_BESCHREIBUNG = 'Alfred I8e Dienstkonto';
+/** Tresor-Name des Dienstkonto-Kennworts: ad-<konto> (klein) */
+export const dienstkontoTresorName = (konto: string) => `ad-${konto.toLowerCase()}`;
+
+export function pruefeDienstkonto(o: Record<string, unknown>): { konto: string; ou: string } | string {
+  const konto = typeof o.konto === 'string' ? o.konto.trim() : '';
+  const ou = o.ou === undefined ? 'Dienstkonten' : typeof o.ou === 'string' ? o.ou.trim() : '';
+  if (!DIENSTKONTO.test(konto)) return 'konto: sAMAccountName des Dienstkontos (Buchstabe, dann Buchstaben/Ziffern/-, 3–20 Zeichen), z. B. svc-sqllnx-backup';
+  if (!OU_NAME.test(ou)) return 'ou: OU direkt unter der Domäne (Standard Dienstkonten)';
+  return { konto, ou };
+}
+
+/** Domänen-Administrator für AD-Änderungen am DC (Kennwort über die Standardeingabe, wie papierkorbSkript) */
+const adAdminCred = "$d = Get-ADDomain; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
+
+/**
+ * Benutzer-Dienstkonto in der OU (Standard Dienstkonten) anlegen — eingabe: { kennwort (Domänen-Administrator), dienstkennwort }.
+ * Kennwort läuft nie ab und kann vom Konto nicht geändert werden (Dienstkonto ohne Anmeldung am Desktop; Wechsel = eigener Change mit
+ * neuem Tresor-Wert). Wiederholbar: besteht das Konto (Beschreibung „Alfred I8e Dienstkonto“), wird nur die Anmeldung mit dem
+ * Tresor-Kennwort geprüft und fehlende Flags werden gesetzt — ein abweichendes Kennwort wird NIE still zurückgesetzt. Ein fremdes Konto
+ * gleichen Namens → Abbruch. Selbstprüfung: LDAP-Anmeldung mit dem Kennwort, aktiv, Flags, OU.
+ */
+export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: string }): string {
+  return [
+    ...kopf(p, true),
+    'Import-Module ActiveDirectory',
+    adAdminCred,
+    "$pfad = 'OU=' + $p.ou + ',' + $d.DistinguishedName",
+    "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
+    "function Anmeldung { try { $t = New-Object System.DirectoryServices.DirectoryEntry(('LDAP://' + $d.PDCEmulator + '/' + $d.DistinguishedName), ($d.NetBIOSName + '\\' + $p.konto), $e.dienstkennwort); $null = $t.NativeObject; $true } catch { $false } }",
+    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description, PasswordNeverExpires, CannotChangePassword, Enabled -Credential $c",
+    "$z = 'schon'",
+    'if (-not $u) {',
+    `  New-ADUser -Name $p.konto -SamAccountName $p.konto -UserPrincipalName ($p.konto + '@' + $d.DNSRoot) -Path $pfad -AccountPassword (ConvertTo-SecureString $e.dienstkennwort -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true -Description ${psText(DIENSTKONTO_BESCHREIBUNG)} -Credential $c`,
+    "  $z = 'angelegt'",
+    '} else {',
+    `  if ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt - nichts geändert') }`,
+    "  if (-not (Anmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
+    "  if (-not $u.Enabled) { Enable-ADAccount -Identity $u -Credential $c; $z = 'geaendert' }",
+    "  if (-not $u.PasswordNeverExpires -or -not $u.CannotChangePassword) { Set-ADUser -Identity $u -PasswordNeverExpires $true -CannotChangePassword $true -Credential $c; $z = 'geaendert' }",
+    '}',
+    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled -Credential $c",
+    "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = [bool](Anmeldung) }",
+  ].join('\n');
+}
+
+/** Entfernt nur ein von Alfred angelegtes Dienstkonto (Beschreibung „Alfred I8e Dienstkonto“); der Tresor-Eintrag bleibt */
+export function dienstkontoEntfernenSkript(p: { konto: string; ausKonto?: string }): string {
+  return [
+    ...kopf(p, true),
+    'Import-Module ActiveDirectory',
+    adAdminCred,
+    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description -Credential $c",
+    `if (-not $u) { $z = 'nicht vorhanden' } elseif ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt') } else { Remove-ADUser -Identity $u -Confirm:$false -Credential $c; $z = 'entfernt' }`,
+    "if (Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Credential $c) { throw ('Konto ' + $p.konto + ' nach dem Entfernen noch vorhanden') }",
+    'Ergebnis @{ konto = $p.konto; zustand = $z }',
+  ].join('\n');
+}
+
 /** Ergebniszeile aus der Ausgabe (CLIXML-Fortschritt u. Ä. davor/danach wird ignoriert) */
 /**
  * Fehlertexte aus dem CLIXML-Strom von PowerShell über SSH (Realfall 3103ec4c: der Fehler stand nur in `<S S="Error">…</S>`,

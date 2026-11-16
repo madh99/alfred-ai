@@ -9,6 +9,7 @@ import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
   pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, KONTO_FREI, type AdStatus,
+  pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName,
 } from './windows-ad.js';
 
 export interface WindowsAdDeps {
@@ -20,7 +21,9 @@ export interface WindowsAdDeps {
   schlafe?: (ms: number) => Promise<void>;
 }
 
-const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen', 'dns_client']);
+const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen', 'dns_client',
+  // I8e Task 4 — Domänen-Dienstkonto (z. B. svc-sqllnx-backup für die Sicherung nach fs01)
+  'dienstkonto_anlegen', 'dienstkonto_entfernen']);
 /** v1783 — lesende Aktionen (auch außerhalb eines Changes) */
 export const LESEND = new Set(['status', 'dns_aufloesen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -45,6 +48,7 @@ export class WindowsAdSkill extends Skill {
       + 'papierkorb_beweis (zugang, konto_tresor optional wie grundstruktur) — Testkonto anlegen, löschen, wiederherstellen, prüfen, wieder entfernen. '
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
       + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
+      + 'dienstkonto_anlegen (zugang = DC, konto = sAMAccountName z. B. svc-sqllnx-backup, ou Standard Dienstkonten, konto_tresor optional wie grundstruktur) — Benutzer-Dienstkonto (Kennwort läuft nie ab, Konto kann es nicht ändern), Kennwort erzeugt Alfred im Tresor ad-<konto> und gibt es nur über die Standardeingabe weiter; wiederholbar, ein abweichendes Kennwort wird nie still zurückgesetzt; prüft Anmeldung und Flags selbst ↔ dienstkonto_entfernen (zugang, konto; nur von Alfred angelegte, Tresor-Eintrag bleibt). '
       + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -66,6 +70,7 @@ export class WindowsAdSkill extends Skill {
         groesse_gb: { type: 'number' },
         uhrzeit: { type: 'string', description: 'HH:MM' },
         zone: { type: 'string' }, name: { type: 'string' }, ip: { type: 'string' },
+        konto: { type: 'string', description: 'dienstkonto_anlegen/-entfernen: sAMAccountName des Dienstkontos, z. B. svc-sqllnx-backup' },
         fqdn: { type: 'string', description: 'dns_aufloesen: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers' }, ohne_cache: { type: 'boolean' },
       },
       required: ['action'],
@@ -91,6 +96,13 @@ export class WindowsAdSkill extends Skill {
         case 'sicherung_jetzt': return await this.sicherungJetzt(zugang, input);
         case 'papierkorb_beweis': return await this.papierkorb(zugang, input);
         case 'dns_eintrag': case 'dns_eintrag_loeschen': return await this.dnsEintrag(zugang, action, input);
+        case 'dienstkonto_anlegen': return await this.dienstkonto(zugang, input);
+        case 'dienstkonto_entfernen': {
+          const p = pruefeDienstkonto({ konto: input.konto }); if (typeof p === 'string') throw new Error(p);
+          const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `Dienstkonto ${p.konto} entfernen (Domänen-Administrator)`);
+          const r = await this.lauf<{ zustand: string }>(zugang, dienstkontoEntfernenSkript({ konto: p.konto, ...this.konto(input) }), 'Dienstkonto entfernen', 180_000, { kennwort });
+          return { success: true, data: r, display: `✅ Dienstkonto ${p.konto}: ${r.zustand} (Tresor-Eintrag ${dienstkontoTresorName(p.konto)} bleibt)` };
+        }
         case 'dns_aufloesen': {
           const p = { fqdn: String(input.fqdn ?? '').trim().toLowerCase().replace(/\.$/, ''), ...(input.server ? { server: String(input.server).trim() } : {}) };
           const f = pruefeAufloesen(p); if (f) throw new Error(f);
@@ -233,6 +245,24 @@ export class WindowsAdSkill extends Skill {
     const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `Papierkorb-Beweis ${zugang} (Domänen-Administrator)`);
     const r = await this.lauf<Record<string, unknown>>(zugang, papierkorbSkript({ kennung, ...this.konto(input) }), 'Papierkorb-Beweis', 300_000, { kennwort });
     return { success: true, data: r, display: `✅ AD-Papierkorb belegt: Testkonto ${String(r.konto)} gelöscht, aus dem Papierkorb wiederhergestellt, geprüft und wieder entfernt` };
+  }
+
+  /** I8e Task 4 — Dienstkonto am DC; Kennwort einmalig erzeugt (ad-<konto>), nur über die Standardeingabe */
+  private async dienstkonto(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = pruefeDienstkonto({ konto: input.konto, ...(input.ou !== undefined ? { ou: input.ou } : {}) }); if (typeof p === 'string') throw new Error(p);
+    const ausKonto = this.konto(input);
+    const kennwort = await this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, `Dienstkonto ${p.konto} anlegen (Domänen-Administrator)`);
+    const t = this.tresor(); const name = dienstkontoTresorName(p.konto);
+    let dienstkennwort: string; let neu = false;
+    if ((await t.namen()).has(name)) dienstkennwort = await t.lies(name, `Dienstkonto ${p.konto}`);
+    else { dienstkennwort = adKennwort(); await t.setze(name, dienstkennwort, `Kennwort des Domänen-Dienstkontos ${p.konto} (läuft nie ab)`); neu = true; }
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean }>(zugang, dienstkontoSkript({ ...p, ...ausKonto }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
+    if (!(r.aktiv && r.laeuftNieAb && r.kannNichtAendern && r.anmeldung && r.inOu !== false)) {
+      throw new Error(`Dienstkonto ${p.konto}: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, Kennwort läuft nie ab ${r.laeuftNieAb}, nicht änderbar ${r.kannNichtAendern}, Anmeldung ${r.anmeldung}, in OU ${r.inOu ?? '?'})`);
+    }
+    this.d.protokoll?.('I8e Dienstkonto', { zugang, konto: p.konto, zustand: r.zustand, kennwortNeu: neu });
+    const text = `Dienstkonto ${r.konto} (${r.dn}): aktiv, Kennwort läuft nie ab, Anmeldung geprüft; Kennwort im Tresor (${name})`;
+    return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand} — Rückweg dienstkonto_entfernen konto ${p.konto}` };
   }
 
   private async dnsEintrag(zugang: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {

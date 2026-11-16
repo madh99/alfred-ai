@@ -1,0 +1,202 @@
+import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName } from './windows-ad.js';
+import { WindowsAdSkill } from './windows-ad-skill.js';
+import { pruefeFreigabe, freigabeSkript, FEATURES } from './windows-cluster.js';
+import { WindowsClusterSkill } from './windows-cluster-skill.js';
+import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
+
+// I8e Task 4 — fs01-Seite der Linux-SQL-Sicherung: Domänen-Dienstkonto und Freigabe mit Kontingent als feste Bausteine
+
+const BOESE = ['; rm -rf /', '$(id)', '`id`', "a'b", 'a\nb', '../x', 'a"b', 'x$y', 'a b'];
+const ps = (befehl: string) => Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le');
+
+describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Bausteine)', () => {
+  it('Validator: sAMAccountName, OU, Beschreibung fest; Einschleusversuche abgewiesen', () => {
+    expect(pruefeDienstkonto({ konto: 'svc-sqllnx-backup' })).toEqual({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' });
+    expect(pruefeDienstkonto({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' })).toEqual({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' });
+    expect(pruefeDienstkonto({ konto: 'a' })).toContain('konto');
+    expect(pruefeDienstkonto({ konto: 'x'.repeat(21) })).toContain('konto');
+    expect(pruefeDienstkonto({ konto: 'svc$' })).toContain('konto');
+    for (const b of BOESE) {
+      expect(pruefeDienstkonto({ konto: `svc${b}` }), b).toContain('konto');
+      if (b !== 'a b') expect(pruefeDienstkonto({ konto: 'svc-a', ou: `Dienstkonten${b}` }), b).toEqual(expect.stringContaining('ou'));
+    }
+    expect(dienstkontoTresorName('svc-SQLlnx-Backup')).toBe('ad-svc-sqllnx-backup');
+  });
+  it('Skript: Kennwörter nur aus der Standardeingabe, nie zurückgesetzt, Flags gesetzt, Anmeldung nachgeprüft', () => {
+    const s = dienstkontoSkript({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' });
+    expect(s).toContain('[Console]::In.ReadLine()');
+    expect(s).toContain('$e.dienstkennwort');
+    expect(s).toContain('$e.kennwort');
+    expect(s).toContain(`$p = '{"konto":"svc-sqllnx-backup","ou":"Dienstkonten"}' | ConvertFrom-Json`);
+    expect(s).toContain('-PasswordNeverExpires $true');
+    expect(s).toContain('-CannotChangePassword $true');
+    expect(s).toContain("'Alfred I8e Dienstkonto'");
+    // fremdes Konto gleichen Namens → Abbruch; abweichendes Kennwort → Abbruch statt Zurücksetzen
+    expect(s).toContain('ist nicht von Alfred angelegt');
+    expect(s).toContain('nicht still zurückgesetzt');
+    expect(s).not.toMatch(/Set-ADAccountPassword/);
+    // Selbstprüfung: LDAP-Anmeldung mit dem neuen Kennwort, Flags, OU
+    expect(s).toContain('System.DirectoryServices.DirectoryEntry');
+    expect(s).toContain('.NativeObject');
+  });
+  it('Entfernen nur für von Alfred angelegte Konten', () => {
+    const s = dienstkontoEntfernenSkript({ konto: 'svc-sqllnx-backup' });
+    expect(s).toContain("-ne 'Alfred I8e Dienstkonto'");
+    expect(s).toContain('Remove-ADUser');
+  });
+});
+
+describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', () => {
+  function welt(antworten: object[], tresorDa: string[] = ['win-dc01-admin']) {
+    const aufrufe: Array<{ befehl: string; eingabe?: string; zweck: string }> = [];
+    const tresor = new Map<string, string>(tresorDa.map(n => [n, `wert-${n}`]));
+    const gesetzt: string[] = [];
+    const skill = new WindowsAdSkill({
+      skript: async (_z, befehl, eingabe, _t, zweck) => {
+        aufrufe.push({ befehl, ...(eingabe !== undefined ? { eingabe } : {}), zweck });
+        return { code: 0, stdout: `ALFRED-AD ${JSON.stringify(antworten.shift() ?? {})}`, stderr: '' };
+      },
+      tresor: { namen: async () => new Set(tresor.keys()), lies: async n => tresor.get(n)!, setze: async (n, w) => { gesetzt.push(n); tresor.set(n, w); } },
+      schlafe: async () => undefined,
+    });
+    return { skill, aufrufe, tresor, gesetzt };
+  }
+  const imChange = { ausChange: true } as never;
+  const ANLEGEN = { action: 'dienstkonto_anlegen', zugang: 'dc01', konto: 'svc-sqllnx-backup' };
+
+  it('nur im Change; Kennwort erzeugt und im Tresor ad-<konto>, nur über die Standardeingabe', async () => {
+    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=svc-sqllnx-backup,OU=Dienstkonten,DC=ad,DC=3033,DC=at', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true }]);
+    expect((await w.skill.execute(ANLEGEN, {} as never)).error).toContain('nur als Schritt');
+    expect(w.aufrufe).toHaveLength(0);
+    const r = await w.skill.execute(ANLEGEN, imChange);
+    expect(r.error).toBeUndefined();
+    const kw = w.tresor.get('ad-svc-sqllnx-backup')!;
+    expect(kw).toMatch(/^Al-[A-Za-z0-9]{24}9a$/);
+    expect(w.gesetzt).toEqual(['ad-svc-sqllnx-backup']);
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin', dienstkennwort: kw });
+    expect(w.aufrufe[0]!.befehl).not.toContain(kw);
+    expect(ps(w.aufrufe[0]!.befehl)).not.toContain(kw);
+    expect(r.display).toContain('svc-sqllnx-backup');
+    expect(r.display).toContain('ad-svc-sqllnx-backup');
+    expect(JSON.stringify(r)).not.toContain(kw);
+  });
+  it('zweiter Lauf liest das Kennwort aus dem Tresor (kein neues), „schon“ → nichts zu tun', async () => {
+    const w = welt([{ zustand: 'schon', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true }], ['win-dc01-admin', 'ad-svc-sqllnx-backup']);
+    const r = await w.skill.execute(ANLEGEN, imChange);
+    expect(r.display).toContain('nichts zu tun');
+    expect(w.gesetzt).toEqual([]);
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!).dienstkennwort).toBe('wert-ad-svc-sqllnx-backup');
+  });
+  it('Selbstprüfung: fehlt Anmeldung oder ein Flag im Ergebnis → Fehler', async () => {
+    const w = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: false }]);
+    expect((await w.skill.execute(ANLEGEN, imChange)).error).toContain('Nachprüfung');
+    const v = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: false, kannNichtAendern: true, anmeldung: true }]);
+    expect((await v.skill.execute(ANLEGEN, imChange)).error).toContain('Nachprüfung');
+  });
+  it('Einschleusversuche in konto/ou → Fehler vor jedem Aufruf und vor jedem Tresor-Eintrag', async () => {
+    for (const b of BOESE) {
+      const w = welt([]);
+      expect((await w.skill.execute({ ...ANLEGEN, konto: `svc${b}` }, imChange)).error, b).toContain('konto');
+      if (b !== 'a b') expect((await w.skill.execute({ ...ANLEGEN, ou: `x${b}` }, imChange)).error, b).toContain('ou');
+      expect(w.aufrufe).toHaveLength(0);
+      expect(w.gesetzt).toHaveLength(0);
+    }
+  });
+  it('dienstkonto_entfernen ist der Rückweg (nur im Change)', async () => {
+    const w = welt([{ zustand: 'entfernt' }]);
+    expect((await w.skill.execute({ action: 'dienstkonto_entfernen', zugang: 'dc01', konto: 'svc-sqllnx-backup' }, {} as never)).error).toContain('nur als Schritt');
+    const r = await w.skill.execute({ action: 'dienstkonto_entfernen', zugang: 'dc01', konto: 'svc-sqllnx-backup' }, imChange);
+    expect(r.display).toContain('entfernt');
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ kennwort: 'wert-win-dc01-admin' });
+    expect(aktionsArt('windows_ad', 'dienstkonto_anlegen')).toBe('aendern');
+    expect(aktionsArt('windows_ad', 'dienstkonto_entfernen')).toBe('aendern');
+  });
+});
+
+describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
+  const F = { name: 'SQLLinuxBackup$', pfad: 'S:\\SQLLinuxBackup', aendern: ['AD3033\\svc-sqllnx-backup'] };
+  it('kontingent_gib: ganze Zahl 1–16384, optional; ohne Angabe unverändert', () => {
+    expect(pruefeFreigabe(F)).toEqual({ ...F, vollzugriff: [] });
+    expect(pruefeFreigabe({ ...F, kontingent_gib: 64 })).toEqual({ ...F, vollzugriff: [], kontingentGib: 64 });
+    expect(pruefeFreigabe({ ...F, kontingent_gib: '64' })).toEqual({ ...F, vollzugriff: [], kontingentGib: 64 });
+    for (const k of [0, -1, 1.5, 20000, '64; rm', '$(id)', 'x']) expect(pruefeFreigabe({ ...F, kontingent_gib: k }), String(k)).toContain('kontingent_gib');
+  });
+  it('Skript: FSRM-Kontingent hart nur, wenn die Rolle da ist — nie still installiert; sonst „fehlt“ im Ergebnis', () => {
+    const s = freigabeSkript({ ...F, vollzugriff: [], kontingentGib: 64 });
+    expect(s).toContain("Get-WindowsFeature -Name 'FS-Resource-Manager'");
+    expect(s).toContain('New-FsrmQuota -Path $p.pfad -Size');
+    expect(s).toContain('-SoftLimit:$false');
+    expect(s).toContain("kontingent = 'fehlt'");
+    expect(s).not.toMatch(/Install-WindowsFeature/);
+    // ohne Kontingent kein FSRM-Teil
+    expect(freigabeSkript({ ...F, vollzugriff: [] })).not.toContain('Fsrm');
+  });
+  it('Skript: Rechte exakt (Freigabe und NTFS) nachgeprüft; unverändert → „schon“', () => {
+    const s = freigabeSkript({ ...F, vollzugriff: [], kontingentGib: 64 });
+    expect(s).toContain('$acl.SetAccessRuleProtection($true, $false)');
+    expect(s).toContain("'Modify'");
+    expect(s).toContain('NTFS-Rechte nach dem Setzen');
+    expect(s).toContain('Freigaberechte nach dem Setzen');
+    expect(s).toContain("{ 'schon' } else { 'Rechte erneuert' }");
+  });
+  it('FS-Resource-Manager lässt sich als Feature ausdrücklich installieren (eigener Schritt)', () => {
+    expect(FEATURES.has('FS-Resource-Manager')).toBe(true);
+  });
+  it('Skill reicht kontingent_gib durch und nennt den Kontingent-Zustand', async () => {
+    const aufrufe: string[] = [];
+    const skill = new WindowsClusterSkill({
+      skript: async (_z, befehl) => { aufrufe.push(befehl); return { code: 0, stdout: `ALFRED-AD ${JSON.stringify({ unc: '\\\\fs01.ad.3033.at\\SQLLinuxBackup$', zustand: 'neu', rechte: ['BUILTIN\\Administrators:Full', 'AD3033\\svc-sqllnx-backup:Change'], kontingent: 'fehlt' })}`, stderr: '' }; },
+      schlafe: async () => undefined,
+    });
+    const r = await skill.execute({ action: 'freigabe_anlegen', zugang: 'fs01', name: 'SQLLinuxBackup$', pfad: 'S:\\SQLLinuxBackup', aendern: ['AD3033\\svc-sqllnx-backup'], kontingent_gib: 64 }, { ausChange: true } as never);
+    expect(r.error).toBeUndefined();
+    expect(r.display).toContain('Kontingent fehlt');
+    expect(ps(aufrufe[0]!)).toContain('"kontingentGib":64');
+  });
+});
+
+describe('I8e fs01 — Change „Sicherungsziel auf fs01“', () => {
+  const ad = new WindowsAdSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const cl = new WindowsClusterSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const ctx = { skill: (n: string) => (n === 'windows_ad' ? ad : n === 'windows_cluster' ? cl : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  const schritte = [
+    { titel: 'Dienstkonto', art: 'aktion', skill: 'windows_ad', aktion: 'dienstkonto_anlegen', parameter: { zugang: 'dc01', konto: 'svc-sqllnx-backup' }, zeitlimitS: 600,
+      rueckweg: { skill: 'windows_ad', aktion: 'dienstkonto_entfernen', parameter: { zugang: 'dc01', konto: 'svc-sqllnx-backup' } } },
+    { titel: 'Freigabe', art: 'aktion', skill: 'windows_cluster', aktion: 'freigabe_anlegen', zeitlimitS: 600,
+      parameter: { zugang: 'fs01', name: 'SQLLinuxBackup$', pfad: 'S:\SQLLinuxBackup', aendern: ['AD3033\svc-sqllnx-backup'], kontingent_gib: 64 },
+      rueckweg: { skill: 'windows_cluster', aktion: 'freigabe_entfernen', parameter: { zugang: 'fs01', name: 'SQLLinuxBackup$' } },
+      pruefung: { typ: 'skill', skill: 'windows_cluster', aktion: 'status', parameter: { zugang: 'fs01' }, erwartet: 'SQLLinuxBackup$=S:\SQLLinuxBackup' } },
+  ];
+  const plan = (s: unknown[]) => ({ titel: 'Sicherungsziel fs01', begruendung: 'I8e Task 4', typ: 'normal', risiko: 'low', ausfallMinuten: 0, betroffen: ['fs01', 'dc01'], ohneSicherungGrund: 'nur additive Objekte (Konto, Ordner, Freigabe)', schritte: s });
+  it('Dienstkonto prüft sich selbst (keine eigene Prüfung nötig), Freigabe mit Rückweg: 0 Fehler', () => {
+    expect(pruefeChangePlan(plan(schritte), ctx).fehler).toEqual([]);
+  });
+  it('kontingent_gib mit Einschleusversuch scheitert schon beim Planen', () => {
+    const f = pruefeChangePlan(plan([schritte[0], { ...schritte[1], parameter: { ...schritte[1]!.parameter, kontingent_gib: '64; rm' } }]), ctx).fehler;
+    expect(f.join(' | ')).toContain('kontingent_gib');
+  });
+});
+
+// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig
+const POWERSHELL = (() => {
+  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
+  return r.status === 0 && /^\d+/.test(r.stdout.trim());
+})();
+describe.skipIf(!POWERSHELL)('I8e fs01 — PowerShell-Parser', () => {
+  it('dienstkonto_anlegen/-entfernen und freigabe_anlegen (mit/ohne Kontingent) ohne Parserfehler', () => {
+    const skripte = {
+      dienstkonto: dienstkontoSkript({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' }),
+      dienstkontoEntfernen: dienstkontoEntfernenSkript({ konto: 'svc-sqllnx-backup' }),
+      freigabeKontingent: freigabeSkript({ name: 'SQLLinuxBackup$', pfad: 'S:\SQLLinuxBackup', vollzugriff: [], aendern: ['AD3033\svc-sqllnx-backup'], kontingentGib: 64 }),
+      freigabe: freigabeSkript({ name: 'Witness$', pfad: 'W:\Witness', vollzugriff: ['AD3033\SQLCL01$'], aendern: [] }),
+    };
+    for (const [name, s] of Object.entries(skripte)) {
+      const b64 = Buffer.from(s, 'utf8').toString('base64');
+      const prog = `$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
+      expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
+    }
+  }, 60_000);
+});

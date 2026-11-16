@@ -62,7 +62,7 @@ export class WindowsClusterSkill extends Skill {
       + 'NUR als Schritte freigegebener Changes: systemplatte_erweitern (zugang) — C: auf die volle Plattengröße in Proxmox; liegt die Wiederherstellungspartition dahinter, wandert WinRE nach C: und nur diese Partition wird entfernt (ohne Rückweg; Ergebnis „C: … 63 → 100 GB“). platten_einrichten (zugang, platten [{groesse_gb, laufwerk, name, block_kb 4|64}] — rohe Platten über die Größe zugeordnet, Größen verschieden; SQL-Daten/Log/TempDB 64 KB; ein CD-Laufwerk auf dem Buchstaben weicht aus; ohne Rückweg). '
       + `features_installieren (zugang, features aus ${[...FEATURES].join(', ')}; Neustart falls nötig, wartet bis 20 min; ohne Rückweg). `
       + 'firewall_regel (zugang, name, protokoll TCP|UDP|ICMPv4, ports, von = exakte IPv4/Netze) ↔ firewall_regel_entfernen (zugang, name) — eingehend, Profil Any, Name „Alfred <name>“. '
-      + 'freigabe_anlegen (zugang, name z. B. Witness$, pfad z. B. W:\\Witness, vollzugriff/aendern = Konten NETBIOS\\name, Computer/gMSA mit $) ↔ freigabe_entfernen (zugang, name; Ordner und Daten bleiben) — NTFS ohne Vererbung, nur SYSTEM, Administratoren und die Konten. '
+      + 'freigabe_anlegen (zugang, name z. B. Witness$, pfad z. B. W:\\Witness, vollzugriff/aendern = Konten NETBIOS\\name, Computer/gMSA mit $, kontingent_gib optional = hartes FSRM-Kontingent, nur wenn die Rolle FS-Resource-Manager installiert ist — sonst „Kontingent fehlt“, nie still installiert) ↔ freigabe_entfernen (zugang, name; Ordner und Daten bleiben) — NTFS ohne Vererbung, nur SYSTEM, Administratoren und die Konten; Rechte nachgeprüft, unverändert → „schon“. '
       + 'Am DC mit dem Domänen-Administrator (konto_tresor optional, Standard win-<zugang>-admin): gmsa_anlegen (zugang = DC, name ≤14 ohne $, berechtigte = Computer, ou Standard Dienstkonten) ↔ gmsa_entfernen; '
       + 'computerobjekt_vorbereiten (zugang = DC, name = CNO/VCO, ou Standard Server, vollzugriff = sAMAccountNames mit Vollzugriff nur auf DIESES Objekt, z. B. CNO sqlcl01$ für den Listener-VCO) — deaktiviert vorab angelegt ↔ computerobjekt_entfernen (nur deaktivierte, von Alfred angelegte); '
       + 'spn_setzen (zugang = DC, konto = sAMAccountName z. B. gmsa-sqleng$, spns z. B. MSSQLSvc/sql01.ad.3033.at:1433) ↔ spn_entfernen — bricht ab, wenn ein SPN an einem anderen Konto hängt. '
@@ -89,6 +89,7 @@ export class WindowsClusterSkill extends Skill {
         name: { type: 'string', description: 'Regel-, Freigabe-, gMSA-, Computer- oder Clustername' },
         protokoll: { type: 'string' }, ports: { type: 'array', items: { type: 'string' } }, von: { type: 'array', items: { type: 'string' } },
         pfad: { type: 'string' }, vollzugriff: { type: 'array', items: { type: 'string' } }, aendern: { type: 'array', items: { type: 'string' } },
+        kontingent_gib: { type: 'number', description: 'freigabe_anlegen: hartes FSRM-Kontingent in GiB (nur mit installierter Rolle FS-Resource-Manager)' },
         berechtigte: { type: 'array', items: { type: 'string' } }, ou: { type: 'string' },
         konto: { type: 'string' }, spns: { type: 'array', items: { type: 'string' } },
         knoten: { type: 'array', items: { type: 'string' } }, ip: { type: 'string' },
@@ -239,8 +240,10 @@ export class WindowsClusterSkill extends Skill {
         }
         case 'freigabe_anlegen': {
           const p = fehler(pruefeFreigabe(input)) as Parameters<typeof freigabeSkript>[0];
-          const r = await this.lauf<{ unc: string; zustand: string; rechte: string[] }>(zugang, freigabeSkript(p), 'SMB-Freigabe', 180_000);
-          return { success: true, data: r, display: `✅ Freigabe ${r.unc} → ${p.pfad} (${r.zustand}); Rechte ${r.rechte.join(', ')}` };
+          const r = await this.lauf<{ unc: string; zustand: string; rechte: string[]; kontingent?: string; belegtGib?: number }>(zugang, freigabeSkript(p), 'SMB-Freigabe', 180_000);
+          // I8e Task 4 — Kontingent nur mit vorhandener FSRM-Rolle; „fehlt“ ist ein Hinweis, kein Fehler (Grenze dann beim Aufrufer)
+          const kont = p.kontingentGib === undefined ? '' : r.kontingent === 'hart' ? `; Kontingent ${p.kontingentGib} GiB hart (belegt ${r.belegtGib ?? '?'} GiB)` : `; Kontingent fehlt (FSRM-Rolle FS-Resource-Manager nicht installiert — nicht still installiert; Grenze nur beim Aufrufer)`;
+          return { success: true, data: r, display: `${r.zustand === 'schon' ? '' : '✅ '}Freigabe ${r.unc} → ${p.pfad} (${r.zustand}); Rechte ${r.rechte.join(', ')}${kont}${r.zustand === 'schon' ? ' — nichts zu tun' : ''}` };
         }
         case 'freigabe_entfernen': {
           const name = String(input.name ?? '').trim();
