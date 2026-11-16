@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { schwaerzeGeheimnisse } from '@alfred/core';
 import path from 'node:path';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync, statfsSync, renameSync } from 'node:fs';
@@ -763,11 +764,9 @@ export function projektDiff(dir: string, commit: string, datei?: string, git = '
 }
 
 /** v1418 G2 — mögliche Geheimnisse in Befehlen/Texten schwärzen, bevor Schritte das Gerät verlassen. */
+/** v1885 — dieselbe gehärtete Schwärzung wie der Fernzugriff (core/fernzugriff/kaefig.ts); vorher eine eigene, schwächere Kopie. */
 export function schwaerze(t: string): string {
-  return t
-    .replace(/(bearer\s+)[^\s"']+/gi, '$1***')
-    .replace(/((?:token|passwor[dt]|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth)[^\s=:]*\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"']+)/gi, '$1***')
-    .replace(/(:\/\/[^:\s/]+:)[^@\s]+@/g, '$1***@');
+  return schwaerzeGeheimnisse(t).text;
 }
 
 /** v1418 G2 — Fortschritt eines Auftrags aus seinem Protokoll (letzte n Schritte, geschwärzt) und ob er noch läuft. */

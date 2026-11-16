@@ -101,10 +101,18 @@ import { schwaerze } from './satellit-auftrag.js';
 describe('schwaerze', () => {
   it('Tokens, Passwörter, Schlüssel und Zugangsdaten in URLs', () => {
     expect(schwaerze('▶ curl -H "Authorization: Bearer abc.def" https://x')).not.toContain('abc.def');
-    expect(schwaerze('▶ API_KEY=sk-123 node a.js')).toBe('▶ API_KEY=*** node a.js');
-    expect(schwaerze('▶ psql postgres://user:geheim@db/x')).toBe('▶ psql postgres://user:***@db/x');
-    expect(schwaerze('▶ export PASSWORD="a b"')).toBe('▶ export PASSWORD=***');
+    expect(schwaerze('▶ API_KEY=sk-123 node a.js')).toBe('▶ API_KEY=[geschwärzt] node a.js');
+    expect(schwaerze('▶ psql postgres://user:geheim@db/x')).toBe('▶ psql postgres://user:[geschwärzt]@db/x');
+    expect(schwaerze('▶ export PASSWORD="a b"')).not.toContain('a b');
     expect(schwaerze('✏️ schreibt src/a.js')).toBe('✏️ schreibt src/a.js');
+  });
+  // v1885 — dieselbe gehärtete Schwärzung wie der Fernzugriff: Fälle, die die alte CLI-Kopie durchließ
+  it('gehärtete Fälle: curl -u, JSON, deutsche Namen, Basic, mysql -p', () => {
+    expect(schwaerze('▶ curl -u admin:geheim https://x')).not.toContain('geheim');
+    expect(schwaerze('{"password": "geheim1"}')).not.toContain('geheim1');
+    expect(schwaerze('KENNWORT=geheim2')).not.toContain('geheim2');
+    expect(schwaerze('Authorization: Basic dXNlcjpwdw==')).not.toContain('dXNlcjpwdw==');
+    expect(schwaerze('mysql -pGeheim123 db')).not.toContain('Geheim123');
   });
 });
 

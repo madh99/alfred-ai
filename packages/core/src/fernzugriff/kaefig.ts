@@ -120,8 +120,9 @@ const nurName = (s: string) => s.replace(/^\s*(?:export\s+)?/i, '').replace(/^["
 
 // Schlüssel nach Trennzeichen (Leerzeichen ; , & ? { ( [ : | " '; „:“ für grep-Ausgaben datei:key=wert), optional in Anführungszeichen, dann = oder :
 const MITTE_SCHLUESSEL = /(?<=^|[\s;,&?{([:|"'])(["']?)(?<k>[A-Za-z0-9_.-]+)\1\s*[=:]\s*/gm;
-// Wert: in Anführungszeichen (Leerzeichen erlaubt) oder bis Leerraum, ; & oder Anführungszeichen (`,` und `#` gehören zum Wert); mindestens 4 Zeichen
-const MITTE_WERT = /(?!["']?\[geschwärzt\])(?:"([^"\n]{4,})"|'([^'\n]{4,})'|([^\s'";&]{4,}))/y;
+// Wert: in Anführungszeichen (Leerzeichen erlaubt, ab 1 Zeichen — ausdrücklich gequotet ist eindeutig ein Wert) oder
+// bis Leerraum, ; & oder Anführungszeichen (`,` und `#` gehören zum Wert; ungequotet mindestens 4 Zeichen gegen Fehltreffer)
+const MITTE_WERT = /(?!["']?\[geschwärzt\])(?:"([^"\n]+)"|'([^'\n]+)'|([^\s'";&]{4,}))/y;
 // Schalter: --name WERT / -Name WERT (Leerzeichen-getrennt; --name=WERT fängt MITTE_SCHLUESSEL)
 const SCHALTER_SCHLUESSEL = /(?<=^|[\s"'(])(?<k>--?[A-Za-z][A-Za-z0-9_-]*)[^\S\n]+/gm;
 // Kein Wert: nächster Schalter oder Shell-Trennzeichen (| > < ; & )) — `-PassThru | Format-List` bleibt
@@ -197,7 +198,9 @@ export function schwaerze(text: string): { text: string; anzahl: number } {
   });
   // URL-Zugangsdaten am Trenner :// verankert (jedes Schema, auch +postgres:// oder 1-redis://)
   t = t.replace(/(:\/\/[^:\s/@]+:)(?!\[geschwärzt\]@)([^@\s/]{3,})@/g, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]@`; });
-  t = t.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  // v1885 — hinter einer Authorization-Kopfzeile ist jeder Bearer-Wert ein Token, auch ein kurzer (Realfall-Vergleich mit der CLI)
+  t = t.replace(/\b(Authorization["']?[^\S\n]*[:=][^\S\n]*(?:["'][^\S\n]*)?Bearer[^\S\n]+)(?!\[geschwärzt\])[^\s"']+/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
+  t = t.replace(/\b(Bearer\s+)(?!\[geschwärzt\])[A-Za-z0-9._~+/-]{16,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
   // Authorization: Basic … auch als JSON/Hashtable ("Authorization": "Basic …", Authorization = "Basic …")
   t = t.replace(/\b(Authorization["']?[^\S\n]*[:=][^\S\n]*(?:["'][^\S\n]*)?Basic[^\S\n]+)[A-Za-z0-9+/]{4,}=*/gi, (_m, a: string) => { anzahl++; return `${a}[geschwärzt]`; });
   // Basic ohne Kopfzeile: nur base64-artige Werte (Ziffer, + / = oder Klein-Groß-Wechsel), damit „Basic Settings“ lesbar bleibt

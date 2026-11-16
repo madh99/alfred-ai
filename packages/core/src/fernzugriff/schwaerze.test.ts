@@ -188,3 +188,22 @@ ende`).text).not.toContain('Abc12345xyz');
     }
   });
 });
+
+// v1885 — Lücken gegenüber der alten CLI-Schwärzung (satellit-auftrag.ts), die jetzt dieselbe Funktion nutzt
+describe('Schwärzung — Lücken aus dem CLI-Vergleich', () => {
+  it('Authorization: Bearer mit kurzem Token wird geschwärzt (Kopfzeile = immer Token)', () => {
+    weg('▶ curl -H "Authorization: Bearer abc.def" https://x', ['abc.def'], ['Authorization: Bearer', 'https://x']);
+    weg('authorization: bearer kurz1', ['kurz1']);
+  });
+  it('Bearer im Fließtext ohne Kopfzeile bleibt lesbar', () => {
+    const r = schwaerze('Der Bearer token wird erneuert');
+    expect(r.text).toBe('Der Bearer token wird erneuert');
+  });
+  it('Geheimnis-Name mit kurzem Wert in Anführungszeichen', () => {
+    weg('▶ export PASSWORD="a b"', ['a b'], ['PASSWORD=']);
+    weg("db_token='x1'", ['x1'], ['db_token=']);
+  });
+  it('leerer Wert in Anführungszeichen bleibt (kein Geheimnis)', () => {
+    expect(schwaerze('PASSWORD=""').text).toBe('PASSWORD=""');
+  });
+});
