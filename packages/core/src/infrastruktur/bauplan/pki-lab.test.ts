@@ -1,11 +1,8 @@
 /**
- * V3 Task 6 — Bauplan-Vorlage pki_lab (docs/bauplaene/pki_lab.json) aus den Changes 2cfde1a2 (Aufbau), 7335dfeb (Test) und
+ * V3 Task 6 — Bauplan-Vorlage pki_lab (eingebaut: vorlagen/pki_lab.ts) aus den Changes 2cfde1a2 (Aufbau), 7335dfeb (Test) und
  * 288c3716 (Abbau) vom 15.11.2026: Schema, Platzhalter, Parameter-Nutzung, Verweise über Change-Grenzen und Einsetzen offline.
  * Die echte Probe gegen die lebenden Skills (ChangePlanung.pruefeNur) läuft nach dem Deploy live (bauplan_speichern).
  */
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { pruefeSchema, type BauplanVorlage } from './schema.js';
 import { pruefeVorlage } from './validierung.js';
@@ -17,9 +14,13 @@ import { PkiLabSkill } from '../pki-lab-skill.js';
 import { WindowsClusterSkill } from '../windows-cluster-skill.js';
 import { WindowsAdSkill } from '../windows-ad-skill.js';
 import { FernzugriffSkill } from '../../fernzugriff/fernzugriff-skill.js';
+import { eingebauteVorlage } from './vorlagen/index.js';
+import { BauplanDienst } from './bauplan-dienst.js';
+import type { CmdbChangeRequest } from '@alfred/types';
+import type { ChangeSchrittDaten } from '@alfred/storage';
 
-const PFAD = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../docs/bauplaene/pki_lab.json');
-const roh = (): Record<string, unknown> => JSON.parse(readFileSync(PFAD, 'utf8')) as Record<string, unknown>;
+// Final-Welle I2 — einzige Quelle ist die eingebaute Vorlage (Register), je Test eine frische Kopie
+const roh = (): Record<string, unknown> => eingebauteVorlage('pki_lab') as Record<string, unknown>;
 
 function beispielWerte(v: BauplanVorlage): Record<string, unknown> {
   const e: Record<string, unknown> = {};
@@ -152,5 +153,76 @@ describe('Bauplan-Vorlage pki_lab', () => {
     expect(fehler({ node: 'pve3' })).toMatch(/Parameter node/);
     expect(fehler({ netzname: 'x; rm -rf /' })).toMatch(/Parameter netzname/);
     expect(fehler({})).toBe('');
+  });
+
+  it('Final-Welle M1: anwenden offline mit echter ChangePlanung — 0 Fehler, Abbau-Verweise nach der Verschiebung um 5 auf Aufbau 9/11/12/13, Owner-Schritt bleibt Abbau 1', async () => {
+    const skills: Record<string, unknown> = {
+      proxmox: new ProxmoxSkill({ baseUrl: 'https://proxmox.invalid', tokenId: 't', tokenSecret: 's' } as never),
+      unifi: new UniFiSkill({ baseUrl: 'https://unifi.invalid', apiKey: 'k' } as never),
+      pki_lab: new PkiLabSkill({} as never), windows_cluster: new WindowsClusterSkill({} as never),
+      windows_ad: new WindowsAdSkill({} as never), fernzugriff: new FernzugriffSkill({} as never),
+    };
+    const db = new Map<string, CmdbChangeRequest>(); let n = 0;
+    const itsm = {
+      liste: async () => [...db.values()],
+      hole: async (_o: string, id: string) => db.get(id) ?? null,
+      legeAn: async (_o: string, d: ChangeSchrittDaten) => {
+        const id = `c${String(++n).padStart(7, '0')}-0000-0000-0000-000000000000`;
+        db.set(id, { id, userId: 'o', title: d.title, description: d.description, type: d.type, status: 'submitted', riskLevel: d.riskLevel, affectedAssetIds: d.affectedAssetIds, affectedServiceIds: [], implementationPlan: d.implementationPlan, rollbackPlan: d.rollbackPlan, testPlan: d.testPlan, schritte: d.schritte, abhaengigVon: d.abhaengigVon, ausfallMinuten: d.ausfallMinuten, pruefung: d.pruefung, fingerabdruck: d.fingerabdruck, createdAt: 'x', updatedAt: 'x' } as CmdbChangeRequest);
+        return db.get(id)!;
+      },
+      setzeSchritte: async () => { throw new Error('nicht erwartet'); },
+      freigeben: async () => { throw new Error('nicht erwartet'); },
+      setzeFreigabeAnfrage: async () => undefined,
+    };
+    const pl = new ChangePlanung({
+      itsm: itsm as never,
+      skill: nm => skills[nm] as never,
+      assets: async () => [{ id: 'a-pve', name: 'pve' }, { id: 'a-udm', name: 'UDMPRO' }, { id: 'a-sql', name: 'sql01' }] as never,
+      auswirkung: async ids => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] }),
+      bestaetigung: async () => true,
+    });
+    const zeilen: Array<Record<string, unknown>> = [];
+    let geplant: Array<Record<string, any>> = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let planFehler: string[] = [];
+    const dienst = new BauplanDienst({
+      repo: {
+        speichere: async (_u, d) => { const z = { id: `z${zeilen.length + 1}`, key: d.key, version: zeilen.length + 1, json: d.json, abdruck: d.abdruck, status: 'entwurf', createdAt: 'x', updatedAt: 'x' }; zeilen.push(z); return { ...z } as never; },
+        finde: async (_u, key, version) => { const z = zeilen.filter(x => x.key === key && (version === undefined || x.version === version)).at(-1); return z ? { ...z } as never : undefined; },
+        liste: async () => zeilen.map(z => ({ ...z })) as never,
+        setze: async (_u, id, d) => { const z = zeilen.find(x => x.id === id)!; for (const [k, w] of Object.entries(d)) if (w !== undefined) z[k] = w === '' ? undefined : w; },
+      },
+      instanzen: { anlegen: async (_u, d) => ({ id: 'inst-1', name: d.name }), finde: async () => undefined },
+      pruefeNur: (o, r) => pl.pruefeNur(o, r),
+      planen: async (o, r) => { geplant = r as typeof geplant; const x = await pl.planen(o, r); if (!x.ok) planFehler = x.fehler; return x.ok ? { ok: true, ids: x.changes.map(c => c.id) } : x; },
+      freigabeAnfragen: async () => ({ ok: true, text: 'Freigabe-Frage gestellt' }),
+      pruefe: async () => ({ ok: true, text: 'frei' }),
+      frage: async () => true, melde: async () => undefined, verwerfen: async () => undefined,
+    });
+    const s = await dienst.speichern('o', roh());
+    if (!s.ok) throw new Error(s.fehler.join('\n'));
+    await dienst.freigabeAnfragen('o', 'pki_lab');
+    zeilen[0]!.status = 'freigegeben'; // Owner-Ja (Nonce-Weg ist in bauplan-dienst.test.ts belegt)
+    const v = pruefeSchema(roh()).vorlage!;
+    const eingabe: Record<string, unknown> = {};
+    for (const p of v.parameter) if (!p.ableitung && p.beispiel !== undefined) eingabe[p.name] = p.beispiel;
+    const r = await dienst.anwenden('o', 'pki_lab', eingabe, 'pki-lab-offline');
+    expect(planFehler).toEqual([]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    // an planen übergeben: 5 Eingangskontrollen vorn im Aufbau, Abbau-Verweise um 5 verschoben
+    const [aufbau, test, abbau] = geplant;
+    expect(aufbau!.schritte).toHaveLength(39 + 5);
+    expect(aufbau!.schritte.slice(0, 5).map((x: Record<string, unknown>) => x.art)).toEqual(['pruefung', 'pruefung', 'pruefung', 'pruefung', 'pruefung']);
+    expect(test!.abhaengigVon).toEqual(['aufbau']);
+    const refs = [...JSON.stringify(abbau!.schritte).matchAll(/\{\{change:aufbau\.schritt(\d+)\.id\}\}/g)].map(m => Number(m[1]));
+    expect([...new Set(refs)].sort((a, b) => a - b)).toEqual([9, 11, 12, 13]);
+    const aktionen = Object.fromEntries([9, 11, 12, 13].map(k => [k, `${aufbau!.schritte[k - 1].skill}.${aufbau!.schritte[k - 1].aktion}`]));
+    expect(aktionen).toEqual({ 9: 'unifi.create_network', 11: 'unifi.create_firewall_policy', 12: 'unifi.create_firewall_policy', 13: 'unifi.create_firewall_policy' });
+    expect(abbau!.schritte[0].art).toBe('owner');
+    expect(abbau!.schritte).toHaveLength(32);
+    // gespeichert: Verweise zeigen auf die volle ID des Aufbau-Change
+    const [ca, , cb] = r.ids.map(id => db.get(id)!);
+    expect(JSON.stringify(cb!.schritte)).toContain(`{{change:${ca!.id}.schritt11.id}}`);
+    expect((cb!.schritte as Array<{ art: string }>)[0]!.art).toBe('owner');
   });
 });

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { SkillContext } from '@alfred/types';
 import { BauplanSkill, BAUPLAN_SCHREIBEND } from './bauplan-skill.js';
-import type { BauplanDienst } from './bauplan-dienst.js';
+import { BauplanDienst } from './bauplan-dienst.js';
+import { EINGEBAUTE_VORLAGEN } from './vorlagen/index.js';
 
 function dienst() {
   const aufrufe: Array<[string, unknown[]]> = [];
@@ -55,6 +56,37 @@ describe('BauplanSkill', () => {
     expect(r.success).toBe(true);
     expect(aufrufe.at(-1)).toEqual(['anwenden', ['o', 'test_lab', { vlan: 832 }, 'lab-1']]);
     expect((await skill.execute({ action: 'bauplan_anwenden', key: 'test_lab', parameter: {} }, owner)).success).toBe(false);
+  });
+  it('Final-Welle I2: eingebaut statt vorlage — genau eines; unbekannter Schlüssel abgewiesen; Inhalt = Register (Kopie)', async () => {
+    const { skill, aufrufe } = neu();
+    expect((await skill.execute({ action: 'bauplan_speichern', eingebaut: 'pki_lab' }, owner)).success).toBe(true);
+    const gespeichert = aufrufe.at(-1)![1][1] as Record<string, unknown>;
+    expect(gespeichert).toEqual(EINGEBAUTE_VORLAGEN.pki_lab);
+    expect(gespeichert).not.toBe(EINGEBAUTE_VORLAGEN.pki_lab);
+    const n = aufrufe.length;
+    const r1 = await skill.execute({ action: 'bauplan_speichern', eingebaut: 'gibtsnicht' }, owner);
+    expect(r1.success).toBe(false);
+    expect(r1.error).toContain('pki_lab');
+    const r2 = await skill.execute({ action: 'bauplan_speichern', eingebaut: 'pki_lab', vorlage: { key: 'x' } }, owner);
+    expect(r2.success).toBe(false);
+    expect(r2.error).toMatch(/genau eines/);
+    expect(aufrufe).toHaveLength(n);
+    expect(JSON.stringify(skill.metadata.inputSchema)).toContain('eingebaut');
+    expect(skill.metadata.description).toContain('eingebaut');
+  });
+  it('Final-Welle I2: eingebaute pki_lab besteht die echte Speicher-Validierung des Dienstes', async () => {
+    const zeilen: unknown[] = [];
+    const echt = new BauplanDienst({
+      repo: { speichere: async (_u, d) => { const z = { id: 'z1', key: d.key, version: 1, json: d.json, abdruck: d.abdruck, status: 'entwurf', createdAt: 'x', updatedAt: 'x' }; zeilen.push(z); return z as never; }, finde: async () => undefined, liste: async () => [], setze: async () => undefined },
+      instanzen: { anlegen: async () => { throw new Error('nie'); }, finde: async () => undefined },
+      pruefeNur: async () => [], planen: async () => ({ ok: false, fehler: ['nie'] }), freigabeAnfragen: async () => ({ ok: false, fehler: ['nie'] }),
+      pruefe: async () => ({ ok: true, text: '' }), frage: async () => true, melde: async () => undefined, verwerfen: async () => undefined,
+    });
+    const skill = new BauplanSkill(echt, { istOwner: () => true, owner: () => 'o' });
+    const r = await skill.execute({ action: 'bauplan_speichern', eingebaut: 'pki_lab' }, owner);
+    expect(r.success, r.error).toBe(true);
+    expect(zeilen).toHaveLength(1);
+    expect((zeilen[0] as { key: string }).key).toBe('pki_lab');
   });
   it('liste und zeigen lesen nur', async () => {
     const { skill } = neu();

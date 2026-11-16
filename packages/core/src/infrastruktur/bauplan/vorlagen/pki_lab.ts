@@ -1,4 +1,11 @@
-{
+/**
+ * Eingebaute Bauplan-Vorlage pki_lab — einzige Quelle (docs/bauplaene/README.md verweist hierher).
+ *
+ * Aus den Changes 2cfde1a2 (Aufbau), 7335dfeb (Test) und 288c3716 (Abbau) vom 15.11.2026. Reines JSON-Literal: als TS-Modul statt
+ * .json, weil module Node16 keine Import-Attribute kennt und ein JSON-Import ohne Attribut im ungebündelten ESM-Lauf scheitert.
+ * bauplan_speichern mit eingebaut "pki_lab" speichert genau dieses Objekt (gleiche Validierung wie jede Vorlage).
+ */
+const PKI_LAB: Record<string, unknown> = {
   "schema": 1,
   "key": "pki_lab",
   "titel": "PKI-Lab: isoliertes TLS-Negativtest-Lab",
@@ -618,7 +625,7 @@
             "typ": "befehl",
             "erwartet": ",{{param.vmid_server}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/p'"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]\\+\\(.*\\)$/EXCL,\\1,/p'"
           },
           "rueckweg": {
             "skill": "proxmox",
@@ -642,7 +649,7 @@
             "typ": "befehl",
             "erwartet": ",{{param.vmid_client}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/p'"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed -n 's/^[[:space:]]*exclude[[:space:]]\\+\\(.*\\)$/EXCL,\\1,/p'"
           }
         },
         {
@@ -1780,7 +1787,7 @@
             "erwartet": "vzdump: alfred-pbs-taeglich",
             "nichtEnthalten": ",{{param.vmid_server}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/'"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]\\+\\(.*\\)$/EXCL,\\1,/'"
           },
           "rueckweg": {
             "skill": "proxmox",
@@ -1805,7 +1812,7 @@
             "erwartet": "vzdump: alfred-pbs-taeglich",
             "nichtEnthalten": ",{{param.vmid_client}},",
             "zugang": "{{param.node}}",
-            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]*\\(.*\\)$/EXCL,\\1,/'"
+            "befehl": "sed -n '/^vzdump: alfred-pbs-taeglich$/,/^$/p' /etc/pve/jobs.cfg | sed 's/^[[:space:]]*exclude[[:space:]]\\+\\(.*\\)$/EXCL,\\1,/'"
           }
         },
         {
@@ -2254,4 +2261,6 @@
       ]
     }
   ]
-}
+};
+
+export default PKI_LAB;

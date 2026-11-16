@@ -6,6 +6,7 @@
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { BauplanDienst } from './bauplan-dienst.js';
+import { EINGEBAUTE_VORLAGEN, eingebauteVorlage } from './vorlagen/index.js';
 
 const AKTIONEN = ['bauplan_speichern', 'bauplan_liste', 'bauplan_zeigen', 'bauplan_freigabe_anfragen', 'bauplan_freigeben', 'bauplan_widerrufen', 'bauplan_anwenden'] as const;
 /** Wie NUR_HAUPTGESPRAECH im Infrastruktur-Skill: nie aus einem Unteragenten oder einem Change-Schritt */
@@ -29,7 +30,8 @@ export class BauplanSkill extends Skill {
     category: 'infrastructure',
     description:
       'Bauplan-Vorlagen: wiederholbare Aufbauten als Paket normaler Changes mit Parametern (z. B. Test-Lab mit VLAN, Netz, VM). '
-      + 'bauplan_speichern (vorlage = JSON-Objekt: schema 1, key, titel, zweck, dokumentart testprotokoll|betrieb, parameter, annahmen, changes; KEIN Feld version) — '
+      + 'bauplan_speichern (vorlage = JSON-Objekt: schema 1, key, titel, zweck, dokumentart testprotokoll|betrieb, parameter, annahmen, changes; KEIN Feld version — '
+      + 'ODER eingebaut = Schlüssel einer mitgelieferten Vorlage, z. B. pki_lab; dann kein JSON abschreiben) — '
       + 'prüft streng (Schema, Platzhalter, keine Geheimniswerte, Probe durch den Change-Validator) und speichert die nächste Version als Entwurf. '
       + 'bauplan_liste; bauplan_zeigen (key, optional version). '
       + 'bauplan_freigabe_anfragen (key) — stellt dem Owner die Button-Frage für die neueste Version. '
@@ -43,7 +45,8 @@ export class BauplanSkill extends Skill {
       type: 'object',
       properties: {
         action: { type: 'string', enum: [...AKTIONEN] },
-        vorlage: { type: 'object', description: 'bauplan_speichern: die Vorlage als JSON-Objekt (ohne version)' },
+        vorlage: { type: 'object', description: 'bauplan_speichern: die Vorlage als JSON-Objekt (ohne version) — oder stattdessen eingebaut' },
+        eingebaut: { type: 'string', enum: Object.keys(EINGEBAUTE_VORLAGEN), description: 'bauplan_speichern: Schlüssel einer mitgelieferten Vorlage, z. B. pki_lab (statt vorlage)' },
         key: { type: 'string', description: 'Schlüssel der Vorlage, z. B. pki_lab' },
         version: { type: 'number', description: 'bauplan_zeigen: Version (sonst die neueste)' },
         parameter: { type: 'object', description: 'bauplan_anwenden: Parameterwerte, z. B. {"vlan": 832, "netz": "10.203.32.0/28"}' },
@@ -67,7 +70,15 @@ export class BauplanSkill extends Skill {
     try {
       switch (action) {
         case 'bauplan_speichern': {
+          // Final-Welle I2 — genau eines: vorlage (Objekt/JSON) oder eingebaut (Schlüssel einer mitgelieferten Vorlage)
+          const hatVorlage = input.vorlage !== undefined && input.vorlage !== null && input.vorlage !== '';
+          const hatEingebaut = input.eingebaut !== undefined && input.eingebaut !== null && input.eingebaut !== '';
+          if (hatVorlage === hatEingebaut) return { success: false, error: `genau eines angeben: vorlage (JSON-Objekt) oder eingebaut (${Object.keys(EINGEBAUTE_VORLAGEN).join(', ')})` };
           let roh: unknown = input.vorlage;
+          if (hatEingebaut) {
+            roh = typeof input.eingebaut === 'string' ? eingebauteVorlage(input.eingebaut.trim()) : undefined;
+            if (roh === undefined) return { success: false, error: `eingebaut: keine mitgelieferte Vorlage „${String(input.eingebaut).slice(0, 40)}“ — vorhanden: ${Object.keys(EINGEBAUTE_VORLAGEN).join(', ')}` };
+          }
           if (typeof roh === 'string') { try { roh = JSON.parse(roh); } catch { return { success: false, error: 'vorlage: kein gültiges JSON' }; } }
           if (!objekt(roh)) return { success: false, error: 'vorlage: JSON-Objekt der Vorlage angeben' };
           const r = await this.dienst.speichern(o, roh);
