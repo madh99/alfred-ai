@@ -257,7 +257,7 @@ export class WindowsAdSkill extends Skill {
     if ((await t.namen()).has(name)) dienstkennwort = await t.lies(name, `Dienstkonto ${p.konto}`);
     else { dienstkennwort = adKennwort(); await t.setze(name, dienstkennwort, `Kennwort des Domänen-Dienstkontos ${p.konto} (läuft nie ab)`); neu = true; }
     const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean }>(zugang, dienstkontoSkript({ ...p, ...ausKonto }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
-    if (!(r.aktiv && r.laeuftNieAb && r.kannNichtAendern && r.anmeldung && r.inOu !== false)) {
+    if (!(r.aktiv && r.laeuftNieAb && r.kannNichtAendern && r.anmeldung && r.inOu === true)) {
       throw new Error(`Dienstkonto ${p.konto}: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, Kennwort läuft nie ab ${r.laeuftNieAb}, nicht änderbar ${r.kannNichtAendern}, Anmeldung ${r.anmeldung}, in OU ${r.inOu ?? '?'})`);
     }
     this.d.protokoll?.('I8e Dienstkonto', { zugang, konto: p.konto, zustand: r.zustand, kennwortNeu: neu });

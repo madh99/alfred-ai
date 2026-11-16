@@ -39,6 +39,10 @@ describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Bausteine)', () => {
     expect(s).not.toMatch(/Set-ADAccountPassword/);
     // Selbstprüfung: LDAP-Anmeldung mit dem neuen Kennwort, Flags, OU
     expect(s).toContain('System.DirectoryServices.DirectoryEntry');
+    // Fix-Runde 1 (Minor 7): Anlage und Anmeldeprüfung gegen diesen DC
+    expect(s).toContain("$dc = $env:COMPUTERNAME + '.' + $d.DNSRoot");
+    expect(s).toContain("('LDAP://' + $dc + '/' + $d.DistinguishedName)");
+    expect(s).toMatch(/New-ADUser [^\n]*-Server \$dc/);
     expect(s).toContain('.NativeObject');
   });
   it('Entfernen nur für von Alfred angelegte Konten', () => {
@@ -67,7 +71,7 @@ describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', () => {
   const ANLEGEN = { action: 'dienstkonto_anlegen', zugang: 'dc01', konto: 'svc-sqllnx-backup' };
 
   it('nur im Change; Kennwort erzeugt und im Tresor ad-<konto>, nur über die Standardeingabe', async () => {
-    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=svc-sqllnx-backup,OU=Dienstkonten,DC=ad,DC=3033,DC=at', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true }]);
+    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=svc-sqllnx-backup,OU=Dienstkonten,DC=ad,DC=3033,DC=at', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true, inOu: true }]);
     expect((await w.skill.execute(ANLEGEN, {} as never)).error).toContain('nur als Schritt');
     expect(w.aufrufe).toHaveLength(0);
     const r = await w.skill.execute(ANLEGEN, imChange);
@@ -83,17 +87,20 @@ describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', () => {
     expect(JSON.stringify(r)).not.toContain(kw);
   });
   it('zweiter Lauf liest das Kennwort aus dem Tresor (kein neues), „schon“ → nichts zu tun', async () => {
-    const w = welt([{ zustand: 'schon', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true }], ['win-dc01-admin', 'ad-svc-sqllnx-backup']);
+    const w = welt([{ zustand: 'schon', konto: 'AD3033\\svc-sqllnx-backup', dn: 'CN=x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true, inOu: true }], ['win-dc01-admin', 'ad-svc-sqllnx-backup']);
     const r = await w.skill.execute(ANLEGEN, imChange);
     expect(r.display).toContain('nichts zu tun');
     expect(w.gesetzt).toEqual([]);
     expect(JSON.parse(w.aufrufe[0]!.eingabe!).dienstkennwort).toBe('wert-ad-svc-sqllnx-backup');
   });
   it('Selbstprüfung: fehlt Anmeldung oder ein Flag im Ergebnis → Fehler', async () => {
-    const w = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: false }]);
+    const w = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: false, inOu: true }]);
     expect((await w.skill.execute(ANLEGEN, imChange)).error).toContain('Nachprüfung');
-    const v = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: false, kannNichtAendern: true, anmeldung: true }]);
+    const v = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: false, kannNichtAendern: true, anmeldung: true, inOu: true }]);
     expect((await v.skill.execute(ANLEGEN, imChange)).error).toContain('Nachprüfung');
+    // Fix-Runde 1 (Minor 8): fehlende OU-Angabe im Ergebnis zählt als Fehlschlag
+    const o = welt([{ zustand: 'angelegt', konto: 'x', dn: 'x', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, anmeldung: true }]);
+    expect((await o.skill.execute(ANLEGEN, imChange)).error).toContain('Nachprüfung');
   });
   it('Einschleusversuche in konto/ou → Fehler vor jedem Aufruf und vor jedem Tresor-Eintrag', async () => {
     for (const b of BOESE) {
@@ -140,6 +147,15 @@ describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
     expect(s).toContain('NTFS-Rechte nach dem Setzen');
     expect(s).toContain('Freigaberechte nach dem Setzen');
     expect(s).toContain("{ 'schon' } else { 'Rechte erneuert' }");
+    // Fix-Runde 1 (Minor 5): Freigabe/Ordner vor Set-Acl geprüft; fremder gefüllter Ordner → Abbruch
+    expect(s.indexOf('ist nicht leer und keine Alfred-Freigabe')).toBeGreaterThan(0);
+    expect(s.indexOf('ist nicht leer und keine Alfred-Freigabe')).toBeLessThan(s.indexOf('Set-Acl -Path'));
+    expect(s.indexOf("zeigt schon auf")).toBeLessThan(s.indexOf('Set-Acl -Path'));
+    // Minor 6: Rechte je SID verglichen (Vollzugriff/Ändern), keine Verweigern-Regeln
+    expect(s).toContain("$sollR = @{ 'S-1-5-18' = 'F'; 'S-1-5-32-544' = 'F' }");
+    expect(s).toContain("$sollR[$sid] = 'M'");
+    expect(s).toContain("$frSoll[$sid] = 'Change'");
+    expect(s).toContain('Verweigern-Regel');
   });
   it('FS-Resource-Manager lässt sich als Feature ausdrücklich installieren (eigener Schritt)', () => {
     expect(FEATURES.has('FS-Resource-Manager')).toBe(true);

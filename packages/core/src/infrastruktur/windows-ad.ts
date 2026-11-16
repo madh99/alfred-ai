@@ -350,7 +350,7 @@ export function pruefeDienstkonto(o: Record<string, unknown>): { konto: string; 
 }
 
 /** Domänen-Administrator für AD-Änderungen am DC (Kennwort über die Standardeingabe, wie papierkorbSkript) */
-const adAdminCred = "$d = Get-ADDomain; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
+const adAdminCred = "$d = Get-ADDomain; $dc = $env:COMPUTERNAME + '.' + $d.DNSRoot; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
 
 /**
  * Benutzer-Dienstkonto in der OU (Standard Dienstkonten) anlegen — eingabe: { kennwort (Domänen-Administrator), dienstkennwort }.
@@ -365,20 +365,21 @@ export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: str
     'Import-Module ActiveDirectory',
     adAdminCred,
     "$pfad = 'OU=' + $p.ou + ',' + $d.DistinguishedName",
-    "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
-    "function Anmeldung { try { $t = New-Object System.DirectoryServices.DirectoryEntry(('LDAP://' + $d.PDCEmulator + '/' + $d.DistinguishedName), ($d.NetBIOSName + '\\' + $p.konto), $e.dienstkennwort); $null = $t.NativeObject; $true } catch { $false } }",
-    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description, PasswordNeverExpires, CannotChangePassword, Enabled -Credential $c",
+    // Fix-Runde 1 (Minor 7): alles gegen diesen DC (zugang = DC) — Anlage und Anmeldeprüfung ohne Replikationsverzug
+    "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Server $dc -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
+    "function Anmeldung { try { $t = New-Object System.DirectoryServices.DirectoryEntry(('LDAP://' + $dc + '/' + $d.DistinguishedName), ($d.NetBIOSName + '\\' + $p.konto), $e.dienstkennwort); $null = $t.NativeObject; $true } catch { $false } }",
+    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description, PasswordNeverExpires, CannotChangePassword, Enabled -Server $dc -Credential $c",
     "$z = 'schon'",
     'if (-not $u) {',
-    `  New-ADUser -Name $p.konto -SamAccountName $p.konto -UserPrincipalName ($p.konto + '@' + $d.DNSRoot) -Path $pfad -AccountPassword (ConvertTo-SecureString $e.dienstkennwort -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true -Description ${psText(DIENSTKONTO_BESCHREIBUNG)} -Credential $c`,
+    `  New-ADUser -Name $p.konto -SamAccountName $p.konto -UserPrincipalName ($p.konto + '@' + $d.DNSRoot) -Path $pfad -AccountPassword (ConvertTo-SecureString $e.dienstkennwort -AsPlainText -Force) -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true -Description ${psText(DIENSTKONTO_BESCHREIBUNG)} -Server $dc -Credential $c`,
     "  $z = 'angelegt'",
     '} else {',
     `  if ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt - nichts geändert') }`,
     "  if (-not (Anmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
-    "  if (-not $u.Enabled) { Enable-ADAccount -Identity $u -Credential $c; $z = 'geaendert' }",
-    "  if (-not $u.PasswordNeverExpires -or -not $u.CannotChangePassword) { Set-ADUser -Identity $u -PasswordNeverExpires $true -CannotChangePassword $true -Credential $c; $z = 'geaendert' }",
+    "  if (-not $u.Enabled) { Enable-ADAccount -Identity $u -Server $dc -Credential $c; $z = 'geaendert' }",
+    "  if (-not $u.PasswordNeverExpires -or -not $u.CannotChangePassword) { Set-ADUser -Identity $u -PasswordNeverExpires $true -CannotChangePassword $true -Server $dc -Credential $c; $z = 'geaendert' }",
     '}',
-    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled -Credential $c",
+    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled -Server $dc -Credential $c",
     "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = [bool](Anmeldung) }",
   ].join('\n');
 }
@@ -389,9 +390,9 @@ export function dienstkontoEntfernenSkript(p: { konto: string; ausKonto?: string
     ...kopf(p, true),
     'Import-Module ActiveDirectory',
     adAdminCred,
-    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description -Credential $c",
-    `if (-not $u) { $z = 'nicht vorhanden' } elseif ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt') } else { Remove-ADUser -Identity $u -Confirm:$false -Credential $c; $z = 'entfernt' }`,
-    "if (Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Credential $c) { throw ('Konto ' + $p.konto + ' nach dem Entfernen noch vorhanden') }",
+    "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description -Server $dc -Credential $c",
+    `if (-not $u) { $z = 'nicht vorhanden' } elseif ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt') } else { Remove-ADUser -Identity $u -Confirm:$false -Server $dc -Credential $c; $z = 'entfernt' }`,
+    "if (Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Server $dc -Credential $c) { throw ('Konto ' + $p.konto + ' nach dem Entfernen noch vorhanden') }",
     'Ergebnis @{ konto = $p.konto; zustand = $z }',
   ].join('\n');
 }

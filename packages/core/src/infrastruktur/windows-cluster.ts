@@ -345,6 +345,12 @@ export function pruefeFreigabe(o: Record<string, unknown>): Freigabe | string {
 export function freigabeSkript(p: Freigabe): string {
   return [
     ...kopf(p, false),
+    // Fix-Runde 1 (Minor 5): erst Freigabe und Ordner prüfen, dann Rechte setzen — ein fremder, gefüllter Ordner wird nie umberechtigt
+    '$s = Get-SmbShare -Name $p.name -ErrorAction SilentlyContinue',
+    "if ($s -and $s.Path -ne $p.pfad) { throw ('Freigabe ' + $p.name + ' zeigt schon auf ' + $s.Path + ' - nichts geändert') }",
+    "$andere = @(Get-SmbShare -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $p.pfad -and $_.Name -ne $p.name })",
+    "if ($andere.Count) { throw ('Ordner ' + $p.pfad + ' ist schon freigegeben als ' + ((@($andere | ForEach-Object { $_.Name })) -join ', ') + ' - nichts geändert') }",
+    "if (Test-Path -LiteralPath $p.pfad) { $gefuellt = [bool](Get-ChildItem -LiteralPath $p.pfad -Force -ErrorAction Stop | Select-Object -First 1); $unser = [bool]($s -and [string]$s.Description -like 'Alfred*'); if ($gefuellt -and -not $unser) { throw ('Ordner ' + $p.pfad + ' ist nicht leer und keine Alfred-Freigabe - nichts geändert') } }",
     'New-Item -ItemType Directory -Path $p.pfad -Force | Out-Null',
     "function AclText { $a = Get-Acl -Path $p.pfad; ([string]$a.AreAccessRulesProtected) + '#' + ((@($a.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference + ':' + [int]$_.FileSystemRights + ':' + [string]$_.AccessControlType + ':' + [int]$_.InheritanceFlags }) | Sort-Object) -join ',') }",
     "function FreigabeText { (@(Get-SmbShareAccess -Name $p.name -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight + ':' + [string]$_.AccessControlType }) | Sort-Object) -join ',' }",
@@ -358,8 +364,6 @@ export function freigabeSkript(p: Freigabe): string {
     "foreach ($k in @($p.vollzugriff)) { $o = New-Object System.Security.Principal.NTAccount $k; $soll += [string]$o.Translate([System.Security.Principal.SecurityIdentifier]); Recht $o 'FullControl' }",
     "foreach ($k in @($p.aendern)) { $o = New-Object System.Security.Principal.NTAccount $k; $soll += [string]$o.Translate([System.Security.Principal.SecurityIdentifier]); Recht $o 'Modify' }",
     'Set-Acl -Path $p.pfad -AclObject $acl',
-    '$s = Get-SmbShare -Name $p.name -ErrorAction SilentlyContinue',
-    "if ($s -and $s.Path -ne $p.pfad) { throw ('Freigabe ' + $p.name + ' zeigt schon auf ' + $s.Path) }",
     "$voll = @('BUILTIN\\Administrators') + @($p.vollzugriff)",
     'if (-not $s) {',
     "  $a = @{ Name = $p.name; Path = $p.pfad; FullAccess = $voll; FolderEnumerationMode = 'AccessBased'; Description = 'Alfred I8d' }",
@@ -373,11 +377,20 @@ export function freigabeSkript(p: Freigabe): string {
     '}',
     // Selbstprüfung: NTFS ohne Vererbung mit genau den Soll-Konten; Freigabe genau Administratoren + Konten
     '$ist = Get-Acl -Path $p.pfad',
-    "$istSid = @($ist.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { [string]$_.IdentityReference } | Sort-Object -Unique)",
-    "if (-not $ist.AreAccessRulesProtected -or (($istSid -join ',') -ne ((@($soll | Sort-Object -Unique)) -join ','))) { throw ('NTFS-Rechte nach dem Setzen weichen ab: ' + ($istSid -join ', ')) }",
-    "$frSoll = @(@($voll) + @($p.aendern) | ForEach-Object { [string](New-Object System.Security.Principal.NTAccount $_).Translate([System.Security.Principal.SecurityIdentifier]) } | Sort-Object -Unique)",
-    "$frIst = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string](New-Object System.Security.Principal.NTAccount $_.AccountName).Translate([System.Security.Principal.SecurityIdentifier]) } | Sort-Object -Unique)",
-    "if (($frIst -join ',') -ne ($frSoll -join ',')) { throw ('Freigaberechte nach dem Setzen weichen ab: ' + ((@(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName })) -join ', ')) }",
+    // Fix-Runde 1 (Minor 6): Rechte je SID vergleichen (F = Vollzugriff, M = Ändern), generische Rechte aufgelöst, keine Verweigern-Regeln
+    "function Maske([int]$r) { $m = [int64]$r -band 0xFFFFFFFFL; $n = $m -band 0x1F01FF; if ($m -band 0x10000000) { $n = $n -bor 0x1F01FF }; if ($m -band 0x80000000L) { $n = $n -bor 0x120089 }; if ($m -band 0x40000000) { $n = $n -bor 0x120116 }; if ($m -band 0x20000000) { $n = $n -bor 0x1200A0 }; $n }",
+    "function Klasse([int64]$n) { if (($n -band 0x1F01FF) -eq 0x1F01FF) { 'F' } elseif (($n -band 0x301BF) -eq 0x301BF) { 'M' } else { 'X' + $n } }",
+    "$sollR = @{ 'S-1-5-18' = 'F'; 'S-1-5-32-544' = 'F' }",
+    "foreach ($k in @($p.vollzugriff)) { $sollR[[string](New-Object System.Security.Principal.NTAccount $k).Translate([System.Security.Principal.SecurityIdentifier])] = 'F' }",
+    "foreach ($k in @($p.aendern)) { $sid = [string](New-Object System.Security.Principal.NTAccount $k).Translate([System.Security.Principal.SecurityIdentifier]); if (-not $sollR.ContainsKey($sid)) { $sollR[$sid] = 'M' } }",
+    "$istM = @{}; foreach ($x in @($ist.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) { if ([string]$x.AccessControlType -ne 'Allow') { throw ('NTFS-Rechte nach dem Setzen: Verweigern-Regel für ' + $x.IdentityReference) }; $k = [string]$x.IdentityReference; $istM[$k] = [int64]$istM[$k] -bor (Maske ([int]$x.FileSystemRights)) }",
+    "$a1 = (@($sollR.Keys | Sort-Object | ForEach-Object { $_ + '=' + $sollR[$_] })) -join ','; $a2 = (@($istM.Keys | Sort-Object | ForEach-Object { $_ + '=' + (Klasse $istM[$_]) })) -join ','",
+    "if (-not $ist.AreAccessRulesProtected -or $a1 -ne $a2) { throw ('NTFS-Rechte nach dem Setzen weichen ab: ' + $a2 + ' (soll ' + $a1 + ')') }",
+    "$frSoll = @{}; foreach ($k in @($voll)) { $frSoll[[string](New-Object System.Security.Principal.NTAccount $k).Translate([System.Security.Principal.SecurityIdentifier])] = 'Full' }",
+    "foreach ($k in @($p.aendern)) { $sid = [string](New-Object System.Security.Principal.NTAccount $k).Translate([System.Security.Principal.SecurityIdentifier]); if (-not $frSoll.ContainsKey($sid)) { $frSoll[$sid] = 'Change' } }",
+    "$frIst = @{}; foreach ($x in @(Get-SmbShareAccess -Name $p.name)) { if ([string]$x.AccessControlType -ne 'Allow') { throw ('Freigaberechte nach dem Setzen: Verweigern für ' + $x.AccountName) }; $frIst[[string](New-Object System.Security.Principal.NTAccount $x.AccountName).Translate([System.Security.Principal.SecurityIdentifier])] = [string]$x.AccessRight }",
+    "$b1 = (@($frSoll.Keys | Sort-Object | ForEach-Object { $_ + '=' + $frSoll[$_] })) -join ','; $b2 = (@($frIst.Keys | Sort-Object | ForEach-Object { $_ + '=' + $frIst[$_] })) -join ','",
+    "if ($b1 -ne $b2) { throw ('Freigaberechte nach dem Setzen weichen ab: ' + $b2 + ' (soll ' + $b1 + ')') }",
     "$r = [ordered]@{ freigabe = $p.name; pfad = $p.pfad; zustand = $z; rechte = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight }) }",
     ...(p.kontingentGib !== undefined ? [
       '$r.kontingentGib = $p.kontingentGib',
