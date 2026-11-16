@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { pruefeChangePlan, type PruefKontext } from '../change-schritte.js';
 import { pruefeVorlage } from './validierung.js';
 import { testVorlage } from './testvorlage.fixture.js';
 
@@ -179,5 +180,24 @@ describe('Fix-Runde 1 — Validierung', () => {
   it('Minor 2: {{geheim:…}} nur als ganzer Wert, geheimdatei auch im Text', async () => {
     expect((await pruefe(v => { v.changes[0].schritte[0].parameter.notiz = 'pw={{geheim:pkilab-sql}}'; })).fehler.join('\n')).toMatch(/geheim:pkilab-sql/);
     expect((await pruefe(v => { v.changes[0].schritte[0].parameter.befehl = 'cat {{geheimdatei:lab-ca}}'; })).fehler).toEqual([]);
+  });
+});
+
+describe('Fix-Runde 2 — Annahmen-Change besteht den echten Change-Validator', () => {
+  const fakeSkill = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['vm_status', 'create_vm'] }, vmid: { type: 'number' } }, required: ['action'] } } };
+  const kontext: PruefKontext = {
+    skill: n => (n === 'proxmox' ? fakeSkill : undefined),
+    asset: k => (k === 'pve' ? { id: 'a-pve', name: 'pve' } : undefined),
+    changes: [], jetzt: new Date('2026-11-16T10:00:00Z'),
+  };
+  it('ausfallMinuten 0 und betroffen aus der Vereinigung der Changes', async () => {
+    let plaene: Array<Record<string, any>> = [];
+    const r = await pruefe(v => { v.changes[0].betroffen = ['pve']; v.changes[1].betroffen = ['pve']; }, { probe: async p => { plaene = p as Array<Record<string, any>>; return []; } });
+    expect(r.fehler).toEqual([]);
+    const a = plaene.find(p => p.schluessel === 'annahmen')!;
+    expect(a.ausfallMinuten).toBe(0);
+    expect(a.betroffen).toEqual(['pve']);
+    const echt = pruefeChangePlan(a, kontext, plaene.map(p => p.schluessel as string));
+    expect(echt.fehler).toEqual([]);
   });
 });

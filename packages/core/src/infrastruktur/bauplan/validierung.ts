@@ -161,7 +161,9 @@ export function probePlaene(v: BauplanVorlage, werte: Record<string, unknown>): 
   }));
   if (v.annahmen.length) plaene.push({
     schluessel: ANNAHMEN_SCHLUESSEL, titel: 'Eingangskontrolle der Vorlage', begruendung: 'Vorab-Prüfungen der Bauplan-Vorlage',
-    typ: 'normal', risiko: 'low', abhaengigVon: [], betroffen: [],
+    // Plan-Kopf wie ein echter Change (pruefeChangePlan verlangt ausfallMinuten und betroffen): betroffen = Vereinigung der
+    // betroffenen Assets aller Changes; ist sie leer, scheitern die echten Changes am selben Punkt (gleiche Meldung)
+    typ: 'normal', risiko: 'low', ausfallMinuten: 0, abhaengigVon: [], betroffen: [...new Set(v.changes.flatMap(c => c.betroffen ?? []))],
     schritte: v.annahmen.map((a, i) => ({ nr: i + 1, titel: `Eingangskontrolle: ${a.text}`, art: 'pruefung', pruefung: setzeEinWert(a.pruefung, werte), beiFehler: 'anhalten' })),
   });
   return plaene;

@@ -45,6 +45,7 @@ export const ANNAHMEN_SCHLUESSEL = 'annahmen';
 /**
  * ReDoS-Schutz für grenzen.regex: keine Rückverweise, keine Lookarounds, keine quantifizierte Gruppe, die selbst einen
  * Quantifizierer oder eine Alternative enthält ((a+)+, (a*)*, (a|aa)+). Zeichenklassen und Escapes zählen nicht.
+ * Bewusst konservativ: auch harmlose Formen wie (a|b)?c werden abgewiesen — dann als Zeichenklasse ([ab]?c) schreiben.
  */
 export function regexRisiko(src: string): string | undefined {
   if (/\\[1-9]|\\k</.test(src)) return 'Rückverweise (\\1, \\k<…>) sind nicht erlaubt';
