@@ -348,6 +348,11 @@ export function pruefeFreigabe(o: Record<string, unknown>): Freigabe | string {
 export function freigabeSkript(p: Freigabe): string {
   return [
     ...kopf(p, false),
+    // Fix-Welle M-7: ein verlangtes Kontingent ohne FSRM-Rolle ist ein Fehler vor jeder Änderung (nie grün ohne Grenze)
+    ...(p.kontingentGib !== undefined ? [
+      "$fs = Get-WindowsFeature -Name 'FS-Resource-Manager' -ErrorAction SilentlyContinue",
+      "if (-not $fs -or -not $fs.Installed -or -not (Get-Command -Name New-FsrmQuota -ErrorAction SilentlyContinue)) { throw ('Kontingent ' + $p.kontingentGib + ' GiB verlangt, aber die Rolle FS-Resource-Manager fehlt - erst windows_cluster features_installieren features [FS-Resource-Manager], nichts geändert') }",
+    ] : []),
     // Fix-Runde 1 (Minor 5): erst Freigabe und Ordner prüfen, dann Rechte setzen — ein fremder, gefüllter Ordner wird nie umberechtigt
     '$s = Get-SmbShare -Name $p.name -ErrorAction SilentlyContinue',
     "if ($s -and $s.Path -ne $p.pfad) { throw ('Freigabe ' + $p.name + ' zeigt schon auf ' + $s.Path + ' - nichts geändert') }",
@@ -397,9 +402,7 @@ export function freigabeSkript(p: Freigabe): string {
     "$r = [ordered]@{ freigabe = $p.name; pfad = $p.pfad; zustand = $z; rechte = @(Get-SmbShareAccess -Name $p.name | ForEach-Object { [string]$_.AccountName + ':' + [string]$_.AccessRight }) }",
     ...(p.kontingentGib !== undefined ? [
       '$r.kontingentGib = $p.kontingentGib',
-      "$fs = Get-WindowsFeature -Name 'FS-Resource-Manager' -ErrorAction SilentlyContinue",
-      "if (-not $fs -or -not $fs.Installed -or -not (Get-Command -Name New-FsrmQuota -ErrorAction SilentlyContinue)) { $r.kontingent = 'fehlt' }",
-      'else {',
+      'if ($p.kontingentGib) {',
       '  $groesse = [uint64]$p.kontingentGib * 1GB',
       '  $q = Get-FsrmQuota -Path $p.pfad -ErrorAction SilentlyContinue',
       "  if (-not $q) { New-FsrmQuota -Path $p.pfad -Size $groesse -SoftLimit:$false -Description 'Alfred I8e' | Out-Null; if ($z -eq 'schon') { $z = 'Kontingent gesetzt'; $r.zustand = $z } }",

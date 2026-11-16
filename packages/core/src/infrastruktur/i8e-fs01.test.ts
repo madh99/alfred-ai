@@ -135,7 +135,7 @@ describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
     expect(s).toContain("Get-WindowsFeature -Name 'FS-Resource-Manager'");
     expect(s).toContain('New-FsrmQuota -Path $p.pfad -Size');
     expect(s).toContain('-SoftLimit:$false');
-    expect(s).toContain("kontingent = 'fehlt'");
+    expect(s).toContain('die Rolle FS-Resource-Manager fehlt');
     expect(s).not.toMatch(/Install-WindowsFeature/);
     // ohne Kontingent kein FSRM-Teil
     expect(freigabeSkript({ ...F, vollzugriff: [] })).not.toContain('Fsrm');
@@ -167,8 +167,9 @@ describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
       schlafe: async () => undefined,
     });
     const r = await skill.execute({ action: 'freigabe_anlegen', zugang: 'fs01', name: 'SQLLinuxBackup$', pfad: 'S:\\SQLLinuxBackup', aendern: ['AD3033\\svc-sqllnx-backup'], kontingent_gib: 64 }, { ausChange: true } as never);
-    expect(r.error).toBeUndefined();
-    expect(r.display).toContain('Kontingent fehlt');
+    // Fix-Welle M-7: „fehlt“ ist ein Fehler, nicht grün
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('features_installieren');
     expect(ps(aufrufe[0]!)).toContain('"kontingentGib":64');
   });
 });

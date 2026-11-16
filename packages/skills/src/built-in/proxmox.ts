@@ -2402,8 +2402,10 @@ export class ProxmoxSkill extends Skill {
         await this.aufgabeOderFehler(await this.api<string>('PUT', `/nodes/${node}/qemu/${vmid}/resize`, { disk: 'scsi0', size: `${Math.floor(input.disk_size)}G` }), 120_000, 'Platte vergrößern');
       }
       if (zusatz.length) {
-        const f = await this.linuxZusatzPlattenAnlegen(node, vmid, zusatz, wunsch);
-        if (f) return { success: false, error: [...schritte, f].join('\n'), data: { vmid, name, node, ip } };
+        const z = await this.linuxZusatzPlattenAnlegen(node, vmid, zusatz, wunsch);
+        if (z.fehler) return { success: false, error: [...schritte, z.fehler].join('\n'), data: { vmid, name, node, ip } };
+        // Fix-Welle M-11: die Verlegung des Cloud-Init-Laufwerks steht sichtbar im Ergebnis
+        if (z.verlegt) schritte.push(`Cloud-Init-Laufwerk ${z.verlegt.von} → ${z.verlegt.nach} (Platz für die Zusatzplatten)`);
         schritte.push(`${zusatz.length === 1 ? 'Zusatzplatte' : `${zusatz.length} Zusatzplatten`} ${zusatz.map((gb, i) => `scsi${i + 1} ${gb} GB`).join(', ')}`);
       }
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
@@ -2433,17 +2435,19 @@ export class ProxmoxSkill extends Skill {
    * scsi1 (v1629: SCSI-CD, weil IDE/AHCI im schlanken Debian-Kernel fehlt) — es wird hinter die möglichen Zusatzplatten verlegt (erster
    * freier Platz ab scsi7), bleibt aber SCSI. Ein anderes Laufwerk auf einem der Plätze → Abbruch ohne Änderung (Meldung zurück).
    */
-  private async linuxZusatzPlattenAnlegen(node: string, vmid: number, zusatz: number[], wunsch?: string): Promise<string | undefined> {
+  private async linuxZusatzPlattenAnlegen(node: string, vmid: number, zusatz: number[], wunsch?: string): Promise<{ fehler?: string; verlegt?: { von: string; nach: string } }> {
     const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
     const st = wunsch ?? /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
-    if (!st) return 'Speicher für die Zusatzplatten unbekannt (storage angeben)';
+    if (!st) return { fehler: 'Speicher für die Zusatzplatten unbekannt (storage angeben)' };
     const plaetze = zusatz.map((_, i) => `scsi${i + 1}`);
     const fremd = plaetze.filter(k => cfg[k] !== undefined && !String(cfg[k]).includes('cloudinit'));
-    if (fremd.length) return `Zusatzplatten: ${fremd.join(', ')} schon belegt (${fremd.map(k => String(cfg[k]).slice(0, 60)).join('; ')}) — nichts angehängt`;
+    if (fremd.length) return { fehler: `Zusatzplatten: ${fremd.join(', ')} schon belegt (${fremd.map(k => String(cfg[k]).slice(0, 60)).join('; ')}) — nichts angehängt` };
     const ci = plaetze.filter(k => cfg[k] !== undefined);
+    let verlegt: { von: string; nach: string } | undefined;
     if (ci.length) {
       const frei = Array.from({ length: 24 }, (_, i) => `scsi${i + 7}`).find(k => cfg[k] === undefined);
-      if (!frei) return 'Zusatzplatten: kein freier SCSI-Platz für das Cloud-Init-Laufwerk';
+      if (!frei) return { fehler: 'Zusatzplatten: kein freier SCSI-Platz für das Cloud-Init-Laufwerk' };
+      verlegt = { von: ci.join(', '), nach: frei };
       const ciSpeicher = /^([\w-]+):/.exec(String(cfg[ci[0]!]))?.[1] ?? st;
       // zwei Aufrufe: Löschen und Neuanlegen im selben Aufruf hängt von der Reihenfolge in Proxmox ab (pending-Änderungen)
       await this.post(`/nodes/${node}/qemu/${vmid}/config`, { delete: ci.join(',') });
@@ -2452,7 +2456,7 @@ export class ProxmoxSkill extends Skill {
     const neu: Record<string, string> = {};
     zusatz.forEach((gb, i) => { neu[`scsi${i + 1}`] = `${st}:${gb},discard=on,iothread=1,ssd=1`; });
     await this.post(`/nodes/${node}/qemu/${vmid}/config`, neu);
-    return undefined;
+    return verlegt ? { verlegt } : {};
   }
 
   /** v1629 — Snippet-Verweis und Cloud-Init-Laufwerk entfernen, egal an welchem Anschluss es hängt (alte Vorlagen ide2, neue scsi1) */

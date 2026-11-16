@@ -406,6 +406,8 @@ describe('I8e provision_vm mit Zusatzplatten (SQL Server auf Linux: Daten/Log/Te
     expect(verlegt).toBeLessThan(platten);
     expect(r.data).toMatchObject({ zusatzplatten: [{ laufwerk: 'scsi1', gb: 160 }, { laufwerk: 'scsi2', gb: 80 }, { laufwerk: 'scsi3', gb: 64 }, { laufwerk: 'scsi4', gb: 128 }] });
     expect(r.display).toContain('scsi1 160 GB, scsi2 80 GB, scsi3 64 GB, scsi4 128 GB');
+    // Fix-Welle M-11: die Verlegung des Cloud-Init-Laufwerks steht in der Anzeige (von → nach)
+    expect(r.display).toContain('Cloud-Init-Laufwerk scsi1 → scsi7');
   });
 
   it('ohne extra_disks bleibt alles wie bisher (kein Verlegen, keine Platten)', async () => {
