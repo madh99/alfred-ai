@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -519,6 +519,109 @@ describe.skipIf(!PYTHON)('I8e Task 4 Fix-Runde 1 — Aufbewahrung über Wochen, 
     expect(r.rc).not.toBe(0);
     expect(r.json.fehler).toContain('zu wenig Platz');
     expect(readdirSync(ziel)).toEqual([]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+});
+
+describe.skipIf(!PYTHON)('I8e Task 4 Fix-Runde 2 — Inhalt vor lokalem Löschen, Kettengrenzen lokal, Frische, Fehler im Kopierschritt', { timeout: 120_000 }, () => {
+  const START = Date.UTC(2026, 10, 2, 0, 0, 0) / 1000; // Montag
+  const grenzenDatei = (w: Welt) => join(w.wurzel, 'sqllnx', 'pruefdb01-entfernt.json');
+  it('1: Datei auf fs01 mit gleicher Größe, aber anderem Inhalt → lokal nichts gelöscht, Befund, Lauf nicht ok', () => {
+    const w = welt();
+    const T = Math.floor(Date.now() / 1000);
+    const a = kette(w, 'pruefdb01', T - 3 * TAG, 1);
+    const b = kette(w, 'pruefdb01', T - 2 * TAG, 1, a.letzte);
+    const c = kette(w, 'pruefdb01', T - TAG, 1, b.letzte);
+    expect(kopie(w, T).json.ok).toBe(true);
+    kette(w, 'pruefdb01', T - 3600, 1, c.letzte);
+    const f = join(w.mnt, 'sqllnx01', 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`);
+    const alt = readFileSync(f, 'utf8');
+    writeFileSync(f, alt.slice(0, -1) + (alt.endsWith('X') ? 'Y' : 'X'));
+    const r = kopie(w, T);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.lokalEntfernt).toEqual([]);
+    expect(existsSync(join(w.lokal, 'pruefdb01', `pruefdb01_FULL_${b.full}.bak`))).toBe(true);
+    expect(r.json.befunde.join(' ')).toContain('Inhalt auf fs01 weicht vom Manifest ab');
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('2: Kettengrenzen liegen lokal (0600, Ordner 0700); gefälschte Grenzen auf fs01 überbrücken keine echte Lücke', () => {
+    const w = welt();
+    const T = Math.floor(Date.now() / 1000);
+    const b = kette(w, 'pruefdb01', T - 2 * TAG, 2);
+    // Kette c beginnt mit einem LOG, dessen Vorgänger nie existierte (echte Lücke am Ende von b)
+    const fehlt = stempel(T - 2 * TAG + 3 * 3600);
+    const cFull = stempel(T - TAG);
+    lokal(w, 'pruefdb01', `pruefdb01_FULL_${cFull}.bak`, 'full c');
+    lokal(w, 'pruefdb01', `pruefdb01_LOG_${stempel(T - TAG + 900)}_${fehlt}.trn`, 'log c');
+    kopie(w, T);
+    // Fälschung auf der Freigabe: eine „gelöschte Kette“ zwischen b und c, die genau die Lücke schließen würde
+    const mp = join(w.mnt, 'sqllnx01', 'alfred-sqllnx-manifest.json');
+    const m = JSON.parse(readFileSync(mp, 'utf8'));
+    m.entfernteKetten = { pruefdb01: [{ full: stempel(T - 2 * TAG + 2 * 3600), ersterBezug: b.letzte, letztes: fehlt }] };
+    writeFileSync(mp, JSON.stringify(m));
+    const r = kopie(w, T);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.befunde.join(' ')).toContain(`Protokollsicherung ${fehlt} fehlt`);
+    expect(r.json.befunde.join(' ')).toContain('Grenzen gelöschter Ketten auf fs01 weichen von der lokalen Aufzeichnung ab');
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('2/6: gelöschte Ketten stehen in der lokalen Aufzeichnung und werden nie erneut kopiert', () => {
+    const w = welt();
+    const a = kette(w, 'pruefdb01', START + 1800, 2);
+    kette(w, 'pruefdb01', START + TAG + 1800, 2, a.letzte);
+    expect(kopie(w, START + TAG + 23 * 3600).json.ok).toBe(true);
+    const r2 = kopie(w, START + 40 * TAG);
+    expect(r2.json.ok, r2.json.fehler).toBe(true);
+    expect(r2.json.geloescht).toContain(`pruefdb01/pruefdb01_FULL_${a.full}.bak`);
+    expect(r2.json.kopiert).toEqual([]);
+    const lokalGrenzen = JSON.parse(readFileSync(grenzenDatei(w), 'utf8'));
+    expect(lokalGrenzen.map((g: { full: string }) => g.full)).toEqual([a.full]);
+    if (process.platform !== 'win32') {
+      expect(statSync(grenzenDatei(w)).mode & 0o777).toBe(0o600);
+      expect(statSync(join(w.wurzel, 'sqllnx')).mode & 0o777).toBe(0o700);
+    }
+    const r3 = kopie(w, START + 40 * TAG);
+    expect(r3.json.kopiert).toEqual([]);
+    expect(r3.json.geloescht).toEqual([]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('3: liste meldet den Kopierbericht nur als frisch, wenn er höchstens 45 min alt ist', () => {
+    const w = welt();
+    const T = Math.floor(Date.now() / 1000);
+    kette(w, 'pruefdb01', T - TAG, 1);
+    kopie(w, T);
+    const frisch = py(['liste', w.lokal, 'sqllnx01', w.cache, w.status, w.konf]);
+    expect(frisch.json.status.frisch).toBe(true);
+    const st = JSON.parse(readFileSync(w.status, 'utf8'));
+    writeFileSync(w.status, JSON.stringify({ ...st, zeit: new Date(Date.now() - 2 * 3600_000).toISOString().replace(/\.\d+Z$/, 'Z') }));
+    const alt = py(['liste', w.lokal, 'sqllnx01', w.cache, w.status, w.konf]);
+    expect(alt.json.status.frisch).toBe(false);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('4: OSError beim Kopieren (z. B. Kontingent voll) → Befund, aufgeräumt wird trotzdem nur Belegtes', () => {
+    const w = welt();
+    const T = Math.floor(Date.now() / 1000);
+    const a = kette(w, 'pruefdb01', T - 3 * TAG, 1);
+    const b = kette(w, 'pruefdb01', T - 2 * TAG, 1, a.letzte);
+    expect(kopie(w, T).json.ok).toBe(true);
+    kette(w, 'pruefdb01', T - TAG, 1, b.letzte);
+    const r = kopie(w, T, "def _voll(*a):\n    raise OSError(28, 'No space left on device')\nns['kopiere'] = _voll");
+    expect(r.json.ok).toBe(false);
+    expect(r.json.fehler).toContain('No space left on device');
+    expect(r.json.lokalEntfernt).toEqual([`pruefdb01/pruefdb01_FULL_${a.full}.bak`, `pruefdb01/${a.logs[0]}`].sort());
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('5: Datei ohne Fertig-Marke älter als 6 h → nur sie übersprungen (Befund), spätere Dateien werden kopiert', () => {
+    const w = welt();
+    const T = Math.floor(Date.now() / 1000);
+    lokal(w, 'pruefdb01', `pruefdb01_FULL_${stempel(T - 9 * 3600)}.bak`, 'full');
+    lokal(w, 'pruefdb01', `pruefdb01_LOG_${stempel(T - 8 * 3600)}_${stempel(T - 9 * 3600)}.trn`, 'log ohne Marke', 7 * 3600, false);
+    lokal(w, 'pruefdb01', `pruefdb01_LOG_${stempel(T - 7 * 3600)}_${stempel(T - 8 * 3600)}.trn`, 'log danach');
+    const r = kopie(w, T);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.befunde.join(' ')).toContain('ohne Fertig-Marke');
+    expect(r.json.kopiert).toHaveLength(2);
+    expect(r.json.kopiert.join(' ')).not.toContain(stempel(T - 8 * 3600) + '_');
     rmSync(w.wurzel, { recursive: true, force: true });
   });
 });

@@ -805,6 +805,12 @@ export const PY_STATUS = [
   `    with open(${JSON.stringify(SQLLNX_KOPIE_STATUS)}) as f:`,
   '        k = json.load(f)',
   '    sich["letzteKopie"] = {"zeit": k.get("zeit"), "ok": bool(k.get("ok")), "fehler": str(k.get("fehler") or "")[:200]}',
+  // Fix-Runde 2: Alter des Berichts (Minuten) — der Text sagt „ZU ALT“ statt „ok“, wenn er älter als 45 min oder unlesbar ist
+  '    try:',
+  '        import datetime, time',
+  '        sich["letzteKopie"]["alterMin"] = int((time.time() - datetime.datetime.strptime(str(k.get("zeit")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()) // 60)',
+  '    except ValueError:',
+  '        sich["letzteKopie"]["alterMin"] = None',
   'except Exception:',
   '    sich["letzteKopie"] = None',
   'r["sicherung"] = sich',

@@ -341,6 +341,9 @@ export function pruefeFreigabe(o: Record<string, unknown>): Freigabe | string {
  * „schon“. Selbstprüfung: NTFS ohne Vererbung mit genau diesen Konten, Freigabe genau mit diesen Konten.
  * I8e Task 4 — optional kontingentGib: hartes FSRM-Kontingent, NUR wenn die Rolle FS-Resource-Manager installiert ist (nie still
  * installiert; sonst kontingent = 'fehlt' im Ergebnis — die Größe begrenzt dann nur der Aufrufer, z. B. das Kopier-Skript von linux_sql).
+ * Bewusst vorsichtig: nach freigabe_entfernen (Ordner und Daten bleiben) bricht ein erneutes freigabe_anlegen auf denselben, gefüllten
+ * Ordner mit „nicht leer und keine Alfred-Freigabe“ ab — die Daten werden nie stillschweigend neu berechtigt (Owner entscheidet: leeren oder
+ * anderer Ordner).
  */
 export function freigabeSkript(p: Freigabe): string {
   return [

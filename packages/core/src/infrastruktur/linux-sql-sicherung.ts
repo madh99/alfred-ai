@@ -276,6 +276,8 @@ MANIFEST = 'alfred-sqllnx-manifest.json'
 BLOCK = 4 << 20
 TAG = 86400
 SCHREIBRUHE = 60
+# Bericht des Kopierlaufs gilt nur so lange als aktuell (3 Timer-Intervalle)
+FRISCH_S = 45 * 60
 
 
 class Fehler(Exception):
@@ -461,9 +463,7 @@ def manifest_lesen(ziel, host):
         if not rel_ok(rel):
             raise Fehler('Manifest enthält den ungültigen Eintrag %r - nichts geändert' % str(rel)[:80])
     for db, liste_ in m.get('entfernteKetten', {}).items():
-        if not DB.match(db) or not isinstance(liste_, list) or not all(
-                isinstance(e, dict) and isinstance(e.get('full'), str) and zeit_ok(e['full'])
-                and all(e.get(x) is None or (isinstance(e.get(x), str) and zeit_ok(e[x])) for x in ('ersterBezug', 'letztes')) for e in liste_):
+        if not DB.match(db) or not gueltige_grenzen(liste_):
             raise Fehler('Manifest: Grenzen gelöschter Ketten von %r beschädigt - nichts geändert' % str(db)[:40])
     m.setdefault('entfernteKetten', {})
     m.setdefault('entfernen', [])
@@ -572,12 +572,15 @@ def kopiere(src, ziel, db, n):
             os.remove(tmp)
 
 
-def entferne(ziel, mpfad, man, rels, erg, grenzen=None):
-    """Absicht (Dateien + Grenzen der Ketten) zuerst ins Manifest, dann löschen, dann Absicht austragen"""
+def entferne(ziel, mpfad, man, rels, erg, grenzen=None, gdir=None, lokal_g=None):
+    """Grenzen der Ketten zuerst LOKAL (root-only, maßgeblich), dann Absicht + Kopie der Grenzen ins Manifest, löschen, Absicht austragen"""
     for db, g in grenzen or []:
-        bekannt = man['entfernteKetten'].setdefault(db, [])
+        bekannt = lokal_g.setdefault(db, [])
         if not any(e['full'] == g['full'] for e in bekannt):
             bekannt.append(g)
+            bekannt.sort(key=lambda e: e['full'])
+        schreibe_grenzen(gdir, db, bekannt)
+        man['entfernteKetten'][db] = list(bekannt)
     man['entfernen'] = rels
     schreibe_json(mpfad, man)
     for rel in rels:
@@ -591,23 +594,73 @@ def entferne(ziel, mpfad, man, rels, erg, grenzen=None):
     schreibe_json(mpfad, man)
 
 
-def grenzen_kuerzen(man):
-    """Grenzen vor der ältesten vorhandenen Vollsicherung einer Datenbank braucht keine Prüfung mehr"""
-    for db, liste_ in list(man['entfernteKetten'].items()):
+def gueltige_grenzen(liste_):
+    return isinstance(liste_, list) and all(
+        isinstance(e, dict) and isinstance(e.get('full'), str) and zeit_ok(e['full'])
+        and all(e.get(x) is None or (isinstance(e.get(x), str) and zeit_ok(e[x])) for x in ('ersterBezug', 'letztes')) for e in liste_)
+
+
+def lies_grenzen(gdir):
+    """lokale, root-only Aufzeichnung der Grenzen gelöschter Ketten je Datenbank (<gdir>/<db>-entfernt.json) - nur sie zählt"""
+    erg = {}
+    if not os.path.isdir(gdir):
+        return erg
+    for n in sorted(os.listdir(gdir)):
+        if not n.endswith('-entfernt.json'):
+            continue
+        db = n[:-len('-entfernt.json')]
+        liste_ = lies_json(os.path.join(gdir, n), None)
+        if not DB.match(db) or not gueltige_grenzen(liste_):
+            raise Fehler('lokale Kettengrenzen %s beschädigt - nichts geändert' % n)
+        erg[db] = sorted(liste_, key=lambda e: e['full'])
+    return erg
+
+
+def schreibe_grenzen(gdir, db, liste_):
+    os.makedirs(gdir, mode=0o700, exist_ok=True)
+    os.chmod(gdir, 0o700)
+    pfad = os.path.join(gdir, db + '-entfernt.json')
+    if liste_:
+        schreibe_json(pfad, liste_)
+        os.chmod(pfad, 0o600)
+    elif os.path.exists(pfad):
+        os.remove(pfad)
+
+
+def grenzen_kuerzen(man, gdir, lokal_g, lok):
+    """Grenzen vor der ältesten vorhandenen Vollsicherung (fs01) UND vor der ältesten lokalen Datei einer Datenbank werden nicht mehr
+    gebraucht - weder als Brücke noch gegen erneutes Kopieren (lokal und Kopie im Manifest)"""
+    for db, liste_ in list(lokal_g.items()):
         fulls = [zerlege(*rel.split('/'))['zeit'] for rel in man['dateien'] if rel.split('/')[0] == db and '_FULL_' in rel]
         erste = min(fulls) if fulls else None
-        rest = [e for e in liste_ if erste is not None and e['full'] > erste]
+        lokal_erste = min((i['zeit'] for i in lok.get(db, {}).values()), default=None)
+        if erste is not None and lokal_erste is not None:
+            erste = min(erste, lokal_erste)
+        rest = [e for e in liste_ if erste is not None and e['full'] >= erste]
+        if rest != liste_:
+            schreibe_grenzen(gdir, db, rest)
         if rest:
-            man['entfernteKetten'][db] = sorted(rest, key=lambda e: e['full'])
+            lokal_g[db] = rest
+            man['entfernteKetten'][db] = list(rest)
         else:
-            man['entfernteKetten'].pop(db)
+            lokal_g.pop(db)
+            man['entfernteKetten'].pop(db, None)
 
 
-def zustand_fs01(ziel, man):
-    """Ketten und Vorhandensein je Datenbank nach dem Lauf (für Bericht und lokales Aufräumen)"""
+def entfernt_ketten_start(zeit, fulls_alle):
+    """Beginn der Kette (Vollsicherung), zu der ein Zeitstempel gehört - aus allen bekannten Vollsicherungen"""
+    k = None
+    for f in fulls_alle:
+        if f <= zeit:
+            k = f
+    return k
+
+
+def zustand_fs01(ziel, man, lokal_g):
+    """Ketten und Vorhandensein je Datenbank nach dem Lauf (für Bericht und lokales Aufräumen); Brücken nur aus der lokalen Aufzeichnung"""
     erg = {}
     for db, dd in sorted(je_db(man).items()):
-        ks, waisen = ketten(dd, man['entfernteKetten'].get(db))
+        ks, waisen = ketten(dd, lokal_g.get(db))
         fehlend = vorhanden_pruefen(ziel, db, dd, ks)
         erg[db] = {'dd': dd, 'ks': ks, 'waisen': waisen, 'fehlend': fehlend}
     return erg
@@ -628,13 +681,25 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
         if man is None:
             man = {'fassung': 1, 'host': host, 'dateien': {}, 'entfernen': [], 'entfernteKetten': {}}
             schreibe_json(mpfad, man)
+        # 0) Grenzen gelöschter Ketten: maßgeblich ist die lokale root-only Aufzeichnung; die Kopie auf fs01 ist nur Auskunft
+        gdir = os.path.join(os.path.dirname(os.path.abspath(cache_pfad)), 'sqllnx')
+        lokal_g = lies_grenzen(gdir)
+        for db in sorted(set(lokal_g) | set(man['entfernteKetten'])):
+            l_ = [e['full'] for e in lokal_g.get(db, [])]
+            f_ = sorted(e['full'] for e in man['entfernteKetten'].get(db, []))
+            if l_ != f_:
+                erg['befunde'].append('%s: Grenzen gelöschter Ketten auf fs01 weichen von der lokalen Aufzeichnung ab (fs01 %d, lokal %d) - es gilt die lokale' % (db, len(f_), len(l_)))
+            if lokal_g.get(db):
+                man['entfernteKetten'][db] = list(lokal_g[db])
+            else:
+                man['entfernteKetten'].pop(db, None)
         # 1) angefangenes Entfernen abschließen (Absicht steht vorher im Manifest)
         if man['entfernen']:
-            entferne(ziel, mpfad, man, list(man['entfernen']), erg)
+            entferne(ziel, mpfad, man, list(man['entfernen']), erg, gdir=gdir, lokal_g=lokal_g)
         # 2) Aufbewahrung auf fs01 - nur Dateien aus dem Manifest, nur ganze vollständige Ketten
         ausgesetzt = set()
         for db, dd in sorted(je_db(man).items()):
-            ks, waisen = ketten(dd, man['entfernteKetten'].get(db))
+            ks, waisen = ketten(dd, lokal_g.get(db))
             vorhanden_pruefen(ziel, db, dd, ks)
             weg, grund = aufbewahrung(ks, waisen, jetzt)
             if grund:
@@ -642,24 +707,31 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                 ausgesetzt.add(db)
             if weg:
                 entferne(ziel, mpfad, man, [db + '/' + n for k in weg for n in k['logs'] + k['diffs'] + [k['full']]], erg,
-                         [(db, grenze(k, dd)) for k in weg])
-        grenzen_kuerzen(man)
+                         [(db, grenze(k, dd)) for k in weg], gdir, lokal_g)
+        lok = lokale(lokal)
+        grenzen_kuerzen(man, gdir, lokal_g, lok)
         schreibe_json(mpfad, man)
         # 3) kopieren, je Datenbank älteste zuerst; nur fertige Dateien (Fertig-Marke der Prozedur + Schreibruhe); Budget vor jeder Datei
-        lok = lokale(lokal)
         try:
             belegt = belegung(mnt)
             off = offen()
             for db in sorted(lok):
+                entfernt_ = {e['full'] for e in lokal_g.get(db, [])}
+                fulls_alle = sorted(entfernt_ | {i['zeit'] for i in je_db(man).get(db, {}).values() if i['art'] == 'FULL'}
+                                    | {i['zeit'] for i in lok[db].values() if i['art'] == 'FULL'})
                 for n in sorted(lok[db], key=lambda x: (lok[db][x]['zeit'], x)):
                     rel = db + '/' + n
                     src = os.path.join(lokal, db, n)
                     st = os.stat(src)
+                    # Kette per Aufbewahrung gelöscht (lokale Aufzeichnung) → nie erneut kopieren
+                    if entfernt_ketten_start(lok[db][n]['zeit'], fulls_alle) in entfernt_:
+                        continue
                     if not os.path.isdir(src + '.fertig'):
                         if time.time() - st.st_mtime > 6 * 3600:
-                            erg['befunde'].append('%s: seit über 6 h ohne Fertig-Marke (abgebrochene Sicherung?) - spätere Dateien dieser Datenbank warten' % rel)
-                        else:
-                            erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
+                            # nur diese Datei überspringen; die Lücke setzt allenfalls die Aufbewahrung aus
+                            erg['befunde'].append('%s: seit über 6 h ohne Fertig-Marke (abgebrochene Sicherung?) - übersprungen' % rel)
+                            continue
+                        erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
                         break
                     if src in off or time.time() - st.st_mtime < SCHREIBRUHE:
                         erg['hinweise'].append('%s wird noch geschrieben - beim nächsten Lauf' % rel)
@@ -682,10 +754,11 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                     cache[rel] = {'bytes': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': h, 'fs01': True}
                     belegt += st.st_size
                     erg['kopiert'].append(rel)
-        except Fehler as e:
+        except (Fehler, OSError) as e:
+            # auch Kontingent voll (ENOSPC/EDQUOT) und andere E/A-Fehler: Befund, danach trotzdem nur Belegtes aufräumen
             erg['fehler'] = str(e)
         # 4) Zustand auf fs01 nach dem Lauf: Ketten, fehlende Dateien → Bericht; Grundlage fürs lokale Aufräumen
-        z = zustand_fs01(ziel, man)
+        z = zustand_fs01(ziel, man, lokal_g)
         for db, x in z.items():
             mangel = [f for k in x['ks'] for f in k['fehler']]
             if (mangel or x['waisen']) and db not in ausgesetzt:
@@ -708,12 +781,22 @@ def kopie(lokal, mnt, host, konf_pfad, status_pfad, cache_pfad, jetzt):
                 erg['befunde'].append('%s: lokal nichts entfernt (%d Dateien) - Ketten auf fs01 nicht vollständig belegt' % (db, len(kandidaten)))
                 continue
             vollstaendig = {n for k in x['ks'] for n in [k['full']] + k['diffs'] + k['logs']}
+            belegt_ = []
             for n in kandidaten:
                 rel = db + '/' + n
                 c = cache.get(rel) or {}
                 m = man['dateien'].get(rel)
                 fp = os.path.join(ziel, db, n)
                 if m and n in vollstaendig and c.get('fs01') and c.get('sha256') == m['sha256'] and os.path.isfile(fp) and os.path.getsize(fp) == m['bytes']:
+                    belegt_.append(n)
+            # unmittelbar vor dem Löschen: Inhalt der fs01-Kopie neu lesen und gegen das Manifest prüfen - eine Abweichung → nichts löschen
+            abweichend = [n for n in belegt_ if sha(os.path.join(ziel, db, n)) != man['dateien'][db + '/' + n]['sha256']]
+            if abweichend:
+                erg['befunde'].append('%s: Inhalt auf fs01 weicht vom Manifest ab (%s) - lokal nichts entfernt' % (db, ', '.join(abweichend[:3])))
+                continue
+            for n in belegt_:
+                rel = db + '/' + n
+                if True:
                     os.remove(os.path.join(lokal, db, n))
                     marke = os.path.join(lokal, db, n + '.fertig')
                     if os.path.isdir(marke):
@@ -749,7 +832,7 @@ def hole(mnt, host, db, ziel_dir):
         fp = os.path.join(ziel, db, n)
         if not os.path.isfile(fp) or os.path.getsize(fp) != i['bytes']:
             raise Fehler('%s/%s: auf fs01 fehlt die Datei oder ihre Größe weicht vom Manifest ab' % (db, n))
-    ks, _ = ketten(dd, man['entfernteKetten'].get(db))
+    ks, _ = ketten(dd)
     s = None
     for k in reversed(ks):
         s = satz(k, dd)
@@ -788,7 +871,12 @@ def liste(lokal, host, cache_pfad, status_pfad, konf_pfad):
     erg['ziel'] = '//%s/%s' % (k['server'], k['freigabe'])
     erg['budgetBytes'] = k['budgetBytes']
     if isinstance(st, dict):
-        erg['status'] = {'zeit': st.get('zeit'), 'ok': bool(st.get('ok')), 'fehler': st.get('fehler'), 'befunde': (st.get('befunde') or [])[:5]}
+        try:
+            alter = time.time() - datetime.datetime.strptime(str(st.get('zeit')), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            alter = None
+        erg['status'] = {'zeit': st.get('zeit'), 'ok': bool(st.get('ok')), 'fehler': st.get('fehler'), 'befunde': (st.get('befunde') or [])[:5],
+                         'frisch': alter is not None and -300 <= alter <= FRISCH_S, 'alterMin': None if alter is None else int(alter // 60)}
         erg['belegtBytes'] = st.get('belegtBytes')
     cache = lies_json(cache_pfad, {})
     dbs = {}

@@ -62,6 +62,11 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
     const r2 = await w2.skill.execute({ ...EINRICHTEN, konto: 'AD3033\\svc-sqllnx-backup' }, imChange);
     expect(w2.aufrufe[0]!.parameter).toMatchObject({ konto: 'svc-sqllnx-backup', domaene: 'AD3033' });
     expect(r2.display).toContain('nichts zu tun');
+    // Fix-Runde 2: Standard-Budget 63 GiB — 1 GiB unter dem harten FSRM-Kontingent von 64 GiB
+    const w3 = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten]: [{ zustand: 'schon', jobs: 3, timer: 'aktiv', zugangsdatei: 'vorhanden (0600)' }] });
+    const { budget_gib: _b, ...ohneBudget } = EINRICHTEN;
+    await w3.skill.execute(ohneBudget, imChange);
+    expect(w3.aufrufe[0]!.parameter).toMatchObject({ budgetGiB: 63 });
   });
   it('Fix-Runde 1 (Sicherheit): nur fs01 als Ziel, konto_tresor nur ad-svc-sqllnx-…, passend zum Konto — Fehler vor jedem Aufruf', async () => {
     const w = welt({});
@@ -138,7 +143,7 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
 describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
   const LISTE = {
     zustand: 'gelesen', host: 'sqllnx01', ziel: '//fs01.ad.3033.at/SQLLinuxBackup$', budgetBytes: 64 * 2 ** 30, belegtBytes: 3 * 2 ** 30,
-    status: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: null, befunde: [] }, timer: 'active', zugangsdatei: 'vorhanden (0600)',
+    status: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: null, befunde: [], frisch: true, alterMin: 5 }, timer: 'active', zugangsdatei: 'vorhanden (0600)',
     datenbanken: { pruefdb01: { ketten: [{ full: '20261115003000', diffs: 3, logs: 96, vollstaendig: true, fehler: [] }, { full: '20261116003000', diffs: 1, logs: 40, vollstaendig: true, fehler: [] }], waisen: [], fs01Dateien: 142, fs01Bytes: 2 ** 30, fehlend: 0, lokalDateien: 142, lokalBytes: 2 ** 30, ausstehend: 0 } },
   };
   it('sicherungen: fester Wortlaut mit Ziel, Budget, letzter Kopie, Zugangsdatei, Timer, Ketten und Hash-Status', () => {
@@ -159,13 +164,29 @@ describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
     expect(tx({ fehlend: 1 })).toContain('FEHLT auf fs01: 1');
     expect(tx({ ketten: [{ ...d0.ketten[0]!, vollstaendig: false }] })).toContain('Hash ok, Ketten unvollständig');
     expect(linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: null } as never)).toContain('Hash unbekannt (kein Kopierlauf)');
+    // Fix-Runde 2 (Sicherheit): Bericht nur frisch (≤ 45 min) und mit aktivem Timer; sonst nie „vollständig auf fs01“
+    const alt = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { ...LISTE.status, frisch: false, alterMin: 130 } } as never);
+    expect(alt).toContain('Hash unbekannt (Kopierlauf zu alt: 2026-11-16T12:07:00Z)');
+    expect(alt).not.toContain('vollständig auf fs01');
+    expect(alt).not.toContain('Hash ok');
+    const ohneFrisch = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { zeit: '2026-11-16T12:07:00Z', ok: true } } as never);
+    expect(ohneFrisch).toContain('Kopierlauf zu alt');
+    const timerAus = linuxSqlSicherungenText('sqllnx01', { ...LISTE, timer: 'inactive' } as never);
+    expect(timerAus).toContain('Hash unbekannt (Kopie-Timer nicht aktiv)');
+    expect(timerAus).not.toContain('vollständig auf fs01');
   });
   it('FESTE_AUSGABEN: sicherungen und status (mit Sicherungsteil) passen auf genau eine Vorlage; feste Stücke bestehen die Planprüfung', () => {
     const alsMuster = (v: string) => new RegExp(`^${v.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
     const sv = FESTE_AUSGABEN['linux_sql.sicherungen']!.split(' | ');
     expect(sv.filter(v => alsMuster(v).test(linuxSqlSicherungenText('sqllnx01', LISTE as never)))).toHaveLength(1);
     for (const e of ['Zugangsdatei vorhanden (0600)', 'Kopie-Timer aktiv', 'vollständig auf fs01']) expect(FESTE_AUSGABEN['linux_sql.sicherungen']).toContain(e);
-    const st: LinuxSqlStatus = { zustand: 'gelesen', installiert: false, platz: [], sicherung: { zugangsdatei: 'vorhanden (0600)', timer: 'active', letzteKopie: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: '' } } };
+    const st: LinuxSqlStatus = { zustand: 'gelesen', installiert: false, platz: [], sicherung: { zugangsdatei: 'vorhanden (0600)', timer: 'active', letzteKopie: { zeit: '2026-11-16T12:07:00Z', ok: true, fehler: '', alterMin: 5 } } };
+    // Fix-Runde 2: zu alter Kopierlauf (oder Alter unbekannt) heißt „ZU ALT“, nie „ok“
+    for (const alterMin of [130, undefined]) {
+      const t2 = linuxSqlStatusText('sqllnx01', { ...st, sicherung: { ...st.sicherung!, letzteKopie: { zeit: '2026-11-16T10:00:00Z', ok: true, fehler: '', ...(alterMin === undefined ? {} : { alterMin }) } } });
+      expect(t2).toContain('letzte Kopie 2026-11-16T10:00:00Z ZU ALT');
+      expect(t2).not.toMatch(/letzte Kopie \S+ ok/);
+    }
     const text = linuxSqlStatusText('sqllnx01', st);
     expect(text).toBe('sqllnx01: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: Zugangsdatei vorhanden (0600), Kopie-Timer aktiv, letzte Kopie 2026-11-16T12:07:00Z ok');
     const vorlagen = FESTE_AUSGABEN['linux_sql.status']!.split(' | ');

@@ -74,7 +74,7 @@ export interface LinuxSqlStatus {
     tempdb?: Array<{ name: string; typ: string }> | null; datenbanken?: Array<{ name: string }> | null } | null;
   sqlHinweis?: string; sqlFehler?: string;
   /** I8e Task 4 — Zugangsdatei (nur Rechte), Kopier-Timer, letzter Kopierlauf */
-  sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string } | null } | null;
+  sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
 }
 
 /** I8e Task 4 — Sicherungsteil des Statustexts (fester Wortlaut; Stücke in FESTE_AUSGABEN['linux_sql.status']) */
@@ -82,7 +82,7 @@ function sicherungText(s: LinuxSqlStatus): string {
   const x = s.sicherung;
   if (!x || (x.zugangsdatei === 'fehlt' && x.timer !== 'active')) return 'Sicherung: nicht eingerichtet';
   const k = x.letzteKopie;
-  return `Sicherung: Zugangsdatei ${x.zugangsdatei ?? 'unbekannt'}, Kopie-Timer ${x.timer === 'active' ? 'aktiv' : x.timer ?? 'unbekannt'}, letzte Kopie ${k ? `${k.zeit ?? '?'} ${k.ok ? 'ok' : `FEHLER ${(k.fehler ?? '').slice(0, 160)}`}` : 'noch keine'}`;
+  return `Sicherung: Zugangsdatei ${x.zugangsdatei ?? 'unbekannt'}, Kopie-Timer ${x.timer === 'active' ? 'aktiv' : x.timer ?? 'unbekannt'}, letzte Kopie ${k ? `${k.zeit ?? '?'} ${typeof k.alterMin !== 'number' || k.alterMin > 45 ? 'ZU ALT' : k.ok ? 'ok' : `FEHLER ${(k.fehler ?? '').slice(0, 160)}`}` : 'noch keine'}`;
 }
 
 const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
@@ -105,7 +105,7 @@ export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
 
 export interface LinuxSqlSicherungen {
   zustand: string; host?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number | null; timer?: string; zugangsdatei?: string;
-  status?: { zeit?: string; ok?: boolean; fehler?: string | null; befunde?: string[] } | null;
+  status?: { zeit?: string; ok?: boolean; fehler?: string | null; befunde?: string[]; frisch?: boolean; alterMin?: number | null } | null;
   datenbanken?: Record<string, { ketten: Array<{ full: string; diffs: number; logs: number; vollstaendig: boolean; fehler?: string[] }>; waisen?: string[];
     fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number }>;
 }
@@ -114,9 +114,12 @@ const gib = (b: number | null | undefined) => (typeof b === 'number' ? (b / 2 **
  * Hash-Zustand je Datenbank (Fix-Runde 1): „Hash ok“ nur, wenn der letzte Kopierlauf gelang, mindestens eine Datei auf fs01 liegt, nichts
  * aussteht und nichts fehlt; „vollständig auf fs01“ zusätzlich nur mit lauter vollständigen Ketten.
  */
-function hashText(st: LinuxSqlSicherungen['status'], d: NonNullable<LinuxSqlSicherungen['datenbanken']>[string]): string {
+function hashText(st: LinuxSqlSicherungen['status'], d: NonNullable<LinuxSqlSicherungen['datenbanken']>[string], timer: string | undefined): string {
   if (!st) return 'Hash unbekannt (kein Kopierlauf)';
+  // Fix-Runde 2 (Sicherheit): der Bericht des Timers zählt nur frisch (≤ 45 min) und mit aktivem Timer
+  if (timer !== 'active') return 'Hash unbekannt (Kopie-Timer nicht aktiv)';
   if (!st.ok) return 'Hash unbekannt (letzter Kopierlauf fehlgeschlagen)';
+  if (st.frisch !== true) return `Hash unbekannt (Kopierlauf zu alt: ${st.zeit ?? '?'})`;
   if (!d.fs01Dateien) return 'Hash unbekannt (nichts auf fs01)';
   if (d.fehlend) return `FEHLT auf fs01: ${d.fehlend}`;
   if (d.ausstehend) return `ausstehend: ${d.ausstehend}`;
@@ -131,7 +134,7 @@ export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen):
   const dbs = Object.entries(r.datenbanken ?? {}).map(([db, d]) => {
     const voll = d.ketten.filter(k => k.vollstaendig).length;
     const letzte = d.ketten.length ? d.ketten[d.ketten.length - 1]!.full : 'keine';
-    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${hashText(st, d)}`;
+    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${hashText(st, d, r.timer)}`;
   });
   return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}`;
 }
@@ -158,7 +161,9 @@ function sicherungEinrichtenParameter(input: Record<string, unknown>): { p: Sich
   } else {
     konto = kontoTresor.slice(3); domaene = server.slice(server.indexOf('.') + 1);
   }
-  const budgetGiB = ganzzahl(input.budget_gib ?? 64) as number;
+  // Fix-Runde 2: Standard 63 GiB — 1 GiB unter dem harten FSRM-Kontingent (64 GiB), damit Alfred das Budget meldet, bevor das Kontingent
+  // Schreibvorgänge (auch das Manifest) abweist
+  const budgetGiB = ganzzahl(input.budget_gib ?? 63) as number;
   const p: SicherungEinrichtenParameter = { server, freigabe, konto, domaene, budgetGiB };
   if (input.cifs_version !== undefined) p.cifsVersion = String(input.cifs_version).trim();
   const f = pruefeSicherungEinrichten(p);
@@ -257,7 +262,7 @@ export class LinuxSqlSkill extends Skill {
       + 'login_anlegen (zugang, login, rolle dbcreator|sysadmin|lesen) — SQL-Login, Kennwort im Tresor (sqllnx-<zugang>-<login>), „lesen“ = ohne Serverrolle; '
       + `pruefdaten_anlegen (zugang, datenbank) — Datenbank (FULL) mit Prüftabelle dbo.alfred_pruefung (${PRUEFDATEN_ZEILEN} feste Zeilen, Prüfsumme im Ergebnis) für den Restore-Beweis. `
       + 'SICHERUNG (I8e Task 4; vorher auf fs01: windows_ad dienstkonto_anlegen konto svc-sqllnx-backup und windows_cluster freigabe_anlegen name SQLLinuxBackup$ pfad S:\\SQLLinuxBackup aendern <NETBIOS>\\svc-sqllnx-backup kontingent_gib 64; Firewall SQL-Zone → fs01 TCP 445): '
-      + 'sicherung_einrichten (zugang, ziel_freigabe = \\\\fs01.ad.3033.at\\SQLLinuxBackup$, konto_tresor Standard ad-svc-sqllnx-backup, konto optional „NETBIOS\\name“, budget_gib Standard 64) — SQL-Agent-Jobs FULL täglich 00:30, DIFF alle 6 h, LOG alle 15 min (CHECKSUM, COMPRESSION) nach /var/opt/mssql/backup/<db>/, Kopier-Timer alle 15 min nach fs01 (SMB 3.1.1 verschlüsselt, SHA-256 zurückgelesen, nie überschrieben), Aufbewahrung 7 Tage + 4 Sonntage nur ganzer vollständiger Ketten, Budget-Überschreitung = Fehler ohne Löschen; einzige dauerhafte Zugangsdatei /etc/alfred/sqllnx-cifs.cred (0600 root); prüft sich selbst mit einem Kopierlauf. '
+      + 'sicherung_einrichten (zugang, ziel_freigabe = \\\\fs01.ad.3033.at\\SQLLinuxBackup$, konto_tresor Standard ad-svc-sqllnx-backup, konto optional „NETBIOS\\name“, budget_gib Standard 63 = 1 GiB unter dem FSRM-Kontingent 64) — SQL-Agent-Jobs FULL täglich 00:30, DIFF alle 6 h, LOG alle 15 min (CHECKSUM, COMPRESSION) nach /var/opt/mssql/backup/<db>/, Kopier-Timer alle 15 min nach fs01 (SMB 3.1.1 verschlüsselt, SHA-256 zurückgelesen, nie überschrieben), Aufbewahrung 7 Tage + 4 Sonntage nur ganzer vollständiger Ketten, Budget-Überschreitung = Fehler ohne Löschen; einzige dauerhafte Zugangsdatei /etc/alfred/sqllnx-cifs.cred (0600 root); prüft sich selbst mit einem Kopierlauf. '
       + 'sicherung_jetzt (zugang, art full|diff|log, datenbank) — eine Sicherung in derselben Kette, danach auf fs01 bestätigt. '
       + 'wiederherstellen_pruefen (zugang, datenbank, ziel_name Standard alfred_wh_<datenbank>) — letzte vollständige Kette FULL+DIFF+LOGs AUS DER fs01-KOPIE unter ziel_name, DBCC CHECKDB, Prüfdaten-Vergleich → „RESTORE_VERIFIED“ nur wenn alles stimmt; ziel_name wird danach entfernt (Schritt-zeitlimitS großzügig, z. B. 3600). '
       + 'sicherungen (lesend, auch außerhalb von Changes; zugang; liest keinen Tresor und nicht fs01 — lokaler Stand und Bericht des letzten Kopierlaufs, der fs01 prüft) — Wortlaut „<zugang>: Sicherung nach //fs01.ad.3033.at/<freigabe> (belegt <x> GiB von <y> GiB); Kopie zuletzt <zeit> ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; <db>: <n> Ketten (<m> vollständig), letzte FULL …, lokal <a>, fs01 <b>, Hash ok, vollständig auf fs01“ (sonst „Hash unbekannt …“, „ausstehend: <n>“, „FEHLT auf fs01: <n>“; Befunde des Kopierlaufs stehen hinter „Kopie zuletzt <zeit> FEHLER:“), als Prüfung z. B. erwartet „vollständig auf fs01“ oder „Kopie-Timer aktiv“. Ziel ist nur fs01.ad.3033.at, konto_tresor nur ad-svc-sqllnx-…. '
@@ -282,7 +287,7 @@ export class LinuxSqlSkill extends Skill {
         ziel_freigabe: { type: 'string', description: 'sicherung_einrichten: UNC der fs01-Freigabe, z. B. \\\\fs01.ad.3033.at\\SQLLinuxBackup$' },
         konto_tresor: { type: 'string', description: 'Tresor-Eintrag mit dem Kennwort des fs01-Dienstkontos (Standard ad-svc-sqllnx-backup)' },
         konto: { type: 'string', description: 'sicherung_einrichten: optional Dienstkonto „NETBIOS\\name“ (Standard aus konto_tresor ad-<name>, Domäne aus dem Servernamen)' },
-        budget_gib: { type: 'number', description: 'sicherung_einrichten: Budget auf fs01 in GiB (Standard 64)' },
+        budget_gib: { type: 'number', description: 'sicherung_einrichten: Budget auf fs01 in GiB (Standard 63, unter dem FSRM-Kontingent 64)' },
         cifs_version: { type: 'string', description: 'sicherung_einrichten: apt-Version von cifs-utils (Standard fest)' },
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
