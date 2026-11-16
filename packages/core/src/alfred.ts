@@ -7229,6 +7229,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         }));
         this.logger.info('I8d SQL-Server-Skill registriert');
+        // I8e — SQL Server 2025 auf Linux über registrierte Bash-Bausteine (nur in Changes außer status); Kennwörter erzeugt der Skill im Tresor
+        const { LinuxSqlSkill } = await import('./infrastruktur/linux-sql-skill.js');
+        skillRegistry.register(new LinuxSqlSkill({
+          skript: (zugang, baustein, parameter, eingabe, timeoutMs, zweck) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.linuxSkript(zugang, baustein, parameter, eingabe, timeoutMs, zweck); },
+          tresor: {
+            namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
+            lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
+            setze: async (name, wert, zweck) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); await this.tresor.setze(o, name, wert, 'erzeugt', zweck); },
+          },
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        }));
+        this.logger.info('Linux-SQL-Skill registriert');
         // v1810 — Vorhaben 3bb8c058: eigene PKI; die netzlose Offline-Root nur über den QEMU-Gastagenten des Proxmox-Skills
         const { WindowsPkiSkill } = await import('./infrastruktur/windows-pki-skill.js');
         skillRegistry.register(new WindowsPkiSkill({

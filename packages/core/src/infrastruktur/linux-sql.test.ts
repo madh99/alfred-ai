@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   plattenSkript, installSkript, konfigSkript, sqlSkript, statusSkript, sqlErgebnis, shQ,
-  pruefePlatten, pruefeInstallation, pruefeKonfig, pruefeTempdb, pruefeMaxSpeicher, pruefeLogin,
+  pruefePlatten, pruefeInstallation, pruefeKonfig, pruefeTempdb, pruefeMaxSpeicher, pruefeLogin, pruefePruefdaten, PRUEFDATEN_ZEILEN, PRUEFDATEN_SHA256,
   LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, MS_SCHLUESSEL_FPR, MS_QUELLE_SERVER, MS_QUELLE_WERKZEUGE, PY_STATUS, PY_FELD, PY_CONF,
 } from './linux-sql.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
@@ -33,6 +34,7 @@ function alleSkripte(): Array<[string, string]> {
     ['maxspeicher', sqlSkript('maxspeicher', { mb: 10240 })],
     ['login', sqlSkript('login', LOGIN)],
     ['status', statusSkript()],
+    ['pruefdaten', sqlSkript('pruefdaten', { datenbank: 'pruefdb01' })],
   ];
 }
 
@@ -282,16 +284,16 @@ describe('I8e Linux-SQL — Skripttext', () => {
 });
 
 // ── Login-Skript ausführen (bash): Kennwort landet unverfälscht und verdoppelt im T-SQL auf stdin, nie in der Ausgabe ──────────
-function loginLauf(kennwort: string) {
+function loginLauf(kennwort: string, fehlend = 0) {
   const skript = sqlSkript('login', LOGIN);
   const stubs = [
     `feld() { case "$1" in sa) printf '%s' 'Sa-Geheim-1234567890!'; ;; kennwort) printf '%s' ${shQ(kennwort)} ;; esac; }`,
     'bereit() { :; }',
-    'sql() { [ "$SQLCMD" = /opt/mssql-tools18/bin/sqlcmd ] || return 9; printf "%s\\n" "$1" >>"$T/tsql"; echo "ALFRED|angelegt|1"; }',
+    'sql() { [ "$SQLCMD" = /opt/mssql-tools18/bin/sqlcmd ] || return 9; printf "%s\\n" "$1" >>"$T/tsql"; echo "ALFRED|angelegt|1|${ALFRED_FEHLEND:-0}"; }',
     'json_text() { local x; x=$(cat); printf \'"%s"\' "${x//\\"/}"; }',
   ].join('\n');
   const text = skript.replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
-  const huelle = `T=$(mktemp -d)\nALFRED_EINGABE=''\n( ${text}\n)\necho "RC=$?"\necho '---TSQL'; cat "$T/tsql" 2>/dev/null; rm -rf "$T"`;
+  const huelle = `T=$(mktemp -d)\nALFRED_EINGABE=''\nALFRED_FEHLEND=${fehlend}\n( ${text}\n)\necho "RC=$?"\necho '---TSQL'; cat "$T/tsql" 2>/dev/null; rm -rf "$T"`;
   const r = spawnSync('bash', [], { input: huelle, encoding: 'utf8' });
   const [vorne, tsql = ''] = r.stdout.split('---TSQL\n');
   return { rc: Number(/RC=(\d+)/.exec(vorne)?.[1] ?? -1), ergebnis: sqlErgebnis<Record<string, unknown>>(vorne), vorne, tsql };
@@ -308,6 +310,12 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Login-Skript ausgeführt', () => {
     expect(r.tsql).not.toContain('@@KW@@');
     expect(r.vorne).not.toContain('Ab&c');
     expect(r.vorne).not.toContain('Sa-Geheim');
+  });
+  it('Task 3 — Nachprüfung umfasst die Serverrollen: fehlt eine Rolle nach dem Lauf → Abbruch', () => {
+    expect(sqlSkript('login', LOGIN)).toContain("ISNULL(IS_SRVROLEMEMBER(N'\\''dbcreator'\\'', N'\\''app_kunden'\\''), 0) = 1 THEN 0 ELSE 1 END");
+    const r = loginLauf('Gut-1234567890!', 1);
+    expect(r.rc).toBe(1);
+    expect(String(r.ergebnis?.fehler)).toContain('Serverrollen');
   });
   it('Kennwort mit Zeilenumbruch (z. B. !!-Befehl für sqlcmd) → Abbruch ohne SQL', () => {
     const r = loginLauf('Gut-1234567890\n!!rm -rf /');
@@ -446,5 +454,54 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Ger�
     const r = plattenLauf(LEER, PLATTEN, 'UUID=ffff /var/opt/mssql/log xfs defaults 0 0');
     expect(r.rc).toBe(1);
     expect(r.log).not.toContain('mkfs');
+  });
+});
+
+// ── Task 3 — Prüfdaten: feste Zeilen + SHA-256 über alle Zeilen (für den Restore-Beweis) ─────────────────────────────────────────
+describe('I8e Linux-SQL — Prüfdaten', () => {
+  it('Datenbankname geprüft, Systemdatenbanken ausgeschlossen; registriert, Zeitgrenze ≥ 65 s', () => {
+    expect(pruefePruefdaten({ datenbank: 'pruefdb01' })).toBeUndefined();
+    for (const d of ['master', 'MODEL', 'msdb', 'tempdb', 'ab', '1abc', 'a b', 'x]; DROP DATABASE y; --', "x'", ...BOESE.map(b => `db${b}`)]) {
+      expect(pruefePruefdaten({ datenbank: d }), d).toContain('datenbank');
+    }
+    expect(() => sqlSkript('pruefdaten', { datenbank: 'x]; DROP' })).toThrow(/datenbank/);
+    expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.pruefdaten)).toBe(true);
+    expect(LINUX_SQL_ZEIT_MS.pruefdaten).toBeGreaterThanOrEqual(65_000);
+  });
+  it('Soll-Prüfsumme = SHA-256 (UTF-16LE) über die festen Zeilen, wie HASHBYTES über STRING_AGG', () => {
+    const zeilen = Array.from({ length: PRUEFDATEN_ZEILEN }, (_, i) => `${i + 1}|alfred-pruefung-${i + 1}|${((i + 1) * 7919) % 1000}`);
+    const soll = createHash('sha256').update(Buffer.from(zeilen.join(';'), 'utf16le')).digest('hex').toUpperCase();
+    expect(PRUEFDATEN_ZEILEN).toBe(1000);
+    expect(PRUEFDATEN_SHA256).toBe(soll);
+    const s = sqlSkript('pruefdaten', { datenbank: 'pruefdb01' });
+    expect(s).toContain(`SOLL=${soll}`);
+    expect(s).toContain(String.raw`HASHBYTES(N'\'''\''SHA2_256'\'''\''`);
+    expect(s).toContain('SET RECOVERY FULL');
+    expect(s).toContain('EXEC [pruefdb01].sys.sp_executesql');
+    // vorhandene Tabelle wird nie verändert: Anlage nur, wenn sie fehlt
+    expect(s).toContain(String.raw`IF OBJECT_ID(N'\'''\''dbo.alfred_pruefung'\'''\'', N'\'''\''U'\'''\'') IS NULL`);
+  });
+  function lauf(antwort: string) {
+    const stubs = [
+      "feld() { printf '%s' 'Sa-Geheim-1234567890!'; }",
+      'bereit() { :; }',
+      `sql() { echo ${shQ(antwort)}; }`,
+      'json_text() { local x; x=$(cat); printf \'"%s"\' "${x//\\"/}"; }',
+    ].join('\n');
+    const text = sqlSkript('pruefdaten', { datenbank: 'pruefdb01' }).replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
+    const r = spawnSync('bash', [], { input: `ALFRED_EINGABE=''\n( ${text}\n)\necho "RC=$?"`, encoding: 'utf8' });
+    return { rc: Number(/RC=(\d+)/.exec(r.stdout)?.[1] ?? -1), e: sqlErgebnis<Record<string, unknown>>(r.stdout), aus: r.stdout };
+  }
+  it.skipIf(!BASH)('ausgeführt: richtige Zeilen und Prüfsumme → Ergebnis mit Prüfsumme; abweichend → Abbruch', () => {
+    const ok = lauf(`ALFRED|geaendert|1000|${PRUEFDATEN_SHA256}|FULL`);
+    expect(ok.rc, ok.aus).toBe(0);
+    expect(ok.e).toEqual({ zustand: 'geaendert', datenbank: 'pruefdb01', tabelle: 'dbo.alfred_pruefung', zeilen: 1000, pruefsumme: PRUEFDATEN_SHA256, wiederherstellungsmodell: 'FULL' });
+    expect(ok.aus).not.toContain('Sa-Geheim');
+    expect(lauf(`ALFRED|schon|1000|${PRUEFDATEN_SHA256}|FULL`).e?.zustand).toBe('schon');
+    const falsch = lauf(`ALFRED|schon|999|${PRUEFDATEN_SHA256}|FULL`);
+    expect(falsch.rc).toBe(1);
+    expect(String(falsch.e?.fehler)).toContain('weicht ab');
+    expect(lauf(`ALFRED|schon|1000|${'0'.repeat(64)}|FULL`).rc).toBe(1);
+    expect(lauf(`ALFRED|schon|1000|${PRUEFDATEN_SHA256}|SIMPLE`).rc).toBe(1);
   });
 });

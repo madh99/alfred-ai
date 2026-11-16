@@ -52,6 +52,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   'fernzugriff.pruefen': 'Verbindung ok: {hostname} ({benutzer}@{host}, Windows/PowerShell). Lesen über die feste Windows-Leseliste, alles andere mit Bestätigung. '
     + '| Verbindung ok: {hostname} ({benutzer}@{host}). sudo ohne Passwort: ja | nein — Befehle laufen dann ohne root. Lese-Käfig: aktiv | nicht verfügbar '
     + '(eingeschränkt: schreibgeschützt, kein Kill/Docker/D-Bus/Netz, Geheimnis-Pfade unsichtbar, Lesen ok | braucht sudo ohne Passwort | vom Owner abgeschaltet | Selbsttest gescheitert).',
+  // I8e — Wortlaut aus linuxSqlStatusText (linux-sql-skill.ts)
+  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst aktiv, aktiviert; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; '
+    + 'Datenbanken: {liste}; eingehängt: data, log, tempdb, backup | {zugang}: SQL Server nicht installiert; eingehängt: {ziele} | {zugang}: SQL Server {paket} (Paket); Dienst {zustand}, {aktiviert}; SQL-Sicht: {hinweis}',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -137,6 +140,22 @@ const SELBST_GEPRUEFT = new Set([
   'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern',
   // v1856 — Etappe 4: Bindung lesen sie nach dem Schreiben zurück, der Neustart wartet auf SECONDARY/HEALTHY/SYNCHRONIZED, das Entfernen prüft Speicher und Schlüsseldatei
   'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
+/**
+ * I8e — Selbstprüfung je Skill (Aktionsnamen wie installieren/konfigurieren sind zu allgemein für die globale Liste): die linux_sql-Bausteine
+ * prüfen ihr Ergebnis selbst — Platten (Quelle + XFS am Ziel), Installation (sa-Anmeldung, Version, Edition, Dienst aktiviert),
+ * Konfiguration (mssql.conf-Werte, tempdb-Dateien und -Lage, max server memory value_in_use), Login (Kennwort, aktiv, Serverrollen),
+ * Prüfdaten (Zeilen, SHA-256, FULL).
+ */
+const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
+  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen']),
+};
+const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
+/**
+ * I8e — linux_sql-Aufbau ohne Rückweg nur, wenn derselbe Change die VM vorher per proxmox.provision_vm bereitstellt (Rückweg des Changes
+ * = VM löschen) oder ohneSicherungGrund gesetzt ist; sonst gilt wie überall: erst sichern, dann mit Rückweg ändern.
+ */
+const NEUAUFBAU_SKILLS = new Set(['linux_sql']);
+
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
 // Final-Welle M2 — bauplan: Vorlagen speichern/freigeben/anwenden nur der Owner im Hauptgespräch, nie ein Change-Schritt
 const NIE_SKILLS = new Set(['infrastruktur', 'itsm', 'selbstupdate', 'geraet', 'code_agent', 'claude_code', 'bauplan']);
@@ -231,6 +250,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'pki_lab') return 'aendern';
   // Bauplan V4 — unifi.subnet_pruefen liest nur die Netzliste (Vorab-Kontrolle „Netz frei“); LESE_MUSTER greift nur am Anfang
   if (skill === 'unifi' && aktion === 'subnet_pruefen') return 'lesen';
+  // I8e — linux_sql: nur status liest; alle Aufbau-Bausteine ändern
+  if (skill === 'linux_sql') return aktion === 'status' ? 'lesen' : 'aendern';
   if (skill === 'sql_server') return ['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen'].includes(aktion) ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';
@@ -471,6 +492,8 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
   // I6 — Tresor-Einträge, die ein früherer Schritt dieses Plans per geheim_uebernehmen anlegt, gelten für spätere Schritte als vorhanden
   const tresorNamen = ctx.tresorNamen ? new Set(ctx.tresorNamen) : undefined;
   let ersteAenderung: number | undefined; let ersteSicherung: number | undefined;
+  // I8e — Hostnamen, die ein früherer Schritt dieses Changes per proxmox.provision_vm neu bereitstellt
+  const bereitgestellt = new Set<string>();
   for (const [i, s0] of roheSchritte.entries()) {
     const s = obj(s0) ?? {};
     const nr = i + 1;
@@ -520,7 +543,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       if (einordnung === 'sicherung' && ersteSicherung === undefined) ersteSicherung = nr;
       if ((einordnung === 'aendern' || einordnung === 'loeschen') && ersteAenderung === undefined) ersteAenderung = nr;
       // Prüfung je Aktion (außer reinen Lese-Schritten)
-      if (einordnung !== 'lesen' && !(SELBST_GEPRUEFT.has(schritt.aktion) && !s.pruefung)) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
+      if (einordnung !== 'lesen' && !(selbstGeprueft(schritt.skill, schritt.aktion) && !s.pruefung)) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
       else if (s.pruefung) { const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p; }
       // Rückweg für ändernde Aktionen
       if (einordnung === 'aendern' || einordnung === 'loeschen') {
@@ -537,7 +560,10 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && STILLLEGUNG_ENTFERNEN.test(bef);
           if (schritt.skill === 'fernzugriff' && /--destroy-unreferenced-disks/.test(bef)) f.push(`${wo}: --destroy-unreferenced-disks löscht auch gleichnamige Disks auf geteilten Speichern (andere Hosts/Cluster) — nur die Volumes der Gast-Konfiguration löschen (qm/pct destroy <id> --purge)`);
           const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
-          if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen && !einweg) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
+          if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
+            const z = txt(schritt.parameter.zugang).toLowerCase();
+            if (!(z && bereitgestellt.has(z)) && !plan.ohneSicherungGrund) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} ohne Rückweg nur beim Neuaufbau — derselbe Change stellt die VM „${z}“ vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt; sonst vorher sichern (proxmox create_snapshot/backup_vm) und rueckweg angeben (z. B. proxmox rollback_snapshot)`);
+          } else if (!OHNE_RUECKWEG_MOEGLICH.has(schritt.aktion) && einordnung !== 'loeschen' && !neustart && !entfernen && !einweg) f.push(`${wo}: ohne Rückweg nur bei ${[...OHNE_RUECKWEG_MOEGLICH].join(', ')} oder Stilllegung — sonst rueckweg mit skill/aktion angeben`);
           schritt.rueckweg = { keiner: txt(rw.keiner) };
         } else {
           const rs = ctx.skill(txt(rw.skill));
@@ -564,6 +590,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         }
       }
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'geheim_uebernehmen' && typeof schritt.parameter.tresor_name === 'string') tresorNamen?.add(schritt.parameter.tresor_name);
+      if (schritt.skill === 'proxmox' && schritt.aktion === 'provision_vm') { const h = txt(schritt.parameter.hostname); if (h && !h.includes('{{')) bereitgestellt.add(h.toLowerCase()); }
       aktionsNummern.add(nr);
     } else if (art === 'pruefung') {
       const p = pruefePruefung(s.pruefung, wo, f, ctx); if (p) schritt.pruefung = p;

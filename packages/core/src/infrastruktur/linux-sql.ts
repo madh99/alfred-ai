@@ -17,6 +17,7 @@
  * - Genau eine Ergebniszeile `ALFRED-SQL {json}`; Fehler → `{"zustand":"fehler","fehler":…}` und Exit 1.
  * - Jeder Baustein ist idempotent (`zustand: 'schon'`) und prüft sein Ergebnis selbst.
  */
+import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 
 // ── Feste Werte (Quellen im Bericht task-2-report.md) ────────────────────────────────────────────────────────────────────────
@@ -44,12 +45,12 @@ export const SQL2025_CU1_BUILD = 4006;
 
 export const LINUX_SQL_BAUSTEINE = {
   platten: 'sql.platten', installation: 'sql.installation', konfiguration: 'sql.konfiguration',
-  tempdb: 'sql.tempdb', maxspeicher: 'sql.maxspeicher', login: 'sql.login', status: 'sql.status',
+  tempdb: 'sql.tempdb', maxspeicher: 'sql.maxspeicher', login: 'sql.login', status: 'sql.status', pruefdaten: 'sql.pruefdaten',
 } as const;
 
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_SQL_ZEIT_MS = {
-  platten: 180_000, installation: 1_500_000, konfiguration: 300_000, tempdb: 300_000, maxspeicher: 90_000, login: 90_000, status: 90_000,
+  platten: 180_000, installation: 1_500_000, konfiguration: 300_000, tempdb: 300_000, maxspeicher: 90_000, login: 90_000, status: 90_000, pruefdaten: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -453,7 +454,8 @@ export function konfigSkript(p: KonfigParameter): string {
 export interface TempdbParameter { dateien: number; groesseMB: number; wachstumMB: number; logGroesseMB: number }
 export interface MaxSpeicherParameter { mb: number }
 export interface LoginParameter { name: string; serverrollen?: string[] }
-export type SqlBausteinName = 'tempdb' | 'maxspeicher' | 'login' | 'status';
+export interface PruefdatenParameter { datenbank: string }
+export type SqlBausteinName = 'tempdb' | 'maxspeicher' | 'login' | 'status' | 'pruefdaten';
 
 export function pruefeTempdb(p: unknown): string | undefined {
   const x = obj(p);
@@ -582,6 +584,8 @@ function maxSpeicherSkript(p: MaxSpeicherParameter): string {
 function loginSkript(p: LoginParameter): string {
   pruefe(pruefeLogin(p));
   const n = p.name; // geprüft: [A-Za-z][A-Za-z0-9_]* — sicher in [] und N'…'
+  // Nachprüfung der Rollen: Anzahl der verlangten Serverrollen, in denen der Login danach NICHT Mitglied ist (soll 0)
+  const fehlend = (p.serverrollen ?? []).map(r => `(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'${r}', N'${n}'), 0) = 1 THEN 0 ELSE 1 END)`).join(' + ') || '0';
   const rollen = (p.serverrollen ?? []).map(r => `IF ISNULL(IS_SRVROLEMEMBER(N'${r}', N'${n}'), 0) <> 1 BEGIN ALTER SERVER ROLE [${r}] ADD MEMBER [${n}]; IF @z = N'schon' SET @z = N'geaendert'; END`);
   // T-SQL entsteht erst im Skript: Kennwort (verdoppelte ') wird dort eingesetzt; Vorlage mit Platzhalter @@KW@@
   const vorlage = [
@@ -594,7 +598,7 @@ function loginSkript(p: LoginParameter): string {
     `BEGIN ALTER LOGIN [${n}] WITH PASSWORD = N'@@KW@@'; SET @z = N'geaendert'; END`,
     `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${n}') = 1 BEGIN ALTER LOGIN [${n}] ENABLE; IF @z = N'schon' SET @z = N'geaendert'; END`,
     ...rollen,
-    `SELECT N'ALFRED|' + @z + N'|' + CAST((SELECT COUNT(*) FROM sys.sql_logins WHERE name = N'${n}' AND is_disabled = 0 AND PWDCOMPARE(N'@@KW@@', password_hash) = 1) AS nvarchar(5));`,
+    `SELECT N'ALFRED|' + @z + N'|' + CAST((SELECT COUNT(*) FROM sys.sql_logins WHERE name = N'${n}' AND is_disabled = 0 AND PWDCOMPARE(N'@@KW@@', password_hash) = 1) AS nvarchar(5)) + N'|' + CAST(${fehlend} AS nvarchar(5));`,
   ].join('\n');
   return [
     ...kopf(LINUX_SQL_BAUSTEINE.login, { name: p.name, serverrollen: p.serverrollen ?? [] }),
@@ -611,8 +615,9 @@ function loginSkript(p: LoginParameter): string {
     'bereit || abbruch "SQL Server antwortet nicht als sa"',
     'aus=$(sql "$TSQL" 2>&1) || abbruch "Login: $(kurz "$aus")"',
     'unset TSQL',
-    'IFS="|" read -r _ Z ok <<<"$(alfred_zeile "$aus")"',
+    'IFS="|" read -r _ Z ok fehlend <<<"$(alfred_zeile "$aus")"',
     `[ "$ok" = 1 ] || abbruch "Login ${n}: Nachprüfung (Kennwort, aktiv) fehlgeschlagen"`,
+    `[ "$fehlend" = 0 ] || abbruch "Login ${n}: Nachprüfung der Serverrollen fehlgeschlagen ($fehlend fehlen)"`,
     `ergebnis "{\\"zustand\\":\\"$Z\\",\\"login\\":\\"${n}\\",\\"serverrollen\\":${JSON.stringify(JSON.stringify(p.serverrollen ?? [])).slice(1, -1)}}"`,
   ].join('\n');
 }
@@ -622,14 +627,85 @@ export function sqlSkript(name: 'tempdb', p: TempdbParameter): string;
 export function sqlSkript(name: 'maxspeicher', p: MaxSpeicherParameter): string;
 export function sqlSkript(name: 'login', p: LoginParameter): string;
 export function sqlSkript(name: 'status', p?: unknown): string;
+export function sqlSkript(name: 'pruefdaten', p: PruefdatenParameter): string;
 export function sqlSkript(name: SqlBausteinName, p?: unknown): string {
   switch (name) {
     case 'tempdb': return tempdbSkript(p as TempdbParameter);
     case 'maxspeicher': return maxSpeicherSkript(p as MaxSpeicherParameter);
     case 'login': return loginSkript(p as LoginParameter);
     case 'status': return statusSkript();
+    case 'pruefdaten': return pruefdatenSkript(p as PruefdatenParameter);
     default: throw new Error(`Unbekannter SQL-Baustein „${String(name)}“`);
   }
+}
+
+// ── Prüfdaten (Task 3) ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const DB_NAME = /^[A-Za-z][A-Za-z0-9_]{2,63}$/;
+const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
+/** feste Prüftabelle: id 1…N, wert „alfred-pruefung-<id>“, zahl (id·7919) mod 1000 */
+export const PRUEFDATEN_ZEILEN = 1000;
+export const PRUEFDATEN_TABELLE = 'dbo.alfred_pruefung';
+const pruefZeile = (i: number) => `${i}|alfred-pruefung-${i}|${(i * 7919) % 1000}`;
+/**
+ * Soll-Prüfsumme wie in SQL: HASHBYTES('SHA2_256', STRING_AGG(CONCAT(id,'|',wert,'|',zahl), ';') WITHIN GROUP (ORDER BY id)) über
+ * nvarchar (UTF-16LE), als Großbuchstaben-Hex (CONVERT(…, 2)). Der Restore-Beweis vergleicht damit.
+ */
+export const PRUEFDATEN_SHA256 = createHash('sha256')
+  .update(Buffer.from(Array.from({ length: PRUEFDATEN_ZEILEN }, (_, i) => pruefZeile(i + 1)).join(';'), 'utf16le')).digest('hex').toUpperCase();
+
+export function pruefePruefdaten(p: unknown): string | undefined {
+  const d = obj(p).datenbank;
+  if (typeof d !== 'string' || !DB_NAME.test(d) || SYSTEM_DBS.has(d.toLowerCase())) return 'datenbank: Buchstabe, dann Buchstaben/Ziffern/_ (3–64 Zeichen), keine Systemdatenbank';
+  return undefined;
+}
+
+/**
+ * Datenbank (falls fehlend) mit Wiederherstellungsmodell FULL, darin die Prüftabelle — nur wenn sie fehlt, in einer Transaktion.
+ * Eine vorhandene Tabelle wird nie verändert: weicht sie ab (Zeilen/Prüfsumme), bricht der Baustein ab. Zeit: LINUX_SQL_ZEIT_MS.pruefdaten
+ */
+function pruefdatenSkript(p: PruefdatenParameter): string {
+  pruefe(pruefePruefdaten(p));
+  const n = p.datenbank; // geprüft: [A-Za-z][A-Za-z0-9_]* — sicher in [] und N'…'
+  // läuft per sp_executesql in der Ziel-Datenbank (Text steht in N'…', daher verdoppelte ')
+  const innen = [
+    'SET NOCOUNT ON; SET XACT_ABORT ON;',
+    "IF OBJECT_ID(N''dbo.alfred_pruefung'', N''U'') IS NULL",
+    'BEGIN',
+    '  BEGIN TRAN;',
+    '  CREATE TABLE dbo.alfred_pruefung (id int NOT NULL PRIMARY KEY, wert nvarchar(100) NOT NULL, zahl int NOT NULL);',
+    "  INSERT dbo.alfred_pruefung (id, wert, zahl) SELECT n, N''alfred-pruefung-'' + CAST(n AS nvarchar(10)), (n * 7919) % 1000",
+    `    FROM (SELECT TOP (${PRUEFDATEN_ZEILEN}) CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS int) AS n FROM sys.all_objects a CROSS JOIN sys.all_objects b) x;`,
+    '  COMMIT;',
+    '  SET @neu = 1;',
+    'END',
+    "SELECT @anzahl = COUNT(*), @hash = CONVERT(nvarchar(64), HASHBYTES(N''SHA2_256'', STRING_AGG(CAST(CONCAT(id, N''|'', wert, N''|'', zahl) AS nvarchar(max)), N'';'') WITHIN GROUP (ORDER BY id)), 2) FROM dbo.alfred_pruefung;",
+  ].join('\n');
+  const tsql = [
+    'SET NOCOUNT ON; SET XACT_ABORT ON;',
+    "DECLARE @z nvarchar(20) = N'schon', @neu bit = 0, @anzahl int, @hash nvarchar(64), @sql nvarchar(max);",
+    `IF DB_ID(N'${n}') IS NULL BEGIN CREATE DATABASE [${n}]; SET @z = N'geaendert'; END`,
+    `IF (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}') <> N'FULL' BEGIN ALTER DATABASE [${n}] SET RECOVERY FULL; SET @z = N'geaendert'; END`,
+    `SET @sql = N'${innen}';`,
+    // Prozedur der Ziel-Datenbank: der Name wird erst zur Laufzeit aufgelöst (die Datenbank kann in diesem Batch entstanden sein)
+    `EXEC [${n}].sys.sp_executesql @sql, N'@neu bit OUTPUT, @anzahl int OUTPUT, @hash nvarchar(64) OUTPUT', @neu = @neu OUTPUT, @anzahl = @anzahl OUTPUT, @hash = @hash OUTPUT;`,
+    "IF @neu = 1 SET @z = N'geaendert';",
+    `SELECT N'ALFRED|' + @z + N'|' + CAST(@anzahl AS nvarchar(10)) + N'|' + ISNULL(@hash, N'-') + N'|' + (SELECT recovery_model_desc FROM sys.databases WHERE name = N'${n}');`,
+  ].join('\n');
+  return [
+    ...kopf(LINUX_SQL_BAUSTEINE.pruefdaten, { datenbank: n }),
+    ...SQL_HILFE,
+    ...SA_LESEN,
+    `TSQL=${shQ(tsql)}`,
+    `SOLL=${PRUEFDATEN_SHA256}`,
+    `N_SOLL=${PRUEFDATEN_ZEILEN}`,
+    'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    'aus=$(sql "$TSQL" 2>&1) || abbruch "Prüfdaten: $(kurz "$aus")"',
+    'IFS="|" read -r _ Z anzahl hash modell <<<"$(alfred_zeile "$aus")"',
+    `{ [ "$anzahl" = "$N_SOLL" ] && [ "$hash" = "$SOLL" ]; } || abbruch "Prüftabelle ${PRUEFDATEN_TABELLE} in ${n} weicht ab: $anzahl Zeilen, Prüfsumme $hash (erwartet $N_SOLL, $SOLL) — vorhandene Daten werden nie geändert"`,
+    `[ "$modell" = FULL ] || abbruch "Datenbank ${n} hat Wiederherstellungsmodell $modell, erwartet FULL"`,
+    `ergebnis "{\\"zustand\\":\\"$Z\\",\\"datenbank\\":\\"${n}\\",\\"tabelle\\":\\"${PRUEFDATEN_TABELLE}\\",\\"zeilen\\":$anzahl,\\"pruefsumme\\":\\"$hash\\",\\"wiederherstellungsmodell\\":\\"FULL\\"}"`,
+  ].join('\n');
 }
 
 // ── Status ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -737,3 +813,4 @@ registriereLinuxBaustein<TempdbParameter>(LINUX_SQL_BAUSTEINE.tempdb, p => sqlSk
 registriereLinuxBaustein<MaxSpeicherParameter>(LINUX_SQL_BAUSTEINE.maxspeicher, p => sqlSkript('maxspeicher', p));
 registriereLinuxBaustein<LoginParameter>(LINUX_SQL_BAUSTEINE.login, p => sqlSkript('login', p));
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.status, () => statusSkript());
+registriereLinuxBaustein<PruefdatenParameter>(LINUX_SQL_BAUSTEINE.pruefdaten, p => sqlSkript('pruefdaten', p));
