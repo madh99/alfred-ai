@@ -15,8 +15,11 @@ import {
   HA_FENCING_ARTEN, HA_FENCING_SPERRE_S, HA_FENCING_VERZOEGERUNG_S, HA_FENCING_MAX_ALTER_S, HA_FENCING_HAENGER_KNOTEN, pruefeHaFencing, pruefeHaFencingBelegen, fencingBelegGueltig,
   type HaKnoten, type HaRolle, type HaVorbereitenParameter, type HaClusterParameter, type HaClusterEntfernenParameter,
   type HaFencingArt, type HaFencingParameter, type HaFencingBelegenParameter, type FencingLage, type FencingBeleg, type FencingTest,
+  HA_AG_NAME, HA_AG_VIP, HA_AG_KONFIG_KNOTEN, HA_AG_ROLLEN, HA_AG_RESSOURCE, HA_AG_VIP_RESSOURCE, HA_PACEMAKER_TRESOR, haMasterkeyTresor, istOeffentlichesZertifikat,
+  pruefeHaAgBesetzung, pruefeHaAgAbschluss, pruefeHaAgEntfernen,
+  type HaAgBesetzung, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
 } from './linux-ha.js';
-import { linuxSqlKennwort, type LinuxSqlDeps } from './linux-sql-skill.js';
+import { linuxSqlKennwort, saName, type LinuxSqlDeps } from './linux-sql-skill.js';
 
 const sek = (ms: number) => Math.ceil(ms / 1000);
 /** Mindest-zeitlimitS je Aktion: Baustein-Zeitgrenze + 60 s Puffer */
@@ -27,12 +30,15 @@ export const LINUX_HA_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   cluster_entfernen: sek(LINUX_HA_ZEIT_MS.clusterEntfernen) + 60,
   fencing_pruefen: sek(LINUX_HA_ZEIT_MS.fencingPruefen) + 60,
   fencing_belegen: sek(LINUX_HA_ZEIT_MS.fencingBelegen) + 60,
+  // Task 5: zehn Bausteine nacheinander (Status ×3, Endpunkt ×3, Replikat ×3, Abschluss) — je Baustein 60 s Puffer
+  ag_anlegen: sek(3 * LINUX_HA_ZEIT_MS.status + 3 * LINUX_HA_ZEIT_MS.agEndpunkt + 3 * LINUX_HA_ZEIT_MS.agReplikat + LINUX_HA_ZEIT_MS.agAbschluss) + 10 * 60,
+  ag_entfernen: sek(3 * LINUX_HA_ZEIT_MS.agEntfernen) + 3 * 60,
 };
 
 export type LinuxHaDeps = LinuxSqlDeps;
 
 export const LINUX_HA_LESEND = new Set(['status']);
-export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen']);
+export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen']);
 /** Task 4 — fencing_pruefen hat keinen Rückweg; nur mit genau diesem Grund (change-schritte.ts, OHNE_RUECKWEG_NUR_MIT_GRUND) */
 export const FENCING_OHNE_RUECKWEG_GRUND = 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -227,6 +233,44 @@ function fencingBelegenParameter(input: Record<string, unknown>): HaFencingBeleg
   return p;
 }
 
+/**
+ * Task 5 — Besetzung der AG: zugang = Primär (zugang_primaer), sekundaer Standard = der andere Datenknoten, konfig Standard sqllnxcfg.
+ * Zugangsnamen sind die Knotennamen (jeder Baustein prüft hostname -s und @@SERVERNAME gegen den erwarteten Knoten).
+ */
+function agBesetzung(zugang: string, input: Record<string, unknown>): HaAgBesetzung {
+  const n = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : v) as string;
+  const primaer = zugang.trim().toLowerCase();
+  const konfig = input.konfig === undefined ? HA_AG_KONFIG_KNOTEN : n(input.konfig);
+  const sekundaer = input.sekundaer === undefined ? (HA_KNOTEN.map(k => k.name).find(x => x !== primaer && x !== konfig) ?? '') : n(input.sekundaer);
+  const b = { primaer, sekundaer, konfig };
+  const f = pruefeHaAgBesetzung(b, HA_KNOTEN); if (f) throw new Error(f);
+  return b;
+}
+
+const agName = (input: Record<string, unknown>) => (input.ag === undefined ? HA_AG_NAME : typeof input.ag === 'string' ? input.ag.trim() : input.ag) as string;
+
+/** Planbare Eingabe von ag_anlegen → Parameter des Abschluss-Bausteins (prüft ag, Besetzung, Datenbanken, VIP) */
+function agAnlegenParameter(zugang: string, input: Record<string, unknown>): HaAgAbschlussParameter {
+  const besetzung = agBesetzung(zugang, input);
+  const v = input.vip === undefined ? HA_AG_VIP : input.vip;
+  const m = typeof v === 'string' ? /^\s*(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})\s*$/.exec(v) : null;
+  if (!m) throw new Error(`vip: IPv4/Präfix wie ${HA_AG_VIP}`);
+  const dbs = Array.isArray(input.datenbanken) ? input.datenbanken.map(d => (typeof d === 'string' ? d.trim() : d)) : input.datenbanken;
+  const p: HaAgAbschlussParameter = { ag: agName(input), besetzung, knoten: HA_KNOTEN.map(k => ({ ...k })), datenbanken: dbs as string[], vip: { ip: m[1]!, praefix: Number(m[2]) } };
+  const f = pruefeHaAgAbschluss(p); if (f) throw new Error(f);
+  return p;
+}
+
+function agEntfernenBesetzung(zugang: string, input: Record<string, unknown>): { ag: string; besetzung: HaAgBesetzung } {
+  const besetzung = agBesetzung(zugang, input);
+  const ag = agName(input);
+  const f = pruefeHaAgEntfernen({ ag, besetzung, rolle: 'primaer', knoten: HA_KNOTEN.map(k => ({ ...k })), ressourcen: true }); if (f) throw new Error(f);
+  return { ag, besetzung };
+}
+
+/** „sqllnx01: a, b; sqllnx02: c“ — nur Läufe mit Änderungen */
+const jeKnoten = (liste: Array<{ z: string; aenderungen?: string[] }>) => liste.filter(x => x.aenderungen?.length).map(x => `${x.z}: ${x.aenderungen!.join(', ')}`).join('; ');
+
 // ── Skill ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export class LinuxHaSkill extends Skill {
@@ -249,6 +293,13 @@ export class LinuxHaSkill extends Skill {
       + 'Rückweg von cluster_anlegen ist cluster_entfernen (zugang, cluster): Cluster sauber stoppen, SBD aus, pcs cluster destroy --all — nur ohne Ressourcen. cluster_anlegen braucht immer diesen Rückweg. '
       + `Fencing-Beweis je Knoten (nach cluster_anlegen, vor dem AG-Aufbau; der AG-Aufbau verlangt gültige Belege auf allen drei Knoten): fencing_pruefen (zugang = Testknoten, art trennung|haenger) prüft ohne Änderung (Cluster 3/3 online mit Quorum, STONITH an, keine Ressourcen, sbd hält den i6300esb), schreibt die Test-Datei und löst in ${HA_FENCING_VERZOEGERUNG_S} s aus — trennung: Corosync (UDP 5405) ${HA_FENCING_SPERRE_S} s gesperrt (ohne Persistenz) → SBD setzt den Knoten zurück; haenger (nur ${HA_FENCING_HAENGER_KNOTEN}): Kernel-Absturz (sysrq c) → Hardware-Watchdog; Ergebnis „ausgeloest“ vor dem Reset. `
       + `Rückweg von fencing_pruefen: keiner, nur mit dem Grund „${FENCING_OHNE_RUECKWEG_GRUND}“. Danach ein warten-Schritt (sekunden ca. 45, zeitlimitS ca. 600) mit Prüfung linux_ha.status (zugang = Testknoten) erwartet „3/3 online“, nichtEnthalten „Reset ausstehend“, dann fencing_belegen (zugang): Beleg nur bei neuer boot_id, Test ≤ 30 min, Knoten wieder online, Reset- und Rejoin-Zeit aus btime und Journal; sonst Fehler ohne Beleg; Status zeigt „Fencing belegt (…)“. `
+      + `ag_anlegen (zugang = Primär/zugang_primaer, z. B. sqllnx01; ag Standard ${HA_AG_NAME}; sekundaer Standard der andere Datenknoten; konfig Standard ${HA_AG_KONFIG_KNOTEN}; datenbanken Pflicht — vorhanden, ONLINE, Wiederherstellungsmodell FULL, mindestens eine FULL-Sicherung, sonst Abbruch ohne Änderung; vip Standard ${HA_AG_VIP}) — Verfügbarkeitsgruppe nach dem Fencing-Beweis: `
+      + 'liest zuerst linux_ha.status auf allen drei Knoten und bricht VOR jeder SQL-Zeile ab, wenn nicht jeder einen gültigen Fencing-Beleg hat (Cluster 3/3 online mit Quorum); '
+      + `dann je Knoten Master-Key (Tresor sqllnx-<zugang>-masterkey), eigenes Endpunkt-Zertifikat, Endpunkt TCP 5022, Pacemaker-Login (Tresor ${HA_PACEMAKER_TRESOR}) und /var/opt/mssql/secrets/passwd (0600 root); nur öffentliche Zertifikate wandern zwischen den Knoten; `
+      + 'CREATE AVAILABILITY GROUP mit CLUSTER_TYPE = EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0, AUTOMATED_BACKUP_PREFERENCE = PRIMARY (Datenreplikate SYNCHRONOUS_COMMIT, Seeding AUTOMATIC, Konfig CONFIGURATION_ONLY), Beitritt + GRANT CREATE ANY DATABASE, Datenbanken aufnehmen, '
+      + `Pacemaker-Ressource ${HA_AG_RESSOURCE} (ocf:mssql:ag, required_synchronized_secondaries_to_commit=0, promotable) und ${HA_AG_VIP_RESSOURCE} (IPaddr2) mit Kolokation Promoted und Reihenfolge promote → start; prüft sich selbst (Primär, Sekundär SYNCHRONIZED, required_sync 0 in SQL und Ressource, VIP auf dem Primär). `
+      + 'Rückweg von ag_anlegen ist immer ag_entfernen (zugang = aktueller Primär, ag): Ressourcen, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei weg; Datenbanken bleiben (Primär ONLINE, Sekundär RESTORING), Master-Keys bleiben. '
+      + 'Der DNS-Name der AG (windows_ad dns_eintrag, z. B. sqllnxag01 → 10.203.30.13) ist ein eigener Schritt. fencing_pruefen weist einen Cluster mit Ressourcen (AG) ab. '
       + 'Sonst ohne Rückweg nur beim Neuaufbau (derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit) oder mit ohneSicherungGrund — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -264,6 +315,11 @@ export class LinuxHaSkill extends Skill {
         sbd_timeout_s: { type: 'number', description: `cluster_anlegen: SBD_WATCHDOG_TIMEOUT in s (Standard ${HA_SBD_TIMEOUT_S})` },
         stonith_timeout_s: { type: 'number', description: `cluster_anlegen: stonith-watchdog-timeout in s (Standard ${HA_STONITH_WD_TIMEOUT_S}, mindestens 2 × sbd_timeout_s)` },
         art: { type: 'string', enum: [...HA_FENCING_ARTEN], description: `fencing_pruefen: trennung (Corosync ${HA_FENCING_SPERRE_S} s sperren) oder haenger (Kernel-Absturz, nur ${HA_FENCING_HAENGER_KNOTEN})` },
+        ag: { type: 'string', description: `ag_anlegen/ag_entfernen: Name der Verfügbarkeitsgruppe (Standard ${HA_AG_NAME})` },
+        sekundaer: { type: 'string', description: 'ag_anlegen/ag_entfernen: Zugang des zweiten Datenreplikats (Standard der andere Datenknoten)' },
+        konfig: { type: 'string', description: `ag_anlegen/ag_entfernen: Zugang des CONFIGURATION_ONLY-Replikats (nur ${HA_AG_KONFIG_KNOTEN})` },
+        datenbanken: { type: 'array', description: 'ag_anlegen: Datenbanken der AG (auf dem Primär vorhanden, FULL, mit FULL-Sicherung)' },
+        vip: { type: 'string', description: `ag_anlegen: virtuelle IP mit Präfix (Standard ${HA_AG_VIP})` },
       },
       required: ['action', 'zugang'],
     },
@@ -284,6 +340,8 @@ export class LinuxHaSkill extends Skill {
       if (action === 'cluster_entfernen') clusterEntfernenParameter(input);
       if (action === 'fencing_pruefen') fencingParameter(input);
       if (action === 'fencing_belegen') fencingBelegenParameter(input);
+      if (action === 'ag_anlegen') agAnlegenParameter(String(input.zugang), input);
+      if (action === 'ag_entfernen') agEntfernenBesetzung(String(input.zugang), input);
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
   }
@@ -303,6 +361,8 @@ export class LinuxHaSkill extends Skill {
         case 'cluster_entfernen': return await this.clusterEntfernen(zugang, input, geheim);
         case 'fencing_pruefen': return await this.fencingPruefen(zugang, input, geheim);
         case 'fencing_belegen': return await this.fencingBelegen(zugang, input);
+        case 'ag_anlegen': return await this.agAnlegen(zugang, input, geheim);
+        case 'ag_entfernen': return await this.agEntfernen(zugang, input, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -400,6 +460,126 @@ export class LinuxHaSkill extends Skill {
     const text = `Fencing auf ${zugang} (${b.knoten ?? '?'}) belegt (${b.art}, ${zeitText(b.zeit)}): Reset ${b.resetS} s nach der Auslösung, Rejoin ${b.rejoinS} s nach dem Start (Quorum); boot_id ${b.bootIdVorher} → ${b.bootId}`;
     if (r.zustand === 'schon') return { success: true, data: r, display: `${text} — nichts zu tun` };
     return { success: true, data: r, display: `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** sa-Kennwörter der drei Zugänge (Paket 1, linux_sql installieren) — fehlt eines, kein Fernaufruf */
+  private async saKennwoerter(zugaenge: string[], zweck: string, geheim: string[]): Promise<Record<string, string>> {
+    const t = this.tresor();
+    const namen = await t.namen();
+    for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+    const sa: Record<string, string> = {};
+    for (const z of zugaenge) { sa[z] = await t.lies(saName(z), `${zweck} ${z}`); geheim.push(sa[z]!); }
+    return sa;
+  }
+
+  /**
+   * Task 5 — Verfügbarkeitsgruppe über die drei Zugänge: (0) Fencing-Gate über linux_ha.status VOR jeder SQL-Zeile, (1) Endpunkt je
+   * Knoten, (2) Replikat je Knoten (Primär, Sekundär, Konfig) mit genau den öffentlichen Zertifikaten der beiden anderen, (3) Abschluss auf
+   * dem Primär. Neue Kennwörter (Pacemaker-Login, Master-Key je Knoten) kommen in den Tresor, sobald der Knoten sie gesetzt meldet.
+   */
+  private async agAnlegen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const ab = agAnlegenParameter(zugang, input);
+    const b = ab.besetzung;
+    const zugaenge = HA_AG_ROLLEN.map(r => b[r]);
+    const t = this.tresor();
+    const namen = await t.namen();
+    // sa-Einträge vorab (ohne Lesen) — fehlt einer, gar kein Fernaufruf
+    for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+    // ── 0: Fencing-Gate (nur lesend, ohne Geheimnis) — erst wenn alle drei Knoten belegt sind, läuft irgendeine SQL-Zeile ──
+    const maengel: string[] = [];
+    for (const z of zugaenge) {
+      const s = await this.lauf<LinuxHaStatus & Record<string, unknown>>(z, LINUX_HA_BAUSTEINE.status, {}, 'HA-Status vor dem AG-Aufbau', LINUX_HA_ZEIT_MS.status);
+      const f = s.fencing;
+      const k = f?.identitaet?.knoten;
+      if (k && k !== z) { maengel.push(`${z}: Zugang zeigt auf Knoten ${k}`); continue; }
+      const g = fencingBelegGueltig(f?.beleg, f, HA_CLUSTER_NAME);
+      if (g) { maengel.push(`${z}: ${g}`); continue; }
+      const c = s.cluster;
+      const alle = HA_KNOTEN.map(x => x.name);
+      if (!c || c.art !== 'eingerichtet' || c.name !== HA_CLUSTER_NAME || !c.crm || alle.some(n => !c.crm!.online.includes(n)) || !c.crm.quorum || !c.crm.stonith) maengel.push(`${z}: ${clusterText(c)}`);
+    }
+    if (maengel.length) throw new Error(`Verfügbarkeitsgruppe ${ab.ag} nicht angelegt — Fencing nicht auf allen drei Knoten belegt bzw. Cluster nicht bereit: ${maengel.join('; ')} — vorher fencing_pruefen/fencing_belegen je Knoten; keine SQL-Zeile ausgeführt, nichts geändert`);
+    // ── Kennwörter: sa je Knoten, Pacemaker-Login (einmal für alle), Master-Key je Knoten — neue erst nach dem Setzen in den Tresor ──
+    const sa = await this.saKennwoerter(zugaenge, 'AG-Aufbau', geheim);
+    let pmNeu = !namen.has(HA_PACEMAKER_TRESOR);
+    const pm = pmNeu ? linuxSqlKennwort() : await t.lies(HA_PACEMAKER_TRESOR, `AG-Aufbau ${ab.ag}`);
+    geheim.push(pm);
+    const mk: Record<string, { wert: string; neu: boolean }> = {};
+    for (const z of zugaenge) {
+      const neu = !namen.has(haMasterkeyTresor(z));
+      mk[z] = { neu, wert: neu ? linuxSqlKennwort() : await t.lies(haMasterkeyTresor(z), `AG-Aufbau ${z}`) };
+      geheim.push(mk[z]!.wert);
+    }
+    const knoten = () => HA_KNOTEN.map(k => ({ ...k }));
+    const laeufe: Array<{ z: string; zustand: string; aenderungen?: string[] }> = [];
+    // ── 1: Endpunkt je Knoten ──
+    const ep: Record<string, { zertifikat: string; fingerabdruck: string }> = {};
+    for (const rolle of HA_AG_ROLLEN) {
+      const z = b[rolle];
+      const p: HaAgEndpunktParameter = { cluster: HA_CLUSTER_NAME, ag: ab.ag, besetzung: { ...b }, rolle, knoten: knoten() };
+      const roh = await this.d.skript(z, LINUX_HA_BAUSTEINE.agEndpunkt, p, JSON.stringify({ sa: sa[z], hauptschluessel: mk[z]!.wert, pacemaker: pm }), LINUX_HA_ZEIT_MS.agEndpunkt, `AG-Endpunkt ${z}`);
+      // wie ha_vorbereiten: ein neues Kennwort kommt in den Tresor, sobald der Knoten es gesetzt meldet (Marke) oder der Lauf gelang
+      // (ein bestehender Master-Key/Login mit anderem Kennwort bricht im Baustein vor jeder Änderung ab)
+      const marken = new Set(roh.stdout.split(/\r?\n/).map(x => x.trim()));
+      const zustand = haErgebnis<{ zustand?: string }>(roh.stdout)?.zustand;
+      const ok = roh.code === 0 && zustand !== undefined && zustand !== 'fehler';
+      if (mk[z]!.neu && (ok || marken.has('ALFRED-MASTERKEY-GESETZT'))) { await t.setze(haMasterkeyTresor(z), mk[z]!.wert, `Master-Key-Kennwort (master) von SQL Server auf ${z} (Verfügbarkeitsgruppe ${ab.ag})`); mk[z]!.neu = false; }
+      if (pmNeu && (ok || marken.has('ALFRED-PACEMAKER-GESETZT'))) { await t.setze(HA_PACEMAKER_TRESOR, pm, `Kennwort des SQL-Logins alfred_pacemaker (Pacemaker-Resource-Agent, ${zugaenge.join(', ')})`); pmNeu = false; }
+      const r = this.pruefeLauf<{ zustand: string; zertifikat?: unknown; fingerabdruck?: unknown; aenderungen?: string[] }>(z, `AG-Endpunkt ${z}`, roh);
+      // nur ein öffentliches Zertifikat wird weitergegeben — alles andere bricht vor dem Austausch ab
+      if (!istOeffentlichesZertifikat(r.zertifikat) || typeof r.fingerabdruck !== 'string' || !/^[0-9A-F]{40,64}$/.test(r.fingerabdruck)) {
+        throw new Error(`${z} lieferte kein öffentliches Endpunkt-Zertifikat (ein DER-Zertifikat als Hex mit Fingerabdruck) — nichts weitergegeben; Rückweg ag_entfernen`);
+      }
+      ep[z] = { zertifikat: r.zertifikat as string, fingerabdruck: r.fingerabdruck };
+      laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
+    }
+    // ── 2: Replikat je Knoten — Primär legt an, Sekundär und Konfig treten bei ──
+    for (const rolle of HA_AG_ROLLEN) {
+      const z = b[rolle];
+      const peers = HA_KNOTEN.map(k => k.name).filter(n => n !== z).map(n => ({ name: n, zertifikat: ep[n]!.zertifikat, fingerabdruck: ep[n]!.fingerabdruck }));
+      const p: HaAgReplikatParameter = { ag: ab.ag, besetzung: { ...b }, rolle, knoten: knoten(), peers };
+      const r = await this.lauf<{ zustand: string; aenderungen?: string[] }>(z, LINUX_HA_BAUSTEINE.agReplikat, p, `AG-Replikat ${z}`, LINUX_HA_ZEIT_MS.agReplikat, { sa: sa[z]! });
+      laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
+    }
+    // ── 3: Abschluss auf dem Primär — Datenbanken, Seeding, Pacemaker-Ressourcen, Selbstprüfung ──
+    const r = await this.lauf<{ zustand: string; clusterTyp?: string; requiredSyncSql?: unknown; requiredSyncRessource?: unknown; sicherungVorgabe?: string; primaer?: string; vipAuf?: string; promotedAuf?: string;
+      datenbanken?: Array<{ name: string; zustand: string }>; aenderungen?: string[] }>(b.primaer, LINUX_HA_BAUSTEINE.agAbschluss, ab, `AG-Abschluss ${b.primaer}`, LINUX_HA_ZEIT_MS.agAbschluss, { sa: sa[b.primaer]! });
+    laeufe.push({ z: b.primaer, zustand: r.zustand, aenderungen: r.aenderungen });
+    const dbs = r.datenbanken ?? [];
+    const abw = [
+      r.clusterTyp !== 'EXTERNAL' && `CLUSTER_TYPE ${String(r.clusterTyp)}`,
+      r.requiredSyncSql !== 0 && `REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ${String(r.requiredSyncSql)}`,
+      r.requiredSyncRessource !== '0' && `required_synchronized_secondaries_to_commit an ${HA_AG_RESSOURCE} ${String(r.requiredSyncRessource)}`,
+      r.primaer !== b.primaer && `Primär ${String(r.primaer)}`,
+      (r.vipAuf !== b.primaer || r.promotedAuf !== b.primaer) && `VIP auf ${String(r.vipAuf)}, Promoted auf ${String(r.promotedAuf)}`,
+      (dbs.length !== ab.datenbanken.length || dbs.some(d => d.zustand !== 'SYNCHRONIZED')) && `Datenbanken ${dbs.map(d => `${d.name} ${d.zustand}`).join(', ') || 'keine gemeldet'}`,
+    ].filter(Boolean);
+    if (abw.length) throw new Error(`Selbstprüfung der Verfügbarkeitsgruppe ${ab.ag} auf ${b.primaer}: ${abw.join('; ')} — erwartet EXTERNAL, 0 in SQL und Ressource, Primär/VIP/Promoted ${b.primaer}, alle Datenbanken SYNCHRONIZED; Rückweg ag_entfernen`);
+    this.d.protokoll?.('I8e Verfügbarkeitsgruppe', { zugang: b.primaer, ag: ab.ag, besetzung: b, datenbanken: ab.datenbanken, laeufe: laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen })) });
+    const text = `Verfügbarkeitsgruppe ${ab.ag} (CLUSTER_TYPE EXTERNAL): Primär ${b.primaer}, ${b.sekundaer} SYNCHRONOUS_COMMIT (${dbs.map(d => `${d.name} ${d.zustand}`).join(', ')}), ${b.konfig} CONFIGURATION_ONLY; `
+      + `REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT 0 in SQL und Ressource ${HA_AG_RESSOURCE}; Sicherungsvorgabe ${r.sicherungVorgabe ?? '?'}; VIP ${ab.vip.ip}/${ab.vip.praefix} auf ${r.vipAuf} (Promoted ${r.promotedAuf})`;
+    const data = { ...r, besetzung: b, laeufe };
+    if (laeufe.every(l => l.zustand === 'schon')) return { success: true, data, display: `${text} — nichts zu tun` };
+    return { success: true, data, display: `✅ ${text} — geändert: ${jeKnoten(laeufe)}` };
+  }
+
+  /** Rückweg von ag_anlegen: zuerst der Primär (mit den Pacemaker-Ressourcen), dann Sekundär und Konfig — Datenbanken bleiben */
+  private async agEntfernen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const { ag, besetzung: b } = agEntfernenBesetzung(zugang, input);
+    const zugaenge = HA_AG_ROLLEN.map(r => b[r]);
+    const sa = await this.saKennwoerter(zugaenge, 'AG entfernen', geheim);
+    const laeufe: Array<{ z: string; zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }> = [];
+    for (const rolle of HA_AG_ROLLEN) {
+      const z = b[rolle];
+      const p: HaAgEntfernenParameter = { ag, besetzung: { ...b }, rolle, knoten: HA_KNOTEN.map(k => ({ ...k })), ressourcen: rolle === 'primaer' };
+      const r = await this.lauf<{ zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>(z, LINUX_HA_BAUSTEINE.agEntfernen, p, `AG entfernen ${z}`, LINUX_HA_ZEIT_MS.agEntfernen, { sa: sa[z]! });
+      laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen, datenbanken: r.datenbanken });
+    }
+    this.d.protokoll?.('I8e Verfügbarkeitsgruppe entfernt', { zugang: b.primaer, ag, laeufe: laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen, datenbanken: l.datenbanken })) });
+    const dbs = laeufe.filter(l => l.datenbanken?.length).map(l => `${l.z} ${l.datenbanken!.map(d => `${d.name} ${d.zustand}`).join(', ')}`);
+    const text = `Verfügbarkeitsgruppe ${ag} entfernt (Pacemaker-Ressourcen ${HA_AG_RESSOURCE}/${HA_AG_VIP_RESSOURCE}, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei; Master-Keys bleiben); Datenbanken bleiben${dbs.length ? `: ${dbs.join('; ')}` : ''}`;
+    if (laeufe.every(l => l.zustand === 'schon')) return { success: true, data: { ag, besetzung: b, laeufe }, display: `${text} — nichts zu tun` };
+    return { success: true, data: { ag, besetzung: b, laeufe }, display: `✅ ${text} — geändert: ${jeKnoten(laeufe)}` };
   }
 }
 

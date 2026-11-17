@@ -14,7 +14,7 @@
  *   verglichen wird ohne Groß-/Kleinschreibung auf „i6300esb“). Kein softdog-Ersatz.
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, shQ } from './linux-sql.js';
+import { sqlKopf, shQ, SQL_HILFE } from './linux-sql.js';
 
 // ── Feste Werte ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,8 @@ export const HA_PAKETE: ReadonlyArray<[keyof HaVersionen, string]> = [
 export const HA_BEFEHLE: readonly string[] = [
   'pcs', 'crm_mon', 'crm_attribute', 'corosync-quorumtool', 'corosync-cmapctl', 'sbd', 'nft', 'systemd-run', 'journalctl',
   'chpasswd', 'modprobe', 'udevadm', 'getent', 'ss', 'timeout', 'python3', 'apt-get', 'apt-cache', 'apt-mark', 'dpkg-query', '/opt/mssql/bin/mssql-conf',
+  // Task 5 (Verfügbarkeitsgruppe): Ressourcen-Parameter und Constraints lesen, T-SQL als sa (mssql-tools18 aus Paket 1)
+  'crm_resource', 'cibadmin', '/opt/mssql-tools18/bin/sqlcmd',
 ];
 /** Global Constraints I8e Paket 2: die drei Knoten im VLAN 830 */
 export const HA_KNOTEN: readonly HaKnoten[] = [
@@ -160,9 +162,15 @@ export const HA_COROSYNC_QUORUM_TEXT = 'This node is within the primary componen
 export const LINUX_HA_BAUSTEINE = {
   vorbereiten: 'ha.vorbereiten', status: 'ha.status', cluster: 'ha.cluster_anlegen', clusterEntfernen: 'ha.cluster_entfernen',
   fencingPruefen: 'ha.fencing_pruefen', fencingBelegen: 'ha.fencing_belegen',
+  agEndpunkt: 'ha.ag_endpunkt', agReplikat: 'ha.ag_replikat', agAbschluss: 'ha.ag_abschluss', agEntfernen: 'ha.ag_entfernen',
 } as const;
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
-export const LINUX_HA_ZEIT_MS = { vorbereiten: 1_500_000, status: 90_000, cluster: 900_000, clusterEntfernen: 600_000, fencingPruefen: 180_000, fencingBelegen: 300_000 } as const;
+export const LINUX_HA_ZEIT_MS = {
+  vorbereiten: 1_500_000, status: 90_000, cluster: 900_000, clusterEntfernen: 600_000, fencingPruefen: 180_000, fencingBelegen: 300_000,
+  // Task 5: Endpunkt je Knoten, Replikat je Knoten (Zertifikate, AG anlegen/beitreten), Abschluss auf dem Primär (Datenbanken, Seeding,
+  // Pacemaker-Ressourcen), Entfernen je Knoten
+  agEndpunkt: 180_000, agReplikat: 240_000, agAbschluss: 900_000, agEntfernen: 300_000,
+} as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -1752,6 +1760,711 @@ export function haStatusSkript(): string {
   ].join('\n');
 }
 
+// ── Verfügbarkeitsgruppe (Task 5): ag_anlegen / ag_entfernen ─────────────────────────────────────────────────────────────────
+//
+// Ablauf (orchestriert vom Skill über die drei Zugänge, je Knoten ein Baustein):
+//   0. Fencing-Gate im Skill: linux_ha.status auf allen drei Knoten, gültiger Beleg (fencingBelegGueltig) — sonst keine SQL-Zeile.
+//   1. ha.ag_endpunkt je Knoten: lokales Fencing-Gate (fpy grund), Master-Key (Tresor), eigenes Endpunkt-Zertifikat, Endpunkt alfred_hadr
+//      TCP 5022, Pacemaker-Login (Tresor) + VIEW SERVER STATE, /var/opt/mssql/secrets/passwd (0600 root). Ergebnis: das ÖFFENTLICHE
+//      Zertifikat (CERTENCODED, DER als Hex) und sein Fingerabdruck — ein privater Schlüssel verlässt den Knoten nie.
+//   2. ha.ag_replikat je Knoten (Primär zuerst): die beiden fremden öffentlichen Zertifikate (FROM BINARY) mit Login/User und CONNECT
+//      auf den Endpunkt; Primär: CREATE AVAILABILITY GROUP … CLUSTER_TYPE = EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0,
+//      AUTOMATED_BACKUP_PREFERENCE = PRIMARY; Sekundär: JOIN + GRANT CREATE ANY DATABASE; Konfig: JOIN; überall Pacemaker-Rechte auf die AG.
+//   3. ha.ag_abschluss auf dem Primär: Datenbanken (FULL, Log-Kette begonnen) aufnehmen, SYNCHRONIZED abwarten, Pacemaker-Ressourcen
+//      ag_cluster (ocf:mssql:ag, required_synchronized_secondaries_to_commit=0, promotable) und ag_vip (IPaddr2, erst deaktiviert),
+//      Kolokation mit Promoted + Reihenfolge promote → start, VIP aktivieren; Selbstprüfung.
+//   Rückweg ha.ag_entfernen je Knoten (Primär zuerst, mit Ressourcen): Ressourcen, AG, Endpunkt, Zertifikate, Logins, Zugangsdatei;
+//   Datenbanken bleiben (Primär wieder ONLINE, Sekundär RESTORING), Master-Keys bleiben (Tresor).
+//
+// T-SQL geht über stdin an sqlcmd (SQL_HILFE, als sa), Kennwörter nur über Platzhalter @@HS@@/@@PM@@, die das Skript aus der
+// Eingabe einsetzt (' verdoppelt). Jeder T-SQL-Block beginnt mit „-- ALFRED-SCHRITT <name>“ (Tests stubben sqlcmd danach) und liefert
+// genau eine Zeile „ALFRED|…“ — nur Nicht-max-Typen (sqlcmd kürzt varchar(max) ohne -y 0, und -y 0 verträgt sich nicht mit -h -1).
+
+/** Global Constraints: AG sqllnxag01 mit VIP 10.203.30.13/27, CONFIGURATION_ONLY auf sqllnxcfg */
+export const HA_AG_NAME = 'sqllnxag01';
+export const HA_AG_VIP = '10.203.30.13/27';
+export const HA_AG_KONFIG_KNOTEN = 'sqllnxcfg';
+export const HA_AG_ENDPUNKT = 'alfred_hadr';
+export const HA_AG_PORT = 5022;
+/** eigenes Endpunkt-Zertifikat alfred_ag_<knoten>; dasselbe Muster für die importierten Zertifikate, Logins und Benutzer der Peers */
+export const HA_AG_ZERT_PRAEFIX = 'alfred_ag_';
+export const HA_PACEMAKER_LOGIN = 'alfred_pacemaker';
+/** Tresor: Kennwort des Pacemaker-Logins (alle drei Knoten gleich) und Master-Key-Kennwort je Zugang */
+export const HA_PACEMAKER_TRESOR = 'sqllnx-ha-pacemaker';
+export const haMasterkeyTresor = (zugang: string) => `sqllnx-${zugang.toLowerCase()}-masterkey`;
+/** Zugangsdatei des Resource-Agents ocf:mssql:ag (Zeile 1 Login, Zeile 2 Kennwort), 0600 root */
+export const HA_PACEMAKER_DATEI = '/var/opt/mssql/secrets/passwd';
+export const HA_AG_RESSOURCE = 'ag_cluster';
+export const HA_AG_KLON = `${HA_AG_RESSOURCE}-clone`;
+export const HA_AG_VIP_RESSOURCE = 'ag_vip';
+export const HA_AG_ROLLEN = ['primaer', 'sekundaer', 'konfig'] as const;
+export type HaAgRolle = typeof HA_AG_ROLLEN[number];
+export interface HaAgBesetzung { primaer: string; sekundaer: string; konfig: string }
+/** öffentliches Endpunkt-Zertifikat eines anderen Knotens (DER als Großbuchstaben-Hex) mit Fingerabdruck */
+export interface HaAgPeer { name: string; zertifikat: string; fingerabdruck: string }
+export interface HaAgEndpunktParameter { cluster: string; ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[] }
+export interface HaAgReplikatParameter { ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[]; peers: HaAgPeer[] }
+export interface HaAgAbschlussParameter { ag: string; besetzung: HaAgBesetzung; knoten: HaKnoten[]; datenbanken: string[]; vip: { ip: string; praefix: number } }
+export interface HaAgEntfernenParameter { ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[]; ressourcen: boolean }
+
+const AG_NAME = /^[a-z][a-z0-9]{2,30}$/;
+const AG_DB = /^[A-Za-z][A-Za-z0-9_]{2,63}$/;
+const AG_SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
+
+/**
+ * Genau ein DER-Zertifikat als Großbuchstaben-Hex (CERTENCODED, CONVERT(…, 2)): SEQUENCE mit Zwei-Byte-Länge (30 82 LLLL) und genau
+ * LLLL Inhaltsbytes. Ein PVK-Blob (CERTPRIVATEKEY, 1EF1B5B0…), PEM oder angehängte Daten sind es nicht.
+ */
+export function istOeffentlichesZertifikat(hex: unknown): boolean {
+  if (typeof hex !== 'string' || hex.length > 8000 || !/^3082[0-9A-F]{4}(?:[0-9A-F]{2})+$/.test(hex)) return false;
+  return hex.length === 2 * (4 + parseInt(hex.slice(4, 8), 16));
+}
+
+const pruefeAgName = (a: unknown) => (typeof a === 'string' && AG_NAME.test(a) ? undefined : `ag: Name aus Kleinbuchstaben/Ziffern (3–31 Zeichen), z. B. ${HA_AG_NAME}`);
+const pruefeAgRolle = (r: unknown) => (HA_AG_ROLLEN.includes(r as HaAgRolle) ? undefined : `rolle: ${HA_AG_ROLLEN.join(', ')}`);
+
+/** Primär, Sekundär, Konfig: drei verschiedene der Knoten; Konfig fest sqllnxcfg (Global Constraints) */
+export function pruefeHaAgBesetzung(b: unknown, knoten: unknown): string | undefined {
+  const fk = pruefeKnoten(knoten); if (fk) return fk;
+  const namen = (knoten as HaKnoten[]).map(k => k.name);
+  const x = obj(b);
+  for (const r of HA_AG_ROLLEN) if (typeof x[r] !== 'string' || !namen.includes(x[r] as string)) return `besetzung.${r}: einer der Knoten ${namen.join(', ')}`;
+  if (new Set(HA_AG_ROLLEN.map(r => x[r])).size !== HA_AG_ROLLEN.length) return 'besetzung: Primär, Sekundär und Konfig müssen verschiedene Knoten sein';
+  if (x.konfig !== HA_AG_KONFIG_KNOTEN) return `besetzung.konfig: ${HA_AG_KONFIG_KNOTEN} (CONFIGURATION_ONLY-Replikat, Global Constraints)`;
+  return undefined;
+}
+
+export function pruefeAgDatenbanken(d: unknown): string | undefined {
+  const regel = 'Buchstabe, dann Buchstaben/Ziffern/_ (3–64 Zeichen), keine Systemdatenbank';
+  if (!Array.isArray(d) || !d.length || d.length > 20) return `datenbanken: 1–20 Namen (${regel})`;
+  for (const n of d) if (typeof n !== 'string' || !AG_DB.test(n) || AG_SYSTEM_DBS.has(n.toLowerCase())) return `datenbanken: „${String(n).slice(0, 40)}“ ungültig (${regel})`;
+  if (new Set(d.map(n => (n as string).toLowerCase())).size !== d.length) return 'datenbanken: Name doppelt';
+  return undefined;
+}
+
+export function pruefeHaAgEndpunkt(p: unknown): string | undefined {
+  const x = obj(p);
+  return pruefeClusterName(x.cluster) ?? pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgRolle(x.rolle);
+}
+
+export function pruefeHaAgReplikat(p: unknown): string | undefined {
+  const x = obj(p);
+  const f = pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgRolle(x.rolle); if (f) return f;
+  const ich = (x.besetzung as HaAgBesetzung)[x.rolle as HaAgRolle];
+  const soll = (x.knoten as HaKnoten[]).map(k => k.name).filter(n => n !== ich);
+  const peers = Array.isArray(x.peers) ? x.peers.map(obj) : [];
+  if (peers.length !== soll.length || peers.some((e, i) => e.name !== soll[i])) return `peers: genau die anderen Knoten ${soll.join(', ')} (in dieser Reihenfolge)`;
+  for (const e of peers) {
+    if (!istOeffentlichesZertifikat(e.zertifikat)) return `peers.${String(e.name)}: kein öffentliches Zertifikat (ein DER-Zertifikat als Hex) — nur öffentliche Endpunkt-Zertifikate verlassen einen Knoten`;
+    if (typeof e.fingerabdruck !== 'string' || !/^[0-9A-F]{40,64}$/.test(e.fingerabdruck)) return `peers.${String(e.name)}.fingerabdruck: Großbuchstaben-Hex (40–64 Zeichen)`;
+  }
+  return undefined;
+}
+
+export function pruefeHaAgAbschluss(p: unknown): string | undefined {
+  const x = obj(p);
+  const f = pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgDatenbanken(x.datenbanken); if (f) return f;
+  const v = obj(x.vip);
+  if (typeof v.ip !== 'string' || !IPV4.test(v.ip) || typeof v.praefix !== 'number' || !Number.isInteger(v.praefix) || v.praefix < 8 || v.praefix > 32) return `vip: {ip, praefix} wie ${HA_AG_VIP}`;
+  if ((x.knoten as HaKnoten[]).some(k => k.ip === v.ip)) return 'vip: darf keine Knoten-Adresse sein';
+  return undefined;
+}
+
+export function pruefeHaAgEntfernen(p: unknown): string | undefined {
+  const x = obj(p);
+  const f = pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgRolle(x.rolle); if (f) return f;
+  if (typeof x.ressourcen !== 'boolean') return 'ressourcen: true (Pacemaker-Ressourcen hier entfernen, nur auf dem Primär) oder false';
+  return undefined;
+}
+
+// T-SQL-Bausteine (Namen sind geprüft: Knoten [a-z0-9-], AG [a-z0-9], Datenbanken [A-Za-z0-9_] — sicher in [] und N'…')
+const zn = (k: string) => `${HA_AG_ZERT_PRAEFIX}${k}`;
+const ipVon = (knoten: readonly HaKnoten[], n: string) => knoten.find(k => k.name === n)!.ip;
+const agUrl = (knoten: readonly HaKnoten[], n: string) => `TCP://${ipVon(knoten, n)}:${HA_AG_PORT}`;
+const EPN = HA_AG_ENDPUNKT;
+const PML = HA_PACEMAKER_LOGIN;
+const AG_KOPF = (schritt: string) => `-- ALFRED-SCHRITT ${schritt}\nUSE master; SET NOCOUNT ON;`;
+const servername = (ich: string) => `IF @@SERVERNAME <> N'${ich}' BEGIN SET @m = N'@@SERVERNAME ist ' + ISNULL(@@SERVERNAME, N'NULL') + N', erwartet ${ich} (Replikatname = Rechnername) - nichts geändert'; THROW 50100, @m, 1; END`;
+const endpunktPasst = (ich: string) => `EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints e JOIN sys.tcp_endpoints t ON t.endpoint_id = e.endpoint_id WHERE e.name = N'${EPN}' AND t.port = ${HA_AG_PORT} AND e.role_desc = N'ALL' AND e.connection_auth_desc = N'CERTIFICATE' AND e.certificate_id = CERT_ID(N'${zn(ich)}') AND e.is_encryption_enabled = 1 AND e.encryption_algorithm_desc = N'AES')`;
+const vssDa = `EXISTS (SELECT 1 FROM sys.server_permissions p JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id WHERE l.name = N'${PML}' AND p.class = 100 AND p.permission_name = N'VIEW SERVER STATE' AND p.state IN ('G', 'W'))`;
+/** class 108 = AVAILABILITY GROUP: ALTER, CONTROL, VIEW DEFINITION für den Pacemaker-Login */
+const pmAgRechte = `(SELECT COUNT(DISTINCT p.permission_name) FROM sys.server_permissions p JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id WHERE l.name = N'${PML}' AND p.class = 108 AND p.permission_name IN (N'ALTER', N'CONTROL', N'VIEW DEFINITION') AND p.state IN ('G', 'W'))`;
+const agDa = (ag: string) => `EXISTS (SELECT 1 FROM sys.availability_groups WHERE name = N'${ag}')`;
+const lokaleRolle = (ag: string) => `(SELECT UPPER(rs.role_desc) FROM sys.dm_hadr_availability_replica_states rs JOIN sys.availability_groups g ON g.group_id = rs.group_id WHERE g.name = N'${ag}' AND rs.is_local = 1)`;
+const connectDa = (p: string) => `EXISTS (SELECT 1 FROM sys.server_permissions x JOIN sys.server_principals l ON l.principal_id = x.grantee_principal_id JOIN sys.endpoints e ON e.endpoint_id = x.major_id WHERE x.class = 105 AND e.name = N'${EPN}' AND l.name = N'${zn(p)}' AND x.permission_name = N'CONNECT' AND x.state IN ('G', 'W'))`;
+const dbTabelle = (dbs: readonly string[]) => `DECLARE @dbs TABLE (n sysname); INSERT @dbs (n) VALUES ${dbs.map(d => `(N'${d}')`).join(', ')};`;
+
+function tsqlEndpunkt(ich: string): Record<'pruefen' | 'masterkey' | 'login' | 'endpunkt' | 'selbst', string> {
+  const mkDa = "EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'##MS_DatabaseMasterKey##')";
+  return {
+    pruefen: [
+      AG_KOPF('ep_pruefen'),
+      'DECLARE @m nvarchar(2048);',
+      servername(ich),
+      "IF ISNULL(CAST(SERVERPROPERTY('IsHadrEnabled') AS int), 0) <> 1 THROW 50101, N'HADR ist nicht aktiv - vorher ha_vorbereiten (hadr.hadrenabled); nichts geändert', 1;",
+      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name <> N'${EPN}') THROW 50102, N'anderer Spiegelungs-/AG-Endpunkt vorhanden - nicht still ersetzt; nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.tcp_endpoints WHERE port = ${HA_AG_PORT} AND name <> N'${EPN}') THROW 50103, N'TCP ${HA_AG_PORT} ist von einem anderen Endpunkt belegt; nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}' AND pvt_key_encryption_type = 'NA') THROW 50104, N'Zertifikat ${zn(ich)} ohne privaten Schlüssel (kein eigenes Endpunkt-Zertifikat); nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') AND NOT ${endpunktPasst(ich)} THROW 50105, N'Endpunkt ${EPN} weicht ab (Port, Rolle, Zertifikat oder Verschlüsselung) - nicht still geändert; nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${PML}' AND type <> 'S') THROW 50106, N'${PML} ist kein SQL-Login; nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}' AND PWDCOMPARE(N'@@PM@@', password_hash) = 0) THROW 50107, N'Login ${PML} besteht mit anderem Kennwort als im Tresor (${HA_PACEMAKER_TRESOR}) - nicht still zurückgesetzt; nichts geändert', 1;`,
+      `IF ${mkDa}`,
+      'BEGIN',
+      "  BEGIN TRY OPEN MASTER KEY DECRYPTION BY PASSWORD = N'@@HS@@'; CLOSE MASTER KEY; END TRY",
+      "  BEGIN CATCH THROW 50108, N'Master-Key in master besteht mit anderem Kennwort als im Tresor (sqllnx-<zugang>-masterkey) - nicht still ersetzt; nichts geändert', 1; END CATCH",
+      'END',
+      "SELECT 'ALFRED|ok';",
+    ].join('\n'),
+    masterkey: [
+      AG_KOPF('ep_masterkey'),
+      'DECLARE @neu int = 0;',
+      `IF NOT ${mkDa} BEGIN CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'@@HS@@'; SET @neu = 1; END`,
+      "SELECT 'ALFRED|' + CAST(@neu AS varchar(1));",
+    ].join('\n'),
+    login: [
+      AG_KOPF('ep_login'),
+      "DECLARE @neu int = 0, @a varchar(400) = '';",
+      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') BEGIN CREATE LOGIN [${PML}] WITH PASSWORD = N'@@PM@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @neu = 1; SET @a += ' pacemaker-login'; END`,
+      `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${PML}') = 1 BEGIN ALTER LOGIN [${PML}] ENABLE; SET @a += ' pacemaker-login-aktiviert'; END`,
+      `IF NOT ${vssDa} BEGIN GRANT VIEW SERVER STATE TO [${PML}]; SET @a += ' pacemaker-view-server-state'; END`,
+      "SELECT 'ALFRED|' + CAST(@neu AS varchar(1)) + '|' + LTRIM(@a);",
+    ].join('\n'),
+    endpunkt: [
+      AG_KOPF('ep_endpunkt'),
+      "DECLARE @a varchar(400) = '', @sql nvarchar(max);",
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}') BEGIN SET @sql = N'CREATE CERTIFICATE [${zn(ich)}] WITH SUBJECT = N''Alfred AG-Endpunkt ${ich}'', EXPIRY_DATE = ''20361231'''; EXEC (@sql); SET @a += ' zertifikat'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN SET @sql = N'CREATE ENDPOINT [${EPN}] STATE = STARTED AS TCP (LISTENER_PORT = ${HA_AG_PORT}, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE [${zn(ich)}], ENCRYPTION = REQUIRED ALGORITHM AES)'; EXEC (@sql); SET @a += ' endpunkt'; END`,
+      `IF (SELECT state_desc FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') <> N'STARTED' BEGIN EXEC (N'ALTER ENDPOINT [${EPN}] STATE = STARTED'); SET @a += ' endpunkt-gestartet'; END`,
+      "SELECT 'ALFRED|' + LTRIM(@a);",
+    ].join('\n'),
+    selbst: [
+      AG_KOPF('ep_selbst'),
+      "DECLARE @f nvarchar(2000) = N'';",
+      `IF NOT ${endpunktPasst(ich)} SET @f += N' Endpunkt ${EPN} fehlt oder weicht ab;';`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}' AND state_desc = N'STARTED') SET @f += N' Endpunkt ${EPN} nicht gestartet;';`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}' AND pvt_key_encryption_type <> 'NA') SET @f += N' Zertifikat ${zn(ich)} fehlt;';`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}' AND is_disabled = 0 AND PWDCOMPARE(N'@@PM@@', password_hash) = 1) SET @f += N' Login ${PML} fehlt, ist gesperrt oder hat ein anderes Kennwort;';`,
+      `IF NOT ${vssDa} SET @f += N' VIEW SERVER STATE für ${PML} fehlt;';`,
+      "BEGIN TRY OPEN MASTER KEY DECRYPTION BY PASSWORD = N'@@HS@@'; CLOSE MASTER KEY; END TRY BEGIN CATCH SET @f += N' Master-Key nicht mit dem Tresor-Kennwort zu öffnen;'; END CATCH",
+      'IF @f <> N\'\' THROW 50109, @f, 1;',
+      // nur das öffentliche Zertifikat (CERTENCODED) — nie CERTPRIVATEKEY
+      `SELECT 'ALFRED|' + CONVERT(varchar(64), c.thumbprint, 2) + '|' + CONVERT(varchar(8000), CERTENCODED(c.certificate_id), 2) FROM sys.certificates c WHERE c.name = N'${zn(ich)}';`,
+    ].join('\n'),
+  };
+}
+
+function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 'selbst', string> {
+  const { ag, besetzung: b, knoten, rolle } = p;
+  const ich = b[rolle];
+  const daten = (n: string) => `N''${n}'' WITH (ENDPOINT_URL = N''${agUrl(knoten, n)}'', AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, FAILOVER_MODE = EXTERNAL, SEEDING_MODE = AUTOMATIC)`;
+  const anlegen = `CREATE AVAILABILITY GROUP [${ag}] WITH (CLUSTER_TYPE = EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0, AUTOMATED_BACKUP_PREFERENCE = PRIMARY) FOR REPLICA ON `
+    + `${daten(b.primaer)}, ${daten(b.sekundaer)}, N''${b.konfig}'' WITH (ENDPOINT_URL = N''${agUrl(knoten, b.konfig)}'', AVAILABILITY_MODE = CONFIGURATION_ONLY)`;
+  const rep = (n: string, bed: string) => `(r.replica_server_name = N'${n}' AND r.endpoint_url = N'${agUrl(knoten, n)}' AND ${bed})`;
+  const datenBed = "r.availability_mode_desc = N'SYNCHRONOUS_COMMIT' AND r.failover_mode_desc = N'EXTERNAL' AND r.seeding_mode_desc = N'AUTOMATIC'";
+  const reps = `FROM sys.availability_replicas r JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE g.name = N'${ag}'`;
+  const pruefen = [
+    AG_KOPF('rp_pruefen'),
+    'DECLARE @m nvarchar(2048);',
+    servername(ich),
+    `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}' AND state_desc = N'STARTED') THROW 50201, N'Endpunkt ${EPN} fehlt oder ist nicht gestartet - erst der Endpunkt-Schritt; nichts geändert', 1;`,
+    `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') THROW 50202, N'Login ${PML} fehlt - erst der Endpunkt-Schritt; nichts geändert', 1;`,
+    `IF EXISTS (SELECT 1 FROM sys.availability_groups WHERE name <> N'${ag}') THROW 50203, N'auf ${ich} besteht eine andere Verfügbarkeitsgruppe; nichts geändert', 1;`,
+    ...p.peers.flatMap(x => [
+      `IF EXISTS (SELECT 1 FROM sys.certificates c WHERE c.name = N'${zn(x.name)}' AND (CONVERT(varchar(64), c.thumbprint, 2) <> '${x.fingerabdruck}' OR c.pvt_key_encryption_type <> 'NA' OR c.principal_id <> ISNULL(DATABASE_PRINCIPAL_ID(N'${zn(x.name)}'), -1))) THROW 50204, N'Zertifikat ${zn(x.name)} besteht mit anderem Fingerabdruck, privatem Schlüssel oder anderem Besitzer - nicht still ersetzt (vorher ag_entfernen); nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}' AND type <> 'S') THROW 50205, N'${zn(x.name)} besteht, ist aber kein SQL-Login; nichts geändert', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.database_principals u WHERE u.name = N'${zn(x.name)}' AND ISNULL(u.sid, 0x00) <> ISNULL(SUSER_SID(N'${zn(x.name)}'), 0x01)) THROW 50206, N'Benutzer ${zn(x.name)} in master gehört nicht zum Login ${zn(x.name)}; nichts geändert', 1;`,
+    ]),
+    `IF ${agDa(ag)} AND (SELECT UPPER(cluster_type_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'EXTERNAL' THROW 50207, N'${ag} besteht mit anderem CLUSTER_TYPE - nicht still geändert; nichts geändert', 1;`,
+    ...(rolle === 'primaer' ? [
+      `IF ${agDa(ag)} AND ISNULL(${lokaleRolle(ag)}, N'') <> N'PRIMARY' THROW 50208, N'${ich} ist nicht Primär von ${ag}; nichts geändert', 1;`,
+      `IF ${agDa(ag)} AND ((SELECT COUNT(*) ${reps}) <> 3 OR (SELECT COUNT(*) ${reps} AND (${rep(b.primaer, datenBed)} OR ${rep(b.sekundaer, datenBed)} OR ${rep(b.konfig, "r.availability_mode_desc = N'CONFIGURATION_ONLY'")})) <> 3)`,
+      `  THROW 50209, N'${ag} besteht mit anderen Replikaten (Namen, Endpunkte, Modi) - nicht still geändert; nichts geändert', 1;`,
+    ] : [
+      `IF ${agDa(ag)} AND ISNULL(${lokaleRolle(ag)}, N'') = N'PRIMARY' THROW 50210, N'${ich} ist Primär von ${ag} - als ${rolle === 'sekundaer' ? 'Sekundär' : 'Konfig'} nichts geändert', 1;`,
+    ]),
+    "SELECT 'ALFRED|ok';",
+  ].join('\n');
+  const aendern = [
+    AG_KOPF('rp_aendern'),
+    "DECLARE @a varchar(1000) = '', @sql nvarchar(max);",
+    // Login (Kennwort unbekannt, nie ausgegeben — die Anmeldung läuft nur über das Zertifikat), Benutzer, öffentliches Zertifikat, CONNECT
+    ...p.peers.flatMap(x => [
+      `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); SET @a += ' login-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE USER [${zn(x.name)}] FOR LOGIN [${zn(x.name)}]'); SET @a += ' benutzer-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE CERTIFICATE [${zn(x.name)}] AUTHORIZATION [${zn(x.name)}] FROM BINARY = 0x${x.zertifikat}'); SET @a += ' zertifikat-${x.name}'; END`,
+      `IF NOT ${connectDa(x.name)} BEGIN EXEC (N'GRANT CONNECT ON ENDPOINT::[${EPN}] TO [${zn(x.name)}]'); SET @a += ' connect-${x.name}'; END`,
+    ]),
+    ...(rolle === 'primaer' ? [
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'${anlegen}'); SET @a += ' ag-angelegt'; END`,
+      'ELSE',
+      'BEGIN',
+      `  IF (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)'); SET @a += ' required-sync-0'; END`,
+      `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); SET @a += ' sicherungsvorgabe-primary'; END`,
+      'END',
+    ] : rolle === 'sekundaer' ? [
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' beigetreten seeding-erlaubt'; END`,
+      // nach einem abgebrochenen Lauf: Datenbanken der AG fehlen hier noch → Seeding (wieder) erlauben, sichtbar
+      `ELSE IF EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND DB_ID(c.database_name) IS NULL)`,
+      `  BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' seeding-erlaubt'; END`,
+    ] : [
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); SET @a += ' beigetreten'; END`,
+    ]),
+    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 BEGIN EXEC (N'GRANT ALTER, CONTROL, VIEW DEFINITION ON AVAILABILITY GROUP::[${ag}] TO [${PML}]'); SET @a += ' pacemaker-ag-rechte'; END`,
+    "SELECT 'ALFRED|' + LTRIM(@a);",
+  ].join('\n');
+  const selbst = [
+    AG_KOPF('rp_selbst'),
+    "DECLARE @f nvarchar(2000) = N'';",
+    ...p.peers.flatMap(x => [
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates c JOIN sys.database_principals u ON u.principal_id = c.principal_id JOIN sys.server_principals l ON l.sid = u.sid WHERE c.name = N'${zn(x.name)}' AND CONVERT(varchar(64), c.thumbprint, 2) = '${x.fingerabdruck}' AND c.pvt_key_encryption_type = 'NA' AND u.name = N'${zn(x.name)}' AND l.name = N'${zn(x.name)}') SET @f += N' Zertifikat/Benutzer/Login ${zn(x.name)} fehlt oder weicht ab;';`,
+      `IF NOT ${connectDa(x.name)} SET @f += N' CONNECT auf ${EPN} für ${zn(x.name)} fehlt;';`,
+    ]),
+    `IF NOT ${agDa(ag)} SET @f += N' ${ag} fehlt auf ${ich};';`,
+    ...(rolle === 'primaer' ? [
+      `IF ${agDa(ag)} AND (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 SET @f += N' REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT ist nicht 0;';`,
+      `IF ${agDa(ag)} AND (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' SET @f += N' AUTOMATED_BACKUP_PREFERENCE ist nicht PRIMARY;';`,
+    ] : rolle === 'konfig' ? [
+      `IF NOT EXISTS (SELECT 1 ${reps} AND r.replica_server_name = N'${ich}' AND r.availability_mode_desc = N'CONFIGURATION_ONLY') SET @f += N' ${ich} ist kein CONFIGURATION_ONLY-Replikat von ${ag};';`,
+    ] : []),
+    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 SET @f += N' Rechte von ${PML} auf ${ag} fehlen;';`,
+    "IF @f <> N'' THROW 50290, @f, 1;",
+    `SELECT 'ALFRED|' + ISNULL(${lokaleRolle(ag)}, '-');`,
+  ].join('\n');
+  return { pruefen, aendern, selbst };
+}
+
+function tsqlAbschluss(p: HaAgAbschlussParameter): Record<'pruefen' | 'dbs' | 'sync' | 'selbst', string> {
+  const { ag, besetzung: b, datenbanken } = p;
+  // Zustand je Datenbank auf dem Sekundär (OUTER APPLY — eine Unterabfrage in SUM/STRING_AGG lehnt SQL Server ab, Fehler 130)
+  const syncAgg = `SELECT @n = SUM(CASE WHEN s.st = N'SYNCHRONIZED' THEN 1 ELSE 0 END), @l = STRING_AGG(CAST(d.n + N'=' + ISNULL(s.st, N'FEHLT') AS varchar(300)), ',') WITHIN GROUP (ORDER BY d.n) `
+    + `FROM @dbs d OUTER APPLY (SELECT TOP 1 UPPER(x.synchronization_state_desc) AS st FROM sys.dm_hadr_database_replica_states x JOIN sys.availability_replicas r ON r.replica_id = x.replica_id WHERE x.database_id = DB_ID(d.n) AND r.replica_server_name = N'${b.sekundaer}') s;`;
+  const repZustand = (n: string, spalte: string) => `ISNULL((SELECT UPPER(rs.${spalte}) FROM sys.dm_hadr_availability_replica_states rs JOIN sys.availability_replicas r ON r.replica_id = rs.replica_id WHERE r.group_id = g.group_id AND r.replica_server_name = N'${n}'), '-')`;
+  return {
+    pruefen: [
+      AG_KOPF('ab_pruefen'),
+      "DECLARE @m nvarchar(2048), @f nvarchar(2000) = N'';",
+      servername(b.primaer),
+      `IF NOT ${agDa(ag)} THROW 50301, N'${ag} fehlt auf ${b.primaer} - erst der Replikat-Schritt; nichts geändert', 1;`,
+      `IF ISNULL(${lokaleRolle(ag)}, N'') <> N'PRIMARY' THROW 50302, N'${b.primaer} ist nicht Primär von ${ag}; nichts geändert', 1;`,
+      dbTabelle(datenbanken),
+      "SELECT @f += N' ' + d.n + N' fehlt;' FROM @dbs d WHERE DB_ID(d.n) IS NULL;",
+      "SELECT @f += N' ' + d.n + N' ist ' + s.state_desc + N';' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.state_desc <> N'ONLINE';",
+      "SELECT @f += N' ' + d.n + N' hat Wiederherstellungsmodell ' + s.recovery_model_desc + N' (erwartet FULL);' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.recovery_model_desc <> N'FULL';",
+      // Log-Kette begonnen = mindestens eine FULL-Sicherung im Modell FULL (sonst kein automatisches Seeding)
+      "SELECT @f += N' ' + d.n + N' ohne FULL-Sicherung (Log-Kette nicht begonnen);' FROM @dbs d JOIN sys.database_recovery_status r ON r.database_id = DB_ID(d.n) WHERE r.last_log_backup_lsn IS NULL;",
+      `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
+      "IF @f <> N'' BEGIN SET @m = N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW 50303, @m, 1; END",
+      "SELECT 'ALFRED|ok';",
+    ].join('\n'),
+    dbs: [
+      AG_KOPF('ab_dbs'),
+      "DECLARE @a varchar(2000) = '';",
+      ...datenbanken.map(d => `IF NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND c.database_name = N'${d}') BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] ADD DATABASE [${d}]'); SET @a += ' db-${d}'; END`),
+      "SELECT 'ALFRED|' + @a;",
+    ].join('\n'),
+    sync: [
+      AG_KOPF('ab_sync'),
+      "DECLARE @n int, @l varchar(4000);",
+      dbTabelle(datenbanken),
+      syncAgg,
+      "SELECT 'ALFRED|' + CAST(ISNULL(@n, 0) AS varchar(10)) + '|' + ISNULL(@l, '-');",
+    ].join('\n'),
+    selbst: [
+      AG_KOPF('ab_selbst'),
+      "DECLARE @n int, @l varchar(4000);",
+      dbTabelle(datenbanken),
+      syncAgg,
+      `SELECT 'ALFRED|' + UPPER(g.cluster_type_desc) + '|' + CAST(g.required_synchronized_secondaries_to_commit AS varchar(5)) + '|' + UPPER(g.automated_backup_preference_desc) + '|'`,
+      `  + ${repZustand(b.primaer, 'role_desc')} + '|' + ${repZustand(b.sekundaer, 'role_desc')} + '|' + ${repZustand(b.sekundaer, 'connected_state_desc')} + '|'`,
+      `  + ISNULL((SELECT UPPER(r.availability_mode_desc) FROM sys.availability_replicas r WHERE r.group_id = g.group_id AND r.replica_server_name = N'${b.konfig}'), '-') + '|'`,
+      `  + CAST(ISNULL(@n, 0) AS varchar(10)) + '|' + ISNULL(@l, '-') FROM sys.availability_groups g WHERE g.name = N'${ag}';`,
+    ].join('\n'),
+  };
+}
+
+function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'drop' | 'aufraeumen' | 'selbst', string> {
+  const { ag, besetzung: b, rolle, knoten } = p;
+  const ich = b[rolle];
+  const peers = knoten.map(k => k.name).filter(n => n !== ich);
+  const weg = (art: 'CERTIFICATE' | 'USER' | 'LOGIN', katalog: string, name: string, kennung: string) =>
+    `IF EXISTS (SELECT 1 FROM ${katalog} WHERE name = N'${name}') BEGIN EXEC (N'DROP ${art} [${name}]'); SET @a += ' ${kennung}'; END`;
+  return {
+    lage: [
+      AG_KOPF('en_lage'),
+      `SELECT 'ALFRED|' + ISNULL(${lokaleRolle(ag)}, CASE WHEN ${agDa(ag)} THEN 'UNBEKANNT' ELSE '-' END) + '|'`,
+      `  + ISNULL((SELECT STRING_AGG(CAST(c.database_name AS varchar(200)), ',') WITHIN GROUP (ORDER BY c.database_name) FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}'), '-');`,
+    ].join('\n'),
+    // Rolle VOR dem Entfernen der Pacemaker-Ressourcen (@@ROLLE@@): nur der bisherige Primär holt RESTORING-Datenbanken zurück
+    drop: [
+      AG_KOPF('en_drop'),
+      "DECLARE @a varchar(2000) = '', @n sysname, @sql nvarchar(max);",
+      'DECLARE @dbs TABLE (n sysname);',
+      `INSERT @dbs (n) SELECT c.database_name FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}';`,
+      `IF ${agDa(ag)} BEGIN EXEC (N'DROP AVAILABILITY GROUP [${ag}]'); SET @a += ' ag-entfernt'; END`,
+      "IF '@@ROLLE@@' = 'PRIMARY'",
+      'BEGIN',
+      "  DECLARE d CURSOR LOCAL FAST_FORWARD FOR SELECT x.n FROM @dbs x JOIN sys.databases s ON s.name = x.n COLLATE DATABASE_DEFAULT WHERE s.state_desc = N'RESTORING';",
+      '  OPEN d; FETCH NEXT FROM d INTO @n;',
+      "  WHILE @@FETCH_STATUS = 0 BEGIN SET @sql = N'RESTORE DATABASE ' + QUOTENAME(@n) + N' WITH RECOVERY'; EXEC (@sql); SET @a += ' db-online-' + CAST(@n AS varchar(128)); FETCH NEXT FROM d INTO @n; END",
+      '  CLOSE d; DEALLOCATE d;',
+      'END',
+      "SELECT 'ALFRED|' + LTRIM(@a);",
+    ].join('\n'),
+    aufraeumen: [
+      AG_KOPF('en_aufraeumen'),
+      "DECLARE @a varchar(2000) = '';",
+      `IF ${agDa(ag)} THROW 50401, N'${ag} besteht noch - Endpunkt und Zertifikate bleiben', 1;`,
+      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN EXEC (N'DROP ENDPOINT [${EPN}]'); SET @a += ' endpunkt-entfernt'; END`,
+      ...peers.flatMap(n => [weg('CERTIFICATE', 'sys.certificates', zn(n), `zertifikat-${n}-entfernt`), weg('USER', 'sys.database_principals', zn(n), `benutzer-${n}-entfernt`), weg('LOGIN', 'sys.server_principals', zn(n), `login-${n}-entfernt`)]),
+      weg('CERTIFICATE', 'sys.certificates', zn(ich), 'zertifikat-entfernt'),
+      weg('LOGIN', 'sys.server_principals', PML, 'pacemaker-login-entfernt'),
+      "SELECT 'ALFRED|' + LTRIM(@a);",
+    ].join('\n'),
+    selbst: [
+      AG_KOPF('en_selbst'),
+      `SELECT 'ALFRED|' + CAST((SELECT COUNT(*) FROM sys.availability_groups WHERE name = N'${ag}') + (SELECT COUNT(*) FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}')`,
+      `  + (SELECT COUNT(*) FROM sys.certificates WHERE name LIKE N'alfred[_]ag[_]%') + (SELECT COUNT(*) FROM sys.database_principals WHERE name LIKE N'alfred[_]ag[_]%')`,
+      `  + (SELECT COUNT(*) FROM sys.server_principals WHERE name = N'${PML}' OR name LIKE N'alfred[_]ag[_]%') AS varchar(10)) + '|'`,
+      "  + ISNULL((SELECT STRING_AGG(CAST(name + N'=' + state_desc AS varchar(300)), ',') WITHIN GROUP (ORDER BY name) FROM sys.databases WHERE name IN (@@DBS@@)), '-');",
+    ].join('\n'),
+  };
+}
+
+/** python3: crm_mon-XML → „<Promoted-Knoten> <VIP-Knoten>“ (lage) bzw. CIB-Constraints → „<Kolokation 0|1> <Reihenfolge 0|1>“ (regeln) */
+export const PY_AG_PCS = String.raw`import sys, xml.etree.ElementTree as ET
+c = sys.argv[1]
+try:
+    r = ET.fromstring(sys.stdin.read())
+except Exception:
+    sys.exit(2)
+if c == "lage":
+    ag, vip = sys.argv[2], sys.argv[3]
+    prom, vn = set(), set()
+    for x in r.iter("resource"):
+        if x.get("active", "true") != "true" or x.get("failed", "false") == "true":
+            continue
+        kn = [n.get("name") for n in x.findall("node") if n.get("name")]
+        if x.get("id") == ag and x.get("role") in ("Promoted", "Master"):
+            prom.update(kn)
+        if x.get("id") == vip and x.get("role") == "Started":
+            vn.update(kn)
+    print(",".join(sorted(prom)) or "-", ",".join(sorted(vn)) or "-")
+elif c == "regeln":
+    vip, klon = sys.argv[2], sys.argv[3]
+    ko = any(x.get("rsc") == vip and x.get("with-rsc") == klon and x.get("with-rsc-role") in ("Promoted", "Master") and x.get("score") in ("INFINITY", "+INFINITY") for x in r.iter("rsc_colocation"))
+    od = any(x.get("first") == klon and x.get("first-action") == "promote" and x.get("then") == vip and x.get("then-action", "start") == "start" for x in r.iter("rsc_order"))
+    print(1 if ko else 0, 1 if od else 0)
+else:
+    sys.exit(3)`;
+
+/** Pfade und Wartezeiten der AG-Bausteine — vor der Marke, damit Tests sie umbiegen können */
+const AG_PFADE = [
+  `PM_DATEI=${shQ(HA_PACEMAKER_DATEI)}`,
+  // warte_pacemaker / warte_weg: Runden à 2 s (120 s); warte_sync: Runden à 2 s (300 s, Seeding)
+  'WARTE_RUNDEN=60',
+  'SYNC_RUNDEN=150',
+];
+
+const AG_HILFEN = sh(String.raw`GEAENDERT=0; AJ=''; ZEILE=''
+SA=''; HS=''; PM=''; HS_SQL=''; PM_SQL=''
+aend() { GEAENDERT=1; AJ+="§{AJ:+,}\"$1\""; }
+stand() { if [ "$GEAENDERT" = 1 ]; then printf 'bisher geändert: %s' "$(printf '%s' "$AJ" | tr -d '"')"; else printf 'nichts geändert'; fi; }
+eigener_name() { hostname -s; }
+schwaerze_geheim() { local t=$1 g; for g in "$SA" "$HS" "$PM"; do if [ §{#g} -ge 4 ]; then t=§{t//"$g"/[geschwärzt]}; fi; done; printf '%s' "$t"; }
+# Geheimnis aus der ersten stdin-Zeile (JSON-Feld $1) in die Variable $2 — nur druckbare Zeichen, nie Befehlszeile oder Ausgabe
+geheim_lesen() {
+  local v
+  v=$(feld "$1") || abbruch "$3 enthält nicht druckbare Zeichen — nichts geändert"
+  [ -n "$v" ] || abbruch "$3 fehlt in der Eingabe (erste stdin-Zeile, JSON-Feld $1) — nichts geändert"
+  [[ "$v" =~ ^[[:print:]]+$ ]] || abbruch "$3 enthält nicht druckbare Zeichen — nichts geändert"
+  printf -v "$2" '%s' "$v"
+}
+# Kennwörter für T-SQL (' verdoppelt) und Einsetzen in die Vorlagen (@@HS@@ Master-Key, @@PM@@ Pacemaker-Login)
+geheim_sql() { local q="'"; HS_SQL=§{HS//"$q"/"$q$q"}; PM_SQL=§{PM//"$q"/"$q$q"}; }
+mit_geheim() { local t=$1; t=§{t//@@HS@@/"$HS_SQL"}; t=§{t//@@PM@@/"$PM_SQL"}; printf '%s' "$t"; }
+# T-SQL ausführen; Ergebniszeile „ALFRED|…“ in ZEILE, sonst sichtbarer Abbruch (Ausgabe geschwärzt)
+sql_lauf() {
+  local a
+  a=$(sql "$1" 2>&1) || abbruch "$2: $(kurz "$(schwaerze_geheim "$a")") — $(stand)"
+  ZEILE=$(alfred_zeile "$a")
+  [ -n "$ZEILE" ] || abbruch "$2: keine Ergebniszeile: $(kurz "$(schwaerze_geheim "$a")") — $(stand)"
+}
+knoten_ich() { ICH=$(eigener_name); [ "$ICH" = "$ICH_SOLL" ] || abbruch "Zugang zeigt auf $ICH, erwartet $ICH_SOLL ($ROLLE) — keine SQL-Zeile ausgeführt, nichts geändert"; }
+# Pacemaker: Ressource vorhanden, Parameter/Meta-Attribut lesen, Constraints und Lage (Promoted-Knoten, VIP-Knoten)
+ressource_da() { crm_resource --resource "$1" --query-xml >/dev/null 2>&1; }
+parameter() { local v; v=$(crm_resource --resource "$1" --get-parameter "$2" 2>/dev/null) || v=''; printf '%s' "$v" | tail -n 1 | tr -d '[:space:]'; }
+meta() { local v; v=$(crm_resource --resource "$1" --meta --get-parameter "$2" 2>/dev/null) || v=''; printf '%s' "$v" | tail -n 1 | tr -d '[:space:]'; }
+ag_pcs_py() { python3 -c "$PY_AG_PCS" "$@"; }
+regeln() { local x; x=$(cibadmin --query --scope constraints 2>/dev/null) || { echo '0 0'; return 0; }; ag_pcs_py regeln "$VIP_RES" "$AG_KLON" <<<"$x" 2>/dev/null || echo '0 0'; }
+pm_lage() { local x l='- -'; if x=$(crm_mon -1 --output-as=xml 2>/dev/null); then l=$(ag_pcs_py lage "$AG_RES" "$VIP_RES" <<<"$x" 2>/dev/null || echo '- -'); fi; read -r PROM VIPN <<<"$l"; }
+warte_pacemaker() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do pm_lage; if [ "$PROM" = "$ICH" ] && [ "$VIPN" = "$ICH" ]; then return 0; fi; sleep 2; done; return 1; }
+warte_weg() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if ! ressource_da "$AG_RES" && ! ressource_da "$VIP_RES"; then return 0; fi; sleep 2; done; return 1; }
+cluster_lage() { local x l=''; if x=$(crm_mon -1 --output-as=xml 2>/dev/null); then l=$(python3 -c "$PY_CRM_LAGE" <<<"$x" 2>/dev/null || true); fi; read -r LK LO LQ LS LR LN <<<"§{l:-0 0 0 0 0 -}"; }
+vip_lokal() { ip -o -4 addr show 2>/dev/null | grep -qF " $VIP_IP/$VIP_PRAEFIX "; }
+# „a=SYNCHRONIZED,b=…“ → JSON-Liste [{name, zustand}] (Namen geprüft, Zustände aus SQL nur [A-Z_ ])
+db_json() { local x n s j=''; [ "$1" = - ] || [ -z "$1" ] || { local IFS=','; for x in $1; do n=§{x%%=*}; s=§{x#*=}; [[ "$n" =~ ^[A-Za-z0-9_]+$ ]] || n='?'; [[ "$s" =~ ^[A-Za-z_\ ]+$ ]] || s='?'; j+="§{j:+,}{\"name\":\"$n\",\"zustand\":\"$s\"}"; done; }; printf '[%s]' "$j"; }`);
+
+function agKopf(baustein: string, p: Record<string, unknown>, ag: string, rolle: HaAgRolle, ich: string): string[] {
+  return [
+    ...sqlKopf(baustein, p, 'ALFRED-HA'),
+    ...SQL_HILFE,
+    `AG=${shQ(ag)}`,
+    `ROLLE=${shQ(rolle)}`,
+    `ICH_SOLL=${shQ(ich)}`,
+    `PM_LOGIN=${shQ(HA_PACEMAKER_LOGIN)}`,
+    `AG_RES=${shQ(HA_AG_RESSOURCE)}`,
+    `AG_KLON=${shQ(HA_AG_KLON)}`,
+    `VIP_RES=${shQ(HA_AG_VIP_RESSOURCE)}`,
+    `PY_AG_PCS=${shQ(PY_AG_PCS)}`,
+    `PY_CRM_LAGE=${shQ(PY_CRM_LAGE)}`,
+    ...AG_PFADE,
+    AG_HILFEN,
+  ];
+}
+
+const AG_ENDPUNKT_KOERPER = sh(String.raw`# ── Phase 1: prüfen — bis hierhin weder eine SQL-Zeile noch eine Änderung ──
+knoten_ich
+# Fencing-Gate (Task 4): ohne gültigen Beleg dieses Knotens keine SQL-Zeile (der Skill prüft vorher alle drei über linux_ha.status)
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER" 2>&1) || abbruch "Fencing-Beleg auf $ICH nicht prüfbar ($(kurz "$G")) — keine SQL-Zeile ausgeführt, nichts geändert"
+[ -z "$G" ] || abbruch "Fencing auf $ICH nicht belegt: $G — Verfügbarkeitsgruppe erst nach fencing_pruefen/fencing_belegen auf allen drei Knoten; keine SQL-Zeile ausgeführt, nichts geändert"
+geheim_lesen sa SA "sa-Kennwort"
+geheim_lesen hauptschluessel HS "Master-Key-Kennwort"
+geheim_lesen pacemaker PM "Kennwort des Pacemaker-Logins"
+geheim_sql
+PM_DIR=$(dirname "$PM_DATEI")
+[ -d "$PM_DIR" ] || abbruch "Verzeichnis $PM_DIR fehlt auf $ICH (mssql-server installiert?) — nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+sql_lauf "$(mit_geheim "$T_PRUEFEN")" "Prüfung auf $ICH"
+# ── Phase 2: Master-Key, Pacemaker-Login, Zertifikat + Endpunkt (je eigener Block: eine Marke steht, sobald das Kennwort gesetzt ist) ──
+sql_lauf "$(mit_geheim "$T_MASTERKEY")" "Master-Key auf $ICH"
+IFS='|' read -r _ mk <<<"$ZEILE"
+if [ "$mk" = 1 ]; then echo ALFRED-MASTERKEY-GESETZT; aend masterkey; fi
+sql_lauf "$(mit_geheim "$T_LOGIN")" "Pacemaker-Login auf $ICH"
+IFS='|' read -r _ pmneu a <<<"$ZEILE"
+if [ "$pmneu" = 1 ]; then echo ALFRED-PACEMAKER-GESETZT; fi
+for x in $a; do aend "$x"; done
+sql_lauf "$T_ENDPUNKT" "Zertifikat und Endpunkt auf $ICH"
+IFS='|' read -r _ a <<<"$ZEILE"
+for x in $a; do aend "$x"; done
+# Zugangsdatei des Resource-Agents: Login und Kennwort, 0600 root, atomar ersetzt (Inhalt nur über das printf-Builtin)
+PM_INHALT=$(printf '%s\n%s' "$PM_LOGIN" "$PM")
+if ! pm_datei_ok; then
+  (umask 077; printf '%s\n' "$PM_INHALT" >"$PM_DATEI.alfred-neu")
+  chown root:root "$PM_DATEI.alfred-neu"; chmod 0600 "$PM_DATEI.alfred-neu"; mv -f "$PM_DATEI.alfred-neu" "$PM_DATEI"
+  aend pacemaker-zugangsdatei
+fi
+# ── Selbstprüfung ──
+pm_datei_ok || abbruch "Selbstprüfung: Zugangsdatei $PM_DATEI nicht 0600 root oder mit anderem Inhalt — $(stand)"
+sql_lauf "$(mit_geheim "$T_SELBST")" "Selbstprüfung auf $ICH"
+IFS='|' read -r _ fp zert <<<"$ZEILE"
+[[ "$fp" =~ ^[0-9A-F]{40,64}$ ]] || abbruch "Selbstprüfung: Fingerabdruck von alfred_ag_$ICH nicht lesbar — $(stand)"
+[[ "$zert" =~ ^3082[0-9A-F]+$ ]] || abbruch "Selbstprüfung: öffentliches Zertifikat alfred_ag_$ICH nicht lesbar (kein DER) — $(stand)"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"knoten\":\"$ICH\",\"rolle\":\"$ROLLE\",\"endpunkt\":\"$URL\",\"fingerabdruck\":\"$fp\",\"zertifikat\":\"$zert\",\"aenderungen\":[$AJ]}"`);
+
+/**
+ * AG-Schritt 1 je Knoten: lokales Fencing-Gate vor jeder SQL-Zeile, dann Master-Key (Kennwort aus dem Tresor; besteht er mit anderem
+ * Kennwort → Abbruch), eigenes Endpunkt-Zertifikat alfred_ag_<knoten>, Endpunkt alfred_hadr (TCP 5022, Zertifikat, AES), Pacemaker-Login
+ * mit VIEW SERVER STATE und Zugangsdatei. Ergebnis: öffentliches Zertifikat + Fingerabdruck. Marken ALFRED-MASTERKEY-GESETZT /
+ * ALFRED-PACEMAKER-GESETZT, sobald ein neues Kennwort gesetzt ist. Zeit: LINUX_HA_ZEIT_MS.agEndpunkt
+ */
+export function haAgEndpunktSkript(p: HaAgEndpunktParameter): string {
+  pruefe(pruefeHaAgEndpunkt(p));
+  const ich = p.besetzung[p.rolle];
+  const t = tsqlEndpunkt(ich);
+  return [
+    ...agKopf(LINUX_HA_BAUSTEINE.agEndpunkt, { cluster: p.cluster, ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })) }, p.ag, p.rolle, ich),
+    `CLUSTER=${shQ(p.cluster)}`,
+    `URL=${shQ(agUrl(p.knoten, ich))}`,
+    `PY_FENCING=${shQ(PY_FENCING)}`,
+    `T_PRUEFEN=${shQ(t.pruefen)}`, `T_MASTERKEY=${shQ(t.masterkey)}`, `T_LOGIN=${shQ(t.login)}`, `T_ENDPUNKT=${shQ(t.endpunkt)}`, `T_SELBST=${shQ(t.selbst)}`,
+    'COROSYNC_CONF=/etc/corosync/corosync.conf',
+    ...FENCING_PFADE,
+    'fpy() { python3 -c "$PY_FENCING" "$@"; }',
+    "datei_rechte() { stat -c '%u %a' \"$1\" 2>/dev/null || true; }",
+    'pm_datei_ok() { [ -f "$PM_DATEI" ] && [ "$(datei_rechte "$PM_DATEI")" = \'0 600\' ] && [ "$(cat "$PM_DATEI")" = "$PM_INHALT" ]; }',
+    '# ALFRED-ABLAUF',
+    AG_ENDPUNKT_KOERPER,
+  ].join('\n');
+}
+
+const AG_REPLIKAT_KOERPER = sh(String.raw`knoten_ich
+geheim_lesen sa SA "sa-Kennwort"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
+sql_lauf "$T_AENDERN" "Replikat ($ROLLE) auf $ICH"
+IFS='|' read -r _ a <<<"$ZEILE"
+for x in $a; do aend "$x"; done
+# ── Selbstprüfung: Zertifikate/Logins/CONNECT der Peers, AG vorhanden; Rolle Primär bzw. (nach dem Beitritt, ggf. kurz RESOLVING) Sekundär ──
+lokal=-
+for i in $(seq 1 "$WARTE_RUNDEN"); do
+  sql_lauf "$T_SELBST" "Selbstprüfung auf $ICH"
+  IFS='|' read -r _ lokal <<<"$ZEILE"
+  case "$ROLLE:$lokal" in primaer:PRIMARY|sekundaer:SECONDARY|konfig:*) break ;; esac
+  sleep 2
+done
+case "$ROLLE:$lokal" in
+  primaer:PRIMARY|sekundaer:SECONDARY|konfig:*) ;;
+  *) abbruch "Selbstprüfung: $ICH hat in $AG die Rolle $lokal (erwartet $([ "$ROLLE" = primaer ] && echo PRIMARY || echo SECONDARY)) — $(stand)" ;;
+esac
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"knoten\":\"$ICH\",\"rolle\":\"$ROLLE\",\"lokaleRolle\":\"$lokal\",\"aenderungen\":[$AJ]}"`);
+
+/**
+ * AG-Schritt 2 je Knoten (Primär, dann Sekundär, dann Konfig): öffentliche Zertifikate der beiden Peers (FROM BINARY) mit Login + Benutzer
+ * und CONNECT auf alfred_hadr; Primär legt die AG an (EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0, Sicherung PRIMARY,
+ * Datenreplikate SYNCHRONOUS_COMMIT/EXTERNAL/AUTOMATIC, Konfig CONFIGURATION_ONLY), Sekundär tritt bei + GRANT CREATE ANY DATABASE,
+ * Konfig tritt bei; überall Pacemaker-Rechte auf die AG. Bestehendes mit Abweichung → Abbruch ohne Änderung. Zeit: LINUX_HA_ZEIT_MS.agReplikat
+ */
+export function haAgReplikatSkript(p: HaAgReplikatParameter): string {
+  pruefe(pruefeHaAgReplikat(p));
+  const ich = p.besetzung[p.rolle];
+  const t = tsqlReplikat(p);
+  return [
+    ...agKopf(LINUX_HA_BAUSTEINE.agReplikat, { ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), peers: p.peers.map(x => ({ name: x.name, zertifikat: x.zertifikat, fingerabdruck: x.fingerabdruck })) }, p.ag, p.rolle, ich),
+    `T_PRUEFEN=${shQ(t.pruefen)}`, `T_AENDERN=${shQ(t.aendern)}`, `T_SELBST=${shQ(t.selbst)}`,
+    '# ALFRED-ABLAUF',
+    AG_REPLIKAT_KOERPER,
+  ].join('\n');
+}
+
+const AG_ABSCHLUSS_KOERPER = sh(String.raw`knoten_ich
+geheim_lesen sa SA "sa-Kennwort"
+# ── Phase 1: prüfen — Cluster 3/3 mit Quorum, AG hier Primär, Datenbanken bereit ──
+cluster_lage
+{ [ "$LO" = 3 ] && [ "$LQ" = 1 ]; } || abbruch "Cluster: $LO/3 online, Quorum $([ "$LQ" = 1 ] && echo ja || echo nein) — erwartet 3/3 mit Quorum; nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
+# ── Phase 2: Datenbanken aufnehmen, Seeding abwarten (vor Pacemaker) ──
+sql_lauf "$T_DBS" "Datenbanken in $AG aufnehmen"
+IFS='|' read -r _ a <<<"$ZEILE"
+for x in $a; do aend "$x"; done
+SYNC_N=0; SYNC_LISTE=-
+warte_sync() { local i; for i in $(seq 1 "$SYNC_RUNDEN"); do sql_lauf "$T_SYNC" "Synchronisierung lesen"; IFS='|' read -r _ SYNC_N SYNC_LISTE <<<"$ZEILE"; if [ "$SYNC_N" = "$DB_ANZAHL" ]; then return 0; fi; sleep 2; done; return 1; }
+warte_sync || abbruch "Datenbanken auf $SEK nicht SYNCHRONIZED nach $((SYNC_RUNDEN * 2)) s: $SYNC_LISTE — Pacemaker-Ressourcen nicht angelegt; $(stand)"
+# ── Phase 3: Pacemaker — ag_cluster (promotable), VIP erst deaktiviert, Constraints, dann VIP aktivieren ──
+if ! ressource_da "$AG_RES"; then
+  aus=$(pcs resource create "$AG_RES" ocf:mssql:ag "ag_name=$AG" required_synchronized_secondaries_to_commit=0 meta failure-timeout=60s promotable notify=true 2>&1) || abbruch "pcs resource create $AG_RES fehlgeschlagen: $(kurz "$aus") — $(stand); Rückweg ag_entfernen"
+  aend ressource-ag
+else
+  an=$(parameter "$AG_RES" ag_name)
+  [ "$an" = "$AG" ] || abbruch "Ressource $AG_RES verwaltet '§{an:-?}' statt $AG — nicht still geändert; $(stand)"
+  if [ "$(parameter "$AG_RES" required_synchronized_secondaries_to_commit)" != 0 ]; then
+    aus=$(pcs resource update "$AG_RES" required_synchronized_secondaries_to_commit=0 2>&1) || abbruch "pcs resource update $AG_RES fehlgeschlagen: $(kurz "$aus") — $(stand)"
+    aend ressource-required-sync-0
+  fi
+fi
+if ! ressource_da "$VIP_RES"; then
+  aus=$(pcs resource create "$VIP_RES" ocf:heartbeat:IPaddr2 "ip=$VIP_IP" "cidr_netmask=$VIP_PRAEFIX" op monitor interval=30s --disabled 2>&1) || abbruch "pcs resource create $VIP_RES fehlgeschlagen: $(kurz "$aus") — $(stand); Rückweg ag_entfernen"
+  aend ressource-vip
+else
+  vi=$(parameter "$VIP_RES" ip); vc=$(parameter "$VIP_RES" cidr_netmask)
+  { [ "$vi" = "$VIP_IP" ] && [ "$vc" = "$VIP_PRAEFIX" ]; } || abbruch "Ressource $VIP_RES hat ip=§{vi:-?} cidr_netmask=§{vc:-?}, erwartet $VIP_IP/$VIP_PRAEFIX — nicht still geändert; $(stand)"
+fi
+read -r KO OD <<<"$(regeln)"
+if [ "$KO" != 1 ]; then aus=$(pcs constraint colocation add "$VIP_RES" with Promoted "$AG_KLON" INFINITY 2>&1) || abbruch "Kolokation $VIP_RES mit Promoted $AG_KLON fehlgeschlagen: $(kurz "$aus") — $(stand)"; aend kolokation; fi
+if [ "$OD" != 1 ]; then aus=$(pcs constraint order promote "$AG_KLON" then start "$VIP_RES" 2>&1) || abbruch "Reihenfolge promote $AG_KLON → start $VIP_RES fehlgeschlagen: $(kurz "$aus") — $(stand)"; aend reihenfolge; fi
+read -r KO OD <<<"$(regeln)"
+{ [ "$KO" = 1 ] && [ "$OD" = 1 ]; } || abbruch "Constraints nach dem Anlegen nicht in der CIB (Kolokation $KO, Reihenfolge $OD) — $(stand)"
+if [ "$(meta "$VIP_RES" target-role)" = Stopped ]; then aus=$(pcs resource enable "$VIP_RES" 2>&1) || abbruch "pcs resource enable $VIP_RES fehlgeschlagen: $(kurz "$aus") — $(stand)"; aend vip-aktiviert; fi
+warte_pacemaker || abbruch "Pacemaker: Promoted auf '$PROM', VIP auf '$VIPN' — erwartet beide auf $ICH; $(stand)"
+# ── Selbstprüfung: SQL (EXTERNAL, required_sync 0, Sicherung PRIMARY, Rollen, SYNCHRONIZED) und Ressource (required_sync 0), VIP hier ──
+sql_lauf "$T_SELBST" "Selbstprüfung auf $ICH"
+IFS='|' read -r _ typ rs bp lokal sekrolle sekverb cfgmodus nsync liste <<<"$ZEILE"
+[ "$typ" = EXTERNAL ] || abbruch "Selbstprüfung: CLUSTER_TYPE ist $typ, erwartet EXTERNAL — $(stand)"
+[ "$rs" = 0 ] || abbruch "Selbstprüfung: REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist $rs, erwartet 0 — $(stand)"
+[ "$bp" = PRIMARY ] || abbruch "Selbstprüfung: AUTOMATED_BACKUP_PREFERENCE ist $bp, erwartet PRIMARY — $(stand)"
+[ "$lokal" = PRIMARY ] || abbruch "Selbstprüfung: $ICH ist $lokal, erwartet PRIMARY — $(stand)"
+{ [ "$sekrolle" = SECONDARY ] && [ "$sekverb" = CONNECTED ]; } || abbruch "Selbstprüfung: $SEK ist $sekrolle/$sekverb, erwartet SECONDARY/CONNECTED — $(stand)"
+[ "$cfgmodus" = CONFIGURATION_ONLY ] || abbruch "Selbstprüfung: $KONFIG ist $cfgmodus, erwartet CONFIGURATION_ONLY — $(stand)"
+[ "$nsync" = "$DB_ANZAHL" ] || abbruch "Selbstprüfung: auf $SEK nicht alle Datenbanken SYNCHRONIZED: $liste — $(stand)"
+rr=$(parameter "$AG_RES" required_synchronized_secondaries_to_commit)
+[ "$rr" = 0 ] || abbruch "Selbstprüfung: required_synchronized_secondaries_to_commit an der Ressource $AG_RES ist '§{rr:-nicht gesetzt}', erwartet 0 — $(stand)"
+pm_lage
+{ [ "$PROM" = "$ICH" ] && [ "$VIPN" = "$ICH" ]; } || abbruch "Selbstprüfung: Promoted auf '$PROM', VIP auf '$VIPN' — erwartet $ICH; $(stand)"
+vip_lokal || abbruch "Selbstprüfung: VIP $VIP_IP/$VIP_PRAEFIX ist auf $ICH nicht gebunden — $(stand)"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"ag\":\"$AG\",\"primaer\":\"$ICH\",\"sekundaer\":\"$SEK\",\"konfig\":\"$KONFIG\",\"clusterTyp\":\"$typ\",\"requiredSyncSql\":$rs,\"requiredSyncRessource\":\"$rr\",\"sicherungVorgabe\":\"$bp\",\"datenbanken\":$(db_json "$liste"),\"vip\":\"$VIP_IP/$VIP_PRAEFIX\",\"vipAuf\":\"$VIPN\",\"promotedAuf\":\"$PROM\",\"aenderungen\":[$AJ]}"`);
+
+/**
+ * AG-Schritt 3 auf dem Primär: Cluster 3/3 mit Quorum, AG hier Primär; Datenbanken (vorhanden, ONLINE, FULL, Log-Kette begonnen, in keiner
+ * anderen AG — sonst Abbruch ohne Änderung) aufnehmen, SYNCHRONIZED auf dem Sekundär abwarten; dann ag_cluster (ocf:mssql:ag,
+ * required_synchronized_secondaries_to_commit=0, promotable), ag_vip (IPaddr2, deaktiviert angelegt), Kolokation mit Promoted,
+ * Reihenfolge promote → start, VIP aktivieren. Selbstprüfung wie im Brief. Zeit: LINUX_HA_ZEIT_MS.agAbschluss
+ */
+export function haAgAbschlussSkript(p: HaAgAbschlussParameter): string {
+  pruefe(pruefeHaAgAbschluss(p));
+  const t = tsqlAbschluss(p);
+  return [
+    ...agKopf(LINUX_HA_BAUSTEINE.agAbschluss, { ag: p.ag, besetzung: { ...p.besetzung }, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), datenbanken: [...p.datenbanken], vip: { ip: p.vip.ip, praefix: p.vip.praefix } }, p.ag, 'primaer', p.besetzung.primaer),
+    `SEK=${shQ(p.besetzung.sekundaer)}`,
+    `KONFIG=${shQ(p.besetzung.konfig)}`,
+    `VIP_IP=${shQ(p.vip.ip)}`,
+    `VIP_PRAEFIX=${p.vip.praefix}`,
+    `DB_ANZAHL=${p.datenbanken.length}`,
+    `T_PRUEFEN=${shQ(t.pruefen)}`, `T_DBS=${shQ(t.dbs)}`, `T_SYNC=${shQ(t.sync)}`, `T_SELBST=${shQ(t.selbst)}`,
+    '# ALFRED-ABLAUF',
+    AG_ABSCHLUSS_KOERPER,
+  ].join('\n');
+}
+
+const AG_ENTFERNEN_KOERPER = sh(String.raw`knoten_ich
+geheim_lesen sa SA "sa-Kennwort"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+# Rolle und Datenbanken der AG VOR dem Entfernen der Ressourcen (Pacemaker stuft den Primär beim Löschen herab)
+sql_lauf "$T_LAGE" "Lage auf $ICH"
+IFS='|' read -r _ RV DBL <<<"$ZEILE"
+case "$RV" in PRIMARY|SECONDARY|RESOLVING|UNBEKANNT|-) ;; *) RV=UNBEKANNT ;; esac
+if [ "$RESSOURCEN" = 1 ]; then
+  if ressource_da "$AG_RES" || ressource_da "$VIP_RES"; then
+    case "$RV" in PRIMARY|-) ;; *) abbruch "$ICH ist nicht Primär von $AG ($RV) — ag_entfernen mit zugang = aktueller Primär (dort zuerst die Pacemaker-Ressourcen); nichts geändert" ;; esac
+  fi
+  if ressource_da "$VIP_RES"; then aus=$(pcs resource delete "$VIP_RES" 2>&1) || abbruch "pcs resource delete $VIP_RES fehlgeschlagen: $(kurz "$aus") — $(stand)"; aend ressource-vip-entfernt; fi
+  if ressource_da "$AG_RES"; then aus=$(pcs resource delete "$AG_RES" 2>&1) || abbruch "pcs resource delete $AG_RES fehlgeschlagen: $(kurz "$aus") — $(stand)"; aend ressource-ag-entfernt; fi
+  warte_weg || abbruch "Pacemaker-Ressourcen $AG_RES/$VIP_RES nach dem Entfernen noch vorhanden — $(stand)"
+elif ressource_da "$AG_RES" || ressource_da "$VIP_RES"; then
+  abbruch "Pacemaker-Ressourcen $AG_RES/$VIP_RES bestehen noch — zuerst ag_entfernen auf dem Primär (entfernt sie); nichts geändert"
+fi
+sql_lauf "§{T_DROP//@@ROLLE@@/"$RV"}" "Verfügbarkeitsgruppe auf $ICH entfernen"
+IFS='|' read -r _ a <<<"$ZEILE"
+for x in $a; do aend "$x"; done
+sql_lauf "$T_AUFRAEUMEN" "Endpunkt, Zertifikate und Logins auf $ICH entfernen"
+IFS='|' read -r _ a <<<"$ZEILE"
+for x in $a; do aend "$x"; done
+if [ -e "$PM_DATEI" ]; then rm -f -- "$PM_DATEI"; aend pacemaker-zugangsdatei-entfernt; fi
+# ── Selbstprüfung: nichts mehr von AG/Endpunkt/alfred_ag_*/alfred_pacemaker; Datenbanken bleiben (Zustand gemeldet) ──
+DBIN=''
+if [ "$DBL" != - ]; then IFS=',' read -r -a DBA <<<"$DBL"; for n in "§{DBA[@]}"; do if [[ "$n" =~ ^[A-Za-z0-9_]{1,128}$ ]]; then DBIN+="§{DBIN:+, }N'$n'"; fi; done; fi
+[ -n "$DBIN" ] || DBIN="N''"
+sql_lauf "§{T_SELBST//@@DBS@@/"$DBIN"}" "Selbstprüfung auf $ICH"
+IFS='|' read -r _ rest dbz <<<"$ZEILE"
+[ "$rest" = 0 ] || abbruch "Selbstprüfung: auf $ICH bestehen noch $rest Objekte (AG, Endpunkt, alfred_ag_-Zertifikate/-Benutzer/-Logins, $PM_LOGIN) — $(stand)"
+[ ! -e "$PM_DATEI" ] || abbruch "Selbstprüfung: $PM_DATEI besteht noch — $(stand)"
+if [ "$RV" = PRIMARY ] && [ "$dbz" != - ]; then
+  for x in §{dbz//,/ }; do [ "§{x#*=}" = ONLINE ] || abbruch "Selbstprüfung: Datenbanken auf dem bisherigen Primär nicht alle ONLINE: $dbz — RESTORE DATABASE … WITH RECOVERY bewusst entscheiden; $(stand)"; done
+fi
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"knoten\":\"$ICH\",\"rolle\":\"$ROLLE\",\"rolleVorher\":\"$RV\",\"datenbanken\":$(db_json "$dbz"),\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Rückweg von ag_anlegen je Knoten (zuerst der Primär mit ressourcen=true): Pacemaker-Ressourcen ag_vip und ag_cluster (nur auf dem
+ * aktuellen Primär), DROP AVAILABILITY GROUP, auf dem bisherigen Primär RESTORING-Datenbanken WITH RECOVERY zurück; Endpunkt, Zertifikate,
+ * Benutzer und Logins alfred_ag_*, Login alfred_pacemaker und die Zugangsdatei entfernen. Datenbanken bleiben (Sekundär: RESTORING,
+ * gemeldet), Master-Key bleibt (Tresor). Zeit: LINUX_HA_ZEIT_MS.agEntfernen
+ */
+export function haAgEntfernenSkript(p: HaAgEntfernenParameter): string {
+  pruefe(pruefeHaAgEntfernen(p));
+  const ich = p.besetzung[p.rolle];
+  const t = tsqlEntfernen(p);
+  return [
+    ...agKopf(LINUX_HA_BAUSTEINE.agEntfernen, { ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), ressourcen: p.ressourcen }, p.ag, p.rolle, ich),
+    `RESSOURCEN=${p.ressourcen ? 1 : 0}`,
+    `T_LAGE=${shQ(t.lage)}`, `T_DROP=${shQ(t.drop)}`, `T_AUFRAEUMEN=${shQ(t.aufraeumen)}`, `T_SELBST=${shQ(t.selbst)}`,
+    '# ALFRED-ABLAUF',
+    AG_ENTFERNEN_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<HaVorbereitenParameter>(LINUX_HA_BAUSTEINE.vorbereiten, haVorbereitenSkript);
@@ -1760,3 +2473,7 @@ registriereLinuxBaustein<HaClusterParameter>(LINUX_HA_BAUSTEINE.cluster, haClust
 registriereLinuxBaustein<HaClusterEntfernenParameter>(LINUX_HA_BAUSTEINE.clusterEntfernen, haClusterEntfernenSkript);
 registriereLinuxBaustein<HaFencingParameter>(LINUX_HA_BAUSTEINE.fencingPruefen, haFencingPruefenSkript);
 registriereLinuxBaustein<HaFencingBelegenParameter>(LINUX_HA_BAUSTEINE.fencingBelegen, haFencingBelegenSkript);
+registriereLinuxBaustein<HaAgEndpunktParameter>(LINUX_HA_BAUSTEINE.agEndpunkt, haAgEndpunktSkript);
+registriereLinuxBaustein<HaAgReplikatParameter>(LINUX_HA_BAUSTEINE.agReplikat, haAgReplikatSkript);
+registriereLinuxBaustein<HaAgAbschlussParameter>(LINUX_HA_BAUSTEINE.agAbschluss, haAgAbschlussSkript);
+registriereLinuxBaustein<HaAgEntfernenParameter>(LINUX_HA_BAUSTEINE.agEntfernen, haAgEntfernenSkript);

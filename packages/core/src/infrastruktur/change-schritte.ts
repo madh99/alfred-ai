@@ -178,14 +178,20 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
   // Task 4 — Fencing: fencing_pruefen prüft die Vorbedingungen, schreibt die Test-Datei und weist die geplanten Timer nach (die Wirkung —
   // Reset — belegt fencing_belegen); fencing_belegen schreibt den Beleg nur mit Beweis und liest ihn gegen die Cluster-Identität zurück
-  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen']),
+  // Task 5 — AG: ag_anlegen prüft Primär, Sekundär SYNCHRONIZED, required_sync 0 in SQL und Ressource, VIP auf dem Primär; ag_entfernen
+  // prüft, dass AG, Endpunkt, alfred_ag_*-Objekte, Pacemaker-Login und Zugangsdatei weg sind (Datenbanken bleiben, Zustand gemeldet)
+  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen']),
 };
 /**
  * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
  * Knoten (auch das bestehende sqllnx01) — Rückweg genau linux_ha.cluster_entfernen (Task 4, Carry-over 4: kein anderer Rückweg zählt).
  */
 const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { skill: string; aktion: string; text: string }>>> = {
-  linux_ha: new Map([['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }]]),
+  // Task 5 — ag_anlegen wirkt auf alle drei Knoten und den Cluster: Rückweg genau linux_ha.ag_entfernen
+  linux_ha: new Map([
+    ['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }],
+    ['ag_anlegen', { skill: 'linux_ha', aktion: 'ag_entfernen', text: 'linux_ha.ag_entfernen (zugang, ag)' }],
+  ]),
 };
 /**
  * I8e Paket 2 Task 4 — Aktionen ohne Rückweg, aber nur mit genau diesem Grund (ein angegebener Rückweg wird abgewiesen): fencing_pruefen

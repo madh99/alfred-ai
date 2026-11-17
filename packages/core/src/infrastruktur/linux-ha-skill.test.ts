@@ -400,6 +400,220 @@ describe('I8e Paket 2 Task 4 — Change „Fencing-Beweis“', () => {
   });
 });
 
+// ── Task 5: Verfügbarkeitsgruppe ────────────────────────────────────────────────────────────────────────────────────────────────
+const zert = (fuell: string) => `30820010${fuell.repeat(16)}`; // DER-SEQUENCE mit 16 Inhaltsbytes (öffentliches Zertifikat, Form)
+const ZERT: Record<string, string> = { sqllnx01: zert('A1'), sqllnx02: zert('B2'), sqllnxcfg: zert('C3') };
+const FP: Record<string, string> = { sqllnx01: '1'.repeat(40), sqllnx02: '2'.repeat(40), sqllnxcfg: '3'.repeat(40) };
+const IP: Record<string, string> = Object.fromEntries(HA_KNOTEN.map(k => [k.name, k.ip]));
+const fencingOk = (k: string, nodeid: string) => ({ bootId: 'b-neu', jetztS: 1_795_000_200, identitaet: { cluster: 'sqllnxcl01', knoten: k, nodeid, konfHash: 'h1' }, test: { ...TEST01, knoten: k, nodeid }, beleg: { ...BELEG01, knoten: k, nodeid } });
+const statusAg = (k: string, nodeid: string, extra: Partial<LinuxHaStatus> = {}) => ({ ...STATUS_OK, cluster: CLUSTER_OK, fencing: fencingOk(k, nodeid), ...extra });
+const STATUS_3 = [statusAg('sqllnx01', '1'), statusAg('sqllnx02', '2'), statusAg('sqllnxcfg', '3')];
+const endpunkt = (k: string, zustand = 'geaendert') => ({ zustand, knoten: k, endpunkt: `TCP://${IP[k]}:5022`, fingerabdruck: FP[k], zertifikat: ZERT[k], aenderungen: zustand === 'schon' ? [] : ['zertifikat', 'endpunkt', 'pacemaker-login', 'pacemaker-zugangsdatei'] });
+const replikat = (k: string, rolle: string, zustand = 'geaendert') => ({ zustand, knoten: k, rolle, aenderungen: zustand === 'schon' ? [] : [rolle === 'primaer' ? 'ag-angelegt' : 'beigetreten'] });
+const ABSCHLUSS = { zustand: 'geaendert', ag: 'sqllnxag01', primaer: 'sqllnx01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg', clusterTyp: 'EXTERNAL', requiredSyncSql: 0, requiredSyncRessource: '0', sicherungVorgabe: 'PRIMARY',
+  datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], vip: '10.203.30.13/27', vipAuf: 'sqllnx01', promotedAuf: 'sqllnx01', aenderungen: ['db-alfredpruef', 'ressource-ag', 'ressource-vip', 'kolokation', 'reihenfolge', 'vip-aktiviert'] };
+const AG_TRESOR = { [HA_HACLUSTER_TRESOR]: 'Hk-Tresor-Wert-77', 'sqllnx-sqllnx01-sa': 'Sa-Eins-1111', 'sqllnx-sqllnx02-sa': 'Sa-Zwei-2222', 'sqllnx-sqllnxcfg-sa': 'Sa-Drei-3333' };
+const AG_EINGABE = { action: 'ag_anlegen', zugang: 'sqllnx01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg', datenbanken: ['alfredpruef'] };
+const AG_SCHRITTE = [LINUX_HA_BAUSTEINE.agEndpunkt, LINUX_HA_BAUSTEINE.agReplikat, LINUX_HA_BAUSTEINE.agAbschluss, LINUX_HA_BAUSTEINE.agEntfernen] as string[];
+
+describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () => {
+  const voll = (extra: Record<string, unknown[]> = {}, tresor: Record<string, string> = AG_TRESOR) => welt({
+    [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[],
+    [LINUX_HA_BAUSTEINE.agEndpunkt]: [endpunkt('sqllnx01'), endpunkt('sqllnx02'), endpunkt('sqllnxcfg')],
+    [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer'), replikat('sqllnx02', 'sekundaer'), replikat('sqllnxcfg', 'konfig')],
+    [LINUX_HA_BAUSTEINE.agAbschluss]: [ABSCHLUSS],
+    ...extra as Record<string, never[]>,
+  }, tresor);
+
+  it('nur im Change; Fencing-Gate: ohne gültigen Beleg auf allen drei Knoten Abbruch vor jeder SQL-Zeile (nur Status gelesen, nichts im Tresor)', async () => {
+    const w = voll();
+    expect((await w.skill.execute(AG_EINGABE, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
+    expect(w.aufrufe).toEqual([]);
+    for (const kaputt of [
+      { i: 1, s: statusAg('sqllnx02', '2', { fencing: { ...fencingOk('sqllnx02', '2'), beleg: null } }), grund: 'sqllnx02: kein Fencing-Beleg' },
+      { i: 2, s: statusAg('sqllnxcfg', '3', { fencing: { ...fencingOk('sqllnxcfg', '3'), identitaet: { cluster: 'sqllnxcl01', knoten: 'sqllnxcfg', nodeid: '3', konfHash: 'h2' } } }), grund: 'sqllnxcfg: Cluster seit dem Beleg neu eingerichtet' },
+      { i: 0, s: statusAg('sqllnx01', '1', { fencing: undefined }), grund: 'sqllnx01: kein Fencing-Beleg' },
+    ]) {
+      const st = [...STATUS_3]; st[kaputt.i] = kaputt.s as never;
+      const v = voll({ [LINUX_HA_BAUSTEINE.status]: st });
+      const r = await v.skill.execute(AG_EINGABE, imChange);
+      expect(r.success).toBe(false);
+      expect(r.error).toContain('Fencing nicht auf allen drei Knoten belegt');
+      expect(r.error).toContain(kaputt.grund);
+      expect(r.error).toContain('nichts geändert');
+      expect(v.aufrufe.map(a => a.baustein).every(b => b === LINUX_HA_BAUSTEINE.status)).toBe(true);
+      expect(v.aufrufe.filter(a => AG_SCHRITTE.includes(a.baustein))).toEqual([]);
+      expect(v.aufrufe.every(a => a.eingabe === undefined)).toBe(true);
+      expect(v.gesetzt).toEqual([]);
+    }
+    // Zugang zeigt auf einen anderen Knoten, Cluster nicht 3/3 → ebenfalls Abbruch vor jeder SQL-Zeile
+    const fremd = voll({ [LINUX_HA_BAUSTEINE.status]: [STATUS_3[0], statusAg('sqllnx01', '1'), STATUS_3[2]] });
+    expect((await fremd.skill.execute(AG_EINGABE, imChange)).error).toContain('sqllnx02: Zugang zeigt auf Knoten sqllnx01');
+    const halb = voll({ [LINUX_HA_BAUSTEINE.status]: [STATUS_3[0], statusAg('sqllnx02', '2', { cluster: { ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, online: ['sqllnx01', 'sqllnx02'] } } }), STATUS_3[2]] });
+    expect((await halb.skill.execute(AG_EINGABE, imChange)).error).toContain('2/3 online');
+    expect([...fremd.aufrufe, ...halb.aufrufe].filter(a => AG_SCHRITTE.includes(a.baustein))).toEqual([]);
+  });
+
+  it('Ablauf: Status ×3 → Endpunkt ×3 → Replikat Primär, Sekundär, Konfig → Abschluss; Geheimnisse nur über stdin; Tresor nach dem Setzen', async () => {
+    const w = voll();
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.map(a => `${a.baustein}@${a.zugang}`)).toEqual([
+      ...['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => `${LINUX_HA_BAUSTEINE.status}@${z}`),
+      ...['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => `${LINUX_HA_BAUSTEINE.agEndpunkt}@${z}`),
+      ...['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => `${LINUX_HA_BAUSTEINE.agReplikat}@${z}`),
+      `${LINUX_HA_BAUSTEINE.agAbschluss}@sqllnx01`,
+    ]);
+    const besetzung = { primaer: 'sqllnx01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg' };
+    const ep = w.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agEndpunkt);
+    expect(ep.map(a => a.parameter)).toEqual(['primaer', 'sekundaer', 'konfig'].map(rolle => ({ cluster: 'sqllnxcl01', ag: 'sqllnxag01', besetzung, rolle, knoten: HA_KNOTEN })));
+    expect(ep[0]!.timeoutMs).toBe(180_000);
+    // Kennwörter: sa je Knoten, ein Pacemaker-Kennwort für alle, Master-Key je Knoten — neu erzeugt und nach dem Lauf im Tresor
+    const pm = w.tresor.get('sqllnx-ha-pacemaker')!;
+    expect(pm).toHaveLength(24);
+    for (const [i, z] of ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].entries()) {
+      const e = JSON.parse(ep[i]!.eingabe!) as Record<string, string>;
+      expect(Object.keys(e).sort()).toEqual(['hauptschluessel', 'pacemaker', 'sa']);
+      expect(e.sa).toBe((AG_TRESOR as Record<string, string>)[`sqllnx-${z}-sa`]);
+      expect(e.pacemaker).toBe(pm);
+      expect(e.hauptschluessel).toBe(w.tresor.get(`sqllnx-${z}-masterkey`));
+    }
+    expect(new Set(['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => w.tresor.get(`sqllnx-${z}-masterkey`))).size).toBe(3);
+    expect(w.gesetzt.map(g => g.name).sort()).toEqual(['sqllnx-ha-pacemaker', 'sqllnx-sqllnx01-masterkey', 'sqllnx-sqllnx02-masterkey', 'sqllnx-sqllnxcfg-masterkey']);
+    const rp = w.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agReplikat);
+    for (const a of [...rp, ...w.aufrufe.filter(x => x.baustein === LINUX_HA_BAUSTEINE.agAbschluss)]) expect(Object.keys(JSON.parse(a.eingabe!))).toEqual(['sa']);
+    const ab = w.aufrufe.find(a => a.baustein === LINUX_HA_BAUSTEINE.agAbschluss)!;
+    expect(ab.parameter).toEqual({ ag: 'sqllnxag01', besetzung, knoten: HA_KNOTEN, datenbanken: ['alfredpruef'], vip: { ip: '10.203.30.13', praefix: 27 } });
+    expect(ab.timeoutMs).toBe(900_000);
+    const geheim = [...w.tresor.values()];
+    for (const a of w.aufrufe) for (const g of geheim) { expect(JSON.stringify(a.parameter)).not.toContain(g); expect(a.zweck).not.toContain(g); }
+    for (const g of geheim) expect(JSON.stringify(r)).not.toContain(g);
+    expect(r.display).toBe('✅ Verfügbarkeitsgruppe sqllnxag01 (CLUSTER_TYPE EXTERNAL): Primär sqllnx01, sqllnx02 SYNCHRONOUS_COMMIT (alfredpruef SYNCHRONIZED), sqllnxcfg CONFIGURATION_ONLY; '
+      + 'REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT 0 in SQL und Ressource ag_cluster; Sicherungsvorgabe PRIMARY; VIP 10.203.30.13/27 auf sqllnx01 (Promoted sqllnx01) — geändert: '
+      + 'sqllnx01: zertifikat, endpunkt, pacemaker-login, pacemaker-zugangsdatei; sqllnx02: zertifikat, endpunkt, pacemaker-login, pacemaker-zugangsdatei; sqllnxcfg: zertifikat, endpunkt, pacemaker-login, pacemaker-zugangsdatei; '
+      + 'sqllnx01: ag-angelegt; sqllnx02: beigetreten; sqllnxcfg: beigetreten; sqllnx01: db-alfredpruef, ressource-ag, ressource-vip, kolokation, reihenfolge, vip-aktiviert');
+  });
+
+  it('nur öffentliche Zertifikate verlassen einen Knoten: jeder Knoten bekommt genau die beiden fremden Endpunkt-Zertifikate; alles andere bricht vor dem Austausch ab', async () => {
+    const w = voll();
+    await w.skill.execute(AG_EINGABE, imChange);
+    const rp = w.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agReplikat);
+    for (const a of rp) {
+      const p = a.parameter as { besetzung: unknown; rolle: string; peers: Array<{ name: string; zertifikat: string; fingerabdruck: string }> };
+      const ich = a.zugang;
+      expect(p.peers.map(x => x.name)).toEqual(HA_KNOTEN.map(k => k.name).filter(n => n !== ich));
+      for (const x of p.peers) expect(x).toEqual({ name: x.name, zertifikat: ZERT[x.name], fingerabdruck: FP[x.name] });
+      expect(JSON.stringify(p)).not.toContain(ZERT[ich]!);
+    }
+    // ein Endpunkt-Ergebnis, das kein einzelnes DER-Zertifikat ist (z. B. PVK-Blob, PEM mit privatem Schlüssel, Länge passt nicht), wird nie weitergegeben
+    for (const boese of ['1EF1B5B000000000', '-----BEGIN PRIVATE KEY-----', `${zert('A1')}00`, '30820010AB', zert('A1').toLowerCase().replace('3082', '3083')]) {
+      const v = voll({ [LINUX_HA_BAUSTEINE.agEndpunkt]: [endpunkt('sqllnx01'), { ...endpunkt('sqllnx02'), zertifikat: boese }, endpunkt('sqllnxcfg')] });
+      const r = await v.skill.execute(AG_EINGABE, imChange);
+      expect(r.success).toBe(false);
+      expect(r.error).toContain('sqllnx02 lieferte kein öffentliches Endpunkt-Zertifikat');
+      expect(v.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agReplikat)).toEqual([]);
+    }
+  });
+
+  it('required_synchronized_secondaries_to_commit muss an beiden Stellen 0 sein; zweiter Lauf „nichts zu tun“ ohne Tresor-Schreiben', async () => {
+    for (const [feld, wert] of [['requiredSyncRessource', '1'], ['requiredSyncSql', 1], ['requiredSyncRessource', undefined], ['clusterTyp', 'WSFC']] as const) {
+      const v = voll({ [LINUX_HA_BAUSTEINE.agAbschluss]: [{ ...ABSCHLUSS, [feld]: wert }] });
+      const r = await v.skill.execute(AG_EINGABE, imChange);
+      expect(r.success, feld).toBe(false);
+      expect(r.error).toContain('Selbstprüfung');
+    }
+    const tresor = { ...AG_TRESOR, 'sqllnx-ha-pacemaker': 'Pm-Wert-4444', 'sqllnx-sqllnx01-masterkey': 'Mk-1', 'sqllnx-sqllnx02-masterkey': 'Mk-2', 'sqllnx-sqllnxcfg-masterkey': 'Mk-3' };
+    const w = voll({
+      [LINUX_HA_BAUSTEINE.agEndpunkt]: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(k => endpunkt(k, 'schon')),
+      [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer', 'schon'), replikat('sqllnx02', 'sekundaer', 'schon'), replikat('sqllnxcfg', 'konfig', 'schon')],
+      [LINUX_HA_BAUSTEINE.agAbschluss]: [{ ...ABSCHLUSS, zustand: 'schon', aenderungen: [] }],
+    }, tresor);
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toMatch(/^Verfügbarkeitsgruppe sqllnxag01 \(CLUSTER_TYPE EXTERNAL\): Primär sqllnx01, .* — nichts zu tun$/);
+    expect(w.gesetzt).toEqual([]);
+    expect(JSON.parse(w.aufrufe.find(a => a.baustein === LINUX_HA_BAUSTEINE.agEndpunkt)!.eingabe!)).toEqual({ sa: 'Sa-Eins-1111', hauptschluessel: 'Mk-1', pacemaker: 'Pm-Wert-4444' });
+  });
+
+  it('Kennwörter: Master-Key bzw. Pacemaker-Login gesetzt (Marke) → im Tresor, auch wenn der Lauf danach scheitert; ohne sa-Eintrag kein Fernaufruf; Meldungen geschwärzt', async () => {
+    const f = voll({ [LINUX_HA_BAUSTEINE.agEndpunkt]: [{ code: 1, stdout: 'ALFRED-MASTERKEY-GESETZT\nALFRED-PACEMAKER-GESETZT\nALFRED-HA {"zustand":"fehler","fehler":"Endpunkt: Port 5022 belegt"}' }] });
+    const r = await f.skill.execute(AG_EINGABE, imChange);
+    expect(r.error).toContain('Port 5022 belegt');
+    expect(f.gesetzt.map(g => g.name).sort()).toEqual(['sqllnx-ha-pacemaker', 'sqllnx-sqllnx01-masterkey']);
+    const vorher = voll({ [LINUX_HA_BAUSTEINE.agEndpunkt]: [{ zustand: 'fehler', fehler: 'Master-Key in master besteht mit anderem Kennwort' }] });
+    await vorher.skill.execute(AG_EINGABE, imChange);
+    expect(vorher.gesetzt).toEqual([]);
+    const { 'sqllnx-sqllnx02-sa': _weg, ...ohneSa } = AG_TRESOR;
+    const o = voll({}, ohneSa);
+    expect((await o.skill.execute(AG_EINGABE, imChange)).error).toContain('sqllnx-sqllnx02-sa fehlt');
+    expect(o.aufrufe.filter(a => AG_SCHRITTE.includes(a.baustein))).toEqual([]);
+    const g = voll({ [LINUX_HA_BAUSTEINE.agReplikat]: [{ code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","fehler":"Login mit Sa-Zwei-2222 abgelehnt"}' }] });
+    expect((await g.skill.execute(AG_EINGABE, imChange)).error).toContain('Login mit [geschwärzt] abgelehnt');
+  });
+
+  it('Parameter: Besetzung nur aus den festen Knoten (Konfig = sqllnxcfg), Datenbanken Pflicht und gültig, VIP — Fehler vor jedem Fernaufruf; Planprüfung', async () => {
+    const w = voll();
+    const fehler = async (x: Record<string, unknown>) => (await w.skill.execute({ ...AG_EINGABE, ...x }, imChange)).error;
+    expect(await fehler({ datenbanken: [] })).toContain('datenbanken');
+    expect(await fehler({ datenbanken: ['master'] })).toContain('datenbanken');
+    expect(await fehler({ datenbanken: ["x'; DROP"] })).toContain('datenbanken');
+    expect(await fehler({ sekundaer: 'sqllnx01' })).toContain('verschieden');
+    expect(await fehler({ konfig: 'sqllnx02', sekundaer: 'sqllnxcfg' })).toContain('konfig: sqllnxcfg');
+    expect(await fehler({ zugang: 'sqllnx09' })).toContain('sqllnx01, sqllnx02');
+    expect(await fehler({ vip: '10.203.30.13' })).toContain('vip');
+    expect(await fehler({ ag: 'ag; drop' })).toContain('ag:');
+    expect(w.aufrufe).toEqual([]);
+    expect(w.skill.pruefeEingabe(AG_EINGABE)).toBeUndefined();
+    expect(w.skill.pruefeEingabe({ ...AG_EINGABE, datenbanken: undefined })).toContain('datenbanken');
+    expect(w.skill.pruefeEingabe({ action: 'ag_entfernen', zugang: 'sqllnx01' })).toBeUndefined();
+    expect(w.skill.mindestZeitlimitS('ag_anlegen')).toBe(LINUX_HA_MIN_ZEITLIMIT_S.ag_anlegen);
+    expect(LINUX_HA_MIN_ZEITLIMIT_S.ag_anlegen).toBe(3 * 90 + 3 * 180 + 3 * 240 + 900 + 10 * 60);
+    expect(LINUX_HA_MIN_ZEITLIMIT_S.ag_entfernen).toBe(3 * 300 + 3 * 60);
+  });
+
+  it('ag_entfernen: Primär zuerst (Pacemaker-Ressourcen, AG), dann Sekundär und Konfig; nur sa über stdin; Datenbanken bleiben (Text nennt RESTORING)', async () => {
+    const ent = (k: string, zustand = 'geaendert') => ({ zustand, knoten: k, datenbanken: k === 'sqllnx01' ? [{ name: 'alfredpruef', zustand: 'ONLINE' }] : k === 'sqllnx02' ? [{ name: 'alfredpruef', zustand: 'RESTORING' }] : [], aenderungen: zustand === 'schon' ? [] : ['ag-entfernt', 'endpunkt-entfernt'] });
+    const w = welt({ [LINUX_HA_BAUSTEINE.agEntfernen]: [ent('sqllnx01'), ent('sqllnx02'), ent('sqllnxcfg'), ent('sqllnx01', 'schon'), ent('sqllnx02', 'schon'), ent('sqllnxcfg', 'schon')] }, AG_TRESOR);
+    expect((await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, {} as never)).error).toContain('nur als Schritt');
+    const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01', ag: 'sqllnxag01' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.map(a => [a.zugang, (a.parameter as { rolle: string; ressourcen: boolean }).rolle, (a.parameter as { ressourcen: boolean }).ressourcen])).toEqual([['sqllnx01', 'primaer', true], ['sqllnx02', 'sekundaer', false], ['sqllnxcfg', 'konfig', false]]);
+    expect(w.aufrufe.every(a => Object.keys(JSON.parse(a.eingabe!)).join() === 'sa')).toBe(true);
+    expect(w.aufrufe[0]!.timeoutMs).toBe(300_000);
+    expect(r.display).toBe('✅ Verfügbarkeitsgruppe sqllnxag01 entfernt (Pacemaker-Ressourcen ag_cluster/ag_vip, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei; Master-Keys bleiben); Datenbanken bleiben: sqllnx01 alfredpruef ONLINE; sqllnx02 alfredpruef RESTORING — geändert: sqllnx01: ag-entfernt, endpunkt-entfernt; sqllnx02: ag-entfernt, endpunkt-entfernt; sqllnxcfg: ag-entfernt, endpunkt-entfernt');
+    expect((await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange)).display).toContain('— nichts zu tun');
+  });
+});
+
+describe('I8e Paket 2 Task 5 — Change „Verfügbarkeitsgruppe sqllnxag01 anlegen“', () => {
+  const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const windowsAd = { metadata: { name: 'windows_ad', inputSchema: { type: 'object', properties: {
+    action: { type: 'string', enum: ['status', 'dns_eintrag', 'dns_eintrag_loeschen'] }, zugang: { type: 'string' }, zone: { type: 'string' }, name: { type: 'string' }, ip: { type: 'string' },
+  }, required: ['action', 'zugang'] } } };
+  const ctx = { skill: (n: string) => (n === 'linux_ha' ? ha : n === 'windows_ad' ? windowsAd : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  const anlegen = { titel: 'AG anlegen', art: 'aktion', skill: 'linux_ha', aktion: 'ag_anlegen', zeitlimitS: 3100,
+    parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg', datenbanken: ['alfredpruef'], vip: '10.203.30.13/27' },
+    rueckweg: { skill: 'linux_ha', aktion: 'ag_entfernen', parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01' } } };
+  const dns = { titel: 'DNS sqllnxag01', art: 'aktion', skill: 'windows_ad', aktion: 'dns_eintrag', parameter: { zugang: 'dc01', zone: 'ad.3033.at', name: 'sqllnxag01', ip: '10.203.30.13' },
+    rueckweg: { skill: 'windows_ad', aktion: 'dns_eintrag_loeschen', parameter: { zugang: 'dc01', zone: 'ad.3033.at', name: 'sqllnxag01' } }, pruefung: { typ: 'ping', ziel: '10.203.30.13' } };
+  const plan = (schritte: unknown[]) => ({ titel: 'Verfügbarkeitsgruppe sqllnxag01 anlegen', begruendung: 'I8e Paket 2 Task 5', typ: 'normal', risiko: 'hoch', ausfallMinuten: 0, betroffen: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], schritte, ohneSicherungGrund: 'AG-Aufbau hat einen eigenen Rückweg (ag_entfernen), Datenbanken bleiben' });
+
+  it('ag_anlegen mit Rückweg ag_entfernen (prüft sich selbst), danach DNS als eigener Schritt: 0 Fehler', () => {
+    expect(aktionsArt('linux_ha', 'ag_anlegen')).toBe('aendern');
+    expect(aktionsArt('linux_ha', 'ag_entfernen')).toBe('aendern');
+    expect(pruefeChangePlan(plan([anlegen, dns]), ctx).fehler).toEqual([]);
+  });
+  it('Rückweg Pflicht und genau linux_ha.ag_entfernen; zeitlimitS unter der Summe der Bausteine abgewiesen; fehlende Datenbanken schon beim Planen', () => {
+    const k = pruefeChangePlan(plan([{ ...anlegen, rueckweg: { keiner: 'Neuaufbau' } }]), ctx).fehler;
+    expect(k.some(x => x.startsWith('Schritt 1:') && x.includes('braucht immer einen Rückweg — rueckweg linux_ha.ag_entfernen'))).toBe(true);
+    const a = pruefeChangePlan(plan([{ ...anlegen, rueckweg: { skill: 'linux_ha', aktion: 'cluster_entfernen', parameter: { zugang: 'sqllnx01' } } }]), ctx).fehler;
+    expect(a.some(x => x.includes('braucht als Rückweg genau linux_ha.ag_entfernen (zugang, ag), nicht linux_ha.cluster_entfernen'))).toBe(true);
+    const z = pruefeChangePlan(plan([{ ...anlegen, zeitlimitS: 1800, parameter: { ...anlegen.parameter, datenbanken: [] } }]), ctx).fehler;
+    expect(z.some(x => x.includes('zeitlimitS 1800 zu klein für linux_ha.ag_anlegen'))).toBe(true);
+    expect(z.some(x => x.includes('datenbanken'))).toBe(true);
+  });
+});
+
 describe('I8e Paket 2 — Werkzeugwahl', () => {
   it('Pacemaker, SBD, Verfügbarkeitsgruppe, Failover wählen die Infrastruktur-Kategorie', async () => {
     const { selectCategoriesOhneRueckfall } = await import('../skill-filter.js');

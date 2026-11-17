@@ -12,6 +12,10 @@ import {
   HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI, WARTE_WATCHDOG_SKRIPT, SBD_DROPIN_INHALT, HA_SBD_DROPIN,
   type HaVorbereitenParameter, type HaClusterParameter, type FencingBeleg, type FencingLage,
 } from './linux-ha.js';
+import {
+  haAgEndpunktSkript, haAgReplikatSkript, haAgAbschlussSkript, haAgEntfernenSkript, pruefeHaAgEndpunkt, pruefeHaAgReplikat, pruefeHaAgAbschluss, pruefeHaAgEntfernen,
+  istOeffentlichesZertifikat, PY_AG_PCS, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
+} from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
 
@@ -97,7 +101,8 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
   });
   it('Live-Fix: HA_BEFEHLE deckt jedes Programm der erzeugten Skripte ab (und nennt nichts, was kein Skript nutzt)', () => {
     const skripte = [haVorbereitenSkript(P), haStatusSkript(), haClusterSkript(PC), haClusterEntfernenSkript(PC),
-      haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'trennung' }), haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'haenger' }), haFencingBelegenSkript(PC)].join('\n');
+      haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'trennung' }), haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'haenger' }), haFencingBelegenSkript(PC),
+      ...AG_SKRIPTE()].join('\n');
     // bekannte Programme außerhalb des Grundsystems (Pacemaker/Corosync/SBD-Werkzeuge, Paketverwaltung, Netz, systemd, SQL)
     const KANDIDATEN = ['pcs', 'crm_mon', 'crm_attribute', 'crm_resource', 'crm_node', 'crm_verify', 'crm_simulate', 'crm_failcount', 'crm_standby', 'crm_shadow', 'crm_report', 'crm_ticket', 'crm_diff',
       'cibadmin', 'stonith_admin', 'attrd_updater', 'fence_watchdog', 'corosync-quorumtool', 'corosync-cmapctl', 'corosync-cfgtool', 'corosync-keygen', 'corosync-cpgtool', 'sbd', 'wdctl',
@@ -1433,5 +1438,315 @@ describe('I8e Paket 2 — Live-Fix: Ergebnisfelder ohne Geheimnis-Namen', { time
       ueberstehtSchwaerzung(`ALFRED-HA ${pyJson(status)}`, 'status');
       expect([...schluessel(status)].filter(n => GEHEIM_NAME.test(n))).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// ── Task 5: Verfügbarkeitsgruppe (ag_anlegen / ag_entfernen) ────────────────────────────────────────────────────────────────────
+
+const BES = { primaer: 'sqllnx01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg' };
+const DER = (f: string) => `30820010${f.repeat(16)}`;
+const PEERS: Record<string, HaAgReplikatParameter['peers']> = {
+  sqllnx01: [{ name: 'sqllnx02', zertifikat: DER('B2'), fingerabdruck: '2'.repeat(40) }, { name: 'sqllnxcfg', zertifikat: DER('C3'), fingerabdruck: '3'.repeat(40) }],
+  sqllnx02: [{ name: 'sqllnx01', zertifikat: DER('A1'), fingerabdruck: '1'.repeat(40) }, { name: 'sqllnxcfg', zertifikat: DER('C3'), fingerabdruck: '3'.repeat(40) }],
+  sqllnxcfg: [{ name: 'sqllnx01', zertifikat: DER('A1'), fingerabdruck: '1'.repeat(40) }, { name: 'sqllnx02', zertifikat: DER('B2'), fingerabdruck: '2'.repeat(40) }],
+};
+const ROLLE_VON = { sqllnx01: 'primaer', sqllnx02: 'sekundaer', sqllnxcfg: 'konfig' } as const;
+const AG_EP = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgEndpunktParameter => ({ cluster: 'sqllnxcl01', ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN] });
+const AG_RP = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgReplikatParameter => ({ ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN], peers: PEERS[k]!.map(x => ({ ...x })) });
+const AG_AB: HaAgAbschlussParameter = { ag: 'sqllnxag01', besetzung: { ...BES }, knoten: [...HA_KNOTEN], datenbanken: ['alfredpruef'], vip: { ip: '10.203.30.13', praefix: 27 } };
+const AG_EN = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgEntfernenParameter => ({ ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN], ressourcen: k === 'sqllnx01' });
+function AG_SKRIPTE(): string[] {
+  return (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).flatMap(k => [haAgEndpunktSkript(AG_EP(k)), haAgReplikatSkript(AG_RP(k)), haAgEntfernenSkript(AG_EN(k))]).concat(haAgAbschlussSkript(AG_AB));
+}
+
+describe('I8e Paket 2 Task 5 — AG-Bausteine (Text, Validatoren)', () => {
+  it('registriert; Validatoren: Besetzung aus den festen Knoten, Konfig = sqllnxcfg, Peers = die beiden anderen mit öffentlichem Zertifikat, Datenbanken, VIP', () => {
+    expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agEndpunkt, AG_EP())).toBe(haAgEndpunktSkript(AG_EP()));
+    expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agReplikat, AG_RP('sqllnx02'))).toBe(haAgReplikatSkript(AG_RP('sqllnx02')));
+    expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agAbschluss, AG_AB)).toBe(haAgAbschlussSkript(AG_AB));
+    expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agEntfernen, AG_EN())).toBe(haAgEntfernenSkript(AG_EN()));
+    expect(pruefeHaAgEndpunkt(AG_EP())).toBeUndefined();
+    expect(pruefeHaAgEndpunkt({ ...AG_EP(), besetzung: { ...BES, konfig: 'sqllnx02', sekundaer: 'sqllnxcfg' } })).toContain('konfig: sqllnxcfg');
+    expect(pruefeHaAgEndpunkt({ ...AG_EP(), besetzung: { ...BES, sekundaer: 'sqllnx01' } })).toContain('verschieden');
+    expect(pruefeHaAgEndpunkt({ ...AG_EP(), rolle: 'zeuge' as never })).toContain('rolle');
+    expect(pruefeHaAgEndpunkt({ ...AG_EP(), ag: "ag'; --" })).toContain('ag:');
+    expect(pruefeHaAgReplikat(AG_RP('sqllnx02'))).toBeUndefined();
+    expect(pruefeHaAgReplikat({ ...AG_RP('sqllnx02'), peers: PEERS.sqllnx01! })).toContain('peers');
+    expect(pruefeHaAgReplikat({ ...AG_RP(), peers: [{ ...PEERS.sqllnx01![0]!, zertifikat: '1EF1B5B0' + '00'.repeat(20) }, PEERS.sqllnx01![1]!] })).toContain('öffentliches Zertifikat');
+    expect(pruefeHaAgReplikat({ ...AG_RP(), peers: [{ ...PEERS.sqllnx01![0]!, fingerabdruck: 'xyz' }, PEERS.sqllnx01![1]!] })).toContain('fingerabdruck');
+    expect(pruefeHaAgAbschluss(AG_AB)).toBeUndefined();
+    for (const d of [[], ['tempdb'], ['a b'], ['alfredpruef', 'alfredpruef']]) expect(pruefeHaAgAbschluss({ ...AG_AB, datenbanken: d })).toContain('datenbanken');
+    expect(pruefeHaAgAbschluss({ ...AG_AB, vip: { ip: '10.203.30.256', praefix: 27 } })).toContain('vip');
+    expect(pruefeHaAgEntfernen(AG_EN())).toBeUndefined();
+    expect(pruefeHaAgEntfernen({ ...AG_EN(), ressourcen: 'ja' as never })).toContain('ressourcen');
+    // DER: 30 82 LLLL + genau LLLL Bytes, Großbuchstaben-Hex; PVK-Blob, PEM, Rest danach, kleingeschrieben → nein
+    expect(istOeffentlichesZertifikat(DER('A1'))).toBe(true);
+    for (const x of ['1EF1B5B0' + '00'.repeat(20), '-----BEGIN PRIVATE KEY-----', `${DER('A1')}00`, '30820010AB', DER('a1'), '', 'ZZ']) expect(istOeffentlichesZertifikat(x), x).toBe(false);
+  });
+
+  it('nur öffentliche Zertifikate verlassen einen Knoten: Endpunkt exportiert nur CERTENCODED, nie privaten Schlüssel; Import nur FROM BINARY', () => {
+    const alle = AG_SKRIPTE().join('\n');
+    for (const verboten of ['CERTPRIVATEKEY', 'PRIVATE KEY', 'BACKUP CERTIFICATE', 'BACKUP MASTER KEY', 'BACKUP SERVICE MASTER KEY', 'FROM FILE']) expect(alle, verboten).not.toContain(verboten);
+    const ep = haAgEndpunktSkript(AG_EP());
+    expect(ep).toContain('CONVERT(varchar(8000), CERTENCODED(c.certificate_id), 2)');
+    const rp = haAgReplikatSkript(AG_RP());
+    expect(rp).toContain(`CREATE CERTIFICATE [alfred_ag_sqllnx02] AUTHORIZATION [alfred_ag_sqllnx02] FROM BINARY = 0x${DER('B2')}`);
+    expect(rp).toContain('GRANT CONNECT ON ENDPOINT::[alfred_hadr] TO [alfred_ag_sqllnx02]');
+    expect(rp).not.toContain(DER('A1')); // das eigene Zertifikat kommt nie zurück
+    // Geheimnisse nie im Text, nur über stdin (feld)
+    const mit = haAgEndpunktSkript({ ...AG_EP(), sa: 'Sa-Geheim-1', pacemaker: 'Pm-Geheim-2' } as never);
+    expect(mit).not.toMatch(/Sa-Geheim-1|Pm-Geheim-2/);
+    for (const f of ['sa', 'hauptschluessel', 'pacemaker']) expect(mit).toContain(`geheim_lesen ${f} `);
+  });
+
+  it('required_synchronized_secondaries_to_commit = 0 an beiden Stellen (CREATE AVAILABILITY GROUP und pcs-Ressource) und in der Selbstprüfung', () => {
+    // T-SQL steht als Shell-Literal im Skript (' → '''); für den Vergleich zurückübersetzt
+    const un = (t: string) => t.replaceAll(`'\\''`, "'");
+    const rp = un(haAgReplikatSkript(AG_RP()));
+    expect(rp).toContain('CREATE AVAILABILITY GROUP [sqllnxag01] WITH (CLUSTER_TYPE = EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0, AUTOMATED_BACKUP_PREFERENCE = PRIMARY) FOR REPLICA ON');
+    expect(rp).toContain("N''sqllnx01'' WITH (ENDPOINT_URL = N''TCP://10.203.30.10:5022'', AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, FAILOVER_MODE = EXTERNAL, SEEDING_MODE = AUTOMATIC)");
+    expect(rp).toContain("N''sqllnx02'' WITH (ENDPOINT_URL = N''TCP://10.203.30.11:5022'', AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, FAILOVER_MODE = EXTERNAL, SEEDING_MODE = AUTOMATIC)");
+    expect(rp).toContain("N''sqllnxcfg'' WITH (ENDPOINT_URL = N''TCP://10.203.30.12:5022'', AVAILABILITY_MODE = CONFIGURATION_ONLY)");
+    expect(rp).toContain('SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)');
+    const sek = un(haAgReplikatSkript(AG_RP('sqllnx02')));
+    expect(sek).toContain("EXEC (N'ALTER AVAILABILITY GROUP [sqllnxag01] JOIN WITH (CLUSTER_TYPE = EXTERNAL)')");
+    expect(sek).toContain("EXEC (N'ALTER AVAILABILITY GROUP [sqllnxag01] GRANT CREATE ANY DATABASE')");
+    const cfg = un(haAgReplikatSkript(AG_RP('sqllnxcfg')));
+    expect(cfg).toContain('JOIN WITH (CLUSTER_TYPE = EXTERNAL)');
+    expect(cfg).not.toContain('GRANT CREATE ANY DATABASE');
+    const ab = haAgAbschlussSkript(AG_AB);
+    expect(ab).toContain('pcs resource create "$AG_RES" ocf:mssql:ag "ag_name=$AG" required_synchronized_secondaries_to_commit=0 meta failure-timeout=60s promotable notify=true');
+    expect(ab).toContain('pcs resource create "$VIP_RES" ocf:heartbeat:IPaddr2 "ip=$VIP_IP" "cidr_netmask=$VIP_PRAEFIX" op monitor interval=30s --disabled');
+    expect(ab).toContain('pcs constraint colocation add "$VIP_RES" with Promoted "$AG_KLON" INFINITY');
+    expect(ab).toContain('pcs constraint order promote "$AG_KLON" then start "$VIP_RES"');
+    expect(ab).toContain('abbruch "Selbstprüfung: REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist');
+    expect(ab).toContain('abbruch "Selbstprüfung: required_synchronized_secondaries_to_commit an der Ressource');
+  });
+
+  it.skipIf(!BASH)('bash -n: alle AG-Skripte syntaktisch gültig', () => {
+    for (const s of AG_SKRIPTE()) { const r = spawnSync('bash', ['-n'], { input: s, encoding: 'utf8' }); expect(r.status, r.stderr).toBe(0); }
+  });
+  it.skipIf(!PYTHON)('PY_AG_PCS parst; crm_mon-Lage (Promoted/Master, VIP Started) und Constraints (Promoted/Master, INFINITY)', () => {
+    const py = (args: string[], input: string) => spawnSync(PYTHON!, ['-c', PY_AG_PCS, ...args], { input, encoding: 'utf8' });
+    const mon = '<pacemaker-result><resources><clone id="ag_cluster-clone" multi_state="true"><resource id="ag_cluster" role="Promoted" active="true" failed="false"><node name="sqllnx01" id="1"/></resource>'
+      + '<resource id="ag_cluster" role="Unpromoted" active="true"><node name="sqllnx02" id="2"/></resource></clone><resource id="ag_vip" role="Started" active="true"><node name="sqllnx01" id="1"/></resource></resources></pacemaker-result>';
+    expect(py(['lage', 'ag_cluster', 'ag_vip'], mon).stdout.trim()).toBe('sqllnx01 sqllnx01');
+    expect(py(['lage', 'ag_cluster', 'ag_vip'], mon.replace('"Promoted"', '"Master"').replace('role="Started"', 'role="Stopped"')).stdout.trim()).toBe('sqllnx01 -');
+    expect(py(['lage', 'ag_cluster', 'ag_vip'], 'kaputt').status).toBe(2);
+    const reg = '<constraints><rsc_colocation id="c1" rsc="ag_vip" with-rsc="ag_cluster-clone" with-rsc-role="Promoted" score="INFINITY"/><rsc_order id="o1" first="ag_cluster-clone" first-action="promote" then="ag_vip" then-action="start"/></constraints>';
+    expect(py(['regeln', 'ag_vip', 'ag_cluster-clone'], reg).stdout.trim()).toBe('1 1');
+    expect(py(['regeln', 'ag_vip', 'ag_cluster-clone'], reg.replace('Promoted', 'Started').replace('promote', 'start')).stdout.trim()).toBe('0 0');
+  });
+  it('Ergebnisfelder ohne Geheimnis-Namen (Schwärzung im Fernzugriff)', () => {
+    const namen = new Set<string>();
+    for (const t of AG_SKRIPTE()) for (const m of t.matchAll(/\\?"([A-Za-z_][A-Za-z0-9_]*)\\?"\s*:/g)) namen.add(m[1]!);
+    for (const n of ['zustand', 'zertifikat', 'fingerabdruck', 'requiredSyncSql', 'requiredSyncRessource', 'datenbanken']) expect(namen).toContain(n);
+    expect([...namen].filter(n => GEHEIM_NAME.test(n))).toEqual([]);
+  });
+});
+
+/** AG-Bausteine mit nachgebildetem sqlcmd (Antwort je „-- ALFRED-SCHRITT <name>“), pcs, crm_resource, crm_mon, cibadmin, ip */
+const AG_STUBS = String.raw`
+PM_DATEI="$T/secrets/passwd"; WARTE_RUNDEN=3; SYNC_RUNDEN=3
+log() { echo "$*" >>"$T/log"; }
+python3() { PYTHONUTF8=1 "$PY" "$@"; }
+eigener_name() { cat "$T/name"; }
+sleep() { :; }
+fpy() { [ ! -f "$T/fpy_kaputt" ] || return 1; [ ! -f "$T/fencing_grund" ] || cat "$T/fencing_grund"; return 0; }
+datei_rechte() { cat "$T/rechte" 2>/dev/null || echo '0 600'; }
+chown() { :; }
+sql() {
+  local t; t=$(grep -o 'ALFRED-SCHRITT [a-z_]*' <<<"$1" | head -n 1 | cut -d' ' -f2)
+  echo "§{t:-bereit}" >>"$T/sqllog"
+  [ -n "$t" ] || return 0
+  printf '%s\n' "$1" >"$T/tsql_$t"
+  if [ -f "$T/sqlfehler_$t" ]; then cat "$T/sqlfehler_$t"; return 1; fi
+  [ -f "$T/sql/$t" ] || { echo "kein SQL-Stub $t"; return 1; }
+  cat "$T/sql/$t"
+}
+ip() { if [ -f "$T/res_ag_vip" ] && [ ! -f "$T/meta_ag_vip_target-role" ]; then echo "2: eth0    inet 10.203.30.10/27 brd 10.203.30.31 scope global eth0"; echo "2: eth0    inet 10.203.30.13/27 brd 10.203.30.31 scope global secondary eth0"; fi; }
+crm_resource() {
+  local r='' g='' m=0 q=0
+  while [ $# -gt 0 ]; do case "$1" in --resource) r=$2; shift ;; --get-parameter) g=$2; shift ;; --meta) m=1 ;; --query-xml) q=1 ;; esac; shift; done
+  [ -f "$T/res_$r" ] || { echo "resource $r not found" >&2; return 6; }
+  [ "$q" = 0 ] || { echo "<primitive id=\"$r\"/>"; return 0; }
+  if [ "$m" = 1 ]; then [ -f "$T/meta_§{r}_$g" ] || return 6; cat "$T/meta_§{r}_$g"; return 0; fi
+  [ -f "$T/param_§{r}_$g" ] || return 6; cat "$T/param_§{r}_$g"
+}
+pcs() {
+  log "pcs $*"
+  [ ! -f "$T/pcs_scheitert" ] || { echo 'Error: pcs kaputt'; return 1; }
+  case "$1 $2" in
+    "resource create") local r=$3 a; shift 4; for a in "$@"; do case "$a" in meta|op|promotable) break ;; *=*) echo "§{a#*=}" >"$T/param_§{r}_§{a%%=*}" ;; esac; done
+      touch "$T/res_$r"; case " $* " in *" --disabled "*) echo Stopped >"$T/meta_§{r}_target-role" ;; esac; return 0 ;;
+    "resource update") [ -f "$T/update_wirkungslos" ] || { local a=$4; echo "§{a#*=}" >"$T/param_§{3}_§{a%%=*}"; }; return 0 ;;
+    "resource enable") rm -f "$T/meta_§{3}_target-role"; return 0 ;;
+    "resource delete") rm -f "$T/res_$3" "$T/param_§{3}_"* "$T/meta_§{3}_"*; return 0 ;;
+    "constraint colocation") touch "$T/kolo"; return 0 ;;
+    "constraint order") touch "$T/ordn"; return 0 ;;
+  esac
+  echo "pcs-Stub kennt '$*' nicht" >&2; return 99
+}
+cibadmin() { echo '<constraints>'; [ ! -f "$T/kolo" ] || echo '<rsc_colocation id="c" rsc="ag_vip" with-rsc="ag_cluster-clone" with-rsc-role="Promoted" score="INFINITY"/>'; [ ! -f "$T/ordn" ] || echo '<rsc_order id="o" first="ag_cluster-clone" first-action="promote" then="ag_vip" then-action="start"/>'; echo '</constraints>'; }
+crm_mon() {
+  local p; p=$(cat "$T/promoted" 2>/dev/null || cat "$T/name")
+  echo '<pacemaker-result><summary><current_dc present="true" with_quorum="true"/><resources_configured number="0"/><cluster_options stonith-enabled="true"/></summary><nodes>'
+  echo '<node name="sqllnx01" online="true" type="member"/><node name="sqllnx02" online="true" type="member"/><node name="sqllnxcfg" online="true" type="member"/></nodes><resources>'
+  [ ! -f "$T/res_ag_cluster" ] || echo "<clone id=\"ag_cluster-clone\"><resource id=\"ag_cluster\" role=\"Promoted\" active=\"true\"><node name=\"$p\"/></resource></clone>"
+  if [ -f "$T/res_ag_vip" ] && [ ! -f "$T/meta_ag_vip_target-role" ]; then echo "<resource id=\"ag_vip\" role=\"Started\" active=\"true\"><node name=\"$p\"/></resource>"; fi
+  echo '</resources></pacemaker-result>'
+}
+`.replaceAll('§{', '${');
+
+interface AgLauf { rc: number; ergebnis?: Record<string, unknown>; aus: string; log: string; sqllog: string[] }
+const shQTest = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+/** Läufe nacheinander in EINEM Verzeichnis; `zwischen[i]` vor Lauf i (Shell, $T gesetzt); `ende` liest Dateien nach dem letzten Lauf */
+async function agLaeufe(texte: string[], eingabe: Record<string, string>, zwischen: string[] = [], ende = ''): Promise<{ laeufe: AgLauf[]; ende: string }> {
+  const teile = texte.map((t, i) => {
+    const text = t.replace('# ALFRED-ABLAUF', () => `${AG_STUBS}\n# ALFRED-ABLAUF`);
+    return `${zwischen[i] ?? ''}\n( ${text}\n) >"$T/aus${i}" 2>&1; echo "RC${i}=$?" >>"$T/rc"; mv "$T/log" "$T/log${i}" 2>/dev/null || : >"$T/log${i}"; mv "$T/sqllog" "$T/sqllog${i}" 2>/dev/null || : >"$T/sqllog${i}"`;
+  });
+  const huelle = [
+    'T=$(mktemp -d)', `PY=$(command -v ${PYTHON})`, 'mkdir -p "$T/sql" "$T/secrets"; echo sqllnx01 >"$T/name"', `ALFRED_EINGABE=${shQTest(JSON.stringify(eingabe))}`, ...teile,
+    'cat "$T/rc"',
+    ...texte.map((_, i) => `echo "---AUS${i}"; cat "$T/aus${i}"; echo "---LOG${i}"; cat "$T/log${i}"; echo "---SQL${i}"; cat "$T/sqllog${i}"`),
+    `echo ---ENDE; ${ende || ':'}; echo ---SCHLUSS`, 'rm -rf "$T"',
+  ].join('\n');
+  const r = await new Promise<{ stdout: string }>((ok, fehler) => {
+    const k = spawn('bash', [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    k.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
+    k.stderr.resume();
+    k.on('error', fehler);
+    k.on('close', () => ok({ stdout }));
+    k.stdin.end(huelle);
+  });
+  const o = r.stdout;
+  const zw = (a: string, b: string) => o.split(`${a}\n`)[1]?.split(`${b}\n`)[0] ?? '';
+  const laeufe = texte.map((_, i) => {
+    const aus = zw(`---AUS${i}`, `---LOG${i}`);
+    const sql = zw(`---SQL${i}`, i + 1 < texte.length ? `---AUS${i + 1}` : '---ENDE');
+    return { rc: Number(new RegExp(`RC${i}=(\\d+)`).exec(o)?.[1] ?? -1), ergebnis: haErgebnis(aus), aus, log: zw(`---LOG${i}`, `---SQL${i}`), sqllog: sql.split('\n').filter(Boolean) };
+  });
+  return { laeufe, ende: zw('---ENDE', '---SCHLUSS') };
+}
+const sqlStub = (werte: Record<string, string>) => Object.entries(werte).map(([k, v]) => `printf '%s\\n' ${shQTest(v)} >"$T/sql/${k}"`).join('\n');
+const GEHEIM = { sa: 'Sa-Wert-1111', hauptschluessel: 'Mk-Wert-2222', pacemaker: 'Pm-Wert-3333' };
+const FP1 = 'A'.repeat(40);
+const EP_NEU = sqlStub({ ep_pruefen: 'ALFRED|ok', ep_masterkey: 'ALFRED|1', ep_login: 'ALFRED|1| pacemaker-login pacemaker-view-server-state', ep_endpunkt: 'ALFRED| zertifikat endpunkt', ep_selbst: `ALFRED|${FP1}|${DER('A1')}` });
+const EP_SCHON = sqlStub({ ep_masterkey: 'ALFRED|0', ep_login: 'ALFRED|0|', ep_endpunkt: 'ALFRED|' });
+const AB_NEU = sqlStub({ ab_pruefen: 'ALFRED|ok', ab_dbs: 'ALFRED| db-alfredpruef', ab_sync: 'ALFRED|1|alfredpruef=SYNCHRONIZED',
+  ab_selbst: 'ALFRED|EXTERNAL|0|PRIMARY|PRIMARY|SECONDARY|CONNECTED|CONFIGURATION_ONLY|1|alfredpruef=SYNCHRONIZED' });
+
+describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 — AG-Bausteine ausgeführt (nachgebildetes sqlcmd/pcs)', { timeout: 180_000 }, () => {
+  it('Endpunkt: ohne gültigen Fencing-Beleg (oder nicht prüfbar, oder falscher Rechner) Abbruch VOR jeder SQL-Zeile', async () => {
+    const w = await agLaeufe([haAgEndpunktSkript(AG_EP()), haAgEndpunktSkript(AG_EP()), haAgEndpunktSkript(AG_EP())], GEHEIM,
+      [`${EP_NEU}\necho 'kein Fencing-Beleg' >"$T/fencing_grund"`, 'rm -f "$T/fencing_grund"; touch "$T/fpy_kaputt"', 'rm -f "$T/fpy_kaputt"; echo sqllnx02 >"$T/name"'], 'ls "$T/secrets"');
+    const [a, b, c] = w.laeufe as [AgLauf, AgLauf, AgLauf];
+    expect(a.rc).toBe(1);
+    expect(a.ergebnis).toMatchObject({ zustand: 'fehler' });
+    expect(String(a.ergebnis!.fehler)).toContain('Fencing auf sqllnx01 nicht belegt: kein Fencing-Beleg');
+    expect(String(a.ergebnis!.fehler)).toContain('keine SQL-Zeile ausgeführt');
+    expect(String(b.ergebnis!.fehler)).toContain('Fencing-Beleg auf sqllnx01 nicht prüfbar');
+    expect(String(c.ergebnis!.fehler)).toContain('Zugang zeigt auf sqllnx02, erwartet sqllnx01');
+    for (const l of [a, b, c]) { expect(l.sqllog).toEqual([]); expect(l.aus).not.toMatch(/ALFRED-(MASTERKEY|PACEMAKER)-GESETZT/); }
+    expect(w.ende.trim()).toBe('');
+  });
+
+  it('Endpunkt: erster Lauf legt an (Marken, Zugangsdatei mit Login + Kennwort, öffentliches Zertifikat im Ergebnis); zweiter Lauf „schon“', async () => {
+    const ep = haAgEndpunktSkript(AG_EP());
+    const w = await agLaeufe([ep, ep], GEHEIM, [EP_NEU, EP_SCHON], 'cat "$T/secrets/passwd"; echo "---TSQL"; cat "$T/tsql_ep_masterkey" "$T/tsql_ep_login"');
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.sqllog).toEqual(['bereit', 'ep_pruefen', 'ep_masterkey', 'ep_login', 'ep_endpunkt', 'ep_selbst']);
+    expect(a.aus).toContain('ALFRED-MASTERKEY-GESETZT');
+    expect(a.aus).toContain('ALFRED-PACEMAKER-GESETZT');
+    expect(a.ergebnis).toEqual({ zustand: 'geaendert', knoten: 'sqllnx01', rolle: 'primaer', endpunkt: 'TCP://10.203.30.10:5022', fingerabdruck: FP1, zertifikat: DER('A1'),
+      aenderungen: ['masterkey', 'pacemaker-login', 'pacemaker-view-server-state', 'zertifikat', 'endpunkt', 'pacemaker-zugangsdatei'] });
+    const [datei, tsql] = w.ende.split('---TSQL\n') as [string, string];
+    expect(datei).toBe('alfred_pacemaker\nPm-Wert-3333\n');
+    // Kennwörter nur im T-SQL über stdin an sqlcmd (hier: der Stub), nie in der Ausgabe
+    expect(tsql).toContain("CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'Mk-Wert-2222'");
+    expect(tsql).toContain("CREATE LOGIN [alfred_pacemaker] WITH PASSWORD = N'Pm-Wert-3333'");
+    for (const g of Object.values(GEHEIM)) expect(a.aus + b.aus).not.toContain(g);
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(b.aus).not.toMatch(/GESETZT/);
+    ueberstehtSchwaerzung(a.aus, 'endpunkt'); ueberstehtSchwaerzung(b.aus, 'endpunkt schon');
+  });
+
+  it('Endpunkt: Zugangsdatei mit falschen Rechten fällt in der Selbstprüfung auf; SQL-Fehler geschwärzt und sichtbar', async () => {
+    const ep = haAgEndpunktSkript(AG_EP());
+    const w = await agLaeufe([ep, ep], GEHEIM, [`${EP_SCHON}\n${sqlStub({ ep_pruefen: 'ALFRED|ok', ep_selbst: `ALFRED|${FP1}|${DER('A1')}` })}\nprintf 'alfred_pacemaker\\nPm-Wert-3333\\n' >"$T/secrets/passwd"; echo '0 644' >"$T/rechte"`,
+      `rm -f "$T/rechte"; printf 'Msg 50107, Level 16\\nLogin alfred_pacemaker mit Pm-Wert-3333 abgelehnt\\n' >"$T/sqlfehler_ep_pruefen"`]);
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    // die (gestubbten) Rechte bleiben 0644 → die Datei wird ersetzt, die Selbstprüfung liest weiter 0644 → Abbruch statt „ok“
+    expect(a.ergebnis!.zustand).toBe('fehler');
+    expect(String(a.ergebnis!.fehler)).toContain('Zugangsdatei');
+    expect(b.rc).toBe(1);
+    expect(String(b.ergebnis!.fehler)).toContain('Login alfred_pacemaker mit [geschwärzt] abgelehnt');
+    expect(b.aus).not.toContain('Pm-Wert-3333');
+  });
+
+  it('Abschluss: Datenbank aufnehmen, Seeding abwarten, ag_cluster (required_sync 0, promotable), VIP deaktiviert → Constraints → aktivieren; zweiter Lauf „schon“ ohne pcs-Änderung', async () => {
+    const ab = haAgAbschlussSkript(AG_AB);
+    const w = await agLaeufe([ab, ab], { sa: GEHEIM.sa }, [AB_NEU, sqlStub({ ab_dbs: 'ALFRED|' })]);
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log.split('\n').filter(Boolean)).toEqual([
+      'pcs resource create ag_cluster ocf:mssql:ag ag_name=sqllnxag01 required_synchronized_secondaries_to_commit=0 meta failure-timeout=60s promotable notify=true',
+      'pcs resource create ag_vip ocf:heartbeat:IPaddr2 ip=10.203.30.13 cidr_netmask=27 op monitor interval=30s --disabled',
+      'pcs constraint colocation add ag_vip with Promoted ag_cluster-clone INFINITY',
+      'pcs constraint order promote ag_cluster-clone then start ag_vip',
+      'pcs resource enable ag_vip',
+    ]);
+    expect(a.ergebnis).toEqual({ zustand: 'geaendert', ag: 'sqllnxag01', primaer: 'sqllnx01', sekundaer: 'sqllnx02', konfig: 'sqllnxcfg', clusterTyp: 'EXTERNAL', requiredSyncSql: 0, requiredSyncRessource: '0',
+      sicherungVorgabe: 'PRIMARY', datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], vip: '10.203.30.13/27', vipAuf: 'sqllnx01', promotedAuf: 'sqllnx01',
+      aenderungen: ['db-alfredpruef', 'ressource-ag', 'ressource-vip', 'kolokation', 'reihenfolge', 'vip-aktiviert'] });
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(b.log).toBe('');
+    ueberstehtSchwaerzung(a.aus, 'abschluss');
+  });
+
+  it('Abschluss: Ressource mit required_sync ≠ 0 → sichtbar auf 0 gesetzt; wirkt das nicht oder meldet SQL ≠ 0 → Selbstprüfung bricht ab; Seeding bleibt aus → Abbruch vor Pacemaker', async () => {
+    const ab = haAgAbschlussSkript(AG_AB);
+    const w = await agLaeufe([ab, ab, ab, ab], { sa: GEHEIM.sa }, [
+      AB_NEU,
+      `${sqlStub({ ab_dbs: 'ALFRED|' })}\necho 1 >"$T/param_ag_cluster_required_synchronized_secondaries_to_commit"`,
+      `echo 2 >"$T/param_ag_cluster_required_synchronized_secondaries_to_commit"; touch "$T/update_wirkungslos"`,
+      `rm -f "$T/update_wirkungslos"; ${sqlStub({ ab_selbst: 'ALFRED|EXTERNAL|1|PRIMARY|PRIMARY|SECONDARY|CONNECTED|CONFIGURATION_ONLY|1|alfredpruef=SYNCHRONIZED' })}`,
+    ]);
+    const [, b, c, d] = w.laeufe as [AgLauf, AgLauf, AgLauf, AgLauf];
+    expect(b.ergebnis).toMatchObject({ zustand: 'geaendert', aenderungen: ['ressource-required-sync-0'], requiredSyncRessource: '0' });
+    expect(b.log).toContain('pcs resource update ag_cluster required_synchronized_secondaries_to_commit=0');
+    expect(c.ergebnis!.zustand).toBe('fehler');
+    expect(String(c.ergebnis!.fehler)).toContain("Selbstprüfung: required_synchronized_secondaries_to_commit an der Ressource ag_cluster ist '2', erwartet 0");
+    expect(String(d.ergebnis!.fehler)).toContain('Selbstprüfung: REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist 1, erwartet 0');
+    const s = await agLaeufe([ab], { sa: GEHEIM.sa }, [`${AB_NEU}\n${sqlStub({ ab_sync: 'ALFRED|0|alfredpruef=NOT SYNCHRONIZING' })}`]);
+    expect(String(s.laeufe[0]!.ergebnis!.fehler)).toContain('nicht SYNCHRONIZED');
+    expect(s.laeufe[0]!.log).toBe('');
+  });
+
+  it('Entfernen (Primär): Ressourcen weg, dann AG/Endpunkte; Zugangsdatei entfernt; Datenbanken bleiben; nicht Primär mit Ressourcen → Abbruch ohne Änderung', async () => {
+    const en = haAgEntfernenSkript(AG_EN());
+    const vorher = `touch "$T/res_ag_cluster" "$T/res_ag_vip"; printf 'x\\n' >"$T/secrets/passwd"; ${sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef', en_drop: 'ALFRED| ag-entfernt',
+      en_aufraeumen: 'ALFRED| endpunkt-entfernt zertifikat-entfernt pacemaker-login-entfernt', en_selbst: 'ALFRED|0|alfredpruef=ONLINE' })}`;
+    const w = await agLaeufe([en, en], { sa: GEHEIM.sa }, [vorher, `cp "$T/tsql_en_drop" "$T/drop_a"; ${sqlStub({ en_lage: 'ALFRED|-|-', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|-' })}`], 'ls "$T/secrets"; cat "$T/drop_a"');
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource delete ag_vip', 'pcs resource delete ag_cluster']);
+    expect(a.sqllog).toEqual(['bereit', 'en_lage', 'en_drop', 'en_aufraeumen', 'en_selbst']);
+    expect(a.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnx01', datenbanken: [{ name: 'alfredpruef', zustand: 'ONLINE' }],
+      aenderungen: ['ressource-vip-entfernt', 'ressource-ag-entfernt', 'ag-entfernt', 'endpunkt-entfernt', 'zertifikat-entfernt', 'pacemaker-login-entfernt', 'pacemaker-zugangsdatei-entfernt'] });
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [], datenbanken: [] });
+    expect(w.ende).toContain("IF 'PRIMARY' = 'PRIMARY'"); // Rolle vor dem Entfernen der Ressourcen bestimmt die Wiederherstellung
+    expect(w.ende).not.toContain('passwd');
+    const n = await agLaeufe([en], { sa: GEHEIM.sa }, [`touch "$T/res_ag_cluster"; ${sqlStub({ en_lage: 'ALFRED|SECONDARY|alfredpruef' })}`]);
+    expect(String(n.laeufe[0]!.ergebnis!.fehler)).toContain('sqllnx01 ist nicht Primär von sqllnxag01 (SECONDARY)');
+    expect(n.laeufe[0]!.log).toBe('');
+    // Primär: eine Datenbank bleibt nach DROP nicht ONLINE → sichtbarer Abbruch (nicht still)
+    const r = await agLaeufe([en], { sa: GEHEIM.sa }, [sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef', en_drop: 'ALFRED| ag-entfernt', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|alfredpruef=RESTORING' })]);
+    expect(String(r.laeufe[0]!.ergebnis!.fehler)).toContain('alfredpruef=RESTORING');
   });
 });
