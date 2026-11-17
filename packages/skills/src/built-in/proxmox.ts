@@ -2266,15 +2266,18 @@ export class ProxmoxSkill extends Skill {
     type Pend = Array<{ key: string; value?: unknown; pending?: unknown }>;
     const pend0 = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
     const eintrag = (pend0 ?? []).find(x => x.key === 'watchdog');
-    const vorher = modellVon(eintrag ? eintrag.value : aktuell);
+    const vorherRoh = (eintrag ? eintrag.value : aktuell) as string | null | undefined;
+    const roh = typeof vorherRoh === 'string' && vorherRoh ? vorherRoh : null;
+    const vorher = modellVon(roh);
+    const ausstehend = eintrag?.pending !== undefined;
     if (ziel === null ? aktuell === null : aktuell === WATCHDOG_WERT) {
-      return { success: true, data: { vmid, node: vm.node, vorher: modellVon(aktuell), nachher: ziel, geaendert: false }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${ziel ?? 'aus'} schon so — nichts geändert` };
+      return { success: true, data: { vmid, node: vm.node, vorher: modellVon(aktuell), vorherRoh: aktuell, nachher: ziel, geaendert: false, ausstehend }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${ziel ?? 'aus'} schon so — nichts geändert${ausstehend ? ' (noch ausstehend: wirksam nach stop_vm/start_vm)' : ''}` };
     }
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, ziel === null ? { delete: 'watchdog' } : { watchdog: WATCHDOG_WERT }), 120_000, 'VM-Watchdog ändern');
     const danach = await this.get<{ watchdog?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
     const ist = typeof danach.watchdog === 'string' && danach.watchdog ? danach.watchdog : null;
     if (ziel === null ? ist !== null : ist !== WATCHDOG_WERT) return { success: false, error: `nach dem Ändern gelesen: watchdog ${ist ?? '(keiner)'}`, data: { vmid, vorher } };
-    return { success: true, data: { vmid, node: vm.node, vorher, nachher: ziel, geaendert: true }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${vorher ?? 'aus'} → ${ziel ?? 'aus'} — wirksam nach stop_vm/start_vm (ein neues QEMU-Gerät braucht einen Kaltstart, reboot_vm genügt nicht). Rückweg: set_vm_watchdog mit model ${vorher === null ? 'null' : vorher}` };
+    return { success: true, data: { vmid, node: vm.node, vorher, vorherRoh: roh, nachher: ziel, geaendert: true }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${vorher ?? 'aus'} → ${ziel ?? 'aus'} — wirksam nach stop_vm/start_vm (ein neues QEMU-Gerät braucht einen Kaltstart, reboot_vm genügt nicht). Rückweg: set_vm_watchdog mit model ${vorher === null ? 'null' : vorher}${roh !== null && roh !== WATCHDOG_WERT ? ` — Achtung: vorher war „${roh}“, der Rückweg stellt das nicht exakt wieder her (setzt immer ${WATCHDOG_WERT})` : ''}` };
   }
 
   /** v1865 — PKI-Lab: SQL-ISO als CD einlegen (Laufwerk ide2/ide3); nur ISO-Volumes, die im Speicher des Knotens der VM liegen */
@@ -2371,6 +2374,8 @@ export class ProxmoxSkill extends Skill {
       // I8e — Zusatzplatten werden bei der Fortsetzung nicht neu angelegt, nur geprüft (Position und Größe)
       const abweichend = zusatz.map((gb, i) => ({ k: `scsi${i + 1}`, gb })).filter(p => laufwerkGb(cfg[p.k]) !== p.gb || String(cfg[p.k]).includes('cloudinit'));
       if (abweichend.length) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): Zusatzplatten passen nicht — ${abweichend.map(p => `${p.k} erwartet ${p.gb} GB, ist ${cfg[p.k] === undefined ? 'leer' : `${laufwerkGb(cfg[p.k]) ?? '?'} GB`}`).join('; ')} — nichts geändert; neu anlegen nur nach delete_vm (vmid ${da.vmid}, vm_name ${name})`, data: { vmid: da.vmid, name, node: da.node } };
+      // I8e Paket 2 — gewünschter Watchdog wird bei der Fortsetzung nicht nachgesetzt (neues QEMU-Gerät braucht Kaltstart), nur geprüft
+      if (input.watchdog === WATCHDOG_MODELL && cfg.watchdog !== WATCHDOG_WERT) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): watchdog erwartet ${WATCHDOG_WERT}, ist ${typeof cfg.watchdog === 'string' && cfg.watchdog ? cfg.watchdog : '(keiner)'} — nichts geändert; nachrüsten mit set_vm_watchdog (vmid ${da.vmid}, model ${WATCHDOG_MODELL}) und danach stop_vm/start_vm`, data: { vmid: da.vmid, name, node: da.node } };
       if (da.status !== 'running') await this.aufgabeOderFehler(await this.post<string>(`/nodes/${da.node}/qemu/${da.vmid}/status/start`, {}), 120_000, 'Starten');
       const a = await this.fabrik.fortsetzen({ name, ip: ip.replace(/\/\d+$/, ''), node: da.node, vmid: da.vmid, zeitlimitMs: 600_000 });
       if (!a.ok) return { success: false, error: `Fortsetzung von ${name} (VMID ${da.vmid}): ${a.meldung}`, data: { vmid: da.vmid, name, node: da.node } };
@@ -2379,7 +2384,7 @@ export class ProxmoxSkill extends Skill {
       await this.cloudInitLoesen(da.node, da.vmid);
       const sp = await this.get<{ path?: string }>('/storage/local').catch(() => ({} as { path?: string }));
       await this.fabrik.snippetEntfernen(da.node, `${sp.path ?? '/var/lib/vz'}/snippets/${snippetDatei(da.vmid)}`).catch(() => undefined);
-      return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true, ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
+      return { success: true, data: { vmid: da.vmid, name, node: da.node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, fortgesetzt: true, ...(input.watchdog === WATCHDOG_MODELL ? { watchdog: WATCHDOG_MODELL } : {}), ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: `- vorhandene VM ${name} (VMID ${da.vmid}) fortgesetzt\n- ${a.meldung}` };
     }
     if (alle.some(v => v.name === name)) return { success: false, error: `Name ${name} ist in Proxmox vergeben` };
     const hindernisse = await this.fabrik.vorpruefung({ name, ip: ip.replace(/\/\d+$/, '') });
