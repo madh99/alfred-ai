@@ -935,8 +935,11 @@ describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', () => {
   const P = SICHERUNG_PROZEDUR;
   it('Sekundär überspringt: AG-Datenbank ohne Vorzug → genau „ALFRED|nicht-bevorzugt“, kein Fehler, keine Sicherung, kein LOG', () => {
     // AG-Zugehörigkeit aus sys.databases.replica_id; Datenbanken ohne AG laufen wie bisher (Funktion wird für sie nicht befragt)
-    expect(P).toContain('@agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END FROM sys.databases WHERE name = @n');
-    expect(P).toContain('IF @agdb = 1 AND ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0) <> 1');
+    expect(P).toContain('@agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END,');
+    // Fix-Runde 1 (I-1): verschachtelt statt AND (T-SQL wertet AND nicht garantiert kurzgeschlossen aus) — Funktion nur für AG-Datenbanken
+    expect(P).toContain('SET @bev = 1;\n        IF @agdb = 1\n        BEGIN\n          SET @bev = ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0);\n        END\n        IF @bev <> 1');
+    expect(P.split('fn_hadr_backup_is_preferred_replica').length - 1).toBe(1);
+    expect(P).not.toMatch(/AND ISNULL\(sys\.fn_hadr/);
     expect(P).toContain("INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');");
     const skip = P.indexOf("INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');");
     const sonst = P.indexOf('ELSE', skip);
@@ -948,6 +951,15 @@ describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', () => {
     expect(sonst).toBeLessThan(P.indexOf('sys.database_recovery_status'));
     // keine copy-only-Umwege
     expect(P).not.toMatch(/\bCOPY_ONLY\b/i);
+  });
+  it('Fix-Runde 1 (D): AG-Datenbanken erreichen das Überspringen unabhängig vom Zustand; Datenbanken ohne AG behalten den Zustandsfilter', () => {
+    const cursor = P.slice(P.indexOf('DECLARE d CURSOR'), P.indexOf('ORDER BY name;'));
+    expect(cursor).toContain('WHERE database_id > 4 AND ((state = 0 AND is_read_only = 0) OR replica_id IS NOT NULL) AND source_database_id IS NULL');
+    // nicht ONLINE/schreibgeschützt kann nur eine AG-Datenbank ankommen: Rollenprüfung zuerst, danach (bevorzugt) überspringen statt sichern
+    expect(P).toContain('@online = CASE WHEN state = 0 AND is_read_only = 0 THEN 1 ELSE 0 END FROM sys.databases WHERE name = @n');
+    expect(P).toContain("IF @online = 0 SET @grund = N'Datenbank nicht online oder schreibgeschuetzt';");
+    expect(P.indexOf('IF @online = 0')).toBeGreaterThan(P.indexOf('IF @bev <> 1'));
+    expect(P.indexOf('IF @online = 0')).toBeLessThan(P.indexOf("EXEC sp_executesql @sql, N'@d nvarchar(600)'"));
   });
   it('FULL-Erzwingung: AG-Datenbank ohne passende eigene Vollsicherung (dieser Server) → FULL statt DIFF/LOG, sichtbar markiert', () => {
     // Basis und Vorgänger der AG-Datenbank nur aus Sicherungen DIESES Servers (msdb je Replikat; RESTORE-Einträge tragen den Quellserver)
@@ -1090,6 +1102,28 @@ describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Rollen je Datenbank (Python PY_
     expect(an.alle).toBeUndefined();
     expect(an.rollen).toBeUndefined();
     expect(an.fehler).toContain('Rolle nicht lesbar');
+  });
+  it('Fix-Runde 1 (M-2): hadr_an streng — mssql.conf fehlt/unlesbar/kaputt → unbekannt (nie „keine AG“); nur gelesenes HADR aus → keine AG', () => {
+    const d = mkdtempSync(join(tmpdir(), 'alfred-hadr-'));
+    const mit = (konf: string) => rollen(`ns['lies'] = lambda p: None\nns['KONF'] = ${JSON.stringify(konf)}`).json;
+    // fehlt
+    const fehlt = mit(join(d, 'gibt-es-nicht.conf'));
+    expect(fehlt.alle).toBeUndefined();
+    expect(fehlt.fehler).toContain('mssql.conf fehlt oder ist unlesbar');
+    // unlesbar (Ordner statt Datei)
+    mkdirSync(join(d, 'ordner.conf'));
+    expect(mit(join(d, 'ordner.conf')).fehler).toContain('mssql.conf fehlt oder ist unlesbar');
+    // kaputt (kein Abschnittskopf)
+    writeFileSync(join(d, 'kaputt.conf'), 'hadrenabled = 0\n');
+    expect(mit(join(d, 'kaputt.conf')).alle).toBeUndefined();
+    // gelesen: HADR aus (ausdrücklich oder Abschnitt fehlt) → keine AG; an → nicht lesbar
+    writeFileSync(join(d, 'aus.conf'), '[hadr]\nhadrenabled = 0\n');
+    expect(mit(join(d, 'aus.conf'))).toEqual({ alle: 'keine AG' });
+    writeFileSync(join(d, 'ohne.conf'), '[memory]\nmemorylimitmb = 3072\n');
+    expect(mit(join(d, 'ohne.conf'))).toEqual({ alle: 'keine AG' });
+    writeFileSync(join(d, 'an.conf'), '[hadr]\nhadrenabled = 1\n');
+    expect(mit(join(d, 'an.conf')).fehler).toContain('Zugangsdatei des Resource-Agents fehlt');
+    rmSync(d, { recursive: true, force: true });
   });
 });
 

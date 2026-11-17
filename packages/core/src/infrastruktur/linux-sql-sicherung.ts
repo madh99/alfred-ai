@@ -118,11 +118,12 @@ BEGIN
   DECLARE @n sysname, @dbid int, @guid uniqueidentifier, @modell nvarchar(60), @zeit nchar(14), @ordner nvarchar(400), @datei nvarchar(600),
           @bezug nchar(14), @dev nvarchar(600), @pre nvarchar(600), @f numeric(25,0), @dbl numeric(25,0), @lf numeric(25,0), @sql nvarchar(max),
           @sperre nvarchar(200), @fertig nvarchar(620), @rc int, @fehler nvarchar(max) = N'', @msg nvarchar(2048), @grund nvarchar(400),
-          @agdb bit, @eff nvarchar(4), @erzw nvarchar(200);
+          @agdb bit, @eff nvarchar(4), @erzw nvarchar(200), @bev int, @online bit;
   DECLARE @r TABLE (zeile nvarchar(800));
   DECLARE d CURSOR LOCAL FAST_FORWARD FOR
     SELECT name FROM sys.databases
-    WHERE database_id > 4 AND state = 0 AND is_read_only = 0 AND source_database_id IS NULL
+    -- Fix-Runde 1 (D): AG-Datenbanken unabhängig vom Zustand (auf dem Sekundär oft nicht ONLINE) — sie erreichen das Überspringen ausdrücklich
+    WHERE database_id > 4 AND ((state = 0 AND is_read_only = 0) OR replica_id IS NOT NULL) AND source_database_id IS NULL
       AND LEN(name) BETWEEN 3 AND 64 AND name LIKE N'[A-Za-z]%' AND name NOT LIKE N'%[^A-Za-z0-9_]%'
       AND name NOT LIKE N'alfred[_]wh[_]%' AND (@db IS NULL OR name = @db)
     ORDER BY name;
@@ -136,10 +137,17 @@ BEGIN
       IF @rc < 0 THROW 50012, N'Sperre der Datenbank nicht erhalten (andere Sicherung läuft seit 2 h)', 1;
       BEGIN TRY
         SET @grund = NULL; SET @bezug = NULL; SET @erzw = NULL; SET @eff = @art;
-        SELECT @dbid = database_id, @modell = recovery_model_desc, @agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END FROM sys.databases WHERE name = @n;
+        SELECT @dbid = database_id, @modell = recovery_model_desc, @agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END,
+          @online = CASE WHEN state = 0 AND is_read_only = 0 THEN 1 ELSE 0 END FROM sys.databases WHERE name = @n;
         -- I8e Paket 2 (Owner-Entscheidung 1): Datenbank einer AG nur auf dem bevorzugten Replikat (AG-Vorgabe PRIMARY); sonst überspringen —
         -- kein Fehler, der Job scheitert nicht, auch kein LOG. Datenbanken ohne AG (replica_id NULL) laufen wie bisher.
-        IF @agdb = 1 AND ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0) <> 1
+        -- Fix-Runde 1 (I-1): verschachtelt — T-SQL garantiert keine Kurzschluss-Auswertung von AND; die Funktion wird nur für AG-Datenbanken gerufen
+        SET @bev = 1;
+        IF @agdb = 1
+        BEGIN
+          SET @bev = ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0);
+        END
+        IF @bev <> 1
         BEGIN
           INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');
           INSERT @r VALUES (N'ALFRED-UEBERSPRUNGEN|' + @n + N'|nicht bevorzugtes Replikat der AG (Sicherung auf dem Primaer)');
@@ -148,7 +156,9 @@ BEGIN
         BEGIN
         SELECT @guid = database_guid, @f = last_log_backup_lsn FROM sys.database_recovery_status WHERE database_id = @dbid;
         SET @dbl = (SELECT differential_base_lsn FROM sys.master_files WHERE database_id = @dbid AND file_id = 1);
-        IF @art = N'LOG' AND @modell <> N'FULL' SET @grund = N'Wiederherstellungsmodell ' + @modell + N' (LOG nur bei FULL)';
+        -- Fix-Runde 1 (D): nur AG-Datenbanken kommen hier nicht ONLINE/schreibgeschützt an (Cursor) — bevorzugt, aber nicht sicherbar → überspringen
+        IF @online = 0 SET @grund = N'Datenbank nicht online oder schreibgeschuetzt';
+        ELSE IF @art = N'LOG' AND @modell <> N'FULL' SET @grund = N'Wiederherstellungsmodell ' + @modell + N' (LOG nur bei FULL)';
         -- AG: hat dieser Rechner noch keine Vollsicherung der Datenbank, zuerst FULL (Kette je Rechner)
         ELSE IF @agdb = 1 AND @art = N'DIFF' AND @dbl IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';
         ELSE IF @agdb = 1 AND @art = N'LOG' AND @f IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';
@@ -1399,11 +1409,13 @@ def lies(p):
     except Exception:
         return None
 def hadr_an():
+    # Fix-Runde 1 (M-2): streng - fehlt mssql.conf oder ist sie unlesbar, ist HADR unbekannt (None), nie "aus"
     cp = configparser.ConfigParser(interpolation=None)
     try:
-        cp.read(KONF)
+        with open(KONF, encoding='utf-8') as f:
+            cp.read_file(f)
     except Exception:
-        return True
+        return None
     return cp.get('hadr', 'hadrenabled', fallback='0').strip() != '0'
 def sqlcmd_lauf(login, kw):
     return subprocess.run([SQLCMD, '-C', '-b', '-x', '-S', 'localhost', '-U', login, '-l', '10', '-h', '-1', '-W', '-w', '65535'], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=kw))
@@ -1411,7 +1423,12 @@ def rollen():
     z = (lies(PMDATEI) or '').splitlines()
     if len(z) < 2 or not z[0] or not z[1]:
         # ohne HADR gibt es keine AG; mit HADR ohne Zugangsdatei ist die Rolle nicht lesbar
-        return {'alle': 'keine AG'} if not hadr_an() else {'fehler': 'Zugangsdatei des Resource-Agents fehlt - Rolle nicht lesbar'}
+        h = hadr_an()
+        if h is False:
+            return {'alle': 'keine AG'}
+        if h is None:
+            return {'fehler': 'mssql.conf fehlt oder ist unlesbar und keine Zugangsdatei des Resource-Agents - Rolle nicht lesbar'}
+        return {'fehler': 'Zugangsdatei des Resource-Agents fehlt - Rolle nicht lesbar'}
     try:
         p = sqlcmd_lauf(z[0], z[1])
     except Exception as e:
