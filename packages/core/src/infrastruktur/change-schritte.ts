@@ -65,6 +65,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
     // Fix-Welle M-9: positives Stück nur je Datenbank („pruefdb01: vollständig auf fs01“); „~“ = nur als ganzes Muster, nie als Teilstück
     + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
+  // I8e Paket 2 — Wortlaut aus linuxHaStatusText (linux-ha-skill.ts); positive Stücke einzeln prüfbar
+  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}'
+    + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -165,13 +168,15 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
+  // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
+  linux_ha: new Set(['ha_vorbereiten']),
 };
 const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
 /**
  * I8e — linux_sql-Aufbau ohne Rückweg nur, wenn derselbe Change die VM vorher per proxmox.provision_vm bereitstellt (Rückweg des Changes
  * = VM löschen) oder ohneSicherungGrund gesetzt ist; sonst gilt wie überall: erst sichern, dann mit Rückweg ändern.
  */
-const NEUAUFBAU_SKILLS = new Set(['linux_sql']);
+const NEUAUFBAU_SKILLS = new Set(['linux_sql', 'linux_ha']);
 /**
  * I8e Task 4 — innerhalb der Neuaufbau-Regel ohne Rückweg zulässig, auch auf bestehenden VMs: eine Sicherung wirkt nur additiv (neue
  * Datei in derselben Kette), der Restore-Beweis legt nur eine Wegwerf-Datenbank alfred_wh_… an und entfernt sie wieder.
@@ -277,6 +282,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   if (skill === 'unifi' && aktion === 'subnet_pruefen') return 'lesen';
   // I8e — linux_sql: nur status liest; alle Aufbau-Bausteine ändern
   if (skill === 'linux_sql') return aktion === 'status' || aktion === 'sicherungen' ? 'lesen' : 'aendern';
+  // I8e Paket 2 — linux_ha: nur status liest; alle Bausteine (HA-Grundlage, später Cluster, Fencing, AG, Failover) ändern
+  if (skill === 'linux_ha') return aktion === 'status' ? 'lesen' : 'aendern';
   if (skill === 'sql_server') return ['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen'].includes(aktion) ? 'lesen' : 'aendern';
   if (SICHERUNGS_AKTIONEN.has(aktion)) return 'sicherung';
   if (LOESCH_MUSTER.test(aktion)) return 'loeschen';

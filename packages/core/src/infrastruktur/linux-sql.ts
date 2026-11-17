@@ -107,7 +107,9 @@ export const PY_CONF = [
  * `p` ist immer der vom Erzeuger neu gebaute Satz NUR geprüfter Felder — nie das Eingabeobjekt (fremde Schlüssel wie
  * `kennwort` dürfen nie in den Skripttext).
  */
-export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] {
+export function sqlKopf(baustein: string, p: Record<string, unknown>, praefix = 'ALFRED-SQL'): string[] {
+  // I8e Paket 2: linux_ha nutzt denselben Kopf mit eigener Ergebniszeile (ALFRED-HA)
+  if (!/^ALFRED-[A-Z]{2,8}$/.test(praefix)) throw new Error(`sqlKopf: ungültiges Präfix ${praefix}`);
   return [
     'set -euo pipefail',
     'export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
@@ -116,11 +118,11 @@ export function sqlKopf(baustein: string, p: Record<string, unknown>): string[] 
     "ALFRED_ZEILE=''",
     "ALFRED_TMP=''",
     // Nachtrag: entfernte alte Zugangsdateien (siehe unten) stehen in der Ergebniszeile, wenn es welche gab
-    `ergebnis() { ALFRED_ZEILE=1; local j="$1"; if [[ "\${ALFRED_RESTE:-0}" =~ ^[1-9][0-9]*$ ]] && [[ "$j" == *'}' ]]; then j="\${j%?},\\"alteZugangsdateienEntfernt\\":$ALFRED_RESTE}"; fi; printf 'ALFRED-SQL %s\\n' "$j"; }`,
+    `ergebnis() { ALFRED_ZEILE=1; local j="$1"; if [[ "\${ALFRED_RESTE:-0}" =~ ^[1-9][0-9]*$ ]] && [[ "$j" == *'}' ]]; then j="\${j%?},\\"alteZugangsdateienEntfernt\\":$ALFRED_RESTE}"; fi; printf '${praefix} %s\\n' "$j"; }`,
     `json_text() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'; }`,
     `abbruch() { local t; t=$(printf '%s' "$1" | json_text); ergebnis "{\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"$ALFRED_BAUSTEIN\\",\\"fehler\\":$t}"; exit 1; }`,
     // I8e Task 4: optionale Funktion alfred_aufraeumen (z. B. Zugangsdatei, Einhängepunkt, Wegwerf-Datenbank) läuft zuerst
-    `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "ALFRED-SQL {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\",\\"alteZugangsdateienEntfernt\\":%s}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC" "\${ALFRED_RESTE:-0}"; fi' EXIT`,
+    `trap 'ALFRED_RC=$?; if declare -F alfred_aufraeumen >/dev/null; then alfred_aufraeumen || true; fi; [ -z "$ALFRED_TMP" ] || rm -rf -- "$ALFRED_TMP"; if [ "$ALFRED_RC" -ne 0 ] && [ -z "$ALFRED_ZEILE" ]; then printf "${praefix} {\\"zustand\\":\\"fehler\\",\\"baustein\\":\\"%s\\",\\"fehler\\":\\"unerwarteter Abbruch (Exit %s)\\",\\"alteZugangsdateienEntfernt\\":%s}\\n" "$ALFRED_BAUSTEIN" "$ALFRED_RC" "\${ALFRED_RESTE:-0}"; fi' EXIT`,
     `feld() { python3 -c ${shQ(PY_FELD)} "$1" <<<"$ALFRED_EINGABE"; }`,
     // Fix-Welle M-6: liegengebliebene Zugangsdateien abgebrochener Läufe (älter als jede Zeitgrenze, 120 min) entfernen
     "ALFRED_RESTE=$( { find /run -maxdepth 1 -type f -name 'alfred-c-*' -mmin +120 -delete -print 2>/dev/null || true; } | wc -l | tr -d ' ')",
@@ -162,7 +164,19 @@ export function pruefePlatten(p: unknown): string | undefined {
     if (ziele.has(x.ziel)) return `platten: Ziel ${x.ziel} doppelt`;
     scsi.add(x.scsi as number); ziele.add(x.ziel);
   }
-  return undefined;
+  return zielSatzFehler([...ziele], 'platten (Ziele)');
+}
+
+/**
+ * I8e Paket 2 — zulässige Plattenziele: alle vier (Datenreplikat) oder nur /var/opt/mssql/data (Konfig-Knoten sqllnxcfg, eine 16-GiB-Platte;
+ * Log, TempDB und Sicherung liegen dort mit). Andere Teilmengen sind kein geplanter Aufbau.
+ */
+export const KONFIG_KNOTEN_ZIELE: readonly LinuxSqlZiel[] = ['/var/opt/mssql/data'];
+function zielSatzFehler(ziele: string[], feld: string): string | undefined {
+  const s = new Set(ziele);
+  if (s.size === LINUX_SQL_ZIELE.length && LINUX_SQL_ZIELE.every(z => s.has(z))) return undefined;
+  if (s.size === 1 && s.has(KONFIG_KNOTEN_ZIELE[0]!)) return undefined;
+  return `${feld}: alle vier (${LINUX_SQL_ZIELE.join(', ')}) oder nur /var/opt/mssql/data (Konfig-Knoten) — keine andere Teilmenge`;
 }
 
 const PLATTEN_KOERPER = `FSTAB=/etc/fstab
@@ -281,7 +295,7 @@ export function plattenSkript(p: PlattenParameter): string {
 
 export interface InstallParameter {
   version: string; edition: 'EnterpriseDeveloper'; werkzeugVersion?: string; odbcVersion?: string;
-  /** vor setup Pflicht-Einhängepunkte (Standard: alle vier Plattenziele); data immer dabei */
+  /** vor setup Pflicht-Einhängepunkte (Standard: alle vier Plattenziele); sonst nur data (Konfig-Knoten, I8e Paket 2) */
   einhaengepunkte?: LinuxSqlZiel[];
   /** Fix-Welle I-2: das sa-Kennwort ist neu erzeugt (noch nicht im Tresor) — eine vorhandene Installation bricht dann ohne Änderung ab */
   saNeu?: boolean;
@@ -303,6 +317,7 @@ export function pruefeInstallation(p: unknown): string | undefined {
     if (!Array.isArray(e) || !e.every(istZiel) || new Set(e).size !== e.length || !e.includes('/var/opt/mssql/data')) {
       return `einhaengepunkte: Teilmenge von ${LINUX_SQL_ZIELE.join(', ')} ohne Dubletten, /var/opt/mssql/data Pflicht`;
     }
+    const f = zielSatzFehler(e as string[], 'einhaengepunkte'); if (f) return f;
   }
   return undefined;
 }

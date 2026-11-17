@@ -296,7 +296,7 @@ export class LinuxSqlSkill extends Skill {
       'SQL Server 2025 Enterprise Developer auf Ubuntu 24.04 (I8e) über feste, geprüfte Bash-Bausteine auf Linux-Fernzugängen (zugang = Name des Fernzugangs, z. B. sqllnx01). '
       + 'status (lesend, auch außerhalb von Changes): Pakete, Dienst, mssql.conf, Platten; mit sa aus dem Tresor zusätzlich Version/CU/Edition, max server memory, tempdb, Datenbanken, letzte Sicherungen — '
       + 'Wortlaut „<zugang>: SQL Server <version> <cu> <edition>; Dienst aktiv, aktiviert; Speicherlimit <mb> MB; max server memory <mb> MB; tempdb <n> Datendateien; Datenbanken: <liste>; eingehängt: data, log, tempdb, backup“, als Prüfung z. B. erwartet „Dienst aktiv, aktiviert“. '
-      + 'NUR als Schritte freigegebener Changes (Reihenfolge): platten_einrichten (zugang, platten = [{scsi, groesse_gib, ziel: data|log|tempdb|backup}], z. B. scsi1 160 data, scsi2 80 log, scsi3 64 tempdb, scsi4 128 backup aus provision_vm extra_disks [160,80,64,128]) — nur leere Platten exakter Größe, XFS, fstab per UUID; '
+      + 'NUR als Schritte freigegebener Changes (Reihenfolge): platten_einrichten (zugang, platten = [{scsi, groesse_gib, ziel: data|log|tempdb|backup}], z. B. scsi1 160 data, scsi2 80 log, scsi3 64 tempdb, scsi4 128 backup aus provision_vm extra_disks [160,80,64,128]; Konfig-Knoten sqllnxcfg nur scsi1 16 data, dann installieren mit einhaengepunkte ["data"]; andere Teilmengen nicht zulässig) — nur leere Platten exakter Größe, XFS, fstab per UUID; '
       + 'installieren (zugang, version = apt-Version ab CU1 wie 17.0.4006.2-1) — signierte Microsoft-Quelle, feste Versionen, sa-Kennwort erzeugt Alfred im Tresor (sqllnx-<zugang>-sa); '
       + 'konfigurieren (zugang, speicher_limit_mb Standard 12288, max_server_memory_mb Standard 10240, tempdb_dateien Standard Kerne max. 8, agent Standard true) — mssql-conf, tempdb auf der TempDB-Platte, max server memory; '
       + 'login_anlegen (zugang, login, rolle dbcreator|sysadmin|lesen) — SQL-Login, Kennwort im Tresor (sqllnx-<zugang>-<login>), „lesen“ = ohne Serverrolle; '
@@ -319,7 +319,7 @@ export class LinuxSqlSkill extends Skill {
         zugang: { type: 'string', description: 'Name des Linux-Fernzugangs (z. B. sqllnx01)' },
         platten: { type: 'array', items: { type: 'object', properties: { scsi: { type: 'number' }, groesse_gib: { type: 'number' }, ziel: { type: 'string', enum: ['data', 'log', 'tempdb', 'backup'] } } }, description: 'platten_einrichten: Zusatzplatten nach SCSI-Position' },
         version: { type: 'string', description: 'installieren: apt-Version von mssql-server, z. B. 17.0.4006.2-1' },
-        einhaengepunkte: { type: 'array', items: { type: 'string' }, description: 'installieren: Plattenziele, die vor dem Setup eingehängt sein müssen (Standard alle vier; data Pflicht)' },
+        einhaengepunkte: { type: 'array', items: { type: 'string' }, description: 'installieren: Plattenziele, die vor dem Setup eingehängt sein müssen (Standard alle vier; sonst nur ["data"] für den Konfig-Knoten sqllnxcfg)' },
         speicher_limit_mb: { type: 'number' }, max_server_memory_mb: { type: 'number' },
         tempdb_dateien: { type: 'number', description: 'Standard: Kerne, höchstens 8' }, tempdb_mb: { type: 'number' }, tempdb_wachstum_mb: { type: 'number' }, tempdb_log_mb: { type: 'number' },
         agent: { type: 'boolean' },

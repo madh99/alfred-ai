@@ -75,6 +75,10 @@ describe('I8e Linux-SQL — Register und Validatoren', () => {
     expect(pruefePlatten({ platten: [PLATTEN.platten[0], { ...PLATTEN.platten[1], ziel: '/var/opt/mssql/data' }] })).toContain('doppelt');
     for (const b of BOESE) expect(pruefePlatten({ platten: [{ ...PLATTEN.platten[0], ziel: `/var/opt/mssql/data${b}` }] })).toContain('ziel');
     expect(pruefePlatten({ platten: [{ ...PLATTEN.platten[0], ziel: '/' }] })).toContain('ziel');
+    // I8e Paket 2: alle vier Ziele oder nur data (Konfig-Knoten, eine 16-GiB-Platte)
+    expect(pruefePlatten({ platten: [{ scsi: 1, groesseGiB: 16, ziel: '/var/opt/mssql/data' }] })).toBeUndefined();
+    expect(pruefePlatten({ platten: [PLATTEN.platten[0], PLATTEN.platten[1]] })).toContain('nur /var/opt/mssql/data');
+    expect(pruefePlatten({ platten: [PLATTEN.platten[1]] })).toContain('platten (Ziele)');
     expect(pruefePlatten({ platten: Array.from({ length: 5 }, (_, i) => ({ scsi: i + 1, groesseGiB: 10, ziel: '/var/opt/mssql/data' })) })).toContain('platten');
     expect(() => plattenSkript({ platten: [{ ...PLATTEN.platten[0], ziel: '/var/opt/mssql/data; rm -rf /' as never }] })).toThrow(/ziel/);
   });
@@ -256,8 +260,11 @@ describe('I8e Linux-SQL — Skripttext', () => {
     for (const s of skripte) { expect(s).not.toContain(G); expect(s).not.toContain('"kennwort"'); }
     expect(plattenSkript(PLATTEN)).toContain(`ALFRED_P='${JSON.stringify(PLATTEN)}'`);
   });
-  it('Installation: Einhängepunkte nur aus der festen Liste, data Pflicht', () => {
-    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/log'] })).toBeUndefined();
+  it('Installation: Einhängepunkte nur aus der festen Liste — alle vier oder nur data (Konfig-Knoten, I8e Paket 2)', () => {
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data'] })).toBeUndefined();
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/backup', '/var/opt/mssql/data', '/var/opt/mssql/tempdb', '/var/opt/mssql/log'] })).toBeUndefined();
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/log'] })).toContain('nur /var/opt/mssql/data');
+    expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/log', '/var/opt/mssql/tempdb'] })).toContain('einhaengepunkte');
     expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/log'] })).toContain('einhaengepunkte');
     expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/tmp'] })).toContain('einhaengepunkte');
     expect(pruefeInstallation({ ...INSTALL, einhaengepunkte: ['/var/opt/mssql/data', '/var/opt/mssql/data'] })).toContain('einhaengepunkte');
