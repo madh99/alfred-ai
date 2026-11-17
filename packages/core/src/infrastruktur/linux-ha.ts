@@ -71,6 +71,8 @@ export const HA_SYSTEMD_DATEI = '/etc/systemd/system.conf.d/alfred-watchdog.conf
 export const HA_SBD_DROPIN = '/etc/systemd/system/sbd.service.d/alfred-watchdog.conf';
 export const HA_WARTE_WATCHDOG = '/usr/local/lib/alfred/warte-watchdog';
 export const HA_WARTE_WATCHDOG_S = 60;
+/** sbd.service muss mindestens so lange starten dürfen (TimeoutStartUSec): Wartezeit + 15 s Spielraum — systemd-Standard ist 90 s */
+export const HA_SBD_START_MIN_S = HA_WARTE_WATCHDOG_S + 15;
 /** sbd-Meldung, wenn das Watchdog-Gerät beim Start fehlt (sbd 1.5, watchdog_init_fd) — nur dann repariert ha_vorbereiten selbst */
 export const HA_SBD_WATCHDOG_FEHLT = "isn't a valid watchdog-device";
 /** /bin/sh-Skript (fest): wartet bis HA_WARTE_WATCHDOG_S s auf das Gerät aus SBD_WATCHDOG_DEV ($1 = Konfiguration, $2 = Sekunden — nur für Tests) */
@@ -349,6 +351,10 @@ prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { readlink "$PROC/$1/exe" 2>/dev/null || true; }
 eigener_name() { hostname -s; }
 befehl_da() { command -v "$1" >/dev/null 2>&1; }
+ist_ausfuehrbar() { [ -x "$1" ]; }
+rechte_setzen() { chmod 0755 "$1"; }
+# systemd-Zeitspanne („1min 30s“, „90s“, „infinity“) → ganze Sekunden; unbekannt → -1
+zeitspanne_s() { awk '{ if ($0 == "infinity") { print 999999; exit } t = 0; for (i = 1; i <= NF; i++) { if (!match($i, /^[0-9.]+/)) { print -1; exit } n = substr($i, 1, RLENGTH) + 0; u = substr($i, RLENGTH + 1); if (u == "h") t += n * 3600; else if (u == "min") t += n * 60; else if (u == "s") t += n; else if (u == "ms") t += n / 1000; else if (u == "us") t += n / 1000000; else { print -1; exit } } if (NF == 0) { print -1; exit } printf "%d\\n", t }' <<<"$1"; }
 kennwort_gleich() { python3 -c "$PY_KW_GLEICH" "$SHADOW" <<<"$KW"; }
 hadr_wert() { awk -F'=' '/^\\[/ { s = ($0 == "[hadr]") } s && $1 ~ /^[ \\t]*hadrenabled[ \\t]*$/ { gsub(/[ \\t\\r]/, "", $2); print $2 }' "$MSSQL_CONF" 2>/dev/null | tail -n 1 || true; }
 ist_esb() { local r=1; shopt -s nocasematch; if [[ "$1" == *i6300esb* ]]; then r=0; fi; shopt -u nocasematch; return $r; }
@@ -507,6 +513,8 @@ if [ "$rw" != 0 ]; then systemctl daemon-reexec || abbruch "systemctl daemon-ree
 # ── Live-Fix (c2e4f56d): sbd startet erst nach dem Watchdog-Modul und wenn das Gerät da ist (Wartezeit fest, sichtbarer Fehler danach) ──
 DR_NEU=0
 inhalt_gleich "$WARTE_DATEI" "$WARTE_SOLL" || { schreibe "$WARTE_DATEI" 0755 "$WARTE_SOLL"; DR_NEU=1; aend sbd-warteskript; }
+# nur die Rechte falsch → nur die Rechte richten (kein daemon-reload nötig)
+ist_ausfuehrbar "$WARTE_DATEI" || { rechte_setzen "$WARTE_DATEI"; aend sbd-warteskript-rechte; }
 inhalt_gleich "$SBD_DROPIN" "$SBD_DROPIN_SOLL" || { schreibe "$SBD_DROPIN" 0644 "$SBD_DROPIN_SOLL"; DR_NEU=1; aend sbd-wartet-auf-watchdog; }
 if [ "$DR_NEU" = 1 ]; then systemctl daemon-reload || abbruch "systemctl daemon-reload nach dem sbd-Drop-in fehlgeschlagen"; aend systemd-neu-geladen-sbd; fi
 # ── Host-Firewall: eigene Tabelle inet alfred_ha über alfred-hostfw.service ──
@@ -544,13 +552,17 @@ if [ "$(hadr_wert)" != 1 ]; then
   NS=true; aend hadr
 fi
 # ── Live-Fix (c2e4f56d): Knoten mit eingerichtetem Cluster und aktiviertem SBD — sbd muss laufen. Ein gesundes sbd wird nie angefasst.
-# War sbd genau am fehlenden Watchdog-Gerät gescheitert (Meldung im Journal dieses Starts) und ist das Gerät jetzt da, holt der Baustein
-# NUR DIESEN Knoten zurück: reset-failed, pcs cluster stop/start lokal (corosync zieht sbd beim Start mit; Pacemaker läuft hier nicht).
-# Jeder andere Grund → sichtbarer Abbruch, nichts automatisch.
+# Zurückgeholt wird NUR, wenn sbd im Zustand failed ist und die LETZTE Ausführung von sbd (Journal-Feld _SYSTEMD_INVOCATION_ID =
+# InvocationID der Unit, systemd ≥ 236) genau am fehlenden Watchdog-Gerät scheiterte (sbd-Meldung oder die des Warteskripts) und das Gerät
+# jetzt da ist: dann NUR DIESEN Knoten — reset-failed, pcs cluster stop/start lokal (corosync zieht sbd beim Start mit; Pacemaker läuft hier
+# nicht). Ein absichtlich gestoppter Knoten (inactive, nicht failed) und jede andere Ursache → nichts automatisch; die Selbstprüfung bricht
+# dann sichtbar ab (sbd muss laufen, sobald der Cluster eingerichtet ist).
 SBD_REPARIERT=false
-if [ -e "$COROSYNC_CONF" ] && ! konf_frei "$(cat "$COROSYNC_CONF")" && systemctl is-enabled --quiet sbd && ! systemctl is-active --quiet sbd; then
-  sj=$(journalctl -b 0 -u sbd --no-pager -o cat 2>/dev/null || true)
-  grep -qF "$SBD_WD_FEHLT" <<<"$sj" || abbruch "sbd läuft auf $ICH nicht (Cluster eingerichtet, SBD aktiviert) und das Journal nennt nicht das fehlende Watchdog-Gerät — nicht automatisch: $(kurz "$sj")"
+if [ -e "$COROSYNC_CONF" ] && ! konf_frei "$(cat "$COROSYNC_CONF")" && systemctl is-enabled --quiet sbd && ! systemctl is-active --quiet sbd && systemctl is-failed --quiet sbd; then
+  inv=$(systemctl show -p InvocationID --value sbd 2>/dev/null || true)
+  [[ "$inv" =~ ^[0-9a-f]{32}$ ]] || abbruch "sbd ist auf $ICH gescheitert, die letzte Ausführung (InvocationID '$inv') ist nicht lesbar — nicht automatisch"
+  sj=$(journalctl -b 0 "_SYSTEMD_INVOCATION_ID=$inv" --no-pager -o cat 2>/dev/null || true)
+  { grep -qF "$SBD_WD_FEHLT" <<<"$sj" || grep -qF "$WARTE_FEHLT" <<<"$sj"; } || abbruch "sbd ist auf $ICH gescheitert, die letzte Ausführung ($inv) nennt aber nicht das fehlende Watchdog-Gerät — nicht automatisch: $(kurz "$sj")"
   ! systemctl is-active --quiet pacemaker || abbruch "sbd läuft auf $ICH nicht, Pacemaker aber schon — nicht automatisch (kein Stopp eines laufenden Pacemaker)"
   "$WARTE_DATEI" "$SBD_KONF" 5 || abbruch "sbd scheiterte am fehlenden Watchdog-Gerät, und es fehlt noch immer — nichts am Cluster geändert"
   systemctl reset-failed sbd >/dev/null 2>&1 || true
@@ -583,7 +595,10 @@ kw_vergleich || abbruch "hacluster-Kennwort stimmt nach dem Setzen nicht"
 systemctl is-active --quiet pcsd || abbruch "pcsd läuft nicht"
 [ "$(hadr_wert)" = 1 ] || abbruch "mssql.conf: hadr.hadrenabled ist '$(hadr_wert)', erwartet 1"
 systemctl is-active --quiet mssql-server || abbruch "mssql-server läuft nicht"
-{ inhalt_gleich "$WARTE_DATEI" "$WARTE_SOLL" && [ -x "$WARTE_DATEI" ] && inhalt_gleich "$SBD_DROPIN" "$SBD_DROPIN_SOLL"; } || abbruch "sbd-Drop-in oder Warteskript nicht wie erzeugt ($SBD_DROPIN, $WARTE_DATEI)"
+{ inhalt_gleich "$WARTE_DATEI" "$WARTE_SOLL" && ist_ausfuehrbar "$WARTE_DATEI" && inhalt_gleich "$SBD_DROPIN" "$SBD_DROPIN_SOLL"; } || abbruch "sbd-Drop-in oder Warteskript nicht wie erzeugt ($SBD_DROPIN, $WARTE_DATEI)"
+# sbd.service muss die Wartezeit überstehen: TimeoutStartUSec ≥ SBD_START_MIN_S (systemd-Standard 90 s; live ohne TimeoutSec in der Unit)
+sto=$(systemctl show -p TimeoutStartUSec --value sbd 2>/dev/null || true); sts=$(zeitspanne_s "$sto")
+[ "$sts" -ge "$SBD_START_MIN_S" ] || abbruch "sbd.service TimeoutStartUSec ist '\${sto:-leer}' — erwartet mindestens $SBD_START_MIN_S s (Wartezeit des Warteskripts + Spielraum)"
 if [ -e "$COROSYNC_CONF" ] && ! konf_frei "$(cat "$COROSYNC_CONF")" && systemctl is-enabled --quiet sbd; then
   systemctl is-active --quiet sbd || abbruch "Selbstprüfung: sbd läuft auf $ICH nicht (Cluster eingerichtet, SBD aktiviert)"
 fi
@@ -621,6 +636,8 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `WARTE_SOLL=${shQ(WARTE_WATCHDOG_SKRIPT)}`,
     `SBD_DROPIN_SOLL=${shQ(SBD_DROPIN_INHALT)}`,
     `SBD_WD_FEHLT=${shQ(HA_SBD_WATCHDOG_FEHLT)}`,
+    `WARTE_FEHLT=${shQ('alfred: Watchdog-Gerät')}`,
+    `SBD_START_MIN_S=${HA_SBD_START_MIN_S}`,
     `PY_KW_GLEICH=${shQ(PY_KW_GLEICH)}`,
     ...VORBEREITEN_PFADE,
     KONF_HILFEN,

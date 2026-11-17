@@ -202,7 +202,11 @@ id() { return 0; }
 modprobe() { log "modprobe $*"; if [ -f "$T/pci_ok" ]; then mkdir -p "$WD_SYS/watchdog0"; cat "$T/kennung" >"$WD_SYS/watchdog0/identity"; fi; }
 udevadm() { :; }
 sleep() { :; }
-journalctl() { cat "$T/journal_sbd" 2>/dev/null || true; }
+# Journal: mit _SYSTEMD_INVOCATION_ID=<id> nur die Einträge dieser Ausführung ($T/journal_inv_<id>), sonst das ganze sbd-Journal
+journalctl() { local a; for a in "$@"; do case "$a" in _SYSTEMD_INVOCATION_ID=*) cat "$T/journal_inv_§{a#*=}" 2>/dev/null || true; return 0 ;; esac; done; cat "$T/journal_sbd" 2>/dev/null || true; }
+# Rechte des Warteskripts nachgebildet ($T/warte_nicht_ausfuehrbar = Rechte falsch)
+ist_ausfuehrbar() { [ -f "$1" ] && [ ! -f "$T/warte_nicht_ausfuehrbar" ]; }
+rechte_setzen() { log "chmod 0755 §{1##*/}"; rm -f "$T/warte_nicht_ausfuehrbar"; }
 # Live-Fix (c2e4f56d): sbd-Drop-in/Warteskript im Testverzeichnis; pcs nur für die Rückholung eines Knotens (corosync zieht sbd mit)
 SBD_DROPIN="$T/etc/systemd/system/sbd.service.d/alfred-watchdog.conf"; WARTE_DATEI="$T/etc/alfred-lib/warte-watchdog"; SBD_KONF="$T/sbd_default"; WARTE_RUNDEN=3
 pcs() {
@@ -216,13 +220,18 @@ ss() { echo LISTEN; }
 systemctl() {
   local u=§{@: -1}
   case "$1" in
-    show) cat "$T/rw"; return 0 ;;
-    is-active|is-enabled) [ -f "$T/svc/$u.$1" ]; return ;;
+    show) case "$3" in
+        InvocationID) cat "$T/sbd_inv" 2>/dev/null || true ;;
+        TimeoutStartUSec) cat "$T/sbd_timeout" 2>/dev/null || echo '1min 30s' ;;
+        *) cat "$T/rw" ;;
+      esac; return 0 ;;
+    is-active|is-enabled|is-failed) [ -f "$T/svc/$u.$1" ]; return ;;
   esac
   log "systemctl $*"
   case "$1" in
     enable) touch "$T/svc/$u.is-enabled"; if [ "$2" = --now ]; then touch "$T/svc/$u.is-active"; fi ;;
     disable) rm -f "$T/svc/$u.is-enabled" "$T/svc/$u.is-active" ;;
+    reset-failed) rm -f "$T/svc/$u.is-failed" ;;
     restart|start) touch "$T/svc/$u.is-active"; if [ "$u" = "$FW_DIENST" ]; then touch "$T/nft_geladen"; fi ;;
   esac
   return 0
@@ -451,7 +460,10 @@ printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"
   const CLUSTER_KNOTEN = String.raw`printf 'totem {\n    cluster_name: sqllnxcl01\n}\nnodelist {\n    node {\n        ring0_addr: 10.203.30.12\n        name: sqllnxcfg\n        nodeid: 3\n    }\n}\n' >"$T/corosync.conf"
 printf '[hadr]\nhadrenabled = 1\n' >>"$T/mssql.conf"; printf 'SBD_WATCHDOG_DEV=/dev/null\nSBD_WATCHDOG_TIMEOUT=10\n' >"$T/sbd_default"
 for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; touch "$T/svc/corosync.is-active" "$T/svc/pcsd.is-active"`;
-  const SBD_FEHLT = `printf '%s\\n' "sbd[612]: error: watchdog_init_fd: Seems as if '/dev/watchdog' isn't a valid watchdog-device: No such file or directory" >"$T/journal_sbd"`;
+  const INV = '4f1c2b0d9e8a47b6a1c3d5e7f9012345';
+  const WD_MELDUNG = "sbd[612]: error: watchdog_init_fd: Seems as if '/dev/watchdog' isn't a valid watchdog-device: No such file or directory";
+  /** Fix-Runde B: sbd failed, letzte Ausführung INV scheiterte am fehlenden Gerät (dieselbe Meldung auch im ganzen Journal des Starts) */
+  const SBD_FEHLT = `touch "$T/svc/sbd.is-failed"; echo ${INV} >"$T/sbd_inv"; printf '%s\\n' "${WD_MELDUNG}" >"$T/journal_inv_${INV}"; cp "$T/journal_inv_${INV}" "$T/journal_sbd"`;
   it('Live-Fix: Drop-in (After=systemd-modules-load, ExecStartPre=Warteskript) und Warteskript fest geschrieben, daemon-reload nur bei Änderung; zweiter Lauf „schon“', () => {
     const w = laeufe('', 2);
     const [a, b] = w.laeufe as [Lauf, Lauf];
@@ -505,9 +517,39 @@ for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; tou
       expect(String(a.ergebnis?.fehler)).toMatch(muster);
       expect(a.log).not.toMatch(/pcs |reset-failed/);
     };
-    f(`printf 'sbd: anderer Fehler\\n' >"$T/journal_sbd"`, /sbd läuft auf sqllnxcfg nicht .* nennt nicht das fehlende Watchdog-Gerät — nicht automatisch/);
+    f(`${SBD_FEHLT}; printf 'sbd: anderer Fehler\\n' >"$T/journal_inv_${INV}"`, new RegExp(`sbd ist auf sqllnxcfg gescheitert, die letzte Ausführung \\(${INV}\\) nennt aber nicht das fehlende Watchdog-Gerät — nicht automatisch`));
     f(`${SBD_FEHLT}; touch "$T/svc/pacemaker.is-active"`, /Pacemaker aber schon — nicht automatisch/);
     f(`${SBD_FEHLT}; printf 'SBD_WATCHDOG_DEV=/dev/alfred-gibt-es-nicht\\n' >"$T/sbd_default"`, /es fehlt noch immer — nichts am Cluster geändert/);
+    // Fix-Runde B: Auslöser eingegrenzt
+    // absichtlich gestoppt (inactive, NICHT failed), alte Meldung im Journal dieses Starts → keine Rückholung, Selbstprüfung bricht sichtbar ab
+    f(`printf '%s\\n' "${WD_MELDUNG}" >"$T/journal_sbd"`, /Selbstprüfung: sbd läuft auf sqllnxcfg nicht \(Cluster eingerichtet, SBD aktiviert\)/);
+    // failed, alte Meldung im Journal des Starts, die LETZTE Ausführung scheiterte anders → Abbruch ohne pcs
+    f(`${SBD_FEHLT}; echo 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a >"$T/sbd_inv"; printf 'sbd: Konfiguration ungültig\\n' >"$T/journal_inv_0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"`, /letzte Ausführung \(0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\) nennt aber nicht das fehlende Watchdog-Gerät/);
+    // InvocationID nicht lesbar → nicht automatisch
+    f(`${SBD_FEHLT}; : >"$T/sbd_inv"`, /die letzte Ausführung \(InvocationID ''\) ist nicht lesbar — nicht automatisch/);
+  });
+  it('Fix-Runde B: letzte Ausführung scheiterte am Warteskript (Gerät kam nach 60 s) → Rückholung; Start-Zeitlimit von sbd ≥ 75 s sonst sichtbarer Abbruch; nur Rechte falsch → nur chmod', () => {
+    const basis = `${PAKETE_DA}\n${CLUSTER_KNOTEN}\necho sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"`;
+    const warte = laeufe(`${basis}\n${SBD_FEHLT}; printf '%s\\n' 'alfred: Watchdog-Gerät /dev/watchdog nach 60 s nicht vorhanden — sbd startet nicht' >"$T/journal_inv_${INV}"`, 1);
+    expect(warte.laeufe[0]!.rc, warte.laeufe[0]!.aus).toBe(0);
+    expect(warte.laeufe[0]!.ergebnis).toMatchObject({ sbdZurueckgeholt: true });
+    // TimeoutStartUSec: Standard 1min 30s besteht (alle anderen Tests); 45s scheitert sichtbar mit dem Wert; 1min 15s und infinity bestehen
+    const zeit = (wert: string) => laeufe(`touch "$T/svc/sbd.is-active"; echo '${wert}' >"$T/sbd_timeout"`, 1).laeufe[0]!;
+    const kurz = zeit('45s');
+    expect(kurz.rc).toBe(1);
+    expect(String(kurz.ergebnis?.fehler)).toContain("sbd.service TimeoutStartUSec ist '45s' — erwartet mindestens 75 s");
+    expect(zeit('1min 15s').rc).toBe(0);
+    expect(zeit('infinity').rc).toBe(0);
+    expect(zeit('1min 14s').rc).toBe(1);
+    expect(String(zeit('irgendwas').ergebnis?.fehler)).toContain("TimeoutStartUSec ist 'irgendwas'");
+    // Inhalt richtig, nur die Rechte falsch → nur chmod, kein daemon-reload
+    const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+    const rechte = laeufe(`mkdir -p "$T/etc/alfred-lib" "$T/etc/systemd/system/sbd.service.d"; printf '%s\\n' ${q(WARTE_WATCHDOG_SKRIPT)} >"$T/etc/alfred-lib/warte-watchdog"; printf '%s\\n' ${q(SBD_DROPIN_INHALT)} >"$T/etc/systemd/system/sbd.service.d/alfred-watchdog.conf"; touch "$T/warte_nicht_ausfuehrbar"`, 1).laeufe[0]!;
+    expect(rechte.rc, rechte.aus).toBe(0);
+    expect(rechte.log).toContain('chmod 0755 warte-watchdog');
+    expect(rechte.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['sbd-warteskript-rechte']));
+    expect(rechte.ergebnis!.aenderungen).not.toEqual(expect.arrayContaining(['sbd-warteskript']));
+    expect(rechte.ergebnis!.aenderungen).not.toEqual(expect.arrayContaining(['systemd-neu-geladen-sbd']));
   });
 });
 
