@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Watchdog-Treiber nach Neustart trotz Ubuntu-Sperre (v1894)
+
+- Ubuntu sperrt Watchdog-Treiber für das automatische Laden beim Start. sbd lädt den Treiber i6300esb jetzt vor dem Start selbst und wartet dann auf das Gerät; vorher blieb ein Knoten nach jedem Neustart (auch nach einem Fencing-Reset) dem Cluster fern. Der wirkungslose Eintrag in modules-load.d wird entfernt; Ubuntus Sperrdateien bleiben unverändert.
+
 ### Fixed — Fencing-Beweis und SBD-Start nach Reset (v1893)
 
 - Die Ergebnisse der HA-Bausteine enthalten keine Feldnamen mehr, die die Geheimnis-Schwärzung trifft; der Fencing-Test meldete sich sonst als gescheitert, obwohl er ausgelöst war.
