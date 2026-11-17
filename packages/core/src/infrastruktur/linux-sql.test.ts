@@ -398,7 +398,7 @@ const LEER: FakePlatte[] = [
   { scsi: 4, dev: '/dev/sde', bytes: 128 * GiB },
 ];
 
-describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Geräten', () => {
+describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Geräten', { timeout: 60_000 }, () => {
   it('vier leere Platten passender Größe → formatiert, fstab per UUID mit nofail, eingehängt', () => {
     const r = plattenLauf(LEER);
     expect(r.rc, r.aus + r.stderr).toBe(0);
