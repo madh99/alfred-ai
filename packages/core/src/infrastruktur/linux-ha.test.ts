@@ -9,7 +9,7 @@ import {
   HA_KNOTEN, HA_VERSIONEN, HA_PORTS, HA_SQL_ZUSATZQUELLEN, HA_BEFEHLE, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
   haClusterSkript, haClusterEntfernenSkript, pruefeHaCluster, pruefeHaClusterEntfernen, PY_CRM_LAGE, PY_CLUSTER_FUNK,
   haFencingPruefenSkript, haFencingBelegenSkript, pruefeHaFencing, pruefeHaFencingBelegen, fencetestNft, fencingBelegGueltig, PY_FENCING, PY_FENCING_FUNK,
-  HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI,
+  HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI, WARTE_WATCHDOG_SKRIPT, SBD_DROPIN_INHALT, HA_SBD_DROPIN,
   type HaVorbereitenParameter, type HaClusterParameter, type FencingBeleg, type FencingLage,
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
@@ -202,7 +202,16 @@ id() { return 0; }
 modprobe() { log "modprobe $*"; if [ -f "$T/pci_ok" ]; then mkdir -p "$WD_SYS/watchdog0"; cat "$T/kennung" >"$WD_SYS/watchdog0/identity"; fi; }
 udevadm() { :; }
 sleep() { :; }
-journalctl() { :; }
+journalctl() { cat "$T/journal_sbd" 2>/dev/null || true; }
+# Live-Fix (c2e4f56d): sbd-Drop-in/Warteskript im Testverzeichnis; pcs nur für die Rückholung eines Knotens (corosync zieht sbd mit)
+SBD_DROPIN="$T/etc/systemd/system/sbd.service.d/alfred-watchdog.conf"; WARTE_DATEI="$T/etc/alfred-lib/warte-watchdog"; SBD_KONF="$T/sbd_default"; WARTE_RUNDEN=3
+pcs() {
+  log "pcs $*"
+  case "$1 $2" in
+    "cluster stop") rm -f "$T/svc/corosync.is-active" "$T/svc/pacemaker.is-active" ;;
+    "cluster start") touch "$T/svc/corosync.is-active" "$T/svc/pacemaker.is-active"; if [ -f "$T/svc/sbd.is-enabled" ] && "$WARTE_DATEI" "$SBD_KONF" 1 2>/dev/null; then touch "$T/svc/sbd.is-active"; fi ;;
+  esac
+}
 ss() { echo LISTEN; }
 systemctl() {
   local u=§{@: -1}
@@ -438,6 +447,68 @@ printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"
     expect(w.laeufe[0]!.log).not.toMatch(/disable/);
     expect(w.dateien).toMatch(/(^|\n)corosync\.conf\n/);
   });
+  // ── Live-Fix (Change c2e4f56d): sbd startete vor /dev/watchdog ──
+  const CLUSTER_KNOTEN = String.raw`printf 'totem {\n    cluster_name: sqllnxcl01\n}\nnodelist {\n    node {\n        ring0_addr: 10.203.30.12\n        name: sqllnxcfg\n        nodeid: 3\n    }\n}\n' >"$T/corosync.conf"
+printf '[hadr]\nhadrenabled = 1\n' >>"$T/mssql.conf"; printf 'SBD_WATCHDOG_DEV=/dev/null\nSBD_WATCHDOG_TIMEOUT=10\n' >"$T/sbd_default"
+for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; touch "$T/svc/corosync.is-active" "$T/svc/pcsd.is-active"`;
+  const SBD_FEHLT = `printf '%s\\n' "sbd[612]: error: watchdog_init_fd: Seems as if '/dev/watchdog' isn't a valid watchdog-device: No such file or directory" >"$T/journal_sbd"`;
+  it('Live-Fix: Drop-in (After=systemd-modules-load, ExecStartPre=Warteskript) und Warteskript fest geschrieben, daemon-reload nur bei Änderung; zweiter Lauf „schon“', () => {
+    const w = laeufe('', 2);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['sbd-warteskript', 'sbd-wartet-auf-watchdog', 'systemd-neu-geladen-sbd']));
+    expect(a.ergebnis).toMatchObject({ sbdWartetAufWatchdog: true, sbdZurueckgeholt: false });
+    expect(a.log).toContain('systemctl daemon-reload');
+    expect(w.dateien).toContain('etc/systemd/system/sbd.service.d/alfred-watchdog.conf');
+    expect(w.dateien).toContain('etc/alfred-lib/warte-watchdog');
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(b.log.trim()).toBe('');
+    expect(SBD_DROPIN_INHALT.split('\n')).toEqual(expect.arrayContaining(['[Unit]', 'Wants=systemd-modules-load.service', 'After=systemd-modules-load.service', '[Service]', 'ExecStartPre=/usr/local/lib/alfred/warte-watchdog']));
+    expect(HA_SBD_DROPIN).toBe('/etc/systemd/system/sbd.service.d/alfred-watchdog.conf');
+  });
+  it('Live-Fix: Warteskript — Gerät aus /etc/default/sbd (auch in Anführungszeichen) als Zeichengerät → 0; fehlt es → nach der Wartezeit Exit 1 mit Meldung', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-wd-'));
+    try {
+      const konf = join(dir, 'sbd');
+      const lauf = (inhalt: string | undefined, grenze = '1') => { if (inhalt === undefined) rmSync(konf, { force: true }); else writeFileSync(konf, inhalt); return spawnSync('sh', ['-c', WARTE_WATCHDOG_SKRIPT, 'warte', konf.replace(/\\/g, '/'), grenze], { encoding: 'utf8' }); };
+      expect(lauf('SBD_WATCHDOG_DEV=/dev/null\n').status).toBe(0);
+      expect(lauf('# Kommentar\nSBD_WATCHDOG_DEV="/dev/null"\n').status).toBe(0);
+      expect(lauf("SBD_WATCHDOG_DEV='/dev/null'\n").status).toBe(0);
+      const f = lauf('SBD_WATCHDOG_DEV=/dev/alfred-gibt-es-nicht\n');
+      expect(f.status).toBe(1);
+      expect(f.stderr).toContain('Watchdog-Gerät /dev/alfred-gibt-es-nicht nach 1 s nicht vorhanden — sbd startet nicht');
+      expect(lauf('SBD_WATCHDOG_DEV=/dev/alfred-x\nSBD_WATCHDOG_DEV=/dev/null\n').status).toBe(0); // letzter Eintrag gilt
+      expect(lauf(undefined).stderr).toContain('Watchdog-Gerät /dev/watchdog nach 1 s'); // ohne Konfiguration: /dev/watchdog
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('Live-Fix: sbd scheiterte am fehlenden Watchdog-Gerät, Gerät jetzt da → nur DIESER Knoten: reset-failed, pcs cluster stop/start (lokal), danach sbd und pacemaker aktiv', () => {
+    const w = laeufe(`${PAKETE_DA}\n${CLUSTER_KNOTEN}\n${SBD_FEHLT}\necho sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"`, 2);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    const befehle = a.log.split('\n').filter(z => /reset-failed|^pcs /.test(z));
+    expect(befehle).toEqual(['systemctl reset-failed sbd', 'pcs cluster stop', 'pcs cluster start --wait=120']); // ohne --all
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['sbd-reset-failed', 'cluster-hier-gestoppt', 'cluster-hier-gestartet']));
+    expect(a.ergebnis).toMatchObject({ sbdZurueckgeholt: true });
+    // danach gesund: nichts mehr anfassen
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', sbdZurueckgeholt: false, aenderungen: [] });
+    expect(b.log).not.toMatch(/pcs |reset-failed/);
+  });
+  it('Live-Fix: gesundes sbd nie angefasst; anderer Grund, laufender Pacemaker oder weiter fehlendes Gerät → sichtbarer Abbruch ohne pcs', () => {
+    const gesund = laeufe(`${PAKETE_DA}\n${CLUSTER_KNOTEN}\n${SBD_FEHLT}\ntouch "$T/svc/sbd.is-active" "$T/svc/pacemaker.is-active"; echo sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"`, 1);
+    expect(gesund.laeufe[0]!.rc, gesund.laeufe[0]!.aus).toBe(0);
+    expect(gesund.laeufe[0]!.log).not.toMatch(/pcs |reset-failed/);
+    const f = (zusatz: string, muster: RegExp) => {
+      const w = laeufe(`${PAKETE_DA}\n${CLUSTER_KNOTEN}\necho sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"\n${zusatz}`, 1);
+      const a = w.laeufe[0]!;
+      expect(a.rc).toBe(1);
+      expect(String(a.ergebnis?.fehler)).toMatch(muster);
+      expect(a.log).not.toMatch(/pcs |reset-failed/);
+    };
+    f(`printf 'sbd: anderer Fehler\\n' >"$T/journal_sbd"`, /sbd läuft auf sqllnxcfg nicht .* nennt nicht das fehlende Watchdog-Gerät — nicht automatisch/);
+    f(`${SBD_FEHLT}; touch "$T/svc/pacemaker.is-active"`, /Pacemaker aber schon — nicht automatisch/);
+    f(`${SBD_FEHLT}; printf 'SBD_WATCHDOG_DEV=/dev/alfred-gibt-es-nicht\\n' >"$T/sbd_default"`, /es fehlt noch immer — nichts am Cluster geändert/);
+  });
 });
 
 // ── Task 3: Cluster und diskless SBD ────────────────────────────────────────────────────────────────────────────────────────────
@@ -526,6 +597,9 @@ describe.skipIf(!PYTHON)('I8e Paket 2 — crm_mon-XML lesen (PY_CRM_LAGE)', () =
   });
   it('altes --as-xml: unclean zählt nicht als online; ohne Quorum, stonith aus', () => {
     expect(lage(CRM_XML_ALT).stdout.trim()).toBe('3 1 0 0 0 sqllnx02');
+  });
+  it('Live-Fix (c2e4f56d): ein Knoten mit pending="true" (corosync-Mitglied, Pacemaker noch nicht beigetreten) zählt nicht als online', () => {
+    expect(lage(CRM_XML.replace('name="sqllnx02" id="2" online="true" standby="false" standby_onfail="false" maintenance="false" pending="false"', 'name="sqllnx02" id="2" online="true" standby="false" standby_onfail="false" maintenance="false" pending="true"')).stdout.trim()).toBe('3 1 1 1 1 sqllnx01');
   });
   it('kaputtes XML → Exit 2 (Bash wertet das als „nichts online“)', () => {
     expect(lage('<pacemaker-result><summary>').status).toBe(2);
@@ -1029,6 +1103,12 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     const off = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\necho 1 >"$T/online"`]);
     keinBeleg(off.laeufe[1]!, /sqllnx01 ist nach dem Reset nicht online im Cluster \(online: sqllnx01, Quorum 0\)/);
     expect(off.beleg).toBeUndefined();
+    // Live-Fix (c2e4f56d): corosync wieder drin, Pacemaker hier nicht → kein Beleg (Mitgliedschaft in Pacemaker, nicht nur corosync)
+    const ohnePm = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\nrm -f "$T/svc/pacemaker.is-active"`]);
+    keinBeleg(ohnePm.laeufe[1]!, /sqllnx01 ist nach dem Reset nicht online im Cluster \(online: sqllnx01,sqllnx02,sqllnxcfg, Quorum 1\) — Pacemaker hier: .*kein Beleg/);
+    expect(ohnePm.beleg).toBeUndefined();
+    const ohneSbd = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\nrm -f "$T/svc/sbd.is-active"`]);
+    keinBeleg(ohneSbd.laeufe[1]!, /sbd läuft auf sqllnx01 nach dem Reset nicht — kein Beleg/);
     const wd = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\nrm -rf "$T/proc/42"`]);
     keinBeleg(wd.laeufe[1]!, /sbd hält auf sqllnx01 nach dem Reset kein \/dev\/watchdog offen/);
   });

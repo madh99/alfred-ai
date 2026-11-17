@@ -69,8 +69,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Task 3: „; Cluster …“ am Ende (clusterText) — positive Form als ganzes Stück (Teilstücke wie „Quorum ja“ zulässig)
   // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten.
   // Fix-Runde 1: eine geladene Test-Sperre hängt „ — Corosync-Sperre alfred_fencetest AKTIV“ an den Fencing-Teil (Prüfung: nichtEnthalten „Sperre“)
-  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
-    + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv'
+  // Live-Fix (c2e4f56d): „; sbd wartet auf Watchdog“ nach RuntimeWatchdog
+  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
+    + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {

@@ -50,6 +50,8 @@ export interface LinuxHaStatus {
   hadr?: string | null; sqlDienst?: string;
   firewall?: { tabelle: boolean; dienst: string; aktiviert: string };
   hosts?: boolean; runtimeWatchdog?: string | null; pcsd?: string;
+  /** Live-Fix (c2e4f56d): sbd-Drop-in und Warteskript vorhanden und unverändert */
+  sbdWartetAufWatchdog?: boolean;
   /** Fix-Runde 1: Loopback-Zeilen mit eigenem Namen, ersetzte Originale, zusätzliche 1433-Quellen (Ruling R4) */
   hostsLoopback?: string[]; hostsEntfernt?: string[]; sql1433Zusatz?: string[];
   /** Task 3: Cluster aus corosync.conf, crm_mon-XML, pcs stonith sbd status, stonith-watchdog-timeout */
@@ -149,6 +151,8 @@ export function linuxHaStatusTeile(s: LinuxHaStatus): string[] {
     fwText,
     s.hostsLoopback?.length ? `hosts-Block mit eigenem Namen auf Loopback (${s.hostsLoopback.join(' / ').slice(0, 120)})` : s.hosts ? 'hosts-Block vorhanden' : 'hosts-Block fehlt',
     s.runtimeWatchdog === '0' ? 'RuntimeWatchdog aus' : `RuntimeWatchdog AN (${s.runtimeWatchdog ?? 'unbekannt'})`,
+    // Live-Fix (c2e4f56d): sbd wartet beim Start auf das Watchdog-Gerät (Drop-in + Warteskript von ha_vorbereiten)
+    s.sbdWartetAufWatchdog === true ? 'sbd wartet auf Watchdog' : s.sbdWartetAufWatchdog === false ? 'sbd ohne Watchdog-Wartezeit (Drop-in fehlt)' : 'sbd Watchdog-Wartezeit unbekannt',
     s.pcsd === 'active' ? 'pcsd aktiv' : `pcsd ${s.pcsd ?? 'unbekannt'}`,
     clusterText(s.cluster),
     fencingText(s.fencing),
@@ -232,7 +236,7 @@ export class LinuxHaSkill extends Skill {
     description:
       'Hochverfügbarkeit für SQL Server 2025 auf Ubuntu 24.04 (I8e Paket 2: Pacemaker, diskless SBD mit Hardware-Watchdog i6300esb, Verfügbarkeitsgruppe) über feste, geprüfte Bash-Bausteine auf Linux-Fernzugängen (zugang = Name des Fernzugangs, z. B. sqllnx02). '
       + 'status (lesend, auch außerhalb von Changes; ohne Tresor): Watchdog (Kennung, Besitzer), Pakete, HADR, Host-Firewall, hosts-Block, systemd-RuntimeWatchdog, pcsd, Cluster — '
-      + 'Wortlaut „<zugang>: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv; Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s“ (Abweichungen: „Watchdog fehlt …“, „Watchdog FREMD …“, „Watchdog i6300esb BELEGT von …“, „Watchdog i6300esb bei sbd“, „Pakete abweichend: …“, „HADR aus“, „Cluster nicht eingerichtet“, „Quorum nein“ …), als Prüfung z. B. erwartet „Pakete fest“, „Firewall alfred_ha aktiv“ oder „3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3“. '
+      + 'Wortlaut „<zugang>: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s“ (Abweichungen: „Watchdog fehlt …“, „Watchdog FREMD …“, „Watchdog i6300esb BELEGT von …“, „Watchdog i6300esb bei sbd“, „Pakete abweichend: …“, „HADR aus“, „Cluster nicht eingerichtet“, „Quorum nein“ …), als Prüfung z. B. erwartet „Pakete fest“, „Firewall alfred_ha aktiv“ oder „3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3“. '
       + `NUR als Schritt freigegebener Changes: ha_vorbereiten (zugang, rolle daten|konfig, knoten optional — Standard ${HA_KNOTEN.map(k => `${k.name} ${k.ip}`).join(', ')}) — nach linux_sql installieren auf jedem der drei Knoten: `
       + `hosts-Block der drei Knoten, Pakete fest und gehalten (${HA_PAKETE.map(([s, n]) => `${n} ${HA_VERSIONEN[s]}`).join(', ')}, linux-modules-extra des laufenden Kernels), i6300esb laden, softdog gesperrt, systemd-RuntimeWatchdog aus, `
       + `hacluster-Kennwort aus dem Tresor (${HA_HACLUSTER_TRESOR}, erzeugt Alfred einmalig), HADR an (SQL-Neustart nur bei Änderung), nft-Tabelle inet alfred_ha (alfred-hostfw.service: nur die drei Knoten dürfen TCP 1433, 2224, 3121, 5022, 21064 und UDP 5405, TCP 1433 zusätzlich ${HA_SQL_ZUSATZQUELLEN.join(', ')}, sonst unverändert, SSH bleibt), pcsd läuft, Cluster-Dienste bleiben bis zur Cluster-Einrichtung aus. `

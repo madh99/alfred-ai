@@ -35,7 +35,7 @@ const SOLL = { pacemaker: '2.1.6-5ubuntu2', 'pacemaker-cli-utils': '2.1.6-5ubunt
 const STATUS_OK: LinuxHaStatus = {
   zustand: 'gelesen', watchdog: [{ geraet: 'watchdog0', kennung: 'i6300ESB timer', treiber: 'i6300esb' }], pciEsb: true, halter: [],
   pakete: { ...Object.fromEntries(Object.entries(SOLL).map(([k, v]) => [k, { version: v, gehalten: true }])), 'linux-modules-extra-6.8.0-147-generic': { version: '6.8.0-147.147', gehalten: false } },
-  soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', pcsd: 'active', sql1433Zusatz: ['192.168.1.223'],
+  soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', sbdWartetAufWatchdog: true, pcsd: 'active', sql1433Zusatz: ['192.168.1.223'],
   cluster: { art: 'keiner' },
   fencing: { bootId: 'b-1', jetztS: 1_795_000_000, identitaet: null, test: null, beleg: null },
 };
@@ -56,7 +56,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(s.success, s.error).toBe(true);
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.status, parameter: {}, timeoutMs: 90_000 });
     expect(w.aufrufe[0]!.eingabe).toBeUndefined();
-    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv; Cluster nicht eingerichtet; Fencing nicht belegt');
+    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect((await w.skill.execute({ action: 'loeschen', zugang: 'sqllnx02' }, imChange)).error).toContain('Unbekannte Aktion');
   });
 
@@ -70,9 +70,13 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(v({ pakete: { ...STATUS_OK.pakete, pcs: { version: '0.11.8-1', gehalten: true }, sbd: { version: null, gehalten: false }, corosync: { version: SOLL.corosync, gehalten: false } } }))
       .toContain('Pakete abweichend: corosync nicht gehalten, pcs 0.11.8-1 (soll 0.11.7-1ubuntu1.1), sbd fehlt');
     expect(v({ hadr: null, hosts: false, runtimeWatchdog: '10s', pcsd: 'inactive', firewall: { tabelle: false, dienst: 'inactive', aktiviert: 'disabled' } }))
-      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
+      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); sbd wartet auf Watchdog; pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');
     expect(v({ sql1433Zusatz: [] })).toContain('Firewall alfred_ha aktiv (1433: Knoten);');
+    // Live-Fix (c2e4f56d): sbd-Drop-in
+    expect(v({ sbdWartetAufWatchdog: false })).toContain('; RuntimeWatchdog aus; sbd ohne Watchdog-Wartezeit (Drop-in fehlt); pcsd aktiv;');
+    expect(v({ sbdWartetAufWatchdog: undefined })).toContain('; sbd Watchdog-Wartezeit unbekannt; ');
+    expect(FESTE_AUSGABEN['linux_ha.status']!.split(' | ')).toContain('sbd wartet auf Watchdog');
     const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
     const muster = new RegExp(`^${vorlage.split(' | ')[0]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
     for (const t of [v({}), v({ watchdog: [], pciEsb: false, hadr: '0', hosts: false }), v({ cluster: CLUSTER_OK }), v({ cluster: undefined }), v({ fencing: undefined })]) expect(t).toMatch(muster);
