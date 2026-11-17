@@ -308,7 +308,8 @@ export function pruefeInstallation(p: unknown): string | undefined {
 }
 
 const INSTALL_KOERPER = `export DEBIAN_FRONTEND=noninteractive
-paket_version() { dpkg-query -W -f='\${Status}|\${Version}' "$1" 2>/dev/null | awk -F'|' '$1 == "install ok installed" { print $2 }' || true; }
+# Realfall 17.11. (6279a86a): gehaltene Pakete melden „hold ok installed“ — installiert ist jeder Status „<wunsch> ok installed“
+paket_version() { dpkg-query -W -f='\${Status}|\${Version}' "$1" 2>/dev/null | awk -F'|' '$1 ~ / ok installed$/ { print $2 }' || true; }
 schreibe_wenn_anders() { if [ "$(cat "$1" 2>/dev/null || true)" != "$2" ]; then printf '%s\\n' "$2" >"$1.alfred-neu"; chmod 0644 "$1.alfred-neu"; mv -f "$1.alfred-neu" "$1"; GEAENDERT=1; fi; }
 GEAENDERT=0
 # Fix-Welle I-2: neues sa-Kennwort, aber SQL Server schon installiert → das alte Kennwort nie still ersetzen
@@ -799,7 +800,9 @@ export const PY_STATUS = [
   'pakete = {}',
   'for pk in ("mssql-server", "mssql-tools18", "msodbcsql18"):',
   '    c, v = lauf("dpkg-query", "-W", "-f=${Status}|${Version}", pk)',
-  '    pakete[pk] = v.split("|", 1)[1] if c == 0 and v.startswith("install ok installed|") else None',
+  // Realfall 17.11. (6279a86a): die Installation hält die Pakete → „hold ok installed“ zählt ebenso als installiert
+  '    st, _, ver = v.partition("|")',
+  '    pakete[pk] = ver if c == 0 and st.endswith(" ok installed") else None',
   'r["pakete"] = pakete',
   'r["installiert"] = pakete["mssql-server"] is not None',
   'r["dienst"] = lauf("systemctl", "is-active", "mssql-server")[1] or "unbekannt"',

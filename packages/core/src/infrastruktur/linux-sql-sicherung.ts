@@ -1212,7 +1212,7 @@ export function sicherungEinrichtenSkript(p: SicherungEinrichtenParameter): stri
     `KOPIE_SH=${shQ(KOPIE_SH)}`,
     `DIENST=${shQ(KOPIE_DIENST_UNIT)}`,
     `TIMER=${shQ(KOPIE_TIMER_UNIT)}`,
-    "paket_version() { dpkg-query -W -f='${Status}|${Version}' \"$1\" 2>/dev/null | awk -F'|' '$1 == \"install ok installed\" { print $2 }' || true; }",
+    "paket_version() { dpkg-query -W -f='${Status}|${Version}' \"$1\" 2>/dev/null | awk -F'|' '$1 ~ / ok installed$/ { print $2 }' || true; }", // gehaltene Pakete: „hold ok installed“
     // Datei nur bei abweichendem Inhalt oder Rechten ersetzen (mktemp im Zielordner, dann mv); $3 = Inhalt
     'schreibe_wenn_anders() {',
     '  if [ "$(cat "$1" 2>/dev/null || true)" != "$3" ] || [ "$(stat -c \'%u:%a\' "$1" 2>/dev/null || true)" != "0:$2" ]; then',
