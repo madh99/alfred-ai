@@ -1051,7 +1051,29 @@ def fencing_grund(b, t, i, cluster):
         return "Test-Datei unlesbar"
     if isinstance(t, dict) and t.get("zeit") != b.get("testZeit"):
         return "neuerer Fencing-Test vom %s ohne Beleg" % _w(t.get("zeit"))
-    return ""`;
+    return ""
+# Live-Fix (Change c2e4f56d): Ergebnisse und Status geben Test und Beleg nur mit diesen festen Feldern aus — Feldnamen ohne Geheimnis-Wörter
+# (die Schwärzung im Fernzugriff, kaefig.ts GEHEIM_NAME, ersetzte z. B. den Wert von „tokenMs“ und zerstörte die JSON-Zeile).
+# Alte Namen aus vorhandenen Dateien (tokenMs/tokenQuelle) werden gelesen und unter den neuen ausgegeben; nur Skalare.
+TEST_FELDER = ("art", "bootIdVorher", "zeit", "zeitS", "ausloeseS", "sperreS", "minResetS", "corosyncTaktMs", "taktQuelle", "knoten", "cluster", "nodeid", "konfHash", "sysrq", "kernelPanic")
+BELEG_FELDER = ("art", "zeit", "resetS", "rejoinS", "bootId", "bootIdVorher", "testZeit", "minResetS", "cluster", "knoten", "nodeid", "konfHash", "journalLueckeS")
+QUELLEN_FELDER = ("resetS", "rejoinS", "journalLueckeS", "keinShutdown")
+ALTE_NAMEN = {"corosyncTaktMs": "tokenMs", "taktQuelle": "tokenQuelle"}
+def _skalar(v):
+    return v if v is None or isinstance(v, (str, bool, int)) or (isinstance(v, float) and math.isfinite(v)) else None
+def _sicht(o, felder):
+    if o is None or o == "unlesbar":
+        return o
+    if not isinstance(o, dict):
+        return "unlesbar"
+    return {f: _skalar(o.get(f, o.get(ALTE_NAMEN.get(f, ""), None))) for f in felder}
+def sicht_test(t):
+    return _sicht(t, TEST_FELDER)
+def sicht_beleg(b):
+    s = _sicht(b, BELEG_FELDER)
+    if isinstance(s, dict) and isinstance(b.get("quellen"), dict):
+        s["quellen"] = {f: _skalar(b["quellen"].get(f)) for f in QUELLEN_FELDER}
+    return s`;
 
 /** python3-Werkzeug der Fencing-Bausteine: `python3 -c "$PY_FENCING" <befehl> …` (Befehle siehe unten; Fehler → Exit 1 mit Grund auf stdout) */
 export const PY_FENCING = `${PY_FENCING_FUNK}
@@ -1132,7 +1154,8 @@ elif c == "beleg_art":
     b = lies_json(a[2])
     print(b.get("art", "") if isinstance(b, dict) else "")
 elif c == "kompakt":
-    print(json.dumps(lies_json(a[2])))
+    # test|beleg datei → nur die festen Felder (Live-Fix: nie ein rohes Objekt mit beliebigen Schlüsseln ausgeben)
+    print(json.dumps((sicht_test if a[2] == "test" else sicht_beleg)(lies_json(a[3]))))
 elif c == "test":
     # datei conf key sbd ich cluster → „art bootIdVorher zeitS ausloeseS sperreS minResetS zeit“
     w, g = test_lesen(a[2], a[6], a[7], fencing_ident(a[3], a[4], a[5], a[6]))
@@ -1141,11 +1164,11 @@ elif c == "test":
         sys.exit(1)
     print(*w)
 elif c == "test_json":
-    # art boot zeitS ausloeseS sperreS minResetS tokenMs tokenQuelle conf key sbd ich sysrq panic
+    # art boot zeitS ausloeseS sperreS minResetS corosyncTaktMs taktQuelle conf key sbd ich sysrq panic
     i = fencing_ident(a[10], a[11], a[12], a[13]) or {}
     zs = int(a[4])
     print(json.dumps({"art": a[2], "bootIdVorher": a[3], "zeit": iso(zs), "zeitS": zs, "ausloeseS": int(a[5]), "sperreS": int(a[6]) or None,
-                      "minResetS": int(a[7]), "tokenMs": int(a[8]) if a[8].isdigit() else None, "tokenQuelle": a[9], "knoten": a[13],
+                      "minResetS": int(a[7]), "corosyncTaktMs": int(a[8]) if a[8].isdigit() else None, "taktQuelle": a[9], "knoten": a[13],
                       "cluster": i.get("cluster"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"), "sysrq": a[14], "kernelPanic": a[15]}))
 elif c == "journal_letzt":
     # stdin: journalctl -b -1 -n 1 -o json → „<_BOOT_ID> <Sekunden>“
@@ -1257,12 +1280,12 @@ fi
 # gültiger Beleg derselben Art → schon (eine Wiederholung des Schritts setzt den Knoten nicht noch einmal zurück)
 G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
 if [ -z "$G" ] && [ "$(fpy beleg_art "$BELEG_DATEI")" = "$ART" ]; then
-  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
+  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt beleg "$BELEG_DATEI"),\"aenderungen\":[]}"
   exit 0
 fi
 # Test dieser Art ist schon erfolgt (Reset nach dem Test, noch kein Beleg) → schon, Beleg folgt mit fencing_belegen
 if [ -n "$T_BOOT" ] && [ "$T_ART" = "$ART" ] && [ "$T_BOOT" != "$BOOT" ] && [ "$T_ALTER" -le "$MAX_ALTER_S" ]; then
-  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"test\":$(fpy kompakt "$TEST_DATEI"),\"hinweis\":\"Reset nach dem Test vom $T_ZEIT erfolgt — Beleg mit fencing_belegen\",\"aenderungen\":[]}"
+  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"test\":$(fpy kompakt test "$TEST_DATEI"),\"hinweis\":\"Reset nach dem Test vom $T_ZEIT erfolgt — Beleg mit fencing_belegen\",\"aenderungen\":[]}"
   exit 0
 fi
 # Cluster: alle Knoten online mit Quorum, STONITH an, keine Ressourcen (Beweis vor dem AG-Aufbau), Rest behält ohne den Testknoten das Quorum
@@ -1332,7 +1355,7 @@ fi
 # ── Selbstprüfung: Timer geplant ──
 systemctl is-active --quiet "$EINHEIT.timer" || abbruch "Selbstprüfung: Auslöser $EINHEIT.timer nicht aktiv"
 if [ "$ART" = trennung ]; then systemctl is-active --quiet "$EINHEIT-ende.timer" || abbruch "Selbstprüfung: Aufheben $EINHEIT-ende.timer nicht aktiv"; fi
-ergebnis "{\"zustand\":\"ausgeloest\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"bootIdVorher\":\"$BOOT\",\"ausloesungInS\":$VERZ_S,\"sperreS\":$SP,\"einheit\":\"$EINHEIT\",\"test\":$TJ,\"aenderungen\":[$AJ]}"`);
+ergebnis "{\"zustand\":\"ausgeloest\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"bootIdVorher\":\"$BOOT\",\"ausloesungInS\":$VERZ_S,\"sperreS\":$SP,\"einheit\":\"$EINHEIT\",\"test\":$(fpy kompakt test "$TEST_DATEI"),\"aenderungen\":[$AJ]}"`);
 
 const FENCING_BELEGEN_KOERPER = sh(String.raw`# ── Phase 1: prüfen — ohne Beweis kein Beleg ──
 knoten_pruefen
@@ -1346,7 +1369,7 @@ read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_MIN T_ZEIT <<<"$tz"
 # gültiger Beleg genau zu diesem Test → schon
 G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
 if [ -z "$G" ]; then
-  ergebnis "{\"zustand\":\"schon\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
+  ergebnis "{\"zustand\":\"schon\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt beleg "$BELEG_DATEI"),\"aenderungen\":[]}"
   exit 0
 fi
 BOOT=$(boot_id)
@@ -1396,7 +1419,7 @@ aend fencing-beleg
 G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
 [ -z "$G" ] || abbruch "Selbstprüfung: geschriebener Beleg ist nicht gültig: $G — Beleg entfernt"
 BELEG_OK=1
-ergebnis "{\"zustand\":\"geaendert\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$BJ,\"aenderungen\":[$AJ]}"`);
+ergebnis "{\"zustand\":\"geaendert\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt beleg "$BELEG_DATEI"),\"aenderungen\":[$AJ]}"`);
 
 function fencingKopf(baustein: string, p: Record<string, unknown>, knoten: readonly HaKnoten[], cluster: string): string[] {
   return [
@@ -1456,7 +1479,7 @@ export function haFencingBelegenSkript(p: HaFencingBelegenParameter): string {
 export interface FencingIdentitaet { cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null }
 export interface FencingTest {
   art: HaFencingArt; bootIdVorher: string; zeit: string; zeitS: number; ausloeseS: number; sperreS: number | null; knoten: string; cluster: string | null;
-  nodeid?: string | null; konfHash?: string | null; sysrq?: string; kernelPanic?: string; minResetS?: number; tokenMs?: number | null; tokenQuelle?: string;
+  nodeid?: string | null; konfHash?: string | null; sysrq?: string; kernelPanic?: string; minResetS?: number; corosyncTaktMs?: number | null; taktQuelle?: string;
 }
 export interface FencingBeleg {
   art: HaFencingArt; zeit: string; resetS: number; rejoinS: number; bootId: string; bootIdVorher: string; testZeit: string;
@@ -1605,7 +1628,7 @@ else:
 r["cluster"] = cl`,
   // Task 4: Fencing-Beweis dieses Knotens — Test, Beleg, boot_id und Identität im Cluster; die Gültigkeit prüft fencingBelegGueltig (TS)
   PY_FENCING_FUNK,
-  `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)}), "beleg": lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)}), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", "/etc/default/sbd", ich), "sperreAktiv": lauf("nft", "list", "table", "inet", ${JSON.stringify(HA_FENCETEST_TABELLE)})[0] == 0}`,
+  `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": sicht_test(lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)})), "beleg": sicht_beleg(lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)})), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", "/etc/default/sbd", ich), "sperreAktiv": lauf("nft", "list", "table", "inet", ${JSON.stringify(HA_FENCETEST_TABELLE)})[0] == 0}`,
   'print("ALFRED-HA " + json.dumps(r))',
 ].join('\n');
 

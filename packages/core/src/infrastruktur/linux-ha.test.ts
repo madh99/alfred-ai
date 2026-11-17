@@ -13,6 +13,7 @@ import {
   type HaVorbereitenParameter, type HaClusterParameter, type FencingBeleg, type FencingLage,
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
+import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
 
 // I8e Paket 2 Task 2 — HA-Grundlage je Knoten (linux_ha.ha_vorbereiten), feste Bash-Bausteine
 
@@ -985,7 +986,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
       expect.stringMatching(new RegExp(`^systemd-run --unit=alfred-fencetest-${J} --on-active=10 --timer-property=AccuracySec=1s nft -f \\S+fencetest\\.nft$`)),
     ]);
     expect(w.nft).toBe(fencetestNft());
-    expect(w.test).toMatchObject({ art: 'trennung', bootIdVorher: ALT, zeitS: J, ausloeseS: J + 10, minResetS: 13, tokenMs: 3000, tokenQuelle: 'live', sperreS: 120, knoten: 'sqllnx01', cluster: 'sqllnxcl01', nodeid: '1', sysrq: '176', kernelPanic: '0' });
+    expect(w.test).toMatchObject({ art: 'trennung', bootIdVorher: ALT, zeitS: J, ausloeseS: J + 10, minResetS: 13, corosyncTaktMs: 3000, taktQuelle: 'live', sperreS: 120, knoten: 'sqllnx01', cluster: 'sqllnxcl01', nodeid: '1', sysrq: '176', kernelPanic: '0' });
     expect(String(w.test!.zeit)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
     expect(String(w.test!.konfHash)).toMatch(/^[0-9a-f]{64}$/);
     expect(p.aus + p.log).not.toContain('Hk-Geheim');
@@ -1083,10 +1084,10 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
   it('trennung: Reset schneller als Corosync-Token + SBD_WATCHDOG_TIMEOUT → kein Beleg; Token nicht lesbar → fest 1000 ms; haenger ohne Untergrenze', async () => {
     const zuSchnell = await fencing([PRUEFEN_T, BELEGEN], ['', reset({ resetS: 12 })]);
     keinBeleg(zuSchnell.laeufe[1]!, /Reset schon 12 s nach der Auslösung \(mindestens 13 s = Corosync-Token \+ SBD_WATCHDOG_TIMEOUT\) — nicht die Folge der Trennung; kein Beleg/);
-    expect(zuSchnell.test).toMatchObject({ minResetS: 13, tokenMs: 3000, tokenQuelle: 'live' });
+    expect(zuSchnell.test).toMatchObject({ minResetS: 13, corosyncTaktMs: 3000, taktQuelle: 'live' });
     expect(zuSchnell.beleg).toBeUndefined();
     const fest = await fencing([PRUEFEN_T, BELEGEN], ['rm -f "$T/token_ms"', reset({ resetS: 12 })]);
-    expect(fest.test).toMatchObject({ minResetS: 11, tokenMs: 1000, tokenQuelle: 'fest' });
+    expect(fest.test).toMatchObject({ minResetS: 11, corosyncTaktMs: 1000, taktQuelle: 'fest' });
     expect(fest.laeufe[1]!.rc, fest.laeufe[1]!.aus).toBe(0);
     expect(fest.beleg).toMatchObject({ resetS: 12, minResetS: 11 });
     const h = await fencing([PRUEFEN_H, BELEGEN], ['echo sqllnxcfg >"$T/name"', reset({ resetS: 5 })]);
@@ -1150,5 +1151,106 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     const beide = await fencing([PRUEFEN_T, BELEGEN, PRUEFEN_H], [cfg, reset(), `echo ${J + 300} >"$T/jetzt"`]);
     expect(beide.laeufe[2]!.rc, beide.laeufe[2]!.aus).toBe(0);
     expect(beide.laeufe[2]!.ergebnis).toMatchObject({ zustand: 'ausgeloest', art: 'haenger' });
+  });
+});
+
+// ── Live-Fix (Change c2e4f56d): die Schwärzung im Fernzugriff darf keine Ergebniszeile verändern ──────────────────────────────
+// Realfall: „tokenMs“/„tokenQuelle“ trafen GEHEIM_NAME (TOKEN) → Werte „[geschwärzt]“ → ALFRED-HA-Zeile kein JSON mehr → „gescheitert (Exit 0)“.
+
+/** jede ALFRED-HA-Zeile übersteht schwaerze unverändert und bleibt JSON */
+const ueberstehtSchwaerzung = (aus: string, wo: string) => {
+  const zeilen = aus.split(/\r?\n/).filter(z => z.startsWith('ALFRED-HA '));
+  expect(zeilen.length, `${wo}: keine ALFRED-HA-Zeile`).toBeGreaterThan(0);
+  const nach = schwaerze(aus).text.split(/\r?\n/).filter(z => z.startsWith('ALFRED-HA '));
+  expect(nach, wo).toEqual(zeilen);
+  for (const z of nach) expect(() => JSON.parse(z.slice('ALFRED-HA '.length)), `${wo}: ${z.slice(0, 200)}`).not.toThrow();
+};
+/** alle Schlüssel (rekursiv) eines Ergebnisobjekts */
+const schluessel = (o: unknown, aus: Set<string> = new Set()): Set<string> => {
+  if (Array.isArray(o)) for (const x of o) schluessel(x, aus);
+  else if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) { aus.add(k); schluessel(v, aus); }
+  return aus;
+};
+/** Python-Ausgabe wie auf dem Knoten (json.dumps mit „, “ und „: “ — Leerzeichen nach dem Doppelpunkt wie im Realfall) */
+const pyJson = (o: unknown) => spawnSync(PYTHON!, ['-c', 'import json, sys; print(json.dumps(json.loads(sys.stdin.read())))'], { input: JSON.stringify(o), encoding: 'utf8' }).stdout.trim();
+
+describe('I8e Paket 2 — Live-Fix: Ergebnisfelder ohne Geheimnis-Namen', { timeout: 240_000 }, () => {
+  it('Muster bestätigt: ein Feld „tokenMs“ würde geschwärzt und zerstörte die JSON-Zeile (Grund des Live-Fehlers)', () => {
+    const alt = 'ALFRED-HA {"zustand": "ausgeloest", "test": {"tokenMs": 3000, "tokenQuelle": "live"}}';
+    const s = schwaerze(alt);
+    expect(s.anzahl).toBeGreaterThan(0);
+    expect(() => JSON.parse(s.text.slice('ALFRED-HA '.length))).toThrow();
+  });
+  it('statisch: kein ausgegebener Schlüssel in Status-Programm, Fencing-Werkzeug oder Bash-Bausteinen trifft GEHEIM_NAME', () => {
+    const texte = [PY_HA_STATUS, PY_FENCING, haVorbereitenSkript(P), haClusterSkript(PC), haClusterEntfernenSkript(PC), PRUEFEN_T, PRUEFEN_H, BELEGEN, haStatusSkript()];
+    const namen = new Set<string>();
+    for (const t of texte) {
+      for (const m of t.matchAll(/\\?"([A-Za-z_][A-Za-z0-9_]*)\\?"\s*:/g)) namen.add(m[1]!); // {"k": …} und \"k\": im Bash-Ergebnis
+      for (const m of t.matchAll(/\b[A-Za-z_]\w*\["([A-Za-z_][A-Za-z0-9_]*)"\]\s*=/g)) namen.add(m[1]!); // r["k"] = …
+    }
+    // feste Feldlisten der Sicht auf Test und Beleg
+    for (const liste of ['TEST_FELDER', 'BELEG_FELDER', 'QUELLEN_FELDER']) {
+      const z = PY_FENCING.split('\n').find(x => x.startsWith(`${liste} = (`))!;
+      expect(z, liste).toBeDefined();
+      for (const m of z.matchAll(/"([A-Za-z_]\w*)"/g)) namen.add(m[1]!);
+    }
+    expect(namen.size).toBeGreaterThan(60);
+    for (const n of ['zustand', 'corosyncTaktMs', 'taktQuelle', 'minResetS', 'konfHash', 'fencing', 'sperreAktiv']) expect(namen).toContain(n);
+    // Ausnahme: _BOOT_ID/__REALTIME_TIMESTAMP/MESSAGE sind gelesene Journal-Felder, keine Ausgabe — sie treffen ohnehin nicht
+    expect([...namen].filter(n => GEHEIM_NAME.test(n))).toEqual([]);
+  });
+  it.skipIf(!BASH)('ha_vorbereiten: Ergebniszeilen überstehen schwaerze', () => {
+    const w = laeufe('');
+    for (const [i, l] of w.laeufe.entries()) { ueberstehtSchwaerzung(l.aus, `vorbereiten ${i}`); expect([...schluessel(l.ergebnis)].filter(n => GEHEIM_NAME.test(n))).toEqual([]); }
+  });
+  it.skipIf(!BASH || !PYTHON)('cluster_anlegen/-entfernen und alle Fencing-Ergebnisse (ausgeloest, schon, Beleg, Fehler) überstehen schwaerze; Schlüssel ohne Geheimnis-Namen', async () => {
+    const c = await cluster([ANLEGEN, ANLEGEN, ENTFERNEN, ENTFERNEN]);
+    for (const [i, l] of c.laeufe.entries()) { expect(l.rc, l.aus).toBe(0); ueberstehtSchwaerzung(l.aus, `cluster ${i}`); }
+    const f = await fencing([PRUEFEN_T, BELEGEN, BELEGEN, PRUEFEN_T, BELEGEN], ['', reset(), '', '', `printf 'x' >"$T/sbd_default"`]);
+    const h = await fencing([PRUEFEN_H, PRUEFEN_H], ['echo sqllnxcfg >"$T/name"', '']);
+    const alle = [...f.laeufe, ...h.laeufe];
+    expect(alle.map(l => l.ergebnis?.zustand)).toEqual(['ausgeloest', 'geaendert', 'schon', 'schon', 'fehler', 'ausgeloest', 'fehler']);
+    for (const [i, l] of alle.entries()) {
+      ueberstehtSchwaerzung(l.aus, `fencing ${i}`);
+      expect([...schluessel(l.ergebnis)].filter(n => GEHEIM_NAME.test(n)), `fencing ${i}`).toEqual([]);
+    }
+    expect((f.laeufe[0]!.ergebnis!.test as Record<string, unknown>)).toMatchObject({ corosyncTaktMs: 3000, taktQuelle: 'live' });
+  });
+  it.skipIf(!BASH || !PYTHON)('alte Test-Datei (tokenMs/tokenQuelle, wie auf sqllnxcfg): wird gelesen, nur unter den neuen Namen ausgegeben, Zeile übersteht schwaerze', async () => {
+    const alt = `sed -i 's/"corosyncTaktMs"/"tokenMs"/; s/"taktQuelle"/"tokenQuelle"/; s/}$/, "fremdesFeld": {"password": "x"}}/' "$T/ha/fencing-test.json"`;
+    const w = await fencing([PRUEFEN_T, PRUEFEN_T, BELEGEN], ['', `${alt}\n${reset()}`, '']);
+    expect(w.test).toMatchObject({ tokenMs: 3000, tokenQuelle: 'live' }); // die Datei hat wirklich die alten Namen
+    const [, schon, beleg] = w.laeufe as [ClLauf, ClLauf, ClLauf];
+    expect(schon.rc, schon.aus).toBe(0);
+    expect(schon.ergebnis).toMatchObject({ zustand: 'schon', test: { corosyncTaktMs: 3000, taktQuelle: 'live', minResetS: 13 } });
+    expect(Object.keys(schon.ergebnis!.test as object)).not.toContain('fremdesFeld');
+    expect(beleg.rc, beleg.aus).toBe(0);
+    for (const l of [schon, beleg]) { ueberstehtSchwaerzung(l.aus, l.ergebnis!.zustand as string); expect([...schluessel(l.ergebnis)].filter(n => GEHEIM_NAME.test(n))).toEqual([]); }
+  });
+  it.skipIf(!PYTHON)('Status: Fencing-Teil nur mit festen Feldern (alte und fremde Schlüssel weg) — ganze Statuszeile übersteht schwaerze', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-sicht-'));
+    try {
+      const td = join(dir, 'test.json'); const bd = join(dir, 'beleg.json');
+      writeFileSync(td, JSON.stringify({ art: 'trennung', bootIdVorher: ALT, zeit: '2026-11-17T14:00:00Z', zeitS: J, ausloeseS: J + 10, sperreS: 120, minResetS: 13, tokenMs: 3000, tokenQuelle: 'live', knoten: 'sqllnxcfg', cluster: 'sqllnxcl01', nodeid: '3', konfHash: 'h', passwort: 'geheim-1234', liste: [1] }));
+      writeFileSync(bd, '{"art": "trennung", "resetS": NaN, "rejoinS": 41, "quellen": {"resetS": "btime", "apiKey": "abc12345"}, "secret": "x"}');
+      const prog = `${PY_FENCING_FUNK}\nimport sys\nprint(json.dumps({"test": sicht_test(lies_json(sys.argv[1])), "beleg": sicht_beleg(lies_json(sys.argv[2])), "fehlt": sicht_beleg(lies_json(sys.argv[3]))}))`;
+      const r = spawnSync(PYTHON!, ['-c', prog, td, bd, join(dir, 'gibtsnicht')], { encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(0);
+      const f = JSON.parse(r.stdout) as { test: Record<string, unknown>; beleg: Record<string, unknown>; fehlt: unknown };
+      expect(f.test).toMatchObject({ corosyncTaktMs: 3000, taktQuelle: 'live', minResetS: 13, nodeid: '3' });
+      expect(Object.keys(f.test).sort()).toEqual(['art', 'ausloeseS', 'bootIdVorher', 'cluster', 'corosyncTaktMs', 'kernelPanic', 'knoten', 'konfHash', 'minResetS', 'nodeid', 'sperreS', 'sysrq', 'taktQuelle', 'zeit', 'zeitS']);
+      expect(f.beleg).toMatchObject({ art: 'trennung', resetS: null, rejoinS: 41, quellen: { resetS: 'btime', rejoinS: null } });
+      expect(JSON.stringify(f)).not.toMatch(/passwort|secret|apiKey|tokenMs|liste/);
+      expect(f.fehlt).toBeNull();
+      // ganze Statuszeile wie PY_HA_STATUS sie ausgibt (python json.dumps), mit Cluster- und Fencing-Teil
+      const status = { zustand: 'gelesen', watchdog: [{ geraet: 'watchdog0', kennung: 'i6300ESB timer', treiber: 'i6300esb' }], pciEsb: true, halter: [{ pid: 812, name: 'sbd', exe: '/usr/sbin/sbd' }],
+        pakete: { pacemaker: { version: '2.1.6-5ubuntu2', gehalten: true } }, soll: { pacemaker: '2.1.6-5ubuntu2' }, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' },
+        hosts: true, hostsLoopback: [], hostsEntfernt: ['# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 sqllnxcfg'], sql1433Zusatz: ['192.168.1.223'], runtimeWatchdog: '0', pcsd: 'active',
+        cluster: { art: 'eingerichtet', name: 'sqllnxcl01', knoten: HA_KNOTEN, crm: { knoten: 3, online: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], quorum: true, stonith: true, ressourcen: 0 },
+          sbd: { sqllnx01: { installiert: true, aktiviert: true, laeuft: true } }, stonithWatchdogTimeout: '20' },
+        fencing: { bootId: NEU, jetztS: J + 200, test: f.test, beleg: f.beleg, identitaet: { cluster: 'sqllnxcl01', knoten: 'sqllnxcfg', nodeid: '3', konfHash: 'h' }, sperreAktiv: false } };
+      ueberstehtSchwaerzung(`ALFRED-HA ${pyJson(status)}`, 'status');
+      expect([...schluessel(status)].filter(n => GEHEIM_NAME.test(n))).toEqual([]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
