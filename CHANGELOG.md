@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL auf Linux: gehaltene Pakete gelten als installiert (v1888)
+
+- Die Installation hält die SQL-Pakete auf ihrer Version; dpkg meldet sie dann als „hold ok installed“. Status, Installation und Sicherungseinrichtung erkannten bisher nur „install ok installed“ und meldeten SQL Server als nicht installiert. Jeder Status „… ok installed“ zählt jetzt als installiert; die Sperren gegen stilles Ersetzen des sa-Kennworts und gegen Versionswechsel greifen damit auch bei gehaltenen Paketen.
+
 ### Fixed — Hilfe zeigt die tatsächliche Rolle (v1887)
 
 - Die Hilfe (Überblick, Details, Suche) verwendet dieselbe Rolle wie der Werkzeugfilter der Nachrichtenverarbeitung. Der Owner ohne eigenen Benutzereintrag wurde dort bisher als Gast behandelt, sodass die Hilfe erlaubte Skills mit „für deine Rolle nicht verfügbar“ abwies. Zugriffsprüfungen der übrigen Skills sind unverändert.
