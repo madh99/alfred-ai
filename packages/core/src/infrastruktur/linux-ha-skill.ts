@@ -68,6 +68,12 @@ const zeitText = (z: unknown) => { const m = /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)/.ex
  */
 export function fencingText(f: FencingLage | undefined): string {
   if (!f) return 'Fencing unbekannt';
+  // Fix-Runde 1: eine geladene Test-Sperre (nft inet alfred_fencetest) steht sichtbar dahinter
+  const t0 = fencingStand(f);
+  return f.sperreAktiv ? `${t0} — Corosync-Sperre alfred_fencetest AKTIV` : t0;
+}
+
+function fencingStand(f: FencingLage): string {
   const t = f.test && typeof f.test === 'object' ? f.test as FencingTest : undefined;
   const frisch = !!t && typeof f.jetztS === 'number' && f.jetztS - t.zeitS <= HA_FENCING_MAX_ALTER_S;
   if (t && f.bootId && t.bootIdVorher === f.bootId) return frisch ? `Fencing Test ${t.art} ausgelöst, Reset ausstehend` : `Fencing Test ${t.art} vom ${zeitText(t.zeit)} ohne Reset (boot_id unverändert)`;

@@ -75,8 +75,13 @@ export const HA_FENCING_TEST_DATEI = `${HA_FENCING_DIR}/fencing-test.json`;
 export const HA_FENCING_BELEG_DATEI = `${HA_FENCING_DIR}/fencing-beleg.json`;
 /** Sperrdauer der Corosync-Trennung */
 export const HA_FENCING_SPERRE_S = 120;
-/** Auslösung so viele Sekunden nach dem Schreiben der Test-Datei (SSH-Aufruf kehrt vorher sauber zurück) */
-export const HA_FENCING_VERZOEGERUNG_S = 3;
+/** Auslösung so viele Sekunden nach dem Schreiben der Test-Datei (SSH-Aufruf kehrt vorher sauber zurück; Fix-Runde 1: 3 → 10) */
+export const HA_FENCING_VERZOEGERUNG_S = 10;
+/**
+ * Fix-Runde 1 — fester Corosync-Token (ms), wenn corosync-cmapctl ihn nicht liefert: kleinster sinnvoller Wert (1 s), damit die Untergrenze
+ * resetS ≥ Token + SBD_WATCHDOG_TIMEOUT einen echten Beweis nie fälschlich verwirft (pcs/corosync-3-Standard liegt bei 3000 ms und mehr)
+ */
+export const HA_COROSYNC_TOKEN_MS_FEST = 1000;
 /** ein Test ist höchstens so lange belegbar */
 export const HA_FENCING_MAX_ALTER_S = 1800;
 /** der Reset muss spätestens so lange nach der Auslösung erfolgen (trennung: während der Sperre), sonst gilt er nicht als Testfolge */
@@ -955,7 +960,7 @@ export function fencetestNft(): string {
  * Identität = Clustername + nodeid aus corosync.conf + SHA-256 über corosync.conf und /etc/corosync/authkey (pcs cluster setup erzeugt den
  * authkey bei jeder Einrichtung neu → ein neu aufgebauter Cluster macht jeden alten Beleg ungültig; der Schlüssel selbst wird nie gespeichert).
  */
-export const PY_FENCING_FUNK = String.raw`import hashlib, json, re, time
+export const PY_FENCING_FUNK = String.raw`import hashlib, json, math, re, time
 FENCING_ARTEN = ("trennung", "haenger")
 def lies_json(p):
     try:
@@ -965,7 +970,13 @@ def lies_json(p):
         return None
     except Exception:
         return "unlesbar"
-def fencing_ident(conf, key, ich):
+def _bytes(p):
+    try:
+        with open(p, "rb") as f:
+            return f.read()
+    except Exception:
+        return b""
+def fencing_ident(conf, key, sbd, ich):
     try:
         with open(conf, "rb") as f:
             t = f.read()
@@ -992,12 +1003,10 @@ def fencing_ident(conf, key, ich):
             k = False
             if n == ich:
                 nodeid = i
-    try:
-        with open(key, "rb") as f:
-            kb = f.read()
-    except Exception:
-        kb = b""
-    return {"cluster": name, "knoten": ich, "nodeid": nodeid, "konfHash": hashlib.sha256(t + b"\0" + kb).hexdigest() if kb else None}
+    # Fix-Runde 1: /etc/default/sbd gehört zur Identität — eine SBD-Neueinrichtung macht den Beleg ungültig
+    kb = _bytes(key)
+    sb = _bytes(sbd)
+    return {"cluster": name, "knoten": ich, "nodeid": nodeid, "konfHash": hashlib.sha256(t + b"\0" + kb + b"\0" + sb).hexdigest() if kb and sb else None}
 def _w(v):
     return "?" if v is None else str(v)
 def fencing_grund(b, t, i, cluster):
@@ -1009,12 +1018,12 @@ def fencing_grund(b, t, i, cluster):
         return "Beleg ohne gültige Art"
     for f in ("resetS", "rejoinS"):
         v = b.get(f)
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
             return "Beleg ohne Messwert " + f
     if not b.get("bootId") or not b.get("bootIdVorher") or b.get("bootId") == b.get("bootIdVorher"):
         return "Beleg ohne Reset (boot_id gleich)"
     if not isinstance(i, dict) or not i.get("konfHash"):
-        return "Cluster-Identität nicht lesbar (corosync.conf/authkey)"
+        return "Cluster-Identität nicht lesbar (corosync.conf/authkey/SBD-Konfiguration)"
     if b.get("cluster") != cluster:
         return "Beleg für Cluster %s, erwartet %s" % (_w(b.get("cluster")), cluster)
     if b.get("cluster") != i.get("cluster"):
@@ -1022,7 +1031,7 @@ def fencing_grund(b, t, i, cluster):
     if b.get("knoten") != i.get("knoten") or b.get("nodeid") != i.get("nodeid"):
         return "Beleg für Knoten %s (nodeid %s), hier %s (nodeid %s)" % (_w(b.get("knoten")), _w(b.get("nodeid")), _w(i.get("knoten")), _w(i.get("nodeid")))
     if b.get("konfHash") != i.get("konfHash"):
-        return "Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders)"
+        return "Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey/SBD-Konfiguration anders)"
     if t is not None and not isinstance(t, dict):
         return "Test-Datei unlesbar"
     if isinstance(t, dict) and t.get("zeit") != b.get("testZeit"):
@@ -1041,49 +1050,80 @@ def test_lesen(p, ich, cluster, i):
     if not isinstance(t, dict):
         return None, "Test-Datei fehlt oder ist unlesbar"
     try:
-        w = [t["art"], str(t["bootIdVorher"]), int(t["zeitS"]), int(t["ausloeseS"]), int(t.get("sperreS") or 0), str(t["zeit"])]
+        w = [t["art"], str(t["bootIdVorher"]), int(t["zeitS"]), int(t["ausloeseS"]), int(t.get("sperreS") or 0), int(t.get("minResetS") or 0), str(t["zeit"])]
     except Exception:
         return None, "Test-Datei unvollständig"
-    if w[0] not in FENCING_ARTEN or not BOOT_ID.match(w[1]) or not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", w[5]):
+    if w[0] not in FENCING_ARTEN or not BOOT_ID.match(w[1]) or not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", w[6]):
         return None, "Test-Datei mit ungültigen Werten"
     if t.get("knoten") != ich or t.get("cluster") != cluster:
         return None, "Test gehört zu %s/%s, nicht zu %s/%s" % (_w(t.get("knoten")), _w(t.get("cluster")), ich, cluster)
     if not isinstance(i, dict) or not i.get("konfHash") or t.get("konfHash") != i.get("konfHash"):
-        return None, "Test vor einer Neueinrichtung des Clusters (corosync.conf/authkey anders)"
+        return None, "Test vor einer Neueinrichtung des Clusters oder von SBD (corosync.conf/authkey/SBD-Konfiguration anders)"
     return w, ""
+# Fix-Runde 1: Spuren eines geordneten Herunterfahrens im Journal des getesteten Starts — ein Fencing-Reset hinterlässt keine
+SHUTDOWN_ZIELE = ("shutdown.target", "reboot.target", "poweroff.target", "halt.target", "kexec.target")
+LOGIND_TEXTE = ("System is rebooting.", "System is powering down.", "System is halting.", "System is rebooting with kexec.")
+def shutdown_spur(e):
+    if not isinstance(e, dict):
+        return ""
+    m = e.get("MESSAGE")
+    m = m if isinstance(m, str) else ""
+    ident = e.get("SYSLOG_IDENTIFIER")
+    # systemd (PID 1): Ziel des Herunterfahrens gestartet/erreicht („Reached target reboot.target - System Reboot.“)
+    if e.get("_PID") == "1" and e.get("UNIT") in SHUTDOWN_ZIELE and (m.startswith("Reached target") or e.get("JOB_TYPE") == "start"):
+        return "systemd: " + m[:100]
+    # systemd-journald beendet sich nur beim Herunterfahren („Journal stopped“)
+    if ident == "systemd-journald" and m.startswith("Journal stopped"):
+        return "systemd-journald: " + m[:100]
+    if ident == "systemd-logind" and m in LOGIND_TEXTE:
+        return "systemd-logind: " + m
+    if ident == "systemd-shutdown":
+        return "systemd-shutdown: " + m[:100]
+    return ""
 a = sys.argv
 c = a[1] if len(a) > 1 else ""
 if c == "ident_ok":
-    # conf key ich cluster → konfHash; sonst Grund + Exit 1
-    i = fencing_ident(a[2], a[3], a[4])
+    # conf key sbd ich cluster → konfHash; sonst Grund + Exit 1
+    i = fencing_ident(a[2], a[3], a[4], a[5])
     if not i:
         print("corosync.conf nicht lesbar")
         sys.exit(1)
-    if i["cluster"] != a[5] or not i["nodeid"] or not i["konfHash"]:
-        print("Cluster %s, nodeid %s, authkey %s" % (_w(i["cluster"]), _w(i["nodeid"]), "lesbar" if i["konfHash"] else "fehlt"))
+    if i["cluster"] != a[6] or not i["nodeid"] or not i["konfHash"]:
+        print("Cluster %s, nodeid %s, authkey %s, SBD-Konfiguration %s" % (_w(i["cluster"]), _w(i["nodeid"]), "lesbar" if _bytes(a[3]) else "fehlt", "lesbar" if _bytes(a[4]) else "fehlt"))
         sys.exit(1)
     print(i["konfHash"])
 elif c == "grund":
-    # beleg test conf key ich cluster → leer = gültig
-    print(fencing_grund(lies_json(a[2]), lies_json(a[3]), fencing_ident(a[4], a[5], a[6]), a[7]))
+    # beleg test conf key sbd ich cluster → leer = gültig
+    print(fencing_grund(lies_json(a[2]), lies_json(a[3]), fencing_ident(a[4], a[5], a[6], a[7]), a[8]))
+elif c == "shutdown_spur":
+    # stdin: journalctl -b -1 -o json --since @<Test> → erste Spur eines geordneten Herunterfahrens oder nichts
+    for z in sys.stdin:
+        try:
+            s = shutdown_spur(json.loads(z))
+        except Exception:
+            continue
+        if s:
+            print(s)
+            break
 elif c == "beleg_art":
     b = lies_json(a[2])
     print(b.get("art", "") if isinstance(b, dict) else "")
 elif c == "kompakt":
     print(json.dumps(lies_json(a[2])))
 elif c == "test":
-    # datei conf key ich cluster → „art bootIdVorher zeitS ausloeseS sperreS zeit“
-    w, g = test_lesen(a[2], a[5], a[6], fencing_ident(a[3], a[4], a[5]))
+    # datei conf key sbd ich cluster → „art bootIdVorher zeitS ausloeseS sperreS minResetS zeit“
+    w, g = test_lesen(a[2], a[6], a[7], fencing_ident(a[3], a[4], a[5], a[6]))
     if w is None:
         print(g)
         sys.exit(1)
     print(*w)
 elif c == "test_json":
-    # art boot zeitS ausloeseS sperreS conf key ich sysrq panic
-    i = fencing_ident(a[7], a[8], a[9]) or {}
+    # art boot zeitS ausloeseS sperreS minResetS tokenMs tokenQuelle conf key sbd ich sysrq panic
+    i = fencing_ident(a[10], a[11], a[12], a[13]) or {}
     zs = int(a[4])
-    print(json.dumps({"art": a[2], "bootIdVorher": a[3], "zeit": iso(zs), "zeitS": zs, "ausloeseS": int(a[5]), "sperreS": int(a[6]) or None, "knoten": a[9],
-                      "cluster": i.get("cluster"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"), "sysrq": a[10], "kernelPanic": a[11]}))
+    print(json.dumps({"art": a[2], "bootIdVorher": a[3], "zeit": iso(zs), "zeitS": zs, "ausloeseS": int(a[5]), "sperreS": int(a[6]) or None,
+                      "minResetS": int(a[7]), "tokenMs": int(a[8]) if a[8].isdigit() else None, "tokenQuelle": a[9], "knoten": a[13],
+                      "cluster": i.get("cluster"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"), "sysrq": a[14], "kernelPanic": a[15]}))
 elif c == "journal_letzt":
     # stdin: journalctl -b -1 -n 1 -o json → „<_BOOT_ID> <Sekunden>“
     l = None
@@ -1112,14 +1152,16 @@ elif c == "rejoin":
             sys.exit(0)
     sys.exit(1)
 elif c == "beleg_json":
-    # test boot resetS rejoinS jetzt luecke conf key ich
+    # test boot resetS rejoinS jetzt luecke conf key sbd ich
     t = lies_json(a[2])
-    i = fencing_ident(a[8], a[9], a[10]) or {}
+    i = fencing_ident(a[8], a[9], a[10], a[11]) or {}
     print(json.dumps({"art": t["art"], "zeit": iso(int(a[6])), "resetS": int(a[4]), "rejoinS": int(a[5]), "bootId": a[3], "bootIdVorher": t["bootIdVorher"],
-                      "testZeit": t["zeit"], "cluster": i.get("cluster"), "knoten": i.get("knoten"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"),
+                      "testZeit": t["zeit"], "minResetS": t.get("minResetS"), "cluster": i.get("cluster"), "knoten": i.get("knoten"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"),
                       "journalLueckeS": int(a[7]),
-                      "quellen": {"resetS": "btime (/proc/stat) minus Auslösezeit (Test-Datei, systemd-run --on-active)", "rejoinS": "erste corosync-Meldung „" + QUORUM + "“ (journalctl -b 0 -u corosync) minus btime",
-                                  "journalLueckeS": "btime minus letzter Eintrag des getesteten Starts (journalctl -b -1, _BOOT_ID = bootIdVorher)"}}))
+                      "quellen": {"resetS": "btime (/proc/stat) minus ausloeseS der Test-Datei (Uhrzeit unmittelbar vor dem Schreiben der Test-Datei + Verzögerung, systemd-run --on-active, AccuracySec=1s)",
+                                  "rejoinS": "erste corosync-Meldung „" + QUORUM + "“ (journalctl -b 0 -u corosync) minus btime",
+                                  "journalLueckeS": "btime minus letzter Eintrag des getesteten Starts (journalctl -b -1, _BOOT_ID = bootIdVorher)",
+                                  "keinShutdown": "journalctl -b -1 --since @zeitS ohne reboot/poweroff/halt/kexec/shutdown.target, „Journal stopped“, logind „System is rebooting.“ u. ä., systemd-shutdown"}}))
 else:
     sys.exit(3)`}`;
 
@@ -1129,6 +1171,8 @@ const FENCING_PFADE = [
   `TEST_DATEI=${shQ(HA_FENCING_TEST_DATEI)}`,
   `BELEG_DATEI=${shQ(HA_FENCING_BELEG_DATEI)}`,
   'AUTHKEY=/etc/corosync/authkey',
+  // Fix-Runde 1: SBD-Konfiguration gehört zur Identität des Belegs
+  'SBD_KONF=/etc/default/sbd',
   'BOOT_ID_DATEI=/proc/sys/kernel/random/boot_id',
   'SYSRQ_TRIGGER=/proc/sysrq-trigger',
   'SYSRQ_DATEI=/proc/sys/kernel/sysrq',
@@ -1145,6 +1189,8 @@ boot_id() { cat "$BOOT_ID_DATEI" 2>/dev/null || true; }
 boot_zeit() { awk '$1 == "btime" { print $2 }' "$PROC/stat" 2>/dev/null || true; }
 # Stimmen, die corosync für das Quorum verlangt (corosync-quorumtool -s: „Quorum:           2“)
 quorum_noetig() { corosync-quorumtool -s 2>/dev/null | awk -F: '/^Quorum:/ { gsub(/[ \t]/, "", $2); print $2 }' || true; }
+# wirksamer Corosync-Token in ms (corosync-cmapctl: „runtime.config.totem.token (u32) = 3000“)
+token_ms() { corosync-cmapctl -g runtime.config.totem.token 2>/dev/null | awk -F'= ' 'NF > 1 { gsub(/[ \t\r]/, "", $2); print $2 }' || true; }
 fd_ziel() { readlink "$1" 2>/dev/null || true; }
 prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { readlink "$PROC/$1/exe" 2>/dev/null || true; }
@@ -1173,20 +1219,20 @@ if [ "$ART" = haenger ] && [ "$ICH" != "$HAENGER_KNOTEN" ]; then abbruch "haenge
 KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
 KA=$(konf_art "$KONF")
 [ "$KA" = alfred ] || abbruch "auf $ICH ist $CLUSTER mit $KNOTEN_SOLL nicht eingerichtet (corosync.conf: §{KA#fremd:}) — vorher cluster_anlegen; nichts geändert"
-KH=$(fpy ident_ok "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER") || abbruch "Cluster-Identität auf $ICH nicht lesbar ($KH) — nichts geändert"
+KH=$(fpy ident_ok "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER") || abbruch "Cluster-Identität auf $ICH nicht lesbar ($KH) — nichts geändert"
 BOOT=$(boot_id)
 [[ "$BOOT" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || abbruch "boot_id nicht lesbar ('$BOOT') — nichts geändert"
 JETZT=$(jetzt)
 [[ "$JETZT" =~ ^[0-9]+$ ]] || abbruch "Uhrzeit nicht lesbar — nichts geändert"
 # laufender oder schon erfolgter Test dieses Knotens (gleicher Cluster)
 T_BOOT=''
-if [ -f "$TEST_DATEI" ] && tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER"); then
-  read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_ZEIT <<<"$tz"
+if [ -f "$TEST_DATEI" ] && tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER"); then
+  read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_MIN T_ZEIT <<<"$tz"
   T_ALTER=$((JETZT - T_ZEIT_S))
   if [ "$T_BOOT" = "$BOOT" ] && [ "$T_ALTER" -le "$MAX_ALTER_S" ]; then abbruch "Fencing-Test ($T_ART) vom $T_ZEIT auf $ICH läuft noch — Reset ausstehend (boot_id unverändert); kein zweiter Test, nichts geändert"; fi
 fi
 # gültiger Beleg derselben Art → schon (eine Wiederholung des Schritts setzt den Knoten nicht noch einmal zurück)
-G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
 if [ -z "$G" ] && [ "$(fpy beleg_art "$BELEG_DATEI")" = "$ART" ]; then
   ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
   exit 0
@@ -1221,6 +1267,11 @@ if [ "$ART" = haenger ]; then
   [ "$PANIC" = 0 ] || abbruch "kernel.panic ist '$PANIC' — der Kernel startete nach dem Absturz selbst neu, der Beweis gälte nicht dem Watchdog; nichts geändert"
   kx=$(cat "$KEXEC_CRASH" 2>/dev/null || echo 0); [ "$kx" = 0 ] || abbruch "kdump-Kernel geladen (kexec_crash_loaded=$kx) — er übernähme den Absturz statt des Watchdogs; nichts geändert"
 fi
+# Fix-Runde 1: Untergrenze für den trennung-Reset = Corosync-Token (live, sonst fest $TOKEN_MS_FEST ms) + SBD_WATCHDOG_TIMEOUT — ein schnellerer
+# Neustart ist nicht die Folge des Quorumverlusts
+TOKEN_MS=$(token_ms); TOKEN_Q=live
+if ! [[ "$TOKEN_MS" =~ ^[0-9]+$ ]] || [ "$TOKEN_MS" -lt 1 ]; then TOKEN_MS=$TOKEN_MS_FEST; TOKEN_Q=fest; fi
+if [ "$ART" = trennung ]; then MIN_RESET=$(( (TOKEN_MS + 999) / 1000 + SBD_T )); else MIN_RESET=0; fi
 # ── Phase 2: pcs-Anmeldung nur bei Bedarf (für pcs stonith sbd status), SBD auf allen Knoten ──
 if ! pcsd_online; then anmelden; aend pcs-anmeldung; fi
 ss=$(sbd_status); n=$(sbd_zahl "$ss" 3)
@@ -1229,15 +1280,18 @@ sbd_soll || abbruch "SBD weicht ab: $SBD_ABW — kein Test; $(stand)"
 # ── Test-Datei VOR dem Auslösen (0600, sync) — scheitert das Planen des Auslösers, wird sie wieder entfernt (sonst sperrte sie 30 min) ──
 TEST_NEU=0; AUSL_GEPLANT=0
 alfred_aufraeumen() { if [ "$TEST_NEU" = 1 ] && [ "$AUSL_GEPLANT" = 0 ]; then rm -f -- "$TEST_DATEI"; sync; fi; }
-AUSL_S=$((JETZT + VERZ_S))
+# Fix-Runde 1: Uhrzeit unmittelbar vor dem Schreiben neu lesen — Phase 1/2 (pcs über pcsd) dauern Sekunden; JETZT von oben gilt nur für „läuft noch“
+JETZT_T=$(jetzt)
+[[ "$JETZT_T" =~ ^[0-9]+$ ]] || abbruch "Uhrzeit nicht lesbar — $(stand)"
+AUSL_S=$((JETZT_T + VERZ_S))
 if [ "$ART" = trennung ]; then SP=$SPERRE_S; else SP=0; fi
-TJ=$(fpy test_json "$ART" "$BOOT" "$JETZT" "$AUSL_S" "$SP" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$SYSRQ" "$PANIC")
+TJ=$(fpy test_json "$ART" "$BOOT" "$JETZT_T" "$AUSL_S" "$SP" "$MIN_RESET" "$TOKEN_MS" "$TOKEN_Q" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$SYSRQ" "$PANIC")
 TEST_NEU=1
 schreibe_privat "$TEST_DATEI" "$TJ"
 aend fencing-test-datei
-{ [ "$(cat "$TEST_DATEI")" = "$TJ" ] && fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER" >/dev/null; } || abbruch "Test-Datei $TEST_DATEI nach dem Schreiben nicht lesbar — nichts ausgelöst, Test-Datei entfernt"
+{ [ "$(cat "$TEST_DATEI")" = "$TJ" ] && fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER" >/dev/null; } || abbruch "Test-Datei $TEST_DATEI nach dem Schreiben nicht lesbar — nichts ausgelöst, Test-Datei entfernt"
 # ── Auslösen: entkoppelt per systemd-run (AccuracySec=1s — Standard wäre 1 min), der SSH-Aufruf kehrt vorher zurück ──
-EINHEIT="alfred-fencetest-$JETZT"
+EINHEIT="alfred-fencetest-$JETZT_T"
 if [ "$ART" = trennung ]; then
   printf '%s\n' "$NFT_TEST" >"$REGEL_DATEI"
   aus=$(nft -c -f "$REGEL_DATEI" 2>&1) || abbruch "nft lehnt die Test-Regel ab: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
@@ -1264,10 +1318,10 @@ KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
 KA=$(konf_art "$KONF")
 [ "$KA" = alfred ] || abbruch "auf $ICH ist $CLUSTER mit $KNOTEN_SOLL nicht eingerichtet (corosync.conf: §{KA#fremd:}) — kein Beleg"
 [ -f "$TEST_DATEI" ] || abbruch "kein Fencing-Test auf $ICH ($TEST_DATEI fehlt) — vorher fencing_pruefen; kein Beleg"
-tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER") || abbruch "Fencing-Test nicht verwendbar: $tz — kein Beleg"
-read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_ZEIT <<<"$tz"
+tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER") || abbruch "Fencing-Test nicht verwendbar: $tz — kein Beleg"
+read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_MIN T_ZEIT <<<"$tz"
 # gültiger Beleg genau zu diesem Test → schon
-G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
 if [ -z "$G" ]; then
   ergebnis "{\"zustand\":\"schon\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
   exit 0
@@ -1284,11 +1338,17 @@ BT=$(boot_zeit)
 [ "$BT" -ge "$T_AUSL_S" ] || abbruch "Neustart (btime $BT) vor dem Auslösezeitpunkt ($T_AUSL_S) — nicht dem Test zuzuordnen; kein Beleg"
 RESET_S=$((BT - T_AUSL_S))
 [ "$RESET_S" -le "$RESET_MAX_S" ] || abbruch "Reset erst $RESET_S s nach der Auslösung (höchstens $RESET_MAX_S s) — nicht dem Test zuzuordnen; kein Beleg"
+# Fix-Runde 1: trennung — schneller als Corosync-Token + SBD_WATCHDOG_TIMEOUT kann der Quorumverlust nicht zurücksetzen
+[ "$RESET_S" -ge "$T_MIN" ] || abbruch "Reset schon $RESET_S s nach der Auslösung (mindestens $T_MIN s = Corosync-Token + SBD_WATCHDOG_TIMEOUT) — nicht die Folge der Trennung; kein Beleg"
 # der vorherige Start im Journal ist genau der getestete (kein weiterer Neustart dazwischen)
 jv=$(journalctl -b -1 -n 1 -o json --no-pager 2>/dev/null | fpy journal_letzt) || abbruch "Journal des vorherigen Starts nicht lesbar (journalctl -b -1; persistentes Journal nötig) — kein Beleg"
 read -r J_BOOT J_LETZT_S <<<"$jv"
 [ "$J_BOOT" = "§{T_BOOT//-/}" ] || abbruch "vorheriger Start im Journal ist $J_BOOT, getestet wurde §{T_BOOT//-/} — dazwischen lag ein weiterer Neustart; kein Beleg"
 LUECKE=$((BT - J_LETZT_S))
+# Fix-Runde 1: kein geordnetes Herunterfahren im getesteten Start seit dem Test (manueller Neustart, unattended-upgrades Automatic-Reboot)
+jj=$(journalctl -b -1 -o json --no-pager --since "@$T_ZEIT_S" 2>/dev/null) || abbruch "Journal des getesteten Starts ab dem Test nicht lesbar (journalctl -b -1 --since @$T_ZEIT_S) — kein Beleg"
+sp=$(printf '%s\n' "$jj" | fpy shutdown_spur)
+[ -z "$sp" ] || abbruch "geordnetes Herunterfahren im getesteten Start ($sp) — ein Neustart, kein Fencing-Reset; kein Beleg"
 # ── Cluster: der Knoten ist wieder online (bis WARTE_RUNDEN × 2 s), SBD läuft und hält den Watchdog ──
 ok=0
 for i in $(seq 1 "$WARTE_RUNDEN"); do lage; if [ "$LQ" = 1 ] && [[ ",$LN," == *",$ICH,"* ]]; then ok=1; break; fi; sleep 2; done
@@ -1297,11 +1357,16 @@ systemctl is-active --quiet sbd || abbruch "sbd läuft auf $ICH nach dem Reset n
 sbd_haelt_wd || abbruch "sbd hält auf $ICH nach dem Reset kein /dev/watchdog offen — kein Beleg"
 RJ=$(journalctl -b 0 -u corosync -o json --no-pager 2>/dev/null | fpy rejoin "$BT") || abbruch "Rejoin-Zeitpunkt nicht im Journal (corosync seit dem Start ohne „$QUORUM_TEXT“) — kein Beleg"
 # ── Beleg schreiben (0600, sync) und selbst prüfen ──
-BJ=$(fpy beleg_json "$TEST_DATEI" "$BOOT" "$RESET_S" "$RJ" "$JETZT" "$LUECKE" "$COROSYNC_CONF" "$AUTHKEY" "$ICH") || abbruch "Beleg nicht erzeugbar — kein Beleg"
+BJ=$(fpy beleg_json "$TEST_DATEI" "$BOOT" "$RESET_S" "$RJ" "$JETZT" "$LUECKE" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH") || abbruch "Beleg nicht erzeugbar — kein Beleg"
+# Fix-Runde 1: besteht der geschriebene Beleg die Selbstprüfung nicht, wird er wieder entfernt (kein Beweis → kein Marker)
+BELEG_NEU=0; BELEG_OK=0
+alfred_aufraeumen() { if [ "$BELEG_NEU" = 1 ] && [ "$BELEG_OK" = 0 ]; then rm -f -- "$BELEG_DATEI"; sync; fi; }
+BELEG_NEU=1
 schreibe_privat "$BELEG_DATEI" "$BJ"
 aend fencing-beleg
-G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
-[ -z "$G" ] || abbruch "Selbstprüfung: geschriebener Beleg ist nicht gültig: $G"
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER")
+[ -z "$G" ] || abbruch "Selbstprüfung: geschriebener Beleg ist nicht gültig: $G — Beleg entfernt"
+BELEG_OK=1
 ergebnis "{\"zustand\":\"geaendert\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$BJ,\"aenderungen\":[$AJ]}"`);
 
 function fencingKopf(baustein: string, p: Record<string, unknown>, knoten: readonly HaKnoten[], cluster: string): string[] {
@@ -1313,6 +1378,7 @@ function fencingKopf(baustein: string, p: Record<string, unknown>, knoten: reado
     `SPERRE_S=${HA_FENCING_SPERRE_S}`,
     `MAX_ALTER_S=${HA_FENCING_MAX_ALTER_S}`,
     `RESET_MAX_S=${HA_FENCING_RESET_MAX_S}`,
+    `TOKEN_MS_FEST=${HA_COROSYNC_TOKEN_MS_FEST}`,
     `HAENGER_KNOTEN=${shQ(HA_FENCING_HAENGER_KNOTEN)}`,
     `TEST_TABELLE=${shQ(HA_FENCETEST_TABELLE)}`,
     `QUORUM_TEXT=${shQ(HA_COROSYNC_QUORUM_TEXT)}`,
@@ -1361,11 +1427,11 @@ export function haFencingBelegenSkript(p: HaFencingBelegenParameter): string {
 export interface FencingIdentitaet { cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null }
 export interface FencingTest {
   art: HaFencingArt; bootIdVorher: string; zeit: string; zeitS: number; ausloeseS: number; sperreS: number | null; knoten: string; cluster: string | null;
-  nodeid?: string | null; konfHash?: string | null; sysrq?: string; kernelPanic?: string;
+  nodeid?: string | null; konfHash?: string | null; sysrq?: string; kernelPanic?: string; minResetS?: number; tokenMs?: number | null; tokenQuelle?: string;
 }
 export interface FencingBeleg {
   art: HaFencingArt; zeit: string; resetS: number; rejoinS: number; bootId: string; bootIdVorher: string; testZeit: string;
-  cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null; journalLueckeS?: number; quellen?: Record<string, string>;
+  cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null; journalLueckeS?: number; minResetS?: number; quellen?: Record<string, string>;
 }
 /** Fencing-Teil des Status eines Knotens (PY_HA_STATUS → r.fencing); Datei fehlt → null, unlesbar → 'unlesbar' */
 export interface FencingLage {
@@ -1373,6 +1439,8 @@ export interface FencingLage {
   identitaet?: FencingIdentitaet | null;
   test?: FencingTest | 'unlesbar' | null;
   beleg?: FencingBeleg | 'unlesbar' | null;
+  /** Fix-Runde 1: nft-Tabelle inet alfred_fencetest geladen (Corosync-Sperre eines Tests) */
+  sperreAktiv?: boolean;
 }
 
 const w = (v: unknown) => (v === null || v === undefined ? '?' : String(v));
@@ -1392,13 +1460,13 @@ export function fencingBelegGueltig(beleg: FencingBeleg | 'unlesbar' | null | un
   for (const f of ['resetS', 'rejoinS']) { const v = x[f]; if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return `Beleg ohne Messwert ${f}`; }
   if (!x.bootId || !x.bootIdVorher || x.bootId === x.bootIdVorher) return 'Beleg ohne Reset (boot_id gleich)';
   const i = lage?.identitaet;
-  if (!i || typeof i !== 'object' || !i.konfHash) return 'Cluster-Identität nicht lesbar (corosync.conf/authkey)';
+  if (!i || typeof i !== 'object' || !i.konfHash) return 'Cluster-Identität nicht lesbar (corosync.conf/authkey/SBD-Konfiguration)';
   // wie Python: fehlend und null sind gleich (None)
   const g = (a: unknown, b2: unknown) => (a ?? null) === (b2 ?? null);
   if (!g(x.cluster, cluster)) return `Beleg für Cluster ${w(x.cluster)}, erwartet ${cluster}`;
   if (!g(x.cluster, i.cluster)) return `Beleg für Cluster ${w(x.cluster)}, eingerichtet ist ${w(i.cluster)}`;
   if (!g(x.knoten, i.knoten) || !g(x.nodeid, i.nodeid)) return `Beleg für Knoten ${w(x.knoten)} (nodeid ${w(x.nodeid)}), hier ${w(i.knoten)} (nodeid ${w(i.nodeid)})`;
-  if (!g(x.konfHash, i.konfHash)) return 'Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders)';
+  if (!g(x.konfHash, i.konfHash)) return 'Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey/SBD-Konfiguration anders)';
   const t = lage?.test as unknown;
   if (t !== null && t !== undefined && (typeof t !== 'object' || Array.isArray(t))) return 'Test-Datei unlesbar';
   if (t && !g((t as Record<string, unknown>).zeit, x.testZeit)) return `neuerer Fencing-Test vom ${w((t as Record<string, unknown>).zeit)} ohne Beleg`;
@@ -1508,7 +1576,7 @@ else:
 r["cluster"] = cl`,
   // Task 4: Fencing-Beweis dieses Knotens — Test, Beleg, boot_id und Identität im Cluster; die Gültigkeit prüft fencingBelegGueltig (TS)
   PY_FENCING_FUNK,
-  `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)}), "beleg": lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)}), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", ich)}`,
+  `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)}), "beleg": lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)}), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", "/etc/default/sbd", ich), "sperreAktiv": lauf("nft", "list", "table", "inet", ${JSON.stringify(HA_FENCETEST_TABELLE)})[0] == 0}`,
   'print("ALFRED-HA " + json.dumps(r))',
 ].join('\n');
 

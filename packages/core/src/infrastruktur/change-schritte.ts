@@ -67,7 +67,8 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
   // I8e Paket 2 — Wortlaut aus linuxHaStatusText (linux-ha-skill.ts); positive Stücke einzeln prüfbar
   // Task 3: „; Cluster …“ am Ende (clusterText) — positive Form als ganzes Stück (Teilstücke wie „Quorum ja“ zulässig)
-  // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten
+  // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten.
+  // Fix-Runde 1: eine geladene Test-Sperre hängt „ — Corosync-Sperre alfred_fencetest AKTIV“ an den Fencing-Teil (Prüfung: nichtEnthalten „Sperre“)
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt',

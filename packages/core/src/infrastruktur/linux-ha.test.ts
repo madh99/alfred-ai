@@ -775,7 +775,7 @@ describe('I8e Paket 2 Task 4 — Fencing-Bausteine (Text, Validatoren)', () => {
     expect(HA_FENCING_BELEG_DATEI).toBe('/var/lib/alfred/ha/fencing-beleg.json');
     expect(PRUEFEN_H).toContain('/bin/sh -c "sync; echo c > $SYSRQ_TRIGGER"');
     expect(PRUEFEN_T).toContain('SPERRE_S=120');
-    expect(PRUEFEN_T).toContain('VERZ_S=3');
+    expect(PRUEFEN_T).toContain('VERZ_S=10');
     expect(BELEGEN).toContain('MAX_ALTER_S=1800');
     // fencing_belegen braucht kein Geheimnis
     expect(BELEGEN.split('# ALFRED-ABLAUF')[1]).not.toContain('kennwort_lesen');
@@ -813,11 +813,11 @@ describe('I8e Paket 2 Task 4 — fencingBelegGueltig (für Task 5)', () => {
     expect(g(BL, TS0, ID)).toBeUndefined();
     expect(g(null, null, ID)).toBe('kein Fencing-Beleg');
     expect(g({ ...BL, bootId: 'a-alt' }, null, ID)).toBe('Beleg ohne Reset (boot_id gleich)');
-    expect(g(BL, null, { ...ID, konfHash: 'h2' })).toBe('Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders)');
+    expect(g(BL, null, { ...ID, konfHash: 'h2' })).toBe('Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey/SBD-Konfiguration anders)');
     expect(g(BL, null, { ...ID, nodeid: '2' })).toBe('Beleg für Knoten sqllnx01 (nodeid 1), hier sqllnx01 (nodeid 2)');
     expect(g({ ...BL, cluster: 'altcl' }, null, { ...ID, cluster: 'altcl' })).toBe('Beleg für Cluster altcl, erwartet sqllnxcl01');
     expect(g(BL, { ...TS0, zeit: '2026-11-17T15:00:00Z' }, ID)).toBe('neuerer Fencing-Test vom 2026-11-17T15:00:00Z ohne Beleg');
-    expect(fencingBelegGueltig(BL, undefined)).toBe('Cluster-Identität nicht lesbar (corosync.conf/authkey)');
+    expect(fencingBelegGueltig(BL, undefined)).toBe('Cluster-Identität nicht lesbar (corosync.conf/authkey/SBD-Konfiguration)');
   });
   it.skipIf(!PYTHON)('Python (fencing_grund in den Bausteinen) und TS liefern für alle Fälle denselben Grund', () => {
     const prog = `${PY_FENCING_FUNK}\nimport sys\nfor b, t, i in json.loads(sys.stdin.read()):\n    print(fencing_grund(b, t, i, "sqllnxcl01"))`;
@@ -829,18 +829,36 @@ describe('I8e Paket 2 Task 4 — fencingBelegGueltig (für Task 5)', () => {
     expect(ts.filter(x => x === '')).toHaveLength(2);
     expect(new Set(ts.filter(Boolean)).size).toBeGreaterThanOrEqual(12);
   });
+  // Fix-Runde 1: nicht endliche Messwerte (json lädt NaN/Infinity aus einer Datei) sind ungültig — in Python wie in TS
+  it.skipIf(!PYTHON)('nicht endliche Messwerte (NaN, Infinity, -Infinity) → „Beleg ohne Messwert …“ in Python und TS', () => {
+    const roh = ['NaN', 'Infinity', '-Infinity'];
+    const prog = `${PY_FENCING_FUNK}\nimport sys\nfor x in sys.argv[1:]:\n    b = json.loads(${JSON.stringify(JSON.stringify(BL))})\n    b["resetS"] = json.loads(x)\n    print(fencing_grund(b, None, ${JSON.stringify(ID).replace(/null/g, 'None')}, "sqllnxcl01"))`;
+    const r = spawnSync(PYTHON!, ['-c', prog, ...roh], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.replace(/\r/g, '').trim().split('\n')).toEqual(roh.map(() => 'Beleg ohne Messwert resetS'));
+    for (const v of [NaN, Infinity, -Infinity]) expect(fencingBelegGueltig({ ...BL, resetS: v }, { identitaet: ID })).toBe('Beleg ohne Messwert resetS');
+  });
   it.skipIf(!PYTHON)('Identität: nodeid des eigenen Namens aus der corosync.conf von pcs, konfHash über corosync.conf + authkey; ohne authkey kein Hash', () => {
     const dir = mkdtempSync(join(tmpdir(), 'alfred-fen-'));
     try {
       const conf = join(dir, 'corosync.conf'); const key = join(dir, 'authkey');
       writeFileSync(conf, 'totem {\n    cluster_name: sqllnxcl01\n}\nnodelist {\n    node {\n        ring0_addr: 10.203.30.10\n        name: sqllnx01\n        nodeid: 1\n    }\n    node {\n        ring0_addr: 10.203.30.12\n        name: sqllnxcfg\n        nodeid: 3\n    }\n}\n');
+      const sbd = join(dir, 'sbd');
       writeFileSync(key, Buffer.from([1, 2, 3, 0, 255]));
-      const id = (ich: string) => JSON.parse(spawnSync(PYTHON!, ['-c', `${PY_FENCING_FUNK}\nimport sys\nprint(json.dumps(fencing_ident(sys.argv[1], sys.argv[2], sys.argv[3])))`, conf, key, ich], { encoding: 'utf8' }).stdout);
+      writeFileSync(sbd, 'SBD_WATCHDOG_DEV=/dev/watchdog\nSBD_WATCHDOG_TIMEOUT=10\n');
+      const id = (ich: string) => JSON.parse(spawnSync(PYTHON!, ['-c', `${PY_FENCING_FUNK}\nimport sys\nprint(json.dumps(fencing_ident(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])))`, conf, key, sbd, ich], { encoding: 'utf8' }).stdout);
       const a = id('sqllnxcfg');
       expect(a).toMatchObject({ cluster: 'sqllnxcl01', knoten: 'sqllnxcfg', nodeid: '3' });
       expect(a.konfHash).toMatch(/^[0-9a-f]{64}$/);
+      // Fix-Runde 1: SBD neu eingerichtet (/etc/default/sbd anders) → anderer Hash
+      writeFileSync(sbd, 'SBD_WATCHDOG_DEV=/dev/watchdog\nSBD_WATCHDOG_TIMEOUT=15\n');
+      const b = id('sqllnxcfg').konfHash;
+      expect(b).not.toBe(a.konfHash);
       writeFileSync(key, Buffer.from([1, 2, 3, 0, 254]));
-      expect(id('sqllnxcfg').konfHash).not.toBe(a.konfHash); // neuer authkey (pcs cluster setup) → anderer Hash
+      expect(id('sqllnxcfg').konfHash).not.toBe(b); // neuer authkey (pcs cluster setup) → anderer Hash
+      rmSync(sbd);
+      expect(id('sqllnx01')).toMatchObject({ nodeid: '1', konfHash: null });
+      writeFileSync(sbd, 'x');
       rmSync(key);
       expect(id('sqllnx01')).toMatchObject({ nodeid: '1', konfHash: null });
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -851,7 +869,14 @@ describe('I8e Paket 2 Task 4 — fencingBelegGueltig (für Task 5)', () => {
 const FEN_STUBS = String.raw`
 HA_DIR="$T/ha"; TEST_DATEI="$T/ha/fencing-test.json"; BELEG_DATEI="$T/ha/fencing-beleg.json"; AUTHKEY="$T/authkey"; BOOT_ID_DATEI="$T/boot_id"
 SYSRQ_TRIGGER="$T/sysrq-trigger"; SYSRQ_DATEI="$T/sysrq"; PANIC_DATEI="$T/panic"; KEXEC_CRASH="$T/kexec"; REGEL_DATEI="$T/fencetest.nft"; PROC="$T/proc"
-jetzt() { cat "$T/jetzt"; }
+SBD_KONF="$T/sbd_default"
+# Windows-Python schreibt sonst in der ANSI-Codepage (auf den Knoten: UTF-8-Modus unter LC_ALL=C, PEP 540)
+export PYTHONIOENCODING=utf-8
+# Uhr: mit $T/jetzt_schritt rückt sie bei jedem Lesen um so viele Sekunden vor (Phase 1/2 dauern auf echten Knoten Sekunden)
+jetzt() { local j; j=$(cat "$T/jetzt"); if [ -f "$T/jetzt_schritt" ]; then echo $((j + $(cat "$T/jetzt_schritt"))) >"$T/jetzt"; fi; echo "$j"; }
+corosync-cmapctl() { [ -f "$T/token_ms" ] || return 1; echo "runtime.config.totem.token (u32) = $(cat "$T/token_ms")"; }
+# Beleg beim Schreiben verfälschen (nachgebildeter Fehler für die Selbstprüfung)
+if [ -f "$T/beleg_kaputt" ]; then schreibe_privat() { mkdir -p "$(dirname "$1")"; if [ "$1" = "$BELEG_DATEI" ]; then printf '%s\n' '{"art":"x"}' >"$1"; else printf '%s\n' "$2" >"$1"; fi; }; fi
 fd_ziel() { cat "$1"; }
 prozess_exe() { cat "$PROC/$1/exe" 2>/dev/null || true; }
 sync() { :; }
@@ -866,14 +891,21 @@ const FEN_BASIS = String.raw`
 mkdir -p "$T/proc/42/fd"; echo /dev/watchdog >"$T/proc/42/fd/3"; echo sbd >"$T/proc/42/comm"; echo /usr/sbin/sbd >"$T/proc/42/exe"
 printf 'cpu 1 2 3\nbtime 1794990000\n' >"$T/proc/stat"
 echo ${ALT} >"$T/boot_id"; echo ${J} >"$T/jetzt"; printf 'k3y\001b1n' >"$T/authkey"; echo 176 >"$T/sysrq"; echo 0 >"$T/panic"; echo 0 >"$T/kexec"; touch "$T/sysrq-trigger"
+printf 'SBD_WATCHDOG_DEV=/dev/watchdog\nSBD_WATCHDOG_TIMEOUT=10\n' >"$T/sbd_default"; echo 3000 >"$T/token_ms"
 `;
-/** Reset nachgebildet: neue boot_id, Kernel-Start resetS nach der Auslösung (J + 3), Journal des getesteten Starts, corosync-Quorum nach 41,4 s */
-const reset = (o: { resetS?: number; jetzt?: number; vorherBoot?: string; quorum?: boolean } = {}) => {
-  const bt = J + 3 + (o.resetS ?? 18);
+/** Spuren eines geordneten Herunterfahrens (wie systemd 255 sie schreibt) — je eine Zeile für das Journal des getesteten Starts */
+const SHUTDOWN = {
+  reboot: (boot: string, s: number) => `{"_BOOT_ID":"${boot}","__REALTIME_TIMESTAMP":"${s * 1_000_000}","_PID":"1","UNIT":"reboot.target","SYSLOG_IDENTIFIER":"systemd","MESSAGE":"Reached target reboot.target - System Reboot."}`,
+  journald: (boot: string, s: number) => `{"_BOOT_ID":"${boot}","__REALTIME_TIMESTAMP":"${s * 1_000_000}","_PID":"377","SYSLOG_IDENTIFIER":"systemd-journald","MESSAGE":"Journal stopped"}`,
+  logind: (boot: string, s: number) => `{"_BOOT_ID":"${boot}","__REALTIME_TIMESTAMP":"${s * 1_000_000}","SYSLOG_IDENTIFIER":"systemd-logind","MESSAGE":"System is rebooting."}`,
+};
+/** Reset nachgebildet: neue boot_id, Kernel-Start resetS nach der Auslösung (J + 10), Journal des getesteten Starts, corosync-Quorum nach 41,4 s */
+const reset = (o: { resetS?: number; jetzt?: number; vorherBoot?: string; quorum?: boolean; shutdown?: keyof typeof SHUTDOWN } = {}) => {
+  const bt = J + 10 + (o.resetS ?? 18);
   const vb = (o.vorherBoot ?? ALT).replaceAll('-', '');
   return [
-    `echo ${NEU} >"$T/boot_id"; printf 'cpu 1\\nbtime ${bt}\\n' >"$T/proc/stat"; echo ${o.jetzt ?? J + 200} >"$T/jetzt"`,
-    `printf '%s\\n' '{"_BOOT_ID":"${vb}","__REALTIME_TIMESTAMP":"${(J + 4) * 1_000_000 + 500_000}","MESSAGE":"letzter Eintrag"}' >"$T/j_vorher"`,
+    `rm -f "$T/jetzt_schritt"; echo ${NEU} >"$T/boot_id"; printf 'cpu 1\\nbtime ${bt}\\n' >"$T/proc/stat"; echo ${o.jetzt ?? J + 200} >"$T/jetzt"`,
+    `printf '%s\\n' ${o.shutdown ? `'${SHUTDOWN[o.shutdown](vb, J + 12)}' ` : ''}'{"_BOOT_ID":"${vb}","__REALTIME_TIMESTAMP":"${(J + 4) * 1_000_000 + 500_000}","MESSAGE":"letzter Eintrag"}' >"$T/j_vorher"`,
     `printf '%s\\n' '{"__REALTIME_TIMESTAMP":"${(bt + 20) * 1_000_000}","MESSAGE":"[TOTEM ] A new membership (3.2b) was formed. Members joined: 3"}' ${o.quorum === false ? '' : `'{"__REALTIME_TIMESTAMP":"${(bt + 41) * 1_000_000 + 400_000}","MESSAGE":"[QUORUM] This node is within the primary component and will provide service."}'`} >"$T/j_corosync"`,
   ].join('\n');
 };
@@ -897,21 +929,21 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     const w = await fencing([PRUEFEN_T, BELEGEN, BELEGEN, PRUEFEN_T], ['', reset(), '', '']);
     const [p, b, b2, p2] = w.laeufe as [ClLauf, ClLauf, ClLauf, ClLauf];
     expect(p.rc, p.aus).toBe(0);
-    expect(p.ergebnis).toMatchObject({ zustand: 'ausgeloest', art: 'trennung', knoten: 'sqllnx01', cluster: 'sqllnxcl01', bootIdVorher: ALT, ausloesungInS: 3, sperreS: 120,
+    expect(p.ergebnis).toMatchObject({ zustand: 'ausgeloest', art: 'trennung', knoten: 'sqllnx01', cluster: 'sqllnxcl01', bootIdVorher: ALT, ausloesungInS: 10, sperreS: 120,
       einheit: `alfred-fencetest-${J}`, aenderungen: ['fencing-test-datei', 'aufheben-geplant', 'ausloeser-geplant'] });
     expect(p.log.trim().split('\n')).toEqual([
-      `systemd-run --unit=alfred-fencetest-${J}-ende --on-active=123 --timer-property=AccuracySec=1s nft delete table inet alfred_fencetest`,
-      expect.stringMatching(new RegExp(`^systemd-run --unit=alfred-fencetest-${J} --on-active=3 --timer-property=AccuracySec=1s nft -f \\S+fencetest\\.nft$`)),
+      `systemd-run --unit=alfred-fencetest-${J}-ende --on-active=130 --timer-property=AccuracySec=1s nft delete table inet alfred_fencetest`,
+      expect.stringMatching(new RegExp(`^systemd-run --unit=alfred-fencetest-${J} --on-active=10 --timer-property=AccuracySec=1s nft -f \\S+fencetest\\.nft$`)),
     ]);
     expect(w.nft).toBe(fencetestNft());
-    expect(w.test).toMatchObject({ art: 'trennung', bootIdVorher: ALT, zeitS: J, ausloeseS: J + 3, sperreS: 120, knoten: 'sqllnx01', cluster: 'sqllnxcl01', nodeid: '1', sysrq: '176', kernelPanic: '0' });
+    expect(w.test).toMatchObject({ art: 'trennung', bootIdVorher: ALT, zeitS: J, ausloeseS: J + 10, minResetS: 13, tokenMs: 3000, tokenQuelle: 'live', sperreS: 120, knoten: 'sqllnx01', cluster: 'sqllnxcl01', nodeid: '1', sysrq: '176', kernelPanic: '0' });
     expect(String(w.test!.zeit)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
     expect(String(w.test!.konfHash)).toMatch(/^[0-9a-f]{64}$/);
     expect(p.aus + p.log).not.toContain('Hk-Geheim');
     expect(b.rc, b.aus).toBe(0);
     expect(b.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnx01', aenderungen: ['fencing-beleg'] });
     expect(w.beleg).toMatchObject({ art: 'trennung', resetS: 18, rejoinS: 41, bootId: NEU, bootIdVorher: ALT, testZeit: w.test!.zeit, cluster: 'sqllnxcl01', knoten: 'sqllnx01', nodeid: '1',
-      konfHash: w.test!.konfHash, journalLueckeS: 17 });
+      konfHash: w.test!.konfHash, journalLueckeS: 24, minResetS: 13 });
     expect(b.log.trim()).toBe('');
     expect(b2.rc, b2.aus).toBe(0);
     expect(b2.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
@@ -972,7 +1004,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     await f('rm -f "$T/svc/sbd.is-active"', /sbd läuft auf sqllnx01 nicht/);
     await f('echo ignore >"$T/prop/no-quorum-policy"', /no-quorum-policy=ignore/);
     await f('', /haenger \(Kernel-Absturz\) nur auf sqllnxcfg .* nicht auf sqllnx01/, PRUEFEN_H);
-    await f('rm -f "$T/authkey"', /Cluster-Identität auf sqllnx01 nicht lesbar \(Cluster sqllnxcl01, nodeid 1, authkey fehlt\)/);
+    await f('rm -f "$T/authkey"', /Cluster-Identität auf sqllnx01 nicht lesbar \(Cluster sqllnxcl01, nodeid 1, authkey fehlt, SBD-Konfiguration lesbar\)/);
   });
   it('Auslöser nicht planbar → sichtbarer Abbruch, Test-Datei wieder entfernt (sonst sperrte sie den Knoten 30 min als „läuft noch“)', async () => {
     const w = await fencing([PRUEFEN_T, PRUEFEN_T], ['touch "$T/run_scheitert"', 'rm -f "$T/run_scheitert"']);
@@ -980,13 +1012,56 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     expect(w.laeufe[1]!.rc, w.laeufe[1]!.aus).toBe(0);
     expect(w.laeufe[1]!.ergebnis).toMatchObject({ zustand: 'ausgeloest' });
   });
+  // ── Fix-Runde 1 ──
+  it('Auslösezeit aus der Uhr unmittelbar vor dem Schreiben (die Uhr läuft während Phase 1/2 weiter) → resetS genau', async () => {
+    const w = await fencing([PRUEFEN_T, BELEGEN], ['echo 7 >"$T/jetzt_schritt"', reset({ resetS: 25 })]);
+    const [p, b] = w.laeufe as [ClLauf, ClLauf];
+    expect(p.rc, p.aus).toBe(0);
+    expect(w.test).toMatchObject({ zeitS: J + 7, ausloeseS: J + 17 });
+    expect(p.ergebnis).toMatchObject({ einheit: `alfred-fencetest-${J + 7}` });
+    expect(p.log).toContain(`--unit=alfred-fencetest-${J + 7} --on-active=10 `);
+    expect(b.rc, b.aus).toBe(0);
+    // btime = J + 10 + 25 = J + 35; Auslösung J + 17 → 18 s (mit der Uhr aus Phase 1 wären es fälschlich 25 s)
+    expect(w.beleg).toMatchObject({ resetS: 18 });
+    expect(String((w.beleg!.quellen as Record<string, string>).resetS)).toContain('unmittelbar vor dem Schreiben der Test-Datei');
+  });
+  it('geordnetes Herunterfahren im getesteten Start (systemd reboot.target, journald „Journal stopped“, logind) → kein Beleg', async () => {
+    const f = async (art: keyof typeof SHUTDOWN, muster: RegExp) => { const w = await fencing([PRUEFEN_T, BELEGEN], ['', reset({ shutdown: art })]); keinBeleg(w.laeufe[1]!, muster); expect(w.beleg).toBeUndefined(); };
+    await f('reboot', /geordnetes Herunterfahren im getesteten Start \(systemd: Reached target reboot\.target - System Reboot\.\) — ein Neustart, kein Fencing-Reset; kein Beleg/);
+    await f('journald', /geordnetes Herunterfahren im getesteten Start \(systemd-journald: Journal stopped\)/);
+    await f('logind', /geordnetes Herunterfahren im getesteten Start \(systemd-logind: System is rebooting\.\)/);
+  });
+  it('trennung: Reset schneller als Corosync-Token + SBD_WATCHDOG_TIMEOUT → kein Beleg; Token nicht lesbar → fest 1000 ms; haenger ohne Untergrenze', async () => {
+    const zuSchnell = await fencing([PRUEFEN_T, BELEGEN], ['', reset({ resetS: 12 })]);
+    keinBeleg(zuSchnell.laeufe[1]!, /Reset schon 12 s nach der Auslösung \(mindestens 13 s = Corosync-Token \+ SBD_WATCHDOG_TIMEOUT\) — nicht die Folge der Trennung; kein Beleg/);
+    expect(zuSchnell.test).toMatchObject({ minResetS: 13, tokenMs: 3000, tokenQuelle: 'live' });
+    expect(zuSchnell.beleg).toBeUndefined();
+    const fest = await fencing([PRUEFEN_T, BELEGEN], ['rm -f "$T/token_ms"', reset({ resetS: 12 })]);
+    expect(fest.test).toMatchObject({ minResetS: 11, tokenMs: 1000, tokenQuelle: 'fest' });
+    expect(fest.laeufe[1]!.rc, fest.laeufe[1]!.aus).toBe(0);
+    expect(fest.beleg).toMatchObject({ resetS: 12, minResetS: 11 });
+    const h = await fencing([PRUEFEN_H, BELEGEN], ['echo sqllnxcfg >"$T/name"', reset({ resetS: 5 })]);
+    expect(h.test).toMatchObject({ minResetS: 0 });
+    expect(h.laeufe[1]!.rc, h.laeufe[1]!.aus).toBe(0);
+    expect(h.beleg).toMatchObject({ art: 'haenger', resetS: 5 });
+  });
+  it('Beleg besteht die eigene Selbstprüfung nicht → Abbruch und Beleg-Datei entfernt', async () => {
+    const w = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\ntouch "$T/beleg_kaputt"`]);
+    keinBeleg(w.laeufe[1]!, /Selbstprüfung: geschriebener Beleg ist nicht gültig: Beleg ohne gültige Art — Beleg entfernt/);
+    expect(w.beleg).toBeUndefined();
+  });
+  it('SBD neu eingerichtet (/etc/default/sbd anders) nach dem Beleg → Beleg ungültig, kein „schon“', async () => {
+    const w = await fencing([PRUEFEN_T, BELEGEN, BELEGEN], ['', reset(), 'printf "SBD_WATCHDOG_TIMEOUT=15\\n" >"$T/sbd_default"']);
+    expect(w.laeufe[1]!.rc, w.laeufe[1]!.aus).toBe(0);
+    keinBeleg(w.laeufe[2]!, /Test vor einer Neueinrichtung des Clusters oder von SBD/);
+  });
   it('haenger auf sqllnxcfg: sysrq c entkoppelt, Beleg nach Reset; kernel.panic ≠ 0 oder kdump → Abbruch ohne Änderung', async () => {
     const cfg = 'echo sqllnxcfg >"$T/name"';
     const w = await fencing([PRUEFEN_H, BELEGEN], [cfg, reset()]);
     const [p, b] = w.laeufe as [ClLauf, ClLauf];
     expect(p.rc, p.aus).toBe(0);
     expect(p.ergebnis).toMatchObject({ zustand: 'ausgeloest', art: 'haenger', knoten: 'sqllnxcfg', sperreS: 0, aenderungen: ['fencing-test-datei', 'ausloeser-geplant'] });
-    expect(p.log.trim().split('\n')).toEqual([expect.stringMatching(new RegExp(`^systemd-run --unit=alfred-fencetest-${J} --on-active=3 --timer-property=AccuracySec=1s /bin/sh -c sync; echo c > \\S+sysrq-trigger$`))]);
+    expect(p.log.trim().split('\n')).toEqual([expect.stringMatching(new RegExp(`^systemd-run --unit=alfred-fencetest-${J} --on-active=10 --timer-property=AccuracySec=1s /bin/sh -c sync; echo c > \\S+sysrq-trigger$`))]);
     expect(w.nft).toBe('FEHLT');
     expect(b.rc, b.aus).toBe(0);
     expect(w.beleg).toMatchObject({ art: 'haenger', knoten: 'sqllnxcfg', nodeid: '3', resetS: 18, rejoinS: 41 });

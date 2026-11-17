@@ -304,9 +304,13 @@ describe('I8e Paket 2 Task 4 — Skill linux_ha: Fencing', () => {
     expect(fencingText({ bootId: 'a-alt', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung ausgelöst, Reset ausstehend');
     expect(fencingText({ bootId: 'a-alt', jetztS: jetzt + 1801, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung vom 2026-11-17 14:00 UTC ohne Reset (boot_id unverändert)');
     expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung vom 2026-11-17 14:00 UTC erfolgt, Beleg ausstehend (fencing_belegen)');
-    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: { ...ID01, konfHash: 'h2' }, test: TEST01, beleg: BELEG01 })).toBe('Fencing Beleg ungültig (Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders))');
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: { ...ID01, konfHash: 'h2' }, test: TEST01, beleg: BELEG01 })).toBe('Fencing Beleg ungültig (Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey/SBD-Konfiguration anders))');
     expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: null, beleg: null })).toBe('Fencing nicht belegt');
     expect(fencingText(undefined)).toBe('Fencing unbekannt');
+    // Fix-Runde 1: liegengebliebene Test-Sperre sichtbar
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: BELEG01, sperreAktiv: true })).toBe('Fencing belegt (trennung, 2026-11-17 14:03 UTC, Reset 18 s, Rejoin 41 s) — Corosync-Sperre alfred_fencetest AKTIV');
+    expect(fencingText({ bootId: 'a-alt', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: null, sperreAktiv: true })).toBe('Fencing Test trennung ausgelöst, Reset ausstehend — Corosync-Sperre alfred_fencetest AKTIV');
+    expect(linuxHaStatusText('k', { ...STATUS_OK, fencing: { ...STATUS_OK.fencing!, sperreAktiv: true } })).toMatch(/; Fencing nicht belegt — Corosync-Sperre alfred_fencetest AKTIV$/);
     // neuerer Test auf einem Knoten mit altem Beleg, Reset noch aus → „Reset ausstehend“ (die Warte-Prüfung schließt das aus)
     expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: { ...TEST01, bootIdVorher: 'b-neu', zeit: '2026-11-17T15:00:00Z' }, beleg: BELEG01 })).toContain('Reset ausstehend');
     const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
@@ -318,7 +322,7 @@ describe('I8e Paket 2 Task 4 — Skill linux_ha: Fencing', () => {
 
   it('fencing_pruefen nur im Change; Kennwort nur über stdin; Parameter vor jedem Fernaufruf geprüft; fester Text für ausgeloest und schon', async () => {
     const KW = 'Hk-Tresor-Wert-77';
-    const aus = { zustand: 'ausgeloest', art: 'trennung', knoten: 'sqllnx02', cluster: 'sqllnxcl01', bootIdVorher: 'a-alt', ausloesungInS: 3, sperreS: 120, aenderungen: ['fencing-test-datei', 'aufheben-geplant', 'ausloeser-geplant'] };
+    const aus = { zustand: 'ausgeloest', art: 'trennung', knoten: 'sqllnx02', cluster: 'sqllnxcl01', bootIdVorher: 'a-alt', ausloesungInS: 10, sperreS: 120, aenderungen: ['fencing-test-datei', 'aufheben-geplant', 'ausloeser-geplant'] };
     const w = welt({ [LINUX_HA_BAUSTEINE.fencingPruefen]: [aus, { zustand: 'schon', art: 'trennung', hinweis: 'Reset nach dem Test vom 2026-11-17T14:00:00Z erfolgt — Beleg mit fencing_belegen', aenderungen: [] }] }, { [HA_HACLUSTER_TRESOR]: KW });
     expect((await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'trennung' }, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
     expect((await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'reboot' }, imChange)).error).toContain('art: trennung oder haenger');
@@ -328,7 +332,7 @@ describe('I8e Paket 2 Task 4 — Skill linux_ha: Fencing', () => {
     expect(r.success, r.error).toBe(true);
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.fencingPruefen, timeoutMs: 180_000, parameter: { cluster: 'sqllnxcl01', knoten: HA_KNOTEN, art: 'trennung' } });
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ hacluster: KW });
-    expect(r.display).toBe('Fencing-Test trennung auf sqllnx02 (sqllnx02) ausgelöst: Corosync (UDP 5405) ab +3 s für 120 s gesperrt; boot_id vorher a-alt — Reset durch SBD erwartet, danach fencing_belegen — geändert: fencing-test-datei, aufheben-geplant, ausloeser-geplant');
+    expect(r.display).toBe('Fencing-Test trennung auf sqllnx02 (sqllnx02) ausgelöst: Corosync (UDP 5405) ab +10 s für 120 s gesperrt; boot_id vorher a-alt — Reset durch SBD erwartet, danach fencing_belegen — geändert: fencing-test-datei, aufheben-geplant, ausloeser-geplant');
     const r2 = await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'trennung' }, imChange);
     expect(r2.display).toBe('Fencing-Test trennung auf sqllnx02: Reset nach dem Test vom 2026-11-17T14:00:00Z erfolgt — Beleg mit fencing_belegen — nichts zu tun');
     expect(JSON.stringify([r, r2, w.aufrufe.map(a => [a.parameter, a.zweck])])).not.toContain(KW);
