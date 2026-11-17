@@ -52,3 +52,24 @@ describe('Paketerkennung: gehaltene Pakete gelten als installiert', () => {
     expect(lauf('deinstall ok config-files')).toMatchObject({ installiert: false, pakete: { 'mssql-server': null } });
   });
 });
+
+
+describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', () => {
+  it('kein -h -1 neben -y 0 (sqlcmd: „mutually exclusive“, Realfall 17.11.)', () => {
+    const aufruf = PY_STATUS.split('\n').find(l => l.includes('subprocess.run([SQLCMD'));
+    expect(aufruf).toContain('"-y", "0"');
+    expect(aufruf).not.toContain('"-h"');
+  });
+
+  it.skipIf(!PYTHON)('sql_json schneidet Spaltenkopf und Trennlinie ab, lehnt Unvollständiges ab', () => {
+    const zeilen = PY_STATUS.split('\n');
+    const von = zeilen.indexOf('def sql_json(text):'), bis = zeilen.indexOf('if not sa:');
+    expect(von).toBeGreaterThan(-1); expect(bis).toBeGreaterThan(von);
+    const prog = ['import json, sys', ...zeilen.slice(von, bis), 'print(json.dumps(sql_json(sys.stdin.read())))'].join('\n');
+    const lauf = (t: string) => JSON.parse(spawnSync(PYTHON!, ['-c', prog], { input: t, encoding: 'utf8' }).stdout);
+    expect(lauf('j\n-\n{"version":"17.0.4006.2","kerne":4,"datenbanken":[{"name":"pruefdb01"}]}\n')).toEqual({ version: '17.0.4006.2', kerne: 4, datenbanken: [{ name: 'pruefdb01' }] });
+    expect(lauf('j\n----\n{"a":[1,\n2]}\n')).toEqual({ a: [1, 2] });
+    expect(lauf('Msg 18456, Login failed')).toBeNull();
+    expect(lauf('j\n-\n{"a":')).toBeNull();
+  });
+});
