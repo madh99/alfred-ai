@@ -411,7 +411,7 @@ const zert = (fuell: string) => `30820010${fuell.repeat(16)}`; // DER-SEQUENCE m
 const ZERT: Record<string, string> = { sqllnx01: zert('A1'), sqllnx02: zert('B2'), sqllnxcfg: zert('C3') };
 const FP: Record<string, string> = { sqllnx01: '1'.repeat(40), sqllnx02: '2'.repeat(40), sqllnxcfg: '3'.repeat(40) };
 const IP: Record<string, string> = Object.fromEntries(HA_KNOTEN.map(k => [k.name, k.ip]));
-const fencingOk = (k: string, nodeid: string) => ({ bootId: 'b-neu', jetztS: 1_795_000_200, identitaet: { cluster: 'sqllnxcl01', knoten: k, nodeid, konfHash: 'h1' }, test: { ...TEST01, knoten: k, nodeid }, beleg: { ...BELEG01, knoten: k, nodeid } });
+const fencingOk = (k: string, nodeid: string) => ({ bootId: 'b-neu', jetztS: 1_795_000_200, sperreAktiv: false, identitaet: { cluster: 'sqllnxcl01', knoten: k, nodeid, konfHash: 'h1' }, test: { ...TEST01, knoten: k, nodeid }, beleg: { ...BELEG01, knoten: k, nodeid } });
 const statusAg = (k: string, nodeid: string, extra: Partial<LinuxHaStatus> = {}) => ({ ...STATUS_OK, cluster: CLUSTER_OK, fencing: fencingOk(k, nodeid), ...extra });
 const STATUS_3 = [statusAg('sqllnx01', '1'), statusAg('sqllnx02', '2'), statusAg('sqllnxcfg', '3')];
 const endpunkt = (k: string, zustand = 'geaendert') => ({ zustand, knoten: k, endpunkt: `TCP://${IP[k]}:5022`, fingerabdruck: FP[k], zertifikat: ZERT[k], aenderungen: zustand === 'schon' ? [] : ['zertifikat', 'endpunkt', 'pacemaker-login', 'pacemaker-zugangsdatei'] });
@@ -819,6 +819,10 @@ describe('I8e Paket 2 Task 6 — Skill linux_ha: ag_failover', () => {
       [st(1, statusAg('sqllnx02', '2', { fencing: { ...fencingOk('sqllnx02', '2'), test: { ...TEST01, knoten: 'sqllnx02', nodeid: '2', bootIdVorher: 'b-neu', zeitS: 1_795_000_100 } } })), 'sqllnx02: Fencing Test trennung ausgelöst, Reset ausstehend'],
       [st(1, statusAg('sqllnx01', '1')), 'sqllnx02: Zugang zeigt auf Knoten sqllnx01'],
       [st(0, { ...STATUS_3[0], cluster: undefined }), 'sqllnx01: Cluster unbekannt'],
+      // Fix-Runde 1 (M2): unlesbar = Abbruch
+      [st(1, { ...STATUS_3[1], fencing: undefined }), 'sqllnx02: Fencing-Lage (Sperre, Reset, Identität) nicht lesbar'],
+      [st(2, statusAg('sqllnxcfg', '3', { fencing: { ...fencingOk('sqllnxcfg', '3'), identitaet: null } })), 'sqllnxcfg: Identität im Cluster nicht lesbar'],
+      [st(0, statusAg('sqllnx01', '1', { fencing: { ...fencingOk('sqllnx01', '1'), sperreAktiv: undefined } })), 'sqllnx01: Corosync-Sperre nicht lesbar'],
     ] as Array<[typeof STATUS_3, string]>) {
       const w = voll([FO_ERGEBNIS], status);
       const r = await w.skill.execute(FO_EINGABE, imChange);
@@ -852,6 +856,9 @@ describe('I8e Paket 2 Task 6 — Skill linux_ha: ag_failover', () => {
       expect(r.success, JSON.stringify(x)).toBe(false);
       expect(r.error, JSON.stringify(x)).toContain('Selbstprüfung');
       expect(r.error).toContain('Geplantes Failover abgebrochen — Grund:');
+      // Fix-Runde 1 (M6): der Lauf hat geändert → Daten (Change-Motor: teilweise → Rückweg)
+      expect(r.data, JSON.stringify(x)).toBeDefined();
+      expect((r.data as { laeufe: Array<{ aenderungen: string[] }> }).laeufe[0]!.aenderungen).toEqual(FO_ERGEBNIS.aenderungen);
     }
   });
 
@@ -859,13 +866,23 @@ describe('I8e Paket 2 Task 6 — Skill linux_ha: ag_failover', () => {
     const nach = { code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","fehler":"Zeitüberschreitung: nach 120 s Promoted auf \'sqllnx01\' — Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt; bisher geändert: failover-angestossen,standort-bedingung-entfernt"}' };
     const r = await voll([nach]).skill.execute(FO_EINGABE, imChange);
     expect(r.success).toBe(false);
-    expect(r.error!.startsWith('Geplantes Failover abgebrochen — Grund: AG-Failover sqllnx02 auf sqllnx02 gescheitert (Exit 1): Zeitüberschreitung')).toBe(true);
+    expect(r.error!.startsWith('Geplantes Failover abgebrochen — Grund: Failover von sqllnx01 auf sqllnx02 gescheitert (Exit 1): Zeitüberschreitung')).toBe(true);
     expect(r.error).toContain('pcs resource clear');
     expect((r.data as { grund: string }).grund).toContain('bisher geändert: failover-angestossen');
     const vor = { code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","fehler":"Ziel sqllnx02 nicht SYNCHRONIZED (0/1: alfredpruef=SYNCHRONIZING) — nichts geändert"}' };
     const v = await voll([vor]).skill.execute(FO_EINGABE, imChange);
     expect(v.error).toContain('nicht SYNCHRONIZED');
     expect(v.data).toBeUndefined();
+    // Fix-Runde 1 (I1): Fehlerzeile des Traps (unerwartetes Ende nach dem move) → Daten; Lauf ohne jede Ergebniszeile → fail-closed Daten
+    const trap = { code: 1, stdout: `ALFRED-HA ${JSON.stringify({ zustand: 'fehler', fehler: "unerwarteter Abbruch (Exit 143) nach pcs resource move — Promoted auf 'sqllnx01', Failover möglicherweise erfolgt; Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt; bisher geändert: failover-angestossen,standort-bedingung-entfernt" })}` };
+    const t = await voll([trap]).skill.execute(FO_EINGABE, imChange);
+    expect(t.error).toContain('unerwarteter Abbruch (Exit 143)');
+    expect(t.error).toContain('pcs resource clear');
+    expect(t.data).toBeDefined();
+    const leer = await voll([{ code: 124, stdout: 'Zeitgrenze erreicht' }]).skill.execute(FO_EINGABE, imChange);
+    expect(leer.error).toContain('möglicherweise geändert: kein Ergebnis des Failover-Bausteins');
+    expect(leer.data).toBeDefined();
+    expect((leer.data as { grund: string }).grund).toContain('Failover von sqllnx01 auf sqllnx02 gescheitert (Exit 124)');
   });
 });
 

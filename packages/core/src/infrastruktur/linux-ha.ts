@@ -2672,7 +2672,7 @@ function tsqlFailover(p: HaAgFailoverParameter): string {
 
 /** Hilfen des Failover-Bausteins — vor der Marke, damit Tests sie umbiegen können */
 const FO_HILFEN = sh(String.raw`jetzt() { date +%s; }
-MOVE_OFFEN=0; FREIGABE=''
+MOVE_OFFEN=0; FREIGABE=''; FREI_VOR=x
 # Standort-Bedingungen der AG-Ressourcen: SCLI = cli-prefer/cli-ban (von pcs resource move/ban), SANDERE = fremde, SLISTE; unlesbar → x
 standort() { local x l; SCLI=x; SANDERE=x; SLISTE=-; if x=$(cibadmin --query --scope constraints 2>/dev/null) && l=$(ag_pcs_py standort "$AG_RES" "$AG_KLON" "$VIP_RES" <<<"$x" 2>/dev/null); then read -r SCLI SANDERE SLISTE <<<"$l"; fi; }
 lage_setzen() { IFS='|' read -r _ LOKAL RS NDB NSYNC VERB ALTROLLE ALTVERB NALT LLOKAL LALT <<<"$1"; }
@@ -2683,7 +2683,7 @@ lage_versuch() { local a; a=$(sql "$T_LAGE" 2>&1) || return 1; a=$(alfred_zeile 
 freigeben() {
   local aus vor
   MOVE_OFFEN=0
-  standort; vor=$SCLI
+  standort; vor=$SCLI; FREI_VOR=$vor
   if ! aus=$(pcs resource clear "$AG_KLON" 2>&1); then
     standort
     FREIGABE="pcs resource clear $AG_KLON fehlgeschlagen ($(kurz "$aus")) — Standort-Bedingung(en) $SLISTE bleiben und binden die AG an einen Knoten; von Hand: pcs resource clear $AG_KLON"
@@ -2700,10 +2700,19 @@ const AG_FAILOVER_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
 DAUER=0; VORHER=$ALT
 # Nach dem Verschieben darf kein Abbruch die Standort-Bedingung still stehen lassen: jeder Abbruch gibt sie zuerst frei und nennt das
-# Ergebnis; bei einem unerwarteten Ende (set -e) räumt alfred_aufraeumen (EXIT-Trap) wenigstens auf
+# Ergebnis. Fix-Runde 1 (I1): bei einem unerwarteten Ende (set -e/-u, TERM/INT) gibt alfred_aufraeumen (EXIT-Trap) ebenfalls frei und
+# schreibt selbst die Fehlerzeile — mit dem Ergebnis der Freigabe und dem Stand (failover-angestossen steht schon vor dem move darin)
 eval "$(declare -f abbruch | sed '1s/^abbruch /abbruch_basis /')"
 abbruch() { if [ "$MOVE_OFFEN" = 1 ]; then freigeben || true; set -- "$1 — $FREIGABE"; fi; abbruch_basis "$1"; }
-alfred_aufraeumen() { if [ "$MOVE_OFFEN" = 1 ]; then MOVE_OFFEN=0; pcs resource clear "$AG_KLON" >/dev/null 2>&1 || true; fi; }
+alfred_aufraeumen() {
+  local t
+  [ "$MOVE_OFFEN" = 1 ] || return 0
+  freigeben || true
+  [ -z "$ALFRED_ZEILE" ] || return 0
+  pm_lage || true
+  t=$(printf '%s' "unerwarteter Abbruch (Exit §{ALFRED_RC:-?}) nach pcs resource move — Promoted auf '§{PROM:-?}', Failover möglicherweise erfolgt; $FREIGABE; $(stand)" | json_text)
+  ergebnis "{\"zustand\":\"fehler\",\"baustein\":\"$ALFRED_BAUSTEIN\",\"fehler\":$t}"
+}
 # ── Phase 1: prüfen — bis zum Verschieben keine Änderung ──
 cluster_lage
 { [ "$LO" = 3 ] && [ "$LQ" = 1 ]; } || abbruch "Cluster: $LO/3 online, Quorum $([ "$LQ" = 1 ] && echo ja || echo nein) — erwartet 3/3 mit Quorum; kein Failover, nichts geändert"
@@ -2735,12 +2744,24 @@ else
     [ "$PROM" = "$ALT" ] || abbruch "nach dem Freigeben der liegengebliebenen Standort-Bedingung ist Promoted auf '$PROM' — kein Failover; $(stand)"
   fi
   # ── Phase 2: verschieben, auf den Primär warten, Standort-Bedingung freigeben — auch bei Zeitüberschreitung oder gescheitertem move ──
+  # Fix-Runde 1 (I1): ab hier gilt der Lauf als (möglicherweise) ändernd — schon VOR dem move, denn pcs 0.11 kann nach dem Verschieben
+  # scheitern (z. B. „cannot verify the resource will not move back“); nur ein nachgelesen wirkungsloser move nimmt das zurück
+  AJ_VOR=$AJ; GEAENDERT_VOR=$GEAENDERT
+  aend failover-angestossen
+  trap 'exit 143' TERM; trap 'exit 130' INT
   T0=$(jetzt); MOVE_OFFEN=1
   if ! aus=$(pcs resource move "$AG_KLON" "$ICH" --promoted 2>&1); then
-    freigeben || true
-    abbruch "pcs resource move $AG_KLON $ICH --promoted fehlgeschlagen: $(kurz "$aus") — $FREIGABE; $(stand)"
+    frei=0; freigeben || frei=1
+    pm_lage
+    if [ "$frei" = 0 ] && [ "$FREI_VOR" = 0 ] && [ "$PROM" = "$ALT" ]; then
+      AJ=$AJ_VOR; GEAENDERT=$GEAENDERT_VOR
+      wirkung="ohne Wirkung (Promoted weiter auf $ALT, keine Standort-Bedingung entstanden)"
+    else
+      if [ "$PROM" = "$ICH" ]; then aend primaer-gewechselt; fi
+      wirkung="Promoted jetzt auf '$PROM' — Failover möglicherweise erfolgt"
+    fi
+    abbruch "pcs resource move $AG_KLON $ICH --promoted fehlgeschlagen: $(kurz "$aus") — $wirkung; $FREIGABE; $(stand)"
   fi
-  aend failover-angestossen
   if ! warte_primaer; then
     freigeben || true
     abbruch "Zeitüberschreitung: nach $((WARTE_RUNDEN * 2)) s Promoted auf '$PROM', SQL-Rolle auf $ICH '§{LOKAL:-?}' — Failover nicht bestätigt; $FREIGABE; $(stand)"

@@ -561,7 +561,7 @@ export class LinuxHaSkill extends Skill {
     const laeufe = spur.laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen ?? [] }));
     this.d.protokoll?.(`I8e ${was} abgebrochen`, { zugang, fehler: grund.slice(0, 500), laeufe, tresorNeu: spur.tresor });
     // geändert = ein abgeschlossener Lauf mit Änderungen, ein neuer Tresor-Eintrag oder der abbrechende Knoten meldet eigene Teiländerungen
-    const geaendert = laeufe.some(l => l.aenderungen.length) || spur.tresor.length > 0 || /bisher geändert: |am ersten Fehler beendet/.test(grund);
+    const geaendert = laeufe.some(l => l.aenderungen.length) || spur.tresor.length > 0 || /bisher geändert: |am ersten Fehler beendet|möglicherweise geändert/.test(grund);
     const spurText = ` — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''}`;
     const kopf = `${was} abgebrochen — Grund: `;
     // ohne Änderung gibt es keine Spur zu verlieren → Grund ganz; sonst so viel Grund, wie neben der Spur in die 500 Zeichen passt (mind. AG_GRUND_KURZ)
@@ -717,19 +717,33 @@ export class LinuxHaSkill extends Skill {
     const maengel: string[] = [];
     for (const z of HA_KNOTEN.map(k => k.name)) {
       const s = await this.lauf<LinuxHaStatus & Record<string, unknown>>(z, LINUX_HA_BAUSTEINE.status, {}, 'HA-Status vor dem Failover', LINUX_HA_ZEIT_MS.status);
-      const k = s.fencing?.identitaet?.knoten;
-      if (k && k !== z) { maengel.push(`${z}: Zugang zeigt auf Knoten ${k}`); continue; }
+      // Fix-Runde 1 (M2): unlesbar = Abbruch — fehlt die Fencing-Lage, die Identität im Cluster oder der Sperr-Zustand, gilt nichts als „ok“
+      const f = s.fencing;
+      if (!f || typeof f !== 'object') { maengel.push(`${z}: Fencing-Lage (Sperre, Reset, Identität) nicht lesbar`); continue; }
+      const k = f.identitaet?.knoten;
+      if (!k) { maengel.push(`${z}: Identität im Cluster nicht lesbar`); continue; }
+      if (k !== z) { maengel.push(`${z}: Zugang zeigt auf Knoten ${k}`); continue; }
       const c = s.cluster;
       if (!c || c.art !== 'eingerichtet' || c.name !== HA_CLUSTER_NAME || !c.crm || HA_KNOTEN.some(x => !c.crm!.online.includes(x.name)) || !c.crm.quorum || !c.crm.stonith) maengel.push(`${z}: ${clusterText(c)}`);
-      if (s.fencing?.sperreAktiv) maengel.push(`${z}: Corosync-Sperre alfred_fencetest AKTIV`);
-      const ft = fencingText(s.fencing);
+      if (typeof f.sperreAktiv !== 'boolean') maengel.push(`${z}: Corosync-Sperre nicht lesbar`);
+      else if (f.sperreAktiv) maengel.push(`${z}: Corosync-Sperre alfred_fencetest AKTIV`);
+      const ft = fencingText(f);
       if (ft.includes('Reset ausstehend')) maengel.push(`${z}: ${ft}`);
     }
     if (maengel.length) throw new Error(`Failover von ${p.ag} nach ${p.ziel} nicht gestartet — Cluster nicht bereit: ${maengel.join('; ')} — kein Fernaufruf mit Geheimnis, nichts geändert`);
     const sa = await this.saKennwoerter([p.ziel], 'Failover', geheim);
-    const r = await this.lauf<{ zustand: string; ag?: string; primaer?: string; vorher?: string; dauerS?: number; vip?: string; vipAuf?: string; promotedAuf?: string; requiredSyncSql?: unknown;
-      requiredSyncRessource?: unknown; altRolle?: string; datenbanken?: Array<{ name: string; zustand: string }>; standortBedingungen?: unknown; aenderungen?: string[] }>(
-      p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, `AG-Failover ${p.ziel}`, LINUX_HA_ZEIT_MS.agFailover, { sa: sa[p.ziel]! });
+    // Fix-Runde 1 (M4): Kopf „Failover von <zugang> auf <ziel> gescheitert“ (pruefeLauf hängt „auf <ziel>“ an)
+    const zweck = `Failover von ${p.vorher}`;
+    const roh = await this.d.skript(p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, JSON.stringify({ sa: sa[p.ziel]! }), LINUX_HA_ZEIT_MS.agFailover, zweck);
+    type FoErgebnis = { zustand: string; ag?: string; primaer?: string; vorher?: string; dauerS?: number; vip?: string; vipAuf?: string; promotedAuf?: string; requiredSyncSql?: unknown;
+      requiredSyncRessource?: unknown; altRolle?: string; datenbanken?: Array<{ name: string; zustand: string }>; standortBedingungen?: unknown; aenderungen?: string[] };
+    let r: FoErgebnis;
+    try { r = this.pruefeLauf<FoErgebnis>(p.ziel, zweck, roh); } catch (err) {
+      // Fix-Runde 1 (I1): ohne Ergebniszeile des Bausteins (Zeitgrenze am Host, Verbindung weg) ist nicht belegt, dass kein move lief —
+      // fail-closed als möglicherweise geändert (Daten → teilweise → Rückweg ag_failover zurück, der bei unverändertem Primär „schon“ ist)
+      if (!haErgebnis(roh.stdout)) throw new Error(`${(err as Error).message} — möglicherweise geändert: kein Ergebnis des Failover-Bausteins (pcs resource move kann gelaufen sein); Lage mit linux_ha.status prüfen`);
+      throw err;
+    }
     spur.laeufe.push({ z: p.ziel, zustand: r.zustand, aenderungen: r.aenderungen });
     const abw = [
       (r.primaer !== p.ziel || r.promotedAuf !== p.ziel) && `Primär ${String(r.primaer)}, Promoted auf ${String(r.promotedAuf)}`,

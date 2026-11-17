@@ -1870,6 +1870,7 @@ pcs() {
   log "pcs $*"
   case "$1 $2" in
     "resource move") [ ! -f "$T/move_scheitert" ] || { echo 'Error: move kaputt'; return 1; }
+      [ ! -f "$T/move_scheitert_nach" ] || { echo "$4" >"$T/promoted"; echo 'Error: cannot verify the resource will not move back'; return 1; }
       echo "$4" >"$T/cli_prefer"; [ -f "$T/move_haengt" ] || { echo "$4" >"$T/promoted"; echo 1012 >"$T/uhr"; }; return 0 ;;
     "resource clear") [ ! -f "$T/clear_scheitert" ] || { echo 'Error: clear kaputt'; return 1; }; [ -f "$T/clear_wirkungslos" ] || rm -f "$T/cli_prefer"; return 0 ;;
   esac
@@ -2000,6 +2001,16 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 6 — ag_failover ausgeführ
     expect(m.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
     expect(String(m.laeufe[0]!.ergebnis!.fehler)).toContain('pcs resource move ag_cluster-clone sqllnx02 --promoted fehlgeschlagen: Error: move kaputt');
     expect(String(m.laeufe[0]!.ergebnis!.fehler)).toContain('pcs resource clear ag_cluster-clone ausgeführt');
+    // Fix-Runde 1 (I1): nachgelesen ohne Wirkung (Promoted weiter auf sqllnx01, keine Bedingung entstanden) → nichts geändert
+    expect(String(m.laeufe[0]!.ergebnis!.fehler)).toContain('ohne Wirkung (Promoted weiter auf sqllnx01, keine Standort-Bedingung entstanden)');
+    expect(String(m.laeufe[0]!.ergebnis!.fehler)).toMatch(/nichts geändert$/);
+    // move scheitert NACH dem Verschieben (pcs 0.11): Primärwechsel wird als Änderung gemeldet
+    const n = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/move_scheitert_nach"`]);
+    const nf = String(n.laeufe[0]!.ergebnis!.fehler);
+    expect(n.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(nf).toContain('cannot verify the resource will not move back');
+    expect(nf).toContain("Promoted jetzt auf 'sqllnx02' — Failover möglicherweise erfolgt");
+    expect(nf).toContain('bisher geändert: failover-angestossen,primaer-gewechselt');
     const c = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/move_haengt" "$T/clear_scheitert"`], 'cat "$T/cli_prefer"');
     const cf = String(c.laeufe[0]!.ergebnis!.fehler);
     expect(cf).toContain('pcs resource clear ag_cluster-clone fehlgeschlagen (Error: clear kaputt)');
@@ -2022,8 +2033,26 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 6 — ag_failover ausgeführ
     const u = await agLaeufe([mitFo(haAgFailoverSkript(FO()), 'warte_primaer() { echo "$GIBTS_NICHT"; }')], { sa: GEHEIM.sa }, [FO_VOR()], 'ls "$T"');
     expect(u.laeufe[0]!.rc).not.toBe(0);
     expect(u.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
-    expect(String(u.laeufe[0]!.ergebnis!.fehler)).toContain('unerwarteter Abbruch');
+    // Fix-Runde 1 (I1): die Fehlerzeile des Traps nennt das Ergebnis der Freigabe und den Stand (→ teilweise im Skill)
+    const uf = String(u.laeufe[0]!.ergebnis!.fehler);
+    expect(uf).toContain('unerwarteter Abbruch (Exit 1) nach pcs resource move');
+    expect(uf).toContain('Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt');
+    expect(uf).toContain('bisher geändert: failover-angestossen,standort-bedingung-entfernt');
+    expect(u.laeufe[0]!.aus.split('\n').filter((z: string) => z.startsWith('ALFRED-HA ')).length).toBe(1);
     expect(u.ende).not.toContain('cli_prefer');
+    // … und scheitert dort auch clear: verbliebene Bedingung mit Handbefehl
+    const uc = await agLaeufe([mitFo(haAgFailoverSkript(FO()), 'warte_primaer() { echo "$GIBTS_NICHT"; }')], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/clear_scheitert"`]);
+    const ucf = String(uc.laeufe[0]!.ergebnis!.fehler);
+    expect(ucf).toContain('unerwarteter Abbruch');
+    expect(ucf).toContain('pcs resource clear ag_cluster-clone fehlgeschlagen (Error: clear kaputt)');
+    expect(ucf).toContain('cli-prefer-ag_cluster-clone@sqllnx02');
+    expect(ucf).toContain('von Hand: pcs resource clear ag_cluster-clone');
+    expect(ucf).toContain('bisher geändert: failover-angestossen');
+    // SIGTERM (z. B. Zeitgrenze am Host) nach dem move: EXIT-Trap läuft, gibt frei, meldet
+    const t = await agLaeufe([mitFo(haAgFailoverSkript(FO()), 'warte_primaer() { kill -TERM "$BASHPID"; sleep 1; }')], { sa: GEHEIM.sa }, [FO_VOR()], 'ls "$T"');
+    expect(t.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(String(t.laeufe[0]!.ergebnis!.fehler)).toContain('unerwarteter Abbruch (Exit 143) nach pcs resource move');
+    expect(t.ende).not.toContain('cli_prefer');
   });
 
   it('Ziel schon Primär: ohne move; liegengebliebene cli-prefer wird freigegeben und als Änderung gemeldet; Gegenstelle nicht synchron → Abbruch (nicht „ok“)', async () => {
