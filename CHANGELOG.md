@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Antworten im Notbetrieb mit Mistral (v1892)
+
+- OpenAI-kompatible Anbieter (Mistral) liefern den Antworttext teils als Liste von Bausteinen. Alfred übernimmt daraus nur die Text-Bausteine; bisher scheiterte die Verarbeitung solcher Antworten, und im Notbetrieb gingen Antworten verloren.
+
 ### Fixed — HA-Grundlage installiert die Pacemaker-Werkzeuge (v1891)
 
 - linux_ha.ha_vorbereiten installiert zusätzlich pacemaker-cli-utils in fester Version (crm_mon, crm_attribute, cibadmin); unter Ubuntu 24.04 ist es ein eigenes Paket. Nach der Installation prüft der Baustein, dass jedes von den HA-Bausteinen benutzte Programm vorhanden ist, und bricht sonst sichtbar ab. Eine Wiederholung auf einem bereits vorbereiteten Knoten installiert nur das fehlende Paket, ohne SQL-Neustart.
