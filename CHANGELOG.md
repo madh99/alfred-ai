@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — HA-Grundlage installiert die Pacemaker-Werkzeuge (v1891)
+
+- linux_ha.ha_vorbereiten installiert zusätzlich pacemaker-cli-utils in fester Version (crm_mon, crm_attribute, cibadmin); unter Ubuntu 24.04 ist es ein eigenes Paket. Nach der Installation prüft der Baustein, dass jedes von den HA-Bausteinen benutzte Programm vorhanden ist, und bricht sonst sichtbar ab. Eine Wiederholung auf einem bereits vorbereiteten Knoten installiert nur das fehlende Paket, ohne SQL-Neustart.
+
 ### Added — SQL auf Linux: Pacemaker-Cluster mit diskless SBD und Fencing-Beweis (v1890)
 
 - Proxmox: Watchdog i6300esb (Aktion Reset) für VMs — bei provision_vm und als eigene Aktion set_vm_watchdog mit Rückweg; als wirksam gilt er erst nach Kalt-Start, ausstehende Änderungen und unlesbarer Zustand werden sichtbar gemeldet.
