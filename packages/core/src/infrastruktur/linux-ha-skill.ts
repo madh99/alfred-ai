@@ -466,6 +466,22 @@ export class LinuxHaSkill extends Skill {
     return e;
   }
 
+  /**
+   * Ruling R8 — ein ÄNDERNDER Baustein-Lauf ohne lesbare Ergebniszeile (Zeitgrenze am Host, SIGKILL, Verbindung weg, Exit ≠ 0 ohne Zeile)
+   * belegt nicht, dass nichts geändert wurde: fail-closed „möglicherweise geändert: kein Ergebnis …“ (mitSpur hängt dann Daten an →
+   * Schritt teilweise → Rückweg). Lesende Läufe (Status, Gate) nutzen weiter pruefeLauf/lauf („nichts geändert“).
+   */
+  private pruefeAendernd<T extends Record<string, unknown>>(zugang: string, zweck: string, roh: { code: number; stdout: string; stderr: string }, hinweis: string): T {
+    try { return this.pruefeLauf<T>(zugang, zweck, roh); } catch (err) {
+      if (!haErgebnis(roh.stdout)) throw new Error(`${(err as Error).message} — möglicherweise geändert: kein Ergebnis ${hinweis}; Lage mit linux_ha.status prüfen`);
+      throw err;
+    }
+  }
+
+  private async laufAendernd<T extends Record<string, unknown>>(zugang: string, baustein: string, parameter: unknown, zweck: string, timeoutMs: number, eingabe: Record<string, string>, hinweis: string): Promise<T> {
+    return this.pruefeAendernd<T>(zugang, zweck, await this.d.skript(zugang, baustein, parameter, JSON.stringify(eingabe), timeoutMs, zweck), hinweis);
+  }
+
   private tresor() { if (!this.d.tresor) throw new Error('Tresor nicht verfügbar'); return this.d.tresor; }
 
   private async vorbereiten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
@@ -635,10 +651,12 @@ export class LinuxHaSkill extends Skill {
       // (ein bestehender Master-Key/Login mit anderem Kennwort bricht im Baustein vor jeder Änderung ab)
       const marken = new Set(roh.stdout.split(/\r?\n/).map(x => x.trim()));
       const zustand = haErgebnis<{ zustand?: string }>(roh.stdout)?.zustand;
-      const ok = roh.code === 0 && zustand !== undefined && zustand !== 'fehler';
+      // R8: ohne Ergebniszeile kann das Kennwort gesetzt sein (Abbruch zwischen Anlage und Marke) — dann ebenfalls in den Tresor; ist es
+      // nicht gesetzt, legt der nächste Lauf das Objekt mit genau diesem Kennwort an (kein Schaden), sonst passte es ohnehin
+      const ok = (roh.code === 0 && zustand !== undefined && zustand !== 'fehler') || zustand === undefined;
       if (mk[z]!.neu && (ok || marken.has('ALFRED-MASTERKEY-GESETZT'))) { await t.setze(haMasterkeyTresor(z), mk[z]!.wert, `Master-Key-Kennwort (master) von SQL Server auf ${z} (Verfügbarkeitsgruppe ${ab.ag})`); mk[z]!.neu = false; spur.tresor.push(haMasterkeyTresor(z)); }
       if (pmNeu && (ok || marken.has('ALFRED-PACEMAKER-GESETZT'))) { await t.setze(HA_PACEMAKER_TRESOR, pm, `Kennwort des SQL-Logins alfred_pacemaker (Pacemaker-Resource-Agent, ${zugaenge.join(', ')})`); pmNeu = false; spur.tresor.push(HA_PACEMAKER_TRESOR); }
-      const r = this.pruefeLauf<{ zustand: string; zertifikat?: unknown; fingerabdruck?: unknown; aenderungen?: string[] }>(z, `AG-Endpunkt ${z}`, roh);
+      const r = this.pruefeAendernd<{ zustand: string; zertifikat?: unknown; fingerabdruck?: unknown; aenderungen?: string[] }>(z, `AG-Endpunkt ${z}`, roh, "des Endpunkt-Bausteins (Master-Key, Login, Zertifikat, Endpunkt, Zugangsdatei können angelegt sein)");
       // Fix-Runde 2 (A2): der Lauf hat geändert, auch wenn sein Zertifikat danach abgewiesen wird — erst in die Spur, dann prüfen
       laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
       // nur ein öffentliches Zertifikat wird weitergegeben — alles andere bricht vor dem Austausch ab
@@ -652,12 +670,12 @@ export class LinuxHaSkill extends Skill {
       const z = b[rolle];
       const peers = HA_KNOTEN.map(k => k.name).filter(n => n !== z).map(n => ({ name: n, zertifikat: ep[n]!.zertifikat, fingerabdruck: ep[n]!.fingerabdruck }));
       const p: HaAgReplikatParameter = { ag: ab.ag, besetzung: { ...b }, rolle, knoten: knoten(), peers };
-      const r = await this.lauf<{ zustand: string; aenderungen?: string[] }>(z, LINUX_HA_BAUSTEINE.agReplikat, p, `AG-Replikat ${z}`, LINUX_HA_ZEIT_MS.agReplikat, { sa: sa[z]! });
+      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[] }>(z, LINUX_HA_BAUSTEINE.agReplikat, p, `AG-Replikat ${z}`, LINUX_HA_ZEIT_MS.agReplikat, { sa: sa[z]! }, "des Replikat-Bausteins (Zertifikate, Logins, AG oder Beitritt können angelegt sein)");
       laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
     }
     // ── 3: Abschluss auf dem Primär — Datenbanken, Seeding, Pacemaker-Ressourcen, Selbstprüfung ──
-    const r = await this.lauf<{ zustand: string; clusterTyp?: string; requiredSyncSql?: unknown; requiredSyncRessource?: unknown; sicherungVorgabe?: string; primaer?: string; vipAuf?: string; promotedAuf?: string;
-      datenbanken?: Array<{ name: string; zustand: string }>; aenderungen?: string[] }>(b.primaer, LINUX_HA_BAUSTEINE.agAbschluss, ab, `AG-Abschluss ${b.primaer}`, LINUX_HA_ZEIT_MS.agAbschluss, { sa: sa[b.primaer]! });
+    const r = await this.laufAendernd<{ zustand: string; clusterTyp?: string; requiredSyncSql?: unknown; requiredSyncRessource?: unknown; sicherungVorgabe?: string; primaer?: string; vipAuf?: string; promotedAuf?: string;
+      datenbanken?: Array<{ name: string; zustand: string }>; aenderungen?: string[] }>(b.primaer, LINUX_HA_BAUSTEINE.agAbschluss, ab, `AG-Abschluss ${b.primaer}`, LINUX_HA_ZEIT_MS.agAbschluss, { sa: sa[b.primaer]! }, "des Abschluss-Bausteins (Datenbanken, Pacemaker-Ressourcen können angelegt sein)");
     laeufe.push({ z: b.primaer, zustand: r.zustand, aenderungen: r.aenderungen });
     const dbs = r.datenbanken ?? [];
     const abw = [
@@ -691,7 +709,7 @@ export class LinuxHaSkill extends Skill {
     for (const rolle of HA_AG_ROLLEN) {
       const z = b[rolle];
       const p: HaAgEntfernenParameter = { ag, besetzung: { ...b }, rolle, knoten: HA_KNOTEN.map(k => ({ ...k })), ressourcen: rolle === 'primaer' };
-      const r = await this.lauf<{ zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>(z, LINUX_HA_BAUSTEINE.agEntfernen, p, `AG entfernen ${z}`, LINUX_HA_ZEIT_MS.agEntfernen, { sa: sa[z]! });
+      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>(z, LINUX_HA_BAUSTEINE.agEntfernen, p, `AG entfernen ${z}`, LINUX_HA_ZEIT_MS.agEntfernen, { sa: sa[z]! }, "des Entfernen-Bausteins (Ressourcen, AG, Endpunkt können entfernt sein)");
       laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen, datenbanken: r.datenbanken });
     }
     this.d.protokoll?.('I8e Verfügbarkeitsgruppe entfernt', { zugang: b.primaer, ag, laeufe: laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen, datenbanken: l.datenbanken })) });
@@ -737,13 +755,9 @@ export class LinuxHaSkill extends Skill {
     const roh = await this.d.skript(p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, JSON.stringify({ sa: sa[p.ziel]! }), LINUX_HA_ZEIT_MS.agFailover, zweck);
     type FoErgebnis = { zustand: string; ag?: string; primaer?: string; vorher?: string; dauerS?: number; vip?: string; vipAuf?: string; promotedAuf?: string; requiredSyncSql?: unknown;
       requiredSyncRessource?: unknown; altRolle?: string; datenbanken?: Array<{ name: string; zustand: string }>; standortBedingungen?: unknown; aenderungen?: string[] };
-    let r: FoErgebnis;
-    try { r = this.pruefeLauf<FoErgebnis>(p.ziel, zweck, roh); } catch (err) {
-      // Fix-Runde 1 (I1): ohne Ergebniszeile des Bausteins (Zeitgrenze am Host, Verbindung weg) ist nicht belegt, dass kein move lief —
-      // fail-closed als möglicherweise geändert (Daten → teilweise → Rückweg ag_failover zurück, der bei unverändertem Primär „schon“ ist)
-      if (!haErgebnis(roh.stdout)) throw new Error(`${(err as Error).message} — möglicherweise geändert: kein Ergebnis des Failover-Bausteins (pcs resource move kann gelaufen sein); Lage mit linux_ha.status prüfen`);
-      throw err;
-    }
+    // Fix-Runde 1 (I1): ohne Ergebniszeile des Bausteins (Zeitgrenze am Host, Verbindung weg) ist nicht belegt, dass kein move lief —
+    // fail-closed als möglicherweise geändert (Daten → teilweise → Rückweg ag_failover zurück, der bei unverändertem Primär „schon“ ist)
+    const r = this.pruefeAendernd<FoErgebnis>(p.ziel, zweck, roh, 'des Failover-Bausteins (pcs resource move kann gelaufen sein)');
     spur.laeufe.push({ z: p.ziel, zustand: r.zustand, aenderungen: r.aenderungen });
     const abw = [
       (r.primaer !== p.ziel || r.promotedAuf !== p.ziel) && `Primär ${String(r.primaer)}, Promoted auf ${String(r.promotedAuf)}`,

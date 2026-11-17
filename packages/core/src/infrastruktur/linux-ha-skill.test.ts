@@ -706,6 +706,53 @@ describe('I8e Paket 2 Task 5 Fix-Runde 2 — Spur übersteht die Kürzung, abgew
   });
 });
 
+describe('I8e Paket 2 Task 5 — Ruling R8: ändernder Lauf ohne Ergebniszeile = möglicherweise geändert (fail-closed)', () => {
+  const OHNE = { code: 124, stdout: '' };
+  const basis = (extra: Record<string, unknown[]>, tresor: Record<string, string> = AG_TRESOR) => welt({
+    [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[],
+    [LINUX_HA_BAUSTEINE.agEndpunkt]: [endpunkt('sqllnx01', 'schon'), endpunkt('sqllnx02', 'schon'), endpunkt('sqllnxcfg', 'schon')],
+    [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer', 'schon'), replikat('sqllnx02', 'sekundaer', 'schon'), replikat('sqllnxcfg', 'konfig', 'schon')],
+    [LINUX_HA_BAUSTEINE.agAbschluss]: [{ ...ABSCHLUSS, zustand: 'schon', aenderungen: [] }],
+    ...extra as Record<string, never[]>,
+  }, tresor);
+  const ALLE_DA = { ...AG_TRESOR, 'sqllnx-ha-pacemaker': 'Pm-Wert-4444', 'sqllnx-sqllnx01-masterkey': 'Mk-1', 'sqllnx-sqllnx02-masterkey': 'Mk-2', 'sqllnx-sqllnxcfg-masterkey': 'Mk-3' };
+
+  it('ag_anlegen: Endpunkt-Lauf auf sqllnx02 endet mit Exit 124 ohne Ausgabe (nichts vorher geändert) → „möglicherweise geändert“, Daten gesetzt', async () => {
+    const w = basis({ [LINUX_HA_BAUSTEINE.agEndpunkt]: [endpunkt('sqllnx01', 'schon'), OHNE] }, ALLE_DA);
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('AG-Endpunkt sqllnx02 auf sqllnx02 gescheitert (Exit 124): keine Ausgabe — möglicherweise geändert: kein Ergebnis des Endpunkt-Bausteins');
+    expect(r.error).toContain('vorherige Läufe bisher geändert: nichts');
+    expect(r.data).toMatchObject({ abgebrochen: 'Verfügbarkeitsgruppe anlegen', tresorNeu: [] });
+  });
+  it('ag_anlegen: Replikat- und Abschluss-Lauf ohne Ergebniszeile → ebenso; neues Kennwort eines Endpunkt-Laufs ohne Ergebnis kommt in den Tresor', async () => {
+    const faelle: Array<Record<string, unknown[]>> = [{ [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer', 'schon'), OHNE] }, { [LINUX_HA_BAUSTEINE.agAbschluss]: [{ code: 137, stdout: 'irgendwas\n' }] }];
+    for (const extra of faelle) {
+      const r = await basis(extra, ALLE_DA).skill.execute(AG_EINGABE, imChange);
+      expect(r.error).toContain('möglicherweise geändert: kein Ergebnis des');
+      expect(r.data).toBeDefined();
+    }
+    const n = basis({ [LINUX_HA_BAUSTEINE.agEndpunkt]: [OHNE] });
+    const r = await n.skill.execute(AG_EINGABE, imChange);
+    expect(r.error).toContain('möglicherweise geändert');
+    expect(n.gesetzt.map(g => g.name).sort()).toEqual(['sqllnx-ha-pacemaker', 'sqllnx-sqllnx01-masterkey']);
+  });
+  it('ag_entfernen: Lauf ohne Ergebniszeile → „möglicherweise geändert“, Daten gesetzt', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.agEntfernen]: [OHNE] }, AG_TRESOR);
+    const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange);
+    expect(r.error).toContain('AG entfernen sqllnx01 auf sqllnx01 gescheitert (Exit 124): keine Ausgabe — möglicherweise geändert: kein Ergebnis des Entfernen-Bausteins');
+    expect(r.data).toMatchObject({ abgebrochen: 'Verfügbarkeitsgruppe entfernen', laeufe: [] });
+  });
+  it('lesender Lauf (Status im Gate) ohne Ergebniszeile bleibt „nichts geändert“ ohne Daten', async () => {
+    const w = basis({ [LINUX_HA_BAUSTEINE.status]: [OHNE] });
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.error).toContain('HA-Status vor dem AG-Aufbau auf sqllnx01 gescheitert (Exit 124)');
+    expect(r.error).not.toContain('möglicherweise geändert');
+    expect(r.data).toBeUndefined();
+    expect(w.aufrufe.filter(a => a.baustein !== LINUX_HA_BAUSTEINE.status)).toEqual([]);
+  });
+});
+
 describe('I8e Paket 2 Task 5 — Change „Verfügbarkeitsgruppe sqllnxag01 anlegen“', () => {
   const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const windowsAd = { metadata: { name: 'windows_ad', inputSchema: { type: 'object', properties: {
