@@ -276,6 +276,20 @@ interface AgSpur { laeufe: Array<{ z: string; zustand: string; aenderungen?: str
  * (bis zu zehn Läufe mit Änderungslisten) steht vorn und muss vollständig bleiben; gekürzt wird nur der Grund am Ende.
  */
 export const AG_FEHLER_MAX = 2400;
+/** Fix-Runde 3 (C): Länge des Grunds vorn im Fehlertext — der Change-Motor speichert 500 Zeichen, die Spur folgt dahinter */
+export const AG_GRUND_KURZ = 220;
+/** so viel speichert der Change-Motor vom Fehler eines Skills (change-motor.ts: String(r.error).slice(0, 500)) */
+export const AG_MOTOR_FEHLER = 500;
+/** Grund auf höchstens `max` Zeichen: Anfang (was scheiterte) + Ende (dort nennt der Knoten seine eigenen Teiländerungen, „bisher geändert: …“) */
+export function grundKurz(g: string, max: number = AG_GRUND_KURZ): string {
+  if (g.length <= max) return g;
+  const vorn = Math.ceil((max - 3) * 0.55);
+  return `${g.slice(0, vorn)} … ${g.slice(-(max - 3 - vorn))}`;
+}
+/** Fehler eines AG-Laufs mit der vollständigen Spur als Daten (execute gibt sie als `data` zurück) */
+export class AgFehler extends Error {
+  daten?: { abgebrochen: string; grund: string; laeufe: Array<{ knoten: string; zustand: string; aenderungen: string[] }>; tresorNeu: string[] };
+}
 
 /** sa-Tresoreinträge der Zugänge vorhanden — sonst Abbruch vor jedem Fernaufruf */
 function saPruefen(namen: Set<string>, zugaenge: string[]): void {
@@ -378,7 +392,10 @@ export class LinuxHaSkill extends Skill {
         case 'ag_anlegen': return await this.agAnlegen(zugang, input, geheim);
         case 'ag_entfernen': return await this.agEntfernen(zugang, input, geheim);
       }
-    } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, action === 'ag_anlegen' || action === 'ag_entfernen' ? AG_FEHLER_MAX : 800) }; }
+    } catch (err) {
+      const daten = err instanceof AgFehler ? err.daten : undefined;
+      return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, action === 'ag_anlegen' || action === 'ag_entfernen' ? AG_FEHLER_MAX : 800), ...(daten ? { data: daten } : {}) };
+    }
     return { success: false, error: 'Unbekannte Aktion' };
   }
 
@@ -479,13 +496,25 @@ export class LinuxHaSkill extends Skill {
   /**
    * Fix-Runde 1 (I1): bricht ein AG-Lauf auf Knoten n ab, nennt der Fehler zusätzlich alles, was die abgeschlossenen Läufe davor geändert
    * haben (je Knoten) und neue Tresor-Einträge — der Lauf auf Knoten n nennt seine eigenen Änderungen selbst. Auch protokolliert.
-   * Fix-Runde 2 (A1): die Spur steht VORN — gekürzt wird nur der Grund dahinter (Fehlertexte von AG-Aktionen bis AG_FEHLER_MAX Zeichen).
+   * Fix-Runde 3 (C): der Change-Motor speichert vom Fehler nur 500 Zeichen (change-motor.ts, Skill-Fehler → fehler) — darum steht der
+   * Grund kurz (≤ AG_GRUND_KURZ, Anfang + Ende, wo der Knoten seine eigenen Teiländerungen nennt) VORN, danach die Spur, soweit sie passt.
+   * Die vollständige Spur geht strukturiert als `daten` mit (AgFehler): der Motor legt Daten eines gescheiterten Skills als `daten` mit
+   * `teilweise: true` am Schritt ab — genau dann, wenn etwas geändert wurde (dann gehört der Schritt auch in den Rückweg ag_entfernen).
    */
   private mitSpur(was: string, zugang: string, err: unknown, spur: AgSpur, geheim: string[]): Error {
-    const grund = (err as Error).message;
+    const grund = schwaerze((err as Error).message, geheim);
     const bisher = jeKnoten(spur.laeufe);
-    this.d.protokoll?.(`I8e ${was} abgebrochen`, { zugang, fehler: schwaerze(grund, geheim).slice(0, 500), laeufe: spur.laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen })), tresorNeu: spur.tresor });
-    return new Error(`${was} abgebrochen — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''} — Grund: ${grund}`);
+    const laeufe = spur.laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen ?? [] }));
+    this.d.protokoll?.(`I8e ${was} abgebrochen`, { zugang, fehler: grund.slice(0, 500), laeufe, tresorNeu: spur.tresor });
+    // geändert = ein abgeschlossener Lauf mit Änderungen, ein neuer Tresor-Eintrag oder der abbrechende Knoten meldet eigene Teiländerungen
+    const geaendert = laeufe.some(l => l.aenderungen.length) || spur.tresor.length > 0 || /bisher geändert: |am ersten Fehler beendet/.test(grund);
+    const spurText = ` — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''}`;
+    const kopf = `${was} abgebrochen — Grund: `;
+    // ohne Änderung gibt es keine Spur zu verlieren → Grund ganz; sonst so viel Grund, wie neben der Spur in die 500 Zeichen passt (mind. AG_GRUND_KURZ)
+    const budget = geaendert ? Math.max(AG_GRUND_KURZ, AG_MOTOR_FEHLER - kopf.length - spurText.length) : Number.POSITIVE_INFINITY;
+    const f = new AgFehler(`${kopf}${grundKurz(grund, budget)}${spurText}`);
+    if (geaendert) f.daten = { abgebrochen: was, grund: grund.slice(0, 1500), laeufe, tresorNeu: [...spur.tresor] };
+    return f;
   }
 
   /** sa-Kennwörter der drei Zugänge (Paket 1, linux_sql installieren) — fehlt eines, kein Fernaufruf */

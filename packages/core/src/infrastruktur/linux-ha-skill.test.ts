@@ -3,6 +3,10 @@ import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE
 import { LinuxSqlSkill } from './linux-sql-skill.js';
 import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR, type FencingBeleg, type FencingTest } from './linux-ha.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
+import { ChangeMotor, type MotorDeps } from './change-motor.js';
+import { rueckwegSchritte, type ChangeLauf } from './change-lauf.js';
+import type { ChangeSchritt } from './change-schritte.js';
+import type { CmdbChangeRequest } from '@alfred/types';
 
 // I8e Paket 2 Task 2 — Skill linux_ha: HA-Grundlage je Knoten
 
@@ -617,11 +621,13 @@ describe('I8e Paket 2 Task 5 Fix-Runde 1 — Abbruch mittendrin nennt alles bish
   it('ag_anlegen: Fencing-Gate → „vorherige Läufe bisher geändert: nichts“; ag_entfernen: Abbruch auf sqllnx02 nennt das auf dem Primär Entfernte', async () => {
     const st = [...STATUS_3]; st[1] = statusAg('sqllnx02', '2', { fencing: undefined }) as never;
     const g = await voll({ [LINUX_HA_BAUSTEINE.status]: st }).skill.execute(AG_EINGABE, imChange);
-    expect(g.error).toMatch(/^Verfügbarkeitsgruppe anlegen abgebrochen — vorherige Läufe bisher geändert: nichts — Grund: Verfügbarkeitsgruppe sqllnxag01 nicht angelegt — .* keine SQL-Zeile ausgeführt, nichts geändert$/);
+    expect(g.error).toMatch(/^Verfügbarkeitsgruppe anlegen abgebrochen — Grund: Verfügbarkeitsgruppe sqllnxag01 nicht angelegt — .* keine SQL-Zeile ausgeführt, nichts geändert — vorherige Läufe bisher geändert: nichts$/);
+    expect(g.data).toBeUndefined(); // nichts geändert → keine Daten (der Motor markiert den Schritt sonst als „teilweise“)
     const w = welt({ [LINUX_HA_BAUSTEINE.agEntfernen]: [{ zustand: 'geaendert', knoten: 'sqllnx01', datenbanken: [{ name: 'alfredpruef', zustand: 'ONLINE' }], aenderungen: ['ressource-vip-entfernt', 'ressource-ag-entfernt', 'ag-entfernt'] },
       { zustand: 'fehler', fehler: 'Endpunkt auf sqllnx02 nicht entfernbar' }] }, AG_TRESOR);
     const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange);
-    expect(r.error).toBe('Verfügbarkeitsgruppe entfernen abgebrochen — vorherige Läufe bisher geändert: sqllnx01: ressource-vip-entfernt, ressource-ag-entfernt, ag-entfernt — Grund: AG entfernen sqllnx02 auf sqllnx02 gescheitert (Exit 1): Endpunkt auf sqllnx02 nicht entfernbar');
+    expect(r.error).toBe('Verfügbarkeitsgruppe entfernen abgebrochen — Grund: AG entfernen sqllnx02 auf sqllnx02 gescheitert (Exit 1): Endpunkt auf sqllnx02 nicht entfernbar — vorherige Läufe bisher geändert: sqllnx01: ressource-vip-entfernt, ressource-ag-entfernt, ag-entfernt');
+    expect(r.data).toMatchObject({ abgebrochen: 'Verfügbarkeitsgruppe entfernen', laeufe: [{ knoten: 'sqllnx01', zustand: 'geaendert', aenderungen: ['ressource-vip-entfernt', 'ressource-ag-entfernt', 'ag-entfernt'] }], tresorNeu: [] });
     expect(w.protokolle.some(x => x.msg === 'I8e Verfügbarkeitsgruppe entfernen abgebrochen')).toBe(true);
   });
 });
@@ -640,18 +646,55 @@ describe('I8e Paket 2 Task 5 Fix-Runde 2 — Spur übersteht die Kürzung, abgew
   }, AG_TRESOR);
   const ROLLE = { sqllnx01: 'primaer', sqllnx02: 'sekundaer', sqllnxcfg: 'konfig' } as const;
 
-  it('A1: lange Änderungslisten auf allen Knoten + langer Grund — die vollständige Spur steht vorn und übersteht die Kürzung in execute()', async () => {
-    const w = lang({ code: 1, stdout: `ALFRED-HA ${JSON.stringify({ zustand: 'fehler', fehler: `${langerGrund} — bisher geändert: db-alfredpruef,ressource-ag` })}` });
-    const r = await w.skill.execute(AG_EINGABE, imChange);
+  const SPUR_LANG = () => ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(k => `${k}: ${EP_AE.join(', ')}`).join('; ') + '; '
+    + (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).map(k => `${k}: ${rpAe(k, ROLLE[k]).join(', ')}`).join('; ')
+    + '; neu im Tresor: sqllnx-sqllnx01-masterkey, sqllnx-ha-pacemaker, sqllnx-sqllnx02-masterkey, sqllnx-sqllnxcfg-masterkey';
+  const LANG_FEHLER = () => ({ code: 1, stdout: `ALFRED-HA ${JSON.stringify({ zustand: 'fehler', fehler: `${langerGrund} — bisher geändert: db-alfredpruef,ressource-ag` })}` });
+
+  it('A1/C: lange Änderungslisten + langer Grund — Grund (Anfang + eigene Teiländerungen) vorn in den ersten 500 Zeichen, volle Spur im Text (≤ AG_FEHLER_MAX) und als Daten', async () => {
+    const r = await lang(LANG_FEHLER()).skill.execute(AG_EINGABE, imChange);
     expect(r.success).toBe(false);
-    const spur = 'Verfügbarkeitsgruppe anlegen abgebrochen — vorherige Läufe bisher geändert: '
-      + ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(k => `${k}: ${EP_AE.join(', ')}`).join('; ') + '; '
-      + (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).map(k => `${k}: ${rpAe(k, ROLLE[k]).join(', ')}`).join('; ')
-      + '; neu im Tresor: sqllnx-sqllnx01-masterkey, sqllnx-ha-pacemaker, sqllnx-sqllnx02-masterkey, sqllnx-sqllnxcfg-masterkey — Grund: ';
-    expect(spur.length).toBeGreaterThan(800); // ohne die Änderung wäre die Spur abgeschnitten worden
-    expect(r.error!.startsWith(spur), r.error).toBe(true);
+    expect(SPUR_LANG().length).toBeGreaterThan(800);
+    const vorn = r.error!.slice(0, 500);
+    expect(vorn).toMatch(/^Verfügbarkeitsgruppe anlegen abgebrochen — Grund: AG-Abschluss sqllnx01 auf sqllnx01 gescheitert \(Exit 1\): Selbstprüfung auf sqllnx01: Msg 50290.* … .*— bisher geändert: db-alfredpruef,ressource-ag — vorherige Läufe bisher geändert: sqllnx01: masterkey/);
+    expect(r.error!.endsWith(`— vorherige Läufe bisher geändert: ${SPUR_LANG()}`), r.error).toBe(true);
     expect(r.error!.length).toBeLessThanOrEqual(AG_FEHLER_MAX);
-    expect(r.error).toContain('AG-Abschluss sqllnx01 auf sqllnx01 gescheitert');
+    const d = r.data as { abgebrochen: string; grund: string; laeufe: Array<{ knoten: string; aenderungen: string[] }>; tresorNeu: string[] };
+    expect(d.abgebrochen).toBe('Verfügbarkeitsgruppe anlegen');
+    expect(d.laeufe.map(l => `${l.knoten}: ${l.aenderungen.join(', ')}`).join('; ')).toBe(SPUR_LANG().split('; neu im Tresor')[0]);
+    expect(d.tresorNeu).toEqual(['sqllnx-sqllnx01-masterkey', 'sqllnx-ha-pacemaker', 'sqllnx-sqllnx02-masterkey', 'sqllnx-sqllnxcfg-masterkey']);
+    expect(d.grund).toContain(langerGrund.trim().slice(0, 300));
+  });
+
+  it('C: im Change-Motor — gescheiterter ag_anlegen-Schritt speichert den Grund in den 500 Zeichen von „fehler“ und die volle Spur in den Daten (teilweise → Rückweg ag_entfernen)', async () => {
+    const w = lang(LANG_FEHLER());
+    const schritt: ChangeSchritt = { nr: 1, titel: 'AG anlegen', art: 'aktion', zeitlimitS: 3100, beiFehler: 'anhalten', skill: 'linux_ha', aktion: 'ag_anlegen', einordnung: 'aendern',
+      parameter: { zugang: 'sqllnx01', datenbanken: ['alfredpruef'] }, rueckweg: { skill: 'linux_ha', aktion: 'ag_entfernen', parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01' } } };
+    const c: CmdbChangeRequest = { id: 'chg-ag', userId: 'o', title: 'AG', type: 'normal', status: 'approved' as never, riskLevel: 'high', affectedAssetIds: [], affectedServiceIds: [], schritte: [schritt], fingerabdruck: 'fp', freigabeFingerabdruck: 'fp', createdAt: 'x', updatedAt: 'x' };
+    const deps = {
+      owner: () => 'o',
+      itsm: { liste: async () => [c], hole: async () => c, motorSetze: async (_o: string, _id: string, d: { status?: string; lauf?: unknown; result?: string }) => { if (d.status) c.status = d.status as never; c.lauf = JSON.parse(JSON.stringify(d.lauf)); if (d.result !== undefined) c.result = d.result; return c; } },
+      fuehreAus: async (skill: string, input: Record<string, unknown>) => (skill === 'linux_ha' ? w.skill.execute(input, imChange) : { success: true }),
+      fernLesen: async () => '', fernAusfuehren: async () => ({ code: 0, stdout: '', stderr: '' }),
+      netz: { http: async () => ({ status: 200, text: '' }), port: async () => true, dns: async () => [], ping: async () => true },
+      incident: { anlegen: async () => 'inc-1', notiz: async () => undefined, loese: async () => undefined, hochstufen: async () => undefined },
+      melde: async () => undefined, frage: async () => true, schlafe: async () => undefined,
+      takt: { pruefAbstandMs: 0, pruefVersuche: 1, taskAbstandMs: 0, wartenAbstandMs: 1 },
+    } as unknown as MotorDeps;
+    const m = new ChangeMotor(deps);
+    await m.anstossen();
+    for (let i = 0; i < 400 && (m.aktiv() > 0 || (c.lauf as ChangeLauf | undefined)?.phase === 'laeuft'); i++) await new Promise(r => setTimeout(r, 5));
+    const l = c.lauf as ChangeLauf;
+    expect(l.phase, JSON.stringify({ l, r: c.result, s: c.status }).slice(0, 1500)).toBe('angehalten');
+    const e = l.ergebnisse.find(x => x.nr === 1)!;
+    expect(e).toMatchObject({ ok: false, teilweise: true });
+    expect(e.fehler!.length).toBeLessThanOrEqual(500);
+    expect(e.fehler).toMatch(/^Verfügbarkeitsgruppe anlegen abgebrochen — Grund: AG-Abschluss sqllnx01 auf sqllnx01 gescheitert .*— bisher geändert: db-alfredpruef,ressource-ag — vorherige Läufe bisher geändert: /);
+    const d = e.daten as { laeufe: Array<{ knoten: string; aenderungen: string[] }>; tresorNeu: string[] };
+    expect(d.laeufe.map(x => `${x.knoten}: ${x.aenderungen.join(', ')}`).join('; ')).toBe(SPUR_LANG().split('; neu im Tresor')[0]);
+    expect(d.tresorNeu).toHaveLength(4);
+    expect(rueckwegSchritte([schritt], l.ergebnisse).map(s => s.nr)).toEqual([1]); // Teiländerungen → ag_entfernen gehört in den Rückweg
+    for (const g of [...w.tresor.values()]) expect(JSON.stringify(l)).not.toContain(g);
   });
   it('A2: Endpunkt meldet Änderungen, aber kein öffentliches Zertifikat → seine Änderungen stehen in Fehler und Protokoll', async () => {
     const w = welt({ [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[], [LINUX_HA_BAUSTEINE.agEndpunkt]: [{ ...endpunkt('sqllnx01'), zertifikat: '1EF1B5B000', aenderungen: EP_AE }] }, AG_TRESOR);

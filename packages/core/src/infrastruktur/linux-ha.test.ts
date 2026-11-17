@@ -1848,6 +1848,9 @@ describe('I8e Paket 2 Task 5 Fix-Runde 2 — PRINT ALFRED-ERLEDIGT nur nach gesc
         for (const vor of teile) {
           gesamt++;
           expect(vor, z).toMatch(/BEGIN TRY .+ END TRY BEGIN CATCH THROW; END CATCH;(?: SET @\w+ \+?= [^;]+;)* $/);
+          // Fix-Runde 3: vor dem BEGIN TRY dieses Abschnitts steht keine ändernde Anweisung (Textliterale wie SET @sql = N'CREATE …' ausgenommen)
+          const davor = vor.slice(0, vor.lastIndexOf('BEGIN TRY')).replace(/N?'(?:[^']|'')*'/g, "''");
+          expect(davor, z).not.toMatch(/\b(CREATE|ALTER|GRANT|DROP|RESTORE|EXEC|DENY|REVOKE)\b/);
         }
       }
       // kein CATCH, das einen Fehler schluckt (nur THROW weiter); Prüf-CATCH der Selbstprüfung/Master-Key-Prüfung ausgenommen
