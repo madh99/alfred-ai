@@ -682,7 +682,7 @@ describe('v1785 set_vm_resources: vorher = wirksamer Wert', () => {
 
 // I8e Paket 2 Task 1 — Watchdog i6300esb (Aktion reset) an der VM, damit SBD den Gast selbst zurücksetzen kann
 describe('I8e provision_vm mit watchdog', () => {
-  function welt(vorhanden?: Record<string, string>) {
+  function welt(vorhanden?: Record<string, string>, pending: Array<Record<string, unknown>> = []) {
     const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
     const a = px as unknown as Record<string, unknown>;
     const aufrufe: string[] = [];
@@ -692,6 +692,7 @@ describe('I8e provision_vm mit watchdog', () => {
     a.get = async (p: string) => {
       if (p.endsWith('/qemu/9020/config')) return { description: 'Vorlage von Alfred (I5) aus backupshare%3Aimport/ubuntu-24.04-20261017.qcow2' };
       if (p.endsWith('/qemu/160/config') && vorhanden) return vorhanden;
+      if (p.endsWith('/qemu/160/pending')) return pending;
       if (p.endsWith('/qemu/160/config')) return { scsi0: 'data2:vm-160-disk-0,size=8G', scsi1: 'data2:vm-160-cloudinit,media=cdrom' };
       if (p === '/storage/local') return { path: '/var/lib/vz' };
       return {};
@@ -746,6 +747,33 @@ describe('I8e provision_vm mit watchdog', () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain('model=i6300esb,action=poweroff');
     expect(w.aufrufe).toEqual([]);
+  });
+  it('Fortsetzung: Watchdog nur ausstehend (Setzen) → Fehler „noch ausstehend“, kein data.watchdog', async () => {
+    const w = welt({ ...vorhanden, watchdog: 'model=i6300esb,action=reset' }, [{ key: 'watchdog', pending: 'model=i6300esb,action=reset' }]);
+    const r = await w.px.execute({ ...eingabe, watchdog: 'i6300esb' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('noch ausstehend');
+    expect(r.error).toContain('stop_vm/start_vm');
+    expect(w.aufrufe).toEqual([]);
+  });
+  it('Fortsetzung: wirksamer Watchdog mit ausstehendem Entfernen → Fehler', async () => {
+    const w = welt(vorhanden, [{ key: 'watchdog', value: 'model=i6300esb,action=reset', delete: 1 }]);
+    const r = await w.px.execute({ ...eingabe, watchdog: 'i6300esb' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('noch ausstehend');
+    expect(w.aufrufe).toEqual([]);
+  });
+  it('Fortsetzung: wirksam ist ein anderer Wert als in /config (value aus /pending) → Fehler mit wirksamem Wert', async () => {
+    const w = welt({ ...vorhanden, watchdog: 'model=i6300esb,action=reset' }, [{ key: 'watchdog', value: 'model=i6300esb,action=poweroff' }]);
+    const r = await w.px.execute({ ...eingabe, watchdog: 'i6300esb' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('ist model=i6300esb,action=poweroff');
+  });
+  it('Fortsetzung: wirksamer Watchdog laut /pending (value) → ok', async () => {
+    const w = welt({ ...vorhanden, watchdog: 'model=i6300esb,action=reset' }, [{ key: 'watchdog', value: 'model=i6300esb,action=reset' }]);
+    const r = await w.px.execute({ ...eingabe, watchdog: 'i6300esb' }, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(r.data).toMatchObject({ watchdog: 'i6300esb' });
   });
   it('Fortsetzung: passender Watchdog → ok und im Ergebnis genannt; ohne Wunsch keine Prüfung', async () => {
     const w = welt({ ...vorhanden, watchdog: 'model=i6300esb,action=reset' });
@@ -849,5 +877,30 @@ describe('I8e set_vm_watchdog', () => {
     const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: null }, imChange);
     expect(r.success, r.error).toBe(true);
     expect(r.data).toMatchObject({ vorher: 'i6300esb', vorherRoh: 'model=i6300esb,action=poweroff' });
+  });
+  it('ausstehendes Entfernen: „entfernt, noch ausstehend“ bei model null; Setzen antwortet NICHT „schon so“', async () => {
+    const pend = [{ key: 'watchdog', value: 'model=i6300esb,action=reset', delete: 1 }];
+    const w = welt(undefined, pend);
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: null }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.posts).toEqual([]);
+    expect(r.display).toContain('entfernt, noch ausstehend');
+    expect(r.data).toMatchObject({ ausstehend: true, nachher: null });
+    const w2 = welt(undefined, pend);
+    const s = await w2.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(w2.posts).toEqual([{ watchdog: 'model=i6300esb,action=reset' }]);
+    expect(s.display).not.toContain('schon so');
+    expect(s.data).toMatchObject({ vorher: 'i6300esb', geaendert: true });
+  });
+  it('ausstehendes Setzen: „gesetzt, noch ausstehend“; wirksam gesetzt: „nichts geändert (wirksam)“; ausstehendes Setzen + Anfrage null → ändert', async () => {
+    const w = welt('model=i6300esb,action=reset', [{ key: 'watchdog', pending: 'model=i6300esb,action=reset' }]);
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(r.display).toContain('gesetzt, noch ausstehend');
+    const wirksam = await welt('model=i6300esb,action=reset', [{ key: 'watchdog', value: 'model=i6300esb,action=reset' }]).px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(wirksam.display).toContain('nichts geändert (wirksam)');
+    expect(wirksam.data).toMatchObject({ ausstehend: false });
+    const w3 = welt('model=i6300esb,action=reset', [{ key: 'watchdog', pending: 'model=i6300esb,action=reset' }]);
+    await w3.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: null }, imChange);
+    expect(w3.posts).toEqual([{ delete: 'watchdog' }]);
   });
 });
