@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { LinuxHaSkill, linuxHaStatusText, clusterText, LINUX_HA_MIN_ZEITLIMIT_S, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
+import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE_RUECKWEG_GRUND, LINUX_HA_MIN_ZEITLIMIT_S, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
 import { LinuxSqlSkill } from './linux-sql-skill.js';
-import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR } from './linux-ha.js';
+import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR, type FencingBeleg, type FencingTest } from './linux-ha.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 
 // I8e Paket 2 Task 2 — Skill linux_ha: HA-Grundlage je Knoten
@@ -37,6 +37,7 @@ const STATUS_OK: LinuxHaStatus = {
   pakete: { ...Object.fromEntries(Object.entries(SOLL).map(([k, v]) => [k, { version: v, gehalten: true }])), 'linux-modules-extra-6.8.0-147-generic': { version: '6.8.0-147.147', gehalten: false } },
   soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', pcsd: 'active', sql1433Zusatz: ['192.168.1.223'],
   cluster: { art: 'keiner' },
+  fencing: { bootId: 'b-1', jetztS: 1_795_000_000, identitaet: null, test: null, beleg: null },
 };
 const CLUSTER_OK: LinuxHaCluster = {
   art: 'eingerichtet', name: 'sqllnxcl01', knoten: HA_KNOTEN.map(k => ({ ...k })),
@@ -55,7 +56,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(s.success, s.error).toBe(true);
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.status, parameter: {}, timeoutMs: 90_000 });
     expect(w.aufrufe[0]!.eingabe).toBeUndefined();
-    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv; Cluster nicht eingerichtet');
+    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect((await w.skill.execute({ action: 'loeschen', zugang: 'sqllnx02' }, imChange)).error).toContain('Unbekannte Aktion');
   });
 
@@ -69,12 +70,12 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(v({ pakete: { ...STATUS_OK.pakete, pcs: { version: '0.11.8-1', gehalten: true }, sbd: { version: null, gehalten: false }, corosync: { version: SOLL.corosync, gehalten: false } } }))
       .toContain('Pakete abweichend: corosync nicht gehalten, pcs 0.11.8-1 (soll 0.11.7-1ubuntu1.1), sbd fehlt');
     expect(v({ hadr: null, hosts: false, runtimeWatchdog: '10s', pcsd: 'inactive', firewall: { tabelle: false, dienst: 'inactive', aktiviert: 'disabled' } }))
-      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); pcsd inactive; Cluster nicht eingerichtet');
+      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');
     expect(v({ sql1433Zusatz: [] })).toContain('Firewall alfred_ha aktiv (1433: Knoten);');
     const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
     const muster = new RegExp(`^${vorlage.split(' | ')[0]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
-    for (const t of [v({}), v({ watchdog: [], pciEsb: false, hadr: '0', hosts: false }), v({ cluster: CLUSTER_OK }), v({ cluster: undefined })]) expect(t).toMatch(muster);
+    for (const t of [v({}), v({ watchdog: [], pciEsb: false, hadr: '0', hosts: false }), v({ cluster: CLUSTER_OK }), v({ cluster: undefined }), v({ fencing: undefined })]) expect(t).toMatch(muster);
     expect(vorlage).toContain(clusterText(CLUSTER_OK));
     for (const e of ['Watchdog i6300esb frei', 'Watchdog i6300esb bei sbd', 'Pakete fest', 'HADR an', 'Firewall alfred_ha aktiv', 'hosts-Block vorhanden', 'RuntimeWatchdog aus', 'pcsd aktiv']) expect(vorlage).toContain(e);
   });
@@ -202,7 +203,7 @@ describe('I8e Paket 2 Task 3 — Skill linux_ha: Cluster', () => {
     expect(clusterText({ art: 'keiner' })).toBe('Cluster nicht eingerichtet');
     expect(clusterText({ art: 'debian' })).toBe('Cluster nicht eingerichtet (Debian-Standardkonfiguration)');
     expect(clusterText(undefined)).toBe('Cluster unbekannt');
-    expect(linuxHaStatusText('sqllnx01', { ...STATUS_OK, cluster: CLUSTER_OK })).toMatch(/; pcsd aktiv; Cluster sqllnxcl01: 3\/3 online, Quorum ja, STONITH an, SBD aktiv 3\/3, stonith-watchdog-timeout 20s$/);
+    expect(linuxHaStatusText('sqllnx01', { ...STATUS_OK, cluster: CLUSTER_OK })).toMatch(/; pcsd aktiv; Cluster sqllnxcl01: 3\/3 online, Quorum ja, STONITH an, SBD aktiv 3\/3, stonith-watchdog-timeout 20s; Fencing nicht belegt$/);
   });
 
   it('cluster_anlegen nur im Change; ohne Tresor-Eintrag kein Fernaufruf; Kennwort nur über stdin, nie in Parametern/Zweck/Ergebnis', async () => {
@@ -279,6 +280,115 @@ describe('I8e Paket 2 Task 3 — Change „Cluster sqllnxcl01 anlegen“', () =>
     expect(z.some(x => x.includes('zeitlimitS 600 zu klein für linux_ha.cluster_anlegen'))).toBe(true);
     expect(z.some(x => x.includes('mindestens 2 × sbd_timeout_s'))).toBe(true);
     expect(pruefeChangePlan(plan([anlegen, { ...status, pruefung: { ...status.pruefung, erwartet: 'Cluster läuft super' } }]), ctx).fehler.some(x => x.includes('kommt in der Antwort'))).toBe(true);
+  });
+  // Task 4, Carry-over 4: Pflicht-Rückweg heißt genau linux_ha.cluster_entfernen
+  it('Rückweg muss genau linux_ha.cluster_entfernen sein — ein anderer (z. B. status, ha_vorbereiten, proxmox) wird abgewiesen', () => {
+    for (const rueckweg of [{ skill: 'linux_ha', aktion: 'status', parameter: { zugang: 'sqllnx01' } }, { skill: 'linux_ha', aktion: 'ha_vorbereiten', parameter: { zugang: 'sqllnx01', rolle: 'daten' } },
+      { skill: 'proxmox', aktion: 'rollback_snapshot', parameter: { vmid: 156, name: 'x' } }]) {
+      const f = pruefeChangePlan(plan([{ ...anlegen, rueckweg }, status]), ctx).fehler;
+      expect(f.some(x => x.startsWith('Schritt 1:') && x.includes(`braucht als Rückweg genau linux_ha.cluster_entfernen (zugang, cluster), nicht ${rueckweg.skill}.${rueckweg.aktion}`)), JSON.stringify(f)).toBe(true);
+    }
+  });
+});
+
+// ── Task 4: Fencing-Beweis ──────────────────────────────────────────────────────────────────────────────────────────────────────
+const ID01 = { cluster: 'sqllnxcl01', knoten: 'sqllnx01', nodeid: '1', konfHash: 'h1' };
+const BELEG01: FencingBeleg = { art: 'trennung', zeit: '2026-11-17T14:03:41Z', resetS: 18, rejoinS: 41, bootId: 'b-neu', bootIdVorher: 'a-alt', testZeit: '2026-11-17T14:00:00Z',
+  cluster: 'sqllnxcl01', knoten: 'sqllnx01', nodeid: '1', konfHash: 'h1', journalLueckeS: 17 };
+const TEST01: FencingTest = { art: 'trennung', bootIdVorher: 'a-alt', zeit: '2026-11-17T14:00:00Z', zeitS: 1_795_000_000, ausloeseS: 1_795_000_003, sperreS: 120, knoten: 'sqllnx01', cluster: 'sqllnxcl01', nodeid: '1', konfHash: 'h1' };
+
+describe('I8e Paket 2 Task 4 — Skill linux_ha: Fencing', () => {
+  it('Statustext Fencing: belegt, Reset ausstehend, ohne Reset, Beleg ausstehend, ungültig, nicht belegt, unbekannt — passt auf FESTE_AUSGABEN', () => {
+    const jetzt = 1_795_000_200;
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: BELEG01 })).toBe('Fencing belegt (trennung, 2026-11-17 14:03 UTC, Reset 18 s, Rejoin 41 s)');
+    expect(fencingText({ bootId: 'a-alt', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung ausgelöst, Reset ausstehend');
+    expect(fencingText({ bootId: 'a-alt', jetztS: jetzt + 1801, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung vom 2026-11-17 14:00 UTC ohne Reset (boot_id unverändert)');
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: null })).toBe('Fencing Test trennung vom 2026-11-17 14:00 UTC erfolgt, Beleg ausstehend (fencing_belegen)');
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: { ...ID01, konfHash: 'h2' }, test: TEST01, beleg: BELEG01 })).toBe('Fencing Beleg ungültig (Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders))');
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: null, beleg: null })).toBe('Fencing nicht belegt');
+    expect(fencingText(undefined)).toBe('Fencing unbekannt');
+    // neuerer Test auf einem Knoten mit altem Beleg, Reset noch aus → „Reset ausstehend“ (die Warte-Prüfung schließt das aus)
+    expect(fencingText({ bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: { ...TEST01, bootIdVorher: 'b-neu', zeit: '2026-11-17T15:00:00Z' }, beleg: BELEG01 })).toContain('Reset ausstehend');
+    const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
+    expect(vorlage).toContain('; Fencing {fencing}');
+    expect(vorlage.split(' | ')).toContain('Fencing belegt');
+    const t = linuxHaStatusText('sqllnx01', { ...STATUS_OK, cluster: CLUSTER_OK, fencing: { bootId: 'b-neu', jetztS: jetzt, identitaet: ID01, test: TEST01, beleg: BELEG01 } });
+    expect(t).toMatch(/; Cluster sqllnxcl01: 3\/3 online, .*; Fencing belegt \(trennung, /);
+  });
+
+  it('fencing_pruefen nur im Change; Kennwort nur über stdin; Parameter vor jedem Fernaufruf geprüft; fester Text für ausgeloest und schon', async () => {
+    const KW = 'Hk-Tresor-Wert-77';
+    const aus = { zustand: 'ausgeloest', art: 'trennung', knoten: 'sqllnx02', cluster: 'sqllnxcl01', bootIdVorher: 'a-alt', ausloesungInS: 3, sperreS: 120, aenderungen: ['fencing-test-datei', 'aufheben-geplant', 'ausloeser-geplant'] };
+    const w = welt({ [LINUX_HA_BAUSTEINE.fencingPruefen]: [aus, { zustand: 'schon', art: 'trennung', hinweis: 'Reset nach dem Test vom 2026-11-17T14:00:00Z erfolgt — Beleg mit fencing_belegen', aenderungen: [] }] }, { [HA_HACLUSTER_TRESOR]: KW });
+    expect((await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'trennung' }, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
+    expect((await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'reboot' }, imChange)).error).toContain('art: trennung oder haenger');
+    expect((await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02' }, imChange)).error).toContain('art:');
+    expect(w.aufrufe).toEqual([]);
+    const r = await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'Trennung' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.fencingPruefen, timeoutMs: 180_000, parameter: { cluster: 'sqllnxcl01', knoten: HA_KNOTEN, art: 'trennung' } });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ hacluster: KW });
+    expect(r.display).toBe('Fencing-Test trennung auf sqllnx02 (sqllnx02) ausgelöst: Corosync (UDP 5405) ab +3 s für 120 s gesperrt; boot_id vorher a-alt — Reset durch SBD erwartet, danach fencing_belegen — geändert: fencing-test-datei, aufheben-geplant, ausloeser-geplant');
+    const r2 = await w.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'trennung' }, imChange);
+    expect(r2.display).toBe('Fencing-Test trennung auf sqllnx02: Reset nach dem Test vom 2026-11-17T14:00:00Z erfolgt — Beleg mit fencing_belegen — nichts zu tun');
+    expect(JSON.stringify([r, r2, w.aufrufe.map(a => [a.parameter, a.zweck])])).not.toContain(KW);
+    const ohne = welt({});
+    expect((await ohne.skill.execute({ action: 'fencing_pruefen', zugang: 'sqllnx02', art: 'trennung' }, imChange)).error).toContain('vorher ha_vorbereiten');
+    expect(ohne.aufrufe).toEqual([]);
+    expect(w.skill.mindestZeitlimitS('fencing_pruefen')).toBe(240);
+    expect(w.skill.mindestZeitlimitS('fencing_belegen')).toBe(360);
+    expect(w.skill.pruefeEingabe({ action: 'fencing_pruefen', zugang: 'sqllnxcfg', art: 'haenger' })).toBeUndefined();
+    expect(w.skill.pruefeEingabe({ action: 'fencing_pruefen', zugang: 'sqllnxcfg', art: 'kaputt' })).toContain('art:');
+  });
+
+  it('fencing_belegen: ohne Geheimnis, fester Text mit Messwerten; ein Ergebnis ohne gültigen Beleg ist ein Fehler', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.fencingBelegen]: [{ zustand: 'geaendert', knoten: 'sqllnx01', beleg: BELEG01, aenderungen: ['fencing-beleg'] }, { zustand: 'schon', beleg: BELEG01, aenderungen: [] },
+      { zustand: 'geaendert', beleg: { ...BELEG01, bootId: 'a-alt' }, aenderungen: ['fencing-beleg'] }] });
+    const r = await w.skill.execute({ action: 'fencing_belegen', zugang: 'sqllnx01' }, imChange);
+    expect(r.display).toBe('✅ Fencing auf sqllnx01 (sqllnx01) belegt (trennung, 2026-11-17 14:03 UTC): Reset 18 s nach der Auslösung, Rejoin 41 s nach dem Start (Quorum); boot_id a-alt → b-neu — geändert: fencing-beleg');
+    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.fencingBelegen, timeoutMs: 300_000, parameter: { cluster: 'sqllnxcl01', knoten: HA_KNOTEN } });
+    expect(w.aufrufe[0]!.eingabe).toBeUndefined();
+    expect((await w.skill.execute({ action: 'fencing_belegen', zugang: 'sqllnx01' }, imChange)).display).toContain('— nichts zu tun');
+    const f = await w.skill.execute({ action: 'fencing_belegen', zugang: 'sqllnx01' }, imChange);
+    expect(f.success).toBe(false);
+    expect(f.error).toContain('Ergebnis ohne gültigen Beleg (Beleg ohne Reset (boot_id gleich))');
+    expect((await w.skill.execute({ action: 'fencing_belegen', zugang: 'sqllnx01' }, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
+  });
+});
+
+describe('I8e Paket 2 Task 4 — Change „Fencing-Beweis“', () => {
+  const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const ctx = { skill: (n: string) => (n === 'linux_ha' ? ha : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  const je = (zugang: string, art: 'trennung' | 'haenger') => [
+    { titel: `Fencing-Test ${art} ${zugang}`, art: 'aktion', skill: 'linux_ha', aktion: 'fencing_pruefen', parameter: { zugang, art }, zeitlimitS: 300, rueckweg: { keiner: FENCING_OHNE_RUECKWEG_GRUND } },
+    { titel: `${zugang} wieder im Cluster`, art: 'warten', sekunden: 45, zeitlimitS: 600,
+      pruefung: { typ: 'skill', skill: 'linux_ha', aktion: 'status', parameter: { zugang }, erwartet: '3/3 online', nichtEnthalten: 'Reset ausstehend' } },
+    { titel: `Fencing-Beleg ${zugang}`, art: 'aktion', skill: 'linux_ha', aktion: 'fencing_belegen', parameter: { zugang }, zeitlimitS: 400, rueckweg: { keiner: 'schreibt nur die Beleg-Datei des Knotens' } },
+  ];
+  const abschluss = (zugang: string) => ({ titel: `Beleg ${zugang}`, art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_ha', aktion: 'status', parameter: { zugang }, erwartet: 'Fencing belegt' } });
+  const schritte = [...je('sqllnx01', 'trennung'), ...je('sqllnx02', 'trennung'), ...je('sqllnxcfg', 'trennung'), ...je('sqllnxcfg', 'haenger'), ...['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(abschluss)];
+  const plan = (s: unknown[], extra: Record<string, unknown> = { ohneSicherungGrund: 'Fencing-Test setzt nur den jeweiligen Testknoten zurück; keine Daten- oder Konfigurationsänderung' }) =>
+    ({ titel: 'Fencing-Beweis sqllnxcl01', begruendung: 'I8e Paket 2 Task 4 — Beleg je Knoten vor dem AG-Aufbau', typ: 'normal', risiko: 'hoch', ausfallMinuten: 5, betroffen: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], schritte: s, ...extra });
+
+  it('je Knoten fencing_pruefen → warten bis status „3/3 online“ ohne „Reset ausstehend“ → fencing_belegen, dazu haenger auf sqllnxcfg: 0 Fehler', () => {
+    expect(aktionsArt('linux_ha', 'fencing_pruefen')).toBe('aendern');
+    expect(aktionsArt('linux_ha', 'fencing_belegen')).toBe('aendern');
+    expect(pruefeChangePlan(plan(schritte), ctx).fehler).toEqual([]);
+  });
+  it('fencing_pruefen: kein Rückweg nur mit genau dem Grund; ein angegebener Rückweg oder anderer Grund wird abgewiesen; zu kleines zeitlimitS', () => {
+    const mit = (rueckweg: unknown) => pruefeChangePlan(plan([{ ...je('sqllnx02', 'trennung')[0], rueckweg }]), ctx).fehler;
+    expect(mit({ keiner: FENCING_OHNE_RUECKWEG_GRUND })).toEqual([]);
+    expect(mit({ keiner: 'Neuaufbau' }).some(x => x.includes(`linux_ha.fencing_pruefen hat keinen Rückweg — rueckweg {keiner: „${FENCING_OHNE_RUECKWEG_GRUND}“}`))).toBe(true);
+    expect(mit({ skill: 'linux_ha', aktion: 'cluster_entfernen', parameter: { zugang: 'sqllnx02' } }).some(x => x.includes('hat keinen Rückweg'))).toBe(true);
+    expect(mit(undefined).some(x => x.includes('rueckweg fehlt') && x.includes(FENCING_OHNE_RUECKWEG_GRUND))).toBe(true);
+    const z = pruefeChangePlan(plan([{ ...je('sqllnx02', 'trennung')[0], zeitlimitS: 120 }]), ctx).fehler;
+    expect(z.some(x => x.includes('zeitlimitS 120 zu klein für linux_ha.fencing_pruefen — mindestens 240 s'))).toBe(true);
+  });
+  it('fencing_belegen ohne Rückweg auch ohne ohneSicherungGrund zulässig (schreibt nur die Beleg-Datei); Status-Erwartung außerhalb des Wortlauts abgewiesen', () => {
+    const f = pruefeChangePlan(plan(je('sqllnx02', 'trennung'), {}), ctx).fehler;
+    expect(f.filter(x => !x.startsWith('Vor der ersten ändernden Aktion'))).toEqual([]);
+    const e = pruefeChangePlan(plan([abschluss('sqllnx01'), { ...abschluss('sqllnx02'), pruefung: { ...abschluss('sqllnx02').pruefung, erwartet: 'Fencing bewiesen' } }]), ctx).fehler;
+    expect(e.some(x => x.startsWith('Schritt 2:') && x.includes('kommt in der Antwort'))).toBe(true);
   });
 });
 

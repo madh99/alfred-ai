@@ -63,9 +63,36 @@ export const HA_STONITH_WD_TIMEOUT_S = 20;
 /** einziger Watchdog-Pfad für SBD (i6300esb, ha_vorbereiten) */
 export const HA_WATCHDOG_DEV = '/dev/watchdog';
 
-export const LINUX_HA_BAUSTEINE = { vorbereiten: 'ha.vorbereiten', status: 'ha.status', cluster: 'ha.cluster_anlegen', clusterEntfernen: 'ha.cluster_entfernen' } as const;
+/**
+ * Task 4 — Fencing-Beweis je Knoten (Owner-Entscheidung 2): (a) trennung = Corosync (UDP 5405) auf dem Testknoten 120 s sperren
+ * (nft-Tabelle ohne Persistenz, Aufheben per Timer und spätestens durch den Reset) → Quorumverlust → SBD setzt den Knoten über den
+ * i6300esb zurück; (b) einmalig auf sqllnxcfg haenger = Kernel-Absturz (sysrq c) → der Hardware-Watchdog setzt zurück.
+ */
+export const HA_FENCING_ARTEN = ['trennung', 'haenger'] as const;
+export type HaFencingArt = typeof HA_FENCING_ARTEN[number];
+export const HA_FENCING_DIR = '/var/lib/alfred/ha';
+export const HA_FENCING_TEST_DATEI = `${HA_FENCING_DIR}/fencing-test.json`;
+export const HA_FENCING_BELEG_DATEI = `${HA_FENCING_DIR}/fencing-beleg.json`;
+/** Sperrdauer der Corosync-Trennung */
+export const HA_FENCING_SPERRE_S = 120;
+/** Auslösung so viele Sekunden nach dem Schreiben der Test-Datei (SSH-Aufruf kehrt vorher sauber zurück) */
+export const HA_FENCING_VERZOEGERUNG_S = 3;
+/** ein Test ist höchstens so lange belegbar */
+export const HA_FENCING_MAX_ALTER_S = 1800;
+/** der Reset muss spätestens so lange nach der Auslösung erfolgen (trennung: während der Sperre), sonst gilt er nicht als Testfolge */
+export const HA_FENCING_RESET_MAX_S = 120;
+/** haenger (Kernel-Absturz) nur hier — Owner-Entscheidung 2 */
+export const HA_FENCING_HAENGER_KNOTEN = 'sqllnxcfg';
+export const HA_FENCETEST_TABELLE = 'alfred_fencetest';
+/** corosync meldet so das (Wieder-)Erlangen des Quorums — Quelle der Rejoin-Zeit */
+export const HA_COROSYNC_QUORUM_TEXT = 'This node is within the primary component and will provide service';
+
+export const LINUX_HA_BAUSTEINE = {
+  vorbereiten: 'ha.vorbereiten', status: 'ha.status', cluster: 'ha.cluster_anlegen', clusterEntfernen: 'ha.cluster_entfernen',
+  fencingPruefen: 'ha.fencing_pruefen', fencingBelegen: 'ha.fencing_belegen',
+} as const;
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
-export const LINUX_HA_ZEIT_MS = { vorbereiten: 1_500_000, status: 90_000, cluster: 900_000, clusterEntfernen: 600_000 } as const;
+export const LINUX_HA_ZEIT_MS = { vorbereiten: 1_500_000, status: 90_000, cluster: 900_000, clusterEntfernen: 600_000, fencingPruefen: 180_000, fencingBelegen: 300_000 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -725,10 +752,13 @@ else
   if ! sbd_soll; then
     # SBD ändern wirkt erst nach einem Neustart des ganzen Clusters — nur ohne Ressourcen (keine AG), sonst sichtbarer Abbruch
     [ "$LR" = 0 ] || abbruch "SBD weicht ab ($SBD_ABW), der Cluster trägt aber $LR Ressourcen — SBD ändern braucht einen Neustart des ganzen Clusters; nicht automatisch"
+    # Task 4 (Carry-over 3): Stopp und Start des ganzen Clusters stehen in den Änderungen (Owner-Regel: nichts still)
     aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
+    aend cluster-gestoppt
     aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
     aend sbd-neu-eingerichtet
-    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus")"
+    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+    aend cluster-gestartet
     warte_online || abbruch "nach dem SBD-Neustart $LO/$ANZAHL Knoten online, Quorum $LQ"
   fi
 fi
@@ -768,13 +798,35 @@ case "$ART" in
   leer|debian|alfred) ;;
   *) abbruch "auf $ICH ist ein anderer Cluster eingerichtet: §{ART#fremd:} — cluster_entfernen entfernt nur $CLUSTER mit $KNOTEN_SOLL; nichts geändert" ;;
 esac
+# ── pcs-Anmeldung (nur bei Bedarf); danach die Prüfungen über alle Knoten — alle vor der ersten Änderung am Cluster ──
+if ! pcsd_online; then anmelden; aend pcs-anmeldung; fi
+LO=0
 if [ "$ART" = alfred ]; then
-  lage
-  if [ "$LO" -gt 0 ]; then RES=$LR; else RES=$(cib_ressourcen); fi
-  [ "$RES" = 0 ] || abbruch "Cluster $CLUSTER trägt $RES Ressourcen — vorher die Ressourcen (Verfügbarkeitsgruppe) entfernen; nichts geändert"
+  # Task 4 (Carry-over 2): destroy --all nur, wenn jeder andere Knoten $CLUSTER oder keine corosync.conf trägt
+  for k in "§{KNOTEN_NAME[@]}"; do
+    [ "$k" != "$ICH" ] || continue
+    t=$(pcs cluster corosync "$k" 2>/dev/null) || abbruch "corosync.conf von $k nicht lesbar (pcs cluster corosync $k) — ohne sie kein destroy --all; $(stand)"
+    a=$(konf_art "$t")
+    case "$a" in
+      leer|alfred) ;;
+      debian) abbruch "auf $k liegt die Debian-Standardkonfiguration statt $CLUSTER — destroy --all entfernt nur $CLUSTER; $(stand)" ;;
+      *) abbruch "auf $k ist ein anderer Cluster eingerichtet: §{a#fremd:} — destroy --all entfernt nur $CLUSTER; $(stand)" ;;
+    esac
+  done
+  # Task 4 (Carry-over 1): Ressourcen nur über einen laufenden Pacemaker prüfbar — sonst muss belegt sein, dass der Cluster auf allen Knoten
+  # steht: SBD auf allen installiert und aktiviert, läuft auf keinem (sbd.service ist PartOf/RequiredBy corosync — kein Cluster ohne sbd)
+  if systemctl is-active --quiet pacemaker; then
+    lage
+    [ "$LO" -gt 0 ] || abbruch "Pacemaker läuft auf $ICH, crm_mon liefert aber keine Lage — Ressourcen nicht prüfbar; $(stand)"
+    RES=$LR
+  else
+    ss=$(sbd_status); si=$(sbd_zahl "$ss" 1); se=$(sbd_zahl "$ss" 2); sl=$(sbd_zahl "$ss" 3)
+    { [ "$si" = "$ANZAHL" ] && [ "$se" = "$ANZAHL" ] && [ "$sl" = 0 ]; } || abbruch "Pacemaker ist auf $ICH nicht aktiv, und dass der Cluster auf allen Knoten steht, ist nicht belegt (SBD installiert $si/$ANZAHL, aktiviert $se/$ANZAHL, läuft $sl/$ANZAHL) — Ressourcen nicht prüfbar; cluster_entfernen auf einem Knoten mit laufendem Pacemaker ausführen; $(stand)"
+    RES=$(cib_ressourcen)
+  fi
+  [ "$RES" = 0 ] || abbruch "Cluster $CLUSTER trägt $RES Ressourcen — vorher die Ressourcen (Verfügbarkeitsgruppe) entfernen; $(stand)"
 fi
 # ── Phase 2 ──
-if ! pcsd_online; then anmelden; aend pcs-anmeldung; fi
 if [ "$ART" = alfred ]; then
   # erst sauber stoppen (Pacemaker beendet sich geordnet → SBD setzt keinen Knoten zurück), dann SBD aus, dann entfernen
   if [ "$LO" -gt 0 ] || systemctl is-active --quiet pacemaker || systemctl is-active --quiet corosync; then
@@ -857,6 +909,500 @@ export function haClusterEntfernenSkript(p: HaClusterEntfernenParameter): string
     '# ALFRED-ABLAUF',
     CLUSTER_ENTFERNEN_KOERPER,
   ].join('\n');
+}
+
+// ── Fencing-Beweis (Task 4): fencing_pruefen / fencing_belegen ──────────────────────────────────────────────────────────────────
+
+export interface HaFencingParameter { cluster: string; knoten: HaKnoten[]; art: HaFencingArt }
+export interface HaFencingBelegenParameter { cluster: string; knoten: HaKnoten[] }
+
+export function pruefeHaFencing(p: unknown): string | undefined {
+  const x = obj(p);
+  const f = pruefeClusterName(x.cluster) ?? pruefeKnoten(x.knoten); if (f) return f;
+  if (!HA_FENCING_ARTEN.includes(x.art as HaFencingArt)) return `art: ${HA_FENCING_ARTEN.join(' oder ')} (Owner-Entscheidung 2: trennung je Knoten, haenger einmalig auf ${HA_FENCING_HAENGER_KNOTEN})`;
+  return undefined;
+}
+export function pruefeHaFencingBelegen(p: unknown): string | undefined {
+  const x = obj(p);
+  return pruefeClusterName(x.cluster) ?? pruefeKnoten(x.knoten);
+}
+
+/** Corosync-Trennung: eigene Tabelle, beide Richtungen, nur UDP 5405 — ohne Persistenz (Datei in /run, Aufheben per Timer, weg nach Reset) */
+export function fencetestNft(): string {
+  const udp = HA_PORTS.udp.join(', ');
+  const t = HA_FENCETEST_TABELLE;
+  return [
+    '# Alfred I8e Paket 2 — Fencing-Test: Corosync (UDP) gesperrt, ohne Persistenz',
+    `table inet ${t}`,
+    `delete table inet ${t}`,
+    `table inet ${t} {`,
+    '\tchain ein {',
+    '\t\ttype filter hook input priority -20; policy accept;',
+    `\t\tudp dport { ${udp} } drop`,
+    `\t\tudp sport { ${udp} } drop`,
+    '\t}',
+    '\tchain aus {',
+    '\t\ttype filter hook output priority -20; policy accept;',
+    `\t\tudp dport { ${udp} } drop`,
+    `\t\tudp sport { ${udp} } drop`,
+    '\t}',
+    '}',
+  ].join('\n');
+}
+
+/**
+ * python3: Identität des Knotens im Cluster und Gültigkeit eines Belegs — dieselben Regeln (und Wortlaute) wie `fencingBelegGueltig`.
+ * Identität = Clustername + nodeid aus corosync.conf + SHA-256 über corosync.conf und /etc/corosync/authkey (pcs cluster setup erzeugt den
+ * authkey bei jeder Einrichtung neu → ein neu aufgebauter Cluster macht jeden alten Beleg ungültig; der Schlüssel selbst wird nie gespeichert).
+ */
+export const PY_FENCING_FUNK = String.raw`import hashlib, json, re, time
+FENCING_ARTEN = ("trennung", "haenger")
+def lies_json(p):
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return "unlesbar"
+def fencing_ident(conf, key, ich):
+    try:
+        with open(conf, "rb") as f:
+            t = f.read()
+    except Exception:
+        return None
+    name = None
+    nodeid = None
+    k = False
+    n = i = None
+    for z in t.decode("utf-8", "replace").splitlines():
+        w = z.split("#")[0].split()
+        if not w:
+            continue
+        if w[0] == "cluster_name:" and len(w) > 1 and name is None:
+            name = w[1]
+        elif w[0] == "node" and w[1:2] == ["{"]:
+            k = True
+            n = i = None
+        elif k and w[0] == "name:" and len(w) > 1:
+            n = w[1]
+        elif k and w[0] == "nodeid:" and len(w) > 1:
+            i = w[1]
+        elif k and w[0] == "}":
+            k = False
+            if n == ich:
+                nodeid = i
+    try:
+        with open(key, "rb") as f:
+            kb = f.read()
+    except Exception:
+        kb = b""
+    return {"cluster": name, "knoten": ich, "nodeid": nodeid, "konfHash": hashlib.sha256(t + b"\0" + kb).hexdigest() if kb else None}
+def _w(v):
+    return "?" if v is None else str(v)
+def fencing_grund(b, t, i, cluster):
+    if b is None:
+        return "kein Fencing-Beleg"
+    if not isinstance(b, dict):
+        return "Beleg unlesbar"
+    if b.get("art") not in FENCING_ARTEN:
+        return "Beleg ohne gültige Art"
+    for f in ("resetS", "rejoinS"):
+        v = b.get(f)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+            return "Beleg ohne Messwert " + f
+    if not b.get("bootId") or not b.get("bootIdVorher") or b.get("bootId") == b.get("bootIdVorher"):
+        return "Beleg ohne Reset (boot_id gleich)"
+    if not isinstance(i, dict) or not i.get("konfHash"):
+        return "Cluster-Identität nicht lesbar (corosync.conf/authkey)"
+    if b.get("cluster") != cluster:
+        return "Beleg für Cluster %s, erwartet %s" % (_w(b.get("cluster")), cluster)
+    if b.get("cluster") != i.get("cluster"):
+        return "Beleg für Cluster %s, eingerichtet ist %s" % (_w(b.get("cluster")), _w(i.get("cluster")))
+    if b.get("knoten") != i.get("knoten") or b.get("nodeid") != i.get("nodeid"):
+        return "Beleg für Knoten %s (nodeid %s), hier %s (nodeid %s)" % (_w(b.get("knoten")), _w(b.get("nodeid")), _w(i.get("knoten")), _w(i.get("nodeid")))
+    if b.get("konfHash") != i.get("konfHash"):
+        return "Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders)"
+    if t is not None and not isinstance(t, dict):
+        return "Test-Datei unlesbar"
+    if isinstance(t, dict) and t.get("zeit") != b.get("testZeit"):
+        return "neuerer Fencing-Test vom %s ohne Beleg" % _w(t.get("zeit"))
+    return ""`;
+
+/** python3-Werkzeug der Fencing-Bausteine: `python3 -c "$PY_FENCING" <befehl> …` (Befehle siehe unten; Fehler → Exit 1 mit Grund auf stdout) */
+export const PY_FENCING = `${PY_FENCING_FUNK}
+${String.raw`import sys
+QUORUM = ${JSON.stringify(HA_COROSYNC_QUORUM_TEXT)}
+BOOT_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+def iso(s):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(s))
+def test_lesen(p, ich, cluster, i):
+    t = lies_json(p)
+    if not isinstance(t, dict):
+        return None, "Test-Datei fehlt oder ist unlesbar"
+    try:
+        w = [t["art"], str(t["bootIdVorher"]), int(t["zeitS"]), int(t["ausloeseS"]), int(t.get("sperreS") or 0), str(t["zeit"])]
+    except Exception:
+        return None, "Test-Datei unvollständig"
+    if w[0] not in FENCING_ARTEN or not BOOT_ID.match(w[1]) or not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", w[5]):
+        return None, "Test-Datei mit ungültigen Werten"
+    if t.get("knoten") != ich or t.get("cluster") != cluster:
+        return None, "Test gehört zu %s/%s, nicht zu %s/%s" % (_w(t.get("knoten")), _w(t.get("cluster")), ich, cluster)
+    if not isinstance(i, dict) or not i.get("konfHash") or t.get("konfHash") != i.get("konfHash"):
+        return None, "Test vor einer Neueinrichtung des Clusters (corosync.conf/authkey anders)"
+    return w, ""
+a = sys.argv
+c = a[1] if len(a) > 1 else ""
+if c == "ident_ok":
+    # conf key ich cluster → konfHash; sonst Grund + Exit 1
+    i = fencing_ident(a[2], a[3], a[4])
+    if not i:
+        print("corosync.conf nicht lesbar")
+        sys.exit(1)
+    if i["cluster"] != a[5] or not i["nodeid"] or not i["konfHash"]:
+        print("Cluster %s, nodeid %s, authkey %s" % (_w(i["cluster"]), _w(i["nodeid"]), "lesbar" if i["konfHash"] else "fehlt"))
+        sys.exit(1)
+    print(i["konfHash"])
+elif c == "grund":
+    # beleg test conf key ich cluster → leer = gültig
+    print(fencing_grund(lies_json(a[2]), lies_json(a[3]), fencing_ident(a[4], a[5], a[6]), a[7]))
+elif c == "beleg_art":
+    b = lies_json(a[2])
+    print(b.get("art", "") if isinstance(b, dict) else "")
+elif c == "kompakt":
+    print(json.dumps(lies_json(a[2])))
+elif c == "test":
+    # datei conf key ich cluster → „art bootIdVorher zeitS ausloeseS sperreS zeit“
+    w, g = test_lesen(a[2], a[5], a[6], fencing_ident(a[3], a[4], a[5]))
+    if w is None:
+        print(g)
+        sys.exit(1)
+    print(*w)
+elif c == "test_json":
+    # art boot zeitS ausloeseS sperreS conf key ich sysrq panic
+    i = fencing_ident(a[7], a[8], a[9]) or {}
+    zs = int(a[4])
+    print(json.dumps({"art": a[2], "bootIdVorher": a[3], "zeit": iso(zs), "zeitS": zs, "ausloeseS": int(a[5]), "sperreS": int(a[6]) or None, "knoten": a[9],
+                      "cluster": i.get("cluster"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"), "sysrq": a[10], "kernelPanic": a[11]}))
+elif c == "journal_letzt":
+    # stdin: journalctl -b -1 -n 1 -o json → „<_BOOT_ID> <Sekunden>“
+    l = None
+    for z in sys.stdin:
+        z = z.strip()
+        if z:
+            try:
+                l = json.loads(z)
+            except Exception:
+                pass
+    try:
+        print(l["_BOOT_ID"], int(l["__REALTIME_TIMESTAMP"]) // 1000000)
+    except Exception:
+        sys.exit(1)
+elif c == "rejoin":
+    # btime; stdin: journalctl -b 0 -u corosync -o json → Sekunden vom Start bis zur ersten Quorum-Meldung
+    bt = int(a[2])
+    for z in sys.stdin:
+        try:
+            e = json.loads(z)
+        except Exception:
+            continue
+        m = e.get("MESSAGE") if isinstance(e, dict) else None
+        if isinstance(m, str) and QUORUM in m:
+            print(max(0, int(round(int(e["__REALTIME_TIMESTAMP"]) / 1000000 - bt))))
+            sys.exit(0)
+    sys.exit(1)
+elif c == "beleg_json":
+    # test boot resetS rejoinS jetzt luecke conf key ich
+    t = lies_json(a[2])
+    i = fencing_ident(a[8], a[9], a[10]) or {}
+    print(json.dumps({"art": t["art"], "zeit": iso(int(a[6])), "resetS": int(a[4]), "rejoinS": int(a[5]), "bootId": a[3], "bootIdVorher": t["bootIdVorher"],
+                      "testZeit": t["zeit"], "cluster": i.get("cluster"), "knoten": i.get("knoten"), "nodeid": i.get("nodeid"), "konfHash": i.get("konfHash"),
+                      "journalLueckeS": int(a[7]),
+                      "quellen": {"resetS": "btime (/proc/stat) minus Auslösezeit (Test-Datei, systemd-run --on-active)", "rejoinS": "erste corosync-Meldung „" + QUORUM + "“ (journalctl -b 0 -u corosync) minus btime",
+                                  "journalLueckeS": "btime minus letzter Eintrag des getesteten Starts (journalctl -b -1, _BOOT_ID = bootIdVorher)"}}))
+else:
+    sys.exit(3)`}`;
+
+/** Gemeinsame Teile der Fencing-Bausteine — Pfade vor der Marke (Tests biegen sie um) */
+const FENCING_PFADE = [
+  `HA_DIR=${shQ(HA_FENCING_DIR)}`,
+  `TEST_DATEI=${shQ(HA_FENCING_TEST_DATEI)}`,
+  `BELEG_DATEI=${shQ(HA_FENCING_BELEG_DATEI)}`,
+  'AUTHKEY=/etc/corosync/authkey',
+  'BOOT_ID_DATEI=/proc/sys/kernel/random/boot_id',
+  'SYSRQ_TRIGGER=/proc/sysrq-trigger',
+  'SYSRQ_DATEI=/proc/sys/kernel/sysrq',
+  'PANIC_DATEI=/proc/sys/kernel/panic',
+  'KEXEC_CRASH=/sys/kernel/kexec_crash_loaded',
+  'REGEL_DATEI=/run/alfred-fencetest.nft',
+  'PROC=/proc',
+];
+
+const FENCING_HILFEN = sh(String.raw`fpy() { python3 -c "$PY_FENCING" "$@"; }
+jetzt() { date +%s; }
+boot_id() { cat "$BOOT_ID_DATEI" 2>/dev/null || true; }
+# Startzeit des laufenden Kernels (Sekunden seit 1970)
+boot_zeit() { awk '$1 == "btime" { print $2 }' "$PROC/stat" 2>/dev/null || true; }
+# Stimmen, die corosync für das Quorum verlangt (corosync-quorumtool -s: „Quorum:           2“)
+quorum_noetig() { corosync-quorumtool -s 2>/dev/null | awk -F: '/^Quorum:/ { gsub(/[ \t]/, "", $2); print $2 }' || true; }
+fd_ziel() { readlink "$1" 2>/dev/null || true; }
+prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
+prozess_exe() { readlink "$PROC/$1/exe" 2>/dev/null || true; }
+# sbd (/usr/sbin/sbd) hält ein /dev/watchdog* offen = SBD hat den Hardware-Watchdog scharf geschaltet
+sbd_haelt_wd() {
+  local f z pid
+  for f in "$PROC"/[0-9]*/fd/*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    z=$(fd_ziel "$f")
+    case "$z" in /dev/watchdog|/dev/watchdog[0-9]*) ;; *) continue ;; esac
+    pid=§{f#"$PROC"/}; pid=§{pid%%/*}
+    if [ "$(prozess_name "$pid")" = sbd ] && [ "$(prozess_exe "$pid")" = /usr/sbin/sbd ]; then return 0; fi
+  done
+  return 1
+}
+# Datei nur für root (0600, Verzeichnis 0700), atomar ersetzt und mit sync auf die Platte — ein harter Reset darf sie nicht verlieren
+schreibe_privat() { mkdir -p "$(dirname "$1")"; chmod 0700 "$(dirname "$1")"; (umask 077; printf '%s\n' "$2" >"$1.alfred-neu"); chmod 0600 "$1.alfred-neu"; mv -f "$1.alfred-neu" "$1"; sync; }`);
+
+const FENCING_PRUEFEN_KOERPER = sh(String.raw`kennwort_lesen
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+knoten_pruefen
+case "$ART" in trennung|haenger) ;; *) abbruch "art '$ART': trennung oder haenger — nichts geändert" ;; esac
+for c in pcs crm_mon crm_attribute corosync-quorumtool python3 systemd-run; do command -v "$c" >/dev/null 2>&1 || abbruch "$c fehlt auf $ICH — nichts geändert"; done
+if [ "$ART" = trennung ]; then command -v nft >/dev/null 2>&1 || abbruch "nft fehlt auf $ICH — nichts geändert"; fi
+if [ "$ART" = haenger ] && [ "$ICH" != "$HAENGER_KNOTEN" ]; then abbruch "haenger (Kernel-Absturz) nur auf $HAENGER_KNOTEN (Owner-Entscheidung 2), nicht auf $ICH — nichts geändert"; fi
+KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
+KA=$(konf_art "$KONF")
+[ "$KA" = alfred ] || abbruch "auf $ICH ist $CLUSTER mit $KNOTEN_SOLL nicht eingerichtet (corosync.conf: §{KA#fremd:}) — vorher cluster_anlegen; nichts geändert"
+KH=$(fpy ident_ok "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER") || abbruch "Cluster-Identität auf $ICH nicht lesbar ($KH) — nichts geändert"
+BOOT=$(boot_id)
+[[ "$BOOT" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || abbruch "boot_id nicht lesbar ('$BOOT') — nichts geändert"
+JETZT=$(jetzt)
+[[ "$JETZT" =~ ^[0-9]+$ ]] || abbruch "Uhrzeit nicht lesbar — nichts geändert"
+# laufender oder schon erfolgter Test dieses Knotens (gleicher Cluster)
+T_BOOT=''
+if [ -f "$TEST_DATEI" ] && tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER"); then
+  read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_ZEIT <<<"$tz"
+  T_ALTER=$((JETZT - T_ZEIT_S))
+  if [ "$T_BOOT" = "$BOOT" ] && [ "$T_ALTER" -le "$MAX_ALTER_S" ]; then abbruch "Fencing-Test ($T_ART) vom $T_ZEIT auf $ICH läuft noch — Reset ausstehend (boot_id unverändert); kein zweiter Test, nichts geändert"; fi
+fi
+# gültiger Beleg derselben Art → schon (eine Wiederholung des Schritts setzt den Knoten nicht noch einmal zurück)
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
+if [ -z "$G" ] && [ "$(fpy beleg_art "$BELEG_DATEI")" = "$ART" ]; then
+  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
+  exit 0
+fi
+# Test dieser Art ist schon erfolgt (Reset nach dem Test, noch kein Beleg) → schon, Beleg folgt mit fencing_belegen
+if [ -n "$T_BOOT" ] && [ "$T_ART" = "$ART" ] && [ "$T_BOOT" != "$BOOT" ] && [ "$T_ALTER" -le "$MAX_ALTER_S" ]; then
+  ergebnis "{\"zustand\":\"schon\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"test\":$(fpy kompakt "$TEST_DATEI"),\"hinweis\":\"Reset nach dem Test vom $T_ZEIT erfolgt — Beleg mit fencing_belegen\",\"aenderungen\":[]}"
+  exit 0
+fi
+# Cluster: alle Knoten online mit Quorum, STONITH an, keine Ressourcen (Beweis vor dem AG-Aufbau), Rest behält ohne den Testknoten das Quorum
+lage
+{ [ "$LO" = "$ANZAHL" ] && [ "$LQ" = 1 ] && [ "$LN" = "$NAMEN_SOLL" ]; } || abbruch "Cluster: $LO/$ANZAHL online ($LN), Quorum $LQ — Fencing-Test nur, wenn alle Knoten online sind und Quorum besteht; nichts geändert"
+[ "$LS" = 1 ] || abbruch "stonith-enabled ist nicht true — ohne STONITH kein Fencing-Test; nichts geändert"
+[ "$LR" = 0 ] || abbruch "Cluster trägt $LR Ressourcen — Fencing-Beweis nur vor dem AG-Aufbau (ohne Ressourcen); nichts geändert"
+st=$(stimmen); [ "$st" = "$ANZAHL/$ANZAHL" ] || abbruch "Quorum-Stimmen '$st', erwartet $ANZAHL/$ANZAHL — nichts geändert"
+qn=$(quorum_noetig)
+[[ "$qn" =~ ^[0-9]+$ ]] || abbruch "Quorum-Grenze nicht lesbar (corosync-quorumtool -s) — nichts geändert"
+[ "$((ANZAHL - 1))" -ge "$qn" ] || abbruch "ohne $ICH blieben $((ANZAHL - 1)) Stimmen, das Quorum braucht $qn — der Rest des Clusters verlöre das Quorum; nichts geändert"
+nq=$(eigenschaft no-quorum-policy); [ "$nq" != ignore ] || abbruch "no-quorum-policy=ignore — der getrennte Knoten setzte sich nicht zurück; nichts geändert"
+hw=$(eigenschaft have-watchdog); [ "$hw" = true ] || abbruch "have-watchdog ist '§{hw:-nicht gesetzt}', erwartet true — nichts geändert"
+swt=$(sekunden "$(eigenschaft stonith-watchdog-timeout)"); [ "$swt" = "$STONITH_T" ] || abbruch "stonith-watchdog-timeout ist '$swt', erwartet $STONITH_T — nichts geändert"
+systemctl is-active --quiet sbd || abbruch "sbd läuft auf $ICH nicht — nichts geändert"
+[ -e "$WD_DEV" ] || abbruch "$WD_DEV fehlt auf $ICH — nichts geändert"
+wid=$(cat "$WD_SYS/watchdog0/identity" 2>/dev/null || true)
+ist_esb "$wid" || abbruch "Watchdog auf $ICH stammt von '§{wid:-unbekannt}', erwartet i6300esb — kein softdog-Ersatz; nichts geändert"
+sbd_haelt_wd || abbruch "sbd hält auf $ICH kein /dev/watchdog offen — Watchdog nicht scharf; nichts geändert"
+SYSRQ=$(cat "$SYSRQ_DATEI" 2>/dev/null || echo '?'); PANIC=$(cat "$PANIC_DATEI" 2>/dev/null || echo '?')
+if [ "$ART" = haenger ]; then
+  # /proc/sysrq-trigger ist für root unabhängig von kernel.sysrq erlaubt (Kernel-Doku sysrq.rst) — nichts wird umgestellt
+  [ -e "$SYSRQ_TRIGGER" ] || abbruch "$SYSRQ_TRIGGER fehlt (Kernel ohne MAGIC_SYSRQ) — nichts geändert"
+  # nur der Hardware-Watchdog darf zurücksetzen: kein automatischer Neustart nach Panik, kein kdump-Kernel
+  [ "$PANIC" = 0 ] || abbruch "kernel.panic ist '$PANIC' — der Kernel startete nach dem Absturz selbst neu, der Beweis gälte nicht dem Watchdog; nichts geändert"
+  kx=$(cat "$KEXEC_CRASH" 2>/dev/null || echo 0); [ "$kx" = 0 ] || abbruch "kdump-Kernel geladen (kexec_crash_loaded=$kx) — er übernähme den Absturz statt des Watchdogs; nichts geändert"
+fi
+# ── Phase 2: pcs-Anmeldung nur bei Bedarf (für pcs stonith sbd status), SBD auf allen Knoten ──
+if ! pcsd_online; then anmelden; aend pcs-anmeldung; fi
+ss=$(sbd_status); n=$(sbd_zahl "$ss" 3)
+[ "$n" = "$ANZAHL" ] || abbruch "SBD läuft auf $n/$ANZAHL Knoten: $(kurz "$ss") — kein Test; $(stand)"
+sbd_soll || abbruch "SBD weicht ab: $SBD_ABW — kein Test; $(stand)"
+# ── Test-Datei VOR dem Auslösen (0600, sync) — scheitert das Planen des Auslösers, wird sie wieder entfernt (sonst sperrte sie 30 min) ──
+TEST_NEU=0; AUSL_GEPLANT=0
+alfred_aufraeumen() { if [ "$TEST_NEU" = 1 ] && [ "$AUSL_GEPLANT" = 0 ]; then rm -f -- "$TEST_DATEI"; sync; fi; }
+AUSL_S=$((JETZT + VERZ_S))
+if [ "$ART" = trennung ]; then SP=$SPERRE_S; else SP=0; fi
+TJ=$(fpy test_json "$ART" "$BOOT" "$JETZT" "$AUSL_S" "$SP" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$SYSRQ" "$PANIC")
+TEST_NEU=1
+schreibe_privat "$TEST_DATEI" "$TJ"
+aend fencing-test-datei
+{ [ "$(cat "$TEST_DATEI")" = "$TJ" ] && fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER" >/dev/null; } || abbruch "Test-Datei $TEST_DATEI nach dem Schreiben nicht lesbar — nichts ausgelöst, Test-Datei entfernt"
+# ── Auslösen: entkoppelt per systemd-run (AccuracySec=1s — Standard wäre 1 min), der SSH-Aufruf kehrt vorher zurück ──
+EINHEIT="alfred-fencetest-$JETZT"
+if [ "$ART" = trennung ]; then
+  printf '%s\n' "$NFT_TEST" >"$REGEL_DATEI"
+  aus=$(nft -c -f "$REGEL_DATEI" 2>&1) || abbruch "nft lehnt die Test-Regel ab: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
+  # zuerst das Aufheben planen: die Sperre endet nach $SPERRE_S s auch dann, wenn SBD den Knoten nicht zurücksetzt
+  aus=$(systemd-run --unit="$EINHEIT-ende" --on-active="$((VERZ_S + SPERRE_S))" --timer-property=AccuracySec=1s nft delete table inet "$TEST_TABELLE" 2>&1) || abbruch "Aufheben der Sperre nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
+  aend aufheben-geplant
+  aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s nft -f "$REGEL_DATEI" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt (der Aufheben-Timer läuft ins Leere)"
+  AUSL_GEPLANT=1
+  aend ausloeser-geplant
+else
+  aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s /bin/sh -c "sync; echo c > $SYSRQ_TRIGGER" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
+  AUSL_GEPLANT=1
+  aend ausloeser-geplant
+fi
+# ── Selbstprüfung: Timer geplant ──
+systemctl is-active --quiet "$EINHEIT.timer" || abbruch "Selbstprüfung: Auslöser $EINHEIT.timer nicht aktiv"
+if [ "$ART" = trennung ]; then systemctl is-active --quiet "$EINHEIT-ende.timer" || abbruch "Selbstprüfung: Aufheben $EINHEIT-ende.timer nicht aktiv"; fi
+ergebnis "{\"zustand\":\"ausgeloest\",\"art\":\"$ART\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"bootIdVorher\":\"$BOOT\",\"ausloesungInS\":$VERZ_S,\"sperreS\":$SP,\"einheit\":\"$EINHEIT\",\"test\":$TJ,\"aenderungen\":[$AJ]}"`);
+
+const FENCING_BELEGEN_KOERPER = sh(String.raw`# ── Phase 1: prüfen — ohne Beweis kein Beleg ──
+knoten_pruefen
+for c in crm_mon python3 journalctl; do command -v "$c" >/dev/null 2>&1 || abbruch "$c fehlt auf $ICH — kein Beleg"; done
+KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
+KA=$(konf_art "$KONF")
+[ "$KA" = alfred ] || abbruch "auf $ICH ist $CLUSTER mit $KNOTEN_SOLL nicht eingerichtet (corosync.conf: §{KA#fremd:}) — kein Beleg"
+[ -f "$TEST_DATEI" ] || abbruch "kein Fencing-Test auf $ICH ($TEST_DATEI fehlt) — vorher fencing_pruefen; kein Beleg"
+tz=$(fpy test "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER") || abbruch "Fencing-Test nicht verwendbar: $tz — kein Beleg"
+read -r T_ART T_BOOT T_ZEIT_S T_AUSL_S T_SPERRE T_ZEIT <<<"$tz"
+# gültiger Beleg genau zu diesem Test → schon
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
+if [ -z "$G" ]; then
+  ergebnis "{\"zustand\":\"schon\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$(fpy kompakt "$BELEG_DATEI"),\"aenderungen\":[]}"
+  exit 0
+fi
+BOOT=$(boot_id)
+[[ "$BOOT" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || abbruch "boot_id nicht lesbar ('$BOOT') — kein Beleg"
+[ "$BOOT" != "$T_BOOT" ] || abbruch "kein Reset seit dem Fencing-Test ($T_ART) vom $T_ZEIT — boot_id unverändert ($BOOT); kein Beleg"
+JETZT=$(jetzt)
+[[ "$JETZT" =~ ^[0-9]+$ ]] || abbruch "Uhrzeit nicht lesbar — kein Beleg"
+A=$((JETZT - T_ZEIT_S))
+{ [ "$A" -ge 0 ] && [ "$A" -le "$MAX_ALTER_S" ]; } || abbruch "Fencing-Test vom $T_ZEIT ist $A s alt (höchstens $MAX_ALTER_S s) — Test wiederholen; kein Beleg"
+BT=$(boot_zeit)
+[[ "$BT" =~ ^[0-9]+$ ]] || abbruch "Startzeit (btime) nicht lesbar — kein Beleg"
+[ "$BT" -ge "$T_AUSL_S" ] || abbruch "Neustart (btime $BT) vor dem Auslösezeitpunkt ($T_AUSL_S) — nicht dem Test zuzuordnen; kein Beleg"
+RESET_S=$((BT - T_AUSL_S))
+[ "$RESET_S" -le "$RESET_MAX_S" ] || abbruch "Reset erst $RESET_S s nach der Auslösung (höchstens $RESET_MAX_S s) — nicht dem Test zuzuordnen; kein Beleg"
+# der vorherige Start im Journal ist genau der getestete (kein weiterer Neustart dazwischen)
+jv=$(journalctl -b -1 -n 1 -o json --no-pager 2>/dev/null | fpy journal_letzt) || abbruch "Journal des vorherigen Starts nicht lesbar (journalctl -b -1; persistentes Journal nötig) — kein Beleg"
+read -r J_BOOT J_LETZT_S <<<"$jv"
+[ "$J_BOOT" = "§{T_BOOT//-/}" ] || abbruch "vorheriger Start im Journal ist $J_BOOT, getestet wurde §{T_BOOT//-/} — dazwischen lag ein weiterer Neustart; kein Beleg"
+LUECKE=$((BT - J_LETZT_S))
+# ── Cluster: der Knoten ist wieder online (bis WARTE_RUNDEN × 2 s), SBD läuft und hält den Watchdog ──
+ok=0
+for i in $(seq 1 "$WARTE_RUNDEN"); do lage; if [ "$LQ" = 1 ] && [[ ",$LN," == *",$ICH,"* ]]; then ok=1; break; fi; sleep 2; done
+[ "$ok" = 1 ] || abbruch "$ICH ist nach dem Reset nicht online im Cluster (online: $LN, Quorum $LQ) — kein Beleg"
+systemctl is-active --quiet sbd || abbruch "sbd läuft auf $ICH nach dem Reset nicht — kein Beleg"
+sbd_haelt_wd || abbruch "sbd hält auf $ICH nach dem Reset kein /dev/watchdog offen — kein Beleg"
+RJ=$(journalctl -b 0 -u corosync -o json --no-pager 2>/dev/null | fpy rejoin "$BT") || abbruch "Rejoin-Zeitpunkt nicht im Journal (corosync seit dem Start ohne „$QUORUM_TEXT“) — kein Beleg"
+# ── Beleg schreiben (0600, sync) und selbst prüfen ──
+BJ=$(fpy beleg_json "$TEST_DATEI" "$BOOT" "$RESET_S" "$RJ" "$JETZT" "$LUECKE" "$COROSYNC_CONF" "$AUTHKEY" "$ICH") || abbruch "Beleg nicht erzeugbar — kein Beleg"
+schreibe_privat "$BELEG_DATEI" "$BJ"
+aend fencing-beleg
+G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$ICH" "$CLUSTER")
+[ -z "$G" ] || abbruch "Selbstprüfung: geschriebener Beleg ist nicht gültig: $G"
+ergebnis "{\"zustand\":\"geaendert\",\"knoten\":\"$ICH\",\"cluster\":\"$CLUSTER\",\"beleg\":$BJ,\"aenderungen\":[$AJ]}"`);
+
+function fencingKopf(baustein: string, p: Record<string, unknown>, knoten: readonly HaKnoten[], cluster: string): string[] {
+  return [
+    ...clusterKopf(baustein, p, knoten, cluster),
+    `SBD_T=${HA_SBD_TIMEOUT_S}`,
+    `STONITH_T=${HA_STONITH_WD_TIMEOUT_S}`,
+    `VERZ_S=${HA_FENCING_VERZOEGERUNG_S}`,
+    `SPERRE_S=${HA_FENCING_SPERRE_S}`,
+    `MAX_ALTER_S=${HA_FENCING_MAX_ALTER_S}`,
+    `RESET_MAX_S=${HA_FENCING_RESET_MAX_S}`,
+    `HAENGER_KNOTEN=${shQ(HA_FENCING_HAENGER_KNOTEN)}`,
+    `TEST_TABELLE=${shQ(HA_FENCETEST_TABELLE)}`,
+    `QUORUM_TEXT=${shQ(HA_COROSYNC_QUORUM_TEXT)}`,
+    `NFT_TEST=${shQ(fencetestNft())}`,
+    `PY_FENCING=${shQ(PY_FENCING)}`,
+    ...FENCING_PFADE,
+    FENCING_HILFEN,
+  ];
+}
+
+/**
+ * Fencing-Beweis Teil 1, auf dem Testknoten (zugang): prüft ohne Änderung (Cluster 3/3 online mit Quorum, STONITH an, keine Ressourcen,
+ * Rest behält das Quorum, no-quorum-policy ≠ ignore, have-watchdog, stonith-watchdog-timeout, sbd hält den i6300esb; haenger zusätzlich:
+ * nur sqllnxcfg, kernel.panic = 0, kein kdump), SBD 3/3 über pcs, schreibt dann `fencing-test.json` {art, bootIdVorher, zeit, …} (0600,
+ * sync) und plant den Auslöser per systemd-run in 3 s: trennung = nft-Tabelle inet alfred_fencetest (UDP 5405 beide Richtungen, ohne
+ * Persistenz) mit Aufheben-Timer nach 120 s; haenger = sysrq c. Ergebnis `ausgeloest` vor dem Reset; `schon`, wenn ein gültiger Beleg
+ * derselben Art vorliegt oder der Reset nach einem Test dieser Art schon erfolgt ist. Kein Rückweg (der Knoten setzt sich selbst zurück).
+ */
+export function haFencingPruefenSkript(p: HaFencingParameter): string {
+  pruefe(pruefeHaFencing(p));
+  return [
+    ...fencingKopf(LINUX_HA_BAUSTEINE.fencingPruefen, { cluster: p.cluster, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), art: p.art }, p.knoten, p.cluster),
+    `ART=${shQ(p.art)}`,
+    '# ALFRED-ABLAUF',
+    FENCING_PRUEFEN_KOERPER,
+  ].join('\n');
+}
+
+/**
+ * Fencing-Beweis Teil 2, nach dem Reset auf demselben Knoten: Beleg nur mit Beweis — boot_id ≠ bootIdVorher, Test ≤ 30 min alt, Neustart
+ * nach der Auslösung und höchstens 120 s danach, vorheriger Start im Journal = getesteter Start, Knoten wieder online mit Quorum, sbd läuft
+ * und hält den Watchdog. Reset = btime − Auslösezeit, Rejoin = erste corosync-Quorum-Meldung − btime. Schreibt `fencing-beleg.json`
+ * (0600, sync) mit Clustername, nodeid und konfHash (Identität); gültiger Beleg zu diesem Test → `schon`.
+ */
+export function haFencingBelegenSkript(p: HaFencingBelegenParameter): string {
+  pruefe(pruefeHaFencingBelegen(p));
+  return [
+    ...fencingKopf(LINUX_HA_BAUSTEINE.fencingBelegen, { cluster: p.cluster, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })) }, p.knoten, p.cluster),
+    '# ALFRED-ABLAUF',
+    FENCING_BELEGEN_KOERPER,
+  ].join('\n');
+}
+
+// ── Fencing-Beleg: Gültigkeit (rein, für Status und den AG-Aufbau in Task 5) ──────────────────────────────────────────────────
+
+export interface FencingIdentitaet { cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null }
+export interface FencingTest {
+  art: HaFencingArt; bootIdVorher: string; zeit: string; zeitS: number; ausloeseS: number; sperreS: number | null; knoten: string; cluster: string | null;
+  nodeid?: string | null; konfHash?: string | null; sysrq?: string; kernelPanic?: string;
+}
+export interface FencingBeleg {
+  art: HaFencingArt; zeit: string; resetS: number; rejoinS: number; bootId: string; bootIdVorher: string; testZeit: string;
+  cluster: string | null; knoten: string | null; nodeid: string | null; konfHash: string | null; journalLueckeS?: number; quellen?: Record<string, string>;
+}
+/** Fencing-Teil des Status eines Knotens (PY_HA_STATUS → r.fencing); Datei fehlt → null, unlesbar → 'unlesbar' */
+export interface FencingLage {
+  bootId?: string | null; jetztS?: number;
+  identitaet?: FencingIdentitaet | null;
+  test?: FencingTest | 'unlesbar' | null;
+  beleg?: FencingBeleg | 'unlesbar' | null;
+}
+
+const w = (v: unknown) => (v === null || v === undefined ? '?' : String(v));
+
+/**
+ * Ist der Fencing-Beleg für die heutige Cluster-Identität des Knotens gültig? undefined = gültig, sonst der Grund (gleicher Wortlaut wie
+ * `fencing_grund` in PY_FENCING_FUNK, das die Bausteine verwenden). Gültig nur mit Art, Messwerten, Reset (boot_id ≠ bootIdVorher), Cluster
+ * sqllnxcl01 = eingerichteter Cluster, gleicher Knoten und nodeid, gleichem konfHash (corosync.conf + authkey — ein neu eingerichteter
+ * Cluster macht ihn ungültig) und ohne neueren, unbelegten Test. Task 5 (AG-Aufbau) verlangt das für alle drei Knoten.
+ */
+export function fencingBelegGueltig(beleg: FencingBeleg | 'unlesbar' | null | undefined, lage: FencingLage | null | undefined, cluster: string = HA_CLUSTER_NAME): string | undefined {
+  const b = beleg as unknown;
+  if (b === null || b === undefined) return 'kein Fencing-Beleg';
+  if (typeof b !== 'object' || Array.isArray(b)) return 'Beleg unlesbar';
+  const x = b as Record<string, unknown>;
+  if (!HA_FENCING_ARTEN.includes(x.art as HaFencingArt)) return 'Beleg ohne gültige Art';
+  for (const f of ['resetS', 'rejoinS']) { const v = x[f]; if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return `Beleg ohne Messwert ${f}`; }
+  if (!x.bootId || !x.bootIdVorher || x.bootId === x.bootIdVorher) return 'Beleg ohne Reset (boot_id gleich)';
+  const i = lage?.identitaet;
+  if (!i || typeof i !== 'object' || !i.konfHash) return 'Cluster-Identität nicht lesbar (corosync.conf/authkey)';
+  // wie Python: fehlend und null sind gleich (None)
+  const g = (a: unknown, b2: unknown) => (a ?? null) === (b2 ?? null);
+  if (!g(x.cluster, cluster)) return `Beleg für Cluster ${w(x.cluster)}, erwartet ${cluster}`;
+  if (!g(x.cluster, i.cluster)) return `Beleg für Cluster ${w(x.cluster)}, eingerichtet ist ${w(i.cluster)}`;
+  if (!g(x.knoten, i.knoten) || !g(x.nodeid, i.nodeid)) return `Beleg für Knoten ${w(x.knoten)} (nodeid ${w(x.nodeid)}), hier ${w(i.knoten)} (nodeid ${w(i.nodeid)})`;
+  if (!g(x.konfHash, i.konfHash)) return 'Cluster seit dem Beleg neu eingerichtet (corosync.conf/authkey anders)';
+  const t = lage?.test as unknown;
+  if (t !== null && t !== undefined && (typeof t !== 'object' || Array.isArray(t))) return 'Test-Datei unlesbar';
+  if (t && !g((t as Record<string, unknown>).zeit, x.testZeit)) return `neuerer Fencing-Test vom ${w((t as Record<string, unknown>).zeit)} ohne Beleg`;
+  return undefined;
 }
 
 // ── Status ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -960,6 +1506,9 @@ else:
         c, v = lauf("crm_attribute", "-t", "crm_config", "-n", "stonith-watchdog-timeout", "-G", "-q")
         cl["stonithWatchdogTimeout"] = v if c == 0 and v else None
 r["cluster"] = cl`,
+  // Task 4: Fencing-Beweis dieses Knotens — Test, Beleg, boot_id und Identität im Cluster; die Gültigkeit prüft fencingBelegGueltig (TS)
+  PY_FENCING_FUNK,
+  `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)}), "beleg": lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)}), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", ich)}`,
   'print("ALFRED-HA " + json.dumps(r))',
 ].join('\n');
 
@@ -979,3 +1528,5 @@ registriereLinuxBaustein<HaVorbereitenParameter>(LINUX_HA_BAUSTEINE.vorbereiten,
 registriereLinuxBaustein(LINUX_HA_BAUSTEINE.status, () => haStatusSkript());
 registriereLinuxBaustein<HaClusterParameter>(LINUX_HA_BAUSTEINE.cluster, haClusterSkript);
 registriereLinuxBaustein<HaClusterEntfernenParameter>(LINUX_HA_BAUSTEINE.clusterEntfernen, haClusterEntfernenSkript);
+registriereLinuxBaustein<HaFencingParameter>(LINUX_HA_BAUSTEINE.fencingPruefen, haFencingPruefenSkript);
+registriereLinuxBaustein<HaFencingBelegenParameter>(LINUX_HA_BAUSTEINE.fencingBelegen, haFencingBelegenSkript);

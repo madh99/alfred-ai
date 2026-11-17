@@ -67,9 +67,10 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
   // I8e Paket 2 — Wortlaut aus linuxHaStatusText (linux-ha-skill.ts); positive Stücke einzeln prüfbar
   // Task 3: „; Cluster …“ am Ende (clusterText) — positive Form als ganzes Stück (Teilstücke wie „Quorum ja“ zulässig)
-  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}; Cluster {cluster}'
+  // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten
+  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv'
-    + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s',
+    + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -173,14 +174,24 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
   // Task 3 — Cluster: alle Knoten online, Quorum n/n, sbd läuft/aktiviert, have-watchdog, Eigenschaften; Entfernen: keine corosync.conf
   // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
-  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen']),
+  // Task 4 — Fencing: fencing_pruefen prüft die Vorbedingungen, schreibt die Test-Datei und weist die geplanten Timer nach (die Wirkung —
+  // Reset — belegt fencing_belegen); fencing_belegen schreibt den Beleg nur mit Beweis und liest ihn gegen die Cluster-Identität zurück
+  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen']),
 };
 /**
  * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
- * Knoten (auch das bestehende sqllnx01) — Rückweg linux_ha.cluster_entfernen.
+ * Knoten (auch das bestehende sqllnx01) — Rückweg genau linux_ha.cluster_entfernen (Task 4, Carry-over 4: kein anderer Rückweg zählt).
  */
-const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, string>>> = {
-  linux_ha: new Map([['cluster_anlegen', 'linux_ha.cluster_entfernen (zugang, cluster)']]),
+const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { skill: string; aktion: string; text: string }>>> = {
+  linux_ha: new Map([['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }]]),
+};
+/**
+ * I8e Paket 2 Task 4 — Aktionen ohne Rückweg, aber nur mit genau diesem Grund (ein angegebener Rückweg wird abgewiesen): fencing_pruefen
+ * setzt den Testknoten zurück, es gibt nichts zurückzunehmen (die nft-Sperre ist ohne Persistenz und endet per Timer bzw. mit dem Reset).
+ * Text gleich FENCING_OHNE_RUECKWEG_GRUND in linux-ha-skill.ts.
+ */
+const OHNE_RUECKWEG_NUR_MIT_GRUND: Readonly<Record<string, ReadonlyMap<string, string>>> = {
+  linux_ha: new Map([['fencing_pruefen', 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen']]),
 };
 const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
 /**
@@ -195,6 +206,8 @@ const NEUAUFBAU_SKILLS = new Set(['linux_sql', 'linux_ha']);
 const OHNE_RUECKWEG_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
   // Fix-Welle M-1: kettengrenzen_uebernehmen schreibt nur die lokale Aufzeichnung nach Owner-Prüfung (Unterschied steht im Ergebnis)
   linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
+  // I8e Paket 2 Task 4 — fencing_belegen schreibt nur die Beleg-Datei des Knotens (nichts am Cluster oder an Diensten)
+  linux_ha: new Set(['fencing_belegen']),
 };
 
 /** Skills, die Changes nie als Schritt benutzen dürfen (Planung/Freigabe selbst, Gerätesteuerung, eigene Software) */
@@ -595,8 +608,13 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       // Rückweg für ändernde Aktionen
       if (einordnung === 'aendern' || einordnung === 'loeschen') {
         const rw = obj(s.rueckweg);
-        if (!rw) f.push(`${wo}: rueckweg fehlt (ändernde Aktion)`);
-        else if (txt(rw.keiner)) {
+        const nurGrund = OHNE_RUECKWEG_NUR_MIT_GRUND[schritt.skill ?? '']?.get(schritt.aktion ?? '');
+        if (!rw) f.push(`${wo}: rueckweg fehlt (ändernde Aktion)${nurGrund ? ` — ${schritt.skill}.${schritt.aktion}: rueckweg {keiner: „${nurGrund}“}` : ''}`);
+        else if (nurGrund) {
+          // Task 4: kein Rückweg möglich — genau dieser Grund, sonst nichts (auch kein erfundener Rückweg)
+          if (txt(rw.keiner) !== nurGrund) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} hat keinen Rückweg — rueckweg {keiner: „${nurGrund}“}`);
+          schritt.rueckweg = { keiner: txt(rw.keiner) || nurGrund };
+        } else if (txt(rw.keiner)) {
           const neustart = schritt.skill === 'fernzugriff' && /^docker restart [\w.-]+$/.test(String(schritt.parameter.befehl ?? '').trim());
           // v1622 — Realfall 23.10. (Restwirkung b85e56af): im Stilllegungs-Change ist Entfernen per Fernzugriff (rm) gewollt endgültig —
           // ein erfundener Rückweg wäre schlechter als keiner
@@ -609,7 +627,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
           const pflicht = RUECKWEG_PFLICHT_JE_SKILL[schritt.skill ?? '']?.get(schritt.aktion ?? '');
           if (pflicht) {
-            f.push(`${wo}: ${schritt.skill}.${schritt.aktion} braucht immer einen Rückweg — rueckweg ${pflicht}`);
+            f.push(`${wo}: ${schritt.skill}.${schritt.aktion} braucht immer einen Rückweg — rueckweg ${pflicht.text}`);
           } else if (OHNE_RUECKWEG_JE_SKILL[schritt.skill]?.has(schritt.aktion)) {
             // additiv bzw. ohne bleibende Wirkung — kein Rückweg nötig
           } else if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
@@ -620,6 +638,9 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
         } else {
           const rs = ctx.skill(txt(rw.skill));
           const rueck: Rueckweg = { skill: txt(rw.skill), aktion: txt(rw.aktion), parameter: obj(rw.parameter) ?? {} };
+          // Task 4 (Carry-over 4): Pflicht-Rückweg heißt genau diese Aktion — ein anderer Rückweg (z. B. ein Status) zählt nicht
+          const pflicht = RUECKWEG_PFLICHT_JE_SKILL[schritt.skill ?? '']?.get(schritt.aktion ?? '');
+          if (pflicht && (rueck.skill !== pflicht.skill || rueck.aktion !== pflicht.aktion)) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} braucht als Rückweg genau ${pflicht.text}, nicht ${rueck.skill || '?'}.${rueck.aktion || '?'}`);
           if (NIE_SKILLS.has(rueck.skill ?? '')) f.push(`${wo}: Skill ${rueck.skill} ist in Changes nicht erlaubt (Rückweg)`);
           else if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);

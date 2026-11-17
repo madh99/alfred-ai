@@ -12,7 +12,9 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   LINUX_HA_BAUSTEINE, LINUX_HA_ZEIT_MS, HA_KNOTEN, HA_SQL_ZUSATZQUELLEN, HA_VERSIONEN, HA_PAKETE, HA_HACLUSTER_TRESOR, haErgebnis, pruefeHaVorbereiten,
   HA_CLUSTER_NAME, HA_SBD_TIMEOUT_S, HA_STONITH_WD_TIMEOUT_S, HA_WATCHDOG_DEV, pruefeHaCluster, pruefeHaClusterEntfernen,
+  HA_FENCING_ARTEN, HA_FENCING_SPERRE_S, HA_FENCING_VERZOEGERUNG_S, HA_FENCING_MAX_ALTER_S, HA_FENCING_HAENGER_KNOTEN, pruefeHaFencing, pruefeHaFencingBelegen, fencingBelegGueltig,
   type HaKnoten, type HaRolle, type HaVorbereitenParameter, type HaClusterParameter, type HaClusterEntfernenParameter,
+  type HaFencingArt, type HaFencingParameter, type HaFencingBelegenParameter, type FencingLage, type FencingBeleg, type FencingTest,
 } from './linux-ha.js';
 import { linuxSqlKennwort, type LinuxSqlDeps } from './linux-sql-skill.js';
 
@@ -23,12 +25,16 @@ export const LINUX_HA_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   ha_vorbereiten: sek(LINUX_HA_ZEIT_MS.vorbereiten) + 60,
   cluster_anlegen: sek(LINUX_HA_ZEIT_MS.cluster) + 60,
   cluster_entfernen: sek(LINUX_HA_ZEIT_MS.clusterEntfernen) + 60,
+  fencing_pruefen: sek(LINUX_HA_ZEIT_MS.fencingPruefen) + 60,
+  fencing_belegen: sek(LINUX_HA_ZEIT_MS.fencingBelegen) + 60,
 };
 
 export type LinuxHaDeps = LinuxSqlDeps;
 
 export const LINUX_HA_LESEND = new Set(['status']);
-export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen']);
+export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen']);
+/** Task 4 — fencing_pruefen hat keinen Rückweg; nur mit genau diesem Grund (change-schritte.ts, OHNE_RUECKWEG_NUR_MIT_GRUND) */
+export const FENCING_OHNE_RUECKWEG_GRUND = 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const istVerweis = (v: unknown) => typeof v === 'string' && v.includes('{{');
 
@@ -48,6 +54,29 @@ export interface LinuxHaStatus {
   hostsLoopback?: string[]; hostsEntfernt?: string[]; sql1433Zusatz?: string[];
   /** Task 3: Cluster aus corosync.conf, crm_mon-XML, pcs stonith sbd status, stonith-watchdog-timeout */
   cluster?: LinuxHaCluster;
+  /** Task 4: Fencing-Test und -Beleg dieses Knotens, boot_id, Identität im Cluster */
+  fencing?: FencingLage;
+}
+
+/** „2026-11-17T14:03:12Z“ → „2026-11-17 14:03 UTC“ */
+const zeitText = (z: unknown) => { const m = /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)/.exec(String(z ?? '')); return m ? `${m[1]} ${m[2]} UTC` : String(z ?? '?'); };
+
+/**
+ * Fencing-Teil des Status (fester Wortlaut): „Fencing belegt (trennung, 2026-11-17 14:03 UTC, Reset 18 s, Rejoin 41 s)“; sonst „Fencing Test
+ * <art> ausgelöst, Reset ausstehend“ (gleiche boot_id, Test ≤ 30 min), „Fencing Test <art> vom … ohne Reset (boot_id unverändert)“, „Fencing
+ * Test <art> vom … erfolgt, Beleg ausstehend (fencing_belegen)“, „Fencing nicht belegt“, „Fencing Beleg ungültig (<Grund>)“, „Fencing unbekannt“
+ */
+export function fencingText(f: FencingLage | undefined): string {
+  if (!f) return 'Fencing unbekannt';
+  const t = f.test && typeof f.test === 'object' ? f.test as FencingTest : undefined;
+  const frisch = !!t && typeof f.jetztS === 'number' && f.jetztS - t.zeitS <= HA_FENCING_MAX_ALTER_S;
+  if (t && f.bootId && t.bootIdVorher === f.bootId) return frisch ? `Fencing Test ${t.art} ausgelöst, Reset ausstehend` : `Fencing Test ${t.art} vom ${zeitText(t.zeit)} ohne Reset (boot_id unverändert)`;
+  const grund = fencingBelegGueltig(f.beleg, f);
+  if (!grund) { const b = f.beleg as FencingBeleg; return `Fencing belegt (${b.art}, ${zeitText(b.zeit)}, Reset ${b.resetS} s, Rejoin ${b.rejoinS} s)`; }
+  const b = f.beleg && typeof f.beleg === 'object' ? f.beleg as FencingBeleg : undefined;
+  if (t && frisch && b?.testZeit !== t.zeit) return `Fencing Test ${t.art} vom ${zeitText(t.zeit)} erfolgt, Beleg ausstehend (fencing_belegen)`;
+  if (!f.beleg) return 'Fencing nicht belegt';
+  return `Fencing Beleg ungültig (${grund})`;
 }
 
 export interface LinuxHaCluster {
@@ -116,6 +145,7 @@ export function linuxHaStatusTeile(s: LinuxHaStatus): string[] {
     s.runtimeWatchdog === '0' ? 'RuntimeWatchdog aus' : `RuntimeWatchdog AN (${s.runtimeWatchdog ?? 'unbekannt'})`,
     s.pcsd === 'active' ? 'pcsd aktiv' : `pcsd ${s.pcsd ?? 'unbekannt'}`,
     clusterText(s.cluster),
+    fencingText(s.fencing),
   ];
 }
 
@@ -174,6 +204,19 @@ function clusterEntfernenParameter(input: Record<string, unknown>): HaClusterEnt
   return p;
 }
 
+function fencingParameter(input: Record<string, unknown>): HaFencingParameter {
+  const art = (typeof input.art === 'string' ? input.art.trim().toLowerCase() : input.art) as HaFencingArt;
+  const p: HaFencingParameter = { cluster: clusterName(input), knoten: clusterKnoten(input.knoten), art };
+  const f = pruefeHaFencing(p); if (f) throw new Error(f);
+  return p;
+}
+
+function fencingBelegenParameter(input: Record<string, unknown>): HaFencingBelegenParameter {
+  const p: HaFencingBelegenParameter = { cluster: clusterName(input), knoten: clusterKnoten(input.knoten) };
+  const f = pruefeHaFencingBelegen(p); if (f) throw new Error(f);
+  return p;
+}
+
 // ── Skill ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export class LinuxHaSkill extends Skill {
@@ -193,6 +236,8 @@ export class LinuxHaSkill extends Skill {
       + `pcs-Anmeldung als hacluster (Kennwort aus dem Tresor, nur über die Standardeingabe), pcs cluster setup mit knet über die festen IPs, diskless SBD (Watchdog ${HA_WATCHDOG_DEV}, kein SBD-Device), Cluster auf allen aktiviert und gestartet, stonith-enabled=true, stonith-watchdog-timeout; `
       + 'prüft sich selbst (alle Knoten online, Quorum 3/3, sbd läuft auf allen, have-watchdog=true). Gleicher Cluster schon da → nur Abweichungen beheben; anderer Cluster oder Debian-Standardkonfiguration → Abbruch ohne Änderung. '
       + 'Rückweg von cluster_anlegen ist cluster_entfernen (zugang, cluster): Cluster sauber stoppen, SBD aus, pcs cluster destroy --all — nur ohne Ressourcen. cluster_anlegen braucht immer diesen Rückweg. '
+      + `Fencing-Beweis je Knoten (nach cluster_anlegen, vor dem AG-Aufbau; der AG-Aufbau verlangt gültige Belege auf allen drei Knoten): fencing_pruefen (zugang = Testknoten, art trennung|haenger) prüft ohne Änderung (Cluster 3/3 online mit Quorum, STONITH an, keine Ressourcen, sbd hält den i6300esb), schreibt die Test-Datei und löst in ${HA_FENCING_VERZOEGERUNG_S} s aus — trennung: Corosync (UDP 5405) ${HA_FENCING_SPERRE_S} s gesperrt (ohne Persistenz) → SBD setzt den Knoten zurück; haenger (nur ${HA_FENCING_HAENGER_KNOTEN}): Kernel-Absturz (sysrq c) → Hardware-Watchdog; Ergebnis „ausgeloest“ vor dem Reset. `
+      + `Rückweg von fencing_pruefen: keiner, nur mit dem Grund „${FENCING_OHNE_RUECKWEG_GRUND}“. Danach ein warten-Schritt (sekunden ca. 45, zeitlimitS ca. 600) mit Prüfung linux_ha.status (zugang = Testknoten) erwartet „3/3 online“, nichtEnthalten „Reset ausstehend“, dann fencing_belegen (zugang): Beleg nur bei neuer boot_id, Test ≤ 30 min, Knoten wieder online, Reset- und Rejoin-Zeit aus btime und Journal; sonst Fehler ohne Beleg; Status zeigt „Fencing belegt (…)“. `
       + 'Sonst ohne Rückweg nur beim Neuaufbau (derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit) oder mit ohneSicherungGrund — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -207,6 +252,7 @@ export class LinuxHaSkill extends Skill {
         cluster: { type: 'string', description: `cluster_anlegen/cluster_entfernen: Clustername (Standard ${HA_CLUSTER_NAME})` },
         sbd_timeout_s: { type: 'number', description: `cluster_anlegen: SBD_WATCHDOG_TIMEOUT in s (Standard ${HA_SBD_TIMEOUT_S})` },
         stonith_timeout_s: { type: 'number', description: `cluster_anlegen: stonith-watchdog-timeout in s (Standard ${HA_STONITH_WD_TIMEOUT_S}, mindestens 2 × sbd_timeout_s)` },
+        art: { type: 'string', enum: [...HA_FENCING_ARTEN], description: `fencing_pruefen: trennung (Corosync ${HA_FENCING_SPERRE_S} s sperren) oder haenger (Kernel-Absturz, nur ${HA_FENCING_HAENGER_KNOTEN})` },
       },
       required: ['action', 'zugang'],
     },
@@ -225,6 +271,8 @@ export class LinuxHaSkill extends Skill {
       if (action === 'ha_vorbereiten') vorbereitenParameter(input);
       if (action === 'cluster_anlegen') clusterParameter(input);
       if (action === 'cluster_entfernen') clusterEntfernenParameter(input);
+      if (action === 'fencing_pruefen') fencingParameter(input);
+      if (action === 'fencing_belegen') fencingBelegenParameter(input);
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
   }
@@ -242,6 +290,8 @@ export class LinuxHaSkill extends Skill {
         case 'ha_vorbereiten': return await this.vorbereiten(zugang, input, geheim);
         case 'cluster_anlegen': return await this.clusterAnlegen(zugang, input, geheim);
         case 'cluster_entfernen': return await this.clusterEntfernen(zugang, input, geheim);
+        case 'fencing_pruefen': return await this.fencingPruefen(zugang, input, geheim);
+        case 'fencing_belegen': return await this.fencingBelegen(zugang, input);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -308,6 +358,35 @@ export class LinuxHaSkill extends Skill {
     const r = await this.lauf<{ zustand: string; aenderungen?: string[] }>(zugang, LINUX_HA_BAUSTEINE.clusterEntfernen, p, 'Cluster entfernen', LINUX_HA_ZEIT_MS.clusterEntfernen, { hacluster: kw });
     this.d.protokoll?.('I8e Cluster entfernt', { zugang, cluster: p.cluster, zustand: r.zustand, aenderungen: r.aenderungen });
     const text = `Cluster ${p.cluster} auf ${p.knoten.map(k => k.name).join(', ')} entfernt (SBD aus, Cluster-Dienste aus, keine corosync.conf von ${p.cluster} mehr)`;
+    if (r.zustand === 'schon') return { success: true, data: r, display: `${text} — nichts zu tun` };
+    return { success: true, data: r, display: `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Fencing-Beweis Teil 1: hacluster-Kennwort nur für die pcs-Anmeldung (pcs stonith sbd status über alle Knoten) */
+  private async fencingPruefen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = fencingParameter(input);
+    const kw = await this.hacluster(zugang, 'Fencing-Test', geheim);
+    const r = await this.lauf<{ zustand: string; art?: string; knoten?: string; bootIdVorher?: string; hinweis?: string; beleg?: FencingBeleg; aenderungen?: string[] }>(
+      zugang, LINUX_HA_BAUSTEINE.fencingPruefen, p, `Fencing-Test ${p.art}`, LINUX_HA_ZEIT_MS.fencingPruefen, { hacluster: kw });
+    this.d.protokoll?.('I8e Fencing-Test', { zugang, art: p.art, zustand: r.zustand, bootIdVorher: r.bootIdVorher, aenderungen: r.aenderungen });
+    if (r.zustand === 'schon') {
+      const was = r.hinweis ?? (r.beleg ? `gültiger Beleg vom ${zeitText(r.beleg.zeit)} (Reset ${r.beleg.resetS} s, Rejoin ${r.beleg.rejoinS} s)` : 'schon erledigt');
+      return { success: true, data: r, display: `Fencing-Test ${p.art} auf ${zugang}: ${was} — nichts zu tun` };
+    }
+    const wie = p.art === 'trennung' ? `Corosync (UDP 5405) ab +${HA_FENCING_VERZOEGERUNG_S} s für ${HA_FENCING_SPERRE_S} s gesperrt` : `Kernel-Absturz (sysrq c) in ${HA_FENCING_VERZOEGERUNG_S} s`;
+    return { success: true, data: r, display: `Fencing-Test ${p.art} auf ${zugang} (${r.knoten ?? '?'}) ausgelöst: ${wie}; boot_id vorher ${r.bootIdVorher ?? '?'} — Reset durch ${p.art === 'trennung' ? 'SBD' : 'den Hardware-Watchdog'} erwartet, danach fencing_belegen — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Fencing-Beweis Teil 2: Beleg nach dem Reset (kein Geheimnis nötig) */
+  private async fencingBelegen(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = fencingBelegenParameter(input);
+    const r = await this.lauf<{ zustand: string; knoten?: string; beleg?: FencingBeleg; aenderungen?: string[] }>(zugang, LINUX_HA_BAUSTEINE.fencingBelegen, p, 'Fencing-Beleg', LINUX_HA_ZEIT_MS.fencingBelegen);
+    // Form des Belegs (Art, Messwerte, Reset, Cluster) — die Identität hat der Baustein gegen corosync.conf/authkey selbst geprüft
+    const b = r.beleg;
+    const form = fencingBelegGueltig(b, { identitaet: b ? { cluster: b.cluster, knoten: b.knoten, nodeid: b.nodeid, konfHash: b.konfHash } : null }, p.cluster);
+    if (!b || form) throw new Error(`Fencing-Beleg auf ${zugang}: Ergebnis ohne gültigen Beleg (${form ?? 'fehlt'})`);
+    this.d.protokoll?.('I8e Fencing-Beleg', { zugang, zustand: r.zustand, art: b.art, resetS: b.resetS, rejoinS: b.rejoinS, bootIdVorher: b.bootIdVorher, bootId: b.bootId });
+    const text = `Fencing auf ${zugang} (${b.knoten ?? '?'}) belegt (${b.art}, ${zeitText(b.zeit)}): Reset ${b.resetS} s nach der Auslösung, Rejoin ${b.rejoinS} s nach dem Start (Quorum); boot_id ${b.bootIdVorher} → ${b.bootId}`;
     if (r.zustand === 'schon') return { success: true, data: r, display: `${text} — nichts zu tun` };
     return { success: true, data: r, display: `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
   }
