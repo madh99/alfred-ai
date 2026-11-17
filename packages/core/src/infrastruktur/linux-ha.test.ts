@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   haVorbereitenSkript, haStatusSkript, haErgebnis, hostfwNft, hostsBlock, pruefeHaVorbereiten, pruefeKnoten,
-  HA_KNOTEN, HA_VERSIONEN, HA_PORTS, HA_SQL_ZUSATZQUELLEN, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
+  HA_KNOTEN, HA_VERSIONEN, HA_PORTS, HA_SQL_ZUSATZQUELLEN, HA_BEFEHLE, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
   haClusterSkript, haClusterEntfernenSkript, pruefeHaCluster, pruefeHaClusterEntfernen, PY_CRM_LAGE, PY_CLUSTER_FUNK,
   haFencingPruefenSkript, haFencingBelegenSkript, pruefeHaFencing, pruefeHaFencingBelegen, fencetestNft, fencingBelegGueltig, PY_FENCING, PY_FENCING_FUNK,
   HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI,
@@ -20,6 +20,10 @@ const P: HaVorbereitenParameter = { knoten: [...HA_KNOTEN], rolle: 'daten', vers
 const PC: HaClusterParameter = { cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], sbd_timeout_s: 10, stonith_timeout_s: 20 };
 const BASH = (() => { const r = spawnSync('bash', ['-c', 'echo "$BASH_VERSION"'], { encoding: 'utf8' }); return r.status === 0 && /^\d+\./.test(r.stdout.trim()); })();
 const PYTHON = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3');
+
+// Live-Fix: die Bash-Läufe blockieren den Worker synchron (spawnSync); vor jedem Test einmal an die Ereignisschleife abgeben, sonst
+// läuft vitest-RPC (onTaskUpdate, 60 s) über mehrere Tests hinweg in die Zeitgrenze
+beforeEach(async () => { await new Promise(r => setTimeout(r, 0)); });
 
 describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
   it('Bausteine sind beim Laden registriert und liefern denselben Text wie die Erzeuger', () => {
@@ -44,7 +48,7 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
     expect(pruefeHaVorbereiten({ ...P, versionen: { ...HA_VERSIONEN, pcs: "0.11'; id" } })).toContain('versionen.pcs');
     expect(pruefeHaVorbereiten({ ...P, versionen: { ...HA_VERSIONEN, mssqlHa: '16.0.1000.6-1' } })).toContain('mssqlHa');
     expect(pruefeHaVorbereiten({ ...P, rolle: 'konfig' })).toBeUndefined();
-    expect(HA_VERSIONEN).toEqual({ pacemaker: '2.1.6-5ubuntu2', corosync: '3.1.7-1ubuntu3.2', pcs: '0.11.7-1ubuntu1.1', sbd: '1.5.2-2ubuntu2', resourceAgents: '1:4.13.0-1ubuntu4.2', mssqlHa: '17.0.4006.2-1' });
+    expect(HA_VERSIONEN).toEqual({ pacemaker: '2.1.6-5ubuntu2', pacemakerCli: '2.1.6-5ubuntu2', corosync: '3.1.7-1ubuntu3.2', pcs: '0.11.7-1ubuntu1.1', sbd: '1.5.2-2ubuntu2', resourceAgents: '1:4.13.0-1ubuntu4.2', mssqlHa: '17.0.4006.2-1' });
   });
   it('Skript ohne Geheimnis im Text; fremde Eingabefelder landen nie im Skript; Kennwort nur aus stdin (feld hacluster)', () => {
     const s = haVorbereitenSkript({ ...P, hacluster: 'Geheim-Wert-42' } as never);
@@ -54,7 +58,7 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
     expect(s).toContain("printf 'hacluster:%s\\n' \"$KW\" | chpasswd");
     expect(s).toContain(`ALFRED_P='${JSON.stringify({ knoten: HA_KNOTEN, rolle: 'daten', versionen: HA_VERSIONEN })}'`);
     // Pakete fest, mssql-server-ha = SQL-Version, Kernel-Module passend zum laufenden Kernel
-    for (const pv of ['pacemaker=2.1.6-5ubuntu2', 'corosync=3.1.7-1ubuntu3.2', 'pcs=0.11.7-1ubuntu1.1', 'sbd=1.5.2-2ubuntu2', 'resource-agents-base=1:4.13.0-1ubuntu4.2', 'mssql-server-ha=17.0.4006.2-1']) expect(s).toContain(`'${pv}'`);
+    for (const pv of ['pacemaker=2.1.6-5ubuntu2', 'pacemaker-cli-utils=2.1.6-5ubuntu2', 'corosync=3.1.7-1ubuntu3.2', 'pcs=0.11.7-1ubuntu1.1', 'sbd=1.5.2-2ubuntu2', 'resource-agents-base=1:4.13.0-1ubuntu4.2', 'mssql-server-ha=17.0.4006.2-1']) expect(s).toContain(`'${pv}'`);
     expect(s).toContain('MOD_EXTRA="linux-modules-extra-$(uname -r)"');
   });
   it('nft-Regeln: genau Peers × Ports, andere Quellen nur für diese Ports verworfen, Grundregel accept, SSH unberührt', () => {
@@ -89,6 +93,22 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
       const r = spawnSync('bash', ['-n'], { input: s, encoding: 'utf8' });
       expect(r.status, r.stderr).toBe(0);
     }
+  });
+  it('Live-Fix: HA_BEFEHLE deckt jedes Programm der erzeugten Skripte ab (und nennt nichts, was kein Skript nutzt)', () => {
+    const skripte = [haVorbereitenSkript(P), haStatusSkript(), haClusterSkript(PC), haClusterEntfernenSkript(PC),
+      haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'trennung' }), haFencingPruefenSkript({ cluster: 'sqllnxcl01', knoten: [...HA_KNOTEN], art: 'haenger' }), haFencingBelegenSkript(PC)].join('\n');
+    // bekannte Programme außerhalb des Grundsystems (Pacemaker/Corosync/SBD-Werkzeuge, Paketverwaltung, Netz, systemd, SQL)
+    const KANDIDATEN = ['pcs', 'crm_mon', 'crm_attribute', 'crm_resource', 'crm_node', 'crm_verify', 'crm_simulate', 'crm_failcount', 'crm_standby', 'crm_shadow', 'crm_report', 'crm_ticket', 'crm_diff',
+      'cibadmin', 'stonith_admin', 'attrd_updater', 'fence_watchdog', 'corosync-quorumtool', 'corosync-cmapctl', 'corosync-cfgtool', 'corosync-keygen', 'corosync-cpgtool', 'sbd', 'wdctl',
+      'nft', 'iptables', 'systemd-run', 'journalctl', 'chpasswd', 'modprobe', 'udevadm', 'getent', 'ss', 'timeout', 'setsid', 'flock', 'python3',
+      'apt-get', 'apt-cache', 'apt-mark', 'dpkg-query', 'mssql-conf', 'sqlcmd'];
+    const benutzt = KANDIDATEN.filter(k => new RegExp(`(?<![\\w.-])${k.replace(/[-]/g, '\\-')}(?![\\w.-])`).test(skripte));
+    const basis = HA_BEFEHLE.map(b => b.split('/').pop()!);
+    expect(benutzt.filter(b => !basis.includes(b)), 'benutzt, aber nicht in HA_BEFEHLE').toEqual([]);
+    expect(basis.filter(b => !benutzt.includes(b)), 'in HA_BEFEHLE, aber von keinem Skript benutzt').toEqual([]);
+    expect(basis).toContain('crm_mon');
+    expect(HA_VERSIONEN.pacemakerCli).toBe(HA_VERSIONEN.pacemaker);
+    expect(haVorbereitenSkript(P)).toContain("'pacemaker-cli-utils=2.1.6-5ubuntu2'");
   });
   it.skipIf(!PYTHON)('Python-Programme parsen', () => {
     for (const prog of [PY_HA_STATUS, PY_KW_GLEICH, PY_CRM_LAGE, PY_CLUSTER_FUNK, PY_FENCING, PY_FENCING_FUNK]) {
@@ -149,6 +169,7 @@ const STUBS = String.raw`
 HOSTS="$T/hosts"; HOSTS_VORLAGE="$T/hosts.tmpl"; WD_SYS="$T/wd"; PCI_SYS="$T/pci"; PROC="$T/proc"; SHADOW="$T/shadow"; POLICY_RC="$T/policy-rc.d"; TMP_BASIS="$T"
 MSSQL_CONF="$T/mssql.conf"; MSSQLCONF=mssqlconf_stub; COROSYNC_CONF="$T/corosync.conf"
 crypt_da() { [ ! -f "$T/ohne_crypt" ]; }
+befehl_da() { [ ! -f "$T/fehlt_§{1##*/}" ]; }
 # wie Ubuntu 24.04 (Paket corosync): Standardkonfiguration „debian“ mit einem Knoten auf Loopback
 debian_conf() { printf 'totem {
 	version: 2
@@ -250,7 +271,7 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(a.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnx02', rolle: 'daten', watchdog: 'i6300ESB timer', hadr: true, firewall: 'aktiv', neustartSql: true,
       pakete: { pacemaker: '2.1.6-5ubuntu2', 'mssql-server-ha': '17.0.4006.2-1', 'resource-agents-base': '1:4.13.0-1ubuntu4.2' } });
     expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['pakete', 'halten:pcs', 'i6300esb-geladen', 'softdog-gesperrt', 'systemd-runtimewatchdog', 'firewall-regeln', 'firewall-dienst', 'hacluster-kennwort', 'pcsd', 'hadr']));
-    expect(a.log).toContain('apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold pacemaker=2.1.6-5ubuntu2 corosync=3.1.7-1ubuntu3.2 pcs=0.11.7-1ubuntu1.1 sbd=1.5.2-2ubuntu2 resource-agents-base=1:4.13.0-1ubuntu4.2 mssql-server-ha=17.0.4006.2-1 linux-modules-extra-6.8.0-147-generic');
+    expect(a.log).toContain('apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold pacemaker=2.1.6-5ubuntu2 pacemaker-cli-utils=2.1.6-5ubuntu2 corosync=3.1.7-1ubuntu3.2 pcs=0.11.7-1ubuntu1.1 sbd=1.5.2-2ubuntu2 resource-agents-base=1:4.13.0-1ubuntu4.2 mssql-server-ha=17.0.4006.2-1 linux-modules-extra-6.8.0-147-generic');
     expect(a.log).toContain('modprobe i6300esb');
     expect(a.log).toContain('mssql-conf set hadr.hadrenabled 1');
     expect(a.aus).toContain('ALFRED-HACLUSTER-GESETZT');
@@ -333,7 +354,7 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(String(f.laeufe[0]!.ergebnis?.fehler)).toContain("sqllnx01 löst zu '10.203.30.10 192.168.5.5' auf, erwartet 10.203.30.10");
   });
   it('Wiederholung auf einem Cluster-Knoten (Pakete und corosync.conf da, Dienste laufen): Cluster-Dienste bleiben unberührt', () => {
-    const vorher = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
+    const vorher = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'pacemaker-cli-utils=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
 printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"; printf 'totem {
     cluster_name: sqllnxcl01
     transport: knet
@@ -367,8 +388,33 @@ for d in pacemaker corosync sbd; do touch "$T/svc/$d.is-enabled" "$T/svc/$d.is-a
     expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
     expect(w.laeufe[0]!.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnxcfg', rolle: 'konfig' });
   });
+  // Live-Fix (Change 710116b4): crm_mon fehlte — pacemaker-cli-utils nicht installiert
+  it('Live-Fix: Knoten aus einem früheren Lauf ohne pacemaker-cli-utils → Wiederholung installiert nur dieses Paket, kein SQL-Neustart, Cluster-Dienste unberührt; danach „schon“', () => {
+    const ohneCli = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
+printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"
+printf 'totem {\n\tcluster_name: sqllnxcl01\n}\n' >"$T/corosync.conf"; printf '[hadr]\nhadrenabled = 1\n' >>"$T/mssql.conf"
+for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled" "$T/svc/$d.is-active"; done`.replaceAll('§{', '${');
+    const w = laeufe(ohneCli, 2);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    const installs = a.log.split('\n').filter(z => z.includes(' install '));
+    expect(installs).toEqual(['apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold pacemaker-cli-utils=2.1.6-5ubuntu2']);
+    expect(a.log).toContain('apt-mark -o DPkg::Lock::Timeout=300 hold pacemaker-cli-utils');
+    expect(a.log).not.toMatch(/mssql-conf|restart mssql-server|disable|stop (pacemaker|corosync|sbd)|restart (pacemaker|corosync|sbd|pcsd)/);
+    expect(a.ergebnis).toMatchObject({ neustartSql: false, pakete: { 'pacemaker-cli-utils': '2.1.6-5ubuntu2' } });
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['pakete', 'halten:pacemaker-cli-utils']));
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(b.log.trim()).toBe('');
+  });
+  it('Live-Fix: fehlt nach der Installation ein Programm der HA-Bausteine → sichtbarer Abbruch mit Namen', () => {
+    const w = laeufe('touch "$T/fehlt_crm_mon" "$T/fehlt_mssql-conf"', 1);
+    expect(w.laeufe[0]!.rc).toBe(1);
+    expect(String(w.laeufe[0]!.ergebnis?.fehler)).toContain('nach der Installation fehlen Programme der HA-Bausteine: crm_mon, /opt/mssql/bin/mssql-conf');
+    expect(w.laeufe[0]!.log).not.toMatch(/chpasswd|mssql-conf set|nft -f/);
+  });
   // Task 3, Carry-over a: Teil-Lauf (Pakete schon installiert, Debian aktivierte die Dienste) — die Wiederholung schaltet sie trotzdem ab
-  const PAKETE_DA = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
+  const PAKETE_DA = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'pacemaker-cli-utils=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
 printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"`.replaceAll('§{', '${');
   it('Wiederholung nach abgebrochenem Erstlauf: Debian-Standardkonfiguration gilt als „kein Cluster“ → Dienste aus, Konfiguration beiseite', () => {
     const debian = String.raw`printf 'totem {\n\tversion: 2\n\tcluster_name: debian\n}\n\nnodelist {\n\tnode {\n\t\tname: node1\n\t\tnodeid: 1\n\t\tring0_addr: 127.0.0.1\n\t}\n}\n' >"$T/corosync.conf"`;

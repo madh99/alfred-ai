@@ -20,16 +20,26 @@ import { sqlKopf, shQ } from './linux-sql.js';
 
 export interface HaKnoten { name: string; ip: string }
 export type HaRolle = 'daten' | 'konfig';
-export interface HaVersionen { pacemaker: string; corosync: string; pcs: string; sbd: string; resourceAgents: string; mssqlHa: string }
+export interface HaVersionen { pacemaker: string; pacemakerCli: string; corosync: string; pcs: string; sbd: string; resourceAgents: string; mssqlHa: string }
 
 /** gelesen auf sqllnx01 (Ubuntu 24.04, apt-cache madison, 17.11.2026); mssql-server-ha = installierte mssql-server-Version (CU1) */
 export const HA_VERSIONEN: Readonly<HaVersionen> = {
-  pacemaker: '2.1.6-5ubuntu2', corosync: '3.1.7-1ubuntu3.2', pcs: '0.11.7-1ubuntu1.1', sbd: '1.5.2-2ubuntu2',
+  // Live-Fix (Change 710116b4): crm_mon, crm_attribute, cibadmin, stonith_admin … liegen auf Ubuntu 24.04 in pacemaker-cli-utils
+  // (mit --no-install-recommends nicht mitinstalliert) — gleiche Version wie pacemaker
+  pacemaker: '2.1.6-5ubuntu2', pacemakerCli: '2.1.6-5ubuntu2', corosync: '3.1.7-1ubuntu3.2', pcs: '0.11.7-1ubuntu1.1', sbd: '1.5.2-2ubuntu2',
   resourceAgents: '1:4.13.0-1ubuntu4.2', mssqlHa: '17.0.4006.2-1',
 };
 /** Paketnamen zu HaVersionen (Reihenfolge = Installationsliste) */
 export const HA_PAKETE: ReadonlyArray<[keyof HaVersionen, string]> = [
-  ['pacemaker', 'pacemaker'], ['corosync', 'corosync'], ['pcs', 'pcs'], ['sbd', 'sbd'], ['resourceAgents', 'resource-agents-base'], ['mssqlHa', 'mssql-server-ha'],
+  ['pacemaker', 'pacemaker'], ['pacemakerCli', 'pacemaker-cli-utils'], ['corosync', 'corosync'], ['pcs', 'pcs'], ['sbd', 'sbd'], ['resourceAgents', 'resource-agents-base'], ['mssqlHa', 'mssql-server-ha'],
+];
+/**
+ * Live-Fix — jedes Programm außerhalb des Grundsystems, das ein linux_ha-Baustein aufruft (Skripte und eingebettete Python-Programme).
+ * ha_vorbereiten prüft nach der Installation, dass alle da sind; der Test liest die erzeugten Skripte und verlangt Vollständigkeit.
+ */
+export const HA_BEFEHLE: readonly string[] = [
+  'pcs', 'crm_mon', 'crm_attribute', 'corosync-quorumtool', 'corosync-cmapctl', 'sbd', 'nft', 'systemd-run', 'journalctl',
+  'chpasswd', 'modprobe', 'udevadm', 'getent', 'ss', 'timeout', 'python3', 'apt-get', 'apt-cache', 'apt-mark', 'dpkg-query', '/opt/mssql/bin/mssql-conf',
 ];
 /** Global Constraints I8e Paket 2: die drei Knoten im VLAN 830 */
 export const HA_KNOTEN: readonly HaKnoten[] = [
@@ -297,6 +307,7 @@ fd_ziel() { readlink "$1" 2>/dev/null || true; }
 prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { readlink "$PROC/$1/exe" 2>/dev/null || true; }
 eigener_name() { hostname -s; }
+befehl_da() { command -v "$1" >/dev/null 2>&1; }
 kennwort_gleich() { python3 -c "$PY_KW_GLEICH" "$SHADOW" <<<"$KW"; }
 hadr_wert() { awk -F'=' '/^\\[/ { s = ($0 == "[hadr]") } s && $1 ~ /^[ \\t]*hadrenabled[ \\t]*$/ { gsub(/[ \\t\\r]/, "", $2); print $2 }' "$MSSQL_CONF" 2>/dev/null | tail -n 1 || true; }
 ist_esb() { local r=1; shopt -s nocasematch; if [[ "$1" == *i6300esb* ]]; then r=0; fi; shopt -u nocasematch; return $r; }
@@ -406,6 +417,9 @@ for pv in "\${PAKETE[@]}"; do
   if ! paket_gehalten "$pk"; then apt-mark -o DPkg::Lock::Timeout=300 hold "$pk" >/dev/null; aend "halten:$pk"; fi
 done
 id hacluster >/dev/null 2>&1 || abbruch "Benutzer hacluster fehlt nach der Installation von pacemaker"
+# Live-Fix: jedes Programm, das die linux_ha-Bausteine aufrufen, muss jetzt da sein (HA_BEFEHLE)
+FEHLT=''; for b in "\${HA_BEFEHLE[@]}"; do if ! befehl_da "$b"; then FEHLT+="\${FEHLT:+, }$b"; fi; done
+[ -z "$FEHLT" ] || abbruch "nach der Installation fehlen Programme der HA-Bausteine: $FEHLT"
 # ── Cluster-Dienste: gleich nach der Installation aus, solange kein Cluster eingerichtet ist ──
 # Task 3 (Ruling a): „kein Cluster“ = keine corosync.conf oder die Debian-Standardkonfiguration (cluster_name debian, nur Loopback) — gilt
 # auch bei der Wiederholung nach einem abgebrochenen Erstlauf; ist ein Cluster eingerichtet (sqllnxcl01 oder ein anderer), bleiben die
@@ -523,6 +537,7 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `ROLLE=${shQ(p.rolle)}`,
     `V_SQL=${shQ(v.mssqlHa)}`,
     `PAKETE=(${HA_PAKETE.map(([s, n]) => shQ(`${n}=${v[s]}`)).join(' ')})`,
+    `HA_BEFEHLE=(${HA_BEFEHLE.map(shQ).join(' ')})`,
     `H_ANFANG=${shQ(HA_HOSTS_ANFANG)}`,
     `H_ENDE=${shQ(HA_HOSTS_ENDE)}`,
     `HOSTS_BLOCK=${shQ(hostsBlock(k))}`,
