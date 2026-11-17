@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -199,7 +199,8 @@ apt-get() { log "apt-get $*"; local a; if [[ " $* " == *" install "* ]]; then fo
 apt-cache() { local pk=§{@: -1} pv; for pv in "§{PAKETE[@]}"; do if [ "§{pv%%=*}" = "$pk" ]; then echo " $pk | §{pv#*=} | http://x noble/main"; fi; done; case "$pk" in linux-modules-extra-*) echo " $pk | 6.8.0-147.147 | http://x" ;; esac; }
 apt-mark() { log "apt-mark $*"; local pk=§{@: -1}; printf 'hold ok installed|%s' "$(cut -d'|' -f2 "$T/dpkg/$pk")" >"$T/dpkg/$pk"; }
 id() { return 0; }
-modprobe() { log "modprobe $*"; if [ -f "$T/pci_ok" ]; then mkdir -p "$WD_SYS/watchdog0"; cat "$T/kennung" >"$WD_SYS/watchdog0/identity"; fi; }
+# ausdrückliches modprobe lädt trotz Ubuntu-Sperrliste; mit $T/dev_wd_pfad erscheint dort das Gerät (Symlink auf /dev/null = Zeichengerät)
+modprobe() { log "modprobe $*"; if [ -f "$T/pci_ok" ]; then mkdir -p "$WD_SYS/watchdog0"; cat "$T/kennung" >"$WD_SYS/watchdog0/identity"; if [ -f "$T/dev_wd_pfad" ]; then ln -sf /dev/null "$(cat "$T/dev_wd_pfad")"; fi; fi; }
 udevadm() { :; }
 sleep() { :; }
 # Journal: mit _SYSTEMD_INVOCATION_ID=<id> nur die Einträge dieser Ausführung ($T/journal_inv_<id>), sonst das ganze sbd-Journal
@@ -482,7 +483,7 @@ for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; tou
     const dir = mkdtempSync(join(tmpdir(), 'alfred-wd-'));
     try {
       const konf = join(dir, 'sbd');
-      const lauf = (inhalt: string | undefined, grenze = '1') => { if (inhalt === undefined) rmSync(konf, { force: true }); else writeFileSync(konf, inhalt); return spawnSync('sh', ['-c', WARTE_WATCHDOG_SKRIPT, 'warte', konf.replace(/\\/g, '/'), grenze], { encoding: 'utf8' }); };
+      const lauf = (inhalt: string | undefined, grenze = '1') => { if (inhalt === undefined) rmSync(konf, { force: true }); else writeFileSync(konf, inhalt); return spawnSync('sh', ['-c', WARTE_WATCHDOG_SKRIPT, 'warte', konf.replace(/\\/g, '/'), grenze, 'true'], { encoding: 'utf8' }); }; // modprobe nachgebildet: lädt, Gerät bleibt aus
       expect(lauf('SBD_WATCHDOG_DEV=/dev/null\n').status).toBe(0);
       expect(lauf('# Kommentar\nSBD_WATCHDOG_DEV="/dev/null"\n').status).toBe(0);
       expect(lauf("SBD_WATCHDOG_DEV='/dev/null'\n").status).toBe(0);
@@ -527,6 +528,64 @@ for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; tou
     f(`${SBD_FEHLT}; echo 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a >"$T/sbd_inv"; printf 'sbd: Konfiguration ungültig\\n' >"$T/journal_inv_0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"`, /letzte Ausführung \(0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\) nennt aber nicht das fehlende Watchdog-Gerät/);
     // InvocationID nicht lesbar → nicht automatisch
     f(`${SBD_FEHLT}; : >"$T/sbd_inv"`, /die letzte Ausführung \(InvocationID ''\) ist nicht lesbar — nicht automatisch/);
+  });
+  // ── Live-Fix 2 (c2e4f56d, zweiter Reset 16:20:27): i6300esb ist auf Ubuntus Sperrliste — modules-load.d lädt es nie ──
+  it('Live-Fix 2: Knoten im heutigen Zustand (sbd vom Warteskript gescheitert, Modul nicht geladen, Gerät fehlt) → erst modprobe (Gerät erscheint), dann Rückholung nur dieses Knotens', () => {
+    const heute = [
+      `${PAKETE_DA}\n${CLUSTER_KNOTEN}\n${SBD_FEHLT}`,
+      `printf '%s\\n' 'alfred: Watchdog-Gerät /dev/watchdog nach 60 s nicht vorhanden — sbd startet nicht' >"$T/journal_inv_${INV}"`,
+      // Gerät fehlt, bis i6300esb geladen ist (kein watchdog0 in /sys); SBD_WATCHDOG_DEV zeigt auf das nachgebildete Gerät
+      `printf 'SBD_WATCHDOG_DEV=%s\\n' "$T/dev_wd" >"$T/sbd_default"; echo "$T/dev_wd" >"$T/dev_wd_pfad"; rm -rf "$T/wd/watchdog0"`,
+      `echo sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"`,
+    ].join('\n');
+    const w = laeufe(heute, 2);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    const zeilen = a.log.split('\n');
+    const pos = (t: string) => zeilen.findIndex(z => z.startsWith(t));
+    expect(pos('modprobe i6300esb')).toBeGreaterThanOrEqual(0);
+    expect(pos('modprobe i6300esb')).toBeLessThan(pos('systemctl reset-failed sbd'));
+    expect(pos('systemctl reset-failed sbd')).toBeLessThan(pos('pcs cluster stop'));
+    expect(pos('pcs cluster stop')).toBeLessThan(pos('pcs cluster start --wait=120'));
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['i6300esb-geladen', 'sbd-reset-failed', 'cluster-hier-gestoppt', 'cluster-hier-gestartet']));
+    expect(a.ergebnis).toMatchObject({ sbdZurueckgeholt: true });
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+  });
+  it('Live-Fix 2: alte modules-load.d-Datei (wirkungslos wegen Sperrliste) wird entfernt; Ubuntus Sperrdateien bleiben unberührt; Status hängt nicht daran', () => {
+    const w = laeufe('mkdir -p "$T/etc/modules-load.d"; printf "# Alfred I8e Paket 2: Hardware-Watchdog für SBD\\ni6300esb\\n" >"$T/etc/modules-load.d/a.conf"', 2);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['modules-load-entfernt']));
+    expect(w.dateien).not.toContain('modules-load.d');
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    const text = haVorbereitenSkript(P);
+    expect(text).not.toMatch(/blacklist_linux|\/lib\/modprobe\.d|\/etc\/modprobe\.d\/blacklist/); // keine fremde Sperrdatei angefasst
+    expect(PY_HA_STATUS).not.toContain('/etc/modules-load.d/');
+    expect(PY_HA_STATUS).toContain('/etc/systemd/system/sbd.service.d/alfred-watchdog.conf');
+  });
+  it.skipIf(!BASH)('Live-Fix 2: Warteskript lädt i6300esb ausdrücklich (ohne -b, kein Alias) — Sperrliste nachgebildet: nur der ausdrückliche Name lädt; Fehlschlag sichtbar', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-mp-'));
+    try {
+      const p = (x: string) => join(dir, x).replace(/\\/g, '/');
+      const konf = p('sbd'); const wd = p('wd'); const log = p('modprobe.log'); const fake = p('modprobe');
+      // wie kmod mit Sperrliste: -b/--use-blacklist oder Alias → gesperrt; ausdrücklicher Name i6300esb → geladen, Gerät erscheint
+      writeFileSync(fake, `#!/bin/sh\necho "$*" >>"${log}"\ncase "$*" in *-b*|*--use-blacklist*|pci:*) echo "modprobe: i6300esb deny-listed" >&2; exit 1 ;; esac\n[ "$1" = i6300esb ] || exit 1\n[ -f "${p('kaputt')}" ] && exit 1\nln -sf /dev/null "${wd}"\nexit 0\n`);
+      writeFileSync(konf, `SBD_WATCHDOG_DEV=${wd}\n`);
+      const lauf = () => spawnSync('sh', ['-c', WARTE_WATCHDOG_SKRIPT, 'warte', konf, '2', fake], { encoding: 'utf8' });
+      const geladen = lauf();
+      expect(geladen.status, geladen.stderr).toBe(0);
+      expect(readFileSync(log, 'utf8').trim()).toBe('i6300esb');
+      // Gerät schon da → kein modprobe
+      rmSync(log); const da = lauf();
+      expect(da.status).toBe(0);
+      expect(existsSync(log)).toBe(false);
+      // modprobe scheitert → sofort sichtbar, mit Meldung (zählt als Watchdog-Fehler der letzten Ausführung)
+      rmSync(wd); writeFileSync(p('kaputt'), '');
+      const f = lauf();
+      expect(f.status).toBe(1);
+      expect(f.stderr).toContain(`alfred: Watchdog-Gerät ${wd} fehlt und modprobe i6300esb ist fehlgeschlagen — sbd startet nicht`);
+      expect(WARTE_WATCHDOG_SKRIPT).not.toMatch(/modprobe[^\n]*-b|use-blacklist/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it('Fix-Runde B: letzte Ausführung scheiterte am Warteskript (Gerät kam nach 60 s) → Rückholung; Start-Zeitlimit von sbd ≥ 75 s sonst sichtbarer Abbruch; nur Rechte falsch → nur chmod', () => {
     const basis = `${PAKETE_DA}\n${CLUSTER_KNOTEN}\necho sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n" >"$T/hosts"`;

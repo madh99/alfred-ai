@@ -61,12 +61,19 @@ export const HA_HOSTS_ENDE = '# ALFRED-HA ENDE';
 /** Fix-Runde 1: Loopback-Zeilen mit dem eigenen Namen (cloud-init „127.0.1.1 <fqdn> <hostname>“) — Original bleibt als Kommentar erhalten */
 export const HA_HOSTS_ENTFERNT = '# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen):';
 export const HA_MODPROBE_DATEI = '/etc/modprobe.d/alfred-watchdog.conf';
+/**
+ * Frühere Datei (bis Live-Fix 2 zu c2e4f56d): i6300esb über modules-load.d — wirkungslos, weil Ubuntu Watchdog-Treiber sperrt (blacklist in
+ * /lib/modprobe.d/blacklist_linux_*.conf) und systemd-modules-load die Sperre auch für ausdrücklich genannte Module anwendet
+ * („Module 'i6300esb' is deny-listed (by kmod)“). ha_vorbereiten entfernt sie; geladen wird das Modul vom Warteskript.
+ */
 export const HA_MODULES_LOAD_DATEI = '/etc/modules-load.d/alfred-watchdog.conf';
 export const HA_SYSTEMD_DATEI = '/etc/systemd/system.conf.d/alfred-watchdog.conf';
 /**
- * Live-Fix (Change c2e4f56d, sqllnxcfg nach dem Fencing-Reset): sbd.service startete eine Sekunde nach dem Boot, bevor i6300esb (modules-load.d)
- * /dev/watchdog angelegt hatte — „watchdog_init_fd: Seems as if '/dev/watchdog' isn't a valid watchdog-device“, sbd failed, Pacemaker blieb
- * draußen. Drop-in: sbd nach systemd-modules-load und erst, wenn das Watchdog-Gerät aus /etc/default/sbd als Zeichengerät da ist (≤ 60 s).
+ * Live-Fix (Change c2e4f56d, sqllnxcfg nach dem Fencing-Reset): sbd.service scheiterte nach dem Neustart, weil /dev/watchdog fehlte — Ursache
+ * (zweiter Reset, 16:20:27): systemd-modules-load lädt i6300esb nicht („deny-listed (by kmod)“). Drop-in: sbd startet erst nach dem
+ * Warteskript; das lädt i6300esb ausdrücklich per modprobe (ohne -b wendet modprobe die blacklist-Einträge nicht auf ausdrücklich genannte
+ * Module an — modprobe(8) zu --use-blacklist, modprobe.d(5) zu blacklist: nur Aliase) und wartet ≤ 60 s auf das Gerät aus /etc/default/sbd.
+ * Ubuntus Sperrdateien bleiben unberührt.
  */
 export const HA_SBD_DROPIN = '/etc/systemd/system/sbd.service.d/alfred-watchdog.conf';
 export const HA_WARTE_WATCHDOG = '/usr/local/lib/alfred/warte-watchdog';
@@ -75,15 +82,24 @@ export const HA_WARTE_WATCHDOG_S = 60;
 export const HA_SBD_START_MIN_S = HA_WARTE_WATCHDOG_S + 15;
 /** sbd-Meldung, wenn das Watchdog-Gerät beim Start fehlt (sbd 1.5, watchdog_init_fd) — nur dann repariert ha_vorbereiten selbst */
 export const HA_SBD_WATCHDOG_FEHLT = "isn't a valid watchdog-device";
-/** /bin/sh-Skript (fest): wartet bis HA_WARTE_WATCHDOG_S s auf das Gerät aus SBD_WATCHDOG_DEV ($1 = Konfiguration, $2 = Sekunden — nur für Tests) */
+/**
+ * /bin/sh-Skript (fest): lädt i6300esb ausdrücklich (falls das Gerät fehlt) und wartet bis HA_WARTE_WATCHDOG_S s auf das Gerät aus
+ * SBD_WATCHDOG_DEV. Nur für Tests: $1 = Konfiguration, $2 = Sekunden, $3 = modprobe-Programm.
+ */
 export const WARTE_WATCHDOG_SKRIPT = [
   '#!/bin/sh',
   '# Alfred I8e Paket 2 (fest erzeugt, nicht von Hand ändern): sbd startet erst, wenn das Watchdog-Gerät da ist',
+  '# i6300esb steht auf Ubuntus Sperrliste (modules-load.d lädt es nicht); modprobe mit ausdrücklichem Namen lädt es trotzdem',
   'KONF=${1:-/etc/default/sbd}',
   `GRENZE=\${2:-${HA_WARTE_WATCHDOG_S}}`,
+  'MODPROBE=${3:-/usr/sbin/modprobe}',
   // letzter Eintrag gilt; Anführungszeichen (" und ') und Leerraum entfernt
   'GERAET=$(awk -F= \'/^[[:space:]]*SBD_WATCHDOG_DEV[[:space:]]*=/ { v = $2; gsub(/[[:space:]"\\047]/, "", v); d = v } END { print d }\' "$KONF" 2>/dev/null)',
   '[ -n "$GERAET" ] || GERAET=/dev/watchdog',
+  'if [ ! -c "$GERAET" ] && ! "$MODPROBE" i6300esb; then',
+  '  echo "alfred: Watchdog-Gerät $GERAET fehlt und modprobe i6300esb ist fehlgeschlagen — sbd startet nicht" >&2',
+  '  exit 1',
+  'fi',
   'i=0',
   'while [ "$i" -lt "$GRENZE" ]; do',
   '  if [ -c "$GERAET" ]; then exit 0; fi',
@@ -94,7 +110,7 @@ export const WARTE_WATCHDOG_SKRIPT = [
   'exit 1',
 ].join('\n');
 export const SBD_DROPIN_INHALT = [
-  '# Alfred I8e Paket 2 (fest erzeugt, nicht von Hand ändern): sbd erst nach dem Watchdog-Modul und dem Gerät',
+  '# Alfred I8e Paket 2 (fest erzeugt, nicht von Hand ändern): sbd erst, wenn das Warteskript i6300esb geladen hat und das Gerät da ist',
   '[Unit]',
   'Wants=systemd-modules-load.service',
   'After=systemd-modules-load.service',
@@ -493,7 +509,9 @@ for f in "$HOSTS" "$HOSTS_VORLAGE"; do
   fi
 done
 # ── Watchdog: Modul fest laden, softdog sperren, Kennung und Besitzer nach dem Laden erneut prüfen ──
-inhalt_gleich "$MODLOAD_CONF" "$MODLOAD_SOLL" || { schreibe "$MODLOAD_CONF" 0644 "$MODLOAD_SOLL"; aend modules-load; }
+# Live-Fix 2 (c2e4f56d): modules-load.d lädt i6300esb nie (Ubuntu-Sperrliste, systemd-modules-load „deny-listed (by kmod)“) — die eigene
+# Datei von früher ist irreführend und wird entfernt; beim Start lädt das Warteskript im sbd-Drop-in das Modul ausdrücklich
+if [ -e "$MODLOAD_CONF" ]; then rm -f -- "$MODLOAD_CONF"; aend modules-load-entfernt; fi
 inhalt_gleich "$MODPROBE_CONF" "$MODPROBE_SOLL" || { schreibe "$MODPROBE_CONF" 0644 "$MODPROBE_SOLL"; aend softdog-gesperrt; }
 if [ ! -e "$WD_SYS/watchdog0" ]; then
   aus=$(modprobe i6300esb 2>&1) || abbruch "modprobe i6300esb fehlgeschlagen: $(kurz "$aus")"
@@ -607,7 +625,7 @@ ergebnis "{\\"zustand\\":\\"$Z\\",\\"knoten\\":\\"$ICH\\",\\"rolle\\":\\"$ROLLE\
 
 /**
  * HA-Grundlage je Knoten, idempotent: hosts-Block der drei Knoten, Pakete fest und gehalten (pacemaker, corosync, pcs, sbd,
- * resource-agents-base, mssql-server-ha = SQL-Version, linux-modules-extra des laufenden Kernels), i6300esb laden + modules-load.d,
+ * resource-agents-base, mssql-server-ha = SQL-Version, linux-modules-extra des laufenden Kernels), i6300esb laden (beim Start lädt es das Warteskript im sbd-Drop-in; modules-load.d wirkt wegen Ubuntus Sperrliste nicht und wird entfernt),
  * softdog gesperrt, systemd RuntimeWatchdogSec aus, hacluster-Kennwort aus stdin, HADR an (Neustart nur bei Änderung), nft-Tabelle
  * inet alfred_ha über alfred-hostfw.service. Zeit: LINUX_HA_ZEIT_MS.vorbereiten
  */
@@ -630,7 +648,6 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `SQL1433_JSON=${shQ(JSON.stringify([...k.map(x => x.ip), ...HA_SQL_ZUSATZQUELLEN]))}`,
     `H_ENTFERNT=${shQ(HA_HOSTS_ENTFERNT)}`,
     `UNIT_SOLL=${shQ(HOSTFW_UNIT)}`,
-    `MODLOAD_SOLL=${shQ('# Alfred I8e Paket 2: Hardware-Watchdog für SBD\ni6300esb')}`,
     `MODPROBE_SOLL=${shQ('# Alfred I8e Paket 2: SBD ist einziger Watchdog-Besitzer — kein softdog\nblacklist softdog')}`,
     `SYSTEMD_SOLL=${shQ('# Alfred I8e Paket 2: SBD ist einziger Watchdog-Besitzer\n[Manager]\nRuntimeWatchdogSec=off')}`,
     `WARTE_SOLL=${shQ(WARTE_WATCHDOG_SKRIPT)}`,
