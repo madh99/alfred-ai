@@ -14,7 +14,7 @@ import {
 } from './linux-ha.js';
 import {
   haAgEndpunktSkript, haAgReplikatSkript, haAgAbschlussSkript, haAgEntfernenSkript, pruefeHaAgEndpunkt, pruefeHaAgReplikat, pruefeHaAgAbschluss, pruefeHaAgEntfernen,
-  istOeffentlichesZertifikat, PY_AG_PCS, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
+  istOeffentlichesZertifikat, PY_AG_PCS, HA_AG_BEFEHLE, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
@@ -109,7 +109,7 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
       'nft', 'iptables', 'systemd-run', 'journalctl', 'chpasswd', 'modprobe', 'udevadm', 'getent', 'ss', 'timeout', 'setsid', 'flock', 'python3',
       'apt-get', 'apt-cache', 'apt-mark', 'dpkg-query', 'mssql-conf', 'sqlcmd'];
     const benutzt = KANDIDATEN.filter(k => new RegExp(`(?<![\\w.-])${k.replace(/[-]/g, '\\-')}(?![\\w.-])`).test(skripte));
-    const basis = HA_BEFEHLE.map(b => b.split('/').pop()!);
+    const basis = [...HA_BEFEHLE, ...HA_AG_BEFEHLE].map(b => b.split('/').pop()!);
     expect(benutzt.filter(b => !basis.includes(b)), 'benutzt, aber nicht in HA_BEFEHLE').toEqual([]);
     expect(basis.filter(b => !benutzt.includes(b)), 'in HA_BEFEHLE, aber von keinem Skript benutzt').toEqual([]);
     expect(basis).toContain('crm_mon');
@@ -1547,7 +1547,8 @@ describe('I8e Paket 2 Task 5 — AG-Bausteine (Text, Validatoren)', () => {
 
 /** AG-Bausteine mit nachgebildetem sqlcmd (Antwort je „-- ALFRED-SCHRITT <name>“), pcs, crm_resource, crm_mon, cibadmin, ip */
 const AG_STUBS = String.raw`
-PM_DATEI="$T/secrets/passwd"; WARTE_RUNDEN=3; SYNC_RUNDEN=3
+PM_DATEI="$T/secrets/passwd"; AG_MERK="$T/merk/ag-entfernen.txt"; WARTE_RUNDEN=3; SYNC_RUNDEN=3
+befehl_da() { [ ! -f "$T/fehlt_§{1##*/}" ]; }
 log() { echo "$*" >>"$T/log"; }
 python3() { PYTHONUTF8=1 "$PY" "$@"; }
 eigener_name() { cat "$T/name"; }
@@ -1732,7 +1733,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 — AG-Bausteine ausgefüh
     const en = haAgEntfernenSkript(AG_EN());
     const vorher = `touch "$T/res_ag_cluster" "$T/res_ag_vip"; printf 'x\\n' >"$T/secrets/passwd"; ${sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef', en_drop: 'ALFRED| ag-entfernt',
       en_aufraeumen: 'ALFRED| endpunkt-entfernt zertifikat-entfernt pacemaker-login-entfernt', en_selbst: 'ALFRED|0|alfredpruef=ONLINE' })}`;
-    const w = await agLaeufe([en, en], { sa: GEHEIM.sa }, [vorher, `cp "$T/tsql_en_drop" "$T/drop_a"; ${sqlStub({ en_lage: 'ALFRED|-|-', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|-' })}`], 'ls "$T/secrets"; cat "$T/drop_a"');
+    const w = await agLaeufe([en, en], { sa: GEHEIM.sa }, [vorher, `cp "$T/tsql_en_drop" "$T/drop_a"; ${sqlStub({ en_lage: 'ALFRED|-|-', en_waisen: 'ALFRED|-', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|-' })}`], 'ls "$T/secrets"; cat "$T/drop_a"');
     const [a, b] = w.laeufe as [AgLauf, AgLauf];
     expect(a.rc, a.aus).toBe(0);
     expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource delete ag_vip', 'pcs resource delete ag_cluster']);
@@ -1748,5 +1749,90 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 — AG-Bausteine ausgefüh
     // Primär: eine Datenbank bleibt nach DROP nicht ONLINE → sichtbarer Abbruch (nicht still)
     const r = await agLaeufe([en], { sa: GEHEIM.sa }, [sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef', en_drop: 'ALFRED| ag-entfernt', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|alfredpruef=RESTORING' })]);
     expect(String(r.laeufe[0]!.ergebnis!.fehler)).toContain('alfredpruef=RESTORING');
+  });
+});
+
+// ── Task 5 Fix-Runde 1: abgebrochene T-SQL-Blöcke, wiederholtes Entfernen, sqlcmd nur in den AG-Bausteinen ─────────────────────────
+describe('I8e Paket 2 Task 5 Fix-Runde 1 — Text', () => {
+  it('I2: jede Änderung in einem ändernden T-SQL-Block meldet sich per PRINT ALFRED-ERLEDIGT; JOIN und GRANT getrennt', () => {
+    const un = (t: string) => t.replaceAll(`'\\''`, "'");
+    for (const t of AG_SKRIPTE().map(un)) {
+      const sets = [...t.matchAll(/SET @a \+= '[^']*';/g)].length;
+      expect(sets).toBeGreaterThan(0);
+      expect([...t.matchAll(/PRINT 'ALFRED-ERLEDIGT /g)].length).toBeGreaterThanOrEqual(sets);
+    }
+    const sek = un(haAgReplikatSkript(AG_RP('sqllnx02')));
+    expect(sek).toContain("JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); PRINT 'ALFRED-ERLEDIGT beigetreten'; EXEC (N'ALTER AVAILABILITY GROUP [sqllnxag01] GRANT CREATE ANY DATABASE'); PRINT 'ALFRED-ERLEDIGT seeding-erlaubt';");
+    const en = un(haAgEntfernenSkript(AG_EN()));
+    expect(en).toContain("EXEC (N'DROP AVAILABILITY GROUP [sqllnxag01]'); SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt';");
+    expect(en).toContain("PRINT 'ALFRED-ERLEDIGT db-online-' + CAST(@n AS varchar(128));");
+  });
+  it('I4: sqlcmd steht nicht mehr in HA_BEFEHLE (ha_vorbereiten prüft es nicht), sondern in HA_AG_BEFEHLE der AG-Bausteine', () => {
+    expect(HA_BEFEHLE).not.toContain('/opt/mssql-tools18/bin/sqlcmd');
+    expect(HA_AG_BEFEHLE).toEqual(['/opt/mssql-tools18/bin/sqlcmd']);
+    expect(haVorbereitenSkript(P)).not.toContain('sqlcmd');
+    for (const t of AG_SKRIPTE()) expect(t).toContain("AG_BEFEHLE=('/opt/mssql-tools18/bin/sqlcmd')");
+  });
+});
+
+describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 Fix-Runde 1 — ausgeführt', { timeout: 180_000 }, () => {
+  it('I4: sqlcmd fehlt → Abbruch vor jeder SQL-Zeile mit Hinweis auf linux_sql installieren', async () => {
+    const w = await agLaeufe([haAgEndpunktSkript(AG_EP()), haAgAbschlussSkript(AG_AB)], GEHEIM, ['touch "$T/fehlt_sqlcmd"']);
+    for (const l of w.laeufe) {
+      expect(l.rc).toBe(1);
+      expect(String(l.ergebnis!.fehler)).toContain('/opt/mssql-tools18/bin/sqlcmd fehlt auf sqllnx01 — vorher linux_sql installieren (mssql-tools18); keine SQL-Zeile ausgeführt');
+      expect(l.sqllog).toEqual([]);
+    }
+  });
+
+  it('I2: Block bricht nach wirksamen Anweisungen ab → genau diese stehen im Fehler (nie „nichts geändert“), neue Kennwörter melden ihre Marke', async () => {
+    const fehler = (schritt: string, zeilen: string[]) => `printf '%s\\n' ${zeilen.map(shQTest).join(' ')} >"$T/sqlfehler_${schritt}"`;
+    const rp = await agLaeufe([haAgReplikatSkript(AG_RP())], { sa: GEHEIM.sa }, [
+      `${sqlStub({ rp_pruefen: 'ALFRED|ok' })}\n${fehler('rp_aendern', ['ALFRED-ERLEDIGT login-sqllnx02', 'ALFRED-ERLEDIGT benutzer-sqllnx02', 'Msg 15151, Level 16', 'Cannot grant CONNECT'])}`]);
+    const f = String(rp.laeufe[0]!.ergebnis!.fehler);
+    expect(f).toContain('Replikat (primaer) auf sqllnx01: Msg 15151, Level 16 Cannot grant CONNECT');
+    expect(f).toContain('bisher geändert: login-sqllnx02,benutzer-sqllnx02');
+    expect(f).toContain('mittendrin abgebrochen');
+    expect(f).not.toContain('ALFRED-ERLEDIGT');
+    expect(f).not.toContain('nichts geändert');
+    // en_drop: DROP AG wirksam, RESTORE scheitert
+    const en = await agLaeufe([haAgEntfernenSkript(AG_EN())], { sa: GEHEIM.sa }, [
+      `${sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef' })}\n${fehler('en_drop', ['ALFRED-ERLEDIGT ag-entfernt', 'Msg 3101, Level 16', 'Exclusive access could not be obtained'])}`]);
+    const e = String(en.laeufe[0]!.ergebnis!.fehler);
+    expect(e).toContain('bisher geändert: ag-entfernt');
+    expect(e).not.toContain('nichts geändert');
+    // auch ohne gemeldete Anweisung: „bisher keine Änderung gemeldet“ + Hinweis, nie „nichts geändert“
+    const leer = await agLaeufe([haAgAbschlussSkript(AG_AB)], { sa: GEHEIM.sa }, [`${AB_NEU}\n${fehler('ab_dbs', ['Msg 1475, Level 16', 'database cannot be added'])}`]);
+    const l = String(leer.laeufe[0]!.ergebnis!.fehler);
+    expect(l).toContain('bisher keine Änderung gemeldet; Block „Datenbanken in sqllnxag01 aufnehmen“ mittendrin abgebrochen');
+    expect(l).not.toContain('nichts geändert');
+    // Endpunkt: Pacemaker-Login angelegt, GRANT scheitert → Marke trotzdem (Kennwort kommt in den Tresor)
+    const ep = await agLaeufe([haAgEndpunktSkript(AG_EP())], GEHEIM, [`${EP_NEU}\n${fehler('ep_login', ['ALFRED-ERLEDIGT pacemaker-login', 'Msg 4613, Level 16', 'Grantor does not have GRANT permission'])}`]);
+    expect(ep.laeufe[0]!.aus).toContain('ALFRED-PACEMAKER-GESETZT');
+    expect(String(ep.laeufe[0]!.ergebnis!.fehler)).toContain('bisher geändert: masterkey,pacemaker-login');
+  });
+
+  it('I3: Entfernen bricht nach DROP ab → Wiederholung kennt Rolle und Datenbanken aus der Merkdatei, holt RESTORING zurück bzw. bricht sichtbar ab; ohne Merkdatei Rückfallnetz', async () => {
+    const en = haAgEntfernenSkript(AG_EN());
+    const w = await agLaeufe([en, en, en], { sa: GEHEIM.sa }, [
+      `${sqlStub({ en_lage: 'ALFRED|PRIMARY|alfredpruef' })}\nprintf 'ALFRED-ERLEDIGT ag-entfernt\\nMsg 3101\\n' >"$T/sqlfehler_en_drop"`,
+      // Wiederholung: AG weg (Lage „-|-“), Datenbank noch RESTORING → Abbruch mit Namen
+      `rm -f "$T/sqlfehler_en_drop"; cp "$T/merk/ag-entfernen.txt" "$T/merk_a"; ${sqlStub({ en_lage: 'ALFRED|-|-', en_waisen: 'ALFRED|-', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|alfredpruef=RESTORING' })}`,
+      // dritte: RESTORE gelang (db-online) → ok, Datenbank genannt, Merkdatei weg
+      `cp "$T/tsql_en_drop" "$T/drop_b"; ${sqlStub({ en_drop: 'ALFRED| db-online-alfredpruef', en_selbst: 'ALFRED|0|alfredpruef=ONLINE' })}`,
+    ], 'cat "$T/merk_a"; echo ---DROP; cat "$T/drop_b"; echo ---MERK; ls "$T/merk"');
+    const [a, b, c] = w.laeufe as [AgLauf, AgLauf, AgLauf];
+    expect(a.rc).toBe(1);
+    expect(String(b.ergebnis!.fehler)).toContain('Datenbanken auf dem bisherigen Primär nicht alle ONLINE: alfredpruef=RESTORING');
+    expect(c.rc, c.aus).toBe(0);
+    expect(c.ergebnis).toMatchObject({ zustand: 'geaendert', rolleVorher: 'PRIMARY', datenbanken: [{ name: 'alfredpruef', zustand: 'ONLINE' }], aenderungen: ['db-online-alfredpruef'] });
+    const [merk, rest] = w.ende.split('---DROP\n') as [string, string];
+    expect(merk.trim()).toBe('PRIMARY|alfredpruef');
+    expect(rest).toContain("IF 'PRIMARY' = 'PRIMARY'");
+    expect(rest).toContain("WHERE s.name IN (N'alfredpruef')");
+    expect(rest.split('---MERK\n')[1]!.trim()).toBe('');
+    // ohne Merkdatei: RESTORING-Datenbank ohne AG auf dem Primär → Abbruch, nie still „schon“
+    const o = await agLaeufe([en], { sa: GEHEIM.sa }, [sqlStub({ en_lage: 'ALFRED|-|-', en_waisen: 'ALFRED|alfredpruef', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|-' })]);
+    expect(String(o.laeufe[0]!.ergebnis!.fehler)).toContain('Datenbanken ohne AG im Zustand RESTORING (alfredpruef)');
   });
 });

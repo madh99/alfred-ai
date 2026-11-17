@@ -268,6 +268,14 @@ function agEntfernenBesetzung(zugang: string, input: Record<string, unknown>): {
   return { ag, besetzung };
 }
 
+/** Fix-Runde 1 (I1): abgeschlossene Läufe und neue Tresor-Einträge eines AG-Laufs — auch für die Fehlermeldung bei Abbruch */
+interface AgSpur { laeufe: Array<{ z: string; zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>; tresor: string[] }
+
+/** sa-Tresoreinträge der Zugänge vorhanden — sonst Abbruch vor jedem Fernaufruf */
+function saPruefen(namen: Set<string>, zugaenge: string[]): void {
+  for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+}
+
 /** „sqllnx01: a, b; sqllnx02: c“ — nur Läufe mit Änderungen */
 const jeKnoten = (liste: Array<{ z: string; aenderungen?: string[] }>) => liste.filter(x => x.aenderungen?.length).map(x => `${x.z}: ${x.aenderungen!.join(', ')}`).join('; ');
 
@@ -462,11 +470,21 @@ export class LinuxHaSkill extends Skill {
     return { success: true, data: r, display: `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
   }
 
+  /**
+   * Fix-Runde 1 (I1): bricht ein AG-Lauf auf Knoten n ab, nennt der Fehler zusätzlich alles, was die abgeschlossenen Läufe davor geändert
+   * haben (je Knoten) und neue Tresor-Einträge — der Lauf auf Knoten n nennt seine eigenen Änderungen selbst. Auch protokolliert.
+   */
+  private mitSpur(was: string, zugang: string, err: unknown, spur: AgSpur, geheim: string[]): Error {
+    const grund = (err as Error).message;
+    const bisher = jeKnoten(spur.laeufe);
+    this.d.protokoll?.(`I8e ${was} abgebrochen`, { zugang, fehler: schwaerze(grund, geheim).slice(0, 500), laeufe: spur.laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen })), tresorNeu: spur.tresor });
+    return new Error(`${grund} — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''}`);
+  }
+
   /** sa-Kennwörter der drei Zugänge (Paket 1, linux_sql installieren) — fehlt eines, kein Fernaufruf */
   private async saKennwoerter(zugaenge: string[], zweck: string, geheim: string[]): Promise<Record<string, string>> {
     const t = this.tresor();
-    const namen = await t.namen();
-    for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+    saPruefen(await t.namen(), zugaenge);
     const sa: Record<string, string> = {};
     for (const z of zugaenge) { sa[z] = await t.lies(saName(z), `${zweck} ${z}`); geheim.push(sa[z]!); }
     return sa;
@@ -478,13 +496,18 @@ export class LinuxHaSkill extends Skill {
    * dem Primär. Neue Kennwörter (Pacemaker-Login, Master-Key je Knoten) kommen in den Tresor, sobald der Knoten sie gesetzt meldet.
    */
   private async agAnlegen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const spur: AgSpur = { laeufe: [], tresor: [] };
+    try { return await this.agAnlegenLauf(zugang, input, geheim, spur); } catch (err) { throw this.mitSpur('Verfügbarkeitsgruppe anlegen', zugang, err, spur, geheim); }
+  }
+
+  private async agAnlegenLauf(zugang: string, input: Record<string, unknown>, geheim: string[], spur: AgSpur): Promise<SkillResult> {
     const ab = agAnlegenParameter(zugang, input);
     const b = ab.besetzung;
     const zugaenge = HA_AG_ROLLEN.map(r => b[r]);
     const t = this.tresor();
     const namen = await t.namen();
     // sa-Einträge vorab (ohne Lesen) — fehlt einer, gar kein Fernaufruf
-    for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+    saPruefen(namen, zugaenge);
     // ── 0: Fencing-Gate (nur lesend, ohne Geheimnis) — erst wenn alle drei Knoten belegt sind, läuft irgendeine SQL-Zeile ──
     const maengel: string[] = [];
     for (const z of zugaenge) {
@@ -511,7 +534,7 @@ export class LinuxHaSkill extends Skill {
       geheim.push(mk[z]!.wert);
     }
     const knoten = () => HA_KNOTEN.map(k => ({ ...k }));
-    const laeufe: Array<{ z: string; zustand: string; aenderungen?: string[] }> = [];
+    const laeufe = spur.laeufe;
     // ── 1: Endpunkt je Knoten ──
     const ep: Record<string, { zertifikat: string; fingerabdruck: string }> = {};
     for (const rolle of HA_AG_ROLLEN) {
@@ -523,8 +546,8 @@ export class LinuxHaSkill extends Skill {
       const marken = new Set(roh.stdout.split(/\r?\n/).map(x => x.trim()));
       const zustand = haErgebnis<{ zustand?: string }>(roh.stdout)?.zustand;
       const ok = roh.code === 0 && zustand !== undefined && zustand !== 'fehler';
-      if (mk[z]!.neu && (ok || marken.has('ALFRED-MASTERKEY-GESETZT'))) { await t.setze(haMasterkeyTresor(z), mk[z]!.wert, `Master-Key-Kennwort (master) von SQL Server auf ${z} (Verfügbarkeitsgruppe ${ab.ag})`); mk[z]!.neu = false; }
-      if (pmNeu && (ok || marken.has('ALFRED-PACEMAKER-GESETZT'))) { await t.setze(HA_PACEMAKER_TRESOR, pm, `Kennwort des SQL-Logins alfred_pacemaker (Pacemaker-Resource-Agent, ${zugaenge.join(', ')})`); pmNeu = false; }
+      if (mk[z]!.neu && (ok || marken.has('ALFRED-MASTERKEY-GESETZT'))) { await t.setze(haMasterkeyTresor(z), mk[z]!.wert, `Master-Key-Kennwort (master) von SQL Server auf ${z} (Verfügbarkeitsgruppe ${ab.ag})`); mk[z]!.neu = false; spur.tresor.push(haMasterkeyTresor(z)); }
+      if (pmNeu && (ok || marken.has('ALFRED-PACEMAKER-GESETZT'))) { await t.setze(HA_PACEMAKER_TRESOR, pm, `Kennwort des SQL-Logins alfred_pacemaker (Pacemaker-Resource-Agent, ${zugaenge.join(', ')})`); pmNeu = false; spur.tresor.push(HA_PACEMAKER_TRESOR); }
       const r = this.pruefeLauf<{ zustand: string; zertifikat?: unknown; fingerabdruck?: unknown; aenderungen?: string[] }>(z, `AG-Endpunkt ${z}`, roh);
       // nur ein öffentliches Zertifikat wird weitergegeben — alles andere bricht vor dem Austausch ab
       if (!istOeffentlichesZertifikat(r.zertifikat) || typeof r.fingerabdruck !== 'string' || !/^[0-9A-F]{40,64}$/.test(r.fingerabdruck)) {
@@ -565,10 +588,15 @@ export class LinuxHaSkill extends Skill {
 
   /** Rückweg von ag_anlegen: zuerst der Primär (mit den Pacemaker-Ressourcen), dann Sekundär und Konfig — Datenbanken bleiben */
   private async agEntfernen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const spur: AgSpur = { laeufe: [], tresor: [] };
+    try { return await this.agEntfernenLauf(zugang, input, geheim, spur); } catch (err) { throw this.mitSpur('Verfügbarkeitsgruppe entfernen', zugang, err, spur, geheim); }
+  }
+
+  private async agEntfernenLauf(zugang: string, input: Record<string, unknown>, geheim: string[], spur: AgSpur): Promise<SkillResult> {
     const { ag, besetzung: b } = agEntfernenBesetzung(zugang, input);
     const zugaenge = HA_AG_ROLLEN.map(r => b[r]);
     const sa = await this.saKennwoerter(zugaenge, 'AG entfernen', geheim);
-    const laeufe: Array<{ z: string; zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }> = [];
+    const laeufe = spur.laeufe;
     for (const rolle of HA_AG_ROLLEN) {
       const z = b[rolle];
       const p: HaAgEntfernenParameter = { ag, besetzung: { ...b }, rolle, knoten: HA_KNOTEN.map(k => ({ ...k })), ressourcen: rolle === 'primaer' };

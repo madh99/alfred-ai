@@ -13,7 +13,9 @@ function welt(antworten: Record<string, Array<Record<string, unknown> | { code: 
   const aufrufe: Aufruf[] = [];
   const tresor = new Map<string, string>(Object.entries(tresorDa));
   const gesetzt: Array<{ name: string; wert: string; zweck: string }> = [];
+  const protokolle: Array<{ msg: string; daten: Record<string, unknown> }> = [];
   const skill = new LinuxHaSkill({
+    protokoll: (msg, daten) => { protokolle.push({ msg, daten }); },
     skript: async (zugang, baustein, parameter, eingabe, timeoutMs, zweck) => {
       aufrufe.push({ zugang, baustein, parameter, ...(eingabe !== undefined ? { eingabe } : {}), timeoutMs, zweck });
       const liste = antworten[baustein] ?? [];
@@ -28,7 +30,7 @@ function welt(antworten: Record<string, Array<Record<string, unknown> | { code: 
       setze: async (name, wert, zweck) => { gesetzt.push({ name, wert, zweck }); tresor.set(name, wert); },
     },
   });
-  return { skill, aufrufe, tresor, gesetzt };
+  return { skill, aufrufe, tresor, gesetzt, protokolle };
 }
 
 const SOLL = { pacemaker: '2.1.6-5ubuntu2', 'pacemaker-cli-utils': '2.1.6-5ubuntu2', corosync: '3.1.7-1ubuntu3.2', pcs: '0.11.7-1ubuntu1.1', sbd: '1.5.2-2ubuntu2', 'resource-agents-base': '1:4.13.0-1ubuntu4.2', 'mssql-server-ha': '17.0.4006.2-1' };
@@ -582,6 +584,45 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     expect(w.aufrufe[0]!.timeoutMs).toBe(300_000);
     expect(r.display).toBe('✅ Verfügbarkeitsgruppe sqllnxag01 entfernt (Pacemaker-Ressourcen ag_cluster/ag_vip, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei; Master-Keys bleiben); Datenbanken bleiben: sqllnx01 alfredpruef ONLINE; sqllnx02 alfredpruef RESTORING — geändert: sqllnx01: ag-entfernt, endpunkt-entfernt; sqllnx02: ag-entfernt, endpunkt-entfernt; sqllnxcfg: ag-entfernt, endpunkt-entfernt');
     expect((await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange)).display).toContain('— nichts zu tun');
+  });
+});
+
+describe('I8e Paket 2 Task 5 Fix-Runde 1 — Abbruch mittendrin nennt alles bisher Geänderte (I1)', () => {
+  const voll = (extra: Record<string, unknown[]> = {}) => welt({
+    [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[],
+    [LINUX_HA_BAUSTEINE.agEndpunkt]: [endpunkt('sqllnx01'), endpunkt('sqllnx02'), endpunkt('sqllnxcfg')],
+    [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer'), replikat('sqllnx02', 'sekundaer'), replikat('sqllnxcfg', 'konfig')],
+    [LINUX_HA_BAUSTEINE.agAbschluss]: [ABSCHLUSS],
+    ...extra as Record<string, never[]>,
+  }, AG_TRESOR);
+
+  it('ag_anlegen: Replikat auf sqllnx02 scheitert → Fehler nennt die Änderungen der Endpunkt-Läufe und des Primärs, neue Tresor-Einträge; protokolliert', async () => {
+    const w = voll({ [LINUX_HA_BAUSTEINE.agReplikat]: [replikat('sqllnx01', 'primaer'), { zustand: 'fehler', fehler: 'Replikat (sekundaer) auf sqllnx02: JOIN scheitert — bisher geändert: login-sqllnx01' }] });
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('JOIN scheitert — bisher geändert: login-sqllnx01');
+    expect(r.error).toContain('— vorherige Läufe bisher geändert: sqllnx01: zertifikat, endpunkt, pacemaker-login, pacemaker-zugangsdatei; sqllnx02: zertifikat, endpunkt');
+    expect(r.error).toContain('sqllnx01: ag-angelegt');
+    expect(r.error).toContain('neu im Tresor: sqllnx-sqllnx01-masterkey, sqllnx-ha-pacemaker, sqllnx-sqllnx02-masterkey, sqllnx-sqllnxcfg-masterkey');
+    const p = w.protokolle.find(x => x.msg === 'I8e Verfügbarkeitsgruppe anlegen abgebrochen');
+    expect(p?.daten).toMatchObject({ zugang: 'sqllnx01', tresorNeu: ['sqllnx-sqllnx01-masterkey', 'sqllnx-ha-pacemaker', 'sqllnx-sqllnx02-masterkey', 'sqllnx-sqllnxcfg-masterkey'] });
+    expect((p!.daten.laeufe as unknown[]).length).toBe(4);
+    for (const g of [...w.tresor.values()]) expect(JSON.stringify([r, w.protokolle])).not.toContain(g);
+  });
+  it('ag_anlegen: eigene Selbstprüfung scheitert nach allen Läufen → Fehler nennt alle zehn Läufe mit Änderungen', async () => {
+    const r = await voll({ [LINUX_HA_BAUSTEINE.agAbschluss]: [{ ...ABSCHLUSS, requiredSyncRessource: '1' }] }).skill.execute(AG_EINGABE, imChange);
+    expect(r.error).toContain('Selbstprüfung der Verfügbarkeitsgruppe');
+    expect(r.error).toContain('sqllnx01: db-alfredpruef, ressource-ag, ressource-vip, kolokation, reihenfolge, vip-aktiviert');
+  });
+  it('ag_anlegen: Fencing-Gate → „vorherige Läufe bisher geändert: nichts“; ag_entfernen: Abbruch auf sqllnx02 nennt das auf dem Primär Entfernte', async () => {
+    const st = [...STATUS_3]; st[1] = statusAg('sqllnx02', '2', { fencing: undefined }) as never;
+    const g = await voll({ [LINUX_HA_BAUSTEINE.status]: st }).skill.execute(AG_EINGABE, imChange);
+    expect(g.error).toContain('keine SQL-Zeile ausgeführt, nichts geändert — vorherige Läufe bisher geändert: nichts');
+    const w = welt({ [LINUX_HA_BAUSTEINE.agEntfernen]: [{ zustand: 'geaendert', knoten: 'sqllnx01', datenbanken: [{ name: 'alfredpruef', zustand: 'ONLINE' }], aenderungen: ['ressource-vip-entfernt', 'ressource-ag-entfernt', 'ag-entfernt'] },
+      { zustand: 'fehler', fehler: 'Endpunkt auf sqllnx02 nicht entfernbar' }] }, AG_TRESOR);
+    const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange);
+    expect(r.error).toContain('Endpunkt auf sqllnx02 nicht entfernbar — vorherige Läufe bisher geändert: sqllnx01: ressource-vip-entfernt, ressource-ag-entfernt, ag-entfernt');
+    expect(w.protokolle.some(x => x.msg === 'I8e Verfügbarkeitsgruppe entfernen abgebrochen')).toBe(true);
   });
 });
 

@@ -40,9 +40,14 @@ export const HA_PAKETE: ReadonlyArray<[keyof HaVersionen, string]> = [
 export const HA_BEFEHLE: readonly string[] = [
   'pcs', 'crm_mon', 'crm_attribute', 'corosync-quorumtool', 'corosync-cmapctl', 'sbd', 'nft', 'systemd-run', 'journalctl',
   'chpasswd', 'modprobe', 'udevadm', 'getent', 'ss', 'timeout', 'python3', 'apt-get', 'apt-cache', 'apt-mark', 'dpkg-query', '/opt/mssql/bin/mssql-conf',
-  // Task 5 (Verfügbarkeitsgruppe): Ressourcen-Parameter und Constraints lesen, T-SQL als sa (mssql-tools18 aus Paket 1)
-  'crm_resource', 'cibadmin', '/opt/mssql-tools18/bin/sqlcmd',
+  // Task 5 (Verfügbarkeitsgruppe): Ressourcen-Parameter und Constraints lesen (pacemaker-cli-utils, von ha_vorbereiten installiert)
+  'crm_resource', 'cibadmin',
 ];
+/**
+ * Task 5 — Programme nur der AG-Bausteine, die NICHT ha_vorbereiten installiert: sqlcmd (mssql-tools18, von linux_sql installieren auf
+ * jedem Knoten, auch sqllnxcfg). Geprüft nur in den ag_*-Bausteinen vor der ersten SQL-Zeile — ha_vorbereiten bleibt davon unabhängig.
+ */
+export const HA_AG_BEFEHLE: readonly string[] = ['/opt/mssql-tools18/bin/sqlcmd'];
 /** Global Constraints I8e Paket 2: die drei Knoten im VLAN 830 */
 export const HA_KNOTEN: readonly HaKnoten[] = [
   { name: 'sqllnx01', ip: '10.203.30.10' }, { name: 'sqllnx02', ip: '10.203.30.11' }, { name: 'sqllnxcfg', ip: '10.203.30.12' },
@@ -1918,23 +1923,23 @@ function tsqlEndpunkt(ich: string): Record<'pruefen' | 'masterkey' | 'login' | '
     masterkey: [
       AG_KOPF('ep_masterkey'),
       'DECLARE @neu int = 0;',
-      `IF NOT ${mkDa} BEGIN CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'@@HS@@'; SET @neu = 1; END`,
+      `IF NOT ${mkDa} BEGIN CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'@@HS@@'; SET @neu = 1; PRINT 'ALFRED-ERLEDIGT masterkey'; END`,
       "SELECT 'ALFRED|' + CAST(@neu AS varchar(1));",
     ].join('\n'),
     login: [
       AG_KOPF('ep_login'),
       "DECLARE @neu int = 0, @a varchar(400) = '';",
-      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') BEGIN CREATE LOGIN [${PML}] WITH PASSWORD = N'@@PM@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @neu = 1; SET @a += ' pacemaker-login'; END`,
-      `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${PML}') = 1 BEGIN ALTER LOGIN [${PML}] ENABLE; SET @a += ' pacemaker-login-aktiviert'; END`,
-      `IF NOT ${vssDa} BEGIN GRANT VIEW SERVER STATE TO [${PML}]; SET @a += ' pacemaker-view-server-state'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') BEGIN CREATE LOGIN [${PML}] WITH PASSWORD = N'@@PM@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @neu = 1; SET @a += ' pacemaker-login'; PRINT 'ALFRED-ERLEDIGT pacemaker-login'; END`,
+      `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${PML}') = 1 BEGIN ALTER LOGIN [${PML}] ENABLE; SET @a += ' pacemaker-login-aktiviert'; PRINT 'ALFRED-ERLEDIGT pacemaker-login-aktiviert'; END`,
+      `IF NOT ${vssDa} BEGIN GRANT VIEW SERVER STATE TO [${PML}]; SET @a += ' pacemaker-view-server-state'; PRINT 'ALFRED-ERLEDIGT pacemaker-view-server-state'; END`,
       "SELECT 'ALFRED|' + CAST(@neu AS varchar(1)) + '|' + LTRIM(@a);",
     ].join('\n'),
     endpunkt: [
       AG_KOPF('ep_endpunkt'),
       "DECLARE @a varchar(400) = '', @sql nvarchar(max);",
-      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}') BEGIN SET @sql = N'CREATE CERTIFICATE [${zn(ich)}] WITH SUBJECT = N''Alfred AG-Endpunkt ${ich}'', EXPIRY_DATE = ''20361231'''; EXEC (@sql); SET @a += ' zertifikat'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN SET @sql = N'CREATE ENDPOINT [${EPN}] STATE = STARTED AS TCP (LISTENER_PORT = ${HA_AG_PORT}, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE [${zn(ich)}], ENCRYPTION = REQUIRED ALGORITHM AES)'; EXEC (@sql); SET @a += ' endpunkt'; END`,
-      `IF (SELECT state_desc FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') <> N'STARTED' BEGIN EXEC (N'ALTER ENDPOINT [${EPN}] STATE = STARTED'); SET @a += ' endpunkt-gestartet'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}') BEGIN SET @sql = N'CREATE CERTIFICATE [${zn(ich)}] WITH SUBJECT = N''Alfred AG-Endpunkt ${ich}'', EXPIRY_DATE = ''20361231'''; EXEC (@sql); SET @a += ' zertifikat'; PRINT 'ALFRED-ERLEDIGT zertifikat'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN SET @sql = N'CREATE ENDPOINT [${EPN}] STATE = STARTED AS TCP (LISTENER_PORT = ${HA_AG_PORT}, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE [${zn(ich)}], ENCRYPTION = REQUIRED ALGORITHM AES)'; EXEC (@sql); SET @a += ' endpunkt'; PRINT 'ALFRED-ERLEDIGT endpunkt'; END`,
+      `IF (SELECT state_desc FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') <> N'STARTED' BEGIN EXEC (N'ALTER ENDPOINT [${EPN}] STATE = STARTED'); SET @a += ' endpunkt-gestartet'; PRINT 'ALFRED-ERLEDIGT endpunkt-gestartet'; END`,
       "SELECT 'ALFRED|' + LTRIM(@a);",
     ].join('\n'),
     selbst: [
@@ -1989,27 +1994,27 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
     "DECLARE @a varchar(1000) = '', @sql nvarchar(max);",
     // Login (Kennwort unbekannt, nie ausgegeben — die Anmeldung läuft nur über das Zertifikat), Benutzer, öffentliches Zertifikat, CONNECT
     ...p.peers.flatMap(x => [
-      `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); SET @a += ' login-${x.name}'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE USER [${zn(x.name)}] FOR LOGIN [${zn(x.name)}]'); SET @a += ' benutzer-${x.name}'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE CERTIFICATE [${zn(x.name)}] AUTHORIZATION [${zn(x.name)}] FROM BINARY = 0x${x.zertifikat}'); SET @a += ' zertifikat-${x.name}'; END`,
-      `IF NOT ${connectDa(x.name)} BEGIN EXEC (N'GRANT CONNECT ON ENDPOINT::[${EPN}] TO [${zn(x.name)}]'); SET @a += ' connect-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); SET @a += ' login-${x.name}'; PRINT 'ALFRED-ERLEDIGT login-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE USER [${zn(x.name)}] FOR LOGIN [${zn(x.name)}]'); SET @a += ' benutzer-${x.name}'; PRINT 'ALFRED-ERLEDIGT benutzer-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE CERTIFICATE [${zn(x.name)}] AUTHORIZATION [${zn(x.name)}] FROM BINARY = 0x${x.zertifikat}'); SET @a += ' zertifikat-${x.name}'; PRINT 'ALFRED-ERLEDIGT zertifikat-${x.name}'; END`,
+      `IF NOT ${connectDa(x.name)} BEGIN EXEC (N'GRANT CONNECT ON ENDPOINT::[${EPN}] TO [${zn(x.name)}]'); SET @a += ' connect-${x.name}'; PRINT 'ALFRED-ERLEDIGT connect-${x.name}'; END`,
     ]),
     ...(rolle === 'primaer' ? [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'${anlegen}'); SET @a += ' ag-angelegt'; END`,
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'${anlegen}'); SET @a += ' ag-angelegt'; PRINT 'ALFRED-ERLEDIGT ag-angelegt'; END`,
       'ELSE',
       'BEGIN',
-      `  IF (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)'); SET @a += ' required-sync-0'; END`,
-      `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); SET @a += ' sicherungsvorgabe-primary'; END`,
+      `  IF (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)'); SET @a += ' required-sync-0'; PRINT 'ALFRED-ERLEDIGT required-sync-0'; END`,
+      `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); SET @a += ' sicherungsvorgabe-primary'; PRINT 'ALFRED-ERLEDIGT sicherungsvorgabe-primary'; END`,
       'END',
     ] : rolle === 'sekundaer' ? [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' beigetreten seeding-erlaubt'; END`,
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); PRINT 'ALFRED-ERLEDIGT beigetreten'; EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; SET @a += ' beigetreten seeding-erlaubt'; END`,
       // nach einem abgebrochenen Lauf: Datenbanken der AG fehlen hier noch → Seeding (wieder) erlauben, sichtbar
       `ELSE IF EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND DB_ID(c.database_name) IS NULL)`,
-      `  BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' seeding-erlaubt'; END`,
+      `  BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' seeding-erlaubt'; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; END`,
     ] : [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); SET @a += ' beigetreten'; END`,
+      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); SET @a += ' beigetreten'; PRINT 'ALFRED-ERLEDIGT beigetreten'; END`,
     ]),
-    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 BEGIN EXEC (N'GRANT ALTER, CONTROL, VIEW DEFINITION ON AVAILABILITY GROUP::[${ag}] TO [${PML}]'); SET @a += ' pacemaker-ag-rechte'; END`,
+    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 BEGIN EXEC (N'GRANT ALTER, CONTROL, VIEW DEFINITION ON AVAILABILITY GROUP::[${ag}] TO [${PML}]'); SET @a += ' pacemaker-ag-rechte'; PRINT 'ALFRED-ERLEDIGT pacemaker-ag-rechte'; END`,
     "SELECT 'ALFRED|' + LTRIM(@a);",
   ].join('\n');
   const selbst = [
@@ -2059,7 +2064,7 @@ function tsqlAbschluss(p: HaAgAbschlussParameter): Record<'pruefen' | 'dbs' | 's
     dbs: [
       AG_KOPF('ab_dbs'),
       "DECLARE @a varchar(2000) = '';",
-      ...datenbanken.map(d => `IF NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND c.database_name = N'${d}') BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] ADD DATABASE [${d}]'); SET @a += ' db-${d}'; END`),
+      ...datenbanken.map(d => `IF NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND c.database_name = N'${d}') BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] ADD DATABASE [${d}]'); SET @a += ' db-${d}'; PRINT 'ALFRED-ERLEDIGT db-${d}'; END`),
       "SELECT 'ALFRED|' + @a;",
     ].join('\n'),
     sync: [
@@ -2082,13 +2087,18 @@ function tsqlAbschluss(p: HaAgAbschlussParameter): Record<'pruefen' | 'dbs' | 's
   };
 }
 
-function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'drop' | 'aufraeumen' | 'selbst', string> {
+function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'drop' | 'aufraeumen' | 'selbst', string> {
   const { ag, besetzung: b, rolle, knoten } = p;
   const ich = b[rolle];
   const peers = knoten.map(k => k.name).filter(n => n !== ich);
   const weg = (art: 'CERTIFICATE' | 'USER' | 'LOGIN', katalog: string, name: string, kennung: string) =>
-    `IF EXISTS (SELECT 1 FROM ${katalog} WHERE name = N'${name}') BEGIN EXEC (N'DROP ${art} [${name}]'); SET @a += ' ${kennung}'; END`;
+    `IF EXISTS (SELECT 1 FROM ${katalog} WHERE name = N'${name}') BEGIN EXEC (N'DROP ${art} [${name}]'); SET @a += ' ${kennung}'; PRINT 'ALFRED-ERLEDIGT ${kennung}'; END`;
   return {
+    // Fix-Runde 1 (I3): Datenbanken im Zustand RESTORING ohne AG (Wiederholung auf dem Primär ohne Merkdatei — nie still übergehen)
+    waisen: [
+      AG_KOPF('en_waisen'),
+      "SELECT 'ALFRED|' + ISNULL((SELECT STRING_AGG(CAST(name AS varchar(200)), ',') WITHIN GROUP (ORDER BY name) FROM sys.databases WHERE state_desc = N'RESTORING' AND replica_id IS NULL), '-');",
+    ].join('\n'),
     lage: [
       AG_KOPF('en_lage'),
       `SELECT 'ALFRED|' + ISNULL(${lokaleRolle(ag)}, CASE WHEN ${agDa(ag)} THEN 'UNBEKANNT' ELSE '-' END) + '|'`,
@@ -2100,12 +2110,14 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'drop' | 'auf
       "DECLARE @a varchar(2000) = '', @n sysname, @sql nvarchar(max);",
       'DECLARE @dbs TABLE (n sysname);',
       `INSERT @dbs (n) SELECT c.database_name FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}';`,
-      `IF ${agDa(ag)} BEGIN EXEC (N'DROP AVAILABILITY GROUP [${ag}]'); SET @a += ' ag-entfernt'; END`,
+      // Fix-Runde 1 (I3): dazu die gemerkten Datenbanken eines früheren, nach DROP abgebrochenen Laufs (@@DBS@@ aus der Merkdatei)
+      "INSERT @dbs (n) SELECT s.name FROM sys.databases s WHERE s.name IN (@@DBS@@) AND NOT EXISTS (SELECT 1 FROM @dbs x WHERE x.n = s.name COLLATE DATABASE_DEFAULT);",
+      `IF ${agDa(ag)} BEGIN EXEC (N'DROP AVAILABILITY GROUP [${ag}]'); SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt'; END`,
       "IF '@@ROLLE@@' = 'PRIMARY'",
       'BEGIN',
-      "  DECLARE d CURSOR LOCAL FAST_FORWARD FOR SELECT x.n FROM @dbs x JOIN sys.databases s ON s.name = x.n COLLATE DATABASE_DEFAULT WHERE s.state_desc = N'RESTORING';",
+      "  DECLARE d CURSOR LOCAL FAST_FORWARD FOR SELECT x.n FROM @dbs x JOIN sys.databases s ON s.name = x.n COLLATE DATABASE_DEFAULT WHERE s.state_desc = N'RESTORING' AND s.replica_id IS NULL;",
       '  OPEN d; FETCH NEXT FROM d INTO @n;',
-      "  WHILE @@FETCH_STATUS = 0 BEGIN SET @sql = N'RESTORE DATABASE ' + QUOTENAME(@n) + N' WITH RECOVERY'; EXEC (@sql); SET @a += ' db-online-' + CAST(@n AS varchar(128)); FETCH NEXT FROM d INTO @n; END",
+      "  WHILE @@FETCH_STATUS = 0 BEGIN SET @sql = N'RESTORE DATABASE ' + QUOTENAME(@n) + N' WITH RECOVERY'; EXEC (@sql); SET @a += ' db-online-' + CAST(@n AS varchar(128)); PRINT 'ALFRED-ERLEDIGT db-online-' + CAST(@n AS varchar(128)); FETCH NEXT FROM d INTO @n; END",
       '  CLOSE d; DEALLOCATE d;',
       'END',
       "SELECT 'ALFRED|' + LTRIM(@a);",
@@ -2114,7 +2126,7 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'drop' | 'auf
       AG_KOPF('en_aufraeumen'),
       "DECLARE @a varchar(2000) = '';",
       `IF ${agDa(ag)} THROW 50401, N'${ag} besteht noch - Endpunkt und Zertifikate bleiben', 1;`,
-      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN EXEC (N'DROP ENDPOINT [${EPN}]'); SET @a += ' endpunkt-entfernt'; END`,
+      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN EXEC (N'DROP ENDPOINT [${EPN}]'); SET @a += ' endpunkt-entfernt'; PRINT 'ALFRED-ERLEDIGT endpunkt-entfernt'; END`,
       ...peers.flatMap(n => [weg('CERTIFICATE', 'sys.certificates', zn(n), `zertifikat-${n}-entfernt`), weg('USER', 'sys.database_principals', zn(n), `benutzer-${n}-entfernt`), weg('LOGIN', 'sys.server_principals', zn(n), `login-${n}-entfernt`)]),
       weg('CERTIFICATE', 'sys.certificates', zn(ich), 'zertifikat-entfernt'),
       weg('LOGIN', 'sys.server_principals', PML, 'pacemaker-login-entfernt'),
@@ -2165,12 +2177,21 @@ const AG_PFADE = [
   'SYNC_RUNDEN=150',
 ];
 
-const AG_HILFEN = sh(String.raw`GEAENDERT=0; AJ=''; ZEILE=''
+const AG_HILFEN = sh(String.raw`GEAENDERT=0; AJ=''; ZEILE=''; UNSICHER=''
 SA=''; HS=''; PM=''; HS_SQL=''; PM_SQL=''
 aend() { GEAENDERT=1; AJ+="§{AJ:+,}\"$1\""; }
-stand() { if [ "$GEAENDERT" = 1 ]; then printf 'bisher geändert: %s' "$(printf '%s' "$AJ" | tr -d '"')"; else printf 'nichts geändert'; fi; }
+# Stand für Fehlermeldungen: jede gemeldete Änderung; brach ein ändernder T-SQL-Block ab, steht das dabei (dann nie „nichts geändert“)
+stand() {
+  local t='nichts geändert'
+  if [ "$GEAENDERT" = 1 ]; then t="bisher geändert: $(printf '%s' "$AJ" | tr -d '"')"; elif [ -n "$UNSICHER" ]; then t='bisher keine Änderung gemeldet'; fi
+  if [ -n "$UNSICHER" ]; then t+="; $UNSICHER"; fi
+  printf '%s' "$t"
+}
 eigener_name() { hostname -s; }
-schwaerze_geheim() { local t=$1 g; for g in "$SA" "$HS" "$PM"; do if [ §{#g} -ge 4 ]; then t=§{t//"$g"/[geschwärzt]}; fi; done; printf '%s' "$t"; }
+# Geheimnisse wörtlich aus Fehlertexten entfernen — roh und in der T-SQL-Form (' verdoppelt; beim Tresor-Alphabet ohne ' identisch)
+schwaerze_geheim() { local t=$1 g; for g in "$SA" "$HS" "$PM" "$HS_SQL" "$PM_SQL"; do if [ §{#g} -ge 4 ]; then t=§{t//"$g"/[geschwärzt]}; fi; done; printf '%s' "$t"; }
+# im abgebrochenen Block schon ausgeführte Anlage mit neuem Kennwort → dieselbe Marke wie im Erfolgsfall (der Skill legt es in den Tresor)
+erledigt_marke() { case "$1" in masterkey) echo ALFRED-MASTERKEY-GESETZT ;; pacemaker-login) echo ALFRED-PACEMAKER-GESETZT ;; esac; }
 # Geheimnis aus der ersten stdin-Zeile (JSON-Feld $1) in die Variable $2 — nur druckbare Zeichen, nie Befehlszeile oder Ausgabe
 geheim_lesen() {
   local v
@@ -2182,14 +2203,29 @@ geheim_lesen() {
 # Kennwörter für T-SQL (' verdoppelt) und Einsetzen in die Vorlagen (@@HS@@ Master-Key, @@PM@@ Pacemaker-Login)
 geheim_sql() { local q="'"; HS_SQL=§{HS//"$q"/"$q$q"}; PM_SQL=§{PM//"$q"/"$q$q"}; }
 mit_geheim() { local t=$1; t=§{t//@@HS@@/"$HS_SQL"}; t=§{t//@@PM@@/"$PM_SQL"}; printf '%s' "$t"; }
-# T-SQL ausführen; Ergebniszeile „ALFRED|…“ in ZEILE, sonst sichtbarer Abbruch (Ausgabe geschwärzt)
+# T-SQL ausführen; Ergebniszeile „ALFRED|…“ in ZEILE, sonst sichtbarer Abbruch (Ausgabe geschwärzt). $3 = aendernd: sqlcmd -b bricht
+# beim ersten Fehler ab, frühere Anweisungen des Blocks sind ohne Transaktion wirksam — jede meldet sich per PRINT „ALFRED-ERLEDIGT <x>“
+# und steht dann in den Änderungen; der Abbruch sagt zusätzlich, dass der Block mittendrin endete
 sql_lauf() {
-  local a
-  a=$(sql "$1" 2>&1) || abbruch "$2: $(kurz "$(schwaerze_geheim "$a")") — $(stand)"
+  local a x
+  if ! a=$(sql "$1" 2>&1); then
+    if [ "§{3:-}" = aendernd ]; then
+      for x in $(printf '%s\n' "$a" | sed -n 's/^ALFRED-ERLEDIGT //p' | tr -d '\r'); do aend "$x"; erledigt_marke "$x"; done
+      UNSICHER="Block „$2“ mittendrin abgebrochen — Anweisungen vor dem Fehler sind ohne Transaktion wirksam"
+    fi
+    abbruch "$2: $(kurz "$(schwaerze_geheim "$(printf '%s\n' "$a" | grep -v '^ALFRED-ERLEDIGT ' || true)")") — $(stand)"
+  fi
   ZEILE=$(alfred_zeile "$a")
   [ -n "$ZEILE" ] || abbruch "$2: keine Ergebniszeile: $(kurz "$(schwaerze_geheim "$a")") — $(stand)"
 }
-knoten_ich() { ICH=$(eigener_name); [ "$ICH" = "$ICH_SOLL" ] || abbruch "Zugang zeigt auf $ICH, erwartet $ICH_SOLL ($ROLLE) — keine SQL-Zeile ausgeführt, nichts geändert"; }
+befehl_da() { command -v "$1" >/dev/null 2>&1; }
+# eigener Rechner = erwarteter Knoten; Programme der AG-Bausteine (sqlcmd aus mssql-tools18) vorhanden — beides vor jeder SQL-Zeile
+knoten_ich() {
+  local b f=''
+  ICH=$(eigener_name); [ "$ICH" = "$ICH_SOLL" ] || abbruch "Zugang zeigt auf $ICH, erwartet $ICH_SOLL ($ROLLE) — keine SQL-Zeile ausgeführt, nichts geändert"
+  for b in "§{AG_BEFEHLE[@]}"; do befehl_da "$b" || f+="§{f:+, }$b"; done
+  [ -z "$f" ] || abbruch "$f fehlt auf $ICH — vorher linux_sql installieren (mssql-tools18); keine SQL-Zeile ausgeführt, nichts geändert"
+}
 # Pacemaker: Ressource vorhanden, Parameter/Meta-Attribut lesen, Constraints und Lage (Promoted-Knoten, VIP-Knoten)
 ressource_da() { crm_resource --resource "$1" --query-xml >/dev/null 2>&1; }
 parameter() { local v; v=$(crm_resource --resource "$1" --get-parameter "$2" 2>/dev/null) || v=''; printf '%s' "$v" | tail -n 1 | tr -d '[:space:]'; }
@@ -2217,6 +2253,7 @@ function agKopf(baustein: string, p: Record<string, unknown>, ag: string, rolle:
     `VIP_RES=${shQ(HA_AG_VIP_RESSOURCE)}`,
     `PY_AG_PCS=${shQ(PY_AG_PCS)}`,
     `PY_CRM_LAGE=${shQ(PY_CRM_LAGE)}`,
+    `AG_BEFEHLE=(${HA_AG_BEFEHLE.map(shQ).join(" ")})`,
     ...AG_PFADE,
     AG_HILFEN,
   ];
@@ -2236,14 +2273,14 @@ PM_DIR=$(dirname "$PM_DATEI")
 bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
 sql_lauf "$(mit_geheim "$T_PRUEFEN")" "Prüfung auf $ICH"
 # ── Phase 2: Master-Key, Pacemaker-Login, Zertifikat + Endpunkt (je eigener Block: eine Marke steht, sobald das Kennwort gesetzt ist) ──
-sql_lauf "$(mit_geheim "$T_MASTERKEY")" "Master-Key auf $ICH"
+sql_lauf "$(mit_geheim "$T_MASTERKEY")" "Master-Key auf $ICH" aendernd
 IFS='|' read -r _ mk <<<"$ZEILE"
 if [ "$mk" = 1 ]; then echo ALFRED-MASTERKEY-GESETZT; aend masterkey; fi
-sql_lauf "$(mit_geheim "$T_LOGIN")" "Pacemaker-Login auf $ICH"
+sql_lauf "$(mit_geheim "$T_LOGIN")" "Pacemaker-Login auf $ICH" aendernd
 IFS='|' read -r _ pmneu a <<<"$ZEILE"
 if [ "$pmneu" = 1 ]; then echo ALFRED-PACEMAKER-GESETZT; fi
 for x in $a; do aend "$x"; done
-sql_lauf "$T_ENDPUNKT" "Zertifikat und Endpunkt auf $ICH"
+sql_lauf "$T_ENDPUNKT" "Zertifikat und Endpunkt auf $ICH" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
 for x in $a; do aend "$x"; done
 # Zugangsdatei des Resource-Agents: Login und Kennwort, 0600 root, atomar ersetzt (Inhalt nur über das printf-Builtin)
@@ -2292,7 +2329,7 @@ const AG_REPLIKAT_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
 bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
 sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
-sql_lauf "$T_AENDERN" "Replikat ($ROLLE) auf $ICH"
+sql_lauf "$T_AENDERN" "Replikat ($ROLLE) auf $ICH" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
 for x in $a; do aend "$x"; done
 # ── Selbstprüfung: Zertifikate/Logins/CONNECT der Peers, AG vorhanden; Rolle Primär bzw. (nach dem Beitritt, ggf. kurz RESOLVING) Sekundär ──
@@ -2336,7 +2373,7 @@ cluster_lage
 bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
 sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
 # ── Phase 2: Datenbanken aufnehmen, Seeding abwarten (vor Pacemaker) ──
-sql_lauf "$T_DBS" "Datenbanken in $AG aufnehmen"
+sql_lauf "$T_DBS" "Datenbanken in $AG aufnehmen" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
 for x in $a; do aend "$x"; done
 SYNC_N=0; SYNC_LISTE=-
@@ -2415,6 +2452,20 @@ bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geände
 sql_lauf "$T_LAGE" "Lage auf $ICH"
 IFS='|' read -r _ RV DBL <<<"$ZEILE"
 case "$RV" in PRIMARY|SECONDARY|RESOLVING|UNBEKANNT|-) ;; *) RV=UNBEKANNT ;; esac
+# Fix-Runde 1 (I3): Rolle und Datenbanken in einer Merkdatei (0600) festhalten, solange die AG besteht — bricht ein Lauf nach DROP ab,
+# kennt die Wiederholung sie noch (sonst sähe sie „keine AG, keine Datenbanken“ und meldete RESTORING-Datenbanken nicht)
+MERK_ALT=0
+if [ "$RV" != - ]; then
+  mkdir -p "$(dirname "$AG_MERK")"; (umask 077; printf '%s|%s\n' "$RV" "$DBL" >"$AG_MERK")
+elif [ -f "$AG_MERK" ]; then
+  IFS='|' read -r RV DBL <"$AG_MERK" || true
+  case "$RV" in PRIMARY|SECONDARY|RESOLVING|UNBEKANNT) ;; *) RV=UNBEKANNT ;; esac
+  [[ "$DBL" =~ ^[A-Za-z0-9_,-]*$ ]] || DBL=-
+  MERK_ALT=1
+fi
+DBIN=''
+if [ -n "$DBL" ] && [ "$DBL" != - ]; then IFS=',' read -r -a DBA <<<"$DBL"; for n in "§{DBA[@]}"; do if [[ "$n" =~ ^[A-Za-z0-9_]{1,128}$ ]]; then DBIN+="§{DBIN:+, }N'$n'"; fi; done; fi
+[ -n "$DBIN" ] || DBIN="N''"
 if [ "$RESSOURCEN" = 1 ]; then
   if ressource_da "$AG_RES" || ressource_da "$VIP_RES"; then
     case "$RV" in PRIMARY|-) ;; *) abbruch "$ICH ist nicht Primär von $AG ($RV) — ag_entfernen mit zugang = aktueller Primär (dort zuerst die Pacemaker-Ressourcen); nichts geändert" ;; esac
@@ -2425,17 +2476,15 @@ if [ "$RESSOURCEN" = 1 ]; then
 elif ressource_da "$AG_RES" || ressource_da "$VIP_RES"; then
   abbruch "Pacemaker-Ressourcen $AG_RES/$VIP_RES bestehen noch — zuerst ag_entfernen auf dem Primär (entfernt sie); nichts geändert"
 fi
-sql_lauf "§{T_DROP//@@ROLLE@@/"$RV"}" "Verfügbarkeitsgruppe auf $ICH entfernen"
+T_DROP=§{T_DROP//@@ROLLE@@/"$RV"}
+sql_lauf "§{T_DROP//@@DBS@@/"$DBIN"}" "Verfügbarkeitsgruppe auf $ICH entfernen" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
 for x in $a; do aend "$x"; done
-sql_lauf "$T_AUFRAEUMEN" "Endpunkt, Zertifikate und Logins auf $ICH entfernen"
+sql_lauf "$T_AUFRAEUMEN" "Endpunkt, Zertifikate und Logins auf $ICH entfernen" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
 for x in $a; do aend "$x"; done
 if [ -e "$PM_DATEI" ]; then rm -f -- "$PM_DATEI"; aend pacemaker-zugangsdatei-entfernt; fi
 # ── Selbstprüfung: nichts mehr von AG/Endpunkt/alfred_ag_*/alfred_pacemaker; Datenbanken bleiben (Zustand gemeldet) ──
-DBIN=''
-if [ "$DBL" != - ]; then IFS=',' read -r -a DBA <<<"$DBL"; for n in "§{DBA[@]}"; do if [[ "$n" =~ ^[A-Za-z0-9_]{1,128}$ ]]; then DBIN+="§{DBIN:+, }N'$n'"; fi; done; fi
-[ -n "$DBIN" ] || DBIN="N''"
 sql_lauf "§{T_SELBST//@@DBS@@/"$DBIN"}" "Selbstprüfung auf $ICH"
 IFS='|' read -r _ rest dbz <<<"$ZEILE"
 [ "$rest" = 0 ] || abbruch "Selbstprüfung: auf $ICH bestehen noch $rest Objekte (AG, Endpunkt, alfred_ag_-Zertifikate/-Benutzer/-Logins, $PM_LOGIN) — $(stand)"
@@ -2443,6 +2492,13 @@ IFS='|' read -r _ rest dbz <<<"$ZEILE"
 if [ "$RV" = PRIMARY ] && [ "$dbz" != - ]; then
   for x in §{dbz//,/ }; do [ "§{x#*=}" = ONLINE ] || abbruch "Selbstprüfung: Datenbanken auf dem bisherigen Primär nicht alle ONLINE: $dbz — RESTORE DATABASE … WITH RECOVERY bewusst entscheiden; $(stand)"; done
 fi
+# Rückfallnetz (I3): Wiederholung auf dem Primär ohne AG und ohne Merkdatei — RESTORING-Datenbanken ohne AG nie still übergehen
+if [ "$ROLLE" = primaer ] && [ "$RV" = - ]; then
+  sql_lauf "$T_WAISEN" "RESTORING-Datenbanken auf $ICH lesen"
+  IFS='|' read -r _ waisen <<<"$ZEILE"
+  [ "$waisen" = - ] || abbruch "Selbstprüfung: auf $ICH sind Datenbanken ohne AG im Zustand RESTORING ($waisen) und keine Merkdatei nennt die AG-Datenbanken — vermutlich aus $AG nach abgebrochenem Entfernen; RESTORE DATABASE … WITH RECOVERY bewusst entscheiden; $(stand)"
+fi
+rm -f -- "$AG_MERK"
 if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
 ergebnis "{\"zustand\":\"$Z\",\"knoten\":\"$ICH\",\"rolle\":\"$ROLLE\",\"rolleVorher\":\"$RV\",\"datenbanken\":$(db_json "$dbz"),\"aenderungen\":[$AJ]}"`);
 
@@ -2459,7 +2515,8 @@ export function haAgEntfernenSkript(p: HaAgEntfernenParameter): string {
   return [
     ...agKopf(LINUX_HA_BAUSTEINE.agEntfernen, { ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), ressourcen: p.ressourcen }, p.ag, p.rolle, ich),
     `RESSOURCEN=${p.ressourcen ? 1 : 0}`,
-    `T_LAGE=${shQ(t.lage)}`, `T_DROP=${shQ(t.drop)}`, `T_AUFRAEUMEN=${shQ(t.aufraeumen)}`, `T_SELBST=${shQ(t.selbst)}`,
+    `AG_MERK=${shQ(`${HA_FENCING_DIR}/ag-entfernen-${p.ag}.txt`)}`,
+    `T_LAGE=${shQ(t.lage)}`, `T_WAISEN=${shQ(t.waisen)}`, `T_DROP=${shQ(t.drop)}`, `T_AUFRAEUMEN=${shQ(t.aufraeumen)}`, `T_SELBST=${shQ(t.selbst)}`,
     '# ALFRED-ABLAUF',
     AG_ENTFERNEN_KOERPER,
   ].join('\n');
