@@ -2264,8 +2264,11 @@ export class ProxmoxSkill extends Skill {
     const aktuell = typeof cfg.watchdog === 'string' && cfg.watchdog ? cfg.watchdog : null;
     // „vorher“ = wirksamer Wert (Feld value aus /pending), wie bei set_vm_resources
     type Pend = Array<{ key: string; value?: unknown; pending?: unknown; delete?: unknown }>;
-    const pend0 = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
-    const eintrag = (pend0 ?? []).find(x => x.key === 'watchdog');
+    let pend0: Pend | undefined;
+    try { pend0 = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`); } catch { pend0 = undefined; }
+    // fail closed: ohne lesbares /pending kein Ergebnis, keine Änderung
+    if (!Array.isArray(pend0)) return { success: false, error: `VM ${vmid}: Watchdog nicht prüfbar — /pending nicht lesbar — nichts geändert` };
+    const eintrag = pend0.find(x => x.key === 'watchdog');
     const vorherRoh = (eintrag ? eintrag.value : aktuell) as string | null | undefined;
     const roh = typeof vorherRoh === 'string' && vorherRoh ? vorherRoh : null;
     const vorher = modellVon(roh);
@@ -2273,7 +2276,11 @@ export class ProxmoxSkill extends Skill {
     // Zielzustand inkl. Ausstehendem: ausstehendes Entfernen → keiner; ausstehendes Setzen → dessen Wert; sonst /config
     const zielStand = eintrag?.delete ? null : (typeof eintrag?.pending === 'string' ? eintrag.pending : aktuell);
     if (ziel === null ? zielStand === null : zielStand === WATCHDOG_WERT) {
-      return { success: true, data: { vmid, node: vm.node, vorher: modellVon(aktuell), vorherRoh: roh, nachher: ziel, geaendert: false, ausstehend }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${ziel ?? 'aus'} schon so — nichts geändert${ausstehend ? ` (${ziel === null ? 'entfernt' : 'gesetzt'}, noch ausstehend — wirksam nach stop_vm/start_vm)` : ' (wirksam)'}` };
+      const wirksamErreicht = ziel === null ? roh === null : roh === WATCHDOG_WERT;
+      const stand = ausstehend
+        ? ` (${ziel === null ? 'entfernt' : 'gesetzt'}, noch ausstehend — wirksam nach stop_vm/start_vm)`
+        : wirksamErreicht ? ' (wirksam)' : ` — ACHTUNG: Konfiguration zeigt das Ziel, wirksam ist aber ${roh ?? '(keiner)'}; stop_vm/start_vm nötig`;
+      return { success: true, data: { vmid, node: vm.node, vorher, vorherRoh: roh, nachher: ziel, geaendert: false, ausstehend, wirksam: wirksamErreicht }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${ziel ?? 'aus'} schon so — nichts geändert${stand}` };
     }
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, ziel === null ? { delete: 'watchdog' } : { watchdog: WATCHDOG_WERT }), 120_000, 'VM-Watchdog ändern');
     const danach = await this.get<{ watchdog?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
@@ -2380,8 +2387,11 @@ export class ProxmoxSkill extends Skill {
       // /config enthält ausstehende Werte schon — wirksam ist nur der Wert (value) aus /pending; eine ausstehende Änderung/Entfernung zählt nicht
       if (input.watchdog === WATCHDOG_MODELL) {
         type WPend = Array<{ key: string; value?: unknown; pending?: unknown; delete?: unknown }>;
-        const wp = await this.get<WPend>(`/nodes/${da.node}/qemu/${da.vmid}/pending`).catch(() => [] as WPend);
-        const we = Array.isArray(wp) ? wp.find(x => x.key === 'watchdog') : undefined;
+        let wp: WPend | undefined;
+        try { wp = await this.get<WPend>(`/nodes/${da.node}/qemu/${da.vmid}/pending`); } catch { wp = undefined; }
+        // fail closed: ohne lesbares /pending gilt kein Watchdog als wirksam
+        if (!Array.isArray(wp)) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): Watchdog nicht prüfbar — /pending nicht lesbar — nichts geändert`, data: { vmid: da.vmid, name, node: da.node } };
+        const we = wp.find(x => x.key === 'watchdog');
         const wirksamW = we ? (typeof we.value === 'string' && we.value ? we.value : null) : (typeof cfg.watchdog === 'string' && cfg.watchdog ? cfg.watchdog : null);
         const hinweis = `nachrüsten bzw. korrigieren mit set_vm_watchdog (vmid ${da.vmid}, model ${WATCHDOG_MODELL}) und danach stop_vm/start_vm`;
         if (we && (we.pending !== undefined || !!we.delete)) return { success: false, error: `Vorhandene VM ${name} (VMID ${da.vmid}): watchdog noch ausstehend — stop_vm/start_vm nötig (wirksam ${wirksamW ?? '(keiner)'}, ausstehend ${we.delete ? 'Entfernen' : String(we.pending)}) — nichts geändert`, data: { vmid: da.vmid, name, node: da.node } };
