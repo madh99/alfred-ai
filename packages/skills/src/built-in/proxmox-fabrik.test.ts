@@ -679,3 +679,119 @@ describe('v1785 set_vm_resources: vorher = wirksamer Wert', () => {
     expect(r.display).toContain('Rückweg: set_vm_resources mit memory 4096');
   });
 });
+
+// I8e Paket 2 Task 1 — Watchdog i6300esb (Aktion reset) an der VM, damit SBD den Gast selbst zurücksetzen kann
+describe('I8e provision_vm mit watchdog', () => {
+  function welt() {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const aufrufe: string[] = [];
+    const vms: Array<{ vmid: number; name: string; node: string; type: string; status: string }> = [{ vmid: 9020, name: 'ubuntu-2404', node: 'pve1', type: 'qemu', status: 'stopped' }];
+    a.getAllVms = async () => vms;
+    a.get = async (p: string) => {
+      if (p.endsWith('/qemu/9020/config')) return { description: 'Vorlage von Alfred (I5) aus backupshare%3Aimport/ubuntu-24.04-20261017.qcow2' };
+      if (p.endsWith('/qemu/160/config')) return { scsi0: 'data2:vm-160-disk-0,size=8G', scsi1: 'data2:vm-160-cloudinit,media=cdrom' };
+      if (p === '/storage/local') return { path: '/var/lib/vz' };
+      return {};
+    };
+    a.post = async (p: string, b: Record<string, unknown>) => {
+      aufrufe.push(`POST ${p} ${JSON.stringify(b)}`);
+      if (p.endsWith('/clone')) vms.push({ vmid: 160, name: 'sql-lx01', node: 'pve1', type: 'qemu', status: 'stopped' });
+      return 'UPID:x';
+    };
+    a.api = async () => 'UPID:x';
+    a.aufgabeOderFehler = async () => undefined;
+    a.vmidFrei = async () => true;
+    a.warteAufAgent = async () => ({ ok: true, meldung: 'Gast-Agent antwortet' });
+    px.setVmFabrik({
+      vorpruefung: async () => [], hostSchluessel: async () => ({ privat: HOST_PRIV, oeffentlich: HOST_PUB }), alfredSchluessel: async () => ALFRED,
+      snippetSchreiben: async () => undefined, snippetEntfernen: async () => undefined,
+      anmelden: async () => ({ ok: true, meldung: 'SSH ok' }), fortsetzen: async () => ({ ok: true, meldung: 'SSH ok' }), abmelden: async () => '',
+    } as never);
+    return { px, aufrufe };
+  }
+  const eingabe = { action: 'provision_vm', template: 9020, node: 'pve1', storage: 'data2', hostname: 'sql-lx01', ip: '10.203.28.10/28', gateway: '10.203.28.1', new_vmid: 160 };
+
+  it('setzt genau model=i6300esb,action=reset vor dem ersten Start und nennt es im Ergebnis', async () => {
+    const w = welt();
+    const r = await w.px.execute({ ...eingabe, watchdog: 'i6300esb' }, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    const i = w.aufrufe.findIndex(x => x.includes('"watchdog":"model=i6300esb,action=reset"'));
+    expect(i).toBeGreaterThan(-1);
+    expect(i).toBeLessThan(w.aufrufe.findIndex(x => x.includes('/status/start')));
+    expect(r.display).toContain('Watchdog i6300esb');
+    expect(r.data).toMatchObject({ watchdog: 'i6300esb' });
+  });
+  it('ohne watchdog bleibt die Konfiguration unverändert', async () => {
+    const w = welt();
+    const r = await w.px.execute(eingabe, { ausChange: true } as never);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.some(x => x.includes('watchdog'))).toBe(false);
+  });
+  it('weist andere Modelle ab, ohne etwas anzulegen', async () => {
+    const w = welt();
+    const r = await w.px.execute({ ...eingabe, watchdog: 'ib700' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('i6300esb');
+    expect(w.aufrufe).toEqual([]);
+  });
+});
+
+describe('I8e set_vm_watchdog', () => {
+  function welt(watchdog?: string) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const posts: Array<Record<string, unknown>> = [];
+    let aktuell = watchdog;
+    a.getAllVms = async () => [{ vmid: 156, name: 'sqllnx01', node: 'pve', type: 'qemu', status: 'running' }];
+    a.get = async (p: string) => (p.endsWith('/config') ? { ...(aktuell ? { watchdog: aktuell } : {}) } : p.endsWith('/pending') ? [] : {});
+    a.post = async (_p: string, b: Record<string, unknown>) => {
+      posts.push(b);
+      if (typeof b.watchdog === 'string') aktuell = b.watchdog; else if (b.delete === 'watchdog') aktuell = undefined;
+      return null;
+    };
+    a.aufgabeOderFehler = async () => undefined;
+    return { px, posts };
+  }
+  const imChange = { ausChange: true } as never;
+
+  it('setzt den Watchdog, nennt vorher und den Kaltstart-Hinweis', async () => {
+    const w = welt();
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.posts).toEqual([{ watchdog: 'model=i6300esb,action=reset' }]);
+    expect(r.data).toMatchObject({ vmid: 156, vorher: null, nachher: 'i6300esb' });
+    expect(r.display).toContain('stop_vm/start_vm');
+  });
+  it('ist idempotent: schon gesetzt → keine Änderung', async () => {
+    const w = welt('model=i6300esb,action=reset');
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.posts).toEqual([]);
+    expect(r.display).toContain('schon');
+    expect(r.data).toMatchObject({ vorher: 'i6300esb', nachher: 'i6300esb' });
+  });
+  it('entfernt mit model null und liefert vorher für den Rückweg', async () => {
+    const w = welt('model=i6300esb,action=reset');
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: null }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.posts).toEqual([{ delete: 'watchdog' }]);
+    expect(r.data).toMatchObject({ vorher: 'i6300esb', nachher: null });
+    const nochmal = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: null }, imChange);
+    expect(nochmal.display).toContain('schon');
+    expect(w.posts).toHaveLength(1);
+  });
+  it('weist andere Modelle, fehlendes model und Aufrufe außerhalb eines Changes ab', async () => {
+    const w = welt();
+    expect((await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'ib700' }, imChange)).success).toBe(false);
+    expect((await w.px.execute({ action: 'set_vm_watchdog', vmid: 156 }, imChange)).success).toBe(false);
+    expect((await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, {} as never)).success).toBe(false);
+    expect(w.posts).toEqual([]);
+  });
+  it('abgewichene Aktion am vorhandenen Watchdog (z. B. action=poweroff) wird als anderer Stand behandelt und gesetzt', async () => {
+    const w = welt('model=i6300esb,action=poweroff');
+    const r = await w.px.execute({ action: 'set_vm_watchdog', vmid: 156, model: 'i6300esb' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.posts).toEqual([{ watchdog: 'model=i6300esb,action=reset' }]);
+  });
+});

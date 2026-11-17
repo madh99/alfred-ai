@@ -102,13 +102,17 @@ export const GAST_EINGABE_MAX = 60_000;
 const GAST_TEIL_BYTES = 45_000;
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation']);
 /** I5 — Vorlagen-Fabrik */
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'check_offline_isolation', 'attach_iso', 'detach_iso'] as const;
+/** I8e Paket 2 — Watchdog-Gerät der VM (SBD ist einziger Besitzer im Gast); Proxmox-Wert fest, nur dieses Modell mit Aktion reset */
+const WATCHDOG_MODELL = 'i6300esb';
+const WATCHDOG_WERT = `model=${WATCHDOG_MODELL},action=reset`;
+
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'set_vm_watchdog', 'provision_windows_offline', 'check_offline_isolation', 'attach_iso', 'detach_iso'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
 const PBS_VM_SICHERUNG = /^[a-zA-Z][\w-]{0,40}:backup\/vm\/\d{1,9}\/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 /** Spec I5: Anlegen und Entfernen laufen nur als Schritte freigegebener Changes (Freigabe, Rückweg, Protokoll) — nie direkt aus dem Chat */
-const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'provision_windows_offline', 'attach_iso', 'detach_iso']);
+const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'download_iso', 'build_windows_template', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'set_vm_watchdog', 'provision_windows_offline', 'attach_iso', 'detach_iso']);
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
@@ -196,7 +200,7 @@ export class ProxmoxSkill extends Skill {
       'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
       'NETZLOS (v1810, Offline-Root-CA): "provision_windows_offline" (template, hostname, node, storage, memory, cores, disk_size, extra_disks, new_vmid; KEINE ip/gateway/bridge; zeitlimitS 3000; Rückweg delete_vm mit force_stop) — entfernt net0 der Vorlage vor dem ersten Start, Autostart aus, Kennwort im Tresor, kein Fernzugang; Nachweis Rechnername über den Gastagenten. "check_offline_isolation" (vmid, vm_name; lesend) — Ergebnis „ROOT_ISOLATED“ nur ohne Netzwerkkarte und ohne Autostart, dazu Agent, Wechselmedien und erfassende Sicherungsjobs. ' +
       'v1865 (nur in Changes): "attach_iso" (vmid, volid = ISO im Speicher des Knotens der VM, laufwerk ide2|ide3) legt das ISO als CD ein — fehlt das Laufwerk an einer laufenden VM, wirksam erst nach "reboot_vm" (Ergebnis sagt es); Rückweg "detach_iso" (vmid, laufwerk) entfernt nur ein CD-Laufwerk. ' +
-    'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
+    'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "set_vm_watchdog" (vmid, model i6300esb oder null = entfernen) — Watchdog-Gerät i6300esb mit Aktion reset für SBD-Fencing, alter Wert im Ergebnis (Rückweg: gleicher Aufruf mit vorher), wirksam erst nach "stop_vm"/"start_vm" (neues QEMU-Gerät, reboot_vm genügt nicht); "provision_vm" setzt es mit watchdog i6300esb schon vor dem ersten Start. "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
       'Sicherungsjobs: "list_backup_jobs" (lesen); "create_backup_job" (nur Change: job_id alfred-…, vmids, storage, schedule z. B. „sat 03:00“, keep_last, optional bwlimit KiB/s) mit Rückweg "delete_backup_job" (job_id).',
     riskLevel: 'write',
     version: '1.0.0',
@@ -352,6 +356,8 @@ export class ProxmoxSkill extends Skill {
         vlan: { type: 'number', description: 'create_vlan_bridge: VLAN-ID' },
         ueber: { type: 'string', description: 'create_vlan_bridge: nicht VLAN-fähige Bridge/Netzkarte des Knotens, über die das VLAN läuft (z. B. vmbr0)' },
         extra_disk_size: { type: 'number', description: 'provision_windows_vm: zweite Platte in GB (scsi1, gleicher Speicher wie storage), z. B. Sicherungsplatte' },
+        watchdog: { type: 'string', description: "provision_vm: 'i6300esb' legt vor dem ersten Start einen Watchdog (model=i6300esb,action=reset) an die VM (SBD-Fencing)" },
+        model: { type: 'string', description: "set_vm_watchdog: 'i6300esb' setzt den Watchdog (Aktion reset), null entfernt ihn" },
         extra_disks: { type: 'array', items: { type: 'number' }, description: 'provision_windows_vm/provision_vm: Zusatzplatten in GB als scsi1…scsiN (gleicher Speicher wie storage), z. B. [50, 20, 15, 30] für SQL D/L/T/B; Größen verschieden (Zuordnung in Windows über die Größe)' },
         schedule: { type: 'string', description: 'create_backup_job: Proxmox-Kalender, z. B. „sat 03:00“ oder „*-*-* 02:30“' },
         keep_last: { type: 'number', description: 'create_backup_job: so viele Sicherungen je VM behalten (1–30)' },
@@ -403,6 +409,7 @@ export class ProxmoxSkill extends Skill {
       if (typeof input.gateway !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}$/.test(input.gateway)) return 'provision_vm braucht gateway';
       if (input.template === undefined || !/^\d+$/.test(String(input.template))) return 'provision_vm: template als VMID';
       try { linuxZusatzPlatten(input); } catch (err) { return (err as Error).message; }
+      if (input.watchdog !== undefined && input.watchdog !== WATCHDOG_MODELL) return `provision_vm: watchdog nur '${WATCHDOG_MODELL}' (Aktion reset)`;
       return undefined;
     }
     if (action === 'delete_image' && (typeof input.volid !== 'string' || !IMPORT_VOLUME.test(input.volid))) return 'delete_image: volid eines import-Volumes';
@@ -574,6 +581,8 @@ export class ProxmoxSkill extends Skill {
           return await this.sicherungAusnehmen(input);
         case 'set_vm_resources':
           return await this.vmRessourcen(input);
+        case 'set_vm_watchdog':
+          return await this.vmWatchdog(input);
         case 'attach_iso':
           return await this.isoEinlegen(input);
         case 'detach_iso':
@@ -2243,6 +2252,31 @@ export class ProxmoxSkill extends Skill {
     return { success: true, data: { vmid, node: vm.node, vorher, nachher: { ...vorher, ...neu }, ausstehend }, display: `✅ VM ${vmid} (${vm.name}): ${mem !== undefined ? `RAM ${vorher.memory} → ${mem} MiB` : ''}${mem !== undefined && cores !== undefined ? ', ' : ''}${cores !== undefined ? `Kerne ${vorher.cores} → ${cores}` : ''}${ausstehend ? ' — wirksam nach reboot_vm (Proxmox wendet ausstehende Änderungen beim Neustart an)' : ''}. Rückweg: set_vm_resources mit memory ${vorher.memory}, cores ${vorher.cores}` };
   }
 
+  /** I8e Paket 2 — Watchdog der VM setzen/entfernen (nur im Change); vorher für den Rückweg; wirksam erst nach Kaltstart (stop_vm/start_vm) */
+  private async vmWatchdog(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid && v.type === 'qemu');
+    if (!vm) return { success: false, error: `VM ${input.vmid} gibt es nicht` };
+    if (input.model === undefined || (input.model !== null && input.model !== WATCHDOG_MODELL)) return { success: false, error: `model: '${WATCHDOG_MODELL}' (setzen) oder null (entfernen)` };
+    const ziel = input.model === null ? null : WATCHDOG_MODELL;
+    const modellVon = (w: unknown): string | null => { const t = typeof w === 'string' ? w : ''; return t ? (/model=([A-Za-z0-9]+)/.exec(t)?.[1] ?? t) : null; };
+    const cfg = await this.get<{ watchdog?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const aktuell = typeof cfg.watchdog === 'string' && cfg.watchdog ? cfg.watchdog : null;
+    // „vorher“ = wirksamer Wert (Feld value aus /pending), wie bei set_vm_resources
+    type Pend = Array<{ key: string; value?: unknown; pending?: unknown }>;
+    const pend0 = await this.get<Pend>(`/nodes/${vm.node}/qemu/${vmid}/pending`).catch(() => [] as Pend);
+    const eintrag = (pend0 ?? []).find(x => x.key === 'watchdog');
+    const vorher = modellVon(eintrag ? eintrag.value : aktuell);
+    if (ziel === null ? aktuell === null : aktuell === WATCHDOG_WERT) {
+      return { success: true, data: { vmid, node: vm.node, vorher: modellVon(aktuell), nachher: ziel, geaendert: false }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${ziel ?? 'aus'} schon so — nichts geändert` };
+    }
+    await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/config`, ziel === null ? { delete: 'watchdog' } : { watchdog: WATCHDOG_WERT }), 120_000, 'VM-Watchdog ändern');
+    const danach = await this.get<{ watchdog?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const ist = typeof danach.watchdog === 'string' && danach.watchdog ? danach.watchdog : null;
+    if (ziel === null ? ist !== null : ist !== WATCHDOG_WERT) return { success: false, error: `nach dem Ändern gelesen: watchdog ${ist ?? '(keiner)'}`, data: { vmid, vorher } };
+    return { success: true, data: { vmid, node: vm.node, vorher, nachher: ziel, geaendert: true }, display: `✅ VM ${vmid} (${vm.name}): Watchdog ${vorher ?? 'aus'} → ${ziel ?? 'aus'} — wirksam nach stop_vm/start_vm (ein neues QEMU-Gerät braucht einen Kaltstart, reboot_vm genügt nicht). Rückweg: set_vm_watchdog mit model ${vorher === null ? 'null' : vorher}` };
+  }
+
   /** v1865 — PKI-Lab: SQL-ISO als CD einlegen (Laufwerk ide2/ide3); nur ISO-Volumes, die im Speicher des Knotens der VM liegen */
   private async isoEinlegen(input: Record<string, unknown>): Promise<SkillResult> {
     const vmid = Number(input.vmid);
@@ -2394,6 +2428,8 @@ export class ProxmoxSkill extends Skill {
         description: `Angelegt von Alfred (I5) aus Vorlage ${tpl} am ${new Date().toISOString().slice(0, 10)}. Host-Schlüssel ${hs.oeffentlich.split(' ')[1]?.slice(0, 16)}…`,
       };
       if (typeof input.nameserver === 'string' && input.nameserver.trim()) konfig.nameserver = input.nameserver.trim();
+      // I8e Paket 2 — Watchdog vor dem ersten Start (SBD setzt den Gast damit selbst zurück)
+      if (input.watchdog === WATCHDOG_MODELL) { konfig.watchdog = WATCHDOG_WERT; schritte.push(`Watchdog ${WATCHDOG_MODELL} (Aktion reset) in der Konfiguration`); }
       if (typeof input.memory === 'number') konfig.memory = input.memory;
       if (typeof input.cores === 'number') konfig.cores = input.cores;
       if (input.bridge || input.vlan_tag) konfig.net0 = `virtio,bridge=${(input.bridge as string) ?? 'vmbr0'}${input.vlan_tag ? `,tag=${input.vlan_tag as number}` : ''}`;
@@ -2427,7 +2463,7 @@ export class ProxmoxSkill extends Skill {
       await this.cloudInitLoesen(node, vmid);
     }
     schritte.push('Snippet am Knoten entfernt');
-    return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich, ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: schritte.map(s => `- ${s}`).join('\n') };
+    return { success: true, data: { vmid, name, node, ip: ip.replace(/\/\d+$/, ''), vorlage: tpl, hostSchluessel: hs.oeffentlich, ...(input.watchdog === WATCHDOG_MODELL ? { watchdog: WATCHDOG_MODELL } : {}), ...(zusatz.length ? { zusatzplatten: zusatz.map((gb, i) => ({ laufwerk: `scsi${i + 1}`, gb })) } : {}) }, display: schritte.map(s => `- ${s}`).join('\n') };
   }
 
   /**
