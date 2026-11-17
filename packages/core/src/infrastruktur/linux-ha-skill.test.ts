@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE_RUECKWEG_GRUND, LINUX_HA_MIN_ZEITLIMIT_S, AG_FEHLER_MAX, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
+import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE_RUECKWEG_GRUND, LINUX_HA_MIN_ZEITLIMIT_S, AG_FEHLER_MAX, agText, type LinuxHaStatus, type LinuxHaCluster, type LinuxHaAg } from './linux-ha-skill.js';
 import { LinuxSqlSkill } from './linux-sql-skill.js';
 import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR, type FencingBeleg, type FencingTest } from './linux-ha.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
@@ -742,5 +742,155 @@ describe('I8e Paket 2 — Werkzeugwahl', () => {
     for (const t of ['Läuft Pacemaker auf sqllnx02?', 'Ist SBD bereit?', 'Wie steht die Verfügbarkeitsgruppe?', 'Mach ein Failover', 'Was meldet linux_ha?', 'corosync Status bitte']) {
       expect([...(selectCategoriesOhneRueckfall(t, alle as never) ?? [])], t).toContain('infrastructure');
     }
+  });
+});
+
+// ── Task 6: Geplantes Failover ──────────────────────────────────────────────────────────────────────────────────────────────────
+const AG_LAGE: LinuxHaAg = {
+  art: 'eingerichtet', ressource: true, name: 'sqllnxag01', requiredSyncRessource: '0', promoted: ['sqllnx01'], vip: ['sqllnx01'], standort: [],
+  sql: { name: 'sqllnxag01', requiredSync: 0, datenbanken: 1, replikate: [
+    { name: 'sqllnx01', rolle: 'PRIMARY', modus: 'SYNCHRONOUS_COMMIT', verbunden: 'CONNECTED', dbs: 1, sync: 1 },
+    { name: 'sqllnx02', rolle: 'SECONDARY', modus: 'SYNCHRONOUS_COMMIT', verbunden: 'CONNECTED', dbs: 1, sync: 1 },
+    { name: 'sqllnxcfg', rolle: 'SECONDARY', modus: 'CONFIGURATION_ONLY', verbunden: 'CONNECTED', dbs: 0, sync: 0 },
+  ] }, sqlFehler: null,
+};
+const FO_ERGEBNIS = { zustand: 'geaendert', ag: 'sqllnxag01', primaer: 'sqllnx02', vorher: 'sqllnx01', dauerS: 12, vip: '10.203.30.13/27', vipAuf: 'sqllnx02', promotedAuf: 'sqllnx02',
+  requiredSyncSql: 0, requiredSyncRessource: '0', altRolle: 'SECONDARY', datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], standortBedingungen: 0, aenderungen: ['failover-angestossen', 'standort-bedingung-entfernt'] };
+const FO_EINGABE = { action: 'ag_failover', zugang: 'sqllnx01', ziel: 'sqllnx02' };
+
+describe('I8e Paket 2 Task 6 — Status: AG-Teil', () => {
+  it('fester Wortlaut: Promoted, VIP, required_sync Ressource/SQL, Replikate mit Sync-Zustand, offene Standort-Bedingungen; ohne AG-Daten unverändert', () => {
+    expect(agText(AG_LAGE)).toBe('AG sqllnxag01: Promoted sqllnx01, VIP sqllnx01, required_sync Ressource 0 / SQL 0, Replikate sqllnx01 PRIMARY / sqllnx02 SECONDARY SYNCHRONIZED 1/1, Standort-Bedingungen 0');
+    expect(agText({ art: 'keine' })).toBe('AG nicht eingerichtet');
+    expect(agText({ ...AG_LAGE, standort: [{ id: 'cli-prefer-ag_cluster-clone', rsc: 'ag_cluster-clone', knoten: 'sqllnx02', rolle: 'Promoted' }] }))
+      .toContain('Standort-Bedingungen OFFEN: cli-prefer-ag_cluster-clone (sqllnx02, Promoted)');
+    expect(agText({ ...AG_LAGE, standort: null })).toContain('Standort-Bedingungen unbekannt');
+    expect(agText({ ...AG_LAGE, requiredSyncRessource: '1', sql: { ...AG_LAGE.sql!, requiredSync: 1 } })).toContain('required_sync Ressource 1 / SQL 1');
+    expect(agText({ ...AG_LAGE, sql: { ...AG_LAGE.sql!, replikate: [{ ...AG_LAGE.sql!.replikate[1]!, sync: 0 }] } })).toContain('sqllnx02 SECONDARY NICHT SYNCHRONIZED 0/1');
+    expect(agText({ ...AG_LAGE, sql: null, sqlFehler: 'Login failed' })).toContain('SQL nicht lesbar (Login failed)');
+    expect(agText({ ...AG_LAGE, sql: null, sqlFehler: null })).toContain('SQL ohne Zugangsdatei');
+    expect(agText({ ...AG_LAGE, promoted: null, vip: [] })).toContain('Promoted unbekannt, VIP keiner');
+    // angehängt nach dem Fencing-Teil; ohne ag-Feld bleibt der Text wie bisher (Live-Prüfungen auf „3/3 online“, „Fencing belegt“ unberührt)
+    const mit = linuxHaStatusText('sqllnx01', { ...STATUS_OK, cluster: CLUSTER_OK, ag: AG_LAGE });
+    expect(mit).toMatch(/; Cluster sqllnxcl01: 3\/3 online, .*; Fencing nicht belegt; AG sqllnxag01: Promoted sqllnx01, /);
+    expect(linuxHaStatusText('sqllnx01', STATUS_OK)).not.toContain('; AG ');
+    expect(linuxHaStatusText('sqllnx01', { ...STATUS_OK, ag: { art: 'keine' } })).toBe(linuxHaStatusText('sqllnx01', STATUS_OK));
+    const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
+    const muster = new RegExp(`^${vorlage.split(' | ')[0]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
+    expect(mit).toMatch(muster);
+    for (const e of ['Standort-Bedingungen 0', 'required_sync Ressource 0 / SQL 0', 'Promoted sqllnx02', 'VIP sqllnx02', 'sqllnx02 SECONDARY SYNCHRONIZED']) expect(vorlage, e).toContain(e);
+  });
+});
+
+describe('I8e Paket 2 Task 6 — Skill linux_ha: ag_failover', () => {
+  const voll = (fo: Array<Record<string, unknown> | { code: number; stdout: string }> = [FO_ERGEBNIS], status = STATUS_3) => welt({
+    [LINUX_HA_BAUSTEINE.status]: [...status] as never[], [LINUX_HA_BAUSTEINE.agFailover]: fo as never[],
+  }, AG_TRESOR);
+
+  it('nur im Change; Ablauf Status ×3 → Failover-Baustein auf dem Ziel (nur dessen sa über stdin); Text mit Dauer, neuem Primär und VIP-Ort', async () => {
+    const w = voll();
+    expect((await w.skill.execute(FO_EINGABE, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
+    expect(w.aufrufe).toEqual([]);
+    const r = await w.skill.execute(FO_EINGABE, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe.map(a => `${a.baustein}@${a.zugang}`)).toEqual([
+      ...['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => `${LINUX_HA_BAUSTEINE.status}@${z}`), `${LINUX_HA_BAUSTEINE.agFailover}@sqllnx02`,
+    ]);
+    const fo = w.aufrufe[3]!;
+    expect(fo.parameter).toEqual({ ag: 'sqllnxag01', ziel: 'sqllnx02', vorher: 'sqllnx01', knoten: HA_KNOTEN.map(k => ({ ...k })) });
+    expect(JSON.parse(fo.eingabe!)).toEqual({ sa: 'Sa-Zwei-2222' });
+    expect(fo.timeoutMs).toBe(600_000);
+    expect(w.aufrufe.slice(0, 3).every(a => a.eingabe === undefined)).toBe(true);
+    expect(r.display).toBe('✅ Geplantes Failover der Verfügbarkeitsgruppe sqllnxag01: Primär jetzt sqllnx02 (vorher sqllnx01) nach 12 s; VIP 10.203.30.13/27 auf sqllnx02 (Promoted sqllnx02); '
+      + 'sqllnx01 SECONDARY (alfredpruef SYNCHRONIZED); REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT 0 in SQL und Ressource ag_cluster; keine Standort-Bedingung offen (pcs resource clear) — geändert: failover-angestossen, standort-bedingung-entfernt');
+    expect(JSON.stringify(r)).not.toContain('Sa-Zwei-2222');
+    expect(w.protokolle.some(p => p.msg === 'I8e Geplantes Failover' && p.daten.dauerS === 12)).toBe(true);
+    const s = voll([{ ...FO_ERGEBNIS, zustand: 'schon', vorher: 'sqllnx02', dauerS: 0, aenderungen: [] }]);
+    expect((await s.skill.execute(FO_EINGABE, imChange)).display).toBe('Verfügbarkeitsgruppe sqllnxag01: sqllnx02 ist schon Primär; VIP 10.203.30.13/27 auf sqllnx02 (Promoted sqllnx02); '
+      + 'sqllnx01 SECONDARY (alfredpruef SYNCHRONIZED); REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT 0 in SQL und Ressource ag_cluster; keine Standort-Bedingung offen — nichts zu tun');
+  });
+
+  it('Gate vor jeder Änderung: Cluster nicht 3/3 / ohne Quorum, Corosync-Sperre aktiv, Reset ausstehend, Zugang zeigt woanders hin → nur Status gelesen, kein Failover-Baustein', async () => {
+    const st = (i: number, s: unknown) => { const x = [...STATUS_3]; x[i] = s as never; return x; };
+    for (const [status, grund] of [
+      [st(1, statusAg('sqllnx02', '2', { cluster: { ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, online: ['sqllnx01', 'sqllnx02'] } } })), 'sqllnx02: Cluster sqllnxcl01: 2/3 online'],
+      [st(0, statusAg('sqllnx01', '1', { cluster: { ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, quorum: false } } })), 'Quorum nein'],
+      [st(2, statusAg('sqllnxcfg', '3', { fencing: { ...fencingOk('sqllnxcfg', '3'), sperreAktiv: true } })), 'sqllnxcfg: Corosync-Sperre alfred_fencetest AKTIV'],
+      [st(1, statusAg('sqllnx02', '2', { fencing: { ...fencingOk('sqllnx02', '2'), test: { ...TEST01, knoten: 'sqllnx02', nodeid: '2', bootIdVorher: 'b-neu', zeitS: 1_795_000_100 } } })), 'sqllnx02: Fencing Test trennung ausgelöst, Reset ausstehend'],
+      [st(1, statusAg('sqllnx01', '1')), 'sqllnx02: Zugang zeigt auf Knoten sqllnx01'],
+      [st(0, { ...STATUS_3[0], cluster: undefined }), 'sqllnx01: Cluster unbekannt'],
+    ] as Array<[typeof STATUS_3, string]>) {
+      const w = voll([FO_ERGEBNIS], status);
+      const r = await w.skill.execute(FO_EINGABE, imChange);
+      expect(r.success, grund).toBe(false);
+      expect(r.error, grund).toContain(grund);
+      expect(r.error, grund).toContain('nichts geändert');
+      expect(w.aufrufe.every(a => a.baustein === LINUX_HA_BAUSTEINE.status), grund).toBe(true);
+      expect(r.data, grund).toBeUndefined();
+    }
+  });
+
+  it('Parameter: ziel Pflicht, Datenreplikat, verschieden vom zugang (bisheriger Primär) — vor jedem Fernaufruf; ohne sa-Eintrag des Ziels kein Fernaufruf', async () => {
+    for (const [e, grund] of [[{ ziel: 'sqllnxcfg' }, 'CONFIGURATION_ONLY'], [{ ziel: 'sqllnx01' }, 'verschieden'], [{ ziel: undefined }, 'ziel'], [{ zugang: 'sqllnxcfg' }, 'CONFIGURATION_ONLY']] as const) {
+      const w = voll();
+      const r = await w.skill.execute({ ...FO_EINGABE, ...e }, imChange);
+      expect(r.error, grund).toContain(grund);
+      expect(w.aufrufe).toEqual([]);
+      expect(w.skill.pruefeEingabe({ ...FO_EINGABE, ...e })).toContain(grund);
+    }
+    expect(voll().skill.pruefeEingabe(FO_EINGABE)).toBeUndefined();
+    const ohne = welt({ [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[] }, { 'sqllnx-sqllnx01-sa': 'x-1111' });
+    expect((await ohne.skill.execute(FO_EINGABE, imChange)).error).toContain('sqllnx-sqllnx02-sa fehlt');
+    expect(ohne.aufrufe).toEqual([]);
+    expect(voll().skill.mindestZeitlimitS('ag_failover')).toBe(LINUX_HA_MIN_ZEITLIMIT_S.ag_failover);
+    expect(LINUX_HA_MIN_ZEITLIMIT_S.ag_failover).toBe(3 * 90 + 600 + 4 * 60);
+  });
+
+  it('Selbstprüfung des Ergebnisses: Primär/Promoted/VIP nicht auf dem Ziel, required_sync ≠ 0, offene Standort-Bedingung → Fehler', async () => {
+    for (const x of [{ primaer: 'sqllnx01' }, { promotedAuf: 'sqllnx01' }, { vipAuf: 'sqllnx01' }, { requiredSyncSql: 1 }, { requiredSyncRessource: '1' }, { requiredSyncRessource: undefined }, { standortBedingungen: 1 }]) {
+      const r = await voll([{ ...FO_ERGEBNIS, ...x }]).skill.execute(FO_EINGABE, imChange);
+      expect(r.success, JSON.stringify(x)).toBe(false);
+      expect(r.error, JSON.stringify(x)).toContain('Selbstprüfung');
+      expect(r.error).toContain('Geplantes Failover abgebrochen — Grund:');
+    }
+  });
+
+  it('Abbruch des Bausteins nach dem Verschieben: Grund vorn, Teiländerungen als Daten (teilweise → Rückweg ag_failover zurück); vor dem Verschieben ohne Daten', async () => {
+    const nach = { code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","fehler":"Zeitüberschreitung: nach 120 s Promoted auf \'sqllnx01\' — Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt; bisher geändert: failover-angestossen,standort-bedingung-entfernt"}' };
+    const r = await voll([nach]).skill.execute(FO_EINGABE, imChange);
+    expect(r.success).toBe(false);
+    expect(r.error!.startsWith('Geplantes Failover abgebrochen — Grund: AG-Failover sqllnx02 auf sqllnx02 gescheitert (Exit 1): Zeitüberschreitung')).toBe(true);
+    expect(r.error).toContain('pcs resource clear');
+    expect((r.data as { grund: string }).grund).toContain('bisher geändert: failover-angestossen');
+    const vor = { code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","fehler":"Ziel sqllnx02 nicht SYNCHRONIZED (0/1: alfredpruef=SYNCHRONIZING) — nichts geändert"}' };
+    const v = await voll([vor]).skill.execute(FO_EINGABE, imChange);
+    expect(v.error).toContain('nicht SYNCHRONIZED');
+    expect(v.data).toBeUndefined();
+  });
+});
+
+describe('I8e Paket 2 Task 6 — Change „Geplantes Failover sqllnxag01“', () => {
+  const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const ctx = { skill: (n: string) => (n === 'linux_ha' ? ha : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  const hin = { titel: 'Failover nach sqllnx02', art: 'aktion', skill: 'linux_ha', aktion: 'ag_failover', zeitlimitS: 1200,
+    parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01', ziel: 'sqllnx02' }, rueckweg: { skill: 'linux_ha', aktion: 'ag_failover', parameter: { zugang: 'sqllnx02', ag: 'sqllnxag01', ziel: 'sqllnx01' } } };
+  const zurueck = { ...hin, titel: 'Failover zurück nach sqllnx01', parameter: { zugang: 'sqllnx02', ag: 'sqllnxag01', ziel: 'sqllnx01' }, rueckweg: { skill: 'linux_ha', aktion: 'ag_failover', parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01', ziel: 'sqllnx02' } } };
+  const status = (z: string, erwartet: string, nichtEnthalten?: string) => ({ titel: `Status ${z}`, art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_ha', aktion: 'status', parameter: { zugang: z }, erwartet, ...(nichtEnthalten ? { nichtEnthalten } : {}) } });
+  const plan = (schritte: unknown[]) => ({ titel: 'Geplantes Failover sqllnxag01', begruendung: 'I8e Paket 2 Task 6', typ: 'normal', risiko: 'hoch', ausfallMinuten: 1, betroffen: ['sqllnx01', 'sqllnx02'], schritte, ohneSicherungGrund: 'Failover ändert keine Daten, Rückweg ist das Failover zurück' });
+
+  it('hin und zurück (prüft sich selbst) mit Status-Prüfungen aus dem festen Wortlaut: 0 Fehler', () => {
+    expect(aktionsArt('linux_ha', 'ag_failover')).toBe('aendern');
+    expect(pruefeChangePlan(plan([hin, status('sqllnx02', 'Promoted sqllnx02'), status('sqllnx01', 'Standort-Bedingungen 0', 'OFFEN'), zurueck, status('sqllnx01', 'Promoted sqllnx01')]), ctx).fehler).toEqual([]);
+  });
+  it('Rückweg Pflicht, genau linux_ha.ag_failover und zurück zum bisherigen Primär; zeitlimitS und Ziel schon beim Planen geprüft', () => {
+    const k = pruefeChangePlan(plan([{ ...hin, rueckweg: { keiner: 'geht schon' } }]), ctx).fehler;
+    expect(k.some(x => x.startsWith('Schritt 1:') && x.includes('braucht immer einen Rückweg — rueckweg linux_ha.ag_failover'))).toBe(true);
+    const a = pruefeChangePlan(plan([{ ...hin, rueckweg: { skill: 'linux_ha', aktion: 'ag_entfernen', parameter: { zugang: 'sqllnx02' } } }]), ctx).fehler;
+    expect(a.some(x => x.includes('braucht als Rückweg genau linux_ha.ag_failover'))).toBe(true);
+    const g = pruefeChangePlan(plan([{ ...hin, rueckweg: { ...hin.rueckweg, parameter: { zugang: 'sqllnx01', ag: 'sqllnxag01', ziel: 'sqllnx02' } } }]), ctx).fehler;
+    expect(g.some(x => x.includes('Rückweg') && x.includes('zurück zum bisherigen Primär'))).toBe(true);
+    const z = pruefeChangePlan(plan([{ ...hin, zeitlimitS: 600, parameter: { ...hin.parameter, ziel: 'sqllnxcfg' } }]), ctx).fehler;
+    expect(z.some(x => x.includes('zeitlimitS 600 zu klein für linux_ha.ag_failover'))).toBe(true);
+    expect(z.some(x => x.includes('CONFIGURATION_ONLY'))).toBe(true);
   });
 });

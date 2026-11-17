@@ -72,7 +72,11 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Live-Fix (c2e4f56d): „; sbd wartet auf Watchdog“ nach RuntimeWatchdog
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
-    + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt',
+    + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt'
+    // Task 6: „; AG …“ am Ende (agText) — positive Stücke einzeln; Knotennamen fest (Global Constraints), Prüfung „offen“: nichtEnthalten „OFFEN“
+    + ' | AG {ag}: Promoted {knoten}, VIP {knoten}, required_sync Ressource {n} / SQL {n}, Replikate {replikate}, {standort}'
+    + ' | Standort-Bedingungen 0 | required_sync Ressource 0 / SQL 0 | Promoted sqllnx01 | Promoted sqllnx02 | VIP sqllnx01 | VIP sqllnx02'
+    + ' | sqllnx01 PRIMARY | sqllnx02 PRIMARY | sqllnx01 SECONDARY SYNCHRONIZED | sqllnx02 SECONDARY SYNCHRONIZED',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -180,19 +184,30 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // Reset — belegt fencing_belegen); fencing_belegen schreibt den Beleg nur mit Beweis und liest ihn gegen die Cluster-Identität zurück
   // Task 5 — AG: ag_anlegen prüft Primär, Sekundär SYNCHRONIZED, required_sync 0 in SQL und Ressource, VIP auf dem Primär; ag_entfernen
   // prüft, dass AG, Endpunkt, alfred_ag_*-Objekte, Pacemaker-Login und Zugangsdatei weg sind (Datenbanken bleiben, Zustand gemeldet)
-  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen']),
+  // Task 6 — ag_failover prüft Primär/Promoted/VIP auf dem Ziel, Gegenstelle SECONDARY und synchron, required_sync 0 in SQL und Ressource,
+  // keine Standort-Bedingung mehr (pcs resource clear)
+  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover']),
 };
 /**
  * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
  * Knoten (auch das bestehende sqllnx01) — Rückweg genau linux_ha.cluster_entfernen (Task 4, Carry-over 4: kein anderer Rückweg zählt).
  */
-const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { skill: string; aktion: string; text: string }>>> = {
+const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { skill: string; aktion: string; text: string; parameter?: (hin: Record<string, unknown>, rueck: Record<string, unknown>) => string | undefined }>>> = {
   // Task 5 — ag_anlegen wirkt auf alle drei Knoten und den Cluster: Rückweg genau linux_ha.ag_entfernen
+  // Task 6 — ag_failover: Rückweg genau ag_failover zurück zum bisherigen Primär (zugang und ziel vertauscht)
   linux_ha: new Map([
     ['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }],
     ['ag_anlegen', { skill: 'linux_ha', aktion: 'ag_entfernen', text: 'linux_ha.ag_entfernen (zugang, ag)' }],
+    ['ag_failover', { skill: 'linux_ha', aktion: 'ag_failover', text: 'linux_ha.ag_failover (zugang = Ziel, ziel = bisheriger Primär)', parameter: failoverZurueck }],
   ]),
 };
+/** Task 6: der Rückweg eines Failovers führt zurück zum bisherigen Primär — zugang/ziel genau vertauscht (Verweise erst zur Laufzeit) */
+function failoverZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
+  const [hz, hziel, rz, rziel] = [n(hin.zugang), n(hin.ziel), n(rueck.zugang), n(rueck.ziel)];
+  if ((hz && rziel && hz !== rziel) || (hziel && rz && hziel !== rz)) return `ag_failover führt zurück zum bisherigen Primär — rueckweg zugang ${hziel ?? '<ziel>'}, ziel ${hz ?? '<zugang>'} (nicht zugang ${rz ?? '?'}, ziel ${rziel ?? '?'})`;
+  return undefined;
+}
 /**
  * I8e Paket 2 Task 4 — Aktionen ohne Rückweg, aber nur mit genau diesem Grund (ein angegebener Rückweg wird abgewiesen): fencing_pruefen
  * setzt den Testknoten zurück, es gibt nichts zurückzunehmen (die nft-Sperre ist ohne Persistenz und endet per Timer bzw. mit dem Reset).
@@ -649,6 +664,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           // Task 4 (Carry-over 4): Pflicht-Rückweg heißt genau diese Aktion — ein anderer Rückweg (z. B. ein Status) zählt nicht
           const pflicht = RUECKWEG_PFLICHT_JE_SKILL[schritt.skill ?? '']?.get(schritt.aktion ?? '');
           if (pflicht && (rueck.skill !== pflicht.skill || rueck.aktion !== pflicht.aktion)) f.push(`${wo}: ${schritt.skill}.${schritt.aktion} braucht als Rückweg genau ${pflicht.text}, nicht ${rueck.skill || '?'}.${rueck.aktion || '?'}`);
+          else if (pflicht?.parameter) { const pf = pflicht.parameter(schritt.parameter, rueck.parameter!); if (pf) f.push(`${wo} (Rückweg): ${pf}`); }
           if (NIE_SKILLS.has(rueck.skill ?? '')) f.push(`${wo}: Skill ${rueck.skill} ist in Changes nicht erlaubt (Rückweg)`);
           else if (!rs) f.push(`${wo}: Rückweg-Skill „${rueck.skill}“ gibt es nicht`);
           else if (!skillAktionen(rs).includes(rueck.aktion!)) f.push(`${wo}: Rückweg-Aktion ${rueck.skill}.${rueck.aktion} gibt es nicht`);

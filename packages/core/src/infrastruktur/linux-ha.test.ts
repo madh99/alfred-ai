@@ -15,6 +15,7 @@ import {
 import {
   haAgEndpunktSkript, haAgReplikatSkript, haAgAbschlussSkript, haAgEntfernenSkript, pruefeHaAgEndpunkt, pruefeHaAgReplikat, pruefeHaAgAbschluss, pruefeHaAgEntfernen,
   istOeffentlichesZertifikat, PY_AG_PCS, HA_AG_BEFEHLE, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
+  haAgFailoverSkript, pruefeHaAgFailover, PY_AG_STATUS_FUNK, type HaAgFailoverParameter,
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
@@ -1857,5 +1858,242 @@ describe('I8e Paket 2 Task 5 Fix-Runde 2 — PRINT ALFRED-ERLEDIGT nur nach gesc
       for (const m of t.matchAll(/BEGIN CATCH (.*?) END CATCH/g)) expect(m[1], m[0]).toMatch(/^(THROW;|THROW 50108, .*|SET @f \+= .*)$/);
     }
     expect(gesamt).toBeGreaterThan(40);
+  });
+});
+
+// ── Task 6: Geplantes Failover (ag_failover) ─────────────────────────────────────────────────────────────────────────────────────
+
+const FO = (ziel = 'sqllnx02', vorher = 'sqllnx01'): HaAgFailoverParameter => ({ ag: 'sqllnxag01', ziel, vorher, knoten: [...HA_KNOTEN] });
+/** zusätzliche Stubs NACH denen von agLaeufe: pcs move/clear, CIB mit Standort-Bedingungen, Uhr, sqlcmd je nach Promoted-Knoten */
+const FO_STUBS = String.raw`
+pcs() {
+  log "pcs $*"
+  case "$1 $2" in
+    "resource move") [ ! -f "$T/move_scheitert" ] || { echo 'Error: move kaputt'; return 1; }
+      echo "$4" >"$T/cli_prefer"; [ -f "$T/move_haengt" ] || { echo "$4" >"$T/promoted"; echo 1012 >"$T/uhr"; }; return 0 ;;
+    "resource clear") [ ! -f "$T/clear_scheitert" ] || { echo 'Error: clear kaputt'; return 1; }; [ -f "$T/clear_wirkungslos" ] || rm -f "$T/cli_prefer"; return 0 ;;
+  esac
+  echo "pcs-Stub kennt '$*' nicht" >&2; return 99
+}
+cibadmin() {
+  [ ! -f "$T/cib_kaputt" ] || return 1
+  echo '<constraints>'
+  [ ! -f "$T/cli_prefer" ] || echo "<rsc_location id=\"cli-prefer-ag_cluster-clone\" rsc=\"ag_cluster-clone\" role=\"Promoted\" node=\"$(cat "$T/cli_prefer")\" score=\"INFINITY\"/>"
+  [ ! -f "$T/fremd" ] || echo '<rsc_location id="loc-handarbeit" rsc="ag_vip" node="sqllnx01" score="100"/>'
+  echo '<rsc_colocation id="c" rsc="ag_vip" with-rsc="ag_cluster-clone" with-rsc-role="Promoted" score="INFINITY"/></constraints>'
+}
+jetzt() { cat "$T/uhr" 2>/dev/null || echo 1000; }
+sql() {
+  local t; t=$(grep -o 'ALFRED-SCHRITT [a-z_]*' <<<"$1" | head -n 1 | cut -d' ' -f2)
+  echo "§{t:-bereit}" >>"$T/sqllog"
+  [ -n "$t" ] || return 0
+  if [ -f "$T/sqlfehler_$t" ]; then cat "$T/sqlfehler_$t"; return 1; fi
+  if [ "$(cat "$T/promoted" 2>/dev/null)" = "$(cat "$T/name")" ] && [ -f "$T/sql/§{t}_primaer" ]; then cat "$T/sql/§{t}_primaer"; return 0; fi
+  [ -f "$T/sql/$t" ] || { echo "kein SQL-Stub $t"; return 1; }
+  cat "$T/sql/$t"
+}
+`.replaceAll('§{', '${');
+const mitFo = (t: string, extra = '') => t.replace('# ALFRED-ABLAUF', () => `# ALFRED-ABLAUF\n${FO_STUBS}\n${extra}`);
+const FO_SEK = 'ALFRED|SECONDARY|0|1|1|CONNECTED|-|-|0|alfredpruef=SYNCHRONIZED|-';
+const FO_PRIM = 'ALFRED|PRIMARY|0|1|1|CONNECTED|SECONDARY|CONNECTED|1|alfredpruef=SYNCHRONIZED|alfredpruef=SYNCHRONIZED';
+/** Ausgangslage: Lauf auf sqllnx02 (Ziel), Promoted auf sqllnx01, Ressourcen da, required_sync 0 an der Ressource */
+const FO_VOR = (sql: Record<string, string> = {}) => [
+  'echo sqllnx02 >"$T/name"; echo sqllnx01 >"$T/promoted"; touch "$T/res_ag_cluster" "$T/res_ag_vip"',
+  'echo sqllnxag01 >"$T/param_ag_cluster_ag_name"; echo 0 >"$T/param_ag_cluster_required_synchronized_secondaries_to_commit"',
+  'echo 10.203.30.13 >"$T/param_ag_vip_ip"; echo 27 >"$T/param_ag_vip_cidr_netmask"',
+  sqlStub({ fo_lage: FO_SEK, fo_lage_primaer: FO_PRIM, ...sql }),
+].join('\n');
+
+describe('I8e Paket 2 Task 6 — ag_failover (Text, Validatoren)', () => {
+  it('registriert; Validator: Ziel und bisheriger Primär verschiedene Datenreplikate (nie sqllnxcfg), AG-Name geprüft', () => {
+    expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agFailover, FO())).toBe(haAgFailoverSkript(FO()));
+    expect(pruefeHaAgFailover(FO())).toBeUndefined();
+    expect(pruefeHaAgFailover(FO('sqllnx01', 'sqllnx02'))).toBeUndefined();
+    expect(pruefeHaAgFailover(FO('sqllnxcfg', 'sqllnx01'))).toContain('CONFIGURATION_ONLY');
+    expect(pruefeHaAgFailover(FO('sqllnx01', 'sqllnxcfg'))).toContain('CONFIGURATION_ONLY');
+    expect(pruefeHaAgFailover(FO('sqllnx02', 'sqllnx02'))).toContain('verschieden');
+    expect(pruefeHaAgFailover(FO('sqllnx09', 'sqllnx01'))).toContain('ziel');
+    expect(pruefeHaAgFailover({ ...FO(), ag: "x'; --" })).toContain('ag:');
+  });
+  it('Text: pcs resource move <Klon> <Ziel> --promoted, danach pcs resource clear; required_sync an beiden Stellen geprüft; nur sa über stdin', () => {
+    const s = haAgFailoverSkript(FO());
+    expect(s).toContain('pcs resource move "$AG_KLON" "$ICH" --promoted');
+    expect(s).toContain('pcs resource clear "$AG_KLON"');
+    expect(s).toContain("AG_KLON='ag_cluster-clone'");
+    expect(s).toContain('required_synchronized_secondaries_to_commit');
+    expect(s).toContain('REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL');
+    expect(s).toContain('geheim_lesen sa SA');
+    expect(s).not.toMatch(/geheim_lesen (hauptschluessel|pacemaker)/);
+  });
+  it.skipIf(!BASH)('bash -n', () => {
+    for (const p of [FO(), FO('sqllnx01', 'sqllnx02')]) { const r = spawnSync('bash', ['-n'], { input: haAgFailoverSkript(p), encoding: 'utf8' }); expect(r.status, r.stderr).toBe(0); }
+  });
+  it.skipIf(!PYTHON)('PY_AG_PCS standort: cli-prefer/cli-ban gezählt, fremde Standort-Bedingungen getrennt, andere Ressourcen ignoriert', () => {
+    const py = (input: string) => spawnSync(PYTHON!, ['-c', PY_AG_PCS, 'standort', 'ag_cluster', 'ag_cluster-clone', 'ag_vip'], { input, encoding: 'utf8' });
+    const cib = '<constraints><rsc_location id="cli-prefer-ag_cluster-clone" rsc="ag_cluster-clone" role="Promoted" node="sqllnx02" score="INFINITY"/>'
+      + '<rsc_location id="cli-ban-ag_cluster-clone-on-sqllnx01" rsc="ag_cluster-clone" node="sqllnx01" score="-INFINITY"/><rsc_location id="loc-x" rsc="ag_vip" node="sqllnx01" score="100"/>'
+      + '<rsc_location id="loc-anders" rsc="anderes" node="sqllnx01" score="100"/></constraints>';
+    expect(py(cib).stdout.trim()).toBe('2 1 cli-prefer-ag_cluster-clone@sqllnx02,cli-ban-ag_cluster-clone-on-sqllnx01@sqllnx01,loc-x@sqllnx01');
+    expect(py('<constraints/>').stdout.trim()).toBe('0 0 -');
+    expect(py('kaputt').status).toBe(2);
+  });
+  it('Ergebnisfelder ohne Geheimnis-Namen', () => {
+    const namen = new Set<string>();
+    for (const m of haAgFailoverSkript(FO()).matchAll(/\\?"([A-Za-z_][A-Za-z0-9_]*)\\?"\s*:/g)) namen.add(m[1]!);
+    for (const n of ['zustand', 'primaer', 'vorher', 'dauerS', 'vipAuf', 'requiredSyncSql', 'requiredSyncRessource', 'standortBedingungen']) expect(namen).toContain(n);
+    expect([...namen].filter(n => GEHEIM_NAME.test(n))).toEqual([]);
+  });
+});
+
+describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 6 — ag_failover ausgeführt (nachgebildetes sqlcmd/pcs)', { timeout: 180_000 }, () => {
+  const fo = mitFo(haAgFailoverSkript(FO()));
+
+  it('Abbruchzweige vor jeder Änderung: Ziel nicht SYNCHRONIZED, required_sync ≠ 0 (SQL/Ressource), Cluster nicht 3/3, Primär woanders, Ziel nicht SECONDARY, fremde Standort-Bedingung, CIB unlesbar', async () => {
+    const faelle: Array<[string, string, string?]> = [
+      [FO_VOR({ fo_lage: 'ALFRED|SECONDARY|0|1|0|CONNECTED|-|-|0|alfredpruef=SYNCHRONIZING|-' }), 'nicht SYNCHRONIZED (0/1: alfredpruef=SYNCHRONIZING)'],
+      [FO_VOR({ fo_lage: 'ALFRED|SECONDARY|1|1|1|CONNECTED|-|-|0|alfredpruef=SYNCHRONIZED|-' }), 'REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist 1, erwartet 0'],
+      [`${FO_VOR()}\necho 1 >"$T/param_ag_cluster_required_synchronized_secondaries_to_commit"`, "required_synchronized_secondaries_to_commit an ag_cluster ist '1', erwartet 0"],
+      [`${FO_VOR()}\necho sqllnxcfg >"$T/promoted"`, "Promoted auf 'sqllnxcfg', erwartet sqllnx01"],
+      [FO_VOR({ fo_lage: 'ALFRED|RESOLVING|0|1|1|DISCONNECTED|-|-|0|alfredpruef=SYNCHRONIZED|-' }), 'sqllnx02 ist RESOLVING/DISCONNECTED, erwartet SECONDARY/CONNECTED'],
+      [`${FO_VOR()}\ntouch "$T/fremd"`, 'fremde Standort-Bedingungen an ag_cluster-clone/ag_vip (loc-handarbeit@sqllnx01)'],
+      [`${FO_VOR()}\ntouch "$T/cib_kaputt"`, 'Standort-Bedingungen (CIB) nicht lesbar'],
+      [`${FO_VOR()}\nrm -f "$T/res_ag_cluster"`, 'Pacemaker-Ressource ag_cluster fehlt'],
+      [FO_VOR(), 'Cluster: 2/3 online', 'cluster_lage() { LO=2; LQ=1; }'],
+    ];
+    for (const [vor, grund, extra] of faelle) {
+      const w = await agLaeufe([extra ? mitFo(haAgFailoverSkript(FO()), extra) : fo], { sa: GEHEIM.sa }, [vor]);
+      const l = w.laeufe[0]!;
+      expect(l.rc, grund).toBe(1);
+      expect(String(l.ergebnis!.fehler), grund).toContain(grund);
+      expect(String(l.ergebnis!.fehler), grund).toContain('nichts geändert');
+      expect(l.log, grund).toBe(''); // kein pcs-Aufruf
+    }
+  });
+
+  it('Failover: move → Primär = Ziel → clear; Ergebnis mit Dauer, neuem Primär, VIP-Ort; zweiter Lauf „schon“ ohne pcs', async () => {
+    const w = await agLaeufe([fo, fo], { sa: GEHEIM.sa }, [FO_VOR()]);
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(a.ergebnis).toEqual({ zustand: 'geaendert', ag: 'sqllnxag01', primaer: 'sqllnx02', vorher: 'sqllnx01', dauerS: 12, vip: '10.203.30.13/27', vipAuf: 'sqllnx02', promotedAuf: 'sqllnx02',
+      requiredSyncSql: 0, requiredSyncRessource: '0', altRolle: 'SECONDARY', datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], standortBedingungen: 0,
+      aenderungen: ['failover-angestossen', 'standort-bedingung-entfernt'] });
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', primaer: 'sqllnx02', vorher: 'sqllnx02', dauerS: 0, aenderungen: [], standortBedingungen: 0 });
+    expect(b.log).toBe('');
+    ueberstehtSchwaerzung(a.aus, 'failover'); ueberstehtSchwaerzung(b.aus, 'failover schon');
+    expect(a.aus + b.aus).not.toContain(GEHEIM.sa);
+  });
+
+  it('clear auch bei Zeitüberschreitung und bei gescheitertem move — die Meldung sagt es; scheitert clear, steht die verbliebene Bedingung im Fehler', async () => {
+    const w = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/move_haengt"`], 'ls "$T"');
+    const a = w.laeufe[0]!;
+    expect(a.rc).toBe(1);
+    expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    const f = String(a.ergebnis!.fehler);
+    expect(f).toContain('Zeitüberschreitung');
+    expect(f).toContain("Promoted auf 'sqllnx01'");
+    expect(f).toContain('Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt');
+    expect(f).toContain('bisher geändert: failover-angestossen,standort-bedingung-entfernt');
+    expect(w.ende).not.toContain('cli_prefer');
+    const m = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/move_scheitert"`]);
+    expect(m.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(String(m.laeufe[0]!.ergebnis!.fehler)).toContain('pcs resource move ag_cluster-clone sqllnx02 --promoted fehlgeschlagen: Error: move kaputt');
+    expect(String(m.laeufe[0]!.ergebnis!.fehler)).toContain('pcs resource clear ag_cluster-clone ausgeführt');
+    const c = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/move_haengt" "$T/clear_scheitert"`], 'cat "$T/cli_prefer"');
+    const cf = String(c.laeufe[0]!.ergebnis!.fehler);
+    expect(cf).toContain('pcs resource clear ag_cluster-clone fehlgeschlagen (Error: clear kaputt)');
+    expect(cf).toContain('cli-prefer-ag_cluster-clone@sqllnx02');
+    expect(cf).toContain('von Hand: pcs resource clear ag_cluster-clone');
+    expect(c.ende.trim()).toBe('sqllnx02'); // die Bedingung besteht wirklich noch — und der Fehler sagt es
+    // Primär erreicht, aber clear scheitert → kein Erfolg, Bedingung genannt
+    const d = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/clear_scheitert"`]);
+    expect(d.laeufe[0]!.rc).toBe(1);
+    expect(String(d.laeufe[0]!.ergebnis!.fehler)).toContain('Failover auf sqllnx02 nach 12 s, aber: pcs resource clear ag_cluster-clone fehlgeschlagen');
+    // clear läuft, Bedingung bleibt trotzdem → Fehler, nie still
+    const e = await agLaeufe([fo], { sa: GEHEIM.sa }, [`${FO_VOR()}\ntouch "$T/clear_wirkungslos"`]);
+    expect(e.laeufe[0]!.rc).toBe(1);
+    expect(String(e.laeufe[0]!.ergebnis!.fehler)).toContain('bestehen weiter');
+    // jeder andere Abbruch nach dem move gibt zuerst frei und sagt es (Hülle um abbruch)
+    const h = await agLaeufe([mitFo(haAgFailoverSkript(FO()), 'warte_primaer() { abbruch "Testabbruch nach dem move"; }')], { sa: GEHEIM.sa }, [FO_VOR()]);
+    expect(h.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(String(h.laeufe[0]!.ergebnis!.fehler)).toBe('Testabbruch nach dem move — Standort-Bedingung mit pcs resource clear ag_cluster-clone entfernt');
+    // unerwartetes Ende (set -u) nach dem move: der EXIT-Trap räumt die Standort-Bedingung trotzdem ab
+    const u = await agLaeufe([mitFo(haAgFailoverSkript(FO()), 'warte_primaer() { echo "$GIBTS_NICHT"; }')], { sa: GEHEIM.sa }, [FO_VOR()], 'ls "$T"');
+    expect(u.laeufe[0]!.rc).not.toBe(0);
+    expect(u.laeufe[0]!.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(String(u.laeufe[0]!.ergebnis!.fehler)).toContain('unerwarteter Abbruch');
+    expect(u.ende).not.toContain('cli_prefer');
+  });
+
+  it('Ziel schon Primär: ohne move; liegengebliebene cli-prefer wird freigegeben und als Änderung gemeldet; Gegenstelle nicht synchron → Abbruch (nicht „ok“)', async () => {
+    const schon = `${FO_VOR()}\necho sqllnx02 >"$T/promoted"; echo sqllnx02 >"$T/cli_prefer"`;
+    const w = await agLaeufe([fo], { sa: GEHEIM.sa }, [schon], 'ls "$T"');
+    const a = w.laeufe[0]!;
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource clear ag_cluster-clone']);
+    expect(a.ergebnis).toMatchObject({ zustand: 'geaendert', primaer: 'sqllnx02', dauerS: 0, aenderungen: ['standort-bedingung-entfernt'], standortBedingungen: 0 });
+    expect(w.ende).not.toContain('cli_prefer');
+    const n = await agLaeufe([fo], { sa: GEHEIM.sa }, [FO_VOR({ fo_lage_primaer: 'ALFRED|PRIMARY|0|1|1|CONNECTED|SECONDARY|CONNECTED|0|alfredpruef=SYNCHRONIZED|alfredpruef=NOT SYNCHRONIZING' })]);
+    const f = String(n.laeufe[0]!.ergebnis!.fehler);
+    expect(n.laeufe[0]!.rc).toBe(1);
+    expect(f).toContain('sqllnx01 ist SECONDARY/CONNECTED, Datenbanken 0/1 SYNCHRONIZED (alfredpruef=NOT SYNCHRONIZING)');
+    expect(f).toContain('bisher geändert: failover-angestossen,standort-bedingung-entfernt');
+  });
+
+  it('Status: AG-Teil aus Pacemaker (Promoted, VIP, required_sync, Standort-Bedingungen) und SQL über die Zugangsdatei — Kennwort nur in der Umgebung von sqlcmd', () => {
+    expect(PY_HA_STATUS).toContain('SQLCMDPASSWORD');
+    expect(PY_HA_STATUS).toContain('/var/opt/mssql/secrets/passwd');
+    expect(PY_HA_STATUS).toMatch(/r\["ag"\] = /);
+    // nie als Argument
+    expect(PY_HA_STATUS).not.toMatch(/"-P"/);
+    expect(PY_HA_STATUS).toContain(PY_AG_STATUS_FUNK);
+  });
+
+  it('Status ausgeführt (lauf/lies/sqlcmd nachgebildet): Promoted, VIP, Standort-Bedingungen, required_sync, Replikate; unlesbar bleibt unbekannt (null), Kennwort nie in der Ausgabe', () => {
+    const MON = '<pacemaker-result><resources><clone id="ag_cluster-clone"><resource id="ag_cluster" role="Promoted" active="true"><node name="sqllnx02"/></resource>'
+      + '<resource id="ag_cluster" role="Unpromoted" active="true"><node name="sqllnx01"/></resource></clone><resource id="ag_vip" role="Started" active="true"><node name="sqllnx02"/></resource></resources></pacemaker-result>';
+    const CIB = '<constraints><rsc_location id="cli-prefer-ag_cluster-clone" rsc="ag_cluster-clone" role="Promoted" node="sqllnx02" score="INFINITY"/><rsc_location id="x" rsc="fremd" node="a" score="1"/></constraints>';
+    const SQL = 'ALFRED|G|sqllnxag01|0|1\nALFRED|R|sqllnx01|SECONDARY|SYNCHRONOUS_COMMIT|CONNECTED|1|1\nALFRED|R|sqllnx02|PRIMARY|SYNCHRONOUS_COMMIT|CONNECTED|1|1\nALFRED|R|sqllnxcfg|SECONDARY|CONFIGURATION_ONLY|CONNECTED|0|0\n';
+    const lauf = (o: { res?: boolean; mon?: string | null; cib?: string | null; datei?: string | null; sql?: { rc: number; aus: string } }) => {
+      const prog = [
+        'import json, os, re, subprocess, sys, xml.etree.ElementTree as ET',
+        `O = json.loads(${JSON.stringify(JSON.stringify(o))})`,
+        'def lauf(*a):',
+        '    if a[0] == "crm_resource" and "--query-xml" in a: return (0 if O.get("res") else 6), ""',
+        '    if a[0] == "crm_resource": return 0, {"ag_name": "sqllnxag01", "required_synchronized_secondaries_to_commit": "0"}[a[-1]]',
+        '    if a[0] == "crm_mon": return (0, O["mon"]) if O.get("mon") is not None else (1, "")',
+        '    if a[0] == "cibadmin": return (0, O["cib"]) if O.get("cib") is not None else (1, "")',
+        '    return 1, ""',
+        'def lies(p):',
+        '    return O.get("datei")',
+        PY_AG_STATUS_FUNK,
+        'os.path.exists = lambda p: O.get("datei") is not None',
+        'class E: pass',
+        'def sqlcmd_lauf(login, kw):',
+        '    e = E(); e.returncode = O["sql"]["rc"]; e.stdout = O["sql"]["aus"].replace("KW", kw); e.stderr = ""; return e',
+        'print(json.dumps(ag_lage()))',
+      ].join('\n');
+      const r = spawnSync(PYTHON!, ['-c', prog], { encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1' } });
+      expect(r.status, r.stderr).toBe(0);
+      return { ag: JSON.parse(r.stdout) as Record<string, unknown>, roh: r.stdout };
+    };
+    const voll = lauf({ res: true, mon: MON, cib: CIB, datei: 'alfred_pacemaker\nKw-Geheim-9999\n', sql: { rc: 0, aus: SQL } });
+    expect(voll.ag).toEqual({ art: 'eingerichtet', ressource: true, name: 'sqllnxag01', requiredSyncRessource: '0', promoted: ['sqllnx02'], vip: ['sqllnx02'],
+      standort: [{ id: 'cli-prefer-ag_cluster-clone', rsc: 'ag_cluster-clone', knoten: 'sqllnx02', rolle: 'Promoted' }],
+      sql: { name: 'sqllnxag01', requiredSync: 0, datenbanken: 1, replikate: [
+        { name: 'sqllnx01', rolle: 'SECONDARY', modus: 'SYNCHRONOUS_COMMIT', verbunden: 'CONNECTED', dbs: 1, sync: 1 },
+        { name: 'sqllnx02', rolle: 'PRIMARY', modus: 'SYNCHRONOUS_COMMIT', verbunden: 'CONNECTED', dbs: 1, sync: 1 },
+        { name: 'sqllnxcfg', rolle: 'SECONDARY', modus: 'CONFIGURATION_ONLY', verbunden: 'CONNECTED', dbs: 0, sync: 0 }] }, sqlFehler: null });
+    // nichts lesbar: unbekannt (null), nie „keine Bedingung“ oder „ok“; SQL-Fehler mit geschwärztem Kennwort
+    const kaputt = lauf({ res: true, mon: '<kaputt', cib: null, datei: 'alfred_pacemaker\nKw-Geheim-9999\n', sql: { rc: 1, aus: 'Login failed for KW' } });
+    expect(kaputt.ag).toMatchObject({ promoted: null, vip: null, standort: null, sql: null });
+    expect(String(kaputt.ag.sqlFehler)).toContain('Login failed for [geschwärzt]');
+    expect(kaputt.roh).not.toContain('Kw-Geheim-9999');
+    // ohne Ressource und ohne Zugangsdatei: keine AG
+    expect(lauf({ res: false, datei: null }).ag).toEqual({ art: 'keine' });
+    // Ressource, aber keine Zugangsdatei: SQL ohne Zugangsdatei (null/null)
+    expect(lauf({ res: true, mon: MON, cib: '<constraints/>', datei: null }).ag).toMatchObject({ standort: [], sql: null, sqlFehler: null });
+    for (const [k] of Object.entries(voll.ag)) expect(GEHEIM_NAME.test(k), k).toBe(false);
   });
 });

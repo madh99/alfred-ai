@@ -48,6 +48,12 @@ export const HA_BEFEHLE: readonly string[] = [
  * jedem Knoten, auch sqllnxcfg). Geprüft nur in den ag_*-Bausteinen vor der ersten SQL-Zeile — ha_vorbereiten bleibt davon unabhängig.
  */
 export const HA_AG_BEFEHLE: readonly string[] = ['/opt/mssql-tools18/bin/sqlcmd'];
+/** Zugangsdatei des Resource-Agents ocf:mssql:ag (Zeile 1 Login, Zeile 2 Kennwort), 0600 root */
+export const HA_PACEMAKER_DATEI = '/var/opt/mssql/secrets/passwd';
+/** Task 5 — Pacemaker-Ressourcen der AG (promotable Klon wie von ag_anlegen angelegt); Task 6: hier oben, weil PY_HA_STATUS sie liest */
+export const HA_AG_RESSOURCE = 'ag_cluster';
+export const HA_AG_KLON = `${HA_AG_RESSOURCE}-clone`;
+export const HA_AG_VIP_RESSOURCE = 'ag_vip';
 /** Global Constraints I8e Paket 2: die drei Knoten im VLAN 830 */
 export const HA_KNOTEN: readonly HaKnoten[] = [
   { name: 'sqllnx01', ip: '10.203.30.10' }, { name: 'sqllnx02', ip: '10.203.30.11' }, { name: 'sqllnxcfg', ip: '10.203.30.12' },
@@ -168,6 +174,7 @@ export const LINUX_HA_BAUSTEINE = {
   vorbereiten: 'ha.vorbereiten', status: 'ha.status', cluster: 'ha.cluster_anlegen', clusterEntfernen: 'ha.cluster_entfernen',
   fencingPruefen: 'ha.fencing_pruefen', fencingBelegen: 'ha.fencing_belegen',
   agEndpunkt: 'ha.ag_endpunkt', agReplikat: 'ha.ag_replikat', agAbschluss: 'ha.ag_abschluss', agEntfernen: 'ha.ag_entfernen',
+  agFailover: 'ha.ag_failover',
 } as const;
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_HA_ZEIT_MS = {
@@ -175,6 +182,8 @@ export const LINUX_HA_ZEIT_MS = {
   // Task 5: Endpunkt je Knoten, Replikat je Knoten (Zertifikate, AG anlegen/beitreten), Abschluss auf dem Primär (Datenbanken, Seeding,
   // Pacemaker-Ressourcen), Entfernen je Knoten
   agEndpunkt: 180_000, agReplikat: 240_000, agAbschluss: 900_000, agEntfernen: 300_000,
+  // Task 6: Prüfen, pcs resource move, Warten auf Primär/VIP/Gegenstelle (je bis 120 s), pcs resource clear, Selbstprüfung
+  agFailover: 600_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1648,6 +1657,78 @@ export function fencingBelegGueltig(beleg: FencingBeleg | 'unlesbar' | null | un
 
 // ── Status ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Task 6: AG-Lage — Pacemaker (Promoted, VIP, required_sync an der Ressource, Standort-Bedingungen) und SQL (Rollen, Sync-Zustand,
+ * required_sync) über die Zugangsdatei des Resource-Agents (Login alfred_pacemaker: VIEW SERVER STATE + Rechte auf die AG); das Kennwort
+ * steht nur in der Umgebung des einen sqlcmd-Prozesses (wie SQL_HILFE), nie in Argumenten oder Ausgabe
+ * Funktionen getrennt vom Aufruf (Tests setzen lauf, lies und sqlcmd_lauf ein).
+ */
+export const PY_AG_STATUS_FUNK = [
+  `AGR, AGK, VIPR, PMDATEI, SQLCMD = ${JSON.stringify(HA_AG_RESSOURCE)}, ${JSON.stringify(HA_AG_KLON)}, ${JSON.stringify(HA_AG_VIP_RESSOURCE)}, ${JSON.stringify(HA_PACEMAKER_DATEI)}, ${JSON.stringify(HA_AG_BEFEHLE[0])}`,
+  String.raw`AG_TSQL = """SET NOCOUNT ON;
+SELECT 'ALFRED|G|' + g.name + '|' + CAST(g.required_synchronized_secondaries_to_commit AS varchar(5)) + '|' + CAST((SELECT COUNT(*) FROM sys.availability_databases_cluster c WHERE c.group_id = g.group_id) AS varchar(10)) FROM sys.availability_groups g;
+SELECT 'ALFRED|R|' + r.replica_server_name + '|' + ISNULL(UPPER(rs.role_desc), '-') + '|' + UPPER(r.availability_mode_desc) + '|' + ISNULL(UPPER(rs.connected_state_desc), '-') + '|'
+  + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states d WHERE d.replica_id = r.replica_id) AS varchar(10)) + '|'
+  + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states d WHERE d.replica_id = r.replica_id AND UPPER(d.synchronization_state_desc) = 'SYNCHRONIZED') AS varchar(10))
+  FROM sys.availability_replicas r LEFT JOIN sys.dm_hadr_availability_replica_states rs ON rs.replica_id = r.replica_id ORDER BY r.replica_server_name;
+"""
+def wort(v):
+    return re.sub(r"[^A-Za-z0-9_.:-]", "_", v or "")[:80] or None
+def sqlcmd_lauf(login, kw):
+    return subprocess.run([SQLCMD, "-C", "-b", "-x", "-S", "localhost", "-U", login, "-l", "10", "-h", "-1", "-W", "-w", "65535"], input=AG_TSQL, capture_output=True, text=True, timeout=30, env=dict(os.environ, SQLCMDPASSWORD=kw))
+def ag_sql():
+    z = (lies(PMDATEI) or "").splitlines()
+    if len(z) < 2 or not z[0] or not z[1]:
+        return None, None
+    try:
+        p = sqlcmd_lauf(z[0], z[1])
+    except Exception as e:
+        return None, type(e).__name__
+    if p.returncode != 0:
+        t = " ".join((p.stdout + " " + p.stderr).replace(z[1], "[geschwärzt]").split())
+        return None, t[-160:] or ("Exit %d" % p.returncode)
+    s = {"name": None, "requiredSync": None, "datenbanken": None, "replikate": []}
+    for zeile in p.stdout.splitlines():
+        f = zeile.strip().split("|")
+        if f[:2] == ["ALFRED", "G"] and len(f) == 5:
+            s.update({"name": wort(f[2]), "requiredSync": int(f[3]) if f[3].isdigit() else None, "datenbanken": int(f[4]) if f[4].isdigit() else None})
+        elif f[:2] == ["ALFRED", "R"] and len(f) == 8:
+            s["replikate"].append({"name": wort(f[2]), "rolle": wort(f[3]), "modus": wort(f[4]), "verbunden": wort(f[5]), "dbs": int(f[6]) if f[6].isdigit() else 0, "sync": int(f[7]) if f[7].isdigit() else 0})
+    return s, None
+def ag_lage():
+    ag = {"art": "keine"}
+    c, _ = lauf("crm_resource", "--resource", AGR, "--query-xml")
+    if c == 0 or os.path.exists(PMDATEI):
+        ag = {"art": "eingerichtet", "ressource": c == 0, "name": None, "requiredSyncRessource": None, "promoted": None, "vip": None, "standort": None}
+        if c == 0:
+            for k, n in (("name", "ag_name"), ("requiredSyncRessource", "required_synchronized_secondaries_to_commit")):
+                c2, v = lauf("crm_resource", "--resource", AGR, "--get-parameter", n)
+                ag[k] = wort(v.splitlines()[-1].strip()) if c2 == 0 and v.strip() else None
+        c, x = lauf("crm_mon", "-1", "--output-as=xml")
+        if c == 0:
+            try:
+                pr, vn = [], []
+                for e in ET.fromstring(x).iter("resource"):
+                    if e.get("active", "true") != "true" or e.get("failed", "false") == "true":
+                        continue
+                    kn = [n.get("name") for n in e.findall("node") if n.get("name")]
+                    if e.get("id") == AGR and e.get("role") in ("Promoted", "Master"):
+                        pr += kn
+                    if e.get("id") == VIPR and e.get("role") == "Started":
+                        vn += kn
+                ag["promoted"], ag["vip"] = sorted(set(pr)), sorted(set(vn))
+            except Exception:
+                pass
+        c, x = lauf("cibadmin", "--query", "--scope", "constraints")
+        if c == 0:
+            try:
+                ag["standort"] = [{"id": wort(e.get("id")), "rsc": wort(e.get("rsc")), "knoten": wort(e.get("node")), "rolle": wort(e.get("role"))} for e in ET.fromstring(x).iter("rsc_location") if e.get("rsc") in (AGR, AGK, VIPR)]
+            except Exception:
+                ag["standort"] = None
+        ag["sql"], ag["sqlFehler"] = ag_sql()
+    return ag`,
+].join('\n');
+
 /** python3-Statusprogramm (ohne Geheimnis): Watchdog (Kennung, Treiber, Besitzer), Pakete, HADR, Firewall, hosts, RuntimeWatchdog, pcsd */
 export const PY_HA_STATUS = [
   'import glob, json, os, re, subprocess',
@@ -1752,6 +1833,9 @@ r["cluster"] = cl`,
   // Task 4: Fencing-Beweis dieses Knotens — Test, Beleg, boot_id und Identität im Cluster; die Gültigkeit prüft fencingBelegGueltig (TS)
   PY_FENCING_FUNK,
   `r["fencing"] = {"bootId": lies("/proc/sys/kernel/random/boot_id"), "jetztS": int(time.time()), "test": sicht_test(lies_json(${JSON.stringify(HA_FENCING_TEST_DATEI)})), "beleg": sicht_beleg(lies_json(${JSON.stringify(HA_FENCING_BELEG_DATEI)})), "identitaet": fencing_ident("/etc/corosync/corosync.conf", "/etc/corosync/authkey", "/etc/default/sbd", ich), "sperreAktiv": lauf("nft", "list", "table", "inet", ${JSON.stringify(HA_FENCETEST_TABELLE)})[0] == 0}`,
+  // Task 6: AG-Lage (PY_AG_STATUS_FUNK)
+  PY_AG_STATUS_FUNK,
+  'r["ag"] = ag_lage()',
   'print("ALFRED-HA " + json.dumps(r))',
 ].join('\n');
 
@@ -1797,11 +1881,6 @@ export const HA_PACEMAKER_LOGIN = 'alfred_pacemaker';
 /** Tresor: Kennwort des Pacemaker-Logins (alle drei Knoten gleich) und Master-Key-Kennwort je Zugang */
 export const HA_PACEMAKER_TRESOR = 'sqllnx-ha-pacemaker';
 export const haMasterkeyTresor = (zugang: string) => `sqllnx-${zugang.toLowerCase()}-masterkey`;
-/** Zugangsdatei des Resource-Agents ocf:mssql:ag (Zeile 1 Login, Zeile 2 Kennwort), 0600 root */
-export const HA_PACEMAKER_DATEI = '/var/opt/mssql/secrets/passwd';
-export const HA_AG_RESSOURCE = 'ag_cluster';
-export const HA_AG_KLON = `${HA_AG_RESSOURCE}-clone`;
-export const HA_AG_VIP_RESSOURCE = 'ag_vip';
 export const HA_AG_ROLLEN = ['primaer', 'sekundaer', 'konfig'] as const;
 export type HaAgRolle = typeof HA_AG_ROLLEN[number];
 export interface HaAgBesetzung { primaer: string; sekundaer: string; konfig: string }
@@ -2143,7 +2222,7 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'd
 }
 
 /** python3: crm_mon-XML → „<Promoted-Knoten> <VIP-Knoten>“ (lage) bzw. CIB-Constraints → „<Kolokation 0|1> <Reihenfolge 0|1>“ (regeln) */
-export const PY_AG_PCS = String.raw`import sys, xml.etree.ElementTree as ET
+export const PY_AG_PCS = String.raw`import re, sys, xml.etree.ElementTree as ET
 c = sys.argv[1]
 try:
     r = ET.fromstring(sys.stdin.read())
@@ -2166,6 +2245,20 @@ elif c == "regeln":
     ko = any(x.get("rsc") == vip and x.get("with-rsc") == klon and x.get("with-rsc-role") in ("Promoted", "Master") and x.get("score") in ("INFINITY", "+INFINITY") for x in r.iter("rsc_colocation"))
     od = any(x.get("first") == klon and x.get("first-action") == "promote" and x.get("then") == vip and x.get("then-action", "start") == "start" for x in r.iter("rsc_order"))
     print(1 if ko else 0, 1 if od else 0)
+elif c == "standort":
+    # Task 6: Standort-Bedingungen der AG-Ressourcen — „<cli> <andere> <id@knoten,…|->“ (cli-prefer/cli-ban stammen von pcs resource move/ban)
+    namen = set(sys.argv[2:])
+    cli, andere, liste = 0, 0, []
+    for x in r.iter("rsc_location"):
+        if x.get("rsc") not in namen:
+            continue
+        i = re.sub(r"[^A-Za-z0-9_.-]", "_", x.get("id") or "?")
+        if i.startswith("cli-prefer-") or i.startswith("cli-ban-"):
+            cli += 1
+        else:
+            andere += 1
+        liste.append(i + "@" + re.sub(r"[^A-Za-z0-9_.-]", "_", x.get("node") or "regel"))
+    print(cli, andere, ",".join(liste) or "-")
 else:
     sys.exit(3)`;
 
@@ -2242,7 +2335,7 @@ vip_lokal() { ip -o -4 addr show 2>/dev/null | grep -qF " $VIP_IP/$VIP_PRAEFIX "
 # „a=SYNCHRONIZED,b=…“ → JSON-Liste [{name, zustand}] (Namen geprüft, Zustände aus SQL nur [A-Z_ ])
 db_json() { local x n s j=''; [ "$1" = - ] || [ -z "$1" ] || { local IFS=','; for x in $1; do n=§{x%%=*}; s=§{x#*=}; [[ "$n" =~ ^[A-Za-z0-9_]+$ ]] || n='?'; [[ "$s" =~ ^[A-Za-z_\ ]+$ ]] || s='?'; j+="§{j:+,}{\"name\":\"$n\",\"zustand\":\"$s\"}"; done; }; printf '[%s]' "$j"; }`);
 
-function agKopf(baustein: string, p: Record<string, unknown>, ag: string, rolle: HaAgRolle, ich: string): string[] {
+function agKopf(baustein: string, p: Record<string, unknown>, ag: string, rolle: HaAgRolle | 'failover-ziel', ich: string): string[] {
   return [
     ...sqlKopf(baustein, p, 'ALFRED-HA'),
     ...SQL_HILFE,
@@ -2524,6 +2617,172 @@ export function haAgEntfernenSkript(p: HaAgEntfernenParameter): string {
   ].join('\n');
 }
 
+// ── Geplantes Failover (Task 6): ag_failover ─────────────────────────────────────────────────────────────────────────────────
+//
+// Läuft auf dem ZIEL (sa des Ziels über stdin): prüft ohne Änderung (Cluster 3/3 mit Quorum, Ressource ag_cluster mit
+// required_synchronized_secondaries_to_commit=0, keine fremde Standort-Bedingung, SQL: REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0,
+// Ziel SECONDARY/CONNECTED und alle AG-Datenbanken hier SYNCHRONIZED, Promoted auf dem bisherigen Primär), dann
+// `pcs resource move ag_cluster-clone <ziel> --promoted`, wartet bis Promoted = Ziel und die SQL-Rolle hier PRIMARY ist, und gibt die
+// Standort-Bedingung mit `pcs resource clear ag_cluster-clone` frei — auch bei Zeitüberschreitung oder gescheitertem move; das Ergebnis
+// davon steht immer in der Meldung (eine verbliebene cli-prefer bindet die AG still an einen Knoten). Danach VIP hier, bisheriger
+// Primär SECONDARY/CONNECTED und synchron, Selbstprüfung. Ist das Ziel schon Primär: kein move, nur eine liegengebliebene cli-prefer/
+// cli-ban freigeben (als Änderung gemeldet) und dieselbe Selbstprüfung. Rückweg = ag_failover zurück (zugang/ziel vertauscht).
+
+export interface HaAgFailoverParameter { ag: string; ziel: string; vorher: string; knoten: HaKnoten[] }
+
+/** Ziel und bisheriger Primär (zugang): zwei verschiedene Datenreplikate — nie das CONFIGURATION_ONLY-Replikat */
+export function pruefeHaAgFailover(p: unknown): string | undefined {
+  const x = obj(p);
+  const f = pruefeAgName(x.ag) ?? pruefeKnoten(x.knoten); if (f) return f;
+  const daten = (x.knoten as HaKnoten[]).map(k => k.name).filter(n => n !== HA_AG_KONFIG_KNOTEN);
+  for (const [feld, wer] of [['ziel', 'ziel'], ['vorher', 'zugang (bisheriger Primär)']] as const) {
+    const v = x[feld];
+    if (v === HA_AG_KONFIG_KNOTEN) return `${wer}: ${HA_AG_KONFIG_KNOTEN} ist CONFIGURATION_ONLY (ohne Daten) — nur ${daten.join(' oder ')}`;
+    if (typeof v !== 'string' || !daten.includes(v)) return `${wer}: ein Datenreplikat (${daten.join(', ')})`;
+  }
+  if (x.ziel === x.vorher) return 'ziel und zugang (bisheriger Primär) müssen verschiedene Datenreplikate sein';
+  return undefined;
+}
+
+/**
+ * Lage der AG auf dem Ziel, eine Zeile: „ALFRED|<Rolle hier>|<required_sync>|<AG-Datenbanken>|<davon hier SYNCHRONIZED>|<Verbindung hier>|
+ * <Rolle bisheriger Primär>|<dessen Verbindung>|<dessen Datenbanken SYNCHRONIZED>|<Liste hier>|<Liste bisheriger Primär>“ — die Werte des
+ * anderen Replikats sieht nur der Primär (auf dem Sekundär „-“/0), also erst nach dem Failover.
+ */
+function tsqlFailover(p: HaAgFailoverParameter): string {
+  const { ag, ziel, vorher } = p;
+  const alt = `JOIN sys.availability_replicas ar ON ar.replica_id = x.replica_id WHERE x.group_id = g.group_id AND ar.replica_server_name = N'${vorher}'`;
+  const altRep = (spalte: string) => `ISNULL((SELECT UPPER(rs.${spalte}) FROM sys.dm_hadr_availability_replica_states rs JOIN sys.availability_replicas ar ON ar.replica_id = rs.replica_id WHERE rs.group_id = g.group_id AND ar.replica_server_name = N'${vorher}'), '-')`;
+  const liste = (wo: string) => `ISNULL((SELECT STRING_AGG(CAST(ISNULL(DB_NAME(x.database_id), N'?') + N'=' + UPPER(x.synchronization_state_desc) AS varchar(300)), ',') WITHIN GROUP (ORDER BY x.database_id) FROM sys.dm_hadr_database_replica_states x ${wo}), '-')`;
+  return [
+    AG_KOPF('fo_lage'),
+    'DECLARE @m nvarchar(2048);',
+    servername(ziel),
+    `IF NOT ${agDa(ag)} THROW 50501, N'${ag} fehlt auf ${ziel} - kein Failover; nichts geändert', 1;`,
+    `SELECT 'ALFRED|' + ISNULL(${lokaleRolle(ag)}, '-') + '|' + CAST(g.required_synchronized_secondaries_to_commit AS varchar(5)) + '|'`,
+    "  + CAST((SELECT COUNT(*) FROM sys.availability_databases_cluster c WHERE c.group_id = g.group_id) AS varchar(10)) + '|'",
+    "  + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states x WHERE x.group_id = g.group_id AND x.is_local = 1 AND UPPER(x.synchronization_state_desc) = N'SYNCHRONIZED') AS varchar(10)) + '|'",
+    "  + ISNULL((SELECT UPPER(rs.connected_state_desc) FROM sys.dm_hadr_availability_replica_states rs WHERE rs.group_id = g.group_id AND rs.is_local = 1), '-') + '|'",
+    `  + ${altRep('role_desc')} + '|' + ${altRep('connected_state_desc')} + '|'`,
+    `  + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states x ${alt} AND UPPER(x.synchronization_state_desc) = N'SYNCHRONIZED') AS varchar(10)) + '|'`,
+    `  + ${liste('WHERE x.group_id = g.group_id AND x.is_local = 1')} + '|' + ${liste(alt)}`,
+    `FROM sys.availability_groups g WHERE g.name = N'${ag}';`,
+  ].join('\n');
+}
+
+/** Hilfen des Failover-Bausteins — vor der Marke, damit Tests sie umbiegen können */
+const FO_HILFEN = sh(String.raw`jetzt() { date +%s; }
+MOVE_OFFEN=0; FREIGABE=''
+# Standort-Bedingungen der AG-Ressourcen: SCLI = cli-prefer/cli-ban (von pcs resource move/ban), SANDERE = fremde, SLISTE; unlesbar → x
+standort() { local x l; SCLI=x; SANDERE=x; SLISTE=-; if x=$(cibadmin --query --scope constraints 2>/dev/null) && l=$(ag_pcs_py standort "$AG_RES" "$AG_KLON" "$VIP_RES" <<<"$x" 2>/dev/null); then read -r SCLI SANDERE SLISTE <<<"$l"; fi; }
+lage_setzen() { IFS='|' read -r _ LOKAL RS NDB NSYNC VERB ALTROLLE ALTVERB NALT LLOKAL LALT <<<"$1"; }
+lage_lesen() { sql_lauf "$T_LAGE" "$1"; lage_setzen "$ZEILE"; }
+# während des Rollenwechsels: ein SQL-Fehler zählt als „noch nicht“ (kein Abbruch mitten im Warten)
+lage_versuch() { local a; a=$(sql "$T_LAGE" 2>&1) || return 1; a=$(alfred_zeile "$a"); [ -n "$a" ] || return 1; lage_setzen "$a"; }
+# Standort-Bedingung freigeben: pcs resource clear läuft immer; FREIGABE sagt, was geschah — 1, wenn danach noch eine Bedingung besteht
+freigeben() {
+  local aus vor
+  MOVE_OFFEN=0
+  standort; vor=$SCLI
+  if ! aus=$(pcs resource clear "$AG_KLON" 2>&1); then
+    standort
+    FREIGABE="pcs resource clear $AG_KLON fehlgeschlagen ($(kurz "$aus")) — Standort-Bedingung(en) $SLISTE bleiben und binden die AG an einen Knoten; von Hand: pcs resource clear $AG_KLON"
+    return 1
+  fi
+  standort
+  if [ "$SCLI" != 0 ]; then FREIGABE="pcs resource clear $AG_KLON lief, aber Standort-Bedingung(en) $SLISTE bestehen weiter oder sind nicht lesbar und binden die AG — von Hand prüfen (pcs constraint location)"; return 1; fi
+  if [ "$vor" = 0 ]; then FREIGABE="pcs resource clear $AG_KLON ausgeführt (keine Standort-Bedingung offen)"; else aend standort-bedingung-entfernt; FREIGABE="Standort-Bedingung mit pcs resource clear $AG_KLON entfernt"; fi
+}
+warte_primaer() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do pm_lage; if [ "$PROM" = "$ICH" ] && lage_versuch && [ "$LOKAL" = PRIMARY ]; then return 0; fi; sleep 2; done; return 1; }
+warte_gegenstelle() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if lage_versuch && [ "$LOKAL" = PRIMARY ] && [ "$ALTROLLE" = SECONDARY ] && [ "$ALTVERB" = CONNECTED ] && [ "$NALT" = "$NDB" ]; then return 0; fi; sleep 2; done; return 1; }`);
+
+const AG_FAILOVER_KOERPER = sh(String.raw`knoten_ich
+geheim_lesen sa SA "sa-Kennwort"
+DAUER=0; VORHER=$ALT
+# Nach dem Verschieben darf kein Abbruch die Standort-Bedingung still stehen lassen: jeder Abbruch gibt sie zuerst frei und nennt das
+# Ergebnis; bei einem unerwarteten Ende (set -e) räumt alfred_aufraeumen (EXIT-Trap) wenigstens auf
+eval "$(declare -f abbruch | sed '1s/^abbruch /abbruch_basis /')"
+abbruch() { if [ "$MOVE_OFFEN" = 1 ]; then freigeben || true; set -- "$1 — $FREIGABE"; fi; abbruch_basis "$1"; }
+alfred_aufraeumen() { if [ "$MOVE_OFFEN" = 1 ]; then MOVE_OFFEN=0; pcs resource clear "$AG_KLON" >/dev/null 2>&1 || true; fi; }
+# ── Phase 1: prüfen — bis zum Verschieben keine Änderung ──
+cluster_lage
+{ [ "$LO" = 3 ] && [ "$LQ" = 1 ]; } || abbruch "Cluster: $LO/3 online, Quorum $([ "$LQ" = 1 ] && echo ja || echo nein) — erwartet 3/3 mit Quorum; kein Failover, nichts geändert"
+ressource_da "$AG_RES" || abbruch "Pacemaker-Ressource $AG_RES fehlt — erst ag_anlegen; nichts geändert"
+an=$(parameter "$AG_RES" ag_name)
+[ "$an" = "$AG" ] || abbruch "Ressource $AG_RES verwaltet '§{an:-?}' statt $AG — kein Failover; nichts geändert"
+rr=$(parameter "$AG_RES" required_synchronized_secondaries_to_commit)
+[ "$rr" = 0 ] || abbruch "required_synchronized_secondaries_to_commit an $AG_RES ist '§{rr:-nicht gesetzt}', erwartet 0 (ag_anlegen setzt es) — kein Failover; nichts geändert"
+VIP_IP=$(parameter "$VIP_RES" ip); VIP_PRAEFIX=$(parameter "$VIP_RES" cidr_netmask)
+{ [[ "$VIP_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && [[ "$VIP_PRAEFIX" =~ ^[0-9]{1,2}$ ]]; } || abbruch "VIP-Ressource $VIP_RES nicht lesbar (ip '§{VIP_IP}', cidr_netmask '§{VIP_PRAEFIX}') — kein Failover; nichts geändert"
+standort
+[ "$SCLI" != x ] || abbruch "Standort-Bedingungen (CIB) nicht lesbar — kein Failover; nichts geändert"
+[ "$SANDERE" = 0 ] || abbruch "fremde Standort-Bedingungen an $AG_KLON/$VIP_RES ($SLISTE) — nicht still entfernt, kein Failover; nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+lage_lesen "AG-Lage auf $ICH"
+[ "$RS" = 0 ] || abbruch "REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist $RS, erwartet 0 (ag_anlegen setzt es) — kein Failover; nichts geändert"
+pm_lage
+if [ "$PROM" = "$ICH" ] && [ "$LOKAL" = PRIMARY ]; then
+  # schon Primär: kein move — nur eine liegengebliebene Standort-Bedingung freigeben (als Änderung gemeldet)
+  VORHER=$ICH
+  if [ "$SCLI" != 0 ]; then freigeben || abbruch "$ICH ist schon Primär, aber: $FREIGABE — $(stand)"; fi
+else
+  [ "$PROM" = "$ALT" ] || abbruch "Promoted auf '$PROM', erwartet $ALT (zugang = bisheriger Primär) — Lage unklar, kein Failover; nichts geändert"
+  { [ "$LOKAL" = SECONDARY ] && [ "$VERB" = CONNECTED ]; } || abbruch "$ICH ist $LOKAL/$VERB, erwartet SECONDARY/CONNECTED — kein Failover; nichts geändert"
+  { [[ "$NDB" =~ ^[1-9][0-9]*$ ]] && [ "$NSYNC" = "$NDB" ]; } || abbruch "Ziel $ICH nicht SYNCHRONIZED ($NSYNC/$NDB: $LLOKAL) — geplantes Failover nur auf ein synchronisiertes Ziel; nichts geändert"
+  if [ "$SCLI" != 0 ]; then
+    freigeben || abbruch "liegengebliebene Standort-Bedingung vor dem Failover: $FREIGABE — $(stand)"
+    pm_lage
+    [ "$PROM" = "$ALT" ] || abbruch "nach dem Freigeben der liegengebliebenen Standort-Bedingung ist Promoted auf '$PROM' — kein Failover; $(stand)"
+  fi
+  # ── Phase 2: verschieben, auf den Primär warten, Standort-Bedingung freigeben — auch bei Zeitüberschreitung oder gescheitertem move ──
+  T0=$(jetzt); MOVE_OFFEN=1
+  if ! aus=$(pcs resource move "$AG_KLON" "$ICH" --promoted 2>&1); then
+    freigeben || true
+    abbruch "pcs resource move $AG_KLON $ICH --promoted fehlgeschlagen: $(kurz "$aus") — $FREIGABE; $(stand)"
+  fi
+  aend failover-angestossen
+  if ! warte_primaer; then
+    freigeben || true
+    abbruch "Zeitüberschreitung: nach $((WARTE_RUNDEN * 2)) s Promoted auf '$PROM', SQL-Rolle auf $ICH '§{LOKAL:-?}' — Failover nicht bestätigt; $FREIGABE; $(stand)"
+  fi
+  DAUER=$(( $(jetzt) - T0 ))
+  freigeben || abbruch "Failover auf $ICH nach $DAUER s, aber: $FREIGABE — $(stand)"
+fi
+# ── Phase 3: Promoted und VIP hier, bisheriger Primär SECONDARY/CONNECTED und synchron ──
+warte_pacemaker || abbruch "Pacemaker: Promoted auf '$PROM', VIP auf '$VIPN' — erwartet beide auf $ICH; $(stand)"
+warte_gegenstelle || abbruch "$ALT ist §{ALTROLLE:-?}/§{ALTVERB:-?}, Datenbanken §{NALT:-?}/§{NDB:-?} SYNCHRONIZED (§{LALT:--}) nach $((WARTE_RUNDEN * 2)) s — $ICH ist Primär, die Gegenstelle aber nicht synchron; $(stand)"
+# ── Selbstprüfung: SQL (Primär hier, required_sync 0), Ressource (required_sync 0), keine Standort-Bedingung, Promoted + VIP hier ──
+lage_lesen "Selbstprüfung auf $ICH"
+[ "$LOKAL" = PRIMARY ] || abbruch "Selbstprüfung: $ICH ist $LOKAL, erwartet PRIMARY — $(stand)"
+[ "$RS" = 0 ] || abbruch "Selbstprüfung: REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist $RS, erwartet 0 — $(stand)"
+rr=$(parameter "$AG_RES" required_synchronized_secondaries_to_commit)
+[ "$rr" = 0 ] || abbruch "Selbstprüfung: required_synchronized_secondaries_to_commit an der Ressource $AG_RES ist '§{rr:-nicht gesetzt}', erwartet 0 — $(stand)"
+standort
+{ [ "$SCLI" = 0 ] && [ "$SANDERE" = 0 ]; } || abbruch "Selbstprüfung: Standort-Bedingungen an $AG_KLON/$VIP_RES offen oder nicht lesbar ($SLISTE) — $(stand)"
+pm_lage
+{ [ "$PROM" = "$ICH" ] && [ "$VIPN" = "$ICH" ]; } || abbruch "Selbstprüfung: Promoted auf '$PROM', VIP auf '$VIPN' — erwartet $ICH; $(stand)"
+vip_lokal || abbruch "Selbstprüfung: VIP $VIP_IP/$VIP_PRAEFIX ist auf $ICH nicht gebunden — $(stand)"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"ag\":\"$AG\",\"primaer\":\"$ICH\",\"vorher\":\"$VORHER\",\"dauerS\":$DAUER,\"vip\":\"$VIP_IP/$VIP_PRAEFIX\",\"vipAuf\":\"$VIPN\",\"promotedAuf\":\"$PROM\",\"requiredSyncSql\":$RS,\"requiredSyncRessource\":\"$rr\",\"altRolle\":\"$ALTROLLE\",\"datenbanken\":$(db_json "$LALT"),\"standortBedingungen\":0,\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Geplantes Failover auf das Ziel (läuft dort; nur sa über stdin): Abbruch ohne Änderung, wenn das Ziel nicht SYNCHRONIZED ist,
+ * required_sync in SQL oder an der Ressource ≠ 0, Cluster nicht 3/3 mit Quorum, eine fremde Standort-Bedingung besteht oder Promoted nicht
+ * auf dem bisherigen Primär liegt; dann pcs resource move … --promoted, warten, pcs resource clear (immer), Selbstprüfung. Ergebnis: Dauer
+ * (move bis Primär = Ziel, s), neuer Primär, VIP-Ort, Zustand der Gegenstelle. Zeit: LINUX_HA_ZEIT_MS.agFailover
+ */
+export function haAgFailoverSkript(p: HaAgFailoverParameter): string {
+  pruefe(pruefeHaAgFailover(p));
+  return [
+    ...agKopf(LINUX_HA_BAUSTEINE.agFailover, { ag: p.ag, ziel: p.ziel, vorher: p.vorher, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })) }, p.ag, 'failover-ziel', p.ziel),
+    `ALT=${shQ(p.vorher)}`,
+    `T_LAGE=${shQ(tsqlFailover(p))}`,
+    FO_HILFEN,
+    '# ALFRED-ABLAUF',
+    AG_FAILOVER_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<HaVorbereitenParameter>(LINUX_HA_BAUSTEINE.vorbereiten, haVorbereitenSkript);
@@ -2536,3 +2795,4 @@ registriereLinuxBaustein<HaAgEndpunktParameter>(LINUX_HA_BAUSTEINE.agEndpunkt, h
 registriereLinuxBaustein<HaAgReplikatParameter>(LINUX_HA_BAUSTEINE.agReplikat, haAgReplikatSkript);
 registriereLinuxBaustein<HaAgAbschlussParameter>(LINUX_HA_BAUSTEINE.agAbschluss, haAgAbschlussSkript);
 registriereLinuxBaustein<HaAgEntfernenParameter>(LINUX_HA_BAUSTEINE.agEntfernen, haAgEntfernenSkript);
+registriereLinuxBaustein<HaAgFailoverParameter>(LINUX_HA_BAUSTEINE.agFailover, haAgFailoverSkript);

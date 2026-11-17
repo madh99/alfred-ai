@@ -15,8 +15,8 @@ import {
   HA_FENCING_ARTEN, HA_FENCING_SPERRE_S, HA_FENCING_VERZOEGERUNG_S, HA_FENCING_MAX_ALTER_S, HA_FENCING_HAENGER_KNOTEN, pruefeHaFencing, pruefeHaFencingBelegen, fencingBelegGueltig,
   type HaKnoten, type HaRolle, type HaVorbereitenParameter, type HaClusterParameter, type HaClusterEntfernenParameter,
   type HaFencingArt, type HaFencingParameter, type HaFencingBelegenParameter, type FencingLage, type FencingBeleg, type FencingTest,
-  HA_AG_NAME, HA_AG_VIP, HA_AG_KONFIG_KNOTEN, HA_AG_ROLLEN, HA_AG_RESSOURCE, HA_AG_VIP_RESSOURCE, HA_PACEMAKER_TRESOR, haMasterkeyTresor, istOeffentlichesZertifikat,
-  pruefeHaAgBesetzung, pruefeHaAgAbschluss, pruefeHaAgEntfernen,
+  HA_AG_NAME, HA_AG_VIP, HA_AG_KONFIG_KNOTEN, HA_AG_ROLLEN, HA_AG_RESSOURCE, HA_AG_KLON, HA_AG_VIP_RESSOURCE, HA_PACEMAKER_TRESOR, haMasterkeyTresor, istOeffentlichesZertifikat,
+  pruefeHaAgBesetzung, pruefeHaAgAbschluss, pruefeHaAgEntfernen, pruefeHaAgFailover, type HaAgFailoverParameter,
   type HaAgBesetzung, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
 } from './linux-ha.js';
 import { linuxSqlKennwort, saName, type LinuxSqlDeps } from './linux-sql-skill.js';
@@ -33,12 +33,14 @@ export const LINUX_HA_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   // Task 5: zehn Bausteine nacheinander (Status ×3, Endpunkt ×3, Replikat ×3, Abschluss) — je Baustein 60 s Puffer
   ag_anlegen: sek(3 * LINUX_HA_ZEIT_MS.status + 3 * LINUX_HA_ZEIT_MS.agEndpunkt + 3 * LINUX_HA_ZEIT_MS.agReplikat + LINUX_HA_ZEIT_MS.agAbschluss) + 10 * 60,
   ag_entfernen: sek(3 * LINUX_HA_ZEIT_MS.agEntfernen) + 3 * 60,
+  // Task 6: Status ×3 (Gate), Failover-Baustein auf dem Ziel — je Baustein 60 s Puffer
+  ag_failover: sek(3 * LINUX_HA_ZEIT_MS.status + LINUX_HA_ZEIT_MS.agFailover) + 4 * 60,
 };
 
 export type LinuxHaDeps = LinuxSqlDeps;
 
 export const LINUX_HA_LESEND = new Set(['status']);
-export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen']);
+export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover']);
 /** Task 4 — fencing_pruefen hat keinen Rückweg; nur mit genau diesem Grund (change-schritte.ts, OHNE_RUECKWEG_NUR_MIT_GRUND) */
 export const FENCING_OHNE_RUECKWEG_GRUND = 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -64,6 +66,38 @@ export interface LinuxHaStatus {
   cluster?: LinuxHaCluster;
   /** Task 4: Fencing-Test und -Beleg dieses Knotens, boot_id, Identität im Cluster */
   fencing?: FencingLage;
+  /** Task 6: AG-Lage (Pacemaker und SQL über die Zugangsdatei des Resource-Agents) */
+  ag?: LinuxHaAg;
+}
+
+/** Task 6 — AG-Teil des Status (PY_HA_STATUS → r.ag) */
+export interface LinuxHaAg {
+  art: 'keine' | 'eingerichtet';
+  ressource?: boolean; name?: string | null; requiredSyncRessource?: string | null;
+  /** Knoten mit Promoted bzw. gestarteter VIP (crm_mon); null = nicht lesbar */
+  promoted?: string[] | null; vip?: string[] | null;
+  /** rsc_location an ag_cluster, ag_cluster-clone, ag_vip (CIB); null = nicht lesbar */
+  standort?: Array<{ id: string | null; rsc: string | null; knoten: string | null; rolle: string | null }> | null;
+  sql?: { name: string | null; requiredSync: number | null; datenbanken: number | null; replikate: Array<{ name: string | null; rolle: string | null; modus: string | null; verbunden: string | null; dbs: number; sync: number }> } | null;
+  sqlFehler?: string | null;
+}
+
+/**
+ * AG-Teil des Status (fester Wortlaut): „AG sqllnxag01: Promoted sqllnx01, VIP sqllnx01, required_sync Ressource 0 / SQL 0, Replikate
+ * sqllnx01 PRIMARY / sqllnx02 SECONDARY SYNCHRONIZED 1/1, Standort-Bedingungen 0“; offene Bedingungen „Standort-Bedingungen OFFEN: <id>
+ * (<knoten>, <rolle>)“ (z. B. eine cli-prefer aus pcs resource move); ohne AG „AG nicht eingerichtet“. Positive Stücke ohne Verneinung
+ * (Planprüfung VERNEINUNG): „Standort-Bedingungen 0“ erwarten, „OFFEN“ als nichtEnthalten
+ */
+export function agText(a: LinuxHaAg): string {
+  if (a.art !== 'eingerichtet') return 'AG nicht eingerichtet';
+  const kn = (l: string[] | null | undefined) => (!l ? 'unbekannt' : l.length ? l.join('+') : 'keiner');
+  const sql = a.sql;
+  const reps = !sql ? (a.sqlFehler ? `SQL nicht lesbar (${a.sqlFehler})` : 'SQL ohne Zugangsdatei')
+    : `Replikate ${sql.replikate.filter(r => r.modus !== 'CONFIGURATION_ONLY').map(r => `${r.name ?? '?'} ${r.rolle ?? '?'}${r.dbs > 0 && r.rolle !== 'PRIMARY' ? ` ${r.sync === r.dbs ? 'SYNCHRONIZED' : 'NICHT SYNCHRONIZED'} ${r.sync}/${r.dbs}` : ''}`).join(' / ') || 'keine'}`;
+  const st = a.standort;
+  const standort = !st ? 'Standort-Bedingungen unbekannt' : !st.length ? 'Standort-Bedingungen 0'
+    : `Standort-Bedingungen OFFEN: ${st.map(x => `${x.id ?? '?'} (${x.knoten ?? '?'}${x.rolle ? `, ${x.rolle}` : ''})`).join(', ')}`;
+  return `AG ${a.name ?? sql?.name ?? '?'}: Promoted ${kn(a.promoted)}, VIP ${kn(a.vip)}, required_sync Ressource ${a.requiredSyncRessource ?? '?'} / SQL ${sql?.requiredSync ?? '?'}, ${reps}, ${standort}`;
 }
 
 /** „2026-11-17T14:03:12Z“ → „2026-11-17 14:03 UTC“ */
@@ -162,6 +196,9 @@ export function linuxHaStatusTeile(s: LinuxHaStatus): string[] {
     s.pcsd === 'active' ? 'pcsd aktiv' : `pcsd ${s.pcsd ?? 'unbekannt'}`,
     clusterText(s.cluster),
     fencingText(s.fencing),
+    // Task 6: AG-Teil am Ende, sobald eine AG eingerichtet ist (Ressource oder Zugangsdatei) — davor bleibt der Text wie bisher;
+    // Stücke wie „3/3 online“, „Fencing belegt“ bleiben unverändert
+    ...(s.ag?.art === 'eingerichtet' ? [agText(s.ag)] : []),
   ];
 }
 
@@ -268,6 +305,14 @@ function agEntfernenBesetzung(zugang: string, input: Record<string, unknown>): {
   return { ag, besetzung };
 }
 
+/** Task 6 — Failover: zugang = bisheriger Primär, ziel = neuer Primär (beides Datenreplikate, verschieden); läuft auf dem Ziel */
+function agFailoverParameter(zugang: string, input: Record<string, unknown>): HaAgFailoverParameter {
+  const ziel = (typeof input.ziel === 'string' ? input.ziel.trim().toLowerCase() : input.ziel) as string;
+  const p: HaAgFailoverParameter = { ag: agName(input), ziel, vorher: zugang.trim().toLowerCase(), knoten: HA_KNOTEN.map(k => ({ ...k })) };
+  const f = pruefeHaAgFailover(p); if (f) throw new Error(f);
+  return p;
+}
+
 /** Fix-Runde 1 (I1): abgeschlossene Läufe und neue Tresor-Einträge eines AG-Laufs — auch für die Fehlermeldung bei Abbruch */
 interface AgSpur { laeufe: Array<{ z: string; zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>; tresor: string[] }
 
@@ -276,6 +321,7 @@ interface AgSpur { laeufe: Array<{ z: string; zustand: string; aenderungen?: str
  * (bis zu zehn Läufe mit Änderungslisten) steht vorn und muss vollständig bleiben; gekürzt wird nur der Grund am Ende.
  */
 export const AG_FEHLER_MAX = 2400;
+const AG_AKTIONEN = new Set(['ag_anlegen', 'ag_entfernen', 'ag_failover']);
 /** Fix-Runde 3 (C): Länge des Grunds vorn im Fehlertext — der Change-Motor speichert 500 Zeichen, die Spur folgt dahinter */
 export const AG_GRUND_KURZ = 220;
 /** so viel speichert der Change-Motor vom Fehler eines Skills (change-motor.ts: String(r.error).slice(0, 500)) */
@@ -328,6 +374,11 @@ export class LinuxHaSkill extends Skill {
       + `Pacemaker-Ressource ${HA_AG_RESSOURCE} (ocf:mssql:ag, required_synchronized_secondaries_to_commit=0, promotable) und ${HA_AG_VIP_RESSOURCE} (IPaddr2) mit Kolokation Promoted und Reihenfolge promote → start; prüft sich selbst (Primär, Sekundär SYNCHRONIZED, required_sync 0 in SQL und Ressource, VIP auf dem Primär). `
       + 'Rückweg von ag_anlegen ist immer ag_entfernen (zugang = aktueller Primär, ag): Ressourcen, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei weg; Datenbanken bleiben (Primär ONLINE, Sekundär RESTORING), Master-Keys bleiben. '
       + 'Der DNS-Name der AG (windows_ad dns_eintrag, z. B. sqllnxag01 → 10.203.30.13) ist ein eigener Schritt. fencing_pruefen weist einen Cluster mit Ressourcen (AG) ab. '
+      + `ag_failover (zugang = bisheriger Primär, ziel = neuer Primär, beides Datenreplikate; ag Standard ${HA_AG_NAME}) — geplantes Failover: liest linux_ha.status auf allen drei Knoten (3/3 online, Quorum, STONITH, keine Corosync-Sperre, kein ausstehender Reset), `
+      + `dann auf dem Ziel: Abbruch ohne Änderung, wenn das Ziel nicht SYNCHRONIZED/CONNECTED ist, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL oder required_synchronized_secondaries_to_commit an ${HA_AG_RESSOURCE} nicht 0 ist, eine fremde Standort-Bedingung besteht oder Promoted nicht auf zugang liegt; `
+      + `sonst pcs resource move ${HA_AG_KLON} <ziel> --promoted, warten bis Primär = Ziel, immer pcs resource clear (auch bei Zeitüberschreitung — eine verbliebene Standort-Bedingung steht im Fehler), VIP und Gegenstelle SECONDARY/synchron abwarten, Selbstprüfung; `
+      + 'Ergebnis Dauer (s), neuer Primär, VIP-Ort. Ziel schon Primär → nichts zu tun (eine liegengebliebene cli-prefer wird sichtbar freigegeben). Rückweg ist immer ag_failover zurück (zugang und ziel vertauscht). '
+      + 'Status zeigt dazu „AG <name>: Promoted …, VIP …, required_sync Ressource 0 / SQL 0, Replikate … SYNCHRONIZED …, Standort-Bedingungen 0“ (offen: „Standort-Bedingungen OFFEN: …“ — Prüfung nichtEnthalten „OFFEN“). '
       + 'Sonst ohne Rückweg nur beim Neuaufbau (derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit) oder mit ohneSicherungGrund — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -343,11 +394,12 @@ export class LinuxHaSkill extends Skill {
         sbd_timeout_s: { type: 'number', description: `cluster_anlegen: SBD_WATCHDOG_TIMEOUT in s (Standard ${HA_SBD_TIMEOUT_S})` },
         stonith_timeout_s: { type: 'number', description: `cluster_anlegen: stonith-watchdog-timeout in s (Standard ${HA_STONITH_WD_TIMEOUT_S}, mindestens 2 × sbd_timeout_s)` },
         art: { type: 'string', enum: [...HA_FENCING_ARTEN], description: `fencing_pruefen: trennung (Corosync ${HA_FENCING_SPERRE_S} s sperren) oder haenger (Kernel-Absturz, nur ${HA_FENCING_HAENGER_KNOTEN})` },
-        ag: { type: 'string', description: `ag_anlegen/ag_entfernen: Name der Verfügbarkeitsgruppe (Standard ${HA_AG_NAME})` },
+        ag: { type: 'string', description: `ag_anlegen/ag_entfernen/ag_failover: Name der Verfügbarkeitsgruppe (Standard ${HA_AG_NAME})` },
         sekundaer: { type: 'string', description: 'ag_anlegen/ag_entfernen: Zugang des zweiten Datenreplikats (Standard der andere Datenknoten)' },
         konfig: { type: 'string', description: `ag_anlegen/ag_entfernen: Zugang des CONFIGURATION_ONLY-Replikats (nur ${HA_AG_KONFIG_KNOTEN})` },
         datenbanken: { type: 'array', description: 'ag_anlegen: Datenbanken der AG (auf dem Primär vorhanden, FULL, mit FULL-Sicherung)' },
         vip: { type: 'string', description: `ag_anlegen: virtuelle IP mit Präfix (Standard ${HA_AG_VIP})` },
+        ziel: { type: 'string', description: 'ag_failover: neuer Primär (Datenreplikat; zugang = bisheriger Primär)' },
       },
       required: ['action', 'zugang'],
     },
@@ -370,6 +422,7 @@ export class LinuxHaSkill extends Skill {
       if (action === 'fencing_belegen') fencingBelegenParameter(input);
       if (action === 'ag_anlegen') agAnlegenParameter(String(input.zugang), input);
       if (action === 'ag_entfernen') agEntfernenBesetzung(String(input.zugang), input);
+      if (action === 'ag_failover') agFailoverParameter(String(input.zugang), input);
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
   }
@@ -391,10 +444,11 @@ export class LinuxHaSkill extends Skill {
         case 'fencing_belegen': return await this.fencingBelegen(zugang, input);
         case 'ag_anlegen': return await this.agAnlegen(zugang, input, geheim);
         case 'ag_entfernen': return await this.agEntfernen(zugang, input, geheim);
+        case 'ag_failover': return await this.agFailover(zugang, input, geheim);
       }
     } catch (err) {
       const daten = err instanceof AgFehler ? err.daten : undefined;
-      return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, action === 'ag_anlegen' || action === 'ag_entfernen' ? AG_FEHLER_MAX : 800), ...(daten ? { data: daten } : {}) };
+      return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, AG_AKTIONEN.has(action) ? AG_FEHLER_MAX : 800), ...(daten ? { data: daten } : {}) };
     }
     return { success: false, error: 'Unbekannte Aktion' };
   }
@@ -645,6 +699,52 @@ export class LinuxHaSkill extends Skill {
     const text = `Verfügbarkeitsgruppe ${ag} entfernt (Pacemaker-Ressourcen ${HA_AG_RESSOURCE}/${HA_AG_VIP_RESSOURCE}, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei; Master-Keys bleiben); Datenbanken bleiben${dbs.length ? `: ${dbs.join('; ')}` : ''}`;
     if (laeufe.every(l => l.zustand === 'schon')) return { success: true, data: { ag, besetzung: b, laeufe }, display: `${text} — nichts zu tun` };
     return { success: true, data: { ag, besetzung: b, laeufe }, display: `✅ ${text} — geändert: ${jeKnoten(laeufe)}` };
+  }
+
+  /**
+   * Task 6 — geplantes Failover: (0) Gate über linux_ha.status auf allen drei Knoten (ohne Geheimnis): Cluster 3/3 online mit Quorum und
+   * STONITH (Wertung wie ag_anlegen/clusterText), keine Corosync-Sperre, kein ausstehender Reset; (1) Baustein ha.ag_failover auf dem Ziel
+   * (nur dessen sa); (2) Ergebnis gegen das Ziel prüfen. Abbruch mit Teiländerungen → Daten (teilweise → Rückweg ag_failover zurück).
+   */
+  private async agFailover(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const spur: AgSpur = { laeufe: [], tresor: [] };
+    try { return await this.agFailoverLauf(zugang, input, geheim, spur); } catch (err) { throw this.mitSpur('Geplantes Failover', zugang, err, spur, geheim); }
+  }
+
+  private async agFailoverLauf(zugang: string, input: Record<string, unknown>, geheim: string[], spur: AgSpur): Promise<SkillResult> {
+    const p = agFailoverParameter(zugang, input);
+    saPruefen(await this.tresor().namen(), [p.ziel]);
+    const maengel: string[] = [];
+    for (const z of HA_KNOTEN.map(k => k.name)) {
+      const s = await this.lauf<LinuxHaStatus & Record<string, unknown>>(z, LINUX_HA_BAUSTEINE.status, {}, 'HA-Status vor dem Failover', LINUX_HA_ZEIT_MS.status);
+      const k = s.fencing?.identitaet?.knoten;
+      if (k && k !== z) { maengel.push(`${z}: Zugang zeigt auf Knoten ${k}`); continue; }
+      const c = s.cluster;
+      if (!c || c.art !== 'eingerichtet' || c.name !== HA_CLUSTER_NAME || !c.crm || HA_KNOTEN.some(x => !c.crm!.online.includes(x.name)) || !c.crm.quorum || !c.crm.stonith) maengel.push(`${z}: ${clusterText(c)}`);
+      if (s.fencing?.sperreAktiv) maengel.push(`${z}: Corosync-Sperre alfred_fencetest AKTIV`);
+      const ft = fencingText(s.fencing);
+      if (ft.includes('Reset ausstehend')) maengel.push(`${z}: ${ft}`);
+    }
+    if (maengel.length) throw new Error(`Failover von ${p.ag} nach ${p.ziel} nicht gestartet — Cluster nicht bereit: ${maengel.join('; ')} — kein Fernaufruf mit Geheimnis, nichts geändert`);
+    const sa = await this.saKennwoerter([p.ziel], 'Failover', geheim);
+    const r = await this.lauf<{ zustand: string; ag?: string; primaer?: string; vorher?: string; dauerS?: number; vip?: string; vipAuf?: string; promotedAuf?: string; requiredSyncSql?: unknown;
+      requiredSyncRessource?: unknown; altRolle?: string; datenbanken?: Array<{ name: string; zustand: string }>; standortBedingungen?: unknown; aenderungen?: string[] }>(
+      p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, `AG-Failover ${p.ziel}`, LINUX_HA_ZEIT_MS.agFailover, { sa: sa[p.ziel]! });
+    spur.laeufe.push({ z: p.ziel, zustand: r.zustand, aenderungen: r.aenderungen });
+    const abw = [
+      (r.primaer !== p.ziel || r.promotedAuf !== p.ziel) && `Primär ${String(r.primaer)}, Promoted auf ${String(r.promotedAuf)}`,
+      r.vipAuf !== p.ziel && `VIP auf ${String(r.vipAuf)}`,
+      r.requiredSyncSql !== 0 && `REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ${String(r.requiredSyncSql)}`,
+      r.requiredSyncRessource !== '0' && `required_synchronized_secondaries_to_commit an ${HA_AG_RESSOURCE} ${String(r.requiredSyncRessource)}`,
+      r.standortBedingungen !== 0 && `Standort-Bedingungen offen: ${String(r.standortBedingungen)}`,
+    ].filter(Boolean);
+    if (abw.length) throw new Error(`Selbstprüfung des Failovers auf ${p.ziel}: ${abw.join('; ')} — erwartet Primär/Promoted/VIP ${p.ziel}, required_sync 0 in SQL und Ressource, keine Standort-Bedingung; Änderungen des Laufs: ${(r.aenderungen ?? []).join(', ') || 'keine'}`);
+    this.d.protokoll?.('I8e Geplantes Failover', { zugang, ziel: p.ziel, ag: p.ag, zustand: r.zustand, vorher: r.vorher, dauerS: r.dauerS, vipAuf: r.vipAuf, aenderungen: r.aenderungen });
+    const dbs = (r.datenbanken ?? []).map(d => `${d.name} ${d.zustand}`).join(', ') || 'keine Datenbanken gemeldet';
+    const lage = `VIP ${r.vip ?? '?'} auf ${r.vipAuf} (Promoted ${r.promotedAuf}); ${p.vorher} ${r.altRolle ?? '?'} (${dbs}); REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT 0 in SQL und Ressource ${HA_AG_RESSOURCE}`;
+    if (r.zustand === 'schon') return { success: true, data: r, display: `Verfügbarkeitsgruppe ${p.ag}: ${p.ziel} ist schon Primär; ${lage}; keine Standort-Bedingung offen — nichts zu tun` };
+    const kopf = r.vorher === p.ziel ? `${p.ziel} war schon Primär` : `Primär jetzt ${p.ziel} (vorher ${r.vorher ?? p.vorher}) nach ${r.dauerS ?? '?'} s`;
+    return { success: true, data: r, display: `✅ Geplantes Failover der Verfügbarkeitsgruppe ${p.ag}: ${kopf}; ${lage}; keine Standort-Bedingung offen (pcs resource clear) — geändert: ${(r.aenderungen ?? []).join(', ')}` };
   }
 }
 
