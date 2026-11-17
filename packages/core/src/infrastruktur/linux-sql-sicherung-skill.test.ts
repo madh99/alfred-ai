@@ -149,7 +149,8 @@ describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
   it('sicherungen: fester Wortlaut mit Ziel, Budget, letzter Kopie, Zugangsdatei, Timer, Ketten und Hash-Status', () => {
     const t = linuxSqlSicherungenText('sqllnx01', LISTE as never);
     expect(t).toBe('sqllnx01: Sicherung nach //fs01.ad.3033.at/SQLLinuxBackup$ (belegt 3.0 GiB von 64 GiB); Kopie zuletzt 2026-11-16T12:07:00Z ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; '
-      + 'pruefdb01: 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, Hash ok — pruefdb01: vollständig auf fs01');
+      // I8e Paket 2 Task 7: Rolle je Datenbank; fehlt sie (ältere Ausgabe), heißt sie „unbekannt“ — nie PRIMARY
+      + 'pruefdb01: Rolle unbekannt, 2 Ketten (2 vollständig), letzte FULL 20261116003000, lokal 142, fs01 142, Hash ok — pruefdb01: vollständig auf fs01');
     const kaputt = linuxSqlSicherungenText('sqllnx01', { ...LISTE, status: { zeit: 'x', ok: false, fehler: 'Budget überschritten' }, datenbanken: { pruefdb01: { ...LISTE.datenbanken.pruefdb01, ketten: [{ ...LISTE.datenbanken.pruefdb01.ketten[0]!, vollstaendig: false }] } } } as never);
     expect(kaputt).toContain('FEHLER: Budget überschritten');
     expect(kaputt).toContain('Hash unbekannt (letzter Kopierlauf fehlgeschlagen)');
@@ -232,5 +233,42 @@ describe('I8e Task 4 — Planregeln', () => {
     expect(pruefeChangePlan(plan([pr('vollständig auf fs01')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
     expect(pruefeChangePlan(plan([pr('Hash ok')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
     expect(pruefeChangePlan(plan([pr('alles bestens gesichert')]), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
+  });
+});
+
+describe('I8e Paket 2 Task 7 — Rolle je Datenbank und erzwungene FULL im Wortlaut', () => {
+  const D = { ketten: [{ full: '20261116003000', diffs: 1, logs: 40, vollstaendig: true, fehler: [] }], waisen: [], fs01Dateien: 42, fehlend: 0, lokalDateien: 42, ausstehend: 0 };
+  const L = { zustand: 'gelesen', ziel: '//fs01.ad.3033.at/SQLLinuxBackup$', budgetBytes: 64 * 2 ** 30, belegtBytes: 2 ** 30, status: { zeit: '2026-11-17T12:07:00Z', ok: true, frisch: true, alterMin: 5 }, timer: 'active', zugangsdatei: 'vorhanden (0600)' };
+  it('sicherungen nennt die Rolle je Datenbank; Datenbanken ohne Sicherung auf diesem Rechner erscheinen mit Rolle; Lesefehler sichtbar', () => {
+    const t = linuxSqlSicherungenText('sqllnx02', { ...L, datenbanken: { pruefdb01: { ...D, rolle: 'SECONDARY' } }, ohneSicherung: { neudb01: 'PRIMARY' } } as never);
+    expect(t).toContain('pruefdb01: Rolle SECONDARY, 1 Ketten (1 vollständig)');
+    expect(t).toContain('; neudb01: Rolle PRIMARY, keine Sicherungen auf diesem Rechner');
+    const leer = linuxSqlSicherungenText('sqllnx02', { ...L, datenbanken: {}, ohneSicherung: { pruefdb01: 'SECONDARY' } } as never);
+    expect(leer).toContain('pruefdb01: Rolle SECONDARY, keine Sicherungen auf diesem Rechner');
+    expect(leer).not.toContain('keine Datenbanken gesichert');
+    const f = linuxSqlSicherungenText('sqllnx02', { ...L, datenbanken: { pruefdb01: { ...D, rolle: 'unbekannt' } }, rollenFehler: 'Login failed' } as never);
+    expect(f).toContain('pruefdb01: Rolle unbekannt');
+    expect(f).toContain('Rolle nicht lesbar: Login failed');
+    // fail-closed im Text: unbekannte Werte werden nie als PRIMARY gezeigt
+    expect(linuxSqlSicherungenText('x', { ...L, datenbanken: { pruefdb01: { ...D, rolle: 'MASTER' } } } as never)).toContain('pruefdb01: Rolle unbekannt');
+    // Vorlage: genau eine passt weiterhin
+    const alsMuster = (v: string) => new RegExp(`^${v.split(/\{[a-z]+\}/).map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
+    expect(FESTE_AUSGABEN['linux_sql.sicherungen']!.split(' | ').filter(v => alsMuster(v).test(t))).toHaveLength(1);
+  });
+  it('Prüfstück „<db>: Rolle PRIMARY/SECONDARY“ besteht die Planprüfung', () => {
+    const skill = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    const plan = (erwartet: string) => ({ titel: 'Rolle prüfen', begruendung: 'I8e Paket 2 Task 7', typ: 'normal', risiko: 'low', ausfallMinuten: 0, betroffen: ['sqllnx01'],
+      schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'sicherungen', parameter: { zugang: 'sqllnx01' }, erwartet } }] });
+    for (const e of ['pruefdb01: Rolle PRIMARY', 'pruefdb01: Rolle SECONDARY']) expect(pruefeChangePlan(plan(e), ctx).fehler, e).toEqual([]);
+    expect(pruefeChangePlan(plan('Rolle PRIMARY überall'), ctx).fehler.join(' ')).toContain('kommt in der Antwort');
+  });
+  it('sicherung_jetzt: erzwungene FULL steht mit Grund im Text', async () => {
+    const datei = '/var/opt/mssql/backup/pruefdb01/pruefdb01_FULL_20261117120000.bak';
+    const w = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt]: [{ zustand: 'geaendert', art: 'FULL', angefordert: 'LOG', erzwungen: 'FULL statt LOG: Protokollkette auf diesem Rechner unterbrochen (Rollenwechsel)', datenbank: 'pruefdb01', datei, sha256: 'ab'.repeat(32), fs01: true }] });
+    const r = await w.skill.execute({ action: 'sicherung_jetzt', zugang: 'sqllnx01', art: 'log', datenbank: 'pruefdb01' }, imChange);
+    expect(r.error).toBeUndefined();
+    expect(r.display).toContain('Sicherung FULL von pruefdb01');
+    expect(r.display).toContain('angefordert LOG — FULL statt LOG: Protokollkette auf diesem Rechner unterbrochen (Rollenwechsel)');
   });
 });

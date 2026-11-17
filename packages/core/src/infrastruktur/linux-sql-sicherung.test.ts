@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, CIFS_UTILS_VERSION, ZUGANGSDATEI_FEST, PY_KETTE, KOPIE_SH, SICHERUNG_PROZEDUR, PRUEF_SELECT,
   pruefeSicherungEinrichten, sicherungEinrichtenSkript, pruefeSicherungJetzt, sicherungJetztSkript, sicherungenSkript, pruefeWiederherstellen, wiederherstellenSkript,
-  sicherungJobsTsql, CIFS_OPTIONEN, kettengrenzenSkript,
+  sicherungJobsTsql, CIFS_OPTIONEN, kettengrenzenSkript, PROZEDUR_DEFINITION, PY_ROLLEN,
 } from './linux-sql-sicherung.js';
 import { sqlErgebnis, shQ, sqlSkript, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN } from './linux-sql.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
@@ -924,5 +924,212 @@ describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', () => {
     const nein = lauf(false);
     expect(nein.rc).toBe(1);
     expect(String(nein.e?.fehler)).toContain('fs01');
+  });
+});
+
+// ── I8e Paket 2, Task 7 — Sicherung rollenabhängig in der AG (Owner-Entscheidung 1) ──────────────────────────────────────────────
+/** Fassung der Prozedur im Stand vor Task 7 (5e6b4b87, live auf sqllnx01 seit v1889) */
+const FASSUNG_VOR_TASK7 = 'c3091dc5';
+
+describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', () => {
+  const P = SICHERUNG_PROZEDUR;
+  it('Sekundär überspringt: AG-Datenbank ohne Vorzug → genau „ALFRED|nicht-bevorzugt“, kein Fehler, keine Sicherung, kein LOG', () => {
+    // AG-Zugehörigkeit aus sys.databases.replica_id; Datenbanken ohne AG laufen wie bisher (Funktion wird für sie nicht befragt)
+    expect(P).toContain('@agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END FROM sys.databases WHERE name = @n');
+    expect(P).toContain('IF @agdb = 1 AND ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0) <> 1');
+    expect(P).toContain("INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');");
+    const skip = P.indexOf("INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');");
+    const sonst = P.indexOf('ELSE', skip);
+    // im Überspringen-Zweig: kein THROW (Job scheitert nicht), keine Sicherung, kein Kettenblick
+    expect(P.slice(skip, sonst)).not.toMatch(/THROW|BACKUP|backupset|@fehler/);
+    // die Rollenprüfung kommt vor jedem Lesen der Kette und vor jeder Sicherung (auch LOG)
+    const rolle = P.indexOf('sys.fn_hadr_backup_is_preferred_replica');
+    for (const x of ['sys.database_recovery_status', 'msdb.dbo.backupset', "EXEC sp_executesql @sql, N'@d nvarchar(600)'", 'BACKUP LOG ']) expect(P.indexOf(x), x).toBeGreaterThan(rolle);
+    expect(sonst).toBeLessThan(P.indexOf('sys.database_recovery_status'));
+    // keine copy-only-Umwege
+    expect(P).not.toMatch(/\bCOPY_ONLY\b/i);
+  });
+  it('FULL-Erzwingung: AG-Datenbank ohne passende eigene Vollsicherung (dieser Server) → FULL statt DIFF/LOG, sichtbar markiert', () => {
+    // Basis und Vorgänger der AG-Datenbank nur aus Sicherungen DIESES Servers (msdb je Replikat; RESTORE-Einträge tragen den Quellserver)
+    expect(P.split('(@agdb = 0 OR b.server_name = @@SERVERNAME)').length - 1).toBe(2);
+    expect(P).toMatch(/b\.server_name = @@SERVERNAME AND b\.type = 'D' AND b\.is_copy_only = 0 ORDER BY b\.backup_set_id DESC/);
+    // noch keine Vollsicherung / Basis anderswo / Protokollkette auf diesem Rechner unterbrochen → erzwungen
+    expect(P).toContain("ELSE IF @agdb = 1 AND @art = N'DIFF' AND @dbl IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';");
+    expect(P).toContain("ELSE IF @agdb = 1 AND @art = N'LOG' AND @f IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';");
+    expect(P).toContain('IF @dev IS NULL AND @agdb = 1 SET @erzw');
+    expect(P).toContain('IF @dev IS NULL OR @lf < @f SET @erzw');
+    expect(P).toContain("IF @erzw IS NOT NULL SET @eff = N'FULL';");
+    expect(P).toContain("N'ALFRED-ERZWUNGEN|' + @n + N'|FULL statt ' + @art + N': ' + @erzw");
+    // Datei, Befehl und Endung nach der wirksamen Art
+    expect(P).toContain("SET @datei = @ordner + N'/' + @n + N'_' + @eff + N'_' + @zeit + ISNULL(N'_' + @bezug, N'') + CASE WHEN @eff = N'LOG' THEN N'.trn' ELSE N'.bak' END;");
+    expect(P).toContain('SET @sql = CASE @eff');
+    // Datenbanken ohne AG wie bisher: Überspringen ohne Vollsicherung, fremde Basis/Lücke bleibt Fehler
+    expect(P).toContain("ELSE IF @art = N'DIFF' AND @dbl IS NULL SET @grund = N'noch keine Vollsicherung';");
+    expect(P).toContain("ELSE IF @art = N'LOG' AND @f IS NULL SET @grund = N'noch keine Vollsicherung (Protokollkette beginnt erst danach)';");
+    for (const t of ['THROW 50014', 'THROW 50015', 'THROW 50016']) expect(P, t).toContain(t);
+    // erzwungene FULL beginnt eine neue Kette (kein Bezug)
+    expect(P.indexOf("IF @erzw IS NOT NULL SET @eff = N'FULL';")).toBeLessThan(P.indexOf('SET @zeit = FORMAT(SYSUTCDATETIME()'));
+    expect(P).toContain('IF @erzw IS NOT NULL SET @bezug = NULL;');
+  });
+  it('Fassungswechsel: neue Fassung, die Prüfung über msdb.sys.sql_modules spielt sie ein und meldet „geaendert“', () => {
+    const neu = /alfred-fassung ([0-9a-f]{8})/.exec(SICHERUNG_PROZEDUR)![1]!;
+    expect(neu).not.toBe(FASSUNG_VOR_TASK7);
+    const t = sicherungJobsTsql();
+    expect(t).not.toContain(FASSUNG_VOR_TASK7);
+    const bedingung = `IF OBJECT_ID(N'msdb.dbo.alfred_sicherung', N'P') IS NULL OR CHARINDEX(N'alfred-fassung ${neu}', ISNULL(${PROZEDUR_DEFINITION}, N'')) = 0`;
+    expect(t).toContain(bedingung);
+    const ab = t.indexOf(bedingung);
+    const ein = t.indexOf('EXEC msdb.sys.sp_executesql @proc;', ab);
+    expect(ein).toBeGreaterThan(ab);
+    expect(t.slice(ein, ein + 80)).toContain("SET @z = N'geaendert';");
+    // Jobs tragen die Fassung in der Beschreibung → werden mit der neuen Fassung neu angelegt
+    expect(t).toContain(`@description = N'Alfred I8e ${neu}'`);
+    // nichts still: sicherung_einrichten meldet den Wechsel als Änderung
+    expect(sicherungEinrichtenSkript(EINRICHTEN)).toContain('[ "$jz" = schon ] || GEAENDERT=1');
+  });
+});
+
+describe.skipIf(!BASH)('I8e Paket 2 Task 7 — sicherung_jetzt rollenabhängig (Stubs)', () => {
+  const lauf = (antwort: string, art: 'LOG' | 'FULL' = 'LOG') => bashLauf(sicherungJetztSkript({ art, datenbank: 'pruefdb01' }), [
+    ...GEMEINSAM,
+    `sql() { echo "$1" >>"$T/log"; printf '%s\\n' ${shQ(antwort)}; }`,
+    'systemctl() { echo "systemctl $*" >>"$T/log"; }',
+    'pruefe_datei() { [[ "$1" =~ ^/var/opt/mssql/backup/pruefdb01/pruefdb01_(LOG|FULL)_ ]]; }',
+    'warte_schreibruhe() { :; }',
+    "kette_py() { echo \"kette $*\" >>\"$T/log\"; if [ \"$1\" = geprueft ]; then echo 'ALFRED-GEPRUEFT {\"sha256\":\"ab\"}'; fi; }",
+  ]);
+  it('Sekundär: „ALFRED|nicht-bevorzugt“ → klarer Abbruch, keine Kopie angestoßen', () => {
+    const r = lauf('ALFRED|nicht-bevorzugt');
+    expect(r.rc).toBe(1);
+    expect(String(r.e?.fehler)).toContain('nicht das bevorzugte Sicherungsreplikat');
+    expect(r.log).not.toContain('systemctl start');
+  });
+  it('erzwungene FULL statt LOG: Ergebnis nennt die wirksame Art und den Grund', () => {
+    const datei = '/var/opt/mssql/backup/pruefdb01/pruefdb01_FULL_20261117120000.bak';
+    const r = lauf(`ALFRED-ERZWUNGEN|pruefdb01|FULL statt LOG: Protokollkette auf diesem Rechner unterbrochen (Rollenwechsel)\nALFRED|${datei}`);
+    expect(r.rc, r.vorne + r.err).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', art: 'FULL', angefordert: 'LOG', datenbank: 'pruefdb01', datei, fs01: true });
+    expect(String(r.e?.erzwungen)).toContain('Rollenwechsel');
+    const normal = lauf('ALFRED|/var/opt/mssql/backup/pruefdb01/pruefdb01_LOG_20261117120000_20261117114500.trn');
+    expect(normal.e).toMatchObject({ art: 'LOG', angefordert: 'LOG', erzwungen: null });
+  });
+  it('pruefe_datei: bei LOG/DIFF auch die erzwungene FULL derselben Datenbank, nie eine andere Datenbank', () => {
+    const s = sicherungJetztSkript({ art: 'DIFF', datenbank: 'pruefdb01' });
+    expect(s).toContain('pruefe_datei() { [[ "$1" =~ ^/var/opt/mssql/backup/pruefdb01/pruefdb01_(DIFF|FULL)_[0-9]{14}(_[0-9]{14})?\\.(bak|trn)$ ]] && [ -f "$1" ]; }');
+    expect(sicherungJetztSkript({ art: 'FULL', datenbank: 'pruefdb01' })).toContain('pruefe_datei() { [[ "$1" =~ ^/var/opt/mssql/backup/pruefdb01/pruefdb01_(FULL)_');
+  });
+});
+
+describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Ketten nach Rollenwechsel (Python)', { timeout: 60_000 }, () => {
+  const JETZT = Date.UTC(2026, 10, 17, 12, 0, 0) / 1000;
+  it('Neubeginn: erstes LOG der neuen Kette bezieht sich auf die eigene Vollsicherung → vorige Kette vollständig, kein Befund', () => {
+    const w = welt();
+    kette(w, 'pruefdb01', JETZT - 2 * TAG, 4);
+    // nach dem Rollenwechsel: erzwungene FULL, LOG-Kette beginnt an ihr (die LOGs dazwischen liegen auf dem anderen Rechner)
+    kette(w, 'pruefdb01', JETZT - TAG, 4);
+    kopie(w, JETZT);
+    const r = kopie(w, JETZT);
+    expect(r.json.ok, JSON.stringify(r.json.befunde)).toBe(true);
+    expect(r.json.befunde).toEqual([]);
+    expect(r.json.datenbanken.pruefdb01.ketten.map((k: { vollstaendig: boolean }) => k.vollstaendig)).toEqual([true, true]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('echte Lücke am Übergang (Vorgänger fehlt) bleibt Befund', () => {
+    const w = welt();
+    const a = kette(w, 'pruefdb01', JETZT - 2 * TAG, 4);
+    // das erste LOG der neuen Kette verweist auf ein LOG, das es nicht gibt
+    kette(w, 'pruefdb01', JETZT - TAG, 4, stempel(JETZT - 2 * TAG + 5 * 900));
+    expect(a.letzte).not.toBe(stempel(JETZT - 2 * TAG + 5 * 900));
+    kopie(w, JETZT);
+    const r = kopie(w, JETZT);
+    expect(r.json.ok).toBe(false);
+    expect(r.json.befunde.join(' ')).toContain('Protokollsicherung');
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+  it('Aufbewahrung läuft über einen Rollenwechsel hinweg weiter (gelöschte Neubeginn-Kette als Grenze)', () => {
+    const w = welt();
+    let vor: string | undefined;
+    for (let d = 20; d >= 0; d--) {
+      const t0 = Math.floor((JETZT - d * TAG) / TAG) * TAG + 1800;
+      // vor 15 Tagen Rollenwechsel: die Kette beginnt neu an ihrer eigenen Vollsicherung
+      const k = kette(w, 'pruefdb01', t0, 3, d === 15 ? undefined : vor);
+      vor = k.letzte;
+    }
+    // erster Lauf kopiert, zweiter wendet die Aufbewahrung an, dritter läuft ohne Befund über die gelöschten Ketten hinweg
+    kopie(w, JETZT);
+    const r2 = kopie(w, JETZT);
+    expect(r2.json.befunde, JSON.stringify(r2.json.befunde)).toEqual([]);
+    expect(r2.json.geloescht.length).toBeGreaterThan(0);
+    const r3 = kopie(w, JETZT);
+    expect(r3.json.ok, JSON.stringify(r3.json.befunde)).toBe(true);
+    expect(r3.json.befunde).toEqual([]);
+    rmSync(w.wurzel, { recursive: true, force: true });
+  });
+});
+
+describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Rollen je Datenbank (Python PY_ROLLEN)', () => {
+  /** PY_ROLLEN als Modul laden, lies/hadr_an/sqlcmd_lauf ersetzen, rollen() ausgeben */
+  function rollen(patch: string) {
+    const prog = `import sys, json\nsys.stdout.reconfigure(encoding='utf-8')\nns = {'__name__': 'alfred_test'}\nexec(compile(sys.stdin.read(), 'rollen', 'exec'), ns)\n${patch}\nprint('ALFRED-T ' + json.dumps(ns['rollen']()))`;
+    const r = spawnSync(PYTHON!, ['-c', prog], { input: PY_ROLLEN, encoding: 'utf8' });
+    const z = r.stdout.split(/\r?\n/).find(x => x.startsWith('ALFRED-T '));
+    return { json: z ? JSON.parse(z.slice(9)) : undefined, err: r.stderr };
+  }
+  const SQL_OK = (aus: string, rc = 0) => `class P: pass\ndef s(login, kw):\n    p = P(); p.returncode = ${rc}; p.stdout = ${JSON.stringify(aus)}; p.stderr = ''\n    return p\nns['sqlcmd_lauf'] = s`;
+  it('Rollen aus SQL über die Zugangsdatei des Resource-Agents: PRIMARY/SECONDARY/keine AG; Unlesbares → unbekannt', () => {
+    const r = rollen(`ns['lies'] = lambda p: 'alfred_pacemaker\\nPm-Wert-1234'\n${SQL_OK('ALFRED|D|pruefdb01|PRIMARY\nALFRED|D|lokaldb01|KEINE\nALFRED|D|zweitdb01|SECONDARY\nALFRED|D|komischdb|-\nALFRED|D|x;y|PRIMARY\n')}`);
+    expect(r.json, r.err).toEqual({ rollen: { pruefdb01: 'PRIMARY', lokaldb01: 'keine AG', zweitdb01: 'SECONDARY', komischdb: 'unbekannt' } });
+  });
+  it('fail-closed: SQL-Fehler → Fehler ohne Kennwort, keine Rollen; Zugangsdatei fehlt → keine AG nur bei HADR aus', () => {
+    const f = rollen(`ns['lies'] = lambda p: 'alfred_pacemaker\\nPm-Wert-1234'\n${SQL_OK('Login failed for alfred_pacemaker Pm-Wert-1234', 1)}`);
+    expect(f.json.rollen).toBeUndefined();
+    expect(f.json.fehler).toContain('Login failed');
+    expect(f.json.fehler).not.toContain('Pm-Wert-1234');
+    expect(rollen("ns['lies'] = lambda p: None\nns['hadr_an'] = lambda: False").json).toEqual({ alle: 'keine AG' });
+    const an = rollen("ns['lies'] = lambda p: None\nns['hadr_an'] = lambda: True").json;
+    expect(an.alle).toBeUndefined();
+    expect(an.rollen).toBeUndefined();
+    expect(an.fehler).toContain('Rolle nicht lesbar');
+  });
+});
+
+/** absoluter Pfad des Python-Interpreters (der Baustein setzt PATH fest) */
+const PY_EXE = PYTHON ? spawnSync(PYTHON, ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim().replace(/\\/g, '/') : undefined;
+
+describe.skipIf(!BASH || !PY_EXE)('I8e Paket 2 Task 7 — sicherungen nennt die Rolle je Datenbank (Stubs)', () => {
+  const LISTE = { zustand: 'gelesen', host: 'sqllnx01', status: null, datenbanken: { pruefdb01: { ketten: [], waisen: [], fs01Dateien: 0, lokalDateien: 2 } } };
+  const lauf = (rollenZeile: string) => bashLauf(sicherungenSkript(), [
+    ...GEMEINSAM,
+    `python3() { ${shQ(PY_EXE!)} "$@"; }`,
+    'KONF_DATEI="$T/konf"; : >"$KONF_DATEI"',
+    `kette_py() { echo ${shQ(`ALFRED-LISTE ${JSON.stringify(LISTE)}`)}; }`,
+    'systemctl() { echo active; }',
+    "zugangsdatei_zustand() { echo 'vorhanden (0600)'; }",
+    `rollen_lesen() { ${rollenZeile ? `echo ${shQ(rollenZeile)}` : ':'}; }`,
+  ]);
+  const rolle = (r: ReturnType<typeof lauf>) => (r.e?.datenbanken as Record<string, { rolle: string }> | undefined)?.pruefdb01?.rolle;
+  it('Rolle je Datenbank aus PY_ROLLEN; Datenbanken ohne Sicherung hier erscheinen mit Rolle', () => {
+    const r = lauf(`ALFRED-ROLLEN ${JSON.stringify({ rollen: { pruefdb01: 'SECONDARY', neudb01: 'PRIMARY' } })}`);
+    expect(r.rc, r.vorne + r.err).toBe(0);
+    expect(rolle(r)).toBe('SECONDARY');
+    expect(r.e?.ohneSicherung).toEqual({ neudb01: 'PRIMARY' });
+  });
+  it('fail-closed: keine/kaputte Rollen-Ausgabe oder fehlende Datenbank → unbekannt/nicht vorhanden, nie PRIMARY', () => {
+    for (const z of ['', 'ALFRED-ROLLEN {kaputt', `ALFRED-ROLLEN ${JSON.stringify({ fehler: 'Login failed' })}`, `ALFRED-ROLLEN ${JSON.stringify({ rollen: { pruefdb01: 'MASTER' } })}`]) {
+      const r = lauf(z);
+      expect(r.rc, z + r.vorne + r.err).toBe(0);
+      expect(rolle(r), z).toBe('unbekannt');
+    }
+    expect(rolle(lauf(`ALFRED-ROLLEN ${JSON.stringify({ rollen: { anderedb: 'PRIMARY' } })}`))).toBe('nicht vorhanden');
+    expect(rolle(lauf(`ALFRED-ROLLEN ${JSON.stringify({ alle: 'keine AG' })}`))).toBe('keine AG');
+    expect(lauf(`ALFRED-ROLLEN ${JSON.stringify({ fehler: 'Login failed' })}`).e?.rollenFehler).toBe('Login failed');
+  });
+  it('Skripttext: Rollen über die Zugangsdatei des Resource-Agents, nie über Tresor-Eingabe', () => {
+    const s = sicherungenSkript();
+    expect(s).toContain('PY_ROLLEN=');
+    expect(PY_ROLLEN).toContain('/var/opt/mssql/secrets/passwd');
+    expect(PY_ROLLEN).toContain('SQLCMDPASSWORD=kw');
+    expect(PY_ROLLEN).not.toMatch(/"-P"/);
+    expect(s.split('# ALFRED-ABLAUF')[1]).not.toContain('ALFRED_EINGABE');
   });
 });

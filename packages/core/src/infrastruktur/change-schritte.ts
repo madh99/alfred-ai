@@ -64,7 +64,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
     // Fix-Welle M-9: positives Stück nur je Datenbank („pruefdb01: vollständig auf fs01“); „~“ = nur als ganzes Muster, nie als Teilstück
-    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
+    + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01'
+    // I8e Paket 2 Task 7: Rolle je Datenbank als ganzes Prüfstück („pruefdb01: Rolle PRIMARY“)
+    + ' | ~{db}: Rolle PRIMARY | ~{db}: Rolle SECONDARY',
   // I8e Paket 2 — Wortlaut aus linuxHaStatusText (linux-ha-skill.ts); positive Stücke einzeln prüfbar
   // Task 3: „; Cluster …“ am Ende (clusterText) — positive Form als ganzes Stück (Teilstücke wie „Quorum ja“ zulässig)
   // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten.

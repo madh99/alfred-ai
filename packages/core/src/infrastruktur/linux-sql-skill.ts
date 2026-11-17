@@ -142,8 +142,14 @@ export interface LinuxSqlSicherungen {
   reste?: string[];
   alteZugangsdateienEntfernt?: number;
   datenbanken?: Record<string, { ketten: Array<{ full: string; diffs: number; logs: number; vollstaendig: boolean; fehler?: string[] }>; waisen?: string[];
-    fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number }>;
+    fs01Dateien: number; fs01Bytes?: number; fehlend?: number; lokalDateien?: number; lokalBytes?: number; ausstehend?: number; rolle?: string }>;
+  /** I8e Paket 2 Task 7: Datenbanken dieses Servers ohne Sicherung auf diesem Rechner (z. B. sekundär) mit ihrer Rolle */
+  ohneSicherung?: Record<string, string>;
+  rollenFehler?: string;
 }
+/** I8e Paket 2 Task 7 — Rolle fail-closed: nur bekannte Werte, alles andere „unbekannt“ (nie PRIMARY) */
+const AG_ROLLEN = new Set(['PRIMARY', 'SECONDARY', 'RESOLVING', 'keine AG', 'nicht vorhanden']);
+const rolleText = (r: unknown) => (typeof r === 'string' && AG_ROLLEN.has(r) ? r : 'unbekannt');
 const gib = (b: number | null | undefined) => (typeof b === 'number' ? (b / 2 ** 30).toFixed(1) : '?');
 /**
  * Hash-Zustand je Datenbank (Fix-Runde 1): „Hash ok“ nur, wenn der letzte Kopierlauf gelang, mindestens eine Datei auf fs01 liegt, nichts
@@ -172,9 +178,12 @@ export function linuxSqlSicherungenText(zugang: string, r: LinuxSqlSicherungen):
     const letzte = d.ketten.length ? d.ketten[d.ketten.length - 1]!.full : 'keine';
     // Fix-Welle M-9: das positive Prüfstück nennt die Datenbank („<db>: vollständig auf fs01“)
     const h = hashText(st, d, r.timer);
-    return `${db}: ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${h}${h === 'Hash ok' ? ` — ${db}: vollständig auf fs01` : ''}`;
+    // I8e Paket 2 Task 7: Rolle je Datenbank („<db>: Rolle PRIMARY“ ist ein Prüfstück)
+    return `${db}: Rolle ${rolleText(d.rolle)}, ${d.ketten.length} Ketten (${voll} vollständig), letzte FULL ${letzte}, lokal ${d.lokalDateien ?? 0}, fs01 ${d.fs01Dateien}, ${h}${h === 'Hash ok' ? ` — ${db}: vollständig auf fs01` : ''}`;
   });
-  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}${resteText(r.reste)}${altZugangText(r.alteZugangsdateienEntfernt)}`;
+  for (const [db, rolle] of Object.entries(r.ohneSicherung ?? {})) dbs.push(`${db}: Rolle ${rolleText(rolle)}, keine Sicherungen auf diesem Rechner`);
+  const rf = r.rollenFehler ? `; Rolle nicht lesbar: ${String(r.rollenFehler).slice(0, 200)}` : '';
+  return `${zugang}: Sicherung nach ${r.ziel ?? '?'} (belegt ${gib(r.belegtBytes)} GiB von ${budget} GiB); Kopie zuletzt ${kopie}; Zugangsdatei ${r.zugangsdatei ?? 'unbekannt'}; Kopie-Timer ${r.timer === 'active' ? 'aktiv' : r.timer ?? 'unbekannt'}; ${dbs.length ? dbs.join('; ') : 'keine Datenbanken gesichert'}${rf}${resteText(r.reste)}${altZugangText(r.alteZugangsdateienEntfernt)}`;
 }
 
 /** \\server.fqdn\Freigabe$ → { server, freigabe } */
@@ -542,9 +551,12 @@ export class LinuxSqlSkill extends Skill {
   private async sicherungJetzt(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = sicherungJetztParameter(input);
     const sa = await this.sa(zugang, `Sicherung ${p.art} ${p.datenbank} auf ${zugang}`, geheim);
-    const r = await this.lauf<{ zustand: string; datei?: string; sha256?: string; fs01?: boolean }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, p, `Sicherung ${p.art} ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt, { sa });
+    const r = await this.lauf<{ zustand: string; datei?: string; sha256?: string; fs01?: boolean; art?: string; erzwungen?: string | null }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, p, `Sicherung ${p.art} ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt, { sa });
     if (r.fs01 !== true || !r.datei) throw new Error(`Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: Kopie auf fs01 nicht bestätigt`);
-    return { success: true, data: r, display: `✅ Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: ${r.datei} — auf fs01 geprüft (SHA-256 ${String(r.sha256 ?? '').slice(0, 16)}…)` };
+    // I8e Paket 2 Task 7: in der AG kann die Prozedur statt DIFF/LOG eine FULL erzwingen (Rollenwechsel) — nie still
+    const art = r.art === 'FULL' || r.art === 'DIFF' || r.art === 'LOG' ? r.art : p.art;
+    const erzw = art !== p.art ? ` (angefordert ${p.art}${r.erzwungen ? ` — ${String(r.erzwungen).slice(0, 200)}` : ''})` : '';
+    return { success: true, data: r, display: `✅ Sicherung ${art} von ${p.datenbank} auf ${zugang}${erzw}: ${r.datei} — auf fs01 geprüft (SHA-256 ${String(r.sha256 ?? '').slice(0, 16)}…)` };
   }
 
   /** Fix-Welle M-1 — lokale Kettengrenzen aus der Kopie auf fs01 übernehmen (nur im Change, nach Prüfung); zeigt den Unterschied */

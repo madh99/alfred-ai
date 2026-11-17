@@ -31,7 +31,8 @@
  */
 import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, SQL_HILFE, SA_LESEN, shQ, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, SQLLNX_KOPIE_STATUS, SQLLNX_ZUGANGSDATEI } from './linux-sql.js';
+import { sqlKopf, SQL_HILFE, SA_LESEN, shQ, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, SQLLNX_KOPIE_STATUS, SQLLNX_ZUGANGSDATEI, SQLCMD } from './linux-sql.js';
+import { HA_PACEMAKER_DATEI } from './linux-ha.js';
 
 export const LINUX_SQL_SICHERUNG_BAUSTEINE = {
   einrichten: 'sql.sicherung_einrichten', jetzt: 'sql.sicherung_jetzt', liste: 'sql.sicherungen', wiederherstellen: 'sql.wiederherstellen',
@@ -116,7 +117,8 @@ BEGIN
   DECLARE @wurzel nvarchar(100) = N'${SICHERUNG_WURZEL}/';
   DECLARE @n sysname, @dbid int, @guid uniqueidentifier, @modell nvarchar(60), @zeit nchar(14), @ordner nvarchar(400), @datei nvarchar(600),
           @bezug nchar(14), @dev nvarchar(600), @pre nvarchar(600), @f numeric(25,0), @dbl numeric(25,0), @lf numeric(25,0), @sql nvarchar(max),
-          @sperre nvarchar(200), @fertig nvarchar(620), @rc int, @fehler nvarchar(max) = N'', @msg nvarchar(2048), @grund nvarchar(400);
+          @sperre nvarchar(200), @fertig nvarchar(620), @rc int, @fehler nvarchar(max) = N'', @msg nvarchar(2048), @grund nvarchar(400),
+          @agdb bit, @eff nvarchar(4), @erzw nvarchar(200);
   DECLARE @r TABLE (zeile nvarchar(800));
   DECLARE d CURSOR LOCAL FAST_FORWARD FOR
     SELECT name FROM sys.databases
@@ -133,38 +135,71 @@ BEGIN
       EXEC @rc = sp_getapplock @Resource = @sperre, @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = 7200000;
       IF @rc < 0 THROW 50012, N'Sperre der Datenbank nicht erhalten (andere Sicherung läuft seit 2 h)', 1;
       BEGIN TRY
-        SET @grund = NULL; SET @bezug = NULL;
-        SELECT @dbid = database_id, @modell = recovery_model_desc FROM sys.databases WHERE name = @n;
+        SET @grund = NULL; SET @bezug = NULL; SET @erzw = NULL; SET @eff = @art;
+        SELECT @dbid = database_id, @modell = recovery_model_desc, @agdb = CASE WHEN replica_id IS NULL THEN 0 ELSE 1 END FROM sys.databases WHERE name = @n;
+        -- I8e Paket 2 (Owner-Entscheidung 1): Datenbank einer AG nur auf dem bevorzugten Replikat (AG-Vorgabe PRIMARY); sonst überspringen —
+        -- kein Fehler, der Job scheitert nicht, auch kein LOG. Datenbanken ohne AG (replica_id NULL) laufen wie bisher.
+        IF @agdb = 1 AND ISNULL(sys.fn_hadr_backup_is_preferred_replica(@n), 0) <> 1
+        BEGIN
+          INSERT @r VALUES (N'ALFRED|nicht-bevorzugt');
+          INSERT @r VALUES (N'ALFRED-UEBERSPRUNGEN|' + @n + N'|nicht bevorzugtes Replikat der AG (Sicherung auf dem Primaer)');
+        END
+        ELSE
+        BEGIN
         SELECT @guid = database_guid, @f = last_log_backup_lsn FROM sys.database_recovery_status WHERE database_id = @dbid;
         SET @dbl = (SELECT differential_base_lsn FROM sys.master_files WHERE database_id = @dbid AND file_id = 1);
         IF @art = N'LOG' AND @modell <> N'FULL' SET @grund = N'Wiederherstellungsmodell ' + @modell + N' (LOG nur bei FULL)';
+        -- AG: hat dieser Rechner noch keine Vollsicherung der Datenbank, zuerst FULL (Kette je Rechner)
+        ELSE IF @agdb = 1 AND @art = N'DIFF' AND @dbl IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';
+        ELSE IF @agdb = 1 AND @art = N'LOG' AND @f IS NULL SET @erzw = N'noch keine Vollsicherung auf diesem Rechner';
         ELSE IF @art = N'DIFF' AND @dbl IS NULL SET @grund = N'noch keine Vollsicherung';
         ELSE IF @art = N'LOG' AND @f IS NULL SET @grund = N'noch keine Vollsicherung (Protokollkette beginnt erst danach)';
-        IF @grund IS NULL AND @art = N'DIFF'
+        -- AG: Basis und Vorgänger nur aus Sicherungen DIESES Servers (msdb gehört je Replikat; RESTORE-Einträge tragen den Quellserver)
+        IF @grund IS NULL AND @erzw IS NULL AND @art = N'DIFF'
         BEGIN
           SET @dev = NULL;
           SELECT TOP (1) @dev = mf.physical_device_name FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = b.media_set_id
-            WHERE b.database_guid = @guid AND b.type = 'D' AND b.is_copy_only = 0 AND b.checkpoint_lsn = @dbl ORDER BY b.backup_set_id DESC;
-          SET @pre = @wurzel + @n + N'/' + @n + N'_FULL_';
-          IF @dev IS NULL OR LEFT(@dev, LEN(@pre)) <> @pre OR LEN(@dev) <> LEN(@pre) + 18
-            THROW 50014, N'Basis der Differenzsicherung ist keine Alfred-Vollsicherung (fremde Vollsicherung?) - erst FULL ueber den Baustein', 1;
-          SET @bezug = SUBSTRING(@dev, LEN(@pre) + 1, 14);
+            WHERE b.database_guid = @guid AND (@agdb = 0 OR b.server_name = @@SERVERNAME) AND b.type = 'D' AND b.is_copy_only = 0 AND b.checkpoint_lsn = @dbl ORDER BY b.backup_set_id DESC;
+          IF @dev IS NULL AND @agdb = 1 SET @erzw = N'Basis der Differenzsicherung liegt nicht auf diesem Rechner (Rollenwechsel)';
+          ELSE
+          BEGIN
+            SET @pre = @wurzel + @n + N'/' + @n + N'_FULL_';
+            IF @dev IS NULL OR LEFT(@dev, LEN(@pre)) <> @pre OR LEN(@dev) <> LEN(@pre) + 18
+              THROW 50014, N'Basis der Differenzsicherung ist keine Alfred-Vollsicherung (fremde Vollsicherung?) - erst FULL ueber den Baustein', 1;
+            SET @bezug = SUBSTRING(@dev, LEN(@pre) + 1, 14);
+          END
         END
-        IF @grund IS NULL AND @art = N'LOG'
+        IF @grund IS NULL AND @erzw IS NULL AND @art = N'LOG'
         BEGIN
           SET @dev = NULL; SET @lf = NULL;
           SELECT TOP (1) @dev = mf.physical_device_name, @lf = b.last_lsn FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = b.media_set_id
-            WHERE b.database_guid = @guid AND b.type = 'L' AND b.is_copy_only = 0 ORDER BY b.backup_set_id DESC;
-          IF @dev IS NULL
+            WHERE b.database_guid = @guid AND (@agdb = 0 OR b.server_name = @@SERVERNAME) AND b.type = 'L' AND b.is_copy_only = 0 ORDER BY b.backup_set_id DESC;
+          IF @agdb = 1 AND (@dev IS NULL OR @lf <> @f)
+          BEGIN
+            -- AG: die eigene Protokollkette endet nicht am Beginn der neuen (das andere Replikat hat inzwischen gesichert) → das neue LOG
+            -- schließt nur an die neueste eigene Vollsicherung an, wenn sie bis @f reicht; sonst zuerst FULL
+            SET @dev = NULL; SET @lf = NULL;
+            SELECT TOP (1) @dev = mf.physical_device_name, @lf = b.last_lsn FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = b.media_set_id
+              WHERE b.database_guid = @guid AND b.server_name = @@SERVERNAME AND b.type = 'D' AND b.is_copy_only = 0 ORDER BY b.backup_set_id DESC;
+            IF @dev IS NULL OR @lf < @f SET @erzw = N'Protokollkette auf diesem Rechner unterbrochen (Rollenwechsel)';
+            ELSE SET @lf = @f;
+          END
+          ELSE IF @dev IS NULL
             SELECT TOP (1) @dev = mf.physical_device_name, @lf = @f FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = b.media_set_id
               WHERE b.database_guid = @guid AND b.type = 'D' AND b.is_copy_only = 0 AND b.first_lsn <= @f AND b.last_lsn >= @f ORDER BY b.backup_set_id DESC;
-          IF @dev IS NULL OR @lf <> @f
-            THROW 50015, N'Protokollkette unterbrochen: die letzte Protokollsicherung endet nicht am Beginn der neuen - erst FULL ueber den Baustein', 1;
-          SET @pre = @wurzel + @n + N'/' + @n + N'_';
-          IF LEFT(@dev, LEN(@pre)) = @pre AND SUBSTRING(@dev, LEN(@pre) + 1, 4) = N'LOG_' SET @bezug = SUBSTRING(@dev, LEN(@pre) + 5, 14);
-          ELSE IF LEFT(@dev, LEN(@pre)) = @pre AND SUBSTRING(@dev, LEN(@pre) + 1, 5) = N'FULL_' SET @bezug = SUBSTRING(@dev, LEN(@pre) + 6, 14);
-          ELSE THROW 50016, N'Vorgaenger der Protokollsicherung ist keine Alfred-Sicherung (fremde Sicherung?) - erst FULL ueber den Baustein', 1;
+          IF @erzw IS NULL
+          BEGIN
+            IF @dev IS NULL OR @lf <> @f
+              THROW 50015, N'Protokollkette unterbrochen: die letzte Protokollsicherung endet nicht am Beginn der neuen - erst FULL ueber den Baustein', 1;
+            SET @pre = @wurzel + @n + N'/' + @n + N'_';
+            IF LEFT(@dev, LEN(@pre)) = @pre AND SUBSTRING(@dev, LEN(@pre) + 1, 4) = N'LOG_' SET @bezug = SUBSTRING(@dev, LEN(@pre) + 5, 14);
+            ELSE IF LEFT(@dev, LEN(@pre)) = @pre AND SUBSTRING(@dev, LEN(@pre) + 1, 5) = N'FULL_' SET @bezug = SUBSTRING(@dev, LEN(@pre) + 6, 14);
+            ELSE THROW 50016, N'Vorgaenger der Protokollsicherung ist keine Alfred-Sicherung (fremde Sicherung?) - erst FULL ueber den Baustein', 1;
+          END
         END
+        -- erzwungene Vollsicherung beginnt eine neue Kette dieses Rechners (kein Bezug)
+        IF @erzw IS NOT NULL SET @eff = N'FULL';
+        IF @erzw IS NOT NULL SET @bezug = NULL;
         IF @bezug IS NOT NULL AND @bezug NOT LIKE N'[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
           THROW 50017, N'Bezug der Sicherung nicht lesbar', 1;
         IF @grund IS NOT NULL
@@ -179,9 +214,9 @@ BEGIN
           SET @zeit = FORMAT(SYSUTCDATETIME(), N'yyyyMMddHHmmss');
           SET @ordner = @wurzel + @n;
           EXEC master.sys.xp_create_subdir @ordner;
-          SET @datei = @ordner + N'/' + @n + N'_' + @art + N'_' + @zeit + ISNULL(N'_' + @bezug, N'') + CASE WHEN @art = N'LOG' THEN N'.trn' ELSE N'.bak' END;
+          SET @datei = @ordner + N'/' + @n + N'_' + @eff + N'_' + @zeit + ISNULL(N'_' + @bezug, N'') + CASE WHEN @eff = N'LOG' THEN N'.trn' ELSE N'.bak' END;
           IF EXISTS (SELECT 1 FROM msdb.dbo.backupmediafamily WHERE physical_device_name = @datei) THROW 50019, N'Sicherungsdatei gibt es schon', 1;
-          SET @sql = CASE @art
+          SET @sql = CASE @eff
             WHEN N'FULL' THEN N'BACKUP DATABASE ' + QUOTENAME(@n) + N' TO DISK = @d WITH CHECKSUM, COMPRESSION, NAME = N''alfred'', DESCRIPTION = N''${JOB_BESCHREIBUNG}'''
             WHEN N'DIFF' THEN N'BACKUP DATABASE ' + QUOTENAME(@n) + N' TO DISK = @d WITH DIFFERENTIAL, CHECKSUM, COMPRESSION, NAME = N''alfred'', DESCRIPTION = N''${JOB_BESCHREIBUNG}'''
             ELSE N'BACKUP LOG ' + QUOTENAME(@n) + N' TO DISK = @d WITH CHECKSUM, COMPRESSION, NAME = N''alfred'', DESCRIPTION = N''${JOB_BESCHREIBUNG}''' END;
@@ -189,7 +224,10 @@ BEGIN
           -- Fertig-Marke (T-SQL schreibt unter Linux keine Dateien; xp_create_subdir legt einen Ordner an): die Kopie nimmt nur markierte Dateien
           SET @fertig = @datei + N'.fertig';
           EXEC master.sys.xp_create_subdir @fertig;
+          -- nichts still: die erzwungene Vollsicherung steht mit Grund in der Ausgabe (Job-Verlauf, sicherung_jetzt)
+          IF @erzw IS NOT NULL INSERT @r VALUES (N'ALFRED-ERZWUNGEN|' + @n + N'|FULL statt ' + @art + N': ' + @erzw);
           INSERT @r VALUES (N'ALFRED|' + @datei);
+        END
         END
       END TRY
       BEGIN CATCH
@@ -421,13 +459,15 @@ def ketten(dateien, entfernt=None):
             soll = dateien[ks[idx + 1]['logs'][0]]['bezug']
             kand = dateien[vor]['zeit'] if vor is not None else None
             # Übergang über dazwischen gelöschte Ketten (deren Kontinuität beim Löschen geprüft war)
+            # I8e Paket 2 (Rollenwechsel in der AG): beginnt die Protokollkette einer Kette an ihrer EIGENEN Vollsicherung (erzwungene FULL,
+            # die LOGs dazwischen liegen auf dem anderen Rechner), ist das ein Neubeginn - kein fehlendes LOG am Übergang
             for e in entfernt:
                 if not (k['zeit'] < e['full'] < ks[idx + 1]['zeit']) or not e.get('letztes'):
                     continue
-                if kand is not None and e.get('ersterBezug') != kand:
+                if kand is not None and e.get('ersterBezug') != kand and e.get('ersterBezug') != e['full']:
                     k['fehler'].append('Übergang zur gelöschten Kette %s: Protokollsicherung %s fehlt' % (e['full'], e.get('ersterBezug')))
                 kand = e['letztes']
-            if kand is not None and soll != kand:
+            if kand is not None and soll != kand and soll != ks[idx + 1]['zeit']:
                 k['fehler'].append('Ende: Protokollsicherung %s fehlt' % soll)
     return ks, waisen
 
@@ -1303,7 +1343,8 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
     `CACHE=${KOPIE_CACHE}`,
     `PY_KETTE=${shQ(PY_KETTE)}`,
     'kette_py() { python3 -I -c "$PY_KETTE" "$@"; }',
-    `pruefe_datei() { [[ "$1" =~ ^${SICHERUNG_WURZEL}/${db}/${db}_${p.art}_[0-9]{14}(_[0-9]{14})?\\.(bak|trn)$ ]] && [ -f "$1" ]; }`,
+    // I8e Paket 2 Task 7: bei DIFF/LOG kann die Prozedur in der AG stattdessen eine FULL erzwingen (Rollenwechsel) — nur derselben Datenbank
+    `pruefe_datei() { [[ "$1" =~ ^${SICHERUNG_WURZEL}/${db}/${db}_(${p.art === 'FULL' ? 'FULL' : `${p.art}|FULL`})_[0-9]{14}(_[0-9]{14})?\\.(bak|trn)$ ]] && [ -f "$1" ]; }`,
     // die Kopie nimmt Dateien erst nach 60 s Schreibruhe
     'warte_schreibruhe() { local a; a=$(( $(date +%s) - $(stat -c %Y "$1") )); if [ "$a" -lt 61 ]; then sleep $(( 61 - a )); fi; }',
     ...FASSUNG_PRUEFEN,
@@ -1313,8 +1354,13 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
     'bereit || abbruch "SQL Server antwortet nicht als sa"',
     `aus=$(sql "EXEC msdb.dbo.alfred_sicherung @art = N'${p.art}', @db = N'${db}', @streng = 1;" 2>&1) || abbruch "Sicherung ${p.art} von ${db}: $(kurz "$aus")"`,
     'datei=$(alfred_zeile "$aus"); datei=${datei#ALFRED|}',
+    `[ "$datei" != nicht-bevorzugt ] || abbruch "${db} ist auf diesem Rechner nicht das bevorzugte Sicherungsreplikat der AG (sekundär) — nichts gesichert; gesichert wird auf dem Primär"`,
     'pruefe_datei "$datei" || abbruch "Sicherung meldet unerwartete Datei: $(kurz "$datei")"',
     `rel=\${datei#${SICHERUNG_WURZEL}/}`,
+    // wirksame Art aus dem Dateinamen; Grund einer erzwungenen FULL aus der Zeile ALFRED-ERZWUNGEN der Prozedur
+    `eff=\${rel#${db}/${db}_}; eff=\${eff%%_*}`,
+    "erzw=$(grep '^ALFRED-ERZWUNGEN|' <<<\"$aus\" | head -n 1 | cut -d'|' -f3- | tr -d '\\r' || true)",
+    'if [ -n "$erzw" ]; then erzw_j=$(printf \'%s\' "$erzw" | json_text); else erzw_j=null; fi',
     'warte_schreibruhe "$datei"',
     'ok=0; g=\'\'',
     'for i in 1 2; do',
@@ -1323,11 +1369,65 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
     'done',
     '[ "$ok" = 1 ] || abbruch "Kopie von $rel nach fs01 nicht bestätigt (Status des Kopierlaufs: sicherungen)"',
     'sha=$(sed -n \'s/.*"sha256": *"\\([0-9a-f]\\{64\\}\\)".*/\\1/p\' <<<"$g")',
-    `ergebnis "{\\"zustand\\":\\"geaendert\\",\\"art\\":\\"${p.art}\\",\\"datenbank\\":\\"${db}\\",\\"datei\\":\\"$datei\\",\\"sha256\\":\\"$sha\\",\\"fs01\\":true}"`,
+    `ergebnis "{\\"zustand\\":\\"geaendert\\",\\"art\\":\\"$eff\\",\\"angefordert\\":\\"${p.art}\\",\\"erzwungen\\":$erzw_j,\\"datenbank\\":\\"${db}\\",\\"datei\\":\\"$datei\\",\\"sha256\\":\\"$sha\\",\\"fs01\\":true}"`,
   ].join('\n');
 }
 
 // ── sicherungen (lesend) ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * I8e Paket 2 Task 7 — Rolle je Datenbank (lesend, ohne Tresor): über die Zugangsdatei des Pacemaker-Resource-Agents (Login
+ * alfred_pacemaker, VIEW SERVER STATE; wie linux_ha status), Kennwort nur in SQLCMDPASSWORD des einen sqlcmd-Prozesses.
+ * Ergebnis: {rollen: {db: PRIMARY|SECONDARY|RESOLVING|keine AG|unbekannt}} | {alle: 'keine AG'} (HADR aus, keine Zugangsdatei) |
+ * {fehler} — fail-closed: was nicht sicher lesbar ist, heißt nie PRIMARY. Funktionen getrennt vom Aufruf (Tests ersetzen lies, hadr_an, sqlcmd_lauf).
+ */
+export const PY_ROLLEN = String.raw`import configparser, json, os, re, subprocess, sys
+PMDATEI = ${JSON.stringify(HA_PACEMAKER_DATEI)}
+SQLCMD = ${JSON.stringify(SQLCMD)}
+KONF = '/var/opt/mssql/mssql.conf'
+ROLLEN = ('PRIMARY', 'SECONDARY', 'RESOLVING')
+DB = re.compile(r'^[A-Za-z][A-Za-z0-9_]{2,63}$')
+TSQL = """SET NOCOUNT ON;
+SELECT 'ALFRED|D|' + d.name + '|' + CASE WHEN d.replica_id IS NULL THEN 'KEINE' ELSE ISNULL(UPPER(rs.role_desc), '-') END
+  FROM sys.databases d LEFT JOIN sys.dm_hadr_availability_replica_states rs ON rs.replica_id = d.replica_id
+  WHERE d.database_id > 4 ORDER BY d.name;
+"""
+def lies(p):
+    try:
+        with open(p) as f:
+            return f.read().strip()
+    except Exception:
+        return None
+def hadr_an():
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(KONF)
+    except Exception:
+        return True
+    return cp.get('hadr', 'hadrenabled', fallback='0').strip() != '0'
+def sqlcmd_lauf(login, kw):
+    return subprocess.run([SQLCMD, '-C', '-b', '-x', '-S', 'localhost', '-U', login, '-l', '10', '-h', '-1', '-W', '-w', '65535'], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=kw))
+def rollen():
+    z = (lies(PMDATEI) or '').splitlines()
+    if len(z) < 2 or not z[0] or not z[1]:
+        # ohne HADR gibt es keine AG; mit HADR ohne Zugangsdatei ist die Rolle nicht lesbar
+        return {'alle': 'keine AG'} if not hadr_an() else {'fehler': 'Zugangsdatei des Resource-Agents fehlt - Rolle nicht lesbar'}
+    try:
+        p = sqlcmd_lauf(z[0], z[1])
+    except Exception as e:
+        return {'fehler': 'sqlcmd: ' + type(e).__name__}
+    if p.returncode != 0:
+        t = ' '.join(((p.stdout or '') + ' ' + (p.stderr or '')).replace(z[1], '[geschwärzt]').split())
+        return {'fehler': t[-160:] or ('Exit %d' % p.returncode)}
+    r = {}
+    for zeile in (p.stdout or '').splitlines():
+        f = zeile.strip().split('|')
+        if len(f) == 4 and f[:2] == ['ALFRED', 'D'] and DB.match(f[2]):
+            r[f[2]] = 'keine AG' if f[3] == 'KEINE' else (f[3] if f[3] in ROLLEN else 'unbekannt')
+    return {'rollen': r}
+if __name__ == '__main__':
+    print('ALFRED-ROLLEN ' + json.dumps(rollen(), ensure_ascii=True))
+`;
 
 const PY_ZUSAMMEN = [
   'import json, sys',
@@ -1336,12 +1436,36 @@ const PY_ZUSAMMEN = [
   'l["zugangsdatei"] = sys.argv[3]',
   'if sys.argv[4].isdigit() and int(sys.argv[4]) > 0:',
   '    l["alteZugangsdateienEntfernt"] = int(sys.argv[4])',
+  // I8e Paket 2 Task 7: Rolle je Datenbank — fail-closed (unlesbar/kaputt → unbekannt, Datenbank fehlt in SQL → nicht vorhanden)
+  'try:',
+  '    ro = json.loads(sys.argv[5]) if len(sys.argv) > 5 else {}',
+  'except ValueError:',
+  '    ro = {}',
+  'if not isinstance(ro, dict):',
+  '    ro = {}',
+  'rollen = ro.get("rollen") if isinstance(ro.get("rollen"), dict) else None',
+  'GUELTIG = ("PRIMARY", "SECONDARY", "RESOLVING", "keine AG")',
+  'def rolle(db):',
+  '    if rollen is None:',
+  '        return "keine AG" if ro.get("alle") == "keine AG" else "unbekannt"',
+  '    if db not in rollen:',
+  '        return "nicht vorhanden"',
+  '    return rollen[db] if rollen[db] in GUELTIG else "unbekannt"',
+  'dbs = l.get("datenbanken") if isinstance(l.get("datenbanken"), dict) else {}',
+  'for db, d in dbs.items():',
+  '    if isinstance(d, dict):',
+  '        d["rolle"] = rolle(db)',
+  'if rollen is not None:',
+  '    l["ohneSicherung"] = {db: rolle(db) for db in sorted(rollen) if db not in dbs}',
+  'if isinstance(ro.get("fehler"), str):',
+  '    l["rollenFehler"] = ro["fehler"][:200]',
   'print("ALFRED-SQL " + json.dumps(l, ensure_ascii=True))',
 ].join('\n');
 
 /**
  * Lesend, ohne Tresor und ohne fs01-Zugang (Fix-Runde 1, Sicherheit): lokale Dateien, ausstehende Kopien und der Bericht des letzten
  * Kopierlaufs (Manifest-Ketten, Vorhandensein/Größe auf fs01, Befunde, Budget), Timer, Zugangsdatei (nur Rechte). Keine Eingabe.
+ * I8e Paket 2 Task 7: dazu die Rolle je Datenbank (PY_ROLLEN, Zugangsdatei des Resource-Agents auf dem Rechner — kein Tresor).
  */
 export function sicherungenSkript(): string {
   return [
@@ -1356,6 +1480,8 @@ export function sicherungenSkript(): string {
     "rechnername() { hostname -s | tr 'A-Z' 'a-z'; }",
     ZUSTAND_ZUGANGSDATEI,
     `PY_ZUSAMMEN=${shQ(PY_ZUSAMMEN)}`,
+    `PY_ROLLEN=${shQ(PY_ROLLEN)}`,
+    'rollen_lesen() { python3 -I -c "$PY_ROLLEN" 2>/dev/null | grep "^ALFRED-ROLLEN " | head -n 1 || true; }',
     ...FASSUNG_PRUEFEN,
     '# ALFRED-ABLAUF',
     'fassung_pruefen',
@@ -1366,7 +1492,8 @@ export function sicherungenSkript(): string {
     'l=$(grep "^ALFRED-LISTE " <<<"$l" | head -n 1)',
     `timer=$(systemctl is-active ${KOPIE_DIENST}.timer 2>/dev/null || true)`,
     `zd=$(zugangsdatei_zustand ${ZUGANGSDATEI_FEST})`,
-    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "${timer:-unbekannt}" "$zd" "${ALFRED_RESTE:-0}"',
+    'ro=$(rollen_lesen); ro=${ro#ALFRED-ROLLEN }; [ -n "$ro" ] || ro=null',
+    'python3 -I -c "$PY_ZUSAMMEN" "${l#ALFRED-LISTE }" "${timer:-unbekannt}" "$zd" "${ALFRED_RESTE:-0}" "$ro"',
     'ALFRED_ZEILE=1',
   ].join('\n');
 }
