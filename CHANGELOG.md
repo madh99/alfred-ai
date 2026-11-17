@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Hilfe zeigt die tatsächliche Rolle (v1887)
+
+- Die Hilfe (Überblick, Details, Suche) verwendet dieselbe Rolle wie der Werkzeugfilter der Nachrichtenverarbeitung. Der Owner ohne eigenen Benutzereintrag wurde dort bisher als Gast behandelt, sodass die Hilfe erlaubte Skills mit „für deine Rolle nicht verfügbar“ abwies. Zugriffsprüfungen der übrigen Skills sind unverändert.
+
 ### Added — SQL Server 2025 auf Linux: Einzelinstanz mit Sicherung und Wiederherstellungsbeweis (v1886)
 
 - Neuer Skill linux_sql: Platten einrichten (XFS), SQL Server 2025 aus der Microsoft-Paketquelle installieren (Version fest, gehalten), konfigurieren (Speicher, tempdb, SQL Agent), Logins und Prüfdaten anlegen, Status. Ändernde Aktionen nur im freigegebenen Change; Kennwörter entstehen im Tresor und gehen nur über die Standardeingabe an den Server.
