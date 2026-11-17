@@ -1923,23 +1923,23 @@ function tsqlEndpunkt(ich: string): Record<'pruefen' | 'masterkey' | 'login' | '
     masterkey: [
       AG_KOPF('ep_masterkey'),
       'DECLARE @neu int = 0;',
-      `IF NOT ${mkDa} BEGIN CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'@@HS@@'; SET @neu = 1; PRINT 'ALFRED-ERLEDIGT masterkey'; END`,
+      `IF NOT ${mkDa} BEGIN BEGIN TRY CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'@@HS@@'; END TRY BEGIN CATCH THROW; END CATCH; SET @neu = 1; PRINT 'ALFRED-ERLEDIGT masterkey'; END`,
       "SELECT 'ALFRED|' + CAST(@neu AS varchar(1));",
     ].join('\n'),
     login: [
       AG_KOPF('ep_login'),
       "DECLARE @neu int = 0, @a varchar(400) = '';",
-      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') BEGIN CREATE LOGIN [${PML}] WITH PASSWORD = N'@@PM@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @neu = 1; SET @a += ' pacemaker-login'; PRINT 'ALFRED-ERLEDIGT pacemaker-login'; END`,
-      `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${PML}') = 1 BEGIN ALTER LOGIN [${PML}] ENABLE; SET @a += ' pacemaker-login-aktiviert'; PRINT 'ALFRED-ERLEDIGT pacemaker-login-aktiviert'; END`,
-      `IF NOT ${vssDa} BEGIN GRANT VIEW SERVER STATE TO [${PML}]; SET @a += ' pacemaker-view-server-state'; PRINT 'ALFRED-ERLEDIGT pacemaker-view-server-state'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') BEGIN BEGIN TRY CREATE LOGIN [${PML}] WITH PASSWORD = N'@@PM@@', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = [master]; SET @neu = 1; END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' pacemaker-login'; PRINT 'ALFRED-ERLEDIGT pacemaker-login'; END`,
+      `IF (SELECT is_disabled FROM sys.server_principals WHERE name = N'${PML}') = 1 BEGIN BEGIN TRY ALTER LOGIN [${PML}] ENABLE; END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' pacemaker-login-aktiviert'; PRINT 'ALFRED-ERLEDIGT pacemaker-login-aktiviert'; END`,
+      `IF NOT ${vssDa} BEGIN BEGIN TRY GRANT VIEW SERVER STATE TO [${PML}]; END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' pacemaker-view-server-state'; PRINT 'ALFRED-ERLEDIGT pacemaker-view-server-state'; END`,
       "SELECT 'ALFRED|' + CAST(@neu AS varchar(1)) + '|' + LTRIM(@a);",
     ].join('\n'),
     endpunkt: [
       AG_KOPF('ep_endpunkt'),
       "DECLARE @a varchar(400) = '', @sql nvarchar(max);",
-      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}') BEGIN SET @sql = N'CREATE CERTIFICATE [${zn(ich)}] WITH SUBJECT = N''Alfred AG-Endpunkt ${ich}'', EXPIRY_DATE = ''20361231'''; EXEC (@sql); SET @a += ' zertifikat'; PRINT 'ALFRED-ERLEDIGT zertifikat'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN SET @sql = N'CREATE ENDPOINT [${EPN}] STATE = STARTED AS TCP (LISTENER_PORT = ${HA_AG_PORT}, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE [${zn(ich)}], ENCRYPTION = REQUIRED ALGORITHM AES)'; EXEC (@sql); SET @a += ' endpunkt'; PRINT 'ALFRED-ERLEDIGT endpunkt'; END`,
-      `IF (SELECT state_desc FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') <> N'STARTED' BEGIN EXEC (N'ALTER ENDPOINT [${EPN}] STATE = STARTED'); SET @a += ' endpunkt-gestartet'; PRINT 'ALFRED-ERLEDIGT endpunkt-gestartet'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(ich)}') BEGIN BEGIN TRY SET @sql = N'CREATE CERTIFICATE [${zn(ich)}] WITH SUBJECT = N''Alfred AG-Endpunkt ${ich}'', EXPIRY_DATE = ''20361231'''; EXEC (@sql); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' zertifikat'; PRINT 'ALFRED-ERLEDIGT zertifikat'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN BEGIN TRY SET @sql = N'CREATE ENDPOINT [${EPN}] STATE = STARTED AS TCP (LISTENER_PORT = ${HA_AG_PORT}, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = CERTIFICATE [${zn(ich)}], ENCRYPTION = REQUIRED ALGORITHM AES)'; EXEC (@sql); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' endpunkt'; PRINT 'ALFRED-ERLEDIGT endpunkt'; END`,
+      `IF (SELECT state_desc FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') <> N'STARTED' BEGIN BEGIN TRY EXEC (N'ALTER ENDPOINT [${EPN}] STATE = STARTED'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' endpunkt-gestartet'; PRINT 'ALFRED-ERLEDIGT endpunkt-gestartet'; END`,
       "SELECT 'ALFRED|' + LTRIM(@a);",
     ].join('\n'),
     selbst: [
@@ -1994,27 +1994,27 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
     "DECLARE @a varchar(1000) = '', @sql nvarchar(max);",
     // Login (Kennwort unbekannt, nie ausgegeben — die Anmeldung läuft nur über das Zertifikat), Benutzer, öffentliches Zertifikat, CONNECT
     ...p.peers.flatMap(x => [
-      `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); SET @a += ' login-${x.name}'; PRINT 'ALFRED-ERLEDIGT login-${x.name}'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE USER [${zn(x.name)}] FOR LOGIN [${zn(x.name)}]'); SET @a += ' benutzer-${x.name}'; PRINT 'ALFRED-ERLEDIGT benutzer-${x.name}'; END`,
-      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(x.name)}') BEGIN EXEC (N'CREATE CERTIFICATE [${zn(x.name)}] AUTHORIZATION [${zn(x.name)}] FROM BINARY = 0x${x.zertifikat}'); SET @a += ' zertifikat-${x.name}'; PRINT 'ALFRED-ERLEDIGT zertifikat-${x.name}'; END`,
-      `IF NOT ${connectDa(x.name)} BEGIN EXEC (N'GRANT CONNECT ON ENDPOINT::[${EPN}] TO [${zn(x.name)}]'); SET @a += ' connect-${x.name}'; PRINT 'ALFRED-ERLEDIGT connect-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN BEGIN TRY SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' login-${x.name}'; PRINT 'ALFRED-ERLEDIGT login-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'${zn(x.name)}') BEGIN BEGIN TRY EXEC (N'CREATE USER [${zn(x.name)}] FOR LOGIN [${zn(x.name)}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' benutzer-${x.name}'; PRINT 'ALFRED-ERLEDIGT benutzer-${x.name}'; END`,
+      `IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'${zn(x.name)}') BEGIN BEGIN TRY EXEC (N'CREATE CERTIFICATE [${zn(x.name)}] AUTHORIZATION [${zn(x.name)}] FROM BINARY = 0x${x.zertifikat}'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' zertifikat-${x.name}'; PRINT 'ALFRED-ERLEDIGT zertifikat-${x.name}'; END`,
+      `IF NOT ${connectDa(x.name)} BEGIN BEGIN TRY EXEC (N'GRANT CONNECT ON ENDPOINT::[${EPN}] TO [${zn(x.name)}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' connect-${x.name}'; PRINT 'ALFRED-ERLEDIGT connect-${x.name}'; END`,
     ]),
     ...(rolle === 'primaer' ? [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'${anlegen}'); SET @a += ' ag-angelegt'; PRINT 'ALFRED-ERLEDIGT ag-angelegt'; END`,
+      `IF NOT ${agDa(ag)} BEGIN BEGIN TRY EXEC (N'${anlegen}'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' ag-angelegt'; PRINT 'ALFRED-ERLEDIGT ag-angelegt'; END`,
       'ELSE',
       'BEGIN',
-      `  IF (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)'); SET @a += ' required-sync-0'; PRINT 'ALFRED-ERLEDIGT required-sync-0'; END`,
-      `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); SET @a += ' sicherungsvorgabe-primary'; PRINT 'ALFRED-ERLEDIGT sicherungsvorgabe-primary'; END`,
+      `  IF (SELECT required_synchronized_secondaries_to_commit FROM sys.availability_groups WHERE name = N'${ag}') <> 0 BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0)'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' required-sync-0'; PRINT 'ALFRED-ERLEDIGT required-sync-0'; END`,
+      `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' sicherungsvorgabe-primary'; PRINT 'ALFRED-ERLEDIGT sicherungsvorgabe-primary'; END`,
       'END',
     ] : rolle === 'sekundaer' ? [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); PRINT 'ALFRED-ERLEDIGT beigetreten'; EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; SET @a += ' beigetreten seeding-erlaubt'; END`,
+      `IF NOT ${agDa(ag)} BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT beigetreten'; BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; SET @a += ' beigetreten seeding-erlaubt'; END`,
       // nach einem abgebrochenen Lauf: Datenbanken der AG fehlen hier noch → Seeding (wieder) erlauben, sichtbar
       `ELSE IF EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND DB_ID(c.database_name) IS NULL)`,
-      `  BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); SET @a += ' seeding-erlaubt'; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; END`,
+      `  BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' seeding-erlaubt'; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; END`,
     ] : [
-      `IF NOT ${agDa(ag)} BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); SET @a += ' beigetreten'; PRINT 'ALFRED-ERLEDIGT beigetreten'; END`,
+      `IF NOT ${agDa(ag)} BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' beigetreten'; PRINT 'ALFRED-ERLEDIGT beigetreten'; END`,
     ]),
-    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 BEGIN EXEC (N'GRANT ALTER, CONTROL, VIEW DEFINITION ON AVAILABILITY GROUP::[${ag}] TO [${PML}]'); SET @a += ' pacemaker-ag-rechte'; PRINT 'ALFRED-ERLEDIGT pacemaker-ag-rechte'; END`,
+    `IF ${agDa(ag)} AND ${pmAgRechte} < 3 BEGIN BEGIN TRY EXEC (N'GRANT ALTER, CONTROL, VIEW DEFINITION ON AVAILABILITY GROUP::[${ag}] TO [${PML}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' pacemaker-ag-rechte'; PRINT 'ALFRED-ERLEDIGT pacemaker-ag-rechte'; END`,
     "SELECT 'ALFRED|' + LTRIM(@a);",
   ].join('\n');
   const selbst = [
@@ -2064,7 +2064,7 @@ function tsqlAbschluss(p: HaAgAbschlussParameter): Record<'pruefen' | 'dbs' | 's
     dbs: [
       AG_KOPF('ab_dbs'),
       "DECLARE @a varchar(2000) = '';",
-      ...datenbanken.map(d => `IF NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND c.database_name = N'${d}') BEGIN EXEC (N'ALTER AVAILABILITY GROUP [${ag}] ADD DATABASE [${d}]'); SET @a += ' db-${d}'; PRINT 'ALFRED-ERLEDIGT db-${d}'; END`),
+      ...datenbanken.map(d => `IF NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND c.database_name = N'${d}') BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] ADD DATABASE [${d}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' db-${d}'; PRINT 'ALFRED-ERLEDIGT db-${d}'; END`),
       "SELECT 'ALFRED|' + @a;",
     ].join('\n'),
     sync: [
@@ -2092,7 +2092,7 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'd
   const ich = b[rolle];
   const peers = knoten.map(k => k.name).filter(n => n !== ich);
   const weg = (art: 'CERTIFICATE' | 'USER' | 'LOGIN', katalog: string, name: string, kennung: string) =>
-    `IF EXISTS (SELECT 1 FROM ${katalog} WHERE name = N'${name}') BEGIN EXEC (N'DROP ${art} [${name}]'); SET @a += ' ${kennung}'; PRINT 'ALFRED-ERLEDIGT ${kennung}'; END`;
+    `IF EXISTS (SELECT 1 FROM ${katalog} WHERE name = N'${name}') BEGIN BEGIN TRY EXEC (N'DROP ${art} [${name}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' ${kennung}'; PRINT 'ALFRED-ERLEDIGT ${kennung}'; END`;
   return {
     // Fix-Runde 1 (I3): Datenbanken im Zustand RESTORING ohne AG (Wiederholung auf dem Primär ohne Merkdatei — nie still übergehen)
     waisen: [
@@ -2112,12 +2112,12 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'd
       `INSERT @dbs (n) SELECT c.database_name FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}';`,
       // Fix-Runde 1 (I3): dazu die gemerkten Datenbanken eines früheren, nach DROP abgebrochenen Laufs (@@DBS@@ aus der Merkdatei)
       "INSERT @dbs (n) SELECT s.name FROM sys.databases s WHERE s.name IN (@@DBS@@) AND NOT EXISTS (SELECT 1 FROM @dbs x WHERE x.n = s.name COLLATE DATABASE_DEFAULT);",
-      `IF ${agDa(ag)} BEGIN EXEC (N'DROP AVAILABILITY GROUP [${ag}]'); SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt'; END`,
+      `IF ${agDa(ag)} BEGIN BEGIN TRY EXEC (N'DROP AVAILABILITY GROUP [${ag}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt'; END`,
       "IF '@@ROLLE@@' = 'PRIMARY'",
       'BEGIN',
       "  DECLARE d CURSOR LOCAL FAST_FORWARD FOR SELECT x.n FROM @dbs x JOIN sys.databases s ON s.name = x.n COLLATE DATABASE_DEFAULT WHERE s.state_desc = N'RESTORING' AND s.replica_id IS NULL;",
       '  OPEN d; FETCH NEXT FROM d INTO @n;',
-      "  WHILE @@FETCH_STATUS = 0 BEGIN SET @sql = N'RESTORE DATABASE ' + QUOTENAME(@n) + N' WITH RECOVERY'; EXEC (@sql); SET @a += ' db-online-' + CAST(@n AS varchar(128)); PRINT 'ALFRED-ERLEDIGT db-online-' + CAST(@n AS varchar(128)); FETCH NEXT FROM d INTO @n; END",
+      "  WHILE @@FETCH_STATUS = 0 BEGIN SET @sql = N'RESTORE DATABASE ' + QUOTENAME(@n) + N' WITH RECOVERY'; BEGIN TRY EXEC (@sql); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' db-online-' + CAST(@n AS varchar(128)); PRINT 'ALFRED-ERLEDIGT db-online-' + CAST(@n AS varchar(128)); FETCH NEXT FROM d INTO @n; END",
       '  CLOSE d; DEALLOCATE d;',
       'END',
       "SELECT 'ALFRED|' + LTRIM(@a);",
@@ -2126,7 +2126,7 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'd
       AG_KOPF('en_aufraeumen'),
       "DECLARE @a varchar(2000) = '';",
       `IF ${agDa(ag)} THROW 50401, N'${ag} besteht noch - Endpunkt und Zertifikate bleiben', 1;`,
-      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN EXEC (N'DROP ENDPOINT [${EPN}]'); SET @a += ' endpunkt-entfernt'; PRINT 'ALFRED-ERLEDIGT endpunkt-entfernt'; END`,
+      `IF EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}') BEGIN BEGIN TRY EXEC (N'DROP ENDPOINT [${EPN}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' endpunkt-entfernt'; PRINT 'ALFRED-ERLEDIGT endpunkt-entfernt'; END`,
       ...peers.flatMap(n => [weg('CERTIFICATE', 'sys.certificates', zn(n), `zertifikat-${n}-entfernt`), weg('USER', 'sys.database_principals', zn(n), `benutzer-${n}-entfernt`), weg('LOGIN', 'sys.server_principals', zn(n), `login-${n}-entfernt`)]),
       weg('CERTIFICATE', 'sys.certificates', zn(ich), 'zertifikat-entfernt'),
       weg('LOGIN', 'sys.server_principals', PML, 'pacemaker-login-entfernt'),
@@ -2203,15 +2203,17 @@ geheim_lesen() {
 # Kennwörter für T-SQL (' verdoppelt) und Einsetzen in die Vorlagen (@@HS@@ Master-Key, @@PM@@ Pacemaker-Login)
 geheim_sql() { local q="'"; HS_SQL=§{HS//"$q"/"$q$q"}; PM_SQL=§{PM//"$q"/"$q$q"}; }
 mit_geheim() { local t=$1; t=§{t//@@HS@@/"$HS_SQL"}; t=§{t//@@PM@@/"$PM_SQL"}; printf '%s' "$t"; }
-# T-SQL ausführen; Ergebniszeile „ALFRED|…“ in ZEILE, sonst sichtbarer Abbruch (Ausgabe geschwärzt). $3 = aendernd: sqlcmd -b bricht
-# beim ersten Fehler ab, frühere Anweisungen des Blocks sind ohne Transaktion wirksam — jede meldet sich per PRINT „ALFRED-ERLEDIGT <x>“
-# und steht dann in den Änderungen; der Abbruch sagt zusätzlich, dass der Block mittendrin endete
+# T-SQL ausführen; Ergebniszeile „ALFRED|…“ in ZEILE, sonst sichtbarer Abbruch (Ausgabe geschwärzt). $3 = aendernd: in den ändernden
+# Blöcken steht jede Änderung in BEGIN TRY … END TRY BEGIN CATCH THROW; END CATCH — ein Fehler beendet den ganzen Block (THROW ohne
+# äußeres TRY beendet den Batch), bevor ihr PRINT „ALFRED-ERLEDIGT <x>“ läuft; ohne Fehler meldet sich jede Änderung per PRINT. Es gibt
+# keine Transaktion: die vorher gemeldeten Änderungen bleiben wirksam und stehen in den Änderungen, danach lief nichts mehr
+# (Fix-Runde 2 — ohne TRY/CATCH hätte ein Fehler der Schwere 16 nur die Anweisung beendet und der Block wäre weitergelaufen)
 sql_lauf() {
   local a x
   if ! a=$(sql "$1" 2>&1); then
     if [ "§{3:-}" = aendernd ]; then
       for x in $(printf '%s\n' "$a" | sed -n 's/^ALFRED-ERLEDIGT //p' | tr -d '\r'); do aend "$x"; erledigt_marke "$x"; done
-      UNSICHER="Block „$2“ mittendrin abgebrochen — Anweisungen vor dem Fehler sind ohne Transaktion wirksam"
+      UNSICHER="Block „$2“ am ersten Fehler beendet — die vorher als erledigt gemeldeten Änderungen bleiben wirksam (keine Transaktion), danach lief nichts mehr"
     fi
     abbruch "$2: $(kurz "$(schwaerze_geheim "$(printf '%s\n' "$a" | grep -v '^ALFRED-ERLEDIGT ' || true)")") — $(stand)"
   fi

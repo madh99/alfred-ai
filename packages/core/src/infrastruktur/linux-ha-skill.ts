@@ -271,6 +271,12 @@ function agEntfernenBesetzung(zugang: string, input: Record<string, unknown>): {
 /** Fix-Runde 1 (I1): abgeschlossene Läufe und neue Tresor-Einträge eines AG-Laufs — auch für die Fehlermeldung bei Abbruch */
 interface AgSpur { laeufe: Array<{ z: string; zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>; tresor: string[] }
 
+/**
+ * Fix-Runde 2 (A1): Fehlertexte von ag_anlegen/ag_entfernen dürfen länger sein als die üblichen 800 Zeichen — die Spur aller Knoten
+ * (bis zu zehn Läufe mit Änderungslisten) steht vorn und muss vollständig bleiben; gekürzt wird nur der Grund am Ende.
+ */
+export const AG_FEHLER_MAX = 2400;
+
 /** sa-Tresoreinträge der Zugänge vorhanden — sonst Abbruch vor jedem Fernaufruf */
 function saPruefen(namen: Set<string>, zugaenge: string[]): void {
   for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
@@ -372,7 +378,7 @@ export class LinuxHaSkill extends Skill {
         case 'ag_anlegen': return await this.agAnlegen(zugang, input, geheim);
         case 'ag_entfernen': return await this.agEntfernen(zugang, input, geheim);
       }
-    } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
+    } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, action === 'ag_anlegen' || action === 'ag_entfernen' ? AG_FEHLER_MAX : 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
   }
 
@@ -473,12 +479,13 @@ export class LinuxHaSkill extends Skill {
   /**
    * Fix-Runde 1 (I1): bricht ein AG-Lauf auf Knoten n ab, nennt der Fehler zusätzlich alles, was die abgeschlossenen Läufe davor geändert
    * haben (je Knoten) und neue Tresor-Einträge — der Lauf auf Knoten n nennt seine eigenen Änderungen selbst. Auch protokolliert.
+   * Fix-Runde 2 (A1): die Spur steht VORN — gekürzt wird nur der Grund dahinter (Fehlertexte von AG-Aktionen bis AG_FEHLER_MAX Zeichen).
    */
   private mitSpur(was: string, zugang: string, err: unknown, spur: AgSpur, geheim: string[]): Error {
     const grund = (err as Error).message;
     const bisher = jeKnoten(spur.laeufe);
     this.d.protokoll?.(`I8e ${was} abgebrochen`, { zugang, fehler: schwaerze(grund, geheim).slice(0, 500), laeufe: spur.laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen })), tresorNeu: spur.tresor });
-    return new Error(`${grund} — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''}`);
+    return new Error(`${was} abgebrochen — vorherige Läufe bisher geändert: ${bisher || 'nichts'}${spur.tresor.length ? `; neu im Tresor: ${spur.tresor.join(', ')}` : ''} — Grund: ${grund}`);
   }
 
   /** sa-Kennwörter der drei Zugänge (Paket 1, linux_sql installieren) — fehlt eines, kein Fernaufruf */
@@ -549,12 +556,13 @@ export class LinuxHaSkill extends Skill {
       if (mk[z]!.neu && (ok || marken.has('ALFRED-MASTERKEY-GESETZT'))) { await t.setze(haMasterkeyTresor(z), mk[z]!.wert, `Master-Key-Kennwort (master) von SQL Server auf ${z} (Verfügbarkeitsgruppe ${ab.ag})`); mk[z]!.neu = false; spur.tresor.push(haMasterkeyTresor(z)); }
       if (pmNeu && (ok || marken.has('ALFRED-PACEMAKER-GESETZT'))) { await t.setze(HA_PACEMAKER_TRESOR, pm, `Kennwort des SQL-Logins alfred_pacemaker (Pacemaker-Resource-Agent, ${zugaenge.join(', ')})`); pmNeu = false; spur.tresor.push(HA_PACEMAKER_TRESOR); }
       const r = this.pruefeLauf<{ zustand: string; zertifikat?: unknown; fingerabdruck?: unknown; aenderungen?: string[] }>(z, `AG-Endpunkt ${z}`, roh);
+      // Fix-Runde 2 (A2): der Lauf hat geändert, auch wenn sein Zertifikat danach abgewiesen wird — erst in die Spur, dann prüfen
+      laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
       // nur ein öffentliches Zertifikat wird weitergegeben — alles andere bricht vor dem Austausch ab
       if (!istOeffentlichesZertifikat(r.zertifikat) || typeof r.fingerabdruck !== 'string' || !/^[0-9A-F]{40,64}$/.test(r.fingerabdruck)) {
         throw new Error(`${z} lieferte kein öffentliches Endpunkt-Zertifikat (ein DER-Zertifikat als Hex mit Fingerabdruck) — nichts weitergegeben; Rückweg ag_entfernen`);
       }
       ep[z] = { zertifikat: r.zertifikat as string, fingerabdruck: r.fingerabdruck };
-      laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
     }
     // ── 2: Replikat je Knoten — Primär legt an, Sekundär und Konfig treten bei ──
     for (const rolle of HA_AG_ROLLEN) {

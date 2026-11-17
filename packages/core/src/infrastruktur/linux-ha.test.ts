@@ -1762,9 +1762,9 @@ describe('I8e Paket 2 Task 5 Fix-Runde 1 — Text', () => {
       expect([...t.matchAll(/PRINT 'ALFRED-ERLEDIGT /g)].length).toBeGreaterThanOrEqual(sets);
     }
     const sek = un(haAgReplikatSkript(AG_RP('sqllnx02')));
-    expect(sek).toContain("JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); PRINT 'ALFRED-ERLEDIGT beigetreten'; EXEC (N'ALTER AVAILABILITY GROUP [sqllnxag01] GRANT CREATE ANY DATABASE'); PRINT 'ALFRED-ERLEDIGT seeding-erlaubt';");
+    expect(sek).toContain("JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT beigetreten'; BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [sqllnxag01] GRANT CREATE ANY DATABASE'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt';");
     const en = un(haAgEntfernenSkript(AG_EN()));
-    expect(en).toContain("EXEC (N'DROP AVAILABILITY GROUP [sqllnxag01]'); SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt';");
+    expect(en).toContain("BEGIN TRY EXEC (N'DROP AVAILABILITY GROUP [sqllnxag01]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' ag-entfernt'; PRINT 'ALFRED-ERLEDIGT ag-entfernt';");
     expect(en).toContain("PRINT 'ALFRED-ERLEDIGT db-online-' + CAST(@n AS varchar(128));");
   });
   it('I4: sqlcmd steht nicht mehr in HA_BEFEHLE (ha_vorbereiten prüft es nicht), sondern in HA_AG_BEFEHLE der AG-Bausteine', () => {
@@ -1792,7 +1792,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 Fix-Runde 1 — ausgeführ
     const f = String(rp.laeufe[0]!.ergebnis!.fehler);
     expect(f).toContain('Replikat (primaer) auf sqllnx01: Msg 15151, Level 16 Cannot grant CONNECT');
     expect(f).toContain('bisher geändert: login-sqllnx02,benutzer-sqllnx02');
-    expect(f).toContain('mittendrin abgebrochen');
+    expect(f).toContain('am ersten Fehler beendet — die vorher als erledigt gemeldeten Änderungen bleiben wirksam (keine Transaktion), danach lief nichts mehr');
     expect(f).not.toContain('ALFRED-ERLEDIGT');
     expect(f).not.toContain('nichts geändert');
     // en_drop: DROP AG wirksam, RESTORE scheitert
@@ -1804,7 +1804,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 Fix-Runde 1 — ausgeführ
     // auch ohne gemeldete Anweisung: „bisher keine Änderung gemeldet“ + Hinweis, nie „nichts geändert“
     const leer = await agLaeufe([haAgAbschlussSkript(AG_AB)], { sa: GEHEIM.sa }, [`${AB_NEU}\n${fehler('ab_dbs', ['Msg 1475, Level 16', 'database cannot be added'])}`]);
     const l = String(leer.laeufe[0]!.ergebnis!.fehler);
-    expect(l).toContain('bisher keine Änderung gemeldet; Block „Datenbanken in sqllnxag01 aufnehmen“ mittendrin abgebrochen');
+    expect(l).toContain('bisher keine Änderung gemeldet; Block „Datenbanken in sqllnxag01 aufnehmen“ am ersten Fehler beendet');
     expect(l).not.toContain('nichts geändert');
     // Endpunkt: Pacemaker-Login angelegt, GRANT scheitert → Marke trotzdem (Kennwort kommt in den Tresor)
     const ep = await agLaeufe([haAgEndpunktSkript(AG_EP())], GEHEIM, [`${EP_NEU}\n${fehler('ep_login', ['ALFRED-ERLEDIGT pacemaker-login', 'Msg 4613, Level 16', 'Grantor does not have GRANT permission'])}`]);
@@ -1834,5 +1834,25 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 Fix-Runde 1 — ausgeführ
     // ohne Merkdatei: RESTORING-Datenbank ohne AG auf dem Primär → Abbruch, nie still „schon“
     const o = await agLaeufe([en], { sa: GEHEIM.sa }, [sqlStub({ en_lage: 'ALFRED|-|-', en_waisen: 'ALFRED|alfredpruef', en_drop: 'ALFRED|', en_aufraeumen: 'ALFRED|', en_selbst: 'ALFRED|0|-' })]);
     expect(String(o.laeufe[0]!.ergebnis!.fehler)).toContain('Datenbanken ohne AG im Zustand RESTORING (alfredpruef)');
+  });
+});
+
+// ── Task 5 Fix-Runde 2 (B): jede gemeldete Änderung steht hinter einer TRY/CATCH-THROW-geschützten Anweisung ─────────────────────────
+describe('I8e Paket 2 Task 5 Fix-Runde 2 — PRINT ALFRED-ERLEDIGT nur nach geschützter Anweisung', () => {
+  it('statisch: vor jedem PRINT ALFRED-ERLEDIGT steht im selben Block „END CATCH;“ (höchstens noch SET-Zuweisungen dazwischen), jedes CATCH wirft weiter', () => {
+    const un = (t: string) => t.replaceAll(`'\\''`, "'");
+    let gesamt = 0;
+    for (const t of AG_SKRIPTE().map(un)) {
+      for (const z of t.split('\n').filter(x => x.includes("PRINT 'ALFRED-ERLEDIGT"))) {
+        const teile = z.split("PRINT 'ALFRED-ERLEDIGT").slice(0, -1);
+        for (const vor of teile) {
+          gesamt++;
+          expect(vor, z).toMatch(/BEGIN TRY .+ END TRY BEGIN CATCH THROW; END CATCH;(?: SET @\w+ \+?= [^;]+;)* $/);
+        }
+      }
+      // kein CATCH, das einen Fehler schluckt (nur THROW weiter); Prüf-CATCH der Selbstprüfung/Master-Key-Prüfung ausgenommen
+      for (const m of t.matchAll(/BEGIN CATCH (.*?) END CATCH/g)) expect(m[1], m[0]).toMatch(/^(THROW;|THROW 50108, .*|SET @f \+= .*)$/);
+    }
+    expect(gesamt).toBeGreaterThan(40);
   });
 });

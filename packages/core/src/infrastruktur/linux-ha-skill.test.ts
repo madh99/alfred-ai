@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE_RUECKWEG_GRUND, LINUX_HA_MIN_ZEITLIMIT_S, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
+import { LinuxHaSkill, linuxHaStatusText, clusterText, fencingText, FENCING_OHNE_RUECKWEG_GRUND, LINUX_HA_MIN_ZEITLIMIT_S, AG_FEHLER_MAX, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
 import { LinuxSqlSkill } from './linux-sql-skill.js';
 import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR, type FencingBeleg, type FencingTest } from './linux-ha.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
@@ -617,12 +617,49 @@ describe('I8e Paket 2 Task 5 Fix-Runde 1 — Abbruch mittendrin nennt alles bish
   it('ag_anlegen: Fencing-Gate → „vorherige Läufe bisher geändert: nichts“; ag_entfernen: Abbruch auf sqllnx02 nennt das auf dem Primär Entfernte', async () => {
     const st = [...STATUS_3]; st[1] = statusAg('sqllnx02', '2', { fencing: undefined }) as never;
     const g = await voll({ [LINUX_HA_BAUSTEINE.status]: st }).skill.execute(AG_EINGABE, imChange);
-    expect(g.error).toContain('keine SQL-Zeile ausgeführt, nichts geändert — vorherige Läufe bisher geändert: nichts');
+    expect(g.error).toMatch(/^Verfügbarkeitsgruppe anlegen abgebrochen — vorherige Läufe bisher geändert: nichts — Grund: Verfügbarkeitsgruppe sqllnxag01 nicht angelegt — .* keine SQL-Zeile ausgeführt, nichts geändert$/);
     const w = welt({ [LINUX_HA_BAUSTEINE.agEntfernen]: [{ zustand: 'geaendert', knoten: 'sqllnx01', datenbanken: [{ name: 'alfredpruef', zustand: 'ONLINE' }], aenderungen: ['ressource-vip-entfernt', 'ressource-ag-entfernt', 'ag-entfernt'] },
       { zustand: 'fehler', fehler: 'Endpunkt auf sqllnx02 nicht entfernbar' }] }, AG_TRESOR);
     const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange);
-    expect(r.error).toContain('Endpunkt auf sqllnx02 nicht entfernbar — vorherige Läufe bisher geändert: sqllnx01: ressource-vip-entfernt, ressource-ag-entfernt, ag-entfernt');
+    expect(r.error).toBe('Verfügbarkeitsgruppe entfernen abgebrochen — vorherige Läufe bisher geändert: sqllnx01: ressource-vip-entfernt, ressource-ag-entfernt, ag-entfernt — Grund: AG entfernen sqllnx02 auf sqllnx02 gescheitert (Exit 1): Endpunkt auf sqllnx02 nicht entfernbar');
     expect(w.protokolle.some(x => x.msg === 'I8e Verfügbarkeitsgruppe entfernen abgebrochen')).toBe(true);
+  });
+});
+
+describe('I8e Paket 2 Task 5 Fix-Runde 2 — Spur übersteht die Kürzung, abgewiesenes Zertifikat zählt mit (A1, A2)', () => {
+  // realistische Änderungslisten (wie die Bausteine sie melden)
+  const EP_AE = ['masterkey', 'pacemaker-login', 'pacemaker-view-server-state', 'zertifikat', 'endpunkt', 'pacemaker-zugangsdatei'];
+  const rpAe = (k: string, rolle: string) => [...HA_KNOTEN.map(x => x.name).filter(n => n !== k).flatMap(n => [`login-${n}`, `benutzer-${n}`, `zertifikat-${n}`, `connect-${n}`]),
+    ...(rolle === 'primaer' ? ['ag-angelegt'] : rolle === 'sekundaer' ? ['beigetreten', 'seeding-erlaubt'] : ['beigetreten']), 'pacemaker-ag-rechte'];
+  const langerGrund = `Selbstprüfung auf sqllnx01: ${'Msg 50290, Level 16, State 1, Server sqllnx01, Line 12 Zertifikat/Benutzer/Login fehlt oder weicht ab; '.repeat(12)}`;
+  const lang = (abschluss: unknown) => welt({
+    [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[],
+    [LINUX_HA_BAUSTEINE.agEndpunkt]: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(k => ({ ...endpunkt(k), aenderungen: EP_AE })),
+    [LINUX_HA_BAUSTEINE.agReplikat]: (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).map(k => ({ ...replikat(k, ROLLE[k]), aenderungen: rpAe(k, ROLLE[k]) })),
+    [LINUX_HA_BAUSTEINE.agAbschluss]: [abschluss as never],
+  }, AG_TRESOR);
+  const ROLLE = { sqllnx01: 'primaer', sqllnx02: 'sekundaer', sqllnxcfg: 'konfig' } as const;
+
+  it('A1: lange Änderungslisten auf allen Knoten + langer Grund — die vollständige Spur steht vorn und übersteht die Kürzung in execute()', async () => {
+    const w = lang({ code: 1, stdout: `ALFRED-HA ${JSON.stringify({ zustand: 'fehler', fehler: `${langerGrund} — bisher geändert: db-alfredpruef,ressource-ag` })}` });
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.success).toBe(false);
+    const spur = 'Verfügbarkeitsgruppe anlegen abgebrochen — vorherige Läufe bisher geändert: '
+      + ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(k => `${k}: ${EP_AE.join(', ')}`).join('; ') + '; '
+      + (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).map(k => `${k}: ${rpAe(k, ROLLE[k]).join(', ')}`).join('; ')
+      + '; neu im Tresor: sqllnx-sqllnx01-masterkey, sqllnx-ha-pacemaker, sqllnx-sqllnx02-masterkey, sqllnx-sqllnxcfg-masterkey — Grund: ';
+    expect(spur.length).toBeGreaterThan(800); // ohne die Änderung wäre die Spur abgeschnitten worden
+    expect(r.error!.startsWith(spur), r.error).toBe(true);
+    expect(r.error!.length).toBeLessThanOrEqual(AG_FEHLER_MAX);
+    expect(r.error).toContain('AG-Abschluss sqllnx01 auf sqllnx01 gescheitert');
+  });
+  it('A2: Endpunkt meldet Änderungen, aber kein öffentliches Zertifikat → seine Änderungen stehen in Fehler und Protokoll', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.status]: [...STATUS_3] as never[], [LINUX_HA_BAUSTEINE.agEndpunkt]: [{ ...endpunkt('sqllnx01'), zertifikat: '1EF1B5B000', aenderungen: EP_AE }] }, AG_TRESOR);
+    const r = await w.skill.execute(AG_EINGABE, imChange);
+    expect(r.error).toContain(`vorherige Läufe bisher geändert: sqllnx01: ${EP_AE.join(', ')}`);
+    expect(r.error).toContain('sqllnx01 lieferte kein öffentliches Endpunkt-Zertifikat');
+    const p = w.protokolle.find(x => x.msg === 'I8e Verfügbarkeitsgruppe anlegen abgebrochen')!;
+    expect(p.daten.laeufe).toEqual([{ knoten: 'sqllnx01', zustand: 'geaendert', aenderungen: EP_AE }]);
   });
 });
 
