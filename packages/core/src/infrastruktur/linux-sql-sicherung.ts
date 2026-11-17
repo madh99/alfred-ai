@@ -227,6 +227,12 @@ const FASSUNG = fassung(PROZEDUR_TEXT + JSON.stringify(JOBS));
 export const SICHERUNG_PROZEDUR = PROZEDUR_TEXT.replace('@@FASSUNG@@', FASSUNG);
 
 /**
+ * Text der Prozedur aus msdb — Realfall 17.11. (6279a86a Schritt 7): OBJECT_DEFINITION(id) sucht immer in der aktuellen Datenbank
+ * (hier master) und lieferte NULL → „Prozedur 0“, und eine neue Fassung wäre nie eingespielt worden. msdb.sys.sql_modules ist eindeutig.
+ */
+export const PROZEDUR_DEFINITION = "(SELECT m.definition FROM msdb.sys.sql_modules m WHERE m.object_id = OBJECT_ID(N'msdb.dbo.alfred_sicherung', N'P'))";
+
+/**
  * Prozedur und drei Agent-Jobs in msdb, idempotent: fremde Jobs gleichen Namens → THROW vor jeder Änderung; eigene Jobs mit anderer
  * Fassung werden neu angelegt; abgeschaltete eigene Jobs wieder eingeschaltet. Letzte Zeile: ALFRED|<zustand>|<jobs ok>|<proc ok>|<agent>.
  */
@@ -238,7 +244,7 @@ export function sicherungJobsTsql(): string {
     "DECLARE @z nvarchar(20) = N'schon', @jid uniqueidentifier, @besch nvarchar(512), @proc nvarchar(max);",
     `IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name IN (${namen}) AND ISNULL(description, N'') NOT LIKE N'${JOB_BESCHREIBUNG}%')`,
     "  THROW 50020, N'Ein Job alfred-sqllnx-* ist kein Alfred-Job - nichts geaendert', 1;",
-    `IF OBJECT_ID(N'msdb.dbo.alfred_sicherung', N'P') IS NULL OR CHARINDEX(N'alfred-fassung ${FASSUNG}', OBJECT_DEFINITION(OBJECT_ID(N'msdb.dbo.alfred_sicherung'))) = 0`,
+    `IF OBJECT_ID(N'msdb.dbo.alfred_sicherung', N'P') IS NULL OR CHARINDEX(N'alfred-fassung ${FASSUNG}', ISNULL(${PROZEDUR_DEFINITION}, N'')) = 0`,
     'BEGIN',
     `  SET @proc = N'${SICHERUNG_PROZEDUR.replace(/'/g, "''")}';`,
     '  EXEC msdb.sys.sp_executesql @proc;',
@@ -261,7 +267,7 @@ export function sicherungJobsTsql(): string {
     `  + N'|' + CAST((SELECT COUNT(*) FROM msdb.dbo.sysjobs j WHERE j.name IN (${namen}) AND j.enabled = 1 AND j.description = N'${besch}'`,
     '      AND EXISTS (SELECT 1 FROM msdb.dbo.sysjobschedules js JOIN msdb.dbo.sysschedules s ON s.schedule_id = js.schedule_id WHERE js.job_id = j.job_id AND s.enabled = 1)',
     '      AND EXISTS (SELECT 1 FROM msdb.dbo.sysjobservers sv WHERE sv.job_id = j.job_id)) AS nvarchar(5))',
-    `  + N'|' + CASE WHEN CHARINDEX(N'alfred-fassung ${FASSUNG}', ISNULL(OBJECT_DEFINITION(OBJECT_ID(N'msdb.dbo.alfred_sicherung')), N'')) > 0 THEN N'1' ELSE N'0' END`,
+    `  + N'|' + CASE WHEN CHARINDEX(N'alfred-fassung ${FASSUNG}', ISNULL(${PROZEDUR_DEFINITION}, N'')) > 0 THEN N'1' ELSE N'0' END`,
     "  + N'|' + CAST((SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE program_name LIKE N'SQLAgent%') AS nvarchar(5));",
   ].join('\n');
 }

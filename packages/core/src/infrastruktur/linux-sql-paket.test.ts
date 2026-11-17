@@ -73,3 +73,13 @@ describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', () => {
     expect(lauf('j\n-\n{"a":')).toBeNull();
   });
 });
+
+describe('Sicherung einrichten: Prozedurtext aus msdb (nicht aus der aktuellen Datenbank)', () => {
+  it('kein OBJECT_DEFINITION, Fassungsvergleich und Ergebnis über msdb.sys.sql_modules (Realfall 17.11., „Prozedur 0“)', async () => {
+    const { sicherungJobsTsql, PROZEDUR_DEFINITION } = await import('./linux-sql-sicherung.js');
+    const t = sicherungJobsTsql();
+    expect(t).not.toContain('OBJECT_DEFINITION');
+    expect(PROZEDUR_DEFINITION).toContain('msdb.sys.sql_modules');
+    expect(t.split(PROZEDUR_DEFINITION).length - 1).toBe(2);
+  });
+});
