@@ -1050,11 +1050,17 @@ def test_lesen(p, ich, cluster, i):
     if not isinstance(t, dict):
         return None, "Test-Datei fehlt oder ist unlesbar"
     try:
-        w = [t["art"], str(t["bootIdVorher"]), int(t["zeitS"]), int(t["ausloeseS"]), int(t.get("sperreS") or 0), int(t.get("minResetS") or 0), str(t["zeit"])]
+        w = [t["art"], str(t["bootIdVorher"]), int(t["zeitS"]), int(t["ausloeseS"]), int(t.get("sperreS") or 0), 0, str(t["zeit"])]
     except Exception:
         return None, "Test-Datei unvollständig"
     if w[0] not in FENCING_ARTEN or not BOOT_ID.match(w[1]) or not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", w[6]):
         return None, "Test-Datei mit ungültigen Werten"
+    # Fix-Runde 2: trennung ohne gültige Untergrenze (fehlend, 0, nicht endlich) ist kein verwendbarer Test — nie stillschweigend 0
+    m = t.get("minResetS")
+    if w[0] == "trennung" and (isinstance(m, bool) or not isinstance(m, (int, float)) or not math.isfinite(m) or m <= 0):
+        return None, "Test-Datei ohne gültige Untergrenze minResetS (trennung)"
+    if w[0] == "trennung":
+        w[5] = int(math.ceil(m))
     if t.get("knoten") != ich or t.get("cluster") != cluster:
         return None, "Test gehört zu %s/%s, nicht zu %s/%s" % (_w(t.get("knoten")), _w(t.get("cluster")), ich, cluster)
     if not isinstance(i, dict) or not i.get("konfHash") or t.get("konfHash") != i.get("konfHash"):
@@ -1096,15 +1102,17 @@ elif c == "grund":
     # beleg test conf key sbd ich cluster → leer = gültig
     print(fencing_grund(lies_json(a[2]), lies_json(a[3]), fencing_ident(a[4], a[5], a[6], a[7]), a[8]))
 elif c == "shutdown_spur":
-    # stdin: journalctl -b -1 -o json --since @<Test> → erste Spur eines geordneten Herunterfahrens oder nichts
+    # stdin: journalctl -b -1 -o json --since @<Test> → erste Spur eines geordneten Herunterfahrens, sonst ausdrücklich „KEINE“
+    # (Fix-Runde 2: nur „KEINE“ mit Exit 0 gilt als sauber — leere Ausgabe oder Absturz nie)
     for z in sys.stdin:
         try:
             s = shutdown_spur(json.loads(z))
         except Exception:
             continue
         if s:
-            print(s)
-            break
+            print("SPUR " + s)
+            sys.exit(0)
+    print("KEINE")
 elif c == "beleg_art":
     b = lies_json(a[2])
     print(b.get("art", "") if isinstance(b, dict) else "")
@@ -1347,8 +1355,14 @@ read -r J_BOOT J_LETZT_S <<<"$jv"
 LUECKE=$((BT - J_LETZT_S))
 # Fix-Runde 1: kein geordnetes Herunterfahren im getesteten Start seit dem Test (manueller Neustart, unattended-upgrades Automatic-Reboot)
 jj=$(journalctl -b -1 -o json --no-pager --since "@$T_ZEIT_S" 2>/dev/null) || abbruch "Journal des getesteten Starts ab dem Test nicht lesbar (journalctl -b -1 --since @$T_ZEIT_S) — kein Beleg"
-sp=$(printf '%s\n' "$jj" | fpy shutdown_spur)
-[ -z "$sp" ] || abbruch "geordnetes Herunterfahren im getesteten Start ($sp) — ein Neustart, kein Fencing-Reset; kein Beleg"
+# Fix-Runde 2: fail closed — nur genau „KEINE“ mit Exit 0 (pipefail) gilt als „kein Herunterfahren“
+rc=0; sp=$(printf '%s\n' "$jj" | fpy shutdown_spur) || rc=$?
+[ "$rc" = 0 ] || abbruch "Prüfung auf geordnetes Herunterfahren gescheitert (Exit $rc) — kein Beleg"
+case "$sp" in
+  KEINE) ;;
+  "SPUR "*) abbruch "geordnetes Herunterfahren im getesteten Start (§{sp#SPUR }) — ein Neustart, kein Fencing-Reset; kein Beleg" ;;
+  *) abbruch "Prüfung auf geordnetes Herunterfahren ohne eindeutige Antwort ('$(kurz "$sp")') — kein Beleg" ;;
+esac
 # ── Cluster: der Knoten ist wieder online (bis WARTE_RUNDEN × 2 s), SBD läuft und hält den Watchdog ──
 ok=0
 for i in $(seq 1 "$WARTE_RUNDEN"); do lage; if [ "$LQ" = 1 ] && [[ ",$LN," == *",$ICH,"* ]]; then ok=1; break; fi; sleep 2; done

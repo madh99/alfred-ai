@@ -875,6 +875,8 @@ export PYTHONIOENCODING=utf-8
 # Uhr: mit $T/jetzt_schritt rückt sie bei jedem Lesen um so viele Sekunden vor (Phase 1/2 dauern auf echten Knoten Sekunden)
 jetzt() { local j; j=$(cat "$T/jetzt"); if [ -f "$T/jetzt_schritt" ]; then echo $((j + $(cat "$T/jetzt_schritt"))) >"$T/jetzt"; fi; echo "$j"; }
 corosync-cmapctl() { [ -f "$T/token_ms" ] || return 1; echo "runtime.config.totem.token (u32) = $(cat "$T/token_ms")"; }
+# shutdown_spur nachgebildet kaputt: „absturz“ = Exit 1 ohne Ausgabe, „leer“ = Exit 0 ohne Ausgabe (Fix-Runde 2: fail closed)
+if [ -f "$T/spur_kaputt" ]; then fpy() { if [ "$1" = shutdown_spur ]; then cat >/dev/null; [ "$(cat "$T/spur_kaputt")" = leer ]; return; fi; python3 -c "$PY_FENCING" "$@"; }; fi
 # Beleg beim Schreiben verfälschen (nachgebildeter Fehler für die Selbstprüfung)
 if [ -f "$T/beleg_kaputt" ]; then schreibe_privat() { mkdir -p "$(dirname "$1")"; if [ "$1" = "$BELEG_DATEI" ]; then printf '%s\n' '{"art":"x"}' >"$1"; else printf '%s\n' "$2" >"$1"; fi; }; fi
 fd_ziel() { cat "$1"; }
@@ -914,7 +916,8 @@ const mitFen = (t: string) => t.replace('# ALFRED-ABLAUF', () => `${FEN_STUBS}\n
 async function fencing(texte: string[], zwischen: string[] = [], setup = '') {
   const w = await cluster([ANLEGEN, ...texte].map(mitFen), `${FEN_BASIS}\n${setup}`, ['', ...zwischen], DATEIEN);
   const z = (a: string, b?: string) => { const t = w.zustand.split(`${a}\n`)[1] ?? ''; return (b ? t.split(`${b}\n`)[0] : t)!.trim(); };
-  const json = (s: string) => (s === 'FEHLT' ? undefined : JSON.parse(s) as Record<string, unknown>);
+  // Python-JSON darf NaN enthalten (JSON.parse nicht) → dann nur der Rohtext
+  const json = (s: string) => { if (s === 'FEHLT') return undefined; try { return JSON.parse(s) as Record<string, unknown>; } catch { return { roh: s } as Record<string, unknown>; } };
   expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
   return { laeufe: w.laeufe.slice(1), beleg: json(z('---BELEG', '---TEST')), test: json(z('---TEST', '---NFT')), nft: z('---NFT') };
 }
@@ -1044,6 +1047,32 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     expect(h.test).toMatchObject({ minResetS: 0 });
     expect(h.laeufe[1]!.rc, h.laeufe[1]!.aus).toBe(0);
     expect(h.beleg).toMatchObject({ art: 'haenger', resetS: 5 });
+  });
+  // ── Fix-Runde 2: fail closed ──
+  it('Prüfung auf Herunterfahren abgestürzt oder ohne Antwort → kein Beleg (nur „KEINE“ mit Exit 0 gilt als sauber)', async () => {
+    const absturz = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\necho absturz >"$T/spur_kaputt"`]);
+    keinBeleg(absturz.laeufe[1]!, /Prüfung auf geordnetes Herunterfahren gescheitert \(Exit 1\) — kein Beleg/);
+    expect(absturz.beleg).toBeUndefined();
+    const leer = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\necho leer >"$T/spur_kaputt"`]);
+    keinBeleg(leer.laeufe[1]!, /Prüfung auf geordnetes Herunterfahren ohne eindeutige Antwort \(''\) — kein Beleg/);
+    expect(leer.beleg).toBeUndefined();
+  });
+  it.skipIf(!PYTHON)('shutdown_spur: sauber → genau „KEINE“, Spur → „SPUR …“, leere Eingabe → „KEINE“', () => {
+    const lauf = (input: string) => spawnSync(PYTHON!, ['-c', PY_FENCING, 'shutdown_spur'], { input, encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
+    const sauber = lauf('{"MESSAGE":"irgendwas"}\nkein json\n');
+    expect([sauber.status, sauber.stdout.trim()]).toEqual([0, 'KEINE']);
+    const spur = lauf(`${SHUTDOWN.journald('x', J)}\n`);
+    expect([spur.status, spur.stdout.trim()]).toEqual([0, 'SPUR systemd-journald: Journal stopped']);
+    expect(lauf('').stdout.trim()).toBe('KEINE');
+  });
+  it('trennung-Test ohne gültige Untergrenze minResetS (fehlt, 0, NaN) → kein Beleg', async () => {
+    const datei = '"$T/ha/fencing-test.json"';
+    for (const [sed, name] of [['s/"minResetS": 13, //', 'fehlt'], ['s/"minResetS": 13/"minResetS": 0/', '0'], ['s/"minResetS": 13/"minResetS": NaN/', 'NaN']] as const) {
+      const w = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\nsed -i '${sed}' ${datei}`]);
+      keinBeleg(w.laeufe[1]!, /Fencing-Test nicht verwendbar: Test-Datei ohne gültige Untergrenze minResetS \(trennung\) — kein Beleg/);
+      expect(w.beleg, name).toBeUndefined();
+      if (name === 'fehlt') expect(w.test!.minResetS).toBeUndefined(); // die Änderung hat gegriffen
+    }
   });
   it('Beleg besteht die eigene Selbstprüfung nicht → Abbruch und Beleg-Datei entfernt', async () => {
     const w = await fencing([PRUEFEN_T, BELEGEN], ['', `${reset()}\ntouch "$T/beleg_kaputt"`]);
