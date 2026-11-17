@@ -19,6 +19,21 @@ export function openaiCacheKeyModus(env: Record<string, string | undefined> = pr
   return w === 'gespraech' || w === 'inhalt' ? w : 'aus';
 }
 
+/**
+ * Realfall 17.11. (Notbetrieb auf mistral-large-latest): OpenAI-kompatible Anbieter liefern `content` nicht nur als Text,
+ * sondern auch als Liste von Bausteinen ({type:'text',text}, {type:'thinking',…}, {type:'reference',…}). Alles danach
+ * erwartet Text — nur Text-Bausteine zählen, Denk- und Verweis-Bausteine fallen weg, Unbekanntes wird leer statt Absturz.
+ */
+export function inhaltAlsText(inhalt: unknown): string {
+  if (typeof inhalt === 'string') return inhalt;
+  if (!Array.isArray(inhalt)) return '';
+  let text = '';
+  for (const b of inhalt) {
+    if (b && typeof b === 'object' && (b as { type?: unknown }).type === 'text' && typeof (b as { text?: unknown }).text === 'string') text += (b as { text: string }).text;
+  }
+  return text;
+}
+
 export class OpenAIProvider extends LLMProvider {
   private client!: OpenAI;
 
@@ -167,10 +182,11 @@ export class OpenAIProvider extends LLMProvider {
 
       const delta = choice.delta;
 
-      // Handle text content
-      if (delta?.content) {
-        fullContent += delta.content;
-        yield { type: 'text_delta', text: delta.content };
+      // Handle text content (Realfall 17.11.: Mistral liefert auch Listen von Bausteinen → inhaltAlsText)
+      const deltaText = inhaltAlsText(delta?.content);
+      if (deltaText) {
+        fullContent += deltaText;
+        yield { type: 'text_delta', text: deltaText };
       }
 
       // Handle tool calls
@@ -646,7 +662,7 @@ export class OpenAIProvider extends LLMProvider {
     const choice = response.choices[0];
     const message = choice?.message;
 
-    const content = message?.content ?? '';
+    const content = inhaltAlsText(message?.content);
     // v919 — openai-SDK v6: `tool_calls` ist eine Union (function|custom);
     // `.function` existiert nur beim function-Typ → per `tc.type` narrowen.
     const toolCalls: ToolCall[] | undefined = message?.tool_calls
