@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   haVorbereitenSkript, haStatusSkript, haErgebnis, hostfwNft, hostsBlock, pruefeHaVorbereiten, pruefeKnoten,
-  HA_KNOTEN, HA_VERSIONEN, HA_PORTS, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
+  HA_KNOTEN, HA_VERSIONEN, HA_PORTS, HA_SQL_ZUSATZQUELLEN, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
   type HaVorbereitenParameter,
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
@@ -49,16 +53,23 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
     expect(regeln).toEqual([
       'iifname "lo" accept',
       'ip saddr @ha_peers4 tcp dport { 1433, 2224, 3121, 5022, 21064 } accept',
+      'ip saddr @sql_quellen4 tcp dport 1433 accept',
       'ip saddr @ha_peers4 udp dport { 5405 } accept',
       'tcp dport { 1433, 2224, 3121, 5022, 21064 } drop',
       'udp dport { 5405 } drop',
     ]);
     expect(t).toContain('elements = { 10.203.30.10, 10.203.30.11, 10.203.30.12 }');
+    // Ruling R4: 1433 zusätzlich nur von der Probe 192.168.1.223 (Architektur v2 §4), alle anderen Ports nur die Knoten
+    expect(HA_SQL_ZUSATZQUELLEN).toEqual(['192.168.1.223']);
+    expect(t).toContain('\tset sql_quellen4 {\n\t\ttype ipv4_addr\n\t\telements = { 192.168.1.223 }\n\t}');
+    expect(t.split('192.168.1.223')).toHaveLength(2);
+    expect(() => hostfwNft(HA_KNOTEN, ['1.2.3'])).toThrow(/sqlQuellen/);
     expect(t).toContain('type filter hook input priority -10; policy accept;');
     expect(t).not.toMatch(/\b22\b/);
     expect(t.match(/table inet alfred_ha/g)).toHaveLength(3); // anlegen, löschen, neu (atomar ersetzt)
     expect([...HA_PORTS.tcp, ...HA_PORTS.udp]).not.toContain(22);
     expect(HOSTFW_UNIT).toContain('ExecStart=/usr/sbin/nft -f /etc/alfred/hostfw.nft');
+    expect(HOSTFW_UNIT).toContain('ExecStop=-/usr/sbin/nft delete table inet alfred_ha');
     expect(HOSTFW_UNIT).not.toMatch(/nftables\.service|ufw/);
     expect(hostsBlock(HA_KNOTEN).split('\n').slice(1, 4)).toEqual(['10.203.30.10 sqllnx01', '10.203.30.11 sqllnx02', '10.203.30.12 sqllnxcfg']);
   });
@@ -74,6 +85,40 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
       expect(r.status, r.stderr).toBe(0);
     }
   });
+  it.skipIf(!PYTHON)('PY_KW_GLEICH ausgeführt: gleich → 0, anders/gesperrt → 1, crypt fehlt → 2 (Modul über PYTHONPATH ersetzt)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-kw-'));
+    try {
+      // Ersatz-crypt mit der Semantik von crypt.crypt(kennwort, hash) == hash (Salz = alles bis zum letzten „$“)
+      const modul = join(dir, 'mit'); const ohne = join(dir, 'ohne');
+      mkdirSync(modul); mkdirSync(ohne);
+      writeFileSync(join(modul, 'crypt.py'), 'import hashlib\ndef crypt(kw, h):\n    s = h.rsplit("$", 1)[0]\n    return s + "$" + hashlib.sha256((s + kw).encode()).hexdigest()\n');
+      writeFileSync(join(ohne, 'crypt.py'), 'raise ImportError("crypt entfernt (Python 3.13)")\n');
+      const salz = '$y$j9T$abcdefghijklmnop';
+      const hash = `${salz}$${createHash('sha256').update(`${salz}Hk-Richtig-1!`).digest('hex')}`;
+      const shadow = join(dir, 'shadow');
+      const lauf = (kw: string, pfad: string, zeile = `hacluster:${hash}:19000:0:99999:7:::`) => {
+        writeFileSync(shadow, `root:*:19000:0:99999:7:::\n${zeile}\n`);
+        return spawnSync(PYTHON!, ['-c', PY_KW_GLEICH, shadow], { input: `${kw}\n`, encoding: 'utf8', env: { ...process.env, PYTHONPATH: pfad } }).status;
+      };
+      expect(lauf('Hk-Richtig-1!', modul)).toBe(0);
+      expect(lauf('Hk-Falsch-1!', modul)).toBe(1);
+      expect(lauf('Hk-Richtig-1!', modul, 'hacluster:!:19000::::::')).toBe(1);
+      expect(lauf('Hk-Richtig-1!', modul, 'hacluster:*:19000::::::')).toBe(1);
+      expect(lauf('Hk-Richtig-1!', ohne)).toBe(2);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  // mit echtem crypt (Linux, Python ≤ 3.12) zusätzlich ein echter yescrypt-Hash
+  const ECHT = PYTHON && spawnSync(PYTHON, ['-c', 'import warnings; warnings.simplefilter("ignore"); import crypt, sys; sys.exit(0 if crypt.crypt("x", "$y$j9T$abcdefghijklmnop$") else 1)'], { encoding: 'utf8' }).status === 0;
+  it.skipIf(!ECHT)('PY_KW_GLEICH mit echtem yescrypt-Hash', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-kw-'));
+    try {
+      const h = spawnSync(PYTHON!, ['-c', 'import warnings; warnings.simplefilter("ignore"); import crypt; print(crypt.crypt("Hk-Echt-2#", "$y$j9T$abcdefghijklmnop$"))'], { encoding: 'utf8' }).stdout.trim();
+      writeFileSync(join(dir, 'shadow'), `hacluster:${h}:19000:0:99999:7:::\n`);
+      const lauf = (kw: string) => spawnSync(PYTHON!, ['-c', PY_KW_GLEICH, join(dir, 'shadow')], { input: `${kw}\n`, encoding: 'utf8' }).status;
+      expect(lauf('Hk-Echt-2#')).toBe(0);
+      expect(lauf('Hk-Echt-3#')).toBe(1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it('haErgebnis liest die letzte ALFRED-HA-Zeile', () => {
     expect(haErgebnis('x\nALFRED-HA {"zustand":"a"}\nALFRED-SQL {"zustand":"b"}\nALFRED-HA {"zustand":"c"}\n')).toEqual({ zustand: 'c' });
     expect(haErgebnis('ALFRED-SQL {"zustand":"b"}')).toBeUndefined();
@@ -83,7 +128,8 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
 // ── Skript mit nachgebildetem Rechner ausführen (bash) ──────────────────────────────────────────────────────────────────────────
 const STUBS = String.raw`
 HOSTS="$T/hosts"; HOSTS_VORLAGE="$T/hosts.tmpl"; WD_SYS="$T/wd"; PCI_SYS="$T/pci"; PROC="$T/proc"; SHADOW="$T/shadow"; POLICY_RC="$T/policy-rc.d"; TMP_BASIS="$T"
-MSSQL_CONF="$T/mssql.conf"; MSSQLCONF=mssqlconf_stub
+MSSQL_CONF="$T/mssql.conf"; MSSQLCONF=mssqlconf_stub; COROSYNC_CONF="$T/corosync.conf"
+crypt_da() { [ ! -f "$T/ohne_crypt" ]; }
 MODPROBE_CONF="$T/etc/modprobe.d/a.conf"; MODLOAD_CONF="$T/etc/modules-load.d/a.conf"; SYSTEMD_CONF="$T/etc/systemd/a.conf"
 FW_DATEI="$T/etc/alfred/hostfw.nft"; UNIT_DATEI="$T/etc/systemd/system/alfred-hostfw.service"
 log() { echo "$*" >>"$T/log"; }
@@ -92,7 +138,7 @@ json_text() { local x; x=$(cat); printf '"%s"' "§{x//\"/}"; }
 eigener_name() { cat "$T/name"; }
 uname() { echo 6.8.0-147-generic; }
 dpkg-query() { local f="$T/dpkg/§{@: -1}"; [ -f "$f" ] || return 1; case "$*" in *Version*) cat "$f" ;; *) cut -d'|' -f1 "$f" ;; esac; }
-apt-get() { log "apt-get $*"; local a; if [[ " $* " == *" install "* ]]; then for a in "$@"; do case "$a" in -*|install|DPkg*|Dpkg*) ;; *=*) printf 'install ok installed|%s' "§{a#*=}" >"$T/dpkg/§{a%%=*}" ;; linux-modules-extra-*) printf 'install ok installed|1' >"$T/dpkg/$a" ;; esac; done; fi; }
+apt-get() { log "apt-get $*"; local a; if [[ " $* " == *" install "* ]]; then for a in "$@"; do case "$a" in -*|install|DPkg*|Dpkg*) ;; *=*) printf 'install ok installed|%s' "§{a#*=}" >"$T/dpkg/§{a%%=*}"; case "§{a%%=*}" in pacemaker|corosync|sbd) touch "$T/svc/§{a%%=*}.is-enabled"; echo 'totem { cluster_name: debian }' >"$COROSYNC_CONF" ;; esac ;; linux-modules-extra-*) printf 'install ok installed|1' >"$T/dpkg/$a" ;; esac; done; fi; }
 apt-cache() { local pk=§{@: -1} pv; for pv in "§{PAKETE[@]}"; do if [ "§{pv%%=*}" = "$pk" ]; then echo " $pk | §{pv#*=} | http://x noble/main"; fi; done; case "$pk" in linux-modules-extra-*) echo " $pk | 6.8.0-147.147 | http://x" ;; esac; }
 apt-mark() { log "apt-mark $*"; local pk=§{@: -1}; printf 'hold ok installed|%s' "$(cut -d'|' -f2 "$T/dpkg/$pk")" >"$T/dpkg/$pk"; }
 id() { return 0; }
@@ -117,9 +163,10 @@ systemctl() {
 }
 nft() { case "$*" in "list table"*) [ -f "$T/nft_geladen" ]; return ;; "-c -f"*) return 0 ;; esac; log "nft $*"; }
 chpasswd() { log chpasswd; cat >"$T/kw_gesetzt"; }
-kennwort_gleich() { [ -f "$T/kw_gesetzt" ] && [ "$(cat "$T/kw_gesetzt")" = "hacluster:$KW" ]; }
+kennwort_gleich() { if [ -f "$T/crypt_rc" ]; then return "$(cat "$T/crypt_rc")"; fi; [ -f "$T/kw_gesetzt" ] && [ "$(cat "$T/kw_gesetzt")" = "hacluster:$KW" ]; }
 mssqlconf_stub() { log "mssql-conf $*"; printf '[hadr]\nhadrenabled = 1\n' >>"$MSSQL_CONF"; }
-getent() { awk -v n="§{@: -1}" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) if ($i == n) { print $1; exit } }' "$HOSTS"; }
+# wie glibc: jeder Treffer aus /etc/hosts, Loopback zuerst (RFC 6724), Format „<ip> STREAM <name>“
+getent() { awk -v n="§{@: -1}" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) { if ($i ~ /^#/) break; if ($i == n) { if ($1 ~ /^127\./) l = l $1 " STREAM " n "\n"; else a = a $1 " STREAM " n "\n"; break } } } END { printf "%s%s", l, a }' "$HOSTS"; }
 fd_ziel() { cat "$1"; }
 prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { cat "$PROC/$1/exe" 2>/dev/null || true; }
@@ -131,7 +178,7 @@ mkdir -p "$T/dpkg" "$T/svc" "$T/pci/0000:00:04.0" "$T/proc/1/fd" "$T/wd"
 printf 'hold ok installed|17.0.4006.2-1' >"$T/dpkg/mssql-server"
 echo 0x8086 >"$T/pci/0000:00:04.0/vendor"; echo 0x25ab >"$T/pci/0000:00:04.0/device"; touch "$T/pci_ok"
 echo 'i6300ESB timer' >"$T/kennung"; echo 0 >"$T/rw"; echo sqllnx02 >"$T/name"
-printf '127.0.0.1 localhost\n127.0.1.1 sqllnx02\n' >"$T/hosts"
+printf '127.0.0.1 localhost\n127.0.1.1 sqllnx02.ad.3033.at sqllnx02\n' >"$T/hosts"
 printf '## template:jinja\n127.0.1.1 {{fqdn}} {{hostname}}\n' >"$T/hosts.tmpl"
 touch "$T/svc/mssql-server.is-active"
 printf '[network]\ntcpport = 1433\n' >"$T/mssql.conf"
@@ -167,18 +214,26 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(a.rc, a.aus).toBe(0);
     expect(a.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnx02', rolle: 'daten', watchdog: 'i6300ESB timer', hadr: true, firewall: 'aktiv', neustartSql: true,
       pakete: { pacemaker: '2.1.6-5ubuntu2', 'mssql-server-ha': '17.0.4006.2-1', 'resource-agents-base': '1:4.13.0-1ubuntu4.2' } });
-    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['pakete', 'halten:pcs', 'i6300esb-geladen', 'softdog-gesperrt', 'systemd-runtimewatchdog', 'firewall-regeln', 'firewall-dienst', 'hacluster-kennwort', 'cluster-dienste-aus', 'pcsd', 'hadr']));
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['pakete', 'halten:pcs', 'i6300esb-geladen', 'softdog-gesperrt', 'systemd-runtimewatchdog', 'firewall-regeln', 'firewall-dienst', 'hacluster-kennwort', 'pcsd', 'hadr']));
     expect(a.log).toContain('apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold pacemaker=2.1.6-5ubuntu2 corosync=3.1.7-1ubuntu3.2 pcs=0.11.7-1ubuntu1.1 sbd=1.5.2-2ubuntu2 resource-agents-base=1:4.13.0-1ubuntu4.2 mssql-server-ha=17.0.4006.2-1 linux-modules-extra-6.8.0-147-generic');
     expect(a.log).toContain('modprobe i6300esb');
-    expect(a.log).toContain('systemctl disable --now sbd');
     expect(a.log).toContain('mssql-conf set hadr.hadrenabled 1');
     expect(a.aus).toContain('ALFRED-HACLUSTER-GESETZT');
     expect(a.aus).not.toContain('Hk-Geheim');
     // hosts: Block oben (eigener Name löst zur Knoten-IP auf), cloud-init-Vorlage nach der Kopfzeile
     expect(w.hosts.split('\n').slice(0, 5)).toEqual([expect.stringContaining('# ALFRED-HA ANFANG'), '10.203.30.10 sqllnx01', '10.203.30.11 sqllnx02', '10.203.30.12 sqllnxcfg', '# ALFRED-HA ENDE']);
-    expect(w.hosts).toContain('127.0.1.1 sqllnx02');
+    // eigener Name nicht mehr auf Loopback (glibc sortiert 127.0.1.1 vor 10.x) — Original als markierter Kommentar
+    expect(w.hosts).toContain('# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 sqllnx02.ad.3033.at sqllnx02');
+    expect(w.hosts.split('\n').filter(z => z.startsWith('127.0.1.1'))).toEqual([]);
+    expect(w.hosts).toContain('127.0.0.1 localhost');
     expect(w.vorlage.split('\n')[0]).toBe('## template:jinja');
     expect(w.vorlage.split('\n')[1]).toContain('# ALFRED-HA ANFANG');
+    expect(w.vorlage).toContain('# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 {{fqdn}} {{hostname}}');
+    expect(w.vorlage.split('\n').filter(z => z.startsWith('127.0.1.1'))).toEqual([]);
+    expect(a.ergebnis!.sql1433).toEqual(['10.203.30.10', '10.203.30.11', '10.203.30.12', '192.168.1.223']);
+    // frische Installation: Debian aktiviert die Cluster-Dienste → deaktiviert und geprüft
+    expect(a.log).toContain('systemctl disable --now pacemaker');
+    expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['aus:pacemaker', 'aus:corosync', 'aus:sbd']));
     expect(w.fw.trim()).toBe(hostfwNft(HA_KNOTEN));
     expect(w.dateien).not.toContain('policy-rc.d'); // eigene policy-rc.d wieder entfernt
     expect(b.rc, b.aus).toBe(0);
@@ -194,7 +249,7 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(String(a.ergebnis?.fehler)).toMatch(muster);
     expect(String(a.ergebnis?.fehler)).toContain('nichts geändert');
     expect(a.log.trim()).toBe('');
-    expect(w.hosts).toBe('127.0.0.1 localhost\n127.0.1.1 sqllnx02\n');
+    expect(w.hosts).toBe('127.0.0.1 localhost\n127.0.1.1 sqllnx02.ad.3033.at sqllnx02\n');
     expect(w.dateien.trim()).toBe('');
   };
   it('Abbruch vor jeder Änderung: kein i6300ESB in der VM', () => {
@@ -230,8 +285,35 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(String(w.laeufe[0]!.ergebnis?.fehler)).toMatch(/stammt von 'iTCO_wdt'.*nach dem Laden des Moduls/);
     expect(w.laeufe[0]!.log).not.toMatch(/chpasswd|nft|mssql-conf/);
   });
+  it('Loopback-Zeile mit weiteren Namen bleibt ohne den eigenen Namen; ein fremder Eintrag für einen Knoten fällt in der Selbstprüfung auf', () => {
+    const w = laeufe('printf "127.0.0.1 localhost\\n127.0.1.1 sqllnx02 druckerhost # Kommentar\\n" >"$T/hosts"', 1);
+    expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
+    expect(w.hosts).toContain('# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 sqllnx02 druckerhost # Kommentar\n127.0.1.1 druckerhost\n');
+    const f = laeufe('printf "127.0.0.1 localhost\\n192.168.5.5 sqllnx01\\n" >"$T/hosts"', 1);
+    expect(f.laeufe[0]!.rc).toBe(1);
+    expect(String(f.laeufe[0]!.ergebnis?.fehler)).toContain("sqllnx01 löst zu '10.203.30.10 192.168.5.5' auf, erwartet 10.203.30.10");
+  });
+  it('Wiederholung auf einem Cluster-Knoten (Pakete und corosync.conf da, Dienste laufen): Cluster-Dienste bleiben unberührt', () => {
+    const vorher = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
+printf 'install ok installed|1' >"$T/dpkg/linux-modules-extra-6.8.0-147-generic"; echo 'totem { cluster_name: sqllnxha }' >"$T/corosync.conf"
+for d in pacemaker corosync sbd; do touch "$T/svc/$d.is-enabled" "$T/svc/$d.is-active"; done`.replaceAll('§{', '${');
+    const w = laeufe(vorher, 1);
+    expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
+    expect(w.laeufe[0]!.log).not.toMatch(/disable|stop (pacemaker|corosync|sbd)/);
+    expect(w.laeufe[0]!.log).not.toContain('apt-get');
+  });
+  it('python3 ohne crypt: Abbruch vor jeder Änderung; Vergleich nicht möglich (Exit 2) → sichtbarer Abbruch statt chpasswd', () => {
+    const a = laeufe('touch "$T/ohne_crypt"', 1);
+    expect(a.laeufe[0]!.rc).toBe(1);
+    expect(String(a.laeufe[0]!.ergebnis?.fehler)).toContain('crypt fehlt');
+    expect(a.laeufe[0]!.log.trim()).toBe('');
+    const b = laeufe('echo 2 >"$T/crypt_rc"', 1);
+    expect(b.laeufe[0]!.rc).toBe(1);
+    expect(String(b.laeufe[0]!.ergebnis?.fehler)).toContain('hacluster-Kennwort nicht prüfbar (python3 crypt, Exit 2)');
+    expect(b.laeufe[0]!.log).not.toContain('chpasswd');
+  });
   it('Konfig-Knoten: gleiche Grundlage, Rolle im Ergebnis', () => {
-    const w = laeufe('echo sqllnxcfg >"$T/name"', 1, { ...P, rolle: 'konfig' });
+    const w = laeufe('echo sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n127.0.1.1 sqllnxcfg.ad.3033.at sqllnxcfg\\n" >"$T/hosts"', 1, { ...P, rolle: 'konfig' });
     expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
     expect(w.laeufe[0]!.ergebnis).toMatchObject({ zustand: 'geaendert', knoten: 'sqllnxcfg', rolle: 'konfig' });
   });

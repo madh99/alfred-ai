@@ -9,7 +9,7 @@ import { randomInt } from 'node:crypto';
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
-  LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, LINUX_SQL_ZIELE, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, sqlErgebnis,
+  LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, LINUX_SQL_ZIELE, TEMPDB_PFAD_DATEN, type TempdbPfad, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, sqlErgebnis,
   pruefePlatten, pruefeInstallation, pruefeKonfig, pruefeTempdb, pruefeMaxSpeicher, pruefeLogin, pruefePruefdaten,
   type LinuxSqlZiel, type PlattenParameter, type InstallParameter, type KonfigParameter, type TempdbParameter, type LoginParameter,
 } from './linux-sql.js';
@@ -252,10 +252,19 @@ function installParameter(input: Record<string, unknown>): InstallParameter {
 }
 
 interface KonfigWerte { konfig: KonfigParameter; maxMb: number; tempdb: Omit<TempdbParameter, 'dateien'> & { dateien?: number } }
+/** Ruling R5 — Layout aus einhaengepunkte: alle vier (Standard) oder nur data (Konfig-Knoten: Log, Sicherung, tempdb auf der Datenplatte) */
+function nurDatenLayout(input: Record<string, unknown>): boolean {
+  if (input.einhaengepunkte === undefined) return false;
+  const e = Array.isArray(input.einhaengepunkte) ? input.einhaengepunkte.map(x => (typeof x === 'string' ? KURZZIEL[x.trim().toLowerCase()] ?? x.trim() : x)) : input.einhaengepunkte;
+  const f = pruefeInstallation({ version: '17.0.4006.2-1', edition: 'EnterpriseDeveloper', einhaengepunkte: e });
+  if (f) throw new Error(f);
+  return (e as string[]).length === 1;
+}
 function konfigWerte(input: Record<string, unknown>): KonfigWerte {
+  const nurDaten = nurDatenLayout(input);
   const konfig: KonfigParameter = {
     speicherLimitMB: ganzzahl(input.speicher_limit_mb ?? STANDARD.speicherLimitMB) as number,
-    datenPfad: KURZZIEL.data!, logPfad: KURZZIEL.log!, sicherungsPfad: KURZZIEL.backup!, agent: input.agent === undefined ? true : input.agent as boolean,
+    datenPfad: KURZZIEL.data!, logPfad: nurDaten ? KURZZIEL.data! : KURZZIEL.log!, sicherungsPfad: nurDaten ? KURZZIEL.data! : KURZZIEL.backup!, agent: input.agent === undefined ? true : input.agent as boolean,
   };
   // Fix-Welle M-4: Wahrheitswerte nur als true/false — „false“ als Text würde sonst still als true/false gedeutet
   if (input.agent !== undefined && typeof input.agent !== 'boolean') throw new Error('agent: nur true oder false (Wahrheitswert, kein Text)');
@@ -267,6 +276,7 @@ function konfigWerte(input: Record<string, unknown>): KonfigWerte {
     groesseMB: ganzzahl(input.tempdb_mb ?? STANDARD.tempdbMB) as number, wachstumMB: ganzzahl(input.tempdb_wachstum_mb ?? STANDARD.tempdbWachstumMB) as number,
     logGroesseMB: ganzzahl(input.tempdb_log_mb ?? STANDARD.tempdbLogMB) as number,
     ...(input.tempdb_dateien !== undefined ? { dateien: ganzzahl(input.tempdb_dateien) as number } : {}),
+    ...(nurDaten ? { pfad: TEMPDB_PFAD_DATEN as TempdbPfad } : {}),
   };
   const ft = pruefeTempdb({ dateien: tempdb.dateien ?? 1, ...tempdb }); if (ft) throw new Error(`tempdb: ${ft}`);
   return { konfig, maxMb, tempdb };
@@ -298,7 +308,7 @@ export class LinuxSqlSkill extends Skill {
       + 'Wortlaut „<zugang>: SQL Server <version> <cu> <edition>; Dienst aktiv, aktiviert; Speicherlimit <mb> MB; max server memory <mb> MB; tempdb <n> Datendateien; Datenbanken: <liste>; eingehängt: data, log, tempdb, backup“, als Prüfung z. B. erwartet „Dienst aktiv, aktiviert“. '
       + 'NUR als Schritte freigegebener Changes (Reihenfolge): platten_einrichten (zugang, platten = [{scsi, groesse_gib, ziel: data|log|tempdb|backup}], z. B. scsi1 160 data, scsi2 80 log, scsi3 64 tempdb, scsi4 128 backup aus provision_vm extra_disks [160,80,64,128]; Konfig-Knoten sqllnxcfg nur scsi1 16 data, dann installieren mit einhaengepunkte ["data"]; andere Teilmengen nicht zulässig) — nur leere Platten exakter Größe, XFS, fstab per UUID; '
       + 'installieren (zugang, version = apt-Version ab CU1 wie 17.0.4006.2-1) — signierte Microsoft-Quelle, feste Versionen, sa-Kennwort erzeugt Alfred im Tresor (sqllnx-<zugang>-sa); '
-      + 'konfigurieren (zugang, speicher_limit_mb Standard 12288, max_server_memory_mb Standard 10240, tempdb_dateien Standard Kerne max. 8, agent Standard true) — mssql-conf, tempdb auf der TempDB-Platte, max server memory; '
+      + 'konfigurieren (zugang, speicher_limit_mb Standard 12288, max_server_memory_mb Standard 10240, tempdb_dateien Standard Kerne max. 8, agent Standard true, einhaengepunkte wie installieren) — mssql-conf, tempdb auf der TempDB-Platte, max server memory; Konfig-Knoten sqllnxcfg mit einhaengepunkte ["data"], speicher_limit_mb 3072, max_server_memory_mb 2048: Daten, Log und Sicherung auf /var/opt/mssql/data, tempdb unter /var/opt/mssql/data/tempdb/; '
       + 'login_anlegen (zugang, login, rolle dbcreator|sysadmin|lesen) — SQL-Login, Kennwort im Tresor (sqllnx-<zugang>-<login>), „lesen“ = ohne Serverrolle; '
       + `pruefdaten_anlegen (zugang, datenbank) — Datenbank (FULL) mit Prüftabelle dbo.alfred_pruefung (${PRUEFDATEN_ZEILEN} feste Zeilen, Prüfsumme im Ergebnis) für den Restore-Beweis. `
       + 'SICHERUNG (I8e Task 4; vorher auf fs01: windows_ad dienstkonto_anlegen konto svc-sqllnx-backup und windows_cluster freigabe_anlegen name SQLLinuxBackup$ pfad S:\\SQLLinuxBackup aendern <NETBIOS>\\svc-sqllnx-backup kontingent_gib 64; Firewall SQL-Zone → fs01 TCP 445): '
@@ -319,7 +329,7 @@ export class LinuxSqlSkill extends Skill {
         zugang: { type: 'string', description: 'Name des Linux-Fernzugangs (z. B. sqllnx01)' },
         platten: { type: 'array', items: { type: 'object', properties: { scsi: { type: 'number' }, groesse_gib: { type: 'number' }, ziel: { type: 'string', enum: ['data', 'log', 'tempdb', 'backup'] } } }, description: 'platten_einrichten: Zusatzplatten nach SCSI-Position' },
         version: { type: 'string', description: 'installieren: apt-Version von mssql-server, z. B. 17.0.4006.2-1' },
-        einhaengepunkte: { type: 'array', items: { type: 'string' }, description: 'installieren: Plattenziele, die vor dem Setup eingehängt sein müssen (Standard alle vier; sonst nur ["data"] für den Konfig-Knoten sqllnxcfg)' },
+        einhaengepunkte: { type: 'array', items: { type: 'string' }, description: 'installieren/konfigurieren: Plattenziele, die vor dem Setup eingehängt sein müssen (Standard alle vier; sonst nur ["data"] für den Konfig-Knoten sqllnxcfg)' },
         speicher_limit_mb: { type: 'number' }, max_server_memory_mb: { type: 'number' },
         tempdb_dateien: { type: 'number', description: 'Standard: Kerne, höchstens 8' }, tempdb_mb: { type: 'number' }, tempdb_wachstum_mb: { type: 'number' }, tempdb_log_mb: { type: 'number' },
         agent: { type: 'boolean' },

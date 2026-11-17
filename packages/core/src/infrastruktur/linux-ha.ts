@@ -37,12 +37,19 @@ export const HA_KNOTEN: readonly HaKnoten[] = [
 ];
 /** nur die Peers dürfen diese Ports (SQL, AG-Endpunkt, pcsd, Pacemaker-Remote, DLM; Corosync knet) — sonst nichts verändert */
 export const HA_PORTS = { tcp: [1433, 2224, 3121, 5022, 21064], udp: [5405] } as const;
+/**
+ * Ruling R4 (Architektur v2 §4: „ausschließlich Probe 192.168.1.223 → VIP / befristet Einzelinstanz“): TCP 1433 zusätzlich zu den
+ * Knoten nur von diesen Quellen; alle anderen Ports bleiben auf die Knoten beschränkt.
+ */
+export const HA_SQL_ZUSATZQUELLEN: readonly string[] = ['192.168.1.223'];
 export const HA_NFT_TABELLE = 'alfred_ha';
 export const HA_HOSTFW_DATEI = '/etc/alfred/hostfw.nft';
 export const HA_HOSTFW_DIENST = 'alfred-hostfw.service';
 export const HA_HOSTFW_UNIT = `/etc/systemd/system/${HA_HOSTFW_DIENST}`;
 export const HA_HOSTS_ANFANG = '# ALFRED-HA ANFANG (fest erzeugt, I8e Paket 2 — nicht von Hand ändern)';
 export const HA_HOSTS_ENDE = '# ALFRED-HA ENDE';
+/** Fix-Runde 1: Loopback-Zeilen mit dem eigenen Namen (cloud-init „127.0.1.1 <fqdn> <hostname>“) — Original bleibt als Kommentar erhalten */
+export const HA_HOSTS_ENTFERNT = '# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen):';
 export const HA_MODPROBE_DATEI = '/etc/modprobe.d/alfred-watchdog.conf';
 export const HA_MODULES_LOAD_DATEI = '/etc/modules-load.d/alfred-watchdog.conf';
 export const HA_SYSTEMD_DATEI = '/etc/systemd/system.conf.d/alfred-watchdog.conf';
@@ -100,8 +107,9 @@ export function pruefeHaVorbereiten(p: unknown): string | undefined {
 }
 
 /** nft-Regelsatz: nur Peers × feste Ports; andere Quellen genau für diese Ports verworfen; Grundregel accept (SSH u. a. unberührt) */
-export function hostfwNft(knoten: readonly HaKnoten[]): string {
+export function hostfwNft(knoten: readonly HaKnoten[], sqlQuellen: readonly string[] = HA_SQL_ZUSATZQUELLEN): string {
   pruefe(pruefeKnoten(knoten));
+  if (!sqlQuellen.length || sqlQuellen.some(q => !IPV4.test(q))) throw new Error('sqlQuellen: mindestens eine IPv4-Adresse');
   const tcp = HA_PORTS.tcp.join(', '); const udp = HA_PORTS.udp.join(', ');
   return [
     '# Alfred I8e Paket 2 — Host-Firewall (fest erzeugt, nicht von Hand ändern)',
@@ -112,10 +120,15 @@ export function hostfwNft(knoten: readonly HaKnoten[]): string {
     '\t\ttype ipv4_addr',
     `\t\telements = { ${knoten.map(k => k.ip).join(', ')} }`,
     '\t}',
+    '\tset sql_quellen4 {',
+    '\t\ttype ipv4_addr',
+    `\t\telements = { ${sqlQuellen.join(', ')} }`,
+    '\t}',
     '\tchain eingang {',
     '\t\ttype filter hook input priority -10; policy accept;',
     '\t\tiifname "lo" accept',
     `\t\tip saddr @ha_peers4 tcp dport { ${tcp} } accept`,
+    '\t\tip saddr @sql_quellen4 tcp dport 1433 accept',
     `\t\tip saddr @ha_peers4 udp dport { ${udp} } accept`,
     `\t\ttcp dport { ${tcp} } drop`,
     `\t\tudp dport { ${udp} } drop`,
@@ -139,7 +152,7 @@ export const HOSTFW_UNIT = [
   'RemainAfterExit=yes',
   `ExecStart=/usr/sbin/nft -f ${HA_HOSTFW_DATEI}`,
   `ExecReload=/usr/sbin/nft -f ${HA_HOSTFW_DATEI}`,
-  `ExecStop=/usr/sbin/nft delete table inet ${HA_NFT_TABELLE}`,
+  `ExecStop=-/usr/sbin/nft delete table inet ${HA_NFT_TABELLE}`,
   '',
   '[Install]',
   'WantedBy=multi-user.target',
@@ -186,6 +199,7 @@ const VORBEREITEN_PFADE = [
   'TMP_BASIS=/run',
   'MSSQL_CONF=/var/opt/mssql/mssql.conf',
   'MSSQLCONF=/opt/mssql/bin/mssql-conf',
+  'COROSYNC_CONF=/etc/corosync/corosync.conf',
   `MODPROBE_CONF=${shQ(HA_MODPROBE_DATEI)}`,
   `MODLOAD_CONF=${shQ(HA_MODULES_LOAD_DATEI)}`,
   `SYSTEMD_CONF=${shQ(HA_SYSTEMD_DATEI)}`,
@@ -235,7 +249,27 @@ fremde_halter() {
   printf '%s' "$aus"
 }
 # hosts: Block (ohne alten Block) an den Anfang — in einer cloud-init-Vorlage nach der Kopfzeile „## template:jinja“
-hosts_neu() { HB="$HOSTS_BLOCK" awk -v a="$H_ANFANG" -v e="$H_ENDE" 'NR == 1 && /^## template:/ { print; next } !d { print ENVIRON["HB"]; d = 1 } $0 == a { s = 1; next } $0 == e { s = 0; next } !s { print } END { if (!d) print ENVIRON["HB"] }' "$1"; }
+# Fix-Runde 1: Loopback-Zeilen (127.*) verlieren den eigenen Kurznamen, jede FQDN „<name>.…“ und die cloud-init-Platzhalter
+# {{fqdn}}/{{hostname}} (glibc liefert alle Treffer und sortiert 127.0.1.1 vor 10.x; corosync/pcs dürfen den eigenen Namen nie auf
+# Loopback auflösen). Das Original bleibt als markierter Kommentar stehen; bleiben andere Namen, bleibt die Zeile mit ihnen.
+hosts_neu() { HB="$HOSTS_BLOCK" awk -v a="$H_ANFANG" -v e="$H_ENDE" -v ich="$ICH" -v ent="$H_ENTFERNT" '
+function eigen(n) { return n == ich || index(n, ich ".") == 1 || n == "{{fqdn}}" || n == "{{hostname}}" }
+NR == 1 && /^## template:/ { print; next }
+!d { print ENVIRON["HB"]; d = 1 }
+$0 == a { s = 1; next }
+$0 == e { s = 0; next }
+s { next }
+$1 ~ /^127\\./ {
+  k = ""; w = 0
+  for (i = 2; i <= NF; i++) { if ($i ~ /^#/) break; if (eigen($i)) w = 1; else k = k " " $i }
+  if (w) { print ent " " $0; if (k != "") print $1 k; next }
+}
+{ print }
+END { if (!d) print ENVIRON["HB"] }' "$1"; }
+# ohne -W: das Modul crypt fehlt ab Python 3.13 — dann sichtbarer Abbruch statt „jedes Mal chpasswd“
+crypt_da() { python3 -c 'import warnings; warnings.simplefilter("ignore"); import crypt' >/dev/null 2>&1; }
+# 0 gleich, 1 verschieden; alles andere (2 = crypt fehlt) → Abbruch
+kw_vergleich() { local rc=0; kennwort_gleich || rc=$?; [ "$rc" -le 1 ] || abbruch "hacluster-Kennwort nicht prüfbar (python3 crypt, Exit $rc)"; return "$rc"; }
 marken_ok() { local a e; a=$(grep -cxF "$H_ANFANG" "$1" || true); e=$(grep -cxF "$H_ENDE" "$1" || true); [ "$a" = "$e" ] && [ "$a" -le 1 ]; }
 GEAENDERT=0; AJ=''
 aend() { GEAENDERT=1; AJ+="\${AJ:+,}\\"$1\\""; }
@@ -251,6 +285,7 @@ ICH=$(eigener_name)
 IDX=-1; for i in "\${!KNOTEN_NAME[@]}"; do if [ "\${KNOTEN_NAME[$i]}" = "$ICH" ]; then IDX=$i; fi; done
 [ "$IDX" -ge 0 ] || abbruch "Rechner $ICH gehört nicht zu den Knoten \${KNOTEN_NAME[*]} — nichts geändert"
 command -v nft >/dev/null 2>&1 || abbruch "nft fehlt (Paket nftables) — nichts geändert"
+crypt_da || abbruch "python3-Modul crypt fehlt — hacluster-Kennwort nicht prüfbar; nichts geändert"
 iv=$(paket_version mssql-server)
 [ "$iv" = "$V_SQL" ] || abbruch "mssql-server ist in Version '\${iv:-nicht installiert}' vorhanden, erwartet $V_SQL (mssql-server-ha muss dieselbe Version haben; vorher linux_sql.installieren) — nichts geändert"
 for pv in "\${PAKETE[@]}"; do
@@ -268,8 +303,10 @@ done
 FEHLEND=()
 for pv in "\${PAKETE[@]}"; do if [ -z "$(paket_version "\${pv%%=*}")" ]; then FEHLEND+=("$pv"); fi; done
 [ -n "$(paket_version "$MOD_EXTRA")" ] || FEHLEND+=("$MOD_EXTRA")
-NEU_CLUSTER=0
-for pk in pacemaker corosync sbd; do if [ -z "$(paket_version "$pk")" ]; then NEU_CLUSTER=1; fi; done
+# Fix-Runde 1: „frisch“ nur, wenn keins der drei Cluster-Pakete da ist und es noch keine corosync.conf gibt (vor der Installation gemerkt)
+FRISCH_CLUSTER=1
+for pk in pacemaker corosync sbd; do if [ -n "$(paket_version "$pk")" ]; then FRISCH_CLUSTER=0; fi; done
+if [ -e "$COROSYNC_CONF" ]; then FRISCH_CLUSTER=0; fi
 if [ "\${#FEHLEND[@]}" -gt 0 ]; then
   ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-ha.XXXXXX")
   apt-get -o DPkg::Lock::Timeout=300 update -q >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get update fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
@@ -339,15 +376,21 @@ if [ "$FW_NEU" = 1 ] || ! systemctl is-active --quiet "$FW_DIENST" || ! nft list
   aend firewall-geladen
 fi
 # ── hacluster-Kennwort (aus stdin; nur bei Abweichung) ──
-if ! kennwort_gleich; then
+if ! kw_vergleich; then
   printf 'hacluster:%s\\n' "$KW" | chpasswd || abbruch "chpasswd für hacluster fehlgeschlagen"
   printf 'ALFRED-HACLUSTER-GESETZT\\n'
   aend hacluster-kennwort
 fi
 # ── Dienste: frisch installierte Cluster-Dienste bleiben aus (Task 3), pcsd läuft (hinter der Firewall) ──
-if [ "$NEU_CLUSTER" = 1 ]; then
-  for d in pacemaker corosync sbd; do systemctl disable --now "$d" >/dev/null 2>&1 || true; done
-  aend cluster-dienste-aus
+# nie bei einer Wiederholung: dann laufen die Cluster-Dienste ab Task 3 gewollt
+if [ "$FRISCH_CLUSTER" = 1 ]; then
+  for d in pacemaker corosync sbd; do
+    if systemctl is-enabled --quiet "$d" || systemctl is-active --quiet "$d"; then
+      aus=$(systemctl disable --now "$d" 2>&1) || abbruch "$d lässt sich nach der frischen Installation nicht stoppen/deaktivieren: $(kurz "$aus")"
+      aend "aus:$d"
+    fi
+    ! systemctl is-active --quiet "$d" || abbruch "$d läuft nach der frischen Installation noch"
+  done
 fi
 if ! systemctl is-enabled --quiet pcsd || ! systemctl is-active --quiet pcsd; then
   systemctl enable --now pcsd >/dev/null 2>&1 || abbruch "pcsd lässt sich nicht starten"
@@ -364,7 +407,8 @@ if [ "$(hadr_wert)" != 1 ]; then
 fi
 # ── Selbstprüfung ──
 for i in "\${!KNOTEN_NAME[@]}"; do
-  a=$(getent ahostsv4 "\${KNOTEN_NAME[$i]}" | awk 'NR == 1 { print $1 }' || true)
+  # alle Adressen (glibc liefert jeden Treffer aus /etc/hosts) — genau die Knoten-IP, kein Loopback
+  a=$(getent ahostsv4 "\${KNOTEN_NAME[$i]}" | awk '{ print $1 }' | sort -u | tr '\\n' ' ' | sed 's/ $//' || true)
   [ "$a" = "\${KNOTEN_IP[$i]}" ] || abbruch "hosts: \${KNOTEN_NAME[$i]} löst zu '\${a:-nichts}' auf, erwartet \${KNOTEN_IP[$i]}"
 done
 PJ=''
@@ -377,12 +421,12 @@ pruefe_wd " (Selbstprüfung)"
 h=$(fremde_halter); [ -z "$h" ] || abbruch "Watchdog offen gehalten von $h (Selbstprüfung)"
 nft list table inet "$NFT_TABELLE" >/dev/null 2>&1 || abbruch "nft-Tabelle inet $NFT_TABELLE fehlt"
 { systemctl is-active --quiet "$FW_DIENST" && systemctl is-enabled --quiet "$FW_DIENST"; } || abbruch "$FW_DIENST nicht aktiv und aktiviert"
-kennwort_gleich || abbruch "hacluster-Kennwort stimmt nach dem Setzen nicht"
+kw_vergleich || abbruch "hacluster-Kennwort stimmt nach dem Setzen nicht"
 systemctl is-active --quiet pcsd || abbruch "pcsd läuft nicht"
 [ "$(hadr_wert)" = 1 ] || abbruch "mssql.conf: hadr.hadrenabled ist '$(hadr_wert)', erwartet 1"
 systemctl is-active --quiet mssql-server || abbruch "mssql-server läuft nicht"
 if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
-ergebnis "{\\"zustand\\":\\"$Z\\",\\"knoten\\":\\"$ICH\\",\\"rolle\\":\\"$ROLLE\\",\\"watchdog\\":$(printf '%s' "$WD_ID" | json_text),\\"pakete\\":{$PJ},\\"hadr\\":true,\\"firewall\\":\\"aktiv\\",\\"pcsd\\":\\"aktiv\\",\\"neustartSql\\":$NS,\\"aenderungen\\":[$AJ]}"`;
+ergebnis "{\\"zustand\\":\\"$Z\\",\\"knoten\\":\\"$ICH\\",\\"rolle\\":\\"$ROLLE\\",\\"watchdog\\":$(printf '%s' "$WD_ID" | json_text),\\"pakete\\":{$PJ},\\"hadr\\":true,\\"firewall\\":\\"aktiv\\",\\"sql1433\\":$SQL1433_JSON,\\"pcsd\\":\\"aktiv\\",\\"neustartSql\\":$NS,\\"aenderungen\\":[$AJ]}"`;
 
 /**
  * HA-Grundlage je Knoten, idempotent: hosts-Block der drei Knoten, Pakete fest und gehalten (pacemaker, corosync, pcs, sbd,
@@ -405,6 +449,8 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `H_ENDE=${shQ(HA_HOSTS_ENDE)}`,
     `HOSTS_BLOCK=${shQ(hostsBlock(k))}`,
     `NFT_SOLL=${shQ(hostfwNft(k))}`,
+    `SQL1433_JSON=${shQ(JSON.stringify([...k.map(x => x.ip), ...HA_SQL_ZUSATZQUELLEN]))}`,
+    `H_ENTFERNT=${shQ(HA_HOSTS_ENTFERNT)}`,
     `UNIT_SOLL=${shQ(HOSTFW_UNIT)}`,
     `MODLOAD_SOLL=${shQ('# Alfred I8e Paket 2: Hardware-Watchdog für SBD\ni6300esb')}`,
     `MODPROBE_SOLL=${shQ('# Alfred I8e Paket 2: SBD ist einziger Watchdog-Besitzer — kein softdog\nblacklist softdog')}`,
@@ -483,6 +529,15 @@ export const PY_HA_STATUS = [
   'r["firewall"] = {"tabelle": lauf("nft", "list", "table", "inet", TABELLE)[0] == 0, "dienst": lauf("systemctl", "is-active", DIENST)[1] or "unbekannt", "aktiviert": lauf("systemctl", "is-enabled", DIENST)[1] or "unbekannt"}',
   'hosts = lies("/etc/hosts") or ""',
   'r["hosts"] = ANFANG in hosts.splitlines() and all(("%s %s" % (k["ip"], k["name"])) in hosts.splitlines() for k in KNOTEN)',
+  // Fix-Runde 1: eigener Name auf Loopback (cloud-init 127.0.1.1) und die vom Baustein ersetzten Originale
+  'ich = os.uname().nodename.split(".")[0]',
+  'def namen(z):',
+  '    t = z.split("#")[0].split()',
+  '    return t[1:] if t else []',
+  'r["hostsLoopback"] = [z for z in hosts.splitlines() if z.split() and z.split()[0].startswith("127.") and any(n == ich or n.startswith(ich + ".") for n in namen(z))]',
+  `r["hostsEntfernt"] = [z for z in hosts.splitlines() if z.startswith(${JSON.stringify(HA_HOSTS_ENTFERNT)})]`,
+  'c, t = lauf("nft", "list", "set", "inet", TABELLE, "sql_quellen4")',
+  'r["sql1433Zusatz"] = re.findall(r"\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b", t.split("elements", 1)[1]) if c == 0 and "elements" in t else []',
   'r["runtimeWatchdog"] = lauf("systemctl", "show", "-p", "RuntimeWatchdogUSec", "--value")[1] or None',
   'r["pcsd"] = lauf("systemctl", "is-active", "pcsd")[1] or "unbekannt"',
   'print("ALFRED-HA " + json.dumps(r))',

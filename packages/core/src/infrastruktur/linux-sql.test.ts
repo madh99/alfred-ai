@@ -234,6 +234,18 @@ describe('I8e Linux-SQL — Skripttext', () => {
     expect(t).toContain('THROW 50001');
     expect(t).not.toMatch(/REMOVE FILE/);
     expect(t).toContain('systemctl restart mssql-server');
+    expect(t).toContain("mountpoint -q '/var/opt/mssql/tempdb' ||");
+    expect(t).not.toContain('install -d');
+    // Ruling R5: Konfig-Knoten — tempdb im Unterordner der Datenplatte, Einhängepunkt data, Ordner mit mssql-Rechten
+    const d = sqlSkript('tempdb', { ...TEMPDB, pfad: '/var/opt/mssql/data/tempdb/' });
+    expect(d).toContain("@pfad nvarchar(200) = N'\\''/var/opt/mssql/data/tempdb/'\\''");
+    expect(d).toContain("mountpoint -q '/var/opt/mssql/data' ||");
+    expect(d).toContain("install -d -o mssql -g mssql -m 0750 '/var/opt/mssql/data/tempdb/'");
+    expect(d).toContain('"pfad":"/var/opt/mssql/data/tempdb/"');
+    expect(BASH ? spawnSync('bash', ['-n'], { input: d, encoding: 'utf8' }).status : 0).toBe(0);
+    expect(() => sqlSkript('tempdb', { ...TEMPDB, pfad: '/tmp/' as never })).toThrow(/pfad/);
+    expect(pruefeKonfig({ ...KONFIG, logPfad: '/var/opt/mssql/data', sicherungsPfad: '/var/opt/mssql/data' })).toBeUndefined();
+    expect(pruefeKonfig({ ...KONFIG, datenPfad: '/var/opt/mssql/log', logPfad: '/var/opt/mssql/log', sicherungsPfad: '/var/opt/mssql/log' })).toContain('doppelt');
     const m = sqlSkript('maxspeicher', { mb: 10240 });
     expect(m).toContain("EXEC sp_configure N'\\''max server memory (MB)'\\'', 10240");
     expect(m).toContain('[ "$neu" = 10240 ]');

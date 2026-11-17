@@ -138,6 +138,21 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     const ohne = welt({ [LINUX_SQL_BAUSTEINE.status]: [{ code: 255, stdout: '' }] });
     expect((await ohne.skill.execute({ action: 'status', zugang: 'sqllnx01' }, {} as never)).error).toMatch(/Exit 255/);
   });
+  it('Ruling R5 — konfigurieren auf dem Konfig-Knoten (einhaengepunkte nur data): Daten, Log, Sicherung und tempdb auf der Datenplatte', async () => {
+    const w = welt({
+      [LINUX_SQL_BAUSTEINE.konfiguration]: [{ zustand: 'geaendert', neustart: true }],
+      [LINUX_SQL_BAUSTEINE.tempdb]: [{ zustand: 'geaendert', dateien: 2 }],
+      [LINUX_SQL_BAUSTEINE.maxspeicher]: [{ zustand: 'geaendert', maxSpeicherMb: 2048 }],
+    }, { 'sqllnx-sqllnxcfg-sa': 'Sa-C' });
+    const r = await w.skill.execute({ action: 'konfigurieren', zugang: 'sqllnxcfg', einhaengepunkte: ['data'], speicher_limit_mb: 3072, max_server_memory_mb: 2048, tempdb_dateien: 2 }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe[0]).toMatchObject({ parameter: { speicherLimitMB: 3072, datenPfad: '/var/opt/mssql/data', logPfad: '/var/opt/mssql/data', sicherungsPfad: '/var/opt/mssql/data', agent: true } });
+    expect(w.aufrufe[1]).toMatchObject({ parameter: { dateien: 2, pfad: '/var/opt/mssql/data/tempdb/' } });
+    expect(w.aufrufe[2]).toMatchObject({ parameter: { mb: 2048 } });
+    // Standard (alle vier) unverändert: tempdb ohne pfad
+    expect(w.skill.pruefeEingabe({ action: 'konfigurieren', zugang: 'sqllnxcfg', einhaengepunkte: ['data', 'log'], speicher_limit_mb: 3072, max_server_memory_mb: 2048 })).toContain('einhaengepunkte');
+    expect(w.skill.pruefeEingabe({ action: 'konfigurieren', zugang: 'sqllnxcfg', einhaengepunkte: ['data'], speicher_limit_mb: 3072, max_server_memory_mb: 2048 })).toBeUndefined();
+  });
   it('konfigurieren: mssql-conf, tempdb, max server memory der Reihe nach; max < Limit; Kerne aus dem Status, höchstens 8', async () => {
     const w = welt({
       [LINUX_SQL_BAUSTEINE.status]: [{ ...STATUS_VOLL, sql: { ...STATUS_VOLL.sql, kerne: 12 } }],

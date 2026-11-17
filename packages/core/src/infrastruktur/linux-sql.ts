@@ -35,6 +35,12 @@ const LABEL: Record<LinuxSqlZiel, string> = {
   '/var/opt/mssql/data': 'mssql-data', '/var/opt/mssql/log': 'mssql-log', '/var/opt/mssql/tempdb': 'mssql-tempdb', '/var/opt/mssql/backup': 'mssql-backup',
 };
 export const TEMPDB_PFAD = '/var/opt/mssql/tempdb/';
+const TEMPDB_PFAD_STANDARD = TEMPDB_PFAD;
+/** Ruling R5 (I8e Paket 2): Konfig-Knoten ohne TempDB-Platte — tempdb in einem Unterordner der Datenplatte */
+export const TEMPDB_PFAD_DATEN = '/var/opt/mssql/data/tempdb/';
+export type TempdbPfad = typeof TEMPDB_PFAD | typeof TEMPDB_PFAD_DATEN;
+/** Ruling R5: Größe der einzigen Datenplatte des Konfig-Knotens (GiB) */
+export const KONFIG_KNOTEN_DATEN_GIB = 16;
 
 /** Microsoft-Paketschlüssel (signiert mssql-server-2025 und prod für noble; geprüft 16.11.2026 per gpg --verify InRelease) */
 export const MS_SCHLUESSEL_URL = 'https://packages.microsoft.com/keys/microsoft.asc';
@@ -164,7 +170,10 @@ export function pruefePlatten(p: unknown): string | undefined {
     if (ziele.has(x.ziel)) return `platten: Ziel ${x.ziel} doppelt`;
     scsi.add(x.scsi as number); ziele.add(x.ziel);
   }
-  return zielSatzFehler([...ziele], 'platten (Ziele)');
+  const f = zielSatzFehler([...ziele], 'platten (Ziele)'); if (f) return f;
+  // Ruling R5: das Layout „nur data“ ist der Konfig-Knoten — genau eine 16-GiB-Platte (am Host ±1 % wie alle Größen)
+  if (ziele.size === 1 && (pl[0] as { groesseGiB: number }).groesseGiB !== KONFIG_KNOTEN_DATEN_GIB) return `platten: nur data (Konfig-Knoten) verlangt genau ${KONFIG_KNOTEN_DATEN_GIB} GiB`;
+  return undefined;
 }
 
 /**
@@ -421,7 +430,9 @@ export function pruefeKonfig(p: unknown): string | undefined {
   const x = obj(p);
   if (!ganz(x.speicherLimitMB, 2048, 1_048_576)) return 'speicherLimitMB: ganze Zahl 2048–1048576';
   for (const k of ['datenPfad', 'logPfad', 'sicherungsPfad'] as const) if (!istZiel(x[k])) return `${k}: nur ${LINUX_SQL_ZIELE.join(', ')}`;
-  if (new Set([x.datenPfad, x.logPfad, x.sicherungsPfad]).size !== 3) return 'datenPfad, logPfad, sicherungsPfad: Pfad doppelt';
+  const nurDaten = x.datenPfad === KONFIG_KNOTEN_ZIELE[0] && x.logPfad === x.datenPfad && x.sicherungsPfad === x.datenPfad;
+  // Ruling R5: entweder drei verschiedene Ziele oder alle drei auf der Datenplatte (Konfig-Knoten)
+  if (!nurDaten && new Set([x.datenPfad, x.logPfad, x.sicherungsPfad]).size !== 3) return 'datenPfad, logPfad, sicherungsPfad: Pfad doppelt — drei verschiedene Ziele oder alle /var/opt/mssql/data (Konfig-Knoten)';
   if (typeof x.agent !== 'boolean') return 'agent: true oder false';
   return undefined;
 }
@@ -491,7 +502,7 @@ export function konfigSkript(p: KonfigParameter): string {
 
 // ── T-SQL-Bausteine ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface TempdbParameter { dateien: number; groesseMB: number; wachstumMB: number; logGroesseMB: number }
+export interface TempdbParameter { dateien: number; groesseMB: number; wachstumMB: number; logGroesseMB: number; /** Ruling R5: Standard TEMPDB_PFAD */ pfad?: TempdbPfad }
 export interface MaxSpeicherParameter { mb: number }
 export interface LoginParameter { name: string; serverrollen?: string[]; /** Fix-Welle I-2: Kennwort neu erzeugt — ein bestehender Login bricht ab */ nurNeu?: boolean }
 export interface PruefdatenParameter { datenbank: string }
@@ -503,6 +514,7 @@ export function pruefeTempdb(p: unknown): string | undefined {
   if (!ganz(x.groesseMB, 8, 262_144)) return 'groesseMB: ganze Zahl 8–262144';
   if (!ganz(x.wachstumMB, 1, 65_536)) return 'wachstumMB: ganze Zahl 1–65536';
   if (!ganz(x.logGroesseMB, 8, 262_144)) return 'logGroesseMB: ganze Zahl 8–262144';
+  if (x.pfad !== undefined && x.pfad !== TEMPDB_PFAD && x.pfad !== TEMPDB_PFAD_DATEN) return `pfad: ${TEMPDB_PFAD} oder ${TEMPDB_PFAD_DATEN}`;
   return undefined;
 }
 
@@ -525,6 +537,9 @@ export function pruefeLogin(p: unknown): string | undefined {
 
 function tempdbSkript(p: TempdbParameter): string {
   pruefe(pruefeTempdb(p));
+  const TEMPDB_PFAD: TempdbPfad = p.pfad ?? TEMPDB_PFAD_STANDARD;
+  // Datenplatten-Variante: Einhängepunkt ist die Datenplatte, der Unterordner entsteht hier (mssql, 0750)
+  const einhaenge = TEMPDB_PFAD === TEMPDB_PFAD_DATEN ? KONFIG_KNOTEN_ZIELE[0]! : TEMPDB_PFAD.replace(/\/$/, '');
   const tsql = [
     'SET NOCOUNT ON; SET XACT_ABORT ON;',
     `DECLARE @pfad nvarchar(200) = N'${TEMPDB_PFAD}', @n int = ${p.dateien}, @mb int = ${p.groesseMB}, @wmb int = ${p.wachstumMB}, @logmb int = ${p.logGroesseMB};`,
@@ -566,13 +581,14 @@ function tempdbSkript(p: TempdbParameter): string {
   ].join('\n');
   const lage = `SET NOCOUNT ON; SELECT N'ALFRED|' + CAST(SUM(CASE WHEN type = 0 THEN 1 ELSE 0 END) AS nvarchar(5)) + N'|' + CAST(SUM(CASE WHEN physical_name LIKE N'${TEMPDB_PFAD}%' THEN 0 ELSE 1 END) AS nvarchar(5)) FROM tempdb.sys.database_files`;
   return [
-    ...sqlKopf(LINUX_SQL_BAUSTEINE.tempdb, { dateien: p.dateien, groesseMB: p.groesseMB, wachstumMB: p.wachstumMB, logGroesseMB: p.logGroesseMB }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.tempdb, { dateien: p.dateien, groesseMB: p.groesseMB, wachstumMB: p.wachstumMB, logGroesseMB: p.logGroesseMB, ...(p.pfad ? { pfad: p.pfad } : {}) }),
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
     `LAGE=${shQ(lage)}`,
     `N=${p.dateien}`,
-    `mountpoint -q ${shQ(TEMPDB_PFAD.replace(/\/$/, ''))} || abbruch "${TEMPDB_PFAD} ist kein eigener Einhängepunkt — nichts geändert"`,
+    `mountpoint -q ${shQ(einhaenge)} || abbruch "${einhaenge} ist kein eigener Einhängepunkt — nichts geändert"`,
+    ...(TEMPDB_PFAD === TEMPDB_PFAD_DATEN ? [`if [ ! -d ${shQ(TEMPDB_PFAD)} ]; then install -d -o mssql -g mssql -m 0750 ${shQ(TEMPDB_PFAD)}; fi`] : []),
     'bereit || abbruch "SQL Server antwortet nicht als sa"',
     // Fix-Welle M-5: bisherige Lage der tempdb-Dateien merken — nach der Verlegung meldet das Ergebnis die alten Dateien (nie löschen)
     `alt=$(sql "SET NOCOUNT ON; SELECT N'ALFRED-ALT|' + physical_name FROM sys.master_files WHERE database_id = 2 AND physical_name NOT LIKE N'${TEMPDB_PFAD}%'" 2>/dev/null | grep '^ALFRED-ALT|' | tr -d '\r' || true)`,

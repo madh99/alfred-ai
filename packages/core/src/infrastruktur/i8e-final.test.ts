@@ -210,7 +210,7 @@ describe('Nachtrag N-1 / Restpunkte', () => {
     const l = { zustand: 'gelesen', ziel: '//fs01.ad.3033.at/X$', budgetBytes: 1, timer: 'active', zugangsdatei: 'vorhanden (0600)', datenbanken: {}, alteZugangsdateienEntfernt: 2 };
     expect(linuxSqlSicherungenText('x', l as never)).toContain('alte Zugangsdateien entfernt: 2');
     const w = welt({ [LINUX_SQL_BAUSTEINE.platten]: [{ zustand: 'schon', platten: [], alteZugangsdateienEntfernt: 4 }] });
-    const r = await w.skill.execute({ action: 'platten_einrichten', zugang: 'sqllnx01', platten: [{ scsi: 1, groesse_gib: 160, ziel: 'data' }] }, imChange);
+    const r = await w.skill.execute({ action: 'platten_einrichten', zugang: 'sqllnx01', platten: [{ scsi: 1, groesse_gib: 16, ziel: 'data' }] }, imChange);
     expect(r.display).toContain('alte Zugangsdateien entfernt: 4');
   });
   it('Modulkopf dokumentiert sa-Wiederherstellung nach SSH-Verlust', () => {
