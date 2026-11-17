@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fencing-Beweis und SBD-Start nach Reset (v1893)
+
+- Die Ergebnisse der HA-Bausteine enthalten keine Feldnamen mehr, die die Geheimnis-Schwärzung trifft; der Fencing-Test meldete sich sonst als gescheitert, obwohl er ausgelöst war.
+- sbd wartet beim Start bis zu 60 s auf das Watchdog-Gerät (es erscheint nach dem Laden des Treibers verzögert); ohne das blieb ein Knoten nach einem Fencing-Reset dem Cluster fern. ha_vorbereiten holt einen Knoten zurück, dessen letzter sbd-Start genau daran scheiterte — nur diesen Knoten, nie einen absichtlich gestoppten.
+- Der Fencing-Beleg verlangt zusätzlich aktives sbd und die Mitgliedschaft des Knotens in Pacemaker.
+
 ### Fixed — Antworten im Notbetrieb mit Mistral (v1892)
 
 - OpenAI-kompatible Anbieter (Mistral) liefern den Antworttext teils als Liste von Bausteinen. Alfred übernimmt daraus nur die Text-Bausteine; bisher scheiterte die Verarbeitung solcher Antworten, und im Notbetrieb gingen Antworten verloren.
