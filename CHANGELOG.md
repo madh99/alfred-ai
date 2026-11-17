@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL auf Linux: Pacemaker-Cluster mit diskless SBD und Fencing-Beweis (v1890)
+
+- Proxmox: Watchdog i6300esb (Aktion Reset) für VMs — bei provision_vm und als eigene Aktion set_vm_watchdog mit Rückweg; als wirksam gilt er erst nach Kalt-Start, ausstehende Änderungen und unlesbarer Zustand werden sichtbar gemeldet.
+- Neuer Skill linux_ha: HA-Grundlage je Knoten (feste Paketversionen, Watchdog-Prüfung, Host-Firewall nur für die Knoten, HADR), Pacemaker-Cluster mit diskless SBD und STONITH samt Rückweg, Status mit festem Wortlaut.
+- Fencing-Beweis je Knoten: Test auslösen und erst nach nachgewiesenem, ungeordnetem Reset einen an den Cluster gebundenen Beleg schreiben; Reset- und Rejoin-Zeit werden gemessen.
+- linux_sql: Konfigurationsknoten mit nur einer Datenplatte.
+
 ### Fixed — SQL auf Linux: Sicherungsprozedur und SQL-Sicht im Status (v1889)
 
 - Die Sicherungseinrichtung liest den Text der Sicherungsprozedur jetzt aus msdb. Bisher fand die Prüfung die Prozedur nicht („Prozedur 0“), und eine neue Fassung der Prozedur wäre nie eingespielt worden.
