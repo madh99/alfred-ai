@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL auf Linux: Sicherungsprozedur und SQL-Sicht im Status (v1889)
+
+- Die Sicherungseinrichtung liest den Text der Sicherungsprozedur jetzt aus msdb. Bisher fand die Prüfung die Prozedur nicht („Prozedur 0“), und eine neue Fassung der Prozedur wäre nie eingespielt worden.
+- Der Status zeigt wieder die SQL-Sicht (Version, Kerne, tempdb, Datenbanken, letzte Sicherungen); der sqlcmd-Aufruf kombinierte zwei Optionen, die sqlcmd nicht gemeinsam erlaubt.
+
 ### Fixed — SQL auf Linux: gehaltene Pakete gelten als installiert (v1888)
 
 - Die Installation hält die SQL-Pakete auf ihrer Version; dpkg meldet sie dann als „hold ok installed“. Status, Installation und Sicherungseinrichtung erkannten bisher nur „install ok installed“ und meldeten SQL Server als nicht installiert. Jeder Status „… ok installed“ zählt jetzt als installiert; die Sperren gegen stilles Ersetzen des sa-Kennworts und gegen Versionswechsel greifen damit auch bei gehaltenen Paketen.
