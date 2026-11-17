@@ -56,9 +56,16 @@ export const HA_SYSTEMD_DATEI = '/etc/systemd/system.conf.d/alfred-watchdog.conf
 /** Tresor-Eintrag des hacluster-Kennworts (für alle drei Knoten gleich) */
 export const HA_HACLUSTER_TRESOR = 'sqllnx-ha-hacluster';
 
-export const LINUX_HA_BAUSTEINE = { vorbereiten: 'ha.vorbereiten', status: 'ha.status' } as const;
+/** Task 3: Cluster-Name und Zeitwerte (Owner-Entscheidung 3: SBD_WATCHDOG_TIMEOUT 10, stonith-watchdog-timeout 20, Token pcs-Standard) */
+export const HA_CLUSTER_NAME = 'sqllnxcl01';
+export const HA_SBD_TIMEOUT_S = 10;
+export const HA_STONITH_WD_TIMEOUT_S = 20;
+/** einziger Watchdog-Pfad für SBD (i6300esb, ha_vorbereiten) */
+export const HA_WATCHDOG_DEV = '/dev/watchdog';
+
+export const LINUX_HA_BAUSTEINE = { vorbereiten: 'ha.vorbereiten', status: 'ha.status', cluster: 'ha.cluster_anlegen', clusterEntfernen: 'ha.cluster_entfernen' } as const;
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
-export const LINUX_HA_ZEIT_MS = { vorbereiten: 1_500_000, status: 90_000 } as const;
+export const LINUX_HA_ZEIT_MS = { vorbereiten: 1_500_000, status: 90_000, cluster: 900_000, clusterEntfernen: 600_000 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -163,7 +170,10 @@ export function hostsBlock(knoten: readonly HaKnoten[]): string {
   return [HA_HOSTS_ANFANG, ...knoten.map(k => `${k.ip} ${k.name}`), HA_HOSTS_ENDE].join('\n');
 }
 
-/** python3: stimmt das Kennwort (stdin) mit dem hacluster-Hash in argv[1] (/etc/shadow) überein? 0 ja, 1 nein, 2 crypt fehlt */
+/**
+ * python3: stimmt das Kennwort (stdin) mit dem hacluster-Hash in argv[1] (/etc/shadow) überein? 0 ja, 1 nein, 2 nicht prüfbar
+ * (crypt fehlt, shadow nicht lesbar, crypt wirft oder kennt das Hash-Verfahren nicht) — 2 führt im Baustein zum sichtbaren Abbruch
+ */
 export const PY_KW_GLEICH = [
   'import sys, warnings',
   'warnings.simplefilter("ignore")',
@@ -175,15 +185,50 @@ export const PY_KW_GLEICH = [
   'if kw.endswith("\\n"):',
   '    kw = kw[:-1]',
   'h = ""',
-  'with open(sys.argv[1]) as f:',
-  '    for z in f:',
-  '        t = z.rstrip("\\n").split(":")',
-  '        if t[0] == "hacluster" and len(t) > 1:',
-  '            h = t[1]',
+  'try:',
+  '    with open(sys.argv[1]) as f:',
+  '        for z in f:',
+  '            t = z.rstrip("\\n").split(":")',
+  '            if t[0] == "hacluster" and len(t) > 1:',
+  '                h = t[1]',
+  'except Exception:',
+  '    sys.exit(2)',
   'if not h or h[0] in "!*":',
   '    sys.exit(1)',
-  'sys.exit(0 if crypt.crypt(kw, h) == h else 1)',
+  'try:',
+  '    e = crypt.crypt(kw, h)',
+  'except Exception:',
+  '    sys.exit(2)',
+  'if e is None:',
+  '    sys.exit(2)',
+  'sys.exit(0 if e == h else 1)',
 ].join('\n');
+
+/** Bash-Text mit „§{“ statt „${“ (String.raw ohne Escape-Salat) */
+const sh = (s: string) => s.replaceAll('§{', '${');
+
+/**
+ * Task 3 — corosync.conf lesen (gemeinsam für ha_vorbereiten und die Cluster-Bausteine). Debian/Ubuntu liefert mit dem Paket corosync
+ * eine Standardkonfiguration (`cluster_name: debian`, Knoten nur auf 127.0.0.1) — sie gilt als „kein Cluster eingerichtet“.
+ */
+const KONF_HILFEN = sh(String.raw`# corosync.conf-Text ($1) → Clustername
+# (ohne awk-exit: unter pipefail könnte printf sonst SIGPIPE melden)
+konf_name() { printf '%s\n' "$1" | awk '{ sub(/#.*/, "") } $1 == "cluster_name:" && !g { print $2; g = 1 }'; }
+# corosync.conf-Text ($1) → „name=ring0_addr“ je Knoten, sortiert, durch Leerzeichen getrennt
+konf_knoten() { printf '%s\n' "$1" | awk '{ sub(/#.*/, "") } $1 == "node" && $2 == "{" { k = 1; n = ""; a = ""; next } k && $1 == "name:" { n = $2 } k && $1 == "ring0_addr:" { a = $2 } k && $1 == "}" { k = 0; print n "=" a }' | sort | tr '\n' ' ' | sed 's/ $//'; }
+# Debian-Standard: Name „debian“, jeder Knoten (falls überhaupt einer) auf Loopback
+konf_debian() { local x lo=1; [ "$(konf_name "$1")" = debian ] || return 1; for x in $(konf_knoten "$1"); do case "$x" in *=127.*) ;; *) lo=0 ;; esac; done; [ "$lo" = 1 ]; }
+# kein Cluster eingerichtet: leer (oder fehlend) oder Debian-Standard
+konf_frei() { [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ] || konf_debian "$1"; }
+# leer | debian | alfred | fremd:<name> (<knoten>) — alfred = Name $CLUSTER und genau die Knoten $KNOTEN_SOLL
+konf_art() {
+  local n kn
+  if [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]; then echo leer; return 0; fi
+  if konf_debian "$1"; then echo debian; return 0; fi
+  n=$(konf_name "$1"); kn=$(konf_knoten "$1")
+  if [ "$n" = "$CLUSTER" ] && [ "$kn" = "$KNOTEN_SOLL" ]; then echo alfred; return 0; fi
+  echo "fremd:§{n:-ohne Namen} (§{kn:-ohne Knoten})"
+}`);
 
 // ── ha_vorbereiten ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -303,10 +348,6 @@ done
 FEHLEND=()
 for pv in "\${PAKETE[@]}"; do if [ -z "$(paket_version "\${pv%%=*}")" ]; then FEHLEND+=("$pv"); fi; done
 [ -n "$(paket_version "$MOD_EXTRA")" ] || FEHLEND+=("$MOD_EXTRA")
-# Fix-Runde 1: „frisch“ nur, wenn keins der drei Cluster-Pakete da ist und es noch keine corosync.conf gibt (vor der Installation gemerkt)
-FRISCH_CLUSTER=1
-for pk in pacemaker corosync sbd; do if [ -n "$(paket_version "$pk")" ]; then FRISCH_CLUSTER=0; fi; done
-if [ -e "$COROSYNC_CONF" ]; then FRISCH_CLUSTER=0; fi
 if [ "\${#FEHLEND[@]}" -gt 0 ]; then
   ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-ha.XXXXXX")
   apt-get -o DPkg::Lock::Timeout=300 update -q >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get update fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
@@ -333,6 +374,21 @@ for pv in "\${PAKETE[@]}"; do
   if ! paket_gehalten "$pk"; then apt-mark -o DPkg::Lock::Timeout=300 hold "$pk" >/dev/null; aend "halten:$pk"; fi
 done
 id hacluster >/dev/null 2>&1 || abbruch "Benutzer hacluster fehlt nach der Installation von pacemaker"
+# ── Cluster-Dienste: gleich nach der Installation aus, solange kein Cluster eingerichtet ist ──
+# Task 3 (Ruling a): „kein Cluster“ = keine corosync.conf oder die Debian-Standardkonfiguration (cluster_name debian, nur Loopback) — gilt
+# auch bei der Wiederholung nach einem abgebrochenen Erstlauf; ist ein Cluster eingerichtet (sqllnxcl01 oder ein anderer), bleiben die
+# Dienste unberührt. Die Debian-Standardkonfiguration wird beiseitegelegt: pcs cluster setup verweigert Knoten mit corosync.conf
+# (ohne --force, das Alfred nie setzt).
+if [ ! -e "$COROSYNC_CONF" ] || konf_frei "$(cat "$COROSYNC_CONF")"; then
+  for d in pacemaker corosync sbd; do
+    if systemctl is-enabled --quiet "$d" || systemctl is-active --quiet "$d"; then
+      aus=$(systemctl disable --now "$d" 2>&1) || abbruch "$d lässt sich nicht stoppen/deaktivieren (noch kein Cluster eingerichtet): $(kurz "$aus")"
+      aend "aus:$d"
+    fi
+    ! systemctl is-active --quiet "$d" || abbruch "$d läuft noch, obwohl kein Cluster eingerichtet ist"
+  done
+  if [ -e "$COROSYNC_CONF" ]; then mv -f "$COROSYNC_CONF" "$COROSYNC_CONF.alfred-debian-$(date +%Y%m%d%H%M%S)"; aend corosync-standard-beiseite; fi
+fi
 # ── hosts (drei Knoten, markierter Block oben; cloud-init-Vorlage ebenso, sonst überschreibt cloud-init /etc/hosts beim Start) ──
 for f in "$HOSTS" "$HOSTS_VORLAGE"; do
   [ -f "$f" ] || continue
@@ -381,17 +437,7 @@ if ! kw_vergleich; then
   printf 'ALFRED-HACLUSTER-GESETZT\\n'
   aend hacluster-kennwort
 fi
-# ── Dienste: frisch installierte Cluster-Dienste bleiben aus (Task 3), pcsd läuft (hinter der Firewall) ──
-# nie bei einer Wiederholung: dann laufen die Cluster-Dienste ab Task 3 gewollt
-if [ "$FRISCH_CLUSTER" = 1 ]; then
-  for d in pacemaker corosync sbd; do
-    if systemctl is-enabled --quiet "$d" || systemctl is-active --quiet "$d"; then
-      aus=$(systemctl disable --now "$d" 2>&1) || abbruch "$d lässt sich nach der frischen Installation nicht stoppen/deaktivieren: $(kurz "$aus")"
-      aend "aus:$d"
-    fi
-    ! systemctl is-active --quiet "$d" || abbruch "$d läuft nach der frischen Installation noch"
-  done
-fi
+# ── pcsd läuft (hinter der Firewall); die Cluster-Dienste regelt der Block nach der Installation ──
 if ! systemctl is-enabled --quiet pcsd || ! systemctl is-active --quiet pcsd; then
   systemctl enable --now pcsd >/dev/null 2>&1 || abbruch "pcsd lässt sich nicht starten"
   aend pcsd
@@ -457,9 +503,359 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `SYSTEMD_SOLL=${shQ('# Alfred I8e Paket 2: SBD ist einziger Watchdog-Besitzer\n[Manager]\nRuntimeWatchdogSec=off')}`,
     `PY_KW_GLEICH=${shQ(PY_KW_GLEICH)}`,
     ...VORBEREITEN_PFADE,
+    KONF_HILFEN,
     VORBEREITEN_HILFEN,
     '# ALFRED-ABLAUF',
     VORBEREITEN_KOERPER,
+  ].join('\n');
+}
+
+// ── Cluster (Task 3): cluster_anlegen / cluster_entfernen ────────────────────────────────────────────────────────────────────
+
+export interface HaClusterParameter { cluster: string; knoten: HaKnoten[]; sbd_timeout_s: number; stonith_timeout_s: number }
+export interface HaClusterEntfernenParameter { cluster: string; knoten: HaKnoten[] }
+
+const CLUSTER_NAME = /^[a-z][a-z0-9-]{2,30}$/;
+
+export function pruefeClusterName(c: unknown): string | undefined {
+  if (typeof c !== 'string' || !CLUSTER_NAME.test(c)) return 'cluster: Name aus Kleinbuchstaben/Ziffern/- (3–31 Zeichen), z. B. sqllnxcl01';
+  if (c === 'debian') return 'cluster: „debian“ ist der Name der Debian-Standardkonfiguration';
+  return undefined;
+}
+
+/** Validator: Knoten, SBD_WATCHDOG_TIMEOUT 5–60 s, stonith-watchdog-timeout ganze Sekunden ≥ 2 × SBD_WATCHDOG_TIMEOUT und ≤ 600 s */
+export function pruefeHaCluster(p: unknown): string | undefined {
+  const x = obj(p);
+  const fc = pruefeClusterName(x.cluster); if (fc) return fc;
+  const fk = pruefeKnoten(x.knoten); if (fk) return fk;
+  const n = x.sbd_timeout_s; const m = x.stonith_timeout_s;
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 5 || n > 60) return 'sbd_timeout_s: ganze Sekunden 5–60 (Owner-Entscheidung: 10)';
+  if (typeof m !== 'number' || !Number.isInteger(m) || m > 600) return 'stonith_timeout_s: ganze Sekunden bis 600 (Owner-Entscheidung: 20)';
+  if (m < 2 * n) return `stonith_timeout_s ${m} zu klein — stonith-watchdog-timeout muss mindestens 2 × sbd_timeout_s sein (${2 * n})`;
+  return undefined;
+}
+
+export function pruefeHaClusterEntfernen(p: unknown): string | undefined {
+  const x = obj(p);
+  return pruefeClusterName(x.cluster) ?? pruefeKnoten(x.knoten);
+}
+
+/** python3: crm_mon-XML (pacemaker 2.1 `--output-as=xml`, auch das alte `--as-xml`) → Knoten, online, Quorum, stonith-enabled, Ressourcen */
+export const PY_CRM_FUNK = String.raw`import xml.etree.ElementTree as ET
+def crm_lage(t):
+    r = ET.fromstring(t)
+    s = r.find("summary")
+    def wert(name, attr):
+        e = s.find(name) if s is not None else None
+        return e.get(attr) if e is not None else None
+    nodes = r.find("nodes")
+    kn = [n for n in (nodes.findall("node") if nodes is not None else []) if n.get("type", "member") == "member"]
+    online = sorted(n.get("name") for n in kn if n.get("online") == "true" and n.get("unclean", "false") != "true")
+    try:
+        res = int(wert("resources_configured", "number") or 0)
+    except ValueError:
+        res = -1
+    return {"knoten": len(kn), "online": online, "quorum": wert("current_dc", "with_quorum") == "true", "stonith": wert("cluster_options", "stonith-enabled") == "true", "ressourcen": res}`;
+
+/** Ausgabe für Bash: „<knoten> <online> <quorum 0|1> <stonith 0|1> <ressourcen> <online-namen,…|->“; Exit 2 bei unlesbarem XML */
+export const PY_CRM_LAGE = `${PY_CRM_FUNK}
+import sys
+try:
+    l = crm_lage(sys.stdin.read())
+except Exception:
+    sys.exit(2)
+print(l["knoten"], len(l["online"]), 1 if l["quorum"] else 0, 1 if l["stonith"] else 0, l["ressourcen"], ",".join(l["online"]) or "-")`;
+
+/**
+ * python3 für den Status: crm_lage, dazu konf(t) → (Clustername, [{name, ip}]) aus corosync.conf und sbd_lesen(t) → {knoten: {installiert,
+ * aktiviert, laeuft}} aus `pcs stonith sbd status` („<knoten>: YES | YES | YES“; Kopfzeilen werden übersprungen)
+ */
+export const PY_CLUSTER_FUNK = `${PY_CRM_FUNK}
+${String.raw`def konf(t):
+    name = None
+    kn = []
+    k = False
+    n = a = None
+    for z in t.splitlines():
+        w = z.split("#")[0].split()
+        if not w:
+            continue
+        if w[0] == "cluster_name:" and len(w) > 1 and name is None:
+            name = w[1]
+        elif w[0] == "node" and w[1:2] == ["{"]:
+            k = True
+            n = a = None
+        elif k and w[0] == "name:" and len(w) > 1:
+            n = w[1]
+        elif k and w[0] == "ring0_addr:" and len(w) > 1:
+            a = w[1]
+        elif k and w[0] == "}":
+            k = False
+            kn.append({"name": n, "ip": a})
+    return name, kn
+def sbd_lesen(t):
+    sb = {}
+    for z in t.splitlines():
+        nn, _, rest = z.partition(":")
+        f = [v.strip() for v in rest.split("|")]
+        if len(f) == 3 and nn.strip() and not nn.strip().startswith("<"):
+            sb[nn.strip()] = {"installiert": f[0] == "YES", "aktiviert": f[1] == "YES", "laeuft": f[2] == "YES"}
+    return sb`}`;
+
+/** Pfade und Werkzeuge der Cluster-Bausteine — vor der Marke, damit Tests sie umbiegen können */
+const CLUSTER_PFADE = [
+  'COROSYNC_CONF=/etc/corosync/corosync.conf',
+  'CIB_DATEI=/var/lib/pacemaker/cib/cib.xml',
+  'WD_SYS=/sys/class/watchdog',
+  // warte_online: Runden à 2 s (120 s)
+  'WARTE_RUNDEN=60',
+  `WD_DEV=${shQ(HA_WATCHDOG_DEV)}`,
+];
+
+const CLUSTER_HILFEN = sh(String.raw`paket_version() { dpkg-query -W -f='§{Status}|§{Version}' "$1" 2>/dev/null | awk -F'|' '$1 ~ / ok installed$/ { print $2 }' || true; }
+kurz() { printf "%s" "$1" | tail -n 6 | tr "\r\n" "  "; }
+ist_esb() { local r=1; shopt -s nocasematch; if [[ "$1" == *i6300esb* ]]; then r=0; fi; shopt -u nocasematch; return $r; }
+eigener_name() { hostname -s; }
+port_offen() { timeout 5 bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$1" "$2" >/dev/null 2>&1; }
+schwaerze() { local t="$1"; if [ -n "§{KW:-}" ]; then t=§{t//"$KW"/[geschwärzt]}; fi; printf '%s' "$t"; }
+GEAENDERT=0; AJ=''
+aend() { GEAENDERT=1; AJ+="§{AJ:+,}\"$1\""; }
+stand() { if [ "$GEAENDERT" = 1 ]; then printf 'am Cluster nichts geändert (nur pcs-Anmeldung erneuert)'; else printf 'nichts geändert'; fi; }
+# alle Knoten melden „Online“ (pcsd erreichbar, lokale pcs-Anmeldung gültig)
+pcsd_online() { local s k; s=$(pcs status pcsd "§{KNOTEN_NAME[@]}" 2>&1 || true); for k in "§{KNOTEN_NAME[@]}"; do grep -qE "^[[:space:]]*$k: Online[[:space:]]*$" <<<"$s" || return 1; done; }
+# pcs liest das Kennwort ohne -p von der Standardeingabe (kein Terminal: utils.get_terminal_password → input()); nie auf der Befehlszeile
+anmelden() { local aus; aus=$(printf '%s\n' "$KW" | pcs host auth "§{KNOTEN_ADDR[@]}" -u hacluster 2>&1) || abbruch "pcs host auth (hacluster) fehlgeschlagen: $(kurz "$(schwaerze "$aus")") — Kennwort aus dem Tresor sqllnx-ha-hacluster, gesetzt von ha_vorbereiten; $(stand)"; }
+# Lage aus crm_mon: LK Knoten, LO online, LQ Quorum (1/0), LS stonith-enabled (1/0), LR Ressourcen, LN Online-Namen (Komma)
+lage() { local x l=''; if x=$(crm_mon -1 --output-as=xml 2>/dev/null); then l=$(python3 -c "$PY_CRM_LAGE" <<<"$x" 2>/dev/null || true); fi; read -r LK LO LQ LS LR LN <<<"§{l:-0 0 0 0 0 -}"; }
+warte_online() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do lage; if [ "$LO" = "$ANZAHL" ] && [ "$LQ" = 1 ]; then return 0; fi; sleep 2; done; return 1; }
+stimmen() { corosync-quorumtool -s 2>/dev/null | awk -F: '/^Total votes/ { gsub(/[ \t]/, "", $2); t = $2 } /^Expected votes/ { gsub(/[ \t]/, "", $2); e = $2 } END { print t "/" e }' || true; }
+eigenschaft() { crm_attribute -t crm_config -n "$1" -G -q 2>/dev/null || true; }
+sekunden() { if [[ "$1" =~ ^([0-9]+)s?$ ]]; then printf '%s' "§{BASH_REMATCH[1]}"; else printf '%s' "$1"; fi; }
+cib_ressourcen() { local n=0; if [ -f "$CIB_DATEI" ]; then n=$(grep -c '<primitive' "$CIB_DATEI" || true); fi; printf '%s' "§{n:-0}"; }
+sbd_status() { pcs stonith sbd status 2>&1 || true; }
+# Anzahl Knoten mit YES in Spalte $2 (1 installiert, 2 aktiviert, 3 läuft) der Ausgabe $1 („<knoten>: YES | YES | YES“)
+sbd_zahl() { local n=0 k; for k in "§{KNOTEN_NAME[@]}"; do if printf '%s\n' "$1" | awk -v k="$k" -v sp="$2" '{ i = index($0, ":"); if (!i) next; nm = substr($0, 1, i - 1); gsub(/[ \t]/, "", nm); if (nm != k) next; split(substr($0, i + 1), f, "|"); v = f[sp]; gsub(/[ \t]/, "", v); if (v == "YES") ok = 1 } END { exit !ok }'; then n=$((n + 1)); fi; done; printf '%s' "$n"; }
+# SBD wie gefordert: diskless (keine Devices), Watchdog $WD_DEV je Knoten, SBD_WATCHDOG_TIMEOUT, auf allen aktiviert — Abweichungen in SBD_ABW
+sbd_soll() {
+  local c s k t
+  SBD_ABW=''
+  c=$(pcs stonith sbd config 2>&1 || true)
+  t=$(awk -F= '$1 == "SBD_WATCHDOG_TIMEOUT" { print $2 }' <<<"$c" | tr -d ' \r' | tail -n 1)
+  [ "$t" = "$SBD_T" ] || SBD_ABW+="§{SBD_ABW:+, }SBD_WATCHDOG_TIMEOUT '§{t:-fehlt}' statt $SBD_T"
+  if grep -q '^Devices:' <<<"$c"; then SBD_ABW+="§{SBD_ABW:+, }SBD mit Devices (nicht diskless)"; fi
+  for k in "§{KNOTEN_NAME[@]}"; do grep -qE "^[[:space:]]+$k: $WD_DEV[[:space:]]*$" <<<"$c" || SBD_ABW+="§{SBD_ABW:+, }Watchdog $k nicht $WD_DEV"; done
+  s=$(sbd_zahl "$(sbd_status)" 2)
+  [ "$s" = "$ANZAHL" ] || SBD_ABW+="§{SBD_ABW:+, }SBD aktiviert auf $s/$ANZAHL"
+  [ -z "$SBD_ABW" ]
+}
+# hacluster-Kennwort aus der ersten stdin-Zeile (JSON-Feld hacluster)
+kennwort_lesen() {
+  KW=$(feld hacluster) || abbruch "hacluster-Kennwort enthält nicht druckbare Zeichen — nichts geändert"
+  [ -n "$KW" ] || abbruch "hacluster-Kennwort fehlt in der Eingabe (erste stdin-Zeile, JSON-Feld hacluster) — nichts geändert"
+  [[ "$KW" =~ ^[[:print:]]+$ ]] || abbruch "hacluster-Kennwort enthält nicht druckbare Zeichen — nichts geändert"
+}
+# eigener Kurzname muss einer der Knoten sein
+knoten_pruefen() {
+  local i
+  ICH=$(eigener_name); IDX=-1
+  for i in "§{!KNOTEN_NAME[@]}"; do if [ "§{KNOTEN_NAME[$i]}" = "$ICH" ]; then IDX=$i; fi; done
+  [ "$IDX" -ge 0 ] || abbruch "Rechner $ICH gehört nicht zu den Knoten §{KNOTEN_NAME[*]} — nichts geändert"
+}`);
+
+const CLUSTER_ANLEGEN_KOERPER = sh(String.raw`kennwort_lesen
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+knoten_pruefen
+for pv in "§{PAKETE[@]}"; do
+  pk=§{pv%%=*}; iv=$(paket_version "$pk")
+  [ "$iv" = "§{pv#*=}" ] || abbruch "$pk ist in Version '§{iv:-nicht installiert}' vorhanden, erwartet §{pv#*=} — vorher ha_vorbereiten auf $ICH; nichts geändert"
+done
+for c in pcs crm_mon crm_attribute corosync-quorumtool python3; do command -v "$c" >/dev/null 2>&1 || abbruch "$c fehlt auf $ICH — vorher ha_vorbereiten; nichts geändert"; done
+[ -e "$WD_DEV" ] || abbruch "$WD_DEV fehlt auf $ICH — vorher ha_vorbereiten (i6300esb); kein softdog-Ersatz; nichts geändert"
+wid=$(cat "$WD_SYS/watchdog0/identity" 2>/dev/null || true)
+ist_esb "$wid" || abbruch "Watchdog auf $ICH stammt von '§{wid:-unbekannt}', erwartet i6300esb — kein softdog-Ersatz ohne Owner-Entscheidung; nichts geändert"
+KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
+ART=$(konf_art "$KONF")
+case "$ART" in
+  leer|alfred) ;;
+  debian) abbruch "$COROSYNC_CONF auf $ICH ist noch die Debian-Standardkonfiguration — vorher ha_vorbereiten auf $ICH wiederholen (legt sie beiseite); nichts geändert" ;;
+  *) abbruch "auf $ICH ist ein anderer Cluster eingerichtet: §{ART#fremd:} — erwartet $CLUSTER mit $KNOTEN_SOLL; nichts geändert" ;;
+esac
+for i in "§{!KNOTEN_NAME[@]}"; do
+  port_offen "§{KNOTEN_IP[$i]}" 2224 || abbruch "pcsd auf §{KNOTEN_NAME[$i]} (§{KNOTEN_IP[$i]}:2224) nicht erreichbar — dort ha_vorbereiten (pcsd aktiv, Firewall alfred_ha); nichts geändert"
+done
+# ── Phase 2: pcs-Anmeldung an allen Knoten (nur wenn nötig) ──
+if ! pcsd_online; then
+  anmelden; aend pcs-anmeldung
+  pcsd_online || abbruch "pcs meldet nach der Anmeldung nicht alle Knoten Online: $(kurz "$(pcs status pcsd "§{KNOTEN_NAME[@]}" 2>&1 || true)") — $(stand)"
+fi
+if [ "$ART" = leer ]; then
+  # andere Knoten: keine Debian-Standard- oder fremde Konfiguration (pcs cluster setup prüft ohne --force zusätzlich selbst und bricht ab)
+  for k in "§{KNOTEN_NAME[@]}"; do
+    [ "$k" != "$ICH" ] || continue
+    a=leer; if t=$(pcs cluster corosync "$k" 2>/dev/null); then a=$(konf_art "$t"); fi
+    case "$a" in
+      leer) ;;
+      debian) abbruch "auf $k liegt noch die Debian-Standardkonfiguration von corosync — dort ha_vorbereiten wiederholen; $(stand)" ;;
+      alfred) abbruch "auf $k ist $CLUSTER schon eingerichtet, auf $ICH nicht (Teilstand) — erst cluster_entfernen mit zugang $k, dann cluster_anlegen; $(stand)" ;;
+      *) abbruch "auf $k ist ein anderer Cluster eingerichtet: §{a#fremd:} — $(stand)" ;;
+    esac
+  done
+  # ── neu anlegen: knet über die festen Adressen, diskless SBD (kein sbd create), dann aktivieren und starten ──
+  aus=$(pcs cluster setup "$CLUSTER" "§{KNOTEN_ADDR[@]}" transport knet 2>&1) || abbruch "pcs cluster setup fehlgeschlagen: $(kurz "$aus") — pcs prüft vor dem Anlegen; ein Teilstand geht mit cluster_entfernen zurück"
+  aend cluster-angelegt
+  aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  aend sbd-diskless
+  aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  aend cluster-aktiviert
+  aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  aend cluster-gestartet
+  warte_online || abbruch "nach dem Start $LO/$ANZAHL Knoten online, Quorum $LQ — erwartet alle Knoten mit Quorum; Rückweg cluster_entfernen"
+else
+  # ── bestehender Cluster gleichen Namens mit denselben Knoten: nur Abweichungen beheben, jede sichtbar ──
+  lage
+  if ! systemctl is-enabled --quiet corosync || ! systemctl is-enabled --quiet pacemaker; then
+    aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus")"
+    aend cluster-aktiviert
+  fi
+  if [ "$LO" != "$ANZAHL" ] || [ "$LQ" != 1 ]; then
+    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus")"
+    aend cluster-gestartet
+    warte_online || abbruch "nach dem Start $LO/$ANZAHL Knoten online, Quorum $LQ — erwartet alle Knoten mit Quorum"
+  fi
+  if ! sbd_soll; then
+    # SBD ändern wirkt erst nach einem Neustart des ganzen Clusters — nur ohne Ressourcen (keine AG), sonst sichtbarer Abbruch
+    [ "$LR" = 0 ] || abbruch "SBD weicht ab ($SBD_ABW), der Cluster trägt aber $LR Ressourcen — SBD ändern braucht einen Neustart des ganzen Clusters; nicht automatisch"
+    aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
+    aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+    aend sbd-neu-eingerichtet
+    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus")"
+    warte_online || abbruch "nach dem SBD-Neustart $LO/$ANZAHL Knoten online, Quorum $LQ"
+  fi
+fi
+# ── Eigenschaften: stonith-watchdog-timeout (diskless SBD) und stonith-enabled; have-watchdog setzt Pacemaker selbst (nur gelesen) ──
+if [ "$(sekunden "$(eigenschaft stonith-watchdog-timeout)")" != "$STONITH_T" ]; then
+  aus=$(pcs property set "stonith-watchdog-timeout=$STONITH_T" 2>&1) || abbruch "pcs property set stonith-watchdog-timeout=$STONITH_T fehlgeschlagen: $(kurz "$aus")"
+  aend stonith-watchdog-timeout
+fi
+if [ "$(eigenschaft stonith-enabled)" != true ]; then
+  aus=$(pcs property set stonith-enabled=true 2>&1) || abbruch "pcs property set stonith-enabled=true fehlgeschlagen: $(kurz "$aus")"
+  aend stonith-enabled
+fi
+# ── Selbstprüfung ──
+warte_online || abbruch "Selbstprüfung: $LO/$ANZAHL Knoten online, Quorum $LQ"
+[ "$LK" = "$ANZAHL" ] || abbruch "Selbstprüfung: Pacemaker kennt $LK Knoten, erwartet $ANZAHL"
+[ "$LN" = "$NAMEN_SOLL" ] || abbruch "Selbstprüfung: online sind $LN, erwartet $NAMEN_SOLL"
+st=$(stimmen); [ "$st" = "$ANZAHL/$ANZAHL" ] || abbruch "Selbstprüfung: Quorum-Stimmen '$st', erwartet $ANZAHL/$ANZAHL"
+[ "$LS" = 1 ] || abbruch "Selbstprüfung: stonith-enabled ist nicht true"
+ss=$(sbd_status); n=$(sbd_zahl "$ss" 3)
+[ "$n" = "$ANZAHL" ] || abbruch "Selbstprüfung: SBD läuft auf $n/$ANZAHL Knoten: $(kurz "$ss")"
+sbd_soll || abbruch "Selbstprüfung: SBD weicht ab: $SBD_ABW"
+systemctl is-active --quiet sbd || abbruch "Selbstprüfung: sbd läuft auf $ICH nicht"
+hw=$(eigenschaft have-watchdog); [ "$hw" = true ] || abbruch "Selbstprüfung: have-watchdog ist '§{hw:-nicht gesetzt}', erwartet true (SBD mit Watchdog aktiv)"
+swt=$(sekunden "$(eigenschaft stonith-watchdog-timeout)"); [ "$swt" = "$STONITH_T" ] || abbruch "Selbstprüfung: stonith-watchdog-timeout ist '$swt', erwartet $STONITH_T"
+nq=$(eigenschaft no-quorum-policy); [ "$nq" != ignore ] || abbruch "Selbstprüfung: no-quorum-policy=ignore widerspricht dem Dreierquorum — nicht automatisch geändert"
+[ "$(konf_art "$(cat "$COROSYNC_CONF" 2>/dev/null || true)")" = alfred ] || abbruch "Selbstprüfung: $COROSYNC_CONF auf $ICH beschreibt nicht $CLUSTER mit $KNOTEN_SOLL"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"cluster\":\"$CLUSTER\",\"ausgefuehrtAuf\":\"$ICH\",\"knoten\":$KNOTEN_JSON,\"online\":$LO,\"quorum\":\"$st\",\"stonith\":true,\"sbd\":\"$n/$ANZAHL\",\"sbdTimeoutS\":$SBD_T,\"stonithWatchdogTimeoutS\":$STONITH_T,\"haveWatchdog\":true,\"noQuorumPolicy\":$(printf '%s' "§{nq:-stop}" | json_text),\"aenderungen\":[$AJ]}"`);
+
+const CLUSTER_ENTFERNEN_KOERPER = sh(String.raw`kennwort_lesen
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+knoten_pruefen
+command -v pcs >/dev/null 2>&1 || abbruch "pcs fehlt auf $ICH — nichts geändert"
+KONF=''; if [ -f "$COROSYNC_CONF" ]; then KONF=$(cat "$COROSYNC_CONF"); fi
+ART=$(konf_art "$KONF")
+case "$ART" in
+  leer|debian|alfred) ;;
+  *) abbruch "auf $ICH ist ein anderer Cluster eingerichtet: §{ART#fremd:} — cluster_entfernen entfernt nur $CLUSTER mit $KNOTEN_SOLL; nichts geändert" ;;
+esac
+if [ "$ART" = alfred ]; then
+  lage
+  if [ "$LO" -gt 0 ]; then RES=$LR; else RES=$(cib_ressourcen); fi
+  [ "$RES" = 0 ] || abbruch "Cluster $CLUSTER trägt $RES Ressourcen — vorher die Ressourcen (Verfügbarkeitsgruppe) entfernen; nichts geändert"
+fi
+# ── Phase 2 ──
+if ! pcsd_online; then anmelden; aend pcs-anmeldung; fi
+if [ "$ART" = alfred ]; then
+  # erst sauber stoppen (Pacemaker beendet sich geordnet → SBD setzt keinen Knoten zurück), dann SBD aus, dann entfernen
+  if [ "$LO" -gt 0 ] || systemctl is-active --quiet pacemaker || systemctl is-active --quiet corosync; then
+    aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
+    aend cluster-gestoppt
+  fi
+  aus=$(pcs stonith sbd disable 2>&1) || abbruch "pcs stonith sbd disable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+  aend sbd-aus
+  # pcs 0.11 fragt vor destroy nach; --force ersetzt nur diese Rückfrage
+  aus=$(pcs cluster destroy --all --force 2>&1) || abbruch "pcs cluster destroy --all fehlgeschlagen: $(kurz "$aus")"
+  aend cluster-entfernt
+fi
+# ── Selbstprüfung (auch bei „schon“): $CLUSTER auf keinem Knoten mehr, Cluster-Dienste hier aus ──
+if [ -f "$COROSYNC_CONF" ] && [ "$(konf_name "$(cat "$COROSYNC_CONF")")" = "$CLUSTER" ]; then abbruch "Selbstprüfung: $COROSYNC_CONF auf $ICH beschreibt noch $CLUSTER"; fi
+for d in pacemaker corosync sbd; do
+  ! systemctl is-active --quiet "$d" || abbruch "Selbstprüfung: $d läuft auf $ICH noch"
+  ! systemctl is-enabled --quiet "$d" || abbruch "Selbstprüfung: $d ist auf $ICH noch aktiviert"
+done
+REST=''
+for k in "§{KNOTEN_NAME[@]}"; do
+  [ "$k" != "$ICH" ] || continue
+  if t=$(pcs cluster corosync "$k" 2>/dev/null) && [ "$(konf_name "$t")" = "$CLUSTER" ]; then REST+=" $k"; fi
+done
+[ -z "$REST" ] || abbruch "Selbstprüfung: auf$REST liegt noch die corosync.conf von $CLUSTER (Teilstand) — dort pcs cluster destroy"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"cluster\":\"$CLUSTER\",\"ausgefuehrtAuf\":\"$ICH\",\"knoten\":$KNOTEN_JSON,\"aenderungen\":[$AJ]}"`);
+
+function clusterKopf(baustein: string, p: Record<string, unknown>, knoten: readonly HaKnoten[], cluster: string): string[] {
+  const k = knoten.map(x => ({ name: x.name, ip: x.ip }));
+  const sortiert = [...k].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return [
+    ...sqlKopf(baustein, p, 'ALFRED-HA'),
+    `CLUSTER=${shQ(cluster)}`,
+    `KNOTEN_NAME=(${k.map(x => shQ(x.name)).join(' ')})`,
+    `KNOTEN_IP=(${k.map(x => shQ(x.ip)).join(' ')})`,
+    // pcs host auth / cluster setup: „<name> addr=<ip>“ — Corosync knet und pcsd nur über die festen Adressen (keine Namensauflösung)
+    `KNOTEN_ADDR=(${k.map(x => `${shQ(x.name)} ${shQ(`addr=${x.ip}`)}`).join(' ')})`,
+    `KNOTEN_SOLL=${shQ(sortiert.map(x => `${x.name}=${x.ip}`).join(' '))}`,
+    `NAMEN_SOLL=${shQ(sortiert.map(x => x.name).join(','))}`,
+    `KNOTEN_JSON=${shQ(JSON.stringify(k.map(x => x.name)))}`,
+    `ANZAHL=${k.length}`,
+    `PY_CRM_LAGE=${shQ(PY_CRM_LAGE)}`,
+    ...CLUSTER_PFADE,
+    KONF_HILFEN,
+    CLUSTER_HILFEN,
+  ];
+}
+
+/**
+ * Pacemaker-Cluster mit diskless SBD, auf EINEM Knoten (zugang) ausgeführt: pcs host auth (hacluster aus stdin) an allen Knoten,
+ * pcs cluster setup <cluster> … transport knet, pcs stonith sbd enable watchdog=/dev/watchdog SBD_WATCHDOG_TIMEOUT=<n> (diskless, kein
+ * sbd create), Cluster auf allen aktivieren und starten, stonith-watchdog-timeout=<m>, stonith-enabled=true. Idempotent: derselbe Cluster
+ * mit denselben Knoten → nur Abweichungen beheben (`schon`, wenn keine); ein anderer Cluster → Abbruch ohne Änderung. Selbstprüfung:
+ * alle Knoten online, Quorum n/n, sbd läuft und ist aktiviert auf allen, have-watchdog=true. Rückweg: ha.cluster_entfernen.
+ * Zeit: LINUX_HA_ZEIT_MS.cluster
+ */
+export function haClusterSkript(p: HaClusterParameter): string {
+  pruefe(pruefeHaCluster(p));
+  const v = HA_VERSIONEN;
+  const pakete = HA_PAKETE.filter(([s]) => s === 'pacemaker' || s === 'corosync' || s === 'pcs' || s === 'sbd');
+  return [
+    ...clusterKopf(LINUX_HA_BAUSTEINE.cluster, { cluster: p.cluster, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), sbd_timeout_s: p.sbd_timeout_s, stonith_timeout_s: p.stonith_timeout_s }, p.knoten, p.cluster),
+    `SBD_T=${p.sbd_timeout_s}`,
+    `STONITH_T=${p.stonith_timeout_s}`,
+    `PAKETE=(${pakete.map(([s, n]) => shQ(`${n}=${v[s]}`)).join(' ')})`,
+    '# ALFRED-ABLAUF',
+    CLUSTER_ANLEGEN_KOERPER,
+  ].join('\n');
+}
+
+/**
+ * Rückweg von cluster_anlegen: Cluster sauber stoppen (pcs cluster stop --all), SBD aus (pcs stonith sbd disable), pcs cluster destroy
+ * --all. Nur für <cluster> mit genau diesen Knoten und ohne Ressourcen; ein anderer Cluster → Abbruch ohne Änderung. Zeit:
+ * LINUX_HA_ZEIT_MS.clusterEntfernen
+ */
+export function haClusterEntfernenSkript(p: HaClusterEntfernenParameter): string {
+  pruefe(pruefeHaClusterEntfernen(p));
+  return [
+    ...clusterKopf(LINUX_HA_BAUSTEINE.clusterEntfernen, { cluster: p.cluster, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })) }, p.knoten, p.cluster),
+    '# ALFRED-ABLAUF',
+    CLUSTER_ENTFERNEN_KOERPER,
   ].join('\n');
 }
 
@@ -540,6 +936,30 @@ export const PY_HA_STATUS = [
   'r["sql1433Zusatz"] = re.findall(r"\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b", t.split("elements", 1)[1]) if c == 0 and "elements" in t else []',
   'r["runtimeWatchdog"] = lauf("systemctl", "show", "-p", "RuntimeWatchdogUSec", "--value")[1] or None',
   'r["pcsd"] = lauf("systemctl", "is-active", "pcsd")[1] or "unbekannt"',
+  // Task 3: Cluster — corosync.conf (Name, Knoten), crm_mon-XML, SBD je Knoten (pcs stonith sbd status), stonith-watchdog-timeout
+  PY_CLUSTER_FUNK,
+  String.raw`cl = {}
+kt = lies("/etc/corosync/corosync.conf")
+if not kt:
+    cl["art"] = "keiner"
+else:
+    nm, kn = konf(kt)
+    if nm == "debian" and all((x["ip"] or "").startswith("127.") for x in kn):
+        cl["art"] = "debian"
+    else:
+        cl.update({"art": "eingerichtet", "name": nm, "knoten": kn, "crm": None, "sbd": None})
+        c, x = lauf("crm_mon", "-1", "--output-as=xml")
+        if c == 0:
+            try:
+                cl["crm"] = crm_lage(x)
+            except Exception:
+                cl["crm"] = None
+        c, t = lauf("pcs", "stonith", "sbd", "status")
+        if c == 0:
+            cl["sbd"] = sbd_lesen(t)
+        c, v = lauf("crm_attribute", "-t", "crm_config", "-n", "stonith-watchdog-timeout", "-G", "-q")
+        cl["stonithWatchdogTimeout"] = v if c == 0 and v else None
+r["cluster"] = cl`,
   'print("ALFRED-HA " + json.dumps(r))',
 ].join('\n');
 
@@ -557,3 +977,5 @@ export function haStatusSkript(): string {
 
 registriereLinuxBaustein<HaVorbereitenParameter>(LINUX_HA_BAUSTEINE.vorbereiten, haVorbereitenSkript);
 registriereLinuxBaustein(LINUX_HA_BAUSTEINE.status, () => haStatusSkript());
+registriereLinuxBaustein<HaClusterParameter>(LINUX_HA_BAUSTEINE.cluster, haClusterSkript);
+registriereLinuxBaustein<HaClusterEntfernenParameter>(LINUX_HA_BAUSTEINE.clusterEntfernen, haClusterEntfernenSkript);

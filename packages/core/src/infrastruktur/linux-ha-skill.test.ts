@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinuxHaSkill, linuxHaStatusText, LINUX_HA_MIN_ZEITLIMIT_S, type LinuxHaStatus } from './linux-ha-skill.js';
+import { LinuxHaSkill, linuxHaStatusText, clusterText, LINUX_HA_MIN_ZEITLIMIT_S, type LinuxHaStatus, type LinuxHaCluster } from './linux-ha-skill.js';
 import { LinuxSqlSkill } from './linux-sql-skill.js';
 import { LINUX_HA_BAUSTEINE, HA_KNOTEN, HA_VERSIONEN, HA_HACLUSTER_TRESOR } from './linux-ha.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
@@ -36,6 +36,12 @@ const STATUS_OK: LinuxHaStatus = {
   zustand: 'gelesen', watchdog: [{ geraet: 'watchdog0', kennung: 'i6300ESB timer', treiber: 'i6300esb' }], pciEsb: true, halter: [],
   pakete: { ...Object.fromEntries(Object.entries(SOLL).map(([k, v]) => [k, { version: v, gehalten: true }])), 'linux-modules-extra-6.8.0-147-generic': { version: '6.8.0-147.147', gehalten: false } },
   soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', pcsd: 'active', sql1433Zusatz: ['192.168.1.223'],
+  cluster: { art: 'keiner' },
+};
+const CLUSTER_OK: LinuxHaCluster = {
+  art: 'eingerichtet', name: 'sqllnxcl01', knoten: HA_KNOTEN.map(k => ({ ...k })),
+  crm: { knoten: 3, online: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], quorum: true, stonith: true, ressourcen: 0 },
+  sbd: Object.fromEntries(HA_KNOTEN.map(k => [k.name, { installiert: true, aktiviert: true, laeuft: true }])), stonithWatchdogTimeout: '20',
 };
 const OK = { zustand: 'geaendert', knoten: 'sqllnx02', rolle: 'daten', watchdog: 'i6300ESB timer', pakete: SOLL, hadr: true, firewall: 'aktiv', pcsd: 'aktiv', neustartSql: true, aenderungen: ['pakete', 'hadr'] };
 
@@ -49,7 +55,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(s.success, s.error).toBe(true);
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.status, parameter: {}, timeoutMs: 90_000 });
     expect(w.aufrufe[0]!.eingabe).toBeUndefined();
-    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv');
+    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; pcsd aktiv; Cluster nicht eingerichtet');
     expect((await w.skill.execute({ action: 'loeschen', zugang: 'sqllnx02' }, imChange)).error).toContain('Unbekannte Aktion');
   });
 
@@ -63,12 +69,13 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(v({ pakete: { ...STATUS_OK.pakete, pcs: { version: '0.11.8-1', gehalten: true }, sbd: { version: null, gehalten: false }, corosync: { version: SOLL.corosync, gehalten: false } } }))
       .toContain('Pakete abweichend: corosync nicht gehalten, pcs 0.11.8-1 (soll 0.11.7-1ubuntu1.1), sbd fehlt');
     expect(v({ hadr: null, hosts: false, runtimeWatchdog: '10s', pcsd: 'inactive', firewall: { tabelle: false, dienst: 'inactive', aktiviert: 'disabled' } }))
-      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); pcsd inactive');
+      .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); pcsd inactive; Cluster nicht eingerichtet');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');
     expect(v({ sql1433Zusatz: [] })).toContain('Firewall alfred_ha aktiv (1433: Knoten);');
     const vorlage = FESTE_AUSGABEN['linux_ha.status']!;
     const muster = new RegExp(`^${vorlage.split(' | ')[0]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
-    for (const t of [v({}), v({ watchdog: [], pciEsb: false, hadr: '0', hosts: false })]) expect(t).toMatch(muster);
+    for (const t of [v({}), v({ watchdog: [], pciEsb: false, hadr: '0', hosts: false }), v({ cluster: CLUSTER_OK }), v({ cluster: undefined })]) expect(t).toMatch(muster);
+    expect(vorlage).toContain(clusterText(CLUSTER_OK));
     for (const e of ['Watchdog i6300esb frei', 'Watchdog i6300esb bei sbd', 'Pakete fest', 'HADR an', 'Firewall alfred_ha aktiv', 'hosts-Block vorhanden', 'RuntimeWatchdog aus', 'pcsd aktiv']) expect(vorlage).toContain(e);
   });
 
@@ -176,6 +183,102 @@ describe('I8e Paket 2 — Change „sqllnx02 aufbauen“', () => {
     const f = pruefeChangePlan(plan([provision, ...paket1, { ...vorbereiten, zeitlimitS: 600, pruefung: haStatus('Cluster läuft prima') }], NEU), ctx).fehler;
     expect(f.some(x => x.includes('zeitlimitS 600 zu klein für linux_ha.ha_vorbereiten'))).toBe(true);
     expect(f.some(x => x.includes('linux_ha.status') && x.includes('kommt in der Antwort'))).toBe(true);
+  });
+});
+
+// ── Task 3: Cluster ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+describe('I8e Paket 2 Task 3 — Skill linux_ha: Cluster', () => {
+  const KW = 'Hk-Tresor-Wert-77';
+  const CL_OK = { zustand: 'geaendert', cluster: 'sqllnxcl01', ausgefuehrtAuf: 'sqllnx01', knoten: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], online: 3, quorum: '3/3', stonith: true, sbd: '3/3', sbdTimeoutS: 10, stonithWatchdogTimeoutS: 20, haveWatchdog: true, aenderungen: ['pcs-anmeldung', 'cluster-angelegt'] };
+
+  it('Statustext Cluster: fester Wortlaut wie im Brief, Abweichungen lesbar', () => {
+    expect(clusterText(CLUSTER_OK)).toBe('Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s');
+    expect(clusterText({ ...CLUSTER_OK, stonithWatchdogTimeout: '20s' })).toContain('stonith-watchdog-timeout 20s');
+    expect(clusterText({ ...CLUSTER_OK, stonithWatchdogTimeout: null })).toContain('stonith-watchdog-timeout nicht gesetzt');
+    expect(clusterText({ ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, online: ['sqllnx01', 'sqllnx02'], quorum: false, stonith: false }, sbd: { sqllnx01: { installiert: true, aktiviert: true, laeuft: true } } }))
+      .toBe('Cluster sqllnxcl01: 2/3 online, Quorum nein, STONITH aus, SBD aktiv 1/3, stonith-watchdog-timeout 20s');
+    expect(clusterText({ ...CLUSTER_OK, crm: null })).toBe('Cluster sqllnxcl01: Pacemaker hier nicht aktiv (3 Knoten konfiguriert)');
+    expect(clusterText({ ...CLUSTER_OK, sbd: null })).toContain('SBD unbekannt');
+    expect(clusterText({ art: 'keiner' })).toBe('Cluster nicht eingerichtet');
+    expect(clusterText({ art: 'debian' })).toBe('Cluster nicht eingerichtet (Debian-Standardkonfiguration)');
+    expect(clusterText(undefined)).toBe('Cluster unbekannt');
+    expect(linuxHaStatusText('sqllnx01', { ...STATUS_OK, cluster: CLUSTER_OK })).toMatch(/; pcsd aktiv; Cluster sqllnxcl01: 3\/3 online, Quorum ja, STONITH an, SBD aktiv 3\/3, stonith-watchdog-timeout 20s$/);
+  });
+
+  it('cluster_anlegen nur im Change; ohne Tresor-Eintrag kein Fernaufruf; Kennwort nur über stdin, nie in Parametern/Zweck/Ergebnis', async () => {
+    const ohne = welt({ [LINUX_HA_BAUSTEINE.cluster]: [CL_OK] });
+    expect((await ohne.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01' }, {} as never)).error).toContain('nur als Schritt eines freigegebenen Changes');
+    const r0 = await ohne.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01' }, imChange);
+    expect(r0.error).toContain('vorher ha_vorbereiten');
+    expect(ohne.aufrufe).toEqual([]);
+    expect(ohne.gesetzt).toEqual([]);
+    const w = welt({ [LINUX_HA_BAUSTEINE.cluster]: [CL_OK, { ...CL_OK, zustand: 'schon', aenderungen: [] }] }, { [HA_HACLUSTER_TRESOR]: KW });
+    const r = await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(w.aufrufe[0]).toMatchObject({ zugang: 'sqllnx01', baustein: LINUX_HA_BAUSTEINE.cluster, timeoutMs: 900_000,
+      parameter: { cluster: 'sqllnxcl01', knoten: HA_KNOTEN, sbd_timeout_s: 10, stonith_timeout_s: 20 } });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ hacluster: KW });
+    expect(r.display).toBe('✅ Cluster sqllnxcl01 (sqllnx01, sqllnx02, sqllnxcfg, ausgeführt auf sqllnx01): 3/3 online, Quorum 3/3, STONITH an, SBD diskless (Watchdog /dev/watchdog, SBD_WATCHDOG_TIMEOUT 10 s) aktiv 3/3, stonith-watchdog-timeout 20 s, have-watchdog true — geändert: pcs-anmeldung, cluster-angelegt');
+    const r2 = await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx02', knoten: ['sqllnxcfg', 'sqllnx02', 'sqllnx01'] }, imChange);
+    expect(r2.display).toContain('nichts zu tun');
+    // Reihenfolge immer wie HA_KNOTEN (nodeid stabil)
+    expect((w.aufrufe[1]!.parameter as { knoten: unknown }).knoten).toEqual(HA_KNOTEN);
+    for (const a of w.aufrufe) { expect(JSON.stringify(a.parameter)).not.toContain(KW); expect(a.zweck).not.toContain(KW); }
+    expect(JSON.stringify([r, r2])).not.toContain(KW);
+    expect(w.gesetzt).toEqual([]);
+  });
+
+  it('Parameter: Validator stonith ≥ 2 × sbd, nur die festen Knoten, Zahlen als Text erlaubt — Fehler vor jedem Fernaufruf; Meldungen geschwärzt', async () => {
+    const w = welt({}, { [HA_HACLUSTER_TRESOR]: KW });
+    expect((await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01', stonith_timeout_s: 19 }, imChange)).error).toContain('mindestens 2 × sbd_timeout_s sein (20)');
+    expect((await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01', knoten: ['sqllnx01', 'sqllnx02', 'sqllnx09'] }, imChange)).error).toContain('knoten: nur sqllnx01, sqllnx02, sqllnxcfg');
+    expect((await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01', knoten: ['sqllnx01', 'sqllnx02'] }, imChange)).error).toContain('genau die drei Knoten');
+    expect((await w.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01', knoten: [{ name: 'sqllnx01', ip: '10.0.0.1' }, 'sqllnx02', 'sqllnxcfg'] }, imChange)).error).toContain('feste IP 10.203.30.10');
+    expect((await w.skill.execute({ action: 'cluster_entfernen', zugang: 'sqllnx01', cluster: 'Debian!' }, imChange)).error).toContain('cluster:');
+    expect(w.aufrufe).toEqual([]);
+    expect(w.skill.pruefeEingabe({ action: 'cluster_anlegen', zugang: 'sqllnx01', sbd_timeout_s: '15', stonith_timeout_s: '30' })).toBeUndefined();
+    expect(w.skill.pruefeEingabe({ action: 'cluster_anlegen', zugang: 'sqllnx01', sbd_timeout_s: 15 })).toContain('(30)');
+    expect(w.skill.mindestZeitlimitS('cluster_anlegen')).toBe(960);
+    expect(w.skill.mindestZeitlimitS('cluster_entfernen')).toBe(660);
+    const g = welt({ [LINUX_HA_BAUSTEINE.cluster]: [{ code: 1, stdout: `ALFRED-HA {"zustand":"fehler","fehler":"pcs host auth (hacluster) fehlgeschlagen: ${KW} abgelehnt"}` }] }, { [HA_HACLUSTER_TRESOR]: KW });
+    const e = await g.skill.execute({ action: 'cluster_anlegen', zugang: 'sqllnx01' }, imChange);
+    expect(e.error).toContain('[geschwärzt] abgelehnt');
+    expect(e.error).not.toContain(KW);
+  });
+
+  it('cluster_entfernen: Tresor-Kennwort über stdin, fester Text, „nichts zu tun“ beim zweiten Lauf', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.clusterEntfernen]: [{ zustand: 'geaendert', cluster: 'sqllnxcl01', aenderungen: ['cluster-gestoppt', 'sbd-aus', 'cluster-entfernt'] }, { zustand: 'schon', aenderungen: [] }] }, { [HA_HACLUSTER_TRESOR]: KW });
+    const r = await w.skill.execute({ action: 'cluster_entfernen', zugang: 'sqllnx01', cluster: 'sqllnxcl01' }, imChange);
+    expect(r.display).toBe('✅ Cluster sqllnxcl01 auf sqllnx01, sqllnx02, sqllnxcfg entfernt (SBD aus, Cluster-Dienste aus, keine corosync.conf von sqllnxcl01 mehr) — geändert: cluster-gestoppt, sbd-aus, cluster-entfernt');
+    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.clusterEntfernen, timeoutMs: 600_000, parameter: { cluster: 'sqllnxcl01', knoten: HA_KNOTEN } });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ hacluster: KW });
+    expect((await w.skill.execute({ action: 'cluster_entfernen', zugang: 'sqllnx01' }, imChange)).display).toContain('nichts zu tun');
+  });
+});
+
+describe('I8e Paket 2 Task 3 — Change „Cluster sqllnxcl01 anlegen“', () => {
+  const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+  const proxmox = { metadata: { name: 'proxmox', inputSchema: { type: 'object', properties: {
+    action: { type: 'string', enum: ['provision_vm', 'create_snapshot', 'rollback_snapshot'] }, vmid: { type: 'number' }, node: { type: 'string' }, name: { type: 'string' },
+  }, required: ['action'] } } };
+  const ctx = { skill: (n: string) => (n === 'linux_ha' ? ha : n === 'proxmox' ? proxmox : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+  const anlegen = { titel: 'Cluster anlegen', art: 'aktion', skill: 'linux_ha', aktion: 'cluster_anlegen', parameter: { zugang: 'sqllnx01' }, zeitlimitS: 1000,
+    rueckweg: { skill: 'linux_ha', aktion: 'cluster_entfernen', parameter: { zugang: 'sqllnx01', cluster: 'sqllnxcl01' } } };
+  const status = { titel: 'Cluster prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_ha', aktion: 'status', parameter: { zugang: 'sqllnx02' }, erwartet: '3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3' } };
+  const plan = (schritte: unknown[]) => ({ titel: 'Cluster sqllnxcl01 anlegen', begruendung: 'I8e Paket 2 Task 3', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['sqllnx01', 'sqllnx02', 'sqllnxcfg'], schritte, ohneSicherungGrund: 'Cluster-Anlage hat einen eigenen Rückweg (cluster_entfernen)' });
+
+  it('cluster_anlegen mit Rückweg cluster_entfernen, ohne eigene Prüfung (prüft sich selbst), Status-Prüfung mit festem Wortlaut: 0 Fehler', () => {
+    expect(aktionsArt('linux_ha', 'cluster_anlegen')).toBe('aendern');
+    expect(aktionsArt('linux_ha', 'cluster_entfernen')).toBe('aendern');
+    expect(pruefeChangePlan(plan([anlegen, status]), ctx).fehler).toEqual([]);
+  });
+  it('ohne Rückweg abgewiesen — auch mit ohneSicherungGrund; zu kleines zeitlimitS und ungültige Zeitwerte schon beim Planen', () => {
+    const f = pruefeChangePlan(plan([{ ...anlegen, rueckweg: { keiner: 'Neuaufbau' } }]), ctx).fehler;
+    expect(f.some(x => x.startsWith('Schritt 1:') && x.includes('braucht immer einen Rückweg — rueckweg linux_ha.cluster_entfernen'))).toBe(true);
+    const z = pruefeChangePlan(plan([{ ...anlegen, zeitlimitS: 600, parameter: { zugang: 'sqllnx01', stonith_timeout_s: 15 } }]), ctx).fehler;
+    expect(z.some(x => x.includes('zeitlimitS 600 zu klein für linux_ha.cluster_anlegen'))).toBe(true);
+    expect(z.some(x => x.includes('mindestens 2 × sbd_timeout_s'))).toBe(true);
+    expect(pruefeChangePlan(plan([anlegen, { ...status, pruefung: { ...status.pruefung, erwartet: 'Cluster läuft super' } }]), ctx).fehler.some(x => x.includes('kommt in der Antwort'))).toBe(true);
   });
 });
 

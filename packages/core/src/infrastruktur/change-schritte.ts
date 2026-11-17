@@ -66,8 +66,10 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     // Fix-Welle M-9: positives Stück nur je Datenbank („pruefdb01: vollständig auf fs01“); „~“ = nur als ganzes Muster, nie als Teilstück
     + ' | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | ~{db}: vollständig auf fs01',
   // I8e Paket 2 — Wortlaut aus linuxHaStatusText (linux-ha-skill.ts); positive Stücke einzeln prüfbar
-  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}'
-    + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv',
+  // Task 3: „; Cluster …“ am Ende (clusterText) — positive Form als ganzes Stück (Teilstücke wie „Quorum ja“ zulässig)
+  'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; pcsd {pcsd}; Cluster {cluster}'
+    + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | pcsd aktiv'
+    + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
@@ -169,7 +171,16 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
-  linux_ha: new Set(['ha_vorbereiten']),
+  // Task 3 — Cluster: alle Knoten online, Quorum n/n, sbd läuft/aktiviert, have-watchdog, Eigenschaften; Entfernen: keine corosync.conf
+  // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
+  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen']),
+};
+/**
+ * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
+ * Knoten (auch das bestehende sqllnx01) — Rückweg linux_ha.cluster_entfernen.
+ */
+const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, string>>> = {
+  linux_ha: new Map([['cluster_anlegen', 'linux_ha.cluster_entfernen (zugang, cluster)']]),
 };
 const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
 /**
@@ -596,7 +607,10 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
           const entfernen = plan.zweck === 'stilllegung' && schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && STILLLEGUNG_ENTFERNEN.test(bef);
           if (schritt.skill === 'fernzugriff' && /--destroy-unreferenced-disks/.test(bef)) f.push(`${wo}: --destroy-unreferenced-disks löscht auch gleichnamige Disks auf geteilten Speichern (andere Hosts/Cluster) — nur die Volumes der Gast-Konfiguration löschen (qm/pct destroy <id> --purge)`);
           const einweg = schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && einwegBefehl(bef);
-          if (OHNE_RUECKWEG_JE_SKILL[schritt.skill]?.has(schritt.aktion)) {
+          const pflicht = RUECKWEG_PFLICHT_JE_SKILL[schritt.skill ?? '']?.get(schritt.aktion ?? '');
+          if (pflicht) {
+            f.push(`${wo}: ${schritt.skill}.${schritt.aktion} braucht immer einen Rückweg — rueckweg ${pflicht}`);
+          } else if (OHNE_RUECKWEG_JE_SKILL[schritt.skill]?.has(schritt.aktion)) {
             // additiv bzw. ohne bleibende Wirkung — kein Rückweg nötig
           } else if (NEUAUFBAU_SKILLS.has(schritt.skill)) {
             const z = txt(schritt.parameter.zugang).toLowerCase();
