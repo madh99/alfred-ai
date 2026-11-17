@@ -1237,6 +1237,7 @@ export class MessagePipeline {
           }
         }
         if (role) {
+          baseContext.werkzeugRolle = role; // Hilfe zeigt dieselbe Rolle wie dieser Filter (help.ts hilfeRolle)
           const allowed = this.roleSkillAccess[role];
           if (allowed && allowed !== '*') {
             const allowedSet = new Set(allowed);

@@ -73,6 +73,9 @@ export interface SkillContext {
   timezone?: string;
   /** Alfred user role (admin/user/family/guest). Undefined = unregistered. */
   userRole?: string;
+  /** Rolle, nach der die Pipeline die Werkzeugliste gefiltert hat (inkl. Owner-Fallback „admin“). Nur für die Anzeige der
+   *  Hilfe — Zugriffsprüfungen in Skills bleiben bei userRole/alfredUserId. */
+  werkzeugRolle?: string;
   /** Alfred user ID (internal UUID from alfred_users table). */
   alfredUserId?: string;
   /** Resolver for per-user service configs (email, bmw, calendar etc.). */

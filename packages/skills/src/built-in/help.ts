@@ -21,6 +21,14 @@ const RISK_LABELS: Record<string, string> = {
   critical: 'Kritisch',
 };
 
+/**
+ * Rolle für die Hilfe: dieselbe, nach der die Pipeline die Werkzeugliste filtert (inkl. Owner-Fallback „admin“ ohne
+ * alfred_users-Eintrag). Realfall 10.–17.11.: help sah den Owner im API-Faden als „guest“ und wies Skills ab, die er benutzen darf.
+ */
+export function hilfeRolle(context: SkillContext): string {
+  return context.werkzeugRolle ?? context.userRole ?? 'guest';
+}
+
 export class HelpSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'help',
@@ -76,7 +84,7 @@ export class HelpSkill extends Skill {
 
   private getAccessibleSkills(context: SkillContext): Skill[] {
     const all = this.registry.getAll();
-    const role = context.userRole ?? 'guest';
+    const role = hilfeRolle(context);
 
     if (!this.roleAccess) return all;
 
@@ -89,7 +97,7 @@ export class HelpSkill extends Skill {
 
   private overview(context: SkillContext): SkillResult {
     const skills = this.getAccessibleSkills(context);
-    const role = context.userRole ?? 'guest';
+    const role = hilfeRolle(context);
 
     // Group by category
     const groups = new Map<string, Skill[]>();
