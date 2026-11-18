@@ -2014,11 +2014,11 @@ const dbTabelle = (dbs: readonly string[]) => `DECLARE @dbs TABLE (n sysname); I
 const dbBereitschaft = (ag: string, dbs: readonly string[], nr: number): string[] => [
   dbTabelle(dbs),
   "SELECT @f += N' ' + d.n + N' fehlt;' FROM @dbs d WHERE DB_ID(d.n) IS NULL;",
-  "SELECT @f += N' ' + d.n + N' ist ' + s.state_desc + N';' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.state_desc <> N'ONLINE';",
-  "SELECT @f += N' ' + d.n + N' hat Wiederherstellungsmodell ' + s.recovery_model_desc + N' (erwartet FULL);' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.recovery_model_desc <> N'FULL';",
+  "SELECT @f += N' ' + d.n + N' ist ' + s.state_desc COLLATE DATABASE_DEFAULT + N';' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.state_desc <> N'ONLINE';",
+  "SELECT @f += N' ' + d.n + N' hat Wiederherstellungsmodell ' + s.recovery_model_desc COLLATE DATABASE_DEFAULT + N' (erwartet FULL);' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.recovery_model_desc <> N'FULL';",
   // Log-Kette begonnen = mindestens eine FULL-Sicherung im Modell FULL (sonst kein automatisches Seeding)
   "SELECT @f += N' ' + d.n + N' ohne FULL-Sicherung (Log-Kette nicht begonnen);' FROM @dbs d JOIN sys.database_recovery_status r ON r.database_id = DB_ID(d.n) WHERE r.last_log_backup_lsn IS NULL;",
-  `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
+  `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name COLLATE DATABASE_DEFAULT + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
   `IF @f <> N'' BEGIN SET @m = N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW ${nr}, @m, 1; END`,
 ];
 /**
@@ -2123,7 +2123,7 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
         `IF EXISTS (SELECT 1 FROM sys.databases s LEFT JOIN sys.availability_replicas r ON r.replica_id = s.replica_id LEFT JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE s.name = N'${d}' AND s.replica_id IS NOT NULL AND ISNULL(g.name, N'') <> N'${ag}')`,
         `  BEGIN SELECT TOP 1 @m = N'${d} gehört auf ${ich} zur Verfügbarkeitsgruppe ' + ISNULL(g.name, N'?') + N'; nichts geändert' FROM sys.databases s LEFT JOIN sys.availability_replicas r ON r.replica_id = s.replica_id LEFT JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE s.name = N'${d}'; THROW 50212, @m, 1; END`,
         `IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'${d}' AND replica_id IS NULL AND state_desc <> N'RESTORING')`,
-        `  BEGIN SELECT TOP 1 @m = N'${d} besteht auf ${ich} als ' + state_desc + N' außerhalb der AG - nie still gelöscht; nichts geändert' FROM sys.databases WHERE name = N'${d}'; THROW 50213, @m, 1; END`,
+        `  BEGIN SELECT TOP 1 @m = N'${d} besteht auf ${ich} als ' + state_desc COLLATE DATABASE_DEFAULT + N' außerhalb der AG - nie still gelöscht; nichts geändert' FROM sys.databases WHERE name = N'${d}'; THROW 50213, @m, 1; END`,
       ]) : []),
     ]),
     "SELECT 'ALFRED|ok';",
@@ -2273,7 +2273,7 @@ function tsqlEntfernen(p: HaAgEntfernenParameter): Record<'lage' | 'waisen' | 'd
       `SELECT 'ALFRED|' + CAST((SELECT COUNT(*) FROM sys.availability_groups WHERE name = N'${ag}') + (SELECT COUNT(*) FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}')`,
       `  + (SELECT COUNT(*) FROM sys.certificates WHERE name LIKE N'alfred[_]ag[_]%') + (SELECT COUNT(*) FROM sys.database_principals WHERE name LIKE N'alfred[_]ag[_]%')`,
       `  + (SELECT COUNT(*) FROM sys.server_principals WHERE name = N'${PML}' OR name LIKE N'alfred[_]ag[_]%') AS varchar(10)) + '|'`,
-      "  + ISNULL((SELECT STRING_AGG(CAST(name + N'=' + state_desc AS varchar(300)), ',') WITHIN GROUP (ORDER BY name) FROM sys.databases WHERE name IN (@@DBS@@)), '-');",
+      "  + ISNULL((SELECT STRING_AGG(CAST(name COLLATE DATABASE_DEFAULT + N'=' + state_desc COLLATE DATABASE_DEFAULT AS varchar(300)), ',') WITHIN GROUP (ORDER BY name) FROM sys.databases WHERE name IN (@@DBS@@)), '-');",
     ].join('\n'),
   };
 }

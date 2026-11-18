@@ -2234,12 +2234,20 @@ describe('I8e Paket 2 K1 — alte Sekundär-Kopie (Text, Validator)', () => {
     expect(un(haAgReplikatSkript(AG_RP('sqllnxcfg')))).not.toContain('alte Kopie');
   });
 
+  // Live-Halt c68454ed (18.11.): Msg 446 — sys.databases.name (Server-Kollation) + state_desc (Latin1_General_CI_AS_KS_WS) in en_selbst
+  it('Kollation: jede Verkettung einer Katalog-Textspalte (*_desc, Namen aus Katalogen) in den AG-Skripten trägt COLLATE DATABASE_DEFAULT', () => {
+    const alle = AG_SKRIPTE().map(un).join('\n');
+    const nackt = /(?:\+\s*(?:[a-z]+\.)?(?:state_desc|recovery_model_desc)\s*(?!COLLATE)\+)|(?:\+\s*g\.name\s*\+)|(?:CAST\(name\s*\+)/g;
+    expect(alle.match(nackt) ?? []).toEqual([]);
+    expect(alle).toContain("CAST(name COLLATE DATABASE_DEFAULT + N'=' + state_desc COLLATE DATABASE_DEFAULT AS varchar(300))");
+  });
+
   it('Sekundär rp_pruefen: andere AG und jeder Zustand außer RESTORING ohne AG → Abbruch „nie still gelöscht“', () => {
     const p = block('sqllnx02', 'pruefen');
     expect(p).toContain("N'pruefdb01 gehört auf sqllnx02 zur Verfügbarkeitsgruppe ' + ISNULL(g.name, N'?') + N'; nichts geändert'");
     expect(p).toContain("WHERE s.name = N'pruefdb01' AND s.replica_id IS NOT NULL AND ISNULL(g.name, N'') <> N'sqllnxag01'");
     expect(p).toContain("IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND replica_id IS NULL AND state_desc <> N'RESTORING')");
-    expect(p).toContain("N'pruefdb01 besteht auf sqllnx02 als ' + state_desc + N' außerhalb der AG - nie still gelöscht; nichts geändert'");
+    expect(p).toContain("N'pruefdb01 besteht auf sqllnx02 als ' + state_desc COLLATE DATABASE_DEFAULT + N' außerhalb der AG - nie still gelöscht; nichts geändert'");
     expect(p).not.toContain('DROP');
   });
 
