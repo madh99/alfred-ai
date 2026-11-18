@@ -409,6 +409,17 @@ for d in pacemaker corosync sbd; do touch "$T/svc/$d.is-enabled" "$T/svc/$d.is-a
     expect(String(b.laeufe[0]!.ergebnis?.fehler)).toContain('hacluster-Kennwort nicht prüfbar (python3 crypt, Exit 2)');
     expect(b.laeufe[0]!.log).not.toContain('chpasswd');
   });
+  // Final-Review I-1: ein Abbruch nach einer Änderung nennt sie (wie R8 bei der AG); vor jeder Änderung bleibt die Meldung ohne Liste
+  it('I-1: Abbruch nach Änderungen (Pakete installiert, dann Kennwort nicht prüfbar) → „bisher geändert: …“; Abbruch davor ohne Liste', () => {
+    const b = laeufe('echo 2 >"$T/crypt_rc"', 1).laeufe[0]!;
+    const f = String(b.ergebnis?.fehler);
+    expect(b.rc).toBe(1);
+    expect(f).toMatch(/^hacluster-Kennwort nicht prüfbar \(python3 crypt, Exit 2\) — bisher geändert: [^"]*\bpakete\b/);
+    expect(f).toContain('halten:pcs');
+    expect(b.aus.split('\n').filter(z => z.startsWith('ALFRED-HA ')).length).toBe(1);
+    const a = laeufe('touch "$T/ohne_crypt"', 1).laeufe[0]!;
+    expect(String(a.ergebnis?.fehler)).not.toContain('bisher geändert');
+  });
   it('Konfig-Knoten: gleiche Grundlage, Rolle im Ergebnis', () => {
     const w = laeufe('echo sqllnxcfg >"$T/name"; printf "127.0.0.1 localhost\\n127.0.1.1 sqllnxcfg.ad.3033.at sqllnxcfg\\n" >"$T/hosts"', 1, { ...P, rolle: 'konfig' });
     expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
@@ -575,7 +586,7 @@ for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; tou
       const p = (x: string) => join(dir, x).replace(/\\/g, '/');
       const konf = p('sbd'); const wd = p('wd'); const log = p('modprobe.log'); const fake = p('modprobe');
       // wie kmod mit Sperrliste: -b/--use-blacklist oder Alias → gesperrt; ausdrücklicher Name i6300esb → geladen, Gerät erscheint
-      writeFileSync(fake, `#!/bin/sh\necho "$*" >>"${log}"\ncase "$*" in *-b*|*--use-blacklist*|pci:*) echo "modprobe: i6300esb deny-listed" >&2; exit 1 ;; esac\n[ "$1" = i6300esb ] || exit 1\n[ -f "${p('kaputt')}" ] && exit 1\nln -sf /dev/null "${wd}"\nexit 0\n`);
+      writeFileSync(fake, `#!/bin/sh\necho "$*" >>"${log}"\ncase "$*" in *-b*|*--use-blacklist*|pci:*) echo "modprobe: i6300esb deny-listed" >&2; exit 1 ;; esac\n[ "$1" = i6300esb ] || exit 1\n[ -f "${p('kaputt')}" ] && exit 1\nln -sf /dev/null "${wd}"\nexit 0\n`, { mode: 0o755 });
       writeFileSync(konf, `SBD_WATCHDOG_DEV=${wd}\n`);
       const lauf = () => spawnSync('sh', ['-c', WARTE_WATCHDOG_SKRIPT, 'warte', konf, '2', fake], { encoding: 'utf8' });
       const geladen = lauf();
@@ -752,7 +763,7 @@ pcs() {
     "stonith sbd")
       case "$3" in
         enable) log "pcs $*"; touch "$T/sbd_en" "$T/svc/sbd.is-enabled"; echo "§{4#watchdog=}" >"$T/sbd_wd"; echo "§{5#SBD_WATCHDOG_TIMEOUT=}" >"$T/sbd_t" ;;
-        disable) log "pcs $*"; rm -f "$T/sbd_en" "$T/svc/sbd.is-enabled" ;;
+        disable) log "pcs $*"; [ ! -f "$T/sbd_aus_scheitert" ] || { echo 'Error: disable kaputt'; return 1; }; rm -f "$T/sbd_en" "$T/svc/sbd.is-enabled" ;;
         status) echo 'SBD STATUS'; echo '<node name>: <installed> | <enabled> | <running>'; local k e r; for k in $ALLE; do e=' NO'; r=' NO'; if [ -f "$T/sbd_en" ]; then e=YES; if [ -f "$T/laeuft" ]; then r=YES; fi; fi; echo "$k: YES | $e | $r"; done ;;
         config) [ -f "$T/sbd_en" ] || { echo 'Error: SBD is not enabled'; return 1; }; printf 'SBD_DELAY_START=no\nSBD_STARTMODE=always\nSBD_WATCHDOG_TIMEOUT=%s\n\nWatchdogs:\n' "$(cat "$T/sbd_t")"; local k; for k in $ALLE; do echo "  $k: $(cat "$T/sbd_wd")"; done ;;
       esac
@@ -920,6 +931,24 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 — cluster_anlegen / cluster_ent
     const a = (await cluster([ANLEGEN], 'echo 2 >"$T/online"')).laeufe[0]!;
     expect(a.rc).toBe(1);
     expect(String(a.ergebnis?.fehler)).toContain('nach dem Start 2/3 Knoten online');
+    // Final-Review I-1: der Abbruch nennt, was bis dahin geändert wurde
+    expect(String(a.ergebnis?.fehler)).toContain('Rückweg cluster_entfernen — bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert,cluster-gestartet');
+  });
+  it('I-1: cluster_anlegen — Start scheitert nach setup und SBD → „bisher geändert: …“; nur pcs-Anmeldung erneuert → ohne Liste (Text sagt es schon)', async () => {
+    const a = (await cluster([ANLEGEN], 'touch "$T/start_scheitert"')).laeufe[0]!;
+    expect(a.rc).toBe(1);
+    expect(String(a.ergebnis?.fehler)).toMatch(/^pcs cluster start --all fehlgeschlagen: .* — Rückweg cluster_entfernen — bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert$/);
+    expect(a.aus.split('\n').filter(z => z.startsWith('ALFRED-HA ')).length).toBe(1);
+    const fremd = `printf 'totem {\\n    cluster_name: altcl\\n}\\nnodelist {\\n    node {\\n        ring0_addr: 10.203.30.11\\n        name: sqllnx02\\n    }\\n}\\n' >"$T/conf/sqllnx02"`;
+    const nurAnmeldung = (await cluster([ANLEGEN], fremd)).laeufe[0]!;
+    expect(String(nurAnmeldung.ergebnis?.fehler)).toContain('am Cluster nichts geändert (nur pcs-Anmeldung erneuert)');
+    expect(String(nurAnmeldung.ergebnis?.fehler)).not.toContain('bisher geändert');
+  });
+  it('I-1: cluster_entfernen — SBD-Abschaltung scheitert nach dem Stopp → „bisher geändert: cluster-gestoppt“', async () => {
+    const b = (await cluster([ANLEGEN, ENTFERNEN], '', ['', 'touch "$T/sbd_aus_scheitert"'])).laeufe[1]!;
+    expect(b.rc).toBe(1);
+    expect(String(b.ergebnis?.fehler)).toMatch(/^pcs stonith sbd disable fehlgeschlagen: .* — Cluster ist gestoppt — bisher geändert: cluster-gestoppt$/);
+    expect(b.log.trim().split('\n')).toEqual(['pcs cluster stop --all', 'pcs stonith sbd disable']);
   });
   it('cluster_entfernen: stoppt sauber, SBD aus, destroy --all; zweiter Lauf „schon“; mit Ressourcen oder fremdem Cluster Abbruch ohne Änderung', async () => {
     const w = (await cluster([ANLEGEN, ENTFERNEN, ENTFERNEN]));
@@ -1111,7 +1140,7 @@ fd_ziel() { cat "$1"; }
 prozess_exe() { cat "$PROC/$1/exe" 2>/dev/null || true; }
 sync() { :; }
 nft() { case "$1 $2" in "-c -f") return 0 ;; esac; log "nft $*"; }
-systemd-run() { local u='' a; for a in "$@"; do case "$a" in --unit=*) u=§{a#--unit=} ;; esac; done; log "systemd-run $*"; [ -f "$T/run_scheitert" ] && return 1; touch "$T/svc/$u.timer.is-active"; }
+systemd-run() { local u='' a; for a in "$@"; do case "$a" in --unit=*) u=§{a#--unit=} ;; esac; done; log "systemd-run $*"; [ -f "$T/run_scheitert" ] && return 1; [ -f "$T/timer_inaktiv" ] && return 0; touch "$T/svc/$u.timer.is-active"; }
 journalctl() { case "$*" in *"-b -1"*) cat "$T/j_vorher" 2>/dev/null || return 1 ;; *"-u corosync"*) cat "$T/j_corosync" 2>/dev/null || return 1 ;; *) return 1 ;; esac; }
 `.replaceAll('§{', '${');
 const J = 1795000000;
@@ -1246,8 +1275,15 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
   it('Auslöser nicht planbar → sichtbarer Abbruch, Test-Datei wieder entfernt (sonst sperrte sie den Knoten 30 min als „läuft noch“)', async () => {
     const w = await fencing([PRUEFEN_T, PRUEFEN_T], ['touch "$T/run_scheitert"', 'rm -f "$T/run_scheitert"']);
     keinBeleg(w.laeufe[0]!, /Aufheben der Sperre nicht planbar: .* nichts ausgelöst, Test-Datei entfernt/);
+    // Final-Review I-1: die (wieder entfernte) Test-Datei steht trotzdem in der Änderungsliste — nichts still
+    expect(String(w.laeufe[0]!.ergebnis?.fehler)).toMatch(/Test-Datei entfernt — bisher geändert: fencing-test-datei$/);
     expect(w.laeufe[1]!.rc, w.laeufe[1]!.aus).toBe(0);
     expect(w.laeufe[1]!.ergebnis).toMatchObject({ zustand: 'ausgeloest' });
+  });
+  it('I-1: Selbstprüfung nach dem Planen scheitert (Timer nicht aktiv) → Abbruch nennt Test-Datei, Aufheben und Auslöser; Test-Datei bleibt', async () => {
+    const w = await fencing([PRUEFEN_T], ['touch "$T/timer_inaktiv"']);
+    keinBeleg(w.laeufe[0]!, /^Selbstprüfung: Auslöser alfred-fencetest-\d+\.timer nicht aktiv — bisher geändert: fencing-test-datei,aufheben-geplant,ausloeser-geplant$/);
+    expect(w.test).toMatchObject({ art: 'trennung' });
   });
   // ── Fix-Runde 1 ──
   it('Auslösezeit aus der Uhr unmittelbar vor dem Schreiben (die Uhr läuft während Phase 1/2 weiter) → resetS genau', async () => {
@@ -2068,6 +2104,21 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 6 — ag_failover ausgeführ
     expect(n.laeufe[0]!.rc).toBe(1);
     expect(f).toContain('sqllnx01 ist SECONDARY/CONNECTED, Datenbanken 0/1 SYNCHRONIZED (alfredpruef=NOT SYNCHRONIZING)');
     expect(f).toContain('bisher geändert: failover-angestossen,standort-bedingung-entfernt');
+  });
+
+  // Final-Review M-3: CIB beim Freigeben vorher unlesbar → nicht „Standort-Bedingung entfernt“ behaupten, aber weiter als Änderung zählen
+  it('freigeben: Standort-Bedingungen vor dem clear unlesbar → „pcs resource clear ausgeführt (vorher nicht lesbar)“, als Änderung gemeldet', async () => {
+    // 1. Aufruf: Prüfung vor dem move (lesbar), 2. Aufruf: freigeben „vorher“ (unlesbar), danach wieder lesbar
+    const zweiterKaputt = String.raw`eval "$(declare -f cibadmin | sed '1s/^cibadmin /cibadmin_echt /')"
+cibadmin() { local n; n=$(( $(cat "$T/cib_n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$T/cib_n"; [ "$n" != 2 ] || return 1; cibadmin_echt "$@"; }`;
+    const w = await agLaeufe([mitFo(haAgFailoverSkript(FO()), zweiterKaputt)], { sa: GEHEIM.sa }, [FO_VOR()]);
+    const a = w.laeufe[0]!;
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    expect(a.ergebnis).toMatchObject({ zustand: 'geaendert', primaer: 'sqllnx02', standortBedingungen: 0, aenderungen: ['failover-angestossen', 'pcs-resource-clear-vorher-unlesbar'] });
+    // im Abbruch steht der Wortlaut der Freigabe
+    const h = await agLaeufe([mitFo(haAgFailoverSkript(FO()), `${zweiterKaputt}\nwarte_primaer() { abbruch "Testabbruch nach dem move"; }`)], { sa: GEHEIM.sa }, [FO_VOR()]);
+    expect(String(h.laeufe[0]!.ergebnis!.fehler)).toBe('Testabbruch nach dem move — pcs resource clear ag_cluster-clone ausgeführt (vorher nicht lesbar)');
   });
 
   it('Status: AG-Teil aus Pacemaker (Promoted, VIP, required_sync, Standort-Bedingungen) und SQL über die Zugangsdatei — Kennwort nur in der Umgebung von sqlcmd', () => {

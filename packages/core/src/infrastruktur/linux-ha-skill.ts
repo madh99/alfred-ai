@@ -473,9 +473,23 @@ export class LinuxHaSkill extends Skill {
    */
   private pruefeAendernd<T extends Record<string, unknown>>(zugang: string, zweck: string, roh: { code: number; stdout: string; stderr: string }, hinweis: string): T {
     try { return this.pruefeLauf<T>(zugang, zweck, roh); } catch (err) {
-      if (!haErgebnis(roh.stdout)) throw new Error(`${(err as Error).message} — möglicherweise geändert: kein Ergebnis ${hinweis}; Lage mit linux_ha.status prüfen`);
+      const e = haErgebnis<{ fehler?: unknown }>(roh.stdout);
+      if (!e) throw new Error(`${(err as Error).message} — möglicherweise geändert: kein Ergebnis ${hinweis}; Lage mit linux_ha.status prüfen`);
+      // Final-Review I-1: die Ersatzzeile des EXIT-Traps (set -e/-u, Signal) kennt den Stand nicht — ebenso fail-closed
+      const f = typeof e.fehler === 'string' ? e.fehler : '';
+      if (f.startsWith('unerwarteter Abbruch (Exit') && !/bisher geändert: |möglicherweise/.test(f)) throw new Error(`${(err as Error).message} — möglicherweise geändert: unerwartetes Ende ${hinweis}; Lage mit linux_ha.status prüfen`);
       throw err;
     }
+  }
+
+  /**
+   * Final-Review I-1 (wie R8 bei der AG): ein ändernder Einzel-Lauf (ha_vorbereiten, cluster_anlegen, cluster_entfernen, fencing_pruefen),
+   * der nach Änderungen abbricht („bisher geändert: …“ aus der Hülle um abbruch) oder ohne Ergebnis endet („möglicherweise geändert“),
+   * gibt seine Spur als Daten zurück (mitSpur → AgFehler) — der Change-Motor setzt den Schritt dann auf teilweise, er gehört in den Rückweg.
+   */
+  private async mitAenderungsSpur(was: string, zugang: string, geheim: string[], lauf: (spur: AgSpur) => Promise<SkillResult>): Promise<SkillResult> {
+    const spur: AgSpur = { laeufe: [], tresor: [] };
+    try { return await lauf(spur); } catch (err) { throw this.mitSpur(was, zugang, err, spur, geheim); }
   }
 
   private async laufAendernd<T extends Record<string, unknown>>(zugang: string, baustein: string, parameter: unknown, zweck: string, timeoutMs: number, eingabe: Record<string, string>, hinweis: string): Promise<T> {
@@ -485,6 +499,10 @@ export class LinuxHaSkill extends Skill {
   private tresor() { if (!this.d.tresor) throw new Error('Tresor nicht verfügbar'); return this.d.tresor; }
 
   private async vorbereiten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    return this.mitAenderungsSpur('HA-Grundlage vorbereiten', zugang, geheim, spur => this.vorbereitenLauf(zugang, input, geheim, spur));
+  }
+
+  private async vorbereitenLauf(zugang: string, input: Record<string, unknown>, geheim: string[], spur: AgSpur): Promise<SkillResult> {
     const p = vorbereitenParameter(input);
     const t = this.tresor();
     const neu = !(await t.namen()).has(HA_HACLUSTER_TRESOR);
@@ -495,8 +513,12 @@ export class LinuxHaSkill extends Skill {
     // späterer Schritt scheitert; scheitert der Lauf davor, erzeugt der nächste Lauf ein neues (hacluster hat dann noch kein bekanntes Kennwort)
     const gesetzt = roh.stdout.split(/\r?\n/).some(z => z.trim() === 'ALFRED-HACLUSTER-GESETZT');
     const ok = roh.code === 0 && !!haErgebnis(roh.stdout) && haErgebnis<{ zustand?: string }>(roh.stdout)?.zustand !== 'fehler';
-    if (neu && (ok || gesetzt)) await t.setze(HA_HACLUSTER_TRESOR, kw, 'Kennwort des Pacemaker-Benutzers hacluster (sqllnx01, sqllnx02, sqllnxcfg)');
-    const r = this.pruefeLauf<{ zustand: string; knoten?: string; watchdog?: string; pakete?: Record<string, string>; sql1433?: string[]; neustartSql?: boolean; aenderungen?: string[] }>(zugang, 'HA-Grundlage vorbereiten', roh);
+    if (neu && (ok || gesetzt)) {
+      await t.setze(HA_HACLUSTER_TRESOR, kw, 'Kennwort des Pacemaker-Benutzers hacluster (sqllnx01, sqllnx02, sqllnxcfg)');
+      spur.tresor.push(HA_HACLUSTER_TRESOR);
+    }
+    const r = this.pruefeAendernd<{ zustand: string; knoten?: string; watchdog?: string; pakete?: Record<string, string>; sql1433?: string[]; neustartSql?: boolean; aenderungen?: string[] }>(zugang, 'HA-Grundlage vorbereiten', roh,
+      'des Vorbereiten-Bausteins (Pakete, Watchdog, Firewall, hacluster-Kennwort, HADR mit SQL-Neustart, pcsd können geändert sein)');
     this.d.protokoll?.('I8e HA-Grundlage', { zugang, zustand: r.zustand, rolle: p.rolle, aenderungen: r.aenderungen, kennwortNeu: neu });
     const text = `HA-Grundlage auf ${zugang} (${p.rolle}): Watchdog ${r.watchdog ?? '?'}, Pakete fest (${Object.entries(r.pakete ?? {}).map(([k, v]) => `${k} ${v}`).join(', ')}), HADR an, Firewall alfred_ha aktiv (1433 nur ${(r.sql1433 ?? []).join(', ')}), pcsd aktiv; hacluster-Kennwort im Tresor (${HA_HACLUSTER_TRESOR})`;
     if (r.zustand === 'schon') return { success: true, data: r, display: `${text} — nichts zu tun` };
@@ -513,10 +535,14 @@ export class LinuxHaSkill extends Skill {
   }
 
   private async clusterAnlegen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    return this.mitAenderungsSpur('Cluster anlegen', zugang, geheim, () => this.clusterAnlegenLauf(zugang, input, geheim));
+  }
+
+  private async clusterAnlegenLauf(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = clusterParameter(input);
     const kw = await this.hacluster(zugang, 'Cluster anlegen', geheim);
-    const r = await this.lauf<{ zustand: string; cluster?: string; knoten?: string[]; online?: number; quorum?: string; sbd?: string; aenderungen?: string[] }>(
-      zugang, LINUX_HA_BAUSTEINE.cluster, p, 'Cluster anlegen', LINUX_HA_ZEIT_MS.cluster, { hacluster: kw });
+    const r = await this.laufAendernd<{ zustand: string; cluster?: string; knoten?: string[]; online?: number; quorum?: string; sbd?: string; aenderungen?: string[] }>(
+      zugang, LINUX_HA_BAUSTEINE.cluster, p, 'Cluster anlegen', LINUX_HA_ZEIT_MS.cluster, { hacluster: kw }, 'des Cluster-Bausteins (pcs cluster setup, SBD, Aktivieren und Start können gelaufen sein)');
     this.d.protokoll?.('I8e Cluster', { zugang, cluster: p.cluster, zustand: r.zustand, aenderungen: r.aenderungen });
     const text = `Cluster ${p.cluster} (${(r.knoten ?? p.knoten.map(k => k.name)).join(', ')}, ausgeführt auf ${zugang}): ${r.online ?? '?'}/${p.knoten.length} online, Quorum ${r.quorum ?? '?'}, STONITH an, `
       + `SBD diskless (Watchdog ${HA_WATCHDOG_DEV}, SBD_WATCHDOG_TIMEOUT ${p.sbd_timeout_s} s) aktiv ${r.sbd ?? '?'}, stonith-watchdog-timeout ${p.stonith_timeout_s} s, have-watchdog true`;
@@ -525,9 +551,14 @@ export class LinuxHaSkill extends Skill {
   }
 
   private async clusterEntfernen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    return this.mitAenderungsSpur('Cluster entfernen', zugang, geheim, () => this.clusterEntfernenLauf(zugang, input, geheim));
+  }
+
+  private async clusterEntfernenLauf(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = clusterEntfernenParameter(input);
     const kw = await this.hacluster(zugang, 'Cluster entfernen', geheim);
-    const r = await this.lauf<{ zustand: string; aenderungen?: string[] }>(zugang, LINUX_HA_BAUSTEINE.clusterEntfernen, p, 'Cluster entfernen', LINUX_HA_ZEIT_MS.clusterEntfernen, { hacluster: kw });
+    const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[] }>(zugang, LINUX_HA_BAUSTEINE.clusterEntfernen, p, 'Cluster entfernen', LINUX_HA_ZEIT_MS.clusterEntfernen, { hacluster: kw },
+      'des Entfernen-Bausteins (Cluster kann gestoppt, SBD aus oder der Cluster entfernt sein)');
     this.d.protokoll?.('I8e Cluster entfernt', { zugang, cluster: p.cluster, zustand: r.zustand, aenderungen: r.aenderungen });
     const text = `Cluster ${p.cluster} auf ${p.knoten.map(k => k.name).join(', ')} entfernt (SBD aus, Cluster-Dienste aus, keine corosync.conf von ${p.cluster} mehr)`;
     if (r.zustand === 'schon') return { success: true, data: r, display: `${text} — nichts zu tun` };
@@ -536,10 +567,15 @@ export class LinuxHaSkill extends Skill {
 
   /** Fencing-Beweis Teil 1: hacluster-Kennwort nur für die pcs-Anmeldung (pcs stonith sbd status über alle Knoten) */
   private async fencingPruefen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    return this.mitAenderungsSpur('Fencing-Test', zugang, geheim, () => this.fencingPruefenLauf(zugang, input, geheim));
+  }
+
+  private async fencingPruefenLauf(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = fencingParameter(input);
     const kw = await this.hacluster(zugang, 'Fencing-Test', geheim);
-    const r = await this.lauf<{ zustand: string; art?: string; knoten?: string; bootIdVorher?: string; hinweis?: string; beleg?: FencingBeleg; aenderungen?: string[] }>(
-      zugang, LINUX_HA_BAUSTEINE.fencingPruefen, p, `Fencing-Test ${p.art}`, LINUX_HA_ZEIT_MS.fencingPruefen, { hacluster: kw });
+    const r = await this.laufAendernd<{ zustand: string; art?: string; knoten?: string; bootIdVorher?: string; hinweis?: string; beleg?: FencingBeleg; aenderungen?: string[] }>(
+      zugang, LINUX_HA_BAUSTEINE.fencingPruefen, p, `Fencing-Test ${p.art}`, LINUX_HA_ZEIT_MS.fencingPruefen, { hacluster: kw },
+      'des Fencing-Tests (Test-Datei, Aufheben- und Auslöse-Timer können geplant sein — Reset möglich)');
     this.d.protokoll?.('I8e Fencing-Test', { zugang, art: p.art, zustand: r.zustand, bootIdVorher: r.bootIdVorher, aenderungen: r.aenderungen });
     if (r.zustand === 'schon') {
       const was = r.hinweis ?? (r.beleg ? `gültiger Beleg vom ${zeitText(r.beleg.zeit)} (Reset ${r.beleg.resetS} s, Rejoin ${r.beleg.rejoinS} s)` : 'schon erledigt');

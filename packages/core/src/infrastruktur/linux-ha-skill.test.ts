@@ -753,6 +753,96 @@ describe('I8e Paket 2 Task 5 — Ruling R8: ändernder Lauf ohne Ergebniszeile =
   });
 });
 
+describe('I8e Paket 2 Final-Review I-1 — Teiländerungen auch bei ha_vorbereiten, cluster_anlegen, cluster_entfernen, fencing_pruefen', () => {
+  const KW = 'Hk-Tresor-Wert-77';
+  const OHNE = { code: 124, stdout: '' };
+  const fehler = (f: string) => ({ code: 1, stdout: `irgendwas\nALFRED-HA ${JSON.stringify({ zustand: 'fehler', baustein: 'x', fehler: f })}\n` });
+  const FAELLE = [
+    { action: 'ha_vorbereiten', baustein: LINUX_HA_BAUSTEINE.vorbereiten, eingabe: { zugang: 'sqllnx01', rolle: 'daten' }, was: 'HA-Grundlage vorbereiten', zweck: 'HA-Grundlage vorbereiten', hinweis: 'des Vorbereiten-Bausteins',
+      nach: 'SQL Server lauscht nach dem Neustart nicht auf 1433 (120 s) — bisher geändert: pakete,halten:pcs,firewall-regeln,hadr', vor: 'kein i6300ESB-Watchdog (PCI 8086:25ab) in der VM — nichts geändert' },
+    { action: 'cluster_anlegen', baustein: LINUX_HA_BAUSTEINE.cluster, eingabe: { zugang: 'sqllnx01' }, was: 'Cluster anlegen', zweck: 'Cluster anlegen', hinweis: 'des Cluster-Bausteins',
+      nach: 'pcs cluster start --all fehlgeschlagen: Error: unable to start — Rückweg cluster_entfernen — bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert', vor: 'auf sqllnx02 ist ein anderer Cluster eingerichtet: altcl — am Cluster nichts geändert (nur pcs-Anmeldung erneuert)' },
+    { action: 'cluster_entfernen', baustein: LINUX_HA_BAUSTEINE.clusterEntfernen, eingabe: { zugang: 'sqllnx01' }, was: 'Cluster entfernen', zweck: 'Cluster entfernen', hinweis: 'des Entfernen-Bausteins',
+      nach: 'pcs stonith sbd disable fehlgeschlagen: Error: disable kaputt — Cluster ist gestoppt — bisher geändert: cluster-gestoppt', vor: 'Cluster sqllnxcl01 trägt 1 Ressourcen — vorher die Ressourcen (Verfügbarkeitsgruppe) entfernen; nichts geändert' },
+    { action: 'fencing_pruefen', baustein: LINUX_HA_BAUSTEINE.fencingPruefen, eingabe: { zugang: 'sqllnx01', art: 'trennung' }, was: 'Fencing-Test', zweck: 'Fencing-Test trennung', hinweis: 'des Fencing-Tests',
+      nach: 'Selbstprüfung: Auslöser alfred-fencetest-1.timer nicht aktiv — bisher geändert: fencing-test-datei,aufheben-geplant,ausloeser-geplant', vor: 'Cluster: 2/3 online — kein Test; nichts geändert' },
+  ] as const;
+  const lauf = (f: typeof FAELLE[number], antwort: { code: number; stdout: string }) => {
+    const w = welt({ [f.baustein]: [antwort] }, { [HA_HACLUSTER_TRESOR]: KW });
+    return { w, r: w.skill.execute({ action: f.action, ...f.eingabe }, imChange) };
+  };
+
+  it('Abbruch nach Änderungen („bisher geändert“ vom Baustein) → Fehler mit Grund vorn und Daten (teilweise → Rückweg); protokolliert', async () => {
+    for (const f of FAELLE) {
+      const { w, r: rp } = lauf(f, fehler(f.nach));
+      const r = await rp;
+      expect(r.success, f.action).toBe(false);
+      expect(r.error!.startsWith(`${f.was} abgebrochen — Grund: ${f.zweck} auf sqllnx01 gescheitert (Exit 1): `), r.error).toBe(true);
+      expect(r.error, f.action).toContain(f.nach.split(' — bisher geändert: ')[1]);
+      expect(r.data, f.action).toMatchObject({ abgebrochen: f.was, laeufe: [], tresorNeu: [] });
+      expect((r.data as { grund: string }).grund).toContain(`bisher geändert: ${f.nach.split(' — bisher geändert: ')[1]}`);
+      expect(w.protokolle.some(p => p.msg === `I8e ${f.was} abgebrochen`), f.action).toBe(true);
+      expect(JSON.stringify(r)).not.toContain(KW);
+    }
+  });
+
+  it('Lauf ohne Ergebniszeile (Zeitgrenze, Verbindung weg) oder nur mit der Ersatzzeile des EXIT-Traps → „möglicherweise geändert“, Daten gesetzt', async () => {
+    for (const f of FAELLE) {
+      const r = await lauf(f, OHNE).r;
+      expect(r.error, f.action).toContain(`${f.zweck} auf sqllnx01 gescheitert (Exit 124): keine Ausgabe — möglicherweise geändert: kein Ergebnis ${f.hinweis}`);
+      expect(r.data, f.action).toMatchObject({ abgebrochen: f.was });
+      const t = await lauf(f, { code: 1, stdout: 'ALFRED-HA {"zustand":"fehler","baustein":"x","fehler":"unerwarteter Abbruch (Exit 1)","alteZugangsdateienEntfernt":0}' }).r;
+      expect(t.error, f.action).toContain(`unerwarteter Abbruch (Exit 1) — möglicherweise geändert: unerwartetes Ende ${f.hinweis}`);
+      expect(t.data, f.action).toBeDefined();
+    }
+  });
+
+  it('Abbruch vor jeder Änderung (auch: nur pcs-Anmeldung erneuert) → Fehler ohne Daten; Erfolg unverändert', async () => {
+    for (const f of FAELLE) {
+      const r = await lauf(f, fehler(f.vor)).r;
+      expect(r.success, f.action).toBe(false);
+      expect(r.error, f.action).toContain(f.vor);
+      expect(r.data, f.action).toBeUndefined();
+    }
+  });
+
+  it('ha_vorbereiten: neues hacluster-Kennwort gesetzt (Marke), dann Abbruch ohne Liste → Tresor-Eintrag steht in Fehler und Daten', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.vorbereiten]: [{ code: 1, stdout: 'ALFRED-HACLUSTER-GESETZT\nALFRED-HA {"zustand":"fehler","fehler":"pcsd lässt sich nicht starten — bisher geändert: hacluster-kennwort"}' }] });
+    const r = await w.skill.execute({ action: 'ha_vorbereiten', zugang: 'sqllnx01', rolle: 'daten' }, imChange);
+    expect(w.gesetzt.map(g => g.name)).toEqual([HA_HACLUSTER_TRESOR]);
+    expect(r.error).toContain(`neu im Tresor: ${HA_HACLUSTER_TRESOR}`);
+    expect(r.data).toMatchObject({ tresorNeu: [HA_HACLUSTER_TRESOR] });
+    expect(JSON.stringify(r)).not.toContain(w.gesetzt[0]!.wert);
+  });
+
+  it('im Change-Motor: cluster_anlegen bricht nach setup ab → Schritt teilweise, cluster_entfernen gehört in den Rückweg', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.cluster]: [fehler(FAELLE[1].nach)] }, { [HA_HACLUSTER_TRESOR]: KW });
+    const schritt: ChangeSchritt = { nr: 1, titel: 'Cluster anlegen', art: 'aktion', zeitlimitS: 960, beiFehler: 'anhalten', skill: 'linux_ha', aktion: 'cluster_anlegen', einordnung: 'aendern',
+      parameter: { zugang: 'sqllnx01' }, rueckweg: { skill: 'linux_ha', aktion: 'cluster_entfernen', parameter: { zugang: 'sqllnx01', cluster: 'sqllnxcl01' } } };
+    const c: CmdbChangeRequest = { id: 'chg-cl', userId: 'o', title: 'Cluster', type: 'normal', status: 'approved' as never, riskLevel: 'high', affectedAssetIds: [], affectedServiceIds: [], schritte: [schritt], fingerabdruck: 'fp', freigabeFingerabdruck: 'fp', createdAt: 'x', updatedAt: 'x' };
+    const deps = {
+      owner: () => 'o',
+      itsm: { liste: async () => [c], hole: async () => c, motorSetze: async (_o: string, _id: string, d: { status?: string; lauf?: unknown; result?: string }) => { if (d.status) c.status = d.status as never; c.lauf = JSON.parse(JSON.stringify(d.lauf)); if (d.result !== undefined) c.result = d.result; return c; } },
+      fuehreAus: async (skill: string, input: Record<string, unknown>) => (skill === 'linux_ha' ? w.skill.execute(input, imChange) : { success: true }),
+      fernLesen: async () => '', fernAusfuehren: async () => ({ code: 0, stdout: '', stderr: '' }),
+      netz: { http: async () => ({ status: 200, text: '' }), port: async () => true, dns: async () => [], ping: async () => true },
+      incident: { anlegen: async () => 'inc-1', notiz: async () => undefined, loese: async () => undefined, hochstufen: async () => undefined },
+      melde: async () => undefined, frage: async () => true, schlafe: async () => undefined,
+      takt: { pruefAbstandMs: 0, pruefVersuche: 1, taskAbstandMs: 0, wartenAbstandMs: 1 },
+    } as unknown as MotorDeps;
+    const m = new ChangeMotor(deps);
+    await m.anstossen();
+    for (let i = 0; i < 400 && (m.aktiv() > 0 || (c.lauf as ChangeLauf | undefined)?.phase === 'laeuft'); i++) await new Promise(r => setTimeout(r, 5));
+    const l = c.lauf as ChangeLauf;
+    expect(l.phase, JSON.stringify({ l, r: c.result, s: c.status }).slice(0, 1500)).toBe('angehalten');
+    const e = l.ergebnisse.find(x => x.nr === 1)!;
+    expect(e).toMatchObject({ ok: false, teilweise: true });
+    expect(e.fehler).toMatch(/^Cluster anlegen abgebrochen — Grund: Cluster anlegen auf sqllnx01 gescheitert \(Exit 1\): pcs cluster start --all fehlgeschlagen.*bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert/);
+    expect(rueckwegSchritte([schritt], l.ergebnisse).map(s => s.nr)).toEqual([1]);
+    expect(JSON.stringify(l)).not.toContain(KW);
+  });
+});
+
 describe('I8e Paket 2 Task 5 — Change „Verfügbarkeitsgruppe sqllnxag01 anlegen“', () => {
   const ha = new LinuxHaSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const windowsAd = { metadata: { name: 'windows_ad', inputSchema: { type: 'object', properties: {

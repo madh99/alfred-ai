@@ -327,6 +327,15 @@ export const PY_KW_GLEICH = [
 const sh = (s: string) => s.replaceAll('§{', '${');
 
 /**
+ * Final-Review I-1 (wie R8 bei der AG): Hülle um `abbruch` aus sqlKopf — ein Abbruch nach einer gemeldeten Änderung (aend → GEAENDERT/AJ)
+ * hängt „ — bisher geändert: <AJ>“ an; der Skill gibt den Fehler dann mit Daten zurück (teilweise → Rückweg). `ausnahme` ist eine
+ * zusätzliche Bedingung, unter der die Liste entfällt (Cluster: nur die pcs-Anmeldung erneuert — das sagt der Text schon über stand()).
+ * Gleiche Technik wie der Failover-Baustein (dort mit der Freigabe der Standort-Bedingung).
+ */
+const abbruchMitAenderungen = (ausnahme = '') => sh(String.raw`eval "$(declare -f abbruch | sed '1s/^abbruch /abbruch_basis /')"
+abbruch() { if [ "$GEAENDERT" = 1 ]${ausnahme}; then set -- "$1 — bisher geändert: $(printf '%s' "$AJ" | tr -d '"')"; fi; abbruch_basis "$1"; }`);
+
+/**
  * Task 3 — corosync.conf lesen (gemeinsam für ha_vorbereiten und die Cluster-Bausteine). Debian/Ubuntu liefert mit dem Paket corosync
  * eine Standardkonfiguration (`cluster_name: debian`, Knoten nur auf 127.0.0.1) — sie gilt als „kein Cluster eingerichtet“.
  */
@@ -446,6 +455,7 @@ kw_vergleich() { local rc=0; kennwort_gleich || rc=$?; [ "$rc" -le 1 ] || abbruc
 marken_ok() { local a e; a=$(grep -cxF "$H_ANFANG" "$1" || true); e=$(grep -cxF "$H_ENDE" "$1" || true); [ "$a" = "$e" ] && [ "$a" -le 1 ]; }
 GEAENDERT=0; AJ=''
 aend() { GEAENDERT=1; AJ+="\${AJ:+,}\\"$1\\""; }
+${abbruchMitAenderungen()}
 POLICY_EIGEN=0
 alfred_aufraeumen() { if [ "$POLICY_EIGEN" = 1 ]; then rm -f -- "$POLICY_RC"; fi; }`;
 
@@ -797,6 +807,7 @@ schwaerze() { local t="$1"; if [ -n "§{KW:-}" ]; then t=§{t//"$KW"/[geschwärz
 GEAENDERT=0; AJ=''
 aend() { GEAENDERT=1; AJ+="§{AJ:+,}\"$1\""; }
 stand() { if [ "$GEAENDERT" = 1 ]; then printf 'am Cluster nichts geändert (nur pcs-Anmeldung erneuert)'; else printf 'nichts geändert'; fi; }
+${abbruchMitAenderungen(String.raw` && [ "$AJ" != '"pcs-anmeldung"' ]`)}
 # alle Knoten melden „Online“ (pcsd erreichbar, lokale pcs-Anmeldung gültig)
 pcsd_online() { local s k; s=$(pcs status pcsd "§{KNOTEN_NAME[@]}" 2>&1 || true); for k in "§{KNOTEN_NAME[@]}"; do grep -qE "^[[:space:]]*$k: Online[[:space:]]*$" <<<"$s" || return 1; done; }
 # pcs liest das Kennwort ohne -p von der Standardeingabe (kein Terminal: utils.get_terminal_password → input()); nie auf der Befehlszeile
@@ -2691,7 +2702,10 @@ freigeben() {
   fi
   standort
   if [ "$SCLI" != 0 ]; then FREIGABE="pcs resource clear $AG_KLON lief, aber Standort-Bedingung(en) $SLISTE bestehen weiter oder sind nicht lesbar und binden die AG — von Hand prüfen (pcs constraint location)"; return 1; fi
-  if [ "$vor" = 0 ]; then FREIGABE="pcs resource clear $AG_KLON ausgeführt (keine Standort-Bedingung offen)"; else aend standort-bedingung-entfernt; FREIGABE="Standort-Bedingung mit pcs resource clear $AG_KLON entfernt"; fi
+  # Final-Review M-3: vorher unlesbar → nicht „entfernt“ behaupten, aber weiter als (mögliche) Änderung melden
+  if [ "$vor" = 0 ]; then FREIGABE="pcs resource clear $AG_KLON ausgeführt (keine Standort-Bedingung offen)"
+  elif [ "$vor" = x ]; then aend pcs-resource-clear-vorher-unlesbar; FREIGABE="pcs resource clear $AG_KLON ausgeführt (vorher nicht lesbar)"
+  else aend standort-bedingung-entfernt; FREIGABE="Standort-Bedingung mit pcs resource clear $AG_KLON entfernt"; fi
 }
 warte_primaer() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do pm_lage; if [ "$PROM" = "$ICH" ] && lage_versuch && [ "$LOKAL" = PRIMARY ]; then return 0; fi; sleep 2; done; return 1; }
 warte_gegenstelle() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if lage_versuch && [ "$LOKAL" = PRIMARY ] && [ "$ALTROLLE" = SECONDARY ] && [ "$ALTVERB" = CONNECTED ] && [ "$NALT" = "$NDB" ]; then return 0; fi; sleep 2; done; return 1; }`);
