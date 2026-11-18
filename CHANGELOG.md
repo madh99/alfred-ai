@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Linux-SQL: Verfügbarkeitsgruppe hinter Fencing, geplantes Failover, rollenabhängige Sicherung (v1895)
+
+- `linux_ha.ag_anlegen` baut die Verfügbarkeitsgruppe (CLUSTER_TYPE EXTERNAL) über alle drei Knoten: Master-Key, Endpunkt-Zertifikat und Endpunkt TCP 5022 je Knoten, Austausch nur öffentlicher Zertifikate, Pacemaker-Login mit Zugangsdatei, Replikate SYNCHRONOUS_COMMIT plus CONFIGURATION_ONLY, automatisches Seeding, Ressource `ag_cluster` (promotable) mit `required_synchronized_secondaries_to_commit=0`, `failure-timeout=60s` und `notify=true`, VIP mit Colocation und Reihenfolge. Der Aufbau bricht vor jeder SQL-Zeile ab, solange nicht alle drei Knoten einen gültigen Fencing-Beleg haben. `REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0` wird in SQL und an der Ressource gesetzt und geprüft. Rückweg ist ausschließlich `linux_ha.ag_entfernen` (Datenbanken bleiben erhalten; auf dem bisherigen Primär werden sie wieder online gebracht).
+- `linux_ha.ag_failover` schaltet geplant nur auf ein SYNCHRONIZED-Ziel bei 3/3 Knoten mit Quorum um, räumt die Verschiebe-Bedingung auf jedem Weg wieder ab und meldet Dauer, neuen Primär und VIP-Ort. Rückweg ist das Failover zurück.
+- `linux_ha.status` zeigt bei eingerichteter AG Rollen, Sync-Zustand, required_sync (SQL und Ressource) und offene Standort-Bedingungen; ohne AG bleibt die Ausgabe unverändert.
+- Teiländerungen werden nie still: Bricht ein AG-Schritt ab, nennt die Meldung zuerst den Grund und dann alle bis dahin geänderten Objekte je Knoten; die vollständige Liste steht am Change-Schritt, der als teilweise gilt und in den Rückweg aufgenommen wird. Endet ein Knoten-Lauf ohne Ergebnis, gilt er als möglicherweise geändert. Jede ändernde T-SQL-Anweisung beendet bei einem Fehler den ganzen Block, bevor sie als erledigt gemeldet wird.
+
+### Changed — Linux-SQL-Sicherung rollenabhängig (v1895)
+
+- Die Sicherungsprozedur sichert AG-Datenbanken nur auf dem bevorzugten Replikat (Vorgabe PRIMARY); der Sekundär überspringt sichtbar mit `nicht-bevorzugt`. Hat ein Knoten keine eigene passende Vollsicherung oder schließt seine Kette nach einem Rollenwechsel nicht mehr an, macht er sichtbar (`ALFRED-ERZWUNGEN`) zuerst eine FULL. Ketten bleiben je Rechner. Datenbanken ohne AG verhalten sich unverändert.
+- `linux_sql.sicherungen` nennt die Rolle je Datenbank; nicht sicher lesbare Rollen erscheinen als „unbekannt“.
+- Neue Prozedur- und Kopierfassung: Bis `linux_sql.sicherung_einrichten` erneut gelaufen ist, melden `sicherungen`, `sicherung_jetzt` und `wiederherstellen` „Sicherung neu einrichten“. Agent-Jobs und Kopier-Timer laufen in dieser Zeit unverändert weiter.
+
 ### Fixed — Watchdog-Treiber nach Neustart trotz Ubuntu-Sperre (v1894)
 
 - Ubuntu sperrt Watchdog-Treiber für das automatische Laden beim Start. sbd lädt den Treiber i6300esb jetzt vor dem Start selbst und wartet dann auf das Gerät; vorher blieb ein Knoten nach jedem Neustart (auch nach einem Fencing-Reset) dem Cluster fern. Der wirkungslose Eintrag in modules-load.d wird entfernt; Ubuntus Sperrdateien bleiben unverändert.
