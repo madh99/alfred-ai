@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-HA: Kollationskonflikt in der Selbstprüfung von ag_entfernen (v1898)
+
+- Die Selbstprüfung von `linux_ha.ag_entfernen` brach nach erfolgreichem Abbau auf dem Primär mit „Cannot resolve collation conflict“ (Msg 446) ab, weil Datenbankname und Zustand aus unterschiedlich kollationierten Katalogspalten verkettet wurden. Alle solchen Verkettungen in den AG-Skripten legen die Kollation jetzt fest (`COLLATE DATABASE_DEFAULT`), auch in den Abbruchmeldungen von `ag_anlegen` („… ist <Zustand>“, „… besteht als <Zustand> außerhalb der AG“).
+
 ### Fixed — Linux-HA: Neuaufbau der Verfügbarkeitsgruppe nach ag_entfernen (v1897)
 
 - `linux_ha.ag_anlegen` entfernt auf dem Sekundär vor dem Beitritt eine zurückgebliebene Kopie einer AG-Datenbank, die im Zustand RESTORING ist und zu keiner Verfügbarkeitsgruppe gehört (Rest eines früheren `ag_entfernen`), und meldet das als „alte-kopie-entfernt-<db>“. Danach wird die Datenbank per automatischem Seeding neu aufgebaut; der Neuaufbau hängt damit nicht mehr von der Log-Kette der alten Kopie ab.
