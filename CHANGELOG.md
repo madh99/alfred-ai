@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-HA: Neuaufbau der Verfügbarkeitsgruppe nach ag_entfernen (v1897)
+
+- `linux_ha.ag_anlegen` entfernt auf dem Sekundär vor dem Beitritt eine zurückgebliebene Kopie einer AG-Datenbank, die im Zustand RESTORING ist und zu keiner Verfügbarkeitsgruppe gehört (Rest eines früheren `ag_entfernen`), und meldet das als „alte-kopie-entfernt-<db>“. Danach wird die Datenbank per automatischem Seeding neu aufgebaut; der Neuaufbau hängt damit nicht mehr von der Log-Kette der alten Kopie ab.
+- Gelöscht wird nur, nachdem der Primär im selben Lauf die Datenbank ONLINE, im Wiederherstellungsmodell FULL und mit begonnener Log-Kette gezeigt hat; diese Prüfung läuft jetzt schon im Replikat-Schritt des Primärs, vor jeder Änderung.
+- Eine Kopie, die bereits in einer Verfügbarkeitsgruppe eingetragen ist (etwa laufendes Seeding bei einer Wiederholung), bleibt unberührt. Jeder andere Zustand auf dem Sekundär (ONLINE, OFFLINE, andere AG …) bricht ohne Änderung ab („nie still gelöscht“).
+
 ### Fixed — Linux-HA: Teiländerungen bei Vorbereitung, Cluster und Fencing nie still (v1896)
 
 - `linux_ha.ha_vorbereiten`, `cluster_anlegen`, `cluster_entfernen` und `fencing_pruefen` melden bei einem Abbruch zuerst den Grund und dann alle bis dahin geänderten Objekte („bisher geändert: …“). Ein Lauf ohne Ergebniszeile gilt als „möglicherweise geändert“. Der Change-Schritt gilt in beiden Fällen als teilweise und wird in den Rückweg aufgenommen, etwa `cluster_entfernen` nach einem abgebrochenen `cluster_anlegen`.
