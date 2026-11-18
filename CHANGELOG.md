@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-HA: Teiländerungen bei Vorbereitung, Cluster und Fencing nie still (v1896)
+
+- `linux_ha.ha_vorbereiten`, `cluster_anlegen`, `cluster_entfernen` und `fencing_pruefen` melden bei einem Abbruch zuerst den Grund und dann alle bis dahin geänderten Objekte („bisher geändert: …“). Ein Lauf ohne Ergebniszeile gilt als „möglicherweise geändert“. Der Change-Schritt gilt in beiden Fällen als teilweise und wird in den Rückweg aufgenommen, etwa `cluster_entfernen` nach einem abgebrochenen `cluster_anlegen`.
+- Jeder ändernde pcs-, systemctl- und systemd-run-Befehl wird vor dem Start vorgemerkt. Scheitert er selbst (z. B. `pcs cluster setup`, `pcs cluster stop --all`), erscheint er als „<name>-versucht“ unter den geänderten Objekten. Erfolgsmeldungen bleiben unverändert.
+- Ein Abbruch, bei dem nur die pcs-Anmeldung erneuert wurde, gilt weiterhin nicht als teilweise; die Meldung sagt das ausdrücklich („nur pcs-Anmeldung erneuert“).
+- Das Freigeben der Verschiebe-Bedingung beim Failover meldet bei vorher unlesbarer CIB „pcs resource clear ausgeführt (vorher nicht lesbar)“ statt „entfernt“.
+
 ### Added — Linux-SQL: Verfügbarkeitsgruppe hinter Fencing, geplantes Failover, rollenabhängige Sicherung (v1895)
 
 - `linux_ha.ag_anlegen` baut die Verfügbarkeitsgruppe (CLUSTER_TYPE EXTERNAL) über alle drei Knoten: Master-Key, Endpunkt-Zertifikat und Endpunkt TCP 5022 je Knoten, Austausch nur öffentlicher Zertifikate, Pacemaker-Login mit Zugangsdatei, Replikate SYNCHRONOUS_COMMIT plus CONFIGURATION_ONLY, automatisches Seeding, Ressource `ag_cluster` (promotable) mit `required_synchronized_secondaries_to_commit=0`, `failure-timeout=60s` und `notify=true`, VIP mit Colocation und Reihenfolge. Der Aufbau bricht vor jeder SQL-Zeile ab, solange nicht alle drei Knoten einen gültigen Fencing-Beleg haben. `REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0` wird in SQL und an der Ressource gesetzt und geprüft. Rückweg ist ausschließlich `linux_ha.ag_entfernen` (Datenbanken bleiben erhalten; auf dem bisherigen Primär werden sie wieder online gebracht).
