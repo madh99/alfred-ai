@@ -759,7 +759,7 @@ pcs() {
     "host auth") local kw; IFS= read -r kw || true; log "pcs host auth §{*:3}"; if [ "$kw" != "$(cat "$T/kw_soll")" ]; then echo 'Password: Error: Unable to authenticate to sqllnx01'; return 1; fi; touch "$T/auth"; echo 'Password: sqllnx01: Authorized'; return 0 ;;
     "status pcsd") shift 2; local k; for k in "$@"; do if [ -f "$T/auth" ]; then echo "  $k: Online"; else echo "  $k: Unable to authenticate"; fi; done; return 0 ;;
     "cluster corosync") if [ -f "$T/auth" ] && [ -f "$T/conf/$3" ]; then cat "$T/conf/$3"; return 0; fi; echo "Error: Unable to get corosync.conf from $3" >&2; return 1 ;;
-    "cluster setup") log "pcs $*"; local k; for k in $ALLE; do if [ -f "$T/conf/$k" ]; then echo "Error: $k: Cluster configuration files found, the host seems to be in a cluster already, use --force to override"; return 1; fi; done; shift 2; pcs_setup "$@"; return 0 ;;
+    "cluster setup") log "pcs $*"; local k; if [ -f "$T/setup_scheitert" ]; then echo 'totem { cluster_name: sqllnxcl01 }' >"$T/conf/sqllnx02"; echo 'Error: Unable to send corosync.conf to sqllnxcfg'; return 1; fi; for k in $ALLE; do if [ -f "$T/conf/$k" ]; then echo "Error: $k: Cluster configuration files found, the host seems to be in a cluster already, use --force to override"; return 1; fi; done; shift 2; pcs_setup "$@"; return 0 ;;
     "stonith sbd")
       case "$3" in
         enable) log "pcs $*"; touch "$T/sbd_en" "$T/svc/sbd.is-enabled"; echo "§{4#watchdog=}" >"$T/sbd_wd"; echo "§{5#SBD_WATCHDOG_TIMEOUT=}" >"$T/sbd_t" ;;
@@ -770,7 +770,7 @@ pcs() {
       return 0 ;;
     "cluster enable") log "pcs $*"; touch "$T/svc/corosync.is-enabled" "$T/svc/pacemaker.is-enabled"; return 0 ;;
     "cluster start") log "pcs $*"; [ ! -f "$T/start_scheitert" ] || { echo 'Error: unable to start'; return 1; }; touch "$T/laeuft" "$T/svc/corosync.is-active" "$T/svc/pacemaker.is-active"; [ ! -f "$T/sbd_en" ] || touch "$T/svc/sbd.is-active"; return 0 ;;
-    "cluster stop") log "pcs $*"; rm -f "$T/laeuft" "$T/svc/corosync.is-active" "$T/svc/pacemaker.is-active" "$T/svc/sbd.is-active"; return 0 ;;
+    "cluster stop") log "pcs $*"; [ ! -f "$T/stop_scheitert" ] || { rm -f "$T/svc/pacemaker.is-active"; echo 'Error: unable to stop all nodes'; return 1; }; rm -f "$T/laeuft" "$T/svc/corosync.is-active" "$T/svc/pacemaker.is-active" "$T/svc/sbd.is-active"; return 0 ;;
     "cluster destroy") log "pcs $*"; rm -f "$T/conf/"* "$T/laeuft" "$T/prop/"*; local d; for d in corosync pacemaker sbd; do rm -f "$T/svc/$d.is-active" "$T/svc/$d.is-enabled"; done; return 0 ;;
     "property set") log "pcs $*"; local kv=$3; echo "§{kv#*=}" >"$T/prop/§{kv%%=*}"; return 0 ;;
   esac
@@ -937,17 +937,34 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 — cluster_anlegen / cluster_ent
   it('I-1: cluster_anlegen — Start scheitert nach setup und SBD → „bisher geändert: …“; nur pcs-Anmeldung erneuert → ohne Liste (Text sagt es schon)', async () => {
     const a = (await cluster([ANLEGEN], 'touch "$T/start_scheitert"')).laeufe[0]!;
     expect(a.rc).toBe(1);
-    expect(String(a.ergebnis?.fehler)).toMatch(/^pcs cluster start --all fehlgeschlagen: .* — Rückweg cluster_entfernen — bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert$/);
+    expect(String(a.ergebnis?.fehler)).toMatch(/^pcs cluster start --all fehlgeschlagen: .* — Rückweg cluster_entfernen — bisher geändert: pcs-anmeldung,cluster-angelegt,sbd-diskless,cluster-aktiviert,cluster-gestartet-versucht$/);
     expect(a.aus.split('\n').filter(z => z.startsWith('ALFRED-HA ')).length).toBe(1);
     const fremd = `printf 'totem {\\n    cluster_name: altcl\\n}\\nnodelist {\\n    node {\\n        ring0_addr: 10.203.30.11\\n        name: sqllnx02\\n    }\\n}\\n' >"$T/conf/sqllnx02"`;
     const nurAnmeldung = (await cluster([ANLEGEN], fremd)).laeufe[0]!;
     expect(String(nurAnmeldung.ergebnis?.fehler)).toContain('am Cluster nichts geändert (nur pcs-Anmeldung erneuert)');
     expect(String(nurAnmeldung.ergebnis?.fehler)).not.toContain('bisher geändert');
   });
+  // Ruling R12: der scheiternde ändernde Befehl kann selbst schon geändert haben → „<name>-versucht“ (ohne vorheriges aend)
+  it('R12: pcs cluster setup scheitert mit Teilstand → „bisher geändert: pcs-anmeldung,cluster-angelegt-versucht“ (→ teilweise, Rückweg cluster_entfernen)', async () => {
+    const w = await cluster([ANLEGEN], 'touch "$T/setup_scheitert"');
+    const a = w.laeufe[0]!;
+    expect(a.rc).toBe(1);
+    expect(String(a.ergebnis?.fehler)).toMatch(/^pcs cluster setup fehlgeschlagen: .*; ein Teilstand geht mit cluster_entfernen zurück — bisher geändert: pcs-anmeldung,cluster-angelegt-versucht$/);
+    expect(w.zustand).toContain('conf/sqllnx02:'); // der Teilstand ist wirklich da
+  });
+  it('R12: pcs cluster stop --all scheitert (ohne vorheriges aend) → „bisher geändert: cluster-gestoppt-versucht“; Erfolg unverändert', async () => {
+    const b = (await cluster([ANLEGEN, ENTFERNEN], '', ['', 'touch "$T/stop_scheitert"'])).laeufe[1]!;
+    expect(b.rc).toBe(1);
+    expect(String(b.ergebnis?.fehler)).toMatch(/^pcs cluster stop --all fehlgeschlagen: .* — bisher geändert: cluster-gestoppt-versucht$/);
+    expect(b.log.trim().split('\n')).toEqual(['pcs cluster stop --all']);
+    const ok = (await cluster([ANLEGEN, ENTFERNEN])).laeufe[1]!;
+    expect(ok.ergebnis).toMatchObject({ zustand: 'geaendert', aenderungen: ['cluster-gestoppt', 'sbd-aus', 'cluster-entfernt'] });
+    expect(ok.aus).not.toContain('versucht');
+  });
   it('I-1: cluster_entfernen — SBD-Abschaltung scheitert nach dem Stopp → „bisher geändert: cluster-gestoppt“', async () => {
     const b = (await cluster([ANLEGEN, ENTFERNEN], '', ['', 'touch "$T/sbd_aus_scheitert"'])).laeufe[1]!;
     expect(b.rc).toBe(1);
-    expect(String(b.ergebnis?.fehler)).toMatch(/^pcs stonith sbd disable fehlgeschlagen: .* — Cluster ist gestoppt — bisher geändert: cluster-gestoppt$/);
+    expect(String(b.ergebnis?.fehler)).toMatch(/^pcs stonith sbd disable fehlgeschlagen: .* — Cluster ist gestoppt — bisher geändert: cluster-gestoppt,sbd-aus-versucht$/);
     expect(b.log.trim().split('\n')).toEqual(['pcs cluster stop --all', 'pcs stonith sbd disable']);
   });
   it('cluster_entfernen: stoppt sauber, SBD aus, destroy --all; zweiter Lauf „schon“; mit Ressourcen oder fremdem Cluster Abbruch ohne Änderung', async () => {
@@ -1276,7 +1293,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 4 — Fencing-Beweis ausgef�
     const w = await fencing([PRUEFEN_T, PRUEFEN_T], ['touch "$T/run_scheitert"', 'rm -f "$T/run_scheitert"']);
     keinBeleg(w.laeufe[0]!, /Aufheben der Sperre nicht planbar: .* nichts ausgelöst, Test-Datei entfernt/);
     // Final-Review I-1: die (wieder entfernte) Test-Datei steht trotzdem in der Änderungsliste — nichts still
-    expect(String(w.laeufe[0]!.ergebnis?.fehler)).toMatch(/Test-Datei entfernt — bisher geändert: fencing-test-datei$/);
+    expect(String(w.laeufe[0]!.ergebnis?.fehler)).toMatch(/Test-Datei entfernt — bisher geändert: fencing-test-datei,aufheben-geplant-versucht$/);
     expect(w.laeufe[1]!.rc, w.laeufe[1]!.aus).toBe(0);
     expect(w.laeufe[1]!.ergebnis).toMatchObject({ zustand: 'ausgeloest' });
   });

@@ -331,9 +331,22 @@ const sh = (s: string) => s.replaceAll('§{', '${');
  * hängt „ — bisher geändert: <AJ>“ an; der Skill gibt den Fehler dann mit Daten zurück (teilweise → Rückweg). `ausnahme` ist eine
  * zusätzliche Bedingung, unter der die Liste entfällt (Cluster: nur die pcs-Anmeldung erneuert — das sagt der Text schon über stand()).
  * Gleiche Technik wie der Failover-Baustein (dort mit der Freigabe der Standort-Bedingung).
+ * Ruling R12: ein ändernder Befehl kann scheitern, nachdem er schon etwas geändert hat (pcs cluster setup schreibt corosync.conf auf
+ * einzelne Knoten, pcs cluster stop --all stoppt einen Teil). Darum steht vor jedem solchen Befehl `versuch <name>`: scheitert er,
+ * nennt der Abbruch „<name>-versucht“ in „bisher geändert“ (→ Daten → teilweise → Rückweg). Das folgende `aend` leert die Marke,
+ * die Erfolgsausgabe bleibt unverändert. Die Ausnahme (nur pcs-Anmeldung) gilt nur für die Liste ohne offenen Versuch.
  */
-const abbruchMitAenderungen = (ausnahme = '') => sh(String.raw`eval "$(declare -f abbruch | sed '1s/^abbruch /abbruch_basis /')"
-abbruch() { if [ "$GEAENDERT" = 1 ]${ausnahme}; then set -- "$1 — bisher geändert: $(printf '%s' "$AJ" | tr -d '"')"; fi; abbruch_basis "$1"; }`);
+const abbruchMitAenderungen = (ausnahme = '') => sh(String.raw`VERSUCHT=''
+versuch() { VERSUCHT=$1; }
+eval "$(declare -f aend | sed '1s/^aend /aend_basis /')"
+aend() { VERSUCHT=''; aend_basis "$1"; }
+eval "$(declare -f abbruch | sed '1s/^abbruch /abbruch_basis /')"
+abbruch() {
+  local l; l=$(printf '%s' "$AJ" | tr -d '"')
+  if [ -n "$VERSUCHT" ]; then l+="§{l:+,}$VERSUCHT-versucht"; fi
+  if { [ "$GEAENDERT" = 1 ]${ausnahme}; } || [ -n "$VERSUCHT" ]; then set -- "$1 — bisher geändert: $l"; fi
+  abbruch_basis "$1"
+}`);
 
 /**
  * Task 3 — corosync.conf lesen (gemeinsam für ha_vorbereiten und die Cluster-Bausteine). Debian/Ubuntu liefert mit dem Paket corosync
@@ -500,6 +513,7 @@ if [ "\${#FEHLEND[@]}" -gt 0 ]; then
   done
   # Dienste der neuen Pakete nicht starten (Debian startet corosync/pacemaker sonst mit Standardkonfiguration); Cluster richtet Task 3 ein
   if [ ! -e "$POLICY_RC" ]; then printf '#!/bin/sh\\nexit 101\\n' >"$POLICY_RC"; chmod 0755 "$POLICY_RC"; POLICY_EIGEN=1; fi
+  versuch pakete
   if ! ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "\${FEHLEND[@]}" >"$ALFRED_TMP/apt.log" 2>&1; then
     abbruch "apt-get install fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   fi
@@ -523,7 +537,7 @@ FEHLT=''; for b in "\${HA_BEFEHLE[@]}"; do if ! befehl_da "$b"; then FEHLT+="\${
 if [ ! -e "$COROSYNC_CONF" ] || konf_frei "$(cat "$COROSYNC_CONF")"; then
   for d in pacemaker corosync sbd; do
     if systemctl is-enabled --quiet "$d" || systemctl is-active --quiet "$d"; then
-      aus=$(systemctl disable --now "$d" 2>&1) || abbruch "$d lässt sich nicht stoppen/deaktivieren (noch kein Cluster eingerichtet): $(kurz "$aus")"
+      versuch "aus:$d"; aus=$(systemctl disable --now "$d" 2>&1) || abbruch "$d lässt sich nicht stoppen/deaktivieren (noch kein Cluster eingerichtet): $(kurz "$aus")"
       aend "aus:$d"
     fi
     ! systemctl is-active --quiet "$d" || abbruch "$d läuft noch, obwohl kein Cluster eingerichtet ist"
@@ -546,7 +560,7 @@ done
 if [ -e "$MODLOAD_CONF" ]; then rm -f -- "$MODLOAD_CONF"; aend modules-load-entfernt; fi
 inhalt_gleich "$MODPROBE_CONF" "$MODPROBE_SOLL" || { schreibe "$MODPROBE_CONF" 0644 "$MODPROBE_SOLL"; aend softdog-gesperrt; }
 if [ ! -e "$WD_SYS/watchdog0" ]; then
-  aus=$(modprobe i6300esb 2>&1) || abbruch "modprobe i6300esb fehlgeschlagen: $(kurz "$aus")"
+  versuch i6300esb-geladen; aus=$(modprobe i6300esb 2>&1) || abbruch "modprobe i6300esb fehlgeschlagen: $(kurz "$aus")"
   aend i6300esb-geladen
   udevadm settle >/dev/null 2>&1 || true
   for i in $(seq 1 10); do if [ -e "$WD_SYS/watchdog0" ]; then break; fi; sleep 1; done
@@ -558,7 +572,7 @@ WD_ID=$(cat "$WD_SYS/watchdog0/identity" 2>/dev/null || true)
 # ── systemd: kein Runtime-Watchdog (SBD ist einziger Besitzer) ──
 inhalt_gleich "$SYSTEMD_CONF" "$SYSTEMD_SOLL" || { schreibe "$SYSTEMD_CONF" 0644 "$SYSTEMD_SOLL"; aend systemd-runtimewatchdog; }
 rw=$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || true)
-if [ "$rw" != 0 ]; then systemctl daemon-reexec || abbruch "systemctl daemon-reexec fehlgeschlagen"; aend systemd-neu-geladen; rw=$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || true); fi
+if [ "$rw" != 0 ]; then versuch systemd-neu-geladen; systemctl daemon-reexec || abbruch "systemctl daemon-reexec fehlgeschlagen"; aend systemd-neu-geladen; rw=$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || true); fi
 [ "$rw" = 0 ] || abbruch "systemd RuntimeWatchdogUSec ist '$rw', erwartet 0 (aus)"
 # ── Live-Fix (c2e4f56d): sbd startet erst nach dem Watchdog-Modul und wenn das Gerät da ist (Wartezeit fest, sichtbarer Fehler danach) ──
 DR_NEU=0
@@ -566,7 +580,7 @@ inhalt_gleich "$WARTE_DATEI" "$WARTE_SOLL" || { schreibe "$WARTE_DATEI" 0755 "$W
 # nur die Rechte falsch → nur die Rechte richten (kein daemon-reload nötig)
 ist_ausfuehrbar "$WARTE_DATEI" || { rechte_setzen "$WARTE_DATEI"; aend sbd-warteskript-rechte; }
 inhalt_gleich "$SBD_DROPIN" "$SBD_DROPIN_SOLL" || { schreibe "$SBD_DROPIN" 0644 "$SBD_DROPIN_SOLL"; DR_NEU=1; aend sbd-wartet-auf-watchdog; }
-if [ "$DR_NEU" = 1 ]; then systemctl daemon-reload || abbruch "systemctl daemon-reload nach dem sbd-Drop-in fehlgeschlagen"; aend systemd-neu-geladen-sbd; fi
+if [ "$DR_NEU" = 1 ]; then versuch systemd-neu-geladen-sbd; systemctl daemon-reload || abbruch "systemctl daemon-reload nach dem sbd-Drop-in fehlgeschlagen"; aend systemd-neu-geladen-sbd; fi
 # ── Host-Firewall: eigene Tabelle inet alfred_ha über alfred-hostfw.service ──
 FW_NEU=0
 if ! inhalt_gleich "$FW_DATEI" "$NFT_SOLL"; then
@@ -576,26 +590,26 @@ if ! inhalt_gleich "$FW_DATEI" "$NFT_SOLL"; then
   mv -f "$FW_DATEI.alfred-neu" "$FW_DATEI"; FW_NEU=1; aend firewall-regeln
 fi
 if ! inhalt_gleich "$UNIT_DATEI" "$UNIT_SOLL"; then schreibe "$UNIT_DATEI" 0644 "$UNIT_SOLL"; systemctl daemon-reload; FW_NEU=1; aend firewall-dienst; fi
-if ! systemctl is-enabled --quiet "$FW_DIENST"; then systemctl enable "$FW_DIENST" >/dev/null 2>&1 || abbruch "$FW_DIENST lässt sich nicht aktivieren"; aend firewall-aktiviert; fi
+if ! systemctl is-enabled --quiet "$FW_DIENST"; then versuch firewall-aktiviert; systemctl enable "$FW_DIENST" >/dev/null 2>&1 || abbruch "$FW_DIENST lässt sich nicht aktivieren"; aend firewall-aktiviert; fi
 if [ "$FW_NEU" = 1 ] || ! systemctl is-active --quiet "$FW_DIENST" || ! nft list table inet "$NFT_TABELLE" >/dev/null 2>&1; then
-  systemctl restart "$FW_DIENST" || abbruch "$FW_DIENST startet nicht: $(kurz "$(journalctl -u "$FW_DIENST" -n 6 --no-pager 2>&1 || true)")"
+  versuch firewall-geladen; systemctl restart "$FW_DIENST" || abbruch "$FW_DIENST startet nicht: $(kurz "$(journalctl -u "$FW_DIENST" -n 6 --no-pager 2>&1 || true)")"
   aend firewall-geladen
 fi
 # ── hacluster-Kennwort (aus stdin; nur bei Abweichung) ──
 if ! kw_vergleich; then
-  printf 'hacluster:%s\\n' "$KW" | chpasswd || abbruch "chpasswd für hacluster fehlgeschlagen"
+  versuch hacluster-kennwort; printf 'hacluster:%s\\n' "$KW" | chpasswd || abbruch "chpasswd für hacluster fehlgeschlagen"
   printf 'ALFRED-HACLUSTER-GESETZT\\n'
   aend hacluster-kennwort
 fi
 # ── pcsd läuft (hinter der Firewall); die Cluster-Dienste regelt der Block nach der Installation ──
 if ! systemctl is-enabled --quiet pcsd || ! systemctl is-active --quiet pcsd; then
-  systemctl enable --now pcsd >/dev/null 2>&1 || abbruch "pcsd lässt sich nicht starten"
+  versuch pcsd; systemctl enable --now pcsd >/dev/null 2>&1 || abbruch "pcsd lässt sich nicht starten"
   aend pcsd
 fi
 # ── SQL Server: HADR an (Neustart nur bei Änderung) ──
 NS=false
 if [ "$(hadr_wert)" != 1 ]; then
-  aus=$("$MSSQLCONF" set hadr.hadrenabled 1 2>&1) || abbruch "mssql-conf set hadr.hadrenabled fehlgeschlagen: $(kurz "$aus")"
+  versuch hadr; aus=$("$MSSQLCONF" set hadr.hadrenabled 1 2>&1) || abbruch "mssql-conf set hadr.hadrenabled fehlgeschlagen: $(kurz "$aus")"
   systemctl restart mssql-server || abbruch "Neustart von mssql-server fehlgeschlagen"
   ok=0; for i in $(seq 1 60); do if ss -Htln 'sport = :1433' | grep -q .; then ok=1; break; fi; sleep 2; done
   [ "$ok" = 1 ] || abbruch "SQL Server lauscht nach dem Neustart nicht auf 1433 (120 s)"
@@ -617,9 +631,9 @@ if [ -e "$COROSYNC_CONF" ] && ! konf_frei "$(cat "$COROSYNC_CONF")" && systemctl
   "$WARTE_DATEI" "$SBD_KONF" 5 || abbruch "sbd scheiterte am fehlenden Watchdog-Gerät, und es fehlt noch immer — nichts am Cluster geändert"
   systemctl reset-failed sbd >/dev/null 2>&1 || true
   aend sbd-reset-failed
-  aus=$(pcs cluster stop 2>&1) || abbruch "pcs cluster stop (nur $ICH) fehlgeschlagen: $(kurz "$aus")"
+  versuch cluster-hier-gestoppt; aus=$(pcs cluster stop 2>&1) || abbruch "pcs cluster stop (nur $ICH) fehlgeschlagen: $(kurz "$aus")"
   aend cluster-hier-gestoppt
-  aus=$(pcs cluster start --wait=120 2>&1) || abbruch "pcs cluster start (nur $ICH) fehlgeschlagen: $(kurz "$aus")"
+  versuch cluster-hier-gestartet; aus=$(pcs cluster start --wait=120 2>&1) || abbruch "pcs cluster start (nur $ICH) fehlgeschlagen: $(kurz "$aus")"
   aend cluster-hier-gestartet
   ok=0; for i in $(seq 1 "$WARTE_RUNDEN"); do if systemctl is-active --quiet sbd && systemctl is-active --quiet pacemaker; then ok=1; break; fi; sleep 2; done
   [ "$ok" = 1 ] || abbruch "nach pcs cluster start laufen sbd/pacemaker auf $ICH nicht — sbd: $(systemctl is-active sbd 2>/dev/null || true), pacemaker: $(systemctl is-active pacemaker 2>/dev/null || true)"
@@ -888,24 +902,24 @@ if [ "$ART" = leer ]; then
     esac
   done
   # ── neu anlegen: knet über die festen Adressen, diskless SBD (kein sbd create), dann aktivieren und starten ──
-  aus=$(pcs cluster setup "$CLUSTER" "§{KNOTEN_ADDR[@]}" transport knet 2>&1) || abbruch "pcs cluster setup fehlgeschlagen: $(kurz "$aus") — pcs prüft vor dem Anlegen; ein Teilstand geht mit cluster_entfernen zurück"
+  versuch cluster-angelegt; aus=$(pcs cluster setup "$CLUSTER" "§{KNOTEN_ADDR[@]}" transport knet 2>&1) || abbruch "pcs cluster setup fehlgeschlagen: $(kurz "$aus") — pcs prüft vor dem Anlegen; ein Teilstand geht mit cluster_entfernen zurück"
   aend cluster-angelegt
-  aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  versuch sbd-diskless; aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
   aend sbd-diskless
-  aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  versuch cluster-aktiviert; aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
   aend cluster-aktiviert
-  aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
+  versuch cluster-gestartet; aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Rückweg cluster_entfernen"
   aend cluster-gestartet
   warte_online || abbruch "nach dem Start $LO/$ANZAHL Knoten online, Quorum $LQ — erwartet alle Knoten mit Quorum; Rückweg cluster_entfernen"
 else
   # ── bestehender Cluster gleichen Namens mit denselben Knoten: nur Abweichungen beheben, jede sichtbar ──
   lage
   if ! systemctl is-enabled --quiet corosync || ! systemctl is-enabled --quiet pacemaker; then
-    aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus")"
+    versuch cluster-aktiviert; aus=$(pcs cluster enable --all 2>&1) || abbruch "pcs cluster enable --all fehlgeschlagen: $(kurz "$aus")"
     aend cluster-aktiviert
   fi
   if [ "$LO" != "$ANZAHL" ] || [ "$LQ" != 1 ]; then
-    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus")"
+    versuch cluster-gestartet; aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus")"
     aend cluster-gestartet
     warte_online || abbruch "nach dem Start $LO/$ANZAHL Knoten online, Quorum $LQ — erwartet alle Knoten mit Quorum"
   fi
@@ -913,22 +927,22 @@ else
     # SBD ändern wirkt erst nach einem Neustart des ganzen Clusters — nur ohne Ressourcen (keine AG), sonst sichtbarer Abbruch
     [ "$LR" = 0 ] || abbruch "SBD weicht ab ($SBD_ABW), der Cluster trägt aber $LR Ressourcen — SBD ändern braucht einen Neustart des ganzen Clusters; nicht automatisch"
     # Task 4 (Carry-over 3): Stopp und Start des ganzen Clusters stehen in den Änderungen (Owner-Regel: nichts still)
-    aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
+    versuch cluster-gestoppt; aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
     aend cluster-gestoppt
-    aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+    versuch sbd-neu-eingerichtet; aus=$(pcs stonith sbd enable "watchdog=$WD_DEV" "SBD_WATCHDOG_TIMEOUT=$SBD_T" 2>&1) || abbruch "pcs stonith sbd enable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
     aend sbd-neu-eingerichtet
-    aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+    versuch cluster-gestartet; aus=$(pcs cluster start --all --wait=180 2>&1) || abbruch "pcs cluster start --all fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
     aend cluster-gestartet
     warte_online || abbruch "nach dem SBD-Neustart $LO/$ANZAHL Knoten online, Quorum $LQ"
   fi
 fi
 # ── Eigenschaften: stonith-watchdog-timeout (diskless SBD) und stonith-enabled; have-watchdog setzt Pacemaker selbst (nur gelesen) ──
 if [ "$(sekunden "$(eigenschaft stonith-watchdog-timeout)")" != "$STONITH_T" ]; then
-  aus=$(pcs property set "stonith-watchdog-timeout=$STONITH_T" 2>&1) || abbruch "pcs property set stonith-watchdog-timeout=$STONITH_T fehlgeschlagen: $(kurz "$aus")"
+  versuch stonith-watchdog-timeout; aus=$(pcs property set "stonith-watchdog-timeout=$STONITH_T" 2>&1) || abbruch "pcs property set stonith-watchdog-timeout=$STONITH_T fehlgeschlagen: $(kurz "$aus")"
   aend stonith-watchdog-timeout
 fi
 if [ "$(eigenschaft stonith-enabled)" != true ]; then
-  aus=$(pcs property set stonith-enabled=true 2>&1) || abbruch "pcs property set stonith-enabled=true fehlgeschlagen: $(kurz "$aus")"
+  versuch stonith-enabled; aus=$(pcs property set stonith-enabled=true 2>&1) || abbruch "pcs property set stonith-enabled=true fehlgeschlagen: $(kurz "$aus")"
   aend stonith-enabled
 fi
 # ── Selbstprüfung ──
@@ -990,13 +1004,13 @@ fi
 if [ "$ART" = alfred ]; then
   # erst sauber stoppen (Pacemaker beendet sich geordnet → SBD setzt keinen Knoten zurück), dann SBD aus, dann entfernen
   if [ "$LO" -gt 0 ] || systemctl is-active --quiet pacemaker || systemctl is-active --quiet corosync; then
-    aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
+    versuch cluster-gestoppt; aus=$(pcs cluster stop --all 2>&1) || abbruch "pcs cluster stop --all fehlgeschlagen: $(kurz "$aus")"
     aend cluster-gestoppt
   fi
-  aus=$(pcs stonith sbd disable 2>&1) || abbruch "pcs stonith sbd disable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
+  versuch sbd-aus; aus=$(pcs stonith sbd disable 2>&1) || abbruch "pcs stonith sbd disable fehlgeschlagen: $(kurz "$aus") — Cluster ist gestoppt"
   aend sbd-aus
   # pcs 0.11 fragt vor destroy nach; --force ersetzt nur diese Rückfrage
-  aus=$(pcs cluster destroy --all --force 2>&1) || abbruch "pcs cluster destroy --all fehlgeschlagen: $(kurz "$aus")"
+  versuch cluster-entfernt; aus=$(pcs cluster destroy --all --force 2>&1) || abbruch "pcs cluster destroy --all fehlgeschlagen: $(kurz "$aus")"
   aend cluster-entfernt
 fi
 # ── Selbstprüfung (auch bei „schon“): $CLUSTER auf keinem Knoten mehr, Cluster-Dienste hier aus ──
@@ -1482,13 +1496,13 @@ if [ "$ART" = trennung ]; then
   printf '%s\n' "$NFT_TEST" >"$REGEL_DATEI"
   aus=$(nft -c -f "$REGEL_DATEI" 2>&1) || abbruch "nft lehnt die Test-Regel ab: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
   # zuerst das Aufheben planen: die Sperre endet nach $SPERRE_S s auch dann, wenn SBD den Knoten nicht zurücksetzt
-  aus=$(systemd-run --unit="$EINHEIT-ende" --on-active="$((VERZ_S + SPERRE_S))" --timer-property=AccuracySec=1s nft delete table inet "$TEST_TABELLE" 2>&1) || abbruch "Aufheben der Sperre nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
+  versuch aufheben-geplant; aus=$(systemd-run --unit="$EINHEIT-ende" --on-active="$((VERZ_S + SPERRE_S))" --timer-property=AccuracySec=1s nft delete table inet "$TEST_TABELLE" 2>&1) || abbruch "Aufheben der Sperre nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
   aend aufheben-geplant
-  aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s nft -f "$REGEL_DATEI" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt (der Aufheben-Timer läuft ins Leere)"
+  versuch ausloeser-geplant; aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s nft -f "$REGEL_DATEI" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt (der Aufheben-Timer läuft ins Leere)"
   AUSL_GEPLANT=1
   aend ausloeser-geplant
 else
-  aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s /bin/sh -c "sync; echo c > $SYSRQ_TRIGGER" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
+  versuch ausloeser-geplant; aus=$(systemd-run --unit="$EINHEIT" --on-active="$VERZ_S" --timer-property=AccuracySec=1s /bin/sh -c "sync; echo c > $SYSRQ_TRIGGER" 2>&1) || abbruch "Auslöser nicht planbar: $(kurz "$aus") — nichts ausgelöst, Test-Datei entfernt"
   AUSL_GEPLANT=1
   aend ausloeser-geplant
 fi
