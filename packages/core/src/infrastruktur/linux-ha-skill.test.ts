@@ -488,6 +488,9 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     expect(w.gesetzt.map(g => g.name).sort()).toEqual(['sqllnx-ha-pacemaker', 'sqllnx-sqllnx01-masterkey', 'sqllnx-sqllnx02-masterkey', 'sqllnx-sqllnxcfg-masterkey']);
     const rp = w.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agReplikat);
     for (const a of [...rp, ...w.aufrufe.filter(x => x.baustein === LINUX_HA_BAUSTEINE.agAbschluss)]) expect(Object.keys(JSON.parse(a.eingabe!))).toEqual(['sa']);
+    // K1: alle drei Replikat-Läufe bekommen die Datenbanken (Primär prüft Bereitschaft, Sekundär entfernt eine alte RESTORING-Kopie)
+    expect(rp.map(a => [a.zugang, (a.parameter as { rolle: string }).rolle, (a.parameter as { datenbanken: unknown }).datenbanken]))
+      .toEqual([['sqllnx01', 'primaer', ['alfredpruef']], ['sqllnx02', 'sekundaer', ['alfredpruef']], ['sqllnxcfg', 'konfig', ['alfredpruef']]]);
     const ab = w.aufrufe.find(a => a.baustein === LINUX_HA_BAUSTEINE.agAbschluss)!;
     expect(ab.parameter).toEqual({ ag: 'sqllnxag01', besetzung, knoten: HA_KNOTEN, datenbanken: ['alfredpruef'], vip: { ip: '10.203.30.13', praefix: 27 } });
     expect(ab.timeoutMs).toBe(900_000);

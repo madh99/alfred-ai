@@ -1884,11 +1884,15 @@ export function haStatusSkript(): string {
 //   2. ha.ag_replikat je Knoten (Primär zuerst): die beiden fremden öffentlichen Zertifikate (FROM BINARY) mit Login/User und CONNECT
 //      auf den Endpunkt; Primär: CREATE AVAILABILITY GROUP … CLUSTER_TYPE = EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0,
 //      AUTOMATED_BACKUP_PREFERENCE = PRIMARY; Sekundär: JOIN + GRANT CREATE ANY DATABASE; Konfig: JOIN; überall Pacemaker-Rechte auf die AG.
+//      Primär prüft vorher die Datenbanken wie der Abschluss (vorhanden, ONLINE, FULL, Log-Kette, keine andere AG) — erst danach läuft der
+//      Sekundär. Sekundär: eine zurückgebliebene Kopie einer AG-Datenbank im Zustand RESTORING ohne AG (Rest von ag_entfernen) wird vor
+//      dem JOIN sichtbar entfernt (alte-kopie-entfernt-<db>) und neu geseedet; jeder andere Zustand außerhalb der AG bricht ohne Änderung ab.
 //   3. ha.ag_abschluss auf dem Primär: Datenbanken (FULL, Log-Kette begonnen) aufnehmen, SYNCHRONIZED abwarten, Pacemaker-Ressourcen
 //      ag_cluster (ocf:mssql:ag, required_synchronized_secondaries_to_commit=0, promotable) und ag_vip (IPaddr2, erst deaktiviert),
 //      Kolokation mit Promoted + Reihenfolge promote → start, VIP aktivieren; Selbstprüfung.
 //   Rückweg ha.ag_entfernen je Knoten (Primär zuerst, mit Ressourcen): Ressourcen, AG, Endpunkt, Zertifikate, Logins, Zugangsdatei;
-//   Datenbanken bleiben (Primär wieder ONLINE, Sekundär RESTORING), Master-Keys bleiben (Tresor).
+//   Datenbanken bleiben (Primär wieder ONLINE, Sekundär RESTORING — ein späteres ag_anlegen entfernt die Sekundär-Kopie sichtbar und
+//   seedet neu), Master-Keys bleiben (Tresor).
 //
 // T-SQL geht über stdin an sqlcmd (SQL_HILFE, als sa), Kennwörter nur über Platzhalter @@HS@@/@@PM@@, die das Skript aus der
 // Eingabe einsetzt (' verdoppelt). Jeder T-SQL-Block beginnt mit „-- ALFRED-SCHRITT <name>“ (Tests stubben sqlcmd danach) und liefert
@@ -1912,7 +1916,8 @@ export interface HaAgBesetzung { primaer: string; sekundaer: string; konfig: str
 /** öffentliches Endpunkt-Zertifikat eines anderen Knotens (DER als Großbuchstaben-Hex) mit Fingerabdruck */
 export interface HaAgPeer { name: string; zertifikat: string; fingerabdruck: string }
 export interface HaAgEndpunktParameter { cluster: string; ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[] }
-export interface HaAgReplikatParameter { ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[]; peers: HaAgPeer[] }
+/** datenbanken: die Datenbanken der AG — Primär prüft ihre Bereitschaft, Sekundär entfernt eine alte RESTORING-Kopie ohne AG, Konfig nur geprüft */
+export interface HaAgReplikatParameter { ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[]; peers: HaAgPeer[]; datenbanken: string[] }
 export interface HaAgAbschlussParameter { ag: string; besetzung: HaAgBesetzung; knoten: HaKnoten[]; datenbanken: string[]; vip: { ip: string; praefix: number } }
 export interface HaAgEntfernenParameter { ag: string; besetzung: HaAgBesetzung; rolle: HaAgRolle; knoten: HaKnoten[]; ressourcen: boolean }
 
@@ -1958,7 +1963,7 @@ export function pruefeHaAgEndpunkt(p: unknown): string | undefined {
 
 export function pruefeHaAgReplikat(p: unknown): string | undefined {
   const x = obj(p);
-  const f = pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgRolle(x.rolle); if (f) return f;
+  const f = pruefeAgName(x.ag) ?? pruefeHaAgBesetzung(x.besetzung, x.knoten) ?? pruefeAgRolle(x.rolle) ?? pruefeAgDatenbanken(x.datenbanken); if (f) return f;
   const ich = (x.besetzung as HaAgBesetzung)[x.rolle as HaAgRolle];
   const soll = (x.knoten as HaKnoten[]).map(k => k.name).filter(n => n !== ich);
   const peers = Array.isArray(x.peers) ? x.peers.map(obj) : [];
@@ -2002,6 +2007,22 @@ const agDa = (ag: string) => `EXISTS (SELECT 1 FROM sys.availability_groups WHER
 const lokaleRolle = (ag: string) => `(SELECT UPPER(rs.role_desc) FROM sys.dm_hadr_availability_replica_states rs JOIN sys.availability_groups g ON g.group_id = rs.group_id WHERE g.name = N'${ag}' AND rs.is_local = 1)`;
 const connectDa = (p: string) => `EXISTS (SELECT 1 FROM sys.server_permissions x JOIN sys.server_principals l ON l.principal_id = x.grantee_principal_id JOIN sys.endpoints e ON e.endpoint_id = x.major_id WHERE x.class = 105 AND e.name = N'${EPN}' AND l.name = N'${zn(p)}' AND x.permission_name = N'CONNECT' AND x.state IN ('G', 'W'))`;
 const dbTabelle = (dbs: readonly string[]) => `DECLARE @dbs TABLE (n sysname); INSERT @dbs (n) VALUES ${dbs.map(d => `(N'${d}')`).join(', ')};`;
+/**
+ * Bereitschaft der AG-Datenbanken auf dem Primär (ab_pruefen und rp_pruefen Primär): vorhanden, ONLINE, Wiederherstellungsmodell FULL,
+ * Log-Kette begonnen, in keiner anderen AG — sonst THROW <nr> ohne Änderung. Erwartet deklarierte @m nvarchar(2048), @f nvarchar(2000) = N''.
+ */
+const dbBereitschaft = (ag: string, dbs: readonly string[], nr: number): string[] => [
+  dbTabelle(dbs),
+  "SELECT @f += N' ' + d.n + N' fehlt;' FROM @dbs d WHERE DB_ID(d.n) IS NULL;",
+  "SELECT @f += N' ' + d.n + N' ist ' + s.state_desc + N';' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.state_desc <> N'ONLINE';",
+  "SELECT @f += N' ' + d.n + N' hat Wiederherstellungsmodell ' + s.recovery_model_desc + N' (erwartet FULL);' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.recovery_model_desc <> N'FULL';",
+  // Log-Kette begonnen = mindestens eine FULL-Sicherung im Modell FULL (sonst kein automatisches Seeding)
+  "SELECT @f += N' ' + d.n + N' ohne FULL-Sicherung (Log-Kette nicht begonnen);' FROM @dbs d JOIN sys.database_recovery_status r ON r.database_id = DB_ID(d.n) WHERE r.last_log_backup_lsn IS NULL;",
+  `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
+  `IF @f <> N'' BEGIN SET @m = N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW ${nr}, @m, 1; END`,
+];
+/** lokale Kopie ohne AG im Zustand RESTORING (Rest von ag_entfernen auf dem früheren Sekundär) — nur diese wird je entfernt */
+const alteKopie = (d: string) => `EXISTS (SELECT 1 FROM sys.databases WHERE name = N'${d}' AND state_desc = N'RESTORING' AND replica_id IS NULL)`;
 
 function tsqlEndpunkt(ich: string): Record<'pruefen' | 'masterkey' | 'login' | 'endpunkt' | 'selbst', string> {
   const mkDa = "EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'##MS_DatabaseMasterKey##')";
@@ -2073,7 +2094,7 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
   const reps = `FROM sys.availability_replicas r JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE g.name = N'${ag}'`;
   const pruefen = [
     AG_KOPF('rp_pruefen'),
-    'DECLARE @m nvarchar(2048);',
+    "DECLARE @m nvarchar(2048), @f nvarchar(2000) = N'';",
     servername(ich),
     `IF NOT EXISTS (SELECT 1 FROM sys.database_mirroring_endpoints WHERE name = N'${EPN}' AND state_desc = N'STARTED') THROW 50201, N'Endpunkt ${EPN} fehlt oder ist nicht gestartet - erst der Endpunkt-Schritt; nichts geändert', 1;`,
     `IF NOT EXISTS (SELECT 1 FROM sys.sql_logins WHERE name = N'${PML}') THROW 50202, N'Login ${PML} fehlt - erst der Endpunkt-Schritt; nichts geändert', 1;`,
@@ -2088,14 +2109,24 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
       `IF ${agDa(ag)} AND ISNULL(${lokaleRolle(ag)}, N'') <> N'PRIMARY' THROW 50208, N'${ich} ist nicht Primär von ${ag}; nichts geändert', 1;`,
       `IF ${agDa(ag)} AND ((SELECT COUNT(*) ${reps}) <> 3 OR (SELECT COUNT(*) ${reps} AND (${rep(b.primaer, datenBed)} OR ${rep(b.sekundaer, datenBed)} OR ${rep(b.konfig, "r.availability_mode_desc = N'CONFIGURATION_ONLY'")})) <> 3)`,
       `  THROW 50209, N'${ag} besteht mit anderen Replikaten (Namen, Endpunkte, Modi) - nicht still geändert; nichts geändert', 1;`,
+      // Bereitschaft der Datenbanken VOR jeder Änderung — erst danach läuft der Sekundär (der dort eine alte Kopie entfernen darf)
+      ...dbBereitschaft(ag, p.datenbanken, 50211),
     ] : [
       `IF ${agDa(ag)} AND ISNULL(${lokaleRolle(ag)}, N'') = N'PRIMARY' THROW 50210, N'${ich} ist Primär von ${ag} - als ${rolle === 'sekundaer' ? 'Sekundär' : 'Konfig'} nichts geändert', 1;`,
+      // Sekundär: je Datenbank der Liste, die hier besteht — in dieser AG oder RESTORING ohne AG (wird in rp_aendern entfernt) ist in Ordnung,
+      // eine andere AG oder jeder andere Zustand bricht ab (nie still gelöscht)
+      ...(rolle === 'sekundaer' ? p.datenbanken.flatMap(d => [
+        `IF EXISTS (SELECT 1 FROM sys.databases s LEFT JOIN sys.availability_replicas r ON r.replica_id = s.replica_id LEFT JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE s.name = N'${d}' AND s.replica_id IS NOT NULL AND ISNULL(g.name, N'') <> N'${ag}')`,
+        `  BEGIN SELECT TOP 1 @m = N'${d} gehört auf ${ich} zur Verfügbarkeitsgruppe ' + ISNULL(g.name, N'?') + N'; nichts geändert' FROM sys.databases s LEFT JOIN sys.availability_replicas r ON r.replica_id = s.replica_id LEFT JOIN sys.availability_groups g ON g.group_id = r.group_id WHERE s.name = N'${d}'; THROW 50212, @m, 1; END`,
+        `IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'${d}' AND replica_id IS NULL AND state_desc <> N'RESTORING')`,
+        `  BEGIN SELECT TOP 1 @m = N'${d} besteht auf ${ich} als ' + state_desc + N' außerhalb der AG - nie still gelöscht; nichts geändert' FROM sys.databases WHERE name = N'${d}'; THROW 50213, @m, 1; END`,
+      ]) : []),
     ]),
     "SELECT 'ALFRED|ok';",
   ].join('\n');
   const aendern = [
     AG_KOPF('rp_aendern'),
-    "DECLARE @a varchar(1000) = '', @sql nvarchar(max);",
+    "DECLARE @a varchar(4000) = '', @sql nvarchar(max);",
     // Login (Kennwort unbekannt, nie ausgegeben — die Anmeldung läuft nur über das Zertifikat), Benutzer, öffentliches Zertifikat, CONNECT
     ...p.peers.flatMap(x => [
       `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'${zn(x.name)}') BEGIN BEGIN TRY SET @sql = N'CREATE LOGIN [${zn(x.name)}] WITH PASSWORD = N''Ag!' + REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'') + N'z9'', CHECK_POLICY = OFF'; EXEC (@sql); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' login-${x.name}'; PRINT 'ALFRED-ERLEDIGT login-${x.name}'; END`,
@@ -2111,6 +2142,9 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
       `  IF (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] SET (AUTOMATED_BACKUP_PREFERENCE = PRIMARY)'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' sicherungsvorgabe-primary'; PRINT 'ALFRED-ERLEDIGT sicherungsvorgabe-primary'; END`,
       'END',
     ] : rolle === 'sekundaer' ? [
+      // VOR dem Beitritt: zurückgebliebene Kopie (RESTORING ohne AG) sichtbar entfernen — der Primär hat im selben Lauf die Datenbank
+      // ONLINE/FULL/mit Log-Kette gezeigt; das Seeding legt sie neu an. Kein anderer Zustand wird je gelöscht.
+      ...p.datenbanken.map(d => `IF ${alteKopie(d)} BEGIN BEGIN TRY EXEC (N'DROP DATABASE [${d}]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' alte-kopie-entfernt-${d}'; PRINT 'ALFRED-ERLEDIGT alte-kopie-entfernt-${d}'; END`),
       `IF NOT ${agDa(ag)} BEGIN BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] JOIN WITH (CLUSTER_TYPE = EXTERNAL)'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT beigetreten'; BEGIN TRY EXEC (N'ALTER AVAILABILITY GROUP [${ag}] GRANT CREATE ANY DATABASE'); END TRY BEGIN CATCH THROW; END CATCH; PRINT 'ALFRED-ERLEDIGT seeding-erlaubt'; SET @a += ' beigetreten seeding-erlaubt'; END`,
       // nach einem abgebrochenen Lauf: Datenbanken der AG fehlen hier noch → Seeding (wieder) erlauben, sichtbar
       `ELSE IF EXISTS (SELECT 1 FROM sys.availability_databases_cluster c JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name = N'${ag}' AND DB_ID(c.database_name) IS NULL)`,
@@ -2134,7 +2168,7 @@ function tsqlReplikat(p: HaAgReplikatParameter): Record<'pruefen' | 'aendern' | 
       `IF ${agDa(ag)} AND (SELECT UPPER(automated_backup_preference_desc) FROM sys.availability_groups WHERE name = N'${ag}') <> N'PRIMARY' SET @f += N' AUTOMATED_BACKUP_PREFERENCE ist nicht PRIMARY;';`,
     ] : rolle === 'konfig' ? [
       `IF NOT EXISTS (SELECT 1 ${reps} AND r.replica_server_name = N'${ich}' AND r.availability_mode_desc = N'CONFIGURATION_ONLY') SET @f += N' ${ich} ist kein CONFIGURATION_ONLY-Replikat von ${ag};';`,
-    ] : []),
+    ] : p.datenbanken.map(d => `IF ${alteKopie(d)} SET @f += N' alte Kopie ${d} (RESTORING ohne AG) besteht noch;';`)),
     `IF ${agDa(ag)} AND ${pmAgRechte} < 3 SET @f += N' Rechte von ${PML} auf ${ag} fehlen;';`,
     "IF @f <> N'' THROW 50290, @f, 1;",
     `SELECT 'ALFRED|' + ISNULL(${lokaleRolle(ag)}, '-');`,
@@ -2155,14 +2189,8 @@ function tsqlAbschluss(p: HaAgAbschlussParameter): Record<'pruefen' | 'dbs' | 's
       servername(b.primaer),
       `IF NOT ${agDa(ag)} THROW 50301, N'${ag} fehlt auf ${b.primaer} - erst der Replikat-Schritt; nichts geändert', 1;`,
       `IF ISNULL(${lokaleRolle(ag)}, N'') <> N'PRIMARY' THROW 50302, N'${b.primaer} ist nicht Primär von ${ag}; nichts geändert', 1;`,
-      dbTabelle(datenbanken),
-      "SELECT @f += N' ' + d.n + N' fehlt;' FROM @dbs d WHERE DB_ID(d.n) IS NULL;",
-      "SELECT @f += N' ' + d.n + N' ist ' + s.state_desc + N';' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.state_desc <> N'ONLINE';",
-      "SELECT @f += N' ' + d.n + N' hat Wiederherstellungsmodell ' + s.recovery_model_desc + N' (erwartet FULL);' FROM @dbs d JOIN sys.databases s ON s.name = d.n COLLATE DATABASE_DEFAULT WHERE s.recovery_model_desc <> N'FULL';",
-      // Log-Kette begonnen = mindestens eine FULL-Sicherung im Modell FULL (sonst kein automatisches Seeding)
-      "SELECT @f += N' ' + d.n + N' ohne FULL-Sicherung (Log-Kette nicht begonnen);' FROM @dbs d JOIN sys.database_recovery_status r ON r.database_id = DB_ID(d.n) WHERE r.last_log_backup_lsn IS NULL;",
-      `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
-      "IF @f <> N'' BEGIN SET @m = N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW 50303, @m, 1; END",
+      // dieselben Prüfungen wie rp_pruefen auf dem Primär — der Abschluss kann ohne vorherigen Replikat-Lauf wiederholt werden
+      ...dbBereitschaft(ag, datenbanken, 50303),
       "SELECT 'ALFRED|ok';",
     ].join('\n'),
     dbs: [
@@ -2471,14 +2499,16 @@ ergebnis "{\"zustand\":\"$Z\",\"knoten\":\"$ICH\",\"rolle\":\"$ROLLE\",\"lokaleR
  * AG-Schritt 2 je Knoten (Primär, dann Sekundär, dann Konfig): öffentliche Zertifikate der beiden Peers (FROM BINARY) mit Login + Benutzer
  * und CONNECT auf alfred_hadr; Primär legt die AG an (EXTERNAL, REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 0, Sicherung PRIMARY,
  * Datenreplikate SYNCHRONOUS_COMMIT/EXTERNAL/AUTOMATIC, Konfig CONFIGURATION_ONLY), Sekundär tritt bei + GRANT CREATE ANY DATABASE,
- * Konfig tritt bei; überall Pacemaker-Rechte auf die AG. Bestehendes mit Abweichung → Abbruch ohne Änderung. Zeit: LINUX_HA_ZEIT_MS.agReplikat
+ * Konfig tritt bei; überall Pacemaker-Rechte auf die AG. Primär prüft vorher die Bereitschaft der datenbanken (wie ab_pruefen); Sekundär
+ * entfernt vor dem Beitritt eine alte Kopie im Zustand RESTORING ohne AG (alte-kopie-entfernt-<db>), jeder andere Zustand → Abbruch.
+ * Bestehendes mit Abweichung → Abbruch ohne Änderung. Zeit: LINUX_HA_ZEIT_MS.agReplikat
  */
 export function haAgReplikatSkript(p: HaAgReplikatParameter): string {
   pruefe(pruefeHaAgReplikat(p));
   const ich = p.besetzung[p.rolle];
   const t = tsqlReplikat(p);
   return [
-    ...agKopf(LINUX_HA_BAUSTEINE.agReplikat, { ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), peers: p.peers.map(x => ({ name: x.name, zertifikat: x.zertifikat, fingerabdruck: x.fingerabdruck })) }, p.ag, p.rolle, ich),
+    ...agKopf(LINUX_HA_BAUSTEINE.agReplikat, { ag: p.ag, besetzung: { ...p.besetzung }, rolle: p.rolle, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), peers: p.peers.map(x => ({ name: x.name, zertifikat: x.zertifikat, fingerabdruck: x.fingerabdruck })), datenbanken: [...p.datenbanken] }, p.ag, p.rolle, ich),
     `T_PRUEFEN=${shQ(t.pruefen)}`, `T_AENDERN=${shQ(t.aendern)}`, `T_SELBST=${shQ(t.selbst)}`,
     '# ALFRED-ABLAUF',
     AG_REPLIKAT_KOERPER,

@@ -1506,7 +1506,7 @@ const PEERS: Record<string, HaAgReplikatParameter['peers']> = {
 };
 const ROLLE_VON = { sqllnx01: 'primaer', sqllnx02: 'sekundaer', sqllnxcfg: 'konfig' } as const;
 const AG_EP = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgEndpunktParameter => ({ cluster: 'sqllnxcl01', ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN] });
-const AG_RP = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgReplikatParameter => ({ ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN], peers: PEERS[k]!.map(x => ({ ...x })) });
+const AG_RP = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgReplikatParameter => ({ ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN], peers: PEERS[k]!.map(x => ({ ...x })), datenbanken: ['pruefdb01'] });
 const AG_AB: HaAgAbschlussParameter = { ag: 'sqllnxag01', besetzung: { ...BES }, knoten: [...HA_KNOTEN], datenbanken: ['alfredpruef'], vip: { ip: '10.203.30.13', praefix: 27 } };
 const AG_EN = (k: keyof typeof ROLLE_VON = 'sqllnx01'): HaAgEntfernenParameter => ({ ag: 'sqllnxag01', besetzung: { ...BES }, rolle: ROLLE_VON[k], knoten: [...HA_KNOTEN], ressourcen: k === 'sqllnx01' });
 function AG_SKRIPTE(): string[] {
@@ -2192,5 +2192,83 @@ cibadmin() { local n; n=$(( $(cat "$T/cib_n" 2>/dev/null || echo 0) + 1 )); echo
     // Ressource, aber keine Zugangsdatei: SQL ohne Zugangsdatei (null/null)
     expect(lauf({ res: true, mon: MON, cib: '<constraints/>', datei: null }).ag).toMatchObject({ standort: [], sql: null, sqlFehler: null });
     for (const [k] of Object.entries(voll.ag)) expect(GEHEIM_NAME.test(k), k).toBe(false);
+  });
+});
+
+// ── K1: zurückgebliebene RESTORING-Kopie auf dem Sekundär vor dem Beitritt sichtbar entfernen ────────────────────────────────────
+describe('I8e Paket 2 K1 — alte Sekundär-Kopie (Text, Validator)', () => {
+  const un = (t: string) => t.replaceAll(`'\\''`, "'");
+  /** T-SQL-Block eines Replikat-Skripts (Shell-Literal zurückübersetzt) */
+  const block = (k: keyof typeof ROLLE_VON, name: 'pruefen' | 'aendern' | 'selbst') => {
+    const t = un(haAgReplikatSkript(AG_RP(k)));
+    const rest = t.slice(t.indexOf(`-- ALFRED-SCHRITT rp_${name}`));
+    return rest.slice(0, rest.search(/\r?\nT_[A-Z]+=|\r?\n# ALFRED-ABLAUF/));
+  };
+
+  it('Validator: datenbanken Pflicht und geprüft (alle Rollen); Skript gibt sie im Kopf mit aus', () => {
+    for (const k of ['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const) {
+      expect(pruefeHaAgReplikat(AG_RP(k))).toBeUndefined();
+      const { datenbanken: _d, ...ohne } = AG_RP(k);
+      expect(pruefeHaAgReplikat(ohne)).toContain('datenbanken');
+      for (const d of [[], ['tempdb'], ['a b'], ["x'; DROP"], ['pruefdb01', 'PRUEFDB01']]) expect(pruefeHaAgReplikat({ ...AG_RP(k), datenbanken: d }), JSON.stringify(d)).toContain('datenbanken');
+    }
+    expect(() => haAgReplikatSkript({ ...AG_RP('sqllnx02'), datenbanken: ['master'] })).toThrow(/datenbanken/);
+    expect(haAgReplikatSkript(AG_RP('sqllnxcfg'))).toContain('"datenbanken":["pruefdb01"]');
+  });
+
+  it('Primär rp_pruefen: dieselben Bereitschaftsprüfungen wie ab_pruefen, Abbruch „nichts geändert“; kein DROP DATABASE bei Primär und Konfig', () => {
+    const p = block('sqllnx01', 'pruefen');
+    const ab = un(haAgAbschlussSkript({ ...AG_AB, datenbanken: ['pruefdb01'] }));
+    for (const z of [
+      "INSERT @dbs (n) VALUES (N'pruefdb01');",
+      "N' fehlt;' FROM @dbs d WHERE DB_ID(d.n) IS NULL;",
+      "WHERE s.state_desc <> N'ONLINE';",
+      "WHERE s.recovery_model_desc <> N'FULL';",
+      'WHERE r.last_log_backup_lsn IS NULL;',
+      "WHERE g.name <> N'sqllnxag01';",
+      "N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW 50211, @m, 1;",
+    ]) { expect(p, z).toContain(z); expect(ab, z).toContain(z.replace('THROW 50211', 'THROW 50303')); }
+    for (const k of ['sqllnx01', 'sqllnxcfg'] as const) expect(un(haAgReplikatSkript(AG_RP(k)))).not.toContain('DROP DATABASE');
+    expect(block('sqllnx02', 'pruefen')).not.toContain('last_log_backup_lsn');
+    expect(block('sqllnxcfg', 'pruefen')).not.toContain('pruefdb01');
+    expect(un(haAgReplikatSkript(AG_RP('sqllnxcfg')))).not.toContain('alte Kopie');
+  });
+
+  it('Sekundär rp_pruefen: andere AG und jeder Zustand außer RESTORING ohne AG → Abbruch „nie still gelöscht“', () => {
+    const p = block('sqllnx02', 'pruefen');
+    expect(p).toContain("N'pruefdb01 gehört auf sqllnx02 zur Verfügbarkeitsgruppe ' + ISNULL(g.name, N'?') + N'; nichts geändert'");
+    expect(p).toContain("WHERE s.name = N'pruefdb01' AND s.replica_id IS NOT NULL AND ISNULL(g.name, N'') <> N'sqllnxag01'");
+    expect(p).toContain("IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND replica_id IS NULL AND state_desc <> N'RESTORING')");
+    expect(p).toContain("N'pruefdb01 besteht auf sqllnx02 als ' + state_desc + N' außerhalb der AG - nie still gelöscht; nichts geändert'");
+    expect(p).not.toContain('DROP');
+  });
+
+  it('Sekundär rp_aendern: DROP DATABASE nur bei RESTORING ohne AG, mit Marke, VOR dem JOIN; rp_selbst prüft die Restkopie', () => {
+    const a = block('sqllnx02', 'aendern');
+    const drop = "IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) BEGIN BEGIN TRY EXEC (N'DROP DATABASE [pruefdb01]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' alte-kopie-entfernt-pruefdb01'; PRINT 'ALFRED-ERLEDIGT alte-kopie-entfernt-pruefdb01'; END";
+    expect(a).toContain(drop);
+    expect(a.split('DROP DATABASE').length).toBe(2);
+    expect(a.indexOf('DROP DATABASE [pruefdb01]')).toBeLessThan(a.indexOf('JOIN WITH'));
+    expect(un(haAgReplikatSkript(AG_RP('sqllnx02'))).split('DROP DATABASE').length).toBe(2);
+    expect(block('sqllnx02', 'selbst')).toContain("IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) SET @f += N' alte Kopie pruefdb01 (RESTORING ohne AG) besteht noch;';");
+  });
+});
+
+describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 K1 — alte Sekundär-Kopie ausgeführt', { timeout: 180_000 }, () => {
+  it('Sekundär: Marke alte-kopie-entfernt-pruefdb01 landet in aenderungen; Abbruch nach dem DROP ist „teilweise“ (bisher geändert)', async () => {
+    const sek = haAgReplikatSkript(AG_RP('sqllnx02'));
+    const fehler = `printf '%s\\n' 'ALFRED-ERLEDIGT alte-kopie-entfernt-pruefdb01' 'Msg 47106, Level 16' 'Cannot join availability group' >"$T/sqlfehler_rp_aendern"`;
+    const w = await agLaeufe([sek, sek], { sa: GEHEIM.sa }, [
+      `echo sqllnx02 >"$T/name"; ${sqlStub({ rp_pruefen: 'ALFRED|ok', rp_aendern: 'ALFRED|alte-kopie-entfernt-pruefdb01 beigetreten seeding-erlaubt pacemaker-ag-rechte', rp_selbst: 'ALFRED|SECONDARY' })}`,
+      fehler], 'cat "$T/tsql_rp_aendern"');
+    const [a, b] = w.laeufe as [AgLauf, AgLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.sqllog).toEqual(['bereit', 'rp_pruefen', 'rp_aendern', 'rp_selbst']);
+    expect(a.ergebnis).toEqual({ zustand: 'geaendert', knoten: 'sqllnx02', rolle: 'sekundaer', lokaleRolle: 'SECONDARY', aenderungen: ['alte-kopie-entfernt-pruefdb01', 'beigetreten', 'seeding-erlaubt', 'pacemaker-ag-rechte'] });
+    expect(b.rc).toBe(1);
+    const f = String(b.ergebnis!.fehler);
+    expect(f).toContain('bisher geändert: alte-kopie-entfernt-pruefdb01');
+    expect(f).not.toContain('nichts geändert');
+    expect(w.ende).toContain("EXEC (N'DROP DATABASE [pruefdb01]')");
   });
 });
