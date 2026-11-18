@@ -2245,12 +2245,20 @@ describe('I8e Paket 2 K1 — alte Sekundär-Kopie (Text, Validator)', () => {
 
   it('Sekundär rp_aendern: DROP DATABASE nur bei RESTORING ohne AG, mit Marke, VOR dem JOIN; rp_selbst prüft die Restkopie', () => {
     const a = block('sqllnx02', 'aendern');
-    const drop = "IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) BEGIN BEGIN TRY EXEC (N'DROP DATABASE [pruefdb01]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' alte-kopie-entfernt-pruefdb01'; PRINT 'ALFRED-ERLEDIGT alte-kopie-entfernt-pruefdb01'; END";
+    const drop = "IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) AND NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster WHERE database_name = N'pruefdb01') BEGIN BEGIN TRY EXEC (N'DROP DATABASE [pruefdb01]'); END TRY BEGIN CATCH THROW; END CATCH; SET @a += ' alte-kopie-entfernt-pruefdb01'; PRINT 'ALFRED-ERLEDIGT alte-kopie-entfernt-pruefdb01'; END";
     expect(a).toContain(drop);
     expect(a.split('DROP DATABASE').length).toBe(2);
     expect(a.indexOf('DROP DATABASE [pruefdb01]')).toBeLessThan(a.indexOf('JOIN WITH'));
     expect(un(haAgReplikatSkript(AG_RP('sqllnx02'))).split('DROP DATABASE').length).toBe(2);
-    expect(block('sqllnx02', 'selbst')).toContain("IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) SET @f += N' alte Kopie pruefdb01 (RESTORING ohne AG) besteht noch;';");
+    // Wiederholung: steht die Datenbank in availability_databases_cluster (Seeding/Wiederbeitritt läuft), ist sie keine alte Kopie —
+    // weder DROP noch Abbruch noch Selbstprüfungs-Fehler, unabhängig von replica_id
+    const schutz = "AND NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster WHERE database_name = N'pruefdb01')";
+    const dropZeile = a.split('\n').find(z => z.includes('DROP DATABASE'))!;
+    expect(dropZeile.indexOf(schutz)).toBeGreaterThan(-1);
+    expect(dropZeile.indexOf(schutz)).toBeLessThan(dropZeile.indexOf('DROP DATABASE'));
+    expect(block('sqllnx02', 'selbst').split('\n').find(z => z.includes('alte Kopie pruefdb01'))).toContain(schutz);
+    expect(block('sqllnx02', 'pruefen')).not.toMatch(/state_desc = N'RESTORING'[^\n]*THROW/);
+    expect(block('sqllnx02', 'selbst')).toContain("IF EXISTS (SELECT 1 FROM sys.databases WHERE name = N'pruefdb01' AND state_desc = N'RESTORING' AND replica_id IS NULL) AND NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster WHERE database_name = N'pruefdb01') SET @f += N' alte Kopie pruefdb01 (RESTORING ohne AG) besteht noch;';");
   });
 });
 

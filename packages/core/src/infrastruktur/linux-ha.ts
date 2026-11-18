@@ -2021,8 +2021,12 @@ const dbBereitschaft = (ag: string, dbs: readonly string[], nr: number): string[
   `SELECT @f += N' ' + d.n + N' gehört zur Verfügbarkeitsgruppe ' + g.name + N';' FROM @dbs d JOIN sys.availability_databases_cluster c ON c.database_name = d.n COLLATE DATABASE_DEFAULT JOIN sys.availability_groups g ON g.group_id = c.group_id WHERE g.name <> N'${ag}';`,
   `IF @f <> N'' BEGIN SET @m = N'Datenbanken nicht bereit:' + @f + N' - Wiederherstellungsmodell und Sicherung werden nie still geändert; nichts geändert'; THROW ${nr}, @m, 1; END`,
 ];
-/** lokale Kopie ohne AG im Zustand RESTORING (Rest von ag_entfernen auf dem früheren Sekundär) — nur diese wird je entfernt */
-const alteKopie = (d: string) => `EXISTS (SELECT 1 FROM sys.databases WHERE name = N'${d}' AND state_desc = N'RESTORING' AND replica_id IS NULL)`;
+/**
+ * lokale Kopie ohne AG im Zustand RESTORING (Rest von ag_entfernen auf dem früheren Sekundär) — nur diese wird je entfernt. Steht die
+ * Datenbank in sys.availability_databases_cluster einer hier bekannten AG (Seeding/Wiederbeitritt bei einer Wiederholung läuft), ist
+ * sie keine alte Kopie und bleibt unberührt — unabhängig davon, ob replica_id schon gesetzt ist.
+ */
+const alteKopie = (d: string) => `EXISTS (SELECT 1 FROM sys.databases WHERE name = N'${d}' AND state_desc = N'RESTORING' AND replica_id IS NULL) AND NOT EXISTS (SELECT 1 FROM sys.availability_databases_cluster WHERE database_name = N'${d}')`;
 
 function tsqlEndpunkt(ich: string): Record<'pruefen' | 'masterkey' | 'login' | 'endpunkt' | 'selbst', string> {
   const mkDa = "EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'##MS_DatabaseMasterKey##')";
