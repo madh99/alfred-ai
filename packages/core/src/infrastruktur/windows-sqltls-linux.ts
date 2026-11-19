@@ -77,12 +77,48 @@ export function pruefeFremdAusstellung(o: Record<string, unknown>): FremdAusstel
   let csrPem = typeof o.csr_pem === 'string' ? o.csr_pem : '';
   if (o.csr_base64 !== undefined) {
     const b = typeof o.csr_base64 === 'string' ? o.csr_base64.trim() : '';
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b) || b.length < 88 || b.length > CSR_MAX_BYTES) return 'csr_base64: Anforderung als DER-Base64 (eine Zeile) aus linux_sql tls_anfordern (data.csrBase64)';
+    if (!CSR_BASE64.test(b) || b.length < 88 || b.length > CSR_MAX_BYTES) return 'csr_base64: Anforderung als DER-Base64 (eine Zeile) aus linux_sql tls_anfordern (data.csrBase64)';
     csrPem = `-----BEGIN CERTIFICATE REQUEST-----\n${b.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE REQUEST-----\n`;
   }
   const form = pruefeCsrForm(csrPem); if (form) return form;
   if (csrSha256(csrPem) !== sha) return 'csr_sha256 passt nicht zur Anforderung (csr_pem) — nichts eingereicht';
   return { cn, sans: soll, csr_sha256: sha, csrPem };
+}
+
+const istVerweis = (v: unknown): boolean => typeof v === 'string' && v.includes('{{');
+const CSR_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/**
+ * Fix-Welle (Final-Review I8e Etappe 3): Planprüfung für fremd_csr_ausstellen — rein, ohne Tresor und Fernaufruf. Verweise {{…}}
+ * (z. B. csr_base64 = {{schrittN.csrBase64}}, csr_sha256 = {{schrittN.csrSha256}}) bleiben bis zur Laufzeit ungeprüft; feste Werte
+ * werden wie in pruefeFremdAusstellung geprüft: cn = FQDN eines Linux-SQL-Hosts, sans genau nach linuxTlsSans, csr_sha256 64 Hex,
+ * csr_pem ODER csr_base64 in gültiger Form. Ist nichts ein Verweis, gilt die volle Laufzeitprüfung (inkl. Hash-Abgleich).
+ */
+export function pruefeFremdAusstellungPlan(o: Record<string, unknown>): string | undefined {
+  if (o.vmid !== undefined) return 'fremd_csr_ausstellen nur über den Fernzugang der Issuing-CA';
+  const felder = [o.cn, o.csr_sha256, o.csr_pem, o.csr_base64, o.sans, ...(Array.isArray(o.sans) ? o.sans : [])];
+  if (!felder.some(istVerweis)) { const a = pruefeFremdAusstellung(o); return typeof a === 'string' ? a : undefined; }
+  const hosts = ['sqllnx01', 'sqllnx02', 'sqllnxcfg'];
+  let host: string | undefined;
+  if (!istVerweis(o.cn)) {
+    const cn = String(o.cn ?? '').trim().toLowerCase();
+    host = cn.endsWith(`.${DOMAENE}`) ? cn.slice(0, -(DOMAENE.length + 1)) : '';
+    if (!linuxTlsSans(host)) return `cn: FQDN eines Linux-SQL-Hosts — sqllnx01.${DOMAENE}, sqllnx02.${DOMAENE} oder sqllnxcfg.${DOMAENE}`;
+  }
+  if (!istVerweis(o.sans) && !(Array.isArray(o.sans) && o.sans.some(istVerweis))) {
+    const sans = (Array.isArray(o.sans) ? o.sans : []).map(x => String(x).trim().toLowerCase());
+    const passt = (h: string) => { const soll = linuxTlsSans(h)!; return new Set(sans).size === sans.length && [...sans].sort().join(',') === [...soll].sort().join(','); };
+    if (host !== undefined ? !passt(host) : !hosts.some(passt)) return `sans: genau ${host !== undefined ? linuxTlsSans(host)!.join(', ') : 'die Namen eines Linux-SQL-Hosts (linuxTlsSans)'} (Reihenfolge egal)`;
+  }
+  if (!istVerweis(o.csr_sha256) && !/^[0-9a-f]{64}$/.test(String(o.csr_sha256 ?? '').trim().toLowerCase())) return 'csr_sha256: SHA-256 der Anforderung (64 Hex) aus linux_sql tls_anfordern';
+  if (o.csr_pem !== undefined && o.csr_base64 !== undefined) return 'entweder csr_pem oder csr_base64';
+  if (o.csr_pem === undefined && o.csr_base64 === undefined) return 'csr_base64 (im Change {{schrittN.csrBase64}} aus linux_sql tls_anfordern) oder csr_pem fehlt';
+  if (o.csr_base64 !== undefined && !istVerweis(o.csr_base64)) {
+    const b = typeof o.csr_base64 === 'string' ? o.csr_base64.trim() : '';
+    if (!CSR_BASE64.test(b) || b.length < 88 || b.length > CSR_MAX_BYTES) return 'csr_base64: Anforderung als DER-Base64 (eine Zeile) aus linux_sql tls_anfordern (data.csrBase64)';
+  }
+  if (o.csr_pem !== undefined && !istVerweis(o.csr_pem)) { const f = pruefeCsrForm(String(o.csr_pem)); if (f) return f; }
+  return undefined;
 }
 
 /** Platzhalter, die das äußere Skript zur Laufzeit im Skript für svc-pki-linuxreq ersetzt (beide Werte Base64: JSON- und PS-sicher) */

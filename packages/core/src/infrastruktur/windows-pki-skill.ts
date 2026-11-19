@@ -15,7 +15,7 @@ import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellen
 import { createHash } from 'node:crypto';
 import { profilSqlTls } from './windows-codesignatur.js';
 import { SQL_TLS_VORLAGE, SQL_TLS_PROVIDER, pruefeAnforderung, anfordernSkript, pruefeGenehmigung, genehmigenSkript, pruefeInstallation, installierenSkript, zertifikatPruefenSkript, bewerteZertifikat, erneuerungStatusSkript, warnstufe, anforderungListeSkript, anforderungEntfernenSkript, type ZertifikatBefund } from './windows-sqltls.js';
-import { SQL_TLS_LINUX_VORLAGE, SQL_TLS_LINUX_ANZEIGE, SQL_TLS_LINUX_GRUPPE, SQL_TLS_LINUX_KONTO, SQL_TLS_LINUX_TRESOR, profilSqlTlsLinux, pruefeFremdAusstellung, fremdAusstellenSkript, bewerteFremdAusgestellt, derOderPem, type FremdAusgestellt } from './windows-sqltls-linux.js';
+import { SQL_TLS_LINUX_VORLAGE, SQL_TLS_LINUX_ANZEIGE, SQL_TLS_LINUX_GRUPPE, SQL_TLS_LINUX_KONTO, SQL_TLS_LINUX_TRESOR, profilSqlTlsLinux, pruefeFremdAusstellung, pruefeFremdAusstellungPlan, fremdAusstellenSkript, bewerteFremdAusgestellt, derOderPem, type FremdAusgestellt } from './windows-sqltls-linux.js';
 
 /** v1851 — breite Gruppen dürfen eine Vorlage nie registrieren */
 function breiteGruppen(registrieren: string[]): string[] {
@@ -132,17 +132,20 @@ export class WindowsPkiSkill extends Skill {
         datei_name: { type: 'string' }, http_basis: { type: 'string' }, unc_ziel: { type: 'string' }, cdp_roh: { type: 'array', items: { type: 'string' } }, aia_roh: { type: 'array', items: { type: 'string' } },
         crl_einheit: { type: 'string' }, crl_anzahl: { type: 'number' }, ueberlappung_einheit: { type: 'string' }, ueberlappung_anzahl: { type: 'number' },
         konto_tresor: { type: 'string' }, erwartet_thumbprint: { type: 'string' }, seriennummer: { type: 'string' }, erwartet_cn: { type: 'string' }, grund: { type: 'string' }, ausfuehrungskonto: { type: 'string' },
-        csr_base64: { type: 'string' }, erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
+        csr_base64: { type: 'string', description: 'subordinate_signieren: Anforderung der Issuing-CA aus issuer_anfordern; fremd_csr_ausstellen: Anforderung als DER-Base64 (eine Zeile) aus linux_sql tls_anfordern — im Change {{schrittN.csrBase64}}; statt csr_pem' },
+        erwartet_csr_sha256: { type: 'string' }, erwartet_subject: { type: 'string' },
         host_header: { type: 'string' }, pfad: { type: 'string' }, site: { type: 'string' }, alias: { type: 'string', description: 'pki_web_einrichten: URL-Unterpfad, z. B. pki' }, ordner: { type: 'string' }, datei: { type: 'string' }, base64: { type: 'string' }, erwartet_sha256: { type: 'string' },
         urls: { type: 'array', items: { type: 'string' } }, erwartet: { type: 'object' }, dcs: { type: 'array', items: { type: 'string' } }, sub_base64: { type: 'string' }, erwartet_sub_sha256: { type: 'string' },
         ziel_ordner: { type: 'string' }, passwort_tresor: { type: 'string' }, satz: { type: 'string' }, behalten: { type: 'number', description: 'ca_sicherung_aufraeumen: so viele neueste geprüfte Sätze bleiben (1–52)' }, quelle_zugang: { type: 'string' }, quelle_ordner: { type: 'string' }, erwartet_ca_thumbprint: { type: 'string' }, erwartet_root_thumbprint: { type: 'string' }, erwartete_zertifikate: { type: 'array', items: { type: 'string' } }, schuetzen: { type: 'array', items: { type: 'string' }, description: 'ca_sicherung_aufraeumen: Sätze, die nie gelöscht werden (ca-JJJJMMTT-HHMMSS)' }, ziel_zugang: { type: 'string' }, ziel_ziel_ordner: { type: 'string' },
         db_pfad: { type: 'string' }, log_pfad: { type: 'string' },
         root_thumbprints: { type: 'array', items: { type: 'string' } }, zwischen_thumbprints: { type: 'array', items: { type: 'string' } },
-        vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' }, cn: { type: 'string' }, o: { type: 'string' },
+        vorlage: { type: 'string' }, anzeige: { type: 'string' }, gueltig_tage: { type: 'number' }, schluessel_bits: { type: 'number' },
+        cn: { type: 'string', description: 'codesignatur_einrichten/sql_tls_*: Name; fremd_csr_ausstellen: FQDN des Linux-SQL-Hosts (sqllnx01|sqllnx02|sqllnxcfg.ad.3033.at)' }, o: { type: 'string' },
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
-        gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } }, sans: { type: 'array', items: { type: 'string' } }, ca: { type: 'string' },
-        csr_pem: { type: 'string', description: 'fremd_csr_ausstellen: Anforderung (PEM, öffentlich) aus linux_sql tls_anfordern' }, csr_sha256: { type: 'string', description: 'fremd_csr_ausstellen: SHA-256 der Anforderung (64 Hex)' },
+        gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } },
+        sans: { type: 'array', items: { type: 'string' }, description: 'sql_tls_*: SAN-Allowlist; fremd_csr_ausstellen: genau <host>, <host>.ad.3033.at und bei sqllnx01/02 zusätzlich sqllnxag01, sqllnxag01.ad.3033.at' }, ca: { type: 'string' },
+        csr_pem: { type: 'string', description: 'fremd_csr_ausstellen: Anforderung (PEM, öffentlich) aus linux_sql tls_anfordern — statt csr_base64 (im Change csr_base64 verwenden)' }, csr_sha256: { type: 'string', description: 'fremd_csr_ausstellen: SHA-256 der Anforderung (64 Hex) aus linux_sql tls_anfordern — im Change {{schrittN.csrSha256}}' },
         request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, subjekt: { type: 'string', description: 'anforderung_entfernen: Subject exakt aus anforderung_liste' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } }, erwartet_zertifikat: { type: 'boolean', description: 'erneuerung_status: true = je Knoten muss ein Zertifikat da sein, false = keines (schlägt sonst fehl)' },
         erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
@@ -152,6 +155,12 @@ export class WindowsPkiSkill extends Skill {
   };
 
   constructor(private readonly d: WindowsPkiDeps) { super(); }
+
+  /** Fix-Welle (Final-Review I8e Etappe 3): Planprüfung (rein, ohne Tresor und Fernaufruf) — fremd_csr_ausstellen; Verweise {{…}} erst zur Laufzeit */
+  pruefeEingabe(input: Record<string, unknown>): string | undefined {
+    if (String(input.action ?? '') === 'fremd_csr_ausstellen') return pruefeFremdAusstellungPlan(input);
+    return undefined;
+  }
 
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');

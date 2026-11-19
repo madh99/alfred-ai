@@ -74,6 +74,36 @@ describe('I8e Etappe 3 Task 3 — Eingaben', () => {
     expect(pruefeFremdAusstellung({ ...gut, cn: 'sql01.ad.3033.at' })).toContain('cn');
     expect(pruefeFremdAusstellung({ ...gut, csr_pem: 'x' })).toContain('csr_pem');
   });
+  // Fix-Welle (Final-Review): Planprüfung im Skill — Verweise zur Laufzeit, feste Werte schon beim Planen
+  it('pruefeEingabe fremd_csr_ausstellen: Verweise {{…}} durch, feste cn/sans/csr_sha256/csr_base64 geprüft; ohne Verweis volle Prüfung', () => {
+    const s = new WindowsPkiSkill({ skript: async () => ({ code: 1, stdout: '', stderr: '' }) });
+    const b64 = DER.toString('base64');
+    const plan = { action: 'fremd_csr_ausstellen', zugang: 'pkiiss01', cn: 'sqllnx01.ad.3033.at', sans: SANS01, csr_base64: '{{schritt3.csrBase64}}', csr_sha256: '{{schritt3.csrSha256}}' };
+    expect(s.pruefeEingabe(plan)).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, csr_sha256: SHA })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, cn: '{{schritt1.cn}}' })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, cn: '{{schritt1.cn}}', sans: ['sqllnxcfg', 'sqllnxcfg.ad.3033.at'] })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, cn: '{{schritt1.cn}}', sans: ['sqllnxcfg', 'sql01.ad.3033.at'] })).toContain('sans');
+    expect(s.pruefeEingabe({ ...plan, sans: '{{schritt1.sans}}' })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, cn: 'sql01.ad.3033.at' })).toContain('cn: FQDN eines Linux-SQL-Hosts');
+    expect(s.pruefeEingabe({ ...plan, sans: SANS01.slice(1) })).toContain('sans: genau sqllnx01, sqllnx01.ad.3033.at, sqllnxag01');
+    expect(s.pruefeEingabe({ ...plan, cn: 'sqllnxcfg.ad.3033.at' })).toContain('sans: genau sqllnxcfg, sqllnxcfg.ad.3033.at');
+    expect(s.pruefeEingabe({ ...plan, csr_sha256: 'abc' })).toContain('csr_sha256');
+    expect(s.pruefeEingabe({ ...plan, csr_base64: 'kein base64!' })).toContain('csr_base64');
+    expect(s.pruefeEingabe({ ...plan, csr_base64: b64 })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, csr_pem: CSR })).toContain('entweder csr_pem oder csr_base64');
+    expect(s.pruefeEingabe({ ...plan, csr_base64: undefined })).toContain('csr_base64');
+    expect(s.pruefeEingabe({ ...plan, csr_base64: undefined, csr_pem: 'x' })).toContain('csr_pem');
+    expect(s.pruefeEingabe({ ...plan, vmid: 101 })).toContain('Fernzugang der Issuing-CA');
+    // nichts ist ein Verweis → volle Laufzeitprüfung inkl. Hash-Abgleich
+    expect(s.pruefeEingabe({ ...plan, csr_base64: b64, csr_sha256: SHA })).toBeUndefined();
+    expect(s.pruefeEingabe({ ...plan, csr_base64: b64, csr_sha256: 'f'.repeat(64) })).toContain('passt nicht');
+    // andere Aktionen unberührt
+    expect(s.pruefeEingabe({ action: 'status', zugang: 'pkiiss01' })).toBeUndefined();
+    // Schema nennt die Felder von fremd_csr_ausstellen mit Beschreibung
+    const props = (s.metadata.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+    for (const f of ['csr_base64', 'csr_pem', 'csr_sha256', 'cn', 'sans']) expect(props[f]?.description, f).toContain('fremd_csr_ausstellen');
+  });
 });
 
 describe('I8e Etappe 3 Task 3 — Skripttexte', () => {
