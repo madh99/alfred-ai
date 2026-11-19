@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { resteEntfernenSkript, sqlErgebnis, shQ, LINUX_SQL_BAUSTEINE } from './linux-sql.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // Owner 19.11.2026 — alte tempdb-Dateien entfernen: fail-closed, jede Datei gemeldet, Dateien in Gebrauch bleiben
 
@@ -46,7 +49,7 @@ function lauf(l: Lauf) {
   };
 }
 
-describe('linux_sql reste_entfernen — Skripttext', () => {
+describe('linux_sql reste_entfernen — Skripttext', { timeout: 120_000 }, () => {
   it('registriert, feste Kandidaten nur direkt im Datenordner, sa nur aus der Eingabe, Kollation festgelegt', () => {
     const s = resteEntfernenSkript();
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.resteEntfernen)).toBe(true);
@@ -61,7 +64,7 @@ describe('linux_sql reste_entfernen — Skripttext', () => {
   });
 });
 
-describe.skipIf(!BASH)('linux_sql reste_entfernen — ausgeführt', () => {
+describe.skipIf(!BASH)('linux_sql reste_entfernen — ausgeführt', { timeout: 120_000 }, () => {
   it('löscht nur ungenutzte Reste, behält Dateien aus sys.master_files (auch in anderer Pfadform) und geöffnete, meldet jede Datei', () => {
     const r = lauf({
       dateien: { 'tempdb.mdf': 2048, 'templog.ldf': 1024, 'tempdb2.ndf': 512, 'tempdb3.ndf': 256, 'master.mdf': 64, 'temp-notiz.txt': 8 },
@@ -98,7 +101,7 @@ describe.skipIf(!BASH)('linux_sql reste_entfernen — ausgeführt', () => {
   });
 });
 
-describe('linux_sql reste_entfernen — Skill', () => {
+describe('linux_sql reste_entfernen — Skill', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; eingabe?: string }> = [];
     const s = new LinuxSqlSkill({

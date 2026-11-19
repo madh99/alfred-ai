@@ -44,7 +44,7 @@ function alleSkripte(): Array<[string, string]> {
   ];
 }
 
-describe('I8e Task 4 — Register, Validatoren, Einschleusung', () => {
+describe('I8e Task 4 — Register, Validatoren, Einschleusung', { timeout: 120_000 }, () => {
   it('alle Bausteine registriert, Zeitgrenzen ≥ 65 s', () => {
     for (const k of Object.values(LINUX_SQL_SICHERUNG_BAUSTEINE)) expect(linuxBausteinBekannt(k), k).toBe(true);
     for (const ms of Object.values(LINUX_SQL_SICHERUNG_ZEIT_MS)) expect(ms).toBeGreaterThanOrEqual(65_000);
@@ -93,7 +93,7 @@ describe('I8e Task 4 — Register, Validatoren, Einschleusung', () => {
   });
 });
 
-describe('I8e Task 4 — Skripttext', { timeout: 60_000 }, () => {
+describe('I8e Task 4 — Skripttext', { timeout: 120_000 }, () => {
   it('jedes Skript: strikter Modus, Parameter-Literal, Eingabe nur per Here-String, kein Kennwort in Befehlszeilen', () => {
     for (const [name, s] of alleSkripte()) {
       expect(s, name).toMatch(/^set -euo pipefail\n/);
@@ -239,7 +239,7 @@ function kette(w: Welt, db: string, t0: number, logs: number, vorher?: string, d
   return { full: f, logs: namen, letzte: vor };
 }
 
-describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)', { timeout: 60_000 }, () => {
+describe.skipIf(!PYTHON)('I8e Task 4 — Kopie nach fs01 (Python, echte Dateien)', { timeout: 120_000 }, () => {
   const JETZT = Date.UTC(2026, 10, 16, 12, 0, 0) / 1000;
   it('kopiert älteste zuerst, prüft SHA-256 durch Zurücklesen, schreibt das Manifest; zweiter Lauf kopiert nichts', () => {
     const w = welt();
@@ -935,7 +935,7 @@ describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', { timeout
 /** Fassung der Prozedur im Stand vor Task 7 (5e6b4b87, live auf sqllnx01 seit v1889) */
 const FASSUNG_VOR_TASK7 = 'c3091dc5';
 
-describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', () => {
+describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', { timeout: 120_000 }, () => {
   const P = SICHERUNG_PROZEDUR;
   it('Sekundär überspringt: AG-Datenbank ohne Vorzug → genau „ALFRED|nicht-bevorzugt“, kein Fehler, keine Sicherung, kein LOG', () => {
     // AG-Zugehörigkeit aus sys.databases.replica_id; Datenbanken ohne AG laufen wie bisher (Funktion wird für sie nicht befragt)
@@ -1036,7 +1036,7 @@ describe.skipIf(!BASH)('I8e Paket 2 Task 7 — sicherung_jetzt rollenabhängig (
   });
 });
 
-describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Ketten nach Rollenwechsel (Python)', { timeout: 60_000 }, () => {
+describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Ketten nach Rollenwechsel (Python)', { timeout: 120_000 }, () => {
   const JETZT = Date.UTC(2026, 10, 17, 12, 0, 0) / 1000;
   it('Neubeginn: erstes LOG der neuen Kette bezieht sich auf die eigene Vollsicherung → vorige Kette vollständig, kein Befund', () => {
     const w = welt();

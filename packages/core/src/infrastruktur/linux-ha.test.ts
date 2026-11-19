@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
@@ -21,6 +21,9 @@ import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
 import { LINUX_AD } from './linux-sql-ad.js';
 
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
+
 // I8e Paket 2 Task 2 — HA-Grundlage je Knoten (linux_ha.ha_vorbereiten), feste Bash-Bausteine
 
 const P: HaVorbereitenParameter = { knoten: [...HA_KNOTEN], rolle: 'daten', versionen: { ...HA_VERSIONEN } };
@@ -32,7 +35,7 @@ const PYTHON = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; 
 // läuft vitest-RPC (onTaskUpdate, 60 s) über mehrere Tests hinweg in die Zeitgrenze
 beforeEach(async () => { await new Promise(r => setTimeout(r, 0)); });
 
-describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
+describe('I8e Paket 2 — linux-ha Register und Validatoren', { timeout: 120_000 }, () => {
   it('Bausteine sind beim Laden registriert und liefern denselben Text wie die Erzeuger', () => {
     for (const k of Object.values(LINUX_HA_BAUSTEINE)) expect(linuxBausteinBekannt(k)).toBe(true);
     expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.vorbereiten, P)).toBe(haVorbereitenSkript(P));
@@ -700,7 +703,7 @@ for d in pacemaker corosync sbd pcsd; do touch "$T/svc/$d.is-enabled"; done; tou
 
 // ── Task 3: Cluster und diskless SBD ────────────────────────────────────────────────────────────────────────────────────────────
 
-describe('I8e Paket 2 — cluster_anlegen Validatoren', () => {
+describe('I8e Paket 2 — cluster_anlegen Validatoren', { timeout: 120_000 }, () => {
   it('stonith_timeout_s ≥ 2 × sbd_timeout_s; ganze Sekunden; Clustername; genau drei Knoten', () => {
     expect(pruefeHaCluster(PC)).toBeUndefined();
     expect(pruefeHaCluster({ ...PC, stonith_timeout_s: 19 })).toContain('mindestens 2 × sbd_timeout_s sein (20)');
@@ -775,7 +778,7 @@ const CRM_XML_ALT = `<?xml version="1.0"?>
   </nodes>
 </crm_mon>`;
 
-describe.skipIf(!PYTHON)('I8e Paket 2 — crm_mon-XML lesen (PY_CRM_LAGE)', () => {
+describe.skipIf(!PYTHON)('I8e Paket 2 — crm_mon-XML lesen (PY_CRM_LAGE)', { timeout: 120_000 }, () => {
   const lage = (xml: string) => spawnSync(PYTHON!, ['-c', PY_CRM_LAGE], { input: xml, encoding: 'utf8' });
   it('pacemaker 2.1 --output-as=xml: Knoten, online (sortiert), Quorum, stonith-enabled, Ressourcen; Ressourcen-<node> zählt nicht', () => {
     const r = lage(CRM_XML);
@@ -1084,7 +1087,7 @@ const PRUEFEN_T = haFencingPruefenSkript({ ...PF, art: 'trennung' });
 const PRUEFEN_H = haFencingPruefenSkript({ ...PF, art: 'haenger' });
 const BELEGEN = haFencingBelegenSkript(PF);
 
-describe('I8e Paket 2 Task 4 — Fencing-Bausteine (Text, Validatoren)', () => {
+describe('I8e Paket 2 Task 4 — Fencing-Bausteine (Text, Validatoren)', { timeout: 120_000 }, () => {
   it('Validatoren: art trennung|haenger, Cluster und drei Knoten', () => {
     expect(pruefeHaFencing({ ...PF, art: 'trennung' })).toBeUndefined();
     expect(pruefeHaFencing({ ...PF, art: 'haenger' })).toBeUndefined();
@@ -1149,7 +1152,7 @@ const FAELLE: Array<[string, unknown, unknown, unknown]> = [
   ['neuerer Test', BL, { ...TS0, zeit: '2026-11-17T15:00:00Z' }, ID],
 ];
 
-describe('I8e Paket 2 Task 4 — fencingBelegGueltig (für Task 5)', () => {
+describe('I8e Paket 2 Task 4 — fencingBelegGueltig (für Task 5)', { timeout: 120_000 }, () => {
   it('Regeln und Wortlaut', () => {
     const g = (b: unknown, t: unknown, i: unknown) => fencingBelegGueltig(b as FencingBeleg, { identitaet: i as never, test: t as never });
     expect(g(BL, null, ID)).toBeUndefined();
@@ -1582,7 +1585,7 @@ function AG_SKRIPTE(): string[] {
   return (['sqllnx01', 'sqllnx02', 'sqllnxcfg'] as const).flatMap(k => [haAgEndpunktSkript(AG_EP(k)), haAgReplikatSkript(AG_RP(k)), haAgEntfernenSkript(AG_EN(k))]).concat(haAgAbschlussSkript(AG_AB));
 }
 
-describe('I8e Paket 2 Task 5 — AG-Bausteine (Text, Validatoren)', () => {
+describe('I8e Paket 2 Task 5 — AG-Bausteine (Text, Validatoren)', { timeout: 120_000 }, () => {
   it('registriert; Validatoren: Besetzung aus den festen Knoten, Konfig = sqllnxcfg, Peers = die beiden anderen mit öffentlichem Zertifikat, Datenbanken, VIP', () => {
     expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agEndpunkt, AG_EP())).toBe(haAgEndpunktSkript(AG_EP()));
     expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agReplikat, AG_RP('sqllnx02'))).toBe(haAgReplikatSkript(AG_RP('sqllnx02')));
@@ -1876,7 +1879,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 — AG-Bausteine ausgefüh
 });
 
 // ── Task 5 Fix-Runde 1: abgebrochene T-SQL-Blöcke, wiederholtes Entfernen, sqlcmd nur in den AG-Bausteinen ─────────────────────────
-describe('I8e Paket 2 Task 5 Fix-Runde 1 — Text', () => {
+describe('I8e Paket 2 Task 5 Fix-Runde 1 — Text', { timeout: 120_000 }, () => {
   it('I2: jede Änderung in einem ändernden T-SQL-Block meldet sich per PRINT ALFRED-ERLEDIGT; JOIN und GRANT getrennt', () => {
     const un = (t: string) => t.replaceAll(`'\\''`, "'");
     for (const t of AG_SKRIPTE().map(un)) {
@@ -1961,7 +1964,7 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 5 Fix-Runde 1 — ausgeführ
 });
 
 // ── Task 5 Fix-Runde 2 (B): jede gemeldete Änderung steht hinter einer TRY/CATCH-THROW-geschützten Anweisung ─────────────────────────
-describe('I8e Paket 2 Task 5 Fix-Runde 2 — PRINT ALFRED-ERLEDIGT nur nach geschützter Anweisung', () => {
+describe('I8e Paket 2 Task 5 Fix-Runde 2 — PRINT ALFRED-ERLEDIGT nur nach geschützter Anweisung', { timeout: 120_000 }, () => {
   it('statisch: vor jedem PRINT ALFRED-ERLEDIGT steht im selben Block „END CATCH;“ (höchstens noch SET-Zuweisungen dazwischen), jedes CATCH wirft weiter', () => {
     const un = (t: string) => t.replaceAll(`'\\''`, "'");
     let gesamt = 0;
@@ -2027,7 +2030,7 @@ const FO_VOR = (sql: Record<string, string> = {}) => [
   sqlStub({ fo_lage: FO_SEK, fo_lage_primaer: FO_PRIM, ...sql }),
 ].join('\n');
 
-describe('I8e Paket 2 Task 6 — ag_failover (Text, Validatoren)', () => {
+describe('I8e Paket 2 Task 6 — ag_failover (Text, Validatoren)', { timeout: 120_000 }, () => {
   it('registriert; Validator: Ziel und bisheriger Primär verschiedene Datenreplikate (nie sqllnxcfg), AG-Name geprüft', () => {
     expect(linuxBausteinSkript(LINUX_HA_BAUSTEINE.agFailover, FO())).toBe(haAgFailoverSkript(FO()));
     expect(pruefeHaAgFailover(FO())).toBeUndefined();
@@ -2265,7 +2268,7 @@ cibadmin() { local n; n=$(( $(cat "$T/cib_n" 2>/dev/null || echo 0) + 1 )); echo
 });
 
 // ── K1: zurückgebliebene RESTORING-Kopie auf dem Sekundär vor dem Beitritt sichtbar entfernen ────────────────────────────────────
-describe('I8e Paket 2 K1 — alte Sekundär-Kopie (Text, Validator)', () => {
+describe('I8e Paket 2 K1 — alte Sekundär-Kopie (Text, Validator)', { timeout: 120_000 }, () => {
   const un = (t: string) => t.replaceAll(`'\\''`, "'");
   /** T-SQL-Block eines Replikat-Skripts (Shell-Literal zurückübersetzt) */
   const block = (k: keyof typeof ROLLE_VON, name: 'pruefen' | 'aendern' | 'selbst') => {

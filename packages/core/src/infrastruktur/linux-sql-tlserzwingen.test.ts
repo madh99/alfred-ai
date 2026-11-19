@@ -57,7 +57,7 @@ afterAll(() => { for (const d of ORDNER) rmSync(d, { recursive: true, force: tru
 
 // ── Python: PY_PM_PRUEFUNG direkt ────────────────────────────────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!PYTHON)('Task 8 — Pacemaker-Fehler aus crm_mon (PY_PM_PRUEFUNG)', { timeout: 60_000 }, () => {
+describe.skipIf(!PYTHON)('Task 8 — Pacemaker-Fehler aus crm_mon (PY_PM_PRUEFUNG)', { timeout: 120_000 }, () => {
   function pm(xml: string, ich = 'sqllnx01'): { rc: number; f?: Record<string, unknown>; err: string } {
     const T = mkdtempSync(join(tmpdir(), 'alfred-pm-')); ORDNER.push(T);
     writeFileSync(join(T, 'crm.xml'), xml);
@@ -137,7 +137,7 @@ describe.skipIf(!PYTHON)('Task 8 — Pacemaker-Fehler aus crm_mon (PY_PM_PRUEFUN
   });
 });
 
-describe('Task 8 — linux_ha status: Pacemaker-Fehlertext', () => {
+describe('Task 8 — linux_ha status: Pacemaker-Fehlertext', { timeout: 120_000 }, () => {
   const gut: PacemakerFehler = { knoten: 'sqllnx01', online: true, quorum: true, ressource: true, fehlerzaehler: 0, fehlaktionen: [], aeltere: 0, fensterS: 1800 };
   it('fester Wortlaut; positives Stück in FESTE_AUSGABEN, negatives enthält FEHLER', () => {
     expect(pacemakerFehlerText(gut)).toBe('Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)');
@@ -328,7 +328,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { time
 
 // ── Skill und Change-Regeln ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-describe('Task 8 — Skill linux_sql tls_erzwingen, Rückweg im Change', () => {
+describe('Task 8 — Skill linux_sql tls_erzwingen, Rückweg im Change', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const tresor = { namen: async () => new Set(['sqllnx-sqllnx01-sa']), lies: async () => 'Sa-Geheim-1', setze: async () => undefined };

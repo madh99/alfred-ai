@@ -155,7 +155,7 @@ const P1 = tlsParameter('sqllnx01');
 const PRIVAT = /PRIVATE KEY|BEGIN RSA PRIVATE|BEGIN ENCRYPTED PRIVATE/;
 function keinSchluessel(...l: Lauf[]) { for (const x of l) { expect(x.aus).not.toMatch(PRIVAT); expect(x.log).not.toMatch(PRIVAT); expect(JSON.stringify(x.e ?? {})).not.toMatch(PRIVAT); } }
 
-describe('linux_sql TLS — Parameter (SANs je Host aus linuxTlsSans)', () => {
+describe('linux_sql TLS — Parameter (SANs je Host aus linuxTlsSans)', { timeout: 120_000 }, () => {
   it('sqllnx01/02 mit Listener, sqllnxcfg nur sich selbst; CN = FQDN; andere Hosts abgewiesen', () => {
     expect(tlsParameter('sqllnx01')).toEqual({ cn: 'sqllnx01.ad.3033.at', sans: ['sqllnx01', 'sqllnx01.ad.3033.at', 'sqllnxag01', 'sqllnxag01.ad.3033.at'] });
     expect(tlsParameter('SQLLNX02').sans).toEqual(linuxTlsSans('sqllnx02'));
@@ -179,7 +179,7 @@ describe('linux_sql TLS — Parameter (SANs je Host aus linuxTlsSans)', () => {
   });
 });
 
-describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter openssl', () => {
+describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter openssl', { timeout: 120_000 }, () => {
   it('Anfordern: RSA-3072-Schlüssel 0400 mssql auf dem Host, CSR mit CN und SANs; Wiederholung nutzt denselben Schlüssel (gleiche Anforderung)', () => {
     const w = welt();
     const a = w.lauf(tlsAnfordernSkript(P1));
@@ -449,7 +449,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
   }, 60_000);
 });
 
-describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
+describe('linux_sql TLS — Skill, Verweise, Change-Regeln', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const s = new LinuxSqlSkill({
@@ -587,7 +587,7 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
   });
 });
 
-describe('linux_sql status — AD/Keytab- und TLS-Text (Task 6)', () => {
+describe('linux_sql status — AD/Keytab- und TLS-Text (Task 6)', { timeout: 120_000 }, () => {
   const tls = { zertifikat: TLS_CRT, thumbprint: 'AB'.repeat(20), gueltigBis: '2027-11-19T12:00:00Z', restTage: 365, erzwungen: true, pruefSchalter: true };
   it('fester Wortlaut je Lage', () => {
     expect(adText({ beigetreten: true, keytab: { kvno: 4, spns: 6, aktuell: true, adKvno: 4 } })).toBe('AD beigetreten; Kerberos-Keytab kvno 4 (6 SPNs, aktuell)');

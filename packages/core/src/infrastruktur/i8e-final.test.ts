@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { LinuxSqlSkill, linuxSqlStatusText, linuxSqlSicherungenText, LINUX_SQL_MIN_ZEITLIMIT_S, type LinuxSqlStatus } from './linux-sql-skill.js';
@@ -7,6 +7,9 @@ import { LINUX_SQL_SICHERUNG_BAUSTEINE, sicherungJetztSkript, sicherungenSkript,
 import { pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 import { freigabeSkript } from './windows-cluster.js';
 import { WindowsClusterSkill } from './windows-cluster-skill.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Paket 1 — abschließende Fix-Welle: nichts ändert oder löscht still
 
@@ -32,7 +35,7 @@ function welt(antworten: Record<string, Array<Record<string, unknown> | { code: 
   return { skill, aufrufe, gesetzt, reihenfolge, tresor };
 }
 
-describe('I-1: Mindest-zeitlimitS je linux_sql-Aktion', () => {
+describe('I-1: Mindest-zeitlimitS je linux_sql-Aktion', { timeout: 120_000 }, () => {
   const skill = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
   const plan = (schritt: Record<string, unknown>) => ({ titel: 'Fix-Welle Zeitlimit', begruendung: 'I8e Fix-Welle I-1 Mindest-zeitlimitS', typ: 'normal', risiko: 'low', ausfallMinuten: 0, betroffen: ['sqllnx01'], ohneSicherungGrund: 'neu', schritte: [schritt] });
@@ -52,7 +55,7 @@ describe('I-1: Mindest-zeitlimitS je linux_sql-Aktion', () => {
   });
 });
 
-describe('I-2: Kennwörter nie still zurückgesetzt, Tresor erst nach Erfolg', () => {
+describe('I-2: Kennwörter nie still zurückgesetzt, Tresor erst nach Erfolg', { timeout: 120_000 }, () => {
   it('Login-T-SQL: bestehender Login mit anderem Kennwort → THROW vor jeder Änderung, kein ALTER LOGIN … PASSWORD', () => {
     const t = sqlSkript('login', { name: 'app_kunden', serverrollen: ['dbcreator'] });
     expect(t).not.toMatch(/ALTER LOGIN \[app_kunden\] WITH PASSWORD/);
@@ -96,7 +99,7 @@ describe('I-2: Kennwörter nie still zurückgesetzt, Tresor erst nach Erfolg', (
   });
 });
 
-describe('M-3/M-5/M-6: Uhrzeit, Reste, Aufräumen', () => {
+describe('M-3/M-5/M-6: Uhrzeit, Reste, Aufräumen', { timeout: 120_000 }, () => {
   const st = (k: Record<string, unknown>, extra: Partial<LinuxSqlStatus> = {}): LinuxSqlStatus => ({ zustand: 'gelesen', installiert: false, platz: [], sicherung: { zugangsdatei: 'vorhanden (0600)', timer: 'active', letzteKopie: { zeit: '2026-11-16T12:00:00Z', ok: true, fehler: '', ...k } }, ...extra });
   it('Bericht aus der Zukunft (alterMin < -5) → „UHRZEIT ABWEICHEND“, nie ok', () => {
     expect(linuxSqlStatusText('x', st({ alterMin: -30 }))).toContain('letzte Kopie 2026-11-16T12:00:00Z UHRZEIT ABWEICHEND');
@@ -124,7 +127,7 @@ describe('M-3/M-5/M-6: Uhrzeit, Reste, Aufräumen', () => {
   });
 });
 
-describe('M-4: Wahrheitswerte nur als true/false', () => {
+describe('M-4: Wahrheitswerte nur als true/false', { timeout: 120_000 }, () => {
   it('agent als Zeichenkette → Fehler beim Planen und zur Laufzeit, ohne Fernaufruf', async () => {
     const w = welt({}, { 'sqllnx-sqllnx01-sa': 'Sa-1' });
     for (const agent of ['false', 'true', 0, 1, 'nein']) {
@@ -136,7 +139,7 @@ describe('M-4: Wahrheitswerte nur als true/false', () => {
   });
 });
 
-describe('M-7: verlangtes Kontingent ohne FSRM → Fehler vor jeder Änderung', () => {
+describe('M-7: verlangtes Kontingent ohne FSRM → Fehler vor jeder Änderung', { timeout: 120_000 }, () => {
   it('Skript bricht vor Set-Acl ab; Skill meldet „kontingent fehlt“ als Fehler mit Hinweis auf features_installieren', async () => {
     const s = freigabeSkript({ name: 'SQLLinuxBackup$', pfad: 'S:\\SQLLinuxBackup', vollzugriff: [], aendern: ['AD3033\\svc-sqllnx-backup'], kontingentGib: 64 });
     const abbruch = s.indexOf('FS-Resource-Manager fehlt');
@@ -149,7 +152,7 @@ describe('M-7: verlangtes Kontingent ohne FSRM → Fehler vor jeder Änderung', 
   });
 });
 
-describe('M-8: Fassung des installierten Kopier-Skripts', () => {
+describe('M-8: Fassung des installierten Kopier-Skripts', { timeout: 120_000 }, () => {
   it('sicherungen, sicherung_jetzt und wiederherstellen prüfen die Fassung; Abweichung → „Sicherung neu einrichten“', () => {
     expect(KOPIE_FASSUNG.kette).toMatch(/^[0-9a-f]{64}$/);
     for (const s of [sicherungenSkript(), sicherungJetztSkript({ art: 'LOG', datenbank: 'pruefdb01' }), wiederherstellenSkript({ datenbank: 'pruefdb01', ziel: 'alfred_wh_pruefdb01' })]) {
@@ -170,7 +173,7 @@ describe('M-8: Fassung des installierten Kopier-Skripts', () => {
   });
 });
 
-describe('M-9: Prüfstück je Datenbank', () => {
+describe('M-9: Prüfstück je Datenbank', { timeout: 120_000 }, () => {
   const skill = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
   const pr = (erwartet: string) => ({ titel: 'Fix-Welle Prüfstück', begruendung: 'I8e Fix-Welle M-9 Prüfstück je Datenbank', typ: 'normal', risiko: 'low', ausfallMinuten: 0, betroffen: ['x'], schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'sicherungen', parameter: { zugang: 'sqllnx01' }, erwartet } }] });
@@ -183,7 +186,7 @@ describe('M-9: Prüfstück je Datenbank', () => {
   });
 });
 
-describe('Nachtrag N-1 / Restpunkte', () => {
+describe('Nachtrag N-1 / Restpunkte', { timeout: 120_000 }, () => {
   it('kettengrenzen prüft die Fassung; Anzeige nennt die übernommenen Grenzen', async () => {
     const s = kettengrenzenSkript();
     expect(s).toContain(KOPIE_FASSUNG.kette);
@@ -220,7 +223,7 @@ describe('Nachtrag N-1 / Restpunkte', () => {
   });
 });
 
-describe('M-1: kettengrenzen_uebernehmen (nur im Change)', () => {
+describe('M-1: kettengrenzen_uebernehmen (nur im Change)', { timeout: 120_000 }, () => {
   it('Baustein hängt fs01 nur lesend ein, zeigt den Unterschied, schreibt die lokale Datei; Skill nur im Change', async () => {
     const s = kettengrenzenSkript();
     expect(s).toContain('fs01_einhaengen ro');

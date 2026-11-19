@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { createHash } from 'node:crypto';
 import { TEST_CA_PEM, TEST_ZERT_PEM } from './windows-codesignatur.fixture.js';
@@ -10,6 +10,9 @@ import { vorlageAnlegenSkript, vorlageEntfernenSkript } from './windows-codesign
 import { genehmigenSkript, pruefeGenehmigung } from './windows-sqltls.js';
 import { WindowsPkiSkill } from './windows-pki-skill.js';
 import { aktionsArt } from './change-schritte.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Etappe 3 Task 3 — Linux-Vorlage und Ausstellung fremder Anforderungen (Spec docs/specs/2026-11-19-i8e-linux-sql-ad-tls.md)
 const ausChange = { ausChange: true } as never;
@@ -42,7 +45,7 @@ function welt(antworten: object[]) {
   return { skill, aufrufe, gelesen };
 }
 
-describe('I8e Etappe 3 Task 3 — Eingaben', () => {
+describe('I8e Etappe 3 Task 3 — Eingaben', { timeout: 120_000 }, () => {
   it('SANs je Host genau nach Global Constraints', () => {
     expect(linuxTlsSans('sqllnx01')).toEqual(SANS01);
     expect(linuxTlsSans('sqllnx02')).toEqual(['sqllnx02', 'sqllnx02.ad.3033.at', 'sqllnxag01', 'sqllnxag01.ad.3033.at']);
@@ -106,7 +109,7 @@ describe('I8e Etappe 3 Task 3 — Eingaben', () => {
   });
 });
 
-describe('I8e Etappe 3 Task 3 — Skripttexte', () => {
+describe('I8e Etappe 3 Task 3 — Skripttexte', { timeout: 120_000 }, () => {
   it('Linux-Vorlage: Benutzer-Vorlage ohne CSP-Vorgabe, nur ServerAuth, Erneuerung 8 Wochen, Gruppe mit genau svc-pki-linuxreq', () => {
     const p = profilSqlTlsLinux('Dienstkonten');
     expect(p).toMatchObject({ eku: '1.3.6.1.5.5.7.3.1', csp: '', ueberlappungTage: 56, adminsRegistrieren: false, maschine: false, gruppe: { name: SQL_TLS_LINUX_GRUPPE, ou: 'Dienstkonten', mitglieder: ['svc-pki-linuxreq'] } });
@@ -168,7 +171,7 @@ describe('I8e Etappe 3 Task 3 — Skripttexte', () => {
   });
 });
 
-describe('I8e Etappe 3 Task 3 — Skill', () => {
+describe('I8e Etappe 3 Task 3 — Skill', { timeout: 120_000 }, () => {
   const eingabe = { action: 'fremd_csr_ausstellen', zugang: 'pkiiss01', cn: 'sqllnx01.ad.3033.at', sans: SANS01, csr_sha256: SHA, csr_pem: CSR };
   it('nur im Change', async () => {
     const w = welt([]);
@@ -274,7 +277,7 @@ function innere(s: string): string[] {
   for (const m of s.matchAll(/'param\(\[string\]\$aus\)((?:[^']|'')*)'/g)) funde.push(`param([string]$aus)${m[1]!.replace(/''/g, "'")}`);
   return funde;
 }
-describe.skipIf(!POWERSHELL)('I8e Etappe 3 Task 3 — PowerShell-Parser', () => {
+describe.skipIf(!POWERSHELL)('I8e Etappe 3 Task 3 — PowerShell-Parser', { timeout: 120_000 }, () => {
   it('alle neuen Bausteine (samt inneren Skripten) ohne Parserfehler', () => {
     const fremd = fremdAusstellenSkript({ cn: 'sqllnx01.ad.3033.at', sans: SANS01, csr_sha256: SHA });
     const vorlage = vorlageAnlegenSkript({ vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE, gueltig_tage: 365, schluessel_bits: 3072, profil: profilSqlTlsLinux('Dienstkonten') });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   kerberosSkript, kerberosEntfernenSkript, kerberosParameter, pruefeKerberos, KERBEROS_SPNS, KERBEROS_ENCTYPES, KERBEROS_KONTO_TRESOR,
@@ -8,6 +8,9 @@ import { sqlErgebnis, LINUX_SQL_BAUSTEINE, PY_STATUS } from './linux-sql.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { pruefeChangePlan } from './change-schritte.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Etappe 3 Task 5 — linux_sql kerberos_einrichten / kerberos_entfernen
 
@@ -150,7 +153,7 @@ const einrichten = (setup = '', n = 1, eingabe = KW, stubZusatz = '') => welt(ke
 /** vorhandener Keytab (Stub-Format), laut Rechte-Stub mssql:mssql 0400 */
 const KT_VORHER = (inhalt: string) => `printf '%s\\n' ${q(inhalt)} >"$T/secrets/mssql.keytab"; k="$T/secrets/mssql.keytab"; s="\${k//\\//_}"; echo 400 >"$T/meta/$s.mod"; echo 'mssql mssql' >"$T/meta/$s.own"`;
 
-describe('linux_sql kerberos_einrichten — Skripttext und Parameter', () => {
+describe('linux_sql kerberos_einrichten — Skripttext und Parameter', { timeout: 120_000 }, () => {
   it('registriert, gültiges Bash, feste Werte, kein Kennwort im Text, Mindest-Zeitlimit', () => {
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.kerberosEinrichten)).toBe(true);
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.kerberosEntfernen)).toBe(true);
@@ -370,7 +373,7 @@ describe.skipIf(!BASH)('linux_sql kerberos_entfernen — ausgeführt', { timeout
   });
 });
 
-describe('linux_sql kerberos_einrichten — Skill und Change-Regeln', () => {
+describe('linux_sql kerberos_einrichten — Skill und Change-Regeln', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>, tresor = ['ad-svc-sqllnx']) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const gelesen: string[] = [];
@@ -451,7 +454,7 @@ describe('linux_sql kerberos_einrichten — Skill und Change-Regeln', () => {
   });
 });
 
-describe('linux_sql status — AD-Daten (Task 5, Text in Task 6)', () => {
+describe('linux_sql status — AD-Daten (Task 5, Text in Task 6)', { timeout: 120_000 }, () => {
   it('PY_STATUS liest beigetreten und Keytab (kvno, SPNs, aktuell) ohne Kennwort', () => {
     expect(PY_STATUS).toContain('r["ad"] = ad');
     expect(PY_STATUS).toContain(`KT = "${SQL_KEYTAB}"`);

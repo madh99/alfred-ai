@@ -2,10 +2,13 @@
  * Realfall 17.11. (Change 6279a86a, Schritt 5): Die Installation hält die SQL-Pakete (apt-mark hold) → dpkg meldet „hold ok installed“.
  * Status, Installation und Sicherung erkannten nur „install ok installed“ und hielten SQL Server für nicht installiert.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { installSkript, PY_STATUS } from './linux-sql.js';
 import { sicherungEinrichtenSkript } from './linux-sql-sicherung.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 const BASH = spawnSync('bash', ['-c', 'echo "$BASH_VERSION"'], { encoding: 'utf8' }).status === 0;
 const PYTHON = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3');
@@ -21,7 +24,7 @@ function bashVersion(funktion: string, status: string): string {
   return spawnSync('bash', [], { input: `${stub}\n${funktion}\npaket_version mssql-server`, encoding: 'utf8' }).stdout.trim(); // wie $(…) in bash
 }
 
-describe('Paketerkennung: gehaltene Pakete gelten als installiert', () => {
+describe('Paketerkennung: gehaltene Pakete gelten als installiert', { timeout: 120_000 }, () => {
   const skripte: Array<[string, string]> = [
     ['installieren', installSkript({ version: '17.0.4006.2-1', edition: 'EnterpriseDeveloper' })],
     ['sicherung_einrichten', sicherungEinrichtenSkript({ server: 'fs01.ad.3033.at', freigabe: 'SQLLinuxBackup$', konto: 'svc-sqllnx-backup', domaene: 'AD3033', budgetGiB: 64 })],
@@ -54,7 +57,7 @@ describe('Paketerkennung: gehaltene Pakete gelten als installiert', () => {
 });
 
 
-describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', () => {
+describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', { timeout: 120_000 }, () => {
   it('kein -h -1 neben -y 0 (sqlcmd: „mutually exclusive“, Realfall 17.11.)', () => {
     const aufruf = PY_STATUS.split('\n').find(l => l.includes('subprocess.run([SQLCMD'));
     expect(aufruf).toContain('"-y", "0"');
@@ -74,7 +77,7 @@ describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', () => {
   });
 });
 
-describe('Sicherung einrichten: Prozedurtext aus msdb (nicht aus der aktuellen Datenbank)', () => {
+describe('Sicherung einrichten: Prozedurtext aus msdb (nicht aus der aktuellen Datenbank)', { timeout: 120_000 }, () => {
   it('kein OBJECT_DEFINITION, Fassungsvergleich und Ergebnis über msdb.sys.sql_modules (Realfall 17.11., „Prozedur 0“)', async () => {
     const { sicherungJobsTsql, PROZEDUR_DEFINITION } = await import('./linux-sql-sicherung.js');
     const t = sicherungJobsTsql();

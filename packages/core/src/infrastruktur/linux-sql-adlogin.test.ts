@@ -24,7 +24,7 @@ const ADMINS: AdLoginParameter = { gruppe: 'SQL-Linux-Admins', serverrolle: 'sys
 const APP: AdLoginParameter = { gruppe: 'SQL-Linux-Kunden', datenbank: 'kunden', datenbankrolle: 'db_datareader' };
 const LOGIN = 'AD3033\\SQL-Linux-Admins';
 
-describe('Task 8 — ad_login Parameter und T-SQL', () => {
+describe('Task 8 — ad_login Parameter und T-SQL', { timeout: 120_000 }, () => {
   it('Validator: Gruppe ohne ] \' \\ und ohne Einschleusung, feste Rollen, Datenbank nur mit Rolle, mindestens eine Rolle', () => {
     expect(pruefeAdLogin(ADMINS)).toBeUndefined();
     expect(pruefeAdLogin(APP)).toBeUndefined();
@@ -253,7 +253,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — ad_login / ad_login_entfernen ausg
 
 // ── Skill und Change-Regeln ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-describe('Task 8 — Skill linux_sql ad_login, Rückweg im Change', () => {
+describe('Task 8 — Skill linux_sql ad_login, Rückweg im Change', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const tresor = { namen: async () => new Set(['sqllnx-sqllnx01-sa', 'sqllnx-sqllnxcfg-sa']), lies: async () => 'Sa-Geheim-1', setze: async () => undefined };

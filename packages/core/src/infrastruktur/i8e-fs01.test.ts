@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName } from './windows-ad.js';
 import { WindowsAdSkill } from './windows-ad-skill.js';
@@ -6,12 +6,15 @@ import { pruefeFreigabe, freigabeSkript, FEATURES } from './windows-cluster.js';
 import { WindowsClusterSkill } from './windows-cluster-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
 
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
+
 // I8e Task 4 — fs01-Seite der Linux-SQL-Sicherung: Domänen-Dienstkonto und Freigabe mit Kontingent als feste Bausteine
 
 const BOESE = ['; rm -rf /', '$(id)', '`id`', "a'b", 'a\nb', '../x', 'a"b', 'x$y', 'a b'];
 const ps = (befehl: string) => Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le');
 
-describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Bausteine)', () => {
+describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Bausteine)', { timeout: 120_000 }, () => {
   it('Validator: sAMAccountName, OU, Beschreibung fest; Einschleusversuche abgewiesen', () => {
     expect(pruefeDienstkonto({ konto: 'svc-sqllnx-backup' })).toEqual({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' });
     expect(pruefeDienstkonto({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' })).toEqual({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' });
@@ -52,7 +55,7 @@ describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Bausteine)', () => {
   });
 });
 
-describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', () => {
+describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', { timeout: 120_000 }, () => {
   function welt(antworten: object[], tresorDa: string[] = ['win-dc01-admin']) {
     const aufrufe: Array<{ befehl: string; eingabe?: string; zweck: string }> = [];
     const tresor = new Map<string, string>(tresorDa.map(n => [n, `wert-${n}`]));
@@ -122,7 +125,7 @@ describe('I8e fs01 — windows_ad.dienstkonto_anlegen (Skill)', () => {
   });
 });
 
-describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
+describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', { timeout: 120_000 }, () => {
   const F = { name: 'SQLLinuxBackup$', pfad: 'S:\\SQLLinuxBackup', aendern: ['AD3033\\svc-sqllnx-backup'] };
   it('kontingent_gib: ganze Zahl 1–16384, optional; ohne Angabe unverändert', () => {
     expect(pruefeFreigabe(F)).toEqual({ ...F, vollzugriff: [] });
@@ -174,7 +177,7 @@ describe('I8e fs01 — windows_cluster.freigabe_anlegen mit Kontingent', () => {
   });
 });
 
-describe('I8e fs01 — Change „Sicherungsziel auf fs01“', () => {
+describe('I8e fs01 — Change „Sicherungsziel auf fs01“', { timeout: 120_000 }, () => {
   const ad = new WindowsAdSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const cl = new WindowsClusterSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const ctx = { skill: (n: string) => (n === 'windows_ad' ? ad : n === 'windows_cluster' ? cl : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
@@ -198,7 +201,7 @@ describe('I8e fs01 — Change „Sicherungsziel auf fs01“', () => {
 
 // PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (gemeinsame Testhilfe, Skripte als Datei)
 const POWERSHELL = powershellVorhanden();
-describe.skipIf(!POWERSHELL)('I8e fs01 — PowerShell-Parser', () => {
+describe.skipIf(!POWERSHELL)('I8e fs01 — PowerShell-Parser', { timeout: 120_000 }, () => {
   it('dienstkonto_anlegen/-entfernen und freigabe_anlegen (mit/ohne Kontingent) ohne Parserfehler', () => {
     const skripte = {
       dienstkonto: dienstkontoSkript({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' }),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   adBeitretenSkript, adVerlassenSkript, pruefeAdBeitreten, pruefeAdVerlassen, LINUX_AD, LINUX_AD_PAKETE, AD_SSSD_KOPF, AD_KRB5_KOPF,
@@ -9,6 +9,9 @@ import { sqlErgebnis, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZE
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { pruefeChangePlan } from './change-schritte.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort ohne Admin-Konto, lokaler Rückweg
 
@@ -162,7 +165,7 @@ function ausSkript(variable: string): string {
 function sssdAusLauf() { return ausSkript('SSSD_SOLL'); }
 function krb5AusLauf() { return ausSkript('KRB5_SOLL'); }
 
-describe('linux_sql ad_beitreten — Skripttext und Parameter', { timeout: 60_000 }, () => {
+describe('linux_sql ad_beitreten — Skripttext und Parameter', { timeout: 120_000 }, () => {
   it('registriert, gültiges Bash, Kennwort nur über stdin (nie Befehlszeile), feste Domänenwerte', () => {
     const s = adBeitretenSkript(P);
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.adBeitreten)).toBe(true);
@@ -389,7 +392,7 @@ describe.skipIf(!BASH)('linux_sql ad_verlassen — ausgeführt', { timeout: 180_
   });
 });
 
-describe('linux_sql ad_beitreten/ad_verlassen — Skill', () => {
+describe('linux_sql ad_beitreten/ad_verlassen — Skill', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>, opt: { tresor?: string[]; ohneEntferne?: boolean } = {}) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const namen = new Set(opt.tresor ?? ['ad-join-sqllnx01']);
@@ -489,7 +492,7 @@ describe('linux_sql ad_beitreten/ad_verlassen — Skill', () => {
   });
 });
 
-describe('linux_sql ad_beitreten — Change-Regeln', () => {
+describe('linux_sql ad_beitreten — Change-Regeln', { timeout: 120_000 }, () => {
   const skill = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
   const ctx = { skill: (n: string) => (n === 'linux_sql' ? skill : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
   const plan = (rueckweg: unknown) => ({ titel: 'AD-Beitritt sqllnx01', begruendung: 'I8e Etappe 3', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['sqllnx01'],
@@ -564,7 +567,7 @@ function zeitLaeufe(skript: string, setup = '', n = 1): { laeufe: ZeitLauf[]; dr
 const einrichten = (setup = '', n = 1) => zeitLaeufe(zeitquelleEinrichtenSkript(), setup, n);
 const DROPIN_EIGEN = `printf '%s\\n' ${q(zeitquelleDropin())} >"$T/etc/timesyncd.conf.d/alfred-ad.conf"`;
 
-describe('linux_sql zeitquelle_einrichten — Skripttext', () => {
+describe('linux_sql zeitquelle_einrichten — Skripttext', { timeout: 120_000 }, () => {
   it('registriert, gültiges Bash, Drop-in genau: Alfred-Kopf, NTP = die DCs, FallbackNTP leer', () => {
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten)).toBe(true);
     expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen)).toBe(true);
@@ -668,7 +671,7 @@ describe.skipIf(!BASH)('linux_sql zeitquelle_entfernen — ausgeführt', { timeo
   });
 });
 
-describe('linux_sql zeitquelle_einrichten/zeitquelle_entfernen — Skill und Change-Regeln', () => {
+describe('linux_sql zeitquelle_einrichten/zeitquelle_entfernen — Skill und Change-Regeln', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const s = new LinuxSqlSkill({

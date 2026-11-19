@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -11,6 +11,9 @@ import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-
 // mit linux-sql.ts vermieden; der Skill lädt beide Module)
 import './linux-sql-ad.js';
 import './linux-sql-tls.js';
+
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Paket 1 (Vorhaben c7e02aff v2) — SQL Server 2025 auf Ubuntu 24.04, feste Skripte
 
@@ -55,7 +58,7 @@ const PYTHON = (() => {
   return undefined;
 })();
 
-describe('I8e Linux-SQL — Register und Validatoren', () => {
+describe('I8e Linux-SQL — Register und Validatoren', { timeout: 120_000 }, () => {
   it('alle Bausteine sind beim Laden registriert und liefern denselben Text wie die Erzeuger', () => {
     for (const k of Object.values(LINUX_SQL_BAUSTEINE)) expect(linuxBausteinBekannt(k)).toBe(true);
     expect(linuxBausteinSkript(LINUX_SQL_BAUSTEINE.platten, PLATTEN)).toBe(plattenSkript(PLATTEN));
@@ -142,7 +145,7 @@ describe('I8e Linux-SQL — Register und Validatoren', () => {
   });
 });
 
-describe('I8e Linux-SQL — Skripttext', () => {
+describe('I8e Linux-SQL — Skripttext', { timeout: 120_000 }, () => {
   it('jedes Skript: strikter Modus, Parameter als JSON-Literal, genau eine Ergebniszeile, kein Echo der Eingabe', () => {
     for (const [name, s] of alleSkripte()) {
       expect(s, name).toMatch(/^set -euo pipefail\n/);
@@ -325,7 +328,7 @@ function loginLauf(kennwort: string, fehlend = 0) {
   return { rc: Number(/RC=(\d+)/.exec(vorne)?.[1] ?? -1), ergebnis: sqlErgebnis<Record<string, unknown>>(vorne), vorne, tsql };
 }
 
-describe.skipIf(!BASH)('I8e Linux-SQL — Login-Skript ausgeführt', () => {
+describe.skipIf(!BASH)('I8e Linux-SQL — Login-Skript ausgeführt', { timeout: 120_000 }, () => {
   it("Sonderzeichen & ' $( ` bleiben erhalten, ' wird verdoppelt; Ausgabe ohne Kennwort", () => {
     const kw = "Ab&c'd$(id)`x`&&Z9#%";
     const r = loginLauf(kw);
@@ -405,7 +408,7 @@ const LEER: FakePlatte[] = [
   { scsi: 4, dev: '/dev/sde', bytes: 128 * GiB },
 ];
 
-describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Geräten', { timeout: 60_000 }, () => {
+describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Geräten', { timeout: 120_000 }, () => {
   it('vier leere Platten passender Größe → formatiert, fstab per UUID mit nofail, eingehängt', () => {
     const r = plattenLauf(LEER);
     expect(r.rc, r.aus + r.stderr).toBe(0);
@@ -484,7 +487,7 @@ describe.skipIf(!BASH)('I8e Linux-SQL — Platten-Skript mit nachgebildeten Ger�
 });
 
 // ── Task 3 — Prüfdaten: feste Zeilen + SHA-256 über alle Zeilen (für den Restore-Beweis) ─────────────────────────────────────────
-describe('I8e Linux-SQL — Prüfdaten', () => {
+describe('I8e Linux-SQL — Prüfdaten', { timeout: 120_000 }, () => {
   it('Datenbankname geprüft, Systemdatenbanken ausgeschlossen; registriert, Zeitgrenze ≥ 65 s', () => {
     expect(pruefePruefdaten({ datenbank: 'pruefdb01' })).toBeUndefined();
     for (const d of ['master', 'MODEL', 'msdb', 'tempdb', 'ab', '1abc', 'a b', 'x]; DROP DATABASE y; --', "x'", ...BOESE.map(b => `db${b}`)]) {
@@ -533,7 +536,7 @@ describe('I8e Linux-SQL — Prüfdaten', () => {
 });
 
 // ── Task 3 Fix-Runde 1: keine stillen Änderungen an bestehenden Logins und fremden Datenbanken ─────────────────────────────────
-describe('I8e Linux-SQL — Fix 1: Abweichungen statt stiller Änderungen', () => {
+describe('I8e Linux-SQL — Fix 1: Abweichungen statt stiller Änderungen', { timeout: 120_000 }, () => {
   const tsqlVon = (s: string) => {
     const m = /^(?:VORLAGE|TSQL)=('(?:[^']|'\\'')*')$/m.exec(s);
     const r = spawnSync('bash', ['-c', `X=${m![1]}; printf '%s' "$X"`], { encoding: 'utf8' });

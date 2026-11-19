@@ -12,6 +12,9 @@ import {
 import { WindowsAdSkill, einmalKennwort } from './windows-ad-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
 
+// Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
+afterEach(() => new Promise<void>(r => setImmediate(r)));
+
 // I8e Etappe 3 Task 2 — AD-Objekte für Kerberos der Linux-SQL-Instanzen (Spec docs/specs/2026-11-19-i8e-linux-sql-ad-tls.md)
 const roh = (befehl: string) => Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le');
 
@@ -33,7 +36,7 @@ function welt(antworten: object[], tresorDa: string[] = []) {
 }
 const imChange = { ausChange: true } as never;
 
-describe('I8e Etappe 3 — Eingabeprüfung', () => {
+describe('I8e Etappe 3 — Eingabeprüfung', { timeout: 120_000 }, () => {
   it('SPNs nur MSSQLSvc/<name>.ad.3033.at[:1433]', () => {
     expect(pruefeSpns(['MSSQLSvc/sqllnx01.ad.3033.at:1433'])).toEqual(['MSSQLSvc/sqllnx01.ad.3033.at:1433']);
     expect(pruefeSpns(['MSSQLSvc/sqllnx01.ad.3033.at', 'MSSQLSvc/sqllnx01.ad.3033.at'])).toEqual(['MSSQLSvc/sqllnx01.ad.3033.at']);
@@ -64,7 +67,7 @@ describe('I8e Etappe 3 — Eingabeprüfung', () => {
   });
 });
 
-describe('I8e Etappe 3 — Skripttexte', () => {
+describe('I8e Etappe 3 — Skripttexte', { timeout: 120_000 }, () => {
   it('Domänen-Operationen mit dem Domänen-Administrator, Geheimnisse nur über die Standardeingabe', () => {
     const s = spnSetzenSkript({ konto: 'svc-sqllnx', spns: ['MSSQLSvc/sqllnx01.ad.3033.at:1433'] });
     expect(s).toContain('[Console]::In.ReadLine()');
@@ -177,7 +180,7 @@ describe('I8e Etappe 3 — Skripttexte', () => {
   });
 });
 
-describe('I8e Etappe 3 — Skill windows_ad', () => {
+describe('I8e Etappe 3 — Skill windows_ad', { timeout: 120_000 }, () => {
   it('computerkonto_vorbereiten: Einmal-Kennwort im Tresor, nur über die Standardeingabe, nie in Ergebnis oder Anzeige', async () => {
     const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'CN=SQLLNX01,OU=Server,DC=ad,DC=3033,DC=at', aktiv: true, inOu: true, kennwortGesetzt: true, ohneAnmeldung: true }], ['win-dc01-admin']);
     expect((await w.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, {} as never)).error).toContain('nur als Schritt');
@@ -334,7 +337,7 @@ describe('I8e Etappe 3 — Skill windows_ad', () => {
 
 // PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (gemeinsame Testhilfe, Skripte als Datei)
 const POWERSHELL = powershellVorhanden();
-describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
+describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', { timeout: 120_000 }, () => {
   it('alle neuen Bausteine ohne Parserfehler', () => {
     const skripte = {
       dienstkontoGehaertet: dienstkontoSkript({ konto: 'svc-sqllnx', ou: 'Dienstkonten', haerten: true }),
@@ -358,7 +361,6 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
 // Fix-Welle (Final-Review I8e Etappe 3): AlsBenutzer wartet, bis die Aufgabe gelaufen ist — Queued/Ready kurz nach dem Start ist kein Ende.
 // Ablauf in Windows PowerShell mit nachgebildeten ScheduledTask-Cmdlets (Funktionen gleichen Namens), Ordner im Testverzeichnis.
 describe.skipIf(!POWERSHELL)('Fix-Welle — ALS_BENUTZER Warteschleife (ausgeführt)', { timeout: 120_000 }, () => {
-  afterEach(() => new Promise<void>(r => setImmediate(r)));
   /**
    * folge: Zustand je Abfrage; „+“ = die Aufgabe ist zuvor gelaufen (LastRunTime gesetzt) und hat die Ergebnisdatei geschrieben,
    * „*“ = gelaufen ohne Ergebnisdatei (LastTaskResult 1). Die letzte Angabe gilt für alle weiteren Abfragen.

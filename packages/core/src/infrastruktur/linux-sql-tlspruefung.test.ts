@@ -90,7 +90,7 @@ function ohneSqlZiel(t: string): { rest: string; bash: number; python: number } 
 }
 const MIT_C = /(^|[\s"'([,])-C(?=[\s"',)\]]|$)/m;
 
-describe('Task 7 — kein -C außerhalb von sql_ziel (alle erzeugten Skripte)', () => {
+describe('Task 7 — kein -C außerhalb von sql_ziel (alle erzeugten Skripte)', { timeout: 120_000 }, () => {
   it('jedes Skript mit sqlcmd: -C nur in sql_ziel (Bash) bzw. sql_ziel() (Python); sqlcmd nur über sql_ziel/sqlcmd_sa', () => {
     for (const [name, s] of alleSkripte()) {
       const { rest, bash, python } = ohneSqlZiel(s);
@@ -160,7 +160,7 @@ const PYTHON_PFAD = BASH && PYTHON ? spawnSync('bash', ['-c', `command -v ${PYTH
 const PY_STUB = `python3() { PYTHONIOENCODING=utf-8 ${q(PYTHON_PFAD)} "$@" | tr -d '\\r'; }`;
 const PFADE = `${PY_STUB}\nTLS_SCHALTER="$T/etc/sqllnx-tls-pruefen"; SQLCMD="$T/sqlcmd"; sleep() { :; }`;
 
-describe.skipIf(!BASH || !PYTHON)('Task 7 — sql_ziel ausgeführt (sqlcmd-Stub)', { timeout: 60_000 }, () => {
+describe.skipIf(!BASH || !PYTHON)('Task 7 — sql_ziel ausgeführt (sqlcmd-Stub)', { timeout: 120_000 }, () => {
   it('ohne Schalter: -C -S localhost (wie bisher)', () => {
     const T = ordner();
     const r = lauf(T, PROBE, PFADE);
@@ -242,7 +242,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 7 — sql_ziel ausgeführt (sqlcmd-Stub)
 
 // ── Python: sql_ziel() / sql_tls_fehler ─────────────────────────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!PYTHON)('Task 7 — Python-Schnipsel sql_ziel()', { timeout: 60_000 }, () => {
+describe.skipIf(!PYTHON)('Task 7 — Python-Schnipsel sql_ziel()', { timeout: 120_000 }, () => {
   /** PY_ROLLEN (Sicherung) als Modul geladen, Schalter umgelenkt, subprocess.run ersetzt — Ergebnis: Argumente, rollen() */
   function rollen(schalter: string | null, antwort: { rc: number; out?: string; err?: string }) {
     const T = ordner();
@@ -428,7 +428,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 7 — tls_pruefung_schalten ausgeführt'
 
 // ── Skill und Change-Regeln ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-describe('Task 7 — Skill linux_sql tls_pruefung_schalten, Rückweg im Change', () => {
+describe('Task 7 — Skill linux_sql tls_pruefung_schalten, Rückweg im Change', { timeout: 120_000 }, () => {
   function skill(antwort: Record<string, unknown>) {
     const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
     const tresor = { namen: async () => new Set(['sqllnx-sqllnx01-sa']), lies: async () => 'Sa-Geheim-1', setze: async () => undefined };
