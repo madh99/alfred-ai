@@ -402,6 +402,8 @@ export const SPERR_GRUPPE = 'Dienstkonten-KeineAnmeldung';
 export const SPERR_GRUPPE_OU = 'Dienstkonten';
 export const SPERR_GRUPPE_BESCHREIBUNG = 'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung (GPO AD3033 Dienstkonten keine Anmeldung)';
 export const SPERR_GPO = 'AD3033 Dienstkonten keine Anmeldung';
+/** Fix-Runde 2 (R6) — Kommentar (Description) der GPO als Alfred-Marke; eine gleichnamige GPO ohne ihn wird nie übernommen */
+export const SPERR_GPO_KOMMENTAR = 'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung';
 /** Client-Erweiterung „Sicherheitseinstellungen“ + Werkzeug-Erweiterung, Pflicht in gPCMachineExtensionNames für GptTmpl.inf */
 export const SICHERHEIT_CSE = '[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]';
 
@@ -417,19 +419,40 @@ const ANMELDESPERRE = [
   `  if (-not $sg) { New-ADGroup -Name ${psText(SPERR_GRUPPE)} -SamAccountName ${psText(SPERR_GRUPPE)} -GroupScope Global -GroupCategory Security -Path $spou -Description ${psText(SPERR_GRUPPE_BESCHREIBUNG)} -Server $dc -Credential $c; $sg = Get-ADGroup -Identity ${psText(SPERR_GRUPPE)} -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
   `  elseif ($sg.Description -ne ${psText(SPERR_GRUPPE_BESCHREIBUNG)}) { throw ('Gruppe ' + ${psText(SPERR_GRUPPE)} + ' ist nicht von Alfred angelegt - nichts geändert') }`,
   '  $sid = [string]$sg.SID.Value',
-  `  $sperre = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c -ArgumentList ${psText(SPERR_GPO)}, $sid, $d.DistinguishedName, $d.DNSRoot, $dc, ${psText(SICHERHEIT_CSE)} -ScriptBlock {`,
-  '    param([string]$name, [string]$sid, [string]$dn, [string]$root, [string]$server, [string]$cse)',
+  `  $sperre = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c -ArgumentList ${psText(SPERR_GPO)}, $sid, $d.DistinguishedName, $d.DNSRoot, $dc, ${psText(SICHERHEIT_CSE)}, ${psText(SPERR_GPO_KOMMENTAR)} -ScriptBlock {`,
+  '    param([string]$name, [string]$sid, [string]$dn, [string]$root, [string]$server, [string]$cse, [string]$kommentar)',
   "    $ErrorActionPreference = 'Stop'; Import-Module GroupPolicy, ActiveDirectory",
   "    $r = [ordered]@{ gpo = 'schon'; inhalt = 'schon'; link = 'schon' }",
   '    $g = Get-GPO -Name $name -Server $server -ErrorAction SilentlyContinue',
-  "    if (-not $g) { $g = New-GPO -Name $name -Server $server -Comment 'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung'; $r.gpo = 'angelegt' }",
+  // Fix-Runde 2 (Ruling R6): eine vorhandene GPO dieses Namens nur, wenn Alfred sie angelegt hat (Kommentar) — sonst nichts ändern
+  "    if ($g -and [string]$g.Description -ne $kommentar) { throw ('GPO ' + $name + ' ist nicht von Alfred angelegt - nichts geändert') }",
+  "    if (-not $g) { $g = New-GPO -Name $name -Server $server -Comment $kommentar; $r.gpo = 'angelegt' }",
   "    $id = '{' + $g.Id.ToString().ToUpper() + '}'",
   "    $basis = Join-Path (Get-SmbShare -Name SYSVOL).Path ($root + '\\Policies\\' + $id)",
   "    $sec = Join-Path $basis 'Machine\\Microsoft\\Windows NT\\SecEdit'; $datei = Join-Path $sec 'GptTmpl.inf'",
   "    $soll = (@('[Unicode]', 'Unicode=yes', '[Version]', 'signature=\"$CHICAGO$\"', 'Revision=1', '[Privilege Rights]', ('SeDenyInteractiveLogonRight = *' + $sid), ('SeDenyRemoteInteractiveLogonRight = *' + $sid)) -join \"`r`n\") + \"`r`n\"",
   "    $ad = 'CN=' + $id + ',CN=Policies,CN=System,' + $dn",
-  "    $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames -Server $server",
+  "    $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames, gPCUserExtensionNames -Server $server",
   "    $ext = [string]$o.gPCMachineExtensionNames",
+  // Fix-Runde 2 (R6): Inhalts- und Rechteprüfung VOR jedem Schreiben/Verknüpfen — die GPO darf nur Alfreds Anmeldesperre enthalten
+  '    $abw = @()',
+  "    if ([string]$o.gPCUserExtensionNames) { $abw += ('Benutzer-Erweiterungen ' + [string]$o.gPCUserExtensionNames) }",
+  "    if ($ext -and $ext -ne $cse) { $abw += ('Computer-Erweiterungen ' + $ext) }",
+  "    if (-not (Test-Path -LiteralPath $basis)) { $abw += ('SYSVOL-Ordner ' + $basis + ' fehlt') } else {",
+  "      $fremd = @(Get-ChildItem -LiteralPath $basis -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($basis.Length).TrimStart('\\') } | Where-Object { $_ -ine 'GPT.INI' -and $_ -ine 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf' })",
+  "      if ($fremd.Count) { $abw += ('fremde Dateien ' + ($fremd -join ', ')) }",
+  '    }',
+  '    if (Test-Path -LiteralPath $datei) {',
+  "      $abschnitt = ''; $erlaubt = @{ 'Unicode' = @('Unicode'); 'Version' = @('signature', 'Revision'); 'Privilege Rights' = @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') }",
+  "      foreach ($zl in ([IO.File]::ReadAllText($datei) -split \"`r?`n\")) { $zl = $zl.Trim(); if (-not $zl) { continue }",
+  "        $m = [regex]::Match($zl, '^\\[(.+)\\]$'); if ($m.Success) { $abschnitt = $m.Groups[1].Value; if (-not $erlaubt.ContainsKey($abschnitt)) { $abw += ('GptTmpl.inf-Abschnitt [' + $abschnitt + ']') }; continue }",
+  "        $schl = ($zl -split '=', 2)[0].Trim(); if (-not $erlaubt.ContainsKey($abschnitt) -or $erlaubt[$abschnitt] -notcontains $schl) { $abw += ('GptTmpl.inf-Eintrag ' + $schl + ' in [' + $abschnitt + ']') } }",
+  '    }',
+  // Bearbeiten-Rechte nur für Domänen-Admins (-512), Organisations-Admins (-519 der Gesamtstruktur-Stammdomäne), SYSTEM
+  "    $domSid = (Get-ADDomain -Server $server).DomainSID.Value; $rootSid = (Get-ADDomain -Identity (Get-ADForest -Server $server).RootDomain -Server $server).DomainSID.Value",
+  "    $ok = @(($domSid + '-512'), ($rootSid + '-519'), 'S-1-5-18')",
+  "    foreach ($x in @(Get-GPPermission -Guid $g.Id -All -Server $server)) { if ([string]$x.Permission -in @('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom') -and $ok -notcontains [string]$x.Trustee.Sid.Value) { $abw += ('Bearbeiten-Recht ' + [string]$x.Permission + ' für ' + [string]$x.Trustee.Name) } }",
+  "    if ($abw.Count) { throw ('GPO ' + $name + ' weicht ab (' + ($abw -join '; ') + ') - nichts geändert') }",
   "    $ist = if (Test-Path -LiteralPath $datei) { [IO.File]::ReadAllText($datei) } else { '' }",
   "    if ($ist -ne $soll -or $ext.IndexOf($cse) -lt 0) {",
   '      New-Item -ItemType Directory -Path $sec -Force | Out-Null',

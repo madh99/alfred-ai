@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { dienstkontoSkript, dienstkontoGehaertet } from './windows-ad.js';
 import {
   pruefeSpns, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, computerkontoSkript, computerkontoEntfernenSkript, pruefeComputerkonto,
@@ -98,6 +101,17 @@ describe('I8e Etappe 3 — Skripttexte', () => {
     expect(h).toMatch(/Add-ADGroupMember -Identity \$sg -Members \$p\.konto[^\n]*-Credential \$c/);
     expect(h).toContain('nicht von Alfred angelegt');
     expect(dienstkontoSkript({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' })).toContain('if ($p.haerten) {');
+    // Fix-Runde 2 (R6): fremde gleichnamige GPO nie übernehmen; Inhalt und Rechte prüfen, bevor geschrieben oder verknüpft wird
+    const eigen = h.indexOf("[string]$g.Description -ne $kommentar) { throw ('GPO ' + $name + ' ist nicht von Alfred angelegt - nichts geändert') }");
+    expect(eigen).toBeGreaterThan(0);
+    expect(eigen).toBeLessThan(h.indexOf('New-GPO -Name $name'));
+    expect(h).toContain("'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung'");
+    const pruefungen = ['gPCUserExtensionNames) { $abw +=', "$ext -ne $cse) { $abw +=", 'fremde Dateien', "-ine 'GPT.INI'", "'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf'", 'GptTmpl.inf-Abschnitt', 'GptTmpl.inf-Eintrag',
+      "@('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight')", 'Get-GPPermission -Guid $g.Id -All', "@('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom')", "($domSid + '-512')", "($rootSid + '-519')", "'S-1-5-18'",
+      "if ($abw.Count) { throw ('GPO ' + $name + ' weicht ab ("];
+    const abbruch = h.indexOf('if ($abw.Count) { throw');
+    for (const t of pruefungen) { const i = h.indexOf(t); expect(i, t).toBeGreaterThan(0); expect(i, t).toBeLessThanOrEqual(abbruch); }
+    for (const schreiben of ['New-GPLink', 'Set-GPLink', 'WriteAllText($datei', 'WriteAllText($ini', 'Set-ADObject -Identity $ad', 'New-Item -ItemType Directory -Path $sec']) expect(abbruch, schreiben).toBeLessThan(h.indexOf(schreiben));
   });
   it('Fix-Runde 1: Computerkonto — fremdes nie übernehmen, eigenes in Gebrauch nie zurücksetzen', () => {
     const k = computerkontoSkript({ name: 'SQLLNX01', ou: 'Server' });
@@ -315,11 +329,22 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
       gruppeEntfernen: gruppeEntfernenSkript({ gruppe: 'SQL-Linux-Admins' }),
       sqlAnmeldung: sqlAnmeldungSkript({ server: 'sqllnx01.ad.3033.at', konto: 'svc-sqllnx-test' }),
     };
-    for (const [name, s] of Object.entries(skripte)) {
-      const b64 = Buffer.from(s, 'utf8').toString('base64');
-      const prog = `$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
-      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
-      expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
-    }
+    // Fix-Runde 2: das gehärtete Dienstkonto-Skript ist für eine Befehlszeile (-EncodedCommand, 32 767 Zeichen) zu lang — Skript als Datei
+    // übergeben (wie der Windows-Transport)
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-ps-'));
+    try {
+      for (const [name, s] of Object.entries(skripte)) {
+        const datei = join(dir, `${name}.ps1`);
+        writeFileSync(datei, s, 'utf8');
+        const prog = `$t = [IO.File]::ReadAllText('${datei.replace(/'/g, "''")}', [Text.Encoding]::UTF8); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
+        const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
+        expect(r.error, `${name}: ${String(r.error)}`).toBeUndefined();
+        expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
+      }
+      // Gegenprobe: ein fehlerhaftes Skript fällt durch
+      writeFileSync(join(dir, 'kaputt.ps1'), "if ($a) { 'x' ", 'utf8');
+      const k = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$t = [IO.File]::ReadAllText('${join(dir, 'kaputt.ps1').replace(/'/g, "''")}'); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { 'FEHLER' } else { 'OK' }`, 'utf16le').toString('base64')], { encoding: 'utf8' });
+      expect(k.stdout.trim()).toBe('FEHLER');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 60_000);
 });
