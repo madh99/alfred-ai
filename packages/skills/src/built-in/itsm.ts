@@ -17,6 +17,13 @@ type Action =
   | 'mttr_report' | 'capacity_forecast'
   | 'service_health_score' | 'list_cascades' | 'sla_breach_risk' | 'pir_pending' | 'search_history';
 
+/** Beginnen beide Titel mit derselben Vorsilbe bis „: “ (z. B. „change angehalten: “), wird sie bei beiden entfernt */
+export function ohneGemeinsameVorsilbe(a: string, b: string): [string, string] {
+  const i = a.indexOf(': ');
+  if (i > 0 && b.startsWith(a.slice(0, i + 2))) return [a.slice(i + 2), b.slice(i + 2)];
+  return [a, b];
+}
+
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'itsm',
@@ -480,11 +487,13 @@ export class ItsmSkill extends Skill {
       if (resolution.length < 20) return ''; // ohne substanzielle Lösung kein Known-Error
 
       // Dedup: existiert schon ein Known-Error mit ≥2 gemeinsamen Keywords?
-      const keywords = incident.title.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4);
       const existing = await this.problem.listProblems(userId, { isKnownError: true, limit: 100 });
       for (const p of existing) {
-        const t = p.title.toLowerCase();
-        if (keywords.filter(k => t.includes(k)).length >= 2) {
+        // Realfall 19.11.2026: automatische Incidents „Change angehalten: <Change-Titel>“ teilten über die feste Vorsilbe schon zwei
+        // Wörter mit jedem anderen Change-Halt und wurden still an einen fremden Known-Error gehängt — gleiche Vorsilbe zählt nicht mit
+        const [a, b] = ohneGemeinsameVorsilbe(incident.title.toLowerCase(), p.title.toLowerCase());
+        const keywords = a.split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4);
+        if (keywords.filter(k => b.includes(k)).length >= 2) {
           // Bereits bekannt → Incident verlinken statt Duplikat anlegen
           try { await this.problem.linkIncident(userId, p.id, incident.id); } catch { /* evtl. schon verlinkt */ }
           return `\n📚 Known-Error existiert bereits (\`${p.id.slice(0, 8)}\`) — Incident verlinkt.`;

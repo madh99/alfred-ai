@@ -184,38 +184,58 @@ export class ProblemRepository {
     );
   }
 
+  /**
+   * Realfall 19.11.2026: Kurz-IDs (8 Zeichen) fanden das Problem per Präfix, die UPDATEs liefen aber mit der Kurz-ID ins Leere und meldeten
+   * trotzdem Erfolg. Jetzt immer mit den vollen IDs schreiben; eine nicht eindeutige oder unbekannte Kurz-ID ist ein Fehler, nie still.
+   */
+  private async volleIncidentId(userId: string, id: string): Promise<string> {
+    const genau = await this.db.queryOne(`SELECT id FROM cmdb_incidents WHERE id = ? AND user_id = ?`, [id, userId]) as { id: string } | undefined | null;
+    if (genau) return genau.id;
+    if (!/^[0-9a-f-]{6,35}$/i.test(id)) throw new Error(`Incident ${id} nicht gefunden`);
+    const treffer = await this.db.query(`SELECT id FROM cmdb_incidents WHERE id LIKE ? AND user_id = ?`, [id + '%', userId]) as Array<{ id: string }>;
+    if (treffer.length !== 1) throw new Error(treffer.length ? `Incident-Kurz-ID ${id} ist nicht eindeutig (${treffer.length} Treffer)` : `Incident ${id} nicht gefunden`);
+    return treffer[0]!.id;
+  }
+
   async linkIncident(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
     const problem = await this.getProblemById(userId, problemId);
     if (!problem) return null;
-    if (!problem.linkedIncidentIds.includes(incidentId)) {
-      const newIds = [...problem.linkedIncidentIds, incidentId];
+    const inc = await this.volleIncidentId(userId, incidentId);
+    if (!problem.linkedIncidentIds.includes(inc)) {
+      const newIds = [...problem.linkedIncidentIds, inc];
       await this.db.execute(
         `UPDATE cmdb_problems SET linked_incident_ids = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-        [JSON.stringify(newIds), new Date().toISOString(), problemId, userId],
+        [JSON.stringify(newIds), new Date().toISOString(), problem.id, userId],
       );
     }
     // Denormalized: set problem_id on incident
     await this.db.execute(
       `UPDATE cmdb_incidents SET problem_id = ? WHERE id = ? AND user_id = ?`,
-      [problemId, incidentId, userId],
+      [problem.id, inc, userId],
     );
-    return this.getProblemById(userId, problemId);
+    const nachher = await this.getProblemById(userId, problem.id);
+    if (!nachher?.linkedIncidentIds.includes(inc)) throw new Error(`Incident ${inc.slice(0, 8)} ist nach dem Verknüpfen nicht an Problem ${problem.id.slice(0, 8)} — nichts bestätigt`);
+    return nachher;
   }
 
   async unlinkIncident(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
     const problem = await this.getProblemById(userId, problemId);
     if (!problem) return null;
-
-    const newIds = problem.linkedIncidentIds.filter(id => id !== incidentId);
+    const treffer = problem.linkedIncidentIds.filter(id => id === incidentId || (incidentId.length >= 6 && id.startsWith(incidentId)));
+    if (treffer.length !== 1) throw new Error(treffer.length ? `Incident-Kurz-ID ${incidentId} ist nicht eindeutig` : `Incident ${incidentId} ist nicht mit Problem ${problem.id.slice(0, 8)} verknüpft — nichts geändert`);
+    const inc = treffer[0]!;
+    const newIds = problem.linkedIncidentIds.filter(id => id !== inc);
     await this.db.execute(
       `UPDATE cmdb_problems SET linked_incident_ids = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [JSON.stringify(newIds), new Date().toISOString(), problemId, userId],
+      [JSON.stringify(newIds), new Date().toISOString(), problem.id, userId],
     );
     await this.db.execute(
-      `UPDATE cmdb_incidents SET problem_id = NULL WHERE id = ? AND user_id = ?`,
-      [incidentId, userId],
+      `UPDATE cmdb_incidents SET problem_id = NULL WHERE id = ? AND user_id = ? AND (problem_id = ? OR problem_id IS NULL)`,
+      [inc, userId, problem.id],
     );
-    return this.getProblemById(userId, problemId);
+    const nachher = await this.getProblemById(userId, problem.id);
+    if (!nachher || nachher.linkedIncidentIds.includes(inc)) throw new Error(`Incident ${inc.slice(0, 8)} ist nach dem Trennen noch an Problem ${problem.id.slice(0, 8)} — nichts bestätigt`);
+    return nachher;
   }
 
   async linkChangeRequest(userId: string, problemId: string, changeRequestId: string): Promise<CmdbProblem | null> {

@@ -66,6 +66,26 @@ describe('v923 A — Auto-Known-Error beim close_incident', () => {
     expect(r.display).toContain('existiert bereits');
   });
 
+  it('Realfall 19.11.: gleiche Vorsilbe „Change angehalten: “ zählt nicht — fremder Change-Halt wird nicht verlinkt', async () => {
+    const { skill, itsmRepo, problemRepo } = makeSkill({
+      problems: [{ id: 'prob-i3', title: 'Change angehalten: Probe-Change: Snapshot i3probe auf test-ubuntu (142, pve3)', isKnownError: true }],
+    });
+    (itsmRepo.closeIncident as any).mockResolvedValueOnce({ ...ZED_INCIDENT, id: 'inc-ag', title: 'Change angehalten: I8e: Live-Beweis ag_entfernen und Neuaufbau sqllnxag01', resolution: 'Kollation behoben in 1898; nachgeholt mit Change 0a2ed58c (12/12).' });
+    const r = await skill.execute({ action: 'close_incident', incident_id: 'inc-ag', resolution: 'Kollation behoben in 1898; nachgeholt mit Change 0a2ed58c (12/12).' }, ctx);
+    expect(r.success).toBe(true);
+    expect(problemRepo.linkIncident).not.toHaveBeenCalled();
+    expect(problemRepo.createProblem).toHaveBeenCalledTimes(1);
+  });
+
+  it('gleiche Vorsilbe, gleicher Inhalt → weiter verlinkt', async () => {
+    const { skill, itsmRepo, problemRepo } = makeSkill({
+      problems: [{ id: 'prob-i3', title: 'Change angehalten: Probe-Change: Snapshot i3probe auf test-ubuntu (142, pve3)', isKnownError: true }],
+    });
+    (itsmRepo.closeIncident as any).mockResolvedValueOnce({ ...ZED_INCIDENT, id: 'inc-i3b', title: 'Change angehalten: Probe-Change: Snapshot i3probe erneut', resolution: 'Snapshot-Name war schon vergeben, Probe neu angelegt.' });
+    await skill.execute({ action: 'close_incident', incident_id: 'inc-i3b', resolution: 'Snapshot-Name war schon vergeben, Probe neu angelegt.' }, ctx);
+    expect(problemRepo.linkIncident).toHaveBeenCalledWith('u1', 'prob-i3', 'inc-i3b');
+  });
+
   it('ohne substanzielle resolution kein Known-Error', async () => {
     const { skill, itsmRepo, problemRepo } = makeSkill();
     (itsmRepo.closeIncident as any).mockResolvedValueOnce({ ...ZED_INCIDENT, resolution: 'ok' });
