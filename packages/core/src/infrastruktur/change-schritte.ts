@@ -176,7 +176,9 @@ const SELBST_GEPRUEFT = new Set([
  */
 const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
   // I8e Task 4: Sicherung (Jobs + Probe-Kopie mit fester Zugangsdatei), Sicherung jetzt (auf fs01 bestätigt), Restore-Beweis (RESTORE_VERIFIED)
-  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
+  linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen',
+    // Owner 19.11.2026 — reste_entfernen: danach liegen genau die Dateien in Gebrauch noch (Selbstprüfung im Baustein)
+    'reste_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd

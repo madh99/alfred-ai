@@ -37,6 +37,7 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   sicherungen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.liste) + 60,
   wiederherstellen_pruefen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.wiederherstellen) + 60,
   kettengrenzen_uebernehmen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen) + 60,
+  reste_entfernen: sek(LINUX_SQL_ZEIT_MS.resteEntfernen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -52,7 +53,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // I8e Task 4 — Sicherung nach fs01 und Wiederherstellungs-Beweis
   'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen',
   // Fix-Welle M-1 — Kettengrenzen nach Prüfung aus der Kopie auf fs01 übernehmen
-  'kettengrenzen_uebernehmen']);
+  'kettengrenzen_uebernehmen',
+  // Owner 19.11.2026 — alte tempdb-Dateien entfernen (fail-closed, jede Datei gemeldet)
+  'reste_entfernen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -151,6 +154,7 @@ export interface LinuxSqlSicherungen {
 const AG_ROLLEN = new Set(['PRIMARY', 'SECONDARY', 'RESOLVING', 'keine AG', 'nicht vorhanden']);
 const rolleText = (r: unknown) => (typeof r === 'string' && AG_ROLLEN.has(r) ? r : 'unbekannt');
 const gib = (b: number | null | undefined) => (typeof b === 'number' ? (b / 2 ** 30).toFixed(1) : '?');
+const mib = (b: number | null | undefined) => (typeof b === 'number' ? String(Math.round(b / 2 ** 20)) : '?');
 /**
  * Hash-Zustand je Datenbank (Fix-Runde 1): „Hash ok“ nur, wenn der letzte Kopierlauf gelang, mindestens eine Datei auf fs01 liegt, nichts
  * aussteht und nichts fehlt; „vollständig auf fs01“ zusätzlich nur mit lauter vollständigen Ketten.
@@ -326,6 +330,7 @@ export class LinuxSqlSkill extends Skill {
       + 'wiederherstellen_pruefen (zugang, datenbank, ziel_name Standard alfred_wh_<datenbank>) — letzte vollständige Kette FULL+DIFF+LOGs AUS DER fs01-KOPIE unter ziel_name, DBCC CHECKDB, Prüfdaten-Vergleich → „RESTORE_VERIFIED“ nur wenn alles stimmt; ziel_name wird danach entfernt (Schritt-zeitlimitS großzügig, z. B. 3600). '
       + 'sicherungen (lesend, auch außerhalb von Changes; zugang; liest keinen Tresor und nicht fs01 — lokaler Stand und Bericht des letzten Kopierlaufs, der fs01 prüft) — Wortlaut „<zugang>: Sicherung nach //fs01.ad.3033.at/<freigabe> (belegt <x> GiB von <y> GiB); Kopie zuletzt <zeit> ok; Zugangsdatei vorhanden (0600); Kopie-Timer aktiv; <db>: <n> Ketten (<m> vollständig), letzte FULL …, lokal <a>, fs01 <b>, Hash ok, vollständig auf fs01“ (sonst „Hash unbekannt …“, „ausstehend: <n>“, „FEHLT auf fs01: <n>“; Befunde des Kopierlaufs stehen hinter „Kopie zuletzt <zeit> FEHLER:“), als Prüfung z. B. erwartet „vollständig auf fs01“ oder „Kopie-Timer aktiv“. Ziel ist nur fs01.ad.3033.at, konto_tresor nur ad-svc-sqllnx-…. '
       + `Mindest-zeitlimitS je Schritt (Baustein-Zeitgrenzen + 60 s): ${Object.entries(LINUX_SQL_MIN_ZEITLIMIT_S).map(([a, sk]) => `${a} ${sk} s`).join(', ')}. `
+      + 'reste_entfernen (nur im Change; zugang) — entfernt alte tempdb-Dateien (temp*.mdf/ndf/ldf direkt in /var/opt/mssql/data), die der Status als „Reste“ meldet; nur Dateien, die nicht in sys.master_files stehen und kein Prozess geöffnet hat; SQL Server muss laufen, sonst Abbruch ohne Löschen; jede gelöschte Datei steht mit Größe im Ergebnis, Dateien in Gebrauch bleiben und werden genannt; kein Rückweg (ohneSicherungGrund). '
       + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
@@ -369,7 +374,7 @@ export class LinuxSqlSkill extends Skill {
     if (!istVerweis(input.zugang) && !ZUGANG.test(String(input.zugang ?? '').trim())) return 'zugang: Name des Linux-Fernzugangs';
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
-      if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
+      if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'reste_entfernen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
       if (action === 'platten_einrichten') plattenParameter(input);
       else if (action === 'installieren') installParameter(input);
       else if (action === 'konfigurieren') konfigWerte(input);
@@ -413,6 +418,7 @@ export class LinuxSqlSkill extends Skill {
         case 'sicherungen': return await this.sicherungen(zugang);
         case 'wiederherstellen_pruefen': return await this.wiederherstellen(zugang, input, geheim);
         case 'kettengrenzen_uebernehmen': return await this.kettengrenzen(zugang, input, geheim);
+        case 'reste_entfernen': return await this.resteEntfernen(zugang, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -568,6 +574,23 @@ export class LinuxSqlSkill extends Skill {
     // Nachtrag N-1: übernommene Grenzen einzeln nennen; sie sperren nur das erneute Kopieren
     const u = (r.unterschied ?? []).map(x => `${x.datenbank}: lokal ${x.lokal} → fs01 ${x.fs01} (übernommen: ${(x.grenzen ?? []).map(g => `${g.full} (Bezug ${g.ersterBezug ?? '-'}, letztes ${g.letztes ?? '-'})`).join(', ')})`);
     return { success: true, data: r, display: u.length ? `✅ Kettengrenzen auf ${zugang} übernommen: ${u.join('; ')} — sie sperren nur das erneute Kopieren; Ketten bis zur neuesten übernommenen Grenze bleiben unangetastet (Aufbewahrung dort ausgesetzt), lokale Dateien dieser Ketten werden nie auf dieser Grundlage gelöscht` : `Kettengrenzen auf ${zugang} stimmen mit fs01 überein — nichts zu tun` };
+  }
+
+  /** Owner 19.11.2026 — alte tempdb-Dateien im Datenordner entfernen; jede Datei einzeln genannt, Dateien in Gebrauch bleiben (nie still) */
+  private async resteEntfernen(zugang: string, geheim: string[]): Promise<SkillResult> {
+    const sa = await this.sa(zugang, `Reste entfernen ${zugang}`, geheim);
+    const r = await this.lauf<{ zustand: string; ordner?: string; masterFiles?: number; entfernt?: Array<{ datei: string; bytes: number }>; inGebrauch?: Array<{ datei: string; grund: string }> }>(
+      zugang, LINUX_SQL_BAUSTEINE.resteEntfernen, {}, 'alte tempdb-Dateien entfernen', LINUX_SQL_ZEIT_MS.resteEntfernen, { sa });
+    const weg = (r.entfernt ?? []).map(x => `${x.datei} (${mib(x.bytes)} MiB)`);
+    const bleibt = (r.inGebrauch ?? []).map(x => `${x.datei} (${x.grund === 'offen' ? 'geöffnet' : 'in sys.master_files'})`);
+    const gebrauch = bleibt.length ? `; in Gebrauch, nicht gelöscht: ${bleibt.join(', ')}` : '';
+    this.d.protokoll?.('I8e Reste entfernt', { zugang, entfernt: (r.entfernt ?? []).map(x => x.datei), inGebrauch: (r.inGebrauch ?? []).map(x => x.datei) });
+    return {
+      success: true, data: r,
+      display: weg.length
+        ? `✅ Alte tempdb-Dateien auf ${zugang} entfernt (${weg.length}, gegen ${r.masterFiles ?? '?'} Dateien in sys.master_files geprüft): ${weg.join(', ')}${gebrauch}`
+        : `Keine alten tempdb-Dateien auf ${zugang} in ${r.ordner ?? '/var/opt/mssql/data'} — nichts zu tun${gebrauch}`,
+    };
   }
 
   /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */

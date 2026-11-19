@@ -62,11 +62,13 @@ export const SQLLNX_KOPIE_STATUS = '/var/lib/alfred/sqllnx-kopie-status.json';
 export const LINUX_SQL_BAUSTEINE = {
   platten: 'sql.platten', installation: 'sql.installation', konfiguration: 'sql.konfiguration',
   tempdb: 'sql.tempdb', maxspeicher: 'sql.maxspeicher', login: 'sql.login', status: 'sql.status', pruefdaten: 'sql.pruefdaten',
+  resteEntfernen: 'sql.reste_entfernen',
 } as const;
 
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_SQL_ZEIT_MS = {
   platten: 180_000, installation: 1_500_000, konfiguration: 300_000, tempdb: 300_000, maxspeicher: 90_000, login: 90_000, status: 90_000, pruefdaten: 180_000,
+  resteEntfernen: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -932,6 +934,72 @@ export function statusSkript(): string {
   ].join('\n');
 }
 
+// ── Reste entfernen (Owner 19.11.2026) ──────────────────────────────────────────────────────────────────────────────────────
+
+/** Ordner, in dem der Status alte tempdb-Dateien als „Reste“ meldet (nur diese Ebene, kein Unterordner) */
+export const RESTE_ORDNER = '/var/opt/mssql/data';
+/**
+ * Owner 19.11.2026 (Variante „neue Aktion“): alte tempdb-Dateien (temp*.mdf/ndf/ldf direkt in RESTE_ORDNER) entfernen — fail-closed:
+ * SQL Server muss laufen und als sa antworten, sys.master_files muss vollständig lesbar sein; eine Datei, die dort steht (Pfad nach
+ * realpath gleich) oder die irgendein Prozess geöffnet hat, bleibt liegen und wird als „in Gebrauch“ gemeldet. Jede gelöschte Datei steht
+ * mit Größe im Ergebnis; ein Abbruch mitten im Lauf nennt die bis dahin gelöschten. Selbstprüfung: danach liegen genau die Dateien in
+ * Gebrauch noch. Zeit: LINUX_SQL_ZEIT_MS.resteEntfernen
+ */
+export function resteEntfernenSkript(): string {
+  const tsql = [
+    'SET NOCOUNT ON;',
+    "SELECT N'ALFRED-DATEI|' + physical_name COLLATE DATABASE_DEFAULT FROM sys.master_files;",
+    "SELECT N'ALFRED|' + CAST(COUNT(*) AS nvarchar(10)) FROM sys.master_files;",
+  ].join('\n');
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.resteEntfernen, {}),
+    ...SQL_HILFE,
+    `DATEN=${shQ(RESTE_ORDNER)}`,
+    // 0 = irgendein Prozess hat die Datei geöffnet
+    'offen() { local l; for l in /proc/[0-9]*/fd/*; do if [ "$(readlink "$l" 2>/dev/null || true)" = "$1" ]; then return 0; fi; done; return 1; }',
+    'kandidaten() { find "$DATEN" -mindepth 1 -maxdepth 1 -type f \\( -name "temp*.mdf" -o -name "temp*.ndf" -o -name "temp*.ldf" \\) -print | sort; }',
+    'laeuft() { pgrep -x sqlservr >/dev/null; }',
+    ...SA_LESEN,
+    `TSQL=${shQ(tsql)}`,
+    'E_LISTE=""',
+    'teil() { abbruch "$1; bisher entfernt: ${E_LISTE:-nichts}"; }',
+    '[ -d "$DATEN" ] || abbruch "$DATEN fehlt — nichts gelöscht"',
+    'laeuft || abbruch "sqlservr läuft nicht — Gebrauch der Dateien nicht prüfbar, nichts gelöscht"',
+    'bereit || abbruch "SQL Server antwortet nicht als sa — nichts gelöscht"',
+    'aus=$(sql "$TSQL" 2>&1) || abbruch "sys.master_files nicht lesbar — nichts gelöscht: $(kurz "$aus")"',
+    'n=$(alfred_zeile "$aus"); n=${n#ALFRED|}',
+    '[[ "$n" =~ ^[1-9][0-9]*$ ]] || abbruch "sys.master_files: keine Ergebniszeile — nichts gelöscht"',
+    'BELEGT=()',
+    'while IFS= read -r z; do',
+    '  [ -n "$z" ] || continue',
+    '  [[ "$z" == /* ]] || abbruch "sys.master_files: unerwartete Pfadform $z — nichts gelöscht"',
+    '  BELEGT+=("$(realpath -m -- "$z")")',
+    'done <<<"$(grep "^ALFRED-DATEI|" <<<"$aus" | tr -d "\\r" | sed "s/^ALFRED-DATEI|//" || true)"',
+    '[ "${#BELEGT[@]}" = "$n" ] || abbruch "sys.master_files: $n Dateien gemeldet, ${#BELEGT[@]} gelesen — nichts gelöscht"',
+    'liste=$(kandidaten) || abbruch "$DATEN nicht lesbar — nichts gelöscht"',
+    'ENTFERNT=""; GEBRAUCH=""; E_N=0; G_N=0',
+    'while IFS= read -r f; do',
+    '  [ -n "$f" ] || continue',
+    '  r=$(realpath -m -- "$f"); grund=""',
+    '  for z in "${BELEGT[@]}"; do if [ "$z" = "$r" ]; then grund=master_files; break; fi; done',
+    '  if [ -z "$grund" ] && offen "$f"; then grund=offen; fi',
+    '  if [ -z "$grund" ] && offen "$r"; then grund=offen; fi',
+    '  if [ -n "$grund" ]; then GEBRAUCH+="${GEBRAUCH:+,}{\\"datei\\":$(printf "%s" "$f" | json_text),\\"grund\\":\\"$grund\\"}"; G_N=$((G_N + 1)); continue; fi',
+    '  b=$(stat -c %s -- "$f") || teil "Größe von $f nicht lesbar"',
+    '  rm -f -- "$f" || teil "$f ließ sich nicht löschen"',
+    '  [ ! -e "$f" ] || teil "$f besteht nach dem Löschen noch"',
+    '  E_LISTE+="${E_LISTE:+, }$f"',
+    '  ENTFERNT+="${ENTFERNT:+,}{\\"datei\\":$(printf "%s" "$f" | json_text),\\"bytes\\":$b}"; E_N=$((E_N + 1))',
+    'done <<<"$liste"',
+    // Selbstprüfung: übrig sind genau die Dateien in Gebrauch
+    'rest=$(kandidaten) || teil "$DATEN nach dem Löschen nicht lesbar"',
+    'r_n=$(grep -c . <<<"$rest" || true)',
+    '[ "$r_n" = "$G_N" ] || teil "Selbstprüfung: $r_n alte tempdb-Dateien liegen noch, erwartet $G_N (in Gebrauch)"',
+    'if [ "$E_N" -gt 0 ]; then Z=geaendert; else Z=schon; fi',
+    'ergebnis "{\\"zustand\\":\\"$Z\\",\\"ordner\\":\\"$DATEN\\",\\"masterFiles\\":$n,\\"entfernt\\":[$ENTFERNT],\\"inGebrauch\\":[$GEBRAUCH]}"',
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<PlattenParameter>(LINUX_SQL_BAUSTEINE.platten, plattenSkript);
@@ -942,3 +1010,4 @@ registriereLinuxBaustein<MaxSpeicherParameter>(LINUX_SQL_BAUSTEINE.maxspeicher, 
 registriereLinuxBaustein<LoginParameter>(LINUX_SQL_BAUSTEINE.login, p => sqlSkript('login', p));
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.status, () => statusSkript());
 registriereLinuxBaustein<PruefdatenParameter>(LINUX_SQL_BAUSTEINE.pruefdaten, p => sqlSkript('pruefdaten', p));
+registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.resteEntfernen, () => resteEntfernenSkript());
