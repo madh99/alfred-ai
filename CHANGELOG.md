@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 3: Kerberos, TLS, Zertifikatsprüfung (v1904)
+
+- **`linux_sql kerberos_einrichten` / `kerberos_entfernen`:** Der Dienst-Keytab entsteht auf dem Host aus dem Kennwort von `svc-sqllnx` (nur über die Standardeingabe), mit der kvno aus dem AD; ältere Schlüsselversionen bleiben erhalten. Die Selbstprüfung holt echte Diensttickets für den eigenen SPN und den Listener `sqllnxag01`. Eine Abweichung der kvno zwischen AD und Keytab wird mit beiden Werten gemeldet.
+- **`linux_sql tls_anfordern` / `tls_einspielen` / `tls_entfernen`:** RSA-3072-Schlüssel und Zertifikatsanforderung entstehen auf dem Host, der Schlüssel verlässt ihn nie. Das ausgestellte Zertifikat wird nur eingespielt, wenn es zum Schlüssel passt, die Kette bis zu einer fest vorgegebenen Root-CA (SHA-256) reicht und die SAN-Liste exakt stimmt; eine eingespielte Root wird nie still ersetzt. Verschlüsselung wird hier noch nicht erzwungen.
+- **`linux_sql tls_pruefung_schalten`:** Alfreds eigene SQL-Verbindungen zu einem Linux-Host prüfen nach dem Einschalten das Server-Zertifikat (FQDN, verschlüsselt) — ohne stillen Rückfall auf ungeprüfte Verbindungen. Der Status nennt Keytab, TLS-Zertifikat, Erzwingung und Prüfschalter.
+
+### Changed
+
+- Der Change-Lauf behält Base64-Felder der Schrittdaten (bis 16 KB je Feld, 64 KB gesamt) unverkürzt, damit Zertifikatsanforderung und Zertifikat zwischen Schritten weitergereicht werden können.
+
 ### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 2: Domänenbeitritt und Zeitquelle (v1903)
 
 - **`linux_sql ad_beitreten` / `ad_verlassen`:** Linux-SQL-Hosts treten der Domäne mit einem vorab angelegten Computerkonto und dessen Einmal-Kennwort bei — ohne AD-Admin-Konto auf dem Host, Kennwort nur über die Standardeingabe. sssd dient nur der Namensauflösung für SQL Server (`access_provider = deny`, sss nicht in PAM), Pakete fest gepinnt. Vorbedingungen (FQDN, DNS, Zeit, fremde Konfiguration) brechen vor jeder Änderung ab; der Rückweg nimmt nur Alfreds eigene Einrichtung zurück und lässt fremde Konfiguration stehen.
