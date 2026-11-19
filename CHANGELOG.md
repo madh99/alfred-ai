@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-SQL/HA: Paketinstallation ohne ungeplante Dienstneustarts (v1907)
+
+- Paketinstallationen der Bausteine `linux_sql` (Installation, AD-Beitritt, Sicherung) und `linux_ha` laufen jetzt mit `NEEDRESTART_MODE=l` und `NEEDRESTART_SUSPEND=1`. Bisher konnte needrestart nach `apt-get install` den SQL-Server-Dienst ungeplant neu starten (Realfall: AD-Beitritt eines sekundären Replikats startete dessen SQL Server neu, der primäre Knoten fiel dabei kurz aus und Pacemaker übernahm). Neustarts laufen ausschließlich rollierend und geplant über den Change. Ein Test erzwingt die Einstellung für jede Installationsstelle.
+
 ### Fixed — Linux-SQL AD/TLS: Ergebnis von computerkonto_vorbereiten (v1906)
 
 - `windows_ad computerkonto_vorbereiten` meldete ein korrekt angelegtes Computerkonto als gescheitert: Das Ergebnisfeld `kennwortGesetzt` wurde von der Geheimnis-Schwärzung des Fernzugriffs mitsamt Trennzeichen ersetzt, die Ergebniszeile war damit kein gültiges JSON mehr. Das Feld heißt jetzt `einmalBereit`; ein Test prüft alle Ergebnisfelder der neuen Linux-SQL-AD/TLS-Bausteine gegen die Schwärzung.
