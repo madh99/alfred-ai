@@ -77,8 +77,10 @@ export function kuerzeDaten(d: unknown): unknown {
   let rest: unknown = d;
   if (typeof d === 'object' && !Array.isArray(d)) {
     const r: Record<string, unknown> = {};
+    // Fix-Runde 2: zusammen höchstens BASE64_DATEN_SUMME Zeichen — was darüber hinausgeht, wird wie alles andere behandelt (gekürzt)
+    let summe = 0;
     for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
-      if (istBase64DatenFeld(k, v)) behalten[k] = v; else r[k] = v;
+      if (istBase64DatenFeld(k, v) && summe + v.length <= BASE64_DATEN_SUMME) { behalten[k] = v; summe += v.length; } else r[k] = v;
     }
     rest = r;
   }
@@ -94,6 +96,8 @@ export function kuerzeDaten(d: unknown): unknown {
 }
 /** Ruling R16 — Höchstlänge eines unverkürzt gespeicherten Base64-Datenfelds (ein Zertifikat/eine Anforderung, DER) */
 export const BASE64_DATEN_MAX = 16_384;
+/** Fix-Runde 2 — Obergrenze aller unverkürzt gespeicherten Base64-Felder eines Schritts zusammen */
+export const BASE64_DATEN_SUMME = 65_536;
 const istBase64DatenFeld = (k: string, v: unknown): v is string =>
   /^[a-z][A-Za-z0-9]*Base64$/.test(k) && typeof v === 'string' && v.length > 0 && v.length <= BASE64_DATEN_MAX && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v);
 

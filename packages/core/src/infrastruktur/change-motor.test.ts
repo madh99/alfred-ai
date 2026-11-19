@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { ChangeMotor, ownerFrageVeraltet, ueberspringbar, type MotorDeps } from './change-motor.js';
-import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, unaufgeloesterVerweis, kuerzeDaten, MAX_DATEN, BASE64_DATEN_MAX, type ChangeLauf } from './change-lauf.js';
+import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, unaufgeloesterVerweis, kuerzeDaten, MAX_DATEN, BASE64_DATEN_MAX, BASE64_DATEN_SUMME, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
 // I4 — Ausführungsmotor gegen Attrappen (kein echter Host)
@@ -1149,6 +1149,15 @@ describe('Ruling R16 — kuerzeDaten behält strikte Base64-Felder (…Base64) u
     expect(f.zertBase64).toHaveLength(300);
     expect(f.keinB64Base64).toHaveLength(300);
     expect(f.zert_b64).toHaveLength(300);
+  });
+  it('Fix-Runde 2: zusammen höchstens BASE64_DATEN_SUMME Zeichen — weitere Base64-Felder werden wie der Rest gekürzt', () => {
+    const feld = b64(12_000); // 16000 Zeichen je Feld
+    const d: Record<string, string> = { aBase64: feld, bBase64: feld, cBase64: feld, dBase64: feld, eBase64: feld, fBase64: feld };
+    const k = kuerzeDaten(d) as Record<string, string>;
+    const voll = Object.values(k).filter(v => v.length === feld.length);
+    expect(voll).toHaveLength(Math.floor(BASE64_DATEN_SUMME / feld.length));
+    expect(voll.reduce((n, v) => n + v.length, 0)).toBeLessThanOrEqual(BASE64_DATEN_SUMME);
+    expect(Object.values(k).filter(v => v.length === 300)).toHaveLength(6 - voll.length);
   });
   it('Verweis auf das gespeicherte Ergebnis liefert den vollen Wert (zert_base64 = {{schritt4.zertBase64}})', () => {
     const daten = kuerzeDaten({ zustand: 'ausgestellt', zertifikatPem: `-----BEGIN CERTIFICATE-----

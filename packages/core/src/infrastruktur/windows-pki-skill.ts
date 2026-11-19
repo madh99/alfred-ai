@@ -452,8 +452,10 @@ export class WindowsPkiSkill extends Skill {
           if (r.zustand === 'fehler') return { success: false, data: { zustand: r.zustand, fehler: r.fehler }, error: `SQL-TLS-Anforderung ${a.cn} NICHT eingereicht: ${r.fehler ?? 'Prüfung gescheitert'}` };
           const gruende = bewerteFremdAusgestellt(r, a);
           const data = { zustand: r.zustand, requestId: r.requestId, thumbprint: r.thumbprint, seriennummer: r.seriennummer, gueltigBis: r.gueltigBis, cn: a.cn, sans: a.sans, csrSha256: a.csr_sha256, eingereicht: r.eingereicht, ...derOderPem(r) };
-          // Anzeige ohne PEM-Blöcke (öffentlich, aber lang) — sie stehen in data für den nächsten Change-Schritt (linux_sql tls_einspielen)
-          const text = `${gruende.length ? 'SQL-TLS-Zertifikat NICHT wie verlangt' : '✅ SQL_TLS_LINUX_ISSUED'} ${a.cn} (${r.zustand}): Anforderung ${r.requestId}, Thumbprint ${r.thumbprint}, Seriennummer ${r.seriennummer}, gültig bis ${r.gueltigBis}, ${r.subjekt}, SAN ${r.sans}, EKU ${(r.eku ?? []).join(',')}, Anforderer ${r.anforderer}, Kette ${r.glieder} Glieder; Zertifikat und Kette (PEM) in data.zertifikatPem/kettePem${gruende.length ? ` — BEFUNDE: ${gruende.join('; ')}` : ''}`;
+          // Anzeige ohne Zertifikatsinhalt (öffentlich, aber lang) — er steht in data für den nächsten Change-Schritt (linux_sql tls_einspielen):
+          // als DER-Base64 (zertBase64/issuingBase64/rootBase64), nur wenn die Kette nicht Issuing + Root ist als PEM (derOderPem)
+          const ablage = 'zertBase64' in data ? 'als DER-Base64 in data.zertBase64/issuingBase64/rootBase64' : 'als PEM in data.zertifikatPem/kettePem (Kette nicht Issuing + Root, keine Base64-Felder)';
+          const text = `${gruende.length ? 'SQL-TLS-Zertifikat NICHT wie verlangt' : '✅ SQL_TLS_LINUX_ISSUED'} ${a.cn} (${r.zustand}): Anforderung ${r.requestId}, Thumbprint ${r.thumbprint}, Seriennummer ${r.seriennummer}, gültig bis ${r.gueltigBis}, ${r.subjekt}, SAN ${r.sans}, EKU ${(r.eku ?? []).join(',')}, Anforderer ${r.anforderer}, Kette ${r.glieder} Glieder; Zertifikat und Kette ${ablage}${gruende.length ? ` — BEFUNDE: ${gruende.join('; ')}` : ''}`;
           return gruende.length ? { success: false, data, error: text } : { success: true, data, display: text };
         }
         case 'sql_tls_anfordern': case 'erneuerung_anfordern': {

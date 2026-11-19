@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { createHash } from 'node:crypto';
+import { TEST_CA_PEM, TEST_ZERT_PEM } from './windows-codesignatur.fixture.js';
 import {
   pruefeCsrForm, pruefeFremdAusstellung, fremdAusstellenSkript, linuxTlsSans, profilSqlTlsLinux, csrSha256,
   SQL_TLS_LINUX_VORLAGE, SQL_TLS_LINUX_ANZEIGE, SQL_TLS_LINUX_GRUPPE, SQL_TLS_LINUX_ANFORDERER,
@@ -174,6 +175,18 @@ describe('I8e Etappe 3 Task 3 — Skill', () => {
     expect((r.data as Record<string, unknown>).zertifikatPem).toBe(ROH_ZERT);
     expect((r.data as Record<string, unknown>).kettePem).toBe(ROH_ZERT + ROH_ZERT);
     expect(w.aufrufe).toHaveLength(1);
+    // Fix-Runde 2: ohne gültige Kette (Issuing + Root) nennt die Anzeige die PEM-Felder
+    expect(r.display).toContain('Zertifikat und Kette als PEM in data.zertifikatPem/kettePem');
+  });
+  it('Fix-Runde 2: Kette Issuing + Root → data nur DER-Base64, Anzeige nennt die Base64-Felder', async () => {
+    const w = welt([{ zustand: 'ausgestellt', requestId: 43, thumbprint: 'CD'.repeat(20), gueltigBis: '2027-11-19T10:00:00', seriennummer: '1a2c', subjekt: 'CN=sqllnx01.ad.3033.at', sans: SANS01.join(','), eku: ['1.3.6.1.5.5.7.3.1'], glieder: 3, zertifikatPem: TEST_ZERT_PEM, kettePem: TEST_ZERT_PEM + TEST_CA_PEM }]);
+    const r = await w.skill.execute(eingabe, ausChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('Zertifikat und Kette als DER-Base64 in data.zertBase64/issuingBase64/rootBase64');
+    expect(r.display).not.toContain('zertifikatPem');
+    const d = r.data as Record<string, unknown>;
+    expect(Object.keys(d)).toEqual(expect.arrayContaining(['zertBase64', 'issuingBase64', 'rootBase64']));
+    expect(d.zertifikatPem).toBeUndefined(); expect(d.kettePem).toBeUndefined();
   });
   it('Selbstprüfung des Ergebnisses: abweichende SANs/EKU oder fehlende Kette → success:false', async () => {
     const basis = { zustand: 'ausgestellt', requestId: 42, thumbprint: 'AB'.repeat(20), gueltigBis: '2027-11-19T10:00:00', seriennummer: '1a', subjekt: 'CN=sqllnx01.ad.3033.at', sans: SANS01.join(','), eku: ['1.3.6.1.5.5.7.3.1'], glieder: 3, zertifikatPem: ROH_ZERT, kettePem: ROH_ZERT + ROH_ZERT };
