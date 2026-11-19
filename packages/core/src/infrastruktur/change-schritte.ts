@@ -180,7 +180,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // Owner 19.11.2026 — reste_entfernen: danach liegen genau die Dateien in Gebrauch noch (Selbstprüfung im Baustein)
     'reste_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
-  windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen']),
+  // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
+  // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
+  windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen', 'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen']),
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
   // Task 3 — Cluster: alle Knoten online, Quorum n/n, sbd läuft/aktiviert, have-watchdog, Eigenschaften; Entfernen: keine corosync.conf
   // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
@@ -322,7 +324,8 @@ export function aktionsArt(skill: string, aktion: string, parameter?: Record<str
   // v1676 — Realfall 26.10. (Matrix E): der GitLab-Skill liest nur (Projekte, Registry-Tags mit Digest) — „gitlab.registry ist nicht lesend“
   if (skill === 'gitlab') return 'lesen';
   // I8c — windows_ad: nur status liest; alle Bausteine ändern
-  if (skill === 'windows_ad') return aktion === 'status' || aktion === 'dns_aufloesen' ? 'lesen' : 'aendern';
+  // I8e Etappe 3 — spn_lesen und die SQL-Anmeldeprobe (geplante Aufgabe wird wieder entfernt) lesen
+  if (skill === 'windows_ad') return ['status', 'dns_aufloesen', 'spn_lesen', 'sql_anmeldung_pruefen'].includes(aktion) ? 'lesen' : 'aendern';
   // I8d — windows_cluster: status und gmsa_pruefen lesen; alle Bausteine ändern
   if (skill === 'windows_cluster') return ['status', 'gmsa_pruefen', 'verbindung_pruefen', 'firewall_lesen', 'spn_lesen', 'verzeichnis_lesen', 'ereignisse_status', 'stabilitaet_pruefen', 'defender_status', 'defender_protokoll'].includes(aktion) ? 'lesen' : 'aendern';
   // v1810 — windows_pki: status liest; alle späteren Bausteine ändern

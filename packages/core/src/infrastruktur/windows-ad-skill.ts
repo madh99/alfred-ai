@@ -2,15 +2,20 @@
  * I8c — Skill „windows_ad“: Active Directory über feste Bausteine (windows-ad.ts). Alles außer „status“ nur als Schritt eines
  * freigegebenen Changes. Kennwörter erzeugt bzw. liest der Skill im Tresor und gibt sie nur über die Standardeingabe weiter.
  */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
   pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, KONTO_FREI, type AdStatus,
-  pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName,
+  pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName, dienstkontoGehaertet,
 } from './windows-ad.js';
+import {
+  pruefeSpns, pruefeKonto, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, spnLesenText, type SpnLesen, pruefeComputerkonto, joinTresorName,
+  computerkontoSkript, computerkontoEntfernenSkript, pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, pruefeGruppe, gruppeSkript, gruppeEntfernenSkript,
+  pruefeSqlServer, sqlAnmeldungSkript, sqlAnmeldungAuswerten, type SqlAnmeldung,
+} from './windows-ad-linux.js';
 
 export interface WindowsAdDeps {
   /** Fernzugriff: festes Skript auf einem Windows-Zugang (Geheimnisse per Standardeingabe) */
@@ -23,14 +28,24 @@ export interface WindowsAdDeps {
 
 const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'grundstruktur', 'sicherung_einrichten', 'sicherung_jetzt', 'papierkorb_beweis', 'dns_eintrag', 'dns_eintrag_loeschen', 'dns_client',
   // I8e Task 4 — Domänen-Dienstkonto (z. B. svc-sqllnx-backup für die Sicherung nach fs01)
-  'dienstkonto_anlegen', 'dienstkonto_entfernen']);
-/** v1783 — lesende Aktionen (auch außerhalb eines Changes) */
-export const LESEND = new Set(['status', 'dns_aufloesen']);
+  'dienstkonto_anlegen', 'dienstkonto_entfernen',
+  // I8e Etappe 3 — AD-Objekte für Kerberos der Linux-SQL-Instanzen (je mit Rückweg)
+  'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen']);
+/** v1783 — lesende Aktionen (auch außerhalb eines Changes); I8e Etappe 3: spn_lesen, sql_anmeldung_pruefen */
+export const LESEND = new Set(['status', 'dns_aufloesen', 'spn_lesen', 'sql_anmeldung_pruefen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const KENNWORT_ZEICHEN = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 /** wie die Windows-Fabrik: erfüllt die Komplexitätsregeln (groß, klein, Ziffer, Sonderzeichen) */
 export const adKennwort = () => `Al-${Array.from(randomBytes(24), x => KENNWORT_ZEICHEN[x % KENNWORT_ZEICHEN.length]).join('')}9a`;
 export const dsrmName = (domaene: string, zugang: string) => `ad-${domaene}-dsrm-${zugang}`;
+/** I8e Etappe 3 — Einmal-Kennwort für den Domänenbeitritt: 24 Zeichen, groß/klein/Ziffer/Sonderzeichen, ohne Anführungszeichen */
+const EINMAL_ZEICHEN = `${KENNWORT_ZEICHEN}-_`;
+export function einmalKennwort(): string {
+  for (;;) {
+    const k = Array.from({ length: 24 }, () => EINMAL_ZEICHEN[randomInt(EINMAL_ZEICHEN.length)]).join('');
+    if (/[A-Z]/.test(k) && /[a-z]/.test(k) && /\d/.test(k) && /[-_]/.test(k)) return k;
+  }
+}
 
 export class WindowsAdSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -49,7 +64,14 @@ export class WindowsAdSkill extends Skill {
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
       + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
       + 'dienstkonto_anlegen (zugang = DC, konto = sAMAccountName z. B. svc-sqllnx-backup, ou Standard Dienstkonten, konto_tresor optional wie grundstruktur) — Benutzer-Dienstkonto (Kennwort läuft nie ab, Konto kann es nicht ändern), Kennwort erzeugt Alfred im Tresor ad-<konto> und gibt es nur über die Standardeingabe weiter; wiederholbar, ein abweichendes Kennwort wird nie still zurückgesetzt; prüft Anmeldung und Flags selbst ↔ dienstkonto_entfernen (zugang, konto; nur von Alfred angelegte, Tresor-Eintrag bleibt). '
-      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen und dns_client (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
+      + 'Mit haerten: true (I8e Etappe 3, z. B. svc-sqllnx) zusätzlich nur AES128+AES256 (msDS-SupportedEncryptionTypes 24), vertraulich/keine Delegierung, Anmeldung nirgends (userWorkstations KEINEANMELDUNG); Ergebnis „DIENSTKONTO_GEHAERTET“ mit allen Flags zurückgelesen. '
+      + 'I8e Etappe 3 (zugang = DC, konto_tresor optional wie grundstruktur, je mit Rückweg und Selbstprüfung): spn_setzen (konto, spns = Liste MSSQLSvc/<name>.ad.3033.at[:1433]) — wie setspn -S, Abbruch wenn ein anderes Objekt im Wald einen SPN trägt; Ergebnis „SPN_EINDEUTIG“ (jeder SPN genau einmal im Wald, am Konto) ↔ spn_entfernen (konto, spns). '
+      + 'spn_lesen (lesend, auch außerhalb von Changes; zugang = DC, spns, konto optional) — Träger je SPN im Wald, „SPN_EINDEUTIG“ bzw. „SPN_PROBLEM“. '
+      + 'computerkonto_vorbereiten (name z. B. sqllnx01, ou Standard Server) — Computerkonto NAME$ für den Linux-Beitritt; vorhanden nur, wenn deaktiviert oder nie angemeldet; Einmal-Kennwort erzeugt Alfred im Tresor ad-join-<name> (nur über die Standardeingabe, nie in der Ausgabe); „COMPUTERKONTO_BEREIT“ ↔ computerkonto_entfernen (name; nur von Alfred angelegte). '
+      + 'dns_ptr (zone z. B. 30.203.10.in-addr.arpa, ip, fqdn) — Reverse-Zone AD-integriert (Wald) falls fehlt, PTR; prüft die Auflösung an allen DCs (bis 10 min), „PTR_OK“ ↔ dns_ptr_loeschen (zone, ip, fqdn; Zone bleibt). '
+      + 'gruppe_anlegen (gruppe z. B. SQL-Linux-Admins, ou Standard Dienstkonten, mitglieder = sAMAccountNames) — globale Sicherheitsgruppe, fehlende Mitglieder ergänzt, „GRUPPE_OK“ ↔ gruppe_entfernen (gruppe; nur von Alfred angelegte). '
+      + 'sql_anmeldung_pruefen (lesend; zugang = Windows-Domänenmitglied mit sqlcmd, z. B. sql01; server = SQL-Instanz z. B. sqllnx01.ad.3033.at; konto_tresor = Tresor-Eintrag des Test-Kontos z. B. ad-svc-sqllnx-test, konto optional, Standard = Tresor-Name ohne ad-) — sqlcmd -E -N ohne -C als geplante Aufgabe unter dem Konto; „SQL_KERBEROS_OK“ nur bei auth_scheme KERBEROS und encrypt_option TRUE, sonst Fehler „NICHT KERBEROS“/„NICHT VERSCHLÜSSELT“. '
+      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen, dns_client, dienstkonto_anlegen ↔ dienstkonto_entfernen und den I8e-Etappe-3-Paaren oben (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -71,7 +93,11 @@ export class WindowsAdSkill extends Skill {
         uhrzeit: { type: 'string', description: 'HH:MM' },
         zone: { type: 'string' }, name: { type: 'string' }, ip: { type: 'string' },
         konto: { type: 'string', description: 'dienstkonto_anlegen/-entfernen: sAMAccountName des Dienstkontos, z. B. svc-sqllnx-backup' },
-        fqdn: { type: 'string', description: 'dns_aufloesen: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers' }, ohne_cache: { type: 'boolean' },
+        fqdn: { type: 'string', description: 'dns_aufloesen/dns_ptr: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers; sql_anmeldung_pruefen: SQL-Instanz, z. B. sqllnx01.ad.3033.at' }, ohne_cache: { type: 'boolean' },
+        haerten: { type: 'boolean', description: 'dienstkonto_anlegen: nur AES, keine Delegierung, keine Anmeldung (I8e Etappe 3)' },
+        spns: { type: 'array', items: { type: 'string' }, description: 'spn_setzen/-entfernen/-lesen: MSSQLSvc/<name>.ad.3033.at[:1433]' },
+        gruppe: { type: 'string', description: 'gruppe_anlegen/-entfernen: z. B. SQL-Linux-Admins' },
+        mitglieder: { type: 'array', items: { type: 'string' }, description: 'gruppe_anlegen: sAMAccountNames' },
       },
       required: ['action'],
     },
@@ -103,6 +129,23 @@ export class WindowsAdSkill extends Skill {
           const r = await this.lauf<{ zustand: string }>(zugang, dienstkontoEntfernenSkript({ konto: p.konto, ...this.konto(input) }), 'Dienstkonto entfernen', 180_000, { kennwort });
           return { success: true, data: r, display: `✅ Dienstkonto ${p.konto}: ${r.zustand} (Tresor-Eintrag ${dienstkontoTresorName(p.konto)} bleibt)` };
         }
+        case 'spn_setzen': case 'spn_entfernen': case 'spn_lesen': return await this.spn(zugang, action, input);
+        case 'computerkonto_vorbereiten': return await this.computerkonto(zugang, input);
+        case 'computerkonto_entfernen': {
+          const p = pruefeComputerkonto({ name: input.name }); if (typeof p === 'string') throw new Error(p);
+          const kennwort = await this.adminKennwort(zugang, input, `Computerkonto ${p.name}$ entfernen (Domänen-Administrator)`);
+          const r = await this.lauf<{ zustand: string }>(zugang, computerkontoEntfernenSkript({ name: p.name, ...this.konto(input) }), 'Computerkonto entfernen', 180_000, { kennwort });
+          return { success: true, data: r, display: `✅ Computerkonto ${p.name}$: ${r.zustand} (Tresor-Eintrag ${joinTresorName(p.name)} bleibt, falls vorhanden)` };
+        }
+        case 'dns_ptr': case 'dns_ptr_loeschen': return await this.dnsPtr(zugang, action, input);
+        case 'gruppe_anlegen': return await this.gruppe(zugang, input);
+        case 'gruppe_entfernen': {
+          const p = pruefeGruppe({ gruppe: input.gruppe }); if (typeof p === 'string') throw new Error(p);
+          const kennwort = await this.adminKennwort(zugang, input, `Gruppe ${p.gruppe} entfernen (Domänen-Administrator)`);
+          const r = await this.lauf<{ zustand: string }>(zugang, gruppeEntfernenSkript({ gruppe: p.gruppe, ...this.konto(input) }), 'Gruppe entfernen', 180_000, { kennwort });
+          return { success: true, data: r, display: `✅ Gruppe ${p.gruppe}: ${r.zustand}` };
+        }
+        case 'sql_anmeldung_pruefen': return await this.sqlAnmeldung(zugang, input);
         case 'dns_aufloesen': {
           const p = { fqdn: String(input.fqdn ?? '').trim().toLowerCase().replace(/\.$/, ''), ...(input.server ? { server: String(input.server).trim() } : {}) };
           const f = pruefeAufloesen(p); if (f) throw new Error(f);
@@ -256,13 +299,103 @@ export class WindowsAdSkill extends Skill {
     let dienstkennwort: string; let neu = false;
     if ((await t.namen()).has(name)) dienstkennwort = await t.lies(name, `Dienstkonto ${p.konto}`);
     else { dienstkennwort = adKennwort(); await t.setze(name, dienstkennwort, `Kennwort des Domänen-Dienstkontos ${p.konto} (läuft nie ab)`); neu = true; }
-    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean }>(zugang, dienstkontoSkript({ ...p, ...ausKonto }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
+    const haerten = input.haerten === true;
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean; verschluesselung?: number; keineDelegierung?: boolean; arbeitsstationen?: string }>(zugang, dienstkontoSkript({ ...p, ...ausKonto, ...(haerten ? { haerten: true } : {}) }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
     if (!(r.aktiv && r.laeuftNieAb && r.kannNichtAendern && r.anmeldung && r.inOu === true)) {
       throw new Error(`Dienstkonto ${p.konto}: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, Kennwort läuft nie ab ${r.laeuftNieAb}, nicht änderbar ${r.kannNichtAendern}, Anmeldung ${r.anmeldung}, in OU ${r.inOu ?? '?'})`);
     }
-    this.d.protokoll?.('I8e Dienstkonto', { zugang, konto: p.konto, zustand: r.zustand, kennwortNeu: neu });
-    const text = `Dienstkonto ${r.konto} (${r.dn}): aktiv, Kennwort läuft nie ab, Anmeldung geprüft; Kennwort im Tresor (${name})`;
+    // I8e Etappe 3 — Härtung aus dem Zurückgelesenen prüfen
+    const mangel = haerten ? dienstkontoGehaertet(r) : undefined;
+    if (mangel) throw new Error(`Dienstkonto ${p.konto}: Nachprüfung der Härtung fehlgeschlagen — ${mangel}`);
+    this.d.protokoll?.('I8e Dienstkonto', { zugang, konto: p.konto, zustand: r.zustand, kennwortNeu: neu, haerten });
+    const text = `${haerten ? 'DIENSTKONTO_GEHAERTET ' : ''}Dienstkonto ${r.konto} (${r.dn}): aktiv, Kennwort läuft nie ab, Anmeldung geprüft${haerten ? `, nur AES (${r.verschluesselung}), keine Delegierung, Anmeldung nirgends (${r.arbeitsstationen})` : ''}; Kennwort im Tresor (${name})`;
     return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand} — Rückweg dienstkonto_entfernen konto ${p.konto}` };
+  }
+
+  /** Domänen-Administrator am DC: Tresor konto_tresor, Standard win-<zugang>-admin (wie grundstruktur) */
+  private adminKennwort(zugang: string, input: Record<string, unknown>, wofuer: string): Promise<string> {
+    return this.kontoKennwort({ konto_tresor: input.konto_tresor ?? `win-${zugang}-admin` }, wofuer);
+  }
+
+  /** I8e Etappe 3 — SPNs am Dienstkonto (setzen/entfernen im Change, lesen auch außerhalb) */
+  private async spn(zugang: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const spns = pruefeSpns(input.spns); if (typeof spns === 'string') throw new Error(spns);
+    const ausKonto = this.konto(input);
+    if (action === 'spn_lesen') {
+      const k = input.konto === undefined ? undefined : pruefeKonto(input.konto);
+      if (typeof k === 'string') throw new Error(k);
+      const kennwort = await this.adminKennwort(zugang, input, 'SPNs lesen (Domänen-Administrator)');
+      const r = await this.lauf<SpnLesen>(zugang, spnLesenSkript({ spns, ...ausKonto }), 'SPNs lesen', 180_000, { kennwort });
+      const t = spnLesenText(r, k?.konto);
+      return { success: true, data: { ...r, eindeutig: t.eindeutig }, display: t.text };
+    }
+    const k = pruefeKonto(input.konto); if (typeof k === 'string') throw new Error(k);
+    const kennwort = await this.adminKennwort(zugang, input, `SPNs am Konto ${k.konto} (Domänen-Administrator)`);
+    if (action === 'spn_entfernen') {
+      const r = await this.lauf<{ zustand: string; entfernt: string[] }>(zugang, spnEntfernenSkript({ konto: k.konto, spns, ...ausKonto }), 'SPNs entfernen', 180_000, { kennwort });
+      return { success: true, data: r, display: `✅ SPNs am Konto ${k.konto}: ${r.zustand}${r.entfernt?.length ? ` (${r.entfernt.join(', ')})` : ''}` };
+    }
+    const r = await this.lauf<{ konto: string; dn: string; neu: string[]; spns: Array<{ spn: string; traeger: number; amKonto: boolean }> }>(zugang, spnSetzenSkript({ konto: k.konto, spns, ...ausKonto }), 'SPNs setzen', 300_000, { kennwort });
+    const falsch = spns.filter(s => !r.spns?.some(x => x.spn.toLowerCase() === s.toLowerCase() && x.traeger === 1 && x.amKonto));
+    if (falsch.length) throw new Error(`SPNs am Konto ${k.konto}: Nachprüfung fehlgeschlagen — nicht genau einmal im Wald am Konto: ${falsch.map(s => `${s} (${r.spns?.find(x => x.spn.toLowerCase() === s.toLowerCase())?.traeger ?? 0} Träger)`).join(', ')}`);
+    const text = `SPN_EINDEUTIG — ${spns.length} SPN(s) genau einmal im Wald, am Konto ${k.konto} (${r.dn})`;
+    return { success: true, data: r, display: r.neu?.length ? `✅ ${text} — neu: ${r.neu.join(', ')} — Rückweg spn_entfernen konto ${k.konto} spns ${JSON.stringify(r.neu)}` : `${text} — nichts zu tun` };
+  }
+
+  /** I8e Etappe 3 — Computerkonto für den Linux-Beitritt; Einmal-Kennwort nur Tresor + Standardeingabe */
+  private async computerkonto(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = pruefeComputerkonto({ name: input.name, ...(input.ou !== undefined ? { ou: input.ou } : {}) }); if (typeof p === 'string') throw new Error(p);
+    const ausKonto = this.konto(input);
+    const kennwort = await this.adminKennwort(zugang, input, `Computerkonto ${p.name}$ vorbereiten (Domänen-Administrator)`);
+    const t = this.tresor(); const name = joinTresorName(p.name);
+    let einmal: string; let neu = false;
+    if ((await t.namen()).has(name)) einmal = await t.lies(name, `Einmal-Kennwort Computerkonto ${p.name}$`);
+    else { einmal = einmalKennwort(); await t.setze(name, einmal, `Einmal-Kennwort für den Domänenbeitritt von ${p.name} (Computerkonto ${p.name}$, verbraucht linux_sql ad_beitreten)`); neu = true; }
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; inOu: boolean; kennwortGesetzt: boolean; ohneAnmeldung: boolean }>(zugang, computerkontoSkript({ ...p, ...ausKonto }), 'Computerkonto vorbereiten', 300_000, { kennwort, einmal });
+    if (!(r.aktiv && r.inOu && r.kennwortGesetzt)) throw new Error(`Computerkonto ${p.name}$: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, in OU ${r.inOu}, Kennwort gesetzt ${r.kennwortGesetzt})`);
+    this.d.protokoll?.('I8e Computerkonto', { zugang, name: p.name, zustand: r.zustand, kennwortNeu: neu });
+    return {
+      success: true, data: { ...r, tresor: name },
+      display: `✅ COMPUTERKONTO_BEREIT ${r.konto} (${r.dn}) — ${r.zustand}, aktiv, Einmal-Kennwort gesetzt; im Tresor (${name}) — Rückweg computerkonto_entfernen name ${p.name}${r.zustand === 'uebernommen' ? ' (übernommenes Konto: der Rückweg entfernt nur von Alfred angelegte)' : ''}`,
+    };
+  }
+
+  /** I8e Etappe 3 — Reverse-DNS (Zone + PTR), Auflösung an allen DCs geprüft */
+  private async dnsPtr(zugang: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = pruefePtr(input); if (typeof p === 'string') throw new Error(p);
+    const kennwort = await this.adminKennwort(zugang, input, `PTR ${p.ip} (Domänen-Administrator)`);
+    if (action === 'dns_ptr_loeschen') {
+      const r = await this.lauf<{ zustand: string }>(zugang, dnsPtrLoeschenSkript({ ...p, ...this.konto(input) }), 'PTR löschen', 180_000, { kennwort });
+      return { success: true, data: r, display: `✅ PTR ${p.ip} → ${p.fqdn}: ${r.zustand} (Zone ${p.zone} bleibt)` };
+    }
+    const r = await this.lauf<{ zone: string; ptr: string; dcs: Array<{ name: string; ip: string; antwort: string }>; offen: string[] }>(zugang, dnsPtrSkript({ ...p, ...this.konto(input) }), 'PTR anlegen', 900_000, { kennwort });
+    const dcs = (r.dcs ?? []).map(x => `${x.name} (${x.ip}): ${x.antwort || 'keine Antwort'}`).join('; ');
+    if (r.offen?.length || !r.dcs?.length) throw new Error(`PTR ${p.ip} → ${p.fqdn}: Nachprüfung fehlgeschlagen — ${r.offen?.length ? `nach 10 min nicht aufgelöst an ${r.offen.join(', ')}` : 'keine DCs gefunden'} (${dcs})`);
+    const text = `PTR_OK ${p.ip} → ${p.fqdn} (Zone ${p.zone}: ${r.zone}, PTR: ${r.ptr}) — aufgelöst an ${dcs}`;
+    return { success: true, data: { ...r, ...p }, display: r.zone === 'schon' && r.ptr === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — Rückweg dns_ptr_loeschen zone ${p.zone} ip ${p.ip} fqdn ${p.fqdn}` };
+  }
+
+  /** I8e Etappe 3 — globale Sicherheitsgruppe mit Mitgliedern */
+  private async gruppe(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = pruefeGruppe({ gruppe: input.gruppe, mitglieder: input.mitglieder, ...(input.ou !== undefined ? { ou: input.ou } : {}) }); if (typeof p === 'string') throw new Error(p);
+    const kennwort = await this.adminKennwort(zugang, input, `Gruppe ${p.gruppe} (Domänen-Administrator)`);
+    const r = await this.lauf<{ zustand: string; gruppe: string; dn: string; inOu: boolean; global?: boolean; mitglieder: string[]; neu: string[]; fehlt: string[] }>(zugang, gruppeSkript({ ...p, ...this.konto(input) }), 'Gruppe anlegen', 300_000, { kennwort });
+    if (!r.inOu || r.fehlt?.length) throw new Error(`Gruppe ${p.gruppe}: Nachprüfung fehlgeschlagen (in OU ${r.inOu}${r.fehlt?.length ? `, fehlende Mitglieder ${r.fehlt.join(', ')}` : ''})`);
+    const weitere = (r.mitglieder ?? []).filter(m => !p.mitglieder.some(x => x.toLowerCase() === m.toLowerCase()));
+    const text = `GRUPPE_OK ${r.gruppe} (${r.dn}) — Mitglieder ${(r.mitglieder ?? []).join(', ') || 'keine'}${weitere.length ? ` (davon nicht verlangt: ${weitere.join(', ')})` : ''}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand} — Rückweg gruppe_entfernen gruppe ${p.gruppe}` };
+  }
+
+  /** I8e Etappe 3 — Anmeldeprobe Kerberos + TLS von einem Windows-Domänenmitglied (sql01) unter dem Test-Konto */
+  private async sqlAnmeldung(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const s = pruefeSqlServer(input.server); if (typeof s === 'string') throw new Error(s);
+    const tresorName = String(input.konto_tresor ?? '').trim();
+    const k = pruefeKonto(input.konto ?? tresorName.replace(/^ad-/, '')); if (typeof k === 'string') throw new Error(k);
+    const kennwort = await this.kontoKennwort({ konto_tresor: tresorName }, `Anmeldeprobe ${s.server} als ${k.konto}`);
+    const r = await this.lauf<SqlAnmeldung>(zugang, sqlAnmeldungSkript({ server: s.server, konto: k.konto }), 'SQL-Anmeldeprobe', 300_000, { kennwort });
+    const a = sqlAnmeldungAuswerten(r, s.server);
+    const data = { server: s.server, konto: k.konto, sqlcmd: r.sqlcmd, exit: r.exit, auth: a.auth, verschluesselt: a.verschluesselt, servername: a.servername };
+    return a.ok ? { success: true, data, display: a.text } : { success: false, data, error: a.text };
   }
 
   private async dnsEintrag(zugang: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {

@@ -350,7 +350,7 @@ export function pruefeDienstkonto(o: Record<string, unknown>): { konto: string; 
 }
 
 /** Domänen-Administrator für AD-Änderungen am DC (Kennwort über die Standardeingabe, wie papierkorbSkript) */
-const adAdminCred = "$d = Get-ADDomain; $dc = $env:COMPUTERNAME + '.' + $d.DNSRoot; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
+export const adAdminCred = "$d = Get-ADDomain; $dc = $env:COMPUTERNAME + '.' + $d.DNSRoot; $c = New-Object System.Management.Automation.PSCredential ((" + kontoAusdruck('Administrator', '$d.NetBIOSName') + "), (ConvertTo-SecureString $e.kennwort -AsPlainText -Force))";
 
 /**
  * Benutzer-Dienstkonto in der OU (Standard Dienstkonten) anlegen — eingabe: { kennwort (Domänen-Administrator), dienstkennwort }.
@@ -359,7 +359,7 @@ const adAdminCred = "$d = Get-ADDomain; $dc = $env:COMPUTERNAME + '.' + $d.DNSRo
  * Tresor-Kennwort geprüft und fehlende Flags werden gesetzt — ein abweichendes Kennwort wird NIE still zurückgesetzt. Ein fremdes Konto
  * gleichen Namens → Abbruch. Selbstprüfung: LDAP-Anmeldung mit dem Kennwort, aktiv, Flags, OU.
  */
-export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: string }): string {
+export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: string; haerten?: boolean }): string {
   return [
     ...kopf(p, true),
     'Import-Module ActiveDirectory',
@@ -368,6 +368,9 @@ export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: str
     // Fix-Runde 1 (Minor 7): alles gegen diesen DC (zugang = DC) — Anlage und Anmeldeprüfung ohne Replikationsverzug
     "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Server $dc -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
     "function Anmeldung { try { $t = New-Object System.DirectoryServices.DirectoryEntry(('LDAP://' + $dc + '/' + $d.DistinguishedName), ($d.NetBIOSName + '\\' + $p.konto), $e.dienstkennwort); $null = $t.NativeObject; $true } catch { $false } }",
+    // I8e Etappe 3 — ein gehärtetes Konto darf sich nirgends anmelden (userWorkstations = KEINEANMELDUNG), auch nicht am DC für die
+    // Kennwortprüfung. Für die Prüfung gilt die Sperre kurz nur für diesen DC, danach wieder der vorherige Wert (finally).
+    `function Pruefanmeldung { if (-not $p.haerten) { return (Anmeldung) }; $w = [string](Get-ADUser -Identity $p.konto -Properties userWorkstations -Server $dc -Credential $c).userWorkstations; if (-not $w) { return (Anmeldung) }; Set-ADUser -Identity $p.konto -LogonWorkstations $env:COMPUTERNAME -Server $dc -Credential $c; try { return (Anmeldung) } finally { Set-ADUser -Identity $p.konto -LogonWorkstations $w -Server $dc -Credential $c } }`,
     "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description, PasswordNeverExpires, CannotChangePassword, Enabled -Server $dc -Credential $c",
     "$z = 'schon'",
     'if (-not $u) {',
@@ -375,13 +378,36 @@ export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: str
     "  $z = 'angelegt'",
     '} else {',
     `  if ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt - nichts geändert') }`,
-    "  if (-not (Anmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
+    "  if (-not (Pruefanmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
     "  if (-not $u.Enabled) { Enable-ADAccount -Identity $u -Server $dc -Credential $c; $z = 'geaendert' }",
     "  if (-not $u.PasswordNeverExpires -or -not $u.CannotChangePassword) { Set-ADUser -Identity $u -PasswordNeverExpires $true -CannotChangePassword $true -Server $dc -Credential $c; $z = 'geaendert' }",
     '}',
-    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled -Server $dc -Credential $c",
-    "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = [bool](Anmeldung) }",
+    // I8e Etappe 3 — Härtung (svc-sqllnx): nur AES128+AES256 (24), vertraulich/keine Delegierung, keine Anmeldung an Arbeitsstationen
+    'if ($p.haerten) {',
+    "  $h = Get-ADUser -Identity $p.konto -Properties 'msDS-SupportedEncryptionTypes', AccountNotDelegated, userWorkstations -Server $dc -Credential $c",
+    `  if ([int]$h.'msDS-SupportedEncryptionTypes' -ne ${AD_AES_NUR}) { Set-ADUser -Identity $h -Replace @{ 'msDS-SupportedEncryptionTypes' = ${AD_AES_NUR} } -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
+    "  if (-not $h.AccountNotDelegated) { Set-ADUser -Identity $h -AccountNotDelegated $true -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }",
+    `  if ([string]$h.userWorkstations -ne ${psText(KEINE_ANMELDUNG)}) { Set-ADUser -Identity $h -LogonWorkstations ${psText(KEINE_ANMELDUNG)} -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
+    '}',
+    // Kennwortprüfung zuerst, dann zurücklesen (die Prüfung setzt die Arbeitsstationen kurz um und wieder zurück)
+    '$anm = [bool](Pruefanmeldung)',
+    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled, 'msDS-SupportedEncryptionTypes', AccountNotDelegated, userWorkstations -Server $dc -Credential $c",
+    "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = $anm; verschluesselung = [int]$u.'msDS-SupportedEncryptionTypes'; keineDelegierung = [bool]$u.AccountNotDelegated; arbeitsstationen = [string]$u.userWorkstations }",
   ].join('\n');
+}
+
+/** I8e Etappe 3 — msDS-SupportedEncryptionTypes: AES128 (0x08) + AES256 (0x10) */
+export const AD_AES_NUR = 24;
+/** I8e Etappe 3 — nicht existierender Rechnername in userWorkstations: Anmeldung nirgends möglich (ohne GPO) */
+export const KEINE_ANMELDUNG = 'KEINEANMELDUNG';
+/** Härtung vollständig zurückgelesen? (Ergebnis von dienstkontoSkript mit haerten) */
+export function dienstkontoGehaertet(r: { verschluesselung?: number; keineDelegierung?: boolean; laeuftNieAb?: boolean; arbeitsstationen?: string }): string | undefined {
+  const f: string[] = [];
+  if (r.verschluesselung !== AD_AES_NUR) f.push(`Verschlüsselung ${r.verschluesselung ?? '?'} statt ${AD_AES_NUR} (nur AES)`);
+  if (r.keineDelegierung !== true) f.push('Delegierung nicht gesperrt');
+  if (r.laeuftNieAb !== true) f.push('Kennwort läuft ab');
+  if (r.arbeitsstationen !== KEINE_ANMELDUNG) f.push(`Arbeitsstationen „${r.arbeitsstationen ?? ''}“ statt ${KEINE_ANMELDUNG}`);
+  return f.length ? f.join(', ') : undefined;
 }
 
 /** Entfernt nur ein von Alfred angelegtes Dienstkonto (Beschreibung „Alfred I8e Dienstkonto“); der Tresor-Eintrag bleibt */
