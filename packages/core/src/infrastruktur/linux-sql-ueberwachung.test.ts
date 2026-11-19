@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { linuxSqlBefunde, linuxSqlUeberwachung } from './linux-sql-ueberwachung.js';
+import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge } from './linux-sql-ueberwachung.js';
 import { befundeAlsProblems, type ProblemZugriff } from './befund-problems.js';
 
-const tls = (restTage: number | null) => ({ tls: { thumbprint: 'ABCDEF0123456789', gueltigBis: '2026-12-01T00:00:00Z', restTage, erzwungen: true, pruefSchalter: true } });
+const tls = (restTage: number | null) => ({ installiert: true, ad: { beigetreten: true, keytab: null }, tls: { zertifikat: '/var/opt/mssql/secrets/tls.crt', thumbprint: 'ABCDEF0123456789', gueltigBis: '2026-12-01T00:00:00Z', restTage, erzwungen: true, pruefSchalter: true } });
 
 describe('linuxSqlBefunde', () => {
   it('Restlaufzeit 40 und 31 → kein Befund', () => {
@@ -71,5 +71,41 @@ describe('linuxSqlUeberwachung (Verdrahtung mit befundeAlsProblems)', () => {
     expect((await lauf(360)).geloest).toHaveLength(1);
     expect(probleme[0]!.status).toBe('resolved');
     expect((await lauf(3)).neu).toHaveLength(1);
+  });
+});
+
+describe('R21 — unlesbar ist nicht ok', () => {
+  const aus = (d: unknown) => async () => ({ success: true, data: d });
+  const gut = { installiert: true, ad: { beigetreten: true, keytab: { kvno: 3, spns: 6, aktuell: true } }, tls: { zertifikat: '/c.crt', thumbprint: 'AB', gueltigBis: '2027-01-01T00:00:00Z', restTage: 100 } };
+
+  it('vollständiger Status zählt als erfasst', async () => {
+    const r = await linuxSqlUeberwachung(['a'], aus(gut));
+    expect(r.erfasst.has('a')).toBe(true);
+    expect(r.fehler).toEqual([]);
+  });
+  it.each([
+    ['ohne ad', { ...gut, ad: undefined }],
+    ['ohne tls', { ...gut, tls: undefined }],
+    ['Zertifikat konfiguriert, aber unlesbar', { ...gut, tls: { zertifikat: '/c.crt', thumbprint: null, restTage: null } }],
+    ['Keytab nicht lesbar', { ...gut, ad: { keytab: { kvno: null, spns: 0, aktuell: null, fehler: 'nicht lesbar' } } }],
+    ['Keytab-Aktualität unbekannt', { ...gut, ad: { keytab: { kvno: 3, spns: 6, aktuell: null } } }],
+    ['installiert fehlt', { ...gut, installiert: undefined }],
+  ])('%s → Lesefehler, nicht erfasst', async (_n, d) => {
+    const r = await linuxSqlUeberwachung(['a'], aus(d));
+    expect(r.erfasst.size).toBe(0);
+    expect(r.fehler[0]).toContain('a: Status unvollständig');
+  });
+  it('installiert false → übersprungen, weder erfasst noch Fehler', async () => {
+    const r = await linuxSqlUeberwachung(['dockerhost'], aus({ installiert: false, zustand: 'nicht_installiert' }));
+    expect(r).toMatchObject({ uebersprungen: ['dockerhost'], fehler: [] });
+    expect(r.erfasst.size).toBe(0);
+  });
+  it('ohne Zertifikat und ohne Keytab (installiert) → erfasst, keine Befunde', async () => {
+    const r = await linuxSqlUeberwachung(['a'], aus({ installiert: true, ad: { beigetreten: false, keytab: null }, tls: { zertifikat: null, thumbprint: null, restTage: null } }));
+    expect(r.erfasst.has('a')).toBe(true);
+    expect(r.befunde).toEqual([]);
+  });
+  it('Zugangsauswahl: alle Nicht-Windows-Zugänge', () => {
+    expect(linuxSqlZugaenge([{ name: 'sqllnx01', system: 'linux' }, { name: 'dockerhost' }, { name: 'sql01', system: 'windows' }])).toEqual(['sqllnx01', 'dockerhost']);
   });
 });

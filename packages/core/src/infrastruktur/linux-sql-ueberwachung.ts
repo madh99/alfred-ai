@@ -29,22 +29,45 @@ export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tl
   return a;
 }
 
+
 export type LinuxSqlStatusAufruf = (zugang: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
 
+/** Alle aktiven Linux-Fernzugänge (nicht Windows) werden gelesen; ob SQL Server darauf läuft, sagt erst der Status (installiert). */
+export function linuxSqlZugaenge(zugaenge: Array<{ name: string; system?: string }>): string[] {
+  return zugaenge.filter(z => z.system !== 'windows').map(z => z.name);
+}
+
 /**
- * Ein Lauf über die Linux-SQL-Zugänge: je Host `status` lesen. Erfasst (= Befunde dürfen als gelöst gelten) ist nur ein Host, dessen
- * Status gelesen werden konnte; Fehlschlag → Eintrag in fehler, Befunde bleiben unberührt.
+ * Ruling R21 (unlesbar ist nicht ok): nur ein vollständig gelesener Status zählt als Erfassung. Rückgabe: Grund der Lücke oder null.
+ * Pflicht: installiert true, ad-Objekt vorhanden; tls-Objekt vorhanden und, wenn ein Zertifikat konfiguriert ist, mit Thumbprint und
+ * Restlaufzeit lesbar; ein vorhandenes Keytab muss lesbar (kein fehler) und seine Aktualität geprüft sein (aktuell nicht null).
  */
-export async function linuxSqlUeberwachung(zugaenge: string[], status: LinuxSqlStatusAufruf): Promise<{ befunde: Auffaelligkeit[]; erfasst: Set<string>; fehler: string[] }> {
-  const befunde: Auffaelligkeit[] = []; const erfasst = new Set<string>(); const fehler: string[] = [];
+export function linuxSqlStatusLueckenhaft(s: Partial<LinuxSqlStatus>): string | null {
+  if (s.installiert !== true) return 'SQL Server nicht als installiert gemeldet';
+  if (!s.ad || typeof s.ad !== 'object') return 'AD-Teil des Status fehlt';
+  if (!s.tls || typeof s.tls !== 'object') return 'TLS-Teil des Status fehlt';
+  if (s.tls.zertifikat && (!s.tls.thumbprint || typeof s.tls.restTage !== 'number')) return `TLS-Zertifikat ${s.tls.zertifikat} nicht lesbar`;
+  const kt = s.ad.keytab;
+  if (kt && (kt.fehler || typeof kt.aktuell !== 'boolean')) return `Keytab nicht prüfbar (${kt.fehler ?? 'Aktualität unbekannt, kein Ticket ohne Kennwort'})`;
+  return null;
+}
+
+/**
+ * Ein Lauf über die übergebenen Linux-Zugänge: je Host status lesen. Hosts ohne SQL Server (installiert false) werden übersprungen
+ * (weder erfasst noch Fehler, ihre Befunde bleiben unberührt). Erfasst ist nur ein vollständig gelesener Host; sonst Eintrag in
+ * fehler, Befunde bleiben offen.
+ */
+export async function linuxSqlUeberwachung(zugaenge: string[], status: LinuxSqlStatusAufruf): Promise<{ befunde: Auffaelligkeit[]; erfasst: Set<string>; fehler: string[]; uebersprungen: string[] }> {
+  const befunde: Auffaelligkeit[] = []; const erfasst = new Set<string>(); const fehler: string[] = []; const uebersprungen: string[] = [];
   for (const z of zugaenge) {
     const r = await status(z).catch((err: Error) => ({ success: false, error: err.message }) as Awaited<ReturnType<LinuxSqlStatusAufruf>>);
     if (!r.success || !r.data || typeof r.data !== 'object') { fehler.push(`${z}: ${(r.error ?? 'kein Status').slice(0, 160)}`); continue; }
-    befunde.push(...linuxSqlBefunde(z, r.data as LinuxSqlStatus));
+    const s = r.data as LinuxSqlStatus;
+    if (s.installiert === false) { uebersprungen.push(z); continue; }
+    const luecke = linuxSqlStatusLueckenhaft(s);
+    if (luecke) { fehler.push(`${z}: Status unvollständig — ${luecke}`); continue; }
+    befunde.push(...linuxSqlBefunde(z, s));
     erfasst.add(z);
   }
-  return { befunde, erfasst, fehler };
+  return { befunde, erfasst, fehler, uebersprungen };
 }
-
-/** Linux-Fernzugänge, die SQL-Server-Knoten sein können (Namensschema sqllnx*) */
-export const LINUX_SQL_ZUGANG = /^sqllnx/i;
