@@ -76,6 +76,7 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Task 4: „; Fencing …“ am Ende (fencingText) — positiv nur „Fencing belegt“; „Reset ausstehend“ gehört in nichtEnthalten.
   // Fix-Runde 1: eine geladene Test-Sperre hängt „ — Corosync-Sperre alfred_fencetest AKTIV“ an den Fencing-Teil (Prüfung: nichtEnthalten „Sperre“)
   // Live-Fix (c2e4f56d): „; sbd wartet auf Watchdog“ nach RuntimeWatchdog
+  // Ruling R22: abweichende 1433-Zusatzquellen → „Firewall alfred_ha veraltet (…)“ statt „aktiv“ — „Firewall alfred_ha aktiv“ belegt also auch die Menge
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt'
@@ -85,6 +86,15 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | AG {ag}: Promoted {knoten}, VIP {knoten}, required_sync Ressource {n} / SQL {n}, Replikate {replikate}, {standort}'
     + ' | Standort-Bedingungen 0 | required_sync Ressource 0 / SQL 0 | Promoted sqllnx01 | Promoted sqllnx02 | VIP sqllnx01 | VIP sqllnx02'
     + ' | sqllnx01 PRIMARY | sqllnx02 PRIMARY | sqllnx01 SECONDARY SYNCHRONIZED | sqllnx02 SECONDARY SYNCHRONIZED',
+  // Fix-Welle (Final-Review I8e Etappe 3) — Wortlaut aus sqlAnmeldungAuswerten (windows-ad-linux.ts); die Fehlerformen
+  // („NICHT KERBEROS“, „NICHT VERSCHLÜSSELT“, „ohne Ergebniszeile“) melden die Aktion selbst als Fehlschlag
+  'windows_ad.sql_anmeldung_pruefen': 'SQL_KERBEROS_OK {server}: auth_scheme KERBEROS, encrypt_option TRUE, @@SERVERNAME {name}',
+  // Wortlaut aus spnLesenText (windows-ad-linux.ts) — positiv nur „SPN_EINDEUTIG“ und „genau einmal“; „SPN_PROBLEM“, „MEHRFACH“,
+  // „an einem anderen Konto“ gehören in nichtEnthalten (spn_lesen meldet auch einen Befund als Erfolg)
+  'windows_ad.spn_lesen': 'SPN_EINDEUTIG — {spn}: genau einmal ({dn})',
+  // Wortlaut aus windows-pki-skill.ts (fremd_csr_ausstellen); „NICHT wie verlangt“/„BEFUNDE“ sind Fehlschläge der Aktion
+  'windows_pki.fremd_csr_ausstellen': '✅ SQL_TLS_LINUX_ISSUED {cn} ({zustand}): Anforderung {id}, Thumbprint {tp}, Seriennummer {sn}, gültig bis {datum}, {subjekt}, SAN {sans}, EKU {eku}, Anforderer {konto}, Kette {n} Glieder; '
+    + 'Zertifikat und Kette als DER-Base64 in data.zertBase64/issuingBase64/rootBase64 | Zertifikat und Kette als PEM in data.zertifikatPem/kettePem',
 };
 function festeAusgabeFehler(p: Pruefung): string | undefined {
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;

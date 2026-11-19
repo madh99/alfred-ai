@@ -634,7 +634,8 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
 describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {
     const { FESTE_AUSGABEN } = await import('./change-schritte.js');
-    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen', 'linux_ha.status']);
+    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen', 'linux_ha.status',
+      'windows_ad.sql_anmeldung_pruefen', 'windows_ad.spn_lesen', 'windows_pki.fremd_csr_ausstellen']);
     const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Probe prüfen', begruendung: 'Realfall 6f7b0b99', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['probe-win25b'],
       schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
     const fz = (erwartet?: string) => pruefeChangePlan(plan({ typ: 'skill', skill: 'fernzugriff', aktion: 'pruefen', parameter: { name: 'probe-win25b' }, ...(erwartet ? { erwartet } : {}) }), ctx());
@@ -646,6 +647,42 @@ describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
     expect(ag('antwortet').fehler.filter(x => x.includes('nicht vor'))).toEqual([]);
     expect(ag('probe-win25b').fehler.filter(x => x.includes('nicht vor'))).toEqual([]);
     expect(ag('Agent bereit').fehler.join(' ')).toContain('kommt in der Antwort von proxmox.agent_status nicht vor');
+  });
+});
+
+// Fix-Welle (Final-Review I8e Etappe 3): fester Wortlaut für die Kerberos-/TLS-Abnahme, SPN-Lesen und die Linux-TLS-Ausstellung
+describe('Fix-Welle I8e Etappe 3 — FESTE_AUSGABEN windows_ad/windows_pki', () => {
+  const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Abnahme', begruendung: 'Test', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['sqllnx01'],
+    schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
+  const nichtVor = (skill: string, aktion: string, parameter: Record<string, unknown>, erwartet: string) =>
+    pruefeChangePlan(plan({ typ: 'skill', skill, aktion, parameter, erwartet }), ctx()).fehler.filter(x => x.includes('nicht vor'));
+  it('sql_anmeldung_pruefen: Marke SQL_KERBEROS_OK und Wortlaut-Stücke ja, Freitext nein', () => {
+    const p = { zugang: 'sql01', server: 'sqllnx01.ad.3033.at', konto_tresor: 'ad-svc-sqllnx-test' };
+    for (const ok of ['SQL_KERBEROS_OK', 'auth_scheme KERBEROS', 'encrypt_option TRUE', 'auth_scheme KERBEROS, encrypt_option TRUE', 'sqllnx01.ad.3033.at', '{{schritt1.x}}'])
+      expect(nichtVor('windows_ad', 'sql_anmeldung_pruefen', p, ok), ok).toEqual([]);
+    for (const frei of ['Kerberos ok', 'Anmeldung erfolgreich', 'verschlüsselt'])
+      expect(nichtVor('windows_ad', 'sql_anmeldung_pruefen', p, frei).join(' '), frei).toContain('kommt in der Antwort von windows_ad.sql_anmeldung_pruefen nicht vor');
+  });
+  it('spn_lesen: SPN_EINDEUTIG und „genau einmal“ ja, Freitext nein', () => {
+    const p = { zugang: 'dc01', spns: ['MSSQLSvc/sqllnx01.ad.3033.at:1433'] };
+    for (const ok of ['SPN_EINDEUTIG', 'genau einmal', 'MSSQLSvc/sqllnx01.ad.3033.at:1433'])
+      expect(nichtVor('windows_ad', 'spn_lesen', p, ok), ok).toEqual([]);
+    for (const frei of ['SPN vorhanden', 'eindeutig gesetzt'])
+      expect(nichtVor('windows_ad', 'spn_lesen', p, frei).join(' '), frei).toContain('kommt in der Antwort von windows_ad.spn_lesen nicht vor');
+  });
+  it('fremd_csr_ausstellen: SQL_TLS_LINUX_ISSUED und Wortlaut-Stücke ja, Freitext nein', () => {
+    const p = { zugang: 'pkiiss01', cn: 'sqllnx01.ad.3033.at', sans: ['sqllnx01'], csr_base64: '{{schritt2.csrBase64}}', csr_sha256: '{{schritt2.csrSha256}}' };
+    for (const ok of ['SQL_TLS_LINUX_ISSUED', '✅ SQL_TLS_LINUX_ISSUED', 'als DER-Base64 in data.zertBase64', 'Kette', 'sqllnx01.ad.3033.at'])
+      expect(nichtVor('windows_pki', 'fremd_csr_ausstellen', p, ok), ok).toEqual([]);
+    for (const frei of ['Zertifikat ausgestellt', 'ISSUED ok'])
+      expect(nichtVor('windows_pki', 'fremd_csr_ausstellen', p, frei).join(' '), frei).toContain('kommt in der Antwort von windows_pki.fremd_csr_ausstellen nicht vor');
+  });
+  it('Wortlaut passt zu den Anzeigen der Skills', async () => {
+    const { FESTE_AUSGABEN } = await import('./change-schritte.js');
+    const { sqlAnmeldungAuswerten, spnLesenText } = await import('./windows-ad-linux.js');
+    const muster = (k: string, i = 0) => new RegExp(`^${FESTE_AUSGABEN[k]!.split(' | ')[i]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}`);
+    expect(sqlAnmeldungAuswerten({ sqlcmd: 'C:\\sqlcmd.exe', exit: 0, ausgabe: 'KERBEROS|TRUE|sqllnx01' }, 'sqllnx01.ad.3033.at').text).toMatch(muster('windows_ad.sql_anmeldung_pruefen'));
+    expect(spnLesenText({ spns: [{ spn: 'MSSQLSvc/sqllnx01.ad.3033.at:1433', traeger: ['CN=gmsa-sqllnx,CN=Managed Service Accounts,DC=ad,DC=3033,DC=at'] }] } as never, 'gmsa-sqllnx').text).toMatch(muster('windows_ad.spn_lesen'));
   });
 });
 
