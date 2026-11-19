@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 4: TLS erzwingen, AD-Logins, Ablaufwarnung (v1905)
+
+- **`linux_sql tls_erzwingen`:** erzwingt verschlüsselte Verbindungen nur, wenn Alfreds TLS-Zertifikat eingespielt ist, Alfreds Zertifikatsprüfung eingeschaltet ist und Pacemaker auf dem Knoten in den letzten 30 Minuten keine Fehlaktionen hatte. Der Rückweg nimmt die Erzwingung nur zurück, wenn Alfred sie gesetzt hat.
+- **`linux_sql ad_login` / `ad_login_entfernen`:** Anmeldungen für AD-Gruppen (`AD3033\<Gruppe>`) mit Server- oder Datenbankrolle; der Rückweg entfernt nur von Alfred angelegte Logins.
+- **Tägliche Überwachung der Linux-SQL-Server (07:30):** Befunde für ablaufende TLS-Zertifikate (≤ 30 Tage mittel, ≤ 7 Tage hoch) und veraltete Kerberos-Keytabs; unvollständig gelesene Hosts lösen bestehende Befunde nie still auf.
+- `linux_ha status` meldet Pacemaker-Fehlaktionen und Fehlerzähler der Verfügbarkeitsgruppe.
+
+### Changed
+
+- Die Host-Firewall der Linux-SQL-Knoten lässt TCP 1433 zusätzlich von sql01 zu (Kerberos-/TLS-Abnahmeprobe); `ha_vorbereiten` rollt das aus und prüft den geladenen Regelsatz.
+- `windows_pki fremd_csr_ausstellen` wird schon beim Planen geprüft; feste Prüf-Wortlaute für Kerberos-Abnahme, SPN-Lesen und Linux-TLS-Ausstellung.
+- Die Kerberos-Anmeldeprobe auf sql01 wartet zuverlässig auf das Ende der geplanten Aufgabe.
+
 ### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 3: Kerberos, TLS, Zertifikatsprüfung (v1904)
 
 - **`linux_sql kerberos_einrichten` / `kerberos_entfernen`:** Der Dienst-Keytab entsteht auf dem Host aus dem Kennwort von `svc-sqllnx` (nur über die Standardeingabe), mit der kvno aus dem AD; ältere Schlüsselversionen bleiben erhalten. Die Selbstprüfung holt echte Diensttickets für den eigenen SPN und den Listener `sqllnxag01`. Eine Abweichung der kvno zwischen AD und Keytab wird mit beiden Werten gemeldet.
