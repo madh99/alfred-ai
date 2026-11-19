@@ -526,7 +526,7 @@ if [ "\${#FEHLEND[@]}" -gt 0 ]; then
   # Dienste der neuen Pakete nicht starten (Debian startet corosync/pacemaker sonst mit Standardkonfiguration); Cluster richtet Task 3 ein
   if [ ! -e "$POLICY_RC" ]; then printf '#!/bin/sh\\nexit 101\\n' >"$POLICY_RC"; chmod 0755 "$POLICY_RC"; POLICY_EIGEN=1; fi
   versuch pakete
-  if ! ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "\${FEHLEND[@]}" >"$ALFRED_TMP/apt.log" 2>&1; then
+  if ! DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "\${FEHLEND[@]}" >"$ALFRED_TMP/apt.log" 2>&1; then
     abbruch "apt-get install fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   fi
   alfred_aufraeumen; POLICY_EIGEN=0

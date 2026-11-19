@@ -1293,7 +1293,7 @@ export function sicherungEinrichtenSkript(p: SicherungEinrichtenParameter): stri
     '  ALFRED_TMP=$(mktemp -d /run/alfred-sql.XXXXXX)',
     '  apt-get -o DPkg::Lock::Timeout=300 update -q >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get update fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"',
     '  apt-cache madison cifs-utils | awk -F\'|\' \'{ gsub(/ /, "", $2); print $2 }\' | grep -qxF "$CIFS_V" || abbruch "cifs-utils=$CIFS_V ist in der Paketquelle nicht verfügbar — nichts installiert"',
-    '  apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends "cifs-utils=$CIFS_V" >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get install cifs-utils fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"',
+    '  NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends "cifs-utils=$CIFS_V" >"$ALFRED_TMP/apt.log" 2>&1 || abbruch "apt-get install cifs-utils fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"',
     '  apt-mark -o DPkg::Lock::Timeout=300 hold cifs-utils >/dev/null',
     '  GEAENDERT=1',
     'elif [ "$iv" != "$CIFS_V" ]; then',

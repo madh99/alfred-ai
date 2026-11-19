@@ -267,7 +267,7 @@ if [ "§{#FEHLEND[@]}" -gt 0 ]; then
     vs=$(apt-cache madison "$pk" | awk -F'|' '{ gsub(/ /, "", $2); print $2 }')
     grep -qxF "$sv" <<<"$vs" || abbruch "$pk=$sv ist in der Paketquelle nicht verfügbar (verfügbar: $(printf '%s' "$vs" | tr '\n' ' ')) — Version per Parameter pakete angeben; nichts installiert"
   done
-  if ! apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "§{FEHLEND[@]}" >"$ALFRED_TMP/apt.log" 2>&1; then
+  if ! DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "§{FEHLEND[@]}" >"$ALFRED_TMP/apt.log" 2>&1; then
     abbruch "apt-get install fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   fi
   aend pakete

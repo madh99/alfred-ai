@@ -509,7 +509,7 @@ else
     vs=$(apt-cache madison "$pk" | awk -F'|' '{ gsub(/ /, "", $2); print $2 }')
     grep -qxF "$sv" <<<"$vs" || abbruch "$pk=$sv ist in der Paketquelle nicht verfügbar — nichts installiert"
   done
-  if ! ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO" >"$ALFRED_TMP/apt.log" 2>&1; then
+  if ! DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 ACCEPT_EULA=Y apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends -o Dpkg::Options::=--force-confold "mssql-server=$V" "mssql-tools18=$VT" "msodbcsql18=$VO" >"$ALFRED_TMP/apt.log" 2>&1; then
     abbruch "apt-get install fehlgeschlagen: $(kurz "$(cat "$ALFRED_TMP/apt.log")")"
   fi
   apt-mark -o DPkg::Lock::Timeout=300 hold mssql-server mssql-tools18 msodbcsql18 >/dev/null
