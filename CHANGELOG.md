@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Linux-SQL: alte tempdb-Dateien gezielt entfernen (v1899)
+
+- Neue Aktion `linux_sql.reste_entfernen` (nur als Schritt eines freigegebenen Changes): entfernt die alten tempdb-Dateien aus der Erstinstallation, die der Status bisher nur als „Reste“ meldet (`temp*.mdf/ndf/ldf` direkt in `/var/opt/mssql/data`).
+- Gelöscht wird nur, was nachweislich nicht in Gebrauch ist: Die Datei steht nicht in `sys.master_files` und kein Prozess hat sie geöffnet. Läuft SQL Server nicht oder ist `sys.master_files` nicht vollständig lesbar, bricht die Aktion ohne Löschen ab.
+- Jede gelöschte Datei steht mit Größe im Ergebnis; Dateien in Gebrauch bleiben liegen und werden genannt. Ein Abbruch mitten im Lauf nennt die bis dahin gelöschten Dateien.
+
 ### Fixed — Linux-HA: Kollationskonflikt in der Selbstprüfung von ag_entfernen (v1898)
 
 - Die Selbstprüfung von `linux_ha.ag_entfernen` brach nach erfolgreichem Abbau auf dem Primär mit „Cannot resolve collation conflict“ (Msg 446) ab, weil Datenbankname und Zustand aus unterschiedlich kollationierten Katalogspalten verkettet wurden. Alle solchen Verkettungen in den AG-Skripten legen die Kollation jetzt fest (`COLLATE DATABASE_DEFAULT`), auch in den Abbruchmeldungen von `ag_anlegen` („… ist <Zustand>“, „… besteht als <Zustand> außerhalb der AG“).
