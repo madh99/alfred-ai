@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinuxSqlSkill, linuxSqlKennwort, saName, loginTresorName, linuxSqlStatusText, KENNWORT_ALPHABET } from './linux-sql-skill.js';
+import { LinuxSqlSkill, linuxSqlKennwort, saName, loginTresorName, linuxSqlStatusText, zeitText, KENNWORT_ALPHABET } from './linux-sql-skill.js';
 import { LINUX_SQL_BAUSTEINE, PRUEFDATEN_SHA256 } from './linux-sql.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 
@@ -81,11 +81,11 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     const w = welt({ [LINUX_SQL_BAUSTEINE.status]: [STATUS_VOLL] }, { 'sqllnx-sqllnx01-sa': 'Sa-Wert-1' });
     const r = await w.skill.execute({ action: 'status', zugang: 'sqllnx01' }, {} as never);
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-Wert-1' });
-    expect(r.display).toBe('sqllnx01: SQL Server 17.0.4006.2 CU1 Enterprise Developer Edition (64-bit); Dienst aktiv, aktiviert; Speicherlimit 12288 MB; max server memory 10240 MB; tempdb 2 Datendateien; Datenbanken: pruefdb01; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet');
+    expect(r.display).toBe('sqllnx01: SQL Server 17.0.4006.2 CU1 Enterprise Developer Edition (64-bit); Dienst aktiv, aktiviert; Speicherlimit 12288 MB; max server memory 10240 MB; tempdb 2 Datendateien; Datenbanken: pruefdb01; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet; Zeit unbekannt');
     expect(JSON.stringify(r.data)).not.toContain('Sa-Wert-1');
-    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet');
+    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet; Zeit unbekannt');
     expect(linuxSqlStatusText('x', { ...STATUS_VOLL, sql: null, sqlHinweis: 'Dienst nicht aktiv', dienst: 'failed', aktiviert: 'enabled' }))
-      .toBe('x: SQL Server 17.0.4006.2-1 (Paket); Dienst failed, aktiviert; Speicherlimit 12288 MB; SQL-Sicht: Dienst nicht aktiv; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet');
+      .toBe('x: SQL Server 17.0.4006.2-1 (Paket); Dienst failed, aktiviert; Speicherlimit 12288 MB; SQL-Sicht: Dienst nicht aktiv; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet; Zeit unbekannt');
     // jedes Stück des festen Wortlauts steht in FESTE_AUSGABEN (Planprüfung erwartet)
     for (const t of ['Dienst aktiv, aktiviert', 'eingehängt: data, log, tempdb, backup', 'SQL Server nicht installiert']) expect(FESTE_AUSGABEN['linux_sql.status']).toContain(t);
   });
@@ -340,6 +340,10 @@ describe('I8e Task 3 Fix 1 — bestehende VM, Wortlaut, Tresor-Namen', () => {
       [linuxSqlStatusText('sqllnx01', { zustand: 'gelesen', installiert: false, platz: [] }), ['SQL Server', 'eingehängt:']],
       [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, sql: null, sqlHinweis: 'ohne sa-Kennwort nur Betriebssystem-Sicht' }), ['(Paket)', 'SQL-Sicht:', 'Dienst aktiv, aktiviert', 'Speicherlimit']],
       [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, dienst: 'failed', aktiviert: 'disabled', sql: null, sqlHinweis: 'Dienst nicht aktiv' }), ['(Paket)', 'SQL-Sicht:']],
+      // Ruling R11: Zeitteil am Ende — positiv nur „Zeit synchron (DC)“
+      [linuxSqlStatusText('sqllnx01', { ...STATUS_VOLL, zeit: { dropin: 'alfred', synchronisiert: 'yes', server: '10.203.29.2', dc: true } }), ['Zeit synchron (DC)', 'Dienst aktiv, aktiviert']],
+      [linuxSqlStatusText('sqllnxcfg', { zustand: 'gelesen', installiert: false, platz: [], zeit: { dropin: 'alfred', synchronisiert: 'no', server: null, dc: false } }), ['SQL Server']],
+      [linuxSqlStatusText('sqllnx02', { ...STATUS_VOLL, sql: null, sqlHinweis: 'x', zeit: { dropin: 'fehlt', synchronisiert: 'no', server: '185.125.190.56', dc: false } }), ['(Paket)']],
     ];
     for (const [text, stuecke] of varianten) {
       expect(vorlagen.filter(v => alsMuster(v).test(text)), text).toHaveLength(1);
@@ -349,6 +353,16 @@ describe('I8e Task 3 Fix 1 — bestehende VM, Wortlaut, Tresor-Namen', () => {
         expect(pruefeChangePlan(plan([schritt]), ctx).fehler, e).toEqual([]);
       }
     }
+  });
+
+  it('R11: Zeitteil des Status — fester Wortlaut je Lage', () => {
+    expect(zeitText({ dropin: 'alfred', synchronisiert: 'yes', server: '10.203.29.3', dc: true })).toBe('Zeit synchron (DC) — Server 10.203.29.3');
+    expect(zeitText({ dropin: 'alfred', synchronisiert: 'no', server: '10.203.29.2', dc: true })).toBe('Zeit NICHT synchron (Zeitquelle DC eingerichtet; NTPSynchronized no, Server 10.203.29.2)');
+    // synchron, aber mit einem anderen Server (z. B. per DHCP) zählt nicht als DC-Zeit
+    expect(zeitText({ dropin: 'alfred', synchronisiert: 'yes', server: '192.168.1.1', dc: false })).toContain('Zeit NICHT synchron');
+    expect(zeitText({ dropin: 'fehlt', synchronisiert: 'no', server: null, dc: false })).toBe('Zeit ohne DC-Zeitquelle (Drop-in fehlt; NTPSynchronized no, Server keiner)');
+    expect(zeitText(undefined)).toBe('Zeit unbekannt');
+    expect(FESTE_AUSGABEN['linux_sql.status']).toContain(' | Zeit synchron (DC)');
   });
 
   it('pruefeEingabe: Tresor-Name des sa-Kennworts zu lang → abgewiesen (installieren, login_anlegen)', () => {

@@ -15,7 +15,7 @@
  * `belassen`); das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen.
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, shQ, LINUX_SQL_BAUSTEINE } from './linux-sql.js';
+import { sqlKopf, shQ, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF } from './linux-sql.js';
 
 // ── Feste Werte (Global Constraints I8e Etappe 3) ──────────────────────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ export const AD_KRB5_KOPF = '# Alfred I8e — linux_sql ad_beitreten (krb5.conf,
 export const AD_KRB5_VORLAGE = '/usr/share/kerberos-configs/krb5.conf.template';
 export const AD_KRB5_ALT = '/etc/krb5.conf.alfred-vorher';
 export const AD_PAM_D = '/etc/pam.d';
-/** höchste zulässige Uhrzeitabweichung zu dc01 in Sekunden (Kerberos verträgt 300 s; Plan: < 60 s) */
+/** höchste zulässige Uhrzeitabweichung (Offset der Zeitquelle an den DCs, R11) in Sekunden (Kerberos verträgt 300 s; Plan: < 60 s) */
 export const AD_UHR_MAX_S = 60;
 
 export interface AdBeitretenParameter { domaene: string; realm: string; ou: string; computername: string; dcs: string[]; pakete: Record<string, string> }
@@ -103,39 +103,34 @@ const sh = (s: string) => s.replaceAll('§{', '${');
 const MARKE = '# ALFRED-ABLAUF';
 
 /**
- * python3: SNTP-Abfrage (RFC 4330, Client-Modus 3) an argv[1] — Ausgabe „<aufgerundete Abweichung in s>|<Abweichung mit Vorzeichen>“.
- * Ohne Zusatzpaket (chrony ist auf Ubuntu 24.04 nicht überall installiert) und ohne Anmeldung; misst genau gegen dc01 (W32Time).
- * Exit 2: keine gültige Antwort (Stratum 0/KoD, falscher Modus, Zeitüberschreitung).
+ * Ruling R11 — systemd-timesyncd lesen (gemeinsam für zeitquelle_einrichten und die Vorbedingung von ad_beitreten). Offset aus
+ * `timedatectl timesync-status` (Zeile „Offset: +1.234ms“, systemd format_timespan: d, h, min, s, ms, us, ns) → ganze Millisekunden mit
+ * Vorzeichen; leer = keine Messung (noch keine Antwort eines Servers) oder unbekannte Form. Ohne Pipe in grep/sed-q (pipefail/SIGPIPE).
  */
-export const PY_SNTP = String.raw`import math, socket, struct, sys, time
-def frage(ip):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.settimeout(3)
-    try:
-        t0 = time.time()
-        s.sendto(b"\x23" + b"\x00" * 47, (ip, 123))
-        d, _ = s.recvfrom(512)
-        t3 = time.time()
-    finally:
-        s.close()
-    if len(d) < 48 or (d[0] & 7) != 4 or not 1 <= d[1] <= 15:
-        return None
-    def ts(o):
-        a, b = struct.unpack("!II", d[o:o + 8])
-        return a - 2208988800 + b / 2.0 ** 32
-    t1, t2 = ts(32), ts(40)
-    if t2 <= 0:
-        return None
-    return ((t1 - t0) + (t2 - t3)) / 2
-for _ in range(3):
-    try:
-        o = frage(sys.argv[1])
-    except OSError:
-        o = None
-    if o is not None:
-        print("%d|%+.1f" % (math.ceil(abs(o)), o))
-        sys.exit(0)
-sys.exit(2)`;
+const ZEIT_HILFEN = sh(String.raw`ZQ_DROPIN=${shQ(ZEITQUELLE_DROPIN)}
+ZQ_KOPF=${shQ(ZEITQUELLE_KOPF)}
+zq_eigen() { [ -f "$ZQ_DROPIN" ] && [ "$(head -n 1 "$ZQ_DROPIN")" = "$ZQ_KOPF" ]; }
+zeit_sync() { timedatectl show -p NTPSynchronized --value 2>/dev/null || true; }
+zeit_server() { timedatectl show-timesync -p ServerAddress --value 2>/dev/null || true; }
+zeit_status() { timedatectl timesync-status 2>/dev/null || true; }
+zeit_offset_ms() {
+  local z
+  z=$(sed -n '/^[[:space:]]*Offset:/ { s/^[[:space:]]*Offset:[[:space:]]*//p; q; }' <<<"$1")
+  [ -n "$z" ] || return 0
+  awk '{ s = 1; v = $0
+    if (substr(v, 1, 1) == "-") { s = -1; v = substr(v, 2) } else if (substr(v, 1, 1) == "+") v = substr(v, 2)
+    n = split(v, t, " "); ms = 0
+    for (i = 1; i <= n; i++) {
+      if (!match(t[i], /^[0-9.]+/)) exit
+      x = substr(t[i], 1, RLENGTH) + 0; u = substr(t[i], RLENGTH + 1)
+      if (u == "d") ms += x * 86400000; else if (u == "h") ms += x * 3600000; else if (u == "min") ms += x * 60000
+      else if (u == "s") ms += x * 1000; else if (u == "ms") ms += x; else if (u == "us") ms += x / 1000; else if (u == "ns") ms += x / 1000000
+      else if (u == "" && x == 0) ms += 0; else exit
+    }
+    printf "%d\n", s * int(ms + 0.5) }' <<<"$z"
+}
+# Betrag einer ganzen Zahl mit Vorzeichen
+betrag() { printf '%s' "§{1#-}"; }`);
 
 const HILFEN = sh(String.raw`export DEBIAN_FRONTEND=noninteractive
 TMP_BASIS=/run
@@ -211,7 +206,6 @@ const BEITRETEN_HILFEN = sh(String.raw`srv_ok() { local a; a=$(host -t SRV "_lda
 ptr_von() { host "$1" 2>/dev/null | sed -n 's/.* domain name pointer \(.*\)\.$/\1/p' | head -n 1 | tr 'A-Z' 'a-z' || true; }
 # Quelladresse Richtung dc01 = die Adresse, unter der der Host die DCs erreicht (PTR muss auf den FQDN zeigen)
 eigene_ip() { ip -4 route get "$DC1" 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1 || true; }
-uhr_abweichung() { python3 -c "$PY_SNTP" "$DC1"; }
 beigetreten() { [ -f "$KEYTAB" ] && keytab_hat "$KONTO_PRINCIPAL" && adcli testjoin --domain="$DOM" >/dev/null 2>&1; }
 schwarz() { local t="$1"; if [ -n "§{EINMAL:-}" ]; then t=§{t//"$EINMAL"/[geschwärzt]}; fi; printf '%s' "$t"; }`);
 
@@ -226,10 +220,14 @@ IP=$(eigene_ip)
 [ -n "$IP" ] || abbruch "keine eigene IPv4-Adresse Richtung $DC1 (ip route get) — nichts geändert"
 PTR=$(ptr_von "$IP")
 [ "$PTR" = "$FQDN" ] || abbruch "PTR von $IP ist '§{PTR:-keiner}', erwartet $FQDN (windows_ad dns_ptr) — nichts geändert"
-UHR=$(uhr_abweichung) || abbruch "Uhrzeit von dc01 ($DC1) nicht abfragbar (NTP UDP 123) — nichts geändert"
-UHR_S=§{UHR%%|*}; UHR_V=§{UHR#*|}
-[[ "$UHR_S" =~ ^[0-9]+$ ]] || abbruch "Uhrzeit von dc01: unerwartete Antwort — nichts geändert"
-[ "$UHR_S" -lt "$UHR_MAX" ] || abbruch "Uhrzeit weicht $UHR_V s von dc01 ab (höchstens $UHR_MAX s) — Zeitquelle richten; nichts geändert"
+# Ruling R11: statt eigener SNTP-Probe — Zeitquelle an den DCs eingerichtet (Alfreds Drop-in), synchronisiert, Offset < 60 s
+ZQ_FEHLT="Zeitquelle zuerst einrichten (linux_sql zeitquelle_einrichten) — nichts geändert"
+zq_eigen || abbruch "$ZQ_FEHLT ($ZQ_DROPIN fehlt oder ist nicht von Alfred)"
+SYNC=$(zeit_sync); OFF=$(zeit_offset_ms "$(zeit_status)")
+[ "$SYNC" = yes ] || abbruch "$ZQ_FEHLT (NTPSynchronized §{SYNC:-unbekannt})"
+[ -n "$OFF" ] || abbruch "$ZQ_FEHLT (keine Messung in timedatectl timesync-status)"
+[ "$(betrag "$OFF")" -lt "$UHR_MAX_MS" ] || abbruch "$ZQ_FEHLT (Offset $OFF ms, höchstens ±$UHR_MAX_MS ms)"
+UHR_V=$(awk -v m="$OFF" 'BEGIN { printf "%+.3f", m / 1000 }')
 for pv in "§{PAKETE[@]}"; do
   pk=§{pv%%=*}; sv=§{pv#*=}; iv=$(paket_version "$pk")
   [ -z "$iv" ] || [ "$iv" = "$sv" ] || abbruch "$pk ist in Version $iv installiert, erwartet $sv — der Beitritt ändert keine vorhandene Version; nichts geändert"
@@ -358,7 +356,7 @@ const KRB5_SOLL = [
 
 /**
  * Domänenbeitritt (Eingabe stdin `{ einmal }`, fehlt bei schon beigetretenem Host nicht schädlich). Ablauf: prüfen (hostname -f = FQDN,
- * SRV, PTR, Uhrzeit < 60 s zu dc01, keine abweichende Paketversion, kein fremder Keytab, keine fremde sssd.conf) → Pakete fest + hold →
+ * SRV, PTR, Zeitquelle an den DCs eingerichtet und synchron (Offset < 60 s, R11), keine abweichende Paketversion, kein fremder Keytab, keine fremde sssd.conf) → Pakete fest + hold →
  * krb5.conf → adcli join als Computerkonto → sssd.conf, NSS, sssd → Selbstprüfung. Zeit: LINUX_SQL_ZEIT_MS.adBeitreten
  */
 export function adBeitretenSkript(p: AdBeitretenParameter): string {
@@ -378,9 +376,9 @@ export function adBeitretenSkript(p: AdBeitretenParameter): string {
     `KONTO_ANZEIGE=${shQ(`${LINUX_AD.netbios}\\\\${name}$`)}`,
     `PRUEF_KONTO=${shQ(AD_PRUEF_KONTO)}`,
     `PRUEF_GRUPPE=${shQ(AD_PRUEF_GRUPPE)}`,
-    `UHR_MAX=${AD_UHR_MAX_S}`,
+    `UHR_MAX_MS=${AD_UHR_MAX_S * 1000}`,
     `PAKETE=(${pakete.map(shQ).join(' ')})`,
-    `PY_SNTP=${shQ(PY_SNTP)}`,
+    ZEIT_HILFEN,
     `SSSD_SOLL=${shQ(sssdSoll(fqdn, name))}`,
     `KRB5_SOLL=${shQ(KRB5_SOLL)}`,
     BEITRETEN_HILFEN,
@@ -458,7 +456,137 @@ export function adVerlassenSkript(p: AdVerlassenParameter): string {
   ].join('\n');
 }
 
+// ── Zeitquelle an den DCs (Ruling R11) ──────────────────────────────────────────────────────────────────────────────────────────
+
+/** höchster Betrag des Offsets nach der Einrichtung (Nachweis) und Wartezeit auf die Synchronisierung */
+export const ZEITQUELLE_OFFSET_MAX_MS = 1000;
+export const ZEITQUELLE_WARTE_S = 120;
+/** systemd-timesyncd-Programm (Ubuntu 24.04: Paket systemd-timesyncd) */
+export const ZEITQUELLE_TIMESYNCD = '/usr/lib/systemd/systemd-timesyncd';
+/** Drop-in-Ordner von timesyncd (timesyncd.conf(5)) — ein fremdes Drop-in mit NTP=/FallbackNTP= würde die DCs ergänzen oder ersetzen */
+export const ZEITQUELLE_DROPIN_ORDNER: readonly string[] = ['/etc/systemd/timesyncd.conf.d', '/run/systemd/timesyncd.conf.d', '/usr/lib/systemd/timesyncd.conf.d'];
+/** andere Zeitdienste — läuft einer, wäre systemd-timesyncd wirkungslos (Abbruch ohne Änderung) */
+export const ZEITQUELLE_FREMDE_DIENSTE: readonly string[] = ['chrony', 'chronyd', 'ntp', 'ntpd', 'ntpsec', 'openntpd'];
+
+/**
+ * Inhalt des Drop-ins: Kopfzeile, `NTP=` leert eine Liste aus timesyncd.conf (NTP= ist laut timesyncd.conf(5) kumulativ), dann genau
+ * die DCs; `FallbackNTP=` leer — kein Rückfall auf ntp.ubuntu.com
+ */
+export function zeitquelleDropin(): string {
+  return [ZEITQUELLE_KOPF, '[Time]', 'NTP=', `NTP=${ZEITQUELLE_DCS.join(' ')}`, 'FallbackNTP='].join('\n');
+}
+
+const ZEIT_PRUEF_HILFEN = sh(String.raw`ist_dc() { local d; [ -n "$1" ] || return 1; for d in "§{DCS[@]}"; do if [ "$d" = "$1" ]; then return 0; fi; done; return 1; }`);
+
+const EINRICHTEN_KOERPER = sh(String.raw`# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+command -v timedatectl >/dev/null 2>&1 || abbruch "timedatectl fehlt — nichts geändert"
+[ -x "$TIMESYNCD" ] || abbruch "systemd-timesyncd fehlt ($TIMESYNCD, Paket systemd-timesyncd) — nichts geändert"
+for d in "§{FREMDE_DIENSTE[@]}"; do
+  if systemctl is-active --quiet "$d"; then abbruch "andere Zeitquelle aktiv — nichts geändert ($d läuft; systemd-timesyncd wäre wirkungslos)"; fi
+done
+if [ -e "$ZQ_DROPIN" ] && ! zq_eigen; then abbruch "$ZQ_DROPIN ist nicht von Alfred (andere Kopfzeile) — nichts geändert"; fi
+for dir in "§{DROPIN_ORDNER[@]}"; do
+  for f in "$dir"/*.conf; do
+    [ -f "$f" ] || continue
+    [ "$f" != "$ZQ_DROPIN" ] || continue
+    if grep -Eq '^[[:space:]]*(NTP|FallbackNTP)[[:space:]]*=' "$f"; then abbruch "fremdes Drop-in $f setzt NTP/FallbackNTP (würde die DCs ergänzen oder ersetzen) — nichts geändert"; fi
+  done
+done
+# ── Phase 2: Drop-in, NTP an, Dienst neu starten ──
+NEU=0
+if [ ! -f "$ZQ_DROPIN" ] || [ "$(cat "$ZQ_DROPIN")" != "$ZQ_SOLL" ]; then
+  mkdir -p "$(dirname "$ZQ_DROPIN")"
+  t=$(mktemp "$ZQ_DROPIN.alfred-XXXXXX")
+  chmod 0644 "$t"
+  printf '%s\n' "$ZQ_SOLL" >"$t"
+  mv -f "$t" "$ZQ_DROPIN"
+  aend dropin; NEU=1
+fi
+ntp=$(timedatectl show -p NTP --value 2>/dev/null || true)
+if [ "$ntp" != yes ]; then
+  aus=$(timedatectl set-ntp true 2>&1) || abbruch "timedatectl set-ntp true fehlgeschlagen: $(kurz "$aus") — Drop-in bleibt (Rückweg zeitquelle_entfernen)"
+  aend ntp-an; NEU=1
+fi
+if [ "$NEU" = 1 ] || ! systemctl is-active --quiet systemd-timesyncd || ! ist_dc "$(zeit_server)"; then
+  aus=$(systemctl restart systemd-timesyncd 2>&1) || abbruch "systemd-timesyncd startet nicht: $(kurz "$aus") — Drop-in bleibt (Rückweg zeitquelle_entfernen)"
+  aend timesyncd-neu-gestartet
+fi
+# ── Nachweis: binnen WARTE_S synchronisiert mit einem DC, |Offset| < OFFSET_MAX_MS ──
+SYNC=''; SERVER=''; ST=''; OFF=''
+for i in $(seq 1 "$WARTE_RUNDEN"); do
+  SYNC=$(zeit_sync); SERVER=$(zeit_server); ST=$(zeit_status); OFF=$(zeit_offset_ms "$ST")
+  if [ "$SYNC" = yes ] && ist_dc "$SERVER" && [ -n "$OFF" ] && [ "$(betrag "$OFF")" -lt "$OFFSET_MAX_MS" ]; then break; fi
+  sleep 2
+done
+LAGE="NTPSynchronized §{SYNC:-unbekannt}, Server §{SERVER:-keiner}, Offset §{OFF:-keine Messung}§{OFF:+ ms}; timesync-status: $(kurz "$ST")"
+{ [ "$SYNC" = yes ] && ist_dc "$SERVER"; } || abbruch "nach $WARTE_S s nicht mit einem DC synchronisiert ($LAGE) — Drop-in bleibt (Rückweg zeitquelle_entfernen)"
+[ -n "$OFF" ] || abbruch "nach $WARTE_S s keine Messung des DCs ($LAGE) — Drop-in bleibt (Rückweg zeitquelle_entfernen)"
+[ "$(betrag "$OFF")" -lt "$OFFSET_MAX_MS" ] || abbruch "Offset zum DC nach $WARTE_S s zu groß (höchstens ±$OFFSET_MAX_MS ms; $LAGE) — Drop-in bleibt (Rückweg zeitquelle_entfernen)"
+# ── Selbstprüfung ──
+{ zq_eigen && [ "$(cat "$ZQ_DROPIN")" = "$ZQ_SOLL" ]; } || abbruch "Selbstprüfung: $ZQ_DROPIN nicht wie erzeugt"
+systemctl is-active --quiet systemd-timesyncd || abbruch "Selbstprüfung: systemd-timesyncd läuft nicht"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"server\":\"$SERVER\",\"offsetMs\":$OFF,\"synchronisiert\":true,\"aenderungen\":[$AJ]}"`);
+
+/** Kopf und Hilfen beider Zeitquellen-Skripte */
+function zeitKopf(baustein: string): string[] {
+  return [
+    ...sqlKopf(baustein, { dcs: [...ZEITQUELLE_DCS] }),
+    HILFEN,
+    ZEIT_HILFEN,
+    `DCS=(${ZEITQUELLE_DCS.map(shQ).join(' ')})`,
+    ZEIT_PRUEF_HILFEN,
+  ];
+}
+
+/**
+ * Ruling R11 — Zeitquelle an den DCs (alle drei Hosts, auch sqllnxcfg): prüfen (timedatectl und systemd-timesyncd vorhanden, kein anderer
+ * Zeitdienst aktiv, kein fremdes Drop-in mit NTP=/FallbackNTP=, ZEITQUELLE_DROPIN fremd → Abbruch ohne Änderung) → Drop-in
+ * (zeitquelleDropin) → NTP an → systemd-timesyncd neu starten → Nachweis binnen 120 s: NTPSynchronized=yes, Server ist ein DC,
+ * |Offset| < 1 s. Kein Erfolg → Abbruch mit gelesenem Status, Drop-in bleibt (Rückweg zeitquelleEntfernenSkript). Wiederholbar („schon“
+ * ohne Neustart, wenn alles stimmt). Zeit: LINUX_SQL_ZEIT_MS.zeitquelleEinrichten
+ */
+export function zeitquelleEinrichtenSkript(): string {
+  return [
+    ...zeitKopf(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten),
+    `ZQ_SOLL=${shQ(zeitquelleDropin())}`,
+    `TIMESYNCD=${shQ(ZEITQUELLE_TIMESYNCD)}`,
+    `DROPIN_ORDNER=(${ZEITQUELLE_DROPIN_ORDNER.map(shQ).join(' ')})`,
+    `FREMDE_DIENSTE=(${ZEITQUELLE_FREMDE_DIENSTE.map(shQ).join(' ')})`,
+    `WARTE_S=${ZEITQUELLE_WARTE_S}`,
+    `WARTE_RUNDEN=${ZEITQUELLE_WARTE_S / 2}`,
+    `OFFSET_MAX_MS=${ZEITQUELLE_OFFSET_MAX_MS}`,
+    MARKE,
+    EINRICHTEN_KOERPER,
+  ].join('\n');
+}
+
+const ENTFERNEN_KOERPER = sh(String.raw`BELASSEN=''
+if [ -e "$ZQ_DROPIN" ]; then
+  if zq_eigen; then rm -f -- "$ZQ_DROPIN"; aend dropin-entfernt
+  else BELASSEN=$(printf '%s' "$ZQ_DROPIN (nicht von Alfred)" | json_text); fi
+fi
+if [ "$GEAENDERT" = 1 ]; then
+  aus=$(systemctl restart systemd-timesyncd 2>&1) || abbruch "systemd-timesyncd startet nach dem Entfernen des Drop-ins nicht: $(kurz "$aus") — bisher geändert: Drop-in entfernt"
+  aend timesyncd-neu-gestartet
+fi
+# ── Selbstprüfung ──
+! zq_eigen || abbruch "Selbstprüfung: $ZQ_DROPIN besteht noch"
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"belassen\":[$BELASSEN],\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Rückweg von zeitquelleEinrichtenSkript: entfernt NUR Alfreds Drop-in (Kopfzeile) und startet systemd-timesyncd neu; eine fremde Datei
+ * an derselben Stelle bleibt und steht in `belassen`. NTP bleibt an (timesyncd nutzt dann wieder die Ubuntu-Vorgabe). Zeit:
+ * LINUX_SQL_ZEIT_MS.zeitquelleEntfernen
+ */
+export function zeitquelleEntfernenSkript(): string {
+  return [...zeitKopf(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen), MARKE, ENTFERNEN_KOERPER].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<AdBeitretenParameter>(LINUX_SQL_BAUSTEINE.adBeitreten, adBeitretenSkript);
 registriereLinuxBaustein<AdVerlassenParameter>(LINUX_SQL_BAUSTEINE.adVerlassen, adVerlassenSkript);
+registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten, () => zeitquelleEinrichtenSkript());
+registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen, () => zeitquelleEntfernenSkript());

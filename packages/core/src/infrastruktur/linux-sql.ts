@@ -65,13 +65,26 @@ export const LINUX_SQL_BAUSTEINE = {
   resteEntfernen: 'sql.reste_entfernen',
   // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort und lokaler Rückweg (Erzeuger in linux-sql-ad.ts)
   adBeitreten: 'sql.ad_beitreten', adVerlassen: 'sql.ad_verlassen',
+  // Ruling R11 — Zeitquelle an den DCs (systemd-timesyncd-Drop-in) und Rückweg (Erzeuger in linux-sql-ad.ts)
+  zeitquelleEinrichten: 'sql.zeitquelle_einrichten', zeitquelleEntfernen: 'sql.zeitquelle_entfernen',
 } as const;
+
+/**
+ * Ruling R11 (I8e Etappe 3, L1-Fakten 19.11.2026): systemd-timesyncd auf den Linux-SQL-Hosts versuchte ntp.ubuntu.com und lief nur in
+ * Zeitüberschreitungen. Zeitquelle sind die DCs (= LINUX_AD.dcs, Test prüft das) über ein eigenes Drop-in mit Alfred-Kopfzeile.
+ * Hier (nicht in linux-sql-ad.ts), weil der Status (PY_STATUS) sie liest.
+ */
+export const ZEITQUELLE_DCS: readonly string[] = ['10.203.29.2', '10.203.29.3'];
+export const ZEITQUELLE_DROPIN = '/etc/systemd/timesyncd.conf.d/alfred-ad.conf';
+export const ZEITQUELLE_KOPF = '# Alfred I8e — linux_sql zeitquelle_einrichten (nicht von Hand ändern)';
 
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_SQL_ZEIT_MS = {
   platten: 180_000, installation: 1_500_000, konfiguration: 300_000, tempdb: 300_000, maxspeicher: 90_000, login: 90_000, status: 90_000, pruefdaten: 180_000,
   resteEntfernen: 180_000,
   adBeitreten: 600_000, adVerlassen: 300_000,
+  // Ruling R11: Prüfen, Drop-in, Neustart, bis 120 s Warten auf die Synchronisierung
+  zeitquelleEinrichten: 240_000, zeitquelleEntfernen: 90_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -888,6 +901,21 @@ export const PY_STATUS = [
   '    pass',
   'reste += sorted(glob.glob("/var/opt/mssql/backup/.alfred-wh-*")) + sorted(glob.glob("/run/alfred-c-*"))',
   'r["reste"] = reste[:20]',
+  // Ruling R11 — Zeitquelle: Alfreds Drop-in (Kopfzeile), NTPSynchronized, Server von systemd-timesyncd
+  'zeit = {}',
+  'try:',
+  `    with open(${JSON.stringify(ZEITQUELLE_DROPIN)}) as f:`,
+  `        zeit["dropin"] = "alfred" if f.readline().rstrip("\\n") == ${JSON.stringify(ZEITQUELLE_KOPF)} else "fremd"`,
+  'except FileNotFoundError:',
+  '    zeit["dropin"] = "fehlt"',
+  'except Exception:',
+  '    zeit["dropin"] = "unlesbar"',
+  'c, v = lauf("timedatectl", "show", "-p", "NTPSynchronized", "--value")',
+  'zeit["synchronisiert"] = v if c == 0 and v else None',
+  'c, v = lauf("timedatectl", "show-timesync", "-p", "ServerAddress", "--value")',
+  'zeit["server"] = v if c == 0 and v else None',
+  `zeit["dc"] = zeit["server"] in ${JSON.stringify(ZEITQUELLE_DCS)}`,
+  'r["zeit"] = zeit',
   'def sql_json(text):',
   '    aus = "".join(z.strip() for z in text.splitlines())',
   '    a, e = aus.find("{"), aus.rfind("}")',

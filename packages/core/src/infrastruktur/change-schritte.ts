@@ -56,10 +56,11 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Fix 1: die drei Formen genau wie ausgegeben, dazu die festen Werte der Platzhalter (Dienst, eingehängt) als prüfbare Stücke;
   // verneinende Formen („nicht installiert“, „keine eigenen“, „keine Plattenziele“) sind als erwartet ohnehin unzulässig (VERNEINUNG) → nichtEnthalten
   // I8e Task 4: jede Form endet mit „; Sicherung: …“ (Zugangsdatei, Kopier-Timer, letzte Kopie bzw. „nicht eingerichtet“)
-  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}; Sicherung: {sicherung}'
-    + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}; Sicherung: {sicherung}'
-    + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}; Sicherung: {sicherung}'
-    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv',
+  // Ruling R11: danach „; Zeit …“ (zeitText) — positiv nur „Zeit synchron (DC)“
+  'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
+    + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
+    + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
+    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Zeit synchron (DC)',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
@@ -184,7 +185,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // Owner 19.11.2026 — reste_entfernen: danach liegen genau die Dateien in Gebrauch noch (Selbstprüfung im Baustein)
     'reste_entfernen',
     // I8e Etappe 3 Task 4 — Beitritt (realm list, id, getent group, Keytab, testjoin) und Verlassen (sssd aus, Dateien weg, NSS ohne sss)
-    'ad_beitreten', 'ad_verlassen']),
+    'ad_beitreten', 'ad_verlassen',
+    // Ruling R11 — Zeitquelle: synchronisiert mit einem DC (NTPSynchronized, Server, Offset < 1 s); Rückweg: Drop-in weg, timesyncd läuft
+    'zeitquelle_einrichten', 'zeitquelle_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -214,14 +217,18 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
   ]),
   // I8e Etappe 3 Task 4 — Domänenbeitritt: Rückweg genau linux_sql.ad_verlassen auf demselben Zugang (auch beim Neuaufbau)
   linux_sql: new Map([
-    ['ad_beitreten', { skill: 'linux_sql', aktion: 'ad_verlassen', text: 'linux_sql.ad_verlassen (zugang)', parameter: gleicherZugang }],
+    ['ad_beitreten', { skill: 'linux_sql', aktion: 'ad_verlassen', text: 'linux_sql.ad_verlassen (zugang)', parameter: gleicherZugang('ad_verlassen') }],
+    // Ruling R11 — Zeitquelle: Rückweg genau linux_sql.zeitquelle_entfernen auf demselben Zugang
+    ['zeitquelle_einrichten', { skill: 'linux_sql', aktion: 'zeitquelle_entfernen', text: 'linux_sql.zeitquelle_entfernen (zugang)', parameter: gleicherZugang('zeitquelle_entfernen') }],
   ]),
 };
-/** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit) */
-function gleicherZugang(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
-  const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
-  const [h, r] = [n(hin.zugang), n(rueck.zugang)];
-  return h && r && h !== r ? `ad_verlassen muss auf demselben Zugang laufen — rueckweg zugang ${h} (nicht ${r})` : undefined;
+/** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
+function gleicherZugang(aktion: string) {
+  return (hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined => {
+    const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
+    const [h, r] = [n(hin.zugang), n(rueck.zugang)];
+    return h && r && h !== r ? `${aktion} muss auf demselben Zugang laufen — rueckweg zugang ${h} (nicht ${r})` : undefined;
+  };
 }
 /** Task 6: der Rückweg eines Failovers führt zurück zum bisherigen Primär — zugang/ziel genau vertauscht (Verweise erst zur Laufzeit) */
 function failoverZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {

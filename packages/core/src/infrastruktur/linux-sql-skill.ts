@@ -9,7 +9,7 @@ import { randomInt } from 'node:crypto';
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import {
-  LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, LINUX_SQL_ZIELE, TEMPDB_PFAD_DATEN, type TempdbPfad, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, sqlErgebnis,
+  LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, LINUX_SQL_ZIELE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, TEMPDB_PFAD_DATEN, type TempdbPfad, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, sqlErgebnis,
   pruefePlatten, pruefeInstallation, pruefeKonfig, pruefeTempdb, pruefeMaxSpeicher, pruefeLogin, pruefePruefdaten,
   type LinuxSqlZiel, type PlattenParameter, type InstallParameter, type KonfigParameter, type TempdbParameter, type LoginParameter,
 } from './linux-sql.js';
@@ -42,6 +42,8 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   reste_entfernen: sek(LINUX_SQL_ZEIT_MS.resteEntfernen) + 60,
   ad_beitreten: sek(LINUX_SQL_ZEIT_MS.adBeitreten) + 60,
   ad_verlassen: sek(LINUX_SQL_ZEIT_MS.adVerlassen) + 60,
+  zeitquelle_einrichten: sek(LINUX_SQL_ZEIT_MS.zeitquelleEinrichten) + 60,
+  zeitquelle_entfernen: sek(LINUX_SQL_ZEIT_MS.zeitquelleEntfernen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -65,7 +67,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // Owner 19.11.2026 — alte tempdb-Dateien entfernen (fail-closed, jede Datei gemeldet)
   'reste_entfernen',
   // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort und lokaler Rückweg
-  'ad_beitreten', 'ad_verlassen']);
+  'ad_beitreten', 'ad_verlassen',
+  // Ruling R11 — Zeitquelle an den DCs (alle drei Hosts) und Rückweg
+  'zeitquelle_einrichten', 'zeitquelle_entfernen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -114,6 +118,20 @@ export interface LinuxSqlStatus {
   reste?: string[];
   /** Nachtrag 2 (M-B): vom Baustein-Kopf entfernte alte Zugangsdateien (/run/alfred-c-*, älter als 120 min) */
   alteZugangsdateienEntfernt?: number;
+  /** Ruling R11 — Zeitquelle: Alfreds timesyncd-Drop-in, NTPSynchronized (yes/no), Server von systemd-timesyncd, Server ist ein DC */
+  zeit?: { dropin?: string; synchronisiert?: string | null; server?: string | null; dc?: boolean } | null;
+}
+
+/**
+ * Ruling R11 — Zeitteil des Statustexts (fester Wortlaut; positives Stück „Zeit synchron (DC)“ in FESTE_AUSGABEN['linux_sql.status']).
+ * Jede Form beginnt mit „Zeit “.
+ */
+export function zeitText(z: LinuxSqlStatus['zeit']): string {
+  if (!z) return 'Zeit unbekannt';
+  const server = z.server ?? 'keiner';
+  if (z.dropin === 'alfred' && z.synchronisiert === 'yes' && z.dc) return `Zeit synchron (DC) — Server ${server}`;
+  if (z.dropin === 'alfred') return `Zeit NICHT synchron (Zeitquelle DC eingerichtet; NTPSynchronized ${z.synchronisiert ?? 'unbekannt'}, Server ${server})`;
+  return `Zeit ohne DC-Zeitquelle (Drop-in ${z.dropin ?? 'unbekannt'}; NTPSynchronized ${z.synchronisiert ?? 'unbekannt'}, Server ${server})`;
 }
 
 /** Nachtrag 2 (M-B): Anzeige der entfernten alten Zugangsdateien (nur ab 1) */
@@ -136,7 +154,8 @@ const SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
 export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
   const ein = (s.platz ?? []).filter(p => p.eingehaengt && (LINUX_SQL_ZIELE as readonly string[]).includes(p.pfad)).map(p => p.pfad.split('/').pop());
   const eingehaengt = `eingehängt: ${ein.length ? ein.join(', ') : 'keine Plattenziele'}`;
-  const sich = sicherungText(s) + resteText(s.reste) + altZugangText(s.alteZugangsdateienEntfernt);
+  // Ruling R11: Zeitquelle und Synchronisierung am Ende („; Zeit …“)
+  const sich = `${sicherungText(s)}${resteText(s.reste)}${altZugangText(s.alteZugangsdateienEntfernt)}; ${zeitText(s.zeit)}`;
   if (!s.installiert) return `${zugang}: SQL Server nicht installiert; ${eingehaengt}; ${sich}`;
   const dienst = `Dienst ${s.dienst === 'active' ? 'aktiv' : s.dienst ?? 'unbekannt'}, ${s.aktiviert === 'enabled' ? 'aktiviert' : s.aktiviert ?? 'unbekannt'}`;
   const limit = `Speicherlimit ${s.konfig?.memorylimitmb ?? '-'} MB`;
@@ -360,7 +379,8 @@ export class LinuxSqlSkill extends Skill {
       + `Mindest-zeitlimitS je Schritt (Baustein-Zeitgrenzen + 60 s): ${Object.entries(LINUX_SQL_MIN_ZEITLIMIT_S).map(([a, sk]) => `${a} ${sk} s`).join(', ')}. `
       + 'reste_entfernen (nur im Change; zugang) — entfernt alte tempdb-Dateien (temp*.mdf/ndf/ldf direkt in /var/opt/mssql/data), die der Status als „Reste“ meldet; nur Dateien, die nicht in sys.master_files stehen und kein Prozess geöffnet hat; SQL Server muss laufen, sonst Abbruch ohne Löschen; jede gelöschte Datei steht mit Größe im Ergebnis, Dateien in Gebrauch bleiben und werden genannt; kein Rückweg (ohneSicherungGrund). '
       + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
-      + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Uhrzeit < 60 s zu dc01; dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd nur für NSS (access_provider = deny, PAM ohne sss — keine Anmeldung von Domänenbenutzern am Host); eine fremde sssd.conf, krb5.conf (außer der unveränderten krb5-config-Vorgabe) oder ein fremder Keytab → Abbruch ohne Änderung; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab, kein pam_sss; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang, computername Standard = zugang; nur lokal und nur Alfreds Einrichtung: sssd aus, Alfreds sssd.conf/krb5.conf entfernt bzw. Paketvorgabe zurück, Keytab nur mit ausschließlich eigenen Principals, NSS und PAM ohne sss; Fremdes bleibt und steht unter „belassen“; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
+      + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Zeitquelle eingerichtet (zeitquelle_einrichten: Drop-in, NTPSynchronized yes, Offset < 60 s — sonst „Zeitquelle zuerst einrichten“); dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd nur für NSS (access_provider = deny, PAM ohne sss — keine Anmeldung von Domänenbenutzern am Host); eine fremde sssd.conf, krb5.conf (außer der unveränderten krb5-config-Vorgabe) oder ein fremder Keytab → Abbruch ohne Änderung; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab, kein pam_sss; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang, computername Standard = zugang; nur lokal und nur Alfreds Einrichtung: sssd aus, Alfreds sssd.conf/krb5.conf entfernt bzw. Paketvorgabe zurück, Keytab nur mit ausschließlich eigenen Principals, NSS und PAM ohne sss; Fremdes bleibt und steht unter „belassen“; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
+      + `ZEIT (Ruling R11, alle drei Hosts einschließlich sqllnxcfg, vor ad_beitreten): zeitquelle_einrichten (nur im Change; zugang) — systemd-timesyncd mit Drop-in ${ZEITQUELLE_DROPIN} (NTP=${ZEITQUELLE_DCS.join(' ')}, FallbackNTP= leer), Neustart, Nachweis binnen 120 s: NTPSynchronized yes, Server ein DC, Offset unter 1 s → „TIME_SYNCED“; chrony/ntpd aktiv oder fremdes Drop-in mit NTP= → Abbruch ohne Änderung; nicht synchronisiert → Abbruch mit gelesenem Status, Drop-in bleibt ↔ zeitquelle_entfernen (zugang; entfernt nur Alfreds Drop-in, Neustart). Status nennt „Zeit synchron (DC)“ (sonst „Zeit NICHT synchron …“ bzw. „Zeit ohne DC-Zeitquelle …“). `
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -456,6 +476,8 @@ export class LinuxSqlSkill extends Skill {
         case 'reste_entfernen': return await this.resteEntfernen(zugang, geheim);
         case 'ad_beitreten': return await this.adBeitreten(zugang, input, geheim);
         case 'ad_verlassen': return await this.adVerlassen(zugang, input);
+        case 'zeitquelle_einrichten': return await this.zeitquelleEinrichten(zugang);
+        case 'zeitquelle_entfernen': return await this.zeitquelleEntfernen(zugang);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -655,7 +677,7 @@ export class LinuxSqlSkill extends Skill {
       catch (err) { tresorText = `WARNUNG: Tresor-Eintrag ${name} nicht entfernt (${(err as Error).message.slice(0, 120)}) — das Kennwort ist verbraucht, Eintrag bitte entfernen`; }
     }
     this.d.protokoll?.('I8e Domänenbeitritt', { zugang, computername: p.computername, zustand: r.zustand, beitritt: r.beitritt, tresorEntfernt: da && !!t.entferne });
-    const text = `AD_JOINED ${r.computerkonto ?? p.computername.toUpperCase()} in ${LINUX_AD.domaene} (${r.fqdn ?? zugang}) — sssd aktiv, realm/id/Gruppe geprüft, Uhrzeit ${r.uhrAbweichungS ?? '?'} s zu dc01; ${tresorText}`;
+    const text = `AD_JOINED ${r.computerkonto ?? p.computername.toUpperCase()} in ${LINUX_AD.domaene} (${r.fqdn ?? zugang}) — sssd aktiv, realm/id/Gruppe geprüft, Uhrzeit ${r.uhrAbweichungS ?? '?'} s (Zeitquelle DC); ${tresorText}`;
     return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
@@ -672,6 +694,30 @@ export class LinuxSqlSkill extends Skill {
     const eigen = r.sssd === 'aus' ? 'sssd aus, Alfreds sssd.conf/krb5.conf und Keytab entfernt, NSS und PAM ohne sss' : 'fremde sssd-Einrichtung unverändert';
     const text = `AD_LEFT ${zugang} hat ${LINUX_AD.domaene} lokal verlassen (${eigen})${bel} — Computerkonto im AD entfernt windows_ad computerkonto_entfernen`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  // ── Ruling R11 — Zeitquelle an den DCs ─────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Drop-in, Neustart, Nachweis im Baustein; der Skill prüft das Ergebnis noch einmal (synchron, Server ein DC, |Offset| < 1 s) */
+  private async zeitquelleEinrichten(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<{ zustand: string; server?: string; offsetMs?: number; synchronisiert?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.zeitquelleEinrichten, {}, 'Zeitquelle einrichten', LINUX_SQL_ZEIT_MS.zeitquelleEinrichten);
+    if (r.synchronisiert !== true || !ZEITQUELLE_DCS.includes(String(r.server)) || typeof r.offsetMs !== 'number' || Math.abs(r.offsetMs) >= 1000) {
+      throw new Error(`Zeitquelle ${zugang}: Nachprüfung fehlgeschlagen (synchronisiert ${String(r.synchronisiert)}, Server ${String(r.server)}, Offset ${String(r.offsetMs)} ms)`);
+    }
+    this.d.protokoll?.('I8e Zeitquelle', { zugang, zustand: r.zustand, server: r.server, offsetMs: r.offsetMs, aenderungen: r.aenderungen });
+    const text = `TIME_SYNCED ${zugang}: systemd-timesyncd synchron mit DC ${r.server} (Offset ${r.offsetMs} ms; Drop-in ${ZEITQUELLE_DROPIN})`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Rückweg: nur Alfreds Drop-in; eine fremde Datei an derselben Stelle bleibt (belassen, nie still) */
+  private async zeitquelleEntfernen(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<{ zustand: string; belassen?: string[]; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.zeitquelleEntfernen, {}, 'Zeitquelle entfernen', LINUX_SQL_ZEIT_MS.zeitquelleEntfernen);
+    this.d.protokoll?.('I8e Zeitquelle entfernt', { zugang, zustand: r.zustand, belassen: r.belassen ?? [] });
+    const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 300)}` : '';
+    const text = `Zeitquelle DC auf ${zugang} entfernt (Drop-in ${ZEITQUELLE_DROPIN} weg, systemd-timesyncd neu gestartet)${bel}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `Kein Alfred-Drop-in ${ZEITQUELLE_DROPIN} auf ${zugang}${bel} — nichts zu tun` : `✅ ${text}` };
   }
 
   /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */

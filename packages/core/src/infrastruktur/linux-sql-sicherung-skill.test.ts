@@ -189,10 +189,10 @@ describe('I8e Task 4 — Wortlaut sicherungen und status', () => {
       expect(t2).not.toMatch(/letzte Kopie \S+ ok/);
     }
     const text = linuxSqlStatusText('sqllnx01', st);
-    expect(text).toBe('sqllnx01: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: Zugangsdatei vorhanden (0600), Kopie-Timer aktiv, letzte Kopie 2026-11-16T12:07:00Z ok');
+    expect(text).toBe('sqllnx01: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: Zugangsdatei vorhanden (0600), Kopie-Timer aktiv, letzte Kopie 2026-11-16T12:07:00Z ok; Zeit unbekannt');
     const vorlagen = FESTE_AUSGABEN['linux_sql.status']!.split(' | ');
     expect(vorlagen.filter(v => alsMuster(v).test(text))).toHaveLength(1);
-    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet');
+    expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet; Zeit unbekannt');
     for (const e of ['Zugangsdatei vorhanden (0600)', 'Kopie-Timer aktiv']) expect(FESTE_AUSGABEN['linux_sql.status']).toContain(e);
   });
 });

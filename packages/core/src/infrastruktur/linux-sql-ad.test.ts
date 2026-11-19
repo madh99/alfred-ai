@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
-  adBeitretenSkript, adVerlassenSkript, pruefeAdBeitreten, pruefeAdVerlassen, LINUX_AD, LINUX_AD_PAKETE, AD_SSSD_KOPF, AD_KRB5_KOPF, PY_SNTP,
+  adBeitretenSkript, adVerlassenSkript, pruefeAdBeitreten, pruefeAdVerlassen, LINUX_AD, LINUX_AD_PAKETE, AD_SSSD_KOPF, AD_KRB5_KOPF,
+  zeitquelleEinrichtenSkript, zeitquelleEntfernenSkript, zeitquelleDropin,
   type AdBeitretenParameter,
 } from './linux-sql-ad.js';
-import { sqlErgebnis, LINUX_SQL_BAUSTEINE } from './linux-sql.js';
+import { sqlErgebnis, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF } from './linux-sql.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { pruefeChangePlan } from './change-schritte.js';
@@ -19,11 +20,18 @@ const EINMAL = 'Einmal-Geheim_7Kq2Zx9Wv4Ty';
 const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const P: AdBeitretenParameter = { domaene: 'ad.3033.at', realm: 'AD.3033.AT', ou: 'Server', computername: 'sqllnx01', dcs: ['10.203.29.2', '10.203.29.3'], pakete: { ...LINUX_AD_PAKETE } };
 const V = { computername: 'sqllnx01' };
+// wie linux-ha.test.ts: die Bash-Läufe blockieren den Worker synchron (spawnSync); vor jedem Test an die Ereignisschleife abgeben,
+// sonst läuft vitest-RPC (onTaskUpdate) in die Zeitgrenze
+beforeEach(async () => { await new Promise(r => setTimeout(r, 0)); });
 
 interface Lauf {
   hostnameF?: string;
   ptr?: string;
+  /** Offset-Text in timedatectl timesync-status (Standard „+1.4ms“; leer = keine Messung) */
   uhr?: string;
+  /** Ruling R11: Zeitquelle eingerichtet (Alfreds Drop-in, Standard ja) und NTPSynchronized (Standard yes) */
+  zeitquelle?: boolean;
+  sync?: string;
   /** Einmal-Kennwort in der Eingabe (Standard EINMAL) */
   einmal?: string;
   /** schon beigetreten: Keytab, Alfreds sssd.conf und krb5.conf, Pakete gehalten, sssd aktiv, PAM ohne sss */
@@ -63,7 +71,9 @@ function stubs(l: Lauf): string {
     `hostname() { log "hostname $*"; [ "$1" = -f ] && echo ${q(l.hostnameF ?? 'sqllnx01.ad.3033.at')}; }`,
     'host() { log "host $*"; case "$*" in *SRV*) echo "_ldap._tcp.ad.3033.at has SRV record 0 100 389 dc01.ad.3033.at." ;; 10.203.30.10) echo ' + `"10.30.203.10.in-addr.arpa domain name pointer ${l.ptr ?? 'sqllnx01.ad.3033.at'}."` + ' ;; *) return 1 ;; esac; }',
     'ip() { echo "10.203.29.2 via 10.203.30.1 dev eth0 src 10.203.30.10 uid 0"; }',
-    `uhr_abweichung() { echo ${q(l.uhr ?? '2|+1.4')}; }`,
+    // Ruling R11: Zeitquelle — Drop-in außerhalb von etc/ (Dateiliste der Tests), timedatectl liest Dateien unter $T/zeit
+    'ZQ_DROPIN="$T/zq/alfred-ad.conf"',
+    'timedatectl() { case "$1 ${2:-}" in "show -p") case "$3" in NTPSynchronized) cat "$T/zeit/sync" ;; NTP) echo yes ;; esac ;; "show-timesync -p") cat "$T/zeit/server" 2>/dev/null || true ;; "timesync-status ") cat "$T/zeit/status" 2>/dev/null || true ;; esac; }',
     'dpkg-query() { local p="${@: -1}" st="install ok installed"; [ -f "$T/inst/$p" ] || return 1; [ ! -f "$T/held/$p" ] || st="hold ok installed"; if [[ "$*" == *Version* ]]; then printf \'%s|%s\' "$st" "$(cat "$T/inst/$p")"; else printf \'%s\' "$st"; fi; }',
     // install: libpam-sss schaltet pam_sss ein (pam-auth-update --package), krb5-config legt Vorlage und krb5.conf an
     `apt-get() { log "apt-get $*"; local a; for a in "$@"; do case "$a" in *=*[0-9]*) [[ "$a" == DPkg* || "$a" == Dpkg* ]] && continue; echo "\${a#*=}" >"$T/inst/\${a%%=*}"
@@ -88,7 +98,10 @@ function stubs(l: Lauf): string {
 function vorbereiten(l: Lauf): string {
   const verf = { ...LINUX_AD_PAKETE, ...(l.verfuegbar ?? {}) };
   const z = [
-    'T=$(mktemp -d)', 'mkdir -p "$T/etc/sssd" "$T/inst" "$T/held" "$T/verf" "$T/sss/db" "$T/sss/mc" "$T/pam.d" "$T/vorlage"', ': >"$T/log"',
+    'T=$(mktemp -d)', 'mkdir -p "$T/etc/sssd" "$T/inst" "$T/held" "$T/verf" "$T/sss/db" "$T/sss/mc" "$T/pam.d" "$T/vorlage" "$T/zq" "$T/zeit"', ': >"$T/log"',
+    `echo ${q(l.sync ?? 'yes')} >"$T/zeit/sync"; echo 10.203.29.2 >"$T/zeit/server"`,
+    `printf '       Server: 10.203.29.2 (10.203.29.2)\n%s\n' ${q(l.uhr === '' ? 'Packet count: 0' : `       Offset: ${l.uhr ?? '+1.4ms'}`)} >"$T/zeit/status"`,
+    ...(l.zeitquelle === false ? [] : [`printf '%s\n' ${q(zeitquelleDropin())} >"$T/zq/alfred-ad.conf"`]),
     `printf 'passwd:         files systemd\\ngroup:          files systemd\\nshadow:         files\\nhosts:          files dns\\n' >"$T/etc/nsswitch.conf"`,
     `printf 'auth\\t[success=1 default=ignore]\\tpam_unix.so nullok\\n' >"$T/pam.d/common-auth"`,
     `printf 'account\\t[success=1 new_authtok_reqd=done default=ignore]\\tpam_unix.so\\n' >"$T/pam.d/common-account"`,
@@ -189,9 +202,11 @@ describe('linux_sql ad_beitreten — Skripttext und Parameter', { timeout: 60_00
     expect(pruefeAdVerlassen(V)).toBeUndefined();
     expect(() => adVerlassenSkript({ computername: 'x;rm -rf /' })).toThrow('computername');
   });
-  it.skipIf(!PYTHON)('SNTP-Programm ist gültiges Python', () => {
-    const r = spawnSync(PYTHON!, ['-c', 'import sys; compile(sys.stdin.read(), "sntp", "exec")'], { input: PY_SNTP, encoding: 'utf8' });
-    expect(r.status, r.stderr).toBe(0);
+  it('R11: keine eigene SNTP-Probe mehr — ad_beitreten liest die Zeitquelle (Drop-in, timedatectl)', () => {
+    const s = adBeitretenSkript(P);
+    expect(s).not.toMatch(/PY_SNTP|socket|uhr_abweichung/);
+    expect(s).toContain(`ZQ_DROPIN='${ZEITQUELLE_DROPIN}'`);
+    expect(s).toContain('UHR_MAX_MS=60000');
   });
 });
 
@@ -208,7 +223,7 @@ describe.skipIf(!BASH)('linux_sql ad_beitreten — ausgeführt', { timeout: 180_
   it('PTR falsch, Uhr zu weit weg, fremde sssd.conf/krb5.conf/Keytab, Paket nicht verfügbar → Abbruch ohne Änderung', () => {
     for (const [l, text] of [
       [{ ptr: 'anders.ad.3033.at' }, "PTR von 10.203.30.10 ist 'anders.ad.3033.at'"],
-      [{ uhr: '75|-75.2' }, 'Uhrzeit weicht -75.2 s von dc01 ab'],
+      [{ uhr: '-1min 15.2s' }, 'Zeitquelle zuerst einrichten (linux_sql zeitquelle_einrichten) — nichts geändert (Offset -75200 ms, höchstens ±60000 ms)'],
       [{ fremdeSssd: true }, 'nicht von Alfred'],
       [{ krb5: 'fremd' }, 'krb5.conf ist fremd (weder von Alfred noch die unveränderte Vorgabe von krb5-config) — nichts geändert'],
       [{ fremderKeytab: true }, 'enthält fremde Principals (http/web01.ad.3033.at@ad.3033.at'],
@@ -283,6 +298,24 @@ describe.skipIf(!BASH)('linux_sql ad_beitreten — ausgeführt', { timeout: 180_
     expect(r.rc, r.aus).toBe(0);
     expect(r.e).toMatchObject({ zustand: 'schon', beitritt: 'schon', aenderungen: [] });
     expect(r.log).not.toMatch(/adcli join|apt-get|apt-mark|systemctl restart|pam-auth-update/);
+  });
+  it('R11: ohne eingerichtete Zeitquelle (kein Drop-in, nicht synchron, keine Messung) → Abbruch vor jeder Änderung', () => {
+    for (const [l, text] of [
+      [{ zeitquelle: false }, 'fehlt oder ist nicht von Alfred'],
+      [{ sync: 'no' }, '(NTPSynchronized no)'],
+      [{ uhr: '' }, '(keine Messung in timedatectl timesync-status)'],
+    ] as Array<[Lauf, string]>) {
+      const r = beitreten(l);
+      expect(r.rc, r.aus).toBe(1);
+      expect(String(r.e?.fehler)).toContain('Zeitquelle zuerst einrichten (linux_sql zeitquelle_einrichten) — nichts geändert');
+      expect(String(r.e?.fehler)).toContain(text);
+      expect(r.log).not.toMatch(/apt-get|apt-mark|adcli|systemctl|pam-auth-update/);
+      expect(ohneNss(r.dateien)).toEqual([]);
+    }
+    // mit Zeitquelle: Abweichung im Ergebnis (Sekunden aus dem Offset von timesyncd)
+    const ok = beitreten({ uhr: '-12.5ms' });
+    expect(ok.rc, ok.aus).toBe(0);
+    expect(ok.e?.uhrAbweichungS).toBe('-0.013');
   });
   it('nicht beigetreten ohne Einmal-Kennwort → Abbruch mit Hinweis auf computerkonto_vorbereiten', () => {
     const r = beitreten({ einmal: '' });
@@ -468,5 +501,217 @@ describe('linux_sql ad_beitreten — Change-Regeln', () => {
     expect(f({ skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnx01' } }).some(x => x.includes('braucht als Rückweg genau linux_sql.ad_verlassen'))).toBe(true);
     expect(f({ skill: 'linux_sql', aktion: 'ad_verlassen', parameter: { zugang: 'sqllnx02' } }).some(x => x.includes('ad_verlassen muss auf demselben Zugang laufen'))).toBe(true);
     expect(f({ skill: 'linux_sql', aktion: 'ad_verlassen', parameter: { zugang: 'sqllnx01' } })).toEqual([]);
+  });
+});
+
+// ── Ruling R11 — linux_sql zeitquelle_einrichten / zeitquelle_entfernen ─────────────────────────────────────────────────────────
+
+/** Stubs: timedatectl liest $T/zeit; Neustart mit Alfreds Drop-in und antwortendem DC → synchron mit dc02 (Offset aus $T/zeit/offset) */
+const ZEIT_STUBS = String.raw`ZQ_DROPIN="$T/etc/timesyncd.conf.d/alfred-ad.conf"; TIMESYNCD="$T/timesyncd"; DROPIN_ORDNER=("$T/etc/timesyncd.conf.d" "$T/run/timesyncd.conf.d")
+json_text() { local x; x=$(cat); printf '"%s"' "§{x//\"/}"; }
+log() { printf '%s\n' "$*" >>"$T/log"; }
+sleep() { :; }
+timedatectl() {
+  case "$1 §{2:-}" in
+    "show -p") case "$3" in NTPSynchronized) cat "$T/zeit/sync" ;; NTP) cat "$T/zeit/ntp" ;; esac ;;
+    "show-timesync -p") cat "$T/zeit/server" ;;
+    "timesync-status ") cat "$T/zeit/status" ;;
+    "set-ntp true") log "timedatectl set-ntp true"; echo yes >"$T/zeit/ntp" ;;
+  esac
+}
+systemctl() {
+  local u="§{@: -1}"
+  case "$1" in is-active) [ -f "$T/svc/$u" ]; return ;; esac
+  log "systemctl $*"
+  case "$1" in
+    restart)
+      [ ! -f "$T/restart_fehler" ] || { echo "Job for $u failed"; return 1; }
+      touch "$T/svc/$u"
+      if [ -f "$ZQ_DROPIN" ] && [ -f "$T/dc_antwortet" ]; then
+        echo yes >"$T/zeit/sync"; echo 10.203.29.3 >"$T/zeit/server"
+        printf '       Server: 10.203.29.3 (10.203.29.3)\nPoll interval: 32s (min: 32s; max 34min 8s)\n       Offset: %s\n        Delay: 515us\n' "$(cat "$T/zeit/offset")" >"$T/zeit/status"
+      elif [ -f "$ZQ_DROPIN" ]; then
+        echo no >"$T/zeit/sync"; echo 10.203.29.2 >"$T/zeit/server"; printf '       Server: 10.203.29.2 (10.203.29.2)\n Packet count: 0\n' >"$T/zeit/status"
+      else
+        echo no >"$T/zeit/sync"; echo 185.125.190.56 >"$T/zeit/server"; : >"$T/zeit/status"
+      fi ;;
+  esac
+}`.replaceAll('§{', '${');
+
+interface ZeitLauf { rc: number; e?: Record<string, unknown>; aus: string; log: string }
+function zeitLaeufe(skript: string, setup = '', n = 1): { laeufe: ZeitLauf[]; dropin: string; dateien: string[] } {
+  const text = skript.replace('# ALFRED-ABLAUF', `${ZEIT_STUBS}\n# ALFRED-ABLAUF`);
+  const huelle = [
+    'T=$(mktemp -d)', 'mkdir -p "$T/zeit" "$T/svc" "$T/etc/timesyncd.conf.d" "$T/run/timesyncd.conf.d"',
+    // wie live vor R11: timesyncd läuft, versucht ntp.ubuntu.com ohne Antwort
+    `printf '#!/bin/sh\\n' >"$T/timesyncd"; chmod +x "$T/timesyncd"; echo no >"$T/zeit/sync"; echo yes >"$T/zeit/ntp"; echo 185.125.190.56 >"$T/zeit/server"; : >"$T/zeit/status"; echo -1.234ms >"$T/zeit/offset"`,
+    'touch "$T/svc/systemd-timesyncd" "$T/dc_antwortet"; : >"$T/log"',
+    setup, "ALFRED_EINGABE=''",
+    ...Array.from({ length: n }, (_, i) => `( ${text}\n) >"$T/aus" 2>&1; echo "RC=$?"; echo "---AUS${i}"; cat "$T/aus"; echo "---LOG${i}"; cat "$T/log"; : >"$T/log"`),
+    'echo "---DROPIN"; cat "$T/etc/timesyncd.conf.d/alfred-ad.conf" 2>/dev/null', 'echo "---DATEIEN"; (cd "$T" && find etc run -type f | sort)', 'echo "---ENDE"', 'rm -rf "$T"',
+  ].join('\n');
+  const o = spawnSync('bash', [], { input: huelle, encoding: 'utf8' }).stdout;
+  const zw = (a: string, b: string) => o.split(`${a}\n`)[1]?.split(`${b}\n`)[0] ?? '';
+  const rcs = [...o.matchAll(/^RC=(\d+)$/gm)].map(m => Number(m[1]));
+  return {
+    laeufe: Array.from({ length: n }, (_, i) => {
+      const aus = zw(`---AUS${i}`, `---LOG${i}`);
+      return { rc: rcs[i] ?? -1, e: sqlErgebnis<Record<string, unknown>>(aus), aus, log: zw(`---LOG${i}`, i + 1 < n ? `RC=${rcs[i + 1]}` : '---DROPIN') };
+    }),
+    dropin: zw('---DROPIN', '---DATEIEN'), dateien: zw('---DATEIEN', '---ENDE').split('\n').filter(Boolean),
+  };
+}
+const einrichten = (setup = '', n = 1) => zeitLaeufe(zeitquelleEinrichtenSkript(), setup, n);
+const DROPIN_EIGEN = `printf '%s\\n' ${q(zeitquelleDropin())} >"$T/etc/timesyncd.conf.d/alfred-ad.conf"`;
+
+describe('linux_sql zeitquelle_einrichten — Skripttext', () => {
+  it('registriert, gültiges Bash, Drop-in genau: Alfred-Kopf, NTP = die DCs, FallbackNTP leer', () => {
+    expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten)).toBe(true);
+    expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen)).toBe(true);
+    expect(ZEITQUELLE_DCS).toEqual(LINUX_AD.dcs);
+    expect(ZEITQUELLE_DROPIN).toBe('/etc/systemd/timesyncd.conf.d/alfred-ad.conf');
+    expect(zeitquelleDropin()).toBe(`${ZEITQUELLE_KOPF}\n[Time]\nNTP=\nNTP=10.203.29.2 10.203.29.3\nFallbackNTP=`);
+    expect(LINUX_SQL_MIN_ZEITLIMIT_S.zeitquelle_einrichten).toBe(300);
+    expect(LINUX_SQL_MIN_ZEITLIMIT_S.zeitquelle_entfernen).toBe(150);
+    for (const t of [zeitquelleEinrichtenSkript(), zeitquelleEntfernenSkript()]) {
+      if (!BASH) continue;
+      const r = spawnSync('bash', ['-n'], { input: t, encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(0);
+    }
+  });
+});
+
+describe.skipIf(!BASH)('linux_sql zeitquelle_einrichten — ausgeführt', { timeout: 180_000 }, () => {
+  it('synchronisiert → Drop-in, Neustart, TIME_SYNCED-Daten; Wiederholung „schon“ ohne Neustart', () => {
+    const w = einrichten('', 2);
+    const [a, b] = w.laeufe as [ZeitLauf, ZeitLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.e).toMatchObject({ zustand: 'geaendert', server: '10.203.29.3', offsetMs: -1, synchronisiert: true, aenderungen: ['dropin', 'timesyncd-neu-gestartet'] });
+    expect(w.dropin.trimEnd()).toBe(zeitquelleDropin());
+    expect(a.log).toContain('systemctl restart systemd-timesyncd');
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.e).toMatchObject({ zustand: 'schon', server: '10.203.29.3', synchronisiert: true, aenderungen: [] });
+    expect(b.log).not.toContain('systemctl');
+  });
+  it('Offset-Formen von timesyncd: us, ms, s, min — gerundet auf ganze ms', () => {
+    for (const [roh, ms] of [['-21us', 0], ['+999.4ms', 999], ['-0.5004s', -500], ['0', 0]] as Array<[string, number]>) {
+      const r = einrichten(`echo ${q(roh)} >"$T/zeit/offset"`).laeufe[0]!;
+      expect(r.rc, `${roh}: ${r.aus}`).toBe(0);
+      expect(r.e?.offsetMs, roh).toBe(ms);
+    }
+    const gross = einrichten(`echo '+2min 3.5s' >"$T/zeit/offset"`).laeufe[0]!;
+    expect(gross.rc).toBe(1);
+    expect(String(gross.e?.fehler)).toContain('Offset zum DC nach 120 s zu groß (höchstens ±1000 ms; NTPSynchronized yes, Server 10.203.29.3, Offset 123500 ms');
+  });
+  it('NTP aus → timedatectl set-ntp true (gemeldet)', () => {
+    const r = einrichten('echo no >"$T/zeit/ntp"').laeufe[0]!;
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.log).toContain('timedatectl set-ntp true');
+    expect(r.e?.aenderungen).toEqual(['dropin', 'ntp-an', 'timesyncd-neu-gestartet']);
+  });
+  it('nicht synchronisiert nach der Frist → Abbruch mit gelesenem Status, Drop-in bleibt (Rückweg entfernt es)', () => {
+    const w = einrichten('rm -f "$T/dc_antwortet"');
+    const r = w.laeufe[0]!;
+    expect(r.rc).toBe(1);
+    expect(String(r.e?.fehler)).toContain('nach 120 s nicht mit einem DC synchronisiert (NTPSynchronized no, Server 10.203.29.2, Offset keine Messung; timesync-status:');
+    expect(String(r.e?.fehler)).toContain('Packet count: 0');
+    expect(String(r.e?.fehler)).toContain('Drop-in bleibt (Rückweg zeitquelle_entfernen)');
+    expect(w.dropin.trimEnd()).toBe(zeitquelleDropin());
+  });
+  it('chrony/ntpd aktiv, fremdes Drop-in mit NTP=, fremde Datei an Alfreds Stelle → Abbruch ohne Änderung', () => {
+    for (const [setup, text] of [
+      ['touch "$T/svc/chrony"', 'andere Zeitquelle aktiv — nichts geändert (chrony läuft'],
+      ['touch "$T/svc/ntpsec"', 'andere Zeitquelle aktiv — nichts geändert (ntpsec läuft'],
+      [`printf '[Time]\\nNTP=pool.ntp.org\\n' >"$T/run/timesyncd.conf.d/zz-anders.conf"`, 'zz-anders.conf setzt NTP/FallbackNTP (würde die DCs ergänzen oder ersetzen) — nichts geändert'],
+      [`printf '[Time]\\nNTP=10.0.0.1\\n' >"$T/etc/timesyncd.conf.d/alfred-ad.conf"`, 'alfred-ad.conf ist nicht von Alfred (andere Kopfzeile) — nichts geändert'],
+      ['rm -f "$T/timesyncd"', 'systemd-timesyncd fehlt'],
+    ] as Array<[string, string]>) {
+      const w = einrichten(setup);
+      const r = w.laeufe[0]!;
+      expect(r.rc, `${setup}: ${r.aus}`).toBe(1);
+      expect(String(r.e?.fehler)).toContain(text);
+      expect(r.log.trim(), setup).toBe('');
+      expect(w.dropin.startsWith(ZEITQUELLE_KOPF), setup).toBe(false);
+    }
+    // ein fremdes Drop-in ohne NTP-Zeilen stört nicht
+    const ok = einrichten(`printf '[Time]\\nPollIntervalMaxSec=1024\\n' >"$T/etc/timesyncd.conf.d/poll.conf"`).laeufe[0]!;
+    expect(ok.rc, ok.aus).toBe(0);
+  });
+  it('Neustart scheitert → Abbruch, Drop-in bleibt', () => {
+    const w = einrichten('touch "$T/restart_fehler"');
+    expect(w.laeufe[0]!.rc).toBe(1);
+    expect(String(w.laeufe[0]!.e?.fehler)).toContain('systemd-timesyncd startet nicht: Job for systemd-timesyncd failed — Drop-in bleibt');
+    expect(w.dropin.trimEnd()).toBe(zeitquelleDropin());
+  });
+});
+
+describe.skipIf(!BASH)('linux_sql zeitquelle_entfernen — ausgeführt', { timeout: 120_000 }, () => {
+  it('entfernt nur Alfreds Drop-in, startet timesyncd neu; andere Drop-ins bleiben; zweiter Lauf „schon“', () => {
+    const w = zeitLaeufe(zeitquelleEntfernenSkript(), `${DROPIN_EIGEN}; printf '[Time]\\nPollIntervalMaxSec=1024\\n' >"$T/etc/timesyncd.conf.d/poll.conf"`, 2);
+    const [a, b] = w.laeufe as [ZeitLauf, ZeitLauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.e).toMatchObject({ zustand: 'geaendert', belassen: [], aenderungen: ['dropin-entfernt', 'timesyncd-neu-gestartet'] });
+    expect(a.log).toContain('systemctl restart systemd-timesyncd');
+    expect(w.dateien).toEqual(['etc/timesyncd.conf.d/poll.conf']);
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.e).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(b.log.trim()).toBe('');
+  });
+  it('fremde Datei an Alfreds Stelle → bleibt, steht in belassen, kein Neustart', () => {
+    const w = zeitLaeufe(zeitquelleEntfernenSkript(), `printf '[Time]\\nNTP=10.0.0.1\\n' >"$T/etc/timesyncd.conf.d/alfred-ad.conf"`);
+    const r = w.laeufe[0]!;
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(String((r.e?.belassen as string[])[0])).toContain('alfred-ad.conf (nicht von Alfred)');
+    expect(w.dropin).toContain('NTP=10.0.0.1');
+    expect(r.log.trim()).toBe('');
+  });
+});
+
+describe('linux_sql zeitquelle_einrichten/zeitquelle_entfernen — Skill und Change-Regeln', () => {
+  function skill(antwort: Record<string, unknown>) {
+    const aufrufe: Array<{ baustein: string; parameter: unknown; eingabe?: string }> = [];
+    const s = new LinuxSqlSkill({
+      skript: async (_z, baustein, parameter, eingabe) => {
+        aufrufe.push({ baustein, parameter, ...(eingabe ? { eingabe } : {}) });
+        return { code: antwort.zustand === 'fehler' ? 1 : 0, stdout: `ALFRED-SQL ${JSON.stringify(antwort)}\n`, stderr: '' };
+      },
+    });
+    return { s, aufrufe };
+  }
+  const ok = { zustand: 'geaendert', server: '10.203.29.2', offsetMs: -3, synchronisiert: true, aenderungen: ['dropin', 'timesyncd-neu-gestartet'] };
+  it('nur im Change, auch auf sqllnxcfg; TIME_SYNCED; Nachprüfung im Skill (Server ein DC, |Offset| < 1 s)', async () => {
+    const w = skill(ok);
+    expect((await w.s.execute({ action: 'zeitquelle_einrichten', zugang: 'sqllnxcfg' }, {} as never)).error).toContain('nur als Schritt');
+    const r = await w.s.execute({ action: 'zeitquelle_einrichten', zugang: 'sqllnxcfg' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toBe('✅ TIME_SYNCED sqllnxcfg: systemd-timesyncd synchron mit DC 10.203.29.2 (Offset -3 ms; Drop-in /etc/systemd/timesyncd.conf.d/alfred-ad.conf) — geändert: dropin, timesyncd-neu-gestartet');
+    expect(w.aufrufe).toEqual([{ baustein: LINUX_SQL_BAUSTEINE.zeitquelleEinrichten, parameter: {} }]);
+    expect(w.s.pruefeEingabe({ action: 'zeitquelle_einrichten', zugang: 'sqllnxcfg' })).toBeUndefined();
+    expect((await skill({ ...ok, zustand: 'schon', aenderungen: [] }).s.execute({ action: 'zeitquelle_einrichten', zugang: 'sqllnx01' }, imChange)).display).toContain('— nichts zu tun');
+    for (const x of [{ server: '185.125.190.56' }, { offsetMs: 1500 }, { synchronisiert: false }]) {
+      const f = await skill({ ...ok, ...x }).s.execute({ action: 'zeitquelle_einrichten', zugang: 'sqllnx01' }, imChange);
+      expect(f.success).toBe(false);
+      expect(f.error).toContain('Nachprüfung fehlgeschlagen');
+    }
+    const fehler = await skill({ zustand: 'fehler', fehler: 'andere Zeitquelle aktiv — nichts geändert (chrony läuft; systemd-timesyncd wäre wirkungslos)' }).s.execute({ action: 'zeitquelle_einrichten', zugang: 'sqllnx01' }, imChange);
+    expect(fehler.error).toContain('andere Zeitquelle aktiv — nichts geändert');
+  });
+  it('zeitquelle_entfernen: Anzeige mit belassen', async () => {
+    const r = await skill({ zustand: 'schon', belassen: ['/etc/systemd/timesyncd.conf.d/alfred-ad.conf (nicht von Alfred)'], aenderungen: [] }).s.execute({ action: 'zeitquelle_entfernen', zugang: 'sqllnx02' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('belassen (nicht von Alfred): /etc/systemd/timesyncd.conf.d/alfred-ad.conf');
+    expect(r.display).toContain('nichts zu tun');
+  });
+  it('Change: Rückweg genau zeitquelle_entfernen auf demselben Zugang; selbstgeprüft', () => {
+    const sk = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const ctx = { skill: (n: string) => (n === 'linux_sql' ? sk : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    const plan = (rueckweg: unknown) => ({ titel: 'Zeitquelle sqllnxcfg', begruendung: 'I8e Etappe 3, Ruling R11: Zeit von den DCs', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['sqllnxcfg'],
+      ohneSicherungGrund: 'nur ein Drop-in, eigener Rückweg',
+      schritte: [{ titel: 'Zeitquelle', art: 'aktion', skill: 'linux_sql', aktion: 'zeitquelle_einrichten', parameter: { zugang: 'sqllnxcfg' }, zeitlimitS: 300, rueckweg }] });
+    const f = (rw: unknown) => pruefeChangePlan(plan(rw) as never, ctx as never).fehler;
+    expect(f({ keiner: 'geht nicht' }).some(x => x.includes('rueckweg linux_sql.zeitquelle_entfernen (zugang)'))).toBe(true);
+    expect(f({ skill: 'linux_sql', aktion: 'zeitquelle_entfernen', parameter: { zugang: 'sqllnx01' } }).some(x => x.includes('zeitquelle_entfernen muss auf demselben Zugang laufen'))).toBe(true);
+    expect(f({ skill: 'linux_sql', aktion: 'zeitquelle_entfernen', parameter: { zugang: 'sqllnxcfg' } })).toEqual([]);
   });
 });
