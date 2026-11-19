@@ -109,3 +109,13 @@ describe('R21 — unlesbar ist nicht ok', () => {
     expect(linuxSqlZugaenge([{ name: 'sqllnx01', system: 'linux' }, { name: 'dockerhost' }, { name: 'sql01', system: 'windows' }])).toEqual(['sqllnx01', 'dockerhost']);
   });
 });
+
+describe('R21 — lückenhafter Status meldet gelesene Befunde trotzdem', () => {
+  it('Keytab ungeprüft, TLS läuft ab → Befund da, aber nicht erfasst', async () => {
+    const d = { installiert: true, ad: { keytab: { kvno: 3, spns: 6, aktuell: null } }, tls: { zertifikat: '/c', thumbprint: 'ABCDEF0123456789', restTage: 3 } };
+    const r = await linuxSqlUeberwachung(['a'], async () => ({ success: true, data: d }));
+    expect(r.befunde).toHaveLength(1);
+    expect(r.erfasst.size).toBe(0);
+    expect(r.fehler).toHaveLength(1);
+  });
+});

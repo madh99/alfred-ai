@@ -65,7 +65,7 @@ export async function linuxSqlUeberwachung(zugaenge: string[], status: LinuxSqlS
     const s = r.data as LinuxSqlStatus;
     if (s.installiert === false) { uebersprungen.push(z); continue; }
     const luecke = linuxSqlStatusLueckenhaft(s);
-    if (luecke) { fehler.push(`${z}: Status unvollständig — ${luecke}`); continue; }
+    if (luecke) { fehler.push(`${z}: Status unvollständig — ${luecke}`); befunde.push(...linuxSqlBefunde(z, s)); continue; }
     befunde.push(...linuxSqlBefunde(z, s));
     erfasst.add(z);
   }
