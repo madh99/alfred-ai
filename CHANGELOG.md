@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 2: Domänenbeitritt und Zeitquelle (v1903)
+
+- **`linux_sql ad_beitreten` / `ad_verlassen`:** Linux-SQL-Hosts treten der Domäne mit einem vorab angelegten Computerkonto und dessen Einmal-Kennwort bei — ohne AD-Admin-Konto auf dem Host, Kennwort nur über die Standardeingabe. sssd dient nur der Namensauflösung für SQL Server (`access_provider = deny`, sss nicht in PAM), Pakete fest gepinnt. Vorbedingungen (FQDN, DNS, Zeit, fremde Konfiguration) brechen vor jeder Änderung ab; der Rückweg nimmt nur Alfreds eigene Einrichtung zurück und lässt fremde Konfiguration stehen.
+- **`linux_sql zeitquelle_einrichten` / `zeitquelle_entfernen`:** systemd-timesyncd bezieht die Zeit von den Domänencontrollern (ohne Rückfall ins Internet) und weist die Synchronisierung nach; der Status nennt die Zeitquelle.
+
+### Changed
+
+- **`linux_ha` hosts-Block:** Die Knoten stehen mit FQDN zuerst (`<ip> <host>.ad.3033.at <host>`), damit `hostname -f` den vollständigen Namen liefert; Kurznamen, Pacemaker und Corosync bleiben unverändert. Ein Block im alten Format wird als „veraltet“ gemeldet und von `ha_vorbereiten` umgestellt.
+
 ### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 1: Planprüfung, AD-Objekte, Zertifikatsausstellung (v1902)
 
 - **Feste Systemprüfung in der Change-Planprüfung:** Skill-Aktionen, Rückwege und Prüfungen, die an ein Betriebssystem gebunden sind (`linux_sql`, `linux_ha`, `windows_ad`, `windows_pki`, `windows_cluster`, `sql_server`, `pki_lab`), werden abgelehnt, wenn der Zugang das andere System hat — auch für Zugänge, die der Plan selbst anlegt, und für Standard-Changes. Die Meldung nennt den richtigen Weg.
