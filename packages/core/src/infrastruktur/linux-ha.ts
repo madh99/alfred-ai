@@ -14,7 +14,7 @@
  *   verglichen wird ohne Groß-/Kleinschreibung auf „i6300esb“). Kein softdog-Ersatz.
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, shQ, SQL_HILFE } from './linux-sql.js';
+import { sqlKopf, shQ, SQL_HILFE, PY_SQL_ZIEL } from './linux-sql.js';
 
 // ── Feste Werte ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -1707,6 +1707,8 @@ export function fencingBelegGueltig(beleg: FencingBeleg | 'unlesbar' | null | un
  * Funktionen getrennt vom Aufruf (Tests setzen lauf, lies und sqlcmd_lauf ein).
  */
 export const PY_AG_STATUS_FUNK = [
+  // I8e Etappe 3 Task 7: Ziel der Verbindung (Schalter der Zertifikatsprüfung, wie linux_sql)
+  PY_SQL_ZIEL,
   `AGR, AGK, VIPR, PMDATEI, SQLCMD = ${JSON.stringify(HA_AG_RESSOURCE)}, ${JSON.stringify(HA_AG_KLON)}, ${JSON.stringify(HA_AG_VIP_RESSOURCE)}, ${JSON.stringify(HA_PACEMAKER_DATEI)}, ${JSON.stringify(HA_AG_BEFEHLE[0])}`,
   String.raw`AG_TSQL = """SET NOCOUNT ON;
 SELECT 'ALFRED|G|' + g.name + '|' + CAST(g.required_synchronized_secondaries_to_commit AS varchar(5)) + '|' + CAST((SELECT COUNT(*) FROM sys.availability_databases_cluster c WHERE c.group_id = g.group_id) AS varchar(10)) FROM sys.availability_groups g;
@@ -1718,15 +1720,20 @@ SELECT 'ALFRED|R|' + r.replica_server_name + '|' + ISNULL(UPPER(rs.role_desc), '
 def wort(v):
     return re.sub(r"[^A-Za-z0-9_.:-]", "_", v or "")[:80] or None
 def sqlcmd_lauf(login, kw):
-    return subprocess.run([SQLCMD, "-C", "-b", "-x", "-S", "localhost", "-U", login, "-l", "10", "-h", "-1", "-W", "-w", "65535"], input=AG_TSQL, capture_output=True, text=True, timeout=30, env=dict(os.environ, SQLCMDPASSWORD=kw))
+    return subprocess.run([SQLCMD] + sql_ziel() + ["-b", "-x", "-U", login, "-l", "10", "-h", "-1", "-W", "-w", "65535"], input=AG_TSQL, capture_output=True, text=True, timeout=30, env=dict(os.environ, SQLCMDPASSWORD=kw))
 def ag_sql():
     z = (lies(PMDATEI) or "").splitlines()
     if len(z) < 2 or not z[0] or not z[1]:
         return None, None
     try:
         p = sqlcmd_lauf(z[0], z[1])
+    except SqlZielFehler as e:
+        return None, str(e)
     except Exception as e:
         return None, type(e).__name__
+    tf = sql_tls_fehler(p)
+    if tf:
+        return None, tf.replace(z[1], "[geschwärzt]")
     if p.returncode != 0:
         t = " ".join((p.stdout + " " + p.stderr).replace(z[1], "[geschwärzt]").split())
         return None, t[-160:] or ("Exit %d" % p.returncode)

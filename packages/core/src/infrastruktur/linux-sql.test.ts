@@ -163,12 +163,15 @@ describe('I8e Linux-SQL — Skripttext', () => {
     const i = installSkript(INSTALL);
     expect(i).toContain('SA=$(feld sa)');
     expect(i).toContain('MSSQL_SA_PASSWORD="$SA" MSSQL_PID="$PID" /opt/mssql/bin/mssql-conf -n setup accept-eula');
-    expect(i).toContain('SQLCMDPASSWORD="$SA" "$SQLCMD" -C -b -x -S localhost -U sa');
+    // Task 7: Ziel (-C -S localhost bzw. -N -S <fqdn>) nur aus sql_ziel
+    expect(i).toContain('SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U sa');
     const l = sqlSkript('login', LOGIN);
     expect(l).toContain('KW=$(feld kennwort)');
     // T-SQL mit Kennwort geht über stdin, nicht -Q
     expect(l).toContain('sql "$TSQL"');
-    expect(l).toMatch(/sql\(\) \{[^\n]*<<<"\$1"/);
+    // Task 7: sql → sqlcmd_sa (Ziel aus sql_ziel), T-SQL weiter über stdin
+    expect(l).toMatch(/sql\(\) \{[^\n]*sqlcmd_sa "\$@"/);
+    expect(l).toMatch(/sqlcmd_sa\(\) \{[^\n]*<<<"\$1"/);
     expect(l).not.toMatch(/-Q "?\$TSQL/);
     expect(l).toContain('KW_SQL=${KW//"$Q1"/"$Q1$Q1"}');
     expect(l).toContain('TSQL=${VORLAGE//@@KW@@/"$KW_SQL"}');

@@ -196,7 +196,10 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     'kerberos_einrichten', 'kerberos_entfernen',
     // Etappe 3 Task 6 — TLS: Anforderung (Signatur, Modulus = Schlüssel, Subject, SANs), Einspielen (Kette, Modulus, SANs, Laufzeit,
     // Vertrauensspeicher, Rechte, mssql-conf und Manifest zurückgelesen); Rückweg: mssql-conf-Werte nicht mehr Alfreds, Manifest weg
-    'tls_anfordern', 'tls_einspielen', 'tls_entfernen']),
+    'tls_anfordern', 'tls_einspielen', 'tls_entfernen',
+    // Etappe 3 Task 7 — Zertifikatsprüfung: an prüft Zertifikat (Manifest, mssql.conf, Ablauf, Kette + Name), Probe -N, danach sql_ziel + Verbindung
+    // über den Schalter (sonst voriger Zustand zurück); aus prüft, dass kein Schalter mehr gelesen wird
+    'tls_pruefung_schalten']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -233,6 +236,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['kerberos_einrichten', { skill: 'linux_sql', aktion: 'kerberos_entfernen', text: 'linux_sql.kerberos_entfernen (zugang)', parameter: gleicherZugang('kerberos_entfernen') }],
     // Etappe 3 Task 6 — TLS: Rückweg genau linux_sql.tls_entfernen auf demselben Zugang
     ['tls_einspielen', { skill: 'linux_sql', aktion: 'tls_entfernen', text: 'linux_sql.tls_entfernen (zugang)', parameter: gleicherZugang('tls_entfernen') }],
+    // Etappe 3 Task 7 — Zertifikatsprüfung: Rückweg genau tls_pruefung_schalten mit umgekehrtem an auf demselben Zugang
+    ['tls_pruefung_schalten', { skill: 'linux_sql', aktion: 'tls_pruefung_schalten', text: 'linux_sql.tls_pruefung_schalten (zugang, an umgekehrt)', parameter: schalterZurueck }],
   ]),
 };
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
@@ -242,6 +247,12 @@ function gleicherZugang(aktion: string) {
     const [h, r] = [n(hin.zugang), n(rueck.zugang)];
     return h && r && h !== r ? `${aktion} muss auf demselben Zugang laufen — rueckweg zugang ${h} (nicht ${r})` : undefined;
   };
+}
+/** Task 7: der Rückweg von tls_pruefung_schalten kehrt an um (true ↔ false) — derselbe Zugang (Verweise erst zur Laufzeit) */
+function schalterZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const z = gleicherZugang('tls_pruefung_schalten')(hin, rueck); if (z) return z;
+  if (typeof hin.an === 'boolean' && rueck.an !== !hin.an) return `tls_pruefung_schalten: rueckweg an = ${String(!hin.an)} (Hinweg an = ${String(hin.an)})`;
+  return undefined;
 }
 /** Task 6: der Rückweg eines Failovers führt zurück zum bisherigen Primär — zugang/ziel genau vertauscht (Verweise erst zur Laufzeit) */
 function failoverZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {

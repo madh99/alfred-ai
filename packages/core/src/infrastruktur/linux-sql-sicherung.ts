@@ -31,7 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, SQL_HILFE, SA_LESEN, shQ, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, SQLLNX_KOPIE_STATUS, SQLLNX_ZUGANGSDATEI, SQLCMD } from './linux-sql.js';
+import { sqlKopf, SQL_HILFE, SA_LESEN, shQ, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN, SQLLNX_KOPIE_STATUS, SQLLNX_ZUGANGSDATEI, SQLCMD, PY_SQL_ZIEL } from './linux-sql.js';
 import { HA_PACEMAKER_DATEI } from './linux-ha.js';
 
 export const LINUX_SQL_SICHERUNG_BAUSTEINE = {
@@ -1394,6 +1394,7 @@ export function sicherungJetztSkript(p: SicherungJetztParameter): string {
 export const PY_ROLLEN = String.raw`import configparser, json, os, re, subprocess, sys
 PMDATEI = ${JSON.stringify(HA_PACEMAKER_DATEI)}
 SQLCMD = ${JSON.stringify(SQLCMD)}
+${PY_SQL_ZIEL}
 KONF = '/var/opt/mssql/mssql.conf'
 ROLLEN = ('PRIMARY', 'SECONDARY', 'RESOLVING')
 DB = re.compile(r'^[A-Za-z][A-Za-z0-9_]{2,63}$')
@@ -1418,7 +1419,7 @@ def hadr_an():
         return None
     return cp.get('hadr', 'hadrenabled', fallback='0').strip() != '0'
 def sqlcmd_lauf(login, kw):
-    return subprocess.run([SQLCMD, '-C', '-b', '-x', '-S', 'localhost', '-U', login, '-l', '10', '-h', '-1', '-W', '-w', '65535'], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=kw))
+    return subprocess.run([SQLCMD] + sql_ziel() + ['-b', '-x', '-U', login, '-l', '10', '-h', '-1', '-W', '-w', '65535'], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=kw))
 def rollen():
     z = (lies(PMDATEI) or '').splitlines()
     if len(z) < 2 or not z[0] or not z[1]:
@@ -1431,9 +1432,15 @@ def rollen():
         return {'fehler': 'Zugangsdatei des Resource-Agents fehlt - Rolle nicht lesbar'}
     try:
         p = sqlcmd_lauf(z[0], z[1])
+    except SqlZielFehler as e:
+        return {'fehler': str(e)}
     except Exception as e:
         return {'fehler': 'sqlcmd: ' + type(e).__name__}
     if p.returncode != 0:
+        # Task 7: mit Schalter der Zertifikatsprüfung die feste Meldung (vorn, nie abgeschnitten) — kein zweiter Versuch ohne Prüfung
+        tf = sql_tls_fehler(p)
+        if tf:
+            return {'fehler': tf.replace(z[1], '[geschwärzt]')}
         t = ' '.join(((p.stdout or '') + ' ' + (p.stderr or '')).replace(z[1], '[geschwärzt]').split())
         return {'fehler': t[-160:] or ('Exit %d' % p.returncode)}
     r = {}
@@ -1529,7 +1536,8 @@ export function wiederherstellenSkript(p: WiederherstellenParameter): string {
   return [
     ...sqlKopf(LINUX_SQL_SICHERUNG_BAUSTEINE.wiederherstellen, { datenbank: db, ziel: z }),
     ...SQL_HILFE,
-    'sqls() { SQLCMDPASSWORD="$SA" "$SQLCMD" -C -b -x -S localhost -U sa -l 30 -h -1 -W -w 65535 -s "|" <<<"$1"; }',
+    // Task 7: wie sql (Ziel über sql_ziel, Schalter der Zertifikatsprüfung), Spalten mit „|“ getrennt
+    'sqls() { sql "$1" -s "|"; }',
     ...FS01_HILFE(z),
     `DB=${shQ(db)}`,
     `ZIEL=${shQ(z)}`,

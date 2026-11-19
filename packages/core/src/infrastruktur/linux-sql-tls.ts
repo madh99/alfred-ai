@@ -12,7 +12,9 @@
  *    forceencryption (Task 8) und KEIN Neustart (neustartNoetig im Ergebnis; der Change startet rollierend neu).
  *  - tls_entfernen (Rückweg von tls_einspielen): bei network.forceencryption 1 Abbruch ohne Änderung (ohne Zertifikat startete SQL Server
  *    nicht); mssql-conf-Werte nur, wenn es Alfreds sind; Dateien nur, wenn ihr SHA-256 im Manifest steht; `tls.key.neu` nur mit 0400
- *    mssql:mssql. Fremdes bleibt (belassen).
+ *    mssql:mssql. Fremdes bleibt (belassen). Abbruch, solange die Zertifikatsprüfung (Task 7) an ist.
+ *  - tls_pruefung_schalten (Task 7): Schalter TLS_PRUEF_SCHALTER für Alfreds eigene SQL-Verbindungen (sql_ziel in linux-sql.ts) — an nur
+ *    mit gültigem, genutztem Zertifikat und gelungener Probe `sqlcmd -N -S <fqdn>`; aus = Rückweg.
  *
  * Der private Schlüssel erscheint nie in Ergebnis, Log, Fehlertext oder Tresor: auf ihn laufen nur `openssl rsa -noout -modulus` und
  * `openssl pkey -pubout` (öffentlicher Teil); die Eingabe-Prüfung weist jeden „PRIVATE“-Block zurück.
@@ -20,13 +22,13 @@
 import { X509Certificate, createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import {
-  LINUX_SQL_BAUSTEINE, PY_CONF, shQ, sqlKopf, AD_DOMAENE_LINUX,
+  LINUX_SQL_BAUSTEINE, PY_CONF, shQ, sqlKopf, AD_DOMAENE_LINUX, SQL_HILFE, SA_LESEN, TLS_PRUEF_SCHALTER,
   TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE,
 } from './linux-sql.js';
 import { MSSQL_CONF_PROGRAMM, MSSQL_CONF_DATEI } from './linux-sql-ad.js';
 import { linuxTlsSans } from './windows-sqltls-linux.js';
 
-export { TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE };
+export { TLS_PRUEF_SCHALTER, TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE };
 
 export const TLS_BITS = 3072;
 /** Mindest-Restlaufzeit beim Einspielen (Tage) */
@@ -192,6 +194,8 @@ function werte(p?: TlsParameter): string[] {
     `MSSQLCONF=${shQ(MSSQL_CONF_PROGRAMM)}`,
     `MSSQL_CONF=${shQ(MSSQL_CONF_DATEI)}`,
     `PY_CONF=${shQ(PY_CONF)}`,
+    // Task 7: Schalter der Zertifikatsprüfung (gleicher Name wie in SQL_HILFE)
+    `TLS_SCHALTER=${shQ(TLS_PRUEF_SCHALTER)}`,
     ...(p ? [
       `CN=${shQ(p.cn)}`,
       `SANS=(${p.sans.map(shQ).join(' ')})`,
@@ -469,6 +473,8 @@ export function tlsEinspielenSkript(p: TlsEinspielenParameter): string {
 
 const ENTFERNEN_KOERPER = sh(String.raw`# ohne Zertifikat startet SQL Server mit erzwungener Verschlüsselung nicht — dann zuerst das Erzwingen zurücknehmen
 if [ -x "$MSSQLCONF" ] && [ "$(lies network forceencryption)" = 1 ]; then abbruch "mssql.conf network.forceencryption = 1 — zuerst das Erzwingen zurücknehmen (ohne Zertifikat startet SQL Server nicht); nichts geändert"; fi
+# Task 7: ohne Zertifikat scheiterte jede Verbindung Alfreds mit gesetztem Schalter — zuerst tls_pruefung_schalten an=false
+if [ -e "$TLS_SCHALTER" ] || [ -L "$TLS_SCHALTER" ]; then abbruch "Zertifikatsprüfung ist an ($TLS_SCHALTER) — zuerst tls_pruefung_schalten an=false; nichts geändert"; fi
 SQL_AEND=0; CA_WEG=0
 # mssql-conf nur, wenn die Werte Alfreds sind; fremde Werte bleiben (belassen)
 if [ -x "$MSSQLCONF" ]; then
@@ -519,8 +525,100 @@ export function tlsEntfernenSkript(): string {
   ].join('\n');
 }
 
+// ── tls_pruefung_schalten (Task 7) ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** an=true mit dem FQDN des Hosts (= CN des Zertifikats, Name der Probe-Verbindung); an=false ohne weitere Angaben */
+export interface TlsPruefungParameter { an: boolean; cn?: string }
+
+export function pruefeTlsPruefung(p: unknown): string | undefined {
+  const x = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+  if (typeof x.an !== 'boolean') return 'an: true oder false';
+  if (!x.an) return x.cn === undefined ? undefined : 'cn: nur mit an=true';
+  return TLS_HOSTS.some(h => x.cn === `${h}.${AD_DOMAENE_LINUX}`) ? undefined : `cn: ${TLS_HOSTS.map(h => `${h}.${AD_DOMAENE_LINUX}`).join(', ')}`;
+}
+
+/** Probe: Anmeldung als sa über -N gegen den FQDN, Verschlüsselung der eigenen Verbindung laut SQL Server */
+const PRUEF_PROBE = "SET NOCOUNT ON; SELECT N'ALFRED|' + CAST(c.encrypt_option AS nvarchar(10)) FROM sys.dm_exec_connections c WHERE c.session_id = @@SPID";
+
+const SCHALTEN_AN_KOERPER = sh(String.raw`# ── Phase 1: prüfen — bis hierhin wird nichts geändert (Review Focus 1: Zertifikat fehlt/abgelaufen/nicht prüfbar → Abbruch) ──
+command -v openssl >/dev/null 2>&1 || abbruch "openssl fehlt — Schalter nicht gesetzt"
+[ -x "$SQLCMD" ] || abbruch "$SQLCMD fehlt — Schalter nicht gesetzt"
+if [ -e "$TLS_SCHALTER" ] || [ -L "$TLS_SCHALTER" ]; then { [ -f "$TLS_SCHALTER" ] && [ ! -L "$TLS_SCHALTER" ]; } || abbruch "$TLS_SCHALTER ist keine reguläre Datei — nichts geändert"; fi
+{ [ -f "$CRT" ] && [ ! -L "$CRT" ]; } || abbruch "$CRT fehlt — zuerst tls_einspielen; Schalter nicht gesetzt"
+alfreds "$CRT" || abbruch "$CRT steht nicht mit diesem Inhalt in Alfreds Manifest $MANIFEST (nicht von tls_einspielen) — Schalter nicht gesetzt"
+[ "$(lies network tlscert)" = "$CRT" ] || abbruch "mssql.conf network.tlscert ist nicht $CRT — Schalter nicht gesetzt"
+openssl x509 -noout -checkend 0 -in "$CRT" >/dev/null 2>&1 || abbruch "$CRT ist abgelaufen oder nicht lesbar — Schalter nicht gesetzt"
+a=$(openssl verify -purpose sslserver -verify_hostname "$CN" -CAfile "$CA_BUNDLE" -untrusted "$CA_ISS" "$CRT" 2>&1) || abbruch "$CRT: Kette gegen den Vertrauensspeicher $CA_BUNDLE nicht prüfbar oder $CN nicht im Zertifikat ($(kurz "$a")) — Schalter nicht gesetzt"
+# Probe genau so, wie Alfred mit Schalter verbindet (-N, Zertifikat und Name geprüft, ohne Vertrauen auf jedes Zertifikat)
+SQL_ZIEL=(-N -S "$CN")
+a=$(sqlcmd_sa "$PROBE_Q" 2>&1) || abbruch "$SQL_TLS_FEHLER — Probe -N -S $CN als sa: $(sql_fehlerzeile "$a"); Schalter nicht gesetzt"
+[ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || abbruch "Probe: Verbindung zu $CN laut SQL Server nicht verschlüsselt ($(kurz "$a")) — Schalter nicht gesetzt"
+# ── Phase 2: Schalter (Zwischendatei im selben Ordner, Rechte vor dem Inhalt, mv) ──
+ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-tls.XXXXXX"); chmod 0700 "$ALFRED_TMP"
+printf '%s\n' "$CN" >"$ALFRED_TMP/schalter"
+ALT=''
+if [ -f "$TLS_SCHALTER" ]; then cp -- "$TLS_SCHALTER" "$ALFRED_TMP/schalter.alt"; ALT=1; fi
+if ! cmp -s -- "$ALFRED_TMP/schalter" "$TLS_SCHALTER"; then
+  [ -d "§{TLS_SCHALTER%/*}" ] || { mkdir -p "§{TLS_SCHALTER%/*}"; chmod 0755 "§{TLS_SCHALTER%/*}"; }
+  schreibe "$TLS_SCHALTER" "$ALFRED_TMP/schalter" 0644 root:root; aend schalter
+elif [ "$(rechte "$TLS_SCHALTER")" != '644 root root' ]; then
+  chown root:root "$TLS_SCHALTER"; chmod 0644 "$TLS_SCHALTER"; aend schalter-rechte
+fi
+# ── Selbstprüfung über denselben Weg wie jede Verbindung Alfreds (sql_ziel + sql); scheitert sie, kommt der vorige Zustand zurück ──
+zurueck() {
+  if [ "$GEAENDERT" = 1 ]; then
+    if [ -n "$ALT" ]; then schreibe "$TLS_SCHALTER" "$ALFRED_TMP/schalter.alt" 0644 root:root; else rm -f -- "$TLS_SCHALTER"; fi
+    abbruch "$1 — Schalter zurückgenommen (voriger Zustand)"
+  fi
+  abbruch "$1"
+}
+cmp -s -- "$ALFRED_TMP/schalter" "$TLS_SCHALTER" || zurueck "Selbstprüfung: $TLS_SCHALTER enthält nicht $CN"
+[ "$(rechte "$TLS_SCHALTER")" = '644 root root' ] || zurueck "Selbstprüfung: $TLS_SCHALTER ist nicht 0644 root:root"
+sql_ziel || zurueck "Selbstprüfung: $SQL_ZIEL_FEHLER"
+{ [ -n "$SQL_TLS" ] && [ "§{SQL_ZIEL[*]}" = "-N -S $CN" ]; } || zurueck "Selbstprüfung: Verbindungsziel §{SQL_ZIEL[*]} statt -N -S $CN"
+a=$(sql "$PROBE_Q" 2>&1) || zurueck "Selbstprüfung: $SQL_TLS_FEHLER: $(sql_fehlerzeile "$a")"
+[ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || zurueck "Selbstprüfung: Verbindung zu $CN nicht verschlüsselt"
+if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
+ergebnis "{\"zustand\":\"$ZU\",\"schalter\":\"an\",\"fqdn\":\"$CN\",\"verschluesselt\":true,\"datei\":\"$TLS_SCHALTER\",\"aenderungen\":[$AJ]}"`);
+
+const SCHALTEN_AUS_KOERPER = sh(String.raw`# Rückweg: Schalter weg — Alfreds Verbindungen gehen wieder ohne Zertifikatsprüfung an localhost
+if [ -e "$TLS_SCHALTER" ] || [ -L "$TLS_SCHALTER" ]; then
+  { [ -f "$TLS_SCHALTER" ] || [ -L "$TLS_SCHALTER" ]; } || abbruch "$TLS_SCHALTER ist keine Datei — nichts geändert"
+  rm -f -- "$TLS_SCHALTER"; aend schalter-entfernt
+fi
+# ── Selbstprüfung ──
+{ [ ! -e "$TLS_SCHALTER" ] && [ ! -L "$TLS_SCHALTER" ]; } || abbruch "Selbstprüfung: $TLS_SCHALTER ist noch da"
+{ sql_ziel && [ -z "$SQL_TLS" ]; } || abbruch "Selbstprüfung: Alfreds Verbindungen lesen noch einen Schalter"
+if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
+ergebnis "{\"zustand\":\"$ZU\",\"schalter\":\"aus\",\"datei\":\"$TLS_SCHALTER\",\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Task 7 — Zertifikatsprüfung bei Alfreds eigenen SQL-Verbindungen dieses Hosts schalten (Schalterdatei TLS_PRUEF_SCHALTER, root 0644,
+ * Inhalt = FQDN). an=true (sa über stdin) nur, wenn tls.crt Alfreds ist (Manifest), von mssql.conf genutzt wird, nicht abgelaufen ist,
+ * gegen den Vertrauensspeicher mit Namen prüfbar ist und die Probe `sqlcmd -N -S <fqdn>` verschlüsselt gelingt; Selbstprüfung über
+ * sql_ziel + sql (sonst voriger Zustand zurück). an=false entfernt den Schalter (Rückweg). Ergebnis { zustand, schalter, fqdn?,
+ * verschluesselt?, datei, aenderungen }. Zeit: LINUX_SQL_ZEIT_MS.tlsPruefungSchalten
+ */
+export function tlsPruefungSchaltenSkript(p: TlsPruefungParameter): string {
+  const f = pruefeTlsPruefung(p); if (f) throw new Error(f);
+  if (!p.an) {
+    return [...sqlKopf(LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, { an: false }), ...werte(), ...SQL_HILFE, HILFEN, MARKE, SCHALTEN_AUS_KOERPER].join('\n');
+  }
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, { an: true, cn: p.cn }),
+    ...werte(),
+    `CN=${shQ(p.cn!)}`,
+    `PROBE_Q=${shQ(PRUEF_PROBE)}`,
+    ...SQL_HILFE,
+    HILFEN,
+    ...SA_LESEN,
+    SCHALTEN_AN_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<TlsParameter>(LINUX_SQL_BAUSTEINE.tlsAnfordern, tlsAnfordernSkript);
 registriereLinuxBaustein<TlsEinspielenParameter>(LINUX_SQL_BAUSTEINE.tlsEinspielen, tlsEinspielenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.tlsEntfernen, () => tlsEntfernenSkript());
+registriereLinuxBaustein<TlsPruefungParameter>(LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, tlsPruefungSchaltenSkript);

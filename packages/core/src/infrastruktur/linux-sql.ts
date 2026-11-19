@@ -71,6 +71,8 @@ export const LINUX_SQL_BAUSTEINE = {
   kerberosEinrichten: 'sql.kerberos_einrichten', kerberosEntfernen: 'sql.kerberos_entfernen',
   // I8e Etappe 3 Task 6 — TLS: Schlüssel + Anforderung auf dem Host, Zertifikat geprüft einspielen, Rückweg (Erzeuger in linux-sql-tls.ts)
   tlsAnfordern: 'sql.tls_anfordern', tlsEinspielen: 'sql.tls_einspielen', tlsEntfernen: 'sql.tls_entfernen',
+  // I8e Etappe 3 Task 7 — Zertifikatsprüfung bei Alfreds eigenen SQL-Verbindungen schalten (Erzeuger in linux-sql-tls.ts)
+  tlsPruefungSchalten: 'sql.tls_pruefung_schalten',
 } as const;
 
 /**
@@ -100,6 +102,10 @@ export const TLS_MANIFEST_KOPF = '# Alfred I8e — linux_sql tls_einspielen (SHA
 /** Schalter der Zertifikatsprüfung für Alfreds eigene Verbindungen (Task 7; root 0644, Inhalt = FQDN) */
 export const TLS_PRUEF_SCHALTER = '/etc/alfred/sqllnx-tls-pruefen';
 export const TLS_PROTOKOLLE = '1.2,1.3';
+/** Task 7 — feste Meldung, wenn Alfreds Verbindung mit gesetztem Schalter scheitert (nie ein zweiter Versuch mit -C) */
+export const TLS_PRUEF_FEHLER = `Zertifikatsprüfung fehlgeschlagen (Schalter ${TLS_PRUEF_SCHALTER})`;
+/** Task 7 — Inhalt der Schalterdatei: genau eine Zeile <host>.ad.3033.at (Kurzname aus Kleinbuchstaben, Ziffern, -) */
+export const TLS_PRUEF_FQDN_MUSTER = `^[a-z0-9-]+\\.${AD_DOMAENE_LINUX.replace(/\./g, '\\.')}$`;
 
 /**
  * Ruling R11 (I8e Etappe 3, L1-Fakten 19.11.2026): systemd-timesyncd auf den Linux-SQL-Hosts versuchte ntp.ubuntu.com und lief nur in
@@ -121,6 +127,8 @@ export const LINUX_SQL_ZEIT_MS = {
   kerberosEinrichten: 180_000, kerberosEntfernen: 90_000,
   // Task 6: RSA-3072-Schlüssel erzeugen + Anforderung; Prüfen + Einspielen + update-ca-certificates — ohne Neustart
   tlsAnfordern: 120_000, tlsEinspielen: 150_000, tlsEntfernen: 90_000,
+  // Task 7: openssl-Prüfung, zwei Verbindungen (Probe vor, Selbstprüfung nach dem Schreiben), je Anmeldegrenze 30 s
+  tlsPruefungSchalten: 120_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -189,11 +197,86 @@ export function sqlKopf(baustein: string, p: Record<string, unknown>, praefix = 
   ];
 }
 
-/** sqlcmd lokal als sa: Kennwort nur in SQLCMDPASSWORD des einen Prozesses, T-SQL über stdin, ohne Variablenersetzung (-x) */
+/**
+ * I8e Etappe 3 Task 7 — Ziel jeder sqlcmd-Verbindung Alfreds (Bash): EINZIGE Stelle mit `-C`. Ohne Schalterdatei wie bisher
+ * `-C -S localhost`; mit Schalterdatei `-N -S <fqdn aus der Datei>` (Verschlüsselung Pflicht, Zertifikat gegen den Vertrauensspeicher
+ * des Hosts und den Namen geprüft). Ein ungültiger oder unlesbarer Schalter ist ein Fehler (fail-closed) — nie Rückfall auf `-C`.
+ * Setzt das Feld SQL_ZIEL (statt es auszugeben: so kann bereit() auf oberster Ebene abbrechen, nicht nur in einer Subshell),
+ * SQL_TLS (1 = Schalter gesetzt) und bei Fehler SQL_ZIEL_FEHLER.
+ */
+const SQL_ZIEL_BASH = `sql_ziel() {
+  local r
+  SQL_ZIEL=(); SQL_TLS=''; SQL_ZIEL_FEHLER=''
+  if [ ! -e "$TLS_SCHALTER" ] && [ ! -L "$TLS_SCHALTER" ]; then SQL_ZIEL=(-C -S localhost); return 0; fi
+  SQL_TLS=1
+  if ! r=$(cat -- "$TLS_SCHALTER" 2>/dev/null && printf x); then SQL_ZIEL_FEHLER="Schalter $TLS_SCHALTER nicht lesbar — keine Verbindung ohne Zertifikatsprüfung"; return 1; fi
+  r=\${r%x}; r=\${r%$'\\n'}
+  if ! [[ "$r" =~ $SQL_FQDN_MUSTER ]]; then SQL_ZIEL_FEHLER="Schalter $TLS_SCHALTER ungültig (erwartet genau eine Zeile <host>.${AD_DOMAENE_LINUX}) — keine Verbindung ohne Zertifikatsprüfung"; return 1; fi
+  SQL_ZIEL=(-N -S "$r")
+}`;
+
+/**
+ * Python-Gegenstück zu sql_ziel (Task 7) — wird in jedes Python-Programm mit sqlcmd eingebunden (Status, Rollen der Sicherung,
+ * AG-Lage von linux_ha): `sql_ziel()` liefert die Argumente oder wirft SqlZielFehler (ungültiger Schalter, nie `-C`);
+ * `sql_tls_fehler(p)` macht aus einem gescheiterten Lauf mit gesetztem Schalter und sqlcmd-Verbindungsfehler („Sqlcmd: Error …“ —
+ * T-SQL-Fehler heißen „Msg …“) die feste Meldung samt Fehlerzeile, sonst None.
+ */
+export const PY_SQL_ZIEL = String.raw`import os, re
+SQL_SCHALTER = ${JSON.stringify(TLS_PRUEF_SCHALTER)}
+SQL_TLS_FEHLER = ${JSON.stringify(TLS_PRUEF_FEHLER)}
+SQL_FQDN = re.compile(${JSON.stringify(TLS_PRUEF_FQDN_MUSTER)})
+class SqlZielFehler(Exception):
+    pass
+def sql_ziel():
+    if not os.path.lexists(SQL_SCHALTER):
+        return ["-C", "-S", "localhost"]
+    try:
+        with open(SQL_SCHALTER, "rb") as f:
+            t = f.read(4096)
+    except Exception:
+        raise SqlZielFehler("Schalter " + SQL_SCHALTER + " nicht lesbar - keine Verbindung ohne Zertifikatsprüfung")
+    w = t[:-1] if t.endswith(b"\n") else t
+    try:
+        w = w.decode("ascii")
+    except UnicodeDecodeError:
+        w = ""
+    if not SQL_FQDN.match(w) or "\n" in w:
+        raise SqlZielFehler("Schalter " + SQL_SCHALTER + " ungültig (erwartet genau eine Zeile <host>.${AD_DOMAENE_LINUX}) - keine Verbindung ohne Zertifikatsprüfung")
+    return ["-N", "-S", w]
+def sql_tls_fehler(p):
+    if p.returncode == 0 or not os.path.lexists(SQL_SCHALTER):
+        return None
+    for z in ((p.stderr or "") + "\n" + (p.stdout or "")).splitlines():
+        if "Sqlcmd: Error" in z:
+            return SQL_TLS_FEHLER + ": " + " ".join(z.split())[:300]
+    return None`;
+
+/**
+ * sqlcmd lokal als sa: Kennwort nur in SQLCMDPASSWORD des einen Prozesses, T-SQL über stdin, ohne Variablenersetzung (-x).
+ * Task 7: Ziel über sql_ziel (Schalter /etc/alfred/sqllnx-tls-pruefen); `sqlcmd_sa` nutzt das gesetzte SQL_ZIEL (für die Probe von
+ * tls_pruefung_schalten), `sql` liest den Schalter bei jedem Aufruf. bereit() bricht mit gesetztem Schalter selbst ab
+ * („Zertifikatsprüfung fehlgeschlagen …“ + sqlcmd-Fehlerzeile) — TLS-/Zertifikatsfehler sofort, ohne die 120 s zu warten.
+ */
 export const SQL_HILFE = [
   `SQLCMD=${shQ(SQLCMD)}`,
-  'sql() { SQLCMDPASSWORD="$SA" "$SQLCMD" -C -b -x -S localhost -U sa -l 30 -h -1 -W -w 65535 <<<"$1"; }',
-  'bereit() { local i; for i in $(seq 1 60); do if sql "SELECT 1" >/dev/null 2>&1; then return 0; fi; sleep 2; done; return 1; }',
+  `TLS_SCHALTER=${shQ(TLS_PRUEF_SCHALTER)}`,
+  `SQL_FQDN_MUSTER=${shQ(TLS_PRUEF_FQDN_MUSTER)}`,
+  `SQL_TLS_FEHLER=${shQ(TLS_PRUEF_FEHLER)}`,
+  SQL_ZIEL_BASH,
+  'sqlcmd_sa() { SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U sa -l 30 -h -1 -W -w 65535 "${@:2}" <<<"$1"; }',
+  'sql() { sql_ziel || { printf \'%s\\n\' "$SQL_ZIEL_FEHLER" >&2; return 1; }; sqlcmd_sa "$@"; }',
+  'sql_fehlerzeile() { local z; z=$(grep -m 1 "Sqlcmd: Error" <<<"$1" | tr -d "\\r" || true); [ -n "$z" ] || z=$(kurz "$1"); printf "%s" "${z:0:300}"; }',
+  'bereit() {',
+  '  local i a=""',
+  '  sql_ziel || abbruch "$SQL_ZIEL_FEHLER"',
+  '  for i in $(seq 1 60); do',
+  '    if a=$(sql "SELECT 1" 2>&1); then return 0; fi',
+  '    if [ -n "$SQL_TLS" ]; then case "$a" in *"SSL Provider"*|*[Cc]ertificate*|*"target principal"*) break ;; esac; fi',
+  '    sleep 2',
+  '  done',
+  '  [ -z "$SQL_TLS" ] || abbruch "$SQL_TLS_FEHLER: $(sql_fehlerzeile "$a")"',
+  '  return 1',
+  '}',
   'alfred_zeile() { grep "^ALFRED|" <<<"$1" | head -n 1 | tr -d "\\r" || true; }',
   'kurz() { printf "%s" "$1" | tail -n 6 | tr "\\r\\n" "  "; }',
 ];
@@ -867,6 +950,8 @@ export const PY_STATUS = [
   `ZIELE = ${JSON.stringify([...LINUX_SQL_ZIELE])}`,
   `SQLCMD = ${JSON.stringify(SQLCMD)}`,
   `TSQL = ${JSON.stringify(STATUS_TSQL)}`,
+  // Task 7: Ziel der Verbindung (Schalter der Zertifikatsprüfung)
+  PY_SQL_ZIEL,
   'roh = sys.stdin.read().strip()',
   'sa = ""',
   'if roh:',
@@ -1014,7 +1099,8 @@ export const PY_STATUS = [
   // network.forceencryption 1, Schalter der Zertifikatsprüfung (Task 7). Den Schlüssel liest der Status nie.
   'import datetime as _dt',
   'tls = {"zertifikat": g("network", "tlscert"), "erzwungen": g("network", "forceencryption") == "1", "thumbprint": None, "gueltigBis": None, "restTage": None}',
-  `tls["pruefSchalter"] = os.path.isfile(${JSON.stringify(TLS_PRUEF_SCHALTER)})`,
+  // Task 7: dieselbe Datei wie sql_ziel (TLS_PRUEF_SCHALTER, dort SQL_SCHALTER); vorhanden = an — ein ungültiger Inhalt zeigt sich als sqlFehler
+  `tls["pruefSchalter"] = os.path.lexists(${JSON.stringify(TLS_PRUEF_SCHALTER)})`,
   'if tls["zertifikat"] and os.path.isfile(tls["zertifikat"]):',
   '    c, v = lauf("openssl", "x509", "-noout", "-fingerprint", "-sha1", "-enddate", "-in", tls["zertifikat"])',
   '    for z in v.splitlines() if c == 0 else []:',
@@ -1048,13 +1134,16 @@ export const PY_STATUS = [
   '    try:',
   // Realfall 17.11. (sqllnx01): sqlcmd lehnt „-h -1“ zusammen mit „-y 0“ ab („mutually exclusive“). -y 0 (volle Länge der JSON-Spalte)
   // bleibt; die Kopfzeilen (Spaltenname, Trennlinie) schneidet sql_json ab — das JSON reicht von der ersten „{“ bis zur letzten „}“.
-  '        p = subprocess.run([SQLCMD, "-C", "-b", "-x", "-S", "localhost", "-U", "sa", "-l", "30", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
+  '        p = subprocess.run([SQLCMD] + sql_ziel() + ["-b", "-x", "-U", "sa", "-l", "30", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
   '        j = sql_json(p.stdout) if p.returncode == 0 else None',
   '        if j is not None:',
   '            r["sql"] = j',
   '        else:',
   '            r["sql"] = None',
-  '            r["sqlFehler"] = ((p.stderr or "") + " " + (p.stdout or "")).strip()[-400:]',
+  '            r["sqlFehler"] = sql_tls_fehler(p) or ((p.stderr or "") + " " + (p.stdout or "")).strip()[-400:]',
+  '    except SqlZielFehler as e:',
+  '        r["sql"] = None',
+  '        r["sqlFehler"] = str(e)',
   '    except Exception as e:',
   '        r["sql"] = None',
   '        r["sqlFehler"] = type(e).__name__',
