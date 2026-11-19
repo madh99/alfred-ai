@@ -66,6 +66,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect((await w.skill.execute({ action: 'loeschen', zugang: 'sqllnx02' }, imChange)).error).toContain('Unbekannte Aktion');
   });
 
+  const muster0 = () => new RegExp(`^${FESTE_AUSGABEN['linux_ha.status']!.split(' | ')[0]!.split(/\{[a-z]+\}/).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
   it('Statustext: fester Wortlaut für Abweichungen; jede Form passt auf FESTE_AUSGABEN, positive Stücke stehen dort', () => {
     const v = (x: Partial<LinuxHaStatus>) => linuxHaStatusText('k', { ...STATUS_OK, ...x });
     expect(v({ watchdog: [], pciEsb: false })).toContain('Watchdog fehlt (kein i6300ESB in der VM)');
@@ -79,6 +80,9 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
       .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); sbd wartet auf Watchdog; pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');
     expect(v({ sql1433Zusatz: [] })).toContain('Firewall alfred_ha aktiv (1433: Knoten);');
+    // Ruling R10: alter Block (nur Kurznamen) heißt „veraltet“, nicht „fehlt“
+    expect(v({ hosts: false, hostsVeraltet: true })).toContain('; hosts-Block veraltet (ohne FQDN — ha_vorbereiten stellt um); ');
+    expect(v({ hosts: false, hostsVeraltet: true })).toMatch(muster0());
     // Live-Fix (c2e4f56d): sbd-Drop-in
     expect(v({ sbdWartetAufWatchdog: false })).toContain('; RuntimeWatchdog aus; sbd ohne Watchdog-Wartezeit (Drop-in fehlt); pcsd aktiv;');
     expect(v({ sbdWartetAufWatchdog: undefined })).toContain('; sbd Watchdog-Wartezeit unbekannt; ');
@@ -107,6 +111,14 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(JSON.parse(w.aufrufe[1]!.eingabe!)).toEqual({ hacluster: kw });
     for (const a of w.aufrufe) { expect(JSON.stringify(a.parameter)).not.toContain(kw); expect(a.zweck).not.toContain(kw); }
     expect(JSON.stringify([r, r2])).not.toContain(kw);
+    expect(r.display).not.toContain('auf FQDN umgestellt');
+  });
+
+  it('R10: ha_vorbereiten mit ersetztem altem hosts-Block meldet „hosts-Block auf FQDN umgestellt“', async () => {
+    const w = welt({ [LINUX_HA_BAUSTEINE.vorbereiten]: [{ ...OK, zustand: 'geaendert', neustartSql: false, aenderungen: ['hosts-fqdn:/etc/hosts'] }] }, { [HA_HACLUSTER_TRESOR]: 'Hk-Wert-1234-abcd' });
+    const r = await w.skill.execute({ action: 'ha_vorbereiten', zugang: 'sqllnx01', rolle: 'daten' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('; hosts-Block auf FQDN umgestellt — geändert: hosts-fqdn:/etc/hosts');
   });
 
   it('Fehler: vor dem Setzen kein Tresor-Eintrag; nach gesetztem Kennwort (Marke) trotz späterem Fehler im Tresor; Meldung geschwärzt', async () => {

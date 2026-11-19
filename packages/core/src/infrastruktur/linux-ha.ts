@@ -71,6 +71,12 @@ export const HA_HOSTFW_DIENST = 'alfred-hostfw.service';
 export const HA_HOSTFW_UNIT = `/etc/systemd/system/${HA_HOSTFW_DIENST}`;
 export const HA_HOSTS_ANFANG = '# ALFRED-HA ANFANG (fest erzeugt, I8e Paket 2 — nicht von Hand ändern)';
 export const HA_HOSTS_ENDE = '# ALFRED-HA ENDE';
+/**
+ * Ruling R10 (I8e Etappe 3, L1-Fakten 19.11.2026): `hostname -f` lieferte auf sqllnx01/02 nur den Kurznamen, weil der Block nur
+ * „<ip> <name>“ enthielt. Jede Zeile lautet jetzt „<ip> <name>.<HA_DOMAENE> <name>“ — FQDN zuerst (kanonischer Name), Kurzname als Alias.
+ * Hostnamen, Corosync-/Pacemaker-Knotennamen und AG-Replikanamen bleiben kurz. Gleich LINUX_AD.domaene (linux-sql-ad.ts, Test prüft das).
+ */
+export const HA_DOMAENE = 'ad.3033.at';
 /** Fix-Runde 1: Loopback-Zeilen mit dem eigenen Namen (cloud-init „127.0.1.1 <fqdn> <hostname>“) — Original bleibt als Kommentar erhalten */
 export const HA_HOSTS_ENTFERNT = '# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen):';
 export const HA_MODPROBE_DATEI = '/etc/modprobe.d/alfred-watchdog.conf';
@@ -286,7 +292,7 @@ export const HOSTFW_UNIT = [
 
 export function hostsBlock(knoten: readonly HaKnoten[]): string {
   pruefe(pruefeKnoten(knoten));
-  return [HA_HOSTS_ANFANG, ...knoten.map(k => `${k.ip} ${k.name}`), HA_HOSTS_ENDE].join('\n');
+  return [HA_HOSTS_ANFANG, ...knoten.map(k => `${k.ip} ${k.name}.${HA_DOMAENE} ${k.name}`), HA_HOSTS_ENDE].join('\n');
 }
 
 /**
@@ -410,6 +416,7 @@ fd_ziel() { readlink "$1" 2>/dev/null || true; }
 prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { readlink "$PROC/$1/exe" 2>/dev/null || true; }
 eigener_name() { hostname -s; }
+eigener_fqdn() { hostname -f; }
 befehl_da() { command -v "$1" >/dev/null 2>&1; }
 ist_ausfuehrbar() { [ -x "$1" ]; }
 rechte_setzen() { chmod 0755 "$1"; }
@@ -461,6 +468,8 @@ $1 ~ /^127\\./ {
 }
 { print }
 END { if (!d) print ENVIRON["HB"] }' "$1"; }
+# Zeilen zwischen den Markierungen (leer = kein Block)
+hosts_block_inhalt() { awk -v a="$H_ANFANG" -v e="$H_ENDE" '$0 == a { s = 1; next } $0 == e { s = 0; next } s { print }' "$1"; }
 # ohne -W: das Modul crypt fehlt ab Python 3.13 — dann sichtbarer Abbruch statt „jedes Mal chpasswd“
 crypt_da() { python3 -c 'import warnings; warnings.simplefilter("ignore"); import crypt' >/dev/null 2>&1; }
 # 0 gleich, 1 verschieden; alles andere (2 = crypt fehlt) → Abbruch
@@ -549,9 +558,11 @@ for f in "$HOSTS" "$HOSTS_VORLAGE"; do
   [ -f "$f" ] || continue
   neu=$(hosts_neu "$f")
   if [ "$(cat "$f")" != "$neu" ]; then
+    # Ruling R10: ein vorhandener Block in anderer Form (bis Etappe 3: nur Kurznamen) wird ersetzt und eigens gemeldet
+    alt=$(hosts_block_inhalt "$f")
     cp -p "$f" "$f.alfred-$(date +%Y%m%d%H%M%S)"
     printf '%s\\n' "$neu" >"$f.alfred-neu"; chmod --reference="$f" "$f.alfred-neu" 2>/dev/null || chmod 0644 "$f.alfred-neu"; mv -f "$f.alfred-neu" "$f"
-    aend "hosts:$f"
+    if [ -n "$alt" ] && [ "$alt" != "$H_SOLL_ZEILEN" ]; then aend "hosts-fqdn:$f"; else aend "hosts:$f"; fi
   fi
 done
 # ── Watchdog: Modul fest laden, softdog sperren, Kennung und Besitzer nach dem Laden erneut prüfen ──
@@ -644,7 +655,12 @@ for i in "\${!KNOTEN_NAME[@]}"; do
   # alle Adressen (glibc liefert jeden Treffer aus /etc/hosts) — genau die Knoten-IP, kein Loopback
   a=$(getent ahostsv4 "\${KNOTEN_NAME[$i]}" | awk '{ print $1 }' | sort -u | tr '\\n' ' ' | sed 's/ $//' || true)
   [ "$a" = "\${KNOTEN_IP[$i]}" ] || abbruch "hosts: \${KNOTEN_NAME[$i]} löst zu '\${a:-nichts}' auf, erwartet \${KNOTEN_IP[$i]}"
+  # Ruling R10: kanonischer Name (erstes Feld nach der Adresse) ist der FQDN
+  c=$(getent hosts "\${KNOTEN_NAME[$i]}" | awk 'NR == 1 { print $2 }' || true)
+  [ "$c" = "\${KNOTEN_NAME[$i]}.$DOMAENE" ] || abbruch "hosts: kanonischer Name von \${KNOTEN_NAME[$i]} ist '\${c:-keiner}', erwartet \${KNOTEN_NAME[$i]}.$DOMAENE"
 done
+hf=$(eigener_fqdn 2>/dev/null || true)
+[ "$hf" = "$ICH.$DOMAENE" ] || abbruch "hostname -f liefert '\${hf:-nichts}', erwartet $ICH.$DOMAENE"
 PJ=''
 for pv in "\${PAKETE[@]}"; do
   pk=\${pv%%=*}; iv=$(paket_version "$pk")
@@ -670,7 +686,7 @@ if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
 ergebnis "{\\"zustand\\":\\"$Z\\",\\"knoten\\":\\"$ICH\\",\\"rolle\\":\\"$ROLLE\\",\\"watchdog\\":$(printf '%s' "$WD_ID" | json_text),\\"pakete\\":{$PJ},\\"hadr\\":true,\\"firewall\\":\\"aktiv\\",\\"sql1433\\":$SQL1433_JSON,\\"pcsd\\":\\"aktiv\\",\\"sbdWartetAufWatchdog\\":true,\\"sbdZurueckgeholt\\":$SBD_REPARIERT,\\"neustartSql\\":$NS,\\"aenderungen\\":[$AJ]}"`;
 
 /**
- * HA-Grundlage je Knoten, idempotent: hosts-Block der drei Knoten, Pakete fest und gehalten (pacemaker, corosync, pcs, sbd,
+ * HA-Grundlage je Knoten, idempotent: hosts-Block der drei Knoten (FQDN zuerst, R10), Pakete fest und gehalten (pacemaker, corosync, pcs, sbd,
  * resource-agents-base, mssql-server-ha = SQL-Version, linux-modules-extra des laufenden Kernels), i6300esb laden (beim Start lädt es das Warteskript im sbd-Drop-in; modules-load.d wirkt wegen Ubuntus Sperrliste nicht und wird entfernt),
  * softdog gesperrt, systemd RuntimeWatchdogSec aus, hacluster-Kennwort aus stdin, HADR an (Neustart nur bei Änderung), nft-Tabelle
  * inet alfred_ha über alfred-hostfw.service. Zeit: LINUX_HA_ZEIT_MS.vorbereiten
@@ -690,6 +706,8 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `H_ANFANG=${shQ(HA_HOSTS_ANFANG)}`,
     `H_ENDE=${shQ(HA_HOSTS_ENDE)}`,
     `HOSTS_BLOCK=${shQ(hostsBlock(k))}`,
+    `H_SOLL_ZEILEN=${shQ(hostsBlock(k).split('\n').slice(1, -1).join('\n'))}`,
+    `DOMAENE=${shQ(HA_DOMAENE)}`,
     `NFT_SOLL=${shQ(hostfwNft(k))}`,
     `SQL1433_JSON=${shQ(JSON.stringify([...k.map(x => x.ip), ...HA_SQL_ZUSATZQUELLEN]))}`,
     `H_ENTFERNT=${shQ(HA_HOSTS_ENTFERNT)}`,
@@ -1817,7 +1835,11 @@ export const PY_HA_STATUS = [
   'r["sqlDienst"] = lauf("systemctl", "is-active", "mssql-server")[1] or "unbekannt"',
   'r["firewall"] = {"tabelle": lauf("nft", "list", "table", "inet", TABELLE)[0] == 0, "dienst": lauf("systemctl", "is-active", DIENST)[1] or "unbekannt", "aktiviert": lauf("systemctl", "is-enabled", DIENST)[1] or "unbekannt"}',
   'hosts = lies("/etc/hosts") or ""',
-  'r["hosts"] = ANFANG in hosts.splitlines() and all(("%s %s" % (k["ip"], k["name"])) in hosts.splitlines() for k in KNOTEN)',
+  // Ruling R10: vorhanden = FQDN-Form; der alte Block (nur Kurznamen) gilt als veraltet, nicht als fehlend
+  `DOMAENE = ${JSON.stringify(HA_DOMAENE)}`,
+  'hz = hosts.splitlines()',
+  'r["hosts"] = ANFANG in hz and all(("%s %s.%s %s" % (k["ip"], k["name"], DOMAENE, k["name"])) in hz for k in KNOTEN)',
+  'r["hostsVeraltet"] = ANFANG in hz and not r["hosts"] and all(("%s %s" % (k["ip"], k["name"])) in hz for k in KNOTEN)',
   // Fix-Runde 1: eigener Name auf Loopback (cloud-init 127.0.1.1) und die vom Baustein ersetzten Originale
   'ich = os.uname().nodename.split(".")[0]',
   'def namen(z):',

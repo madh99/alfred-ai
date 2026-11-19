@@ -9,7 +9,7 @@ import {
   HA_KNOTEN, HA_VERSIONEN, HA_PORTS, HA_SQL_ZUSATZQUELLEN, HA_BEFEHLE, LINUX_HA_BAUSTEINE, PY_HA_STATUS, PY_KW_GLEICH, HOSTFW_UNIT,
   haClusterSkript, haClusterEntfernenSkript, pruefeHaCluster, pruefeHaClusterEntfernen, PY_CRM_LAGE, PY_CLUSTER_FUNK,
   haFencingPruefenSkript, haFencingBelegenSkript, pruefeHaFencing, pruefeHaFencingBelegen, fencetestNft, fencingBelegGueltig, PY_FENCING, PY_FENCING_FUNK,
-  HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI, WARTE_WATCHDOG_SKRIPT, SBD_DROPIN_INHALT, HA_SBD_DROPIN,
+  HA_FENCING_TEST_DATEI, HA_FENCING_BELEG_DATEI, WARTE_WATCHDOG_SKRIPT, SBD_DROPIN_INHALT, HA_SBD_DROPIN, HA_DOMAENE, HA_HOSTS_ANFANG,
   type HaVorbereitenParameter, type HaClusterParameter, type FencingBeleg, type FencingLage,
 } from './linux-ha.js';
 import {
@@ -19,6 +19,7 @@ import {
 } from './linux-ha.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
+import { LINUX_AD } from './linux-sql-ad.js';
 
 // I8e Paket 2 Task 2 — HA-Grundlage je Knoten (linux_ha.ha_vorbereiten), feste Bash-Bausteine
 
@@ -91,7 +92,9 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', () => {
     expect(HOSTFW_UNIT).toContain('ExecStart=/usr/sbin/nft -f /etc/alfred/hostfw.nft');
     expect(HOSTFW_UNIT).toContain('ExecStop=-/usr/sbin/nft delete table inet alfred_ha');
     expect(HOSTFW_UNIT).not.toMatch(/nftables\.service|ufw/);
-    expect(hostsBlock(HA_KNOTEN).split('\n').slice(1, 4)).toEqual(['10.203.30.10 sqllnx01', '10.203.30.11 sqllnx02', '10.203.30.12 sqllnxcfg']);
+    // Ruling R10: FQDN zuerst (kanonischer Name), Kurzname als Alias
+    expect(hostsBlock(HA_KNOTEN).split('\n').slice(1, 4)).toEqual(['10.203.30.10 sqllnx01.ad.3033.at sqllnx01', '10.203.30.11 sqllnx02.ad.3033.at sqllnx02', '10.203.30.12 sqllnxcfg.ad.3033.at sqllnxcfg']);
+    expect(HA_DOMAENE).toBe(LINUX_AD.domaene);
   });
   it.skipIf(!BASH)('bash -n: beide Skripte syntaktisch gültig', () => {
     for (const s of [haVorbereitenSkript(P), haVorbereitenSkript({ ...P, rolle: 'konfig' }), haStatusSkript(), haClusterSkript(PC), haClusterEntfernenSkript(PC),
@@ -248,10 +251,15 @@ chpasswd() { log chpasswd; cat >"$T/kw_gesetzt"; }
 kennwort_gleich() { if [ -f "$T/crypt_rc" ]; then return "$(cat "$T/crypt_rc")"; fi; [ -f "$T/kw_gesetzt" ] && [ "$(cat "$T/kw_gesetzt")" = "hacluster:$KW" ]; }
 mssqlconf_stub() { log "mssql-conf $*"; printf '[hadr]\nhadrenabled = 1\n' >>"$MSSQL_CONF"; }
 # wie glibc: jeder Treffer aus /etc/hosts, Loopback zuerst (RFC 6724), Format „<ip> STREAM <name>“
-getent() { awk -v n="§{@: -1}" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) { if ($i ~ /^#/) break; if ($i == n) { if ($1 ~ /^127\./) l = l $1 " STREAM " n "\n"; else a = a $1 " STREAM " n "\n"; break } } } END { printf "%s%s", l, a }' "$HOSTS"; }
+# Ruling R10 — getent hosts <name>: erste passende Zeile (Adresse, kanonischer Name, Aliase) wie gethostbyname aus /etc/hosts
+getent() {
+  if [ "$1" = hosts ]; then awk -v n="$2" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) { if ($i ~ /^#/) break; if ($i == n) { z = $1; for (j = 2; j <= NF && $j !~ /^#/; j++) z = z " " $j; print z; exit } } }' "$HOSTS"; return 0; fi
+  awk -v n="§{@: -1}" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) { if ($i ~ /^#/) break; if ($i == n) { if ($1 ~ /^127\./) l = l $1 " STREAM " n "\n"; else a = a $1 " STREAM " n "\n"; break } } } END { printf "%s%s", l, a }' "$HOSTS"; }
 fd_ziel() { cat "$1"; }
 prozess_name() { cat "$PROC/$1/comm" 2>/dev/null || true; }
 prozess_exe() { cat "$PROC/$1/exe" 2>/dev/null || true; }
+# hostname -f = kanonischer Name des eigenen Kurznamens aus /etc/hosts
+eigener_fqdn() { if [ -f "$T/fqdn" ]; then cat "$T/fqdn"; return 0; fi; getent hosts "$(cat "$T/name")" | awk 'NR == 1 { print $2 }'; }
 `.replaceAll('§{', '${');
 
 /** frischer Rechner: SQL Server installiert (CU1, gehalten), i6300ESB in der VM, Modul noch nicht geladen */
@@ -303,7 +311,9 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(a.aus).toContain('ALFRED-HACLUSTER-GESETZT');
     expect(a.aus).not.toContain('Hk-Geheim');
     // hosts: Block oben (eigener Name löst zur Knoten-IP auf), cloud-init-Vorlage nach der Kopfzeile
-    expect(w.hosts.split('\n').slice(0, 5)).toEqual([expect.stringContaining('# ALFRED-HA ANFANG'), '10.203.30.10 sqllnx01', '10.203.30.11 sqllnx02', '10.203.30.12 sqllnxcfg', '# ALFRED-HA ENDE']);
+    expect(w.hosts.split('\n').slice(0, 5)).toEqual([expect.stringContaining('# ALFRED-HA ANFANG'), '10.203.30.10 sqllnx01.ad.3033.at sqllnx01', '10.203.30.11 sqllnx02.ad.3033.at sqllnx02', '10.203.30.12 sqllnxcfg.ad.3033.at sqllnxcfg', '# ALFRED-HA ENDE']);
+    // neuer Block (kein alter da) → „hosts:“, nicht „hosts-fqdn:“
+    expect((a.ergebnis!.aenderungen as string[]).filter(x => x.startsWith('hosts'))).toEqual([expect.stringMatching(/^hosts:.*\/hosts$/), expect.stringMatching(/^hosts:.*\/hosts\.tmpl$/)]);
     // eigener Name nicht mehr auf Loopback (glibc sortiert 127.0.1.1 vor 10.x) — Original als markierter Kommentar
     expect(w.hosts).toContain('# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 sqllnx02.ad.3033.at sqllnx02');
     expect(w.hosts.split('\n').filter(z => z.startsWith('127.0.1.1'))).toEqual([]);
@@ -378,6 +388,38 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     const f = laeufe('printf "127.0.0.1 localhost\\n192.168.5.5 sqllnx01\\n" >"$T/hosts"', 1);
     expect(f.laeufe[0]!.rc).toBe(1);
     expect(String(f.laeufe[0]!.ergebnis?.fehler)).toContain("sqllnx01 löst zu '10.203.30.10 192.168.5.5' auf, erwartet 10.203.30.10");
+  });
+  // Ruling R10 — bestehender Cluster mit dem Block aus Paket 2 (nur Kurznamen)
+  const ALTER_BLOCK = `printf '%s\\n' ${JSON.stringify(HA_HOSTS_ANFANG)} '10.203.30.10 sqllnx01' '10.203.30.11 sqllnx02' '10.203.30.12 sqllnxcfg' '# ALFRED-HA ENDE' '127.0.0.1 localhost' >"$T/hosts"`;
+  it('R10: alter Block (nur Kurznamen) → durch die FQDN-Form ersetzt und als hosts-fqdn gemeldet; Wiederholung „schon“; getent hosts liefert FQDN zuerst', () => {
+    const w = laeufe(`${ALTER_BLOCK}\nrm -f "$T/hosts.tmpl"`);
+    const [a, b] = w.laeufe as [Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(w.hosts).toBe(`${HA_HOSTS_ANFANG}\n10.203.30.10 sqllnx01.ad.3033.at sqllnx01\n10.203.30.11 sqllnx02.ad.3033.at sqllnx02\n10.203.30.12 sqllnxcfg.ad.3033.at sqllnxcfg\n# ALFRED-HA ENDE\n127.0.0.1 localhost\n`);
+    expect((a.ergebnis!.aenderungen as string[]).filter(x => x.startsWith('hosts'))).toEqual([expect.stringMatching(/^hosts-fqdn:.*\/hosts$/)]);
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    // getent hosts (Stub wie glibc: erste passende Zeile) → kanonischer Name = FQDN, Kurzname als Alias
+    const g = spawnSync('bash', [], { input: `T=$(mktemp -d)\n${STUBS}\ncat >"$HOSTS" <<'ENDE'\n${w.hosts}ENDE\ngetent hosts sqllnx01; rm -rf "$T"`, encoding: 'utf8' });
+    expect(g.stdout.trim()).toBe('10.203.30.10 sqllnx01.ad.3033.at sqllnx01');
+  });
+  it('R10: alte Kurznamen-Zeile hinter dem Block ändert den kanonischen Namen nicht; hostname -f ohne FQDN → Abbruch in der Selbstprüfung', () => {
+    const w = laeufe('printf "127.0.0.1 localhost\\n10.203.30.10 sqllnx01\\n" >"$T/hosts"', 1);
+    expect(w.laeufe[0]!.rc, w.laeufe[0]!.aus).toBe(0);
+    const f = laeufe('echo sqllnx02 >"$T/fqdn"', 1);
+    expect(f.laeufe[0]!.rc).toBe(1);
+    expect(String(f.laeufe[0]!.ergebnis?.fehler)).toContain("hostname -f liefert 'sqllnx02', erwartet sqllnx02.ad.3033.at");
+  });
+  it.skipIf(!PYTHON)('R10: Status — FQDN-Block „vorhanden“, alter Block „veraltet“ (nicht fehlend), kein Block weder noch', () => {
+    const zeilen = PY_HA_STATUS.split('\n');
+    const teil = [zeilen.find(z => z.startsWith('KNOTEN = '))!, zeilen.find(z => z.startsWith('ANFANG = '))!, ...zeilen.filter(z => /^(DOMAENE = |hz = |r\["hosts"\] = |r\["hostsVeraltet"\] = )/.test(z))];
+    expect(teil).toHaveLength(6);
+    const lauf = (hosts: string) => JSON.parse(spawnSync(PYTHON!, ['-c', ['import json, sys', 'hosts = sys.stdin.read()', 'r = {}', ...teil, 'print(json.dumps(r))'].join('\n')], { input: hosts, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1' } }).stdout) as Record<string, boolean>;
+    const neu = `${hostsBlock(HA_KNOTEN)}\n127.0.0.1 localhost\n`;
+    const alt = `${HA_HOSTS_ANFANG}\n10.203.30.10 sqllnx01\n10.203.30.11 sqllnx02\n10.203.30.12 sqllnxcfg\n# ALFRED-HA ENDE\n`;
+    expect(lauf(neu)).toEqual({ hosts: true, hostsVeraltet: false });
+    expect(lauf(alt)).toEqual({ hosts: false, hostsVeraltet: true });
+    expect(lauf('127.0.0.1 localhost\n')).toEqual({ hosts: false, hostsVeraltet: false });
   });
   it('Wiederholung auf einem Cluster-Knoten (Pakete und corosync.conf da, Dienste laufen): Cluster-Dienste bleiben unberührt', () => {
     const vorher = String.raw`for pv in 'pacemaker=2.1.6-5ubuntu2' 'pacemaker-cli-utils=2.1.6-5ubuntu2' 'corosync=3.1.7-1ubuntu3.2' 'pcs=0.11.7-1ubuntu1.1' 'sbd=1.5.2-2ubuntu2' 'resource-agents-base=1:4.13.0-1ubuntu4.2' 'mssql-server-ha=17.0.4006.2-1'; do printf 'hold ok installed|%s' "§{pv#*=}" >"$T/dpkg/§{pv%%=*}"; done
