@@ -994,9 +994,13 @@ marker_eigen() { [ -f "$MARKER" ] && [ ! -L "$MARKER" ] && [ "$(head -n 1 "$MARK
 marker_pruefen() { if [ -e "$MARKER" ] || [ -L "$MARKER" ]; then marker_eigen || abbruch "$MARKER ist vorhanden und nicht von Alfred — $NICHT"; fi; }
 marker_hat() { marker_eigen && grep -qxF -- "$1" "$MARKER"; }
 # $1 = dazu|weg, weitere Argumente = Zeilen; schreibt atomar (Zwischendatei im Ordner, Rechte vor dem Inhalt, mv)
+# Zwischendateien (.alfred-adl-*) nach einem Abbruch wegräumen — läuft im EXIT-Trap des Kopfs
+alfred_aufraeumen() { rm -f -- "§{MARKER%/*}"/.alfred-adl-* 2>/dev/null || true; }
 marker_setzen() {
   local art=$1 t e; shift
   [ $# -gt 0 ] || return 0
+  # Zwischendateien nur für root lesbar (umask 077 für .alt/.rest/.neu, die Zieldatei bekommt 0600 vor dem Inhalt)
+  umask 077
   [ -d "§{MARKER%/*}" ] || { mkdir -p "§{MARKER%/*}"; chmod 0755 "§{MARKER%/*}"; }
   t=$(mktemp "§{MARKER%/*}/.alfred-adl-XXXXXX"); chown root:root "$t"; chmod 0600 "$t"
   { if marker_eigen; then cat -- "$MARKER"; else printf '%s\n' "$MARKER_KOPF"; fi; } >"$t.alt"

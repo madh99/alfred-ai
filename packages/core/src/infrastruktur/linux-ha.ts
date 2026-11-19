@@ -833,8 +833,9 @@ export const HA_CRM_FEHLER_ARGS: readonly string[] = ['-1', '--output-as=xml', '
 
 /**
  * python3: pm_fehler(x, ich, jetzt) aus dem crm_mon-XML (HA_CRM_FEHLER_ARGS) → { knoten, online, quorum, ressource (ag_cluster bekannt),
- * fehlerzaehler (ag_cluster auf diesem Knoten, INFINITY/unlesbar = 1000000), fehlaktionen (dieser Knoten, im Fenster oder Zeit
- * unlesbar — fail-closed), aeltere }. pm_maengel(f) → Liste der Gründe (leer = gesund). Braucht crm_lage (PY_CRM_FUNK).
+ * fehlerzaehler (ag_cluster auf diesem Knoten, nur mit last-failure im Fenster oder unlesbarer Zeit — fail-closed; INFINITY/unlesbar
+ * = 1000000), fehlerzaehlerAlt (ältere, zählen nicht — Ruling R19: linux_ha räumt Fehlerzähler nie auf, ohne Fenster sperrten die
+ * rollierenden Neustarts tls_erzwingen auf Dauer), fehlaktionen (dieser Knoten, im Fenster oder Zeit unlesbar — fail-closed), aeltere }. pm_maengel(f) → Liste der Gründe (leer = gesund). Braucht crm_lage (PY_CRM_FUNK).
  * Zeitformen: Epoche, „2026-11-19 10:00:00 +01:00“ (pacemaker 2.1), „Thu Nov 19 10:00:00 2026“ (ctime, lokale Zeit).
  */
 export const PY_PM_FEHLER_FUNK = String.raw`import calendar, re, time
@@ -868,7 +869,7 @@ def pm_fehler(x, ich, jetzt):
     r = ET.fromstring(x)
     l = crm_lage(x)
     f = {"knoten": ich, "online": ich in l["online"], "quorum": l["quorum"], "ressource": any(pm_ist_ag(e.get("id")) for e in r.iter("resource")),
-         "fehlerzaehler": 0, "fehlaktionen": [], "aeltere": 0, "fensterS": PM_FENSTER}
+         "fehlerzaehler": 0, "fehlerzaehlerAlt": 0, "fehlaktionen": [], "aeltere": 0, "fensterS": PM_FENSTER}
     for nh in r.iter("node_history"):
         for nd in nh.findall("node"):
             if nd.get("name") != ich:
@@ -881,7 +882,13 @@ def pm_fehler(x, ich, jetzt):
                     n = 1000000 if fc.upper() == "INFINITY" else int(fc)
                 except ValueError:
                     n = 1000000
-                f["fehlerzaehler"] = max(f["fehlerzaehler"], n)
+                if n <= 0:
+                    continue
+                z = pm_zeit(rh.get("last-failure"))
+                if z is None or jetzt - z <= PM_FENSTER:
+                    f["fehlerzaehler"] = max(f["fehlerzaehler"], n)
+                else:
+                    f["fehlerzaehlerAlt"] = max(f["fehlerzaehlerAlt"], n)
     for e in r.iter("failure"):
         if e.get("node") != ich:
             continue
@@ -900,7 +907,7 @@ def pm_maengel(f):
     if not f["ressource"]:
         m.append("Ressource %s nicht gefunden" % PM_RESSOURCE)
     if f["fehlerzaehler"]:
-        m.append("Fehlerzähler %s = %d (Ursache klären, dann pcs resource cleanup %s)" % (PM_RESSOURCE, f["fehlerzaehler"], PM_RESSOURCE))
+        m.append("Fehlerzähler %s = %d mit Fehler in %d min (Ursache klären, dann pcs resource cleanup %s)" % (PM_RESSOURCE, f["fehlerzaehler"], PM_FENSTER // 60, PM_RESSOURCE))
     if f["fehlaktionen"]:
         m.append("%d fehlgeschlagene Aktionen in %d min: %s" % (len(f["fehlaktionen"]), PM_FENSTER // 60, ", ".join(str(a["aktion"]) for a in f["fehlaktionen"][:5])))
     return m`;

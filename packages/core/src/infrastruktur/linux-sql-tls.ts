@@ -40,6 +40,12 @@ export const TLS_MIN_TAGE = 30;
 export const TLS_CA_BUNDLE = '/etc/ssl/certs/ca-certificates.crt';
 /** Hosts mit TLS (Global Constraints: auch der Konfig-Knoten) */
 export const TLS_HOSTS: readonly string[] = ['sqllnx01', 'sqllnx02', 'sqllnxcfg'];
+/**
+ * Ruling R20 — Eigentum von network.forceencryption 1: tls_erzwingen schreibt diese Datei (root 0600, nur Kopfzeile) VOR dem Setzen;
+ * tls_erzwingen an=false nimmt den Wert nur mit diesem Vermerk zurück, ein vorher (ohne Alfred) gesetztes 1 bleibt (belassen).
+ */
+export const TLS_ERZWUNGEN_MARKE = '/etc/alfred/sqllnx-tls-erzwungen';
+export const TLS_ERZWUNGEN_KOPF = '# Alfred I8e — linux_sql tls_erzwingen hat network.forceencryption 1 gesetzt (nicht von Hand ändern)';
 
 /**
  * tls_anfordern ändert keine Konfiguration (nur ein neuer, unbenutzter Schlüssel und die Anforderung) — kein Rückweg, nur mit genau
@@ -636,7 +642,11 @@ export function pruefeTlsErzwingen(p: unknown): string | undefined {
   return x.cn === `${x.host}.${AD_DOMAENE_LINUX}` ? undefined : `cn: ${x.host}.${AD_DOMAENE_LINUX}`;
 }
 
-const ERZWINGEN_NEUSTART = sh(String.raw`# 0 = SQL Server muss neu starten: in diesem Lauf geändert, Dienst nicht aktiv oder mssql.conf jünger als der Dienststart
+/** Task 8 (Ruling R20): Vermerk, dass Alfred network.forceencryption gesetzt hat — nur in tls_erzwingen (nicht in werte()) */
+const ERZ_WERTE = [`ERZ_MARKE=${shQ(TLS_ERZWUNGEN_MARKE)}`, `ERZ_KOPF=${shQ(TLS_ERZWUNGEN_KOPF)}`];
+const ERZWINGEN_NEUSTART = sh(String.raw`# R20: 0 = Vermerk ist Alfreds (reguläre Datei, Kopfzeile, 0600 root:root)
+erz_eigen() { [ -f "$ERZ_MARKE" ] && [ ! -L "$ERZ_MARKE" ] && [ "$(head -n 1 "$ERZ_MARKE")" = "$ERZ_KOPF" ] && [ "$(rechte "$ERZ_MARKE")" = '600 root root' ]; }
+# 0 = SQL Server muss neu starten: in diesem Lauf geändert, Dienst nicht aktiv oder mssql.conf jünger als der Dienststart
 neustart_noetig() {
   [ "$SQL_AEND" = 0 ] || return 0
   systemctl is-active --quiet mssql-server || return 0
@@ -650,9 +660,10 @@ neustart_noetig() {
 const ERZWINGEN_AN_KOERPER = sh(String.raw`NICHT='Verschlüsselung nicht erzwungen, nichts geändert'
 # ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
 [ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — $NICHT"
-for b in openssl crm_mon python3; do command -v "$b" >/dev/null 2>&1 || abbruch "$b fehlt — $NICHT"; done
+for b in openssl crm_mon python3 timeout; do command -v "$b" >/dev/null 2>&1 || abbruch "$b fehlt — $NICHT"; done
 ICH=$(hostname -s 2>/dev/null || true)
 [ "$ICH" = "$HOST" ] || abbruch "Host meldet sich als $ICH, erwartet $HOST (Pacemaker-Knoten) — $NICHT"
+if [ -e "$ERZ_MARKE" ] || [ -L "$ERZ_MARKE" ]; then erz_eigen || abbruch "$ERZ_MARKE ist vorhanden und nicht von Alfred — $NICHT"; fi
 # (1) TLS von Alfred eingespielt (Task 6): Zertifikat und Schlüssel laut Manifest, von mssql.conf genutzt, gültig, Kette + Name prüfbar
 { [ -f "$CRT" ] && [ ! -L "$CRT" ]; } || abbruch "$CRT fehlt — zuerst tls_einspielen; $NICHT"
 alfreds "$CRT" || abbruch "$CRT steht nicht mit diesem Inhalt in Alfreds Manifest $MANIFEST (nicht von tls_einspielen) — $NICHT"
@@ -671,52 +682,70 @@ a=$(sql "$PROBE_Q" 2>&1) || abbruch "Probe über $CN: $(sql_fehlerzeile "$a") �
 [ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || abbruch "Probe: Verbindung zu $CN laut SQL Server nicht verschlüsselt — $NICHT"
 # (3) Pacemaker auf diesem Knoten fehlerfrei: online, Quorum, Ressource bekannt, Fehlerzähler 0, keine Fehlaktion im Fenster
 ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-tls.XXXXXX"); chmod 0700 "$ALFRED_TMP"
-crm_mon "§{CRM_FEHLER_ARGS[@]}" >"$ALFRED_TMP/crm.xml" 2>"$ALFRED_TMP/crm.err" || abbruch "crm_mon nicht lesbar ($(kurz "$(cat "$ALFRED_TMP/crm.err")")) — Pacemaker-Lage unbekannt; $NICHT"
+timeout 30 crm_mon "§{CRM_FEHLER_ARGS[@]}" >"$ALFRED_TMP/crm.xml" 2>"$ALFRED_TMP/crm.err" || abbruch "crm_mon nicht lesbar ($(kurz "$(cat "$ALFRED_TMP/crm.err")")) — Pacemaker-Lage unbekannt; $NICHT"
 PM=$(python3 -c "$PY_PM_PRUEFUNG" "$ICH" "$ALFRED_TMP/crm.xml" 2>"$ALFRED_TMP/pm.err") || abbruch "Pacemaker auf $ICH nicht fehlerfrei: $(kurz "$(cat "$ALFRED_TMP/pm.err")") — $NICHT"
 [[ "$PM" == '{'*'}' ]] || abbruch "Pacemaker-Prüfung ohne Ergebnis — $NICHT"
 # ── Phase 2: mssql-conf nur bei Abweichung (wirkt erst nach dem Neustart — der läuft rollierend per Change, nicht hier) ──
 SQL_AEND=0
 if [ "$(lies network forceencryption)" != 1 ]; then
-  aus=$("$MSSQLCONF" set network.forceencryption 1 2>&1) || abbruch "mssql-conf set network.forceencryption 1 fehlgeschlagen: $(kurz "$aus")"
+  # R20: Eigentum VOR dem Setzen vermerken (bricht danach etwas ab, nimmt der Rückweg den Wert trotzdem zurück)
+  if ! erz_eigen; then
+    [ -d "§{ERZ_MARKE%/*}" ] || { mkdir -p "§{ERZ_MARKE%/*}"; chmod 0755 "§{ERZ_MARKE%/*}"; }
+    printf '%s\n' "$ERZ_KOPF" >"$ALFRED_TMP/erz"; schreibe "$ERZ_MARKE" "$ALFRED_TMP/erz" 0600 root:root; aend vermerk
+  fi
+  aus=$("$MSSQLCONF" set network.forceencryption 1 2>&1) || abbruch "mssql-conf set network.forceencryption 1 fehlgeschlagen: $(kurz "$aus") — Vermerk $ERZ_MARKE bleibt (Rückweg tls_erzwingen an=false)"
   aend mssql-conf:forceencryption; SQL_AEND=1
 fi
 # ── Selbstprüfung ──
 [ "$(lies network forceencryption)" = 1 ] || abbruch "Selbstprüfung: mssql.conf network.forceencryption ist nicht 1"
+# vorher schon 1 ohne Alfreds Vermerk: nicht Alfreds Wert (der Rückweg lässt ihn stehen)
+if erz_eigen; then VA=true; else VA=false; fi
 if neustart_noetig; then NN=true; else NN=false; fi
 if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
-ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":true,\"fqdn\":\"$CN\",\"neustartNoetig\":$NN,\"pacemaker\":$PM,\"aenderungen\":[$AJ]}"`);
+ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":true,\"vonAlfred\":$VA,\"fqdn\":\"$CN\",\"neustartNoetig\":$NN,\"pacemaker\":$PM,\"aenderungen\":[$AJ]}"`);
 
-const ERZWINGEN_AUS_KOERPER = sh(String.raw`# Rückweg: keine Vorbedingung (Zurücknehmen muss immer gehen) — Alfreds Wert 1 entfernen (Standard = nicht erzwungen)
+const ERZWINGEN_AUS_KOERPER = sh(String.raw`# Rückweg: keine Vorbedingung (Zurücknehmen muss immer gehen) — nur Alfreds Wert (Vermerk, R20) entfernen; Fremdes bleibt (belassen)
 [ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — nichts geändert"
 SQL_AEND=0
 V=$(lies network forceencryption)
 if [ -n "$V" ] && [ "$V" != 0 ]; then
-  aus=$("$MSSQLCONF" unset network.forceencryption 2>&1) || abbruch "mssql-conf unset network.forceencryption fehlgeschlagen: $(kurz "$aus")"
-  aend mssql-conf:forceencryption; SQL_AEND=1
+  if erz_eigen; then
+    aus=$("$MSSQLCONF" unset network.forceencryption 2>&1) || abbruch "mssql-conf unset network.forceencryption fehlgeschlagen: $(kurz "$aus")"
+    aend mssql-conf:forceencryption; SQL_AEND=1
+  else belassen "network.forceencryption = $V (nicht von Alfred gesetzt, kein Vermerk $ERZ_MARKE)"; fi
+fi
+# Vermerk erst nach dem Zurücknehmen entfernen; ein fremder bleibt
+if [ -e "$ERZ_MARKE" ] || [ -L "$ERZ_MARKE" ]; then
+  if erz_eigen; then V=$(lies network forceencryption); if [ -z "$V" ] || [ "$V" = 0 ]; then rm -f -- "$ERZ_MARKE"; aend vermerk-entfernt; fi
+  else belassen "$ERZ_MARKE (nicht von Alfred)"; fi
 fi
 # ── Selbstprüfung ──
 V=$(lies network forceencryption)
-{ [ -z "$V" ] || [ "$V" = 0 ]; } || abbruch "Selbstprüfung: mssql.conf network.forceencryption ist noch $V"
+if [ "$SQL_AEND" = 1 ]; then { [ -z "$V" ] || [ "$V" = 0 ]; } || abbruch "Selbstprüfung: mssql.conf network.forceencryption ist noch $V"; fi
+! erz_eigen || abbruch "Selbstprüfung: Vermerk $ERZ_MARKE ist noch da"
+if [ "$V" = 1 ]; then ER=true; else ER=false; fi
 if neustart_noetig; then NN=true; else NN=false; fi
 if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
-ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":false,\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
+ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":$ER,\"belassen\":[$BELASSEN],\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
 
 /**
  * Task 8 — network.forceencryption setzen (an=true) bzw. zurücknehmen (an=false, Rückweg); KEIN Neustart (neustartNoetig im Ergebnis,
  * der Change startet rollierend neu). an=true (sa über stdin) nur, wenn (1) TLS von Alfred eingespielt ist (Manifest, mssql.conf, gültig,
  * Kette + Name), (2) Alfreds Zertifikatsprüfung an ist (Schalter mit genau diesem FQDN, Probe -N verschlüsselt) und (3) Pacemaker auf
  * diesem Knoten fehlerfrei ist (PY_PM_PRUEFUNG: online, Quorum, ag_cluster bekannt, Fehlerzähler 0, keine Fehlaktion in 30 min) — sonst
- * Abbruch ohne mssql-conf-Aufruf. Ergebnis { zustand, erzwungen, fqdn?, neustartNoetig, pacemaker?, aenderungen }.
+ * Abbruch ohne mssql-conf-Aufruf. Ruling R20: vor dem Setzen Vermerk TLS_ERZWUNGEN_MARKE; an=false nimmt nur einen vermerkten Wert zurück
+ * (sonst belassen). Ergebnis { zustand, erzwungen, vonAlfred?, fqdn?, belassen?, neustartNoetig, pacemaker?, aenderungen }.
  * Zeit: LINUX_SQL_ZEIT_MS.tlsErzwingen
  */
 export function tlsErzwingenSkript(p: TlsErzwingenParameter): string {
   const f = pruefeTlsErzwingen(p); if (f) throw new Error(f);
   if (!p.an) {
-    return [...sqlKopf(LINUX_SQL_BAUSTEINE.tlsErzwingen, { an: false }), ...werte(), HILFEN, ERZWINGEN_NEUSTART, MARKE, ERZWINGEN_AUS_KOERPER].join('\n');
+    return [...sqlKopf(LINUX_SQL_BAUSTEINE.tlsErzwingen, { an: false }), ...werte(), ...ERZ_WERTE, HILFEN, ERZWINGEN_NEUSTART, MARKE, ERZWINGEN_AUS_KOERPER].join('\n');
   }
   return [
     ...sqlKopf(LINUX_SQL_BAUSTEINE.tlsErzwingen, { an: true, host: p.host, cn: p.cn }),
     ...werte(),
+    ...ERZ_WERTE,
     `HOST=${shQ(p.host!)}`,
     `CN=${shQ(p.cn!)}`,
     `PROBE_Q=${shQ(PRUEF_PROBE)}`,

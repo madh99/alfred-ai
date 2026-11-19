@@ -237,12 +237,17 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — ad_login / ad_login_entfernen ausg
 
   it('SQL Server findet die Gruppe nicht (Msg 15401) → klare Meldung, Vermerk bleibt für den Rückweg', () => {
     const T = welt();
+    // Fix-Runde 1: liegengebliebene Zwischendateien räumt der EXIT-Trap weg
+    writeFileSync(join(T, 'etc', '.alfred-adl-rest1'), 'x'); writeFileSync(join(T, 'etc', '.alfred-adl-rest1.alt'), 'x');
     writeFileSync(join(T, 'anlegen_fehler'), "Msg 15401, Level 16, State 1, Server sqllnx01, Line 5\nWindows NT user or group 'AD3033\\SQL-Linux-Admins' not found. Check the name again.\n");
     const r = lauf(T, adLoginSkript(ADMINS));
     expect(r.rc).toBe(1);
     expect(String(r.e?.fehler)).toContain('Msg 15401');
     expect(String(r.e?.fehler)).toContain('kerberos_einrichten + Neustart');
     expect(marker(T)).toContain(`L|${LOGIN}`);
+    expect(existsSync(join(T, 'etc', '.alfred-adl-rest1'))).toBe(false);
+    expect(existsSync(join(T, 'etc', '.alfred-adl-rest1.alt'))).toBe(false);
+    expect(adLoginSkript(ADMINS)).toContain('umask 077');
   });
 });
 

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sqlErgebnis, LINUX_SQL_BAUSTEINE, TLS_PRUEF_FEHLER } from './linux-sql.js';
-import { tlsErzwingenSkript, pruefeTlsErzwingen, tlsEntfernenSkript } from './linux-sql-tls.js';
+import { tlsErzwingenSkript, pruefeTlsErzwingen, tlsEntfernenSkript, TLS_ERZWUNGEN_KOPF } from './linux-sql-tls.js';
 import { PY_PM_PRUEFUNG, PY_HA_STATUS, HA_CRM_FEHLER_ARGS, HA_PM_FENSTER_S } from './linux-ha.js';
 import { pacemakerFehlerText, linuxHaStatusText, type PacemakerFehler } from './linux-ha-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
@@ -29,7 +29,7 @@ function iso(vorS: number): string {
   const d = new Date(Date.now() - vorS * 1000);
   return `${d.toISOString().slice(0, 19).replace('T', ' ')} +00:00`;
 }
-interface Xml { online?: boolean; quorum?: boolean; ag?: boolean; failcount?: string; fehler?: Array<{ knoten: string; zeit: string; op?: string }> }
+interface Xml { online?: boolean; quorum?: boolean; ag?: boolean; failcount?: string; fcZeit?: string; fehler?: Array<{ knoten: string; zeit: string; op?: string }> }
 function crmXml(o: Xml = {}): string {
   const on = o.online ?? true;
   const fc = o.failcount ?? '0';
@@ -45,7 +45,7 @@ function crmXml(o: Xml = {}): string {
     ...(o.ag ?? true ? ['    <clone id="ag_cluster-clone" multi_state="true"><resource id="ag_cluster" resource_agent="ocf:mssql:ag" role="Promoted" active="true" failed="false"><node name="sqllnx01" id="1" cached="true"/></resource></clone>'] : []),
     '    <resource id="ag_vip" resource_agent="ocf:heartbeat:IPaddr2" role="Started" active="true" failed="false"><node name="sqllnx01" id="1" cached="true"/></resource>',
     '  </resources>',
-    ...(fc !== '0' ? ['  <node_history>', '    <node name="sqllnx01">', `      <resource_history id="ag_cluster" orphan="false" migration-threshold="1000000" fail-count="${fc}" last-failure="${iso(7200)}"/>`, '    </node>', '  </node_history>'] : []),
+    ...(fc !== '0' ? ['  <node_history>', '    <node name="sqllnx01">', `      <resource_history id="ag_cluster" orphan="false" migration-threshold="1000000" fail-count="${fc}" last-failure="${o.fcZeit ?? iso(300)}"/>`, '    </node>', '  </node_history>'] : []),
     ...(o.fehler?.length ? ['  <failures>', ...o.fehler.map(f => `    <failure op_key="${f.op ?? 'ag_cluster_monitor_10000'}" node="${f.knoten}" exitstatus="not running" exitreason="" exitcode="7" call="12" status="complete" last-rc-change="${f.zeit}" queued="0" exec="0" interval="10000" task="monitor"/>`), '  </failures>'] : []),
     '  <status code="0" message="OK"/>',
     '</pacemaker-result>',
@@ -74,13 +74,27 @@ describe.skipIf(!PYTHON)('Task 8 — Pacemaker-Fehler aus crm_mon (PY_PM_PRUEFUN
     expect(HA_CRM_FEHLER_ARGS).toEqual(['-1', '--output-as=xml', '--include=failcounts,failures']);
   });
 
-  it('Fehlerzähler > 0 (auch INFINITY, unlesbar) → Exit 3 mit Grund; ohne Zeitfenster', () => {
+  it('Fehlerzähler > 0 mit letztem Fehler im Fenster (auch INFINITY, unlesbar) → Exit 3 mit Grund', () => {
     for (const [fc, n] of [['1', 1], ['INFINITY', 1000000], ['x', 1000000]] as const) {
       const r = pm(crmXml({ failcount: fc }));
       expect(r.rc, fc).toBe(3);
       expect(r.f?.fehlerzaehler, fc).toBe(n);
       expect(r.err, fc).toContain('Fehlerzähler ag_cluster');
       expect(r.err, fc).toContain('pcs resource cleanup ag_cluster');
+    }
+  });
+
+  it('Ruling R19: Fehlerzähler mit letztem Fehler vor > 30 min sperrt nicht (nur „fehlerzaehlerAlt“); unlesbare Zeit sperrt (fail-closed)', () => {
+    const alt = pm(crmXml({ failcount: '3', fcZeit: iso(3600) }));
+    expect(alt.rc, alt.err).toBe(0);
+    expect(alt.f).toMatchObject({ fehlerzaehler: 0, fehlerzaehlerAlt: 3 });
+    const jung = pm(crmXml({ failcount: '3', fcZeit: iso(1500) }));
+    expect(jung.rc).toBe(3);
+    expect(jung.err).toContain('Fehlerzähler ag_cluster = 3 mit Fehler in 30 min');
+    for (const z of ['', 'irgendwann']) {
+      const u = pm(crmXml({ failcount: '1', fcZeit: z }));
+      expect(u.rc, JSON.stringify(z)).toBe(3);
+      expect(u.f?.fehlerzaehler, JSON.stringify(z)).toBe(1);
     }
   });
 
@@ -126,14 +140,14 @@ describe.skipIf(!PYTHON)('Task 8 — Pacemaker-Fehler aus crm_mon (PY_PM_PRUEFUN
 describe('Task 8 — linux_ha status: Pacemaker-Fehlertext', () => {
   const gut: PacemakerFehler = { knoten: 'sqllnx01', online: true, quorum: true, ressource: true, fehlerzaehler: 0, fehlaktionen: [], aeltere: 0, fensterS: 1800 };
   it('fester Wortlaut; positives Stück in FESTE_AUSGABEN, negatives enthält FEHLER', () => {
-    expect(pacemakerFehlerText(gut)).toBe('Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0');
-    expect(pacemakerFehlerText({ ...gut, aeltere: 2 })).toBe('Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0, ältere Fehlaktionen 2');
+    expect(pacemakerFehlerText(gut)).toBe('Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)');
+    expect(pacemakerFehlerText({ ...gut, aeltere: 2, fehlerzaehlerAlt: 4 })).toBe('Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min), ältere Fehlaktionen 2, älterer Fehlerzähler 4');
     expect(pacemakerFehlerText({ ...gut, fehlerzaehler: 1, fehlaktionen: [{ aktion: 'ag_cluster_monitor_10000', status: 'not_running', zeit: 1 }] }))
-      .toBe('Pacemaker FEHLER: 1 Fehlaktionen in 30 min (ag_cluster_monitor_10000 not_running), Fehlerzähler ag_cluster 1');
+      .toBe('Pacemaker FEHLER: 1 Fehlaktionen in 30 min (ag_cluster_monitor_10000 not_running), Fehlerzähler ag_cluster 1 (30 min)');
     expect(pacemakerFehlerText(null)).toBe('Pacemaker-Fehler unbekannt (crm_mon nicht lesbar)');
-    expect(FESTE_AUSGABEN['linux_ha.status']).toContain(' | Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0');
+    expect(FESTE_AUSGABEN['linux_ha.status']).toContain(' | Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)');
     const text = linuxHaStatusText('sqllnx01', { cluster: { art: 'eingerichtet', name: 'sqllnxcl01', knoten: [], crm: { knoten: 3, online: [], quorum: true, stonith: true, ressourcen: 4 }, fehler: gut } } as never);
-    expect(text).toContain('; Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0; Fencing');
+    expect(text).toContain('; Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min); Fencing');
     // ohne gelesene Fehler (alter Status) bleibt der Text wie bisher
     expect(linuxHaStatusText('sqllnx01', { cluster: { art: 'eingerichtet', name: 'sqllnxcl01', knoten: [], crm: null } } as never)).not.toContain('Pacemaker ohne');
   });
@@ -152,7 +166,11 @@ alfreds() { [ -f "$T/alfreds" ] && { [ "$1" != "$KEY" ] || [ ! -f "$T/key_fremd"
 lies() { cat "$T/conf_$2" 2>/dev/null || true; }
 hostname() { cat "$T/hostname"; }
 crm_mon() { log "crm_mon $*"; if [ -f "$T/crm_kaputt" ]; then echo 'crm_mon: Error: cluster is not available on this node' >&2; return 102; fi; cat "$T/crm.xml"; }
-systemctl() { case "$1" in is-active) [ -f "$T/sql_aktiv" ] ;; show) cat "$T/sql_start" ;; *) log "systemctl $*" ;; esac; }`;
+systemctl() { case "$1" in is-active) [ -f "$T/sql_aktiv" ] ;; show) cat "$T/sql_start" ;; *) log "systemctl $*" ;; esac; }
+ERZ_MARKE="$T/etc/sqllnx-tls-erzwungen"
+timeout() { log "timeout $1"; shift; "$@"; }
+chown() { :; }
+rechte() { [ -e "$1" ] || return 0; cat "$T/marke_rechte" 2>/dev/null || echo '600 root root'; }`;
 
 function welt(): string {
   const T = mkdtempSync(join(tmpdir(), 'alfred-tlse-')).replace(/\\/g, '/');
@@ -180,6 +198,7 @@ function lauf(T: string, skript: string, eingabe = '{"sa":"Sa-Geheim-1"}'): Lauf
   const aus = lies('aus');
   return { rc: Number(/RC=(\d+)/.exec(o.stdout)?.[1] ?? -1), e: sqlErgebnis(aus), aus, argv: lies('argv').split('\n').filter(Boolean), mcl: lies('mcl'), log: lies('log') };
 }
+const marke = (T: string) => (existsSync(join(T, 'etc', 'sqllnx-tls-erzwungen')) ? ohneCr(readFileSync(join(T, 'etc', 'sqllnx-tls-erzwungen'), 'utf8')) : undefined);
 const conf = (T: string) => (existsSync(join(T, 'conf_forceencryption')) ? readFileSync(join(T, 'conf_forceencryption'), 'utf8').trim() : undefined);
 
 describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { timeout: 120_000 }, () => {
@@ -221,6 +240,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { time
       ['unverschlüsselt', T => writeFileSync(join(T, 'unverschluesselt'), ''), 'nicht verschlüsselt'],
       ['crm_mon', T => writeFileSync(join(T, 'crm_kaputt'), ''), 'crm_mon nicht lesbar'],
       ['failcount', T => writeFileSync(join(T, 'crm.xml'), crmXml({ failcount: '2' })), 'Fehlerzähler ag_cluster = 2'],
+      ['vermerk fremd', T => writeFileSync(join(T, 'etc', 'sqllnx-tls-erzwungen'), 'fremd\n'), 'sqllnx-tls-erzwungen ist vorhanden und nicht von Alfred'],
       ['fehlaktion', T => writeFileSync(join(T, 'crm.xml'), crmXml({ fehler: [{ knoten: 'sqllnx01', zeit: iso(600) }] })), 'fehlgeschlagene Aktionen in 30 min'],
       ['offline', T => writeFileSync(join(T, 'crm.xml'), crmXml({ online: false })), 'nicht online'],
       ['xml kaputt', T => writeFileSync(join(T, 'crm.xml'), '<kaputt'), 'crm_mon-XML nicht lesbar'],
@@ -242,7 +262,9 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { time
     const T = welt();
     const r = lauf(T, an);
     expect(r.rc, r.aus).toBe(0);
-    expect(r.e).toMatchObject({ zustand: 'geaendert', erzwungen: true, fqdn: FQDN, neustartNoetig: true, aenderungen: ['mssql-conf:forceencryption'], pacemaker: { knoten: 'sqllnx01', online: true, fehlerzaehler: 0, fehlaktionen: [] } });
+    expect(r.e).toMatchObject({ zustand: 'geaendert', erzwungen: true, fqdn: FQDN, neustartNoetig: true, vonAlfred: true, aenderungen: ['vermerk', 'mssql-conf:forceencryption'], pacemaker: { knoten: 'sqllnx01', online: true, fehlerzaehler: 0, fehlaktionen: [] } });
+    expect(marke(T)).toBe(`${TLS_ERZWUNGEN_KOPF}\n`);
+    expect(r.log).toContain('timeout 30');
     expect(r.mcl.trim()).toBe('mssql-conf set network.forceencryption 1');
     expect(conf(T)).toBe('1');
     expect(r.argv.length).toBeGreaterThan(0);
@@ -258,7 +280,8 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { time
     writeFileSync(join(T, 'crm_kaputt'), ''); rmSync(join(T, 'etc', 'sqllnx-tls-pruefen'));
     const a = lauf(T, aus, '');
     expect(a.rc, a.aus).toBe(0);
-    expect(a.e).toMatchObject({ zustand: 'geaendert', erzwungen: false, aenderungen: ['mssql-conf:forceencryption'] });
+    expect(a.e).toMatchObject({ zustand: 'geaendert', erzwungen: false, belassen: [], aenderungen: ['mssql-conf:forceencryption', 'vermerk-entfernt'] });
+    expect(marke(T)).toBeUndefined();
     expect(a.mcl.trim()).toBe('mssql-conf unset network.forceencryption');
     expect(conf(T)).toBeUndefined();
     expect(a.argv).toEqual([]);
@@ -268,6 +291,29 @@ describe.skipIf(!BASH || !PYTHON)('Task 8 — tls_erzwingen ausgeführt', { time
     // ein fremd gesetztes 0 bleibt (nicht erzwungen)
     writeFileSync(join(T, 'conf_forceencryption'), '0');
     expect(lauf(T, aus, '').mcl).toBe('');
+  });
+
+  it('Ruling R20: forceencryption 1 schon vor Alfred → an=true „schon“ ohne Vermerk; an=false lässt es stehen (belassen)', () => {
+    const T = welt();
+    writeFileSync(join(T, 'conf_forceencryption'), '1');
+    writeFileSync(join(T, 'sql_start'), '@9999999999\n');
+    const r = lauf(T, an);
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'schon', erzwungen: true, vonAlfred: false, aenderungen: [] });
+    expect(marke(T)).toBeUndefined();
+    expect(r.mcl).toBe('');
+    const a = lauf(T, aus, '');
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.e).toMatchObject({ zustand: 'schon', erzwungen: true, aenderungen: [] });
+    expect((a.e?.belassen as string[])[0]).toContain('network.forceencryption = 1 (nicht von Alfred gesetzt');
+    expect(a.mcl).toBe('');
+    expect(conf(T)).toBe('1');
+    // ein Vermerk mit falschen Rechten zählt nicht als Alfreds — bleibt, Wert bleibt
+    writeFileSync(join(T, 'etc', 'sqllnx-tls-erzwungen'), `${TLS_ERZWUNGEN_KOPF}\n`); writeFileSync(join(T, 'marke_rechte'), '644 root root');
+    const f = lauf(T, aus, '');
+    expect(f.mcl).toBe('');
+    expect((f.e?.belassen as string[]).join(';')).toContain('(nicht von Alfred)');
+    expect(marke(T)).toBeDefined();
   });
 
   it('tls_entfernen bleibt gesperrt, solange forceencryption 1 ist (Reihenfolge des Rückwegs)', () => {
@@ -319,6 +365,12 @@ describe('Task 8 — Skill linux_sql tls_erzwingen, Rückweg im Change', () => {
       const f = skill({ zustand: 'geaendert', erzwungen: true, fqdn: FQDN, neustartNoetig: true, ...(pm ? { pacemaker: pm } : {}) });
       expect((await f.s.execute({ action: 'tls_erzwingen', zugang: 'sqllnx01', an: true }, imChange)).error).toContain('Nachprüfung fehlgeschlagen');
     }
+    const b = skill({ zustand: 'schon', erzwungen: true, belassen: ['network.forceencryption = 1 (nicht von Alfred gesetzt, kein Vermerk /etc/alfred/sqllnx-tls-erzwungen)'], neustartNoetig: false, aenderungen: [] });
+    const rb = await b.s.execute({ action: 'tls_erzwingen', zugang: 'sqllnx01', an: false }, imChange);
+    expect(rb.success, rb.error).toBe(true);
+    expect(rb.display).toMatch(/^TLS_ERZWUNGEN_BELASSEN sqllnx01: .*nicht von Alfred gesetzt/);
+    const x = skill({ zustand: 'schon', erzwungen: true, belassen: [], neustartNoetig: false });
+    expect((await x.s.execute({ action: 'tls_erzwingen', zugang: 'sqllnx01', an: false }, imChange)).error).toContain('Nachprüfung fehlgeschlagen');
     const a = skill({ zustand: 'geaendert', erzwungen: false, neustartNoetig: true, aenderungen: ['mssql-conf:forceencryption'] });
     const ra = await a.s.execute({ action: 'tls_erzwingen', zugang: 'sqllnx01', an: false }, imChange);
     expect(ra.display).toMatch(/^✅ TLS_NICHT_ERZWUNGEN sqllnx01: /);

@@ -80,7 +80,7 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt'
     // I8e Etappe 3 Task 8: „; Pacemaker …“ nach dem Cluster-Teil (pacemakerFehlerText) — positiv nur dieses Stück; „FEHLER“ gehört in nichtEnthalten
-    + ' | Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0'
+    + ' | Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)'
     // Task 6: „; AG …“ am Ende (agText) — positive Stücke einzeln; Knotennamen fest (Global Constraints), Prüfung „offen“: nichtEnthalten „OFFEN“
     + ' | AG {ag}: Promoted {knoten}, VIP {knoten}, required_sync Ressource {n} / SQL {n}, Replikate {replikate}, {standort}'
     + ' | Standort-Bedingungen 0 | required_sync Ressource 0 / SQL 0 | Promoted sqllnx01 | Promoted sqllnx02 | VIP sqllnx01 | VIP sqllnx02'
