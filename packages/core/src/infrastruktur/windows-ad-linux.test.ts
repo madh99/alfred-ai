@@ -106,12 +106,35 @@ describe('I8e Etappe 3 — Skripttexte', () => {
     expect(eigen).toBeGreaterThan(0);
     expect(eigen).toBeLessThan(h.indexOf('New-GPO -Name $name'));
     expect(h).toContain("'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung'");
-    const pruefungen = ['gPCUserExtensionNames) { $abw +=', "$ext -ne $cse) { $abw +=", 'fremde Dateien', "-ine 'GPT.INI'", "'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf'", 'GptTmpl.inf-Abschnitt', 'GptTmpl.inf-Eintrag',
-      "@('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight')", 'Get-GPPermission -Guid $g.Id -All', "@('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom')", "($domSid + '-512')", "($rootSid + '-519')", "'S-1-5-18'",
-      "if ($abw.Count) { throw ('GPO ' + $name + ' weicht ab ("];
-    const abbruch = h.indexOf('if ($abw.Count) { throw');
-    for (const t of pruefungen) { const i = h.indexOf(t); expect(i, t).toBeGreaterThan(0); expect(i, t).toBeLessThanOrEqual(abbruch); }
-    for (const schreiben of ['New-GPLink', 'Set-GPLink', 'WriteAllText($datei', 'WriteAllText($ini', 'Set-ADObject -Identity $ad', 'New-Item -ItemType Directory -Path $sec']) expect(abbruch, schreiben).toBeLessThan(h.indexOf(schreiben));
+    // Prüfungen (Fix-Runde 2 + 3) stehen alle in der Funktion Pruefe, die vor jedem Anlegen/Schreiben/Verknüpfen definiert ist
+    const pruefungen = ["[string]$po.gPCUserExtensionNames) { [void]$abw.Add('Benutzer-Erweiterungen", "-ne $cse) { [void]$abw.Add('Computer-Erweiterungen", 'fremde Dateien', "-ine 'GPT.INI'", "'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf'", 'GptTmpl.inf-Abschnitt', 'GptTmpl.inf-Eintrag',
+      "@('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight')", 'Get-GPPermission -Guid $g.Id -All', "@('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom')",
+      // Fix-Runde 3 (R7): Werte der Rechte, Besitzer, AD-DACL, SYSVOL-Rechte; ERSTELLER-BESITZER bei Get-GPPermission erlaubt
+      "$wert -ne ('*' + $sid)", "'Wert von ' + $schl", "$mitCO -notcontains [string]$x.Trustee.Sid.Value",
+      "Get-Acl -Path ('AD:' + $pad)", 'GetOwner([System.Security.Principal.SecurityIdentifier])', "'Besitzer des GPO-Objekts '", '$rr -band 0xC0003', '($rr -band 0x20) -and $a.ObjectType -eq [guid]::Empty', "'AD-Recht '",
+      '[int64]0x500D0156', 'Get-Acl -LiteralPath $ele.FullName', "'SYSVOL-Schreibrecht '"];
+    // Berechtigte (DA -512, EA -519 der Stammdomäne, SYSTEM, Administratoren, ERSTELLER-BESITZER) vor der Prüffunktion festgelegt
+    for (const t of ["($domSid + '-512')", "($rootSid + '-519')", "'S-1-5-18'", "'S-1-5-32-544'", "$mitCO = $admins + @('S-1-3-0')"]) { expect(h.indexOf(t), t).toBeGreaterThan(0); expect(h.indexOf(t), t).toBeLessThan(h.indexOf('function Pruefe($g, $abw)')); }
+    const pruefeEnde = h.indexOf('    $g = Get-GPO -Name $name');
+    expect(h.indexOf('function Pruefe($g, $abw)')).toBeGreaterThan(0);
+    for (const t of pruefungen) { const i = h.indexOf(t); expect(i, t).toBeGreaterThan(h.indexOf('function Pruefe($g, $abw)')); expect(i, t).toBeLessThan(pruefeEnde); }
+    // Reihenfolge: Gruppe fremd? → GPO fremd? → vorhandene GPO prüfen (Abbruch „nichts geändert“) → Gruppe/GPO anlegen → neue GPO prüfen → schreiben/verknüpfen
+    const gruppeFremd = h.indexOf("ist nicht von Alfred angelegt - nichts geändert') }\n    $sid =");
+    const ersteAbbruch = h.indexOf("weicht ab (' + ($abw -join '; ') + ') - nichts geändert')");
+    const gruppeNeu = h.indexOf('New-ADGroup -Name $gname');
+    const gpoNeu = h.indexOf('New-GPO -Name $name');
+    const zweiteAbbruch = h.indexOf('weicht nach dem Anlegen ab');
+    expect(gruppeFremd).toBeGreaterThan(0);
+    expect(gruppeFremd).toBeLessThan(eigen);
+    expect(eigen).toBeLessThan(ersteAbbruch);
+    expect(ersteAbbruch).toBeLessThan(gruppeNeu);
+    expect(gruppeNeu).toBeLessThan(gpoNeu);
+    expect(gpoNeu).toBeLessThan(zweiteAbbruch);
+    expect(h.slice(zweiteAbbruch, zweiteAbbruch + 200)).toContain('in diesem Lauf angelegt');
+    for (const schreiben of ['New-GPLink', 'Set-GPLink', 'WriteAllText($datei', 'WriteAllText($ini', 'Set-ADObject -Identity $ad', 'New-Item -ItemType Directory -Path $sec']) expect(zweiteAbbruch, schreiben).toBeLessThan(h.indexOf(schreiben));
+    // Fix-Runde 3: gruppe im Ergebnis ist ein echter Wert (vorher ${…} im gewöhnlichen String)
+    expect(h).toContain("$sperre = [ordered]@{ gruppe = 'Dienstkonten-KeineAnmeldung';");
+    expect(h).not.toContain('${psText');
   });
   it('Fix-Runde 1: Computerkonto — fremdes nie übernehmen, eigenes in Gebrauch nie zurücksetzen', () => {
     const k = computerkontoSkript({ name: 'SQLLNX01', ou: 'Server' });

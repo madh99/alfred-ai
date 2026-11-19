@@ -414,45 +414,66 @@ export const SICHERHEIT_CSE = '[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-
  * grundstrukturSkript), alle Zugriffe gegen diesen DC (lokales SYSVOL, -Server) — kein zweiter Sprung. Liefert $sg (Gruppe) und $sperre.
  */
 const ANMELDESPERRE = [
-  `  $spou = 'OU=' + ${psText(SPERR_GRUPPE_OU)} + ',' + $d.DistinguishedName`,
-  `  $sg = Get-ADGroup -Filter "SamAccountName -eq '${SPERR_GRUPPE}'" -Properties Description -Server $dc -Credential $c`,
-  `  if (-not $sg) { New-ADGroup -Name ${psText(SPERR_GRUPPE)} -SamAccountName ${psText(SPERR_GRUPPE)} -GroupScope Global -GroupCategory Security -Path $spou -Description ${psText(SPERR_GRUPPE_BESCHREIBUNG)} -Server $dc -Credential $c; $sg = Get-ADGroup -Identity ${psText(SPERR_GRUPPE)} -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
-  `  elseif ($sg.Description -ne ${psText(SPERR_GRUPPE_BESCHREIBUNG)}) { throw ('Gruppe ' + ${psText(SPERR_GRUPPE)} + ' ist nicht von Alfred angelegt - nichts geändert') }`,
-  '  $sid = [string]$sg.SID.Value',
-  `  $sperre = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c -ArgumentList ${psText(SPERR_GPO)}, $sid, $d.DistinguishedName, $d.DNSRoot, $dc, ${psText(SICHERHEIT_CSE)}, ${psText(SPERR_GPO_KOMMENTAR)} -ScriptBlock {`,
-  '    param([string]$name, [string]$sid, [string]$dn, [string]$root, [string]$server, [string]$cse, [string]$kommentar)',
+  // Fix-Runde 3 (R7): alles im WinRM-Block mit vollem Token. Reihenfolge: nur lesen und prüfen (fremde Gruppe? fremde oder abweichende
+  // GPO?) → erst dann Gruppe und GPO anlegen → eine neu angelegte GPO erneut prüfen → erst dann schreiben und verknüpfen.
+  `  $sperre = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c -ArgumentList ${psText(SPERR_GPO)}, ${psText(SPERR_GRUPPE)}, ${psText(SPERR_GRUPPE_OU)}, ${psText(SPERR_GRUPPE_BESCHREIBUNG)}, $d.DistinguishedName, $d.DNSRoot, $dc, ${psText(SICHERHEIT_CSE)}, ${psText(SPERR_GPO_KOMMENTAR)} -ScriptBlock {`,
+  '    param([string]$name, [string]$gname, [string]$gou, [string]$gbeschr, [string]$dn, [string]$root, [string]$server, [string]$cse, [string]$kommentar)',
   "    $ErrorActionPreference = 'Stop'; Import-Module GroupPolicy, ActiveDirectory",
-  "    $r = [ordered]@{ gpo = 'schon'; inhalt = 'schon'; link = 'schon' }",
+  "    $r = [ordered]@{ gruppeNeu = $false; gpo = 'schon'; inhalt = 'schon'; link = 'schon' }; $angelegt = @()",
+  "    $domSid = (Get-ADDomain -Server $server).DomainSID.Value; $rootSid = (Get-ADDomain -Identity (Get-ADForest -Server $server).RootDomain -Server $server).DomainSID.Value",
+  // Berechtigte: Domänen-Admins, Organisations-Admins (Stammdomäne), SYSTEM, Administratoren des DCs (erben SYSVOL und die AD-Wurzel),
+  // dazu ERSTELLER-BESITZER (S-1-3-0, Vorlage für neue Objekte)
+  "    $admins = @(($domSid + '-512'), ($rootSid + '-519'), 'S-1-5-18', 'S-1-5-32-544'); $mitCO = $admins + @('S-1-3-0')",
+  "    $sg = Get-ADGroup -Filter (\"SamAccountName -eq '\" + $gname + \"'\") -Properties Description -Server $server",
+  "    if ($sg -and $sg.Description -ne $gbeschr) { throw ('Gruppe ' + $gname + ' ist nicht von Alfred angelegt - nichts geändert') }",
+  '    $sid = $(if ($sg) { [string]$sg.SID.Value } else { $null })',
+  // Prüfung einer (vorhandenen oder eben angelegten) GPO — sammelt jede Abweichung in $abw, ändert nichts
+  '    function Pruefe($g, $abw) {',
+  "      $gid = '{' + $g.Id.ToString().ToUpper() + '}'",
+  "      $pb = Join-Path (Get-SmbShare -Name SYSVOL).Path ($root + '\\Policies\\' + $gid)",
+  "      $pad = 'CN=' + $gid + ',CN=Policies,CN=System,' + $dn",
+  '      $po = Get-ADObject -Identity $pad -Properties gPCMachineExtensionNames, gPCUserExtensionNames -Server $server',
+  "      if ([string]$po.gPCUserExtensionNames) { [void]$abw.Add('Benutzer-Erweiterungen ' + [string]$po.gPCUserExtensionNames) }",
+  "      if ([string]$po.gPCMachineExtensionNames -and [string]$po.gPCMachineExtensionNames -ne $cse) { [void]$abw.Add('Computer-Erweiterungen ' + [string]$po.gPCMachineExtensionNames) }",
+  "      if (-not (Test-Path -LiteralPath $pb)) { [void]$abw.Add('SYSVOL-Ordner ' + $pb + ' fehlt') } else {",
+  "        $fremd = @(Get-ChildItem -LiteralPath $pb -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($pb.Length).TrimStart('\\') } | Where-Object { $_ -ine 'GPT.INI' -and $_ -ine 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf' })",
+  "        if ($fremd.Count) { [void]$abw.Add('fremde Dateien ' + ($fremd -join ', ')) }",
+  "        $pdat = Join-Path $pb 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf'",
+  '        if (Test-Path -LiteralPath $pdat) {',
+  "          $abschnitt = ''; $erlaubt = @{ 'Unicode' = @('Unicode'); 'Version' = @('signature', 'Revision'); 'Privilege Rights' = @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') }",
+  "          foreach ($zl in ([IO.File]::ReadAllText($pdat) -split \"`r?`n\")) { $zl = $zl.Trim(); if (-not $zl) { continue }",
+  "            $m = [regex]::Match($zl, '^\\[(.+)\\]$'); if ($m.Success) { $abschnitt = $m.Groups[1].Value; if (-not $erlaubt.ContainsKey($abschnitt)) { [void]$abw.Add('GptTmpl.inf-Abschnitt [' + $abschnitt + ']') }; continue }",
+  "            $teil = $zl -split '=', 2; $schl = $teil[0].Trim(); $wert = $(if ($teil.Count -gt 1) { $teil[1].Trim() } else { '' })",
+  "            if (-not $erlaubt.ContainsKey($abschnitt) -or $erlaubt[$abschnitt] -notcontains $schl) { [void]$abw.Add('GptTmpl.inf-Eintrag ' + $schl + ' in [' + $abschnitt + ']'); continue }",
+  // Werte der beiden Rechte: genau die SID von Dienstkonten-KeineAnmeldung
+  "            if ($abschnitt -eq 'Privilege Rights' -and (-not $sid -or $wert -ne ('*' + $sid))) { [void]$abw.Add('Wert von ' + $schl + ': ' + $wert + $(if (-not $sid) { ' (Gruppe ' + $gname + ' fehlt)' } else { ' statt *' + $sid })) } }",
+  '        }',
+  // Dateirechte im SYSVOL: Schreiben/Ändern/Vollzugriff nur für die Berechtigten
+  "        $fsMaske = [int64]0x500D0156",
+  "        foreach ($ele in @(@(Get-Item -LiteralPath $pb -Force) + @(Get-ChildItem -LiteralPath $pb -Recurse -Force))) { foreach ($a in (Get-Acl -LiteralPath $ele.FullName).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) { if ([string]$a.AccessControlType -eq 'Allow' -and ([int64]$a.FileSystemRights -band $fsMaske) -and $mitCO -notcontains $a.IdentityReference.Value) { [void]$abw.Add('SYSVOL-Schreibrecht ' + [string]$a.FileSystemRights + ' für ' + $a.IdentityReference.Value + ' auf ' + $ele.FullName.Substring($pb.Length).TrimStart('\\')) } } }",
+  '      }',
+  // GPMC-Bearbeiten-Rechte
+  "      foreach ($x in @(Get-GPPermission -Guid $g.Id -All -Server $server)) { if ([string]$x.Permission -in @('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom') -and $mitCO -notcontains [string]$x.Trustee.Sid.Value) { [void]$abw.Add('Bearbeiten-Recht ' + [string]$x.Permission + ' für ' + [string]$x.Trustee.Name) } }",
+  // Besitzer und DACL des AD-Objekts (ein Besitzer hat immer WRITE_DAC, unabhängig von Get-GPPermission)
+  "      $acl = Get-Acl -Path ('AD:' + $pad); $besitzer = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value",
+  "      if ($admins -notcontains $besitzer) { [void]$abw.Add('Besitzer des GPO-Objekts ' + $besitzer) }",
+  // CreateChild 0x1, DeleteChild 0x2, WriteDacl 0x40000, WriteOwner 0x80000 (GenericAll enthält sie); WriteProperty 0x20 nur für alle Eigenschaften (GenericWrite enthält es)
+  "      foreach ($a in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) { if ([string]$a.AccessControlType -ne 'Allow' -or $mitCO -contains $a.IdentityReference.Value) { continue }; $rr = [int64]$a.ActiveDirectoryRights; if (($rr -band 0xC0003) -or (($rr -band 0x20) -and $a.ObjectType -eq [guid]::Empty)) { [void]$abw.Add('AD-Recht ' + [string]$a.ActiveDirectoryRights + ' für ' + $a.IdentityReference.Value) } }",
+  '    }',
   '    $g = Get-GPO -Name $name -Server $server -ErrorAction SilentlyContinue',
-  // Fix-Runde 2 (Ruling R6): eine vorhandene GPO dieses Namens nur, wenn Alfred sie angelegt hat (Kommentar) — sonst nichts ändern
   "    if ($g -and [string]$g.Description -ne $kommentar) { throw ('GPO ' + $name + ' ist nicht von Alfred angelegt - nichts geändert') }",
-  "    if (-not $g) { $g = New-GPO -Name $name -Server $server -Comment $kommentar; $r.gpo = 'angelegt' }",
+  "    if ($g) { $abw = New-Object System.Collections.ArrayList; Pruefe $g $abw; if ($abw.Count) { throw ('GPO ' + $name + ' weicht ab (' + ($abw -join '; ') + ') - nichts geändert') } }",
+  // erst nach allen Prüfungen anlegen
+  "    if (-not $sg) { New-ADGroup -Name $gname -SamAccountName $gname -GroupScope Global -GroupCategory Security -Path ('OU=' + $gou + ',' + $dn) -Description $gbeschr -Server $server; $sg = Get-ADGroup -Identity $gname -Server $server; $sid = [string]$sg.SID.Value; $r.gruppeNeu = $true; $angelegt += ('Gruppe ' + $gname) }",
+  "    if (-not $g) { $g = New-GPO -Name $name -Server $server -Comment $kommentar; $r.gpo = 'angelegt'; $angelegt += ('GPO ' + $name)",
+  "      $abw = New-Object System.Collections.ArrayList; Pruefe $g $abw; if ($abw.Count) { throw ('GPO ' + $name + ' weicht nach dem Anlegen ab (' + ($abw -join '; ') + ') - in diesem Lauf angelegt: ' + ($angelegt -join ', ') + '; nicht beschrieben, nicht verknüpft') } }",
   "    $id = '{' + $g.Id.ToString().ToUpper() + '}'",
   "    $basis = Join-Path (Get-SmbShare -Name SYSVOL).Path ($root + '\\Policies\\' + $id)",
   "    $sec = Join-Path $basis 'Machine\\Microsoft\\Windows NT\\SecEdit'; $datei = Join-Path $sec 'GptTmpl.inf'",
   "    $soll = (@('[Unicode]', 'Unicode=yes', '[Version]', 'signature=\"$CHICAGO$\"', 'Revision=1', '[Privilege Rights]', ('SeDenyInteractiveLogonRight = *' + $sid), ('SeDenyRemoteInteractiveLogonRight = *' + $sid)) -join \"`r`n\") + \"`r`n\"",
   "    $ad = 'CN=' + $id + ',CN=Policies,CN=System,' + $dn",
-  "    $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames, gPCUserExtensionNames -Server $server",
+  "    $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames -Server $server",
   "    $ext = [string]$o.gPCMachineExtensionNames",
-  // Fix-Runde 2 (R6): Inhalts- und Rechteprüfung VOR jedem Schreiben/Verknüpfen — die GPO darf nur Alfreds Anmeldesperre enthalten
-  '    $abw = @()',
-  "    if ([string]$o.gPCUserExtensionNames) { $abw += ('Benutzer-Erweiterungen ' + [string]$o.gPCUserExtensionNames) }",
-  "    if ($ext -and $ext -ne $cse) { $abw += ('Computer-Erweiterungen ' + $ext) }",
-  "    if (-not (Test-Path -LiteralPath $basis)) { $abw += ('SYSVOL-Ordner ' + $basis + ' fehlt') } else {",
-  "      $fremd = @(Get-ChildItem -LiteralPath $basis -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($basis.Length).TrimStart('\\') } | Where-Object { $_ -ine 'GPT.INI' -and $_ -ine 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf' })",
-  "      if ($fremd.Count) { $abw += ('fremde Dateien ' + ($fremd -join ', ')) }",
-  '    }',
-  '    if (Test-Path -LiteralPath $datei) {',
-  "      $abschnitt = ''; $erlaubt = @{ 'Unicode' = @('Unicode'); 'Version' = @('signature', 'Revision'); 'Privilege Rights' = @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') }",
-  "      foreach ($zl in ([IO.File]::ReadAllText($datei) -split \"`r?`n\")) { $zl = $zl.Trim(); if (-not $zl) { continue }",
-  "        $m = [regex]::Match($zl, '^\\[(.+)\\]$'); if ($m.Success) { $abschnitt = $m.Groups[1].Value; if (-not $erlaubt.ContainsKey($abschnitt)) { $abw += ('GptTmpl.inf-Abschnitt [' + $abschnitt + ']') }; continue }",
-  "        $schl = ($zl -split '=', 2)[0].Trim(); if (-not $erlaubt.ContainsKey($abschnitt) -or $erlaubt[$abschnitt] -notcontains $schl) { $abw += ('GptTmpl.inf-Eintrag ' + $schl + ' in [' + $abschnitt + ']') } }",
-  '    }',
-  // Bearbeiten-Rechte nur für Domänen-Admins (-512), Organisations-Admins (-519 der Gesamtstruktur-Stammdomäne), SYSTEM
-  "    $domSid = (Get-ADDomain -Server $server).DomainSID.Value; $rootSid = (Get-ADDomain -Identity (Get-ADForest -Server $server).RootDomain -Server $server).DomainSID.Value",
-  "    $ok = @(($domSid + '-512'), ($rootSid + '-519'), 'S-1-5-18')",
-  "    foreach ($x in @(Get-GPPermission -Guid $g.Id -All -Server $server)) { if ([string]$x.Permission -in @('GpoEdit', 'GpoEditDeleteModifySecurity', 'GpoCustom') -and $ok -notcontains [string]$x.Trustee.Sid.Value) { $abw += ('Bearbeiten-Recht ' + [string]$x.Permission + ' für ' + [string]$x.Trustee.Name) } }",
-  "    if ($abw.Count) { throw ('GPO ' + $name + ' weicht ab (' + ($abw -join '; ') + ') - nichts geändert') }",
   "    $ist = if (Test-Path -LiteralPath $datei) { [IO.File]::ReadAllText($datei) } else { '' }",
   "    if ($ist -ne $soll -or $ext.IndexOf($cse) -lt 0) {",
   '      New-Item -ItemType Directory -Path $sec -Force | Out-Null',
@@ -477,8 +498,10 @@ const ANMELDESPERRE = [
   '    $r.erweiterung = ([string]$o.gPCMachineExtensionNames).IndexOf($cse) -ge 0',
   '    [pscustomobject]$r',
   '  }',
-  "  if ($sperre.gpo -ne 'schon' -or $sperre.inhalt -ne 'schon' -or $sperre.link -ne 'schon') { if ($z -ne 'angelegt') { $z = 'geaendert' } }",
-  "  $sperre = [ordered]@{ gruppe = ${psText(SPERR_GRUPPE)}; gpo = [string]$sperre.gpoName; gpoId = [string]$sperre.gpoId; verknuepft = [bool]$sperre.verknuepft; lokal = [bool]$sperre.lokal; rdp = [bool]$sperre.rdp; erweiterung = [bool]$sperre.erweiterung; mitglied = $false }",
+  "  if ($sperre.gruppeNeu -or $sperre.gpo -ne 'schon' -or $sperre.inhalt -ne 'schon' -or $sperre.link -ne 'schon') { if ($z -ne 'angelegt') { $z = 'geaendert' } }",
+  `  $sg = Get-ADGroup -Identity ${psText(SPERR_GRUPPE)} -Server $dc -Credential $c`,
+  // Fix-Runde 3: vorher stand hier ${…} in einem gewöhnlichen String — PowerShell las das als Variable (immer leer)
+  `  $sperre = [ordered]@{ gruppe = ${psText(SPERR_GRUPPE)}; gpo = [string]$sperre.gpoName; gpoId = [string]$sperre.gpoId; verknuepft = [bool]$sperre.verknuepft; lokal = [bool]$sperre.lokal; rdp = [bool]$sperre.rdp; erweiterung = [bool]$sperre.erweiterung; mitglied = $false }`,
 ];
 
 export interface Anmeldesperre { gruppe?: string; gpo?: string; verknuepft?: boolean; lokal?: boolean; rdp?: boolean; erweiterung?: boolean; mitglied?: boolean }
