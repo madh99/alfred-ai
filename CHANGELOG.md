@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-SQL AD/TLS: Ergebnis von computerkonto_vorbereiten (v1906)
+
+- `windows_ad computerkonto_vorbereiten` meldete ein korrekt angelegtes Computerkonto als gescheitert: Das Ergebnisfeld `kennwortGesetzt` wurde von der Geheimnis-Schwärzung des Fernzugriffs mitsamt Trennzeichen ersetzt, die Ergebniszeile war damit kein gültiges JSON mehr. Das Feld heißt jetzt `einmalBereit`; ein Test prüft alle Ergebnisfelder der neuen Linux-SQL-AD/TLS-Bausteine gegen die Schwärzung.
+
 ### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 4: TLS erzwingen, AD-Logins, Ablaufwarnung (v1905)
 
 - **`linux_sql tls_erzwingen`:** erzwingt verschlüsselte Verbindungen nur, wenn Alfreds TLS-Zertifikat eingespielt ist, Alfreds Zertifikatsprüfung eingeschaltet ist und Pacemaker auf dem Knoten in den letzten 30 Minuten keine Fehlaktionen hatte. Der Rückweg nimmt die Erzwingung nur zurück, wenn Alfred sie gesetzt hat.
