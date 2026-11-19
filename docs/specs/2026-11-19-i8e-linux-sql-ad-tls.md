@@ -90,9 +90,9 @@ Betrachtet:
 1. **Netz + DNS:** UniFi-Freigaben 830→829 (falls fehlend), A/PTR-Einträge, Reverse-Zone. Beweis: Auflösung vorwärts/rückwärts von allen drei Hosts.
 2. **AD-Objekte:** `svc-sqllnx` gehärtet, SPNs, Gruppen, vorbereitete Computerkonten.
 3. **Beitritt** sqllnxcfg → sqllnx02 → sqllnx01 (Konfig-Knoten zuerst, kein SQL-Datenverkehr).
-4. **Kerberos** rollierend (Sekundär, Failover, Primär, zurück) — Beweis: SSMS/`sqlcmd -E` mit `auth_scheme = KERBEROS` auf beiden Hosts und über den Listener, nach Failover erneut.
-5. **TLS ohne Zwang** (Zertifikate ausstellen und einspielen, rollierend), dann **Alfred auf Zertifikatsprüfung umstellen**, dann **Pacemaker-Prüfung** (Monitor-Läufe fehlerfrei mit TLS).
-6. **TLS erzwingen** rollierend — Beweis: Verbindung ohne Verschlüsselung wird abgelehnt; `encrypt_option = TRUE` für alle Sitzungen in `sys.dm_exec_connections`; Failover hin/zurück mit Pacemaker fehlerfrei.
+4. **Kerberos** rollierend (Sekundär, Failover, Primär, zurück) — Beweis auf dem Linux-Host: `kerberos_einrichten` holt echte Diensttickets für den eigenen SPN und den Listener-SPN (`kvno -k`), Status „Kerberos-Keytab … aktuell“. *Reihenfolge-Korrektur 19.11. (Ruling R23, Gesamtprüfung):* Der Client-Beweis über sql01 (`auth_scheme = KERBEROS`) gehört ans Ende von Schritt 5, weil die Probe das Server-Zertifikat prüft und das PKI-Zertifikat erst dort eingespielt ist.
+5. **TLS ohne Zwang** (Zertifikate ausstellen und einspielen, rollierend), dann **Alfred auf Zertifikatsprüfung umstellen**, dann **Pacemaker-Prüfung** (Monitor-Läufe fehlerfrei mit TLS), dann **Kerberos-Beweis über sql01** auf beiden Hosts und über den Listener, nach Failover erneut. Voraussetzung: Host-Firewall lässt sql01 (10.203.30.2) auf 1433 zu (Ruling R22).
+6. **TLS erzwingen** rollierend — frühestens 30 min nach dem letzten Neustart aus Schritt 5 (Ruling R24, Pacemaker-Fenster), je Knoten erst erzwingen, dann neu starten (Neustart = `systemctl restart mssql-server` mit Prüfung Dienst aktiv / AG synchron). Beweis: Verbindung ohne Verschlüsselung wird abgelehnt; `encrypt_option = TRUE` für alle Sitzungen in `sys.dm_exec_connections`; Failover hin/zurück mit Pacemaker fehlerfrei (Torbeweis R18); eine LOG-Sicherung unter Zwang.
 7. **Logins** für `SQL-Linux-Admins` auf beiden Replikaten; Owner-Test mit SSMS über `sqllnxag01`.
 
 ### 7.6 Feste Systemprüfung in der Planprüfung
