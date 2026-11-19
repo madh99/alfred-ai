@@ -16,7 +16,7 @@
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import {
-  sqlKopf, shQ, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF, AD_SSSD_KOPF, AD_KRB5_KOPF, SQL_KEYTAB, SQL_KERBEROS_KONTO, PY_CONF, AD_DOMAENE_LINUX,
+  sqlKopf, shQ, SQL_HILFE, SA_LESEN, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF, AD_SSSD_KOPF, AD_KRB5_KOPF, SQL_KEYTAB, SQL_KERBEROS_KONTO, PY_CONF, AD_DOMAENE_LINUX,
 } from './linux-sql.js';
 
 export { AD_SSSD_KOPF, AD_KRB5_KOPF, SQL_KEYTAB, SQL_KERBEROS_KONTO };
@@ -863,8 +863,320 @@ export function kerberosEntfernenSkript(): string {
   ].join('\n');
 }
 
+// ── ad_login / ad_login_entfernen (Task 8, Spec 7.4 Nr. 5) ───────────────────────────────────────────────────────────────────────────
+
+/** AD-Gruppe (sAMAccountName): Buchstabe/Ziffer, dann Buchstaben, Ziffern, Leerzeichen, . _ - (2–64 Zeichen), nicht auf Leerzeichen/Punkt endend */
+export const AD_LOGIN_GRUPPE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}[A-Za-z0-9_-]$/;
+export const AD_LOGIN_SERVERROLLEN: readonly string[] = ['sysadmin'];
+/** feste Liste der Datenbankrollen (keine benutzerdefinierten Rollen, kein db_securityadmin/db_accessadmin) */
+export const AD_LOGIN_DB_ROLLEN: readonly string[] = ['db_datareader', 'db_datawriter', 'db_ddladmin', 'db_owner'];
+const AD_LOGIN_DB = /^[A-Za-z][A-Za-z0-9_]{2,63}$/;
+const AD_LOGIN_SYSTEM_DBS = new Set(['master', 'model', 'msdb', 'tempdb']);
+/**
+ * Eigentumsnachweis (SQL-Logins haben keine Beschreibung): jede Anlage durch ad_login steht VOR der Anlage als Zeile in dieser Datei
+ * (root 0600, Kopfzeile) — L|<login>, S|<serverrolle>|<login>, U|<db>|<login>, R|<db>|<rolle>|<login>. ad_login_entfernen nimmt nur
+ * zurück, was hier steht und noch ein Windows-Gruppen-Objekt ist; Vorhandenes (vor Alfred) bleibt und steht unter „belassen“.
+ */
+export const AD_LOGINS_DATEI = '/etc/alfred/sqllnx-ad-logins';
+export const AD_LOGINS_KOPF = '# Alfred I8e — linux_sql ad_login (von Alfred angelegte AD-Logins und Mitgliedschaften, nicht von Hand ändern)';
+
+export interface AdLoginParameter { gruppe: string; serverrolle?: string; datenbank?: string; datenbankrolle?: string }
+
+/** Login-Name AD3033\<gruppe> */
+export const adLoginName = (gruppe: string) => `${LINUX_AD.netbios}\\${gruppe}`;
+
+export function pruefeAdLogin(p: unknown): string | undefined {
+  const x = obj(p);
+  if (typeof x.gruppe !== 'string' || !AD_LOGIN_GRUPPE.test(x.gruppe)) return 'gruppe: Name der AD-Gruppe (Buchstaben, Ziffern, Leerzeichen, . _ -; 2–64 Zeichen, ohne ] \' \\)';
+  if (x.serverrolle !== undefined && (typeof x.serverrolle !== 'string' || !AD_LOGIN_SERVERROLLEN.includes(x.serverrolle))) return `serverrolle: nur ${AD_LOGIN_SERVERROLLEN.join(', ')}`;
+  if ((x.datenbank === undefined) !== (x.datenbankrolle === undefined)) return 'datenbank und datenbankrolle nur zusammen';
+  if (x.datenbank !== undefined && (typeof x.datenbank !== 'string' || !AD_LOGIN_DB.test(x.datenbank) || AD_LOGIN_SYSTEM_DBS.has(x.datenbank.toLowerCase()))) return 'datenbank: Buchstabe, dann Buchstaben/Ziffern/_ (3–64 Zeichen), keine Systemdatenbank';
+  if (x.datenbankrolle !== undefined && (typeof x.datenbankrolle !== 'string' || !AD_LOGIN_DB_ROLLEN.includes(x.datenbankrolle))) return `datenbankrolle: nur ${AD_LOGIN_DB_ROLLEN.join(', ')}`;
+  if (x.serverrolle === undefined && x.datenbank === undefined) return 'serverrolle oder datenbank + datenbankrolle angeben';
+  const fremd = Object.keys(x).filter(k => !['gruppe', 'serverrolle', 'datenbank', 'datenbankrolle'].includes(k));
+  return fremd.length ? `unbekannte Felder: ${fremd.join(', ').slice(0, 80)}` : undefined;
+}
+
+/**
+ * Lage (nur lesend): „ALFRED|L|<typ|->|<deaktiviert|->|<Mitglied der Serverrolle 0/1>“ und mit Datenbank „ALFRED|D|fehlt|sekundaer|
+ * nicht-schreibbar“ bzw. „ALFRED|D|ok|<typ|->|<SID = Login 0/1>|<Mitglied der Datenbankrolle 0/1>“. Katalogspalten in Verkettungen mit
+ * COLLATE DATABASE_DEFAULT (Lehre v1898). Datenbankteil über <db>.sys.sp_executesql mit Parametern (Name nie im dynamischen Text).
+ */
+function adLoginLage(n: string, p: AdLoginParameter): string {
+  return [
+    'SET NOCOUNT ON;',
+    `DECLARE @n sysname = N'${n}', @srolle sysname = N'${p.serverrolle ?? ''}';`,
+    "SELECT N'ALFRED|L|' + ISNULL((SELECT RTRIM(sp.type) COLLATE DATABASE_DEFAULT FROM sys.server_principals sp WHERE sp.name = @n), N'-') + N'|'",
+    "  + ISNULL((SELECT CAST(sp.is_disabled AS nvarchar(1)) FROM sys.server_principals sp WHERE sp.name = @n), N'-') + N'|'",
+    '  + CAST((SELECT COUNT(*) FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = @n AND r.name = @srolle) AS nvarchar(5));',
+    ...(p.datenbank ? [
+      `DECLARE @db sysname = N'${p.datenbank}', @drolle sysname = N'${p.datenbankrolle}';`,
+      "IF DB_ID(@db) IS NULL SELECT N'ALFRED|D|fehlt';",
+      "ELSE IF EXISTS (SELECT 1 FROM sys.dm_hadr_database_replica_states s WHERE s.database_id = DB_ID(@db) AND s.is_local = 1 AND s.is_primary_replica = 0) SELECT N'ALFRED|D|sekundaer';",
+      "ELSE IF CAST(DATABASEPROPERTYEX(@db, 'Status') AS nvarchar(30)) <> N'ONLINE' OR CAST(DATABASEPROPERTYEX(@db, 'Updateability') AS nvarchar(30)) <> N'READ_WRITE' SELECT N'ALFRED|D|nicht-schreibbar';",
+      'ELSE',
+      'BEGIN',
+      '  DECLARE @t nvarchar(10), @sid int, @rm int, @proc nvarchar(300) = QUOTENAME(@db) + N\'.sys.sp_executesql\';',
+      "  EXEC @proc N'SELECT @t = RTRIM(d.type) COLLATE DATABASE_DEFAULT, @sid = CASE WHEN d.sid = (SELECT s.sid FROM master.sys.server_principals s WHERE s.name = @n) THEN 1 ELSE 0 END FROM sys.database_principals d WHERE d.name = @n; SELECT @rm = COUNT(*) FROM sys.database_role_members m JOIN sys.database_principals r ON r.principal_id = m.role_principal_id JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = @n AND r.name = @drolle;',",
+      "    N'@n sysname, @drolle sysname, @t nvarchar(10) OUTPUT, @sid int OUTPUT, @rm int OUTPUT', @n = @n, @drolle = @drolle, @t = @t OUTPUT, @sid = @sid OUTPUT, @rm = @rm OUTPUT;",
+      "  SELECT N'ALFRED|D|ok|' + ISNULL(@t, N'-') + N'|' + CAST(ISNULL(@sid, 0) AS nvarchar(1)) + N'|' + CAST(ISNULL(@rm, 0) AS nvarchar(5));",
+      'END',
+    ] : []),
+  ].join('\n');
+}
+
+/** Anlegen (idempotent): fremder Typ/deaktiviert/abweichender Datenbankbenutzer → THROW vor jeder Änderung; dann Login, Rollen, Benutzer */
+function adLoginAnlegen(n: string, p: AdLoginParameter): string {
+  return [
+    'SET NOCOUNT ON; SET XACT_ABORT ON;',
+    `DECLARE @n sysname = N'${n}';`,
+    `IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @n AND type <> 'G') THROW 50020, N'Login ${n} besteht und ist kein Windows-Gruppen-Login - nichts geändert', 1;`,
+    `IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @n AND is_disabled = 1) THROW 50021, N'Login ${n} ist deaktiviert - nicht still aktiviert; bitte bewusst entscheiden', 1;`,
+    ...(p.datenbank ? [
+      `DECLARE @db sysname = N'${p.datenbank}', @proc nvarchar(300) = QUOTENAME(N'${p.datenbank}') + N'.sys.sp_executesql';`,
+      "EXEC @proc N'IF EXISTS (SELECT 1 FROM sys.database_principals d WHERE d.name = @n AND (d.type <> ''G'' OR d.sid <> ISNULL((SELECT s.sid FROM master.sys.server_principals s WHERE s.name = @n), d.sid))) THROW 50022, N''Datenbankbenutzer passt nicht zum Login (Typ oder SID) - nichts geändert'', 1;', N'@n sysname', @n = @n;",
+    ] : []),
+    `IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @n) CREATE LOGIN [${n}] FROM WINDOWS WITH DEFAULT_DATABASE = [master];`,
+    ...(p.serverrolle ? [
+      `IF NOT EXISTS (SELECT 1 FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = @n AND r.name = N'${p.serverrolle}') ALTER SERVER ROLE [${p.serverrolle}] ADD MEMBER [${n}];`,
+    ] : []),
+    ...(p.datenbank ? [
+      "EXEC @proc N'IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @n) BEGIN DECLARE @c nvarchar(400) = N''CREATE USER '' + QUOTENAME(@n) + N'' FOR LOGIN '' + QUOTENAME(@n); EXEC (@c); END;",
+      " IF NOT EXISTS (SELECT 1 FROM sys.database_role_members m JOIN sys.database_principals r ON r.principal_id = m.role_principal_id JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = @n AND r.name = @drolle)",
+      " BEGIN DECLARE @r nvarchar(400) = N''ALTER ROLE '' + QUOTENAME(@drolle) + N'' ADD MEMBER '' + QUOTENAME(@n); EXEC (@r); END;',",
+      `  N'@n sysname, @drolle sysname', @n = @n, @drolle = N'${p.datenbankrolle}';`,
+    ] : []),
+    "SELECT N'ALFRED|A|ok';",
+  ].join('\n');
+}
+
+/** Entfernen nur der markierten Objekte (@@DR@@ Datenbankrolle, @@DU@@ Benutzer, @@DS@@ Serverrolle, @@DL@@ Login — je 0/1 aus Bash) */
+function adLoginEntfernenTsql(n: string, p: AdLoginParameter): string {
+  return [
+    'SET NOCOUNT ON; SET XACT_ABORT ON;',
+    `DECLARE @n sysname = N'${n}', @dr bit = @@DR@@, @du bit = @@DU@@, @ds bit = @@DS@@, @dl bit = @@DL@@;`,
+    ...(p.datenbank ? [
+      `DECLARE @proc nvarchar(300) = QUOTENAME(N'${p.datenbank}') + N'.sys.sp_executesql';`,
+      'IF @dr = 1 OR @du = 1',
+      "  EXEC @proc N'IF @dr = 1 AND EXISTS (SELECT 1 FROM sys.database_role_members m JOIN sys.database_principals r ON r.principal_id = m.role_principal_id JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = @n AND r.name = @drolle)",
+      " BEGIN DECLARE @c nvarchar(400) = N''ALTER ROLE '' + QUOTENAME(@drolle) + N'' DROP MEMBER '' + QUOTENAME(@n); EXEC (@c); END;",
+      " IF @du = 1 AND EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @n AND type = ''G'') BEGIN DECLARE @d nvarchar(400) = N''DROP USER '' + QUOTENAME(@n); EXEC (@d); END;',",
+      `    N'@n sysname, @drolle sysname, @dr bit, @du bit', @n = @n, @drolle = N'${p.datenbankrolle}', @dr = @dr, @du = @du;`,
+    ] : []),
+    ...(p.serverrolle ? [
+      `IF @ds = 1 AND EXISTS (SELECT 1 FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = @n AND r.name = N'${p.serverrolle}') ALTER SERVER ROLE [${p.serverrolle}] DROP MEMBER [${n}];`,
+    ] : []),
+    `IF @dl = 1 AND EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @n AND type = 'G') DROP LOGIN [${n}];`,
+    "SELECT N'ALFRED|E|ok';",
+  ].join('\n');
+}
+
+const AD_LOGIN_HILFEN = sh(String.raw`NICHT='nichts geändert'
+GEAENDERT=0; AJ=''
+aend() { GEAENDERT=1; AJ+="§{AJ:+,}\"$1\""; }
+lies() { python3 -c "$PY_CONF" "$1" "$2"; }
+# Lage lesen → L_TYP L_AUS L_ROLLE, D_Z D_TYP D_SID D_RM (D_* nur mit Datenbank)
+lage() {
+  local a l d
+  a=$(sql "$LAGE_Q" 2>&1) || abbruch "Lage von $LOGIN nicht lesbar: $(sql_fehlerzeile "$a")"
+  l=$(grep '^ALFRED|L|' <<<"$a" | head -n 1 | tr -d '\r' || true)
+  IFS='|' read -r _ _ L_TYP L_AUS L_ROLLE <<<"$l"
+  [ -n "§{L_TYP:-}" ] || abbruch "Lage von $LOGIN ohne Ergebniszeile: $(kurz "$a")"
+  D_Z=''; D_TYP='-'; D_SID=0; D_RM=0
+  if [ -n "$DB" ]; then
+    d=$(grep '^ALFRED|D|' <<<"$a" | head -n 1 | tr -d '\r' || true)
+    IFS='|' read -r _ _ D_Z D_TYP D_SID D_RM <<<"$d"
+    [ -n "$D_Z" ] || abbruch "Lage der Datenbank $DB ohne Ergebniszeile: $(kurz "$a")"
+  fi
+}
+# Eigentumsnachweis (AD_LOGINS_DATEI): nur Alfreds Datei (Kopfzeile, reguläre Datei, 0600 root:root)
+marker_eigen() { [ -f "$MARKER" ] && [ ! -L "$MARKER" ] && [ "$(head -n 1 "$MARKER")" = "$MARKER_KOPF" ] && [ "$(stat -c '%a %U %G' "$MARKER" 2>/dev/null || true)" = '600 root root' ]; }
+marker_pruefen() { if [ -e "$MARKER" ] || [ -L "$MARKER" ]; then marker_eigen || abbruch "$MARKER ist vorhanden und nicht von Alfred — $NICHT"; fi; }
+marker_hat() { marker_eigen && grep -qxF -- "$1" "$MARKER"; }
+# $1 = dazu|weg, weitere Argumente = Zeilen; schreibt atomar (Zwischendatei im Ordner, Rechte vor dem Inhalt, mv)
+marker_setzen() {
+  local art=$1 t e; shift
+  [ $# -gt 0 ] || return 0
+  [ -d "§{MARKER%/*}" ] || { mkdir -p "§{MARKER%/*}"; chmod 0755 "§{MARKER%/*}"; }
+  t=$(mktemp "§{MARKER%/*}/.alfred-adl-XXXXXX"); chown root:root "$t"; chmod 0600 "$t"
+  { if marker_eigen; then cat -- "$MARKER"; else printf '%s\n' "$MARKER_KOPF"; fi; } >"$t.alt"
+  if [ "$art" = dazu ]; then
+    cat -- "$t.alt" >"$t"
+    for e in "$@"; do grep -qxF -- "$e" "$t" || printf '%s\n' "$e" >>"$t"; done
+  else
+    cp -- "$t.alt" "$t.rest"
+    for e in "$@"; do { grep -vxF -- "$e" "$t.rest" || true; } >"$t.neu"; mv -f -- "$t.neu" "$t.rest"; done
+    cat -- "$t.rest" >"$t"; rm -f -- "$t.rest"
+  fi
+  rm -f -- "$t.alt"
+  mv -f -- "$t" "$MARKER"
+}
+sql_meldung() { local z; z=$(grep -m 1 -E 'Msg [0-9]+|Sqlcmd: Error' <<<"$1" | tr -d '\r' || true); [ -n "$z" ] || z=$(kurz "$1"); printf '%s %s' "$z" "$(grep -v '^Msg ' <<<"$1" | grep -v '^ALFRED|' | head -n 2 | tr '\r\n' '  ' || true)"; }`);
+
+const AD_LOGIN_VORBEDINGUNG = sh(String.raw`# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+[ "$(hostname -s 2>/dev/null || true)" != "$NIE" ] || abbruch "$NIE bekommt keine AD-Logins (Spec 10) — $NICHT"
+# Auflösung von AD-Namen: Host über Alfred beigetreten (sssd.conf mit Alfred-Kopf, sssd aktiv), Gruppe über NSS sichtbar; SQL Server
+# selbst löst den Namen über seinen Keytab (network.kerberoskeytabfile, privilegedadaccount) — beides vorher (ad_beitreten, kerberos_einrichten + Neustart)
+{ [ -f "$SSSD_CONF" ] && [ "$(head -n 1 "$SSSD_CONF")" = "$SSSD_KOPF" ]; } || abbruch "Host nicht über Alfred beigetreten ($SSSD_CONF ohne Alfred-Kopf) — zuerst ad_beitreten; $NICHT"
+systemctl is-active --quiet sssd || abbruch "sssd läuft nicht — AD-Namen nicht auflösbar; $NICHT"
+getent group "$GRUPPE_NSS" >/dev/null 2>&1 || abbruch "Gruppe $GRUPPE_NSS im AD nicht auflösbar (getent group) — Gruppe im AD vorhanden (windows_ad gruppe_anlegen), Host beigetreten? $NICHT"
+{ [ "$(lies network kerberoskeytabfile)" = "$SQL_KT" ] && [ -f "$SQL_KT" ]; } || abbruch "SQL Server ohne Alfreds Keytab ($SQL_KT in mssql.conf network.kerberoskeytabfile) — zuerst kerberos_einrichten und Neustart; $NICHT"
+marker_pruefen
+bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+lage
+[ "$L_TYP" = - ] || [ "$L_TYP" = G ] || abbruch "Login $LOGIN besteht als Typ $L_TYP (kein Windows-Gruppen-Login) — $NICHT"
+[ "$L_AUS" != 1 ] || abbruch "Login $LOGIN ist deaktiviert — nicht still aktiviert; $NICHT"
+if [ -n "$DB" ]; then
+  case "$D_Z" in
+    ok) ;;
+    fehlt) abbruch "Datenbank $DB fehlt — $NICHT" ;;
+    sekundaer) abbruch "Datenbank $DB ist auf $(hostname -s 2>/dev/null || true) Sekundär-Replikat — Datenbankbenutzer auf dem Primär anlegen bzw. entfernen (wird repliziert); hier nur Login/Serverrolle; $NICHT" ;;
+    *) abbruch "Datenbank $DB ist nicht ONLINE/READ_WRITE — $NICHT" ;;
+  esac
+  [ "$D_TYP" = - ] || { [ "$D_TYP" = G ] && [ "$D_SID" = 1 ]; } || abbruch "Datenbankbenutzer $LOGIN in $DB passt nicht zum Login (Typ $D_TYP, SID gleich $D_SID) — $NICHT"
+fi`);
+
+const AD_LOGIN_KOERPER = sh(String.raw`# ── Phase 2: Eigentum VOR der Anlage vermerken (nur, was jetzt fehlt), dann anlegen ──
+NEU=()
+[ "$L_TYP" != - ] || NEU+=("L|$LOGIN")
+if [ -n "$SROLLE" ] && [ "$L_ROLLE" = 0 ]; then NEU+=("S|$SROLLE|$LOGIN"); fi
+if [ -n "$DB" ]; then
+  [ "$D_TYP" != - ] || NEU+=("U|$DB|$LOGIN")
+  [ "$D_RM" != 0 ] || NEU+=("R|$DB|$DROLLE|$LOGIN")
+fi
+if [ §{#NEU[@]} -gt 0 ]; then
+  marker_setzen dazu "§{NEU[@]}"
+  for e in "§{NEU[@]}"; do aend "§{e%%|*}"; done
+  a=$(sql "$ANLEGEN_Q" 2>&1) || {
+    case "$a" in *"Msg 15401"*) abbruch "AD-Gruppe $LOGIN von SQL Server nicht gefunden (Msg 15401) — SQL Server löst AD-Namen über den Keytab auf: kerberos_einrichten + Neustart, Gruppe im AD? Vermerk in $MARKER bleibt (Rückweg ad_login_entfernen)" ;; esac
+    abbruch "AD-Login anlegen fehlgeschlagen: $(sql_meldung "$a") — Vermerk in $MARKER bleibt (Rückweg ad_login_entfernen)"
+  }
+  [ "$(alfred_zeile "$a")" = 'ALFRED|A|ok' ] || abbruch "AD-Login anlegen ohne Ergebniszeile: $(kurz "$a")"
+fi
+# ── Selbstprüfung über die Kataloge ──
+lage
+[ "$L_TYP" = G ] || abbruch "Selbstprüfung: $LOGIN ist kein Windows-Gruppen-Login (Typ $L_TYP)"
+[ "$L_AUS" = 0 ] || abbruch "Selbstprüfung: $LOGIN ist nicht aktiv"
+if [ -n "$SROLLE" ]; then [ "$L_ROLLE" = 1 ] || abbruch "Selbstprüfung: $LOGIN ist nicht Mitglied von $SROLLE"; fi
+if [ -n "$DB" ]; then
+  { [ "$D_Z" = ok ] && [ "$D_TYP" = G ] && [ "$D_SID" = 1 ]; } || abbruch "Selbstprüfung: Datenbankbenutzer $LOGIN in $DB fehlt oder passt nicht (Typ $D_TYP, SID $D_SID)"
+  [ "$D_RM" = 1 ] || abbruch "Selbstprüfung: $LOGIN ist in $DB nicht Mitglied von $DROLLE"
+fi
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+LJ=$(printf '%s' "$LOGIN" | json_text)
+ergebnis "{\"zustand\":\"$Z\",\"login\":$LJ,\"typ\":\"G\",\"serverrolle\":\"$SROLLE\",\"datenbank\":\"$DB\",\"datenbankrolle\":\"$DROLLE\",\"aenderungen\":[$AJ]}"`);
+
+const AD_LOGIN_ENTFERNEN_KOERPER = sh(String.raw`BELASSEN=''
+belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
+[ "$(hostname -s 2>/dev/null || true)" != "$NIE" ] || abbruch "$NIE hat keine AD-Logins (Spec 10) — $NICHT"
+marker_pruefen
+bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+lage
+# nur, was Alfred vermerkt hat UND noch ein Windows-Gruppen-Objekt ist; alles andere bleibt (belassen)
+DR=0; DU=0; DS=0; DL=0; WEG=()
+if [ -n "$DB" ]; then
+  if marker_hat "R|$DB|$DROLLE|$LOGIN" || marker_hat "U|$DB|$LOGIN"; then
+    [ "$D_Z" = ok ] || abbruch "Datenbank $DB ist hier nicht schreibbar ($D_Z) — Datenbankbenutzer auf dem Primär entfernen; $NICHT"
+  fi
+  if marker_hat "R|$DB|$DROLLE|$LOGIN"; then
+    if [ "$D_RM" = 1 ] && [ "$D_TYP" = G ]; then DR=1; fi; WEG+=("R|$DB|$DROLLE|$LOGIN")
+  elif [ "$D_RM" = 1 ]; then belassen "Mitgliedschaft $DROLLE in $DB (nicht von Alfred)"; fi
+  if marker_hat "U|$DB|$LOGIN"; then
+    if [ "$D_TYP" = G ]; then DU=1; elif [ "$D_TYP" != - ]; then belassen "Datenbankbenutzer $LOGIN in $DB (Typ $D_TYP, kein Gruppen-Benutzer)"; fi; WEG+=("U|$DB|$LOGIN")
+  elif [ "$D_TYP" != - ]; then belassen "Datenbankbenutzer $LOGIN in $DB (nicht von Alfred)"; fi
+fi
+if [ -n "$SROLLE" ]; then
+  if marker_hat "S|$SROLLE|$LOGIN"; then
+    if [ "$L_ROLLE" = 1 ] && [ "$L_TYP" = G ]; then DS=1; fi; WEG+=("S|$SROLLE|$LOGIN")
+  elif [ "$L_ROLLE" = 1 ]; then belassen "Mitgliedschaft $SROLLE (nicht von Alfred)"; fi
+fi
+if marker_hat "L|$LOGIN"; then
+  if [ "$L_TYP" = G ]; then DL=1; elif [ "$L_TYP" != - ]; then belassen "Login $LOGIN (Typ $L_TYP, kein Windows-Gruppen-Login)"; fi; WEG+=("L|$LOGIN")
+elif [ "$L_TYP" != - ]; then belassen "Login $LOGIN (nicht von Alfred angelegt)"; fi
+if [ "$DR$DU$DS$DL" != 0000 ]; then
+  Q=§{ENTFERNEN_V//@@DR@@/$DR}; Q=§{Q//@@DU@@/$DU}; Q=§{Q//@@DS@@/$DS}; Q=§{Q//@@DL@@/$DL}
+  a=$(sql "$Q" 2>&1) || abbruch "AD-Login entfernen fehlgeschlagen: $(sql_meldung "$a")"
+  [ "$(alfred_zeile "$a")" = 'ALFRED|E|ok' ] || abbruch "AD-Login entfernen ohne Ergebniszeile: $(kurz "$a")"
+  [ "$DR" = 0 ] || aend R; [ "$DU" = 0 ] || aend U; [ "$DS" = 0 ] || aend S; [ "$DL" = 0 ] || aend L
+fi
+# ── Selbstprüfung ──
+lage
+[ "$DL" = 0 ] || [ "$L_TYP" = - ] || abbruch "Selbstprüfung: Login $LOGIN besteht noch"
+[ "$DS" = 0 ] || [ "$L_ROLLE" = 0 ] || abbruch "Selbstprüfung: $LOGIN ist noch Mitglied von $SROLLE"
+[ "$DU" = 0 ] || [ "$D_TYP" = - ] || abbruch "Selbstprüfung: Datenbankbenutzer $LOGIN in $DB besteht noch"
+[ "$DR" = 0 ] || [ "$D_RM" = 0 ] || abbruch "Selbstprüfung: $LOGIN ist in $DB noch Mitglied von $DROLLE"
+# Vermerke erst nach gelungenem Entfernen löschen
+if [ §{#WEG[@]} -gt 0 ]; then marker_setzen weg "§{WEG[@]}"; fi
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+LJ=$(printf '%s' "$LOGIN" | json_text)
+ergebnis "{\"zustand\":\"$Z\",\"login\":$LJ,\"belassen\":[$BELASSEN],\"aenderungen\":[$AJ]}"`);
+
+function adLoginWerte(p: AdLoginParameter): string[] {
+  const n = adLoginName(p.gruppe);
+  return [
+    `LOGIN=${shQ(n)}`,
+    `GRUPPE_NSS=${shQ(`${p.gruppe.toLowerCase()}@${LINUX_AD.domaene}`)}`,
+    `SROLLE=${shQ(p.serverrolle ?? '')}`,
+    `DB=${shQ(p.datenbank ?? '')}`,
+    `DROLLE=${shQ(p.datenbankrolle ?? '')}`,
+    `NIE=${shQ(AD_NIE_BEITRETEN)}`,
+    `MARKER=${shQ(AD_LOGINS_DATEI)}`,
+    `MARKER_KOPF=${shQ(AD_LOGINS_KOPF)}`,
+    `SSSD_CONF=${shQ(AD_SSSD_CONF)}`,
+    `SSSD_KOPF=${shQ(AD_SSSD_KOPF)}`,
+    `SQL_KT=${shQ(SQL_KEYTAB)}`,
+    `PY_CONF=${shQ(PY_CONF)}`,
+    `LAGE_Q=${shQ(adLoginLage(n, p))}`,
+  ];
+}
+/** nur geprüfte Felder in den Kopf (nie das Eingabeobjekt) */
+const adLoginKopfP = (p: AdLoginParameter) => ({ gruppe: p.gruppe, ...(p.serverrolle ? { serverrolle: p.serverrolle } : {}), ...(p.datenbank ? { datenbank: p.datenbank, datenbankrolle: p.datenbankrolle } : {}) });
+
+/**
+ * Task 8 — `CREATE LOGIN [AD3033\<gruppe>] FROM WINDOWS` (+ Serverrolle sysadmin bzw. Datenbankbenutzer + Datenbankrolle), wiederholbar.
+ * Vorbedingung ohne Änderung: nicht sqllnxcfg, Host über Alfred beigetreten (sssd), Gruppe per getent auflösbar, Alfreds Keytab in
+ * mssql.conf; ein vorhandener Login anderen Typs, ein deaktivierter Login, ein abweichender Datenbankbenutzer → Abbruch; Datenbank nur auf
+ * dem Primär (Sekundär → Abbruch, der Benutzer wird repliziert). Was fehlt, steht vor der Anlage in AD_LOGINS_DATEI (Eigentum für den
+ * Rückweg). Selbstprüfung über sys.server_principals (Typ G, aktiv), sys.server_role_members, sys.database_principals (Typ G, SID =
+ * Login) und sys.database_role_members. Ergebnis { zustand, login, typ, serverrolle, datenbank, datenbankrolle, aenderungen }.
+ * Zeit: LINUX_SQL_ZEIT_MS.adLogin
+ */
+export function adLoginSkript(p: AdLoginParameter): string {
+  const f = pruefeAdLogin(p); if (f) throw new Error(f);
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.adLogin, adLoginKopfP(p)),
+    ...adLoginWerte(p),
+    `ANLEGEN_Q=${shQ(adLoginAnlegen(adLoginName(p.gruppe), p))}`,
+    ...SQL_HILFE,
+    AD_LOGIN_HILFEN,
+    ...SA_LESEN,
+    AD_LOGIN_VORBEDINGUNG,
+    AD_LOGIN_KOERPER,
+  ].join('\n');
+}
+
+/**
+ * Rückweg von adLoginSkript (gleiche Parameter): entfernt nur, was in AD_LOGINS_DATEI vermerkt ist UND noch ein Windows-Gruppen-Objekt
+ * ist — Datenbankrolle, Datenbankbenutzer (nur auf dem Primär), Serverrolle, Login; Vorhandenes ohne Vermerk bleibt (belassen). Vermerke
+ * fallen erst nach gelungener Selbstprüfung weg. Ergebnis { zustand, login, belassen, aenderungen }. Zeit: LINUX_SQL_ZEIT_MS.adLoginEntfernen
+ */
+export function adLoginEntfernenSkript(p: AdLoginParameter): string {
+  const f = pruefeAdLogin(p); if (f) throw new Error(f);
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.adLoginEntfernen, adLoginKopfP(p)),
+    ...adLoginWerte(p),
+    `ENTFERNEN_V=${shQ(adLoginEntfernenTsql(adLoginName(p.gruppe), p))}`,
+    ...SQL_HILFE,
+    AD_LOGIN_HILFEN,
+    ...SA_LESEN,
+    AD_LOGIN_ENTFERNEN_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+registriereLinuxBaustein<AdLoginParameter>(LINUX_SQL_BAUSTEINE.adLogin, adLoginSkript);
+registriereLinuxBaustein<AdLoginParameter>(LINUX_SQL_BAUSTEINE.adLoginEntfernen, adLoginEntfernenSkript);
 registriereLinuxBaustein<AdBeitretenParameter>(LINUX_SQL_BAUSTEINE.adBeitreten, adBeitretenSkript);
 registriereLinuxBaustein<AdVerlassenParameter>(LINUX_SQL_BAUSTEINE.adVerlassen, adVerlassenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten, () => zeitquelleEinrichtenSkript());

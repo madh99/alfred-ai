@@ -7,7 +7,8 @@ import {
   sqlKopf, SQL_HILFE, PY_SQL_ZIEL, PY_STATUS, sqlErgebnis, sqlSkript, installSkript, statusSkript, resteEntfernenSkript,
   LINUX_SQL_BAUSTEINE, TLS_PRUEF_SCHALTER, TLS_PRUEF_FEHLER,
 } from './linux-sql.js';
-import { tlsPruefungSchaltenSkript, tlsEntfernenSkript, pruefeTlsPruefung } from './linux-sql-tls.js';
+import { tlsPruefungSchaltenSkript, tlsEntfernenSkript, pruefeTlsPruefung, tlsErzwingenSkript } from './linux-sql-tls.js';
+import { adLoginSkript, adLoginEntfernenSkript } from './linux-sql-ad.js';
 import { sicherungEinrichtenSkript, sicherungJetztSkript, sicherungenSkript, wiederherstellenSkript, kettengrenzenSkript, PY_ROLLEN } from './linux-sql-sicherung.js';
 import {
   haStatusSkript, haAgEndpunktSkript, haAgReplikatSkript, haAgAbschlussSkript, haAgEntfernenSkript, haAgFailoverSkript, PY_HA_STATUS, PY_AG_STATUS_FUNK, HA_KNOTEN,
@@ -61,6 +62,10 @@ function alleSkripte(): Array<[string, string]> {
     ['reste', resteEntfernenSkript()],
     ['schalten-an', tlsPruefungSchaltenSkript({ an: true, cn: FQDN })],
     ['schalten-aus', tlsPruefungSchaltenSkript({ an: false })],
+    // Task 8: Erzwingen und AD-Logins verbinden ebenfalls nur über sql_ziel
+    ['erzwingen-an', tlsErzwingenSkript({ an: true, host: 'sqllnx01', cn: FQDN })],
+    ['ad-login', adLoginSkript({ gruppe: 'SQL-Linux-Admins', serverrolle: 'sysadmin' })],
+    ['ad-login-entfernen', adLoginEntfernenSkript({ gruppe: 'SQL-Linux-Kunden', datenbank: 'kunden', datenbankrolle: 'db_datareader' })],
     ['sich-einrichten', sicherungEinrichtenSkript({ server: 'fs01.ad.3033.at', freigabe: 'SQLLinuxBackup$', konto: 'svc-sqllnx-backup', domaene: 'AD3033', budgetGiB: 64 })],
     ['sich-jetzt', sicherungJetztSkript({ art: 'LOG', datenbank: 'pruefdb01' })],
     ['sich-liste', sicherungenSkript()],

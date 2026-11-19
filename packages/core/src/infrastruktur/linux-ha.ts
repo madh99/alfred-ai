@@ -820,6 +820,110 @@ def sbd_lesen(t):
             sb[nn.strip()] = {"installiert": f[0] == "YES", "aktiviert": f[1] == "YES", "laeuft": f[2] == "YES"}
     return sb`}`;
 
+/**
+ * I8e Etappe 3 Task 8 — Pacemaker-Fehler dieses Knotens (Spec 4 Anti-Ziel: Fehl-Failover nach forceencryption). Zeitfenster für
+ * fehlgeschlagene Aktionen (Sekunden); der Fehlerzähler der AG-Ressource zählt ohne Fenster (er verfällt nur mit pcs resource cleanup).
+ */
+export const HA_PM_FENSTER_S = 1800;
+/**
+ * Eigener crm_mon-Aufruf für Fehlaktionen (failures) und Fehlerzähler (node_history/resource_history fail-count) — getrennt vom Lage-Aufruf
+ * (`crm_mon -1 --output-as=xml`), damit ein unbekannter Schalter nie die Lage-Prüfung von ag_anlegen/ag_failover kostet.
+ */
+export const HA_CRM_FEHLER_ARGS: readonly string[] = ['-1', '--output-as=xml', '--include=failcounts,failures'];
+
+/**
+ * python3: pm_fehler(x, ich, jetzt) aus dem crm_mon-XML (HA_CRM_FEHLER_ARGS) → { knoten, online, quorum, ressource (ag_cluster bekannt),
+ * fehlerzaehler (ag_cluster auf diesem Knoten, INFINITY/unlesbar = 1000000), fehlaktionen (dieser Knoten, im Fenster oder Zeit
+ * unlesbar — fail-closed), aeltere }. pm_maengel(f) → Liste der Gründe (leer = gesund). Braucht crm_lage (PY_CRM_FUNK).
+ * Zeitformen: Epoche, „2026-11-19 10:00:00 +01:00“ (pacemaker 2.1), „Thu Nov 19 10:00:00 2026“ (ctime, lokale Zeit).
+ */
+export const PY_PM_FEHLER_FUNK = String.raw`import calendar, re, time
+import xml.etree.ElementTree as ET
+PM_RESSOURCE = ${JSON.stringify(HA_AG_RESSOURCE)}
+PM_FENSTER = ${HA_PM_FENSTER_S}
+def pm_wort(v):
+    return re.sub(r"[^A-Za-z0-9_.:#+-]", "_", v or "")[:80] or None
+def pm_zeit(t):
+    t = " ".join((t or "").split())
+    if re.match(r"^\d{9,11}$", t):
+        return int(t)
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d):(\d\d)(?:\.\d+)?\s?(Z|[+-]\d\d:?\d\d)?$", t)
+    if m:
+        w = tuple(int(m.group(i)) for i in range(1, 7))
+        z = m.group(7)
+        if not z:
+            return int(time.mktime(w + (0, 0, -1)))
+        s = calendar.timegm(w + (0, 0, 0))
+        if z != "Z":
+            v = 1 if z[0] == "+" else -1
+            s -= v * (int(z[1:3]) * 3600 + int(z[-2:]) * 60)
+        return s
+    try:
+        return int(time.mktime(time.strptime(t, "%a %b %d %H:%M:%S %Y")))
+    except Exception:
+        return None
+def pm_ist_ag(rid):
+    return rid == PM_RESSOURCE or (rid or "").startswith(PM_RESSOURCE + ":")
+def pm_fehler(x, ich, jetzt):
+    r = ET.fromstring(x)
+    l = crm_lage(x)
+    f = {"knoten": ich, "online": ich in l["online"], "quorum": l["quorum"], "ressource": any(pm_ist_ag(e.get("id")) for e in r.iter("resource")),
+         "fehlerzaehler": 0, "fehlaktionen": [], "aeltere": 0, "fensterS": PM_FENSTER}
+    for nh in r.iter("node_history"):
+        for nd in nh.findall("node"):
+            if nd.get("name") != ich:
+                continue
+            for rh in nd.findall("resource_history"):
+                if not pm_ist_ag(rh.get("id")):
+                    continue
+                fc = (rh.get("fail-count") or "0").strip()
+                try:
+                    n = 1000000 if fc.upper() == "INFINITY" else int(fc)
+                except ValueError:
+                    n = 1000000
+                f["fehlerzaehler"] = max(f["fehlerzaehler"], n)
+    for e in r.iter("failure"):
+        if e.get("node") != ich:
+            continue
+        z = pm_zeit(e.get("last-rc-change"))
+        if z is None or jetzt - z <= PM_FENSTER:
+            f["fehlaktionen"].append({"aktion": pm_wort(e.get("op_key") or e.get("task")), "status": pm_wort(e.get("exitstatus") or e.get("status")), "zeit": z})
+        else:
+            f["aeltere"] += 1
+    return f
+def pm_maengel(f):
+    m = []
+    if not f["online"]:
+        m.append("Knoten %s nicht online" % f["knoten"])
+    if not f["quorum"]:
+        m.append("kein Quorum")
+    if not f["ressource"]:
+        m.append("Ressource %s nicht gefunden" % PM_RESSOURCE)
+    if f["fehlerzaehler"]:
+        m.append("Fehlerzähler %s = %d (Ursache klären, dann pcs resource cleanup %s)" % (PM_RESSOURCE, f["fehlerzaehler"], PM_RESSOURCE))
+    if f["fehlaktionen"]:
+        m.append("%d fehlgeschlagene Aktionen in %d min: %s" % (len(f["fehlaktionen"]), PM_FENSTER // 60, ", ".join(str(a["aktion"]) for a in f["fehlaktionen"][:5])))
+    return m`;
+
+/**
+ * Task 8 — Programm für Bash (tls_erzwingen): argv[1] = eigener Knotenname, argv[2] = Datei mit dem crm_mon-XML (HA_CRM_FEHLER_ARGS).
+ * stdout eine JSON-Zeile pm_fehler; Exit 0 = gesund, 3 = Mängel (stderr nennt sie), 2 = XML unlesbar.
+ */
+export const PY_PM_PRUEFUNG = `${PY_CRM_FUNK}
+${PY_PM_FEHLER_FUNK}
+${String.raw`import json, sys
+try:
+    with open(sys.argv[2]) as d:
+        f = pm_fehler(d.read(), sys.argv[1], int(time.time()))
+except Exception as e:
+    sys.stderr.write("crm_mon-XML nicht lesbar (%s)\n" % type(e).__name__)
+    sys.exit(2)
+print(json.dumps(f))
+m = pm_maengel(f)
+if m:
+    sys.stderr.write("; ".join(m) + "\n")
+    sys.exit(3)`}`;
+
 /** Pfade und Werkzeuge der Cluster-Bausteine — vor der Marke, damit Tests sie umbiegen können */
 const CLUSTER_PFADE = [
   'COROSYNC_CONF=/etc/corosync/corosync.conf',
@@ -1862,6 +1966,8 @@ export const PY_HA_STATUS = [
   'r["pcsd"] = lauf("systemctl", "is-active", "pcsd")[1] or "unbekannt"',
   // Task 3: Cluster — corosync.conf (Name, Knoten), crm_mon-XML, SBD je Knoten (pcs stonith sbd status), stonith-watchdog-timeout
   PY_CLUSTER_FUNK,
+  // Task 8: Fehlaktionen/Fehlerzähler (pm_fehler, nutzt crm_lage aus PY_CLUSTER_FUNK)
+  PY_PM_FEHLER_FUNK,
   String.raw`cl = {}
 kt = lies("/etc/corosync/corosync.conf")
 if not kt:
@@ -1878,6 +1984,14 @@ else:
                 cl["crm"] = crm_lage(x)
             except Exception:
                 cl["crm"] = None
+        # Task 8: Fehlaktionen (30 min) und Fehlerzähler der AG-Ressource dieses Knotens — eigener Aufruf, None = nicht lesbar
+        cl["fehler"] = None
+        c, x = lauf("crm_mon", *${JSON.stringify(HA_CRM_FEHLER_ARGS)})
+        if c == 0:
+            try:
+                cl["fehler"] = pm_fehler(x, ich, int(time.time()))
+            except Exception:
+                cl["fehler"] = None
         c, t = lauf("pcs", "stonith", "sbd", "status")
         if c == 0:
             cl["sbd"] = sbd_lesen(t)

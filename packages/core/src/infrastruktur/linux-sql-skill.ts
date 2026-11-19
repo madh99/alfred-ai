@@ -20,10 +20,11 @@ import {
 } from './linux-sql-sicherung.js';
 import {
   LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, pruefeAdVerlassen, type AdBeitretenParameter,
-  KERBEROS_KONTO_TRESOR, KERBEROS_SPNS, SQL_KEYTAB, SQL_KERBEROS_KONTO, kerberosParameter, pruefeKerberos, type KerberosParameter,
+  KERBEROS_KONTO_TRESOR, KERBEROS_SPNS, KERBEROS_HOSTS, SQL_KEYTAB, SQL_KERBEROS_KONTO, kerberosParameter, pruefeKerberos, type KerberosParameter,
+  AD_LOGINS_DATEI, AD_LOGIN_DB_ROLLEN, adLoginName, pruefeAdLogin, type AdLoginParameter,
 } from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
-import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, type TlsParameter, type TlsPruefungParameter } from './linux-sql-tls.js';
+import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
 
 /**
@@ -55,6 +56,9 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   tls_einspielen: sek(LINUX_SQL_ZEIT_MS.tlsEinspielen) + 60,
   tls_entfernen: sek(LINUX_SQL_ZEIT_MS.tlsEntfernen) + 60,
   tls_pruefung_schalten: sek(LINUX_SQL_ZEIT_MS.tlsPruefungSchalten) + 60,
+  tls_erzwingen: sek(LINUX_SQL_ZEIT_MS.tlsErzwingen) + 60,
+  ad_login: sek(LINUX_SQL_ZEIT_MS.adLogin) + 60,
+  ad_login_entfernen: sek(LINUX_SQL_ZEIT_MS.adLoginEntfernen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -86,7 +90,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // I8e Etappe 3 Task 6 — TLS: Schlüssel + Anforderung auf dem Host, Zertifikat geprüft einspielen, Rückweg
   'tls_anfordern', 'tls_einspielen', 'tls_entfernen',
   // I8e Etappe 3 Task 7 — Zertifikatsprüfung bei Alfreds eigenen SQL-Verbindungen je Host schalten (Rückweg = an umgekehrt)
-  'tls_pruefung_schalten']);
+  'tls_pruefung_schalten',
+  // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Rückweg = an umgekehrt), AD-Gruppen-Logins und Rückweg
+  'tls_erzwingen', 'ad_login', 'ad_login_entfernen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -424,6 +430,28 @@ function tlsEingabeParameter(zugang: string, input: Record<string, unknown>): Tl
   return tlsParameter(host);
 }
 
+/** I8e Etappe 3 Task 8 — AD-Login-Parameter (nie sqllnxcfg, Spec 10); nur die bekannten Felder */
+function adLoginParameter(zugang: string, input: Record<string, unknown>): AdLoginParameter {
+  if (zugang.trim().toLowerCase() === AD_NIE_BEITRETEN) throw new Error(`${AD_NIE_BEITRETEN} bekommt keine AD-Logins (Spec 10)`);
+  if (!KERBEROS_HOSTS.includes(zugang.trim().toLowerCase())) throw new Error(`zugang: AD-Logins nur auf ${KERBEROS_HOSTS.join(', ')} (beigetreten, mit Keytab)`);
+  const p: AdLoginParameter = { gruppe: typeof input.gruppe === 'string' ? input.gruppe : '' };
+  if (input.serverrolle !== undefined) p.serverrolle = input.serverrolle as string;
+  if (input.datenbank !== undefined) p.datenbank = input.datenbank as string;
+  if (input.datenbankrolle !== undefined) p.datenbankrolle = input.datenbankrolle as string;
+  const f = pruefeAdLogin(p); if (f) throw new Error(f);
+  return p;
+}
+
+/** I8e Etappe 3 Task 8 — tls_erzwingen: an fest (true/false), Host = zugang (TLS-Host, = Pacemaker-Knoten), FQDN aus tlsParameter */
+function tlsErzwingenParameter(zugang: string, input: Record<string, unknown>): TlsErzwingenParameter {
+  if (typeof input.an !== 'boolean') throw new Error('an: true oder false');
+  const host = zugang.trim().toLowerCase();
+  if (!TLS_HOSTS.includes(host)) throw new Error(`zugang: Verschlüsselung erzwingen nur auf ${TLS_HOSTS.join(', ')}`);
+  const p: TlsErzwingenParameter = input.an ? { an: true, host, cn: tlsParameter(host).cn } : { an: false };
+  const f = pruefeTlsErzwingen(p); if (f) throw new Error(f);
+  return p;
+}
+
 function pruefdatenParameter(input: Record<string, unknown>): { datenbank: string } {
   const p = { datenbank: String(input.datenbank ?? '').trim() };
   const f = pruefePruefdaten(p); if (f) throw new Error(f);
@@ -459,6 +487,8 @@ export class LinuxSqlSkill extends Skill {
       + `TLS (I8e Etappe 3, alle drei Hosts einschließlich sqllnxcfg; CN <host>.ad.3033.at, SANs fest je Host): tls_anfordern (nur im Change; zugang, computername Standard = zugang) — RSA-${TLS_BITS}-Schlüssel ${TLS_KEY_NEU} (0400 mssql:mssql) AUF dem Host (ein vorhandener unbenutzter wird wiederverwendet), Anforderung daraus; Ergebnis nur öffentlich: data.csrPem, data.csrSha256, data.csrBase64 (DER) → weiter mit windows_pki fremd_csr_ausstellen (zugang pkiiss01, cn, sans, csr_base64 = {{schrittN.csrBase64}}, csr_sha256 = {{schrittN.csrSha256}}); „TLS_CSR_READY“; kein Rückweg (rueckweg {keiner: „${TLS_ANFORDERN_GRUND}“}). `
       + `tls_einspielen (nur im Change; zugang, computername Standard = zugang, zertifikat + kette als PEM ODER zert_base64 + issuing_base64 + root_base64 als DER-Base64, erwartet_root_sha256 Pflicht als fester Wert = SHA-256 der Root-DER) — prüft ohne Änderung: Root = erwartet_root_sha256 (eine vorhandene andere Root wird nie ersetzt), Kette Issuing → Root, Zertifikat für Server-Authentifizierung, Zertifikat passt zum Schlüssel auf dem Host (sonst Abbruch, bisherige Konfiguration bleibt), RSA ${TLS_BITS}, CN, SANs exakt, Restlaufzeit > ${TLS_MIN_TAGE} Tage; dann CA-Dateien ad3033-root.crt/ad3033-issuing.crt + update-ca-certificates, ${TLS_KEY} (0400 mssql:mssql), ${TLS_CRT} (0444), mssql-conf network.tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} — NICHT forceencryption und KEIN Neustart (Anzeige „Neustart nötig“, der Change startet rollierend); „TLS_INSTALLED“ ↔ tls_entfernen (zugang; nur Alfreds mssql-conf-Werte und Dateien laut Manifest, unbenutzter tls.key.neu; Abbruch, solange forceencryption 1; „TLS_REMOVED“; Abbruch, solange die Zertifikatsprüfung an ist). Status nennt „TLS gültig bis <datum>“, „TLS erzwungen“ (sonst „TLS nicht erzwungen“), „Zertifikatsprüfung an“, „AD beigetreten“, „Kerberos-Keytab kvno <n> (6 SPNs, aktuell)“. `
       + `tls_pruefung_schalten (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_einspielen UND dem rollierenden Neustart) — an=true nur, wenn ${TLS_CRT} Alfreds ist (Manifest), von mssql.conf genutzt wird, nicht abgelaufen ist, Kette + Name gegen den Vertrauensspeicher prüfbar sind und eine Probe-Verbindung als sa mit sqlcmd -N -S <host>.ad.3033.at verschlüsselt gelingt; dann Schalter ${TLS_PRUEF_SCHALTER} (0644 root, Inhalt FQDN) → „TLS_PRUEFUNG_AN“: ab da verbinden alle SQL-Bausteine von linux_sql und linux_ha mit Zertifikatsprüfung, scheitert sie, brechen sie mit „Zertifikatsprüfung fehlgeschlagen“ ab (nie Rückfall ohne Prüfung); rueckweg tls_pruefung_schalten an=false (zugang) → „TLS_PRUEFUNG_AUS“. `
+      + `tls_erzwingen (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_pruefung_schalten an=true) — an=true nur, wenn TLS von Alfred eingespielt ist (Manifest, mssql.conf, gültig, Kette + Name), die Zertifikatsprüfung an ist (Schalter mit genau diesem FQDN, Probe -N verschlüsselt) und Pacemaker auf diesem Knoten fehlerfrei ist (online, Quorum, ag_cluster bekannt, Fehlerzähler 0, keine fehlgeschlagene Aktion in 30 min, crm_mon --include=failcounts,failures) — sonst Abbruch ohne Änderung; setzt mssql-conf network.forceencryption 1, KEIN Neustart (Anzeige „Neustart nötig“; der Change startet rollierend: Sekundär neu starten, ag_failover, alter Primär neu starten, ag_failover zurück; sqllnxcfg einzeln) → „TLS_ERZWUNGEN“ ↔ rueckweg Pflicht tls_erzwingen an=false (zugang) → „TLS_NICHT_ERZWUNGEN“ (ohne Vorbedingung). Der Pacemaker-Agent ocf:mssql:ag verbindet ohnehin verschlüsselt (encrypt=true, TrustServerCertificate=true) — der Beweis ist trotzdem der Failover hin/zurück ohne Monitor-Fehler (linux_ha status: „Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0“). `
+      + `AD-LOGINS (nur sqllnx01/sqllnx02, nie sqllnxcfg; nach ad_beitreten und kerberos_einrichten + Neustart): ad_login (nur im Change; zugang, gruppe z. B. SQL-Linux-Admins, serverrolle sysadmin und/oder datenbank + datenbankrolle ${AD_LOGIN_DB_ROLLEN.join('/')}) — CREATE LOGIN [AD3033\\<gruppe>] FROM WINDOWS (+ Serverrolle bzw. Datenbankbenutzer + Rolle, Datenbank nur auf dem Primär — Sekundär → Abbruch, der Benutzer wird repliziert); vorher ohne Änderung: Host beigetreten (sssd), getent group <gruppe>@ad.3033.at, Alfreds Keytab in mssql.conf; ein vorhandener Login anderen Typs, ein deaktivierter Login oder ein abweichender Datenbankbenutzer → Abbruch; was fehlt, wird vor der Anlage in ${AD_LOGINS_DATEI} vermerkt; Selbstprüfung über sys.server_principals (Typ G), Serverrollen- und Datenbankrollen-Mitgliedschaft → „AD_LOGIN_OK“ ↔ rueckweg Pflicht ad_login_entfernen (gleiche zugang, gruppe, serverrolle, datenbank, datenbankrolle; entfernt nur Vermerktes, Fremdes steht unter „belassen“; „AD_LOGIN_REMOVED“). Logins sind instanzbezogen: je Replikat ein Schritt. `
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -493,7 +523,10 @@ export class LinuxSqlSkill extends Skill {
         issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
         root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
         erwartet_root_sha256: { type: 'string', description: 'tls_einspielen: Pflicht, fester Wert — SHA-256 (64 Hex) der DER der AD3033-Root; eine andere Root wird abgewiesen' },
-        an: { type: 'boolean', description: 'tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg)' },
+        an: { type: 'boolean', description: 'tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg)' },
+        gruppe: { type: 'string', description: 'ad_login/ad_login_entfernen: AD-Gruppe ohne Domäne, z. B. SQL-Linux-Admins (Login AD3033\\<gruppe>)' },
+        serverrolle: { type: 'string', enum: ['sysadmin'], description: 'ad_login/ad_login_entfernen: Serverrolle des Gruppen-Logins' },
+        datenbankrolle: { type: 'string', enum: [...AD_LOGIN_DB_ROLLEN], description: 'ad_login/ad_login_entfernen: Rolle in datenbank (nur mit datenbank, nur auf dem Primär)' },
       },
       required: ['action', 'zugang'],
     },
@@ -521,6 +554,12 @@ export class LinuxSqlSkill extends Skill {
       if (!istVerweis(input.an) && typeof input.an !== 'boolean') return 'an: true oder false';
       if (!istVerweis(input.zugang) && !TLS_HOSTS.includes(String(input.zugang).trim().toLowerCase())) return `zugang: Zertifikatsprüfung nur auf ${TLS_HOSTS.join(', ')}`;
     }
+    // Task 8: an fest; Host und sqllnxcfg-Sperre schon beim Planen
+    if (action === 'tls_erzwingen') {
+      if (!istVerweis(input.an) && typeof input.an !== 'boolean') return 'an: true oder false';
+      if (!istVerweis(input.zugang) && !TLS_HOSTS.includes(String(input.zugang).trim().toLowerCase())) return `zugang: Verschlüsselung erzwingen nur auf ${TLS_HOSTS.join(', ')}`;
+    }
+    if ((action === 'ad_login' || action === 'ad_login_entfernen') && typeof input.zugang === 'string' && input.zugang.trim().toLowerCase() === AD_NIE_BEITRETEN) return `${AD_NIE_BEITRETEN} bekommt keine AD-Logins (Spec 10)`;
     if (action === 'tls_einspielen') { try { erwarteteRoot(istVerweis(input.erwartet_root_sha256) ? '' : input.erwartet_root_sha256); } catch (err) { return (err as Error).message.slice(0, 200); } }
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
@@ -538,6 +577,8 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'ad_verlassen') { const f = pruefeAdVerlassen({ computername: String(input.computername ?? input.zugang).trim() }); if (f) throw new Error(f); }
       else if (action === 'kerberos_einrichten') { kerberosEingabe(String(input.zugang).trim(), input); pruefeTresorName(KERBEROS_KONTO_TRESOR); }
       else if (action === 'tls_einspielen') tlsEingabe(input);
+      else if (action === 'tls_erzwingen') { tlsErzwingenParameter(String(input.zugang), input); if (input.an === true) pruefeTresorName(saName(String(input.zugang).trim())); }
+      else if (action === 'ad_login' || action === 'ad_login_entfernen') { adLoginParameter(String(input.zugang), input); pruefeTresorName(saName(String(input.zugang).trim())); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -583,6 +624,9 @@ export class LinuxSqlSkill extends Skill {
         case 'tls_einspielen': return await this.tlsEinspielen(zugang, input);
         case 'tls_entfernen': return await this.tlsEntfernen(zugang);
         case 'tls_pruefung_schalten': return await this.tlsPruefungSchalten(zugang, input, geheim);
+        case 'tls_erzwingen': return await this.tlsErzwingen(zugang, input, geheim);
+        case 'ad_login': return await this.adLogin(zugang, input, geheim);
+        case 'ad_login_entfernen': return await this.adLoginEntfernen(zugang, input, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -914,6 +958,58 @@ export class LinuxSqlSkill extends Skill {
     const text = p.an
       ? `TLS_PRUEFUNG_AN ${zugang}: Alfreds SQL-Verbindungen gehen mit -N an ${p.cn} und prüfen das Zertifikat (Vertrauensspeicher, Name); Probe als sa verschlüsselt; Schalter ${TLS_PRUEF_SCHALTER} (0644 root, Inhalt ${p.cn}) — kein Rückfall auf -C`
       : `TLS_PRUEFUNG_AUS ${zugang}: Schalter ${TLS_PRUEF_SCHALTER} entfernt — Alfreds SQL-Verbindungen gehen wieder an localhost ohne Zertifikatsprüfung`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /**
+   * Task 8 — network.forceencryption: an=true (sa für die Probe) nur mit eingespieltem TLS, Zertifikatsprüfung an und fehlerfreiem Pacemaker
+   * auf diesem Knoten (Baustein); an=false ohne Tresor (Rückweg). KEIN Neustart — der Change startet rollierend neu (linux_ha ag_failover).
+   */
+  private async tlsErzwingen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = tlsErzwingenParameter(zugang, input);
+    const eingabe = p.an ? { sa: await this.sa(zugang, `Verschlüsselung erzwingen ${zugang} (Probe-Verbindung)`, geheim) } : undefined;
+    const r = await this.lauf<{ zustand: string; erzwungen?: boolean; fqdn?: string; neustartNoetig?: boolean; pacemaker?: { fehlerzaehler?: number; fehlaktionen?: unknown[]; online?: boolean; knoten?: string }; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.tlsErzwingen, p, `Verschlüsselung ${p.an ? 'erzwingen' : 'nicht erzwingen'}`, LINUX_SQL_ZEIT_MS.tlsErzwingen, eingabe);
+    const pm = r.pacemaker;
+    const ok = typeof r.neustartNoetig === 'boolean' && (p.an
+      ? r.erzwungen === true && r.fqdn === p.cn && !!pm && pm.knoten === p.host && pm.online === true && pm.fehlerzaehler === 0 && Array.isArray(pm.fehlaktionen) && pm.fehlaktionen.length === 0
+      : r.erzwungen === false);
+    if (!ok) throw new Error(`Verschlüsselung ${zugang}: Nachprüfung fehlgeschlagen (erzwungen ${String(r.erzwungen)}, FQDN ${String(r.fqdn)}, Pacemaker ${JSON.stringify(pm ?? null).slice(0, 200)})`);
+    this.d.protokoll?.('I8e TLS erzwingen', { zugang, an: p.an, zustand: r.zustand, neustartNoetig: r.neustartNoetig, aenderungen: r.aenderungen });
+    const neustart = r.neustartNoetig ? 'Neustart von SQL Server nötig (rollierend per Change: Sekundär, Failover, Primär)' : 'kein Neustart nötig';
+    const text = p.an
+      ? `TLS_ERZWUNGEN ${zugang}: mssql.conf network.forceencryption 1 — Vorbedingungen erfüllt: TLS von Alfred eingespielt, Zertifikatsprüfung an (Probe -N ${p.cn} verschlüsselt), Pacemaker auf ${p.host} online ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0; ${neustart}`
+      : `TLS_NICHT_ERZWUNGEN ${zugang}: mssql.conf network.forceencryption zurückgenommen (Standard, unverschlüsselte Verbindungen wieder zulässig); ${neustart}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Task 8 — AD-Gruppen-Login (sa aus dem Tresor); der Skill prüft das Ergebnis noch einmal (Name, Typ G, Rollen) */
+  private async adLogin(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = adLoginParameter(zugang, input);
+    const sa = await this.sa(zugang, `AD-Login ${adLoginName(p.gruppe)} auf ${zugang}`, geheim);
+    const r = await this.lauf<{ zustand: string; login?: string; typ?: string; serverrolle?: string; datenbank?: string; datenbankrolle?: string; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.adLogin, p, `AD-Login ${p.gruppe}`, LINUX_SQL_ZEIT_MS.adLogin, { sa });
+    const n = adLoginName(p.gruppe);
+    if (r.login !== n || r.typ !== 'G' || r.serverrolle !== (p.serverrolle ?? '') || r.datenbank !== (p.datenbank ?? '') || r.datenbankrolle !== (p.datenbankrolle ?? '')) {
+      throw new Error(`AD-Login ${zugang}: Nachprüfung fehlgeschlagen (Login ${String(r.login)}, Typ ${String(r.typ)}, Serverrolle ${String(r.serverrolle)}, Datenbank ${String(r.datenbank)})`);
+    }
+    this.d.protokoll?.('I8e AD-Login', { zugang, login: n, zustand: r.zustand, aenderungen: r.aenderungen });
+    const rollen = [p.serverrolle ? `Serverrolle ${p.serverrolle}` : '', p.datenbank ? `${p.datenbank}: ${p.datenbankrolle}` : ''].filter(Boolean).join(', ');
+    const text = `AD_LOGIN_OK ${zugang}: ${n} (Windows-Gruppe, aktiv) — ${rollen}; Anlagen vermerkt in ${AD_LOGINS_DATEI} (Rückweg ad_login_entfernen)`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Task 8 — Rückweg: nur Vermerktes (AD_LOGINS_DATEI), Fremdes bleibt (belassen) */
+  private async adLoginEntfernen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = adLoginParameter(zugang, input);
+    const sa = await this.sa(zugang, `AD-Login ${adLoginName(p.gruppe)} entfernen auf ${zugang}`, geheim);
+    const r = await this.lauf<{ zustand: string; login?: string; belassen?: string[]; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.adLoginEntfernen, p, `AD-Login ${p.gruppe} entfernen`, LINUX_SQL_ZEIT_MS.adLoginEntfernen, { sa });
+    const n = adLoginName(p.gruppe);
+    if (r.login !== n) throw new Error(`AD-Login entfernen ${zugang}: Nachprüfung fehlgeschlagen (Login ${String(r.login)})`);
+    this.d.protokoll?.('I8e AD-Login entfernt', { zugang, login: n, zustand: r.zustand, belassen: r.belassen ?? [] });
+    const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
+    const text = `AD_LOGIN_REMOVED ${zugang}: ${n} — ${(r.aenderungen ?? []).join(', ') || 'nichts von Alfred vorhanden'}${bel}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

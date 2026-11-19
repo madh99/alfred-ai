@@ -15,7 +15,7 @@ import {
   HA_FENCING_ARTEN, HA_FENCING_SPERRE_S, HA_FENCING_VERZOEGERUNG_S, HA_FENCING_MAX_ALTER_S, HA_FENCING_HAENGER_KNOTEN, pruefeHaFencing, pruefeHaFencingBelegen, fencingBelegGueltig,
   type HaKnoten, type HaRolle, type HaVorbereitenParameter, type HaClusterParameter, type HaClusterEntfernenParameter,
   type HaFencingArt, type HaFencingParameter, type HaFencingBelegenParameter, type FencingLage, type FencingBeleg, type FencingTest,
-  HA_AG_NAME, HA_AG_VIP, HA_AG_KONFIG_KNOTEN, HA_AG_ROLLEN, HA_AG_RESSOURCE, HA_AG_KLON, HA_AG_VIP_RESSOURCE, HA_PACEMAKER_TRESOR, haMasterkeyTresor, istOeffentlichesZertifikat,
+  HA_PM_FENSTER_S, HA_AG_NAME, HA_AG_VIP, HA_AG_KONFIG_KNOTEN, HA_AG_ROLLEN, HA_AG_RESSOURCE, HA_AG_KLON, HA_AG_VIP_RESSOURCE, HA_PACEMAKER_TRESOR, haMasterkeyTresor, istOeffentlichesZertifikat,
   pruefeHaAgBesetzung, pruefeHaAgAbschluss, pruefeHaAgEntfernen, pruefeHaAgFailover, type HaAgFailoverParameter,
   type HaAgBesetzung, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
 } from './linux-ha.js';
@@ -136,6 +136,27 @@ export interface LinuxHaCluster {
   crm?: { knoten: number; online: string[]; quorum: boolean; stonith: boolean; ressourcen: number } | null;
   sbd?: Record<string, { installiert: boolean; aktiviert: boolean; laeuft: boolean }> | null;
   stonithWatchdogTimeout?: string | null;
+  /** Task 8: Fehlaktionen (Fenster) und Fehlerzähler der AG-Ressource dieses Knotens (PY_PM_FEHLER_FUNK); null = nicht lesbar */
+  fehler?: PacemakerFehler | null;
+}
+
+export interface PacemakerFehler {
+  knoten: string; online: boolean; quorum: boolean; ressource: boolean; fehlerzaehler: number;
+  fehlaktionen: Array<{ aktion: string | null; status: string | null; zeit: number | null }>; aeltere: number; fensterS: number;
+}
+
+/**
+ * Task 8 — Pacemaker-Fehler dieses Knotens (fester Wortlaut): „Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0“; sonst
+ * „Pacemaker FEHLER: <n> Fehlaktionen in 30 min (<aktionen>), Fehlerzähler ag_cluster <n>“ bzw. „Pacemaker-Fehler unbekannt (crm_mon nicht
+ * lesbar)“. Die Ressource selbst nennt clusterText/agText; hier zählt nur, ob seit dem Fenster etwas schiefging.
+ */
+export function pacemakerFehlerText(f: PacemakerFehler | null | undefined): string {
+  if (!f) return 'Pacemaker-Fehler unbekannt (crm_mon nicht lesbar)';
+  const min = Math.round((f.fensterS ?? HA_PM_FENSTER_S) / 60);
+  const alt = f.aeltere ? `, ältere Fehlaktionen ${f.aeltere}` : '';
+  if (!f.fehlaktionen.length && !f.fehlerzaehler) return `Pacemaker ohne Fehlaktionen (${min} min), Fehlerzähler ${HA_AG_RESSOURCE} 0${alt}`;
+  const akt = f.fehlaktionen.slice(0, 5).map(a => `${a.aktion ?? '?'}${a.status ? ` ${a.status}` : ''}`).join(', ');
+  return `Pacemaker FEHLER: ${f.fehlaktionen.length} Fehlaktionen in ${min} min${akt ? ` (${akt})` : ''}, Fehlerzähler ${HA_AG_RESSOURCE} ${f.fehlerzaehler}${alt}`;
 }
 
 /** „Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s“ (fester Wortlaut) */
@@ -197,6 +218,8 @@ export function linuxHaStatusTeile(s: LinuxHaStatus): string[] {
     s.sbdWartetAufWatchdog === true ? 'sbd wartet auf Watchdog' : s.sbdWartetAufWatchdog === false ? 'sbd ohne Watchdog-Wartezeit (Drop-in fehlt)' : 'sbd Watchdog-Wartezeit unbekannt',
     s.pcsd === 'active' ? 'pcsd aktiv' : `pcsd ${s.pcsd ?? 'unbekannt'}`,
     clusterText(s.cluster),
+    // Task 8: nur, wenn der Status die Fehler gelesen hat (eingerichteter Cluster) — davor bleibt der Text wie bisher
+    ...(s.cluster?.art === 'eingerichtet' && s.cluster.fehler !== undefined ? [pacemakerFehlerText(s.cluster.fehler)] : []),
     fencingText(s.fencing),
     // Task 6: AG-Teil am Ende, sobald eine AG eingerichtet ist (Ressource oder Zugangsdatei) — davor bleibt der Text wie bisher;
     // Stücke wie „3/3 online“, „Fencing belegt“ bleiben unverändert

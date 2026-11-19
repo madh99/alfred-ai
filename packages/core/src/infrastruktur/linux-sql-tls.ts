@@ -15,6 +15,8 @@
  *    mssql:mssql. Fremdes bleibt (belassen). Abbruch, solange die Zertifikatsprüfung (Task 7) an ist.
  *  - tls_pruefung_schalten (Task 7): Schalter TLS_PRUEF_SCHALTER für Alfreds eigene SQL-Verbindungen (sql_ziel in linux-sql.ts) — an nur
  *    mit gültigem, genutztem Zertifikat und gelungener Probe `sqlcmd -N -S <fqdn>`; aus = Rückweg.
+ *  - tls_erzwingen (Task 8): network.forceencryption 1 nur mit eingespieltem TLS, Zertifikatsprüfung an und fehlerfreiem Pacemaker auf
+ *    diesem Knoten (PY_PM_PRUEFUNG aus linux-ha.ts); KEIN Neustart; an=false = Rückweg (ohne Vorbedingung).
  *
  * Der private Schlüssel erscheint nie in Ergebnis, Log, Fehlertext oder Tresor: auf ihn laufen nur `openssl rsa -noout -modulus` und
  * `openssl pkey -pubout` (öffentlicher Teil); die Eingabe-Prüfung weist jeden „PRIVATE“-Block zurück.
@@ -27,6 +29,7 @@ import {
 } from './linux-sql.js';
 import { MSSQL_CONF_PROGRAMM, MSSQL_CONF_DATEI } from './linux-sql-ad.js';
 import { linuxTlsSans } from './windows-sqltls-linux.js';
+import { HA_CRM_FEHLER_ARGS, PY_PM_PRUEFUNG } from './linux-ha.js';
 
 export { TLS_PRUEF_SCHALTER, TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE };
 
@@ -616,9 +619,121 @@ export function tlsPruefungSchaltenSkript(p: TlsPruefungParameter): string {
   ].join('\n');
 }
 
+// ── tls_erzwingen (Task 8) ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * an=true mit Host (= Pacemaker-Knotenname = hostname -s) und FQDN (CN, Inhalt des Prüfschalters); an=false ohne weitere Angaben.
+ * Pacemaker unter TLS (Recherche Task 8): der Ressourcen-Agent ocf:mssql:ag (ag-helper, go-mssqldb) verbindet immer mit encrypt=true und
+ * TrustServerCertificate=true — forceencryption ändert für ihn nichts; die Vorbedingung verlangt trotzdem einen fehlerfreien Knoten.
+ */
+export interface TlsErzwingenParameter { an: boolean; host?: string; cn?: string }
+
+export function pruefeTlsErzwingen(p: unknown): string | undefined {
+  const x = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+  if (typeof x.an !== 'boolean') return 'an: true oder false';
+  if (!x.an) return x.host === undefined && x.cn === undefined ? undefined : 'host/cn: nur mit an=true';
+  if (typeof x.host !== 'string' || !TLS_HOSTS.includes(x.host)) return `host: ${TLS_HOSTS.join(', ')}`;
+  return x.cn === `${x.host}.${AD_DOMAENE_LINUX}` ? undefined : `cn: ${x.host}.${AD_DOMAENE_LINUX}`;
+}
+
+const ERZWINGEN_NEUSTART = sh(String.raw`# 0 = SQL Server muss neu starten: in diesem Lauf geändert, Dienst nicht aktiv oder mssql.conf jünger als der Dienststart
+neustart_noetig() {
+  [ "$SQL_AEND" = 0 ] || return 0
+  systemctl is-active --quiet mssql-server || return 0
+  local t s=0
+  t=$(systemctl show -p ActiveEnterTimestamp --value mssql-server 2>/dev/null || true)
+  if [ -n "$t" ]; then s=$(date -d "$t" +%s 2>/dev/null || echo 0); fi
+  [ ! -f "$MSSQL_CONF" ] || [ "$(stat -c %Y "$MSSQL_CONF")" -lt "$s" ] || return 0
+  return 1
+}`);
+
+const ERZWINGEN_AN_KOERPER = sh(String.raw`NICHT='Verschlüsselung nicht erzwungen, nichts geändert'
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+[ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — $NICHT"
+for b in openssl crm_mon python3; do command -v "$b" >/dev/null 2>&1 || abbruch "$b fehlt — $NICHT"; done
+ICH=$(hostname -s 2>/dev/null || true)
+[ "$ICH" = "$HOST" ] || abbruch "Host meldet sich als $ICH, erwartet $HOST (Pacemaker-Knoten) — $NICHT"
+# (1) TLS von Alfred eingespielt (Task 6): Zertifikat und Schlüssel laut Manifest, von mssql.conf genutzt, gültig, Kette + Name prüfbar
+{ [ -f "$CRT" ] && [ ! -L "$CRT" ]; } || abbruch "$CRT fehlt — zuerst tls_einspielen; $NICHT"
+alfreds "$CRT" || abbruch "$CRT steht nicht mit diesem Inhalt in Alfreds Manifest $MANIFEST (nicht von tls_einspielen) — $NICHT"
+alfreds "$KEY" || abbruch "$KEY steht nicht mit diesem Inhalt in Alfreds Manifest $MANIFEST — $NICHT"
+[ "$(lies network tlscert)" = "$CRT" ] || abbruch "mssql.conf network.tlscert ist nicht $CRT — $NICHT"
+[ "$(lies network tlskey)" = "$KEY" ] || abbruch "mssql.conf network.tlskey ist nicht $KEY — $NICHT"
+openssl x509 -noout -checkend 0 -in "$CRT" >/dev/null 2>&1 || abbruch "$CRT ist abgelaufen oder nicht lesbar — $NICHT"
+a=$(openssl verify -purpose sslserver -verify_hostname "$CN" -CAfile "$CA_BUNDLE" -untrusted "$CA_ISS" "$CRT" 2>&1) || abbruch "$CRT: Kette gegen den Vertrauensspeicher $CA_BUNDLE nicht prüfbar oder $CN nicht im Zertifikat ($(kurz "$a")) — $NICHT"
+# (2) Prüfschalter (Task 7) an, mit genau diesem Host
+{ [ -f "$TLS_SCHALTER" ] && [ ! -L "$TLS_SCHALTER" ]; } || abbruch "Zertifikatsprüfung ist nicht an ($TLS_SCHALTER fehlt) — zuerst tls_pruefung_schalten an=true; $NICHT"
+sql_ziel || abbruch "$SQL_ZIEL_FEHLER — $NICHT"
+[ "§{SQL_ZIEL[*]}" = "-N -S $CN" ] || abbruch "Schalter $TLS_SCHALTER nennt nicht $CN (Verbindungsziel §{SQL_ZIEL[*]}) — $NICHT"
+# Verbindung genau so, wie Alfred verbindet (-N, Zertifikat und Name geprüft): SQL Server liefert das eingespielte Zertifikat
+bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+a=$(sql "$PROBE_Q" 2>&1) || abbruch "Probe über $CN: $(sql_fehlerzeile "$a") — $NICHT"
+[ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || abbruch "Probe: Verbindung zu $CN laut SQL Server nicht verschlüsselt — $NICHT"
+# (3) Pacemaker auf diesem Knoten fehlerfrei: online, Quorum, Ressource bekannt, Fehlerzähler 0, keine Fehlaktion im Fenster
+ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-tls.XXXXXX"); chmod 0700 "$ALFRED_TMP"
+crm_mon "§{CRM_FEHLER_ARGS[@]}" >"$ALFRED_TMP/crm.xml" 2>"$ALFRED_TMP/crm.err" || abbruch "crm_mon nicht lesbar ($(kurz "$(cat "$ALFRED_TMP/crm.err")")) — Pacemaker-Lage unbekannt; $NICHT"
+PM=$(python3 -c "$PY_PM_PRUEFUNG" "$ICH" "$ALFRED_TMP/crm.xml" 2>"$ALFRED_TMP/pm.err") || abbruch "Pacemaker auf $ICH nicht fehlerfrei: $(kurz "$(cat "$ALFRED_TMP/pm.err")") — $NICHT"
+[[ "$PM" == '{'*'}' ]] || abbruch "Pacemaker-Prüfung ohne Ergebnis — $NICHT"
+# ── Phase 2: mssql-conf nur bei Abweichung (wirkt erst nach dem Neustart — der läuft rollierend per Change, nicht hier) ──
+SQL_AEND=0
+if [ "$(lies network forceencryption)" != 1 ]; then
+  aus=$("$MSSQLCONF" set network.forceencryption 1 2>&1) || abbruch "mssql-conf set network.forceencryption 1 fehlgeschlagen: $(kurz "$aus")"
+  aend mssql-conf:forceencryption; SQL_AEND=1
+fi
+# ── Selbstprüfung ──
+[ "$(lies network forceencryption)" = 1 ] || abbruch "Selbstprüfung: mssql.conf network.forceencryption ist nicht 1"
+if neustart_noetig; then NN=true; else NN=false; fi
+if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
+ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":true,\"fqdn\":\"$CN\",\"neustartNoetig\":$NN,\"pacemaker\":$PM,\"aenderungen\":[$AJ]}"`);
+
+const ERZWINGEN_AUS_KOERPER = sh(String.raw`# Rückweg: keine Vorbedingung (Zurücknehmen muss immer gehen) — Alfreds Wert 1 entfernen (Standard = nicht erzwungen)
+[ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — nichts geändert"
+SQL_AEND=0
+V=$(lies network forceencryption)
+if [ -n "$V" ] && [ "$V" != 0 ]; then
+  aus=$("$MSSQLCONF" unset network.forceencryption 2>&1) || abbruch "mssql-conf unset network.forceencryption fehlgeschlagen: $(kurz "$aus")"
+  aend mssql-conf:forceencryption; SQL_AEND=1
+fi
+# ── Selbstprüfung ──
+V=$(lies network forceencryption)
+{ [ -z "$V" ] || [ "$V" = 0 ]; } || abbruch "Selbstprüfung: mssql.conf network.forceencryption ist noch $V"
+if neustart_noetig; then NN=true; else NN=false; fi
+if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
+ergebnis "{\"zustand\":\"$ZU\",\"erzwungen\":false,\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Task 8 — network.forceencryption setzen (an=true) bzw. zurücknehmen (an=false, Rückweg); KEIN Neustart (neustartNoetig im Ergebnis,
+ * der Change startet rollierend neu). an=true (sa über stdin) nur, wenn (1) TLS von Alfred eingespielt ist (Manifest, mssql.conf, gültig,
+ * Kette + Name), (2) Alfreds Zertifikatsprüfung an ist (Schalter mit genau diesem FQDN, Probe -N verschlüsselt) und (3) Pacemaker auf
+ * diesem Knoten fehlerfrei ist (PY_PM_PRUEFUNG: online, Quorum, ag_cluster bekannt, Fehlerzähler 0, keine Fehlaktion in 30 min) — sonst
+ * Abbruch ohne mssql-conf-Aufruf. Ergebnis { zustand, erzwungen, fqdn?, neustartNoetig, pacemaker?, aenderungen }.
+ * Zeit: LINUX_SQL_ZEIT_MS.tlsErzwingen
+ */
+export function tlsErzwingenSkript(p: TlsErzwingenParameter): string {
+  const f = pruefeTlsErzwingen(p); if (f) throw new Error(f);
+  if (!p.an) {
+    return [...sqlKopf(LINUX_SQL_BAUSTEINE.tlsErzwingen, { an: false }), ...werte(), HILFEN, ERZWINGEN_NEUSTART, MARKE, ERZWINGEN_AUS_KOERPER].join('\n');
+  }
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.tlsErzwingen, { an: true, host: p.host, cn: p.cn }),
+    ...werte(),
+    `HOST=${shQ(p.host!)}`,
+    `CN=${shQ(p.cn!)}`,
+    `PROBE_Q=${shQ(PRUEF_PROBE)}`,
+    `CRM_FEHLER_ARGS=(${HA_CRM_FEHLER_ARGS.map(shQ).join(' ')})`,
+    `PY_PM_PRUEFUNG=${shQ(PY_PM_PRUEFUNG)}`,
+    ...SQL_HILFE,
+    HILFEN,
+    ERZWINGEN_NEUSTART,
+    ...SA_LESEN,
+    ERZWINGEN_AN_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<TlsParameter>(LINUX_SQL_BAUSTEINE.tlsAnfordern, tlsAnfordernSkript);
 registriereLinuxBaustein<TlsEinspielenParameter>(LINUX_SQL_BAUSTEINE.tlsEinspielen, tlsEinspielenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.tlsEntfernen, () => tlsEntfernenSkript());
 registriereLinuxBaustein<TlsPruefungParameter>(LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, tlsPruefungSchaltenSkript);
+registriereLinuxBaustein<TlsErzwingenParameter>(LINUX_SQL_BAUSTEINE.tlsErzwingen, tlsErzwingenSkript);

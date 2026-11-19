@@ -73,6 +73,8 @@ export const LINUX_SQL_BAUSTEINE = {
   tlsAnfordern: 'sql.tls_anfordern', tlsEinspielen: 'sql.tls_einspielen', tlsEntfernen: 'sql.tls_entfernen',
   // I8e Etappe 3 Task 7 — Zertifikatsprüfung bei Alfreds eigenen SQL-Verbindungen schalten (Erzeuger in linux-sql-tls.ts)
   tlsPruefungSchalten: 'sql.tls_pruefung_schalten',
+  // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Erzeuger in linux-sql-tls.ts), AD-Gruppen-Logins und Rückweg (Erzeuger in linux-sql-ad.ts)
+  tlsErzwingen: 'sql.tls_erzwingen', adLogin: 'sql.ad_login', adLoginEntfernen: 'sql.ad_login_entfernen',
 } as const;
 
 /**
@@ -129,6 +131,8 @@ export const LINUX_SQL_ZEIT_MS = {
   tlsAnfordern: 120_000, tlsEinspielen: 150_000, tlsEntfernen: 90_000,
   // Task 7: openssl-Prüfung, zwei Verbindungen (Probe vor, Selbstprüfung nach dem Schreiben), je Anmeldegrenze 30 s
   tlsPruefungSchalten: 120_000,
+  // Task 8: bereit (bis 120 s), Probe, crm_mon, mssql-conf — ohne Neustart; AD-Login: bereit, Lage, Anlegen, Nachprüfung
+  tlsErzwingen: 180_000, adLogin: 180_000, adLoginEntfernen: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

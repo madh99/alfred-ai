@@ -79,6 +79,8 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt'
+    // I8e Etappe 3 Task 8: „; Pacemaker …“ nach dem Cluster-Teil (pacemakerFehlerText) — positiv nur dieses Stück; „FEHLER“ gehört in nichtEnthalten
+    + ' | Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0'
     // Task 6: „; AG …“ am Ende (agText) — positive Stücke einzeln; Knotennamen fest (Global Constraints), Prüfung „offen“: nichtEnthalten „OFFEN“
     + ' | AG {ag}: Promoted {knoten}, VIP {knoten}, required_sync Ressource {n} / SQL {n}, Replikate {replikate}, {standort}'
     + ' | Standort-Bedingungen 0 | required_sync Ressource 0 / SQL 0 | Promoted sqllnx01 | Promoted sqllnx02 | VIP sqllnx01 | VIP sqllnx02'
@@ -199,7 +201,10 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     'tls_anfordern', 'tls_einspielen', 'tls_entfernen',
     // Etappe 3 Task 7 — Zertifikatsprüfung: an prüft Zertifikat (Manifest, mssql.conf, Ablauf, Kette + Name), Probe -N, danach sql_ziel + Verbindung
     // über den Schalter (sonst voriger Zustand zurück); aus prüft, dass kein Schalter mehr gelesen wird
-    'tls_pruefung_schalten']),
+    'tls_pruefung_schalten',
+    // Etappe 3 Task 8 — Erzwingen: Vorbedingungen (TLS, Schalter, Probe, Pacemaker) und mssql.conf zurückgelesen; AD-Login: Kataloge
+    // zurückgelesen (Typ G, aktiv, Server-/Datenbankrolle, SID); Entfernen: vermerkte Objekte weg
+    'tls_erzwingen', 'ad_login', 'ad_login_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -237,7 +242,11 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     // Etappe 3 Task 6 — TLS: Rückweg genau linux_sql.tls_entfernen auf demselben Zugang
     ['tls_einspielen', { skill: 'linux_sql', aktion: 'tls_entfernen', text: 'linux_sql.tls_entfernen (zugang)', parameter: gleicherZugang('tls_entfernen') }],
     // Etappe 3 Task 7 — Zertifikatsprüfung: Rückweg genau tls_pruefung_schalten mit umgekehrtem an auf demselben Zugang
-    ['tls_pruefung_schalten', { skill: 'linux_sql', aktion: 'tls_pruefung_schalten', text: 'linux_sql.tls_pruefung_schalten (zugang, an umgekehrt)', parameter: schalterZurueck }],
+    ['tls_pruefung_schalten', { skill: 'linux_sql', aktion: 'tls_pruefung_schalten', text: 'linux_sql.tls_pruefung_schalten (zugang, an umgekehrt)', parameter: schalterZurueck('tls_pruefung_schalten') }],
+    // Etappe 3 Task 8 — Erzwingen: Rückweg genau tls_erzwingen mit umgekehrtem an auf demselben Zugang
+    ['tls_erzwingen', { skill: 'linux_sql', aktion: 'tls_erzwingen', text: 'linux_sql.tls_erzwingen (zugang, an umgekehrt)', parameter: schalterZurueck('tls_erzwingen') }],
+    // Etappe 3 Task 8 — AD-Login: Rückweg genau ad_login_entfernen mit denselben Werten (zugang, gruppe, serverrolle, datenbank, datenbankrolle)
+    ['ad_login', { skill: 'linux_sql', aktion: 'ad_login_entfernen', text: 'linux_sql.ad_login_entfernen (zugang, gruppe, serverrolle, datenbank, datenbankrolle wie ad_login)', parameter: adLoginZurueck }],
   ]),
 };
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
@@ -248,10 +257,22 @@ function gleicherZugang(aktion: string) {
     return h && r && h !== r ? `${aktion} muss auf demselben Zugang laufen — rueckweg zugang ${h} (nicht ${r})` : undefined;
   };
 }
-/** Task 7: der Rückweg von tls_pruefung_schalten kehrt an um (true ↔ false) — derselbe Zugang (Verweise erst zur Laufzeit) */
-function schalterZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
-  const z = gleicherZugang('tls_pruefung_schalten')(hin, rueck); if (z) return z;
-  if (typeof hin.an === 'boolean' && rueck.an !== !hin.an) return `tls_pruefung_schalten: rueckweg an = ${String(!hin.an)} (Hinweg an = ${String(hin.an)})`;
+/** Task 7/8: der Rückweg von tls_pruefung_schalten bzw. tls_erzwingen kehrt an um (true ↔ false) — derselbe Zugang (Verweise erst zur Laufzeit) */
+function schalterZurueck(aktion: string) {
+  return (hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined => {
+    const z = gleicherZugang(aktion)(hin, rueck); if (z) return z;
+    if (typeof hin.an === 'boolean' && rueck.an !== !hin.an) return `${aktion}: rueckweg an = ${String(!hin.an)} (Hinweg an = ${String(hin.an)})`;
+    return undefined;
+  };
+}
+/** Task 8: ad_login_entfernen nimmt genau das zurück, was ad_login angelegt hat — gleiche Gruppe, Rollen und Datenbank (Verweise erst zur Laufzeit) */
+function adLoginZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const z = gleicherZugang('ad_login_entfernen')(hin, rueck); if (z) return z;
+  const n = (v: unknown) => (typeof v === 'string' && v.includes('{{') ? undefined : v === undefined ? '' : String(v));
+  for (const k of ['gruppe', 'serverrolle', 'datenbank', 'datenbankrolle']) {
+    const [h, r] = [n(hin[k]), n(rueck[k])];
+    if (h !== undefined && r !== undefined && h !== r) return `ad_login_entfernen: rueckweg ${k} = ${h || '(leer)'} wie ad_login (nicht ${r || '(leer)'})`;
+  }
   return undefined;
 }
 /** Task 6: der Rückweg eines Failovers führt zurück zum bisherigen Primär — zugang/ziel genau vertauscht (Verweise erst zur Laufzeit) */
