@@ -206,8 +206,15 @@ function paketeText(s: LinuxHaStatus): string {
 /** Teile des festen Wortlauts (Tasks 3–6 hängen z. B. „Cluster …“ an) */
 export function linuxHaStatusTeile(s: LinuxHaStatus): string[] {
   const fw = s.firewall;
-  const fwText = !fw ? 'Firewall alfred_ha unbekannt' : fw.tabelle && fw.dienst === 'active' && fw.aktiviert === 'enabled' ? `Firewall alfred_ha aktiv (1433: Knoten${s.sql1433Zusatz?.length ? ` + ${s.sql1433Zusatz.join(', ')}` : ''})`
-    : `Firewall alfred_ha ${fw.tabelle ? 'geladen' : 'nicht geladen'}, Dienst ${fw.dienst}, ${fw.aktiviert}`;
+  // Ruling R22: geladene Zusatzquellen für 1433 ≠ HA_SQL_ZUSATZQUELLEN → „veraltet“ (nicht „aktiv“), ha_vorbereiten stellt um
+  const zusatz = s.sql1433Zusatz;
+  const zusatzAbweichend = zusatz !== undefined && (new Set(zusatz).size !== new Set(HA_SQL_ZUSATZQUELLEN).size || HA_SQL_ZUSATZQUELLEN.some(q => !zusatz.includes(q)));
+  const fwText = !fw ? 'Firewall alfred_ha unbekannt'
+    : fw.tabelle && fw.dienst === 'active' && fw.aktiviert === 'enabled'
+      ? zusatzAbweichend
+        ? `Firewall alfred_ha veraltet (1433: Knoten${zusatz.length ? ` + ${zusatz.join(', ')}` : ''}; Soll Knoten + ${HA_SQL_ZUSATZQUELLEN.join(', ')} — ha_vorbereiten stellt um)`
+        : `Firewall alfred_ha aktiv (1433: Knoten${zusatz?.length ? ` + ${HA_SQL_ZUSATZQUELLEN.join(', ')}` : ''})`
+      : `Firewall alfred_ha ${fw.tabelle ? 'geladen' : 'nicht geladen'}, Dienst ${fw.dienst}, ${fw.aktiviert}`;
   return [
     watchdogText(s),
     paketeText(s),
@@ -380,7 +387,7 @@ export class LinuxHaSkill extends Skill {
     description:
       'Hochverfügbarkeit für SQL Server 2025 auf Ubuntu 24.04 (I8e Paket 2: Pacemaker, diskless SBD mit Hardware-Watchdog i6300esb, Verfügbarkeitsgruppe) über feste, geprüfte Bash-Bausteine auf Linux-Fernzugängen (zugang = Name des Fernzugangs, z. B. sqllnx02). '
       + 'status (lesend, auch außerhalb von Changes; ohne Tresor): Watchdog (Kennung, Besitzer), Pakete, HADR, Host-Firewall, hosts-Block, systemd-RuntimeWatchdog, pcsd, Cluster — '
-      + 'Wortlaut „<zugang>: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s“ (Abweichungen: „Watchdog fehlt …“, „Watchdog FREMD …“, „Watchdog i6300esb BELEGT von …“, „Watchdog i6300esb bei sbd“, „Pakete abweichend: …“, „HADR aus“, „hosts-Block veraltet (ohne FQDN …)“, „Cluster nicht eingerichtet“, „Quorum nein“ …), als Prüfung z. B. erwartet „Pakete fest“, „Firewall alfred_ha aktiv“ oder „3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3“. '
+      + `Wortlaut „<zugang>: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + ${HA_SQL_ZUSATZQUELLEN.join(', ')}); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s“ (Abweichungen: „Watchdog fehlt …“, „Watchdog FREMD …“, „Watchdog i6300esb BELEGT von …“, „Watchdog i6300esb bei sbd“, „Pakete abweichend: …“, „HADR aus“, „Firewall alfred_ha veraltet (… Soll …)“ (andere 1433-Zusatzquellen geladen), „hosts-Block veraltet (ohne FQDN …)“, „Cluster nicht eingerichtet“, „Quorum nein“ …), als Prüfung z. B. erwartet „Pakete fest“, „Firewall alfred_ha aktiv“ oder „3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3“. `
       + `NUR als Schritt freigegebener Changes: ha_vorbereiten (zugang, rolle daten|konfig, knoten optional — Standard ${HA_KNOTEN.map(k => `${k.name} ${k.ip}`).join(', ')}) — nach linux_sql installieren auf jedem der drei Knoten: `
       + `hosts-Block der drei Knoten („<ip> <name>.ad.3033.at <name>“, FQDN zuerst — hostname -f liefert den FQDN; ein alter Block nur mit Kurznamen wird ersetzt und als „hosts-Block auf FQDN umgestellt“ gemeldet), Pakete fest und gehalten (${HA_PAKETE.map(([s, n]) => `${n} ${HA_VERSIONEN[s]}`).join(', ')}, linux-modules-extra des laufenden Kernels), i6300esb laden, softdog gesperrt, systemd-RuntimeWatchdog aus, `
       + `hacluster-Kennwort aus dem Tresor (${HA_HACLUSTER_TRESOR}, erzeugt Alfred einmalig), HADR an (SQL-Neustart nur bei Änderung), nft-Tabelle inet alfred_ha (alfred-hostfw.service: nur die drei Knoten dürfen TCP 1433, 2224, 3121, 5022, 21064 und UDP 5405, TCP 1433 zusätzlich ${HA_SQL_ZUSATZQUELLEN.join(', ')}, sonst unverändert, SSH bleibt), pcsd läuft, Cluster-Dienste bleiben bis zur Cluster-Einrichtung aus. `

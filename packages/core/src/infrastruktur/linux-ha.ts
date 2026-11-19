@@ -63,8 +63,11 @@ export const HA_PORTS = { tcp: [1433, 2224, 3121, 5022, 21064], udp: [5405] } as
 /**
  * Ruling R4 (Architektur v2 §4: „ausschließlich Probe 192.168.1.223 → VIP / befristet Einzelinstanz“): TCP 1433 zusätzlich zu den
  * Knoten nur von diesen Quellen; alle anderen Ports bleiben auf die Knoten beschränkt.
+ * Ruling R22 (I8e Etappe 3): zusätzlich 10.203.30.2 (sql01, Windows-SQL-Knoten) — von dort läuft die Kerberos-/TLS-Abnahme
+ * `windows_ad sql_anmeldung_pruefen`. Bestehende Knoten stellt ha_vorbereiten um (Regelsatz-Vergleich → „firewall-regeln“), die
+ * Selbstprüfung verlangt genau diese Menge im geladenen Satz sql_quellen4, der Status meldet eine abweichende Menge als „veraltet“.
  */
-export const HA_SQL_ZUSATZQUELLEN: readonly string[] = ['192.168.1.223'];
+export const HA_SQL_ZUSATZQUELLEN: readonly string[] = ['192.168.1.223', '10.203.30.2'];
 export const HA_NFT_TABELLE = 'alfred_ha';
 export const HA_HOSTFW_DATEI = '/etc/alfred/hostfw.nft';
 export const HA_HOSTFW_DIENST = 'alfred-hostfw.service';
@@ -670,6 +673,9 @@ done
 pruefe_wd " (Selbstprüfung)"
 h=$(fremde_halter); [ -z "$h" ] || abbruch "Watchdog offen gehalten von $h (Selbstprüfung)"
 nft list table inet "$NFT_TABELLE" >/dev/null 2>&1 || abbruch "nft-Tabelle inet $NFT_TABELLE fehlt"
+# Ruling R22: der geladene Satz sql_quellen4 enthält genau die festen Zusatzquellen für TCP 1433 (nicht nur die Datei)
+sqz=$(nft list set inet "$NFT_TABELLE" sql_quellen4 2>/dev/null | awk '/elements/ { f = 1 } f' | grep -oE '([0-9]{1,3}[.]){3}[0-9]{1,3}' | LC_ALL=C sort -u | tr '\\n' ' ' | sed 's/ $//' || true)
+[ "$sqz" = "$SQL_ZUSATZ_SOLL" ] || abbruch "nft-Satz sql_quellen4 enthält '\${sqz:-nichts}', erwartet $SQL_ZUSATZ_SOLL"
 { systemctl is-active --quiet "$FW_DIENST" && systemctl is-enabled --quiet "$FW_DIENST"; } || abbruch "$FW_DIENST nicht aktiv und aktiviert"
 kw_vergleich || abbruch "hacluster-Kennwort stimmt nach dem Setzen nicht"
 systemctl is-active --quiet pcsd || abbruch "pcsd läuft nicht"
@@ -710,6 +716,8 @@ export function haVorbereitenSkript(p: HaVorbereitenParameter): string {
     `DOMAENE=${shQ(HA_DOMAENE)}`,
     `NFT_SOLL=${shQ(hostfwNft(k))}`,
     `SQL1433_JSON=${shQ(JSON.stringify([...k.map(x => x.ip), ...HA_SQL_ZUSATZQUELLEN]))}`,
+    // Ruling R22: Soll des geladenen Satzes sql_quellen4 (sortiert wie LC_ALL=C sort -u in der Selbstprüfung)
+    `SQL_ZUSATZ_SOLL=${shQ([...new Set(HA_SQL_ZUSATZQUELLEN)].sort().join(' '))}`,
     `H_ENTFERNT=${shQ(HA_HOSTS_ENTFERNT)}`,
     `UNIT_SOLL=${shQ(HOSTFW_UNIT)}`,
     `MODPROBE_SOLL=${shQ('# Alfred I8e Paket 2: SBD ist einziger Watchdog-Besitzer — kein softdog\nblacklist softdog')}`,
