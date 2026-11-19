@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CMDB-Erfassung nach Changes und parallele Incident-Trennung (v1901)
+
+- Nach einem Change mit Fernzugriff-Schritten erfasste Alfred alle Fernzugriff-Hosts neu. Das passte nie in die Zeitgrenze von 120 s: Der Bericht meldete „timed out“, die Erfassung lief unbemerkt weiter. Jetzt werden nur die Hosts neu erfasst, die der Change berührt hat, und dabei wird nichts als veraltet markiert. Die vollständige Erfassung bleibt beim nächtlichen Lauf. Lassen sich keine Hosts bestimmen, sagt der Bericht das ausdrücklich.
+- Mehrere gleichzeitige Aufrufe zum Verknüpfen oder Trennen von Incidents am selben Problem überschrieben sich gegenseitig, nur einer wirkte. Sie laufen jetzt je Problem nacheinander.
+
 ### Fixed — ITSM: Known-Error-Verknüpfung und Trennen per Kurz-ID (v1900)
 
 - Beim Schließen eines Incidents wurde ein bestehender Known-Error schon über zwei gemeinsame Titelwörter erkannt. Automatische Incidents „Change angehalten: …“ teilten diese Wörter über die feste Vorsilbe mit jedem anderen Change-Halt und wurden still an einen fremden Known-Error gehängt. Eine beiden Titeln gemeinsame Vorsilbe bis „: “ zählt beim Abgleich nicht mehr.
