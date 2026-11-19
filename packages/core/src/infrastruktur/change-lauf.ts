@@ -71,16 +71,31 @@ export const MAX_DATEN = 6000;
 /** Daten eines Skill-Ergebnisses kürzen, damit der Lauf in der DB handlich bleibt (Verweise brauchen nur flache Felder). */
 export function kuerzeDaten(d: unknown): unknown {
   if (d === undefined || d === null) return undefined;
-  let t: string;
-  try { t = JSON.stringify(d); } catch { return undefined; }
-  if (t.length <= MAX_DATEN) return d;
+  // Ruling R16 (I8e Task 6) — Felder „…Base64“ der obersten Ebene mit striktem Base64 bis BASE64_DATEN_MAX Zeichen (Zertifikat, Kette,
+  // Anforderung für {{schrittN.zertBase64}} usw.) bleiben unverkürzt und zählen nicht zur Obergrenze MAX_DATEN
+  const behalten: Record<string, string> = {};
+  let rest: unknown = d;
   if (typeof d === 'object' && !Array.isArray(d)) {
+    const r: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+      if (istBase64DatenFeld(k, v)) behalten[k] = v; else r[k] = v;
+    }
+    rest = r;
+  }
+  let t: string;
+  try { t = JSON.stringify(rest); } catch { return undefined; }
+  if (t.length <= MAX_DATEN) return d;
+  if (typeof rest === 'object' && !Array.isArray(rest)) {
     const flach: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(d as Record<string, unknown>)) if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) flach[k] = typeof v === 'string' ? v.slice(0, 300) : v;
-    return flach;
+    for (const [k, v] of Object.entries(rest as Record<string, unknown>)) if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) flach[k] = typeof v === 'string' ? v.slice(0, 300) : v;
+    return { ...flach, ...behalten };
   }
   return undefined;
 }
+/** Ruling R16 — Höchstlänge eines unverkürzt gespeicherten Base64-Datenfelds (ein Zertifikat/eine Anforderung, DER) */
+export const BASE64_DATEN_MAX = 16_384;
+const istBase64DatenFeld = (k: string, v: unknown): v is string =>
+  /^[a-z][A-Za-z0-9]*Base64$/.test(k) && typeof v === 'string' && v.length > 0 && v.length <= BASE64_DATEN_MAX && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v);
 
 /** Wert eines Pfads („vmid“, „vm.ip“, „liste.0.name“) aus einem Objekt. */
 export function pfadWert(o: unknown, pfad: string): unknown {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { CmdbChangeRequest } from '@alfred/types';
 import { ChangeMotor, ownerFrageVeraltet, ueberspringbar, type MotorDeps } from './change-motor.js';
-import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, unaufgeloesterVerweis, type ChangeLauf } from './change-lauf.js';
+import { loeseAuf, merkeVerlauf, pfadWert, restWirkung, rueckwegSchritte, textErfuellt, unaufgeloesterVerweis, kuerzeDaten, MAX_DATEN, BASE64_DATEN_MAX, type ChangeLauf } from './change-lauf.js';
 import type { ChangeSchritt } from './change-schritte.js';
 
 // I4 — Ausführungsmotor gegen Attrappen (kein echter Host)
@@ -1121,5 +1121,42 @@ describe('V3 Verweis über Change-Grenzen', () => {
     const t = unaufgeloesterVerweis({ x: '{{Change:abcdef.schritt2.policy_id geheimwert12345}}' })!;
     expect(t).toContain('{{Change:abcdef');
     expect(t).not.toContain('geheimwert');
+  });
+});
+
+describe('Ruling R16 — kuerzeDaten behält strikte Base64-Felder (…Base64) unverkürzt', () => {
+  const b64 = (n: number) => Buffer.alloc(n, 7).toString('base64');
+  it('unter der Grenze unverändert; darüber nur die übrigen Felder flach/gekürzt, Base64-Felder vollständig', () => {
+    const klein = { zustand: 'ok', zertBase64: b64(300) };
+    expect(kuerzeDaten(klein)).toBe(klein);
+    const gross = { zustand: 'ausgestellt', thumbprint: 'AB'.repeat(20), sans: ['a', 'b'], zertifikatPem: 'P'.repeat(7000), zertBase64: b64(2000), issuingBase64: b64(1600), rootBase64: b64(1300) };
+    const k = kuerzeDaten(gross) as Record<string, unknown>;
+    expect(k.zertBase64).toBe(gross.zertBase64);
+    expect(k.issuingBase64).toBe(gross.issuingBase64);
+    expect(k.rootBase64).toBe(gross.rootBase64);
+    expect(k.zertifikatPem).toBe('P'.repeat(300));
+    expect(k.thumbprint).toBe(gross.thumbprint);
+    expect(k.sans).toBeUndefined();
+    // die Base64-Felder zählen nicht zur Obergrenze: übriger Teil klein → alles unverändert
+    const nurB64 = { zustand: 'ausgestellt', zertBase64: b64(3000), issuingBase64: b64(3000), rootBase64: b64(3000) };
+    expect(JSON.stringify(nurB64).length).toBeGreaterThan(MAX_DATEN);
+    expect(kuerzeDaten(nurB64)).toBe(nurB64);
+  });
+  it('nur striktes Base64, nur Schlüssel auf „Base64“, höchstens BASE64_DATEN_MAX — sonst wie bisher gekürzt', () => {
+    const zuLang = b64(BASE64_DATEN_MAX);
+    expect(zuLang.length).toBeGreaterThan(BASE64_DATEN_MAX);
+    const f = kuerzeDaten({ zertBase64: zuLang, keinB64Base64: 'mit leer zeichen '.repeat(500), zert_b64: b64(9000) }) as Record<string, string>;
+    expect(f.zertBase64).toHaveLength(300);
+    expect(f.keinB64Base64).toHaveLength(300);
+    expect(f.zert_b64).toHaveLength(300);
+  });
+  it('Verweis auf das gespeicherte Ergebnis liefert den vollen Wert (zert_base64 = {{schritt4.zertBase64}})', () => {
+    const daten = kuerzeDaten({ zustand: 'ausgestellt', zertifikatPem: `-----BEGIN CERTIFICATE-----
+${'P'.repeat(7000)}`, kettePem: 'K'.repeat(7000), zertBase64: b64(2000), issuingBase64: b64(1600), rootBase64: b64(1300) });
+    const r = loeseAuf({ zert_base64: '{{schritt4.zertBase64}}', issuing_base64: '{{schritt4.issuingBase64}}', root_base64: '{{schritt4.rootBase64}}' }, [{ nr: 4, ok: true, daten } as never]);
+    expect(r.fehler).toBeUndefined();
+    expect(r.wert).toEqual({ zert_base64: b64(2000), issuing_base64: b64(1600), root_base64: b64(1300) });
+    // PEM bleibt als Verweis unzulässig (Wert-Sicherheit unverändert)
+    expect(loeseAuf({ zert_base64: '{{schritt4.zertifikatPem}}' }, [{ nr: 4, ok: true, daten } as never]).fehler).toContain('unzulässigen Wert');
   });
 });
