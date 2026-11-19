@@ -7957,6 +7957,23 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { ok: true, zaehler: { befunde: r.befunde.length, neu: pr.neu.length, geloest: pr.geloest.length, fehler: r.fehler.length } };
           },
         });
+        // I8e Etappe 3 Task 9 — Linux-SQL-Server (sqllnx*): TLS-Zertifikat- und Keytab-Ablauf aus `linux_sql status` → Problems (Kategorie
+        // ueberwachung, wiederkehrend). Eigener Job statt Windows-Überwachung: dort ist die Quelle PowerShell, hier der Linux-Skill.
+        this.registriereJob({
+          key: 'linux-sql-ueberwachung', beschreibung: 'I8e — Linux-SQL-Server: TLS-Zertifikat läuft ab (≤30 T mittel, ≤7 T hoch), Keytab veraltet → Problems',
+          takt: { art: 'taeglich', um: '07:30' }, bereich: 'global', slot: true, timeoutMin: 20,
+          run: async () => {
+            const fz = this.fernzugriffRef; const sk = skillRegistry.get('linux_sql');
+            if (!fz || !sk || !ownerFz()) return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } };
+            const { linuxSqlUeberwachung, LINUX_SQL_ZUGANG } = await import('./infrastruktur/linux-sql-ueberwachung.js');
+            const hosts = (await fz.aktiveZugaenge()).filter(z => z.system !== 'windows' && LINUX_SQL_ZUGANG.test(z.name)).map(z => z.name);
+            const r = await linuxSqlUeberwachung(hosts, (zugang) => skillSandbox.execute(sk, { action: 'status', zugang }, ctxIntern()));
+            const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
+            const pr = hosts.length ? await infraProblems(r.befunde, { docId: 'tägliche Linux-SQL-Überwachung', datum }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']) }) : undefined;
+            this.logger.info({ hosts: hosts.length, erfasst: r.erfasst.size, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, bekannt: pr?.bekannt ?? 0, geloest: pr?.geloest.length ?? 0, fehler: r.fehler }, 'I8e Linux-SQL-Überwachung');
+            return { ok: true, zaehler: { hosts: hosts.length, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
+          },
+        });
         skillRegistry.register(new InfrastrukturSkill({
           istOwner: istOwnerFz,
           entdecke: async (quellen) => {
