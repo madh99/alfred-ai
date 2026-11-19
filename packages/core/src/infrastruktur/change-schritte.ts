@@ -364,6 +364,7 @@ export interface PruefKontext {
 export const ZIELSYSTEM: Readonly<Record<string, 'linux' | 'windows'>> = {
   linux_sql: 'linux', linux_ha: 'linux',
   windows_ad: 'windows', windows_pki: 'windows', windows_cluster: 'windows',
+  sql_server: 'windows', pki_lab: 'windows',
 };
 
 /** I8e — Skill-Aktion, Rückweg oder Prüfung auf einem Zugang mit dem falschen Betriebssystem → Fehler (Verweise {{…}} und unbekannte Zugänge bleiben anderen Prüfungen) */
@@ -372,7 +373,8 @@ function zielSystemFehler(skill: unknown, parameter: unknown, wo: string, f: str
   const z = (parameter && typeof parameter === 'object' ? (parameter as Record<string, unknown>).zugang : undefined);
   if (!soll || !ctx.zugangSystem || typeof z !== 'string' || !z.trim() || z.includes('{{')) return;
   const ist = ctx.zugangSystem.get(z.trim().toLowerCase());
-  if (ist && ist !== soll) f.push(`${wo}: ${z.trim()} ist ${ist === 'linux' ? 'Linux' : 'Windows'} — ${skill} gehört auf einen ${soll === 'linux' ? 'Linux' : 'Windows'}-Zugang`);
+  if (!ist) { if (ctx.zugaenge?.has(z.trim().toLowerCase())) f.push(`${wo}: Betriebssystem von ${z.trim()} ist nicht bekannt (vom Plan angelegt, System nicht ermittelbar) — ${skill} braucht ein ${soll === 'linux' ? 'Linux' : 'Windows'}-System; System des Zugangs angeben (fernzugriff anlegen mit system, proxmox provision_vm bzw. provision_windows_vm)`); return; }
+  if (ist !== soll) f.push(`${wo}: ${z.trim()} ist ${ist === 'linux' ? 'Linux' : 'Windows'} — ${skill} gehört auf einen ${soll === 'linux' ? 'Linux' : 'Windows'}-Zugang`);
 }
 
 const txt = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -592,6 +594,21 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       for (const k of ['name', 'hostname', 'vm_name', 'vmname'] as const) { const v = p[k]; if (typeof v === 'string' && v.trim() && obj(s0)?.skill !== 'fernzugriff') neueZugaenge.add(v.trim().toLowerCase()); }
     }
     ctx = { ...ctx, zugaenge: new Set([...ctx.zugaenge, ...neueZugaenge]) };
+  }
+  // I8e — Betriebssystem der vom Plan angelegten Zugänge aus dem anlegenden Schritt (Fabrik: provision_windows_* → Windows, provision_vm → Linux;
+  // fernzugriff anlegen: system-Parameter, sonst Linux wie im Fernzugriff). Bestehende Zugänge behalten ihr System. Bei sonstigen Namen bleibt es
+  // unbekannt — OS-gebundene Skills darauf melden dann einen Fehler statt stillschweigend durchzugehen.
+  if (ctx.zugangSystem) {
+    const sys = new Map(ctx.zugangSystem);
+    for (const s0 of roheSchritte) {
+      const o = obj(s0); const p = obj(o?.parameter) ?? {};
+      let system: 'linux' | 'windows' | undefined; const namen: string[] = [];
+      if (o?.skill === 'proxmox' && (o.aktion === 'provision_windows_vm' || o.aktion === 'provision_windows_offline')) { system = 'windows'; for (const k of ['hostname', 'name', 'vm_name', 'vmname']) namen.push(txt(p[k])); }
+      else if (o?.skill === 'proxmox' && o.aktion === 'provision_vm') { system = 'linux'; for (const k of ['hostname', 'name', 'vm_name', 'vmname']) namen.push(txt(p[k])); }
+      else if (o?.skill === 'fernzugriff' && o.aktion === 'anlegen') { system = txt(p.system).toLowerCase() === 'windows' ? 'windows' : 'linux'; namen.push(txt(p.name)); }
+      if (system) for (const n of namen) if (n && !n.includes('{{') && !sys.has(n.toLowerCase())) sys.set(n.toLowerCase(), system);
+    }
+    ctx = { ...ctx, zugangSystem: sys };
   }
   // I6 — Tresor-Einträge, die ein früherer Schritt dieses Plans per geheim_uebernehmen anlegt, gelten für spätere Schritte als vorhanden
   const tresorNamen = ctx.tresorNamen ? new Set(ctx.tresorNamen) : undefined;
