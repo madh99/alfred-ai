@@ -646,6 +646,12 @@ kt_pruefen() {
     PRUEF_FEHLER="kvno -k … $SPN_PRUEF@$REALM scheitert (Schlüssel passt nicht zum AD): $(kurz "$a")"; kdestroy -c "$cc" >/dev/null 2>&1 || true; return 1
   fi
   PKV=$(kvno_aus "$a")
+  # R15: auch das Dienstticket des Listeners (die AG-Anmeldungen laufen über sqllnxag01) muss der Keytab entschlüsseln
+  if ! a=$(KRB5CCNAME="$cc" kvno -k "$1" "$SPN_LISTENER@$REALM" 2>&1); then
+    PRUEF_FEHLER="kvno -k … $SPN_LISTENER@$REALM scheitert (Schlüssel passt nicht zum AD): $(kurz "$a")"; kdestroy -c "$cc" >/dev/null 2>&1 || true; return 1
+  fi
+  local lkv; lkv=$(kvno_aus "$a")
+  if [ "$lkv" != "$PKV" ]; then PRUEF_FEHLER="kvno -k $SPN_LISTENER nennt kvno §{lkv:-keine}, $SPN_PRUEF kvno §{PKV:-keine}"; kdestroy -c "$cc" >/dev/null 2>&1 || true; return 1; fi
   kdestroy -c "$cc" >/dev/null 2>&1 || true
 }
 # ktutil-Befehle (nur Builtins: das Kennwort erscheint in keiner Befehlszeile und in keiner Datei): ältere Einträge lesen, Einträge der
@@ -803,6 +809,7 @@ export function kerberosSkript(p: KerberosParameter): string {
     HILFEN,
     ...kennung(klein),
     `SPN_PRUEF=${shQ(`MSSQLSvc/${klein}.${LINUX_AD.domaene}:1433`)}`,
+    `SPN_LISTENER=${shQ(`MSSQLSvc/${KERBEROS_LISTENER}.${LINUX_AD.domaene}:1433`)}`,
     `UHR_MAX_MS=${AD_UHR_MAX_S * 1000}`,
     ZEIT_HILFEN,
     ...kerberosWerte(),

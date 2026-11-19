@@ -12,6 +12,7 @@ import { pruefeChangePlan } from './change-schritte.js';
 // I8e Etappe 3 Task 5 — linux_sql kerberos_einrichten / kerberos_entfernen
 
 const BASH = (() => { const r = spawnSync('bash', ['-c', 'echo "$BASH_VERSION"'], { encoding: 'utf8' }); return r.status === 0 && /^\d+\./.test(r.stdout.trim()); })();
+const PYTHON = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3');
 const imChange = { ausChange: true } as never;
 const KW = 'Kerberos-Geheim_9Xq!Lm#2Pz%w';
 const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -207,6 +208,12 @@ describe.skipIf(!BASH)('linux_sql kerberos_einrichten — ausgeführt', { timeou
     expect(a.log).toContain('kinit -k -t');
     expect(a.log).toMatch(/kdestroy -c FILE:.*cc-k/);
     for (const p of SOLL) for (const e of KERBEROS_ENCTYPES) expect(a.log).toContain(`ktutil addent -password -p ${p} -k 4 -e ${e} -s ${SALZ}`);
+    // R15: kvno -k für den eigenen SPN UND den Listener, beide vor dem Verschieben
+    const kk = a.log.split('\n').filter(z => z.startsWith('kvno -k '));
+    expect(kk.some(z => z.endsWith(' MSSQLSvc/sqllnx01.ad.3033.at:1433@AD.3033.AT'))).toBe(true);
+    expect(kk.some(z => z.endsWith(' MSSQLSvc/sqllnxag01.ad.3033.at:1433@AD.3033.AT'))).toBe(true);
+    expect(a.log.lastIndexOf('kvno -k ')).toBeLessThan(i('mv '));
+    expect(i('MSSQLSvc/sqllnxag01.ad.3033.at:1433@AD.3033.AT')).toBeLessThan(i('mv '));
     expect(a.log).toContain('mssql-conf set network.kerberoskeytabfile');
     expect(a.log).toContain('mssql-conf set network.privilegedadaccount svc-sqllnx');
     expect(w.conf.privilegedadaccount).toBe('svc-sqllnx');
@@ -239,6 +246,15 @@ describe.skipIf(!BASH)('linux_sql kerberos_einrichten — ausgeführt', { timeou
     expect(w.conf).toEqual({});
     expect(w.dateien).toEqual([]);
     expect(w.kennwortInDateien).toBe('');
+  });
+  it('R15: Listener-SPN lässt sich mit dem Keytab nicht entschlüsseln → Abbruch vor mv, mssql-conf unverändert', () => {
+    const w = einrichten('', 1, KW, String.raw`kvno() { log "kvno $*"; if [ "$1" = -k ] && [[ "$3" == *sqllnxag01* ]]; then echo "kvno: Decrypt integrity check failed while verifying ticket for $3"; return 1; fi; if [ "$1" = -k ]; then echo "$3: kvno = 4, keytab entry valid"; else echo "$1: kvno = 4"; fi; }`);
+    const r = w.laeufe[0]!;
+    expect(r.rc, r.aus).toBe(1);
+    expect(String(r.e?.fehler)).toContain('kvno -k … MSSQLSvc/sqllnxag01.ad.3033.at:1433@AD.3033.AT scheitert');
+    expect(r.log).not.toMatch(/^mv |mssql-conf/m);
+    expect(w.keytab).toBe('');
+    expect(w.conf).toEqual({});
   });
   it('Keytab-Ticket gültig, das AD nennt aber eine andere kvno → Abbruch „Keytab-kvno X, AD-kvno Y“', () => {
     // Stub: kvno -k gelingt, nennt aber 6
@@ -444,5 +460,42 @@ describe('linux_sql status — AD-Daten (Task 5, Text in Task 6)', () => {
     const adTeil = PY_STATUS.slice(PY_STATUS.indexOf('def kopf('), PY_STATUS.indexOf('r["ad"] = ad'));
     expect(adTeil).not.toMatch(/kennwort|password|"sa"/i);
     expect(adTeil).toContain('"kinit"] + list(v)');
+  });
+  /** ad_kvno aus PY_STATUS mit nachgebildetem subprocess.run ausführen; Ausgabe: Aufrufe (JSON) und Ergebnis */
+  function adKvno(modus: 'timeout' | 'ok'): { aufrufe: string[][]; ergebnis: unknown } | undefined {
+    if (!PYTHON) return undefined;
+    const teil = PY_STATUS.slice(PY_STATUS.indexOf('def ad_kvno('), PY_STATUS.indexOf('KT = '));
+    const prog = [
+      'import json, os, re as _re2, shutil, subprocess, tempfile',
+      'KT = "/var/opt/mssql/secrets/mssql.keytab"',
+      // svc-sqllnx in kvno 3 und 4, je zwei Enctypes → vier Zeilen, ein Principal
+      'eintr = [(3, "svc-sqllnx@AD.3033.AT"), (3, "svc-sqllnx@AD.3033.AT"), (4, "svc-sqllnx@AD.3033.AT"), (4, "svc-sqllnx@AD.3033.AT"), (4, "MSSQLSvc/sqllnx01.ad.3033.at:1433@AD.3033.AT")]',
+      'def kt_liste(p):',
+      '    return [(2, "SQLLNX01$@AD.3033.AT"), (2, "SQLLNX01$@AD.3033.AT"), (2, "host/sqllnx01.ad.3033.at@AD.3033.AT")]',
+      'aufrufe = []',
+      'class R:',
+      '    def __init__(s, rc, out): s.returncode = rc; s.stdout = out',
+      'def lauf_stub(a, **kw):',
+      '    aufrufe.append(a)',
+      `    if a[0] == "kinit": ${modus === 'timeout' ? 'raise subprocess.TimeoutExpired(a, 10)' : 'return R(1 if a[-1].startswith("svc") else 0, "")'}`,
+      '    if a[0] == "kvno": return R(0, a[1] + ": kvno = 4")',
+      '    return R(0, "")',
+      'subprocess.run = lauf_stub',
+      teil,
+      'e = ad_kvno("MSSQLSvc/sqllnx01.ad.3033.at:1433@AD.3033.AT")',
+      'print(json.dumps({"aufrufe": aufrufe, "ergebnis": e}))',
+    ].join('\n');
+    const r = spawnSync(PYTHON, ['-'], { input: prog, encoding: 'utf8' });
+    expect(r.stderr).toBe('');
+    return JSON.parse(r.stdout.trim().split('\n').pop()!) as { aufrufe: string[][]; ergebnis: unknown };
+  }
+  it.skipIf(!PYTHON)('R15: ad_kvno — ein kinit je Principal, beim ersten Zeitablauf Schluss', () => {
+    const t = adKvno('timeout')!;
+    expect(t.ergebnis).toBeNull();
+    expect(t.aufrufe.filter(a => a[0] === 'kinit')).toEqual([['kinit', '-k', '-t', '/var/opt/mssql/secrets/mssql.keytab', 'svc-sqllnx@AD.3033.AT']]);
+    // Keytab-Ticket scheitert (Schlüssel veraltet) → genau ein Versuch mit dem Maschinen-Keytab, dann kvno
+    const o = adKvno('ok')!;
+    expect(o.ergebnis).toBe(4);
+    expect(o.aufrufe.filter(a => a[0] === 'kinit').map(a => a.at(-1))).toEqual(['svc-sqllnx@AD.3033.AT', 'SQLLNX01$@AD.3033.AT']);
   });
 });
