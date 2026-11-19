@@ -3475,13 +3475,21 @@ export class Alfred {
 
         // I1 (Spec Infrastruktur-Vorhaben) — Hosts mit Fernzugang von innen: OS, Ressourcen, Updates, Dienste, Ports, Container,
         // Compose-Projekte, Volumes. Feste Lesebefehle (Leseliste/Lese-Käfig), keine Änderungen.
-        cmdbSkill.registerDiscoverySource('fernzugriff', async () => {
+        cmdbSkill.registerDiscoverySource('fernzugriff', async (opt) => {
           const assets: any[] = []; const relations: any[] = [];
           const fz = this.fernzugriffRef;
           if (!fz) return { assets, relations };
           const { sammleLinux } = await import('./infrastruktur/sammler.js');
           const { sammleWindows } = await import('./infrastruktur/sammler-windows.js');
-          for (const z of await fz.aktiveZugaenge()) {
+          // Teil-Erfassung nach einem Change: nur die genannten Zugänge; ein nicht aktiver Name ist ein Fehler (nie still übergangen)
+          let zugaenge = await fz.aktiveZugaenge();
+          if (opt?.hosts) {
+            const soll = new Set(opt.hosts.map(h => h.toLowerCase()));
+            zugaenge = zugaenge.filter(z => soll.has(z.name.toLowerCase()));
+            const fehlt = opt.hosts.filter(h => !zugaenge.some(z => z.name.toLowerCase() === h.toLowerCase()));
+            if (fehlt.length) throw new Error(`Zugang nicht aktiv: ${fehlt.join(', ')}`);
+          }
+          for (const z of zugaenge) {
             // I8b — Windows-Zugänge: feste PowerShell-Leseliste (Rollen/Hotfixes können dauern → längeres Zeitlimit)
             const win = z.system === 'windows' ? await sammleWindows(z.name, z.host, (cmd) => fz.lesenIntern(z.name, cmd, 300_000)) : undefined;
             const b = win ?? await sammleLinux(z.name, z.host, (cmd) => fz.lesenIntern(z.name, cmd, 90_000));
@@ -7777,14 +7785,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             fernAusfuehren: (z, b, root, t) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(z, b, root, t); },
             netz: { http: netz.http, port: netz.port, dns: netz.aufloesen, dnsFrisch: netz.aufloesenFrisch, ping: netz.ping },
             cmdbProtokoll: async (assetId, text) => { const o = ownerFz(); if (o) await cmdbFz.logChange(o, assetId, 'updated', 'maintenance', undefined, undefined, undefined, text, 'infrastruktur-I4'); },
-            entdecke: async (quellen) => {
+            entdecke: async (quellen, hosts) => {
               const cmdb = skillRegistry.get('cmdb'); const o = ownerFz();
               if (!cmdb || !o) return [];
               const aus: string[] = [];
               for (const q of quellen) {
-                const r = await skillSandbox.execute(cmdb, { action: 'discover_source', source: q }, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never).catch(err => ({ success: false, error: (err as Error).message, data: undefined }));
+                // Realfall 19.11.2026: nach einem Change nur die berührten Fernzugriff-Hosts (die volle Erfassung macht der nächtliche Lauf)
+                const teil = q === 'fernzugriff' ? hosts?.fernzugriff ?? [] : undefined;
+                if (teil && !teil.length) { aus.push(`${q}: nicht neu erfasst (keine Hosts aus den Schritten bestimmbar) — vollständig im nächtlichen Lauf`); continue; }
+                const r = await skillSandbox.execute(cmdb, { action: 'discover_source', source: q, ...(teil ? { hosts: teil } : {}) }, { userId: o, masterUserId: o, platform: 'api', chatId: '', conversationId: '' } as never).catch(err => ({ success: false, error: (err as Error).message, data: undefined }));
                 const d = r.data as { assets?: number; relations?: number } | undefined;
-                aus.push(r.success ? `${q}: ${d?.assets ?? 0} Assets` : `${q}: ${String(r.error ?? 'Fehler').slice(0, 80)}`);
+                aus.push(r.success ? `${q}${teil ? ` (nur ${teil.join(', ')})` : ''}: ${d?.assets ?? 0} Assets` : `${q}${teil ? ` (${teil.join(', ')})` : ''}: ${String(r.error ?? 'Fehler').slice(0, 80)}`);
               }
               return aus;
             },

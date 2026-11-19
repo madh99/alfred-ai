@@ -40,7 +40,8 @@ export interface MotorDeps {
     ping: (host: string) => Promise<boolean>;
   };
   cmdbProtokoll?: (assetId: string, text: string) => Promise<void>;
-  entdecke?: (quellen: string[]) => Promise<string[]>;
+  /** hosts: je Quelle die vom Change berührten Hosts (fernzugriff: Zugangsnamen) — Teil-Erfassung statt aller Zugänge */
+  entdecke?: (quellen: string[], hosts?: Record<string, string[]>) => Promise<string[]>;
   incident?: {
     anlegen(o: string, d: { titel: string; text: string; schwere: string; assetIds: string[] }): Promise<string>; notiz(o: string, id: string, text: string): Promise<void>;
     /** v1620 — Change-Ende ohne Restwirkung: eigenen Incident lösen (Lösung = Bericht) bzw. bei Restwirkung hochstufen */
@@ -81,6 +82,19 @@ export interface MotorDeps {
 
 /** Skills, deren Discovery-Quelle nach einem Change neu gelesen wird (Skill → CMDB-Quelle) */
 const QUELLE: Record<string, string> = { proxmox: 'proxmox', docker: 'docker', unifi: 'unifi', nginx_proxy_manager: 'nginx_proxy_manager', pfsense: 'pfsense', mikrotik: 'mikrotik', cloudflare_dns: 'cloudflare_dns', fernzugriff: 'fernzugriff' };
+/**
+ * Realfall 19.11.2026 (2cfde1a2, eccb5401, 8907c9b9): die volle Fernzugriff-Erfassung nach einem Change lief nie in den 120 s des
+ * cmdb-Skills durch („timed out“) und arbeitete unbemerkt weiter. Nach einem Change nur die Zugänge erfassen, die seine Schritte berührt
+ * haben (Parameter name; Verweise {{…}} zählen nicht).
+ */
+export function beruehrteHosts(schritte: ChangeSchritt[]): Record<string, string[]> {
+  const fz = new Set<string>();
+  for (const s of schritte) {
+    const n = (s.parameter as Record<string, unknown> | undefined)?.name;
+    if (s.skill === 'fernzugriff' && typeof n === 'string' && n.trim() && !n.includes('{{')) fz.add(n.trim());
+  }
+  return { fernzugriff: [...fz].sort() };
+}
 const FRAGE_GUELTIG_MS = 24 * 3_600_000;
 /**
  * PDF, DOCX und Kopie auf pve2 dauern Sekunden. beende() hält bis dahin abhängige Changes (nächstes Serien-Glied), den Takt nach einem
@@ -280,7 +294,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       }
       // Abschluss: Discovery der berührten Quellen (die CMDB muss den neuen Zustand selbst sehen), Bericht
       const quellen = [...new Set(schritte.filter(wirkt).map(s => QUELLE[s.skill ?? '']).filter((q): q is string => !!q))];
-      const disc = quellen.length && this.d.entdecke ? await this.d.entdecke(quellen).catch(err => [`Discovery: ${(err as Error).message}`]) : [];
+      const disc = quellen.length && this.d.entdecke ? await this.d.entdecke(quellen, beruehrteHosts(schritte.filter(wirkt))).catch(err => [`Discovery: ${(err as Error).message}`]) : [];
       await this.beende(o, c0, lauf, 'completed', undefined, disc);
       fertig = true;
     } finally {
@@ -786,7 +800,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
       if (this.d.incident && lauf.incidentId) await this.d.incident.notiz(o, lauf.incidentId, `Rückweg ${allesOk ? 'ausgeführt' : 'GESCHEITERT'}:\n${lauf.rueckweg!.map(r => `${r.ok ? '✓' : '✗'} zu Schritt ${r.zuSchritt}: ${r.text}`).join('\n')}`).catch(() => undefined);
       if (!allesOk && !lauf.incidentId && this.d.incident) lauf.incidentId = await this.d.incident.anlegen(o, { titel: `Rückweg gescheitert: ${c.title}`, text: grund, schwere: 'high', assetIds: c.affectedAssetIds }).catch(() => undefined);
       const quellen = [...new Set(((c.schritte ?? []) as ChangeSchritt[]).filter(wirkt).map(s => QUELLE[s.skill ?? '']).filter((q): q is string => !!q))];
-      const disc = quellen.length && this.d.entdecke ? await this.d.entdecke(quellen).catch(() => []) : [];
+      const disc = quellen.length && this.d.entdecke ? await this.d.entdecke(quellen, beruehrteHosts(((c.schritte ?? []) as ChangeSchritt[]).filter(wirkt))).catch(() => []) : [];
       await this.beende(o, c, lauf, allesOk ? 'rolled_back' : 'failed', grund, disc);
     } finally {
       this.laufend.delete(c.id);

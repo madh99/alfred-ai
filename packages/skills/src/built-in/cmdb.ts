@@ -29,7 +29,10 @@ interface DiscoveredRelation {
   relationType: CmdbRelationType;
 }
 
-export type DiscoverySource = () => Promise<{ assets: DiscoveredAsset[]; relations: DiscoveredRelation[] }>;
+/** hosts: nur diese Hosts erfassen (Teil-Erfassung nach einem Change; nur Quellen, die das können — derzeit fernzugriff) */
+export type DiscoverySource = (opt?: { hosts?: string[] }) => Promise<{ assets: DiscoveredAsset[]; relations: DiscoveredRelation[] }>;
+/** Quellen, die eine Teil-Erfassung nach Hosts beherrschen */
+const TEIL_ERFASSUNG = new Set(['fernzugriff']);
 
 export class CmdbSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -58,6 +61,7 @@ export class CmdbSkill extends Skill {
       properties: {
         action: { type: 'string', enum: ['discover', 'discover_source', 'list_assets', 'get_asset', 'add_asset', 'update_asset', 'decommission_asset', 'delete_asset', 'add_relation', 'remove_relation', 'search', 'topology', 'stats', 'asset_docs'] },
         source: { type: 'string', description: 'Discovery-Quelle für discover_source' },
+        hosts: { type: 'array', items: { type: 'string' }, description: 'discover_source fernzugriff: nur diese Zugänge erfassen (Teil-Erfassung, markiert nichts als veraltet)' },
         asset_type: { type: 'string' },
         status: { type: 'string' },
         environment: { type: 'string' },
@@ -117,7 +121,7 @@ export class CmdbSkill extends Skill {
     try {
       switch (action) {
         case 'discover': return await this.discover(userId);
-        case 'discover_source': return await this.discoverSource(userId, input.source as string);
+        case 'discover_source': return await this.discoverSource(userId, input.source as string, Array.isArray(input.hosts) ? (input.hosts as unknown[]).map(String) : undefined);
         case 'list_assets': return await this.listAssets(userId, input);
         case 'get_asset': return await this.getAsset(userId, input.asset_id as string);
         case 'add_asset': return await this.addAsset(userId, input);
@@ -253,13 +257,16 @@ export class CmdbSkill extends Skill {
     return { success: true, data: { totalAssets, totalRelations, sources: results }, display };
   }
 
-  private async discoverSource(userId: string, source: string): Promise<SkillResult> {
+  private async discoverSource(userId: string, source: string, hosts?: string[]): Promise<SkillResult> {
     if (!source) return { success: false, error: 'source ist erforderlich' };
     const fn = this.discoverySources.get(source);
     if (!fn) return { success: false, error: `Unbekannte Quelle: ${source}. Verfügbar: ${[...this.discoverySources.keys()].join(', ')}` };
+    // Realfall 19.11.2026: die volle Fernzugriff-Erfassung nach einem Change passte nie in die 120 s — Teil-Erfassung nur der berührten Hosts
+    const teil = hosts !== undefined;
+    if (teil && (!TEIL_ERFASSUNG.has(source) || hosts.length === 0)) return { success: false, error: `hosts gibt es nur für ${[...TEIL_ERFASSUNG].join(', ')} und nie leer` };
 
     const runStart = new Date().toISOString();
-    const { assets, relations } = await fn();
+    const { assets, relations } = await fn(teil ? { hosts } : undefined);
 
     for (const a of assets) {
       await this.repo.upsertAsset(userId, {
@@ -282,9 +289,10 @@ export class CmdbSkill extends Skill {
     }
 
     let stale = 0;
-    try { stale = await this.repo.markStaleAssets(userId, source, runStart, this.staleThresholdDays); } catch { /* non-critical */ }
-    const display = `## CMDB Discovery: ${source}\n\n${assets.length} Assets, ${relCount} Relationen${stale > 0 ? `, ${stale} stale markiert` : ''}`;
-    return { success: true, data: { assets: assets.length, relations: relCount, stale }, display };
+    // Teil-Erfassung: nie veraltet markieren — die nicht erfassten Hosts sind nicht verschwunden
+    if (!teil) { try { stale = await this.repo.markStaleAssets(userId, source, runStart, this.staleThresholdDays); } catch { /* non-critical */ } }
+    const display = `## CMDB Discovery: ${source}${teil ? ` (nur ${hosts.join(', ')})` : ''}\n\n${assets.length} Assets, ${relCount} Relationen${stale > 0 ? `, ${stale} stale markiert` : ''}`;
+    return { success: true, data: { assets: assets.length, relations: relCount, stale, ...(teil ? { hosts } : {}) }, display };
   }
 
   private async discoverCrossSourceRelations(userId: string): Promise<number> {

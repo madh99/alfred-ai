@@ -115,3 +115,38 @@ describe('CmdbSkill v857 discover() Fix C+D', () => {
     expect(r.display).toContain('legacy: 1 Assets');
   });
 });
+
+// Realfall 19.11.2026: volle Fernzugriff-Erfassung nach jedem Change lief in den 120-s-Timeout — Teil-Erfassung der berührten Hosts
+describe('discover_source mit hosts (Teil-Erfassung)', () => {
+  it('reicht die Hosts an die Quelle, markiert nichts als veraltet und nennt die Hosts', async () => {
+    const repo = makeRepo();
+    const skill = makeSkill(repo);
+    const fn = vi.fn(async () => ({ assets: [{ name: 'sqllnx01', assetType: 'server', sourceSkill: 'fernzugriff', sourceId: 'host:sqllnx01', attributes: {} }], relations: [] }));
+    skill.registerDiscoverySource('fernzugriff', fn as never);
+    const r = await skill.execute({ action: 'discover_source', source: 'fernzugriff', hosts: ['sqllnx01'] }, ctx);
+    expect(r.success, r.error).toBe(true);
+    expect(fn).toHaveBeenCalledWith({ hosts: ['sqllnx01'] });
+    expect(repo.markStaleAssets).not.toHaveBeenCalled();
+    expect(r.display).toContain('(nur sqllnx01)');
+    expect((r.data as { hosts?: string[] }).hosts).toEqual(['sqllnx01']);
+  });
+  it('ohne hosts unverändert: volle Erfassung mit Veraltet-Markierung', async () => {
+    const repo = makeRepo();
+    const skill = makeSkill(repo);
+    const fn = vi.fn(async () => ({ assets: [], relations: [] }));
+    skill.registerDiscoverySource('fernzugriff', fn as never);
+    await skill.execute({ action: 'discover_source', source: 'fernzugriff' }, ctx);
+    expect(fn).toHaveBeenCalledWith(undefined);
+    expect(repo.markStaleAssets).toHaveBeenCalled();
+  });
+  it('hosts bei einer Quelle ohne Teil-Erfassung oder leer → Fehler, nichts erfasst', async () => {
+    const repo = makeRepo();
+    const skill = makeSkill(repo);
+    const fn = vi.fn(async () => ({ assets: [], relations: [] }));
+    skill.registerDiscoverySource('proxmox', fn as never);
+    skill.registerDiscoverySource('fernzugriff', fn as never);
+    expect((await skill.execute({ action: 'discover_source', source: 'proxmox', hosts: ['pve'] }, ctx)).success).toBe(false);
+    expect((await skill.execute({ action: 'discover_source', source: 'fernzugriff', hosts: [] }, ctx)).success).toBe(false);
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
