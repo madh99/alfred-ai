@@ -9,12 +9,12 @@ import {
   adStatusSkript, adStatusText, adErgebnis, dcBereit, mitgliedBereit, kodiert, pruefeWald, pruefeDns, waldSkript, dcSkript, beitrittSkript,
   grundstrukturSkript, pruefeGrundstruktur, clixmlFehler, sicherungSkript, sicherungJetztSkript, papierkorbSkript, dnsEintragSkript, dnsEintragLoeschenSkript,
   pruefeDnsEintrag, dnsClientSkript, pruefeAufloesen, dnsAufloesenSkript, aufloesenText, AD_OUS_STANDARD, NTP_STANDARD, AD_NETBIOS, KONTO_FREI, type AdStatus,
-  pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName, dienstkontoGehaertet,
+  pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName, dienstkontoGehaertet, type Anmeldesperre,
 } from './windows-ad.js';
 import {
   pruefeSpns, pruefeKonto, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, spnLesenText, type SpnLesen, pruefeComputerkonto, joinTresorName,
   computerkontoSkript, computerkontoEntfernenSkript, pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, pruefeGruppe, gruppeSkript, gruppeEntfernenSkript,
-  pruefeSqlServer, sqlAnmeldungSkript, sqlAnmeldungAuswerten, type SqlAnmeldung,
+  pruefeSqlServer, SQL_PROBE_ZUGAENGE, SQL_PROBE_TRESOR, sqlAnmeldungSkript, sqlAnmeldungAuswerten, type SqlAnmeldung,
 } from './windows-ad-linux.js';
 
 export interface WindowsAdDeps {
@@ -31,6 +31,11 @@ const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'g
   'dienstkonto_anlegen', 'dienstkonto_entfernen',
   // I8e Etappe 3 — AD-Objekte für Kerberos der Linux-SQL-Instanzen (je mit Rückweg)
   'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen']);
+/**
+ * Fix-Runde 1 (Ruling R4) — dns_ptr wartet im Baustein bis 600 s auf die Auflösung an allen DCs; der Skill-Aufruf hat 900 s. Mindest-
+ * zeitlimitS = 900 + 60 (wie LINUX_SQL_MIN_ZEITLIMIT_S), damit der Change-Schritt nicht vorher abbricht.
+ */
+export const WINDOWS_AD_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = { dns_ptr: 960 };
 /** v1783 — lesende Aktionen (auch außerhalb eines Changes); I8e Etappe 3: spn_lesen, sql_anmeldung_pruefen */
 export const LESEND = new Set(['status', 'dns_aufloesen', 'spn_lesen', 'sql_anmeldung_pruefen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -64,13 +69,13 @@ export class WindowsAdSkill extends Skill {
       + 'dns_eintrag (zugang = DC, zone, name, ip) / dns_eintrag_loeschen (zugang, zone, name) — A-Eintrag, z. B. frischer Name für den DNS-Ausfalltest (kein Cache kennt ihn). '
       + 'dns_client (zugang, dns = Liste, Reihenfolge = Bevorzugung) — DNS-Server eines Windows-Rechners setzen, z. B. DCs gegenseitig; Ergebnis nennt die vorherigen (Rückweg: dns_client mit diesen). '
       + 'dienstkonto_anlegen (zugang = DC, konto = sAMAccountName z. B. svc-sqllnx-backup, ou Standard Dienstkonten, konto_tresor optional wie grundstruktur) — Benutzer-Dienstkonto (Kennwort läuft nie ab, Konto kann es nicht ändern), Kennwort erzeugt Alfred im Tresor ad-<konto> und gibt es nur über die Standardeingabe weiter; wiederholbar, ein abweichendes Kennwort wird nie still zurückgesetzt; prüft Anmeldung und Flags selbst ↔ dienstkonto_entfernen (zugang, konto; nur von Alfred angelegte, Tresor-Eintrag bleibt). '
-      + 'Mit haerten: true (I8e Etappe 3, z. B. svc-sqllnx) zusätzlich nur AES128+AES256 (msDS-SupportedEncryptionTypes 24), vertraulich/keine Delegierung, Anmeldung nirgends (userWorkstations KEINEANMELDUNG); Ergebnis „DIENSTKONTO_GEHAERTET“ mit allen Flags zurückgelesen. '
+      + 'Mit haerten: true (I8e Etappe 3, z. B. svc-sqllnx) zusätzlich nur AES128+AES256 (msDS-SupportedEncryptionTypes 24), vertraulich/keine Delegierung, Mitglied von Dienstkonten-KeineAnmeldung (OU Dienstkonten; GPO „AD3033 Dienstkonten keine Anmeldung“ an der Domänenwurzel verweigert lokale und RDP-Anmeldung — Gruppe und GPO legt der Baustein bei Bedarf an und lässt sie beim Rückweg stehen); Ergebnis „DIENSTKONTO_GEHAERTET“ mit allen Flags zurückgelesen. '
       + 'I8e Etappe 3 (zugang = DC, konto_tresor optional wie grundstruktur, je mit Rückweg und Selbstprüfung): spn_setzen (konto, spns = Liste MSSQLSvc/<name>.ad.3033.at[:1433]) — wie setspn -S, Abbruch wenn ein anderes Objekt im Wald einen SPN trägt; Ergebnis „SPN_EINDEUTIG“ (jeder SPN genau einmal im Wald, am Konto) ↔ spn_entfernen (konto, spns). '
       + 'spn_lesen (lesend, auch außerhalb von Changes; zugang = DC, spns, konto optional) — Träger je SPN im Wald, „SPN_EINDEUTIG“ bzw. „SPN_PROBLEM“. '
-      + 'computerkonto_vorbereiten (name z. B. sqllnx01, ou Standard Server) — Computerkonto NAME$ für den Linux-Beitritt; vorhanden nur, wenn deaktiviert oder nie angemeldet; Einmal-Kennwort erzeugt Alfred im Tresor ad-join-<name> (nur über die Standardeingabe, nie in der Ausgabe); „COMPUTERKONTO_BEREIT“ ↔ computerkonto_entfernen (name; nur von Alfred angelegte). '
-      + 'dns_ptr (zone z. B. 30.203.10.in-addr.arpa, ip, fqdn) — Reverse-Zone AD-integriert (Wald) falls fehlt, PTR; prüft die Auflösung an allen DCs (bis 10 min), „PTR_OK“ ↔ dns_ptr_loeschen (zone, ip, fqdn; Zone bleibt). '
+      + 'computerkonto_vorbereiten (name z. B. sqllnx01, ou Standard Server) — Computerkonto NAME$ für den Linux-Beitritt; ein vorhandenes fremdes Konto wird nie übernommen, ein eigenes nur, solange es unbenutzt ist (keine Anmeldung, Kennwort unverändert, keine Beitritts-Attribute); Einmal-Kennwort erzeugt Alfred im Tresor ad-join-<name> (nur über die Standardeingabe, nie in der Ausgabe); „COMPUTERKONTO_BEREIT“ ↔ computerkonto_entfernen (name; nur von Alfred angelegte). '
+      + 'dns_ptr (zone z. B. 30.203.10.in-addr.arpa, ip, fqdn) — Reverse-Zone AD-integriert (Wald) falls fehlt, PTR; prüft die Auflösung an allen DCs (bis 10 min; zeitlimitS mindestens 960), „PTR_OK“ ↔ dns_ptr_loeschen (zone, ip, fqdn; Zone bleibt). '
       + 'gruppe_anlegen (gruppe z. B. SQL-Linux-Admins, ou Standard Dienstkonten, mitglieder = sAMAccountNames) — globale Sicherheitsgruppe, fehlende Mitglieder ergänzt, „GRUPPE_OK“ ↔ gruppe_entfernen (gruppe; nur von Alfred angelegte). '
-      + 'sql_anmeldung_pruefen (lesend; zugang = Windows-Domänenmitglied mit sqlcmd, z. B. sql01; server = SQL-Instanz z. B. sqllnx01.ad.3033.at; konto_tresor = Tresor-Eintrag des Test-Kontos z. B. ad-svc-sqllnx-test, konto optional, Standard = Tresor-Name ohne ad-) — sqlcmd -E -N ohne -C als geplante Aufgabe unter dem Konto; „SQL_KERBEROS_OK“ nur bei auth_scheme KERBEROS und encrypt_option TRUE, sonst Fehler „NICHT KERBEROS“/„NICHT VERSCHLÜSSELT“. '
+      + 'sql_anmeldung_pruefen (lesend; zugang nur sql01 oder sql02; server = SQL-Instanz in ad.3033.at ohne Port, z. B. sqllnx01.ad.3033.at; konto_tresor nur ein Test-Konto ad-svc-<name>-test, z. B. ad-svc-sqllnx-test; konto optional, muss der Tresor-Name ohne ad- sein) — sqlcmd -E -N ohne -C als geplante Aufgabe unter dem Konto; „SQL_KERBEROS_OK“ nur bei auth_scheme KERBEROS und encrypt_option TRUE, sonst Fehler „NICHT KERBEROS“/„NICHT VERSCHLÜSSELT“. '
       + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen, dns_client, dienstkonto_anlegen ↔ dienstkonto_entfernen und den I8e-Etappe-3-Paaren oben (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -94,7 +99,7 @@ export class WindowsAdSkill extends Skill {
         zone: { type: 'string' }, name: { type: 'string' }, ip: { type: 'string' },
         konto: { type: 'string', description: 'dienstkonto_anlegen/-entfernen: sAMAccountName des Dienstkontos, z. B. svc-sqllnx-backup' },
         fqdn: { type: 'string', description: 'dns_aufloesen/dns_ptr: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers; sql_anmeldung_pruefen: SQL-Instanz, z. B. sqllnx01.ad.3033.at' }, ohne_cache: { type: 'boolean' },
-        haerten: { type: 'boolean', description: 'dienstkonto_anlegen: nur AES, keine Delegierung, keine Anmeldung (I8e Etappe 3)' },
+        haerten: { type: 'boolean', description: 'dienstkonto_anlegen: nur AES, keine Delegierung, Anmeldesperre per Gruppe + GPO (I8e Etappe 3)' },
         spns: { type: 'array', items: { type: 'string' }, description: 'spn_setzen/-entfernen/-lesen: MSSQLSvc/<name>.ad.3033.at[:1433]' },
         gruppe: { type: 'string', description: 'gruppe_anlegen/-entfernen: z. B. SQL-Linux-Admins' },
         mitglieder: { type: 'array', items: { type: 'string' }, description: 'gruppe_anlegen: sAMAccountNames' },
@@ -104,6 +109,9 @@ export class WindowsAdSkill extends Skill {
   };
 
   constructor(private readonly d: WindowsAdDeps) { super(); }
+
+  /** Fix-Runde 1 (Ruling R4) — Mindest-zeitlimitS je Aktion für die Planprüfung (Baustein-Zeitgrenze + 60 s) */
+  mindestZeitlimitS(aktion: string): number | undefined { return WINDOWS_AD_MIN_ZEITLIMIT_S[aktion]; }
 
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
@@ -300,7 +308,7 @@ export class WindowsAdSkill extends Skill {
     if ((await t.namen()).has(name)) dienstkennwort = await t.lies(name, `Dienstkonto ${p.konto}`);
     else { dienstkennwort = adKennwort(); await t.setze(name, dienstkennwort, `Kennwort des Domänen-Dienstkontos ${p.konto} (läuft nie ab)`); neu = true; }
     const haerten = input.haerten === true;
-    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean; verschluesselung?: number; keineDelegierung?: boolean; arbeitsstationen?: string }>(zugang, dienstkontoSkript({ ...p, ...ausKonto, ...(haerten ? { haerten: true } : {}) }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; laeuftNieAb: boolean; kannNichtAendern: boolean; inOu?: boolean; anmeldung: boolean; verschluesselung?: number; keineDelegierung?: boolean; anmeldesperre?: Anmeldesperre | null }>(zugang, dienstkontoSkript({ ...p, ...ausKonto, ...(haerten ? { haerten: true } : {}) }), 'Dienstkonto anlegen', 300_000, { kennwort, dienstkennwort });
     if (!(r.aktiv && r.laeuftNieAb && r.kannNichtAendern && r.anmeldung && r.inOu === true)) {
       throw new Error(`Dienstkonto ${p.konto}: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, Kennwort läuft nie ab ${r.laeuftNieAb}, nicht änderbar ${r.kannNichtAendern}, Anmeldung ${r.anmeldung}, in OU ${r.inOu ?? '?'})`);
     }
@@ -308,7 +316,7 @@ export class WindowsAdSkill extends Skill {
     const mangel = haerten ? dienstkontoGehaertet(r) : undefined;
     if (mangel) throw new Error(`Dienstkonto ${p.konto}: Nachprüfung der Härtung fehlgeschlagen — ${mangel}`);
     this.d.protokoll?.('I8e Dienstkonto', { zugang, konto: p.konto, zustand: r.zustand, kennwortNeu: neu, haerten });
-    const text = `${haerten ? 'DIENSTKONTO_GEHAERTET ' : ''}Dienstkonto ${r.konto} (${r.dn}): aktiv, Kennwort läuft nie ab, Anmeldung geprüft${haerten ? `, nur AES (${r.verschluesselung}), keine Delegierung, Anmeldung nirgends (${r.arbeitsstationen})` : ''}; Kennwort im Tresor (${name})`;
+    const text = `${haerten ? 'DIENSTKONTO_GEHAERTET ' : ''}Dienstkonto ${r.konto} (${r.dn}): aktiv, Kennwort läuft nie ab, Anmeldung geprüft${haerten ? `, nur AES (${r.verschluesselung}), keine Delegierung, keine lokale/RDP-Anmeldung (Gruppe ${r.anmeldesperre?.gruppe}, GPO „${r.anmeldesperre?.gpo}“ verknüpft)` : ''}; Kennwort im Tresor (${name})`;
     return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand} — Rückweg dienstkonto_entfernen konto ${p.konto}` };
   }
 
@@ -351,12 +359,12 @@ export class WindowsAdSkill extends Skill {
     let einmal: string; let neu = false;
     if ((await t.namen()).has(name)) einmal = await t.lies(name, `Einmal-Kennwort Computerkonto ${p.name}$`);
     else { einmal = einmalKennwort(); await t.setze(name, einmal, `Einmal-Kennwort für den Domänenbeitritt von ${p.name} (Computerkonto ${p.name}$, verbraucht linux_sql ad_beitreten)`); neu = true; }
-    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; inOu: boolean; kennwortGesetzt: boolean; ohneAnmeldung: boolean }>(zugang, computerkontoSkript({ ...p, ...ausKonto }), 'Computerkonto vorbereiten', 300_000, { kennwort, einmal });
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; inOu: boolean; kennwortGesetzt: boolean; ohneAnmeldung: boolean }>(zugang, computerkontoSkript({ ...p, ...(neu ? { neu: true } : {}), ...ausKonto }), 'Computerkonto vorbereiten', 300_000, { kennwort, einmal });
     if (!(r.aktiv && r.inOu && r.kennwortGesetzt)) throw new Error(`Computerkonto ${p.name}$: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, in OU ${r.inOu}, Kennwort gesetzt ${r.kennwortGesetzt})`);
     this.d.protokoll?.('I8e Computerkonto', { zugang, name: p.name, zustand: r.zustand, kennwortNeu: neu });
     return {
       success: true, data: { ...r, tresor: name },
-      display: `✅ COMPUTERKONTO_BEREIT ${r.konto} (${r.dn}) — ${r.zustand}, aktiv, Einmal-Kennwort gesetzt; im Tresor (${name}) — Rückweg computerkonto_entfernen name ${p.name}${r.zustand === 'uebernommen' ? ' (übernommenes Konto: der Rückweg entfernt nur von Alfred angelegte)' : ''}`,
+      display: r.zustand === 'schon' ? `COMPUTERKONTO_BEREIT ${r.konto} (${r.dn}) — aktiv, unbenutzt, Einmal-Kennwort unverändert im Tresor (${name}) — nichts zu tun` : `✅ COMPUTERKONTO_BEREIT ${r.konto} (${r.dn}) — ${r.zustand}, aktiv, Einmal-Kennwort gesetzt; im Tresor (${name}) — Rückweg computerkonto_entfernen name ${p.name}`,
     };
   }
 
@@ -388,9 +396,13 @@ export class WindowsAdSkill extends Skill {
 
   /** I8e Etappe 3 — Anmeldeprobe Kerberos + TLS von einem Windows-Domänenmitglied (sql01) unter dem Test-Konto */
   private async sqlAnmeldung(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    // Fix-Runde 1 (Ruling R5): nur sql01/sql02, nur Test-Konten ad-svc-…-test, konto = Tresor-Name ohne „ad-“, nur Instanzen in ad.3033.at
+    if (!SQL_PROBE_ZUGAENGE.has(zugang.toLowerCase())) throw new Error(`zugang: die Anmeldeprobe läuft nur auf ${[...SQL_PROBE_ZUGAENGE].join(' oder ')}`);
     const s = pruefeSqlServer(input.server); if (typeof s === 'string') throw new Error(s);
     const tresorName = String(input.konto_tresor ?? '').trim();
-    const k = pruefeKonto(input.konto ?? tresorName.replace(/^ad-/, '')); if (typeof k === 'string') throw new Error(k);
+    if (!SQL_PROBE_TRESOR.test(tresorName)) throw new Error('konto_tresor: nur ein Test-Konto ad-svc-<name>-test (z. B. ad-svc-sqllnx-test) — nie ein Administrator- oder Dienstkonto');
+    const k = pruefeKonto(tresorName.replace(/^ad-/, '')); if (typeof k === 'string') throw new Error(k);
+    if (input.konto !== undefined && String(input.konto).trim() !== k.konto) throw new Error(`konto: muss ${k.konto} sein (Tresor-Name ohne „ad-“)`);
     const kennwort = await this.kontoKennwort({ konto_tresor: tresorName }, `Anmeldeprobe ${s.server} als ${k.konto}`);
     const r = await this.lauf<SqlAnmeldung>(zugang, sqlAnmeldungSkript({ server: s.server, konto: k.konto }), 'SQL-Anmeldeprobe', 300_000, { kennwort });
     const a = sqlAnmeldungAuswerten(r, s.server);

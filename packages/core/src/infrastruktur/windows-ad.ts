@@ -368,9 +368,6 @@ export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: str
     // Fix-Runde 1 (Minor 7): alles gegen diesen DC (zugang = DC) — Anlage und Anmeldeprüfung ohne Replikationsverzug
     "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Server $dc -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
     "function Anmeldung { try { $t = New-Object System.DirectoryServices.DirectoryEntry(('LDAP://' + $dc + '/' + $d.DistinguishedName), ($d.NetBIOSName + '\\' + $p.konto), $e.dienstkennwort); $null = $t.NativeObject; $true } catch { $false } }",
-    // I8e Etappe 3 — ein gehärtetes Konto darf sich nirgends anmelden (userWorkstations = KEINEANMELDUNG), auch nicht am DC für die
-    // Kennwortprüfung. Für die Prüfung gilt die Sperre kurz nur für diesen DC, danach wieder der vorherige Wert (finally).
-    `function Pruefanmeldung { if (-not $p.haerten) { return (Anmeldung) }; $w = [string](Get-ADUser -Identity $p.konto -Properties userWorkstations -Server $dc -Credential $c).userWorkstations; if (-not $w) { return (Anmeldung) }; Set-ADUser -Identity $p.konto -LogonWorkstations $env:COMPUTERNAME -Server $dc -Credential $c; try { return (Anmeldung) } finally { Set-ADUser -Identity $p.konto -LogonWorkstations $w -Server $dc -Credential $c } }`,
     "$u = Get-ADUser -Filter (\"SamAccountName -eq '\" + $p.konto + \"'\") -Properties Description, PasswordNeverExpires, CannotChangePassword, Enabled -Server $dc -Credential $c",
     "$z = 'schon'",
     'if (-not $u) {',
@@ -378,35 +375,102 @@ export function dienstkontoSkript(p: { konto: string; ou: string; ausKonto?: str
     "  $z = 'angelegt'",
     '} else {',
     `  if ($u.Description -ne ${psText(DIENSTKONTO_BESCHREIBUNG)}) { throw ('Konto ' + $p.konto + ' ist nicht von Alfred angelegt - nichts geändert') }`,
-    "  if (-not (Pruefanmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
+    "  if (-not (Anmeldung)) { throw ('Konto ' + $p.konto + ': Anmeldung mit dem Tresor-Kennwort scheitert - Kennwort wird nicht still zurückgesetzt; bewusst entscheiden (Tresor-Wert oder Konto prüfen)') }",
     "  if (-not $u.Enabled) { Enable-ADAccount -Identity $u -Server $dc -Credential $c; $z = 'geaendert' }",
     "  if (-not $u.PasswordNeverExpires -or -not $u.CannotChangePassword) { Set-ADUser -Identity $u -PasswordNeverExpires $true -CannotChangePassword $true -Server $dc -Credential $c; $z = 'geaendert' }",
     '}',
-    // I8e Etappe 3 — Härtung (svc-sqllnx): nur AES128+AES256 (24), vertraulich/keine Delegierung, keine Anmeldung an Arbeitsstationen
+    // I8e Etappe 3 — Härtung (svc-sqllnx): nur AES128+AES256 (24), vertraulich/keine Delegierung, Mitglied der Anmeldesperre-Gruppe
+    // (Ruling R3: keine userWorkstations-Sperre — sie bricht kinit -k/LDAP vom Linux-Host mit KDC_ERR_POLICY)
     'if ($p.haerten) {',
-    "  $h = Get-ADUser -Identity $p.konto -Properties 'msDS-SupportedEncryptionTypes', AccountNotDelegated, userWorkstations -Server $dc -Credential $c",
+    "  $h = Get-ADUser -Identity $p.konto -Properties 'msDS-SupportedEncryptionTypes', AccountNotDelegated -Server $dc -Credential $c",
     `  if ([int]$h.'msDS-SupportedEncryptionTypes' -ne ${AD_AES_NUR}) { Set-ADUser -Identity $h -Replace @{ 'msDS-SupportedEncryptionTypes' = ${AD_AES_NUR} } -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
     "  if (-not $h.AccountNotDelegated) { Set-ADUser -Identity $h -AccountNotDelegated $true -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }",
-    `  if ([string]$h.userWorkstations -ne ${psText(KEINE_ANMELDUNG)}) { Set-ADUser -Identity $h -LogonWorkstations ${psText(KEINE_ANMELDUNG)} -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
+    ...ANMELDESPERRE,
+    "  if (-not @(Get-ADGroupMember -Identity $sg -Server $dc -Credential $c | Where-Object { $_.SamAccountName -eq $p.konto }).Count) { Add-ADGroupMember -Identity $sg -Members $p.konto -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }",
+    "  $sperre.mitglied = [bool]@(Get-ADGroupMember -Identity $sg -Server $dc -Credential $c | Where-Object { $_.SamAccountName -eq $p.konto }).Count",
     '}',
-    // Kennwortprüfung zuerst, dann zurücklesen (die Prüfung setzt die Arbeitsstationen kurz um und wieder zurück)
-    '$anm = [bool](Pruefanmeldung)',
-    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled, 'msDS-SupportedEncryptionTypes', AccountNotDelegated, userWorkstations -Server $dc -Credential $c",
-    "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = $anm; verschluesselung = [int]$u.'msDS-SupportedEncryptionTypes'; keineDelegierung = [bool]$u.AccountNotDelegated; arbeitsstationen = [string]$u.userWorkstations }",
+    '$anm = [bool](Anmeldung)',
+    "$u = Get-ADUser -Identity $p.konto -Properties PasswordNeverExpires, CannotChangePassword, Enabled, 'msDS-SupportedEncryptionTypes', AccountNotDelegated -Server $dc -Credential $c",
+    "Ergebnis @{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $p.konto); dn = [string]$u.DistinguishedName; aktiv = [bool]$u.Enabled; laeuftNieAb = [bool]$u.PasswordNeverExpires; kannNichtAendern = [bool]$u.CannotChangePassword; inOu = ([string]$u.DistinguishedName).EndsWith(',' + $pfad); anmeldung = $anm; verschluesselung = [int]$u.'msDS-SupportedEncryptionTypes'; keineDelegierung = [bool]$u.AccountNotDelegated; anmeldesperre = $(if ($p.haerten) { $sperre } else { $null }) }",
   ].join('\n');
 }
 
 /** I8e Etappe 3 — msDS-SupportedEncryptionTypes: AES128 (0x08) + AES256 (0x10) */
 export const AD_AES_NUR = 24;
-/** I8e Etappe 3 — nicht existierender Rechnername in userWorkstations: Anmeldung nirgends möglich (ohne GPO) */
-export const KEINE_ANMELDUNG = 'KEINEANMELDUNG';
+/** I8e Etappe 3 (Ruling R3) — Gruppe der Dienstkonten ohne interaktive/RDP-Anmeldung und die GPO, die das domänenweit durchsetzt */
+export const SPERR_GRUPPE = 'Dienstkonten-KeineAnmeldung';
+export const SPERR_GRUPPE_OU = 'Dienstkonten';
+export const SPERR_GRUPPE_BESCHREIBUNG = 'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung (GPO AD3033 Dienstkonten keine Anmeldung)';
+export const SPERR_GPO = 'AD3033 Dienstkonten keine Anmeldung';
+/** Client-Erweiterung „Sicherheitseinstellungen“ + Werkzeug-Erweiterung, Pflicht in gPCMachineExtensionNames für GptTmpl.inf */
+export const SICHERHEIT_CSE = '[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]';
+
+/**
+ * Anmeldesperre (Teil von dienstkontoSkript mit haerten; braucht $d, $dc, $c, $z): Gruppe in OU Dienstkonten (fremde gleichnamige →
+ * Abbruch), GPO an der Domänenwurzel mit SeDenyInteractiveLogonRight + SeDenyRemoteInteractiveLogonRight für die Gruppe. Die
+ * GroupPolicy-Cmdlets haben kein -Credential: GPO-Teil über WinRM am eigenen DC mit dem Domänen-Administrator (wie KDS in
+ * grundstrukturSkript), alle Zugriffe gegen diesen DC (lokales SYSVOL, -Server) — kein zweiter Sprung. Liefert $sg (Gruppe) und $sperre.
+ */
+const ANMELDESPERRE = [
+  `  $spou = 'OU=' + ${psText(SPERR_GRUPPE_OU)} + ',' + $d.DistinguishedName`,
+  `  $sg = Get-ADGroup -Filter "SamAccountName -eq '${SPERR_GRUPPE}'" -Properties Description -Server $dc -Credential $c`,
+  `  if (-not $sg) { New-ADGroup -Name ${psText(SPERR_GRUPPE)} -SamAccountName ${psText(SPERR_GRUPPE)} -GroupScope Global -GroupCategory Security -Path $spou -Description ${psText(SPERR_GRUPPE_BESCHREIBUNG)} -Server $dc -Credential $c; $sg = Get-ADGroup -Identity ${psText(SPERR_GRUPPE)} -Server $dc -Credential $c; if ($z -ne 'angelegt') { $z = 'geaendert' } }`,
+  `  elseif ($sg.Description -ne ${psText(SPERR_GRUPPE_BESCHREIBUNG)}) { throw ('Gruppe ' + ${psText(SPERR_GRUPPE)} + ' ist nicht von Alfred angelegt - nichts geändert') }`,
+  '  $sid = [string]$sg.SID.Value',
+  `  $sperre = Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c -ArgumentList ${psText(SPERR_GPO)}, $sid, $d.DistinguishedName, $d.DNSRoot, $dc, ${psText(SICHERHEIT_CSE)} -ScriptBlock {`,
+  '    param([string]$name, [string]$sid, [string]$dn, [string]$root, [string]$server, [string]$cse)',
+  "    $ErrorActionPreference = 'Stop'; Import-Module GroupPolicy, ActiveDirectory",
+  "    $r = [ordered]@{ gpo = 'schon'; inhalt = 'schon'; link = 'schon' }",
+  '    $g = Get-GPO -Name $name -Server $server -ErrorAction SilentlyContinue',
+  "    if (-not $g) { $g = New-GPO -Name $name -Server $server -Comment 'Alfred I8e: Dienstkonten ohne interaktive und RDP-Anmeldung'; $r.gpo = 'angelegt' }",
+  "    $id = '{' + $g.Id.ToString().ToUpper() + '}'",
+  "    $basis = Join-Path (Get-SmbShare -Name SYSVOL).Path ($root + '\\Policies\\' + $id)",
+  "    $sec = Join-Path $basis 'Machine\\Microsoft\\Windows NT\\SecEdit'; $datei = Join-Path $sec 'GptTmpl.inf'",
+  "    $soll = (@('[Unicode]', 'Unicode=yes', '[Version]', 'signature=\"$CHICAGO$\"', 'Revision=1', '[Privilege Rights]', ('SeDenyInteractiveLogonRight = *' + $sid), ('SeDenyRemoteInteractiveLogonRight = *' + $sid)) -join \"`r`n\") + \"`r`n\"",
+  "    $ad = 'CN=' + $id + ',CN=Policies,CN=System,' + $dn",
+  "    $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames -Server $server",
+  "    $ext = [string]$o.gPCMachineExtensionNames",
+  "    $ist = if (Test-Path -LiteralPath $datei) { [IO.File]::ReadAllText($datei) } else { '' }",
+  "    if ($ist -ne $soll -or $ext.IndexOf($cse) -lt 0) {",
+  '      New-Item -ItemType Directory -Path $sec -Force | Out-Null',
+  '      [IO.File]::WriteAllText($datei, $soll, [Text.Encoding]::Unicode)',
+  // Version: GPT.INI und versionNumber des GPO-Objekts gemeinsam (Computer-Teil +1), sonst wenden Clients die Änderung nicht an
+  "      $ini = Join-Path $basis 'GPT.INI'; $txt = if (Test-Path -LiteralPath $ini) { [IO.File]::ReadAllText($ini) } else { '' }",
+  "      $m = [regex]::Match($txt, 'Version=(\\d+)'); $neu = $(if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }) + 1",
+  "      $txt = if ($m.Success) { [regex]::Replace($txt, 'Version=\\d+', ('Version=' + $neu)) } else { \"[General]`r`nVersion=$neu`r`n\" }",
+  '      [IO.File]::WriteAllText($ini, $txt, [Text.Encoding]::ASCII)',
+  '      $set = @{ versionNumber = $neu }; if ($ext.IndexOf($cse) -lt 0) { $set.gPCMachineExtensionNames = $ext + $cse }',
+  "      Set-ADObject -Identity $ad -Replace $set -Server $server; $r.inhalt = 'geschrieben'",
+  '    }',
+  '    $l = @((Get-GPInheritance -Target $dn -Server $server).GpoLinks | Where-Object { $_.GpoId -eq $g.Id })',
+  "    if (-not $l.Count) { New-GPLink -Guid $g.Id -Target $dn -LinkEnabled Yes -Server $server | Out-Null; $r.link = 'angelegt' }",
+  "    elseif (-not $l[0].Enabled) { Set-GPLink -Guid $g.Id -Target $dn -LinkEnabled Yes -Server $server | Out-Null; $r.link = 'aktiviert' }",
+  // Zurücklesen: Verknüpfung an der Domänenwurzel, beide Rechte in GptTmpl.inf, Sicherheits-Erweiterung eingetragen
+  '    $l = @((Get-GPInheritance -Target $dn -Server $server).GpoLinks | Where-Object { $_.GpoId -eq $g.Id })',
+  '    $txt = [IO.File]::ReadAllText($datei); $o = Get-ADObject -Identity $ad -Properties gPCMachineExtensionNames -Server $server',
+  "    $r.gpoName = $name; $r.gpoId = $id; $r.verknuepft = [bool]($l.Count -and $l[0].Enabled)",
+  "    $r.lokal = $txt -match ('(?m)^SeDenyInteractiveLogonRight = \\*' + [regex]::Escape($sid) + '\\s*$')",
+  "    $r.rdp = $txt -match ('(?m)^SeDenyRemoteInteractiveLogonRight = \\*' + [regex]::Escape($sid) + '\\s*$')",
+  '    $r.erweiterung = ([string]$o.gPCMachineExtensionNames).IndexOf($cse) -ge 0',
+  '    [pscustomobject]$r',
+  '  }',
+  "  if ($sperre.gpo -ne 'schon' -or $sperre.inhalt -ne 'schon' -or $sperre.link -ne 'schon') { if ($z -ne 'angelegt') { $z = 'geaendert' } }",
+  "  $sperre = [ordered]@{ gruppe = ${psText(SPERR_GRUPPE)}; gpo = [string]$sperre.gpoName; gpoId = [string]$sperre.gpoId; verknuepft = [bool]$sperre.verknuepft; lokal = [bool]$sperre.lokal; rdp = [bool]$sperre.rdp; erweiterung = [bool]$sperre.erweiterung; mitglied = $false }",
+];
+
+export interface Anmeldesperre { gruppe?: string; gpo?: string; verknuepft?: boolean; lokal?: boolean; rdp?: boolean; erweiterung?: boolean; mitglied?: boolean }
 /** Härtung vollständig zurückgelesen? (Ergebnis von dienstkontoSkript mit haerten) */
-export function dienstkontoGehaertet(r: { verschluesselung?: number; keineDelegierung?: boolean; laeuftNieAb?: boolean; arbeitsstationen?: string }): string | undefined {
+export function dienstkontoGehaertet(r: { verschluesselung?: number; keineDelegierung?: boolean; laeuftNieAb?: boolean; anmeldesperre?: Anmeldesperre | null }): string | undefined {
   const f: string[] = [];
+  const s = r.anmeldesperre ?? {};
   if (r.verschluesselung !== AD_AES_NUR) f.push(`Verschlüsselung ${r.verschluesselung ?? '?'} statt ${AD_AES_NUR} (nur AES)`);
   if (r.keineDelegierung !== true) f.push('Delegierung nicht gesperrt');
   if (r.laeuftNieAb !== true) f.push('Kennwort läuft ab');
-  if (r.arbeitsstationen !== KEINE_ANMELDUNG) f.push(`Arbeitsstationen „${r.arbeitsstationen ?? ''}“ statt ${KEINE_ANMELDUNG}`);
+  if (s.mitglied !== true) f.push(`nicht Mitglied von ${SPERR_GRUPPE}`);
+  if (s.verknuepft !== true) f.push(`GPO „${SPERR_GPO}“ nicht an der Domänenwurzel verknüpft`);
+  if (s.lokal !== true) f.push('SeDenyInteractiveLogonRight fehlt in der GPO');
+  if (s.rdp !== true) f.push('SeDenyRemoteInteractiveLogonRight fehlt in der GPO');
+  if (s.erweiterung !== true) f.push('Sicherheits-Erweiterung fehlt in gPCMachineExtensionNames');
   return f.length ? f.join(', ') : undefined;
 }
 

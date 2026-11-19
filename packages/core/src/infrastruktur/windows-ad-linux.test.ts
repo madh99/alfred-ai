@@ -4,10 +4,10 @@ import { dienstkontoSkript, dienstkontoGehaertet } from './windows-ad.js';
 import {
   pruefeSpns, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, computerkontoSkript, computerkontoEntfernenSkript, pruefeComputerkonto,
   pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, gruppeSkript, gruppeEntfernenSkript, pruefeGruppe, sqlAnmeldungSkript, sqlAnmeldungAuswerten,
-  SQLCMD_PFADE, joinTresorName,
+  SQLCMD_PFADE, joinTresorName, sqlcmdArgumente, SQL_PROBE_TSQL,
 } from './windows-ad-linux.js';
 import { WindowsAdSkill, einmalKennwort } from './windows-ad-skill.js';
-import { aktionsArt } from './change-schritte.js';
+import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
 
 // I8e Etappe 3 Task 2 — AD-Objekte für Kerberos der Linux-SQL-Instanzen (Spec docs/specs/2026-11-19-i8e-linux-sql-ad-tls.md)
 const roh = (befehl: string) => Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le');
@@ -81,14 +81,49 @@ describe('I8e Etappe 3 — Skripttexte', () => {
     const h = dienstkontoSkript({ konto: 'svc-sqllnx', ou: 'Dienstkonten', haerten: true });
     expect(h).toContain("'msDS-SupportedEncryptionTypes' = 24");
     expect(h).toContain('-AccountNotDelegated $true');
-    expect(h).toContain("-LogonWorkstations 'KEINEANMELDUNG'");
+    // Ruling R3: keine userWorkstations-Sperre mehr, sondern Gruppe + GPO mit beiden Verweigerungsrechten
+    expect(h).not.toContain('LogonWorkstations');
+    expect(h).not.toContain('userWorkstations');
+    expect(h).toContain('Dienstkonten-KeineAnmeldung');
+    expect(h).toContain('AD3033 Dienstkonten keine Anmeldung');
+    expect(h).toContain("('SeDenyInteractiveLogonRight = *' + $sid)");
+    expect(h).toContain("('SeDenyRemoteInteractiveLogonRight = *' + $sid)");
+    expect(h).toContain('Machine\\Microsoft\\Windows NT\\SecEdit');
+    expect(h).toContain("'GptTmpl.inf'");
+    expect(h).toContain('{827D319E-6EAC-11D2-A4EA-00C04F79F83A}');
+    expect(h).toContain('versionNumber');
+    expect(h).toContain("'GPT.INI'");
+    expect(h).toContain('New-GPLink -Guid $g.Id -Target $dn -LinkEnabled Yes');
+    expect(h).toContain('Invoke-Command -ComputerName $env:COMPUTERNAME -Credential $c');
+    expect(h).toMatch(/Add-ADGroupMember -Identity \$sg -Members \$p\.konto[^\n]*-Credential \$c/);
+    expect(h).toContain('nicht von Alfred angelegt');
+    expect(dienstkontoSkript({ konto: 'svc-sqllnx-backup', ou: 'Dienstkonten' })).toContain('if ($p.haerten) {');
   });
-  it('Anmeldeprobe: sqlcmd nur aus festen Pfaden, -E -N ohne -C, Aufgabe und Datei werden entfernt', () => {
+  it('Fix-Runde 1: Computerkonto — fremdes nie übernehmen, eigenes in Gebrauch nie zurücksetzen', () => {
+    const k = computerkontoSkript({ name: 'SQLLNX01', ou: 'Server' });
+    expect(k).toContain('besteht schon (nicht von Alfred) - nichts geändert');
+    expect(k).not.toContain('uebernommen');
+    expect(k).not.toContain('-DNSHostName'); // dNSHostName setzt nur adcli → Beitritts-Merkmal
+    for (const t of ["$_ -like 'host/*'", "'RestrictedKrbHost/*'", '$k.dNSHostName -or $k.operatingSystem', '$k.lastLogonTimestamp', "Kennwort seit Alfreds Vergabe geändert", 'ist in Gebrauch']) expect(k).toContain(t);
+    // Vermerk des eigenen pwdLastSet in info; ein Zurücksetzen nur mit neuem Tresor-Wert
+    expect(k).toContain("'Alfred-Einmal-Kennwort pwdLastSet='");
+    expect(k).toContain('Set-ADComputer -Identity $n -Replace @{ info = ');
+    expect(k).toContain('if ($p.neu) { Set-ADAccountPassword');
+    // die Gebrauchs-Prüfung steht vor jedem Zurücksetzen
+    expect(k.indexOf('ist in Gebrauch')).toBeLessThan(k.indexOf('Set-ADAccountPassword'));
+  });
+  it('Anmeldeprobe: sqlcmd nur aus festen Pfaden, -N je Programm, ohne -C, Aufgabe und Datei werden entfernt', () => {
     expect(SQLCMD_PFADE).toEqual(['C:\\Program Files\\SqlCmd\\sqlcmd.exe', 'C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\180\\Tools\\Binn\\SQLCMD.EXE', 'C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\170\\Tools\\Binn\\SQLCMD.EXE']);
+    const rest = ['-b', '-l', '15', '-h', '-1', '-W', '-s', '|', '-Q', SQL_PROBE_TSQL];
+    expect(sqlcmdArgumente(SQLCMD_PFADE[0]!, 'sqllnx01.ad.3033.at')).toEqual(['-S', 'sqllnx01.ad.3033.at', '-E', '-N', 'm', ...rest]);
+    expect(sqlcmdArgumente(SQLCMD_PFADE[1]!, 'sqllnx01.ad.3033.at')).toEqual(['-S', 'sqllnx01.ad.3033.at', '-E', '-N', ...rest]);
+    expect(sqlcmdArgumente(SQLCMD_PFADE[2]!, 'sqllnx01.ad.3033.at')).toEqual(['-S', 'sqllnx01.ad.3033.at', '-E', '-N', ...rest]);
+    for (const p of SQLCMD_PFADE) expect(sqlcmdArgumente(p, 'x.ad.3033.at')).not.toContain('-C');
     const s = sqlAnmeldungSkript({ server: 'sqllnx01.ad.3033.at', konto: 'svc-sqllnx-test' });
     expect(s).toContain('$e.kennwort');
-    expect(s).toContain('-E -N');
-    expect(s).not.toMatch(/ -C\b/);
+    expect(s).toContain('& $x[0].pfad @sa');
+    expect(s).toContain('"-N","m"');
+    expect(s).not.toContain('"-C"');
     expect(s).toContain('sys.dm_exec_connections WHERE session_id = @@SPID');
     expect(s).toContain('Unregister-ScheduledTask');
     expect(s).toContain('Remove-Item -LiteralPath $dir -Recurse -Force');
@@ -121,6 +156,13 @@ describe('I8e Etappe 3 — Skill windows_ad', () => {
     expect(r.display).toContain('ad-join-sqllnx01');
     expect(r.display).toContain('COMPUTERKONTO_BEREIT');
     expect(r.display).toContain('computerkonto_entfernen');
+    expect(roh(w.aufrufe[0]!.befehl)).toContain('"neu":true');
+    // Wiederholung mit vorhandenem Tresor-Wert: kein neues Kennwort, kein Zurücksetzen angefordert
+    const nochmal = welt([{ zustand: 'schon', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, kennwortGesetzt: true, ohneAnmeldung: true }], ['win-dc01-admin', 'ad-join-sqllnx01']);
+    const n = await nochmal.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, imChange);
+    expect(n.display).toContain('nichts zu tun');
+    expect(nochmal.gesetzt).toEqual([]);
+    expect(roh(nochmal.aufrufe[0]!.befehl)).not.toContain('"neu"');
   });
   it('computerkonto_vorbereiten: Nachprüfung scheitert → Fehler ohne Kennwort', async () => {
     const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, kennwortGesetzt: false, ohneAnmeldung: true }], ['win-dc01-admin']);
@@ -130,7 +172,10 @@ describe('I8e Etappe 3 — Skill windows_ad', () => {
     expect(r.error).not.toContain(w.tresor.get('ad-join-sqllnx01')!);
   });
   it('dienstkonto_anlegen mit haerten: Flags zurückgelesen, fehlende Härtung → Fehler', async () => {
-    const gut = { zustand: 'angelegt', konto: 'AD3033\\svc-sqllnx', dn: 'CN=svc-sqllnx,OU=Dienstkonten,DC=ad,DC=3033,DC=at', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, inOu: true, anmeldung: true, verschluesselung: 24, keineDelegierung: true, arbeitsstationen: 'KEINEANMELDUNG' };
+    const sperre = { gruppe: 'Dienstkonten-KeineAnmeldung', gpo: 'AD3033 Dienstkonten keine Anmeldung', gpoId: '{X}', verknuepft: true, lokal: true, rdp: true, erweiterung: true, mitglied: true };
+    const gut = { zustand: 'angelegt', konto: 'AD3033\\svc-sqllnx', dn: 'CN=svc-sqllnx,OU=Dienstkonten,DC=ad,DC=3033,DC=at', aktiv: true, laeuftNieAb: true, kannNichtAendern: true, inOu: true, anmeldung: true, verschluesselung: 24, keineDelegierung: true, anmeldesperre: sperre };
+    for (const feld of ['mitglied', 'verknuepft', 'lokal', 'rdp', 'erweiterung'] as const) expect(dienstkontoGehaertet({ ...gut, anmeldesperre: { ...sperre, [feld]: false } }), feld).toBeDefined();
+    expect(dienstkontoGehaertet({ ...gut, anmeldesperre: null })).toContain('Dienstkonten-KeineAnmeldung');
     expect(dienstkontoGehaertet(gut)).toBeUndefined();
     const w = welt([gut], ['win-dc01-admin']);
     const r = await w.skill.execute({ action: 'dienstkonto_anlegen', zugang: 'dc01', konto: 'svc-sqllnx', haerten: true }, imChange);
@@ -196,6 +241,42 @@ describe('I8e Etappe 3 — Skill windows_ad', () => {
     expect(o.success).toBe(true);
     expect(o.display).toContain('SQL_KERBEROS_OK');
     expect((await ok.skill.execute({ action: 'sql_anmeldung_pruefen', zugang: 'sql01', server: 'x; whoami', konto_tresor: 'ad-svc-sqllnx-test' }, {} as never)).error).toContain('server');
+  });
+  it('Fix-Runde 1 (R5): sql_anmeldung_pruefen nur Test-Konten, nur sql01/sql02, nur Instanzen in ad.3033.at', async () => {
+    const fall = async (input: Record<string, unknown>) => {
+      const w = welt([{ sqlcmd: SQLCMD_PFADE[0], exit: 0, ausgabe: 'KERBEROS|TRUE|SQLLNX01' }], ['ad-svc-sqllnx-test', 'win-dc01-admin', 'ad-svc-sqllnx', 'ad-administrator-test']);
+      const r = await w.skill.execute({ action: 'sql_anmeldung_pruefen', zugang: 'sql01', server: 'sqllnx01.ad.3033.at', konto_tresor: 'ad-svc-sqllnx-test', ...input }, {} as never);
+      return { r, aufrufe: w.aufrufe.length };
+    };
+    for (const [input, wort] of [
+      [{ konto_tresor: 'win-dc01-admin' }, 'konto_tresor'],
+      [{ konto_tresor: 'ad-svc-sqllnx' }, 'konto_tresor'],
+      [{ konto_tresor: 'ad-administrator-test' }, 'konto_tresor'],
+      [{ konto: 'Administrator' }, 'konto'],
+      [{ konto: 'svc-sqllnx' }, 'konto'],
+      [{ server: 'sqllnx01.example.com' }, 'server'],
+      [{ server: 'sqllnx01.ad.3033.at,1433' }, 'server'],
+      [{ server: 'evil.ad.3033.at.example.com' }, 'server'],
+      [{ zugang: 'dc01' }, 'zugang'],
+      [{ zugang: 'fs01' }, 'zugang'],
+    ] as Array<[Record<string, unknown>, string]>) {
+      const { r, aufrufe } = await fall(input);
+      expect(r.success, JSON.stringify(input)).toBe(false);
+      expect(r.error, JSON.stringify(input)).toContain(wort);
+      expect(aufrufe, JSON.stringify(input)).toBe(0); // nichts ausgeführt, kein Kennwort weitergegeben
+    }
+    expect((await fall({ zugang: 'sql02', konto: 'svc-sqllnx-test' })).r.success).toBe(true);
+  });
+  it('Fix-Runde 1 (R4): dns_ptr braucht in der Planprüfung zeitlimitS ≥ 960', () => {
+    const sk = new WindowsAdSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    expect(sk.mindestZeitlimitS('dns_ptr')).toBe(960);
+    expect(sk.mindestZeitlimitS('status')).toBeUndefined();
+    const plan = (zeitlimitS: number) => ({ titel: 'PTR sqllnx01', begruendung: 'I8e Etappe 3', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['dc01'],
+      schritte: [{ titel: 'PTR', art: 'aktion', skill: 'windows_ad', aktion: 'dns_ptr', parameter: { zugang: 'dc01', zone: '30.203.10.in-addr.arpa', ip: '10.203.30.11', fqdn: 'sqllnx01.ad.3033.at' }, zeitlimitS,
+        rueckweg: { skill: 'windows_ad', aktion: 'dns_ptr_loeschen', parameter: { zugang: 'dc01', zone: '30.203.10.in-addr.arpa', ip: '10.203.30.11', fqdn: 'sqllnx01.ad.3033.at' } } }] });
+    const ctx = { skill: (n: string) => (n === 'windows_ad' ? sk as never : undefined), asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [], zugangSystem: new Map([['dc01', 'windows']]) } as never;
+    expect(pruefeChangePlan(plan(600), ctx).fehler.join(' | ')).toContain('mindestens 960 s');
+    expect(pruefeChangePlan(plan(960), ctx).fehler.join(' | ')).not.toContain('mindestens 960 s');
   });
   it('Rückwege: spn_entfernen, computerkonto_entfernen, dns_ptr_loeschen, gruppe_entfernen nur im Change', async () => {
     const faelle: Array<[Record<string, unknown>, object]> = [

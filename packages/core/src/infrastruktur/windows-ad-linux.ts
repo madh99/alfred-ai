@@ -24,8 +24,13 @@ const GRUPPE = /^[A-Za-z][A-Za-z0-9._-]{1,63}$/;
 /** Mitglied: sAMAccountName eines Benutzers oder Computers (mit $) */
 const MITGLIED = /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}\$?$/;
 const REVERSE_ZONE = /^((25[0-5]|2[0-4]\d|1?\d?\d)\.){1,3}in-addr\.arpa$/;
-/** SQL-Server für die Anmeldeprobe: vollständiger Name, optional ,Port */
-const SQL_SERVER = /^(?=.{3,120}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(,[0-9]{1,5})?$/;
+/**
+ * Fix-Runde 1 (Ruling R5) — die Anmeldeprobe ist lesend (auch außerhalb von Changes), legt aber eine Aufgabe mit gespeichertem Kennwort an:
+ * nur gegen Instanzen in ad.3033.at, nur von sql01/sql02, nur mit einem Test-Konto ad-svc-…-test (nie ein Admin-Kennwort im Aufgabenplaner)
+ */
+const SQL_SERVER = /^[a-z0-9-]+\.ad\.3033\.at$/;
+export const SQL_PROBE_ZUGAENGE: ReadonlySet<string> = new Set(['sql01', 'sql02']);
+export const SQL_PROBE_TRESOR = /^ad-svc-[a-z0-9-]+-test$/;
 
 export function pruefeSpns(x: unknown): string[] | string {
   const l = Array.isArray(x) ? x.map(v => String(v).trim()).filter(Boolean) : typeof x === 'string' ? x.split(/[,\s]+/).filter(Boolean) : [];
@@ -79,7 +84,7 @@ export function pruefeGruppe(o: Record<string, unknown>): { gruppe: string; ou: 
 
 export function pruefeSqlServer(s: unknown): string | { server: string } {
   const server = String(s ?? '').trim().toLowerCase();
-  return SQL_SERVER.test(server) ? { server } : 'server: vollständiger Name der SQL-Instanz, optional mit ,Port — z. B. sqllnx01.ad.3033.at';
+  return SQL_SERVER.test(server) ? { server } : 'server: Name der SQL-Instanz in ad.3033.at (ohne Port), z. B. sqllnx01.ad.3033.at';
 }
 
 // ── SPNs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -156,12 +161,19 @@ export function spnLesenText(r: SpnLesen, konto?: string): { eindeutig: boolean;
 
 // ── Computerkonto mit Einmal-Kennwort ──────────────────────────────────────────────────────────────────────────────────────────────
 
+/** Vermerk im Attribut info: pwdLastSet unmittelbar nach Alfreds Kennwortvergabe (ändert adcli das Kennwort, passt er nicht mehr) */
+export const EINMAL_VERMERK = 'Alfred-Einmal-Kennwort pwdLastSet=';
+
 /**
- * Computerkonto NAME$ in der OU vorbereiten (Linux-Beitritt per adcli --one-time-password). Vorhanden ist nur zulässig, wenn es
- * deaktiviert ist oder sich noch nie angemeldet hat (sonst ist es in Gebrauch → Abbruch) und in der OU liegt. Kennwort { einmal } und
- * Domänen-Administrator { kennwort } nur über die Standardeingabe. Selbstprüfung: aktiv, OU, Kennwort in diesem Lauf gesetzt (pwdLastSet).
+ * Computerkonto NAME$ in der OU vorbereiten (Linux-Beitritt per adcli --one-time-password). Fix-Runde 1: ein vorhandenes fremdes Konto
+ * (Beschreibung nicht von Alfred) wird nie übernommen → Abbruch. Ein vorhandenes Alfred-Konto gilt als in Gebrauch (Abbruch, nichts
+ * geändert), wenn es sich angemeldet hat, sein Kennwort seit Alfreds Vergabe geändert wurde (pwdLastSet ≠ Vermerk in info — adcli
+ * setzt nach dem Beitritt ein eigenes) oder Beitritts-Attribute trägt (SPN host/ bzw. RestrictedKrbHost/, dNSHostName,
+ * operatingSystem — Alfred selbst setzt keines davon). Sonst: neues Kennwort nur mit p.neu (neuer Tresor-Wert), sonst „schon“.
+ * Kennwort { einmal } und Domänen-Administrator { kennwort } nur über die Standardeingabe.
+ * Selbstprüfung: aktiv, OU, Vermerk = aktuelles pwdLastSet (bei neu gesetztem Kennwort zusätzlich aus diesem Lauf).
  */
-export function computerkontoSkript(p: { name: string; ou: string; ausKonto?: string }): string {
+export function computerkontoSkript(p: { name: string; ou: string; neu?: boolean; ausKonto?: string }): string {
   return [
     ...kopf(p, true),
     'Import-Module ActiveDirectory',
@@ -169,21 +181,31 @@ export function computerkontoSkript(p: { name: string; ou: string; ausKonto?: st
     "$pfad = 'OU=' + $p.ou + ',' + $d.DistinguishedName",
     "if (-not (Get-ADOrganizationalUnit -Identity $pfad -Server $dc -Credential $c -ErrorAction SilentlyContinue)) { throw ('OU ' + $pfad + ' fehlt (windows_ad grundstruktur)') }",
     "$sam = $p.name + '$'",
+    `$vp = ${psText(EINMAL_VERMERK)}`,
     '$start = [DateTime]::UtcNow.AddSeconds(-30)',
     '$pw = ConvertTo-SecureString $e.einmal -AsPlainText -Force',
-    "$k = Get-ADComputer -Filter (\"SamAccountName -eq '\" + $sam + \"'\") -Properties Description, Enabled, lastLogonTimestamp -Server $dc -Credential $c",
+    "$k = Get-ADComputer -Filter (\"SamAccountName -eq '\" + $sam + \"'\") -Properties Description, Enabled, lastLogonTimestamp, pwdLastSet, info, servicePrincipalName, dNSHostName, operatingSystem -Server $dc -Credential $c",
+    '$gesetzt = $false',
     'if (-not $k) {',
-    `  New-ADComputer -Name $p.name -SamAccountName $sam -Path $pfad -DNSHostName ($p.name.ToLower() + '.' + $d.DNSRoot) -AccountPassword $pw -Enabled $true -Description ${psText(COMPUTERKONTO_BESCHREIBUNG)} -Server $dc -Credential $c`,
-    "  $z = 'angelegt'",
+    `  New-ADComputer -Name $p.name -SamAccountName $sam -Path $pfad -AccountPassword $pw -Enabled $true -Description ${psText(COMPUTERKONTO_BESCHREIBUNG)} -Server $dc -Credential $c`,
+    "  $z = 'angelegt'; $gesetzt = $true",
     '} else {',
-    "  if ($k.Enabled -and $k.lastLogonTimestamp) { throw ('Computerkonto ' + $sam + ' ist aktiv und hat sich schon angemeldet (' + [DateTime]::FromFileTimeUtc([int64]$k.lastLogonTimestamp).ToString('yyyy-MM-dd HH:mm') + ' UTC) - in Gebrauch, nichts geändert') }",
+    `  if ($k.Description -ne ${psText(COMPUTERKONTO_BESCHREIBUNG)}) { throw ('Computerkonto ' + $sam + ' besteht schon (nicht von Alfred) - nichts geändert') }`,
     "  if (-not ([string]$k.DistinguishedName).EndsWith(',' + $pfad)) { throw ('Computerkonto ' + $sam + ' liegt nicht in ' + $pfad + ': ' + $k.DistinguishedName + ' - nichts geändert') }",
-    '  Set-ADAccountPassword -Identity $k -Reset -NewPassword $pw -Server $dc -Credential $c',
-    '  if (-not $k.Enabled) { Enable-ADAccount -Identity $k -Server $dc -Credential $c }',
-    `  $z = if ($k.Description -eq ${psText(COMPUTERKONTO_BESCHREIBUNG)}) { 'schon' } else { 'uebernommen' }`,
+    '  $grund = @()',
+    "  if ($k.lastLogonTimestamp) { $grund += ('angemeldet ' + [DateTime]::FromFileTimeUtc([int64]$k.lastLogonTimestamp).ToString('yyyy-MM-dd HH:mm') + ' UTC') }",
+    "  if ([string]$k.info -ne ($vp + [string][int64]$k.pwdLastSet)) { $grund += 'Kennwort seit Alfreds Vergabe geändert' }",
+    "  if (@(@($k.servicePrincipalName) | Where-Object { $_ -like 'host/*' -or $_ -like 'RestrictedKrbHost/*' }).Count) { $grund += 'SPN host/ gesetzt' }",
+    "  if ($k.dNSHostName -or $k.operatingSystem) { $grund += 'dNSHostName/operatingSystem gesetzt' }",
+    "  if ($grund.Count) { throw ('Computerkonto ' + $sam + ' ist in Gebrauch (' + ($grund -join ', ') + ') - nichts geändert') }",
+    "  $z = 'schon'",
+    "  if ($p.neu) { Set-ADAccountPassword -Identity $k -Reset -NewPassword $pw -Server $dc -Credential $c; $z = 'kennwort neu'; $gesetzt = $true }",
+    "  if (-not $k.Enabled) { Enable-ADAccount -Identity $k -Server $dc -Credential $c; if ($z -eq 'schon') { $z = 'geaendert' } }",
     '}',
-    '$k = Get-ADComputer -Identity $sam -Properties Enabled, pwdLastSet, lastLogonTimestamp -Server $dc -Credential $c',
-    "Ergebnis ([ordered]@{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $sam); dn = [string]$k.DistinguishedName; aktiv = [bool]$k.Enabled; inOu = ([string]$k.DistinguishedName).EndsWith(',' + $pfad); kennwortGesetzt = [bool]($k.pwdLastSet -and [DateTime]::FromFileTimeUtc([int64]$k.pwdLastSet) -ge $start); ohneAnmeldung = (-not $k.lastLogonTimestamp) })",
+    "if ($gesetzt) { $n = Get-ADComputer -Identity $sam -Properties pwdLastSet -Server $dc -Credential $c; Set-ADComputer -Identity $n -Replace @{ info = ($vp + [string][int64]$n.pwdLastSet) } -Server $dc -Credential $c }",
+    '$k = Get-ADComputer -Identity $sam -Properties Enabled, pwdLastSet, lastLogonTimestamp, info -Server $dc -Credential $c',
+    "$vermerkOk = ([string]$k.info -eq ($vp + [string][int64]$k.pwdLastSet)) -and ((-not $gesetzt) -or ($k.pwdLastSet -and [DateTime]::FromFileTimeUtc([int64]$k.pwdLastSet) -ge $start))",
+    "Ergebnis ([ordered]@{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $sam); dn = [string]$k.DistinguishedName; aktiv = [bool]$k.Enabled; inOu = ([string]$k.DistinguishedName).EndsWith(',' + $pfad); kennwortGesetzt = [bool]$vermerkOk; ohneAnmeldung = (-not $k.lastLogonTimestamp) })",
   ].join('\n');
 }
 
@@ -341,14 +363,25 @@ const ALS_BENUTZER = [
  * Anmeldeprobe auf einem Windows-Domänenmitglied (sql01): sqlcmd -E (Kerberos) -N (Verschlüsselung) ohne -C (Zertifikat wird geprüft)
  * unter dem Test-Konto. Eingabe { kennwort } (Kennwort des Test-Kontos). Ergebnis { sqlcmd, exit, ausgabe } — ausgewertet in TS.
  */
+/**
+ * Fix-Runde 1 — Argumente je Programm: go-sqlcmd (C:\Program Files\SqlCmd) nimmt -N mit Wert (s|m|o|true|…; ohne Wert schluckte es das
+ * nächste Argument) → „-N m“ (Verschlüsselung Pflicht); ODBC-sqlcmd 17/18 kennt -N ohne Wert. Nie -C (Zertifikat wird geprüft).
+ */
+export function sqlcmdArgumente(pfad: string, server: string): string[] {
+  const go = pfad.toLowerCase() === SQLCMD_PFADE[0]!.toLowerCase();
+  return ['-S', server, '-E', ...(go ? ['-N', 'm'] : ['-N']), '-b', '-l', '15', '-h', '-1', '-W', '-s', '|', '-Q', SQL_PROBE_TSQL];
+}
+
 export function sqlAnmeldungSkript(p: { server: string; konto: string }): string {
-  const innen = innenSkript({ server: p.server, pfade: SQLCMD_PFADE, tsql: SQL_PROBE_TSQL }, [
-    '$exe = @(@($p.pfade) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)',
-    "if (-not $exe.Count) { throw ('sqlcmd nicht gefunden (gesucht: ' + (@($p.pfade) -join '; ') + ') - zuerst die SQL-Befehlszeilenwerkzeuge auf diesem Rechner installieren') }",
+  const aufrufe = SQLCMD_PFADE.map(pfad => ({ pfad, argumente: sqlcmdArgumente(pfad, p.server) }));
+  const innen = innenSkript({ server: p.server, aufrufe }, [
+    '$x = @(@($p.aufrufe) | Where-Object { Test-Path -LiteralPath $_.pfad } | Select-Object -First 1)',
+    "if (-not $x.Count) { throw ('sqlcmd nicht gefunden (gesucht: ' + (@($p.aufrufe | ForEach-Object { $_.pfad }) -join '; ') + ') - zuerst die SQL-Befehlszeilenwerkzeuge auf diesem Rechner installieren') }",
+    '$sa = @($x[0].argumente | ForEach-Object { [string]$_ })',
     // Windows PowerShell 5.1: Fehlerausgabe eines Programms wird mit Stop zur Ausnahme — hier soll sie in den Text
     "$ErrorActionPreference = 'Continue'",
-    "$txt = & $exe[0] -S $p.server -E -N -b -l 15 -h -1 -W -s '|' -Q $p.tsql 2>&1 | Out-String",
-    '[ordered]@{ sqlcmd = [string]$exe[0]; exit = [int]$LASTEXITCODE; ausgabe = $txt.Trim() }',
+    '$txt = & $x[0].pfad @sa 2>&1 | Out-String',
+    '[ordered]@{ sqlcmd = [string]$x[0].pfad; exit = [int]$LASTEXITCODE; ausgabe = $txt.Trim() }',
   ]);
   return [
     ...kopf(p, true),
