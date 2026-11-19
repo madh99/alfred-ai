@@ -41,7 +41,7 @@ export interface ChangeDeps {
   /** I4c — Namen im Tresor (für die Prüfung der Tresor-Verweise) */
   tresorNamen?: (owner: string) => Promise<Set<string>>;
   /** v1684 — Namen der Fernzugänge (für die Prüfung von zugang/name in Plänen) */
-  zugaenge?: (owner: string) => Promise<string[]>;
+  zugaenge?: (owner: string) => Promise<Array<{ name: string; system: 'linux' | 'windows' }>>;
   /** Einwand — offene Einwände blockieren, Antworten sind Pflicht, Freigabe-Frage nennt sie */
   einwand?: import('./einwand.js').EinwandDienst;
 }
@@ -132,7 +132,7 @@ export class ChangePlanung {
     const [assets, changes, tresorNamen, zugaenge] = await Promise.all([this.d.assets(), this.d.itsm.liste(owner), this.d.tresorNamen?.(owner).catch(() => undefined), this.d.zugaenge?.(owner).catch(() => undefined)]);
     return {
       ...(tresorNamen ? { tresorNamen } : {}),
-      ...(zugaenge ? { zugaenge: new Set(zugaenge.map(z => z.toLowerCase())) } : {}),
+      ...(zugaenge ? { zugaenge: new Set(zugaenge.map(z => z.name.toLowerCase())), zugangSystem: new Map(zugaenge.map(z => [z.name.toLowerCase(), z.system] as const)) } : {}),
       skill: this.d.skill,
       changes: changes.map(c => ({ id: c.id, abhaengigVon: c.abhaengigVon ?? [], status: c.status, ...(c.fingerabdruck ? { fingerabdruck: c.fingerabdruck } : {}), ...(c.schritte ? { schritte: c.schritte as unknown[] } : {}) })),
       // I3 (Realfall 22.10.: „test-ubuntu“ = Deploy-Anwendung und VM) — ID, ID-Anfang ab 8 Zeichen, sourceId (z. B. pve3:142), Name/Hostname;

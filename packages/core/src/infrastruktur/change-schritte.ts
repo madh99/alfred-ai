@@ -350,9 +350,26 @@ export interface PruefKontext {
   tresorNamen?: Set<string>;
   /** v1684 — Namen der Fernzugänge (klein geschrieben); fehlt die Angabe, wird nicht geprüft */
   zugaenge?: Set<string>;
+  /** I8e — Betriebssystem je Fernzugang (Schlüssel klein geschrieben); fehlt die Angabe, wird das Zielsystem nicht geprüft */
+  zugangSystem?: Map<string, 'linux' | 'windows'>;
   /** vorhandene Changes (für Abhängigkeiten und Zyklen) */
   changes: Array<{ id: string; abhaengigVon: string[]; status: string; fingerabdruck?: string; schritte?: unknown[] }>;
   jetzt?: Date;
+}
+
+/** I8e — Betriebssystem, auf dem die Aktionen eines Skills laufen (Schlüssel = Skillname); fernzugriff gehört nicht dazu (läuft auf beiden) */
+export const ZIELSYSTEM: Readonly<Record<string, 'linux' | 'windows'>> = {
+  linux_sql: 'linux', linux_ha: 'linux',
+  windows_ad: 'windows', windows_pki: 'windows', windows_cluster: 'windows',
+};
+
+/** I8e — Skill-Aktion, Rückweg oder Prüfung auf einem Zugang mit dem falschen Betriebssystem → Fehler (Verweise {{…}} und unbekannte Zugänge bleiben anderen Prüfungen) */
+function zielSystemFehler(skill: unknown, parameter: unknown, wo: string, f: string[], ctx: PruefKontext): void {
+  const soll = typeof skill === 'string' ? ZIELSYSTEM[skill] : undefined;
+  const z = (parameter && typeof parameter === 'object' ? (parameter as Record<string, unknown>).zugang : undefined);
+  if (!soll || !ctx.zugangSystem || typeof z !== 'string' || !z.trim() || z.includes('{{')) return;
+  const ist = ctx.zugangSystem.get(z.trim().toLowerCase());
+  if (ist && ist !== soll) f.push(`${wo}: ${z.trim()} ist ${ist === 'linux' ? 'Linux' : 'Windows'} — ${skill} gehört auf einen ${soll === 'linux' ? 'Linux' : 'Windows'}-Zugang`);
 }
 
 const txt = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -493,6 +510,7 @@ function pruefePruefung(p0: unknown, wo: string, f: string[], ctx: PruefKontext)
     if (aus.skill && NIE_SKILLS.has(aus.skill)) f.push(`${wo}: Skill ${aus.skill} ist in Changes nicht erlaubt`);
     else if (aus.skill && !s) f.push(`${wo}: Prüf-Skill ${aus.skill} gibt es nicht`);
     else if (s && aus.aktion && aktionsArt(aus.skill!, aus.aktion, aus.parameter) !== 'lesen') f.push(`${wo}: Prüf-Aktion ${aus.skill}.${aus.aktion} ist nicht lesend`);
+    zielSystemFehler(aus.skill, aus.parameter, wo, f, ctx);
     if (aus.skill === 'fernzugriff' && aus.aktion === 'lesen') for (const b of lesebefehle(aus.parameter)) { const g = kaefigGrenze(ersetzeVerweise(b)); if (g) f.push(`${wo}: Prüfbefehl „${b.slice(0, 60)}“ ${g}`); }
   }
   return aus;
@@ -606,6 +624,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const minZl = (sk as { mindestZeitlimitS?: (a: string) => number | undefined }).mindestZeitlimitS?.(schritt.aktion);
       if (minZl !== undefined && schritt.zeitlimitS < minZl) f.push(`${wo}: zeitlimitS ${schritt.zeitlimitS} zu klein für ${schritt.skill}.${schritt.aktion} — mindestens ${minZl} s (Baustein-Zeitgrenze + 60 s)`);
       if (fe) f.push(`${wo}: ${fe}`);
+      zielSystemFehler(schritt.skill, schritt.parameter, wo, f, ctx);
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
       schritt.einordnung = einordnung;
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && befehlsklasse(String(schritt.parameter.befehl ?? '')) === 'nie') f.push(`${wo}: Befehl steht auf der Nie-Liste des Fernzugriffs`);
@@ -676,6 +695,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
             const ersatzR = verweise(rueck.parameter!, nr + 1, new Set([...aktionsNummern, nr]), f, `${wo} (Rückweg)`, (rs.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties, { befehlErlaubt: rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren', ...(tresorNamen ? { namen: tresorNamen } : {}) });
             const feR = eingabeFehler(rs, { ...ersatzR, action: rueck.aktion });
             if (feR) f.push(`${wo} (Rückweg): ${feR}`);
+            zielSystemFehler(rueck.skill, rueck.parameter, `${wo} (Rückweg)`, f, ctx);
             // v1677 — Realfall 26.10. (Matrix I): Rückwege mit fernzugriff.kopieren haben keinen Befehl; der leere Befehl galt als „nie“
             if (rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
             // v1678 — Review 26.10. (Matrix I4–I7): Rückweg kopierte mit loeschen:true vom Ziel zurück auf den ORIGINALPFAD der Quelle. Bricht

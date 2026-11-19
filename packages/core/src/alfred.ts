@@ -7640,7 +7640,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           einwand: this.einwandDienst,
           tresorNamen: (o) => this.tresor!.namen(o),
           // v1684 — Fernzugänge für die Plan-Prüfung (Realfall 26.10.: Prüfung auf nicht vorhandenen Zugang „udm“)
-          zugaenge: async (o) => { const { FernzugaengeRepository: FzR } = await import('@alfred/storage'); return (await new FzR(adapter).liste(o)).map(z => z.name); },
+          zugaenge: async (o) => { const { FernzugaengeRepository: FzR } = await import('@alfred/storage'); return (await new FzR(adapter).liste(o)).map(z => ({ name: z.name, system: z.system === 'windows' ? 'windows' as const : 'linux' as const })); },
         });
         // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
         const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
