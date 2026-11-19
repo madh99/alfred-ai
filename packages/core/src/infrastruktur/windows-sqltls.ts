@@ -133,6 +133,18 @@ export const CSR_BEFUNDE = [
 ];
 
 /**
+ * I8e Etappe 3 Fix 1 (ESC6, Ruling R9) — nach CA_KONFIG_LESEN und $gruende = @(): steht EDITF_ATTRIBUTESUBJECTALTNAME2 (0x40000) in den
+ * EditFlags des aktiven Richtlinienmoduls, übernimmt die CA SAN aus Anforderungsattributen („SAN:dns=…“) an der Allowlist vorbei → Befund.
+ * Gelesen wird derselbe Registrierungswert, den „certutil -getreg policy\EditFlags“ zeigt (ohne sprachabhängige Textausgabe); nicht
+ * lesbar ist ebenfalls ein Befund.
+ */
+export const CA_SAN_ATTRIBUT_PRUEFEN = [
+  "$pm = [string](Get-ItemProperty (Join-Path $k ($ca + '\\PolicyModules')) -ErrorAction SilentlyContinue).Active",
+  "$ef = $(if ($pm) { (Get-ItemProperty (Join-Path $k ($ca + '\\PolicyModules\\' + $pm)) -ErrorAction SilentlyContinue).EditFlags } else { $null })",
+  "if ($null -eq $ef) { $gruende += ('EditFlags des Richtlinienmoduls ' + $pm + ' nicht lesbar') } elseif (([int64]$ef -band 0x40000) -ne 0) { $gruende += ('CA übernimmt SAN aus Anforderungsattributen (EDITF_ATTRIBUTESUBJECTALTNAME2 0x40000 in EditFlags 0x' + ([int64]$ef).ToString('x') + ')') }",
+];
+
+/**
  * Rumpf von sql_tls_genehmigen nach CA_KONFIG_LESEN (läuft als SYSTEM auf der CA): Anforderung $p.request_id aus der CA-Datenbank lesen und prüfen,
  * erst dann ausstellen; Ergebnis in $genehmigt, das COM-Objekt der Anforderung bleibt in $r. Anforderer: $p.anforderer (exakt, z. B.
  * AD3033\svc-pki-linuxreq) oder ohne Angabe das Computerkonto des Knotens aus $p.cn.
@@ -155,6 +167,9 @@ export const GENEHMIGEN_PRUEFEN = [
   "if ($disp -ne 9 -and $disp -ne 20) { $gruende += ('Status ' + $disp + ' (weder ausstehend noch ausgestellt)') }",
   "if ($p.anforderer) { if ($wer -ne [string]$p.anforderer) { $gruende += ('Anforderer ' + $wer + ' ist nicht ' + $p.anforderer) } } elseif ($wer -notmatch ('\\\\' + [regex]::Escape($host1) + '\\$$')) { $gruende += ('Anforderer ' + $wer + ' ist nicht das Computerkonto ' + $host1 + '$') }",
   "if ($attr -notmatch ('CertificateTemplate:\\s*' + [regex]::Escape($p.vorlage) + '(\\s|$)')) { $gruende += ('Vorlage nicht ' + $p.vorlage + ' (' + ($attr -replace '\\s+', ' ') + ')') }",
+  // ESC6: SAN als Name-Wert-Paar in den Anforderungsattributen nie genehmigen; CA darf solche SAN nicht übernehmen
+  "if ($attr -match '(^|\\s|&)san:') { $gruende += ('SAN in den Anforderungsattributen: ' + ($attr -replace '\\s+', ' ')) }",
+  ...CA_SAN_ATTRIBUT_PRUEFEN,
   ...CSR_BEFUNDE,
   "if ($gruende.Count) { throw ('Anforderung ' + $p.request_id + ' NICHT genehmigt: ' + ($gruende -join '; ')) }",
   "$zustand = 'schon ausgestellt'",

@@ -16,7 +16,7 @@ import { kopf, psText } from './windows-ad.js';
 import { MIT_KONTO, innenSkript } from './windows-cluster.js';
 import { ALS_BENUTZER } from './windows-ad-linux.js';
 import { EKU_SERVER, type VorlagenProfil } from './windows-codesignatur.js';
-import { CA_KONFIG_LESEN, CSR_INHALT, CSR_BEFUNDE, GENEHMIGEN_PRUEFEN } from './windows-sqltls.js';
+import { CA_KONFIG_LESEN, CSR_INHALT, CSR_BEFUNDE, CA_SAN_ATTRIBUT_PRUEFEN, GENEHMIGEN_PRUEFEN } from './windows-sqltls.js';
 
 export const SQL_TLS_LINUX_VORLAGE = 'AD3033-SQL-TLS-Linux-v1';
 export const SQL_TLS_LINUX_ANZEIGE = 'AD3033 SQL TLS Linux v1';
@@ -151,6 +151,10 @@ export function fremdAusstellenSkript(a: { cn: string; sans: string[]; csr_sha25
     '$gruende = @()',
     "if ([string]$r.PublicKey.Algorithm.Value -ne '1.2.840.113549.1.1.1') { $gruende += ('Schlüsselalgorithmus ' + $r.PublicKey.Algorithm.Value + ' statt RSA') }",
     ...CSR_BEFUNDE,
+    // ESC6 (Ruling R9): kein SAN als Name-Wert-Paar in der Anforderung; die CA darf SAN aus Anforderungsattributen nicht übernehmen
+    "foreach ($nv in @($r.NameValuePairs)) { if ([string]$nv.Name -match '^\\s*san\\s*$') { $gruende += ('SAN als Name-Wert-Paar in der Anforderung: ' + [string]$nv.Value) } }",
+    ...CA_KONFIG_LESEN,
+    ...CA_SAN_ATTRIBUT_PRUEFEN,
     "if ($gruende.Count) { Fehler (($gruende -join '; ') + ' — nichts eingereicht') }",
     // 3. schon eingereicht? Sonst als svc-pki-linuxreq einreichen (Kennwort nur aus stdin)
     `$such = MitKonto 'SYSTEM' '' ${psText(innenSuchen)} 180`,

@@ -426,7 +426,10 @@ export class WindowsPkiSkill extends Skill {
             if (input[f] !== undefined && String(input[f]).trim() !== w) return { success: false, error: `${f}: fest ${w} (Global Constraints I8e Etappe 3)` };
           }
           if (input.mitglieder !== undefined) return { success: false, error: `mitglieder: fest ${SQL_TLS_LINUX_KONTO}` };
-          const v = pruefeVorlage({ vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE, gueltig_tage: 365, schluessel_bits: input.schluessel_bits ?? 3072 }); if (typeof v === 'string') return { success: false, error: v };
+          // Fix 2: Mindestschlüssel fest 3072 — gleich der Vorprüfung in fremd_csr_ausstellen
+          if (input.schluessel_bits !== undefined && Number(input.schluessel_bits) !== 3072) return { success: false, error: 'schluessel_bits: fest 3072 (Global Constraints I8e Etappe 3)' };
+          if (input.gueltig_tage !== undefined && Number(input.gueltig_tage) !== 365) return { success: false, error: 'gueltig_tage: fest 365 (Global Constraints I8e Etappe 3)' };
+          const v = pruefeVorlage({ vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE, gueltig_tage: 365, schluessel_bits: 3072 }); if (typeof v === 'string') return { success: false, error: v };
           const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `SQL-TLS-Linux-Vorlage ${v.vorlage} (${String(input.zugang)})`);
           if (action === 'sql_tls_linux_vorlage_entfernen') {
             const { r } = await this.lauf<{ vorlage: string; vonCa: boolean; geloescht: boolean; oidWeg: boolean; nochDa: boolean }>(input, vorlageEntfernenSkript(v), 'SQL-TLS-Linux-Vorlage entfernen', 420_000, { kennwort: kw });

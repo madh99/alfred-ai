@@ -116,6 +116,25 @@ describe('I8e Etappe 3 Task 3 — Skripttexte', () => {
     expect(g).toContain("if ($p.anforderer) { if ($wer -ne [string]$p.anforderer)");
     expect(SQL_TLS_LINUX_ANFORDERER).toBe('AD3033\\svc-pki-linuxreq');
   });
+  it('Fix 1 (ESC6): SAN in Anforderungsattributen und EDITF_ATTRIBUTESUBJECTALTNAME2 sind Befunde VOR Genehmigung bzw. Einreichen', () => {
+    // gemeinsamer Genehmigungsteil (Windows und Linux): beide Prüfungen vor „NICHT genehmigt“ und vor -resubmit
+    const g = genehmigenSkript(pruefeGenehmigung({ request_id: 7, cn: 'sql01.ad.3033.at', sans: ['sql01.ad.3033.at'] }) as never).replace(/''/g, "'");
+    const attrSan = g.indexOf("if ($attr -match '(^|\\s|&)san:')"); const editf = g.indexOf('-band 0x40000');
+    expect(attrSan).toBeGreaterThan(0); expect(editf).toBeGreaterThan(0);
+    expect(g).toContain('EDITF_ATTRIBUTESUBJECTALTNAME2');
+    expect(g).toContain("'\\PolicyModules'");
+    for (const i of [attrSan, editf]) { expect(i).toBeLessThan(g.indexOf('NICHT genehmigt')); expect(i).toBeLessThan(g.indexOf('-resubmit')); }
+    // Linux-Vorprüfung: Name-Wert-Paar SAN und EditFlags vor dem Einreichen als svc-pki-linuxreq
+    const t = fremdAusstellenSkript({ cn: 'sqllnx01.ad.3033.at', sans: SANS01, csr_sha256: SHA }).replace(/''/g, "'");
+    const nv = t.indexOf('$r.NameValuePairs'); const ef = t.indexOf('-band 0x40000'); const ein = t.indexOf('AlsBenutzer $p.anforderer $e.kennwort');
+    expect(nv).toBeGreaterThan(0); expect(ef).toBeGreaterThan(0);
+    expect(nv).toBeLessThan(t.indexOf("Fehler (($gruende -join '; ')")); expect(ef).toBeLessThan(t.indexOf("Fehler (($gruende -join '; ')"));
+    expect(ef).toBeLessThan(ein);
+    // und im Genehmigungsteil nach dem Einreichen erneut vor dem resubmit
+    expect(t.indexOf("if ($attr -match '(^|\\s|&)san:')")).toBeLessThan(t.indexOf('-resubmit'));
+    expect(t.lastIndexOf('-band 0x40000')).toBeLessThan(t.indexOf('-resubmit'));
+    expect(t.lastIndexOf('-band 0x40000')).toBeGreaterThan(ein);
+  });
   it('lesend vs. ändernd', () => {
     for (const a of ['sql_tls_linux_vorlage_anlegen', 'sql_tls_linux_vorlage_entfernen', 'fremd_csr_ausstellen']) expect(aktionsArt('windows_pki', a)).toBe('aendern');
   });
@@ -187,6 +206,17 @@ describe('I8e Etappe 3 Task 3 — Skill', () => {
       const f = await welt([{ ...r0, ...falsch }]).skill.execute(p, ausChange);
       expect(f.success, text).toBe(false); expect(f.error).toContain(text);
     }
+  });
+  it('Fix 2: Linux-Vorlage nur mit Mindestschlüssel 3072 (und 365 Tagen) — andere Angaben abgewiesen, kein Aufruf', async () => {
+    for (const x of [{ schluessel_bits: 4096 }, { schluessel_bits: 2048 }, { gueltig_tage: 730 }]) {
+      const w = welt([]);
+      const r = await w.skill.execute({ action: 'sql_tls_linux_vorlage_anlegen', zugang: 'pkiiss01', ...x }, ausChange);
+      expect(r.success, JSON.stringify(x)).toBe(false); expect(r.error).toContain('fest');
+      expect(w.aufrufe).toHaveLength(0);
+    }
+    const w = welt([{ zustand: 'angelegt', flags: 131616, vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE, oid: '1.2', ca: 'CA', aufCa: true, registrieren: [`AD3033\\${SQL_TLS_LINUX_GRUPPE}`], namensFlag: 1, anmeldeFlag: 2, minSchluessel: 3072, eku: ['1.3.6.1.5.5.7.3.1'], keySpec: 1, csp: [], privatFlag: 0, gruppeMitglieder: ['svc-pki-linuxreq'] }]);
+    expect((await w.skill.execute({ action: 'sql_tls_linux_vorlage_anlegen', zugang: 'pkiiss01', schluessel_bits: 3072 }, ausChange)).success).toBe(true);
+    expect(roh(w.aufrufe[0]!.befehl)).toContain('"schluessel_bits":3072');
   });
   it('Linux-Vorlage entfernen (Rückweg)', async () => {
     const w = welt([{ vorlage: SQL_TLS_LINUX_VORLAGE, vonCa: true, geloescht: true, oidWeg: true, nochDa: false }]);
