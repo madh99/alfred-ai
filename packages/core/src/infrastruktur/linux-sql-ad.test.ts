@@ -266,6 +266,18 @@ describe.skipIf(!BASH)('linux_sql ad_beitreten — ausgeführt', { timeout: 180_
     expect(r.krb5.split('\n')[0]).toBe(AD_KRB5_KOPF);
     expect(r.krb5Alt.trimEnd()).toBe(`${VORGABE}`);
   });
+  it('ältere krb5-Sicherung weicht ab → Abbruch, nichts geändert; gleiche Sicherung → Beitritt', () => {
+    const r = beitreten({ krb5: 'vorgabe', krb5Alt: true });
+    expect(r.rc, r.aus).toBe(1);
+    expect(String(r.e?.fehler)).toContain('ältere Sicherung weicht von der jetzigen');
+    expect(String(r.e?.fehler)).toContain('nichts geändert');
+    expect(r.log).not.toMatch(/apt-get|adcli|systemctl|pam-auth-update/);
+    expect(r.krb5.split('\n')[0]).not.toBe(AD_KRB5_KOPF);
+    const g = ausfuehren(adBeitretenSkript(P), { krb5: 'vorgabe' }, 'cp "$T/etc/krb5.conf" "$T/etc/krb5.conf.alfred-vorher"');
+    expect(g.rc, g.aus).toBe(0);
+    expect(g.krb5.split('\n')[0]).toBe(AD_KRB5_KOPF);
+    expect(g.e?.aenderungen).not.toContain('krb5-vorgabe-gesichert');
+  });
   it('schon beigetreten → „schon“ ohne adcli join, ohne Kennwort, ohne PAM-Änderung', () => {
     const r = ausfuehren(adBeitretenSkript(P), { beigetreten: true, einmal: '' });
     expect(r.rc, r.aus).toBe(0);
@@ -299,10 +311,23 @@ describe.skipIf(!BASH)('linux_sql ad_verlassen — ausgeführt', { timeout: 180_
     expect(r.nss).toMatch(/^passwd:\s+files systemd$/m);
     expect(r.pam).not.toContain('pam_sss');
     expect(r.log).toContain('pam-auth-update --disable sss');
+    // Fix-Runde 2 (R13): PAM und NSS ohne sss, bevor sssd stoppt
+    expect(r.log.indexOf('pam-auth-update --disable sss')).toBeLessThan(r.log.indexOf('systemctl disable --now sssd'));
+    const a = r.e?.aenderungen as string[];
+    expect(a.indexOf('pam-ohne-sss')).toBeLessThan(a.indexOf('sssd-aus'));
+    expect(a.indexOf('nsswitch')).toBeLessThan(a.indexOf('sssd-aus'));
+    expect(a.indexOf('pam-ohne-sss')).toBeGreaterThanOrEqual(0);
     expect(r.log).not.toMatch(/adcli|apt-get/);
     const s = ausfuehren(adVerlassenSkript(V), {});
     expect(s.rc, s.aus).toBe(0);
     expect(s.e).toMatchObject({ zustand: 'schon', aenderungen: [], belassen: [] });
+  });
+  it('fremde krb5.conf (ohne Alfred-Kopf) → bleibt unverändert', () => {
+    const r = ausfuehren(adVerlassenSkript(V), { beigetreten: true }, `printf '%s\\n' ${q(FREMD_KRB5)} >"$T/etc/krb5.conf"`);
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.krb5.trim()).toBe(FREMD_KRB5);
+    expect(r.e?.aenderungen).not.toContain('krb5.conf');
+    expect(r.e?.aenderungen).not.toContain('krb5-vorgabe-zurueck');
   });
   it('ohne Sicherung: Alfreds krb5.conf wird entfernt', () => {
     const r = ausfuehren(adVerlassenSkript(V), { beigetreten: true });

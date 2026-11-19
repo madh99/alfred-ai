@@ -191,6 +191,8 @@ sssd_eigen() { [ "$(head -n 1 "$SSSD_CONF")" = "$SSSD_KOPF" ]; }
 krb5_eigen() { [ "$(head -n 1 "$KRB5_CONF")" = "$KRB5_KOPF" ]; }
 krb5_norm() { { grep -Ev '^[[:space:]]*(default_realm|rdns)[[:space:]]*=' "$1" || true; } | sed -E 's/[[:space:]]+$//'; }
 krb5_vorgabe() { [ -f "$KRB5_VORLAGE" ] && [ "$(krb5_norm "$KRB5_CONF")" = "$(krb5_norm "$KRB5_VORLAGE")" ]; }
+# 0 = keine ältere Sicherung oder sie ist byte-gleich mit der jetzigen krb5.conf
+krb5_alt_passt() { [ ! -e "$KRB5_ALT" ] || cmp -s -- "$KRB5_ALT" "$KRB5_CONF"; }
 # Fix-Runde 1 (R13): pam_sss in einer common-*-Datei (pam-auth-update-Profil sss)
 pam_sss_aktiv() { local f; for f in "$PAM_D"/common-*; do if [ -f "$f" ] && grep -q pam_sss "$f"; then return 0; fi; done; return 1; }
 pam_ohne_sss() {
@@ -244,6 +246,10 @@ fi
 if [ -f "$KRB5_CONF" ] && ! krb5_eigen && ! krb5_vorgabe; then
   abbruch "$KRB5_CONF ist fremd (weder von Alfred noch die unveränderte Vorgabe von krb5-config) — nichts geändert"
 fi
+# Fix-Runde 2: eine ältere Sicherung wird nie still beibehalten, wenn die zu ersetzende Vorgabe anders aussieht
+if [ -f "$KRB5_CONF" ] && ! krb5_eigen && ! krb5_alt_passt; then
+  abbruch "$KRB5_ALT: ältere Sicherung weicht von der jetzigen $KRB5_CONF ab — nichts geändert"
+fi
 command -v pam-auth-update >/dev/null 2>&1 || abbruch "pam-auth-update fehlt (libpam-runtime) — PAM nicht steuerbar; nichts geändert"
 # ── Phase 2: Pakete (feste Versionen, gehalten) ──
 FEHLEND=()
@@ -274,6 +280,7 @@ pam_ohne_sss
 if [ -f "$KRB5_CONF" ] && ! krb5_eigen; then
   # nach der Installation kann krb5-config die Vorlage neu angelegt haben — nur diese wird ersetzt (Sicherung für ad_verlassen)
   krb5_vorgabe || abbruch "$KRB5_CONF ist fremd (weder von Alfred noch die unveränderte Vorgabe von krb5-config) — Beitritt abgebrochen"
+  krb5_alt_passt || abbruch "$KRB5_ALT: ältere Sicherung weicht von der jetzigen $KRB5_CONF ab — krb5.conf nicht ersetzt"
   if [ ! -e "$KRB5_ALT" ]; then cp -p -- "$KRB5_CONF" "$KRB5_ALT"; aend krb5-vorgabe-gesichert; fi
 fi
 if schreibe_datei "$KRB5_CONF" 644 "$KRB5_SOLL"; then aend krb5.conf; fi
@@ -391,6 +398,14 @@ belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
 EIGEN=1
 if [ -f "$SSSD_CONF" ] && ! sssd_eigen; then EIGEN=0; belassen "$SSSD_CONF (nicht von Alfred) — sssd, NSS und PAM unverändert"; fi
 if [ "$EIGEN" = 1 ]; then
+  # Fix-Runde 2 (R13): ZUERST PAM und NSS ohne sss, DANN sssd stoppen — bricht der Lauf dazwischen ab, steht nie ein
+  # „[default=bad …] pam_sss.so“ bei gestopptem sssd (lokales sudo/SSH, auch Alfreds eigener Zugang, bliebe sonst gesperrt)
+  pam_ohne_sss
+  # NSS: sss aus allen Zeilen nehmen (libnss-sss trägt es in passwd, group, shadow, netgroup, services, sudoers ein)
+  if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then
+    sed -E -i '/^[a-z]+:/ { s/[[:space:]]+sss([[:space:]]|$)/\1/g; s/[[:space:]]+sss([[:space:]]|$)/\1/g }' "$NSS"
+    aend nsswitch
+  fi
   if systemctl is-active --quiet sssd || systemctl is-enabled --quiet sssd; then
     aus=$(systemctl disable --now sssd 2>&1) || abbruch "sssd lässt sich nicht stoppen/deaktivieren: $(kurz "$aus")"
     aend sssd-aus
@@ -400,13 +415,6 @@ if [ "$EIGEN" = 1 ]; then
   for d in "$SSS_DB" "$SSS_MC"; do
     if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 1 -type f -print -quit)" ]; then find "$d" -maxdepth 1 -type f -delete; aend "cache:$(basename "$d")"; fi
   done
-  # NSS: sss aus allen Zeilen nehmen (libnss-sss trägt es in passwd, group, shadow, netgroup, services, sudoers ein)
-  if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then
-    sed -E -i '/^[a-z]+:/ { s/[[:space:]]+sss([[:space:]]|$)/\1/g; s/[[:space:]]+sss([[:space:]]|$)/\1/g }' "$NSS"
-    aend nsswitch
-  fi
-  # PAM (R13): pam_sss nie aktiv lassen, wenn sssd steht — sonst kann common-account lokales sudo/SSH verweigern
-  pam_ohne_sss
 fi
 # Maschinenschlüssel nur, wenn er ausschließlich diesem Rechner gehört (Computerkonto im AD: windows_ad computerkonto_entfernen)
 if [ -e "$KEYTAB" ]; then
