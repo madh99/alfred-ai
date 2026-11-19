@@ -15,12 +15,16 @@
  * `belassen`); das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen.
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
-import { sqlKopf, shQ, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF } from './linux-sql.js';
+import {
+  sqlKopf, shQ, LINUX_SQL_BAUSTEINE, ZEITQUELLE_DCS, ZEITQUELLE_DROPIN, ZEITQUELLE_KOPF, AD_SSSD_KOPF, AD_KRB5_KOPF, SQL_KEYTAB, SQL_KERBEROS_KONTO, PY_CONF, AD_DOMAENE_LINUX,
+} from './linux-sql.js';
+
+export { AD_SSSD_KOPF, AD_KRB5_KOPF, SQL_KEYTAB, SQL_KERBEROS_KONTO };
 
 // ── Feste Werte (Global Constraints I8e Etappe 3) ──────────────────────────────────────────────────────────────────────────────────
 
 export const LINUX_AD = {
-  domaene: 'ad.3033.at', realm: 'AD.3033.AT', netbios: 'AD3033', ou: 'Server', dcs: ['10.203.29.2', '10.203.29.3'],
+  domaene: AD_DOMAENE_LINUX, realm: 'AD.3033.AT', netbios: 'AD3033', ou: 'Server', dcs: ['10.203.29.2', '10.203.29.3'],
 } as const;
 /** Spec 10: der Konfig-Knoten tritt nie bei (kein Keytab, keine SPNs, keine AD-Logins) */
 export const AD_NIE_BEITRETEN = 'sqllnxcfg';
@@ -42,10 +46,8 @@ export const AD_SSSD_CONF = '/etc/sssd/sssd.conf';
 export const AD_KRB5_CONF = '/etc/krb5.conf';
 export const AD_KEYTAB = '/etc/krb5.keytab';
 export const AD_NSSWITCH = '/etc/nsswitch.conf';
-/** Kopfzeile der von Alfred geschriebenen sssd.conf — eine andere vorhandene sssd.conf wird nie überschrieben oder entfernt */
-export const AD_SSSD_KOPF = '# Alfred I8e — linux_sql ad_beitreten (nicht von Hand ändern)';
-/** Kopfzeile der von Alfred geschriebenen krb5.conf (Fix-Runde 1, Ruling R13) */
-export const AD_KRB5_KOPF = '# Alfred I8e — linux_sql ad_beitreten (krb5.conf, nicht von Hand ändern)';
+// AD_SSSD_KOPF (sssd.conf — eine andere vorhandene wird nie überschrieben oder entfernt) und AD_KRB5_KOPF (Fix-Runde 1, Ruling R13)
+// stehen in linux-sql.ts (der Status liest sie) und werden oben wieder exportiert
 /**
  * Fix-Runde 1 (R13): „Paketvorgabe“ einer krb5.conf ohne Alfred-Kopf = die Vorlage von krb5-config (postinst kopiert sie nach
  * /etc/krb5.conf und ändert nur default_realm bzw. ergänzt rdns = false) — gleich der Vorlage, wenn man default_realm- und rdns-Zeilen
@@ -198,6 +200,18 @@ pam_ohne_sss() {
   ! pam_sss_aktiv || abbruch "pam_sss steht nach pam-auth-update --disable sss noch in $PAM_D/common-*"
 }`);
 
+/**
+ * Ruling R11 — Vorbedingung von ad_beitreten und kerberos_einrichten: statt eigener SNTP-Probe die Zeitquelle an den DCs eingerichtet
+ * (Alfreds Drop-in), synchronisiert, |Offset| < UHR_MAX_MS; setzt UHR_V (Sekunden mit Vorzeichen). Braucht ZEIT_HILFEN und UHR_MAX_MS.
+ */
+const ZEIT_VORBEDINGUNG = sh(String.raw`ZQ_FEHLT="Zeitquelle zuerst einrichten (linux_sql zeitquelle_einrichten) — nichts geändert"
+zq_eigen || abbruch "$ZQ_FEHLT ($ZQ_DROPIN fehlt oder ist nicht von Alfred)"
+SYNC=$(zeit_sync); OFF=$(zeit_offset_ms "$(zeit_status)")
+[ "$SYNC" = yes ] || abbruch "$ZQ_FEHLT (NTPSynchronized §{SYNC:-unbekannt})"
+[ -n "$OFF" ] || abbruch "$ZQ_FEHLT (keine Messung in timedatectl timesync-status)"
+[ "$(betrag "$OFF")" -lt "$UHR_MAX_MS" ] || abbruch "$ZQ_FEHLT (Offset $OFF ms, höchstens ±$UHR_MAX_MS ms)"
+UHR_V=$(awk -v m="$OFF" 'BEGIN { printf "%+.3f", m / 1000 }')`);
+
 // ── Beitritt ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 // pipefail: nie „Programm | grep -q“ — grep endet beim ersten Treffer, der Schreiber bekommt SIGPIPE und die Pipeline gilt als gescheitert;
@@ -220,14 +234,7 @@ IP=$(eigene_ip)
 [ -n "$IP" ] || abbruch "keine eigene IPv4-Adresse Richtung $DC1 (ip route get) — nichts geändert"
 PTR=$(ptr_von "$IP")
 [ "$PTR" = "$FQDN" ] || abbruch "PTR von $IP ist '§{PTR:-keiner}', erwartet $FQDN (windows_ad dns_ptr) — nichts geändert"
-# Ruling R11: statt eigener SNTP-Probe — Zeitquelle an den DCs eingerichtet (Alfreds Drop-in), synchronisiert, Offset < 60 s
-ZQ_FEHLT="Zeitquelle zuerst einrichten (linux_sql zeitquelle_einrichten) — nichts geändert"
-zq_eigen || abbruch "$ZQ_FEHLT ($ZQ_DROPIN fehlt oder ist nicht von Alfred)"
-SYNC=$(zeit_sync); OFF=$(zeit_offset_ms "$(zeit_status)")
-[ "$SYNC" = yes ] || abbruch "$ZQ_FEHLT (NTPSynchronized §{SYNC:-unbekannt})"
-[ -n "$OFF" ] || abbruch "$ZQ_FEHLT (keine Messung in timedatectl timesync-status)"
-[ "$(betrag "$OFF")" -lt "$UHR_MAX_MS" ] || abbruch "$ZQ_FEHLT (Offset $OFF ms, höchstens ±$UHR_MAX_MS ms)"
-UHR_V=$(awk -v m="$OFF" 'BEGIN { printf "%+.3f", m / 1000 }')
+${ZEIT_VORBEDINGUNG}
 for pv in "§{PAKETE[@]}"; do
   pk=§{pv%%=*}; sv=§{pv#*=}; iv=$(paket_version "$pk")
   [ -z "$iv" ] || [ "$iv" = "$sv" ] || abbruch "$pk ist in Version $iv installiert, erwartet $sv — der Beitritt ändert keine vorhandene Version; nichts geändert"
@@ -584,9 +591,276 @@ export function zeitquelleEntfernenSkript(): string {
   return [...zeitKopf(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen), MARKE, ENTFERNEN_KOERPER].join('\n');
 }
 
+// ── Kerberos: Keytab der SQL-Instanz (Task 5) ───────────────────────────────────────────────────────────────────────────────────
+
+/** Hosts mit Keytab (Spec 10: nie sqllnxcfg) und Listener — SPNs je Name mit und ohne Port (Global Constraints: 6 SPNs) */
+export const KERBEROS_HOSTS: readonly string[] = ['sqllnx01', 'sqllnx02'];
+export const KERBEROS_LISTENER = 'sqllnxag01';
+export const KERBEROS_SPNS: readonly string[] = [...KERBEROS_HOSTS, KERBEROS_LISTENER]
+  .flatMap(h => [`MSSQLSvc/${h}.${AD_DOMAENE_LINUX}:1433`, `MSSQLSvc/${h}.${AD_DOMAENE_LINUX}`]);
+/** nur AES (Global Constraints) — RC4 nie */
+export const KERBEROS_ENCTYPES: readonly string[] = ['aes256-cts-hmac-sha1-96', 'aes128-cts-hmac-sha1-96'];
+/** Tresor-Eintrag mit dem Kennwort von svc-sqllnx (windows_ad dienstkonto_anlegen) */
+export const KERBEROS_KONTO_TRESOR = `ad-${SQL_KERBEROS_KONTO}`;
+export const MSSQL_CONF_PROGRAMM = '/opt/mssql/bin/mssql-conf';
+export const MSSQL_CONF_DATEI = '/var/opt/mssql/mssql.conf';
+
+export interface KerberosParameter { konto: string; realm: string; spns: string[]; computername: string }
+
+export function kerberosParameter(computername: string): KerberosParameter {
+  return { konto: SQL_KERBEROS_KONTO, realm: LINUX_AD.realm, spns: [...KERBEROS_SPNS], computername: computername.trim().toLowerCase() };
+}
+
+export function pruefeKerberos(p: unknown): string | undefined {
+  const x = obj(p);
+  if (x.konto !== SQL_KERBEROS_KONTO) return `konto: nur ${SQL_KERBEROS_KONTO}`;
+  if (x.realm !== LINUX_AD.realm) return `realm: nur ${LINUX_AD.realm}`;
+  if (!Array.isArray(x.spns) || x.spns.length !== KERBEROS_SPNS.length || x.spns.some((s, i) => s !== KERBEROS_SPNS[i])) return `spns: genau ${KERBEROS_SPNS.join(', ')}`;
+  if (typeof x.computername !== 'string' || !COMPUTERNAME.test(x.computername)) return 'computername: Rechnername ohne $, z. B. sqllnx01';
+  if (x.computername.toLowerCase() === AD_NIE_BEITRETEN) return `${AD_NIE_BEITRETEN} bekommt keinen Keytab (Spec 10)`;
+  if (!KERBEROS_HOSTS.includes(x.computername.toLowerCase())) return `computername: nur ${KERBEROS_HOSTS.join(' oder ')} (Hosts mit SPN MSSQLSvc/<name>.${LINUX_AD.domaene}:1433)`;
+  return undefined;
+}
+
+/** gemeinsame Werte und Hilfen von kerberos_einrichten und kerberos_entfernen */
+const KERBEROS_HILFEN = sh(String.raw`lies() { python3 -c "$PY_CONF" "$1" "$2"; }
+SOLL_KLEIN=$(printf '%s\n' "§{SOLL[@]}" | tr 'A-Z' 'a-z')
+# Einträge „kvno principal enctype“ (Principal und Enctype klein) aus klist -k -e; 1 = nicht lesbar
+kt_eintraege() { local a; a=$(klist -k -e "$1" 2>/dev/null) || return 1; awk '$1 ~ /^[0-9]+$/ && NF >= 3 { e = $3; gsub(/[()]/, "", e); print $1 " " tolower($2) " " tolower(e) }' <<<"$a"; }
+# Principals, die nicht in Alfreds Keytab gehören (nur SPNs von svc-sqllnx und das Konto selbst)
+kt_fremd() { local k p r; while read -r k p r; do if [ -n "$p" ] && ! grep -qxF -- "$p" <<<"$SOLL_KLEIN"; then printf '%s\n' "$p"; fi; done <<<"$1" | sort -u; }
+kt_hoechste() { awk 'BEGIN { m = 0 } { if ($1 + 0 > m) m = $1 + 0 } END { print m }' <<<"$1"; }
+# 0 = jeder erwartete Principal mit jedem Enctype in kvno $2
+kt_vollstaendig() { local p e; for p in "§{SOLL[@]}"; do for e in "§{ENCTYPES[@]}"; do grep -qxF -- "$2 $(klein "$p") $e" <<<"$1" || return 1; done; done; }
+kt_rechte_ok() { [ "$(stat -c '%a %U %G' "$1" 2>/dev/null || true)" = '400 mssql mssql' ]; }
+kvno_aus() { sed -n 's/.*kvno = \([0-9][0-9]*\).*/\1/p' <<<"$1" | sed -n 1p; }`);
+
+const KERBEROS_EINRICHTEN_HILFEN = sh(String.raw`schwarz_kw() { local t="$1"; if [ -n "§{KW:-}" ]; then t=§{t//"$KW"/[geschwärzt]}; fi; printf '%s' "$t"; }
+# Selbstprüfung eines Keytabs: kinit -k als svc-sqllnx (eigener Zwischenspeicher), dann kvno -k — der Schlüssel im Keytab muss das
+# Dienstticket von MSSQLSvc/<fqdn>:1433 entschlüsseln; PKV = kvno, die das AD dabei nennt; danach kdestroy
+kt_pruefen() {
+  local cc="FILE:$ALFRED_TMP/cc-k" a
+  PKV=''; PRUEF_FEHLER=''
+  if ! a=$(KRB5CCNAME="$cc" kinit -k -t "$1" "$KONTO@$REALM" 2>&1); then PRUEF_FEHLER="kinit -k -t … $KONTO@$REALM scheitert: $(kurz "$a")"; return 1; fi
+  if ! a=$(KRB5CCNAME="$cc" kvno -k "$1" "$SPN_PRUEF@$REALM" 2>&1); then
+    PRUEF_FEHLER="kvno -k … $SPN_PRUEF@$REALM scheitert (Schlüssel passt nicht zum AD): $(kurz "$a")"; kdestroy -c "$cc" >/dev/null 2>&1 || true; return 1
+  fi
+  PKV=$(kvno_aus "$a")
+  kdestroy -c "$cc" >/dev/null 2>&1 || true
+}
+# ktutil-Befehle (nur Builtins: das Kennwort erscheint in keiner Befehlszeile und in keiner Datei): ältere Einträge lesen, Einträge der
+# AD-kvno ersetzen, je Principal und Enctype addent mit dem Salz des Kontos, Kennwort als folgende Zeile, neuer Keytab
+kt_befehle() {
+  local s p e
+  if [ -e "$SQL_KT" ]; then printf 'rkt %s\n' "$SQL_KT"; for s in $SLOTS; do printf 'delent %s\n' "$s"; done; fi
+  for p in "§{SOLL[@]}"; do for e in "§{ENCTYPES[@]}"; do
+    printf 'addent -password -p %s -k %s -e %s -s %s\n%s\n' "$p" "$ADKV" "$e" "$SALT" "$KW"
+  done; done
+  printf 'wkt %s\nquit\n' "$NEU"
+}
+setze_conf() {
+  [ "$(lies network "$1")" != "$2" ] || return 0
+  local aus; aus=$("$MSSQLCONF" set "network.$1" "$2" 2>&1) || abbruch "mssql-conf set network.$1 fehlgeschlagen: $(kurz "$aus") — Keytab bleibt (Rückweg kerberos_entfernen)"
+  aend "mssql-conf:$1"
+}
+# 0 = SQL Server muss neu starten: in diesem Lauf geändert, Dienst nicht aktiv oder Keytab/mssql.conf jünger als der Dienststart
+neustart_noetig() {
+  [ "$GEAENDERT" = 0 ] || return 0
+  systemctl is-active --quiet mssql-server || return 0
+  local t s=0
+  t=$(systemctl show -p ActiveEnterTimestamp --value mssql-server 2>/dev/null || true)
+  if [ -n "$t" ]; then s=$(date -d "$t" +%s 2>/dev/null || echo 0); fi
+  [ "$(stat -c %Y "$SQL_KT")" -lt "$s" ] || return 0
+  [ ! -f "$MSSQL_CONF" ] || [ "$(stat -c %Y "$MSSQL_CONF")" -lt "$s" ] || return 0
+  return 1
+}
+# AD-kvno jetzt (Ticket aus dem Kennwort-TGT dieses Laufs)
+ad_kvno_jetzt() { local a; a=$(KRB5CCNAME="$CC" kvno "$SPN_PRUEF@$REALM" 2>&1) || return 1; kvno_aus "$a"; }
+alfred_aufraeumen() {
+  [ -z "§{NEU_DIR:-}" ] || rm -rf -- "$NEU_DIR"
+  if [ -n "§{CC:-}" ]; then kdestroy -c "$CC" >/dev/null 2>&1 || true; fi
+}`);
+
+const KERBEROS_EINRICHTEN_KOERPER = sh(String.raw`KW=$(feld kennwort) || abbruch "Kennwort von $KONTO enthält nicht druckbare Zeichen"
+[ -n "$KW" ] || abbruch "kein Kennwort von $KONTO in der Eingabe (Tresor $KONTO_TRESOR) — nichts geändert"
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+[ -n "$(paket_version mssql-server)" ] || abbruch "mssql-server ist nicht installiert — nichts geändert"
+[ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — nichts geändert"
+id mssql >/dev/null 2>&1 || abbruch "Benutzer mssql fehlt — nichts geändert"
+for b in kinit kvno klist ktutil kdestroy realm; do command -v "$b" >/dev/null 2>&1 || abbruch "$b fehlt (krb5-user/realmd aus ad_beitreten) — nichts geändert"; done
+NICHT_BEI="nicht in $DOM beigetreten — zuerst linux_sql ad_beitreten; nichts geändert"
+{ [ -f "$SSSD_CONF" ] && sssd_eigen; } || abbruch "$NICHT_BEI ($SSSD_CONF fehlt oder ist nicht von Alfred)"
+{ [ -f "$KRB5_CONF" ] && krb5_eigen; } || abbruch "$NICHT_BEI ($KRB5_CONF fehlt oder ist nicht von Alfred)"
+realm_hat || abbruch "$NICHT_BEI (realm list zeigt $DOM nicht)"
+${ZEIT_VORBEDINGUNG}
+ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-kt.XXXXXX"); chmod 0700 "$ALFRED_TMP"
+CC="FILE:$ALFRED_TMP/cc"
+# TGT mit dem Kennwort (nur über die Pipe aus dem Builtin printf); der Trace nennt das Salz des Kontos aus etype-info2 des KDC
+if ! printf '%s\n' "$KW" | KRB5CCNAME="$CC" KRB5_TRACE="$ALFRED_TMP/trace" kinit "$KONTO@$REALM" >"$ALFRED_TMP/kinit.log" 2>&1; then
+  abbruch "kinit $KONTO@$REALM mit dem Kennwort aus dem Tresor scheitert: $(schwarz_kw "$(kurz "$(cat "$ALFRED_TMP/kinit.log")")") — nichts geändert"
+fi
+if ! a=$(KRB5CCNAME="$CC" kvno "$SPN_PRUEF@$REALM" 2>&1); then
+  abbruch "kvno $SPN_PRUEF@$REALM scheitert: $(kurz "$a") — SPN am Konto $KONTO? (windows_ad spn_setzen); nichts geändert"
+fi
+ADKV=$(kvno_aus "$a")
+[[ "$ADKV" =~ ^[1-9][0-9]{0,5}$ ]] || abbruch "AD-kvno von $SPN_PRUEF nicht lesbar ($(kurz "$a")) — nichts geändert"
+# AD-Salz (REALM + sAMAccountName) gilt für alle Schlüssel des Kontos, auch für die SPNs — gelesen aus dem KDC, sonst nach dieser Regel
+SALT=$(sed -n 's/.*salt "\([^"]*\)".*/\1/p' "$ALFRED_TMP/trace" 2>/dev/null | sed -n 1p || true); SALZ=kdc
+rm -f -- "$ALFRED_TMP/trace"
+if [ -z "$SALT" ] || ! [[ "$SALT" =~ ^[[:graph:]]+$ ]]; then SALT="$REALM$KONTO"; SALZ=regel; fi
+ALT=''; AK=''
+if [ -e "$SQL_KT" ]; then
+  ALT=$(kt_eintraege "$SQL_KT") || abbruch "$SQL_KT nicht lesbar (klist -k) — nichts geändert"
+  fr=$(kt_fremd "$ALT")
+  [ -z "$fr" ] || abbruch "$SQL_KT enthält fremde Principals ($(printf '%s' "$fr" | sed -n 1,3p | tr '\n' ' ')) — nichts geändert"
+  AH=$(kt_hoechste "$ALT")
+  [ "$AH" -le "$ADKV" ] || abbruch "Keytab-kvno $AH, AD-kvno $ADKV — $SQL_KT ist neuer als das AD (Konto $KONTO neu angelegt?) — nichts geändert"
+  for k in $(awk '{ print $1 }' <<<"$ALT" | sort -un); do if [ "$k" -lt "$ADKV" ]; then AK+="§{AK:+,}$k"; fi; done
+fi
+# ── Phase 2: Keytab (bestehende Einträge niedrigerer kvno bleiben, Spec 7.7) ──
+KT=schon
+if [ -n "$ALT" ] && kt_vollstaendig "$ALT" "$ADKV" && kt_pruefen "$SQL_KT" && [ "$PKV" = "$ADKV" ]; then
+  :
+else
+  KT=neu
+  KT_DIR=§{SQL_KT%/*}
+  if [ ! -d "$KT_DIR" ]; then mkdir -p "$KT_DIR"; chown mssql:mssql "$KT_DIR"; chmod 0700 "$KT_DIR"; aend secrets-ordner; fi
+  NEU_DIR=$(mktemp -d "$KT_DIR/.alfred-kt-XXXXXX"); NEU="$NEU_DIR/mssql.keytab"
+  SLOTS=''
+  if [ -e "$SQL_KT" ]; then
+    l=$(printf 'rkt %s\nlist\nquit\n' "$SQL_KT" | ktutil 2>&1) || abbruch "ktutil liest $SQL_KT nicht: $(kurz "$l") — nichts geändert"
+    SLOTS=$(awk -v k="$ADKV" '$1 ~ /^[0-9]+$/ && $2 == k { print $1 }' <<<"$l" | sort -rn)
+  fi
+  kt_befehle | ktutil >"$ALFRED_TMP/ktutil.log" 2>&1 || abbruch "ktutil fehlgeschlagen: $(schwarz_kw "$(kurz "$(cat "$ALFRED_TMP/ktutil.log")")") — $SQL_KT unverändert"
+  KTLOG=$(schwarz_kw "$(kurz "$(cat "$ALFRED_TMP/ktutil.log")")"); rm -f -- "$ALFRED_TMP/ktutil.log"
+  [ -s "$NEU" ] || abbruch "ktutil hat keinen Keytab geschrieben: $KTLOG — $SQL_KT unverändert"
+  chown mssql:mssql "$NEU"; chmod 0400 "$NEU"
+  NE=$(kt_eintraege "$NEU") || abbruch "neuer Keytab nicht lesbar (klist -k): $KTLOG — $SQL_KT unverändert"
+  kt_vollstaendig "$NE" "$ADKV" || abbruch "Selbstprüfung: im neuen Keytab fehlen Einträge mit kvno $ADKV (§{#SOLL[@]} Principals × aes256/aes128): $KTLOG — $SQL_KT unverändert"
+  [ -z "$(kt_fremd "$NE")" ] || abbruch "Selbstprüfung: neuer Keytab enthält fremde Principals — $SQL_KT unverändert"
+  while IFS= read -r z; do
+    if [ -n "$z" ] && [ "§{z%% *}" -lt "$ADKV" ] && ! grep -qxF -- "$z" <<<"$NE"; then abbruch "Selbstprüfung: älterer Eintrag ($z) fehlt im neuen Keytab — $SQL_KT unverändert"; fi
+  done <<<"$ALT"
+  if ! kt_pruefen "$NEU"; then
+    # Review Focus 2: hat das AD inzwischen eine andere kvno (Kennwort während des Laufs gewechselt), beide Zahlen nennen
+    JETZT=$(ad_kvno_jetzt || true)
+    [ -z "$JETZT" ] || [ "$JETZT" = "$ADKV" ] || abbruch "Keytab-kvno $ADKV, AD-kvno $JETZT — Kennwort von $KONTO während des Laufs geändert? $SQL_KT und mssql-conf unverändert"
+    abbruch "Selbstprüfung: $PRUEF_FEHLER — $SQL_KT und mssql-conf unverändert"
+  fi
+  [ "$PKV" = "$ADKV" ] || abbruch "Keytab-kvno $ADKV, AD-kvno §{PKV:-unbekannt} — Kennwort von $KONTO während des Laufs geändert? $SQL_KT und mssql-conf unverändert"
+  mv -f -- "$NEU" "$SQL_KT"
+  aend keytab
+fi
+if ! kt_rechte_ok "$SQL_KT"; then chown mssql:mssql "$SQL_KT"; chmod 0400 "$SQL_KT"; aend keytab-rechte; fi
+# ── Phase 3: mssql-conf (nur bei Abweichung; wirkt erst nach dem Neustart — der läuft rollierend per Change, nicht hier) ──
+setze_conf kerberoskeytabfile "$SQL_KT"
+setze_conf privilegedadaccount "$KONTO"
+# ── Selbstprüfung ──
+E=$(kt_eintraege "$SQL_KT") || abbruch "Selbstprüfung: $SQL_KT nicht lesbar"
+kt_vollstaendig "$E" "$ADKV" || abbruch "Selbstprüfung: $SQL_KT ohne alle Einträge mit kvno $ADKV"
+EH=$(kt_hoechste "$E")
+[ "$EH" = "$ADKV" ] || abbruch "Keytab-kvno $EH, AD-kvno $ADKV"
+kt_rechte_ok "$SQL_KT" || abbruch "Selbstprüfung: $SQL_KT ist nicht 0400 mssql:mssql"
+[ "$(lies network kerberoskeytabfile)" = "$SQL_KT" ] || abbruch "Selbstprüfung: mssql.conf network.kerberoskeytabfile ist nicht $SQL_KT"
+[ "$(lies network privilegedadaccount)" = "$KONTO" ] || abbruch "Selbstprüfung: mssql.conf network.privilegedadaccount ist nicht $KONTO"
+kdestroy -c "$CC" >/dev/null 2>&1 || true
+if neustart_noetig; then NN=true; else NN=false; fi
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
+ergebnis "{\"zustand\":\"$Z\",\"kvno\":$ADKV,\"spns\":§{#SPNS[@]},\"principals\":§{#SOLL[@]},\"keytab\":\"$SQL_KT\",\"keytabNeu\":$([ "$KT" = neu ] && echo true || echo false),\"aeltereKvno\":[$AK],\"salz\":\"$SALZ\",\"fqdn\":\"$FQDN\",\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
+
+function kerberosWerte(): string[] {
+  return [
+    `KONTO=${shQ(SQL_KERBEROS_KONTO)}`,
+    `KONTO_TRESOR=${shQ(KERBEROS_KONTO_TRESOR)}`,
+    `SQL_KT=${shQ(SQL_KEYTAB)}`,
+    `SPNS=(${KERBEROS_SPNS.map(shQ).join(' ')})`,
+    `SOLL=(${[...KERBEROS_SPNS, SQL_KERBEROS_KONTO].map(p => shQ(`${p}@${LINUX_AD.realm}`)).join(' ')})`,
+    `ENCTYPES=(${KERBEROS_ENCTYPES.map(shQ).join(' ')})`,
+    `MSSQLCONF=${shQ(MSSQL_CONF_PROGRAMM)}`,
+    `MSSQL_CONF=${shQ(MSSQL_CONF_DATEI)}`,
+    `PY_CONF=${shQ(PY_CONF)}`,
+  ];
+}
+
+/**
+ * I8e Etappe 3 Task 5 (Spec 7.3 Nr. 2) — Keytab der SQL-Instanz AUF dem Host aus dem Kennwort von svc-sqllnx (stdin `{ kennwort }`).
+ * Prüfen ohne Änderung: mssql-server installiert, beigetreten (Alfreds sssd.conf/krb5.conf, realm list), Zeitquelle (R11). Dann
+ * `kinit` mit dem Kennwort (Pipe aus dem Builtin printf, privater Zwischenspeicher in ALFRED_TMP) → `kvno MSSQLSvc/<fqdn>:1433` = AD-kvno;
+ * Salz des Kontos aus dem KDC-Trace (etype-info2), sonst AD-Regel REALM + sAMAccountName. ktutil 1.20 (Ubuntu 24.04): `addent -password
+ * -p … -k <kvno> -e <enctype> -s <salz>` — `-s` statt `-f`, weil `-f` für jeden SPN eine AS-Anfrage auf den SPN als Client stellt; das
+ * Salz ist für alle Schlüssel eines AD-Kontos gleich. Ein vorhandener Keytab: fremde Principals oder höhere kvno als das AD → Abbruch
+ * ohne Änderung; Einträge niedrigerer kvno bleiben (Spec 7.7), Einträge der AD-kvno werden ersetzt. Der neue Keytab entsteht in einem
+ * eigenen Ordner neben dem Ziel, bekommt mssql:mssql 0400, wird geprüft (klist -k -e: 6 SPNs + Konto × AES256/AES128 mit der AD-kvno;
+ * `kinit -k -t`, `kvno -k` → kvno gleich, sonst Abbruch „Keytab-kvno X, AD-kvno Y“ ohne mssql-conf) und erst dann verschoben. mssql-conf
+ * network.kerberoskeytabfile/privilegedadaccount nur bei Abweichung. KEIN Neustart (neustartNoetig im Ergebnis). Zeit:
+ * LINUX_SQL_ZEIT_MS.kerberosEinrichten
+ */
+export function kerberosSkript(p: KerberosParameter): string {
+  const f = pruefeKerberos(p); if (f) throw new Error(f);
+  const klein = p.computername.toLowerCase();
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.kerberosEinrichten, { konto: p.konto, realm: p.realm, spns: [...p.spns], computername: klein }),
+    HILFEN,
+    ...kennung(klein),
+    `SPN_PRUEF=${shQ(`MSSQLSvc/${klein}.${LINUX_AD.domaene}:1433`)}`,
+    `UHR_MAX_MS=${AD_UHR_MAX_S * 1000}`,
+    ZEIT_HILFEN,
+    ...kerberosWerte(),
+    KERBEROS_HILFEN,
+    KERBEROS_EINRICHTEN_HILFEN,
+    MARKE,
+    KERBEROS_EINRICHTEN_KOERPER,
+  ].join('\n');
+}
+
+const KERBEROS_ENTFERNEN_KOERPER = sh(String.raw`BELASSEN=''
+belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
+# mssql-conf nur, wenn die Werte Alfreds sind; fremde Werte bleiben (belassen)
+if [ -x "$MSSQLCONF" ]; then
+  for kv in "kerberoskeytabfile=$SQL_KT" "privilegedadaccount=$KONTO"; do
+    k=§{kv%%=*}; s=§{kv#*=}; v=$(lies network "$k")
+    if [ "$v" = "$s" ]; then
+      aus=$("$MSSQLCONF" unset "network.$k" 2>&1) || abbruch "mssql-conf unset network.$k fehlgeschlagen: $(kurz "$aus")"
+      aend "mssql-conf:$k"
+    elif [ -n "$v" ]; then belassen "network.$k = $v (nicht Alfreds Wert)"; fi
+  done
+fi
+# Keytab nur, wenn er ausschließlich SPNs von svc-sqllnx und das Konto enthält
+if [ -e "$SQL_KT" ]; then
+  E=''
+  if command -v klist >/dev/null 2>&1; then E=$(kt_eintraege "$SQL_KT" || true); fi
+  if [ -n "$E" ] && [ -z "$(kt_fremd "$E")" ]; then rm -f -- "$SQL_KT"; aend keytab
+  else belassen "$SQL_KT (enthält fremde Principals oder ist nicht lesbar: $(kt_fremd "$E" | sed -n 1,3p | tr '\n' ' '))"; fi
+fi
+# ── Selbstprüfung ──
+if [ -x "$MSSQLCONF" ]; then
+  [ "$(lies network kerberoskeytabfile)" != "$SQL_KT" ] || abbruch "Selbstprüfung: network.kerberoskeytabfile zeigt noch auf $SQL_KT"
+  [ "$(lies network privilegedadaccount)" != "$KONTO" ] || abbruch "Selbstprüfung: network.privilegedadaccount ist noch $KONTO"
+fi
+if [ "$GEAENDERT" = 1 ]; then Z=geaendert; NN=true; else Z=schon; NN=false; fi
+ergebnis "{\"zustand\":\"$Z\",\"belassen\":[$BELASSEN],\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Rückweg von kerberosSkript: mssql-conf network.kerberoskeytabfile/privilegedadaccount nur entfernen, wenn sie Alfreds Werte tragen;
+ * Keytab nur, wenn er ausschließlich svc-sqllnx/MSSQLSvc-Principals enthält. Fremdes bleibt (belassen). KEIN Neustart
+ * (neustartNoetig, sobald etwas geändert wurde). Zeit: LINUX_SQL_ZEIT_MS.kerberosEntfernen
+ */
+export function kerberosEntfernenSkript(): string {
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.kerberosEntfernen, {}),
+    HILFEN,
+    ...kerberosWerte(),
+    KERBEROS_HILFEN,
+    MARKE,
+    KERBEROS_ENTFERNEN_KOERPER,
+  ].join('\n');
+}
+
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<AdBeitretenParameter>(LINUX_SQL_BAUSTEINE.adBeitreten, adBeitretenSkript);
 registriereLinuxBaustein<AdVerlassenParameter>(LINUX_SQL_BAUSTEINE.adVerlassen, adVerlassenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.zeitquelleEinrichten, () => zeitquelleEinrichtenSkript());
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.zeitquelleEntfernen, () => zeitquelleEntfernenSkript());
+registriereLinuxBaustein<KerberosParameter>(LINUX_SQL_BAUSTEINE.kerberosEinrichten, kerberosSkript);
+registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.kerberosEntfernen, () => kerberosEntfernenSkript());

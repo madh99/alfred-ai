@@ -67,7 +67,20 @@ export const LINUX_SQL_BAUSTEINE = {
   adBeitreten: 'sql.ad_beitreten', adVerlassen: 'sql.ad_verlassen',
   // Ruling R11 — Zeitquelle an den DCs (systemd-timesyncd-Drop-in) und Rückweg (Erzeuger in linux-sql-ad.ts)
   zeitquelleEinrichten: 'sql.zeitquelle_einrichten', zeitquelleEntfernen: 'sql.zeitquelle_entfernen',
+  // I8e Etappe 3 Task 5 — Keytab der SQL-Instanz auf dem Host und Rückweg (Erzeuger in linux-sql-ad.ts)
+  kerberosEinrichten: 'sql.kerberos_einrichten', kerberosEntfernen: 'sql.kerberos_entfernen',
 } as const;
+
+/**
+ * I8e Etappe 3 — Kopfzeilen der von ad_beitreten geschriebenen sssd.conf/krb5.conf und Pfad des SQL-Keytabs. Hier (nicht in
+ * linux-sql-ad.ts, das sie wieder exportiert), weil der Status (PY_STATUS) sie liest und linux-sql-ad.ts diese Datei importiert.
+ */
+export const AD_SSSD_KOPF = '# Alfred I8e — linux_sql ad_beitreten (nicht von Hand ändern)';
+export const AD_KRB5_KOPF = '# Alfred I8e — linux_sql ad_beitreten (krb5.conf, nicht von Hand ändern)';
+export const AD_DOMAENE_LINUX = 'ad.3033.at';
+export const SQL_KEYTAB = '/var/opt/mssql/secrets/mssql.keytab';
+/** Dienstkonto der SQL-Instanzen (Träger der SPNs und des Keytab-Schlüssels, Spec 7.1) */
+export const SQL_KERBEROS_KONTO = 'svc-sqllnx';
 
 /**
  * Ruling R11 (I8e Etappe 3, L1-Fakten 19.11.2026): systemd-timesyncd auf den Linux-SQL-Hosts versuchte ntp.ubuntu.com und lief nur in
@@ -85,6 +98,8 @@ export const LINUX_SQL_ZEIT_MS = {
   adBeitreten: 600_000, adVerlassen: 300_000,
   // Ruling R11: Prüfen, Drop-in, Neustart, bis 120 s Warten auf die Synchronisierung
   zeitquelleEinrichten: 240_000, zeitquelleEntfernen: 90_000,
+  // Task 5: kinit + kvno gegen das AD, ktutil, Selbstprüfung (kinit -k, kvno -k), mssql-conf — ohne Neustart
+  kerberosEinrichten: 180_000, kerberosEntfernen: 90_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -916,6 +931,61 @@ export const PY_STATUS = [
   'zeit["server"] = v if c == 0 and v else None',
   `zeit["dc"] = zeit["server"] in ${JSON.stringify(ZEITQUELLE_DCS)}`,
   'r["zeit"] = zeit',
+  // I8e Etappe 3 Task 5 — AD (nur Daten, Text in Task 6): beigetreten (Alfreds sssd.conf/krb5.conf + realm list), SQL-Keytab mit höchster
+  // kvno und SPN-Zahl; „aktuell“ vergleicht mit der AD-kvno, gelesen mit einem Ticket aus dem Keytab selbst oder dem Maschinen-Keytab
+  // (ohne Kennwort) — kein Ticket → None
+  'import re as _re2, shutil, tempfile',
+  'def kopf(pfad):',
+  '    try:',
+  '        with open(pfad) as f:',
+  '            return f.readline().rstrip("\\n")',
+  '    except Exception:',
+  '        return None',
+  `ad = {"beigetreten": kopf("/etc/sssd/sssd.conf") == ${JSON.stringify(AD_SSSD_KOPF)} and kopf("/etc/krb5.conf") == ${JSON.stringify(AD_KRB5_KOPF)} and ${JSON.stringify(AD_DOMAENE_LINUX)} in lauf("realm", "list", "--name-only")[1].lower().split()}`,
+  'def kt_liste(pfad):',
+  '    c, v = lauf("klist", "-k", pfad)',
+  '    if c != 0:',
+  '        return None',
+  '    return [(int(m.group(1)), m.group(2)) for m in (_re2.match(r"^\\s*(\\d+)\\s+(\\S+)", z) for z in v.splitlines()) if m]',
+  'def ad_kvno(ziel):',
+  '    d = tempfile.mkdtemp(prefix="alfred-st-")',
+  '    env = dict(os.environ, KRB5CCNAME="FILE:" + os.path.join(d, "cc"))',
+  '    try:',
+  '        versuche = [("-k", "-t", KT, p) for k, p in eintr if "/" not in p]',
+  '        for k, p in (kt_liste("/etc/krb5.keytab") or []):',
+  '            if _re2.match(r"^[^/@]+\\$@", p):',
+  '                versuche.append(("-k", "-t", "/etc/krb5.keytab", p))',
+  '                break',
+  '        for v in versuche:',
+  '            try:',
+  '                if subprocess.run(["kinit"] + list(v), capture_output=True, text=True, timeout=10, env=env).returncode != 0:',
+  '                    continue',
+  '                p = subprocess.run(["kvno", ziel], capture_output=True, text=True, timeout=10, env=env)',
+  '                m = _re2.search(r"kvno = (\\d+)", p.stdout)',
+  '                if p.returncode == 0 and m:',
+  '                    return int(m.group(1))',
+  '            except Exception:',
+  '                continue',
+  '        return None',
+  '    finally:',
+  '        try:',
+  '            subprocess.run(["kdestroy"], capture_output=True, timeout=10, env=env)',
+  '        except Exception:',
+  '            pass',
+  '        shutil.rmtree(d, ignore_errors=True)',
+  `KT = ${JSON.stringify(SQL_KEYTAB)}`,
+  'ad["keytab"] = None',
+  'if os.path.exists(KT):',
+  '    eintr = kt_liste(KT)',
+  '    if not eintr:',
+  '        ad["keytab"] = {"kvno": None, "spns": 0, "aktuell": None, "fehler": "nicht lesbar"}',
+  '    else:',
+  '        hoch = max(k for k, _ in eintr)',
+  '        spns = sorted({p for k, p in eintr if k == hoch and p.lower().startswith("mssqlsvc/")})',
+  '        ziel = next((p for p in spns if ":1433@" in p), spns[0] if spns else None)',
+  '        akv = ad_kvno(ziel) if ziel else None',
+  '        ad["keytab"] = {"kvno": hoch, "spns": len(spns), "aktuell": (akv == hoch) if akv is not None else None, "adKvno": akv}',
+  'r["ad"] = ad',
   'def sql_json(text):',
   '    aus = "".join(z.strip() for z in text.splitlines())',
   '    a, e = aus.find("{"), aus.rfind("}")',

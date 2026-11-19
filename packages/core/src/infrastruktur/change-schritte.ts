@@ -187,7 +187,10 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // I8e Etappe 3 Task 4 — Beitritt (realm list, id, getent group, Keytab, testjoin) und Verlassen (sssd aus, Dateien weg, NSS ohne sss)
     'ad_beitreten', 'ad_verlassen',
     // Ruling R11 — Zeitquelle: synchronisiert mit einem DC (NTPSynchronized, Server, Offset < 1 s); Rückweg: Drop-in weg, timesyncd läuft
-    'zeitquelle_einrichten', 'zeitquelle_entfernen']),
+    'zeitquelle_einrichten', 'zeitquelle_entfernen',
+    // Etappe 3 Task 5 — Keytab: klist -k -e (alle SPNs + Konto × AES in der AD-kvno), kinit -k, kvno -k, Rechte, mssql-conf zurückgelesen;
+    // Rückweg: mssql-conf-Werte und Keytab weg (Fremdes bleibt)
+    'kerberos_einrichten', 'kerberos_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -220,6 +223,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['ad_beitreten', { skill: 'linux_sql', aktion: 'ad_verlassen', text: 'linux_sql.ad_verlassen (zugang)', parameter: gleicherZugang('ad_verlassen') }],
     // Ruling R11 — Zeitquelle: Rückweg genau linux_sql.zeitquelle_entfernen auf demselben Zugang
     ['zeitquelle_einrichten', { skill: 'linux_sql', aktion: 'zeitquelle_entfernen', text: 'linux_sql.zeitquelle_entfernen (zugang)', parameter: gleicherZugang('zeitquelle_entfernen') }],
+    // Etappe 3 Task 5 — Keytab: Rückweg genau linux_sql.kerberos_entfernen auf demselben Zugang
+    ['kerberos_einrichten', { skill: 'linux_sql', aktion: 'kerberos_entfernen', text: 'linux_sql.kerberos_entfernen (zugang)', parameter: gleicherZugang('kerberos_entfernen') }],
   ]),
 };
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */

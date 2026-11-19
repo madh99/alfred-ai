@@ -18,7 +18,10 @@ import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, FS01_FQDN, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
 } from './linux-sql-sicherung.js';
-import { LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, pruefeAdVerlassen, type AdBeitretenParameter } from './linux-sql-ad.js';
+import {
+  LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, pruefeAdVerlassen, type AdBeitretenParameter,
+  KERBEROS_KONTO_TRESOR, KERBEROS_SPNS, SQL_KEYTAB, SQL_KERBEROS_KONTO, kerberosParameter, pruefeKerberos, type KerberosParameter,
+} from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
 
 /**
@@ -44,6 +47,8 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   ad_verlassen: sek(LINUX_SQL_ZEIT_MS.adVerlassen) + 60,
   zeitquelle_einrichten: sek(LINUX_SQL_ZEIT_MS.zeitquelleEinrichten) + 60,
   zeitquelle_entfernen: sek(LINUX_SQL_ZEIT_MS.zeitquelleEntfernen) + 60,
+  kerberos_einrichten: sek(LINUX_SQL_ZEIT_MS.kerberosEinrichten) + 60,
+  kerberos_entfernen: sek(LINUX_SQL_ZEIT_MS.kerberosEntfernen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -69,7 +74,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort und lokaler Rückweg
   'ad_beitreten', 'ad_verlassen',
   // Ruling R11 — Zeitquelle an den DCs (alle drei Hosts) und Rückweg
-  'zeitquelle_einrichten', 'zeitquelle_entfernen']);
+  'zeitquelle_einrichten', 'zeitquelle_entfernen',
+  // I8e Etappe 3 Task 5 — Keytab der SQL-Instanz (Kennwort svc-sqllnx nur über stdin) und Rückweg
+  'kerberos_einrichten', 'kerberos_entfernen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -120,6 +127,11 @@ export interface LinuxSqlStatus {
   alteZugangsdateienEntfernt?: number;
   /** Ruling R11 — Zeitquelle: Alfreds timesyncd-Drop-in, NTPSynchronized (yes/no), Server von systemd-timesyncd, Server ist ein DC */
   zeit?: { dropin?: string; synchronisiert?: string | null; server?: string | null; dc?: boolean } | null;
+  /**
+   * I8e Etappe 3 Task 5 — AD-Daten (Text in Task 6): beigetreten; SQL-Keytab mit höchster kvno, Zahl der MSSQLSvc-SPNs in dieser kvno,
+   * aktuell = kvno gleich der AD-kvno (null, wenn ohne Kennwort kein Ticket zu bekommen war)
+   */
+  ad?: { beigetreten?: boolean; keytab?: { kvno: number | null; spns: number; aktuell: boolean | null; adKvno?: number | null; fehler?: string } | null } | null;
 }
 
 /**
@@ -350,6 +362,14 @@ function adBeitretenParameter(zugang: string, input: Record<string, unknown>): A
   return p;
 }
 
+/** I8e Etappe 3 Task 5 — Keytab-Parameter: Konto, Realm, SPNs fest; computername Standard = zugang, nie sqllnxcfg (Spec 10) */
+function kerberosEingabe(zugang: string, input: Record<string, unknown>): KerberosParameter {
+  if (zugang.toLowerCase() === AD_NIE_BEITRETEN) throw new Error(`${AD_NIE_BEITRETEN} bekommt keinen Keytab (Spec 10)`);
+  const p = kerberosParameter(String(input.computername ?? zugang));
+  const f = pruefeKerberos(p); if (f) throw new Error(f);
+  return p;
+}
+
 function pruefdatenParameter(input: Record<string, unknown>): { datenbank: string } {
   const p = { datenbank: String(input.datenbank ?? '').trim() };
   const f = pruefePruefdaten(p); if (f) throw new Error(f);
@@ -381,6 +401,7 @@ export class LinuxSqlSkill extends Skill {
       + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
       + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Zeitquelle eingerichtet (zeitquelle_einrichten: Drop-in, NTPSynchronized yes, Offset < 60 s — sonst „Zeitquelle zuerst einrichten“); dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd nur für NSS (access_provider = deny, PAM ohne sss — keine Anmeldung von Domänenbenutzern am Host); eine fremde sssd.conf, krb5.conf (außer der unveränderten krb5-config-Vorgabe) oder ein fremder Keytab → Abbruch ohne Änderung; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab, kein pam_sss; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang, computername Standard = zugang; nur lokal und nur Alfreds Einrichtung: sssd aus, Alfreds sssd.conf/krb5.conf entfernt bzw. Paketvorgabe zurück, Keytab nur mit ausschließlich eigenen Principals, NSS und PAM ohne sss; Fremdes bleibt und steht unter „belassen“; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
       + `ZEIT (Ruling R11, alle drei Hosts einschließlich sqllnxcfg, vor ad_beitreten): zeitquelle_einrichten (nur im Change; zugang) — systemd-timesyncd mit Drop-in ${ZEITQUELLE_DROPIN} (NTP=${ZEITQUELLE_DCS.join(' ')}, FallbackNTP= leer), Neustart, Nachweis binnen 120 s: NTPSynchronized yes, Server ein DC, Offset unter 1 s → „TIME_SYNCED“; chrony/ntpd aktiv oder fremdes Drop-in mit NTP= → Abbruch ohne Änderung; nicht synchronisiert → Abbruch mit gelesenem Status, Drop-in bleibt ↔ zeitquelle_entfernen (zugang; entfernt nur Alfreds Drop-in, Neustart). Status nennt „Zeit synchron (DC)“ (sonst „Zeit NICHT synchron …“ bzw. „Zeit ohne DC-Zeitquelle …“). `
+      + `KERBEROS (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg bekommt keinen Keytab; nach ad_beitreten, vorher windows_ad spn_setzen für ${KERBEROS_SPNS.join(', ')} am Konto ${SQL_KERBEROS_KONTO}): kerberos_einrichten (nur im Change; zugang, computername Standard = zugang) — Kennwort aus dem Tresor ${KERBEROS_KONTO_TRESOR} nur über stdin; liest die kvno per kinit + kvno MSSQLSvc/<fqdn>:1433 aus dem AD, schreibt ${SQL_KEYTAB} (mssql:mssql 0400) mit allen 6 SPNs und ${SQL_KERBEROS_KONTO} je AES256/AES128 in dieser kvno (ältere kvno bleiben; fremde Principals oder eine höhere kvno als das AD → Abbruch ohne Änderung), prüft kinit -k und kvno -k (Abweichung → Abbruch „Keytab-kvno X, AD-kvno Y“, mssql-conf unverändert), setzt mssql-conf network.kerberoskeytabfile und network.privilegedadaccount ${SQL_KERBEROS_KONTO}; KEIN Neustart — „Neustart nötig“ steht in der Anzeige, der Change startet SQL Server rollierend (sqllnx02 → Failover → sqllnx01); „KERBEROS_KEYTAB_OK“ ↔ kerberos_entfernen (zugang; nimmt die mssql-conf-Werte nur zurück, wenn es Alfreds sind, entfernt den Keytab nur mit ausschließlich eigenen Principals; Fremdes steht unter „belassen“; „KERBEROS_REMOVED“). `
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -407,7 +428,7 @@ export class LinuxSqlSkill extends Skill {
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
         // (kettengrenzen_uebernehmen nutzt zugang und konto_tresor)
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
-        computername: { type: 'string', description: 'ad_beitreten/ad_verlassen: Name des Computerkontos ohne $ (Standard = zugang), Beitritt nie sqllnxcfg' },
+        computername: { type: 'string', description: 'ad_beitreten/ad_verlassen/kerberos_einrichten: Name des Computerkontos ohne $ (Standard = zugang), Beitritt und Keytab nie sqllnxcfg' },
         pakete: { type: 'object', description: `ad_beitreten: optional abweichende apt-Versionen { paket: version } für ${Object.keys(LINUX_AD_PAKETE).join(', ')} (Standard fest)` },
       },
       required: ['action', 'zugang'],
@@ -425,6 +446,7 @@ export class LinuxSqlSkill extends Skill {
     if (!istVerweis(input.zugang) && !ZUGANG.test(String(input.zugang ?? '').trim())) return 'zugang: Name des Linux-Fernzugangs';
     // Spec 10 — auch wenn andere Felder Verweise sind: der Konfig-Knoten tritt nie bei
     if (action === 'ad_beitreten' && [input.zugang, input.computername].some(v => typeof v === 'string' && v.trim().toLowerCase() === AD_NIE_BEITRETEN)) return `${AD_NIE_BEITRETEN} tritt nicht bei (Spec 10)`;
+    if (action === 'kerberos_einrichten' && [input.zugang, input.computername].some(v => typeof v === 'string' && v.trim().toLowerCase() === AD_NIE_BEITRETEN)) return `${AD_NIE_BEITRETEN} bekommt keinen Keytab (Spec 10)`;
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
       if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'reste_entfernen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
@@ -439,6 +461,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'kettengrenzen_uebernehmen') kontoTresorName(input);
       else if (action === 'ad_beitreten') adBeitretenParameter(String(input.zugang).trim(), input);
       else if (action === 'ad_verlassen') { const f = pruefeAdVerlassen({ computername: String(input.computername ?? input.zugang).trim() }); if (f) throw new Error(f); }
+      else if (action === 'kerberos_einrichten') { kerberosEingabe(String(input.zugang).trim(), input); pruefeTresorName(KERBEROS_KONTO_TRESOR); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -478,6 +501,8 @@ export class LinuxSqlSkill extends Skill {
         case 'ad_verlassen': return await this.adVerlassen(zugang, input);
         case 'zeitquelle_einrichten': return await this.zeitquelleEinrichten(zugang);
         case 'zeitquelle_entfernen': return await this.zeitquelleEntfernen(zugang);
+        case 'kerberos_einrichten': return await this.kerberosEinrichten(zugang, input, geheim);
+        case 'kerberos_entfernen': return await this.kerberosEntfernen(zugang);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -708,6 +733,38 @@ export class LinuxSqlSkill extends Skill {
     this.d.protokoll?.('I8e Zeitquelle', { zugang, zustand: r.zustand, server: r.server, offsetMs: r.offsetMs, aenderungen: r.aenderungen });
     const text = `TIME_SYNCED ${zugang}: systemd-timesyncd synchron mit DC ${r.server} (Offset ${r.offsetMs} ms; Drop-in ${ZEITQUELLE_DROPIN})`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  // ── I8e Etappe 3 Task 5 — Keytab der SQL-Instanz ───────────────────────────────────────────────────────────────────────────────
+
+  /** Kennwort von svc-sqllnx nur über stdin; der Skill prüft das Ergebnis noch einmal (kvno, 6 SPNs, mssql-conf ohne Neustart) */
+  private async kerberosEinrichten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = kerberosEingabe(zugang, input);
+    const t = this.tresor();
+    const name = pruefeTresorName(KERBEROS_KONTO_TRESOR);
+    if (!(await t.namen()).has(name)) throw new Error(`Tresor-Eintrag ${name} fehlt — Kennwort von ${SQL_KERBEROS_KONTO} (windows_ad dienstkonto_anlegen konto ${SQL_KERBEROS_KONTO})`);
+    const kennwort = await t.lies(name, `Keytab ${SQL_KERBEROS_KONTO} auf ${p.computername}`); geheim.push(kennwort);
+    const r = await this.lauf<{ zustand: string; kvno?: number; spns?: number; principals?: number; keytab?: string; keytabNeu?: boolean; aeltereKvno?: number[]; salz?: string; neustartNoetig?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.kerberosEinrichten, p, 'Keytab einrichten', LINUX_SQL_ZEIT_MS.kerberosEinrichten, { kennwort });
+    if (typeof r.kvno !== 'number' || !Number.isInteger(r.kvno) || r.kvno < 1 || r.spns !== KERBEROS_SPNS.length || typeof r.neustartNoetig !== 'boolean' || r.keytab !== SQL_KEYTAB) {
+      throw new Error(`Keytab ${zugang}: Nachprüfung fehlgeschlagen (kvno ${String(r.kvno)}, SPNs ${String(r.spns)}, neustartNoetig ${String(r.neustartNoetig)})`);
+    }
+    this.d.protokoll?.('I8e Keytab', { zugang, computername: p.computername, zustand: r.zustand, kvno: r.kvno, aeltereKvno: r.aeltereKvno ?? [], salz: r.salz, neustartNoetig: r.neustartNoetig, aenderungen: r.aenderungen });
+    const alt = r.aeltereKvno?.length ? `, ältere kvno ${r.aeltereKvno.join('/')} behalten` : '';
+    const neustart = r.neustartNoetig ? 'Neustart von SQL Server nötig (rollierend per Change)' : 'kein Neustart nötig';
+    const text = `KERBEROS_KEYTAB_OK ${zugang}: ${SQL_KEYTAB} kvno ${r.kvno} (= AD), ${r.spns} SPNs + ${SQL_KERBEROS_KONTO} je AES256/AES128${alt}; kinit -k und kvno -k gelungen; mssql-conf kerberoskeytabfile/privilegedadaccount gesetzt; ${neustart}`;
+    return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Rückweg: nur Alfreds mssql-conf-Werte und ein Keytab mit ausschließlich eigenen Principals; Fremdes bleibt (belassen) */
+  private async kerberosEntfernen(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<{ zustand: string; belassen?: string[]; neustartNoetig?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.kerberosEntfernen, {}, 'Keytab entfernen', LINUX_SQL_ZEIT_MS.kerberosEntfernen);
+    this.d.protokoll?.('I8e Keytab entfernt', { zugang, zustand: r.zustand, belassen: r.belassen ?? [], neustartNoetig: r.neustartNoetig });
+    const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
+    const neustart = r.neustartNoetig ? ' — Neustart von SQL Server nötig (rollierend per Change)' : '';
+    const text = `KERBEROS_REMOVED ${zugang}: ${(r.aenderungen ?? []).join(', ') || 'nichts von Alfred vorhanden'}${bel}${neustart}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
   /** Rückweg: nur Alfreds Drop-in; eine fremde Datei an derselben Stelle bleibt (belassen, nie still) */
