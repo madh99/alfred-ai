@@ -11,7 +11,7 @@
  *     (Schlüssel = Anforderung, Kette bis zur Root, SAN, EKU). Wiederholbar: eine schon eingereichte Anforderung mit demselben SHA-256
  *     (CA-Datenbank, derselbe Anforderer) wird weiterverwendet, eine schon ausgestellte nur abgeholt.
  */
-import { createHash } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
 import { kopf, psText } from './windows-ad.js';
 import { MIT_KONTO, innenSkript } from './windows-cluster.js';
 import { ALS_BENUTZER } from './windows-ad-linux.js';
@@ -71,7 +71,15 @@ export function pruefeFremdAusstellung(o: Record<string, unknown>): FremdAusstel
   if (new Set(sans).size !== sans.length || [...sans].sort().join(',') !== [...soll].sort().join(',')) return `sans: genau ${soll.join(', ')} (Reihenfolge egal)`;
   const sha = String(o.csr_sha256 ?? '').trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(sha)) return 'csr_sha256: SHA-256 der Anforderung (64 Hex) aus linux_sql tls_anfordern';
-  const csrPem = typeof o.csr_pem === 'string' ? o.csr_pem : '';
+  // I8e Task 6 (Ruling R1) — csr_base64 (DER, eine Zeile) ist die Form, die ein Change-Verweis {{schrittN.csrBase64}} aus linux_sql
+  // tls_anfordern als ganzen Wert trägt (PEM mit Zeilenumbrüchen und „-----“ fällt durch die Wert-Sicherheit der Verweise)
+  if (o.csr_pem !== undefined && o.csr_base64 !== undefined) return 'entweder csr_pem oder csr_base64';
+  let csrPem = typeof o.csr_pem === 'string' ? o.csr_pem : '';
+  if (o.csr_base64 !== undefined) {
+    const b = typeof o.csr_base64 === 'string' ? o.csr_base64.trim() : '';
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b) || b.length < 88 || b.length > CSR_MAX_BYTES) return 'csr_base64: Anforderung als DER-Base64 (eine Zeile) aus linux_sql tls_anfordern (data.csrBase64)';
+    csrPem = `-----BEGIN CERTIFICATE REQUEST-----\n${b.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE REQUEST-----\n`;
+  }
   const form = pruefeCsrForm(csrPem); if (form) return form;
   if (csrSha256(csrPem) !== sha) return 'csr_sha256 passt nicht zur Anforderung (csr_pem) — nichts eingereicht';
   return { cn, sans: soll, csr_sha256: sha, csrPem };
@@ -178,6 +186,23 @@ export interface FremdAusgestellt {
 }
 
 const PEM_ZERT = /-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+?-----END CERTIFICATE-----/g;
+
+/**
+ * I8e Task 6 (Ruling R1) — Zertifikat und Kette als DER-Base64 je ein Feld (zertBase64, issuingBase64, rootBase64): die Form, die ein
+ * Change-Verweis als ganzen Wert in linux_sql tls_einspielen zert_base64/issuing_base64/root_base64 trägt. Root = selbstsigniert.
+ * Fehlt etwas oder ist die Kette nicht Issuing + Root, bleiben die Felder weg (linux_sql prüft ohnehin alles noch einmal).
+ */
+export function derFelder(r: FremdAusgestellt): { zertBase64?: string; issuingBase64?: string; rootBase64?: string } {
+  try {
+    const z = String(r.zertifikatPem ?? '').match(PEM_ZERT) ?? []; const k = String(r.kettePem ?? '').match(PEM_ZERT) ?? [];
+    if (z.length !== 1 || k.length !== 2) return {};
+    const der = (p: string) => Buffer.from(p.replace(/-----[^-]+-----|\s/g, ''), 'base64');
+    const kx = k.map(p => new X509Certificate(der(p)));
+    const root = kx.findIndex(c => c.subject === c.issuer); const iss = 1 - root;
+    if (root < 0 || kx[iss]!.subject === kx[iss]!.issuer) return {};
+    return { zertBase64: der(z[0]!).toString('base64'), issuingBase64: der(k[iss]!).toString('base64'), rootBase64: der(k[root]!).toString('base64') };
+  } catch { return {}; }
+}
 /** Selbstprüfung des gemeldeten Ergebnisses gegen die Anforderung (Name, SAN-Liste exakt, nur ServerAuth, Kette, Laufzeit, nur öffentliche Blöcke) */
 export function bewerteFremdAusgestellt(r: FremdAusgestellt, a: FremdAusstellung, jetzt = new Date()): string[] {
   const g: string[] = [];

@@ -69,6 +69,8 @@ export const LINUX_SQL_BAUSTEINE = {
   zeitquelleEinrichten: 'sql.zeitquelle_einrichten', zeitquelleEntfernen: 'sql.zeitquelle_entfernen',
   // I8e Etappe 3 Task 5 — Keytab der SQL-Instanz auf dem Host und Rückweg (Erzeuger in linux-sql-ad.ts)
   kerberosEinrichten: 'sql.kerberos_einrichten', kerberosEntfernen: 'sql.kerberos_entfernen',
+  // I8e Etappe 3 Task 6 — TLS: Schlüssel + Anforderung auf dem Host, Zertifikat geprüft einspielen, Rückweg (Erzeuger in linux-sql-tls.ts)
+  tlsAnfordern: 'sql.tls_anfordern', tlsEinspielen: 'sql.tls_einspielen', tlsEntfernen: 'sql.tls_entfernen',
 } as const;
 
 /**
@@ -81,6 +83,23 @@ export const AD_DOMAENE_LINUX = 'ad.3033.at';
 export const SQL_KEYTAB = '/var/opt/mssql/secrets/mssql.keytab';
 /** Dienstkonto der SQL-Instanzen (Träger der SPNs und des Keytab-Schlüssels, Spec 7.1) */
 export const SQL_KERBEROS_KONTO = 'svc-sqllnx';
+
+/**
+ * I8e Etappe 3 Task 6 — TLS-Pfade (Global Constraints). Hier (nicht in linux-sql-tls.ts, das sie wieder exportiert), weil der Status
+ * (PY_STATUS) sie liest. Das Manifest hält die SHA-256 der von tls_einspielen geschriebenen Dateien — nur diese entfernt tls_entfernen.
+ */
+export const TLS_SECRETS = '/var/opt/mssql/secrets';
+export const TLS_CRT = `${TLS_SECRETS}/tls.crt`;
+export const TLS_KEY = `${TLS_SECRETS}/tls.key`;
+export const TLS_KEY_NEU = `${TLS_SECRETS}/tls.key.neu`;
+export const TLS_CA_ORDNER = '/usr/local/share/ca-certificates';
+export const TLS_CA_ROOT = `${TLS_CA_ORDNER}/ad3033-root.crt`;
+export const TLS_CA_ISSUING = `${TLS_CA_ORDNER}/ad3033-issuing.crt`;
+export const TLS_MANIFEST = '/etc/alfred/sqllnx-tls.manifest';
+export const TLS_MANIFEST_KOPF = '# Alfred I8e — linux_sql tls_einspielen (SHA-256 der eingespielten Dateien, nicht von Hand ändern)';
+/** Schalter der Zertifikatsprüfung für Alfreds eigene Verbindungen (Task 7; root 0644, Inhalt = FQDN) */
+export const TLS_PRUEF_SCHALTER = '/etc/alfred/sqllnx-tls-pruefen';
+export const TLS_PROTOKOLLE = '1.2,1.3';
 
 /**
  * Ruling R11 (I8e Etappe 3, L1-Fakten 19.11.2026): systemd-timesyncd auf den Linux-SQL-Hosts versuchte ntp.ubuntu.com und lief nur in
@@ -100,6 +119,8 @@ export const LINUX_SQL_ZEIT_MS = {
   zeitquelleEinrichten: 240_000, zeitquelleEntfernen: 90_000,
   // Task 5: kinit + kvno gegen das AD, ktutil, Selbstprüfung (kinit -k, kvno -k), mssql-conf — ohne Neustart
   kerberosEinrichten: 180_000, kerberosEntfernen: 90_000,
+  // Task 6: RSA-3072-Schlüssel erzeugen + Anforderung; Prüfen + Einspielen + update-ca-certificates — ohne Neustart
+  tlsAnfordern: 120_000, tlsEinspielen: 150_000, tlsEntfernen: 90_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -989,6 +1010,25 @@ export const PY_STATUS = [
   '        akv = ad_kvno(ziel) if ziel else None',
   '        ad["keytab"] = {"kvno": hoch, "spns": len(spns), "aktuell": (akv == hoch) if akv is not None else None, "adKvno": akv}',
   'r["ad"] = ad',
+  // I8e Etappe 3 Task 6 — TLS: Zertifikat aus mssql.conf network.tlscert (nur öffentliche Daten: SHA-1-Thumbprint, Ablauf), erzwungen =
+  // network.forceencryption 1, Schalter der Zertifikatsprüfung (Task 7). Den Schlüssel liest der Status nie.
+  'import datetime as _dt',
+  'tls = {"zertifikat": g("network", "tlscert"), "erzwungen": g("network", "forceencryption") == "1", "thumbprint": None, "gueltigBis": None, "restTage": None}',
+  `tls["pruefSchalter"] = os.path.isfile(${JSON.stringify(TLS_PRUEF_SCHALTER)})`,
+  'if tls["zertifikat"] and os.path.isfile(tls["zertifikat"]):',
+  '    c, v = lauf("openssl", "x509", "-noout", "-fingerprint", "-sha1", "-enddate", "-in", tls["zertifikat"])',
+  '    for z in v.splitlines() if c == 0 else []:',
+  '        k, _, w = z.strip().partition("=")',
+  '        if k.lower().endswith("fingerprint"):',
+  '            tls["thumbprint"] = w.replace(":", "").upper()',
+  '        elif k == "notAfter":',
+  '            try:',
+  '                t = _dt.datetime.strptime(" ".join(w.split()), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=_dt.timezone.utc)',
+  '                tls["gueltigBis"] = t.strftime("%Y-%m-%dT%H:%M:%SZ")',
+  '                tls["restTage"] = int((t - _dt.datetime.now(_dt.timezone.utc)).total_seconds() // 86400)',
+  '            except ValueError:',
+  '                pass',
+  'r["tls"] = tls',
   'def sql_json(text):',
   '    aus = "".join(z.strip() for z in text.splitlines())',
   '    a, e = aus.find("{"), aus.rfind("}")',

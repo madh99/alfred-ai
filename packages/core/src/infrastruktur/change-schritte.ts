@@ -60,7 +60,10 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   'linux_sql.status': '{zugang}: SQL Server {version} {cu} {edition}; Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; max server memory {mb} MB; tempdb {n} Datendateien; Datenbanken: {liste}; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
     + ' | {zugang}: SQL Server {paket} (Paket); Dienst {dienst}, {aktiviert}; Speicherlimit {mb} MB; SQL-Sicht: {hinweis}; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
     + ' | {zugang}: SQL Server nicht installiert; eingehängt: {ziele}; Sicherung: {sicherung}; Zeit {zeit}'
-    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Zeit synchron (DC)',
+    + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Zeit synchron (DC)'
+    // I8e Etappe 3 Task 6: nach „Zeit …“ AD/Keytab und TLS (adText/tlsText) — positiv nur diese Stücke; „veraltet“, „ungeprüft“,
+    // „TLS nicht erzwungen“, „TLS nicht eingerichtet“, „ABGELAUFEN“ gehören in nichtEnthalten
+    + ' | AD beigetreten | Kerberos-Keytab kvno {n} (6 SPNs, aktuell) | TLS gültig bis {datum} ({n} Tage, Thumbprint {tp}) | TLS erzwungen | Zertifikatsprüfung an',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
@@ -190,7 +193,10 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     'zeitquelle_einrichten', 'zeitquelle_entfernen',
     // Etappe 3 Task 5 — Keytab: klist -k -e (alle SPNs + Konto × AES in der AD-kvno), kinit -k, kvno -k, Rechte, mssql-conf zurückgelesen;
     // Rückweg: mssql-conf-Werte und Keytab weg (Fremdes bleibt)
-    'kerberos_einrichten', 'kerberos_entfernen']),
+    'kerberos_einrichten', 'kerberos_entfernen',
+    // Etappe 3 Task 6 — TLS: Anforderung (Signatur, Modulus = Schlüssel, Subject, SANs), Einspielen (Kette, Modulus, SANs, Laufzeit,
+    // Vertrauensspeicher, Rechte, mssql-conf und Manifest zurückgelesen); Rückweg: mssql-conf-Werte nicht mehr Alfreds, Manifest weg
+    'tls_anfordern', 'tls_einspielen', 'tls_entfernen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -225,6 +231,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['zeitquelle_einrichten', { skill: 'linux_sql', aktion: 'zeitquelle_entfernen', text: 'linux_sql.zeitquelle_entfernen (zugang)', parameter: gleicherZugang('zeitquelle_entfernen') }],
     // Etappe 3 Task 5 — Keytab: Rückweg genau linux_sql.kerberos_entfernen auf demselben Zugang
     ['kerberos_einrichten', { skill: 'linux_sql', aktion: 'kerberos_entfernen', text: 'linux_sql.kerberos_entfernen (zugang)', parameter: gleicherZugang('kerberos_entfernen') }],
+    // Etappe 3 Task 6 — TLS: Rückweg genau linux_sql.tls_entfernen auf demselben Zugang
+    ['tls_einspielen', { skill: 'linux_sql', aktion: 'tls_entfernen', text: 'linux_sql.tls_entfernen (zugang)', parameter: gleicherZugang('tls_entfernen') }],
   ]),
 };
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
@@ -249,6 +257,9 @@ function failoverZurueck(hin: Record<string, unknown>, rueck: Record<string, unk
  */
 const OHNE_RUECKWEG_NUR_MIT_GRUND: Readonly<Record<string, ReadonlyMap<string, string>>> = {
   linux_ha: new Map([['fencing_pruefen', 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen']]),
+  // I8e Etappe 3 Task 6 — tls_anfordern ändert keine Konfiguration (Text gleich TLS_ANFORDERN_GRUND in linux-sql-tls.ts). Ein Rückweg
+  // tls_entfernen wäre falsch: bei einer Erneuerung nähme er das laufende Zertifikat weg
+  linux_sql: new Map([['tls_anfordern', 'nur Schlüssel tls.key.neu und Anforderung, keine Konfiguration — tls_entfernen räumt den unbenutzten Schlüssel ab']]),
 };
 const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
 /**

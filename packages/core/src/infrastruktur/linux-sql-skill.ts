@@ -23,6 +23,8 @@ import {
   KERBEROS_KONTO_TRESOR, KERBEROS_SPNS, SQL_KEYTAB, SQL_KERBEROS_KONTO, kerberosParameter, pruefeKerberos, type KerberosParameter,
 } from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
+import { tlsParameter, tlsEingabe, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, type TlsParameter } from './linux-sql-tls.js';
+import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
 
 /**
  * Fix-Welle I-1 — Mindest-zeitlimitS je Aktion (Sekunden): Baustein-Zeitgrenzen (am Host läuft jeder Baustein bis zu seiner Grenze)
@@ -49,6 +51,9 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   zeitquelle_entfernen: sek(LINUX_SQL_ZEIT_MS.zeitquelleEntfernen) + 60,
   kerberos_einrichten: sek(LINUX_SQL_ZEIT_MS.kerberosEinrichten) + 60,
   kerberos_entfernen: sek(LINUX_SQL_ZEIT_MS.kerberosEntfernen) + 60,
+  tls_anfordern: sek(LINUX_SQL_ZEIT_MS.tlsAnfordern) + 60,
+  tls_einspielen: sek(LINUX_SQL_ZEIT_MS.tlsEinspielen) + 60,
+  tls_entfernen: sek(LINUX_SQL_ZEIT_MS.tlsEntfernen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -76,7 +81,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // Ruling R11 — Zeitquelle an den DCs (alle drei Hosts) und Rückweg
   'zeitquelle_einrichten', 'zeitquelle_entfernen',
   // I8e Etappe 3 Task 5 — Keytab der SQL-Instanz (Kennwort svc-sqllnx nur über stdin) und Rückweg
-  'kerberos_einrichten', 'kerberos_entfernen']);
+  'kerberos_einrichten', 'kerberos_entfernen',
+  // I8e Etappe 3 Task 6 — TLS: Schlüssel + Anforderung auf dem Host, Zertifikat geprüft einspielen, Rückweg
+  'tls_anfordern', 'tls_einspielen', 'tls_entfernen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -132,6 +139,41 @@ export interface LinuxSqlStatus {
    * aktuell = kvno gleich der AD-kvno (null, wenn ohne Kennwort kein Ticket zu bekommen war)
    */
   ad?: { beigetreten?: boolean; keytab?: { kvno: number | null; spns: number; aktuell: boolean | null; adKvno?: number | null; fehler?: string } | null } | null;
+  /**
+   * I8e Etappe 3 Task 6 — TLS: Zertifikat aus mssql.conf network.tlscert (SHA-1-Thumbprint, Ablauf, Resttage), erzwungen =
+   * network.forceencryption 1, pruefSchalter = Schalterdatei der Zertifikatsprüfung (Task 7) vorhanden
+   */
+  tls?: { zertifikat?: string | null; thumbprint?: string | null; gueltigBis?: string | null; restTage?: number | null; erzwungen?: boolean; pruefSchalter?: boolean } | null;
+}
+
+/**
+ * Task 6 — AD-/Keytab-Teil des Statustexts (Daten aus Task 5). Positiv prüfbar „AD beigetreten“ und „Kerberos-Keytab kvno <n> (6 SPNs,
+ * aktuell)“; „veraltet“ (Review Focus 2), „ungeprüft“ (kein Ticket ohne Kennwort) und „kein Kerberos-Keytab“ nur für nichtEnthalten.
+ */
+export function adText(a: LinuxSqlStatus['ad']): string {
+  if (!a) return 'AD unbekannt';
+  const bei = a.beigetreten ? 'AD beigetreten' : 'AD nicht beigetreten';
+  const k = a.keytab;
+  if (!k) return `${bei}; kein Kerberos-Keytab`;
+  if (k.fehler || k.kvno === null) return `${bei}; Kerberos-Keytab nicht lesbar`;
+  const stand = k.aktuell === true ? 'aktuell' : k.aktuell === false ? `veraltet, AD-kvno ${k.adKvno ?? '?'}` : 'ungeprüft';
+  return `${bei}; Kerberos-Keytab kvno ${k.kvno} (${k.spns} SPNs, ${stand})`;
+}
+
+/**
+ * Task 6 — TLS-Teil des Statustexts: „TLS gültig bis <datum> (<n> Tage, Thumbprint <tp>)“ bzw. „TLS ABGELAUFEN …“, „TLS-Zertifikat
+ * nicht lesbar …“, „TLS nicht eingerichtet“; dann „TLS erzwungen“ / „TLS nicht erzwungen“ und „Zertifikatsprüfung an“ / „… aus“.
+ * Positive Stücke in FESTE_AUSGABEN['linux_sql.status'].
+ */
+export function tlsText(t: LinuxSqlStatus['tls']): string {
+  if (!t) return 'TLS unbekannt';
+  const datum = (t.gueltigBis ?? '').slice(0, 10);
+  let z: string;
+  if (t.thumbprint && t.gueltigBis && typeof t.restTage === 'number') {
+    z = t.restTage < 0 ? `TLS ABGELAUFEN seit ${datum} (Thumbprint ${t.thumbprint})` : `TLS gültig bis ${datum} (${t.restTage} Tage, Thumbprint ${t.thumbprint})`;
+  } else if (t.zertifikat) z = `TLS-Zertifikat nicht lesbar (${t.zertifikat.slice(0, 120)})`;
+  else z = 'TLS nicht eingerichtet';
+  return `${z}; ${t.erzwungen ? 'TLS erzwungen' : 'TLS nicht erzwungen'}; Zertifikatsprüfung ${t.pruefSchalter ? 'an' : 'aus'}`;
 }
 
 /**
@@ -167,7 +209,9 @@ export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
   const ein = (s.platz ?? []).filter(p => p.eingehaengt && (LINUX_SQL_ZIELE as readonly string[]).includes(p.pfad)).map(p => p.pfad.split('/').pop());
   const eingehaengt = `eingehängt: ${ein.length ? ein.join(', ') : 'keine Plattenziele'}`;
   // Ruling R11: Zeitquelle und Synchronisierung am Ende („; Zeit …“)
-  const sich = `${sicherungText(s)}${resteText(s.reste)}${altZugangText(s.alteZugangsdateienEntfernt)}; ${zeitText(s.zeit)}`;
+  // Task 6: AD/Keytab und TLS danach („; AD …; TLS …“) — nur, wenn der Status sie liefert (PY_STATUS liefert sie immer)
+  const adTls = `${s.ad !== undefined ? `; ${adText(s.ad)}` : ''}${s.tls !== undefined ? `; ${tlsText(s.tls)}` : ''}`;
+  const sich = `${sicherungText(s)}${resteText(s.reste)}${altZugangText(s.alteZugangsdateienEntfernt)}; ${zeitText(s.zeit)}${adTls}`;
   if (!s.installiert) return `${zugang}: SQL Server nicht installiert; ${eingehaengt}; ${sich}`;
   const dienst = `Dienst ${s.dienst === 'active' ? 'aktiv' : s.dienst ?? 'unbekannt'}, ${s.aktiviert === 'enabled' ? 'aktiviert' : s.aktiviert ?? 'unbekannt'}`;
   const limit = `Speicherlimit ${s.konfig?.memorylimitmb ?? '-'} MB`;
@@ -370,6 +414,13 @@ function kerberosEingabe(zugang: string, input: Record<string, unknown>): Kerber
   return p;
 }
 
+/** I8e Etappe 3 Task 6 — TLS-Parameter: CN/SANs fest je Host (computername Standard = zugang; alle drei Hosts) */
+function tlsEingabeParameter(zugang: string, input: Record<string, unknown>): TlsParameter {
+  const host = String(input.computername ?? zugang).trim().toLowerCase();
+  if (!TLS_HOSTS.includes(host)) throw new Error(`computername: TLS nur für ${TLS_HOSTS.join(', ')} (Standard = zugang)`);
+  return tlsParameter(host);
+}
+
 function pruefdatenParameter(input: Record<string, unknown>): { datenbank: string } {
   const p = { datenbank: String(input.datenbank ?? '').trim() };
   const f = pruefePruefdaten(p); if (f) throw new Error(f);
@@ -402,6 +453,8 @@ export class LinuxSqlSkill extends Skill {
       + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Zeitquelle eingerichtet (zeitquelle_einrichten: Drop-in, NTPSynchronized yes, Offset < 60 s — sonst „Zeitquelle zuerst einrichten“); dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd nur für NSS (access_provider = deny, PAM ohne sss — keine Anmeldung von Domänenbenutzern am Host); eine fremde sssd.conf, krb5.conf (außer der unveränderten krb5-config-Vorgabe) oder ein fremder Keytab → Abbruch ohne Änderung; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab, kein pam_sss; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang, computername Standard = zugang; nur lokal und nur Alfreds Einrichtung: sssd aus, Alfreds sssd.conf/krb5.conf entfernt bzw. Paketvorgabe zurück, Keytab nur mit ausschließlich eigenen Principals, NSS und PAM ohne sss; Fremdes bleibt und steht unter „belassen“; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
       + `ZEIT (Ruling R11, alle drei Hosts einschließlich sqllnxcfg, vor ad_beitreten): zeitquelle_einrichten (nur im Change; zugang) — systemd-timesyncd mit Drop-in ${ZEITQUELLE_DROPIN} (NTP=${ZEITQUELLE_DCS.join(' ')}, FallbackNTP= leer), Neustart, Nachweis binnen 120 s: NTPSynchronized yes, Server ein DC, Offset unter 1 s → „TIME_SYNCED“; chrony/ntpd aktiv oder fremdes Drop-in mit NTP= → Abbruch ohne Änderung; nicht synchronisiert → Abbruch mit gelesenem Status, Drop-in bleibt ↔ zeitquelle_entfernen (zugang; entfernt nur Alfreds Drop-in, Neustart). Status nennt „Zeit synchron (DC)“ (sonst „Zeit NICHT synchron …“ bzw. „Zeit ohne DC-Zeitquelle …“). `
       + `KERBEROS (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg bekommt keinen Keytab; nach ad_beitreten, vorher windows_ad spn_setzen für ${KERBEROS_SPNS.join(', ')} am Konto ${SQL_KERBEROS_KONTO}): kerberos_einrichten (nur im Change; zugang, computername Standard = zugang) — Kennwort aus dem Tresor ${KERBEROS_KONTO_TRESOR} nur über stdin; liest die kvno per kinit + kvno MSSQLSvc/<fqdn>:1433 aus dem AD, schreibt ${SQL_KEYTAB} (mssql:mssql 0400) mit allen 6 SPNs und ${SQL_KERBEROS_KONTO} je AES256/AES128 in dieser kvno (ältere kvno bleiben; fremde Principals oder eine höhere kvno als das AD → Abbruch ohne Änderung), prüft kinit -k und kvno -k (Abweichung → Abbruch „Keytab-kvno X, AD-kvno Y“, mssql-conf unverändert), setzt mssql-conf network.kerberoskeytabfile und network.privilegedadaccount ${SQL_KERBEROS_KONTO}; KEIN Neustart — „Neustart nötig“ steht in der Anzeige, der Change startet SQL Server rollierend (sqllnx02 → Failover → sqllnx01); „KERBEROS_KEYTAB_OK“ ↔ kerberos_entfernen (zugang; nimmt die mssql-conf-Werte nur zurück, wenn es Alfreds sind, entfernt den Keytab nur mit ausschließlich eigenen Principals; Fremdes steht unter „belassen“; „KERBEROS_REMOVED“). `
+      + `TLS (I8e Etappe 3, alle drei Hosts einschließlich sqllnxcfg; CN <host>.ad.3033.at, SANs fest je Host): tls_anfordern (nur im Change; zugang, computername Standard = zugang) — RSA-${TLS_BITS}-Schlüssel ${TLS_KEY_NEU} (0400 mssql:mssql) AUF dem Host (ein vorhandener unbenutzter wird wiederverwendet), Anforderung daraus; Ergebnis nur öffentlich: data.csrPem, data.csrSha256, data.csrBase64 (DER) → weiter mit windows_pki fremd_csr_ausstellen (zugang pkiiss01, cn, sans, csr_base64 = {{schrittN.csrBase64}}, csr_sha256 = {{schrittN.csrSha256}}); „TLS_CSR_READY“; kein Rückweg (rueckweg {keiner: „${TLS_ANFORDERN_GRUND}“}). `
+      + `tls_einspielen (nur im Change; zugang, computername Standard = zugang, zertifikat + kette als PEM ODER zert_base64 + issuing_base64 + root_base64 als DER-Base64) — prüft ohne Änderung: Kette Issuing → Root, Zertifikat für Server-Authentifizierung, Zertifikat passt zum Schlüssel auf dem Host (sonst Abbruch, bisherige Konfiguration bleibt), RSA ${TLS_BITS}, CN, SANs exakt, Restlaufzeit > ${TLS_MIN_TAGE} Tage; dann CA-Dateien ad3033-root.crt/ad3033-issuing.crt + update-ca-certificates, ${TLS_KEY} (0400 mssql:mssql), ${TLS_CRT} (0444), mssql-conf network.tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} — NICHT forceencryption und KEIN Neustart (Anzeige „Neustart nötig“, der Change startet rollierend); „TLS_INSTALLED“ ↔ tls_entfernen (zugang; nur Alfreds mssql-conf-Werte und Dateien laut Manifest, unbenutzter tls.key.neu; Abbruch, solange forceencryption 1; „TLS_REMOVED“). Status nennt „TLS gültig bis <datum>“, „TLS erzwungen“ (sonst „TLS nicht erzwungen“), „AD beigetreten“, „Kerberos-Keytab kvno <n> (6 SPNs, aktuell)“. `
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -428,8 +481,13 @@ export class LinuxSqlSkill extends Skill {
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
         // (kettengrenzen_uebernehmen nutzt zugang und konto_tresor)
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
-        computername: { type: 'string', description: 'ad_beitreten/ad_verlassen/kerberos_einrichten: Name des Computerkontos ohne $ (Standard = zugang), Beitritt und Keytab nie sqllnxcfg' },
+        computername: { type: 'string', description: 'ad_beitreten/ad_verlassen/kerberos_einrichten/tls_anfordern/tls_einspielen: Name des Rechners ohne $ (Standard = zugang), Beitritt und Keytab nie sqllnxcfg' },
         pakete: { type: 'object', description: `ad_beitreten: optional abweichende apt-Versionen { paket: version } für ${Object.keys(LINUX_AD_PAKETE).join(', ')} (Standard fest)` },
+        zertifikat: { type: 'string', description: 'tls_einspielen: Zertifikat (PEM, öffentlich) aus windows_pki fremd_csr_ausstellen' },
+        kette: { type: 'string', description: 'tls_einspielen: Issuing-CA und Root (PEM, öffentlich)' },
+        zert_base64: { type: 'string', description: 'tls_einspielen: Zertifikat als DER-Base64 (statt zertifikat), z. B. {{schrittN.zertBase64}}' },
+        issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
+        root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
       },
       required: ['action', 'zugang'],
     },
@@ -447,6 +505,10 @@ export class LinuxSqlSkill extends Skill {
     // Spec 10 — auch wenn andere Felder Verweise sind: der Konfig-Knoten tritt nie bei
     if (action === 'ad_beitreten' && [input.zugang, input.computername].some(v => typeof v === 'string' && v.trim().toLowerCase() === AD_NIE_BEITRETEN)) return `${AD_NIE_BEITRETEN} tritt nicht bei (Spec 10)`;
     if (action === 'kerberos_einrichten' && [input.zugang, input.computername].some(v => typeof v === 'string' && v.trim().toLowerCase() === AD_NIE_BEITRETEN)) return `${AD_NIE_BEITRETEN} bekommt keinen Keytab (Spec 10)`;
+    // Task 6: Host (CN/SANs) schon beim Planen, auch wenn Zertifikat/Kette noch Verweise sind
+    if ((action === 'tls_anfordern' || action === 'tls_einspielen') && !istVerweis(input.zugang) && !istVerweis(input.computername)) {
+      try { tlsEingabeParameter(String(input.zugang).trim(), input); } catch (err) { return (err as Error).message.slice(0, 200); }
+    }
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
       if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'reste_entfernen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
@@ -462,6 +524,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'ad_beitreten') adBeitretenParameter(String(input.zugang).trim(), input);
       else if (action === 'ad_verlassen') { const f = pruefeAdVerlassen({ computername: String(input.computername ?? input.zugang).trim() }); if (f) throw new Error(f); }
       else if (action === 'kerberos_einrichten') { kerberosEingabe(String(input.zugang).trim(), input); pruefeTresorName(KERBEROS_KONTO_TRESOR); }
+      else if (action === 'tls_einspielen') tlsEingabe(input);
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -503,6 +566,9 @@ export class LinuxSqlSkill extends Skill {
         case 'zeitquelle_entfernen': return await this.zeitquelleEntfernen(zugang);
         case 'kerberos_einrichten': return await this.kerberosEinrichten(zugang, input, geheim);
         case 'kerberos_entfernen': return await this.kerberosEntfernen(zugang);
+        case 'tls_anfordern': return await this.tlsAnfordern(zugang, input);
+        case 'tls_einspielen': return await this.tlsEinspielen(zugang, input);
+        case 'tls_entfernen': return await this.tlsEntfernen(zugang);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -764,6 +830,53 @@ export class LinuxSqlSkill extends Skill {
     const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
     const neustart = r.neustartNoetig ? ' — Neustart von SQL Server nötig (rollierend per Change)' : '';
     const text = `KERBEROS_REMOVED ${zugang}: ${(r.aenderungen ?? []).join(', ') || 'nichts von Alfred vorhanden'}${bel}${neustart}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  // ── I8e Etappe 3 Task 6 — TLS ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Schlüssel + Anforderung auf dem Host; der Skill prüft die Anforderung noch einmal (PEM-Form, SHA-256 = DER, kein privater Block) */
+  private async tlsAnfordern(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = tlsEingabeParameter(zugang, input);
+    const r = await this.lauf<{ zustand: string; cn?: string; sans?: string[]; bits?: number; schluesselNeu?: boolean; csrPem?: string; csrSha256?: string; csrBase64?: string; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.tlsAnfordern, p, 'TLS-Anforderung', LINUX_SQL_ZEIT_MS.tlsAnfordern);
+    const pem = String(r.csrPem ?? '').replace(/\r\n/g, '\n');
+    const form = pruefeCsrForm(pem);
+    const b64 = String(r.csrBase64 ?? '');
+    const gleich = !form && /^[0-9a-f]{64}$/.test(String(r.csrSha256)) && csrSha256(pem) === r.csrSha256 && pem.replace(/-----[^-]+-----|\s/g, '') === b64;
+    if (!gleich || /PRIVATE/i.test(JSON.stringify(r)) || r.cn !== p.cn || JSON.stringify(r.sans) !== JSON.stringify(p.sans) || r.bits !== TLS_BITS) {
+      throw new Error(`TLS-Anforderung ${zugang}: Nachprüfung fehlgeschlagen (${form ?? `CN ${String(r.cn)}, SHA-256 ${String(r.csrSha256).slice(0, 64)}`})`);
+    }
+    this.d.protokoll?.('I8e TLS-Anforderung', { zugang, cn: p.cn, zustand: r.zustand, schluesselNeu: r.schluesselNeu, csrSha256: r.csrSha256 });
+    // csrBase64 (DER, striktes Base64) ist die Form, die ein Change-Verweis als ganzen Wert in csr_base64 trägt
+    const data = { zustand: r.zustand, cn: p.cn, sans: p.sans, bits: TLS_BITS, schluesselNeu: r.schluesselNeu === true, csrPem: pem, csrSha256: r.csrSha256, csrBase64: b64, aenderungen: r.aenderungen ?? [] };
+    const text = `TLS_CSR_READY ${zugang}: Anforderung CN=${p.cn}, SAN ${p.sans.join(', ')}, RSA ${TLS_BITS}, SHA-256 ${r.csrSha256}; Schlüssel ${TLS_KEY_NEU} ${r.schluesselNeu ? 'neu erzeugt' : 'vorhanden, wiederverwendet'} (verlässt den Host nicht); Anforderung in data.csrBase64/csrPem → windows_pki fremd_csr_ausstellen`;
+    return { success: true, data, display: `✅ ${text}` };
+  }
+
+  /** Zertifikat + Kette prüfen und einspielen; der Skill prüft das Ergebnis noch einmal (Thumbprint, CN, Restlaufzeit, Neustart-Angabe) */
+  private async tlsEinspielen(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const p = tlsEingabeParameter(zugang, input);
+    const e = tlsEingabe(input);
+    const r = await this.lauf<{ zustand: string; cn?: string; thumbprint?: string; gueltigBis?: string; restTage?: number; schluessel?: string; neustartNoetig?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.tlsEinspielen, p, 'TLS einspielen', LINUX_SQL_ZEIT_MS.tlsEinspielen, { zertifikat: e.zertifikat, kette: e.kette });
+    if (r.thumbprint !== e.thumbprint || r.cn !== p.cn || typeof r.restTage !== 'number' || r.restTage < TLS_MIN_TAGE || typeof r.neustartNoetig !== 'boolean' || !r.gueltigBis) {
+      throw new Error(`TLS ${zugang}: Nachprüfung fehlgeschlagen (Thumbprint ${String(r.thumbprint)} statt ${e.thumbprint}, CN ${String(r.cn)}, Resttage ${String(r.restTage)}, neustartNoetig ${String(r.neustartNoetig)})`);
+    }
+    this.d.protokoll?.('I8e TLS eingespielt', { zugang, cn: p.cn, zustand: r.zustand, thumbprint: r.thumbprint, gueltigBis: r.gueltigBis, neustartNoetig: r.neustartNoetig, aenderungen: r.aenderungen });
+    const neustart = r.neustartNoetig ? 'Neustart von SQL Server nötig (rollierend per Change)' : 'kein Neustart nötig';
+    const text = `TLS_INSTALLED ${zugang}: ${TLS_CRT} Thumbprint ${r.thumbprint}, gültig bis ${r.gueltigBis} (${r.restTage} Tage), CN=${p.cn}, SAN ${p.sans.join(', ')}, passt zu ${TLS_KEY} (0400 mssql:mssql); Kette AD3033 Issuing + Root geprüft und im Vertrauensspeicher; mssql-conf tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} gesetzt, Verschlüsselung NICHT erzwungen; ${neustart}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.aenderungen ?? []).join(', ')}` };
+  }
+
+  /** Rückweg: nur Alfreds mssql-conf-Werte und Dateien laut Manifest; Fremdes bleibt (belassen); Abbruch, solange forceencryption 1 */
+  private async tlsEntfernen(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<{ zustand: string; belassen?: string[]; neustartNoetig?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.tlsEntfernen, {}, 'TLS entfernen', LINUX_SQL_ZEIT_MS.tlsEntfernen);
+    this.d.protokoll?.('I8e TLS entfernt', { zugang, zustand: r.zustand, belassen: r.belassen ?? [], neustartNoetig: r.neustartNoetig });
+    const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
+    const neustart = r.neustartNoetig ? ' — Neustart von SQL Server nötig (rollierend per Change)' : '';
+    const text = `TLS_REMOVED ${zugang}: ${(r.aenderungen ?? []).join(', ') || 'nichts von Alfred vorhanden'}${bel}${neustart}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
