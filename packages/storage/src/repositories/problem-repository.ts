@@ -58,6 +58,19 @@ function rowToProblem(r: DbRow): CmdbProblem {
 export class ProblemRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
+  /**
+   * Realfall 19.11.2026: drei parallele unlink-Aufrufe lasen dieselbe Liste linked_incident_ids, entfernten je einen Eintrag und schrieben
+   * zurück — der letzte Schreiber gewann, zwei Trennungen gingen verloren. Verknüpfen/Trennen je Problem nacheinander (ein Prozess).
+   */
+  private readonly sperren = new Map<string, Promise<unknown>>();
+  private async nacheinander<T>(schluessel: string, f: () => Promise<T>): Promise<T> {
+    const vorher = this.sperren.get(schluessel) ?? Promise.resolve();
+    const lauf = vorher.catch(() => undefined).then(f);
+    const ende = lauf.catch(() => undefined);
+    this.sperren.set(schluessel, ende);
+    try { return await lauf; } finally { if (this.sperren.get(schluessel) === ende) this.sperren.delete(schluessel); }
+  }
+
   async createProblem(userId: string, data: {
     title: string; description?: string; priority?: ProblemPriority; category?: ProblemCategory;
     linkedIncidentIds?: string[]; affectedAssetIds?: string[]; affectedServiceIds?: string[];
@@ -198,6 +211,12 @@ export class ProblemRepository {
   }
 
   async linkIncident(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
+    const p0 = await this.getProblemById(userId, problemId);
+    if (!p0) return null;
+    return this.nacheinander(p0.id, () => this.linkIncidentIntern(userId, p0.id, incidentId));
+  }
+
+  private async linkIncidentIntern(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
     const problem = await this.getProblemById(userId, problemId);
     if (!problem) return null;
     const inc = await this.volleIncidentId(userId, incidentId);
@@ -219,6 +238,12 @@ export class ProblemRepository {
   }
 
   async unlinkIncident(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
+    const p0 = await this.getProblemById(userId, problemId);
+    if (!p0) return null;
+    return this.nacheinander(p0.id, () => this.unlinkIncidentIntern(userId, p0.id, incidentId));
+  }
+
+  private async unlinkIncidentIntern(userId: string, problemId: string, incidentId: string): Promise<CmdbProblem | null> {
     const problem = await this.getProblemById(userId, problemId);
     if (!problem) return null;
     const treffer = problem.linkedIncidentIds.filter(id => id === incidentId || (incidentId.length >= 6 && id.startsWith(incidentId)));

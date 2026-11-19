@@ -74,4 +74,12 @@ describe('Problem ↔ Incident-Verknüpfung', () => {
     expect(incidentProblem.get('946d08e0-9c02-40b0-847a-26c05849692f')).toBe(p.id);
     await expect(r.linkIncident('u', p.id, 'deadbeef')).rejects.toThrow('nicht gefunden');
   });
+
+  it('Realfall 19.11.: drei parallele Trennungen am selben Problem gehen alle durch (kein verlorenes Schreiben)', async () => {
+    const { r } = repo();
+    const ids = ['0a097789-7203-41ab-841b-1f06a75e93c8', '946d08e0-9c02-40b0-847a-26c05849692f', 'i1'];
+    const p = await r.createProblem('u', { title: 't', linkedIncidentIds: [...ids, 'i2'] });
+    await Promise.all([r.unlinkIncident('u', p.id, '0a097789'), r.unlinkIncident('u', p.id, '946d08e0'), r.unlinkIncident('u', p.id, 'i1')]);
+    expect((await r.getProblemById('u', p.id))?.linkedIncidentIds).toEqual(['i2']);
+  });
 });
