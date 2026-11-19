@@ -23,7 +23,7 @@ import {
   KERBEROS_KONTO_TRESOR, KERBEROS_SPNS, SQL_KEYTAB, SQL_KERBEROS_KONTO, kerberosParameter, pruefeKerberos, type KerberosParameter,
 } from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
-import { tlsParameter, tlsEingabe, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, type TlsParameter } from './linux-sql-tls.js';
+import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, type TlsParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
 
 /**
@@ -454,7 +454,7 @@ export class LinuxSqlSkill extends Skill {
       + `ZEIT (Ruling R11, alle drei Hosts einschließlich sqllnxcfg, vor ad_beitreten): zeitquelle_einrichten (nur im Change; zugang) — systemd-timesyncd mit Drop-in ${ZEITQUELLE_DROPIN} (NTP=${ZEITQUELLE_DCS.join(' ')}, FallbackNTP= leer), Neustart, Nachweis binnen 120 s: NTPSynchronized yes, Server ein DC, Offset unter 1 s → „TIME_SYNCED“; chrony/ntpd aktiv oder fremdes Drop-in mit NTP= → Abbruch ohne Änderung; nicht synchronisiert → Abbruch mit gelesenem Status, Drop-in bleibt ↔ zeitquelle_entfernen (zugang; entfernt nur Alfreds Drop-in, Neustart). Status nennt „Zeit synchron (DC)“ (sonst „Zeit NICHT synchron …“ bzw. „Zeit ohne DC-Zeitquelle …“). `
       + `KERBEROS (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg bekommt keinen Keytab; nach ad_beitreten, vorher windows_ad spn_setzen für ${KERBEROS_SPNS.join(', ')} am Konto ${SQL_KERBEROS_KONTO}): kerberos_einrichten (nur im Change; zugang, computername Standard = zugang) — Kennwort aus dem Tresor ${KERBEROS_KONTO_TRESOR} nur über stdin; liest die kvno per kinit + kvno MSSQLSvc/<fqdn>:1433 aus dem AD, schreibt ${SQL_KEYTAB} (mssql:mssql 0400) mit allen 6 SPNs und ${SQL_KERBEROS_KONTO} je AES256/AES128 in dieser kvno (ältere kvno bleiben; fremde Principals oder eine höhere kvno als das AD → Abbruch ohne Änderung), prüft kinit -k und kvno -k (Abweichung → Abbruch „Keytab-kvno X, AD-kvno Y“, mssql-conf unverändert), setzt mssql-conf network.kerberoskeytabfile und network.privilegedadaccount ${SQL_KERBEROS_KONTO}; KEIN Neustart — „Neustart nötig“ steht in der Anzeige, der Change startet SQL Server rollierend (sqllnx02 → Failover → sqllnx01); „KERBEROS_KEYTAB_OK“ ↔ kerberos_entfernen (zugang; nimmt die mssql-conf-Werte nur zurück, wenn es Alfreds sind, entfernt den Keytab nur mit ausschließlich eigenen Principals; Fremdes steht unter „belassen“; „KERBEROS_REMOVED“). `
       + `TLS (I8e Etappe 3, alle drei Hosts einschließlich sqllnxcfg; CN <host>.ad.3033.at, SANs fest je Host): tls_anfordern (nur im Change; zugang, computername Standard = zugang) — RSA-${TLS_BITS}-Schlüssel ${TLS_KEY_NEU} (0400 mssql:mssql) AUF dem Host (ein vorhandener unbenutzter wird wiederverwendet), Anforderung daraus; Ergebnis nur öffentlich: data.csrPem, data.csrSha256, data.csrBase64 (DER) → weiter mit windows_pki fremd_csr_ausstellen (zugang pkiiss01, cn, sans, csr_base64 = {{schrittN.csrBase64}}, csr_sha256 = {{schrittN.csrSha256}}); „TLS_CSR_READY“; kein Rückweg (rueckweg {keiner: „${TLS_ANFORDERN_GRUND}“}). `
-      + `tls_einspielen (nur im Change; zugang, computername Standard = zugang, zertifikat + kette als PEM ODER zert_base64 + issuing_base64 + root_base64 als DER-Base64) — prüft ohne Änderung: Kette Issuing → Root, Zertifikat für Server-Authentifizierung, Zertifikat passt zum Schlüssel auf dem Host (sonst Abbruch, bisherige Konfiguration bleibt), RSA ${TLS_BITS}, CN, SANs exakt, Restlaufzeit > ${TLS_MIN_TAGE} Tage; dann CA-Dateien ad3033-root.crt/ad3033-issuing.crt + update-ca-certificates, ${TLS_KEY} (0400 mssql:mssql), ${TLS_CRT} (0444), mssql-conf network.tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} — NICHT forceencryption und KEIN Neustart (Anzeige „Neustart nötig“, der Change startet rollierend); „TLS_INSTALLED“ ↔ tls_entfernen (zugang; nur Alfreds mssql-conf-Werte und Dateien laut Manifest, unbenutzter tls.key.neu; Abbruch, solange forceencryption 1; „TLS_REMOVED“). Status nennt „TLS gültig bis <datum>“, „TLS erzwungen“ (sonst „TLS nicht erzwungen“), „AD beigetreten“, „Kerberos-Keytab kvno <n> (6 SPNs, aktuell)“. `
+      + `tls_einspielen (nur im Change; zugang, computername Standard = zugang, zertifikat + kette als PEM ODER zert_base64 + issuing_base64 + root_base64 als DER-Base64, erwartet_root_sha256 Pflicht als fester Wert = SHA-256 der Root-DER) — prüft ohne Änderung: Root = erwartet_root_sha256 (eine vorhandene andere Root wird nie ersetzt), Kette Issuing → Root, Zertifikat für Server-Authentifizierung, Zertifikat passt zum Schlüssel auf dem Host (sonst Abbruch, bisherige Konfiguration bleibt), RSA ${TLS_BITS}, CN, SANs exakt, Restlaufzeit > ${TLS_MIN_TAGE} Tage; dann CA-Dateien ad3033-root.crt/ad3033-issuing.crt + update-ca-certificates, ${TLS_KEY} (0400 mssql:mssql), ${TLS_CRT} (0444), mssql-conf network.tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} — NICHT forceencryption und KEIN Neustart (Anzeige „Neustart nötig“, der Change startet rollierend); „TLS_INSTALLED“ ↔ tls_entfernen (zugang; nur Alfreds mssql-conf-Werte und Dateien laut Manifest, unbenutzter tls.key.neu; Abbruch, solange forceencryption 1; „TLS_REMOVED“). Status nennt „TLS gültig bis <datum>“, „TLS erzwungen“ (sonst „TLS nicht erzwungen“), „AD beigetreten“, „Kerberos-Keytab kvno <n> (6 SPNs, aktuell)“. `
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -488,6 +488,7 @@ export class LinuxSqlSkill extends Skill {
         zert_base64: { type: 'string', description: 'tls_einspielen: Zertifikat als DER-Base64 (statt zertifikat), z. B. {{schrittN.zertBase64}}' },
         issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
         root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
+        erwartet_root_sha256: { type: 'string', description: 'tls_einspielen: Pflicht, fester Wert — SHA-256 (64 Hex) der DER der AD3033-Root; eine andere Root wird abgewiesen' },
       },
       required: ['action', 'zugang'],
     },
@@ -509,6 +510,8 @@ export class LinuxSqlSkill extends Skill {
     if ((action === 'tls_anfordern' || action === 'tls_einspielen') && !istVerweis(input.zugang) && !istVerweis(input.computername)) {
       try { tlsEingabeParameter(String(input.zugang).trim(), input); } catch (err) { return (err as Error).message.slice(0, 200); }
     }
+    // Ruling R17: die erwartete Root ist Pflicht und ein fester Wert (nie aus einem Verweis — sonst bestimmte die Quelle selbst, was vertraut wird)
+    if (action === 'tls_einspielen') { try { erwarteteRoot(istVerweis(input.erwartet_root_sha256) ? '' : input.erwartet_root_sha256); } catch (err) { return (err as Error).message.slice(0, 200); } }
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
       if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'reste_entfernen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
@@ -858,8 +861,9 @@ export class LinuxSqlSkill extends Skill {
   private async tlsEinspielen(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
     const p = tlsEingabeParameter(zugang, input);
     const e = tlsEingabe(input);
+    const pe = { ...p, rootSha256: e.rootSha256 };
     const r = await this.lauf<{ zustand: string; cn?: string; thumbprint?: string; gueltigBis?: string; restTage?: number; schluessel?: string; neustartNoetig?: boolean; aenderungen?: string[] }>(
-      zugang, LINUX_SQL_BAUSTEINE.tlsEinspielen, p, 'TLS einspielen', LINUX_SQL_ZEIT_MS.tlsEinspielen, { zertifikat: e.zertifikat, kette: e.kette });
+      zugang, LINUX_SQL_BAUSTEINE.tlsEinspielen, pe, 'TLS einspielen', LINUX_SQL_ZEIT_MS.tlsEinspielen, { zertifikat: e.zertifikat, kette: e.kette });
     if (r.thumbprint !== e.thumbprint || r.cn !== p.cn || typeof r.restTage !== 'number' || r.restTage < TLS_MIN_TAGE || typeof r.neustartNoetig !== 'boolean' || !r.gueltigBis) {
       throw new Error(`TLS ${zugang}: Nachprüfung fehlgeschlagen (Thumbprint ${String(r.thumbprint)} statt ${e.thumbprint}, CN ${String(r.cn)}, Resttage ${String(r.restTage)}, neustartNoetig ${String(r.neustartNoetig)})`);
     }

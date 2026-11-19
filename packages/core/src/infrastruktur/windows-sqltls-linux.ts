@@ -203,6 +203,12 @@ export function derFelder(r: FremdAusgestellt): { zertBase64?: string; issuingBa
     return { zertBase64: der(z[0]!).toString('base64'), issuingBase64: der(k[iss]!).toString('base64'), rootBase64: der(k[root]!).toString('base64') };
   } catch { return {}; }
 }
+
+/** Fix-Runde 1 (Minor 3): Daten von fremd_csr_ausstellen — die Base64-Felder, sonst (Kette unerwartet) die PEM-Felder; nie beides doppelt */
+export function derOderPem(r: FremdAusgestellt): { zertBase64?: string; issuingBase64?: string; rootBase64?: string; zertifikatPem?: string; kettePem?: string } {
+  const d = derFelder(r);
+  return d.zertBase64 ? d : { zertifikatPem: r.zertifikatPem, kettePem: r.kettePem };
+}
 /** Selbstprüfung des gemeldeten Ergebnisses gegen die Anforderung (Name, SAN-Liste exakt, nur ServerAuth, Kette, Laufzeit, nur öffentliche Blöcke) */
 export function bewerteFremdAusgestellt(r: FremdAusgestellt, a: FremdAusstellung, jetzt = new Date()): string[] {
   const g: string[] = [];

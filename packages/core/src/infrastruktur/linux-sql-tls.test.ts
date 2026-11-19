@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, createHash } from 'node:crypto';
 import {
   tlsAnfordernSkript, tlsEinspielenSkript, tlsEntfernenSkript, tlsParameter, pruefeTls, tlsEingabe, TLS_ANFORDERN_GRUND, PY_TLS_EINGABE,
   TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST,
@@ -13,7 +13,7 @@ import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S, linuxSqlStatusText, adText, t
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 import { loeseAuf, kuerzeDaten, MAX_DATEN } from './change-lauf.js';
-import { linuxTlsSans, pruefeFremdAusstellung, csrSha256, derFelder } from './windows-sqltls-linux.js';
+import { linuxTlsSans, pruefeFremdAusstellung, csrSha256, derFelder, derOderPem } from './windows-sqltls-linux.js';
 
 // I8e Etappe 3 Task 6 — linux_sql tls_anfordern / tls_einspielen / tls_entfernen
 
@@ -45,7 +45,7 @@ dpkg-query() { [ ! -f "$T/kein_sql" ] || return 1; printf 'install ok installed|
 lies() { cat "$T/conf/$2" 2>/dev/null || true; }
 chown() { log "chown $*"; printf '%s' "§{1/:/ }" >"$T/meta/$(schl "§{@: -1}").own"; }
 chmod() { log "chmod $*"; local m="$1"; printf '%s' "§{m#0}" >"$T/meta/$(schl "§{@: -1}").mod"; }
-mv() { log "mv §{@: -2:1} -> §{@: -1}"; local s d x; s=$(schl "§{@: -2:1}"); d=$(schl "§{@: -1}"); command mv "$@"; for x in own mod; do [ ! -f "$T/meta/$s.$x" ] || command mv -f "$T/meta/$s.$x" "$T/meta/$d.$x"; done; }
+mv() { if [ -f "$T/mv_crt_scheitert" ] && [ "§{@: -1}" = "$CRT" ]; then log "mv scheitert"; return 1; fi; log "mv §{@: -2:1} -> §{@: -1}"; local s d x; s=$(schl "§{@: -2:1}"); d=$(schl "§{@: -1}"); command mv "$@"; for x in own mod; do [ ! -f "$T/meta/$s.$x" ] || command mv -f "$T/meta/$s.$x" "$T/meta/$d.$x"; done; }
 stat() {
   if [ "$1 $2" = "-c %a %U %G" ]; then [ -e "$3" ] || return 1; printf '%s %s\n' "$(cat "$T/meta/$(schl "$3").mod" 2>/dev/null || echo 644)" "$(cat "$T/meta/$(schl "$3").own" 2>/dev/null || echo root root)"; return; fi
   command stat "$@"
@@ -124,6 +124,9 @@ function signiere(csrPem: string, abschnitt = 'leaf', tage = 365, aussteller = '
   return pemDatei('out.crt');
 }
 const KETTE = () => pemDatei('iss.crt') + pemDatei('root.crt');
+/** Ruling R17: SHA-256 der Root-DER (fest vorgegeben) */
+const rootSha = (n: string) => createHash('sha256').update(Buffer.from(new X509Certificate(pemDatei(n)).raw)).digest('hex');
+const PE = (rootSha256 = rootSha('root.crt')) => ({ ...P1, rootSha256 });
 
 beforeAll(() => {
   if (!ECHT) return;
@@ -133,7 +136,10 @@ beforeAll(() => {
     'openssl req -x509 -newkey rsa:2048 -nodes -keyout root.key -config ca.cnf -extensions root -days 3650 -out root.crt 2>/dev/null',
     'openssl req -newkey rsa:2048 -nodes -keyout iss.key -subj "/CN=Alfred Test Issuing" -out iss.csr 2>/dev/null',
     'openssl x509 -req -in iss.csr -CA root.crt -CAkey root.key -set_serial 2 -days 3650 -extfile ca.cnf -extensions iss -out iss.crt 2>/dev/null',
+    // zweite Kette: Issuing 2 unter der fremden Root (Root-Wechsel gegen eine eingespielte Root)
+    'openssl req -newkey rsa:2048 -nodes -keyout iss2.key -subj "/CN=Alfred Test Issuing 2" -out iss2.csr 2>/dev/null',
     'openssl req -x509 -newkey rsa:2048 -nodes -keyout root2.key -subj "/CN=Fremde Root" -days 3650 -extensions root -config ca.cnf -out root2.crt 2>/dev/null',
+    'openssl x509 -req -in iss2.csr -CA root2.crt -CAkey root2.key -set_serial 3 -days 3650 -extfile ca.cnf -extensions iss -out iss2.crt 2>/dev/null',
     // fremder 3072-Schlüssel mit demselben Namen (Zertifikat zu einem anderen Schlüssel)
     'openssl req -newkey rsa:3072 -nodes -keyout fremd.key -subj "/CN=sqllnx01.ad.3033.at" -out fremd.csr 2>/dev/null',
     'openssl req -newkey rsa:2048 -nodes -keyout klein.key -subj "/CN=sqllnx01.ad.3033.at" -out klein.csr 2>/dev/null',
@@ -158,7 +164,7 @@ describe('linux_sql TLS — Parameter (SANs je Host aus linuxTlsSans)', () => {
   });
   it('Bausteine registriert; Skript nennt CN/SANs, Pfade und kein forceencryption, keinen Neustart', () => {
     for (const b of [LINUX_SQL_BAUSTEINE.tlsAnfordern, LINUX_SQL_BAUSTEINE.tlsEinspielen, LINUX_SQL_BAUSTEINE.tlsEntfernen]) expect(linuxBausteinBekannt(b)).toBe(true);
-    const a = tlsAnfordernSkript(P1); const e = tlsEinspielenSkript(P1); const r = tlsEntfernenSkript();
+    const a = tlsAnfordernSkript(P1); const e = tlsEinspielenSkript({ ...P1, rootSha256: 'a'.repeat(64) }); const r = tlsEntfernenSkript();
     expect(a).toContain("CN='sqllnx01.ad.3033.at'");
     expect(a).toContain("SAN_CNF='DNS:sqllnx01,DNS:sqllnx01.ad.3033.at,DNS:sqllnxag01,DNS:sqllnxag01.ad.3033.at'");
     expect(a).toContain(`KEY_NEU='${TLS_KEY_NEU}'`);
@@ -228,7 +234,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
   it('Einspielen: Kette geprüft, Schlüssel .neu → tls.key, Zertifikat, CA-Dateien, Manifest, mssql-conf ohne forceencryption, kein Neustart; Wiederholung „schon“', () => {
     const { w, csr } = angefordert();
     const z = signiere(csr);
-    const e = w.lauf(tlsEinspielenSkript(P1), eingabe(z));
+    const e = w.lauf(tlsEinspielenSkript(PE()), eingabe(z));
     expect(e.rc, e.aus).toBe(0);
     const x = new X509Certificate(z);
     expect(e.e).toMatchObject({ zustand: 'geaendert', cn: P1.cn, bits: 3072, thumbprint: x.fingerprint.replace(/:/g, ''), schluessel: 'neu', zertifikat: `${w.T}/secrets/tls.crt`, neustartNoetig: true });
@@ -253,7 +259,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     expect(w.dateien()).not.toMatch(/\.alfred-tls-|alfred-tls\./);
     // Wiederholung: nichts zu tun; Dienst seit „später“ aktiv → kein Neustart nötig
     writeFileSync(join(w.T, 'sql_start'), '@9999999999\n');
-    const s = w.lauf(tlsEinspielenSkript(P1), eingabe(z));
+    const s = w.lauf(tlsEinspielenSkript(PE()), eingabe(z));
     expect(s.rc, s.aus).toBe(0);
     expect(s.e).toMatchObject({ zustand: 'schon', schluessel: 'aktiv', neustartNoetig: false, aenderungen: [] });
     expect(s.log).not.toContain('mssql-conf set');
@@ -264,7 +270,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     const { w, csr } = angefordert();
     const fremd = signiere(ohneCr(readFileSync(join(CA, 'fremd.csr'), 'utf8')));
     const vorher = w.dateien();
-    const a = w.lauf(tlsEinspielenSkript(P1), eingabe(fremd));
+    const a = w.lauf(tlsEinspielenSkript(PE()), eingabe(fremd));
     expect(a.rc).toBe(1);
     expect(a.e!.fehler).toContain('Zertifikat passt nicht zum Schlüssel auf dem Host');
     expect(a.e!.fehler).toContain('bisherige TLS-Konfiguration bleibt');
@@ -273,9 +279,9 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     expect(a.log).not.toMatch(/mssql-conf|update-ca-certificates|^mv /m);
     // richtig eingespielt, dann eine falsche Antwort: tls.crt, tls.key, mssql.conf, Manifest unverändert
     const z = signiere(csr);
-    expect(w.lauf(tlsEinspielenSkript(P1), eingabe(z)).rc).toBe(0);
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(z)).rc).toBe(0);
     const crt = w.datei('secrets/tls.crt'); const key = w.datei('secrets/tls.key'); const man = w.datei('etc/alfred/sqllnx-tls.manifest'); const conf = w.conf();
-    const b = w.lauf(tlsEinspielenSkript(P1), eingabe(fremd));
+    const b = w.lauf(tlsEinspielenSkript(PE()), eingabe(fremd));
     expect(b.rc).toBe(1);
     expect(b.e!.fehler).toContain('Zertifikat passt nicht zum Schlüssel auf dem Host');
     expect(w.datei('secrets/tls.crt')).toBe(crt);
@@ -290,14 +296,14 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     const vorher = w.dateien();
     const faelle: Array<[string, string, string]> = [
       ['SAN fehlt', eingabe(signiere(csr, 'leaf_ohne_listener')), 'SANs'],
-      ['fremde Root', eingabe(signiere(csr), pemDatei('iss.crt') + pemDatei('root2.crt')), 'Kette: Issuing-CA ist nicht von der Root ausgestellt'],
+      ['fremde Root', eingabe(signiere(csr), pemDatei('iss.crt') + pemDatei('root2.crt')), 'Kette: Root mit SHA-256'],
       ['nur clientAuth', eingabe(signiere(csr, 'leaf_client')), 'nicht für Server-Authentifizierung'],
       ['läuft bald ab', eingabe(signiere(csr, 'leaf', 20)), 'weniger als 30 Tagen'],
       ['Schlüssel in der Eingabe', JSON.stringify({ zertifikat: signiere(csr), kette: KETTE() + ohneCr(readFileSync(join(CA, 'fremd.key'), 'utf8')) }), 'enthält einen privaten Schlüssel'],
       ['eine Kette zu wenig', eingabe(signiere(csr), pemDatei('iss.crt')), '1 Zertifikatsblöcke, erwartet 2'],
     ];
     for (const [name, ein, text] of faelle) {
-      const r = w.lauf(tlsEinspielenSkript(P1), ein);
+      const r = w.lauf(tlsEinspielenSkript(PE()), ein);
       expect(r.rc, name).toBe(1);
       expect(String(r.e?.fehler), name).toContain(text);
       expect(String(r.e?.fehler), name).toContain('nichts geändert');
@@ -308,14 +314,14 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     // fremde (nicht im Manifest stehende) CA-Datei bzw. fremde mssql.conf → nichts angefasst
     mkdirSync(join(w.T, 'ca'), { recursive: true });
     writeFileSync(join(w.T, 'ca/ad3033-root.crt'), pemDatei('root2.crt'));
-    const f = w.lauf(tlsEinspielenSkript(P1), eingabe(signiere(csr)));
+    const f = w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr)));
     expect(f.rc).toBe(1);
-    expect(f.e!.fehler).toContain('ad3033-root.crt ist vorhanden und nicht von Alfred');
+    expect(f.e!.fehler).toContain('Root weicht von der eingespielten ab');
     expect(w.datei('ca/ad3033-root.crt')).toBe(pemDatei('root2.crt'));
     expect(existsSync(join(w.T, 'secrets/tls.key.neu'))).toBe(true);
     rmSync(join(w.T, 'ca/ad3033-root.crt'));
     writeFileSync(join(w.T, 'conf/tlscert'), '/etc/ssl/fremd.pem\n');
-    const g = w.lauf(tlsEinspielenSkript(P1), eingabe(signiere(csr)));
+    const g = w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr)));
     expect(g.rc).toBe(1);
     expect(g.e!.fehler).toContain('network.tlscert = /etc/ssl/fremd.pem (nicht Alfreds Pfad');
     expect(w.datei('conf/tlscert')).toBe('/etc/ssl/fremd.pem\n');
@@ -323,12 +329,12 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
 
   it('Erneuerung: neue Anforderung + neues Zertifikat ersetzt Alfreds alte Dateien, Manifest nur mit den neuen', () => {
     const { w, csr } = angefordert();
-    expect(w.lauf(tlsEinspielenSkript(P1), eingabe(signiere(csr))).rc).toBe(0);
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
     const alt = w.datei('secrets/tls.key');
     const a2 = w.lauf(tlsAnfordernSkript(P1));
     expect(a2.e).toMatchObject({ schluesselNeu: true });
     const z2 = signiere(ohneCr(String(a2.e!.csrPem)));
-    const e2 = w.lauf(tlsEinspielenSkript(P1), eingabe(z2));
+    const e2 = w.lauf(tlsEinspielenSkript(PE()), eingabe(z2));
     expect(e2.rc, e2.aus).toBe(0);
     expect(e2.e).toMatchObject({ zustand: 'geaendert', schluessel: 'neu' });
     expect(w.datei('secrets/tls.key')).not.toBe(alt);
@@ -339,7 +345,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
 
   it('tls_entfernen: nur Alfreds Werte und Dateien (Manifest), unbenutzter .neu; forceencryption 1 → Abbruch ohne Änderung; Wiederholung „schon“', () => {
     const { w, csr } = angefordert();
-    expect(w.lauf(tlsEinspielenSkript(P1), eingabe(signiere(csr))).rc).toBe(0);
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
     w.lauf(tlsAnfordernSkript(P1)); // neuer, unbenutzter Schlüssel
     writeFileSync(join(w.T, 'conf/forceencryption'), '1\n');
     const vorher = w.dateien();
@@ -361,6 +367,48 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     const s = w.lauf(tlsEntfernenSkript());
     expect(s.e).toMatchObject({ zustand: 'schon', neustartNoetig: false });
     keinSchluessel(f, r, s);
+  }, 120_000);
+
+  it('Ruling R17: falsche erwartete Root → Abbruch ohne Änderung; andere Root als die eingespielte → Abbruch, Dateien unverändert', () => {
+    const { w, csr } = angefordert();
+    const vorher = w.dateien();
+    const a = w.lauf(tlsEinspielenSkript(PE(rootSha('root2.crt'))), eingabe(signiere(csr)));
+    expect(a.rc).toBe(1);
+    expect(a.e!.fehler).toContain(`Kette: Root mit SHA-256 ${rootSha('root.crt')} statt erwartet ${rootSha('root2.crt')} — nichts geändert`);
+    expect(w.dateien()).toBe(vorher);
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
+    const stand = () => [w.datei('ca/ad3033-root.crt'), w.datei('ca/ad3033-issuing.crt'), w.datei('secrets/tls.crt'), w.datei('secrets/tls.key'), w.datei('etc/alfred/sqllnx-tls.manifest'), JSON.stringify(w.conf())];
+    const v2 = stand();
+    // neue Anforderung, Zertifikat aus einer anderen PKI (Root 2), erwartet Root 2 → die eingespielte Root wird nicht ersetzt
+    const a2 = w.lauf(tlsAnfordernSkript(P1));
+    const z2 = signiere(ohneCr(String(a2.e!.csrPem)), 'leaf', 365, 'iss2');
+    const b = w.lauf(tlsEinspielenSkript(PE(rootSha('root2.crt'))), eingabe(z2, pemDatei('iss2.crt') + pemDatei('root2.crt')));
+    expect(b.rc).toBe(1);
+    expect(b.e!.fehler).toContain('Root weicht von der eingespielten ab');
+    expect(b.e!.fehler).toContain('nichts geändert');
+    expect(stand()).toEqual(v2);
+    expect(b.log).not.toMatch(/mssql-conf|update-ca-certificates/);
+    keinSchluessel(a, b);
+  }, 120_000);
+
+  it('Fix-Runde 1: scheitert das Ersetzen von tls.crt nach dem Schlüssel-mv, kommen alter Schlüssel und .neu zurück', () => {
+    const { w, csr } = angefordert();
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
+    const crt = w.datei('secrets/tls.crt'); const key = w.datei('secrets/tls.key');
+    const a2 = w.lauf(tlsAnfordernSkript(P1));
+    const neu = w.datei('secrets/tls.key.neu');
+    writeFileSync(join(w.T, 'mv_crt_scheitert'), '');
+    const b = w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(ohneCr(String(a2.e!.csrPem)))));
+    expect(b.rc).toBe(1);
+    expect(b.e!.fehler).toContain('nicht ersetzt — Schlüssel zurückgestellt');
+    expect(b.e!.fehler).toContain('Rückweg tls_entfernen');
+    expect(w.datei('secrets/tls.crt')).toBe(crt);
+    expect(w.datei('secrets/tls.key')).toBe(key);
+    expect(w.datei('secrets/tls.key.neu')).toBe(neu);
+    expect(w.rechte('secrets/tls.key')).toBe('400 mssql mssql');
+    expect(w.rechte('secrets/tls.key.neu')).toBe('400 mssql mssql');
+    expect(w.dateien()).not.toMatch(/\.alfred-tls-|tls\.key\.alt/);
+    keinSchluessel(a2, b);
   }, 120_000);
 
   it('Eingabe-Prüfung (python): genau ein Zertifikat und zwei in der Kette, kein Text daneben', () => {
@@ -414,8 +462,12 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
     expect(s.pruefeEingabe({ action: 'tls_anfordern', zugang: 'sqllnxcfg' })).toBeUndefined();
     expect(s.pruefeEingabe({ action: 'tls_anfordern', zugang: 'sqllnx03' })).toContain('TLS nur für sqllnx01, sqllnx02, sqllnxcfg');
     expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', computername: 'sql01', zert_base64: '{{schritt2.zertBase64}}' })).toContain('TLS nur für');
-    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', zert_base64: '{{schritt2.zertBase64}}', issuing_base64: '{{schritt2.issuingBase64}}', root_base64: '{{schritt2.rootBase64}}' })).toBeUndefined();
-    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: 'kein pem', kette: 'x' })).toContain('zertifikat');
+    const refs = { zert_base64: '{{schritt2.zertBase64}}', issuing_base64: '{{schritt2.issuingBase64}}', root_base64: '{{schritt2.rootBase64}}' };
+    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', ...refs, erwartet_root_sha256: 'ab'.repeat(32) })).toBeUndefined();
+    // Ruling R17: Pflicht, fester Wert (kein Verweis)
+    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', ...refs })).toContain('erwartet_root_sha256');
+    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', ...refs, erwartet_root_sha256: '{{schritt2.rootSha256}}' })).toContain('fester Wert');
+    expect(s.pruefeEingabe({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: 'kein pem', kette: 'x', erwartet_root_sha256: 'ab'.repeat(32) })).toContain('zertifikat');
     for (const a of ['tls_anfordern', 'tls_einspielen', 'tls_entfernen']) expect(LINUX_SQL_MIN_ZEITLIMIT_S[a]).toBeGreaterThan(60);
   });
 
@@ -426,21 +478,21 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
     const tp = x.fingerprint.replace(/:/g, '');
     const ok = { zustand: 'geaendert', cn: 'sqllnx01.ad.3033.at', thumbprint: tp, gueltigBis: '2027-11-19T12:00:00Z', restTage: 365, schluessel: 'neu', neustartNoetig: true, aenderungen: ['zertifikat'] };
     const w = skill(ok);
-    expect((await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE() }, {} as never)).error).toContain('nur als Schritt');
-    const r = await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE() }, imChange);
+    expect((await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root.crt') }, {} as never)).error).toContain('nur als Schritt');
+    const r = await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root.crt') }, imChange);
     expect(r.success, r.error).toBe(true);
     expect(r.display).toContain(`TLS_INSTALLED sqllnx01: /var/opt/mssql/secrets/tls.crt Thumbprint ${tp}`);
     expect(r.display).toContain('Verschlüsselung NICHT erzwungen; Neustart von SQL Server nötig (rollierend per Change)');
     expect(w.aufrufe[0]!.baustein).toBe(LINUX_SQL_BAUSTEINE.tlsEinspielen);
-    expect(w.aufrufe[0]!.parameter).toEqual(P1);
+    expect(w.aufrufe[0]!.parameter).toEqual(PE());
     const ein = JSON.parse(w.aufrufe[0]!.eingabe!) as Record<string, string>;
     expect(Object.keys(ein)).toEqual(['zertifikat', 'kette']);
     // DER-Base64 (Form der Change-Verweise) ergibt dieselbe Eingabe; Kettenreihenfolge egal
     const der = (p: string) => Buffer.from(new X509Certificate(p).raw).toString('base64');
-    const r2 = await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zert_base64: der(z), issuing_base64: der(pemDatei('iss.crt')), root_base64: der(pemDatei('root.crt')) }, imChange);
+    const r2 = await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zert_base64: der(z), issuing_base64: der(pemDatei('iss.crt')), root_base64: der(pemDatei('root.crt')), erwartet_root_sha256: rootSha('root.crt').toUpperCase() }, imChange);
     expect(r2.success, r2.error).toBe(true);
     expect(w.aufrufe[1]!.eingabe).toBe(w.aufrufe[0]!.eingabe);
-    expect(tlsEingabe({ zertifikat: z, kette: pemDatei('root.crt') + pemDatei('iss.crt') }).kette).toBe(ein.kette);
+    expect(tlsEingabe({ zertifikat: z, kette: pemDatei('root.crt') + pemDatei('iss.crt'), erwartet_root_sha256: rootSha('root.crt') }).kette).toBe(ein.kette);
     // Eingabe-Fehler vor jedem Aufruf
     const n = skill(ok);
     for (const [input, text] of [
@@ -448,14 +500,17 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
       [{ zertifikat: pemDatei('iss.crt'), kette: KETTE() }, 'nicht von der Issuing-CA'],
       [{ zertifikat: z, kette: `${KETTE()}-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n` }, 'privaten Schlüssel'],
       [{ zert_base64: der(z), issuing_base64: der(pemDatei('iss.crt')) }, 'nur zusammen'],
+      // Ruling R17: andere erwartete Root bzw. keine → abgewiesen, kein Fernaufruf
+      [{ zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root2.crt') }, `Root mit SHA-256 ${rootSha('root.crt')} statt erwartet ${rootSha('root2.crt')}`],
+      [{ zertifikat: z, kette: KETTE(), erwartet_root_sha256: undefined }, 'erwartet_root_sha256: SHA-256 (64 Hex)'],
     ] as Array<[Record<string, unknown>, string]>) {
-      const f = await n.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', ...input }, imChange);
+      const f = await n.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', erwartet_root_sha256: rootSha('root.crt'), ...input }, imChange);
       expect(f.success).toBe(false);
       expect(f.error).toContain(text);
     }
     expect(n.aufrufe).toEqual([]);
     // Nachprüfung: anderer Thumbprint im Ergebnis → Fehler
-    const t = await skill({ ...ok, thumbprint: 'A'.repeat(40) }).s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE() }, imChange);
+    const t = await skill({ ...ok, thumbprint: 'A'.repeat(40) }).s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root.crt') }, imChange);
     expect(t.error).toContain('Nachprüfung fehlgeschlagen');
   });
 
@@ -492,10 +547,13 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
     const der = (p: string) => Buffer.from(new X509Certificate(p).raw).toString('base64');
     expect(f).toEqual({ zertBase64: der(z), issuingBase64: der(pemDatei('iss.crt')), rootBase64: der(pemDatei('root.crt')) });
     expect(derFelder({ zustand: 'ausgestellt', zertifikatPem: z, kettePem: pemDatei('iss.crt') })).toEqual({});
+    // Fix-Runde 1 (Minor 3): data enthält die Base64-Felder ohne doppelte PEM-Felder; nur ohne sie die PEM-Felder
+    expect(derOderPem({ zustand: 'ausgestellt', zertifikatPem: z, kettePem: KETTE() })).toEqual(f);
+    expect(derOderPem({ zustand: 'ausgestellt', zertifikatPem: z, kettePem: pemDatei('iss.crt') })).toEqual({ zertifikatPem: z, kettePem: pemDatei('iss.crt') });
     const erg = [{ nr: 4, ok: true, daten: f }] as never;
     const r = loeseAuf({ zugang: 'sqllnx01', zert_base64: '{{schritt4.zertBase64}}', issuing_base64: '{{schritt4.issuingBase64}}', root_base64: '{{schritt4.rootBase64}}' }, erg);
     expect(r.fehler).toBeUndefined();
-    expect(tlsEingabe(r.wert as never).thumbprint).toBe(new X509Certificate(z).fingerprint.replace(/:/g, ''));
+    expect(tlsEingabe({ ...(r.wert as Record<string, unknown>), erwartet_root_sha256: rootSha('root.crt') }).thumbprint).toBe(new X509Certificate(z).fingerprint.replace(/:/g, ''));
   });
 
   it('tls_entfernen: TLS_REMOVED mit belassen und Neustart-Hinweis; anfordern/entfernen nur im Change', async () => {
@@ -518,7 +576,7 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', () => {
     expect(f([anf({ keiner: 'egal' })]).some(x => x.includes('hat keinen Rückweg'))).toBe(true);
     expect(f([anf({ skill: 'linux_sql', aktion: 'tls_entfernen', parameter: { zugang: 'sqllnxcfg' } })]).some(x => x.includes('hat keinen Rückweg'))).toBe(true);
     expect(f([anf({ keiner: TLS_ANFORDERN_GRUND })])).toEqual([]);
-    const ein = (rueckweg: unknown) => ({ titel: 'Einspielen', art: 'aktion', skill: 'linux_sql', aktion: 'tls_einspielen', parameter: { zugang: 'sqllnxcfg', zert_base64: '{{schritt1.zertBase64}}', issuing_base64: '{{schritt1.issuingBase64}}', root_base64: '{{schritt1.rootBase64}}' }, zeitlimitS: 300, rueckweg });
+    const ein = (rueckweg: unknown) => ({ titel: 'Einspielen', art: 'aktion', skill: 'linux_sql', aktion: 'tls_einspielen', parameter: { zugang: 'sqllnxcfg', erwartet_root_sha256: 'ab'.repeat(32), zert_base64: '{{schritt1.zertBase64}}', issuing_base64: '{{schritt1.issuingBase64}}', root_base64: '{{schritt1.rootBase64}}' }, zeitlimitS: 300, rueckweg });
     const vor = { titel: 'Status', art: 'aktion', skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnxcfg' }, zeitlimitS: 200 };
     expect(f([vor, ein({ keiner: 'x' })]).some(x => x.includes('rueckweg linux_sql.tls_entfernen (zugang)'))).toBe(true);
     expect(f([vor, ein({ skill: 'linux_sql', aktion: 'tls_entfernen', parameter: { zugang: 'sqllnx01' } })]).some(x => x.includes('tls_entfernen muss auf demselben Zugang laufen'))).toBe(true);

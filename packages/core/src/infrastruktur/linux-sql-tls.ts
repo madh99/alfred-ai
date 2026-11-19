@@ -17,7 +17,7 @@
  * Der private Schlüssel erscheint nie in Ergebnis, Log, Fehlertext oder Tresor: auf ihn laufen nur `openssl rsa -noout -modulus` und
  * `openssl pkey -pubout` (öffentlicher Teil); die Eingabe-Prüfung weist jeden „PRIVATE“-Block zurück.
  */
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import {
   LINUX_SQL_BAUSTEINE, PY_CONF, shQ, sqlKopf, AD_DOMAENE_LINUX,
@@ -43,6 +43,8 @@ export const TLS_HOSTS: readonly string[] = ['sqllnx01', 'sqllnx02', 'sqllnxcfg'
 export const TLS_ANFORDERN_GRUND = 'nur Schlüssel tls.key.neu und Anforderung, keine Konfiguration — tls_entfernen räumt den unbenutzten Schlüssel ab';
 
 export interface TlsParameter { cn: string; sans: string[] }
+/** Ruling R17: tls_einspielen zusätzlich mit der fest vorgegebenen Root (SHA-256 der DER) */
+export interface TlsEinspielenParameter extends TlsParameter { rootSha256: string }
 
 /** CN und SANs je Host aus linuxTlsSans (eine Quelle mit windows_pki fremd_csr_ausstellen) */
 export function tlsParameter(host: string): TlsParameter {
@@ -81,7 +83,7 @@ function derAusBase64(feld: string, v: unknown): Buffer {
   return Buffer.from(v, 'base64');
 }
 
-export interface TlsEingabe { zertifikat: string; kette: string; thumbprint: string }
+export interface TlsEingabe { zertifikat: string; kette: string; thumbprint: string; rootSha256: string }
 /**
  * Eingabe von tls_einspielen: `zertifikat` + `kette` (PEM, Kette = Issuing-CA und Root) ODER `zert_base64` + `issuing_base64` +
  * `root_base64` (DER, je ein Zertifikat — die Form, die Change-Verweise als ganzen Wert tragen). Mit Node geprüft: Root selbstsigniert,
@@ -106,7 +108,18 @@ export function tlsEingabe(input: Record<string, unknown>): TlsEingabe {
   if (!root || !iss) throw new Error('kette: erwartet Issuing-CA und Root (selbstsigniert)');
   if (!iss.checkIssued(root) || !iss.verify(root.publicKey)) throw new Error('kette: Issuing-CA ist nicht von der Root ausgestellt');
   if (!x.checkIssued(iss) || !x.verify(iss.publicKey)) throw new Error('zertifikat: nicht von der Issuing-CA der Kette ausgestellt');
-  return { zertifikat: pem(Buffer.from(x.raw)), kette: pem(Buffer.from(iss.raw)) + pem(Buffer.from(root.raw)), thumbprint: x.fingerprint.replace(/:/g, '').toUpperCase() };
+  // Ruling R17: die Root ist fest vorgegeben (SHA-256 der DER) — eine andere selbstsignierte Root wird nie systemweit vertraut
+  const soll = erwarteteRoot(input.erwartet_root_sha256);
+  const ist = createHash('sha256').update(Buffer.from(root.raw)).digest('hex');
+  if (ist !== soll) throw new Error(`kette: Root mit SHA-256 ${ist} statt erwartet ${soll} — nichts eingespielt`);
+  return { zertifikat: pem(Buffer.from(x.raw)), kette: pem(Buffer.from(iss.raw)) + pem(Buffer.from(root.raw)), thumbprint: x.fingerprint.replace(/:/g, '').toUpperCase(), rootSha256: soll };
+}
+
+/** Ruling R17 — erwartet_root_sha256: Pflicht, fester Wert (kein Verweis), 64 Hex = SHA-256 der Root-DER */
+export function erwarteteRoot(v: unknown): string {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (!/^[0-9a-f]{64}$/.test(s)) throw new Error('erwartet_root_sha256: SHA-256 (64 Hex) der DER der AD3033-Root als fester Wert — Pflicht für tls_einspielen');
+  return s;
 }
 
 /** Bash-Text mit „§{“ statt „${“ (String.raw ohne Escape-Salat, wie linux-sql-ad.ts) */
@@ -302,6 +315,10 @@ for k in "$ALFRED_TMP/kette1.pem" "$ALFRED_TMP/kette2.pem"; do
   if [ "$sh_" = "$ih" ]; then [ -z "$ROOT" ] || abbruch "Kette: zwei selbstsignierte Zertifikate, erwartet Issuing-CA und Root — nichts geändert"; ROOT=$k
   else [ -z "$ISS" ] || abbruch "Kette: keine Root (selbstsigniert), erwartet Issuing-CA und Root — nichts geändert"; ISS=$k; fi
 done
+# Ruling R17: nur die fest vorgegebene Root (SHA-256 der DER)
+openssl x509 -in "$ROOT" -outform DER -out "$ALFRED_TMP/root.der" >/dev/null 2>&1 || abbruch "Kette: Root nicht lesbar — nichts geändert"
+RS=$(sha "$ALFRED_TMP/root.der")
+[ "$RS" = "$ROOT_SHA" ] || abbruch "Kette: Root mit SHA-256 $RS statt erwartet $ROOT_SHA — nichts geändert"
 a=$(openssl verify -CAfile "$ROOT" "$ISS" 2>&1) || abbruch "Kette: Issuing-CA ist nicht von der Root ausgestellt ($(kurz "$a")) — nichts geändert"
 a=$(openssl verify -purpose sslserver -CAfile "$ROOT" -untrusted "$ISS" "$Z" 2>&1) || abbruch "Zertifikat: nicht über Issuing-CA bis zur Root prüfbar oder nicht für Server-Authentifizierung ($(kurz "$a")) — nichts geändert"
 MZ=$(mod_zert "$Z")
@@ -339,7 +356,11 @@ fremd_pruefen() {
   if [ -n "$2" ] && cmp -s -- "$1" "$2"; then return 0; fi
   alfreds "$1" || abbruch "$1 ist vorhanden und nicht von Alfred (nicht mit diesem Inhalt im Manifest $MANIFEST) — nichts geändert"
 }
-fremd_pruefen "$CA_ROOT" "$ROOT"
+# Ruling R17: eine vorhandene Root wird nie ersetzt (auch nicht Alfreds) — eine andere Root ist ein eigener Vorgang
+if [ -e "$CA_ROOT" ] || [ -L "$CA_ROOT" ]; then
+  { [ -f "$CA_ROOT" ] && [ ! -L "$CA_ROOT" ]; } || abbruch "$CA_ROOT ist keine reguläre Datei — nichts geändert"
+  cmp -s -- "$CA_ROOT" "$ROOT" || abbruch "Root weicht von der eingespielten ab ($CA_ROOT) — nichts geändert"
+fi
 fremd_pruefen "$CA_ISS" "$ISS"
 fremd_pruefen "$CRT" "$Z"
 if [ "$QUELLE" = neu ]; then fremd_pruefen "$KEY" ''; fi
@@ -371,8 +392,22 @@ vertraut || abbruch "Selbstprüfung: Zertifikat gegen den Vertrauensspeicher $CA
 if [ ! -d "$SECRETS" ]; then mkdir -p "$SECRETS"; chown mssql:mssql "$SECRETS"; chmod 0700 "$SECRETS"; aend secrets-ordner; fi
 CRT_ZW=''
 if ! cmp -s -- "$Z" "$CRT"; then vorbereiten "$CRT" "$Z" 0444 mssql:mssql; CRT_ZW=$ZW; fi
-if [ "$QUELLE" = neu ]; then mv -f -- "$KEY_NEU" "$KEY"; aend schluessel; SQL_AEND=1; fi
-if [ -n "$CRT_ZW" ]; then mv -f -- "$CRT_ZW" "$CRT"; aend zertifikat; SQL_AEND=1; fi
+# Fix-Runde 1: scheitert das zweite mv, kommen der neue Schlüssel nach .neu und der alte (Kopie im privaten Lauf-Ordner) zurück
+KEY_ALT=''
+if [ "$QUELLE" = neu ]; then
+  if [ -f "$KEY" ]; then KEY_ALT="$ALFRED_TMP/tls.key.alt"; cp -p -- "$KEY" "$KEY_ALT"; fi
+  mv -f -- "$KEY_NEU" "$KEY"; aend schluessel; SQL_AEND=1
+fi
+if [ -n "$CRT_ZW" ]; then
+  if ! mv -f -- "$CRT_ZW" "$CRT"; then
+    if [ "$QUELLE" = neu ]; then
+      mv -f -- "$KEY" "$KEY_NEU" || abbruch "$CRT nicht ersetzt und Schlüssel nicht zurückgestellt — Rückweg tls_entfernen"
+      if [ -n "$KEY_ALT" ]; then { vorbereiten "$KEY" "$KEY_ALT" 0400 mssql:mssql && mv -f -- "$ZW" "$KEY"; } || abbruch "$CRT nicht ersetzt, alter Schlüssel nicht zurückgestellt — Rückweg tls_entfernen"; fi
+    fi
+    abbruch "$CRT nicht ersetzt — Schlüssel zurückgestellt ($KEY_NEU wartet weiter), Zertifikat und Schlüssel unverändert; CA-Dateien/Manifest ggf. schon geschrieben (Rückweg tls_entfernen)"
+  fi
+  aend zertifikat; SQL_AEND=1
+fi
 if [ "$(rechte "$KEY")" != '400 mssql mssql' ]; then chown mssql:mssql "$KEY"; chmod 0400 "$KEY"; aend schluessel-rechte; SQL_AEND=1; fi
 if [ "$(rechte "$CRT")" != '444 mssql mssql' ]; then chown mssql:mssql "$CRT"; chmod 0444 "$CRT"; aend zertifikat-rechte; SQL_AEND=1; fi
 # ── Phase 5: mssql-conf (nur bei Abweichung; wirkt erst nach dem Neustart — der läuft rollierend per Change, nicht hier) ──
@@ -416,11 +451,13 @@ ergebnis "{\"zustand\":\"$ZU\",\"cn\":\"$CN\",\"sans\":$SANS_JSON,\"bits\":$BITS
  * Zertifikat + Kette (stdin { zertifikat, kette }, PEM) prüfen und einspielen — siehe Dateikopf. Ergebnis { zustand, cn, sans, bits,
  * thumbprint, gueltigBis, restTage, schluessel (neu|aktiv), zertifikat, neustartNoetig, aenderungen }. Zeit: LINUX_SQL_ZEIT_MS.tlsEinspielen
  */
-export function tlsEinspielenSkript(p: TlsParameter): string {
+export function tlsEinspielenSkript(p: TlsEinspielenParameter): string {
   const f = pruefeTls(p); if (f) throw new Error(f);
+  const rootSha256 = erwarteteRoot(p.rootSha256);
   return [
-    ...sqlKopf(LINUX_SQL_BAUSTEINE.tlsEinspielen, { cn: p.cn, sans: [...p.sans] }),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.tlsEinspielen, { cn: p.cn, sans: [...p.sans], rootSha256 }),
     ...werte(p),
+    `ROOT_SHA=${shQ(rootSha256)}`,
     `PY_TLS_EINGABE=${shQ(PY_TLS_EINGABE)}`,
     HILFEN,
     MARKE,
@@ -485,5 +522,5 @@ export function tlsEntfernenSkript(): string {
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<TlsParameter>(LINUX_SQL_BAUSTEINE.tlsAnfordern, tlsAnfordernSkript);
-registriereLinuxBaustein<TlsParameter>(LINUX_SQL_BAUSTEINE.tlsEinspielen, tlsEinspielenSkript);
+registriereLinuxBaustein<TlsEinspielenParameter>(LINUX_SQL_BAUSTEINE.tlsEinspielen, tlsEinspielenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.tlsEntfernen, () => tlsEntfernenSkript());
