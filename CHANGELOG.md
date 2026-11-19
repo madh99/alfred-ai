@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — AD-Anmeldung und PKI-TLS für SQL Server auf Linux, Teil 1: Planprüfung, AD-Objekte, Zertifikatsausstellung (v1902)
+
+- **Feste Systemprüfung in der Change-Planprüfung:** Skill-Aktionen, Rückwege und Prüfungen, die an ein Betriebssystem gebunden sind (`linux_sql`, `linux_ha`, `windows_ad`, `windows_pki`, `windows_cluster`, `sql_server`, `pki_lab`), werden abgelehnt, wenn der Zugang das andere System hat — auch für Zugänge, die der Plan selbst anlegt, und für Standard-Changes. Die Meldung nennt den richtigen Weg.
+- **`windows_ad`:** Dienstkonten können gehärtet werden (nur AES, keine Delegierung, Kennwort ohne Ablauf, interaktive und RDP-Anmeldung über eine eigene, vor dem Verlinken auf Herkunft, Inhalt und Rechte geprüfte GPO verweigert). Neu: SPNs setzen/entfernen/lesen mit forstweiter Dublettenprüfung, Computerkonten mit Einmal-Kennwort für einen Domänenbeitritt ohne Admin-Konto auf dem Zielhost (nie fremde oder bereits beigetretene Konten übernehmen), Reverse-DNS-Zone und PTR-Einträge, Gruppen, sowie eine eng begrenzte Kerberos-/TLS-Anmeldeprobe gegen SQL Server über ein Test-Konto.
+- **`windows_pki`:** Eigene Zertifikatsvorlage für SQL Server auf Linux und Ausstellung von Anforderungen, die auf dem Linux-Host entstehen: Name, exakte SAN-Liste, Schlüssellänge und Prüfsumme werden vor dem Einreichen geprüft; bei jeder Abweichung wird nichts ausgestellt.
+
+### Security
+
+- SQL-TLS-Genehmigungen (Windows und Linux) lehnen Anforderungen mit SAN-Angaben in den Anforderungsattributen ab und brechen ab, wenn an der CA `EDITF_ATTRIBUTESUBJECTALTNAME2` gesetzt ist.
+
 ### Fixed — CMDB-Erfassung nach Changes und parallele Incident-Trennung (v1901)
 
 - Nach einem Change mit Fernzugriff-Schritten erfasste Alfred alle Fernzugriff-Hosts neu. Das passte nie in die Zeitgrenze von 120 s: Der Bericht meldete „timed out“, die Erfassung lief unbemerkt weiter. Jetzt werden nur die Hosts neu erfasst, die der Change berührt hat, und dabei wird nichts als veraltet markiert. Die vollständige Erfassung bleibt beim nächtlichen Lauf. Lassen sich keine Hosts bestimmen, sagt der Bericht das ausdrücklich.
