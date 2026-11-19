@@ -8,10 +8,11 @@
  *
  * Regeln wie linux-sql.ts: Kopf `sqlKopf`, Ergebniszeile `ALFRED-SQL {json}`, Eingabe nur über "$ALFRED_EINGABE" (JSON-Feld `einmal`),
  * Einmal-Kennwort nur per Pipe aus dem Shell-Builtin printf an adcli (nie argv, nie Ausgabe; adcli-Fehlertext wird geschwärzt).
- * Erst prüfen (nichts geändert), dann ändern: Pakete in fester Version + hold, krb5.conf, Beitritt, sssd.conf (0600 root), NSS, sssd.
- * Selbstprüfung: realm list, id svc-sqllnx@…, getent group sql-linux-admins@…, host/<fqdn> im Keytab, adcli testjoin.
- * Rückweg `adVerlassenSkript`: nur lokal (kein Admin-Konto am Host); das Computerkonto entfernt der Change danach mit
- * windows_ad computerkonto_entfernen.
+ * Erst prüfen (nichts geändert; fremde sssd.conf/krb5.conf/Keytab → Abbruch), dann ändern: Pakete in fester Version + hold, PAM ohne
+ * sss, krb5.conf (Alfred-Kopf), Beitritt, sssd.conf (0600 root, nur NSS, access_provider = deny), NSS, sssd.
+ * Selbstprüfung: realm list, id svc-sqllnx@…, getent group sql-linux-admins@…, host/<fqdn> im Keytab, adcli testjoin, kein pam_sss.
+ * Rückweg `adVerlassenSkript`: nur lokal (kein Admin-Konto am Host) und nur Alfreds eigene Einrichtung (Fremdes bleibt, steht in
+ * `belassen`); das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen.
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import { sqlKopf, shQ, LINUX_SQL_BAUSTEINE } from './linux-sql.js';
@@ -26,12 +27,6 @@ export const AD_NIE_BEITRETEN = 'sqllnxcfg';
 /** Selbstprüfung: Dienstkonto der SQL-Instanzen und Admin-Gruppe (windows_ad, Etappe 3 Task 2) */
 export const AD_PRUEF_KONTO = 'svc-sqllnx';
 export const AD_PRUEF_GRUPPE = 'sql-linux-admins';
-/**
- * sssd-simple(5): „If all lists are empty, access is granted“ — eine leere Erlaubnisliste würde JEDEM Domänenbenutzer die Anmeldung
- * am Host (SSH/PAM) erlauben. Spec 7.2 will das Gegenteil (Beitritt nur für SQL Server). Darum steht in simple_allow_users ein Name,
- * den es im AD nicht geben kann (22 Zeichen, sAMAccountName höchstens 20) — niemand darf sich am Host anmelden.
- */
-export const AD_KEIN_ZUGANG = `alfred-keine-anmeldung@${LINUX_AD.domaene}`;
 
 /**
  * Feste Paketversionen (Spec 7.2: realmd sssd sssd-tools adcli krb5-user libnss-sss libpam-sss) — gelesen per apt-cache madison auf
@@ -47,8 +42,19 @@ export const AD_SSSD_CONF = '/etc/sssd/sssd.conf';
 export const AD_KRB5_CONF = '/etc/krb5.conf';
 export const AD_KEYTAB = '/etc/krb5.keytab';
 export const AD_NSSWITCH = '/etc/nsswitch.conf';
-/** Kopfzeile der von Alfred geschriebenen sssd.conf — eine andere vorhandene sssd.conf wird nie überschrieben */
+/** Kopfzeile der von Alfred geschriebenen sssd.conf — eine andere vorhandene sssd.conf wird nie überschrieben oder entfernt */
 export const AD_SSSD_KOPF = '# Alfred I8e — linux_sql ad_beitreten (nicht von Hand ändern)';
+/** Kopfzeile der von Alfred geschriebenen krb5.conf (Fix-Runde 1, Ruling R13) */
+export const AD_KRB5_KOPF = '# Alfred I8e — linux_sql ad_beitreten (krb5.conf, nicht von Hand ändern)';
+/**
+ * Fix-Runde 1 (R13): „Paketvorgabe“ einer krb5.conf ohne Alfred-Kopf = die Vorlage von krb5-config (postinst kopiert sie nach
+ * /etc/krb5.conf und ändert nur default_realm bzw. ergänzt rdns = false) — gleich der Vorlage, wenn man default_realm- und rdns-Zeilen
+ * und Leerzeichen am Zeilenende nicht mitvergleicht. Nur diese ersetzt ad_beitreten (Sicherung AD_KRB5_ALT, ad_verlassen stellt sie
+ * wieder her); jede andere krb5.conf ohne Kopf ist fremd → Abbruch, nichts geändert.
+ */
+export const AD_KRB5_VORLAGE = '/usr/share/kerberos-configs/krb5.conf.template';
+export const AD_KRB5_ALT = '/etc/krb5.conf.alfred-vorher';
+export const AD_PAM_D = '/etc/pam.d';
 /** höchste zulässige Uhrzeitabweichung zu dc01 in Sekunden (Kerberos verträgt 300 s; Plan: < 60 s) */
 export const AD_UHR_MAX_S = 60;
 
@@ -71,6 +77,22 @@ export function pruefeAdBeitreten(p: unknown): string | undefined {
   if (Object.keys(pk).sort().join(',') !== soll) return `pakete: genau ${Object.keys(LINUX_AD_PAKETE).join(', ')}`;
   for (const [n, v] of Object.entries(pk)) if (typeof v !== 'string' || !DEB_VERSION.test(v)) return `pakete.${n}: Debian-Paketversion wie ${LINUX_AD_PAKETE[n]}`;
   return undefined;
+}
+
+export interface AdVerlassenParameter { computername: string }
+export function pruefeAdVerlassen(p: unknown): string | undefined {
+  const x = obj(p);
+  return typeof x.computername === 'string' && COMPUTERNAME.test(x.computername) ? undefined : 'computername: Rechnername ohne $ (höchstens 15 Zeichen), z. B. sqllnx01';
+}
+
+/** Kennung des Rechners in beiden Skripten (Keytab-Prüfung) */
+function kennung(computername: string): string[] {
+  const klein = computername.toLowerCase();
+  const name = computername.toUpperCase();
+  return [
+    `DOM=${shQ(LINUX_AD.domaene)}`, `REALM=${shQ(LINUX_AD.realm)}`, `NAME=${shQ(name)}`, `KLEIN=${shQ(klein)}`, `FQDN=${shQ(`${klein}.${LINUX_AD.domaene}`)}`,
+    `KONTO_PRINCIPAL=${shQ(`${name}$@${LINUX_AD.realm}`)}`,
+  ];
 }
 
 // ── Gemeinsame Hilfen ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -123,6 +145,11 @@ KEYTAB=${shQ(AD_KEYTAB)}
 NSS=${shQ(AD_NSSWITCH)}
 SSS_DB=/var/lib/sss/db
 SSS_MC=/var/lib/sss/mc
+KRB5_VORLAGE=${shQ(AD_KRB5_VORLAGE)}
+KRB5_ALT=${shQ(AD_KRB5_ALT)}
+PAM_D=${shQ(AD_PAM_D)}
+SSSD_KOPF=${shQ(AD_SSSD_KOPF)}
+KRB5_KOPF=${shQ(AD_KRB5_KOPF)}
 # Realfall 17.11. (6279a86a): gehaltene Pakete melden „hold ok installed“ — installiert ist jeder Status „<wunsch> ok installed“
 paket_version() { dpkg-query -W -f='§{Status}|§{Version}' "$1" 2>/dev/null | awk -F'|' '$1 ~ / ok installed$/ { print $2 }' || true; }
 paket_gehalten() { [ "$(dpkg-query -W -f='§{Status}' "$1" 2>/dev/null || true)" = 'hold ok installed' ]; }
@@ -143,7 +170,36 @@ schreibe_datei() {
 }
 nss_hat() { grep -Eq "^$1:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; }
 # pipefail: nie „Programm | grep -q“ (SIGPIPE beim frühen Ende von grep) — erst lesen, dann suchen
-realm_hat() { local a; a=$(realm list --name-only 2>/dev/null | tr 'A-Z' 'a-z' || true); grep -qxF -- "$DOM" <<<"$a"; }`);
+realm_hat() { local a; a=$(realm list --name-only 2>/dev/null | tr 'A-Z' 'a-z' || true); grep -qxF -- "$DOM" <<<"$a"; }
+klein() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
+keytab_principals() { klist -k "$KEYTAB" 2>/dev/null | awk 'NR > 3 && NF >= 2 { print $2 }' | sort -u || true; }
+keytab_hat() { local p; p=$(klein "$(keytab_principals)"); grep -qxF -- "$(klein "$1")" <<<"$p"; }
+# Principals im Keytab, die nicht zu diesem Rechner gehören (adcli schreibt NAME$, host/ und RestrictedKrbHost/ je Kurzname und FQDN)
+keytab_fremd() {
+  local p e z
+  p=$(klein "$(keytab_principals)")
+  e=$(klein "$NAME\$@$REALM
+host/$FQDN@$REALM
+host/$NAME@$REALM
+restrictedkrbhost/$FQDN@$REALM
+restrictedkrbhost/$NAME@$REALM")
+  while IFS= read -r z; do if [ -n "$z" ] && ! grep -qxF -- "$z" <<<"$e"; then printf '%s\n' "$z"; fi; done <<<"$p"
+}
+# 0 = Keytab lesbar und enthält nur Principals dieses Rechners
+keytab_nur_eigen() { command -v klist >/dev/null 2>&1 && klist -k "$KEYTAB" >/dev/null 2>&1 && [ -z "$(keytab_fremd)" ]; }
+sssd_eigen() { [ "$(head -n 1 "$SSSD_CONF")" = "$SSSD_KOPF" ]; }
+krb5_eigen() { [ "$(head -n 1 "$KRB5_CONF")" = "$KRB5_KOPF" ]; }
+krb5_norm() { { grep -Ev '^[[:space:]]*(default_realm|rdns)[[:space:]]*=' "$1" || true; } | sed -E 's/[[:space:]]+$//'; }
+krb5_vorgabe() { [ -f "$KRB5_VORLAGE" ] && [ "$(krb5_norm "$KRB5_CONF")" = "$(krb5_norm "$KRB5_VORLAGE")" ]; }
+# Fix-Runde 1 (R13): pam_sss in einer common-*-Datei (pam-auth-update-Profil sss)
+pam_sss_aktiv() { local f; for f in "$PAM_D"/common-*; do if [ -f "$f" ] && grep -q pam_sss "$f"; then return 0; fi; done; return 1; }
+pam_ohne_sss() {
+  if pam_sss_aktiv; then
+    local a; a=$(pam-auth-update --disable sss 2>&1) || abbruch "pam-auth-update --disable sss fehlgeschlagen: $(kurz "$a")"
+    aend pam-ohne-sss
+  fi
+  ! pam_sss_aktiv || abbruch "pam_sss steht nach pam-auth-update --disable sss noch in $PAM_D/common-*"
+}`);
 
 // ── Beitritt ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -154,9 +210,6 @@ ptr_von() { host "$1" 2>/dev/null | sed -n 's/.* domain name pointer \(.*\)\.$/\
 # Quelladresse Richtung dc01 = die Adresse, unter der der Host die DCs erreicht (PTR muss auf den FQDN zeigen)
 eigene_ip() { ip -4 route get "$DC1" 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1 || true; }
 uhr_abweichung() { python3 -c "$PY_SNTP" "$DC1"; }
-keytab_principals() { klist -k "$KEYTAB" 2>/dev/null | awk 'NR > 3 && NF >= 2 { print $2 }' | sort -u || true; }
-klein() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
-keytab_hat() { local p; p=$(klein "$(keytab_principals)"); grep -qxF -- "$(klein "$1")" <<<"$p"; }
 beigetreten() { [ -f "$KEYTAB" ] && keytab_hat "$KONTO_PRINCIPAL" && adcli testjoin --domain="$DOM" >/dev/null 2>&1; }
 schwarz() { local t="$1"; if [ -n "§{EINMAL:-}" ]; then t=§{t//"$EINMAL"/[geschwärzt]}; fi; printf '%s' "$t"; }`);
 
@@ -181,12 +234,17 @@ for pv in "§{PAKETE[@]}"; do
 done
 if [ -s "$KEYTAB" ]; then
   command -v klist >/dev/null 2>&1 || abbruch "$KEYTAB vorhanden, klist fehlt — Inhalt nicht prüfbar; nichts geändert"
-  pr=$(keytab_principals)
-  [ -z "$pr" ] || keytab_hat "$KONTO_PRINCIPAL" || abbruch "$KEYTAB gehört einem anderen Beitritt ($(printf '%s' "$pr" | head -n 3 | tr '\n' ' ')) — nichts geändert"
+  klist -k "$KEYTAB" >/dev/null 2>&1 || abbruch "$KEYTAB nicht lesbar (klist -k) — nichts geändert"
+  fr=$(keytab_fremd)
+  [ -z "$fr" ] || abbruch "$KEYTAB enthält fremde Principals ($(printf '%s' "$fr" | head -n 3 | tr '\n' ' ')) — nichts geändert"
 fi
-if [ -f "$SSSD_CONF" ] && [ "$(head -n 1 "$SSSD_CONF")" != "$SSSD_KOPF" ]; then
+if [ -f "$SSSD_CONF" ] && ! sssd_eigen; then
   abbruch "$SSSD_CONF ist nicht von Alfred (andere Konfiguration) — nichts geändert"
 fi
+if [ -f "$KRB5_CONF" ] && ! krb5_eigen && ! krb5_vorgabe; then
+  abbruch "$KRB5_CONF ist fremd (weder von Alfred noch die unveränderte Vorgabe von krb5-config) — nichts geändert"
+fi
+command -v pam-auth-update >/dev/null 2>&1 || abbruch "pam-auth-update fehlt (libpam-runtime) — PAM nicht steuerbar; nichts geändert"
 # ── Phase 2: Pakete (feste Versionen, gehalten) ──
 FEHLEND=()
 for pv in "§{PAKETE[@]}"; do if [ -z "$(paket_version "§{pv%%=*}")" ]; then FEHLEND+=("$pv"); fi; done
@@ -209,7 +267,15 @@ for pv in "§{PAKETE[@]}"; do
   if ! paket_gehalten "$pk"; then apt-mark -o DPkg::Lock::Timeout=300 hold "$pk" >/dev/null; aend "halten:$pk"; fi
 done
 for b in adcli realm klist sssd; do command -v "$b" >/dev/null 2>&1 || abbruch "$b fehlt nach der Installation"; done
+# Fix-Runde 1 (R13): libpam-sss ist Pflicht-Abhängigkeit von sssd-common und schaltet pam_sss per pam-auth-update ein. SQL Server braucht
+# nur NSS; pam_sss mit „[default=bad …]“ in common-account kann bei gestopptem sssd lokales sudo/SSH sperren → Profil sss aus
+pam_ohne_sss
 # ── Phase 3: Kerberos und Beitritt ──
+if [ -f "$KRB5_CONF" ] && ! krb5_eigen; then
+  # nach der Installation kann krb5-config die Vorlage neu angelegt haben — nur diese wird ersetzt (Sicherung für ad_verlassen)
+  krb5_vorgabe || abbruch "$KRB5_CONF ist fremd (weder von Alfred noch die unveränderte Vorgabe von krb5-config) — Beitritt abgebrochen"
+  if [ ! -e "$KRB5_ALT" ]; then cp -p -- "$KRB5_CONF" "$KRB5_ALT"; aend krb5-vorgabe-gesichert; fi
+fi
 if schreibe_datei "$KRB5_CONF" 644 "$KRB5_SOLL"; then aend krb5.conf; fi
 if beigetreten; then
   JOIN=schon
@@ -247,6 +313,8 @@ adcli testjoin --domain="$DOM" >/dev/null 2>&1 || abbruch "Selbstprüfung: adcli
 ok=0; for i in $(seq 1 30); do if id "$PRUEF_KONTO@$DOM" >/dev/null 2>&1; then ok=1; break; fi; sleep 2; done
 [ "$ok" = 1 ] || abbruch "Selbstprüfung: id $PRUEF_KONTO@$DOM löst nicht auf (60 s)"
 getent group "$PRUEF_GRUPPE@$DOM" >/dev/null 2>&1 || abbruch "Selbstprüfung: getent group $PRUEF_GRUPPE@$DOM löst nicht auf"
+! pam_sss_aktiv || abbruch "Selbstprüfung: pam_sss steht in $PAM_D/common-*"
+krb5_eigen || abbruch "Selbstprüfung: $KRB5_CONF ohne Alfred-Kopf"
 if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
 ergebnis "{\"zustand\":\"$Z\",\"domaene\":\"$DOM\",\"computerkonto\":\"$KONTO_ANZEIGE\",\"sssd\":\"aktiv\",\"fqdn\":\"$FQDN\",\"ip\":\"$IP\",\"uhrAbweichungS\":\"$UHR_V\",\"beitritt\":\"$JOIN\",\"aenderungen\":[$AJ]}"`);
 
@@ -254,11 +322,12 @@ function sssdSoll(fqdn: string, name: string): string {
   const d = LINUX_AD.domaene;
   return [
     AD_SSSD_KOPF,
-    '[sssd]', 'config_file_version = 2', 'services = nss, pam', `domains = ${d}`, '',
+    // Fix-Runde 1 (R13): nur NSS (SID-/Namensauflösung für SQL Server), kein PAM-Responder
+    '[sssd]', 'config_file_version = 2', 'services = nss', `domains = ${d}`, '',
     `[domain/${d}]`,
     'id_provider = ad', 'auth_provider = ad', 'chpass_provider = ad',
-    // Spec 7.2: keine Anmeldung von Domänenbenutzern am Host — siehe AD_KEIN_ZUGANG (leere Listen hießen „alle“)
-    'access_provider = simple', `simple_allow_users = ${AD_KEIN_ZUGANG}`,
+    // Spec 7.2 / Ruling R12: keine Anmeldung von Domänenbenutzern am Host (leere simple-Listen hießen laut sssd-simple(5) „alle“)
+    'access_provider = deny',
     `ad_domain = ${d}`, `krb5_realm = ${LINUX_AD.realm}`,
     // Hostname bleibt kurz (Spec 10) — sssd muss Computername und Principal ausdrücklich kennen
     `ad_hostname = ${fqdn}`, `ldap_sasl_authid = ${name}$@${LINUX_AD.realm}`, `krb5_keytab = ${AD_KEYTAB}`,
@@ -271,7 +340,7 @@ function sssdSoll(fqdn: string, name: string): string {
 }
 
 const KRB5_SOLL = [
-  '# Alfred I8e — linux_sql ad_beitreten',
+  AD_KRB5_KOPF,
   '[libdefaults]',
   `    default_realm = ${LINUX_AD.realm}`,
   '    dns_lookup_realm = false',
@@ -295,14 +364,9 @@ export function adBeitretenSkript(p: AdBeitretenParameter): string {
   return [
     ...sqlKopf(LINUX_SQL_BAUSTEINE.adBeitreten, { domaene: p.domaene, realm: p.realm, ou: p.ou, computername: klein, dcs: p.dcs, pakete: Object.fromEntries(Object.keys(LINUX_AD_PAKETE).map(n => [n, p.pakete[n]])) }),
     HILFEN,
-    `DOM=${shQ(p.domaene)}`,
-    `REALM=${shQ(p.realm)}`,
+    ...kennung(p.computername),
     `OU_DN=${shQ(ouDn)}`,
-    `NAME=${shQ(name)}`,
-    `KLEIN=${shQ(klein)}`,
-    `FQDN=${shQ(fqdn)}`,
     `DC1=${shQ(p.dcs[0]!)}`,
-    `KONTO_PRINCIPAL=${shQ(`${name}$@${p.realm}`)}`,
     // JSON-Text (Backslash verdoppelt): AD3033\\SQLLNX01$
     `KONTO_ANZEIGE=${shQ(`${LINUX_AD.netbios}\\\\${name}$`)}`,
     `PRUEF_KONTO=${shQ(AD_PRUEF_KONTO)}`,
@@ -310,7 +374,6 @@ export function adBeitretenSkript(p: AdBeitretenParameter): string {
     `UHR_MAX=${AD_UHR_MAX_S}`,
     `PAKETE=(${pakete.map(shQ).join(' ')})`,
     `PY_SNTP=${shQ(PY_SNTP)}`,
-    `SSSD_KOPF=${shQ(AD_SSSD_KOPF)}`,
     `SSSD_SOLL=${shQ(sssdSoll(fqdn, name))}`,
     `KRB5_SOLL=${shQ(KRB5_SOLL)}`,
     BEITRETEN_HILFEN,
@@ -321,43 +384,67 @@ export function adBeitretenSkript(p: AdBeitretenParameter): string {
 
 // ── Verlassen (Rückweg, nur lokal) ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const VERLASSEN_KOERPER = sh(String.raw`# sssd aus
-if systemctl is-active --quiet sssd || systemctl is-enabled --quiet sssd; then
-  aus=$(systemctl disable --now sssd 2>&1) || abbruch "sssd lässt sich nicht stoppen/deaktivieren: $(kurz "$aus")"
-  aend sssd-aus
+const VERLASSEN_KOERPER = sh(String.raw`BELASSEN=''
+belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
+# Fix-Runde 1: nur Alfreds eigene Einrichtung zurücknehmen — eine fremde sssd.conf (ad_beitreten hätte sie nie angefasst) bleibt samt
+# sssd, NSS, PAM und Zwischenspeicher unverändert und steht im Ergebnis
+EIGEN=1
+if [ -f "$SSSD_CONF" ] && ! sssd_eigen; then EIGEN=0; belassen "$SSSD_CONF (nicht von Alfred) — sssd, NSS und PAM unverändert"; fi
+if [ "$EIGEN" = 1 ]; then
+  if systemctl is-active --quiet sssd || systemctl is-enabled --quiet sssd; then
+    aus=$(systemctl disable --now sssd 2>&1) || abbruch "sssd lässt sich nicht stoppen/deaktivieren: $(kurz "$aus")"
+    aend sssd-aus
+  fi
+  if [ -e "$SSSD_CONF" ]; then rm -f -- "$SSSD_CONF"; aend sssd.conf; fi
+  # Zwischenspeicher von sssd (Benutzer/Gruppen der Domäne) leeren
+  for d in "$SSS_DB" "$SSS_MC"; do
+    if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 1 -type f -print -quit)" ]; then find "$d" -maxdepth 1 -type f -delete; aend "cache:$(basename "$d")"; fi
+  done
+  # NSS: sss aus allen Zeilen nehmen (libnss-sss trägt es in passwd, group, shadow, netgroup, services, sudoers ein)
+  if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then
+    sed -E -i '/^[a-z]+:/ { s/[[:space:]]+sss([[:space:]]|$)/\1/g; s/[[:space:]]+sss([[:space:]]|$)/\1/g }' "$NSS"
+    aend nsswitch
+  fi
+  # PAM (R13): pam_sss nie aktiv lassen, wenn sssd steht — sonst kann common-account lokales sudo/SSH verweigern
+  pam_ohne_sss
 fi
-# Konfiguration und Maschinenschlüssel entfernen (Computerkonto im AD: windows_ad computerkonto_entfernen)
-if [ -e "$SSSD_CONF" ]; then rm -f -- "$SSSD_CONF"; aend sssd.conf; fi
-if [ -e "$KEYTAB" ]; then rm -f -- "$KEYTAB"; aend keytab; fi
-# Zwischenspeicher von sssd (Benutzer/Gruppen der Domäne) leeren
-for d in "$SSS_DB" "$SSS_MC"; do
-  if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 1 -type f -print -quit)" ]; then find "$d" -maxdepth 1 -type f -delete; aend "cache:$(basename "$d")"; fi
-done
-# NSS: sss aus allen Zeilen nehmen (libnss-sss trägt es in passwd, group, shadow, netgroup, services, sudoers ein)
-if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then
-  sed -E -i '/^[a-z]+:/ { s/[[:space:]]+sss([[:space:]]|$)/\1/g; s/[[:space:]]+sss([[:space:]]|$)/\1/g }' "$NSS"
-  aend nsswitch
+# Maschinenschlüssel nur, wenn er ausschließlich diesem Rechner gehört (Computerkonto im AD: windows_ad computerkonto_entfernen)
+if [ -e "$KEYTAB" ]; then
+  if keytab_nur_eigen; then rm -f -- "$KEYTAB"; aend keytab
+  else belassen "$KEYTAB (enthält fremde Principals oder ist nicht lesbar: $(keytab_fremd | head -n 3 | tr '\n' ' '))"; fi
+fi
+# krb5.conf nur mit Alfred-Kopf: gesicherte Paketvorgabe zurück, sonst entfernen
+if [ -f "$KRB5_CONF" ] && krb5_eigen; then
+  if [ -f "$KRB5_ALT" ]; then mv -f -- "$KRB5_ALT" "$KRB5_CONF"; aend krb5-vorgabe-zurueck; else rm -f -- "$KRB5_CONF"; aend krb5.conf; fi
 fi
 # ── Selbstprüfung ──
-! systemctl is-active --quiet sssd || abbruch "Selbstprüfung: sssd läuft noch"
-! systemctl is-enabled --quiet sssd || abbruch "Selbstprüfung: sssd ist noch aktiviert"
-[ ! -e "$SSSD_CONF" ] || abbruch "Selbstprüfung: $SSSD_CONF besteht noch"
-[ ! -e "$KEYTAB" ] || abbruch "Selbstprüfung: $KEYTAB besteht noch"
-if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then abbruch "Selbstprüfung: $NSS enthält noch sss"; fi
-if command -v realm >/dev/null 2>&1 && realm_hat; then abbruch "Selbstprüfung: realm list zeigt $DOM noch"; fi
+if [ "$EIGEN" = 1 ]; then
+  ! systemctl is-active --quiet sssd || abbruch "Selbstprüfung: sssd läuft noch"
+  ! systemctl is-enabled --quiet sssd || abbruch "Selbstprüfung: sssd ist noch aktiviert"
+  [ ! -e "$SSSD_CONF" ] || abbruch "Selbstprüfung: $SSSD_CONF besteht noch"
+  if [ -f "$NSS" ] && grep -Eq "^[a-z]+:([^#]*[[:space:]])?sss([[:space:]]|$)" "$NSS"; then abbruch "Selbstprüfung: $NSS enthält noch sss"; fi
+  ! pam_sss_aktiv || abbruch "Selbstprüfung: pam_sss steht noch in $PAM_D/common-*"
+  if command -v realm >/dev/null 2>&1 && realm_hat; then abbruch "Selbstprüfung: realm list zeigt $DOM noch"; fi
+fi
+if [ -e "$KEYTAB" ] && keytab_nur_eigen; then abbruch "Selbstprüfung: $KEYTAB besteht noch"; fi
+if [ -f "$KRB5_CONF" ] && krb5_eigen; then abbruch "Selbstprüfung: $KRB5_CONF von Alfred besteht noch"; fi
 if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
-ergebnis "{\"zustand\":\"$Z\",\"domaene\":\"$DOM\",\"sssd\":\"aus\",\"aenderungen\":[$AJ]}"`);
+if [ "$EIGEN" = 1 ]; then S=aus; else S=fremd; fi
+ergebnis "{\"zustand\":\"$Z\",\"domaene\":\"$DOM\",\"sssd\":\"$S\",\"belassen\":[$BELASSEN],\"aenderungen\":[$AJ]}"`);
 
 /**
- * Rückweg von adBeitretenSkript, NUR lokal (kein Admin-Konto am Host): sssd stoppen + deaktivieren, sssd.conf und /etc/krb5.keytab
- * entfernen, sssd-Zwischenspeicher leeren, sss aus nsswitch.conf nehmen. Pakete bleiben (gehalten), krb5.conf bleibt (wirkungslos ohne
- * Keytab). Das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen. Zeit: LINUX_SQL_ZEIT_MS.adVerlassen
+ * Rückweg von adBeitretenSkript, NUR lokal (kein Admin-Konto am Host) und nur für Alfreds eigene Einrichtung: bei Alfreds sssd.conf
+ * (oder keiner) sssd stoppen + deaktivieren, sssd.conf entfernen, Zwischenspeicher leeren, sss aus nsswitch.conf und PAM nehmen; Keytab
+ * nur, wenn er ausschließlich Principals dieses Rechners enthält; krb5.conf nur mit Alfred-Kopf (gesicherte Paketvorgabe zurück).
+ * Fremdes bleibt und steht in `belassen`. Pakete bleiben (gehalten). Das Computerkonto entfernt der Change danach mit
+ * windows_ad computerkonto_entfernen. Zeit: LINUX_SQL_ZEIT_MS.adVerlassen
  */
-export function adVerlassenSkript(): string {
+export function adVerlassenSkript(p: AdVerlassenParameter): string {
+  const f = pruefeAdVerlassen(p); if (f) throw new Error(f);
   return [
-    ...sqlKopf(LINUX_SQL_BAUSTEINE.adVerlassen, {}),
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.adVerlassen, { computername: p.computername.toLowerCase() }),
     HILFEN,
-    `DOM=${shQ(LINUX_AD.domaene)}`,
+    ...kennung(p.computername),
     MARKE,
     VERLASSEN_KOERPER,
   ].join('\n');
@@ -366,4 +453,4 @@ export function adVerlassenSkript(): string {
 // ── Register ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 registriereLinuxBaustein<AdBeitretenParameter>(LINUX_SQL_BAUSTEINE.adBeitreten, adBeitretenSkript);
-registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.adVerlassen, () => adVerlassenSkript());
+registriereLinuxBaustein<AdVerlassenParameter>(LINUX_SQL_BAUSTEINE.adVerlassen, adVerlassenSkript);

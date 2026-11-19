@@ -18,7 +18,7 @@ import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, FS01_FQDN, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
 } from './linux-sql-sicherung.js';
-import { LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, type AdBeitretenParameter } from './linux-sql-ad.js';
+import { LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, pruefeAdVerlassen, type AdBeitretenParameter } from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
 
 /**
@@ -360,7 +360,7 @@ export class LinuxSqlSkill extends Skill {
       + `Mindest-zeitlimitS je Schritt (Baustein-Zeitgrenzen + 60 s): ${Object.entries(LINUX_SQL_MIN_ZEITLIMIT_S).map(([a, sk]) => `${a} ${sk} s`).join(', ')}. `
       + 'reste_entfernen (nur im Change; zugang) — entfernt alte tempdb-Dateien (temp*.mdf/ndf/ldf direkt in /var/opt/mssql/data), die der Status als „Reste“ meldet; nur Dateien, die nicht in sys.master_files stehen und kein Prozess geöffnet hat; SQL Server muss laufen, sonst Abbruch ohne Löschen; jede gelöschte Datei steht mit Größe im Ergebnis, Dateien in Gebrauch bleiben und werden genannt; kein Rückweg (ohneSicherungGrund). '
       + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
-      + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Uhrzeit < 60 s zu dc01; dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd ohne Anmeldung von Domänenbenutzern am Host; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang; nur lokal: sssd aus, sssd.conf und /etc/krb5.keytab entfernt, NSS zurück; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
+      + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Uhrzeit < 60 s zu dc01; dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd nur für NSS (access_provider = deny, PAM ohne sss — keine Anmeldung von Domänenbenutzern am Host); eine fremde sssd.conf, krb5.conf (außer der unveränderten krb5-config-Vorgabe) oder ein fremder Keytab → Abbruch ohne Änderung; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab, kein pam_sss; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang, computername Standard = zugang; nur lokal und nur Alfreds Einrichtung: sssd aus, Alfreds sssd.conf/krb5.conf entfernt bzw. Paketvorgabe zurück, Keytab nur mit ausschließlich eigenen Principals, NSS und PAM ohne sss; Fremdes bleibt und steht unter „belassen“; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -387,7 +387,7 @@ export class LinuxSqlSkill extends Skill {
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
         // (kettengrenzen_uebernehmen nutzt zugang und konto_tresor)
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
-        computername: { type: 'string', description: 'ad_beitreten: Name des vorbereiteten Computerkontos ohne $ (Standard = zugang), nie sqllnxcfg' },
+        computername: { type: 'string', description: 'ad_beitreten/ad_verlassen: Name des Computerkontos ohne $ (Standard = zugang), Beitritt nie sqllnxcfg' },
         pakete: { type: 'object', description: `ad_beitreten: optional abweichende apt-Versionen { paket: version } für ${Object.keys(LINUX_AD_PAKETE).join(', ')} (Standard fest)` },
       },
       required: ['action', 'zugang'],
@@ -418,6 +418,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'wiederherstellen_pruefen') { wiederherstellenParameter(input); kontoTresorName(input); }
       else if (action === 'kettengrenzen_uebernehmen') kontoTresorName(input);
       else if (action === 'ad_beitreten') adBeitretenParameter(String(input.zugang).trim(), input);
+      else if (action === 'ad_verlassen') { const f = pruefeAdVerlassen({ computername: String(input.computername ?? input.zugang).trim() }); if (f) throw new Error(f); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -454,7 +455,7 @@ export class LinuxSqlSkill extends Skill {
         case 'kettengrenzen_uebernehmen': return await this.kettengrenzen(zugang, input, geheim);
         case 'reste_entfernen': return await this.resteEntfernen(zugang, geheim);
         case 'ad_beitreten': return await this.adBeitreten(zugang, input, geheim);
-        case 'ad_verlassen': return await this.adVerlassen(zugang);
+        case 'ad_verlassen': return await this.adVerlassen(zugang, input);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -659,11 +660,17 @@ export class LinuxSqlSkill extends Skill {
   }
 
   /** Rückweg nur lokal; das Computerkonto im AD entfernt der Change danach mit windows_ad computerkonto_entfernen */
-  private async adVerlassen(zugang: string): Promise<SkillResult> {
-    const r = await this.lauf<{ zustand: string; domaene?: string; sssd?: string; aenderungen?: string[] }>(zugang, LINUX_SQL_BAUSTEINE.adVerlassen, {}, 'Domäne verlassen', LINUX_SQL_ZEIT_MS.adVerlassen);
-    if (r.sssd !== 'aus') throw new Error(`Domäne verlassen ${zugang}: Nachprüfung fehlgeschlagen (sssd ${String(r.sssd)})`);
-    this.d.protokoll?.('I8e Domäne verlassen', { zugang, zustand: r.zustand });
-    const text = `AD_LEFT ${zugang} hat ${LINUX_AD.domaene} lokal verlassen (sssd aus, sssd.conf und /etc/krb5.keytab entfernt, NSS ohne sss) — Computerkonto im AD entfernt windows_ad computerkonto_entfernen`;
+  private async adVerlassen(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const computername = String(input.computername ?? zugang).trim().toLowerCase();
+    const fp = pruefeAdVerlassen({ computername }); if (fp) throw new Error(fp);
+    const r = await this.lauf<{ zustand: string; domaene?: string; sssd?: string; belassen?: string[]; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.adVerlassen, { computername }, 'Domäne verlassen', LINUX_SQL_ZEIT_MS.adVerlassen);
+    if (r.sssd !== 'aus' && r.sssd !== 'fremd') throw new Error(`Domäne verlassen ${zugang}: Nachprüfung fehlgeschlagen (sssd ${String(r.sssd)})`);
+    this.d.protokoll?.('I8e Domäne verlassen', { zugang, zustand: r.zustand, belassen: r.belassen ?? [] });
+    // Fix-Runde 1: Fremdes (nicht von ad_beitreten) bleibt — nie still, steht in der Anzeige
+    const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
+    const eigen = r.sssd === 'aus' ? 'sssd aus, Alfreds sssd.conf/krb5.conf und Keytab entfernt, NSS und PAM ohne sss' : 'fremde sssd-Einrichtung unverändert';
+    const text = `AD_LEFT ${zugang} hat ${LINUX_AD.domaene} lokal verlassen (${eigen})${bel} — Computerkonto im AD entfernt windows_ad computerkonto_entfernen`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
