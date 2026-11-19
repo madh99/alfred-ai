@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { powershellVorhanden, parseSkripte, fuehreSkriptAus } from './powershell-parser.testhilfe.js';
 import { dienstkontoSkript, dienstkontoGehaertet } from './windows-ad.js';
 import {
   pruefeSpns, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, computerkontoSkript, computerkontoEntfernenSkript, pruefeComputerkonto,
   pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, gruppeSkript, gruppeEntfernenSkript, pruefeGruppe, sqlAnmeldungSkript, sqlAnmeldungAuswerten,
-  SQLCMD_PFADE, joinTresorName, sqlcmdArgumente, SQL_PROBE_TSQL,
+  SQLCMD_PFADE, joinTresorName, sqlcmdArgumente, SQL_PROBE_TSQL, ALS_BENUTZER,
 } from './windows-ad-linux.js';
 import { WindowsAdSkill, einmalKennwort } from './windows-ad-skill.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
@@ -350,4 +353,58 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
     expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
     for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
+});
+
+// Fix-Welle (Final-Review I8e Etappe 3): AlsBenutzer wartet, bis die Aufgabe gelaufen ist — Queued/Ready kurz nach dem Start ist kein Ende.
+// Ablauf in Windows PowerShell mit nachgebildeten ScheduledTask-Cmdlets (Funktionen gleichen Namens), Ordner im Testverzeichnis.
+describe.skipIf(!POWERSHELL)('Fix-Welle — ALS_BENUTZER Warteschleife (ausgeführt)', { timeout: 120_000 }, () => {
+  afterEach(() => new Promise<void>(r => setImmediate(r)));
+  /**
+   * folge: Zustand je Abfrage; „+“ = die Aufgabe ist zuvor gelaufen (LastRunTime gesetzt) und hat die Ergebnisdatei geschrieben,
+   * „*“ = gelaufen ohne Ergebnisdatei (LastTaskResult 1). Die letzte Angabe gilt für alle weiteren Abfragen.
+   */
+  const lauf = (folge: string[], sekunden = 30) => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-alsbenutzer-'));
+    try {
+      const ps = [
+        `$env:ProgramData = '${dir.replace(/'/g, "''")}'`,
+        `$script:folge = @(${folge.map(f => `'${f}'`).join(', ')}); $script:n = 0; $script:lrt = [datetime]'1999-11-30'; $script:ltr = 267011; $script:stopp = $false`,
+        'function Set-Acl { }', "function New-ScheduledTaskAction { 'a' }", "function New-ScheduledTaskSettingsSet { 's' }",
+        'function Register-ScheduledTask { }', 'function Start-ScheduledTask { }', 'function Start-Sleep { }', 'function Unregister-ScheduledTask { }',
+        'function Stop-ScheduledTask { $script:stopp = $true }',
+        'function Get-ScheduledTask([string]$TaskName, [string]$TaskPath) {',
+        '  $z = $script:folge[[Math]::Min($script:n, $script:folge.Count - 1)]; $script:n++',
+        "  if ($z.EndsWith('+') -or $z.EndsWith('*')) { $script:lrt = Get-Date; if ($z.EndsWith('+')) { $script:ltr = 0; [IO.File]::WriteAllText((Join-Path (Join-Path (Join-Path $env:ProgramData 'Alfred\\proben') $TaskName) 'ergebnis.json'), '{\"wert\":\"ok-42\"}') } else { $script:ltr = 1 } }",
+        "  [pscustomobject]@{ State = $z.TrimEnd('+', '*') }",
+        '}',
+        'function Get-ScheduledTaskInfo { [pscustomobject]@{ LastRunTime = $script:lrt; LastTaskResult = $script:ltr } }',
+        ALS_BENUTZER,
+        '$ich = [Security.Principal.WindowsIdentity]::GetCurrent().Name',
+        `try { $w = AlsBenutzer $ich 'kw' 'innen' ${sekunden}; 'WERT=' + $w } catch { 'FEHLER=' + $_.Exception.Message }`,
+        "'ABFRAGEN=' + $script:n; 'STOPP=' + $script:stopp; 'REST=' + @(Get-ChildItem -LiteralPath (Join-Path $env:ProgramData 'Alfred\\proben') -ErrorAction SilentlyContinue).Count",
+      ].join('\n');
+      const r = fuehreSkriptAus(ps);
+      const wert = (k: string) => new RegExp(`^${k}=(.*)$`, 'm').exec(r.stdout)?.[1]?.trim();
+      return { r, wert: wert('WERT'), fehler: wert('FEHLER'), abfragen: Number(wert('ABFRAGEN')), stopp: wert('STOPP'), rest: wert('REST') };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  it('Queued/Ready kurz nach dem Start → weiter warten, bis die Aufgabe gelaufen ist; Ergebnis gelesen, Ordner entfernt', () => {
+    const a = lauf(['Queued', 'Ready', 'Queued', 'Running', 'Ready+']);
+    expect(a.fehler, `${a.r.stdout}\n${a.r.stderr}`).toBeUndefined();
+    expect(a.wert).toBe('ok-42');
+    expect(a.abfragen).toBe(5);
+    expect(a.stopp).toBe('False');
+    expect(a.rest).toBe('0');
+  });
+  it('gelaufen ohne Ergebnisdatei → „Aufgabe ohne Ergebnis“ erst nach dem Lauf (mit LastTaskResult)', () => {
+    const a = lauf(['Ready', 'Running', 'Ready*']);
+    expect(a.fehler, `${a.r.stdout}\n${a.r.stderr}`).toBe('Aufgabe ohne Ergebnis (LastTaskResult 1)');
+    expect(a.abfragen).toBe(3);
+  });
+  it('bleibt Queued → nach der Frist abgebrochen und gestoppt, nicht „ohne Ergebnis“', () => {
+    const a = lauf(['Queued'], 1);
+    expect(a.fehler, `${a.r.stdout}\n${a.r.stderr}`).toMatch(/^Aufgabe nach 1 s abgebrochen \(Zustand Queued, LastRunTime /);
+    expect(a.stopp).toBe('True');
+    expect(a.rest).toBe('0');
+  });
 });

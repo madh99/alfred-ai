@@ -28,6 +28,21 @@ export interface ParserErgebnis {
   roh: string;
 }
 
+/**
+ * Führt ein Skript (als Datei, wie beim Parser) in Windows PowerShell aus — für Ablauftests mit nachgebildeten Cmdlets (Funktionen
+ * gleichen Namens haben Vorrang vor Cmdlets). Nur für Bausteinteile ohne Wirkung außerhalb des übergebenen Testordners.
+ */
+export function fuehreSkriptAus(skript: string, timeoutMs = 60_000): { status: number | null; stdout: string; stderr: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'alfred-ps-lauf-'));
+  try {
+    const datei = join(dir, 'lauf.ps1');
+    // UTF-8 mit BOM: Windows PowerShell 5.1 liest Dateien ohne BOM als ANSI
+    writeFileSync(datei, `${String.fromCharCode(0xfeff)}${skript}`, 'utf8');
+    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', datei], { encoding: 'utf8', timeout: timeoutMs });
+    return { status: r.status, stdout: String(r.stdout ?? ''), stderr: `${String(r.stderr ?? '')}${r.error ? `\n${String(r.error)}` : ''}` };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
 /** Parst alle Skripte in einem PowerShell-Aufruf (Namen: Buchstaben, Ziffern, _ und -) */
 export function parseSkripte(skripte: Record<string, string>): ParserErgebnis {
   const dir = mkdtempSync(join(tmpdir(), 'alfred-ps-'));
