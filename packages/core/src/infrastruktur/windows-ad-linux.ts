@@ -205,7 +205,7 @@ export function computerkontoSkript(p: { name: string; ou: string; neu?: boolean
     "if ($gesetzt) { $n = Get-ADComputer -Identity $sam -Properties pwdLastSet -Server $dc -Credential $c; Set-ADComputer -Identity $n -Replace @{ info = ($vp + [string][int64]$n.pwdLastSet) } -Server $dc -Credential $c }",
     '$k = Get-ADComputer -Identity $sam -Properties Enabled, pwdLastSet, lastLogonTimestamp, info -Server $dc -Credential $c',
     "$vermerkOk = ([string]$k.info -eq ($vp + [string][int64]$k.pwdLastSet)) -and ((-not $gesetzt) -or ($k.pwdLastSet -and [DateTime]::FromFileTimeUtc([int64]$k.pwdLastSet) -ge $start))",
-    "Ergebnis ([ordered]@{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $sam); dn = [string]$k.DistinguishedName; aktiv = [bool]$k.Enabled; inOu = ([string]$k.DistinguishedName).EndsWith(',' + $pfad); kennwortGesetzt = [bool]$vermerkOk; ohneAnmeldung = (-not $k.lastLogonTimestamp) })",
+    "Ergebnis ([ordered]@{ zustand = $z; konto = ($d.NetBIOSName + '\\' + $sam); dn = [string]$k.DistinguishedName; aktiv = [bool]$k.Enabled; inOu = ([string]$k.DistinguishedName).EndsWith(',' + $pfad); einmalBereit = [bool]$vermerkOk; ohneAnmeldung = (-not $k.lastLogonTimestamp) })",
   ].join('\n');
 }
 

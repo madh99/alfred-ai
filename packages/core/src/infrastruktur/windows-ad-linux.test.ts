@@ -182,7 +182,7 @@ describe('I8e Etappe 3 — Skripttexte', { timeout: 120_000 }, () => {
 
 describe('I8e Etappe 3 — Skill windows_ad', { timeout: 120_000 }, () => {
   it('computerkonto_vorbereiten: Einmal-Kennwort im Tresor, nur über die Standardeingabe, nie in Ergebnis oder Anzeige', async () => {
-    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'CN=SQLLNX01,OU=Server,DC=ad,DC=3033,DC=at', aktiv: true, inOu: true, kennwortGesetzt: true, ohneAnmeldung: true }], ['win-dc01-admin']);
+    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'CN=SQLLNX01,OU=Server,DC=ad,DC=3033,DC=at', aktiv: true, inOu: true, einmalBereit: true, ohneAnmeldung: true }], ['win-dc01-admin']);
     expect((await w.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, {} as never)).error).toContain('nur als Schritt');
     const r = await w.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, imChange);
     expect(r.error).toBeUndefined();
@@ -198,14 +198,14 @@ describe('I8e Etappe 3 — Skill windows_ad', { timeout: 120_000 }, () => {
     expect(r.display).toContain('computerkonto_entfernen');
     expect(roh(w.aufrufe[0]!.befehl)).toContain('"neu":true');
     // Wiederholung mit vorhandenem Tresor-Wert: kein neues Kennwort, kein Zurücksetzen angefordert
-    const nochmal = welt([{ zustand: 'schon', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, kennwortGesetzt: true, ohneAnmeldung: true }], ['win-dc01-admin', 'ad-join-sqllnx01']);
+    const nochmal = welt([{ zustand: 'schon', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, einmalBereit: true, ohneAnmeldung: true }], ['win-dc01-admin', 'ad-join-sqllnx01']);
     const n = await nochmal.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, imChange);
     expect(n.display).toContain('nichts zu tun');
     expect(nochmal.gesetzt).toEqual([]);
     expect(roh(nochmal.aufrufe[0]!.befehl)).not.toContain('"neu"');
   });
   it('computerkonto_vorbereiten: Nachprüfung scheitert → Fehler ohne Kennwort', async () => {
-    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, kennwortGesetzt: false, ohneAnmeldung: true }], ['win-dc01-admin']);
+    const w = welt([{ zustand: 'angelegt', konto: 'AD3033\\SQLLNX01$', dn: 'x', aktiv: true, inOu: true, einmalBereit: false, ohneAnmeldung: true }], ['win-dc01-admin']);
     const r = await w.skill.execute({ action: 'computerkonto_vorbereiten', zugang: 'dc01', name: 'sqllnx01', ou: 'Server' }, imChange);
     expect(r.success).toBe(false);
     expect(r.error).toContain('Nachprüfung');

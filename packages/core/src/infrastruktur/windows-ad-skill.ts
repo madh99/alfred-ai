@@ -359,8 +359,8 @@ export class WindowsAdSkill extends Skill {
     let einmal: string; let neu = false;
     if ((await t.namen()).has(name)) einmal = await t.lies(name, `Einmal-Kennwort Computerkonto ${p.name}$`);
     else { einmal = einmalKennwort(); await t.setze(name, einmal, `Einmal-Kennwort für den Domänenbeitritt von ${p.name} (Computerkonto ${p.name}$, verbraucht linux_sql ad_beitreten)`); neu = true; }
-    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; inOu: boolean; kennwortGesetzt: boolean; ohneAnmeldung: boolean }>(zugang, computerkontoSkript({ ...p, ...(neu ? { neu: true } : {}), ...ausKonto }), 'Computerkonto vorbereiten', 300_000, { kennwort, einmal });
-    if (!(r.aktiv && r.inOu && r.kennwortGesetzt)) throw new Error(`Computerkonto ${p.name}$: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, in OU ${r.inOu}, Kennwort gesetzt ${r.kennwortGesetzt})`);
+    const r = await this.lauf<{ zustand: string; konto: string; dn: string; aktiv: boolean; inOu: boolean; einmalBereit: boolean; ohneAnmeldung: boolean }>(zugang, computerkontoSkript({ ...p, ...(neu ? { neu: true } : {}), ...ausKonto }), 'Computerkonto vorbereiten', 300_000, { kennwort, einmal });
+    if (!(r.aktiv && r.inOu && r.einmalBereit)) throw new Error(`Computerkonto ${p.name}$: Nachprüfung fehlgeschlagen (aktiv ${r.aktiv}, in OU ${r.inOu}, Kennwort gesetzt ${r.einmalBereit})`);
     this.d.protokoll?.('I8e Computerkonto', { zugang, name: p.name, zustand: r.zustand, kennwortNeu: neu });
     return {
       success: true, data: { ...r, tresor: name },
