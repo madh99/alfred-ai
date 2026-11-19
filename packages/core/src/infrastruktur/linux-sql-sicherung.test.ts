@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,10 @@ import {
 } from './linux-sql-sicherung.js';
 import { sqlErgebnis, shQ, sqlSkript, PRUEFDATEN_SHA256, PRUEFDATEN_ZEILEN } from './linux-sql.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
+
+// Synchrone Bash-/Python-Läufe (spawnSync) blockieren den Worker; ohne Rückgabe an die Ereignisschleife zwischen den Tests
+// kommt die RPC-Antwort von vitest zu spät („Timeout calling onTaskUpdate“) — nach jedem Test einmal abgeben
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Task 4 — Sicherung (FULL/DIFF/LOG über den SQL-Agent), geprüfte Kopie nach fs01, Aufbewahrung nur vollständiger Ketten,
 // Budget, Wiederherstellungs-Beweis aus der fs01-Kopie
@@ -89,7 +93,7 @@ describe('I8e Task 4 — Register, Validatoren, Einschleusung', () => {
   });
 });
 
-describe('I8e Task 4 — Skripttext', () => {
+describe('I8e Task 4 — Skripttext', { timeout: 60_000 }, () => {
   it('jedes Skript: strikter Modus, Parameter-Literal, Eingabe nur per Here-String, kein Kennwort in Befehlszeilen', () => {
     for (const [name, s] of alleSkripte()) {
       expect(s, name).toMatch(/^set -euo pipefail\n/);
@@ -818,7 +822,7 @@ const GEMEINSAM = [
   'geraet() { echo "$1"; }',
 ];
 
-describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', () => {
+describe.skipIf(!BASH)('I8e Task 4 — Bausteine ausgeführt (Stubs)', { timeout: 120_000 }, () => {
   it('wiederherstellen: fs01 nicht einhängbar → Abbruch, Zugangsdatei unter /run entfernt (trap), Kennwort nie in der Ausgabe', () => {
     const r = bashLauf(wiederherstellenSkript({ datenbank: 'pruefdb01', ziel: 'alfred_wh_pruefdb01' }), [
       ...GEMEINSAM,
@@ -1001,7 +1005,7 @@ describe('I8e Paket 2 Task 7 — Prozedur rollenabhängig', () => {
   });
 });
 
-describe.skipIf(!BASH)('I8e Paket 2 Task 7 — sicherung_jetzt rollenabhängig (Stubs)', () => {
+describe.skipIf(!BASH)('I8e Paket 2 Task 7 — sicherung_jetzt rollenabhängig (Stubs)', { timeout: 120_000 }, () => {
   const lauf = (antwort: string, art: 'LOG' | 'FULL' = 'LOG') => bashLauf(sicherungJetztSkript({ art, datenbank: 'pruefdb01' }), [
     ...GEMEINSAM,
     `sql() { echo "$1" >>"$T/log"; printf '%s\\n' ${shQ(antwort)}; }`,
@@ -1079,7 +1083,7 @@ describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Ketten nach Rollenwechsel (Pyth
   });
 });
 
-describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Rollen je Datenbank (Python PY_ROLLEN)', () => {
+describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Rollen je Datenbank (Python PY_ROLLEN)', { timeout: 120_000 }, () => {
   /** PY_ROLLEN als Modul laden, lies/hadr_an/sqlcmd_lauf ersetzen, rollen() ausgeben */
   function rollen(patch: string) {
     const prog = `import sys, json\nsys.stdout.reconfigure(encoding='utf-8')\nns = {'__name__': 'alfred_test'}\nexec(compile(sys.stdin.read(), 'rollen', 'exec'), ns)\n${patch}\nprint('ALFRED-T ' + json.dumps(ns['rollen']()))`;
@@ -1130,7 +1134,7 @@ describe.skipIf(!PYTHON)('I8e Paket 2 Task 7 — Rollen je Datenbank (Python PY_
 /** absoluter Pfad des Python-Interpreters (der Baustein setzt PATH fest) */
 const PY_EXE = PYTHON ? spawnSync(PYTHON, ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim().replace(/\\/g, '/') : undefined;
 
-describe.skipIf(!BASH || !PY_EXE)('I8e Paket 2 Task 7 — sicherungen nennt die Rolle je Datenbank (Stubs)', () => {
+describe.skipIf(!BASH || !PY_EXE)('I8e Paket 2 Task 7 — sicherungen nennt die Rolle je Datenbank (Stubs)', { timeout: 120_000 }, () => {
   const LISTE = { zustand: 'gelesen', host: 'sqllnx01', status: null, datenbanken: { pruefdb01: { ketten: [], waisen: [], fs01Dateien: 0, lokalDateien: 2 } } };
   const lauf = (rollenZeile: string) => bashLauf(sicherungenSkript(), [
     ...GEMEINSAM,

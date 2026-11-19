@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,6 +14,10 @@ import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
 import { loeseAuf, kuerzeDaten, MAX_DATEN } from './change-lauf.js';
 import { linuxTlsSans, pruefeFremdAusstellung, csrSha256, derFelder, derOderPem } from './windows-sqltls-linux.js';
+
+// Synchrone Bash-/Python-Läufe (spawnSync) blockieren den Worker; ohne Rückgabe an die Ereignisschleife zwischen den Tests
+// kommt die RPC-Antwort von vitest zu spät („Timeout calling onTaskUpdate“) — nach jedem Test einmal abgeben
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Etappe 3 Task 6 — linux_sql tls_anfordern / tls_einspielen / tls_entfernen
 

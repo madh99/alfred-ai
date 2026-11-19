@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterEach, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,6 +16,10 @@ import {
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { pruefeChangePlan } from './change-schritte.js';
+
+// Synchrone Bash-/Python-Läufe (spawnSync) blockieren den Worker; ohne Rückgabe an die Ereignisschleife zwischen den Tests
+// kommt die RPC-Antwort von vitest zu spät („Timeout calling onTaskUpdate“) — nach jedem Test einmal abgeben
+afterEach(() => new Promise<void>(r => setImmediate(r)));
 
 // I8e Etappe 3 Task 7 — Alfreds eigene SQL-Verbindungen mit Zertifikatsprüfung, je Host schaltbar, ohne stillen Rückfall auf -C
 
