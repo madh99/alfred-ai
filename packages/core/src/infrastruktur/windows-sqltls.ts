@@ -102,41 +102,65 @@ export function pruefeGenehmigung(o: Record<string, unknown>): Genehmigung | str
  * Allowlist — erst dann ausstellen (resubmit). Schon ausgestellt mit passenden Angaben: wiederholbar ohne erneutes Ausstellen.
  */
 export function genehmigenSkript(g: Genehmigung): string {
-  const innen = innenSkript(g, [
-    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
-    "$ca = [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active; if (-not $ca) { throw 'auf diesem Rechner läuft keine CA' }",
-    "$konfig = [Net.Dns]::GetHostEntry('').HostName + '\\' + $ca",
-    "$v = New-Object -ComObject CertificateAuthority.View; $v.OpenConnection($konfig)",
-    "$spalten = @('RequestID', 'Request.RequesterName', 'Request.Disposition', 'Request.RawRequest', 'Request.RequestAttributes', 'SerialNumber')",
-    '$v.SetResultColumnCount($spalten.Count); foreach ($s in $spalten) { $v.SetResultColumn($v.GetColumnIndex($false, $s)) }',
-    "$v.SetRestriction($v.GetColumnIndex($false, 'RequestID'), 1, 0, [int]$p.request_id)",
-    '$zeilen = $v.OpenView(); $w = @{}; $treffer = 0',
-    'while ($zeilen.Next() -ne -1) { $treffer++; $sp = $zeilen.EnumCertViewColumn(); while ($sp.Next() -ne -1) { $w[$sp.GetName()] = $sp.GetValue(1) } }',
-    "if ($treffer -ne 1) { throw ('Anforderung ' + $p.request_id + ' nicht eindeutig in der CA-Datenbank (' + $treffer + ')') }",
-    "$disp = [int]$w['Request.Disposition']",
-    "$attr = [string]$w['Request.RequestAttributes']",
-    "$wer = [string]$w['Request.RequesterName']",
-    "$host1 = ($p.cn -split '\\.')[0].ToUpper()",
-    "$r = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10; $r.InitializeDecode(([string]$w['Request.RawRequest'] -replace '\\s', ''), 1)",
-    '$subjekt = [string]$r.Subject.Name; $bits = [int]$r.PublicKey.Length',
-    '$sans = @(); $andere = @()',
-    "foreach ($x in $r.X509Extensions) { if ($x.ObjectId.Value -eq '2.5.29.17') { $an = New-Object -ComObject X509Enrollment.CX509ExtensionAlternativeNames; $an.InitializeDecode(1, $x.RawData(1)); foreach ($n in $an.AlternativeNames) { if ($n.Type -eq 3) { $sans += ([string]$n.strValue).ToLower() } else { $andere += ('Typ ' + $n.Type) } } } }",
-    '$gruende = @()',
-    "if ($disp -ne 9 -and $disp -ne 20) { $gruende += ('Status ' + $disp + ' (weder ausstehend noch ausgestellt)') }",
-    "if ($wer -notmatch ('\\\\' + [regex]::Escape($host1) + '\\$$')) { $gruende += ('Anforderer ' + $wer + ' ist nicht das Computerkonto ' + $host1 + '$') }",
-    "if ($attr -notmatch ('CertificateTemplate:\\s*' + [regex]::Escape($p.vorlage) + '(\\s|$)')) { $gruende += ('Vorlage nicht ' + $p.vorlage + ' (' + ($attr -replace '\\s+', ' ') + ')') }",
-    "if ($subjekt -ne ('CN=' + $p.cn)) { $gruende += ('Subject ' + $subjekt + ' statt CN=' + $p.cn) }",
-    "if ($bits -lt [int]$p.schluessel_bits) { $gruende += ('Schlüssel ' + $bits + ' Bit') }",
-    "if ($andere.Count) { $gruende += ('SAN außer DNS: ' + ($andere -join ', ')) }",
-    "$soll = @($p.sans | Sort-Object); $ist = @($sans | Sort-Object)",
-    "if (($soll -join ',') -ne ($ist -join ',')) { $gruende += ('SAN ' + ($ist -join ',') + ' statt Allowlist ' + ($soll -join ',')) }",
-    "if ($gruende.Count) { throw ('Anforderung ' + $p.request_id + ' NICHT genehmigt: ' + ($gruende -join '; ')) }",
-    "$zustand = 'schon ausgestellt'",
-    "if ($disp -eq 9) { $f = (& certutil.exe -config $konfig -resubmit $p.request_id) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('certutil -resubmit: ' + $f) }; $zustand = 'genehmigt' }",
-    "[ordered]@{ zustand = $zustand; requestId = [int]$p.request_id; anforderer = $wer; subjekt = $subjekt; sans = ($ist -join ','); bits = $bits; vorher = $disp }",
-  ]);
+  const innen = innenSkript(g, [...CA_KONFIG_LESEN, ...GENEHMIGEN_PRUEFEN, '$genehmigt']);
   return alsSystem(g, innen, 300);
 }
+
+/** CA-Konfiguration „<Host-FQDN>\<CA-Name>“ der CA auf diesem Rechner → $ca, $konfig */
+export const CA_KONFIG_LESEN = [
+  "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CertSvc\\Configuration'",
+  "$ca = [string](Get-ItemProperty $k -ErrorAction SilentlyContinue).Active; if (-not $ca) { throw 'auf diesem Rechner läuft keine CA' }",
+  "$konfig = [Net.Dns]::GetHostEntry('').HostName + '\\' + $ca",
+];
+
+/**
+ * Inhalt einer Anforderung aus dem COM-Objekt $r (X509Enrollment.CX509CertificateRequestPkcs10, schon dekodiert): Subject, Schlüssellänge,
+ * DNS-SAN, andere SAN-Typen → $subjekt, $bits, $sans, $andere. Danach CSR_BEFUNDE: Subject = CN=$p.cn, Schlüssel ≥ $p.schluessel_bits,
+ * nur DNS-SAN, genau die Allowlist $p.sans (Reihenfolge egal) — jede Abweichung in $gruende. Gemeinsam für sql_tls_genehmigen (CA-Datenbank)
+ * und fremd_csr_ausstellen (Anforderung vom Linux-Host, vor dem Einreichen).
+ */
+export const CSR_INHALT = [
+  '$subjekt = [string]$r.Subject.Name; $bits = [int]$r.PublicKey.Length',
+  '$sans = @(); $andere = @()',
+  "foreach ($x in $r.X509Extensions) { if ($x.ObjectId.Value -eq '2.5.29.17') { $an = New-Object -ComObject X509Enrollment.CX509ExtensionAlternativeNames; $an.InitializeDecode(1, $x.RawData(1)); foreach ($n in $an.AlternativeNames) { if ($n.Type -eq 3) { $sans += ([string]$n.strValue).ToLower() } else { $andere += ('Typ ' + $n.Type) } } } }",
+];
+export const CSR_BEFUNDE = [
+  "if ($subjekt -ne ('CN=' + $p.cn)) { $gruende += ('Subject ' + $subjekt + ' statt CN=' + $p.cn) }",
+  "if ($bits -lt [int]$p.schluessel_bits) { $gruende += ('Schlüssel ' + $bits + ' Bit') }",
+  "if ($andere.Count) { $gruende += ('SAN außer DNS: ' + ($andere -join ', ')) }",
+  "$soll = @($p.sans | Sort-Object); $ist = @($sans | Sort-Object)",
+  "if (($soll -join ',') -ne ($ist -join ',')) { $gruende += ('SAN ' + ($ist -join ',') + ' statt Allowlist ' + ($soll -join ',')) }",
+];
+
+/**
+ * Rumpf von sql_tls_genehmigen nach CA_KONFIG_LESEN (läuft als SYSTEM auf der CA): Anforderung $p.request_id aus der CA-Datenbank lesen und prüfen,
+ * erst dann ausstellen; Ergebnis in $genehmigt, das COM-Objekt der Anforderung bleibt in $r. Anforderer: $p.anforderer (exakt, z. B.
+ * AD3033\svc-pki-linuxreq) oder ohne Angabe das Computerkonto des Knotens aus $p.cn.
+ */
+export const GENEHMIGEN_PRUEFEN = [
+  "$v = New-Object -ComObject CertificateAuthority.View; $v.OpenConnection($konfig)",
+  "$spalten = @('RequestID', 'Request.RequesterName', 'Request.Disposition', 'Request.RawRequest', 'Request.RequestAttributes', 'SerialNumber')",
+  '$v.SetResultColumnCount($spalten.Count); foreach ($s in $spalten) { $v.SetResultColumn($v.GetColumnIndex($false, $s)) }',
+  "$v.SetRestriction($v.GetColumnIndex($false, 'RequestID'), 1, 0, [int]$p.request_id)",
+  '$zeilen = $v.OpenView(); $w = @{}; $treffer = 0',
+  'while ($zeilen.Next() -ne -1) { $treffer++; $sp = $zeilen.EnumCertViewColumn(); while ($sp.Next() -ne -1) { $w[$sp.GetName()] = $sp.GetValue(1) } }',
+  "if ($treffer -ne 1) { throw ('Anforderung ' + $p.request_id + ' nicht eindeutig in der CA-Datenbank (' + $treffer + ')') }",
+  "$disp = [int]$w['Request.Disposition']",
+  "$attr = [string]$w['Request.RequestAttributes']",
+  "$wer = [string]$w['Request.RequesterName']",
+  "$host1 = ($p.cn -split '\\.')[0].ToUpper()",
+  "$r = New-Object -ComObject X509Enrollment.CX509CertificateRequestPkcs10; $r.InitializeDecode(([string]$w['Request.RawRequest'] -replace '\\s', ''), 1)",
+  ...CSR_INHALT,
+  '$gruende = @()',
+  "if ($disp -ne 9 -and $disp -ne 20) { $gruende += ('Status ' + $disp + ' (weder ausstehend noch ausgestellt)') }",
+  "if ($p.anforderer) { if ($wer -ne [string]$p.anforderer) { $gruende += ('Anforderer ' + $wer + ' ist nicht ' + $p.anforderer) } } elseif ($wer -notmatch ('\\\\' + [regex]::Escape($host1) + '\\$$')) { $gruende += ('Anforderer ' + $wer + ' ist nicht das Computerkonto ' + $host1 + '$') }",
+  "if ($attr -notmatch ('CertificateTemplate:\\s*' + [regex]::Escape($p.vorlage) + '(\\s|$)')) { $gruende += ('Vorlage nicht ' + $p.vorlage + ' (' + ($attr -replace '\\s+', ' ') + ')') }",
+  ...CSR_BEFUNDE,
+  "if ($gruende.Count) { throw ('Anforderung ' + $p.request_id + ' NICHT genehmigt: ' + ($gruende -join '; ')) }",
+  "$zustand = 'schon ausgestellt'",
+  "if ($disp -eq 9) { $f = (& certutil.exe -config $konfig -resubmit $p.request_id) -join ' '; if ($LASTEXITCODE -ne 0) { throw ('certutil -resubmit: ' + $f) }; $zustand = 'genehmigt' }",
+  "$genehmigt = [ordered]@{ zustand = $zustand; requestId = [int]$p.request_id; anforderer = $wer; subjekt = $subjekt; sans = ($ist -join ','); bits = $bits; vorher = $disp }",
+];
 
 export interface Installation { request_id: number; ca: string; cn: string; dienstkonto: string }
 export function pruefeInstallation(o: Record<string, unknown>): Installation | string {

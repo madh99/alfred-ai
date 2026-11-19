@@ -145,6 +145,8 @@ const OHNE_RUECKWEG_MOEGLICH = new Set(['delete_snapshot', 'kopieren', 'datenban
   'codesignatur_sperren',
   // Etappe 3b — Anfordern/Genehmigen/Installieren wirken additiv (keine Bindung an SQL); Ausstellen ist nicht zurückzunehmen (Widerruf separat)
   'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern',
+  // I8e Etappe 3 — Ausstellen einer Linux-Anforderung ist nicht zurückzunehmen (Widerruf separat)
+  'fremd_csr_ausstellen',
   // v1856 — Etappe 4: ein Dienstneustart ist nicht zurückzunehmen (bei Fehler Halt, Bindung separat zurück); das Wiederherstellen ist selbst
   // der Rückweg; ein entfernter ungesendeter Schlüssel ist nicht wiederherstellbar
   'engine_neustart', 'engine_wiederanlauf', 'zertifikat_bindung_wiederherstellen', 'anforderung_entfernen',
@@ -166,6 +168,8 @@ const SELBST_GEPRUEFT = new Set([
   // gegen Schlüssel, Name, Verwendung, Aussteller; Sperrung in der CA-Datenbank; Schalter mit gültigem Material) und schlagen sonst fehl
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
   'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern',
+  // I8e Etappe 3 — Linux-Vorlage (Flags, Gruppe zurückgelesen) und Ausstellung (Schlüssel = Anforderung, Kette, SAN, EKU) prüfen sich selbst
+  'sql_tls_linux_vorlage_anlegen', 'sql_tls_linux_vorlage_entfernen', 'fremd_csr_ausstellen',
   // v1856 — Etappe 4: Bindung lesen sie nach dem Schreiben zurück, der Neustart wartet auf SECONDARY/HEALTHY/SYNCHRONIZED, das Entfernen prüft Speicher und Schlüsseldatei
   'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']); // I6: schreiben nur am neuen Ziel bzw. in den Tresor, die Quelle bleibt unberührt // Übergangsjob/feste IP 22.10.: lesen selbst nach
 /**

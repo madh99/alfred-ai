@@ -330,7 +330,7 @@ export const SQL_PROBE_TSQL = 'SET NOCOUNT ON; SELECT auth_scheme, encrypt_optio
  * (windows-cluster.ts, nur für Administratoren/SYSTEM) bekommt das Konto Ändern-Rechte auf einen eigenen Ordner je Lauf, damit es
  * Skript lesen und Ergebnis schreiben kann. Aufgabe und Ordner (mit Ergebnisdatei) werden immer entfernt.
  */
-const ALS_BENUTZER = [
+export const ALS_BENUTZER = [
   'function AlsBenutzer([string]$benutzer, [string]$kennwort, [string]$innen, [int]$sekunden) {',
   "  $id = 'Alfred-Probe-' + [guid]::NewGuid().ToString('N').Substring(0, 12)",
   "  $dir = Join-Path (Join-Path $env:ProgramData 'Alfred\\proben') $id",

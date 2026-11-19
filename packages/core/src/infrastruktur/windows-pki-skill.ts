@@ -15,6 +15,37 @@ import { pruefeVorlage, vorlageAnlegenSkript, vorlageEntfernenSkript, ausstellen
 import { createHash } from 'node:crypto';
 import { profilSqlTls } from './windows-codesignatur.js';
 import { SQL_TLS_VORLAGE, SQL_TLS_PROVIDER, pruefeAnforderung, anfordernSkript, pruefeGenehmigung, genehmigenSkript, pruefeInstallation, installierenSkript, zertifikatPruefenSkript, bewerteZertifikat, erneuerungStatusSkript, warnstufe, anforderungListeSkript, anforderungEntfernenSkript, type ZertifikatBefund } from './windows-sqltls.js';
+import { SQL_TLS_LINUX_VORLAGE, SQL_TLS_LINUX_ANZEIGE, SQL_TLS_LINUX_GRUPPE, SQL_TLS_LINUX_KONTO, SQL_TLS_LINUX_TRESOR, profilSqlTlsLinux, pruefeFremdAusstellung, fremdAusstellenSkript, bewerteFremdAusgestellt, type FremdAusgestellt } from './windows-sqltls-linux.js';
+
+/** v1851 — breite Gruppen dürfen eine Vorlage nie registrieren */
+function breiteGruppen(registrieren: string[]): string[] {
+  return registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
+}
+
+interface VorlageErgebnis { zustand: string; flags?: number; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number; eku: string[]; keySpec: number; csp: string[]; privatFlag: number; gruppeMitglieder: string[] }
+/**
+ * Befunde einer SQL-TLS-Vorlage (Spec 252217f3 Pos. 11; I8e Etappe 3 für Linux): gemeinsam auf der CA, Name aus der Anforderung nur mit
+ * CA-Freigabe, Mindestschlüssel, nur ServerAuth, Gruppe registriert mit genau den Mitgliedern, nichts zu breit. Windows (Computer-Vorlage):
+ * zusätzlich KeySpec, SChannel-CSP, nicht exportierbar, Kennzeichen 0x40. Linux (Schlüssel als Datei auf dem Host): Benutzer-Vorlage ohne 0x40.
+ */
+function sqlTlsVorlageBefunde(r: VorlageErgebnis, s: { bits: number; gruppe: string; mitglieder: string[]; windows: boolean }): string[] {
+  const breit = breiteGruppen(r.registrieren);
+  const befunde: string[] = [];
+  if (!r.aufCa) befunde.push('nicht auf der CA ausgestellt');
+  if ((r.namensFlag & 1) !== 1 || (r.anmeldeFlag & 2) !== 2) befunde.push('Name aus der Anforderung ohne CA-Freigabe');
+  if (r.minSchluessel < s.bits) befunde.push(`Mindestschlüssel ${r.minSchluessel}`);
+  if (r.eku.join(',') !== '1.3.6.1.5.5.7.3.1') befunde.push(`EKU ${r.eku.join(',')}`);
+  if (s.windows) {
+    if (r.keySpec !== 1) befunde.push(`KeySpec ${r.keySpec}`);
+    if (((r.flags ?? 0) & 0x40) === 0) befunde.push('keine Computer-Vorlage (Kennzeichen 0x40 fehlt)');
+    if (!r.csp.some(c => c.includes(SQL_TLS_PROVIDER))) befunde.push(`CSP ${r.csp.join(', ')}`);
+    if ((r.privatFlag & 0x10) !== 0) befunde.push('Schlüssel exportierbar');
+  } else if (((r.flags ?? 0) & 0x40) !== 0) befunde.push('Computer-Vorlage (Kennzeichen 0x40) — der Linux-Host reicht über ein Benutzerkonto ein');
+  if (!r.registrieren.some(x => x.toLowerCase().endsWith(`\\${s.gruppe.toLowerCase()}`))) befunde.push(`Gruppe ${s.gruppe} darf nicht registrieren`);
+  if (breit.length) befunde.push(`ZU BREIT: ${breit.join(', ')}`);
+  if ([...r.gruppeMitglieder].map(x => x.toUpperCase()).sort().join(',') !== [...s.mitglieder].map(x => x.toUpperCase()).sort().join(',')) befunde.push(`Gruppe hat ${r.gruppeMitglieder.join(', ') || 'keine'} statt ${s.mitglieder.join(', ')}`);
+  return befunde;
+}
 
 export interface WindowsPkiDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -33,7 +64,8 @@ export const PKI_LESEND = new Set(['status', 'artefakte_lesen', 'publication_pru
 /** nur als Schritte freigegebener Changes */
 export const PKI_AENDERND = new Set(['issuer_zuruecksetzen', 'zertifikat_sperren', 'features_installieren', 'features_entfernen', 'root_initialisieren', 'publication_setzen', 'crl_erzeugen', 'issuer_anfordern', 'subordinate_signieren', 'issuer_aktivieren', 'pki_web_einrichten', 'pki_web_entfernen', 'datei_ablegen', 'ad_veroeffentlichen', 'trust_aktualisieren', 'ca_sicherung', 'ca_sicherung_kopieren',
   'codesignatur_vorlage_anlegen', 'codesignatur_vorlage_entfernen', 'codesignatur_einrichten', 'codesignatur_sperren', 'codesignatur_schalten',
-  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen']);
+  'sql_tls_vorlage_anlegen', 'sql_tls_vorlage_entfernen', 'sql_tls_anfordern', 'sql_tls_genehmigen', 'sql_tls_installieren', 'erneuerung_anfordern', 'anforderung_entfernen', 'ca_sicherung_aufraeumen', 'ca_wiederherstellung_testen',
+  'sql_tls_linux_vorlage_anlegen', 'sql_tls_linux_vorlage_entfernen', 'fremd_csr_ausstellen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 const VM_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -77,6 +109,9 @@ export class WindowsPkiSkill extends Skill {
       + 'sql_tls_anfordern (zugang = SQL-Knoten; cn = eigener FQDN, sans = Allowlist, ca = „pkiiss01.ad.3033.at\\\\AD3033 Issuing CA 01“; erneuerung true nur zur Erneuerung) — Schlüssel auf dem Knoten, als Computerkonto einreichen; Ergebnis „SQL_TLS_REQUESTED“ mit requestId (wiederholbar). '
       + 'sql_tls_genehmigen (zugang = Issuing-CA; request_id, cn, sans = Allowlist) — Anforderer = Computerkonto aus cn, Vorlage, Subject, Schlüssellänge und genau die SAN-Allowlist prüfen, dann ausstellen; Ergebnis „SQL_TLS_APPROVED“. '
       + 'sql_tls_installieren (zugang = SQL-Knoten; request_id, ca, cn, dienstkonto z. B. AD3033\\\\gmsa-sqleng$) — abholen, in LocalMachine\\\\My annehmen, Engine-Konto Lesen auf genau diesen Schlüssel; Ergebnis „SQL_TLS_INSTALLED“ mit thumbprint. '
+      + 'SQL-TLS FÜR LINUX (I8e Etappe 3; Schlüssel als Datei auf dem Linux-Host, zur CA geht nur die Anforderung): '
+      + 'sql_tls_linux_vorlage_anlegen (zugang = Issuing-CA; fest Vorlage AD3033-SQL-TLS-Linux-v1 „AD3033 SQL TLS Linux v1“, 365 Tage, Gruppe PKI-SQL-TLS-Linux-Registrieren in ou Standard Dienstkonten mit genau svc-pki-linuxreq; konto_tresor Standard win-dc01-admin) — nur ServerAuthentication, RSA ≥ 3072, Erneuerung 8 Wochen, Name aus der Anforderung nur mit CA-Freigabe, Benutzer-Vorlage ohne CSP-/Export-Vorgabe; Ergebnis „SQL_TLS_LINUX_TEMPLATE_OK“; Rückweg sql_tls_linux_vorlage_entfernen (zugang). '
+      + 'fremd_csr_ausstellen (zugang = Issuing-CA; cn = sqllnx01|sqllnx02|sqllnxcfg.ad.3033.at, sans = genau <host>, <host>.ad.3033.at und bei sqllnx01/02 sqllnxag01, sqllnxag01.ad.3033.at; csr_pem und csr_sha256 aus linux_sql tls_anfordern) — prüft SHA-256, Subject, SAN-Liste exakt und RSA ≥ 3072 vor dem Einreichen (sonst nichts eingereicht), reicht als svc-pki-linuxreq ein (Kennwort aus dem Tresor ad-svc-pki-linuxreq), genehmigt (Anforderer AD3033\\\\svc-pki-linuxreq), holt ab; wiederholbar (dieselbe Anforderung wird nicht neu eingereicht); Ergebnis „SQL_TLS_LINUX_ISSUED“ mit requestId und thumbprint, Zertifikat und Kette (PEM, öffentlich) in data.zertifikatPem/kettePem; ohne Rückweg (Widerruf ist ein eigener Vorgang). '
       + 'zertifikat_pruefen (lesend; zugang, thumbprint, cn, sans; Standard eku ServerAuthentication, Anbieter SChannel, KeySpec Exchange, 3072 Bit) — Ergebnis „CERT_VALID“ nur ohne jeden Befund (Kette und Sperrprüfung online; unbekannt/offline ist kein OK). '
       + 'erneuerung_status (lesend; zugaenge, vorlage, schwellen Standard [90, 60, 30, 14], optional erwartet_zertifikat true|false für Prüfschritte) — „RENEWAL_STATUS“ je Knoten mit Restlaufzeit und Warnstufe. erneuerung_anfordern (zugang, alter_thumbprint, cn, sans, ca) — neuer Schlüssel, altes Zertifikat bleibt; „RENEWAL_PENDING“ mit requestId. '
       + 'codesignatur_selbsttest (lesend; zugang = Windows-Fernzugang, mit oder ohne Domäne; signiert auch bei ausgeschaltetem Schalter) — signierte Probe ausführen und dieselbe Probe nach dem Signieren verändert hochladen; optional erwartet_status [Valid] bzw. [UnknownError, NotTrusted]; Ergebnis „CODESIGN_SELFTEST_OK“ nur, wenn die unveränderte (mit erwartetem Status) läuft (Valid in der Domäne, sonst z. B. UnknownError/NotTrusted) und die veränderte mit HashMismatch/NotSigned abgewiesen, entfernt und nicht ausgeführt wird. '
@@ -107,6 +142,7 @@ export class WindowsPkiSkill extends Skill {
         erwartet_aussteller_thumbprint: { type: 'string' }, erneuern: { type: 'boolean' }, an: { type: 'boolean' }, anforderung: { type: 'number', description: 'codesignatur_sperren: RequestId statt seriennummer' },
         erwartet_status: { type: 'array', items: { type: 'string' }, description: 'codesignatur_selbsttest: erwarteter Status der unveränderten Probe, z. B. [Valid] oder [UnknownError, NotTrusted]' },
         gruppe: { type: 'string' }, ou: { type: 'string' }, mitglieder: { type: 'array', items: { type: 'string' } }, sans: { type: 'array', items: { type: 'string' } }, ca: { type: 'string' },
+        csr_pem: { type: 'string', description: 'fremd_csr_ausstellen: Anforderung (PEM, öffentlich) aus linux_sql tls_anfordern' }, csr_sha256: { type: 'string', description: 'fremd_csr_ausstellen: SHA-256 der Anforderung (64 Hex)' },
         request_id: { type: 'number' }, dienstkonto: { type: 'string' }, thumbprint: { type: 'string' }, subjekt: { type: 'string', description: 'anforderung_entfernen: Subject exakt aus anforderung_liste' }, alter_thumbprint: { type: 'string' }, zugaenge: { type: 'array', items: { type: 'string' } }, schwellen: { type: 'array', items: { type: 'number' } }, erwartet_zertifikat: { type: 'boolean', description: 'erneuerung_status: true = je Knoten muss ein Zertifikat da sein, false = keines (schlägt sonst fehl)' },
         erwartet_an: { type: 'boolean', description: 'codesignatur_status: Schalter muss so stehen' }, mindest_valid: { type: 'number', description: 'codesignatur_status: mindestens so viele Valid-Prüfungen' },
         zert_base64: { type: 'string' }, root_base64: { type: 'string' }, crl_base64: { type: 'string' }, erwartet_zert_sha256: { type: 'string' }, erwartet_root_sha256: { type: 'string' }, erwartet_crl_sha256: { type: 'string' },
@@ -262,7 +298,7 @@ export class WindowsPkiSkill extends Skill {
           }
           const { r } = await this.lauf<{ zustand: string; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number }>(input, vorlageAnlegenSkript(v), 'Codesignatur-Vorlage anlegen', 720_000, { kennwort: kw });
           // v1851 — breite Gruppen dürfen eine Codesignatur-Vorlage nie registrieren (Owner-Vorgabe: nur Domänen-Admins)
-          const breit = r.registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
+          const breit = breiteGruppen(r.registrieren);
           const ok = r.aufCa && (r.namensFlag & 1) === 1 && (r.anmeldeFlag & 2) === 2 && r.minSchluessel >= v.schluessel_bits && breit.length === 0;
           const text = `${ok ? '✅ CODESIGN_TEMPLATE_OK' : 'Codesignatur-Vorlage NICHT wie verlangt'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: ${r.aufCa ? 'ausgestellt' : 'NICHT ausgestellt'}; Name aus der Anforderung ${(r.namensFlag & 1) ? 'ja' : 'NEIN'}, Freigabe an der CA ${(r.anmeldeFlag & 2) ? 'ja' : 'NEIN'}, Mindestschlüssel ${r.minSchluessel}; registrieren dürfen: ${r.registrieren.join(', ') || '—'}${breit.length ? ` — ZU BREIT: ${breit.join(', ')}` : ''} — Rückweg codesignatur_vorlage_entfernen`;
           return ok ? { success: true, data: r, display: text } : { success: false, data: r, error: text };
@@ -378,22 +414,44 @@ export class WindowsPkiSkill extends Skill {
           const mitglieder = (Array.isArray(input.mitglieder) ? input.mitglieder : ['SQL01$', 'SQL02$']).map(x => String(x).trim().toUpperCase());
           if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{2,63}$/.test(gruppe) || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$/.test(ou)) return { success: false, error: 'gruppe/ou: Namen ohne Sonderzeichen' };
           if (!mitglieder.length || mitglieder.length > 8 || mitglieder.some(m => !/^[A-Z0-9-]{1,15}\$$/.test(m))) return { success: false, error: 'mitglieder: Computerkonten wie SQL01$ (höchstens 8)' };
-          const { r } = await this.lauf<{ zustand: string; flags?: number; vorlage: string; anzeige: string; oid: string; ca: string; aufCa: boolean; registrieren: string[]; namensFlag: number; anmeldeFlag: number; minSchluessel: number; eku: string[]; keySpec: number; csp: string[]; privatFlag: number; gruppeMitglieder: string[] }>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTls({ name: gruppe, ou, mitglieder }) }), 'SQL-TLS-Vorlage anlegen', 720_000, { kennwort: kw });
-          const breit = r.registrieren.filter(x => /\\(Authenticated Users|Everyone|Domain Users|Domain Computers|Users|Jeder|Authentifizierte Benutzer|Domänen-Benutzer|Domänencomputer|Benutzer)$/i.test(x) || /^(Everyone|Jeder)$/i.test(x));
-          const befunde: string[] = [];
-          if (!r.aufCa) befunde.push('nicht auf der CA ausgestellt');
-          if ((r.namensFlag & 1) !== 1 || (r.anmeldeFlag & 2) !== 2) befunde.push('Name aus der Anforderung ohne CA-Freigabe');
-          if (r.minSchluessel < v.schluessel_bits) befunde.push(`Mindestschlüssel ${r.minSchluessel}`);
-          if (r.eku.join(',') !== '1.3.6.1.5.5.7.3.1') befunde.push(`EKU ${r.eku.join(',')}`);
-          if (r.keySpec !== 1) befunde.push(`KeySpec ${r.keySpec}`);
-          if (((r.flags ?? 0) & 0x40) === 0) befunde.push('keine Computer-Vorlage (Kennzeichen 0x40 fehlt)');
-          if (!r.csp.some(c => c.includes(SQL_TLS_PROVIDER))) befunde.push(`CSP ${r.csp.join(', ')}`);
-          if ((r.privatFlag & 0x10) !== 0) befunde.push('Schlüssel exportierbar');
-          if (!r.registrieren.some(x => x.toLowerCase().endsWith(`\\${gruppe.toLowerCase()}`))) befunde.push(`Gruppe ${gruppe} darf nicht registrieren`);
-          if (breit.length) befunde.push(`ZU BREIT: ${breit.join(', ')}`);
-          if ([...r.gruppeMitglieder].map(x => x.toUpperCase()).sort().join(',') !== [...mitglieder].sort().join(',')) befunde.push(`Gruppe hat ${r.gruppeMitglieder.join(', ') || 'keine'} statt ${mitglieder.join(', ')}`);
+          const { r } = await this.lauf<VorlageErgebnis>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTls({ name: gruppe, ou, mitglieder }) }), 'SQL-TLS-Vorlage anlegen', 720_000, { kennwort: kw });
+          const befunde = sqlTlsVorlageBefunde(r, { bits: v.schluessel_bits, gruppe, mitglieder, windows: true });
           const text = `${befunde.length ? `SQL-TLS-Vorlage NICHT wie verlangt (${befunde.join('; ')})` : '✅ SQL_TLS_TEMPLATE_OK'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: EKU ${r.eku.join(',')}, KeySpec ${r.keySpec}, ${r.csp.join(', ')}, Mindestschlüssel ${r.minSchluessel}, nicht exportierbar ${(r.privatFlag & 0x10) === 0 ? 'ja' : 'NEIN'}, Name aus der Anforderung mit CA-Freigabe; registrieren dürfen: ${r.registrieren.join(', ')}; Gruppe ${gruppe}: ${r.gruppeMitglieder.join(', ')} — Rückweg sql_tls_vorlage_entfernen`;
           return befunde.length ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+        }
+        // ── I8e Etappe 3 — SQL-TLS für die Linux-SQL-Hosts (Schlüssel auf dem Host, hier nur Anforderung und Zertifikat) ───────────
+        case 'sql_tls_linux_vorlage_anlegen': case 'sql_tls_linux_vorlage_entfernen': {
+          if (input.vmid !== undefined) return { success: false, error: `${action} nur über den Fernzugang der Issuing-CA` };
+          for (const [f, w] of [['vorlage', SQL_TLS_LINUX_VORLAGE], ['anzeige', SQL_TLS_LINUX_ANZEIGE], ['gruppe', SQL_TLS_LINUX_GRUPPE]] as const) {
+            if (input[f] !== undefined && String(input[f]).trim() !== w) return { success: false, error: `${f}: fest ${w} (Global Constraints I8e Etappe 3)` };
+          }
+          if (input.mitglieder !== undefined) return { success: false, error: `mitglieder: fest ${SQL_TLS_LINUX_KONTO}` };
+          const v = pruefeVorlage({ vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE, gueltig_tage: 365, schluessel_bits: input.schluessel_bits ?? 3072 }); if (typeof v === 'string') return { success: false, error: v };
+          const kw = await this.kennwort(input.konto_tresor ?? 'win-dc01-admin', `SQL-TLS-Linux-Vorlage ${v.vorlage} (${String(input.zugang)})`);
+          if (action === 'sql_tls_linux_vorlage_entfernen') {
+            const { r } = await this.lauf<{ vorlage: string; vonCa: boolean; geloescht: boolean; oidWeg: boolean; nochDa: boolean }>(input, vorlageEntfernenSkript(v), 'SQL-TLS-Linux-Vorlage entfernen', 420_000, { kennwort: kw });
+            const text = `${r.nochDa ? 'SQL-TLS-Linux-Vorlage NICHT entfernt' : '✅ SQL_TLS_LINUX_TEMPLATE_REMOVED'} ${r.vorlage}: von der CA ${r.vonCa ? 'genommen' : 'war nicht ausgestellt'}, Vorlage ${r.geloescht ? 'gelöscht' : 'war nicht da'} (Registrier-Gruppe ${SQL_TLS_LINUX_GRUPPE} bleibt)`;
+            return r.nochDa ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+          }
+          const ou = String(input.ou ?? 'Dienstkonten').trim();
+          if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,63}$/.test(ou)) return { success: false, error: 'ou: OU der Registrier-Gruppe ohne Sonderzeichen (Standard Dienstkonten)' };
+          const { r } = await this.lauf<VorlageErgebnis>(input, vorlageAnlegenSkript({ ...v, profil: profilSqlTlsLinux(ou) }), 'SQL-TLS-Linux-Vorlage anlegen', 720_000, { kennwort: kw });
+          const befunde = sqlTlsVorlageBefunde(r, { bits: v.schluessel_bits, gruppe: SQL_TLS_LINUX_GRUPPE, mitglieder: [SQL_TLS_LINUX_KONTO], windows: false });
+          const text = `${befunde.length ? `SQL-TLS-Linux-Vorlage NICHT wie verlangt (${befunde.join('; ')})` : '✅ SQL_TLS_LINUX_TEMPLATE_OK'} ${r.vorlage} „${r.anzeige}“ (${r.zustand}, OID ${r.oid}) auf „${r.ca}“: EKU ${r.eku.join(',')}, Mindestschlüssel ${r.minSchluessel}, ${v.gueltig_tage} Tage, Erneuerung 8 Wochen, Name aus der Anforderung mit CA-Freigabe, keine CSP-/Export-Vorgabe (Schlüssel auf dem Linux-Host); registrieren dürfen: ${r.registrieren.join(', ')}; Gruppe ${SQL_TLS_LINUX_GRUPPE}: ${r.gruppeMitglieder.join(', ') || 'keine'} — Rückweg sql_tls_linux_vorlage_entfernen`;
+          return befunde.length ? { success: false, data: r, error: text } : { success: true, data: r, display: text };
+        }
+        case 'fremd_csr_ausstellen': {
+          if (input.vmid !== undefined) return { success: false, error: 'fremd_csr_ausstellen nur über den Fernzugang der Issuing-CA' };
+          const a = pruefeFremdAusstellung(input); if (typeof a === 'string') return { success: false, error: a };
+          const kw = await this.kennwort(SQL_TLS_LINUX_TRESOR, `SQL-TLS-Anforderung ${a.cn} einreichen (${SQL_TLS_LINUX_KONTO})`);
+          // Kennwort und Anforderung nur über stdin; Ergebnis „fehler“ = eine Prüfung vor dem Einreichen ist gescheitert, nichts eingereicht
+          const { r } = await this.lauf<FremdAusgestellt>(input, fremdAusstellenSkript(a), 'Linux-SQL-TLS-Anforderung ausstellen', 900_000, { kennwort: kw, csr_pem: a.csrPem });
+          if (r.zustand === 'fehler') return { success: false, data: { zustand: r.zustand, fehler: r.fehler }, error: `SQL-TLS-Anforderung ${a.cn} NICHT eingereicht: ${r.fehler ?? 'Prüfung gescheitert'}` };
+          const gruende = bewerteFremdAusgestellt(r, a);
+          const data = { zustand: r.zustand, requestId: r.requestId, thumbprint: r.thumbprint, seriennummer: r.seriennummer, gueltigBis: r.gueltigBis, cn: a.cn, sans: a.sans, csrSha256: a.csr_sha256, eingereicht: r.eingereicht, zertifikatPem: r.zertifikatPem, kettePem: r.kettePem };
+          // Anzeige ohne PEM-Blöcke (öffentlich, aber lang) — sie stehen in data für den nächsten Change-Schritt (linux_sql tls_einspielen)
+          const text = `${gruende.length ? 'SQL-TLS-Zertifikat NICHT wie verlangt' : '✅ SQL_TLS_LINUX_ISSUED'} ${a.cn} (${r.zustand}): Anforderung ${r.requestId}, Thumbprint ${r.thumbprint}, Seriennummer ${r.seriennummer}, gültig bis ${r.gueltigBis}, ${r.subjekt}, SAN ${r.sans}, EKU ${(r.eku ?? []).join(',')}, Anforderer ${r.anforderer}, Kette ${r.glieder} Glieder; Zertifikat und Kette (PEM) in data.zertifikatPem/kettePem${gruende.length ? ` — BEFUNDE: ${gruende.join('; ')}` : ''}`;
+          return gruende.length ? { success: false, data, error: text } : { success: true, data, display: text };
         }
         case 'sql_tls_anfordern': case 'erneuerung_anfordern': {
           if (input.vmid !== undefined) return { success: false, error: `${action} nur über den Fernzugang des SQL-Knotens` };

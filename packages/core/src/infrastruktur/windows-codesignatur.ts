@@ -72,7 +72,7 @@ export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string;
     "    $g = $ou.Create('group', ('CN=' + $p.profil.gruppe.name)); $g.Put('sAMAccountName', $p.profil.gruppe.name); $g.Put('groupType', -2147483646)",
     "    $g.Put('description', ('Registrieren der Vorlage ' + $p.vorlage + ' (Alfred PKI)')); $g.SetInfo()",
     '  }',
-    "  foreach ($m in @($p.profil.gruppe.mitglieder)) { $c = Finde $m; if (-not $c) { throw ('Computerkonto ' + $m + ' nicht gefunden') }; $mdn = [string]$c.distinguishedName.Value; if (@($g.Properties['member']) -notcontains $mdn) { [void]$g.Properties['member'].Add($mdn); $g.CommitChanges() } }",
+    "  foreach ($m in @($p.profil.gruppe.mitglieder)) { $c = Finde $m; if (-not $c) { throw ('Konto ' + $m + ' nicht gefunden') }; $mdn = [string]$c.distinguishedName.Value; if (@($g.Properties['member']) -notcontains $mdn) { [void]$g.Properties['member'].Add($mdn); $g.CommitChanges() } }",
     "  $g.RefreshCache(); $gruppeMitglieder = @($g.Properties['member'] | ForEach-Object { [string]([adsi]('LDAP://' + $_)).Properties['sAMAccountName'].Value })",
     "  $fremd = @($gruppeMitglieder | Where-Object { @($p.profil.gruppe.mitglieder) -notcontains $_ }); if ($fremd.Count) { throw ('Gruppe ' + $p.profil.gruppe.name + ' hat weitere Mitglieder: ' + ($fremd -join ', ') + ' — nichts verändert') }",
     "  $gruppeSid = New-Object Security.Principal.SecurityIdentifier ([byte[]]$g.Properties['objectSid'].Value, 0)",
@@ -112,7 +112,8 @@ export function vorlageAnlegenSkript(v0: VorlageParameter & { ausKonto?: string;
     "  $t.Put('msPKI-Certificate-Application-Policy', @([string]$p.profil.eku))",
     `  $t.Put('pKIExpirationPeriod', ${PERIODE('[int]$p.gueltig_tage')})`,
     `  $t.Put('pKIOverlapPeriod', ${PERIODE('[int]$p.profil.ueberlappungTage')})`,
-    "  $t.Put('pKIDefaultCSPs', @([string]$p.profil.csp))",
+    // I8e Etappe 3 — ohne csp (Linux-Vorlage: Schlüssel entsteht außerhalb von Windows) keine CSP-Vorgabe
+    "  if ($p.profil.csp) { $t.Put('pKIDefaultCSPs', @([string]$p.profil.csp)) }",
     "  $t.Put('msPKI-RA-Signature', 0)",
     // 0x2 CT_FLAG_PEND_ALL_REQUESTS: jede Anforderung wartet auf Freigabe an der CA
     "  $t.Put('msPKI-Enrollment-Flag', 2)",
