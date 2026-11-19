@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { powershellVorhanden, parseSkripte, fuehreSkriptAus } from './powershell-parser.testhilfe.js';
-import { dienstkontoSkript, dienstkontoGehaertet } from './windows-ad.js';
+import { dienstkontoSkript, dienstkontoGehaertet, SPERR_GPO_KOMMENTAR } from './windows-ad.js';
 import {
   pruefeSpns, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, computerkontoSkript, computerkontoEntfernenSkript, pruefeComputerkonto,
   pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, gruppeSkript, gruppeEntfernenSkript, pruefeGruppe, sqlAnmeldungSkript, sqlAnmeldungAuswerten,
@@ -356,6 +356,48 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', { timeout: 12
     expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
     for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
+});
+
+// Ruling R25 (Live-Change L2): New-GPO -Comment schreibt GPO.cmt — erlaubt nur mit genau Alfreds Kommentar
+describe('R25 — Anmeldesperre: GPO.cmt mit Alfreds Kommentar ist keine fremde Datei', { timeout: 120_000 }, () => {
+  const text = dienstkontoSkript({ konto: 'svc-sqllnx', ou: 'Dienstkonten', haerten: true });
+  const von = text.indexOf("$cmt = Join-Path $pb 'GPO.cmt'");
+  const bis = text.indexOf("statt Alfreds Kommentar)') }", von);
+  it('Skripttext: GPO.cmt aus der Fremd-Liste genommen, Inhalt an den Kommentar gebunden (Kodierung erkannt, Ende beschnitten)', () => {
+    expect(text).toContain("-and $_ -ine 'GPO.cmt' })");
+    expect(von).toBeGreaterThan(0);
+    expect(bis).toBeGreaterThan(von);
+    const teil = text.slice(von, bis);
+    expect(teil).toContain('[IO.File]::ReadAllBytes($cmt)');
+    expect(teil).toContain('[Text.Encoding]::Unicode');
+    expect(teil).toContain('if ($ct -cne $kommentar)');
+    expect(teil).toContain('TrimEnd([char[]]@([char]0');
+    // der Kommentar geht als Parameter in den WinRM-Block (dieselbe Marke wie New-GPO -Comment und die Besitzprüfung)
+    expect(text).toContain(`, ${JSON.stringify(SPERR_GPO_KOMMENTAR).replace(/^"|"$/g, "'")} -ScriptBlock {`);
+    expect(text).toContain('New-GPO -Name $name -Server $server -Comment $kommentar');
+  });
+  it.skipIf(!POWERSHELL)('ausgeführt: UTF-16LE mit/ohne BOM und NUL-Ende → ok; anderer Inhalt → Abweichung mit Namen; keine Datei → ok', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-gpocmt-'));
+    try {
+      const teil = `${text.slice(von, bis)}statt Alfreds Kommentar)') }\n        }`;
+      const fall = (hex: string) => fuehreSkriptAus([
+        `$pb = '${dir.replace(/'/g, "''")}'; $kommentar = '${SPERR_GPO_KOMMENTAR.replace(/'/g, "''")}'; $abw = New-Object System.Collections.ArrayList`,
+        `$h = '${hex}'; $cmtPfad = Join-Path $pb 'GPO.cmt'; Remove-Item -LiteralPath $cmtPfad -ErrorAction SilentlyContinue`,
+        "if ($h) { [IO.File]::WriteAllBytes($cmtPfad, [byte[]]@(for ($i = 0; $i -lt $h.Length; $i += 2) { [Convert]::ToByte($h.Substring($i, 2), 16) })) }",
+        teil,
+        "'ABW=' + ($abw -join ' | ')",
+      ].join('\n'));
+      const hexVon = (b: Buffer) => b.toString('hex');
+      const le = Buffer.from(SPERR_GPO_KOMMENTAR, 'utf16le');
+      const abw = (hex: string) => { const r = fall(hex); return /^ABW=(.*)$/m.exec(r.stdout)?.[1]?.trim() ?? `kein Ergebnis: ${r.stdout} ${r.stderr}`; };
+      expect(abw(hexVon(Buffer.concat([Buffer.from([0xff, 0xfe]), le, Buffer.from('\r\n\0\0', 'utf16le')])))).toBe('');
+      expect(abw(hexVon(Buffer.concat([le, Buffer.from([0, 0])])))).toBe('');
+      expect(abw(hexVon(Buffer.from(SPERR_GPO_KOMMENTAR, 'utf8')))).toBe('');
+      expect(abw('')).toBe('');
+      expect(abw(hexVon(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Fremder Kommentar', 'utf16le')])))).toBe('GPO.cmt mit fremdem Inhalt (Fremder Kommentar statt Alfreds Kommentar)');
+      expect(abw(hexVon(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SPERR_GPO_KOMMENTAR.toUpperCase(), 'utf16le')])))).toContain('GPO.cmt mit fremdem Inhalt');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 // Fix-Welle (Final-Review I8e Etappe 3): AlsBenutzer wartet, bis die Aufgabe gelaufen ist — Queued/Ready kurz nach dem Start ist kein Ende.

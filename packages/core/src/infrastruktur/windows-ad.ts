@@ -436,8 +436,17 @@ const ANMELDESPERRE = [
   "      if ([string]$po.gPCUserExtensionNames) { [void]$abw.Add('Benutzer-Erweiterungen ' + [string]$po.gPCUserExtensionNames) }",
   "      if ([string]$po.gPCMachineExtensionNames -and [string]$po.gPCMachineExtensionNames -ne $cse) { [void]$abw.Add('Computer-Erweiterungen ' + [string]$po.gPCMachineExtensionNames) }",
   "      if (-not (Test-Path -LiteralPath $pb)) { [void]$abw.Add('SYSVOL-Ordner ' + $pb + ' fehlt') } else {",
-  "        $fremd = @(Get-ChildItem -LiteralPath $pb -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($pb.Length).TrimStart('\\') } | Where-Object { $_ -ine 'GPT.INI' -and $_ -ine 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf' })",
+  "        $fremd = @(Get-ChildItem -LiteralPath $pb -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($pb.Length).TrimStart('\\') } | Where-Object { $_ -ine 'GPT.INI' -and $_ -ine 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf' -and $_ -ine 'GPO.cmt' })",
   "        if ($fremd.Count) { [void]$abw.Add('fremde Dateien ' + ($fremd -join ', ')) }",
+  // Ruling R25: New-GPO -Comment schreibt den Kommentar nach GPO.cmt (Wurzel des GPO-Ordners, GPMC: UTF-16LE). Erlaubt nur genau
+  // diese Datei mit genau Alfreds Marke (Kodierung nach BOM bzw. UTF-16LE ohne BOM, Leerraum/NULs am Ende abgeschnitten)
+  "        $cmt = Join-Path $pb 'GPO.cmt'",
+  '        if (Test-Path -LiteralPath $cmt -PathType Leaf) {',
+  '          $cb = [IO.File]::ReadAllBytes($cmt)',
+  "          $ct = $(if ($cb.Length -ge 2 -and $cb[0] -eq 0xFF -and $cb[1] -eq 0xFE) { [Text.Encoding]::Unicode.GetString($cb, 2, $cb.Length - 2) } elseif ($cb.Length -ge 2 -and $cb[0] -eq 0xFE -and $cb[1] -eq 0xFF) { [Text.Encoding]::BigEndianUnicode.GetString($cb, 2, $cb.Length - 2) } elseif ($cb.Length -ge 3 -and $cb[0] -eq 0xEF -and $cb[1] -eq 0xBB -and $cb[2] -eq 0xBF) { [Text.Encoding]::UTF8.GetString($cb, 3, $cb.Length - 3) } elseif ($cb.Length -ge 2 -and $cb[1] -eq 0) { [Text.Encoding]::Unicode.GetString($cb) } else { [Text.Encoding]::UTF8.GetString($cb) })",
+  "          $ct = $ct.TrimEnd([char[]]@([char]0, [char]32, [char]9, [char]13, [char]10))",
+  "          if ($ct -cne $kommentar) { [void]$abw.Add('GPO.cmt mit fremdem Inhalt (' + $(if ($ct.Length -gt 80) { $ct.Substring(0, 80) + '…' } else { $ct }) + ' statt Alfreds Kommentar)') }",
+  '        }',
   "        $pdat = Join-Path $pb 'Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf'",
   '        if (Test-Path -LiteralPath $pdat) {',
   "          $abschnitt = ''; $erlaubt = @{ 'Unicode' = @('Unicode'); 'Version' = @('signature', 'Revision'); 'Privilege Rights' = @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') }",
