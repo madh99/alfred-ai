@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { dienstkontoSkript, dienstkontoGehaertet } from './windows-ad.js';
 import {
   pruefeSpns, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, computerkontoSkript, computerkontoEntfernenSkript, pruefeComputerkonto,
@@ -332,11 +329,8 @@ describe('I8e Etappe 3 — Skill windows_ad', () => {
   });
 });
 
-// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (Muster i8e-fs01.test.ts)
-const POWERSHELL = (() => {
-  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
-  return r.status === 0 && /^\d+/.test(r.stdout.trim());
-})();
+// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (gemeinsame Testhilfe, Skripte als Datei)
+const POWERSHELL = powershellVorhanden();
 describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
   it('alle neuen Bausteine ohne Parserfehler', () => {
     const skripte = {
@@ -352,22 +346,8 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 — PowerShell-Parser', () => {
       gruppeEntfernen: gruppeEntfernenSkript({ gruppe: 'SQL-Linux-Admins' }),
       sqlAnmeldung: sqlAnmeldungSkript({ server: 'sqllnx01.ad.3033.at', konto: 'svc-sqllnx-test' }),
     };
-    // Fix-Runde 2: das gehärtete Dienstkonto-Skript ist für eine Befehlszeile (-EncodedCommand, 32 767 Zeichen) zu lang — Skript als Datei
-    // übergeben (wie der Windows-Transport)
-    const dir = mkdtempSync(join(tmpdir(), 'alfred-ps-'));
-    try {
-      for (const [name, s] of Object.entries(skripte)) {
-        const datei = join(dir, `${name}.ps1`);
-        writeFileSync(datei, s, 'utf8');
-        const prog = `$t = [IO.File]::ReadAllText('${datei.replace(/'/g, "''")}', [Text.Encoding]::UTF8); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
-        const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
-        expect(r.error, `${name}: ${String(r.error)}`).toBeUndefined();
-        expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
-      }
-      // Gegenprobe: ein fehlerhaftes Skript fällt durch
-      writeFileSync(join(dir, 'kaputt.ps1'), "if ($a) { 'x' ", 'utf8');
-      const k = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$t = [IO.File]::ReadAllText('${join(dir, 'kaputt.ps1').replace(/'/g, "''")}'); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { 'FEHLER' } else { 'OK' }`, 'utf16le').toString('base64')], { encoding: 'utf8' });
-      expect(k.stdout.trim()).toBe('FEHLER');
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    const p = parseSkripte(skripte);
+    expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
+    for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
 });

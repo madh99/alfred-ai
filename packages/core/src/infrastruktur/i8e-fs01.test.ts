@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { pruefeDienstkonto, dienstkontoSkript, dienstkontoEntfernenSkript, dienstkontoTresorName } from './windows-ad.js';
 import { WindowsAdSkill } from './windows-ad-skill.js';
 import { pruefeFreigabe, freigabeSkript, FEATURES } from './windows-cluster.js';
@@ -196,11 +196,8 @@ describe('I8e fs01 — Change „Sicherungsziel auf fs01“', () => {
   });
 });
 
-// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig
-const POWERSHELL = (() => {
-  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
-  return r.status === 0 && /^\d+/.test(r.stdout.trim());
-})();
+// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (gemeinsame Testhilfe, Skripte als Datei)
+const POWERSHELL = powershellVorhanden();
 describe.skipIf(!POWERSHELL)('I8e fs01 — PowerShell-Parser', () => {
   it('dienstkonto_anlegen/-entfernen und freigabe_anlegen (mit/ohne Kontingent) ohne Parserfehler', () => {
     const skripte = {
@@ -209,11 +206,8 @@ describe.skipIf(!POWERSHELL)('I8e fs01 — PowerShell-Parser', () => {
       freigabeKontingent: freigabeSkript({ name: 'SQLLinuxBackup$', pfad: 'S:\SQLLinuxBackup', vollzugriff: [], aendern: ['AD3033\svc-sqllnx-backup'], kontingentGib: 64 }),
       freigabe: freigabeSkript({ name: 'Witness$', pfad: 'W:\Witness', vollzugriff: ['AD3033\SQLCL01$'], aendern: [] }),
     };
-    for (const [name, s] of Object.entries(skripte)) {
-      const b64 = Buffer.from(s, 'utf8').toString('base64');
-      const prog = `$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
-      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
-      expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
-    }
+    const p = parseSkripte(skripte);
+    expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
+    for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
 });

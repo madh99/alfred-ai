@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
 import { createHash } from 'node:crypto';
 import {
   pruefeCsrForm, pruefeFremdAusstellung, fremdAusstellenSkript, linuxTlsSans, profilSqlTlsLinux, csrSha256,
@@ -226,11 +223,8 @@ describe('I8e Etappe 3 Task 3 — Skill', () => {
   });
 });
 
-// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (Muster windows-ad-linux.test.ts)
-const POWERSHELL = (() => {
-  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
-  return r.status === 0 && /^\d+/.test(r.stdout.trim());
-})();
+// PowerShell-Parser (Windows PowerShell 5.1), wenn vorhanden: jedes neue Skript ist syntaktisch gültig (gemeinsame Testhilfe, Skripte als Datei)
+const POWERSHELL = powershellVorhanden();
 /** Skript und die darin eingebetteten inneren Skripte (psText-Literale mit param([string]$aus)) einzeln parsen */
 function innere(s: string): string[] {
   const funde: string[] = [];
@@ -245,19 +239,8 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 Task 3 — PowerShell-Parser', () => 
     const skripte: Record<string, string> = { fremd, vorlage, genehmigen, entfernen: vorlageEntfernenSkript({ vorlage: SQL_TLS_LINUX_VORLAGE, anzeige: SQL_TLS_LINUX_ANZEIGE }) };
     for (const [n, s] of Object.entries({ fremd, vorlage, genehmigen })) innere(s).forEach((x, i) => { skripte[`${n}-innen${i}`] = x; });
     expect(innere(fremd).length).toBe(3);
-    const dir = mkdtempSync(join(tmpdir(), 'alfred-ps-'));
-    try {
-      for (const [name, s] of Object.entries(skripte)) {
-        const datei = join(dir, `${name}.ps1`);
-        writeFileSync(datei, s, 'utf8');
-        const prog = `$t = [IO.File]::ReadAllText('${datei.replace(/'/g, "''")}', [Text.Encoding]::UTF8); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { $f | ForEach-Object { $_.Message }; exit 1 }; 'OK'`;
-        const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(prog, 'utf16le').toString('base64')], { encoding: 'utf8' });
-        expect(r.error, `${name}: ${String(r.error)}`).toBeUndefined();
-        expect(r.stdout.trim(), `${name}: ${r.stdout} ${r.stderr}`).toBe('OK');
-      }
-      writeFileSync(join(dir, 'kaputt.ps1'), "if ($a) { 'x' ", 'utf8');
-      const k = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$t = [IO.File]::ReadAllText('${join(dir, 'kaputt.ps1').replace(/'/g, "''")}'); $f = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$null, [ref]$f); if ($f.Count) { 'FEHLER' } else { 'OK' }`, 'utf16le').toString('base64')], { encoding: 'utf8' });
-      expect(k.stdout.trim()).toBe('FEHLER');
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    const p = parseSkripte(skripte);
+    expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
+    for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
 });
