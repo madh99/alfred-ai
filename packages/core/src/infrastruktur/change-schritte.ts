@@ -182,7 +182,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // I8e Task 4: Sicherung (Jobs + Probe-Kopie mit fester Zugangsdatei), Sicherung jetzt (auf fs01 bestätigt), Restore-Beweis (RESTORE_VERIFIED)
   linux_sql: new Set(['platten_einrichten', 'installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen',
     // Owner 19.11.2026 — reste_entfernen: danach liegen genau die Dateien in Gebrauch noch (Selbstprüfung im Baustein)
-    'reste_entfernen']),
+    'reste_entfernen',
+    // I8e Etappe 3 Task 4 — Beitritt (realm list, id, getent group, Keytab, testjoin) und Verlassen (sssd aus, Dateien weg, NSS ohne sss)
+    'ad_beitreten', 'ad_verlassen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -210,7 +212,17 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['ag_anlegen', { skill: 'linux_ha', aktion: 'ag_entfernen', text: 'linux_ha.ag_entfernen (zugang, ag)' }],
     ['ag_failover', { skill: 'linux_ha', aktion: 'ag_failover', text: 'linux_ha.ag_failover (zugang = Ziel, ziel = bisheriger Primär)', parameter: failoverZurueck }],
   ]),
+  // I8e Etappe 3 Task 4 — Domänenbeitritt: Rückweg genau linux_sql.ad_verlassen auf demselben Zugang (auch beim Neuaufbau)
+  linux_sql: new Map([
+    ['ad_beitreten', { skill: 'linux_sql', aktion: 'ad_verlassen', text: 'linux_sql.ad_verlassen (zugang)', parameter: gleicherZugang }],
+  ]),
 };
+/** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit) */
+function gleicherZugang(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
+  const [h, r] = [n(hin.zugang), n(rueck.zugang)];
+  return h && r && h !== r ? `ad_verlassen muss auf demselben Zugang laufen — rueckweg zugang ${h} (nicht ${r})` : undefined;
+}
 /** Task 6: der Rückweg eines Failovers führt zurück zum bisherigen Primär — zugang/ziel genau vertauscht (Verweise erst zur Laufzeit) */
 function failoverZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
   const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);

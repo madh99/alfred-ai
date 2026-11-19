@@ -63,12 +63,15 @@ export const LINUX_SQL_BAUSTEINE = {
   platten: 'sql.platten', installation: 'sql.installation', konfiguration: 'sql.konfiguration',
   tempdb: 'sql.tempdb', maxspeicher: 'sql.maxspeicher', login: 'sql.login', status: 'sql.status', pruefdaten: 'sql.pruefdaten',
   resteEntfernen: 'sql.reste_entfernen',
+  // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort und lokaler Rückweg (Erzeuger in linux-sql-ad.ts)
+  adBeitreten: 'sql.ad_beitreten', adVerlassen: 'sql.ad_verlassen',
 } as const;
 
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_SQL_ZEIT_MS = {
   platten: 180_000, installation: 1_500_000, konfiguration: 300_000, tempdb: 300_000, maxspeicher: 90_000, login: 90_000, status: 90_000, pruefdaten: 180_000,
   resteEntfernen: 180_000,
+  adBeitreten: 600_000, adVerlassen: 300_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

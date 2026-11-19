@@ -18,6 +18,8 @@ import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, FS01_FQDN, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
 } from './linux-sql-sicherung.js';
+import { LINUX_AD, LINUX_AD_PAKETE, AD_NIE_BEITRETEN, pruefeAdBeitreten, type AdBeitretenParameter } from './linux-sql-ad.js';
+import { joinTresorName } from './windows-ad-linux.js';
 
 /**
  * Fix-Welle I-1 — Mindest-zeitlimitS je Aktion (Sekunden): Baustein-Zeitgrenzen (am Host läuft jeder Baustein bis zu seiner Grenze)
@@ -38,12 +40,18 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   wiederherstellen_pruefen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.wiederherstellen) + 60,
   kettengrenzen_uebernehmen: sek(LINUX_SQL_SICHERUNG_ZEIT_MS.grenzen) + 60,
   reste_entfernen: sek(LINUX_SQL_ZEIT_MS.resteEntfernen) + 60,
+  ad_beitreten: sek(LINUX_SQL_ZEIT_MS.adBeitreten) + 60,
+  ad_verlassen: sek(LINUX_SQL_ZEIT_MS.adVerlassen) + 60,
 };
 
 export interface LinuxSqlDeps {
   /** Fernzugriff: registrierter Linux-Baustein auf einem Zugang (Geheimnisse nur in `eingabe`, eine Zeile JSON) */
   skript: (zugang: string, baustein: string, parameter: unknown, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
-  tresor?: { namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string>; setze: (name: string, wert: string, zweck: string) => Promise<void> };
+  tresor?: {
+    namen: () => Promise<Set<string>>; lies: (name: string, wofuer: string) => Promise<string>; setze: (name: string, wert: string, zweck: string) => Promise<void>;
+    /** I8e Etappe 3 Task 4 — verbrauchtes Einmal-Kennwort (ad-join-<name>) nach gelungenem Beitritt entfernen */
+    entferne?: (name: string) => Promise<boolean>;
+  };
   protokoll?: (msg: string, daten: Record<string, unknown>) => void;
 }
 
@@ -55,7 +63,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // Fix-Welle M-1 — Kettengrenzen nach Prüfung aus der Kopie auf fs01 übernehmen
   'kettengrenzen_uebernehmen',
   // Owner 19.11.2026 — alte tempdb-Dateien entfernen (fail-closed, jede Datei gemeldet)
-  'reste_entfernen']);
+  'reste_entfernen',
+  // I8e Etappe 3 Task 4 — Domänenbeitritt mit Einmal-Kennwort und lokaler Rückweg
+  'ad_beitreten', 'ad_verlassen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -303,6 +313,24 @@ function loginParameter(input: Record<string, unknown>): LoginParameter {
   return p;
 }
 
+/** I8e Etappe 3 Task 4 — Beitritts-Parameter: Domäne/Realm/OU/DCs fest, computername Standard = zugang, Paketversionen fest (überschreibbar) */
+function adBeitretenParameter(zugang: string, input: Record<string, unknown>): AdBeitretenParameter {
+  // Spec 10: der Konfig-Knoten tritt nie bei — auch nicht über einen anderen computernamen
+  if (zugang.toLowerCase() === AD_NIE_BEITRETEN) throw new Error(`${AD_NIE_BEITRETEN} tritt nicht bei (Spec 10)`);
+  const computername = String(input.computername ?? zugang).trim().toLowerCase();
+  const roh = input.pakete === undefined ? {} : input.pakete;
+  if (!roh || typeof roh !== 'object' || Array.isArray(roh)) throw new Error(`pakete: Objekt { paket: version } (nur ${Object.keys(LINUX_AD_PAKETE).join(', ')})`);
+  const fremd = Object.keys(roh).filter(k => !(k in LINUX_AD_PAKETE));
+  if (fremd.length) throw new Error(`pakete: unbekannt ${fremd.join(', ').slice(0, 120)} — nur ${Object.keys(LINUX_AD_PAKETE).join(', ')}`);
+  const p: AdBeitretenParameter = {
+    domaene: LINUX_AD.domaene, realm: LINUX_AD.realm, ou: LINUX_AD.ou, computername, dcs: [...LINUX_AD.dcs],
+    pakete: { ...LINUX_AD_PAKETE, ...(roh as Record<string, string>) },
+  };
+  const f = pruefeAdBeitreten(p); if (f) throw new Error(f);
+  pruefeTresorName(joinTresorName(computername));
+  return p;
+}
+
 function pruefdatenParameter(input: Record<string, unknown>): { datenbank: string } {
   const p = { datenbank: String(input.datenbank ?? '').trim() };
   const f = pruefePruefdaten(p); if (f) throw new Error(f);
@@ -332,6 +360,7 @@ export class LinuxSqlSkill extends Skill {
       + `Mindest-zeitlimitS je Schritt (Baustein-Zeitgrenzen + 60 s): ${Object.entries(LINUX_SQL_MIN_ZEITLIMIT_S).map(([a, sk]) => `${a} ${sk} s`).join(', ')}. `
       + 'reste_entfernen (nur im Change; zugang) — entfernt alte tempdb-Dateien (temp*.mdf/ndf/ldf direkt in /var/opt/mssql/data), die der Status als „Reste“ meldet; nur Dateien, die nicht in sys.master_files stehen und kein Prozess geöffnet hat; SQL Server muss laufen, sonst Abbruch ohne Löschen; jede gelöschte Datei steht mit Größe im Ergebnis, Dateien in Gebrauch bleiben und werden genannt; kein Rückweg (ohneSicherungGrund). '
       + 'kettengrenzen_uebernehmen (nur im Change; zugang, konto_tresor optional) — nur wenn sicherungen/status „lokale Kettengrenzen fehlen“ meldet: übernimmt nach Prüfung die Grenzen gelöschter Ketten aus der Kopie auf fs01 in die lokale Aufzeichnung und nennt den Unterschied. '
+      + 'AD (I8e Etappe 3, nur sqllnx01/sqllnx02 — sqllnxcfg tritt nie bei): ad_beitreten (nur im Change; zugang, computername Standard = zugang, pakete optional { paket: version }) — vorher windows_ad computerkonto_vorbereiten name <computername> (Einmal-Kennwort im Tresor ad-join-<computername>) und dns_ptr; prüft zuerst ohne Änderung hostname -f = <computername>.ad.3033.at, SRV _ldap._tcp.ad.3033.at, PTR der eigenen Adresse, Uhrzeit < 60 s zu dc01; dann realmd/sssd/adcli/krb5 in fester Version (hold), Beitritt als vorbereitetes Computerkonto (kein AD-Admin auf dem Host, Kennwort nur über stdin), sssd ohne Anmeldung von Domänenbenutzern am Host; Selbstprüfung realm list, id svc-sqllnx@ad.3033.at, getent group sql-linux-admins@ad.3033.at, Keytab; „AD_JOINED“; der Tresor-Eintrag ad-join-<computername> wird danach entfernt (verbraucht) ↔ ad_verlassen (zugang; nur lokal: sssd aus, sssd.conf und /etc/krb5.keytab entfernt, NSS zurück; „AD_LEFT“ — das Computerkonto entfernt der Change danach mit windows_ad computerkonto_entfernen). '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -358,6 +387,8 @@ export class LinuxSqlSkill extends Skill {
         art: { type: 'string', enum: ['full', 'diff', 'log'], description: 'sicherung_jetzt: Art der Sicherung' },
         // (kettengrenzen_uebernehmen nutzt zugang und konto_tresor)
         ziel_name: { type: 'string', description: 'wiederherstellen_pruefen: Name der Wegwerf-Datenbank, alfred_wh_… (Standard alfred_wh_<datenbank>)' },
+        computername: { type: 'string', description: 'ad_beitreten: Name des vorbereiteten Computerkontos ohne $ (Standard = zugang), nie sqllnxcfg' },
+        pakete: { type: 'object', description: `ad_beitreten: optional abweichende apt-Versionen { paket: version } für ${Object.keys(LINUX_AD_PAKETE).join(', ')} (Standard fest)` },
       },
       required: ['action', 'zugang'],
     },
@@ -372,6 +403,8 @@ export class LinuxSqlSkill extends Skill {
   pruefeEingabe(input: Record<string, unknown>): string | undefined {
     const action = String(input.action ?? '');
     if (!istVerweis(input.zugang) && !ZUGANG.test(String(input.zugang ?? '').trim())) return 'zugang: Name des Linux-Fernzugangs';
+    // Spec 10 — auch wenn andere Felder Verweise sind: der Konfig-Knoten tritt nie bei
+    if (action === 'ad_beitreten' && [input.zugang, input.computername].some(v => typeof v === 'string' && v.trim().toLowerCase() === AD_NIE_BEITRETEN)) return `${AD_NIE_BEITRETEN} tritt nicht bei (Spec 10)`;
     if (Object.values(input).some(istVerweis)) return undefined;
     try {
       if (['installieren', 'konfigurieren', 'login_anlegen', 'pruefdaten_anlegen', 'reste_entfernen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
@@ -384,6 +417,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'sicherung_jetzt') sicherungJetztParameter(input);
       else if (action === 'wiederherstellen_pruefen') { wiederherstellenParameter(input); kontoTresorName(input); }
       else if (action === 'kettengrenzen_uebernehmen') kontoTresorName(input);
+      else if (action === 'ad_beitreten') adBeitretenParameter(String(input.zugang).trim(), input);
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
@@ -419,6 +453,8 @@ export class LinuxSqlSkill extends Skill {
         case 'wiederherstellen_pruefen': return await this.wiederherstellen(zugang, input, geheim);
         case 'kettengrenzen_uebernehmen': return await this.kettengrenzen(zugang, input, geheim);
         case 'reste_entfernen': return await this.resteEntfernen(zugang, geheim);
+        case 'ad_beitreten': return await this.adBeitreten(zugang, input, geheim);
+        case 'ad_verlassen': return await this.adVerlassen(zugang);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -591,6 +627,44 @@ export class LinuxSqlSkill extends Skill {
         ? `✅ Alte tempdb-Dateien auf ${zugang} entfernt (${weg.length}, gegen ${r.masterFiles ?? '?'} Dateien in sys.master_files geprüft): ${weg.join(', ')}${gebrauch}`
         : `Keine alten tempdb-Dateien auf ${zugang} in ${r.ordner ?? '/var/opt/mssql/data'} — nichts zu tun${gebrauch}`,
     };
+  }
+
+  // ── I8e Etappe 3 Task 4 — Domänenbeitritt ───────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Beitritt mit dem Einmal-Kennwort aus ad-join-<computername> (nur über die Standardeingabe). Fehlt der Eintrag, läuft der Baustein
+   * ohne Kennwort: ein schon beigetretener Host meldet „nichts zu tun“, sonst Abbruch. Der Eintrag wird nur nach Erfolg entfernt —
+   * danach hat adcli ein eigenes Maschinenkennwort gesetzt, das Einmal-Kennwort gilt nicht mehr.
+   */
+  private async adBeitreten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const p = adBeitretenParameter(zugang, input);
+    const t = this.tresor();
+    const name = pruefeTresorName(joinTresorName(p.computername));
+    const da = (await t.namen()).has(name);
+    let eingabe: Record<string, string> | undefined;
+    if (da) { const einmal = await t.lies(name, `Domänenbeitritt ${p.computername} (Einmal-Kennwort)`); geheim.push(einmal); eingabe = { einmal }; }
+    const r = await this.lauf<{ zustand: string; domaene?: string; computerkonto?: string; sssd?: string; beitritt?: string; uhrAbweichungS?: string; fqdn?: string; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.adBeitreten, p, 'Domänenbeitritt', LINUX_SQL_ZEIT_MS.adBeitreten, eingabe);
+    if (r.sssd !== 'aktiv' || r.domaene !== LINUX_AD.domaene) throw new Error(`Domänenbeitritt ${zugang}: Nachprüfung fehlgeschlagen (Domäne ${String(r.domaene)}, sssd ${String(r.sssd)})`);
+    let tresorText: string;
+    if (!da) tresorText = `kein Tresor-Eintrag ${name} (Einmal-Kennwort schon verbraucht)`;
+    else if (!t.entferne) tresorText = `WARNUNG: Tresor-Eintrag ${name} nicht entfernt (Tresor ohne Entfernen) — das Kennwort ist verbraucht, Eintrag bitte entfernen`;
+    else {
+      try { tresorText = (await t.entferne(name)) ? `Einmal-Kennwort verbraucht, Tresor-Eintrag ${name} entfernt` : `Tresor-Eintrag ${name} war schon entfernt`; }
+      catch (err) { tresorText = `WARNUNG: Tresor-Eintrag ${name} nicht entfernt (${(err as Error).message.slice(0, 120)}) — das Kennwort ist verbraucht, Eintrag bitte entfernen`; }
+    }
+    this.d.protokoll?.('I8e Domänenbeitritt', { zugang, computername: p.computername, zustand: r.zustand, beitritt: r.beitritt, tresorEntfernt: da && !!t.entferne });
+    const text = `AD_JOINED ${r.computerkonto ?? p.computername.toUpperCase()} in ${LINUX_AD.domaene} (${r.fqdn ?? zugang}) — sssd aktiv, realm/id/Gruppe geprüft, Uhrzeit ${r.uhrAbweichungS ?? '?'} s zu dc01; ${tresorText}`;
+    return { success: true, data: { ...r, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Rückweg nur lokal; das Computerkonto im AD entfernt der Change danach mit windows_ad computerkonto_entfernen */
+  private async adVerlassen(zugang: string): Promise<SkillResult> {
+    const r = await this.lauf<{ zustand: string; domaene?: string; sssd?: string; aenderungen?: string[] }>(zugang, LINUX_SQL_BAUSTEINE.adVerlassen, {}, 'Domäne verlassen', LINUX_SQL_ZEIT_MS.adVerlassen);
+    if (r.sssd !== 'aus') throw new Error(`Domäne verlassen ${zugang}: Nachprüfung fehlgeschlagen (sssd ${String(r.sssd)})`);
+    this.d.protokoll?.('I8e Domäne verlassen', { zugang, zustand: r.zustand });
+    const text = `AD_LEFT ${zugang} hat ${LINUX_AD.domaene} lokal verlassen (sssd aus, sssd.conf und /etc/krb5.keytab entfernt, NSS ohne sss) — Computerkonto im AD entfernt windows_ad computerkonto_entfernen`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 
   /** Fix-Runde 1 (Sicherheit): lesend ohne Tresor — lokaler Stand und Bericht des letzten Kopierlaufs (der Timer prüft fs01) */

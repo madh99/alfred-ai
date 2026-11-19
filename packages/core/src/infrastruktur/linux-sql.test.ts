@@ -7,6 +7,9 @@ import {
   LINUX_SQL_BAUSTEINE, LINUX_SQL_ZEIT_MS, MS_SCHLUESSEL_FPR, MS_QUELLE_SERVER, MS_QUELLE_WERKZEUGE, PY_STATUS, PY_FELD, PY_CONF,
 } from './linux-sql.js';
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
+// I8e Etappe 3 Task 4: ad_beitreten/ad_verlassen stehen in LINUX_SQL_BAUSTEINE, ihre Erzeuger registriert linux-sql-ad.ts (Import-Kreis
+// mit linux-sql.ts vermieden; der Skill lädt beide Module)
+import './linux-sql-ad.js';
 
 // I8e Paket 1 (Vorhaben c7e02aff v2) — SQL Server 2025 auf Ubuntu 24.04, feste Skripte
 

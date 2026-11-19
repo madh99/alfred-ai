@@ -7245,6 +7245,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
             lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
             setze: async (name, wert, zweck) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); await this.tresor.setze(o, name, wert, 'erzeugt', zweck); },
+            // I8e Etappe 3 Task 4: verbrauchtes Einmal-Kennwort (ad-join-<name>) nach gelungenem Domänenbeitritt
+            entferne: async (name) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.entferne(o, name); },
           },
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         }));
