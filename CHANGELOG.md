@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — ITSM: Known-Error-Verknüpfung und Trennen per Kurz-ID (v1900)
+
+- Beim Schließen eines Incidents wurde ein bestehender Known-Error schon über zwei gemeinsame Titelwörter erkannt. Automatische Incidents „Change angehalten: …“ teilten diese Wörter über die feste Vorsilbe mit jedem anderen Change-Halt und wurden still an einen fremden Known-Error gehängt. Eine beiden Titeln gemeinsame Vorsilbe bis „: “ zählt beim Abgleich nicht mehr.
+- `link_incident_to_problem` und `unlink_incident_from_problem` fanden das Problem auch über eine Kurz-ID, schrieben die Änderung aber mit dieser Kurz-ID ins Leere und meldeten trotzdem Erfolg. Beide arbeiten jetzt mit den vollen IDs, lösen Kurz-IDs eindeutig auf und prüfen das Ergebnis nach. Unbekannte, nicht eindeutige oder nicht verknüpfte IDs werden als Fehler gemeldet.
+
 ### Added — Linux-SQL: alte tempdb-Dateien gezielt entfernen (v1899)
 
 - Neue Aktion `linux_sql.reste_entfernen` (nur als Schritt eines freigegebenen Changes): entfernt die alten tempdb-Dateien aus der Erstinstallation, die der Status bisher nur als „Reste“ meldet (`temp*.mdf/ndf/ldf` direkt in `/var/opt/mssql/data`).
