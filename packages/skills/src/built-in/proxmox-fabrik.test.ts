@@ -1051,6 +1051,12 @@ describe('Ruling R35 (I8e L6) Medienprüfung in der Windows-Fabrik', () => {
     const aus = await welt({ status: 'stopped', beschreibung: klon }).px.execute({ action: 'check_windows_media', vmid: 9110 }, {} as never);
     expect(aus.success).toBe(false);
     expect(aus.error).toContain('läuft nicht');
+    // Sicherheitsprüfung: keine Gast-Ausführung auf fremden VMs (ohne Variante in der Beschreibung)
+    const fremd = welt({ status: 'running', beschreibung: 'irgendeine VM', agentStdout: `ALFRED_MEDIEN ${json()}` });
+    const f = await fremd.px.execute({ action: 'check_windows_media', vmid: 9110 }, {} as never);
+    expect(f.success).toBe(false);
+    expect(f.error).toContain('keine Windows-VM aus Alfreds Vorlagen');
+    expect(fremd.aufrufe.some(x => x.startsWith('PS '))).toBe(false);
   });
 });
 

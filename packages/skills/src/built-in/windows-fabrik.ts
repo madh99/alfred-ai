@@ -411,7 +411,8 @@ export function bewerteMedienpruefung(roh: string | undefined, name: string, var
   if (x.secureBoot !== true) { if (!fehler.includes('Secure Boot nicht aktiv')) fehler.push('Secure Boot nicht aktiv'); }
   const kern = String(x.installationType ?? '') === 'Server Core';
   if (variante && variante.endsWith('-core') !== kern) fehler.push(`Installationsart „${String(x.installationType ?? '')}“ passt nicht zur Variante ${variante}`);
-  const sollKern = variante ? variante.endsWith('-core') : kern;
+  // Sicherheitsprüfung: ohne bekannte Variante darf die Selbstauskunft des Gastes („Server Core“) die Pflichtliste nicht verkürzen
+  const sollKern = variante ? variante.endsWith('-core') : false;
   const system = liste(x.system);
   const basis = (d: string) => d.split('\\').pop()!.toLowerCase();
   for (const p of [...MEDIEN_SYSTEM, ...(sollKern ? [] : [MEDIEN_EXPLORER])]) {
@@ -432,8 +433,12 @@ export function bewerteMedienpruefung(roh: string | undefined, name: string, var
 
 /** Festgehaltenes Ergebnis aus der Beschreibung der Bau-VM (Zeile „MEDIENPRUEFUNG {json}“) */
 export function medienAusBeschreibung(beschreibung: string): string | undefined {
-  const z = beschreibung.split(/\r?\n/).find(l => l.startsWith(MEDIEN_MARKE));
-  return z === undefined ? undefined : z.slice(MEDIEN_MARKE.length);
+  // Sicherheitsprüfung: genau eine Ergebniszeile, und sie muss die letzte sein — sonst mehrdeutig (unlesbar, fail-closed)
+  const zeilen = beschreibung.split(/\r?\n/).filter(l => l.trim() !== '');
+  const treffer = zeilen.filter(l => l.startsWith(MEDIEN_MARKE));
+  if (!treffer.length) return undefined;
+  if (treffer.length !== 1 || zeilen[zeilen.length - 1] !== treffer[0]) return 'MEHRDEUTIG';
+  return treffer[0].slice(MEDIEN_MARKE.length);
 }
 
 /** Variante aus der Beschreibung einer Bau-VM oder eines Klons (nur bekannte Werte) */

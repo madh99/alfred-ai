@@ -219,8 +219,8 @@ describe('Ruling R35 (I8e L6) — Medienprüfung', () => {
     const kern = bewerteMedienpruefung(medienJson({ kern: true }), 'win-core', 'server-standard-core');
     expect(kern.ok).toBe(true);
     expect(kern.zeile).toContain('4 Systemdateien');
-    // lesend ohne Variante: Server Core aus der Installationsart
-    expect(bewerteMedienpruefung(medienJson({ kern: true }), 'x').ok).toBe(true);
+    // Sicherheitsprüfung: ohne Variante zählt die Selbstauskunft „Server Core“ nicht — explorer.exe bleibt Pflicht
+    expect(bewerteMedienpruefung(medienJson({ kern: true }), 'x').ok).toBe(false);
     // Red-Hat-signierte VirtIO-Treiber zählen auch
     expect(bewerteMedienpruefung(medienJson({ virtioSigner: 'CN=Red Hat, Inc., O="Red Hat, Inc.", L=Raleigh, S=North Carolina, C=US' }), 'x', 'win11').ok).toBe(true);
   });
@@ -244,6 +244,20 @@ describe('Ruling R35 (I8e L6) — Medienprüfung', () => {
     const d = `Windows-Vorlage von Alfred (I8a): win11, gebaut 2026-11-20\n${MEDIEN_MARKE}${medienJson()}`;
     expect(medienAusBeschreibung(d)).toBe(medienJson());
     expect(medienAusBeschreibung('Windows-Vorlage von Alfred (I8a): win11, x')).toBeUndefined();
+  });
+
+  it('Sicherheitsprüfung: eingeschleuste zweite Ergebniszeile ist mehrdeutig → nicht belegt', () => {
+    const echt = `${MEDIEN_MARKE}${medienJson()}`;
+    const doppelt = `Windows-Vorlage von Alfred (I8a): win11\n${echt}\n${MEDIEN_MARKE}${medienJson()}`;
+    expect(bewerteMedienpruefung(medienAusBeschreibung(doppelt), 'v', 'win11').ok).toBe(false);
+    const nichtLetzte = `Windows-Vorlage von Alfred (I8a): win11\n${echt}\nweiterer Text`;
+    expect(bewerteMedienpruefung(medienAusBeschreibung(nichtLetzte), 'v', 'win11').ok).toBe(false);
+  });
+
+  it('Sicherheitsprüfung: ohne Variante verkürzt „Server Core“ die Pflichtliste nicht (explorer.exe bleibt Pflicht)', () => {
+    const r = bewerteMedienpruefung(medienJson({ kern: true }), 'v');
+    expect(r.ok).toBe(false);
+    expect(r.zeile).toContain('explorer.exe');
   });
 });
 

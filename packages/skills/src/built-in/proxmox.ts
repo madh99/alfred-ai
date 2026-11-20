@@ -100,6 +100,10 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1860 — PVE begrenzt input-data von agent/exec auf 65 536 Zeichen; darüber geht die Eingabe als Dateiteile in den Gast */
 export const GAST_EINGABE_MAX = 60_000;
 const GAST_TEIL_BYTES = 45_000;
+/** Sicherheitsprüfung (R35): ISO-Metadaten nur einzeilig und begrenzt in die VM-Beschreibung (dort steht auch das Prüfergebnis) */
+const einzeilig = (t: string): string => t.replace(/\s+/g, ' ').replace(/MEDIENPRUEFUNG/gi, 'Medienpruefung').slice(0, 80);
+/** Owner-Regel: VM 100 und 137 bekommen keinen Fernzugang — auch keine lesende Gast-Ausführung */
+const MEDIEN_GESPERRT: ReadonlySet<number> = new Set([100, 137]);
 const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation', 'check_windows_media']);
 /** I5 — Vorlagen-Fabrik */
 /** I8e Paket 2 — Watchdog-Gerät der VM (SBD ist einziger Besitzer im Gast); Proxmox-Wert fest, nur dieses Modell mit Aktion reset */
@@ -1821,7 +1825,7 @@ export class ProxmoxSkill extends Skill {
     }), 900_000));
     if (!r.treiber.includes('vioscsi')) return { success: false, error: `Antwort-ISO ohne Speichertreiber vioscsi (${r.treiber.join(', ') || 'keine'})` };
     const machine = await this.q35Version(node);
-    const beschreibung = `Windows-Vorlage von Alfred (I8a): ${variante}, Abbild ${abbild.index} „${abbild.name}“ Build ${abbild.build ?? '?'}, ISO ${iso}, VirtIO ${virtioIso} (${ordner}), Cloudbase-Init ${CLOUDBASE_URL.exec(cloudbase)![1]} (SHA-256 ${r.cloudbaseSha256.slice(0, 16)}…), gebaut ${new Date().toISOString().slice(0, 10)}${variante === 'win11-pro' ? `, ${lizenzHinweis(variante)}` : ''}`;
+    const beschreibung = `Windows-Vorlage von Alfred (I8a): ${variante}, Abbild ${abbild.index} „${einzeilig(abbild.name)}“ Build ${einzeilig(abbild.build ?? '?')}, ISO ${iso}, VirtIO ${virtioIso} (${ordner}), Cloudbase-Init ${CLOUDBASE_URL.exec(cloudbase)![1]} (SHA-256 ${r.cloudbaseSha256.slice(0, 16)}…), gebaut ${new Date().toISOString().slice(0, 10)}${variante === 'win11-pro' ? `, ${lizenzHinweis(variante)}` : ''}`;
     const konfig = windowsBauKonfig({ vmid, name, storage, windowsIso: iso, virtioIso, antwortIso: antwort, beschreibung, ...(machine ? { machine } : {}), ...(typeof input.disk_size === 'number' ? { groesseGb: input.disk_size } : {}), ...(typeof input.memory === 'number' ? { memory: input.memory } : {}), ...(typeof input.cores === 'number' ? { cores: input.cores } : {}), ...(typeof input.bridge === 'string' ? { bridge: input.bridge } : {}), ...(typeof input.vlan_tag === 'number' ? { vlan: input.vlan_tag } : {}) });
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu`, konfig), 300_000, 'Bau-VM anlegen');
     this.vmCache = null;
@@ -1924,6 +1928,9 @@ export class ProxmoxSkill extends Skill {
     if (st.status !== 'running') return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: VM läuft nicht (${st.status ?? '?'}) — Prüfung braucht den Gast-Agenten` };
     const cfg = await this.get<{ description?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`).catch(() => ({} as { description?: string }));
     const variante = varianteAusBeschreibung(String(cfg.description ?? ''));
+    // Sicherheitsprüfung: nur Windows-VMs aus Alfreds Vorlagen (Variante in der Beschreibung), nie VM 100/137 (Owner: kein Fernzugang)
+    if (MEDIEN_GESPERRT.has(vmid)) return { success: false, error: `${name}: keine Gast-Ausführung auf VM ${vmid} (Owner-Regel)` };
+    if (!variante) return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: keine Windows-VM aus Alfreds Vorlagen (Variante in der Beschreibung fehlt)` };
     let roh: string | undefined;
     try {
       const r = await this.gastPowershell(vmid, name, medienPruefSkript(), undefined, 180_000);
