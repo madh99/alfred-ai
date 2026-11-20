@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Admin-Clients für SQL Server auf Linux: SSMS, Remotedesktop-Anmeldung, Firewall-Freigabe (v1909)
+
+- `sql_server ssms_installieren` ↔ `ssms_entfernen`: installiert ODBC Driver 18, die SQL-Server-Befehlszeilenwerkzeuge (sqlcmd) und SQL Server Management Studio 22 still auf einem Windows-Rechner. Quellen sind fest und nur von Microsoft; jede Datei wird vor dem Start auf eine gültige Microsoft-Signatur geprüft. Vorhandenes bleibt unberührt, der Rückweg entfernt nur, was der Baustein selbst installiert hat. Erfolg nur mit belegter Version aller drei Teile.
+- `windows_ad admin_anmeldung_einrichten` ↔ `admin_anmeldung_entfernen`: schaltet Remotedesktop mit Netzwerkebenen-Authentifizierung ein, aktiviert die zugehörigen Firewall-Regeln und nimmt die Gruppe `SQL-Linux-Admins` in die lokalen Remotedesktopbenutzer auf (über die feste SID, sprachunabhängig) — nie in die Administratoren. Nur Mitgliedsrechner; der Vorzustand wird festgehalten, der Rückweg stellt nur zurück, was der Baustein geändert hat.
+- Die SQL-Anmeldeprobe (`windows_ad sql_anmeldung_pruefen`) läuft zusätzlich auf den Admin-Clients `sqladmw11` und `sqladm25` und findet sqlcmd an festen Pfaden; fehlt es, bricht sie mit klarem Hinweis ab.
+- Die Host-Firewall der Linux-SQL-Knoten lässt TCP 1433 zusätzlich von den Admin-Clients 10.203.30.20 und 10.203.30.21 zu; bestehende Knoten melden „veraltet“, bis `linux_ha ha_vorbereiten` umstellt.
+
 ### Fixed — Change-Planung: Schrittverweise bei TLS-Bausteinen für SQL Server auf Linux (v1908)
 
 - Die Planprüfung von Changes ersetzt Verweise auf Ergebnisse früherer Schritte (`{{schrittN.feld}}`) vor der Eingabeprüfung der Bausteine durch einen Stellvertreter. `windows_pki fremd_csr_ausstellen`, `linux_sql` und `linux_ha` erkannten diesen Stellvertreter nicht als Verweis und lehnten `csr_sha256` sowie `zert_base64`/`issuing_base64`/`root_base64` als ungültig ab, ein TLS-Change für die Linux-SQL-Server ließ sich dadurch nicht speichern. Die Bausteine erkennen den Stellvertreter jetzt; feste Werte werden unverändert geprüft, die erwartete Root bleibt ein fester Pflichtwert. Ein Test prüft die Kette Anforderung → Ausstellung → Einspielen durch die echte Planprüfung.
