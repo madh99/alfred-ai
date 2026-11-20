@@ -11,9 +11,46 @@
  */
 
 export type WinProdukt = 'server' | 'win11';
-export type WinVariante = 'server-standard-core' | 'server-standard-desktop' | 'server-datacenter-core' | 'server-datacenter-desktop' | 'win11';
-export const WIN_VARIANTEN: WinVariante[] = ['server-standard-core', 'server-standard-desktop', 'server-datacenter-core', 'server-datacenter-desktop', 'win11'];
+// Ruling R36 (I8e L6): win11-pro (Windows 11 Pro aus dem Mehrfach-Edition-ISO) neben win11 (= Enterprise Evaluation, Standard)
+export type WinVariante = 'server-standard-core' | 'server-standard-desktop' | 'server-datacenter-core' | 'server-datacenter-desktop' | 'win11' | 'win11-pro';
+export const WIN_VARIANTEN: WinVariante[] = ['server-standard-core', 'server-standard-desktop', 'server-datacenter-core', 'server-datacenter-desktop', 'win11', 'win11-pro'];
 export const istWinVariante = (x: unknown): x is WinVariante => typeof x === 'string' && (WIN_VARIANTEN as string[]).includes(x);
+/** Ruling R36 (I8e L6): Windows-11-Sonderfälle (Prozessor-Ausnahme, keine Geräteverschlüsselung, kein Administrator-Kennwort, Store) für beide Windows-11-Varianten */
+export const istWin11 = (v: WinVariante): boolean => v === 'win11' || v === 'win11-pro';
+
+/**
+ * Ruling R36 (I8e L6): KMS-Client-Setup-Schlüssel (GVLK) für Windows 11 Pro — öffentlich von Microsoft: Microsoft Learn „Key Management
+ * Services (KMS) client activation and product keys“ (learn.microsoft.com/windows-server/get-started/kms-client-activation-keys, Tabelle
+ * „Windows 11 Pro / Windows 10 Pro“, gelesen 20.11.2026). Wählt nur die Edition bei der Installation und aktiviert nicht (nur gegen einen
+ * KMS-Host) — kein Retail-/MAK-Schlüssel, keine Aktivierungsumgehung.
+ */
+export const WIN11_PRO_GVLK = 'W269N-WFGWX-YVC9B-4J6C9-T83GX';
+
+/** Lizenzstand der Vorlage für Beschreibung und Ergebnis */
+export function lizenzHinweis(v: WinVariante): string {
+  if (v === 'win11-pro') return 'Pro unaktiviert — Aktivierung braucht eine eigene Lizenz (KMS/MAK/Retail)';
+  return v === 'win11' ? 'Testversion Windows 11 Enterprise, 90 Tage ab Installation' : 'Testversion Windows Server, 180 Tage ab Installation';
+}
+
+/**
+ * Ruling R36 (I8e L6): Windows 11 Pro gibt es nicht als Testversion. Das Mehrfach-Edition-ISO von Microsoft (Download-Seite
+ * software-download/windows11) hat nur zeitlich begrenzte, sitzungsgebundene Links — kein fester automatischer Bezug; das ISO liegt
+ * schon im ISO-Speicher: Microsoft-Dateiname „Win11_<Version>_<Sprache>_x64[vN].iso“ oder umbenannt „win11-pro-…-<xx-yy>.iso“.
+ * Sprache aus dem Namen (nur bekannte Microsoft-Sprachwörter) oder ausdrücklich angegeben; beides vorhanden → muss übereinstimmen.
+ */
+export const WIN11_PRO_ISO_VOLUME = /^[a-zA-Z][\w-]{0,40}:iso\/Win11_\d{2}H\d_([A-Za-z]{2,40})_x64(v\d)?\.iso$/;
+export const WIN11_SPRACHWORT: Record<string, string> = { english: 'en-us', englishinternational: 'en-gb', german: 'de-de' };
+export function win11ProIso(iso: string, angabe?: string): { sprache: string } | { fehler: string } {
+  if (angabe !== undefined && !SPRACHE.test(angabe)) return { fehler: `sprache „${angabe}“: Form xx-yy, z. B. de-de` };
+  const ms = WIN11_PRO_ISO_VOLUME.exec(iso);
+  const umbenannt = !ms && ISO_VOLUME.test(iso) && /:iso\/win11-pro-/.test(iso) ? /-([a-z]{2}-[a-z]{2})\.iso$/.exec(iso)?.[1] : undefined;
+  if (!ms && !umbenannt) return { fehler: `ISO ${iso} ist kein Windows-11-ISO mit Pro (Win11_<Version>_<Sprache>_x64.iso oder win11-pro-…-xx-yy.iso)` };
+  const ausName = ms ? WIN11_SPRACHWORT[ms[1]!.toLowerCase()] : umbenannt;
+  if (ausName && angabe && ausName !== angabe) return { fehler: `sprache ${angabe} widerspricht dem ISO-Namen (${ausName})` };
+  const sprache = angabe ?? ausName;
+  if (!sprache) return { fehler: `Sprache aus ${iso} nicht eindeutig — sprache angeben (z. B. fr-fr)` };
+  return { sprache };
+}
 
 export const EVAL_BASIS = 'https://www.microsoft.com/en-us/evalcenter/';
 /** Kandidaten für „aktuellste Server-Version“: Download-Seiten je Jahr, neueste zuerst (eine Seite für ein künftiges Jahr gibt es erst mit der Version) */
@@ -76,13 +113,15 @@ export interface WimAbbild { index: number; name: string; editionId: string; ins
 /** Abbild zur Variante: Edition aus EDITIONID, Core/Desktop aus INSTALLATIONTYPE („Server Core“ / „Server“), Windows 11 = Enterprise */
 export function waehleAbbild(abbilder: WimAbbild[], v: WinVariante): WimAbbild | undefined {
   if (v === 'win11') return abbilder.find(a => /enterprise/i.test(a.editionId) && !/ltsc|ltsb|^enterprisen/i.test(a.editionId));
+  // Ruling R36 (I8e L6): genau EDITIONID „Professional“ (nicht ProfessionalN/-Education/-Workstation, nicht Education/Core)
+  if (v === 'win11-pro') return abbilder.find(a => a.editionId.toLowerCase() === 'professional');
   const edition = v.includes('datacenter') ? /datacenter/i : /standard/i;
   const core = v.endsWith('-core');
   return abbilder.find(a => edition.test(a.editionId) && !/azure/i.test(a.editionId) && (core ? /^server core$/i.test(a.installationType) : /^server$/i.test(a.installationType)));
 }
 
 /** Ordner der Treiber im VirtIO-ISO je Variante (Fallback auf die nächstältere Server-Fassung) */
-export const virtioOrdner = (v: WinVariante): string[] => (v === 'win11' ? ['w11', 'w10'] : ['2k25', '2k22']);
+export const virtioOrdner = (v: WinVariante): string[] => (istWin11(v) ? ['w11', 'w10'] : ['2k25', '2k22']);
 export const VIRTIO_TREIBER = ['vioscsi', 'viostor', 'NetKVM', 'Balloon', 'vioserial', 'viorng', 'pvpanic'];
 
 // ── Antwortdateien ──────────────────────────────────────────────
@@ -104,7 +143,7 @@ export function autounattend(o: { variante: WinVariante; index: number; regional
   if (!KENNWORT.test(o.kennwort)) throw new Error('Baukennwort ungültig');
   if (!COMPUTER.test(o.computer)) throw new Error('Computername: höchstens 15 Zeichen A-Z 0-9 -');
   const r = regional(o.regional);
-  const win11 = o.variante === 'win11';
+  const win11 = istWin11(o.variante);
   const intl = (pe: boolean) => KOMP(pe ? 'Microsoft-Windows-International-Core-WinPE' : 'Microsoft-Windows-International-Core', [
     ...(pe ? [`      <SetupUILanguage><UILanguage>${r.ui}</UILanguage></SetupUILanguage>`] : []),
     `      <InputLocale>${xml(r.tastatur)}</InputLocale><SystemLocale>${r.gebiet}</SystemLocale><UILanguage>${r.ui}</UILanguage><UserLocale>${r.gebiet}</UserLocale>`,
@@ -123,7 +162,8 @@ export function autounattend(o: { variante: WinVariante; index: number; regional
     '        <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>',
     '      </ModifyPartitions></Disk></DiskConfiguration>',
     `      <ImageInstall><OSImage><InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>${o.index}</Value></MetaData></InstallFrom><InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo></OSImage></ImageInstall>`,
-    '      <UserData><AcceptEula>true</AcceptEula><FullName>Alfred</FullName><Organization>Alfred</Organization></UserData>',
+    // Ruling R36 (I8e L6): Pro aus dem Mehrfach-Edition-ISO mit dem öffentlichen KMS-Client-Schlüssel (GVLK) — wählt die Edition, aktiviert nicht
+    `      <UserData>${o.variante === 'win11-pro' ? `<ProductKey><Key>${WIN11_PRO_GVLK}</Key><WillShowUI>OnError</WillShowUI></ProductKey>` : ''}<AcceptEula>true</AcceptEula><FullName>Alfred</FullName><Organization>Alfred</Organization></UserData>`,
   ].join('\n'));
   const spezial = [
     KOMP('Microsoft-Windows-Shell-Setup', `      <ComputerName>${o.computer}</ComputerName><TimeZone>${xml(r.zeitzone)}</TimeZone>`),
@@ -169,7 +209,7 @@ export function sysprepUnattend(o: { variante: WinVariante; regional: Regional; 
     KOMP('Microsoft-Windows-Shell-Setup', [
       '      <OOBE><HideEULAPage>true</HideEULAPage><HideLocalAccountScreen>true</HideLocalAccountScreen><HideOEMRegistrationScreen>true</HideOEMRegistrationScreen><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC><SkipUserOOBE>true</SkipUserOOBE><SkipMachineOOBE>true</SkipMachineOOBE></OOBE>',
       // Server verlangt nach generalize ein Administrator-Kennwort; Vorlagenwert, jeder Klon setzt seinen eigenen aus dem Tresor
-      ...(o.variante === 'win11' ? [] : [`      <UserAccounts><AdministratorPassword><Value>${xml(o.kennwort)}</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>`]),
+      ...(istWin11(o.variante) ? [] : [`      <UserAccounts><AdministratorPassword><Value>${xml(o.kennwort)}</Value><PlainText>true</PlainText></AdministratorPassword></UserAccounts>`]),
     ].join('\n')),
     '  </settings>',
     '</unattend>', '',
@@ -201,7 +241,7 @@ export const CLOUDBASE_CONF = ['[DEFAULT]', ...CB_GEMEINSAM, 'logfile=cloudbase-
  * Panther-Ablage), dann sysprep /generalize /shutdown — die VM schaltet sich aus, wenn die Vorlage fertig ist.
  */
 export function setupSkript(o: { variante: WinVariante }): string {
-  const win11 = o.variante === 'win11';
+  const win11 = istWin11(o.variante);
   return [
     '$ErrorActionPreference = "Stop"',
     'Start-Transcript -Path C:\\Windows\\Temp\\alfred-setup.log -Append',
@@ -209,6 +249,13 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'function Laufwerk($datei) { foreach ($d in "DEFGHIJK".ToCharArray()) { if (Test-Path "$($d):\\$datei") { return "$($d):" } } throw "nicht gefunden: $datei" }',
     '$antwort = Laufwerk "alfred-setup.ps1"',
     '$virtio = Laufwerk "virtio-win-guest-tools.exe"',
+    // Ruling R35 (I8e L6): Medienprüfung — Ergebnisdatei frisch, Bewertung gemeinsam mit check_windows_media
+    ...medienPsGrundlage(),
+    `$mpDatei = "${MEDIEN_DATEI}"; $mpAbgeholt = "${MEDIEN_ABGEHOLT}"`,
+    'New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mpDatei) | Out-Null',
+    'Remove-Item -LiteralPath $mpDatei,$mpAbgeholt -Force -ErrorAction SilentlyContinue',
+    'function MpSchreiben { [IO.File]::WriteAllText($mpDatei, (ConvertTo-Json -InputObject $mp -Depth 5 -Compress), (New-Object Text.UTF8Encoding $false)) }',
+    'function MpFehlschlag { $mp.ok = $false; MpSchreiben; Write-Output "ALFRED: MEDIENPRUEFUNG_FEHLER $($mp.fehler -join "; ")"; Stop-Transcript; exit 1 }',
     'Write-Output "ALFRED: Gast-Werkzeuge"',
     'Start-Process -FilePath "$virtio\\virtio-win-guest-tools.exe" -ArgumentList "/install","/quiet","/norestart" -Wait',
     ...(win11 ? [
@@ -225,6 +272,9 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'Set-Service -Name sshd -StartupType Automatic',
     ...SSH_FIREWALL,
     'Write-Output "ALFRED: Cloudbase-Init"',
+    // Ruling R35 (I8e L6): MSI erst nach gültiger Signatur von Cloudbase Solutions installieren — sonst Ergebnis schreiben, kein sysprep
+    ...medienPsCloudbaseMsi('"$antwort\\CloudbaseInitSetup_x64.msi"'),
+    'if ($mp.fehler.Count -gt 0) { MpFehlschlag }',
     '$cbLog = "C:\\Windows\\Temp\\cloudbase-init-msi.log"',
     'Start-Process -FilePath msiexec.exe -ArgumentList "/i","$antwort\\CloudbaseInitSetup_x64.msi","/qn","/l*v",$cbLog,"RUN_SERVICE_AS_LOCAL_SYSTEM=1" -Wait',
     '$cb = "C:\\Program Files\\Cloudbase Solutions\\Cloudbase-Init"',
@@ -238,11 +288,158 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'Get-ChildItem "C:\\ProgramData\\ssh\\ssh_host_*" -ErrorAction SilentlyContinue | Remove-Item -Force',
     'Remove-Item "C:\\Windows\\Panther\\unattend.xml","C:\\Windows\\Panther\\Unattend\\unattend.xml" -Force -ErrorAction SilentlyContinue',
     'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" -Name DefaultPassword,AutoAdminLogon -ErrorAction SilentlyContinue',
+    // Ruling R35 (I8e L6): vor sysprep prüfen; nur bestanden UND von Alfred abgeholt (Ergebnis in der VM-Beschreibung) geht es weiter.
+    // Fehlschlag oder keine Abholung: kein sysprep, die VM bleibt an (finish_windows_template meldet das Ergebnis)
+    'Write-Output "ALFRED: Medienpruefung"',
+    medienPsPruefung(),
+    'if (-not $mp.ok) { MpFehlschlag }',
+    'MpSchreiben',
+    'Write-Output "ALFRED: Medienpruefung bestanden, warte auf Abholung durch Alfred"',
+    '$bis = (Get-Date).AddHours(6)',
+    'while (-not (Test-Path -LiteralPath $mpAbgeholt)) { if ((Get-Date) -gt $bis) { Write-Output "ALFRED: FEHLER Medienpruefung nicht abgeholt"; Stop-Transcript; exit 1 }; Start-Sleep -Seconds 10 }',
     'Write-Output "ALFRED: sysprep"',
     'Stop-Transcript',
     '& "$env:WINDIR\\System32\\Sysprep\\sysprep.exe" /generalize /oobe /shutdown /quiet "/unattend:$cb\\conf\\alfred-sysprep.xml"',
     '',
   ].join('\r\n');
+}
+
+// ── Ruling R35 (I8e L6): Medienprüfung im Gast ───────────────────────────────────────────────────────────────────────────────────
+// Echtheit der installierten Medien technisch belegt statt nur über die HTTPS-Herkunft: Secure Boot aktiv (UEFI mit den
+// Microsoft-Schlüsseln erzwingt eine Microsoft-signierte Bootkette), Kernsystemdateien und VirtIO-Treiber mit gültiger
+// Authenticode-/Katalogsignatur (Get-AuthenticodeSignature prüft Katalogsignaturen mit), Cloudbase-Init vom Herausgeber signiert.
+// Eine Prüflogik für beide Wege: vor sysprep im Einrichtungsskript und lesend auf jeder laufenden Windows-VM (check_windows_media).
+
+/** Ergebnisdatei der Bau-VM und Freigabe-Marke (schreibt Alfred erst, nachdem das Ergebnis in der VM-Beschreibung steht) */
+export const MEDIEN_DATEI = 'C:\\Windows\\Setup\\Alfred\\medienpruefung.json';
+export const MEDIEN_ABGEHOLT = 'C:\\Windows\\Setup\\Alfred\\medienpruefung.abgeholt';
+/** Zeile in der Beschreibung der Bau-VM: „MEDIENPRUEFUNG {json}“ — finish_windows_template liest nur sie (die VM ist dann aus) */
+export const MEDIEN_MARKE = 'MEDIENPRUEFUNG ';
+/** Feste Kernsystemdateien (alle Varianten); explorer.exe zusätzlich außer bei Server Core */
+export const MEDIEN_SYSTEM = ['C:\\Windows\\System32\\ntoskrnl.exe', 'C:\\Windows\\System32\\winload.efi', 'C:\\Windows\\System32\\ci.dll', 'C:\\Windows\\System32\\kernel32.dll'];
+export const MEDIEN_EXPLORER = 'C:\\Windows\\explorer.exe';
+/** VirtIO-Treiber aus dem VirtIO-ISO (Dateien in System32\drivers); geprüft wird jeder vorhandene, Pflicht sind Platte, Netz und Gast-Agent-Kanal */
+export const VIRTIO_SYS = ['vioscsi', 'viostor', 'netkvm', 'balloon', 'vioser', 'viorng', 'pvpanic', 'fwcfg', 'viofs', 'vioinput', 'viogpudo'];
+export const VIRTIO_SYS_PFLICHT = ['vioscsi', 'netkvm', 'vioser'];
+/** Signer-Subjekte (X.500, wie Get-AuthenticodeSignature sie liefert); gleiche Ausdrücke im Gast (.NET) und hier */
+export const SIGNER_MICROSOFT = /(^|,\s*)O=Microsoft Corporation(,|$)/i;
+/** VirtIO 0.1.2xx/0.1.30x: Windows-10/11-/Server-Treiber attestation-signiert („Microsoft Windows Hardware Compatibility Publisher“); ältere Red Hat */
+export const SIGNER_VIRTIO = /(^|,\s*)O=(Microsoft Corporation|"Red Hat, Inc\.?"|Red Hat Inc\.?)(,|$)/i;
+/** Cloudbase-Init 1.1.9 (gelesen am 20.11.2026): „CN=Cloudbase Solutions Srl, O=Cloudbase Solutions Srl, L=Timisoara, C=RO“ */
+export const SIGNER_CLOUDBASE = /(^|,\s*)O=Cloudbase Solutions Srl(,|$)/i;
+
+const psLit = (s: string) => `'${s.replace(/'/g, "''")}'`;
+
+/** Gemeinsamer Anfang: Signer-Ausdrücke, Signatur-Funktion, Ergebnisobjekt, Installationsart */
+export function medienPsGrundlage(): string[] {
+  return [
+    `$msO = ${psLit(SIGNER_MICROSOFT.source)}`,
+    `$vioO = ${psLit(SIGNER_VIRTIO.source)}`,
+    `$cbO = ${psLit(SIGNER_CLOUDBASE.source)}`,
+    'function Signatur($pfad) { if (-not $pfad -or -not (Test-Path -LiteralPath $pfad)) { return [pscustomobject]@{ datei = [string]$pfad; status = "Fehlt"; signer = "" } }; $s = Get-AuthenticodeSignature -LiteralPath $pfad; $n = ""; if ($s.SignerCertificate) { $n = $s.SignerCertificate.Subject }; [pscustomobject]@{ datei = [string]$pfad; status = $s.Status.ToString(); signer = $n } }',
+    '$mp = [ordered]@{ version = 1; ok = $false; installationType = ""; secureBoot = $false; system = @(); virtio = @(); cloudbase = @(); fehler = @() }',
+    'try { $mp.installationType = [string](Get-ItemProperty -LiteralPath "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion").InstallationType } catch { }',
+  ];
+}
+
+/** Cloudbase-Init-MSI vor der Installation (Bau-VM) */
+export function medienPsCloudbaseMsi(pfadAusdruck: string): string[] {
+  return [
+    `$e = Signatur ${pfadAusdruck}; $mp.cloudbase = @($e)`,
+    'if ($e.status -ne "Valid" -or $e.signer -notmatch $cbO) { $mp.fehler += "Cloudbase-Init-MSI nicht gueltig von Cloudbase Solutions signiert ($($e.status), $($e.signer))" }',
+  ];
+}
+
+/** Cloudbase-Init installiert (lesend, z. B. Klone): Dienstprogramm oder das von Windows Installer zwischengespeicherte MSI */
+export function medienPsCloudbaseInstalliert(): string[] {
+  return [
+    `$d = Get-CimInstance Win32_Service -Filter "Name='cloudbase-init'" -ErrorAction SilentlyContinue`,
+    'if ($d -and $d.PathName) { $x = [string]$d.PathName; if ($x -match \'^"([^"]+)"\') { $x = $Matches[1] } else { $x = ($x -split " ")[0] }; $mp.cloudbase += Signatur $x }',
+    '$pk = Get-ChildItem -LiteralPath "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\S-1-5-18\\Products" -ErrorAction SilentlyContinue | ForEach-Object { Get-ItemProperty -LiteralPath (Join-Path $_.PSPath "InstallProperties") -ErrorAction SilentlyContinue } | Where-Object { $_.DisplayName -like "Cloudbase-Init*" } | Select-Object -First 1',
+    'if ($pk -and $pk.LocalPackage) { $mp.cloudbase += Signatur ([string]$pk.LocalPackage) }',
+    'if (-not ($mp.cloudbase | Where-Object { $_.status -eq "Valid" -and $_.signer -match $cbO })) { $mp.fehler += "Cloudbase-Init: weder Dienstprogramm noch zwischengespeichertes MSI gueltig von Cloudbase Solutions signiert" }',
+  ];
+}
+
+/** Gemeinsame Prüfung: Secure Boot, Kernsystemdateien, VirtIO-Treiber; setzt $mp.ok */
+export function medienPsPruefung(): string {
+  return [
+    'try { $mp.secureBoot = [bool](Confirm-SecureBootUEFI) } catch { $mp.secureBoot = $false }',
+    'if (-not $mp.secureBoot) { $mp.fehler += "Secure Boot nicht aktiv" }',
+    `$sys = @(${MEDIEN_SYSTEM.map(psLit).join(', ')})`,
+    `if ($mp.installationType -ne "Server Core") { $sys += "${MEDIEN_EXPLORER}" }`,
+    'foreach ($f in $sys) { $e = Signatur $f; $mp.system += $e; if ($e.status -ne "Valid" -or $e.signer -notmatch $msO) { $mp.fehler += "$f nicht Microsoft-signiert ($($e.status))" } }',
+    `foreach ($t in @(${VIRTIO_SYS.map(psLit).join(', ')})) { $f = "C:\\Windows\\System32\\drivers\\$t.sys"; if (Test-Path -LiteralPath $f) { $e = Signatur $f; $mp.virtio += $e; if ($e.status -ne "Valid" -or $e.signer -notmatch $vioO) { $mp.fehler += "$t.sys nicht gueltig signiert ($($e.status))" } } elseif (@(${VIRTIO_SYS_PFLICHT.map(psLit).join(', ')}) -contains $t) { $mp.fehler += "VirtIO-Treiber $t.sys fehlt" } }`,
+    '$mp.ok = ($mp.fehler.Count -eq 0)',
+  ].join('\r\n');
+}
+
+/** Lesende Prüfung auf einer laufenden Windows-VM (über den Gast-Agenten): schreibt nichts, Ergebnis als „ALFRED_MEDIEN {json}“ */
+export function medienPruefSkript(): string {
+  return [
+    '$ErrorActionPreference = "Stop"',
+    ...medienPsGrundlage(),
+    ...medienPsCloudbaseInstalliert(),
+    medienPsPruefung(),
+    '"ALFRED_MEDIEN " + (ConvertTo-Json -InputObject $mp -Depth 5 -Compress)',
+    '',
+  ].join('\r\n');
+}
+
+export interface MedienErgebnis { ok: boolean; fehler: string[]; zeile: string; system: number; virtio: number; json?: string }
+interface MedienEintrag { datei: string; status: string; signer: string }
+
+/**
+ * Bewertet das Ergebnis aus dem Gast unabhängig von dessen eigenem „ok“ (fail-closed): fehlt etwas, ist es unlesbar oder weicht ab,
+ * gilt die Prüfung als nicht bestanden. Feste Zeile „MEDIEN_SIGNIERT …“ bzw. „MEDIEN_NICHT_BELEGT …“.
+ */
+export function bewerteMedienpruefung(roh: string | undefined, name: string, variante?: WinVariante): MedienErgebnis {
+  const nein = (fehler: string[], json?: string, system = 0, virtio = 0): MedienErgebnis => ({ ok: false, fehler, zeile: `MEDIEN_NICHT_BELEGT ${name}: ${fehler.join('; ')}`, system, virtio, ...(json ? { json } : {}) });
+  if (roh === undefined || !roh.trim()) return nein(['kein Ergebnis der Medienprüfung (Ruling R35)']);
+  let x: Record<string, unknown>;
+  try { x = JSON.parse(roh.replace(/^\uFEFF/, '').trim()) as Record<string, unknown>; } catch { return nein(['Ergebnis der Medienprüfung unlesbar']); }
+  if (!x || typeof x !== 'object') return nein(['Ergebnis der Medienprüfung unlesbar']);
+  const liste = (v: unknown): MedienEintrag[] => (Array.isArray(v) ? v : v && typeof v === 'object' ? [v] : [])
+    .filter((z): z is Record<string, unknown> => !!z && typeof z === 'object')
+    .map(z => ({ datei: String(z.datei ?? ''), status: String(z.status ?? ''), signer: String(z.signer ?? '') }));
+  const json = JSON.stringify(x);
+  const fehler: string[] = [];
+  const gast = (Array.isArray(x.fehler) ? x.fehler : x.fehler ? [x.fehler] : []).map(String);
+  fehler.push(...gast);
+  if (x.version !== 1) fehler.push('unbekannte Fassung des Ergebnisses');
+  if (x.ok !== true && !gast.length) fehler.push('Gast meldet nicht bestanden');
+  if (x.secureBoot !== true) { if (!fehler.includes('Secure Boot nicht aktiv')) fehler.push('Secure Boot nicht aktiv'); }
+  const kern = String(x.installationType ?? '') === 'Server Core';
+  if (variante && variante.endsWith('-core') !== kern) fehler.push(`Installationsart „${String(x.installationType ?? '')}“ passt nicht zur Variante ${variante}`);
+  const sollKern = variante ? variante.endsWith('-core') : kern;
+  const system = liste(x.system);
+  const basis = (d: string) => d.split('\\').pop()!.toLowerCase();
+  for (const p of [...MEDIEN_SYSTEM, ...(sollKern ? [] : [MEDIEN_EXPLORER])]) {
+    const t = system.find(s => s.datei.toLowerCase() === p.toLowerCase());
+    if (!t || t.status !== 'Valid' || !SIGNER_MICROSOFT.test(t.signer)) { const m = `${basis(p)} nicht Microsoft-signiert (${t?.status ?? 'fehlt'})`; if (!fehler.some(f => f.toLowerCase().includes(basis(p)))) fehler.push(m); }
+  }
+  for (const s of system) if (s.status !== 'Valid' || !SIGNER_MICROSOFT.test(s.signer)) { if (!fehler.some(f => f.toLowerCase().includes(basis(s.datei)))) fehler.push(`${basis(s.datei)} nicht Microsoft-signiert (${s.status})`); }
+  const virtio = liste(x.virtio);
+  for (const p of VIRTIO_SYS_PFLICHT) if (!virtio.some(v => basis(v.datei) === `${p}.sys`)) { if (!fehler.some(f => f.includes(`${p}.sys`))) fehler.push(`VirtIO-Treiber ${p}.sys fehlt`); }
+  for (const v of virtio) {
+    if (!/^c:\\windows\\system32\\drivers\\[a-z0-9]+\.sys$/i.test(v.datei)) fehler.push(`VirtIO-Eintrag außerhalb von System32\\drivers: ${v.datei}`);
+    else if (v.status !== 'Valid' || !SIGNER_VIRTIO.test(v.signer)) { if (!fehler.some(f => f.includes(basis(v.datei)))) fehler.push(`${basis(v.datei)} nicht gültig signiert (${v.status})`); }
+  }
+  if (!liste(x.cloudbase).some(c => c.status === 'Valid' && SIGNER_CLOUDBASE.test(c.signer)) && !fehler.some(f => f.startsWith('Cloudbase-Init'))) fehler.push('Cloudbase-Init nicht gültig von Cloudbase Solutions signiert');
+  if (fehler.length) return nein(fehler, json, system.length, virtio.length);
+  return { ok: true, fehler: [], zeile: `MEDIEN_SIGNIERT ${name}: Secure Boot an, ${system.length} Systemdateien Microsoft-signiert, VirtIO ${virtio.length} signiert, Cloudbase-Init signiert`, system: system.length, virtio: virtio.length, json };
+}
+
+/** Festgehaltenes Ergebnis aus der Beschreibung der Bau-VM (Zeile „MEDIENPRUEFUNG {json}“) */
+export function medienAusBeschreibung(beschreibung: string): string | undefined {
+  const z = beschreibung.split(/\r?\n/).find(l => l.startsWith(MEDIEN_MARKE));
+  return z === undefined ? undefined : z.slice(MEDIEN_MARKE.length);
+}
+
+/** Variante aus der Beschreibung einer Bau-VM oder eines Klons (nur bekannte Werte) */
+export function varianteAusBeschreibung(beschreibung: string): WinVariante | undefined {
+  const v = /Windows-Vorlage von Alfred \(I8a\): ([\w-]+),/.exec(beschreibung)?.[1] ?? /aus Windows-Vorlage \d+ \(([\w-]+)\)/.exec(beschreibung)?.[1];
+  return istWinVariante(v) ? v : undefined;
 }
 
 // ── Klon ─────────────────────────────────────────────────────────
@@ -294,7 +491,7 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: strin
     rechte('C:\\ProgramData\\ssh\\administrators_authorized_keys'),
     `  $pw = ConvertTo-SecureString ${psText(v.kennwort)} -AsPlainText -Force`,
     '  Set-LocalUser -Name alfred -Password $pw -PasswordNeverExpires $true',
-    ...(v.variante === 'win11' ? [] : ['  Set-LocalUser -Name Administrator -Password $pw']),
+    ...(istWin11(v.variante) ? [] : ['  Set-LocalUser -Name Administrator -Password $pw']),
     ...(v.ownerKonto ? [
       `  $opw = ConvertTo-SecureString ${psText(v.ownerKonto.kennwort)} -AsPlainText -Force`,
       `  if (Get-LocalUser -Name ${psText(v.ownerKonto.name)} -ErrorAction SilentlyContinue) { Set-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires $true } else { New-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires -FullName ${psText(v.ownerKonto.name)} | Out-Null }`,
@@ -349,7 +546,9 @@ export const WIN_EINRICHTUNG_NACHHOLEN = [
 
 /** Proxmox-Konfiguration der Bau-VM (UEFI mit Microsoft-Schlüsseln, TPM 2.0, VirtIO) */
 export function windowsBauKonfig(v: { vmid: number; name: string; storage: string; windowsIso: string; virtioIso: string; antwortIso: string; groesseGb?: number; memory?: number; cores?: number; bridge?: string; vlan?: number; beschreibung?: string; machine?: string }): Record<string, unknown> {
-  for (const iso of [v.windowsIso, v.virtioIso, v.antwortIso]) if (!ISO_VOLUME.test(iso)) throw new Error(`ungültiges ISO-Volume ${iso}`);
+  // Ruling R36 (I8e L6): Windows-ISO auch mit dem Microsoft-Dateinamen des Mehrfach-Edition-ISO
+  if (!ISO_VOLUME.test(v.windowsIso) && !WIN11_PRO_ISO_VOLUME.test(v.windowsIso)) throw new Error(`ungültiges ISO-Volume ${v.windowsIso}`);
+  for (const iso of [v.virtioIso, v.antwortIso]) if (!ISO_VOLUME.test(iso)) throw new Error(`ungültiges ISO-Volume ${iso}`);
   // Windows bekommt eine feste Maschinenversion (pc-q35-X.Y): ein QEMU-Update ändert sonst die virtuelle Hardware unter dem Gast
   if (v.machine !== undefined && !/^pc-q35-\d+\.\d+$/.test(v.machine)) throw new Error(`ungültige Maschinenversion ${v.machine}`);
   return {

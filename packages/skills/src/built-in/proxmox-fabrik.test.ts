@@ -941,3 +941,163 @@ describe('I8e set_vm_watchdog', () => {
     expect(leer.display).toContain('(wirksam)');
   });
 });
+
+// ── Ruling R35 (I8e L6): Medienprüfung — abholen beim Warten, finish fail-closed, lesend auf jeder Windows-VM ─────────────────────
+describe('Ruling R35 (I8e L6) Medienprüfung in der Windows-Fabrik', () => {
+  const MS = 'CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US';
+  const WHCP = 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US';
+  const CB = 'CN=Cloudbase Solutions Srl, O=Cloudbase Solutions Srl, L=Timisoara, C=RO';
+  const e = (datei: string, signer: string, status = 'Valid') => ({ datei, status, signer });
+  const json = (secureBoot = true) => JSON.stringify({
+    version: 1, ok: secureBoot, installationType: 'Client', secureBoot,
+    system: ['System32\\ntoskrnl.exe', 'System32\\winload.efi', 'System32\\ci.dll', 'System32\\kernel32.dll', 'explorer.exe'].map(d => e(`C:\\Windows\\${d}`, MS)),
+    virtio: ['vioscsi', 'netkvm', 'vioser'].map(t => e(`C:\\Windows\\System32\\drivers\\${t}.sys`, WHCP)),
+    cloudbase: [e('E:\\CloudbaseInitSetup_x64.msi', CB)], fehler: secureBoot ? [] : ['Secure Boot nicht aktiv'],
+  });
+  const BAU = 'Windows-Vorlage von Alfred (I8a): win11, Abbild 3 Windows 11 Enterprise Evaluation Build 26100.1, gebaut 2026-11-20';
+  function welt(o: { status: string; beschreibung?: string; gast?: string; agentStdout?: string; template?: number }) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const aufrufe: string[] = [];
+    const cfg: Record<string, unknown> = { description: o.beschreibung ?? BAU, scsi0: 'nvme-cs001:vm-9110-disk-1', ide2: 'local:iso/win11.iso,media=cdrom', sata1: 'local:iso/alfred-antwort-9110.iso,media=cdrom', ...(o.template ? { template: o.template } : {}) };
+    a.getAllVms = async () => [{ vmid: 9110, name: 'win11-tpl', node: 'pve', type: 'qemu', status: o.status }];
+    a.get = async (p: string) => {
+      aufrufe.push(`GET ${p}`);
+      if (p.endsWith('/qemu/9110/config')) return cfg;
+      if (p.endsWith('/status/current')) return { status: o.status, name: 'win11-tpl' };
+      if (p.includes('/agent/file-read')) { if (o.gast === undefined) throw new Error('HTTP 500 QEMU guest agent is not running'); return { content: o.gast }; }
+      return {};
+    };
+    a.post = async (p: string, b: Record<string, unknown>) => { aufrufe.push(`POST ${p} ${JSON.stringify(b)}`); return 'UPID:x'; };
+    a.api = async (m: string, p: string, b: Record<string, unknown>) => { aufrufe.push(`${m} ${p} ${JSON.stringify(b)}`); if (p.endsWith('/config') && b?.description) cfg.description = b.description; return null; };
+    a.aufgabeOderFehler = async () => undefined;
+    a.deleteIso = async () => ({ success: true });
+    a.gastPowershell = async (vmid: number, name: string, skript: string) => { aufrufe.push(`PS ${vmid} ${name} ${skript.length}`); return { code: 0, stdout: o.agentStdout ?? '', stderr: '' }; };
+    return { px, aufrufe, cfg };
+  }
+  const imChange = { ausChange: true } as never;
+
+  it('vm_status der laufenden Bau-VM holt das Ergebnis ab, hält es in der Beschreibung fest und gibt sysprep frei', async () => {
+    const w = welt({ status: 'running', gast: `\uFEFF${json()}` });
+    const r = await w.px.execute({ action: 'vm_status', vmid: 9110 }, {} as never);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('MEDIEN_SIGNIERT win11-tpl: Secure Boot an, 5 Systemdateien Microsoft-signiert, VirtIO 3 signiert, Cloudbase-Init signiert');
+    expect(String(w.cfg.description)).toMatch(/^Windows-Vorlage von Alfred \(I8a\): win11,[^\n]*\nMEDIENPRUEFUNG \{"version":1/);
+    const ack = w.aufrufe.find(x => x.includes('/agent/file-write'));
+    expect(ack).toContain('medienpruefung.abgeholt');
+    // Reihenfolge: erst festhalten, dann freigeben
+    expect(w.aufrufe.findIndex(x => x.startsWith('PUT') && x.includes('/config'))).toBeLessThan(w.aufrufe.indexOf(ack!));
+  });
+
+  it('vm_status: fehlgeschlagene Prüfung wird festgehalten, aber nicht freigegeben; fremde VMs bleiben unberührt', async () => {
+    const w = welt({ status: 'running', gast: json(false) });
+    const r = await w.px.execute({ action: 'vm_status', vmid: 9110 }, {} as never);
+    expect(r.display).toContain('MEDIEN_NICHT_BELEGT win11-tpl: ');
+    expect(String(w.cfg.description)).toContain('MEDIENPRUEFUNG ');
+    expect(w.aufrufe.some(x => x.includes('/agent/file-write'))).toBe(false);
+    const fremd = welt({ status: 'running', beschreibung: 'Produktiv-VM', gast: json() });
+    await fremd.px.execute({ action: 'vm_status', vmid: 9110 }, {} as never);
+    expect(fremd.aufrufe.some(x => x.includes('/agent/'))).toBe(false);
+    expect(fremd.cfg.description).toBe('Produktiv-VM');
+    // noch kein Ergebnis im Gast: nichts geschrieben
+    const frueh = welt({ status: 'running' });
+    expect((await frueh.px.execute({ action: 'vm_status', vmid: 9110 }, {} as never)).success).toBe(true);
+    expect(frueh.cfg.description).toBe(BAU);
+  });
+
+  it('finish_windows_template ist fail-closed: ohne festgehaltenes Ergebnis keine Vorlage', async () => {
+    const w = welt({ status: 'stopped' });
+    const r = await w.px.execute({ action: 'finish_windows_template', vmid: 9110, vm_name: 'win11-tpl' }, imChange);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('MEDIEN_NICHT_BELEGT win11-tpl: kein Ergebnis');
+    expect(w.aufrufe.some(x => x.includes('/template') || x.startsWith('POST'))).toBe(false);
+    const kaputt = welt({ status: 'stopped', beschreibung: `${BAU}\nMEDIENPRUEFUNG {kaputt` });
+    expect((await kaputt.px.execute({ action: 'finish_windows_template', vmid: 9110, vm_name: 'win11-tpl' }, imChange)).error).toContain('unlesbar');
+  });
+
+  it('finish_windows_template mit bestandener Prüfung: Vorlage und feste Zeile MEDIEN_SIGNIERT', async () => {
+    const w = welt({ status: 'stopped', beschreibung: `${BAU}\nMEDIENPRUEFUNG ${json()}` });
+    const r = await w.px.execute({ action: 'finish_windows_template', vmid: 9110, vm_name: 'win11-tpl' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('MEDIEN_SIGNIERT win11-tpl: Secure Boot an, 5 Systemdateien Microsoft-signiert, VirtIO 3 signiert, Cloudbase-Init signiert');
+    expect(w.aufrufe.some(x => x.includes('/qemu/9110/template'))).toBe(true);
+  });
+
+  it('finish_windows_template bei laufender VM mit fehlgeschlagener Prüfung: klarer Fehler mit Prüfergebnis', async () => {
+    const w = welt({ status: 'running', gast: json(false) });
+    const r = await w.px.execute({ action: 'finish_windows_template', vmid: 9110, vm_name: 'win11-tpl' }, imChange);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Medienprüfung fehlgeschlagen');
+    expect(r.error).toContain('Secure Boot');
+    // bestehende Vorlage (z. B. 9100) bleibt unberührt
+    const alt = welt({ status: 'stopped', template: 1, beschreibung: 'Windows-Vorlage von Alfred (I8a): server-standard-core, gebaut …' });
+    expect((await alt.px.execute({ action: 'finish_windows_template', vmid: 9110, vm_name: 'win11-tpl' }, imChange)).display).toContain('schon eine Vorlage');
+  });
+
+  it('check_windows_media: lesend auch außerhalb von Changes, gleiche Zeile, fail-closed', async () => {
+    const klon = 'Angelegt von Alfred (I8a) aus Windows-Vorlage 9110 (win11) am 2026-11-20.';
+    const ok = welt({ status: 'running', beschreibung: klon, agentStdout: `Rauschen\nALFRED_MEDIEN ${json()}\n` });
+    const r = await ok.px.execute({ action: 'check_windows_media', vm: 'win11-tpl' }, {} as never);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('MEDIEN_SIGNIERT win11-tpl: Secure Boot an, 5 Systemdateien');
+    expect(ok.aufrufe.some(x => x.startsWith('PS 9110 win11-tpl'))).toBe(true);
+    expect(ok.aufrufe.some(x => x.startsWith('PUT') || x.includes('file-write'))).toBe(false);
+    const nein = await welt({ status: 'running', beschreibung: klon, agentStdout: `ALFRED_MEDIEN ${json(false)}` }).px.execute({ action: 'check_windows_media', vmid: 9110 }, {} as never);
+    expect(nein.success).toBe(false);
+    expect(nein.error).toContain('MEDIEN_NICHT_BELEGT win11-tpl');
+    const leer = await welt({ status: 'running', beschreibung: klon, agentStdout: 'nichts' }).px.execute({ action: 'check_windows_media', vmid: 9110 }, {} as never);
+    expect(leer.success).toBe(false);
+    expect(leer.error).toContain('kein Ergebnis');
+    const aus = await welt({ status: 'stopped', beschreibung: klon }).px.execute({ action: 'check_windows_media', vmid: 9110 }, {} as never);
+    expect(aus.success).toBe(false);
+    expect(aus.error).toContain('läuft nicht');
+  });
+});
+
+// ── Ruling R36 (I8e L6): build_windows_template mit win11-pro ─────────────────────────────────────────────────────────────────────
+describe('Ruling R36 (I8e L6) build_windows_template win11-pro', () => {
+  const CBURL = 'https://github.com/cloudbase/cloudbase-init/releases/download/1.1.9/CloudbaseInitSetup_1_1_9_x64.msi';
+  function welt(isos: string[]) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const skripte: Array<{ name: string; eingabe: Record<string, unknown> }> = [];
+    a.getAllVms = async () => [];
+    a.vmidFrei = async () => true;
+    a.get = async (p: string) => (p.includes('/content?content=iso') ? isos.map(volid => ({ volid })) : {});
+    px.setVmFabrik({
+      knotenSkript: async (_n: string, name: string, eingabe: string) => {
+        skripte.push({ name, eingabe: JSON.parse(eingabe) as Record<string, unknown> });
+        if (name === 'win-inspektion') return `ALFRED_JSON ${JSON.stringify({ abbilder: [{ index: 1, name: 'Windows 11 Home', editionId: 'Core', installationType: 'Client' }, { index: 6, name: 'Windows 11 Pro', editionId: 'Professional', installationType: 'Client' }], virtio: ['w10', 'w11'], gastWerkzeuge: true })}`;
+        throw new Error('Test endet nach dem Antwort-ISO');
+      },
+    } as never);
+    return { px, skripte };
+  }
+  const basis = { action: 'build_windows_template', node: 'pve', storage: 'nvme-cs001', virtio_iso: 'local:iso/virtio-win-0.1.302.iso', variante: 'win11-pro', cloudbase_url: CBURL, hostname: 'w11pro-tpl', new_vmid: 9111 };
+  const imChange = { ausChange: true } as never;
+
+  it('Microsoft-ISO mit Sprache aus dem Namen: Abbild Professional, Antwortdatei mit GVLK und Windows-11-Sonderfällen', async () => {
+    const iso = 'local:iso/Win11_25H2_German_x64.iso';
+    const w = welt([iso, basis.virtio_iso]);
+    const r = await w.px.execute({ ...basis, iso }, imChange);
+    expect(r.error).toContain('Test endet');
+    const antwort = w.skripte.find(s => s.name === 'win-antwort')!;
+    expect(antwort.eingabe.ordner).toBe('w11');
+    const au = Buffer.from(String((antwort.eingabe.dateien as Record<string, string>)['autounattend.xml']), 'base64').toString('utf8');
+    expect(au).toContain('<Key>/IMAGE/INDEX</Key><Value>6</Value>');
+    expect(au).toContain('<Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>');
+    expect(au).toContain('<UILanguage>de-DE</UILanguage>');
+    expect(au).toContain('BypassCPUCheck');
+  });
+
+  it('fail-closed: falsches ISO, unbekannte Sprache ohne Angabe, Widerspruch', async () => {
+    const eval11 = 'local:iso/win11-enterprise-eval-26100.1-en-us.iso';
+    expect((await welt([eval11, basis.virtio_iso]).px.execute({ ...basis, iso: eval11 }, imChange)).error).toMatch(/passt nicht|Windows-11-ISO/);
+    const fr = 'local:iso/Win11_25H2_French_x64.iso';
+    expect((await welt([fr, basis.virtio_iso]).px.execute({ ...basis, iso: fr }, imChange)).error).toContain('sprache');
+    const de = 'local:iso/Win11_25H2_German_x64.iso';
+    expect((await welt([de, basis.virtio_iso]).px.execute({ ...basis, iso: de, sprache: 'en-us' }, imChange)).error).toContain('widerspricht');
+    // Enterprise-Variante nimmt das Mehrfach-Edition-ISO nicht
+    expect((await welt([de, basis.virtio_iso]).px.execute({ ...basis, variante: 'win11', iso: de }, imChange)).error).toBeTruthy();
+  });
+});

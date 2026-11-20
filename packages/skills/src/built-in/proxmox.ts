@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@a
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { randomBytes } from 'node:crypto';
-import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN, type WimAbbild, type WinVariante } from './windows-fabrik.js';
+import { evalLinks, serverSeiten, WIN11_SEITE, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, VIRTIO_ARCHIV, buildAusUrl, neuesteVirtio, isoDateiname, ISO_DATEI, ISO_VOLUME, SPRACHE, istWinVariante, WIN_VARIANTEN, waehleAbbild, virtioOrdner, VIRTIO_TREIBER, autounattend, sysprepUnattend, setupSkript, CLOUDBASE_CONF, CLOUDBASE_UNATTEND_CONF, windowsBauKonfig, knotenJson, zufallsKennwort, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN, win11ProIso, lizenzHinweis, bewerteMedienpruefung, medienAusBeschreibung, varianteAusBeschreibung, medienPruefSkript, MEDIEN_DATEI, MEDIEN_ABGEHOLT, MEDIEN_MARKE, type MedienErgebnis, type WimAbbild, type WinVariante } from './windows-fabrik.js';
 import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 import { getrennteNetze, alleNetzeGetrennt, sicherungsJobPruefung, SICHERUNGSJOB_ID, type SicherungsJobVorhanden, vlanBridgePlan, sicherungsAusnahme, ALFRED_BRIDGE_KOMMENTAR, type NetzIface, DISTROS, istDistro, neuesterStand, imageAngabe, summenUrl, distroAusImage, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, VM_NAME, type Distro, type ImageAngabe } from './proxmox-fabrik.js';
 
@@ -100,13 +100,13 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 /** v1860 — PVE begrenzt input-data von agent/exec auf 65 536 Zeichen; darüber geht die Eingabe als Dateiteile in den Gast */
 export const GAST_EINGABE_MAX = 60_000;
 const GAST_TEIL_BYTES = 45_000;
-const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation']);
+const VM_LESE_AKTIONEN = new Set(['vm_status', 'list_snapshots', 'wait_ready', 'backups_vm', 'agent_status', 'check_offline_isolation', 'check_windows_media']);
 /** I5 — Vorlagen-Fabrik */
 /** I8e Paket 2 — Watchdog-Gerät der VM (SBD ist einziger Besitzer im Gast); Proxmox-Wert fest, nur dieses Modell mit Aktion reset */
 const WATCHDOG_MODELL = 'i6300esb';
 const WATCHDOG_WERT = `model=${WATCHDOG_MODELL},action=reset`;
 
-const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'set_vm_watchdog', 'provision_windows_offline', 'check_offline_isolation', 'attach_iso', 'detach_iso'] as const;
+const FABRIK_AKTIONEN = ['list_cloud_images', 'download_image', 'delete_image', 'create_template', 'provision_vm', 'delete_vm', 'delete_backup', 'list_backup_jobs', 'create_backup_job', 'delete_backup_job', 'restore_backup', 'isolate_vm', 'list_windows_images', 'download_iso', 'build_windows_template', 'windows_build_log', 'finish_windows_template', 'delete_iso', 'provision_windows_vm', 'create_vlan_bridge', 'delete_vlan_bridge', 'backup_job_exclude', 'set_vm_resources', 'set_vm_watchdog', 'provision_windows_offline', 'check_offline_isolation', 'attach_iso', 'detach_iso', 'check_windows_media'] as const;
 /** Owner 22.10. („die alten Sicherungen kann man löschen“): nur echte vzdump-Sicherungsdateien */
 const SICHERUNG_VOLUME = /^[a-zA-Z][\w-]{0,40}:backup\/vzdump-(qemu|lxc)-\d{1,9}-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}\.(vma|tar)(\.(zst|gz|lzo))?$/;
 /** v1771 — PBS-Sicherung einer VM (Realfall 07.11. Change 6f8f54d1: Wiederherstellungstest von VM 100 aus pbs-pve2); nur zum Wiederherstellen */
@@ -116,7 +116,7 @@ const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
-const VM_ZIEL_AKTIONEN = new Set(['agent_status', 'backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
+const VM_ZIEL_AKTIONEN = new Set(['check_windows_media', 'agent_status', 'backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
   // read
@@ -197,7 +197,7 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups. ' +
       'Vorlagen-Fabrik (I5, nur als Schritte freigegebener Changes): "list_cloud_images" (distro → datierter Stand, url, checksum, filename) → "download_image" (node, storage mit Inhalt import, url, checksum, checksum_algorithm, filename) → "create_template" (node, storage, image=Volume, new_vmid, hostname=Name) → "provision_vm" (template, hostname, node, storage, ip CIDR, gateway; Benutzer alfred, Host-Schlüssel von Alfred, Fernzugang + CMDB automatisch). Rückwege: delete_image (volid), delete_vm (vmid + vm_name zur Bestätigung, force_stop). ' +
       'Rettungskopie (nur Change): "restore_backup" (node, volid der vzdump-Sicherung, new_vmid frei, storage, hostname) stellt als NEUE VM wieder her, ohne Start, mit neuen MACs — danach sofort "isolate_vm" (vmid, vm_name) trennt alle Netzwerkkarten, Autostart aus; Rückweg delete_vm. ' +
-      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11, cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. "delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
+      'Windows-Vorlagen (I8a, nur als Schritte freigegebener Changes außer den Lese-Aktionen): "list_windows_images" (sprache, z. B. en-us) → aktuellste Server-Testversion und Windows 11 Enterprise (url, build, filename), VirtIO-ISO, Cloudbase-Init-MSI → "download_iso" (node, storage mit Inhalt iso — nicht backupshare, der ist fast voll —, url, filename) → "build_windows_template" (node, storage für die Platten, iso=Volume des Windows-ISO, virtio_iso=Volume, variante server-standard-core|server-standard-desktop|server-datacenter-core|server-datacenter-desktop|win11 (Enterprise-Testversion, Standard)|win11-pro (Windows 11 Pro: kein Testversions-Download — das Mehrfach-Edition-ISO Win11_<Version>_<Sprache>_x64.iso liegt schon im ISO-Speicher, Sprache aus dem Namen oder sprache angeben; Installation mit Microsofts KMS-Client-Schlüssel, Pro bleibt unaktiviert — Aktivierung braucht eine eigene Lizenz KMS/MAK/Retail), cloudbase_url aus list_windows_images, new_vmid, hostname) startet die unbeaufsichtigte Installation; die VM schaltet sich nach sysprep selbst aus (Warten bis vm_status „stopped“, 30–90 min; bei Zeitüberschreitung "windows_build_log" (vmid) liest das Einrichtungsprotokoll über den Gast-Agenten) → "finish_windows_template" (vmid, vm_name) entfernt CDs und Antwort-ISO und macht die Vorlage; Rückweg delete_vm. Medienprüfung (Ruling R35) vor sysprep im Gast: Secure Boot aktiv, Kernsystemdateien Microsoft-signiert, VirtIO-Treiber signiert, Cloudbase-Init-MSI von Cloudbase Solutions signiert; vm_status holt das Ergebnis ab und hält es in der VM-Beschreibung fest, erst dann läuft sysprep; finish_windows_template macht nur mit bestandener Prüfung eine Vorlage (Zeile MEDIEN_SIGNIERT …), bei Fehlschlag bleibt die VM an. "check_windows_media" (vmid oder vm; lesend, auch außerhalb von Changes) prüft dasselbe auf jeder laufenden Windows-VM über den Gast-Agenten (Cloudbase-Init als installiertes Programm) → MEDIEN_SIGNIERT bzw. MEDIEN_NICHT_BELEGT."delete_iso" (volid) entfernt ein ISO. "provision_windows_vm" (template = Windows-Vorlage, hostname höchstens 15 Zeichen, node, storage, ip CIDR, gateway, nameserver, memory, cores, disk_size; zeitlimitS 2400; Rückweg delete_vm mit force_stop) — Konto alfred mit Alfreds Schlüssel, Host-Schlüssel von Alfred, Kennwort im Tresor (win-<name>-admin), Fernzugang (Windows, Leseliste) + CMDB; extra_disk_size = zweite Platte (scsi1); extra_disks = mehrere Zusatzplatten [GB, …] als scsi1…scsiN (verschiedene Größen; einrichten mit windows_cluster platten_einrichten). ' +
       'NETZLOS (v1810, Offline-Root-CA): "provision_windows_offline" (template, hostname, node, storage, memory, cores, disk_size, extra_disks, new_vmid; KEINE ip/gateway/bridge; zeitlimitS 3000; Rückweg delete_vm mit force_stop) — entfernt net0 der Vorlage vor dem ersten Start, Autostart aus, Kennwort im Tresor, kein Fernzugang; Nachweis Rechnername über den Gastagenten. "check_offline_isolation" (vmid, vm_name; lesend) — Ergebnis „ROOT_ISOLATED“ nur ohne Netzwerkkarte und ohne Autostart, dazu Agent, Wechselmedien und erfassende Sicherungsjobs. ' +
       'v1865 (nur in Changes): "attach_iso" (vmid, volid = ISO im Speicher des Knotens der VM, laufwerk ide2|ide3) legt das ISO als CD ein — fehlt das Laufwerk an einer laufenden VM, wirksam erst nach "reboot_vm" (Ergebnis sagt es); Rückweg "detach_iso" (vmid, laufwerk) entfernt nur ein CD-Laufwerk. ' +
     'I8c (nur in Changes): "set_vm_resources" (vmid, memory MiB, cores) — alte Werte im Ergebnis (Rückweg), bei laufender VM wirksam nach "reboot_vm". "set_vm_watchdog" (vmid, model i6300esb oder null = entfernen) — Watchdog-Gerät i6300esb mit Aktion reset für SBD-Fencing, alter Wert im Ergebnis (Rückweg: gleicher Aufruf mit vorher), wirksam erst nach "stop_vm"/"start_vm" (neues QEMU-Gerät, reboot_vm genügt nicht); "provision_vm" setzt es mit watchdog i6300esb schon vor dem ersten Start. "create_vlan_bridge" (node, vlan, ueber = nicht VLAN-fähige Bridge wie vmbr0, bridge optional) legt eine Bridge mit Port <ueber>.<vlan> an und lädt das Netz neu — nur wenn auf dem Knoten nichts anderes aussteht; ist ueber VLAN-fähig, VM stattdessen mit vlan_tag anbinden; Rückweg "delete_vlan_bridge" (node, bridge; nur Alfreds Bridges ohne VMs). "backup_job_exclude" (job_id alfred-…, add_vmids / remove_vmids) ändert die Ausnahmeliste eines Jobs „alle VMs“; Rückweg mit vertauschten Listen. ' +
@@ -336,7 +336,7 @@ export class ProxmoxSkill extends Skill {
         checksum_algorithm: { type: 'string', enum: ['sha256', 'sha512'], description: 'download_image: sha512 (Debian), sonst sha256 — aus list_cloud_images übernehmen' },
         filename: { type: 'string', description: 'download_image: Dateiname im import-Speicher (…qcow2, aus list_cloud_images); download_iso: Dateiname …iso aus list_windows_images' },
         // I8a — Windows-Vorlagen
-        sprache: { type: 'string', description: 'list_windows_images: Sprache des ISO, z. B. en-us (Standard) oder de-de' },
+        sprache: { type: 'string', description: 'list_windows_images: Sprache des ISO, z. B. en-us (Standard) oder de-de; build_windows_template mit win11-pro: Sprache des Mehrfach-Edition-ISO, wenn der Name sie nicht eindeutig nennt' },
         variante: { type: 'string', enum: WIN_VARIANTEN, description: 'build_windows_template: Edition und Ausprägung' },
         iso: { type: 'string', description: 'build_windows_template: Volume des Windows-ISO (speicher:iso/…iso)' },
         virtio_iso: { type: 'string', description: 'build_windows_template: Volume des VirtIO-ISO' },
@@ -567,6 +567,8 @@ export class ProxmoxSkill extends Skill {
           return await this.windowsBuildLog(input);
         case 'finish_windows_template':
           return await this.finishWindowsTemplate(input);
+        case 'check_windows_media':
+          return await this.windowsMedienPruefen(input);
         case 'provision_windows_vm':
           return await this.provisionWindowsVm(input);
         case 'provision_windows_offline':
@@ -897,6 +899,13 @@ export class ProxmoxSkill extends Skill {
 
     if (data.lock) {
       lines.push(`**Lock:** ${data.lock}`);
+    }
+
+    // Ruling R35 (I8e L6): der Warteschritt nach build_windows_template fragt vm_status ab — er holt das Ergebnis der Medienprüfung
+    // der Bau-VM ab, solange sie läuft (danach ist sie aus und nur noch die Beschreibung lesbar)
+    if (resolved.type === 'qemu' && data.status === 'running') {
+      const m = await this.medienAbholen(resolved.node, vmid, String(data.name ?? resolved.name ?? vmid)).catch(() => undefined);
+      if (m) { lines.push(`**Medienprüfung (R35):** ${m.zeile}`); data.medienpruefung = m.zeile; }
     }
 
     return { success: true, data, display: lines.join('\n') };
@@ -1715,6 +1724,8 @@ export class ProxmoxSkill extends Skill {
       ...(virtio ? [`- **VirtIO** ${virtio.version}: url ${virtio.url}\n  → filename virtio-win-${virtio.version.replace(/-\d+$/, '')}.iso`] : []),
       ...(cloudbase ? [`- **Cloudbase-Init** ${cloudbase.version}: cloudbase_url ${cloudbase.url}`] : []),
       'Testversionen: Server 180 Tage, Windows 11 Enterprise 90 Tage ab Installation. Microsoft veröffentlicht keine Prüfsummen — Alfred berechnet die SHA-256 nach dem Laden am Knoten.',
+      // Ruling R36 (I8e L6): kein automatischer Bezug für Pro (zeitlich begrenzte, sitzungsgebundene Links der Microsoft-Download-Seite)
+      'Windows 11 Pro (variante win11-pro): keine Testversion und kein fester Download-Link — Mehrfach-Edition-ISO (Win11_<Version>_<Sprache>_x64.iso) von microsoft.com/software-download/windows11 selbst in den ISO-Speicher legen; Pro bleibt unaktiviert (eigene Lizenz nötig).',
       ...fehler.map(f => `⚠️ ${f}`),
     ];
     return { success: isos.length > 0, data: { isos, virtio: virtio ? { ...virtio, filename: `virtio-win-${virtio.version.replace(/-\d+$/, '')}.iso` } : undefined, cloudbase, fehler }, display: zeilen.join('\n'), ...(isos.length ? {} : { error: fehler.join('; ') || 'keine ISOs' }) };
@@ -1771,12 +1782,16 @@ export class ProxmoxSkill extends Skill {
     const cloudbase = String(input.cloudbase_url ?? '');
     if (!node || !storage) return { success: false, error: 'build_windows_template braucht node und storage' };
     if (!istWinVariante(variante)) return { success: false, error: `variante: ${WIN_VARIANTEN.join(', ')}` };
-    if (!ISO_VOLUME.test(iso) || !ISO_VOLUME.test(virtioIso)) return { success: false, error: 'iso und virtio_iso: Volumes aus download_iso (speicher:iso/…iso)' };
+    // Ruling R36 (I8e L6): win11-pro aus dem Mehrfach-Edition-ISO (liegt schon im Speicher, Microsoft-Dateiname erlaubt); Sprache aus
+    // dem Namen oder ausdrücklich (sprache) — nichts geraten, Widerspruch ist ein Fehler
+    const pro = variante === 'win11-pro' ? win11ProIso(iso, typeof input.sprache === 'string' && input.sprache.trim() ? input.sprache.trim().toLowerCase() : undefined) : undefined;
+    if (pro && 'fehler' in pro) return { success: false, error: `${pro.fehler} — Windows 11 Pro gibt es nicht als Testversion: Mehrfach-Edition-ISO von Microsoft selbst in den ISO-Speicher legen` };
+    if (!(pro ? true : ISO_VOLUME.test(iso)) || !ISO_VOLUME.test(virtioIso)) return { success: false, error: 'iso und virtio_iso: Volumes aus download_iso (speicher:iso/…iso)' };
     if (!CLOUDBASE_URL.test(cloudbase)) return { success: false, error: 'cloudbase_url: MSI aus list_windows_images' };
     if (!VM_NAME.test(name)) return { success: false, error: 'hostname: Name der Vorlage (Kleinbuchstaben, Ziffern, -)' };
-    const sprache = /-([a-z]{2}-[a-z]{2})\.iso$/.exec(iso)?.[1];
+    const sprache = pro ? pro.sprache : /-([a-z]{2}-[a-z]{2})\.iso$/.exec(iso)?.[1];
     if (!sprache) return { success: false, error: 'Sprache aus dem ISO-Namen nicht lesbar (…-en-us.iso)' };
-    if (variante === 'win11' ? !/win11/.test(iso) : !/win-server/.test(iso)) return { success: false, error: `ISO ${iso} passt nicht zur Variante ${variante}` };
+    if (variante === 'win11' ? !/win11/.test(iso) || /win11-pro-/.test(iso) : variante !== 'win11-pro' && !/win-server/.test(iso)) return { success: false, error: `ISO ${iso} passt nicht zur Variante ${variante}` };
     const vmid = typeof input.new_vmid === 'number' ? input.new_vmid : parseInt(String(await this.get('/cluster/nextid')), 10);
     if (!(await this.vmidFrei(vmid))) return { success: false, error: `VMID ${vmid} ist vergeben` };
     if ((await this.getAllVms()).some(v => v.name === name)) return { success: false, error: `Name ${name} ist vergeben` };
@@ -1806,7 +1821,7 @@ export class ProxmoxSkill extends Skill {
     }), 900_000));
     if (!r.treiber.includes('vioscsi')) return { success: false, error: `Antwort-ISO ohne Speichertreiber vioscsi (${r.treiber.join(', ') || 'keine'})` };
     const machine = await this.q35Version(node);
-    const beschreibung = `Windows-Vorlage von Alfred (I8a): ${variante}, Abbild ${abbild.index} „${abbild.name}“ Build ${abbild.build ?? '?'}, ISO ${iso}, VirtIO ${virtioIso} (${ordner}), Cloudbase-Init ${CLOUDBASE_URL.exec(cloudbase)![1]} (SHA-256 ${r.cloudbaseSha256.slice(0, 16)}…), gebaut ${new Date().toISOString().slice(0, 10)}`;
+    const beschreibung = `Windows-Vorlage von Alfred (I8a): ${variante}, Abbild ${abbild.index} „${abbild.name}“ Build ${abbild.build ?? '?'}, ISO ${iso}, VirtIO ${virtioIso} (${ordner}), Cloudbase-Init ${CLOUDBASE_URL.exec(cloudbase)![1]} (SHA-256 ${r.cloudbaseSha256.slice(0, 16)}…), gebaut ${new Date().toISOString().slice(0, 10)}${variante === 'win11-pro' ? `, ${lizenzHinweis(variante)}` : ''}`;
     const konfig = windowsBauKonfig({ vmid, name, storage, windowsIso: iso, virtioIso, antwortIso: antwort, beschreibung, ...(machine ? { machine } : {}), ...(typeof input.disk_size === 'number' ? { groesseGb: input.disk_size } : {}), ...(typeof input.memory === 'number' ? { memory: input.memory } : {}), ...(typeof input.cores === 'number' ? { cores: input.cores } : {}), ...(typeof input.bridge === 'string' ? { bridge: input.bridge } : {}), ...(typeof input.vlan_tag === 'number' ? { vlan: input.vlan_tag } : {}) });
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu`, konfig), 300_000, 'Bau-VM anlegen');
     this.vmCache = null;
@@ -1816,7 +1831,7 @@ export class ProxmoxSkill extends Skill {
       await this.api('PUT', `/nodes/${node}/qemu/${vmid}/sendkey`, { key: 'ret' }).catch(() => undefined);
       await new Promise(res => setTimeout(res, 1500));
     }
-    return { success: true, data: { vmid, node, name, variante, abbild: { index: abbild.index, name: abbild.name, build: abbild.build }, antwortIso: antwort, machine, virtioOrdner: ordner, cloudbaseSha256: r.cloudbaseSha256 }, display: `Windows-Installation läuft: ${name} (VMID ${vmid}) auf ${node}, ${abbild.name} Build ${abbild.build ?? '?'}, Maschine ${machine ?? 'q35'} — die VM schaltet sich nach sysprep selbst aus (meist 30–90 min)` };
+    return { success: true, data: { vmid, node, name, variante, abbild: { index: abbild.index, name: abbild.name, build: abbild.build }, antwortIso: antwort, machine, virtioOrdner: ordner, cloudbaseSha256: r.cloudbaseSha256 }, display: `Windows-Installation läuft: ${name} (VMID ${vmid}) auf ${node}, ${abbild.name} Build ${abbild.build ?? '?'}, Maschine ${machine ?? 'q35'} — die VM schaltet sich nach sysprep selbst aus (meist 30–90 min)${variante === 'win11-pro' ? `; ${lizenzHinweis(variante)}` : ''}` };
   }
 
   /** Einrichtungsprotokoll der Bau-VM über den Gast-Agenten (gibt es erst nach den Gast-Werkzeugen) */
@@ -1828,7 +1843,9 @@ export class ProxmoxSkill extends Skill {
       const r = await this.get<{ content?: string; truncated?: boolean }>(`/nodes/${vm.node}/qemu/${vmid}/agent/file-read?file=${encodeURIComponent('C:\\Windows\\Temp\\alfred-setup.log')}`);
       const t = String(r.content ?? '');
       const marken = t.split(/\r?\n/).filter(z => z.startsWith('ALFRED:')).join('\n');
-      return { success: true, data: { marken, ende: t.slice(-3000) }, display: `Einrichtungsprotokoll ${vm.name ?? vmid}:\n${marken || '(noch keine Schritte)'}\n…\n${t.slice(-1500)}` };
+      // Ruling R35 (I8e L6): auch hier abholen (Bau ohne Warteschritt)
+      const m = await this.medienAbholen(vm.node, vmid, vm.name ?? String(vmid)).catch(() => undefined);
+      return { success: true, data: { marken, ende: t.slice(-3000), ...(m ? { medienpruefung: m.zeile } : {}) }, display: `Einrichtungsprotokoll ${vm.name ?? vmid}:\n${marken || '(noch keine Schritte)'}${m ? `\n${m.zeile}` : ''}\n…\n${t.slice(-1500)}` };
     } catch (err) {
       return { success: false, error: `Protokoll nicht lesbar (${(err as Error).message.slice(0, 120)}) — vor der Installation der Gast-Werkzeuge antwortet der Agent nicht; Konsole in Proxmox ansehen` };
     }
@@ -1845,7 +1862,15 @@ export class ProxmoxSkill extends Skill {
     if (!String(cfg.description ?? '').startsWith('Windows-Vorlage von Alfred (I8a)')) return { success: false, error: `${name} ist keine Windows-Bau-VM von Alfred` };
     if (cfg.template) return { success: true, data: { vmid, name, node: vm.node, template: true, vorhanden: true }, display: `${name} ist schon eine Vorlage` };
     const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
-    if (st.status !== 'stopped') return { success: false, error: `${name} läuft noch (${st.status}) — Installation/sysprep nicht fertig; windows_build_log zeigt den Stand` };
+    if (st.status !== 'stopped') {
+      // Ruling R35 (I8e L6): bei fehlgeschlagener Medienprüfung bleibt die VM an — hier das Prüfergebnis melden
+      const m = st.status === 'running' ? await this.medienAbholen(vm.node, vmid, name).catch(() => undefined) : undefined;
+      if (m && !m.ok) return { success: false, data: { vmid, name, medienpruefung: m.zeile, fehler: m.fehler }, error: `Medienprüfung fehlgeschlagen — kein sysprep, keine Vorlage, die VM bleibt an: ${m.zeile}` };
+      return { success: false, error: `${name} läuft noch (${st.status}) — Installation/sysprep nicht fertig; windows_build_log zeigt den Stand${m ? ` (${m.zeile})` : ''}` };
+    }
+    // Ruling R35 (I8e L6): fail-closed — nur mit festgehaltener, bestandener Medienprüfung wird die Bau-VM zur Vorlage
+    const medien = bewerteMedienpruefung(medienAusBeschreibung(String(cfg.description ?? '')), name, varianteAusBeschreibung(String(cfg.description ?? '')));
+    if (!medien.ok) return { success: false, data: { vmid, name, medienpruefung: medien.zeile, fehler: medien.fehler }, error: `${medien.zeile} — keine Vorlage (Ruling R35: fail-closed; neu bauen)` };
     const antwort = Object.values(cfg).map(String).map(v => /^(local:iso\/alfred-antwort-\d+\.iso)/.exec(v)?.[1]).find(Boolean);
     const cds = Object.keys(cfg).filter(k => /^(ide|sata)\d+$/.test(k) && String(cfg[k]).includes('media=cdrom'));
     const storage = /^([\w-]+):/.exec(String(cfg.scsi0 ?? ''))?.[1];
@@ -1853,7 +1878,62 @@ export class ProxmoxSkill extends Skill {
     if (antwort) await this.deleteIso({ volid: antwort, node: vm.node }).catch(() => undefined);
     await this.aufgabeOderFehler(await this.post<string>(`/nodes/${vm.node}/qemu/${vmid}/template`, {}), 300_000, 'zur Vorlage machen');
     this.vmCache = null;
-    return { success: true, data: { vmid, name, node: vm.node, template: true, entfernteCds: cds, antwortIsoEntfernt: antwort ?? null }, display: `✅ Windows-Vorlage ${name} (VMID ${vmid}) fertig: CDs ${cds.join(', ') || '-'} entfernt, Antwort-ISO ${antwort ? 'gelöscht' : '-'}, Konfigurationslaufwerk für Cloudbase-Init angelegt` };
+    return { success: true, data: { vmid, name, node: vm.node, template: true, entfernteCds: cds, antwortIsoEntfernt: antwort ?? null, medienpruefung: medien.zeile }, display: `✅ Windows-Vorlage ${name} (VMID ${vmid}) fertig: CDs ${cds.join(', ') || '-'} entfernt, Antwort-ISO ${antwort ? 'gelöscht' : '-'}, Konfigurationslaufwerk für Cloudbase-Init angelegt\n${medien.zeile}` };
+  }
+
+  /**
+   * Ruling R35 (I8e L6) — Ergebnis der Medienprüfung einer laufenden Bau-VM abholen: aus dem Gast lesen (Gast-Agent), in der
+   * VM-Beschreibung festhalten (nach sysprep ist die VM aus, dann ist nur sie lesbar) und erst danach sysprep freigeben (Marke im Gast).
+   * Nur Alfreds Bau-VMs (Beschreibung „Windows-Vorlage von Alfred (I8a)“, keine Vorlage); sonst undefined. Fehlschläge werden
+   * festgehalten, aber nie freigegeben. Idempotent: ist das Ergebnis schon festgehalten, nur erneut bewerten (und bestanden freigeben).
+   */
+  private async medienAbholen(node: string, vmid: number, name: string): Promise<MedienErgebnis | undefined> {
+    const cfg = await this.get<Record<string, unknown>>(`/nodes/${node}/qemu/${vmid}/config`);
+    const beschreibung = String(cfg?.description ?? '');
+    if (!beschreibung.startsWith('Windows-Vorlage von Alfred (I8a)') || cfg.template) return undefined;
+    const variante = varianteAusBeschreibung(beschreibung);
+    const freigeben = () => this.post(`/nodes/${node}/qemu/${vmid}/agent/file-write`, { file: MEDIEN_ABGEHOLT, content: Buffer.from(`abgeholt ${new Date().toISOString()}\r\n`, 'utf8').toString('base64'), encode: 0 });
+    const schon = medienAusBeschreibung(beschreibung);
+    if (schon !== undefined) {
+      const m = bewerteMedienpruefung(schon, name, variante);
+      if (m.ok) await freigeben().catch(() => undefined);
+      return m;
+    }
+    let roh: string;
+    try { roh = String((await this.get<{ content?: string }>(`/nodes/${node}/qemu/${vmid}/agent/file-read?file=${encodeURIComponent(MEDIEN_DATEI)}`))?.content ?? ''); }
+    catch { return undefined; } // noch kein Ergebnis oder der Gast-Agent läuft noch nicht
+    const m = bewerteMedienpruefung(roh, name, variante);
+    if (!m.json) return undefined; // unvollständig gelesen — beim nächsten Abfragen erneut
+    if (m.json.length > 6000) return { ...m, ok: false, zeile: `MEDIEN_NICHT_BELEGT ${name}: Ergebnis zu groß für die VM-Beschreibung` };
+    await this.api('PUT', `/nodes/${node}/qemu/${vmid}/config`, { description: `${beschreibung}\n${MEDIEN_MARKE}${m.json}` });
+    if (m.ok) await freigeben();
+    return m;
+  }
+
+  /**
+   * Ruling R35 (I8e L6) — lesende Medienprüfung auf einer laufenden Windows-VM (z. B. Klone aus Vorlagen ohne Prüfung beim Bau):
+   * dieselbe Prüflogik wie vor sysprep, Cloudbase-Init als installiertes Programm; nichts wird verändert. Fail-closed.
+   */
+  private async windowsMedienPruefen(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = Number(input.vmid);
+    this.vmCache = null;
+    const vm = (await this.getAllVms()).find(v => v.vmid === vmid);
+    if (!vm || vm.type !== 'qemu') return { success: false, error: `QEMU-VM ${vmid} nicht gefunden` };
+    const name = vm.name ?? String(vmid);
+    const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
+    if (st.status !== 'running') return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: VM läuft nicht (${st.status ?? '?'}) — Prüfung braucht den Gast-Agenten` };
+    const cfg = await this.get<{ description?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`).catch(() => ({} as { description?: string }));
+    const variante = varianteAusBeschreibung(String(cfg.description ?? ''));
+    let roh: string | undefined;
+    try {
+      const r = await this.gastPowershell(vmid, name, medienPruefSkript(), undefined, 180_000);
+      roh = r.stdout.split(/\r?\n/).reverse().find(z => z.startsWith('ALFRED_MEDIEN '))?.slice('ALFRED_MEDIEN '.length);
+    } catch (err) {
+      return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: Gast-Agent (${(err as Error).message.slice(0, 160)})` };
+    }
+    const m = bewerteMedienpruefung(roh, name, variante);
+    const data = { vmid, name, node: vm.node, variante: variante ?? null, ok: m.ok, fehler: m.fehler, medienpruefung: m.zeile, ergebnis: m.json ? JSON.parse(m.json) as unknown : null };
+    return m.ok ? { success: true, data, display: m.zeile } : { success: false, data, error: m.zeile };
   }
 
   /**
@@ -1906,7 +1986,7 @@ export class ProxmoxSkill extends Skill {
     const hs = await this.fabrik.hostSchluessel();
     const kennwort = zufallsKennwort(n => randomBytes(n));
     const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
-    schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName})`);
+    schritte.push(`Kennwort für alfred${variante === 'win11' || variante === 'win11-pro' ? '' : ' und Administrator'} im Tresor (${tresorName})`);
     // v1745 (Owner 01.11.: eigener Zugang) — Konto des Owners (Standard „madh“, leer = keins) mit eigenem Kennwort, dazu sein SSH-Schlüssel
     const ownerName = typeof input.owner_konto === 'string' ? input.owner_konto.trim().toLowerCase() : 'madh';
     const ownerKonto = ownerName ? { name: ownerName, kennwort: zufallsKennwort(n => randomBytes(n)) } : undefined;
@@ -2009,7 +2089,7 @@ export class ProxmoxSkill extends Skill {
     const hs = await this.fabrik.hostSchluessel();
     const kennwort = zufallsKennwort(n => randomBytes(n));
     const tresorName = await this.fabrik.kennwortSichern(name, kennwort);
-    schritte.push(`Kennwort für alfred${variante === 'win11' ? '' : ' und Administrator'} im Tresor (${tresorName}) — Anmeldung nur an der Konsole`);
+    schritte.push(`Kennwort für alfred${variante === 'win11' || variante === 'win11-pro' ? '' : ' und Administrator'} im Tresor (${tresorName}) — Anmeldung nur an der Konsole`);
     const ownerName = typeof input.owner_konto === 'string' ? input.owner_konto.trim().toLowerCase() : 'madh';
     const ownerKonto = ownerName ? { name: ownerName, kennwort: zufallsKennwort(n => randomBytes(n)) } : undefined;
     if (ownerKonto) schritte.push(`Konto ${ownerKonto.name} (Administrator), Kennwort im Tresor (${await this.fabrik.kennwortSichern(name, ownerKonto.kennwort, ownerKonto.name)})`);

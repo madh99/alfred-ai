@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   evalLinks, buildAusUrl, neuesteVirtio, isoDateiname, waehleAbbild, autounattend, sysprepUnattend, setupSkript, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN,
   windowsBauKonfig, knotenJson, zufallsKennwort, serverSeiten, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, CLOUDBASE_CONF, KNOTEN_INSPEKTION, KNOTEN_ANTWORT_ISO, type WimAbbild,
+  medienPsPruefung, medienPruefSkript, bewerteMedienpruefung, medienAusBeschreibung, MEDIEN_DATEI, MEDIEN_MARKE, VIRTIO_SYS_PFLICHT,
+  WIN_VARIANTEN, virtioOrdner, WIN11_PRO_GVLK, lizenzHinweis, win11ProIso,
 } from './windows-fabrik.js';
 
 // Echte Anker aus dem Evaluation Center (01.11.2026)
@@ -148,5 +154,174 @@ describe('I8 Einrichtung über den Gast-Agenten nachholen', () => {
     expect(t.match(/\$t\b/g)).toEqual(['$t', '$t', '$t']);
     expect(t).toContain('GetBytes($t)');
     expect(t).toContain("if ($c -eq 1001) { shutdown.exe /r");
+  });
+});
+
+// ── Ruling R35 (I8e L6): Medienprüfung im Gast (vor sysprep und lesend) ──────────────────────────────────────────────────────────
+const MS = 'CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US';
+const WHCP = 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US';
+const CB = 'CN=Cloudbase Solutions Srl, O=Cloudbase Solutions Srl, L=Timisoara, C=RO';
+const e = (datei: string, signer: string, status = 'Valid') => ({ datei, status, signer });
+function medienJson(o: { kern?: boolean; installationType?: string; secureBoot?: boolean; ohne?: string[]; virtioSigner?: string; cbSigner?: string; system?: unknown; fehler?: string[] } = {}): string {
+  const sys = ['C:\\Windows\\System32\\ntoskrnl.exe', 'C:\\Windows\\System32\\winload.efi', 'C:\\Windows\\System32\\ci.dll', 'C:\\Windows\\System32\\kernel32.dll', ...(o.kern ? [] : ['C:\\Windows\\explorer.exe'])]
+    .filter(d => !(o.ohne ?? []).some(x => d.toLowerCase().endsWith(x)));
+  const vio = ['vioscsi', 'netkvm', 'vioser', 'pvpanic'].filter(t => !(o.ohne ?? []).includes(`${t}.sys`)).map(t => e(`C:\\Windows\\System32\\drivers\\${t}.sys`, o.virtioSigner ?? WHCP));
+  const fehler = o.fehler ?? [];
+  return JSON.stringify({
+    version: 1, ok: fehler.length === 0, installationType: o.installationType ?? (o.kern ? 'Server Core' : 'Client'), secureBoot: o.secureBoot ?? true,
+    system: o.system ?? sys.map(d => e(d, MS)), virtio: vio, cloudbase: [e('E:\\CloudbaseInitSetup_x64.msi', o.cbSigner ?? CB)], fehler,
+  });
+}
+
+describe('Ruling R35 (I8e L6) — Medienprüfung', () => {
+  it('Einrichtungsskript: Cloudbase-MSI vor msiexec geprüft, Gesamtprüfung nach dem Aufräumen, sysprep erst nach Abholung', () => {
+    for (const v of ['win11', 'server-standard-core', 'server-standard-desktop'] as const) {
+      const t = setupSkript({ variante: v });
+      const msi = t.indexOf('Signatur "$antwort\\CloudbaseInitSetup_x64.msi"');
+      expect(msi).toBeGreaterThan(0);
+      expect(msi).toBeLessThan(t.indexOf('msiexec.exe'));
+      // fail-closed: bei Fehlschlag Ergebnis schreiben und ohne Installation enden
+      expect(t.slice(msi, t.indexOf('msiexec.exe'))).toContain('MpFehlschlag');
+      const pruef = t.indexOf('Confirm-SecureBootUEFI');
+      expect(pruef).toBeGreaterThan(t.indexOf('ALFRED: Aufraeumen'));
+      expect(t.indexOf(medienPsPruefung())).toBeGreaterThan(0);
+      expect(t).toContain(MEDIEN_DATEI);
+      const warten = t.indexOf(`Test-Path -LiteralPath $mpAbgeholt`);
+      expect(warten).toBeGreaterThan(pruef);
+      expect(warten).toBeLessThan(t.indexOf('sysprep.exe'));
+      expect(t.trim().split('\r\n').pop()).toMatch(/sysprep\.exe" \/generalize \/oobe \/shutdown/);
+    }
+  });
+
+  it('feste Listen: Kernsystemdateien, explorer.exe nur außerhalb von Server Core, VirtIO-Pflichttreiber', () => {
+    const p = medienPsPruefung();
+    for (const d of ['ntoskrnl.exe', 'winload.efi', 'ci.dll', 'kernel32.dll']) expect(p).toContain(`C:\\Windows\\System32\\${d}`);
+    expect(p).toContain('if ($mp.installationType -ne "Server Core") { $sys += "C:\\Windows\\explorer.exe" }');
+    expect(setupSkript({ variante: 'win11' })).toContain('Get-AuthenticodeSignature -LiteralPath $pfad');
+    expect(VIRTIO_SYS_PFLICHT).toEqual(['vioscsi', 'netkvm', 'vioser']);
+  });
+
+  it('lesende Prüfung: gleiche Prüflogik, Cloudbase-Init installiert statt MSI, Ausgabe statt Datei', () => {
+    const t = medienPruefSkript();
+    expect(t).toContain(medienPsPruefung());
+    expect(t).toContain('Win32_Service');
+    expect(t).toContain('LocalPackage');
+    expect(t).not.toContain('CloudbaseInitSetup_x64.msi');
+    expect(t).not.toMatch(/WriteAllText|Set-Content|Out-File|sysprep/);
+    expect(t).toContain('"ALFRED_MEDIEN "');
+  });
+
+  it('Bewertung: bestanden mit fester Zeile; Server Core ohne explorer.exe', () => {
+    const ok = bewerteMedienpruefung(medienJson(), 'win11-tpl', 'win11');
+    expect(ok.fehler).toEqual([]);
+    expect(ok.ok).toBe(true);
+    expect(ok.zeile).toBe('MEDIEN_SIGNIERT win11-tpl: Secure Boot an, 5 Systemdateien Microsoft-signiert, VirtIO 4 signiert, Cloudbase-Init signiert');
+    const kern = bewerteMedienpruefung(medienJson({ kern: true }), 'win-core', 'server-standard-core');
+    expect(kern.ok).toBe(true);
+    expect(kern.zeile).toContain('4 Systemdateien');
+    // lesend ohne Variante: Server Core aus der Installationsart
+    expect(bewerteMedienpruefung(medienJson({ kern: true }), 'x').ok).toBe(true);
+    // Red-Hat-signierte VirtIO-Treiber zählen auch
+    expect(bewerteMedienpruefung(medienJson({ virtioSigner: 'CN=Red Hat, Inc., O="Red Hat, Inc.", L=Raleigh, S=North Carolina, C=US' }), 'x', 'win11').ok).toBe(true);
+  });
+
+  it('Bewertung fail-closed: jede Lücke ist ein Fehlschlag', () => {
+    const nein = (roh: string | undefined, v?: Parameters<typeof bewerteMedienpruefung>[2]) => { const r = bewerteMedienpruefung(roh, 'x', v); expect(r.ok).toBe(false); expect(r.zeile.startsWith('MEDIEN_NICHT_BELEGT x: ')).toBe(true); return r.zeile; };
+    expect(nein(undefined)).toContain('kein Ergebnis');
+    expect(nein('{kaputt')).toContain('unlesbar');
+    expect(nein(medienJson({ secureBoot: false }), 'win11')).toContain('Secure Boot');
+    expect(nein(medienJson({ ohne: ['explorer.exe'] }), 'server-standard-desktop')).toContain('explorer.exe');
+    expect(nein(medienJson({ kern: true }), 'server-standard-desktop')).toContain('explorer.exe');
+    expect(nein(medienJson({ ohne: ['vioscsi.sys'] }), 'win11')).toContain('vioscsi.sys');
+    expect(nein(medienJson({ virtioSigner: 'CN=Irgendwer, O=Irgendwer' }), 'win11')).toContain('netkvm.sys');
+    expect(nein(medienJson({ cbSigner: 'CN=Cloudbase Solutions Srl' }), 'win11')).toContain('Cloudbase-Init');
+    expect(nein(medienJson({ system: [e('C:\\Windows\\System32\\ntoskrnl.exe', MS, 'HashMismatch')] }), 'win11')).toContain('ntoskrnl.exe');
+    expect(nein(medienJson({ fehler: ['Gast meldet etwas'] }), 'win11')).toContain('Gast meldet etwas');
+    expect(nein(medienJson({ kern: true }), 'win11')).toContain('Installationsart');
+  });
+
+  it('Ergebnis in der Beschreibung der Bau-VM wiederfinden', () => {
+    const d = `Windows-Vorlage von Alfred (I8a): win11, gebaut 2026-11-20\n${MEDIEN_MARKE}${medienJson()}`;
+    expect(medienAusBeschreibung(d)).toBe(medienJson());
+    expect(medienAusBeschreibung('Windows-Vorlage von Alfred (I8a): win11, x')).toBeUndefined();
+  });
+});
+
+// Ruling R35 (I8e L6) — beide Skripte mit der Medienprüfung parsen in Windows PowerShell 5.1 (ohne PowerShell übersprungen)
+const psDa = (() => { const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' }); return r.status === 0; })();
+describe.skipIf(!psDa)('Ruling R35 (I8e L6) — PowerShell-Parser', () => {
+  it('Einrichtungsskript (alle Varianten) und lesende Prüfung sind gültiges PowerShell; Gegenprobe erkannt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alfred-r35-'));
+    try {
+      const skripte: Record<string, string> = { lesend: medienPruefSkript(), gegenprobe: 'if ($a -eq { "x" ' };
+      for (const v of ['win11', 'server-standard-core', 'server-standard-desktop'] as const) skripte[v] = setupSkript({ variante: v });
+      for (const [n, t] of Object.entries(skripte)) writeFileSync(join(dir, `${n}.ps1`), `${String.fromCharCode(0xfeff)}${t}`, 'utf8');
+      const pruef = `Get-ChildItem -LiteralPath '${dir}' -Filter *.ps1 | ForEach-Object { $t = $null; $f = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$t, [ref]$f); "$($_.BaseName)=$(if ($f.Count) { ($f | ForEach-Object { $_.Message }) -join ' | ' } else { 'OK' })" }`;
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', pruef], { encoding: 'utf8' });
+      const aus = Object.fromEntries(String(r.stdout).trim().split(/\r?\n/).map(z => [z.split('=')[0], z.slice(z.indexOf('=') + 1)]));
+      expect(aus.gegenprobe).not.toBe('OK');
+      for (const n of Object.keys(skripte).filter(x => x !== 'gegenprobe')) expect(aus[n], n).toBe('OK');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// ── Ruling R36 (I8e L6): Windows 11 Pro als eigene Variante neben Windows 11 Enterprise Evaluation ───────────────────────────────
+describe('Ruling R36 (I8e L6) — Variante win11-pro', () => {
+  // EDITIONID-Werte eines Windows-11-Mehrfach-Edition-ISO (Win11_<Version>_<Sprache>_x64.iso)
+  const verbraucher: WimAbbild[] = [
+    ['Windows 11 Home', 'Core'], ['Windows 11 Home N', 'CoreN'], ['Windows 11 Home Single Language', 'CoreSingleLanguage'], ['Windows 11 Education', 'Education'],
+    ['Windows 11 Education N', 'EducationN'], ['Windows 11 Pro', 'Professional'], ['Windows 11 Pro N', 'ProfessionalN'], ['Windows 11 Pro Education', 'ProfessionalEducation'],
+    ['Windows 11 Pro Education N', 'ProfessionalEducationN'], ['Windows 11 Pro for Workstations', 'ProfessionalWorkstation'], ['Windows 11 Pro N for Workstations', 'ProfessionalWorkstationN'],
+  ].map(([name, editionId], i) => ({ index: i + 1, name: name!, editionId: editionId!, installationType: 'Client' }));
+
+  it('Variante bekannt, Abbild genau „Professional“, Treiber wie Windows 11', () => {
+    expect(WIN_VARIANTEN).toContain('win11-pro');
+    expect(WIN_VARIANTEN).toContain('win11');
+    expect(waehleAbbild(verbraucher, 'win11-pro')?.index).toBe(6);
+    expect(waehleAbbild(verbraucher.filter(a => a.editionId !== 'Professional'), 'win11-pro')).toBeUndefined();
+    expect(waehleAbbild(verbraucher, 'win11')).toBeUndefined();
+    expect(waehleAbbild([{ index: 1, name: 'Windows 11 Enterprise Evaluation', editionId: 'EnterpriseEval', installationType: 'Client' }], 'win11-pro')).toBeUndefined();
+    expect(virtioOrdner('win11-pro')).toEqual(['w11', 'w10']);
+  });
+
+  it('Windows-11-Sonderfälle gelten für beide Varianten; nur Pro bekommt den KMS-Client-Schlüssel (GVLK)', () => {
+    const p = autounattend({ variante: 'win11-pro', index: 6, regional: { sprache: 'de-de' }, computer: 'WIN-9111', kennwort: KW });
+    expect(p).toContain('BypassCPUCheck');
+    expect(p).toContain('PreventDeviceEncryption');
+    expect(p).not.toContain('<AdministratorPassword>');
+    expect(WIN11_PRO_GVLK).toBe('W269N-WFGWX-YVC9B-4J6C9-T83GX');
+    expect(p).toContain(`<ProductKey><Key>${WIN11_PRO_GVLK}</Key><WillShowUI>OnError</WillShowUI></ProductKey>`);
+    expect(autounattend({ variante: 'win11', index: 3, regional: { sprache: 'de-de' }, computer: 'WIN-9110', kennwort: KW })).not.toContain('<ProductKey>');
+    expect(sysprepUnattend({ variante: 'win11-pro', regional: { sprache: 'de-de' }, kennwort: KW })).not.toContain('AdministratorPassword');
+    expect(setupSkript({ variante: 'win11-pro' })).toContain('AutoDownload');
+    expect(windowsBenutzerDaten({ variante: 'win11-pro', hostname: 'w11pro', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW })).not.toContain('Name Administrator');
+  });
+
+  it('Lizenzhinweis: Pro unaktiviert, Enterprise Evaluation bleibt 90 Tage', () => {
+    expect(lizenzHinweis('win11-pro')).toBe('Pro unaktiviert — Aktivierung braucht eine eigene Lizenz (KMS/MAK/Retail)');
+    expect(lizenzHinweis('win11')).toContain('90 Tage');
+    expect(lizenzHinweis('server-standard-core')).toContain('180 Tage');
+  });
+
+  it('ISO und Sprache für Pro: Microsoft-Dateiname oder umbenannt, Sprache aus Name oder Angabe, nichts geraten', () => {
+    expect(win11ProIso('local:iso/Win11_25H2_German_x64.iso')).toEqual({ sprache: 'de-de' });
+    expect(win11ProIso('local:iso/Win11_24H2_English_x64v2.iso')).toEqual({ sprache: 'en-us' });
+    expect(win11ProIso('local:iso/Win11_24H2_EnglishInternational_x64.iso')).toEqual({ sprache: 'en-gb' });
+    expect(win11ProIso('local:iso/Win11_25H2_German_x64.iso', 'de-de')).toEqual({ sprache: 'de-de' });
+    expect(win11ProIso('local:iso/win11-pro-25h2-de-de.iso')).toEqual({ sprache: 'de-de' });
+    expect(win11ProIso('local:iso/Win11_25H2_French_x64.iso', 'fr-fr')).toEqual({ sprache: 'fr-fr' });
+    expect('fehler' in win11ProIso('local:iso/Win11_25H2_French_x64.iso')).toBe(true);
+    expect(win11ProIso('local:iso/Win11_25H2_German_x64.iso', 'en-us')).toMatchObject({ fehler: expect.stringContaining('widerspricht') });
+    expect('fehler' in win11ProIso('local:iso/win11-enterprise-eval-26100.1-en-us.iso')).toBe(true);
+    expect('fehler' in win11ProIso('local:iso/win-server-2025-eval-26100.1-en-us.iso')).toBe(true);
+    expect('fehler' in win11ProIso('local:iso/Win11_25H2_German_x64.iso', 'deutsch')).toBe(true);
+    expect('fehler' in win11ProIso('local:iso/../Win11_25H2_German_x64.iso')).toBe(true);
+    // die Bau-VM nimmt den Microsoft-Dateinamen an
+    expect(windowsBauKonfig({ vmid: 9111, name: 'w11pro', storage: 'nvme-cs001', windowsIso: 'local:iso/Win11_25H2_German_x64.iso', virtioIso: 'local:iso/virtio-win-0.1.302.iso', antwortIso: 'local:iso/alfred-antwort-9111.iso' }).ide2).toBe('local:iso/Win11_25H2_German_x64.iso,media=cdrom');
+  });
+
+  it('R35 gilt auch für win11-pro (explorer.exe Pflicht, Installationsart Client)', () => {
+    expect(bewerteMedienpruefung(medienJson(), 'w11pro', 'win11-pro').ok).toBe(true);
+    expect(bewerteMedienpruefung(medienJson({ ohne: ['explorer.exe'] }), 'w11pro', 'win11-pro').ok).toBe(false);
   });
 });
