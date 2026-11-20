@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Medienprüfung erkennt VirtIO-Treiber im Treiberspeicher (v1912)
+
+- Neuere VirtIO-Treiber laufen unter Windows 11 direkt aus `System32\DriverStore\FileRepository` statt aus `System32\drivers`. Die Medienprüfung meldete sie deshalb als fehlend, und der Vorlagenbau hielt korrekt, aber unnötig an.
+- Der Treiberpfad kommt jetzt aus der Konfiguration der Systemtreiber und wird über den Dateinamen gefunden, weil Dienstnamen abweichen können. Signatur und Herausgeber werden unverändert geprüft.
+- Zulässig sind nur `System32\drivers` und der Paketordner des gleichnamigen Treiberpakets im Treiberspeicher. Jeder andere Ort gilt weiterhin als nicht belegt.
+
 ### Fixed — Windows-Vorlagenbau läuft ohne Eingriff durch (v1911)
 
 - Die Eingabe für „Press any key to boot from CD or DVD“ wird nur noch etwa 12 Sekunden nach dem Start gesendet statt 30 Sekunden. Spätere Tastendrücke erreichten das bereits gestartete Setup und lösten dort „Abbrechen“ aus; die Installation blieb an der Rückfrage stehen.

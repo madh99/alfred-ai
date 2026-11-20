@@ -366,3 +366,39 @@ describe('Ruling R37 (I8e L6): Bau ohne Hänger', () => {
     expect(t).toMatch(/Marke "OpenSSH \(Windows Update, hoechstens 90 min\)"/);
   });
 });
+
+describe('Ruling R38 (I8e L6): VirtIO-Treiber aus dem Treiberspeicher', () => {
+  const R = String.raw;
+  const mit = (dateien: string[]) => {
+    const x = JSON.parse(medienJson()) as { virtio: Array<{ datei: string }> };
+    x.virtio = dateien.map(d => e(d, WHCP));
+    return JSON.stringify(x);
+  };
+  it('Realfall 9112: Treiber im DriverStore-Paketordner des eigenen INF sind belegt', () => {
+    const r = bewerteMedienpruefung(mit([
+      R`C:\WINDOWS\system32\DriverStore\FileRepository\vioscsi.inf_amd64_11391c8694cab0ca\vioscsi.sys`,
+      R`C:\WINDOWS\system32\DriverStore\FileRepository\netkvm.inf_amd64_0123456789abcdef\netkvm.sys`,
+      R`C:\Windows\System32\drivers\vioser.sys`,
+    ]), 'win11-ent-eval-de', 'win11');
+    expect(r.ok, r.zeile).toBe(true);
+  });
+  it('fremde Orte bleiben abgelehnt: anderer Paketordner, Programme, Unterordner, kein Hash', () => {
+    for (const d of [
+      R`C:\WINDOWS\system32\DriverStore\FileRepository\boese.inf_amd64_11391c8694cab0ca\vioscsi.sys`,
+      R`C:\Program Files\Virtio-Win\vioscsi.sys`,
+      R`C:\WINDOWS\system32\DriverStore\FileRepository\vioscsi.inf_amd64_11391c8694cab0ca\x\vioscsi.sys`,
+      R`C:\WINDOWS\system32\DriverStore\FileRepository\vioscsi.inf_amd64\vioscsi.sys`,
+      R`D:\Windows\System32\drivers\vioscsi.sys`,
+    ]) {
+      const r = bewerteMedienpruefung(mit([d, R`C:\Windows\System32\drivers\netkvm.sys`, R`C:\Windows\System32\drivers\vioser.sys`]), 'x', 'win11');
+      expect(r.ok, d).toBe(false);
+      expect(r.zeile).toContain('außerhalb von System32');
+    }
+  });
+  it('Gast-Skript sucht den Treiberpfad über die Systemtreiber (Dateiname), alter Ort nur als Rückfall', () => {
+    const t = medienPsPruefung();
+    expect(t).toContain('Get-CimInstance Win32_SystemDriver');
+    expect(t).toContain('[IO.Path]::GetFileName($_) -ieq "$t.sys"');
+    expect(t.indexOf('Win32_SystemDriver')).toBeLessThan(t.indexOf(String.raw`if (-not $f) { $f = "C:\Windows\System32\drivers\$t.sys" }`));
+  });
+});

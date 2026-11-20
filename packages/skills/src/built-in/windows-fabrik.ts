@@ -340,6 +340,11 @@ export const MEDIEN_EXPLORER = 'C:\\Windows\\explorer.exe';
 /** VirtIO-Treiber aus dem VirtIO-ISO (Dateien in System32\drivers); geprüft wird jeder vorhandene, Pflicht sind Platte, Netz und Gast-Agent-Kanal */
 export const VIRTIO_SYS = ['vioscsi', 'viostor', 'netkvm', 'balloon', 'vioser', 'viorng', 'pvpanic', 'fwcfg', 'viofs', 'vioinput', 'viogpudo'];
 export const VIRTIO_SYS_PFLICHT = ['vioscsi', 'netkvm', 'vioser'];
+/**
+ * Ruling R38: erlaubte Orte eines VirtIO-Treibers — System32\drivers oder der Treiberspeicher, dort nur im Paketordner des
+ * gleichnamigen INF (z. B. vioscsi.inf_amd64_11391c8694cab0ca\vioscsi.sys, Realfall 9112)
+ */
+export const VIRTIO_PFAD = /^c:\\windows\\system32\\(drivers\\[a-z0-9]+|driverstore\\filerepository\\([a-z0-9]+)\.inf_amd64_[0-9a-f]{16}\\\2)\.sys$/i;
 /** Signer-Subjekte (X.500, wie Get-AuthenticodeSignature sie liefert); gleiche Ausdrücke im Gast (.NET) und hier */
 export const SIGNER_MICROSOFT = /(^|,\s*)O=Microsoft Corporation(,|$)/i;
 /** VirtIO 0.1.2xx/0.1.30x: Windows-10/11-/Server-Treiber attestation-signiert („Microsoft Windows Hardware Compatibility Publisher“); ältere Red Hat */
@@ -388,7 +393,10 @@ export function medienPsPruefung(): string {
     `$sys = @(${MEDIEN_SYSTEM.map(psLit).join(', ')})`,
     `if ($mp.installationType -ne "Server Core") { $sys += "${MEDIEN_EXPLORER}" }`,
     'foreach ($f in $sys) { $e = Signatur $f; $mp.system += $e; if ($e.status -ne "Valid" -or $e.signer -notmatch $msO) { $mp.fehler += "$f nicht Microsoft-signiert ($($e.status))" } }',
-    `foreach ($t in @(${VIRTIO_SYS.map(psLit).join(', ')})) { $f = "C:\\Windows\\System32\\drivers\\$t.sys"; if (Test-Path -LiteralPath $f) { $e = Signatur $f; $mp.virtio += $e; if ($e.status -ne "Valid" -or $e.signer -notmatch $vioO) { $mp.fehler += "$t.sys nicht gueltig signiert ($($e.status))" } } elseif (@(${VIRTIO_SYS_PFLICHT.map(psLit).join(', ')}) -contains $t) { $mp.fehler += "VirtIO-Treiber $t.sys fehlt" } }`,
+    // Ruling R38 (I8e L6): neuere VirtIO-Treiber laufen aus dem Treiberspeicher (DriverStore\FileRepository) statt aus System32\drivers —
+    // Pfad aus der Dienstkonfiguration aller Systemtreiber über den Dateinamen (Dienstnamen weichen ab, z. B. vioser), sonst der alte Ort
+    '$drv = @(Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue | Where-Object { $_.PathName } | ForEach-Object { $p = ([string]$_.PathName).Trim(\'"\') -replace \'^\\\\\\?\\?\\\\\', \'\'; if ($p -match \'^\\\\SystemRoot\\\\\') { $p = $env:WINDIR + $p.Substring(11) } elseif ($p -match \'^(?i)system32\\\\\') { $p = Join-Path $env:WINDIR $p }; $p })',
+    `foreach ($t in @(${VIRTIO_SYS.map(psLit).join(', ')})) { $f = $drv | Where-Object { [IO.Path]::GetFileName($_) -ieq "$t.sys" } | Select-Object -First 1; if (-not $f) { $f = "C:\\Windows\\System32\\drivers\\$t.sys" }; if (Test-Path -LiteralPath $f) { $e = Signatur $f; $mp.virtio += $e; if ($e.status -ne "Valid" -or $e.signer -notmatch $vioO) { $mp.fehler += "$t.sys nicht gueltig signiert ($($e.status))" } } elseif (@(${VIRTIO_SYS_PFLICHT.map(psLit).join(', ')}) -contains $t) { $mp.fehler += "VirtIO-Treiber $t.sys fehlt" } }`,
     '$mp.ok = ($mp.fehler.Count -eq 0)',
   ].join('\r\n');
 }
@@ -442,7 +450,7 @@ export function bewerteMedienpruefung(roh: string | undefined, name: string, var
   const virtio = liste(x.virtio);
   for (const p of VIRTIO_SYS_PFLICHT) if (!virtio.some(v => basis(v.datei) === `${p}.sys`)) { if (!fehler.some(f => f.includes(`${p}.sys`))) fehler.push(`VirtIO-Treiber ${p}.sys fehlt`); }
   for (const v of virtio) {
-    if (!/^c:\\windows\\system32\\drivers\\[a-z0-9]+\.sys$/i.test(v.datei)) fehler.push(`VirtIO-Eintrag außerhalb von System32\\drivers: ${v.datei}`);
+    if (!VIRTIO_PFAD.test(v.datei)) fehler.push(`VirtIO-Eintrag außerhalb von System32\\drivers und DriverStore\\FileRepository: ${v.datei}`);
     else if (v.status !== 'Valid' || !SIGNER_VIRTIO.test(v.signer)) { if (!fehler.some(f => f.includes(basis(v.datei)))) fehler.push(`${basis(v.datei)} nicht gültig signiert (${v.status})`); }
   }
   if (!liste(x.cloudbase).some(c => c.status === 'Valid' && SIGNER_CLOUDBASE.test(c.signer)) && !fehler.some(f => f.startsWith('Cloudbase-Init'))) fehler.push('Cloudbase-Init nicht gültig von Cloudbase Solutions signiert');
