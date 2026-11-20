@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Klon: erster SSH-Kontakt erst mit bestätigtem Host-Schlüssel (v1914)
+
+- `provision_windows_vm` wartet nach dem Start über den QEMU-Gast-Agenten, bis Cloudbase-Init sich abgeschaltet hat und die Host-Schlüsseldatei der VM genau den von Alfred erzeugten Schlüssel enthält. Erst danach meldet sich Alfred per SSH an.
+- Bisher konnte sshd beim ersten Start eigene Schlüssel erzeugen, bevor Cloudbase-Init Alfreds Schlüssel schrieb. Ein SSH-Kontakt in dieser Lücke sperrte den Fernzugang.
+- Die Prüfung schlägt sicher fehl (fail-closed): Bei einem fremden Schlüssel nach abgeschlossener Einrichtung oder bei einer Zeitüberschreitung gibt es keinen SSH-Kontakt. Nach 5 Minuten ohne Erfolg holt Alfred die Einrichtung einmal über den Gast-Agenten nach.
+
 ### Fixed — Antwort-ISO wird mit der Windows-Bau-VM entfernt (v1913)
 
 - `delete_vm` entfernt bei Alfreds Windows-Bau-VMs auch das zugehörige Antwort-ISO `alfred-antwort-<vmid>.iso`. Es enthält die Antwortdatei mit einem Einmal-Kennwort. Andere VMs bleiben davon unberührt.

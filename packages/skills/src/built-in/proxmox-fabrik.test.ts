@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { sicherungsJobPruefung, neuesterStand, imageAngabe, summeAus, pruefeDownload, vorlagenKonfig, cloudInitBenutzerDaten, snippetDatei, IMPORT_VOLUME, DISTROS, IMAGE_URL, summenUrl, distroAusImage } from './proxmox-fabrik.js';
-import { ProxmoxSkill } from './proxmox.js';
+import { ProxmoxSkill, WIN_SCHLUESSEL_ABSTAND_MS } from './proxmox.js';
 
 // I5 — Vorlagen-Fabrik: Stände/Prüfsummen der Herausgeber, Vorlagen-Konfiguration, Cloud-Init mit eigenem Host-Schlüssel
 const SHA = '04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94';
@@ -480,6 +480,7 @@ describe('v1779 provision_windows_vm auf lokalen Speicher eines anderen Nodes (R
     a.aufgabeOderFehler = async () => undefined;
     a.vmidFrei = async () => true;
     a.cloudInitLoesen = async () => undefined;
+    a.windowsHostSchluesselAbwarten = async () => ({ ok: true, meldung: 'Gast-Agent (Test) bestätigt' });
     px.setVmFabrik({
       vorpruefung: async () => [], hostSchluessel: async () => ({ privat: HOST_PRIV, oeffentlich: HOST_PUB }), alfredSchluessel: async () => ALFRED,
       snippetSchreiben: async () => undefined, snippetEntfernen: async () => undefined, kennwortSichern: async () => 'win-dc01-admin',
@@ -1196,5 +1197,53 @@ describe('Ruling R39 (I8e L6): Antwort-ISO gehört zur Bau-VM', () => {
     const weg = w.ablauf.findIndex(x => x.includes('alfred-antwort-9112.iso'));
     expect(weg).toBeGreaterThanOrEqual(0);
     expect(weg).toBeLessThan(w.ablauf.indexOf('SKRIPT win-antwort'));
+  });
+});
+
+describe('Ruling R40 erster SSH-Kontakt erst nach Alfreds Host-Schlüssel im Windows-Gast (Realfall 869080b1)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const FREMD = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFremderSchluesselVonSshdBeimErstenStartXXXXXXXX';
+  function welt(antworten: Array<{ cb: string; hk: string } | 'fehler'>) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    let n = 0; let nachgeholt = 0;
+    a.gastAusfuehren = async () => {
+      const x = antworten[Math.min(n++, antworten.length - 1)];
+      if (x === 'fehler') throw new Error('QEMU guest agent is not running');
+      return { code: 0, stdout: `CB=${x.cb}\r\nHK=${x.hk}\r\n`, stderr: '' };
+    };
+    const warte = (ms: number) => (a.windowsHostSchluesselAbwarten as (v: number, nd: string, h: string, ms: number, f: () => Promise<string>) => Promise<{ ok: boolean; meldung: string }>)
+      .call(px, 119, 'pve', `${HOST_PUB} alfred`, ms, async () => { nachgeholt++; return 'Exit 0'; });
+    return { warte, aufrufe: () => n, nachgeholt: () => nachgeholt };
+  }
+  it('fertig eingerichtet mit Alfreds Schlüssel: sofort ok', async () => {
+    const r = await welt([{ cb: 'Disabled', hk: `${HOST_PUB} ` }]).warte(60_000);
+    expect(r.ok).toBe(true);
+    expect(r.meldung).toContain('Host-Schlüssel in der VM ist Alfreds');
+  });
+  it('von sshd erzeugter Schlüssel nach abgeschlossener Einrichtung: fail-closed ohne SSH', async () => {
+    const r = await welt([{ cb: 'Disabled', hk: FREMD }]).warte(60_000);
+    expect(r.ok).toBe(false);
+    expect(r.meldung).toContain('NICHT Alfreds');
+  });
+  it('Lücke des Realfalls: erst Agent fehlt, dann sshd-Schlüssel bei laufender Einrichtung, dann Alfreds — wartet statt zu sperren', async () => {
+    vi.useFakeTimers();
+    const w = welt(['fehler', { cb: 'Automatic', hk: FREMD }, { cb: 'Disabled', hk: HOST_PUB }]);
+    const p = w.warte(600_000);
+    await vi.advanceTimersByTimeAsync(WIN_SCHLUESSEL_ABSTAND_MS * 3);
+    const r = await p;
+    expect(r.ok).toBe(true);
+    expect(w.aufrufe()).toBe(3);
+    expect(w.nachgeholt()).toBe(0);
+  });
+  it('Zeitüberschreitung: kein ok, Einrichtung einmal nachgeholt', async () => {
+    vi.useFakeTimers();
+    const w = welt([{ cb: 'Automatic', hk: '' }]);
+    const p = w.warte(400_000);
+    await vi.advanceTimersByTimeAsync(450_000);
+    const r = await p;
+    expect(r.ok).toBe(false);
+    expect(r.meldung).toContain('kein SSH-Kontakt');
+    expect(w.nachgeholt()).toBe(1);
   });
 });

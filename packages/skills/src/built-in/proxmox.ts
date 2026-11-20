@@ -120,6 +120,9 @@ const NUR_IM_CHANGE = new Set<string>(['download_image', 'delete_image', 'create
 /** v1626 — Wartezeit auf den Gast-Agent nach der Bereitstellung (Paketinstallation beim ersten Start braucht etwas) */
 const AGENT_WARTEN_MS = 180_000;
 const AGENT_ABSTAND_MS = 10_000;
+/** Ruling R40 — Warten auf Alfreds Host-Schlüssel im Windows-Gast (Gast-Agent), bevor SSH den ersten Kontakt macht */
+export const WIN_SCHLUESSEL_WARTEN_MS = 1_500_000;
+export const WIN_SCHLUESSEL_ABSTAND_MS = 15_000;
 const VM_ZIEL_AKTIONEN = new Set(['check_windows_media', 'agent_status', 'backups_vm', 'vm_status', 'list_snapshots', 'start_vm', 'shutdown_vm', 'reboot_vm', 'suspend_vm', 'resume_vm', 'stop_vm', 'create_snapshot', 'backup_vm', 'migrate_vm', 'delete_snapshot', 'rollback_snapshot', 'wait_ready']);
 
 type Action =
@@ -2042,6 +2045,10 @@ export class ProxmoxSkill extends Skill {
       }
       await this.aufgabeOderFehler(await this.post<string>(`/nodes/${node}/qemu/${vmid}/status/start`, {}), 120_000, 'Starten');
       schritte.push(`gestartet mit ${ip}; Windows richtet sich ein (Name, Netz, Schlüssel) — mit Neustart`);
+      // Ruling R40 — erst SSH, wenn der Gast-Agent Alfreds Host-Schlüssel in der VM bestätigt (sonst sperrt der erste Kontakt den Zugang)
+      const hk = await this.windowsHostSchluesselAbwarten(vmid, node, hs.oeffentlich, WIN_SCHLUESSEL_WARTEN_MS, () => this.windowsEinrichtungNachholen(vmid, node));
+      schritte.push(hk.meldung);
+      if (!hk.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip: nackt } };
       const a = await this.fabrik.anmelden({ name, ip: nackt, node, vmid, hostSchluessel: hs.oeffentlich, vorlage: tpl, zeitlimitMs: 1_800_000, system: 'windows', nachholen: () => this.windowsEinrichtungNachholen(vmid, node) });
       schritte.push(a.meldung);
       if (!a.ok) return { success: false, error: schritte.join('\n'), data: { vmid, name, node, ip: nackt } };
@@ -2641,6 +2648,36 @@ export class ProxmoxSkill extends Skill {
       }
     }
     return 'nach 12 min noch nicht fertig';
+  }
+
+  /**
+   * Ruling R40 (Realfall L6-C 869080b1, 20.11.): sshd steht in der Vorlage auf Automatisch und erzeugt beim ersten Start eigene
+   * Host-Schlüssel, bevor Cloudbase-Init Alfreds Schlüssel schreibt. Der erste SSH-Kontakt in dieser Lücke sperrte den Fernzugang.
+   * Deshalb über den Gast-Agenten (Kanal über Proxmox) warten, bis Cloudbase-Init sich abgeschaltet hat UND die öffentliche
+   * Host-Schlüsseldatei genau Alfreds Schlüssel enthält. Nach 5 min ohne Erfolg einmal die Einrichtung nachholen (probe-win25b).
+   * Fail-closed: anderer Schlüssel nach abgeschlossener Einrichtung oder Zeitüberschreitung → kein SSH-Kontakt.
+   */
+  private async windowsHostSchluesselAbwarten(vmid: number, node: string, hostOeff: string, ms: number, nachholen: () => Promise<string>): Promise<{ ok: boolean; meldung: string }> {
+    const start = Date.now();
+    const soll = hostOeff.trim().split(/\s+/).slice(0, 2).join(' ');
+    const befehl = '$ErrorActionPreference="Stop"; Write-Output ("CB=" + (Get-Service cloudbase-init).StartType); $p="C:\\ProgramData\\ssh\\ssh_host_ed25519_key.pub"; if (Test-Path -LiteralPath $p) { Write-Output ("HK=" + (Get-Content -LiteralPath $p -Raw).Trim()) } else { Write-Output "HK=" }';
+    let letzte = ''; let nachgeholt = '';
+    while (Date.now() - start < ms) {
+      const r = await this.gastAusfuehren(node, vmid, ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', befehl], undefined, 60_000)
+        .catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+      if (r.code === 0) {
+        const zeilen = r.stdout.split(/\r?\n/).map(z => z.trim());
+        const cb = zeilen.find(z => z.startsWith('CB='))?.slice(3) ?? '';
+        const ist = (zeilen.find(z => z.startsWith('HK='))?.slice(3) ?? '').split(/\s+/).slice(0, 2).join(' ');
+        const s = Math.round((Date.now() - start) / 1000);
+        if (cb === 'Disabled' && ist === soll) return { ok: true, meldung: `Gast-Agent bestätigt nach ${s} s: Cloudbase-Init fertig, Host-Schlüssel in der VM ist Alfreds${nachgeholt ? ` (Einrichtung nachgeholt: ${nachgeholt})` : ''}` };
+        if (cb === 'Disabled' && ist && ist !== soll) return { ok: false, meldung: `Gast-Agent: Cloudbase-Init fertig, aber der Host-Schlüssel in der VM ist NICHT Alfreds (${ist.slice(0, 40)}…) — kein SSH-Kontakt` };
+        letzte = `Cloudbase-Init ${cb || '?'}, Host-Schlüssel ${!ist ? 'fehlt' : ist === soll ? 'passt' : 'noch der von sshd erzeugte'}`;
+      } else letzte = (r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? '';
+      if (!nachgeholt && Date.now() - start > 300_000) nachgeholt = await nachholen().catch((e: Error) => `Fehler: ${e.message.slice(0, 160)}`);
+      await new Promise(res => setTimeout(res, WIN_SCHLUESSEL_ABSTAND_MS));
+    }
+    return { ok: false, meldung: `Gast-Agent bestätigt Alfreds Host-Schlüssel nach ${Math.round(ms / 1000)} s nicht (${letzte.slice(0, 160)})${nachgeholt ? `; Nachholen: ${nachgeholt}` : ''} — kein SSH-Kontakt` };
   }
 
   private async warteAufAgent(vmid: number, node: string, ms: number): Promise<{ ok: boolean; meldung: string }> {
