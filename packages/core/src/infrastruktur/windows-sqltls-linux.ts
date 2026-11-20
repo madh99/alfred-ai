@@ -85,7 +85,8 @@ export function pruefeFremdAusstellung(o: Record<string, unknown>): FremdAusstel
   return { cn, sans: soll, csr_sha256: sha, csrPem };
 }
 
-const istVerweis = (v: unknown): boolean => typeof v === 'string' && v.includes('{{');
+// Ruling R29 — die Change-Planprüfung (change-schritte verweise/ersetzeVerweise) ersetzt {{…}} vor pruefeEingabe durch den Wert „verweis“
+const istVerweis = (v: unknown): boolean => typeof v === 'string' && (v.includes('{{') || v.trim() === 'verweis');
 const CSR_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /**

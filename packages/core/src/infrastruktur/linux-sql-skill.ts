@@ -338,7 +338,8 @@ function kontoTresorName(input: Record<string, unknown>): string {
 // ── Parameter ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const ganzzahl = (v: unknown): unknown => (typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v);
-const istVerweis = (v: unknown) => typeof v === 'string' && v.includes('{{');
+// Ruling R29 — die Change-Planprüfung (change-schritte verweise/ersetzeVerweise) ersetzt {{…}} vor pruefeEingabe durch den Wert „verweis“
+const istVerweis = (v: unknown) => typeof v === 'string' && (v.includes('{{') || v.trim() === 'verweis');
 
 function plattenParameter(input: Record<string, unknown>): PlattenParameter {
   const roh = Array.isArray(input.platten) ? input.platten : [];

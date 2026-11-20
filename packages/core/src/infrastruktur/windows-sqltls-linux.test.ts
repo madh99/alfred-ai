@@ -9,7 +9,8 @@ import {
 import { vorlageAnlegenSkript, vorlageEntfernenSkript } from './windows-codesignatur.js';
 import { genehmigenSkript, pruefeGenehmigung } from './windows-sqltls.js';
 import { WindowsPkiSkill } from './windows-pki-skill.js';
-import { aktionsArt } from './change-schritte.js';
+import { aktionsArt, pruefeChangePlan, type PruefKontext } from './change-schritte.js';
+import { LinuxSqlSkill } from './linux-sql-skill.js';
 
 // Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
 afterEach(() => new Promise<void>(r => setImmediate(r)));
@@ -289,4 +290,35 @@ describe.skipIf(!POWERSHELL)('I8e Etappe 3 Task 3 — PowerShell-Parser', { time
     expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
     for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
+});
+
+// Ruling R29 — Realfall L4 20.11.: die Change-Planprüfung ersetzt {{…}} vor pruefeEingabe durch „verweis“; die Bausteine erkannten
+// Verweise nur an „{{“ und wiesen csr_sha256/zert_base64 als ungültig ab (Plan nie speicherbar). Durch die echte Planprüfung.
+describe('R29 Verweise durch die Change-Planprüfung (tls_anfordern → fremd_csr_ausstellen → tls_einspielen)', () => {
+  const pki = new WindowsPkiSkill({ skript: async () => ({ code: 1, stdout: '', stderr: '' }) });
+  const sql = new LinuxSqlSkill({ skript: async () => ({ code: 1, stdout: '', stderr: '' }) } as never);
+  const SKILLS: Record<string, unknown> = { windows_pki: pki, linux_sql: sql };
+  const kontext: PruefKontext = { skill: n => SKILLS[n] as never, asset: k => ({ id: `a-${k}`, name: k }) as never, changes: [], jetzt: new Date('2026-11-20T10:00:00Z') };
+  const ROOT = 'f6d2eff8d30cef900c2e0c26c5b86ed462aee4fc68eb3ea947a73ca1ff0aa9b8';
+  const plan = (einspielen: Record<string, unknown> = {}) => ({
+    titel: 'L4 TLS sqllnx01', begruendung: 'Regressionstest R29 für Verweise in der Planprüfung', typ: 'normal', risiko: 'mittel', ausfallMinuten: 0, betroffen: ['sqllnx01', 'pkiiss01'],
+    schritte: [
+      { titel: 'Anforderung', art: 'aktion', skill: 'linux_sql', aktion: 'tls_anfordern', parameter: { zugang: 'sqllnx01' }, zeitlimitS: 600, pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnx01' }, erwartet: 'Dienst aktiv' }, rueckweg: { keiner: 'nur Schlüssel und Anforderung' } },
+      { titel: 'Ausstellen', art: 'aktion', skill: 'windows_pki', aktion: 'fremd_csr_ausstellen', parameter: { zugang: 'pkiiss01', cn: 'sqllnx01.ad.3033.at', sans: SANS01, csr_base64: '{{schritt1.csrBase64}}', csr_sha256: '{{schritt1.csrSha256}}' }, zeitlimitS: 900, pruefung: { typ: 'skill', skill: 'windows_pki', aktion: 'status', parameter: { zugang: 'pkiiss01' }, erwartet: 'AD3033' }, rueckweg: { keiner: 'Widerruf ist ein eigener Vorgang' } },
+      { titel: 'Einspielen', art: 'aktion', skill: 'linux_sql', aktion: 'tls_einspielen', parameter: { zugang: 'sqllnx01', zert_base64: '{{schritt2.zertBase64}}', issuing_base64: '{{schritt2.issuingBase64}}', root_base64: '{{schritt2.rootBase64}}', erwartet_root_sha256: ROOT, ...einspielen }, zeitlimitS: 600, pruefung: { typ: 'skill', skill: 'linux_sql', aktion: 'status', parameter: { zugang: 'sqllnx01' }, erwartet: 'TLS gültig bis' }, rueckweg: { skill: 'linux_sql', aktion: 'tls_entfernen', parameter: { zugang: 'sqllnx01' } } },
+    ],
+  });
+  const eingabe = (f: string[]) => f.filter(x => /csr_sha256|csr_base64|zert_base64|issuing_base64|root_base64|erwartet_root_sha256|DER/.test(x));
+
+  it('Verweise auf csrSha256/csrBase64 und zertBase64/issuingBase64/rootBase64 bestehen die Eingabeprüfung', () => {
+    expect(eingabe(pruefeChangePlan(plan(), kontext).fehler)).toEqual([]);
+  });
+  it('die Root bleibt ein fester Wert: Verweis oder ungültiger Wert werden weiter abgewiesen', () => {
+    expect(eingabe(pruefeChangePlan(plan({ erwartet_root_sha256: '{{schritt2.rootSha256}}' }), kontext).fehler).join(' ')).toContain('erwartet_root_sha256');
+    expect(eingabe(pruefeChangePlan(plan({ erwartet_root_sha256: 'abc' }), kontext).fehler).join(' ')).toContain('erwartet_root_sha256');
+  });
+  it('feste ungültige Werte werden weiter abgewiesen', () => {
+    const p = plan(); (p.schritte[1]!.parameter as Record<string, unknown>).csr_sha256 = 'abc';
+    expect(eingabe(pruefeChangePlan(p, kontext).fehler).join(' ')).toContain('csr_sha256');
+  });
 });

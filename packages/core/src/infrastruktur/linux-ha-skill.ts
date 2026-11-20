@@ -44,7 +44,8 @@ export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlege
 /** Task 4 — fencing_pruefen hat keinen Rückweg; nur mit genau diesem Grund (change-schritte.ts, OHNE_RUECKWEG_NUR_MIT_GRUND) */
 export const FENCING_OHNE_RUECKWEG_GRUND = 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
-const istVerweis = (v: unknown) => typeof v === 'string' && v.includes('{{');
+// Ruling R29 — die Change-Planprüfung (change-schritte verweise/ersetzeVerweise) ersetzt {{…}} vor pruefeEingabe durch den Wert „verweis“
+const istVerweis = (v: unknown) => typeof v === 'string' && (v.includes('{{') || v.trim() === 'verweis');
 
 // ── Status ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
