@@ -1107,3 +1107,42 @@ describe('Ruling R36 (I8e L6) build_windows_template win11-pro', () => {
     expect((await welt([de, basis.virtio_iso]).px.execute({ ...basis, variante: 'win11', iso: de }, imChange)).error).toBeTruthy();
   });
 });
+
+describe('Ruling R37 (I8e L6): windows_build_log liest die Statusdatei', () => {
+  function bau(dateien: Record<string, string | Error>) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    a.getAllVms = async () => [{ vmid: 9110, name: 'win11-ent-eval', node: 'pve', type: 'qemu', status: 'running' }];
+    a.get = async (p: string) => {
+      const m = /agent\/file-read\?file=(.*)$/.exec(p);
+      if (m) { const d = dateien[decodeURIComponent(m[1])]; if (d === undefined || d instanceof Error) throw d ?? new Error('HTTP 500 file not found'); return { content: d }; }
+      if (p.endsWith('/config')) return { description: 'Windows-Vorlage von Alfred (I8a): win11, Abbild 1' };
+      return {};
+    };
+    a.medienAbholen = async () => undefined;
+    return px;
+  }
+  const TRANSKRIPT = String.raw`C:\Windows\Temp\alfred-setup.log`;
+  const STATUS = String.raw`C:\Windows\Temp\alfred-setup-status.log`;
+  const GESPERRT = new Error(`HTTP 500 Agent error: failed to open file '${TRANSKRIPT}': The process cannot access the file because`);
+
+  it('Transkript gesperrt: Marken kommen aus der Statusdatei (mit BOM und Zeitstempel)', async () => {
+    const r = await bau({
+      [STATUS]: '\uFEFF2026-11-20T18:10:00 ALFRED: Gast-Werkzeuge\r\n2026-11-20T18:12:00 ALFRED: OpenSSH (Windows Update, hoechstens 90 min)\r\n',
+      [TRANSKRIPT]: GESPERRT,
+    }).execute({ action: 'windows_build_log', vmid: 9110 }, {} as never);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain('2026-11-20T18:12:00 ALFRED: OpenSSH');
+    expect(r.display).toContain('2026-11-20T18:10:00 ALFRED: Gast-Werkzeuge');
+    expect(r.display).toContain('(Transkript während des Laufs gesperrt)');
+  });
+
+  it('älterer Bau ohne Statusdatei: Marken aus dem Transkript; beides unlesbar = Fehler', async () => {
+    const alt = await bau({ [TRANSKRIPT]: 'Rauschen\r\nALFRED: Cloudbase-Init\r\n' }).execute({ action: 'windows_build_log', vmid: 9110 }, {} as never);
+    expect(alt.success, alt.error).toBe(true);
+    expect(alt.display).toContain('ALFRED: Cloudbase-Init');
+    const nichts = await bau({ [TRANSKRIPT]: GESPERRT }).execute({ action: 'windows_build_log', vmid: 9110 }, {} as never);
+    expect(nichts.success).toBe(false);
+    expect(nichts.error).toContain('Protokoll nicht lesbar');
+  });
+});

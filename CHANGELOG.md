@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Vorlagenbau läuft ohne Eingriff durch (v1911)
+
+- Die Eingabe für „Press any key to boot from CD or DVD“ wird nur noch etwa 12 Sekunden nach dem Start gesendet statt 30 Sekunden. Spätere Tastendrücke erreichten das bereits gestartete Setup und lösten dort „Abbrechen“ aus; die Installation blieb an der Rückfrage stehen.
+- Die Nachinstallation des OpenSSH-Servers aus Windows Update läuft mit einem Zeitlimit von 90 Minuten. Bei Zeitüberschreitung meldet das Einrichtungsskript einen Fehler, statt unbegrenzt zu warten. Sysprep läuft dann nicht.
+- Das Einrichtungsskript schreibt seine Schrittmarken zusätzlich in `C:\Windows\Temp\alfred-setup-status.log`. `windows_build_log` liest den Fortschritt daraus auch während des Laufs; das Transkript ist in dieser Zeit gesperrt.
+- Die Planungshinweise sehen für das Warten auf das Ende des Baus 3 Stunden statt 2 Stunden vor.
+
 ### Added — Windows-Vorlagen: Signaturprüfung der Medien und Windows 11 Pro (v1910)
 
 - Der Bau einer Windows-Vorlage prüft vor dem Sysprep im Gast: Secure Boot aktiv, Kernsystemdateien mit gültiger Microsoft-Signatur, VirtIO-Treiber signiert, Cloudbase-Init-Paket vor der Installation mit gültiger Signatur des Herstellers. Das Ergebnis wird an der VM festgehalten; nur bei bestandener Prüfung läuft Sysprep, und `finish_windows_template` schließt nur mit festgehaltenem, bestandenem Ergebnis ab („MEDIEN_SIGNIERT …“). Fehlt das Ergebnis oder ist es unlesbar, entsteht keine Vorlage.

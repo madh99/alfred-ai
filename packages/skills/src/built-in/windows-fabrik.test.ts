@@ -7,7 +7,7 @@ import {
   evalLinks, buildAusUrl, neuesteVirtio, isoDateiname, waehleAbbild, autounattend, sysprepUnattend, setupSkript, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN,
   windowsBauKonfig, knotenJson, zufallsKennwort, serverSeiten, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, CLOUDBASE_CONF, KNOTEN_INSPEKTION, KNOTEN_ANTWORT_ISO, type WimAbbild,
   medienPsPruefung, medienPruefSkript, bewerteMedienpruefung, medienAusBeschreibung, MEDIEN_DATEI, MEDIEN_MARKE, VIRTIO_SYS_PFLICHT,
-  WIN_VARIANTEN, virtioOrdner, WIN11_PRO_GVLK, lizenzHinweis, win11ProIso,
+  WIN_VARIANTEN, virtioOrdner, WIN11_PRO_GVLK, lizenzHinweis, win11ProIso, SETUP_STATUS_DATEI, OPENSSH_ZEITLIMIT_S, BOOT_TASTEN,
 } from './windows-fabrik.js';
 
 // Echte Anker aus dem Evaluation Center (01.11.2026)
@@ -183,7 +183,7 @@ describe('Ruling R35 (I8e L6) — Medienprüfung', () => {
       // fail-closed: bei Fehlschlag Ergebnis schreiben und ohne Installation enden
       expect(t.slice(msi, t.indexOf('msiexec.exe'))).toContain('MpFehlschlag');
       const pruef = t.indexOf('Confirm-SecureBootUEFI');
-      expect(pruef).toBeGreaterThan(t.indexOf('ALFRED: Aufraeumen'));
+      expect(pruef).toBeGreaterThan(t.indexOf('Marke "Aufraeumen"'));
       expect(t.indexOf(medienPsPruefung())).toBeGreaterThan(0);
       expect(t).toContain(MEDIEN_DATEI);
       const warten = t.indexOf(`Test-Path -LiteralPath $mpAbgeholt`);
@@ -337,5 +337,32 @@ describe('Ruling R36 (I8e L6) — Variante win11-pro', () => {
   it('R35 gilt auch für win11-pro (explorer.exe Pflicht, Installationsart Client)', () => {
     expect(bewerteMedienpruefung(medienJson(), 'w11pro', 'win11-pro').ok).toBe(true);
     expect(bewerteMedienpruefung(medienJson({ ohne: ['explorer.exe'] }), 'w11pro', 'win11-pro').ok).toBe(false);
+  });
+});
+
+describe('Ruling R37 (I8e L6): Bau ohne Hänger', () => {
+  it('Enter nur im Fenster der Boot-Abfrage (höchstens 15 s), nicht mehr 30 s lang', () => {
+    expect(BOOT_TASTEN.anzahl * BOOT_TASTEN.abstandMs).toBeLessThanOrEqual(15_000);
+    expect(BOOT_TASTEN.anzahl * BOOT_TASTEN.abstandMs).toBeGreaterThanOrEqual(8_000);
+  });
+  it('Marken gehen zusätzlich zeilenweise in die Statusdatei — auch die Fehler aus trap und Medienprüfung', () => {
+    for (const v of WIN_VARIANTEN) {
+      const t = setupSkript({ variante: v });
+      expect(t).toContain(`$alfredStatus = "${SETUP_STATUS_DATEI}"`);
+      expect(SETUP_STATUS_DATEI).toBe(String.raw`C:\Windows\Temp\alfred-setup-status.log`);
+      expect(t).toContain('Add-Content -LiteralPath $alfredStatus');
+      expect(t.indexOf('function Marke')).toBeLessThan(t.indexOf('trap {'));
+      expect(t).not.toContain('Write-Output "ALFRED: FEHLER');
+      expect(t).toContain('trap { Marke "FEHLER');
+      expect(t).toContain('Marke "MEDIENPRUEFUNG_FEHLER');
+    }
+  });
+  it('OpenSSH aus Windows Update mit Zeitlimit — Zeitüberschreitung ist ein Fehler vor sysprep', () => {
+    const t = setupSkript({ variante: 'win11' });
+    expect(t).toContain(`Wait-Job -Job $job -Timeout ${OPENSSH_ZEITLIMIT_S}`);
+    expect(t).toMatch(/Stop-Job -Job \$job; throw "OpenSSH-Server/);
+    expect(t.indexOf('Wait-Job')).toBeLessThan(t.indexOf('sysprep.exe'));
+    // nur ASCII in den Marken (PowerShell 5.1 liest die Datei ohne BOM als ANSI)
+    expect(t).toMatch(/Marke "OpenSSH \(Windows Update, hoechstens 90 min\)"/);
   });
 });

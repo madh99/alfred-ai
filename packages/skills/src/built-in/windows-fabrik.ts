@@ -245,7 +245,11 @@ export function setupSkript(o: { variante: WinVariante }): string {
   return [
     '$ErrorActionPreference = "Stop"',
     'Start-Transcript -Path C:\\Windows\\Temp\\alfred-setup.log -Append',
-    'trap { Write-Output "ALFRED: FEHLER $($_.Exception.Message)"; Stop-Transcript; exit 1 }',
+    // Ruling R37 (I8e L6): das Transkript hält die Datei offen (für den Gast-Agenten gesperrt) — Marken zusätzlich zeilenweise in eine
+    // eigene Statusdatei, die windows_build_log jederzeit lesen kann
+    `$alfredStatus = "${SETUP_STATUS_DATEI}"`,
+    'function Marke($t) { Write-Output "ALFRED: $t"; Add-Content -LiteralPath $alfredStatus -Value "$(Get-Date -Format s) ALFRED: $t" -Encoding UTF8 }',
+    'trap { Marke "FEHLER $($_.Exception.Message)"; Stop-Transcript; exit 1 }',
     'function Laufwerk($datei) { foreach ($d in "DEFGHIJK".ToCharArray()) { if (Test-Path "$($d):\\$datei") { return "$($d):" } } throw "nicht gefunden: $datei" }',
     '$antwort = Laufwerk "alfred-setup.ps1"',
     '$virtio = Laufwerk "virtio-win-guest-tools.exe"',
@@ -255,23 +259,29 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mpDatei) | Out-Null',
     'Remove-Item -LiteralPath $mpDatei,$mpAbgeholt -Force -ErrorAction SilentlyContinue',
     'function MpSchreiben { [IO.File]::WriteAllText($mpDatei, (ConvertTo-Json -InputObject $mp -Depth 5 -Compress), (New-Object Text.UTF8Encoding $false)) }',
-    'function MpFehlschlag { $mp.ok = $false; MpSchreiben; Write-Output "ALFRED: MEDIENPRUEFUNG_FEHLER $($mp.fehler -join "; ")"; Stop-Transcript; exit 1 }',
-    'Write-Output "ALFRED: Gast-Werkzeuge"',
+    'function MpFehlschlag { $mp.ok = $false; MpSchreiben; Marke "MEDIENPRUEFUNG_FEHLER $($mp.fehler -join "; ")"; Stop-Transcript; exit 1 }',
+    'Marke "Gast-Werkzeuge"',
     'Start-Process -FilePath "$virtio\\virtio-win-guest-tools.exe" -ArgumentList "/install","/quiet","/norestart" -Wait',
     ...(win11 ? [
       // Store-Apps dürfen sich vor sysprep nicht für den Bau-Benutzer aktualisieren (sysprep scheitert sonst an benutzergebundenen Paketen)
       'New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\WindowsStore" -Force | Out-Null',
       'Set-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\WindowsStore" -Name AutoDownload -Value 2 -Type DWord',
     ] : []),
-    'Write-Output "ALFRED: OpenSSH"',
+    `Marke "OpenSSH (Windows Update, hoechstens ${OPENSSH_ZEITLIMIT_S / 60} min)"`,
     '$cap = Get-WindowsCapability -Online -Name "OpenSSH.Server*" | Select-Object -First 1',
-    'if ($cap.State -ne "Installed") { for ($i = 0; $i -lt 20; $i++) { try { Add-WindowsCapability -Online -Name $cap.Name | Out-Null; break } catch { Start-Sleep -Seconds 30 } } }',
+    // Ruling R37 (I8e L6): Add-WindowsCapability lädt aus Windows Update und kann ohne Fehler hängen — eigener Job mit Zeitlimit,
+    // Zeitüberschreitung = FEHLER (Marke, kein sysprep, die VM bleibt an)
+    'if ($cap.State -ne "Installed") {',
+    '  $job = Start-Job -ArgumentList $cap.Name -ScriptBlock { param($n) for ($i = 1; $i -le 20; $i++) { try { Add-WindowsCapability -Online -Name $n | Out-Null; return } catch { Start-Sleep -Seconds 30 } } }',
+    `  if (-not (Wait-Job -Job $job -Timeout ${OPENSSH_ZEITLIMIT_S})) { Stop-Job -Job $job; throw "OpenSSH-Server: Add-WindowsCapability nach ${OPENSSH_ZEITLIMIT_S / 60} min nicht fertig (Windows Update erreichbar?)" }`,
+    '  Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null',
+    '}',
     'if ((Get-WindowsCapability -Online -Name $cap.Name).State -ne "Installed") { throw "OpenSSH-Server nicht installiert" }',
     'New-Item -Path "HKLM:\\SOFTWARE\\OpenSSH" -Force | Out-Null',
     'Set-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value "$env:WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"',
     'Set-Service -Name sshd -StartupType Automatic',
     ...SSH_FIREWALL,
-    'Write-Output "ALFRED: Cloudbase-Init"',
+    'Marke "Cloudbase-Init"',
     // Ruling R35 (I8e L6): MSI erst nach gültiger Signatur von Cloudbase Solutions installieren — sonst Ergebnis schreiben, kein sysprep
     ...medienPsCloudbaseMsi('"$antwort\\CloudbaseInitSetup_x64.msi"'),
     'if ($mp.fehler.Count -gt 0) { MpFehlschlag }',
@@ -283,21 +293,21 @@ export function setupSkript(o: { variante: WinVariante }): string {
     'Copy-Item "$antwort\\cloudbase-init-unattend.conf" "$cb\\conf\\cloudbase-init-unattend.conf" -Force',
     'Copy-Item "$antwort\\alfred-sysprep.xml" "$cb\\conf\\alfred-sysprep.xml" -Force',
     'Set-Service -Name cloudbase-init -StartupType Automatic',
-    'Write-Output "ALFRED: Aufraeumen"',
+    'Marke "Aufraeumen"',
     'powercfg /hibernate off',
     'Get-ChildItem "C:\\ProgramData\\ssh\\ssh_host_*" -ErrorAction SilentlyContinue | Remove-Item -Force',
     'Remove-Item "C:\\Windows\\Panther\\unattend.xml","C:\\Windows\\Panther\\Unattend\\unattend.xml" -Force -ErrorAction SilentlyContinue',
     'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" -Name DefaultPassword,AutoAdminLogon -ErrorAction SilentlyContinue',
     // Ruling R35 (I8e L6): vor sysprep prüfen; nur bestanden UND von Alfred abgeholt (Ergebnis in der VM-Beschreibung) geht es weiter.
     // Fehlschlag oder keine Abholung: kein sysprep, die VM bleibt an (finish_windows_template meldet das Ergebnis)
-    'Write-Output "ALFRED: Medienpruefung"',
+    'Marke "Medienpruefung"',
     medienPsPruefung(),
     'if (-not $mp.ok) { MpFehlschlag }',
     'MpSchreiben',
-    'Write-Output "ALFRED: Medienpruefung bestanden, warte auf Abholung durch Alfred"',
+    'Marke "Medienpruefung bestanden, warte auf Abholung durch Alfred"',
     '$bis = (Get-Date).AddHours(6)',
-    'while (-not (Test-Path -LiteralPath $mpAbgeholt)) { if ((Get-Date) -gt $bis) { Write-Output "ALFRED: FEHLER Medienpruefung nicht abgeholt"; Stop-Transcript; exit 1 }; Start-Sleep -Seconds 10 }',
-    'Write-Output "ALFRED: sysprep"',
+    'while (-not (Test-Path -LiteralPath $mpAbgeholt)) { if ((Get-Date) -gt $bis) { Marke "FEHLER Medienpruefung nicht abgeholt"; Stop-Transcript; exit 1 }; Start-Sleep -Seconds 10 }',
+    'Marke "sysprep"',
     'Stop-Transcript',
     '& "$env:WINDIR\\System32\\Sysprep\\sysprep.exe" /generalize /oobe /shutdown /quiet "/unattend:$cb\\conf\\alfred-sysprep.xml"',
     '',
@@ -310,6 +320,15 @@ export function setupSkript(o: { variante: WinVariante }): string {
 // Authenticode-/Katalogsignatur (Get-AuthenticodeSignature prüft Katalogsignaturen mit), Cloudbase-Init vom Herausgeber signiert.
 // Eine Prüflogik für beide Wege: vor sysprep im Einrichtungsskript und lesend auf jeder laufenden Windows-VM (check_windows_media).
 
+/** Ruling R37 (I8e L6): Marken des Einrichtungsskripts, zeilenweise geschrieben und für den Gast-Agenten lesbar (das Transkript ist gesperrt) */
+export const SETUP_STATUS_DATEI = 'C:\\Windows\\Temp\\alfred-setup-status.log';
+/** Ruling R37: Zeitlimit für die OpenSSH-Nachinstallation aus Windows Update (Realfall 9110: weit über 30 min) */
+export const OPENSSH_ZEITLIMIT_S = 5400;
+/**
+ * Ruling R37: Enter für „Press any key to boot from CD or DVD“ nur im Fenster der Boot-Abfrage (etwa 12 s nach dem Start).
+ * Länger trifft es das schon laufende Setup — dort hat „Abbrechen“ den Fokus (Realfall 9110/9111).
+ */
+export const BOOT_TASTEN = { anzahl: 8, abstandMs: 1500 } as const;
 /** Ergebnisdatei der Bau-VM und Freigabe-Marke (schreibt Alfred erst, nachdem das Ergebnis in der VM-Beschreibung steht) */
 export const MEDIEN_DATEI = 'C:\\Windows\\Setup\\Alfred\\medienpruefung.json';
 export const MEDIEN_ABGEHOLT = 'C:\\Windows\\Setup\\Alfred\\medienpruefung.abgeholt';
