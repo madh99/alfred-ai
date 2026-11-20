@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Planung: Schrittverweise bei TLS-Bausteinen für SQL Server auf Linux (v1908)
+
+- Die Planprüfung von Changes ersetzt Verweise auf Ergebnisse früherer Schritte (`{{schrittN.feld}}`) vor der Eingabeprüfung der Bausteine durch einen Stellvertreter. `windows_pki fremd_csr_ausstellen`, `linux_sql` und `linux_ha` erkannten diesen Stellvertreter nicht als Verweis und lehnten `csr_sha256` sowie `zert_base64`/`issuing_base64`/`root_base64` als ungültig ab, ein TLS-Change für die Linux-SQL-Server ließ sich dadurch nicht speichern. Die Bausteine erkennen den Stellvertreter jetzt; feste Werte werden unverändert geprüft, die erwartete Root bleibt ein fester Pflichtwert. Ein Test prüft die Kette Anforderung → Ausstellung → Einspielen durch die echte Planprüfung.
+
 ### Fixed — Linux-SQL/HA: Paketinstallation ohne ungeplante Dienstneustarts (v1907)
 
 - Paketinstallationen der Bausteine `linux_sql` (Installation, AD-Beitritt, Sicherung) und `linux_ha` laufen jetzt mit `NEEDRESTART_MODE=l` und `NEEDRESTART_SUSPEND=1`. Bisher konnte needrestart nach `apt-get install` den SQL-Server-Dienst ungeplant neu starten (Realfall: AD-Beitritt eines sekundären Replikats startete dessen SQL Server neu, der primäre Knoten fiel dabei kurz aus und Pacemaker übernahm). Neustarts laufen ausschließlich rollierend und geplant über den Change. Ein Test erzwingt die Einstellung für jede Installationsstelle.
