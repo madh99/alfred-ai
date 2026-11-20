@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Antwort-ISO wird mit der Windows-Bau-VM entfernt (v1913)
+
+- `delete_vm` entfernt bei Alfreds Windows-Bau-VMs auch das zugehörige Antwort-ISO `alfred-antwort-<vmid>.iso`. Es enthält die Antwortdatei mit einem Einmal-Kennwort. Andere VMs bleiben davon unberührt.
+- Vor einem Neubau auf einer freien VMID entfernt `build_windows_template` ein verwaistes Antwort-ISO unter dieser VMID. Bisher brach der Neubau nach einem abgebrochenen Bau mit „Antwort-ISO gibt es schon“ ab.
+
 ### Fixed — Medienprüfung erkennt VirtIO-Treiber im Treiberspeicher (v1912)
 
 - Neuere VirtIO-Treiber laufen unter Windows 11 direkt aus `System32\DriverStore\FileRepository` statt aus `System32\drivers`. Die Medienprüfung meldete sie deshalb als fehlend, und der Vorlagenbau hielt korrekt, aber unnötig an.

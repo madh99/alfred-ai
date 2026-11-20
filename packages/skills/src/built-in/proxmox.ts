@@ -1813,6 +1813,10 @@ export class ProxmoxSkill extends Skill {
     const regional = { sprache };
     const b64 = (t: string) => Buffer.from(t, 'utf-8').toString('base64');
     const antwort = `local:iso/alfred-antwort-${vmid}.iso`;
+    // Ruling R39 (I8e L6): die VMID ist nachweislich frei — ein Antwort-ISO unter ihrem Namen stammt von einem abgebrochenen Bau
+    // (Realfall 049f6c32: „Antwort-ISO gibt es schon“) und gehört keiner VM; vor dem Neubau entfernen
+    const verwaist = await this.deleteIso({ volid: antwort, node });
+    if (!verwaist.success) return { success: false, error: `verwaistes ${antwort} nicht entfernbar: ${verwaist.error ?? '?'}` };
     const r = knotenJson<{ iso: string; cloudbaseSha256: string; treiber: string[] }>(await this.fabrik.knotenSkript(node, 'win-antwort', JSON.stringify({
       ziel: antwort, virtio: virtioIso, ordner, treiber: VIRTIO_TREIBER, cloudbase,
       dateien: {
@@ -2663,8 +2667,9 @@ export class ProxmoxSkill extends Skill {
     if (!vm) return { success: true, data: { vmid, schonWeg: true }, display: `VMID ${vmid} gibt es nicht (mehr)` };
     if (vm.name !== name) return { success: false, error: `VMID ${vmid} heißt „${vm.name}“, nicht „${name}“ — nichts gelöscht` };
     if (vm.type !== 'qemu') return { success: false, error: 'delete_vm gilt nur für QEMU-VMs' };
-    const cfg = await this.get<{ protection?: number }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
+    const cfg = await this.get<{ protection?: number; description?: string }>(`/nodes/${vm.node}/qemu/${vmid}/config`);
     if (cfg.protection) return { success: false, error: `${name} ist geschützt (protection) — nichts gelöscht` };
+    const bauVm = String(cfg.description ?? '').startsWith('Windows-Vorlage von Alfred (I8a)');
     const st = await this.get<{ status?: string }>(`/nodes/${vm.node}/qemu/${vmid}/status/current`);
     if (st.status === 'running') {
       if (input.force_stop !== true) return { success: false, error: `${name} läuft — erst herunterfahren (oder force_stop)` };
@@ -2696,7 +2701,14 @@ export class ProxmoxSkill extends Skill {
     // gehören dann dem weiterlaufenden Original und bleiben (Rückweg eines Restoretests hätte sonst das Original abgemeldet)
     const nurVmid = (await this.getAllVms().catch(() => [])).some(v => v.vmid !== vmid && v.name === name);
     const ab = this.fabrik ? await this.fabrik.abmelden({ name, node: vm.node, vmid, ...(nurVmid ? { nurVmid } : {}) }).catch((e: Error) => `Abmelden fehlgeschlagen: ${e.message}`) : '';
-    return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${hinweis}${ab ? `. ${ab}` : ''}` };
+    // Ruling R39 (I8e L6): Alfreds Windows-Bau-VM — ihr Antwort-ISO (Antwortdatei mit Einmal-Kennwort) gehört zu ihr und geht mit
+    let antwortIso = '';
+    if (bauVm) {
+      const volid = `local:iso/alfred-antwort-${vmid}.iso`;
+      const r = await this.deleteIso({ volid, node: vm.node }).catch((e: Error) => ({ success: false, error: e.message } as SkillResult));
+      antwortIso = r.success ? (r.data as { entfernt?: boolean })?.entfernt ? `. Antwort-ISO ${volid} entfernt` : '' : `. Antwort-ISO ${volid} NICHT entfernt: ${r.error ?? '?'}`;
+    }
+    return { success: true, data: { vmid, name, node: vm.node, entfernt: true }, display: `VM ${name} (VMID ${vmid}) auf ${vm.node} entfernt${hinweis}${ab ? `. ${ab}` : ''}${antwortIso}` };
   }
 
   private async listNetworksAction(input: Record<string, unknown>): Promise<SkillResult> {

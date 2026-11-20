@@ -1146,3 +1146,55 @@ describe('Ruling R37 (I8e L6): windows_build_log liest die Statusdatei', () => {
     expect(nichts.error).toContain('Protokoll nicht lesbar');
   });
 });
+
+describe('Ruling R39 (I8e L6): Antwort-ISO gehört zur Bau-VM', () => {
+  const ANTWORT = 'local:iso/alfred-antwort-9112.iso';
+  function welt(o: { beschreibung: string; isos: string[] }) {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    const ablauf: string[] = [];
+    let vms = [{ vmid: 9112, name: 'win11-ent-eval-de', node: 'pve', type: 'qemu', status: 'stopped' }];
+    a.getAllVms = async () => vms;
+    a.vmidFrei = async () => true;
+    a.get = async (p: string) => {
+      if (p.includes('/content?content=iso')) return o.isos.map(volid => ({ volid }));
+      if (p.endsWith('/config')) return { description: o.beschreibung };
+      if (p.endsWith('/status/current')) return { status: 'stopped' };
+      return {};
+    };
+    a.del = async (p: string) => { ablauf.push(`DEL ${decodeURIComponent(p)}`); if (p.includes('/qemu/9112')) vms = []; if (p.includes('alfred-antwort')) o.isos = o.isos.filter(i => i !== ANTWORT); return 'UPID:x'; };
+    a.aufgabeOderFehler = async () => undefined;
+    px.setVmFabrik({
+      knotenSkript: async (_n: string, name: string) => {
+        ablauf.push(`SKRIPT ${name}`);
+        if (name === 'win-inspektion') return `ALFRED_JSON ${JSON.stringify({ abbilder: [{ index: 1, name: 'Windows 11 Enterprise Evaluation', editionId: 'EnterpriseEval', installationType: 'Client' }], virtio: ['w11'], gastWerkzeuge: true })}`;
+        throw new Error('Test endet nach dem Antwort-ISO');
+      },
+      abmelden: async () => '',
+    } as never);
+    return { px, ablauf };
+  }
+  const imChange = { ausChange: true } as never;
+
+  it('delete_vm einer Bau-VM entfernt ihr Antwort-ISO mit; andere VMs lassen ISOs unberührt', async () => {
+    const bau = welt({ beschreibung: 'Windows-Vorlage von Alfred (I8a): win11, Abbild 1', isos: [ANTWORT] });
+    const r = await bau.px.execute({ action: 'delete_vm', vmid: 9112, vm_name: 'win11-ent-eval-de' }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(r.display).toContain(`Antwort-ISO ${ANTWORT} entfernt`);
+    expect(bau.ablauf.some(x => x.includes('alfred-antwort-9112.iso'))).toBe(true);
+    const fremd = welt({ beschreibung: 'Produktiv-VM', isos: [ANTWORT] });
+    await fremd.px.execute({ action: 'delete_vm', vmid: 9112, vm_name: 'win11-ent-eval-de' }, imChange);
+    expect(fremd.ablauf.some(x => x.includes('alfred-antwort'))).toBe(false);
+  });
+
+  it('Neubau auf freier VMID räumt ein verwaistes Antwort-ISO vor dem Erzeugen weg (Realfall 049f6c32)', async () => {
+    const iso = 'local:iso/win11-enterprise-eval-26300.9457-de-de.iso';
+    const w = welt({ beschreibung: '', isos: [iso, 'local:iso/virtio-win-0.1.302.iso', ANTWORT] });
+    (w.px as unknown as Record<string, unknown>).getAllVms = async () => [];
+    const r = await w.px.execute({ action: 'build_windows_template', node: 'pve', storage: 'data2-pve', iso, virtio_iso: 'local:iso/virtio-win-0.1.302.iso', variante: 'win11', cloudbase_url: 'https://github.com/cloudbase/cloudbase-init/releases/download/1.1.9/CloudbaseInitSetup_1_1_9_x64.msi', hostname: 'win11-ent-eval-de', new_vmid: 9112 }, imChange);
+    expect(r.error).toContain('Test endet');
+    const weg = w.ablauf.findIndex(x => x.includes('alfred-antwort-9112.iso'));
+    expect(weg).toBeGreaterThanOrEqual(0);
+    expect(weg).toBeLessThan(w.ablauf.indexOf('SKRIPT win-antwort'));
+  });
+});
