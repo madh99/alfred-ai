@@ -15,6 +15,7 @@ import {
   pruefeSpns, pruefeKonto, spnSetzenSkript, spnEntfernenSkript, spnLesenSkript, spnLesenText, type SpnLesen, pruefeComputerkonto, joinTresorName,
   computerkontoSkript, computerkontoEntfernenSkript, pruefePtr, dnsPtrSkript, dnsPtrLoeschenSkript, pruefeGruppe, gruppeSkript, gruppeEntfernenSkript,
   pruefeSqlServer, SQL_PROBE_ZUGAENGE, SQL_PROBE_TRESOR, sqlAnmeldungSkript, sqlAnmeldungAuswerten, type SqlAnmeldung,
+  pruefeAdminAnmeldung, adminAnmeldungSkript, adminAnmeldungEntfernenSkript, adminAnmeldungText, type AdminAnmeldung,
 } from './windows-ad-linux.js';
 
 export interface WindowsAdDeps {
@@ -30,7 +31,9 @@ const NUR_IM_CHANGE = new Set(['wald_anlegen', 'dc_hinzufuegen', 'beitreten', 'g
   // I8e Task 4 — Domänen-Dienstkonto (z. B. svc-sqllnx-backup für die Sicherung nach fs01)
   'dienstkonto_anlegen', 'dienstkonto_entfernen',
   // I8e Etappe 3 — AD-Objekte für Kerberos der Linux-SQL-Instanzen (je mit Rückweg)
-  'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen']);
+  'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen',
+  // Ruling R34 (I8e L6): Windows-Anmeldung (RDP mit NLA) der Admin-Gruppe an einem Mitgliedsrechner, mit Rückweg
+  'admin_anmeldung_einrichten', 'admin_anmeldung_entfernen']);
 /**
  * Fix-Runde 1 (Ruling R4) — dns_ptr wartet im Baustein bis 600 s auf die Auflösung an allen DCs; der Skill-Aufruf hat 900 s. Mindest-
  * zeitlimitS = 900 + 60 (wie LINUX_SQL_MIN_ZEITLIMIT_S), damit der Change-Schritt nicht vorher abbricht.
@@ -75,8 +78,9 @@ export class WindowsAdSkill extends Skill {
       + 'computerkonto_vorbereiten (name z. B. sqllnx01, ou Standard Server) — Computerkonto NAME$ für den Linux-Beitritt; ein vorhandenes fremdes Konto wird nie übernommen, ein eigenes nur, solange es unbenutzt ist (keine Anmeldung, Kennwort unverändert, keine Beitritts-Attribute); Einmal-Kennwort erzeugt Alfred im Tresor ad-join-<name> (nur über die Standardeingabe, nie in der Ausgabe); „COMPUTERKONTO_BEREIT“ ↔ computerkonto_entfernen (name; nur von Alfred angelegte). '
       + 'dns_ptr (zone z. B. 30.203.10.in-addr.arpa, ip, fqdn) — Reverse-Zone AD-integriert (Wald) falls fehlt, PTR; prüft die Auflösung an allen DCs (bis 10 min; zeitlimitS mindestens 960), „PTR_OK“ ↔ dns_ptr_loeschen (zone, ip, fqdn; Zone bleibt). '
       + 'gruppe_anlegen (gruppe z. B. SQL-Linux-Admins, ou Standard Dienstkonten, mitglieder = sAMAccountNames) — globale Sicherheitsgruppe, fehlende Mitglieder ergänzt, „GRUPPE_OK“ ↔ gruppe_entfernen (gruppe; nur von Alfred angelegte). '
-      + 'sql_anmeldung_pruefen (lesend; zugang nur sql01 oder sql02; server = SQL-Instanz in ad.3033.at ohne Port, z. B. sqllnx01.ad.3033.at; konto_tresor nur ein Test-Konto ad-svc-<name>-test, z. B. ad-svc-sqllnx-test; konto optional, muss der Tresor-Name ohne ad- sein) — sqlcmd -E -N ohne -C als geplante Aufgabe unter dem Konto; „SQL_KERBEROS_OK“ nur bei auth_scheme KERBEROS und encrypt_option TRUE, sonst Fehler „NICHT KERBEROS“/„NICHT VERSCHLÜSSELT“. '
-      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen, dns_client, dienstkonto_anlegen ↔ dienstkonto_entfernen und den I8e-Etappe-3-Paaren oben (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
+      + 'sql_anmeldung_pruefen (lesend; zugang nur sql01, sql02, sqladmw11 oder sqladm25 — Ruling R32: die Admin-Clients brauchen vorher sql_server ssms_installieren für sqlcmd; server = SQL-Instanz in ad.3033.at ohne Port, z. B. sqllnx01.ad.3033.at; konto_tresor nur ein Test-Konto ad-svc-<name>-test, z. B. ad-svc-sqllnx-test; konto optional, muss der Tresor-Name ohne ad- sein) — sqlcmd -E -N ohne -C als geplante Aufgabe unter dem Konto; „SQL_KERBEROS_OK“ nur bei auth_scheme KERBEROS und encrypt_option TRUE, sonst Fehler „NICHT KERBEROS“/„NICHT VERSCHLÜSSELT“. '
+      + 'admin_anmeldung_einrichten (Ruling R34; zugang = Mitgliedsrechner, nie DC, z. B. sqladmw11/sqladm25; gruppe nur SQL-Linux-Admins) — Remotedesktop an mit NLA, eingebaute Firewall-Regelgruppe Remotedesktop aktiv, Domänengruppe in die lokale Gruppe Remotedesktopbenutzer (SID S-1-5-32-555, sprachunabhängig; nie Administratoren); bricht ab, wenn eine GPO RDP verbietet oder NLA abschaltet; Vorzustand gemerkt; wiederholbar; Ergebnis „ADMIN_ANMELDUNG_OK <zugang>: RDP an (NLA), <DOMÄNE>\\<gruppe> in Remotedesktopbenutzer“ ↔ admin_anmeldung_entfernen (zugang, gruppe) — Gruppe raus, RDP/NLA/Regeln nur zurück, wenn dieser Baustein sie eingeschaltet hat; „ADMIN_ANMELDUNG_ENTFERNT …“. '
+      + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen, dns_client, dienstkonto_anlegen ↔ dienstkonto_entfernen und den I8e-Etappe-3-Paaren oben inkl. admin_anmeldung_einrichten ↔ admin_anmeldung_entfernen (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -101,7 +105,7 @@ export class WindowsAdSkill extends Skill {
         fqdn: { type: 'string', description: 'dns_aufloesen/dns_ptr: vollständiger Name' }, server: { type: 'string', description: 'dns_aufloesen: IPv4 des DNS-Servers; sql_anmeldung_pruefen: SQL-Instanz, z. B. sqllnx01.ad.3033.at' }, ohne_cache: { type: 'boolean' },
         haerten: { type: 'boolean', description: 'dienstkonto_anlegen: nur AES, keine Delegierung, Anmeldesperre per Gruppe + GPO (I8e Etappe 3)' },
         spns: { type: 'array', items: { type: 'string' }, description: 'spn_setzen/-entfernen/-lesen: MSSQLSvc/<name>.ad.3033.at[:1433]' },
-        gruppe: { type: 'string', description: 'gruppe_anlegen/-entfernen: z. B. SQL-Linux-Admins' },
+        gruppe: { type: 'string', description: 'gruppe_anlegen/-entfernen: z. B. SQL-Linux-Admins; admin_anmeldung_einrichten/-entfernen: nur SQL-Linux-Admins' },
         mitglieder: { type: 'array', items: { type: 'string' }, description: 'gruppe_anlegen: sAMAccountNames' },
       },
       required: ['action'],
@@ -112,6 +116,20 @@ export class WindowsAdSkill extends Skill {
 
   /** Fix-Runde 1 (Ruling R4) — Mindest-zeitlimitS je Aktion für die Planprüfung (Baustein-Zeitgrenze + 60 s) */
   mindestZeitlimitS(aktion: string): number | undefined { return WINDOWS_AD_MIN_ZEITLIMIT_S[aktion]; }
+
+  /**
+   * Ruling R34 (I8e L6) — Planprüfung (rein, ohne Tresor und Fernaufruf): admin_anmeldung_* nur mit der zugelassenen Gruppe (fester Wert,
+   * nie ein Verweis). Dazu dieselbe Zahlenprüfung wie eingabeFehler (die entfällt dort, sobald ein Skill selbst prüft).
+   */
+  pruefeEingabe(input: Record<string, unknown>): string | undefined {
+    const props = (this.metadata.inputSchema as { properties?: Record<string, { type?: string }> }).properties ?? {};
+    for (const [k, w] of Object.entries(input)) {
+      if (props[k]?.type === 'number' && w !== undefined && w !== null && typeof w !== 'number' && !(typeof w === 'string' && /^-?\d+(\.\d+)?$/.test(w.trim()))) return `„${k}“ muss eine Zahl sein`;
+    }
+    const action = String(input.action ?? '');
+    if (action === 'admin_anmeldung_einrichten' || action === 'admin_anmeldung_entfernen') { const p = pruefeAdminAnmeldung({ gruppe: input.gruppe }); if (typeof p === 'string') return p; }
+    return undefined;
+  }
 
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
@@ -154,6 +172,19 @@ export class WindowsAdSkill extends Skill {
           return { success: true, data: r, display: `✅ Gruppe ${p.gruppe}: ${r.zustand}` };
         }
         case 'sql_anmeldung_pruefen': return await this.sqlAnmeldung(zugang, input);
+        // Ruling R34 (I8e L6) — Windows-Anmeldung der Admin-Gruppe; lokal, ohne Kennwort (das SSH-Token ist lokaler Administrator)
+        case 'admin_anmeldung_einrichten': {
+          const p = pruefeAdminAnmeldung({ gruppe: input.gruppe }); if (typeof p === 'string') throw new Error(p);
+          const r = await this.lauf<AdminAnmeldung>(zugang, adminAnmeldungSkript(p), 'Admin-Anmeldung einrichten', 180_000);
+          const t = adminAnmeldungText(zugang, r, p.gruppe);
+          this.d.protokoll?.('I8e L6 Admin-Anmeldung', { zugang, gruppe: p.gruppe, zustand: r.zustand, geaendert: r.geaendert });
+          return t.ok ? { success: true, data: r, display: t.text } : { success: false, data: r, error: t.text };
+        }
+        case 'admin_anmeldung_entfernen': {
+          const p = pruefeAdminAnmeldung({ gruppe: input.gruppe }); if (typeof p === 'string') throw new Error(p);
+          const r = await this.lauf<{ konto: string; zustand: string; rdp: string; mitglied: boolean }>(zugang, adminAnmeldungEntfernenSkript(p), 'Admin-Anmeldung entfernen', 180_000);
+          return { success: true, data: r, display: `ADMIN_ANMELDUNG_ENTFERNT ${zugang}: ${r.konto} ${r.mitglied ? 'bleibt in Remotedesktopbenutzer (war vorher schon Mitglied)' : 'nicht mehr in Remotedesktopbenutzer'}; RDP ${r.rdp}` };
+        }
         case 'dns_aufloesen': {
           const p = { fqdn: String(input.fqdn ?? '').trim().toLowerCase().replace(/\.$/, ''), ...(input.server ? { server: String(input.server).trim() } : {}) };
           const f = pruefeAufloesen(p); if (f) throw new Error(f);

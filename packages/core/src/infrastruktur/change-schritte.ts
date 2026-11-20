@@ -218,7 +218,11 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
-  windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen', 'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen']),
+  // Ruling R34 (I8e L6) — Admin-Anmeldung: RDP an, NLA an, Regel aktiv, Gruppe Mitglied (Skript + Skill); Rückweg: Gruppe weg, RDP wie vorher
+  windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen', 'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen',
+    'admin_anmeldung_einrichten', 'admin_anmeldung_entfernen']),
+  // Ruling R33 (I8e L6) — SSMS: Erfolg nur mit belegten Versionen von SSMS, sqlcmd und ODBC 18; Rückweg prüft je Teil die Abwesenheit
+  sql_server: new Set(['ssms_installieren', 'ssms_entfernen']),
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
   // Task 3 — Cluster: alle Knoten online, Quorum n/n, sbd läuft/aktiviert, have-watchdog, Eigenschaften; Entfernen: keine corosync.conf
   // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
@@ -258,7 +262,22 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     // Etappe 3 Task 8 — AD-Login: Rückweg genau ad_login_entfernen mit denselben Werten (zugang, gruppe, serverrolle, datenbank, datenbankrolle)
     ['ad_login', { skill: 'linux_sql', aktion: 'ad_login_entfernen', text: 'linux_sql.ad_login_entfernen (zugang, gruppe, serverrolle, datenbank, datenbankrolle wie ad_login)', parameter: adLoginZurueck }],
   ]),
+  // Ruling R33 (I8e L6) — SSMS: Rückweg genau sql_server.ssms_entfernen auf demselben Zugang (nimmt nur zurück, was der Merker nennt)
+  sql_server: new Map([
+    ['ssms_installieren', { skill: 'sql_server', aktion: 'ssms_entfernen', text: 'sql_server.ssms_entfernen (zugang)', parameter: gleicherZugang('ssms_entfernen') }],
+  ]),
+  // Ruling R34 (I8e L6) — Admin-Anmeldung: Rückweg genau windows_ad.admin_anmeldung_entfernen, derselbe Zugang und dieselbe Gruppe
+  windows_ad: new Map([
+    ['admin_anmeldung_einrichten', { skill: 'windows_ad', aktion: 'admin_anmeldung_entfernen', text: 'windows_ad.admin_anmeldung_entfernen (zugang, gruppe wie admin_anmeldung_einrichten)', parameter: adminAnmeldungZurueck }],
+  ]),
 };
+/** Ruling R34: admin_anmeldung_entfernen nimmt genau die Gruppe zurück, die admin_anmeldung_einrichten eingetragen hat (Verweise erst zur Laufzeit) */
+function adminAnmeldungZurueck(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const z = gleicherZugang('admin_anmeldung_entfernen')(hin, rueck); if (z) return z;
+  const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
+  const [h, r] = [n(hin.gruppe), n(rueck.gruppe)];
+  return h && r && h !== r ? `admin_anmeldung_entfernen: rueckweg gruppe ${String(hin.gruppe)} wie admin_anmeldung_einrichten (nicht ${String(rueck.gruppe)})` : undefined;
+}
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
 function gleicherZugang(aktion: string) {
   return (hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined => {

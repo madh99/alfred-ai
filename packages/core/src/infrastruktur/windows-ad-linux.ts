@@ -29,7 +29,12 @@ const REVERSE_ZONE = /^((25[0-5]|2[0-4]\d|1?\d?\d)\.){1,3}in-addr\.arpa$/;
  * nur gegen Instanzen in ad.3033.at, nur von sql01/sql02, nur mit einem Test-Konto ad-svc-…-test (nie ein Admin-Kennwort im Aufgabenplaner)
  */
 const SQL_SERVER = /^[a-z0-9-]+\.ad\.3033\.at$/;
-export const SQL_PROBE_ZUGAENGE: ReadonlySet<string> = new Set(['sql01', 'sql02']);
+/**
+ * Ruling R32 (I8e L6): zusätzlich die Admin-Clients sqladmw11 (Windows 11, 10.203.30.20) und sqladm25 (Server 2025, 10.203.30.21) —
+ * Abnahme „Kerberos + erzwungenes TLS mit Zertifikatsprüfung“ genau von dort, wo die Admins SSMS benutzen. sqlcmd bringt dort
+ * sql_server ssms_installieren mit (ODBC-Werkzeuge an einem der festen Pfade SQLCMD_PFADE, R33); fehlt es, scheitert die Probe klar.
+ */
+export const SQL_PROBE_ZUGAENGE: ReadonlySet<string> = new Set(['sql01', 'sql02', 'sqladmw11', 'sqladm25']);
 export const SQL_PROBE_TRESOR = /^ad-svc-[a-z0-9-]+-test$/;
 
 export function pruefeSpns(x: unknown): string[] | string {
@@ -383,7 +388,8 @@ export function sqlAnmeldungSkript(p: { server: string; konto: string }): string
   const aufrufe = SQLCMD_PFADE.map(pfad => ({ pfad, argumente: sqlcmdArgumente(pfad, p.server) }));
   const innen = innenSkript({ server: p.server, aufrufe }, [
     '$x = @(@($p.aufrufe) | Where-Object { Test-Path -LiteralPath $_.pfad } | Select-Object -First 1)',
-    "if (-not $x.Count) { throw ('sqlcmd nicht gefunden (gesucht: ' + (@($p.aufrufe | ForEach-Object { $_.pfad }) -join '; ') + ') - zuerst die SQL-Befehlszeilenwerkzeuge auf diesem Rechner installieren') }",
+    // Ruling R32: auf den Admin-Clients installiert sql_server ssms_installieren ODBC 18 + Befehlszeilenwerkzeuge (fail-closed: ohne sqlcmd kein Ergebnis)
+    "if (-not $x.Count) { throw ('sqlcmd nicht gefunden (gesucht: ' + (@($p.aufrufe | ForEach-Object { $_.pfad }) -join '; ') + ') - zuerst die SQL-Befehlszeilenwerkzeuge auf diesem Rechner installieren (sql_server ssms_installieren)') }",
     '$sa = @($x[0].argumente | ForEach-Object { [string]$_ })',
     // Windows PowerShell 5.1: Fehlerausgabe eines Programms wird mit Stop zur Ausnahme — hier soll sie in den Text
     "$ErrorActionPreference = 'Continue'",
@@ -410,4 +416,109 @@ export function sqlAnmeldungAuswerten(r: SqlAnmeldung, server: string): { ok: bo
   const fehler = [auth !== 'KERBEROS' ? `NICHT KERBEROS (auth_scheme ${auth})` : '', verschluesselt !== 'TRUE' ? `NICHT VERSCHLÜSSELT (encrypt_option ${verschluesselt})` : ''].filter(Boolean);
   if (fehler.length) return { ok: false, text: `${server}: ${fehler.join(', ')} — @@SERVERNAME ${servername}`, ...basis };
   return { ok: true, text: `SQL_KERBEROS_OK ${server}: auth_scheme KERBEROS, encrypt_option TRUE, @@SERVERNAME ${servername}${r.sqlcmd ? ` (${r.sqlcmd})` : ''}`, ...basis };
+}
+
+// ── Ruling R34 (I8e L6): Windows-Anmeldung der Admin-Gruppe an den Admin-Clients ────────────────────────────────────────────────────
+
+/** Ruling R34 (I8e L6): lokale Gruppe Remotedesktopbenutzer über die SID (Gruppennamen sind lokalisiert, z. B. deutsch) */
+export const REMOTEDESKTOPBENUTZER_SID = 'S-1-5-32-555';
+/** Ruling R34: eingebaute Firewall-Regelgruppe „Remotedesktop“ über die sprachunabhängige Ressourcen-Kennung */
+export const RDP_REGELGRUPPE = '@FirewallAPI.dll,-28752';
+/** Ruling R34: nur genau diese Domänengruppe darf per Baustein an den Admin-Clients anmelden (nie Administratoren o. ä.) */
+export const ADMIN_ANMELDUNG_GRUPPEN: ReadonlySet<string> = new Set(['SQL-Linux-Admins']);
+
+export function pruefeAdminAnmeldung(o: Record<string, unknown>): { gruppe: string } | string {
+  const g = typeof o.gruppe === 'string' ? o.gruppe.trim() : '';
+  const liste = [...ADMIN_ANMELDUNG_GRUPPEN];
+  if (!GRUPPE.test(g)) return `gruppe: Name der Domänengruppe ohne Domäne (Buchstabe, dann Buchstaben/Ziffern/. _ -), zulässig nur ${liste.join(', ')}`;
+  const treffer = liste.find(x => x.toLowerCase() === g.toLowerCase());
+  return treffer ? { gruppe: treffer } : `gruppe: zulässig nur ${liste.join(', ')} (Ruling R34) — nie Administratoren oder andere Gruppen`;
+}
+
+/**
+ * Ruling R34 — gemeinsamer Teil: nur auf einem Mitgliedsrechner (DomainRole 1 oder 3, nie DC — dort ist Remotedesktopbenutzer die
+ * Domänengruppe BUILTIN), Gruppe aus der eigenen Domäne (gleiche Domänen-SID wie das Computerkonto, RID ≥ 1000), Zustand lesen. Die
+ * SID-Auflösung läuft über LSA/den sicheren Kanal des Rechners (das SSH-Token braucht dafür keine Domänenrechte).
+ */
+const ANMELDUNG_VOR = [
+  '$cs = Get-CimInstance -ClassName Win32_ComputerSystem',
+  "if (-not $cs.PartOfDomain -or ($cs.DomainRole -ne 1 -and $cs.DomainRole -ne 3)) { throw ('nur auf einem Mitgliedsrechner einer Domäne (DomainRole ' + $cs.DomainRole + ') - nie auf einem Domänencontroller; nichts geändert') }",
+  "$nd = @(Get-CimInstance -ClassName Win32_NTDomain | Where-Object { $_.DnsForestName -and $_.DomainName } | Select-Object -First 1); if (-not $nd.Count) { throw 'keiner Domäne beigetreten' }; $nb = [string]$nd[0].DomainName",
+  "$konto = $nb + '\\' + $p.gruppe",
+  "try { $sid = (New-Object System.Security.Principal.NTAccount($nb, $p.gruppe)).Translate([System.Security.Principal.SecurityIdentifier]) } catch { throw ('Domänengruppe ' + $konto + ' nicht auflösbar - nichts geändert') }",
+  "$dsid = (New-Object System.Security.Principal.NTAccount($nb, ($env:COMPUTERNAME + '$'))).Translate([System.Security.Principal.SecurityIdentifier]).AccountDomainSid",
+  "$rid = [int64]($sid.Value.Split('-')[-1])",
+  "if (-not $sid.AccountDomainSid -or -not $dsid -or $sid.AccountDomainSid.Value -ne $dsid.Value -or $rid -lt 1000) { throw ('nur eine eigene Gruppe der Domäne ' + $nb + ' (SID ' + $sid.Value + ') - nichts geändert') }",
+  "$ts = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server'; $rt = $ts + '\\WinStations\\RDP-Tcp'; $pol = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services'",
+  "$merkDir = Join-Path $env:ProgramData 'Alfred\\anmeldung'; $merk = Join-Path $merkDir ('admin-' + $p.gruppe.ToLower() + '.json')",
+  'function Wert($pfad, $name) { $x = Get-ItemProperty -LiteralPath $pfad -Name $name -ErrorAction SilentlyContinue; if ($x) { $x.$name } else { $null } }',
+  `function Regeln { @(Get-NetFirewallRule -Group ${psText(RDP_REGELGRUPPE)} -ErrorAction SilentlyContinue | ForEach-Object { [ordered]@{ name = [string]$_.Name; an = ([string]$_.Enabled -eq 'True') } }) }`,
+  `function Mitglied { [bool]@(Get-LocalGroupMember -SID ${psText(REMOTEDESKTOPBENUTZER_SID)} | Where-Object { $_.SID.Value -eq $sid.Value }).Count }`,
+  "function Zustand { [ordered]@{ deny = (Wert $ts 'fDenyTSConnections'); nla = (Wert $rt 'UserAuthentication'); regeln = @(Regeln); mitglied = (Mitglied) } }",
+];
+
+/**
+ * Ruling R34 (I8e L6) — admin_anmeldung_einrichten: Remotedesktop an (fDenyTSConnections 0) mit NLA (UserAuthentication 1), Regelgruppe
+ * Remotedesktop aktiv, Domänengruppe in Remotedesktopbenutzer (SID S-1-5-32-555; nie Administratoren). Eine GPO, die RDP verbietet oder
+ * NLA abschaltet, bricht vor jeder Änderung ab. Den Vorzustand merkt der Baustein vor der ersten Änderung in
+ * %ProgramData%\Alfred\anmeldung\admin-<gruppe>.json (eine Wiederholung überschreibt ihn nie) — der Rückweg stellt genau ihn wieder her.
+ * Wiederholbar; Selbstprüfung: RDP an, NLA an, Regel RemoteDesktop-UserMode-In-TCP aktiv, Gruppe Mitglied.
+ */
+export function adminAnmeldungSkript(p: { gruppe: string }): string {
+  return [
+    ...kopf(p, false),
+    ...ANMELDUNG_VOR,
+    "if ((Wert $pol 'fDenyTSConnections') -eq 1) { throw 'Richtlinie (GPO) verbietet Remotedesktop (fDenyTSConnections=1) - nichts geändert' }",
+    "$pn = Wert $pol 'UserAuthentication'; if ($null -ne $pn -and $pn -ne 1) { throw ('Richtlinie (GPO) schaltet NLA ab (UserAuthentication=' + $pn + ') - nichts geändert') }",
+    '$vor = Zustand',
+    `if (-not @($vor.regeln).Count) { throw ('Firewall-Regelgruppe Remotedesktop (' + ${psText(RDP_REGELGRUPPE)} + ') fehlt - nichts geändert') }`,
+    "if (-not (Test-Path -LiteralPath $merk)) { New-Item -ItemType Directory -Path $merkDir -Force | Out-Null; [IO.File]::WriteAllText($merk, ([ordered]@{ zeit = (Get-Date).ToString('s'); gruppe = $p.gruppe; sid = $sid.Value; vorher = $vor } | ConvertTo-Json -Depth 5 -Compress), (New-Object System.Text.UTF8Encoding $false)) }",
+    '$g = @()',
+    "if ($vor.deny -ne 0) { Set-ItemProperty -LiteralPath $ts -Name fDenyTSConnections -Value 0 -Type DWord; $g += 'rdp' }",
+    "if ($vor.nla -ne 1) { Set-ItemProperty -LiteralPath $rt -Name UserAuthentication -Value 1 -Type DWord; $g += 'nla' }",
+    `if (@($vor.regeln | Where-Object { -not $_.an }).Count) { Enable-NetFirewallRule -Group ${psText(RDP_REGELGRUPPE)}; $g += 'firewall' }`,
+    `if (-not $vor.mitglied) { Add-LocalGroupMember -SID ${psText(REMOTEDESKTOPBENUTZER_SID)} -Member $sid.Value; $g += 'mitglied' }`,
+    '$n = Zustand',
+    "$nach = [ordered]@{ rdp = ($n.deny -eq 0); nla = ($n.nla -eq 1); regel = [bool]@($n.regeln | Where-Object { $_.name -eq 'RemoteDesktop-UserMode-In-TCP' -and $_.an }).Count; mitglied = [bool]$n.mitglied }",
+    '$fehlt = @(@($nach.Keys) | Where-Object { -not $nach[$_] })',
+    "if ($fehlt.Count) { throw ('Selbstprüfung: ' + ($fehlt -join ', ') + ' nicht wie verlangt') }",
+    `$rdu = (New-Object System.Security.Principal.SecurityIdentifier ${psText(REMOTEDESKTOPBENUTZER_SID)}).Translate([System.Security.Principal.NTAccount]).Value.Split('\\')[-1]`,
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; konto = $konto; sid = $sid.Value; gruppeLokal = $rdu; zustand = $(if ($g.Count) { 'eingerichtet' } else { 'schon' }); geaendert = @($g); vorher = $vor; nachher = $nach })",
+  ].join('\n');
+}
+
+/**
+ * Ruling R34 — Rückweg admin_anmeldung_entfernen: Gruppe aus Remotedesktopbenutzer (außer sie war laut Vorzustand schon Mitglied);
+ * RDP, NLA und Regeln nur zurück, wenn dieser Baustein sie eingeschaltet hat (gemerkter Vorzustand). Ohne Vorzustand bleibt RDP, wie es
+ * ist; nur die Gruppe geht. Selbstprüfung: Gruppe nicht mehr Mitglied, RDP wieder wie vorher; danach ist der Vorzustand gelöscht.
+ */
+export function adminAnmeldungEntfernenSkript(p: { gruppe: string }): string {
+  return [
+    ...kopf(p, false),
+    ...ANMELDUNG_VOR,
+    '$v = $null; if (Test-Path -LiteralPath $merk) { $v = [IO.File]::ReadAllText($merk) | ConvertFrom-Json }',
+    '$warMitglied = [bool]($v -and $v.vorher.mitglied)',
+    '$t = @()',
+    `if ((Mitglied) -and -not $warMitglied) { Remove-LocalGroupMember -SID ${psText(REMOTEDESKTOPBENUTZER_SID)} -Member $sid.Value; $t += 'mitglied' }`,
+    "$rdp = 'unverändert (kein gemerkter Vorzustand)'",
+    'if ($v) {',
+    "  $vd = $v.vorher.deny; if ($vd -ne 0) { if ((Wert $ts 'fDenyTSConnections') -eq 0) { Set-ItemProperty -LiteralPath $ts -Name fDenyTSConnections -Value $(if ($null -eq $vd) { 1 } else { [int]$vd }) -Type DWord; $t += 'rdp' }; $rdp = 'aus (wie vorher)' } else { $rdp = 'an (war vorher schon an)' }",
+    "  $vn = $v.vorher.nla; if ($null -ne $vn -and $vn -ne 1 -and (Wert $rt 'UserAuthentication') -eq 1) { Set-ItemProperty -LiteralPath $rt -Name UserAuthentication -Value ([int]$vn) -Type DWord; $t += 'nla' }",
+    "  $aus = @(@($v.vorher.regeln) | Where-Object { -not $_.an } | ForEach-Object { [string]$_.name }); if ($aus.Count) { Disable-NetFirewallRule -Name $aus; $t += 'firewall' }",
+    '}',
+    "if (-not $warMitglied -and (Mitglied)) { throw ('Selbstprüfung: ' + $konto + ' nach dem Entfernen noch in Remotedesktopbenutzer') }",
+    "if ($v -and $v.vorher.deny -ne 0 -and (Wert $ts 'fDenyTSConnections') -eq 0) { throw 'Selbstprüfung: Remotedesktop nach dem Entfernen noch an (war vorher aus)' }",
+    'if ($v) { Remove-Item -LiteralPath $merk -Force }',
+    "Ergebnis ([ordered]@{ rechner = $env:COMPUTERNAME; konto = $konto; zustand = $(if ($t.Count) { 'entfernt' } else { 'schon weg' }); zurueck = @($t); rdp = $rdp; mitglied = [bool](Mitglied) })",
+  ].join('\n');
+}
+
+export interface AdminAnmeldung { rechner: string; konto: string; sid?: string; zustand: string; geaendert?: string[]; nachher?: { rdp: boolean; nla: boolean; regel: boolean; mitglied: boolean } }
+/** Ruling R34 — feste Ergebniszeile; Erfolg nur, wenn alle vier Punkte der Selbstprüfung belegt sind (zweite Prüfung im Skill) */
+export function adminAnmeldungText(zugang: string, r: AdminAnmeldung, gruppe: string): { ok: boolean; text: string } {
+  const n = r.nachher;
+  const fehlt = !n ? ['Selbstprüfung fehlt'] : [!n.rdp && 'RDP aus', !n.nla && 'NLA aus', !n.regel && 'Firewall-Regel Remotedesktop nicht aktiv', !n.mitglied && `${r.konto} nicht in Remotedesktopbenutzer`].filter((x): x is string => !!x);
+  if (fehlt.length) return { ok: false, text: `${zugang}: Admin-Anmeldung NICHT wie verlangt — ${fehlt.join(', ')}` };
+  const text = `ADMIN_ANMELDUNG_OK ${zugang}: RDP an (NLA), ${r.konto} in Remotedesktopbenutzer`;
+  return { ok: true, text: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — geändert: ${(r.geaendert ?? []).join(', ') || 'nichts'} — Rückweg admin_anmeldung_entfernen gruppe ${gruppe}` };
 }

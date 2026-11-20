@@ -8,7 +8,8 @@ import { schwaerze } from '../fernzugriff/kaefig.js';
  * ungültiges JSON, Schritt gescheitert. Hier: jeder Feldname, den die Bausteine dieser Etappe in ihre Ergebniszeile schreiben,
  * übersteht schwaerze unverändert (als String-, Wahrheits- und Zahlenwert), und die Zeile bleibt gültiges JSON.
  */
-const QUELLEN = ['windows-ad-linux.ts', 'windows-ad.ts', 'windows-sqltls-linux.ts', 'linux-sql-ad.ts', 'linux-sql-tls.ts'];
+// Ruling R33/R34 (I8e L6): sql-ssms.ts (ssms_installieren/-entfernen); admin_anmeldung_* steht in windows-ad-linux.ts
+const QUELLEN = ['windows-ad-linux.ts', 'windows-ad.ts', 'windows-sqltls-linux.ts', 'linux-sql-ad.ts', 'linux-sql-tls.ts', 'sql-ssms.ts'];
 
 /** Feldnamen aus dem Quelltext: PowerShell [ordered]@{ … } / [pscustomobject]@{ … }, bash \"name\": … und Python-Ergebnisse r["name"] */
 function feldnamen(text: string): Set<string> {

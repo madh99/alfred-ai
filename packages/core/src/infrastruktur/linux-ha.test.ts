@@ -85,10 +85,14 @@ describe('I8e Paket 2 — linux-ha Register und Validatoren', { timeout: 120_000
     expect(t).toContain('elements = { 10.203.30.10, 10.203.30.11, 10.203.30.12 }');
     // Ruling R4: 1433 zusätzlich nur von der Probe 192.168.1.223 (Architektur v2 §4), alle anderen Ports nur die Knoten
     // Ruling R22: und von sql01 10.203.30.2 (Kerberos-/TLS-Abnahme windows_ad sql_anmeldung_pruefen) — nur für 1433
-    expect(HA_SQL_ZUSATZQUELLEN).toEqual(['192.168.1.223', '10.203.30.2']);
-    expect(t).toContain('\tset sql_quellen4 {\n\t\ttype ipv4_addr\n\t\telements = { 192.168.1.223, 10.203.30.2 }\n\t}');
+    // Ruling R31 (I8e L6): und von den Admin-Clients sqladmw11 10.203.30.20 / sqladm25 10.203.30.21 (SSMS) — nur für 1433
+    expect(HA_SQL_ZUSATZQUELLEN).toEqual(['192.168.1.223', '10.203.30.2', '10.203.30.20', '10.203.30.21']);
+    const elemente = '\t\telements = { 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21 }';
+    expect(t).toContain(`\tset sql_quellen4 {\n\t\ttype ipv4_addr\n${elemente}\n\t}`);
     expect(t.split('192.168.1.223')).toHaveLength(2);
-    expect(t.split('\n').filter(z => /10\.203\.30\.2\b/.test(z))).toEqual(['\t\telements = { 192.168.1.223, 10.203.30.2 }']);
+    expect(t.split('\n').filter(z => /10\.203\.30\.2\b/.test(z))).toEqual([elemente]);
+    // R31: die Admin-Clients stehen nur im Satz sql_quellen4 (TCP 1433), nie bei den Peers (2224, 3121, 5022, 21064, UDP 5405)
+    expect(t.split('\n').filter(z => /10\.203\.30\.2[01]\b/.test(z))).toEqual([elemente]);
     expect(() => hostfwNft(HA_KNOTEN, ['1.2.3'])).toThrow(/sqlQuellen/);
     expect(t).toContain('type filter hook input priority -10; policy accept;');
     expect(t).not.toMatch(/\b22\b/);
@@ -330,7 +334,7 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(w.vorlage.split('\n')[1]).toContain('# ALFRED-HA ANFANG');
     expect(w.vorlage).toContain('# ALFRED-HA ENTFERNT (Loopback mit eigenem Namen): 127.0.1.1 {{fqdn}} {{hostname}}');
     expect(w.vorlage.split('\n').filter(z => z.startsWith('127.0.1.1'))).toEqual([]);
-    expect(a.ergebnis!.sql1433).toEqual(['10.203.30.10', '10.203.30.11', '10.203.30.12', '192.168.1.223', '10.203.30.2']);
+    expect(a.ergebnis!.sql1433).toEqual(['10.203.30.10', '10.203.30.11', '10.203.30.12', '192.168.1.223', '10.203.30.2', '10.203.30.20', '10.203.30.21']);
     // frische Installation: Debian aktiviert die Cluster-Dienste → deaktiviert und geprüft
     expect(a.log).toContain('systemctl disable --now pacemaker');
     expect(a.ergebnis!.aenderungen).toEqual(expect.arrayContaining(['aus:pacemaker', 'aus:corosync', 'aus:sbd', 'corosync-standard-beiseite']));
@@ -358,14 +362,34 @@ describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildet
     expect(c.rc, c.aus).toBe(0);
     expect(c.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
     expect(w.fw.trim()).toBe(hostfwNft(HA_KNOTEN));
-    expect(w.fw).toContain('elements = { 192.168.1.223, 10.203.30.2 }');
+    expect(w.fw).toContain('elements = { 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21 }');
   });
   it('R22: Selbstprüfung — geladener Satz sql_quellen4 ohne 10.203.30.2 (Datei stimmt, der Dienst lädt einen alten Stand) → Abbruch mit Ist und Soll', () => {
     const w = laeufe(`printf '%s\\n' '${VOR_R22}' >"$T/laedt_alt"`, 1);
     const a = w.laeufe[0]!;
     expect(a.rc).toBe(1);
-    expect(String(a.ergebnis?.fehler)).toContain("nft-Satz sql_quellen4 enthält '192.168.1.223', erwartet 10.203.30.2 192.168.1.223");
+    expect(String(a.ergebnis?.fehler)).toContain("nft-Satz sql_quellen4 enthält '192.168.1.223', erwartet 10.203.30.2 10.203.30.20 10.203.30.21 192.168.1.223");
     expect(w.fw.trim()).toBe(hostfwNft(HA_KNOTEN));
+  });
+
+  // Ruling R31 (I8e L6): Knoten mit dem Regelsatz nach R22 (1433: Knoten + 192.168.1.223, 10.203.30.2) — die Admin-Clients fehlen
+  const VOR_R31 = hostfwNft(HA_KNOTEN, ['192.168.1.223', '10.203.30.2']);
+  it('R31: Regelsatz nach R22 auf eingerichtetem Knoten → Wiederholung stellt genau die Firewall um, danach „schon“', () => {
+    const w = laeufe('', 3, P, `printf '%s\\n' '${VOR_R31}' >"$T/etc/alfred/hostfw.nft"; cp "$T/etc/alfred/hostfw.nft" "$T/nft_geladen"`);
+    const [a, b, c] = w.laeufe as [Lauf, Lauf, Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(b.rc, b.aus).toBe(0);
+    expect(b.ergebnis).toMatchObject({ zustand: 'geaendert', neustartSql: false, aenderungen: ['firewall-regeln', 'firewall-geladen'] });
+    expect(b.log.trim()).toBe('systemctl restart alfred-hostfw');
+    expect(c.rc, c.aus).toBe(0);
+    expect(c.ergebnis).toMatchObject({ zustand: 'schon', aenderungen: [] });
+    expect(w.fw.trim()).toBe(hostfwNft(HA_KNOTEN));
+  });
+  it('R31: Selbstprüfung — geladener Satz noch ohne Admin-Clients → Abbruch mit Ist und Soll', () => {
+    const w = laeufe(`printf '%s\\n' '${VOR_R31}' >"$T/laedt_alt"`, 1);
+    const a = w.laeufe[0]!;
+    expect(a.rc).toBe(1);
+    expect(String(a.ergebnis?.fehler)).toContain("nft-Satz sql_quellen4 enthält '10.203.30.2 192.168.1.223', erwartet 10.203.30.2 10.203.30.20 10.203.30.21 192.168.1.223");
   });
 
   const ohneAenderung = (w: ReturnType<typeof laeufe>, muster: RegExp) => {

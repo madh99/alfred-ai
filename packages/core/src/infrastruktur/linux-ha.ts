@@ -66,8 +66,10 @@ export const HA_PORTS = { tcp: [1433, 2224, 3121, 5022, 21064], udp: [5405] } as
  * Ruling R22 (I8e Etappe 3): zusätzlich 10.203.30.2 (sql01, Windows-SQL-Knoten) — von dort läuft die Kerberos-/TLS-Abnahme
  * `windows_ad sql_anmeldung_pruefen`. Bestehende Knoten stellt ha_vorbereiten um (Regelsatz-Vergleich → „firewall-regeln“), die
  * Selbstprüfung verlangt genau diese Menge im geladenen Satz sql_quellen4, der Status meldet eine abweichende Menge als „veraltet“.
+ * Ruling R31 (I8e L6): zusätzlich 10.203.30.20 (sqladmw11) und 10.203.30.21 (sqladm25) — Admin-Clients mit SSMS, nur TCP 1433 (Satz
+ * sql_quellen4, nie ha_peers4). Knoten mit dem Satz nach R22 melden „veraltet“, bis ha_vorbereiten sie umstellt (gleicher Weg wie R22).
  */
-export const HA_SQL_ZUSATZQUELLEN: readonly string[] = ['192.168.1.223', '10.203.30.2'];
+export const HA_SQL_ZUSATZQUELLEN: readonly string[] = ['192.168.1.223', '10.203.30.2', '10.203.30.20', '10.203.30.21'];
 export const HA_NFT_TABELLE = 'alfred_ha';
 export const HA_HOSTFW_DATEI = '/etc/alfred/hostfw.nft';
 export const HA_HOSTFW_DIENST = 'alfred-hostfw.service';

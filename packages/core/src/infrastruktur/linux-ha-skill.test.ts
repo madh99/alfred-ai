@@ -41,7 +41,7 @@ const SOLL = { pacemaker: '2.1.6-5ubuntu2', 'pacemaker-cli-utils': '2.1.6-5ubunt
 const STATUS_OK: LinuxHaStatus = {
   zustand: 'gelesen', watchdog: [{ geraet: 'watchdog0', kennung: 'i6300ESB timer', treiber: 'i6300esb' }], pciEsb: true, halter: [],
   pakete: { ...Object.fromEntries(Object.entries(SOLL).map(([k, v]) => [k, { version: v, gehalten: true }])), 'linux-modules-extra-6.8.0-147-generic': { version: '6.8.0-147.147', gehalten: false } },
-  soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', sbdWartetAufWatchdog: true, pcsd: 'active', sql1433Zusatz: ['10.203.30.2', '192.168.1.223'],
+  soll: SOLL, hadr: '1', sqlDienst: 'active', firewall: { tabelle: true, dienst: 'active', aktiviert: 'enabled' }, hosts: true, runtimeWatchdog: '0', sbdWartetAufWatchdog: true, pcsd: 'active', sql1433Zusatz: ['10.203.30.2', '10.203.30.20', '10.203.30.21', '192.168.1.223'],
   cluster: { art: 'keiner' },
   fencing: { bootId: 'b-1', jetztS: 1_795_000_000, identitaet: null, test: null, beleg: null },
 };
@@ -62,7 +62,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(s.success, s.error).toBe(true);
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_HA_BAUSTEINE.status, parameter: {}, timeoutMs: 90_000 });
     expect(w.aufrufe[0]!.eingabe).toBeUndefined();
-    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223, 10.203.30.2); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster nicht eingerichtet; Fencing nicht belegt');
+    expect(s.display).toBe('sqllnx02: Watchdog i6300esb frei; Pakete fest; HADR an; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21); hosts-Block vorhanden; RuntimeWatchdog aus; sbd wartet auf Watchdog; pcsd aktiv; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect((await w.skill.execute({ action: 'loeschen', zugang: 'sqllnx02' }, imChange)).error).toContain('Unbekannte Aktion');
   });
 
@@ -80,9 +80,16 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
       .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); sbd wartet auf Watchdog; pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');
     // Ruling R22: geladene Zusatzquellen ≠ HA_SQL_ZUSATZQUELLEN → „veraltet“ (auch leer = Satz fehlt); unbekannt → wie bisher
-    expect(v({ sql1433Zusatz: [] })).toContain('; Firewall alfred_ha veraltet (1433: Knoten; Soll Knoten + 192.168.1.223, 10.203.30.2 — ha_vorbereiten stellt um); ');
-    expect(v({ sql1433Zusatz: ['192.168.1.223'] })).toContain('; Firewall alfred_ha veraltet (1433: Knoten + 192.168.1.223; Soll Knoten + 192.168.1.223, 10.203.30.2 — ha_vorbereiten stellt um); ');
-    expect(v({ sql1433Zusatz: ['192.168.1.223', '10.203.30.2', '10.0.0.9'] })).toContain('Firewall alfred_ha veraltet (1433: Knoten + 192.168.1.223, 10.203.30.2, 10.0.0.9; Soll');
+    const soll = 'Soll Knoten + 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21 — ha_vorbereiten stellt um';
+    expect(v({ sql1433Zusatz: [] })).toContain(`; Firewall alfred_ha veraltet (1433: Knoten; ${soll}); `);
+    expect(v({ sql1433Zusatz: ['192.168.1.223'] })).toContain(`; Firewall alfred_ha veraltet (1433: Knoten + 192.168.1.223; ${soll}); `);
+    expect(v({ sql1433Zusatz: ['192.168.1.223', '10.203.30.2', '10.203.30.20', '10.203.30.21', '10.0.0.9'] })).toContain('Firewall alfred_ha veraltet (1433: Knoten + 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21, 10.0.0.9; Soll');
+    // Ruling R31 (I8e L6): bestehende Knoten mit dem Satz nach R22 (ohne die Admin-Clients) melden „veraltet“, bis ha_vorbereiten umstellt
+    expect(v({ sql1433Zusatz: ['10.203.30.2', '192.168.1.223'] })).toContain(`; Firewall alfred_ha veraltet (1433: Knoten + 10.203.30.2, 192.168.1.223; ${soll}); `);
+    expect(v({ sql1433Zusatz: ['10.203.30.2', '192.168.1.223'] })).not.toContain('Firewall alfred_ha aktiv');
+    expect(v({ sql1433Zusatz: ['10.203.30.2', '192.168.1.223', '10.203.30.20'] })).toContain('Firewall alfred_ha veraltet');
+    // nft liefert die Menge sortiert — die Reihenfolge zählt nicht, die Menge schon
+    expect(v({ sql1433Zusatz: ['10.203.30.2', '10.203.30.20', '10.203.30.21', '192.168.1.223'] })).toContain('; Firewall alfred_ha aktiv (1433: Knoten + 192.168.1.223, 10.203.30.2, 10.203.30.20, 10.203.30.21); ');
     expect(v({ sql1433Zusatz: ['192.168.1.223'] })).not.toContain('Firewall alfred_ha aktiv');
     expect(v({ sql1433Zusatz: ['192.168.1.223'] })).toMatch(muster0());
     expect(v({ sql1433Zusatz: undefined })).toContain('; Firewall alfred_ha aktiv (1433: Knoten); ');

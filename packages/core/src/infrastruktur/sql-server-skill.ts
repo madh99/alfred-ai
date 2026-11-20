@@ -14,6 +14,7 @@ import {
 import { KONTO } from './windows-cluster.js';
 import { sqlTlsStatusSkript, sqlTlsStatusText, pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeWiederanlauf, engineWiederanlaufSkript, type Wiederanlauf, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, tlsTestText, type SqlTlsStatus, type TlsBefund } from './sql-tls-bindung.js';
 import { KONTO_FREI } from './windows-ad.js';
+import { ssmsInstallierenSkript, ssmsEntfernenSkript, ssmsText, SSMS_ZEIT_MS, SSMS_MIN_ZEITLIMIT_S, type SsmsInstalliert } from './sql-ssms.js';
 
 export interface SqlServerDeps {
   skript: (zugang: string, befehl: string, eingabe: string | undefined, timeoutMs: number, zweck: string) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -25,7 +26,9 @@ export interface SqlServerDeps {
 export const SQL_LESEND = new Set(['status', 'pruefdaten_lesen', 'listener_testen', 'zertifikat_status', 'tls_testen']);
 const NUR_IM_CHANGE = new Set(['sql_medien_laden', 'sql_installieren', 'konfigurieren', 'hadr_aktivieren', 'endpunkt_anlegen', 'endpunkt_entfernen', 'ag_anlegen', 'ag_beitreten',
   'ag_entfernen', 'listener_anlegen', 'listener_entfernen', 'failover', 'datenbank_anlegen', 'datenbank_entfernen', 'pruefdaten_schreiben', 'sql_sicherung',
-  'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen', 'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf']);
+  'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen', 'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf',
+  // Ruling R33 (I8e L6): SSMS + sqlcmd + ODBC 18 auf einem Windows-Zugang (Admin-Clients), mit Rückweg
+  'ssms_installieren', 'ssms_entfernen']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 
 export class SqlServerSkill extends Skill {
@@ -55,7 +58,8 @@ export class SqlServerSkill extends Skill {
       + 'datenbank_anlegen (zugang, name) ↔ datenbank_entfernen (nur von Alfred angelegte, nicht in einer AG); pruefdaten_schreiben (zugang = primär, datenbank, notiz) — Commit-Beweis (ohne Rückweg). '
       + 'sql_sicherung (zugang, datenbank, art voll|diff|log, ziel Ordner oder \\\\fs01.ad.3033.at\\SQLBackup$; ohne Rückweg) — Datei <ziel>\\<db>\\<db>_<art>_<zeit>.<bak|dif|trn>, CHECKSUM, Kompression. '
       + 'sicherungsjobs_einrichten (zugang = jedes Replikat, datenbanken, ziel, voll_uhrzeit 01:00, diff_stunden 6, log_minuten 15) ↔ sicherungsjobs_entfernen — sichert nur auf dem bevorzugten Replikat, löscht nie alte Sicherungen. '
-      + 'wiederherstellung_testen (zugang, datenbank, ordner = <ziel>\\<db>, ziel_name, entfernen_danach Standard true) — Kette voll+diff+log neben der AG, Platzprüfung, DBCC CHECKDB, Prüfdaten zählen (ohne Rückweg).',
+      + 'wiederherstellung_testen (zugang, datenbank, ordner = <ziel>\\<db>, ziel_name, entfernen_danach Standard true) — Kette voll+diff+log neben der AG, Platzprüfung, DBCC CHECKDB, Prüfdaten zählen (ohne Rückweg). '
+      + 'ssms_installieren (Ruling R33; zugang = Windows-Fernzugang, z. B. Admin-Client sqladmw11/sqladm25; braucht befristeten Internetzugang zu Microsoft; zeitlimitS mindestens 3660) — still und wiederholbar: ODBC Driver 18 for SQL Server, Microsoft Command Line Utilities (sqlcmd, ODBC) und SSMS 22 (vs_SSMS.exe --quiet --norestart --wait) nur von festen Microsoft-URLs, jede Datei vor dem Start auf die Microsoft-Signatur geprüft; Vorhandenes bleibt, kein Neustart; Selbstprüfung Ssms.exe-Version, sqlcmd -? an den festen Pfaden der Anmeldeprobe, ODBC-Treiber-Version; Ergebnis „SSMS_INSTALLIERT <zugang>: SSMS <ver>, sqlcmd <ver>, ODBC 18 <ver>“ ↔ ssms_entfernen (zugang; zeitlimitS mindestens 1260) — deinstalliert nur, was ssms_installieren dort installiert hat (Merker), mit Selbstprüfung; „SSMS_ENTFERNT …“.',
     riskLevel: 'admin',
     version: '1.0.0',
     // v1811 — direkte Aufrufe (listener_testen, status) nicht am Standard von 30 s abbrechen
@@ -86,6 +90,9 @@ export class SqlServerSkill extends Skill {
 
   constructor(private readonly d: SqlServerDeps) { super(); }
 
+  /** Ruling R33 — Mindest-zeitlimitS eines Change-Schritts (Baustein-Zeitgrenze + 60 s) */
+  mindestZeitlimitS(aktion: string): number | undefined { return SSMS_MIN_ZEITLIMIT_S[aktion]; }
+
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     const action = String(input.action ?? '');
     const zugang = String(input.zugang ?? '').trim().toLowerCase();
@@ -105,6 +112,19 @@ export class SqlServerSkill extends Skill {
     try {
       switch (action) {
         case 'status': { const s = await this.status(zugang, inst); return { success: true, data: s, display: sqlStatusText(s) }; }
+        // Ruling R33 (I8e L6) — SSMS mit sqlcmd und ODBC 18; Erfolg nur mit allen drei belegten Versionen
+        case 'ssms_installieren': {
+          const r = await this.lauf<SsmsInstalliert>(zugang, ssmsInstallierenSkript(), 'SSMS-Installation', SSMS_ZEIT_MS.installieren);
+          const t = ssmsText(zugang, r);
+          this.d.protokoll?.('I8e L6 SSMS', { zugang, neu: r.neu, vorhanden: r.vorhanden, neustart: r.neustartNoetig });
+          if (!t.ok) return { success: false, data: r, error: t.text };
+          return { success: true, data: r, display: r.neu?.length ? `✅ ${t.text} — Rückweg ssms_entfernen` : t.text };
+        }
+        case 'ssms_entfernen': {
+          const r = await this.lauf<{ entfernt: string[]; unveraendert: string[]; neustartNoetig: boolean }>(zugang, ssmsEntfernenSkript(), 'SSMS entfernen', SSMS_ZEIT_MS.entfernen);
+          const e = r.entfernt ?? []; const u = r.unveraendert ?? [];
+          return { success: true, data: r, display: `SSMS_ENTFERNT ${zugang}: ${e.length ? `entfernt ${e.join(', ')}` : 'nichts von Alfred installiert — nichts entfernt'}${u.length ? `; unverändert (nicht von Alfred): ${u.join(', ')}` : ''}${r.neustartNoetig ? ' — Neustart ausstehend' : ''}` };
+        }
         case 'pruefdaten_lesen': {
           const r = await this.lauf<{ zeilen: number; letzteId: number | null; letzterServer: string; letzteZeit: string }>(zugang, pruefdatenLesenSkript(mi({ datenbank: name('datenbank') })), 'Prüfdaten lesen', 120_000);
           return { success: true, data: r, display: `Prüfdaten ${String(input.datenbank)}: ${r.zeilen} Zeilen, letzte Id ${r.letzteId ?? '—'} (${r.letzterServer || '—'}, ${r.letzteZeit || '—'})` };

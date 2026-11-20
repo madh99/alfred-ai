@@ -20,8 +20,10 @@ const REPLIKAT = /^[A-Za-z0-9][A-Za-z0-9-]{0,14}(\\[A-Za-z][A-Za-z0-9_]{0,15})?$
 const FQDN = /^(?=.{3,120}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/i;
 const LOKAL_PFAD = /^[BD-Z]:\\[A-Za-z0-9 ._\\-]{1,150}$/;
 const UNC = /^\\\\[A-Za-z0-9.-]{1,120}\\[A-Za-z0-9_$-]{1,40}(\\[A-Za-z0-9 ._-]{1,60}){0,3}$/;
-/** Medien nur von Microsoft */
-const MEDIEN_URL = /^https:\/\/(go\.microsoft\.com|download\.microsoft\.com|aka\.ms|catalog\.s\.download\.windowsupdate\.com)\/[A-Za-z0-9/._?=&%-]{1,400}$/;
+/** Medien nur von Microsoft (Ruling R33: auch die festen Quellen von ssms_installieren, sql-ssms.ts) */
+export const MEDIEN_URL = /^https:\/\/(go\.microsoft\.com|download\.microsoft\.com|aka\.ms|catalog\.s\.download\.windowsupdate\.com)\/[A-Za-z0-9/._?=&%-]{1,400}$/;
+/** Authenticode gültig und von Microsoft (Subject mit „O=Microsoft Corporation“) — sonst Ausnahme; liefert das Subject */
+export const SIGNIERT_FN = "function Signiert($f) { $s = Get-AuthenticodeSignature -FilePath $f; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw ('Signatur nicht gültig/nicht Microsoft: ' + $f + ' ' + $s.Status + ' ' + $s.SignerCertificate.Subject) }; [string]$s.SignerCertificate.Subject }";
 
 /** T-SQL-Literal N'…' */
 export const nText = (s: string) => `N'${s.replace(/'/g, "''")}'`;
@@ -139,7 +141,7 @@ export function medienSkript(p: { url: string; art: 'installation' | 'cu'; sha25
     'Invoke-WebRequest -UseBasicParsing -Uri $p.url -OutFile $datei',
     "$hash = (Get-FileHash -Path $datei -Algorithm SHA256).Hash.ToLower()",
     "if ($p.sha256 -and $hash -ne $p.sha256) { Remove-Item $datei -Force; throw ('SHA-256 stimmt nicht: ' + $hash) }",
-    "function Signiert($f) { $s = Get-AuthenticodeSignature -FilePath $f; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw ('Signatur nicht gültig/nicht Microsoft: ' + $f + ' ' + $s.Status + ' ' + $s.SignerCertificate.Subject) }; [string]$s.SignerCertificate.Subject }",
+    SIGNIERT_FN,
     "$fs = [IO.File]::OpenRead($datei); $kopf = New-Object byte[] 2; [void]$fs.Read($kopf, 0, 2); $fs.Close()",
     "$istExe = ($kopf[0] -eq 0x4D -and $kopf[1] -eq 0x5A)",
     "$r = [ordered]@{ art = $p.art; sha256 = $hash; groesseMb = [math]::Round((Get-Item $datei).Length / 1MB, 1) }",
