@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Vorlagen: Signaturprüfung der Medien und Windows 11 Pro (v1910)
+
+- Der Bau einer Windows-Vorlage prüft vor dem Sysprep im Gast: Secure Boot aktiv, Kernsystemdateien mit gültiger Microsoft-Signatur, VirtIO-Treiber signiert, Cloudbase-Init-Paket vor der Installation mit gültiger Signatur des Herstellers. Das Ergebnis wird an der VM festgehalten; nur bei bestandener Prüfung läuft Sysprep, und `finish_windows_template` schließt nur mit festgehaltenem, bestandenem Ergebnis ab („MEDIEN_SIGNIERT …“). Fehlt das Ergebnis oder ist es unlesbar, entsteht keine Vorlage.
+- `proxmox check_windows_media`: dieselbe Prüfung lesend auf jeder laufenden Windows-VM, auch außerhalb von Changes — z. B. zum nachträglichen Beleg für Klone älterer Vorlagen.
+- Neue Variante `win11-pro` neben `win11` (Enterprise Evaluation, weiter Standard): wählt die Edition Professional aus dem regulären Windows-11-ISO, das bereits auf dem Speicher liegt, und installiert mit dem von Microsoft veröffentlichten KMS-Client-Setup-Schlüssel. Pro bleibt unaktiviert, bis eine eigene Lizenz eingespielt wird. Sprache aus dem ISO-Namen oder über `sprache`.
+
 ### Added — Admin-Clients für SQL Server auf Linux: SSMS, Remotedesktop-Anmeldung, Firewall-Freigabe (v1909)
 
 - `sql_server ssms_installieren` ↔ `ssms_entfernen`: installiert ODBC Driver 18, die SQL-Server-Befehlszeilenwerkzeuge (sqlcmd) und SQL Server Management Studio 22 still auf einem Windows-Rechner. Quellen sind fest und nur von Microsoft; jede Datei wird vor dem Start auf eine gültige Microsoft-Signatur geprüft. Vorhandenes bleibt unberührt, der Rückweg entfernt nur, was der Baustein selbst installiert hat. Erfolg nur mit belegter Version aller drei Teile.
