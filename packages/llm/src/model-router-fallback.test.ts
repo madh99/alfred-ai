@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ModelRouter } from './model-router.js';
+import { ModelRouter, fallbackKette } from './model-router.js';
 import type { LLMProvider } from './provider.js';
 import type { LLMResponse, MultiModelConfig } from '@alfred/types';
 
@@ -255,5 +255,43 @@ describe('v1510 D6b stufen()', () => {
     expect(s.find(x => x.stufe === 'default')).toEqual({ stufe: 'default', modell: 'gpt-test', gruendlichkeit: 'medium', verfuegbar: true });
     expect(s.find(x => x.stufe === 'strong')?.gruendlichkeit).toBe('high');
     expect(s.find(x => x.stufe === 'fast')?.gruendlichkeit).toBe('low');
+  });
+});
+
+// v1922 (Spec Stufe ultra, U1)
+describe('v1922 Stufe ultra', () => {
+  it('ausdrücklich ultra → Fable antwortet, mit Gründlichkeit high; Anzeige-Liste enthält ultra', async () => {
+    const r = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('ok', 'opus'), ultra: mockProvider('ok', 'fable') },
+      { strong: { provider: 'anthropic', model: 'opus-test' }, ultra: { provider: 'anthropic', model: 'claude-fable-5-2' } } as Partial<MultiModelConfig>);
+    const res = await r.complete({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never);
+    expect(res.content).toBe('antwort-von-fable');
+    expect(r.stufen().find(x => x.stufe === 'ultra')).toEqual({ stufe: 'ultra', modell: 'claude-fable-5-2', gruendlichkeit: 'high', verfuegbar: true });
+  });
+  it('ultra nicht konfiguriert → strong (nicht default), mit Meldung', async () => {
+    const r = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('ok', 'opus') }, { strong: { provider: 'anthropic', model: 'opus-test' } } as Partial<MultiModelConfig>);
+    const meldungen: Array<{ ziel: string; grund: string }> = [];
+    r.setUltraRueckfallCallback(i => meldungen.push(i));
+    const res = await r.complete({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never);
+    expect(res.content).toBe('antwort-von-opus');
+    expect(meldungen).toEqual([{ ziel: 'strong', grund: 'Stufe ultra ist nicht konfiguriert' }]);
+  });
+  it('ultra fällt aus (Guthaben) → zuerst strong, nicht default; Meldung mit Fehlertext; auch im Stream', async () => {
+    const r = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('ok', 'opus'), ultra: mockProvider('billing', 'fable') },
+      { strong: { provider: 'anthropic', model: 'opus-test' }, ultra: { provider: 'anthropic', model: 'claude-fable-5-2' } } as Partial<MultiModelConfig>);
+    const meldungen: Array<{ ziel: string; grund: string }> = [];
+    r.setUltraRueckfallCallback(i => meldungen.push(i));
+    const res = await r.complete({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never);
+    expect(res.content).toBe('antwort-von-opus');
+    expect(meldungen[0]?.ziel).toBe('strong');
+    expect(meldungen[0]?.grund).toMatch(/^Stufe ultra ausgefallen: /);
+    const r2 = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('ok', 'opus'), ultra: mockProvider('overloaded', 'fable') },
+      { strong: { provider: 'anthropic', model: 'opus-test' }, ultra: { provider: 'anthropic', model: 'claude-fable-5-2' } } as Partial<MultiModelConfig>);
+    const teile: string[] = [];
+    for await (const ev of r2.stream({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never)) if ((ev as { type: string; text?: string }).type === 'text') teile.push((ev as { text: string }).text);
+    expect(teile).toEqual(['stream-opus']);
+  });
+  it('ultra ist nie Ersatz für andere Stufen; Kette nach ultra beginnt mit strong', () => {
+    expect(fallbackKette('ultra')).toEqual(['strong', 'default', 'medium', 'fast', 'fallback']);
+    for (const t of ['default', 'strong', 'medium', 'fast'] as const) expect(fallbackKette(t)).not.toContain('ultra');
   });
 });

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Modellstufe „ultra“ (v1922, Spec Stufe ultra U1)
+
+- Neue Stufe `ultra` oberhalb von `strong`, konfiguriert über `ALFRED_LLM_ULTRA_PROVIDER`, `_MODEL` und `_API_KEY`. Vorgesehen ist Claude Fable 5.2. Die Standard-Gründlichkeit ist „high“, „max“ gibt es nur bei ausdrücklicher Wahl.
+- Anfordern lässt sich ultra per HTTP-Feld `tier`, in der CLI mit `/tier ultra` und in der Stufenliste für die Apps.
+- Ist ultra nicht konfiguriert oder fällt es aus, übernimmt zuerst `strong`, erst danach `default`. Bisher fiel jede fehlende Stufe direkt auf `default`. Jeder Rückfall steht im Log, der Owner erfährt ihn höchstens alle 6 Stunden. ultra springt nie als Ersatz für eine andere Stufe ein.
+
 ### Fixed — SQL-Anmeldeprobe nennt die hängende Warteschlange (v1921)
 
 - Bleibt die geplante Aufgabe der Anmeldeprobe in der Warteschlange, meldet `windows_ad sql_anmeldung_pruefen` das jetzt ausdrücklich. Dazu kommt der Ausweg: einmal per RDP am Client anmelden, dann wiederholen. Bisher hieß es nur „nach 120 s abgebrochen“.

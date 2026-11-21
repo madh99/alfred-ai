@@ -975,6 +975,14 @@ export class Alfred {
       // v1725 — Wächter sofort anstoßen (Meldung bzw. Entwarnung ohne Warten auf das 10-min-Raster); Puls ist vorher aktualisiert
       if (this.jobRegister) setTimeout(() => { void this.jobRegister?.jetzt('degradations-waechter').catch(() => undefined); }, 2_000).unref?.();
     });
+    // v1922 (Spec Stufe ultra, U1) — jede ultra-Anfrage, die nicht auf ultra lief, ins Log; dem Owner höchstens alle 6 h je Grund-Art
+    let ultraGemeldet = 0;
+    llmProvider.setUltraRueckfallCallback((info) => {
+      this.logger.warn({ ...info }, 'v1922 Stufe ultra nicht verfügbar — Rückfall');
+      if (Date.now() - ultraGemeldet < 6 * 3_600_000) return;
+      ultraGemeldet = Date.now();
+      void this.sendeAnOwner(`⚠️ Stufe ultra nicht verfügbar — Antwort kam von ${info.ziel}. Grund: ${info.grund}`).catch(() => undefined);
+    });
 
     // Service usage tracking (STT, TTS, OCR, Moderation)
     const serviceUsageRepo = new ServiceUsageRepository(adapter);

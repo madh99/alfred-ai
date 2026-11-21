@@ -14,7 +14,9 @@ export interface LLMProviderConfig {
  *  Übersetzungen) — Qualität über 'fast', Kosten unter 'strong', entkoppelt
  *  vom Chat-Alltag ('default'). Nicht konfiguriert → Router fällt auf
  *  'default' zurück. */
-export type ModelTier = 'default' | 'medium' | 'strong' | 'fast' | 'embeddings' | 'local' | 'fallback';
+/** v1922 (Spec Stufe ultra, U1) — 'ultra' oberhalb von strong: nur ausdrücklich, Gegenprüfung riskanter Changes oder Eskalation;
+ *  nicht konfiguriert oder ausgefallen → strong, dann default. */
+export type ModelTier = 'default' | 'medium' | 'strong' | 'ultra' | 'fast' | 'embeddings' | 'local' | 'fallback';
 
 export type MultiModelConfig = {
   [K in ModelTier]?: LLMProviderConfig;

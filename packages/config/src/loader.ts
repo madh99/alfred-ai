@@ -53,6 +53,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_LLM_STRONG_PROVIDER: ['llm', 'strong', 'provider'],
   ALFRED_LLM_STRONG_MODEL: ['llm', 'strong', 'model'],
   ALFRED_LLM_STRONG_API_KEY: ['llm', 'strong', 'apiKey'],
+  ALFRED_LLM_ULTRA_PROVIDER: ['llm', 'ultra', 'provider'], // v1922 — Stufe ultra
+  ALFRED_LLM_ULTRA_MODEL: ['llm', 'ultra', 'model'],
+  ALFRED_LLM_ULTRA_API_KEY: ['llm', 'ultra', 'apiKey'],
   ALFRED_LLM_MEDIUM_PROVIDER: ['llm', 'medium', 'provider'],
   ALFRED_LLM_MEDIUM_MODEL: ['llm', 'medium', 'model'],
   ALFRED_LLM_MEDIUM_API_KEY: ['llm', 'medium', 'apiKey'],

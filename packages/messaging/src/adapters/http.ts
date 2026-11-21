@@ -6688,7 +6688,7 @@ export class HttpAdapter extends MessagingAdapter {
         if (geraet) message.metadata = { ...(message.metadata ?? {}), sitzungGeraet: geraet.name };
         // v1248 — stückweise Antwort und Modellstufe (nur erlaubte Stufen; 'fallback' bleibt Notfall-Kette)
         if (parsed.stream === true) message.metadata = { ...(message.metadata ?? {}), stream: true };
-        if (typeof parsed.tier === 'string' && ['default', 'strong', 'medium', 'fast'].includes(parsed.tier)) message.metadata = { ...(message.metadata ?? {}), tier: parsed.tier as import('@alfred/types').ModelTier };
+        if (typeof parsed.tier === 'string' && ['default', 'strong', 'ultra', 'medium', 'fast'].includes(parsed.tier)) message.metadata = { ...(message.metadata ?? {}), tier: parsed.tier as import('@alfred/types').ModelTier };
 
         this.emit('message', message);
       } catch {

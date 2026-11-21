@@ -453,10 +453,10 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
           return;
         }
         case '/stimme': stimme = arg ? /^(an|on|ja|1)$/i.test(arg) : !stimme; ui.status({ stimme }); drucke(`🔊 Vorgelesene Antworten: ${stimme ? 'an' : 'aus'}`); return;
-        case '/tier': { // v1248 — Modellstufe wie überall: default · strong · medium · fast
+        case '/tier': { // v1248 — Modellstufe wie überall: default · strong · ultra · medium · fast (v1922 ultra)
           const w = arg.trim().toLowerCase();
           if (!w || w === 'auto' || w === 'server') { tier = undefined; ui.status({ tier: undefined }); drucke('Modellstufe: Server-Standard'); return; }
-          if (!['default', 'strong', 'medium', 'fast'].includes(w)) { drucke('Modellstufe: default · strong · medium · fast · auto'); return; }
+          if (!['default', 'strong', 'ultra', 'medium', 'fast'].includes(w)) { drucke('Modellstufe: default · strong · ultra · medium · fast · auto'); return; }
           tier = w; ui.status({ tier: w }); drucke(`Modellstufe: ${w}`); return;
         }
         case '/ja': await entscheide(arg, 'approve'); return;

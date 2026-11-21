@@ -11,7 +11,7 @@ import { createLLMProvider } from './provider-factory.js';
 import { TokenCostTracker } from './token-costs.js';
 import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
-const TIERS: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback'];
+const TIERS: ModelTier[] = ['default', 'strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback'];
 
 /** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung).
  *  v868.3 — kind: 'failure' (Guthaben/Quota-Fehler) | 'recovered' (Entwarnung). */
@@ -60,17 +60,30 @@ interface StreamUhr { start: number; erstesMs?: number }
 const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'fallback'];
 
 /**
+ * v1922 (Spec Stufe ultra, U1) — Kette nach einem Ausfall: ultra fällt zuerst auf strong (gleiche Güteklasse), erst dann default usw.;
+ * ultra selbst ist nie Ersatz für eine andere Stufe (doppelter Preis, nur auf Auslöser).
+ */
+export function fallbackKette(failedTier: ModelTier): ModelTier[] {
+  if (failedTier === 'ultra') return ['strong', ...FALLBACK_ORDER.filter(t => t !== 'strong')];
+  return FALLBACK_ORDER.filter(t => t !== failedTier);
+}
+
+/** v1922 — Meldung, wenn eine ultra-Anfrage nicht auf ultra lief (nicht konfiguriert oder ausgefallen) */
+export interface UltraRueckfallInfo { ziel: ModelTier; grund: string }
+
+/**
  * Default reasoning_effort per tier — only applied when the underlying model is a
  * reasoning model (gpt-5.5, o-series). Chat models and non-OpenAI providers ignore it.
  *
  * Rationale: reasoning tokens are billed as output ($30/M for gpt-5.5), so calls that
  * don't need deep thinking should use 'low' to save real money.
  */
-const TIER_DEFAULT_EFFORT: Partial<Record<ModelTier, 'none' | 'low' | 'medium' | 'high' | 'xhigh'>> = {
+const TIER_DEFAULT_EFFORT: Partial<Record<ModelTier, 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>> = {
   fast: 'low',
   medium: 'medium', // v979 — nur relevant, wenn medium auf ein Reasoning-Modell zeigt
   default: 'medium',
   strong: 'high',
+  ultra: 'high', // v1922 (Spec Stufe ultra, O2) — max nur bei ausdrücklicher Wahl
 };
 
 /** Minimal logger interface to avoid hard pino dependency. */
@@ -122,6 +135,12 @@ export class ModelRouter extends LLMProvider {
     if (tier && tier !== 'fallback' && this.providers.has(tier)) {
       return { provider: this.providers.get(tier)!, resolvedTier: tier };
     }
+    // v1922 (Spec Stufe ultra, U1) — ultra nicht konfiguriert → strong statt default, mit Meldung
+    if (tier === 'ultra' && this.providers.has('strong')) {
+      this.meldeUltraRueckfall('strong', 'Stufe ultra ist nicht konfiguriert');
+      return { provider: this.providers.get('strong')!, resolvedTier: 'strong' };
+    }
+    if (tier === 'ultra') this.meldeUltraRueckfall('default', 'Stufe ultra und strong sind nicht konfiguriert');
     const defaultProvider = this.providers.get('default');
     if (!defaultProvider) {
       throw new Error(
@@ -277,6 +296,14 @@ export class ModelRouter extends LLMProvider {
   private pendingRecovery = new Set<ModelTier>();
   setBillingAlertCallback(cb: (info: BillingAlertInfo) => void): void { this.billingAlertCallback = cb; }
 
+  /** v1922 (Spec Stufe ultra, U1) — jeder Rückfall einer ultra-Anfrage wird gemeldet (Log immer, Owner über den Callback) */
+  private ultraRueckfallCallback?: (info: UltraRueckfallInfo) => void;
+  setUltraRueckfallCallback(cb: (info: UltraRueckfallInfo) => void): void { this.ultraRueckfallCallback = cb; }
+  private meldeUltraRueckfall(ziel: ModelTier, grund: string): void {
+    this.logger?.warn({ ziel, grund }, 'v1922 ultra-Rückfall');
+    try { this.ultraRueckfallCallback?.({ ziel, grund }); } catch { /* Meldung darf den Aufruf nie stören */ }
+  }
+
   /** v868.3 — zentraler Einstieg für Billing-Fehler: Cooldown setzen + Alert (deduped). */
   private registerBillingFailure(tier: ModelTier, err: unknown): void {
     this.billingCooldownUntil.set(tier, Date.now() + BILLING_COOLDOWN_MS);
@@ -394,7 +421,7 @@ export class ModelRouter extends LLMProvider {
 
   private async completeWithFallback(request: LLMRequest, failedTier: ModelTier, originalErr: unknown): Promise<LLMResponse> {
     // v868 — 'fallback'-Tier (Notfall-Provider) ans Ende der Kette
-    const fallbackOrder = FALLBACK_ORDER.filter(t => t !== failedTier);
+    const fallbackOrder = fallbackKette(failedTier);
     for (const tier of fallbackOrder) {
       // v868.3 — Tiers im Billing-Cooldown überspringen (bekannt leer)
       if (this.isInBillingCooldown(tier)) continue;
@@ -402,6 +429,7 @@ export class ModelRouter extends LLMProvider {
       if (!provider) continue;
       try {
         this.logger?.info({ tier }, 'Fallback to tier');
+        if (failedTier === 'ultra') this.meldeUltraRueckfall(tier, `Stufe ultra ausgefallen: ${((originalErr as Error)?.message ?? String(originalErr)).slice(0, 160)}`);
         const response = await this.executeComplete(provider, tier, request);
         this.maybeNotifyRecovery(tier); // v868.3 — Tier hat sich bewiesen
         this.meldePuls('erfolg', tier);
@@ -453,13 +481,14 @@ export class ModelRouter extends LLMProvider {
 
   /** v868.3 — Fallback-Kette für Streams (Cooldown-aware, mit Recovery-Check). */
   private async *streamFallback(request: LLMRequest, failedTier: ModelTier, originalErr: unknown): AsyncIterable<LLMStreamEvent> {
-    const fallbackOrder = FALLBACK_ORDER.filter(t => t !== failedTier);
+    const fallbackOrder = fallbackKette(failedTier);
     for (const tier of fallbackOrder) {
       if (this.isInBillingCooldown(tier)) continue; // bekannt leer — überspringen
       const fbProvider = this.providers.get(tier);
       if (!fbProvider) continue;
       try {
         this.logger?.info({ tier }, 'Stream fallback to tier');
+        if (failedTier === 'ultra') this.meldeUltraRueckfall(tier, `Stufe ultra ausgefallen: ${((originalErr as Error)?.message ?? String(originalErr)).slice(0, 160)}`);
         const uhr: StreamUhr = { start: Date.now() };
         for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event, uhr); yield event; }
         this.maybeNotifyRecovery(tier);
@@ -500,7 +529,7 @@ export class ModelRouter extends LLMProvider {
     const aus: Array<{ stufe: ModelTier; modell: string; gruendlichkeit?: string; verfuegbar: boolean }> = [];
     for (const tier of TIERS) {
       const provider = this.providers.get(tier);
-      if (!provider || !['fast', 'medium', 'default', 'strong'].includes(tier)) continue; // nur Chat-Stufen (ohne embeddings, local, fallback)
+      if (!provider || !['fast', 'medium', 'default', 'strong', 'ultra'].includes(tier)) continue; // nur Chat-Stufen (ohne embeddings, local, fallback)
       const effort = TIER_DEFAULT_EFFORT[tier];
       aus.push({ stufe: tier, modell: this.multiConfig[tier]?.model ?? 'unbekannt', ...(effort ? { gruendlichkeit: effort } : {}), verfuegbar: provider.isAvailable() });
     }
