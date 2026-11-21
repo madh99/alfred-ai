@@ -83,6 +83,9 @@ export class WindowsAdSkill extends Skill {
       + 'Ausführungskonto optional wählbar: ausfuehrungskonto („name“ oder „NETBIOS\\name“) mit konto_tresor, z. B. für eine fremde Domäne. Alle Änderungen ohne Rückweg außer dns_eintrag ↔ dns_eintrag_loeschen, dns_client, dienstkonto_anlegen ↔ dienstkonto_entfernen und den I8e-Etappe-3-Paaren oben inkl. admin_anmeldung_einrichten ↔ admin_anmeldung_entfernen (Hochstufen/Beitritt zurücknehmen ist ein eigener Change).',
     riskLevel: 'admin',
     version: '1.0.0',
+    // Ruling R46 — ohne eigenes Zeitlimit brach jeder Chat-Aufruf nach 30 s ab (Standard der Sandbox); die Bausteine selbst warten
+    // bis 25 min (Hochstufen), die Anmeldeprobe bis 300 s
+    timeoutMs: 30 * 60_000,
     inputSchema: {
       type: 'object',
       properties: {

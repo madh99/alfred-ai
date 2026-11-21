@@ -24,6 +24,11 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // Terra $2/$12, Luna $0.20/$1.20 (vorher 5/30, 2.5/15, 1/6).
   // v1204 — Modell-Update Oktober 2026 (Quellen 06.10.: OpenAI-Modellliste live, Preisvergleich 05.10.,
   // GPT-6.1-Sol-Ankündigung 29.09.): Sol/Luna-Varianten VOR dem generischen gpt-6-Präfix, sonst $10/$50.
+  // v1917 — Modell-Update November 2026 (Live-Modellliste 21.11.: gpt-6.2-astra 31.10., gpt-6.2-sol 02.11., gpt-6.1-terra 13.10.;
+  // Preise laut OpenAI-Preisseite/Preisvergleichen 21.11.). Vorher fielen alle drei auf den generischen gpt-6-Preis $10/$50.
+  ['gpt-6.2-astra',   { input: 8.00, output: 40.00, cacheRead: 0.40 }],
+  ['gpt-6.2-sol',     { input: 2.00, output: 10.00, cacheRead: 0.10 }],
+  ['gpt-6.1-terra',   { input: 1.00, output: 5.00,  cacheRead: 0.05 }],
   ['gpt-6.1-sol',     { input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50 }],
   ['gpt-6-astra',     { input: 10.00, output: 50.00, cacheRead: 1.00 }],
   ['gpt-6-sol',       { input: 2.00, output: 10.00, cacheRead: 0.20 }],
@@ -62,6 +67,9 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // v1156 (16.09.2026, platform.claude.com Pricing): Fable 5.1 / Mythos 5.1
   // $10/$50 wie Fable 5, aber Cache-Read nur 0.025x = $0.25 (statt $1).
   // Müssen VOR 'claude-fable-5'/'claude-mythos-5' stehen (Präfix-Match).
+  // v1917 — Fable 5.2 / Mythos 5.2 (09.11.2026): $8/$40, Cache-Read $0.20, Cache-Write 1,25× — vorher fielen sie auf Fable 5 ($10/$50)
+  ['claude-fable-5-2',  { input: 8.00, output: 40.00, cacheRead: 0.20, cacheWrite: 10.00 }],
+  ['claude-mythos-5-2', { input: 8.00, output: 40.00, cacheRead: 0.20, cacheWrite: 10.00 }],
   ['claude-fable-5-1',  { input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50 }],
   ['claude-mythos-5-1', { input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50 }],
   // Fable 5 / Mythos 5: $10/$50, Cache standard-Multiplikatoren (write 1.25x, read 0.1x)
@@ -131,6 +139,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['ministral-3b',            { input: 0.10, output: 0.10 }],
   ['ministral-8b',            { input: 0.15, output: 0.15 }],
   ['ministral-14b',           { input: 0.20, output: 0.20 }],
+  // v1917 — Mistral Large 4 ($0.70/$2.10, Cache $0.07); 'mistral-large-latest' (Alfreds Rückfallstufe) zeigt laut Live-Liste 21.11.
+  // darauf (1 048 576 Token Kontext). 'mistral-large-2512' bleibt Large 3.
+  ['mistral-large-4',         { input: 0.70, output: 2.10, cacheRead: 0.07 }],
+  ['mistral-large-latest',    { input: 0.70, output: 2.10, cacheRead: 0.07 }],
   ['mistral-large',           { input: 0.50, output: 1.50, cacheRead: 0.05 }],
   // Mistral Medium 3.5 (April 2026) — 256k context, frontier multimodal.
   // Cached input billed at 10% of standard input (Mistral API doc: "Cached tokens are billed at 10%").

@@ -377,7 +377,9 @@ export class OpenAIProvider extends LLMProvider {
     }
     const diag = this.diagnoseParam(request).prompt_cache_options as Record<string, unknown> | undefined; // v1693 (K2) — nur Messung
     const cacheOptionen = { ...(explizit ? { mode: 'explicit' } : {}), ...(diag ?? {}) };
-    const effort = request.reasoningEffort; // Responses akzeptiert none…xhigh und (5.6) max
+    // v1917 — Live-Probe 21.11.: gpt-6.2-sol und gpt-6.2-astra lehnen effort 'none' mit 400 ab („Supported values are: 'low', …,
+    // 'max'“); bisher ging der Wert hier ungefiltert hinaus (der chat-Weg bildete schon none→low ab). 'max' bleibt erhalten.
+    const effort = request.reasoningEffort === 'none' && this.isReasoningModel() && /^gpt-6/.test(this.config.model) ? 'low' : request.reasoningEffort;
     return {
       model: this.config.model,
       input,

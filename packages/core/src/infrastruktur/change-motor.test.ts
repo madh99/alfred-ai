@@ -842,6 +842,29 @@ describe('v1843 Zeitgrenze beobachtender Skill-Prüfungen', () => {
     await m.pruefe({ typ: 'skill', skill: 'x', aktion: 'y', parameter: { dauer_s: 99999 } });
     expect(grenzen).toEqual([600_000, 60_000, 2_400_000]);
   });
+  // Ruling R46 — Realfall 21.11. 2d2c5d5b Schritt 18: sql_anmeldung_pruefen (geplante Aufgabe, bis 120 s) brach dreimal an 60 s ab
+  it('R46: das Zeitlimit des Schritts hebt die Grenze an (höchstens 40 min), 60 s bleiben Untergrenze, dauer_s gewinnt wenn größer', async () => {
+    const w = welt([]);
+    const grenzen: number[] = [];
+    w.deps.fuehreAus = async (_s, _i, t) => { grenzen.push(t); return { success: true, display: 'SQL_KERBEROS_OK' }; };
+    const m = new ChangeMotor(w.deps);
+    const probe = { typ: 'skill' as const, skill: 'windows_ad', aktion: 'sql_anmeldung_pruefen', parameter: { zugang: 'sqladmw11' }, erwartet: 'SQL_KERBEROS_OK' };
+    await m.pruefe(probe, 600);
+    await m.pruefe(probe, 30);
+    await m.pruefe(probe);
+    await m.pruefe(probe, 99_999);
+    await m.pruefe({ ...probe, parameter: { dauer_s: 900 } }, 600);
+    expect(grenzen).toEqual([600_000, 60_000, 60_000, 2_400_000, 1_200_000]);
+  });
+  it('R46 im Lauf: ein Prüfschritt mit zeitlimitS 600 ruft den Skill mit 600 s auf und schließt ab', async () => {
+    const w = welt([S({ nr: 1, art: 'pruefung', zeitlimitS: 600, pruefung: { typ: 'skill', skill: 'windows_ad', aktion: 'sql_anmeldung_pruefen', parameter: { zugang: 'sqladmw11' }, erwartet: 'SQL_KERBEROS_OK' } })]);
+    const grenzen: number[] = [];
+    w.deps.fuehreAus = async (_s, _i, t) => { grenzen.push(t); return { success: true, display: 'SQL_KERBEROS_OK sqllnxag01' }; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(grenzen).toEqual([600_000]);
+  });
 });
 
 // v1844 — Rückweg publication_setzen mit cdp_roh/aia_roh aus dem gemeldeten „vorher“

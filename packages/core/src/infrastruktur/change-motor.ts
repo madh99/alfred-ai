@@ -422,11 +422,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
           const sek = Math.round((Date.now() - t0) / 1000);
           return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: pr.text.startsWith('Abbruch') ? `Nach ${sek} s abgebrochen: ${pr.text}` : `Prüfung nach ${sek} s (Zeitlimit ${s.zeitlimitS} s) nicht erfüllt: ${pr.text}` }) });
         }
-        const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger);
+        const pr = await this.pruefeMitWiederholung(s.pruefung, [...ergebnisse, { ...e, ...basis, ok: true }], this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger, s.zeitlimitS);
         return fertig({ ...basis, ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Prüfung nicht erfüllt: ${pr.text}` }) });
       }
       if (s.art === 'pruefung') {
-        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger);
+        const pr = await this.pruefeMitWiederholung(s.pruefung!, ergebnisse, this.takt.pruefVersuche, this.takt.pruefAbstandMs, undefined, z?.vorgaenger, s.zeitlimitS);
         return fertig({ ok: pr.ok, pruefung: pr, ...(pr.ok ? {} : { fehler: `Prüfung nicht erfüllt: ${pr.text}` }) });
       }
       if (s.art === 'warten') {
@@ -502,7 +502,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     return { ok: true, ...(r.display ? { ausgabe: r.display } : {}), daten: r.data };
   }
 
-  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number, vorgaenger?: Map<string, SchrittErgebnis[] | string>): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
+  private async pruefeMitWiederholung(p0: Pruefung, ergebnisse: SchrittErgebnis[], versuche: number, abstandMs: number | ((versuch: number) => number), fristMs?: number, vorgaenger?: Map<string, SchrittErgebnis[] | string>, zeitlimitS?: number): Promise<{ ok: boolean; text: string; versuche: number; ausgabe?: string }> {
     const aufgeloest = loeseAuf(p0, ergebnisse, undefined, vorgaenger);
     if (aufgeloest.fehler) return { ok: false, text: aufgeloest.fehler, versuche: 0 };
     const rest = unaufgeloesterVerweis(aufgeloest.wert);
@@ -511,7 +511,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     let letzter = ''; let ausgabe: string | undefined;
     for (let i = 1; i <= versuche; i++) {
       try {
-        const r = await this.pruefe(p);
+        const r = await this.pruefe(p, zeitlimitS);
         if (r.ok) return { ok: true, text: r.text, versuche: i, ...(r.ausgabe ? { ausgabe: r.ausgabe } : {}) };
         letzter = r.text; ausgabe = r.ausgabe;
         // v1718 — Realfall 31.10. (8a26aed6 Schritt 67): pg_verifybackup scheiterte nach 1 s, gewartet wurde 70 min bis zum Zeitlimit.
@@ -530,7 +530,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   /** Eine Prüfung genau einmal. */
-  async pruefe(p: Pruefung): Promise<{ ok: boolean; text: string; ausgabe?: string }> {
+  async pruefe(p: Pruefung, zeitlimitS?: number): Promise<{ ok: boolean; text: string; ausgabe?: string }> {
     switch (p.typ) {
       case 'http': {
         const r = await this.d.netz.http(p.ziel!, 15_000);
@@ -574,7 +574,11 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         // v1843 — Realfall 13.11. (2ee9634f Schritt 2): windows_cluster.stabilitaet_pruefen beobachtet dauer_s (300 s) am Stück,
         // als Prüfung lief der Aufruf mit festen 60 s ins Zeitlimit. Beobachtende Prüfungen bekommen ihre Dauer plus Reserve.
         const dauer = Number((p.parameter as Record<string, unknown> | undefined)?.dauer_s);
-        const grenze = Number.isFinite(dauer) && dauer > 0 ? Math.max(60_000, Math.min(dauer + 300, 2_400) * 1000) : 60_000;
+        // Ruling R46 — Realfall 21.11. (2d2c5d5b Schritt 18): windows_ad.sql_anmeldung_pruefen läuft als geplante Aufgabe unter dem
+        // Test-Konto (bis 120 s) und brach als Prüfung dreimal an den festen 60 s ab — der eigentliche Fehler blieb unsichtbar.
+        // Ein Aufruf darf jetzt bis zum Zeitlimit des Schritts laufen (höchstens 40 min); 60 s bleiben die Untergrenze.
+        const schritt = Number.isFinite(zeitlimitS) && zeitlimitS! > 0 ? Math.min(zeitlimitS!, 2_400) * 1000 : 0;
+        const grenze = Math.max(Number.isFinite(dauer) && dauer > 0 ? Math.max(60_000, Math.min(dauer + 300, 2_400) * 1000) : 60_000, schritt);
         const r = await this.d.fuehreAus(p.skill!, { ...(p.parameter ?? {}), action: p.aktion! }, grenze);
         if (!r.success) return { ok: false, text: `${p.skill}.${p.aktion}: ${String(r.error ?? 'Fehler').slice(0, 160)}` };
         // v1717 — Realfall 30.10. (8a26aed6 Schritte 55–57): fernzugriff.lesen als Prüfung — die Anzeige enthält den Befehl selbst, und

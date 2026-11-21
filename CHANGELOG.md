@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Modelle November 2026 (v1917)
+
+- OpenAI GPT-6.2 Sol ($2/$10, Cache $0.10), GPT-6.2 Astra ($8/$40, Cache $0.40) und GPT-6.1 Terra ($1/$5, Cache $0.05) haben eigene Preise und Kontextfenster (1,05 Mio. / 128k). Bisher wurden sie mit dem allgemeinen GPT-6-Preis von $10/$50 abgerechnet. Alle drei wurden live in Alfreds Anfrageformen geprüft: Werkzeugaufruf mit Folgerunde, Effort low bis max, Cache-Haltepunkte und der Rückfallweg über chat/completions.
+- Im Responses-Weg wird Effort „none“ bei GPT-6-Modellen jetzt als „low“ gesendet. GPT-6.2 Sol und Astra lehnen „none“ mit HTTP 400 ab. Im chat/completions-Weg galt diese Regel schon.
+- Claude Fable 5.2 und Mythos 5.2 kosten $8/$40 (Cache-Lesen $0.20, Cache-Schreiben $10) bei 1 Mio. / 128k Tokens. Bisher galt der Preis von Fable 5 ($10/$50).
+- `mistral-large-latest` zeigt jetzt auf Mistral Large 4. Preis $0.70/$2.10 (Cache $0.07), Kontext 1 Mio. Tokens. Der Rückfall auf Mistral war bisher um rund 30 % zu niedrig angesetzt. `mistral-large-2512` (Large 3) bleibt bei $0.50/$1.50.
+
+### Fixed — Change-Prüfungen dürfen das Zeitlimit des Schritts nutzen (v1917)
+
+- Eine Skill-Prüfung in einem Change bekam bisher fest 60 Sekunden, ohne Rücksicht auf das Zeitlimit des Schritts. Die SQL-Anmeldeprobe vom Admin-Client läuft als geplante Aufgabe unter dem Testkonto und braucht bis zu 120 Sekunden. Sie brach deshalb dreimal ab, und der eigentliche Fehlertext blieb unsichtbar. Jetzt darf ein Aufruf bis zum Zeitlimit des Schritts laufen, höchstens 40 Minuten. Die Untergrenze bleibt bei 60 Sekunden. Wartende Prüfungen mit langem Zeitlimit fragen weiter im gewohnten Takt.
+- `windows_ad` hat ein eigenes Zeitlimit von 30 Minuten. Bisher endete jeder direkte Aufruf nach 30 Sekunden, dem Standard der Sandbox.
+
 ### Fixed — SSMS-Installation wartet auf die befristete Web-Freigabe (v1916)
 
 - Bei einem Verbindungsfehler ohne Antwort des Servers wiederholt `ssms_installieren` den Download bis zu 10× im Abstand von 30 Sekunden, also höchstens etwa 5 Minuten lang. Hintergrund: Eine eben angelegte Firewall-Freigabe greift auf dem Gateway erst mit Verzögerung.

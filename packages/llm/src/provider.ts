@@ -57,6 +57,9 @@ export async function withPrematureCloseRetry<T>(fn: () => Promise<T>, attempts 
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // Anthropic — Fable 5.1 / Fable 5 / Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x
   // v1156 — Fable 5.1 / Mythos 5.1 (Sept. 2026, Models-Overview): 1M / 128k
+  // v1917 — Fable 5.2 / Mythos 5.2 (09.11.2026; Live-Models-API 21.11.: 1000000 / 128000)
+  'claude-fable-5-2':             { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-mythos-5-2':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-fable-5-1':             { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-mythos-5-1':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-fable-5':               { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
@@ -92,6 +95,10 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // v1156 — GPT-6 Astra (Sept. 2026, Modellseite): 1.050.000 / 128.000
   'gpt-6-astra':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   // v1204 — GPT-6.1 Sol (29.09.2026) und GPT-6 Sol/Luna (22.09.2026): 1.050.000 / 128.000 wie Astra
+  // v1917 — GPT-6.2 Astra/Sol und GPT-6.1 Terra (Live-Modellliste 21.11.2026): wie die GPT-6-Familie
+  'gpt-6.2-astra':                { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-6.2-sol':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-6.1-terra':                { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-6.1-sol':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-6-sol':                    { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-6-luna':                   { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
@@ -136,6 +143,9 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'gemini-1.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
 
   // Mistral AI
+  // v1917 — Mistral Large 4 (Live-Modellliste 21.11.: max_context_length 1048576); 'mistral-large-latest' zeigt darauf
+  'mistral-large-4':              { maxInputTokens: 1_048_576, maxOutputTokens: 256_000 },
+  'mistral-large-latest':         { maxInputTokens: 1_048_576, maxOutputTokens: 256_000 },
   'mistral-large':                { maxInputTokens: 256_000, maxOutputTokens: 256_000 },
   // Mistral Medium 3.5 — must come BEFORE generic 'mistral-medium' so prefix-match catches it
   'mistral-medium-3-5':           { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
