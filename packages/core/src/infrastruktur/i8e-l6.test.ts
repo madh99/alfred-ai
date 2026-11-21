@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { powershellVorhanden, parseSkripte } from './powershell-parser.testhilfe.js';
+import { powershellVorhanden, parseSkripte, fuehreSkriptAus } from './powershell-parser.testhilfe.js';
 import { SQL_PROBE_ZUGAENGE, SQLCMD_PFADE, sqlAnmeldungSkript, ADMIN_ANMELDUNG_GRUPPEN, pruefeAdminAnmeldung, adminAnmeldungSkript, adminAnmeldungEntfernenSkript, RDP_REGELGRUPPE, REMOTEDESKTOPBENUTZER_SID } from './windows-ad-linux.js';
 import { WindowsAdSkill } from './windows-ad-skill.js';
 import { SqlServerSkill } from './sql-server-skill.js';
 import { MEDIEN_URL, medienSkript } from './sql-server.js';
-import { SSMS_QUELLEN, SSMS_INSTALLATIONSPFAD, SSMS_EXE, ODBC_TREIBER, SQLCMD_ODBC_PFADE, ssmsInstallierenSkript, ssmsEntfernenSkript, ssmsText } from './sql-ssms.js';
+import { SSMS_QUELLEN, SSMS_INSTALLATIONSPFAD, SSMS_EXE, ODBC_TREIBER, SQLCMD_ODBC_PFADE, ssmsInstallierenSkript, ssmsEntfernenSkript, ssmsText, SSMS_LADEN_VERSUCHE, SSMS_LADEN_ABSTAND_S } from './sql-ssms.js';
 import { aktionsArt, pruefeChangePlan, type PruefKontext } from './change-schritte.js';
 import { selectCategoriesOhneRueckfall } from '../skill-filter.js';
 import { schwaerze } from '../fernzugriff/kaefig.js';
@@ -313,4 +313,30 @@ describe.skipIf(!POWERSHELL)('L6 — PowerShell-Parser', { timeout: 120_000 }, (
     expect(p.gegenprobeErkannt, `Gegenprobe (fehlerhaftes Skript) nicht erkannt: ${p.roh}`).toBe(true);
     for (const [name, ergebnis] of Object.entries(p.ergebnisse)) expect(ergebnis, name).toBe('OK');
   }, 60_000);
+});
+
+describe('Ruling R42 SSMS-Download wiederholt nur Verbindungsfehler (Realfall 2d2c5d5b Schritt 14)', () => {
+  it('bis zu 10 Versuche im Abstand von 30 s, nur WebException ohne Serverantwort, Signaturprüfung danach unverändert', () => {
+    expect(SSMS_LADEN_VERSUCHE * SSMS_LADEN_ABSTAND_S).toBeLessThanOrEqual(300);
+    const laden = ssmsInstallierenSkript().split(/\r?\n/).find(z => z.startsWith('function Laden'))!;
+    expect(laden).toContain(`catch [System.Net.WebException] { if ($v -ge ${SSMS_LADEN_VERSUCHE} -or $_.Exception.Response) { throw }`);
+    expect(laden).toContain(`Start-Sleep -Seconds ${SSMS_LADEN_ABSTAND_S}`);
+    expect(laden).not.toContain('${');
+    expect(laden.indexOf('Invoke-WebRequest')).toBeLessThan(laden.indexOf('Signiert $f'));
+  });
+});
+
+describe('Ruling R43 SSMS-Version aus den Zahlenteilen der Datei (Realfall 2d2c5d5b Schritt 14)', () => {
+  it('ssmsText: „22.12.12412.261 built by: stable“ ist keine belegte Version, die Zahlenform schon', () => {
+    const r = { rechner: 'SQLADMW11', neu: ['ssms'], vorhanden: [], neustartNoetig: false, sqlcmd: { pfad: 'x', version: '17.0.4055.5' }, odbc: { dll: 'x', version: '2018.0187.0001.01' } };
+    expect(ssmsText('sqladmw11', { ...r, ssms: { pfad: 'x', version: '22.12.12412.261 built by: stable' } }).ok).toBe(false);
+    expect(ssmsText('sqladmw11', { ...r, ssms: { pfad: 'x', version: '22.12.12412.261', dateiVersion: '22.12.12412.261 built by: stable' } }).text).toMatch(/^SSMS_INSTALLIERT sqladmw11: SSMS 22\.12\.12412\.261,/);
+  });
+  it.skipIf(!powershellVorhanden())('Ssms im Gast: Datei mit Zusatztext in FileVersion (notepad.exe „… (WinBuild…)“) ergibt reine Zahlenversion', () => {
+    const fn = ssmsInstallierenSkript().split(/\r?\n/).find(z => z.startsWith('function Ssms'))!;
+    const r = fuehreSkriptAus([String.raw`$ssmsExe = "$env:WINDIR\System32\notepad.exe"`, fn, '$s = Ssms; "V=" + $s.version; "D=" + $s.dateiVersion'].join('\r\n'));
+    const v = /V=(.*)/.exec(r.stdout)?.[1]?.trim() ?? '';
+    expect(v).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    expect(/D=(.*)/.exec(r.stdout)?.[1]?.trim()).toContain(v.split('.').slice(0, 3).join('.'));
+  });
 });

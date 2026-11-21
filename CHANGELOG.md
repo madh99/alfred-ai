@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SSMS-Installation wartet auf die befristete Web-Freigabe (v1916)
+
+- Bei einem Verbindungsfehler ohne Antwort des Servers wiederholt `ssms_installieren` den Download bis zu 10× im Abstand von 30 Sekunden, also höchstens etwa 5 Minuten lang. Hintergrund: Eine eben angelegte Firewall-Freigabe greift auf dem Gateway erst mit Verzögerung.
+- Antwortet der Server mit einem HTTP-Fehler, oder tritt ein anderer Fehler auf, bricht die Installation weiterhin sofort ab. Die Microsoft-Signaturprüfung jeder Datei bleibt unverändert.
+- Die Selbstprüfung nach der Installation liest die SSMS-Version jetzt aus den Zahlenteilen der Datei. Die Dateiversion von SSMS 22 lautet `22.12.12412.261 built by: stable`; bisher galt sie deshalb als nicht belegt, und eine erfolgreiche Installation wurde als gescheitert gemeldet. Den Originaltext liefert das Ergebnis weiterhin als `dateiVersion`.
+
 ### Fixed — Windows-11-Klone führen Alfreds Skriptdateien aus (v1915)
 
 - Windows-Clients stehen ab Werk auf der Ausführungsrichtlinie „Restricted“. Seit v1823 laufen Alfreds Windows-Bausteine als Skriptdateien ohne Umgehung der Richtlinie, deshalb liefen sie auf Windows-11-Klonen nicht. Die Medienprüfung am Klon endete ohne Ergebnis.

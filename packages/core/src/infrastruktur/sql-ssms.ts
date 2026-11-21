@@ -28,6 +28,13 @@ export const SSMS_QUELLEN = {
   sqlcmd: 'https://go.microsoft.com/fwlink/?linkid=2370127',
   ssms: 'https://aka.ms/ssms/22/release/vs_SSMS.exe',
 } as const;
+/**
+ * Ruling R42 (Realfall 2d2c5d5b Schritt 14): die befristete Web-Freigabe war auf dem Gateway 30–45 s nach dem Anlegen noch nicht
+ * wirksam — Verbindungsfehler ohne Serverantwort werden bis zu 10× im Abstand von 30 s wiederholt (≈ 5 min); eine HTTP-Antwort
+ * (z. B. 404) bricht sofort ab, ebenso jeder andere Fehler. Die Signaturprüfung danach bleibt unverändert.
+ */
+export const SSMS_LADEN_VERSUCHE = 10;
+export const SSMS_LADEN_ABSTAND_S = 30;
 /** Ruling R33 — fester Installationsort (Standard von SSMS 22, Release-Kanal); Ssms.exe darunter in Common7\IDE */
 export const SSMS_INSTALLATIONSPFAD = 'C:\\Program Files\\Microsoft SQL Server Management Studio 22\\Release';
 export const SSMS_EXE = `${SSMS_INSTALLATIONSPFAD}\\Common7\\IDE\\SSMS.exe`;
@@ -52,7 +59,7 @@ const SSMS_VOR = [
   "function Odbc { $k = Get-ItemProperty -LiteralPath $odbcKey -ErrorAction SilentlyContinue; if (-not $k -or -not $k.Driver -or -not (Test-Path -LiteralPath ([string]$k.Driver))) { return $null }; $v = ([string](Get-Item -LiteralPath ([string]$k.Driver)).VersionInfo.FileVersion).Trim(); [ordered]@{ dll = [string]$k.Driver; version = $v } }",
   // sqlcmd -? nennt „Version 17.0.4055.5 NT“; Fehlerausgabe in den Text statt Ausnahme
   "function SqlcmdFund { foreach ($x in $sqlcmdPfade) { if (Test-Path -LiteralPath $x) { $ErrorActionPreference = 'Continue'; $t = & $x '-?' 2>&1 | Out-String; $ErrorActionPreference = 'Stop'; $v = $(if ($t -match 'Version\\s+(\\d+(\\.\\d+)+)') { $Matches[1] } else { '' }); return [ordered]@{ pfad = $x; version = $v } } }; return $null }",
-  "function Ssms { if (-not (Test-Path -LiteralPath $ssmsExe)) { return $null }; $i = (Get-Item -LiteralPath $ssmsExe).VersionInfo; [ordered]@{ pfad = $ssmsExe; version = ([string]$i.FileVersion).Trim(); produktVersion = ([string]$i.ProductVersion).Trim() } }",
+  "function Ssms { if (-not (Test-Path -LiteralPath $ssmsExe)) { return $null }; $i = (Get-Item -LiteralPath $ssmsExe).VersionInfo; [ordered]@{ pfad = $ssmsExe; version = $(if ($i.FileMajorPart -gt 0) { '{0}.{1}.{2}.{3}' -f $i.FileMajorPart, $i.FileMinorPart, $i.FileBuildPart, $i.FilePrivatePart } else { '' }); dateiVersion = ([string]$i.FileVersion).Trim(); produktVersion = ([string]$i.ProductVersion).Trim() } }",
   "function Produkte([string]$muster) { @(Get-ChildItem -LiteralPath $uninst -ErrorAction SilentlyContinue | ForEach-Object { $x = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue; if ([string]$x.DisplayName -like $muster -and $_.PSChildName -match '^\\{[0-9A-Fa-f-]{36}\\}$') { [string]$_.PSChildName } }) }",
   'function Merker { if (Test-Path -LiteralPath $merk) { [IO.File]::ReadAllText($merk) | ConvertFrom-Json } else { $null } }',
 ];
@@ -75,7 +82,7 @@ export function ssmsInstallierenSkript(): string {
     "function Merken { $mm.zeit = (Get-Date).ToString('s'); [IO.File]::WriteAllText($merk, ($mm | ConvertTo-Json -Depth 5 -Compress), (New-Object System.Text.UTF8Encoding $false)) }",
     '$r = [ordered]@{ rechner = $env:COMPUTERNAME; neu = @(); vorhanden = @(); neustartNoetig = $false; downloads = @() }',
     // Laden: Microsoft-Quelle → Datei → Signatur Microsoft (sonst gelöscht und Abbruch, nichts gestartet)
-    "function Laden([string]$teil, [string]$endung) { $f = Join-Path $dl ($teil + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + $endung); Invoke-WebRequest -UseBasicParsing -Uri $quellen[$teil] -OutFile $f; try { $sig = Signiert $f } catch { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; throw }; $r.downloads += [ordered]@{ teil = $teil; signatur = $sig; sha256 = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() }; $f }",
+    `function Laden([string]$teil, [string]$endung) { $f = Join-Path $dl ($teil + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + $endung); for ($v = 1; ; $v++) { try { Invoke-WebRequest -UseBasicParsing -Uri $quellen[$teil] -OutFile $f; break } catch [System.Net.WebException] { if ($v -ge ${SSMS_LADEN_VERSUCHE} -or $_.Exception.Response) { throw }; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds ${SSMS_LADEN_ABSTAND_S} } }; try { $sig = Signiert $f } catch { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; throw }; $r.downloads += [ordered]@{ teil = $teil; signatur = $sig; sha256 = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() }; $f }`,
     "function Msi([string]$f, [string]$lizenz, [string]$teil) { $log = Join-Path $basis ($teil + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log'); $pr = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', ('\"' + $f + '\"'), '/qn', '/norestart', $lizenz, '/L*v', ('\"' + $log + '\"')) -Wait -PassThru; if ($pr.ExitCode -eq 3010) { $r.neustartNoetig = $true } elseif ($pr.ExitCode -ne 0) { throw ($teil + ': msiexec Exit ' + $pr.ExitCode + ' (Protokoll ' + $log + ')') } }",
     // (a) ODBC Driver 18
     'if (-not (Odbc)) {',
@@ -149,7 +156,8 @@ export function ssmsEntfernenSkript(): string {
 
 export interface SsmsInstalliert {
   rechner: string; neu: string[]; vorhanden: string[]; neustartNoetig: boolean;
-  ssms?: { pfad: string; version: string; produktVersion?: string } | null;
+  /** Ruling R43 (Realfall 2d2c5d5b): version aus den Zahlenteilen der Datei — FileVersion von SSMS 22 lautet „22.12.12412.261 built by: stable“ */
+  ssms?: { pfad: string; version: string; dateiVersion?: string; produktVersion?: string } | null;
   sqlcmd?: { pfad: string; version: string; signatur?: string } | null;
   odbc?: { dll: string; version: string } | null;
   downloads?: Array<{ teil: string; signatur: string; sha256?: string }>;
