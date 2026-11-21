@@ -70,10 +70,34 @@ describe('v1917 Anthropic — Fable 5.2 / Mythos 5.2', () => {
     expect(lookupContextWindow('claude-fable-5-2')).toEqual({ maxInputTokens: 1_000_000, maxOutputTokens: 128_000 });
   });
   it('Gen-5-Regeln greifen: keine temperature, Thinking immer an (effort low), Fallback-Modell bei Ablehnung', () => {
-    const p = anthropic('claude-fable-5-2') as unknown as { supportsTemperature(): boolean; thinkingParam(r: { reasoningEffort?: string }): Record<string, unknown>; fallbacksParam(): Record<string, unknown> };
+    type A = { supportsTemperature(): boolean; thinkingParam(r: { reasoningEffort?: string }): Record<string, unknown>; fallbacksParam(): Record<string, unknown>; anfrageOptionen(): unknown };
+    const p = anthropic('claude-fable-5-2') as unknown as A;
     expect(p.supportsTemperature()).toBe(false);
     expect(p.thinkingParam({ reasoningEffort: 'low' })).toEqual({ output_config: { effort: 'low' } });
-    expect(p.fallbacksParam()).toEqual({ fallbacks: ['claude-opus-4-8'] });
+    // Live-Probe 21.11.: ohne Header 400 „Extra inputs are not permitted“, Liste ['claude-opus-4-8'] 400 „does not match the expected shape“
+    expect(p.fallbacksParam()).toEqual({ fallbacks: 'default' });
+    expect(p.anfrageOptionen()).toEqual({ headers: { 'anthropic-beta': 'server-side-fallback-2026-07-01' } });
+  });
+  it('Modelle ohne fallbacks bekommen keinen Beta-Header', () => {
+    const p = anthropic('claude-opus-5-5') as unknown as { fallbacksParam(): Record<string, unknown>; anfrageOptionen(): unknown };
+    expect(p.fallbacksParam()).toEqual({});
+    expect(p.anfrageOptionen()).toBeUndefined();
+  });
+  it('create und stream schicken den Header mit (Fable), ohne Header bei anderen Modellen', async () => {
+    for (const [modell, erwartet] of [['claude-fable-5-2', { headers: { 'anthropic-beta': 'server-side-fallback-2026-07-01' } }], ['claude-sonnet-5-5', undefined]] as const) {
+      const p = anthropic(modell);
+      const optionen: unknown[] = [];
+      const antwort = { id: 'm', model: modell, content: [{ type: 'text', text: 'OK' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } };
+      (p as unknown as { client: unknown }).client = {
+        messages: {
+          create: async (_b: unknown, o: unknown) => { optionen.push(o); return antwort; },
+          stream: (_b: unknown, o: unknown) => { optionen.push(o); return { async *[Symbol.asyncIterator]() { /* leer */ }, finalMessage: async () => antwort }; },
+        },
+      };
+      await p.complete({ messages: [{ role: 'user', content: 'Hallo' }] } as never);
+      for await (const _ of p.stream({ messages: [{ role: 'user', content: 'Hallo' }] } as never)) { /* leeren */ }
+      expect(optionen).toEqual([erwartet, erwartet]);
+    }
   });
 });
 

@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Claude Fable: Ersatzmodell bei Ablehnung wieder gültig angefordert (v1918)
+
+- Alfred schickte bei allen Fable-Modellen den Parameter `fallbacks` ohne Beta-Header und in einer veralteten Listenform. Die API lehnte deshalb jede Anfrage ab, ohne Header mit „fallbacks: Extra inputs are not permitted“, mit Header wegen der falschen Form. Fable war über Alfred dadurch nicht nutzbar. Jetzt geht `fallbacks: "default"` mit dem Header `server-side-fallback-2026-07-01` hinaus, beim normalen Aufruf und beim Streaming. Live geprüft für Fable 5.1 und 5.2. Andere Modelle bekommen keinen Header.
+
 ### Added — Modelle November 2026 (v1917)
 
 - OpenAI GPT-6.2 Sol ($2/$10, Cache $0.10), GPT-6.2 Astra ($8/$40, Cache $0.40) und GPT-6.1 Terra ($1/$5, Cache $0.05) haben eigene Preise und Kontextfenster (1,05 Mio. / 128k). Bisher wurden sie mit dem allgemeinen GPT-6-Preis von $10/$50 abgerechnet. Alle drei wurden live in Alfreds Anfrageformen geprüft: Werkzeugaufruf mit Folgerunde, Effort low bis max, Cache-Haltepunkte und der Rückfallweg über chat/completions.

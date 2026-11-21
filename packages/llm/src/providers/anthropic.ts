@@ -11,6 +11,9 @@ import type {
 import { DiagnoseKette, anthropicDiagnose, istDiagnoseAblehnung } from '../cache-diagnose.js';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
+/** v1917 — Beta-Header für den serverseitigen Ersatz bei Ablehnung (fallbacks), live geprüft 21.11.2026 */
+export const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
 /**
  * v1355 — Verlauf im Cache (Punkt 8, Owner-Freigabe 11.10.): bisher trugen nur System und Werkzeuge eine Cache-Marke
  * (0.10.52). In Werkzeug-Schleifen ging der wachsende Verlauf jede Runde ungecacht hinaus (Realfall delegate 11.10.
@@ -76,9 +79,17 @@ export class AnthropicProvider extends LLMProvider {
   private fallbacksParam(): Record<string, unknown> {
     const model = (this.config.model ?? '').toLowerCase();
     if (/^claude-fable-5/.test(model)) {
-      return { fallbacks: ['claude-opus-4-8'] };
+      // v1917 — Live-Probe 21.11.: ohne Beta-Header lehnt die API ab („fallbacks: Extra inputs are not permitted“), die alte
+      // Listenform ['claude-opus-4-8'] passt nicht mehr („Input does not match the expected shape“). Aktuell: der Wert „default“
+      // (Anthropic wählt das Ersatzmodell) mit dem Header server-side-fallback-2026-07-01 — live bewiesen für Fable 5.1 und 5.2.
+      return { fallbacks: 'default' };
     }
     return {};
+  }
+
+  /** v1917 — Beta-Header, ohne den der fallbacks-Parameter abgelehnt wird (nur für die Modelle mit fallbacksParam) */
+  private anfrageOptionen(): { headers: Record<string, string> } | undefined {
+    return 'fallbacks' in this.fallbacksParam() ? { headers: { 'anthropic-beta': ANTHROPIC_FALLBACK_BETA } } : undefined;
   }
 
   /**
@@ -201,7 +212,7 @@ export class AnthropicProvider extends LLMProvider {
 
     // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
     const gesendet = 'diagnostics' in params;
-    const response = await withPrematureCloseRetry(() => this.client.messages.create(params));
+    const response = await withPrematureCloseRetry(() => this.client.messages.create(params, this.anfrageOptionen()));
 
     return this.mitDiagnose(this.mapResponse(response), request, response, gesendet);
   }
@@ -242,7 +253,7 @@ export class AnthropicProvider extends LLMProvider {
       ] : undefined,
       messages,
       tools,
-    });
+    }, this.anfrageOptionen());
 
     const gesendet = this.diagnose.aktiv(request.cacheDiagnose);
     let startNachricht: unknown; // v1693 — diagnostics kommt im message_start-Event
