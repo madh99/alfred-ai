@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-11-Klone führen Alfreds Skriptdateien aus (v1915)
+
+- Windows-Clients stehen ab Werk auf der Ausführungsrichtlinie „Restricted“. Seit v1823 laufen Alfreds Windows-Bausteine als Skriptdateien ohne Umgehung der Richtlinie, deshalb liefen sie auf Windows-11-Klonen nicht. Die Medienprüfung am Klon endete ohne Ergebnis.
+- Die Benutzerdaten eines Windows-11-Klons setzen die Ausführungsrichtlinie der Maschine jetzt auf `RemoteSigned`, wie bei Windows Server ab Werk. Gruppenrichtlinien wie AllSigned haben weiterhin Vorrang. Server-Klone bleiben unverändert.
+- Endet `check_windows_media` ohne Ergebniszeile, nennt die Meldung jetzt den Exit-Code und den Fehlertext aus dem Gast. Eingeschleuste Ergebnismarken werden dabei entschärft.
+
 ### Fixed — Windows-Klon: erster SSH-Kontakt erst mit bestätigtem Host-Schlüssel (v1914)
 
 - `provision_windows_vm` wartet nach dem Start über den QEMU-Gast-Agenten, bis Cloudbase-Init sich abgeschaltet hat und die Host-Schlüsseldatei der VM genau den von Alfred erzeugten Schlüssel enthält. Erst danach meldet sich Alfred per SSH an.

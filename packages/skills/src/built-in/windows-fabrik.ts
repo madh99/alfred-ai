@@ -524,6 +524,9 @@ export function windowsBenutzerDaten(v: { variante: WinVariante; hostname: strin
     `  $pw = ConvertTo-SecureString ${psText(v.kennwort)} -AsPlainText -Force`,
     '  Set-LocalUser -Name alfred -Password $pw -PasswordNeverExpires $true',
     ...(istWin11(v.variante) ? [] : ['  Set-LocalUser -Name Administrator -Password $pw']),
+    // Ruling R41 (Realfall a85c5937 Schritt 8): Windows-Clients stehen ab Werk auf „Restricted“ — Alfreds Skriptdateien (v1823, ohne
+    // Umgehung) liefen dort nicht. Wie bei Windows Server RemoteSigned für die Maschine; Gruppenrichtlinien (z. B. AllSigned) gehen vor
+    ...(istWin11(v.variante) ? ['  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force'] : []),
     ...(v.ownerKonto ? [
       `  $opw = ConvertTo-SecureString ${psText(v.ownerKonto.kennwort)} -AsPlainText -Force`,
       `  if (Get-LocalUser -Name ${psText(v.ownerKonto.name)} -ErrorAction SilentlyContinue) { Set-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires $true } else { New-LocalUser -Name ${psText(v.ownerKonto.name)} -Password $opw -PasswordNeverExpires -FullName ${psText(v.ownerKonto.name)} | Out-Null }`,

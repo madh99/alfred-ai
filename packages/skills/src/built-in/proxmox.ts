@@ -101,6 +101,8 @@ export function vmNameAufloesen(entries: { vmid: number; name?: string; node: st
 export const GAST_EINGABE_MAX = 60_000;
 const GAST_TEIL_BYTES = 45_000;
 /** Sicherheitsprüfung (R35): ISO-Metadaten nur einzeilig und begrenzt in die VM-Beschreibung (dort steht auch das Prüfergebnis) */
+/** Ruling R41 — Fehlertext aus dem Gast lesbar und ohne Ergebnis-Marken (eingeschleuste MEDIEN_SIGNIERT/MEDIENPRUEFUNG entschärft) */
+export const gastGrund = (t: string): string => t.replace(/#< CLIXML/g, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').replace(/MEDIEN(PRUEFUNG|_SIGNIERT|_NICHT_BELEGT)/gi, 'Medien-Marke').trim().slice(0, 240) || '(keine Ausgabe)';
 const einzeilig = (t: string): string => t.replace(/\s+/g, ' ').replace(/MEDIENPRUEFUNG/gi, 'Medienpruefung').slice(0, 80);
 /** Owner-Regel: VM 100 und 137 bekommen keinen Fernzugang — auch keine lesende Gast-Ausführung */
 const MEDIEN_GESPERRT: ReadonlySet<number> = new Set([100, 137]);
@@ -1947,6 +1949,8 @@ export class ProxmoxSkill extends Skill {
     try {
       const r = await this.gastPowershell(vmid, name, medienPruefSkript(), undefined, 180_000);
       roh = r.stdout.split(/\r?\n/).reverse().find(z => z.startsWith('ALFRED_MEDIEN '))?.slice('ALFRED_MEDIEN '.length);
+      // Ruling R41 — ohne Ergebniszeile die Ursache aus dem Gast nennen (Realfall a85c5937: Meldung ohne Exit-Code und Fehlertext)
+      if (roh === undefined) return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: kein Ergebnis der Medienprüfung (Ruling R35) — PowerShell Exit ${r.code}: ${gastGrund(r.stderr || r.stdout)}` };
     } catch (err) {
       return { success: false, error: `MEDIEN_NICHT_BELEGT ${name}: Gast-Agent (${(err as Error).message.slice(0, 160)})` };
     }

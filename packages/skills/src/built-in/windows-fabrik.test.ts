@@ -402,3 +402,14 @@ describe('Ruling R38 (I8e L6): VirtIO-Treiber aus dem Treiberspeicher', () => {
     expect(t.indexOf('Win32_SystemDriver')).toBeLessThan(t.indexOf(String.raw`if (-not $f) { $f = "C:\Windows\System32\drivers\$t.sys" }`));
   });
 });
+
+describe('Ruling R41 Windows-Client: Ausführungsrichtlinie wie Windows Server (Realfall a85c5937)', () => {
+  it('Win11-Klon setzt RemoteSigned für die Maschine, Server-Klone bleiben unverändert, nie Bypass/Unrestricted', () => {
+    const w = windowsBenutzerDaten({ variante: 'win11', hostname: 'sqladmw11', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW });
+    expect(w).toContain('Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force');
+    expect(w.indexOf('Set-ExecutionPolicy')).toBeLessThan(w.indexOf('Restart-Service -Name sshd'));
+    const s = windowsBenutzerDaten({ variante: 'server-standard-core', hostname: 'probe-win25', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW });
+    expect(s).not.toContain('Set-ExecutionPolicy');
+    expect(w).not.toMatch(/Bypass|Unrestricted/);
+  });
+});

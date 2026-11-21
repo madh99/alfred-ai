@@ -1247,3 +1247,24 @@ describe('Ruling R40 erster SSH-Kontakt erst nach Alfreds Host-Schlüssel im Win
     expect(w.nachgeholt()).toBe(1);
   });
 });
+
+describe('Ruling R41 Medienprüfung nennt die Ursache ohne Ergebniszeile', () => {
+  it('gastGrund: CLIXML weg, Marken entschärft, begrenzt', async () => {
+    const { gastGrund } = await import('./proxmox.js');
+    const g = gastGrund('#< CLIXML\r\n<Objs><S S="Error">Die Datei kann nicht geladen werden, da die Ausführung von Skripts auf diesem System deaktiviert ist. MEDIEN_SIGNIERT x MEDIENPRUEFUNG {}</S></Objs>');
+    expect(g).toContain('Ausführung von Skripts');
+    expect(g).not.toMatch(/MEDIEN_SIGNIERT|MEDIENPRUEFUNG|CLIXML|<Objs/);
+    expect(gastGrund('x'.repeat(1000)).length).toBe(240);
+    expect(gastGrund('  ')).toBe('(keine Ausgabe)');
+  });
+  it('check_windows_media ohne ALFRED_MEDIEN-Zeile: MEDIEN_NICHT_BELEGT mit Exit-Code und Grund', async () => {
+    const px = new ProxmoxSkill({ baseUrl: 'https://pve:8006', tokenId: 't', tokenSecret: 's' } as never);
+    const a = px as unknown as Record<string, unknown>;
+    a.getAllVms = async () => [{ vmid: 119, name: 'sqladmw11', node: 'pve', type: 'qemu' }];
+    a.get = async (p: string) => p.endsWith('/status/current') ? { status: 'running' } : { description: 'Angelegt von Alfred (I8a) aus Windows-Vorlage 9112 (win11) am 2026-11-21.' };
+    a.gastPowershell = async () => ({ code: 1, stdout: '', stderr: 'Die Ausführung von Skripts ist auf diesem System deaktiviert.' });
+    const r = await px.execute({ action: 'check_windows_media', vmid: 119, node: 'pve' }, { ausChange: true } as never);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/^MEDIEN_NICHT_BELEGT sqladmw11: kein Ergebnis .* PowerShell Exit 1: Die Ausführung von Skripts/);
+  });
+});
