@@ -402,6 +402,47 @@ export function medienPsPruefung(): string {
 }
 
 /** Lesende Prüfung auf einer laufenden Windows-VM (über den Gast-Agenten): schreibt nichts, Ergebnis als „ALFRED_MEDIEN {json}“ */
+/**
+ * Ruling R44 — Realfall 21.11. (sqladmw11): der Windows-11-Eval-Klon war nie aktiviert (Lab ohne Internet), die Aktivierungsfrist lief
+ * ab und wlms.exe fuhr ihn nach ~1 h selbst herunter („Lizenzzeitraum abgelaufen“, 0xC004F009); online `slmgr /ato` half sofort.
+ * Lesen/Aktivieren über WMI (SoftwareLicensingProduct der Windows-Anwendung) statt slmgr — dessen Ausgabe ist je Sprache anders
+ * (de auf sqladmw11, en auf sqladm25). GracePeriodRemaining = Restminuten (bei TIMEBASED_EVAL bis zum Ablauf der Testzeit).
+ */
+export const WINDOWS_ANWENDUNGS_ID = '55c92734-d682-4d71-983e-d6ec3f16059f';
+export function lizenzSkript(aktivieren: boolean): string {
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `function Lies { $p = @(Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "ApplicationID='${WINDOWS_ANWENDUNGS_ID}' AND PartialProductKey IS NOT NULL"); if ($p.Count -ne 1) { throw ('Windows-Lizenzprodukt nicht eindeutig: ' + $p.Count + ' Treffer') }; $p[0] }`,
+    '$p = Lies; $vorher = [int]$p.LicenseStatus; $fehler = ""',
+    aktivieren
+      ? 'if ($vorher -ne 1) { try { Invoke-CimMethod -InputObject $p -MethodName Activate | Out-Null } catch { $fehler = [string]$_.Exception.Message }; $p = Lies }'
+      : '',
+    '$bis = $null; if ([int]$p.LicenseStatus -eq 1 -and [int]$p.GracePeriodRemaining -gt 0) { $bis = (Get-Date).AddMinutes([int]$p.GracePeriodRemaining).ToString("yyyy-MM-dd HH:mm") }',
+    '"ALFRED_LIZENZ " + (ConvertTo-Json -Compress -InputObject ([ordered]@{ name = [string]$p.Name; beschreibung = [string]$p.Description; status = [int]$p.LicenseStatus; vorher = $vorher; restMinuten = [int]$p.GracePeriodRemaining; bis = $bis; grund = ("0x{0:X8}" -f [uint32]$p.LicenseStatusReason); fehler = $fehler }))',
+    '',
+  ].filter(z => z !== '').join('\r\n');
+}
+
+/** SoftwareLicensingProduct.LicenseStatus */
+const LIZENZ_STATUS = ['nicht lizenziert', 'lizenziert', 'Erstfrist (OOB)', 'Frist nach Hardwarewechsel', 'Frist (nicht echt)', 'Benachrichtigung', 'verlängerte Frist'];
+export interface LizenzErgebnis { ok: boolean; text: string; status?: number; bis?: string | null; aktiviertJetzt?: boolean }
+
+/** fail-closed: nur LicenseStatus 1 mit Restzeit gilt als lizenziert; unlesbar = nicht belegt */
+export function bewerteLizenz(roh: string | undefined, name: string, aktivieren: boolean): LizenzErgebnis {
+  let j: { name?: string; beschreibung?: string; status?: number; vorher?: number; restMinuten?: number; bis?: string | null; grund?: string; fehler?: string };
+  try { j = JSON.parse(roh ?? ''); } catch { return { ok: false, text: `WINDOWS_NICHT_LIZENZIERT ${name}: Lizenzstatus nicht lesbar` }; }
+  const status = Number(j.status);
+  const kanal = /TIMEBASED_EVAL/i.test(j.beschreibung ?? '') ? 'Testversion' : (j.beschreibung ?? '').split(',').pop()?.trim() || 'unbekannter Kanal';
+  const edition = (j.name ?? '').replace(/^Windows\(R\),\s*/i, '').trim() || 'Windows';
+  const tage = j.restMinuten && j.restMinuten > 0 ? Math.floor(j.restMinuten / 1440) : 0;
+  const jetzt = aktivieren && j.vorher !== 1 && status === 1;
+  if (status === 1 && j.bis) return { ok: true, status, bis: j.bis, aktiviertJetzt: jetzt, text: `WINDOWS_LIZENZIERT ${name}: ${edition} (${kanal}), gültig bis ${j.bis} (${tage} Tage)${jetzt ? ' — jetzt online aktiviert' : ''}` };
+  if (status === 1) return { ok: true, status, bis: null, aktiviertJetzt: jetzt, text: `WINDOWS_LIZENZIERT ${name}: ${edition} (${kanal}), unbefristet${jetzt ? ' — jetzt online aktiviert' : ''}` };
+  const s = LIZENZ_STATUS[status] ?? `Status ${j.status}`;
+  return { ok: false, status, text: `WINDOWS_NICHT_LIZENZIERT ${name}: ${edition} (${kanal}) — ${s}, Grund ${j.grund ?? '?'}${j.fehler ? ` — Aktivierung: ${gastFehlerKurz(j.fehler)}` : aktivieren ? '' : ' — mit windows_aktivieren online aktivieren (braucht befristet Internet zu activation-v2.sls.microsoft.com:443)'}` };
+}
+function gastFehlerKurz(t: string): string { return t.replace(/\s+/g, ' ').trim().slice(0, 200); }
+
 export function medienPruefSkript(): string {
   return [
     '$ErrorActionPreference = "Stop"',

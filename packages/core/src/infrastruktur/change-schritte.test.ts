@@ -630,6 +630,17 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
   });
 });
 
+// Ruling R44 — Prüfung der Windows-Lizenz nach windows_aktivieren
+describe('R44 — erwartet bei proxmox.windows_lizenz', () => {
+  const plan = (erwartet: string) => ({ titel: 'Windows aktivieren', begruendung: 'Realfall sqladmw11', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['sqladmw11'],
+    schritte: [{ titel: 'Lizenz prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'windows_lizenz', parameter: { vmid: 119 }, erwartet } }] });
+  const fehler = (e: string) => pruefeChangePlan(plan(e), ctx()).fehler.filter(x => x.includes('nicht vor'));
+  it('„WINDOWS_LIZENZIERT“ und „gültig bis“ sind Stücke des Wortlauts, „aktiviert“ und „Licensed“ nicht', () => {
+    for (const ok of ['WINDOWS_LIZENZIERT', 'gültig bis', '(Testversion)', 'unbefristet']) expect(fehler(ok), ok).toEqual([]);
+    for (const nein of ['aktiviert', 'Licensed', 'Lizenzstatus: Lizenziert']) expect(fehler(nein), nein).not.toEqual([]);
+  });
+});
+
 // Ruling R45 — Realfall 21.11.: „deaktiviert“ (2d2c5d5b/ab56d72f Schritt 15) und „1. ALLOW …“ (3af9930c Schritt 4) kamen nie vor
 describe('R45 — erwartet bei unifi.list_firewall_policies', () => {
   const plan = (erwartet: string, parameter: Record<string, unknown>) => ({ titel: 'Webfenster schließen', begruendung: 'Realfall 2d2c5d5b', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['udm'],
@@ -656,7 +667,7 @@ describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {
     const { FESTE_AUSGABEN } = await import('./change-schritte.js');
     expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen', 'linux_ha.status',
-      'windows_ad.sql_anmeldung_pruefen', 'windows_ad.spn_lesen', 'windows_pki.fremd_csr_ausstellen']);
+      'windows_ad.sql_anmeldung_pruefen', 'windows_ad.spn_lesen', 'proxmox.windows_lizenz', 'windows_pki.fremd_csr_ausstellen']);
     const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Probe prüfen', begruendung: 'Realfall 6f7b0b99', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['probe-win25b'],
       schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
     const fz = (erwartet?: string) => pruefeChangePlan(plan({ typ: 'skill', skill: 'fernzugriff', aktion: 'pruefen', parameter: { name: 'probe-win25b' }, ...(erwartet ? { erwartet } : {}) }), ctx());

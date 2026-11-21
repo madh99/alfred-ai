@@ -7,7 +7,7 @@ import {
   evalLinks, buildAusUrl, neuesteVirtio, isoDateiname, waehleAbbild, autounattend, sysprepUnattend, setupSkript, windowsBenutzerDaten, WIN_EINRICHTUNG_NACHHOLEN,
   windowsBauKonfig, knotenJson, zufallsKennwort, serverSeiten, WIN_ISO_URL, VIRTIO_URL, CLOUDBASE_URL, CLOUDBASE_CONF, KNOTEN_INSPEKTION, KNOTEN_ANTWORT_ISO, type WimAbbild,
   medienPsPruefung, medienPruefSkript, bewerteMedienpruefung, medienAusBeschreibung, MEDIEN_DATEI, MEDIEN_MARKE, VIRTIO_SYS_PFLICHT,
-  WIN_VARIANTEN, virtioOrdner, WIN11_PRO_GVLK, lizenzHinweis, win11ProIso, SETUP_STATUS_DATEI, OPENSSH_ZEITLIMIT_S, BOOT_TASTEN,
+  WIN_VARIANTEN, virtioOrdner, WIN11_PRO_GVLK, lizenzHinweis, win11ProIso, SETUP_STATUS_DATEI, OPENSSH_ZEITLIMIT_S, BOOT_TASTEN, lizenzSkript, bewerteLizenz, WINDOWS_ANWENDUNGS_ID,
 } from './windows-fabrik.js';
 
 // Echte Anker aus dem Evaluation Center (01.11.2026)
@@ -411,5 +411,47 @@ describe('Ruling R41 Windows-Client: Ausführungsrichtlinie wie Windows Server (
     const s = windowsBenutzerDaten({ variante: 'server-standard-core', hostname: 'probe-win25', alfredSchluessel: SCHL, hostPrivat: PRIV, hostOeffentlich: SCHL, kennwort: KW });
     expect(s).not.toContain('Set-ExecutionPolicy');
     expect(w).not.toMatch(/Bypass|Unrestricted/);
+  });
+});
+
+// Ruling R44 — Realfall 21.11.: sqladmw11 (Win11 Enterprise Eval) nie aktiviert → wlms fuhr ihn nach ~1 h herunter; sqladm25 aktivierte sich im Webfenster
+describe('Ruling R44 — Windows-Lizenz lesen und online aktivieren', () => {
+  it('Skript nutzt WMI der Windows-Anwendung statt slmgr (Ausgabe je Sprache verschieden); Activate nur beim Aktivieren', () => {
+    const lesen = lizenzSkript(false), akt = lizenzSkript(true);
+    expect(WINDOWS_ANWENDUNGS_ID).toBe('55c92734-d682-4d71-983e-d6ec3f16059f');
+    for (const s of [lesen, akt]) {
+      expect(s).toContain(`ApplicationID='${WINDOWS_ANWENDUNGS_ID}' AND PartialProductKey IS NOT NULL`);
+      expect(s).toContain('"ALFRED_LIZENZ "');
+      expect(s).not.toMatch(/slmgr/i);
+    }
+    expect(lesen).not.toContain('Activate');
+    expect(akt).toContain('Invoke-CimMethod -InputObject $p -MethodName Activate');
+    expect(akt).toContain('if ($vorher -ne 1)'); // schon lizenziert → kein erneuter Aufruf
+  });
+  it.skipIf(!psDa)('beide Skripte sind gültiges PowerShell (nur geparst, nicht ausgeführt)', () => {
+    for (const s of [lizenzSkript(false), lizenzSkript(true)]) {
+      const pruef = `$e=$null; [void][System.Management.Automation.Language.Parser]::ParseInput(@'\n${s}\n'@, [ref]$null, [ref]$e); $e.Count`;
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', pruef], { encoding: 'utf8' });
+      expect(r.stdout.trim()).toBe('0');
+    }
+  });
+  it('bewertet die Realwerte: sqladmw11 vor (Benachrichtigung 0xC004F009) und nach der Aktivierung, sqladm25', () => {
+    const vorher = bewerteLizenz(JSON.stringify({ name: 'Windows(R), EnterpriseEval edition', beschreibung: 'Windows(R) Operating System, TIMEBASED_EVAL channel', status: 5, vorher: 5, restMinuten: 0, bis: null, grund: '0xC004F009', fehler: '' }), 'sqladmw11', false);
+    expect(vorher.ok).toBe(false);
+    expect(vorher.text).toBe('WINDOWS_NICHT_LIZENZIERT sqladmw11: EnterpriseEval edition (Testversion) — Benachrichtigung, Grund 0xC004F009 — mit windows_aktivieren online aktivieren (braucht befristet Internet zu activation-v2.sls.microsoft.com:443)');
+    const nachher = bewerteLizenz(JSON.stringify({ name: 'Windows(R), EnterpriseEval edition', beschreibung: 'Windows(R) Operating System, TIMEBASED_EVAL channel', status: 1, vorher: 5, restMinuten: 129600, bis: '2027-02-19 18:18', grund: '0x00000000', fehler: '' }), 'sqladmw11', true);
+    expect(nachher).toMatchObject({ ok: true, status: 1, bis: '2027-02-19 18:18', aktiviertJetzt: true });
+    expect(nachher.text).toBe('WINDOWS_LIZENZIERT sqladmw11: EnterpriseEval edition (Testversion), gültig bis 2027-02-19 18:18 (90 Tage) — jetzt online aktiviert');
+    const s25 = bewerteLizenz(JSON.stringify({ name: 'Windows(R), ServerStandardEval edition', beschreibung: 'Windows(R) Operating System, TIMEBASED_EVAL channel', status: 1, vorher: 1, restMinuten: 259182, bis: '2027-05-20 21:24', grund: '0x00000000', fehler: '' }), 'sqladm25', true);
+    expect(s25.text).toBe('WINDOWS_LIZENZIERT sqladm25: ServerStandardEval edition (Testversion), gültig bis 2027-05-20 21:24 (179 Tage)');
+  });
+  it('fail-closed: Aktivierung gescheitert, unlesbar, lizenziert ohne Restzeit = unbefristet', () => {
+    const f = bewerteLizenz(JSON.stringify({ name: 'Windows(R), EnterpriseEval edition', beschreibung: 'x, TIMEBASED_EVAL channel', status: 5, vorher: 5, restMinuten: 0, grund: '0xC004F009', fehler: 'Fehler 0xC004C003: Der Aktivierungsserver hat den Schlüssel abgelehnt.\r\n' }), 'w', true);
+    expect(f.ok).toBe(false);
+    expect(f.text).toContain('Aktivierung: Fehler 0xC004C003: Der Aktivierungsserver hat den Schlüssel abgelehnt.');
+    expect(bewerteLizenz(undefined, 'w', false)).toEqual({ ok: false, text: 'WINDOWS_NICHT_LIZENZIERT w: Lizenzstatus nicht lesbar' });
+    expect(bewerteLizenz('{kaputt', 'w', false).ok).toBe(false);
+    expect(bewerteLizenz(JSON.stringify({ name: 'Windows(R), ServerStandard edition', beschreibung: 'Windows(R) Operating System, VOLUME_KMSCLIENT channel', status: 1, vorher: 1, restMinuten: 0 }), 'srv', false).text)
+      .toBe('WINDOWS_LIZENZIERT srv: ServerStandard edition (VOLUME_KMSCLIENT channel), unbefristet');
   });
 });

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-Lizenz lesen und online aktivieren (v1920)
+
+- Neuer Baustein `proxmox windows_lizenz` (nur lesend, auch außerhalb von Changes). Er liest den Lizenzstatus einer Windows-VM aus Alfreds Vorlagen über den Gast-Agenten und meldet „WINDOWS_LIZENZIERT …, gültig bis …“ oder „WINDOWS_NICHT_LIZENZIERT“ mit Grund.
+- Neuer Baustein `proxmox windows_aktivieren` (Change-Schritt). Er aktiviert die VM online, ist sie schon lizenziert, ändert er nichts. Dafür braucht der Change vorher eine befristete Freigabe der VM ins Internet. Beide Bausteine lesen und aktivieren über WMI statt über `slmgr`, dessen Ausgabe sich je nach Sprache unterscheidet. Ist der Status nicht lesbar, gilt die VM als nicht lizenziert.
+- Hintergrund: Ein Klon der Windows-11-Testversion wurde im Labor ohne Internet nie aktiviert. Nach Ablauf der Aktivierungsfrist fuhr Windows ihn etwa stündlich selbst herunter („Lizenzzeitraum abgelaufen“). Die Planhinweise sehen nach jedem Windows-Klon nun Freigabe, Aktivierung und Prüfung vor. Die Planprüfung kennt den festen Wortlaut der neuen Lizenzausgabe.
+
 ### Fixed — Planprüfung weist unerfüllbare UniFi-Prüfungen ab (v1919)
 
 - Prüft ein Change-Schritt mit `unifi.list_firewall_policies`, lehnt die Planprüfung jetzt Erwartungstexte ab, die diese Liste nie ausgibt. Das sind Zustandswörter wie „deaktiviert“, „aktiviert“, „ausgeschaltet“, „enabled“ oder „disabled“: Eine ausgeschaltete Policy erscheint dort als „(aus) ALLOW „Name"“. Ebenfalls abgelehnt werden Positionsnummern wie „1. ALLOW …“, denn die Position hängt von den übrigen Policies ab. Policy-Namen mit Leerzeichen, Zonenpaare und alle bisher verwendeten Prüfwerte bleiben gültig. Hintergrund: Zwei Changes hielten am selben Schritt mit „deaktiviert“ an, ein dritter an „1. ALLOW“, obwohl die Änderung jeweils gewirkt hatte.

@@ -93,6 +93,8 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // „an einem anderen Konto“ gehören in nichtEnthalten (spn_lesen meldet auch einen Befund als Erfolg)
   'windows_ad.spn_lesen': 'SPN_EINDEUTIG — {spn}: genau einmal ({dn})',
   // Wortlaut aus windows-pki-skill.ts (fremd_csr_ausstellen); „NICHT wie verlangt“/„BEFUNDE“ sind Fehlschläge der Aktion
+  // Ruling R44 — Wortlaut aus bewerteLizenz (skills windows-fabrik.ts); „WINDOWS_NICHT_LIZENZIERT“ meldet die Aktion selbst als Fehlschlag
+  'proxmox.windows_lizenz': 'WINDOWS_LIZENZIERT {name}: {edition} ({kanal}), gültig bis {datum} ({n} Tage) | WINDOWS_LIZENZIERT {name}: {edition} ({kanal}), unbefristet | (Testversion)',
   'windows_pki.fremd_csr_ausstellen': '✅ SQL_TLS_LINUX_ISSUED {cn} ({zustand}): Anforderung {id}, Thumbprint {tp}, Seriennummer {sn}, gültig bis {datum}, {subjekt}, SAN {sans}, EKU {eku}, Anforderer {konto}, Kette {n} Glieder; '
     + 'Zertifikat und Kette als DER-Base64 in data.zertBase64/issuingBase64/rootBase64 | Zertifikat und Kette als PEM in data.zertifikatPem/kettePem',
 };
