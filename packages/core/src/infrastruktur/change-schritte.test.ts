@@ -630,6 +630,27 @@ describe('v1717 — Warte-Prüfung mit Textausgabe braucht erwartet', () => {
   });
 });
 
+// Ruling R45 — Realfall 21.11.: „deaktiviert“ (2d2c5d5b/ab56d72f Schritt 15) und „1. ALLOW …“ (3af9930c Schritt 4) kamen nie vor
+describe('R45 — erwartet bei unifi.list_firewall_policies', () => {
+  const plan = (erwartet: string, parameter: Record<string, unknown>) => ({ titel: 'Webfenster schließen', begruendung: 'Realfall 2d2c5d5b', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['udm'],
+    schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung: { typ: 'skill', skill: 'unifi', aktion: 'list_firewall_policies', parameter, erwartet } }] });
+  const nachName = (e: string) => pruefeChangePlan(plan(e, { policy_name: 'I8e-L6C-sqladmw11-TEMP-SSMS-Web' }), ctx()).fehler.filter(x => x.includes('nicht vor'));
+  const nachZonen = (e: string) => pruefeChangePlan(plan(e, { source_zone: 'Internal', destination_zone: 'SQL-Server' }), ctx()).fehler.filter(x => x.includes('nicht vor') || x.includes('Positionsnummer'));
+  it('weist die Realfälle ab: Zustandswörter und Positionsnummer vor der Policy', () => {
+    expect(nachName('deaktiviert').join(' ')).toContain('kommt in der Antwort von unifi.list_firewall_policies nicht vor');
+    for (const nein of ['aktiviert', 'Policy ausgeschaltet', 'enabled', 'disabled'])
+      expect(nachName(nein), nein).not.toEqual([]);
+    expect(nachZonen('1. ALLOW „I8e-L6E-OwnerPC-RDP-Adminclients"').join(' ')).toContain('Positionsnummer');
+  });
+  it('lässt die tatsächlich ausgegebenen Formen und alle bisherigen Prüfwerte aus der DB durch (Namen mit Leerzeichen, Zonenpaare, Ports)', () => {
+    for (const ok of ['(aus) ALLOW', '(aus) BLOCK „', 'I8e-L6C-sqladmw11-TEMP-SSMS-Web', 'eigene Policies mit „'])
+      expect(nachName(ok), ok).toEqual([]);
+    for (const ok of ['ALLOW „I8e-L6E-OwnerPC-RDP-Adminclients"', '(aus) ALLOW „I8e-L6E-OwnerPC-RDP-Adminclients"', 'in Auswertungsreihenfolge (erste passende gewinnt)', '— Systemregeln —',
+      'Internal → AD-Identity', 'matrix827 Block Gateway Rest', 'BLOCK „PKILAB BLOCK Internet', 'pgAdmin zu VLAN998 Postgres (Internal)', '445', 'ALLOW', 'BLOCK', 'I8e-sqllnx01-', 'af96675b-74ad-4f0e-b337-5acc9771f818'])
+      expect(nachZonen(ok), ok).toEqual([]);
+  });
+});
+
 // v1753 — Realfall 02.11. (8f5375b0): Prüfbefehle, die im Lese-Käfig nie bestehen können, schon beim Planen abweisen
 describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {

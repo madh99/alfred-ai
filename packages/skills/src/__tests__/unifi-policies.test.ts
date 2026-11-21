@@ -40,6 +40,15 @@ describe('UniFi-Policies', () => {
     const p: Policy = { id: 'p1', name: 'Block 817_LAN', enabled: true, action: { type: 'BLOCK' }, source: { zoneId: 'z-int', trafficFilter: { type: 'NETWORK', networkFilter: { networkIds: ['n-dev'], matchOpposite: false } } }, destination: { zoneId: 'z-gw', trafficFilter: { type: 'IP_ADDRESS', ipAddressFilter: { type: 'TRAFFIC_MATCHING_LIST', trafficMatchingListId: 'x' } } }, ipProtocolScope: { ipVersion: 'IPV4' } };
     expect(policyZeile(p, zonen, netze, 7)).toBe('7. BLOCK „Block 817_LAN" — Internal [Netz DeviceLAN] → Gateway [IP-Liste], alle · p1');
   });
+
+  // Ruling R45 — der Wortlaut steht als Vorlage in FESTE_AUSGABEN['unifi.list_firewall_policies'] (core/change-schritte.ts):
+  // eine ausgeschaltete Policy heißt „(aus) ALLOW „Name"“, nie „deaktiviert“. Ändert sich die Zeile, dort nachziehen.
+  it('R45: ausgeschaltete Policy — Wortlaut wie in FESTE_AUSGABEN', () => {
+    const p: Policy = { id: 'e5a55fcc', name: 'I8e-L6C-sqladmw11-TEMP-SSMS-Web', enabled: false, action: { type: 'ALLOW' }, source: { zoneId: 'z-int' }, destination: { zoneId: 'z-ext' }, ipProtocolScope: { ipVersion: 'IPV4' } };
+    const zeile = policyZeile(p, zonen, netze, 6);
+    expect(zeile).toBe('6. (aus) ALLOW „I8e-L6C-sqladmw11-TEMP-SSMS-Web" — Internal [alles] → External [alles], alle · e5a55fcc');
+    expect(zeile).not.toMatch(/deaktiviert/);
+  });
 });
 
 // Pilot cf82f3f2 (22.10.): nur der Alfred-Server darf per SSH in die neue Zone — IP-Filter statt ganzem Netz

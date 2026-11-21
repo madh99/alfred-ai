@@ -96,7 +96,24 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   'windows_pki.fremd_csr_ausstellen': '✅ SQL_TLS_LINUX_ISSUED {cn} ({zustand}): Anforderung {id}, Thumbprint {tp}, Seriennummer {sn}, gültig bis {datum}, {subjekt}, SAN {sans}, EKU {eku}, Anforderer {konto}, Kette {n} Glieder; '
     + 'Zertifikat und Kette als DER-Base64 in data.zertBase64/issuingBase64/rootBase64 | Zertifikat und Kette als PEM in data.zertifikatPem/kettePem',
 };
+/**
+ * Ruling R45 — Realfall 21.11. (2d2c5d5b und ab56d72f je Schritt 15, 3af9930c Schritt 4): unifi.list_firewall_policies zeigt eine
+ * Policy als „[N. ][(aus) ]ALLOW „Name" — Quelle [..] → Ziel [..], Protokoll · ID“ (policyZeile, unifi-policies.ts). Policy-Namen sind
+ * freier Text (auch mit Leerzeichen), ein fester Wortlaut passt deshalb nicht. Abgewiesen werden die Formen, die die Liste nie ausgibt:
+ * Zustandswörter („deaktiviert“ kam zweimal nie vor — ausgeschaltet heißt „(aus) ALLOW“) und Positionsnummern (die Position hängt von
+ * den übrigen Policies ab; „1. ALLOW …“ scheiterte an Position 6).
+ */
+const UNIFI_ZUSTANDSWORT = /(^|[^\p{L}])(de)?aktiviert|(^|[^\p{L}])(ein|aus)geschaltet|(^|[^\p{L}])(enabled|disabled|active|inactive)([^\p{L}]|$)/iu;
+function unifiPolicyErwartetFehler(p: Pruefung): string | undefined {
+  if (p.typ !== 'skill' || p.skill !== 'unifi' || p.aktion !== 'list_firewall_policies' || !p.erwartet || p.erwartet.startsWith('{{')) return undefined;
+  const e = p.erwartet;
+  if (UNIFI_ZUSTANDSWORT.test(e)) return `erwartet „${e.slice(0, 60)}“ kommt in der Antwort von unifi.list_firewall_policies nicht vor — eine ausgeschaltete Policy steht dort als „(aus) ALLOW „Name"“ (bzw. BLOCK/REJECT), eine eingeschaltete ohne „(aus)“; erwartet z. B. „(aus) ALLOW“ oder den Policy-Namen`;
+  if (/^\s*\d+\.\s/.test(e)) return `erwartet „${e.slice(0, 60)}“ verlangt eine Positionsnummer — die Position in unifi.list_firewall_policies hängt von den übrigen Policies ab und kommt so nicht verlässlich vor; Nummer weglassen (z. B. „ALLOW „Name"“)`;
+  return undefined;
+}
+
 function festeAusgabeFehler(p: Pruefung): string | undefined {
+  const unifi = unifiPolicyErwartetFehler(p); if (unifi) return unifi;
   const vorlage = p.typ === 'skill' && p.erwartet && !p.erwartet.startsWith('{{') ? FESTE_AUSGABEN[`${p.skill}.${p.aktion}`] : undefined;
   if (!vorlage) return undefined;
   const e = p.erwartet!;

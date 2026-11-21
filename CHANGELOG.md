@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Planprüfung weist unerfüllbare UniFi-Prüfungen ab (v1919)
+
+- Prüft ein Change-Schritt mit `unifi.list_firewall_policies`, lehnt die Planprüfung jetzt Erwartungstexte ab, die diese Liste nie ausgibt. Das sind Zustandswörter wie „deaktiviert“, „aktiviert“, „ausgeschaltet“, „enabled“ oder „disabled“: Eine ausgeschaltete Policy erscheint dort als „(aus) ALLOW „Name"“. Ebenfalls abgelehnt werden Positionsnummern wie „1. ALLOW …“, denn die Position hängt von den übrigen Policies ab. Policy-Namen mit Leerzeichen, Zonenpaare und alle bisher verwendeten Prüfwerte bleiben gültig. Hintergrund: Zwei Changes hielten am selben Schritt mit „deaktiviert“ an, ein dritter an „1. ALLOW“, obwohl die Änderung jeweils gewirkt hatte.
+
 ### Fixed — Claude Fable: Ersatzmodell bei Ablehnung wieder gültig angefordert (v1918)
 
 - Alfred schickte bei allen Fable-Modellen den Parameter `fallbacks` ohne Beta-Header und in einer veralteten Listenform. Die API lehnte deshalb jede Anfrage ab, ohne Header mit „fallbacks: Extra inputs are not permitted“, mit Header wegen der falschen Form. Fable war über Alfred dadurch nicht nutzbar. Jetzt geht `fallbacks: "default"` mit dem Header `server-side-fallback-2026-07-01` hinaus, beim normalen Aufruf und beim Streaming. Live geprüft für Fable 5.1 und 5.2. Andere Modelle bekommen keinen Header.
