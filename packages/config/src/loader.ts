@@ -443,7 +443,7 @@ export class ConfigLoader {
     // When env vars set both flat keys (provider, model) and tier sub-objects
     // (strong, fast), the Zod union would pick the flat schema and strip tiers.
     // Move flat keys into `default` so MultiModelConfigSchema is matched.
-    const tiers = ['strong', 'medium', 'fast', 'embeddings', 'local', 'fallback'] as const; // v868.1 fallback + v979 medium
+    const tiers = ['strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback'] as const; // v868.1 fallback + v979 medium + v1923 ultra (sonst als Flachschlüssel ins default-Tier verschoben und verworfen)
     const preLlm = withEnv.llm as Record<string, unknown> | undefined;
     if (preLlm && 'provider' in preLlm) {
       const hasTierSubObjects = tiers.some(t => preLlm[t] && typeof preLlm[t] === 'object');
@@ -487,7 +487,7 @@ export class ConfigLoader {
     // explizite Config schlägt implizite Propagation.
     const explicitTierKeys = new Set<string>();
     if (llmConfig && typeof llmConfig === 'object') {
-      for (const tier of ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
+      for (const tier of ['default', 'strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
         if (tierConfig?.apiKey) explicitTierKeys.add(tier);
       }
@@ -495,7 +495,7 @@ export class ConfigLoader {
         ?? ((llmConfig.default as Record<string, unknown> | undefined)?.apiKey as string | undefined);
 
       if (sharedApiKey) {
-        for (const tier of ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
+        for (const tier of ['default', 'strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
           const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
           if (tierConfig && !tierConfig.apiKey) {
             tierConfig.apiKey = sharedApiKey;
@@ -518,7 +518,7 @@ export class ConfigLoader {
       // v868.2 — aber NUR geerbte/fehlende: ein explizit im YAML/ENV gesetzter
       // Tier-Key (z.B. zweiter Mistral-Account für den Notfall-Fallback) bleibt
       // unangetastet. Vorher überschrieb die Propagation unconditional.
-      for (const tier of ['strong', 'fast', 'embeddings', 'local', 'fallback']) {
+      for (const tier of ['strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback']) { // v1923 ultra + medium (fehlten)
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
         if (tierConfig?.provider === 'mistral' && !explicitTierKeys.has(tier)) {
           tierConfig.apiKey = mistralApiKey;

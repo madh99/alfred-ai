@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Stufe ultra aus der Umgebung wird übernommen (v1923)
+
+- Seit v1922 gibt es die Stufe ultra, beim Start wurde sie aber nicht angelegt, obwohl `ALFRED_LLM_ULTRA_*` gesetzt war. Ursache: Bei gemischter Konfiguration (Stufen in der YAML und Flachschlüssel in der Umgebung) verschiebt der Config-Loader alle Schlüssel, die nicht in seiner festen Stufen-Liste stehen, in die Standardstufe. Dort verwarf die Prüfung `ultra`. Die Stufe steht jetzt in allen Listen des Loaders.
+- Dieselbe Liste für die Mistral-Schlüssel enthielt auch `medium` nicht. Eine Mistral-Stufe medium bekam deshalb einen falschen geerbten Schlüssel. Sie wird jetzt behandelt wie die anderen Stufen.
+
 ### Added — Modellstufe „ultra“ (v1922, Spec Stufe ultra U1)
 
 - Neue Stufe `ultra` oberhalb von `strong`, konfiguriert über `ALFRED_LLM_ULTRA_PROVIDER`, `_MODEL` und `_API_KEY`. Vorgesehen ist Claude Fable 5.2. Die Standard-Gründlichkeit ist „high“, „max“ gibt es nur bei ausdrücklicher Wahl.
