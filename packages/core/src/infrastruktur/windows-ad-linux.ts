@@ -361,7 +361,10 @@ export const ALS_BENUTZER = [
   '      $gelaufen = (Test-Path $aus) -or ($i.LastRunTime -and [datetime]$i.LastRunTime -ge $start)',
   "      $fertig = $t.State -ne 'Running' -and $t.State -ne 'Queued' -and $gelaufen",
   '    } while (-not $fertig -and (Get-Date) -lt $bis)',
-  "    if (-not $fertig) { if ($t.State -eq 'Running' -or $t.State -eq 'Queued') { Stop-ScheduledTask -TaskName $id -TaskPath '\\Alfred\\' }; throw ('Aufgabe nach ' + $sekunden + ' s abgebrochen (Zustand ' + $t.State + ', LastRunTime ' + $i.LastRunTime + ')') }",
+  // Ruling R48 — Realfall 21.11. (sqladmw11, 2d2c5d5b Schritt 18): auf einem frisch geklonten Windows 11 blieb die Aufgabe nach
+  // erfolgreicher Batch-Anmeldung (4624 Typ 4) in der Warteschlange (TaskScheduler 110 → 325, kein Prozessstart); nach der ersten
+  // interaktiven Anmeldung (RDP) lief sie auch nach Neustart in ~10 s. Die Meldung nennt das statt nur „abgebrochen“.
+  "    if (-not $fertig) { if ($t.State -eq 'Running' -or $t.State -eq 'Queued') { Stop-ScheduledTask -TaskName $id -TaskPath '\\Alfred\\' }; $hinweis = ''; if ([string]$t.State -eq 'Queued') { $hinweis = ' - Aufgabe blieb in der Warteschlange und wurde nie gestartet (Ruling R48: auf frisch geklontem Windows 11 bis zur ersten interaktiven Anmeldung beobachtet; einmal per RDP anmelden, dann wiederholen)' }; throw ('Aufgabe nach ' + $sekunden + ' s abgebrochen (Zustand ' + $t.State + ', LastRunTime ' + $i.LastRunTime + ')' + $hinweis) }",
   "    if (-not (Test-Path $aus)) { throw ('Aufgabe ohne Ergebnis (LastTaskResult ' + $i.LastTaskResult + ')') }",
   '    $o = [IO.File]::ReadAllText($aus) | ConvertFrom-Json',
   '    if ($o.fehler) { throw [string]$o.fehler }',

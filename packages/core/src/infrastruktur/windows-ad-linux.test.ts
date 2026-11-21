@@ -448,7 +448,15 @@ describe.skipIf(!POWERSHELL)('Fix-Welle — ALS_BENUTZER Warteschleife (ausgefü
   it('bleibt Queued → nach der Frist abgebrochen und gestoppt, nicht „ohne Ergebnis“', () => {
     const a = lauf(['Queued'], 1);
     expect(a.fehler, `${a.r.stdout}\n${a.r.stderr}`).toMatch(/^Aufgabe nach 1 s abgebrochen \(Zustand Queued, LastRunTime /);
+    // Ruling R48 — die Meldung nennt die Warteschlange und den Ausweg (Realfall sqladmw11)
+    expect(a.fehler).toContain('Aufgabe blieb in der Warteschlange und wurde nie gestartet (Ruling R48');
+    expect(a.fehler).toContain('einmal per RDP anmelden, dann wiederholen');
     expect(a.stopp).toBe('True');
     expect(a.rest).toBe('0');
+  });
+  it('R48: bleibt Running → nach der Frist abgebrochen, ohne Warteschlangen-Hinweis', () => {
+    const a = lauf(['Running'], 1);
+    expect(a.fehler, `${a.r.stdout}\n${a.r.stderr}`).toMatch(/^Aufgabe nach 1 s abgebrochen \(Zustand Running, /);
+    expect(a.fehler).not.toContain('Warteschlange');
   });
 });

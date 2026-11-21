@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-Anmeldeprobe nennt die hängende Warteschlange (v1921)
+
+- Bleibt die geplante Aufgabe der Anmeldeprobe in der Warteschlange, meldet `windows_ad sql_anmeldung_pruefen` das jetzt ausdrücklich. Dazu kommt der Ausweg: einmal per RDP am Client anmelden, dann wiederholen. Bisher hieß es nur „nach 120 s abgebrochen“.
+- Hintergrund: Auf einem frisch geklonten Windows-11-Client gelang die Batch-Anmeldung des Testkontos, ein Programm startete aber nie. Nach der ersten interaktiven Anmeldung lief die Probe in etwa 10 Sekunden durch, auch nach einem Neustart. Die Ursache ist nicht abschließend belegt.
+- Die Planhinweise sehen bei Windows-11-Clients vor der Probe einen Owner-Schritt „einmal per RDP anmelden“ vor.
+
 ### Added — Windows-Lizenz lesen und online aktivieren (v1920)
 
 - Neuer Baustein `proxmox windows_lizenz` (nur lesend, auch außerhalb von Changes). Er liest den Lizenzstatus einer Windows-VM aus Alfreds Vorlagen über den Gast-Agenten und meldet „WINDOWS_LIZENZIERT …, gültig bis …“ oder „WINDOWS_NICHT_LIZENZIERT“ mit Grund.
