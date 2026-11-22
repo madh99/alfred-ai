@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — SQL Server auf Linux: eigene Alfred-Logins, sa abschaltbar (v1932)
+
+- Zwei eigene SQL-Logins je Linux-Instanz: `alfred_admin` (sysadmin) für ändernde Bausteine und `alfred_status` (nur lesen: VIEW ANY DEFINITION, SELECT auf msdb.dbo.backupset) für Status und Überwachung. Welches Login ein Baustein nutzt, folgt fest aus seiner Art (ändernd oder lesend). Die Kennwörter erzeugt Alfred einmalig im Tresor.
+- Nach der Umstellung meldet sich Alfred an dieser Instanz nie mehr als `sa` an. Fehlt einer der beiden Tresor-Einträge, bricht der Schritt sichtbar ab statt auf `sa` zurückzufallen. Ist `sa` abgeschaltet, sperrt zusätzlich eine Marke auf dem Host jede Anmeldung als `sa`. Jedes Ergebnis nennt das verwendete Login.
+- Neue Bausteine (nur im Change): `linux_sql alfred_logins_anlegen` mit Rechte-Nachweis (keine Serverrolle, kein Server- oder Datenbankrecht über den Rechtesatz hinaus) und Rückweg `alfred_logins_entfernen`; `linux_sql sa_schalten` (nur als alfred_admin, Rückweg mit umgekehrtem Schalter); `linux_sql sa_kennwort_setzen` als Notfallweg (setzt das vorhandene sa-Kennwort aus dem Tresor über mssql-conf, Tresor unverändert); `linux_ha knoten_standby` (Pacemaker-Knoten des Zugangs in Standby und zurück, nie der Primär, erst fertig, wenn die AG-Instanz auf dem Knoten gestoppt ist).
+- Status zeigt `sa aus (gesperrt)` bzw. `sa aktiv` und die vorhandenen Alfred-Logins. Scheitert nach der Umstellung die Status-Anmeldung, meldet die Überwachung einen Befund mit Schwere hoch.
+- Die Kernzahl im Status kommt aus dem Betriebssystem; das Lese-Login braucht dadurch keinen Einblick in fremde Sitzungen.
+
 ### Fixed — Change-Motor: kein zweiter Lauf in der Startlücke (v1931)
 
 - Realfall 21.11. (L6-E): Beim Start setzte der Motor den Change auf „läuft“ und schickte dann die Startmeldung, bevor der Lauf den Change belegte. Ein gleichzeitiger Anstoß, ausgelöst durch den Abschluss eines anderen Changes, sah in dieser Lücke einen scheinbar nach einem Neustart unterbrochenen Change und hielt ihn an, während der echte Lauf weiterarbeitete. Die Folge waren zwei Läufe auf einem Change und zwei Halt-Incidents, von denen einer verwaist offen blieb.
