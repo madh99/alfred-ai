@@ -1192,3 +1192,26 @@ ${'P'.repeat(7000)}`, kettePem: 'K'.repeat(7000), zertBase64: b64(2000), issuing
     expect(loeseAuf({ zert_base64: '{{schritt4.zertifikatPem}}' }, [{ nr: 4, ok: true, daten } as never]).fehler).toContain('unzulässigen Wert');
   });
 });
+
+describe('Realfall 21.11. (3af9930c L6-E) — kein zweiter Lauf in der Startlücke', () => {
+  it('anstossen() während starte() noch meldet: kein „nach Neustart“-Halt, kein Halt-Incident, ein Lauf bis zum Ende', async () => {
+    // wie im Realfall wirkt Schritt 1 (dort „UniFi-Konfiguration sichern“) — sonst setzt nachNeustart einfach fort
+    const w = welt([probe()[1]!].map(s => ({ ...s, nr: 1 })));
+    let freigeben!: () => void;
+    const tor = new Promise<void>(r => { freigeben = r; });
+    let angelegt = 0;
+    w.deps.incident = { ...w.deps.incident!, anlegen: async () => { angelegt++; return `inc-${angelegt}`; } };
+    w.deps.melde = async t => { w.meldungen.push(t); if (t.startsWith('▶️ Change gestartet')) await tor; };
+    const m = new ChangeMotor(w.deps);
+    expect(await m.anstossen()).toEqual(['chg-1']);
+    await new Promise(r => setTimeout(r, 5)); // starte() steht jetzt in der Startmeldung, Status schon in_progress/laeuft
+    expect(w.c.status).toBe('in_progress');
+    expect(await m.anstossen()).toEqual([]); // vorher: nachNeustart → Halt „Neustart während Schritt 1“
+    freigeben();
+    await new Promise(r => setTimeout(r, 5));
+    await warte(m);
+    expect(w.c.status).toBe('completed');
+    expect(w.meldungen.some(t => t.includes('Neustart'))).toBe(false);
+    expect(angelegt).toBe(0);
+  });
+});

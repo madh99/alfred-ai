@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Motor: kein zweiter Lauf in der Startlücke (v1931)
+
+- Realfall 21.11. (L6-E): Beim Start setzte der Motor den Change auf „läuft“ und schickte dann die Startmeldung, bevor der Lauf den Change belegte. Ein gleichzeitiger Anstoß, ausgelöst durch den Abschluss eines anderen Changes, sah in dieser Lücke einen scheinbar nach einem Neustart unterbrochenen Change und hielt ihn an, während der echte Lauf weiterarbeitete. Die Folge waren zwei Läufe auf einem Change und zwei Halt-Incidents, von denen einer verwaist offen blieb.
+- Ein Change ist jetzt vom ersten Schritt des Starts an belegt, bis der Lauf ihn übernimmt. Anstoß und Steuerbefehle (wiederholen, abbrechen, Rückweg) sehen ihn als belegt.
+
+### Changed — Halt-Incidents des Change-Motors werden kein Known-Error mehr (v1931)
+
+- Beim Lösen eines Incidents legt das ITSM seit v923 automatisch einen Known-Error an. Bei Halt-Incidents des Motors beschreibt die Lösung aber nur den Ausgang genau eines Changes. Ein ähnlich benannter späterer Change hätte sie als Workaround geerbt.
+- Incidents mit `detected_by = change-motor` werden deshalb weder als Known-Error angelegt noch mit einem bestehenden verknüpft. Andere Incidents sind davon nicht betroffen.
+
 ### Fixed — CMDB-Umgebung wird gefüllt und bleibt gepflegt (v1930, Owner-Freigabe 22.11., K2–K4)
 
 - Befund 22.11.: Von 3 391 Assets hatten nur 12 eine Umgebung. Keine Quelle lieferte sie, und der Abgleich (`discover`, `discover_source`) gab das Feld gar nicht an die Datenbank weiter.

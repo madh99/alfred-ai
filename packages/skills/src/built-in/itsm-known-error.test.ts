@@ -86,6 +86,17 @@ describe('v923 A — Auto-Known-Error beim close_incident', () => {
     expect(problemRepo.linkIncident).toHaveBeenCalledWith('u1', 'prob-i3', 'inc-i3b');
   });
 
+  it('Realfall 22.11.: Halt-Incidents des Change-Motors werden kein Known-Error (weder angelegt noch verlinkt)', async () => {
+    const { skill, itsmRepo, problemRepo } = makeSkill({
+      problems: [{ id: 'prob-i3', title: 'Change angehalten: Probe-Change: Snapshot i3probe auf test-ubuntu (142, pve3)', isKnownError: true }],
+    });
+    (itsmRepo.closeIncident as any).mockResolvedValueOnce({ ...ZED_INCIDENT, id: 'inc-motor', detectedBy: 'change-motor', title: 'Change angehalten: Probe-Change: Snapshot i3probe erneut', resolution: 'Change 3af9930c nach dem Anhalten abgeschlossen, Wirkung vollständig.' });
+    const r = await skill.execute({ action: 'close_incident', incident_id: 'inc-motor', resolution: 'Change 3af9930c nach dem Anhalten abgeschlossen, Wirkung vollständig.' }, ctx);
+    expect(r.success).toBe(true);
+    expect(problemRepo.createProblem).not.toHaveBeenCalled();
+    expect(problemRepo.linkIncident).not.toHaveBeenCalled();
+  });
+
   it('ohne substanzielle resolution kein Known-Error', async () => {
     const { skill, itsmRepo, problemRepo } = makeSkill();
     (itsmRepo.closeIncident as any).mockResolvedValueOnce({ ...ZED_INCIDENT, resolution: 'ok' });

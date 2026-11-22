@@ -479,10 +479,13 @@ export class ItsmSkill extends Skill {
    */
   private async captureKnownError(
     userId: string,
-    incident: { id: string; title: string; resolution?: string; rootCause?: string; affectedAssetIds?: string[]; affectedServiceIds?: string[] },
+    incident: { id: string; title: string; resolution?: string; rootCause?: string; affectedAssetIds?: string[]; affectedServiceIds?: string[]; detectedBy?: string },
   ): Promise<string> {
     try {
       if (!this.problem) return '';
+      // Realfall 22.11.: vier Halt-Incidents des Change-Motors wurden beim Aufräumen zu Known-Errors. Ihre „Lösung“ beschreibt den
+      // Ausgang genau eines Changes, kein wiederverwendbares Wissen — ein ähnlich benannter späterer Change hätte sie als Workaround geerbt.
+      if (incident.detectedBy === 'change-motor') return '';
       const resolution = (incident.resolution ?? '').trim();
       if (resolution.length < 20) return ''; // ohne substanzielle Lösung kein Known-Error
 

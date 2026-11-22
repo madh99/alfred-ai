@@ -157,6 +157,14 @@ function merkeKorrektur(l: ChangeLauf): void {
 
 export class ChangeMotor {
   private readonly laufend = new Set<string>();
+  /**
+   * Realfall 21.11. (3af9930c L6-E): starte() setzte in_progress/laeuft und wartete auf Meldung und Ereignis, bevor weiter() den
+   * Change in `laufend` eintrug. Ein gleichzeitiges anstossen() (Abschluss von L6-D) hielt ihn in dieser Lücke als „nach Neustart“
+   * an, während der echte Lauf weiterarbeitete — zwei Läufe auf einem Change, zwei Halt-Incidents, einer blieb verwaist.
+   * `startend` belegt den Change ab dem ersten Schritt von starte() bis weiter() ihn übernommen hat.
+   */
+  private readonly startend = new Set<string>();
+  private belegt(id: string): boolean { return this.laufend.has(id) || this.startend.has(id); }
   private readonly takt: NonNullable<MotorDeps['takt']>;
   constructor(private readonly d: MotorDeps) {
     this.takt = d.takt ?? { pruefAbstandMs: 5_000, pruefVersuche: 6, taskAbstandMs: 3_000, wartenAbstandMs: 10_000 };
@@ -187,7 +195,7 @@ export class ChangeMotor {
     const alle = (await this.d.itsm.liste(o)).filter(c => c.schritte?.length);
     const gestartet: string[] = [];
     for (const c of alle) {
-      if (this.laufend.has(c.id)) continue;
+      if (this.belegt(c.id)) continue;
       const l = c.lauf as ChangeLauf | undefined;
       // Owner hat im Web/Chat abgebrochen, während der Change angehalten war → Bericht nachtragen
       if (c.status === 'cancelled' && l && l.phase !== 'fertig') { await this.beende(o, c, l, 'cancelled', 'vom Owner abgebrochen'); continue; }
@@ -251,18 +259,29 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
   }
 
   private async starte(o: string, c: CmdbChangeRequest): Promise<void> {
-    // v1651 — nach Neuplanung eines angehaltenen Changes gehört dessen Halt-Incident weiter zum Lauf (wird am Ende gelöst)
-    const lauf: ChangeLauf = { phase: 'laeuft', schritt: 1, start: this.iso(), ergebnisse: [], ...(c.linkedIncidentId ? { incidentId: c.linkedIncidentId } : {}) };
-    const akt = await this.d.itsm.motorSetze(o, c.id, { status: 'in_progress', lauf });
-    this.log('I4 Change gestartet', { id: c.id, titel: c.title, schritte: (c.schritte ?? []).length });
-    await this.d.melde?.(`▶️ Change gestartet: ${c.title} (${c.id.slice(0, 8)}, ${(c.schritte ?? []).length} Schritte)`, false);
-    await this.d.ereignis?.(o, akt, 'start', `Die Wartung „${c.title}“ beginnt jetzt${c.ausfallMinuten ? ` (erwartete Unterbrechung bis ${c.ausfallMinuten} min)` : ''}.`).catch(() => undefined);
-    await this.weiter(o, akt, lauf);
+    // Realfall 21.11. — synchron belegen (vor dem ersten await), freigeben erst, wenn weiter() den Change in `laufend` hat
+    if (this.belegt(c.id)) return;
+    this.startend.add(c.id);
+    let uebergeben = false;
+    try {
+      // v1651 — nach Neuplanung eines angehaltenen Changes gehört dessen Halt-Incident weiter zum Lauf (wird am Ende gelöst)
+      const lauf: ChangeLauf = { phase: 'laeuft', schritt: 1, start: this.iso(), ergebnisse: [], ...(c.linkedIncidentId ? { incidentId: c.linkedIncidentId } : {}) };
+      const akt = await this.d.itsm.motorSetze(o, c.id, { status: 'in_progress', lauf });
+      this.log('I4 Change gestartet', { id: c.id, titel: c.title, schritte: (c.schritte ?? []).length });
+      await this.d.melde?.(`▶️ Change gestartet: ${c.title} (${c.id.slice(0, 8)}, ${(c.schritte ?? []).length} Schritte)`, false);
+      await this.d.ereignis?.(o, akt, 'start', `Die Wartung „${c.title}“ beginnt jetzt${c.ausfallMinuten ? ` (erwartete Unterbrechung bis ${c.ausfallMinuten} min)` : ''}.`).catch(() => undefined);
+      // weiter() trägt den Change synchron (vor seinem ersten await) in `laufend` ein — erst danach startend freigeben
+      const lauft = this.weiter(o, akt, lauf, true);
+      this.startend.delete(c.id); uebergeben = true;
+      await lauft;
+    } finally {
+      if (!uebergeben) this.startend.delete(c.id);
+    }
   }
 
   /** Schritte ab dem aktuellen ausführen, bis Ende, Owner-Schritt, Anhalten oder Abbruch. */
-  async weiter(o: string, c0: CmdbChangeRequest, lauf: ChangeLauf): Promise<void> {
-    if (this.laufend.has(c0.id)) return;
+  async weiter(o: string, c0: CmdbChangeRequest, lauf: ChangeLauf, ausStarte = false): Promise<void> {
+    if (this.laufend.has(c0.id) || (!ausStarte && this.startend.has(c0.id))) return;
     this.laufend.add(c0.id);
     let fertig = false;
     try {
@@ -673,21 +692,21 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     const c = await this.d.itsm.hole(o, id);
     const l = c?.lauf as ChangeLauf | undefined;
     // Rückweg nach einer Störung: abgeschlossener Change mit verknüpfter Störung
-    if (wahl === 'rueckweg' && c && l && c.status === 'completed' && (l.stoerungen ?? []).length && !this.laufend.has(c.id)) {
+    if (wahl === 'rueckweg' && c && l && c.status === 'completed' && (l.stoerungen ?? []).length && !this.belegt(c.id)) {
       if (!rueckwegSchritte((c.schritte ?? []) as ChangeSchritt[], l.ergebnisse).length) return 'Dieser Change hat keinen Rückweg.';
       delete l.frage;
       void this.rueckweg(o, c, l, `Rückweg nach Störung auf Wunsch des Owners`).catch(err => this.log('I4 Motorfehler', { id, fehler: (err as Error).message }));
       return 'Rückweg läuft — ich melde das Ergebnis.';
     }
     // v1640 — nie gestartet (Entwurf, eingereicht, freigegeben ohne Lauf): „abbrechen“ verwirft ihn
-    if (wahl === 'abbrechen' && c && !l?.start && ['draft', 'submitted', 'approved'].includes(c.status) && !this.laufend.has(c.id)) {
+    if (wahl === 'abbrechen' && c && !l?.start && ['draft', 'submitted', 'approved'].includes(c.status) && !this.belegt(c.id)) {
       if (!this.d.itsm.verwerfen) return 'Verwerfen ist hier nicht verfügbar.';
       const vorher = c.status;
       await this.d.itsm.verwerfen(o, c.id, 'auf Wunsch des Owners');
       this.log('I4 Change verworfen', { id: c.id, vorher });
       return `Change ${c.id.slice(0, 8)} „${c.title}“ verworfen (war ${vorher === 'draft' ? 'in Planung' : vorher === 'submitted' ? 'zur Freigabe' : 'freigegeben, nicht gestartet'}).`;
     }
-    if (!c || !l || c.status !== 'in_progress' || this.laufend.has(c.id)) return 'Der Change ist nicht angehalten.';
+    if (!c || !l || c.status !== 'in_progress' || this.belegt(c.id)) return 'Der Change ist nicht angehalten.';
     // v1682 — Realfall 26.10. (Matrix J c89f6bd9): ein Change, der bei einem Owner-Schritt wartet, ließ sich weder in der App noch im Chat
     // abbrechen („nicht angehalten (Phase wartet_owner)“). Er steht wie ein angehaltener Change still — dieselben Wahlmöglichkeiten.
     if (l.phase !== 'angehalten' && l.phase !== 'wartet_owner') return `Der Change ist nicht angehalten (Phase ${l.phase}).`;
