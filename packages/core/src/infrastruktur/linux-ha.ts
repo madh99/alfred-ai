@@ -2577,12 +2577,13 @@ knoten_ich
 G=$(fpy grund "$BELEG_DATEI" "$TEST_DATEI" "$COROSYNC_CONF" "$AUTHKEY" "$SBD_KONF" "$ICH" "$CLUSTER" 2>&1) || abbruch "Fencing-Beleg auf $ICH nicht prüfbar ($(kurz "$G")) — keine SQL-Zeile ausgeführt, nichts geändert"
 [ -z "$G" ] || abbruch "Fencing auf $ICH nicht belegt: $G — Verfügbarkeitsgruppe erst nach fencing_pruefen/fencing_belegen auf allen drei Knoten; keine SQL-Zeile ausgeführt, nichts geändert"
 geheim_lesen sa SA "sa-Kennwort"
+login_lesen
 geheim_lesen hauptschluessel HS "Master-Key-Kennwort"
 geheim_lesen pacemaker PM "Kennwort des Pacemaker-Logins"
 geheim_sql
 PM_DIR=$(dirname "$PM_DATEI")
 [ -d "$PM_DIR" ] || abbruch "Verzeichnis $PM_DIR fehlt auf $ICH (mssql-server installiert?) — nichts geändert"
-bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als $SQL_LOGIN — nichts geändert"
 sql_lauf "$(mit_geheim "$T_PRUEFEN")" "Prüfung auf $ICH"
 # ── Phase 2: Master-Key, Pacemaker-Login, Zertifikat + Endpunkt (je eigener Block: eine Marke steht, sobald das Kennwort gesetzt ist) ──
 sql_lauf "$(mit_geheim "$T_MASTERKEY")" "Master-Key auf $ICH" aendernd
@@ -2639,7 +2640,8 @@ export function haAgEndpunktSkript(p: HaAgEndpunktParameter): string {
 
 const AG_REPLIKAT_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
-bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+login_lesen
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als $SQL_LOGIN — nichts geändert"
 sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
 sql_lauf "$T_AENDERN" "Replikat ($ROLLE) auf $ICH" aendernd
 IFS='|' read -r _ a <<<"$ZEILE"
@@ -2681,10 +2683,11 @@ export function haAgReplikatSkript(p: HaAgReplikatParameter): string {
 
 const AG_ABSCHLUSS_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
+login_lesen
 # ── Phase 1: prüfen — Cluster 3/3 mit Quorum, AG hier Primär, Datenbanken bereit ──
 cluster_lage
 { [ "$LO" = 3 ] && [ "$LQ" = 1 ]; } || abbruch "Cluster: $LO/3 online, Quorum $([ "$LQ" = 1 ] && echo ja || echo nein) — erwartet 3/3 mit Quorum; nichts geändert"
-bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als $SQL_LOGIN — nichts geändert"
 sql_lauf "$T_PRUEFEN" "Prüfung auf $ICH"
 # ── Phase 2: Datenbanken aufnehmen, Seeding abwarten (vor Pacemaker) ──
 sql_lauf "$T_DBS" "Datenbanken in $AG aufnehmen" aendernd
@@ -2761,7 +2764,8 @@ export function haAgAbschlussSkript(p: HaAgAbschlussParameter): string {
 
 const AG_ENTFERNEN_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
-bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+login_lesen
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als $SQL_LOGIN — nichts geändert"
 # Rolle und Datenbanken der AG VOR dem Entfernen der Ressourcen (Pacemaker stuft den Primär beim Löschen herab)
 sql_lauf "$T_LAGE" "Lage auf $ICH"
 IFS='|' read -r _ RV DBL <<<"$ZEILE"
@@ -2920,6 +2924,7 @@ warte_gegenstelle() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if lage_ver
 
 const AG_FAILOVER_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
+login_lesen
 DAUER=0; VORHER=$ALT
 # Nach dem Verschieben darf kein Abbruch die Standort-Bedingung still stehen lassen: jeder Abbruch gibt sie zuerst frei und nennt das
 # Ergebnis. Fix-Runde 1 (I1): bei einem unerwarteten Ende (set -e/-u, TERM/INT) gibt alfred_aufraeumen (EXIT-Trap) ebenfalls frei und
@@ -2948,7 +2953,7 @@ VIP_IP=$(parameter "$VIP_RES" ip); VIP_PRAEFIX=$(parameter "$VIP_RES" cidr_netma
 standort
 [ "$SCLI" != x ] || abbruch "Standort-Bedingungen (CIB) nicht lesbar — kein Failover; nichts geändert"
 [ "$SANDERE" = 0 ] || abbruch "fremde Standort-Bedingungen an $AG_KLON/$VIP_RES ($SLISTE) — nicht still entfernt, kein Failover; nichts geändert"
-bereit || abbruch "SQL Server antwortet auf $ICH nicht als sa — nichts geändert"
+bereit || abbruch "SQL Server antwortet auf $ICH nicht als $SQL_LOGIN — nichts geändert"
 lage_lesen "AG-Lage auf $ICH"
 [ "$RS" = 0 ] || abbruch "REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT in SQL ist $RS, erwartet 0 (ag_anlegen setzt es) — kein Failover; nichts geändert"
 pm_lage

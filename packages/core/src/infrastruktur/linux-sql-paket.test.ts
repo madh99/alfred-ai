@@ -66,7 +66,7 @@ describe('Status: SQL-Sicht mit sqlcmd -y 0 (ohne -h -1)', { timeout: 120_000 },
 
   it.skipIf(!PYTHON)('sql_json schneidet Spaltenkopf und Trennlinie ab, lehnt Unvollständiges ab', () => {
     const zeilen = PY_STATUS.split('\n');
-    const von = zeilen.indexOf('def sql_json(text):'), bis = zeilen.indexOf('if not sa:');
+    const von = zeilen.indexOf('def sql_json(text):'), bis = zeilen.indexOf('if login_fehler:');
     expect(von).toBeGreaterThan(-1); expect(bis).toBeGreaterThan(von);
     const prog = ['import json, sys', ...zeilen.slice(von, bis), 'print(json.dumps(sql_json(sys.stdin.read())))'].join('\n');
     const lauf = (t: string) => JSON.parse(spawnSync(PYTHON!, ['-c', prog], { input: t, encoding: 'utf8' }).stdout);

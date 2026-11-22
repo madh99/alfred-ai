@@ -1026,7 +1026,7 @@ systemctl is-active --quiet sssd || abbruch "sssd läuft nicht — AD-Namen nich
 getent group "$GRUPPE_NSS" >/dev/null 2>&1 || abbruch "Gruppe $GRUPPE_NSS im AD nicht auflösbar (getent group) — Gruppe im AD vorhanden (windows_ad gruppe_anlegen), Host beigetreten? $NICHT"
 { [ "$(lies network kerberoskeytabfile)" = "$SQL_KT" ] && [ -f "$SQL_KT" ]; } || abbruch "SQL Server ohne Alfreds Keytab ($SQL_KT in mssql.conf network.kerberoskeytabfile) — zuerst kerberos_einrichten und Neustart; $NICHT"
 marker_pruefen
-bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN — $NICHT"
 lage
 [ "$L_TYP" = - ] || [ "$L_TYP" = G ] || abbruch "Login $LOGIN besteht als Typ $L_TYP (kein Windows-Gruppen-Login) — $NICHT"
 [ "$L_AUS" != 1 ] || abbruch "Login $LOGIN ist deaktiviert — nicht still aktiviert; $NICHT"
@@ -1074,7 +1074,7 @@ const AD_LOGIN_ENTFERNEN_KOERPER = sh(String.raw`BELASSEN=''
 belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
 [ "$(hostname -s 2>/dev/null || true)" != "$NIE" ] || abbruch "$NIE hat keine AD-Logins (Spec 10) — $NICHT"
 marker_pruefen
-bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN — $NICHT"
 lage
 # nur, was Alfred vermerkt hat UND noch ein Windows-Gruppen-Objekt ist; alles andere bleibt (belassen)
 DR=0; DU=0; DS=0; DL=0; WEG=()

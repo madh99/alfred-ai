@@ -560,7 +560,7 @@ openssl x509 -noout -checkend 0 -in "$CRT" >/dev/null 2>&1 || abbruch "$CRT ist 
 a=$(openssl verify -purpose sslserver -verify_hostname "$CN" -CAfile "$CA_BUNDLE" -untrusted "$CA_ISS" "$CRT" 2>&1) || abbruch "$CRT: Kette gegen den Vertrauensspeicher $CA_BUNDLE nicht prüfbar oder $CN nicht im Zertifikat ($(kurz "$a")) — Schalter nicht gesetzt"
 # Probe genau so, wie Alfred mit Schalter verbindet (-N, Zertifikat und Name geprüft, ohne Vertrauen auf jedes Zertifikat)
 SQL_ZIEL=(-N -S "$CN")
-a=$(sqlcmd_sa "$PROBE_Q" 2>&1) || abbruch "$SQL_TLS_FEHLER — Probe -N -S $CN als sa: $(sql_fehlerzeile "$a"); Schalter nicht gesetzt"
+a=$(sqlcmd_sa "$PROBE_Q" 2>&1) || abbruch "$SQL_TLS_FEHLER — Probe -N -S $CN als $SQL_LOGIN: $(sql_fehlerzeile "$a"); Schalter nicht gesetzt"
 [ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || abbruch "Probe: Verbindung zu $CN laut SQL Server nicht verschlüsselt ($(kurz "$a")) — Schalter nicht gesetzt"
 # ── Phase 2: Schalter (Zwischendatei im selben Ordner, Rechte vor dem Inhalt, mv) ──
 ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-tls.XXXXXX"); chmod 0700 "$ALFRED_TMP"
@@ -677,7 +677,7 @@ a=$(openssl verify -purpose sslserver -verify_hostname "$CN" -CAfile "$CA_BUNDLE
 sql_ziel || abbruch "$SQL_ZIEL_FEHLER — $NICHT"
 [ "§{SQL_ZIEL[*]}" = "-N -S $CN" ] || abbruch "Schalter $TLS_SCHALTER nennt nicht $CN (Verbindungsziel §{SQL_ZIEL[*]}) — $NICHT"
 # Verbindung genau so, wie Alfred verbindet (-N, Zertifikat und Name geprüft): SQL Server liefert das eingespielte Zertifikat
-bereit || abbruch "SQL Server antwortet nicht als sa — $NICHT"
+bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN — $NICHT"
 a=$(sql "$PROBE_Q" 2>&1) || abbruch "Probe über $CN: $(sql_fehlerzeile "$a") — $NICHT"
 [ "$(alfred_zeile "$a")" = 'ALFRED|TRUE' ] || abbruch "Probe: Verbindung zu $CN laut SQL Server nicht verschlüsselt — $NICHT"
 # (3) Pacemaker auf diesem Knoten fehlerfrei: online, Quorum, Ressource bekannt, Fehlerzähler 0, keine Fehlaktion im Fenster

@@ -163,7 +163,7 @@ describe('M-8: Fassung des installierten Kopier-Skripts', { timeout: 120_000 }, 
   });
   it.skipIf(!BASH)('ausgeführt: abweichende installierte Fassung → Abbruch vor jedem Sichern', () => {
     const skript = sicherungJetztSkript({ art: 'LOG', datenbank: 'pruefdb01' });
-    const stubs = ["feld() { printf '%s' 'Sa-1'; }", 'bereit() { :; }', 'json_text() { local x; x=$(cat); printf \'"%s"\' "${x//\\"/}"; }',
+    const stubs = ["feld() { case \"$1\" in login) ;; *) printf '%s' 'Sa-1' ;; esac; }", 'bereit() { :; }', 'json_text() { local x; x=$(cat); printf \'"%s"\' "${x//\\"/}"; }',
       'systemctl() { :; }', "installiert_sha() { echo 0000; }", 'sql() { echo "SQL $1" >&2; echo ALFRED|x; }'];
     const text = skript.replace('# ALFRED-ABLAUF', () => `${stubs.join('\n')}\n# ALFRED-ABLAUF`);
     const r = spawnSync('bash', [], { input: `ALFRED_EINGABE=''\n( ${text}\n)\necho "RC=$?"`, encoding: 'utf8' });

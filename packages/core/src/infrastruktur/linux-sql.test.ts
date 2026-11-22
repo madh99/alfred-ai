@@ -167,7 +167,7 @@ describe('I8e Linux-SQL — Skripttext', { timeout: 120_000 }, () => {
     expect(i).toContain('SA=$(feld sa)');
     expect(i).toContain('MSSQL_SA_PASSWORD="$SA" MSSQL_PID="$PID" /opt/mssql/bin/mssql-conf -n setup accept-eula');
     // Task 7: Ziel (-C -S localhost bzw. -N -S <fqdn>) nur aus sql_ziel
-    expect(i).toContain('SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U sa');
+    expect(i).toContain('SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U "$SQL_LOGIN"');
     const l = sqlSkript('login', LOGIN);
     expect(l).toContain('KW=$(feld kennwort)');
     // T-SQL mit Kennwort geht über stdin, nicht -Q
@@ -179,7 +179,7 @@ describe('I8e Linux-SQL — Skripttext', { timeout: 120_000 }, () => {
     expect(l).toContain('KW_SQL=${KW//"$Q1"/"$Q1$Q1"}');
     expect(l).toContain('TSQL=${VORLAGE//@@KW@@/"$KW_SQL"}');
     expect(l).toContain('PWDCOMPARE');
-    expect(statusSkript()).toContain('python3 -c "$PY_STATUS" <<<"$ALFRED_EINGABE"');
+    expect(statusSkript()).toContain('python3 -c "$PY_STATUS" "$SA_SPERRE" <<<"$ALFRED_EINGABE"');
     expect(PY_STATUS).toContain("SQLCMDPASSWORD=sa");
   });
   it('Platten: SCSI-Adresse 0:0:0:N, Größe ±1 %, formatiert nur ohne Signatur und Partition, erst alles prüfen', () => {
@@ -512,7 +512,7 @@ describe('I8e Linux-SQL — Prüfdaten', { timeout: 120_000 }, () => {
   });
   function lauf(antwort: string) {
     const stubs = [
-      "feld() { printf '%s' 'Sa-Geheim-1234567890!'; }",
+      "feld() { case \"$1\" in login) ;; *) printf '%s' 'Sa-Geheim-1234567890!' ;; esac; }",
       'bereit() { :; }',
       `sql() { echo ${shQ(antwort)}; }`,
       'json_text() { local x; x=$(cat); printf \'"%s"\' "${x//\\"/}"; }',

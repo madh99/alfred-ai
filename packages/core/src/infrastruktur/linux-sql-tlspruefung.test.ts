@@ -154,7 +154,7 @@ function lauf(T: string, skript: string, stubs: string, eingabe = '{"sa":"Sa-Geh
   return { rc: Number(/RC=(\d+)/.exec(o.stdout)?.[1] ?? -1), e: sqlErgebnis(aus), aus, argv: ohneCr(readFileSync(join(T, 'argv'), 'utf8')).split('\n').filter(Boolean) };
 }
 /** kleines Skript aus Kopf + SQL_HILFE: bereit, dann eine Abfrage über sql (wie jeder Baustein) */
-const PROBE = [...sqlKopf('sql.probe', {}), ...SQL_HILFE, '# ALFRED-ABLAUF', 'SA=x', 'bereit || abbruch "SQL Server antwortet nicht"', 'a=$(sql "SELECT 1")', 'ergebnis "{\\"zustand\\":\\"ok\\"}"'].join('\n');
+const PROBE = [...sqlKopf('sql.probe', {}), ...SQL_HILFE, '# ALFRED-ABLAUF', 'SA=x; SQL_LOGIN=sa', 'bereit || abbruch "SQL Server antwortet nicht"', 'a=$(sql "SELECT 1")', 'ergebnis "{\\"zustand\\":\\"ok\\"}"'].join('\n');
 /** absolute Pfade: der Baustein-Kopf setzt PATH auf die Linux-Standardordner (Git Bash: python unter C:) */
 const PYTHON_PFAD = BASH && PYTHON ? spawnSync('bash', ['-c', `command -v ${PYTHON}`], { encoding: 'utf8' }).stdout.trim() : 'python3';
 const PY_STUB = `python3() { PYTHONIOENCODING=utf-8 ${q(PYTHON_PFAD)} "$@" | tr -d '\\r'; }`;
@@ -228,7 +228,7 @@ describe.skipIf(!BASH || !PYTHON)('Task 7 — sql_ziel ausgeführt (sqlcmd-Stub)
   it('Sicherung (sqls) und echte Bausteine: dasselbe Ziel', () => {
     const T = ordner();
     writeFileSync(join(T, 'etc', 'sqllnx-tls-pruefen'), `${FQDN}\n`);
-    const sqls = [...sqlKopf('sql.probe', {}), ...SQL_HILFE, 'sqls() { sql "$1" -s "|"; }', '# ALFRED-ABLAUF', 'SA=x', 'a=$(sqls "SELECT 1")', 'ergebnis "{\\"zustand\\":\\"ok\\"}"'].join('\n');
+    const sqls = [...sqlKopf('sql.probe', {}), ...SQL_HILFE, 'sqls() { sql "$1" -s "|"; }', '# ALFRED-ABLAUF', 'SA=x; SQL_LOGIN=sa', 'a=$(sqls "SELECT 1")', 'ergebnis "{\\"zustand\\":\\"ok\\"}"'].join('\n');
     const r = lauf(T, sqls, PFADE);
     expect(r.rc, r.aus).toBe(0);
     expect(r.argv[0]!.split('|').slice(0, 3)).toEqual(['-N', '-S', FQDN]);

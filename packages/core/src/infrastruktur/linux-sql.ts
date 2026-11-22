@@ -103,6 +103,8 @@ export const TLS_MANIFEST = '/etc/alfred/sqllnx-tls.manifest';
 export const TLS_MANIFEST_KOPF = '# Alfred I8e — linux_sql tls_einspielen (SHA-256 der eingespielten Dateien, nicht von Hand ändern)';
 /** Schalter der Zertifikatsprüfung für Alfreds eigene Verbindungen (Task 7; root 0644, Inhalt = FQDN) */
 export const TLS_PRUEF_SCHALTER = '/etc/alfred/sqllnx-tls-pruefen';
+/** I8e Folge-Etappe: Host-Marke „sa abgeschaltet“ — gesetzt nur von linux_sql sa_schalten an=false, sperrt jede Anmeldung als sa */
+export const SA_SPERRE = '/etc/alfred/sqllnx-sa-aus';
 export const TLS_PROTOKOLLE = '1.2,1.3';
 /** Task 7 — feste Meldung, wenn Alfreds Verbindung mit gesetztem Schalter scheitert (nie ein zweiter Versuch mit -C) */
 export const TLS_PRUEF_FEHLER = `Zertifikatsprüfung fehlgeschlagen (Schalter ${TLS_PRUEF_SCHALTER})`;
@@ -267,7 +269,17 @@ export const SQL_HILFE = [
   `SQL_FQDN_MUSTER=${shQ(TLS_PRUEF_FQDN_MUSTER)}`,
   `SQL_TLS_FEHLER=${shQ(TLS_PRUEF_FEHLER)}`,
   SQL_ZIEL_BASH,
-  'sqlcmd_sa() { SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U sa -l 30 -h -1 -W -w 65535 "${@:2}" <<<"$1"; }',
+  // I8e Folge-Etappe: Login aus dem Eingabefeld `login` (login_lesen); ohne gelesenes Login keine Anmeldung
+  `SA_SPERRE=${shQ(SA_SPERRE)}`,
+  "SQL_LOGIN=''",
+  'login_lesen() {',
+  '  local l',
+  '  l=$(feld login) || abbruch "login: nur sa, alfred_admin oder alfred_status"',
+  '  SQL_LOGIN=${l:-sa}',
+  '  case "$SQL_LOGIN" in sa|alfred_admin|alfred_status) ;; *) SQL_LOGIN=\'\'; abbruch "login: nur sa, alfred_admin oder alfred_status" ;; esac',
+  '  if [ "$SQL_LOGIN" = sa ] && [ -e "$SA_SPERRE" ]; then SQL_LOGIN=\'\'; abbruch "sa ist auf diesem Host abgeschaltet ($SA_SPERRE) — Anmeldung als sa gesperrt"; fi',
+  '}',
+  'sqlcmd_sa() { [ -n "$SQL_LOGIN" ] || { echo "SQL-Login nicht gelesen (login_lesen fehlt)" >&2; return 1; }; SQLCMDPASSWORD="$SA" "$SQLCMD" "${SQL_ZIEL[@]}" -b -x -U "$SQL_LOGIN" -l 30 -h -1 -W -w 65535 "${@:2}" <<<"$1"; }',
   'sql() { sql_ziel || { printf \'%s\\n\' "$SQL_ZIEL_FEHLER" >&2; return 1; }; sqlcmd_sa "$@"; }',
   'sql_fehlerzeile() { local z; z=$(grep -m 1 "Sqlcmd: Error" <<<"$1" | tr -d "\\r" || true); [ -n "$z" ] || z=$(kurz "$1"); printf "%s" "${z:0:300}"; }',
   'bereit() {',
@@ -292,6 +304,7 @@ export const SA_LESEN = [
   '[ -n "$SA" ] || abbruch "sa-Kennwort fehlt in der Eingabe (erste stdin-Zeile, JSON-Feld sa)"',
   // nur druckbare Zeichen: kein Zeilenumbruch (sqlcmd-Befehle wie !! am Zeilenanfang), keine Steuerzeichen
   '[[ "$SA" =~ ^[[:print:]]+$ ]] || abbruch "sa-Kennwort enthält nicht druckbare Zeichen"',
+  'login_lesen',
 ];
 
 // ── Platten ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -529,7 +542,7 @@ else
   Z=geaendert
 fi
 # Selbstprüfung: Dienst aktiv + aktiviert, Anmeldung als sa, Version und Edition
-bereit || abbruch "SQL Server antwortet nicht als sa (120 s)"
+bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN (120 s)"
 systemctl is-enabled --quiet mssql-server || abbruch "mssql-server ist nicht aktiviert"
 z=$(alfred_zeile "$(sql "SET NOCOUNT ON; SELECT N'ALFRED|' + CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(40)) + N'|' + CAST(SERVERPROPERTY('EngineEdition') AS nvarchar(5)) + N'|' + CAST(SERVERPROPERTY('Edition') AS nvarchar(80))")")
 IFS='|' read -r _ pv ee ed <<<"$z"
@@ -730,7 +743,7 @@ function tempdbSkript(p: TempdbParameter): string {
     `N=${p.dateien}`,
     `mountpoint -q ${shQ(einhaenge)} || abbruch "${einhaenge} ist kein eigener Einhängepunkt — nichts geändert"`,
     ...(TEMPDB_PFAD === TEMPDB_PFAD_DATEN ? [`if [ ! -d ${shQ(TEMPDB_PFAD)} ]; then install -d -o mssql -g mssql -m 0750 ${shQ(TEMPDB_PFAD)}; fi`] : []),
-    'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    'bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN"',
     // Fix-Welle M-5: bisherige Lage der tempdb-Dateien merken — nach der Verlegung meldet das Ergebnis die alten Dateien (nie löschen)
     `alt=$(sql "SET NOCOUNT ON; SELECT N'ALFRED-ALT|' + physical_name FROM sys.master_files WHERE database_id = 2 AND physical_name NOT LIKE N'${TEMPDB_PFAD}%'" 2>/dev/null | grep '^ALFRED-ALT|' | tr -d '\r' || true)`,
     'aus=$(sql "$TSQL" 2>&1) || abbruch "tempdb-Anpassung fehlgeschlagen: $(kurz "$aus")"',
@@ -774,7 +787,7 @@ function maxSpeicherSkript(p: MaxSpeicherParameter): string {
     ...SQL_HILFE,
     ...SA_LESEN,
     `TSQL=${shQ(tsql)}`,
-    'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    'bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN"',
     'aus=$(sql "$TSQL" 2>&1) || abbruch "max server memory: $(kurz "$aus")"',
     'IFS="|" read -r _ Z neu <<<"$(alfred_zeile "$aus")"',
     `[ "$neu" = ${p.mb} ] || abbruch "max server memory ist $neu, erwartet ${p.mb}"`,
@@ -823,7 +836,7 @@ function loginSkript(p: LoginParameter): string {
     'KW_SQL=${KW//"$Q1"/"$Q1$Q1"}',
     `VORLAGE=${shQ(vorlage)}`,
     'TSQL=${VORLAGE//@@KW@@/"$KW_SQL"}',
-    'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    'bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN"',
     'aus=$(sql "$TSQL" 2>&1) || abbruch "Login: $(kurz "$aus")"',
     'unset TSQL',
     'IFS="|" read -r _ Z ok fehlend <<<"$(alfred_zeile "$aus")"',
@@ -916,7 +929,7 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
     `TSQL=${shQ(tsql)}`,
     `SOLL=${PRUEFDATEN_SHA256}`,
     `N_SOLL=${PRUEFDATEN_ZEILEN}`,
-    'bereit || abbruch "SQL Server antwortet nicht als sa"',
+    'bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN"',
     'aus=$(sql "$TSQL" 2>&1) || abbruch "Prüfdaten: $(kurz "$aus")"',
     'IFS="|" read -r _ Z anzahl hash modell <<<"$(alfred_zeile "$aus")"',
     `{ [ "$anzahl" = "$N_SOLL" ] && [ "$hash" = "$SOLL" ]; } || abbruch "Prüftabelle ${PRUEFDATEN_TABELLE} in ${n} weicht ab: $anzahl Zeilen, Prüfsumme $hash (erwartet $N_SOLL, $SOLL) — vorhandene Daten werden nie geändert"`,
@@ -958,12 +971,23 @@ export const PY_STATUS = [
   PY_SQL_ZIEL,
   'roh = sys.stdin.read().strip()',
   'sa = ""',
+  'login = "sa"',
   'if roh:',
   '    try:',
-  '        v = json.loads(roh).get("sa")',
+  '        _e = json.loads(roh)',
+  '        v = _e.get("sa")',
   '        sa = v if isinstance(v, str) else ""',
+  '        _l = _e.get("login")',
+  '        login = _l if isinstance(_l, str) and _l else "sa"',
   '    except Exception:',
   '        sa = ""',
+  // I8e Folge-Etappe: Login nur aus fester Liste; sa bei gesetzter Host-Marke (argv[1]) gesperrt
+  'SA_SPERRE = sys.argv[1] if len(sys.argv) > 1 else ""',
+  'login_fehler = None',
+  'if login not in ("sa", "alfred_admin", "alfred_status"):',
+  '    login_fehler = "login: nur sa, alfred_admin oder alfred_status"',
+  'elif login == "sa" and SA_SPERRE and os.path.exists(SA_SPERRE):',
+  '    login_fehler = "sa ist auf diesem Host abgeschaltet (" + SA_SPERRE + ") — Anmeldung als sa gesperrt"',
   'def lauf(*a):',
   '    try:',
   '        p = subprocess.run(list(a), capture_output=True, text=True, timeout=30)',
@@ -1128,7 +1152,10 @@ export const PY_STATUS = [
   '        return json.loads(aus[a:e + 1])',
   '    except ValueError:',
   '        return None',
-  'if not sa:',
+  'if login_fehler:',
+  '    r["sql"] = None',
+  '    r["sqlFehler"] = login_fehler',
+  'elif not sa:',
   '    r["sql"] = None',
   '    r["sqlHinweis"] = "ohne sa-Kennwort nur Betriebssystem-Sicht"',
   'elif r["dienst"] != "active":',
@@ -1138,7 +1165,7 @@ export const PY_STATUS = [
   '    try:',
   // Realfall 17.11. (sqllnx01): sqlcmd lehnt „-h -1“ zusammen mit „-y 0“ ab („mutually exclusive“). -y 0 (volle Länge der JSON-Spalte)
   // bleibt; die Kopfzeilen (Spaltenname, Trennlinie) schneidet sql_json ab — das JSON reicht von der ersten „{“ bis zur letzten „}“.
-  '        p = subprocess.run([SQLCMD] + sql_ziel() + ["-b", "-x", "-U", "sa", "-l", "30", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
+  '        p = subprocess.run([SQLCMD] + sql_ziel() + ["-b", "-x", "-U", login, "-l", "30", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
   '        j = sql_json(p.stdout) if p.returncode == 0 else None',
   '        if j is not None:',
   '            r["sql"] = j',
@@ -1166,7 +1193,8 @@ export function statusSkript(): string {
   return [
     ...sqlKopf(LINUX_SQL_BAUSTEINE.status, {}),
     `PY_STATUS=${shQ(PY_STATUS)}`,
-    'ALFRED_RESTE="${ALFRED_RESTE:-0}" python3 -c "$PY_STATUS" <<<"$ALFRED_EINGABE"',
+    `SA_SPERRE=${shQ(SA_SPERRE)}`,
+    'ALFRED_RESTE="${ALFRED_RESTE:-0}" python3 -c "$PY_STATUS" "$SA_SPERRE" <<<"$ALFRED_EINGABE"',
     'ALFRED_ZEILE=1',
   ].join('\n');
 }
@@ -1202,7 +1230,7 @@ export function resteEntfernenSkript(): string {
     'teil() { abbruch "$1; bisher entfernt: ${E_LISTE:-nichts}"; }',
     '[ -d "$DATEN" ] || abbruch "$DATEN fehlt — nichts gelöscht"',
     'laeuft || abbruch "sqlservr läuft nicht — Gebrauch der Dateien nicht prüfbar, nichts gelöscht"',
-    'bereit || abbruch "SQL Server antwortet nicht als sa — nichts gelöscht"',
+    'bereit || abbruch "SQL Server antwortet nicht als $SQL_LOGIN — nichts gelöscht"',
     'aus=$(sql "$TSQL" 2>&1) || abbruch "sys.master_files nicht lesbar — nichts gelöscht: $(kurz "$aus")"',
     'n=$(alfred_zeile "$aus"); n=${n#ALFRED|}',
     '[[ "$n" =~ ^[1-9][0-9]*$ ]] || abbruch "sys.master_files: keine Ergebniszeile — nichts gelöscht"',
