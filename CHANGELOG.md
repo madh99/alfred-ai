@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Fernzugriff: Login-Name nicht mehr als Geheimnis geschwärzt (v1933)
+
+- Realfall 22.11. (Change N1): Der Fernzugriff schwärzt jeden Wert aus der Eingabe eines Linux-Bausteins in der Ausgabe. Seit v1932 enthält die Eingabe auch den Namen des SQL-Logins; dadurch erschien im Status „Alfred-Logins [geschwärzt], alfred_admin“ statt „alfred_admin, alfred_status“, und die Prüfung des Changes hielt an, obwohl die Logins korrekt angelegt waren.
+- Ausgenommen ist jetzt nur das oberste Eingabefeld `login` mit einem der festen Namen `sa`, `alfred_admin`, `alfred_status`. Jeder andere Wert bleibt wie bisher geschwärzt. Ein Test über den Transportweg belegt beides.
+
 ### Added — SQL Server auf Linux: eigene Alfred-Logins, sa abschaltbar (v1932)
 
 - Zwei eigene SQL-Logins je Linux-Instanz: `alfred_admin` (sysadmin) für ändernde Bausteine und `alfred_status` (nur lesen: VIEW ANY DEFINITION, SELECT auf msdb.dbo.backupset) für Status und Überwachung. Welches Login ein Baustein nutzt, folgt fest aus seiner Art (ändernd oder lesend). Die Kennwörter erzeugt Alfred einmalig im Tresor.
