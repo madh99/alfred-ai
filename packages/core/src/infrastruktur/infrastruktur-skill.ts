@@ -83,6 +83,8 @@ export interface InfrastrukturDeps {
   tresor?: { liste(o: string): Promise<Array<{ name: string; herkunft: string; zweck?: string; geaendert: string }>>; erzeuge(o: string, name: string, laenge?: number, zweck?: string): Promise<void>; entferne(o: string, name: string): Promise<boolean> };
   // ── Einwand ──
   einwand?: import('./einwand.js').EinwandDienst;
+  /** Spec Stufe ultra U2.3 — meldet objektive Auslöser an das Eskalations-Register (je Faden) */
+  ultraEskalation?: { einwand(chatId: string): void; planAbgelehnt(chatId: string): void; planGespeichert(chatId: string): void };
   updatesSchalter?: { liste(o: string): Promise<Record<string, string>>; setze(o: string, name: string, an: boolean): Promise<boolean> };
   /** Alfred-Benutzer (Familie) nach Name auflösen → Telegram-ID */
   nutzerAufloesen?: (name: string) => Promise<{ userId: string; name: string; konten: Record<string, string> } | { unbekannt: string[] } | undefined>;
@@ -233,6 +235,18 @@ export class InfrastrukturSkill extends Skill {
   constructor(private readonly deps: InfrastrukturDeps) { super(); }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const r = await this.executeIntern(input, context);
+    // Spec Stufe ultra U2.3 — objektive Auslöser der Eskalation je Faden: Planentwurf abgelehnt/gespeichert, Owner-Einwand
+    const e = this.deps.ultraEskalation; const chat = context.chatId;
+    if (e && chat && context.unteragent !== true && this.deps.istOwner(context)) {
+      const a = String(input.action ?? '');
+      if (a === 'changes_planen' || a === 'change_aendern' || a === 'architektur_vorschlagen') { if (r.success) e.planGespeichert(chat); else e.planAbgelehnt(chat); }
+      else if (a === 'einwand' && r.success) e.einwand(chat);
+    }
+    return r;
+  }
+
+  private async executeIntern(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     if (!this.deps.istOwner(context)) return { success: false, error: 'Nur für den Owner.' };
     const action = String(input.action ?? '');
     if (action === 'bestand') return this.bestand(input);

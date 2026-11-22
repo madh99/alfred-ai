@@ -7,7 +7,9 @@ Stand 21.11.2026, **vom Owner freigegeben 21.11.2026** („ok wie vorgeschlagen�
 - U1: v1922/v1923 live, Beweise 1 und 2 erbracht (22.11.).
 - U3 (ohne Faden-Zeile, die kommt mit U2.3): v1924 live, Eintrag in `ultra_nutzung` mit Auslöser `ausdrücklich` belegt (22.11.).
 - U2.2: v1925/v1926 (Gegenprüfung in `freigabe_anfragen`, Befunde als Einwände mit Quelle `ultra`; Vermerk in `skill_state` gilt nur für den geprüften Plan, geänderter Plan wird neu geprüft, höchstens 3× je Change, danach in der Freigabe-Frage offen ausgewiesen).
-- Offen: U2.3, U4, Beweise 3–6.
+- Beweis 3 erbracht 22.11. (v1926): high sauber → „keine Befunde“ (0,025 $), low → keine Prüfung, high mit falscher VM → 1 Befund als Einwand, Change im Entwurf (0,039 $); Probe-Changes verworfen.
+- U2.3: v1927 (Register je Faden, Auslöser Planprüfung 2× in Folge, Owner-Einwand, Korrektur über die ID eines angehaltenen Changes; Zeile „↗ Auf ultra gewechselt, weil …“).
+- Offen: U4, Beweise 4–6.
 
 ## Ziel
 

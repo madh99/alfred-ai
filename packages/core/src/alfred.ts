@@ -8010,8 +8010,24 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { ok: true, zaehler: { hosts: hosts.length, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
           },
         });
+        // Spec Stufe ultra U2.3 — Eskalations-Register je Faden: Skill meldet Auslöser, die Pipeline wechselt die nächste Antwort auf ultra
+        const { UltraEskalation } = await import('./ultra-eskalation.js');
+        const ultraEsk = new UltraEskalation();
+        this.pipeline.setUltraEskalation({
+          register: ultraEsk,
+          gilt: (m) => m.chatId.startsWith('owner:') || [this.config.security?.ownerUserId, this.ownerMasterUserId, this.tryOwner()].some(x => !!x && x === m.userId),
+          angehalten: async () => {
+            const o = ownerFz(); if (!o) return [];
+            return (await itsmI3.listChangeRequests(o, { limit: 500 })).filter(c => c.status === 'in_progress' && ['angehalten', 'wartet_owner'].includes(String((c.lauf as { phase?: string } | undefined)?.phase))).map(c => c.id);
+          },
+        });
         skillRegistry.register(new InfrastrukturSkill({
           istOwner: istOwnerFz,
+          ultraEskalation: {
+            einwand: (chat) => { ultraEsk.setze(chat, 'einwand'); this.logger.info({ chatId: chat }, 'Spec ultra U2.3: Auslöser Owner-Einwand'); },
+            planAbgelehnt: (chat) => { if (ultraEsk.planAbgelehnt(chat)) this.logger.info({ chatId: chat }, 'Spec ultra U2.3: Auslöser Planprüfung zweimal abgelehnt'); },
+            planGespeichert: (chat) => ultraEsk.planGespeichert(chat),
+          },
           entdecke: async (quellen) => {
             const cmdb = skillRegistry.get('cmdb');
             if (!cmdb) return ['CMDB nicht verfügbar'];

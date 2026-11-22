@@ -35,6 +35,7 @@ import { istProtokollAnfrage, werkzeugeAus } from './lernen/anfrage-protokoll.js
 import { absichtenAus } from './skill-filter.js'; // v1374
 import { dossierThemaFuer, dossierAuszug } from './interessen/dossier-auszug.js'; // v1377
 import { mitKostenZweckWennLeer } from './kosten-zweck.js'; // v1506 D5
+import { korrekturZiel, eskalationsZeile, type UltraEskalation } from './ultra-eskalation.js'; // Spec Stufe ultra U2.3
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -581,15 +582,40 @@ export class MessagePipeline {
     return r;
   }
 
-  async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
-    // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
-    // Spec Stufe ultra U3 — Auslöser der Stufe ultra: ausdrücklich gewählt (App, CLI, HTTP-tier) oder vom Einstiegspunkt gesetzt (metadata.ultraGrund)
-    const intern = message.metadata?.tier === 'ultra'
-      ? () => mitUltraAusloeser({ grund: typeof message.metadata?.ultraGrund === 'string' && message.metadata.ultraGrund ? message.metadata.ultraGrund : 'ausdrücklich', ort: message.chatId }, () => this.processIntern(message, onProgress))
-      : () => this.processIntern(message, onProgress);
-    const lauf = () => mitKostenZweckWennLeer('chat', intern);
-    if (!fadenSperrePflicht(message.chatId)) return lauf();
-    return this.nacheinander(message.chatId, lauf);
+  /** Spec Stufe ultra U2.3 — Eskalation nach objektivem Fehlschlag (Register und angehaltene Changes kommen aus alfred.ts) */
+  private ultraEskalation?: { register: UltraEskalation; gilt: (m: NormalizedMessage) => boolean; angehalten: () => Promise<string[]> };
+  setUltraEskalation(e: { register: UltraEskalation; gilt: (m: NormalizedMessage) => boolean; angehalten: () => Promise<string[]> }): void { this.ultraEskalation = e; }
+
+  /** Spec Stufe ultra U2.3 — Stufe ultra setzen, wenn ein Auslöser für diesen Faden gilt; ausdrücklich gewählte Stufe beendet ihn. */
+  private async mitEskalation(message: NormalizedMessage): Promise<NormalizedMessage> {
+    const e = this.ultraEskalation;
+    if (!e || message.metadata?.scheduled || !e.gilt(message)) return message;
+    const tier = message.metadata?.tier;
+    if (tier) { if (tier !== 'ultra') e.register.beende(message.chatId); return message; }
+    let grund = e.register.aktiv(message.chatId);
+    // angehaltene Changes nur nachschlagen, wenn die Nachricht überhaupt eine Change-ID (8 Hex-Zeichen) enthält
+    if (!grund && /\b[0-9a-f]{8}\b/i.test(message.text ?? '')) {
+      const ziel = korrekturZiel(message.text ?? '', await e.angehalten().catch(() => [] as string[]));
+      if (ziel) { grund = `korrektur:${ziel}`; e.register.setze(message.chatId, grund); }
+    }
+    if (!grund) return message;
+    this.logger.info({ chatId: message.chatId, grund }, 'Spec ultra U2.3: Eskalation auf ultra');
+    return { ...message, metadata: { ...message.metadata, tier: 'ultra', ultraGrund: `eskalation:${grund}`, ultraEskalationZeile: eskalationsZeile(grund) } };
+  }
+
+  async process(message0: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
+    const lauf = async () => {
+      // Spec Stufe ultra U2.3 — erst innerhalb der Faden-Sperre: Auslöser aus dem vorherigen Durchgang desselben Fadens sind gesetzt
+      const message = await this.mitEskalation(message0);
+      // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
+      // Spec Stufe ultra U3 — Auslöser der Stufe ultra: ausdrücklich gewählt (App, CLI, HTTP-tier) oder vom Einstiegspunkt gesetzt (metadata.ultraGrund)
+      const intern = message.metadata?.tier === 'ultra'
+        ? () => mitUltraAusloeser({ grund: typeof message.metadata?.ultraGrund === 'string' && message.metadata.ultraGrund ? message.metadata.ultraGrund : 'ausdrücklich', ort: message.chatId }, () => this.processIntern(message, onProgress))
+        : () => this.processIntern(message, onProgress);
+      return mitKostenZweckWennLeer('chat', intern);
+    };
+    if (!fadenSperrePflicht(message0.chatId)) return lauf();
+    return this.nacheinander(message0.chatId, lauf);
   }
 
   /**
@@ -2029,6 +2055,8 @@ export class MessagePipeline {
           if (v.length > 0) anhangVerweise = JSON.stringify(v);
         } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1347 Anhänge nicht abgelegt'); }
       }
+      // Spec Stufe ultra U2.3 — Zeile „auf ultra gewechselt, weil …“ vor der Antwort (Faden und Rückgabe)
+      if (message.metadata?.ultraEskalationZeile && responseText) responseText = `${message.metadata.ultraEskalationZeile}\n\n${responseText}`;
       await this.conversationManager.addMessage(
         conversation.id,
         'assistant',

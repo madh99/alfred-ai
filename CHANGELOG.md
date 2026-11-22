@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Eskalation auf die Stufe ultra nach objektivem Fehlschlag (v1927, Spec Stufe ultra U2.3)
+
+- Die nächste Antwort im selben Faden läuft auf ultra, wenn einer von drei Fällen eintritt:
+  - Die Planprüfung hat einen Planentwurf (`changes_planen`, `change_aendern`, `architektur_vorschlagen`) zweimal in Folge abgelehnt.
+  - Der Owner hat einen Einwand erhoben. Befunde der Gegenprüfung durch ultra lösen das nicht aus.
+  - Die Nachricht spricht einen angehaltenen oder auf den Owner wartenden Change über seine ID an (Korrektur ab dem Haltepunkt). Ausgenommen sind die festen Steuerbefehle (wiederholen, abbrechen, überspringen, Rückweg, verwerfen).
+- Die Stufe gilt, bis ein Entwurf gespeichert ist, der Owner selbst eine Stufe wählt oder sechs Stunden vergangen sind. Geplante Aufgaben und Hintergrundläufe eskalieren nie.
+- Vor der Antwort steht im Faden die Zeile „↗ Auf ultra gewechselt, weil …“. Der Aufruf wird in `ultra_nutzung` mit dem Auslöser `eskalation:<grund>` erfasst.
+- Die Prüfung läuft innerhalb der Faden-Sperre. So sieht sie auch einen Auslöser, den der vorherige Durchgang desselben Fadens gerade erst gesetzt hat. Angehaltene Changes werden nur nachgeschlagen, wenn die Nachricht eine Change-ID enthält.
+
 ### Fixed — Gegenprüfung gilt nur für den geprüften Plan, Windows-Lizenz lesend (v1926)
 
 - Der Vermerk der Gegenprüfung durch ultra galt bisher für den ganzen Change. Wurde der Plan nach der Prüfung umgebaut, kam die neue Fassung ungeprüft zur Freigabe. Jetzt gilt der Vermerk nur für genau den geprüften Plan, gebunden an dessen Fingerabdruck. Ein geänderter Plan wird neu geprüft, höchstens dreimal je Change. Danach sagt die Freigabe-Frage ausdrücklich, dass die letzte Fassung nicht gegengeprüft ist. Werden Befunde nur begründet abgelehnt und der Plan bleibt gleich, gibt es keine neue Prüfung.

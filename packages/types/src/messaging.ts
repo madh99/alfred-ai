@@ -30,6 +30,8 @@ export interface NormalizedMessage {
     tier?: import('./llm.js').ModelTier;
     /** Spec Stufe ultra U3 — Auslöser, wenn tier „ultra“ nicht ausdrücklich gewählt wurde (`gegenpruefung:<change>`, `eskalation:<grund>`) */
     ultraGrund?: string;
+    /** Spec Stufe ultra U2.3 — Zeile „auf ultra gewechselt, weil …“, steht vor der Antwort (auch im gespeicherten Verlauf) */
+    ultraEskalationZeile?: string;
     callbackQuery?: boolean;
     /** Real user chatId for scheduled tasks (which use isolated chatIds for conversation). */
     originalChatId?: string;
