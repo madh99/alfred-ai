@@ -1187,8 +1187,14 @@ export function eingabeWerte(eingabe: string | undefined): string[] {
     if (!t) continue;
     let j: unknown; let istJson = false;
     try { j = JSON.parse(t); istJson = true; } catch { /* keine JSON-Zeile */ }
-    if (istJson && ((j !== null && typeof j === 'object') || typeof j === 'string')) sammle(j);
+    if (istJson && j !== null && typeof j === 'object' && !Array.isArray(j)) {
+      // I8e Folge-Etappe (Realfall N1 22.11.): das oberste Feld `login` mit einem der festen SQL-Login-Namen ist kein Geheimnis — sonst
+      // schwärzt der Transport den Namen in jeder Ausgabe (Status „Alfred-Logins [geschwärzt], …“). Jeder andere Wert bleibt geschwärzt.
+      for (const [k, v] of Object.entries(j)) { if (!(k === 'login' && typeof v === 'string' && OEFFENTLICHE_LOGINS.has(v))) sammle(v); }
+    } else if (istJson && ((j !== null && typeof j === 'object') || typeof j === 'string')) sammle(j);
     else if (t.length >= 6) out.add(t);
   }
   return [...out].sort((a, b) => b.length - a.length);
 }
+/** feste SQL-Login-Namen der Linux-SQL-Bausteine (Feld `login` der Eingabe) — öffentlich, nie geschwärzt */
+const OEFFENTLICHE_LOGINS = new Set(['sa', 'alfred_admin', 'alfred_status']);

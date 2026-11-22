@@ -117,6 +117,22 @@ describe('linuxSkript', () => {
     expect(eingabeWerte(undefined)).toEqual([]);
   });
 
+  it('Realfall N1 über den Transport: Login-Name bleibt in der Ausgabe lesbar, das Kennwort wird geschwärzt', async () => {
+    const w = welt({ lauf: () => ({ code: 0, stdout: `ALFRED-SQL {"alfredLogins":[{"name":"alfred_admin"},{"name":"alfred_status"}],"echo":"${GEHEIM}"}`, stderr: '', hostSchluesselGeaendert: false }) });
+    const r = await w.skill.linuxSkript('sql-lx01', 'test.sql-setup', { instanz: 'a' }, JSON.stringify({ sa: GEHEIM, login: 'alfred_status' }), 60_000, 'Status');
+    expect(r.stdout).toContain('{"name":"alfred_status"}');
+    expect(r.stdout).not.toContain(GEHEIM);
+  });
+
+  it('I8e Folge-Etappe (Realfall N1 22.11.): das Feld login mit einem festen SQL-Login-Namen ist kein Geheimnis — alles andere bleibt geschwärzt', () => {
+    expect(eingabeWerte(JSON.stringify({ sa: 'Geheim-Kennwort-1', login: 'alfred_status' }))).toEqual(['Geheim-Kennwort-1']);
+    expect(eingabeWerte(JSON.stringify({ sa: 'Geheim-Kennwort-1', login: 'alfred_admin' }))).toEqual(['Geheim-Kennwort-1']);
+    // fremder Wert im Feld login, fester Name in einem anderen Feld, verschachteltes login → weiter geschwärzt (fail-closed)
+    expect(eingabeWerte(JSON.stringify({ login: 'irgendwas-geheim' }))).toEqual(['irgendwas-geheim']);
+    expect(eingabeWerte(JSON.stringify({ kennwort: 'alfred_status' }))).toEqual(['alfred_status']);
+    expect(eingabeWerte(JSON.stringify({ x: { login: 'alfred_status' } }))).toEqual(['alfred_status']);
+  });
+
   it('jeder Aufruf bekommt einen neuen zufälligen Dateinamen; ohne Eingabe leere Standardeingabe', async () => {
     const w = welt();
     await w.skill.linuxSkript('sql-lx01', 'test.sql-setup', { instanz: 'a' }, undefined, 60_000, 'a');
