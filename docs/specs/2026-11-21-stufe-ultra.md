@@ -2,6 +2,13 @@
 
 Stand 21.11.2026, **vom Owner freigegeben 21.11.2026** („ok wie vorgeschlagen“): O1 Gegenprüfung ab Risiko high, O2 Gründlichkeit high (max nur ausdrücklich). Owner-Vorgaben: Variante „Eskalation + Gegenprüfung“, auch in den Apps verfügbar. Umsetzung in Releases U1 → U3/U2.1 → U2.2 → U2.3 → U4, je mit Live-Beweis.
 
+## Umsetzungsstand
+
+- U1: v1922/v1923 live, Beweise 1 und 2 erbracht (22.11.).
+- U3 (ohne Faden-Zeile, die kommt mit U2.3): v1924 live, Eintrag in `ultra_nutzung` mit Auslöser `ausdrücklich` belegt (22.11.).
+- U2.2: v1925 (Gegenprüfung in `freigabe_anfragen`, Befunde als Einwände mit Quelle `ultra`, Vermerk je Change in `skill_state`).
+- Offen: U2.3, U4, Beweise 3–6.
+
 ## Ziel
 
 Eine Stufe oberhalb von `strong` für wenige Aufgaben mit hohem Gewicht. Der doppelte Preis (Fable 5.2 $8/$40 gegenüber Opus 5.5 $4/$20) fällt nur an, wo ein objektiver Auslöser vorliegt oder der Owner es ausdrücklich will. Die Auswahl ist deterministisch und modellunabhängig, kein Modell schätzt die „Schwierigkeit“ selbst ein (Architektur-Grundsatz).

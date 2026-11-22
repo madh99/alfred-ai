@@ -63,7 +63,13 @@ export class EinwandDienst {
   async antwortText(o: string, art: EinwandZiel, id: string): Promise<string> {
     const b = await this.beantwortet(o, art, id);
     if (!b.length) return '';
-    return `Deine Einwände:\n${b.map(e => `  • ${e.bezug}: „${e.text.slice(0, 100)}“ → ${e.antwortArt === 'umgesetzt' ? 'umgesetzt' : 'nicht umgesetzt'}: ${e.antwort?.slice(0, 200)}`).join('\n')}`;
+    const zeile = (e: Einwand) => `  • ${e.bezug}: „${e.text.slice(0, 100)}“ → ${e.antwortArt === 'umgesetzt' ? 'umgesetzt' : 'nicht umgesetzt'}: ${e.antwort?.slice(0, 200)}`;
+    // Spec Stufe ultra U2.2 — Befunde der Gegenprüfung (Quelle ultra) getrennt von den Einwänden des Owners
+    const ultra = b.filter(e => e.quelle === 'ultra'); const owner = b.filter(e => e.quelle !== 'ultra');
+    return [
+      ...(owner.length ? [`Deine Einwände:\n${owner.map(zeile).join('\n')}`] : []),
+      ...(ultra.length ? [`Befunde der Gegenprüfung (ultra):\n${ultra.map(zeile).join('\n')}`] : []),
+    ].join('\n\n');
   }
 
   async erledigeBeantwortete(o: string, art: EinwandZiel, id: string): Promise<void> {

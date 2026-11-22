@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Gegenprüfung riskanter Changes durch die Stufe ultra (v1925, Spec Stufe ultra U2.2)
+
+- Ein Change mit Risiko `high` oder `critical` wird vor der ersten Freigabe-Frage einmal von der Stufe ultra gegengelesen. Dafür gibt es einen eigenen, schlanken Prompt: Plan, Prüfliste und bekannte Fehlerbilder, nicht der volle Chat-Prompt. ultra ändert nichts am Plan, es liefert nur Befunde, etwa zu fehlendem Rückweg, falscher Reihenfolge, einer Prüfung, die nicht zur Aktion passt, oder zu unterschätztem Risiko. Changes mit Risiko `low` oder `medium` werden nicht gegengeprüft.
+- Befunde werden zu Einwänden mit der Quelle `ultra`. Der Change geht zurück in den Entwurf, und das planende Modell muss jeden Befund über `change_aendern` mit `antworten` beantworten (umgesetzt oder abgelehnt mit Begründung), genau wie bei Einwänden des Owners. Die Befunde stehen im Faden.
+- Die Freigabe-Frage nennt „Von ultra gegengeprüft: N Befunde“ und führt die Antworten getrennt von den Einwänden des Owners auf.
+- Die Gegenprüfung läuft einmal je Change; ein Vermerk verhindert eine Wiederholung nach der Überarbeitung. Ist die Antwort nicht lesbar oder fällt die Prüfung aus, wird keine Freigabe-Frage gestellt und beim nächsten `freigabe_anfragen` neu geprüft.
+- Jeder Aufruf erscheint in `ultra_nutzung` mit dem Auslöser `gegenpruefung:<change>`.
+
 ### Added — Stufe ultra: Auslöser und Kosten je Aufruf, Tagesbericht (v1924, Spec Stufe ultra U3)
 
 - Jeder Modellaufruf, der die Stufe ultra angefordert hat, wird mit Auslöser, Faden, tatsächlich gelaufener Stufe, Modell, Tokens und Kosten in der neuen Tabelle `ultra_nutzung` erfasst (PG-Migration 164, SQLite 160). Die Logzeile „LLM call completed“ trägt den Auslöser im Feld `ultra`.

@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
 import { changeFingerabdruck, freigabeText, plaeneAusSchritten, pruefeChangePlan, schrittText, pruefText, zyklus, type Auswirkung, type ChangePlan, type ChangeSchritt, type PruefKontext } from './change-schritte.js';
+import { gegenpruefungNoetig, vermerkText, ULTRA_QUELLE, type UltraBefund, type GegenpruefungVermerk } from './ultra-gegenpruefung.js'; // Spec Stufe ultra U2.2
 
 export interface ChangeSpeicher {
   liste(owner: string): Promise<CmdbChangeRequest[]>;
@@ -44,6 +45,12 @@ export interface ChangeDeps {
   zugaenge?: (owner: string) => Promise<Array<{ name: string; system: 'linux' | 'windows' }>>;
   /** Einwand — offene Einwände blockieren, Antworten sind Pflicht, Freigabe-Frage nennt sie */
   einwand?: import('./einwand.js').EinwandDienst;
+  /** Spec Stufe ultra U2.2 — Gegenprüfung durch ultra vor der ersten Freigabe-Frage (Risiko high/critical) und Vermerk je Change */
+  gegenpruefung?: {
+    pruefe(owner: string, c: CmdbChangeRequest, plan: Record<string, unknown>): Promise<{ befunde: UltraBefund[]; modell?: string } | { fehler: string }>;
+    vermerk(owner: string, id: string): Promise<GegenpruefungVermerk | undefined>;
+    setzeVermerk(owner: string, id: string, v: GegenpruefungVermerk): Promise<void>;
+  };
 }
 
 const RISIKO_TEXT: Record<string, string> = { low: 'niedrig', medium: 'mittel', high: 'hoch', critical: 'kritisch' };
@@ -346,7 +353,7 @@ export class ChangePlanung {
     const korrigiert = c.status === 'in_progress' && !!(c.lauf as { korrektur?: unknown } | undefined)?.korrektur && (c.lauf as { phase?: string }).phase === 'angehalten' && c.freigabeFingerabdruck !== c.fingerabdruck;
     if (c.status !== 'submitted' && !korrigiert) return { ok: false, grund: `Status ${c.status} — freigeben geht nur bei submitted${c.status === 'draft' ? ' (offener Einwand oder Prüffehler — erst den Plan überarbeiten)' : ''}` };
     const offen = this.d.einwand ? await this.d.einwand.offen(owner, 'change', c.id) : [];
-    if (offen.length) return { ok: false, grund: `${offen.length} offene Einwände des Owners — erst beantworten (change_aendern mit antworten)` };
+    if (offen.length) return { ok: false, grund: `${offen.length} offene Einwände (des Owners oder Befunde der Gegenprüfung durch ultra) — erst beantworten (change_aendern mit antworten)` };
     const ctx = await this.kontext(owner);
     ctx.changes = ctx.changes.filter(x => x.id !== c.id);
     const e = pruefeChangePlan(planAusChange(c), ctx, [], undefined, vorgaengerAbdruckVon(c));
@@ -369,8 +376,12 @@ export class ChangePlanung {
       if (!c) { fehler.push(`${k}: nicht gefunden`); continue; }
       const b = await this.freigabeBereit(owner, c);
       if (!b.ok) { fehler.push(`${c.title} (${c.id.slice(0, 8)}): ${b.grund}`); continue; }
+      // Spec Stufe ultra U2.2 — einmal je Change gegenprüfen; Befunde werden Einwände (Quelle ultra) mit Antwortpflicht
+      const gp = await this.gegenpruefen(owner, c);
+      if (gp.fehler) { fehler.push(gp.fehler); continue; }
       changes.push({ id: c.id, fingerabdruck: c.fingerabdruck! });
       titel.push(`${c.title} (${c.id.slice(0, 8)})`);
+      if (gp.vermerk) teile.push(gp.vermerk);
       const einwaende = this.d.einwand ? await this.d.einwand.antwortText(owner, 'change', c.id) : '';
       if (einwaende) teile.push(einwaende);
       teile.push(freigabeText({ id: c.id, titel: c.title, risiko: RISIKO_TEXT[c.riskLevel] ?? c.riskLevel, typ: c.type === 'emergency' ? 'Notfall-Change' : 'Normal-Change', ...(c.ausfallMinuten !== undefined ? { ausfallMinuten: c.ausfallMinuten } : {}), ...(c.scheduledAt ? { geplantAb: c.scheduledAt } : {}), schritte: c.schritte as ChangeSchritt[], auswirkung: b.auswirkung, hinweise: b.hinweise, fingerabdruck: c.fingerabdruck! }));
@@ -387,6 +398,34 @@ export class ChangePlanung {
     if (!ok) return { ok: false, fehler: ['Freigabe-Frage konnte nicht gestellt werden'] };
     this.d.protokoll?.('I3 Freigabe angefragt', { changes: changes.map(c => c.id) });
     return { ok: true, text: `Freigabe-Frage gestellt (${changes.length} Change${changes.length > 1 ? 's' : ''}) — der Owner bestätigt in der App oder in Telegram.` };
+  }
+
+  /**
+   * Spec Stufe ultra U2.2 — Gegenprüfung eines Changes mit Risiko high/critical, einmal je Change (Vermerk). Unlesbare
+   * Antwort oder Ausfall → keine Freigabe-Frage (fail-closed), kein Vermerk, ein erneutes freigabe_anfragen prüft neu.
+   * Befunde → Einwände mit Quelle „ultra“; der Change geht in den Entwurf, Antworten über change_aendern sind Pflicht.
+   */
+  private async gegenpruefen(owner: string, c: CmdbChangeRequest): Promise<{ fehler?: string; vermerk?: string }> {
+    const g = this.d.gegenpruefung;
+    if (!g || !this.d.einwand || !gegenpruefungNoetig(c.riskLevel)) return {};
+    const kurz = `${c.title} (${c.id.slice(0, 8)})`;
+    const alt = await g.vermerk(owner, c.id);
+    if (alt) return { vermerk: vermerkText(alt) };
+    const r = await g.pruefe(owner, c, planAusChange(c));
+    if ('fehler' in r) {
+      this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung nicht lesbar', { id: c.id, fehler: r.fehler });
+      return { fehler: `${kurz}: Gegenprüfung durch ultra nicht lesbar (${r.fehler}) — keine Freigabe-Frage gestellt; freigabe_anfragen erneut aufrufen` };
+    }
+    const v: GegenpruefungVermerk = { fingerabdruck: c.fingerabdruck!, befunde: r.befunde.length, ...(r.modell ? { modell: r.modell } : {}), zeit: new Date(this.d.jetzt?.() ?? Date.now()).toISOString() };
+    await g.setzeVermerk(owner, c.id, v);
+    this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung', { id: c.id, risiko: c.riskLevel, befunde: r.befunde.length, modell: r.modell });
+    if (!r.befunde.length) return { vermerk: vermerkText(v) };
+    const zeilen: string[] = [];
+    for (const b of r.befunde) {
+      const e = await this.d.einwand.erfasse(owner, { zielArt: 'change', zielId: c.id, bezug: b.bezug, text: b.text, quelle: ULTRA_QUELLE });
+      zeilen.push(`  • ${e.einwand.id.slice(0, 8)} (${b.bezug}): ${b.text}`);
+    }
+    return { fehler: `${kurz}: von ultra gegengeprüft — ${r.befunde.length} ${r.befunde.length === 1 ? 'Befund' : 'Befunde'}, der Change ist zurück im Entwurf. Jeden Befund beantworten: change_aendern mit antworten [{einwand, art umgesetzt|abgelehnt, text}] (Plan bei „umgesetzt“ entsprechend ändern), danach erneut freigabe_anfragen. Die Antworten stehen in der Freigabe-Frage.\n${zeilen.join('\n')}` };
   }
 
   /** Nach dem Owner-Ja: Einmal-Freigabe verbrauchen und jeden Change mit seinem Fingerabdruck freigeben. */

@@ -7653,6 +7653,29 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1688 — nach einer Korrektur ab dem Haltepunkt gelten offene „Schritt N erledigt?“-Fragen nicht mehr
           nachAenderung: () => { void ownerFragenAufraeumen().catch(err => this.logger.warn({ err }, 'v1688 Aufräumen der Owner-Fragen fehlgeschlagen')); },
           einwand: this.einwandDienst,
+          // Spec Stufe ultra U2.2 — Gegenprüfung (Risiko high/critical) mit schlankem eigenem Prompt; Vermerk je Change in skill_state
+          gegenpruefung: await (async () => {
+            const { SkillStateRepository: SkillStateGp } = await import('@alfred/storage');
+            const { GEGENPRUEFUNG_SYSTEM, gegenpruefungFrage, leseBefunde } = await import('./infrastruktur/ultra-gegenpruefung.js');
+            const { mitUltraAusloeser } = await import('@alfred/llm');
+            const st = new SkillStateGp(adapter);
+            return {
+              pruefe: async (_o: string, c: import('@alfred/types').CmdbChangeRequest, plan: Record<string, unknown>) => {
+                const llm = this.llmProvider;
+                if (!llm) return { fehler: 'kein Sprachmodell' };
+                try {
+                  const r = await mitUltraAusloeser({ grund: `gegenpruefung:${c.id}`, ort: `change:${c.id.slice(0, 8)}` }, () => llm.complete({
+                    tier: 'ultra', system: GEGENPRUEFUNG_SYSTEM, messages: [{ role: 'user', content: gegenpruefungFrage(c, plan) }], maxTokens: 16_000,
+                  }));
+                  const befunde = leseBefunde(r.content ?? '');
+                  if (!befunde) { this.logger.warn({ change: c.id, antwort: (r.content ?? '').slice(0, 300) }, 'Spec ultra U2.2: Antwort der Gegenprüfung nicht lesbar'); return { fehler: 'Antwort nicht lesbar' }; }
+                  return { befunde, ...(r.model ? { modell: r.model } : {}) };
+                } catch (err) { return { fehler: (err as Error).message.slice(0, 200) }; }
+              },
+              vermerk: async (o: string, id: string) => { const roh = await st.get(o, 'ultra-gegenpruefung', id); if (!roh) return undefined; try { return JSON.parse(roh) as import('./infrastruktur/ultra-gegenpruefung.js').GegenpruefungVermerk; } catch { return undefined; } },
+              setzeVermerk: (o: string, id: string, v: import('./infrastruktur/ultra-gegenpruefung.js').GegenpruefungVermerk) => st.set(o, 'ultra-gegenpruefung', id, JSON.stringify(v)),
+            };
+          })(),
           tresorNamen: (o) => this.tresor!.namen(o),
           // v1684 — Fernzugänge für die Plan-Prüfung (Realfall 26.10.: Prüfung auf nicht vorhandenen Zugang „udm“)
           zugaenge: async (o) => { const { FernzugaengeRepository: FzR } = await import('@alfred/storage'); return (await new FzR(adapter).liste(o)).map(z => ({ name: z.name, system: z.system === 'windows' ? 'windows' as const : 'linux' as const })); },
