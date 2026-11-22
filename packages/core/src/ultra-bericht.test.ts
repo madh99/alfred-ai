@@ -21,7 +21,9 @@ describe('Spec Stufe ultra U3 — Tagesbericht', () => {
   });
 
   it('Auslösertexte', () => {
-    expect(ausloeserText('eskalation:planpruefung')).toBe('Eskalation (planpruefung)');
+    expect(ausloeserText('eskalation:planpruefung')).toBe('Eskalation (Planprüfung 2× abgelehnt)');
+    expect(ausloeserText('eskalation:einwand')).toBe('Eskalation (Einwand)');
+    expect(ausloeserText('eskalation:korrektur:ab12cd34')).toBe('Eskalation (Korrektur ab12cd34)');
     expect(ausloeserText('ohne-ausloeser')).toContain('Fehler');
   });
 });

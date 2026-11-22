@@ -10,7 +10,12 @@ const usd = (n: number) => `${n.toFixed(2).replace('.', ',')} $`;
 export function ausloeserText(grund: string): string {
   if (grund === 'ausdrücklich') return 'ausdrücklich gewählt';
   if (grund.startsWith('gegenpruefung:')) return `Gegenprüfung ${grund.slice('gegenpruefung:'.length).slice(0, 8)}`;
-  if (grund.startsWith('eskalation:')) return `Eskalation (${grund.slice('eskalation:'.length)})`;
+  if (grund.startsWith('eskalation:')) {
+    const g = grund.slice('eskalation:'.length);
+    // Spec ultra U4 — lesbar auch in der App-Anzeige „Modell · Gründlichkeit · Auslöser“
+    const text = g === 'einwand' ? 'Einwand' : g === 'planpruefung' ? 'Planprüfung 2× abgelehnt' : g.startsWith('korrektur:') ? `Korrektur ${g.slice('korrektur:'.length)}` : g;
+    return `Eskalation (${text})`;
+  }
   if (grund === 'ohne-ausloeser') return 'ohne Auslöser (Fehler im Einstiegspunkt)';
   return grund;
 }

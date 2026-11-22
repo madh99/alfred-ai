@@ -350,10 +350,13 @@ extension _Senden on _SitzungState {
       ? Vorleser(s.sprich, audio, beiErstemTon: () { final sek = DateTime.now().difference(start).inMilliseconds / 1000; _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${sek.toStringAsFixed(1)} s')); })
       : null;
     vorleserLaufend = vorleser; abbruch = false; // 1.7.0 Stopp-Knopf
+    String? gewaehlt;
     try {
       final bezugText = bezug?.text; // 1.2.2 — Antwort-Bezug geht mit, dann ist er erledigt
       if (bezug != null) _neu(() => bezug = null);
-      final ende = await s.sende(t, tier: tier ?? tierWahl, bezug: bezugText, // 1.58.0 G1 Unterhaltung: schnelle Stufe
+      gewaehlt = tier ?? tierWahl;
+      if (tierWahl == 'ultra') _neu(() => tierWahl = null); // Spec ultra U4 — gilt nur für diese Nachricht, dann wieder „Automatisch“
+      final ende = await s.sende(t, tier: gewaehlt, bezug: bezugText, // 1.58.0 G1 Unterhaltung: schnelle Stufe
         // 1.1.0 — Stufenwahl aus der Eingabekarte
         aufDelta: (d) {
           if (laufend == null) { laufend = e; _neu(() { verlauf.add(e); fluechtig = ''; }); }
@@ -382,7 +385,7 @@ extension _Senden on _SitzungState {
         else _zeile(Eintrag(Art.hinweis, '⏹ Abgebrochen.'));
       } else if (laufend == null && istVerbindungsfehler(err) && t.trim().isNotEmpty) { // 1.8.0 — Punkt 9: nicht verlieren, nachsenden
         if (nachsenden == null) {
-          warteschlange.hinzu(Wartend(text: t, faden: s.faden, tier: tierWahl));
+          warteschlange.hinzu(Wartend(text: t, faden: s.faden, tier: gewaehlt ?? tierWahl));
           _zeile(Eintrag(Art.hinweis, '⏳ Keine Verbindung zum Server — die Nachricht wird automatisch nachgesendet, sobald er wieder antwortet.'));
         }
         _wartenStarten();

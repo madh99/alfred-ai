@@ -358,13 +358,14 @@ extension _Oberflaeche on _SitzungState {
   /// 1.50.0 D6b/1.69.0 — Stufenwahl (am Handy nur im aufgeklappten Zustand).
   Widget _stufenWahl(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
-    const stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'};
+    // Spec ultra U4 — „Ultra“ nur, wenn der Server die Stufe hat; gilt nur für die nächste Nachricht (sitzung_senden.dart)
+    final stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark', if (stufenStand.stufen.containsKey('ultra') || tierWahl == 'ultra') 'ultra': 'Ultra (nur nächste Nachricht)'};
     return PopupMenuButton<String?>(
             // 1.50.0 D6b — hinter jeder Stufe Modell und Gründlichkeit; „Automatisch“ zeigt, was gerade dahinter steht
             tooltip: [
               'Stufe: wie gründlich Alfred denkt (Kosten, Tempo)',
               if (stufenStand.fuer(tierWahl) != null) '${stufen[tierWahl] ?? 'Automatisch'}: ${stufeZeile(stufenStand.fuer(tierWahl))}',
-              if (stufenStand.zuletztModell != null) 'Letzte Antwort: ${stufenStand.zuletztModell}',
+              if (stufenStand.zuletztModell != null) 'Letzte Antwort: ${stufenStand.zuletztZeile()}',
             ].join('\n'),
             initialValue: tierWahl,
             onOpened: _stufenLaden,
@@ -374,10 +375,10 @@ extension _Oberflaeche on _SitzungState {
                 Text(s.key == null && stufenStand.fuer(null) != null ? 'Automatisch (${stufen[stufenStand.automatisch] ?? stufenStand.automatisch})' : s.value),
                 if (stufenStand.fuer(s.key) != null) Text(stufeZeile(stufenStand.fuer(s.key)), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
               ])),
-              if (stufenStand.zuletztModell != null) PopupMenuItem<String?>(enabled: false, child: Text('Letzte Antwort: ${stufenStand.zuletztModell}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+              if (stufenStand.zuletztModell != null) PopupMenuItem<String?>(enabled: false, child: Text('Letzte Antwort: ${stufenStand.zuletztZeile()}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
             ],
             child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text('${stufen[tierWahl] ?? 'Automatisch'}${stufenStand.fuer(tierWahl) == null || istHandy ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+              Text('${(stufen[tierWahl] ?? 'Automatisch').split(' (').first}${stufenStand.fuer(tierWahl) == null || istHandy ? '' : ' · ${stufenStand.fuer(tierWahl)!.modell}'}', key: const Key('stufe-knopf'), style: theme.textTheme.bodySmall?.copyWith(color: tierWahl == 'ultra' ? theme.colorScheme.tertiary : dim)), // U4 — ultra hervorgehoben
               Icon(Icons.expand_more, size: 16, color: dim),
             ])),
           );

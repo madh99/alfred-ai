@@ -9,7 +9,9 @@ Stand 21.11.2026, **vom Owner freigegeben 21.11.2026** („ok wie vorgeschlagen�
 - U2.2: v1925/v1926 (Gegenprüfung in `freigabe_anfragen`, Befunde als Einwände mit Quelle `ultra`; Vermerk in `skill_state` gilt nur für den geprüften Plan, geänderter Plan wird neu geprüft, höchstens 3× je Change, danach in der Freigabe-Frage offen ausgewiesen).
 - Beweis 3 erbracht 22.11. (v1926): high sauber → „keine Befunde“ (0,025 $), low → keine Prüfung, high mit falscher VM → 1 Befund als Einwand, Change im Entwurf (0,039 $); Probe-Changes verworfen.
 - U2.3: v1927 (Register je Faden, Auslöser Planprüfung 2× in Folge, Owner-Einwand, Korrektur über die ID eines angehaltenen Changes; Zeile „↗ Auf ultra gewechselt, weil …“).
-- Offen: U4, Beweise 4–6.
+- Beweis 4 (22.11.): Probe-Change b3e9d951 (low), Owner-Einwand → nächste Antwort begann mit „↗ Auf ultra gewechselt, weil du einen Einwand erhoben hast.“, Log `"ultra":"eskalation:einwand"`, 9 Fable-Aufrufe 3,35 $ (volle Werkzeugrunden mit Faden-Prompt); nach gespeichertem Entwurf lief die dritte Nachricht wieder auf default. Change verworfen.
+- U4: v1928 + App 1.85.0 (Auswahl „Ultra“ nur für die nächste Nachricht, Anzeige „Modell · Gründlichkeit · Auslöser“, `/api/geraete/stufen` mit `grund`/`grundText`, „max“ = maximal; Web ohne Chat-Stufenwahl → keine Änderung).
+- Offen: Beweise 5–6.
 
 ## Ziel
 

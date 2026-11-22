@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Stufe ultra in der App (v1928, App 1.85.0, Spec Stufe ultra U4)
+
+- Die Stufenwahl der App bietet „Ultra“ an, sobald der Server die Stufe hat. Die Wahl gilt nur für die nächste Nachricht und springt danach auf „Automatisch“ zurück. Eine Nachricht in der Warteschlange behält die gewählte Stufe.
+- Die Anzeige der letzten Antwort zeigt „Modell · Gründlichkeit · Auslöser“, z. B. „claude-fable-5-2 · Gründlichkeit hoch · Eskalation (Einwand)“. Antwortet nach einem Rückfall ein anderes Modell, entfällt die Gründlichkeit.
+- `/api/geraete/stufen` liefert zur letzten Antwort `grund` und `grundText`, wenn sie auf ultra lief.
+- Gründlichkeit „max“ hat einen Text („maximal“). Auslöser von Eskalationen sind im Tagesbericht lesbar (Einwand, Planprüfung 2× abgelehnt, Korrektur <ID>).
+- Die Web-Oberfläche hat keine Stufenwahl für den Chat. Dort ändert sich nichts.
+
 ### Added — Eskalation auf die Stufe ultra nach objektivem Fehlschlag (v1927, Spec Stufe ultra U2.3)
 
 - Die nächste Antwort im selben Faden läuft auf ultra, wenn einer von drei Fällen eintritt:

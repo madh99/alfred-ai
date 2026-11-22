@@ -36,6 +36,7 @@ import { absichtenAus } from './skill-filter.js'; // v1374
 import { dossierThemaFuer, dossierAuszug } from './interessen/dossier-auszug.js'; // v1377
 import { mitKostenZweckWennLeer } from './kosten-zweck.js'; // v1506 D5
 import { korrekturZiel, eskalationsZeile, type UltraEskalation } from './ultra-eskalation.js'; // Spec Stufe ultra U2.3
+import { ausloeserText } from './ultra-bericht.js'; // Spec Stufe ultra U4
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -270,7 +271,7 @@ export class MessagePipeline {
   private readonly users: UserRepository;
   private readonly logger: Logger;
   /** v1510 D6b — Modell und Stufe der letzten Antwort je Gespräch (Anzeige „zuletzt“ in der App; begrenzt auf 200). */
-  private readonly letzteModelle = new Map<string, { modell: string; stufe: string; zeit: number }>();
+  private readonly letzteModelle = new Map<string, { modell: string; stufe: string; zeit: number; grund?: string; grundText?: string }>();
   private readonly skillRegistry?: SkillRegistry;
   private readonly skillSandbox?: SkillSandbox;
   private readonly securityManager?: SecurityManager;
@@ -567,8 +568,8 @@ export class MessagePipeline {
   }
 
   /** v1510 D6b — jüngste Antwort unter den Gesprächen, deren chatId [teil] enthält oder gleich [genau] ist. */
-  letztesModell(teil: string, genau?: string): { modell: string; stufe: string; zeit: number } | undefined {
-    let best: { modell: string; stufe: string; zeit: number } | undefined;
+  letztesModell(teil: string, genau?: string): { modell: string; stufe: string; zeit: number; grund?: string; grundText?: string } | undefined {
+    let best: { modell: string; stufe: string; zeit: number; grund?: string; grundText?: string } | undefined;
     for (const [k, v] of this.letzteModelle) if ((k.includes(teil) || k === genau) && (!best || v.zeit > best.zeit)) best = v;
     return best;
   }
@@ -1760,7 +1761,7 @@ export class MessagePipeline {
             ? await this.llmGestreamt(anfrage, (t) => onProgress?.({ kind: 'delta', text: t }))
             : await this.llm.complete(anfrage);
           previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
-          if (response.model) { this.letzteModelle.delete(message.chatId); this.letzteModelle.set(message.chatId, { modell: response.model, stufe: String(message.metadata?.tier ?? 'automatisch'), zeit: Date.now() }); if (this.letzteModelle.size > 200) this.letzteModelle.delete(this.letzteModelle.keys().next().value!); } // v1510 D6b
+          if (response.model) { this.letzteModelle.delete(message.chatId); this.letzteModelle.set(message.chatId, { modell: response.model, stufe: String(message.metadata?.tier ?? 'automatisch'), zeit: Date.now(), ...ultraAnzeige(message.metadata) }); if (this.letzteModelle.size > 200) this.letzteModelle.delete(this.letzteModelle.keys().next().value!); } // v1510 D6b
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;
           verbuche(response);
@@ -3295,6 +3296,13 @@ export class MessagePipeline {
 export const FADEN_WARTE_MS = 15 * 60_000;
 export function fadenSperrePflicht(chatId: string | undefined): boolean {
   return typeof chatId === 'string' && chatId.startsWith('owner:faden:');
+}
+
+/** Spec Stufe ultra U4 — Auslöser der letzten Antwort für die App-Anzeige „Modell · Gründlichkeit · Auslöser“ (nur bei ultra). */
+export function ultraAnzeige(metadata: Record<string, unknown> | undefined): { grund?: string; grundText?: string } {
+  if (metadata?.tier !== 'ultra') return {};
+  const grund = typeof metadata.ultraGrund === 'string' && metadata.ultraGrund ? metadata.ultraGrund : 'ausdrücklich';
+  return { grund, grundText: ausloeserText(grund) };
 }
 
 /** v1724 K1b — Werkzeugreihe eines Gesprächs: bisherige (noch zulässige) in alter Reihenfolge, neue gewählte hinten angehängt */

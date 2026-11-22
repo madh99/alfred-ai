@@ -44,10 +44,12 @@ class StufeInfo {
 }
 
 class StufenStand {
-  const StufenStand({this.stufen = const {}, this.automatisch = 'default', this.zuletztModell, this.zuletztStufe, this.zuletztZeit});
+  const StufenStand({this.stufen = const {}, this.automatisch = 'default', this.zuletztModell, this.zuletztStufe, this.zuletztZeit, this.zuletztGrund});
   final Map<String, StufeInfo> stufen;
   final String automatisch;
   final String? zuletztModell, zuletztStufe;
+  /// Spec ultra U4 — lesbarer Auslöser, wenn die letzte Antwort auf ultra lief (z. B. „Eskalation (Einwand)“)
+  final String? zuletztGrund;
   final DateTime? zuletztZeit;
 
   /// Antwort von `/api/geraete/stufen`.
@@ -58,14 +60,24 @@ class StufenStand {
       automatisch: '${j['automatisch'] ?? 'default'}',
       zuletztModell: z?['modell'] as String?, zuletztStufe: z?['stufe'] as String?,
       zuletztZeit: z?['zeit'] is num ? DateTime.fromMillisecondsSinceEpoch((z!['zeit'] as num).toInt()) : null,
+      zuletztGrund: (z?['grundText'] ?? z?['grund']) as String?,
     );
   }
 
   /// Stufe, die hinter einer Wahl steht (null = Automatisch → [automatisch]).
   StufeInfo? fuer(String? wahl) => stufen[wahl ?? automatisch];
+
+  /// Spec ultra U4 — „Modell · Gründlichkeit · Auslöser“ der letzten Antwort; Gründlichkeit nur, wenn das Modell zur Stufe passt
+  /// (bei einem Rückfall antwortete ein anderes Modell, dessen Gründlichkeit die App nicht kennt).
+  String? zuletztZeile() {
+    if (zuletztModell == null) return null;
+    final st = stufen[zuletztStufe == null || zuletztStufe == 'automatisch' ? automatisch : zuletztStufe!];
+    final g = st != null && st.modell == zuletztModell && st.gruendlichkeit != null ? ' · Gründlichkeit ${gruendlichkeitText(st.gruendlichkeit)}' : '';
+    return '$zuletztModell$g${zuletztGrund == null ? '' : ' · $zuletztGrund'}';
+  }
 }
 
-const _gruendlichkeit = {'none': 'keine', 'low': 'gering', 'medium': 'mittel', 'high': 'hoch', 'xhigh': 'sehr hoch'};
+const _gruendlichkeit = {'none': 'keine', 'low': 'gering', 'medium': 'mittel', 'high': 'hoch', 'xhigh': 'sehr hoch', 'max': 'maximal'};
 String gruendlichkeitText(String? g) => g == null ? '' : _gruendlichkeit[g] ?? g;
 
 /// „gpt-6.1-sol · Gründlichkeit mittel“

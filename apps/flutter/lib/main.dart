@@ -209,7 +209,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Ansicht ansicht = Ansicht.chat;
   bool seitenleisteOffen = seitenleisteGespeichert();
   bool navBreit = navBreitGespeichert(); // 1.36.0
-  String? tierWahl; // null = Automatisch, sonst fast/default/strong
+  String? tierWahl; // null = Automatisch, sonst fast/default/strong/ultra (ultra nur für eine Nachricht, Spec ultra U4)
   List<Map<String, dynamic>> vorgaenge = [];
   List<dynamic>? vorgangSchritte; // 1.9.0 — Schritte für den Vorgangs-Dialog
   int aufgabenFaelligZahl = 0; // 1.9.0 — überfällig + heute (Symbolleiste)
@@ -555,7 +555,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final seite = _seite(context);
     final u = unterhaltung; // 1.58.0 G1 — Unterhaltung liegt über allem; der Chat darunter füllt sich mit
     if (u == null) return seite;
-    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, insWort: uInsWort != null, ausgabePegel: audio.ausgabePegel, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'}[_uStufe],
+    return Stack(children: [seite, Positioned.fill(child: UnterhaltungsAnsicht(stand: u, spielt: () => audio.spielt, insWort: uInsWort != null, ausgabePegel: audio.ausgabePegel, stufe: {'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark', 'ultra': 'Ultra'}[_uStufe],
       aufKugel: _unterhaltungUnterbrechen, aufStumm: _unterhaltungStumm, aufBeenden: _unterhaltungEnde))]);
   }
 

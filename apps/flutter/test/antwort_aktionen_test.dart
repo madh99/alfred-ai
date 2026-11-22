@@ -45,5 +45,23 @@ void main() {
     expect(stufeZeile(s.fuer('fast')), 'claude-sonnet-5-5 · Gründlichkeit gering · nicht verfügbar');
     expect(s.zuletztModell, 'claude-opus-5-5');
     expect(stufeZeile(null), '');
+    expect(s.zuletztZeile(), 'claude-opus-5-5 · Gründlichkeit hoch');
+  });
+
+  test('Spec ultra U4: letzte Antwort mit Auslöser, Gründlichkeit max, Rückfall ohne Gründlichkeit', () {
+    final stufen = [
+      {'stufe': 'default', 'modell': 'gpt-6.2-sol', 'gruendlichkeit': 'medium'},
+      {'stufe': 'strong', 'modell': 'claude-opus-5-5', 'gruendlichkeit': 'high'},
+      {'stufe': 'ultra', 'modell': 'claude-fable-5-2', 'gruendlichkeit': 'high'},
+    ];
+    final s = StufenStand.aus({'stufen': stufen, 'zuletzt': {'modell': 'claude-fable-5-2', 'stufe': 'ultra', 'grund': 'eskalation:einwand', 'grundText': 'Eskalation (Einwand)'}});
+    expect(s.zuletztGrund, 'Eskalation (Einwand)');
+    expect(s.zuletztZeile(), 'claude-fable-5-2 · Gründlichkeit hoch · Eskalation (Einwand)');
+    final r = StufenStand.aus({'stufen': stufen, 'zuletzt': {'modell': 'claude-opus-5-5', 'stufe': 'ultra', 'grund': 'ausdrücklich'}});
+    expect(r.zuletztZeile(), 'claude-opus-5-5 · ausdrücklich'); // Rückfall: anderes Modell, Gründlichkeit unbekannt
+    final a = StufenStand.aus({'stufen': stufen, 'zuletzt': {'modell': 'gpt-6.2-sol', 'stufe': 'automatisch'}});
+    expect(a.zuletztZeile(), 'gpt-6.2-sol · Gründlichkeit mittel');
+    expect(gruendlichkeitText('max'), 'maximal');
+    expect(const StufenStand().zuletztZeile(), isNull);
   });
 }
