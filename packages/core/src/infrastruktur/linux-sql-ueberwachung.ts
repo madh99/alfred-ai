@@ -13,7 +13,7 @@ import type { LinuxSqlStatus } from './linux-sql-skill.js';
 export const LINUX_SQL_TLS_WARN_TAGE = 30;
 export const LINUX_SQL_TLS_HOCH_TAGE = 7;
 
-export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tls' | 'ad' | 'anmeldung'> | null | undefined): Auffaelligkeit[] {
+export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tls' | 'ad' | 'anmeldung' | 'saMarke'> | null | undefined): Auffaelligkeit[] {
   const a: Auffaelligkeit[] = [];
   const k = (teil: string) => ({ bereich: zugang, schluessel: `ueberwachung:${zugang}:${teil}`, kategorie: 'ueberwachung' as const, zugang });
   const t = status?.tls;
@@ -26,9 +26,11 @@ export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tl
     const kt = status.ad.keytab;
     a.push({ schwere: 'hoch', text: `Keytab ${zugang} veraltet (kvno ${kt.kvno ?? '?'}, AD-kvno ${kt.adKvno ?? '?'}) — Kerberos-Anmeldungen schlagen nach dem Kennwortwechsel des Dienstkontos fehl`, ...k('keytab') });
   }
-  // I8e Folge-Etappe (Spec 2026-11-22 §7.3): nach der Umstellung liest der Status als alfred_status — scheitert das, ist die SQL-Sicht unlesbar
-  if (status?.anmeldung?.login === 'alfred_status' && status.anmeldung.ok === false) {
-    a.push({ schwere: 'hoch', text: `${zugang}: SQL-Anmeldung als alfred_status gescheitert — Status und Prüfungen ohne SQL-Sicht (Kennwort im Tresor, Login aktiv?)`, ...k('anmeldung') });
+  // I8e Folge-Etappe (Spec 2026-11-22 §7.3): nach der Umstellung liest der Status als alfred_status — scheitert das, ist die SQL-Sicht
+  // unlesbar. Review I3: ebenso jede gescheiterte Anmeldung bei gesetzter Host-Marke (sa abgeschaltet, z. B. Alfred-Einträge fehlen)
+  const an = status?.anmeldung;
+  if (an && an.ok === false && (an.login === 'alfred_status' || status?.saMarke === true)) {
+    a.push({ schwere: 'hoch', text: `${zugang}: SQL-Anmeldung als ${an.login} gescheitert — Status und Prüfungen ohne SQL-Sicht (Dienst aktiv? Kennwort im Tresor, Login aktiv?)`, ...k('anmeldung') });
   }
   return a;
 }

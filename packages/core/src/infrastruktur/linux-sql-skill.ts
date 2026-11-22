@@ -26,6 +26,7 @@ import {
 import { joinTresorName } from './windows-ad-linux.js';
 import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { pruefeSaSchalten } from './linux-sql-logins.js';
 import { SA_SPERRE } from './linux-sql.js';
 import { saName, sqlAnmeldung, alfredLoginTresor, ADMIN_LOGIN, STATUS_LOGIN, type SqlLogin } from './linux-sql-anmeldung.js';
@@ -35,6 +36,8 @@ import { saName, sqlAnmeldung, alfredLoginTresor, ADMIN_LOGIN, STATUS_LOGIN, typ
  * + 60 s Puffer; konfigurieren = Summe der bis zu vier Bausteine (Status, mssql-conf, tempdb, max server memory).
  */
 const sek = (ms: number) => Math.ceil(ms / 1000);
+/** I8e Folge-Etappe (Review I5): Login des laufenden execute-Aufrufs (für den Ergebnis-Zusatz), je Aufruf getrennt */
+const ANMELDE_KONTEXT = new AsyncLocalStorage<{ login?: SqlLogin }>();
 export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   status: sek(LINUX_SQL_ZEIT_MS.status) + 60,
   platten_einrichten: sek(LINUX_SQL_ZEIT_MS.platten) + 60,
@@ -618,11 +621,12 @@ export class LinuxSqlSkill extends Skill {
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     // Nachtrag 2 (M-B): entfernte alte Zugangsdateien in jeder Anzeige (status/sicherungen nennen sie schon im festen Wortlaut)
     this.altZugang = 0;
-    this.anmeldeLogin = undefined;
-    const r0 = await this.ausfuehren(input, context);
-    // I8e Folge-Etappe: nach der Umstellung nennt jedes Ergebnis das Login (vor der Umstellung bleibt der Wortlaut unverändert)
-    const r = r0.success && this.anmeldeLogin && this.anmeldeLogin !== 'sa'
-      ? { ...r0, display: `${r0.display ?? ''} (angemeldet als ${this.anmeldeLogin})`, data: r0.data && typeof r0.data === 'object' ? { ...(r0.data as object), login: this.anmeldeLogin } : r0.data }
+    // I8e Folge-Etappe (Review I5): Login je Aufruf im eigenen Kontext — gleichzeitige Aufrufe (Überwachung + Change) mischen sich nicht
+    const lauf: { login?: SqlLogin } = {};
+    const r0 = await ANMELDE_KONTEXT.run(lauf, () => this.ausfuehren(input, context));
+    // nach der Umstellung nennt jedes Ergebnis das Login (vor der Umstellung bleibt der Wortlaut unverändert)
+    const r = r0.success && lauf.login && lauf.login !== 'sa'
+      ? { ...r0, display: `${r0.display ?? ''} (angemeldet als ${lauf.login})`, data: r0.data && typeof r0.data === 'object' ? { ...(r0.data as object), login: lauf.login } : r0.data }
       : r0;
     const zusatz = String(input.action ?? '') === 'status' || String(input.action ?? '') === 'sicherungen' ? '' : altZugangText(this.altZugang);
     if (!zusatz) return r;
@@ -678,8 +682,8 @@ export class LinuxSqlSkill extends Skill {
 
   /** Nachtrag 2 (M-B): Summe der vom Baustein-Kopf entfernten alten Zugangsdateien im laufenden execute (für die Anzeige) */
   private altZugang = 0;
-  /** I8e Folge-Etappe: Login des laufenden Aufrufs (für den Ergebnis-Zusatz) */
-  private anmeldeLogin: SqlLogin | undefined;
+
+
 
   private pruefeLauf<T extends Record<string, unknown>>(zugang: string, zweck: string, r: { code: number; stdout: string; stderr: string }): T {
     const e = sqlErgebnis<T>(r.stdout);
@@ -705,7 +709,7 @@ export class LinuxSqlSkill extends Skill {
   private async sa(zugang: string, wofuer: string, geheim: string[]): Promise<{ sa: string; login: SqlLogin }> {
     pruefeTresorName(saName(zugang));
     const a = await sqlAnmeldung(this.tresor(), zugang, 'aendern', wofuer, geheim);
-    this.anmeldeLogin = a.login;
+    { const k = ANMELDE_KONTEXT.getStore(); if (k) k.login = a.login; }
     return a.eingabe;
   }
 
@@ -717,7 +721,7 @@ export class LinuxSqlSkill extends Skill {
       // ohne jeden Eintrag wie bisher nur Betriebssystem-Sicht; halb umgestellt → Abbruch (kein Rückfall auf sa)
       if (umgestellt || namen.has(saName(zugang))) {
         const a = await sqlAnmeldung(this.d.tresor, zugang, 'lesen', `SQL-Status ${zugang}`, geheim);
-        this.anmeldeLogin = a.login; eingabe = a.eingabe;
+        { const k = ANMELDE_KONTEXT.getStore(); if (k) k.login = a.login; } eingabe = a.eingabe;
       }
     }
     return this.lauf<LinuxSqlStatus & Record<string, unknown>>(zugang, LINUX_SQL_BAUSTEINE.status, {}, 'SQL-Status', LINUX_SQL_ZEIT_MS.status, eingabe);

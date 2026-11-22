@@ -55,10 +55,15 @@ describe('Überwachung: gescheiterte Status-Anmeldung', () => {
     expect(linuxSqlBefunde('sqllnx01', { anmeldung: { login: 'alfred_status', ok: true } })).toEqual([]);
     expect(linuxSqlBefunde('sqllnx01', { anmeldung: { login: 'sa', ok: false } })).toEqual([]);
   });
+  it('Review I3a: Host-Marke gesetzt und SQL-Sicht unlesbar (z. B. Alfred-Einträge weg, Status fällt auf sa) → Befund hoch', () => {
+    const b = linuxSqlBefunde('sqllnx01', { anmeldung: { login: 'sa', ok: false }, saMarke: true });
+    expect(b).toHaveLength(1);
+    expect(b[0]).toMatchObject({ schwere: 'hoch', schluessel: 'ueberwachung:sqllnx01:anmeldung' });
+  });
 });
 
 describe.skipIf(!PYTHON)('Python-Status: Anmeldung und Host-Marke', { timeout: 60_000 }, () => {
-  function status(eingabe: string, sqlOk: boolean, marke = false): Record<string, unknown> {
+  function status(eingabe: string, sqlOk: boolean, marke = false, dienst = 'active'): Record<string, unknown> {
     const T = mkdtempSync(join(tmpdir(), 'alfred-pysa-')).replace(/\\/g, '/');
     ORDNER.push(T);
     const stub = join(T, 'sqlcmd.py');
@@ -67,7 +72,7 @@ describe.skipIf(!PYTHON)('Python-Status: Anmeldung und Host-Marke', { timeout: 6
     const py = 'import os\nif not hasattr(os, "statvfs"):\n    os.statvfs = lambda p: type("S", (), {"f_bavail": 1, "f_frsize": 1, "f_blocks": 1, "f_bsize": 1, "f_bfree": 1})()\n' + PY_STATUS
       .replace(/^SQLCMD = .*$/m, `SQLCMD = ${JSON.stringify(PYTHON)}\nSQLCMD_STUB = ${JSON.stringify(stub)}`)
       .replace('[SQLCMD] + sql_ziel()', '[SQLCMD, SQLCMD_STUB] + sql_ziel()')
-      .replace(/def lauf\(\*a\):/, 'def lauf(*a):\n    if a[:2] == ("systemctl", "is-active"):\n        return 0, "active"');
+      .replace(/def lauf\(\*a\):/, `def lauf(*a):\n    if a[:2] == ("systemctl", "is-active"):\n        return 0, "${dienst}"`);
     const o = spawnSync(PYTHON!, ['-c', py, join(T, 'sa-aus')], { input: eingabe, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1' } });
     const z = o.stdout.split(/\r?\n/).find(l => l.startsWith('ALFRED-SQL ')) ?? 'ALFRED-SQL {}';
     return JSON.parse(z.slice(11));
@@ -81,5 +86,19 @@ describe.skipIf(!PYTHON)('Python-Status: Anmeldung und Host-Marke', { timeout: 6
     const r = status('{"sa":"Kw","login":"alfred_status"}', true, true);
     expect(r.anmeldung).toEqual({ login: 'alfred_status', ok: true });
     expect(r.saMarke).toBe(true);
+  });
+  it('Review I4: Kerne aus dem Betriebssystem (kein VIEW SERVER STATE nötig)', () => {
+    const r = status('{"sa":"Kw","login":"alfred_status"}', true);
+    expect((r.sql as Record<string, unknown>).kerne).toBeGreaterThan(0);
+    expect(STATUS_TSQL).not.toContain('dm_os_sys_info');
+  });
+  it('Review I3a: login sa bei Host-Marke → anmeldung ok false (statt fehlend)', () => {
+    const r = status('{"sa":"Kw","login":"sa"}', true, true);
+    expect(r.anmeldung).toEqual({ login: 'sa', ok: false });
+    expect(r.saMarke).toBe(true);
+  });
+  it('Review I3b: Dienst steht nach der Umstellung → anmeldung ok false', () => {
+    const r = status('{"sa":"Kw","login":"alfred_status"}', true, false, 'inactive');
+    expect(r.anmeldung).toEqual({ login: 'alfred_status', ok: false });
   });
 });

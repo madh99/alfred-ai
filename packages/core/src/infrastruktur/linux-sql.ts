@@ -955,7 +955,6 @@ export const STATUS_TSQL = [
   "  CAST(SERVERPROPERTY('Edition') AS nvarchar(80)) AS edition,",
   "  CAST(SERVERPROPERTY('EngineEdition') AS int) AS engineEdition,",
   "  (SELECT CAST(value_in_use AS int) FROM sys.configurations WHERE name = N'max server memory (MB)') AS maxSpeicherMb,",
-  '  (SELECT cpu_count FROM sys.dm_os_sys_info) AS kerne,',
   '  (SELECT name, physical_name AS pfad, type_desc AS typ, CAST(size AS bigint) * 8 / 1024 AS mb,',
   '     CASE WHEN is_percent_growth = 1 THEN NULL ELSE CAST(growth AS bigint) * 8 / 1024 END AS wachstumMb',
   '   FROM tempdb.sys.database_files ORDER BY file_id FOR JSON PATH) AS tempdb,',
@@ -1177,6 +1176,9 @@ export const PY_STATUS = [
   '        p = subprocess.run([SQLCMD] + sql_ziel() + ["-b", "-x", "-U", login, "-l", "30", "-y", "0"], input=TSQL, capture_output=True, text=True, timeout=60, env=dict(os.environ, SQLCMDPASSWORD=sa))',
   '        j = sql_json(p.stdout) if p.returncode == 0 else None',
   '        if j is not None:',
+  // Review I4: Kerne aus dem Betriebssystem (alfred_status braucht so kein VIEW SERVER STATE für sys.dm_os_sys_info)
+  '            if isinstance(j, dict):',
+  '                j["kerne"] = os.cpu_count() or 0',
   '            r["sql"] = j',
   '        else:',
   '            r["sql"] = None',
@@ -1187,10 +1189,12 @@ export const PY_STATUS = [
   '    except Exception as e:',
   '        r["sql"] = None',
   '        r["sqlFehler"] = type(e).__name__',
-  // I8e Folge-Etappe: Ergebnis der Anmeldung (für die Überwachung) und Host-Marke; gescheiterte Anmeldung als alfred_status mit festem Text
+  // I8e Folge-Etappe: Ergebnis der Anmeldung (für die Überwachung) in JEDEM Zweig mit Anmeldung (auch gesperrt oder Dienst aus — Review I3)
+  // und Host-Marke; gescheiterte Anmeldung als alfred_status mit festem Text
+  'if sa or login_fehler:',
   '    r["anmeldung"] = {"login": login, "ok": r.get("sql") is not None}',
   '    if login == "alfred_status" and r.get("sql") is None:',
-  '        r["sqlFehler"] = ("SQL-Anmeldung als alfred_status gescheitert: " + str(r.get("sqlFehler") or ""))[:400]',
+  '        r["sqlFehler"] = ("SQL-Anmeldung als alfred_status gescheitert: " + str(r.get("sqlFehler") or r.get("sqlHinweis") or ""))[:400]',
   'r["saMarke"] = bool(SA_SPERRE) and os.path.exists(SA_SPERRE)',
   // Nachtrag 2 (M-B): vom Kopf entfernte alte Zugangsdateien auch im Status
   'try:',

@@ -10,9 +10,13 @@
  */
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import { LINUX_SQL_BAUSTEINE, SQL_HILFE, SA_LESEN, sqlKopf, shQ } from './linux-sql.js';
+import { PY_HA_KNOTEN_LAGE } from './linux-ha-standby.js';
+import { HA_AG_RESSOURCE } from './linux-ha.js';
 
 /** Rechte von alfred_status über public hinaus (Zuordnung zu den Status-Abfragen: Test „jede Status-Abfrage hat ein Recht“) */
-export const ALFRED_STATUS_RECHTE = ['VIEW SERVER STATE', 'VIEW ANY DEFINITION', 'SELECT ON msdb.dbo.backupset'] as const;
+// Review I4: kein VIEW SERVER STATE — damit ließen sich SQL-Text und Eingabepuffer fremder Sitzungen lesen (auch von alfred_admin);
+// die Kernzahl liest der Status aus dem Betriebssystem
+export const ALFRED_STATUS_RECHTE = ['VIEW ANY DEFINITION', 'SELECT ON msdb.dbo.backupset'] as const;
 /** Inhalt der Host-Marke SA_SPERRE (Eigentumsnachweis: nur diese Marke entfernt sa_schalten an=true) */
 export const SA_MARKE_TEXT = 'ALFRED-SA-AUS (linux_sql sa_schalten)';
 
@@ -39,6 +43,8 @@ function loginTeil(n: 'alfred_admin' | 'alfred_status', ph: string, z: string, n
 export function alfredLoginsVorlage(nurNeu: boolean): string {
   return [
     'SET NOCOUNT ON; -- ALFRED-LOGINS-ANLEGEN',
+    // Server-Rechte (GRANT … TO login) nur aus master — unabhängig von der Standarddatenbank des anmeldenden Logins
+    'USE [master];',
     "DECLARE @za nvarchar(20) = N'schon', @zs nvarchar(20) = N'schon';",
     // alfred_status in keiner Serverrolle (außer public) — sonst nie still entfernt, Abbruch vor jeder Änderung
     "IF EXISTS (SELECT 1 FROM sys.server_role_members m JOIN sys.server_principals l ON l.principal_id = m.member_principal_id WHERE l.name = N'alfred_status')",
@@ -46,18 +52,32 @@ export function alfredLoginsVorlage(nurNeu: boolean): string {
     ...loginTeil('alfred_admin', '@@KA@@', '@za', nurNeu),
     "IF ISNULL(IS_SRVROLEMEMBER(N'sysadmin', N'alfred_admin'), 0) <> 1 BEGIN ALTER SERVER ROLE [sysadmin] ADD MEMBER [alfred_admin]; IF @za = N'schon' SET @za = N'geaendert'; END",
     ...loginTeil('alfred_status', '@@KS@@', '@zs', nurNeu),
-    'GRANT VIEW SERVER STATE TO [alfred_status];',
     'GRANT VIEW ANY DEFINITION TO [alfred_status];',
     "EXEC (N'USE [msdb]; IF USER_ID(N''alfred_status'') IS NULL CREATE USER [alfred_status] FOR LOGIN [alfred_status]; GRANT SELECT ON dbo.backupset TO [alfred_status];');",
     // kein Serverrecht über den Rechtesatz hinaus (CONNECT SQL kommt mit CREATE LOGIN)
-    "IF EXISTS (SELECT 1 FROM sys.server_permissions p JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id WHERE l.name = N'alfred_status' AND p.permission_name NOT IN (N'CONNECT SQL', N'VIEW SERVER STATE', N'VIEW ANY DEFINITION'))",
+    "IF EXISTS (SELECT 1 FROM sys.server_permissions p JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id WHERE l.name = N'alfred_status' AND p.permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DEFINITION'))",
     "  THROW 50007, N'alfred_status hat zusätzliche Serverrechte - nicht still entfernt; bitte bewusst entscheiden', 1;",
+    // Review I4: auch in jeder lesbaren Datenbank keine Rolle und kein Recht über CONNECT und (nur msdb) SELECT auf dbo.backupset hinaus
+    "DECLARE @db sysname, @n int = 0, @c int, @q nvarchar(max);",
+    "DECLARE alfred_dbs CURSOR LOCAL FAST_FORWARD FOR SELECT name FROM sys.databases WHERE state_desc = N'ONLINE' AND HAS_DBACCESS(name) = 1;",
+    'OPEN alfred_dbs; FETCH NEXT FROM alfred_dbs INTO @db;',
+    'WHILE @@FETCH_STATUS = 0',
+    'BEGIN',
+    "  SET @q = N'SELECT @c = COUNT(*) FROM ' + QUOTENAME(@db) + N'.sys.database_role_members m JOIN ' + QUOTENAME(@db) + N'.sys.database_principals p ON p.principal_id = m.member_principal_id WHERE p.sid = SUSER_SID(N''alfred_status'')';",
+    "  EXEC sp_executesql @q, N'@c int OUTPUT', @c = @c OUTPUT; SET @n = @n + @c;",
+    "  SET @q = N'SELECT @c = COUNT(*) FROM ' + QUOTENAME(@db) + N'.sys.database_permissions x JOIN ' + QUOTENAME(@db) + N'.sys.database_principals p ON p.principal_id = x.grantee_principal_id WHERE p.sid = SUSER_SID(N''alfred_status'') AND x.state IN (''G'', ''W'') AND x.permission_name <> N''CONNECT'''",
+    "    + CASE WHEN @db = N'msdb' THEN N' AND NOT (x.class = 1 AND x.major_id = OBJECT_ID(N''msdb.dbo.backupset'') AND x.permission_name = N''SELECT'')' ELSE N'' END;",
+    "  EXEC sp_executesql @q, N'@c int OUTPUT', @c = @c OUTPUT; SET @n = @n + @c;",
+    '  FETCH NEXT FROM alfred_dbs INTO @db;',
+    'END',
+    'CLOSE alfred_dbs; DEALLOCATE alfred_dbs;',
+    "IF @n > 0 THROW 50008, N'alfred_status hat Rollen oder Rechte in Datenbanken über SELECT auf msdb.dbo.backupset hinaus - nicht still entfernt; bitte bewusst entscheiden', 1;",
     "SELECT N'ALFRED|' + @za + N'|' + @zs;",
   ].join('\n');
 }
 /** als alfred_admin: sysadmin? */
 const PRUEF_ADMIN = "SET NOCOUNT ON; -- ALFRED-PRUEF-ADMIN\nSELECT N'ALFRED|' + CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS nvarchar(1));";
-/** als alfred_status: sysadmin | CONTROL SERVER | ALTER ANY LOGIN | INSERT backupset | VIEW SERVER STATE | SELECT backupset — Soll 0|0|0|0|1|1 */
+/** als alfred_status: sysadmin | CONTROL SERVER | ALTER ANY LOGIN | INSERT backupset | VIEW SERVER STATE | SELECT backupset — Soll 0|0|0|0|0|1 */
 const PRUEF_STATUS = [
   'SET NOCOUNT ON; -- ALFRED-PRUEF-STATUS',
   "SELECT N'ALFRED|' + CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS nvarchar(1))",
@@ -67,7 +87,7 @@ const PRUEF_STATUS = [
   "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE'), 0) AS nvarchar(1))",
   "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.backupset', N'OBJECT', N'SELECT'), 0) AS nvarchar(1));",
 ].join('\n');
-export const STATUS_RECHTE_SOLL = '0|0|0|0|1|1';
+export const STATUS_RECHTE_SOLL = '0|0|0|0|0|1';
 
 export function alfredLoginsAnlegenSkript(p: { nurNeu?: boolean }): string {
   const nurNeu = p.nurNeu === true;
@@ -174,18 +194,6 @@ export function saSchaltenSkript(p: { an: boolean }): string {
 
 // ── sa_kennwort_setzen (Notfallweg) ────────────────────────────────────────────────────────────────────────────────────────────
 
-const PY_STANDBY = [
-  'import sys, xml.etree.ElementTree as ET',
-  'try:',
-  '    r = ET.fromstring(sys.stdin.read())',
-  'except Exception:',
-  '    print("unlesbar"); sys.exit(0)',
-  'for n in r.iter("node"):',
-  '    if n.get("name") == sys.argv[1]:',
-  '        print("standby" if n.get("standby") == "true" else "aktiv"); sys.exit(0)',
-  'print("unbekannt")',
-].join('\n');
-
 /** sa abgeschaltet? (0/1) — Prüfung des Notfallwegs als sa */
 const SA_LAGE = "SET NOCOUNT ON; -- ALFRED-SA-PRUEF\nSELECT N'ALFRED|' + CAST(is_disabled AS nvarchar(1)) FROM sys.server_principals WHERE name = N'sa';";
 
@@ -194,14 +202,21 @@ export function saKennwortSetzenSkript(): string {
     ...sqlKopf(LINUX_SQL_BAUSTEINE.saKennwortSetzen, {}),
     ...SQL_HILFE,
     "MSSQL_CONF_BIN='/opt/mssql/bin/mssql-conf'",
-    `PY_STANDBY=${shQ(PY_STANDBY)}`,
+    `PY_LAGE=${shQ(PY_HA_KNOTEN_LAGE)}`,
+    `AG_RES=${shQ(HA_AG_RESSOURCE)}`,
+    // nach einem Abbruch zwischen Stoppen und Starten den Dienst wieder starten (läuft in der Falle des Kopfs)
+    'GESTOPPT=0',
+    'alfred_aufraeumen() { if [ "$GESTOPPT" = 1 ] && ! systemctl is-active --quiet mssql-server; then systemctl start mssql-server || true; fi; }',
     '# ALFRED-ABLAUF',
     ...kennwortLesen('sa', 'SA', 'sa-Kennwort'),
     'K=$(hostname -s)',
     'x=$(crm_mon -1 --output-as=xml 2>/dev/null) || abbruch "crm_mon nicht lesbar — Standby von $K nicht belegt; nichts geändert"',
-    'st=$(python3 -c "$PY_STANDBY" "$K" <<<"$x")',
-    '[ "$st" = standby ] || abbruch "Knoten $K nicht im Standby ($st) — zuerst linux_ha knoten_standby an=true; nichts geändert"',
-    'systemctl stop mssql-server || abbruch "mssql-server lässt sich nicht stoppen — nichts geändert"',
+    'read -r _ _ _ ST _ AKT <<<"$(python3 -c "$PY_LAGE" "$K" "$AG_RES" <<<"$x")"',
+    '[ "${ST:-}" = true ] || abbruch "Knoten $K nicht im Standby (${ST:-unlesbar}) — zuerst linux_ha knoten_standby an=true; nichts geändert"',
+    // Review I2: erst wenn Pacemaker die Instanz auf dem Knoten gestoppt hat — ein Stopp mitten in der stop-Aktion kann Fencing auslösen
+    '[ "${AKT:-}" = 0 ] || abbruch "$AG_RES auf $K noch aktiv (${AKT:-unlesbar}) — Standby nicht abgeschlossen; nichts geändert"',
+    'GESTOPPT=1',
+    'systemctl stop mssql-server || abbruch "mssql-server lässt sich nicht stoppen"',
     'ALFRED_TMP=$(mktemp -d /run/alfred-sql.XXXXXX 2>/dev/null || mktemp -d)',
     'if ! MSSQL_SA_PASSWORD="$SA" "$MSSQL_CONF_BIN" -n set-sa-password >"$ALFRED_TMP/conf.log" 2>&1; then',
     '  systemctl start mssql-server || true',

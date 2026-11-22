@@ -32,7 +32,7 @@ function lauf(skript: string, eingabe: Record<string, unknown>, dateien: Record<
     '  *ALFRED-LOGINS-ANLEGEN*) echo "ALFRED|angelegt|angelegt" ;;',
     '  *ALFRED-LOGINS-ENTFERNEN*) echo "ALFRED|0" ;;',
     '  *) echo "ALFRED|ok" ;; esac; }',
-    'systemctl() { log "systemctl $*"; }',
+    'systemctl() { log "systemctl $*"; case "$1" in is-active) [ ! -f "$T/gestoppt" ] ;; stop) : >"$T/gestoppt" ;; start) if [ -f "$T/start_scheitert" ]; then rm -f "$T/start_scheitert"; return 1; fi; rm -f "$T/gestoppt" ;; esac; }',
     'hostname() { echo sqllnxcfg; }',
     'crm_mon() { log "crm_mon $*"; cat "$T/crm.xml"; }',
   ].join('\n');
@@ -49,7 +49,7 @@ function lauf(skript: string, eingabe: Record<string, unknown>, dateien: Record<
   const teil = (a: string, b?: string) => o.split(`---${a}\n`)[1]?.split(b ? `---${b}\n` : '\u0000')[0] ?? '';
   return { rc: Number(/RC=(\d+)/.exec(o)?.[1] ?? -1), aus: teil('AUS', 'SQL'), e: sqlErgebnis<Record<string, unknown>>(teil('AUS', 'SQL')), sql: teil('SQL', 'LOG'), log: teil('LOG', 'MARKE'), marke: teil('MARKE') };
 }
-const crm = (standby: boolean) => `<crm_mon><nodes><node name="sqllnxcfg" id="3" online="true" standby="${standby}"/><node name="sqllnx01" id="1" online="true" standby="false"/></nodes></crm_mon>`;
+const crm = (standby: boolean, aktivAufCfg = false) => `<crm_mon><nodes><node name="sqllnxcfg" id="3" online="true" standby="${standby}"/><node name="sqllnx01" id="1" online="true" standby="false"/></nodes><resources><clone id="ag_cluster-clone"><resource id="ag_cluster" role="Promoted" active="true"><node name="sqllnx01" id="1"/></resource>${aktivAufCfg ? '<resource id="ag_cluster" role="Unpromoted" active="true"><node name="sqllnxcfg" id="3"/></resource>' : '<resource id="ag_cluster" role="Stopped" active="false"/>'}</clone></resources></crm_mon>`;
 
 describe('Bausteine registriert, Zeitlimits, Planung', () => {
   it('registriert und nur im Change; alle ändernd; Rückweg-Pflicht', () => {
@@ -94,12 +94,17 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_anlegen ausgeführt', { timeout
     expect(S).not.toMatch(/Adm-Geheim|Sta-Geheim/);
     expect(S).toContain('ALTER SERVER ROLE [sysadmin] ADD MEMBER [alfred_admin]');
     expect(S).not.toContain('ADD MEMBER [alfred_status]');
-    for (const g of ['GRANT VIEW SERVER STATE TO [alfred_status]', 'GRANT VIEW ANY DEFINITION TO [alfred_status]', 'GRANT SELECT ON dbo.backupset TO [alfred_status]']) expect(S).toContain(g);
+    for (const g of ['GRANT VIEW ANY DEFINITION TO [alfred_status]', 'GRANT SELECT ON dbo.backupset TO [alfred_status]']) expect(S).toContain(g);
+    // Review I4: kein VIEW SERVER STATE (fremde Sitzungen/SQL-Text lesbar), USE master vor den Server-Rechten, Rechte in jeder Datenbank geprüft
+    expect(S).not.toContain('GRANT VIEW SERVER STATE');
+    expect(S.indexOf('USE [master];')).toBeGreaterThan(-1);
+    expect(S.indexOf('USE [master];')).toBeLessThan(S.indexOf('CREATE LOGIN'));
+    expect(S).toContain('THROW 50008');
     expect(S).toContain('THROW 50006');
   });
 
   it('Erfolg: Marke für den Tresor, Selbstprüfung als alfred_admin (sysadmin) und als alfred_status (nur lesen)', () => {
-    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '0|0|0|0|1|1' });
+    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '0|0|0|0|0|1' });
     expect(r.rc, r.aus).toBe(0);
     expect(r.aus).toContain('ALFRED-LOGIN-GESETZT');
     expect(r.e).toMatchObject({ zustand: 'angelegt', admin: 'angelegt', status: 'angelegt' });
@@ -112,13 +117,13 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_anlegen ausgeführt', { timeout
   });
 
   it('alfred_status mit mehr als Leserecht → Abbruch', () => {
-    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '1|1|0|0|1|1' });
+    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '1|1|0|0|0|1' });
     expect(r.rc).not.toBe(0);
     expect(r.e?.fehler).toMatch(/alfred_status: Rechte weichen ab/);
   });
 
   it('alfred_admin nicht sysadmin → Abbruch', () => {
-    const r = lauf(S, E, { admin_pruef: '0', status_pruef: '0|0|0|0|1|1' });
+    const r = lauf(S, E, { admin_pruef: '0', status_pruef: '0|0|0|0|0|1' });
     expect(r.rc).not.toBe(0);
     expect(r.e?.fehler).toMatch(/alfred_admin ist nicht sysadmin/);
   });
@@ -191,6 +196,19 @@ describe.skipIf(!BASH || !PYTHON)('sa_kennwort_setzen ausgeführt', { timeout: 1
     expect(r.rc).not.toBe(0);
     expect(r.e?.fehler).toMatch(/Anmeldung als sa nach set-sa-password gescheitert/);
     expect(r.log).toContain('systemctl start mssql-server');
+  });
+
+  it('Review I2: Standby-Attribut gesetzt, ag_cluster auf dem Knoten noch aktiv → Abbruch vor dem Stoppen', () => {
+    const r = lauf(saKennwortSetzenSkript(), E, { 'crm.xml': crm(true, true), sa_pruef: '0' });
+    expect(r.rc).not.toBe(0);
+    expect(r.e?.fehler).toMatch(/ag_cluster auf sqllnxcfg noch aktiv/);
+    expect(r.log).not.toContain('systemctl stop');
+  });
+
+  it('Abbruch nach dem Stoppen (Start scheitert einmal) → Aufräumen startet den Dienst erneut', () => {
+    const r = lauf(saKennwortSetzenSkript(), E, { 'crm.xml': crm(true), sa_pruef: '0', start_scheitert: '' });
+    expect(r.rc).not.toBe(0);
+    expect(r.log.split('\n').filter(z => z === 'systemctl start mssql-server')).toHaveLength(2);
   });
 });
 

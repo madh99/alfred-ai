@@ -14,20 +14,26 @@ const PYTHON_PFAD = BASH && PYTHON ? spawnSync('bash', ['-c', `command -v ${PYTH
 const imChange = { ausChange: true } as never;
 
 /** crm_mon-XML: Knoten (Name → standby), Promoted-Knoten von ag_cluster, Quorum */
-function crm(standby: Record<string, boolean>, promoted: string, quorum = true, online = true): string {
+function crm(standby: Record<string, boolean>, promoted: string, quorum = true, online = true, rolle = 'Promoted', ohnePromoted = false): string {
   const knoten = Object.entries(standby).map(([n, s]) => `<node name="${n}" id="${n}" online="${online}" standby="${s}"/>`).join('');
+  // Unpromoted-Instanzen auf allen Knoten außer dem Primär und außer Knoten im Standby (dort gestoppt, ohne node-Kind)
+  const unprom = Object.entries(standby).filter(([n, s]) => n !== promoted && !s).map(([n]) => `<resource id="ag_cluster" role="Unpromoted" active="true"><node name="${n}" id="${n}"/></resource>`).join('');
+  const gestoppt = Object.entries(standby).filter(([, s]) => s).map(() => '<resource id="ag_cluster" role="Stopped" active="false"/>').join('');
   return `<pacemaker-result><summary><current_dc present="true" with_quorum="${quorum}"/><nodes_configured number="3"/></summary><nodes>${knoten}</nodes>`
-    + `<resources><clone id="ag_cluster-clone"><resource id="ag_cluster" role="Promoted"><node name="${promoted}" id="1"/></resource>`
-    + `<resource id="ag_cluster" role="Unpromoted"><node name="sqllnx02" id="2"/></resource></clone></resources></pacemaker-result>`;
+    + `<resources><clone id="ag_cluster-clone">${ohnePromoted ? '' : `<resource id="ag_cluster" role="${rolle}" active="true"><node name="${promoted}" id="${promoted}"/></resource>`}`
+    + `${unprom}${gestoppt}</clone></resources></pacemaker-result>`;
 }
 
 /** führt das Skript auf „ich“ aus; pcs node standby/unstandby schaltet die XML-Datei um (wie Pacemaker), protokolliert nach $T/log */
-function lauf(an: boolean, ich: string, xml: string, pcsWirkt = true) {
+/** pcs-Stub: „voll“ = Attribut + Instanz gestoppt (wie Pacemaker), „attribut“ = nur das Attribut (Instanz läuft weiter), „nichts“ */
+function lauf(an: boolean, ich: string, xml: string, pcs: 'voll' | 'attribut' | 'nichts' = 'voll') {
+  const attribut = 'case "$2" in standby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/" "$T/crm.xml" ;; unstandby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/" "$T/crm.xml" ;; esac';
+  const instanz = '[ "$2" != standby ] || sed -i "s#<resource id=\\"ag_cluster\\" role=\\"Unpromoted\\" active=\\"true\\"><node name=\\"$3\\" id=\\"$3\\"/></resource>#<resource id=\\"ag_cluster\\" role=\\"Stopped\\" active=\\"false\\"/>#" "$T/crm.xml"';
   const stubs = [
     `python3() { PYTHONIOENCODING=utf-8 '${PYTHON_PFAD}' "$@" | tr -d '\\r'; }`,
     `hostname() { echo ${ich}; }`, 'sleep() { :; }',
     'crm_mon() { cat "$T/crm.xml"; }',
-    `pcs() { echo "pcs $*" >>"$T/log"; ${pcsWirkt ? 'case "$2" in standby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/" "$T/crm.xml" ;; unstandby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/" "$T/crm.xml" ;; esac' : ':'}; }`,
+    `pcs() { echo "pcs $*" >>"$T/log"; ${pcs === 'nichts' ? ':' : pcs === 'attribut' ? attribut : `${attribut}; ${instanz}`}; }`,
   ].join('\n');
   const text = knotenStandbySkript({ an }).replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
   const huelle = ['T=$(mktemp -d)', `printf '%s' '${xml}' >"$T/crm.xml"`, "ALFRED_EINGABE=''", `( ${text}\n) >"$T/aus" 2>&1; echo "RC=$?"`, 'echo "---AUS"; cat "$T/aus"; echo "---LOG"; cat "$T/log" 2>/dev/null; rm -rf "$T"'].join('\n');
@@ -90,9 +96,29 @@ describe.skipIf(!BASH || !PYTHON)('knoten_standby ausgeführt', { timeout: 120_0
   });
 
   it('pcs wirkt nicht → Abbruch nach der Wartezeit', () => {
-    const r = lauf(true, 'sqllnxcfg', crm(ALLE(), 'sqllnx01'), false);
+    const r = lauf(true, 'sqllnxcfg', crm(ALLE(), 'sqllnx01'), 'nichts');
     expect(r.rc).not.toBe(0);
     expect(r.e?.fehler).toMatch(/Standby von sqllnxcfg nicht bestätigt/);
+  });
+
+  it('Review I1: Primär mit Rollenname „Master“ → Abbruch ohne Änderung', () => {
+    const r = lauf(true, 'sqllnx01', crm(ALLE(), 'sqllnx01', true, true, 'Master'));
+    expect(r.rc).not.toBe(0);
+    expect(r.e?.fehler).toMatch(/sqllnx01 ist Primär/);
+    expect(r.log).toBe('');
+  });
+
+  it('Review I1: kein Primär erkennbar → Abbruch ohne Änderung (fail-closed)', () => {
+    const r = lauf(true, 'sqllnxcfg', crm(ALLE(), 'sqllnx01', true, true, 'Promoted', true));
+    expect(r.rc).not.toBe(0);
+    expect(r.e?.fehler).toMatch(/kein Primär/);
+    expect(r.log).toBe('');
+  });
+
+  it('Review I2: Attribut gesetzt, Instanz läuft noch → Abbruch nach der Wartezeit (nicht als Erfolg)', () => {
+    const r = lauf(true, 'sqllnxcfg', crm(ALLE(), 'sqllnx01'), 'attribut');
+    expect(r.rc).not.toBe(0);
+    expect(r.e?.fehler).toMatch(/ag_cluster auf sqllnxcfg noch aktiv/);
   });
 });
 

@@ -84,6 +84,34 @@ describe('linux_sql nach der Umstellung', () => {
   });
 });
 
+describe('Review I5: Login je Aufruf, auch bei gleichzeitigen Aufrufen', () => {
+  it('status (wartet) und reste_entfernen (läuft dazwischen) nennen je ihr eigenes Login', async () => {
+    let freigeben!: () => void;
+    const warte = new Promise<void>(r => { freigeben = r; });
+    const w = deps(() => ({}), UM);
+    const d = {
+      ...w.d,
+      skript: async (zugang: string, baustein: string, p: unknown, eingabe?: string) => {
+        if (baustein === LINUX_SQL_BAUSTEINE.status) {
+          await warte;
+          return { code: 0, stdout: `ALFRED-SQL ${JSON.stringify({ zustand: 'gelesen', installiert: true, dienst: 'active' })}\n`, stderr: '' };
+        }
+        void zugang; void p; void eingabe;
+        return { code: 0, stdout: `ALFRED-SQL ${JSON.stringify({ zustand: 'nichts', entfernt: [], inGebrauch: [] })}\n`, stderr: '' };
+      },
+    };
+    const s = new LinuxSqlSkill(d as never);
+    const pStatus = s.execute({ action: 'status', zugang: 'sqllnx01' }, {} as never);
+    await new Promise(r => setTimeout(r, 5));
+    const rReste = await s.execute({ action: 'reste_entfernen', zugang: 'sqllnx01' }, imChange);
+    freigeben();
+    const rStatus = await pStatus;
+    expect(rReste.display).toContain('(angemeldet als alfred_admin)');
+    expect(rStatus.display).toContain('(angemeldet als alfred_status)');
+    expect(rStatus.display).not.toContain('alfred_admin');
+  });
+});
+
 describe('linux_ha nach der Umstellung', () => {
   it('ag_failover: Ziel halb umgestellt → Abbruch vor jedem Fernaufruf', async () => {
     const w = deps(() => ({ zustand: 'gelesen' }), { 'sqllnx-sqllnx02-sa': 'x', 'sqllnx-sqllnx02-alfred-admin': 'y' });
