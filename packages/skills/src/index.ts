@@ -70,6 +70,7 @@ export { DeploySkill } from './built-in/deploy.js';
 export { PfSenseSkill } from './built-in/pfsense.js';
 export { CmdbSkill } from './built-in/cmdb.js';
 export type { DiscoverySource } from './built-in/cmdb.js';
+export { umgebungAusTags, umgebungsVorschlag, NICHT_PRODUKTIV_UMGEBUNGEN, type Umgebung } from './built-in/cmdb-umgebung.js'; // Owner 22.11. K2/K3
 export { ItsmSkill } from './built-in/itsm.js';
 export { InsightsSkill } from './built-in/insights.js';
 export { GoalsSkill } from './built-in/goals.js';

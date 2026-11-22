@@ -68,6 +68,7 @@ import {
   markOutputEnded,
   createForgeClient,
   stageAssetsForProject,
+  umgebungAusTags, // Owner 22.11. K2
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { AgentBusyRegistry } from './projects/agent-busy-registry.js';
@@ -3631,6 +3632,7 @@ export class Alfred {
                 const type = v.type === 'lxc' ? 'lxc' : 'vm';
                 let vmIp: string | undefined;
                 let vmMac: string | undefined;
+                let vmTags: unknown = (v as { tags?: unknown }).tags; // Owner 22.11. K2 — Proxmox-Tags → Umgebung
                 // Try to get IP from VM config (LXC: net0 has ip=..., QEMU: net0 has MAC)
                 try {
                   const configPath = type === 'lxc'
@@ -3646,6 +3648,7 @@ export class Alfred {
                     // MAC: virtio=BC:24:11:...,bridge=... or hwaddr=BC:24:11:...
                     const macMatch = net0.match(/(?:virtio|hwaddr)=([0-9A-Fa-f:]+)/);
                     if (macMatch) vmMac = macMatch[1].toLowerCase();
+                    if (cfg.tags) vmTags = cfg.tags;
                   }
                 } catch { /* skip — config not accessible */ }
                 // Try QEMU guest agent for running VMs without static IP
@@ -3669,7 +3672,7 @@ export class Alfred {
                     }
                   } catch { /* guest agent not available */ }
                 }
-                assets.push({ name: v.name || `${type}-${v.vmid}`, assetType: type, sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: vmIp, status: v.status === 'running' ? 'active' : 'inactive', attributes: { vmid: v.vmid, node: v.node, cpus: v.cpus, maxmem: v.maxmem, maxdisk: v.maxdisk, mac: vmMac } });
+                assets.push({ name: v.name || `${type}-${v.vmid}`, assetType: type, sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: vmIp, ...(umgebungAusTags(vmTags) ? { environment: umgebungAusTags(vmTags) } : {}), status: v.status === 'running' ? 'active' : 'inactive', attributes: { vmid: v.vmid, node: v.node, cpus: v.cpus, maxmem: v.maxmem, maxdisk: v.maxdisk, mac: vmMac } });
                 relations.push({ sourceKey: `proxmox:${v.node}:${v.vmid}`, targetKey: `proxmox:node:${v.node}`, relationType: 'hosted_on' as const });
               }
             }
@@ -4544,6 +4547,17 @@ export class Alfred {
             } catch { /* skip */ }
           }
           return entries;
+        });
+
+        // Owner 22.11. K4 — nach jedem Abgleich: EIN Befund „Umgebung fehlt“, solange aktive Server/VMs/LXC ohne Umgebung sind
+        // (fail-closed gelten sie für die Gegenprüfung als produktiv; der Befund verhindert, dass die Lücke unbemerkt wächst)
+        cmdbSkill.setNachAbgleichCallback(async (uid: string) => {
+          const owner = this.tryOwner();
+          if (!owner || !this.befundeRepo) return;
+          const r = await cmdbSkill.umgebungOffen(uid);
+          const offen = (Array.isArray(r.data) ? r.data : []) as Array<{ name: string; vorschlag: string }>;
+          const namen = offen.slice(0, 30).map(o => `${o.name} (Vorschlag ${o.vorschlag})`).join(', ') + (offen.length > 30 ? ` … (+${offen.length - 30})` : '');
+          await this.befundeRepo.sync(owner, 'cmdb-umgebung', offen.length ? [{ gegenstand: 'umgebung-fehlt', titel: `CMDB: Umgebung fehlt bei ${offen.length} Servern/VMs/LXC`, detail: `Ohne Umgebung gelten sie für die Gegenprüfung als produktiv. lab/test/development nur durch den Owner (Web-CMDB oder Proxmox-Tag), production/staging über cmdb umgebung_setzen. ${namen}` }] : []);
         });
 
         // Wire KG sync callback (CMDB → KG)

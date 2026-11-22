@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CMDB-Umgebung wird gefüllt und bleibt gepflegt (v1930, Owner-Freigabe 22.11., K2–K4)
+
+- Befund 22.11.: Von 3 391 Assets hatten nur 12 eine Umgebung. Keine Quelle lieferte sie, und der Abgleich (`discover`, `discover_source`) gab das Feld gar nicht an die Datenbank weiter.
+- Der Abgleich übernimmt jetzt die Umgebung, wenn die Quelle sie kennt. Proxmox liest dafür die Tags von VMs und LXC (`prod`, `staging`, `dev`, `test`, `lab`). Widersprüchliche Tags gelten als production. Ohne Umgebungs-Tag bleibt der gepflegte Wert stehen.
+- Neue CMDB-Aktionen: `umgebung_offen` listet aktive Server, VMs und LXC ohne Umgebung, jeweils mit einem Vorschlag aus festen Namensregeln. `umgebung_setzen` setzt production oder staging für mehrere Assets.
+- lab, test und development nehmen ein Asset von der Gegenprüfung aus. Diese Werte setzt deshalb nur der Owner, in der Web-CMDB oder per Proxmox-Tag. Der Skill lehnt sie bei `add_asset`, `update_asset` und `umgebung_setzen` ab.
+- Nach jedem Abgleich hält ein einzelner Befund „CMDB: Umgebung fehlt bei N Servern/VMs/LXC“ die Lücke sichtbar. Er schließt sich, sobald alle eingeordnet sind.
+
 ### Fixed — Stufe ultra fällt bei jedem Fehler auf strong zurück (v1929, Spec Stufe ultra Beweis 5)
 
 - Bisher fiel eine ultra-Anfrage nur bei Netz-, 5xx-, 429- und Guthabenfehlern auf eine andere Stufe zurück. Ein falsch konfiguriertes Modell (404 „not_found“), ein abgelaufener Zugang oder ein abgelehnter Parameter ließen die Anfrage scheitern.

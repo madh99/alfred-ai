@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, CmdbAssetType, CmdbRelationType, CmdbLinkedEntityType } from '@alfred/types';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
+import { NICHT_PRODUKTIV_UMGEBUNGEN, umgebungsVorschlag } from './cmdb-umgebung.js'; // Owner 22.11. K2/K3
 
 type Action =
   | 'discover' | 'discover_source'
@@ -8,7 +9,7 @@ type Action =
   | 'decommission_asset' | 'delete_asset'
   | 'add_relation' | 'remove_relation'
   | 'search' | 'topology' | 'stats'
-  | 'asset_docs';
+  | 'asset_docs' | 'umgebung_offen' | 'umgebung_setzen';
 
 interface DiscoveredAsset {
   name: string;
@@ -19,6 +20,8 @@ interface DiscoveredAsset {
   ipAddress?: string;
   hostname?: string;
   fqdn?: string;
+  /** Owner 22.11. K2 — Umgebung, wenn die Quelle sie kennt (Proxmox-Tags); undefined lässt den gepflegten Wert stehen */
+  environment?: string;
   status?: string;
   attributes?: Record<string, unknown>;
 }
@@ -28,6 +31,19 @@ interface DiscoveredRelation {
   targetKey: string;
   relationType: CmdbRelationType;
 }
+
+/**
+ * Owner 22.11. — lab/test/development nimmt ein Asset von der festen Gegenprüfung aus. Diese Werte setzt nur der Owner
+ * (Web-CMDB schreibt direkt ins Repository, Proxmox-Tags über den Abgleich), nie der Skill — sonst könnte ein Modell sich
+ * die Gegenprüfung selbst ersparen.
+ */
+function umgebungGesperrt(env: unknown): string | undefined {
+  if (typeof env !== 'string' || !NICHT_PRODUKTIV_UMGEBUNGEN.has(env.trim().toLowerCase())) return undefined;
+  return `Umgebung „${env}“ setzt nur der Owner (Web-CMDB oder Proxmox-Tag lab/test/dev) — sie nimmt das Asset von der Gegenprüfung durch ultra aus. Der Skill setzt nur production oder staging.`;
+}
+
+/** Typen, deren Umgebung für die Gegenprüfung zählt (Server, VMs, LXC) */
+const UMGEBUNG_TYPEN = new Set(['vm', 'lxc', 'server']);
 
 /** hosts: nur diese Hosts erfassen (Teil-Erfassung nach einem Change; nur Quellen, die das können — derzeit fernzugriff) */
 export type DiscoverySource = (opt?: { hosts?: string[] }) => Promise<{ assets: DiscoveredAsset[]; relations: DiscoveredRelation[] }>;
@@ -53,13 +69,15 @@ export class CmdbSkill extends Skill {
       '"search" sucht Assets per Freitext (query). ' +
       '"topology" zeigt den Beziehungsgraph eines Assets (asset_id, depth). ' +
       '"stats" zeigt CMDB-Statistiken. ' +
-      '"asset_docs" zeigt verknuepfte Dokumente fuer ein Asset oder Service (asset_id oder service_id).',
+      '"asset_docs" zeigt verknuepfte Dokumente fuer ein Asset oder Service (asset_id oder service_id). ' +
+      '"umgebung_offen" listet aktive Server/VMs/LXC ohne Umgebung mit Vorschlag (ohne Umgebung gelten sie für die Gegenprüfung als produktiv). ' +
+      '"umgebung_setzen" setzt production oder staging für asset_ids — nur nach ausdrücklicher Bestätigung des Owners; lab/test/development setzt nur der Owner selbst (Web-CMDB, Proxmox-Tag).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['discover', 'discover_source', 'list_assets', 'get_asset', 'add_asset', 'update_asset', 'decommission_asset', 'delete_asset', 'add_relation', 'remove_relation', 'search', 'topology', 'stats', 'asset_docs'] },
+        action: { type: 'string', enum: ['discover', 'discover_source', 'list_assets', 'get_asset', 'add_asset', 'update_asset', 'decommission_asset', 'delete_asset', 'add_relation', 'remove_relation', 'search', 'topology', 'stats', 'asset_docs', 'umgebung_offen', 'umgebung_setzen'] },
         source: { type: 'string', description: 'Discovery-Quelle für discover_source' },
         hosts: { type: 'array', items: { type: 'string' }, description: 'discover_source fernzugriff: nur diese Zugänge erfassen (Teil-Erfassung, markiert nichts als veraltet)' },
         asset_type: { type: 'string' },
@@ -69,6 +87,7 @@ export class CmdbSkill extends Skill {
         search: { type: 'string' },
         tags: { type: 'string' },
         asset_id: { type: 'string' },
+        asset_ids: { type: 'array', items: { type: 'string' }, description: 'umgebung_setzen: Asset-IDs (oder eindeutige ID-Präfixe ≥ 8)' },
         service_id: { type: 'string', description: 'Service-ID fuer asset_docs' },
         name: { type: 'string' },
         ip_address: { type: 'string' },
@@ -110,6 +129,13 @@ export class CmdbSkill extends Skill {
     this.kgSyncCallback = cb;
   }
 
+  /** Owner 22.11. K4 — nach jedem Abgleich (z. B. Befund „Umgebung fehlt“ fortschreiben) */
+  private nachAbgleichCallback?: (userId: string) => Promise<void>;
+  setNachAbgleichCallback(cb: (userId: string) => Promise<void>): void { this.nachAbgleichCallback = cb; }
+  private async nachAbgleichMelden(userId: string): Promise<void> {
+    try { await this.nachAbgleichCallback?.(userId); } catch { /* darf den Abgleich nie stören */ }
+  }
+
   setIpResolverCallback(cb: () => Promise<Array<{ mac: string; ip: string; hostname?: string; source: string }>>): void {
     this.ipResolverCallback = cb;
   }
@@ -134,6 +160,8 @@ export class CmdbSkill extends Skill {
         case 'topology': return await this.getTopology(userId, input.asset_id as string, input.depth as number | undefined);
         case 'stats': return await this.getStats(userId);
         case 'asset_docs': return await this.assetDocs(userId, input);
+        case 'umgebung_offen': return await this.umgebungOffen(userId);
+        case 'umgebung_setzen': return await this.umgebungSetzen(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${String(action)}` };
       }
     } catch (err: any) {
@@ -168,6 +196,7 @@ export class CmdbSkill extends Skill {
             ipAddress: a.ipAddress,
             hostname: a.hostname,
             fqdn: a.fqdn,
+            ...(a.environment ? { environment: a.environment as any } : {}), // Owner 22.11. K2 — vorher nie weitergereicht
             status: (a.status as any) ?? 'active',
             attributes: a.attributes ?? {},
           });
@@ -252,6 +281,7 @@ export class CmdbSkill extends Skill {
     if (this.kgSyncCallback) {
       try { await this.kgSyncCallback(userId); } catch { /* non-critical */ }
     }
+    await this.nachAbgleichMelden(userId);
 
     const display = `## CMDB Discovery\n\n${results.map(r => `- ${r}`).join('\n')}\n\n**Gesamt:** ${totalAssets} Assets, ${totalRelations} Relationen`;
     return { success: true, data: { totalAssets, totalRelations, sources: results }, display };
@@ -272,6 +302,7 @@ export class CmdbSkill extends Skill {
       await this.repo.upsertAsset(userId, {
         name: a.name, assetType: a.assetType, sourceSkill: a.sourceSkill, sourceId: a.sourceId,
         identifier: a.identifier, ipAddress: a.ipAddress, hostname: a.hostname, fqdn: a.fqdn,
+        ...(a.environment ? { environment: a.environment as any } : {}), // Owner 22.11. K2
         status: (a.status as any) ?? 'active', attributes: a.attributes ?? {},
       });
     }
@@ -291,6 +322,7 @@ export class CmdbSkill extends Skill {
     let stale = 0;
     // Teil-Erfassung: nie veraltet markieren — die nicht erfassten Hosts sind nicht verschwunden
     if (!teil) { try { stale = await this.repo.markStaleAssets(userId, source, runStart, this.staleThresholdDays); } catch { /* non-critical */ } }
+    await this.nachAbgleichMelden(userId);
     const display = `## CMDB Discovery: ${source}${teil ? ` (nur ${hosts.join(', ')})` : ''}\n\n${assets.length} Assets, ${relCount} Relationen${stale > 0 ? `, ${stale} stale markiert` : ''}`;
     return { success: true, data: { assets: assets.length, relations: relCount, stale, ...(teil ? { hosts } : {}) }, display };
   }
@@ -429,6 +461,8 @@ export class CmdbSkill extends Skill {
     const name = input.name as string;
     const assetType = input.asset_type as CmdbAssetType;
     if (!name || !assetType) return { success: false, error: 'name und asset_type erforderlich' };
+    const sperre = umgebungGesperrt(input.environment);
+    if (sperre) return { success: false, error: sperre };
 
     const asset = await this.repo.upsertAsset(userId, {
       name, assetType,
@@ -450,6 +484,8 @@ export class CmdbSkill extends Skill {
   private async updateAsset(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const assetId = input.asset_id as string;
     if (!assetId) return { success: false, error: 'asset_id erforderlich' };
+    const sperre = umgebungGesperrt(input.environment);
+    if (sperre) return { success: false, error: sperre };
 
     const updates: Record<string, unknown> = {};
     for (const key of ['name', 'status', 'environment', 'ip_address', 'hostname', 'fqdn', 'owner', 'purpose', 'tags', 'notes', 'location']) {
@@ -461,6 +497,41 @@ export class CmdbSkill extends Skill {
     const result = await this.repo.updateAsset(userId, assetId, updates as any);
     if (!result) return { success: false, error: `Asset ${assetId} nicht gefunden` };
     return { success: true, data: result, display: `✅ Asset ${result.name} aktualisiert` };
+  }
+
+  /** Owner 22.11. K3 — aktive Server/VMs/LXC ohne Umgebung, je mit Vorschlag aus festen Namensregeln (nie automatisch gesetzt). */
+  async umgebungOffen(userId: string): Promise<SkillResult> {
+    const offen = (await this.repo.listAssets(userId)).filter(a => UMGEBUNG_TYPEN.has(a.assetType) && a.status === 'active' && !a.environment)
+      .map(a => ({ id: a.id, name: a.name, typ: a.assetType, quelle: a.sourceSkill ?? 'manuell', vorschlag: umgebungsVorschlag(a.name) }))
+      .sort((x, y) => x.vorschlag.localeCompare(y.vorschlag) || x.name.localeCompare(y.name));
+    if (!offen.length) return { success: true, data: [], display: 'Alle aktiven Server, VMs und LXC haben eine Umgebung.' };
+    const nichtProd = offen.filter(o => NICHT_PRODUKTIV_UMGEBUNGEN.has(o.vorschlag));
+    const zeilen = offen.map(o => `| ${o.name} | ${o.typ} | ${o.quelle} | ${o.vorschlag} |`);
+    return {
+      success: true, data: offen,
+      display: [`${offen.length} aktive Server/VMs/LXC ohne Umgebung (gelten für die Gegenprüfung als produktiv):`, '', '| Name | Typ | Quelle | Vorschlag |', '|---|---|---|---|', ...zeilen, '',
+        `production/staging setzt umgebung_setzen nach Bestätigung durch den Owner. ${nichtProd.length ? `lab/test/development (${nichtProd.length} Vorschläge) setzt nur der Owner: Web-CMDB oder Proxmox-Tag lab/test/dev.` : ''}`].join('\n'),
+    };
+  }
+
+  /** Owner 22.11. K3 — Umgebung production/staging für mehrere Assets (IDs oder ID-Präfix ≥ 8); lab/test/development nie. */
+  async umgebungSetzen(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const env = String(input.environment ?? '').trim().toLowerCase();
+    const sperre = umgebungGesperrt(env);
+    if (sperre) return { success: false, error: sperre };
+    if (env !== 'production' && env !== 'staging') return { success: false, error: 'environment: production oder staging' };
+    const ids = Array.isArray(input.asset_ids) ? (input.asset_ids as unknown[]).map(String).filter(Boolean) : [];
+    if (!ids.length) return { success: false, error: 'asset_ids erforderlich (Liste)' };
+    const alle = await this.repo.listAssets(userId);
+    const gesetzt: string[] = []; const fehler: string[] = [];
+    for (const id of ids) {
+      const treffer = alle.filter(a => a.id === id || (id.length >= 8 && a.id.startsWith(id)));
+      if (treffer.length !== 1) { fehler.push(`${id}: ${treffer.length ? 'mehrdeutig' : 'nicht gefunden'}`); continue; }
+      const a = treffer[0]!;
+      await this.repo.updateAsset(userId, a.id, { environment: env as any });
+      gesetzt.push(a.name);
+    }
+    return { success: fehler.length === 0, data: { gesetzt, fehler }, display: `Umgebung ${env} gesetzt: ${gesetzt.length}${gesetzt.length ? ` (${gesetzt.slice(0, 20).join(', ')}${gesetzt.length > 20 ? ' …' : ''})` : ''}${fehler.length ? `\nNicht gesetzt: ${fehler.join('; ')}` : ''}`, ...(fehler.length ? { error: fehler.join('; ') } : {}) };
   }
 
   private async decommissionAsset(userId: string, assetId: string): Promise<SkillResult> {

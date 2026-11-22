@@ -11,7 +11,10 @@ Stand 21.11.2026, **vom Owner freigegeben 21.11.2026** („ok wie vorgeschlagen�
 - U2.3: v1927 (Register je Faden, Auslöser Planprüfung 2× in Folge, Owner-Einwand, Korrektur über die ID eines angehaltenen Changes; Zeile „↗ Auf ultra gewechselt, weil …“).
 - Beweis 4 (22.11.): Probe-Change b3e9d951 (low), Owner-Einwand → nächste Antwort begann mit „↗ Auf ultra gewechselt, weil du einen Einwand erhoben hast.“, Log `"ultra":"eskalation:einwand"`, 9 Fable-Aufrufe 3,35 $ (volle Werkzeugrunden mit Faden-Prompt); nach gespeichertem Entwurf lief die dritte Nachricht wieder auf default. Change verworfen.
 - U4: v1928 + App 1.85.0 (Auswahl „Ultra“ nur für die nächste Nachricht, Anzeige „Modell · Gründlichkeit · Auslöser“, `/api/geraete/stufen` mit `grund`/`grundText`, „max“ = maximal; Web ohne Chat-Stufenwahl → keine Änderung). Releases 22.11.: Windows (signiert), Linux (.deb, VM .178 installiert), macOS (notarisiert), iOS TestFlight Build 135. Server-Teil belegt per Probe aus der VM-Gerätesitzung: `zuletzt` = claude-fable-5-2, grund „ausdrücklich“, grundText „ausdrücklich gewählt“; Folgenachricht wieder gpt-6.2-sol „automatisch“; ultra_nutzung 0,43 $.
-- Offen: Beweis 5 (Ausfall), Beweis 6 Sichtprüfung der Auswahl (Owner Windows).
+- Beweis 6 (22.11.): Owner wählte in der Windows-App 1.85.0 „Ultra“; 5 Aufrufe claude-fable-5-2, Auslöser „ausdrücklich“, 1,65 $; Wahl danach wieder „Automatisch“.
+- Beweis 5 (22.11.): Vorher fiel ultra nur bei Netz/5xx/429/Guthaben zurück; ein falsches Modell (404) hätte die Anfrage scheitern lassen → v1929 `ultraFaelltZurueck`. Live: ALFRED_LLM_ULTRA_MODEL=claude-fable-beweis5-gibtsnicht, Probe mit tier ultra → Log „v1922 ultra-Rückfall“ ziel strong, grund „404 not_found_error“, Owner-Meldung ohne Sendefehler, Antwort von claude-opus-5-5, ultra_nutzung Zeile stufe strong (Rückfall). .env danach zurück, Neustart mit claude-fable-5-2 belegt.
+- Gegenprüfung erweitert (Owner 22.11., v1929): zusätzlich ändernder Schritt eines kritischen Skills oder an ausdrücklich produktivem Asset; lab/test/development ausgenommen (setzt nur der Owner, v1930), fehlende Einordnung = produktiv.
+- Alle Beweise 1–6 erbracht.
 
 ## Ziel
 
