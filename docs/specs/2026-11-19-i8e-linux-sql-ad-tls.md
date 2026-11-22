@@ -141,3 +141,30 @@ Betrachtet:
 - Genaue Paketversionen (fest gepinnt wie Paket 1/2), Pfade, Aufteilung von `tls_einrichten` in Anfordern/Einspielen.
 - Ob die Systemprüfung als Tabelle oder als Eigenschaft der Skill-Metadaten umgesetzt wird (deterministisch muss sie sein).
 - Wie der Ressourcen-Agent `ocf:mssql:ag` mit erzwungenem TLS verbindet (Treiber-Einstellungen) — **muss vor `tls_erzwingen` geklärt und belegt sein**.
+
+## 12. Umsetzungsstand (22.11.2026)
+
+**Etappe abgenommen.** Alle Beweise aus Abschnitt 8 sind live erbracht (Changes in der CMDB, Vorhaben c7e02aff). Die Rulings R1–R48 stehen im Plan `docs/superpowers/plans/2026-11-19-i8e-linux-sql-ad-tls.md`, Abschnitt „Umsetzungsstand“ (lokal, gitignored), und in den Commit-Texten.
+
+Releases: v1902–v1906 (Bausteine Tasks 1–9), v1907 (apt ohne needrestart-Neustarts, R27), v1908 (Schrittverweise in der Planprüfung, R29), v1909 (Admin-Clients, R31–R34), v1910 (Medien-Signaturprüfung, win11-pro, R35/R36), v1911–v1921 (Windows-Vorlagen und -Klone R37–R41, SSMS-Download R42/R43, Prüfungs-Zeitlimit R46, UniFi-Prüftexte R45, Windows-Lizenz R44, Anmeldeprobe R48).
+
+| Paket | Change | Ergebnis |
+|---|---|---|
+| L1 Netz, DNS, Zeitquelle, hosts-FQDN | 88248efc | abgeschlossen 19.11. |
+| L2 AD-Objekte, PKI-Vorlage | 2aeb8ffc (Vorläufer 9680859f, e3d19276 abgebrochen) | abgeschlossen 19.11. |
+| L3 Beitritt + Kerberos rollierend | fed31971 (Vorläufer 2c28c7d2 abgebrochen) | abgeschlossen 20.11. |
+| L4 TLS ohne Zwang, rollierend | b2a39f4e (Vorläufer 119cf34e: Batch-Anmelderecht fehlte, R30) | abgeschlossen 20.11. |
+| L5 TLS erzwingen + Failover-Beweis | d5914326 | 52/52 abgeschlossen 20.11. |
+| L6 Admin-Clients mit SSMS | 2c9eeda3, f903b123, 049f6c32, 2d2c5d5b, ab56d72f, 0c8282d6, 3af9930c | abgeschlossen 21.11. |
+
+Belege zu Abschnitt 8:
+- **Kerberos** über sqllnx01, sqllnx02 und `sqllnxag01`, vor und nach Failover hin/zurück, unter Zwang (L5 Schritte 13, 29, 38, 42–44).
+- **TLS erzwungen** auf allen drei Instanzen, sqllnxcfg eingeschlossen (L5 Schritte 39–41). Torbeweis R18: Failover hin und zurück unter Zwang, Pacemaker-Monitor auf allen Knoten fehlerfrei, je 30 min ohne Fehler am Ende (Schritte 25–28, 34–37, 47–49). LOG-Sicherung unter Zwang mit fs01-Kopie (Schritt 46).
+- **Planprüfungs-Negativtest:** `windows_pki sql_tls_anfordern` auf sqllnx01 abgelehnt mit „sqllnx01 ist Linux — windows_pki gehört auf einen Windows-Zugang“ (20.11.).
+- **Owner-Test mit SSMS (L6-E, 21.11. 22:23/22:26):** auf sqladmw11 (Windows 11, VM 119, .20) und sqladm25 (Server 2025 Desktop, .21) `auth_scheme = KERBEROS`, `encrypt_option = TRUE`, Konto AD3033\sqltest-madh (Mitglied `SQL-Linux-Admins`).
+- Bekannte Beweisgrenze: `encrypt_option` für **alle** Sitzungen in `sys.dm_exec_connections` ist nicht einzeln belegt. Belegt sind die Sitzungen der Proben und der erzwungene Zwang auf allen Instanzen.
+
+Offen (nicht blockierend, mit Ort):
+- **R48:** Die geplante Aufgabe unter `svc-sqllnx-test` bleibt auf Windows 11 nach der Anmeldung (Ereignis 4624) auf „Queued“. Server 2025 ist nicht betroffen. Die Anmeldeprobe meldet den Zustand seit v1921 ausdrücklich. Die Ursache wird beim nächsten Win11-Klon geprüft.
+- **Abschnitt 9 Folgeaufgaben** sind noch nicht begonnen: eigenes Alfred-Login, danach `sa` abschalten; M-2 (R9).
+- Testkonto `sqltest-madh` und die RDP-Regel `I8e-L6E-OwnerPC-RDP-Adminclients` bleiben, bis der Owner sie zurücknehmen lässt.
