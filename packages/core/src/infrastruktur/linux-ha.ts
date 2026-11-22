@@ -186,6 +186,8 @@ export const LINUX_HA_BAUSTEINE = {
   fencingPruefen: 'ha.fencing_pruefen', fencingBelegen: 'ha.fencing_belegen',
   agEndpunkt: 'ha.ag_endpunkt', agReplikat: 'ha.ag_replikat', agAbschluss: 'ha.ag_abschluss', agEntfernen: 'ha.ag_entfernen',
   agFailover: 'ha.ag_failover',
+  // I8e Folge-Etappe — Knoten des Zugangs in Pacemaker-Standby und zurück (Erzeuger in linux-ha-standby.ts)
+  knotenStandby: 'ha.knoten_standby',
 } as const;
 /** Zeitgrenzen für `linuxSkript(…, timeoutMs, …)` — am Host läuft das Skript bis timeoutMs − 20 s */
 export const LINUX_HA_ZEIT_MS = {
@@ -195,6 +197,8 @@ export const LINUX_HA_ZEIT_MS = {
   agEndpunkt: 180_000, agReplikat: 240_000, agAbschluss: 900_000, agEntfernen: 300_000,
   // Task 6: Prüfen, pcs resource move, Warten auf Primär/VIP/Gegenstelle (je bis 120 s), pcs resource clear, Selbstprüfung
   agFailover: 600_000,
+  // I8e Folge-Etappe: crm_mon, pcs node standby/unstandby, bis 60 s Warten auf das Attribut
+  knotenStandby: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

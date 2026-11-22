@@ -20,6 +20,7 @@ import {
 import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-bausteine.js';
 import { schwaerze, GEHEIM_NAME } from '../fernzugriff/kaefig.js';
 import { LINUX_AD } from './linux-sql-ad.js';
+import './linux-ha-standby.js';
 
 // Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
 afterEach(() => new Promise<void>(r => setImmediate(r)));

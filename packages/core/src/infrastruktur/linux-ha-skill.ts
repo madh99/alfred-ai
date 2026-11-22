@@ -21,6 +21,7 @@ import {
 } from './linux-ha.js';
 import { linuxSqlKennwort, saName, type LinuxSqlDeps } from './linux-sql-skill.js';
 import { waehleAnmeldung, sqlAnmeldung, type SqlLogin } from './linux-sql-anmeldung.js';
+import { pruefeKnotenStandby } from './linux-ha-standby.js';
 
 const sek = (ms: number) => Math.ceil(ms / 1000);
 /** Mindest-zeitlimitS je Aktion: Baustein-Zeitgrenze + 60 s Puffer */
@@ -36,12 +37,13 @@ export const LINUX_HA_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   ag_entfernen: sek(3 * LINUX_HA_ZEIT_MS.agEntfernen) + 3 * 60,
   // Task 6: Status ×3 (Gate), Failover-Baustein auf dem Ziel — je Baustein 60 s Puffer
   ag_failover: sek(3 * LINUX_HA_ZEIT_MS.status + LINUX_HA_ZEIT_MS.agFailover) + 4 * 60,
+  knoten_standby: sek(LINUX_HA_ZEIT_MS.knotenStandby) + 60,
 };
 
 export type LinuxHaDeps = LinuxSqlDeps;
 
 export const LINUX_HA_LESEND = new Set(['status']);
-export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover']);
+export const LINUX_HA_NUR_IM_CHANGE = new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover', 'knoten_standby']);
 /** Task 4 — fencing_pruefen hat keinen Rückweg; nur mit genau diesem Grund (change-schritte.ts, OHNE_RUECKWEG_NUR_MIT_GRUND) */
 export const FENCING_OHNE_RUECKWEG_GRUND = 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -419,6 +421,7 @@ export class LinuxHaSkill extends Skill {
       + `sonst pcs resource move ${HA_AG_KLON} <ziel> --promoted, warten bis Primär = Ziel, immer pcs resource clear (auch bei Zeitüberschreitung — eine verbliebene Standort-Bedingung steht im Fehler), VIP und Gegenstelle SECONDARY/synchron abwarten, Selbstprüfung; `
       + 'Ergebnis Dauer (s), neuer Primär, VIP-Ort. Ziel schon Primär → nichts zu tun (eine liegengebliebene cli-prefer wird sichtbar freigegeben). Rückweg ist immer ag_failover zurück (zugang und ziel vertauscht). '
       + 'Status zeigt dazu „AG <name>: Promoted …, VIP …, required_sync Ressource 0 / SQL 0, Replikate … SYNCHRONIZED …, Standort-Bedingungen 0“ (offen: „Standort-Bedingungen OFFEN: …“ — Prüfung nichtEnthalten „OFFEN“). '
+      + 'knoten_standby (nur im Change; zugang, an true/false) — setzt den Pacemaker-Knoten DES ZUGANGS in Standby (pcs node standby) bzw. zurück; vorher ohne Änderung: Quorum, alle Knoten online, nie der Primär (Promoted ag_cluster); Selbstprüfung standby-Attribut in crm_mon; Rückweg Pflicht knoten_standby mit an umgekehrt. Nötig vor linux_sql sa_kennwort_setzen (Dienst wird gestoppt). '
       + 'Sonst ohne Rückweg nur beim Neuaufbau (derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit) oder mit ohneSicherungGrund — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -428,6 +431,7 @@ export class LinuxHaSkill extends Skill {
       properties: {
         action: { type: 'string', enum: [...LINUX_HA_LESEND, ...LINUX_HA_NUR_IM_CHANGE] },
         zugang: { type: 'string', description: 'Name des Linux-Fernzugangs (z. B. sqllnx02)' },
+        an: { type: 'boolean', description: 'knoten_standby: true = Knoten des Zugangs in Standby, false = zurückholen (Rückweg)' },
         rolle: { type: 'string', enum: ['daten', 'konfig'], description: 'ha_vorbereiten: daten (Datenreplikat) oder konfig (CONFIGURATION_ONLY, sqllnxcfg)' },
         knoten: { type: 'array', description: 'ha_vorbereiten: genau drei Knoten {name, ip} (Standard sqllnx01/02/cfg); cluster_anlegen/cluster_entfernen: Knotennamen (nur sqllnx01, sqllnx02, sqllnxcfg — feste IPs)' },
         cluster: { type: 'string', description: `cluster_anlegen/cluster_entfernen: Clustername (Standard ${HA_CLUSTER_NAME})` },
@@ -463,6 +467,7 @@ export class LinuxHaSkill extends Skill {
       if (action === 'ag_anlegen') agAnlegenParameter(String(input.zugang), input);
       if (action === 'ag_entfernen') agEntfernenBesetzung(String(input.zugang), input);
       if (action === 'ag_failover') agFailoverParameter(String(input.zugang), input);
+      if (action === 'knoten_standby') { const f = pruefeKnotenStandby(input); if (f) throw new Error(f); }
     } catch (err) { return (err as Error).message.slice(0, 200); }
     return undefined;
   }
@@ -485,6 +490,7 @@ export class LinuxHaSkill extends Skill {
         case 'ag_anlegen': return await this.agAnlegen(zugang, input, geheim);
         case 'ag_entfernen': return await this.agEntfernen(zugang, input, geheim);
         case 'ag_failover': return await this.agFailover(zugang, input, geheim);
+        case 'knoten_standby': return await this.knotenStandby(zugang, input);
       }
     } catch (err) {
       const daten = err instanceof AgFehler ? err.daten : undefined;
@@ -803,6 +809,17 @@ export class LinuxHaSkill extends Skill {
    * STONITH (Wertung wie ag_anlegen/clusterText), keine Corosync-Sperre, kein ausstehender Reset; (1) Baustein ha.ag_failover auf dem Ziel
    * (nur dessen sa); (2) Ergebnis gegen das Ziel prüfen. Abbruch mit Teiländerungen → Daten (teilweise → Rückweg ag_failover zurück).
    */
+  /** I8e Folge-Etappe — Knoten des Zugangs in Pacemaker-Standby bzw. zurück (Baustein prüft Quorum, online, nie den Primär) */
+  private async knotenStandby(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const f = pruefeKnotenStandby(input); if (f) throw new Error(f);
+    const an = input.an as boolean;
+    const r = await this.lauf<{ zustand: string; knoten?: string; standby?: boolean }>(zugang, LINUX_HA_BAUSTEINE.knotenStandby, { an }, `Knoten-Standby ${an ? 'an' : 'aus'}`, LINUX_HA_ZEIT_MS.knotenStandby);
+    if (r.standby !== an) throw new Error(`knoten_standby ${zugang}: Nachprüfung fehlgeschlagen (standby ${String(r.standby)}, Soll ${String(an)})`);
+    this.d.protokoll?.('I8e Knoten-Standby', { zugang, knoten: r.knoten, an, zustand: r.zustand });
+    const text = `Knoten ${r.knoten ?? zugang}: Standby ${an ? 'an' : 'aus'}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
   private async agFailover(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const spur: AgSpur = { laeufe: [], tresor: [] };
     try { return await this.agFailoverLauf(zugang, input, geheim, spur); } catch (err) { throw this.mitSpur('Geplantes Failover', zugang, err, spur, geheim); }

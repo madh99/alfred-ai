@@ -253,7 +253,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   // prüft, dass AG, Endpunkt, alfred_ag_*-Objekte, Pacemaker-Login und Zugangsdatei weg sind (Datenbanken bleiben, Zustand gemeldet)
   // Task 6 — ag_failover prüft Primär/Promoted/VIP auf dem Ziel, Gegenstelle SECONDARY und synchron, required_sync 0 in SQL und Ressource,
   // keine Standort-Bedingung mehr (pcs resource clear)
-  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover']),
+  linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover',
+    // I8e Folge-Etappe — Standby: standby-Attribut in crm_mon zurückgelesen
+    'knoten_standby']),
 };
 /**
  * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
@@ -266,6 +268,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }],
     ['ag_anlegen', { skill: 'linux_ha', aktion: 'ag_entfernen', text: 'linux_ha.ag_entfernen (zugang, ag)' }],
     ['ag_failover', { skill: 'linux_ha', aktion: 'ag_failover', text: 'linux_ha.ag_failover (zugang = Ziel, ziel = bisheriger Primär)', parameter: failoverZurueck }],
+    // I8e Folge-Etappe — Standby: Rückweg genau knoten_standby mit umgekehrtem an auf demselben Zugang
+    ['knoten_standby', { skill: 'linux_ha', aktion: 'knoten_standby', text: 'linux_ha.knoten_standby (zugang, an umgekehrt)', parameter: schalterZurueck('knoten_standby') }],
   ]),
   // I8e Etappe 3 Task 4 — Domänenbeitritt: Rückweg genau linux_sql.ad_verlassen auf demselben Zugang (auch beim Neuaufbau)
   linux_sql: new Map([
