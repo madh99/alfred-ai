@@ -104,11 +104,14 @@ export class CmdbRepository {
         [userId, asset.name, asset.assetType],
       );
       if (existing) {
+        // Owner 22.11. (K5) — wie beim Abgleich (v1715): nicht mitgegebene Felder (undefined → NULL) bleiben erhalten;
+        // vorher setzte ein erneutes add_asset ohne environment die gepflegte Umgebung auf leer zurück.
         await this.db.execute(
           `UPDATE cmdb_assets SET
-            identifier = ?, environment = ?, status = ?,
-            ip_address = ?, hostname = ?, fqdn = ?, location = ?, owner = ?, purpose = ?,
-            attributes = ?, tags = ?, notes = ?, updated_at = ?
+            identifier = COALESCE(?, identifier), environment = COALESCE(?, environment), status = ?,
+            ip_address = COALESCE(?, ip_address), hostname = COALESCE(?, hostname), fqdn = COALESCE(?, fqdn), location = COALESCE(?, location),
+            owner = COALESCE(?, owner), purpose = COALESCE(?, purpose),
+            attributes = ?, tags = COALESCE(?, tags), notes = COALESCE(?, notes), updated_at = ?
           WHERE id = ?`,
           [
             asset.identifier ?? null, asset.environment ?? null, asset.status ?? 'active',

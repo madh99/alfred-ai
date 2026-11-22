@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
 import { changeFingerabdruck, freigabeText, plaeneAusSchritten, pruefeChangePlan, schrittText, pruefText, zyklus, type Auswirkung, type ChangePlan, type ChangeSchritt, type PruefKontext } from './change-schritte.js';
-import { gegenpruefungNoetig, vermerkText, grenzeText, MAX_GEGENPRUEFUNGEN, ULTRA_QUELLE, type UltraBefund, type GegenpruefungVermerk } from './ultra-gegenpruefung.js'; // Spec Stufe ultra U2.2
+import { gegenpruefungAusloeser, vermerkText, grenzeText, MAX_GEGENPRUEFUNGEN, ULTRA_QUELLE, type UltraBefund, type GegenpruefungVermerk } from './ultra-gegenpruefung.js'; // Spec Stufe ultra U2.2
 
 export interface ChangeSpeicher {
   liste(owner: string): Promise<CmdbChangeRequest[]>;
@@ -30,7 +30,7 @@ const hash = (nonce: string) => createHash('sha256').update(nonce).digest('hex')
 export interface ChangeDeps {
   itsm: ChangeSpeicher;
   skill: PruefKontext['skill'];
-  assets: () => Promise<Array<{ id: string; name: string; hostname?: string; status?: string; assetType?: string; sourceId?: string; sourceSkill?: string }>>;
+  assets: () => Promise<Array<{ id: string; name: string; hostname?: string; status?: string; assetType?: string; sourceId?: string; sourceSkill?: string; environment?: string }>>;
   auswirkung: (assetIds: string[], ohneChangeId?: string) => Promise<Auswirkung>;
   bestaetigung?: (frage: { description: string; params: Record<string, unknown> }) => Promise<boolean>;
   jetzt?: () => number;
@@ -407,7 +407,10 @@ export class ChangePlanung {
    */
   private async gegenpruefen(owner: string, c: CmdbChangeRequest): Promise<{ fehler?: string; vermerk?: string }> {
     const g = this.d.gegenpruefung;
-    if (!g || !this.d.einwand || !gegenpruefungNoetig(c.riskLevel)) return {};
+    if (!g || !this.d.einwand) return {};
+    // Owner 22.11. (G1) — Risiko high/critical ODER ändernder Schritt an kritischer Systemklasse/produktivem Asset (fail-closed)
+    const grund = gegenpruefungAusloeser(c, await this.d.assets().catch(() => []));
+    if (!grund) return {};
     const kurz = `${c.title} (${c.id.slice(0, 8)})`;
     const alt = await g.vermerk(owner, c.id);
     // Vermerk gilt nur für genau den geprüften Plan; geänderter Plan → neu prüfen (begrenzt, danach offen ausgewiesen)
@@ -419,9 +422,9 @@ export class ChangePlanung {
       this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung nicht lesbar', { id: c.id, fehler: r.fehler });
       return { fehler: `${kurz}: Gegenprüfung durch ultra nicht lesbar (${r.fehler}) — keine Freigabe-Frage gestellt; freigabe_anfragen erneut aufrufen` };
     }
-    const v: GegenpruefungVermerk = { fingerabdruck: c.fingerabdruck!, befunde: r.befunde.length, ...(r.modell ? { modell: r.modell } : {}), zeit: new Date(this.d.jetzt?.() ?? Date.now()).toISOString(), pruefungen: bisher + 1 };
+    const v: GegenpruefungVermerk = { fingerabdruck: c.fingerabdruck!, befunde: r.befunde.length, ...(r.modell ? { modell: r.modell } : {}), zeit: new Date(this.d.jetzt?.() ?? Date.now()).toISOString(), pruefungen: bisher + 1, grund };
     await g.setzeVermerk(owner, c.id, v);
-    this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung', { id: c.id, risiko: c.riskLevel, befunde: r.befunde.length, modell: r.modell });
+    this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung', { id: c.id, risiko: c.riskLevel, grund, befunde: r.befunde.length, modell: r.modell });
     if (!r.befunde.length) return { vermerk: vermerkText(v) };
     const zeilen: string[] = [];
     for (const b of r.befunde) {

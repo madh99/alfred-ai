@@ -7,6 +7,8 @@
  * Regel fassen lässt. Deterministisch ist nur der Auslöser (Risiko), nie eine Einschätzung des Modells.
  */
 
+import { aktionsArt } from './change-schritte.js';
+
 export const GEGENPRUEFUNG_RISIKEN = new Set(['high', 'critical']);
 export const ULTRA_QUELLE = 'ultra';
 const MAX_BEFUNDE = 8;
@@ -35,6 +37,48 @@ export const GEGENPRUEFUNG_SYSTEM = [
 
 export function gegenpruefungNoetig(risiko: string | undefined): boolean {
   return GEGENPRUEFUNG_RISIKEN.has(String(risiko ?? '').toLowerCase());
+}
+
+/**
+ * Owner-Freigabe 22.11. (G1) — zusätzliche feste Auslöser, unabhängig vom Risiko, das das planende Modell selbst einträgt:
+ * ein ändernder Schritt eines Skills der kritischen Systemklassen oder an einem ausdrücklich produktiven Asset — außer alle
+ * betroffenen Assets sind ausdrücklich lab/test/development. Die Liste steht im Code, nie im Prompt.
+ */
+export const KRITISCHE_SKILLS = new Set(['windows_ad', 'windows_pki', 'windows_cluster', 'sql_server', 'linux_sql', 'linux_ha', 'proxmox', 'unifi', 'pfsense', 'mikrotik']);
+/** pki_lab arbeitet selbst nur auf Lab-Rechnern (prüft das vor jedem Baustein) */
+const NIE_KRITISCH = new Set(['pki_lab']);
+const NICHT_PRODUKTIV = new Set(['lab', 'test', 'development']);
+
+/** K1 (fail-closed) — produktiv ist alles, was nicht ausdrücklich lab/test/development ist; fehlende Einordnung zählt als produktiv. */
+export function istProduktiv(environment: string | undefined | null): boolean {
+  return !NICHT_PRODUKTIV.has(String(environment ?? '').trim().toLowerCase());
+}
+
+export interface AuslöserAsset { id: string; name: string; environment?: string | null }
+
+/** Grund der Gegenprüfung (für Log und Freigabe-Frage) oder undefined, wenn keine nötig ist. */
+export function gegenpruefungAusloeser(
+  c: { riskLevel?: string; schritte?: unknown[]; affectedAssetIds?: string[] },
+  assets: AuslöserAsset[],
+): string | undefined {
+  const risiko = String(c.riskLevel ?? '').toLowerCase();
+  if (GEGENPRUEFUNG_RISIKEN.has(risiko)) return `Risiko ${risiko}`;
+  // unbekannte IDs (Asset fehlt in der CMDB) zählen wie fehlende Einordnung als produktiv
+  const betroffen: AuslöserAsset[] = (c.affectedAssetIds ?? []).map(id => assets.find(a => a.id === id) ?? { id, name: id.slice(0, 8) });
+  const produktiv = betroffen.filter(a => istProduktiv(a.environment));
+  if (betroffen.length > 0 && produktiv.length === 0) return undefined; // alle ausdrücklich lab/test/development
+  const namen = (l: AuslöserAsset[]) => l.slice(0, 3).map(a => a.name).join(', ') + (l.length > 3 ? ` (+${l.length - 3})` : '');
+  const ziel = produktiv.length ? `${namen(produktiv)} (produktiv)` : 'Ziel ohne Asset-Angabe (gilt als produktiv)';
+  const ausdruecklich = produktiv.filter(a => String(a.environment ?? '').toLowerCase() === 'production');
+  for (const roh of c.schritte ?? []) {
+    const s = (roh ?? {}) as { art?: string; skill?: string; aktion?: string; parameter?: Record<string, unknown>; einordnung?: string };
+    if (s.art !== 'aktion' || !s.skill || !s.aktion || NIE_KRITISCH.has(s.skill)) continue;
+    const art = s.einordnung ?? aktionsArt(s.skill, s.aktion, s.parameter);
+    if (art !== 'aendern' && art !== 'loeschen') continue;
+    if (KRITISCHE_SKILLS.has(s.skill)) return `ändernder Schritt ${s.skill}.${s.aktion} an ${ziel}`;
+    if (ausdruecklich.length) return `ändernder Schritt ${s.skill}.${s.aktion} an ${namen(ausdruecklich)} (production)`;
+  }
+  return undefined;
 }
 
 export function gegenpruefungFrage(c: { id: string; title: string; riskLevel: string }, plan: Record<string, unknown>): string {
@@ -70,11 +114,13 @@ export function leseBefunde(antwort: string): UltraBefund[] | undefined {
  * wird neu geprüft — höchstens MAX_GEGENPRUEFUNGEN-mal je Change; danach sagt die Freigabe-Frage offen, dass die letzte
  * Fassung nicht gegengeprüft ist (der Owner entscheidet mit diesem Wissen).
  */
-export interface GegenpruefungVermerk { fingerabdruck: string; befunde: number; modell?: string; zeit: string; pruefungen?: number }
+export interface GegenpruefungVermerk { fingerabdruck: string; befunde: number; modell?: string; zeit: string; pruefungen?: number; grund?: string }
 export const MAX_GEGENPRUEFUNGEN = 3;
 
 export function vermerkText(v: GegenpruefungVermerk): string {
-  const nr = (v.pruefungen ?? 1) > 1 ? ` (${v.pruefungen}. Prüfung, nach Überarbeitung)` : '';
+  // G2 — Anlass der Prüfung in der Freigabe-Frage
+  const teile = [...((v.pruefungen ?? 1) > 1 ? [`${v.pruefungen}. Prüfung, nach Überarbeitung`] : []), ...(v.grund ? [`Anlass: ${v.grund}`] : [])];
+  const nr = teile.length ? ` (${teile.join('; ')})` : '';
   return v.befunde === 0 ? `Von ultra gegengeprüft${nr}: keine Befunde.` : `Von ultra gegengeprüft${nr}: ${v.befunde} ${v.befunde === 1 ? 'Befund' : 'Befunde'} (Antworten unten).`;
 }
 

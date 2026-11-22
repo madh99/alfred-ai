@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Stufe ultra fällt bei jedem Fehler auf strong zurück (v1929, Spec Stufe ultra Beweis 5)
+
+- Bisher fiel eine ultra-Anfrage nur bei Netz-, 5xx-, 429- und Guthabenfehlern auf eine andere Stufe zurück. Ein falsch konfiguriertes Modell (404 „not_found“), ein abgelaufener Zugang oder ein abgelehnter Parameter ließen die Anfrage scheitern.
+- Jetzt geht jeder Fehler der Stufe ultra auf strong (danach default usw.), mit Meldung an den Owner, auch beim Streamen vor der ersten Ausgabe. Ausgenommen ist nur ein Abbruch durch den Owner.
+- Für alle anderen Stufen bleibt die bisherige Regel.
+
+### Changed — Gegenprüfung durch ultra auch nach festen Merkmalen des Plans (v1929, Owner-Freigabe 22.11.)
+
+- Bisher löste nur das Risiko high oder critical die Gegenprüfung aus, und dieses Risiko trägt das planende Modell selbst ein.
+- Zusätzlich läuft sie jetzt bei jedem Risiko, wenn ein ändernder Schritt eines Skills der kritischen Systemklassen vorkommt (windows_ad, windows_pki, windows_cluster, sql_server, linux_sql, linux_ha, proxmox, unifi, pfsense, mikrotik) oder ein ändernder Schritt ein ausdrücklich produktives Asset betrifft. Die Liste steht im Code.
+- Ausgenommen sind Changes, deren betroffene Assets alle ausdrücklich lab, test oder development sind, sowie pki_lab.
+- Fail-closed: Ein Asset ohne Einordnung oder ein Plan ohne betroffene Assets gilt als produktiv.
+- Die Freigabe-Frage nennt den Anlass, z. B. „Von ultra gegengeprüft (Anlass: ändernder Schritt windows_ad.gruppe_anlegen an dc01 (produktiv)): keine Befunde.“
+
+### Fixed — CMDB: erneutes manuelles Anlegen leert gepflegte Felder nicht mehr (v1929)
+
+- Wurde ein Asset ohne Quelle erneut angelegt, setzte das Umgebung, Zweck, Besitzer, Ort, Tags, Notizen und Adressen auf leer zurück. Jetzt bleiben nicht mitgegebene Felder erhalten, wie beim Abgleich der Quellen seit v1715.
+
 ### Added — Stufe ultra in der App (v1928, App 1.85.0, Spec Stufe ultra U4)
 
 - Die Stufenwahl der App bietet „Ultra“ an, sobald der Server die Stufe hat. Die Wahl gilt nur für die nächste Nachricht und springt danach auf „Automatisch“ zurück. Eine Nachricht in der Warteschlange behält die gewählte Stufe.

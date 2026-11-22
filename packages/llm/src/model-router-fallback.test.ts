@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ModelRouter, fallbackKette } from './model-router.js';
+import { ModelRouter, fallbackKette, ultraFaelltZurueck } from './model-router.js';
 import type { LLMProvider } from './provider.js';
 import type { LLMResponse, MultiModelConfig } from '@alfred/types';
 
@@ -11,17 +11,19 @@ import type { LLMResponse, MultiModelConfig } from '@alfred/types';
  */
 
 const CREDIT_ERROR = new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}');
+const NOTFOUND_ERROR = Object.assign(new Error('404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-fable-test-gibtsnicht"}}'), { status: 404 });
 
-function mockProvider(behavior: 'ok' | 'billing' | 'overloaded', label: string): LLMProvider {
+function mockProvider(behavior: 'ok' | 'billing' | 'overloaded' | 'notfound', label: string): LLMProvider {
   return {
     async initialize() { /* noop */ },
     async complete(): Promise<LLMResponse> {
       if (behavior === 'billing') throw CREDIT_ERROR;
       if (behavior === 'overloaded') throw new Error('529 overloaded_error');
+      if (behavior === 'notfound') throw NOTFOUND_ERROR;
       return { content: `antwort-von-${label}`, model: label, usage: { inputTokens: 1, outputTokens: 1 } } as LLMResponse;
     },
     async *stream() {
-      if (behavior !== 'ok') throw behavior === 'billing' ? CREDIT_ERROR : new Error('529 overloaded');
+      if (behavior !== 'ok') throw behavior === 'billing' ? CREDIT_ERROR : behavior === 'notfound' ? NOTFOUND_ERROR : new Error('529 overloaded');
       yield { type: 'text', text: `stream-${label}` };
     },
     async embed() { return undefined; },
@@ -289,6 +291,26 @@ describe('v1922 Stufe ultra', () => {
     const teile: string[] = [];
     for await (const ev of r2.stream({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never)) if ((ev as { type: string; text?: string }).type === 'text') teile.push((ev as { text: string }).text);
     expect(teile).toEqual(['stream-opus']);
+  });
+  it('Beweis 5: ultra mit falschem Modell (404) → strong mit Meldung, auch im Stream; andere Stufen werfen 404 weiter', async () => {
+    const cfg = { strong: { provider: 'anthropic', model: 'opus-test' }, ultra: { provider: 'anthropic', model: 'claude-fable-test-gibtsnicht' } } as Partial<MultiModelConfig>;
+    const r = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('ok', 'opus'), ultra: mockProvider('notfound', 'fable') }, cfg);
+    const meldungen: Array<{ ziel: string; grund: string }> = [];
+    r.setUltraRueckfallCallback(i => meldungen.push(i));
+    expect((await r.complete({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never)).content).toBe('antwort-von-opus');
+    expect(meldungen[0]?.ziel).toBe('strong');
+    expect(meldungen[0]?.grund).toMatch(/not_found_error/);
+    const teile: string[] = [];
+    for await (const ev of r.stream({ messages: [{ role: 'user', content: 'x' }], tier: 'ultra' } as never)) if ((ev as { type: string }).type === 'text') teile.push((ev as { text: string }).text);
+    expect(teile).toEqual(['stream-opus']);
+    const r2 = buildRouter({ default: mockProvider('ok', 'gpt'), strong: mockProvider('notfound', 'opus') }, cfg);
+    await expect(r2.complete({ messages: [{ role: 'user', content: 'x' }], tier: 'strong' } as never)).rejects.toThrow(/404/);
+  });
+  it('ultraFaelltZurueck: nur ultra, nie bei Abbruch durch den Owner', () => {
+    expect(ultraFaelltZurueck('ultra', NOTFOUND_ERROR)).toBe(true);
+    expect(ultraFaelltZurueck('strong', NOTFOUND_ERROR)).toBe(false);
+    expect(ultraFaelltZurueck('ultra', Object.assign(new Error('Request was aborted.'), { name: 'AbortError' }))).toBe(false);
+    expect(ultraFaelltZurueck('ultra', new Error('Request was aborted.'))).toBe(false);
   });
   it('ultra ist nie Ersatz für andere Stufen; Kette nach ultra beginnt mit strong', () => {
     expect(fallbackKette('ultra')).toEqual(['strong', 'default', 'medium', 'fast', 'fallback']);

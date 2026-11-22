@@ -10,8 +10,16 @@ import type { GegenpruefungVermerk, UltraBefund } from './ultra-gegenpruefung.js
  * Einwände (Quelle ultra) mit Antwortpflicht; Risiko low bekommt keine Prüfung; unlesbar → keine Freigabe-Frage.
  */
 const skill = (name: string, aktionen: string[]) => ({ metadata: { name, inputSchema: { type: 'object', properties: { action: { type: 'string', enum: aktionen }, vmid: { type: 'number' }, name: { type: 'string' } }, required: ['action'] } } });
-const SKILLS: Record<string, unknown> = { proxmox: skill('proxmox', ['vm_status', 'create_snapshot', 'delete_snapshot', 'list_vms']) };
-const assets = [{ id: 'a-test', name: 'test-vm' }];
+const SKILLS: Record<string, unknown> = { proxmox: skill('proxmox', ['vm_status', 'create_snapshot', 'delete_snapshot', 'list_vms', 'set_vm_config']) };
+const assets: Array<{ id: string; name: string; environment?: string }> = [{ id: 'a-test', name: 'test-vm' }];
+/** Owner 22.11. (G1) — Plan mit ändernder Aktion eines kritischen Skills (proxmox.set_vm_config) */
+const aendernPlan = (risiko: string, ziel = 'test-vm') => ({
+  titel: `Konfiguration ${risiko}`, begruendung: 'Probe für die Gegenprüfung nach G1', typ: 'normal', risiko, ausfallMinuten: 0, betroffen: [ziel],
+  schritte: [
+    { titel: 'Snapshot anlegen', art: 'aktion', skill: 'proxmox', aktion: 'create_snapshot', parameter: { vmid: 9001, name: 'p' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'list_vms', erwartet: 'p' }, rueckweg: { skill: 'proxmox', aktion: 'delete_snapshot', parameter: { vmid: 9001, name: 'p' } } },
+    { titel: 'Name setzen', art: 'aktion', skill: 'proxmox', aktion: 'set_vm_config', parameter: { vmid: 9001, name: 'neu' }, pruefung: { typ: 'skill', skill: 'proxmox', aktion: 'vm_status', erwartet: 'neu' }, rueckweg: { skill: 'proxmox', aktion: 'set_vm_config', parameter: { vmid: 9001, name: 'alt' } } },
+  ],
+});
 const keineAuswirkung = async (ids: string[]) => ({ assets: ids, abhaengige: [], services: [], kritisch: false, offeneIncidents: [], ueberschneidungen: [] });
 const plan = (risiko: string) => ({
   titel: `Snapshot ${risiko}`, begruendung: 'Probe für die Gegenprüfung', typ: 'normal', risiko, ausfallMinuten: 0, betroffen: ['test-vm'],
@@ -21,7 +29,7 @@ const plan = (risiko: string) => ({
   ],
 });
 
-function aufbau(antworten: Array<{ befunde: UltraBefund[] } | { fehler: string }>) {
+function aufbau(antworten: Array<{ befunde: UltraBefund[] } | { fehler: string }>, liste = assets) {
   const db = new Map<string, CmdbChangeRequest>(); let n = 0;
   const aus = (d: ChangeSchrittDaten, id: string): CmdbChangeRequest => ({
     id, userId: 'o', title: d.title, description: d.description, type: d.type, status: 'submitted', riskLevel: d.riskLevel, affectedAssetIds: d.affectedAssetIds, affectedServiceIds: [],
@@ -51,7 +59,7 @@ function aufbau(antworten: Array<{ befunde: UltraBefund[] } | { fehler: string }
   let aufrufe = 0;
   const fragen: string[] = [];
   const pl = new ChangePlanung({
-    itsm: itsm as never, skill: n => SKILLS[n] as never, assets: async () => assets, auswirkung: keineAuswirkung, einwand,
+    itsm: itsm as never, skill: n => SKILLS[n] as never, assets: async () => liste, auswirkung: keineAuswirkung, einwand,
     bestaetigung: async f => { fragen.push(f.description); return true; },
     gegenpruefung: {
       pruefe: async () => { const r = antworten[aufrufe++]; if (!r) throw new Error('unerwarteter Aufruf'); return 'befunde' in r ? { ...r, modell: 'claude-fable-5-2' } : r; },
@@ -81,7 +89,7 @@ describe('Spec Stufe ultra U2.2 — Gegenprüfung in freigabe_anfragen', () => {
     const f2 = await a.pl.freigabeAnfragen('o', [id]);
     expect(f2.ok).toBe(true);
     expect(a.aufrufe()).toBe(1); // einmal je Change
-    expect(a.fragen[0]).toContain('Von ultra gegengeprüft: 1 Befund');
+    expect(a.fragen[0]).toContain('Von ultra gegengeprüft (Anlass: Risiko high): 1 Befund');
     expect(a.fragen[0]).toContain('Befunde der Gegenprüfung (ultra):');
     expect(a.fragen[0]).toContain('nicht umgesetzt: list_vms zeigt');
   });
@@ -97,7 +105,7 @@ describe('Spec Stufe ultra U2.2 — Gegenprüfung in freigabe_anfragen', () => {
     await aendere('zwei');
     expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
     expect(a.aufrufe()).toBe(2);
-    expect(a.fragen[1]).toContain('Von ultra gegengeprüft (2. Prüfung, nach Überarbeitung): keine Befunde.');
+    expect(a.fragen[1]).toContain('Von ultra gegengeprüft (2. Prüfung, nach Überarbeitung; Anlass: Risiko high): keine Befunde.');
     await aendere('drei');
     expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
     await aendere('vier');
@@ -111,7 +119,7 @@ describe('Spec Stufe ultra U2.2 — Gegenprüfung in freigabe_anfragen', () => {
     const r = await a.pl.planen('o', [plan('kritisch')]);
     if (!r.ok) throw new Error(r.fehler.join('\n'));
     expect((await a.pl.freigabeAnfragen('o', [r.changes[0]!.id])).ok).toBe(true);
-    expect(a.fragen[0]).toContain('Von ultra gegengeprüft: keine Befunde.');
+    expect(a.fragen[0]).toContain('Von ultra gegengeprüft (Anlass: Risiko critical): keine Befunde.');
   });
 
   it('Risiko low und medium: keine Gegenprüfung', async () => {
@@ -121,6 +129,23 @@ describe('Spec Stufe ultra U2.2 — Gegenprüfung in freigabe_anfragen', () => {
     expect((await a.pl.freigabeAnfragen('o', r.changes.map(c => c.id))).ok).toBe(true);
     expect(a.aufrufe()).toBe(0);
     expect(a.fragen[0]).not.toContain('ultra');
+  });
+
+  it('G1: Risiko low, ändernder Schritt eines kritischen Skills an nicht eingeordnetem Asset → Gegenprüfung mit Anlass', async () => {
+    const a = aufbau([{ befunde: [] }]);
+    const r = await a.pl.planen('o', [aendernPlan('niedrig')]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect((await a.pl.freigabeAnfragen('o', [r.changes[0]!.id])).ok).toBe(true);
+    expect(a.aufrufe()).toBe(1);
+    expect(a.fragen[0]).toContain('Anlass: ändernder Schritt proxmox.set_vm_config an test-vm (produktiv)');
+  });
+
+  it('G1: alle betroffenen Assets ausdrücklich lab/test → keine Gegenprüfung', async () => {
+    const a = aufbau([], [{ id: 'a-lab', name: 'lab-vm', environment: 'lab' }]);
+    const r = await a.pl.planen('o', [aendernPlan('mittel', 'lab-vm')]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    expect((await a.pl.freigabeAnfragen('o', [r.changes[0]!.id])).ok).toBe(true);
+    expect(a.aufrufe()).toBe(0);
   });
 
   it('unlesbar: keine Frage, kein Vermerk, erneuter Aufruf prüft neu (fail-closed)', async () => {

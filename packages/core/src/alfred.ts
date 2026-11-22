@@ -7632,7 +7632,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             legeStandardAn: (o, d, v) => itsmI3.legeStandardChangeAn(o, d, v),
           },
           skill: (n) => skillRegistry.get(n) as never,
-          assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status, assetType: a.assetType, ...(a.sourceId ? { sourceId: a.sourceId } : {}), ...(a.sourceSkill ? { sourceSkill: a.sourceSkill } : {}) })); },
+          assets: async () => { const o = ownerFz(); if (!o) return []; return (await cmdbFz.listAssets(o).catch(() => [])).filter(a => a.status !== 'decommissioned').map(a => ({ id: a.id, name: a.name, ...(a.hostname ? { hostname: a.hostname } : {}), status: a.status, assetType: a.assetType, ...(a.sourceId ? { sourceId: a.sourceId } : {}), ...(a.sourceSkill ? { sourceSkill: a.sourceSkill } : {}), ...(a.environment ? { environment: a.environment } : {}) })); },
           auswirkung: auswirkungI3,
           bestaetigung: async (frage) => {
             if (!this.confirmationQueue) return false;

@@ -64,6 +64,18 @@ const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'fal
  * v1922 (Spec Stufe ultra, U1) — Kette nach einem Ausfall: ultra fällt zuerst auf strong (gleiche Güteklasse), erst dann default usw.;
  * ultra selbst ist nie Ersatz für eine andere Stufe (doppelter Preis, nur auf Auslöser).
  */
+/**
+ * Spec Stufe ultra U1/Beweis 5 — ultra ist eine optionale Zusatzstufe: Jeder Fehler (auch 4xx wie „Modell nicht gefunden“,
+ * abgelaufener Zugang, unbekannter Parameter) fällt auf strong zurück, statt die Anfrage scheitern zu lassen. Ausgenommen ist
+ * nur ein Abbruch durch den Owner. Andere Stufen behalten die bisherige Regel (nur Netz, 5xx, 429, Guthaben).
+ */
+export function ultraFaelltZurueck(tier: ModelTier, err: unknown): boolean {
+  if (tier !== 'ultra') return false;
+  const e = err as { name?: string; message?: string } | undefined;
+  if (e?.name === 'AbortError' || /\babort(ed)?\b/i.test(String(e?.message ?? ''))) return false;
+  return true;
+}
+
 export function fallbackKette(failedTier: ModelTier): ModelTier[] {
   if (failedTier === 'ultra') return ['strong', ...FALLBACK_ORDER.filter(t => t !== 'strong')];
   return FALLBACK_ORDER.filter(t => t !== failedTier);
@@ -210,7 +222,7 @@ export class ModelRouter extends LLMProvider {
       // Summarizer aus, obwohl OpenAI als default-Tier verfügbar war.
       const billing = this.isBillingError(err);
       if (billing) this.registerBillingFailure(resolvedTier, err);
-      if (!billing && !this.isRetryableError(err)) throw err;
+      if (!billing && !this.isRetryableError(err) && !ultraFaelltZurueck(resolvedTier, err)) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier, billing },
         billing ? 'Provider billing failure (credit/quota), attempting fallback' : 'Provider failed, attempting fallback',
@@ -492,7 +504,7 @@ export class ModelRouter extends LLMProvider {
       const billing = this.isBillingError(err);
       if (billing) this.registerBillingFailure(resolvedTier, err);
       this.meldePuls('fehler', resolvedTier, err);
-      if (hasYielded || (!billing && !this.isRetryableError(err))) throw err;
+      if (hasYielded || (!billing && !this.isRetryableError(err) && !ultraFaelltZurueck(resolvedTier, err))) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier, billing },
         'Stream provider failed before first chunk, attempting fallback',

@@ -13,4 +13,15 @@ describe('v1715 — Quellen-Abgleich leert gepflegte Felder nicht', () => {
     const u = sql.find(q => q.includes('UPDATE cmdb_assets'))!;
     for (const f of ['purpose', 'notes', 'owner', 'location', 'tags', 'fqdn', 'environment']) expect(u).toContain(`COALESCE(?, ${f})`);
   });
+  it('K5 (Owner 22.11.) — erneutes manuelles Anlegen ohne Quelle leert Umgebung und gepflegte Felder nicht', async () => {
+    const sql: string[] = [];
+    const db = {
+      queryOne: async (q: string) => (q.startsWith('SELECT id FROM cmdb_assets') ? { id: 'a1' } : null),
+      execute: async (q: string) => { sql.push(q); return { changes: 1 }; },
+      query: async () => [],
+    };
+    await new CmdbRepository(db as never).upsertAsset('u', { name: 'dc01', assetType: 'server' });
+    const u = sql.find(q => q.includes('UPDATE cmdb_assets'))!;
+    for (const f of ['environment', 'purpose', 'notes', 'owner', 'location', 'tags', 'fqdn', 'hostname', 'ip_address', 'identifier']) expect(u).toContain(`COALESCE(?, ${f})`);
+  });
 });
