@@ -142,8 +142,13 @@ export interface LinuxSqlStatus {
   zustand: string; installiert?: boolean; pakete?: Record<string, string | null>; dienst?: string; aktiviert?: string;
   konfig?: Record<string, string | null>; platz?: Array<{ pfad: string; eingehaengt: boolean; gesamtMB: number; freiMB: number }>;
   sql?: { version?: string; stufe?: string; cu?: string | null; edition?: string; engineEdition?: number; maxSpeicherMb?: number; kerne?: number;
-    tempdb?: Array<{ name: string; typ: string }> | null; datenbanken?: Array<{ name: string }> | null } | null;
+    tempdb?: Array<{ name: string; typ: string }> | null; datenbanken?: Array<{ name: string }> | null;
+    /** I8e Folge-Etappe: sa abgeschaltet (0/1), vorhandene Alfred-Logins */
+    saAbgeschaltet?: number | null; alfredLogins?: Array<{ name: string }> | null } | null;
   sqlHinweis?: string; sqlFehler?: string;
+  /** I8e Folge-Etappe: Login der Status-Anmeldung und ob sie gelang (Überwachung); Host-Marke SA_SPERRE vorhanden */
+  anmeldung?: { login: string; ok: boolean } | null;
+  saMarke?: boolean;
   /** I8e Task 4 — Zugangsdatei (nur Rechte), Kopier-Timer, letzter Kopierlauf */
   sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
   /** Fix-Welle M-5/M-6 — Reste (alte tempdb-Dateien, Wegwerf-Ordner, Zugangsdateien): nur gemeldet, nie gelöscht */
@@ -237,7 +242,19 @@ export function linuxSqlStatusText(zugang: string, s: LinuxSqlStatus): string {
   if (!q) return `${zugang}: SQL Server ${s.pakete?.['mssql-server'] ?? '?'} (Paket); ${dienst}; ${limit}; SQL-Sicht: ${(s.sqlHinweis ?? s.sqlFehler ?? 'keine').slice(0, 200)}; ${eingehaengt}; ${sich}`;
   const dateien = (q.tempdb ?? []).filter(t => t.typ === 'ROWS').length;
   const dbs = (q.datenbanken ?? []).map(d => d.name).filter(n => !SYSTEM_DBS.has(n.toLowerCase()));
-  return `${zugang}: SQL Server ${q.version ?? '?'} ${q.cu ?? q.stufe ?? ''} ${q.edition ?? ''}; ${dienst}; ${limit}; max server memory ${q.maxSpeicherMb ?? '-'} MB; tempdb ${dateien} Datendateien; Datenbanken: ${dbs.length ? dbs.join(', ') : 'keine eigenen'}; ${eingehaengt}; ${sich}`;
+  return `${zugang}: SQL Server ${q.version ?? '?'} ${q.cu ?? q.stufe ?? ''} ${q.edition ?? ''}; ${dienst}; ${limit}; max server memory ${q.maxSpeicherMb ?? '-'} MB; tempdb ${dateien} Datendateien; Datenbanken: ${dbs.length ? dbs.join(', ') : 'keine eigenen'}; ${eingehaengt}; ${sich}${saText(s)}`;
+}
+
+/**
+ * I8e Folge-Etappe — sa- und Login-Teil am Ende des Statustexts (nur wenn der Status sie liefert): „sa aus (gesperrt)“ = abgeschaltet
+ * mit Host-Marke (positiv prüfbar), „sa aus (ohne Host-Marke)“, „sa aktiv“; „Alfred-Logins alfred_admin, alfred_status“ bzw. „keine“.
+ */
+function saText(s: LinuxSqlStatus): string {
+  const q = s.sql;
+  if (!q || q.saAbgeschaltet === undefined) return '';
+  const sa = q.saAbgeschaltet === 1 ? (s.saMarke ? 'sa aus (gesperrt)' : 'sa aus (ohne Host-Marke)') : q.saAbgeschaltet === 0 ? 'sa aktiv' : 'sa unbekannt';
+  const l = (q.alfredLogins ?? []).map(x => x.name).sort();
+  return `; ${sa}; Alfred-Logins ${l.length ? l.join(', ') : 'keine'}`;
 }
 
 // ── Sicherungen (I8e Task 4) ────────────────────────────────────────────────────────────────────────────────────────────────────

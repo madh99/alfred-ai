@@ -63,7 +63,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Dienst aktiv, aktiviert | eingehängt: data, log, tempdb, backup | Zugangsdatei vorhanden (0600) | Kopie-Timer aktiv | Zeit synchron (DC)'
     // I8e Etappe 3 Task 6: nach „Zeit …“ AD/Keytab und TLS (adText/tlsText) — positiv nur diese Stücke; „veraltet“, „ungeprüft“,
     // „TLS nicht erzwungen“, „TLS nicht eingerichtet“, „ABGELAUFEN“ gehören in nichtEnthalten
-    + ' | AD beigetreten | Kerberos-Keytab kvno {n} (6 SPNs, aktuell) | TLS gültig bis {datum} ({n} Tage, Thumbprint {tp}) | TLS erzwungen | Zertifikatsprüfung an',
+    + ' | AD beigetreten | Kerberos-Keytab kvno {n} (6 SPNs, aktuell) | TLS gültig bis {datum} ({n} Tage, Thumbprint {tp}) | TLS erzwungen | Zertifikatsprüfung an'
+    // I8e Folge-Etappe: am Ende „; sa …; Alfred-Logins …“ — positiv nur diese Stücke; „sa aktiv“, „sa aus (ohne Host-Marke)“, „Alfred-Logins keine“ für nichtEnthalten
+    + ' | sa aus (gesperrt) | Alfred-Logins alfred_admin, alfred_status',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“

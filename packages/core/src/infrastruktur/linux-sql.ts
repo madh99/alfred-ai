@@ -963,7 +963,10 @@ export const STATUS_TSQL = [
   "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'D') AS letzteVoll,",
   "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'I') AS letzteDiff,",
   "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'L') AS letztesLog",
-  '   FROM sys.databases d ORDER BY d.name FOR JSON PATH, INCLUDE_NULL_VALUES) AS datenbanken',
+  '   FROM sys.databases d ORDER BY d.name FOR JSON PATH, INCLUDE_NULL_VALUES) AS datenbanken,',
+  // I8e Folge-Etappe: sa abgeschaltet (0/1) und vorhandene Alfred-Logins (alfred_status liest das über VIEW ANY DEFINITION)
+  "  (SELECT CAST(is_disabled AS int) FROM sys.server_principals WHERE name = N'sa') AS saAbgeschaltet,",
+  "  (SELECT name FROM sys.server_principals WHERE name IN (N'alfred_admin', N'alfred_status') ORDER BY name FOR JSON PATH) AS alfredLogins",
   ' FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES) AS j;',
 ].join('\n');
 
@@ -1184,6 +1187,11 @@ export const PY_STATUS = [
   '    except Exception as e:',
   '        r["sql"] = None',
   '        r["sqlFehler"] = type(e).__name__',
+  // I8e Folge-Etappe: Ergebnis der Anmeldung (für die Überwachung) und Host-Marke; gescheiterte Anmeldung als alfred_status mit festem Text
+  '    r["anmeldung"] = {"login": login, "ok": r.get("sql") is not None}',
+  '    if login == "alfred_status" and r.get("sql") is None:',
+  '        r["sqlFehler"] = ("SQL-Anmeldung als alfred_status gescheitert: " + str(r.get("sqlFehler") or ""))[:400]',
+  'r["saMarke"] = bool(SA_SPERRE) and os.path.exists(SA_SPERRE)',
   // Nachtrag 2 (M-B): vom Kopf entfernte alte Zugangsdateien auch im Status
   'try:',
   '    _n = int(os.environ.get("ALFRED_RESTE") or "0")',
