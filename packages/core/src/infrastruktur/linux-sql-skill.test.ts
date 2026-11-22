@@ -80,7 +80,7 @@ describe('I8e Task 3 — Skill linux_sql', () => {
   it('status: mit sa aus dem Tresor über stdin; Text im festen Wortlaut', async () => {
     const w = welt({ [LINUX_SQL_BAUSTEINE.status]: [STATUS_VOLL] }, { 'sqllnx-sqllnx01-sa': 'Sa-Wert-1' });
     const r = await w.skill.execute({ action: 'status', zugang: 'sqllnx01' }, {} as never);
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-Wert-1' });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-Wert-1', login: 'sa' });
     expect(r.display).toBe('sqllnx01: SQL Server 17.0.4006.2 CU1 Enterprise Developer Edition (64-bit); Dienst aktiv, aktiviert; Speicherlimit 12288 MB; max server memory 10240 MB; tempdb 2 Datendateien; Datenbanken: pruefdb01; eingehängt: data, log, tempdb, backup; Sicherung: nicht eingerichtet; Zeit unbekannt');
     expect(JSON.stringify(r.data)).not.toContain('Sa-Wert-1');
     expect(linuxSqlStatusText('x', { zustand: 'gelesen', installiert: false, platz: [] })).toBe('x: SQL Server nicht installiert; eingehängt: keine Plattenziele; Sicherung: nicht eingerichtet; Zeit unbekannt');
@@ -118,11 +118,11 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     expect(sa.name).toBe('sqllnx-sqllnx01-sa');
     expect(sa.wert).toHaveLength(24);
     expect(w.aufrufe[0]).toMatchObject({ zugang: 'SQLLNX01', baustein: LINUX_SQL_BAUSTEINE.installation, timeoutMs: 1_500_000, parameter: { version: '17.0.4006.2-1', edition: 'EnterpriseDeveloper' } });
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: sa.wert });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: sa.wert, login: 'sa' });
     expect(r.display).toContain('sqllnx-sqllnx01-sa');
     const r2 = await w.skill.execute({ action: 'installieren', zugang: 'sqllnx01', version: '17.0.4006.2-1' }, imChange);
     expect(w.gesetzt).toHaveLength(1);
-    expect(JSON.parse(w.aufrufe[1]!.eingabe!)).toEqual({ sa: sa.wert });
+    expect(JSON.parse(w.aufrufe[1]!.eingabe!)).toEqual({ sa: sa.wert, login: 'sa' });
     expect(r2.display).toContain('nichts zu tun');
     for (const a of w.aufrufe) { expect(JSON.stringify(a.parameter)).not.toContain(sa.wert); expect(a.zweck).not.toContain(sa.wert); expect(a.baustein).not.toContain(sa.wert); }
     expect(JSON.stringify([r, r2])).not.toContain(sa.wert);
@@ -167,7 +167,7 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     expect(w.aufrufe[1]!.eingabe).toBeUndefined();
     expect(w.aufrufe[2]).toMatchObject({ parameter: { dateien: 8, groesseMB: 1024, wachstumMB: 512, logGroesseMB: 2048 } });
     expect(w.aufrufe[3]).toMatchObject({ parameter: { mb: 10240 } });
-    for (const a of w.aufrufe.slice(2)) expect(JSON.parse(a.eingabe!)).toEqual({ sa: 'Sa-K' });
+    for (const a of w.aufrufe.slice(2)) expect(JSON.parse(a.eingabe!)).toEqual({ sa: 'Sa-K', login: 'sa' });
     expect(r.display).toContain('tempdb 8 Datendateien');
     const n = w.aufrufe.length;
     expect((await w.skill.execute({ action: 'konfigurieren', zugang: 'sqllnx01', speicher_limit_mb: 8192, max_server_memory_mb: 8192, tempdb_dateien: 4 }, imChange)).error).toContain('max_server_memory_mb');
@@ -192,14 +192,14 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     expect(w.gesetzt.map(g => g.name)).toEqual(['sqllnx-sqllnx01-app_kunden']);
     const kw = w.gesetzt[0]!.wert;
     expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_SQL_BAUSTEINE.login, parameter: { name: 'app_kunden', serverrollen: ['dbcreator'] } });
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-L', kennwort: kw });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-L', login: 'sa', kennwort: kw });
     expect(JSON.stringify(w.aufrufe[0]!.parameter)).not.toContain(kw);
     expect(JSON.stringify(r)).not.toContain(kw);
     expect(r.display).toContain('sqllnx-sqllnx01-app_kunden');
     const r2 = await w.skill.execute({ action: 'login_anlegen', zugang: 'sqllnx01', login: 'app_kunden', rolle: 'dbcreator' }, imChange);
     expect(r2.display).toContain('nichts zu tun');
     expect(w.gesetzt).toHaveLength(1);
-    expect(JSON.parse(w.aufrufe[1]!.eingabe!)).toEqual({ sa: 'Sa-L', kennwort: kw });
+    expect(JSON.parse(w.aufrufe[1]!.eingabe!)).toEqual({ sa: 'Sa-L', login: 'sa', kennwort: kw });
     const rollen = welt({ [LINUX_SQL_BAUSTEINE.login]: [{ zustand: 'angelegt' }] }, { 'sqllnx-sqllnx01-sa': 'Sa-L' });
     await rollen.skill.execute({ action: 'login_anlegen', zugang: 'sqllnx01', login: 'admin_x', rolle: 'sysadmin' }, imChange);
     await rollen.skill.execute({ action: 'login_anlegen', zugang: 'sqllnx01', login: 'leser_x', rolle: 'lesen' }, imChange);
@@ -214,7 +214,7 @@ describe('I8e Task 3 — Skill linux_sql', () => {
     expect(r.success, r.error).toBe(true);
     expect(r.data).toMatchObject({ zeilen: 1000, pruefsumme: PRUEFDATEN_SHA256 });
     expect(w.aufrufe[0]).toMatchObject({ parameter: { datenbank: 'pruefdb01' } });
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-P' });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-P', login: 'sa' });
     expect((await w.skill.execute({ action: 'pruefdaten_anlegen', zugang: 'sqllnx01', datenbank: 'pruefdb01' }, imChange)).display).toContain('nichts zu tun');
     expect((await w.skill.execute({ action: 'pruefdaten_anlegen', zugang: 'sqllnx01', datenbank: 'pruefdb01' }, imChange)).error).toContain('Prüfsumme');
     expect((await w.skill.execute({ action: 'pruefdaten_anlegen', zugang: 'sqllnx01', datenbank: 'master' }, imChange)).error).toContain('datenbank');

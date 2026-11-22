@@ -458,7 +458,7 @@ describe('Task 7 — Skill linux_sql tls_pruefung_schalten, Rückweg im Change',
     const r = await w.s.execute({ action: 'tls_pruefung_schalten', zugang: 'sqllnx01', an: true }, imChange);
     expect(r.success, r.error).toBe(true);
     expect(r.display).toMatch(/^✅ TLS_PRUEFUNG_AN sqllnx01: /);
-    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, parameter: { an: true, cn: FQDN }, eingabe: '{"sa":"Sa-Geheim-1"}' });
+    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, parameter: { an: true, cn: FQDN }, eingabe: '{"sa":"Sa-Geheim-1","login":"sa"}' });
     // falsches Ergebnis (FQDN anders) → Fehler
     const f = skill({ zustand: 'geaendert', schalter: 'an', fqdn: 'sqllnx02.ad.3033.at', verschluesselt: true, datei: TLS_PRUEF_SCHALTER });
     expect((await f.s.execute({ action: 'tls_pruefung_schalten', zugang: 'sqllnx01', an: true }, imChange)).error).toContain('Nachprüfung fehlgeschlagen');

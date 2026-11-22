@@ -26,7 +26,7 @@ import {
 import { joinTresorName } from './windows-ad-linux.js';
 import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
-import { saName } from './linux-sql-anmeldung.js';
+import { saName, sqlAnmeldung, alfredLoginTresor, ADMIN_LOGIN, STATUS_LOGIN, type SqlLogin } from './linux-sql-anmeldung.js';
 
 /**
  * Fix-Welle I-1 — Mindest-zeitlimitS je Aktion (Sekunden): Baustein-Zeitgrenzen (am Host läuft jeder Baustein bis zu seiner Grenze)
@@ -589,7 +589,12 @@ export class LinuxSqlSkill extends Skill {
   async execute(input: Record<string, unknown>, context?: SkillContext): Promise<SkillResult> {
     // Nachtrag 2 (M-B): entfernte alte Zugangsdateien in jeder Anzeige (status/sicherungen nennen sie schon im festen Wortlaut)
     this.altZugang = 0;
-    const r = await this.ausfuehren(input, context);
+    this.anmeldeLogin = undefined;
+    const r0 = await this.ausfuehren(input, context);
+    // I8e Folge-Etappe: nach der Umstellung nennt jedes Ergebnis das Login (vor der Umstellung bleibt der Wortlaut unverändert)
+    const r = r0.success && this.anmeldeLogin && this.anmeldeLogin !== 'sa'
+      ? { ...r0, display: `${r0.display ?? ''} (angemeldet als ${this.anmeldeLogin})`, data: r0.data && typeof r0.data === 'object' ? { ...(r0.data as object), login: this.anmeldeLogin } : r0.data }
+      : r0;
     const zusatz = String(input.action ?? '') === 'status' || String(input.action ?? '') === 'sicherungen' ? '' : altZugangText(this.altZugang);
     if (!zusatz) return r;
     return r.success ? { ...r, display: `${r.display ?? ''}${zusatz}` } : { ...r, error: `${r.error ?? ''}${zusatz}` };
@@ -640,6 +645,8 @@ export class LinuxSqlSkill extends Skill {
 
   /** Nachtrag 2 (M-B): Summe der vom Baustein-Kopf entfernten alten Zugangsdateien im laufenden execute (für die Anzeige) */
   private altZugang = 0;
+  /** I8e Folge-Etappe: Login des laufenden Aufrufs (für den Ergebnis-Zusatz) */
+  private anmeldeLogin: SqlLogin | undefined;
 
   private pruefeLauf<T extends Record<string, unknown>>(zugang: string, zweck: string, r: { code: number; stdout: string; stderr: string }): T {
     const e = sqlErgebnis<T>(r.stdout);
@@ -661,18 +668,24 @@ export class LinuxSqlSkill extends Skill {
     return { wert, neu: true };
   }
 
-  private async sa(zugang: string, wofuer: string, geheim: string[]): Promise<string> {
-    const t = this.tresor(); const name = pruefeTresorName(saName(zugang));
-    if (!(await t.namen()).has(name)) throw new Error(`Tresor-Eintrag ${name} fehlt — zuerst installieren`);
-    const wert = await t.lies(name, wofuer); geheim.push(wert);
-    return wert;
+  /** I8e Folge-Etappe: Login fest nach Art (Spec 2026-11-22 §7.2) — ändernde Bausteine; liefert die Eingabe { sa: <Kennwort>, login } */
+  private async sa(zugang: string, wofuer: string, geheim: string[]): Promise<{ sa: string; login: SqlLogin }> {
+    pruefeTresorName(saName(zugang));
+    const a = await sqlAnmeldung(this.tresor(), zugang, 'aendern', wofuer, geheim);
+    this.anmeldeLogin = a.login;
+    return a.eingabe;
   }
 
   private async status(zugang: string, geheim: string[]): Promise<LinuxSqlStatus> {
     let eingabe: Record<string, string> | undefined;
     if (this.d.tresor) {
-      const name = saName(zugang);
-      if ((await this.d.tresor.namen()).has(name)) { const sa = await this.d.tresor.lies(name, `SQL-Status ${zugang}`); geheim.push(sa); eingabe = { sa }; }
+      const namen = await this.d.tresor.namen();
+      const umgestellt = namen.has(alfredLoginTresor(zugang, ADMIN_LOGIN)) || namen.has(alfredLoginTresor(zugang, STATUS_LOGIN));
+      // ohne jeden Eintrag wie bisher nur Betriebssystem-Sicht; halb umgestellt → Abbruch (kein Rückfall auf sa)
+      if (umgestellt || namen.has(saName(zugang))) {
+        const a = await sqlAnmeldung(this.d.tresor, zugang, 'lesen', `SQL-Status ${zugang}`, geheim);
+        this.anmeldeLogin = a.login; eingabe = a.eingabe;
+      }
     }
     return this.lauf<LinuxSqlStatus & Record<string, unknown>>(zugang, LINUX_SQL_BAUSTEINE.status, {}, 'SQL-Status', LINUX_SQL_ZEIT_MS.status, eingabe);
   }
@@ -688,10 +701,15 @@ export class LinuxSqlSkill extends Skill {
   private async installieren(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = installParameter(input);
     const name = pruefeTresorName(saName(zugang));
+    const namen = await this.tresor().namen();
+    // I8e Folge-Etappe: auf Alfred-Logins umgestellt → Selbstprüfung als alfred_admin, nie ein neues sa-Kennwort (das Skript lehnt eine
+    // Neuinstallation mit anderem Login als sa ab)
+    const umgestellt = namen.has(alfredLoginTresor(zugang, ADMIN_LOGIN)) || namen.has(alfredLoginTresor(zugang, STATUS_LOGIN));
     // Fix-Welle I-2: ein neues sa-Kennwort kommt erst nach gelungenem Setup in den Tresor (Marke ALFRED-SA-GESETZT, auch wenn ein späterer
     // Schritt scheitert); ist SQL Server schon installiert und fehlt der Tresor-Eintrag, bricht der Baustein ohne Änderung ab
-    const k = await this.vorhandenOderNeu(name, `SQL-Installation ${zugang}`, geheim);
-    const roh = await this.d.skript(zugang, LINUX_SQL_BAUSTEINE.installation, { ...p, saNeu: k.neu }, JSON.stringify({ sa: k.wert }), LINUX_SQL_ZEIT_MS.installation, 'SQL Server installieren');
+    const k = umgestellt ? { wert: '', neu: false } : await this.vorhandenOderNeu(name, `SQL-Installation ${zugang}`, geheim);
+    const eingabe = umgestellt ? await this.sa(zugang, `SQL-Installation ${zugang}`, geheim) : { sa: k.wert, login: 'sa' as const };
+    const roh = await this.d.skript(zugang, LINUX_SQL_BAUSTEINE.installation, { ...p, saNeu: k.neu }, JSON.stringify(eingabe), LINUX_SQL_ZEIT_MS.installation, 'SQL Server installieren');
     const gesetzt = roh.stdout.split(/\r?\n/).some(z => z.trim() === 'ALFRED-SA-GESETZT');
     const ok = roh.code === 0 && sqlErgebnis<{ zustand?: string }>(roh.stdout)?.zustand !== 'fehler' && !!sqlErgebnis(roh.stdout);
     if (k.neu && (ok || gesetzt)) await this.tresor().setze(name, k.wert, `sa-Kennwort von SQL Server auf ${zugang.toLowerCase()} (Linux)`);
@@ -706,7 +724,7 @@ export class LinuxSqlSkill extends Skill {
     const sa = await this.sa(zugang, `SQL-Konfiguration ${zugang}`, geheim);
     let dateien = w.tempdb.dateien;
     if (dateien === undefined) {
-      const s = await this.lauf<LinuxSqlStatus & Record<string, unknown>>(zugang, LINUX_SQL_BAUSTEINE.status, {}, 'SQL-Status (Kerne)', LINUX_SQL_ZEIT_MS.status, { sa });
+      const s = await this.lauf<LinuxSqlStatus & Record<string, unknown>>(zugang, LINUX_SQL_BAUSTEINE.status, {}, 'SQL-Status (Kerne)', LINUX_SQL_ZEIT_MS.status, sa);
       const kerne = s.sql?.kerne;
       if (typeof kerne !== 'number' || kerne < 1) throw new Error(`Kernzahl von ${zugang} nicht lesbar (${s.sqlHinweis ?? s.sqlFehler ?? 'keine SQL-Sicht'}) — tempdb_dateien angeben`);
       dateien = Math.min(8, kerne);
@@ -714,8 +732,8 @@ export class LinuxSqlSkill extends Skill {
     const tempdb: TempdbParameter = { ...w.tempdb, dateien };
     const ft = pruefeTempdb(tempdb); if (ft) throw new Error(`tempdb: ${ft}`);
     const k = await this.lauf<{ zustand: string; neustart?: boolean }>(zugang, LINUX_SQL_BAUSTEINE.konfiguration, w.konfig, 'SQL-Konfiguration (mssql-conf)', LINUX_SQL_ZEIT_MS.konfiguration);
-    const t = await this.lauf<{ zustand: string; dateien?: number; altdateien?: string[] }>(zugang, LINUX_SQL_BAUSTEINE.tempdb, tempdb, 'tempdb einrichten', LINUX_SQL_ZEIT_MS.tempdb, { sa });
-    const m = await this.lauf<{ zustand: string; maxSpeicherMb?: number }>(zugang, LINUX_SQL_BAUSTEINE.maxspeicher, { mb: w.maxMb }, 'max server memory', LINUX_SQL_ZEIT_MS.maxspeicher, { sa });
+    const t = await this.lauf<{ zustand: string; dateien?: number; altdateien?: string[] }>(zugang, LINUX_SQL_BAUSTEINE.tempdb, tempdb, 'tempdb einrichten', LINUX_SQL_ZEIT_MS.tempdb, sa);
+    const m = await this.lauf<{ zustand: string; maxSpeicherMb?: number }>(zugang, LINUX_SQL_BAUSTEINE.maxspeicher, { mb: w.maxMb }, 'max server memory', LINUX_SQL_ZEIT_MS.maxspeicher, sa);
     const schon = [k, t, m].every(x => x.zustand === 'schon');
     const text = `SQL-Konfiguration auf ${zugang}: Speicherlimit ${w.konfig.speicherLimitMB} MB, max server memory ${m.maxSpeicherMb ?? w.maxMb} MB, tempdb ${t.dateien ?? dateien} Datendateien, Agent ${w.konfig.agent ? 'an' : 'aus'}${k.neustart ? ', Dienst neu gestartet' : ''}${t.altdateien?.length ? `; alte tempdb-Dateien liegen noch (nicht gelöscht): ${t.altdateien.join(', ')}` : ''}`;
     return { success: true, data: { konfiguration: k, tempdb: t, maxSpeicher: m }, display: schon ? `${text} — nichts zu tun` : `✅ ${text}` };
@@ -727,7 +745,7 @@ export class LinuxSqlSkill extends Skill {
     const sa = await this.sa(zugang, `SQL-Login ${p.name} auf ${zugang}`, geheim);
     // Fix-Welle I-2: fehlt der Tresor-Eintrag, darf es den Login noch nicht geben (nurNeu); das Kennwort kommt erst nach Erfolg in den Tresor
     const k = await this.vorhandenOderNeu(name, `SQL-Login ${p.name} auf ${zugang}`, geheim);
-    const r = await this.lauf<{ zustand: string }>(zugang, LINUX_SQL_BAUSTEINE.login, { ...p, nurNeu: k.neu }, `SQL-Login ${p.name}`, LINUX_SQL_ZEIT_MS.login, { sa, kennwort: k.wert });
+    const r = await this.lauf<{ zustand: string }>(zugang, LINUX_SQL_BAUSTEINE.login, { ...p, nurNeu: k.neu }, `SQL-Login ${p.name}`, LINUX_SQL_ZEIT_MS.login, { ...sa, kennwort: k.wert });
     if (k.neu) await this.tresor().setze(name, k.wert, `Kennwort des SQL-Logins ${p.name} auf ${zugang.toLowerCase()} (Linux)`);
     const text = `SQL-Login ${p.name} auf ${zugang} (${p.serverrollen?.length ? p.serverrollen.join(', ') : 'ohne Serverrolle'}), Kennwort im Tresor (${name})`;
     return { success: true, data: { ...r, login: p.name, serverrollen: p.serverrollen, tresor: name }, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text} — ${r.zustand}` };
@@ -736,7 +754,7 @@ export class LinuxSqlSkill extends Skill {
   private async pruefdaten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = pruefdatenParameter(input);
     const sa = await this.sa(zugang, `Prüfdaten ${p.datenbank} auf ${zugang}`, geheim);
-    const r = await this.lauf<{ zustand: string; zeilen?: number; pruefsumme?: string }>(zugang, LINUX_SQL_BAUSTEINE.pruefdaten, p, `Prüfdaten ${p.datenbank}`, LINUX_SQL_ZEIT_MS.pruefdaten, { sa });
+    const r = await this.lauf<{ zustand: string; zeilen?: number; pruefsumme?: string }>(zugang, LINUX_SQL_BAUSTEINE.pruefdaten, p, `Prüfdaten ${p.datenbank}`, LINUX_SQL_ZEIT_MS.pruefdaten, sa);
     if (r.zeilen !== PRUEFDATEN_ZEILEN || r.pruefsumme !== PRUEFDATEN_SHA256) throw new Error(`Prüfdaten ${p.datenbank}: ${String(r.zeilen)} Zeilen, Prüfsumme ${String(r.pruefsumme).slice(0, 64)} — erwartet ${PRUEFDATEN_ZEILEN}, ${PRUEFDATEN_SHA256}`);
     const text = `Prüfdaten in ${p.datenbank} auf ${zugang}: dbo.alfred_pruefung, ${r.zeilen} Zeilen, Prüfsumme ${r.pruefsumme}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
@@ -757,7 +775,7 @@ export class LinuxSqlSkill extends Skill {
     const sa = await this.sa(zugang, `Sicherung einrichten ${zugang}`, geheim);
     const kennwort = await this.fs01Kennwort(kontoTresor, `Sicherung ${zugang} → //${p.server}/${p.freigabe}`, geheim);
     const r = await this.lauf<{ zustand: string; jobs?: number; timer?: string; zugangsdatei?: string; ziel?: string; budgetBytes?: number; belegtBytes?: number }>(
-      zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten, p, 'Sicherung einrichten', LINUX_SQL_SICHERUNG_ZEIT_MS.einrichten, { sa, kennwort });
+      zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten, p, 'Sicherung einrichten', LINUX_SQL_SICHERUNG_ZEIT_MS.einrichten, { ...sa, kennwort });
     if (r.jobs !== 3 || r.zugangsdatei !== 'vorhanden (0600)' || r.timer !== 'aktiv') throw new Error(`Sicherung auf ${zugang}: Nachprüfung fehlgeschlagen (Jobs ${String(r.jobs)}, Zugangsdatei ${String(r.zugangsdatei)}, Timer ${String(r.timer)})`);
     this.d.protokoll?.('I8e Sicherung eingerichtet', { zugang, zustand: r.zustand, ziel: `//${p.server}/${p.freigabe}` });
     const text = `Sicherung auf ${zugang}: 3 Agent-Jobs (FULL täglich, DIFF 6 h, LOG 15 min), Kopie alle 15 min nach //${p.server}/${p.freigabe} als ${p.domaene}\\${p.konto} (Budget ${p.budgetGiB} GiB, belegt ${gib(r.belegtBytes)} GiB); Zugangsdatei ${r.zugangsdatei}; Kopie-Timer aktiv; Probe-Kopie ok`;
@@ -767,7 +785,7 @@ export class LinuxSqlSkill extends Skill {
   private async sicherungJetzt(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = sicherungJetztParameter(input);
     const sa = await this.sa(zugang, `Sicherung ${p.art} ${p.datenbank} auf ${zugang}`, geheim);
-    const r = await this.lauf<{ zustand: string; datei?: string; sha256?: string; fs01?: boolean; art?: string; erzwungen?: string | null }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, p, `Sicherung ${p.art} ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt, { sa });
+    const r = await this.lauf<{ zustand: string; datei?: string; sha256?: string; fs01?: boolean; art?: string; erzwungen?: string | null }>(zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt, p, `Sicherung ${p.art} ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.jetzt, sa);
     if (r.fs01 !== true || !r.datei) throw new Error(`Sicherung ${p.art} von ${p.datenbank} auf ${zugang}: Kopie auf fs01 nicht bestätigt`);
     // I8e Paket 2 Task 7: in der AG kann die Prozedur statt DIFF/LOG eine FULL erzwingen (Rollenwechsel) — nie still
     const art = r.art === 'FULL' || r.art === 'DIFF' || r.art === 'LOG' ? r.art : p.art;
@@ -790,7 +808,7 @@ export class LinuxSqlSkill extends Skill {
   private async resteEntfernen(zugang: string, geheim: string[]): Promise<SkillResult> {
     const sa = await this.sa(zugang, `Reste entfernen ${zugang}`, geheim);
     const r = await this.lauf<{ zustand: string; ordner?: string; masterFiles?: number; entfernt?: Array<{ datei: string; bytes: number }>; inGebrauch?: Array<{ datei: string; grund: string }> }>(
-      zugang, LINUX_SQL_BAUSTEINE.resteEntfernen, {}, 'alte tempdb-Dateien entfernen', LINUX_SQL_ZEIT_MS.resteEntfernen, { sa });
+      zugang, LINUX_SQL_BAUSTEINE.resteEntfernen, {}, 'alte tempdb-Dateien entfernen', LINUX_SQL_ZEIT_MS.resteEntfernen, sa);
     const weg = (r.entfernt ?? []).map(x => `${x.datei} (${mib(x.bytes)} MiB)`);
     const bleibt = (r.inGebrauch ?? []).map(x => `${x.datei} (${x.grund === 'offen' ? 'geöffnet' : 'in sys.master_files'})`);
     const gebrauch = bleibt.length ? `; in Gebrauch, nicht gelöscht: ${bleibt.join(', ')}` : '';
@@ -951,7 +969,7 @@ export class LinuxSqlSkill extends Skill {
     if (!TLS_HOSTS.includes(host)) throw new Error(`zugang: Zertifikatsprüfung nur auf ${TLS_HOSTS.join(', ')}`);
     const p: TlsPruefungParameter = input.an ? { an: true, cn: tlsParameter(host).cn } : { an: false };
     const f = pruefeTlsPruefung(p); if (f) throw new Error(f);
-    const eingabe = p.an ? { sa: await this.sa(zugang, `Zertifikatsprüfung ${zugang} (Probe-Verbindung)`, geheim) } : undefined;
+    const eingabe = p.an ? await this.sa(zugang, `Zertifikatsprüfung ${zugang} (Probe-Verbindung)`, geheim) : undefined;
     const r = await this.lauf<{ zustand: string; schalter?: string; fqdn?: string; verschluesselt?: boolean; datei?: string; aenderungen?: string[] }>(
       zugang, LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, p, `Zertifikatsprüfung ${p.an ? 'an' : 'aus'}`, LINUX_SQL_ZEIT_MS.tlsPruefungSchalten, eingabe);
     const ok = p.an ? r.schalter === 'an' && r.fqdn === p.cn && r.verschluesselt === true && r.datei === TLS_PRUEF_SCHALTER : r.schalter === 'aus' && r.datei === TLS_PRUEF_SCHALTER;
@@ -969,7 +987,7 @@ export class LinuxSqlSkill extends Skill {
    */
   private async tlsErzwingen(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
     const p = tlsErzwingenParameter(zugang, input);
-    const eingabe = p.an ? { sa: await this.sa(zugang, `Verschlüsselung erzwingen ${zugang} (Probe-Verbindung)`, geheim) } : undefined;
+    const eingabe = p.an ? await this.sa(zugang, `Verschlüsselung erzwingen ${zugang} (Probe-Verbindung)`, geheim) : undefined;
     const r = await this.lauf<{ zustand: string; erzwungen?: boolean; vonAlfred?: boolean; belassen?: string[]; fqdn?: string; neustartNoetig?: boolean; pacemaker?: { fehlerzaehler?: number; fehlaktionen?: unknown[]; online?: boolean; knoten?: string }; aenderungen?: string[] }>(
       zugang, LINUX_SQL_BAUSTEINE.tlsErzwingen, p, `Verschlüsselung ${p.an ? 'erzwingen' : 'nicht erzwingen'}`, LINUX_SQL_ZEIT_MS.tlsErzwingen, eingabe);
     const pm = r.pacemaker;
@@ -992,7 +1010,7 @@ export class LinuxSqlSkill extends Skill {
     const p = adLoginParameter(zugang, input);
     const sa = await this.sa(zugang, `AD-Login ${adLoginName(p.gruppe)} auf ${zugang}`, geheim);
     const r = await this.lauf<{ zustand: string; login?: string; typ?: string; serverrolle?: string; datenbank?: string; datenbankrolle?: string; aenderungen?: string[] }>(
-      zugang, LINUX_SQL_BAUSTEINE.adLogin, p, `AD-Login ${p.gruppe}`, LINUX_SQL_ZEIT_MS.adLogin, { sa });
+      zugang, LINUX_SQL_BAUSTEINE.adLogin, p, `AD-Login ${p.gruppe}`, LINUX_SQL_ZEIT_MS.adLogin, sa);
     const n = adLoginName(p.gruppe);
     if (r.login !== n || r.typ !== 'G' || r.serverrolle !== (p.serverrolle ?? '') || r.datenbank !== (p.datenbank ?? '') || r.datenbankrolle !== (p.datenbankrolle ?? '')) {
       throw new Error(`AD-Login ${zugang}: Nachprüfung fehlgeschlagen (Login ${String(r.login)}, Typ ${String(r.typ)}, Serverrolle ${String(r.serverrolle)}, Datenbank ${String(r.datenbank)})`);
@@ -1008,7 +1026,7 @@ export class LinuxSqlSkill extends Skill {
     const p = adLoginParameter(zugang, input);
     const sa = await this.sa(zugang, `AD-Login ${adLoginName(p.gruppe)} entfernen auf ${zugang}`, geheim);
     const r = await this.lauf<{ zustand: string; login?: string; belassen?: string[]; aenderungen?: string[] }>(
-      zugang, LINUX_SQL_BAUSTEINE.adLoginEntfernen, p, `AD-Login ${p.gruppe} entfernen`, LINUX_SQL_ZEIT_MS.adLoginEntfernen, { sa });
+      zugang, LINUX_SQL_BAUSTEINE.adLoginEntfernen, p, `AD-Login ${p.gruppe} entfernen`, LINUX_SQL_ZEIT_MS.adLoginEntfernen, sa);
     const n = adLoginName(p.gruppe);
     if (r.login !== n) throw new Error(`AD-Login entfernen ${zugang}: Nachprüfung fehlgeschlagen (Login ${String(r.login)})`);
     this.d.protokoll?.('I8e AD-Login entfernt', { zugang, login: n, zustand: r.zustand, belassen: r.belassen ?? [] });
@@ -1039,7 +1057,7 @@ export class LinuxSqlSkill extends Skill {
     const sa = await this.sa(zugang, `Wiederherstellungs-Beweis ${p.datenbank} auf ${zugang}`, geheim);
     const kennwort = await this.fs01Kennwort(name, `Wiederherstellungs-Beweis ${zugang} (fs01 lesen)`, geheim);
     const r = await this.lauf<{ zustand: string; ergebnis?: string; kette?: string; diff?: boolean; logs?: number; checkdb?: string; zeilen?: number; pruefsumme?: string; entfernt?: boolean }>(
-      zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.wiederherstellen, p, `Wiederherstellungs-Beweis ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.wiederherstellen, { sa, kennwort });
+      zugang, LINUX_SQL_SICHERUNG_BAUSTEINE.wiederherstellen, p, `Wiederherstellungs-Beweis ${p.datenbank}`, LINUX_SQL_SICHERUNG_ZEIT_MS.wiederherstellen, { ...sa, kennwort });
     // RESTORE_VERIFIED nur, wenn auch der Skill alle Bedingungen sieht (Baustein-Ergebnis allein genügt nicht)
     const ok = r.ergebnis === 'RESTORE_VERIFIED' && r.checkdb === 'ohne Befund' && r.zeilen === PRUEFDATEN_ZEILEN && r.pruefsumme === PRUEFDATEN_SHA256 && r.entfernt === true && (r.logs ?? 0) >= 1;
     if (!ok) throw new Error(`Wiederherstellungs-Beweis ${p.datenbank} auf ${zugang} NICHT bestanden: Ergebnis ${String(r.ergebnis)}, CHECKDB ${String(r.checkdb)}, ${String(r.zeilen)} Zeilen, Prüfsumme ${String(r.pruefsumme).slice(0, 64)}, entfernt ${String(r.entfernt)}`);

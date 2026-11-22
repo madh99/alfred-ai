@@ -162,6 +162,14 @@ describe('I8e Linux-SQL — Skripttext', { timeout: 120_000 }, () => {
       expect(s, name).not.toMatch(/sqlcmd[^\n]* -P /);
     }
   });
+  it('I8e Folge-Etappe: Neuinstallation nur mit Login sa — umgestellte Instanz bricht vor jeder Änderung ab', () => {
+    const i = installSkript(INSTALL);
+    const sperre = i.indexOf('[ "$SQL_LOGIN" = sa ] || abbruch "Neuinstallation nur mit sa');
+    expect(sperre).toBeGreaterThan(0);
+    expect(sperre).toBeLessThan(i.indexOf('curl -fsSL'));
+    expect(sperre).toBeLessThan(i.indexOf('mssql-conf -n setup'));
+  });
+
   it('Geheimnisse nur als Umgebung des einen Prozesses: sqlcmd über SQLCMDPASSWORD, setup über MSSQL_SA_PASSWORD', () => {
     const i = installSkript(INSTALL);
     expect(i).toContain('SA=$(feld sa)');

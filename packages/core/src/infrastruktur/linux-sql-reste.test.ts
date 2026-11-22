@@ -117,7 +117,7 @@ describe('linux_sql reste_entfernen — Skill', { timeout: 120_000 }, () => {
     expect(r.success, r.error).toBe(true);
     expect(r.display).toBe('✅ Alte tempdb-Dateien auf sqllnx02 entfernt (2, gegen 12 Dateien in sys.master_files geprüft): /var/opt/mssql/data/tempdb.mdf (1024 MiB), /var/opt/mssql/data/templog.ldf (2048 MiB); in Gebrauch, nicht gelöscht: /var/opt/mssql/data/tempdb2.ndf (geöffnet)');
     expect(w.aufrufe[0]!.baustein).toBe(LINUX_SQL_BAUSTEINE.resteEntfernen);
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-1' });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: 'Sa-1', login: 'sa' });
   });
   it('nichts da → „nichts zu tun“; Abbruch des Bausteins → Fehler mit Grund', async () => {
     expect((await skill({ zustand: 'schon', ordner: '/var/opt/mssql/data', masterFiles: 12, entfernt: [], inGebrauch: [] }).s.execute({ action: 'reste_entfernen', zugang: 'sqllnx02' }, imChange)).display)

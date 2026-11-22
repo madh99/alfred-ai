@@ -504,7 +504,7 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     expect(pm).toHaveLength(24);
     for (const [i, z] of ['sqllnx01', 'sqllnx02', 'sqllnxcfg'].entries()) {
       const e = JSON.parse(ep[i]!.eingabe!) as Record<string, string>;
-      expect(Object.keys(e).sort()).toEqual(['hauptschluessel', 'pacemaker', 'sa']);
+      expect(Object.keys(e).sort()).toEqual(['hauptschluessel', 'login', 'pacemaker', 'sa']);
       expect(e.sa).toBe((AG_TRESOR as Record<string, string>)[`sqllnx-${z}-sa`]);
       expect(e.pacemaker).toBe(pm);
       expect(e.hauptschluessel).toBe(w.tresor.get(`sqllnx-${z}-masterkey`));
@@ -512,7 +512,7 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     expect(new Set(['sqllnx01', 'sqllnx02', 'sqllnxcfg'].map(z => w.tresor.get(`sqllnx-${z}-masterkey`))).size).toBe(3);
     expect(w.gesetzt.map(g => g.name).sort()).toEqual(['sqllnx-ha-pacemaker', 'sqllnx-sqllnx01-masterkey', 'sqllnx-sqllnx02-masterkey', 'sqllnx-sqllnxcfg-masterkey']);
     const rp = w.aufrufe.filter(a => a.baustein === LINUX_HA_BAUSTEINE.agReplikat);
-    for (const a of [...rp, ...w.aufrufe.filter(x => x.baustein === LINUX_HA_BAUSTEINE.agAbschluss)]) expect(Object.keys(JSON.parse(a.eingabe!))).toEqual(['sa']);
+    for (const a of [...rp, ...w.aufrufe.filter(x => x.baustein === LINUX_HA_BAUSTEINE.agAbschluss)]) expect(Object.keys(JSON.parse(a.eingabe!))).toEqual(['sa', 'login']);
     // K1: alle drei Replikat-Läufe bekommen die Datenbanken (Primär prüft Bereitschaft, Sekundär entfernt eine alte RESTORING-Kopie)
     expect(rp.map(a => [a.zugang, (a.parameter as { rolle: string }).rolle, (a.parameter as { datenbanken: unknown }).datenbanken]))
       .toEqual([['sqllnx01', 'primaer', ['alfredpruef']], ['sqllnx02', 'sekundaer', ['alfredpruef']], ['sqllnxcfg', 'konfig', ['alfredpruef']]]);
@@ -566,7 +566,7 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     expect(r.success, r.error).toBe(true);
     expect(r.display).toMatch(/^Verfügbarkeitsgruppe sqllnxag01 \(CLUSTER_TYPE EXTERNAL\): Primär sqllnx01, .* — nichts zu tun$/);
     expect(w.gesetzt).toEqual([]);
-    expect(JSON.parse(w.aufrufe.find(a => a.baustein === LINUX_HA_BAUSTEINE.agEndpunkt)!.eingabe!)).toEqual({ sa: 'Sa-Eins-1111', hauptschluessel: 'Mk-1', pacemaker: 'Pm-Wert-4444' });
+    expect(JSON.parse(w.aufrufe.find(a => a.baustein === LINUX_HA_BAUSTEINE.agEndpunkt)!.eingabe!)).toEqual({ sa: 'Sa-Eins-1111', login: 'sa', hauptschluessel: 'Mk-1', pacemaker: 'Pm-Wert-4444' });
   });
 
   it('Kennwörter: Master-Key bzw. Pacemaker-Login gesetzt (Marke) → im Tresor, auch wenn der Lauf danach scheitert; ohne sa-Eintrag kein Fernaufruf; Meldungen geschwärzt', async () => {
@@ -612,7 +612,7 @@ describe('I8e Paket 2 Task 5 — Skill linux_ha: ag_anlegen / ag_entfernen', () 
     const r = await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01', ag: 'sqllnxag01' }, imChange);
     expect(r.success, r.error).toBe(true);
     expect(w.aufrufe.map(a => [a.zugang, (a.parameter as { rolle: string; ressourcen: boolean }).rolle, (a.parameter as { ressourcen: boolean }).ressourcen])).toEqual([['sqllnx01', 'primaer', true], ['sqllnx02', 'sekundaer', false], ['sqllnxcfg', 'konfig', false]]);
-    expect(w.aufrufe.every(a => Object.keys(JSON.parse(a.eingabe!)).join() === 'sa')).toBe(true);
+    expect(w.aufrufe.every(a => Object.keys(JSON.parse(a.eingabe!)).join() === 'sa,login')).toBe(true);
     expect(w.aufrufe[0]!.timeoutMs).toBe(300_000);
     expect(r.display).toBe('✅ Verfügbarkeitsgruppe sqllnxag01 entfernt (Pacemaker-Ressourcen ag_cluster/ag_vip, AG, Endpunkte, Endpunkt-Zertifikate, Pacemaker-Login und Zugangsdatei; Master-Keys bleiben); Datenbanken bleiben: sqllnx01 alfredpruef ONLINE; sqllnx02 alfredpruef RESTORING — geändert: sqllnx01: ag-entfernt, endpunkt-entfernt; sqllnx02: ag-entfernt, endpunkt-entfernt; sqllnxcfg: ag-entfernt, endpunkt-entfernt');
     expect((await w.skill.execute({ action: 'ag_entfernen', zugang: 'sqllnx01' }, imChange)).display).toContain('— nichts zu tun');
@@ -963,7 +963,7 @@ describe('I8e Paket 2 Task 6 — Skill linux_ha: ag_failover', () => {
     ]);
     const fo = w.aufrufe[3]!;
     expect(fo.parameter).toEqual({ ag: 'sqllnxag01', ziel: 'sqllnx02', vorher: 'sqllnx01', knoten: HA_KNOTEN.map(k => ({ ...k })) });
-    expect(JSON.parse(fo.eingabe!)).toEqual({ sa: 'Sa-Zwei-2222' });
+    expect(JSON.parse(fo.eingabe!)).toEqual({ sa: 'Sa-Zwei-2222', login: 'sa' });
     expect(fo.timeoutMs).toBe(600_000);
     expect(w.aufrufe.slice(0, 3).every(a => a.eingabe === undefined)).toBe(true);
     expect(r.display).toBe('✅ Geplantes Failover der Verfügbarkeitsgruppe sqllnxag01: Primär jetzt sqllnx02 (vorher sqllnx01) nach 12 s; VIP 10.203.30.13/27 auf sqllnx02 (Promoted sqllnx02); '

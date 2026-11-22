@@ -503,6 +503,8 @@ if [ "$(paket_version mssql-server)" = "$V" ] && [ "$(paket_version mssql-tools1
    && [ -f /var/opt/mssql/data/master.mdf ] && systemctl is-active --quiet mssql-server && systemctl is-enabled --quiet mssql-server; then
   Z=schon
 else
+  # I8e Folge-Etappe: auf Alfred-Logins umgestellte Instanz → keine Neuinstallation über diesen Weg ($SA wäre nicht das sa-Kennwort)
+  [ "$SQL_LOGIN" = sa ] || abbruch "Neuinstallation nur mit sa — $SQL_LOGIN ist angemeldet, die Instanz ist auf Alfred-Logins umgestellt; nichts geändert"
   # Plattenziele müssen eingehängt sein, bevor setup die Systemdatenbanken anlegt (sonst landen sie auf der OS-Platte)
   for d in "\${EINHAENGEN[@]}"; do mountpoint -q "$d" || abbruch "$d ist kein eigener Einhängepunkt (Platten-Schritt fehlt) — nichts geändert"; done
   command -v curl >/dev/null && command -v gpg >/dev/null || abbruch "curl oder gpg fehlt"

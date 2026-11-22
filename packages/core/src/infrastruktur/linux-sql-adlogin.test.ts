@@ -286,7 +286,7 @@ describe('Task 8 — Skill linux_sql ad_login, Rückweg im Change', { timeout: 1
     expect(r.success, r.error).toBe(true);
     expect(r.display).toMatch(/^✅ AD_LOGIN_OK sqllnx01: AD3033\\SQL-Linux-Admins \(Windows-Gruppe, aktiv\) — Serverrolle sysadmin/);
     expect(r.display).toContain(AD_LOGINS_DATEI);
-    expect(w.aufrufe[0]).toEqual({ baustein: LINUX_SQL_BAUSTEINE.adLogin, parameter: { gruppe: 'SQL-Linux-Admins', serverrolle: 'sysadmin' }, eingabe: '{"sa":"Sa-Geheim-1"}' });
+    expect(w.aufrufe[0]).toEqual({ baustein: LINUX_SQL_BAUSTEINE.adLogin, parameter: { gruppe: 'SQL-Linux-Admins', serverrolle: 'sysadmin' }, eingabe: '{"sa":"Sa-Geheim-1","login":"sa"}' });
     const f = skill({ zustand: 'geaendert', login: LOGIN, typ: 'S', serverrolle: 'sysadmin', datenbank: '', datenbankrolle: '' });
     expect((await f.s.execute({ action: 'ad_login', zugang: 'sqllnx01', gruppe: 'SQL-Linux-Admins', serverrolle: 'sysadmin' }, imChange)).error).toContain('Nachprüfung fehlgeschlagen');
     const e = skill({ zustand: 'geaendert', login: LOGIN, belassen: [`Login ${LOGIN} (nicht von Alfred angelegt)`], aenderungen: ['S'] });

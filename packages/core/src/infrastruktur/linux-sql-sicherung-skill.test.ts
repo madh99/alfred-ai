@@ -52,7 +52,7 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
     const a = w.aufrufe[0]!;
     expect(a.baustein).toBe(LINUX_SQL_SICHERUNG_BAUSTEINE.einrichten);
     expect(a.parameter).toEqual({ server: 'fs01.ad.3033.at', freigabe: 'SQLLinuxBackup$', konto: 'svc-sqllnx-backup', domaene: 'ad.3033.at', budgetGiB: 64 });
-    expect(JSON.parse(a.eingabe!)).toEqual({ sa: SA, kennwort: FS });
+    expect(JSON.parse(a.eingabe!)).toEqual({ sa: SA, login: 'sa', kennwort: FS });
     expect(JSON.stringify(a.parameter) + a.zweck).not.toContain(FS);
     expect(r.display).toContain('Zugangsdatei vorhanden (0600)');
     expect(r.display).toContain('3 Agent-Jobs');
@@ -111,7 +111,7 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
     const r = await w.skill.execute({ action: 'sicherung_jetzt', zugang: 'sqllnx01', art: 'full', datenbank: 'pruefdb01' }, imChange);
     expect(r.error).toBeUndefined();
     expect(w.aufrufe[0]!.parameter).toEqual({ art: 'FULL', datenbank: 'pruefdb01' });
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: SA });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: SA, login: 'sa' });
     expect(r.display).toContain(datei);
     expect(r.display).toContain('auf fs01 geprüft');
     const nein = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.jetzt]: [{ zustand: 'geaendert', art: 'FULL', datenbank: 'pruefdb01', datei, fs01: false }] });
@@ -122,7 +122,7 @@ describe('I8e Task 4 — Skill: Sicherung', () => {
     const r = await w.skill.execute({ action: 'wiederherstellen_pruefen', zugang: 'sqllnx01', datenbank: 'pruefdb01' }, imChange);
     expect(r.error).toBeUndefined();
     expect(w.aufrufe[0]!.parameter).toEqual({ datenbank: 'pruefdb01', ziel: 'alfred_wh_pruefdb01' });
-    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: SA, kennwort: FS });
+    expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ sa: SA, login: 'sa', kennwort: FS });
     expect(r.display).toMatch(/^✅ RESTORE_VERIFIED/);
     for (const falsch of [{ ...VERIFIZIERT, ergebnis: 'FAIL' }, { ...VERIFIZIERT, zeilen: 999 }, { ...VERIFIZIERT, pruefsumme: 'A'.repeat(64) }, { ...VERIFIZIERT, entfernt: false }, { ...VERIFIZIERT, checkdb: 'Fehler' }]) {
       const f = welt({ [LINUX_SQL_SICHERUNG_BAUSTEINE.wiederherstellen]: [falsch] });

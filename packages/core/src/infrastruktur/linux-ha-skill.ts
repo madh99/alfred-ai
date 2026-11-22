@@ -20,6 +20,7 @@ import {
   type HaAgBesetzung, type HaAgEndpunktParameter, type HaAgReplikatParameter, type HaAgAbschlussParameter, type HaAgEntfernenParameter,
 } from './linux-ha.js';
 import { linuxSqlKennwort, saName, type LinuxSqlDeps } from './linux-sql-skill.js';
+import { waehleAnmeldung, sqlAnmeldung, type SqlLogin } from './linux-sql-anmeldung.js';
 
 const sek = (ms: number) => Math.ceil(ms / 1000);
 /** Mindest-zeitlimitS je Aktion: Baustein-Zeitgrenze + 60 s Puffer */
@@ -371,9 +372,14 @@ export class AgFehler extends Error {
   daten?: { abgebrochen: string; grund: string; laeufe: Array<{ knoten: string; zustand: string; aenderungen: string[] }>; tresorNeu: string[] };
 }
 
-/** sa-Tresoreinträge der Zugänge vorhanden — sonst Abbruch vor jedem Fernaufruf */
+/** Anmelde-Einträge der Zugänge vorhanden (sa vor, alfred_admin nach der Umstellung) — sonst Abbruch vor jedem Fernaufruf */
 function saPruefen(namen: Set<string>, zugaenge: string[]): void {
-  for (const z of zugaenge) if (!namen.has(saName(z))) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+  for (const z of zugaenge) {
+    try { waehleAnmeldung(namen, z, 'aendern'); } catch (e) {
+      if (!namen.has(saName(z)) && !(e as Error).message.includes('kein Rückfall')) throw new Error(`Tresor-Eintrag ${saName(z)} fehlt — linux_sql installieren auf ${z} legt ihn an; nichts geändert`);
+      throw e;
+    }
+  }
 }
 
 /** „sqllnx01: a, b; sqllnx02: c“ — nur Läufe mit Änderungen */
@@ -660,11 +666,12 @@ export class LinuxHaSkill extends Skill {
   }
 
   /** sa-Kennwörter der drei Zugänge (Paket 1, linux_sql installieren) — fehlt eines, kein Fernaufruf */
-  private async saKennwoerter(zugaenge: string[], zweck: string, geheim: string[]): Promise<Record<string, string>> {
+  private async saKennwoerter(zugaenge: string[], zweck: string, geheim: string[]): Promise<Record<string, { sa: string; login: SqlLogin }>> {
     const t = this.tresor();
     saPruefen(await t.namen(), zugaenge);
-    const sa: Record<string, string> = {};
-    for (const z of zugaenge) { sa[z] = await t.lies(saName(z), `${zweck} ${z}`); geheim.push(sa[z]!); }
+    // I8e Folge-Etappe: je Zugang das Login fest nach Art (aendern → alfred_admin nach der Umstellung, sonst sa)
+    const sa: Record<string, { sa: string; login: SqlLogin }> = {};
+    for (const z of zugaenge) sa[z] = (await sqlAnmeldung(t, z, 'aendern', `${zweck} ${z}`, geheim)).eingabe;
     return sa;
   }
 
@@ -718,7 +725,7 @@ export class LinuxHaSkill extends Skill {
     for (const rolle of HA_AG_ROLLEN) {
       const z = b[rolle];
       const p: HaAgEndpunktParameter = { cluster: HA_CLUSTER_NAME, ag: ab.ag, besetzung: { ...b }, rolle, knoten: knoten() };
-      const roh = await this.d.skript(z, LINUX_HA_BAUSTEINE.agEndpunkt, p, JSON.stringify({ sa: sa[z], hauptschluessel: mk[z]!.wert, pacemaker: pm }), LINUX_HA_ZEIT_MS.agEndpunkt, `AG-Endpunkt ${z}`);
+      const roh = await this.d.skript(z, LINUX_HA_BAUSTEINE.agEndpunkt, p, JSON.stringify({ ...sa[z]!, hauptschluessel: mk[z]!.wert, pacemaker: pm }), LINUX_HA_ZEIT_MS.agEndpunkt, `AG-Endpunkt ${z}`);
       // wie ha_vorbereiten: ein neues Kennwort kommt in den Tresor, sobald der Knoten es gesetzt meldet (Marke) oder der Lauf gelang
       // (ein bestehender Master-Key/Login mit anderem Kennwort bricht im Baustein vor jeder Änderung ab)
       const marken = new Set(roh.stdout.split(/\r?\n/).map(x => x.trim()));
@@ -742,12 +749,12 @@ export class LinuxHaSkill extends Skill {
       const z = b[rolle];
       const peers = HA_KNOTEN.map(k => k.name).filter(n => n !== z).map(n => ({ name: n, zertifikat: ep[n]!.zertifikat, fingerabdruck: ep[n]!.fingerabdruck }));
       const p: HaAgReplikatParameter = { ag: ab.ag, besetzung: { ...b }, rolle, knoten: knoten(), peers, datenbanken: [...ab.datenbanken] };
-      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[] }>(z, LINUX_HA_BAUSTEINE.agReplikat, p, `AG-Replikat ${z}`, LINUX_HA_ZEIT_MS.agReplikat, { sa: sa[z]! }, "des Replikat-Bausteins (Zertifikate, Logins, AG oder Beitritt können angelegt sein)");
+      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[] }>(z, LINUX_HA_BAUSTEINE.agReplikat, p, `AG-Replikat ${z}`, LINUX_HA_ZEIT_MS.agReplikat, sa[z]!, "des Replikat-Bausteins (Zertifikate, Logins, AG oder Beitritt können angelegt sein)");
       laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen });
     }
     // ── 3: Abschluss auf dem Primär — Datenbanken, Seeding, Pacemaker-Ressourcen, Selbstprüfung ──
     const r = await this.laufAendernd<{ zustand: string; clusterTyp?: string; requiredSyncSql?: unknown; requiredSyncRessource?: unknown; sicherungVorgabe?: string; primaer?: string; vipAuf?: string; promotedAuf?: string;
-      datenbanken?: Array<{ name: string; zustand: string }>; aenderungen?: string[] }>(b.primaer, LINUX_HA_BAUSTEINE.agAbschluss, ab, `AG-Abschluss ${b.primaer}`, LINUX_HA_ZEIT_MS.agAbschluss, { sa: sa[b.primaer]! }, "des Abschluss-Bausteins (Datenbanken, Pacemaker-Ressourcen können angelegt sein)");
+      datenbanken?: Array<{ name: string; zustand: string }>; aenderungen?: string[] }>(b.primaer, LINUX_HA_BAUSTEINE.agAbschluss, ab, `AG-Abschluss ${b.primaer}`, LINUX_HA_ZEIT_MS.agAbschluss, sa[b.primaer]!, "des Abschluss-Bausteins (Datenbanken, Pacemaker-Ressourcen können angelegt sein)");
     laeufe.push({ z: b.primaer, zustand: r.zustand, aenderungen: r.aenderungen });
     const dbs = r.datenbanken ?? [];
     const abw = [
@@ -781,7 +788,7 @@ export class LinuxHaSkill extends Skill {
     for (const rolle of HA_AG_ROLLEN) {
       const z = b[rolle];
       const p: HaAgEntfernenParameter = { ag, besetzung: { ...b }, rolle, knoten: HA_KNOTEN.map(k => ({ ...k })), ressourcen: rolle === 'primaer' };
-      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>(z, LINUX_HA_BAUSTEINE.agEntfernen, p, `AG entfernen ${z}`, LINUX_HA_ZEIT_MS.agEntfernen, { sa: sa[z]! }, "des Entfernen-Bausteins (Ressourcen, AG, Endpunkt können entfernt sein)");
+      const r = await this.laufAendernd<{ zustand: string; aenderungen?: string[]; datenbanken?: Array<{ name: string; zustand: string }> }>(z, LINUX_HA_BAUSTEINE.agEntfernen, p, `AG entfernen ${z}`, LINUX_HA_ZEIT_MS.agEntfernen, sa[z]!, "des Entfernen-Bausteins (Ressourcen, AG, Endpunkt können entfernt sein)");
       laeufe.push({ z, zustand: r.zustand, aenderungen: r.aenderungen, datenbanken: r.datenbanken });
     }
     this.d.protokoll?.('I8e Verfügbarkeitsgruppe entfernt', { zugang: b.primaer, ag, laeufe: laeufe.map(l => ({ knoten: l.z, zustand: l.zustand, aenderungen: l.aenderungen, datenbanken: l.datenbanken })) });
@@ -824,7 +831,7 @@ export class LinuxHaSkill extends Skill {
     const sa = await this.saKennwoerter([p.ziel], 'Failover', geheim);
     // Fix-Runde 1 (M4): Kopf „Failover von <zugang> auf <ziel> gescheitert“ (pruefeLauf hängt „auf <ziel>“ an)
     const zweck = `Failover von ${p.vorher}`;
-    const roh = await this.d.skript(p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, JSON.stringify({ sa: sa[p.ziel]! }), LINUX_HA_ZEIT_MS.agFailover, zweck);
+    const roh = await this.d.skript(p.ziel, LINUX_HA_BAUSTEINE.agFailover, p, JSON.stringify(sa[p.ziel]!), LINUX_HA_ZEIT_MS.agFailover, zweck);
     type FoErgebnis = { zustand: string; ag?: string; primaer?: string; vorher?: string; dauerS?: number; vip?: string; vipAuf?: string; promotedAuf?: string; requiredSyncSql?: unknown;
       requiredSyncRessource?: unknown; altRolle?: string; datenbanken?: Array<{ name: string; zustand: string }>; standortBedingungen?: unknown; aenderungen?: string[] };
     // Fix-Runde 1 (I1): ohne Ergebniszeile des Bausteins (Zeitgrenze am Host, Verbindung weg) ist nicht belegt, dass kein move lief —

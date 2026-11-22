@@ -359,7 +359,7 @@ describe('Task 8 — Skill linux_sql tls_erzwingen, Rückweg im Change', { timeo
     expect(r.success, r.error).toBe(true);
     expect(r.display).toMatch(/^✅ TLS_ERZWUNGEN sqllnx01: /);
     expect(r.display).toContain('Neustart von SQL Server nötig');
-    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_SQL_BAUSTEINE.tlsErzwingen, parameter: { an: true, host: 'sqllnx01', cn: FQDN }, eingabe: '{"sa":"Sa-Geheim-1"}' });
+    expect(w.aufrufe[0]).toMatchObject({ baustein: LINUX_SQL_BAUSTEINE.tlsErzwingen, parameter: { an: true, host: 'sqllnx01', cn: FQDN }, eingabe: '{"sa":"Sa-Geheim-1","login":"sa"}' });
     // Pacemaker-Teil fehlt oder hat Fehler → Nachprüfung scheitert
     for (const pm of [undefined, { ...pmGut, fehlerzaehler: 1 }, { ...pmGut, fehlaktionen: [{ aktion: 'x' }] }, { ...pmGut, knoten: 'sqllnx02' }]) {
       const f = skill({ zustand: 'geaendert', erzwungen: true, fqdn: FQDN, neustartNoetig: true, ...(pm ? { pacemaker: pm } : {}) });
