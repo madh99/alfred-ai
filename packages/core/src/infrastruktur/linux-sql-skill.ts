@@ -26,6 +26,7 @@ import {
 import { joinTresorName } from './windows-ad-linux.js';
 import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
+import { saName } from './linux-sql-anmeldung.js';
 
 /**
  * Fix-Welle I-1 — Mindest-zeitlimitS je Aktion (Sekunden): Baustein-Zeitgrenzen (am Host läuft jeder Baustein bis zu seiner Grenze)
@@ -117,7 +118,7 @@ export function linuxSqlKennwort(): string {
   return z.join('');
 }
 
-export const saName = (zugang: string) => `sqllnx-${zugang.toLowerCase()}-sa`;
+export { saName };
 /** Fix 1 — Tresor-Regel schon beim Planen und vor jedem Fernaufruf prüfen (langer Zugangsname → Name über 61 Zeichen) */
 function pruefeTresorName(n: string): string {
   if (!TRESOR_NAME.test(n)) throw new Error(`Tresor-Name ${n.slice(0, 80)} ist ungültig (höchstens 61 Zeichen) — kürzeren Zugangs- bzw. Login-Namen wählen`);
