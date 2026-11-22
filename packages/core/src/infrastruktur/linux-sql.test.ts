@@ -11,6 +11,7 @@ import { linuxBausteinBekannt, linuxBausteinSkript } from '../fernzugriff/linux-
 // mit linux-sql.ts vermieden; der Skill lädt beide Module)
 import './linux-sql-ad.js';
 import './linux-sql-tls.js';
+import './linux-sql-logins.js';
 
 // Prozess-Tests: Ereignisschleife zwischen Tests freigeben (sonst „Timeout calling onTaskUpdate“ unter Last)
 afterEach(() => new Promise<void>(r => setImmediate(r)));

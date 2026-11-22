@@ -75,6 +75,8 @@ export const LINUX_SQL_BAUSTEINE = {
   tlsPruefungSchalten: 'sql.tls_pruefung_schalten',
   // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Erzeuger in linux-sql-tls.ts), AD-Gruppen-Logins und Rückweg (Erzeuger in linux-sql-ad.ts)
   tlsErzwingen: 'sql.tls_erzwingen', adLogin: 'sql.ad_login', adLoginEntfernen: 'sql.ad_login_entfernen',
+  // I8e Folge-Etappe — eigene Alfred-Logins, sa schalten, sa-Kennwort setzen (Notfallweg; Erzeuger in linux-sql-logins.ts)
+  alfredLoginsAnlegen: 'sql.alfred_logins_anlegen', alfredLoginsEntfernen: 'sql.alfred_logins_entfernen', saSchalten: 'sql.sa_schalten', saKennwortSetzen: 'sql.sa_kennwort_setzen',
 } as const;
 
 /**
@@ -135,6 +137,8 @@ export const LINUX_SQL_ZEIT_MS = {
   tlsPruefungSchalten: 120_000,
   // Task 8: bereit (bis 120 s), Probe, crm_mon, mssql-conf — ohne Neustart; AD-Login: bereit, Lage, Anlegen, Nachprüfung
   tlsErzwingen: 180_000, adLogin: 180_000, adLoginEntfernen: 180_000,
+  // I8e Folge-Etappe: Logins/sa je bereit (120 s) + zwei Anmeldungen; Notfallweg: Dienst stoppen, set-sa-password, starten, bereit (120 s)
+  alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -942,7 +946,7 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
 
 // ── Status ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const STATUS_TSQL = [
+export const STATUS_TSQL = [
   'SET NOCOUNT ON;',
   'SELECT (SELECT',
   "  CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(40)) AS version,",

@@ -233,7 +233,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     'tls_pruefung_schalten',
     // Etappe 3 Task 8 — Erzwingen: Vorbedingungen (TLS, Schalter, Probe, Pacemaker) und mssql.conf zurückgelesen; AD-Login: Kataloge
     // zurückgelesen (Typ G, aktiv, Server-/Datenbankrolle, SID); Entfernen: vermerkte Objekte weg
-    'tls_erzwingen', 'ad_login', 'ad_login_entfernen']),
+    'tls_erzwingen', 'ad_login', 'ad_login_entfernen',
+    // I8e Folge-Etappe — Logins (Anmeldung als beide, Rechte-Nachweis), sa (is_disabled + Host-Marke zurückgelesen), Notfallweg (Anmeldung als sa)
+    'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -280,6 +282,9 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['tls_erzwingen', { skill: 'linux_sql', aktion: 'tls_erzwingen', text: 'linux_sql.tls_erzwingen (zugang, an umgekehrt)', parameter: schalterZurueck('tls_erzwingen') }],
     // Etappe 3 Task 8 — AD-Login: Rückweg genau ad_login_entfernen mit denselben Werten (zugang, gruppe, serverrolle, datenbank, datenbankrolle)
     ['ad_login', { skill: 'linux_sql', aktion: 'ad_login_entfernen', text: 'linux_sql.ad_login_entfernen (zugang, gruppe, serverrolle, datenbank, datenbankrolle wie ad_login)', parameter: adLoginZurueck }],
+    // I8e Folge-Etappe — Alfred-Logins: Rückweg genau alfred_logins_entfernen; sa schalten: Rückweg genau sa_schalten mit umgekehrtem an
+    ['alfred_logins_anlegen', { skill: 'linux_sql', aktion: 'alfred_logins_entfernen', text: 'linux_sql.alfred_logins_entfernen (zugang)', parameter: gleicherZugang('alfred_logins_entfernen') }],
+    ['sa_schalten', { skill: 'linux_sql', aktion: 'sa_schalten', text: 'linux_sql.sa_schalten (zugang, an umgekehrt)', parameter: schalterZurueck('sa_schalten') }],
   ]),
   // Ruling R33 (I8e L6) — SSMS: Rückweg genau sql_server.ssms_entfernen auf demselben Zugang (nimmt nur zurück, was der Merker nennt)
   sql_server: new Map([

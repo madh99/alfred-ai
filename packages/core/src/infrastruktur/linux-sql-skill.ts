@@ -26,6 +26,8 @@ import {
 import { joinTresorName } from './windows-ad-linux.js';
 import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
+import { pruefeSaSchalten } from './linux-sql-logins.js';
+import { SA_SPERRE } from './linux-sql.js';
 import { saName, sqlAnmeldung, alfredLoginTresor, ADMIN_LOGIN, STATUS_LOGIN, type SqlLogin } from './linux-sql-anmeldung.js';
 
 /**
@@ -60,6 +62,10 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   tls_erzwingen: sek(LINUX_SQL_ZEIT_MS.tlsErzwingen) + 60,
   ad_login: sek(LINUX_SQL_ZEIT_MS.adLogin) + 60,
   ad_login_entfernen: sek(LINUX_SQL_ZEIT_MS.adLoginEntfernen) + 60,
+  alfred_logins_anlegen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsAnlegen) + 60,
+  alfred_logins_entfernen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsEntfernen) + 60,
+  sa_schalten: sek(LINUX_SQL_ZEIT_MS.saSchalten) + 60,
+  sa_kennwort_setzen: sek(LINUX_SQL_ZEIT_MS.saKennwortSetzen) + 60,
 };
 
 export interface LinuxSqlDeps {
@@ -93,7 +99,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // I8e Etappe 3 Task 7 — Zertifikatsprüfung bei Alfreds eigenen SQL-Verbindungen je Host schalten (Rückweg = an umgekehrt)
   'tls_pruefung_schalten',
   // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Rückweg = an umgekehrt), AD-Gruppen-Logins und Rückweg
-  'tls_erzwingen', 'ad_login', 'ad_login_entfernen']);
+  'tls_erzwingen', 'ad_login', 'ad_login_entfernen',
+  // I8e Folge-Etappe — eigene Alfred-Logins (Rückweg entfernen), sa schalten (Rückweg an umgekehrt), Notfallweg sa-Kennwort setzen
+  'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -491,6 +499,9 @@ export class LinuxSqlSkill extends Skill {
       + `tls_pruefung_schalten (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_einspielen UND dem rollierenden Neustart) — an=true nur, wenn ${TLS_CRT} Alfreds ist (Manifest), von mssql.conf genutzt wird, nicht abgelaufen ist, Kette + Name gegen den Vertrauensspeicher prüfbar sind und eine Probe-Verbindung als sa mit sqlcmd -N -S <host>.ad.3033.at verschlüsselt gelingt; dann Schalter ${TLS_PRUEF_SCHALTER} (0644 root, Inhalt FQDN) → „TLS_PRUEFUNG_AN“: ab da verbinden alle SQL-Bausteine von linux_sql und linux_ha mit Zertifikatsprüfung, scheitert sie, brechen sie mit „Zertifikatsprüfung fehlgeschlagen“ ab (nie Rückfall ohne Prüfung); rueckweg tls_pruefung_schalten an=false (zugang) → „TLS_PRUEFUNG_AUS“. `
       + `tls_erzwingen (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_pruefung_schalten an=true) — an=true nur, wenn TLS von Alfred eingespielt ist (Manifest, mssql.conf, gültig, Kette + Name), die Zertifikatsprüfung an ist (Schalter mit genau diesem FQDN, Probe -N verschlüsselt) und Pacemaker auf diesem Knoten fehlerfrei ist (online, Quorum, ag_cluster bekannt, Fehlerzähler mit Fehler in den letzten 30 min 0, keine fehlgeschlagene Aktion in 30 min, crm_mon --include=failcounts,failures) — sonst Abbruch ohne Änderung; vermerkt sein Eigentum in /etc/alfred/sqllnx-tls-erzwungen und setzt mssql-conf network.forceencryption 1, KEIN Neustart (Anzeige „Neustart nötig“; der Change startet rollierend: Sekundär neu starten, ag_failover, alter Primär neu starten, ag_failover zurück; sqllnxcfg einzeln) → „TLS_ERZWUNGEN“ ↔ rueckweg Pflicht tls_erzwingen an=false (zugang) → „TLS_NICHT_ERZWUNGEN“ (ohne Vorbedingung; nimmt nur einen von Alfred vermerkten Wert zurück, ein vorher gesetztes 1 bleibt: „TLS_ERZWUNGEN_BELASSEN“). Der Pacemaker-Agent ocf:mssql:ag verbindet ohnehin verschlüsselt (encrypt=true, TrustServerCertificate=true) — der Beweis ist trotzdem der Failover hin/zurück ohne Monitor-Fehler (linux_ha status: „Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)“). `
       + `AD-LOGINS (nur sqllnx01/sqllnx02, nie sqllnxcfg; nach ad_beitreten und kerberos_einrichten + Neustart): ad_login (nur im Change; zugang, gruppe z. B. SQL-Linux-Admins, serverrolle sysadmin und/oder datenbank + datenbankrolle ${AD_LOGIN_DB_ROLLEN.join('/')}) — CREATE LOGIN [AD3033\\<gruppe>] FROM WINDOWS (+ Serverrolle bzw. Datenbankbenutzer + Rolle, Datenbank nur auf dem Primär — Sekundär → Abbruch, der Benutzer wird repliziert); vorher ohne Änderung: Host beigetreten (sssd), getent group <gruppe>@ad.3033.at, Alfreds Keytab in mssql.conf; ein vorhandener Login anderen Typs, ein deaktivierter Login oder ein abweichender Datenbankbenutzer → Abbruch; was fehlt, wird vor der Anlage in ${AD_LOGINS_DATEI} vermerkt; Selbstprüfung über sys.server_principals (Typ G), Serverrollen- und Datenbankrollen-Mitgliedschaft → „AD_LOGIN_OK“ ↔ rueckweg Pflicht ad_login_entfernen (gleiche zugang, gruppe, serverrolle, datenbank, datenbankrolle; entfernt nur Vermerktes, Fremdes steht unter „belassen“; „AD_LOGIN_REMOVED“). Logins sind instanzbezogen: je Replikat ein Schritt. `
+      + 'ALFRED-LOGINS UND sa (alle drei Instanzen, je Zugang ein Schritt, nur im Change): alfred_logins_anlegen (zugang) — alfred_admin (sysadmin) und alfred_status (nur lesen: VIEW SERVER STATE, VIEW ANY DEFINITION, SELECT msdb.dbo.backupset), Kennwörter erzeugt Alfred im Tresor (sqllnx-<zugang>-alfred-admin/-alfred-status); danach melden sich ändernde Aktionen als alfred_admin, status als alfred_status an, nie mehr als sa ↔ rueckweg Pflicht alfred_logins_entfernen (zugang; nur solange sa aktiv). '
+      + 'sa_schalten (zugang, an false = sa abschalten + Host-Marke, true = einschalten) — nur als alfred_admin ↔ rueckweg Pflicht sa_schalten mit an umgekehrt. '
+      + 'sa_kennwort_setzen (zugang) — Notfallweg: setzt das vorhandene sa-Kennwort aus dem Tresor per mssql-conf set-sa-password (Dienst wird gestoppt und gestartet); Voraussetzung: Pacemaker-Knoten vorher mit linux_ha knoten_standby an=true in Standby. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -525,7 +536,7 @@ export class LinuxSqlSkill extends Skill {
         issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
         root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
         erwartet_root_sha256: { type: 'string', description: 'tls_einspielen: Pflicht, fester Wert — SHA-256 (64 Hex) der DER der AD3033-Root; eine andere Root wird abgewiesen' },
-        an: { type: 'boolean', description: 'tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg)' },
+        an: { type: 'boolean', description: 'tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg); sa_schalten: false = sa abschalten, true = einschalten (Rückweg)' },
         gruppe: { type: 'string', description: 'ad_login/ad_login_entfernen: AD-Gruppe ohne Domäne, z. B. SQL-Linux-Admins (Login AD3033\\<gruppe>)' },
         serverrolle: { type: 'string', enum: ['sysadmin'], description: 'ad_login/ad_login_entfernen: Serverrolle des Gruppen-Logins' },
         datenbankrolle: { type: 'string', enum: [...AD_LOGIN_DB_ROLLEN], description: 'ad_login/ad_login_entfernen: Rolle in datenbank (nur mit datenbank, nur auf dem Primär)' },
@@ -580,6 +591,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'kerberos_einrichten') { kerberosEingabe(String(input.zugang).trim(), input); pruefeTresorName(KERBEROS_KONTO_TRESOR); }
       else if (action === 'tls_einspielen') tlsEingabe(input);
       else if (action === 'tls_erzwingen') { tlsErzwingenParameter(String(input.zugang), input); if (input.an === true) pruefeTresorName(saName(String(input.zugang).trim())); }
+      else if (action === 'sa_schalten') { const f = pruefeSaSchalten(input); if (f) throw new Error(f); }
       else if (action === 'ad_login' || action === 'ad_login_entfernen') { adLoginParameter(String(input.zugang), input); pruefeTresorName(saName(String(input.zugang).trim())); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
@@ -634,6 +646,10 @@ export class LinuxSqlSkill extends Skill {
         case 'tls_erzwingen': return await this.tlsErzwingen(zugang, input, geheim);
         case 'ad_login': return await this.adLogin(zugang, input, geheim);
         case 'ad_login_entfernen': return await this.adLoginEntfernen(zugang, input, geheim);
+        case 'alfred_logins_anlegen': return await this.alfredLoginsAnlegen(zugang, geheim);
+        case 'alfred_logins_entfernen': return await this.alfredLoginsEntfernen(zugang, geheim);
+        case 'sa_schalten': return await this.saSchalten(zugang, input, geheim);
+        case 'sa_kennwort_setzen': return await this.saKennwortSetzen(zugang, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
     return { success: false, error: 'Unbekannte Aktion' };
@@ -1033,6 +1049,69 @@ export class LinuxSqlSkill extends Skill {
     const bel = r.belassen?.length ? `; belassen (nicht von Alfred): ${r.belassen.join('; ').slice(0, 400)}` : '';
     const text = `AD_LOGIN_REMOVED ${zugang}: ${n} — ${(r.aenderungen ?? []).join(', ') || 'nichts von Alfred vorhanden'}${bel}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  // ── I8e Folge-Etappe: eigene Alfred-Logins, sa schalten, Notfallweg ───────────────────────────────────────────────────────────
+
+  /** beide Logins anlegen; neue Kennwörter erst nach gelungenem Anlegen (Marke ALFRED-LOGIN-GESETZT) in den Tresor (wie Fix-Welle I-2) */
+  private async alfredLoginsAnlegen(zugang: string, geheim: string[]): Promise<SkillResult> {
+    const an = await this.sa(zugang, `Alfred-Logins auf ${zugang}`, geheim);
+    const nA = pruefeTresorName(alfredLoginTresor(zugang, ADMIN_LOGIN));
+    const nS = pruefeTresorName(alfredLoginTresor(zugang, STATUS_LOGIN));
+    const ka = await this.vorhandenOderNeu(nA, `Alfred-Logins auf ${zugang}`, geheim);
+    const ks = await this.vorhandenOderNeu(nS, `Alfred-Logins auf ${zugang}`, geheim);
+    // waehleAnmeldung lässt halbe Umstellungen nicht durch — beide neu oder beide vorhanden
+    if (ka.neu !== ks.neu) throw new Error(`Alfred-Logins ${zugang}: Tresor-Einträge uneinheitlich — nichts geändert`);
+    const roh = await this.d.skript(zugang, LINUX_SQL_BAUSTEINE.alfredLoginsAnlegen, { nurNeu: ka.neu }, JSON.stringify({ ...an, admin: ka.wert, status: ks.wert }),
+      LINUX_SQL_ZEIT_MS.alfredLoginsAnlegen, 'Alfred-Logins anlegen');
+    const gesetzt = roh.stdout.split(/\r?\n/).some(z => z.trim() === 'ALFRED-LOGIN-GESETZT');
+    if (ka.neu && gesetzt) {
+      await this.tresor().setze(nA, ka.wert, `SQL-Login alfred_admin (sysadmin) auf ${zugang.toLowerCase()} (Linux)`);
+      await this.tresor().setze(nS, ks.wert, `SQL-Login alfred_status (nur lesen) auf ${zugang.toLowerCase()} (Linux)`);
+    }
+    const r = this.pruefeLauf<{ zustand: string; admin?: string; status?: string }>(zugang, 'Alfred-Logins anlegen', roh);
+    this.d.protokoll?.('I8e Alfred-Logins', { zugang, zustand: r.zustand, neu: ka.neu });
+    const text = `Alfred-Logins auf ${zugang}: alfred_admin (sysadmin, ${r.admin}), alfred_status (nur lesen, ${r.status}); Kennwörter im Tresor (${nA}, ${nS})`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Rückweg: nur als sa (aktiv, ohne Host-Marke); danach beide Tresor-Einträge entfernen (Zugang ist wieder auf sa) */
+  private async alfredLoginsEntfernen(zugang: string, geheim: string[]): Promise<SkillResult> {
+    const t = this.tresor();
+    if (!t.entferne) throw new Error('Tresor kann keine Einträge entfernen — Alfred-Logins bleiben; nichts geändert');
+    const nSa = pruefeTresorName(saName(zugang));
+    if (!(await t.namen()).has(nSa)) throw new Error(`Tresor-Eintrag ${nSa} fehlt — Rückweg nur als sa; nichts geändert`);
+    const kw = await t.lies(nSa, `Alfred-Logins entfernen auf ${zugang}`); geheim.push(kw);
+    const r = await this.lauf<{ zustand: string }>(zugang, LINUX_SQL_BAUSTEINE.alfredLoginsEntfernen, {}, 'Alfred-Logins entfernen', LINUX_SQL_ZEIT_MS.alfredLoginsEntfernen, { sa: kw, login: 'sa' });
+    for (const n of [alfredLoginTresor(zugang, ADMIN_LOGIN), alfredLoginTresor(zugang, STATUS_LOGIN)]) await t.entferne(n);
+    this.d.protokoll?.('I8e Alfred-Logins entfernt', { zugang, zustand: r.zustand });
+    return { success: true, data: r, display: `✅ Alfred-Logins auf ${zugang} entfernt, Tresor-Einträge entfernt — Anmeldung wieder als sa` };
+  }
+
+  /** sa ab-/einschalten — nur als alfred_admin (Zugang umgestellt), sonst Abbruch vor dem Fernaufruf */
+  private async saSchalten(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const f = pruefeSaSchalten(input); if (f) throw new Error(f);
+    const an = input.an as boolean;
+    const e = await this.sa(zugang, `sa ${an ? 'einschalten' : 'abschalten'} auf ${zugang}`, geheim);
+    if (e.login !== ADMIN_LOGIN) throw new Error(`sa_schalten auf ${zugang} nur als alfred_admin — zuerst alfred_logins_anlegen; nichts geändert`);
+    const r = await this.lauf<{ zustand: string; sa?: string }>(zugang, LINUX_SQL_BAUSTEINE.saSchalten, { an }, `sa ${an ? 'einschalten' : 'abschalten'}`, LINUX_SQL_ZEIT_MS.saSchalten, e);
+    const soll = an ? 'aktiv' : 'aus';
+    if (r.sa !== soll) throw new Error(`sa_schalten ${zugang}: Nachprüfung fehlgeschlagen (sa ${String(r.sa)}, Soll ${soll})`);
+    this.d.protokoll?.('I8e sa geschaltet', { zugang, an, zustand: r.zustand });
+    const text = `sa auf ${zugang}: ${soll}${an ? '' : ` (Host-Marke ${SA_SPERRE})`}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Notfallweg: vorhandenes sa-Kennwort aus dem Tresor über mssql-conf setzen (Tresor unverändert); Knoten muss im Standby sein */
+  private async saKennwortSetzen(zugang: string, geheim: string[]): Promise<SkillResult> {
+    const t = this.tresor();
+    const nSa = pruefeTresorName(saName(zugang));
+    if (!(await t.namen()).has(nSa)) throw new Error(`Tresor-Eintrag ${nSa} fehlt — der Notfallweg setzt nur das vorhandene sa-Kennwort; nichts geändert`);
+    const kw = await t.lies(nSa, `Notfallweg sa-Kennwort auf ${zugang}`); geheim.push(kw);
+    const r = await this.lauf<{ zustand: string; saAbgeschaltet?: boolean; marke?: boolean }>(zugang, LINUX_SQL_BAUSTEINE.saKennwortSetzen, {}, 'sa-Kennwort setzen (Notfallweg)', LINUX_SQL_ZEIT_MS.saKennwortSetzen, { sa: kw, login: 'sa' });
+    this.d.protokoll?.('I8e Notfallweg sa-Kennwort', { zugang, saAbgeschaltet: r.saAbgeschaltet, marke: r.marke });
+    const text = `sa-Kennwort auf ${zugang} aus dem Tresor gesetzt (${nSa} unverändert); Anmeldung als sa gelungen; sa ${r.saAbgeschaltet ? 'weiter abgeschaltet' : 'aktiv'}${r.marke ? `; Host-Marke ${SA_SPERRE} vorhanden` : ''}`;
+    return { success: true, data: r, display: `✅ ${text}` };
   }
 
   /** Rückweg: nur Alfreds Drop-in; eine fremde Datei an derselben Stelle bleibt (belassen, nie still) */
