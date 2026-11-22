@@ -135,4 +135,21 @@ Ziel ist es, `sa` abzuschalten. Dafür bekommt Alfred **zwei eigene Logins**, ge
 
 ## 10. Notfallweg (wird nach Change N2 eingetragen)
 
-*Leer bis zum Beweis.*
+**Belegt am 22.11.2026 mit Change 214630c4 (N2, 12/12) auf sqllnxcfg:** `mssql-conf set-sa-password` macht ein **abgeschaltetes** `sa` wieder nutzbar. Belege:
+- Schritt 6: `sa` aus, Host-Marke gesetzt, Status „sa aus (gesperrt)“.
+- Schritt 7: Danach meldete der Baustein `saAbgeschaltet: false`, und die Anmeldung als `sa` gelang.
+- Die AG blieb dabei auf sqllnx01/02 synchron, Pacemaker meldete keine Fehlaktionen.
+
+Weg für den Owner, falls Alfreds Logins oder Kennwörter nicht mehr gehen:
+1. **sqllnx01/sqllnx02 zuerst:** Anmeldung mit einem Konto aus `SQL-Linux-Admins` (Kerberos, SSMS auf sqladmw11/sqladm25) → `ALTER LOGIN [sa] ENABLE;` oder die Alfred-Logins reparieren. Kein Dienststopp nötig.
+2. **Sonst (jede Instanz, auch sqllnxcfg), über Alfred:** Change mit
+   - `linux_ha knoten_standby an=true` (nicht auf dem Primär; vorher Failover),
+   - `linux_sql sa_kennwort_setzen`,
+   - danach `linux_ha knoten_standby an=false`.
+3. **Von Hand auf dem Host:**
+   - `sudo pcs node standby <knoten>`, warten, bis `crm_mon -1` auf dem Knoten keine aktive `ag_cluster`-Instanz mehr zeigt.
+   - `sudo systemctl stop mssql-server`
+   - `sudo MSSQL_SA_PASSWORD='<Kennwort aus Tresor sqllnx-<knoten>-sa>' /opt/mssql/bin/mssql-conf -n set-sa-password`
+   - `sudo systemctl start mssql-server`
+   - `sudo pcs node unstandby <knoten>`
+   - Danach ist `sa` aktiv. Die Host-Marke `/etc/alfred/sqllnx-sa-aus` bleibt liegen, bis `linux_sql sa_schalten an=true` sie entfernt. Solange sie liegt, meldet sich Alfred dort nicht als `sa` an.
