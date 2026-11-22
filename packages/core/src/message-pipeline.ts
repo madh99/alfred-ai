@@ -14,7 +14,7 @@ import type {
 } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
-import { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults, calculateCost } from '@alfred/llm';
+import { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults, calculateCost, mitUltraAusloeser } from '@alfred/llm';
 import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
@@ -583,7 +583,11 @@ export class MessagePipeline {
 
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     // v1506 D5 — Kostenherkunft „chat“; eine Aufgabe oder ein Hintergrund-Job, der hier durchläuft, behält seinen Zweck
-    const lauf = () => mitKostenZweckWennLeer('chat', () => this.processIntern(message, onProgress));
+    // Spec Stufe ultra U3 — Auslöser der Stufe ultra: ausdrücklich gewählt (App, CLI, HTTP-tier) oder vom Einstiegspunkt gesetzt (metadata.ultraGrund)
+    const intern = message.metadata?.tier === 'ultra'
+      ? () => mitUltraAusloeser({ grund: typeof message.metadata?.ultraGrund === 'string' && message.metadata.ultraGrund ? message.metadata.ultraGrund : 'ausdrücklich', ort: message.chatId }, () => this.processIntern(message, onProgress))
+      : () => this.processIntern(message, onProgress);
+    const lauf = () => mitKostenZweckWennLeer('chat', intern);
     if (!fadenSperrePflicht(message.chatId)) return lauf();
     return this.nacheinander(message.chatId, lauf);
   }

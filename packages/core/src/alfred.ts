@@ -983,6 +983,11 @@ export class Alfred {
       ultraGemeldet = Date.now();
       void this.sendeAnOwner(`⚠️ Stufe ultra nicht verfügbar — Antwort kam von ${info.ziel}. Grund: ${info.grund}`).catch(() => undefined);
     });
+    // Spec Stufe ultra U3 — jeder ultra-Aufruf mit Auslöser und Kosten in ultra_nutzung (Tagesbericht, Konto)
+    llmProvider.setUltraNutzungCallback((n) => {
+      usageRepo.recordUltra({ grund: n.grund, ort: n.ort, stufe: n.stufe, modell: n.modell, inputTokens: n.inputTokens, outputTokens: n.outputTokens, kostenUsd: n.kostenUsd })
+        .catch((err: Error) => this.logger.warn({ err: err.message }, 'Spec ultra U3: ultra_nutzung nicht geschrieben'));
+    });
 
     // Service usage tracking (STT, TTS, OCR, Moderation)
     const serviceUsageRepo = new ServiceUsageRepository(adapter);
@@ -16525,6 +16530,20 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             werte.insightsAbgelaufen = await zaehleDb("SELECT count(*) n FROM alfred_insights WHERE user_id = ? AND status = 'expired' AND updated_at >= ?", [owner, seit]);
             werte.vorgaengeErledigt = await zaehleDb("SELECT count(*) n FROM vorgaenge WHERE user_id = ? AND status = 'erledigt' AND aktualisiert >= ?", [owner, seit]);
             werte.kostenUsd = Math.round(await zaehleDb('SELECT COALESCE(SUM(cost_usd), 0) n FROM llm_usage WHERE date = ?', [seit.slice(0, 10)]) * 10000) / 10000;
+            // Spec Stufe ultra U3 — Anzahl, Kosten und Rückfälle der Stufe ultra; Bericht an den Owner nur an Tagen mit ultra
+            if (this.usageRepo) {
+              try {
+                const { ultraKennzahlen, ultraTagesbericht } = await import('./ultra-bericht.js');
+                const tag = this.usageRepo.tagesSchluessel(jetzt);
+                const summen = await this.usageRepo.ultraSummen(tag, tag);
+                Object.assign(werte, ultraKennzahlen(summen));
+                const bericht = ultraTagesbericht(tag, summen);
+                if (bericht) {
+                  this.logger.info({ tag, summen }, 'Spec ultra U3: Tagesbericht');
+                  await this.sendeAnOwner(bericht).catch(() => undefined);
+                }
+              } catch (err) { this.logger.warn({ err: (err as Error).message }, 'Spec ultra U3: Tagesbericht nicht erstellt'); }
+            }
             const zeit = jetzt.toISOString();
             let geschrieben = 0;
             for (const [name, wert] of Object.entries(werte)) {

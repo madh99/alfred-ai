@@ -3289,4 +3289,23 @@ export const MIGRATIONS: Migration[] = [
       if (!spalten.some(s => s.name === 'ableitung')) db.exec('ALTER TABLE infra_bauplan_vorlagen ADD COLUMN ableitung TEXT');
     },
   },
+  {
+    version: 160,
+    description: 'Spec Stufe ultra U3 — ultra_nutzung: jeder Aufruf mit angeforderter Stufe ultra, Auslöser, tatsächlicher Stufe, Modell und Kosten (SQLite-Spiegel zu PG v164).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS ultra_nutzung (
+          id TEXT PRIMARY KEY,
+          zeit TEXT NOT NULL,
+          datum TEXT NOT NULL,
+          grund TEXT NOT NULL,
+          ort TEXT,
+          stufe TEXT NOT NULL,
+          modell TEXT NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          kosten_usd REAL NOT NULL DEFAULT 0
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_ultra_nutzung_datum ON ultra_nutzung (datum)');
+    },
+  },
 ];

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export interface UsageRecord {
@@ -137,6 +138,28 @@ export class UsageRepository {
         output_tokens = llm_usage_zweck.output_tokens + excluded.output_tokens,
         cost_usd = llm_usage_zweck.cost_usd + excluded.cost_usd
     `, [date, zweck.slice(0, 80), model.slice(0, 80), inputTokens, outputTokens, costUsd]);
+  }
+
+  /**
+   * Spec Stufe ultra U3 — jeder Aufruf, der ultra angefordert hat: Auslöser (`ausdrücklich`, `gegenpruefung:<change>`,
+   * `eskalation:<grund>`), Ort (Faden), tatsächliche Stufe (bei Rückfall strong/default), Modell und Kosten.
+   * Ergänzt llm_usage, ersetzt nichts: die Gesamtsummen bleiben unverändert.
+   */
+  async recordUltra(e: { grund: string; ort?: string; stufe: string; modell: string; inputTokens: number; outputTokens: number; kostenUsd: number }, now = new Date()): Promise<void> {
+    await this.adapter.execute(`
+      INSERT INTO ultra_nutzung (id, zeit, datum, grund, ort, stufe, modell, input_tokens, output_tokens, kosten_usd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [randomUUID(), now.toISOString(), localDateKey(now, this.timezone), e.grund.slice(0, 120), e.ort ? e.ort.slice(0, 120) : null,
+      e.stufe.slice(0, 20), e.modell.slice(0, 80), e.inputTokens, e.outputTokens, e.kostenUsd]);
+  }
+
+  /** Spec Stufe ultra U3 — Anzahl und Kosten je Auslöser im Zeitraum (inklusive, lokale Tage). */
+  async ultraSummen(von: string, bis: string): Promise<Array<{ grund: string; aufrufe: number; kostenUsd: number; rueckfaelle: number }>> {
+    const rows = await this.adapter.query(`
+      SELECT grund, COUNT(*) AS aufrufe, SUM(kosten_usd) AS kosten, SUM(CASE WHEN stufe <> 'ultra' THEN 1 ELSE 0 END) AS rueckfaelle
+      FROM ultra_nutzung WHERE datum >= ? AND datum <= ? GROUP BY grund
+    `, [von, bis]) as Record<string, unknown>[];
+    return rows.map(r => ({ grund: String(r.grund), aufrufe: Number(r.aufrufe ?? 0), kostenUsd: Number(r.kosten ?? 0), rueckfaelle: Number(r.rueckfaelle ?? 0) }));
   }
 
   /** v1506 D5 — lokaler Tagesschlüssel (gleiche Zeitzone wie record()). */

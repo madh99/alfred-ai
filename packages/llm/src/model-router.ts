@@ -9,6 +9,7 @@ import { LLMProvider } from './provider.js';
 import type { ContextWindow, EmbeddingResult } from './provider.js';
 import { createLLMProvider } from './provider-factory.js';
 import { TokenCostTracker } from './token-costs.js';
+import { aktuellerUltraAusloeser, ULTRA_OHNE_AUSLOESER } from './ultra-grund.js';
 import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
 const TIERS: ModelTier[] = ['default', 'strong', 'ultra', 'medium', 'fast', 'embeddings', 'local', 'fallback'];
@@ -70,6 +71,9 @@ export function fallbackKette(failedTier: ModelTier): ModelTier[] {
 
 /** v1922 — Meldung, wenn eine ultra-Anfrage nicht auf ultra lief (nicht konfiguriert oder ausgefallen) */
 export interface UltraRueckfallInfo { ziel: ModelTier; grund: string }
+
+/** Spec Stufe ultra U3 — ein verbuchter Aufruf, der ultra angefordert hat (stufe = tatsächlich gelaufene Stufe) */
+export interface UltraNutzung { grund: string; ort?: string; stufe: ModelTier; modell: string; inputTokens: number; outputTokens: number; kostenUsd: number }
 
 /**
  * Default reasoning_effort per tier — only applied when the underlying model is a
@@ -299,6 +303,22 @@ export class ModelRouter extends LLMProvider {
   /** v1922 (Spec Stufe ultra, U1) — jeder Rückfall einer ultra-Anfrage wird gemeldet (Log immer, Owner über den Callback) */
   private ultraRueckfallCallback?: (info: UltraRueckfallInfo) => void;
   setUltraRueckfallCallback(cb: (info: UltraRueckfallInfo) => void): void { this.ultraRueckfallCallback = cb; }
+  /** Spec Stufe ultra U3 — jeder verbuchte Aufruf mit angeforderter Stufe ultra (Auslöser + Kosten) */
+  private ultraNutzungCallback?: (n: UltraNutzung) => void;
+  setUltraNutzungCallback(cb: (n: UltraNutzung) => void): void { this.ultraNutzungCallback = cb; }
+
+  /** Spec Stufe ultra U3 — Auslöser für die Logzeile „LLM call completed“ und Meldung an den Callback; leer, wenn nicht ultra angefordert. */
+  private ultraErfassen(angefordert: ModelTier | undefined, stufe: ModelTier, modell: string, usage: LLMResponse['usage'] | undefined, kostenUsd: number): Record<string, unknown> {
+    if (angefordert !== 'ultra') return {};
+    const a = aktuellerUltraAusloeser();
+    const grund = a?.grund ?? ULTRA_OHNE_AUSLOESER;
+    if (!a) this.logger?.warn({ stufe, modell }, 'Spec ultra U3: ultra-Aufruf ohne Auslöser');
+    try {
+      this.ultraNutzungCallback?.({ grund, ...(a?.ort ? { ort: a.ort } : {}), stufe, modell, inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, kostenUsd });
+    } catch { /* Erfassung darf den Aufruf nie stören */ }
+    return { ultra: grund };
+  }
+
   private meldeUltraRueckfall(ziel: ModelTier, grund: string): void {
     this.logger?.warn({ ziel, grund }, 'v1922 ultra-Rückfall');
     try { this.ultraRueckfallCallback?.({ ziel, grund }); } catch { /* Meldung darf den Aufruf nie stören */ }
@@ -353,7 +373,7 @@ export class ModelRouter extends LLMProvider {
   }
 
   /** v1248 — Streams verbuchen Kosten wie complete(): Kostenwächter und llm_usage sehen auch gestreamte Antworten. */
-  private verbucheStream(resolvedTier: ModelTier, event: LLMStreamEvent, uhr?: StreamUhr): void {
+  private verbucheStream(resolvedTier: ModelTier, event: LLMStreamEvent, uhr?: StreamUhr, angefordert?: ModelTier): void {
     // v1345 — Zeit bis zur ersten Antwort (erstes Text-/Werkzeug-Ereignis) und Gesamtdauer je Aufruf.
     if (uhr && uhr.erstesMs === undefined && event.type !== 'message_complete') uhr.erstesMs = Date.now() - uhr.start;
     if (event.type !== 'message_complete' || !event.response) return;
@@ -362,9 +382,10 @@ export class ModelRouter extends LLMProvider {
     if (!event.response.model) event.response.model = model;
     const costUsd = this.costTracker.record(model, event.response.usage);
     event.response.kostenUsd = costUsd; // v1659
+    const ultra = this.ultraErfassen(angefordert, resolvedTier, model, event.response.usage, costUsd);
     this.logger?.info(
       {
-        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, stream: true,
+        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, stream: true, ...ultra,
         ...(uhr ? { durationMs: Date.now() - uhr.start, ersteAntwortMs: uhr.erstesMs ?? null } : {}),
         inputTokens: event.response.usage?.inputTokens, outputTokens: event.response.usage?.outputTokens,
         cacheReadTokens: event.response.usage?.cacheReadTokens, cacheWriteTokens: event.response.usage?.cacheCreationTokens,
@@ -383,9 +404,10 @@ export class ModelRouter extends LLMProvider {
     if (!response.model) response.model = model;
     const costUsd = this.costTracker.record(model, response.usage);
     response.kostenUsd = costUsd; // v1659 — die Pipeline summiert die echten Kosten je Aufruf
+    const ultra = this.ultraErfassen(request.tier, resolvedTier, model, response.usage, costUsd);
     this.logger?.info(
       {
-        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, durationMs,
+        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, durationMs, ...ultra,
         inputTokens: response.usage?.inputTokens, outputTokens: response.usage?.outputTokens,
         cacheReadTokens: response.usage?.cacheReadTokens, cacheWriteTokens: response.usage?.cacheCreationTokens,
         ...(response.cacheDiagnose ? { cacheDiagnose: response.cacheDiagnose } : {}), // v1693 (K2)
@@ -458,7 +480,7 @@ export class ModelRouter extends LLMProvider {
       const uhr: StreamUhr = { start: Date.now() };
       for await (const event of provider.stream(withEffort)) {
         hasYielded = true;
-        this.verbucheStream(resolvedTier, event, uhr); // v1248, v1345 Zeitmessung
+        this.verbucheStream(resolvedTier, event, uhr, request.tier); // v1248, v1345 Zeitmessung, U3 Auslöser
         yield event;
       }
       this.maybeNotifyRecovery(resolvedTier); // v868.3 — Re-Probe erfolgreich
@@ -490,7 +512,7 @@ export class ModelRouter extends LLMProvider {
         this.logger?.info({ tier }, 'Stream fallback to tier');
         if (failedTier === 'ultra') this.meldeUltraRueckfall(tier, `Stufe ultra ausgefallen: ${((originalErr as Error)?.message ?? String(originalErr)).slice(0, 160)}`);
         const uhr: StreamUhr = { start: Date.now() };
-        for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event, uhr); yield event; }
+        for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event, uhr, request.tier); yield event; }
         this.maybeNotifyRecovery(tier);
         this.meldePuls('erfolg', tier);
         return;

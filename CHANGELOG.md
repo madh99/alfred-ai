@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Stufe ultra: Auslöser und Kosten je Aufruf, Tagesbericht (v1924, Spec Stufe ultra U3)
+
+- Jeder Modellaufruf, der die Stufe ultra angefordert hat, wird mit Auslöser, Faden, tatsächlich gelaufener Stufe, Modell, Tokens und Kosten in der neuen Tabelle `ultra_nutzung` erfasst (PG-Migration 164, SQLite 160). Die Logzeile „LLM call completed“ trägt den Auslöser im Feld `ultra`.
+- Auslöser: `ausdrücklich` (Stufe in App, CLI oder per HTTP-Feld `tier` gewählt), `gegenpruefung:<change>` und `eskalation:<grund>` (Einstiegspunkte folgen in U2.2 und U2.3, Metadatenfeld `ultraGrund`). Ein ultra-Aufruf ohne Auslöser wird als `ohne-ausloeser` erfasst und im Log gewarnt.
+- Fällt ultra auf `strong` zurück, steht die tatsächliche Stufe im Eintrag. Andere Stufen im selben Ablauf, etwa eine Hintergrund-Auswertung auf `fast`, werden nicht als ultra gezählt.
+- Der Tagesabschluss um 23:50 schreibt Anzahl, Kosten und Rückfälle als Kennzahlen. An Tagen mit ultra-Nutzung bekommt der Owner einen kurzen Bericht mit Auslöser und Kosten je Posten. Das Tagesbudget gilt weiter für die Gesamtkosten.
+
 ### Fixed — Stufe ultra aus der Umgebung wird übernommen (v1923)
 
 - Seit v1922 gibt es die Stufe ultra, beim Start wurde sie aber nicht angelegt, obwohl `ALFRED_LLM_ULTRA_*` gesetzt war. Ursache: Bei gemischter Konfiguration (Stufen in der YAML und Flachschlüssel in der Umgebung) verschiebt der Config-Loader alle Schlüssel, die nicht in seiner festen Stufen-Liste stehen, in die Standardstufe. Dort verwarf die Prüfung `ultra`. Die Stufe steht jetzt in allen Listen des Loaders.

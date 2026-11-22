@@ -2596,4 +2596,23 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE infra_bauplan_vorlagen ADD COLUMN IF NOT EXISTS ableitung TEXT', []);
     },
   },
+  {
+    version: 164,
+    description: 'Spec Stufe ultra U3 — ultra_nutzung: jeder Aufruf mit angeforderter Stufe ultra, Auslöser, tatsächlicher Stufe, Modell und Kosten (PG-Spiegel zu SQLite v160).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS ultra_nutzung (
+          id TEXT PRIMARY KEY,
+          zeit TEXT NOT NULL,
+          datum TEXT NOT NULL,
+          grund TEXT NOT NULL,
+          ort TEXT,
+          stufe TEXT NOT NULL,
+          modell TEXT NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          kosten_usd DOUBLE PRECISION NOT NULL DEFAULT 0
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_ultra_nutzung_datum ON ultra_nutzung (datum)', []);
+    },
+  },
 ];
