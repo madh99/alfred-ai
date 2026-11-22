@@ -3,7 +3,7 @@
 # am Mac, dort ios-testflight-mac.sh (bauen, signieren, hochladen). Version/Build aus pubspec.yaml; jeder Upload braucht eine neue
 # Build-Nummer (+N). Voraussetzung am Mac: ~/.config/alfred/asc.env (siehe ios-testflight-mac.sh).
 set -euo pipefail
-MAC="${ALFRED_MAC:-madh@192.168.1.146}"
+MAC="${ALFRED_MAC:-madh@192.168.1.190}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO"
 VERSION="$(sed -n 's/^version: *//p' apps/flutter/pubspec.yaml | tr -d '\r')"

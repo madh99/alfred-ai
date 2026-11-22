@@ -5,7 +5,7 @@
 #   apps/flutter/release/ios-sim-fern.sh            bauen, installieren, starten, Bildschirmfoto nach $AUSGABE (Standard ./ios-sim.png)
 #   apps/flutter/release/ios-sim-fern.sh --nur-foto nur Bildschirmfoto
 set -euo pipefail
-MAC="${ALFRED_MAC:-madh@192.168.1.146}"
+MAC="${ALFRED_MAC:-madh@192.168.1.190}"
 QUELLE='~/dev/alfred-ios'
 AUSGABE="${AUSGABE:-ios-sim.png}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"

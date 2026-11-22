@@ -6,7 +6,7 @@
 #   apps/flutter/release/macos-fern.sh --kein-upload  DMG nur bauen und abholen
 # Voraussetzung: Owner am Mac angemeldet (Bildschirmsperre stört nicht), SSH-Zugang zum Mac und zum Server.
 set -euo pipefail
-MAC="${ALFRED_MAC:-madh@192.168.1.146}" # seit 18.10.2026 (vorher .200), feste Zuordnung in UniFi
+MAC="${ALFRED_MAC:-madh@192.168.1.190}" # seit 22.11.2026 (vorher .146, .200), feste Zuordnung in UniFi
 SERVER="${ALFRED_RELEASE_SERVER:-madh@192.168.1.92}"
 ZIEL=/root/alfred/data/app-releases/macos
 LABEL=at.alfred.build
