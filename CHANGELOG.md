@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gegenprüfung gilt nur für den geprüften Plan, Windows-Lizenz lesend (v1926)
+
+- Der Vermerk der Gegenprüfung durch ultra galt bisher für den ganzen Change. Wurde der Plan nach der Prüfung umgebaut, kam die neue Fassung ungeprüft zur Freigabe. Jetzt gilt der Vermerk nur für genau den geprüften Plan, gebunden an dessen Fingerabdruck. Ein geänderter Plan wird neu geprüft, höchstens dreimal je Change. Danach sagt die Freigabe-Frage ausdrücklich, dass die letzte Fassung nicht gegengeprüft ist. Werden Befunde nur begründet abgelehnt und der Plan bleibt gleich, gibt es keine neue Prüfung.
+- `proxmox windows_lizenz` gilt in der Planprüfung jetzt als lesend. Seit v1920 wurde die Aktion als ändernd eingestuft und verlangte Rückweg und Sicherung, auch als Prüfung. `windows_aktivieren` bleibt ändernd.
+
 ### Added — Gegenprüfung riskanter Changes durch die Stufe ultra (v1925, Spec Stufe ultra U2.2)
 
 - Ein Change mit Risiko `high` oder `critical` wird vor der ersten Freigabe-Frage einmal von der Stufe ultra gegengelesen. Dafür gibt es einen eigenen, schlanken Prompt: Plan, Prüfliste und bekannte Fehlerbilder, nicht der volle Chat-Prompt. ultra ändert nichts am Plan, es liefert nur Befunde, etwa zu fehlendem Rückweg, falscher Reihenfolge, einer Prüfung, die nicht zur Aktion passt, oder zu unterschätztem Risiko. Changes mit Risiko `low` oder `medium` werden nicht gegengeprüft.

@@ -38,6 +38,9 @@ describe('I3 Einordnung der Aktionen', () => {
     expect(aktionsArt('proxmox', 'delete_backup')).toBe('loeschen');
     expect(aktionsArt('proxmox', 'delete_backup_job')).toBe('aendern'); // Rückweg des Übergangsjobs, kein Löschen von Daten
     expect(aktionsArt('proxmox', 'list_backup_jobs')).toBe('lesen');
+    // Realfall 22.11. (Beweis 3 Stufe ultra): windows_lizenz liest nur, windows_aktivieren ändert
+    expect(aktionsArt('proxmox', 'windows_lizenz')).toBe('lesen');
+    expect(aktionsArt('proxmox', 'windows_aktivieren')).toBe('aendern');
     expect(aktionsArt('unifi', 'set_fixed_ip')).toBe('aendern');
     expect(aktionsArt('unifi', 'subnet_pruefen')).toBe('lesen'); // Bauplan V4: Vorab-Kontrolle „Netz frei“
     expect(aktionsArt('nginx_proxy_manager', 'update_host')).toBe('aendern');

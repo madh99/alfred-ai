@@ -86,6 +86,26 @@ describe('Spec Stufe ultra U2.2 — Gegenprüfung in freigabe_anfragen', () => {
     expect(a.fragen[0]).toContain('nicht umgesetzt: list_vms zeigt');
   });
 
+  it('Vermerk gilt nur für den geprüften Plan: geänderter Plan → neu prüfen; ab der Grenze offen ausgewiesen', async () => {
+    const a = aufbau([{ befunde: [] }, { befunde: [] }, { befunde: [] }]);
+    const r = await a.pl.planen('o', [plan('hoch')]);
+    if (!r.ok) throw new Error(r.fehler.join('\n'));
+    const id = r.changes[0]!.id;
+    const aendere = async (name: string) => { const p = plan('hoch'); (p.schritte[1]!.parameter as { name: string }).name = name; (p.schritte[1]!.pruefung as { erwartet: string }).erwartet = name; (p.schritte[1]!.rueckweg as { parameter: { name: string } }).parameter.name = name; expect((await a.pl.aendern('o', id, p)).ok).toBe(true); };
+    expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
+    expect(a.aufrufe()).toBe(1);
+    await aendere('zwei');
+    expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
+    expect(a.aufrufe()).toBe(2);
+    expect(a.fragen[1]).toContain('Von ultra gegengeprüft (2. Prüfung, nach Überarbeitung): keine Befunde.');
+    await aendere('drei');
+    expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
+    await aendere('vier');
+    expect((await a.pl.freigabeAnfragen('o', [id])).ok).toBe(true);
+    expect(a.aufrufe()).toBe(3);
+    expect(a.fragen[3]).toContain('diese Fassung ist NICHT gegengeprüft');
+  });
+
   it('Risiko high ohne Befunde: Frage mit „keine Befunde“', async () => {
     const a = aufbau([{ befunde: [] }]);
     const r = await a.pl.planen('o', [plan('kritisch')]);

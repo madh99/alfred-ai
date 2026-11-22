@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CmdbChangeRequest } from '@alfred/types';
 import type { ChangeSchrittDaten } from '@alfred/storage';
 import { changeFingerabdruck, freigabeText, plaeneAusSchritten, pruefeChangePlan, schrittText, pruefText, zyklus, type Auswirkung, type ChangePlan, type ChangeSchritt, type PruefKontext } from './change-schritte.js';
-import { gegenpruefungNoetig, vermerkText, ULTRA_QUELLE, type UltraBefund, type GegenpruefungVermerk } from './ultra-gegenpruefung.js'; // Spec Stufe ultra U2.2
+import { gegenpruefungNoetig, vermerkText, grenzeText, MAX_GEGENPRUEFUNGEN, ULTRA_QUELLE, type UltraBefund, type GegenpruefungVermerk } from './ultra-gegenpruefung.js'; // Spec Stufe ultra U2.2
 
 export interface ChangeSpeicher {
   liste(owner: string): Promise<CmdbChangeRequest[]>;
@@ -410,13 +410,16 @@ export class ChangePlanung {
     if (!g || !this.d.einwand || !gegenpruefungNoetig(c.riskLevel)) return {};
     const kurz = `${c.title} (${c.id.slice(0, 8)})`;
     const alt = await g.vermerk(owner, c.id);
-    if (alt) return { vermerk: vermerkText(alt) };
+    // Vermerk gilt nur für genau den geprüften Plan; geänderter Plan → neu prüfen (begrenzt, danach offen ausgewiesen)
+    if (alt && alt.fingerabdruck === c.fingerabdruck) return { vermerk: vermerkText(alt) };
+    const bisher = alt ? (alt.pruefungen ?? 1) : 0;
+    if (alt && bisher >= MAX_GEGENPRUEFUNGEN) return { vermerk: grenzeText(alt) };
     const r = await g.pruefe(owner, c, planAusChange(c));
     if ('fehler' in r) {
       this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung nicht lesbar', { id: c.id, fehler: r.fehler });
       return { fehler: `${kurz}: Gegenprüfung durch ultra nicht lesbar (${r.fehler}) — keine Freigabe-Frage gestellt; freigabe_anfragen erneut aufrufen` };
     }
-    const v: GegenpruefungVermerk = { fingerabdruck: c.fingerabdruck!, befunde: r.befunde.length, ...(r.modell ? { modell: r.modell } : {}), zeit: new Date(this.d.jetzt?.() ?? Date.now()).toISOString() };
+    const v: GegenpruefungVermerk = { fingerabdruck: c.fingerabdruck!, befunde: r.befunde.length, ...(r.modell ? { modell: r.modell } : {}), zeit: new Date(this.d.jetzt?.() ?? Date.now()).toISOString(), pruefungen: bisher + 1 };
     await g.setzeVermerk(owner, c.id, v);
     this.d.protokoll?.('Spec ultra U2.2 Gegenprüfung', { id: c.id, risiko: c.riskLevel, befunde: r.befunde.length, modell: r.modell });
     if (!r.befunde.length) return { vermerk: vermerkText(v) };

@@ -65,9 +65,19 @@ export function leseBefunde(antwort: string): UltraBefund[] | undefined {
   return aus;
 }
 
-/** Vermerk je Change (einmal geprüft; Befundzahl für die Freigabe-Frage) */
-export interface GegenpruefungVermerk { fingerabdruck: string; befunde: number; modell?: string; zeit: string }
+/**
+ * Vermerk je Change: gilt nur für den geprüften Plan (Fingerabdruck). Ändert sich der Plan danach (z. B. Befund umgesetzt),
+ * wird neu geprüft — höchstens MAX_GEGENPRUEFUNGEN-mal je Change; danach sagt die Freigabe-Frage offen, dass die letzte
+ * Fassung nicht gegengeprüft ist (der Owner entscheidet mit diesem Wissen).
+ */
+export interface GegenpruefungVermerk { fingerabdruck: string; befunde: number; modell?: string; zeit: string; pruefungen?: number }
+export const MAX_GEGENPRUEFUNGEN = 3;
 
 export function vermerkText(v: GegenpruefungVermerk): string {
-  return v.befunde === 0 ? 'Von ultra gegengeprüft: keine Befunde.' : `Von ultra gegengeprüft: ${v.befunde} ${v.befunde === 1 ? 'Befund' : 'Befunde'} (Antworten unten).`;
+  const nr = (v.pruefungen ?? 1) > 1 ? ` (${v.pruefungen}. Prüfung, nach Überarbeitung)` : '';
+  return v.befunde === 0 ? `Von ultra gegengeprüft${nr}: keine Befunde.` : `Von ultra gegengeprüft${nr}: ${v.befunde} ${v.befunde === 1 ? 'Befund' : 'Befunde'} (Antworten unten).`;
+}
+
+export function grenzeText(v: GegenpruefungVermerk): string {
+  return `⚠️ Von ultra ${v.pruefungen ?? 1}× gegengeprüft, der Plan wurde danach noch einmal geändert — Grenze von ${MAX_GEGENPRUEFUNGEN} Prüfungen je Change erreicht, diese Fassung ist NICHT gegengeprüft.`;
 }

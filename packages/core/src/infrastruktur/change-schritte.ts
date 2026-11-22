@@ -145,7 +145,7 @@ export const PRUEF_TYPEN: readonly PruefTyp[] =['http', 'port', 'dns', 'ping', '
 export const ZEITLIMIT_STANDARD_S = 600;
 export const ZEITLIMIT_MAX_S = 4 * 3600;
 
-const LESE_MUSTER = /^(list|get|show|status|info|search|logs?$|ps$|inspect|describe|check|ping|traceroute|torch|query|read|lesen|pruefen|discover|wait_ready|agent_status|backups_vm|cluster_status|node_stats|vm_status|task_status|interfaces|traffic|resources|dhcp_leases|arp|routes|dns_cache|connections|neighbors|wireless|firewall_rules|nat_rules|stats|containers|images|grundlage|bestand|vorhaben_liste|vorhaben_zeigen|impact|topology|dashboard|api_pruefen|trunk_path)/;
+const LESE_MUSTER = /^(list|get|show|status|info|search|logs?$|ps$|inspect|describe|check|ping|traceroute|torch|query|read|lesen|pruefen|discover|wait_ready|agent_status|backups_vm|cluster_status|node_stats|vm_status|task_status|interfaces|traffic|resources|dhcp_leases|arp|routes|dns_cache|connections|neighbors|wireless|firewall_rules|nat_rules|stats|containers|images|grundlage|bestand|vorhaben_liste|vorhaben_zeigen|impact|topology|dashboard|api_pruefen|trunk_path|windows_lizenz$)/;
 const SICHERUNGS_AKTIONEN = new Set(['create_snapshot', 'backup_vm', 'backup_config', 'snapshot', 'backup', 'export_config']);
 /** v1750 — im Stilllegungs-Change ohne Rückweg zulässige Entfernen-Befehle über Fernzugriff */
 // v1757 — pvesm free (einzelne Sicherungen/Volumes auf einem Speicher; Realfall 02.11. backupshare 2024er Sicherungen)
