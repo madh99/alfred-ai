@@ -905,7 +905,7 @@ export class Alfred {
         const { RegelnRepository } = await import('@alfred/storage');
         const regelnRepo = new RegelnRepository(adapter);
         this.regelnRepo = regelnRepo;
-        const { haltefristMin, nieStummschaltbar, vorgangFaellig } = await import('./vorgaenge/regeln.js');
+        const { haltefristMin, nieStummschaltbar, vorgangFaellig, faelligOhneVorgang } = await import('./vorgaenge/regeln.js');
         const log = this.logger.child({ component: 'befunde' });
         // v1937 — E2 scharf (Owner 23.11.): Vorgang erst nach der Haltefrist; Sicherheit sofort, Haus-Check nie
         const vorgangZuBefund = async (owner: string, quelle: string, b: { id: string; gegenstand: string; titel: string; detail?: string | null; entstanden: string }, anlass: 'neu' | 'frist') => {
@@ -931,9 +931,10 @@ export class Alfred {
           }
         };
         // v1937 — offene Befunde ohne Vorgang, deren Haltefrist abgelaufen ist (bei jedem Sync und im 10-min-Job)
+        // v1938 — nur Quellen aus diesem Weltmodell-Weg; licht/cmdb-umgebung/beobachter legen bewusst nie Vorgänge an (Realfall 91b2204d, 99ef9198)
+        const weltmodellQuellen = new Set<string>();
         const faelligeBefunde = async (owner: string) => {
-          for (const b of await befundeRepo.offene(owner).catch(() => [])) {
-            if (b.vorgangId || vorgangFaellig({ quelle: b.quelle, gegenstand: b.gegenstand }, b.entstanden, Date.now()) !== 'faellig') continue;
+          for (const b of faelligOhneVorgang(await befundeRepo.offene(owner).catch(() => []), weltmodellQuellen, Date.now())) {
             try { await vorgangZuBefund(owner, b.quelle, b, 'frist'); } catch (err) { log.warn({ err: (err as Error).message, quelle: b.quelle, gegenstand: b.gegenstand }, 'v1937 Vorgang nach Haltefrist nicht angelegt'); }
           }
         };
@@ -942,6 +943,7 @@ export class Alfred {
           const owner = this.tryOwner();
           if (!owner) return;
           const r = await befundeRepo.sync(owner, quelle, befundeAusDeutung(quelle, deutung));
+          weltmodellQuellen.add(quelle); // v1938
           for (const b of r.neu) {
             try { await vorgangZuBefund(owner, quelle, b, 'neu'); } catch (err) { log.warn({ err: (err as Error).message, quelle, gegenstand: b.gegenstand }, 'v1217 Vorgang zum Befund nicht angelegt'); }
           }

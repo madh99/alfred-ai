@@ -63,6 +63,18 @@ export function vorgangFaellig(s: BefundSchluessel, entstanden: string, jetzt: n
   return jetzt - t < frist * 60_000 ? 'warten' : 'faellig';
 }
 
+/**
+ * v1938 — offene Befunde, für die nach der Haltefrist jetzt ein Vorgang fällig ist. Nur Quellen aus dem Weltmodell-Weg
+ * (`weltmodellQuellen`, beim Sync gesammelt): licht, cmdb-umgebung, beobachter u. a. legen bewusst nie Vorgänge an.
+ * Leere Menge (frisch nach Neustart) → nichts fällig, bis die Quelle einmal synchronisiert hat.
+ */
+export function faelligOhneVorgang<T extends { quelle: string; gegenstand: string; entstanden: string; vorgangId?: string }>(
+  befunde: readonly T[], weltmodellQuellen: ReadonlySet<string>, jetzt: number,
+): T[] {
+  return befunde.filter(b => !b.vorgangId && weltmodellQuellen.has(b.quelle)
+    && vorgangFaellig({ quelle: b.quelle, gegenstand: b.gegenstand }, b.entstanden, jetzt) === 'faellig');
+}
+
 export const REGEL_VORSCHLAG_AB = 3;
 export const STUMM_TAGE = [7, 30, 90] as const;
 export const STUMM_STANDARD_TAGE = 30;

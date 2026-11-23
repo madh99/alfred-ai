@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Haltefrist legt keine Vorgänge für beobachtende Befunde an (v1938)
+
+- Nach v1937 entstanden nach Ablauf der Haltefrist auch Vorgänge für Befunde, die bewusst nie einen Vorgang erzeugen: Licht-Dauer (beobachtend), fehlende CMDB-Umgebung und Beobachter-Befunde. Die Frist-Prüfung berücksichtigt jetzt nur noch Befunde aus dem Weltmodell-Weg, der auch bisher Vorgänge anlegte. Nach einem Neustart wird erst geprüft, wenn die jeweilige Quelle einmal synchronisiert hat.
+
 ### Changed — Weniger Rauschen nach der Auswertung seit 12.10. (v1937)
 
 Die vorbereitete Auswertung (Befunde, Hinweise, Vorgänge, Anfragen seit 12.10.) ist gelaufen; die Konsequenzen sind auf Owner-Entscheidung umgesetzt.
