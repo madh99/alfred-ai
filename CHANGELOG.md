@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Keine leere Antwort „(no response)“ mehr nach Eskalation auf ultra (v1935)
+
+- Realfall 23.11. 10:19: Nach zwei Ablehnungen der Planprüfung wechselte Alfred auf ultra. Das Modell verbrauchte dreimal das Limit von 4.096 Tokens und auch die einmalige Wiederholung mit 16.384 Tokens vollständig zum Nachdenken; im Faden stand nur „(no response)“.
+- Die Wiederholung nach einer leeren Antwort am Ausgabelimit nutzt jetzt bis zu 48.000 Tokens (begrenzt durch das Ausgabelimit des Modells). Die bisherige Deckelung auf 16.384 war nur wegen des nicht-streamenden Aufrufs nötig, der seit v1934 bei großen Limits als Stream läuft.
+
 ### Fixed — Gegenprüfung durch ultra liefert bei langen Plänen wieder eine Antwort (v1934)
 
 - Realfall 23.11. (Notfall-Change pbs-pve2): Die Gegenprüfung eines Changes mit 19 Schritten kam zweimal ohne lesbare Antwort zurück. Das Modell hatte das gesamte Antwortlimit von 16.000 Tokens zum Nachdenken verbraucht; ohne Prüfergebnis wurde keine Freigabefrage gestellt.

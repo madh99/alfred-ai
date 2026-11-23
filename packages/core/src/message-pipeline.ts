@@ -120,7 +120,8 @@ const MAX_ABGESCHNITTEN_RUNDEN = 2; // v1650 — so oft darf ein abgeschnittener
 export const ABGESCHNITTEN_HINWEIS = 'Dein letzter Werkzeugaufruf wurde am Ausgabelimit abgeschnitten und NICHT ausgeführt. Teile ihn in mehrere kleinere Aufrufe auf (z. B. einen Change je Aufruf, Begründungen und Befehle knapp) und fahre dann fort.';
 /** v1650 — Ausgabelimit für die Wiederholung eines abgeschnittenen Werkzeugaufrufs: 16 384, nie über dem Modell-Maximum. */
 export function abgeschnittenGroesseresLimit(modellMax: number | undefined): number {
-  return Math.max(1024, Math.min(16_384, modellMax && modellMax > 0 ? modellMax : 16_384));
+  // v1935 — 48.000 statt 16.384: Realfall 23.11. (Fable 5.2 verbrauchte auch 16.384 im Denken); große Limits streamt der Provider seit v1934
+  return Math.max(1024, Math.min(48_000, modellMax && modellMax > 0 ? modellMax : 48_000));
 }
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
