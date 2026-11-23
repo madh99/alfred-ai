@@ -197,8 +197,8 @@ export const LINUX_HA_ZEIT_MS = {
   agEndpunkt: 180_000, agReplikat: 240_000, agAbschluss: 900_000, agEntfernen: 300_000,
   // Task 6: Prüfen, pcs resource move, Warten auf Primär/VIP/Gegenstelle (je bis 120 s), pcs resource clear, Selbstprüfung
   agFailover: 600_000,
-  // I8e Folge-Etappe: crm_mon, pcs node standby/unstandby, bis 60 s Warten auf das Attribut
-  knotenStandby: 180_000,
+  // I8e Folge-Etappe: crm_mon, pcs node standby/unstandby, bis 120 s Warten auf das Attribut; 23.11.: mit warte_ag weitere bis 300 s auf die AG-Instanz
+  knotenStandby: 540_000, // Mindest-Zeitlimit im Change damit 600 s (wie bisher geplante Schritte)
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -787,7 +787,8 @@ def crm_lage(t):
         res = int(wert("resources_configured", "number") or 0)
     except ValueError:
         res = -1
-    return {"knoten": len(kn), "online": online, "quorum": wert("current_dc", "with_quorum") == "true", "stonith": wert("cluster_options", "stonith-enabled") == "true", "ressourcen": res}`;
+    standby = sorted(n.get("name") for n in kn if n.get("standby") == "true")
+    return {"knoten": len(kn), "online": online, "quorum": wert("current_dc", "with_quorum") == "true", "stonith": wert("cluster_options", "stonith-enabled") == "true", "ressourcen": res, "standby": standby}`;
 
 /** Ausgabe für Bash: „<knoten> <online> <quorum 0|1> <stonith 0|1> <ressourcen> <online-namen,…|->“; Exit 2 bei unlesbarem XML */
 export const PY_CRM_LAGE = `${PY_CRM_FUNK}

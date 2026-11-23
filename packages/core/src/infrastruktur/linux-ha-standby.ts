@@ -10,8 +10,11 @@ import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import { LINUX_HA_BAUSTEINE, HA_AG_RESSOURCE } from './linux-ha.js';
 import { sqlKopf, shQ } from './linux-sql.js';
 
-export function pruefeKnotenStandby(p: { an?: unknown }): string | undefined {
-  return typeof p.an === 'boolean' ? undefined : 'an: true (Knoten in Standby) oder false (zurückholen)';
+export function pruefeKnotenStandby(p: { an?: unknown; warte_ag?: unknown; warteAg?: unknown }): string | undefined {
+  if (typeof p.an !== 'boolean') return 'an: true (Knoten in Standby) oder false (zurückholen)';
+  const w = p.warte_ag ?? p.warteAg;
+  if (w !== undefined && typeof w !== 'boolean') return 'warte_ag: nur true oder false (Wahrheitswert)';
+  return undefined;
 }
 
 /**
@@ -46,9 +49,12 @@ export const PY_HA_KNOTEN_LAGE = [
   'print(online, len(knoten), q, st, prom, akt)',
 ].join('\n');
 
-export function knotenStandbySkript(p: { an: boolean }): string {
+export function knotenStandbySkript(p: { an: boolean; warteAg?: boolean }): string {
   const f = pruefeKnotenStandby(p); if (f) throw new Error(f);
   const soll = p.an ? 'true' : 'false';
+  // 23.11. (Entwurf 2f31b31d): warteAg nur beim Zurückholen — erst Erfolg, wenn die ag_cluster-Instanz auf dem Knoten wieder aktiv ist
+  const warte = !p.an && p.warteAg === true;
+  const agFeld = warte ? ',\\"agAktiv\\":true' : '';
   return [
     ...sqlKopf(LINUX_HA_BAUSTEINE.knotenStandby, { an: p.an }, 'ALFRED-HA'),
     `PY_LAGE=${shQ(PY_HA_KNOTEN_LAGE)}`,
@@ -68,17 +74,26 @@ export function knotenStandbySkript(p: { an: boolean }): string {
     ] : []),
     p.an
       ? `if [ "$ST" = true ] && [ "$AKT" = 0 ]; then ergebnis "{\\"zustand\\":\\"schon\\",\\"knoten\\":\\"$K\\",\\"standby\\":true}"; exit 0; fi`
-      : `if [ "$ST" = false ]; then ergebnis "{\\"zustand\\":\\"schon\\",\\"knoten\\":\\"$K\\",\\"standby\\":false}"; exit 0; fi`,
+      : warte
+        ? `if [ "$ST" = false ] && [ "$AKT" != 0 ]; then ergebnis "{\\"zustand\\":\\"schon\\",\\"knoten\\":\\"$K\\",\\"standby\\":false${agFeld}}"; exit 0; fi`
+        : `if [ "$ST" = false ]; then ergebnis "{\\"zustand\\":\\"schon\\",\\"knoten\\":\\"$K\\",\\"standby\\":false}"; exit 0; fi`,
+    ...(warte ? ['if [ "$ST" = true ]; then'] : []),
     `pcs node ${p.an ? 'standby' : 'unstandby'} "$K" >/dev/null 2>&1 || abbruch "pcs node ${p.an ? 'standby' : 'unstandby'} $K fehlgeschlagen"`,
     // ab hier kann sich etwas geändert haben
     "NG=''",
     p.an
       ? 'for i in $(seq 1 60); do lage; [ "$ST" = true ] && [ "$AKT" = 0 ] && break; sleep 2; done'
       : 'for i in $(seq 1 60); do lage; [ "$ST" = false ] && break; sleep 2; done',
+    ...(warte ? ['fi', "NG=''"] : []),
     `[ "$ST" = ${soll} ] || abbruch "Standby von $K nicht bestätigt (crm_mon standby=$ST, Soll ${soll})"`,
+    ...(warte ? [
+      // Instanz wieder aktiv (Unpromoted/Promoted) — bis 300 s; sonst Abbruch (Knoten arbeitet nicht wieder mit)
+      'for i in $(seq 1 150); do lage; [ "$AKT" != 0 ] && break; sleep 2; done',
+      '[ "$AKT" != 0 ] || abbruch "$AG_RES auf $K nicht wieder aktiv (300 s nach Standby aus) — Knoten arbeitet nicht mit"',
+    ] : []),
     ...(p.an ? ['[ "$AKT" = 0 ] || abbruch "$AG_RES auf $K noch aktiv ($AKT Instanz) — Standby gesetzt, Ressource nach 120 s nicht gestoppt; Dienst nicht anfassen"'] : []),
-    `ergebnis "{\\"zustand\\":\\"geaendert\\",\\"knoten\\":\\"$K\\",\\"standby\\":${soll}}"`,
+    `ergebnis "{\\"zustand\\":\\"geaendert\\",\\"knoten\\":\\"$K\\",\\"standby\\":${soll}${agFeld}}"`,
   ].join('\n');
 }
 
-registriereLinuxBaustein<{ an: boolean }>(LINUX_HA_BAUSTEINE.knotenStandby, knotenStandbySkript);
+registriereLinuxBaustein<{ an: boolean; warteAg?: boolean }>(LINUX_HA_BAUSTEINE.knotenStandby, knotenStandbySkript);

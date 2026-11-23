@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Standby-Nachweis im HA-Status und Rückholen mit AG-Prüfung (v1941)
+
+- `linux_ha status` nennt Knoten im Pacemaker-Standby („Standby sqllnx02“) als festes Prüfstück. Damit lässt sich in Changes vor einem Neustart belegen, dass der Knoten im Standby ist.
+- `linux_ha knoten_standby` mit `an=false` kennt `warte_ag`: Der Schritt gilt erst als erfolgreich, wenn die Instanz der Verfügbarkeitsgruppe auf dem Knoten wieder aktiv ist (bis 300 Sekunden). So belegt auch ein Rückweg, dass der Knoten wieder mitarbeitet.
+
 ### Fixed — „Agent läuft“ als Prüftext in Changes zulässig (v1940)
 
 - Die Planprüfung kannte die neue Statusangabe „Agent läuft“ noch nicht und lehnte sie als erwartete Ausgabe ab. Sie ist jetzt als positives Prüfstück zugelassen; „Agent GESTOPPT“ bleibt nur als ausgeschlossener Text verwendbar.

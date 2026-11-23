@@ -1076,3 +1076,17 @@ describe('I8e Paket 2 Task 6 — Change „Geplantes Failover sqllnxag01“', ()
     expect(z.some(x => x.includes('CONFIGURATION_ONLY'))).toBe(true);
   });
 });
+
+// Realfall 23.11. (Entwurf 2f31b31d): eigener Standby-Nachweis — der Status nennt Knoten im Standby als festes Prüfstück
+describe('clusterText: Standby (23.11.)', () => {
+  it('Knoten im Standby angehängt; ohne Standby unverändert', () => {
+    expect(clusterText({ ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, standby: ['sqllnx02'] } })).toBe('Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s, Standby sqllnx02');
+    expect(clusterText({ ...CLUSTER_OK, crm: { ...CLUSTER_OK.crm!, standby: [] } })).toBe('Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s');
+  });
+  it('feste Ausgaben und crm_mon-Auswertung', async () => {
+    const { FESTE_AUSGABEN } = await import('./change-schritte.js');
+    for (const k of ['sqllnx01', 'sqllnx02', 'sqllnxcfg']) expect(FESTE_AUSGABEN['linux_ha.status']).toContain(`Standby ${k}`);
+    const { PY_CRM_FUNK } = await import('./linux-ha.js');
+    expect(PY_CRM_FUNK).toContain('"standby": standby');
+  });
+});

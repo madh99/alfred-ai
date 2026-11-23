@@ -137,7 +137,7 @@ export interface LinuxHaCluster {
   art: 'keiner' | 'debian' | 'eingerichtet';
   name?: string | null;
   knoten?: Array<{ name: string | null; ip: string | null }>;
-  crm?: { knoten: number; online: string[]; quorum: boolean; stonith: boolean; ressourcen: number } | null;
+  crm?: { knoten: number; online: string[]; quorum: boolean; stonith: boolean; ressourcen: number; standby?: string[] } | null;
   sbd?: Record<string, { installiert: boolean; aktiviert: boolean; laeuft: boolean }> | null;
   stonithWatchdogTimeout?: string | null;
   /** Task 8: Fehlaktionen (Fenster) und Fehlerzähler der AG-Ressource dieses Knotens (PY_PM_FEHLER_FUNK); null = nicht lesbar */
@@ -176,7 +176,9 @@ export function clusterText(c: LinuxHaCluster | undefined): string {
   const sbd = c.sbd ? `SBD aktiv ${namen.filter(k => c.sbd![k]?.laeuft).length}/${n}` : 'SBD unbekannt';
   const w = c.stonithWatchdogTimeout;
   const swt = !w ? 'nicht gesetzt' : /^\d+$/.test(w) ? `${w}s` : w;
-  return `Cluster ${name}: ${c.crm.online.filter(k => namen.includes(k)).length}/${n} online, Quorum ${c.crm.quorum ? 'ja' : 'nein'}, STONITH ${c.crm.stonith ? 'an' : 'aus'}, ${sbd}, stonith-watchdog-timeout ${swt}`;
+  // 23.11. (Entwurf 2f31b31d): Knoten im Standby als festes Prüfstück („Standby sqllnx02“); ohne Standby unverändert
+  const sb = (c.crm.standby ?? []).filter(k => namen.includes(k));
+  return `Cluster ${name}: ${c.crm.online.filter(k => namen.includes(k)).length}/${n} online, Quorum ${c.crm.quorum ? 'ja' : 'nein'}, STONITH ${c.crm.stonith ? 'an' : 'aus'}, ${sbd}, stonith-watchdog-timeout ${swt}${sb.length ? `, Standby ${sb.join(', ')}` : ''}`;
 }
 
 const istEsb = (k: string | null | undefined) => !!k && /i6300esb/i.test(k);
@@ -421,7 +423,7 @@ export class LinuxHaSkill extends Skill {
       + `sonst pcs resource move ${HA_AG_KLON} <ziel> --promoted, warten bis Primär = Ziel, immer pcs resource clear (auch bei Zeitüberschreitung — eine verbliebene Standort-Bedingung steht im Fehler), VIP und Gegenstelle SECONDARY/synchron abwarten, Selbstprüfung; `
       + 'Ergebnis Dauer (s), neuer Primär, VIP-Ort. Ziel schon Primär → nichts zu tun (eine liegengebliebene cli-prefer wird sichtbar freigegeben). Rückweg ist immer ag_failover zurück (zugang und ziel vertauscht). '
       + 'Status zeigt dazu „AG <name>: Promoted …, VIP …, required_sync Ressource 0 / SQL 0, Replikate … SYNCHRONIZED …, Standort-Bedingungen 0“ (offen: „Standort-Bedingungen OFFEN: …“ — Prüfung nichtEnthalten „OFFEN“). '
-      + 'knoten_standby (nur im Change; zugang, an true/false) — setzt den Pacemaker-Knoten DES ZUGANGS in Standby (pcs node standby) bzw. zurück; vorher ohne Änderung: Quorum, alle Knoten online, nie der Primär (Promoted ag_cluster); Selbstprüfung standby-Attribut in crm_mon; Rückweg Pflicht knoten_standby mit an umgekehrt. Nötig vor linux_sql sa_kennwort_setzen (Dienst wird gestoppt). '
+      + 'knoten_standby (nur im Change; zugang, an true/false) — setzt den Pacemaker-Knoten DES ZUGANGS in Standby (pcs node standby) bzw. zurück; vorher ohne Änderung: Quorum, alle Knoten online, nie der Primär (Promoted ag_cluster); Selbstprüfung standby-Attribut in crm_mon; Rückweg Pflicht knoten_standby mit an umgekehrt; warte_ag true (nur an=false, Replikat-Knoten) wartet bis die ag_cluster-Instanz wieder aktiv ist („Standby aus, AG-Instanz aktiv“). linux_ha status nennt Knoten im Standby („Standby sqllnx02“). Nötig vor linux_sql sa_kennwort_setzen (Dienst wird gestoppt). '
       + 'Sonst ohne Rückweg nur beim Neuaufbau (derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit) oder mit ohneSicherungGrund — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
     version: '1.0.0',
@@ -432,6 +434,7 @@ export class LinuxHaSkill extends Skill {
         action: { type: 'string', enum: [...LINUX_HA_LESEND, ...LINUX_HA_NUR_IM_CHANGE] },
         zugang: { type: 'string', description: 'Name des Linux-Fernzugangs (z. B. sqllnx02)' },
         an: { type: 'boolean', description: 'knoten_standby: true = Knoten des Zugangs in Standby, false = zurückholen (Rückweg)' },
+        warte_ag: { type: 'boolean', description: 'knoten_standby mit an=false: erst Erfolg, wenn die ag_cluster-Instanz auf dem Knoten wieder aktiv ist (bis 300 s) — für Replikat-Knoten im Rückweg' },
         rolle: { type: 'string', enum: ['daten', 'konfig'], description: 'ha_vorbereiten: daten (Datenreplikat) oder konfig (CONFIGURATION_ONLY, sqllnxcfg)' },
         knoten: { type: 'array', description: 'ha_vorbereiten: genau drei Knoten {name, ip} (Standard sqllnx01/02/cfg); cluster_anlegen/cluster_entfernen: Knotennamen (nur sqllnx01, sqllnx02, sqllnxcfg — feste IPs)' },
         cluster: { type: 'string', description: `cluster_anlegen/cluster_entfernen: Clustername (Standard ${HA_CLUSTER_NAME})` },
@@ -813,10 +816,13 @@ export class LinuxHaSkill extends Skill {
   private async knotenStandby(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
     const f = pruefeKnotenStandby(input); if (f) throw new Error(f);
     const an = input.an as boolean;
-    const r = await this.lauf<{ zustand: string; knoten?: string; standby?: boolean }>(zugang, LINUX_HA_BAUSTEINE.knotenStandby, { an }, `Knoten-Standby ${an ? 'an' : 'aus'}`, LINUX_HA_ZEIT_MS.knotenStandby);
+    // 23.11.: warte_ag (nur beim Zurückholen) — Erfolg erst, wenn die ag_cluster-Instanz auf dem Knoten wieder aktiv ist
+    const warteAg = !an && input.warte_ag === true;
+    const r = await this.lauf<{ zustand: string; knoten?: string; standby?: boolean; agAktiv?: boolean }>(zugang, LINUX_HA_BAUSTEINE.knotenStandby, { an, ...(warteAg ? { warteAg } : {}) }, `Knoten-Standby ${an ? 'an' : 'aus'}`, LINUX_HA_ZEIT_MS.knotenStandby);
     if (r.standby !== an) throw new Error(`knoten_standby ${zugang}: Nachprüfung fehlgeschlagen (standby ${String(r.standby)}, Soll ${String(an)})`);
+    if (warteAg && r.agAktiv !== true) throw new Error(`knoten_standby ${zugang}: AG-Instanz nicht als aktiv bestätigt`);
     this.d.protokoll?.('I8e Knoten-Standby', { zugang, knoten: r.knoten, an, zustand: r.zustand });
-    const text = `Knoten ${r.knoten ?? zugang}: Standby ${an ? 'an' : 'aus'}`;
+    const text = `Knoten ${r.knoten ?? zugang}: Standby ${an ? 'an' : 'aus'}${warteAg ? ', AG-Instanz aktiv' : ''}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

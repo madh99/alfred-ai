@@ -26,16 +26,16 @@ function crm(standby: Record<string, boolean>, promoted: string, quorum = true, 
 
 /** führt das Skript auf „ich“ aus; pcs node standby/unstandby schaltet die XML-Datei um (wie Pacemaker), protokolliert nach $T/log */
 /** pcs-Stub: „voll“ = Attribut + Instanz gestoppt (wie Pacemaker), „attribut“ = nur das Attribut (Instanz läuft weiter), „nichts“ */
-function lauf(an: boolean, ich: string, xml: string, pcs: 'voll' | 'attribut' | 'nichts' = 'voll') {
+function lauf(an: boolean, ich: string, xml: string, pcs: 'voll' | 'attribut' | 'nichts' = 'voll', warteAg = false) {
   const attribut = 'case "$2" in standby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/" "$T/crm.xml" ;; unstandby) sed -i "s/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"true\\"/name=\\"$3\\" id=\\"$3\\" online=\\"true\\" standby=\\"false\\"/" "$T/crm.xml" ;; esac';
-  const instanz = '[ "$2" != standby ] || sed -i "s#<resource id=\\"ag_cluster\\" role=\\"Unpromoted\\" active=\\"true\\"><node name=\\"$3\\" id=\\"$3\\"/></resource>#<resource id=\\"ag_cluster\\" role=\\"Stopped\\" active=\\"false\\"/>#" "$T/crm.xml"';
+  const instanz = '[ "$2" != standby ] || sed -i "s#<resource id=\\"ag_cluster\\" role=\\"Unpromoted\\" active=\\"true\\"><node name=\\"$3\\" id=\\"$3\\"/></resource>#<resource id=\\"ag_cluster\\" role=\\"Stopped\\" active=\\"false\\"/>#" "$T/crm.xml"; [ "$2" != unstandby ] || sed -i "0,/<resource id=\\"ag_cluster\\" role=\\"Stopped\\" active=\\"false\\"\\/>/s##<resource id=\\"ag_cluster\\" role=\\"Unpromoted\\" active=\\"true\\"><node name=\\"$3\\" id=\\"$3\\"/></resource>#" "$T/crm.xml"';
   const stubs = [
     `python3() { PYTHONIOENCODING=utf-8 '${PYTHON_PFAD}' "$@" | tr -d '\\r'; }`,
     `hostname() { echo ${ich}; }`, 'sleep() { :; }',
     'crm_mon() { cat "$T/crm.xml"; }',
     `pcs() { echo "pcs $*" >>"$T/log"; ${pcs === 'nichts' ? ':' : pcs === 'attribut' ? attribut : `${attribut}; ${instanz}`}; }`,
   ].join('\n');
-  const text = knotenStandbySkript({ an }).replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
+  const text = knotenStandbySkript({ an, ...(warteAg ? { warteAg } : {}) }).replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
   const huelle = ['T=$(mktemp -d)', `printf '%s' '${xml}' >"$T/crm.xml"`, "ALFRED_EINGABE=''", `( ${text}\n) >"$T/aus" 2>&1; echo "RC=$?"`, 'echo "---AUS"; cat "$T/aus"; echo "---LOG"; cat "$T/log" 2>/dev/null; rm -rf "$T"'].join('\n');
   const o = spawnSync('bash', [], { input: huelle, encoding: 'utf8' }).stdout.replace(/\r/g, '');
   const aus = o.split('---AUS\n')[1]?.split('---LOG\n')[0] ?? '';
@@ -131,5 +131,38 @@ describe('Skill', () => {
     expect(r.success, r.error).toBe(true);
     expect(aufrufe[0]).toEqual({ baustein: LINUX_HA_BAUSTEINE.knotenStandby, p: { an: true }, eingabe: undefined });
     expect(r.display).toContain('Knoten sqllnxcfg: Standby an');
+  });
+});
+
+/**
+ * Realfall 23.11. (Entwurf 2f31b31d): die Planprüfung verlangte nach dem Rückweg einen Nachweis, dass der Knoten wieder mitarbeitet,
+ * und vor dem Neustart einen eigenen Standby-Nachweis. warte_ag (nur an=false): nach unstandby warten, bis die ag_cluster-Instanz auf
+ * dem Knoten wieder aktiv ist (bis 300 s), sonst Abbruch. Für Replikat-Knoten; ohne warte_ag wie bisher.
+ */
+describe('knoten_standby — warte_ag', () => {
+  it.skipIf(!BASH || !PYTHON)('zurück mit warte_ag: Instanz kommt wieder → Erfolg, agAktiv true', () => {
+    const r = lauf(false, 'sqllnx02', crm(ALLE({ sqllnx02: true }), 'sqllnx01'), 'voll', true);
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', standby: false, agAktiv: true });
+  });
+  it.skipIf(!BASH || !PYTHON)('zurück mit warte_ag: Instanz bleibt gestoppt → Abbruch', () => {
+    const r = lauf(false, 'sqllnx02', crm(ALLE({ sqllnx02: true }), 'sqllnx01'), 'attribut', true);
+    expect(r.rc).not.toBe(0);
+    expect(r.aus).toContain('ag_cluster auf sqllnx02 nicht wieder aktiv');
+  }, 90_000);
+  it.skipIf(!BASH || !PYTHON)('schon zurück, Instanz aktiv, warte_ag → nichts zu tun mit agAktiv true', () => {
+    const r = lauf(false, 'sqllnx02', crm(ALLE(), 'sqllnx01'), 'voll', true);
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'schon', standby: false, agAktiv: true });
+  });
+  it('Parameter: warte_ag nur Wahrheitswert; Skill reicht ihn durch; Rückweg mit warte_ag ist zulässig', async () => {
+    expect(pruefeKnotenStandby({ an: false, warte_ag: 'ja' })).toContain('warte_ag');
+    expect(pruefeKnotenStandby({ an: false, warte_ag: true })).toBeUndefined();
+    const aufrufe: unknown[] = [];
+    const sk = new LinuxHaSkill({ skript: async (_z, _b, p) => { aufrufe.push(p); return { code: 0, stdout: `ALFRED-HA ${JSON.stringify({ zustand: 'geaendert', knoten: 'sqllnx02', standby: false, agAktiv: true })}\n`, stderr: '' }; } });
+    const r = await sk.execute({ action: 'knoten_standby', zugang: 'sqllnx02', an: false, warte_ag: true }, imChange);
+    expect(r.success, r.error).toBe(true);
+    expect(aufrufe[0]).toEqual({ an: false, warteAg: true });
+    expect(r.display).toContain('Knoten sqllnx02: Standby aus, AG-Instanz aktiv');
   });
 });
