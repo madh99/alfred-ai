@@ -213,3 +213,42 @@ describe('S4 Betriebssystem-Updates und Serie', () => {
     expect(!g.ok && g.fehler[0]).toContain('gesperrt');
   });
 });
+
+describe('v1936 — liegengebliebene Serien-Changes', () => {
+  it('Realfall 9b119674/3093d1fc: neue Serie verwirft ältere, nie gestartete Changes derselben Vorlage und meldet das', async () => {
+    const v = V('os_updates');
+    const db = new Map([[v.key, { vorlage: v.key, abdruck: vorlagenAbdruck(v), status: 'freigegeben', freigegebenAt: '2026-10-20T00:00:00Z' }]]);
+    const verworfen: Array<[string, string]> = []; const meldungen: string[] = []; const gefragt: string[] = [];
+    const st = new StandardChanges({
+      stand: async () => [...db.values()], setze: async () => undefined,
+      kontext: async () => kontext({ updatesAn: async () => true, vmFuerZugang: async z => ({ assetId: `a-${z}`, vmid: 1, node: 'pve3', name: z }), zugaengeMitUpdates: async () => ['a'] }),
+      speichere: async () => ({ ok: false, fehler: ['nicht für Serien'] }),
+      pruefe: async () => ({ ok: true, text: 'ok' }),
+      melde: async t => { meldungen.push(t); },
+      planeSerie: async (_o, pl) => ({ ok: true, ids: pl.map((_, i) => `neu${i + 1}`) }),
+      freigabeAnfragen: async () => 'Freigabe-Frage gestellt.',
+      liegengeblieben: async (_o, key) => { gefragt.push(key); return [{ id: 'alt00001-x', title: 'Standard: Updates a' }]; },
+      verwerfen: async (_o, id, grund) => { verworfen.push([id, grund]); },
+      jetzt: () => Date.parse('2026-11-24T09:00:00Z'),
+    });
+    const r = await st.serie('o', 'os_updates', { geplantAb: '2026-11-25T00:30:00+01:00' });
+    expect(r.ok).toBe(true);
+    expect(gefragt).toEqual(['os_updates']);
+    expect(verworfen).toHaveLength(1);
+    expect(verworfen[0]![0]).toBe('alt00001-x');
+    expect(verworfen[0]![1]).toContain('neue Serie');
+    expect(meldungen.join(' ')).toContain('alt00001');
+  });
+  it('ohne Deps (ältere Verdrahtung) läuft die Serie unverändert', async () => {
+    const v = V('os_updates');
+    const db = new Map([[v.key, { vorlage: v.key, abdruck: vorlagenAbdruck(v), status: 'freigegeben', freigegebenAt: '2026-10-20T00:00:00Z' }]]);
+    const st = new StandardChanges({
+      stand: async () => [...db.values()], setze: async () => undefined,
+      kontext: async () => kontext({ updatesAn: async () => true, vmFuerZugang: async z => ({ assetId: `a-${z}`, vmid: 1, node: 'pve3', name: z }), zugaengeMitUpdates: async () => ['a'] }),
+      speichere: async () => ({ ok: false, fehler: ['x'] }), pruefe: async () => ({ ok: true, text: 'ok' }),
+      planeSerie: async (_o, pl) => ({ ok: true, ids: pl.map((_, i) => `n${i}`) }), freigabeAnfragen: async () => 'ok',
+      jetzt: () => Date.parse('2026-11-24T09:00:00Z'),
+    });
+    expect((await st.serie('o', 'os_updates', {})).ok).toBe(true);
+  });
+});

@@ -20,6 +20,10 @@ export interface StandardDeps {
   /** S4 — Serie als normales Change-Paket anlegen (verkettet) und EINE Freigabe-Frage stellen (Owner 27.10.: ein Ja je Serie) */
   planeSerie?: (o: string, plaene: Array<Record<string, unknown>>) => Promise<{ ok: true; ids: string[] } | { ok: false; fehler: string[] }>;
   freigabeAnfragen?: (o: string, ids: string[]) => Promise<string>;
+  /** v1936 — nie gestartete, nie freigegebene Serien-Changes dieser Vorlage (Entwurf/zur Freigabe ohne Lauf, Termin vorbei) */
+  liegengeblieben?: (o: string, vorlage: string) => Promise<Array<{ id: string; title: string }>>;
+  /** v1936 — nie gestarteten Change verwerfen (cancelled mit Grund, Zeile bleibt) */
+  verwerfen?: (o: string, id: string, grund: string) => Promise<void>;
   kontext(o: string): Promise<StandardKontext>;
   /** Plan prüfen und als Standard-Change (sofort freigegeben) speichern */
   speichere(o: string, plan: Record<string, unknown>, vorlage: string, merkmal: string): Promise<{ ok: true; change: CmdbChangeRequest } | { ok: false; fehler: string[] }>;
@@ -162,6 +166,14 @@ export class StandardChanges {
     }
     if (ausgelassen.length) await this.d.melde?.(`📋 Serie ${n.v.titel}: ausgelassen — ${ausgelassen.join(' · ')}`).catch(() => undefined);
     if (!plaene.length) return { ok: false, fehler: [`kein Host passt: ${ausgelassen.join(' · ')}`] };
+    // v1936 — Realfall 23.11. (9b119674, 3093d1fc): unbeantwortete Wochen-Serien blieben für immer „zur Freigabe“ stehen. Die neue Serie
+    // ersetzt sie: ältere, nie gestartete Changes derselben Vorlage werden verworfen und gemeldet (nichts still).
+    const alt = (await this.d.liegengeblieben?.(o, key).catch(() => [])) ?? [];
+    if (alt.length && this.d.verwerfen) {
+      for (const a of alt) await this.d.verwerfen(o, a.id, `durch neue Serie ${key} ersetzt (nie freigegeben, Termin verstrichen)`);
+      this.d.protokoll?.('v1936 liegengebliebene Serien-Changes verworfen', { vorlage: key, ids: alt.map(a => a.id) });
+      await this.d.melde?.(`📋 Serie ${n.v.titel}: ${alt.length} ältere, nie freigegebene Change(s) verworfen — ${alt.map(a => `${a.id.slice(0, 8)} „${a.title}“`).join(' · ')}`).catch(() => undefined);
+    }
     const r = await this.d.planeSerie(o, plaene);
     if (!r.ok) return r;
     const frage = await this.d.freigabeAnfragen(o, r.ids);

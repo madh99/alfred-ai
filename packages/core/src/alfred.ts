@@ -8134,6 +8134,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             // S4 — Serie: normales Change-Paket (verkettet) + EINE Freigabe-Frage
             planeSerie: async (o, plaene) => { const r = await this.changePlanung!.planen(o, plaene); return r.ok ? { ok: true as const, ids: r.changes.map(c => c.id) } : r; },
             freigabeAnfragen: async (o, ids) => { const r = await this.changePlanung!.freigabeAnfragen(o, ids); return r.ok ? r.text : `Freigabe-Frage nicht gestellt: ${r.fehler.join('; ')}`; },
+            // v1936 — nie gestartete Serien-Changes derselben Vorlage, deren Termin vorbei ist (Entwurf oder zur Freigabe, ohne Lauf)
+            liegengeblieben: async (o, v) => (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => []))
+              .filter(c => (c.description ?? '').startsWith(`Standard-Serie ${v} `) && (c.status === 'submitted' || c.status === 'draft')
+                && !(c.lauf as { start?: string } | undefined)?.start && !!c.scheduledAt && Date.parse(c.scheduledAt) < Date.now())
+              .map(c => ({ id: c.id, title: c.title })),
+            verwerfen: async (o, id, grund) => { await itsmI3.verwerfen(o, id, grund); },
             setze: (o, v, d) => wartungRepo.standardSetze(o, v, d),
             speichere: (o, plan, v, m) => this.changePlanung!.planenStandard(o, plan, v, m),
             nachAnlage: () => { void this.changeMotor?.anstossen().catch(() => undefined); },

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Unbeantwortete Wochen-Serien bleiben nicht mehr liegen (v1936)
+
+- Realfall 23.11.: Die wöchentliche Windows-Update-Serie für probe-win25b legte am 10.11. und 17.11. je einen Change an. Die Freigabefragen liefen unbeantwortet ab, beide Changes blieben dauerhaft „zur Freigabe“ stehen und sammelten sich an.
+- Legt der Wochenjob eine neue Serie an, verwirft er jetzt ältere Changes derselben Vorlage, die nie gestartet wurden und deren Termin vorbei ist (Entwurf oder zur Freigabe). Der Grund steht im Change, der Owner erhält eine Meldung mit den verworfenen Changes.
+
 ### Fixed — Keine leere Antwort „(no response)“ mehr nach Eskalation auf ultra (v1935)
 
 - Realfall 23.11. 10:19: Nach zwei Ablehnungen der Planprüfung wechselte Alfred auf ultra. Das Modell verbrauchte dreimal das Limit von 4.096 Tokens und auch die einmalige Wiederholung mit 16.384 Tokens vollständig zum Nachdenken; im Faden stand nur „(no response)“.
