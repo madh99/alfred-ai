@@ -66,3 +66,10 @@ describe('Owner 22.11. G1/K1 — feste Auslöser der Gegenprüfung', () => {
     expect(vermerkText({ fingerabdruck: 'x', befunde: 0, zeit: '', grund: 'Risiko high' })).toBe('Von ultra gegengeprüft (Anlass: Risiko high): keine Befunde.');
   });
 });
+
+describe('v1934 — Antwortlimit der Gegenprüfung', () => {
+  it('Realfall 23.11. (29b2f140): 16.000 Tokens gingen ganz ins Thinking — Limit jetzt 48.000', async () => {
+    const m = await import('./ultra-gegenpruefung.js') as { GEGENPRUEFUNG_MAX_TOKENS?: number };
+    expect(m.GEGENPRUEFUNG_MAX_TOKENS).toBe(48_000);
+  });
+});

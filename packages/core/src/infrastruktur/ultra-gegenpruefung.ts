@@ -116,6 +116,8 @@ export function leseBefunde(antwort: string): UltraBefund[] | undefined {
  */
 export interface GegenpruefungVermerk { fingerabdruck: string; befunde: number; modell?: string; zeit: string; pruefungen?: number; grund?: string }
 export const MAX_GEGENPRUEFUNGEN = 3;
+/** v1934 — Realfall 23.11. (29b2f140): bei 16.000 verbrauchte das Thinking das ganze Limit → leerer Text, keine Freigabefrage. */
+export const GEGENPRUEFUNG_MAX_TOKENS = 48_000;
 
 export function vermerkText(v: GegenpruefungVermerk): string {
   // G2 — Anlass der Prüfung in der Freigabe-Frage

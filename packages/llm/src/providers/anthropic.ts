@@ -13,6 +13,8 @@ import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../pr
 
 /** v1917 — Beta-Header für den serverseitigen Ersatz bei Ablehnung (fallbacks), live geprüft 21.11.2026 */
 export const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+/** v1934 — über dieser maxTokens-Grenze läuft complete() intern als Stream (SDK-Grenze nicht-streamend ≈ 21.333). */
+export const LANG_AB_TOKENS = 20_000;
 
 /**
  * v1355 — Verlauf im Cache (Punkt 8, Owner-Freigabe 11.10.): bisher trugen nur System und Werkzeuge eine Cache-Marke
@@ -212,7 +214,12 @@ export class AnthropicProvider extends LLMProvider {
 
     // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
     const gesendet = 'diagnostics' in params;
-    const response = await withPrematureCloseRetry(() => this.client.messages.create(params, this.anfrageOptionen()));
+    // v1934 — Realfall 23.11. (ultra-Gegenprüfung 29b2f140): Ab ~21.333 maxTokens verweigert das SDK nicht-streamende
+    // Aufrufe (> 10 min). Lange Antworten laufen deshalb intern über stream().finalMessage() — gleiches Ergebnisformat.
+    const lang = (params.max_tokens ?? 0) > LANG_AB_TOKENS;
+    const response: Anthropic.Message = await withPrematureCloseRetry<Anthropic.Message>(() => lang
+      ? this.client.messages.stream(params as Anthropic.MessageStreamParams, this.anfrageOptionen()).finalMessage() as Promise<Anthropic.Message>
+      : this.client.messages.create(params, this.anfrageOptionen()) as Promise<Anthropic.Message>);
 
     return this.mitDiagnose(this.mapResponse(response), request, response, gesendet);
   }

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Gegenprüfung durch ultra liefert bei langen Plänen wieder eine Antwort (v1934)
+
+- Realfall 23.11. (Notfall-Change pbs-pve2): Die Gegenprüfung eines Changes mit 19 Schritten kam zweimal ohne lesbare Antwort zurück. Das Modell hatte das gesamte Antwortlimit von 16.000 Tokens zum Nachdenken verbraucht; ohne Prüfergebnis wurde keine Freigabefrage gestellt.
+- Das Limit der Gegenprüfung liegt jetzt bei 48.000 Tokens. Anfragen an Anthropic mit mehr als 20.000 Tokens Antwortlimit laufen intern als Stream, weil das SDK solche Anfragen sonst ablehnt; das Ergebnisformat bleibt gleich.
+- Eine nicht lesbare Antwort protokolliert zusätzlich die Zahl der Ausgabe-Tokens.
+
 ### Fixed — Fernzugriff: Login-Name nicht mehr als Geheimnis geschwärzt (v1933)
 
 - Realfall 22.11. (Change N1): Der Fernzugriff schwärzt jeden Wert aus der Eingabe eines Linux-Bausteins in der Ausgabe. Seit v1932 enthält die Eingabe auch den Namen des SQL-Logins; dadurch erschien im Status „Alfred-Logins [geschwärzt], alfred_admin“ statt „alfred_admin, alfred_status“, und die Prüfung des Changes hielt an, obwohl die Logins korrekt angelegt waren.

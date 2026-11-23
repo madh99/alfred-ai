@@ -7670,7 +7670,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // Spec Stufe ultra U2.2 — Gegenprüfung (Risiko high/critical) mit schlankem eigenem Prompt; Vermerk je Change in skill_state
           gegenpruefung: await (async () => {
             const { SkillStateRepository: SkillStateGp } = await import('@alfred/storage');
-            const { GEGENPRUEFUNG_SYSTEM, gegenpruefungFrage, leseBefunde } = await import('./infrastruktur/ultra-gegenpruefung.js');
+            const { GEGENPRUEFUNG_SYSTEM, GEGENPRUEFUNG_MAX_TOKENS, gegenpruefungFrage, leseBefunde } = await import('./infrastruktur/ultra-gegenpruefung.js');
             const { mitUltraAusloeser } = await import('@alfred/llm');
             const st = new SkillStateGp(adapter);
             return {
@@ -7679,10 +7679,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 if (!llm) return { fehler: 'kein Sprachmodell' };
                 try {
                   const r = await mitUltraAusloeser({ grund: `gegenpruefung:${c.id}`, ort: `change:${c.id.slice(0, 8)}` }, () => llm.complete({
-                    tier: 'ultra', system: GEGENPRUEFUNG_SYSTEM, messages: [{ role: 'user', content: gegenpruefungFrage(c, plan) }], maxTokens: 16_000,
+                    tier: 'ultra', system: GEGENPRUEFUNG_SYSTEM, messages: [{ role: 'user', content: gegenpruefungFrage(c, plan) }], maxTokens: GEGENPRUEFUNG_MAX_TOKENS,
                   }));
                   const befunde = leseBefunde(r.content ?? '');
-                  if (!befunde) { this.logger.warn({ change: c.id, antwort: (r.content ?? '').slice(0, 300) }, 'Spec ultra U2.2: Antwort der Gegenprüfung nicht lesbar'); return { fehler: 'Antwort nicht lesbar' }; }
+                  if (!befunde) { this.logger.warn({ change: c.id, antwort: (r.content ?? '').slice(0, 300), ausgabeTokens: r.usage?.outputTokens },'Spec ultra U2.2: Antwort der Gegenprüfung nicht lesbar'); return { fehler: 'Antwort nicht lesbar' }; }
                   return { befunde, ...(r.model ? { modell: r.model } : {}) };
                 } catch (err) { return { fehler: (err as Error).message.slice(0, 200) }; }
               },
