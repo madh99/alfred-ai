@@ -41,10 +41,26 @@ export function haltefristMin(s: BefundSchluessel): number | null {
   if (s.quelle === 'haus-check') return null;
   if (nieStummschaltbar(s)) return 0;
   const g = s.gegenstand.toLowerCase();
+  // v1937 — Bewegung/offen bei Abwesenheit kann ein Einbruch sein: nie verzögern (stummschaltbar bleibt es wie bisher)
+  if (/bei-abwesenheit/.test(g)) return 0;
   if (/baseline/.test(g)) return 24 * 60;
   if (/batter|akku|:leer|niedrig|low/.test(g) || s.quelle === 'sensorbatterien') return 24 * 60;
   if (/offline|ausgefallen|nicht.?verbunden|unavailable|down|stream|erreichbar/.test(g)) return 120;
   return 120;
+}
+
+/**
+ * v1937 — E2 scharf (Owner 23.11. nach Auswertung Block 26.10.): Wann aus einem offenen Befund ein Vorgang wird.
+ * 'sofort' (Sicherheit/Lebenszeichen), 'warten' (Haltefrist läuft), 'faellig' (Frist abgelaufen), 'nie' (Haus-Check).
+ * Ein unlesbarer Entstehungszeitpunkt gilt als fällig — lieber melden als still verschlucken.
+ */
+export function vorgangFaellig(s: BefundSchluessel, entstanden: string, jetzt: number): 'sofort' | 'warten' | 'faellig' | 'nie' {
+  const frist = haltefristMin(s);
+  if (frist === null) return 'nie';
+  if (frist === 0) return 'sofort';
+  const t = Date.parse(entstanden);
+  if (!Number.isFinite(t)) return 'faellig';
+  return jetzt - t < frist * 60_000 ? 'warten' : 'faellig';
 }
 
 export const REGEL_VORSCHLAG_AB = 3;

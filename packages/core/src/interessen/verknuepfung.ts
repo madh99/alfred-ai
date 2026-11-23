@@ -59,12 +59,15 @@ export function ankerAusGeraeten(geraete: Array<{ hersteller: string; modell?: s
 /** Länder und Bundesländer sind als Ort zu allgemein. */
 const ZU_ALLGEMEIN = new Set(['österreich', 'deutschland', 'niederösterreich', 'oberösterreich', 'steiermark', 'europa', 'eu', 'schweiz']);
 
+/** v1937 — Owner 23.11. (Auswertung Block 26.10.): Wissensgraph-Namen, die gewöhnliche Wörter sind, treffen fast jeden Text. */
+const SPERRWOERTER = new Set(['drei', 'full', 'speicher', 'services', 'service', 'home', 'cloud', 'online', 'data', 'daten', 'system', 'systeme', 'team', 'group', 'gruppe']);
+
 /** Anker aus dem Wissensgraph: Organisationen, Fahrzeug, Orte, Kürzel (z. B. gehaltene Kryptowährungen). */
 export function ankerAusWissen(entitaeten: Array<{ name: string; typ: string }>): Anker[] {
   const aus = new Map<string, Anker>();
   for (const e of entitaeten) {
     const name = sauber(e.name);
-    if (name.length < 2) continue;
+    if (name.length < 2 || SPERRWOERTER.has(name.toLowerCase())) continue;
     let art: AnkerArt | null = null;
     if (e.typ === 'organization') art = 'organisation';
     else if (e.typ === 'vehicle') art = 'fahrzeug';
@@ -106,7 +109,8 @@ export function vorbereiten(anker: Anker[]): Array<Anker & { re: RegExp }> {
 export function auswahl(treffer: VerknuepfungsTreffer[], heute: Map<string, number>, jeAnker = 3): VerknuepfungsTreffer[] {
   const gesehen = new Set<string>();
   const aus: VerknuepfungsTreffer[] = [];
-  for (const t of [...treffer].sort((a, b) => Number(b.stark) - Number(a.stark))) {
+  // v1937 — Owner 23.11.: nur starke Treffer (Anker im Titel) zählen
+  for (const t of treffer.filter(x => x.stark)) {
     const titel = t.beitrag.titel.trim().toLowerCase();
     if (gesehen.has(titel)) continue;
     const frei = t.anker.filter(a => (heute.get(a.wort.toLowerCase()) ?? 0) < jeAnker);

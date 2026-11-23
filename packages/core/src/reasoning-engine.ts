@@ -1052,7 +1052,7 @@ ${this.buildTopicInstructions()}`;
                   this.insightTracker.trackInsightBatch(cats, lines);
                 }
                 try {
-                  const deferredActions = gespeicherteAktionen;
+                  const deferredActions = await this.digestAbtrennen(gespeicherteAktionen); // v1937
                   if (deferredActions.length > 0) {
                     this.aktuelleVorgangIds = await this.legeVorgaengeAn(deferredActions); // v1182 — auch aufgeschobene Aktionen sind Vorgänge
                     await this.processActions(deferredActions);
@@ -2358,6 +2358,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // v1180/v1182 — Insights mit Handlungsimplikation werden Vorgänge des Owners (Frist
     // 7 Tage), UNABHÄNGIG vom Zustellweg (sofort, aufgeschoben, still). Realfall 13:00–13:35:
     // alle Insights wurden aufgeschoben → kein einziger Vorgang entstand.
+    // v1937 — Digest-Vorschläge gleich zu Beginn abtrennen: weder in der Nachricht noch als Vorgang oder Rückfrage
+    actions = await this.digestAbtrennen(actions);
     await this.legeInsightVorgaengeAn(insights);
 
     // v927 — Stiller Modus: unter der Router-Schwelle wird NICHT gesendet, sondern
@@ -2484,6 +2486,24 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // Having it in both places caused double-delivery (user got deferred + new + deferred again).
   }
 
+  /** v1937 — Digest-Modus: Ablage für gesammelte Vorschläge (Tagesmeldung in alfred.ts) */
+  private digestAblage?: (e: import('./insights/digest.js').DigestEintrag[]) => Promise<void>;
+  setDigestAblage(fn: (e: import('./insights/digest.js').DigestEintrag[]) => Promise<void>): void { this.digestAblage = fn; }
+  /** v1937 — Vorschläge der Digest-Kategorien (commvault, unifi) sammeln statt Vorgang + Einzel-Rückfrage. Ohne Ablage unverändert. */
+  private async digestAbtrennen(actions: ProposedAction[]): Promise<ProposedAction[]> {
+    if (!this.digestAblage || actions.length === 0) return actions;
+    const { trenneDigest } = await import('./insights/digest.js');
+    const { sofort, digest } = trenneDigest(actions);
+    if (!digest.length) return actions;
+    try {
+      await this.digestAblage(digest.map(a => ({ skill: a.skillName, beschreibung: a.description, zeit: new Date().toISOString() })));
+      this.logger.info({ anzahl: digest.length, skills: [...new Set(digest.map(a => a.skillName))] }, 'v1937 Vorschläge in den Tages-Digest');
+      return sofort;
+    } catch (err) {
+      this.logger.warn({ err: (err as Error).message }, 'v1937 Digest-Ablage fehlgeschlagen — Vorschläge laufen normal');
+      return actions;
+    }
+  }
   private aktuelleVorgangIds?: Map<ProposedAction, string>;
   /** v1492 — Vorgänge, an die Aktionen dieses Passes nur angehängt sind (werden durch die Aktion nicht geschlossen) */
   private angehaengteVorgaenge?: Set<string>;

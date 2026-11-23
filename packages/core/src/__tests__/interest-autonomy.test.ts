@@ -204,7 +204,7 @@ describe('TopicDigestBuilder', () => {
     return { route: vi.fn(async () => 'sent'), store: vi.fn(async () => 'stored') } as any;
   }
 
-  it('neue Items → Dossier aktualisiert + EINE Meldung über den Router', async () => {
+  it('neue Items → Dossier aktualisiert, still abgelegt — v1937: nie Einzelmeldung (Wochenübersicht sonntags)', async () => {
     const repo = makeInterestsRepo([TOPIC]);
     (repo.getDigest as any).mockResolvedValue({ topicId: 't1', summary: 'Alt.', itemsSinceUpdate: 0, updatedAt: '2026-07-01T06:00:00Z' });
     (repo.countItemsSince as any).mockResolvedValue(1);
@@ -216,9 +216,10 @@ describe('TopicDigestBuilder', () => {
     const updated = await builder.run();
     expect(updated).toBe(1);
     expect(repo.upsertDigest).toHaveBeenCalledWith('t1', 'Neues Dossier: Fable 5 ist da und überzeugt.');
-    // importance 0.9 → high ≥ notifyThreshold high → route (Router entscheidet senden/still)
-    expect(router.route).toHaveBeenCalledTimes(1);
-    const n = (router.route as any).mock.calls[0][0];
+    // v1937 — Owner 23.11.: auch bei hoher Dringlichkeit nur stille Ablage, keine Einzelmeldung
+    expect(router.route).not.toHaveBeenCalled();
+    expect(router.store).toHaveBeenCalledTimes(1);
+    const n = (router.store as any).mock.calls[0][0];
     expect(n.source).toBe('interests');
     expect(n.urgency).toBe('high');
     expect(n.body).toContain('Fable 5 Release');

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Weniger Rauschen nach der Auswertung seit 12.10. (v1937)
+
+Die vorbereitete Auswertung (Befunde, Hinweise, Vorgänge, Anfragen seit 12.10.) ist gelaufen; die Konsequenzen sind auf Owner-Entscheidung umgesetzt.
+
+- **Haltefrist für Befunde aktiv:** Aus einem Befund entsteht erst nach Ablauf der Haltefrist ein Vorgang (Ausfälle und Abweichungen 2 Stunden, Batterien und Abweichungen vom üblichen Wert 24 Stunden). Bisher waren 60 von 73 Infrastruktur-Vorgängen innerhalb von 2 Stunden von selbst erledigt. Sicherheitsmeldungen (Rauch, Wasser, Alarm, Einbruch), Alfreds eigene Ausfälle sowie Bewegung oder offene Fenster und Türen bei Abwesenheit bleiben sofort. Der Haus-Check erzeugt keine Vorgänge.
+- **Tages-Digest:** Vorschläge zu Commvault und UniFi (bisher 17 Vorschläge, 16 verworfen) erzeugen keine Einzel-Vorgänge und keine Rückfragen mehr; sie werden gesammelt und täglich um 18:00 gebündelt gemeldet.
+- **Interessen nur noch wöchentlich:** Themen-Zusammenfassungen werden still abgelegt; sonntags um 18:00 kommt eine Wochenübersicht. Bisher liefen 872 Interessen-Hinweise ohne Reaktion ab.
+- **Verknüpfung genauer:** Allgemeine Wörter aus dem Wissensgraph („Drei“, „Full“, „Speicher“, „Services“ u. a.) sind keine Anker mehr, und gezählt werden nur Treffer im Titel.
+- **Change-Befehle ohne Sprachmodell:** „change <id> schritt wiederholen“ und „status change <id>“ beantwortet Alfred in Owner-Kanälen direkt — schneller und ohne Kosten. Abbrechen, Rückweg und Überspringen laufen weiterhin über das Modell mit dem Wortlaut des Owners.
+
 ### Fixed — Unbeantwortete Wochen-Serien bleiben nicht mehr liegen (v1936)
 
 - Realfall 23.11.: Die wöchentliche Windows-Update-Serie für probe-win25b legte am 10.11. und 17.11. je einen Change an. Die Freigabefragen liefen unbeantwortet ab, beide Changes blieben dauerhaft „zur Freigabe“ stehen und sammelten sich an.

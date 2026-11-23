@@ -456,6 +456,8 @@ export class Alfred {
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v1217 — Befunde mit Identität (Kachel, Lage). */
   private befundeRepo?: import('@alfred/storage').BefundeRepository;
+  /** v1937 — E2 scharf: Vorgänge für offene Befunde mit abgelaufener Haltefrist anlegen */
+  private befundeFaellig?: (owner: string) => Promise<void>;
   /** v1362 — Regeln des Owners (Spec „Entscheiden statt Abhaken") */
   private regelnRepo?: import('@alfred/storage').RegelnRepository;
   /** v1224 — Geräte-Gateway (Satelliten). */
@@ -903,39 +905,52 @@ export class Alfred {
         const { RegelnRepository } = await import('@alfred/storage');
         const regelnRepo = new RegelnRepository(adapter);
         this.regelnRepo = regelnRepo;
-        const { haltefristMin, nieStummschaltbar } = await import('./vorgaenge/regeln.js');
+        const { haltefristMin, nieStummschaltbar, vorgangFaellig } = await import('./vorgaenge/regeln.js');
         const log = this.logger.child({ component: 'befunde' });
-        this.weltmodellBeobachter.setBefundeSync(async (quelle, deutung) => {
-          const owner = this.tryOwner();
-          if (!owner) return;
-          const r = await befundeRepo.sync(owner, quelle, befundeAusDeutung(quelle, deutung));
-          for (const b of r.neu) {
-            try {
-              // v1362 — Regel des Owners: „nicht mehr melden" → Befund ohne Vorgang (Sicherheitsbefunde nie)
-              const schluessel = { quelle, gegenstand: b.gegenstand };
-              const regel = await regelnRepo.wirksam(owner, quelle, b.gegenstand).catch(() => null);
-              if (regel?.wirkung === 'stumm' && !nieStummschaltbar(schluessel)) {
-                log.info({ quelle, gegenstand: b.gegenstand, regel: regel.id.slice(0, 8), bis: regel.bis }, 'v1362 Regel: Befund ohne Vorgang (nicht mehr melden)');
-                continue;
-              }
-              // v1362 — E2 beobachtend: Haltefrist nur protokollieren, der Vorgang entsteht wie bisher
-              log.info({ quelle, gegenstand: b.gegenstand, haltefristMin: haltefristMin(schluessel), regel: regel?.wirkung ?? null }, 'v1362 E2 Haltefrist (beobachtend)');
+        // v1937 — E2 scharf (Owner 23.11.): Vorgang erst nach der Haltefrist; Sicherheit sofort, Haus-Check nie
+        const vorgangZuBefund = async (owner: string, quelle: string, b: { id: string; gegenstand: string; titel: string; detail?: string | null; entstanden: string }, anlass: 'neu' | 'frist') => {
+          const schluessel = { quelle, gegenstand: b.gegenstand };
+          const regel = await regelnRepo.wirksam(owner, quelle, b.gegenstand).catch(() => null);
+          if (regel?.wirkung === 'stumm' && !nieStummschaltbar(schluessel)) {
+            if (anlass === 'neu') log.info({ quelle, gegenstand: b.gegenstand, regel: regel.id.slice(0, 8), bis: regel.bis }, 'v1362 Regel: Befund ohne Vorgang (nicht mehr melden)');
+            return;
+          }
+          const f = vorgangFaellig(schluessel, b.entstanden, Date.now());
+          if (f === 'nie') return;
+          if (f === 'warten') { log.info({ quelle, gegenstand: b.gegenstand, haltefristMin: haltefristMin(schluessel) }, 'v1937 E2 Haltefrist läuft — noch kein Vorgang'); return; }
+          {
+            {
               const v = await vorgaengeRepoB.anlegen({
                 userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail?.split('\n')[0] ?? `Befund ${quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen', // v1380 — Ziel = betroffene Zeile, nicht der ganze Abschnitt
                 naechsterSchritt: 'Owner entscheidet', frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'befund', autonomie: 'bestaetigen',
                 dedupeKey: `befund:${quelle}:${b.gegenstand}`, kategorie: quelleZuKategorie(quelle), begruendung: `Befund ${quelle}/${b.gegenstand} neu auffällig (Weltmodell)`,
               });
               await befundeRepo.setzeVorgang(b.id, v.id);
-              log.info({ quelle, gegenstand: b.gegenstand, titel: b.titel.slice(0, 100), vorgang: v.id.slice(0, 8), fortgeschrieben: v.erstellt !== v.aktualisiert }, 'v1217 Befund neu → Vorgang');
-            } catch (err) { log.warn({ err: (err as Error).message, quelle, gegenstand: b.gegenstand }, 'v1217 Vorgang zum Befund nicht angelegt'); }
+              log.info({ quelle, gegenstand: b.gegenstand, titel: b.titel.slice(0, 100), vorgang: v.id.slice(0, 8), fortgeschrieben: v.erstellt !== v.aktualisiert, anlass }, anlass === 'neu' ? 'v1217 Befund neu → Vorgang' : 'v1937 E2 Haltefrist abgelaufen → Vorgang');
+            }
+          }
+        };
+        // v1937 — offene Befunde ohne Vorgang, deren Haltefrist abgelaufen ist (bei jedem Sync und im 10-min-Job)
+        const faelligeBefunde = async (owner: string) => {
+          for (const b of await befundeRepo.offene(owner).catch(() => [])) {
+            if (b.vorgangId || vorgangFaellig({ quelle: b.quelle, gegenstand: b.gegenstand }, b.entstanden, Date.now()) !== 'faellig') continue;
+            try { await vorgangZuBefund(owner, b.quelle, b, 'frist'); } catch (err) { log.warn({ err: (err as Error).message, quelle: b.quelle, gegenstand: b.gegenstand }, 'v1937 Vorgang nach Haltefrist nicht angelegt'); }
+          }
+        };
+        this.befundeFaellig = faelligeBefunde;
+        this.weltmodellBeobachter.setBefundeSync(async (quelle, deutung) => {
+          const owner = this.tryOwner();
+          if (!owner) return;
+          const r = await befundeRepo.sync(owner, quelle, befundeAusDeutung(quelle, deutung));
+          for (const b of r.neu) {
+            try { await vorgangZuBefund(owner, quelle, b, 'neu'); } catch (err) { log.warn({ err: (err as Error).message, quelle, gegenstand: b.gegenstand }, 'v1217 Vorgang zum Befund nicht angelegt'); }
           }
           for (const b of r.erledigt) {
             log.info({ quelle, gegenstand: b.gegenstand, seit: b.entstanden, gesehen: b.gesehenAnzahl }, 'v1217 Befund erledigt (nicht mehr auffällig)');
-            // v1362 — E2 beobachtend: wäre der Vorgang durch die Haltefrist entfallen?
-            {
+            // v1937 — E2 scharf: innerhalb der Haltefrist erledigt → es entstand gar kein Vorgang
+            if (!b.vorgangId) {
               const frist = haltefristMin({ quelle, gegenstand: b.gegenstand });
-              const dauerMin = Math.round((Date.now() - Date.parse(b.entstanden)) / 60_000);
-              if (b.vorgangId && frist !== null && frist > 0 && dauerMin < frist) log.info({ quelle, gegenstand: b.gegenstand, dauerMin, haltefristMin: frist, vorgang: b.vorgangId.slice(0, 8) }, 'v1362 E2 Vorgang wäre entfallen');
+              if (frist !== null && frist > 0) log.info({ quelle, gegenstand: b.gegenstand, dauerMin: Math.round((Date.now() - Date.parse(b.entstanden)) / 60_000), haltefristMin: frist }, 'v1937 E2 innerhalb der Haltefrist erledigt — kein Vorgang');
             }
             if (b.vorgangId) {
               // v1223 — ein Vorgang kann mehreren Befunden gehören (Dedupe gleicher Themen). Realfall 16:30: der Befund
@@ -949,6 +964,7 @@ export class Alfred {
               }
             }
           }
+          await faelligeBefunde(owner); // v1937
           if (r.neu.length || r.erledigt.length) void this.aktualisiereLage(); // v1220
         });
       }
@@ -3135,6 +3151,8 @@ export class Alfred {
             run: async () => {
               const owner = this.tryOwner();
               if (!owner || !this.befundeRepo || !this.database) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+              // v1937 — E2 scharf: auch Quellen ohne neuen Sync bekommen ihren Vorgang nach Ablauf der Haltefrist
+              await this.befundeFaellig?.(owner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1937 Haltefrist-Prüfung fehlgeschlagen'));
               const { SkillStateRepository: SSRN, VorgaengeRepository: VRepoN } = await import('@alfred/storage');
               const zustand = new SSRN(this.database.getAdapter());
               const jetztN = Date.now();
@@ -8802,6 +8820,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         async (anbieter, betrag) => this.guthabenStand ? this.guthabenStand(anbieter, betrag) : 'Guthaben-Schätzung nicht verfügbar',
         (chatId) => String(chatId) === String(this.config.security?.ownerUserId ?? '') || String(chatId).startsWith('owner:') || String(chatId).startsWith('sitzung:'),
       );
+      // v1937 — L1: „change <id> schritt wiederholen“ und „status change <id>“ ohne Modell (Owner-Kanäle wie oben)
+      this.pipeline.setChangeSchnell(async (b) => {
+        const o = this.tryOwner();
+        if (!o || !this.changePlanung) return 'Changes sind gerade nicht verfügbar.';
+        const c = await this.changePlanung.finde(o, b.id);
+        if (!c) return `Change ${b.id} nicht gefunden.`;
+        if (b.art === 'wiederholen') {
+          if (!this.changeMotor) return 'Ausführungsmotor nicht verfügbar.';
+          this.logger.info({ id: c.id, wahl: 'wiederholen', wortlaut: `change ${b.id} schritt wiederholen` }, 'I4 Owner steuert Change');
+          return this.changeMotor.steuern(o, c.id, 'wiederholen');
+        }
+        const l = c.lauf as { phase?: string; schritt?: number; ergebnisse?: Array<{ nr: number; ok: boolean; pruefung?: { text?: string } }> } | undefined;
+        const gesamt = (c.schritte ?? []).length;
+        const letzte = l?.ergebnisse?.at(-1);
+        return [
+          `**${c.title}** (${c.id.slice(0, 8)}) — Status ${c.status}${l?.phase ? `, Lauf ${l.phase}` : ''}${l?.schritt ? ` bei Schritt ${l.schritt}/${gesamt}` : ` · ${gesamt} Schritte`}`,
+          letzte ? `Letzter Schritt ${letzte.nr}: ${letzte.ok ? '✓' : '✗'}${letzte.pruefung?.text ? ` ${letzte.pruefung.text.slice(0, 160)}` : ''}` : '',
+        ].filter(Boolean).join('\n');
+      });
       // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
       this.pipeline.setWeltmodellQuelle(() => {
         const welt = (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.();
@@ -16517,6 +16554,42 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const vorgaengeRepo = new VorgaengeRepository(this.database.getAdapter());
         this.reasoningEngine?.setVorgaengeRepo(vorgaengeRepo);
         if (this.befundeRepo) this.reasoningEngine?.setBefundeRepo(this.befundeRepo); // v1222
+        // v1937 — Digest-Modus (Owner 23.11.): commvault/unifi-Vorschläge sammeln, täglich 18:00 gebündelt melden
+        {
+          const { SkillStateRepository: SSDigest } = await import('@alfred/storage');
+          const st = new SSDigest(this.database.getAdapter());
+          const lese = async (o: string): Promise<import('./insights/digest.js').DigestEintrag[]> => { try { return JSON.parse((await st.get(o, 'digest', 'eintraege')) ?? '[]'); } catch { return []; } };
+          this.reasoningEngine?.setDigestAblage(async (neu) => {
+            const o = this.tryOwner(); if (!o) throw new Error('kein Owner');
+            await st.set(o, 'digest', 'eintraege', JSON.stringify([...(await lese(o)), ...neu].slice(-200)));
+          });
+          this.registriereJob({
+            key: 'tages-digest', beschreibung: 'Schleife 2 — gesammelte Vorschläge der Digest-Kategorien (commvault, unifi) einmal täglich melden',
+            takt: { art: 'taeglich', um: '18:00' }, bereich: 'global', slot: true, timeoutMin: 5,
+            run: async () => {
+              const o = this.tryOwner(); if (!o) return { ok: true, zaehler: { eintraege: 0 } };
+              const e = await lese(o);
+              const { digestText } = await import('./insights/digest.js');
+              const text = digestText(e);
+              if (text) { await this.meldeOhneModell(text); await st.set(o, 'digest', 'eintraege', '[]'); }
+              return { ok: true, zaehler: { eintraege: e.length } };
+            },
+          });
+          // v1937 — Interessen nur noch als Wochenübersicht (Owner 23.11.): sonntags 18:00 aus den still abgelegten Themen-Digests
+          this.registriereJob({
+            key: 'interessen-woche', beschreibung: 'Interessen — Wochenübersicht der still abgelegten Themen-Digests (keine Einzelmeldungen)',
+            takt: { art: 'woechentlich', tag: 0, um: '18:00' }, bereich: 'global', slot: true, timeoutMin: 5,
+            run: async () => {
+              const o = this.ownerMasterUserId ?? this.tryOwner(); if (!o || !this.database) return { ok: true, zaehler: { hinweise: 0 } };
+              const seit = new Date(Date.now() - 7 * 86_400_000).toISOString();
+              const rows = await this.database.getAdapter().query("SELECT title FROM alfred_insights WHERE user_id = ? AND category = 'interests' AND created_at >= ?", [o, seit]) as Array<{ title: string }>;
+              const { interessenWochenText } = await import('./insights/interessen-woche.js');
+              const text = interessenWochenText(rows.map(r => String(r.title ?? '')));
+              if (text) await this.meldeOhneModell(text);
+              return { ok: true, zaehler: { hinweise: rows.length } };
+            },
+          });
+        }
         this.pipeline.setVorgaengeRepo(vorgaengeRepo); // v1207 — Lernbedarf bei Absagen im Chat
         (this.reasoningEngine as unknown as { collector?: { setVorgaengeRepo?: (r: unknown) => void } } | undefined)?.collector?.setVorgaengeRepo?.(vorgaengeRepo);
         this.registriereJob({

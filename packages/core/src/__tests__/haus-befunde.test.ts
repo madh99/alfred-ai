@@ -7,13 +7,13 @@ import { haltefristMin, nieStummschaltbar } from '../vorgaenge/regeln.js';
 const z = (entity_id: string, state: string, device_class?: string, friendly_name?: string) => ({ entity_id, state, attributes: { device_class, friendly_name }, last_changed: '2026-10-12T10:01:00Z' });
 
 describe('Haus-Deutung → Befunde', () => {
-  it('offen bei Abwesenheit: ein Befund je Fenster, Kategorie haus, Haltefrist wie Ausfall', () => {
+  it('offen bei Abwesenheit: ein Befund je Fenster, Kategorie haus, Haltefrist 0 (v1937: möglicher Einbruch, nie verzögern)', () => {
     const d = deuteHaus([z('person.madh', 'not_home'), z('person.lena', 'not_home'), z('binary_sensor.fenster_lena', 'on', 'window', 'Fenster Lena'), z('binary_sensor.haustuer', 'off', 'door', 'Haustür')]);
     const b = befundeAusDeutung('haus', d);
     expect(b.map(x => x.gegenstand)).toEqual(['haus:offen-bei-abwesenheit:binary_sensor.fenster_lena']);
     expect(b[0]!.titel).toContain('Fenster Lena');
     expect(quelleZuKategorie('haus')).toBe('haus');
-    expect(haltefristMin({ quelle: 'haus', gegenstand: b[0]!.gegenstand })).toBe(120);
+    expect(haltefristMin({ quelle: 'haus', gegenstand: b[0]!.gegenstand })).toBe(0);
   });
 
   it('jemand zu Hause: offenes Fenster ist kein Befund (Realfall „Fenster Lena" 12.10.: madh zu Hause)', () => {

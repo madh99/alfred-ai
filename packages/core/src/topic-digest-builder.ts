@@ -87,11 +87,10 @@ export class TopicDigestBuilder {
         platform: this.delivery.platform,
         dedupeKey: `topic-digest:${topic.id}:${new Date().toISOString().slice(0, 10)}`,
       };
-      if (threshold !== 'mute' && URGENCY_RANK[urgency] >= URGENCY_RANK[threshold]) {
-        await this.router.route(notification);
-      } else {
-        await this.router.store(notification); // unter Topic-Schwelle / gemutet → nur stille Ablage
-      }
+      // v1937 — Owner 23.11. (Block 26.10.: 872 Interessen-Hinweise ohne Reaktion abgelaufen): nie mehr einzeln melden, nur still
+      // ablegen — sonntags kommt eine Wochenübersicht (Job interessen-woche). Schwelle bleibt für die Ablage-Dringlichkeit erhalten.
+      void threshold;
+      await this.router.store(notification);
     }
     return true;
   }

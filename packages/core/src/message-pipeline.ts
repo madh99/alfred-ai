@@ -417,6 +417,9 @@ export class MessagePipeline {
   private guthabenStand?: (anbieter: string, betrag: number) => Promise<string>;
   private istOwnerChat?: (chatId: string) => boolean;
   setGuthabenStand(fn: (anbieter: string, betrag: number) => Promise<string>, istOwnerChat: (chatId: string) => boolean): void { this.guthabenStand = fn; this.istOwnerChat = istOwnerChat; }
+  /** v1937 — L1: Change-Befehle ohne Modell (nutzt istOwnerChat aus setGuthabenStand) */
+  private changeSchnell?: (b: import('./interaktion/change-schnell.js').ChangeBefehl) => Promise<string>;
+  setChangeSchnell(fn: (b: import('./interaktion/change-schnell.js').ChangeBefehl) => Promise<string>): void { this.changeSchnell = fn; }
 
   setQuickActions(handler: import('./quick-actions.js').QuickActionHandler): void {
     this.quickActions = handler;
@@ -670,6 +673,16 @@ export class MessagePipeline {
       if (g) {
         this.logger.info({ anbieter: g.anbieter, betrag: g.betrag }, 'v1727 Kontostand-Eingabe erkannt');
         return { text: await this.guthabenStand(g.anbieter, g.betrag).catch(err => `Kontostand nicht übernommen: ${(err as Error).message}`) };
+      }
+    }
+
+    // v1937 — L1: „change <id> schritt wiederholen“ / „status change <id>“ ohne Modell (nur Owner-Kanäle)
+    if (this.changeSchnell && message.text && this.istOwnerChat?.(message.chatId)) {
+      const { changeBefehl } = await import('./interaktion/change-schnell.js');
+      const b = changeBefehl(message.text);
+      if (b) {
+        this.logger.info({ art: b.art, change: b.id }, 'v1937 L1 Change-Befehl ohne Modell');
+        return { text: await this.changeSchnell(b).catch(err => `Change ${b.id}: ${(err as Error).message}`) };
       }
     }
 
