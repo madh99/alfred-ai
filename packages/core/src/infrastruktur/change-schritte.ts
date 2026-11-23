@@ -240,6 +240,8 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // Etappe 3 Task 8 — Erzwingen: Vorbedingungen (TLS, Schalter, Probe, Pacemaker) und mssql.conf zurückgelesen; AD-Login: Kataloge
     // zurückgelesen (Typ G, aktiv, Server-/Datenbankrolle, SID); Entfernen: vermerkte Objekte weg
     'tls_erzwingen', 'ad_login', 'ad_login_entfernen',
+    // #979 — Zertifikatspfad: mssql.conf, Manifest, Kopie und Rechte zurückgelesen
+    'tls_pfad_umstellen',
     // I8e Folge-Etappe — Logins (Anmeldung als beide, Rechte-Nachweis), sa (is_disabled + Host-Marke zurückgelesen), Notfallweg (Anmeldung als sa)
     'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
@@ -290,6 +292,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     ['tls_pruefung_schalten', { skill: 'linux_sql', aktion: 'tls_pruefung_schalten', text: 'linux_sql.tls_pruefung_schalten (zugang, an umgekehrt)', parameter: schalterZurueck('tls_pruefung_schalten') }],
     // Etappe 3 Task 8 — Erzwingen: Rückweg genau tls_erzwingen mit umgekehrtem an auf demselben Zugang
     ['tls_erzwingen', { skill: 'linux_sql', aktion: 'tls_erzwingen', text: 'linux_sql.tls_erzwingen (zugang, an umgekehrt)', parameter: schalterZurueck('tls_erzwingen') }],
+    // Microsoft #979 — Zertifikatspfad: Rückweg genau tls_pfad_umstellen mit umgekehrtem an auf demselben Zugang
+    ['tls_pfad_umstellen', { skill: 'linux_sql', aktion: 'tls_pfad_umstellen', text: 'linux_sql.tls_pfad_umstellen (zugang, an umgekehrt)', parameter: schalterZurueck('tls_pfad_umstellen') }],
     // Etappe 3 Task 8 — AD-Login: Rückweg genau ad_login_entfernen mit denselben Werten (zugang, gruppe, serverrolle, datenbank, datenbankrolle)
     ['ad_login', { skill: 'linux_sql', aktion: 'ad_login_entfernen', text: 'linux_sql.ad_login_entfernen (zugang, gruppe, serverrolle, datenbank, datenbankrolle wie ad_login)', parameter: adLoginZurueck }],
     // I8e Folge-Etappe — Alfred-Logins: Rückweg genau alfred_logins_entfernen; sa schalten: Rückweg genau sa_schalten mit umgekehrtem an

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { X509Certificate, createHash } from 'node:crypto';
 import {
-  tlsAnfordernSkript, tlsEinspielenSkript, tlsEntfernenSkript, tlsParameter, pruefeTls, tlsEingabe, TLS_ANFORDERN_GRUND, PY_TLS_EINGABE,
+  tlsAnfordernSkript, tlsEinspielenSkript, tlsEntfernenSkript, tlsPfadUmstellenSkript, tlsParameter, pruefeTls, tlsEingabe, TLS_ANFORDERN_GRUND, PY_TLS_EINGABE,
   TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST,
 } from './linux-sql-tls.js';
 import { sqlErgebnis, LINUX_SQL_BAUSTEINE, PY_STATUS } from './linux-sql.js';
@@ -37,7 +37,7 @@ const ohneCr = (s: string) => s.replace(/\r/g, '');
  * Stubs (nach den Hilfen, vor dem Ablauf): Pfade in den Testordner, Besitzer/Rechte als Metadaten (chown/chmod/stat), mssql-conf als
  * Skript, update-ca-certificates hängt die CA-Dateien an das Bündel. openssl und python3 sind echt (CR der Windows-Programme entfernt).
  */
-const STUBS = String.raw`TMP_BASIS="$T/run"; SECRETS="$T/secrets"; CRT="$SECRETS/tls.crt"; KEY="$SECRETS/tls.key"; KEY_NEU="$SECRETS/tls.key.neu"
+const STUBS = String.raw`TMP_BASIS="$T/run"; SECRETS="$T/secrets"; TLS_DIR="$T/tls"; CRT="$TLS_DIR/tls.crt"; CRT_ALT="$SECRETS/tls.crt"; KEY="$SECRETS/tls.key"; KEY_NEU="$SECRETS/tls.key.neu"
 CA_DIR="$T/ca"; CA_ROOT="$CA_DIR/ad3033-root.crt"; CA_ISS="$CA_DIR/ad3033-issuing.crt"; CA_BUNDLE="$T/bundle.crt"
 MANIFEST="$T/etc/alfred/sqllnx-tls.manifest"; MSSQLCONF="$T/mssql-conf"; MSSQL_CONF="$T/mssql.conf"
 log() { printf '%s\n' "$*" >>"$T/log"; }
@@ -79,7 +79,7 @@ function welt(): Welt {
   const datei = (rel: string) => (existsSync(join(T, rel)) ? ohneCr(readFileSync(join(T, rel), 'utf8')) : undefined);
   const conf = () => Object.fromEntries(['tlscert', 'tlskey', 'tlsprotocols', 'forceencryption'].filter(k => existsSync(join(T, 'conf', k))).map(k => [k, readFileSync(join(T, 'conf', k), 'utf8').trim()]));
   const rechte = (rel: string) => { const s = `${T}/${rel}`.replace(/\//g, '_').replace(/:/g, '_'); return `${datei(`meta/${s}.mod`) ?? '-'} ${datei(`meta/${s}.own`) ?? '-'}`; };
-  const dateien = () => spawnSync('bash', ['-c', `cd ${q(T)} && find secrets ca etc run -mindepth 1 2>/dev/null | sort`], { encoding: 'utf8' }).stdout;
+  const dateien = () => spawnSync('bash', ['-c', `cd ${q(T)} && find secrets tls ca etc run -mindepth 1 2>/dev/null | sort`], { encoding: 'utf8' }).stdout;
   return { T, lauf, datei, conf, rechte, dateien };
 }
 
@@ -241,22 +241,25 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     const e = w.lauf(tlsEinspielenSkript(PE()), eingabe(z));
     expect(e.rc, e.aus).toBe(0);
     const x = new X509Certificate(z);
-    expect(e.e).toMatchObject({ zustand: 'geaendert', cn: P1.cn, bits: 3072, thumbprint: x.fingerprint.replace(/:/g, ''), schluessel: 'neu', zertifikat: `${w.T}/secrets/tls.crt`, neustartNoetig: true });
+    expect(e.e).toMatchObject({ zustand: 'geaendert', cn: P1.cn, bits: 3072, thumbprint: x.fingerprint.replace(/:/g, ''), schluessel: 'neu', zertifikat: `${w.T}/tls/tls.crt`, neustartNoetig: true });
     expect(e.e!.restTage).toBeGreaterThanOrEqual(363);
     expect(String(e.e!.gueltigBis)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
     expect(e.e!.aenderungen).toEqual(expect.arrayContaining(['manifest', 'ca-root', 'ca-issuing', 'vertrauensspeicher', 'schluessel', 'zertifikat', 'mssql-conf:tlscert', 'mssql-conf:tlskey', 'mssql-conf:tlsprotocols']));
     expect(w.datei('secrets/tls.key.neu')).toBeUndefined();
     expect(w.datei('secrets/tls.key')).toMatch(/BEGIN PRIVATE KEY/);
-    expect(new X509Certificate(w.datei('secrets/tls.crt')!).fingerprint).toBe(x.fingerprint);
+    expect(new X509Certificate(w.datei('tls/tls.crt')!).fingerprint).toBe(x.fingerprint);
     expect(w.rechte('secrets/tls.key')).toBe('400 mssql mssql');
-    expect(w.rechte('secrets/tls.crt')).toBe('444 mssql mssql');
+    expect(w.rechte('tls/tls.crt')).toBe('444 mssql mssql');
+    // Microsoft mssql-docker #979: das öffentliche Zertifikat liegt außerhalb von secrets (Agent liest es selbst), Ordner 0755 mssql
+    expect(w.rechte('tls')).toBe('755 mssql mssql');
+    expect(w.datei('secrets/tls.crt')).toBeUndefined();
     expect(w.rechte('ca/ad3033-root.crt')).toBe('644 root root');
     expect(new X509Certificate(w.datei('ca/ad3033-root.crt')!).subject).toContain('Alfred Test Root');
     expect(new X509Certificate(w.datei('ca/ad3033-issuing.crt')!).subject).toContain('Alfred Test Issuing');
     expect(w.datei('etc/alfred/sqllnx-tls.manifest')!.split('\n')[0]).toBe('# Alfred I8e — linux_sql tls_einspielen (SHA-256 der eingespielten Dateien, nicht von Hand ändern)');
     expect(w.datei('etc/alfred/sqllnx-tls.manifest')!.trim().split('\n')).toHaveLength(5);
     expect(w.rechte('etc/alfred/sqllnx-tls.manifest')).toBe('600 root root');
-    expect(w.conf()).toEqual({ tlscert: `${w.T}/secrets/tls.crt`, tlskey: `${w.T}/secrets/tls.key`, tlsprotocols: '1.2,1.3' });
+    expect(w.conf()).toEqual({ tlscert: `${w.T}/tls/tls.crt`, tlskey: `${w.T}/secrets/tls.key`, tlsprotocols: '1.2,1.3' });
     expect(e.log).toContain('update-ca-certificates');
     expect(e.log).not.toMatch(/systemctl (re)?start|forceencryption/);
     // keine Zwischendateien
@@ -284,11 +287,11 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     // richtig eingespielt, dann eine falsche Antwort: tls.crt, tls.key, mssql.conf, Manifest unverändert
     const z = signiere(csr);
     expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(z)).rc).toBe(0);
-    const crt = w.datei('secrets/tls.crt'); const key = w.datei('secrets/tls.key'); const man = w.datei('etc/alfred/sqllnx-tls.manifest'); const conf = w.conf();
+    const crt = w.datei('tls/tls.crt'); const key = w.datei('secrets/tls.key'); const man = w.datei('etc/alfred/sqllnx-tls.manifest'); const conf = w.conf();
     const b = w.lauf(tlsEinspielenSkript(PE()), eingabe(fremd));
     expect(b.rc).toBe(1);
     expect(b.e!.fehler).toContain('Zertifikat passt nicht zum Schlüssel auf dem Host');
-    expect(w.datei('secrets/tls.crt')).toBe(crt);
+    expect(w.datei('tls/tls.crt')).toBe(crt);
     expect(w.datei('secrets/tls.key')).toBe(key);
     expect(w.datei('etc/alfred/sqllnx-tls.manifest')).toBe(man);
     expect(w.conf()).toEqual(conf);
@@ -342,7 +345,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     expect(e2.rc, e2.aus).toBe(0);
     expect(e2.e).toMatchObject({ zustand: 'geaendert', schluessel: 'neu' });
     expect(w.datei('secrets/tls.key')).not.toBe(alt);
-    expect(new X509Certificate(w.datei('secrets/tls.crt')!).fingerprint).toBe(new X509Certificate(z2).fingerprint);
+    expect(new X509Certificate(w.datei('tls/tls.crt')!).fingerprint).toBe(new X509Certificate(z2).fingerprint);
     expect(w.datei('etc/alfred/sqllnx-tls.manifest')!.trim().split('\n')).toHaveLength(5);
     keinSchluessel(a2, e2);
   }, 120_000);
@@ -381,7 +384,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     expect(a.e!.fehler).toContain(`Kette: Root mit SHA-256 ${rootSha('root.crt')} statt erwartet ${rootSha('root2.crt')} — nichts geändert`);
     expect(w.dateien()).toBe(vorher);
     expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
-    const stand = () => [w.datei('ca/ad3033-root.crt'), w.datei('ca/ad3033-issuing.crt'), w.datei('secrets/tls.crt'), w.datei('secrets/tls.key'), w.datei('etc/alfred/sqllnx-tls.manifest'), JSON.stringify(w.conf())];
+    const stand = () => [w.datei('ca/ad3033-root.crt'), w.datei('ca/ad3033-issuing.crt'), w.datei('tls/tls.crt'), w.datei('secrets/tls.key'), w.datei('etc/alfred/sqllnx-tls.manifest'), JSON.stringify(w.conf())];
     const v2 = stand();
     // neue Anforderung, Zertifikat aus einer anderen PKI (Root 2), erwartet Root 2 → die eingespielte Root wird nicht ersetzt
     const a2 = w.lauf(tlsAnfordernSkript(P1));
@@ -398,7 +401,7 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
   it('Fix-Runde 1: scheitert das Ersetzen von tls.crt nach dem Schlüssel-mv, kommen alter Schlüssel und .neu zurück', () => {
     const { w, csr } = angefordert();
     expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(signiere(csr))).rc).toBe(0);
-    const crt = w.datei('secrets/tls.crt'); const key = w.datei('secrets/tls.key');
+    const crt = w.datei('tls/tls.crt'); const key = w.datei('secrets/tls.key');
     const a2 = w.lauf(tlsAnfordernSkript(P1));
     const neu = w.datei('secrets/tls.key.neu');
     writeFileSync(join(w.T, 'mv_crt_scheitert'), '');
@@ -406,13 +409,130 @@ describe.skipIf(!ECHT)('linux_sql tls_anfordern / tls_einspielen — echter open
     expect(b.rc).toBe(1);
     expect(b.e!.fehler).toContain('nicht ersetzt — Schlüssel zurückgestellt');
     expect(b.e!.fehler).toContain('Rückweg tls_entfernen');
-    expect(w.datei('secrets/tls.crt')).toBe(crt);
+    expect(w.datei('tls/tls.crt')).toBe(crt);
     expect(w.datei('secrets/tls.key')).toBe(key);
     expect(w.datei('secrets/tls.key.neu')).toBe(neu);
     expect(w.rechte('secrets/tls.key')).toBe('400 mssql mssql');
     expect(w.rechte('secrets/tls.key.neu')).toBe('400 mssql mssql');
     expect(w.dateien()).not.toMatch(/\.alfred-tls-|tls\.key\.alt/);
     keinSchluessel(a2, b);
+  }, 120_000);
+
+  /**
+   * Altbestand vor #979 (Stand 23.11. auf sqllnx01/sqllnxcfg): tls.crt unter secrets, network.tlscert zeigt dorthin, Manifest nennt den
+   * alten Pfad. Aus einer frischen Einspielung nachgebaut. mitKopie = Stand sqllnx02 nach Change 8d80342b (Kopie von Hand, tlscert neu).
+   */
+  function altbestand(mitKopie = false): { w: Welt; z: string } {
+    const { w, csr } = angefordert();
+    const z = signiere(csr);
+    expect(w.lauf(tlsEinspielenSkript(PE()), eingabe(z)).rc).toBe(0);
+    const crt = w.datei('tls/tls.crt')!;
+    writeFileSync(join(w.T, 'secrets/tls.crt'), crt);
+    const meta = (rel: string, mod: string, own: string) => { const s = `${w.T}/${rel}`.replace(/[/:]/g, '_'); writeFileSync(join(w.T, `meta/${s}.mod`), mod); writeFileSync(join(w.T, `meta/${s}.own`), own); };
+    meta('secrets/tls.crt', '444', 'mssql mssql');
+    const man = w.datei('etc/alfred/sqllnx-tls.manifest')!.replace(`${w.T}/tls/tls.crt`, `${w.T}/secrets/tls.crt`);
+    writeFileSync(join(w.T, 'etc/alfred/sqllnx-tls.manifest'), man);
+    if (mitKopie) {
+      writeFileSync(join(w.T, 'conf/tlscert'), `${w.T}/tls/tls.crt\n`);
+    } else {
+      rmSync(join(w.T, 'tls'), { recursive: true });
+      writeFileSync(join(w.T, 'conf/tlscert'), `${w.T}/secrets/tls.crt\n`);
+    }
+    return { w, z };
+  }
+  const zeilen = (w: Welt) => w.datei('etc/alfred/sqllnx-tls.manifest')!.trim().split('\n');
+
+  it('#979 tls_pfad_umstellen an=true: Altbestand → Kopie unter tls/ (0444 mssql), Manifest ergänzt, tlscert neu, Neustart nötig; Wiederholung „schon“', () => {
+    const { w } = altbestand();
+    const r = w.lauf(tlsPfadUmstellenSkript({ an: true }));
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', zertifikat: `${w.T}/tls/tls.crt`, neustartNoetig: true });
+    expect(r.e!.aenderungen).toEqual(expect.arrayContaining(['manifest', 'tls-ordner', 'zertifikat', 'mssql-conf:tlscert']));
+    expect(w.conf().tlscert).toBe(`${w.T}/tls/tls.crt`);
+    expect(w.conf().tlskey).toBe(`${w.T}/secrets/tls.key`);
+    expect(w.datei('tls/tls.crt')).toBe(w.datei('secrets/tls.crt'));
+    expect(w.rechte('tls/tls.crt')).toBe('444 mssql mssql');
+    expect(w.rechte('tls')).toBe('755 mssql mssql');
+    expect(zeilen(w).filter(z => z.endsWith('/tls/tls.crt') || z.endsWith('/secrets/tls.crt'))).toHaveLength(2);
+    expect(r.log).not.toMatch(/systemctl (re)?start/);
+    writeFileSync(join(w.T, 'sql_start'), '@9999999999\n');
+    const s = w.lauf(tlsPfadUmstellenSkript({ an: true }));
+    expect(s.rc, s.aus).toBe(0);
+    expect(s.e).toMatchObject({ zustand: 'schon', neustartNoetig: false, aenderungen: [] });
+    keinSchluessel(r, s);
+  }, 120_000);
+
+  it('#979 tls_pfad_umstellen an=true übernimmt die gleiche Kopie von Hand (sqllnx02 nach 8d80342b): nur Manifest, kein mssql-conf', () => {
+    const { w } = altbestand(true);
+    const r = w.lauf(tlsPfadUmstellenSkript({ an: true }));
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e!.aenderungen).toEqual(['manifest']);
+    expect(r.log).not.toContain('mssql-conf set');
+    expect(zeilen(w).some(z => z.endsWith(`${w.T}/tls/tls.crt`))).toBe(true);
+  }, 120_000);
+
+  it('#979 tls_pfad_umstellen: abweichende Kopie oder alter Pfad nicht im Manifest → Abbruch, nichts geändert', () => {
+    const a = altbestand(true);
+    writeFileSync(join(a.w.T, 'tls/tls.crt'), pemDatei('root.crt'));
+    const vorher = a.w.dateien(); const conf = a.w.conf(); const man = a.w.datei('etc/alfred/sqllnx-tls.manifest');
+    const r = a.w.lauf(tlsPfadUmstellenSkript({ an: true }));
+    expect(r.rc).toBe(1);
+    expect(r.e!.fehler).toContain('weicht von');
+    expect(r.e!.fehler).toContain('nichts geändert');
+    expect(a.w.dateien()).toBe(vorher); expect(a.w.conf()).toEqual(conf); expect(a.w.datei('etc/alfred/sqllnx-tls.manifest')).toBe(man);
+    const b = altbestand();
+    writeFileSync(join(b.w.T, 'secrets/tls.crt'), `${b.w.datei('secrets/tls.crt')}\n`);
+    const s = b.w.lauf(tlsPfadUmstellenSkript({ an: true }));
+    expect(s.rc).toBe(1);
+    expect(s.e!.fehler).toContain('nicht mit diesem Inhalt in Alfreds Manifest');
+    expect(b.w.conf().tlscert).toBe(`${b.w.T}/secrets/tls.crt`);
+    expect(existsSync(join(b.w.T, 'tls'))).toBe(false);
+  }, 120_000);
+
+  it('#979 tls_pfad_umstellen an=false (Rückweg): tlscert zurück auf secrets, Kopie + Ordner weg, Manifest ohne neuen Pfad; Wiederholung „schon“', () => {
+    const { w } = altbestand();
+    const man = w.datei('etc/alfred/sqllnx-tls.manifest');
+    expect(w.lauf(tlsPfadUmstellenSkript({ an: true })).rc).toBe(0);
+    const r = w.lauf(tlsPfadUmstellenSkript({ an: false }));
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', zertifikat: `${w.T}/secrets/tls.crt`, neustartNoetig: true });
+    expect(w.conf().tlscert).toBe(`${w.T}/secrets/tls.crt`);
+    expect(existsSync(join(w.T, 'tls'))).toBe(false);
+    expect(w.datei('etc/alfred/sqllnx-tls.manifest')).toBe(man);
+    writeFileSync(join(w.T, 'sql_start'), '@9999999999\n');
+    const s = w.lauf(tlsPfadUmstellenSkript({ an: false }));
+    expect(s.e).toMatchObject({ zustand: 'schon', neustartNoetig: false, aenderungen: [] });
+  }, 120_000);
+
+  it('#979 Erneuerung auf dem Altbestand: tls_einspielen schreibt unter tls/, räumt Alfreds alte secrets/tls.crt ab, Manifest 5 Zeilen', () => {
+    const { w } = altbestand();
+    const a2 = w.lauf(tlsAnfordernSkript(P1));
+    const z2 = signiere(ohneCr(String(a2.e!.csrPem)));
+    const e = w.lauf(tlsEinspielenSkript(PE()), eingabe(z2));
+    expect(e.rc, e.aus).toBe(0);
+    expect(e.e!.aenderungen).toEqual(expect.arrayContaining(['mssql-conf:tlscert', 'entfernt:alter-pfad']));
+    expect(w.conf().tlscert).toBe(`${w.T}/tls/tls.crt`);
+    expect(w.datei('secrets/tls.crt')).toBeUndefined();
+    expect(new X509Certificate(w.datei('tls/tls.crt')!).fingerprint).toBe(new X509Certificate(z2).fingerprint);
+    expect(zeilen(w)).toHaveLength(5);
+    keinSchluessel(a2, e);
+  }, 120_000);
+
+  it('#979 tls_entfernen nach dem Umstellen: beide Zertifikatspfade, tlscert und der Ordner tls/ weg', () => {
+    const { w } = altbestand();
+    expect(w.lauf(tlsPfadUmstellenSkript({ an: true })).rc).toBe(0);
+    const r = w.lauf(tlsEntfernenSkript());
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e!.aenderungen).toEqual(expect.arrayContaining(['mssql-conf:tlscert', 'entfernt:tls.crt', 'entfernt:alter-pfad', 'entfernt:tls-ordner']));
+    expect(w.conf()).toEqual({});
+    expect(existsSync(join(w.T, 'tls'))).toBe(false);
+    expect(w.datei('secrets/tls.crt')).toBeUndefined();
+    // Altbestand ohne Umstellung: tlscert = alter Pfad wird ebenso als Alfreds Wert zurückgenommen
+    const b = altbestand();
+    const s = b.w.lauf(tlsEntfernenSkript());
+    expect(s.rc, s.aus).toBe(0);
+    expect(b.w.conf()).toEqual({});
+    expect(b.w.datei('secrets/tls.crt')).toBeUndefined();
   }, 120_000);
 
   it('Eingabe-Prüfung (python): genau ein Zertifikat und zwei in der Kette, kein Text daneben', () => {
@@ -485,7 +605,7 @@ describe('linux_sql TLS — Skill, Verweise, Change-Regeln', { timeout: 120_000 
     expect((await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root.crt') }, {} as never)).error).toContain('nur als Schritt');
     const r = await w.s.execute({ action: 'tls_einspielen', zugang: 'sqllnx01', zertifikat: z, kette: KETTE(), erwartet_root_sha256: rootSha('root.crt') }, imChange);
     expect(r.success, r.error).toBe(true);
-    expect(r.display).toContain(`TLS_INSTALLED sqllnx01: /var/opt/mssql/secrets/tls.crt Thumbprint ${tp}`);
+    expect(r.display).toContain(`TLS_INSTALLED sqllnx01: /var/opt/mssql/tls/tls.crt Thumbprint ${tp}`);
     expect(r.display).toContain('Verschlüsselung NICHT erzwungen; Neustart von SQL Server nötig (rollierend per Change)');
     expect(w.aufrufe[0]!.baustein).toBe(LINUX_SQL_BAUSTEINE.tlsEinspielen);
     expect(w.aufrufe[0]!.parameter).toEqual(PE());

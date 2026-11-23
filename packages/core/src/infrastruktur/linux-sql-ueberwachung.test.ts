@@ -3,8 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PY_AGENT } from './linux-sql.js';
-import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge, linuxSqlSicherungsBefunde } from './linux-sql-ueberwachung.js';
+import { PY_AGENT, PY_UPDATE } from './linux-sql.js';
+import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge, linuxSqlSicherungsBefunde, debVersionNeuer } from './linux-sql-ueberwachung.js';
 import { befundeAlsProblems, type ProblemZugriff } from './befund-problems.js';
 
 const tls = (restTage: number | null) => ({ installiert: true, ad: { beigetreten: true, keytab: null }, tls: { zertifikat: '/var/opt/mssql/secrets/tls.crt', thumbprint: 'ABCDEF0123456789', gueltigBis: '2026-12-01T00:00:00Z', restTage, erzwungen: true, pruefSchalter: true } });
@@ -207,5 +207,48 @@ describe('PY_AGENT (ausgeführt)', () => {
   it.skipIf(!PY)('Startzeilen ohne Abbruch → laeuft true; Datei fehlt → null', () => {
     expect(lauf(Buffer.from('2026-11-23 10:00:00 - ? [129] SQLSERVERAGENT starting\n2026-11-23 10:00:02 - ? [146] Request servicer engine started\n')).laeuft).toBe(true);
     expect(lauf(null)).toEqual({ laeuft: null, fehler: 'sqlagent.out fehlt' });
+  });
+});
+
+describe('SQL-Update verfügbar (Owner 23.11.: Pakete auf hold, bisher keine Prüfung)', () => {
+  const st = (inst: string | null, kandidat: string | null | undefined) => ({ pakete: { 'mssql-server': inst }, update: kandidat === undefined ? undefined : { kandidat } });
+  it('debVersionNeuer vergleicht Build und Revision numerisch', () => {
+    expect(debVersionNeuer('17.0.5065.9-2', '17.0.4006.2-1')).toBe(true);
+    expect(debVersionNeuer('17.0.4006.2-1', '17.0.4006.2-1')).toBe(false);
+    expect(debVersionNeuer('17.0.4006.2-1', '17.0.5065.9-2')).toBe(false);
+    expect(debVersionNeuer('17.0.4006.10-1', '17.0.4006.9-1')).toBe(true);
+    expect(debVersionNeuer('17.0.4006.2-2', '17.0.4006.2-1')).toBe(true);
+    expect(debVersionNeuer('kaputt', '17.0.4006.2-1')).toBe(false);
+  });
+  it('neuere Version in der Paketquelle → Befund mittel mit beiden Versionen', () => {
+    const a = linuxSqlBefunde('sqllnx01', st('17.0.4006.2-1', '17.0.5065.9-2'));
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ schwere: 'mittel', schluessel: 'ueberwachung:sqllnx01:sql-update', kategorie: 'ueberwachung', zugang: 'sqllnx01' });
+    expect(a[0]!.text).toContain('17.0.4006.2-1');
+    expect(a[0]!.text).toContain('17.0.5065.9-2');
+  });
+  it('gleich, älter, ohne Kandidat oder nicht installiert → kein Befund', () => {
+    expect(linuxSqlBefunde('sqllnx01', st('17.0.4006.2-1', '17.0.4006.2-1'))).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', st('17.0.5065.9-2', '17.0.4006.2-1'))).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', st('17.0.4006.2-1', null))).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', st('17.0.4006.2-1', undefined))).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', st(null, '17.0.5065.9-2'))).toEqual([]);
+  });
+});
+
+describe('PY_UPDATE (ausgeführt)', () => {
+  const PY = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3');
+  const lauf = (rc: number, text: string, installiert = true) => {
+    const prog = `import os, subprocess\nr = {"installiert": ${installiert ? 'True' : 'False'}}\ndef _apt_policy():\n    return ${rc}, ${JSON.stringify(text)}\n${PY_UPDATE}\nimport json\nprint(json.dumps(r.get("update")))`;
+    return JSON.parse(spawnSync(PY!, ['-'], { input: prog, encoding: 'utf8' }).stdout);
+  };
+  const POLICY = 'mssql-server:\n  Installed: 17.0.4006.2-1\n  Candidate: 17.0.5065.9-2\n  Version table:\n     17.0.5065.9-2 500\n *** 17.0.4006.2-1 100\n';
+  it.skipIf(!PY)('Candidate aus apt-cache policy', () => {
+    expect(lauf(0, POLICY)).toEqual({ kandidat: '17.0.5065.9-2' });
+  });
+  it.skipIf(!PY)('(none), Fehler, nicht installiert', () => {
+    expect(lauf(0, 'mssql-server:\n  Installed: 17.0.4006.2-1\n  Candidate: (none)\n')).toEqual({ kandidat: null });
+    expect(lauf(100, '')).toEqual({ kandidat: null, fehler: 'apt-cache policy fehlgeschlagen' });
+    expect(lauf(0, POLICY, false)).toBeNull();
   });
 });

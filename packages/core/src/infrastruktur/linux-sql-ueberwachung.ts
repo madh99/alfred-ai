@@ -18,7 +18,7 @@ export const LINUX_SQL_LOG_MAX_MIN = 120;
 export const LINUX_SQL_VOLL_MAX_MIN = 26 * 60;
 const SYSTEM_DB = new Set(['master', 'model', 'msdb', 'tempdb']);
 
-export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tls' | 'ad' | 'anmeldung' | 'saMarke' | 'agent' | 'konfig'> | null | undefined): Auffaelligkeit[] {
+export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tls' | 'ad' | 'anmeldung' | 'saMarke' | 'agent' | 'konfig' | 'pakete' | 'update'> | null | undefined): Auffaelligkeit[] {
   const a: Auffaelligkeit[] = [];
   const k = (teil: string) => ({ bereich: zugang, schluessel: `ueberwachung:${zugang}:${teil}`, kategorie: 'ueberwachung' as const, zugang });
   const t = status?.tls;
@@ -42,7 +42,24 @@ export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tl
   if (agentAn && status?.agent?.laeuft === false) {
     a.push({ schwere: 'hoch', text: `${zugang}: SQL Server Agent läuft nicht — geplante Sicherungen und Jobs fallen aus (sqlagent.out: ${(status.agent.letzteZeile ?? '?').slice(0, 160)})`, ...k('agent') });
   }
+  // Owner 23.11.: mssql-server ist auf hold, kein Update zieht es nach — neuere Version in der Microsoft-Quelle melden (Update = Change)
+  const inst = status?.pakete?.['mssql-server']; const kand = status?.update?.kandidat;
+  if (inst && kand && debVersionNeuer(kand, inst)) {
+    a.push({ schwere: 'mittel', text: `${zugang}: SQL-Server-Update verfügbar — installiert ${inst}, Paketquelle ${kand} (Pakete auf hold; Einspielen nur per Change, rollierend)`, ...k('sql-update') });
+  }
   return a;
+}
+
+/** true, wenn a neuer als b ist (Paketversionen wie 17.0.5065.9-2: Zahlenfolgen aus Build und Revision); Unlesbares → false */
+export function debVersionNeuer(a: string, b: string): boolean {
+  const teile = (v: string) => (/^\d+(?:[.-]\d+)*$/.test(v.trim()) ? v.trim().split(/[.-]/).map(Number) : null);
+  const x = teile(a); const y = teile(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
 }
 
 const alterText = (min: number | null | undefined) => (min === null || min === undefined ? 'nie' : min < 120 ? `vor ${min} min` : `vor ${Math.floor(min / 60)} h`);

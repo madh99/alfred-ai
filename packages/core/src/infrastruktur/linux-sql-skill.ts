@@ -24,7 +24,7 @@ import {
   AD_LOGINS_DATEI, AD_LOGIN_DB_ROLLEN, adLoginName, pruefeAdLogin, type AdLoginParameter,
 } from './linux-sql-ad.js';
 import { joinTresorName } from './windows-ad-linux.js';
-import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
+import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS, TLS_CRT, TLS_CRT_ALT, TLS_KEY, TLS_KEY_NEU, TLS_MIN_TAGE, TLS_BITS, TLS_PROTOKOLLE, TLS_PRUEF_SCHALTER, pruefeTlsPruefung, pruefeTlsErzwingen, type TlsParameter, type TlsPruefungParameter, type TlsErzwingenParameter } from './linux-sql-tls.js';
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pruefeSaSchalten } from './linux-sql-logins.js';
@@ -63,6 +63,7 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   tls_entfernen: sek(LINUX_SQL_ZEIT_MS.tlsEntfernen) + 60,
   tls_pruefung_schalten: sek(LINUX_SQL_ZEIT_MS.tlsPruefungSchalten) + 60,
   tls_erzwingen: sek(LINUX_SQL_ZEIT_MS.tlsErzwingen) + 60,
+  tls_pfad_umstellen: sek(LINUX_SQL_ZEIT_MS.tlsPfadUmstellen) + 60,
   ad_login: sek(LINUX_SQL_ZEIT_MS.adLogin) + 60,
   ad_login_entfernen: sek(LINUX_SQL_ZEIT_MS.adLoginEntfernen) + 60,
   alfred_logins_anlegen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsAnlegen) + 60,
@@ -103,6 +104,8 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   'tls_pruefung_schalten',
   // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Rückweg = an umgekehrt), AD-Gruppen-Logins und Rückweg
   'tls_erzwingen', 'ad_login', 'ad_login_entfernen',
+  // Microsoft #979 — öffentliches Zertifikat aus secrets in den eigenen Ordner (Rückweg an umgekehrt)
+  'tls_pfad_umstellen',
   // I8e Folge-Etappe — eigene Alfred-Logins (Rückweg entfernen), sa schalten (Rückweg an umgekehrt), Notfallweg sa-Kennwort setzen
   'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
@@ -156,6 +159,8 @@ export interface LinuxSqlStatus {
   saMarke?: boolean;
   /** Überwachung 23.11.: SQL Server Agent aus der letzten Zeile von sqlagent.out — laeuft false bei „terminated“/„cannot start“, null = unlesbar */
   agent?: { laeuft: boolean | null; letzteZeile?: string; fehler?: string } | null;
+  /** Owner 23.11.: neueste mssql-server-Version der Paketquelle (apt-cache policy, trotz hold) */
+  update?: { kandidat: string | null; fehler?: string } | null;
   /** I8e Task 4 — Zugangsdatei (nur Rechte), Kopier-Timer, letzter Kopierlauf */
   sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
   /** Fix-Welle M-5/M-6 — Reste (alte tempdb-Dateien, Wegwerf-Ordner, Zugangsdateien): nur gemeldet, nie gelöscht */
@@ -528,6 +533,7 @@ export class LinuxSqlSkill extends Skill {
       + `tls_einspielen (nur im Change; zugang, computername Standard = zugang, zertifikat + kette als PEM ODER zert_base64 + issuing_base64 + root_base64 als DER-Base64, erwartet_root_sha256 Pflicht als fester Wert = SHA-256 der Root-DER) — prüft ohne Änderung: Root = erwartet_root_sha256 (eine vorhandene andere Root wird nie ersetzt), Kette Issuing → Root, Zertifikat für Server-Authentifizierung, Zertifikat passt zum Schlüssel auf dem Host (sonst Abbruch, bisherige Konfiguration bleibt), RSA ${TLS_BITS}, CN, SANs exakt, Restlaufzeit > ${TLS_MIN_TAGE} Tage; dann CA-Dateien ad3033-root.crt/ad3033-issuing.crt + update-ca-certificates, ${TLS_KEY} (0400 mssql:mssql), ${TLS_CRT} (0444), mssql-conf network.tlscert/tlskey/tlsprotocols ${TLS_PROTOKOLLE} — NICHT forceencryption und KEIN Neustart (Anzeige „Neustart nötig“, der Change startet rollierend); „TLS_INSTALLED“ ↔ tls_entfernen (zugang; nur Alfreds mssql-conf-Werte und Dateien laut Manifest, unbenutzter tls.key.neu; Abbruch, solange forceencryption 1; „TLS_REMOVED“; Abbruch, solange die Zertifikatsprüfung an ist). Status nennt „TLS gültig bis <datum>“, „TLS erzwungen“ (sonst „TLS nicht erzwungen“), „Zertifikatsprüfung an“, „AD beigetreten“, „Kerberos-Keytab kvno <n> (6 SPNs, aktuell)“. `
       + `tls_pruefung_schalten (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_einspielen UND dem rollierenden Neustart) — an=true nur, wenn ${TLS_CRT} Alfreds ist (Manifest), von mssql.conf genutzt wird, nicht abgelaufen ist, Kette + Name gegen den Vertrauensspeicher prüfbar sind und eine Probe-Verbindung als sa mit sqlcmd -N -S <host>.ad.3033.at verschlüsselt gelingt; dann Schalter ${TLS_PRUEF_SCHALTER} (0644 root, Inhalt FQDN) → „TLS_PRUEFUNG_AN“: ab da verbinden alle SQL-Bausteine von linux_sql und linux_ha mit Zertifikatsprüfung, scheitert sie, brechen sie mit „Zertifikatsprüfung fehlgeschlagen“ ab (nie Rückfall ohne Prüfung); rueckweg tls_pruefung_schalten an=false (zugang) → „TLS_PRUEFUNG_AUS“. `
       + `tls_erzwingen (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false; nach tls_pruefung_schalten an=true) — an=true nur, wenn TLS von Alfred eingespielt ist (Manifest, mssql.conf, gültig, Kette + Name), die Zertifikatsprüfung an ist (Schalter mit genau diesem FQDN, Probe -N verschlüsselt) und Pacemaker auf diesem Knoten fehlerfrei ist (online, Quorum, ag_cluster bekannt, Fehlerzähler mit Fehler in den letzten 30 min 0, keine fehlgeschlagene Aktion in 30 min, crm_mon --include=failcounts,failures) — sonst Abbruch ohne Änderung; vermerkt sein Eigentum in /etc/alfred/sqllnx-tls-erzwungen und setzt mssql-conf network.forceencryption 1, KEIN Neustart (Anzeige „Neustart nötig“; der Change startet rollierend: Sekundär neu starten, ag_failover, alter Primär neu starten, ag_failover zurück; sqllnxcfg einzeln) → „TLS_ERZWUNGEN“ ↔ rueckweg Pflicht tls_erzwingen an=false (zugang) → „TLS_NICHT_ERZWUNGEN“ (ohne Vorbedingung; nimmt nur einen von Alfred vermerkten Wert zurück, ein vorher gesetztes 1 bleibt: „TLS_ERZWUNGEN_BELASSEN“). Der Pacemaker-Agent ocf:mssql:ag verbindet ohnehin verschlüsselt (encrypt=true, TrustServerCertificate=true) — der Beweis ist trotzdem der Failover hin/zurück ohne Monitor-Fehler (linux_ha status: „Pacemaker ohne Fehlaktionen (30 min), Fehlerzähler ag_cluster 0 (30 min)“). `
+      + `tls_pfad_umstellen (nur im Change; zugang = sqllnx01/sqllnx02/sqllnxcfg, an true|false) — Microsoft #979: der SQL Agent von SQL Server 2025 liest network.tlscert selbst und darf nicht in /var/opt/mssql/secrets lesen (Agent beendet sich mit „SSL Provider: The data is invalid“); an=true stellt Alfreds Zertifikat (Manifest) von ${TLS_CRT_ALT} auf ${TLS_CRT} um (bytegleiche Kopie 0444 mssql, Ordner 0755 mssql; eine schon vorhandene gleiche Kopie wird übernommen, eine abweichende nie überschrieben), Schlüssel bleibt; „TLS_PFAD_NEU“; an=false = Rückweg (zurück auf secrets, Kopie entfernt; „TLS_PFAD_ALT“). KEIN Neustart — im Change danach SQL Server im Standby neu starten (Sekundär) bzw. nach dem Failover, dann „Agent läuft“ prüfen. tls_einspielen legt neue Zertifikate immer unter ${TLS_CRT} ab und räumt den alten Pfad ab. `
       + `AD-LOGINS (nur sqllnx01/sqllnx02, nie sqllnxcfg; nach ad_beitreten und kerberos_einrichten + Neustart): ad_login (nur im Change; zugang, gruppe z. B. SQL-Linux-Admins, serverrolle sysadmin und/oder datenbank + datenbankrolle ${AD_LOGIN_DB_ROLLEN.join('/')}) — CREATE LOGIN [AD3033\\<gruppe>] FROM WINDOWS (+ Serverrolle bzw. Datenbankbenutzer + Rolle, Datenbank nur auf dem Primär — Sekundär → Abbruch, der Benutzer wird repliziert); vorher ohne Änderung: Host beigetreten (sssd), getent group <gruppe>@ad.3033.at, Alfreds Keytab in mssql.conf; ein vorhandener Login anderen Typs, ein deaktivierter Login oder ein abweichender Datenbankbenutzer → Abbruch; was fehlt, wird vor der Anlage in ${AD_LOGINS_DATEI} vermerkt; Selbstprüfung über sys.server_principals (Typ G), Serverrollen- und Datenbankrollen-Mitgliedschaft → „AD_LOGIN_OK“ ↔ rueckweg Pflicht ad_login_entfernen (gleiche zugang, gruppe, serverrolle, datenbank, datenbankrolle; entfernt nur Vermerktes, Fremdes steht unter „belassen“; „AD_LOGIN_REMOVED“). Logins sind instanzbezogen: je Replikat ein Schritt. `
       + 'ALFRED-LOGINS UND sa (alle drei Instanzen, je Zugang ein Schritt, nur im Change): alfred_logins_anlegen (zugang) — alfred_admin (sysadmin) und alfred_status (nur lesen: VIEW SERVER STATE, VIEW ANY DEFINITION, SELECT msdb.dbo.backupset), Kennwörter erzeugt Alfred im Tresor (sqllnx-<zugang>-alfred-admin/-alfred-status); danach melden sich ändernde Aktionen als alfred_admin, status als alfred_status an, nie mehr als sa ↔ rueckweg Pflicht alfred_logins_entfernen (zugang; nur solange sa aktiv). '
       + 'sa_schalten (zugang, an false = sa abschalten + Host-Marke, true = einschalten) — nur als alfred_admin ↔ rueckweg Pflicht sa_schalten mit an umgekehrt. '
@@ -566,7 +572,7 @@ export class LinuxSqlSkill extends Skill {
         issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
         root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
         erwartet_root_sha256: { type: 'string', description: 'tls_einspielen: Pflicht, fester Wert — SHA-256 (64 Hex) der DER der AD3033-Root; eine andere Root wird abgewiesen' },
-        an: { type: 'boolean', description: 'tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg); sa_schalten: false = sa abschalten, true = einschalten (Rückweg)' },
+        an: { type: 'boolean', description: 'tls_pfad_umstellen: true = Zertifikat in den eigenen Ordner (#979), false = zurück (Rückweg); tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg); sa_schalten: false = sa abschalten, true = einschalten (Rückweg)' },
         gruppe: { type: 'string', description: 'ad_login/ad_login_entfernen: AD-Gruppe ohne Domäne, z. B. SQL-Linux-Admins (Login AD3033\\<gruppe>)' },
         serverrolle: { type: 'string', enum: ['sysadmin'], description: 'ad_login/ad_login_entfernen: Serverrolle des Gruppen-Logins' },
         datenbankrolle: { type: 'string', enum: [...AD_LOGIN_DB_ROLLEN], description: 'ad_login/ad_login_entfernen: Rolle in datenbank (nur mit datenbank, nur auf dem Primär)' },
@@ -601,6 +607,11 @@ export class LinuxSqlSkill extends Skill {
     if (action === 'tls_erzwingen') {
       if (!istVerweis(input.an) && typeof input.an !== 'boolean') return 'an: true oder false';
       if (!istVerweis(input.zugang) && !TLS_HOSTS.includes(String(input.zugang).trim().toLowerCase())) return `zugang: Verschlüsselung erzwingen nur auf ${TLS_HOSTS.join(', ')}`;
+    }
+    // #979: an fest (der Rückweg kehrt ihn um); nur auf den TLS-Hosts
+    if (action === 'tls_pfad_umstellen') {
+      if (!istVerweis(input.an) && typeof input.an !== 'boolean') return 'an: true oder false';
+      if (!istVerweis(input.zugang) && !TLS_HOSTS.includes(String(input.zugang).trim().toLowerCase())) return `zugang: Zertifikatspfad nur auf ${TLS_HOSTS.join(', ')}`;
     }
     if ((action === 'ad_login' || action === 'ad_login_entfernen') && typeof input.zugang === 'string' && input.zugang.trim().toLowerCase() === AD_NIE_BEITRETEN) return `${AD_NIE_BEITRETEN} bekommt keine AD-Logins (Spec 10)`;
     if (action === 'tls_einspielen') { try { erwarteteRoot(istVerweis(input.erwartet_root_sha256) ? '' : input.erwartet_root_sha256); } catch (err) { return (err as Error).message.slice(0, 200); } }
@@ -675,6 +686,7 @@ export class LinuxSqlSkill extends Skill {
         case 'tls_entfernen': return await this.tlsEntfernen(zugang);
         case 'tls_pruefung_schalten': return await this.tlsPruefungSchalten(zugang, input, geheim);
         case 'tls_erzwingen': return await this.tlsErzwingen(zugang, input, geheim);
+        case 'tls_pfad_umstellen': return await this.tlsPfadUmstellen(zugang, input);
         case 'ad_login': return await this.adLogin(zugang, input, geheim);
         case 'ad_login_entfernen': return await this.adLoginEntfernen(zugang, input, geheim);
         case 'alfred_logins_anlegen': return await this.alfredLoginsAnlegen(zugang, geheim);
@@ -1049,6 +1061,27 @@ export class LinuxSqlSkill extends Skill {
       : r.erzwungen
         ? `TLS_ERZWUNGEN_BELASSEN ${zugang}: mssql.conf network.forceencryption bleibt 1 — belassen (nicht von Alfred): ${(r.belassen ?? []).join('; ').slice(0, 300)}`
         : `TLS_NICHT_ERZWUNGEN ${zugang}: mssql.conf network.forceencryption zurückgenommen (Standard, unverschlüsselte Verbindungen wieder zulässig)${r.belassen?.length ? `; belassen: ${r.belassen.join('; ').slice(0, 300)}` : ''}; ${neustart}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /**
+   * Microsoft #979 — network.tlscert aus secrets in TLS_ORDNER (an=true) bzw. zurück (an=false, Rückweg). Kein Tresor, KEIN Neustart —
+   * der Change startet SQL Server danach im Standby neu (Sekundär) bzw. nach dem Failover.
+   */
+  private async tlsPfadUmstellen(zugang: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (typeof input.an !== 'boolean') throw new Error('an: true oder false');
+    const host = zugang.trim().toLowerCase();
+    if (!TLS_HOSTS.includes(host)) throw new Error(`zugang: Zertifikatspfad nur auf ${TLS_HOSTS.join(', ')}`);
+    const p = { an: input.an };
+    const r = await this.lauf<{ zustand: string; zertifikat?: string; neustartNoetig?: boolean; aenderungen?: string[] }>(
+      zugang, LINUX_SQL_BAUSTEINE.tlsPfadUmstellen, p, `Zertifikatspfad ${p.an ? 'umstellen' : 'zurückstellen'}`, LINUX_SQL_ZEIT_MS.tlsPfadUmstellen);
+    const soll = p.an ? TLS_CRT : TLS_CRT_ALT;
+    if (r.zertifikat !== soll || typeof r.neustartNoetig !== 'boolean') throw new Error(`Zertifikatspfad ${zugang}: Nachprüfung fehlgeschlagen (network.tlscert ${String(r.zertifikat).slice(0, 80)}, erwartet ${soll})`);
+    this.d.protokoll?.('I8e TLS-Pfad (#979)', { zugang, an: p.an, zustand: r.zustand, neustartNoetig: r.neustartNoetig, aenderungen: r.aenderungen });
+    const neustart = r.neustartNoetig ? 'Neustart von SQL Server nötig (im Standby bzw. nach dem Failover, per Change)' : 'kein Neustart nötig';
+    const text = p.an
+      ? `TLS_PFAD_NEU ${zugang}: network.tlscert = ${TLS_CRT} (0444 mssql, Ordner 0755 — für den SQL Agent lesbar, Microsoft #979), Schlüssel bleibt ${TLS_KEY}; ${neustart}`
+      : `TLS_PFAD_ALT ${zugang}: network.tlscert = ${TLS_CRT_ALT}, Kopie ${TLS_CRT} entfernt — der SQL Agent startet mit diesem Pfad nicht (Microsoft #979); ${neustart}`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

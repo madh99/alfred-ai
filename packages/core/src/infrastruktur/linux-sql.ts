@@ -75,6 +75,8 @@ export const LINUX_SQL_BAUSTEINE = {
   tlsPruefungSchalten: 'sql.tls_pruefung_schalten',
   // I8e Etappe 3 Task 8 — Verschlüsselung erzwingen (Erzeuger in linux-sql-tls.ts), AD-Gruppen-Logins und Rückweg (Erzeuger in linux-sql-ad.ts)
   tlsErzwingen: 'sql.tls_erzwingen', adLogin: 'sql.ad_login', adLoginEntfernen: 'sql.ad_login_entfernen',
+  // Microsoft #979 — öffentliches Zertifikat aus secrets in den eigenen Ordner (Rückweg an=false; Erzeuger in linux-sql-tls.ts)
+  tlsPfadUmstellen: 'sql.tls_pfad_umstellen',
   // I8e Folge-Etappe — eigene Alfred-Logins, sa schalten, sa-Kennwort setzen (Notfallweg; Erzeuger in linux-sql-logins.ts)
   alfredLoginsAnlegen: 'sql.alfred_logins_anlegen', alfredLoginsEntfernen: 'sql.alfred_logins_entfernen', saSchalten: 'sql.sa_schalten', saKennwortSetzen: 'sql.sa_kennwort_setzen',
 } as const;
@@ -95,7 +97,15 @@ export const SQL_KERBEROS_KONTO = 'svc-sqllnx';
  * (PY_STATUS) sie liest. Das Manifest hält die SHA-256 der von tls_einspielen geschriebenen Dateien — nur diese entfernt tls_entfernen.
  */
 export const TLS_SECRETS = '/var/opt/mssql/secrets';
-export const TLS_CRT = `${TLS_SECRETS}/tls.crt`;
+/**
+ * Microsoft mssql-docker #979 (Realfall 20.–23.11.: Agent aus, keine geplanten Sicherungen): der SQL Agent von SQL Server 2025 liest
+ * die Datei aus network.tlscert selbst, unter secrets verweigert die SQLPAL-Sandbox den Zugriff („SSL Provider: The data is invalid“).
+ * Das ÖFFENTLICHE Zertifikat liegt deshalb in einem eigenen Ordner (mssql:mssql 0755); der Schlüssel bleibt in secrets. Belegt mit
+ * Change 8d80342b (sqllnx02, 23.11.). TLS_CRT_ALT = der frühere Pfad — Altbestand, den tls_pfad_umstellen / tls_einspielen abräumen.
+ */
+export const TLS_ORDNER = '/var/opt/mssql/tls';
+export const TLS_CRT = `${TLS_ORDNER}/tls.crt`;
+export const TLS_CRT_ALT = `${TLS_SECRETS}/tls.crt`;
 export const TLS_KEY = `${TLS_SECRETS}/tls.key`;
 export const TLS_KEY_NEU = `${TLS_SECRETS}/tls.key.neu`;
 export const TLS_CA_ORDNER = '/usr/local/share/ca-certificates';
@@ -137,6 +147,8 @@ export const LINUX_SQL_ZEIT_MS = {
   tlsPruefungSchalten: 120_000,
   // Task 8: bereit (bis 120 s), Probe, crm_mon, mssql-conf — ohne Neustart; AD-Login: bereit, Lage, Anlegen, Nachprüfung
   tlsErzwingen: 180_000, adLogin: 180_000, adLoginEntfernen: 180_000,
+  // #979: Manifest, Kopie, mssql-conf — ohne Neustart
+  tlsPfadUmstellen: 90_000,
   // I8e Folge-Etappe: Logins/sa je bereit (120 s) + zwei Anmeldungen; Notfallweg: Dienst stoppen, set-sa-password, starten, bereit (120 s)
   alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000,
 } as const;
@@ -997,6 +1009,32 @@ except FileNotFoundError:
 except Exception:
     r["agent"] = {"laeuft": None, "fehler": "sqlagent.out unlesbar"}`;
 
+/**
+ * Owner 23.11. — SQL-Updates: die Installation hält mssql-server (hold), die os-updates-Serie überspringt es, also zieht niemand ein CU
+ * nach. Hier nur lesen: Kandidat aus `apt-cache policy mssql-server` (zeigt die neueste Version der Microsoft-Quelle trotz hold; so
+ * aktuell wie das letzte apt update). LC_ALL=C, sonst ist „Candidate:“ übersetzt. Erwartet r aus PY_STATUS; _apt_policy ist in Tests
+ * vorbelegt. Ergebnis r["update"] = {kandidat} bzw. {kandidat: None, fehler}; ohne Installation kein Eintrag.
+ */
+export const PY_UPDATE = String.raw`if "_apt_policy" not in globals():
+    def _apt_policy():
+        try:
+            _p = subprocess.run(["apt-cache", "policy", "mssql-server"], capture_output=True, text=True, timeout=30, env=dict(os.environ, LC_ALL="C", LANG="C"))
+            return _p.returncode, _p.stdout
+        except Exception:
+            return 1, ""
+if r.get("installiert"):
+    _c, _t = _apt_policy()
+    if _c != 0:
+        r["update"] = {"kandidat": None, "fehler": "apt-cache policy fehlgeschlagen"}
+    else:
+        _k = None
+        for _z in _t.splitlines():
+            _z = _z.strip()
+            if _z.startswith("Candidate:"):
+                _w = _z.split(":", 1)[1].strip()
+                _k = None if _w in ("", "(none)") else _w[:40]
+        r["update"] = {"kandidat": _k}`;
+
 /** python3-Statusprogramm: stdin = Eingabe-JSON (optional sa) */
 export const PY_STATUS = [
   'import configparser, json, os, subprocess, sys',
@@ -1078,6 +1116,7 @@ export const PY_STATUS = [
   '    sich["letzteKopie"] = None',
   'r["sicherung"] = sich',
   PY_AGENT,
+  PY_UPDATE,
   // Fix-Welle M-5/M-6: Reste (nur melden, nie löschen): alte tempdb-Dateien im Datenordner, Wegwerf-Ordner des Restore-Beweises, Zugangsdateien
   'import glob, re as _re',
   'reste = []',

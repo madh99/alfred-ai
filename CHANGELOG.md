@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL Server Agent auf Linux startet wieder: TLS-Zertifikat außerhalb von secrets (v1942)
+
+- Ursache des Agent-Ausfalls seit 20./21.11. (Microsoft mssql-docker #979): Der Agent von SQL Server 2025 liest die Datei aus `network.tlscert` selbst. Unter `/var/opt/mssql/secrets` verweigert die Sandbox den Zugriff („SSL Provider: The data is invalid“), und der Agent beendet sich. Microsoft kündigt die Behebung für CU12 an.
+- `tls_einspielen` legt das öffentliche Zertifikat jetzt unter `/var/opt/mssql/tls/tls.crt` ab (Ordner mssql 0755, Datei 0444). Der private Schlüssel bleibt in `secrets`. Eine frühere Datei unter `secrets` wird beim Einspielen abgeräumt; `tls_entfernen` kennt beide Pfade.
+- Neue Aktion `linux_sql tls_pfad_umstellen` (nur im Change, Rückweg `an=false`) stellt bestehende Hosts um. Sie übernimmt nur Alfreds Zertifikat laut Manifest, eine bereits vorhandene gleiche Kopie wird übernommen und eine abweichende nie überschrieben. Neu gestartet wird im Change (Standby bzw. nach dem Failover).
+
+### Added — Prüfung auf verfügbare SQL-Server-Updates (v1942)
+
+- `mssql-server` ist nach der Installation bewusst gehalten (hold), deshalb zog bisher niemand ein kumulatives Update nach. Die stündliche Linux-SQL-Überwachung liest jetzt die neueste Version der Microsoft-Paketquelle (`apt-cache policy`). Ist sie neuer als die installierte, entsteht der Befund „SQL-Server-Update verfügbar“ (mittel). Das Einspielen bleibt ein eigener, rollierender Change.
+
 ### Added — Standby-Nachweis im HA-Status und Rückholen mit AG-Prüfung (v1941)
 
 - `linux_ha status` nennt Knoten im Pacemaker-Standby („Standby sqllnx02“) als festes Prüfstück. Damit lässt sich in Changes vor einem Neustart belegen, dass der Knoten im Standby ist.

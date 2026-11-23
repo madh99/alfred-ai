@@ -26,12 +26,13 @@ import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
 import {
   LINUX_SQL_BAUSTEINE, PY_CONF, shQ, sqlKopf, AD_DOMAENE_LINUX, SQL_HILFE, SA_LESEN, TLS_PRUEF_SCHALTER,
   TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE,
+  TLS_ORDNER, TLS_CRT_ALT,
 } from './linux-sql.js';
 import { MSSQL_CONF_PROGRAMM, MSSQL_CONF_DATEI } from './linux-sql-ad.js';
 import { linuxTlsSans } from './windows-sqltls-linux.js';
 import { HA_CRM_FEHLER_ARGS, PY_PM_PRUEFUNG } from './linux-ha.js';
 
-export { TLS_PRUEF_SCHALTER, TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE };
+export { TLS_ORDNER, TLS_CRT_ALT, TLS_PRUEF_SCHALTER, TLS_SECRETS, TLS_CRT, TLS_KEY, TLS_KEY_NEU, TLS_CA_ORDNER, TLS_CA_ROOT, TLS_CA_ISSUING, TLS_MANIFEST, TLS_MANIFEST_KOPF, TLS_PROTOKOLLE };
 
 export const TLS_BITS = 3072;
 /** Mindest-Restlaufzeit beim Einspielen (Tage) */
@@ -188,7 +189,9 @@ function werte(p?: TlsParameter): string[] {
   return [
     'TMP_BASIS=/run',
     `SECRETS=${shQ(TLS_SECRETS)}`,
+    `TLS_DIR=${shQ(TLS_ORDNER)}`,
     `CRT=${shQ(TLS_CRT)}`,
+    `CRT_ALT=${shQ(TLS_CRT_ALT)}`,
     `KEY=${shQ(TLS_KEY)}`,
     `KEY_NEU=${shQ(TLS_KEY_NEU)}`,
     `CA_DIR=${shQ(TLS_CA_ORDNER)}`,
@@ -251,7 +254,19 @@ alfred_aufraeumen() {
   [ -z "§{NEU_DIR:-}" ] || rm -rf -- "$NEU_DIR"
 }
 BELASSEN=''
-belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }`);
+belassen() { BELASSEN+="§{BELASSEN:+,}$(printf '%s' "$1" | json_text)"; }
+# Manifest ersetzen ($1 = neuer Inhalt), nur bei Abweichung; MANIFEST_AEND=1 bei Änderung
+MANIFEST_AEND=0
+manifest_setzen() {
+  if manifest_eigen && cmp -s -- "$1" "$MANIFEST"; then return 0; fi
+  [ -d "§{MANIFEST%/*}" ] || { mkdir -p "§{MANIFEST%/*}"; chmod 0755 "§{MANIFEST%/*}"; }
+  schreibe "$MANIFEST" "$1" 0600 root:root; MANIFEST_AEND=1
+}
+# #979: Ordner des öffentlichen Zertifikats (mssql:mssql 0755 — der Agent liest es über die Sandbox)
+tls_ordner() {
+  if [ ! -d "$TLS_DIR" ]; then mkdir -p "$TLS_DIR"; chown mssql:mssql "$TLS_DIR"; chmod 0755 "$TLS_DIR"; aend tls-ordner
+  elif [ "$(rechte "$TLS_DIR")" != '755 mssql mssql' ]; then chown mssql:mssql "$TLS_DIR"; chmod 0755 "$TLS_DIR"; aend tls-ordner-rechte; fi
+}`);
 
 // ── tls_anfordern ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -356,11 +371,12 @@ BIS=$(date -u -d "@$BIS_S" +%Y-%m-%dT%H:%M:%SZ); REST=$(( (BIS_S - $(date -u +%s
 openssl x509 -noout -checkend $(( MIN_TAGE * 86400 )) -in "$Z" >/dev/null 2>&1 || abbruch "Zertifikat läuft in weniger als $MIN_TAGE Tagen ab (gültig bis $BIS) — nichts geändert"
 TP=$({ openssl x509 -noout -fingerprint -sha1 -in "$Z" 2>/dev/null || true; } | sed -n 's/^[^=]*=//p' | tr -d ':\r' | tr 'a-f' 'A-F')
 [[ "$TP" =~ ^[0-9A-F]{40}$ ]] || abbruch "Thumbprint des Zertifikats nicht lesbar — nichts geändert"
-# fremde Konfiguration oder Dateien → nichts anfassen
-for kv in "tlscert=$CRT" "tlskey=$KEY"; do
-  k=§{kv%%=*}; s=§{kv#*=}; v=$(lies network "$k")
-  [ -z "$v" ] || [ "$v" = "$s" ] || abbruch "mssql.conf network.$k = $v (nicht Alfreds Pfad $s) — fremde TLS-Konfiguration, nichts geändert"
-done
+# fremde Konfiguration oder Dateien → nichts anfassen (#979: der frühere Pfad unter secrets ist ebenso Alfreds)
+v=$(lies network tlscert)
+[ -z "$v" ] || [ "$v" = "$CRT" ] || [ "$v" = "$CRT_ALT" ] || abbruch "mssql.conf network.tlscert = $v (nicht Alfreds Pfad $CRT) — fremde TLS-Konfiguration, nichts geändert"
+v=$(lies network tlskey)
+[ -z "$v" ] || [ "$v" = "$KEY" ] || abbruch "mssql.conf network.tlskey = $v (nicht Alfreds Pfad $KEY) — fremde TLS-Konfiguration, nichts geändert"
+if [ -e "$TLS_DIR" ] || [ -L "$TLS_DIR" ]; then { [ -d "$TLS_DIR" ] && [ ! -L "$TLS_DIR" ]; } || abbruch "$TLS_DIR ist kein Ordner — nichts geändert"; fi
 if [ -e "$MANIFEST" ] || [ -L "$MANIFEST" ]; then manifest_eigen || abbruch "$MANIFEST ist vorhanden und nicht von Alfred — nichts geändert"; fi
 # $1 Ziel, $2 neuer Inhalt (leer = wird ersetzt): vorhanden und weder gleich noch Alfreds (Manifest) → Abbruch
 fremd_pruefen() {
@@ -381,14 +397,8 @@ if [ "$QUELLE" = neu ]; then fremd_pruefen "$KEY" ''; fi
 # bleiben bis zum Ende) — so entfernt tls_entfernen auch nach einem Abbruch mitten im Einspielen genau Alfreds Dateien ──
 printf '%s\n%s  %s\n%s  %s\n%s  %s\n%s  %s\n' "$MANIFEST_KOPF" "$(sha "$Z")" "$CRT" "$(sha "$SCHL_QUELLE")" "$KEY" "$(sha "$ROOT")" "$CA_ROOT" "$(sha "$ISS")" "$CA_ISS" >"$ALFRED_TMP/manifest"
 cp -- "$ALFRED_TMP/manifest" "$ALFRED_TMP/manifest-lauf"
-for f in "$CRT" "$KEY" "$CA_ROOT" "$CA_ISS"; do if alfreds "$f"; then printf '%s  %s\n' "$(sha "$f")" "$f" >>"$ALFRED_TMP/manifest-lauf"; fi; done
+for f in "$CRT" "$CRT_ALT" "$KEY" "$CA_ROOT" "$CA_ISS"; do if alfreds "$f"; then printf '%s  %s\n' "$(sha "$f")" "$f" >>"$ALFRED_TMP/manifest-lauf"; fi; done
 awk '!d[$0]++' "$ALFRED_TMP/manifest-lauf" >"$ALFRED_TMP/manifest-lauf2"
-manifest_setzen() {
-  if manifest_eigen && cmp -s -- "$1" "$MANIFEST"; then return 0; fi
-  [ -d "§{MANIFEST%/*}" ] || { mkdir -p "§{MANIFEST%/*}"; chmod 0755 "§{MANIFEST%/*}"; }
-  schreibe "$MANIFEST" "$1" 0600 root:root; MANIFEST_AEND=1
-}
-MANIFEST_AEND=0
 manifest_setzen "$ALFRED_TMP/manifest-lauf2"
 # ── Phase 3: Vertrauen (CA-Dateien, update-ca-certificates) ──
 [ -d "$CA_DIR" ] || { mkdir -p "$CA_DIR"; chmod 0755 "$CA_DIR"; }
@@ -403,6 +413,7 @@ fi
 vertraut || abbruch "Selbstprüfung: Zertifikat gegen den Vertrauensspeicher $CA_BUNDLE nicht prüfbar — Zertifikat nicht eingespielt (Rückweg tls_entfernen)"
 # ── Phase 4: Zertifikat und Schlüssel (Zertifikat zuerst als Zwischendatei, dann Schlüssel und Zertifikat je per mv) ──
 if [ ! -d "$SECRETS" ]; then mkdir -p "$SECRETS"; chown mssql:mssql "$SECRETS"; chmod 0700 "$SECRETS"; aend secrets-ordner; fi
+tls_ordner
 CRT_ZW=''
 if ! cmp -s -- "$Z" "$CRT"; then vorbereiten "$CRT" "$Z" 0444 mssql:mssql; CRT_ZW=$ZW; fi
 # Fix-Runde 1: scheitert das zweite mv, kommen der neue Schlüssel nach .neu und der alte (Kopie im privaten Lauf-Ordner) zurück
@@ -442,6 +453,8 @@ vertraut || abbruch "Selbstprüfung: Zertifikat gegen den Vertrauensspeicher nic
 for kv in "tlscert=$CRT" "tlskey=$KEY" "tlsprotocols=$PROTOKOLLE"; do
   k=§{kv%%=*}; s=§{kv#*=}; [ "$(lies network "$k")" = "$s" ] || abbruch "Selbstprüfung: mssql.conf network.$k ist nicht $s"
 done
+# #979: Alfreds frühere Kopie unter secrets wird nicht mehr genutzt (tlscert zeigt auf $CRT) — abräumen; Fremdes bleibt
+if [ -f "$CRT_ALT" ] && [ ! -L "$CRT_ALT" ] && alfreds "$CRT_ALT"; then rm -f -- "$CRT_ALT"; aend entfernt:alter-pfad; fi
 # Manifest jetzt nur mit den eingespielten Dateien
 manifest_setzen "$ALFRED_TMP/manifest"
 [ "$MANIFEST_AEND" = 0 ] || aend manifest
@@ -489,6 +502,8 @@ SQL_AEND=0; CA_WEG=0
 if [ -x "$MSSQLCONF" ]; then
   for kv in "tlscert=$CRT" "tlskey=$KEY" "tlsprotocols=$PROTOKOLLE"; do
     k=§{kv%%=*}; s=§{kv#*=}; v=$(lies network "$k")
+    # #979: der frühere Zertifikatspfad unter secrets ist ebenso Alfreds Wert
+    if [ "$k" = tlscert ] && [ "$v" = "$CRT_ALT" ]; then s=$CRT_ALT; fi
     if [ "$v" = "$s" ]; then
       aus=$("$MSSQLCONF" unset "network.$k" 2>&1) || abbruch "mssql-conf unset network.$k fehlgeschlagen: $(kurz "$aus")"
       aend "mssql-conf:$k"; SQL_AEND=1
@@ -496,10 +511,11 @@ if [ -x "$MSSQLCONF" ]; then
   done
 fi
 # Dateien nur mit dem SHA-256 aus Alfreds Manifest
-for f in "$CRT" "$KEY" "$CA_ROOT" "$CA_ISS"; do
+for f in "$CRT" "$CRT_ALT" "$KEY" "$CA_ROOT" "$CA_ISS"; do
   { [ -e "$f" ] || [ -L "$f" ]; } || continue
   if alfreds "$f"; then
-    rm -f -- "$f"; aend "entfernt:§{f##*/}"
+    rm -f -- "$f"
+    if [ "$f" = "$CRT_ALT" ]; then aend entfernt:alter-pfad; else aend "entfernt:§{f##*/}"; fi
     case "$f" in "$CA_ROOT"|"$CA_ISS") CA_WEG=1 ;; *) SQL_AEND=1 ;; esac
   else belassen "$f (nicht von Alfred oder seit dem Einspielen verändert)"; fi
 done
@@ -510,9 +526,14 @@ if [ -e "$KEY_NEU" ] || [ -L "$KEY_NEU" ]; then
 fi
 if [ "$CA_WEG" = 1 ]; then a=$(update-ca-certificates --fresh 2>&1) || abbruch "update-ca-certificates fehlgeschlagen: $(kurz "$a")"; aend vertrauensspeicher; fi
 if manifest_eigen; then rm -f -- "$MANIFEST"; aend manifest; fi
+# #979: Alfreds Zertifikatsordner nur, wenn er leer ist (Fremdes darin bleibt samt Ordner)
+if [ -d "$TLS_DIR" ] && [ ! -L "$TLS_DIR" ]; then
+  if [ -z "$(ls -A -- "$TLS_DIR")" ]; then rmdir -- "$TLS_DIR"; aend entfernt:tls-ordner; else belassen "$TLS_DIR (nicht leer)"; fi
+fi
 # ── Selbstprüfung ──
 if [ -x "$MSSQLCONF" ]; then
   [ "$(lies network tlscert)" != "$CRT" ] || abbruch "Selbstprüfung: network.tlscert zeigt noch auf $CRT"
+  [ "$(lies network tlscert)" != "$CRT_ALT" ] || abbruch "Selbstprüfung: network.tlscert zeigt noch auf $CRT_ALT"
   [ "$(lies network tlskey)" != "$KEY" ] || abbruch "Selbstprüfung: network.tlskey zeigt noch auf $KEY"
 fi
 [ ! -e "$MANIFEST" ] || ! manifest_eigen || abbruch "Selbstprüfung: $MANIFEST ist noch da"
@@ -532,6 +553,86 @@ export function tlsEntfernenSkript(): string {
     MARKE,
     ENTFERNEN_KOERPER,
   ].join('\n');
+}
+
+// ── tls_pfad_umstellen (#979) ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+export interface TlsPfadParameter { an: boolean }
+
+const PFAD_KOERPER = sh(String.raw`NICHT='nichts geändert'
+# ── Phase 1: prüfen — bis hierhin wird nichts geändert ──
+[ -x "$MSSQLCONF" ] || abbruch "$MSSQLCONF fehlt — $NICHT"
+command -v sha256sum >/dev/null 2>&1 || abbruch "sha256sum fehlt — $NICHT"
+manifest_eigen || abbruch "Alfreds Manifest $MANIFEST fehlt oder ist nicht von Alfred (TLS nicht von tls_einspielen) — $NICHT"
+V=$(lies network tlscert)
+[ "$(lies network tlskey)" = "$KEY" ] || abbruch "mssql.conf network.tlskey ist nicht $KEY — $NICHT"
+{ [ "$V" = "$CRT_ALT" ] || [ "$V" = "$CRT" ]; } || abbruch "mssql.conf network.tlscert = §{V:-leer} (weder $CRT_ALT noch $CRT) — $NICHT"
+if [ -e "$TLS_DIR" ] || [ -L "$TLS_DIR" ]; then { [ -d "$TLS_DIR" ] && [ ! -L "$TLS_DIR" ]; } || abbruch "$TLS_DIR ist kein Ordner — $NICHT"; fi
+if [ -e "$CRT" ] || [ -L "$CRT" ]; then { [ -f "$CRT" ] && [ ! -L "$CRT" ]; } || abbruch "$CRT ist keine reguläre Datei — $NICHT"; fi
+QUELLE=''
+if [ -e "$CRT_ALT" ] || [ -L "$CRT_ALT" ]; then
+  alfreds "$CRT_ALT" || abbruch "$CRT_ALT steht nicht mit diesem Inhalt in Alfreds Manifest $MANIFEST — $NICHT"
+  QUELLE=$CRT_ALT
+  if [ -f "$CRT" ]; then cmp -s -- "$CRT" "$CRT_ALT" || abbruch "$CRT weicht von $CRT_ALT ab (fremde oder veraltete Kopie) — $NICHT"; fi
+fi
+ALFRED_TMP=$(mktemp -d "$TMP_BASIS/alfred-tls.XXXXXX"); chmod 0700 "$ALFRED_TMP"
+SQL_AEND=0
+conf_setzen() { local aus; aus=$("$MSSQLCONF" set network.tlscert "$1" 2>&1) || abbruch "mssql-conf set network.tlscert fehlgeschlagen: $(kurz "$aus") — $2"; aend mssql-conf:tlscert; SQL_AEND=1; }
+if [ "$AN" = 1 ]; then
+  if [ -z "$QUELLE" ]; then
+    # alter Pfad schon abgeräumt (nach tls_einspielen) — nur gültig, wenn alles schon Alfreds neuer Stand ist
+    { [ "$V" = "$CRT" ] && alfreds "$CRT"; } || abbruch "$CRT_ALT fehlt und $CRT ist nicht Alfreds eingespieltes Zertifikat — $NICHT"
+  else
+    # ── Phase 2: Manifest zuerst (neuer Pfad mit dem SHA-256 der alten Datei; alter bleibt bis tls_einspielen/tls_entfernen) ──
+    { awk -v p="$CRT" 'NR == 1 || $2 != p' "$MANIFEST"; printf '%s  %s\n' "$(sha "$QUELLE")" "$CRT"; } >"$ALFRED_TMP/manifest"
+    manifest_setzen "$ALFRED_TMP/manifest"; [ "$MANIFEST_AEND" = 0 ] || aend manifest
+    tls_ordner
+    if [ ! -f "$CRT" ]; then schreibe "$CRT" "$QUELLE" 0444 mssql:mssql; aend zertifikat; SQL_AEND=1; fi
+  fi
+  if [ "$(rechte "$CRT")" != '444 mssql mssql' ]; then chown mssql:mssql "$CRT"; chmod 0444 "$CRT"; aend zertifikat-rechte; SQL_AEND=1; fi
+  [ "$V" = "$CRT" ] || conf_setzen "$CRT" "Rückweg tls_pfad_umstellen an=false"
+  # ── Selbstprüfung ──
+  [ "$(lies network tlscert)" = "$CRT" ] || abbruch "Selbstprüfung: mssql.conf network.tlscert ist nicht $CRT"
+  alfreds "$CRT" || abbruch "Selbstprüfung: $CRT steht nicht mit diesem Inhalt im Manifest $MANIFEST"
+  [ -z "$QUELLE" ] || cmp -s -- "$CRT" "$QUELLE" || abbruch "Selbstprüfung: $CRT ist nicht gleich $QUELLE"
+  [ "$(rechte "$CRT")" = '444 mssql mssql' ] || abbruch "Selbstprüfung: $CRT ist nicht 0444 mssql:mssql"
+  [ "$(rechte "$TLS_DIR")" = '755 mssql mssql' ] || abbruch "Selbstprüfung: $TLS_DIR ist nicht 0755 mssql:mssql"
+else
+  # Rückweg: nur mit Alfreds Zertifikat unter secrets (sonst stünde SQL Server ohne Zertifikat da)
+  [ -n "$QUELLE" ] || abbruch "$CRT_ALT fehlt — das Zertifikat liegt nur noch unter $CRT, Rückweg nicht möglich; $NICHT"
+  [ "$V" = "$CRT_ALT" ] || conf_setzen "$CRT_ALT" "Kopie $CRT bleibt"
+  if [ -f "$CRT" ]; then rm -f -- "$CRT"; aend entfernt:tls.crt; fi
+  if [ -d "$TLS_DIR" ] && [ -z "$(ls -A -- "$TLS_DIR")" ]; then rmdir -- "$TLS_DIR"; aend entfernt:tls-ordner; fi
+  awk -v p="$CRT" 'NR == 1 || $2 != p' "$MANIFEST" >"$ALFRED_TMP/manifest"
+  manifest_setzen "$ALFRED_TMP/manifest"; [ "$MANIFEST_AEND" = 0 ] || aend manifest
+  # ── Selbstprüfung ──
+  [ "$(lies network tlscert)" = "$CRT_ALT" ] || abbruch "Selbstprüfung: mssql.conf network.tlscert ist nicht $CRT_ALT"
+  { [ ! -e "$CRT" ] && [ ! -L "$CRT" ]; } || abbruch "Selbstprüfung: $CRT ist noch da"
+  alfreds "$CRT_ALT" || abbruch "Selbstprüfung: $CRT_ALT steht nicht mehr im Manifest"
+fi
+# 0 = SQL Server muss neu starten: in diesem Lauf geändert, Dienst nicht aktiv oder mssql.conf jünger als der Dienststart
+neustart_noetig() {
+  [ "$SQL_AEND" = 0 ] || return 0
+  systemctl is-active --quiet mssql-server || return 0
+  local t s=0
+  t=$(systemctl show -p ActiveEnterTimestamp --value mssql-server 2>/dev/null || true)
+  if [ -n "$t" ]; then s=$(date -d "$t" +%s 2>/dev/null || echo 0); fi
+  [ ! -f "$MSSQL_CONF" ] || [ "$(stat -c %Y "$MSSQL_CONF")" -lt "$s" ] || return 0
+  return 1
+}
+if neustart_noetig; then NN=true; else NN=false; fi
+if [ "$GEAENDERT" = 1 ]; then ZU=geaendert; else ZU=schon; fi
+ergebnis "{\"zustand\":\"$ZU\",\"zertifikat\":$(printf '%s' "$(lies network tlscert)" | json_text),\"neustartNoetig\":$NN,\"aenderungen\":[$AJ]}"`);
+
+/**
+ * Microsoft #979 — network.tlscert von TLS_CRT_ALT (secrets) auf TLS_CRT (eigener Ordner) umstellen (an=true) bzw. zurück (an=false,
+ * Rückweg). Nur Alfreds Zertifikat (Manifest); eine schon vorhandene, bytegleiche Kopie (sqllnx02 nach Change 8d80342b) wird übernommen,
+ * eine abweichende nie überschrieben. Der Schlüssel bleibt in secrets. KEIN Neustart (neustartNoetig; der Change startet rollierend neu).
+ * Ergebnis { zustand, zertifikat (= network.tlscert danach), neustartNoetig, aenderungen }. Zeit: LINUX_SQL_ZEIT_MS.tlsPfadUmstellen
+ */
+export function tlsPfadUmstellenSkript(p: TlsPfadParameter): string {
+  if (typeof p?.an !== 'boolean') throw new Error('an: true oder false');
+  return [...sqlKopf(LINUX_SQL_BAUSTEINE.tlsPfadUmstellen, { an: p.an }), ...werte(), `AN=${p.an ? 1 : 0}`, HILFEN, MARKE, PFAD_KOERPER].join('\n');
 }
 
 // ── tls_pruefung_schalten (Task 7) ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -766,3 +867,4 @@ registriereLinuxBaustein<TlsEinspielenParameter>(LINUX_SQL_BAUSTEINE.tlsEinspiel
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.tlsEntfernen, () => tlsEntfernenSkript());
 registriereLinuxBaustein<TlsPruefungParameter>(LINUX_SQL_BAUSTEINE.tlsPruefungSchalten, tlsPruefungSchaltenSkript);
 registriereLinuxBaustein<TlsErzwingenParameter>(LINUX_SQL_BAUSTEINE.tlsErzwingen, tlsErzwingenSkript);
+registriereLinuxBaustein<TlsPfadParameter>(LINUX_SQL_BAUSTEINE.tlsPfadUmstellen, tlsPfadUmstellenSkript);
