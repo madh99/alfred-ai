@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — „Agent läuft“ als Prüftext in Changes zulässig (v1940)
+
+- Die Planprüfung kannte die neue Statusangabe „Agent läuft“ noch nicht und lehnte sie als erwartete Ausgabe ab. Sie ist jetzt als positives Prüfstück zugelassen; „Agent GESTOPPT“ bleibt nur als ausgeschlossener Text verwendbar.
+
 ### Fixed — Linux-SQL-Überwachung erkennt gestoppten Agent und ausbleibende Sicherungen (v1939)
 
 - Anlass: Der SQL Server Agent der Linux-SQL-Knoten lief seit 20./21.11. nicht mehr (TLS-Fehler bei der lokalen Anmeldung). Geplante Sicherungen fielen aus, ohne dass eine Meldung entstand; die Überwachung prüfte nur Zertifikats- und Keytab-Ablauf.

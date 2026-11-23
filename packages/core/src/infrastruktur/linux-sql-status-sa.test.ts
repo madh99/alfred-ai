@@ -102,3 +102,17 @@ describe.skipIf(!PYTHON)('Python-Status: Anmeldung und Host-Marke', { timeout: 6
     expect(r.anmeldung).toEqual({ login: 'alfred_status', ok: false });
   });
 });
+
+// Realfall 23.11. (Entwurf 2f31b31d): der Validator lehnte „Agent läuft“ ab — das positive Stück fehlte in FESTE_AUSGABEN
+describe('Statustext: Agent (Überwachung 23.11.)', () => {
+  const mit = (agent: LinuxSqlStatus['agent'], sqlagent = 'true') => linuxSqlStatusText('sqllnx02', { ...BASIS, konfig: { ...BASIS.konfig, sqlagent }, saMarke: true, agent, sql: { ...BASIS.sql!, saAbgeschaltet: 1, alfredLogins: [{ name: 'alfred_admin' }, { name: 'alfred_status' }] } });
+  it('läuft / GESTOPPT / unbekannt; ausgeschaltet → kein Agent-Teil', () => {
+    expect(mit({ laeuft: true })).toContain('; Agent läuft');
+    expect(mit({ laeuft: false })).toContain('; Agent GESTOPPT');
+    expect(mit({ laeuft: null })).toContain('; Agent unbekannt');
+    expect(mit({ laeuft: false }, 'false')).not.toContain('Agent');
+  });
+  it('feste Ausgaben: „Agent läuft“ ist als Solltext zulässig', () => {
+    expect(FESTE_AUSGABEN['linux_sql.status']).toContain('Agent läuft');
+  });
+});

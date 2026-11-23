@@ -65,7 +65,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     // „TLS nicht erzwungen“, „TLS nicht eingerichtet“, „ABGELAUFEN“ gehören in nichtEnthalten
     + ' | AD beigetreten | Kerberos-Keytab kvno {n} (6 SPNs, aktuell) | TLS gültig bis {datum} ({n} Tage, Thumbprint {tp}) | TLS erzwungen | Zertifikatsprüfung an'
     // I8e Folge-Etappe: am Ende „; sa …; Alfred-Logins …“ — positiv nur diese Stücke; „sa aktiv“, „sa aus (ohne Host-Marke)“, „Alfred-Logins keine“ für nichtEnthalten
-    + ' | sa aus (gesperrt) | Alfred-Logins alfred_admin, alfred_status',
+    + ' | sa aus (gesperrt) | Alfred-Logins alfred_admin, alfred_status'
+    // Überwachung 23.11.: „; Agent …“ (agentText) — positiv nur „Agent läuft“; „Agent GESTOPPT“/„Agent unbekannt“ für nichtEnthalten
+    + ' | Agent läuft',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
