@@ -8030,8 +8030,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // I8e Etappe 3 Task 9 — Linux-SQL-Server (alle Linux-Zugänge; ohne SQL Server übersprungen): TLS-Zertifikat- und Keytab-Ablauf aus `linux_sql status` → Problems (Kategorie
         // ueberwachung, wiederkehrend). Eigener Job statt Windows-Überwachung: dort ist die Quelle PowerShell, hier der Linux-Skill.
         this.registriereJob({
-          key: 'linux-sql-ueberwachung', beschreibung: 'I8e — Linux-SQL-Server: TLS-Zertifikat läuft ab (≤30 T mittel, ≤7 T hoch), Keytab veraltet → Problems',
-          takt: { art: 'taeglich', um: '07:30' }, bereich: 'global', slot: true, timeoutMin: 20,
+          key: 'linux-sql-ueberwachung', beschreibung: 'I8e — Linux-SQL-Server: TLS-Zertifikat läuft ab (≤30 T mittel, ≤7 T hoch), Keytab veraltet, Agent gestoppt, Sicherung zu alt (LOG > 2 h, FULL > 26 h) → Problems',
+          // Überwachung 23.11.: stündlich statt täglich 07:30 — sonst fiele eine LOG-Lücke (Soll ≤ 2 h) bis zu einem Tag später auf
+          takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 15, timeoutMin: 20,
           run: async () => {
             const fz = this.fernzugriffRef; const sk = skillRegistry.get('linux_sql');
             if (!fz || !sk || !ownerFz()) { this.logger.warn({ fernzugriff: !!fz, skill: !!sk, owner: !!ownerFz() }, 'I8e Linux-SQL-Überwachung übersprungen — Voraussetzung fehlt'); return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } }; }

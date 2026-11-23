@@ -145,13 +145,17 @@ export interface LinuxSqlStatus {
   zustand: string; installiert?: boolean; pakete?: Record<string, string | null>; dienst?: string; aktiviert?: string;
   konfig?: Record<string, string | null>; platz?: Array<{ pfad: string; eingehaengt: boolean; gesamtMB: number; freiMB: number }>;
   sql?: { version?: string; stufe?: string; cu?: string | null; edition?: string; engineEdition?: number; maxSpeicherMb?: number; kerne?: number;
-    tempdb?: Array<{ name: string; typ: string }> | null; datenbanken?: Array<{ name: string }> | null;
+    tempdb?: Array<{ name: string; typ: string }> | null;
+    /** Überwachung 23.11.: Alter der letzten Sicherung in Minuten (DATEDIFF auf dem Server, zeitzonenfrei; null = nie), gruppe = group_database_id (AG) */
+    datenbanken?: Array<{ name: string; modell?: string; zustand?: string; gruppe?: string | null; alterVollMin?: number | null; alterLogMin?: number | null }> | null;
     /** I8e Folge-Etappe: sa abgeschaltet (0/1), vorhandene Alfred-Logins */
     saAbgeschaltet?: number | null; alfredLogins?: Array<{ name: string }> | null } | null;
   sqlHinweis?: string; sqlFehler?: string;
   /** I8e Folge-Etappe: Login der Status-Anmeldung und ob sie gelang (Überwachung); Host-Marke SA_SPERRE vorhanden */
   anmeldung?: { login: string; ok: boolean } | null;
   saMarke?: boolean;
+  /** Überwachung 23.11.: SQL Server Agent aus der letzten Zeile von sqlagent.out — laeuft false bei „terminated“/„cannot start“, null = unlesbar */
+  agent?: { laeuft: boolean | null; letzteZeile?: string; fehler?: string } | null;
   /** I8e Task 4 — Zugangsdatei (nur Rechte), Kopier-Timer, letzter Kopierlauf */
   sicherung?: { zugangsdatei?: string; timer?: string; letzteKopie?: { zeit?: string | null; ok?: boolean; fehler?: string; alterMin?: number | null } | null } | null;
   /** Fix-Welle M-5/M-6 — Reste (alte tempdb-Dateien, Wegwerf-Ordner, Zugangsdateien): nur gemeldet, nie gelöscht */
@@ -257,7 +261,13 @@ function saText(s: LinuxSqlStatus): string {
   if (!q || q.saAbgeschaltet === undefined) return '';
   const sa = q.saAbgeschaltet === 1 ? (s.saMarke ? 'sa aus (gesperrt)' : 'sa aus (ohne Host-Marke)') : q.saAbgeschaltet === 0 ? 'sa aktiv' : 'sa unbekannt';
   const l = (q.alfredLogins ?? []).map(x => x.name).sort();
-  return `; ${sa}; Alfred-Logins ${l.length ? l.join(', ') : 'keine'}`;
+  return `; ${sa}; Alfred-Logins ${l.length ? l.join(', ') : 'keine'}${agentText(s)}`;
+}
+
+/** Überwachung 23.11.: Agent-Zustand nur bei eingeschaltetem Agent („GESTOPPT“ positiv prüfbar per nichtEnthalten) */
+function agentText(s: LinuxSqlStatus): string {
+  if (!/^(true|1|yes)$/i.test(String(s.konfig?.sqlagent ?? '').trim()) || !s.agent) return '';
+  return s.agent.laeuft === true ? '; Agent läuft' : s.agent.laeuft === false ? '; Agent GESTOPPT' : '; Agent unbekannt';
 }
 
 // ── Sicherungen (I8e Task 4) ────────────────────────────────────────────────────────────────────────────────────────────────────

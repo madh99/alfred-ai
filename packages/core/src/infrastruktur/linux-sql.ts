@@ -961,13 +961,41 @@ export const STATUS_TSQL = [
   '  (SELECT d.name, d.recovery_model_desc AS modell, d.state_desc AS zustand,',
   "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'D') AS letzteVoll,",
   "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'I') AS letzteDiff,",
-  "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'L') AS letztesLog",
+  "     (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'L') AS letztesLog,",
+  // Überwachung 23.11.: Alter in Minuten auf dem Server gerechnet (zeitzonenfrei), AG-Gruppe für die Auswertung über alle Replikate
+  "     DATEDIFF(MINUTE, (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'D'), GETDATE()) AS alterVollMin,",
+  "     DATEDIFF(MINUTE, (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'L'), GETDATE()) AS alterLogMin,",
+  '     CAST(d.group_database_id AS nvarchar(36)) AS gruppe',
   '   FROM sys.databases d ORDER BY d.name FOR JSON PATH, INCLUDE_NULL_VALUES) AS datenbanken,',
   // I8e Folge-Etappe: sa abgeschaltet (0/1) und vorhandene Alfred-Logins (alfred_status liest das über VIEW ANY DEFINITION)
   "  (SELECT CAST(is_disabled AS int) FROM sys.server_principals WHERE name = N'sa') AS saAbgeschaltet,",
   "  (SELECT name FROM sys.server_principals WHERE name IN (N'alfred_admin', N'alfred_status') ORDER BY name FOR JSON PATH) AS alfredLogins",
   ' FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES) AS j;',
 ].join('\n');
+
+/**
+ * Überwachung 23.11. (Realfall: Agent seit 20./21.11. gestoppt, „SSL Provider: The data is invalid“) — Agent-Zustand ohne SQL-Recht
+ * (alfred_status hat bewusst kein VIEW SERVER STATE): letzte Zeile von sqlagent.out; „terminated“/„cannot start“ = gestoppt. Nach einem
+ * erfolgreichen Start beginnt eine neue Datei. Unlesbar → laeuft null (kein Befund; das Sicherungsalter deckt den Ausfall ab).
+ * Erwartet r und g (mssql.conf) aus PY_STATUS.
+ */
+export const PY_AGENT = String.raw`try:
+    _af = g("sqlagent", "errorlogfile") or "/var/opt/mssql/log/sqlagent.out"
+    with open(_af, "rb") as _f:
+        _f.seek(0, 2)
+        _f.seek(max(0, _f.tell() - 8192))
+        _b = _f.read()
+    _t = _b.decode("utf-8", "replace").replace("\x00", "").replace("﻿", "")
+    _zl = [x.strip() for x in _t.splitlines() if x.strip()]
+    if _zl:
+        _l = _zl[-1][:200]
+        r["agent"] = {"laeuft": not ("terminated" in _l or "cannot start" in _l), "letzteZeile": _l}
+    else:
+        r["agent"] = {"laeuft": None, "fehler": "sqlagent.out leer"}
+except FileNotFoundError:
+    r["agent"] = {"laeuft": None, "fehler": "sqlagent.out fehlt"}
+except Exception:
+    r["agent"] = {"laeuft": None, "fehler": "sqlagent.out unlesbar"}`;
 
 /** python3-Statusprogramm: stdin = Eingabe-JSON (optional sa) */
 export const PY_STATUS = [
@@ -1049,6 +1077,7 @@ export const PY_STATUS = [
   'except Exception:',
   '    sich["letzteKopie"] = None',
   'r["sicherung"] = sich',
+  PY_AGENT,
   // Fix-Welle M-5/M-6: Reste (nur melden, nie löschen): alte tempdb-Dateien im Datenordner, Wegwerf-Ordner des Restore-Beweises, Zugangsdateien
   'import glob, re as _re',
   'reste = []',

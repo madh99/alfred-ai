@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Linux-SQL-Überwachung erkennt gestoppten Agent und ausbleibende Sicherungen (v1939)
+
+- Anlass: Der SQL Server Agent der Linux-SQL-Knoten lief seit 20./21.11. nicht mehr (TLS-Fehler bei der lokalen Anmeldung). Geplante Sicherungen fielen aus, ohne dass eine Meldung entstand; die Überwachung prüfte nur Zertifikats- und Keytab-Ablauf.
+- **Agent:** Der Status liest den Zustand des Agents aus dessen Protokoll (ohne zusätzliche SQL-Rechte). Ist der Agent eingeschaltet, aber gestoppt, entsteht ein Befund der Schwere hoch; der Statustext nennt „Agent läuft“ bzw. „Agent GESTOPPT“.
+- **Sicherungsalter:** Je Datenbank zählt die jüngste Sicherung über alle Replikate einer Verfügbarkeitsgruppe. LOG-Sicherung älter als 2 Stunden (bei vollständigem Wiederherstellungsmodell) oder FULL-Sicherung älter als 26 Stunden ergibt einen Befund der Schwere hoch; nie gesicherte Datenbanken ebenso. Geprüft wird nur, wo die Sicherung eingerichtet ist.
+- Ist ein Host nicht vollständig lesbar, wird das Sicherungsalter in diesem Lauf nicht ausgewertet und bestehende Befunde bleiben offen.
+- Die Überwachung läuft stündlich statt einmal täglich.
+
 ### Fixed — Haltefrist legt keine Vorgänge für beobachtende Befunde an (v1938)
 
 - Nach v1937 entstanden nach Ablauf der Haltefrist auch Vorgänge für Befunde, die bewusst nie einen Vorgang erzeugen: Licht-Dauer (beobachtend), fehlende CMDB-Umgebung und Beobachter-Befunde. Die Frist-Prüfung berücksichtigt jetzt nur noch Befunde aus dem Weltmodell-Weg, der auch bisher Vorgänge anlegte. Nach einem Neustart wird erst geprüft, wenn die jeweilige Quelle einmal synchronisiert hat.

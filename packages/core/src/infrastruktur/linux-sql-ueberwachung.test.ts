@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge } from './linux-sql-ueberwachung.js';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PY_AGENT } from './linux-sql.js';
+import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge, linuxSqlSicherungsBefunde } from './linux-sql-ueberwachung.js';
 import { befundeAlsProblems, type ProblemZugriff } from './befund-problems.js';
 
 const tls = (restTage: number | null) => ({ installiert: true, ad: { beigetreten: true, keytab: null }, tls: { zertifikat: '/var/opt/mssql/secrets/tls.crt', thumbprint: 'ABCDEF0123456789', gueltigBis: '2026-12-01T00:00:00Z', restTage, erzwungen: true, pruefSchalter: true } });
@@ -117,5 +122,90 @@ describe('R21 — lückenhafter Status meldet gelesene Befunde trotzdem', () => 
     expect(r.befunde).toHaveLength(1);
     expect(r.erfasst.size).toBe(0);
     expect(r.fehler).toHaveLength(1);
+  });
+});
+
+/**
+ * Realfall 23.11.: der SQL Server Agent lief auf sqllnx01/02 seit 20./21.11. nicht („SSL Provider: The data is invalid“) — keine geplante
+ * Sicherung mehr, die Überwachung meldete nichts. Owner 23.11. „ok“: Agent-Befund + Sicherungsalter (LOG > 2 h, FULL > 26 h) hoch.
+ */
+describe('Agent und Sicherungsalter (Owner 23.11.)', () => {
+  const basis = { installiert: true, ad: { beigetreten: true, keytab: null }, tls: { zertifikat: null }, konfig: { sqlagent: 'true' } };
+  it('Agent eingeschaltet, aber gestoppt → hoch', () => {
+    const a = linuxSqlBefunde('sqllnx01', { ...basis, agent: { laeuft: false, letzteZeile: '2026-11-21 11:04:40 - ? [098] SQLServerAgent terminated (normally)' } });
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ schwere: 'hoch', schluessel: 'ueberwachung:sqllnx01:agent', kategorie: 'ueberwachung' });
+    expect(a[0]!.text).toContain('SQL Server Agent läuft nicht');
+  });
+  it('Agent läuft, unbekannt oder ausgeschaltet → kein Befund', () => {
+    expect(linuxSqlBefunde('sqllnx01', { ...basis, agent: { laeuft: true } })).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', { ...basis, agent: { laeuft: null, fehler: 'fehlt' } })).toEqual([]);
+    expect(linuxSqlBefunde('sqllnx01', { ...basis, konfig: { sqlagent: 'false' }, agent: { laeuft: false } })).toEqual([]);
+  });
+
+  const db = (name: string, alterVollMin: number | null, alterLogMin: number | null, gruppe: string | null = 'G1', modell = 'FULL') =>
+    ({ name, modell, zustand: 'ONLINE', gruppe, alterVollMin, alterLogMin });
+  const host = (dbs: unknown[], eingerichtet = true) => ({ ...basis, sicherung: { zugangsdatei: eingerichtet ? 'vorhanden (0600)' : 'fehlt' }, sql: { datenbanken: [db('master', 5000, null, null, 'SIMPLE'), ...dbs] } });
+
+  it('Cluster: das jüngste Replikat zählt (Sekundär alt, Primär frisch) → kein Befund', () => {
+    const m = new Map<string, unknown>([['sqllnx01', host([db('pruefdb01', 60, 10)])], ['sqllnx02', host([db('pruefdb01', 9000, 9000)])]]);
+    expect(linuxSqlSicherungsBefunde(m as never)).toEqual([]);
+  });
+  it('LOG älter als 120 min und FULL älter als 26 h → zwei hohe Befunde, Schlüssel am ersten Host', () => {
+    const m = new Map<string, unknown>([['sqllnx02', host([db('pruefdb01', 4400, 4400)])], ['sqllnx01', host([db('pruefdb01', 1561, 121)])]]);
+    const a = linuxSqlSicherungsBefunde(m as never);
+    expect(a.map(x => x.schluessel).sort()).toEqual(['ueberwachung:sqllnx01:sicherung:pruefdb01:log', 'ueberwachung:sqllnx01:sicherung:pruefdb01:voll']);
+    expect(a.every(x => x.schwere === 'hoch')).toBe(true);
+    expect(a.find(x => x.schluessel?.endsWith(':log'))!.text).toContain('letzte LOG-Sicherung vor 2 h');
+  });
+  it('Grenzen: LOG 120 min und FULL 1560 min (26 h) noch ok', () => {
+    const m = new Map<string, unknown>([['sqllnx01', host([db('pruefdb01', 1560, 120)])]]);
+    expect(linuxSqlSicherungsBefunde(m as never)).toEqual([]);
+  });
+  it('nie gesichert (null) → Befund; SIMPLE ohne LOG-Prüfung; Systemdatenbanken nie', () => {
+    const m = new Map<string, unknown>([['sqllnx01', host([db('neu', null, null), db('einfach', 10, null, 'G2', 'SIMPLE')])]]);
+    const a = linuxSqlSicherungsBefunde(m as never);
+    expect(a.map(x => x.schluessel).sort()).toEqual(['ueberwachung:sqllnx01:sicherung:neu:log', 'ueberwachung:sqllnx01:sicherung:neu:voll']);
+    expect(a[0]!.text).toContain('nie');
+  });
+  it('Sicherung nicht eingerichtet → keine Prüfung', () => {
+    const m = new Map<string, unknown>([['sqltest', host([db('x', null, null, null)], false)]]);
+    expect(linuxSqlSicherungsBefunde(m as never)).toEqual([]);
+  });
+  it('Lauf: ein Host ohne SQL-Sicht → Sicherungsalter nicht ausgewertet, nichts gelöst (fail-closed); beide lesbar → alle Befunde', async () => {
+    const st: Record<string, unknown> = {
+      sqllnx01: { ...host([db('pruefdb01', 4400, 4400)]), agent: { laeuft: false } },
+      sqllnx02: { ...basis, sicherung: { zugangsdatei: 'vorhanden (0600)' }, sql: null, sqlFehler: 'Login timeout' },
+    };
+    const r = await linuxSqlUeberwachung(['sqllnx01', 'sqllnx02'], async (z) => ({ success: true, data: st[z] }));
+    expect(r.befunde.map(b => b.schluessel).sort()).toEqual(['ueberwachung:sqllnx01:agent']);
+    expect([...r.erfasst]).toEqual([]);
+    expect(r.fehler.join()).toContain('sqllnx02: Status unvollständig — SQL-Sicht fehlt');
+    expect(r.fehler.join()).toContain('Sicherungsalter nicht ausgewertet');
+    // beide lesbar → Agent- und Sicherungsbefunde zusammen
+    st.sqllnx02 = host([db('pruefdb01', 4500, 4500)]);
+    const r2 = await linuxSqlUeberwachung(['sqllnx01', 'sqllnx02'], async (z) => ({ success: true, data: st[z] }));
+    expect(r2.befunde.map(b => b.schluessel).sort()).toEqual(['ueberwachung:sqllnx01:agent', 'ueberwachung:sqllnx01:sicherung:pruefdb01:log', 'ueberwachung:sqllnx01:sicherung:pruefdb01:voll']);
+    expect([...r2.erfasst].sort()).toEqual(['sqllnx01', 'sqllnx02']);
+  });
+});
+
+describe('PY_AGENT (ausgeführt)', () => {
+  const PY = ['python3', 'python'].find(p => spawnSync(p, ['-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3');
+  const lauf = (inhalt: Buffer | null) => {
+    const d = mkdtempSync(join(tmpdir(), 'agent-')); const f = join(d, 'sqlagent.out');
+    if (inhalt) writeFileSync(f, inhalt);
+    const prog = `r = {}\ng = lambda s, k: ${JSON.stringify(f)} if k == "errorlogfile" else None\n${PY_AGENT}\nimport json\nprint(json.dumps(r["agent"]))`;
+    return JSON.parse(spawnSync(PY!, ['-'], { input: prog, encoding: 'utf8' }).stdout);
+  };
+  it.skipIf(!PY)('Realfall-Log (UTF-16) mit „terminated“ am Ende → laeuft false', () => {
+    const t = '2026-11-21 11:04:40 - ! [000] Unable to connect to server \'(local),1433\'; SQLServerAgent cannot start\r\n2026-11-21 11:04:40 - ? [098] SQLServerAgent terminated (normally)\r\n';
+    const a = lauf(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(t, 'utf16le')]));
+    expect(a.laeuft).toBe(false);
+    expect(a.letzteZeile).toContain('[098] SQLServerAgent terminated');
+  });
+  it.skipIf(!PY)('Startzeilen ohne Abbruch → laeuft true; Datei fehlt → null', () => {
+    expect(lauf(Buffer.from('2026-11-23 10:00:00 - ? [129] SQLSERVERAGENT starting\n2026-11-23 10:00:02 - ? [146] Request servicer engine started\n')).laeuft).toBe(true);
+    expect(lauf(null)).toEqual({ laeuft: null, fehler: 'sqlagent.out fehlt' });
   });
 });
