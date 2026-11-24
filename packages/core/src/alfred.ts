@@ -8040,11 +8040,29 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const fz = this.fernzugriffRef; const sk = skillRegistry.get('linux_sql');
             if (!fz || !sk || !ownerFz()) { this.logger.warn({ fernzugriff: !!fz, skill: !!sk, owner: !!ownerFz() }, 'I8e Linux-SQL-Überwachung übersprungen — Voraussetzung fehlt'); return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } }; }
             const { linuxSqlUeberwachung, linuxSqlZugaenge } = await import('./infrastruktur/linux-sql-ueberwachung.js');
+            const { istSqlUeberwachungsSchluessel } = await import('./infrastruktur/befund-problems.js');
             const hosts = linuxSqlZugaenge(await fz.aktiveZugaenge());
             const r = await linuxSqlUeberwachung(hosts, (zugang) => skillSandbox.execute(sk, { action: 'status', zugang }, ctxIntern()));
             const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
-            const pr = hosts.length ? await infraProblems(r.befunde, { docId: 'tägliche Linux-SQL-Überwachung', datum }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']) }) : undefined;
+            const pr = hosts.length ? await infraProblems(r.befunde, { docId: 'tägliche Linux-SQL-Überwachung', datum }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']), schluessel: istSqlUeberwachungsSchluessel }) : undefined;
             this.logger.info({ hosts: hosts.length, erfasst: r.erfasst.size, uebersprungen: r.uebersprungen, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, bekannt: pr?.bekannt ?? 0, geloest: pr?.geloest.length ?? 0, fehler: r.fehler }, 'I8e Linux-SQL-Überwachung');
+            return { ok: true, zaehler: { hosts: hosts.length, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
+          },
+        });
+        // Realfall 24.11. — Windows-SQL (I8d): DIFF auf dem Primär gescheitert, FULL 4 Tage alt, kein Befund. Gleiches Maß wie Linux, Quelle `sql_server status`.
+        this.registriereJob({
+          key: 'windows-sql-ueberwachung', beschreibung: 'I8d — Windows-SQL-Server: Sicherung zu alt (LOG > 2 h, FULL > 26 h), Alfred-Sicherungsjob fehlgeschlagen → Problems',
+          takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 20, timeoutMin: 20,
+          run: async () => {
+            const fz = this.fernzugriffRef; const sk = skillRegistry.get('sql_server');
+            if (!fz || !sk || !ownerFz()) { this.logger.warn({ fernzugriff: !!fz, skill: !!sk, owner: !!ownerFz() }, 'Windows-SQL-Überwachung übersprungen — Voraussetzung fehlt'); return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } }; }
+            const { windowsSqlUeberwachung } = await import('./infrastruktur/windows-sql-ueberwachung.js');
+            const { istSqlUeberwachungsSchluessel } = await import('./infrastruktur/befund-problems.js');
+            const hosts = (await fz.aktiveZugaenge()).filter(z => z.system === 'windows').map(z => z.name);
+            const r = await windowsSqlUeberwachung(hosts, (zugang) => skillSandbox.execute(sk, { action: 'status', zugang }, ctxIntern()));
+            const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
+            const pr = hosts.length ? await infraProblems(r.befunde, { docId: 'stündliche Windows-SQL-Überwachung', datum }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']), schluessel: istSqlUeberwachungsSchluessel }) : undefined;
+            this.logger.info({ hosts: hosts.length, erfasst: [...r.erfasst], uebersprungen: r.uebersprungen, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, bekannt: pr?.bekannt ?? 0, geloest: pr?.geloest.length ?? 0, fehler: r.fehler }, 'v1952 Windows-SQL-Überwachung');
             return { ok: true, zaehler: { hosts: hosts.length, befunde: r.befunde.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
           },
         });

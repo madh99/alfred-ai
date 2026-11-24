@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PY_AGENT, PY_UPDATE } from './linux-sql.js';
 import { linuxSqlBefunde, linuxSqlUeberwachung, linuxSqlZugaenge, linuxSqlSicherungsBefunde, debVersionNeuer } from './linux-sql-ueberwachung.js';
-import { befundeAlsProblems, type ProblemZugriff } from './befund-problems.js';
+import { befundeAlsProblems, istSqlUeberwachungsSchluessel, type ProblemZugriff } from './befund-problems.js';
 
 const tls = (restTage: number | null) => ({ installiert: true, ad: { beigetreten: true, keytab: null }, tls: { zertifikat: '/var/opt/mssql/secrets/tls.crt', thumbprint: 'ABCDEF0123456789', gueltigBis: '2026-12-01T00:00:00Z', restTage, erzwungen: true, pruefSchalter: true } });
 
@@ -68,7 +68,7 @@ describe('linuxSqlUeberwachung (Verdrahtung mit befundeAlsProblems)', () => {
     } as unknown as ProblemZugriff;
     const lauf = async (rest: number) => {
       const r = await linuxSqlUeberwachung(['sqllnx01'], statusAus({ sqllnx01: tls(rest) }));
-      return befundeAlsProblems(r.befunde, z, { docId: 't', datum: 'heute' }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']) });
+      return befundeAlsProblems(r.befunde, z, { docId: 't', datum: 'heute' }, { hosts: r.erfasst, alle: false, kategorien: new Set(['ueberwachung']), schluessel: istSqlUeberwachungsSchluessel });
     };
     expect((await lauf(5)).neu).toHaveLength(1);
     expect(probleme[0]!.detectionMethod).toContain('ueberwachung:sqllnx01:tls');

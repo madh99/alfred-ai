@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Windows-SQL-Überwachung: Sicherungsalter und fehlgeschlagene Sicherungsjobs; Jobverlauf zeigt die Fehlerursache (v1952)
+
+- Neuer stündlicher Job `windows-sql-ueberwachung`. Er liest über `sql_server status` die Sicherungslage aller Windows-SQL-Server und legt Problems an, wenn die letzte FULL-Sicherung älter als 26 h ist, die letzte LOG-Sicherung älter als 2 h (bei Wiederherstellungsmodell FULL) oder wenn der jüngste Lauf eines aktiven Jobs „Alfred Sicherung …“ fehlgeschlagen ist. Bisher war das nur für die Linux-SQL-Server überwacht. Am 24.11. scheiterte deshalb die DIFF-Sicherung auf dem Primär sql02 unbemerkt, und die letzte FULL-Sicherung war 4 Tage alt. AG-Datenbanken werden über alle Replikate bewertet. Ist ein Replikat nicht lesbar, wird das Alter nicht bewertet, und offene Befunde bleiben bestehen.
+- Die Sicherungsjobs („Alfred Sicherung voll/diff/log“) fangen BACKUP-Fehler nicht mehr mit TRY/CATCH ab. Bisher blieb im Jobverlauf nur „BACKUP DATABASE is terminating abnormally“ stehen, die eigentliche Ursache davor ging verloren. Jetzt stehen alle SQL-Meldungen im Verlauf, und der Schritt scheitert am Ende sichtbar mit der Liste der betroffenen Datenbanken. Auf vorhandenen Replikaten wirkt das erst, wenn `sicherungsjobs_einrichten` dort erneut per Change läuft.
+- Problem-Abgleich: Befunde der SQL-Überwachung (Sicherung, Sicherungsjobs, TLS, Keytab, Anmeldung, Agent, Update) gehören den beiden SQL-Überwachungsjobs. Die stündliche Windows-Überwachung und die Bestandsaufnahme gleichen dieselbe Kategorie ab, lassen diese Befunde aber jetzt unberührt. Ohne diese Trennung hätten sich die Abgleiche gegenseitig als gelöst markiert.
+
 ### Fixed — `linux_ha ha_vorbereiten` nach einem CU-Update wieder nutzbar; Update-Befund ohne doppelten Hostnamen (v1951)
 
 - `ha_vorbereiten` verlangte `mssql-server` fest in Version 17.0.4006.2-1 (CU1). Seit dem CU11-Update vom 24.11. brach der Baustein auf allen drei Knoten ohne Änderung ab, auch für die Reparaturen, die der Status vorschlägt (Firewall umstellen, sbd zurückholen). Neuer optionaler Parameter `version` (apt-Version von `mssql-server`). Ohne ihn gilt die installierte Version, mit ihm muss sie übereinstimmen. `mssql-server-ha` folgt immer derselben Version. Ist `mssql-server` nicht installiert, bricht der Baustein vor jeder Änderung ab.

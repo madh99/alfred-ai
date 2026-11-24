@@ -572,8 +572,12 @@ export function jobsSkript(p: SicherungsJobs): string {
   const liste = p.datenbanken.map(nText).join(', ');
   const schritt = (art: 'voll' | 'diff' | 'log', bedingung: string) =>
     `DECLARE @fehler nvarchar(2000) = N''; DECLARE @d sysname; DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT name FROM sys.databases WHERE name IN (${liste}); OPEN c; FETCH NEXT FROM c INTO @d; `
-    + `WHILE @@FETCH_STATUS = 0 BEGIN IF sys.fn_hadr_backup_is_preferred_replica(@d) = 1 AND DATABASEPROPERTYEX(@d, 'Status') = 'ONLINE' AND (${bedingung}) BEGIN BEGIN TRY ${sicherungTsql(p.ziel, art, '@d').replace('DECLARE @db sysname = @d; ', 'DECLARE @db sysname; SET @db = @d; ').replace(' SELECT @f f;', '')} END TRY BEGIN CATCH SET @fehler += @d + N': ' + ERROR_MESSAGE() + N' '; END CATCH END; FETCH NEXT FROM c INTO @d; END; CLOSE c; DEALLOCATE c; `
-    + `IF @fehler <> N'' THROW 50000, @fehler, 1;`;
+    // Realfall 24.11.: TRY/CATCH lieferte nur die LETZTE Meldung (3013 „BACKUP DATABASE is terminating abnormally“), die eigentliche
+    // Ursache davor ging verloren. Ohne TRY: BACKUP-Fehler beenden nur die Anweisung, alle Meldungen landen im Jobverlauf; @@ERROR
+    // direkt danach merkt die Datenbank, der Schritt scheitert am Ende sichtbar.
+    + `WHILE @@FETCH_STATUS = 0 BEGIN IF sys.fn_hadr_backup_is_preferred_replica(@d) = 1 AND DATABASEPROPERTYEX(@d, 'Status') = 'ONLINE' AND (${bedingung}) BEGIN ${sicherungTsql(p.ziel, art, '@d').replace('DECLARE @db sysname = @d; ', 'DECLARE @db sysname; SET @db = @d; ').replace(' SELECT @f f;', ' IF @@ERROR <> 0 SET @fehler += @d + N\' \';')} END; FETCH NEXT FROM c INTO @d; END; CLOSE c; DEALLOCATE c; `
+    // ohne ALFRED-Präfix: jobMeldungKurz zeigt bei Fehlern dann den Verlaufstext ab der ersten SQL-Meldung (die Ursache), nicht nur diese Zeile
+    + `IF @fehler <> N'' BEGIN SET @fehler = N'Sicherung ${art} gescheitert: ' + RTRIM(@fehler) + N' (Ursache in den SQL-Meldungen davor)'; THROW 50000, @fehler, 1; END;`;
   const jobs: Array<{ name: string; tsql: string; plan: string }> = [
     { name: 'Alfred Sicherung voll', tsql: schritt('voll', '1 = 1'), plan: `@freq_type = 4, @freq_interval = 1, @active_start_time = ${Number(p.voll_uhrzeit.replace(':', '')) * 100}` },
     ...(p.diff_stunden ? [{ name: 'Alfred Sicherung diff', tsql: schritt('diff', "(SELECT differential_base_lsn FROM sys.master_files WHERE database_id = DB_ID(@d) AND file_id = 1) IS NOT NULL"), plan: `@freq_type = 4, @freq_interval = 1, @freq_subday_type = 8, @freq_subday_interval = ${p.diff_stunden}, @active_start_time = ${(Number(p.voll_uhrzeit.replace(':', '')) * 100 + 3000) % 240000}` }] : []),

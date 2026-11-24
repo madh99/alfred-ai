@@ -66,6 +66,12 @@ describe('I8d Bausteine sql_server', () => {
     expect(j).toContain('sys.fn_hadr_backup_is_preferred_replica(@d) = 1');
     expect(j).toContain("Alfred Sicherung log");
     expect(j).not.toMatch(/xp_delete_file|sp_delete_backuphistory/);
+    // Realfall 24.11.: kein TRY/CATCH um BACKUP — sonst bleibt nur „terminating abnormally“, die Ursache davor fehlt im Jobverlauf
+    expect(j).not.toContain('BEGIN TRY');
+    expect(j).not.toContain('ERROR_MESSAGE()');
+    expect(j).toContain('BACKUP DATABASE @db TO DISK = @f WITH DIFFERENTIAL, CHECKSUM, COMPRESSION, INIT; IF @@ERROR <> 0 SET @fehler += @d');
+    expect(j).toContain('BACKUP LOG @db TO DISK = @f WITH CHECKSUM, COMPRESSION, INIT; IF @@ERROR <> 0 SET @fehler += @d');
+    expect(j).toContain('(Ursache in den SQL-Meldungen davor)');
     expect(pruefeJobs({ datenbanken: ['x'], ziel: 'B:\\SQLBackup', log_minuten: 7 })).toContain('log_minuten');
   });
   it('Wiederherstellungstest: neben der AG, Liste über den Datenbankdienst, Platzprüfung, CHECKDB', () => {

@@ -28,6 +28,11 @@ export interface Erfassung {
   hosts: Set<string>; alle: boolean;
   /** I8 3b-4 — nur diese Kategorien abgleichen (stündliche Überwachung: andere Befunde derselben Hosts bleiben unberührt) */
   kategorien?: ReadonlySet<string>;
+  /**
+   * v1952 — nur Schlüssel, die dieser Filter annimmt, abgleichen (anlegen und lösen): mehrere Jobs teilen sich die Kategorie
+   * ueberwachung auf denselben Hosts (Windows-Überwachung: Dienste/Ereignisse/Zertifikate; Windows-SQL-Überwachung: Sicherung/Jobs)
+   */
+  schluessel?: (k: string) => boolean;
 }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
 const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung|pki)$/;
@@ -37,6 +42,13 @@ const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|li
  */
 // v1858 — PKI-Betrieb: Fristen (Zertifikat, Sperrliste, Sicherungsalter) kehren mit jedem Zyklus wieder
 const WIEDERKEHREND = /^(ueberwachung|pki)$/;
+
+/**
+ * v1952 — Schlüssel, die den SQL-Überwachungsjobs (Linux und Windows) gehören: Sicherungsalter, Sicherungsjobs, TLS/Keytab/Anmeldung/
+ * Agent/Update der Linux-SQL. Andere Abgleiche derselben Kategorie (stündliche Windows-Überwachung, Bestandsaufnahme) lassen sie
+ * unberührt — sonst lösten sie diese Befunde jede Stunde und der SQL-Job legte sie neu an.
+ */
+export const istSqlUeberwachungsSchluessel = (k: string): boolean => /^ueberwachung:[^:]+:(sicherung:|job:|tls$|keytab$|anmeldung$|agent$|sql-update$)/.test(k);
 
 const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
 
@@ -51,6 +63,7 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
     const k = p.detectionMethod!.slice(METHODE.length + 1);
     const kat = k.split(':')[0]!;
     if (erfassung.kategorien && !erfassung.kategorien.has(kat)) continue;
+    if (erfassung.schluessel ? !erfassung.schluessel(k) : istSqlUeberwachungsSchluessel(k)) continue;
     const da = nachSchluessel.get(k);
     if (!da) { nachSchluessel.set(k, p); continue; }
     // wiederkehrend: Bezug ist das offene Problem, sonst das jüngste; ein zweites offenes ist eine Dublette
@@ -59,7 +72,8 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
     await z.loese(p.id, `Dublette von Problem ${da.id} (gleicher Befund ${k}) — automatisch geschlossen (v1770).`);
     dubletten.push(p.id);
   }
-  const aktuell = auff.filter(uebernehmen);
+  const zustaendig = (k: string) => (erfassung.schluessel ? erfassung.schluessel(k) : !istSqlUeberwachungsSchluessel(k));
+  const aktuell = auff.filter(a => uebernehmen(a) && zustaendig(a.schluessel!));
   const neu: string[] = []; let bekannt = 0;
   for (const a of aktuell) {
     const da = nachSchluessel.get(a.schluessel!);
