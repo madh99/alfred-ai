@@ -97,7 +97,9 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     + ' | Standort-Bedingungen 0 | required_sync Ressource 0 / SQL 0 | Promoted sqllnx01 | Promoted sqllnx02 | VIP sqllnx01 | VIP sqllnx02'
     + ' | sqllnx01 PRIMARY | sqllnx02 PRIMARY | sqllnx01 SECONDARY SYNCHRONIZED | sqllnx02 SECONDARY SYNCHRONIZED'
     // 23.11. (Entwurf 2f31b31d): Knoten im Standby (clusterText) — als erwartet Standby-Nachweis, als nichtEnthalten „zurückgeholt“
-    + ' | Standby sqllnx01 | Standby sqllnx02 | Standby sqllnxcfg',
+    + ' | Standby sqllnx01 | Standby sqllnx02 | Standby sqllnxcfg'
+    // v1949/v1950 — Verbindung des Konfig-Replikats (agText), vor jedem Datenknoten-Standby prüfbar
+    + ' | sqllnxcfg CONFIGURATION_ONLY CONNECTED',
   // Fix-Welle (Final-Review I8e Etappe 3) — Wortlaut aus sqlAnmeldungAuswerten (windows-ad-linux.ts); die Fehlerformen
   // („NICHT KERBEROS“, „NICHT VERSCHLÜSSELT“, „ohne Ergebniszeile“) melden die Aktion selbst als Fehlschlag
   'windows_ad.sql_anmeldung_pruefen': 'SQL_KERBEROS_OK {server}: auth_scheme KERBEROS, encrypt_option TRUE, @@SERVERNAME {name}',

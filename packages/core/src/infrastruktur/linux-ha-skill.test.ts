@@ -932,6 +932,8 @@ describe('I8e Paket 2 Task 6 — Status: AG-Teil', () => {
     expect(agText(AG_LAGE)).toBe('AG sqllnxag01: Promoted sqllnx01, VIP sqllnx01, required_sync Ressource 0 / SQL 0, Replikate sqllnx01 PRIMARY / sqllnx02 SECONDARY SYNCHRONIZED 1/1 / sqllnxcfg CONFIGURATION_ONLY CONNECTED, Standort-Bedingungen 0');
     expect(agText({ ...AG_LAGE, sql: { ...AG_LAGE.sql!, replikate: [AG_LAGE.sql!.replikate[0]!, { ...AG_LAGE.sql!.replikate[2]!, verbunden: 'DISCONNECTED' }] } })).not.toContain('sqllnxcfg CONFIGURATION_ONLY CONNECTED');
     expect(agText({ ...AG_LAGE, sql: { ...AG_LAGE.sql!, replikate: [{ ...AG_LAGE.sql!.replikate[2]!, verbunden: null }] } })).toContain('sqllnxcfg CONFIGURATION_ONLY unbekannt');
+    // jeder neue Wortlaut auch in FESTE_AUSGABEN (Realfall v1949: der Validator wies die Prüfung ab)
+    expect(FESTE_AUSGABEN['linux_ha.status']).toContain('sqllnxcfg CONFIGURATION_ONLY CONNECTED');
     expect(agText({ art: 'keine' })).toBe('AG nicht eingerichtet');
     expect(agText({ ...AG_LAGE, standort: [{ id: 'cli-prefer-ag_cluster-clone', rsc: 'ag_cluster-clone', knoten: 'sqllnx02', rolle: 'Promoted' }] }))
       .toContain('Standort-Bedingungen OFFEN: cli-prefer-ag_cluster-clone (sqllnx02, Promoted)');

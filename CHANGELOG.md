@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Planprüfung kennt „sqllnxcfg CONFIGURATION_ONLY CONNECTED“ (v1950)
+
+- Der neue Wortlaut aus v1949 fehlte in der Liste fester Ausgaben von `linux_ha.status`. Die Planprüfung wies deshalb Prüfungen auf die Verbindung des Konfig-Replikats ab. Er ist jetzt eingetragen, und ein Test verlangt das künftig.
+
 ### Changed — `linux_ha status` zeigt die Verbindung des Konfig-Replikats (v1949)
 
 - Der AG-Teil des Status nennt jetzt auch das CONFIGURATION_ONLY-Replikat mit seinem Verbindungszustand aus Sicht des abgefragten Knotens, z. B. „… / sqllnx02 SECONDARY SYNCHRONIZED 1/1 / sqllnxcfg CONFIGURATION_ONLY CONNECTED“. Bisher war es ausgeblendet, und ein Change musste die Verbindung vor einem Datenknoten-Standby als Owner-Handgriff bestätigen lassen. Jetzt ist sie eine prüfbare feste Ausgabe. Bestehende Prüfungen auf „<knoten> SECONDARY SYNCHRONIZED“ passen weiter.
