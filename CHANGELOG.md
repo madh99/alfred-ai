@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — `linux_sql hadr_fortsetzen`: Datenbewegung nach dem Update des bisherigen Primärs fortsetzen (v1947)
+
+- Sendet ein Primär mit höherer Version an einen Sekundär mit niedrigerer, hält SQL Server die Datenbewegung an. Nach dessen Update ist laut Microsoft `ALTER DATABASE … SET HADR RESUME` nötig (Upgrade-Schritt 7). Ohne diese Aktion wäre ein rollierendes CU-Update nach dem Failover auf einem nicht synchronisierten Sekundär stehen geblieben (Gegenprüfung des Changes ea55451b).
+- Neue Aktion `hadr_fortsetzen` (nur im Change, nur als `alfred_admin`): Sie wirkt nur auf einem SECONDARY und nur auf die lokal angehaltenen AG-Datenbanken. Der Nachweis kommt aus `sys.dm_hadr_database_replica_states` (danach keine angehalten). Ein Rückweg ist nicht nötig. Feste Ausgabe: „HADR_FORTGESETZT <zugang>: <n> fortgesetzt, 0 angehalten (<d> AG-Datenbanken)“.
+
 ### Added — `linux_sql aktualisieren`: SQL-Server-Update (CU) je Knoten, rollierend per Change (v1946)
 
 - Neue Aktion `aktualisieren` (nur im Change, nur als `alfred_admin`, Parameter `version` als apt-Version wie `17.0.5065.9-3`). Sie hebt `mssql-server` und, falls installiert, `mssql-server-ha` auf dieselbe Version und hält beide danach wieder fest (`hold`). Bisher änderte `installieren` eine vorhandene Version bewusst nicht, ein Update war nicht möglich.

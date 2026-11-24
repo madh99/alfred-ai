@@ -114,3 +114,43 @@ export function sqlUpdateSkript(p: SqlUpdateParameter): string {
 }
 
 registriereLinuxBaustein<SqlUpdateParameter>(LINUX_SQL_BAUSTEINE.aktualisieren, sqlUpdateSkript);
+
+// ── hadr_fortsetzen ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Microsoft (Operate AG on Linux, Upgrade Schritt 7): sendet ein Primär mit höherer Version an einen Sekundär mit niedrigerer, hält
+ * SQL Server die Datenbewegung an; nach dem Update des Sekundärs ist ALTER DATABASE … SET HADR RESUME nötig. Nur auf einem SECONDARY,
+ * nur die lokal angehaltenen AG-Datenbanken; Nachweis aus sys.dm_hadr_database_replica_states (danach keine angehalten).
+ * Kein Rückweg nötig: Fortsetzen stellt den Normalzustand her.
+ */
+export const HADR_FORTSETZEN_TSQL = [
+  'SET NOCOUNT ON; -- ALFRED-HADR-FORTSETZEN',
+  "IF NOT EXISTS (SELECT 1 FROM sys.dm_hadr_availability_replica_states WHERE is_local = 1 AND role_desc = N'SECONDARY') THROW 50040, N'Replikat ist nicht SECONDARY - nichts geaendert', 1;",
+  'DECLARE @n int = 0, @db sysname, @s nvarchar(400);',
+  'DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT DB_NAME(database_id) FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND is_suspended = 1;',
+  'OPEN c; FETCH NEXT FROM c INTO @db;',
+  "WHILE @@FETCH_STATUS = 0 BEGIN SET @s = N'ALTER DATABASE ' + QUOTENAME(@db) + N' SET HADR RESUME;'; EXEC (@s); SET @n += 1; FETCH NEXT FROM c INTO @db; END",
+  'CLOSE c; DEALLOCATE c;',
+  "SELECT N'ALFRED|' + CAST(@n AS nvarchar(5)) + N'|' + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states WHERE is_local = 1 AND is_suspended = 1) AS nvarchar(5))"
+    + " + N'|' + CAST((SELECT COUNT(*) FROM sys.dm_hadr_database_replica_states WHERE is_local = 1) AS nvarchar(5));",
+].join('\n');
+
+/** Ergebnis { zustand schon|geaendert, fortgesetzt, angehalten (danach, Soll 0), datenbanken }. Zeit: LINUX_SQL_ZEIT_MS.hadrFortsetzen */
+export function hadrFortsetzenSkript(): string {
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.hadrFortsetzen, {}),
+    ...SQL_HILFE,
+    ...SA_LESEN,
+    '[ "$SQL_LOGIN" = alfred_admin ] || abbruch "hadr_fortsetzen nur als alfred_admin — nichts geändert"',
+    'bereit || abbruch "SQL Server antwortet nicht als alfred_admin — nichts geändert"',
+    `TSQL=${shQ(HADR_FORTSETZEN_TSQL)}`,
+    'aus=$(sql "$TSQL" 2>&1) || abbruch "Datenbewegung fortsetzen: $(kurz "$aus")"',
+    'IFS="|" read -r _ N A D <<<"$(alfred_zeile "$aus")"',
+    '[[ "$N" =~ ^[0-9]+$ ]] && [[ "$A" =~ ^[0-9]+$ ]] && [[ "$D" =~ ^[0-9]+$ ]] || abbruch "Datenbewegung fortsetzen: Antwort unlesbar ($(alfred_zeile "$aus"))"',
+    '[ "$A" = 0 ] || abbruch "nach dem Fortsetzen sind noch $A AG-Datenbanken angehalten"',
+    'Z=schon; [ "$N" = 0 ] || Z=geaendert',
+    'ergebnis "{\\"zustand\\":\\"$Z\\",\\"fortgesetzt\\":$N,\\"angehalten\\":$A,\\"datenbanken\\":$D}"',
+  ].join('\n');
+}
+
+registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.hadrFortsetzen, () => hadrFortsetzenSkript());

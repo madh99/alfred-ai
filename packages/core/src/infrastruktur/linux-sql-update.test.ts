@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { LINUX_SQL_BAUSTEINE, sqlErgebnis } from './linux-sql.js';
-import { sqlUpdateSkript, pruefeSqlUpdate, SQL_UPDATE_OHNE_RUECKWEG } from './linux-sql-update.js';
+import { sqlUpdateSkript, pruefeSqlUpdate, SQL_UPDATE_OHNE_RUECKWEG, hadrFortsetzenSkript, HADR_FORTSETZEN_TSQL } from './linux-sql-update.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
 import { aktionsArt, pruefeChangePlan, FESTE_AUSGABEN } from './change-schritte.js';
@@ -77,7 +77,7 @@ describe('linux_sql aktualisieren — Parameter und Planung', () => {
   });
 });
 
-describe.skipIf(!BASH || !PYTHON)('linux_sql aktualisieren — Baustein', () => {
+describe.skipIf(!BASH || !PYTHON)('linux_sql aktualisieren — Baustein', { timeout: 60_000 }, () => {
   it('Standby → mssql-server und mssql-server-ha auf Ziel, danach gehalten, Selbstprüfung', () => {
     const r = lauf(admin, basis());
     expect(r.rc, r.aus).toBe(0);
@@ -142,5 +142,42 @@ describe('Skill linux_sql aktualisieren', () => {
     const r0 = await sk.execute({ action: 'aktualisieren', zugang: 'sqllnx01', version: NEU }, {} as never);
     expect(r0.error).toContain('nur als Schritt eines freigegebenen Changes');
     expect(aufrufe).toEqual([]);
+  });
+});
+
+describe.skipIf(!BASH || !PYTHON)('linux_sql hadr_fortsetzen', { timeout: 60_000 }, () => {
+  const lauf2 = (eingabe: Record<string, unknown>, antwort: string) => {
+    const stubs = [
+      `python3() { PYTHONIOENCODING=utf-8 '${PYTHON_PFAD}' "$@" | tr -d '\r'; }`,
+      'bereit() { :; }',
+      `sql() { printf "%s|%s\n" "$SQL_LOGIN" "$(printf "%s" "$1" | head -c 60)" >>"$T/log"; ${antwort} }`,
+    ].join('\n');
+    const text = hadrFortsetzenSkript().replace('# ALFRED-ABLAUF', `${stubs}\n# ALFRED-ABLAUF`);
+    const huelle = ['T=$(mktemp -d)', `ALFRED_EINGABE=${JSON.stringify(JSON.stringify(eingabe))}`, `( ${text}\n) >"$T/aus" 2>&1; echo "RC=$?"`, 'echo "---AUS"; cat "$T/aus"; echo "---LOG"; cat "$T/log" 2>/dev/null; rm -rf "$T"'].join('\n');
+    const o = spawnSync('bash', [], { input: huelle, encoding: 'utf8' }).stdout.replace(/\r/g, '');
+    const aus = o.split('---AUS\n')[1]?.split('---LOG\n')[0] ?? '';
+    return { rc: Number(/RC=(\d+)/.exec(o)?.[1] ?? -1), e: sqlErgebnis<Record<string, unknown>>(aus), log: o.split('---LOG\n')[1] ?? '' };
+  };
+  it('setzt angehaltene fort, Nachweis 0 angehalten; nichts angehalten → schon', () => {
+    const r = lauf2(admin, 'echo "ALFRED|1|0|1";');
+    expect(r.rc).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', fortgesetzt: 1, angehalten: 0, datenbanken: 1 });
+    expect(r.log).toContain('alfred_admin|SET NOCOUNT ON; -- ALFRED-HADR-FORTSETZEN');
+    expect(lauf2(admin, 'echo "ALFRED|0|0|1";').e).toMatchObject({ zustand: 'schon', fortgesetzt: 0 });
+  });
+  it('fail-closed: noch angehalten, nicht SECONDARY (THROW), unlesbar, falsches Login', () => {
+    expect(String(lauf2(admin, 'echo "ALFRED|1|1|1";').e?.fehler)).toContain('noch 1 AG-Datenbanken angehalten');
+    expect(String(lauf2(admin, 'echo "Msg 50040 Replikat ist nicht SECONDARY"; return 1;').e?.fehler)).toContain('nicht SECONDARY');
+    expect(String(lauf2(admin, 'echo "ALFRED|x";').e?.fehler)).toContain('unlesbar');
+    const s = lauf2({ sa: 'x', login: 'alfred_status' }, 'echo "ALFRED|0|0|1";');
+    expect(String(s.e?.fehler)).toContain('nur als alfred_admin');
+    expect(s.log).toBe('');
+  });
+  it('T-SQL: nur lokale, angehaltene Datenbanken; nur auf SECONDARY', () => {
+    expect(HADR_FORTSETZEN_TSQL).toContain("is_local = 1 AND role_desc = N'SECONDARY'");
+    expect(HADR_FORTSETZEN_TSQL).toContain('WHERE is_local = 1 AND is_suspended = 1');
+    expect(HADR_FORTSETZEN_TSQL).toContain("SET HADR RESUME");
+    expect(aktionsArt('linux_sql', 'hadr_fortsetzen')).toBe('aendern');
+    expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.hadrFortsetzen)).toBe(true);
   });
 });

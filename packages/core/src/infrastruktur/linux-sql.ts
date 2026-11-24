@@ -84,6 +84,8 @@ export const LINUX_SQL_BAUSTEINE = {
   jobverlaufRecht: 'sql.jobverlauf_recht',
   // Owner 23./24.11.: SQL-Server-Update (CU) je Knoten, rollierend per Change (Erzeuger in linux-sql-update.ts)
   aktualisieren: 'sql.aktualisieren',
+  // Microsoft Upgrade Schritt 7 — angehaltene AG-Datenbanken auf dem Sekundär fortsetzen (Erzeuger in linux-sql-update.ts)
+  hadrFortsetzen: 'sql.hadr_fortsetzen',
 } as const;
 
 /**
@@ -158,6 +160,7 @@ export const LINUX_SQL_ZEIT_MS = {
   alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000, jobverlaufRecht: 180_000,
   // CU-Update: apt update + Download + Installation + Skript-Upgrade-Modus (bis 10 min) — wie die Installation
   aktualisieren: 1_500_000,
+  hadrFortsetzen: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

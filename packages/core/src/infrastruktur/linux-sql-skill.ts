@@ -73,6 +73,7 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   sa_schalten: sek(LINUX_SQL_ZEIT_MS.saSchalten) + 60,
   jobverlauf_recht: sek(LINUX_SQL_ZEIT_MS.jobverlaufRecht) + 60,
   aktualisieren: sek(LINUX_SQL_ZEIT_MS.aktualisieren) + 60,
+  hadr_fortsetzen: sek(LINUX_SQL_ZEIT_MS.hadrFortsetzen) + 60,
   sa_kennwort_setzen: sek(LINUX_SQL_ZEIT_MS.saKennwortSetzen) + 60,
 };
 
@@ -113,7 +114,7 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // I8e Folge-Etappe — eigene Alfred-Logins (Rückweg entfernen), sa schalten (Rückweg an umgekehrt), Notfallweg sa-Kennwort setzen
   'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen', 'jobverlauf_recht',
   // Owner 23./24.11. — SQL-Server-Update (CU) je Knoten im Standby, rollierend (kein Rückweg: Downgrade wird nicht unterstützt)
-  'aktualisieren']);
+  'aktualisieren', 'hadr_fortsetzen']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -555,6 +556,7 @@ export class LinuxSqlSkill extends Skill {
       + 'Voraussetzung bei Pacemaker: Knoten vorher mit linux_ha knoten_standby an=true (keine aktive ag_cluster-Instanz mehr; so ist der Knoten nie Primär), danach knoten_standby an=false; kein Downgrade, Ziel muss in der Paketquelle sein; '
       + 'Selbstprüfung: Dienst aktiv/aktiviert, Anmeldung (Skript-Upgrade bis 10 min), ProductVersion = Ziel, Pakete in Zielversion gehalten, mssql.conf unverändert; Wortlaut „SQL_AKTUALISIERT <zugang>: <von> → <version>“. '
       + 'Reihenfolge rollierend: sqllnxcfg und der Sekundär zuerst, dann ag_failover, dann der bisherige Primär; je Knoten danach linux_ha status mit „SECONDARY SYNCHRONIZED“. Kein Rückweg: rueckweg {keiner: „' + SQL_UPDATE_OHNE_RUECKWEG + '“}. '
+      + 'hadr_fortsetzen (nur im Change; zugang) — nach dem Update des bisherigen Primärs (jetzt Sekundär): Microsoft hält die Datenbewegung an, wenn ein Primär mit höherer Version an einen Sekundär mit niedrigerer sendet; setzt nur auf einem SECONDARY die lokal angehaltenen AG-Datenbanken fort (ALTER DATABASE … SET HADR RESUME), nur als alfred_admin; Nachweis: danach keine angehalten; Wortlaut „HADR_FORTGESETZT <zugang>: <n> fortgesetzt, 0 angehalten (<d> AG-Datenbanken)“; kein Rückweg nötig (rueckweg {keiner: …}). Den Sekundär mit älterer Version vor seinem Update nicht auf SYNCHRONIZED warten lassen; nach Update und hadr_fortsetzen linux_ha status mit „<zugang> SECONDARY SYNCHRONIZED“ als warten. '
       + 'sa_kennwort_setzen (zugang) — Notfallweg: setzt das vorhandene sa-Kennwort aus dem Tresor per mssql-conf set-sa-password (Dienst wird gestoppt und gestartet); Voraussetzung: Pacemaker-Knoten vorher mit linux_ha knoten_standby an=true in Standby. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
@@ -713,6 +715,7 @@ export class LinuxSqlSkill extends Skill {
         case 'sa_schalten': return await this.saSchalten(zugang, input, geheim);
         case 'jobverlauf_recht': return await this.jobverlaufRecht(zugang, input, geheim);
         case 'aktualisieren': return await this.aktualisieren(zugang, input, geheim);
+        case 'hadr_fortsetzen': return await this.hadrFortsetzen(zugang, geheim);
         case 'sa_kennwort_setzen': return await this.saKennwortSetzen(zugang, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
@@ -1211,6 +1214,17 @@ export class LinuxSqlSkill extends Skill {
     if (r.paket !== version || r.version !== version.replace(/-\d+$/, '')) throw new Error(`aktualisieren ${zugang}: Nachprüfung fehlgeschlagen (Paket ${String(r.paket)}, Version ${String(r.version)}, Soll ${version})`);
     this.d.protokoll?.('SQL-Server aktualisiert', { zugang, von: r.von, version: r.version, ha: r.ha, zustand: r.zustand });
     const text = `SQL_AKTUALISIERT ${zugang}: ${r.von ?? '?'} → ${r.version}${r.ha ? ` (mssql-server-ha ${r.ha})` : ''}, Pakete gehalten, mssql.conf unverändert`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Microsoft Upgrade Schritt 7: angehaltene AG-Datenbanken auf dem Sekundär fortsetzen — nur als alfred_admin, Nachweis aus dem Katalog */
+  private async hadrFortsetzen(zugang: string, geheim: string[]): Promise<SkillResult> {
+    const e = await this.sa(zugang, `Datenbewegung fortsetzen auf ${zugang}`, geheim);
+    if (e.login !== ADMIN_LOGIN) throw new Error(`hadr_fortsetzen auf ${zugang} nur als alfred_admin — nichts geändert`);
+    const r = await this.lauf<{ zustand: string; fortgesetzt?: number; angehalten?: number; datenbanken?: number }>(zugang, LINUX_SQL_BAUSTEINE.hadrFortsetzen, {}, 'Datenbewegung fortsetzen', LINUX_SQL_ZEIT_MS.hadrFortsetzen, e);
+    if (r.angehalten !== 0) throw new Error(`hadr_fortsetzen ${zugang}: Nachprüfung fehlgeschlagen (${String(r.angehalten)} angehalten, Soll 0)`);
+    this.d.protokoll?.('HADR fortgesetzt', { zugang, fortgesetzt: r.fortgesetzt, datenbanken: r.datenbanken, zustand: r.zustand });
+    const text = `HADR_FORTGESETZT ${zugang}: ${r.fortgesetzt ?? 0} fortgesetzt, 0 angehalten (${r.datenbanken ?? '?'} AG-Datenbanken)`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

@@ -85,6 +85,7 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Live-Fix (c2e4f56d): „; sbd wartet auf Watchdog“ nach RuntimeWatchdog
   // Ruling R22: abweichende 1433-Zusatzquellen → „Firewall alfred_ha veraltet (…)“ statt „aktiv“ — „Firewall alfred_ha aktiv“ belegt also auch die Menge
   // Owner 23./24.11. — Wortlaut aus LinuxSqlSkill.aktualisieren
+  'linux_sql.hadr_fortsetzen': 'HADR_FORTGESETZT {zugang}: {n} fortgesetzt, 0 angehalten ({d} AG-Datenbanken) — nichts zu tun',
   'linux_sql.aktualisieren': 'SQL_AKTUALISIERT {zugang}: {von} → {version} (mssql-server-ha {ha}), Pakete gehalten, mssql.conf unverändert — nichts zu tun',
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
@@ -251,8 +252,8 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen',
     // Owner 24.11. — Jobverlauf-Recht: Rechte im msdb-Katalog zurückgelesen (2 bzw. 0)
     'jobverlauf_recht',
-    // Owner 23./24.11. — CU-Update: ProductVersion, Paketversionen + hold, mssql.conf-Hash zurückgelesen
-    'aktualisieren']),
+    // Owner 23./24.11. — CU-Update: ProductVersion, Paketversionen + hold, mssql.conf-Hash zurückgelesen; Fortsetzen: keine angehalten
+    'aktualisieren', 'hadr_fortsetzen']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -386,7 +387,8 @@ const NEUAUFBAU_SKILLS = new Set(['linux_sql', 'linux_ha']);
  */
 const OHNE_RUECKWEG_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = {
   // Fix-Welle M-1: kettengrenzen_uebernehmen schreibt nur die lokale Aufzeichnung nach Owner-Prüfung (Unterschied steht im Ergebnis)
-  linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen']),
+  // Microsoft Upgrade Schritt 7 — hadr_fortsetzen stellt nur den Normalzustand her (angehaltene Datenbewegung läuft wieder)
+  linux_sql: new Set(['sicherung_jetzt', 'wiederherstellen_pruefen', 'kettengrenzen_uebernehmen', 'hadr_fortsetzen']),
   // I8e Paket 2 Task 4 — fencing_belegen schreibt nur die Beleg-Datei des Knotens (nichts am Cluster oder an Diensten)
   linux_ha: new Set(['fencing_belegen']),
 };
