@@ -99,7 +99,11 @@ export function agText(a: LinuxHaAg): string {
   const kn = (l: string[] | null | undefined) => (!l ? 'unbekannt' : l.length ? l.join('+') : 'keiner');
   const sql = a.sql;
   const reps = !sql ? (a.sqlFehler ? `SQL nicht lesbar (${a.sqlFehler})` : 'SQL ohne Zugangsdatei')
-    : `Replikate ${sql.replikate.filter(r => r.modus !== 'CONFIGURATION_ONLY').map(r => `${r.name ?? '?'} ${r.rolle ?? '?'}${r.dbs > 0 && r.rolle !== 'PRIMARY' ? ` ${r.sync === r.dbs ? 'SYNCHRONIZED' : 'NICHT SYNCHRONIZED'} ${r.sync}/${r.dbs}` : ''}`).join(' / ') || 'keine'}`;
+    : `Replikate ${[
+      ...sql.replikate.filter(r => r.modus !== 'CONFIGURATION_ONLY').map(r => `${r.name ?? '?'} ${r.rolle ?? '?'}${r.dbs > 0 && r.rolle !== 'PRIMARY' ? ` ${r.sync === r.dbs ? 'SYNCHRONIZED' : 'NICHT SYNCHRONIZED'} ${r.sync}/${r.dbs}` : ''}`),
+      // CU-Update 24.11.: Verbindung des Konfig-Replikats aus Sicht dieses Knotens (vor jedem Datenknoten-Standby prüfbar, sonst Owner-Handgriff)
+      ...sql.replikate.filter(r => r.modus === 'CONFIGURATION_ONLY').map(r => `${r.name ?? '?'} CONFIGURATION_ONLY ${r.verbunden ?? 'unbekannt'}`),
+    ].join(' / ') || 'keine'}`;
   const st = a.standort;
   const standort = !st ? 'Standort-Bedingungen unbekannt' : !st.length ? 'Standort-Bedingungen 0'
     : `Standort-Bedingungen OFFEN: ${st.map(x => `${x.id ?? '?'} (${x.knoten ?? '?'}${x.rolle ? `, ${x.rolle}` : ''})`).join(', ')}`;

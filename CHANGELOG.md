@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — `linux_ha status` zeigt die Verbindung des Konfig-Replikats (v1949)
+
+- Der AG-Teil des Status nennt jetzt auch das CONFIGURATION_ONLY-Replikat mit seinem Verbindungszustand aus Sicht des abgefragten Knotens, z. B. „… / sqllnx02 SECONDARY SYNCHRONIZED 1/1 / sqllnxcfg CONFIGURATION_ONLY CONNECTED“. Bisher war es ausgeblendet, und ein Change musste die Verbindung vor einem Datenknoten-Standby als Owner-Handgriff bestätigen lassen. Jetzt ist sie eine prüfbare feste Ausgabe. Bestehende Prüfungen auf „<knoten> SECONDARY SYNCHRONIZED“ passen weiter.
+
 ### Added — `linux_ha ag_failover` mit `upgrade`: Failover beim rollierenden CU-Update (v1948)
 
 - Bisher wartete der Baustein nach dem Wechsel darauf, dass der bisherige Primär wieder SECONDARY, CONNECTED und SYNCHRONIZED ist. Beim CU-Update hat dieser aber noch die ältere Version, und SQL Server hält die Datenbewegung zu ihm an. Der Failover wäre deshalb mit einer Zeitüberschreitung gescheitert, obwohl der Wechsel gelungen war (Fund in Alfreds Gegenprüfung).
