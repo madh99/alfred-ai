@@ -7993,17 +7993,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const fz = this.fernzugriffRef;
             if (!fz || !ownerFz()) return { ok: true, zaehler: { hosts: 0, befunde: 0, neu: 0, geloest: 0 } };
             const { sammleWindowsUeberwachung } = await import('./infrastruktur/sammler-windows.js');
-            const { ueberwachungsBefunde, auffaelligkeiten } = await import('./infrastruktur/bericht.js');
+            const { ueberwachungsBefunde, auffaelligkeiten, lizenzBefunde, erreichbarkeitsBefund } = await import('./infrastruktur/bericht.js');
             const auff: import('./infrastruktur/bericht.js').Auffaelligkeit[] = []; const vollstaendig = new Set<string>(); const fehler: string[] = [];
             const win = (await fz.aktiveZugaenge()).filter(z => z.system === 'windows');
             for (const z of win) {
               const r = await sammleWindowsUeberwachung((cmd) => fz.lesenIntern(z.name, cmd, 120_000)).catch(err => ({ ueberwachung: {}, fehler: [`gesamt: ${(err as Error).message.slice(0, 160)}`] } as Awaited<ReturnType<typeof sammleWindowsUeberwachung>>));
               auff.push(...ueberwachungsBefunde(z.name, r.ueberwachung));
+              // Owner 24.11.: Lizenz stündlich (gleicher Schlüssel wie im Bestandsbericht) und „nicht erreichbar“ als Befund statt nur Logzeile
+              if (r.ueberwachung.lizenz) auff.push(...lizenzBefunde(z.name, r.ueberwachung.lizenz));
+              auff.push(...erreichbarkeitsBefund(z.name, r));
               if (r.dateisysteme) auff.push(...auffaelligkeiten({ hosts: [{ zugang: z.name, host: z.host, dateisysteme: r.dateisysteme, dienste: [], ports: [], container: [], compose: [], volumes: [], fehler: [], erfasst: '' }], vms: [], proxy: [] }).filter(a => a.kategorie === 'platte'));
               if (r.fehler.length) fehler.push(`${z.name}: ${r.fehler.join('; ')}`); else vollstaendig.add(z.name);
             }
             const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
-            const pr = win.length ? await infraProblems(auff, { docId: 'stündliche Windows-Überwachung', datum }, { hosts: vollstaendig, alle: false, kategorien: new Set(['ueberwachung', 'platte']) }) : undefined;
+            const pr = win.length ? await infraProblems(auff, { docId: 'stündliche Windows-Überwachung', datum }, { hosts: vollstaendig, alle: false, kategorien: new Set(['ueberwachung', 'platte', 'lizenz']) }) : undefined;
             this.logger.info({ hosts: win.length, vollstaendig: vollstaendig.size, befunde: auff.length, neu: pr?.neu.length ?? 0, bekannt: pr?.bekannt ?? 0, geloest: pr?.geloest.length ?? 0, fehler }, 'I8 3b-4 Windows-Überwachung');
             return { ok: true, zaehler: { hosts: win.length, befunde: auff.length, neu: pr?.neu.length ?? 0, geloest: pr?.geloest.length ?? 0 } };
           },

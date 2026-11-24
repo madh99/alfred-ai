@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pkiBefunde, PKI_BETRIEB, type PkiAufruf } from './pki-betrieb.js';
+import { pkiBefunde, PKI_BETRIEB, crlZeit, type PkiAufruf } from './pki-betrieb.js';
 import { VORLAGEN, type StandardKontext } from './standard-vorlagen.js';
 import { pruefeChangePlan, type PruefKontext, aktionsArt } from './change-schritte.js';
 import { caSicherungAufraeumenSkript } from './windows-pki.js';
@@ -48,6 +48,47 @@ describe('PKI-Betrieb: tägliche Prüfung', () => {
     const f = await pkiBefunde(welt({ fehlt: 'erneuerung_status' }), PKI_BETRIEB, jetzt);
     expect(f.erfasst.has('sql02')).toBe(false);
     expect(f.fehler[0]).toContain('Zertifikate');
+  });
+});
+
+// Owner 24.11. — Issuing-CRL seit 22.11. 16:02 abgelaufen, unbemerkt: NextUpdate im deutschen Format unlesbar, sql01 als Client aus
+describe('PKI-Betrieb: Fix 24.11. (CRL-Datum, Ersatz-Client, gescheiterte Prüfung als Befund)', () => {
+  it('crlZeit liest ISO, deutsch und englisch; Unlesbares → NaN', () => {
+    expect(crlZeit('2026-11-20T10:00:00Z')).toBe(Date.parse('2026-11-20T10:00:00Z'));
+    expect(crlZeit('22.11.2026 16:02')).toBe(Date.parse('2026-11-22T15:02:00Z'));
+    expect(crlZeit('22.11.2026 16:02:30')).toBe(Date.parse('2026-11-22T15:02:30Z'));
+    expect(crlZeit('11/22/2026 4:02 PM')).toBe(Date.parse('2026-11-22T15:02:00Z'));
+    expect(crlZeit('11/22/2026 12:05 AM')).toBe(Date.parse('2026-11-21T23:05:00Z'));
+    expect(crlZeit('irgendwas')).toBeNaN();
+    expect(crlZeit(undefined)).toBeNaN();
+  });
+
+  it('abgelaufene Issuing-CRL im deutschen Format → hoch (statt „nicht lesbar“)', async () => {
+    const r = await pkiBefunde(welt({ issuerNu: '22.11.2026 16:02' }), PKI_BETRIEB, new Date('2026-11-24T08:00:00Z'));
+    const b = r.befunde.find(x => x.schluessel === 'pki:sql01:crl:ad3033-issuing1.crl')!;
+    expect(b.schwere).toBe('hoch');
+    expect(b.text).toContain('gilt nur noch -1.7 Tage');
+  });
+
+  it('sql01 nicht erreichbar → Veröffentlichung über sql02 geprüft, Befund „Prüfung nicht möglich“ für sql01', async () => {
+    const basis = welt({ issuerNu: '22.11.2026 16:02' });
+    const auf: PkiAufruf = async (a, p) => (a === 'publication_pruefen' && p.zugang === 'sql01') ? { success: false, error: 'ssh: No route to host' } : basis(a, p);
+    const r = await pkiBefunde(auf, PKI_BETRIEB, new Date('2026-11-24T08:00:00Z'));
+    expect(r.erfasst.has('sql02')).toBe(true);
+    expect(r.befunde.map(b => `${b.schwere} ${b.schluessel}`)).toContain('hoch pki:sql02:crl:ad3033-issuing1.crl');
+    expect(r.zeilen.join(' ')).toContain('Veröffentlichung von sql02 geprüft (sql01 nicht erreichbar)');
+    // geprüft wurde trotzdem → kein „nicht möglich“-Befund
+    expect(r.befunde.some(b => b.schluessel === 'pki:sql01:pruefung:veroeffentlichung')).toBe(false);
+  });
+
+  it('alle Clients und Sicherungsziel unerreichbar → Befunde „nicht möglich“ (hoch) statt nur Logzeile', async () => {
+    const auf: PkiAufruf = async (a, p) => ({ success: false, error: `ssh: connect to host ${String(p.zugang ?? '')} port 22: No route to host` });
+    const r = await pkiBefunde(auf, PKI_BETRIEB, jetzt);
+    const s = r.befunde.map(b => `${b.schwere} ${b.schluessel}`);
+    expect(s).toEqual(expect.arrayContaining([
+      'hoch pki:sql01:pruefung:zertifikate', 'hoch pki:sql01:pruefung:veroeffentlichung', 'hoch pki:pkiiss01:pruefung:sicherung', 'hoch pki:fs01:pruefung:sicherung',
+    ]));
+    expect(r.befunde.find(b => b.schluessel === 'pki:pkiiss01:pruefung:sicherung')!.text).toContain('läuft pkiiss01?');
   });
 });
 

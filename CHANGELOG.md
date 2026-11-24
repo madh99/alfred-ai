@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Windows-Überwachung meldet abgelaufene Aktivierung und nicht erreichbare Hosts (v1944)
+
+- Die stündliche Windows-Überwachung liest jetzt auch die Windows-Lizenz. „Nicht aktiviert“ und eine ablaufende Testversion oder Kulanzfrist werden zum Problem, mit demselben Schlüssel wie im Bestandsbericht. Bisher meldete das nur der Bestandsbericht, und ein Server ohne Aktivierung fuhr sich nach Ablauf der Kulanzfrist unbemerkt selbst herunter.
+- Ist ein Windows-Host über den Fernzugang gar nicht lesbar, entsteht ein Problem „Windows-Host nicht erreichbar“ (hoch). Bisher stand das nur im Log, so blieben zwei SQL-Server drei Tage unbemerkt aus. Ein Host, der bewusst aus ist, gehört nicht in die aktiven Zugänge.
+- PKI-Prüfung: `NextUpdate` der Sperrlisten liegt im Gebietsschema-Format des Servers vor (z. B. „22.11.2026 16:02“) und war seit 14.11. unlesbar („NextUpdate nicht lesbar“). Dadurch blieb die abgelaufene Issuing-CRL unbemerkt. Gelesen werden jetzt ISO, deutsches und englisches Format.
+- PKI-Prüfung: Ist `sql01` als Prüf-Client nicht erreichbar, prüft `sql02` bzw. `fs01` die Veröffentlichung. Eine gescheiterte Teilprüfung (Zertifikate, Veröffentlichung, CA-Sicherung) wird jetzt als Problem „PKI-Prüfung nicht möglich“ (hoch) gemeldet, statt nur im Log und in der Telegram-Meldung zu stehen.
+
 ### Added — Sicherungslage im SQL-Status für Linux und Windows (v1943)
 
 - `linux_sql status` und `sql_server status` zeigen je Datenbank die letzte FULL-, DIFF- und LOG-Sicherung mit Alter und dem Server, der sie geschrieben hat, sowie je Agent-Job den letzten Lauf mit Ergebnis. Beide nutzen dieselbe Abfrage (`sql-sicherung-lage.ts`), nur lesend.

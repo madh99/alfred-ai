@@ -44,6 +44,8 @@ export interface WindowsUeberwachung {
   zertifikate?: Array<{ betreff: string; fingerabdruck: string; ablauf?: string }>;
   /** I8c — nur auf Domänencontrollern: von dcdiag gemeldete fehlgeschlagene Tests, Replikationsverbindungen mit Fehlern */
   dc?: { dcdiagFehler: string[]; replikation: Array<{ quelle: string; kontext: string; fehler: number; letzterFehler?: string; status?: string }> };
+  /** Owner 24.11. — Windows-Lizenz auch stündlich (Kulanzfrist ohne Aktivierung → Windows fährt sich herunter) */
+  lizenz?: WindowsLizenz;
 }
 
 /** I8c — dcdiag /q nennt nur Fehler („……… DC01 failed test DFSREvent“); repadmin /showrepl /csv je Verbindung eine showrepl_INFO-Zeile */
@@ -93,6 +95,7 @@ export async function sammleWindowsUeberwachung(lesen: (befehl: string) => Promi
   const e = await versuch('ereignisse', WINDOWS_BEFEHLE.ereignisse, leseWinEreignisse); if (e) u.ereignisse = e;
   const z = await versuch('zertifikate', WINDOWS_BEFEHLE.zertifikate, leseWinZertifikate); if (z) u.zertifikate = z;
   const dc = await versuch('dc', WINDOWS_BEFEHLE.dcGesundheit, leseWinDcGesundheit); if (dc) u.dc = dc;
+  const l = await versuch('lizenz', WINDOWS_BEFEHLE.lizenz, t => leseWinLizenz(t)); if (l) u.lizenz = l;
   return { ...(dateisysteme ? { dateisysteme } : {}), ueberwachung: u, fehler };
 }
 

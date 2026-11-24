@@ -128,6 +128,32 @@ export interface WinUeberwachung {
  * I8 3b-4 — Befunde der Windows-Überwachung. Dienst mit Exit-Code ≠ 0 (abgestürzt oder nie gestartet, z. B. 1077) → Problem; Exit-Code 0
  * (sauber beendet, evtl. von Hand) nur im Bericht. Ereignisse: kritische oder ab EREIGNIS_FEHLER_AB Fehler je Quelle in 24 h → Problem.
  */
+/** Windows-Lizenz wie in sammler-windows (strukturell) */
+interface WinLizenz { status: string; kanal: string; ablauf?: string; restTage?: number }
+
+/**
+ * I8 3b-5 — Windows-Lizenz: nicht aktiviert / Benachrichtigung → hoch; Testversion oder Kulanzfrist ≤ LIZENZ_WARN_TAGE → mittel, ≤ 7 hoch.
+ * Owner 24.11. (sql01/sql02/pkiiss01 seit 21.11. aus — Kulanzfrist ohne Aktivierung, Windows fährt sich dann stündlich herunter): auch die
+ * stündliche Windows-Überwachung meldet das, nicht nur der Bestandsbericht. Gleicher Schlüssel in beiden.
+ */
+export function lizenzBefunde(zugang: string, liz: WinLizenz): Auffaelligkeit[] {
+  const k = { schluessel: `lizenz:${zugang}`, kategorie: 'lizenz' as const, zugang };
+  if (liz.status === 'nicht_aktiviert' || liz.status === 'benachrichtigung') return [{ schwere: 'hoch', bereich: zugang, text: `Windows nicht aktiviert (${liz.kanal}) — Funktionen eingeschränkt, ohne Aktivierung fährt Windows sich stündlich herunter — per Change aktivieren (proxmox windows_aktivieren)`, ...k }];
+  if (liz.restTage !== undefined && liz.restTage <= LIZENZ_WARN_TAGE) return [{ schwere: liz.restTage <= 7 ? 'hoch' : 'mittel', bereich: zugang, text: `Windows-${liz.status === 'testversion' ? 'Testversion' : 'Kulanzfrist'} läuft ${liz.restTage < 0 ? `seit ${-liz.restTage} Tagen nicht mehr` : `in ${liz.restTage} Tagen ab`} (${liz.ablauf}) — ${liz.status === 'testversion' ? 'Lizenz per Change einspielen (Schlüssel aus dem Tresor)' : 'per Change aktivieren (proxmox windows_aktivieren)'}`, ...k }];
+  return [];
+}
+
+/**
+ * Owner 24.11. — Windows-Host über den Fernzugang gar nicht lesbar (kein Teil der Überwachung kam an): bisher nur eine Logzeile, so
+ * blieben sql01/sql02 drei Tage unbemerkt aus. Jetzt ein Befund (hoch). Ein Host, der bewusst aus ist, gehört nicht in die aktiven Zugänge.
+ */
+export function erreichbarkeitsBefund(zugang: string, r: { dateisysteme?: unknown; ueberwachung: object; fehler: string[] }): Auffaelligkeit[] {
+  const nichts = !r.dateisysteme && !Object.keys(r.ueberwachung).length;
+  if (!nichts || !r.fehler.length) return [];
+  const grund = r.fehler[0]!.replace(/^[^:]+:\s*/, '').replace(/\s+/g, ' ').slice(0, 160);
+  return [{ schwere: 'hoch', bereich: zugang, text: `Windows-Host nicht erreichbar — Überwachung nicht möglich (${grund}); läuft die VM? (Proxmox-Status prüfen)`, schluessel: `ueberwachung:${zugang}:erreichbar`, kategorie: 'ueberwachung', zugang }];
+}
+
 export function ueberwachungsBefunde(zugang: string, u: WinUeberwachung, jetzt = new Date()): Auffaelligkeit[] {
   const a: Auffaelligkeit[] = [];
   const k = (teil: string) => ({ bereich: zugang, schluessel: `ueberwachung:${zugang}:${teil}`, kategorie: 'ueberwachung' as const, zugang });
@@ -172,12 +198,8 @@ export function auffaelligkeiten(e: { hosts: HostBestand[]; vms: VmEintrag[]; pr
     const apt = h.fehler.find(f => f.startsWith('updates:') && /MergeList|Hash Sum mismatch|Could not get lock|dpkg was interrupted|NO_PUBKEY|EXPKEYSIG/i.test(f));
     if (apt) a.push({ schwere: 'mittel', bereich: h.zugang, text: `Paketverwaltung gestört — Updates nicht prüfbar (${apt.replace(/^updates:\s*/, '').replace(/\s+/g, ' ').slice(0, 120)})`, schluessel: `paketverwaltung:${h.zugang}`, kategorie: 'paketverwaltung', zugang: h.zugang });
     // I8 3b-5 — Windows-Lizenz: nicht aktiviert oder Testversion/Kulanzfrist läuft bald ab
-    const liz = (h as HostBestand & { windows?: { lizenz?: { status: string; kanal: string; ablauf?: string; restTage?: number } } }).windows?.lizenz;
-    if (liz) {
-      const k = { schluessel: `lizenz:${h.zugang}`, kategorie: 'lizenz' as const, zugang: h.zugang };
-      if (liz.status === 'nicht_aktiviert' || liz.status === 'benachrichtigung') a.push({ schwere: 'hoch', bereich: h.zugang, text: `Windows nicht aktiviert (${liz.kanal}) — Funktionen eingeschränkt`, ...k });
-      else if (liz.restTage !== undefined && liz.restTage <= LIZENZ_WARN_TAGE) a.push({ schwere: liz.restTage <= 7 ? 'hoch' : 'mittel', bereich: h.zugang, text: `Windows-${liz.status === 'testversion' ? 'Testversion' : 'Kulanzfrist'} läuft ${liz.restTage < 0 ? `seit ${-liz.restTage} Tagen nicht mehr` : `in ${liz.restTage} Tagen ab`} (${liz.ablauf}) — Lizenz per Change einspielen (Schlüssel aus dem Tresor)`, ...k });
-    }
+    const liz = (h as HostBestand & { windows?: { lizenz?: WinLizenz } }).windows?.lizenz;
+    if (liz) a.push(...lizenzBefunde(h.zugang, liz));
     // I8 3b-2a — Sicherheits-Grundlinie (Spec 3b-2): je Abweichung ein eigener Befund, damit Problems einzeln erledigt werden
     const win = (h as HostBestand & { windows?: { domaene?: string; grundlinie?: WinGrundlinie } }).windows;
     for (const g of grundlinienAbweichungen(win?.grundlinie, win?.domaene)) a.push({ ...g, bereich: h.zugang, text: `Grundlinie: ${g.text}`, schluessel: `grundlinie:${h.zugang}:${g.punkt}`, kategorie: 'grundlinie', zugang: h.zugang });

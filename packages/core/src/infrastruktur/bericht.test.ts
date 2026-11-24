@@ -83,7 +83,7 @@ describe('I8 3b-5 — Windows-Lizenz', () => {
       w('dev', { status: 'aktiviert', kanal: 'Einzelhandel' }),
     ], vms: [], proxy: [] }, jetzt).filter(x => x.kategorie === 'lizenz');
     expect(a.map(x => `${x.schwere}|${x.schluessel}|${x.text}`)).toEqual(expect.arrayContaining([
-      'hoch|lizenz:workvm|Windows nicht aktiviert (Einzelhandel) — Funktionen eingeschränkt',
+      'hoch|lizenz:workvm|Windows nicht aktiviert (Einzelhandel) — Funktionen eingeschränkt, ohne Aktivierung fährt Windows sich stündlich herunter — per Change aktivieren (proxmox windows_aktivieren)',
       'mittel|lizenz:eval20|Windows-Testversion läuft in 20 Tagen ab (2026-11-11) — Lizenz per Change einspielen (Schlüssel aus dem Tresor)',
       expect.stringMatching(/^hoch\|lizenz:eval5\|/),
     ]));
