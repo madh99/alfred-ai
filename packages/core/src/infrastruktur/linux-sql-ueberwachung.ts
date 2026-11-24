@@ -35,17 +35,17 @@ export function linuxSqlBefunde(zugang: string, status: Pick<LinuxSqlStatus, 'tl
   // unlesbar. Review I3: ebenso jede gescheiterte Anmeldung bei gesetzter Host-Marke (sa abgeschaltet, z. B. Alfred-Einträge fehlen)
   const an = status?.anmeldung;
   if (an && an.ok === false && (an.login === 'alfred_status' || status?.saMarke === true)) {
-    a.push({ schwere: 'hoch', text: `${zugang}: SQL-Anmeldung als ${an.login} gescheitert — Status und Prüfungen ohne SQL-Sicht (Dienst aktiv? Kennwort im Tresor, Login aktiv?)`, ...k('anmeldung') });
+    a.push({ schwere: 'hoch', text: `SQL-Anmeldung als ${an.login} gescheitert — Status und Prüfungen ohne SQL-Sicht (Dienst aktiv? Kennwort im Tresor, Login aktiv?)`, ...k('anmeldung') });
   }
   // Realfall 23.11.: Agent seit 20./21.11. gestoppt, keine geplante Sicherung, kein Befund
   const agentAn = /^(true|1|yes)$/i.test(String(status?.konfig?.sqlagent ?? '').trim());
   if (agentAn && status?.agent?.laeuft === false) {
-    a.push({ schwere: 'hoch', text: `${zugang}: SQL Server Agent läuft nicht — geplante Sicherungen und Jobs fallen aus (sqlagent.out: ${(status.agent.letzteZeile ?? '?').slice(0, 160)})`, ...k('agent') });
+    a.push({ schwere: 'hoch', text: `SQL Server Agent läuft nicht — geplante Sicherungen und Jobs fallen aus (sqlagent.out: ${(status.agent.letzteZeile ?? '?').slice(0, 160)})`, ...k('agent') });
   }
   // Owner 23.11.: mssql-server ist auf hold, kein Update zieht es nach — neuere Version in der Microsoft-Quelle melden (Update = Change)
   const inst = status?.pakete?.['mssql-server']; const kand = status?.update?.kandidat;
   if (inst && kand && debVersionNeuer(kand, inst)) {
-    a.push({ schwere: 'mittel', text: `${zugang}: SQL-Server-Update verfügbar — installiert ${inst}, Paketquelle ${kand} (Pakete auf hold; Einspielen nur per Change, rollierend)`, ...k('sql-update') });
+    a.push({ schwere: 'mittel', text: `SQL-Server-Update verfügbar — installiert ${inst}, Paketquelle ${kand} (Pakete auf hold; Einspielen nur per Change, rollierend)`, ...k('sql-update') });
   }
   return a;
 }

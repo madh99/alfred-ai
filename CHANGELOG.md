@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `linux_ha ha_vorbereiten` nach einem CU-Update wieder nutzbar; Update-Befund ohne doppelten Hostnamen (v1951)
+
+- `ha_vorbereiten` verlangte `mssql-server` fest in Version 17.0.4006.2-1 (CU1). Seit dem CU11-Update vom 24.11. brach der Baustein auf allen drei Knoten ohne Änderung ab, auch für die Reparaturen, die der Status vorschlägt (Firewall umstellen, sbd zurückholen). Neuer optionaler Parameter `version` (apt-Version von `mssql-server`). Ohne ihn gilt die installierte Version, mit ihm muss sie übereinstimmen. `mssql-server-ha` folgt immer derselben Version. Ist `mssql-server` nicht installiert, bricht der Baustein vor jeder Änderung ab.
+- Befunde der SQL-Überwachung (Update verfügbar, Agent läuft nicht, Anmeldung gescheitert) nannten den Host im Text, obwohl der Problem-Titel ihn bereits voranstellt („sqllnx01: sqllnx01: …“). Der Text trägt den Host jetzt nicht mehr.
+
 ### Fixed — Change-Planprüfung kennt „sqllnxcfg CONFIGURATION_ONLY CONNECTED“ (v1950)
 
 - Der neue Wortlaut aus v1949 fehlte in der Liste fester Ausgaben von `linux_ha.status`. Die Planprüfung wies deshalb Prüfungen auf die Verbindung des Konfig-Replikats ab. Er ist jetzt eingetragen, und ein Test verlangt das künftig.

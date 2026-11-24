@@ -310,6 +310,32 @@ function laeufe(setup: string, n = 2, p: HaVorbereitenParameter = P, nachErstem 
   return { laeufe: ls, hosts: zwischen('---HOSTS', '---VORLAGE'), vorlage: zwischen('---VORLAGE', '---FW'), fw: zwischen('---FW', '---DATEIEN'), dateien: zwischen('---DATEIEN', '---ENDE') };
 }
 
+describe.skipIf(!BASH)('ha_vorbereiten nach CU-Update (Realfall 24.11.: CU11 installiert, fest eingetragenes CU1 sperrte den Baustein)', { timeout: 120_000 }, () => {
+  const CU11 = String.raw`printf 'hold ok installed|17.0.5065.9-3' >"$T/dpkg/mssql-server"`;
+  const ohne = { ...P, versionen: { ...HA_VERSIONEN, mssqlHa: '' } };
+  it('ohne version: mssql-server-ha in der installierten Version', () => {
+    const [a] = laeufe(CU11, 1, ohne).laeufe as [Lauf];
+    expect(a.rc, a.aus).toBe(0);
+    expect(a.log).toContain(' mssql-server-ha=17.0.5065.9-3 ');
+    expect(a.log).not.toContain('17.0.4006.2-1');
+    expect(a.ergebnis).toMatchObject({ pakete: { 'mssql-server-ha': '17.0.5065.9-3' } });
+  });
+  it('mit abweichender version oder ohne mssql-server: Abbruch, nichts geändert', () => {
+    const [a] = laeufe(CU11, 1, { ...P, versionen: { ...HA_VERSIONEN, mssqlHa: '17.0.4006.2-1' } }).laeufe as [Lauf];
+    expect(a.rc).not.toBe(0);
+    expect(a.aus).toContain("mssql-server ist in Version '17.0.5065.9-3' vorhanden, erwartet 17.0.4006.2-1");
+    expect(a.log).not.toContain('apt-get');
+    const [b] = laeufe(String.raw`rm -f "$T/dpkg/mssql-server"`, 1, ohne).laeufe as [Lauf];
+    expect(b.rc).not.toBe(0);
+    expect(b.aus).toContain('mssql-server ist nicht installiert');
+    expect(b.log).not.toContain('apt-get');
+  });
+  it('Parameterprüfung: leer erlaubt, sonst nur 17.0-Paketversion', () => {
+    expect(pruefeHaVorbereiten(ohne)).toBeUndefined();
+    expect(pruefeHaVorbereiten({ ...P, versionen: { ...HA_VERSIONEN, mssqlHa: '17.0.5065.9' } })).toContain('mssqlHa');
+  });
+});
+
 describe.skipIf(!BASH)('I8e Paket 2 — ha_vorbereiten ausgeführt (nachgebildeter Rechner)', { timeout: 120_000 }, () => {
   it('erster Lauf richtet alles ein, zweiter Lauf meldet „schon“ ohne einen ändernden Befehl', () => {
     const w = laeufe('');

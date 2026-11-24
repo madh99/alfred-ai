@@ -233,11 +233,12 @@ export function pruefeKnoten(k: unknown): string | undefined {
 
 export function pruefeVersionen(v: unknown): string | undefined {
   const x = obj(v);
-  for (const [k] of HA_PAKETE) if (typeof x[k] !== 'string' || !DEB_VERSION.test(x[k] as string)) return `versionen.${k}: Debian-Paketversion wie ${HA_VERSIONEN[k]}`;
-  if (!/^17\.0\.\d{4}\.\d{1,3}-\d{1,3}$/.test(x.mssqlHa as string)) return 'versionen.mssqlHa: Version von mssql-server wie 17.0.4006.2-1';
+  for (const [k] of HA_PAKETE) if (k !== 'mssqlHa' && (typeof x[k] !== 'string' || !DEB_VERSION.test(x[k] as string))) return `versionen.${k}: Debian-Paketversion wie ${HA_VERSIONEN[k]}`;
+  if (x.mssqlHa !== '' && !/^17\.0\.\d{4}\.\d{1,3}-\d{1,3}$/.test(x.mssqlHa as string)) return 'versionen.mssqlHa: Version von mssql-server wie 17.0.5065.9-3 (leer = installierte Version)';
   return undefined;
 }
 
+/** versionen.mssqlHa leer = mssql-server-ha in der installierten mssql-server-Version (Regel ha = server, gilt auch nach CU-Updates) */
 export interface HaVorbereitenParameter { knoten: HaKnoten[]; rolle: HaRolle; versionen: HaVersionen }
 
 export function pruefeHaVorbereiten(p: unknown): string | undefined {
@@ -501,7 +502,11 @@ IDX=-1; for i in "\${!KNOTEN_NAME[@]}"; do if [ "\${KNOTEN_NAME[$i]}" = "$ICH" ]
 command -v nft >/dev/null 2>&1 || abbruch "nft fehlt (Paket nftables) — nichts geändert"
 crypt_da || abbruch "python3-Modul crypt fehlt — hacluster-Kennwort nicht prüfbar; nichts geändert"
 iv=$(paket_version mssql-server)
-[ "$iv" = "$V_SQL" ] || abbruch "mssql-server ist in Version '\${iv:-nicht installiert}' vorhanden, erwartet $V_SQL (mssql-server-ha muss dieselbe Version haben; vorher linux_sql.installieren) — nichts geändert"
+[ -n "$iv" ] || abbruch "mssql-server ist nicht installiert (mssql-server-ha muss dieselbe Version haben; vorher linux_sql.installieren) — nichts geändert"
+# V_SQL leer = installierte mssql-server-Version (nach einem CU-Update nicht veraltet); gesetzt = muss übereinstimmen
+[ -z "$V_SQL" ] || [ "$iv" = "$V_SQL" ] || abbruch "mssql-server ist in Version '$iv' vorhanden, erwartet $V_SQL (mssql-server-ha muss dieselbe Version haben; vorher linux_sql.installieren) — nichts geändert"
+V_SQL=$iv
+PAKETE=("\${PAKETE[@]/#mssql-server-ha=*/mssql-server-ha=$V_SQL}")
 for pv in "\${PAKETE[@]}"; do
   pk=\${pv%%=*}; sv=\${pv#*=}; iv=$(paket_version "$pk")
   [ -z "$iv" ] || [ "$iv" = "$sv" ] || abbruch "$pk ist in Version $iv installiert, erwartet $sv — Vorbereitung ändert keine vorhandene Version; nichts geändert"

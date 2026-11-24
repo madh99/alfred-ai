@@ -226,6 +226,8 @@ describe('SQL-Update verfügbar (Owner 23.11.: Pakete auf hold, bisher keine Pr�
     expect(a[0]).toMatchObject({ schwere: 'mittel', schluessel: 'ueberwachung:sqllnx01:sql-update', kategorie: 'ueberwachung', zugang: 'sqllnx01' });
     expect(a[0]!.text).toContain('17.0.4006.2-1');
     expect(a[0]!.text).toContain('17.0.5065.9-2');
+    // Realfall 24.11.: Titel = „<bereich>: <text>“ — der Text trägt den Host nicht noch einmal
+    expect(a[0]!.text.startsWith('SQL-Server-Update verfügbar')).toBe(true);
   });
   it('gleich, älter, ohne Kandidat oder nicht installiert → kein Befund', () => {
     expect(linuxSqlBefunde('sqllnx01', st('17.0.4006.2-1', '17.0.4006.2-1'))).toEqual([]);

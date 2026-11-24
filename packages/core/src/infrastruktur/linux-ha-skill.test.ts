@@ -118,7 +118,7 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(w.gesetzt.map(g => g.name)).toEqual([HA_HACLUSTER_TRESOR]);
     const kw = w.gesetzt[0]!.wert;
     expect(kw).toHaveLength(24);
-    expect(w.aufrufe[0]).toMatchObject({ zugang: 'sqllnx02', baustein: LINUX_HA_BAUSTEINE.vorbereiten, timeoutMs: 1_500_000, parameter: { knoten: HA_KNOTEN, rolle: 'daten', versionen: HA_VERSIONEN } });
+    expect(w.aufrufe[0]).toMatchObject({ zugang: 'sqllnx02', baustein: LINUX_HA_BAUSTEINE.vorbereiten, timeoutMs: 1_500_000, parameter: { knoten: HA_KNOTEN, rolle: 'daten', versionen: { ...HA_VERSIONEN, mssqlHa: '' } } }); // ohne version = installierte mssql-server-Version
     expect(JSON.parse(w.aufrufe[0]!.eingabe!)).toEqual({ hacluster: kw });
     expect(r.display).toContain('✅ HA-Grundlage auf sqllnx02 (daten)');
     expect(r.display).toContain('SQL Server neu gestartet (HADR)');
@@ -160,6 +160,8 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(w.aufrufe).toEqual([]);
     expect(w.skill.pruefeEingabe({ action: 'ha_vorbereiten', zugang: 'sqllnx02', rolle: 'daten' })).toBeUndefined();
     expect(w.skill.pruefeEingabe({ action: 'ha_vorbereiten', zugang: 'sqllnx02', rolle: 'zeuge' })).toContain('rolle');
+    expect(w.skill.pruefeEingabe({ action: 'ha_vorbereiten', zugang: 'sqllnx02', rolle: 'daten', version: '17.0.5065.9-3' })).toBeUndefined();
+    expect(w.skill.pruefeEingabe({ action: 'ha_vorbereiten', zugang: 'sqllnx02', rolle: 'daten', version: '17.0.5065.9' })).toContain('mssqlHa');
     expect(w.skill.pruefeEingabe({ action: 'ha_vorbereiten', zugang: 'sqllnx02', rolle: 'daten', knoten: [{ name: 'a', ip: 'x' }] })).toContain('knoten');
     expect(w.skill.pruefeEingabe({ action: 'status', zugang: '{{schritt1.name}}' })).toBeUndefined();
     expect(w.skill.mindestZeitlimitS('ha_vorbereiten')).toBe(LINUX_HA_MIN_ZEITLIMIT_S.ha_vorbereiten);
