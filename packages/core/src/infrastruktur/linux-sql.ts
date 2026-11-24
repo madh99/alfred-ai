@@ -80,6 +80,8 @@ export const LINUX_SQL_BAUSTEINE = {
   tlsPfadUmstellen: 'sql.tls_pfad_umstellen',
   // I8e Folge-Etappe — eigene Alfred-Logins, sa schalten, sa-Kennwort setzen (Notfallweg; Erzeuger in linux-sql-logins.ts)
   alfredLoginsAnlegen: 'sql.alfred_logins_anlegen', alfredLoginsEntfernen: 'sql.alfred_logins_entfernen', saSchalten: 'sql.sa_schalten', saKennwortSetzen: 'sql.sa_kennwort_setzen',
+  // Owner 24.11.: Leserecht von alfred_status auf den Jobverlauf (sysjobs/sysjobhistory) schalten — Rückweg ohne Login-Abbau
+  jobverlaufRecht: 'sql.jobverlauf_recht',
 } as const;
 
 /**
@@ -151,7 +153,7 @@ export const LINUX_SQL_ZEIT_MS = {
   // #979: Manifest, Kopie, mssql-conf — ohne Neustart
   tlsPfadUmstellen: 90_000,
   // I8e Folge-Etappe: Logins/sa je bereit (120 s) + zwei Anmeldungen; Notfallweg: Dienst stoppen, set-sa-password, starten, bereit (120 s)
-  alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000,
+  alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000, jobverlaufRecht: 180_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

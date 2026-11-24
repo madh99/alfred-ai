@@ -67,7 +67,10 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
     // I8e Folge-Etappe: am Ende „; sa …; Alfred-Logins …“ — positiv nur diese Stücke; „sa aktiv“, „sa aus (ohne Host-Marke)“, „Alfred-Logins keine“ für nichtEnthalten
     + ' | sa aus (gesperrt) | Alfred-Logins alfred_admin, alfred_status'
     // Überwachung 23.11.: „; Agent …“ (agentText) — positiv nur „Agent läuft“; „Agent GESTOPPT“/„Agent unbekannt“ für nichtEnthalten
-    + ' | Agent läuft',
+    + ' | Agent läuft'
+    // Owner 24.11. (v1943): Sicherungslage (sicherungsLageText) — positiv „letzte Sicherungen …“, „Agent-Jobs …“ und Alfreds Jobzeile
+    // „— ALFRED|/var/opt/mssql/backup/…“ (PRINT der Prozedur); „Jobverlauf nicht lesbar“ und „FEHLER“ für nichtEnthalten
+    + ' | letzte Sicherungen {liste} | Agent-Jobs alfred-sqllnx-full: {lauf} | ALFRED|/var/opt/mssql/backup/{pfad} | ALFRED-ERZWUNGEN|{db}|FULL statt LOG',
   // I8e Task 4 — Wortlaut aus linuxSqlSicherungenText (linux-sql-skill.ts)
   'linux_sql.sicherungen': '{zugang}: Sicherung nach {ziel} (belegt {gib} GiB von {gib} GiB); Kopie zuletzt {zeit} {ergebnis}; Zugangsdatei {zugangsdatei}; Kopie-Timer {timer}; {datenbanken}'
     // Fix-Runde 1: „Hash ok“ allein ist kein Beleg (kann neben unvollständigen Ketten stehen) — positiv nur „vollständig auf fs01“
@@ -243,7 +246,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // #979 — Zertifikatspfad: mssql.conf, Manifest, Kopie und Rechte zurückgelesen
     'tls_pfad_umstellen',
     // I8e Folge-Etappe — Logins (Anmeldung als beide, Rechte-Nachweis), sa (is_disabled + Host-Marke zurückgelesen), Notfallweg (Anmeldung als sa)
-    'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']),
+    'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen',
+    // Owner 24.11. — Jobverlauf-Recht: Rechte im msdb-Katalog zurückgelesen (2 bzw. 0)
+    'jobverlauf_recht']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -299,6 +304,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
     // I8e Folge-Etappe — Alfred-Logins: Rückweg genau alfred_logins_entfernen; sa schalten: Rückweg genau sa_schalten mit umgekehrtem an
     ['alfred_logins_anlegen', { skill: 'linux_sql', aktion: 'alfred_logins_entfernen', text: 'linux_sql.alfred_logins_entfernen (zugang)', parameter: gleicherZugang('alfred_logins_entfernen') }],
     ['sa_schalten', { skill: 'linux_sql', aktion: 'sa_schalten', text: 'linux_sql.sa_schalten (zugang, an umgekehrt)', parameter: schalterZurueck('sa_schalten') }],
+    // Owner 24.11. — Jobverlauf-Recht: Rückweg genau jobverlauf_recht mit umgekehrtem an (Logins bleiben)
+    ['jobverlauf_recht', { skill: 'linux_sql', aktion: 'jobverlauf_recht', text: 'linux_sql.jobverlauf_recht (zugang, an umgekehrt)', parameter: schalterZurueck('jobverlauf_recht') }],
   ]),
   // Ruling R33 (I8e L6) — SSMS: Rückweg genau sql_server.ssms_entfernen auf demselben Zugang (nimmt nur zurück, was der Merker nennt)
   sql_server: new Map([

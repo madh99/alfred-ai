@@ -6,6 +6,7 @@ import {
 } from './linux-sql-logins.js';
 import { LinuxSqlSkill, LINUX_SQL_MIN_ZEITLIMIT_S } from './linux-sql-skill.js';
 import { linuxBausteinBekannt } from '../fernzugriff/linux-bausteine.js';
+import { jobverlaufRechtSkript, jobverlaufRechtTsql } from './linux-sql-logins.js';
 import { aktionsArt, pruefeChangePlan } from './change-schritte.js';
 
 // I8e Folge-Etappe (Spec 2026-11-22 §7.3/§7.4, Plan Task 4): Alfred-Logins anlegen/entfernen, sa schalten, sa-Kennwort setzen (Notfallweg)
@@ -31,6 +32,7 @@ function lauf(skript: string, eingabe: Record<string, unknown>, dateien: Record<
     '  *ALFRED-SA-PRUEF*) echo "ALFRED|$(cat "$T/sa_pruef")" ;;',
     '  *ALFRED-LOGINS-ANLEGEN*) echo "ALFRED|angelegt|angelegt" ;;',
     '  *ALFRED-LOGINS-ENTFERNEN*) echo "ALFRED|0" ;;',
+    '  *ALFRED-JOBVERLAUF-RECHT*) echo "ALFRED|$(cat "$T/jv")" ;;',
     '  *) echo "ALFRED|ok" ;; esac; }',
     'systemctl() { log "systemctl $*"; case "$1" in is-active) [ ! -f "$T/gestoppt" ] ;; stop) : >"$T/gestoppt" ;; start) if [ -f "$T/start_scheitert" ]; then rm -f "$T/start_scheitert"; return 1; fi; rm -f "$T/gestoppt" ;; esac; }',
     'hostname() { echo sqllnxcfg; }',
@@ -295,5 +297,61 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_entfernen ausgeführt', { timeo
     const r2 = lauf(alfredLoginsEntfernenSkript(), { sa: 'Sa-1', login: 'sa' }, { sa_pruef: '1|0' });
     expect(r2.rc, r2.aus).toBe(0);
     expect(r2.sql).toContain('DROP LOGIN [alfred_admin]');
+  });
+});
+
+// Owner 24.11. — Leserecht auf den Jobverlauf ohne Login-Abbau (Gegenprüfung a71cd8ff: Rückweg alfred_logins_entfernen braucht aktives sa)
+describe('jobverlauf_recht', () => {
+  it('T-SQL: an gibt, aus entzieht genau sysjobs/sysjobhistory; Nachweis aus dem msdb-Katalog; kein Login-Abbau', () => {
+    const an = jobverlaufRechtTsql(true), aus = jobverlaufRechtTsql(false);
+    expect(an).toContain('GRANT SELECT ON dbo.sysjobs TO [alfred_status]; GRANT SELECT ON dbo.sysjobhistory TO [alfred_status];');
+    expect(aus).toContain('REVOKE SELECT ON dbo.sysjobs TO [alfred_status]; REVOKE SELECT ON dbo.sysjobhistory TO [alfred_status];');
+    for (const t of [an, aus]) { expect(t).not.toMatch(/DROP|CREATE LOGIN|ALTER LOGIN|backupset/); expect(t).toContain('THROW 50030'); expect(t).toContain('THROW 50031'); }
+  });
+
+  it('Planung: nur im Change, Rückweg genau jobverlauf_recht mit umgekehrtem an', () => {
+    expect(linuxBausteinBekannt(LINUX_SQL_BAUSTEINE.jobverlaufRecht)).toBe(true);
+    expect(aktionsArt('linux_sql', 'jobverlauf_recht')).toBe('aendern');
+    expect(LINUX_SQL_MIN_ZEITLIMIT_S.jobverlauf_recht).toBeGreaterThan(0);
+    const sk = new LinuxSqlSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const ctx = { skill: (n: string) => (n === 'linux_sql' ? sk : undefined) as never, asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    const plan = (schritte: unknown[]) => ({ titel: 'Jobverlauf', begruendung: 'v1943 Rollout', typ: 'normal', risiko: 'low', ausfallMinuten: 0, betroffen: ['sqllnx02'], ohneSicherungGrund: 'eigener Rückweg', schritte });
+    const f = (x: unknown[]) => pruefeChangePlan(plan(x) as never, ctx as never).fehler;
+    const schritt = (an: unknown, rwAn: unknown) => ({ titel: 'Recht', art: 'aktion', skill: 'linux_sql', aktion: 'jobverlauf_recht', parameter: { zugang: 'sqllnx02', an }, zeitlimitS: 900, rueckweg: { skill: 'linux_sql', aktion: 'jobverlauf_recht', parameter: { zugang: 'sqllnx02', an: rwAn } } });
+    expect(f([schritt(true, false)])).toEqual([]);
+    expect(f([schritt(true, true)]).length).toBeGreaterThan(0);
+    expect(f([schritt('ja', false)]).some(x => x.includes('an: true oder false'))).toBe(true);
+  });
+
+  it('Skill: nur als alfred_admin (sa → Abbruch vor dem Fernaufruf)', async () => {
+    let gerufen = false;
+    const sk = new LinuxSqlSkill({ skript: async () => { gerufen = true; return { code: 0, stdout: '', stderr: '' }; } });
+    (sk as unknown as { sa: () => Promise<{ sa: string; login: string }> }).sa = async () => ({ sa: 'x', login: 'sa' });
+    const r = await sk.execute({ action: 'jobverlauf_recht', zugang: 'sqllnx02', an: true }, imChange);
+    expect(r.success).toBe(false);
+    expect(String(r.error)).toContain('nur als alfred_admin');
+    expect(gerufen).toBe(false);
+  });
+});
+
+describe.skipIf(!BASH || !PYTHON)('jobverlauf_recht ausgeführt', { timeout: 60_000 }, () => {
+  const E = { sa: 'Adm-Geheim-1', login: 'alfred_admin' };
+  it('an: Katalog zeigt 2 Rechte → geaendert, Kennwort nicht in der Ausgabe', () => {
+    const r = lauf(jobverlaufRechtSkript({ an: true }), E, { jv: 'geaendert|2' });
+    expect(r.rc, r.aus).toBe(0);
+    expect(r.e).toMatchObject({ zustand: 'geaendert', rechte: 2 });
+    expect(r.sql.split(String.fromCharCode(10)).filter(Boolean).every(z => z.startsWith('alfred_admin|'))).toBe(true);
+    expect(r.aus).not.toContain('Adm-Geheim');
+  });
+  it('an, Katalog zeigt danach nur 1 Recht → Abbruch', () => {
+    const r = lauf(jobverlaufRechtSkript({ an: true }), E, { jv: 'geaendert|1' });
+    expect(r.rc).not.toBe(0);
+    expect(r.e?.fehler).toMatch(/1 Rechte im msdb-Katalog, Soll 2/);
+  });
+  it('aus: 0 Rechte → schon; als sa → Abbruch vor jeder Änderung', () => {
+    expect(lauf(jobverlaufRechtSkript({ an: false }), E, { jv: 'schon|0' }).e).toMatchObject({ zustand: 'schon', rechte: 0 });
+    const s = lauf(jobverlaufRechtSkript({ an: true }), { sa: 'x', login: 'sa' }, { jv: 'geaendert|2' });
+    expect(s.rc).not.toBe(0);
+    expect(s.sql).toBe('');
   });
 });

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — `linux_sql jobverlauf_recht`: Leserecht auf den Jobverlauf ohne Login-Abbau (v1945)
+
+- Neue Aktion `jobverlauf_recht` (nur im Change, nur als `alfred_admin`): `an=true` gibt `alfred_status` SELECT auf `msdb.dbo.sysjobs` und `sysjobhistory`, `an=false` entzieht es. Der Nachweis kommt aus dem msdb-Katalog (2 bzw. 0 Rechte). Der Pflicht-Rückweg ist dieselbe Aktion mit umgekehrtem `an`, die Logins bleiben unangetastet. Bestehende Hosts brauchten bisher `alfred_logins_anlegen`, dessen Pflicht-Rückweg `alfred_logins_entfernen` bei abgeschaltetem `sa` nicht laufen kann.
+- Planprüfung: Die Sicherungslage im `linux_sql status` („letzte Sicherungen“, „Agent-Jobs …“, Alfreds Jobzeile „ALFRED|/var/opt/mssql/backup/…“, „ALFRED-ERZWUNGEN|…“) ist als feste Ausgabe zulässig, auch als Wartekriterium.
+
 ### Fixed — Windows-Überwachung meldet abgelaufene Aktivierung und nicht erreichbare Hosts (v1944)
 
 - Die stündliche Windows-Überwachung liest jetzt auch die Windows-Lizenz. „Nicht aktiviert“ und eine ablaufende Testversion oder Kulanzfrist werden zum Problem, mit demselben Schlüssel wie im Bestandsbericht. Bisher meldete das nur der Bestandsbericht, und ein Server ohne Aktivierung fuhr sich nach Ablauf der Kulanzfrist unbemerkt selbst herunter.

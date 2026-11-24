@@ -70,6 +70,7 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   alfred_logins_anlegen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsAnlegen) + 60,
   alfred_logins_entfernen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsEntfernen) + 60,
   sa_schalten: sek(LINUX_SQL_ZEIT_MS.saSchalten) + 60,
+  jobverlauf_recht: sek(LINUX_SQL_ZEIT_MS.jobverlaufRecht) + 60,
   sa_kennwort_setzen: sek(LINUX_SQL_ZEIT_MS.saKennwortSetzen) + 60,
 };
 
@@ -108,7 +109,7 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // Microsoft #979 — öffentliches Zertifikat aus secrets in den eigenen Ordner (Rückweg an umgekehrt)
   'tls_pfad_umstellen',
   // I8e Folge-Etappe — eigene Alfred-Logins (Rückweg entfernen), sa schalten (Rückweg an umgekehrt), Notfallweg sa-Kennwort setzen
-  'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen']);
+  'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen', 'jobverlauf_recht']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -545,6 +546,7 @@ export class LinuxSqlSkill extends Skill {
       + `AD-LOGINS (nur sqllnx01/sqllnx02, nie sqllnxcfg; nach ad_beitreten und kerberos_einrichten + Neustart): ad_login (nur im Change; zugang, gruppe z. B. SQL-Linux-Admins, serverrolle sysadmin und/oder datenbank + datenbankrolle ${AD_LOGIN_DB_ROLLEN.join('/')}) — CREATE LOGIN [AD3033\\<gruppe>] FROM WINDOWS (+ Serverrolle bzw. Datenbankbenutzer + Rolle, Datenbank nur auf dem Primär — Sekundär → Abbruch, der Benutzer wird repliziert); vorher ohne Änderung: Host beigetreten (sssd), getent group <gruppe>@ad.3033.at, Alfreds Keytab in mssql.conf; ein vorhandener Login anderen Typs, ein deaktivierter Login oder ein abweichender Datenbankbenutzer → Abbruch; was fehlt, wird vor der Anlage in ${AD_LOGINS_DATEI} vermerkt; Selbstprüfung über sys.server_principals (Typ G), Serverrollen- und Datenbankrollen-Mitgliedschaft → „AD_LOGIN_OK“ ↔ rueckweg Pflicht ad_login_entfernen (gleiche zugang, gruppe, serverrolle, datenbank, datenbankrolle; entfernt nur Vermerktes, Fremdes steht unter „belassen“; „AD_LOGIN_REMOVED“). Logins sind instanzbezogen: je Replikat ein Schritt. `
       + 'ALFRED-LOGINS UND sa (alle drei Instanzen, je Zugang ein Schritt, nur im Change): alfred_logins_anlegen (zugang) — alfred_admin (sysadmin) und alfred_status (nur lesen: VIEW SERVER STATE, VIEW ANY DEFINITION, SELECT msdb.dbo.backupset), Kennwörter erzeugt Alfred im Tresor (sqllnx-<zugang>-alfred-admin/-alfred-status); danach melden sich ändernde Aktionen als alfred_admin, status als alfred_status an, nie mehr als sa ↔ rueckweg Pflicht alfred_logins_entfernen (zugang; nur solange sa aktiv). '
       + 'sa_schalten (zugang, an false = sa abschalten + Host-Marke, true = einschalten) — nur als alfred_admin ↔ rueckweg Pflicht sa_schalten mit an umgekehrt. '
+      + 'jobverlauf_recht (zugang, an true = alfred_status darf msdb.dbo.sysjobs/sysjobhistory lesen, false = Recht entziehen; Logins bleiben) — nur als alfred_admin, für bestehende Hosts statt alfred_logins_anlegen ↔ rueckweg Pflicht jobverlauf_recht mit an umgekehrt. '
       + 'sa_kennwort_setzen (zugang) — Notfallweg: setzt das vorhandene sa-Kennwort aus dem Tresor per mssql-conf set-sa-password (Dienst wird gestoppt und gestartet); Voraussetzung: Pacemaker-Knoten vorher mit linux_ha knoten_standby an=true in Standby. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
@@ -580,7 +582,7 @@ export class LinuxSqlSkill extends Skill {
         issuing_base64: { type: 'string', description: 'tls_einspielen: Issuing-CA als DER-Base64 (statt kette)' },
         root_base64: { type: 'string', description: 'tls_einspielen: Root-CA als DER-Base64 (statt kette)' },
         erwartet_root_sha256: { type: 'string', description: 'tls_einspielen: Pflicht, fester Wert — SHA-256 (64 Hex) der DER der AD3033-Root; eine andere Root wird abgewiesen' },
-        an: { type: 'boolean', description: 'tls_pfad_umstellen: true = Zertifikat in den eigenen Ordner (#979), false = zurück (Rückweg); tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg); sa_schalten: false = sa abschalten, true = einschalten (Rückweg)' },
+        an: { type: 'boolean', description: 'tls_pfad_umstellen: true = Zertifikat in den eigenen Ordner (#979), false = zurück (Rückweg); tls_pruefung_schalten: true = Zertifikatsprüfung an (Schalter setzen), false = aus (Rückweg); tls_erzwingen: true = network.forceencryption 1, false = zurück (Rückweg); sa_schalten: false = sa abschalten, true = einschalten (Rückweg); jobverlauf_recht: true = Leserecht auf den Jobverlauf, false = entziehen (Rückweg)' },
         gruppe: { type: 'string', description: 'ad_login/ad_login_entfernen: AD-Gruppe ohne Domäne, z. B. SQL-Linux-Admins (Login AD3033\\<gruppe>)' },
         serverrolle: { type: 'string', enum: ['sysadmin'], description: 'ad_login/ad_login_entfernen: Serverrolle des Gruppen-Logins' },
         datenbankrolle: { type: 'string', enum: [...AD_LOGIN_DB_ROLLEN], description: 'ad_login/ad_login_entfernen: Rolle in datenbank (nur mit datenbank, nur auf dem Primär)' },
@@ -640,7 +642,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'kerberos_einrichten') { kerberosEingabe(String(input.zugang).trim(), input); pruefeTresorName(KERBEROS_KONTO_TRESOR); }
       else if (action === 'tls_einspielen') tlsEingabe(input);
       else if (action === 'tls_erzwingen') { tlsErzwingenParameter(String(input.zugang), input); if (input.an === true) pruefeTresorName(saName(String(input.zugang).trim())); }
-      else if (action === 'sa_schalten') { const f = pruefeSaSchalten(input); if (f) throw new Error(f); }
+      else if (action === 'sa_schalten' || action === 'jobverlauf_recht') { const f = pruefeSaSchalten(input); if (f) throw new Error(f); }
       else if (action === 'ad_login' || action === 'ad_login_entfernen') { adLoginParameter(String(input.zugang), input); pruefeTresorName(saName(String(input.zugang).trim())); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
@@ -700,6 +702,7 @@ export class LinuxSqlSkill extends Skill {
         case 'alfred_logins_anlegen': return await this.alfredLoginsAnlegen(zugang, geheim);
         case 'alfred_logins_entfernen': return await this.alfredLoginsEntfernen(zugang, geheim);
         case 'sa_schalten': return await this.saSchalten(zugang, input, geheim);
+        case 'jobverlauf_recht': return await this.jobverlaufRecht(zugang, input, geheim);
         case 'sa_kennwort_setzen': return await this.saKennwortSetzen(zugang, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
@@ -1171,6 +1174,20 @@ export class LinuxSqlSkill extends Skill {
     if (r.sa !== soll) throw new Error(`sa_schalten ${zugang}: Nachprüfung fehlgeschlagen (sa ${String(r.sa)}, Soll ${soll})`);
     this.d.protokoll?.('I8e sa geschaltet', { zugang, an, zustand: r.zustand });
     const text = `sa auf ${zugang}: ${soll}${an ? '' : ` (Host-Marke ${SA_SPERRE})`}`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Owner 24.11.: Leserecht von alfred_status auf den Jobverlauf schalten — nur als alfred_admin, Nachweis aus dem msdb-Katalog */
+  private async jobverlaufRecht(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const f = pruefeSaSchalten(input); if (f) throw new Error(f);
+    const an = input.an as boolean;
+    const e = await this.sa(zugang, `Jobverlauf-Recht ${an ? 'geben' : 'nehmen'} auf ${zugang}`, geheim);
+    if (e.login !== ADMIN_LOGIN) throw new Error(`jobverlauf_recht auf ${zugang} nur als alfred_admin — nichts geändert`);
+    const r = await this.lauf<{ zustand: string; rechte?: number }>(zugang, LINUX_SQL_BAUSTEINE.jobverlaufRecht, { an }, `Jobverlauf-Recht ${an ? 'geben' : 'nehmen'}`, LINUX_SQL_ZEIT_MS.jobverlaufRecht, e);
+    const soll = an ? 2 : 0;
+    if (r.rechte !== soll) throw new Error(`jobverlauf_recht ${zugang}: Nachprüfung fehlgeschlagen (${String(r.rechte)} Rechte, Soll ${soll})`);
+    this.d.protokoll?.('Jobverlauf-Recht geschaltet', { zugang, an, zustand: r.zustand });
+    const text = `JOBVERLAUF_RECHT ${an ? 'AN' : 'AUS'} ${zugang}: alfred_status ${an ? 'liest' : 'liest nicht mehr'} msdb.dbo.sysjobs und sysjobhistory (${soll} Rechte im Katalog)`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

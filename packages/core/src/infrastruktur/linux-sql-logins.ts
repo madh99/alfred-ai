@@ -241,6 +241,50 @@ export function saKennwortSetzenSkript(): string {
   ].join('\n');
 }
 
+// ── jobverlauf_recht ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Owner 24.11. — Leserecht von alfred_status auf msdb.dbo.sysjobs/sysjobhistory (Sicherungslage im Status) an- bzw. abschalten, ohne die
+ * Logins anzufassen. Bestehende Hosts brauchten sonst alfred_logins_anlegen, dessen Pflicht-Rückweg alfred_logins_entfernen bei
+ * abgeschaltetem sa nicht laufen kann (Gegenprüfung a71cd8ff). Nur als alfred_admin; Nachweis aus dem msdb-Katalog (2 bzw. 0 Rechte).
+ */
+const JOBVERLAUF_ZAEHLEN = "N'SELECT @n = COUNT(*) FROM sys.database_permissions x JOIN sys.database_principals p ON p.principal_id = x.grantee_principal_id"
+  + " WHERE p.name = N''alfred_status'' AND x.class = 1 AND x.major_id IN (OBJECT_ID(N''dbo.sysjobs''), OBJECT_ID(N''dbo.sysjobhistory''))"
+  + " AND x.permission_name = N''SELECT'' AND x.state IN (''G'', ''W'')'";
+export function jobverlaufRechtTsql(an: boolean): string {
+  return [
+    'SET NOCOUNT ON; -- ALFRED-JOBVERLAUF-RECHT',
+    "DECLARE @z nvarchar(20) = N'schon', @n int;",
+    "IF SUSER_ID(N'alfred_status') IS NULL THROW 50030, N'Login alfred_status fehlt - zuerst alfred_logins_anlegen; nichts geaendert', 1;",
+    "EXEC msdb.sys.sp_executesql N'SELECT @u = USER_ID(N''alfred_status'')', N'@u int OUTPUT', @u = @n OUTPUT;",
+    "IF @n IS NULL THROW 50031, N'alfred_status hat keinen msdb-Benutzer - zuerst alfred_logins_anlegen; nichts geaendert', 1;",
+    `EXEC msdb.sys.sp_executesql ${JOBVERLAUF_ZAEHLEN}, N'@n int OUTPUT', @n = @n OUTPUT;`,
+    an
+      ? "IF @n < 2 BEGIN EXEC msdb.sys.sp_executesql N'GRANT SELECT ON dbo.sysjobs TO [alfred_status]; GRANT SELECT ON dbo.sysjobhistory TO [alfred_status];'; SET @z = N'geaendert'; END"
+      : "IF @n > 0 BEGIN EXEC msdb.sys.sp_executesql N'REVOKE SELECT ON dbo.sysjobs TO [alfred_status]; REVOKE SELECT ON dbo.sysjobhistory TO [alfred_status];'; SET @z = N'geaendert'; END",
+    `EXEC msdb.sys.sp_executesql ${JOBVERLAUF_ZAEHLEN}, N'@n int OUTPUT', @n = @n OUTPUT;`,
+    "SELECT N'ALFRED|' + @z + N'|' + CAST(@n AS nvarchar(5));",
+  ].join('\n');
+}
+
+export function jobverlaufRechtSkript(p: { an: boolean }): string {
+  const f = pruefeSaSchalten(p); if (f) throw new Error(f.replace('sa einschalten bzw. abschalten', 'Leserecht auf den Jobverlauf geben bzw. nehmen'));
+  const soll = p.an ? '2' : '0';
+  return [
+    ...sqlKopf(LINUX_SQL_BAUSTEINE.jobverlaufRecht, { an: p.an }),
+    ...SQL_HILFE,
+    ...SA_LESEN,
+    '[ "$SQL_LOGIN" = alfred_admin ] || abbruch "jobverlauf_recht nur als alfred_admin — nichts geändert"',
+    'bereit || abbruch "SQL Server antwortet nicht als alfred_admin — nichts geändert"',
+    `TSQL=${shQ(jobverlaufRechtTsql(p.an))}`,
+    'aus=$(sql "$TSQL" 2>&1) || abbruch "Jobverlauf-Recht: $(kurz "$aus")"',
+    'IFS="|" read -r _ Z N <<<"$(alfred_zeile "$aus")"',
+    `[ "$N" = ${soll} ] || abbruch "Jobverlauf-Recht: nach dem Schalten $N Rechte im msdb-Katalog, Soll ${soll}"`,
+    `ergebnis "{\\"zustand\\":\\"$Z\\",\\"rechte\\":$N}"`,
+  ].join('\n');
+}
+
+registriereLinuxBaustein<{ an: boolean }>(LINUX_SQL_BAUSTEINE.jobverlaufRecht, jobverlaufRechtSkript);
 registriereLinuxBaustein<{ nurNeu?: boolean }>(LINUX_SQL_BAUSTEINE.alfredLoginsAnlegen, alfredLoginsAnlegenSkript);
 registriereLinuxBaustein(LINUX_SQL_BAUSTEINE.alfredLoginsEntfernen, () => alfredLoginsEntfernenSkript());
 registriereLinuxBaustein<{ an: boolean }>(LINUX_SQL_BAUSTEINE.saSchalten, saSchaltenSkript);
