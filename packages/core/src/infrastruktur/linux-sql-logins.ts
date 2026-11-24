@@ -16,7 +16,10 @@ import { HA_AG_RESSOURCE } from './linux-ha.js';
 /** Rechte von alfred_status über public hinaus (Zuordnung zu den Status-Abfragen: Test „jede Status-Abfrage hat ein Recht“) */
 // Review I4: kein VIEW SERVER STATE — damit ließen sich SQL-Text und Eingabepuffer fremder Sitzungen lesen (auch von alfred_admin);
 // die Kernzahl liest der Status aus dem Betriebssystem
-export const ALFRED_STATUS_RECHTE = ['VIEW ANY DEFINITION', 'SELECT ON msdb.dbo.backupset'] as const;
+// Owner 24.11.: zusätzlich Lesen des Jobverlaufs (sysjobs, sysjobhistory) für die Sicherungslage im Status (sql-sicherung-lage.ts)
+export const ALFRED_STATUS_RECHTE = ['VIEW ANY DEFINITION', 'SELECT ON msdb.dbo.backupset', 'SELECT ON msdb.dbo.sysjobs', 'SELECT ON msdb.dbo.sysjobhistory'] as const;
+/** msdb-Objekte, die alfred_status lesen darf (GRANT und Prüfung „kein Recht darüber hinaus“) */
+const MSDB_LESEN = ['backupset', 'sysjobs', 'sysjobhistory'] as const;
 /** Inhalt der Host-Marke SA_SPERRE (Eigentumsnachweis: nur diese Marke entfernt sa_schalten an=true) */
 export const SA_MARKE_TEXT = 'ALFRED-SA-AUS (linux_sql sa_schalten)';
 
@@ -53,7 +56,7 @@ export function alfredLoginsVorlage(nurNeu: boolean): string {
     "IF ISNULL(IS_SRVROLEMEMBER(N'sysadmin', N'alfred_admin'), 0) <> 1 BEGIN ALTER SERVER ROLE [sysadmin] ADD MEMBER [alfred_admin]; IF @za = N'schon' SET @za = N'geaendert'; END",
     ...loginTeil('alfred_status', '@@KS@@', '@zs', nurNeu),
     'GRANT VIEW ANY DEFINITION TO [alfred_status];',
-    "EXEC (N'USE [msdb]; IF USER_ID(N''alfred_status'') IS NULL CREATE USER [alfred_status] FOR LOGIN [alfred_status]; GRANT SELECT ON dbo.backupset TO [alfred_status];');",
+    `EXEC (N'USE [msdb]; IF USER_ID(N''alfred_status'') IS NULL CREATE USER [alfred_status] FOR LOGIN [alfred_status]; ${MSDB_LESEN.map(o => `GRANT SELECT ON dbo.${o} TO [alfred_status];`).join(' ')}');`,
     // kein Serverrecht über den Rechtesatz hinaus (CONNECT SQL kommt mit CREATE LOGIN)
     "IF EXISTS (SELECT 1 FROM sys.server_permissions p JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id WHERE l.name = N'alfred_status' AND p.permission_name NOT IN (N'CONNECT SQL', N'VIEW ANY DEFINITION'))",
     "  THROW 50007, N'alfred_status hat zusätzliche Serverrechte - nicht still entfernt; bitte bewusst entscheiden', 1;",
@@ -66,18 +69,18 @@ export function alfredLoginsVorlage(nurNeu: boolean): string {
     "  SET @q = N'SELECT @c = COUNT(*) FROM ' + QUOTENAME(@db) + N'.sys.database_role_members m JOIN ' + QUOTENAME(@db) + N'.sys.database_principals p ON p.principal_id = m.member_principal_id WHERE p.sid = SUSER_SID(N''alfred_status'')';",
     "  EXEC sp_executesql @q, N'@c int OUTPUT', @c = @c OUTPUT; SET @n = @n + @c;",
     "  SET @q = N'SELECT @c = COUNT(*) FROM ' + QUOTENAME(@db) + N'.sys.database_permissions x JOIN ' + QUOTENAME(@db) + N'.sys.database_principals p ON p.principal_id = x.grantee_principal_id WHERE p.sid = SUSER_SID(N''alfred_status'') AND x.state IN (''G'', ''W'') AND x.permission_name <> N''CONNECT'''",
-    "    + CASE WHEN @db = N'msdb' THEN N' AND NOT (x.class = 1 AND x.major_id = OBJECT_ID(N''msdb.dbo.backupset'') AND x.permission_name = N''SELECT'')' ELSE N'' END;",
+    `    + CASE WHEN @db = N'msdb' THEN N' AND NOT (x.class = 1 AND x.major_id IN (${MSDB_LESEN.map(o => `OBJECT_ID(N''msdb.dbo.${o}'')`).join(', ')}) AND x.permission_name = N''SELECT'')' ELSE N'' END;`,
     "  EXEC sp_executesql @q, N'@c int OUTPUT', @c = @c OUTPUT; SET @n = @n + @c;",
     '  FETCH NEXT FROM alfred_dbs INTO @db;',
     'END',
     'CLOSE alfred_dbs; DEALLOCATE alfred_dbs;',
-    "IF @n > 0 THROW 50008, N'alfred_status hat Rollen oder Rechte in Datenbanken über SELECT auf msdb.dbo.backupset hinaus - nicht still entfernt; bitte bewusst entscheiden', 1;",
+    "IF @n > 0 THROW 50008, N'alfred_status hat Rollen oder Rechte in Datenbanken über SELECT auf msdb.dbo.backupset/sysjobs/sysjobhistory hinaus - nicht still entfernt; bitte bewusst entscheiden', 1;",
     "SELECT N'ALFRED|' + @za + N'|' + @zs;",
   ].join('\n');
 }
 /** als alfred_admin: sysadmin? */
 const PRUEF_ADMIN = "SET NOCOUNT ON; -- ALFRED-PRUEF-ADMIN\nSELECT N'ALFRED|' + CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS nvarchar(1));";
-/** als alfred_status: sysadmin | CONTROL SERVER | ALTER ANY LOGIN | INSERT backupset | VIEW SERVER STATE | SELECT backupset — Soll 0|0|0|0|0|1 */
+/** als alfred_status: sysadmin | CONTROL SERVER | ALTER ANY LOGIN | INSERT backupset | VIEW SERVER STATE | SELECT backupset | SELECT sysjobs | SELECT sysjobhistory — Soll 0|0|0|0|0|1|1|1 */
 const PRUEF_STATUS = [
   'SET NOCOUNT ON; -- ALFRED-PRUEF-STATUS',
   "SELECT N'ALFRED|' + CAST(ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) AS nvarchar(1))",
@@ -85,9 +88,11 @@ const PRUEF_STATUS = [
   "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, N'ALTER ANY LOGIN'), 0) AS nvarchar(1))",
   "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.backupset', N'OBJECT', N'INSERT'), 0) AS nvarchar(1))",
   "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, N'VIEW SERVER STATE'), 0) AS nvarchar(1))",
-  "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.backupset', N'OBJECT', N'SELECT'), 0) AS nvarchar(1));",
+  "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.backupset', N'OBJECT', N'SELECT'), 0) AS nvarchar(1))",
+  "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.sysjobs', N'OBJECT', N'SELECT'), 0) AS nvarchar(1))",
+  "  + N'|' + CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.sysjobhistory', N'OBJECT', N'SELECT'), 0) AS nvarchar(1));",
 ].join('\n');
-export const STATUS_RECHTE_SOLL = '0|0|0|0|0|1';
+export const STATUS_RECHTE_SOLL = '0|0|0|0|0|1|1|1';
 
 export function alfredLoginsAnlegenSkript(p: { nurNeu?: boolean }): string {
   const nurNeu = p.nurNeu === true;
@@ -115,7 +120,7 @@ export function alfredLoginsAnlegenSkript(p: { nurNeu?: boolean }): string {
     'a=$(SA="$KA"; SQL_LOGIN=alfred_admin; sql "$PRUEF_ADMIN" 2>&1) || abbruch "Anmeldung als alfred_admin fehlgeschlagen: $(sql_fehlerzeile "$a")"',
     '[ "$(alfred_zeile "$a")" = "ALFRED|1" ] || abbruch "alfred_admin ist nicht sysadmin ($(alfred_zeile "$a"))"',
     's=$(SA="$KS"; SQL_LOGIN=alfred_status; sql "$PRUEF_STATUS" 2>&1) || abbruch "Anmeldung als alfred_status fehlgeschlagen: $(sql_fehlerzeile "$s")"',
-    `[ "$(alfred_zeile "$s")" = "ALFRED|${STATUS_RECHTE_SOLL}" ] || abbruch "alfred_status: Rechte weichen ab ($(alfred_zeile "$s"), Soll ${STATUS_RECHTE_SOLL}: sysadmin|CONTROL SERVER|ALTER ANY LOGIN|INSERT backupset|VIEW SERVER STATE|SELECT backupset)"`,
+    `[ "$(alfred_zeile "$s")" = "ALFRED|${STATUS_RECHTE_SOLL}" ] || abbruch "alfred_status: Rechte weichen ab ($(alfred_zeile "$s"), Soll ${STATUS_RECHTE_SOLL}: sysadmin|CONTROL SERVER|ALTER ANY LOGIN|INSERT backupset|VIEW SERVER STATE|SELECT backupset|SELECT sysjobs|SELECT sysjobhistory)"`,
     'Z=schon; { [ "$ZA" = schon ] && [ "$ZS" = schon ]; } || Z=angelegt',
     '{ [ "$ZA" = angelegt ] || [ "$ZS" = angelegt ]; } || [ "$Z" = schon ] || Z=geaendert',
     'ergebnis "{\\"zustand\\":\\"$Z\\",\\"admin\\":\\"$ZA\\",\\"status\\":\\"$ZS\\"}"',

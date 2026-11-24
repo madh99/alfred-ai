@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Sicherungslage im SQL-Status für Linux und Windows (v1943)
+
+- `linux_sql status` und `sql_server status` zeigen je Datenbank die letzte FULL-, DIFF- und LOG-Sicherung mit Alter und dem Server, der sie geschrieben hat, sowie je Agent-Job den letzten Lauf mit Ergebnis. Beide nutzen dieselbe Abfrage (`sql-sicherung-lage.ts`), nur lesend.
+- Bei Alfreds Sicherungsjobs auf Linux erscheinen die Zeilen der Prozedur (`ALFRED|…`, `ALFRED-UEBERSPRUNGEN|…`, `ALFRED-ERZWUNGEN|…`) im Jobverlauf, weil `msdb.dbo.alfred_sicherung` sie zusätzlich per `PRINT` meldet. Damit ist sichtbar, ob ein Lauf gesichert, übersprungen oder eine Vollsicherung erzwungen hat. Die neue Fassung spielt `sicherung_einrichten` ein.
+- `alfred_status` (Linux) darf zusätzlich `msdb.dbo.sysjobs` und `msdb.dbo.sysjobhistory` lesen. Die Rechteprüfung von `alfred_logins_anlegen` erwartet jetzt `0|0|0|0|0|1|1|1`. Bestehende Hosts erhalten das Recht durch erneutes `alfred_logins_anlegen` im Change. Bis dahin meldet der Status „Jobverlauf nicht lesbar“ statt zu scheitern.
+
 ### Fixed — SQL Server Agent auf Linux startet wieder: TLS-Zertifikat außerhalb von secrets (v1942)
 
 - Ursache des Agent-Ausfalls seit 20./21.11. (Microsoft mssql-docker #979): Der Agent von SQL Server 2025 liest die Datei aus `network.tlscert` selbst. Unter `/var/opt/mssql/secrets` verweigert die Sandbox den Zugriff („SSL Provider: The data is invalid“), und der Agent beendet sich. Microsoft kündigt die Behebung für CU12 an.

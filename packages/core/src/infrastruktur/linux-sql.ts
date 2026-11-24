@@ -26,6 +26,7 @@
  */
 import { createHash } from 'node:crypto';
 import { registriereLinuxBaustein } from '../fernzugriff/linux-bausteine.js';
+import { JOBS_VORSPANN, SICHERUNGEN_JSON } from './sql-sicherung-lage.js';
 
 // ── Feste Werte (Quellen im Bericht task-2-report.md) ────────────────────────────────────────────────────────────────────────
 
@@ -960,6 +961,8 @@ function pruefdatenSkript(p: PruefdatenParameter): string {
 
 export const STATUS_TSQL = [
   'SET NOCOUNT ON;',
+  // Owner 24.11.: Jobverlauf nur mit Recht (sql-sicherung-lage.ts) — vorher angelegte alfred_status-Logins brechen den Status nicht
+  JOBS_VORSPANN,
   'SELECT (SELECT',
   "  CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(40)) AS version,",
   "  CAST(SERVERPROPERTY('ProductLevel') AS nvarchar(40)) AS stufe,",
@@ -981,7 +984,9 @@ export const STATUS_TSQL = [
   '   FROM sys.databases d ORDER BY d.name FOR JSON PATH, INCLUDE_NULL_VALUES) AS datenbanken,',
   // I8e Folge-Etappe: sa abgeschaltet (0/1) und vorhandene Alfred-Logins (alfred_status liest das über VIEW ANY DEFINITION)
   "  (SELECT CAST(is_disabled AS int) FROM sys.server_principals WHERE name = N'sa') AS saAbgeschaltet,",
-  "  (SELECT name FROM sys.server_principals WHERE name IN (N'alfred_admin', N'alfred_status') ORDER BY name FOR JSON PATH) AS alfredLogins",
+  "  (SELECT name FROM sys.server_principals WHERE name IN (N'alfred_admin', N'alfred_status') ORDER BY name FOR JSON PATH) AS alfredLogins,",
+  // Owner 24.11.: Sicherungslage — letzte Sicherung je Datenbank und Art mit Server, Jobverlauf (NULL ohne Recht, jobsLesbar 0)
+  `  ${SICHERUNGEN_JSON} AS sicherungen, JSON_QUERY(@jobs) AS jobs, @jobsLesbar AS jobsLesbar`,
   ' FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES) AS j;',
 ].join('\n');
 

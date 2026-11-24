@@ -14,6 +14,7 @@ import {
   type LinuxSqlZiel, type PlattenParameter, type InstallParameter, type KonfigParameter, type TempdbParameter, type LoginParameter,
 } from './linux-sql.js';
 import { NAME as TRESOR_NAME } from './tresor.js';
+import { sicherungsLageText, type SicherungsLage } from './sql-sicherung-lage.js';
 import {
   LINUX_SQL_SICHERUNG_BAUSTEINE, LINUX_SQL_SICHERUNG_ZEIT_MS, FS01_FQDN, pruefeSicherungEinrichten, pruefeSicherungJetzt, pruefeWiederherstellen,
   type SicherungEinrichtenParameter, type SicherungJetztParameter, type WiederherstellenParameter,
@@ -152,7 +153,7 @@ export interface LinuxSqlStatus {
     /** Überwachung 23.11.: Alter der letzten Sicherung in Minuten (DATEDIFF auf dem Server, zeitzonenfrei; null = nie), gruppe = group_database_id (AG) */
     datenbanken?: Array<{ name: string; modell?: string; zustand?: string; gruppe?: string | null; alterVollMin?: number | null; alterLogMin?: number | null }> | null;
     /** I8e Folge-Etappe: sa abgeschaltet (0/1), vorhandene Alfred-Logins */
-    saAbgeschaltet?: number | null; alfredLogins?: Array<{ name: string }> | null } | null;
+    saAbgeschaltet?: number | null; alfredLogins?: Array<{ name: string }> | null } & SicherungsLage | null;
   sqlHinweis?: string; sqlFehler?: string;
   /** I8e Folge-Etappe: Login der Status-Anmeldung und ob sie gelang (Überwachung); Host-Marke SA_SPERRE vorhanden */
   anmeldung?: { login: string; ok: boolean } | null;
@@ -266,7 +267,14 @@ function saText(s: LinuxSqlStatus): string {
   if (!q || q.saAbgeschaltet === undefined) return '';
   const sa = q.saAbgeschaltet === 1 ? (s.saMarke ? 'sa aus (gesperrt)' : 'sa aus (ohne Host-Marke)') : q.saAbgeschaltet === 0 ? 'sa aktiv' : 'sa unbekannt';
   const l = (q.alfredLogins ?? []).map(x => x.name).sort();
-  return `; ${sa}; Alfred-Logins ${l.length ? l.join(', ') : 'keine'}${agentText(s)}`;
+  return `; ${sa}; Alfred-Logins ${l.length ? l.join(', ') : 'keine'}${agentText(s)}${lageText(s)}`;
+}
+
+/** Owner 24.11.: Sicherungslage (letzte Sicherungen, Jobverlauf) am Ende — nur, wenn die SQL-Sicht sie liefert */
+function lageText(s: LinuxSqlStatus): string {
+  const q = s.sql;
+  if (!q || (q.sicherungen === undefined && q.jobsLesbar === undefined)) return '';
+  return `; ${sicherungsLageText(q)}`;
 }
 
 /** Überwachung 23.11.: Agent-Zustand nur bei eingeschaltetem Agent („GESTOPPT“ positiv prüfbar per nichtEnthalten) */

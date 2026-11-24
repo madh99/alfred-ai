@@ -10,6 +10,7 @@
  */
 import { IPV4, kopf, psText, neustart } from './windows-ad.js';
 import { alsDomaenenkonto, KONTO } from './windows-cluster.js';
+import { SICHERUNG_LAGE_TSQL, sicherungsLageLesen, sicherungsLageText } from './sql-sicherung-lage.js';
 
 export const BEZEICHNER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const SERVER = /^[A-Za-z0-9][A-Za-z0-9-]{0,14}$/;
@@ -66,6 +67,8 @@ export interface SqlStatus {
   ags?: Array<{ name: string; replikat: string; rolle: string; modus: string; failover: string; gesundheit: string; verbunden: string }>;
   agDbs?: Array<{ db: string; replikat: string; zustand: string }>;
   listener?: Array<{ name: string; port: number; ip: string }>;
+  /** Owner 24.11.: Sicherungslage als JSON-Text (SicherungsLage), bzw. Fehler der Abfrage */
+  sicherungsLage?: string; sicherungsLageFehler?: string;
   fehler?: string;
 }
 
@@ -86,6 +89,8 @@ export function sqlStatusSkript(instanz?: string): string {
     "      $r.agDbs = @(Sql \"SELECT DB_NAME(s.database_id) d, ar.replica_server_name r, s.synchronization_state_desc z FROM sys.dm_hadr_database_replica_states s JOIN sys.availability_replicas ar ON ar.replica_id = s.replica_id ORDER BY 1, 2\" | ForEach-Object { [ordered]@{ db = [string]$_.d; replikat = [string]$_.r; zustand = [string]$_.z } })",
     "      $r.listener = @(Sql \"SELECT l.dns_name n, l.port p, ISNULL(i.ip_address, '') i FROM sys.availability_group_listeners l LEFT JOIN sys.availability_group_listener_ip_addresses i ON i.listener_id = l.listener_id\" | ForEach-Object { [ordered]@{ name = [string]$_.n; port = [int]$_.p; ip = [string]$_.i } })",
     '    }',
+    // Owner 24.11.: Sicherungslage (sql-sicherung-lage.ts) als JSON-Text — eigener Versuch, ein Fehler hier bricht den übrigen Status nicht
+    `    try { $r.sicherungsLage = [string](Sql "${psDq(SICHERUNG_LAGE_TSQL)}" 60 'msdb')[0].j } catch { $r.sicherungsLageFehler = $_.Exception.Message }`,
     '  } catch { $r.fehler = $_.Exception.Message }',
     '}',
     'Ergebnis $r',
@@ -106,6 +111,9 @@ export function sqlStatusText(s: SqlStatus): string {
   }
   if (s.agDbs?.length) t.push(`AG-Datenbanken ${s.agDbs.map(d => `${d.db}@${d.replikat} ${d.zustand}`).join(', ')}`);
   if (s.listener?.length) t.push(`Listener ${s.listener.map(l => `${l.name}:${l.port} ${l.ip}`).join(', ')}`);
+  const lage = sicherungsLageLesen(s.sicherungsLage);
+  if (lage) t.push(sicherungsLageText(lage));
+  else if (s.sicherungsLageFehler) t.push(`Sicherungslage nicht lesbar: ${s.sicherungsLageFehler.slice(0, 200)}`);
   if (s.fehler) t.push(`Abfrage: ${s.fehler}`);
   return t.join('; ');
 }

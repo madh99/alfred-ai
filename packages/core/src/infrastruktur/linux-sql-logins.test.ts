@@ -79,6 +79,8 @@ describe('alfred_status: jede Status-Abfrage hat ein Recht, kein Recht mehr als 
     const herkunft: Record<string, string> = {
       'sys.configurations': 'public', 'sys.databases': 'public', 'tempdb.sys.database_files': 'public',
       'sys.dm_os_sys_info': 'VIEW SERVER STATE', 'msdb.dbo.backupset': 'SELECT ON msdb.dbo.backupset', 'sys.server_principals': 'VIEW ANY DEFINITION',
+      // Owner 24.11.: Jobverlauf der Sicherungslage
+      'msdb.dbo.sysjobs': 'SELECT ON msdb.dbo.sysjobs', 'msdb.dbo.sysjobhistory': 'SELECT ON msdb.dbo.sysjobhistory',
     };
     for (const o of objekte) expect(herkunft[o], o).toBeDefined();
     const noetig = new Set([...objekte].map(o => herkunft[o]!).filter(h => h !== 'public'));
@@ -94,7 +96,7 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_anlegen ausgeführt', { timeout
     expect(S).not.toMatch(/Adm-Geheim|Sta-Geheim/);
     expect(S).toContain('ALTER SERVER ROLE [sysadmin] ADD MEMBER [alfred_admin]');
     expect(S).not.toContain('ADD MEMBER [alfred_status]');
-    for (const g of ['GRANT VIEW ANY DEFINITION TO [alfred_status]', 'GRANT SELECT ON dbo.backupset TO [alfred_status]']) expect(S).toContain(g);
+    for (const g of ['GRANT VIEW ANY DEFINITION TO [alfred_status]', 'GRANT SELECT ON dbo.backupset TO [alfred_status]', 'GRANT SELECT ON dbo.sysjobs TO [alfred_status]', 'GRANT SELECT ON dbo.sysjobhistory TO [alfred_status]']) expect(S).toContain(g);
     // Review I4: kein VIEW SERVER STATE (fremde Sitzungen/SQL-Text lesbar), USE master vor den Server-Rechten, Rechte in jeder Datenbank geprüft
     expect(S).not.toContain('GRANT VIEW SERVER STATE');
     expect(S.indexOf('USE [master];')).toBeGreaterThan(-1);
@@ -104,7 +106,7 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_anlegen ausgeführt', { timeout
   });
 
   it('Erfolg: Marke für den Tresor, Selbstprüfung als alfred_admin (sysadmin) und als alfred_status (nur lesen)', () => {
-    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '0|0|0|0|0|1' });
+    const r = lauf(S, E, { admin_pruef: '1', status_pruef: '0|0|0|0|0|1|1|1' });
     expect(r.rc, r.aus).toBe(0);
     expect(r.aus).toContain('ALFRED-LOGIN-GESETZT');
     expect(r.e).toMatchObject({ zustand: 'angelegt', admin: 'angelegt', status: 'angelegt' });
@@ -123,7 +125,7 @@ describe.skipIf(!BASH || !PYTHON)('alfred_logins_anlegen ausgeführt', { timeout
   });
 
   it('alfred_admin nicht sysadmin → Abbruch', () => {
-    const r = lauf(S, E, { admin_pruef: '0', status_pruef: '0|0|0|0|0|1' });
+    const r = lauf(S, E, { admin_pruef: '0', status_pruef: '0|0|0|0|0|1|1|1' });
     expect(r.rc).not.toBe(0);
     expect(r.e?.fehler).toMatch(/alfred_admin ist nicht sysadmin/);
   });

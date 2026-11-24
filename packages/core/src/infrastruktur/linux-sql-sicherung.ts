@@ -252,6 +252,11 @@ BEGIN
   END
   CLOSE d; DEALLOCATE d;
   SELECT zeile FROM @r;
+  -- Owner 24.11.: dieselben Zeilen als Meldung — der Agent übernimmt PRINT in den Jobverlauf (Ergebnismengen nicht), Status zeigt sie.
+  -- Vorsatz „Alfred-Sicherung: “, damit die Zeile nie mit ALFRED| beginnt (sqlcmd gibt PRINT aus; sicherung_jetzt liest ^ALFRED…)
+  -- nvarchar(max): ohne CAST endet STRING_AGG bei 4000 Zeichen mit Fehler 9829 (viele Datenbanken)
+  DECLARE @aus nvarchar(max) = (SELECT STRING_AGG(CAST(zeile AS nvarchar(max)), N' ; ') FROM @r);
+  IF @aus IS NOT NULL PRINT N'Alfred-Sicherung: ' + LEFT(@aus, 3800);
   IF @fehler <> N'' BEGIN SET @msg = LEFT(N'Sicherung ' + @art + N' fehlgeschlagen: ' + @fehler, 2048); THROW 50011, @msg, 1; END
   IF @streng = 1 AND NOT EXISTS (SELECT 1 FROM @r WHERE zeile LIKE N'ALFRED|%') THROW 50013, N'Datenbank nicht gefunden oder nicht sicherbar (online, nicht schreibgeschuetzt, Name Buchstaben/Ziffern/_)', 1;
 END`;
