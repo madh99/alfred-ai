@@ -76,6 +76,10 @@ describe('I8e Paket 2 — Skill linux_ha', () => {
     expect(v({ halter: [{ pid: 1, name: 'systemd', exe: '/usr/lib/systemd/systemd' }] })).toContain('Watchdog i6300esb BELEGT von systemd(1)');
     expect(v({ pakete: { ...STATUS_OK.pakete, pcs: { version: '0.11.8-1', gehalten: true }, sbd: { version: null, gehalten: false }, corosync: { version: SOLL.corosync, gehalten: false } } }))
       .toContain('Pakete abweichend: corosync nicht gehalten, pcs 0.11.8-1 (soll 0.11.7-1ubuntu1.1), sbd fehlt');
+    // CU-Update (Owner 23./24.11.): mssql-server-ha folgt der installierten mssql-server-Version, nicht dem festen Einrichtungsstand
+    const cu = { version: '17.0.5065.9-3', gehalten: true };
+    expect(v({ pakete: { ...STATUS_OK.pakete, 'mssql-server': cu, 'mssql-server-ha': cu } })).toContain('Pakete fest;');
+    expect(v({ pakete: { ...STATUS_OK.pakete, 'mssql-server': cu } })).toContain('Pakete abweichend: mssql-server-ha 17.0.4006.2-1 (soll 17.0.5065.9-3)');
     expect(v({ hadr: null, hosts: false, runtimeWatchdog: '10s', pcsd: 'inactive', firewall: { tabelle: false, dienst: 'inactive', aktiviert: 'disabled' } }))
       .toBe('k: Watchdog i6300esb frei; Pakete fest; HADR aus; Firewall alfred_ha nicht geladen, Dienst inactive, disabled; hosts-Block fehlt; RuntimeWatchdog AN (10s); sbd wartet auf Watchdog; pcsd inactive; Cluster nicht eingerichtet; Fencing nicht belegt');
     expect(v({ hostsLoopback: ['127.0.1.1 sqllnx02.ad.3033.at sqllnx02'] })).toContain('hosts-Block mit eigenem Namen auf Loopback (127.0.1.1 sqllnx02.ad.3033.at sqllnx02)');

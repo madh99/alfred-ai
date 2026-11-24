@@ -29,6 +29,7 @@ import { tlsParameter, tlsEingabe, erwarteteRoot, TLS_ANFORDERN_GRUND, TLS_HOSTS
 import { csrSha256, pruefeCsrForm } from './windows-sqltls-linux.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pruefeSaSchalten } from './linux-sql-logins.js';
+import { pruefeSqlUpdate, SQL_UPDATE_OHNE_RUECKWEG } from './linux-sql-update.js';
 import { SA_SPERRE } from './linux-sql.js';
 import { saName, sqlAnmeldung, alfredLoginTresor, ADMIN_LOGIN, STATUS_LOGIN, type SqlLogin } from './linux-sql-anmeldung.js';
 
@@ -71,6 +72,7 @@ export const LINUX_SQL_MIN_ZEITLIMIT_S: Readonly<Record<string, number>> = {
   alfred_logins_entfernen: sek(LINUX_SQL_ZEIT_MS.alfredLoginsEntfernen) + 60,
   sa_schalten: sek(LINUX_SQL_ZEIT_MS.saSchalten) + 60,
   jobverlauf_recht: sek(LINUX_SQL_ZEIT_MS.jobverlaufRecht) + 60,
+  aktualisieren: sek(LINUX_SQL_ZEIT_MS.aktualisieren) + 60,
   sa_kennwort_setzen: sek(LINUX_SQL_ZEIT_MS.saKennwortSetzen) + 60,
 };
 
@@ -109,7 +111,9 @@ const NUR_IM_CHANGE = new Set(['platten_einrichten', 'installieren', 'konfigurie
   // Microsoft #979 — öffentliches Zertifikat aus secrets in den eigenen Ordner (Rückweg an umgekehrt)
   'tls_pfad_umstellen',
   // I8e Folge-Etappe — eigene Alfred-Logins (Rückweg entfernen), sa schalten (Rückweg an umgekehrt), Notfallweg sa-Kennwort setzen
-  'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen', 'jobverlauf_recht']);
+  'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen', 'jobverlauf_recht',
+  // Owner 23./24.11. — SQL-Server-Update (CU) je Knoten im Standby, rollierend (kein Rückweg: Downgrade wird nicht unterstützt)
+  'aktualisieren']);
 /** Standard-Tresor-Eintrag des fs01-Dienstkontos (windows_ad dienstkonto_anlegen konto svc-sqllnx-backup) */
 export const SICHERUNG_KONTO_TRESOR = 'ad-svc-sqllnx-backup';
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
@@ -547,6 +551,10 @@ export class LinuxSqlSkill extends Skill {
       + 'ALFRED-LOGINS UND sa (alle drei Instanzen, je Zugang ein Schritt, nur im Change): alfred_logins_anlegen (zugang) — alfred_admin (sysadmin) und alfred_status (nur lesen: VIEW SERVER STATE, VIEW ANY DEFINITION, SELECT msdb.dbo.backupset), Kennwörter erzeugt Alfred im Tresor (sqllnx-<zugang>-alfred-admin/-alfred-status); danach melden sich ändernde Aktionen als alfred_admin, status als alfred_status an, nie mehr als sa ↔ rueckweg Pflicht alfred_logins_entfernen (zugang; nur solange sa aktiv). '
       + 'sa_schalten (zugang, an false = sa abschalten + Host-Marke, true = einschalten) — nur als alfred_admin ↔ rueckweg Pflicht sa_schalten mit an umgekehrt. '
       + 'jobverlauf_recht (zugang, an true = alfred_status darf msdb.dbo.sysjobs/sysjobhistory lesen, false = Recht entziehen; Logins bleiben) — nur als alfred_admin, für bestehende Hosts statt alfred_logins_anlegen ↔ rueckweg Pflicht jobverlauf_recht mit an umgekehrt. '
+      + 'aktualisieren (nur im Change; zugang, version = apt-Version wie 17.0.5065.9-3) — SQL-Server-Update (CU): mssql-server und, falls installiert, mssql-server-ha auf dieselbe Version, danach wieder gehalten; nur als alfred_admin; '
+      + 'Voraussetzung bei Pacemaker: Knoten vorher mit linux_ha knoten_standby an=true (keine aktive ag_cluster-Instanz mehr; so ist der Knoten nie Primär), danach knoten_standby an=false; kein Downgrade, Ziel muss in der Paketquelle sein; '
+      + 'Selbstprüfung: Dienst aktiv/aktiviert, Anmeldung (Skript-Upgrade bis 10 min), ProductVersion = Ziel, Pakete in Zielversion gehalten, mssql.conf unverändert; Wortlaut „SQL_AKTUALISIERT <zugang>: <von> → <version>“. '
+      + 'Reihenfolge rollierend: sqllnxcfg und der Sekundär zuerst, dann ag_failover, dann der bisherige Primär; je Knoten danach linux_ha status mit „SECONDARY SYNCHRONIZED“. Kein Rückweg: rueckweg {keiner: „' + SQL_UPDATE_OHNE_RUECKWEG + '“}. '
       + 'sa_kennwort_setzen (zugang) — Notfallweg: setzt das vorhandene sa-Kennwort aus dem Tresor per mssql-conf set-sa-password (Dienst wird gestoppt und gestartet); Voraussetzung: Pacemaker-Knoten vorher mit linux_ha knoten_standby an=true in Standby. '
       + 'Alle Aktionen sind wiederholbar („nichts zu tun“) und prüfen ihr Ergebnis selbst. Ohne Rückweg nur beim Neuaufbau: derselbe Change stellt die VM vorher mit proxmox.provision_vm bereit (Rückweg = VM löschen) oder ohneSicherungGrund ist gesetzt — sonst vorher sichern und rueckweg angeben.',
     riskLevel: 'admin',
@@ -558,7 +566,7 @@ export class LinuxSqlSkill extends Skill {
         action: { type: 'string', enum: [...LESEND, ...NUR_IM_CHANGE] },
         zugang: { type: 'string', description: 'Name des Linux-Fernzugangs (z. B. sqllnx01)' },
         platten: { type: 'array', items: { type: 'object', properties: { scsi: { type: 'number' }, groesse_gib: { type: 'number' }, ziel: { type: 'string', enum: ['data', 'log', 'tempdb', 'backup'] } } }, description: 'platten_einrichten: Zusatzplatten nach SCSI-Position' },
-        version: { type: 'string', description: 'installieren: apt-Version von mssql-server, z. B. 17.0.4006.2-1' },
+        version: { type: 'string', description: 'installieren: apt-Version von mssql-server, z. B. 17.0.4006.2-1; aktualisieren: Zielversion, z. B. 17.0.5065.9-3' },
         einhaengepunkte: { type: 'array', items: { type: 'string' }, description: 'installieren/konfigurieren: Plattenziele, die vor dem Setup eingehängt sein müssen (Standard alle vier; sonst nur ["data"] für den Konfig-Knoten sqllnxcfg)' },
         speicher_limit_mb: { type: 'number' }, max_server_memory_mb: { type: 'number' },
         tempdb_dateien: { type: 'number', description: 'Standard: Kerne, höchstens 8' }, tempdb_mb: { type: 'number' }, tempdb_wachstum_mb: { type: 'number' }, tempdb_log_mb: { type: 'number' },
@@ -643,6 +651,7 @@ export class LinuxSqlSkill extends Skill {
       else if (action === 'tls_einspielen') tlsEingabe(input);
       else if (action === 'tls_erzwingen') { tlsErzwingenParameter(String(input.zugang), input); if (input.an === true) pruefeTresorName(saName(String(input.zugang).trim())); }
       else if (action === 'sa_schalten' || action === 'jobverlauf_recht') { const f = pruefeSaSchalten(input); if (f) throw new Error(f); }
+      else if (action === 'aktualisieren') { const f = pruefeSqlUpdate(input); if (f) throw new Error(f); }
       else if (action === 'ad_login' || action === 'ad_login_entfernen') { adLoginParameter(String(input.zugang), input); pruefeTresorName(saName(String(input.zugang).trim())); }
       if (['sicherung_einrichten', 'sicherung_jetzt', 'wiederherstellen_pruefen'].includes(action)) pruefeTresorName(saName(String(input.zugang).trim()));
     } catch (err) { return (err as Error).message.slice(0, 200); }
@@ -703,6 +712,7 @@ export class LinuxSqlSkill extends Skill {
         case 'alfred_logins_entfernen': return await this.alfredLoginsEntfernen(zugang, geheim);
         case 'sa_schalten': return await this.saSchalten(zugang, input, geheim);
         case 'jobverlauf_recht': return await this.jobverlaufRecht(zugang, input, geheim);
+        case 'aktualisieren': return await this.aktualisieren(zugang, input, geheim);
         case 'sa_kennwort_setzen': return await this.saKennwortSetzen(zugang, geheim);
       }
     } catch (err) { return { success: false, error: schwaerze((err as Error).message, geheim).slice(0, 800) }; }
@@ -1188,6 +1198,19 @@ export class LinuxSqlSkill extends Skill {
     if (r.rechte !== soll) throw new Error(`jobverlauf_recht ${zugang}: Nachprüfung fehlgeschlagen (${String(r.rechte)} Rechte, Soll ${soll})`);
     this.d.protokoll?.('Jobverlauf-Recht geschaltet', { zugang, an, zustand: r.zustand });
     const text = `JOBVERLAUF_RECHT ${an ? 'AN' : 'AUS'} ${zugang}: alfred_status ${an ? 'liest' : 'liest nicht mehr'} msdb.dbo.sysjobs und sysjobhistory (${soll} Rechte im Katalog)`;
+    return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
+  }
+
+  /** Owner 23./24.11.: SQL-Server-Update (CU) auf einem Knoten im Standby — nur als alfred_admin, Selbstprüfung im Baustein */
+  private async aktualisieren(zugang: string, input: Record<string, unknown>, geheim: string[]): Promise<SkillResult> {
+    const f = pruefeSqlUpdate(input); if (f) throw new Error(f);
+    const version = String(input.version);
+    const e = await this.sa(zugang, `SQL-Server-Update auf ${zugang}`, geheim);
+    if (e.login !== ADMIN_LOGIN) throw new Error(`aktualisieren auf ${zugang} nur als alfred_admin — nichts geändert`);
+    const r = await this.lauf<{ zustand: string; von?: string; version?: string; paket?: string; ha?: string | null }>(zugang, LINUX_SQL_BAUSTEINE.aktualisieren, { version }, 'SQL-Server-Update', LINUX_SQL_ZEIT_MS.aktualisieren, e);
+    if (r.paket !== version || r.version !== version.replace(/-\d+$/, '')) throw new Error(`aktualisieren ${zugang}: Nachprüfung fehlgeschlagen (Paket ${String(r.paket)}, Version ${String(r.version)}, Soll ${version})`);
+    this.d.protokoll?.('SQL-Server aktualisiert', { zugang, von: r.von, version: r.version, ha: r.ha, zustand: r.zustand });
+    const text = `SQL_AKTUALISIERT ${zugang}: ${r.von ?? '?'} → ${r.version}${r.ha ? ` (mssql-server-ha ${r.ha})` : ''}, Pakete gehalten, mssql.conf unverändert`;
     return { success: true, data: r, display: r.zustand === 'schon' ? `${text} — nichts zu tun` : `✅ ${text}` };
   }
 

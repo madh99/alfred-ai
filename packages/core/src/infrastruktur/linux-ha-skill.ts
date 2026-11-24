@@ -198,8 +198,10 @@ function watchdogText(s: LinuxHaStatus): string {
 function paketeText(s: LinuxHaStatus): string {
   const p = s.pakete ?? {}; const soll = s.soll ?? {};
   const ab: string[] = [];
-  for (const [pk, v] of Object.entries(soll)) {
+  for (const [pk, v0] of Object.entries(soll)) {
     const ist = p[pk];
+    // Owner 23./24.11. (CU-Update): mssql-server-ha folgt der installierten mssql-server-Version, nicht dem festen Stand der Einrichtung
+    const v = pk === 'mssql-server-ha' && p['mssql-server']?.version ? p['mssql-server'].version : v0;
     if (!ist?.version) ab.push(`${pk} fehlt`);
     else if (ist.version !== v) ab.push(`${pk} ${ist.version} (soll ${v})`);
     else if (!ist.gehalten) ab.push(`${pk} nicht gehalten`);

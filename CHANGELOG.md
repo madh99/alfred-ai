@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — `linux_sql aktualisieren`: SQL-Server-Update (CU) je Knoten, rollierend per Change (v1946)
+
+- Neue Aktion `aktualisieren` (nur im Change, nur als `alfred_admin`, Parameter `version` als apt-Version wie `17.0.5065.9-3`). Sie hebt `mssql-server` und, falls installiert, `mssql-server-ha` auf dieselbe Version und hält beide danach wieder fest (`hold`). Bisher änderte `installieren` eine vorhandene Version bewusst nicht, ein Update war nicht möglich.
+- Vor jeder Änderung wird geprüft: Knoten im Pacemaker-Standby und keine aktive `ag_cluster`-Instanz mehr (der Knoten ist so nie Primär), kein Downgrade, Ziel in der Paketquelle, `mssql-server-ha` passt zur installierten Version. Selbstprüfung danach: Dienst aktiv und aktiviert, Anmeldung (Skript-Upgrade-Modus bis 10 Minuten), `ProductVersion` gleich Ziel, beide Pakete gehalten, `mssql.conf` unverändert (TLS-Pfad, erzwungene Verschlüsselung). Bricht der Lauf mitten im Update ab, werden die Pakete wieder gehalten und der Dienst gestartet.
+- Ein CU ist nicht zurücknehmbar. Der Schritt steht deshalb nur mit dem festen Grund `rueckweg {keiner: …}` im Plan; abgesichert wird über die Reihenfolge (Standby, Sekundär zuerst, Primär erst nach dem Failover, Synchronisierung je Knoten). Feste Ausgabe für Prüfungen: „SQL_AKTUALISIERT <zugang>: <von> → <version> …“.
+
+### Fixed — HA-Status meldet nach einem SQL-Update keine falsche Paketabweichung (v1946)
+
+- `linux_ha status` verglich `mssql-server-ha` mit dem festen Stand der Einrichtung (17.0.4006.2-1) und hätte nach jedem CU „Pakete abweichend“ gemeldet. Das Soll ist jetzt die installierte `mssql-server`-Version.
+
 ### Added — `linux_sql jobverlauf_recht`: Leserecht auf den Jobverlauf ohne Login-Abbau (v1945)
 
 - Neue Aktion `jobverlauf_recht` (nur im Change, nur als `alfred_admin`): `an=true` gibt `alfred_status` SELECT auf `msdb.dbo.sysjobs` und `sysjobhistory`, `an=false` entzieht es. Der Nachweis kommt aus dem msdb-Katalog (2 bzw. 0 Rechte). Der Pflicht-Rückweg ist dieselbe Aktion mit umgekehrtem `an`, die Logins bleiben unangetastet. Bestehende Hosts brauchten bisher `alfred_logins_anlegen`, dessen Pflicht-Rückweg `alfred_logins_entfernen` bei abgeschaltetem `sa` nicht laufen kann.

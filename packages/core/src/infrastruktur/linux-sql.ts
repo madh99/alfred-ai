@@ -82,6 +82,8 @@ export const LINUX_SQL_BAUSTEINE = {
   alfredLoginsAnlegen: 'sql.alfred_logins_anlegen', alfredLoginsEntfernen: 'sql.alfred_logins_entfernen', saSchalten: 'sql.sa_schalten', saKennwortSetzen: 'sql.sa_kennwort_setzen',
   // Owner 24.11.: Leserecht von alfred_status auf den Jobverlauf (sysjobs/sysjobhistory) schalten — Rückweg ohne Login-Abbau
   jobverlaufRecht: 'sql.jobverlauf_recht',
+  // Owner 23./24.11.: SQL-Server-Update (CU) je Knoten, rollierend per Change (Erzeuger in linux-sql-update.ts)
+  aktualisieren: 'sql.aktualisieren',
 } as const;
 
 /**
@@ -154,6 +156,8 @@ export const LINUX_SQL_ZEIT_MS = {
   tlsPfadUmstellen: 90_000,
   // I8e Folge-Etappe: Logins/sa je bereit (120 s) + zwei Anmeldungen; Notfallweg: Dienst stoppen, set-sa-password, starten, bereit (120 s)
   alfredLoginsAnlegen: 240_000, alfredLoginsEntfernen: 180_000, saSchalten: 180_000, saKennwortSetzen: 600_000, jobverlaufRecht: 180_000,
+  // CU-Update: apt update + Download + Installation + Skript-Upgrade-Modus (bis 10 min) — wie die Installation
+  aktualisieren: 1_500_000,
 } as const;
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────

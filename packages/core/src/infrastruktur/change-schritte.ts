@@ -84,6 +84,8 @@ export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Fix-Runde 1: eine geladene Test-Sperre hängt „ — Corosync-Sperre alfred_fencetest AKTIV“ an den Fencing-Teil (Prüfung: nichtEnthalten „Sperre“)
   // Live-Fix (c2e4f56d): „; sbd wartet auf Watchdog“ nach RuntimeWatchdog
   // Ruling R22: abweichende 1433-Zusatzquellen → „Firewall alfred_ha veraltet (…)“ statt „aktiv“ — „Firewall alfred_ha aktiv“ belegt also auch die Menge
+  // Owner 23./24.11. — Wortlaut aus LinuxSqlSkill.aktualisieren
+  'linux_sql.aktualisieren': 'SQL_AKTUALISIERT {zugang}: {von} → {version} (mssql-server-ha {ha}), Pakete gehalten, mssql.conf unverändert — nichts zu tun',
   'linux_ha.status': '{zugang}: Watchdog {watchdog}; Pakete {pakete}; HADR {hadr}; Firewall alfred_ha {firewall}; hosts-Block {hosts}; RuntimeWatchdog {rw}; sbd {sbd}; pcsd {pcsd}; Cluster {cluster}; Fencing {fencing}'
     + ' | Watchdog i6300esb frei | Watchdog i6300esb bei sbd | Pakete fest | HADR an | Firewall alfred_ha aktiv | hosts-Block vorhanden | RuntimeWatchdog aus | sbd wartet auf Watchdog | pcsd aktiv'
     + ' | Cluster sqllnxcl01: 3/3 online, Quorum ja, STONITH an, SBD aktiv 3/3, stonith-watchdog-timeout 20s | Fencing belegt'
@@ -248,7 +250,9 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
     // I8e Folge-Etappe — Logins (Anmeldung als beide, Rechte-Nachweis), sa (is_disabled + Host-Marke zurückgelesen), Notfallweg (Anmeldung als sa)
     'alfred_logins_anlegen', 'alfred_logins_entfernen', 'sa_schalten', 'sa_kennwort_setzen',
     // Owner 24.11. — Jobverlauf-Recht: Rechte im msdb-Katalog zurückgelesen (2 bzw. 0)
-    'jobverlauf_recht']),
+    'jobverlauf_recht',
+    // Owner 23./24.11. — CU-Update: ProductVersion, Paketversionen + hold, mssql.conf-Hash zurückgelesen
+    'aktualisieren']),
   // I8e Task 4 — Dienstkonto: Anlage prüft LDAP-Anmeldung mit dem Tresor-Kennwort, aktiv, Flags, OU; Entfernen prüft die Abwesenheit
   // I8e Etappe 3 — SPNs (genau einmal im Wald, am Konto), Computerkonto (aktiv, OU, Kennwort in diesem Lauf gesetzt), PTR (Auflösung an
   // allen DCs), Gruppe (Mitglieder zurückgelesen); die Rückwege prüfen die Abwesenheit
@@ -365,7 +369,10 @@ const OHNE_RUECKWEG_NUR_MIT_GRUND: Readonly<Record<string, ReadonlyMap<string, s
   linux_ha: new Map([['fencing_pruefen', 'Testknoten setzt sich selbst zurück; Beleg folgt mit fencing_belegen']]),
   // I8e Etappe 3 Task 6 — tls_anfordern ändert keine Konfiguration (Text gleich TLS_ANFORDERN_GRUND in linux-sql-tls.ts). Ein Rückweg
   // tls_entfernen wäre falsch: bei einer Erneuerung nähme er das laufende Zertifikat weg
-  linux_sql: new Map([['tls_anfordern', 'nur Schlüssel tls.key.neu und Anforderung, keine Konfiguration — tls_entfernen räumt den unbenutzten Schlüssel ab']]),
+  // Owner 23./24.11. — aktualisieren (CU): ein Downgrade wird nicht unterstützt; ein VM-Snapshot als Rückweg drehte das AG-Replikat zurück
+  // (Text gleich SQL_UPDATE_OHNE_RUECKWEG in linux-sql-update.ts)
+  linux_sql: new Map([['tls_anfordern', 'nur Schlüssel tls.key.neu und Anforderung, keine Konfiguration — tls_entfernen räumt den unbenutzten Schlüssel ab'],
+    ['aktualisieren', 'CU nicht zurücknehmbar (Downgrade nicht unterstützt) — Absicherung: Standby, Sekundär zuerst, Primär erst nach dem Failover, Synchronisierung je Knoten geprüft']]),
 };
 const selbstGeprueft = (skill: string | undefined, aktion: string | undefined) => !!aktion && (SELBST_GEPRUEFT.has(aktion) || !!(skill && SELBST_GEPRUEFT_JE_SKILL[skill]?.has(aktion)));
 /**

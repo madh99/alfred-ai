@@ -669,7 +669,7 @@ describe('R45 — erwartet bei unifi.list_firewall_policies', () => {
 describe('v1767 — erwartet bei Status-Abfragen mit festem Wortlaut', () => {
   it('weist „SSH“ ab (Realfall 6f7b0b99 Schritt 3), lässt Wortlaut-Stücke, Namen, IPs und Platzhalter durch', async () => {
     const { FESTE_AUSGABEN } = await import('./change-schritte.js');
-    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen', 'linux_ha.status',
+    expect(Object.keys(FESTE_AUSGABEN)).toEqual(['proxmox.agent_status', 'fernzugriff.pruefen', 'linux_sql.status', 'linux_sql.sicherungen', 'linux_sql.aktualisieren', 'linux_ha.status',
       'windows_ad.sql_anmeldung_pruefen', 'windows_ad.spn_lesen', 'proxmox.windows_lizenz', 'windows_pki.fremd_csr_ausstellen']);
     const plan = (pruefung: Record<string, unknown>) => ({ titel: 'Probe prüfen', begruendung: 'Realfall 6f7b0b99', typ: 'normal', risiko: 'niedrig', ausfallMinuten: 0, betroffen: ['probe-win25b'],
       schritte: [{ titel: 'Prüfen', art: 'pruefung', pruefung }] });
