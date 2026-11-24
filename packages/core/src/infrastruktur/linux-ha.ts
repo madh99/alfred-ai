@@ -2856,7 +2856,16 @@ export function haAgEntfernenSkript(p: HaAgEntfernenParameter): string {
 // Primär SECONDARY/CONNECTED und synchron, Selbstprüfung. Ist das Ziel schon Primär: kein move, nur eine liegengebliebene cli-prefer/
 // cli-ban freigeben (als Änderung gemeldet) und dieselbe Selbstprüfung. Rückweg = ag_failover zurück (zugang/ziel vertauscht).
 
-export interface HaAgFailoverParameter { ag: string; ziel: string; vorher: string; knoten: HaKnoten[] }
+export interface HaAgFailoverParameter {
+  ag: string; ziel: string; vorher: string; knoten: HaKnoten[];
+  /**
+   * CU-Update (Microsoft Upgrade Schritt 4–7): das Ziel hat schon die höhere Version, der bisherige Primär noch die alte. SQL Server hält
+   * die Datenbewegung zu ihm an — er wird erst nach seinem Update und linux_sql hadr_fortsetzen wieder synchron. Mit upgrade=true wartet
+   * der Baustein nach dem Wechsel nur auf PRIMARY hier (Promoted, VIP, Standort-Bedingungen wie immer), nicht auf die Gegenstelle.
+   * Die Vorbedingung (Ziel SYNCHRONIZED) bleibt unverändert.
+   */
+  upgrade?: boolean;
+}
 
 /** Ziel und bisheriger Primär (zugang): zwei verschiedene Datenreplikate — nie das CONFIGURATION_ONLY-Replikat */
 export function pruefeHaAgFailover(p: unknown): string | undefined {
@@ -2869,6 +2878,7 @@ export function pruefeHaAgFailover(p: unknown): string | undefined {
     if (typeof v !== 'string' || !daten.includes(v)) return `${wer}: ein Datenreplikat (${daten.join(', ')})`;
   }
   if (x.ziel === x.vorher) return 'ziel und zugang (bisheriger Primär) müssen verschiedene Datenreplikate sein';
+  if (x.upgrade !== undefined && typeof x.upgrade !== 'boolean') return 'upgrade: true oder false';
   return undefined;
 }
 
@@ -2925,7 +2935,8 @@ freigeben() {
   else aend standort-bedingung-entfernt; FREIGABE="Standort-Bedingung mit pcs resource clear $AG_KLON entfernt"; fi
 }
 warte_primaer() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do pm_lage; if [ "$PROM" = "$ICH" ] && lage_versuch && [ "$LOKAL" = PRIMARY ]; then return 0; fi; sleep 2; done; return 1; }
-warte_gegenstelle() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if lage_versuch && [ "$LOKAL" = PRIMARY ] && [ "$ALTROLLE" = SECONDARY ] && [ "$ALTVERB" = CONNECTED ] && [ "$NALT" = "$NDB" ]; then return 0; fi; sleep 2; done; return 1; }`);
+# CU-Update (upgrade): nur PRIMARY hier — der bisherige Primär mit älterer Version bleibt bis zu seinem Update angehalten
+warte_gegenstelle() { local i; for i in $(seq 1 "$WARTE_RUNDEN"); do if lage_versuch && [ "$LOKAL" = PRIMARY ] && { [ "$UPGRADE" = 1 ] || { [ "$ALTROLLE" = SECONDARY ] && [ "$ALTVERB" = CONNECTED ] && [ "$NALT" = "$NDB" ]; }; }; then return 0; fi; sleep 2; done; return 1; }`);
 
 const AG_FAILOVER_KOERPER = sh(String.raw`knoten_ich
 geheim_lesen sa SA "sa-Kennwort"
@@ -3016,7 +3027,7 @@ pm_lage
 { [ "$PROM" = "$ICH" ] && [ "$VIPN" = "$ICH" ]; } || abbruch "Selbstprüfung: Promoted auf '$PROM', VIP auf '$VIPN' — erwartet $ICH; $(stand)"
 vip_lokal || abbruch "Selbstprüfung: VIP $VIP_IP/$VIP_PRAEFIX ist auf $ICH nicht gebunden — $(stand)"
 if [ "$GEAENDERT" = 1 ]; then Z=geaendert; else Z=schon; fi
-ergebnis "{\"zustand\":\"$Z\",\"ag\":\"$AG\",\"primaer\":\"$ICH\",\"vorher\":\"$VORHER\",\"dauerS\":$DAUER,\"vip\":\"$VIP_IP/$VIP_PRAEFIX\",\"vipAuf\":\"$VIPN\",\"promotedAuf\":\"$PROM\",\"requiredSyncSql\":$RS,\"requiredSyncRessource\":\"$rr\",\"altRolle\":\"$ALTROLLE\",\"datenbanken\":$(db_json "$LALT"),\"standortBedingungen\":0,\"aenderungen\":[$AJ]}"`);
+ergebnis "{\"zustand\":\"$Z\",\"ag\":\"$AG\",\"primaer\":\"$ICH\",\"vorher\":\"$VORHER\",\"dauerS\":$DAUER,\"vip\":\"$VIP_IP/$VIP_PRAEFIX\",\"vipAuf\":\"$VIPN\",\"promotedAuf\":\"$PROM\",\"requiredSyncSql\":$RS,\"requiredSyncRessource\":\"$rr\",\"altRolle\":\"$ALTROLLE\",\"upgrade\":$([ "$UPGRADE" = 1 ] && echo true || echo false),\"datenbanken\":$(db_json "$LALT"),\"standortBedingungen\":0,\"aenderungen\":[$AJ]}"`);
 
 /**
  * Geplantes Failover auf das Ziel (läuft dort; nur sa über stdin): Abbruch ohne Änderung, wenn das Ziel nicht SYNCHRONIZED ist,
@@ -3027,8 +3038,9 @@ ergebnis "{\"zustand\":\"$Z\",\"ag\":\"$AG\",\"primaer\":\"$ICH\",\"vorher\":\"$
 export function haAgFailoverSkript(p: HaAgFailoverParameter): string {
   pruefe(pruefeHaAgFailover(p));
   return [
-    ...agKopf(LINUX_HA_BAUSTEINE.agFailover, { ag: p.ag, ziel: p.ziel, vorher: p.vorher, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })) }, p.ag, 'failover-ziel', p.ziel),
+    ...agKopf(LINUX_HA_BAUSTEINE.agFailover, { ag: p.ag, ziel: p.ziel, vorher: p.vorher, knoten: p.knoten.map(x => ({ name: x.name, ip: x.ip })), ...(p.upgrade ? { upgrade: true } : {}) }, p.ag, 'failover-ziel', p.ziel),
     `ALT=${shQ(p.vorher)}`,
+    `UPGRADE=${p.upgrade === true ? 1 : 0}`,
     `T_LAGE=${shQ(tsqlFailover(p))}`,
     FO_HILFEN,
     '# ALFRED-ABLAUF',

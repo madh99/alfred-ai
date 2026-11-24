@@ -349,7 +349,7 @@ function agEntfernenBesetzung(zugang: string, input: Record<string, unknown>): {
 /** Task 6 — Failover: zugang = bisheriger Primär, ziel = neuer Primär (beides Datenreplikate, verschieden); läuft auf dem Ziel */
 function agFailoverParameter(zugang: string, input: Record<string, unknown>): HaAgFailoverParameter {
   const ziel = (typeof input.ziel === 'string' ? input.ziel.trim().toLowerCase() : input.ziel) as string;
-  const p: HaAgFailoverParameter = { ag: agName(input), ziel, vorher: zugang.trim().toLowerCase(), knoten: HA_KNOTEN.map(k => ({ ...k })) };
+  const p: HaAgFailoverParameter = { ag: agName(input), ziel, vorher: zugang.trim().toLowerCase(), knoten: HA_KNOTEN.map(k => ({ ...k })), ...(input.upgrade === undefined ? {} : { upgrade: input.upgrade as boolean }) };
   const f = pruefeHaAgFailover(p); if (f) throw new Error(f);
   return p;
 }
@@ -449,6 +449,7 @@ export class LinuxHaSkill extends Skill {
         datenbanken: { type: 'array', description: 'ag_anlegen: Datenbanken der AG (auf dem Primär vorhanden, FULL, mit FULL-Sicherung)' },
         vip: { type: 'string', description: `ag_anlegen: virtuelle IP mit Präfix (Standard ${HA_AG_VIP})` },
         ziel: { type: 'string', description: 'ag_failover: neuer Primär (Datenreplikat; zugang = bisheriger Primär)' },
+        upgrade: { type: 'boolean', description: 'ag_failover beim CU-Update: true = Ziel schon aktualisiert, bisheriger Primär noch alt — nach dem Wechsel nicht auf seine Synchronisierung warten (sie ist bis zu seinem Update und linux_sql hadr_fortsetzen angehalten)' },
       },
       required: ['action', 'zugang'],
     },

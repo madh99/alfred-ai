@@ -2127,13 +2127,32 @@ describe.skipIf(!BASH || !PYTHON)('I8e Paket 2 Task 6 — ag_failover ausgeführ
     expect(a.rc, a.aus).toBe(0);
     expect(a.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
     expect(a.ergebnis).toEqual({ zustand: 'geaendert', ag: 'sqllnxag01', primaer: 'sqllnx02', vorher: 'sqllnx01', dauerS: 12, vip: '10.203.30.13/27', vipAuf: 'sqllnx02', promotedAuf: 'sqllnx02',
-      requiredSyncSql: 0, requiredSyncRessource: '0', altRolle: 'SECONDARY', datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], standortBedingungen: 0,
+      requiredSyncSql: 0, requiredSyncRessource: '0', altRolle: 'SECONDARY', upgrade: false, datenbanken: [{ name: 'alfredpruef', zustand: 'SYNCHRONIZED' }], standortBedingungen: 0,
       aenderungen: ['failover-angestossen', 'standort-bedingung-entfernt'] });
     expect(b.rc, b.aus).toBe(0);
     expect(b.ergebnis).toMatchObject({ zustand: 'schon', primaer: 'sqllnx02', vorher: 'sqllnx02', dauerS: 0, aenderungen: [], standortBedingungen: 0 });
     expect(b.log).toBe('');
     ueberstehtSchwaerzung(a.aus, 'failover'); ueberstehtSchwaerzung(b.aus, 'failover schon');
     expect(a.aus + b.aus).not.toContain(GEHEIM.sa);
+  });
+
+  it('CU-Update (upgrade): bisheriger Primär mit älterer Version bleibt angehalten — ohne upgrade Abbruch, mit upgrade Erfolg (PRIMARY hier, VIP, clear)', async () => {
+    // der alte Primär sqllnx01 (noch CU1) ist SECONDARY/CONNECTED, seine Datenbank NOT SYNCHRONIZING (Datenbewegung angehalten)
+    const alt = { fo_lage_primaer: 'ALFRED|PRIMARY|0|1|1|CONNECTED|SECONDARY|CONNECTED|0|alfredpruef=SYNCHRONIZED|alfredpruef=NOT SYNCHRONIZING' };
+    const schnell = 'WARTE_RUNDEN=2';
+    const ohne = await agLaeufe([mitFo(haAgFailoverSkript(FO()), schnell)], { sa: GEHEIM.sa }, [FO_VOR(alt)]);
+    expect(ohne.laeufe[0]!.rc).toBe(1);
+    expect(String(ohne.laeufe[0]!.ergebnis!.fehler)).toContain('die Gegenstelle aber nicht synchron');
+    const mit = await agLaeufe([mitFo(haAgFailoverSkript({ ...FO(), upgrade: true }), schnell)], { sa: GEHEIM.sa }, [FO_VOR(alt)]);
+    const l = mit.laeufe[0]!;
+    expect(l.rc, l.aus).toBe(0);
+    expect(l.ergebnis).toMatchObject({ zustand: 'geaendert', primaer: 'sqllnx02', vipAuf: 'sqllnx02', upgrade: true, standortBedingungen: 0 });
+    expect(l.log.split('\n').filter(Boolean)).toEqual(['pcs resource move ag_cluster-clone sqllnx02 --promoted', 'pcs resource clear ag_cluster-clone']);
+    // Vorbedingung bleibt: Ziel nicht SYNCHRONIZED → auch mit upgrade kein Failover
+    const vor = await agLaeufe([mitFo(haAgFailoverSkript({ ...FO(), upgrade: true }))], { sa: GEHEIM.sa }, [FO_VOR({ fo_lage: 'ALFRED|SECONDARY|0|1|0|CONNECTED|-|-|0|alfredpruef=SYNCHRONIZING|-' })]);
+    expect(String(vor.laeufe[0]!.ergebnis!.fehler)).toContain('nicht SYNCHRONIZED');
+    expect(vor.laeufe[0]!.log).toBe('');
+    expect(pruefeHaAgFailover({ ...FO(), upgrade: 'ja' })).toContain('upgrade: true oder false');
   });
 
   it('clear auch bei Zeitüberschreitung und bei gescheitertem move — die Meldung sagt es; scheitert clear, steht die verbliebene Bedingung im Fehler', async () => {

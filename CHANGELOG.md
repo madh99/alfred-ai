@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — `linux_ha ag_failover` mit `upgrade`: Failover beim rollierenden CU-Update (v1948)
+
+- Bisher wartete der Baustein nach dem Wechsel darauf, dass der bisherige Primär wieder SECONDARY, CONNECTED und SYNCHRONIZED ist. Beim CU-Update hat dieser aber noch die ältere Version, und SQL Server hält die Datenbewegung zu ihm an. Der Failover wäre deshalb mit einer Zeitüberschreitung gescheitert, obwohl der Wechsel gelungen war (Fund in Alfreds Gegenprüfung).
+- Mit `upgrade=true` wartet der Baustein nach dem Wechsel nur auf PRIMARY auf dem Ziel. Promoted, VIP, `required_sync` und freigegebene Standort-Bedingungen werden wie immer geprüft. Die Vorbedingung bleibt unverändert: Das Ziel muss synchron sein. Synchron wird der alte Primär erst nach seinem Update und `linux_sql hadr_fortsetzen`. Das Ergebnis nennt `upgrade`.
+
 ### Added — `linux_sql hadr_fortsetzen`: Datenbewegung nach dem Update des bisherigen Primärs fortsetzen (v1947)
 
 - Sendet ein Primär mit höherer Version an einen Sekundär mit niedrigerer, hält SQL Server die Datenbewegung an. Nach dessen Update ist laut Microsoft `ALTER DATABASE … SET HADR RESUME` nötig (Upgrade-Schritt 7). Ohne diese Aktion wäre ein rollierendes CU-Update nach dem Failover auf einem nicht synchronisierten Sekundär stehen geblieben (Gegenprüfung des Changes ea55451b).
