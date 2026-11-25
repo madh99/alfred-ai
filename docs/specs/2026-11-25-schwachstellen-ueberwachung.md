@@ -1,6 +1,6 @@
 # Schwachstellen-Überwachung (CVE) mit Anzeige in Web und Apps
 
-Stand 25.11.2026. Entwurf, nicht freigegeben.
+Stand 25.11.2026. Entwurf; Entscheidungen 1, 2, 4, 5, 6 vom Owner getroffen (§5), 3 offen.
 
 **Anlass (Owner 25.11.):** Eine Mail zu Vaultwarden-CVEs blieb ohne Reaktion von Alfred. Der Owner fragt: „sollte man nicht nach aktueller Lage CVEs täglich prüfen? – und kann man das auch im Web und den Apps entsprechend mit Scores usw. Details visualisieren?“
 
@@ -114,6 +114,16 @@ Eine Mail-Aufgabe je Absender, den der Owner nennt, z. B. GitHub Security Adviso
 - Tabelle `sicherheit_treffer`: Komponente, Advisory-ID, Aliase, CVSS mit Vektor, EPSS, KEV, betroffene und behobene Versionen, Stufe, Frist, Status, erkannt, behoben, akzeptiert bis mit Grund.
 - Befunde und Vorgänge wie bisher, mit Verweis auf die Komponente.
 
+### 3.8 Neues kommt von selbst dazu (Owner 25.11.)
+
+Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
+
+- **Neuer Container auf einer bestehenden VM:** Die tägliche CMDB-Discovery (heute 08:19) erfasst ihn. Die CVE-Prüfung läuft direkt danach und nimmt ihn mit. Trivy scannt das Image auch ohne bekannte Zuordnung, einschließlich der Basis-Image-Pakete.
+- **Neues natives Paket:** kommt über die apt-Liste des Bestands.
+- **Software außerhalb der Paketverwaltung** (Binaries unter /opt, /usr/local): Trivy-Dateisystem-Scan des Hosts (`trivy rootfs`, nur lesend), sonst bliebe eine Lücke.
+- **Neue VM oder LXC:** Proxmox-Discovery. Mit Fernzugang wird sie vollständig geprüft. Ohne Fernzugang steht sie als „nicht geprüft: kein Fernzugang“ mit Befund in der Ansicht.
+- **Neuer Dienst:** Alfred schlägt ein Prüfprofil vor (Spec Standard-Changes S3 §4.4), damit ein späteres Update abgenommen werden kann.
+
 ## 4. Etappen (je Release mit Live-Beweis)
 
 - **A:** Komponenten aus dem Bestand: Container, native Pakete aller Linux-Hosts, Proxmox/PBS, Datenbanken. Dazu OSV + CVSS + EPSS + KEV, Bewertung, täglicher Job, Befund/Vorgang ab hoch, Meldung bei kritisch, Abschnitt im Wochenbericht.
@@ -124,14 +134,14 @@ Eine Mail-Aufgabe je Absender, den der Owner nennt, z. B. GitHub Security Adviso
 - **D:** Windows und SQL Server (MSRC), Netzwerkgeräte (UniFi, pfSense, MikroTik über NVD-CPE), Home Assistant, Alfred selbst (npm/Pub); Mail-Eingang für Sicherheitsmeldungen (3.5).
 - **E (optional):** Trivy-Scan der Images für Basis-Image-Pakete.
 
-## 5. Offene Owner-Entscheidungen
+## 5. Owner-Entscheidungen 25.11.2026
 
-1. **Takt:** täglich um 06:00? Zusätzlich sofort nach jeder Bestandsaufnahme?
-2. **Fristen und Stufen** wie in 3.3?
-3. **Automatik:** Ab „hoch“ nur Befund und Vorgang mit Vorschlag (Change braucht wie immer dein Ja), oder soll Alfred den Change auch gleich planen und zur Freigabe vorlegen?
-4. **Trivy** (Etappe E): ja/nein. Es ist vollständiger, aber schwerer (Datenbank und Rechenzeit).
-5. **Mail-Absender** für 3.5: Wer hat die Vaultwarden-Mail geschickt?
-6. **Push** in den Apps nur bei kritisch, oder auch bei hoch?
+1. **Takt:** täglich um 06:00. Zusätzlich läuft die Prüfung direkt nach jeder CMDB-Discovery, damit Neues nicht bis zu einem Tag wartet (Empfehlung, siehe 3.8).
+2. **Fristen und Stufen:** wie in 3.3 (bestätigt).
+3. **Automatik:** offen, Empfehlung vorgelegt. Ab „hoch“ plant Alfred den Change und legt ihn zur Freigabe vor; ohne Ja läuft nichts. Wo eine Vorlage passt, plant Code ohne Modell. Einzeln geplant werden nur Anwendungen mit Daten. Je Komponente gibt es höchstens einen offenen Change, neue CVEs fließen in den bestehenden ein.
+4. **Trivy:** ja, für Images und als Dateisystem-Scan der Hosts.
+5. **Mail-Absender:** `no-reply@bitwarden.com` (Hersteller Bitwarden). Die Mail löst einen sofortigen Abgleich für Vaultwarden und die Bitwarden-Clients aus.
+6. **Push in den Apps:** nur bei „kritisch“.
 
 ## 6. Was bewusst nicht gemacht wird
 
