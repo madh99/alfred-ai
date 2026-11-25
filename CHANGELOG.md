@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Anzeige von sicherungsjobs_einrichten (v1955)
+
+- Die Ergebniszeile nennt jetzt die gesicherten Datenbanken und beide möglichen Rückwege: `sicherungsjobs_entfernen` bzw. bei schon vorhandenen Jobs `sicherungsjobs_einrichten` mit den bisherigen Werten. Bisher stand dort nur `sicherungsjobs_entfernen`, auch wenn der Change die bisherige Einrichtung wiederherstellt.
+
 ### Added — PBS-Snapshot von SQL-Knoten als copy-only (v1954)
 
 - Neuer Baustein `sql_server vss_kopie_schalten` (zugang, an): setzt den Registry-Wert `VssOption` des QEMU Guest Agent VSS Providers auf 5 (VSS_BT_COPY) bzw. zurück auf 1 (Standard VSS_BT_FULL), als DWORD, zurückgelesen samt Typ, ohne Neustart. Damit erscheint der PBS-Snapshot der VM in msdb als copy-only und setzt die DIFF-Basis nicht mehr neu. Nur als Change-Schritt; Rückweg ist derselbe Baustein mit umgekehrtem `an` auf demselben Zugang (Pflicht).

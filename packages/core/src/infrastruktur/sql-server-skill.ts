@@ -274,7 +274,7 @@ export class SqlServerSkill extends Skill {
         case 'sicherungsjobs_einrichten': {
           const p = pr(pruefeJobs(input));
           const r = await this.lauf<{ jobs: string[] }>(zugang, jobsSkript(mi(p)), 'Sicherungsjobs', 180_000);
-          return { success: true, data: r, display: `✅ Sicherungsjobs auf ${zugang}: ${r.jobs.join(', ')} → ${p.ziel} — Rückweg sicherungsjobs_entfernen` };
+          return { success: true, data: r, display: `✅ Sicherungsjobs auf ${zugang}: ${r.jobs.join(', ')} für ${p.datenbanken.join(', ')} → ${p.ziel} — Rückweg sicherungsjobs_entfernen, bei schon vorhandenen Jobs sicherungsjobs_einrichten mit den bisherigen Werten` };
         }
         case 'sicherungsjobs_entfernen': { const r = await this.lauf<{ entfernt: string[] }>(zugang, jobsEntfernenSkript(inst), 'Sicherungsjobs entfernen', 120_000); return { success: true, data: r, display: `✅ Sicherungsjobs entfernt: ${r.entfernt.join(', ') || 'keine'}` }; }
         case 'wiederherstellung_testen': {

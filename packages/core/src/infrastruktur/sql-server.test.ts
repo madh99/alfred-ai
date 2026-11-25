@@ -308,3 +308,12 @@ describe('Owner 25.11. vss_kopie_schalten', () => {
     expect(f({ keiner: 'egal' }).length).toBeGreaterThan(0);
   });
 });
+
+// Owner 25.11. — Change 25d5a700 Schritt 6: Anzeige nannte nur sicherungsjobs_entfernen als Rückweg, der Change nutzt einrichten mit den bisherigen Werten
+describe('Owner 25.11. Anzeige sicherungsjobs_einrichten', () => {
+  it('nennt Datenbanken und beide Rückwege', async () => {
+    const skill = new SqlServerSkill({ skript: async () => ({ code: 0, stdout: `ALFRED-AD ${JSON.stringify({ jobs: ['Alfred Sicherung voll aktiv'] })}`, stderr: '' }) });
+    const r = await skill.execute({ action: 'sicherungsjobs_einrichten', zugang: 'sql01', datenbanken: ['i8d_ag01', 'i8d_single01'], ziel: 'B:\\SQLBackup' }, { ausChange: true } as never);
+    expect(r.display).toBe('✅ Sicherungsjobs auf sql01: Alfred Sicherung voll aktiv für i8d_ag01, i8d_single01 → B:\\SQLBackup — Rückweg sicherungsjobs_entfernen, bei schon vorhandenen Jobs sicherungsjobs_einrichten mit den bisherigen Werten');
+  });
+});
