@@ -9,7 +9,7 @@ import type { Auffaelligkeit, BefundKategorie } from './bericht.js';
 
 export const METHODE = 'infrastruktur-bestand';
 const AUSGENOMMEN: ReadonlySet<BefundKategorie> = new Set(['sicherung', 'erfassung']);
-const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security', ueberwachung: 'software', pki: 'security' };
+const KATEGORIE: Record<BefundKategorie, string> = { container: 'software', platte: 'capacity', updates: 'security', os: 'security', paketverwaltung: 'configuration', proxy: 'configuration', erfassung: 'unknown', sicherung: 'data', lizenz: 'configuration', grundlinie: 'security', ueberwachung: 'software', pki: 'security', sicherheit: 'security' };
 
 export interface ProblemZugriff {
   liste(): Promise<Array<{ id: string; title: string; status: string; detectionMethod?: string }>>;
@@ -35,7 +35,7 @@ export interface Erfassung {
   schluessel?: (k: string) => boolean;
 }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
-const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung|pki)$/;
+const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung|pki|sicherheit)$/;
 /**
  * I8 3b-4 — wiederkehrende Befunde: ein Dienst kann nächsten Monat wieder ausfallen. Von Alfred gelöste Problems (resolved) blockieren
  * den Schlüssel daher nicht — ein neues Auftreten wird ein neues Problem. Vom Owner geschlossene (closed) gelten weiter als entschieden.
@@ -48,6 +48,8 @@ const WIEDERKEHREND = /^(ueberwachung|pki)$/;
  * Agent/Update der Linux-SQL. Andere Abgleiche derselben Kategorie (stündliche Windows-Überwachung, Bestandsaufnahme) lassen sie
  * unberührt — sonst lösten sie diese Befunde jede Stunde und der SQL-Job legte sie neu an.
  */
+/** Spec Schwachstellen-Überwachung — Befunde des täglichen CVE-Laufs (eigener Job, nie vom Bestands- oder SQL-Abgleich gelöst) */
+export const istSicherheitsSchluessel = (k: string): boolean => k.startsWith('sicherheit:');
 export const istSqlUeberwachungsSchluessel = (k: string): boolean => /^ueberwachung:[^:]+:(sicherung:|job:|tls$|keytab$|anmeldung$|agent$|sql-update$)/.test(k);
 
 const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
@@ -63,7 +65,7 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
     const k = p.detectionMethod!.slice(METHODE.length + 1);
     const kat = k.split(':')[0]!;
     if (erfassung.kategorien && !erfassung.kategorien.has(kat)) continue;
-    if (erfassung.schluessel ? !erfassung.schluessel(k) : istSqlUeberwachungsSchluessel(k)) continue;
+    if (erfassung.schluessel ? !erfassung.schluessel(k) : (istSqlUeberwachungsSchluessel(k) || istSicherheitsSchluessel(k))) continue;
     const da = nachSchluessel.get(k);
     if (!da) { nachSchluessel.set(k, p); continue; }
     // wiederkehrend: Bezug ist das offene Problem, sonst das jüngste; ein zweites offenes ist eine Dublette
@@ -72,7 +74,7 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
     await z.loese(p.id, `Dublette von Problem ${da.id} (gleicher Befund ${k}) — automatisch geschlossen (v1770).`);
     dubletten.push(p.id);
   }
-  const zustaendig = (k: string) => (erfassung.schluessel ? erfassung.schluessel(k) : !istSqlUeberwachungsSchluessel(k));
+  const zustaendig = (k: string) => (erfassung.schluessel ? erfassung.schluessel(k) : !istSqlUeberwachungsSchluessel(k) && !istSicherheitsSchluessel(k));
   const aktuell = auff.filter(a => uebernehmen(a) && zustaendig(a.schluessel!));
   const neu: string[] = []; let bekannt = 0;
   for (const a of aktuell) {

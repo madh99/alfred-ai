@@ -2638,4 +2638,49 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_pruefprofile_asset ON infra_pruefprofile (user_id, asset_id)', []);
     },
   },
+  {
+    version: 166,
+    description: 'Schwachstellen-Überwachung A1 — sicherheit_komponenten (was läuft wo in welcher Version) und sicherheit_treffer (CVE/GHSA je Komponente, erstes Erkennen, behoben am) (PG-Spiegel zu SQLite v162).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS sicherheit_komponenten (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          schluessel TEXT NOT NULL,
+          host TEXT NOT NULL,
+          name TEXT NOT NULL,
+          art TEXT NOT NULL,
+          image TEXT,
+          version TEXT,
+          anwendung TEXT,
+          erreichbar INTEGER NOT NULL DEFAULT 0,
+          nicht_geprueft TEXT NOT NULL DEFAULT '[]',
+          zaehler TEXT NOT NULL DEFAULT '{}',
+          zuletzt TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_sicherheit_komponenten_schluessel ON sicherheit_komponenten (user_id, schluessel)', []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS sicherheit_treffer (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          komponente TEXT NOT NULL,
+          treffer_id TEXT NOT NULL,
+          paket TEXT NOT NULL,
+          installiert TEXT,
+          behoben TEXT,
+          cvss DOUBLE PRECISION,
+          vektor TEXT,
+          schwere TEXT NOT NULL,
+          stufe TEXT NOT NULL,
+          epss DOUBLE PRECISION,
+          kev TEXT,
+          titel TEXT,
+          link TEXT,
+          quellen TEXT NOT NULL DEFAULT '[]',
+          aliase TEXT NOT NULL DEFAULT '[]',
+          erkannt TEXT NOT NULL,
+          zuletzt TEXT NOT NULL,
+          behoben_am TEXT
+        )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_sicherheit_treffer_komponente ON sicherheit_treffer (user_id, komponente, behoben_am)', []);
+    },
+  },
 ];

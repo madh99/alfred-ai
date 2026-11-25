@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Schwachstellen-Überwachung der gesamten Infrastruktur, Etappe A1 (v1959)
+
+- Täglicher Job `schwachstellen` (06:00, zusätzlich nach jeder CMDB-Discovery) für alle Container und Linux-Hosts mit Fernzugang, einschließlich der Proxmox-Knoten.
+- **Anwendungen in Containern:** Für jede Anwendung werden drei Quellen abgefragt und über CVE/GHSA zusammengeführt: die Security-Advisories im GitHub-Repo des Herstellers, NVD über die CPE-Kennung und OSV. Grundlage sind eine erweiterbare Zuordnungstabelle Image → Anwendung und die laufende Version aus OCI-Label oder Tag. Freie Bereichsangaben der Advisories werden über die behobene Version ausgewertet.
+- **Images:** Trivy 0.76.2 (per Digest gepinnt) scannt je Image den laufenden Digest. Trivy läuft als Container auf dem Alfred-Server mit eigenem Cache.
+- **Hosts:** Ausstehende Sicherheitsupdates werden über OSV (Debian/Ubuntu) mit CVEs angereichert.
+- **Bewertung:** EPSS (FIRST) und CISA KEV je CVE. Feste Stufen mit Fristen ab dem ersten Erkennen: kritisch 48 h, hoch 7 Tage, mittel 30 Tage. „Von außen erreichbar“ ergibt sich aus Proxy-Hosts des Nginx Proxy Manager auf veröffentlichte Container-Ports.
+- **Speicherung:** neue Tabellen `sicherheit_komponenten` und `sicherheit_treffer` (PG v166, SQLite v162). Ein Treffer gilt nur als behoben, wenn eine seiner Quellen im Lauf erfolgreich lief.
+- **Befunde (Kategorie `sicherheit`):** je Komponente ab hoch (kritisch immer, hoch nur mit behobener Version). Sie werden von keinem anderen Abgleich angelegt oder gelöst.
+- **Meldung und Push** nur bei neuen kritischen Treffern. Dazu kommt ein Tagesdokument „Schwachstellen“ in der CMDB. Was nicht geprüft werden konnte, steht dort mit Grund.
+- **Neue Aktionen:** `infrastruktur schwachstellen` zeigt die Lage, `schwachstellen_pruefen` startet einen Lauf sofort.
+
 ### Fixed — Prüfprofile ohne festgeschriebene Image-Versionen (v1958)
 
 - Beim Ableiten eines Prüfprofils aus abgeschlossenen Changes bleiben Prüfungen auf den genauen Image-Digest außen vor: `docker images`, `{{.Config.Image}}` bzw. `{{.Image}}` sowie Erwartungen mit `sha256:…`. Realfall 25.11.: Aus Umzugs-Changes kamen solche Prüfungen für docker-dev-01 und docker-com-01. Dort belegten sie die richtige Kopie. Als Dauerprüfung hätten sie jedes Image-Update angehalten.

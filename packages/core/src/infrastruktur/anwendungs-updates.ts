@@ -165,7 +165,9 @@ export async function registryAbfrage(ref: ImageRef, abruf: Abruf): Promise<{ di
 
 // ── Bericht ────────────────────────────────────────────────────
 
-export interface ContainerStand { host: string; name: string; image: string; art: UpdateArt; tag?: string; neuerBuild?: boolean; gleicheHauptversion: string[]; neueHauptversion: string[]; hinweis?: string; version?: string; herkunft?: string }
+export interface ContainerStand { host: string; name: string; image: string; art: UpdateArt; tag?: string; neuerBuild?: boolean; gleicheHauptversion: string[]; neueHauptversion: string[]; hinweis?: string; version?: string; herkunft?: string;
+  /** Schwachstellen-Überwachung — voller Repo-Digest des laufenden Images (repo@sha256:…) für den Trivy-Scan */
+  digest?: string }
 
 /**
  * v1730 — Owner 01.11.: „synapse wird in lokalkraft gesucht, obwohl es nicht von dort stammt“. Beim Umzug lokal gebauter Images
@@ -173,7 +175,9 @@ export interface ContainerStand { host: string; name: string; image: string; art
  * (Digest → Quellhost und Quell-Image) und dem alten CMDB-Eintrag des Containers (Image-Name, Compose-Ordner).
  */
 export interface Herkunft { quelleHost: string; image?: string; ordner?: string; change: string }
-export interface HostStand { host: string; apt: AptUpdate[]; hauptversionen: Array<{ familie: string; installiert: string; verfuegbar: string }>; updatesSchalter: boolean; fehler?: string }
+export interface HostStand { host: string; apt: AptUpdate[]; hauptversionen: Array<{ familie: string; installiert: string; verfuegbar: string }>; updatesSchalter: boolean; fehler?: string;
+  /** Schwachstellen-Überwachung — System aus /etc/os-release (OSV-Ökosystem) */
+  os?: { id: string; version: string } }
 
 const ART_TEXT: Record<UpdateArt, string> = { datenbank: 'Datenbank — nie Standard, eigener Change', mit_daten: 'mit Daten/Schema — eigener Change mit Sicherung', zustandslos: 'zustandslos — Vorlage (d) möglich', system: 'System' };
 
@@ -266,6 +270,8 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
     try {
       const os = await d.lesen(h.name, UPDATE_BEFEHLE.os);
       if (!/^(ID|ID_LIKE)="?[\w ]*(debian|ubuntu)/m.test(os)) { stand.fehler = 'kein apt-System'; hosts.push(stand); continue; }
+      const osId = /^ID="?([\w-]+)"?$/m.exec(os)?.[1]; const osVer = /^VERSION_ID="?([\d.]+)"?$/m.exec(os)?.[1];
+      if (osId && osVer) stand.os = { id: osId, version: osVer };
       stand.apt = leseAptListe(await d.lesen(h.name, UPDATE_BEFEHLE.apt));
       const inst = (await d.lesen(h.name, UPDATE_BEFEHLE.pakete)).split(/\r?\n/).filter(z => /^ii\s/.test(z)).map(z => z.trim().split(/\s+/)[1]!.split(':')[0]!);
       const familien = [...new Set(inst.map(familieAus).filter((f): f is { familie: string; version: string } => !!f).map(f => f.familie))];
@@ -300,7 +306,7 @@ export async function sammleAnwendungsUpdates(d: SammelDeps): Promise<{ hosts: H
     }
     for (const c of liste) {
       const k = konfig.get(c.name); const b = k ? bild.get(k.id) : undefined;
-      const st: ContainerStand = { host: h.name, name: c.name, image: c.image, art: containerArt(c), gleicheHauptversion: [], neueHauptversion: [], ...(b?.version ? { version: b.version } : {}) };
+      const st: ContainerStand = { host: h.name, name: c.name, image: c.image, art: containerArt(c), gleicheHauptversion: [], neueHauptversion: [], ...(b?.version ? { version: b.version } : {}), ...(b?.digests?.[0] ? { digest: b.digests[0] } : {}) };
       container.push(st);
       // v1730 — per eigener Registry übertragen: Herkunft statt Transportweg
       const eigeneDigests = [...(b?.digests ?? []), ...[c.image, k?.ref].filter((x): x is string => !!x?.includes('@'))].map(x => x.slice(x.indexOf('@') + 1));

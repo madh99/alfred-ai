@@ -148,3 +148,21 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
 - Kein automatisches Einspielen von Updates ohne Change und Freigabe.
 - Keine Bewertung durch das Modell. Scores kommen aus den Quellen, Stufen aus festen Regeln.
 - Keine stille Lücke: Komponenten ohne Zuordnung oder mit nicht erreichbarer Quelle stehen sichtbar als „nicht geprüft“ in der Ansicht und im Bericht.
+
+## 7. Umsetzungsstand
+
+- **A1** (v1959, 25.11.2026) — Erkennung:
+  - **Quellen je Anwendung:** GitHub-Repo-Advisories des Herstellers, NVD per CPE (ohne Schlüssel höchstens 5 Abfragen je 30 s) und OSV, zusammengeführt über CVE/GHSA.
+    - Realfall Vaultwarden 1.30.5: OSV allein lieferte 7 Advisories, NVD 16, die Repo-Advisories 37. Ohne die Repo-Advisories fehlte u. a. GHSA-69q9 (8.1). Deshalb gibt es alle drei Quellen.
+    - Freie Bereichsangaben werden über die behobene Version ausgewertet (`versionen.ts`).
+  - **Trivy 0.76.2** (Digest gepinnt) läuft als Container auf dem Alfred-Server, mit Cache-Volume `alfred-trivy-cache`, und scannt je Image den laufenden Digest. Lokal gebaute bzw. per eigener Registry übertragene Images stehen als „nicht geprüft“.
+  - **Linux-Hosts inkl. Proxmox:** ausstehende Sicherheitsupdates (apt, Kennzeichen `-security`), angereichert über OSV (Debian/Ubuntu).
+  - **EPSS und KEV**, Stufe je Treffer nach §3.3, Fristen ab dem ersten Erkennen.
+  - **Speicherung:** Tabellen `sicherheit_komponenten`/`sicherheit_treffer` (PG v166, SQLite v162). Fail-closed: Behoben ist ein Treffer nur, wenn eine seiner Quellen im Lauf erfolgreich lief. Verschwundene Komponenten werden nur auf vollständig gelesenen Hosts aufgeräumt.
+  - **Befunde** (Kategorie `sicherheit`, Schlüssel `sicherheit:<host>:<name>`) ab hoch: kritisch immer, hoch nur mit behobener Version. Kein anderer Abgleich legt sie an oder löst sie.
+  - **Meldung und Push** nur bei neuem „kritisch“; Tagesdokument „Schwachstellen <Datum>“ in der CMDB.
+  - **Job `schwachstellen`:** täglich 06:00, zusätzlich nach jeder CMDB-Discovery. Dazu `infrastruktur schwachstellen` (Lage) und `schwachstellen_pruefen` (sofort).
+- **Offen:**
+  - A2: automatische Change-Planung nach Entscheidung 3.
+  - B: Web, C: Apps, D: Windows/SQL Server, Netzwerk, Home Assistant direkt, Mail-Regel Bitwarden.
+  - Trivy-Dateisystem-Scan der Hosts.

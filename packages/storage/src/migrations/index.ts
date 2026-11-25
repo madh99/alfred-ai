@@ -3331,4 +3331,49 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_pruefprofile_asset ON infra_pruefprofile (user_id, asset_id)');
     },
   },
+  {
+    version: 162,
+    description: 'Schwachstellen-Überwachung A1 — sicherheit_komponenten und sicherheit_treffer (SQLite-Spiegel zu PG v166).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS sicherheit_komponenten (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          schluessel TEXT NOT NULL,
+          host TEXT NOT NULL,
+          name TEXT NOT NULL,
+          art TEXT NOT NULL,
+          image TEXT,
+          version TEXT,
+          anwendung TEXT,
+          erreichbar INTEGER NOT NULL DEFAULT 0,
+          nicht_geprueft TEXT NOT NULL DEFAULT '[]',
+          zaehler TEXT NOT NULL DEFAULT '{}',
+          zuletzt TEXT NOT NULL
+        )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sicherheit_komponenten_schluessel ON sicherheit_komponenten (user_id, schluessel)');
+      db.exec(`CREATE TABLE IF NOT EXISTS sicherheit_treffer (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          komponente TEXT NOT NULL,
+          treffer_id TEXT NOT NULL,
+          paket TEXT NOT NULL,
+          installiert TEXT,
+          behoben TEXT,
+          cvss REAL,
+          vektor TEXT,
+          schwere TEXT NOT NULL,
+          stufe TEXT NOT NULL,
+          epss REAL,
+          kev TEXT,
+          titel TEXT,
+          link TEXT,
+          quellen TEXT NOT NULL DEFAULT '[]',
+          aliase TEXT NOT NULL DEFAULT '[]',
+          erkannt TEXT NOT NULL,
+          zuletzt TEXT NOT NULL,
+          behoben_am TEXT
+        )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sicherheit_treffer_komponente ON sicherheit_treffer (user_id, komponente, behoben_am)');
+    },
+  },
 ];

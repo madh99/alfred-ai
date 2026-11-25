@@ -194,3 +194,17 @@ describe('S3 Prüfprofil-Aktionen', () => {
     expect((await s.execute({ action: 'pruefprofil_vorschlagen', asset: 'x' }, { ...ctx, unteragent: true } as never)).error).toContain('Hauptgespräch');
   });
 });
+
+// Schwachstellen-Überwachung A1 — Lage lesen und Lauf anstoßen
+describe('Schwachstellen-Aktionen', () => {
+  const ctx = { userId: 'owner', chatId: 'c' } as SkillContext;
+  it('lage, pruefen, läuft schon', async () => {
+    let laeuft = false; const gruende: string[] = [];
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: {}, schwachstellen: { pruefen: (g: string) => { gruende.push(g); if (laeuft) return false; laeuft = true; return true; }, lage: async () => (laeuft ? '# Schwachstellen 25.11.26' : undefined) } } as never);
+    expect((await s.execute({ action: 'schwachstellen' }, ctx)).display).toContain('Noch kein Schwachstellen-Lauf');
+    expect((await s.execute({ action: 'schwachstellen_pruefen' }, ctx)).display).toContain('gestartet');
+    expect((await s.execute({ action: 'schwachstellen_pruefen' }, ctx)).display).toBe('Ein Schwachstellen-Lauf läuft bereits.');
+    expect((await s.execute({ action: 'schwachstellen' }, ctx)).display).toBe('# Schwachstellen 25.11.26');
+    expect(gruende).toEqual(['auf Anfrage', 'auf Anfrage']);
+  });
+});

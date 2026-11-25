@@ -472,6 +472,8 @@ export class Alfred {
   private fernzugangNamenAuffrischen?: () => Promise<void>;
   /** I1 — Fernzugriff-Skill (Sammler) und letzte Host-Bestände der Discovery */
   private fernzugriffRef?: import('./fernzugriff/fernzugriff-skill.js').FernzugriffSkill;
+  /** Schwachstellen-Überwachung — Lauf anstoßen (nach der CMDB-Discovery, damit Neues nicht bis 06:00 wartet) */
+  private schwachstellenAnstoss?: (grund: string) => boolean;
   /** Dokument-Vorlagen V1 — gemeinsamer Kern für den Skill dokumentation und das Change-Ende (Task 7) */
   private dokumenteDienst?: import('./infrastruktur/dokumente/dokumente-skill.js').DokumenteDienst;
   /** PKI Etappe 3a — Codesignatur der Windows-Skripte */
@@ -6144,6 +6146,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const uid = this.tryOwner();
               if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
               await cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any);
+              // Spec Schwachstellen-Überwachung §3.8 — neue Container/VMs gleich mitprüfen
+              this.schwachstellenAnstoss?.('nach CMDB-Discovery');
               return { ok: true };
             },
           });
@@ -7718,10 +7722,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // I4b Teil 1 — Wartungsfenster, Sperrzeiten, Benachrichtigungen
         const { WartungRepository, AlfredUserRepository: AlfredUserRepoI4b } = await import('@alfred/storage');
         const wartungRepo = new WartungRepository(adapter);
-        const anwendungsBericht = async (): Promise<string> => {
+        // Schwachstellen-Überwachung — die Erhebung des Anwendungs-Berichts (Container mit Image/Digest/Version, Hosts mit OS und apt) nutzt
+        // auch der tägliche CVE-Lauf (ohne die Windows-Update-Suche des Berichts)
+        const anwendungsErheben = async () => {
           const o = ownerFz(); const fz = this.fernzugriffRef;
-          if (!o || !fz) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
-          const { sammleAnwendungsUpdates, berichtText } = await import('./infrastruktur/anwendungs-updates.js');
+          if (!o || !fz) return undefined;
+          const { sammleAnwendungsUpdates } = await import('./infrastruktur/anwendungs-updates.js');
           const schalter = await wartungRepo.updatesSchalter(o).catch(() => ({} as Record<string, string>));
           // I8b — Windows-Hosts haben kein apt; ihre ausstehenden Updates stehen im eigenen Abschnitt (unten)
           const hosts = (await fz.aktiveZugaenge()).filter(z => z.system !== 'windows').map(z => ({ name: z.name, updatesSchalter: schalter[z.name] === 'an' }));
@@ -7752,6 +7758,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             hosts, lesen: (z, b) => fz.lesenIntern(z, b, 90_000), herkunft,
             abruf: async (url, init) => fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000) }), // v1708 — keine Weiterleitung (SSRF)
           });
+          return { r, schalter };
+        };
+        const anwendungsBericht = async (): Promise<string> => {
+          const o = ownerFz(); const fz = this.fernzugriffRef;
+          if (!o || !fz) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
+          const { berichtText } = await import('./infrastruktur/anwendungs-updates.js');
+          const e = await anwendungsErheben();
+          if (!e) return 'Anwendungs-Updates: kein Owner oder kein Fernzugriff';
+          const { r, schalter } = e;
           // I8 3b-1 — Windows-Hosts: ausstehende Updates über das feste Such-Skript (nur suchen, nichts installieren)
           const { WIN_UPDATE_SUCHE, leseWinUpdates } = await import('./infrastruktur/windows-updates.js');
           const windows: import('./infrastruktur/anwendungs-updates.js').WindowsStand[] = [];
@@ -8080,6 +8095,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         });
         skillRegistry.register(new InfrastrukturSkill({
           istOwner: istOwnerFz,
+          // Schwachstellen-Überwachung A1 — Lage aus dem jüngsten Tagesdokument, Lauf auf Anfrage
+          schwachstellen: {
+            pruefen: (grund) => this.schwachstellenAnstoss?.(grund) ?? false,
+            lage: async () => { const o = ownerFz(); if (!o) return undefined; const d = (await cmdbFz.listDocuments(o, { docType: 'inventory', limit: 50 })).find(x => x.generatedBy === 'alfred:schwachstellen'); return d ? (await cmdbFz.getDocumentById(o, d.id))?.content ?? undefined : undefined; },
+          },
           ultraEskalation: {
             einwand: (chat) => { ultraEsk.setze(chat, 'einwand'); this.logger.info({ chatId: chat }, 'Spec ultra U2.3: Auslöser Owner-Einwand'); },
             planAbgelehnt: (chat) => { if (ultraEsk.planAbgelehnt(chat)) this.logger.info({ chatId: chat }, 'Spec ultra U2.3: Auslöser Planprüfung zweimal abgelehnt'); },
@@ -8349,6 +8369,78 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { ok: true, zaehler: { zeichen: text.length } };
           },
         });
+        // Spec Schwachstellen-Überwachung (Owner 25.11.: täglich 06:00, gesamte Infrastruktur, Trivy ja, Push nur kritisch) — Etappe A1
+        {
+          let laeuft = false;
+          const schwachstellenLauf = async (grund: string): Promise<{ ok: boolean; zaehler: Record<string, number> }> => {
+            const o = ownerFz(); const fz = this.fernzugriffRef;
+            if (!o || !fz) return { ok: true, zaehler: { komponenten: 0 } };
+            if (laeuft) { this.logger.info({ grund }, 'Schwachstellen-Lauf läuft bereits — übersprungen'); return { ok: true, zaehler: { uebersprungen: 1 } }; }
+            laeuft = true;
+            try {
+              const { schwachstellenLauf: lauf } = await import('./infrastruktur/schwachstellen/lauf.js');
+              const { befunde, lageText, zaehle } = await import('./infrastruktur/schwachstellen/bewertung.js');
+              const { trivyArgumente } = await import('./infrastruktur/schwachstellen/trivy.js');
+              const { veroeffentlichtePorts, vonAussenErreichbar } = await import('./infrastruktur/schwachstellen/zuordnung.js');
+              const { istSicherheitsSchluessel } = await import('./infrastruktur/befund-problems.js');
+              const { SchwachstellenRepository } = await import('@alfred/storage');
+              const repo = new SchwachstellenRepository(adapter);
+              const { execFile } = await import('node:child_process');
+              const e = await anwendungsErheben();
+              if (!e) return { ok: true, zaehler: { komponenten: 0 } };
+              const zugaenge = await fz.aktiveZugaenge();
+              const proxies = (await cmdbFz.listAssets(o, { sourceSkill: 'nginx_proxy_manager' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>))
+                .filter(a => a.assetType === 'proxy_host' && a.status === 'active')
+                .map(a => { const at = a.attributes as { forward_host?: string; forward_port?: number }; return { forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0) }; })
+                .filter(p => p.forwardHost && p.forwardPort);
+              const vorher = await repo.erkannt(o);
+              const erfasst = new Set(e.r.hosts.filter(h => !h.fehler || h.fehler === 'kein apt-System').map(h => h.host));
+              const letzteZeile = (t: string) => t.trim().split(/\r?\n/).slice(-1)[0]!.slice(0, 200);
+              const r = await lauf({
+                container: e.r.container.map(c => ({ host: c.host, name: c.name, image: c.image, ...(c.version ? { label: c.version } : {}), ...(c.digest ? { digest: c.digest } : {}),
+                  ...(c.herkunft ? { lokal: `lokal gebaut, über die eigene Registry übertragen — von hier nicht abrufbar (${c.herkunft.slice(0, 120)})` } : {}) })),
+                hosts: e.r.hosts.filter(h => !h.fehler).map(h => ({ host: h.host, ...(h.os ? { os: h.os } : {}), sicherheit: h.apt.filter(a => a.sicherheit).map(a => ({ paket: a.paket, alt: a.alt, neu: a.neu })) })),
+                abruf: async (url, init) => { const x = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(60_000) }); return { ok: x.ok, status: x.status, json: () => x.json() }; },
+                trivy: (ref) => new Promise<string>((ok, nein) => execFile('docker', trivyArgumente(ref), { timeout: 20 * 60_000, maxBuffer: 256 * 1024 * 1024 },
+                  (err, out, fehl) => (err ? nein(new Error(letzteZeile(String(fehl || err.message)))) : ok(out)))),
+                erreichbar: (host, name) => {
+                  const ports = veroeffentlichtePorts(this.hostBestaende.get(host)?.container.find(c => c.name === name)?.ports ?? '');
+                  const ip = zugaenge.find(z => z.name === host)?.host;
+                  return ports.length > 0 && vonAussenErreichbar(proxies, { name: host, ...(ip ? { ip } : {}) }, ports);
+                },
+                erkannt: (k) => vorher.get(k) ?? new Map(),
+              });
+              const gespeichert = await repo.speichereLauf(o, r.komponenten.map(k => ({ schluessel: k.schluessel, host: k.host, name: k.name, art: k.art, ...(k.image ? { image: k.image } : {}), ...(k.version ? { version: k.version } : {}),
+                ...(k.anwendung ? { anwendung: k.anwendung } : {}), erreichbar: k.erreichbar, nichtGeprueft: k.nichtGeprueft, zaehler: zaehle(k.treffer), geprueft: k.geprueft, treffer: k.treffer })), erfasst);
+              // erstes Erkennen der gerade gespeicherten Treffer für die Fristen der Befunde
+              const erk = await repo.erkannt(o);
+              for (const k of r.komponenten) for (const t of k.treffer) { const x = erk.get(k.schluessel)?.get(`${t.id}|${t.paket}`); if (x) t.erkannt = x; }
+              const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
+              const bef = befunde(r.komponenten);
+              const pr = await infraProblems(bef, { docId: 'tägliche Schwachstellen-Überwachung', datum }, { hosts: erfasst, alle: false, kategorien: new Set(['sicherheit']), schluessel: istSicherheitsSchluessel });
+              const text = lageText(r.komponenten, datum, r.fehler);
+              await cmdbFz.saveDocument(o, { docType: 'inventory', title: `Schwachstellen ${new Date().toISOString().slice(0, 10)}`, content: text, format: 'markdown', generatedBy: 'alfred:schwachstellen' }).catch(() => undefined);
+              // Owner 25.11.: sofort melden und Push nur bei neuem „kritisch“
+              const kritisch = gespeichert.neu.filter(n => n.stufe === 'kritisch');
+              if (kritisch.length) {
+                const je = [...new Set(kritisch.map(n => n.komponente))];
+                const meldung = `🛡️ Neue kritische Schwachstellen (${kritisch.length}) in ${je.join(', ')} — Details in den Befunden und im Dokument „Schwachstellen“.`;
+                await this.meldeOhneModell(meldung).catch(() => undefined);
+                if (this.pushDienst) await this.pushDienst.anOwner({ titel: 'Kritische Schwachstellen', text: meldung.slice(0, 180), art: 'hinweis', stufe: 'active' }).catch(() => undefined);
+              }
+              const z = zaehle(r.komponenten.flatMap(k => k.treffer));
+              this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch: kritisch.length, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt.length,
+                befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
+              return { ok: true, zaehler: { komponenten: r.komponenten.length, kritisch: z.kritisch, hoch: z.hoch, neu: gespeichert.neu.length, befunde: bef.length } };
+            } finally { laeuft = false; }
+          };
+          this.schwachstellenAnstoss = (grund) => { if (laeuft) return false; void schwachstellenLauf(grund).catch(err => this.logger.warn({ err, grund }, 'Schwachstellen-Lauf fehlgeschlagen')); return true; };
+          this.registriereJob({
+            key: 'schwachstellen', beschreibung: 'Schwachstellen-Überwachung: CVEs der gesamten Infrastruktur (Container, Linux-Hosts) täglich, Befunde ab hoch',
+            takt: { art: 'taeglich', um: '06:00' }, bereich: 'global', slot: true, timeoutMin: 120,
+            run: () => schwachstellenLauf('täglich 06:00'),
+          });
+        }
         // S4 — wöchentliche Betriebssystem-Updates (Owner 27.10.: wöchentlich, nachts ab 00:30; ein Ja je Serie): dienstags 10:00 legt
         // Alfred die Serie für die kommende Nacht an (alle Hosts mit Schalter „Updates an“) und stellt EINE Freigabe-Frage. Ohne Ja läuft nichts.
         this.registriereJob({

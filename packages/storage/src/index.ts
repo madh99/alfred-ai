@@ -112,6 +112,7 @@ export type { BauplanVorlageZeile, BauplanVorlageStatus } from './repositories/b
 export { FernzugaengeRepository } from './repositories/fernzugaenge-repository.js'; // v1539
 export { VorhabenRepository } from './repositories/vorhaben-repository.js'; // I2
 export { WartungRepository } from './repositories/wartung-repository.js'; // I4b
+export { SchwachstellenRepository, type SicherheitsKomponente, type SicherheitsTreffer, type LaufTreffer } from './repositories/schwachstellen-repository.js'; // Schwachstellen-Überwachung A1
 export { EinwandRepository } from './repositories/einwand-repository.js'; // Einwand
 export { TresorRepository } from './repositories/tresor-repository.js'; // I4c
 export type { Einwand, EinwandZiel, EinwandStatus } from './repositories/einwand-repository.js';
