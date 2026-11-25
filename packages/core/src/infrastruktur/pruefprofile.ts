@@ -55,6 +55,11 @@ const MARKER = /^[A-Z][A-Z0-9_]{5,}$/;
 const ARTEFAKT = /\/var\/lib\/alfred-wartung\/|\/srv\/i9-|\/proofs\/|\.bak\b|20\d\d-?[01]\d-?[0-3]\d/;
 /** Verweise auf Schritte, andere Changes oder den Tresor (Go-Templates wie docker inspect {{.State.Running}} sind keine) */
 const VERWEIS = /\{\{\s*(schritt\d|change:|geheim)/;
+/**
+ * v1958 — Realfall 25.11.: aus Umzugs-Changes kamen Prüfungen auf den genauen Image-Digest (docker images --digests, Config.Image
+ * mit sha256:…). Sie belegten dort die richtige Kopie; als Dauerprüfung hielten sie jedes Image-Update an.
+ */
+const VERSION_FEST = /sha256:[0-9a-f]{12,}|docker\s+images|\{\{\s*\.Config\.Image\s*\}\}|\{\{\s*\.Image\s*\}\}/;
 const BEWEIS_BEFEHL = /^\s*(cat|stat|test|ls|head|tail|wc|sha256sum|md5sum)\s/;
 
 /**
@@ -75,6 +80,7 @@ export function kandidaten(quellen: QuellChange[], zugang: string | undefined): 
       const befehl = String(p.befehl ?? '');
       if (p.typ === 'befehl' && (!befehl || BEWEIS_BEFEHL.test(befehl) || ARTEFAKT.test(befehl))) continue;
       if (p.erwartet && (MARKER.test(p.erwartet) || ARTEFAKT.test(p.erwartet))) continue;
+      if (VERSION_FEST.test(befehl) || VERSION_FEST.test(String(p.erwartet ?? ''))) continue;
       const k = schluessel(p);
       if (gesehen.has(k)) continue;
       gesehen.add(k); r.push(p); aus.add(c.id.slice(0, 8));

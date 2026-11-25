@@ -135,3 +135,16 @@ describe('S3 Prüfprofile — Vorschlag, Bestätigung, Ersetzen', () => {
     expect(await pp.liste('o')).toEqual([]);
   });
 });
+
+// v1958 — Realfall 25.11. (docker-dev-01, docker-com-01): Prüfungen auf den genauen Image-Digest aus Umzugs-Changes hielten jedes Image-Update an
+describe('v1958 keine festgeschriebenen Image-Versionen im Profil', () => {
+  it('lässt docker images --digests, Config.Image und sha256-Erwartungen aus', () => {
+    const c: QuellChange = { id: 'cdc0f216-0000', titel: 'Umzug dev', schritte: [
+      { pruefung: { typ: 'befehl', zugang: 'docker-dev-01', befehl: 'docker images --digests', erwartet: 'sha256:d6ab9bce3030f5b58e59144a7db9fe3012b39c94d27bc2979e98e6d6dc2161da' } },
+      { pruefung: { typ: 'befehl', zugang: 'docker-dev-01', befehl: "docker inspect --format '{{.Config.Image}} {{.State.Running}}' open-webui", erwartet: 'ghcr.io/open-webui/open-webui@sha256:d6ab9bce3030f5b58e59144a7db9fe3012b39c94d27bc2979e98e6d6dc2161da true' } },
+      { pruefung: { typ: 'befehl', zugang: 'docker-dev-01', befehl: "docker inspect --format '{{.State.Running}} {{.Config.Image}}' matrix-coturn", erwartet: 'true coturn/coturn@sha256:bbefd3e1fdfd' } },
+      { pruefung: { typ: 'befehl', zugang: 'docker-dev-01', befehl: "docker inspect --format '{{.State.Running}}' redis", erwartet: 'true' } },
+    ] };
+    expect(kandidaten([c], 'docker-dev-01').pruefungen.map(p => p.befehl)).toEqual(["docker inspect --format '{{.State.Running}}' redis"]);
+  });
+});

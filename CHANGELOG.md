@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfprofile ohne festgeschriebene Image-Versionen (v1958)
+
+- Beim Ableiten eines Prüfprofils aus abgeschlossenen Changes bleiben Prüfungen auf den genauen Image-Digest außen vor: `docker images`, `{{.Config.Image}}` bzw. `{{.Image}}` sowie Erwartungen mit `sha256:…`. Realfall 25.11.: Aus Umzugs-Changes kamen solche Prüfungen für docker-dev-01 und docker-com-01. Dort belegten sie die richtige Kopie. Als Dauerprüfung hätten sie jedes Image-Update angehalten.
+
 ### Fixed — Prüfprofil-Vorschlag scheiterte an mehrdeutigem VM-Namen (v1957)
 
 - Für die Planprüfung trug `pruefprofil_vorschlagen` den VM-Namen als betroffenes Asset ein. In der CMDB gehören zu einem Namen oft zwei aktive Assets: die Proxmox-VM und der Fernzugriffs-Host. Der Validator lehnte den Namen deshalb als mehrdeutig ab. Jetzt wird die volle Asset-ID verwendet. Realfall 25.11.: Vier der fünf Vorschläge scheiterten.
