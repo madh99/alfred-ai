@@ -69,6 +69,8 @@ export interface SqlStatus {
   listener?: Array<{ name: string; port: number; ip: string }>;
   /** Owner 24.11.: Sicherungslage als JSON-Text (SicherungsLage), bzw. Fehler der Abfrage */
   sicherungsLage?: string; sicherungsLageFehler?: string;
+  /** Owner 25.11.: VssOption des QEMU-Gastagent-VSS-Providers — -1 Provider fehlt, 0 nicht gesetzt (Standard VSS_BT_FULL), sonst der Wert */
+  vss?: number;
   fehler?: string;
 }
 
@@ -93,8 +95,40 @@ export function sqlStatusSkript(instanz?: string): string {
     `    try { $r.sicherungsLage = [string](Sql "${psDq(SICHERUNG_LAGE_TSQL)}" 60 'msdb')[0].j } catch { $r.sicherungsLageFehler = $_.Exception.Message }`,
     '  } catch { $r.fehler = $_.Exception.Message }',
     '}',
+    // Owner 25.11.: VssOption des QEMU-VSS-Providers (PBS-Snapshot als FULL oder copy-only) — Registry, unabhängig von SQL
+    `$vk = '${QEMU_VSS_SCHLUESSEL}'`,
+    "$r.vss = $(if (-not (Test-Path -LiteralPath $vk)) { -1 } else { $v = (Get-ItemProperty -LiteralPath $vk -Name VssOption -ErrorAction SilentlyContinue).VssOption; if ($null -eq $v) { 0 } else { [int]$v } })",
     'Ergebnis $r',
   ]);
+}
+
+/**
+ * Owner 25.11. — Realfall: der PBS-Snapshot der VM (QEMU-Gastagent, VSS) erscheint in msdb als FULL ohne copy-only und setzt die
+ * DIFF-Basis neu. VssOption 5 (VSS_BT_COPY) macht ihn copy-only (Proxmox-Wiki „VM Backup Consistency“); ein Update des Gastagenten
+ * setzt den Wert zurück (qemu#2919) — der Status zeigt ihn deshalb an.
+ */
+export const QEMU_VSS_SCHLUESSEL = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\QEMU Guest Agent VSS Provider';
+export function vssText(v: number | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  if (v === -1) return 'QEMU-VSS-Provider fehlt';
+  if (v === 5) return 'QEMU-VSS copy-only (VssOption 5)';
+  if (v === 0 || v === 1) return `QEMU-VSS voll (VssOption ${v === 0 ? 'Standard' : '1'})`;
+  return `QEMU-VSS VssOption ${v}`;
+}
+
+/** Owner 25.11. — VssOption setzen: an = 5 (VSS_BT_COPY), aus = 1 (VSS_BT_FULL, Standard); zurückgelesen samt Typ DWORD */
+export function vssKopieSkript(an: boolean): string {
+  return [...kopf({ an }, false),
+    `$k = '${QEMU_VSS_SCHLUESSEL}'`,
+    "if (-not (Test-Path -LiteralPath $k)) { throw 'QEMU Guest Agent VSS Provider ist auf diesem Rechner nicht registriert (Registry-Schlüssel fehlt) — nichts geändert' }",
+    '$vorher = (Get-ItemProperty -LiteralPath $k -Name VssOption -ErrorAction SilentlyContinue).VssOption',
+    '$soll = $(if ($p.an -eq $true) { 5 } else { 1 })',
+    'New-ItemProperty -LiteralPath $k -Name VssOption -PropertyType DWord -Value $soll -Force | Out-Null',
+    '$nachher = (Get-ItemProperty -LiteralPath $k -Name VssOption).VssOption',
+    "$typ = (Get-Item -LiteralPath $k).GetValueKind('VssOption').ToString()",
+    "if ([int]$nachher -ne $soll -or $typ -ne 'DWord') { throw ('VssOption zurückgelesen ' + $nachher + ' (' + $typ + '), erwartet ' + $soll + ' (DWord)') }",
+    "Ergebnis @{ rechner = $env:COMPUTERNAME; vorher = $(if ($null -eq $vorher) { 0 } else { [int]$vorher }); nachher = [int]$nachher; typ = $typ }",
+  ].join('\n');
 }
 
 export function sqlStatusText(s: SqlStatus): string {
@@ -114,6 +148,7 @@ export function sqlStatusText(s: SqlStatus): string {
   const lage = sicherungsLageLesen(s.sicherungsLage);
   if (lage) t.push(sicherungsLageText(lage));
   else if (s.sicherungsLageFehler) t.push(`Sicherungslage nicht lesbar: ${s.sicherungsLageFehler.slice(0, 200)}`);
+  const vss = vssText(s.vss); if (vss) t.push(vss);
   if (s.fehler) t.push(`Abfrage: ${s.fehler}`);
   return t.join('; ');
 }

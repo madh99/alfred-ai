@@ -258,3 +258,53 @@ describe('v1805 Platzprüfung im Wiederherstellungstest', () => {
     expect(src).not.toContain('(Get-Volume -DriveLetter $daten');
   });
 });
+
+// Owner 25.11. — Realfall: PBS-Snapshot (QEMU-VSS) als FULL ohne copy-only setzt die DIFF-Basis neu → VssOption 5 (VSS_BT_COPY)
+describe('Owner 25.11. vss_kopie_schalten', () => {
+  const imChange = { ausChange: true } as never;
+  function welt(antwort: object) {
+    const aufrufe: string[] = [];
+    const skill = new SqlServerSkill({ skript: async (_z, befehl) => { aufrufe.push(Buffer.from(befehl.split(' ').pop()!, 'base64').toString('utf16le')); return { code: 0, stdout: `ALFRED-AD ${JSON.stringify(antwort)}`, stderr: '' }; } });
+    return { skill, aufrufe };
+  }
+  it('setzt 5 bzw. 1 als DWORD am Provider-Schlüssel und liest zurück; nur im Change, an Pflicht', async () => {
+    const { vssKopieSkript } = await import('./sql-server.js');
+    const s = vssKopieSkript(true);
+    expect(s).toContain("$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\QEMU Guest Agent VSS Provider'");
+    expect(s).toContain('$soll = $(if ($p.an -eq $true) { 5 } else { 1 })');
+    expect(s).toContain('-PropertyType DWord -Value $soll -Force');
+    expect(s).toContain("if ([int]$nachher -ne $soll -or $typ -ne 'DWord') { throw");
+    expect(s).toContain("if (-not (Test-Path -LiteralPath $k)) { throw");
+    const { skill, aufrufe } = welt({ rechner: 'SQL01', vorher: 0, nachher: 5, typ: 'DWord' });
+    expect((await skill.execute({ action: 'vss_kopie_schalten', zugang: 'sql01', an: true }, {} as never)).error).toContain('nur als Schritt');
+    expect((await skill.execute({ action: 'vss_kopie_schalten', zugang: 'sql01' }, imChange)).error).toContain('an: true');
+    const r = await skill.execute({ action: 'vss_kopie_schalten', zugang: 'sql01', an: true }, imChange);
+    expect(r.display).toBe('✅ QEMU-VSS copy-only auf SQL01 (VssOption 5, vorher Standard) — Rückweg vss_kopie_schalten an false');
+    expect(aufrufe[0]).toContain('"an":true');
+    const z = welt({ rechner: 'SQL02', vorher: 5, nachher: 1, typ: 'DWord' });
+    expect((await z.skill.execute({ action: 'vss_kopie_schalten', zugang: 'sql02', an: false }, imChange)).display).toBe('✅ QEMU-VSS voll auf SQL02 (VssOption 1, vorher 5) — Rückweg vss_kopie_schalten an true');
+  });
+  it('status zeigt den Wert', async () => {
+    const { vssText, sqlStatusSkript } = await import('./sql-server.js');
+    expect(vssText(5)).toBe('QEMU-VSS copy-only (VssOption 5)');
+    expect(vssText(0)).toBe('QEMU-VSS voll (VssOption Standard)');
+    expect(vssText(1)).toBe('QEMU-VSS voll (VssOption 1)');
+    expect(vssText(-1)).toBe('QEMU-VSS-Provider fehlt');
+    expect(vssText(undefined)).toBeUndefined();
+    expect(sqlStatusSkript()).toContain('-Name VssOption -ErrorAction SilentlyContinue');
+    expect(sqlStatusText({ rechner: 'SQL01', installiert: true, version: '17.0.1', stufe: 'RTM', edition: 'Dev', vss: 5 })).toMatch(/; QEMU-VSS copy-only \(VssOption 5\)$/);
+  });
+  it('Change-Plan: Rückweg genau vss_kopie_schalten mit umgekehrtem an auf demselben Zugang', () => {
+    expect(aktionsArt('sql_server', 'vss_kopie_schalten')).toBe('aendern');
+    const sk = new SqlServerSkill({ skript: async () => ({ code: 0, stdout: '', stderr: '' }) });
+    const plan = (rueckweg: object) => ({ titel: 'PBS-Snapshot copy-only', begruendung: 'Owner 25.11.', ohneSicherungGrund: 'nur ein Registry-Wert, der Rückweg setzt ihn zurück', typ: 'normal', risiko: 'gering', ausfallMinuten: 0, betroffen: ['sql01'],
+      schritte: [{ titel: 'VssOption 5', art: 'aktion', skill: 'sql_server', aktion: 'vss_kopie_schalten', parameter: { zugang: 'sql01', an: true }, rueckweg,
+        pruefung: { typ: 'skill', skill: 'sql_server', aktion: 'status', parameter: { zugang: 'sql01' }, erwartet: 'QEMU-VSS copy-only (VssOption 5)' } }] });
+    const ctx = { skill: (n: string) => (n === 'sql_server' ? sk as never : undefined), asset: (n: string) => ({ id: `a-${n}`, name: n }), changes: [] };
+    const f = (r: object) => pruefeChangePlan(plan(r), ctx).fehler;
+    expect(f({ skill: 'sql_server', aktion: 'vss_kopie_schalten', parameter: { zugang: 'sql01', an: false } })).toEqual([]);
+    expect(f({ skill: 'sql_server', aktion: 'vss_kopie_schalten', parameter: { zugang: 'sql01', an: true } }).some(x => x.includes('rueckweg an = false'))).toBe(true);
+    expect(f({ skill: 'sql_server', aktion: 'vss_kopie_schalten', parameter: { zugang: 'sql02', an: false } }).some(x => x.includes('demselben Zugang'))).toBe(true);
+    expect(f({ keiner: 'egal' }).length).toBeGreaterThan(0);
+  });
+});

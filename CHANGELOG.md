@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — PBS-Snapshot von SQL-Knoten als copy-only (v1954)
+
+- Neuer Baustein `sql_server vss_kopie_schalten` (zugang, an): setzt den Registry-Wert `VssOption` des QEMU Guest Agent VSS Providers auf 5 (VSS_BT_COPY) bzw. zurück auf 1 (Standard VSS_BT_FULL), als DWORD, zurückgelesen samt Typ, ohne Neustart. Damit erscheint der PBS-Snapshot der VM in msdb als copy-only und setzt die DIFF-Basis nicht mehr neu. Nur als Change-Schritt; Rückweg ist derselbe Baustein mit umgekehrtem `an` auf demselben Zugang (Pflicht).
+- `sql_server status` zeigt den Wert („QEMU-VSS copy-only (VssOption 5)“, „QEMU-VSS voll (…)“ bzw. „QEMU-VSS-Provider fehlt“), weil ein Update des Gastagenten ihn zurücksetzt.
+
 ### Fixed — SQL-Sicherungslage trennt VSS-Snapshots von FULL-Dateien (v1953)
 
 - Die Sicherungslage (`sql_server status`, `linux_sql status`) liest je Datenbank und Art die letzte Sicherung jetzt getrennt nach `is_snapshot`. Ein VSS-Snapshot erscheint als „FULL vor … (Server, Snapshot)“. Am 25.11. meldete der Status nach der FULL-Datei um 01:00 Uhr eine spätere FULL, die zeitlich zur PBS-Sicherung der VM passte, auch für eine Datenbank ganz ohne Sicherungsjob. Woher ein FULL-Eintrag stammt, war bisher nicht erkennbar.

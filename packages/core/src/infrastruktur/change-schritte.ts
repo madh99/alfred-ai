@@ -263,7 +263,8 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   windows_ad: new Set(['dienstkonto_anlegen', 'dienstkonto_entfernen', 'spn_setzen', 'spn_entfernen', 'computerkonto_vorbereiten', 'computerkonto_entfernen', 'dns_ptr', 'dns_ptr_loeschen', 'gruppe_anlegen', 'gruppe_entfernen',
     'admin_anmeldung_einrichten', 'admin_anmeldung_entfernen']),
   // Ruling R33 (I8e L6) — SSMS: Erfolg nur mit belegten Versionen von SSMS, sqlcmd und ODBC 18; Rückweg prüft je Teil die Abwesenheit
-  sql_server: new Set(['ssms_installieren', 'ssms_entfernen']),
+  // Owner 25.11. — VssOption: Wert und Typ DWORD zurückgelesen
+  sql_server: new Set(['ssms_installieren', 'ssms_entfernen', 'vss_kopie_schalten']),
   // I8e Paket 2 — HA-Grundlage prüft hosts-Auflösung, Paketversionen + hold, Watchdog-Kennung/-Besitzer, nft-Tabelle + Dienst, hacluster, HADR, pcsd
   // Task 3 — Cluster: alle Knoten online, Quorum n/n, sbd läuft/aktiviert, have-watchdog, Eigenschaften; Entfernen: keine corosync.conf
   // des Clusters mehr auf irgendeinem Knoten, Cluster-Dienste aus
@@ -317,6 +318,8 @@ const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { s
   // Ruling R33 (I8e L6) — SSMS: Rückweg genau sql_server.ssms_entfernen auf demselben Zugang (nimmt nur zurück, was der Merker nennt)
   sql_server: new Map([
     ['ssms_installieren', { skill: 'sql_server', aktion: 'ssms_entfernen', text: 'sql_server.ssms_entfernen (zugang)', parameter: gleicherZugang('ssms_entfernen') }],
+    // Owner 25.11. — VssOption: Rückweg genau vss_kopie_schalten mit umgekehrtem an auf demselben Zugang
+    ['vss_kopie_schalten', { skill: 'sql_server', aktion: 'vss_kopie_schalten', text: 'sql_server.vss_kopie_schalten (zugang, an umgekehrt)', parameter: schalterZurueck('vss_kopie_schalten') }],
   ]),
   // Ruling R34 (I8e L6) — Admin-Anmeldung: Rückweg genau windows_ad.admin_anmeldung_entfernen, derselbe Zugang und dieselbe Gruppe
   windows_ad: new Map([

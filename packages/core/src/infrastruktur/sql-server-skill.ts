@@ -9,7 +9,7 @@ import {
   sqlStatusSkript, sqlStatusText, pruefdatenLesenSkript, pruefeMedien, medienSkript, pruefeInstallation, installierenSkript, pruefeKonfiguration, konfigurierenSkript,
   hadrSkript, ressourcentypSkript, endpunktSkript, endpunktEntfernenSkript, pruefeAg, agAnlegenSkript, agBeitretenSkript, agEntfernenSkript, pruefeListener, listenerSkript, listenerEntfernenSkript,
   failoverSkript, datenbankSkript, datenbankEntfernenSkript, pruefdatenSchreibenSkript, pruefeSicherung, sicherungSkript, pruefeJobs, jobsSkript, jobsEntfernenSkript,
-  pruefeWiederherstellung, wiederherstellungSkript, BEZEICHNER, INSTANZ, listenerTestSkript, listenerTestText, type SqlStatus, type ListenerTest,
+  pruefeWiederherstellung, wiederherstellungSkript, vssKopieSkript, BEZEICHNER, INSTANZ, listenerTestSkript, listenerTestText, type SqlStatus, type ListenerTest,
 } from './sql-server.js';
 import { KONTO } from './windows-cluster.js';
 import { sqlTlsStatusSkript, sqlTlsStatusText, pruefeBindung, bindenSkript, bindungWiederherstellenSkript, pruefeNeustart, engineNeustartSkript, pruefeWiederanlauf, engineWiederanlaufSkript, type Wiederanlauf, pruefeTlsTest, tlsTestSkript, bewerteTlsTest, tlsTestText, type SqlTlsStatus, type TlsBefund } from './sql-tls-bindung.js';
@@ -28,7 +28,9 @@ const NUR_IM_CHANGE = new Set(['sql_medien_laden', 'sql_installieren', 'konfigur
   'ag_entfernen', 'listener_anlegen', 'listener_entfernen', 'failover', 'datenbank_anlegen', 'datenbank_entfernen', 'pruefdaten_schreiben', 'sql_sicherung',
   'sicherungsjobs_einrichten', 'sicherungsjobs_entfernen', 'wiederherstellung_testen', 'zertifikat_binden', 'zertifikat_bindung_wiederherstellen', 'engine_neustart', 'engine_wiederanlauf',
   // Ruling R33 (I8e L6): SSMS + sqlcmd + ODBC 18 auf einem Windows-Zugang (Admin-Clients), mit Rückweg
-  'ssms_installieren', 'ssms_entfernen']);
+  'ssms_installieren', 'ssms_entfernen',
+  // Owner 25.11.: PBS-Snapshot copy-only (VssOption des QEMU-VSS-Providers), mit Rückweg an umgekehrt
+  'vss_kopie_schalten']);
 const ZUGANG = /^[a-z0-9][a-z0-9.-]{0,62}$/i;
 
 export class SqlServerSkill extends Skill {
@@ -59,7 +61,8 @@ export class SqlServerSkill extends Skill {
       + 'sql_sicherung (zugang, datenbank, art voll|diff|log, ziel Ordner oder \\\\fs01.ad.3033.at\\SQLBackup$; ohne Rückweg) — Datei <ziel>\\<db>\\<db>_<art>_<zeit>.<bak|dif|trn>, CHECKSUM, Kompression. '
       + 'sicherungsjobs_einrichten (zugang = jedes Replikat, datenbanken, ziel, voll_uhrzeit 01:00, diff_stunden 6, log_minuten 15) ↔ sicherungsjobs_entfernen — sichert nur auf dem bevorzugten Replikat, löscht nie alte Sicherungen. '
       + 'wiederherstellung_testen (zugang, datenbank, ordner = <ziel>\\<db>, ziel_name, entfernen_danach Standard true) — Kette voll+diff+log neben der AG, Platzprüfung, DBCC CHECKDB, Prüfdaten zählen (ohne Rückweg). '
-      + 'ssms_installieren (Ruling R33; zugang = Windows-Fernzugang, z. B. Admin-Client sqladmw11/sqladm25; braucht befristeten Internetzugang zu Microsoft; zeitlimitS mindestens 3660) — still und wiederholbar: ODBC Driver 18 for SQL Server, Microsoft Command Line Utilities (sqlcmd, ODBC) und SSMS 22 (vs_SSMS.exe --quiet --norestart --wait) nur von festen Microsoft-URLs, jede Datei vor dem Start auf die Microsoft-Signatur geprüft; Vorhandenes bleibt, kein Neustart; Selbstprüfung Ssms.exe-Version, sqlcmd -? an den festen Pfaden der Anmeldeprobe, ODBC-Treiber-Version; Ergebnis „SSMS_INSTALLIERT <zugang>: SSMS <ver>, sqlcmd <ver>, ODBC 18 <ver>“ ↔ ssms_entfernen (zugang; zeitlimitS mindestens 1260) — deinstalliert nur, was ssms_installieren dort installiert hat (Merker), mit Selbstprüfung; „SSMS_ENTFERNT …“.',
+      + 'ssms_installieren (Ruling R33; zugang = Windows-Fernzugang, z. B. Admin-Client sqladmw11/sqladm25; braucht befristeten Internetzugang zu Microsoft; zeitlimitS mindestens 3660) — still und wiederholbar: ODBC Driver 18 for SQL Server, Microsoft Command Line Utilities (sqlcmd, ODBC) und SSMS 22 (vs_SSMS.exe --quiet --norestart --wait) nur von festen Microsoft-URLs, jede Datei vor dem Start auf die Microsoft-Signatur geprüft; Vorhandenes bleibt, kein Neustart; Selbstprüfung Ssms.exe-Version, sqlcmd -? an den festen Pfaden der Anmeldeprobe, ODBC-Treiber-Version; Ergebnis „SSMS_INSTALLIERT <zugang>: SSMS <ver>, sqlcmd <ver>, ODBC 18 <ver>“ ↔ ssms_entfernen (zugang; zeitlimitS mindestens 1260) — deinstalliert nur, was ssms_installieren dort installiert hat (Merker), mit Selbstprüfung; „SSMS_ENTFERNT …“. '
+      + 'vss_kopie_schalten (Owner 25.11.; zugang = SQL-Knoten als VM mit QEMU-Gastagent, an true|false) — setzt VssOption des QEMU Guest Agent VSS Providers: an = 5 (VSS_BT_COPY, der PBS-Snapshot erscheint in msdb als copy-only und lässt die DIFF-Basis unberührt), false = 1 (Standard VSS_BT_FULL); zurückgelesen samt Typ DWORD, kein Neustart; Ergebnis „QEMU-VSS copy-only auf SQL01 (VssOption 5, vorher 1)“ ↔ vss_kopie_schalten an umgekehrt; status zeigt „QEMU-VSS copy-only (VssOption 5)“ bzw. „QEMU-VSS voll (…)“ — ein Update des Gastagenten setzt den Wert zurück.',
     riskLevel: 'admin',
     version: '1.0.0',
     // v1811 — direkte Aufrufe (listener_testen, status) nicht am Standard von 30 s abbrechen
@@ -83,6 +86,7 @@ export class SqlServerSkill extends Skill {
         thumbprint: { type: 'string' }, force_encryption: { type: 'boolean' }, erwarteter_vorher_hash: { type: 'string' }, zeitlimit_s: { type: 'number' }, erwarteter_primaer: { type: 'string' },
         erwarteter_thumbprint: { type: 'string' }, erwarteter_server: { type: 'string' }, erwartete_rolle: { type: 'string', enum: ['PRIMARY', 'SECONDARY'] }, erzwungen: { type: 'boolean' },
         ordner: { type: 'string' }, listener: { type: 'string', description: 'listener_testen: FQDN des Listeners' }, ziel_name: { type: 'string' }, entfernen_danach: { type: 'boolean' },
+        an: { type: 'boolean', description: 'vss_kopie_schalten: true = VssOption 5 (copy-only), false = 1 (Standard, Rückweg)' },
       },
       required: ['action', 'zugang'],
     },
@@ -124,6 +128,13 @@ export class SqlServerSkill extends Skill {
           const r = await this.lauf<{ entfernt: string[]; unveraendert: string[]; neustartNoetig: boolean }>(zugang, ssmsEntfernenSkript(), 'SSMS entfernen', SSMS_ZEIT_MS.entfernen);
           const e = r.entfernt ?? []; const u = r.unveraendert ?? [];
           return { success: true, data: r, display: `SSMS_ENTFERNT ${zugang}: ${e.length ? `entfernt ${e.join(', ')}` : 'nichts von Alfred installiert — nichts entfernt'}${u.length ? `; unverändert (nicht von Alfred): ${u.join(', ')}` : ''}${r.neustartNoetig ? ' — Neustart ausstehend' : ''}` };
+        }
+        // Owner 25.11. — PBS-Snapshot copy-only: VssOption 5 bzw. zurück auf 1, zurückgelesen
+        case 'vss_kopie_schalten': {
+          if (typeof input.an !== 'boolean') return { success: false, error: 'an: true (VssOption 5, copy-only) oder false (1, Standard)' };
+          const r = await this.lauf<{ rechner: string; vorher: number; nachher: number; typ: string }>(zugang, vssKopieSkript(input.an), 'VssOption setzen', 120_000);
+          this.d.protokoll?.('QEMU-VSS VssOption', { zugang, vorher: r.vorher, nachher: r.nachher });
+          return { success: true, data: r, display: `✅ QEMU-VSS ${input.an ? 'copy-only' : 'voll'} auf ${r.rechner} (VssOption ${r.nachher}, vorher ${r.vorher === 0 ? 'Standard' : r.vorher}) — Rückweg vss_kopie_schalten an ${String(!input.an)}` };
         }
         case 'pruefdaten_lesen': {
           const r = await this.lauf<{ zeilen: number; letzteId: number | null; letzterServer: string; letzteZeit: string }>(zugang, pruefdatenLesenSkript(mi({ datenbank: name('datenbank') })), 'Prüfdaten lesen', 120_000);
