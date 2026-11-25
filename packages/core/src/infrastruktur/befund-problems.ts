@@ -17,6 +17,8 @@ export interface ProblemZugriff {
   loese(id: string, notiz: string): Promise<void>;
   /** CMDB-Asset des Hosts (Fernzugang) */
   assetFuer?(zugang: string): Promise<string | undefined>;
+  /** Titel und Beschreibung eines offenen Problems ersetzen (nur mit Erfassung.textNachziehen) */
+  aktualisiere?(id: string, d: { title: string; description: string }): Promise<void>;
 }
 
 export function uebernehmen(a: Auffaelligkeit): boolean {
@@ -33,6 +35,12 @@ export interface Erfassung {
    * ueberwachung auf denselben Hosts (Windows-Überwachung: Dienste/Ereignisse/Zertifikate; Windows-SQL-Überwachung: Sicherung/Jobs)
    */
   schluessel?: (k: string) => boolean;
+  /**
+   * v1961 — offene Problems mit geändertem Befundtext nachziehen (Titel und Beschreibung). Schwachstellen-Lauf: Zahlen, Stufe und Frist
+   * ändern sich täglich; ohne das trug ein Problem dauerhaft den Stand seines ersten Laufs (Realfall 25.11.: „772 kritisch“ nach der
+   * Kalibrierung auf 34).
+   */
+  textNachziehen?: boolean;
 }
 /** Schlüssel-Präfixe, deren zweites Feld der Fernzugang ist (container-unhealthy:dockerhost:noah …) */
 const HOST_SCHLUESSEL = /^(container-[a-z]+|platte|updates|os|paketverwaltung|lizenz|grundlinie|ueberwachung|pki|sicherheit)$/;
@@ -54,7 +62,7 @@ export const istSqlUeberwachungsSchluessel = (k: string): boolean => /^ueberwach
 
 const OFFEN = (s: string) => !['resolved', 'closed'].includes(s);
 
-export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugriff, bericht: { docId: string; datum: string }, erfassung: Erfassung): Promise<{ neu: string[]; bekannt: number; geloest: string[]; dubletten?: string[] }> {
+export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugriff, bericht: { docId: string; datum: string }, erfassung: Erfassung): Promise<{ neu: string[]; bekannt: number; geloest: string[]; dubletten?: string[]; aktualisiert?: string[] }> {
   // liste() liefert ALLE Problems dieser Quelle, älteste zuerst (v1770 — vorher abgeschnitten bei 1000, Realfall 07.11.)
   const vorhanden = (await z.liste()).filter(p => p.detectionMethod?.startsWith(`${METHODE}:`));
   // je Schlüssel zählt das älteste Problem (auch ein geschlossenes — Regel oben). Jüngere offene zum selben Schlüssel können nur aus
@@ -76,14 +84,20 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
   }
   const zustaendig = (k: string) => (erfassung.schluessel ? erfassung.schluessel(k) : !istSqlUeberwachungsSchluessel(k) && !istSicherheitsSchluessel(k));
   const aktuell = auff.filter(a => uebernehmen(a) && zustaendig(a.schluessel!));
-  const neu: string[] = []; let bekannt = 0;
+  const neu: string[] = []; let bekannt = 0; const aktualisiert: string[] = [];
   for (const a of aktuell) {
     const da = nachSchluessel.get(a.schluessel!);
-    if (da && !(WIEDERKEHREND.test(a.kategorie!) && da.status === 'resolved')) { bekannt++; continue; }
+    const title = `${a.bereich}: ${a.text}`.slice(0, 200);
+    const description = `Befund der Bestandsaufnahme (${bericht.datum}, Bericht ${bericht.docId}).\n${a.text}\nSchwere laut Regeln: ${a.schwere}.`;
+    if (da && !(WIEDERKEHREND.test(a.kategorie!) && da.status === 'resolved')) {
+      bekannt++;
+      if (erfassung.textNachziehen && z.aktualisiere && OFFEN(da.status) && da.title !== title) { await z.aktualisiere(da.id, { title, description }); aktualisiert.push(da.id); }
+      continue;
+    }
     const asset = a.zugang ? await z.assetFuer?.(a.zugang).catch(() => undefined) : undefined;
     const id = await z.anlegen({
-      title: `${a.bereich}: ${a.text}`.slice(0, 200),
-      description: `Befund der Bestandsaufnahme (${bericht.datum}, Bericht ${bericht.docId}).\n${a.text}\nSchwere laut Regeln: ${a.schwere}.`,
+      title,
+      description,
       priority: a.schwere === 'hoch' ? 'high' : 'medium', category: KATEGORIE[a.kategorie!],
       affectedAssetIds: asset ? [asset] : [], detectionMethod: `${METHODE}:${a.schluessel}`,
     });
@@ -101,5 +115,5 @@ export async function befundeAlsProblems(auff: Auffaelligkeit[], z: ProblemZugri
     await z.loese(p.id, `Im Bestand vom ${bericht.datum} (Bericht ${bericht.docId}) nicht mehr festgestellt — automatisch als gelöst markiert.`);
     geloest.push(p.id);
   }
-  return { neu, bekannt, geloest, ...(dubletten.length ? { dubletten } : {}) };
+  return { neu, bekannt, geloest, ...(dubletten.length ? { dubletten } : {}), ...(aktualisiert.length ? { aktualisiert } : {}) };
 }

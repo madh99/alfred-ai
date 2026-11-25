@@ -226,6 +226,26 @@ describe('Zuständigkeit der Schlüssel sicherheit:', () => {
   });
 });
 
+// v1961 — Realfall 25.11.: nach der Kalibrierung trugen die Problems weiter „772 kritisch“ aus dem ersten Lauf
+describe('Befundtext offener Problems nachziehen', () => {
+  it('nur mit textNachziehen, nur offene, nur bei geändertem Text', async () => {
+    const { befundeAlsProblems, istSicherheitsSchluessel } = await import('../befund-problems.js');
+    const probleme = [{ id: 'p1', title: 'docker-ops-01: KRITISCH — Container guacamole (Guacamole): 772 kritisch', status: 'open', detectionMethod: 'infrastruktur-bestand:sicherheit:docker-ops-01:guacamole' }];
+    const neu: Array<{ id: string; title: string }> = [];
+    const z = { liste: async () => probleme, anlegen: async () => 'x', loese: async () => undefined, aktualisiere: async (id: string, d: { title: string }) => { neu.push({ id, title: d.title }); } } as never;
+    const b = { schwere: 'hoch' as const, bereich: 'docker-ops-01', text: 'KRITISCH — Basis-Image von Container guacamole: 34 kritisch', schluessel: 'sicherheit:docker-ops-01:guacamole', kategorie: 'sicherheit' as const, zugang: 'docker-ops-01' };
+    const erf = { hosts: new Set(['docker-ops-01']), alle: false, kategorien: new Set(['sicherheit']), schluessel: istSicherheitsSchluessel };
+    expect((await befundeAlsProblems([b], z, { docId: 's', datum: 'd' }, erf)).aktualisiert).toBeUndefined();
+    const r = await befundeAlsProblems([b], z, { docId: 's', datum: 'd' }, { ...erf, textNachziehen: true });
+    expect(r.aktualisiert).toEqual(['p1']); expect(r.neu).toEqual([]);
+    expect(neu[0]!.title).toBe('docker-ops-01: KRITISCH — Basis-Image von Container guacamole: 34 kritisch');
+    probleme[0]!.title = neu[0]!.title;
+    expect((await befundeAlsProblems([b], z, { docId: 's', datum: 'd' }, { ...erf, textNachziehen: true })).aktualisiert).toBeUndefined();
+    probleme[0]!.status = 'closed'; probleme[0]!.title = 'alt';
+    expect((await befundeAlsProblems([b], z, { docId: 's', datum: 'd' }, { ...erf, textNachziehen: true })).aktualisiert).toBeUndefined();
+  });
+});
+
 // Security-Review 25.11. — fail-closed bei Quellenausfällen
 describe('Fail-closed bei Quellenausfällen', () => {
   const basis = { hosts: [] as LaufDeps['hosts'], pause: async () => undefined };

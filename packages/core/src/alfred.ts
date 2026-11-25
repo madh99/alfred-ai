@@ -7999,6 +7999,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             anlegen: async (d) => (await pr.createProblem(o, { ...d, category: d.category as never, detectedBy: 'auto' })).id,
             loese: async (id, notiz) => { await pr.appendAnalysisNotes(o, id, notiz); await pr.updateProblem(o, id, { status: 'resolved' } as never); },
             assetFuer: async (zugang) => (await this.fernzugriffRef?.aktiveZugaenge() ?? []).find(z => z.name === zugang)?.cmdbAssetId,
+            aktualisiere: async (id, d) => { await pr.updateProblem(o, id, { title: d.title, description: d.description }); },
           }, bericht, erfassung);
         };
         // I8 3b-4 — Windows-Überwachung stündlich: Dienste, Ereignisprotokoll, Zertifikate, freier Speicher → Problems (nur diese Kategorien)
@@ -8426,7 +8427,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               // Fail-closed: Befunde von Komponenten mit ausgefallener Quelle werden in diesem Lauf nie gelöst (angelegt werden sie, wenn es sie gibt)
               const gesperrt = new Set(r.komponenten.filter(k => k.quellenFehler).map(k => `sicherheit:${k.host}:${k.name}`));
               const mitBefund = new Set(bef.map(b => b.schluessel));
-              const pr = await infraProblems(bef, { docId: 'tägliche Schwachstellen-Überwachung', datum }, { hosts: erfasst, alle: false, kategorien: new Set(['sicherheit']), schluessel: (k) => istSicherheitsSchluessel(k) && (!gesperrt.has(k) || mitBefund.has(k)) });
+              const pr = await infraProblems(bef, { docId: 'tägliche Schwachstellen-Überwachung', datum }, { hosts: erfasst, alle: false, kategorien: new Set(['sicherheit']), schluessel: (k) => istSicherheitsSchluessel(k) && (!gesperrt.has(k) || mitBefund.has(k)), textNachziehen: true });
               const text = lageText(r.komponenten, datum, r.fehler);
               await cmdbFz.saveDocument(o, { docType: 'inventory', title: `Schwachstellen ${new Date().toISOString().slice(0, 10)}`, content: text, format: 'markdown', generatedBy: 'alfred:schwachstellen' }).catch(() => undefined);
               // Owner 25.11.: sofort melden und Push nur bei neuem „kritisch“ — neu heißt: vorher nicht offen oder nicht kritisch (auch ein
@@ -8447,7 +8448,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               }
               const z = zaehleKomponenten(r.komponenten);
               this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt.length,
-                befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
+                befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, problemsAktualisiert: pr.aktualisiert?.length ?? 0, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
               return { ok: true, zaehler: { komponenten: r.komponenten.length, kritisch: z.kritisch, hoch: z.hoch, neu: gespeichert.neu.length, befunde: bef.length } };
             } finally { laeuft = false; }
           };

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Schwachstellen-Problems tragen den aktuellen Befund (v1961)
+
+- Bisher behielt ein offenes Problem der Schwachstellen-Überwachung Titel und Beschreibung des Laufs, in dem es angelegt wurde.
+- Jetzt übernimmt jeder Lauf den aktuellen Befundtext, also Zahlen, Stufe und Frist.
+- Andere Abgleiche (Bestand, Windows- und SQL-Überwachung) bleiben unverändert.
+
 ### Changed — Schwachstellen-Überwachung: Kalibrierung und fail-closed bei Quellenausfällen (v1960)
 
 - **Bewertung von Paketen im Image (Trivy):** Ausschlaggebend ist jetzt die tatsächliche Gefährdung, nicht mehr der NVD-Höchstwert.
