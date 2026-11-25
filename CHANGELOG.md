@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — SQL-Sicherungslage trennt VSS-Snapshots von FULL-Dateien (v1953)
+
+- Die Sicherungslage (`sql_server status`, `linux_sql status`) liest je Datenbank und Art die letzte Sicherung jetzt getrennt nach `is_snapshot`. Ein VSS-Snapshot erscheint als „FULL vor … (Server, Snapshot)“. Am 25.11. meldete der Status nach der FULL-Datei um 01:00 Uhr eine spätere FULL, die zeitlich zur PBS-Sicherung der VM passte, auch für eine Datenbank ganz ohne Sicherungsjob. Woher ein FULL-Eintrag stammt, war bisher nicht erkennbar.
+- Die Windows-SQL-Überwachung zählt nur noch FULL-Dateien als FULL-Sicherung. Ein Snapshot löst den FULL-Befund nicht mehr. Ist der jüngste Snapshot (nicht copy-only) jünger als die FULL-Datei, entsteht ein Befund der Stufe „mittel“. Ein solcher Snapshot setzt die DIFF-Basis neu, die DIFF-Sicherungen danach lassen sich dann nur zusammen mit dem Snapshot wiederherstellen.
+
 ### Added — Windows-SQL-Überwachung: Sicherungsalter und fehlgeschlagene Sicherungsjobs; Jobverlauf zeigt die Fehlerursache (v1952)
 
 - Neuer stündlicher Job `windows-sql-ueberwachung`. Er liest über `sql_server status` die Sicherungslage aller Windows-SQL-Server und legt Problems an, wenn die letzte FULL-Sicherung älter als 26 h ist, die letzte LOG-Sicherung älter als 2 h (bei Wiederherstellungsmodell FULL) oder wenn der jüngste Lauf eines aktiven Jobs „Alfred Sicherung …“ fehlgeschlagen ist. Bisher war das nur für die Linux-SQL-Server überwacht. Am 24.11. scheiterte deshalb die DIFF-Sicherung auf dem Primär sql02 unbemerkt, und die letzte FULL-Sicherung war 4 Tage alt. AG-Datenbanken werden über alle Replikate bewertet. Ist ein Replikat nicht lesbar, wird das Alter nicht bewertet, und offene Befunde bleiben bestehen.

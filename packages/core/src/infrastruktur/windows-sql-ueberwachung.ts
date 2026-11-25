@@ -7,6 +7,9 @@
  * Fail-closed (R21): jedes Replikat führt in msdb nur die eigenen Sicherungen. Ist ein Replikat einer AG nicht gelesen, wird das Alter
  * ihrer Datenbanken nicht ausgewertet (es könnte die jüngste Sicherung haben) und die gelesenen Replikate gelten nicht als erfasst —
  * ihre Sicherungsbefunde bleiben offen statt fälschlich gelöst. Nur lesend; kein Modell.
+ *
+ * v1953 — Realfall 25.11.: die PBS-Sicherung der VM (VSS-Snapshot) stand in msdb als FULL und löste die FULL-Befunde, auch für eine
+ * Datenbank ganz ohne Sicherungsdatei. Snapshots zählen nicht mehr als FULL; ist der jüngste Snapshot jünger als die FULL-Datei → mittel.
  */
 import type { Auffaelligkeit } from './bericht.js';
 import type { SqlStatus } from './sql-server.js';
@@ -40,7 +43,7 @@ export function windowsSqlJobBefunde(host: string, lage: SicherungsLage): Auffae
  * Hosts (AG mit nicht gelesenem Replikat).
  */
 export function windowsSqlSicherungsBefunde(gelesen: ReadonlyMap<string, Gelesen>): { befunde: Auffaelligkeit[]; gesperrt: Map<string, string> } {
-  type G = { name: string; hosts: Set<string>; replikate: Set<string>; eingerichtet: boolean; voll: number | null; log: number | null; logPflicht: boolean };
+  type G = { name: string; hosts: Set<string>; replikate: Set<string>; eingerichtet: boolean; voll: number | null; snap: number | null; log: number | null; logPflicht: boolean };
   const gruppen = new Map<string, G>();
   const juenger = (a: number | null, b: number | null | undefined) => (typeof b !== 'number' ? a : a === null ? b : Math.min(a, b));
   for (const [host, { status: s, lage }] of gelesen) {
@@ -49,12 +52,14 @@ export function windowsSqlSicherungsBefunde(gelesen: ReadonlyMap<string, Gelesen
     const replikate = new Set((s.ags ?? []).map(r => r.replikat.toLowerCase()));
     for (const d of s.datenbanken ?? []) {
       const key = agDb.has(d.name) ? `ag:${d.name}` : `${host}/${d.name}`;
-      const g = gruppen.get(key) ?? { name: d.name, hosts: new Set<string>(), replikate: new Set<string>(), eingerichtet: false, voll: null, log: null, logPflicht: false };
+      const g = gruppen.get(key) ?? { name: d.name, hosts: new Set<string>(), replikate: new Set<string>(), eingerichtet: false, voll: null, snap: null, log: null, logPflicht: false };
       g.hosts.add(host); g.eingerichtet ||= eingerichtet;
       if (agDb.has(d.name)) for (const r of replikate) g.replikate.add(r);
       for (const e of lage.sicherungen ?? []) {
         if (e.db !== d.name) continue;
-        if (e.typ === 'FULL') g.voll = juenger(g.voll, e.alterMin);
+        // v1953: nur die FULL-Datei zählt als FULL; ein VSS-Snapshot (nicht copy-only) liegt nur im PBS, setzt aber die DIFF-Basis
+        if (e.typ === 'FULL' && e.snapshot === 1) g.snap = juenger(g.snap, e.alterMin);
+        else if (e.typ === 'FULL') g.voll = juenger(g.voll, e.alterMin);
         if (e.typ === 'LOG') g.log = juenger(g.log, e.alterMin);
       }
       g.logPflicht ||= /^(FULL|BULK_LOGGED)$/i.test(d.modell ?? '');
@@ -70,6 +75,7 @@ export function windowsSqlSicherungsBefunde(gelesen: ReadonlyMap<string, Gelesen
     const z = [...g.hosts].sort()[0]!;
     const wo = g.hosts.size > 1 ? ` (${[...g.hosts].sort().join(', ')})` : '';
     if (g.voll === null || g.voll > LINUX_SQL_VOLL_MAX_MIN) befunde.push({ schwere: 'hoch', text: `Datenbank ${g.name}${wo}: letzte FULL-Sicherung ${altersText(g.voll)} (Soll ≤ 26 h)`, ...k(z, `sicherung:${g.name}:voll`) });
+    if (g.snap !== null && (g.voll === null || g.snap < g.voll)) befunde.push({ schwere: 'mittel', text: `Datenbank ${g.name}${wo}: jüngste FULL ist ein VSS-Snapshot (${alterWort(g.snap)}, nicht copy-only) statt der FULL-Datei (${altersText(g.voll)}) — DIFF-Sicherungen danach sind nur mit dem Snapshot wiederherstellbar (Snapshot als copy-only sichern)`, ...k(z, `sicherung:${g.name}:snapshot`) });
     if (g.logPflicht && (g.log === null || g.log > LINUX_SQL_LOG_MAX_MIN)) befunde.push({ schwere: 'hoch', text: `Datenbank ${g.name}${wo}: letzte LOG-Sicherung ${altersText(g.log)} (Soll ≤ 2 h)`, ...k(z, `sicherung:${g.name}:log`) });
   }
   return { befunde, gesperrt };

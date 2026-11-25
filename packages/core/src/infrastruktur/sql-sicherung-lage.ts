@@ -9,19 +9,24 @@
  * (Login vor diesem Stand angelegt), meldet der Status das, statt zu scheitern.
  */
 
-/** Ausdruck (Unterabfrage, FOR JSON): letzte Sicherung je Datenbank und Art — Benutzerdatenbanken, ohne Wegwerf-Kopien alfred_wh_* */
+/**
+ * Ausdruck (Unterabfrage, FOR JSON): letzte Sicherung je Datenbank und Art — Benutzerdatenbanken, ohne Wegwerf-Kopien alfred_wh_*.
+ * v1953 — Realfall 25.11. (sql02/sql01): nach der FULL-Datei um 01:00 meldete der Status „FULL vor 3 h“, auch für i8d_single01 ohne
+ * Alfred-Job — zeitgleich mit der PBS-Sicherung der VM. Ein VSS-Snapshot (Gast-Agent, SQL Writer) steht in msdb als FULL; ist er nicht
+ * copy-only, setzt er die DIFF-Basis neu. Deshalb je Datenbank, Art UND is_snapshot die letzte Sicherung: Datei und Snapshot getrennt.
+ */
 export const SICHERUNGEN_JSON = [
   '(SELECT b.database_name AS db,',
   "   CASE b.type WHEN 'D' THEN N'FULL' WHEN 'I' THEN N'DIFF' ELSE N'LOG' END AS typ,",
   '   CONVERT(nvarchar(19), b.backup_finish_date, 126) AS ende,',
   '   DATEDIFF(MINUTE, b.backup_finish_date, GETDATE()) AS alterMin,',
-  '   b.server_name AS server, CAST(b.is_copy_only AS int) AS kopie',
+  '   b.server_name AS server, CAST(b.is_copy_only AS int) AS kopie, CAST(b.is_snapshot AS int) AS snapshot',
   ' FROM msdb.dbo.backupset b',
   ' WHERE b.backup_set_id IN (SELECT MAX(x.backup_set_id) FROM msdb.dbo.backupset x',
   "   WHERE x.type IN ('D', 'I', 'L') AND x.is_copy_only = 0 AND x.database_name NOT LIKE N'alfred[_]wh[_]%'",
   '     AND x.database_name IN (SELECT d.name FROM sys.databases d WHERE d.database_id > 4)',
-  '   GROUP BY x.database_name, x.type)',
-  ' ORDER BY b.database_name, b.type FOR JSON PATH)',
+  '   GROUP BY x.database_name, x.type, x.is_snapshot)',
+  ' ORDER BY b.database_name, b.type, b.is_snapshot FOR JSON PATH)',
 ].join('\n');
 
 /** Ausdruck (Unterabfrage, FOR JSON): je Job die letzten 3 Schritt-Einträge (step_id > 0) — Zeit aus run_date/run_time (Serverzeit) */
@@ -57,7 +62,7 @@ export const SICHERUNG_LAGE_TSQL = [
   '  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES) AS j;',
 ].join('\n');
 
-export interface SicherungEintrag { db: string; typ: 'FULL' | 'DIFF' | 'LOG'; ende?: string; alterMin?: number | null; server?: string; kopie?: number }
+export interface SicherungEintrag { db: string; typ: 'FULL' | 'DIFF' | 'LOG'; ende?: string; alterMin?: number | null; server?: string; kopie?: number; snapshot?: number }
 export interface JobLauf { zeit?: string; alterMin?: number | null; status?: number; schritt?: number; meldung?: string | null }
 export interface JobLage { name: string; aktiv?: number; laeufe?: JobLauf[] | null }
 export interface SicherungsLage { sicherungen?: SicherungEintrag[] | null; jobs?: JobLage[] | null; jobsLesbar?: number | null }
@@ -85,6 +90,12 @@ export function jobMeldungKurz(l: JobLauf): string {
   return '';
 }
 
+/** „ (sql02)“, „ (sql02, Snapshot)“ — v1953: ein VSS-Snapshot ist als solcher erkennbar */
+const klammer = (x: SicherungEintrag): string => {
+  const t = [x.server, x.snapshot === 1 ? 'Snapshot' : ''].filter(Boolean);
+  return t.length ? ` (${t.join(', ')})` : '';
+};
+
 /** Text der Sicherungslage (eine Zeile, „; “-getrennt) — für die Statusanzeige beider Skills */
 export function sicherungsLageText(l: SicherungsLage | null | undefined): string {
   if (!l) return '';
@@ -92,7 +103,7 @@ export function sicherungsLageText(l: SicherungsLage | null | undefined): string
   const s = l.sicherungen ?? [];
   if (s.length) {
     const dbs = [...new Set(s.map(x => x.db))];
-    teile.push(`letzte Sicherungen ${dbs.map(d => `${d}: ${s.filter(x => x.db === d).map(x => `${x.typ} ${alterWort(x.alterMin)}${x.server ? ` (${x.server})` : ''}`).join(', ')}`).join('; ')}`);
+    teile.push(`letzte Sicherungen ${dbs.map(d => `${d}: ${s.filter(x => x.db === d).map(x => `${x.typ} ${alterWort(x.alterMin)}${klammer(x)}`).join(', ')}`).join('; ')}`);
   } else teile.push('letzte Sicherungen: keine in msdb');
   if (l.jobsLesbar !== 1) teile.push('Jobverlauf nicht lesbar (Leserecht auf msdb-Jobs fehlt — bei Linux alfred_logins_anlegen erneut per Change)');
   else if (!l.jobs?.length) teile.push('Agent-Jobs: keine');

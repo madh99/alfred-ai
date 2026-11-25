@@ -63,6 +63,18 @@ describe('Sicherungslage: Text', () => {
     expect(jobMeldungKurz({ status: 0, meldung: 'Executed as user: X. Sicherung LOG fehlgeschlagen: pruefdb01: Platte voll' })).toBe('Sicherung LOG fehlgeschlagen: pruefdb01: Platte voll');
   });
 
+  it('v1953 — Realfall 25.11.: VSS-Snapshot getrennt von der FULL-Datei (je Datenbank, Art und is_snapshot), copy-only weiter ausgeschlossen', () => {
+    expect(SICHERUNGEN_JSON).toContain('CAST(b.is_snapshot AS int) AS snapshot');
+    expect(SICHERUNGEN_JSON).toContain('GROUP BY x.database_name, x.type, x.is_snapshot)');
+    expect(SICHERUNGEN_JSON).toContain('x.is_copy_only = 0');
+    const t = sicherungsLageText({ sicherungen: [
+      { db: 'i8d_ag01', typ: 'FULL', alterMin: 400, server: 'sql02', snapshot: 0 },
+      { db: 'i8d_ag01', typ: 'FULL', alterMin: 190, server: 'sql02', snapshot: 1 },
+    ], jobsLesbar: 1, jobs: [] });
+    expect(t).toBe('letzte Sicherungen i8d_ag01: FULL vor 7 h (sql02), FULL vor 3 h (sql02, Snapshot); Agent-Jobs: keine');
+    expect(sicherungsLageText({ sicherungen: [{ db: 'd', typ: 'FULL', alterMin: 5, snapshot: 1 }], jobsLesbar: 1, jobs: [] })).toContain('FULL vor 5 min (Snapshot)');
+  });
+
   it('Gesamttext: Sicherungen je Datenbank mit Server, Jobs mit letztem Lauf', () => {
     const t = sicherungsLageText({
       sicherungen: [

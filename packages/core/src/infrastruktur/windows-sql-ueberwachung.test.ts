@@ -94,3 +94,29 @@ describe('v1952 — Zuständigkeit der Schlüssel: Windows-Überwachung und SQL-
     expect(probleme.map(p => p.status)).toEqual(['resolved', 'open']);
   });
 });
+
+describe('v1953 — VSS-Snapshot zählt nicht als FULL (Realfall 25.11.: PBS-Sicherung der VM löste die FULL-Befunde)', () => {
+  const mit = (eintraege: Array<{ typ: 'FULL' | 'LOG'; alterMin: number; snapshot?: number }>) => JSON.stringify({
+    sicherungen: eintraege.map(e => ({ db: 'i8d_ag01', server: 'sql02', ...e })), jobs: jobs(), jobsLesbar: 1,
+  } satisfies SicherungsLage);
+  it('Snapshot jünger als die FULL-Datei → mittlerer Befund „snapshot“, FULL-Alter aus der Datei', async () => {
+    const r = await lauf({ sql01: st('SQL01', lage(null, null)), sql02: st('SQL02', mit([{ typ: 'FULL', alterMin: 400 }, { typ: 'FULL', alterMin: 190, snapshot: 1 }, { typ: 'LOG', alterMin: 5 }])) });
+    expect(r.fehler).toEqual([]);
+    expect(r.befunde.map(b => b.schluessel)).toEqual(['ueberwachung:sql01:sicherung:i8d_ag01:snapshot']);
+    expect(r.befunde[0]).toMatchObject({ schwere: 'mittel' });
+    expect(r.befunde[0]!.text).toBe('Datenbank i8d_ag01 (sql01, sql02): jüngste FULL ist ein VSS-Snapshot (vor 3 h, nicht copy-only) statt der FULL-Datei (vor 7 h) — DIFF-Sicherungen danach sind nur mit dem Snapshot wiederherstellbar (Snapshot als copy-only sichern)');
+  });
+  it('nur Snapshot, keine Datei → FULL „nie“ (hoch) und Snapshot-Befund; der Snapshot löst den FULL-Befund nicht', async () => {
+    const r = await lauf({ sql01: st('SQL01', lage(null, null)), sql02: st('SQL02', mit([{ typ: 'FULL', alterMin: 190, snapshot: 1 }, { typ: 'LOG', alterMin: 5 }])) });
+    expect(r.befunde.map(b => b.schluessel).sort()).toEqual(['ueberwachung:sql01:sicherung:i8d_ag01:snapshot', 'ueberwachung:sql01:sicherung:i8d_ag01:voll']);
+    expect(r.befunde.find(b => b.schluessel?.endsWith(':voll'))!.text).toContain('letzte FULL-Sicherung nie');
+  });
+  it('FULL-Datei jünger als der Snapshot → kein Befund', async () => {
+    const r = await lauf({ sql01: st('SQL01', lage(null, null)), sql02: st('SQL02', mit([{ typ: 'FULL', alterMin: 100 }, { typ: 'FULL', alterMin: 190, snapshot: 1 }, { typ: 'LOG', alterMin: 5 }])) });
+    expect(r.befunde).toEqual([]);
+  });
+  it('Schlüssel gehört der SQL-Überwachung', async () => {
+    const { istSqlUeberwachungsSchluessel } = await import('./befund-problems.js');
+    expect(istSqlUeberwachungsSchluessel('ueberwachung:sql01:sicherung:i8d_ag01:snapshot')).toBe(true);
+  });
+});
