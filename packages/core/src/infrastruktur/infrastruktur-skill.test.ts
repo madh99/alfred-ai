@@ -166,3 +166,31 @@ describe('v1701 change_aendern geplant_ab allein', () => {
     expect(geaendert!.schritte).toEqual(schritte);
   });
 });
+
+// S3 — Prüfprofil-Aktionen: Liste lesend, Entfernen nur mit Owner-Wortlaut, Bestätigen nur über die Frage
+describe('S3 Prüfprofil-Aktionen', () => {
+  const ctx = { userId: 'owner', chatId: 'c' } as SkillContext;
+  function skill() {
+    const aufrufe: string[] = [];
+    const pruefprofile = {
+      liste: async () => [{ assetId: 'a', assetName: 'docker-com-01', status: 'bestaetigt', pruefungen: [{ typ: 'befehl', zugang: 'docker-com-01', befehl: 'nc -z -w 5 127.0.0.1 8008' }], abdruck: 'x', quelle: 'abgeleitet aus f3fabf62', bestaetigtAt: '2026-11-25T15:00:00Z' }],
+      vorschlagen: async (_o: string, a: string, p?: unknown[]) => { aufrufe.push(`vorschlagen ${a} ${p?.length ?? 0}`); return { ok: true, text: 'vorgelegt' }; },
+      bestaetigenNachJa: async (_o: string, a: unknown, f: unknown) => (f === 'n' ? { ok: true, text: `bestätigt ${String(a)}` } : { ok: false, text: 'Keine gültige Bestätigung' }),
+      entfernen: async (_o: string, a: string) => { aufrufe.push(`entfernen ${a}`); return { ok: true, text: 'entfernt' }; },
+    };
+    return { s: new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: {}, pruefprofile } as never), aufrufe };
+  }
+  it('liste, vorschlagen, bestätigen, entfernen', async () => {
+    const { s, aufrufe } = skill();
+    const l = await s.execute({ action: 'pruefprofil_liste' }, ctx);
+    expect(l.display).toContain('**docker-com-01** — bestätigt 2026-11-25, 1 Prüfungen · abgeleitet aus f3fabf62\n  ');
+    expect((await s.execute({ action: 'pruefprofil_vorschlagen', asset: 'docker-com-01' }, ctx)).display).toBe('vorgelegt');
+    expect((await s.execute({ action: 'pruefprofil_vorschlagen' }, ctx)).error).toContain('asset');
+    expect((await s.execute({ action: 'pruefprofil_bestaetigen', asset: 'a', freigabe: 'x' }, ctx)).success).toBe(false);
+    expect((await s.execute({ action: 'pruefprofil_bestaetigen', asset: 'a', freigabe: 'n' }, ctx)).display).toBe('bestätigt a');
+    expect((await s.execute({ action: 'pruefprofil_entfernen', asset: 'docker-com-01' }, ctx)).error).toContain('wortlaut');
+    expect((await s.execute({ action: 'pruefprofil_entfernen', asset: 'docker-com-01', wortlaut: 'Profil weg' }, ctx)).success).toBe(true);
+    expect(aufrufe).toEqual(['vorschlagen docker-com-01 0', 'entfernen docker-com-01']);
+    expect((await s.execute({ action: 'pruefprofil_vorschlagen', asset: 'x' }, { ...ctx, unteragent: true } as never)).error).toContain('Hauptgespräch');
+  });
+});

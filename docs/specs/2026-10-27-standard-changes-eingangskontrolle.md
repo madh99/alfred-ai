@@ -164,3 +164,18 @@ Ein Aufruf kann mehrere Assets betreffen, z. B. „Updates für alle Docker-VMs�
 3. **Bei Abweichung:** **beides**, also melden und den Einzelfall automatisch planen lassen (zur Freigabe).
 4. **Verfall:** Eine Vorlage wird nach **mindestens 2 Monaten** ohne Lauf auf „überprüfen“ gesetzt.
 5. **Prüfprofile:** vom Owner bestätigt: sofort für die fünf neuen Docker-VMs (144, 146, 147, 148, 149). Ihre Dienste und Prüfungen sind aus den Umzugs- und I9-Changes bekannt, und sie laufen wöchentlich. Alle anderen Assets bekommen ein Profil beim nächsten Change am jeweiligen Asset.
+
+## 11. Umsetzungsstand
+
+- **S1** (v1698), **S2/S4** (v1705, os_updates v2, Serie): umgesetzt.
+- **S3 Prüfprofile** (v1956, 25.11.2026):
+  - Tabelle `infra_pruefprofile` (PG v165 / SQLite v161), eine Zeile je Asset. Das bestätigte Profil und ein offener Vorschlag stehen getrennt; das bestätigte bleibt wirksam, bis das Ja zum neuen kommt.
+  - `infrastruktur pruefprofil_vorschlagen (asset, optional pruefungen)`. Ohne `pruefungen` leitet Alfred die Prüfungen ohne Modell aus den abgeschlossenen Changes der VM ab. Aufgenommen werden nur Prüfungen, die an den Fernzugang der VM gebunden sind (Befehl bzw. Container gesund). Ausgeschlossen sind:
+    - Verweise auf andere Schritte, Changes oder den Tresor;
+    - Einmal-Beweise (`cat`/`stat`/`ls` …, Marker wie `I9_UPGRADE_OK`, `/proofs/`, Tagesordner, Datumsbezug);
+    - mehr als 15 Prüfungen, jüngste Changes gehen vor.
+  - Jede Prüfung läuft durch die Planprüfung (`pruefeNur`) und wird einmal live ausgeführt. Was durchfällt, steht in der Frage unter „Nicht aufgenommen“.
+  - Die Owner-Bestätigung ist eine Einmal-Freigabe (24 h) mit Abdruck. Wird das gespeicherte Profil verändert, verliert es seine Wirkung.
+  - `pruefprofil_liste`; `pruefprofil_entfernen` geht nur mit Owner-Wortlaut.
+  - Die Vorlage **os_updates v3** hängt nach dem Nachher-Vergleich je Prüfung einen Prüf-Schritt an (Halt bei Abweichung). Ohne Profil steht in der Begründung ausdrücklich: „Kein Prüfprofil … nur generischer Vorher-/Nachher-Vergleich“. Wegen der neuen Version braucht die Vorlage eine neue Freigabe.
+  - **Offen:** Live-Beweis an den fünf Docker-VMs 144, 146–149 (Owner-Entscheidung 5). Die Vorlage windows_updates und die Restoretest-Vorlage (S5) folgen.

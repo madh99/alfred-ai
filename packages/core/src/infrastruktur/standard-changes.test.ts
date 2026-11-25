@@ -252,3 +252,29 @@ describe('v1936 — liegengebliebene Serien-Changes', () => {
     expect((await st.serie('o', 'os_updates', {})).ok).toBe(true);
   });
 });
+
+// S3 — Prüfprofil der VM nach dem Nachher-Vergleich; ohne Profil sagt die Begründung das ausdrücklich
+describe('S3 os_updates mit Prüfprofil', () => {
+  const skillsMit: Record<string, unknown> = { ...SKILLS, proxmox: skill('proxmox', ['vm_status', 'list_snapshots', 'create_snapshot', 'delete_snapshot', 'rollback_snapshot', 'agent_status']) };
+  const pctx: PruefKontext = { skill: n => skillsMit[n] as never, asset: k => ({ id: k, name: k }), changes: [] };
+  it('hängt die bestätigten Prüfungen an, der Plan besteht die Planprüfung', async () => {
+    const profil = [{ typ: 'befehl' as const, zugang: 'docker1', befehl: 'nc -z -w 5 127.0.0.1 8008' }, { typ: 'befehl' as const, zugang: 'docker1', befehl: 'docker inspect --format "{{.State.Running}}" synapse', erwartet: 'true' }];
+    const e = await V('os_updates').erzeuge!({ zugang: 'docker1' }, kontext({ pruefprofil: async id => (id === 'a-vm2' ? profil : undefined) }));
+    if (!('plan' in e)) throw new Error(e.fehler);
+    expect(pruefeChangePlan(e.plan, pctx).fehler).toEqual([]);
+    const s = e.plan.schritte as Array<{ titel: string; art: string; pruefung?: unknown; beiFehler?: string }>;
+    expect(s.slice(-3).map(x => x.titel.split(':')[0])).toEqual(['Nachher vergleichen', 'Prüfprofil docker1 1/2', 'Prüfprofil docker1 2/2']);
+    expect(s.at(-1)).toMatchObject({ art: 'pruefung', pruefung: profil[1], beiFehler: 'anhalten' });
+    expect(String(e.plan.begruendung)).toContain('Prüfprofil docker1: 2 bestätigte Prüfungen.');
+  });
+  it('ohne Profil: nur generischer Vergleich, ausdrücklich in der Begründung', async () => {
+    const e = await V('os_updates').erzeuge!({ zugang: 'docker1' }, kontext());
+    if (!('plan' in e)) throw new Error(e.fehler);
+    expect(String(e.plan.begruendung)).toContain('Kein Prüfprofil für docker1 — nur generischer Vorher-/Nachher-Vergleich.');
+    expect((e.plan.schritte as Array<{ titel: string }>).at(-1)!.titel).toMatch(/^Nachher vergleichen/);
+  });
+  it('Version 3: geänderter Abdruck verlangt eine neue Freigabe', () => {
+    expect(V('os_updates').version).toBe(3);
+    expect(V('os_updates').beschreibung).toContain('Prüfprofil der VM');
+  });
+});

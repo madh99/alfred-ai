@@ -3308,4 +3308,27 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_ultra_nutzung_datum ON ultra_nutzung (datum)');
     },
   },
+  {
+    version: 161,
+    description: 'Standard-Changes S3 — infra_pruefprofile: Prüfprofil je Asset (bestätigte Prüfungen, offener Vorschlag mit Einmal-Freigabe) (SQLite-Spiegel zu PG v165).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS infra_pruefprofile (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_id TEXT NOT NULL,
+          asset_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          pruefungen TEXT NOT NULL DEFAULT '[]',
+          abdruck TEXT NOT NULL DEFAULT '',
+          quelle TEXT NOT NULL DEFAULT '',
+          bestaetigt_at TEXT,
+          vorschlag TEXT,
+          vorschlag_quelle TEXT,
+          frage_hash TEXT,
+          frage_bis TEXT,
+          geaendert TEXT NOT NULL
+        )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_pruefprofile_asset ON infra_pruefprofile (user_id, asset_id)');
+    },
+  },
 ];

@@ -9,7 +9,7 @@ import type { ChangeMotor } from './change-motor.js';
 import type { StandardChanges } from './standard-changes.js';
 import { KANAELE, ZEITPUNKTE, regelFehler, regelText, type Empfaenger, type Kanal, type KalenderEintrag, type BenachrichtigungsRegel, type Zeitpunkt } from './wartung.js';
 import { erreichbar } from './wartung-dienst.js';
-import { PRUEF_TYPEN } from './change-schritte.js';
+import { PRUEF_TYPEN, pruefText } from './change-schritte.js';
 
 /** Ausschnitt des VorhabenRepository (@alfred/storage), damit der Skill ohne DB testbar bleibt. */
 export interface VorhabenSpeicher {
@@ -75,6 +75,8 @@ export interface InfrastrukturDeps {
   };
   // ── I4b Teil 4 ──
   standard?: StandardChanges;
+  // ── S3 — Prüfprofile je Asset ──
+  pruefprofile?: import('./pruefprofile.js').Pruefprofile;
   // ── I4b Teil 5 — Soll/Ist ──
   sollIst?: { planen(o: string, v: VorhabenDaten): Promise<number>; abgleich(o: string, v: VorhabenDaten): Promise<{ text: string; erfuellt: number; gesamt: number; abweichungen: string[] }> };
   // ── v1707 — Anwendungs-Update-Bericht (nur lesend) ──
@@ -97,8 +99,8 @@ export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 /** Adresse des Alfred-Servers für Firewall-Regeln (Zone „alfred“ der Architektur) */
 const ALFRED_IP = (() => { try { for (const l of Object.values(networkInterfaces())) for (const a of l ?? []) if (a.family === 'IPv4' && !a.internal && /^(10|172|192)\./.test(a.address) && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address; } catch { /* keine Netzinfo */ } return 'unbekannt'; })();
 /** v1695 (K5) — Aktionen, die nie aus einem Unteragenten laufen */
-export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen']);
-const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'anwendungs_updates', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen'] as const;
+export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen']);
+const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'anwendungs_updates', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_liste', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen'] as const;
 
 const STATUS_TEXT: Record<VorhabenDaten['status'], string> = {
   entwurf: 'Entwurf (noch keine geprüfte Architektur)',
@@ -139,6 +141,7 @@ export class InfrastrukturSkill extends Skill {
       + 'WARTUNG (I4b): wartung_liste; fenster_anlegen / sperre_anlegen (name, regel {art einmalig, von, bis (ISO)} oder {art woechentlich, tage [0=So…6=Sa], von, bis "HH:MM" Wiener Zeit}, fuer = Asset-Namen oder leer = global, notiz); '
       + 'benachrichtigung_anlegen (name, fuer, empfaenger [{art owner|nutzer|kontakt, name, email, haDienst}], kanaele push|telegram|email|homeassistant, zeitpunkte 24h_vorher|1h_vorher|start|ende|stoerung); wartung_entfernen (id). Der Motor startet ändernde Changes nur im geltenden Fenster, nie in Sperrzeiten (außer Notfall) und erst nach der verlangten Ankündigung. '
       + 'STANDARD-CHANGES (I4b): standard_liste; standard_freigabe_anfragen (vorlage) — der Owner gibt eine Vorlage EINMAL per Button frei; standard_change (vorlage, parameter) legt daraus ohne Einzel-Ja einen Change an (Grenzen prüft die Vorlage, Eingangskontrolle der Annahmen vor dem Anlegen und als erste Schritte, Start nach Zeitplan; weicht die Eingangskontrolle ab, den Fall einzeln mit changes_planen planen; eine nach Halt/Rückweg oder 2 Monaten ohne Lauf gesperrte Vorlage (überprüfen) braucht eine neue Freigabe); standard_widerrufen (vorlage, wortlaut); standard_serie (vorlage, optional zugaenge [Liste; sonst alle Hosts mit Schalter „Updates an“, unkritische zuerst], optional parameter, geplant_ab) legt die Vorlage für mehrere Hosts als verkettetes Paket an und stellt EINE Freigabe-Frage (Owner: ein Ja je Serie) — für wöchentliche Betriebssystem-Updates Vorlage os_updates; updates_schalter (zugang, an true|false, wortlaut) nur auf ausdrücklichen Wunsch des Owners. standard_freigeben NIE selbst aufrufen. '
+      + 'PRÜFPROFILE (S3): pruefprofil_liste (lesend); pruefprofil_vorschlagen (asset = VM-Name, vmid oder Fernzugang; optional pruefungen = Liste lesender Prüfungen wie in Change-Schritten, z. B. {typ:"befehl", zugang, befehl:"nc -z -w 5 127.0.0.1 8008"}) — ohne pruefungen leitet Alfred sie ohne Modell aus den abgeschlossenen Changes der VM ab (nur dauerhaft gültige, an den Fernzugang gebundene); jede Prüfung läuft durch die Planprüfung und einmal live, die bestandenen gehen als Bestätigungs-Frage an den Owner; erst danach nimmt die Vorlage os_updates die VM nach dem Nachher-Vergleich damit ab (Abweichung hält den Change an). Vorschlagen bei neuen Diensten und nach abgeschlossenen Umzügen. pruefprofil_entfernen (asset, wortlaut) nur auf Wunsch des Owners. pruefprofil_bestaetigen NIE selbst aufrufen. '
       + 'ANWENDUNGS-UPDATES: anwendungs_updates (ohne Parameter) — nur lesend, alle Hosts mit Fernzugang: native Pakete (apt, auch Datenbanken wie PostgreSQL, neue Hauptversionen wie postgresql-18) und Container-Images gegen die Registry (neuer Build desselben Tags, neuere Versionen); je Eintrag die Art (Datenbank/mit Daten/zustandslos). Ändert nichts; Updates nur als eigener Change. '
       + 'SOLL/IST (I4b): soll_ist (vorhaben) — Abgleich der angenommenen Zielarchitektur mit dem Ist (VMs, Netze, Dienste am neuen Host, Proxy-Ziele), Fortschritt und Abweichungen; nach jedem abgeschlossenen Change des Vorhabens automatisch. '
       + 'TRESOR (I4c): tresor_liste (nur Namen), tresor_erzeugen (name, laenge, zweck — Zufallspasswort am Server, der Wert wird nie gezeigt), tresor_entfernen (name, wortlaut). Werte setzt der Owner auf der Tresor-Seite im Web; NIE nach Passwörtern im Chat fragen. In Change-Schritten: {{geheimdatei:name}} im Befehl eines Fernzugriff-Schritts (Datei 600 am Host, z. B. --env-file) oder {{geheim:name}} als ganzer Wert in password/secret/token/api_key. '
@@ -227,6 +230,9 @@ export class InfrastrukturSkill extends Skill {
         zugang: { type: 'string', description: 'updates_schalter: Fernzugang-Name' },
         an: { type: 'boolean', description: 'updates_schalter: true = Sicherheitsupdates automatisch (Standard-Change c), false = nur Info' },
         wortlaut: { type: 'string', description: 'entscheiden: die Worte des Owners' },
+        asset: { type: 'string', description: 'pruefprofil_*: VM-Name, vmid oder Fernzugang (pruefprofil_bestaetigen: Asset-ID aus der Frage)' },
+        pruefungen: { type: 'array', description: 'pruefprofil_vorschlagen optional: lesende Prüfungen ({typ, zugang, befehl|…, erwartet}); ohne Angabe aus abgeschlossenen Changes abgeleitet', items: { type: 'object' } },
+        freigabe: { type: 'string', description: 'nur aus der Bestätigungs-Frage' },
       },
       required: ['action'],
     },
@@ -260,6 +266,7 @@ export class InfrastrukturSkill extends Skill {
     if (action.startsWith('change') || ['freigabe_anfragen', 'freigeben', 'owner_schritt_erledigt', 'rueckweg_ausfuehren'].includes(action)) return this.changeAktion(owner, repo, action, input);
     if (['wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen'].includes(action)) return this.wartungAktion(owner, action, input);
     if (action.startsWith('standard_') || action === 'updates_schalter') return this.standardAktion(owner, action, input);
+    if (action.startsWith('pruefprofil_')) return this.profilAktion(owner, action, input);
     if (action === 'anwendungs_updates') {
       if (!this.deps.anwendungsUpdates) return { success: false, error: 'Anwendungs-Update-Bericht nicht verfügbar' };
       const t = await this.deps.anwendungsUpdates();
@@ -577,6 +584,31 @@ export class InfrastrukturSkill extends Skill {
       if (treffer.length !== 1) return { success: false, error: `Eintrag „${k}“ nicht eindeutig gefunden` };
       await w.entferne(owner, treffer[0]!);
       return { success: true, display: `Eintrag ${treffer[0]!.slice(0, 8)} entfernt.` };
+    }
+    return { success: false, error: 'Unbekannte Aktion' };
+  }
+
+  /** S3 — Prüfprofile je Asset */
+  private async profilAktion(owner: string, action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const pp = this.deps.pruefprofile;
+    if (!pp) return { success: false, error: 'Prüfprofile nicht verfügbar' };
+    const asset = typeof input.asset === 'string' ? input.asset.trim() : '';
+    if (action === 'pruefprofil_liste') {
+      const l = await pp.liste(owner);
+      if (!l.length) return { success: true, data: [], display: 'Noch keine Prüfprofile — Vorlagen prüfen nur generisch (Vorher-/Nachher-Vergleich).' };
+      return { success: true, data: l, display: l.map(z => `- **${z.assetName}** — ${z.status === 'bestaetigt' ? `bestätigt ${z.bestaetigtAt?.slice(0, 10) ?? ''}, ${z.pruefungen.length} Prüfungen` : z.status}${z.vorschlag?.length ? ` · Vorschlag offen (${z.vorschlag.length} Prüfungen)` : ''}${z.quelle ? ` · ${z.quelle}` : ''}${z.pruefungen.length ? `\n  ${z.pruefungen.map(p => pruefText(p)).join('\n  ')}` : ''}`).join('\n') };
+    }
+    if (!asset) return { success: false, error: 'asset: VM-Name, vmid oder Fernzugang' };
+    if (action === 'pruefprofil_vorschlagen') {
+      const r = await pp.vorschlagen(owner, asset, Array.isArray(input.pruefungen) ? input.pruefungen : undefined);
+      return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler };
+    }
+    if (action === 'pruefprofil_bestaetigen') { const r = await pp.bestaetigenNachJa(owner, asset, input.freigabe); return r.ok ? { success: true, display: r.text } : { success: false, error: r.text }; }
+    if (action === 'pruefprofil_entfernen') {
+      const w = typeof input.wortlaut === 'string' ? input.wortlaut.trim() : '';
+      if (w.length < 2) return { success: false, error: 'wortlaut: die Worte des Owners — ein Profil entfernt nur der Owner' };
+      const r = await pp.entfernen(owner, asset);
+      return r.ok ? { success: true, display: r.text } : { success: false, error: r.text };
     }
     return { success: false, error: 'Unbekannte Aktion' };
   }

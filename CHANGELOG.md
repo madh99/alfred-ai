@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Prüfprofile je Asset für Standard-Changes (S3, v1956)
+
+- Neue Tabelle `infra_pruefprofile` mit einer Zeile je Asset. Das vom Owner bestätigte Profil und ein offener Vorschlag stehen getrennt. Das bestätigte Profil bleibt wirksam, bis der neue Vorschlag bestätigt ist.
+- `infrastruktur pruefprofil_vorschlagen (asset, optional pruefungen)`: Ohne `pruefungen` werden die Prüfungen ohne Modell aus den abgeschlossenen Changes der VM abgeleitet.
+  - Aufgenommen werden nur dauerhaft gültige Prüfungen, die an den Fernzugang der VM gebunden sind.
+  - Nicht aufgenommen werden Einmal-Beweise, Marker, Tagesordner und Verweise. Höchstens 15 Prüfungen.
+- Jede vorgeschlagene Prüfung durchläuft die Planprüfung und wird einmal live ausgeführt. Die bestandenen Prüfungen gehen als Bestätigungsfrage an den Owner (Einmal-Freigabe, 24 h, an den Abdruck gebunden).
+- Weitere Aktionen: `pruefprofil_liste` und `pruefprofil_entfernen`. Entfernen geht nur mit dem Wortlaut des Owners.
+- Vorlage `os_updates` Version 3: Nach dem Nachher-Vergleich folgt je Prüfung des bestätigten Profils ein Prüfschritt, der bei Abweichung anhält. Ohne Profil steht das ausdrücklich in der Begründung des Plans. Wegen der neuen Version braucht die Vorlage eine neue Freigabe.
+
 ### Fixed — Anzeige von sicherungsjobs_einrichten (v1955)
 
 - Die Ergebniszeile nennt jetzt die gesicherten Datenbanken und beide möglichen Rückwege: `sicherungsjobs_entfernen` bzw. bei schon vorhandenen Jobs `sicherungsjobs_einrichten` mit den bisherigen Werten. Bisher stand dort nur `sicherungsjobs_entfernen`, auch wenn der Change die bisherige Einrichtung wiederherstellt.

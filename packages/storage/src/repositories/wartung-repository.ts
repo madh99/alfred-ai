@@ -62,6 +62,29 @@ export class WartungRepository {
       [randomUUID(), userId, vorlage, d.abdruck, d.status, d.frageHash ?? null, d.frageBis ?? null, fa, wa, jetzt]);
   }
 
+  // ── Standard-Changes S3 — Prüfprofile je Asset ──
+  async pruefprofile(userId: string): Promise<Array<{ assetId: string; assetName: string; status: 'angefragt' | 'bestaetigt' | 'abgelehnt' | 'entfernt'; pruefungen: Array<Record<string, unknown>>; abdruck: string; quelle: string; bestaetigtAt?: string; vorschlag?: Array<Record<string, unknown>>; vorschlagQuelle?: string; frageHash?: string; frageBis?: string }>> {
+    const rows = await this.db.query('SELECT * FROM infra_pruefprofile WHERE user_id = ?', [userId]);
+    const json = (v: unknown) => { try { const x = JSON.parse(String(v ?? '')); return Array.isArray(x) ? x as Array<Record<string, unknown>> : undefined; } catch { return undefined; } };
+    return rows.map(r => {
+      const x = r as Record<string, unknown>;
+      const vorschlag = x.vorschlag ? json(x.vorschlag) : undefined;
+      return {
+        assetId: String(x.asset_id), assetName: String(x.asset_name), status: String(x.status) as 'angefragt', pruefungen: json(x.pruefungen) ?? [], abdruck: String(x.abdruck ?? ''), quelle: String(x.quelle ?? ''),
+        ...(x.bestaetigt_at ? { bestaetigtAt: String(x.bestaetigt_at) } : {}), ...(vorschlag ? { vorschlag } : {}), ...(x.vorschlag_quelle ? { vorschlagQuelle: String(x.vorschlag_quelle) } : {}),
+        ...(x.frage_hash ? { frageHash: String(x.frage_hash) } : {}), ...(x.frage_bis ? { frageBis: String(x.frage_bis) } : {}),
+      };
+    });
+  }
+
+  async pruefprofilSetze(userId: string, z: { assetId: string; assetName: string; status: string; pruefungen: unknown[]; abdruck: string; quelle: string; bestaetigtAt?: string; vorschlag?: unknown[]; vorschlagQuelle?: string; frageHash?: string; frageBis?: string }): Promise<void> {
+    const jetzt = new Date().toISOString();
+    const werte = [z.assetName, z.status, JSON.stringify(z.pruefungen), z.abdruck, z.quelle, z.bestaetigtAt ?? null, z.vorschlag ? JSON.stringify(z.vorschlag) : null, z.vorschlagQuelle ?? null, z.frageHash ?? null, z.frageBis ?? null, jetzt];
+    const da = await this.db.queryOne('SELECT id FROM infra_pruefprofile WHERE user_id = ? AND asset_id = ?', [userId, z.assetId]);
+    if (da) await this.db.execute('UPDATE infra_pruefprofile SET asset_name = ?, status = ?, pruefungen = ?, abdruck = ?, quelle = ?, bestaetigt_at = ?, vorschlag = ?, vorschlag_quelle = ?, frage_hash = ?, frage_bis = ?, geaendert = ? WHERE user_id = ? AND asset_id = ?', [...werte, userId, z.assetId]);
+    else await this.db.execute('INSERT INTO infra_pruefprofile (asset_name, status, pruefungen, abdruck, quelle, bestaetigt_at, vorschlag, vorschlag_quelle, frage_hash, frage_bis, geaendert, id, user_id, asset_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [...werte, randomUUID(), userId, z.assetId]);
+  }
+
   /** Schalter „Sicherheitsupdates automatisch“ je Fernzugang (5b-8): 'an' | 'aus' (leer = aus bei vorhandenen Hosts). */
   async updatesSchalter(userId: string): Promise<Record<string, string>> {
     const rows = await this.db.query('SELECT name, sicherheitsupdates FROM fernzugaenge WHERE user_id = ?', [userId]);

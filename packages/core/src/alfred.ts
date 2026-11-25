@@ -7586,6 +7586,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const itsmI3 = new (await import('@alfred/storage')).ItsmRepository(adapter);
         // S1 — Standard-Changes: Verweis für den Motor-Hook (Sperre der Vorlage nach Halt/Rückweg); gesetzt, sobald der Skill gebaut ist
         let standardRef: import('./infrastruktur/standard-changes.js').StandardChanges | undefined;
+        let pruefprofileRef: import('./infrastruktur/pruefprofile.js').Pruefprofile | undefined;
         // v1688 — offene Owner-Fragen „Schritt N erledigt?“ zurückziehen, deren Change nicht mehr genau dort mit dieser Frage wartet
         const ownerFragenAufraeumen = async (): Promise<void> => {
           const chatId = this.config.security?.ownerUserId ?? ''; const o = ownerFz();
@@ -8167,6 +8168,36 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           sollIst: this.sollIstDienst,
           anwendungsUpdates: () => anwendungsBericht(),
           tresor: { liste: (o) => this.tresor!.liste(o), erzeuge: (o, n, l, z) => this.tresor!.erzeuge(o, n, l, z), entferne: (o, n) => this.tresor!.entferne(o, n) },
+          // S3 — Prüfprofile je Asset (VM): Vorschlag aus abgeschlossenen Changes oder genannt, Planprüfung + Live-Lauf, Owner bestätigt
+          pruefprofile: pruefprofileRef = new (await import('./infrastruktur/pruefprofile.js')).Pruefprofile({
+            lade: async (o) => (await wartungRepo.pruefprofile(o)) as never,
+            setze: (o, z) => wartungRepo.pruefprofilSetze(o, z),
+            asset: async (o, k) => {
+              const n = k.trim().toLowerCase();
+              const vms = (await cmdbFz.listAssets(o, { sourceSkill: 'proxmox' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>)).filter(a => (a.assetType === 'vm' || a.assetType === 'lxc') && a.status === 'active');
+              const zugaenge = await this.fernzugriffRef?.aktiveZugaenge() ?? [];
+              const zg = zugaenge.find(z => z.name.toLowerCase() === n);
+              const t = vms.filter(a => a.name.toLowerCase() === n || a.identifier === `vmid:${n}` || a.id === k || (!!zg && a.ipAddress === zg.host));
+              if (t.length !== 1) return { fehler: t.length ? `„${k}“ mehrdeutig` : `„${k}“: keine aktive Proxmox-VM (Name, vmid oder Fernzugang)` };
+              const vm = t[0]!;
+              const zugang = zugaenge.filter(z => z.host === vm.ipAddress);
+              return { id: vm.id, name: vm.name, ...(zugang.length === 1 ? { zugang: zugang[0]!.name } : {}) };
+            },
+            quellen: async (o, id) => (await itsmI3.listChangeRequests(o, { limit: 500 }).catch(() => []))
+              .filter(c => c.status === 'completed' && c.affectedAssetIds.includes(id))
+              .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+              .map(c => ({ id: c.id, titel: c.title, schritte: ((c.schritte ?? []) as Array<{ pruefung?: unknown }>) })),
+            planPruefen: (o, plan) => this.changePlanung ? this.changePlanung.pruefeNur(o, [plan]) : Promise.resolve(['Change-Planung nicht verfügbar']),
+            pruefe: (p) => this.changeMotor ? this.changeMotor.pruefe(p) : Promise.resolve({ ok: false, text: 'Motor nicht verfügbar' }),
+            frage: async (description, params) => {
+              if (!this.confirmationQueue) return false;
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (!chatId) return false;
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform: this.config.telegram?.enabled ? 'telegram' : 'api', source: 'geraet', sourceId: `infrastruktur-pruefprofil-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
+              return ok !== false;
+            },
+            protokoll: (msg, daten) => this.logger.info(daten, msg),
+          }),
           standard: standardRef = new (await import('./infrastruktur/standard-changes.js')).StandardChanges({
             stand: (o) => wartungRepo.standardStand(o),
             // S1 — Eingangskontrolle, Zähler, Meldungen
@@ -8224,6 +8255,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   return Array.isArray(r.data) ? (r.data as Array<{ name?: string }>).filter(s => s.name && s.name !== 'current').map(s => ({ name: s.name! })) : [];
                 },
                 updatesAn: async (z) => schalter[z] === 'an',
+                // S3 — bestätigtes Prüfprofil der VM
+                pruefprofil: (assetId) => pruefprofileRef ? pruefprofileRef.bestaetigt(o, assetId) : Promise.resolve(undefined),
                 istWindows: (z) => zugaenge.find(x => x.name === z)?.system === 'windows',
                 // Vorlage (f) — Zertifikat aus Nginx Proxy Manager
                 zertifikat: async (id) => {

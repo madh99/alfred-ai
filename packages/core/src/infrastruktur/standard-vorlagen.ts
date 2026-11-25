@@ -14,6 +14,7 @@ import type { Pruefung } from './change-schritte.js';
 import { fensterAus, fensterStart, osUpdateSchritte } from './os-updates.js';
 import { winUpdateSchritte } from './windows-updates.js';
 import { winGrundlinieSchritte } from './windows-grundlinie.js';
+import { profilSchritte } from './pruefprofile.js';
 
 /** S1 (Spec 2026-10-27-standard-changes-eingangskontrolle §4.1) — Annahme einer Vorlage: lesende Prüfung, beim Anlegen UND als erster Schritt */
 export interface Annahme { id: string; text: string; pruefung: Pruefung }
@@ -35,6 +36,8 @@ export interface StandardKontext {
   istWindows?(zugang: string): boolean;
   /** Vorlage (f) — NPM-Zertifikat nach ID */
   zertifikat?(id: number): Promise<{ id: number; domains: string[]; provider: string; ablauf?: string } | undefined>;
+  /** S3 — vom Owner bestätigtes Prüfprofil des Assets (undefined = keins) */
+  pruefprofil?(assetId: string): Promise<Pruefung[] | undefined>;
   jetzt: Date;
 }
 
@@ -200,8 +203,8 @@ export const VORLAGEN: Vorlage[] = [
     },
   },
   {
-    key: 'os_updates', version: 2, titel: '(h) Betriebssystem-Updates (Updates v2)',
-    beschreibung: 'Für Proxmox-VMs mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (Container, Ports, Dienste) → apt-get upgrade mit gesperrten Docker- und Datenbank-Paketen (PostgreSQL, MariaDB/MySQL, MongoDB, Redis/Valkey — deren Update ist ein eigener Change) und Simulation vorher → Neustart NUR bei reboot-required und spätestens 30 min vor Fensterende → Warten, VM und Gast-Agent → Nachher-Vergleich (dieselben Container mit gleichem Image, vorher Gesunde wieder gesund, Ports und Dienste wieder da). Rückweg: Snapshot zurücksetzen. Kein Distributions-Upgrade, kein Docker-Wechsel. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage.',
+    key: 'os_updates', version: 3, titel: '(h) Betriebssystem-Updates (Updates v2)',
+    beschreibung: 'Für Proxmox-VMs mit Schalter „Sicherheitsupdates an“: nur im Wartungsfenster (Standard 00:30–02:45 Wien) → Snapshot (7 Tage) → Vorher-Erhebung (Container, Ports, Dienste) → apt-get upgrade mit gesperrten Docker- und Datenbank-Paketen (PostgreSQL, MariaDB/MySQL, MongoDB, Redis/Valkey — deren Update ist ein eigener Change) und Simulation vorher → Neustart NUR bei reboot-required und spätestens 30 min vor Fensterende → Warten, VM und Gast-Agent → Nachher-Vergleich (dieselben Container mit gleichem Image, vorher Gesunde wieder gesund, Ports und Dienste wieder da) → Prüfprofil der VM (vom Owner bestätigte dienstspezifische Prüfungen; ohne Profil nur der generische Vergleich, der Plan sagt das). Rückweg: Snapshot zurücksetzen. Kein Distributions-Upgrade, kein Docker-Wechsel. Höchstens 1× je Tag und Host. Als Serie über mehrere Hosts mit einer Freigabe-Frage.',
     parameter: { zugang: 'Fernzugang-Name', fenster: 'optional HH:MM-HH:MM (Standard 00:30-02:45)' }, verfuegbar: true,
     annahmenText: ['Debian-artiges System (apt, python3-apt)', 'keine Paketverwaltung blockiert (dpkg sauber)', 'Gast-Agent der VM antwortet'],
     async annahmen(p, k) {
@@ -225,10 +228,12 @@ export const VORLAGEN: Vorlage[] = [
       if (await k.anzahl('os_updates', z, k.jetzt.getTime() - 20 * 3_600_000) > 0) return { fehler: `${z}: höchstens 1× je Tag` };
       const snap = await freierSnapshotName(k, vm, 7);
       const za = await k.zugangAsset(z);
+      // S3 — Prüfprofil der VM nach dem Nachher-Vergleich; ohne Profil steht das ausdrücklich in der Begründung (Spec §4.4)
+      const profil = await k.pruefprofil?.(vm.assetId);
       return { merkmal: z, plan: {
-        titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}.`,
+        titel: `Standard: Betriebssystem-Updates ${z}`, begruendung: `Standard-Change (h) — Betriebssystem-Updates auf ${z} (VM ${vm.vmid}), Snapshot ${snap} als Rückweg, Fenster ${f.von}–${f.bis}. ${profil?.length ? `Prüfprofil ${vm.name}: ${profil.length} bestätigte Prüfungen.` : `Kein Prüfprofil für ${vm.name} — nur generischer Vorher-/Nachher-Vergleich.`}`,
         typ: 'normal', risiko: 'mittel', ausfallMinuten: 5, betroffen: [vm.assetId, ...(za ? [za] : [])], ...fensterAb(k.jetzt, f),
-        schritte: osUpdateSchritte(z, vm, snap, f, `osupd-${snap}`),
+        schritte: [...osUpdateSchritte(z, vm, snap, f, `osupd-${snap}`), ...profilSchritte(vm.name, profil ?? [])],
       } };
     },
   },

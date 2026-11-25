@@ -2615,4 +2615,27 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_ultra_nutzung_datum ON ultra_nutzung (datum)', []);
     },
   },
+  {
+    version: 165,
+    description: 'Standard-Changes S3 — infra_pruefprofile: Prüfprofil je Asset (bestätigte Prüfungen, offener Vorschlag mit Einmal-Freigabe) (PG-Spiegel zu SQLite v161).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS infra_pruefprofile (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_id TEXT NOT NULL,
+          asset_name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          pruefungen TEXT NOT NULL DEFAULT '[]',
+          abdruck TEXT NOT NULL DEFAULT '',
+          quelle TEXT NOT NULL DEFAULT '',
+          bestaetigt_at TEXT,
+          vorschlag TEXT,
+          vorschlag_quelle TEXT,
+          frage_hash TEXT,
+          frage_bis TEXT,
+          geaendert TEXT NOT NULL
+        )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_infra_pruefprofile_asset ON infra_pruefprofile (user_id, asset_id)', []);
+    },
+  },
 ];
