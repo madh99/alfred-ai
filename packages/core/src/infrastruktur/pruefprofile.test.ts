@@ -57,24 +57,27 @@ describe('S3 Prüfprofile — Kandidaten aus abgeschlossenen Changes', () => {
 describe('S3 Prüfprofile — Vorschlag, Bestätigung, Ersetzen', () => {
   function welt(o: { planFehler?: string[]; scheitert?: string[] } = {}) {
     const zeilen: ProfilZeile[] = []; const fragen: Array<{ text: string; params: Record<string, unknown> }> = [];
+    const geplant: Array<Record<string, unknown>> = [];
     let jetzt = Date.parse('2026-11-25T14:00:00Z');
     const pp = new Pruefprofile({
       lade: async () => zeilen.map(z => ({ ...z })),
       setze: async (_o, z) => { const i = zeilen.findIndex(x => x.assetId === z.assetId); if (i >= 0) zeilen[i] = { ...z }; else zeilen.push({ ...z }); },
       asset: async (_o, k) => (k === 'docker-com-01' || k === '149' ? { id: 'a-149', name: 'docker-com-01', zugang: 'docker-com-01' } : { fehler: `„${k}“: keine aktive Proxmox-VM` }),
       quellen: async () => [I9, J],
-      planPruefen: async () => o.planFehler ?? [],
+      planPruefen: async (_o, plan) => { geplant.push(plan); return o.planFehler ?? []; },
       pruefe: async (p: Pruefung) => (o.scheitert?.some(x => String(p.befehl).includes(x)) ? { ok: false, text: 'Exit 1' } : { ok: true, text: 'ok' }),
       frage: async (text, params) => { fragen.push({ text, params }); return true; },
       jetzt: () => jetzt,
     });
-    return { pp, zeilen, fragen, spaeter: (ms: number) => { jetzt += ms; } };
+    return { pp, zeilen, fragen, geplant, spaeter: (ms: number) => { jetzt += ms; } };
   }
 
   it('leitet ab, prüft live, fragt den Owner; gültig erst nach dem Ja', async () => {
-    const { pp, fragen } = welt({ scheitert: ['8090/healthz'] });
+    const { pp, fragen, geplant } = welt({ scheitert: ['8090/healthz'] });
     const r = await pp.vorschlagen('o', 'docker-com-01');
     expect(r.ok).toBe(true);
+    // v1957 — Realfall 25.11.: betroffen als volle Asset-ID, nie der (mehrdeutige) Name
+    expect(geplant[0]!.betroffen).toEqual(['a-149']);
     expect(fragen).toHaveLength(1);
     expect(fragen[0]!.text).toContain('Prüfprofil für docker-com-01 bestätigen (3 Prüfungen, abgeleitet aus f3fabf62)');
     expect(fragen[0]!.text).toContain('besteht jetzt nicht');

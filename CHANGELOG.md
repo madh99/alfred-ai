@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Prüfprofil-Vorschlag scheiterte an mehrdeutigem VM-Namen (v1957)
+
+- Für die Planprüfung trug `pruefprofil_vorschlagen` den VM-Namen als betroffenes Asset ein. In der CMDB gehören zu einem Namen oft zwei aktive Assets: die Proxmox-VM und der Fernzugriffs-Host. Der Validator lehnte den Namen deshalb als mehrdeutig ab. Jetzt wird die volle Asset-ID verwendet. Realfall 25.11.: Vier der fünf Vorschläge scheiterten.
+
 ### Added — Prüfprofile je Asset für Standard-Changes (S3, v1956)
 
 - Neue Tabelle `infra_pruefprofile` mit einer Zeile je Asset. Das vom Owner bestätigte Profil und ein offener Vorschlag stehen getrennt. Das bestätigte Profil bleibt wirksam, bis der neue Vorschlag bestätigt ist.

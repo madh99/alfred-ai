@@ -120,8 +120,9 @@ export class Pruefprofile {
       if (!kd.pruefungen.length) return { ok: false, fehler: `${a.name}: keine dauerhaft gültigen Prüfungen in abgeschlossenen Changes${a.zugang ? '' : ' (kein Fernzugang auf dieser VM)'} — Prüfungen ausdrücklich nennen (pruefungen)` };
       roh = kd.pruefungen; quelle = `abgeleitet aus ${kd.quellen.join(', ')}`;
     }
-    // Planprüfung: dieselben Regeln wie jeder Change (Leseliste, feste Ausgaben, Käfig)
-    const plan = { schluessel: 'profil', titel: `Prüfprofil ${a.name}`, begruendung: 'S3 Prüfprofil (nur Prüfung, nichts wird gespeichert)', typ: 'normal', risiko: 'gering', ausfallMinuten: 0, betroffen: [a.name],
+    // Planprüfung: dieselben Regeln wie jeder Change (Leseliste, feste Ausgaben, Käfig). v1957 — betroffen als volle Asset-ID: Realfall
+    // 25.11. 14:40, der VM-Name war mehrdeutig (Proxmox-VM und Fernzugriffs-Host gleichen Namens), alle fünf Vorschläge scheiterten
+    const plan = { schluessel: 'profil', titel: `Prüfprofil ${a.name}`, begruendung: 'S3 Prüfprofil (nur Prüfung, nichts wird gespeichert)', typ: 'normal', risiko: 'gering', ausfallMinuten: 0, betroffen: [a.id],
       schritte: roh.map((p, i) => ({ titel: `Prüfung ${i + 1}`, art: 'pruefung', pruefung: p })) };
     const fehler = await this.d.planPruefen(o, plan);
     const schlecht = new Map<number, string>(); const allgemein: string[] = [];
