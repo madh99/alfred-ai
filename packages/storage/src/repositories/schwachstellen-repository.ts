@@ -22,14 +22,15 @@ const zahl = (v: unknown) => (v === null || v === undefined || v === '' ? undefi
 export class SchwachstellenRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
-  /** erstes Erkennen der offenen Treffer je Komponente: `${id}|${paket}` → ISO */
-  async erkannt(userId: string): Promise<Map<string, Map<string, string>>> {
-    const rows = await this.db.query('SELECT komponente, treffer_id, paket, erkannt FROM sicherheit_treffer WHERE user_id = ? AND behoben_am IS NULL', [userId]);
-    const m = new Map<string, Map<string, string>>();
+  /** Vorgeschichte der offenen Treffer je Komponente: `${id}|${paket}` → erstes Erkennen, zuletzt gespeicherte EPSS/KEV und Stufe (neu kritisch = vorher nicht kritisch) */
+  async erkannt(userId: string): Promise<Map<string, Map<string, { erkannt: string; epss?: number; kev?: string; stufe: string }>>> {
+    const rows = await this.db.query('SELECT komponente, treffer_id, paket, erkannt, epss, kev, stufe FROM sicherheit_treffer WHERE user_id = ? AND behoben_am IS NULL', [userId]);
+    const m = new Map<string, Map<string, { erkannt: string; epss?: number; kev?: string; stufe: string }>>();
     for (const r of rows as Array<Record<string, unknown>>) {
       const k = String(r.komponente);
       if (!m.has(k)) m.set(k, new Map());
-      m.get(k)!.set(`${String(r.treffer_id)}|${String(r.paket)}`, String(r.erkannt));
+      const e = zahl(r.epss);
+      m.get(k)!.set(`${String(r.treffer_id)}|${String(r.paket)}`, { erkannt: String(r.erkannt), stufe: String(r.stufe), ...(e !== undefined ? { epss: e } : {}), ...(r.kev ? { kev: String(r.kev) } : {}) });
     }
     return m;
   }

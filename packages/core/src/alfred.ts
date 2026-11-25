@@ -8379,7 +8379,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             laeuft = true;
             try {
               const { schwachstellenLauf: lauf } = await import('./infrastruktur/schwachstellen/lauf.js');
-              const { befunde, lageText, zaehle } = await import('./infrastruktur/schwachstellen/bewertung.js');
+              const { befunde, lageText, zaehle, zaehleKomponenten } = await import('./infrastruktur/schwachstellen/bewertung.js');
               const { trivyArgumente } = await import('./infrastruktur/schwachstellen/trivy.js');
               const { veroeffentlichtePorts, vonAussenErreichbar } = await import('./infrastruktur/schwachstellen/zuordnung.js');
               const { istSicherheitsSchluessel } = await import('./infrastruktur/befund-problems.js');
@@ -8389,6 +8389,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const e = await anwendungsErheben();
               if (!e) return { ok: true, zaehler: { komponenten: 0 } };
               const zugaenge = await fz.aktiveZugaenge();
+              // Ports dauerhaft aus der CMDB (Container-Assets des Fernzugriffs), nicht aus dem flüchtigen Host-Bestand im Speicher
+              const portsCmdb = new Map((await cmdbFz.listAssets(o, { sourceSkill: 'fernzugriff', assetType: 'container' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>))
+                .filter(a => a.sourceSkill === 'fernzugriff' && a.assetType === 'container' && a.status === 'active')
+                .map(a => { const at = a.attributes as { host?: string; ports?: string }; return [`${String(at.host ?? '')}/${a.name}`, String(at.ports ?? '')] as const; }));
               const proxies = (await cmdbFz.listAssets(o, { sourceSkill: 'nginx_proxy_manager' } as never).catch(() => [] as Awaited<ReturnType<typeof cmdbFz.listAssets>>))
                 .filter(a => a.assetType === 'proxy_host' && a.status === 'active')
                 .map(a => { const at = a.attributes as { forward_host?: string; forward_port?: number }; return { forwardHost: String(at.forward_host ?? ''), forwardPort: Number(at.forward_port ?? 0) }; })
@@ -8404,7 +8408,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 trivy: (ref) => new Promise<string>((ok, nein) => execFile('docker', trivyArgumente(ref), { timeout: 20 * 60_000, maxBuffer: 256 * 1024 * 1024 },
                   (err, out, fehl) => (err ? nein(new Error(letzteZeile(String(fehl || err.message)))) : ok(out)))),
                 erreichbar: (host, name) => {
-                  const ports = veroeffentlichtePorts(this.hostBestaende.get(host)?.container.find(c => c.name === name)?.ports ?? '');
+                  const roh = portsCmdb.get(`${host}/${name}`) ?? this.hostBestaende.get(host)?.container.find(c => c.name === name)?.ports;
+                  if (roh === undefined) return undefined;
+                  const ports = veroeffentlichtePorts(roh);
                   const ip = zugaenge.find(z => z.name === host)?.host;
                   return ports.length > 0 && vonAussenErreichbar(proxies, { name: host, ...(ip ? { ip } : {}) }, ports);
                 },
@@ -8414,22 +8420,33 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 ...(k.anwendung ? { anwendung: k.anwendung } : {}), erreichbar: k.erreichbar, nichtGeprueft: k.nichtGeprueft, zaehler: zaehle(k.treffer), geprueft: k.geprueft, treffer: k.treffer })), erfasst);
               // erstes Erkennen der gerade gespeicherten Treffer für die Fristen der Befunde
               const erk = await repo.erkannt(o);
-              for (const k of r.komponenten) for (const t of k.treffer) { const x = erk.get(k.schluessel)?.get(`${t.id}|${t.paket}`); if (x) t.erkannt = x; }
+              for (const k of r.komponenten) for (const t of k.treffer) { const x = erk.get(k.schluessel)?.get(`${t.id}|${t.paket}`); if (x) t.erkannt = x.erkannt; }
               const datum = new Date().toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' });
               const bef = befunde(r.komponenten);
-              const pr = await infraProblems(bef, { docId: 'tägliche Schwachstellen-Überwachung', datum }, { hosts: erfasst, alle: false, kategorien: new Set(['sicherheit']), schluessel: istSicherheitsSchluessel });
+              // Fail-closed: Befunde von Komponenten mit ausgefallener Quelle werden in diesem Lauf nie gelöst (angelegt werden sie, wenn es sie gibt)
+              const gesperrt = new Set(r.komponenten.filter(k => k.quellenFehler).map(k => `sicherheit:${k.host}:${k.name}`));
+              const mitBefund = new Set(bef.map(b => b.schluessel));
+              const pr = await infraProblems(bef, { docId: 'tägliche Schwachstellen-Überwachung', datum }, { hosts: erfasst, alle: false, kategorien: new Set(['sicherheit']), schluessel: (k) => istSicherheitsSchluessel(k) && (!gesperrt.has(k) || mitBefund.has(k)) });
               const text = lageText(r.komponenten, datum, r.fehler);
               await cmdbFz.saveDocument(o, { docType: 'inventory', title: `Schwachstellen ${new Date().toISOString().slice(0, 10)}`, content: text, format: 'markdown', generatedBy: 'alfred:schwachstellen' }).catch(() => undefined);
-              // Owner 25.11.: sofort melden und Push nur bei neuem „kritisch“
-              const kritisch = gespeichert.neu.filter(n => n.stufe === 'kritisch');
-              if (kritisch.length) {
-                const je = [...new Set(kritisch.map(n => n.komponente))];
-                const meldung = `🛡️ Neue kritische Schwachstellen (${kritisch.length}) in ${je.join(', ')} — Details in den Befunden und im Dokument „Schwachstellen“.`;
+              // Owner 25.11.: sofort melden und Push nur bei neuem „kritisch“ — neu heißt: vorher nicht offen oder nicht kritisch (auch ein
+              // späterer KEV-Eintrag zählt); je Komponente und CVE einmal, eine gebündelte Meldung (Kalibrierung nach dem ersten Lauf)
+              const neuJe = r.komponenten.map(k => {
+                const v = vorher.get(k.schluessel);
+                const neu = k.treffer.filter(t => t.stufe === 'kritisch' && v?.get(`${t.id}|${t.paket}`)?.stufe !== 'kritisch');
+                const app = new Set(neu.filter(t => !t.basis).map(t => t.id));
+                const bas = new Set(neu.filter(t => t.basis && !app.has(t.id)).map(t => t.id));
+                return { k, app: app.size, bas: bas.size };
+              }).filter(x => x.app + x.bas > 0);
+              const neuKritisch = neuJe.reduce((s, x) => s + x.app + x.bas, 0);
+              if (neuKritisch) {
+                const teile = neuJe.map(x => `${x.k.host}/${x.k.name}: ${[x.app ? `${x.app} in der Anwendung` : '', x.bas ? `${x.bas} im Basis-Image` : ''].filter(Boolean).join(', ')}`);
+                const meldung = `🛡️ Neue kritische Schwachstellen (${neuKritisch}) — ${teile.join('; ')}. Details in den Befunden und im Dokument „Schwachstellen“.`;
                 await this.meldeOhneModell(meldung).catch(() => undefined);
                 if (this.pushDienst) await this.pushDienst.anOwner({ titel: 'Kritische Schwachstellen', text: meldung.slice(0, 180), art: 'hinweis', stufe: 'active' }).catch(() => undefined);
               }
-              const z = zaehle(r.komponenten.flatMap(k => k.treffer));
-              this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch: kritisch.length, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt.length,
+              const z = zaehleKomponenten(r.komponenten);
+              this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt.length,
                 befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
               return { ok: true, zaehler: { komponenten: r.komponenten.length, kritisch: z.kritisch, hoch: z.hoch, neu: gespeichert.neu.length, befunde: bef.length } };
             } finally { laeuft = false; }

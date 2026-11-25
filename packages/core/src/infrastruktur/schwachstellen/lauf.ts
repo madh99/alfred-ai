@@ -16,12 +16,15 @@ export interface LaufDeps {
   abruf: Abruf;
   /** Trivy-Scan (JSON); ohne → Images „nicht geprüft“ */
   trivy?: (ref: string) => Promise<string>;
-  erreichbar: (host: string, container: string) => boolean;
-  /** erstes Erkennen bisheriger Treffer je Komponente: `${id}|${paket}` → ISO */
-  erkannt?: (schluessel: string) => Map<string, string>;
+  /** von außen erreichbar; undefined = unbekannt (keine Port-Daten) → als erreichbar gewertet und benannt (fail-closed) */
+  erreichbar: (host: string, container: string) => boolean | undefined;
+  /** Vorgeschichte offener Treffer je Komponente: `${id}|${paket}` → erstes Erkennen, zuletzt gespeicherte EPSS/KEV */
+  erkannt?: (schluessel: string) => Map<string, Vorher>;
   githubToken?: string; nvdKey?: string;
   pause?: (ms: number) => Promise<void>;
 }
+
+export interface Vorher { erkannt: string; epss?: number; kev?: string; stufe?: string }
 
 export interface LaufErgebnis { komponenten: Komponente[]; fehler: string[]; abfragen: { github: number; nvd: number; osv: number; trivy: number } }
 
@@ -59,7 +62,7 @@ export async function schwachstellenLauf(d: LaufDeps): Promise<LaufErgebnis> {
   const trivyLage = (ref: string) => {
     if (!trivyCache.has(ref)) trivyCache.set(ref, (async () => {
       abfragen.trivy++;
-      try { return { treffer: leseTrivy(await d.trivy!(ref)).treffer.map(t => ({ ...t, stufe: 'niedrig' as const })) }; } catch (e) { return { fehler: `Trivy: ${(e as Error).message.slice(0, 200)}` }; }
+      try { return { treffer: leseTrivy(await d.trivy!(ref)).treffer.map(t => ({ ...t, stufe: 'niedrig' as const, basis: true })) }; } catch (e) { return { fehler: `Trivy: ${(e as Error).message.slice(0, 200)}` }; }
     })());
     return trivyCache.get(ref)!;
   };
@@ -68,11 +71,14 @@ export async function schwachstellenLauf(d: LaufDeps): Promise<LaufErgebnis> {
   for (const c of d.container) {
     const repo = imageRepo(c.image); const app = ANWENDUNGEN[repo];
     const version = laufendeVersion(c.image, app?.nurTag ? undefined : c.label);
-    const k: Komponente = { schluessel: `${c.host}/${c.name}`, host: c.host, name: c.name, art: 'container', image: c.image, ...(version ? { version } : {}), ...(app ? { anwendung: app.name } : {}), erreichbar: d.erreichbar(c.host, c.name), treffer: [], nichtGeprueft: [], geprueft: [] };
+    const er = d.erreichbar(c.host, c.name);
+    const k: Komponente = { schluessel: `${c.host}/${c.name}`, host: c.host, name: c.name, art: 'container', image: c.image, ...(version ? { version } : {}), ...(app ? { anwendung: app.name } : {}), erreichbar: er !== false, treffer: [], nichtGeprueft: [], geprueft: [], quellenFehler: false };
+    if (er === undefined) k.nichtGeprueft.push('Erreichbarkeit unbekannt (keine Port-Daten) — als von außen erreichbar gewertet');
     if (app && version) {
       const r = await anwendungsLage(repo, version);
       for (const a of r.adv) k.treffer.push({ ...a, paket: app.name, installiert: version, stufe: 'niedrig' });
       for (const f of r.fehler) k.nichtGeprueft.push(`${app.name}: ${f}`);
+      if (r.fehler.length) k.quellenFehler = true;
       k.geprueft.push(...r.ok);
     } else if (app) k.nichtGeprueft.push(`${app.name}: keine laufende Version (Tag ohne Version, kein Versions-Label) — nur Trivy`);
     else k.nichtGeprueft.push('keine Anwendungs-Zuordnung — nur Trivy');
@@ -81,40 +87,49 @@ export async function schwachstellenLauf(d: LaufDeps): Promise<LaufErgebnis> {
     else {
       const ref = c.digest ?? c.image;
       const r = await trivyLage(ref);
-      if ('fehler' in r) k.nichtGeprueft.push(r.fehler);
+      if ('fehler' in r) { k.nichtGeprueft.push(r.fehler); k.quellenFehler = true; }
       else { k.geprueft.push('trivy'); for (const t of r.treffer) if (!k.treffer.some(x => (x.id === t.id || x.aliase.includes(t.id)) && x.paket === t.paket)) k.treffer.push({ ...t }); }
     }
     komponenten.push(k);
   }
 
-  const osvCache = new Map<string, Promise<Advisory[]>>();
+  // Ergebnis (nicht den verschluckten Fehler) zwischenspeichern: jeder Host, der einen Fehler aus dem Speicher liest, benennt ihn selbst
+  const osvCache = new Map<string, Promise<{ adv: Advisory[] } | { fehler: string }>>();
   for (const h of d.hosts) {
     if (!h.sicherheit.length) continue;
     const eco = OEKO(h.os);
-    const k: Komponente = { schluessel: `${h.host}/sicherheitsupdates`, host: h.host, name: 'sicherheitsupdates', art: 'host', erreichbar: false, treffer: [], nichtGeprueft: [], geprueft: [] };
+    const k: Komponente = { schluessel: `${h.host}/sicherheitsupdates`, host: h.host, name: 'sicherheitsupdates', art: 'host', erreichbar: false, treffer: [], nichtGeprueft: [], geprueft: [], quellenFehler: false };
     if (!eco) { k.nichtGeprueft.push(`System ${h.os?.id ?? '?'} ${h.os?.version ?? ''} ohne OSV-Ökosystem — ${h.sicherheit.length} Sicherheitsupdates ausstehend`); komponenten.push(k); continue; }
     for (const p of h.sicherheit) {
       const key = `${eco}|${p.paket}|${p.alt}`;
-      if (!osvCache.has(key)) { abfragen.osv++; osvCache.set(key, osv(d.abruf, eco, p.paket, p.alt).catch(e => { k.nichtGeprueft.push(`${p.paket}: ${(e as Error).message}`); return []; })); }
-      for (const a of await osvCache.get(key)!) k.treffer.push({ ...a, paket: p.paket, installiert: p.alt, behoben: a.behoben ?? p.neu, stufe: 'niedrig' });
+      if (!osvCache.has(key)) { abfragen.osv++; osvCache.set(key, osv(d.abruf, eco, p.paket, p.alt).then(adv => ({ adv }), e => ({ fehler: (e as Error).message }))); }
+      const r = await osvCache.get(key)!;
+      if ('fehler' in r) { k.nichtGeprueft.push(`${p.paket}: ${r.fehler}`); k.quellenFehler = true; continue; }
+      for (const a of r.adv) k.treffer.push({ ...a, paket: p.paket, installiert: p.alt, behoben: a.behoben ?? p.neu, stufe: 'niedrig' });
     }
-    if (!k.nichtGeprueft.length) k.geprueft.push('osv');
+    if (!k.quellenFehler) k.geprueft.push('osv');
     komponenten.push(k);
   }
 
   // EPSS + KEV je CVE, dann Stufe je Treffer; erstes Erkennen aus der Vorgeschichte
   const cves = komponenten.flatMap(k => k.treffer.flatMap(t => [t.id, ...t.aliase])).filter(x => x.startsWith('CVE-'));
-  const ep = await epss(d.abruf, cves).catch(e => { fehler.push((e as Error).message); return new Map<string, number>(); });
-  const kv = await kev(d.abruf).catch(e => { fehler.push((e as Error).message); return new Map<string, string>(); });
+  // Fail-closed: ist EPSS oder KEV nicht abrufbar, gelten die zuletzt gespeicherten Werte (nie still herabstufen), und kein Befund wird
+  // in diesem Lauf als gelöst gewertet (quellenFehler an jeder Komponente)
+  let epFehler = false; let kvFehler = false;
+  const ep = await epss(d.abruf, cves).catch(e => { fehler.push((e as Error).message); epFehler = true; return new Map<string, number>(); });
+  const kv = await kev(d.abruf).catch(e => { fehler.push((e as Error).message); kvFehler = true; return new Map<string, string>(); });
   for (const k of komponenten) {
+    if (epFehler || kvFehler) { k.quellenFehler = true; k.nichtGeprueft.push(`${[epFehler ? 'EPSS' : '', kvFehler ? 'KEV' : ''].filter(Boolean).join(' und ')} nicht abrufbar — zuletzt gespeicherte Werte`); }
     const vor = d.erkannt?.(k.schluessel);
     for (const t of k.treffer) {
       const ids = [t.id, ...t.aliase];
-      const e = ids.map(i => ep.get(i)).find(x => x !== undefined); const v = ids.map(i => kv.get(i)).find(Boolean);
+      const alt = vor?.get(`${t.id}|${t.paket}`);
+      const e = epFehler ? alt?.epss : ids.map(i => ep.get(i)).find(x => x !== undefined);
+      const v = kvFehler ? alt?.kev : ids.map(i => kv.get(i)).find(Boolean);
       if (e !== undefined) t.epss = e;
       if (v) t.kev = v;
       t.stufe = stufe(t, k.erreichbar);
-      const erk = vor?.get(`${t.id}|${t.paket}`); if (erk) t.erkannt = erk;
+      if (alt) t.erkannt = alt.erkannt;
     }
   }
   return { komponenten, fehler, abfragen };

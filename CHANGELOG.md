@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Schwachstellen-Überwachung: Kalibrierung und fail-closed bei Quellenausfällen (v1960)
+
+- **Bewertung von Paketen im Image (Trivy):** Ausschlaggebend ist jetzt die tatsächliche Gefährdung, nicht mehr der NVD-Höchstwert.
+  - kritisch: der Eintrag steht im CISA-KEV, oder EPSS ≥ 10 % bei Erreichbarkeit von außen;
+  - hoch: EPSS ≥ 10 %, oder CVSS ≥ 9 mit behobener Version;
+  - alles Übrige erscheint nur in der Ansicht.
+  - Für die Anwendung selbst gilt die bisherige CVSS-Regel unverändert.
+- **Zählung:** je CVE und Komponente statt je Paket. Eine Lücke in mehreren Unterpaketen derselben Bibliothek zählt einmal.
+- **Befunde:** Pakete im Image ergeben je Container einen Sammel-Befund mit der Maßnahme „Image aktualisieren bzw. neu bauen“, getrennt von den Lücken der Anwendung.
+- **Meldung und Push:** Es kommt eine gebündelte Meldung je Lauf, mit Anzahl je Komponente, getrennt nach Anwendung und Basis-Image. Als neu kritisch gilt auch ein Treffer, der vorher nicht kritisch war, zum Beispiel nach einem neuen KEV-Eintrag.
+- **Fail-closed bei Quellenausfällen:**
+  - Ohne Port-Daten gilt eine Komponente als von außen erreichbar; das wird benannt.
+  - Fällt EPSS oder KEV aus, gelten die zuletzt gespeicherten Werte weiter.
+  - Fehler aus dem OSV-Zwischenspeicher werden an jedem betroffenen Host benannt.
+  - Komponenten mit ausgefallener Quelle lösen in diesem Lauf keinen Befund.
+  - Die Erreichbarkeit stammt aus den Container-Assets der CMDB.
+
 ### Added — Schwachstellen-Überwachung der gesamten Infrastruktur, Etappe A1 (v1959)
 
 - Täglicher Job `schwachstellen` (06:00, zusätzlich nach jeder CMDB-Discovery) für alle Container und Linux-Hosts mit Fernzugang, einschließlich der Proxmox-Knoten.

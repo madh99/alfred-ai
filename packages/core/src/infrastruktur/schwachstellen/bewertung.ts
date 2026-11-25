@@ -6,6 +6,13 @@
  *   niedrig:  Rest (nur Ansicht und Bericht)
  * Ohne Score zählt die Schwere der Quelle. Befund je Komponente ab hoch: kritisch immer, hoch nur mit behobener Version (sonst gibt
  * es nichts zu tun — steht in der Ansicht). Frist ab dem ersten Erkennen.
+ *
+ * Kalibrierung (Owner 25.11. nach dem ersten Lauf: 2001 „kritisch“, 99 % Trivy-Treffer in Basis-Paketen alter Images) — für Pakete im
+ * Image (Trivy, `basis`) entscheidet die tatsächliche Gefährdung, nicht der NVD-Höchstwert:
+ *   kritisch: KEV, oder EPSS ≥ 10 % und von außen erreichbar
+ *   hoch:     EPSS ≥ 10 %, oder CVSS ≥ 9 mit behobener Version
+ *   mittel:   CVSS ≥ 4 (nur Ansicht)
+ * Gezählt wird je CVE und Komponente (nicht je Paket), Basis-Pakete ergeben einen Sammel-Befund „Image aktualisieren“.
  */
 import type { Auffaelligkeit } from '../bericht.js';
 import { rang, type Advisory, type Schwere } from './quellen.js';
@@ -13,13 +20,22 @@ import { rang, type Advisory, type Schwere } from './quellen.js';
 export type Stufe = 'kritisch' | 'hoch' | 'mittel' | 'niedrig';
 export const FRIST_H: Record<Stufe, number | undefined> = { kritisch: 48, hoch: 7 * 24, mittel: 30 * 24, niedrig: undefined };
 
-export interface Treffer extends Advisory { paket: string; installiert: string; epss?: number; kev?: string; stufe: Stufe; erkannt?: string }
+/** `basis`: Paket im Image (Trivy), nicht die Anwendung selbst */
+export interface Treffer extends Advisory { paket: string; installiert: string; epss?: number; kev?: string; stufe: Stufe; erkannt?: string; basis?: boolean }
 
-export function stufe(t: Pick<Advisory, 'cvss' | 'schwere'> & { epss?: number; kev?: string }, erreichbar: boolean): Stufe {
+const EPSS_HOCH = 0.1;
+
+export function stufe(t: Pick<Advisory, 'cvss' | 'schwere'> & { epss?: number; kev?: string; basis?: boolean; behoben?: string }, erreichbar: boolean): Stufe {
   const s = typeof t.cvss === 'number' ? t.cvss : undefined;
   const r = (x: Schwere) => rang(t.schwere) >= rang(x);
+  const ep = (t.epss ?? 0) >= EPSS_HOCH;
+  if (t.basis) {
+    if (t.kev || (ep && erreichbar)) return 'kritisch';
+    if (ep || ((s !== undefined ? s >= 9 : r('kritisch')) && !!t.behoben)) return 'hoch';
+    return (s !== undefined ? s >= 4 : r('mittel')) ? 'mittel' : 'niedrig';
+  }
   if (t.kev || (s !== undefined ? s >= 9 : r('kritisch')) || (erreichbar && (s !== undefined ? s >= 7 : r('hoch')))) return 'kritisch';
-  if ((s !== undefined ? s >= 7 : r('hoch')) || (t.epss ?? 0) >= 0.1) return 'hoch';
+  if ((s !== undefined ? s >= 7 : r('hoch')) || ep) return 'hoch';
   if (s !== undefined ? s >= 4 : r('mittel')) return 'mittel';
   return 'niedrig';
 }
@@ -32,12 +48,26 @@ export interface Komponente {
   nichtGeprueft: string[];
   /** Quellen, die für diese Komponente in diesem Lauf erfolgreich liefen (github, nvd, osv, trivy) — nur deren Treffer dürfen als behoben gelten */
   geprueft: string[];
+  /** eine Quelle (Anwendung, Trivy, OSV, EPSS/KEV) ist in diesem Lauf ausgefallen — der Befund darf nicht als gelöst gelten */
+  quellenFehler: boolean;
 }
 
 const STUFEN: Stufe[] = ['kritisch', 'hoch', 'mittel', 'niedrig'];
 export const hoechste = (t: Treffer[]): Stufe | undefined => STUFEN.find(s => t.some(x => x.stufe === s));
-export const zaehle = (t: Treffer[]) => Object.fromEntries(STUFEN.map(s => [s, t.filter(x => x.stufe === s).length])) as Record<Stufe, number>;
-
+/** je CVE (Kennung) einmal, mit ihrer höchsten Stufe — eine Lücke in zehn Unterpaketen derselben Bibliothek zählt einmal */
+export function zaehle(t: Treffer[]): Record<Stufe, number> {
+  const je = new Map<string, number>();
+  for (const x of t) { const i = STUFEN.indexOf(x.stufe); const alt = je.get(x.id); if (alt === undefined || i < alt) je.set(x.id, i); }
+  const z = { kritisch: 0, hoch: 0, mittel: 0, niedrig: 0 } as Record<Stufe, number>;
+  for (const i of je.values()) z[STUFEN[i]!]++;
+  return z;
+}
+/** Zählung über mehrere Komponenten: je Komponente und CVE einmal */
+export const zaehleKomponenten = (k: Komponente[]): Record<Stufe, number> => {
+  const z = { kritisch: 0, hoch: 0, mittel: 0, niedrig: 0 } as Record<Stufe, number>;
+  for (const c of k) { const n = zaehle(c.treffer); for (const s of STUFEN) z[s] += n[s]; }
+  return z;
+};
 /** kleinste Version, die alle Treffer einer Anwendung behebt, ist nicht sicher bestimmbar — genannt wird die höchste behobene */
 function zielVersion(t: Treffer[], anwendung?: string): string | undefined {
   const v = t.filter(x => anwendung && x.paket === anwendung && x.behoben).map(x => x.behoben!.split(/\s*,\s*/)[0]!);
@@ -52,18 +82,31 @@ const frist = (erkannt: string | undefined, s: Stufe, jetzt: Date): string | und
 /** Befunde je Komponente (Schlüssel sicherheit:<host>:<name>) — Kategorie sicherheit */
 export function befunde(k: Komponente[], jetzt = new Date()): Auffaelligkeit[] {
   const aus: Auffaelligkeit[] = [];
+  const relevant = (t: Treffer) => t.stufe === 'kritisch' || (t.stufe === 'hoch' && !!t.behoben);
   for (const c of k) {
-    const relevant = c.treffer.filter(t => t.stufe === 'kritisch' || (t.stufe === 'hoch' && !!t.behoben));
-    const h = hoechste(relevant);
+    const app = c.treffer.filter(t => !t.basis); const bas = c.treffer.filter(t => t.basis);
+    const relApp = app.filter(relevant); const relBas = bas.filter(relevant);
+    const h = hoechste([...relApp, ...relBas]);
     if (!h) continue;
-    const z = zaehle(c.treffer);
-    const top = [...relevant].sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0))[0]!;
-    const fr = relevant.filter(t => t.stufe === h).map(t => frist(t.erkannt, h, jetzt)).filter(Boolean).sort()[0];
-    const ziel = zielVersion(c.treffer, c.anwendung);
-    const was = c.art === 'container' ? `Container ${c.name}${c.anwendung ? ` (${c.anwendung}${c.version ? ` ${c.version}` : ''})` : ''}` : 'ausstehende Sicherheitsupdates';
+    const fr = [...relApp, ...relBas].filter(t => t.stufe === h).map(t => frist(t.erkannt, h, jetzt)).filter(Boolean).sort()[0];
+    const teile: string[] = []; const erreichbar = c.erreichbar ? ', von außen erreichbar' : '';
+    if (relApp.length) {
+      const z = zaehle(app);
+      const top = [...relApp].sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0))[0]!;
+      const was = c.art === 'container' ? `Container ${c.name}${c.anwendung ? ` (${c.anwendung}${c.version ? ` ${c.version}` : ''})` : ''}` : 'ausstehende Sicherheitsupdates';
+      const ziel = zielVersion(c.treffer, c.anwendung);
+      teile.push(`${was}: ${z.kritisch} kritisch, ${z.hoch} hoch, ${z.mittel} mittel; höchster CVSS ${top.cvss ?? '—'} (${top.id}${top.kev ? ', aktiv ausgenutzt (KEV)' : ''})${erreichbar}${ziel ? `; behoben in ${ziel}` : ''}`);
+    }
+    if (relBas.length) {
+      // Sammel-Befund je Image: die Maßnahme ist dieselbe (Image aktualisieren bzw. neu bauen), egal wie viele Pakete betroffen sind
+      const z = zaehle(relBas);
+      const top = [...relBas].sort((a, b) => Number(!!b.kev) - Number(!!a.kev) || (b.epss ?? 0) - (a.epss ?? 0) || (b.cvss ?? 0) - (a.cvss ?? 0))[0]!;
+      const grund = top.kev ? ', aktiv ausgenutzt (KEV)' : top.epss !== undefined && top.epss >= EPSS_HOCH ? `, EPSS ${Math.round(top.epss * 100)} %` : top.cvss !== undefined ? `, CVSS ${top.cvss}` : '';
+      teile.push(`${relApp.length ? 'Basis-Image' : `Basis-Image von Container ${c.name}${c.image ? ` (${c.image.slice(0, 80)})` : ''}`}: ${z.kritisch} kritisch, ${z.hoch} hoch in ${new Set(relBas.map(t => t.paket)).size} Paketen (u. a. ${top.id} in ${top.paket}${grund})${relApp.length ? '' : erreichbar} — Image aktualisieren bzw. neu bauen`);
+    }
     aus.push({
       schwere: 'hoch', bereich: c.host, kategorie: 'sicherheit', schluessel: `sicherheit:${c.host}:${c.name}`, zugang: c.host,
-      text: `${h === 'kritisch' ? 'KRITISCH — ' : ''}${was}: ${z.kritisch} kritisch, ${z.hoch} hoch, ${z.mittel} mittel; höchster CVSS ${top.cvss ?? '—'} (${top.id}${top.kev ? ', aktiv ausgenutzt (KEV)' : ''})${c.erreichbar ? ', von außen erreichbar' : ''}${ziel ? `; behoben in ${ziel}` : ''}${fr ? `; Frist bis ${new Date(fr).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })}` : ''}`,
+      text: `${h === 'kritisch' ? 'KRITISCH — ' : ''}${teile.join('; ')}${fr ? `; Frist bis ${new Date(fr).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', dateStyle: 'short', timeStyle: 'short' })}` : ''}`,
     });
   }
   return aus;
@@ -71,8 +114,7 @@ export function befunde(k: Komponente[], jetzt = new Date()): Auffaelligkeit[] {
 
 /** Tagesdokument / Meldungstext: Lage je Stufe, Komponenten ab hoch, nicht Geprüftes (ohne Modell) */
 export function lageText(k: Komponente[], datum: string, fehler: string[]): string {
-  const alle = k.flatMap(c => c.treffer);
-  const z = zaehle(alle);
+  const z = zaehleKomponenten(k);
   const zeilen = [`# Schwachstellen ${datum}`, '', `${k.length} Komponenten geprüft · offen: ${z.kritisch} kritisch, ${z.hoch} hoch, ${z.mittel} mittel, ${z.niedrig} niedrig`, ''];
   const wichtig = k.map(c => ({ c, h: hoechste(c.treffer), n: zaehle(c.treffer) })).filter(x => x.h === 'kritisch' || x.h === 'hoch')
     .sort((a, b) => (a.h === b.h ? b.n.kritisch * 100 + b.n.hoch - (a.n.kritisch * 100 + a.n.hoch) : a.h === 'kritisch' ? -1 : 1));

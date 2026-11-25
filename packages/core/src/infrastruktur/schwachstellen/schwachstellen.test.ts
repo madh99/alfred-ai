@@ -3,8 +3,8 @@ import { betroffen, vergleiche, leseBereich } from './versionen.js';
 import { githubAdvisories, nvdCpe, osv, zusammenfuehren, epss, kev, type Abruf } from './quellen.js';
 import { leseTrivy, trivyArgumente, TRIVY_IMAGE } from './trivy.js';
 import { imageRepo, laufendeVersion, veroeffentlichtePorts, vonAussenErreichbar } from './zuordnung.js';
-import { stufe, befunde, lageText, type Komponente } from './bewertung.js';
-import { schwachstellenLauf } from './lauf.js';
+import { stufe, befunde, lageText, zaehle, type Komponente } from './bewertung.js';
+import { schwachstellenLauf, type LaufDeps } from './lauf.js';
 
 // Realfall 25.11.: Vaultwarden 1.30.5 — Bereichsangaben genau wie in den Repo-Advisories
 describe('Versionen und Bereiche', () => {
@@ -116,7 +116,23 @@ describe('Bewertung (Owner 25.11.: Fristen 48 h / 7 Tage / 30 Tage)', () => {
     expect(stufe({ schwere: 'mittel' }, false)).toBe('mittel');
     expect(stufe({ cvss: 2, schwere: 'niedrig' }, false)).toBe('niedrig');
   });
-  const k = (treffer: Komponente['treffer'], o: Partial<Komponente> = {}): Komponente => ({ schluessel: 'docker-vault-01/vaultwarden', host: 'docker-vault-01', name: 'vaultwarden', art: 'container', anwendung: 'Vaultwarden', version: '1.30.5', erreichbar: true, treffer, nichtGeprueft: [], geprueft: [], ...o });
+  // Kalibrierung 25.11. (erster Lauf: 2001 „kritisch“, 99 % Basis-Pakete aus Trivy)
+  it('Basis-Pakete: Gefährdung statt NVD-Höchstwert', () => {
+    const b = { basis: true as const };
+    expect(stufe({ ...b, cvss: 9.8, schwere: 'kritisch' }, true)).toBe('mittel');
+    expect(stufe({ ...b, cvss: 9.8, schwere: 'kritisch', behoben: '1.2' }, true)).toBe('hoch');
+    expect(stufe({ ...b, cvss: 5, schwere: 'mittel', kev: '2026-01-01' }, false)).toBe('kritisch');
+    expect(stufe({ ...b, cvss: 7.5, schwere: 'hoch', epss: 0.3 }, true)).toBe('kritisch');
+    expect(stufe({ ...b, cvss: 7.5, schwere: 'hoch', epss: 0.3 }, false)).toBe('hoch');
+    expect(stufe({ ...b, cvss: 8.1, schwere: 'hoch', behoben: '2' }, true)).toBe('mittel');
+    expect(stufe({ ...b, schwere: 'kritisch', behoben: '2' }, false)).toBe('hoch');
+    expect(stufe({ ...b, cvss: 3, schwere: 'niedrig' }, true)).toBe('niedrig');
+  });
+  it('Zählung je CVE und Komponente, nicht je Paket', () => {
+    const p = (id: string, paket: string, st: 'kritisch' | 'hoch' | 'mittel') => ({ id, aliase: [id], titel: '', schwere: 'hoch' as const, link: '', quellen: ['trivy'], paket, installiert: '1', stufe: st, basis: true });
+    expect(zaehle([p('CVE-1', 'libssl3', 'hoch'), p('CVE-1', 'openssl', 'hoch'), p('CVE-1', 'libcrypto', 'kritisch'), p('CVE-2', 'zlib', 'mittel')])).toEqual({ kritisch: 1, hoch: 0, mittel: 1, niedrig: 0 });
+  });
+  const k = (treffer: Komponente['treffer'], o: Partial<Komponente> = {}): Komponente => ({ schluessel: 'docker-vault-01/vaultwarden', host: 'docker-vault-01', name: 'vaultwarden', art: 'container', anwendung: 'Vaultwarden', version: '1.30.5', erreichbar: true, treffer, nichtGeprueft: [], geprueft: [], quellenFehler: false, ...o });
   const t = (id: string, cvss: number, st: 'kritisch' | 'hoch' | 'mittel' | 'niedrig', behoben?: string) => ({ id, aliase: [id], titel: '', cvss, schwere: 'hoch' as const, link: '', quellen: ['github'], paket: 'Vaultwarden', installiert: '1.30.5', stufe: st, ...(behoben ? { behoben } : {}), erkannt: '2026-11-25T05:00:00Z' });
   it('Befund je Komponente: kritisch immer, hoch nur mit Fix; Frist ab erstem Erkennen in Ortszeit', () => {
     const b = befunde([k([t('CVE-2024-55225', 9.8, 'kritisch', '1.32.6'), t('GHSA-69q9', 8.1, 'hoch', '1.37.4'), t('X', 5, 'mittel', '1.37.5')])]);
@@ -125,6 +141,15 @@ describe('Bewertung (Owner 25.11.: Fristen 48 h / 7 Tage / 30 Tage)', () => {
     expect(b[0]!.text).toBe('KRITISCH — Container vaultwarden (Vaultwarden 1.30.5): 1 kritisch, 1 hoch, 1 mittel; höchster CVSS 9.8 (CVE-2024-55225), von außen erreichbar; behoben in 1.37.5; Frist bis 27.11.26, 06:00');
     expect(befunde([k([t('Y', 8, 'hoch')])])).toEqual([]);
     expect(befunde([k([t('Z', 5, 'mittel', '2')])])).toEqual([]);
+  });
+  it('Basis-Image: ein Sammel-Befund je Image mit Maßnahme, Anwendung und Basis getrennt', () => {
+    const b = (id: string, paket: string, st: 'kritisch' | 'hoch' | 'mittel', x: { kev?: string; epss?: number } = {}) => ({ id, aliase: [id], titel: '', cvss: 7.5, schwere: 'hoch' as const, link: '', quellen: ['trivy'], paket, installiert: '1', behoben: '2', stufe: st, basis: true, erkannt: '2026-11-25T05:00:00Z', ...x });
+    const nur = befunde([k([b('CVE-2023-4863', 'libwebp7', 'kritisch', { kev: '2023-09-13' }), b('CVE-2023-4863', 'libwebp-dev', 'kritisch', { kev: '2023-09-13' }), b('CVE-2024-1', 'curl', 'hoch', { epss: 0.4 }), b('CVE-2024-2', 'zlib', 'mittel')],
+      { schluessel: 'docker-com-01/guacamole', host: 'docker-com-01', name: 'guacamole', anwendung: undefined, version: undefined, image: 'guacamole/guacamole:1.5.4', erreichbar: false })]);
+    expect(nur).toHaveLength(1);
+    expect(nur[0]!.text).toBe('KRITISCH — Basis-Image von Container guacamole (guacamole/guacamole:1.5.4): 1 kritisch, 1 hoch in 3 Paketen (u. a. CVE-2023-4863 in libwebp7, aktiv ausgenutzt (KEV)) — Image aktualisieren bzw. neu bauen; Frist bis 27.11.26, 06:00');
+    const beide = befunde([k([t('CVE-2024-55225', 9.8, 'kritisch', '1.32.6'), b('CVE-2024-1', 'curl', 'hoch', { epss: 0.4 })])]);
+    expect(beide[0]!.text).toBe('KRITISCH — Container vaultwarden (Vaultwarden 1.30.5): 1 kritisch, 0 hoch, 0 mittel; höchster CVSS 9.8 (CVE-2024-55225), von außen erreichbar; behoben in 1.32.6; Basis-Image: 0 kritisch, 1 hoch in 1 Paketen (u. a. CVE-2024-1 in curl, EPSS 40 %) — Image aktualisieren bzw. neu bauen; Frist bis 27.11.26, 06:00');
   });
   it('Lagetext nennt nicht Geprüftes und Quellenfehler', () => {
     const x = lageText([k([t('A', 9.8, 'kritisch', '1')]), k([], { schluessel: 'h/x', name: 'x', anwendung: undefined, nichtGeprueft: ['keine Anwendungs-Zuordnung — nur Trivy', 'Trivy: pull denied'] })], '25.11.26, 16:00', ['KEV: HTTP 503']);
@@ -156,7 +181,8 @@ describe('Lauf über die Infrastruktur', () => {
     });
     const vw = r.komponenten.find(k => k.name === 'vaultwarden')!;
     expect(vw.treffer.find(t => t.id === 'CVE-2026-43912')).toMatchObject({ paket: 'Vaultwarden', stufe: 'kritisch', quellen: ['github', 'nvd'] });
-    expect(vw.treffer.find(t => t.id === 'CVE-2025-7')).toMatchObject({ paket: 'libc6', stufe: 'mittel' });
+    expect(vw.treffer.find(t => t.id === 'CVE-2025-7')).toMatchObject({ paket: 'libc6', stufe: 'mittel', basis: true });
+    expect(vw.treffer.find(t => t.id === 'CVE-2026-43912')!.basis).toBeUndefined();
     expect(vw.geprueft.sort()).toEqual(['github', 'nvd', 'osv', 'trivy']);
     expect(gescannt[0]).toBe('vaultwarden/server@sha256:' + 'b'.repeat(64));
     expect(r.komponenten.find(k => k.name === 'sydent')!.nichtGeprueft).toEqual(['keine Anwendungs-Zuordnung — nur Trivy', 'Trivy: lokal gebaut']);
@@ -197,5 +223,30 @@ describe('Zuständigkeit der Schlüssel sicherheit:', () => {
     expect(b.neu).toEqual([]); expect(b.geloest).toEqual([]);
     // CVE-Lauf ohne Befund (behoben): löst den eigenen
     expect((await befundeAlsProblems([], z, { docId: 's', datum: 'd' }, { ...erf, kategorien: new Set(['sicherheit']), schluessel: istSicherheitsSchluessel })).geloest).toEqual(['p1']);
+  });
+});
+
+// Security-Review 25.11. — fail-closed bei Quellenausfällen
+describe('Fail-closed bei Quellenausfällen', () => {
+  const basis = { hosts: [] as LaufDeps['hosts'], pause: async () => undefined };
+  it('OSV-Fehler aus dem Zwischenspeicher wird an jedem Host benannt; kein osv in geprueft', async () => {
+    const abruf: Abruf = async (url) => (url.includes('api.osv.dev') ? { ok: false, status: 503, json: async () => ({}) } : url.includes('cisa.gov') ? { ok: true, status: 200, json: async () => ({ vulnerabilities: [] }) } : { ok: true, status: 200, json: async () => ({ data: [] }) });
+    const r = await schwachstellenLauf({ ...basis, container: [], abruf, erreichbar: () => false,
+      hosts: [{ host: 'a', os: { id: 'debian', version: '12' }, sicherheit: [{ paket: 'openssl', alt: '1', neu: '2' }] }, { host: 'b', os: { id: 'debian', version: '12' }, sicherheit: [{ paket: 'openssl', alt: '1', neu: '2' }] }] });
+    for (const k of r.komponenten) { expect(k.quellenFehler).toBe(true); expect(k.geprueft).toEqual([]); expect(k.nichtGeprueft[0]).toContain('openssl: OSV Debian:12/openssl: HTTP 503'); }
+  });
+  it('KEV/EPSS nicht abrufbar: gespeicherte Werte gelten weiter, Stufe bleibt kritisch, Komponente gesperrt', async () => {
+    const abruf: Abruf = async (url) => (url.includes('security-advisories') ? { ok: true, status: 200, json: async () => [{ ghsa_id: 'G', cve_id: 'CVE-2026-1', severity: 'medium', cvss_severities: { cvss_v3: { score: 5 } }, vulnerabilities: [{ vulnerable_version_range: '<2', patched_versions: '2' }] }] } : { ok: false, status: 503, json: async () => ({}) });
+    const r = await schwachstellenLauf({ ...basis, container: [{ host: 'h', name: 'vaultwarden', image: 'vaultwarden/server:1.0' }], abruf, erreichbar: () => false,
+      erkannt: () => new Map([['CVE-2026-1|Vaultwarden', { erkannt: '2026-11-20T00:00:00Z', kev: '2026-11-01' }]]) });
+    const k = r.komponenten[0]!;
+    expect(k.quellenFehler).toBe(true);
+    expect(k.nichtGeprueft).toContain('EPSS und KEV nicht abrufbar — zuletzt gespeicherte Werte');
+    expect(k.treffer.find(t => t.id === 'CVE-2026-1')).toMatchObject({ kev: '2026-11-01', stufe: 'kritisch', erkannt: '2026-11-20T00:00:00Z' });
+  });
+  it('Erreichbarkeit unbekannt wird als erreichbar gewertet und benannt', async () => {
+    const r = await schwachstellenLauf({ ...basis, container: [{ host: 'h', name: 'x', image: 'unbekannt/app:1' }], abruf: abrufMit({ 'cisa.gov': { vulnerabilities: [] } }).abruf, erreichbar: () => undefined });
+    expect(r.komponenten[0]).toMatchObject({ erreichbar: true });
+    expect(r.komponenten[0]!.nichtGeprueft[0]).toBe('Erreichbarkeit unbekannt (keine Port-Daten) — als von außen erreichbar gewertet');
   });
 });
