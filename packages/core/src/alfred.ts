@@ -8214,7 +8214,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               if (!this.confirmationQueue) return false;
               const chatId = this.config.security?.ownerUserId ?? '';
               if (!chatId) return false;
-              const ok = await this.confirmationQueue.enqueue({ chatId, platform: this.config.telegram?.enabled ? 'telegram' : 'api', source: 'geraet', sourceId: `infrastruktur-pruefprofil-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
+              const plattform = this.config.telegram?.enabled ? 'telegram' : 'api';
+              // v1969 — überholte Profilfragen zurückziehen: der neue Vorschlag hat die Einmal-Freigabe schon ersetzt (vor dem Aufruf
+              // gespeichert), ältere Fragen desselben Assets und abgelaufene anderer sind ungültig und dürfen nicht offen stehen bleiben
+              const o = ownerFz();
+              if (o && pruefprofileRef) {
+                const offen = (await this.confirmationQueue.offeneFuer(chatId, plattform)).filter(p => p.skillName === 'infrastruktur' && (p.skillParams as { action?: string })?.action === 'pruefprofil_bestaetigen');
+                const ueberholt: string[] = [];
+                for (const p of offen) {
+                  const sp = p.skillParams as { asset?: unknown; freigabe?: unknown };
+                  if (!(await pruefprofileRef.frageGueltig(o, sp.asset, sp.freigabe).catch(() => true))) ueberholt.push(p.id);
+                }
+                if (ueberholt.length) this.logger.info({ anzahl: await this.confirmationQueue.zurueckziehen(ueberholt, 'Prüfprofil-Vorschlag überholt') }, 'S3 Prüfprofil: überholte Fragen zurückgezogen');
+              }
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform: plattform, source: 'geraet', sourceId: `infrastruktur-pruefprofil-${Date.now()}`, description, skillName: 'infrastruktur', skillParams: params, timeoutMinutes: 24 * 60 } as never);
               return ok !== false;
             },
             protokoll: (msg, daten) => this.logger.info(daten, msg),

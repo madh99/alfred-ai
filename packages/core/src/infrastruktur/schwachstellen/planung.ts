@@ -147,7 +147,17 @@ export function zielReferenzen(image: string | undefined, anwendungsZiel?: strin
   if (!image) return [];
   const ohneDigest = image.replace(/@sha256:[0-9a-f]{64}$/, '');
   const letzter = ohneDigest.split('/').pop() ?? '';
-  if (letzter.includes(':')) return [ohneDigest];
+  if (letzter.includes(':')) {
+    // v1969 — fester Versions-Tag und behobene Anwendungsversion: zuerst deren Tag (in der Schreibweise des laufenden Tags), dann
+    // derselbe Tag. Realfall 26.11. EMHASS v0.18.0: nur derselbe Tag geprüft, der Fix v0.19.0 nie
+    const tag = letzter.slice(letzter.indexOf(':') + 1);
+    const repo = ohneDigest.slice(0, ohneDigest.length - tag.length - 1);
+    if (anwendungsZiel && /^v?\d/.test(tag)) {
+      const ziel = `${tag.startsWith('v') ? 'v' : ''}${anwendungsZiel.replace(/^v/, '')}`;
+      if (ziel !== tag) return [`${repo}:${ziel}`, ohneDigest];
+    }
+    return [ohneDigest];
+  }
   if (image.includes('@sha256:')) return anwendungsZiel ? [`${ohneDigest}:${anwendungsZiel}`, `${ohneDigest}:v${anwendungsZiel.replace(/^v/, '')}`] : [];
   return [`${ohneDigest}:latest`];
 }

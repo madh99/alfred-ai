@@ -109,6 +109,11 @@ describe('Schwachstellen A2 — Zielprüfung (v1966)', () => {
     expect(zielReferenzen(`matrixdotorg/synapse@${D}`, '1.157.2')).toEqual(['matrixdotorg/synapse:1.157.2', 'matrixdotorg/synapse:v1.157.2']);
     expect(zielReferenzen(`coturn/coturn@${D}`)).toEqual([]);
     expect(zielReferenzen(undefined)).toEqual([]);
+    // v1969 — Versions-Tag mit behobener Anwendungsversion: zuerst deren Tag in derselben Schreibweise, dann derselbe Tag
+    expect(zielReferenzen('emhass/emhass:v0.18.0', '0.19.0')).toEqual(['emhass/emhass:v0.19.0', 'emhass/emhass:v0.18.0']);
+    expect(zielReferenzen(`registry.lokalkraft.at:5000/x/y:1.2@${D}`, 'v1.3')).toEqual(['registry.lokalkraft.at:5000/x/y:1.3', 'registry.lokalkraft.at:5000/x/y:1.2']);
+    expect(zielReferenzen('x/y:1.3', '1.3')).toEqual(['x/y:1.3']);
+    expect(zielReferenzen('jwetzell/guacamole:latest', '1.6.0')).toEqual(['jwetzell/guacamole:latest']);
   });
   const b = (id: string, x: Partial<Treffer> = {}): Treffer => ({ id, aliase: [id], titel: '', schwere: 'hoch', link: '', quellen: ['trivy'], paket: 'p', installiert: '1', stufe: 'kritisch', basis: true, behoben: '2', ...x });
   it('Vergleich: relevante Basis-IDs, die im Ziel bleiben; ohne Wirkung → keine Runde', () => {

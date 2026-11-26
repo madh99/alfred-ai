@@ -105,6 +105,19 @@ describe('S3 Prüfprofile — Vorschlag, Bestätigung, Ersetzen', () => {
     expect(await pp.bestaetigt('o', 'a-149')).toEqual(vorher);
   });
 
+  it('v1969 frageGueltig: nur die Frage des letzten Vorschlags gilt, abgelaufene und fremde nicht', async () => {
+    const { pp, fragen, spaeter } = welt();
+    await pp.vorschlagen('o', 'docker-com-01');
+    expect(await pp.frageGueltig('o', 'a-149', fragen[0]!.params.freigabe)).toBe(true);
+    await pp.vorschlagen('o', 'docker-com-01');
+    expect(await pp.frageGueltig('o', 'a-149', fragen[0]!.params.freigabe)).toBe(false);
+    expect(await pp.frageGueltig('o', 'a-149', fragen[1]!.params.freigabe)).toBe(true);
+    expect(await pp.frageGueltig('o', 'a-anderes', fragen[1]!.params.freigabe)).toBe(false);
+    expect(await pp.frageGueltig('o', 'a-149', undefined)).toBe(false);
+    spaeter(25 * 3_600_000);
+    expect(await pp.frageGueltig('o', 'a-149', fragen[1]!.params.freigabe)).toBe(false);
+  });
+
   it('Planprüfung nimmt einzelne Prüfungen heraus; allgemeiner Fehler bricht ab; nichts bestanden → kein Vorschlag', async () => {
     const a = welt({ planFehler: ['Change profil: Schritt 1: Prüfbefehl nicht in der Leseliste'] });
     const r = await a.pp.vorschlagen('o', 'docker-com-01');

@@ -192,6 +192,14 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
 - **Titelmarke** (v1968): Der Changetitel beginnt mit `A2 <Problem-ID> – `. Die Verknüpfung läuft zuerst über die Marke (genau ein Treffer), dann über Asset oder Namen.
   - Vor der Planung werden Changes mit Marke nachverknüpft.
   - Ein offener Change mit Marke verhindert einen zweiten Plan.
+- **v1969:**
+  - Bei festem Versions-Tag und behobener Anwendungsversion scannt die Zielprüfung zuerst den Tag dieser Version, dann denselben Tag (EMHASS v0.18.0 → v0.19.0).
+  - Ein neuer Prüfprofil-Vorschlag zieht überholte oder abgelaufene Profilfragen zurück. Am 26.11. standen 15 Bestätigungen offen: 7 Change-Freigaben und 8 Profilfragen, davon 5 überholt.
+  - Der Change-Motor startet im selben Durchgang keine zwei Changes auf demselben Asset. Am 26.11. starteten ffdfb929 und 347d2aea gleichzeitig auf VM 144.
+- **Erste Freigabe-Serie 26.11. (18:55):**
+  - Abgeschlossen: Ombi b111b3a2, pgAdmin ffdfb929, Glances 085dc9a4.
+  - Zurückgerollt: nginx e51b4dcb. Die eigene Schutzprüfung schlug an (`NGINX_HOST_OPTIONS_DRIFT`).
+  - postgreDEV 347d2aea wartet bei Owner-Schritt 4 (Schreibpause). WordPress df90a112 und MySQL 9123859a warten auf das Asset.
 - **Erste Serie 26.11. (v1967), 18 Kandidaten:**
   - 10 Changes, davon 7 mit Freigabe-Anfrage und 3 Entwürfe. Bei den Entwürfen fand die Gegenprüfung Planfehler; `change_aendern` ist unbeaufsichtigt gesperrt.
   - 6 verknüpft, 4 ohne Verknüpfung; das hat v1968 behoben.

@@ -156,10 +156,19 @@ export class Pruefprofile {
     return ok ? { ok: true, text: `Prüfprofil ${a.name}: ${gut.length} Prüfungen zur Bestätigung vorgelegt${raus.length ? `, ${raus.length} nicht aufgenommen (${raus.join(' · ')})` : ''}.` } : { ok: false, fehler: 'Frage konnte nicht gestellt werden' };
   }
 
+  /**
+   * v1969 — gilt diese Freigabe-Frage noch? Jeder neue Vorschlag ersetzt die Einmal-Freigabe des Assets; ältere Fragen sind damit
+   * ungültig (Realfall 26.11.: 8 Profilfragen offen, davon 5 überholt — je A2-Runde ein neuer Vorschlag für denselben Host).
+   */
+  async frageGueltig(o: string, assetId: unknown, nonce: unknown): Promise<boolean> {
+    const z = (await this.d.lade(o)).find(x => x.assetId === assetId);
+    return !!z && typeof nonce === 'string' && !!z.frageHash && z.frageHash === hash(nonce) && !!z.frageBis && Date.parse(z.frageBis) >= this.jetzt();
+  }
+
   /** Ja des Owners (Button): nur mit gültiger Einmal-Freigabe; ersetzt ein bisher bestätigtes Profil */
   async bestaetigenNachJa(o: string, assetId: unknown, nonce: unknown): Promise<{ ok: boolean; text: string }> {
     const z = (await this.d.lade(o)).find(x => x.assetId === assetId);
-    if (!z || typeof nonce !== 'string' || !z.frageHash || z.frageHash !== hash(nonce) || !z.frageBis || Date.parse(z.frageBis) < this.jetzt()) {
+    if (!z || !(await this.frageGueltig(o, assetId, nonce))) {
       return { ok: false, text: 'Keine gültige Bestätigung — Prüfprofile bestätigt nur der Owner über die Freigabe-Frage.' };
     }
     if (!z.vorschlag?.length) return { ok: false, text: `${z.assetName}: kein offener Vorschlag` };

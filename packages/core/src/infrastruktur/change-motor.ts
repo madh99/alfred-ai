@@ -194,6 +194,9 @@ export class ChangeMotor {
     const o = this.d.owner(); if (!o) return [];
     const alle = (await this.d.itsm.liste(o)).filter(c => c.schritte?.length);
     const gestartet: string[] = [];
+    // v1969 — Assets der in DIESEM Durchgang gestarteten Changes: `alle` ist ein Stand vor dem Durchgang (Realfall 26.11.: ffdfb929 und
+    // 347d2aea starteten in derselben Millisekunde auf VM 144, beide waren beim Laden noch `approved`)
+    const imDurchgang = new Set<string>();
     for (const c of alle) {
       if (this.belegt(c.id)) continue;
       const l = c.lauf as ChangeLauf | undefined;
@@ -206,6 +209,7 @@ export class ChangeMotor {
         await this.d.melde?.(`▶️ Korrektur freigegeben: ${c.title} (${c.id.slice(0, 8)}) läuft ab Schritt ${l.korrektur.abSchritt} weiter`, false);
         await this.steuern(o, c.id, 'wiederholen', 'freigabe');
         gestartet.push(c.id);
+        for (const a of c.affectedAssetIds) imDurchgang.add(a);
         continue;
       }
       if (c.status !== 'approved') continue;
@@ -229,6 +233,7 @@ export class ChangeMotor {
       // belegt seine Assets nur, wenn er schon etwas verändert hat
       const hatGewirkt = (x: CmdbChangeRequest) => { const l = x.lauf as ChangeLauf | undefined; const st = (x.schritte ?? []) as ChangeSchritt[]; return (l?.ergebnisse ?? []).some(e => (e.ok || e.aktionOk || e.teilweise) && st.some(s => s.nr === e.nr && wirkt(s))); };
       const belegende = alle.filter(x => x.id !== c.id && x.status === 'in_progress' && (x.lauf as ChangeLauf | undefined)?.phase !== 'fertig' && ((x.lauf as ChangeLauf | undefined)?.phase !== 'angehalten' || hatGewirkt(x)) && x.affectedAssetIds.some(a => c.affectedAssetIds.includes(a)));
+      if (c.affectedAssetIds.some(a => imDurchgang.has(a))) { this.log('I4 Change wartet (Asset im selben Durchgang belegt)', { id: c.id }); continue; }
       if (belegende.length) {
         this.log('I4 Change wartet (Asset belegt)', { id: c.id, durch: belegende.map(x => x.id) });
         // v1604 — Realfall 23.10.: 9527d97f wartete still auf den angehaltenen 4f2642ab, der wiederum 9527d97f brauchte. Ein angehaltener
@@ -253,6 +258,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (!z.jetzt) { this.log('I4b Change wartet', { id: c.id, grund: z.grund, startAb: (z as { startAb?: string }).startAb }); continue; }
       }
       gestartet.push(c.id);
+      for (const a of c.affectedAssetIds) imDurchgang.add(a);
       void this.starte(o, c).catch(err => this.log('I4 Motorfehler', { id: c.id, fehler: (err as Error).message }));
     }
     return gestartet;

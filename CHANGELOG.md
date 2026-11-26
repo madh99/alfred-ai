@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Zielprüfung mit dem Tag der behobenen Version, überholte Prüfprofil-Fragen, Asset-Sperre im Change-Motor (v1969)
+
+- Läuft ein Container mit festem Versions-Tag und ist die Anwendung in einer neueren Version behoben, prüft Trivy zuerst den Tag dieser Version (in der Schreibweise des laufenden Tags, mit oder ohne „v“), danach denselben Tag. Bisher wurde nur derselbe Tag geprüft (Realfall EMHASS v0.18.0, Fix in v0.19.0).
+- Jeder neue Prüfprofil-Vorschlag ersetzt die Einmal-Freigabe des Assets. Vor der neuen Frage werden nun alle offenen Prüfprofil-Fragen zurückgezogen, die dadurch oder durch Ablauf ungültig sind. Bisher blieben sie offen: Am 26.11. waren von 8 Profilfragen 5 überholt.
+- Change-Motor: Zwei freigegebene Changes auf demselben Asset starten nicht mehr im selben Durchgang. Die Liste wurde einmal je Durchgang geladen, ein darin gerade gestarteter Change galt deshalb nicht als belegend. Am 26.11. starteten so zwei Changes auf VM 144 in derselben Millisekunde.
+
 ### Fixed — Schwachstellen-Planung verknüpft Changes über eine Titelmarke (v1968)
 
 - Der Planungsauftrag gibt den Titelanfang `A2 <Problem-ID> – ` vor. Ein neuer Change wird zuerst über diese Marke dem Problem zugeordnet, dann wie bisher über das gemeinsame Asset oder den Containernamen. Mehrere Changes mit derselben Marke werden nicht verknüpft.

@@ -735,6 +735,25 @@ describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () 
     await warte(m);
     expect(w.c.status).toBe('rolled_back');
   });
+  it('v1969 Realfall 26.11. (ffdfb929/347d2aea): zwei freigegebene Changes auf demselben Asset starten nicht im selben Durchgang', async () => {
+    const w = welt(probe());
+    const zwei = { ...w.c, id: 'chg-2', title: 'Zwei' } as CmdbChangeRequest;
+    const fremd = { ...w.c, id: 'chg-3', title: 'Fremd', affectedAssetIds: ['a-anders'] } as CmdbChangeRequest;
+    w.deps.itsm.liste = async () => [w.c, zwei, fremd];
+    w.deps.itsm.hole = async (_o, id) => [w.c, zwei, fremd].find(x => x.id === id)!;
+    const setze = w.deps.itsm.motorSetze;
+    w.deps.itsm.motorSetze = async (o, id, d) => {
+      if (id === 'chg-1') return setze(o, id, d);
+      const x = id === 'chg-2' ? zwei : fremd;
+      if (d.status) x.status = d.status; x.lauf = JSON.parse(JSON.stringify(d.lauf)); return x;
+    };
+    const m = new ChangeMotor(w.deps);
+    expect(await m.anstossen()).toEqual(['chg-1', 'chg-3']);
+    expect(zwei.status).toBe('approved');
+    await warte(m);
+    // nach dem Ende von chg-1 läuft chg-2 in einem späteren Durchgang
+    expect(w.c.status).toBe('completed');
+  });
   it('Realfall 22.10.: der Halt-Incident eines anderen Changes wird nie dem abgeschlossenen Change zugeschrieben', async () => {
     const w = welt(probe());
     await w.motor.anstossen(); await warte(w.motor);
