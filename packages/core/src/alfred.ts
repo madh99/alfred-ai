@@ -8373,6 +8373,39 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // Spec Schwachstellen-Überwachung (Owner 25.11.: täglich 06:00, gesamte Infrastruktur, Trivy ja, Push nur kritisch) — Etappe A1
         {
           let laeuft = false;
+          // Spec Schwachstellen-Überwachung A2 (Owner 25./26.11.) — je Komponente mit Handlungsbedarf plant Alfred EINEN Change im
+          // sichtbaren Infrastruktur-Faden und fragt die Freigabe an; nichts wird ausgeführt. Auswahl und Auftrag ohne Modell
+          // (planung.ts), Runden nacheinander, je Komponente höchstens ein Versuch am Tag; der neue Change wird mit dem Problem verknüpft.
+          let planungLaeuft = false;
+          const planeSchwachstellen = async (o: string, komponenten: import('./infrastruktur/schwachstellen/bewertung.js').Komponente[]): Promise<void> => {
+            if (planungLaeuft) { this.logger.info('A2 Schwachstellen-Planung läuft bereits — übersprungen'); return; }
+            planungLaeuft = true;
+            try {
+              const { planungsKandidaten, planungsAuftrag, neuerChange, PLANUNGS_FADEN } = await import('./infrastruktur/schwachstellen/planung.js');
+              const chatId = `owner:faden:${PLANUNGS_FADEN}`;
+              // fail-closed: ohne den sichtbaren Faden keine Planung (Owner 25.10.: keine unsichtbaren Aufträge)
+              const faden = this.conversationRepo ? await this.conversationRepo.findByPlatformChat('api' as Platform, chatId).catch(() => null) : null;
+              if (!faden || faden.deletedAt) { this.logger.warn({ chatId }, 'A2 Schwachstellen-Planung: Infrastruktur-Faden fehlt — nichts geplant'); return; }
+              const { ProblemRepository: ProblemA2 } = await import('@alfred/storage');
+              const prA2 = new ProblemA2(adapter);
+              const vor = 'infrastruktur-bestand:';
+              const probs = (await prA2.listProblemsByDetection(o, `${vor}sicherheit:`)).filter(p => p.status !== 'resolved' && p.status !== 'closed')
+                .map(p => ({ id: p.id, schluessel: String(p.detectionMethod).slice(vor.length), text: p.title, ...(p.linkedChangeRequestId ? { linkedChangeRequestId: p.linkedChangeRequestId } : {}), affectedAssetIds: p.affectedAssetIds }));
+              const kand = planungsKandidaten(komponenten, probs, await itsmI3.listChangeRequests(o, { limit: 500 }));
+              const geplant: string[] = []; const ohneChange: string[] = []; const heuteSchon: string[] = []; const fehler: string[] = [];
+              for (const k of kand) {
+                if (!(await this.claimDailySlot(`schwachstellen-plan:${k.schluessel}`))) { heuteSchon.push(k.schluessel); continue; }
+                try {
+                  const vorher = new Set((await itsmI3.listChangeRequests(o, { limit: 500 })).map(c => c.id));
+                  const image = komponenten.find(c => c.host === k.host && c.name === k.name)?.image;
+                  await this.fortsetzungImOwnerChat(planungsAuftrag(k, image), { id: `schwachstellen-plan-${k.name}`, platform: 'api', chatId, userId: o, unbeaufsichtigt: true, allowedSkills: ['infrastruktur', 'fernzugriff'] });
+                  const cid = neuerChange(k, probs.find(p => p.id === k.problemId)?.affectedAssetIds ?? [], vorher, await itsmI3.listChangeRequests(o, { limit: 500 }));
+                  if (cid) { await prA2.linkChangeRequest(o, k.problemId, cid); geplant.push(`${k.host}/${k.name} → ${cid.slice(0, 8)}`); } else ohneChange.push(`${k.host}/${k.name}`);
+                } catch (err) { fehler.push(`${k.host}/${k.name}: ${(err as Error).message.slice(0, 160)}`); }
+              }
+              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, heuteSchon, fehler }, 'A2 Schwachstellen-Planung');
+            } finally { planungLaeuft = false; }
+          };
           const schwachstellenLauf = async (grund: string): Promise<{ ok: boolean; zaehler: Record<string, number> }> => {
             const o = ownerFz(); const fz = this.fernzugriffRef;
             if (!o || !fz) return { ok: true, zaehler: { komponenten: 0 } };
@@ -8449,6 +8482,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const z = zaehleKomponenten(r.komponenten);
               this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt,
                 befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, problemsAktualisiert: pr.aktualisiert?.length ?? 0, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
+              // A2 im Hintergrund nach dem Lauf (gibt die Lauf-Sperre frei; Planungsrunden dauern Minuten)
+              void planeSchwachstellen(o, r.komponenten).catch(err => this.logger.warn({ err: (err as Error).message }, 'A2 Schwachstellen-Planung fehlgeschlagen'));
               return { ok: true, zaehler: { komponenten: r.komponenten.length, kritisch: z.kritisch, hoch: z.hoch, neu: gespeichert.neu.length, befunde: bef.length } };
             } finally { laeuft = false; }
           };
@@ -20013,7 +20048,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     await this.conversationRepo.addMessage(c.id, 'assistant', text, undefined, 'meldung');
   }
 
-  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {
+  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; userId?: string; unbeaufsichtigt?: boolean; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {
     const ownerPlatform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
     const ownerChatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
     // v1324 — kam der Auftrag aus einer anderen Sitzung (Desktop-App, Terminal), läuft die Fortsetzung dort: die Antwort steht in
@@ -20024,8 +20059,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!chatId) return false;
     try {
       const result = await this.pipeline.process({
-        id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: h?.userId ?? chatId, userName: 'owner',
-        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}), ...(opts.ablageAnhaenge?.length ? { ablageAnhaenge: opts.ablageAnhaenge } : {}) }, // v1295 — Tier für Vorhaben; v1347 Anhänge der Freigabe ablegen
+        id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: h?.userId ?? opts.userId ?? chatId, userName: 'owner', // userId: A2 — Runde direkt in einem Owner-Faden
+        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.unbeaufsichtigt ? { unbeaufsichtigt: true } : {}), ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}), ...(opts.ablageAnhaenge?.length ? { ablageAnhaenge: opts.ablageAnhaenge } : {}) }, // v1295 — Tier für Vorhaben; v1347 Anhänge der Freigabe ablegen
       } as NormalizedMessage);
       if (!result?.text) return false;
       const ziele: Array<{ platform: Platform; chatId: string }> = [{ platform, chatId }];

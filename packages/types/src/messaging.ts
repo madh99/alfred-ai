@@ -26,6 +26,8 @@ export interface NormalizedMessage {
   threadId?: string;
   metadata?: {
     scheduled?: boolean;
+    /** v1964 — unbeaufsichtigte Runde (Schwachstellen A2): Skills erlauben nur Lesen und Planen; nur der Code setzt das */
+    unbeaufsichtigt?: boolean;
     skipHistory?: boolean;
     tier?: import('./llm.js').ModelTier;
     /** Spec Stufe ultra U3 — Auslöser, wenn tier „ultra“ nicht ausdrücklich gewählt wurde (`gegenpruefung:<change>`, `eskalation:<grund>`) */

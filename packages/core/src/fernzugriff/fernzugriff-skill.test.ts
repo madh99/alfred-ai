@@ -43,6 +43,19 @@ async function aktiv(t: ReturnType<typeof aufbau>) {
   expect(r.success).toBe(true);
 }
 
+describe('v1964 unbeaufsichtigte Runde (Schwachstellen A2)', () => {
+  it('nur liste, lesen, pruefen, seite — ausführen, anlegen, entfernen, kopieren gesperrt, ohne Verbindung', async () => {
+    const t = aufbau();
+    const auto = { ...ctx, unbeaufsichtigt: true } as typeof ctx;
+    for (const action of ['ausfuehren', 'anlegen', 'entfernen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'kaefig', 'zugang_bestaetigen']) {
+      expect((await t.skill.execute({ action, name: 'pve', befehl: 'reboot' }, auto)).error, action).toContain('automatischen Planungsrunde gesperrt');
+    }
+    expect(t.befehle).toHaveLength(0);
+    expect(t.fragen).toHaveLength(0);
+    expect((await t.skill.execute({ action: 'liste' }, auto)).success).toBe(true);
+  });
+});
+
 describe('v1539 FernzugriffSkill', () => {
   it('anlegen: Host aus der CMDB, Host-Schlüssel zur Bestätigung, erst danach aktiv', async () => {
     const t = aufbau();

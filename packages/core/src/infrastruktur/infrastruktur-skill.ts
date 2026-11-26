@@ -101,6 +101,8 @@ export const GRUNDLAGE_MAX_ALTER_MS = 6 * 3_600_000;
 /** Adresse des Alfred-Servers für Firewall-Regeln (Zone „alfred“ der Architektur) */
 const ALFRED_IP = (() => { try { for (const l of Object.values(networkInterfaces())) for (const a of l ?? []) if (a.family === 'IPv4' && !a.internal && /^(10|172|192)\./.test(a.address) && !/^172\.(1[6-9]|2\d|3[01])\./.test(a.address)) return a.address; } catch { /* keine Netzinfo */ } return 'unbekannt'; })();
 /** v1695 (K5) — Aktionen, die nie aus einem Unteragenten laufen */
+/** v1964 — in einer unbeaufsichtigten Runde (Schwachstellen A2) erlaubt; alles andere aus NUR_HAUPTGESPRAECH ist dort gesperrt */
+export const UNBEAUFSICHTIGT_ERLAUBT = new Set(['changes_planen', 'freigabe_anfragen', 'pruefprofil_vorschlagen']);
 export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen']);
 const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'anwendungs_updates', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_liste', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen', 'schwachstellen', 'schwachstellen_pruefen'] as const;
 
@@ -262,6 +264,9 @@ export class InfrastrukturSkill extends Skill {
     if (!(AKTIONEN as readonly string[]).includes(action)) return { success: false, error: `Unbekannte Aktion (${AKTIONEN.join(', ')})` };
     // v1695 (K5) — Realfall 27.10. (I9): der Unteragent speicherte 2 von 5 Changes und meldete Erfolg; Planen/Ändern/Freigeben braucht den Faden
     if (context.unteragent === true && NUR_HAUPTGESPRAECH.has(action)) return { success: false, error: `${action} läuft nur im Hauptgespräch, nicht im Unteragenten — Erhebungsergebnis zurückgeben, Alfred plant selbst.` };
+    // v1964 — unbeaufsichtigte Runde (Schwachstellen A2): nur lesen und planen; freigeben, ausführen, steuern, Standard-Changes,
+    // Schalter und Tresor bleiben dem Owner — auch keine neue Prüfung (die Runde entsteht selbst aus einer)
+    if (context.unbeaufsichtigt === true && ((NUR_HAUPTGESPRAECH.has(action) && !UNBEAUFSICHTIGT_ERLAUBT.has(action)) || action === 'schwachstellen_pruefen')) return { success: false, error: `${action} ist in der automatischen Planungsrunde gesperrt — nur lesen, changes_planen, pruefprofil_vorschlagen und freigabe_anfragen.` };
     const owner = this.deps.ownerId?.();
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;

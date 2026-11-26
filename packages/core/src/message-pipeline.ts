@@ -744,6 +744,8 @@ export class MessagePipeline {
           displayName: message.displayName,
         },
       );
+      // v1964 — unbeaufsichtigte Runde (Schwachstellen A2): nur vom Code gesetzt, nie aus Nutzereingaben
+      if (message.metadata?.unbeaufsichtigt === true) baseContext.unbeaufsichtigt = true;
       // v667 — masterUserId mutable: bei Project-Chat überschreiben wir es auf den project-owner.
       let masterUserId = resolvedMasterUserId;
       // v1330 — Owner-Gespräche kanalunabhängig: Hauptgespräch/Faden statt Kanal-Chat; `/faden` ohne Modell

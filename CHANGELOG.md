@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Automatische Change-Planung für Schwachstellen (v1964)
+
+- **Auslöser:** Nach jedem Prüflauf plant Alfred je Container mit Handlungsbedarf einen Change und fragt die Freigabe an. Ausgeführt wird nichts ohne Freigabe.
+- **Reihenfolge:** zuerst die kritischen Komponenten, und zwar:
+  1. aktiv ausgenutzt und von außen erreichbar;
+  2. aktiv ausgenutzt;
+  3. von außen erreichbar;
+  4. die übrigen, nach Anzahl der kritischen Lücken.
+  
+  Hohe Befunde folgen erst, wenn kein kritischer Kandidat mehr offen ist.
+- **Ort:** Die Planung läuft sichtbar im Infrastruktur-Faden, eine Runde nach der anderen. Je Komponente gibt es höchstens einen Versuch pro Tag.
+- **Kein zweiter Plan:** Kein neuer Plan entsteht, solange ein offener Change dasselbe Asset betrifft (auch ein Entwurf). Das gilt auch, wenn ein verknüpfter Change abgelehnt wurde, gescheitert ist oder zurückgerollt wurde.
+- **Verknüpfung:** Der neue Change wird mit dem Problem des Befunds verknüpft.
+- **Ohne Faden keine Planung:** Fehlt der Infrastruktur-Faden, wird nichts geplant.
+- **Unbeaufsichtigt nur lesen und planen:**
+  - Die Planungsrunde hat nur die Skills Infrastruktur und Fernzugriff.
+  - Freigeben, Ausführen, Steuern, Rückweg, Standard-Changes, Update-Schalter, Tresor und neue Prüfungen sind dort gesperrt, ebenso jeder schreibende Fernzugriff.
+  - Erlaubt sind `liste`, `lesen`, `pruefen` und `seite`.
+  - Das Kennzeichen kann nur der Code setzen, nicht eine Nachricht.
+
 ### Changed — Kein Befund für Basis-Pakete ohne Fix (v1963)
 
 - Ein kritischer Treffer in einem Basis-Paket, für das es keine behobene Version gibt und der nicht als aktiv ausgenutzt (KEV) gelistet ist, löst keinen Befund und keine Meldung mehr aus. Ein neues Image würde daran nichts ändern.

@@ -93,6 +93,8 @@ export interface SkillContext {
   ausChange?: boolean;
   /** v1695 (K5) — Aufruf aus einem Unteragenten (delegate): Skills können Aktionen dem Hauptgespräch vorbehalten */
   unteragent?: boolean;
+  /** v1964 (Schwachstellen A2) — unbeaufsichtigte Runde ohne Owner-Nachricht: Skills erlauben nur Lesen und Planen, nichts Ausführendes */
+  unbeaufsichtigt?: boolean;
   /** Whether HA cluster mode is active. */
   clusterEnabled?: boolean;
   /** Audio/image attachments from the current message (e.g. voice messages, photos). */

@@ -152,6 +152,16 @@ describe('v1695 (K5) Planen/Freigeben nie im Unteragenten', () => {
     expect((await s.execute({ action: 'freigabe_anfragen', ids: ['x'] }, sub)).error).toContain('nur im Hauptgespräch');
     expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'zusammenfassung' }, sub)).success).toBe(true);
   });
+  it('v1964 unbeaufsichtigte Runde (A2): freigeben, steuern, Standard-Changes, Tresor und neue Prüfung gesperrt; Planen und Lesen nicht', async () => {
+    const vorhaben = { id: 'cf82f3f2-xxxx', titel: 'D', ziel: 'z', hosts: [], status: 'angenommen', architekturVersion: 1, entscheidungen: [], changeIds: [], erstellt: 'x', architektur: { zusammenfassung: 'Z' } };
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: { finde: async () => vorhaben } } as never);
+    const auto = { userId: 'owner', unbeaufsichtigt: true } as SkillContext;
+    for (const action of ['freigeben', 'change_steuern', 'rueckweg_ausfuehren', 'owner_schritt_erledigt', 'standard_change', 'standard_serie', 'standard_freigeben', 'updates_schalter', 'tresor_erzeugen', 'change_aendern', 'schwachstellen_pruefen']) {
+      expect((await s.execute({ action }, auto)).error, action).toContain('automatischen Planungsrunde gesperrt');
+    }
+    expect((await s.execute({ action: 'changes_planen', changes: [] }, auto)).error ?? '').not.toContain('gesperrt');
+    expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'zusammenfassung' }, auto)).success).toBe(true);
+  });
 });
 
 describe('v1701 change_aendern geplant_ab allein', () => {
