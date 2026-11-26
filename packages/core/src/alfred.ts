@@ -8391,7 +8391,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const vor = 'infrastruktur-bestand:';
               const probs = (await prA2.listProblemsByDetection(o, `${vor}sicherheit:`)).filter(p => p.status !== 'resolved' && p.status !== 'closed')
                 .map(p => ({ id: p.id, schluessel: String(p.detectionMethod).slice(vor.length), text: p.title, ...(p.linkedChangeRequestId ? { linkedChangeRequestId: p.linkedChangeRequestId } : {}), affectedAssetIds: p.affectedAssetIds }));
-              const kand = planungsKandidaten(komponenten, probs, await itsmI3.listChangeRequests(o, { limit: 500 }));
+              const { nachVerknuepfen } = await import('./infrastruktur/schwachstellen/planung.js');
+              const crsA2 = await itsmI3.listChangeRequests(o, { limit: 500 });
+              // v1968 — Changes früherer Runden, die nur über die Titelmarke zum Problem passen, nachträglich verknüpfen
+              const nachverknuepft: string[] = [];
+              for (const v of nachVerknuepfen(probs, crsA2)) {
+                await prA2.linkChangeRequest(o, v.problemId, v.changeId);
+                const p = probs.find(x => x.id === v.problemId); if (p) p.linkedChangeRequestId = v.changeId;
+                nachverknuepft.push(`${v.problemId.slice(0, 8)} → ${v.changeId.slice(0, 8)}`);
+              }
+              const kand = planungsKandidaten(komponenten, probs, crsA2);
               const { zielReferenzen, zielVergleich, zielOhneWirkung, zielText } = await import('./infrastruktur/schwachstellen/planung.js');
               const { zielVersion } = await import('./infrastruktur/schwachstellen/bewertung.js');
               const { trivyArgumente, leseTrivy } = await import('./infrastruktur/schwachstellen/trivy.js');
@@ -8422,7 +8431,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   if (cid) { await prA2.linkChangeRequest(o, k.problemId, cid); geplant.push(`${k.host}/${k.name} → ${cid.slice(0, 8)}`); } else ohneChange.push(`${k.host}/${k.name}`);
                 } catch (err) { await freigeben(); fehler.push(`${k.host}/${k.name}: ${(err as Error).message.slice(0, 160)}`); }
               }
-              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, schonVersucht, ohneWirkung, fehler }, 'A2 Schwachstellen-Planung');
+              this.logger.info({ kandidaten: kand.length, nachverknuepft, geplant, ohneChange, schonVersucht, ohneWirkung, fehler }, 'A2 Schwachstellen-Planung');
             } finally { planungLaeuft = false; }
           };
           const schwachstellenLauf = async (grund: string): Promise<{ ok: boolean; zaehler: Record<string, number> }> => {

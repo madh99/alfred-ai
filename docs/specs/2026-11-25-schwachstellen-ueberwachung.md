@@ -181,6 +181,23 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
     - Skills nur `infrastruktur` und `fernzugriff`.
     - Erlaubt sind nur `changes_planen`, `freigabe_anfragen`, `pruefprofil_vorschlagen` sowie lesende Aktionen (Fernzugriff: `liste`, `lesen`, `pruefen`, `seite`).
     - Alles andere ist gesperrt, ebenso eine neue Prüfung.
+- **Härtung A2** (v1965, v1967):
+  - Die Skill-Sperre gilt auch beim Ausführen eines Werkzeugs (`executeToolCall`), nicht nur in der angebotenen Liste; Grundregel: verweigern.
+  - Fernzugriff zusätzlich `datenbank_inventar` lesend.
+  - Quelltexte stehen nur bereinigt im Datenblock `<<<DATEN … DATEN>>>`. Fehler der Zielprüfung erscheinen nur als feste Ursache (`fehlerArt`).
+  - `reasoning_slots` sind dauerhaft je Schlüssel, nicht je Tag. Der Schlüssel ist daher Komponente + Befund + Zielprüfung: Ein neuer Versuch entsteht nur, wenn sich etwas ändert. Ohne Antwort oder bei Fehler wird die Sperre freigegeben.
+- **Zielprüfung** (v1966): Vor der Runde scannt der Code das Ziel-Image mit Trivy. Ziel ist derselbe Tag im aktuellen Stand oder der Tag der behobenen Anwendungsversion.
+  - Der Auftrag nennt Digest sowie behobene und bleibende Treffer. Behebt das Ziel nichts, gibt es keine Runde (`ohneWirkung`).
+  - Als Digest gilt nur ein RepoDigest desselben Repositorys (v1967).
+- **Titelmarke** (v1968): Der Changetitel beginnt mit `A2 <Problem-ID> – `. Die Verknüpfung läuft zuerst über die Marke (genau ein Treffer), dann über Asset oder Namen.
+  - Vor der Planung werden Changes mit Marke nachverknüpft.
+  - Ein offener Change mit Marke verhindert einen zweiten Plan.
+- **Erste Serie 26.11. (v1967), 18 Kandidaten:**
+  - 10 Changes, davon 7 mit Freigabe-Anfrage und 3 Entwürfe. Bei den Entwürfen fand die Gegenprüfung Planfehler; `change_aendern` ist unbeaufsichtigt gesperrt.
+  - 6 verknüpft, 4 ohne Verknüpfung; das hat v1968 behoben.
+  - Begründet abgelehnt, unter anderem Guacamole: Das eingebettete PostgreSQL 9.6 bräuchte eine Migration.
+  - Ohne Wirkung: embyserver.
 - **Offen:**
+  - Doppeltes CMDB-Asset at-uls2024-media01p: e4c7a51e (unknown) und c615d4a6 (active).
   - B: Web, C: Apps, D: Windows/SQL Server, Netzwerk, Home Assistant direkt, Mail-Regel Bitwarden.
   - Trivy-Dateisystem-Scan der Hosts.

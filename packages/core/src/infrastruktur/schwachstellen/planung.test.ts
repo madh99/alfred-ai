@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planungsKandidaten, planungsAuftrag, neuerChange, planungsSchluessel, zielReferenzen, zielVergleich, zielOhneWirkung, zielText, type PlanProblem } from './planung.js';
+import { planungsKandidaten, planungsAuftrag, neuerChange, planungsMarke, hatMarke, nachVerknuepfen,planungsSchluessel, zielReferenzen, zielVergleich, zielOhneWirkung, zielText, type PlanProblem } from './planung.js';
 import type { Komponente, Treffer } from './bewertung.js';
 
 const t = (id: string, stufe: Treffer['stufe'], x: Partial<Treffer> = {}): Treffer => ({ id, aliase: [id], titel: '', schwere: 'hoch', link: '', quellen: ['trivy'], paket: 'p', installiert: '1', stufe, basis: true, behoben: '2', erkannt: '2026-11-25T05:00:00Z', ...x });
@@ -61,6 +61,31 @@ describe('Schwachstellen A2 — Planungskandidaten', () => {
     expect(neuerChange(x!, ['a-nur-krit'], alt, [{ id: 'fremd', status: 'submitted', affectedAssetIds: ['a-anderes'], title: 'nur-krit aktualisieren' }])).toBeUndefined();
     expect(neuerChange(x!, [], alt, [{ id: 'n', status: 'draft', affectedAssetIds: [], title: 'nur-krit-alt aktualisieren' }])).toBeUndefined();
     expect(neuerChange(x!, [], alt, [{ id: 'n1', status: 'draft', affectedAssetIds: [], title: 'nur-krit' }, { id: 'n2', status: 'draft', affectedAssetIds: [], title: 'x' }])).toBeUndefined();
+  });
+  it('v1968 Titelmarke: Realfall 26.11. — Problem ohne Asset bzw. mit anderem (doppeltem) Asset wird über die Marke verknüpft', () => {
+    const [x] = planungsKandidaten([komp[0]!], [probs[0]!], []);
+    const alt = new Set<string>();
+    expect(planungsMarke('7f6c4d27-aaaa')).toBe('A2 7f6c4d27');
+    expect(planungsAuftrag(x!)).toContain('der Titel beginnt mit „A2 p-nur-kr – “');
+    // Asset passt nicht (doppeltes CMDB-Asset), Name nicht im Titel — Marke entscheidet
+    expect(neuerChange(x!, ['a-nur-krit'], alt, [{ id: 'n', status: 'submitted', affectedAssetIds: ['a-anderes'], title: 'A2 p-nur-kr – Glances aktualisieren' }])).toBe('n');
+    expect(neuerChange(x!, [], alt, [{ id: 'n', status: 'draft', affectedAssetIds: [], title: 'A2 p-nur-kr – Node-RED Dev' }, { id: 'm', status: 'draft', affectedAssetIds: [], title: 'anderes' }])).toBe('n');
+    // zwei mit Marke, Marke als Teil einer längeren Kennung, Marke eines anderen Problems → keine Verknüpfung
+    expect(neuerChange(x!, [], alt, [{ id: 'n1', status: 'draft', affectedAssetIds: [], title: 'A2 p-nur-kr – a' }, { id: 'n2', status: 'draft', affectedAssetIds: [], title: 'A2 p-nur-kr – b' }])).toBeUndefined();
+    expect(hatMarke('A2 p-nur-krX – a', 'p-nur-krit')).toBe(false);
+    expect(hatMarke('A2 p-nur-kr – a', 'p-nur-krit')).toBe(true);
+    expect(neuerChange(x!, [], alt, [{ id: 'n', status: 'draft', affectedAssetIds: [], title: 'A2 p-kev-au – x' }])).toBeUndefined();
+  });
+  it('v1968 Nachverknüpfung und kein zweiter Plan bei offenem Change mit Marke', () => {
+    const ein = [komp[0]!];
+    const pr = p('h', 'nur-krit', { affectedAssetIds: [] });
+    const offen = { id: 'c', status: 'draft', affectedAssetIds: ['a-host'], title: 'A2 p-nur-kr – Image' };
+    expect(planungsKandidaten(ein, [pr], [offen])).toEqual([]);
+    expect(nachVerknuepfen([pr], [offen])).toEqual([{ problemId: pr.id, changeId: 'c' }]);
+    expect(nachVerknuepfen([pr], [{ ...offen, status: 'completed' }])).toEqual([]);
+    expect(nachVerknuepfen([pr], [offen, { ...offen, id: 'd' }])).toEqual([]);
+    expect(nachVerknuepfen([{ ...pr, linkedChangeRequestId: 'y' }], [offen, { id: 'y', status: 'submitted', affectedAssetIds: [] }])).toEqual([]);
+    expect(nachVerknuepfen([{ ...pr, linkedChangeRequestId: 'y' }], [offen, { id: 'y', status: 'completed', affectedAssetIds: [] }])).toEqual([{ problemId: pr.id, changeId: 'c' }]);
   });
 });
 

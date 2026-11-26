@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Schwachstellen-Planung verknüpft Changes über eine Titelmarke (v1968)
+
+- Der Planungsauftrag gibt den Titelanfang `A2 <Problem-ID> – ` vor. Ein neuer Change wird zuerst über diese Marke dem Problem zugeordnet, dann wie bisher über das gemeinsame Asset oder den Containernamen. Mehrere Changes mit derselben Marke werden nicht verknüpft.
+- Vor jeder Planung werden offene Changes früherer Runden nachverknüpft, wenn genau einer die Marke eines unverknüpften Problems trägt. Ein offener Change mit Marke verhindert außerdem einen zweiten Plan für dieselbe Komponente.
+- Anlass: In der ersten Serie am 26.11. blieben 4 von 10 Changes ohne Verknüpfung. Bei dockerhost hatten die Probleme kein Asset, bei at-uls2024-media01p hingen Problem und Change an zwei verschiedenen CMDB-Einträgen desselben Hosts.
+
 ### Security — Zielprüfung ohne Fremdtext, Digest nur vom gescannten Repository (v1967)
 
 - Scheitert die Zielprüfung, nennt der Auftrag nur noch eine feste Ursache: nicht gefunden, kein Zugriff, Abruflimit der Registry, Zeitüberschreitung oder nicht abrufbar. Die Fehlerausgabe von Trivy oder der Registry gelangt nicht mehr ins Modell.

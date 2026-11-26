@@ -18,7 +18,32 @@ export const PLANUNGS_FADEN = 'infra-cf82f3f2';
 export const OFFENE_CHANGE_STATUS = new Set(['draft', 'submitted', 'approved', 'in_progress']);
 
 export interface PlanProblem { id: string; schluessel: string; text: string; linkedChangeRequestId?: string; affectedAssetIds: string[] }
-export interface PlanChange { id: string; status: string; affectedAssetIds: string[] }
+export interface PlanChange { id: string; status: string; affectedAssetIds: string[]; title?: string }
+
+/** Titelmarke der A2-Runde je Problem (erste 8 Zeichen der Problem-ID) */
+export const planungsMarke = (problemId: string): string => `A2 ${problemId.slice(0, 8)}`;
+/** Marke als ganzes Wort im Titel (nicht als Anfang einer längeren ID) */
+export function hatMarke(titel: string | undefined, problemId: string): boolean {
+  const m = planungsMarke(problemId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return !!titel && new RegExp(`(^|[^\\w-])${m}($|[^\\w-])`).test(titel);
+}
+
+/**
+ * Nachverknüpfung vor der Planung: Problem ohne Verknüpfung (oder mit abgeschlossenem bzw. gelöschtem Change), zu dem genau EIN offener
+ * Change die Titelmarke trägt → diese Verknüpfung nachholen; mehrere → keine (eindeutig oder gar nicht).
+ */
+export function nachVerknuepfen(problems: PlanProblem[], changes: PlanChange[]): Array<{ problemId: string; changeId: string }> {
+  const offen = changes.filter(c => OFFENE_CHANGE_STATUS.has(c.status));
+  const status = new Map(changes.map(c => [c.id, c.status] as const));
+  const aus: Array<{ problemId: string; changeId: string }> = [];
+  for (const p of problems) {
+    const vs = p.linkedChangeRequestId ? status.get(p.linkedChangeRequestId) : undefined;
+    if (vs && vs !== 'completed') continue;
+    const treffer = offen.filter(c => hatMarke(c.title, p.id));
+    if (treffer.length === 1) aus.push({ problemId: p.id, changeId: treffer[0]!.id });
+  }
+  return aus;
+}
 export interface PlanKandidat { schluessel: string; problemId: string; host: string; name: string; kritisch: boolean; kev: boolean; erreichbar: boolean; kritischeIds: number; befund: string }
 
 /**
@@ -40,6 +65,8 @@ export function planungsKandidaten(komponenten: Komponente[], problems: PlanProb
     const vs = p.linkedChangeRequestId ? status.get(p.linkedChangeRequestId) : undefined;
     if (vs && vs !== 'completed') continue;
     if (p.affectedAssetIds.some(a => belegt.has(a))) continue;
+    // offener Change mit der Titelmarke dieses Problems (auch unverknüpft) → kein zweiter Plan
+    if (offen.some(c => hatMarke(c.title, p.id))) continue;
     const rel = k.treffer.filter(handlungsbedarf);
     if (!rel.length) continue;
     const krit = rel.filter(t => t.stufe === 'kritisch');
@@ -73,6 +100,7 @@ export function planungsAuftrag(k: PlanKandidat, image?: string, ziel?: string):
     `- zuerst den Ist-Stand lesen (Compose-Datei, Tag, Volumes, Healthcheck); die Zielprüfung im Datenblock belegt das Ziel-Image — im Change mit diesem Digest festlegen (pull per Digest, Compose-Image auf Tag@Digest), damit genau das geprüfte Image läuft;`,
     `- Sicherung bzw. Snapshot-Rückweg und Abnahme über das Prüfprofil (fehlt eines: pruefprofil_vorschlagen);`,
     `- betroffen = das CMDB-Asset des Containers bzw. seines Hosts;`,
+    `- der Titel beginnt mit „${planungsMarke(k.problemId)} – “;`,
     `- danach freigabe_anfragen. Nichts ausführen.`,
     `Gibt es keinen sinnvollen Change (kein neueres Image, Hauptversionssprung mit Datenmigration, Daten gehören dem Owner), plane nichts und nenne den Grund in einem Satz.`,
   ].join('\n');
@@ -85,6 +113,11 @@ export function planungsAuftrag(k: PlanKandidat, image?: string, ziel?: string):
  */
 export function neuerChange(k: PlanKandidat, assets: string[], vorher: Set<string>, changes: Array<PlanChange & { title: string }>): string | undefined {
   const neu = changes.filter(c => !vorher.has(c.id) && OFFENE_CHANGE_STATUS.has(c.status));
+  // v1968 — Titelmarke des Auftrags zuerst: Realfall 26.11. (4 von 10 Changes unverknüpft) — Problem ohne Asset (dockerhost) bzw. mit
+  // doppeltem CMDB-Asset (media01p); die Marke trägt die Problem-ID, die nur dieser Auftrag kennt
+  const mitMarke = neu.filter(c => hatMarke(c.title, k.problemId));
+  if (mitMarke.length === 1) return mitMarke[0]!.id;
+  if (mitMarke.length > 1) return undefined;
   if (assets.length) {
     const treffer = neu.filter(c => c.affectedAssetIds.some(a => assets.includes(a)));
     return treffer.length === 1 ? treffer[0]!.id : undefined;
