@@ -75,7 +75,7 @@ export interface FernzugriffDeps {
  *  ≈ 14 600 Zeichen, 2 673 fehlten in der Mitte) → 30 000; die Pipeline lässt für diesen Skill ebenso viel durch (FERNZUGRIFF_MAX). */
 export const ANZEIGE_MAX = 30_000;
 /** v1964 — Aktionen ohne Wirkung auf Hosts (unbeaufsichtigte Runde) */
-const NUR_LESEND = new Set(['liste', 'lesen', 'pruefen', 'seite']);
+const NUR_LESEND = new Set(['liste', 'lesen', 'pruefen', 'seite', 'datenbank_inventar']); // datenbank_inventar: Version, Datenbanken, Tabellenzahlen (Realfall A2 26.11. Guacamole/PG 9.6)
 const AKTIONEN = ['liste', 'schluessel', 'anlegen', 'pruefen', 'lesen', 'ausfuehren', 'entfernen', 'seite', 'kaefig', 'zugang_bestaetigen', 'kaefig_bestaetigen', 'kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'datenbank_inventar', 'image_hochladen', 'image_holen', 'iso_ablegen'] as const;
 /** I6 — Datenübertragung und Geheimnis-Übernahme nur als Schritte freigegebener Changes */
 const NUR_IM_CHANGE = new Set(['kopieren', 'datenbank_kopieren', 'geheim_uebernehmen', 'image_hochladen', 'image_holen', 'iso_ablegen']); // v1658 Registry
@@ -214,7 +214,7 @@ export class FernzugriffSkill extends Skill {
     // v1660 — mit userId: sonst landet die Fortsetzung nach dem Ja im Owner-Hauptgespräch statt im Faden/in der App, aus der die Frage kam (Realfall 25.10.)
     const herkunft = context.chatId && context.platform ? { chatId: context.chatId, platform: String(context.platform), ...(context.userId ? { userId: context.userId } : {}) } : undefined;
     // v1964 — unbeaufsichtigte Runde (Schwachstellen A2): nur lesend (Ist-Stand für die Planung), nichts Ausführendes
-    if (context.unbeaufsichtigt === true && !NUR_LESEND.has(action)) return { success: false, error: `${action} ist in der automatischen Planungsrunde gesperrt — nur liste, lesen, pruefen, seite.` };
+    if (context.unbeaufsichtigt === true && !NUR_LESEND.has(action)) return { success: false, error: `${action} ist in der automatischen Planungsrunde gesperrt — nur liste, lesen, pruefen, seite, datenbank_inventar.` };
     if (NUR_IM_CHANGE.has(action) && context.ausChange !== true) return { success: false, error: `${action} läuft nur als Schritt eines freigegebenen Changes — mit infrastruktur changes_planen planen` };
     try {
       switch (action) {

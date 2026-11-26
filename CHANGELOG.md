@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Automatische Planungsrunde gehärtet (v1965)
+
+- **Fix, Sperre je Versuch:** In v1964 bekam jede Komponente nur einen einzigen Planungsversuch für immer, weil die Sperre dauerhaft je Schlüssel gilt. Jetzt gilt sie je Komponente und Befundtext: Ändert sich der Befund (neue CVEs, anderes Image, andere Stufe), wird neu geplant. Eine begründete Ablehnung bei unverändertem Befund wird nicht täglich wiederholt. Scheitert eine Runde technisch, wird die Sperre freigegeben.
+
+- **Werkzeuge:** In einer unbeaufsichtigten Runde prüft die Pipeline jeden Werkzeugaufruf gegen die erlaubten Skills, nicht nur die angebotene Werkzeugliste. Ein anderer Skill wird abgewiesen, auch wenn das Modell ihn nennt (deny by default).
+- **Datenblock:** Quellendaten (Befund, Container, Host, Image) stehen im Auftrag in einem eigenen Datenblock, ohne Steuerzeichen und ohne die Zeichen „<“ und „>“, gekürzt.
+- **Verknüpfung:** Ein neuer Change wird nur bei eindeutigem gemeinsamem Asset mit dem Problem verknüpft. Hat das Problem kein Asset, gilt: genau ein neuer Change und der Containername als ganzes Wort im Titel. Eine falsche Verknüpfung würde den Befund sonst sperren.
+
 ### Added — Automatische Change-Planung für Schwachstellen (v1964)
 
 - **Auslöser:** Nach jedem Prüflauf plant Alfred je Container mit Handlungsbedarf einen Change und fragt die Freigabe an. Ausgeführt wird nichts ohne Freigabe.
@@ -22,7 +30,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **Unbeaufsichtigt nur lesen und planen:**
   - Die Planungsrunde hat nur die Skills Infrastruktur und Fernzugriff.
   - Freigeben, Ausführen, Steuern, Rückweg, Standard-Changes, Update-Schalter, Tresor und neue Prüfungen sind dort gesperrt, ebenso jeder schreibende Fernzugriff.
-  - Erlaubt sind `liste`, `lesen`, `pruefen` und `seite`.
+  - Erlaubt sind `liste`, `lesen`, `pruefen`, `seite` und (ab v1965) `datenbank_inventar`, das nur Version und Umfang einer Datenbank liest.
   - Das Kennzeichen kann nur der Code setzen, nicht eine Nachricht.
 
 ### Changed — Kein Befund für Basis-Pakete ohne Fix (v1963)

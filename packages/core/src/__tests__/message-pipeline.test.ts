@@ -284,6 +284,23 @@ describe('MessagePipeline', () => {
     });
   }
 
+  // ---- v1964: unbeaufsichtigte Runde — nur erlaubte Skills, auch wenn das Modell einen anderen nennt ----
+  it('v1964 unbeaufsichtigt: nicht erlaubter Skill wird beim Aufruf abgewiesen, erlaubter läuft', async () => {
+    mockLLM.complete.mockResolvedValueOnce({
+      content: '', toolCalls: [{ id: 'tc1', name: 'calculator', input: {} }, { id: 'tc2', name: 'infrastruktur', input: { action: 'bestand' } }],
+      usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_use',
+    });
+    mockLLM.complete.mockResolvedValueOnce({ content: 'fertig', usage: { inputTokens: 20, outputTokens: 10 }, stopReason: 'end_turn' });
+    const skill = (name: string) => ({ metadata: { name, description: name, riskLevel: 'read' as const, version: '1.0.0', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn(async () => ({ success: true, display: 'ok' })) });
+    const calc = skill('calculator'); const infra = skill('infrastruktur');
+    const reg = { get: vi.fn((n: string) => (n === 'calculator' ? calc : n === 'infrastruktur' ? infra : undefined)), getAll: vi.fn(() => [calc, infra]), has: vi.fn(() => true), toToolDefinitions: vi.fn() };
+    const pipeline = new MessagePipeline({ llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any, skillRegistry: reg as any });
+    await pipeline.process(makeMessage({ metadata: { scheduled: true, unbeaufsichtigt: true, allowedSkills: ['infrastruktur'] } }));
+    expect(calc.execute).not.toHaveBeenCalled();
+    expect(infra.execute).toHaveBeenCalledTimes(1);
+    expect((infra.execute.mock.calls[0] as unknown[])[1]).toMatchObject({ unbeaufsichtigt: true, erlaubteSkills: ['infrastruktur'] });
+  });
+
   // ---- Test 3: Security deny ----
   it('should deny tool execution when security manager denies', async () => {
     // First LLM call returns a tool call

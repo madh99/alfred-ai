@@ -95,6 +95,8 @@ export interface SkillContext {
   unteragent?: boolean;
   /** v1964 (Schwachstellen A2) — unbeaufsichtigte Runde ohne Owner-Nachricht: Skills erlauben nur Lesen und Planen, nichts Ausführendes */
   unbeaufsichtigt?: boolean;
+  /** v1964 — in einer unbeaufsichtigten Runde die einzigen ausführbaren Skills (Pipeline prüft beim Aufruf, deny by default) */
+  erlaubteSkills?: string[];
   /** Whether HA cluster mode is active. */
   clusterEnabled?: boolean;
   /** Audio/image attachments from the current message (e.g. voice messages, photos). */

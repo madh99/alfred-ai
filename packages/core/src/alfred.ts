@@ -8381,7 +8381,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (planungLaeuft) { this.logger.info('A2 Schwachstellen-Planung läuft bereits — übersprungen'); return; }
             planungLaeuft = true;
             try {
-              const { planungsKandidaten, planungsAuftrag, neuerChange, PLANUNGS_FADEN } = await import('./infrastruktur/schwachstellen/planung.js');
+              const { planungsKandidaten, planungsAuftrag, neuerChange, planungsSchluessel, PLANUNGS_FADEN } = await import('./infrastruktur/schwachstellen/planung.js');
               const chatId = `owner:faden:${PLANUNGS_FADEN}`;
               // fail-closed: ohne den sichtbaren Faden keine Planung (Owner 25.10.: keine unsichtbaren Aufträge)
               const faden = this.conversationRepo ? await this.conversationRepo.findByPlatformChat('api' as Platform, chatId).catch(() => null) : null;
@@ -8392,18 +8392,23 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const probs = (await prA2.listProblemsByDetection(o, `${vor}sicherheit:`)).filter(p => p.status !== 'resolved' && p.status !== 'closed')
                 .map(p => ({ id: p.id, schluessel: String(p.detectionMethod).slice(vor.length), text: p.title, ...(p.linkedChangeRequestId ? { linkedChangeRequestId: p.linkedChangeRequestId } : {}), affectedAssetIds: p.affectedAssetIds }));
               const kand = planungsKandidaten(komponenten, probs, await itsmI3.listChangeRequests(o, { limit: 500 }));
-              const geplant: string[] = []; const ohneChange: string[] = []; const heuteSchon: string[] = []; const fehler: string[] = [];
+              const geplant: string[] = []; const ohneChange: string[] = []; const schonVersucht: string[] = []; const fehler: string[] = [];
               for (const k of kand) {
-                if (!(await this.claimDailySlot(`schwachstellen-plan:${k.schluessel}`))) { heuteSchon.push(k.schluessel); continue; }
+                // Sperre je Komponente und Befundtext (reasoning_slots sind dauerhaft je Schlüssel): neuer Versuch nur bei geändertem Befund
+                const slot = planungsSchluessel(k);
+                if (!(await this.claimDailySlot(slot))) { schonVersucht.push(k.schluessel); continue; }
+                const freigeben = () => this.database?.getAdapter().execute('DELETE FROM reasoning_slots WHERE slot_key = ?', [slot]).catch(() => undefined);
                 try {
                   const vorher = new Set((await itsmI3.listChangeRequests(o, { limit: 500 })).map(c => c.id));
                   const image = komponenten.find(c => c.host === k.host && c.name === k.name)?.image;
-                  await this.fortsetzungImOwnerChat(planungsAuftrag(k, image), { id: `schwachstellen-plan-${k.name}`, platform: 'api', chatId, userId: o, unbeaufsichtigt: true, allowedSkills: ['infrastruktur', 'fernzugriff'] });
+                  const antwort = await this.fortsetzungImOwnerChat(planungsAuftrag(k, image), { id: `schwachstellen-plan-${k.name}`, platform: 'api', chatId, userId: o, unbeaufsichtigt: true, allowedSkills: ['infrastruktur', 'fernzugriff'] });
+                  // ohne Antwort (Modell-/Zustellfehler) gilt der Versuch als nicht gemacht: Sperre freigeben, nächster Lauf versucht es erneut
+                  if (!antwort) { await freigeben(); fehler.push(`${k.host}/${k.name}: keine Antwort der Planungsrunde`); continue; }
                   const cid = neuerChange(k, probs.find(p => p.id === k.problemId)?.affectedAssetIds ?? [], vorher, await itsmI3.listChangeRequests(o, { limit: 500 }));
                   if (cid) { await prA2.linkChangeRequest(o, k.problemId, cid); geplant.push(`${k.host}/${k.name} → ${cid.slice(0, 8)}`); } else ohneChange.push(`${k.host}/${k.name}`);
-                } catch (err) { fehler.push(`${k.host}/${k.name}: ${(err as Error).message.slice(0, 160)}`); }
+                } catch (err) { await freigeben(); fehler.push(`${k.host}/${k.name}: ${(err as Error).message.slice(0, 160)}`); }
               }
-              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, heuteSchon, fehler }, 'A2 Schwachstellen-Planung');
+              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, schonVersucht, fehler }, 'A2 Schwachstellen-Planung');
             } finally { planungLaeuft = false; }
           };
           const schwachstellenLauf = async (grund: string): Promise<{ ok: boolean; zaehler: Record<string, number> }> => {

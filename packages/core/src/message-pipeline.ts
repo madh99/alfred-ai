@@ -745,7 +745,7 @@ export class MessagePipeline {
         },
       );
       // v1964 — unbeaufsichtigte Runde (Schwachstellen A2): nur vom Code gesetzt, nie aus Nutzereingaben
-      if (message.metadata?.unbeaufsichtigt === true) baseContext.unbeaufsichtigt = true;
+      if (message.metadata?.unbeaufsichtigt === true) { baseContext.unbeaufsichtigt = true; baseContext.erlaubteSkills = Array.isArray(message.metadata.allowedSkills) ? [...message.metadata.allowedSkills] : []; }
       // v667 — masterUserId mutable: bei Project-Chat überschreiben wir es auf den project-owner.
       let masterUserId = resolvedMasterUserId;
       // v1330 — Owner-Gespräche kanalunabhängig: Hauptgespräch/Faden statt Kanal-Chat; `/faden` ohne Modell
@@ -2561,6 +2561,11 @@ export class MessagePipeline {
     context: SkillContext,
     onProgress?: ProgressCallback,
   ): Promise<{ content: string; isError?: boolean; attachments?: SkillResultAttachment[] }> {
+    // v1964 — unbeaufsichtigte Runde: nur die vom Aufrufer erlaubten Skills, auch wenn das Modell einen anderen Namen nennt (deny by default)
+    if (context.unbeaufsichtigt === true && !(context.erlaubteSkills ?? []).includes(toolCall.name)) {
+      this.logger.warn({ tool: toolCall.name }, 'v1964 Werkzeug in unbeaufsichtigter Runde gesperrt');
+      return { content: `Error: ${toolCall.name} ist in der automatischen Planungsrunde nicht erlaubt`, isError: true };
+    }
     const skill = this.skillRegistry?.get(toolCall.name);
     if (!skill) {
       this.logger.warn({ tool: toolCall.name }, 'Unknown skill requested');
