@@ -88,6 +88,9 @@ describe('Trivy und Zuordnung', () => {
     expect(r.treffer).toHaveLength(2);
     expect(r.treffer[0]).toMatchObject({ id: 'CVE-2024-1', cvss: 7.5, schwere: 'hoch', behoben: '3.0.13', paket: 'openssl' });
     expect(r.treffer[1]!.behoben).toBeUndefined();
+    expect(r.digest).toBeUndefined();
+    const d = `sha256:${'b'.repeat(64)}`;
+    expect(leseTrivy(JSON.stringify({ Metadata: { RepoDigests: [`jwetzell/guacamole@${d}`] }, Results: [] })).digest).toBe(d);
   });
   it('Image-Repo und laufende Version', () => {
     expect(imageRepo('ghcr.io/element-hq/lk-jwt-service:latest')).toBe('element-hq/lk-jwt-service');

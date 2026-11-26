@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Zielprüfung vor der Change-Planung (v1966)
+
+- **Anlass:** Am 26.11. lehnten alle Planungsrunden ab (Guacamole, Synapse, Emby, Nginx Proxy Manager, WordPress, Open WebUI). Keine konnte belegen, dass ein neueres Image die Lücken behebt.
+- **Scan ohne Modell:** Jetzt scannt Code das Ziel-Image vorher mit Trivy:
+  - bei Tag-Images den aktuellen Stand desselben Tags;
+  - bei Images, die nur per Digest festgelegt sind, den Tag der behobenen Anwendungsversion.
+- **Ergebnis im Auftrag:** Der Auftrag nennt das Ergebnis mit Digest, z. B. „von 27 relevanten Lücken bleiben 2“. Der Change soll genau dieses Image per Digest festlegen.
+- **Ohne Wirkung keine Runde:** Behebt das Ziel-Image keine der relevanten Lücken und hat die Anwendung selbst keinen Handlungsbedarf, startet keine Runde.
+- **Neuer Versuch:** Ein neues Ziel-Image (anderer Digest) erlaubt einen neuen Planungsversuch.
+
 ### Security — Automatische Planungsrunde gehärtet (v1965)
 
 - **Fix, Sperre je Versuch:** In v1964 bekam jede Komponente nur einen einzigen Planungsversuch für immer, weil die Sperre dauerhaft je Schlüssel gilt. Jetzt gilt sie je Komponente und Befundtext: Ändert sich der Befund (neue CVEs, anderes Image, andere Stufe), wird neu geplant. Eine begründete Ablehnung bei unverändertem Befund wird nicht täglich wiederholt. Scheitert eine Runde technisch, wird die Sperre freigegeben.

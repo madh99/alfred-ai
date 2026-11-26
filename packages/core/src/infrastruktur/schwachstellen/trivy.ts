@@ -23,8 +23,8 @@ const schwereTrivy = (s: unknown): Schwere => {
 };
 
 /** Trivy-JSON → Treffer je (Kennung, Paket); Score bevorzugt NVD, sonst GHSA, sonst Hersteller */
-export function leseTrivy(json: string): { treffer: TrivyTreffer[]; os?: string } {
-  const j = JSON.parse(json) as { Metadata?: { OS?: { Family?: string; Name?: string } }; Results?: Array<{ Target?: string; Vulnerabilities?: Array<{ VulnerabilityID: string; PkgName: string; InstalledVersion?: string; FixedVersion?: string; Status?: string; Severity?: string; Title?: string; PrimaryURL?: string; CVSS?: Record<string, { V3Score?: number; V3Vector?: string; V40Score?: number; V40Vector?: string }> }> }> };
+export function leseTrivy(json: string): { treffer: TrivyTreffer[]; os?: string; digest?: string } {
+  const j = JSON.parse(json) as { Metadata?: { OS?: { Family?: string; Name?: string }; RepoDigests?: string[] }; Results?: Array<{ Target?: string; Vulnerabilities?: Array<{ VulnerabilityID: string; PkgName: string; InstalledVersion?: string; FixedVersion?: string; Status?: string; Severity?: string; Title?: string; PrimaryURL?: string; CVSS?: Record<string, { V3Score?: number; V3Vector?: string; V40Score?: number; V40Vector?: string }> }> }> };
   const treffer: TrivyTreffer[] = []; const gesehen = new Set<string>();
   for (const r of j.Results ?? []) {
     for (const v of r.Vulnerabilities ?? []) {
@@ -41,5 +41,7 @@ export function leseTrivy(json: string): { treffer: TrivyTreffer[]; os?: string 
     }
   }
   const os = j.Metadata?.OS ? `${j.Metadata.OS.Family ?? ''} ${j.Metadata.OS.Name ?? ''}`.trim() : undefined;
-  return { treffer, ...(os ? { os } : {}) };
+  // v1966 — Digest des gescannten Images (Zielprüfung A2: Ziel-Image genau benennen)
+  const digest = j.Metadata?.RepoDigests?.map(d => /@(sha256:[0-9a-f]{64})$/.exec(d)?.[1]).find(Boolean);
+  return { treffer, ...(os ? { os } : {}), ...(digest ? { digest } : {}) };
 }

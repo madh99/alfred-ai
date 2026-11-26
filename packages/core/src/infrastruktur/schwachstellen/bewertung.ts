@@ -69,7 +69,7 @@ export const zaehleKomponenten = (k: Komponente[]): Record<Stufe, number> => {
   return z;
 };
 /** kleinste Version, die alle Treffer einer Anwendung behebt, ist nicht sicher bestimmbar — genannt wird die höchste behobene */
-function zielVersion(t: Treffer[], anwendung?: string): string | undefined {
+export function zielVersion(t: Treffer[], anwendung?: string): string | undefined {
   const v = t.filter(x => anwendung && x.paket === anwendung && x.behoben).map(x => x.behoben!.split(/\s*,\s*/)[0]!);
   return v.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).at(-1);
 }

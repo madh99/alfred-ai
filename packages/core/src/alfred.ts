@@ -8392,23 +8392,37 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const probs = (await prA2.listProblemsByDetection(o, `${vor}sicherheit:`)).filter(p => p.status !== 'resolved' && p.status !== 'closed')
                 .map(p => ({ id: p.id, schluessel: String(p.detectionMethod).slice(vor.length), text: p.title, ...(p.linkedChangeRequestId ? { linkedChangeRequestId: p.linkedChangeRequestId } : {}), affectedAssetIds: p.affectedAssetIds }));
               const kand = planungsKandidaten(komponenten, probs, await itsmI3.listChangeRequests(o, { limit: 500 }));
-              const geplant: string[] = []; const ohneChange: string[] = []; const schonVersucht: string[] = []; const fehler: string[] = [];
+              const { zielReferenzen, zielVergleich, zielOhneWirkung, zielText } = await import('./infrastruktur/schwachstellen/planung.js');
+              const { zielVersion } = await import('./infrastruktur/schwachstellen/bewertung.js');
+              const { trivyArgumente, leseTrivy } = await import('./infrastruktur/schwachstellen/trivy.js');
+              const { execFile } = await import('node:child_process');
+              const trivyScan = (ref: string) => new Promise<string>((ok, nein) => execFile('docker', trivyArgumente(ref), { timeout: 20 * 60_000, maxBuffer: 256 * 1024 * 1024 },
+                (err, out, fehl) => (err ? nein(new Error(String(fehl || err.message).trim().split(/\r?\n/).slice(-1)[0]!.slice(0, 200))) : ok(out))));
+              const geplant: string[] = []; const ohneChange: string[] = []; const schonVersucht: string[] = []; const ohneWirkung: string[] = []; const fehler: string[] = [];
               for (const k of kand) {
-                // Sperre je Komponente und Befundtext (reasoning_slots sind dauerhaft je Schlüssel): neuer Versuch nur bei geändertem Befund
-                const slot = planungsSchluessel(k);
+                // v1966 — Zielprüfung ohne Modell: Ziel-Image scannen; behebt es nichts, gibt es keine Runde
+                const komp = komponenten.find(c => c.host === k.host && c.name === k.name);
+                let ziel: import('./infrastruktur/schwachstellen/planung.js').Zielpruefung | undefined;
+                for (const ref of zielReferenzen(komp?.image, komp ? zielVersion(komp.treffer, komp.anwendung) : undefined)) {
+                  try { const t = leseTrivy(await trivyScan(ref)); ziel = zielVergleich(komp!.treffer, t.treffer, ref, t.digest); break; } catch (err) { ziel = { ref, relevant: 0, bleiben: [], fehler: (err as Error).message }; }
+                }
+                if (komp && zielOhneWirkung(ziel, komp.treffer)) { ohneWirkung.push(`${k.host}/${k.name} (${ziel!.ref})`); continue; }
+                const zt = zielText(ziel);
+                // Sperre je Komponente, Befund und Zielprüfung (reasoning_slots sind dauerhaft je Schlüssel): neuer Versuch nur bei Änderung
+                const slot = planungsSchluessel(k, zt);
                 if (!(await this.claimDailySlot(slot))) { schonVersucht.push(k.schluessel); continue; }
                 const freigeben = () => this.database?.getAdapter().execute('DELETE FROM reasoning_slots WHERE slot_key = ?', [slot]).catch(() => undefined);
                 try {
                   const vorher = new Set((await itsmI3.listChangeRequests(o, { limit: 500 })).map(c => c.id));
                   const image = komponenten.find(c => c.host === k.host && c.name === k.name)?.image;
-                  const antwort = await this.fortsetzungImOwnerChat(planungsAuftrag(k, image), { id: `schwachstellen-plan-${k.name}`, platform: 'api', chatId, userId: o, unbeaufsichtigt: true, allowedSkills: ['infrastruktur', 'fernzugriff'] });
+                  const antwort = await this.fortsetzungImOwnerChat(planungsAuftrag(k, image, zt), { id: `schwachstellen-plan-${k.name}`, platform: 'api', chatId, userId: o, unbeaufsichtigt: true, allowedSkills: ['infrastruktur', 'fernzugriff'] });
                   // ohne Antwort (Modell-/Zustellfehler) gilt der Versuch als nicht gemacht: Sperre freigeben, nächster Lauf versucht es erneut
                   if (!antwort) { await freigeben(); fehler.push(`${k.host}/${k.name}: keine Antwort der Planungsrunde`); continue; }
                   const cid = neuerChange(k, probs.find(p => p.id === k.problemId)?.affectedAssetIds ?? [], vorher, await itsmI3.listChangeRequests(o, { limit: 500 }));
                   if (cid) { await prA2.linkChangeRequest(o, k.problemId, cid); geplant.push(`${k.host}/${k.name} → ${cid.slice(0, 8)}`); } else ohneChange.push(`${k.host}/${k.name}`);
                 } catch (err) { await freigeben(); fehler.push(`${k.host}/${k.name}: ${(err as Error).message.slice(0, 160)}`); }
               }
-              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, schonVersucht, fehler }, 'A2 Schwachstellen-Planung');
+              this.logger.info({ kandidaten: kand.length, geplant, ohneChange, schonVersucht, ohneWirkung, fehler }, 'A2 Schwachstellen-Planung');
             } finally { planungLaeuft = false; }
           };
           const schwachstellenLauf = async (grund: string): Promise<{ ok: boolean; zaehler: Record<string, number> }> => {
