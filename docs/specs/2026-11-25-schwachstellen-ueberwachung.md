@@ -138,7 +138,7 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
 
 1. **Takt:** täglich um 06:00. Zusätzlich läuft die Prüfung direkt nach jeder CMDB-Discovery, damit Neues nicht bis zu einem Tag wartet (Empfehlung, siehe 3.8).
 2. **Fristen und Stufen:** wie in 3.3 (bestätigt).
-3. **Automatik:** offen, Empfehlung vorgelegt. Ab „hoch“ plant Alfred den Change und legt ihn zur Freigabe vor; ohne Ja läuft nichts. Wo eine Vorlage passt, plant Code ohne Modell. Einzeln geplant werden nur Anwendungen mit Daten. Je Komponente gibt es höchstens einen offenen Change, neue CVEs fließen in den bestehenden ein.
+3. **Automatik:** entschieden wie empfohlen (Owner 25.11.); Reihenfolge am 26.11. bestätigt: zuerst die kritischen Komponenten, die übrigen nach Frist. Ab „hoch“ plant Alfred den Change und legt ihn zur Freigabe vor; ohne Ja läuft nichts. Wo eine Vorlage passt, plant Code ohne Modell. Einzeln geplant werden nur Anwendungen mit Daten. Je Komponente gibt es höchstens einen offenen Change, neue CVEs fließen in den bestehenden ein.
 4. **Trivy:** ja, für Images und als Dateisystem-Scan der Hosts.
 5. **Mail-Absender:** `no-reply@bitwarden.com` (Hersteller Bitwarden). Die Mail löst einen sofortigen Abgleich für Vaultwarden und die Bitwarden-Clients aus.
 6. **Push in den Apps:** nur bei „kritisch“.
@@ -162,7 +162,20 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
   - **Befunde** (Kategorie `sicherheit`, Schlüssel `sicherheit:<host>:<name>`) ab hoch: kritisch immer, hoch nur mit behobener Version. Kein anderer Abgleich legt sie an oder löst sie.
   - **Meldung und Push** nur bei neuem „kritisch“; Tagesdokument „Schwachstellen <Datum>“ in der CMDB.
   - **Job `schwachstellen`:** täglich 06:00, zusätzlich nach jeder CMDB-Discovery. Dazu `infrastruktur schwachstellen` (Lage) und `schwachstellen_pruefen` (sofort).
+- **Kalibrierung** (v1960–v1962, 25./26.11.2026, Owner „wie empfohlen“). Der erste Lauf meldete 2.001 „kritisch“, 99 % davon Basis-Pakete alter Images.
+  - **Basis-Pakete (Trivy):** kritisch nur bei KEV oder bei EPSS ≥ 10 % und Erreichbarkeit von außen. Hoch gilt bei EPSS ≥ 10 % oder bei CVSS ≥ 9 mit Fix. Anwendungen behalten §3.3.
+  - **Zählung** je CVE und Komponente. **Ein Sammel-Befund je Image** mit der Maßnahme „Image aktualisieren bzw. neu bauen“.
+  - **Meldung** nur für neu kritische Treffer, gebündelt je Komponente. Offene Problems übernehmen den aktuellen Befundtext (v1961).
+  - **Quellen:** Fällt eine Quelle aus, schließt der Lauf keinen Treffer (fail-closed).
+  - **Log (v1962):** Entfernte Komponenten stehen namentlich in der Logzeile, ihre Treffer zählen unter „behoben“.
+  - **Stand Lauf 26.11. 06:00:** 103 kritisch, 693 hoch, 32 Befunde.
+  - **Vaultwarden-Beweis (Change 31d548a4, 26.11. 00:35):** 9.798 Treffer behoben, die Anwendungs-CVEs sind weg. Das Basis-Image zeigt weiter CVE-2011-3389 (BEAST) in libgnutls ohne Fix (EPSS 73 %), Entscheidung siehe Offen.
 - **Offen:**
   - A2: automatische Change-Planung nach Entscheidung 3.
+    - Befund 26.11.: Die Vorlage (d) `image_aktualisieren` passt bei keinem der 32 Images so, dass sie etwas behebt.
+      - Ausschlussgründe: Tag `latest`/`main`/`stable`, ein Digest statt eines Tags, kein Healthcheck, kein Compose-Dienst, Datenbank oder Home Assistant.
+      - Vaultwarden besteht die Prüfung zwar formal, holt aber mit dem Tag 1.37.5 dasselbe Image erneut.
+    - Ohne Modell lässt sich derzeit also kein Change planen. Wie A2 trotzdem vorgeht, muss der Owner entscheiden.
+  - Basis-Treffer ohne Fix und ohne KEV (z. B. BEAST): Es ist noch offen, ob sie einen Befund auslösen. Owner-Entscheidung ausstehend.
   - B: Web, C: Apps, D: Windows/SQL Server, Netzwerk, Home Assistant direkt, Mail-Regel Bitwarden.
   - Trivy-Dateisystem-Scan der Hosts.
