@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Rückweg nimmt einen gescheiterten ändernden Befehl mit zurück (v1970)
+
+- Endet ein ändernder Fernzugriff-Befehl eines Change-Schritts mit einem Exit-Code ungleich 0, gilt der Schritt jetzt als teilweise ausgeführt. Sein eigener Rückweg gehört damit zu „Rückweg ausführen“ und zu einem im Plan vorgesehenen automatischen Rückweg. Außerdem belegt ein so angehaltener Change sein Asset, und der Schritt ist nicht überspringbar.
+- Anlass: Am 26.11. stoppte Schritt 5 von Change 347d2aea den Container postgreDEV und scheiterte danach an der eigenen Probe-Prüfung. Der Rückweg fand „nichts zurückzunehmen“, postgreDEV blieb gestoppt und musste von Hand gestartet werden.
+
 ### Fixed — Zielprüfung mit dem Tag der behobenen Version, überholte Prüfprofil-Fragen, Asset-Sperre im Change-Motor (v1969)
 
 - Läuft ein Container mit festem Versions-Tag und ist die Anwendung in einer neueren Version behoben, prüft Trivy zuerst den Tag dieser Version (in der Schreibweise des laufenden Tags, mit oder ohne „v“), danach denselben Tag. Bisher wurde nur derselbe Tag geprüft (Realfall EMHASS v0.18.0, Fix in v0.19.0).

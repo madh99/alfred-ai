@@ -199,7 +199,12 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
 - **Erste Freigabe-Serie 26.11. (18:55):**
   - Abgeschlossen: Ombi b111b3a2, pgAdmin ffdfb929, Glances 085dc9a4.
   - Zurückgerollt: nginx e51b4dcb. Die eigene Schutzprüfung schlug an (`NGINX_HOST_OPTIONS_DRIFT`).
-  - postgreDEV 347d2aea wartet bei Owner-Schritt 4 (Schreibpause). WordPress df90a112 und MySQL 9123859a warten auf das Asset.
+  - Abgeschlossen um 19:25 bzw. 19:27: WordPress df90a112, MySQL 9123859a.
+  - postgreDEV 347d2aea wurde abgebrochen.
+    - Schritt 5 stoppte postgreDEV. Die isolierte Probe mit 15.20 auf der Datenkopie scheiterte an `PG15_TRIAL_SQL_OR_COLLATION_MISMATCH`, vermutlich weil das neue Image eine andere glibc-Collation-Version hat (nicht belegt).
+    - „Rückweg ausführen“ fand nichts zurückzunehmen: Ein gescheiterter Schritt zählte nicht. Das ist in v1970 behoben.
+    - Der Owner hat postgreDEV per Compose mit 15.2 auf den Originaldaten neu gestartet (19:22:45).
+    - Offen: Umstellung mit REINDEX (Owner-Entscheidung). Aufräumen von `data-a2-e2624412`, `.a2-e2624412` und Snapshot `vor-pg15-a2-e2624412` auf VM 144.
 - **Erste Serie 26.11. (v1967), 18 Kandidaten:**
   - 10 Changes, davon 7 mit Freigabe-Anfrage und 3 Entwürfe. Bei den Entwürfen fand die Gegenprüfung Planfehler; `change_aendern` ist unbeaufsichtigt gesperrt.
   - 6 verknüpft, 4 ohne Verknüpfung; das hat v1968 behoben.

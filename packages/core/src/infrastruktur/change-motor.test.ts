@@ -735,6 +735,23 @@ describe('I4b Störung nach Change (Owner 5b-13: Rückweg nur vorschlagen)', () 
     await warte(m);
     expect(w.c.status).toBe('rolled_back');
   });
+  it('v1970 Realfall 26.11. (347d2aea Schritt 5): ändernder Befehl mit Exit ≠ 0 → teilweise; „Rückweg ausführen“ nimmt ihn zurück', async () => {
+    const w = welt([
+      S({ nr: 1, skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'h', befehl: 'systemctl stop pg' }, einordnung: 'aendern', rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'h', befehl: 'systemctl start pg' } } }),
+    ]);
+    const befehle: string[] = [];
+    w.deps.fernAusfuehren = async (_n, b) => { befehle.push(b); return b.includes('stop') ? { code: 1, stdout: 'gestoppt', stderr: 'AssertionError: PROBE' } : { code: 0, stdout: 'ok', stderr: '' }; };
+    const m = new ChangeMotor(w.deps);
+    await m.anstossen(); await warte(m);
+    const l = w.c.lauf as ChangeLauf;
+    expect(l.phase).toBe('angehalten');
+    expect(l.ergebnisse[0]).toMatchObject({ nr: 1, ok: false, teilweise: true });
+    expect(rueckwegSchritte(w.c.schritte as ChangeSchritt[], l.ergebnisse).map(s => s.nr)).toEqual([1]);
+    expect(await m.steuern('o', 'chg-1', 'rueckweg')).toContain('Rückweg läuft');
+    await warte(m);
+    expect(befehle).toEqual(['systemctl stop pg', 'systemctl start pg']);
+    expect(w.c.status).toBe('rolled_back');
+  });
   it('v1969 Realfall 26.11. (ffdfb929/347d2aea): zwei freigegebene Changes auf demselben Asset starten nicht im selben Durchgang', async () => {
     const w = welt(probe());
     const zwei = { ...w.c, id: 'chg-2', title: 'Zwei' } as CmdbChangeRequest;

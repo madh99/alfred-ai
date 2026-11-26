@@ -497,7 +497,10 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         await this.schlafe(this.takt.wartenAbstandMs * 3);
         r = await this.d.fernAusfuehren(name, befehl, p.als_root !== false, timeoutMs);
       }
-      return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}` };
+      // v1970 — Realfall 26.11. (347d2aea Schritt 5): das Skript stoppte postgreDEV und scheiterte danach an einer eigenen Prüfung; der
+      // Schritt galt als „nicht ausgeführt“, „Rückweg ausführen“ fand nichts zurückzunehmen und postgreDEV blieb gestoppt. Ein ändernder
+      // Befehl, der mit Exit ≠ 0 endet, ist gelaufen und kann teilweise gewirkt haben → sein Rückweg gehört dazu.
+      return r.code === 0 ? { ok: true, ausgabe: r.stdout, daten: { exit: 0, ausgabe: r.stdout.slice(0, 2000) } } : { ok: false, ausgabe: `${r.stdout}\n${r.stderr}`.trim(), fehler: `Exit ${r.code}: ${r.stderr.trim().slice(-300)}`, teilweise: true, daten: { exit: r.code } };
     }
     // v1719 — Realfall 31.10. (8a26aed6 Schritt 73): kopieren lief mit der Skill-Vorgabe von 1 h statt mit dem Schrittlimit von 3 h und
     // brach nach 120 von 193 GB ab. Ohne eigenes timeout_s gilt bei Fernzugriff-Aktionen das Zeitlimit des Schritts.
