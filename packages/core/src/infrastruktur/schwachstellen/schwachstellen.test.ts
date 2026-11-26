@@ -142,6 +142,12 @@ describe('Bewertung (Owner 25.11.: Fristen 48 h / 7 Tage / 30 Tage)', () => {
     expect(befunde([k([t('Y', 8, 'hoch')])])).toEqual([]);
     expect(befunde([k([t('Z', 5, 'mittel', '2')])])).toEqual([]);
   });
+  it('ohne CVSS-Wert nennt der Text die Schwere der Quelle statt „—“', () => {
+    const ohne = { id: 'GHSA-xyz', aliase: ['GHSA-xyz'], titel: '', schwere: 'kritisch' as const, link: '', quellen: ['github'], paket: 'Synapse', installiert: '1.98.0', stufe: 'kritisch' as const, erkannt: '2026-11-25T05:00:00Z' };
+    const b = befunde([k([ohne], { schluessel: 'docker-com-01/synapse', host: 'docker-com-01', name: 'synapse', anwendung: 'Synapse', version: '1.98.0' })]);
+    expect(b[0]!.text).toBe('KRITISCH — Container synapse (Synapse 1.98.0): 1 kritisch, 0 hoch, 0 mittel; ohne CVSS-Wert, Schwere laut Quelle kritisch (GHSA-xyz), von außen erreichbar; Frist bis 27.11.26, 06:00');
+    expect(lageText([k([ohne])], '26.11.26, 06:00', [])).toContain('ohne CVSS-Wert, Schwere laut Quelle kritisch GHSA-xyz');
+  });
   it('Basis-Image: ein Sammel-Befund je Image mit Maßnahme, Anwendung und Basis getrennt', () => {
     const b = (id: string, paket: string, st: 'kritisch' | 'hoch' | 'mittel', x: { kev?: string; epss?: number } = {}) => ({ id, aliase: [id], titel: '', cvss: 7.5, schwere: 'hoch' as const, link: '', quellen: ['trivy'], paket, installiert: '1', behoben: '2', stufe: st, basis: true, erkannt: '2026-11-25T05:00:00Z', ...x });
     const nur = befunde([k([b('CVE-2023-4863', 'libwebp7', 'kritisch', { kev: '2023-09-13' }), b('CVE-2023-4863', 'libwebp-dev', 'kritisch', { kev: '2023-09-13' }), b('CVE-2024-1', 'curl', 'hoch', { epss: 0.4 }), b('CVE-2024-2', 'zlib', 'mittel')],

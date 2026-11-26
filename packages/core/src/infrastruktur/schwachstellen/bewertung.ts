@@ -79,6 +79,9 @@ const frist = (erkannt: string | undefined, s: Stufe, jetzt: Date): string | und
   return new Date((erkannt ? Date.parse(erkannt) : jetzt.getTime()) + h * 3_600_000).toISOString();
 };
 
+/** CVSS-Angabe für Texte — ohne Score (manche GitHub-/OSV-Einträge) die Schwere der Quelle statt „—“ */
+const cvssAngabe = (t: Pick<Treffer, 'cvss' | 'schwere'>) => (t.cvss !== undefined ? `höchster CVSS ${t.cvss}` : `ohne CVSS-Wert, Schwere laut Quelle ${t.schwere}`);
+
 /** Befunde je Komponente (Schlüssel sicherheit:<host>:<name>) — Kategorie sicherheit */
 export function befunde(k: Komponente[], jetzt = new Date()): Auffaelligkeit[] {
   const aus: Auffaelligkeit[] = [];
@@ -95,7 +98,7 @@ export function befunde(k: Komponente[], jetzt = new Date()): Auffaelligkeit[] {
       const top = [...relApp].sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0))[0]!;
       const was = c.art === 'container' ? `Container ${c.name}${c.anwendung ? ` (${c.anwendung}${c.version ? ` ${c.version}` : ''})` : ''}` : 'ausstehende Sicherheitsupdates';
       const ziel = zielVersion(c.treffer, c.anwendung);
-      teile.push(`${was}: ${z.kritisch} kritisch, ${z.hoch} hoch, ${z.mittel} mittel; höchster CVSS ${top.cvss ?? '—'} (${top.id}${top.kev ? ', aktiv ausgenutzt (KEV)' : ''})${erreichbar}${ziel ? `; behoben in ${ziel}` : ''}`);
+      teile.push(`${was}: ${z.kritisch} kritisch, ${z.hoch} hoch, ${z.mittel} mittel; ${cvssAngabe(top)} (${top.id}${top.kev ? ', aktiv ausgenutzt (KEV)' : ''})${erreichbar}${ziel ? `; behoben in ${ziel}` : ''}`);
     }
     if (relBas.length) {
       // Sammel-Befund je Image: die Maßnahme ist dieselbe (Image aktualisieren bzw. neu bauen), egal wie viele Pakete betroffen sind
@@ -122,7 +125,7 @@ export function lageText(k: Komponente[], datum: string, fehler: string[]): stri
     zeilen.push('## Ab hoch', '');
     for (const { c, h, n } of wichtig) {
       const top = [...c.treffer].sort((a, b) => (b.cvss ?? 0) - (a.cvss ?? 0))[0];
-      zeilen.push(`- **${c.host} / ${c.name}**${c.anwendung ? ` (${c.anwendung}${c.version ? ` ${c.version}` : ''})` : ''} — ${h}: ${n.kritisch} kritisch, ${n.hoch} hoch, ${n.mittel} mittel${top ? `; höchster CVSS ${top.cvss ?? '—'} ${top.id}` : ''}${c.erreichbar ? ' · von außen erreichbar' : ''}`);
+      zeilen.push(`- **${c.host} / ${c.name}**${c.anwendung ? ` (${c.anwendung}${c.version ? ` ${c.version}` : ''})` : ''} — ${h}: ${n.kritisch} kritisch, ${n.hoch} hoch, ${n.mittel} mittel${top ? `; ${cvssAngabe(top)} ${top.id}` : ''}${c.erreichbar ? ' · von außen erreichbar' : ''}`);
     }
     zeilen.push('');
   }

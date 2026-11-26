@@ -8447,7 +8447,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 if (this.pushDienst) await this.pushDienst.anOwner({ titel: 'Kritische Schwachstellen', text: meldung.slice(0, 180), art: 'hinweis', stufe: 'active' }).catch(() => undefined);
               }
               const z = zaehleKomponenten(r.komponenten);
-              this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt.length,
+              this.logger.info({ grund, komponenten: r.komponenten.length, erfasst: erfasst.size, ...z, neu: gespeichert.neu.length, neuKritisch, behoben: gespeichert.behoben, entfernt: gespeichert.entfernt,
                 befunde: bef.length, problemsNeu: pr.neu.length, problemsGeloest: pr.geloest.length, problemsAktualisiert: pr.aktualisiert?.length ?? 0, abfragen: r.abfragen, fehler: r.fehler, nichtGeprueft: r.komponenten.filter(k => k.nichtGeprueft.length).length }, 'Schwachstellen-Lauf');
               return { ok: true, zaehler: { komponenten: r.komponenten.length, kritisch: z.kritisch, hoch: z.hoch, neu: gespeichert.neu.length, befunde: bef.length } };
             } finally { laeuft = false; }

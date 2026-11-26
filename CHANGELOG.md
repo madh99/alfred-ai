@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Schwachstellen-Lauf: nichts ändert sich still (v1962)
+
+- Entfernt ein Lauf eine Komponente, die nicht mehr läuft, nennt die Logzeile jetzt ihre Namen statt nur der Anzahl.
+- Treffer, die dabei geschlossen werden, zählen jetzt unter „behoben“ mit; bisher wurden sie ohne Zählung geschlossen.
+- Hat ein Treffer keinen CVSS-Wert, nennen Befund und Tagesbericht die Schwere laut Quelle, statt „höchster CVSS —“ anzuzeigen.
+
 ### Fixed — Schwachstellen-Problems tragen den aktuellen Befund (v1961)
 
 - Bisher behielt ein offenes Problem der Schwachstellen-Überwachung Titel und Beschreibung des Laufs, in dem es angelegt wurde.

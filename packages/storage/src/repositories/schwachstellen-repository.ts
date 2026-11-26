@@ -74,7 +74,7 @@ export class SchwachstellenRepository {
     for (const r of await this.db.query('SELECT schluessel, host FROM sicherheit_komponenten WHERE user_id = ?', [userId]) as Array<Record<string, unknown>>) {
       const sch = String(r.schluessel);
       if (imLauf.has(sch) || !erfassteHosts.has(String(r.host))) continue;
-      await this.db.execute('UPDATE sicherheit_treffer SET behoben_am = ? WHERE user_id = ? AND komponente = ? AND behoben_am IS NULL', [jetzt, userId, sch]);
+      behoben += (await this.db.execute('UPDATE sicherheit_treffer SET behoben_am = ? WHERE user_id = ? AND komponente = ? AND behoben_am IS NULL', [jetzt, userId, sch])).changes ?? 0;
       await this.db.execute('DELETE FROM sicherheit_komponenten WHERE user_id = ? AND schluessel = ?', [userId, sch]);
       entfernt.push(sch);
     }
