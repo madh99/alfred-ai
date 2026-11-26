@@ -136,6 +136,16 @@ export function zielOhneWirkung(z: Zielpruefung | undefined, aktuell: Treffer[])
 
 export function zielText(z: Zielpruefung | undefined): string {
   if (!z) return 'Zielprüfung: kein prüfbares Ziel-Image (nur per Digest festgelegt, keine behobene Anwendungsversion bekannt)';
-  if (z.fehler) return `Zielprüfung: ${z.ref} nicht prüfbar (${z.fehler.slice(0, 160)})`;
+  if (z.fehler) return `Zielprüfung: ${z.ref} nicht prüfbar (${fehlerArt(z.fehler)})`;
   return `Zielprüfung (Trivy, ohne Modell): ${z.ref}${z.digest ? ` = ${z.digest}` : ''} — von ${z.relevant} relevanten Lücken im Basis-Image bleiben ${z.bleiben.length}${z.bleiben.length ? ` (u. a. ${z.bleiben.slice(0, 5).join(', ')})` : ''}`;
+}
+
+/** v1967 — Fehler von Trivy/Registry nie roh in den Auftrag (Prompt-Injection über stderr): nur eine feste Ursache */
+export function fehlerArt(meldung: string): 'nicht gefunden' | 'kein Zugriff' | 'Abruflimit der Registry' | 'Zeitüberschreitung' | 'nicht abrufbar' {
+  const m = meldung.toLowerCase();
+  if (/manifest unknown|not found|no such|404/.test(m)) return 'nicht gefunden';
+  if (/toomanyrequests|rate limit|429/.test(m)) return 'Abruflimit der Registry';
+  if (/unauthorized|denied|forbidden|401|403/.test(m)) return 'kein Zugriff';
+  if (/timeout|timed out|deadline|etimedout|killed/.test(m)) return 'Zeitüberschreitung';
+  return 'nicht abrufbar';
 }

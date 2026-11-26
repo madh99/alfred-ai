@@ -8404,7 +8404,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const komp = komponenten.find(c => c.host === k.host && c.name === k.name);
                 let ziel: import('./infrastruktur/schwachstellen/planung.js').Zielpruefung | undefined;
                 for (const ref of zielReferenzen(komp?.image, komp ? zielVersion(komp.treffer, komp.anwendung) : undefined)) {
-                  try { const t = leseTrivy(await trivyScan(ref)); ziel = zielVergleich(komp!.treffer, t.treffer, ref, t.digest); break; } catch (err) { ziel = { ref, relevant: 0, bleiben: [], fehler: (err as Error).message }; }
+                  try { const t = leseTrivy(await trivyScan(ref), ref); ziel = zielVergleich(komp!.treffer, t.treffer, ref, t.digest); break; } catch (err) { ziel = { ref, relevant: 0, bleiben: [], fehler: (err as Error).message }; }
                 }
                 if (komp && zielOhneWirkung(ziel, komp.treffer)) { ohneWirkung.push(`${k.host}/${k.name} (${ziel!.ref})`); continue; }
                 const zt = zielText(ziel);

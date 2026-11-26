@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Zielprüfung ohne Fremdtext, Digest nur vom gescannten Repository (v1967)
+
+- Scheitert die Zielprüfung, nennt der Auftrag nur noch eine feste Ursache: nicht gefunden, kein Zugriff, Abruflimit der Registry, Zeitüberschreitung oder nicht abrufbar. Die Fehlerausgabe von Trivy oder der Registry gelangt nicht mehr ins Modell.
+- Als Ziel-Digest gilt nur ein Digest desselben Repositorys wie das gescannte Image. Gibt es keinen solchen, wird kein Digest genannt.
+
 ### Added — Zielprüfung vor der Change-Planung (v1966)
 
 - **Anlass:** Am 26.11. lehnten alle Planungsrunden ab (Guacamole, Synapse, Emby, Nginx Proxy Manager, WordPress, Open WebUI). Keine konnte belegen, dass ein neueres Image die Lücken behebt.

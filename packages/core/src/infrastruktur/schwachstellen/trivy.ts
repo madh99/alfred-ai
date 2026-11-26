@@ -23,7 +23,7 @@ const schwereTrivy = (s: unknown): Schwere => {
 };
 
 /** Trivy-JSON → Treffer je (Kennung, Paket); Score bevorzugt NVD, sonst GHSA, sonst Hersteller */
-export function leseTrivy(json: string): { treffer: TrivyTreffer[]; os?: string; digest?: string } {
+export function leseTrivy(json: string, ref?: string): { treffer: TrivyTreffer[]; os?: string; digest?: string } {
   const j = JSON.parse(json) as { Metadata?: { OS?: { Family?: string; Name?: string }; RepoDigests?: string[] }; Results?: Array<{ Target?: string; Vulnerabilities?: Array<{ VulnerabilityID: string; PkgName: string; InstalledVersion?: string; FixedVersion?: string; Status?: string; Severity?: string; Title?: string; PrimaryURL?: string; CVSS?: Record<string, { V3Score?: number; V3Vector?: string; V40Score?: number; V40Vector?: string }> }> }> };
   const treffer: TrivyTreffer[] = []; const gesehen = new Set<string>();
   for (const r of j.Results ?? []) {
@@ -42,6 +42,14 @@ export function leseTrivy(json: string): { treffer: TrivyTreffer[]; os?: string;
   }
   const os = j.Metadata?.OS ? `${j.Metadata.OS.Family ?? ''} ${j.Metadata.OS.Name ?? ''}`.trim() : undefined;
   // v1966 — Digest des gescannten Images (Zielprüfung A2: Ziel-Image genau benennen)
-  const digest = j.Metadata?.RepoDigests?.map(d => /@(sha256:[0-9a-f]{64})$/.exec(d)?.[1]).find(Boolean);
+  // nur ein Digest desselben Repositorys wie die gescannte Referenz — sonst keiner (kein Festlegen auf ein anderes Artefakt)
+  const digest = ref ? j.Metadata?.RepoDigests?.map(d => /^(.+)@(sha256:[0-9a-f]{64})$/.exec(d)).find(m => !!m && repoVon(m[1]!) === repoVon(ref))?.[2] : undefined;
   return { treffer, ...(os ? { os } : {}), ...(digest ? { digest } : {}) };
+}
+
+/** Repository einer Image-Referenz ohne Tag, Digest und Docker-Hub-Präfixe (docker.io/, library/) */
+export function repoVon(ref: string): string {
+  const ohne = ref.replace(/@sha256:[0-9a-f]{64}$/, '');
+  const teile = ohne.split('/'); const letzter = teile.pop()!.split(':')[0]!;
+  return [...teile, letzter].join('/').replace(/^(docker\.io\/|index\.docker\.io\/|registry-1\.docker\.io\/)/, '').replace(/^library\//, '');
 }

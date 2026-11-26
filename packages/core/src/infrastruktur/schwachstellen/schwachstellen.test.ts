@@ -90,7 +90,11 @@ describe('Trivy und Zuordnung', () => {
     expect(r.treffer[1]!.behoben).toBeUndefined();
     expect(r.digest).toBeUndefined();
     const d = `sha256:${'b'.repeat(64)}`;
-    expect(leseTrivy(JSON.stringify({ Metadata: { RepoDigests: [`jwetzell/guacamole@${d}`] }, Results: [] })).digest).toBe(d);
+    const mit = (r: string[], ref?: string) => leseTrivy(JSON.stringify({ Metadata: { RepoDigests: r }, Results: [] }), ref).digest;
+    expect(mit([`jwetzell/guacamole@${d}`], 'jwetzell/guacamole:latest')).toBe(d);
+    expect(mit([`docker.io/library/redis@${d}`], 'redis:7-alpine')).toBe(d);
+    expect(mit([`anderes/image@${d}`], 'jwetzell/guacamole:latest')).toBeUndefined();
+    expect(mit([`jwetzell/guacamole@${d}`])).toBeUndefined();
   });
   it('Image-Repo und laufende Version', () => {
     expect(imageRepo('ghcr.io/element-hq/lk-jwt-service:latest')).toBe('element-hq/lk-jwt-service');
