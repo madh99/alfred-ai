@@ -3,7 +3,7 @@ import { betroffen, vergleiche, leseBereich } from './versionen.js';
 import { githubAdvisories, nvdCpe, osv, zusammenfuehren, epss, kev, type Abruf } from './quellen.js';
 import { leseTrivy, trivyArgumente, TRIVY_IMAGE } from './trivy.js';
 import { imageRepo, laufendeVersion, veroeffentlichtePorts, vonAussenErreichbar } from './zuordnung.js';
-import { stufe, befunde, lageText, zaehle, type Komponente } from './bewertung.js';
+import { stufe, befunde, lageText, zaehle, handlungsbedarf, type Komponente } from './bewertung.js';
 import { schwachstellenLauf, type LaufDeps } from './lauf.js';
 
 // Realfall 25.11.: Vaultwarden 1.30.5 — Bereichsangaben genau wie in den Repo-Advisories
@@ -141,6 +141,16 @@ describe('Bewertung (Owner 25.11.: Fristen 48 h / 7 Tage / 30 Tage)', () => {
     expect(b[0]!.text).toBe('KRITISCH — Container vaultwarden (Vaultwarden 1.30.5): 1 kritisch, 1 hoch, 1 mittel; höchster CVSS 9.8 (CVE-2024-55225), von außen erreichbar; behoben in 1.37.5; Frist bis 27.11.26, 06:00');
     expect(befunde([k([t('Y', 8, 'hoch')])])).toEqual([]);
     expect(befunde([k([t('Z', 5, 'mittel', '2')])])).toEqual([]);
+  });
+  it('Basis-Paket ohne Fix und ohne KEV ist kein Handlungsbedarf (BEAST), mit KEV schon', () => {
+    const beast = { id: 'CVE-2011-3389', aliase: ['CVE-2011-3389'], titel: '', schwere: 'mittel' as const, link: '', quellen: ['trivy'], paket: 'libgnutls30t64', installiert: '3.8.9', stufe: 'kritisch' as const, epss: 0.73, basis: true, erkannt: '2026-11-25T05:00:00Z' };
+    expect(handlungsbedarf(beast)).toBe(false);
+    expect(befunde([k([beast], { anwendung: undefined, version: undefined, image: 'vaultwarden/server:1.37.5' })])).toEqual([]);
+    expect(handlungsbedarf({ ...beast, kev: '2026-01-01' })).toBe(true);
+    expect(handlungsbedarf({ ...beast, behoben: '3.8.10' })).toBe(true);
+    expect(handlungsbedarf({ ...beast, basis: false })).toBe(true);
+    expect(handlungsbedarf({ ...beast, stufe: 'hoch' })).toBe(false);
+    expect(handlungsbedarf({ ...beast, stufe: 'hoch', behoben: '2' })).toBe(true);
   });
   it('ohne CVSS-Wert nennt der Text die Schwere der Quelle statt „—“', () => {
     const ohne = { id: 'GHSA-xyz', aliase: ['GHSA-xyz'], titel: '', schwere: 'kritisch' as const, link: '', quellen: ['github'], paket: 'Synapse', installiert: '1.98.0', stufe: 'kritisch' as const, erkannt: '2026-11-25T05:00:00Z' };

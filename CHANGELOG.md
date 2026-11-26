@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Kein Befund für Basis-Pakete ohne Fix (v1963)
+
+- Ein kritischer Treffer in einem Basis-Paket, für das es keine behobene Version gibt und der nicht als aktiv ausgenutzt (KEV) gelistet ist, löst keinen Befund und keine Meldung mehr aus. Ein neues Image würde daran nichts ändern.
+- In Ansicht und Bericht bleibt der Treffer sichtbar.
+- Auslöser war CVE-2011-3389 (BEAST) in libgnutls: Vaultwarden 1.37.5 stand deshalb weiter auf „kritisch“.
+- Aktiv ausgenutzte Lücken bleiben immer ein Befund, auch ohne Fix.
+
 ### Fixed — Schwachstellen-Lauf: nichts ändert sich still (v1962)
 
 - Entfernt ein Lauf eine Komponente, die nicht mehr läuft, nennt die Logzeile jetzt ihre Namen statt nur der Anzahl.

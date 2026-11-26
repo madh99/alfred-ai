@@ -8380,7 +8380,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             laeuft = true;
             try {
               const { schwachstellenLauf: lauf } = await import('./infrastruktur/schwachstellen/lauf.js');
-              const { befunde, lageText, zaehle, zaehleKomponenten } = await import('./infrastruktur/schwachstellen/bewertung.js');
+              const { befunde, lageText, zaehle, zaehleKomponenten, handlungsbedarf } = await import('./infrastruktur/schwachstellen/bewertung.js');
               const { trivyArgumente } = await import('./infrastruktur/schwachstellen/trivy.js');
               const { veroeffentlichtePorts, vonAussenErreichbar } = await import('./infrastruktur/schwachstellen/zuordnung.js');
               const { istSicherheitsSchluessel } = await import('./infrastruktur/befund-problems.js');
@@ -8434,7 +8434,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               // späterer KEV-Eintrag zählt); je Komponente und CVE einmal, eine gebündelte Meldung (Kalibrierung nach dem ersten Lauf)
               const neuJe = r.komponenten.map(k => {
                 const v = vorher.get(k.schluessel);
-                const neu = k.treffer.filter(t => t.stufe === 'kritisch' && v?.get(`${t.id}|${t.paket}`)?.stufe !== 'kritisch');
+                const neu = k.treffer.filter(t => t.stufe === 'kritisch' && handlungsbedarf(t) && v?.get(`${t.id}|${t.paket}`)?.stufe !== 'kritisch');
                 const app = new Set(neu.filter(t => !t.basis).map(t => t.id));
                 const bas = new Set(neu.filter(t => t.basis && !app.has(t.id)).map(t => t.id));
                 return { k, app: app.size, bas: bas.size };

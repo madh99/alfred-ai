@@ -82,10 +82,18 @@ const frist = (erkannt: string | undefined, s: Stufe, jetzt: Date): string | und
 /** CVSS-Angabe für Texte — ohne Score (manche GitHub-/OSV-Einträge) die Schwere der Quelle statt „—“ */
 const cvssAngabe = (t: Pick<Treffer, 'cvss' | 'schwere'>) => (t.cvss !== undefined ? `höchster CVSS ${t.cvss}` : `ohne CVSS-Wert, Schwere laut Quelle ${t.schwere}`);
 
+/**
+ * Handlungsbedarf (Befund, Meldung): kritisch immer, hoch nur mit behobener Version. Owner 26.11.: ein Basis-Paket ohne Fix und
+ * ohne KEV (Realfall CVE-2011-3389 BEAST in libgnutls, Vaultwarden 1.37.5) ist nie Handlungsbedarf — ein neues Image hilft nicht;
+ * es bleibt in Ansicht und Bericht sichtbar. Aktiv ausgenutzt (KEV) bleibt immer ein Befund, auch ohne Fix.
+ */
+export const handlungsbedarf = (t: Pick<Treffer, 'stufe' | 'basis' | 'behoben' | 'kev'>): boolean =>
+  (t.stufe === 'kritisch' && (!t.basis || !!t.behoben || !!t.kev)) || (t.stufe === 'hoch' && !!t.behoben);
+
 /** Befunde je Komponente (Schlüssel sicherheit:<host>:<name>) — Kategorie sicherheit */
 export function befunde(k: Komponente[], jetzt = new Date()): Auffaelligkeit[] {
   const aus: Auffaelligkeit[] = [];
-  const relevant = (t: Treffer) => t.stufe === 'kritisch' || (t.stufe === 'hoch' && !!t.behoben);
+  const relevant = handlungsbedarf;
   for (const c of k) {
     const app = c.treffer.filter(t => !t.basis); const bas = c.treffer.filter(t => t.basis);
     const relApp = app.filter(relevant); const relBas = bas.filter(relevant);
