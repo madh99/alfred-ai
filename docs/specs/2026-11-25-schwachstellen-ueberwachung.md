@@ -170,12 +170,17 @@ Die Prüfung geht nicht von einer festen Liste aus, sondern vom Bestand:
   - **Log (v1962):** Entfernte Komponenten stehen namentlich in der Logzeile, ihre Treffer zählen unter „behoben“.
   - **Stand Lauf 26.11. 06:00:** 103 kritisch, 693 hoch, 32 Befunde.
   - **Vaultwarden-Beweis (Change 31d548a4, 26.11. 00:35):** 9.798 Treffer behoben, die Anwendungs-CVEs sind weg. Das Basis-Image zeigt weiter CVE-2011-3389 (BEAST) in libgnutls ohne Fix (EPSS 73 %), Entscheidung siehe Offen.
+- **Basis ohne Fix** (v1963, Owner 26.11.): Ein kritischer Basis-Treffer ohne behobene Version und ohne KEV ist kein Handlungsbedarf (`handlungsbedarf()`): kein Befund, keine Meldung, sichtbar in Ansicht und Bericht. Beweis Lauf 26.11. 09:41: Vaultwarden 1.37.5 nicht mehr KRITISCH, es bleibt „hoch“ für libmariadb3 mit Fix.
+- **A2** (v1964, Owner 26.11. „wie empfohlen“): Die Vorlage (d) passt bei keinem der 32 Images so, dass sie etwas behebt. Gründe: `latest`/`main`/`stable`, Digest statt Tag, kein Healthcheck, Datenbank. Daher:
+  - **Auswahl ohne Modell** (`schwachstellen/planung.ts`): Container mit Handlungsbedarf, kritische zuerst (KEV und erreichbar, KEV, erreichbar, Anzahl). Hohe kommen erst, wenn kein kritischer Kandidat mehr offen ist.
+  - **Kein zweiter Plan**, solange ein offener Change (auch ein Entwurf) dasselbe Asset betrifft. Das gilt auch, wenn ein verknüpfter Change abgelehnt wurde, gescheitert ist oder zurückgerollt wurde. Erst nach `completed` mit bleibendem Befund wird neu geplant.
+  - **Planung:** Je Kandidat läuft eine Modell-Runde im sichtbaren Faden `owner:faden:infra-cf82f3f2` mit festem Auftrag: genau ein Change mit Sicherung, Rückweg und Prüfprofil, dann `freigabe_anfragen`, nichts ausführen.
+    - Die Runden laufen nacheinander, je Komponente höchstens ein Versuch am Tag (`claimDailySlot`).
+    - Der neue Change wird mit dem Problem verknüpft. Fehlt der Faden, wird nichts geplant.
+  - **Unbeaufsichtigt** (`SkillContext.unbeaufsichtigt`, nur vom Code gesetzt):
+    - Skills nur `infrastruktur` und `fernzugriff`.
+    - Erlaubt sind nur `changes_planen`, `freigabe_anfragen`, `pruefprofil_vorschlagen` sowie lesende Aktionen (Fernzugriff: `liste`, `lesen`, `pruefen`, `seite`).
+    - Alles andere ist gesperrt, ebenso eine neue Prüfung.
 - **Offen:**
-  - A2: automatische Change-Planung nach Entscheidung 3.
-    - Befund 26.11.: Die Vorlage (d) `image_aktualisieren` passt bei keinem der 32 Images so, dass sie etwas behebt.
-      - Ausschlussgründe: Tag `latest`/`main`/`stable`, ein Digest statt eines Tags, kein Healthcheck, kein Compose-Dienst, Datenbank oder Home Assistant.
-      - Vaultwarden besteht die Prüfung zwar formal, holt aber mit dem Tag 1.37.5 dasselbe Image erneut.
-    - Ohne Modell lässt sich derzeit also kein Change planen. Wie A2 trotzdem vorgeht, muss der Owner entscheiden.
-  - Basis-Treffer ohne Fix und ohne KEV (z. B. BEAST): Es ist noch offen, ob sie einen Befund auslösen. Owner-Entscheidung ausstehend.
   - B: Web, C: Apps, D: Windows/SQL Server, Netzwerk, Home Assistant direkt, Mail-Regel Bitwarden.
   - Trivy-Dateisystem-Scan der Hosts.
