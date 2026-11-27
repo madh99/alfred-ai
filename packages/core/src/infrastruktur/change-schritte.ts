@@ -49,7 +49,7 @@ const VERNEINUNG = /(^|[^\p{L}])(nicht|kein|keine|keinen|keiner|not|no longer|fe
  */
 export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
   // Owner 27.11. — Portainer-Skill (portainer-skill.ts): Wortlaut je Stack bzw. Ergebnis
-  'portainer.list_stacks': '{zugang}: Stack {name} (ID {id}, Endpunkt {id}, aktiv | inaktiv): Dienste {liste}; Portainer-Variablen {liste}; Datei-SHA256 {hash}',
+  'portainer.list_stacks': '{zugang}: Stack {name} (ID {id}, Endpunkt {id}, aktiv | inaktiv): Dienste {liste}; Portainer-Variablen {liste}; Datei-SHA256 {hash}; Laufzeit = Datei | Laufzeit weicht ab: {liste} | Laufzeit nicht lesbar',
   'portainer.image_setzen': 'PORTAINER_IMAGE_GESETZT {zugang} Stack {name} Dienst {dienst}: {alt} → {image}; Container läuft',
   'portainer.stack_zuruecksetzen': 'PORTAINER_ZURUECK {zugang} Stack {name}: Datei {hash} wiederhergestellt; Container laufen',
   'proxmox.agent_status': 'Gast-Agent auf VM {vmid} {name} ({node}) antwortet — IPv4: {ip} ({schnittstelle})',

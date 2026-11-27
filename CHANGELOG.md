@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Portainer: Laufzeit gegen Image und Stack-Datei (v1973)
+
+- `list_stacks` meldet je Dienst die Namen von Umgebungsvariablen, die nur im laufenden Container stehen: weder in der Stack-Datei (`environment`) gesetzt noch mit gleichem Wert aus dem Image. Ausgegeben werden nur Namen, nie Werte. Ist ein `env_file` eingebunden, wird es als nicht prüfbar genannt.
+- `image_setzen` verweigert bei einer solchen Abweichung und ändert nichts, denn eine Neubereitstellung durch Portainer würde diese Variablen verlieren.
+- Anlass: Node-RED (42ed9669) brach am 27.11. mit `NR_STACK_ENV_DRIFT` ab. Der Lesezugang darf die Umgebungsvariablen von Containern nicht sehen, die abweichenden Namen ließen sich so nicht klären.
+
 ### Added — Portainer-Skill: Stacks über die Portainer-API (v1972)
 
 - Neuer Skill `portainer`. Zugang ist der Linux-Fernzugang des Portainer-Hosts, das API-Token liegt im Tresor als `portainer-<zugang>`.

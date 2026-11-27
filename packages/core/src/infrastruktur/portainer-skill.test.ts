@@ -3,15 +3,15 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SkillContext } from '@alfred/types';
-import { PortainerSkill, dienstImages, imageErsetzen, leseFingerabdruck, tresorName } from './portainer-skill.js';
+import { PortainerSkill, dienstImages, dienstUmgebung, envAbweichung, imageErsetzen, leseFingerabdruck, tresorName } from './portainer-skill.js';
 import { aktionsArt, pruefeChangePlan, type PruefKontext } from './change-schritte.js';
 
 const FP = Array.from({ length: 32 }, (_, i) => (i + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
-const DATEI = `version: '3'\nservices:\n  app:\n    image: 'jc21/nginx-proxy-manager:latest'\n    restart: unless-stopped\n    ports:\n      - '80:80'\n  db:\n    image: mariadb:10\n`;
+const DATEI = `version: '3'\nservices:\n  app:\n    image: 'jc21/nginx-proxy-manager:latest'\n    environment:\n      - TZ=Europe/Vienna\n    restart: unless-stopped\n    ports:\n      - '80:80'\n  db:\n    image: mariadb:10\n`;
 const NEU = 'jc21/nginx-proxy-manager:latest@sha256:' + 'a'.repeat(64);
 const TOKEN = 'ptr_geheimestoken123';
 
-function aufbau(o: { datei?: string; containerImage?: (datei: string) => string; putFehler?: boolean } = {}) {
+function aufbau(o: { datei?: string; containerImage?: (datei: string) => string; putFehler?: boolean; zusatzEnv?: string[] } = {}) {
   let datei = o.datei ?? DATEI;
   const aufrufe: Array<{ url: string; methode: string; koerper?: unknown; fp: string; token?: string }> = [];
   const stack = { Id: 1, Name: 'proxy-prod', Type: 2, EndpointId: 2, Status: 1, Env: [{ name: 'DB_PASS', value: 'sehrgeheim' }] };
@@ -30,7 +30,8 @@ function aufbau(o: { datei?: string; containerImage?: (datei: string) => string;
       return antwort(alle.filter(c => f.every(l => !l.startsWith('com.docker.compose.service=') || l.endsWith(`=${c.Labels['com.docker.compose.service']}`))));
     }
     const m = /^\/api\/endpoints\/2\/docker\/containers\/c-([\w-]+)\/json$/.exec(p);
-    if (m) { const d = dienstImages(datei).find(x => x.dienst === m[1]); return antwort({ Config: { Image: o.containerImage ? o.containerImage(datei) : d?.image }, State: { Status: 'running' } }); }
+    if (m) { const d = dienstImages(datei).find(x => x.dienst === m[1]); return antwort({ Config: { Image: o.containerImage ? o.containerImage(datei) : d?.image, Env: ['PATH=/usr/bin', ...(m[1] === 'app' ? ['TZ=Europe/Vienna', ...(o.zusatzEnv ?? [])] : [])] }, State: { Status: 'running' }, Image: 'sha256:img' }); }
+    if (p === '/api/endpoints/2/docker/images/sha256%3Aimg/json' || p === '/api/endpoints/2/docker/images/sha256:img/json') return antwort({ Config: { Env: ['PATH=/usr/bin'] } });
     return antwort({ message: 'unbekannt' }, 404);
   };
   return { aufrufe, stack, holeDatei: () => datei, pinnedFetch };
@@ -54,7 +55,7 @@ const imChat = { userId: 'owner' } as SkillContext;
 
 describe('Portainer-Skill: Hilfsfunktionen', () => {
   it('Dienste und Images, image-Zeile genau eines Dienstes ersetzt, Rest bytegleich', () => {
-    expect(dienstImages(DATEI)).toEqual([{ dienst: 'app', image: 'jc21/nginx-proxy-manager:latest', zeile: 3 }, { dienst: 'db', image: 'mariadb:10', zeile: 8 }]);
+    expect(dienstImages(DATEI)).toEqual([{ dienst: 'app', image: 'jc21/nginx-proxy-manager:latest', zeile: 3 }, { dienst: 'db', image: 'mariadb:10', zeile: 10 }]);
     const r = imageErsetzen(DATEI, 'app', NEU);
     expect(r.vorher).toBe('jc21/nginx-proxy-manager:latest');
     expect(r.datei).toBe(DATEI.replace("    image: 'jc21/nginx-proxy-manager:latest'", `    image: ${NEU}`));
@@ -66,12 +67,26 @@ describe('Portainer-Skill: Hilfsfunktionen', () => {
   });
 });
 
+describe('v1973 Laufzeit gegen Image + Stack-Datei', () => {
+  it('environment-Schlüssel in Listen- und Mapform, env_file erkannt', () => {
+    const d = 'services:\n  a:\n    image: x\n    environment:\n      - TZ=Europe/Vienna\n      - LEER\n    env_file: .env\n  b:\n    image: y\n    environment:\n      FOO: bar\n      "BAZ": 1\n';
+    expect([...dienstUmgebung(d, 'a').schluessel]).toEqual(['TZ', 'LEER']);
+    expect(dienstUmgebung(d, 'a').envFile).toBe(true);
+    expect([...dienstUmgebung(d, 'b').schluessel]).toEqual(['FOO', 'BAZ']);
+  });
+  it('nur Namen, die weder die Datei setzt noch das Image mit gleichem Wert liefert', () => {
+    expect(envAbweichung(['PATH=/a', 'TZ=Europe/Vienna', 'NODE_OPTIONS=--x', 'HOME=/x'], ['PATH=/a', 'HOME=/root'], new Set(['TZ']))).toEqual(['HOME', 'NODE_OPTIONS']);
+    expect(envAbweichung(['PATH=/a', 'TZ=x'], ['PATH=/a'], new Set(['TZ']))).toEqual([]);
+  });
+});
+
 describe('Portainer-Skill: Ausführung', () => {
   it('list_stacks: nur Variablen-NAMEN, Pinning mit dem Host-Fingerabdruck, Token nie in der Ausgabe', async () => {
     const { s, a, gelesen } = await skill();
     const r = await s.execute({ action: 'list_stacks', zugang: 'authProxy' }, imChat);
     expect(r.success).toBe(true);
     expect(r.display).toContain('authProxy: Stack proxy-prod (ID 1, Endpunkt 2, aktiv): Dienste app=jc21/nginx-proxy-manager:latest, db=mariadb:10; Portainer-Variablen DB_PASS; Datei-SHA256 ');
+    expect(r.display).toContain('; Laufzeit = Datei');
     expect(JSON.stringify(r)).not.toContain('sehrgeheim');
     expect(JSON.stringify(r)).not.toContain(TOKEN);
     expect(a.aufrufe.every(x => x.fp === FP && x.url.startsWith('https://192.168.1.50:9443/') && x.token === TOKEN)).toBe(true);
@@ -100,6 +115,17 @@ describe('Portainer-Skill: Ausführung', () => {
     expect(z.success).toBe(true);
     expect(z.display).toContain('PORTAINER_ZURUECK authProxy Stack proxy-prod: Datei ');
     expect(a.holeDatei()).toBe(DATEI);
+  });
+
+  it('v1973: Env nur im laufenden Container → image_setzen verweigert, nichts geändert; list_stacks nennt nur den Namen', async () => {
+    const { s, a } = await skill({ zusatzEnv: ['GEHEIM_TOKEN=wert123'] });
+    const r = await s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU }, imChange);
+    expect(r.error).toContain('Laufzeit weicht von Image + Stack-Datei ab (Env GEHEIM_TOKEN)');
+    expect(r.data).toBeUndefined();
+    expect(a.aufrufe.some(x => x.methode === 'PUT')).toBe(false);
+    const l = await s.execute({ action: 'list_stacks', zugang: 'authProxy' }, imChat);
+    expect(l.display).toContain('Laufzeit weicht ab: app GEHEIM_TOKEN');
+    expect(JSON.stringify(l)).not.toContain('wert123');
   });
 
   it('abweichender Ist-Stand → nichts geändert, nicht „teilweise“', async () => {
