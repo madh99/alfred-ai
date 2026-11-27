@@ -585,7 +585,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.kosten => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : KostenAnsicht(json: server!.json), // 1.71.0
           Ansicht.notizen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : NotizenAnsicht(json: server!.json), // 1.71.0
           Ansicht.wissen => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : WissenAnsicht(json: server!.json), // 1.71.0
-          Ansicht.changes => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : ChangesAnsicht(json: server!.json, aufNachfragen: _nachfragen, aufBestaetigungen: () => _neu(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), aufAnzahl: (n) { if (mounted && n != changesOffen) _neu(() => changesOffen = n); }), // 1.75.0
+          Ansicht.changes => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : ChangesAnsicht(json: server!.json, aufNachfragen: _nachfragen, aufSenden: (t) { _neu(() => ansicht = Ansicht.chat); _senden(text: t); }, aufBestaetigungen: () => _neu(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), aufAnzahl: (n) { if (mounted && n != changesOffen) _neu(() => changesOffen = n); }), // 1.75.0
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
         };

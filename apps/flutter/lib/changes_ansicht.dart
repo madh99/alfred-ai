@@ -98,10 +98,12 @@ String changeStatusText(Map<String, dynamic> c) {
 }
 
 class ChangesAnsicht extends StatefulWidget {
-  const ChangesAnsicht({super.key, required this.json, required this.aufNachfragen, this.aufBestaetigungen, this.aufAnzahl, this.jetzt});
+  const ChangesAnsicht({super.key, required this.json, required this.aufNachfragen, this.aufSenden, this.aufBestaetigungen, this.aufAnzahl, this.jetzt});
   final JsonAbruf json;
   /// füllt die Chat-Eingabe vor (nicht senden)
   final void Function(String text) aufNachfragen;
+  /// 1.86.0 — Owner 27.11.: sendet sofort (nach Bestätigung im Dialog); ohne Angabe wie bisher nur vorfüllen
+  final void Function(String text)? aufSenden;
   /// öffnet die offenen Bestätigungen (dort steht die Freigabe-Frage)
   final VoidCallback? aufBestaetigungen;
   final void Function(int)? aufAnzahl;
@@ -115,6 +117,19 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
   String? fehler;
   Timer? takt;
   final offen = <String>{};
+
+  /// 1.86.0 — Bestätigen und sofort senden; ohne aufSenden wie bisher nur vorfüllen
+  Future<void> _direkt(BuildContext context, String frage, String text, String befehl) async {
+    final senden = widget.aufSenden;
+    if (senden == null) { widget.aufNachfragen(befehl); return; }
+    final ja = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(frage), content: Text(text),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Nein')),
+        FilledButton(key: const Key('direkt-ja'), onPressed: () => Navigator.pop(ctx, true), child: const Text('Ja, ausführen')),
+      ]));
+    if (ja == true) senden(befehl);
+  }
 
   DateTime get _jetzt => widget.jetzt?.call() ?? DateTime.now();
 
@@ -308,8 +323,9 @@ class _ChangesAnsichtState extends State<ChangesAnsicht> {
               FilledButton.tonalIcon(onPressed: () => widget.aufNachfragen('Change $kurz Schritt wiederholen'), icon: const Icon(Icons.replay, size: 18), label: const Text('Wiederholen …')),
               // Owner 02.11.: Überspringen gab es nur im Chat — Alfred lässt es nur bei lesenden/prüfenden Schritten zu und sagt sonst, warum nicht
               TextButton(key: Key('ueberspringen-$kurz'), onPressed: () => widget.aufNachfragen('Change $kurz Schritt ${lauf?['schritt'] ?? fertig + 1} überspringen'), child: const Text('Überspringen …')),
-              TextButton(onPressed: () => widget.aufNachfragen('Change $kurz Rückweg ausführen'), child: const Text('Rückweg …')),
-              TextButton(onPressed: () => widget.aufNachfragen('Change $kurz abbrechen'), child: const Text('Abbrechen …')),
+              // 1.86.0 — Owner 27.11.: „Rückweg …“ füllte nur die Eingabe, der erste Klick kam nie an → direkt mit Bestätigung
+              TextButton(key: Key('rueckweg-$kurz'), onPressed: () => _direkt(context, 'Rückweg ausführen?', 'Change $kurz „${c['titel'] ?? ''}“ wird über seine Rückweg-Schritte zurückgenommen.', 'Change $kurz Rückweg ausführen'), child: const Text('Rückweg')),
+              TextButton(key: Key('abbrechen-$kurz'), onPressed: () => _direkt(context, 'Change abbrechen?', 'Change $kurz „${c['titel'] ?? ''}“ wird abgebrochen, ohne Rückweg.', 'Change $kurz abbrechen'), child: const Text('Abbrechen')),
             ],
             // 1.79.0 — Owner 27.10.: Plan ändern lassen (vor der Freigabe oder ab dem Haltepunkt)
             if (status == 'submitted' || status == 'draft' || halt) TextButton.icon(key: Key('aendern-$kurz'), onPressed: () => widget.aufNachfragen(halt ? 'Change $kurz ab Schritt ${lauf?['schritt'] ?? fertig + 1} ändern: ' : 'Change $kurz ändern: '), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('Ändern lassen …')),

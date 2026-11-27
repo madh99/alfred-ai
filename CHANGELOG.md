@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — App 1.86.0: Rückweg und Abbrechen direkt mit Bestätigung
+
+- In der Changes-Ansicht der App lösen „Rückweg“ und „Abbrechen“ an einem angehaltenen Change nach einem Bestätigungsdialog sofort aus. Bisher schrieben sie nur den Text in die Eingabe, gesendet wurde erst mit „Senden“.
+- Anlass: Am 26.11. kam der erste Klick auf „Rückweg …“ für 89bba438 nie an, weil der vorgefüllte Text nicht gesendet wurde. Wiederholen, Überspringen und Ändern füllen weiter nur vor.
+
 ### Fixed — Echter Change-Stand am Ende der Antwort, Gegenprüfungs-Befunde in der A2-Runde beantwortbar (v1971)
 
 - Berührt eine Antwortrunde einen Change (Anzeigen, Ändern, Freigabe anfragen, Steuern) und ändert sich dessen Status, bevor die Antwort fertig ist, steht unter der Antwort der Stand laut Datenbank, mit Uhrzeit. Ist der Stand nicht lesbar, sagt die Zeile das ausdrücklich.

@@ -2,7 +2,7 @@ import 'package:alfred_app/changes_ansicht.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// 1.75.0 — Changes-Ansicht (Owner 22.10.): Gruppen nach Status/Laufphase, Zähler, Knöpfe füllen nur die Eingabe vor
+// 1.75.0 — Changes-Ansicht (Owner 22.10.): Gruppen nach Status/Laufphase, Zähler, Knöpfe füllen die Eingabe vor (1.86.0: Rückweg/Abbrechen direkt mit Bestätigung)
 final _jetzt = DateTime.utc(2026, 10, 22, 22, 0);
 
 Map<String, dynamic> _daten() => {
@@ -88,6 +88,36 @@ void main() {
     await t.pump();
     expect(find.text('1. Jobs lesen'), findsOneWidget);
     await t.pumpWidget(const SizedBox()); // Takt beenden
+  });
+
+  testWidgets('1.86.0: Rückweg und Abbrechen senden nach Bestätigung direkt; Nein sendet nichts; ohne aufSenden nur vorfüllen', (t) async {
+    final gesendet = <String>[], vorgefuellt = <String>[];
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChangesAnsicht(
+      json: (p, {methode = 'GET', koerper}) async => _daten(), aufNachfragen: vorgefuellt.add, aufSenden: gesendet.add, jetzt: () => _jetzt))));
+    await t.pump();
+    await t.tap(find.byKey(const Key('rueckweg-f94cb2cd')));
+    await t.pumpAndSettle();
+    expect(find.text('Rückweg ausführen?'), findsOneWidget);
+    expect(find.textContaining('pgAdmin umziehen'), findsWidgets);
+    await t.tap(find.text('Nein'));
+    await t.pumpAndSettle();
+    expect(gesendet, isEmpty);
+    await t.tap(find.byKey(const Key('rueckweg-f94cb2cd')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('direkt-ja')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('abbrechen-f94cb2cd')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('direkt-ja')));
+    await t.pumpAndSettle();
+    expect(gesendet, ['Change f94cb2cd Rückweg ausführen', 'Change f94cb2cd abbrechen']);
+    expect(vorgefuellt, isEmpty);
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChangesAnsicht(
+      json: (p, {methode = 'GET', koerper}) async => _daten(), aufNachfragen: vorgefuellt.add, jetzt: () => _jetzt))));
+    await t.pump();
+    await t.tap(find.byKey(const Key('rueckweg-f94cb2cd')));
+    expect(vorgefuellt, ['Change f94cb2cd Rückweg ausführen']);
+    await t.pumpWidget(const SizedBox());
   });
 
   testWidgets('1.76.0: vorgeschlagene Architektur zeigt eine Karte; Annehmen füllt nur die Eingabe vor und zählt mit', (t) async {
