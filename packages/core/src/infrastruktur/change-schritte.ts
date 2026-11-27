@@ -48,6 +48,10 @@ const VERNEINUNG = /(^|[^\p{L}])(nicht|kein|keine|keinen|keiner|not|no longer|fe
  * Parameterwert oder eine IPv4-Adresse sein. Wortlaut bei Änderungen an den Skills nachziehen.
  */
 export const FESTE_AUSGABEN: Readonly<Record<string, string>> = {
+  // Owner 27.11. — Portainer-Skill (portainer-skill.ts): Wortlaut je Stack bzw. Ergebnis
+  'portainer.list_stacks': '{zugang}: Stack {name} (ID {id}, Endpunkt {id}, aktiv | inaktiv): Dienste {liste}; Portainer-Variablen {liste}; Datei-SHA256 {hash}',
+  'portainer.image_setzen': 'PORTAINER_IMAGE_GESETZT {zugang} Stack {name} Dienst {dienst}: {alt} → {image}; Container läuft',
+  'portainer.stack_zuruecksetzen': 'PORTAINER_ZURUECK {zugang} Stack {name}: Datei {hash} wiederhergestellt; Container laufen',
   'proxmox.agent_status': 'Gast-Agent auf VM {vmid} {name} ({node}) antwortet — IPv4: {ip} ({schnittstelle})',
   'fernzugriff.pruefen': 'Verbindung ok: {hostname} ({benutzer}@{host}, Windows/PowerShell). Lesen über die feste Windows-Leseliste, alles andere mit Bestätigung. '
     + '| Verbindung ok: {hostname} ({benutzer}@{host}). sudo ohne Passwort: ja | nein — Befehle laufen dann ohne root. Lese-Käfig: aktiv | nicht verfügbar '
@@ -277,6 +281,8 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
   linux_ha: new Set(['ha_vorbereiten', 'cluster_anlegen', 'cluster_entfernen', 'fencing_pruefen', 'fencing_belegen', 'ag_anlegen', 'ag_entfernen', 'ag_failover',
     // I8e Folge-Etappe — Standby: standby-Attribut in crm_mon zurückgelesen
     'knoten_standby']),
+  // Owner 27.11. — Portainer: image_setzen liest Datei und Container (Config.Image, running) zurück; zurücksetzen prüft Datei-Hash und Container
+  portainer: new Set(['image_setzen', 'stack_zuruecksetzen']),
 };
 /**
  * I8e Paket 2 Task 3 — Aktionen, die immer einen echten Rückweg brauchen, auch beim Neuaufbau: cluster_anlegen wirkt auf alle drei
@@ -285,6 +291,10 @@ const SELBST_GEPRUEFT_JE_SKILL: Readonly<Record<string, ReadonlySet<string>>> = 
 const RUECKWEG_PFLICHT_JE_SKILL: Readonly<Record<string, ReadonlyMap<string, { skill: string; aktion: string; text: string; parameter?: (hin: Record<string, unknown>, rueck: Record<string, unknown>) => string | undefined }>>> = {
   // Task 5 — ag_anlegen wirkt auf alle drei Knoten und den Cluster: Rückweg genau linux_ha.ag_entfernen
   // Task 6 — ag_failover: Rückweg genau ag_failover zurück zum bisherigen Primär (zugang und ziel vertauscht)
+  // Owner 27.11. — Portainer: image_setzen sichert die bisherige Stack-Datei, Rückweg genau stack_zuruecksetzen auf demselben Zugang und Stack
+  portainer: new Map([
+    ['image_setzen', { skill: 'portainer', aktion: 'stack_zuruecksetzen', text: 'portainer.stack_zuruecksetzen (zugang, stack wie image_setzen)', parameter: gleicherStack }],
+  ]),
   linux_ha: new Map([
     ['cluster_anlegen', { skill: 'linux_ha', aktion: 'cluster_entfernen', text: 'linux_ha.cluster_entfernen (zugang, cluster)' }],
     ['ag_anlegen', { skill: 'linux_ha', aktion: 'ag_entfernen', text: 'linux_ha.ag_entfernen (zugang, ag)' }],
@@ -334,6 +344,14 @@ function adminAnmeldungZurueck(hin: Record<string, unknown>, rueck: Record<strin
   return h && r && h !== r ? `admin_anmeldung_entfernen: rueckweg gruppe ${String(hin.gruppe)} wie admin_anmeldung_einrichten (nicht ${String(rueck.gruppe)})` : undefined;
 }
 /** Etappe 3 Task 4: der Rückweg wirkt auf denselben Host (Verweise erst zur Laufzeit); Task 4a: für jede Rückweg-Aktion */
+/** Owner 27.11. — Portainer-Rückweg: derselbe Zugang und derselbe Stack (Verweise erst zur Laufzeit) */
+function gleicherStack(hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined {
+  const z = gleicherZugang('stack_zuruecksetzen')(hin, rueck);
+  if (z) return z;
+  const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim() : typeof v === 'number' ? String(v) : undefined);
+  const [h, r] = [n(hin.stack), n(rueck.stack)];
+  return !r ? 'stack_zuruecksetzen braucht stack wie image_setzen' : h && h !== r ? `stack_zuruecksetzen muss denselben Stack zurücksetzen — rueckweg stack ${h} (nicht ${r})` : undefined;
+}
 function gleicherZugang(aktion: string) {
   return (hin: Record<string, unknown>, rueck: Record<string, unknown>): string | undefined => {
     const n = (v: unknown) => (typeof v === 'string' && !v.includes('{{') ? v.trim().toLowerCase() : undefined);
@@ -521,7 +539,7 @@ export interface PruefKontext {
 
 /** I8e — Betriebssystem, auf dem die Aktionen eines Skills laufen (Schlüssel = Skillname); fernzugriff gehört nicht dazu (läuft auf beiden) */
 export const ZIELSYSTEM: Readonly<Record<string, 'linux' | 'windows'>> = {
-  linux_sql: 'linux', linux_ha: 'linux',
+  linux_sql: 'linux', linux_ha: 'linux', portainer: 'linux', // Owner 27.11. — Portainer läuft auf Linux-Docker-Hosts
   windows_ad: 'windows', windows_pki: 'windows', windows_cluster: 'windows',
   sql_server: 'windows', pki_lab: 'windows',
 };

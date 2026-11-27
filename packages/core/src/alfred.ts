@@ -7302,6 +7302,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           protokoll: (msg, daten) => this.logger.info(daten, msg),
         }));
         this.logger.info('Linux-SQL-Skill registriert');
+        // Owner 27.11. — Portainer-Stacks über die API (Token aus dem Tresor, Pinning über den Fernzugang); ändernd nur in Changes
+        const { PortainerSkill } = await import('./infrastruktur/portainer-skill.js');
+        const { pinnedFetch } = await import('@alfred/skills');
+        skillRegistry.register(new PortainerSkill({
+          hostLesen: (zugang, skript) => { if (!this.fernzugriffRef) throw new Error('Fernzugriff nicht verfügbar'); return this.fernzugriffRef.ausfuehrenIntern(zugang, skript, true, 60_000); },
+          hostAdresse: async (zugang) => { if (!this.fernzugriffRef) return undefined; return (await this.fernzugriffRef.aktiveZugaenge()).find(z => z.name === zugang && z.system !== 'windows')?.host; },
+          tresor: {
+            namen: async () => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.namen(o); },
+            lies: async (name, wofuer) => { const o = ownerAd(); if (!o || !this.tresor) throw new Error('Tresor nicht verfügbar'); return this.tresor.lies(o, name, wofuer); },
+          },
+          pinnedFetch,
+          sicherungsOrdner: path.resolve(process.cwd(), 'data', 'portainer-sicherung'),
+          protokoll: (msg, daten) => this.logger.info(daten, msg),
+        }));
+        this.logger.info('Portainer-Skill registriert');
         // I8e Paket 2 — SQL Server AG auf Linux (Pacemaker, diskless SBD) über registrierte Bash-Bausteine (nur in Changes außer status);
         // hacluster-Kennwort erzeugt der Skill im Tresor (sqllnx-ha-hacluster)
         const { LinuxHaSkill } = await import('./infrastruktur/linux-ha-skill.js');

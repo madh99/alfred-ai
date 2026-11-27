@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Portainer-Skill: Stacks über die Portainer-API (v1972)
+
+- Neuer Skill `portainer`. Zugang ist der Linux-Fernzugang des Portainer-Hosts, das API-Token liegt im Tresor als `portainer-<zugang>`.
+- Verbindung über HTTPS mit Zertifikat-Pinning: Der SHA-256-Fingerabdruck wird bei jedem Aufruf über den SSH-Fernzugang aus dem `/data`-Mount des Portainer-Containers gelesen und auf derselben TLS-Verbindung geprüft, die das Token trägt. Kein Klartext-Port, keine abgeschaltete Zertifikatsprüfung.
+- `list_stacks` (lesend): je Stack die Dienste mit Image, die Namen der in Portainer gespeicherten Variablen (ohne Werte) und der SHA-256 der Stack-Datei.
+- `image_setzen` (nur in freigegebenen Changes): ersetzt genau die image-Zeile eines Dienstes. Portainer stellt mit denselben gespeicherten Variablen neu bereit, ohne Pull und ohne Prune. Die bisherige Datei wird gesichert. Erfolg gilt nur, wenn die Datei zurückgelesen das neue Image enthält und der Container damit läuft.
+- Pflicht-Rückweg ist `stack_zuruecksetzen` auf demselben Zugang und Stack: Die gesicherte Datei wird wieder bereitgestellt, danach werden Datei-Hash und Container geprüft.
+- Anlass: Am 27.11. brauchte der NPM-Change einen Owner-Schritt in Portainer. Node-RED (42ed9669) brach mit `NR_STACK_ENV_DRIFT` ab, weil Portainer Stack-Variablen in seiner Datenbank führt und ein Neuaufbau an Portainer vorbei sie verlieren würde.
+
 ### Changed — App 1.86.0: Rückweg und Abbrechen direkt mit Bestätigung
 
 - In der Changes-Ansicht der App lösen „Rückweg“ und „Abbrechen“ an einem angehaltenen Change nach einem Bestätigungsdialog sofort aus. Bisher schrieben sie nur den Text in die Eingabe, gesendet wurde erst mit „Senden“.
