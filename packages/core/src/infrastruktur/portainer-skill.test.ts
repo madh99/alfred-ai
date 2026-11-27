@@ -11,7 +11,7 @@ const DATEI = `version: '3'\nservices:\n  app:\n    image: 'jc21/nginx-proxy-man
 const NEU = 'jc21/nginx-proxy-manager:latest@sha256:' + 'a'.repeat(64);
 const TOKEN = 'ptr_geheimestoken123';
 
-function aufbau(o: { datei?: string; containerImage?: (datei: string) => string; putFehler?: boolean; zusatzEnv?: string[] } = {}) {
+function aufbau(o: { datei?: string; containerImage?: (datei: string) => string; putFehler?: boolean; zusatzEnv?: string[]; dbEnv?: string[]; ohneDb?: boolean } = {}) {
   let datei = o.datei ?? DATEI;
   const aufrufe: Array<{ url: string; methode: string; koerper?: unknown; fp: string; token?: string }> = [];
   const stack = { Id: 1, Name: 'proxy-prod', Type: 2, EndpointId: 2, Status: 1, Env: [{ name: 'DB_PASS', value: 'sehrgeheim' }] };
@@ -26,11 +26,11 @@ function aufbau(o: { datei?: string; containerImage?: (datei: string) => string;
     if (p === '/api/stacks/1' && methode === 'PUT') { if (o.putFehler) return antwort({ message: 'kaputt ' + TOKEN }, 500); datei = (koerper as { StackFileContent: string }).StackFileContent; return antwort(stack); }
     if (p === '/api/endpoints/2/docker/containers/json') {
       const f = JSON.parse(new URL(url).searchParams.get('filters')!).label as string[];
-      const alle = dienstImages(datei).map(d => ({ Id: `c-${d.dienst}`, Image: 'sha256:egal', State: 'running', Labels: { 'com.docker.compose.service': d.dienst } }));
+      const alle = dienstImages(datei).filter(d => !(o.ohneDb && d.dienst === 'db')).map(d => ({ Id: `c-${d.dienst}`, Image: 'sha256:egal', State: 'running', Labels: { 'com.docker.compose.service': d.dienst } }));
       return antwort(alle.filter(c => f.every(l => !l.startsWith('com.docker.compose.service=') || l.endsWith(`=${c.Labels['com.docker.compose.service']}`))));
     }
     const m = /^\/api\/endpoints\/2\/docker\/containers\/c-([\w-]+)\/json$/.exec(p);
-    if (m) { const d = dienstImages(datei).find(x => x.dienst === m[1]); return antwort({ Config: { Image: o.containerImage ? o.containerImage(datei) : d?.image, Env: ['PATH=/usr/bin', ...(m[1] === 'app' ? ['TZ=Europe/Vienna', ...(o.zusatzEnv ?? [])] : [])] }, State: { Status: 'running' }, Image: 'sha256:img' }); }
+    if (m) { const d = dienstImages(datei).find(x => x.dienst === m[1]); return antwort({ Config: { Image: o.containerImage ? o.containerImage(datei) : d?.image, Env: ['PATH=/usr/bin', ...(m[1] === 'app' ? ['TZ=Europe/Vienna', ...(o.zusatzEnv ?? [])] : (o.dbEnv ?? []))] }, State: { Status: 'running' }, Image: 'sha256:img' }); }
     if (p === '/api/endpoints/2/docker/images/sha256%3Aimg/json' || p === '/api/endpoints/2/docker/images/sha256:img/json') return antwort({ Config: { Env: ['PATH=/usr/bin'] } });
     return antwort({ message: 'unbekannt' }, 404);
   };
@@ -75,8 +75,8 @@ describe('v1973 Laufzeit gegen Image + Stack-Datei', () => {
     expect([...dienstUmgebung(d, 'b').schluessel]).toEqual(['FOO', 'BAZ']);
   });
   it('nur Namen, die weder die Datei setzt noch das Image mit gleichem Wert liefert', () => {
-    expect(envAbweichung(['PATH=/a', 'TZ=Europe/Vienna', 'NODE_OPTIONS=--x', 'HOME=/x'], ['PATH=/a', 'HOME=/root'], new Set(['TZ']))).toEqual(['HOME', 'NODE_OPTIONS']);
-    expect(envAbweichung(['PATH=/a', 'TZ=x'], ['PATH=/a'], new Set(['TZ']))).toEqual([]);
+    expect(envAbweichung(['PATH=/a', 'TZ=Europe/Vienna', 'NODE_OPTIONS=--x', 'HOME=/x'], ['PATH=/a', 'HOME=/root'], new Set(['TZ']))).toEqual({ fehlend: ['NODE_OPTIONS'], ausImage: ['HOME'] });
+    expect(envAbweichung(['PATH=/a', 'TZ=x'], ['PATH=/a'], new Set(['TZ']))).toEqual({ fehlend: [], ausImage: [] });
   });
 });
 
@@ -120,12 +120,38 @@ describe('Portainer-Skill: Ausführung', () => {
   it('v1973: Env nur im laufenden Container → image_setzen verweigert, nichts geändert; list_stacks nennt nur den Namen', async () => {
     const { s, a } = await skill({ zusatzEnv: ['GEHEIM_TOKEN=wert123'] });
     const r = await s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU }, imChange);
-    expect(r.error).toContain('Laufzeit weicht von Image + Stack-Datei ab (Env GEHEIM_TOKEN)');
+    expect(r.error).toContain('Laufzeit weicht von Image + Stack-Datei ab (Env GEHEIM_TOKEN fehlt im Image');
     expect(r.data).toBeUndefined();
     expect(a.aufrufe.some(x => x.methode === 'PUT')).toBe(false);
     const l = await s.execute({ action: 'list_stacks', zugang: 'authProxy' }, imChat);
-    expect(l.display).toContain('Laufzeit weicht ab: app GEHEIM_TOKEN');
+    expect(l.display).toContain('Laufzeit weicht ab: app fehlt im Image GEHEIM_TOKEN');
     expect(JSON.stringify(l)).not.toContain('wert123');
+  });
+
+  it('v1974: alte Image-Versionsvariable im Container → nur mit env_neu_aus_image = genau diese Namen', async () => {
+    const { s, a } = await skill({ zusatzEnv: ['PATH=/alt/bin'] });
+    const l = await s.execute({ action: 'list_stacks', zugang: 'authProxy' }, imChat);
+    expect(l.display).toContain('Laufzeit weicht ab: app neu aus dem Image PATH');
+    const ohne = await s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU }, imChange);
+    expect(ohne.error).toContain('env_neu_aus_image nennen (genannt: keine)');
+    expect(a.aufrufe.some(x => x.methode === 'PUT')).toBe(false);
+    const mit = await s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU, env_neu_aus_image: ['PATH'] }, imChange);
+    expect(mit.error ?? '').not.toContain('env_neu_aus_image');
+    expect(a.aufrufe.some(x => x.methode === 'PUT')).toBe(true);
+  });
+
+  it('Sicherheitsprüfung: Abweichung oder fehlender Container in einem ANDEREN Dienst des Stacks → nichts geändert', async () => {
+    const x = await skill({ dbEnv: ['NUR_HIER=1'] });
+    const r = await x.s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU }, imChange);
+    expect(r.error).toContain('andere Dienste weichen ab (db NUR_HIER)');
+    expect(x.a.aufrufe.some(y => y.methode === 'PUT')).toBe(false);
+    const o = await skill({ ohneDb: true });
+    const l = await o.s.execute({ action: 'list_stacks', zugang: 'authProxy' }, imChat);
+    expect(l.display).toContain('Laufzeit nicht prüfbar: db (kein Container)');
+    expect(l.display).not.toContain('Laufzeit = Datei');
+    const r2 = await o.s.execute({ action: 'image_setzen', zugang: 'authProxy', stack: '1', dienst: 'app', image: NEU }, imChange);
+    expect(r2.error).toContain('Dienst db ohne laufenden Container');
+    expect(o.a.aufrufe.some(y => y.methode === 'PUT')).toBe(false);
   });
 
   it('abweichender Ist-Stand → nichts geändert, nicht „teilweise“', async () => {

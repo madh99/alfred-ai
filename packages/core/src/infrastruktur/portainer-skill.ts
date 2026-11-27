@@ -105,10 +105,13 @@ export function dienstUmgebung(datei: string, dienst: string): { schluessel: Set
  * v1973 — Laufzeit gegen Image + Stack-Datei (nur Namen): Namen im Container, die die Datei nicht setzt und die nicht (mit gleichem
  * Wert) aus dem Image kommen. Eine Neubereitstellung durch Portainer verlöre genau diese — Werte verlassen die Funktion nie.
  */
-export function envAbweichung(container: string[], image: string[], dateiSchluessel: Set<string>): string[] {
+export function envAbweichung(container: string[], image: string[], dateiSchluessel: Set<string>): { fehlend: string[]; ausImage: string[] } {
   const karte = (l: string[]) => new Map(l.map(v => { const i = v.indexOf('='); return i < 0 ? [v, ''] as const : [v.slice(0, i), v.slice(i + 1)] as const; }));
   const c = karte(container); const im = karte(image);
-  return [...c.keys()].filter(n => !dateiSchluessel.has(n) && (!im.has(n) || im.get(n) !== c.get(n))).sort();
+  const offen = [...c.keys()].filter(n => !dateiSchluessel.has(n) && (!im.has(n) || im.get(n) !== c.get(n)));
+  // v1974 — Realfall 27.11. (nodered_dev, rdp-prod, joomla db): Versionsvariablen des Images mit alten Werten (Portainer „Recreate/Duplicate“
+  // übernimmt alle Variablen fest). Die setzt eine Neubereitstellung wieder aus dem Image — das ist kein Verlust, aber eine Änderung.
+  return { fehlend: offen.filter(n => !im.has(n)).sort(), ausImage: offen.filter(n => im.has(n)).sort() };
 }
 
 /** Genau die image-Zeile eines Dienstes ersetzen; alles andere bleibt bytegleich. */
@@ -152,6 +155,7 @@ export class PortainerSkill extends Skill {
       + 'NUR als Schritte freigegebener Changes: image_setzen (zugang, stack = ID oder Name, dienst, image = repo:tag@sha256:…, datei_sha256 optional = erwarteter Ist-Stand) — '
       + 'ersetzt genau die image-Zeile des Dienstes, Portainer stellt mit denselben gespeicherten Variablen neu bereit (ohne Pull: Image vorher per Digest holen, ohne Prune), '
       + 'sichert die bisherige Datei; Erfolg nur, wenn die Datei zurückgelesen das neue Image hat und der Container des Dienstes mit genau diesem Image läuft — '
+      + 'Laufzeit: „Laufzeit = Datei“ oder „Laufzeit weicht ab: <dienst> fehlt im Image <namen>, neu aus dem Image <namen>“ — fehlt im Image: image_setzen verweigert immer; neu aus dem Image: nur mit env_neu_aus_image = genau diese Namen. '
       + 'Wortlaut „PORTAINER_IMAGE_GESETZT <zugang> Stack <name> Dienst <dienst>: <alt> → <neu>; Container läuft“. '
       + 'Rückweg genau stack_zuruecksetzen (zugang, stack) — stellt die vor image_setzen gesicherte Datei wieder bereit, Wortlaut „PORTAINER_ZURUECK <zugang> Stack <name>: Datei <hash> wiederhergestellt; Container laufen“. '
       + 'Statt Compose-Datei in Portainers Datenbereich ändern und docker compose selbst aufrufen.',
@@ -167,6 +171,7 @@ export class PortainerSkill extends Skill {
         dienst: { type: 'string', description: 'image_setzen: Dienst im Stack' },
         image: { type: 'string', description: 'image_setzen: neue Referenz, möglichst repo:tag@sha256:<digest>' },
         datei_sha256: { type: 'string', description: 'image_setzen optional: erwarteter SHA-256 der Stack-Datei vor der Änderung (aus list_stacks)' },
+        env_neu_aus_image: { type: 'array', items: { type: 'string' }, description: 'image_setzen: genau die Env-Namen aus list_stacks „neu aus dem Image“ (Container-Wert weicht vom Image ab, z. B. alte Versionsvariablen) — sonst verweigert' },
       },
       required: ['action', 'zugang'],
     },
@@ -238,16 +243,17 @@ export class PortainerSkill extends Skill {
   }
 
   /** v1973 — je Dienst die Env-Namen, die eine Neubereitstellung verlöre (Container gegen Image + Stack-Datei; nur Namen) */
-  private async abweichungen(api: Api, s: PortainerStack, datei: string, nurDienst?: string): Promise<Map<string, { namen: string[]; envFile: boolean }>> {
-    const aus = new Map<string, { namen: string[]; envFile: boolean }>();
+  private async abweichungen(api: Api, s: PortainerStack, datei: string, nurDienst?: string): Promise<Map<string, { fehlend: string[]; ausImage: string[]; envFile: boolean }>> {
+    const aus = new Map<string, { fehlend: string[]; ausImage: string[]; envFile: boolean }>();
     const imageEnv = new Map<string, string[]>();
     for (const c of await this.container(api, s, nurDienst)) {
       const dienst = c.Labels?.['com.docker.compose.service']; if (!dienst || !c.ImageID) continue;
       if (!imageEnv.has(c.ImageID)) imageEnv.set(c.ImageID, (await api.anfrage<{ Config?: { Env?: string[] } }>(`/api/endpoints/${s.EndpointId}/docker/images/${encodeURIComponent(c.ImageID)}/json`)).Config?.Env ?? []);
       const u = dienstUmgebung(datei, dienst);
-      const namen = envAbweichung(c.Env ?? [], imageEnv.get(c.ImageID)!, u.schluessel);
+      const ab = envAbweichung(c.Env ?? [], imageEnv.get(c.ImageID)!, u.schluessel);
       const alt = aus.get(dienst);
-      aus.set(dienst, { namen: [...new Set([...(alt?.namen ?? []), ...namen])].sort(), envFile: u.envFile });
+      const vereint = (x: string[], y: string[]) => [...new Set([...x, ...y])].sort();
+      aus.set(dienst, { fehlend: vereint(alt?.fehlend ?? [], ab.fehlend), ausImage: vereint(alt?.ausImage ?? [], ab.ausImage), envFile: u.envFile });
     }
     return aus;
   }
@@ -256,20 +262,25 @@ export class PortainerSkill extends Skill {
     const alle = await api.anfrage<PortainerStack[]>('/api/stacks');
     const zeilen: string[] = []; const daten: unknown[] = [];
     for (const s of alle) {
-      let dienste = 'Datei nicht lesbar'; let hash = '?'; let liste: unknown[] = []; let laufzeit = 'Laufzeit nicht geprüft'; let abw: Record<string, string[]> = {};
+      let dienste = 'Datei nicht lesbar'; let hash = '?'; let liste: unknown[] = []; let laufzeit = 'Laufzeit nicht geprüft'; let abw: Record<string, { fehlend: string[]; ausImage: string[] }> = {}; let nichtPruefbar: string[] = [];
       if (s.Type === 2) {
         try {
           const f = await this.datei(api, s); hash = sha(f); const di = dienstImages(f); liste = di.map(x => ({ dienst: x.dienst, image: x.image })); dienste = di.map(x => `${x.dienst}=${x.image ?? 'ohne image'}`).join(', ') || 'keine';
           try {
-            const ab = [...(await this.abweichungen(api, s, f)).entries()].filter(([, v]) => v.namen.length);
-            laufzeit = ab.length ? `Laufzeit weicht ab: ${ab.map(([d, v]) => `${d} ${v.namen.join(', ')}${v.envFile ? ' (env_file nicht prüfbar)' : ''}`).join('; ')}` : 'Laufzeit = Datei';
-            abw = Object.fromEntries(ab.map(([d, v]) => [d, v.namen]));
+            const alleAb = await this.abweichungen(api, s, f);
+            // Sicherheitsprüfung 27.11. — Dienst ohne vergleichbaren Container ist nicht „= Datei“, sondern nicht prüfbar
+            const ungeprueft = di.map(x => x.dienst).filter(d => !alleAb.has(d));
+            const ab = [...alleAb.entries()].filter(([, v]) => v.fehlend.length || v.ausImage.length);
+            const teil = (v: { fehlend: string[]; ausImage: string[]; envFile: boolean }) => [v.fehlend.length ? `fehlt im Image ${v.fehlend.join(', ')}${v.envFile ? ' (env_file nicht prüfbar)' : ''}` : '', v.ausImage.length ? `neu aus dem Image ${v.ausImage.join(', ')}` : ''].filter(Boolean).join(', ');
+            laufzeit = [ab.length ? `Laufzeit weicht ab: ${ab.map(([d, v]) => `${d} ${teil(v)}`).join('; ')}` : '', ungeprueft.length ? `Laufzeit nicht prüfbar: ${ungeprueft.join(', ')} (kein Container)` : ''].filter(Boolean).join('; ') || 'Laufzeit = Datei';
+            nichtPruefbar = ungeprueft;
+            abw = Object.fromEntries(ab.map(([d, v]) => [d, { fehlend: v.fehlend, ausImage: v.ausImage }]));
           } catch { laufzeit = 'Laufzeit nicht lesbar'; }
         } catch { /* bleibt „nicht lesbar“ */ }
       } else dienste = `kein Compose-Stack (Typ ${s.Type})`;
       const env = (s.Env ?? []).map(e => e.name).filter(Boolean);
       zeilen.push(`${zugang}: Stack ${s.Name} (ID ${s.Id}, Endpunkt ${s.EndpointId}, ${s.Status === 2 ? 'inaktiv' : 'aktiv'}): Dienste ${dienste}; Portainer-Variablen ${env.length ? env.join(', ') : 'keine'}; Datei-SHA256 ${hash}; ${laufzeit}`);
-      daten.push({ id: s.Id, name: s.Name, endpunkt: s.EndpointId, aktiv: s.Status !== 2, dienste: liste, variablen: env, dateiSha256: hash, laufzeitAbweichung: abw });
+      daten.push({ id: s.Id, name: s.Name, endpunkt: s.EndpointId, aktiv: s.Status !== 2, dienste: liste, variablen: env, dateiSha256: hash, laufzeitAbweichung: abw, laufzeitNichtPruefbar: nichtPruefbar });
     }
     return { success: true, data: daten, display: zeilen.join('\n') || `${zugang}: keine Stacks` };
   }
@@ -291,9 +302,18 @@ export class PortainerSkill extends Skill {
     if (erwartet && erwartet !== sha(alt)) return { success: false, error: `Stack ${s.Name}: Datei weicht vom erwarteten Stand ab (ist ${sha(alt)}) — nichts geändert` };
     const { datei: neu, vorher } = imageErsetzen(alt, dienst, image);
     // v1973 — eine Neubereitstellung verlöre Env-Namen, die nur im laufenden Container stehen → nichts ändern (fail-closed)
-    const ab = (await this.abweichungen(api, s, alt, dienst)).get(dienst);
+    // Sicherheitsprüfung 27.11. — Portainer stellt den GANZEN Stack neu bereit: jeder Dienst braucht einen geprüften Container ohne Abweichung
+    const alleAb = await this.abweichungen(api, s, alt);
+    const ohne = dienstImages(alt).map(x => x.dienst).filter(d => d !== dienst && !alleAb.has(d));
+    if (ohne.length) return { success: false, error: `Stack ${s.Name}: Dienst ${ohne.join(', ')} ohne laufenden Container — eine Neubereitstellung würde ihn anlegen/starten, nichts geändert` };
+    const andere = [...alleAb.entries()].filter(([d, v]) => d !== dienst && (v.fehlend.length || v.ausImage.length));
+    if (andere.length) return { success: false, error: `Stack ${s.Name}: andere Dienste weichen ab (${andere.map(([d, v]) => `${d} ${[...v.fehlend, ...v.ausImage].join(', ')}`).join('; ')}) — die Neubereitstellung des ganzen Stacks beträfe sie, nichts geändert` };
+    const ab = alleAb.get(dienst);
     if (!ab) return { success: false, error: `Stack ${s.Name} Dienst ${dienst}: kein Container gefunden — Laufzeit nicht prüfbar, nichts geändert` };
-    if (ab.namen.length) return { success: false, error: `Stack ${s.Name} Dienst ${dienst}: Laufzeit weicht von Image + Stack-Datei ab (Env ${ab.namen.join(', ')}${ab.envFile ? '; env_file nicht prüfbar' : ''}) — Neubereitstellung verlöre sie, nichts geändert. Erst in die Stack-Datei übernehmen.` };
+    if (ab.fehlend.length) return { success: false, error: `Stack ${s.Name} Dienst ${dienst}: Laufzeit weicht von Image + Stack-Datei ab (Env ${ab.fehlend.join(', ')} fehlt im Image${ab.envFile ? '; env_file nicht prüfbar' : ''}) — Neubereitstellung verlöre sie, nichts geändert. Erst in die Stack-Datei übernehmen.` };
+    // v1974 — Image-Variablen mit abweichendem Wert nur, wenn der Plan genau diese Namen nennt (die Freigabe zeigt sie dem Owner)
+    const genannt = Array.isArray(input.env_neu_aus_image) ? (input.env_neu_aus_image as unknown[]).map(String).sort() : [];
+    if (ab.ausImage.length && genannt.join(',') !== ab.ausImage.join(',')) return { success: false, error: `Stack ${s.Name} Dienst ${dienst}: Env ${ab.ausImage.join(', ')} hat im Container andere Werte als im Image und käme neu aus dem Image — im Plan genau diese Namen als env_neu_aus_image nennen (genannt: ${genannt.join(', ') || 'keine'}), nichts geändert` };
     if (vorher === image) return { success: true, display: `PORTAINER_IMAGE_GESETZT ${zugang} Stack ${s.Name} Dienst ${dienst}: ${vorher} → ${image}; Container läuft (war schon gesetzt, nichts geändert)` };
     await mkdir(this.d.sicherungsOrdner, { recursive: true, mode: 0o700 });
     const pfad = this.sicherungsPfad(zugang, s);

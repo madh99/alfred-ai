@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Portainer: alte Image-Variablen von echten Verlusten getrennt (v1974)
+
+- Die Laufzeitprüfung unterscheidet jetzt zwei Fälle:
+  - **fehlt im Image:** Der Name steht weder in der Stack-Datei noch im Image. `image_setzen` verweigert immer.
+  - **neu aus dem Image:** Der Name kommt aus dem Image, steht im Container aber mit anderem Wert. `image_setzen` läuft nur, wenn der Plan genau diese Namen als `env_neu_aus_image` nennt. So sieht der Owner sie bei der Freigabe.
+- `image_setzen` prüft jetzt den ganzen Stack, weil Portainer ihn ganz neu bereitstellt. Der Skill verweigert, sobald ein anderer Dienst abweicht oder keinen laufenden Container hat; dieser würde beim Neubereitstellen sonst angelegt oder gestartet. `list_stacks` meldet Dienste ohne vergleichbaren Container als „Laufzeit nicht prüfbar“ statt „Laufzeit = Datei“. Beides geht auf Befunde der Sicherheitsprüfung zurück.
+- Anlass: Am 27.11. wichen bei `nodered_dev`, `rdp-prod` und der Joomla-Datenbank nur Versionsvariablen des Images ab (`NODE_RED_VERSION`, `GUAC_VER`, `MYSQL_VERSION` …). Portainer übernimmt bei „Recreate“ und „Duplicate“ alle Variablen fest. Bei einem Image-Update sollen diese Werte aus dem neuen Image kommen.
+
 ### Added — Portainer: Laufzeit gegen Image und Stack-Datei (v1973)
 
 - `list_stacks` meldet je Dienst die Namen von Umgebungsvariablen, die nur im laufenden Container stehen: weder in der Stack-Datei (`environment`) gesetzt noch mit gleichem Wert aus dem Image. Ausgegeben werden nur Namen, nie Werte. Ist ein `env_file` eingebunden, wird es als nicht prüfbar genannt.
