@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Echter Change-Stand am Ende der Antwort, Gegenprüfungs-Befunde in der A2-Runde beantwortbar (v1971)
+
+- Berührt eine Antwortrunde einen Change (Anzeigen, Ändern, Freigabe anfragen, Steuern) und ändert sich dessen Status, bevor die Antwort fertig ist, steht unter der Antwort der Stand laut Datenbank, mit Uhrzeit. Ist der Stand nicht lesbar, sagt die Zeile das ausdrücklich.
+  - Anlass: Am 26.11. um 20:26 meldete die Antwort „Keiner der drei Changes wurde ausgeführt“. Die Runde hatte vor der Freigabe begonnen, Open WebUI (943b8254) war aber seit 20:22 abgeschlossen.
+- In der unbeaufsichtigten Schwachstellen-Planungsrunde (A2) ist `change_aendern` jetzt erlaubt, aber nur für eigene A2-Changes (Titel „A2 xxxxxxxx – “) im Entwurf oder eingereicht. Der Planungsauftrag nennt das Beantworten der Befunde ausdrücklich.
+  - Anlass: Am 27.11. schickte die Gegenprüfung die nachts geplanten Changes 373bea9e (Nginx Proxy Manager) und 29555483 (EMHASS) in den Entwurf. Beantworten ging nur mit dem gesperrten `change_aendern`, beide blieben ohne Freigabe-Anfrage liegen.
+
 ### Fixed — Rückweg nimmt einen gescheiterten ändernden Befehl mit zurück (v1970)
 
 - Endet ein ändernder Fernzugriff-Befehl eines Change-Schritts mit einem Exit-Code ungleich 0, gilt der Schritt jetzt als teilweise ausgeführt. Sein eigener Rückweg gehört damit zu „Rückweg ausführen“ und zu einem im Plan vorgesehenen automatischen Rückweg. Außerdem belegt ein so angehaltener Change sein Asset, und der Schritt ist nicht überspringbar.

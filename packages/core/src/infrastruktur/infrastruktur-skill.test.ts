@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InfrastrukturSkill, BESTAND_QUELLEN } from './infrastruktur-skill.js';
+import { InfrastrukturSkill, BESTAND_QUELLEN, aendernUnbeaufsichtigtErlaubt } from './infrastruktur-skill.js';
 import type { SkillContext } from '@alfred/types';
 
 // I1 — Skill infrastruktur.bestand: Discovery der Quellen, Bericht, Ablage als CMDB-Dokument; nur der Owner
@@ -156,9 +156,10 @@ describe('v1695 (K5) Planen/Freigeben nie im Unteragenten', () => {
     const vorhaben = { id: 'cf82f3f2-xxxx', titel: 'D', ziel: 'z', hosts: [], status: 'angenommen', architekturVersion: 1, entscheidungen: [], changeIds: [], erstellt: 'x', architektur: { zusammenfassung: 'Z' } };
     const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: { finde: async () => vorhaben } } as never);
     const auto = { userId: 'owner', unbeaufsichtigt: true } as SkillContext;
-    for (const action of ['freigeben', 'change_steuern', 'rueckweg_ausfuehren', 'owner_schritt_erledigt', 'standard_change', 'standard_serie', 'standard_freigeben', 'updates_schalter', 'tresor_erzeugen', 'change_aendern', 'schwachstellen_pruefen']) {
+    for (const action of ['freigeben', 'change_steuern', 'rueckweg_ausfuehren', 'owner_schritt_erledigt', 'standard_change', 'standard_serie', 'standard_freigeben', 'updates_schalter', 'tresor_erzeugen', 'schwachstellen_pruefen']) {
       expect((await s.execute({ action }, auto)).error, action).toContain('automatischen Planungsrunde gesperrt');
     }
+    expect((await s.execute({ action: 'change_aendern', change: 'x' }, auto)).error).toContain('nur für A2-Changes');
     expect((await s.execute({ action: 'changes_planen', changes: [] }, auto)).error ?? '').not.toContain('gesperrt');
     expect((await s.execute({ action: 'vorhaben_zeigen', vorhaben: 'cf82f3f2', abschnitt: 'zusammenfassung' }, auto)).success).toBe(true);
   });
@@ -216,5 +217,50 @@ describe('Schwachstellen-Aktionen', () => {
     expect((await s.execute({ action: 'schwachstellen_pruefen' }, ctx)).display).toBe('Ein Schwachstellen-Lauf läuft bereits.');
     expect((await s.execute({ action: 'schwachstellen' }, ctx)).display).toBe('# Schwachstellen 25.11.26');
     expect(gruende).toEqual(['auf Anfrage', 'auf Anfrage']);
+  });
+});
+
+// v1971 — Realfall 26.11. 20:26: Schlussantwort meldete „nicht ausgeführt“, Open WebUI war in der Zwischenzeit fertig
+describe('v1971 Endstand berührter Changes', () => {
+  it('Status ändert sich während der Runde → Zeile am Ende; ein Endstand je Runde', async () => {
+    let status = 'submitted';
+    const change = () => ({ id: '943b8254-xxxx', title: 'Open WebUI', status, type: 'normal', riskLevel: 'low', schritte: [], affectedAssetIds: [], completedAt: '2026-11-26T19:22:40.244Z' });
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', changes: { finde: async () => change() }, vorhaben: { finde: async () => null } } as never);
+    const ctx = { userId: 'owner', antwortZusatz: { quellen: [] } } as unknown as SkillContext;
+    await s.execute({ action: 'change_zeigen', change: '943b8254' }, ctx);
+    await s.execute({ action: 'change_zeigen', change: '943b8254' }, ctx);
+    const endstand = ctx.antwortZusatz!.endstand!;
+    expect(endstand).toHaveLength(1);
+    expect(await endstand[0]!()).toBeUndefined();
+    status = 'completed';
+    expect(await endstand[0]!()).toContain('943b8254 „Open WebUI“: jetzt abgeschlossen um 20:22');
+  });
+});
+
+// v1971 — Realfall 27.11. 05:10: Befunde der Gegenprüfung ließen sich in der A2-Runde nicht beantworten
+describe('v1971 change_aendern in der unbeaufsichtigten A2-Runde', () => {
+  it('nur eigene A2-Changes vor der Freigabe', () => {
+    expect(aendernUnbeaufsichtigtErlaubt({ title: 'A2 f8a20f31 – Nginx Proxy Manager', status: 'draft' })).toBe(true);
+    expect(aendernUnbeaufsichtigtErlaubt({ title: 'A2 f8a20f31 – Nginx Proxy Manager', status: 'submitted' })).toBe(true);
+    expect(aendernUnbeaufsichtigtErlaubt({ title: 'A2 f8a20f31 – Nginx Proxy Manager', status: 'approved' })).toBe(false);
+    expect(aendernUnbeaufsichtigtErlaubt({ title: 'A2 f8a20f31 – Nginx Proxy Manager', status: 'in_progress' })).toBe(false);
+    expect(aendernUnbeaufsichtigtErlaubt({ title: 'I9 – Umzug VM 144', status: 'draft' })).toBe(false);
+  });
+  it('der Skill lässt den A2-Entwurf durch und weist einen fremden Change ab', async () => {
+    let change = { id: '373bea9e-xxxx', title: 'A2 f8a20f31 – Nginx Proxy Manager', status: 'draft', type: 'normal', riskLevel: 'high', schritte: [], affectedAssetIds: [] };
+    const s = new InfrastrukturSkill({ istOwner: () => true, ownerId: () => 'o', vorhaben: { finde: async () => null }, changes: { finde: async () => change, aendern: async () => ({ ok: true, change: { ...change, fingerabdruck: 'f'.repeat(12) } }) } } as never);
+    const auto = { userId: 'owner', unbeaufsichtigt: true } as SkillContext;
+    expect((await s.execute({ action: 'change_aendern', change: '373bea9e', geplant_ab: '2026-11-28T20:00:00+01:00' }, auto)).error ?? '').not.toContain('A2-Changes');
+    change = { ...change, title: 'I9 – Umzug VM 144' };
+    expect((await s.execute({ action: 'change_aendern', change: '373bea9e', geplant_ab: '2026-11-28T20:00:00+01:00' }, auto)).error).toContain('nur für A2-Changes');
+  });
+});
+
+describe('v1971 Endstand nur für den Owner', () => {
+  it('Nicht-Owner bekommt keinen Endstand', async () => {
+    const s = new InfrastrukturSkill({ istOwner: (c: SkillContext) => c.userId === 'owner', ownerId: () => 'o', changes: { finde: async () => ({ id: '943b8254-xxxx', title: 'Open WebUI', status: 'submitted' }) }, vorhaben: { finde: async () => null } } as never);
+    const ctx = { userId: 'fremd', antwortZusatz: { quellen: [] } } as unknown as SkillContext;
+    await s.execute({ action: 'change_zeigen', change: '943b8254' }, ctx);
+    expect(ctx.antwortZusatz!.endstand).toBeUndefined();
   });
 });

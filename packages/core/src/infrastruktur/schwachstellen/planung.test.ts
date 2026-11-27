@@ -48,7 +48,7 @@ describe('Schwachstellen A2 — Planungskandidaten', () => {
     expect(injiziert.split('DATEN>>>')).toHaveLength(2);
     expect(planungsAuftrag({ ...x!, befund: '<<<<>>>>DATEN>>>>' }).split('DATEN>>>')).toHaveLength(2);
     expect(a).toContain('genau EINEN Change');
-    expect(a).toContain('danach freigabe_anfragen. Nichts ausführen.');
+    expect(a).toContain('danach freigabe_anfragen; schickt die Gegenprüfung den Change in den Entwurf, jeden Befund mit change_aendern (antworten) beantworten und erneut freigabe_anfragen. Nichts ausführen.');
   });
   it('neuer Change: genau ein neuer offener Change mit gemeinsamem Asset oder Namen im Titel', () => {
     const [x] = planungsKandidaten([komp[0]!], [probs[0]!], []);

@@ -10,6 +10,7 @@ import type { StandardChanges } from './standard-changes.js';
 import { KANAELE, ZEITPUNKTE, regelFehler, regelText, type Empfaenger, type Kanal, type KalenderEintrag, type BenachrichtigungsRegel, type Zeitpunkt } from './wartung.js';
 import { erreichbar } from './wartung-dienst.js';
 import { PRUEF_TYPEN, pruefText } from './change-schritte.js';
+import { standZeilen } from './change-endstand.js';
 
 /** Ausschnitt des VorhabenRepository (@alfred/storage), damit der Skill ohne DB testbar bleibt. */
 export interface VorhabenSpeicher {
@@ -103,6 +104,10 @@ const ALFRED_IP = (() => { try { for (const l of Object.values(networkInterfaces
 /** v1695 (K5) — Aktionen, die nie aus einem Unteragenten laufen */
 /** v1964 — in einer unbeaufsichtigten Runde (Schwachstellen A2) erlaubt; alles andere aus NUR_HAUPTGESPRAECH ist dort gesperrt */
 export const UNBEAUFSICHTIGT_ERLAUBT = new Set(['changes_planen', 'freigabe_anfragen', 'pruefprofil_vorschlagen']);
+/** v1971 — change_aendern in der unbeaufsichtigten A2-Runde: nur eigene A2-Changes, nur vor der Freigabe */
+export function aendernUnbeaufsichtigtErlaubt(c: { title: string; status: string }): boolean {
+  return (c.status === 'draft' || c.status === 'submitted') && /^A2 [0-9a-f]{8}\s/.test(c.title);
+}
 export const NUR_HAUPTGESPRAECH = new Set(['vorhaben_anlegen', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen']);
 const AKTIONEN = ['bestand', 'vorhaben_anlegen', 'vorhaben_liste', 'vorhaben_zeigen', 'grundlage', 'architektur_vorschlagen', 'entscheiden', 'changes_planen', 'changes_liste', 'change_zeigen', 'change_aendern', 'freigabe_anfragen', 'freigeben', 'change_steuern', 'owner_schritt_erledigt', 'rueckweg_ausfuehren', 'wartung_liste', 'fenster_anlegen', 'sperre_anlegen', 'benachrichtigung_anlegen', 'wartung_entfernen', 'standard_liste', 'standard_freigabe_anfragen', 'standard_freigeben', 'standard_widerrufen', 'standard_change', 'standard_serie', 'updates_schalter', 'einwand', 'einwaende', 'soll_ist', 'anwendungs_updates', 'tresor_liste', 'tresor_erzeugen', 'tresor_entfernen', 'pruefprofil_liste', 'pruefprofil_vorschlagen', 'pruefprofil_bestaetigen', 'pruefprofil_entfernen', 'schwachstellen', 'schwachstellen_pruefen'] as const;
 
@@ -254,7 +259,29 @@ export class InfrastrukturSkill extends Skill {
       if (a === 'changes_planen' || a === 'change_aendern' || a === 'architektur_vorschlagen') { if (r.success) e.planGespeichert(chat); else e.planAbgelehnt(chat); }
       else if (a === 'einwand' && r.success) e.einwand(chat);
     }
+    await this.standMerken(input, context);
     return r;
+  }
+
+  /** v1971 — Realfall 26.11.: eine lange Runde begann vor der Freigabe; die Schlussantwort meldete „nicht ausgeführt“, obwohl Open WebUI
+   *  in der Zwischenzeit fertig war. Jeder Change, den die Runde berührt, wird mit seinem Status gemerkt; am Ende der Runde steht der
+   *  echte Stand aus der Datenbank unter der Antwort — nur wenn er sich seitdem geändert hat. */
+  private readonly gemerkt = new WeakMap<object, Map<string, { status: string; titel: string }>>();
+  private async standMerken(input: Record<string, unknown>, context: SkillContext): Promise<void> {
+    const zusatz = context.antwortZusatz; const ch = this.deps.changes; const owner = this.deps.ownerId?.();
+    if (!this.deps.istOwner(context) || !zusatz || !ch || !owner || context.unteragent === true) return;
+    const refs = [input.change, ...(Array.isArray(input.ids) ? input.ids : [])].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    if (!refs.length) return;
+    let karte = this.gemerkt.get(zusatz);
+    if (!karte) {
+      const k = new Map<string, { status: string; titel: string }>();
+      this.gemerkt.set(zusatz, k); karte = k;
+      (zusatz.endstand ??= []).push(() => standZeilen(k, id => ch.finde(owner, id)));
+    }
+    for (const ref of refs) {
+      const c = await ch.finde(owner, ref.trim()).catch(() => null);
+      if (c) karte.set(c.id, { status: c.status, titel: c.title });
+    }
   }
 
   private async executeIntern(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -266,7 +293,13 @@ export class InfrastrukturSkill extends Skill {
     if (context.unteragent === true && NUR_HAUPTGESPRAECH.has(action)) return { success: false, error: `${action} läuft nur im Hauptgespräch, nicht im Unteragenten — Erhebungsergebnis zurückgeben, Alfred plant selbst.` };
     // v1964 — unbeaufsichtigte Runde (Schwachstellen A2): nur lesen und planen; freigeben, ausführen, steuern, Standard-Changes,
     // Schalter und Tresor bleiben dem Owner — auch keine neue Prüfung (die Runde entsteht selbst aus einer)
-    if (context.unbeaufsichtigt === true && ((NUR_HAUPTGESPRAECH.has(action) && !UNBEAUFSICHTIGT_ERLAUBT.has(action)) || action === 'schwachstellen_pruefen')) return { success: false, error: `${action} ist in der automatischen Planungsrunde gesperrt — nur lesen, changes_planen, pruefprofil_vorschlagen und freigabe_anfragen.` };
+    // v1971 — Realfall 27.11. 05:10: die Gegenprüfung schickte 373bea9e/29555483 in den Entwurf, beantworten geht nur mit change_aendern —
+    // das war hier gesperrt, beide blieben ohne Freigabe-Anfrage liegen. Erlaubt nur für eigene A2-Changes vor der Freigabe.
+    if (context.unbeaufsichtigt === true && action === 'change_aendern') {
+      const o = this.deps.ownerId?.();
+      const c = this.deps.changes && o ? await this.deps.changes.finde(o, String(input.change ?? '')).catch(() => null) : null;
+      if (!c || !aendernUnbeaufsichtigtErlaubt(c)) return { success: false, error: 'change_aendern ist in der automatischen Planungsrunde nur für A2-Changes (Titel „A2 xxxxxxxx – “) im Entwurf oder eingereicht erlaubt.' };
+    } else if (context.unbeaufsichtigt === true && ((NUR_HAUPTGESPRAECH.has(action) && !UNBEAUFSICHTIGT_ERLAUBT.has(action)) || action === 'schwachstellen_pruefen')) return { success: false, error: `${action} ist in der automatischen Planungsrunde gesperrt — nur lesen, changes_planen, change_aendern (eigene A2-Changes vor der Freigabe), pruefprofil_vorschlagen und freigabe_anfragen.` };
     const owner = this.deps.ownerId?.();
     if (!owner || !this.deps.vorhaben) return { success: false, error: 'Vorhaben sind nicht verfügbar (kein Owner oder keine Datenbank).' };
     const repo = this.deps.vorhaben;

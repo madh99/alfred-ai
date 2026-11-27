@@ -101,7 +101,7 @@ export function planungsAuftrag(k: PlanKandidat, image?: string, ziel?: string):
     `- Sicherung bzw. Snapshot-Rückweg und Abnahme über das Prüfprofil (fehlt eines: pruefprofil_vorschlagen);`,
     `- betroffen = das CMDB-Asset des Containers bzw. seines Hosts;`,
     `- der Titel beginnt mit „${planungsMarke(k.problemId)} – “;`,
-    `- danach freigabe_anfragen. Nichts ausführen.`,
+    `- danach freigabe_anfragen; schickt die Gegenprüfung den Change in den Entwurf, jeden Befund mit change_aendern (antworten) beantworten und erneut freigabe_anfragen. Nichts ausführen.`,
     `Gibt es keinen sinnvollen Change (kein neueres Image, Hauptversionssprung mit Datenmigration, Daten gehören dem Owner), plane nichts und nenne den Grund in einem Satz.`,
   ].join('\n');
 }

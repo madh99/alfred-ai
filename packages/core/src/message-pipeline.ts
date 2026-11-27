@@ -2030,6 +2030,10 @@ export class MessagePipeline {
         const kopf = n.split('\n')[0]!.replace(/^#+\s*/, '').trim();
         if (kopf && !responseText.includes(kopf)) responseText += `\n\n${n}`;
       }
+      // v1971 — Stand am Ende der Runde (Realfall 26.11. 20:26: „Keiner der drei Changes wurde ausgeführt“, Open WebUI war seit 20:22 fertig)
+      for (const f of zusatz?.endstand ?? []) {
+        try { const z = await f(); if (z && !responseText.includes(z)) responseText += `\n\n${z}`; } catch (err) { this.logger.warn({ err: String(err) }, 'v1971 Endstand nicht lesbar'); }
+      }
 
       // 7b. Output moderation (optional — skipped when no moderationService configured)
       if (this.moderationService && responseText && responseText !== '(no response)') {
