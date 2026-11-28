@@ -29,7 +29,7 @@ import { werkzeugeFuerNachricht, zuletztBenutzteWerkzeuge, type WerkzeugwahlGrun
 import { geraetSkillName } from './geraete/protokoll.js'; // v1421
 import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenDeps } from './gespraeche.js'; // v1330, v1334, v1335
 import { randomUUID as arbeitsId } from 'node:crypto';
-import { arbeitsMelder, type ArbeitsEreignis } from './geraete/arbeits-melder.js'; // v1354
+import { arbeitsMelder, type ArbeitsEreignis, type ArbeitsMeta } from './geraete/arbeits-melder.js'; // v1354, v1975
 import type { Platform } from '@alfred/types';
 import { istProtokollAnfrage, werkzeugeAus } from './lernen/anfrage-protokoll.js'; // v1374
 import { absichtenAus } from './skill-filter.js'; // v1374
@@ -338,6 +338,8 @@ export class MessagePipeline {
   private beiArbeit?: (e: ArbeitsEreignis) => void;
   /** v1354 — laufende Owner-Anfragen: Arbeits-ID → Schlüssel in activeRequests (Abbruch von einem Owner-Gerät). */
   private readonly ownerArbeit = new Map<string, string>();
+  /** v1975 — Modell/Kosten/Runde einer laufenden Owner-Anfrage (Schlüssel wie activeRequests) an ihren Arbeits-Melder */
+  private readonly arbeitMeta = new Map<string, (m: ArbeitsMeta) => void>();
   setArbeit(cb: (e: ArbeitsEreignis) => void): void { this.beiArbeit = cb; }
   /** v1354 — Anfrage eines Owner-Gesprächs abbrechen (gleiche Wirkung wie /stop im anfragenden Kanal). */
   cancelArbeit(id: string): boolean {
@@ -760,7 +762,8 @@ export class MessagePipeline {
         melder.start(message.text);
         const kanal = onProgress;
         onProgress = (p) => { kanal?.(p); melder.status(p); };
-        arbeitEnde = () => { melder.ende(); this.ownerArbeit.delete(id); };
+        this.arbeitMeta.set(requestKey, (m) => melder.meta(m)); // v1975
+        arbeitEnde = () => { melder.ende(); this.ownerArbeit.delete(id); this.arbeitMeta.delete(requestKey); };
       }
       if (istOwnerGespraech && this.fadenDeps && /^\/faden\b/i.test(message.text.trim())) {
         const antwort = await fadenBefehl(message.text.trim(), message.platform, message.chatId, this.fadenDeps);
@@ -1684,7 +1687,11 @@ export class MessagePipeline {
       let totalOutputTokens = 0;
       // v1659 — echte Kosten je Aufruf (vom Router, Cache berücksichtigt); fehlt ein Wert, gilt die alte Schätzung
       let kostenSumme = 0, kostenVollstaendig = true;
-      const verbuche = (r: LLMResponse): void => { if (typeof r.kostenUsd === 'number') kostenSumme += r.kostenUsd; else kostenVollstaendig = false; };
+      const verbuche = (r: LLMResponse): void => {
+        if (typeof r.kostenUsd === 'number') kostenSumme += r.kostenUsd; else kostenVollstaendig = false;
+        // v1975 — Live-Anzeige: Modell, bisherige Kosten und Runde dieser Anfrage an die Geräte des Owners
+        this.arbeitMeta.get(requestKey)?.({ ...(r.model ? { modell: r.model } : {}), kostenUsd: kostenSumme, runde: iteration + 1 });
+      };
       let lastModel: string | undefined;
       // v1099 (Etappe 2) — Responses-API-Kontinuität innerhalb der Tool-Schleife
       let previousResponseId: string | undefined;
@@ -1800,6 +1807,7 @@ export class MessagePipeline {
         if (response.stopReason === 'max_tokens' && !response.toolCalls?.length && !(response.content ?? '').trim()) {
           const groesser = abgeschnittenGroesseresLimit(this.llm.getContextWindow().maxOutputTokens);
           this.logger.warn({ groesser, outputTokens: response.usage?.outputTokens }, 'v1674 leere Antwort am Ausgabelimit — Wiederholung mit größerem Limit');
+          onProgress?.({ kind: 'status', text: 'Antwort am Ausgabelimit – Wiederholung mit größerem Limit (kann Minuten dauern)' }); // v1975
           try {
             const zweiter = await this.llm.complete({ messages, system, tools: tools && tools.length > 0 ? tools : undefined, tier: message.metadata?.tier, maxTokens: groesser });
             totalInputTokens += zweiter.usage?.inputTokens ?? 0;
@@ -1819,6 +1827,7 @@ export class MessagePipeline {
         if (response.stopReason === 'max_tokens' && response.toolCalls?.length && !schonVergroessert) {
           const groesser = abgeschnittenGroesseresLimit(this.llm.getContextWindow().maxOutputTokens);
           this.logger.warn({ toolCallCount: response.toolCalls.length, groesser }, 'v1650 Werkzeugaufruf am Ausgabelimit abgeschnitten — Wiederholung mit größerem Limit');
+          onProgress?.({ kind: 'status', text: 'Werkzeugaufruf am Ausgabelimit abgeschnitten – Wiederholung mit größerem Limit' }); // v1975
           try {
             const zweiter = await this.llm.complete({ messages, system, tools: tools && tools.length > 0 ? tools : undefined, tier: message.metadata?.tier, maxTokens: groesser });
             totalInputTokens += zweiter.usage?.inputTokens ?? 0;
@@ -1849,6 +1858,7 @@ export class MessagePipeline {
             while (response.stopReason === 'max_tokens' && continuationRounds < MAX_CONTINUATION_ROUNDS) {
               continuationRounds++;
               this.logger.info({ continuationRounds, textLength: fullText.length }, 'Output truncated, requesting continuation');
+              onProgress?.({ kind: 'status', text: `Antwort abgeschnitten – Fortsetzung ${continuationRounds}/${MAX_CONTINUATION_ROUNDS}` }); // v1975
               if (fullText) {
                 messages.push({ role: 'assistant', content: fullText });
                 messages.push({ role: 'user', content: 'Fahre exakt dort fort wo du aufgehört hast. Keine Wiederholung, nur der Rest.' });

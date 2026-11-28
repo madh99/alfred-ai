@@ -6,14 +6,33 @@ import { InputBar } from './InputBar';
 import { ChatSidePanel } from './ChatSidePanel';
 import { ChatWelcome } from './ChatWelcome';
 import { useChat } from '@/hooks/useChat';
+import { useArbeit, anfrageMeta, changeMeta } from '@/hooks/useArbeit'; // v1975
 
 const SIDE_PANEL_KEY = 'alfred-chat-side-panel';
 
 export function ChatPage() {
   const {
     messages, streaming, currentStatus, error,
-    sendMessage, cancel, retryLast, editLastUser, clearMessages, userId,
+    sendMessage, cancel, retryLast, editLastUser, clearMessages, userId, chatId, faden, nachladen,
   } = useChat();
+  // v1975 — Live-Zeile: Alfred arbeitet in diesem Faden (aus Telegram, App, API) bzw. ein Change läuft
+  const arbeit = useArbeit();
+  const [jetzt, setJetzt] = useState(() => Date.now());
+  const hierLaeuft = arbeit.anfragen.filter(a => (a.faden ?? null) === (faden ?? null) && !(streaming && a.von === chatId));
+  const anderswo = arbeit.anfragen.filter(a => (a.faden ?? null) !== (faden ?? null));
+  const sichtbar = hierLaeuft.length > 0 || anderswo.length > 0 || arbeit.changes.length > 0;
+  useEffect(() => {
+    if (!sichtbar) return;
+    const t = setInterval(() => setJetzt(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [sichtbar]);
+  // Ein Lauf in diesem Faden ist fertig → Verlauf nachladen (die Antwort steht nur auf dem Server)
+  const vorherHier = useRef<string[]>([]);
+  useEffect(() => {
+    const ids = hierLaeuft.map(a => a.arbeit);
+    if (!streaming && vorherHier.current.some(id => !ids.includes(id))) void nachladen();
+    vorherHier.current = ids;
+  }, [hierLaeuft.map(a => a.arbeit).join(','), streaming]); // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   // v657 — Reply-Kontext (gesetzt durch Reply-Button auf Hover über einer Nachricht)
@@ -131,6 +150,29 @@ export function ChatPage() {
           )}
         </div>
       </div>
+      {sichtbar && (
+        <div className="max-w-4xl w-full mx-auto px-3 md:px-4 pb-1 space-y-1">
+          {arbeit.changes.slice(0, 2).map(c => (
+            <a key={c.id} href={`/alfred/vorhaben/`} className={`block rounded-lg border px-3 py-1.5 text-xs ${c.phase === 'angehalten' ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
+              <div className="text-gray-200 truncate">{c.phase === 'laeuft' && c.aktiv ? '⏳' : c.phase === 'angehalten' ? '⏸' : '⌛'} Change {c.id.slice(0, 8)} · {c.titel}</div>
+              <div className="text-gray-400 truncate">{changeMeta(c, jetzt)}{c.schrittTitel ? ` · ${c.schrittTitel}` : ''}</div>
+              {c.phase === 'angehalten' && c.grund && <div className="text-red-300 truncate">{c.grund}</div>}
+            </a>
+          ))}
+          {hierLaeuft.map(a => (
+            <div key={a.arbeit} className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs">
+              <div className="text-gray-200 truncate"><span className="animate-pulse">●</span> Alfred arbeitet in diesem Gespräch · aus {a.kanal}</div>
+              <div className="text-gray-400 truncate">{a.status || a.frage.slice(0, 120)}</div>
+              <div className="text-gray-500 truncate">{anfrageMeta(a, jetzt)}</div>
+            </div>
+          ))}
+          {anderswo.slice(0, 2).map(a => (
+            <a key={a.arbeit} href={a.faden ? `/alfred/chat/?faden=${encodeURIComponent(a.faden)}` : '/alfred/chat/'} className="block rounded-lg border border-[#2a2a2a] bg-[#151515] px-3 py-1 text-xs text-gray-400 truncate">
+              <span className="animate-pulse">●</span> Alfred arbeitet in {a.faden ? `Faden ${a.faden}` : 'Hauptgespräch'} · {a.status || a.frage.slice(0, 80)} · {anfrageMeta(a, jetzt)}
+            </a>
+          ))}
+        </div>
+      )}
       <InputBar
         key={urlDraft ? 'url-draft' : 'default'}
         onSend={sendMessage}

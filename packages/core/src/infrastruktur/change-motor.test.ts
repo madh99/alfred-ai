@@ -96,6 +96,16 @@ describe('I4 Ausführungsmotor', () => {
     expect(w.aufrufe.some(a => a.startsWith('incident:Rückweg ausgeführt'))).toBe(true);
   });
 
+  it('v1975: Übersicht für die Live-Anzeige — angehaltener Change mit Schritt, Titel, Beginn des Schritts, Zeitlimit und Grund', async () => {
+    const w = welt(probe(), { snapshotFehlt: true });
+    expect(await w.motor.uebersicht()).toEqual([]); // noch nicht in Arbeit
+    await w.motor.anstossen(); await warte(w.motor);
+    const [u] = await w.motor.uebersicht();
+    expect(u).toMatchObject({ id: 'chg-1', titel: 'Probe', phase: 'angehalten', schritt: 2, schritte: 4, schrittTitel: 'S2', zeitlimitS: 60, aktiv: false });
+    expect(Number.isNaN(Date.parse(u!.schrittSeit!))).toBe(false);
+    expect(u!.grund).toContain('Schritt 2');
+  });
+
   it('beiFehler rueckweg (im Plan freigegeben) läuft ohne Frage; wiederholen und abbrechen im angehaltenen Zustand', async () => {
     const plan = probe(); plan[1]!.beiFehler = 'rueckweg';
     const w = welt(plan, { snapshotFehlt: true });

@@ -86,6 +86,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/suche/x')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/meldung')).toBe(true); // v1351
     expect(istSitzungsPfad('/api/geraete/abbrechen')).toBe(true); // v1352
+    expect(istSitzungsPfad('/api/geraete/arbeit')).toBe(true); // v1975
+    expect(istSitzungsPfad('/api/gespraeche/arbeit')).toBe(false); // v1975 — Web-Weg bleibt API-Token/Owner-Sitzung
     // v1353 — native Ansichten der App
     expect(istSitzungsPfad('/api/geraete/aufgaben')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/aufgaben/0b6c2f1e-1111-4a2b-9c3d-123456789abc')).toBe(true);

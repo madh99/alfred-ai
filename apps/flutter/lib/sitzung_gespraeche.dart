@@ -591,7 +591,23 @@ extension _Gespraeche on _SitzungState {
   /// „Gespräch „Strompreise““ bzw. „Hauptgespräch" — ohne doppeltes „Gespräch" bei Fäden ohne eigenen Titel.
   String _gespraechName(String? faden) { final t = _fadenTitel(faden); return t.startsWith('Gespräch') || t.startsWith('Hauptgespräch') ? t : 'Gespräch „$t“'; }
 
-  void _fremdeArbeitAufraeumen() { if (fremdeArbeitAufraeumen(fremdeArbeit, DateTime.now())) _neu(() {}); }
+  void _fremdeArbeitAufraeumen() {
+    // 1.87.0 — läuft etwas, im Takt neu zeichnen (Laufzeit „seit … (6 min)“ zählt mit)
+    if (fremdeArbeitAufraeumen(fremdeArbeit, DateTime.now()) || fremdeArbeit.isNotEmpty || laufendeChanges.isNotEmpty) _neu(() {});
+  }
+
+  /// 1.87.0 / v1975 — Server-Stand „was Alfred gerade macht“: verpasste Läufe (App später geöffnet), Ende verpasst,
+  /// Changes in Arbeit. Alter Server (404) oder kein Owner-Gerät (403) → bleibt still wie bisher.
+  Future<void> _arbeitAbgleich() async {
+    final s = server; final k = konfig; if (s == null || k == null) return;
+    try {
+      final r = await s.json('/api/geraete/arbeit');
+      final changes = (r['changes'] is List ? r['changes'] as List : const []).map(LaufenderChange.aus).whereType<LaufenderChange>().toList();
+      final anders = fremdeArbeitAbgleich(fremdeArbeit, r['anfragen'], k.geraetId, DateTime.now());
+      final changesAnders = changes.map((c) => '${c.id}|${c.phase}|${c.schritt}|${c.aktiv}').join(',') != laufendeChanges.map((c) => '${c.id}|${c.phase}|${c.schritt}|${c.aktiv}').join(',');
+      if (mounted && (anders || changesAnders)) _neu(() => laufendeChanges = changes);
+    } catch (_) { /* Komfort */ }
+  }
 
   Future<void> _fremdeArbeitStoppen(FremdeArbeit a) async {
     final s = server; if (s == null) return;

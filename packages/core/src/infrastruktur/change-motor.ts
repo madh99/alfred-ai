@@ -183,6 +183,29 @@ export class ChangeMotor {
 
   /** Anzahl Changes, deren Schritte gerade aktiv laufen (Selbstupdate wartet darauf). */
   aktiv(): number { return this.laufend.size; }
+
+  /**
+   * v1975 — Live-Anzeige (Owner 28.11.): Changes in Arbeit mit aktuellem Schritt, seit wann er läuft und seinem Zeitlimit.
+   * `aktiv` = der Motor führt gerade Schritte aus (sonst wartet der Change, z. B. angehalten oder auf den Owner).
+   */
+  async uebersicht(): Promise<Array<{ id: string; titel: string; phase: string; schritt: number; schritte: number; schrittTitel?: string; schrittSeit?: string; zeitlimitS?: number; start?: string; grund?: string; aktiv: boolean }>> {
+    const o = this.d.owner(); if (!o) return [];
+    const alle = await this.d.itsm.liste(o).catch(() => [] as CmdbChangeRequest[]);
+    return alle.filter(c => c.status === 'in_progress').map(c => {
+      const l = (c.lauf ?? undefined) as ChangeLauf | undefined;
+      const schritte = (c.schritte ?? []) as ChangeSchritt[];
+      const s = l ? schritte.find(x => x.nr === l.schritt) : undefined;
+      return {
+        id: c.id, titel: c.title, phase: l?.phase ?? 'unbekannt', schritt: l?.schritt ?? 0, schritte: schritte.length,
+        ...(s?.titel ? { schrittTitel: s.titel.slice(0, 160) } : {}),
+        ...(l?.schrittSeit ? { schrittSeit: l.schrittSeit } : {}),
+        ...(typeof s?.zeitlimitS === 'number' ? { zeitlimitS: s.zeitlimitS } : {}),
+        ...(l?.start ? { start: l.start } : {}),
+        ...(l?.grund ? { grund: l.grund.slice(0, 300) } : {}),
+        aktiv: this.laufend.has(c.id),
+      };
+    });
+  }
   /** v1604 — „wartet auf angehaltenen Change“ nur einmal je Paar melden */
   private readonly wartenGemeldet = new Set<string>();
 
@@ -298,7 +321,7 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
         if (!frisch || frisch.status === 'cancelled') { await this.beende(o, frisch ?? c0, lauf, 'cancelled', 'vom Owner abgebrochen'); return; }
         // Sicherheitsbefund 22.10.: vor jedem Schritt (auch nach Neustart/Owner-Ja) — Freigabe deckt genau den gespeicherten Plan
         if (!this.freigabeDeckt(frisch, c0)) { await this.halte(o, c0, lauf, 'Freigabe deckt den gespeicherten Plan nicht mehr (Fingerabdruck geändert) — nichts ausgeführt'); return; }
-        lauf.schritt = s.nr; lauf.phase = 'laeuft';
+        lauf.schritt = s.nr; lauf.phase = 'laeuft'; lauf.schrittSeit = this.iso(); // v1975
         await this.d.itsm.motorSetze(o, c0.id, { lauf });
         if (s.art === 'owner') { await this.frageOwner(o, c0, lauf, s); return; }
         const vorher = lauf.nurPruefung?.nr === s.nr ? lauf.nurPruefung : undefined;

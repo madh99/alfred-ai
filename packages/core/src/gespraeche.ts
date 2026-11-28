@@ -60,6 +60,9 @@ export function gespraechsZiel(
     const f = o.aktiverFaden?.(m.platform, m.chatId) ?? null;
     return mitFaden(f && FADEN_RE.test(f) ? f : null);
   }
+  // v1975 — Owner 28.11.: Aufträge per API direkt an den Fadenschlüssel (`owner:faden:<f>`) liefen am Owner-Gespräch
+  // vorbei: keine Live-Anzeige „Alfred arbeitet“ in App und Web, kein Neuladen des Fadens.
+  if (m.chatId.startsWith(FADEN_PRAEFIX)) { const f = m.chatId.slice(FADEN_PRAEFIX.length); return FADEN_RE.test(f) ? mitFaden(f) : undefined; }
   if (m.chatId.startsWith('web-chat-')) return mitFaden(null);
   const web = /^web-faden-([a-z0-9-]{1,40})$/.exec(m.chatId);
   if (web) return mitFaden(web[1]!);

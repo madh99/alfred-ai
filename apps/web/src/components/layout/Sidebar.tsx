@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
 import { eingangEintraege, hinweisOffen, vorgaengeFuerDich } from '@/components/eingang/eingang-logik';
 import { fadenGruppen, fadenTitel, istProjektFaden, fadenAlsMarkdown, type FadenEintrag, type ProjektKurz } from './faden-liste'; // v1497, v1499, v1500
+import { useArbeit, dauerText } from '@/hooks/useArbeit'; // v1975
 
 const BASE = '/alfred';
 
@@ -82,6 +83,7 @@ export function Sidebar() {
   const [projekteKurz, setProjekteKurz] = useState<ProjektKurz[]>([]);
   const [offeneProjekte, setOffeneProjekte] = useState<Set<string>>(new Set());
   const aktiverFaden = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('faden') : null;
+  const arbeit = useArbeit(); // v1975 — Live-Markierung der Fäden, in denen Alfred gerade arbeitet
   function faedenLaden() { if (client) client.fetchGespraecheMitProjekten().then(r => { setFaeden(r.faeden); setProjekteKurz(r.projekte); }).catch(() => setFaeden([])); } // v1499
   useEffect(() => { faedenLaden(); }, [client]); // eslint-disable-line react-hooks/exhaustive-deps
   function neuerFaden() {
@@ -145,11 +147,14 @@ export function Sidebar() {
     if (aenderung.archiviert && aktiverFaden === f) window.location.href = `${BASE}/chat/`;
   }
   const gruppen = fadenGruppen(faeden, { alle: alleFaeden, filter: fadenFilter, ausgeblendet: new Set([...loeschTimer.current.keys(), ...(geloescht ? [geloescht.faden] : [])]), projekte: projekteKurz, offeneProjekte });
-  const fadenZeile = (f: FadenEintrag, symbol: string) => (
+  // v1975 — Faden, in dem Alfred gerade arbeitet: pulsierender Punkt und „seit …“
+  const arbeitIn = (f: FadenEintrag) => arbeit.anfragen.find(a => (a.faden ?? null) === (f.faden ?? null));
+  const fadenZeile = (f: FadenEintrag, symbol: string) => { const laeuft = arbeitIn(f); return (
     <div key={f.faden ?? 'haupt'} className={clsx('group flex items-center gap-2 px-3 py-1 rounded-lg', (f.faden ?? null) === (aktiverFaden ?? null) && isActive(`${BASE}/chat`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}>
       <a href={f.faden ? `${BASE}/chat/?faden=${encodeURIComponent(f.faden)}` : `${BASE}/chat/`} className="flex-1 min-w-0 flex items-center gap-2">
-        <span className="text-xs">{symbol}</span>
-        <span className="truncate text-xs" title={f.titel}>{f.faden ? fadenTitel(f) : 'Hauptgespräch'}</span>
+        <span className={clsx('text-xs', laeuft && 'animate-pulse text-blue-400')}>{laeuft ? '●' : symbol}</span>
+        <span className="truncate text-xs" title={laeuft ? `Alfred arbeitet seit ${dauerText(Date.now() - Date.parse(laeuft.seit))}: ${laeuft.status ?? laeuft.frage}` : f.titel}>{f.faden ? fadenTitel(f) : 'Hauptgespräch'}</span>
+        {laeuft && <span className="text-[10px] text-blue-400 shrink-0">{dauerText(Date.now() - Date.parse(laeuft.seit))}</span>}
       </a>
       {f.faden && (
         <>
@@ -163,7 +168,7 @@ export function Sidebar() {
         </>
       )}
     </div>
-  );
+  ); };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

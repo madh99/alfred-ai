@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Live-Zeile: was Alfred gerade macht, in App und Web (v1975, App 1.87.0)
+
+- **Live-Zeile in App und Web:** Läuft eine Anfrage in einem Owner-Gespräch, zeigen App und Web:
+  - Beginn und Laufzeit, aktuellen Schritt, Modell, bisherige Kosten und Runde der Werkzeugschleife.
+  - In der Fadenliste ist der betroffene Faden markiert („arbeitet seit 6 min“).
+- **Changes in Arbeit:** Changes, die der Change-Motor gerade ausführt oder an denen er angehalten hat, erscheinen mit:
+  - Schrittnummer und Schrittname;
+  - Laufzeit des Schritts und seinem Zeitlimit;
+  - Haltegrund, falls angehalten.
+- **Stand jederzeit abfragbar:**
+  - Neue Endpunkte: `GET /api/geraete/arbeit` für Owner-Geräte und `GET /api/gespraeche/arbeit` für den Owner im Web.
+  - Läufe, die vor dem Öffnen begonnen haben, sind damit sichtbar.
+  - Verpasste Enden räumen sich von selbst auf.
+  - Das Web lädt den Faden neu, wenn ein Lauf aus einem anderen Kanal fertig ist.
+- **Neue Statuszeilen:** Hängt eine Antwort am Ausgabelimit, nennt die Statuszeile die Wiederholung mit größerem Limit oder die Fortsetzung, statt minutenlang still zu bleiben.
+- **Behoben:** Aufträge per API an den Fadenschlüssel (`owner:faden:<faden>`) galten nicht als Owner-Gespräch. Für sie gab es keine Live-Anzeige und kein Neuladen des Fadens auf den Geräten.
+- **Anlass:** Am 28.11. arbeitete Alfred mehrfach 10–16 Minuten an Change-Korrekturen. In App und Web war dabei weder zu sehen, womit er beschäftigt war, noch seit wann.
+
 ### Changed — Portainer: alte Image-Variablen von echten Verlusten getrennt (v1974)
 
 - Die Laufzeitprüfung unterscheidet jetzt zwei Fälle:

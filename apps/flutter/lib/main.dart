@@ -219,6 +219,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Timer? erinnerungTakt;
   bool paletteOffen = false; // 1.10.0 B1
   final Map<String, FremdeArbeit> fremdeArbeit = {}; // 1.11.0 — Alfred arbeitet an einer Anfrage aus Telegram/anderem Gerät
+  List<LaufenderChange> laufendeChanges = []; // 1.87.0 — Changes, die der Change-Motor gerade bearbeitet
   String _traySignatur = ''; // 1.10.0 B2 — Menü nur bei Änderung neu setzen
   Timer? trayTakt;
   DateTime updateGeprueft = DateTime.fromMillisecondsSinceEpoch(0); // 1.10.0 — stilles Update sucht selbst
@@ -284,7 +285,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         setState(() => satellit = s);
         // 1.17.1 — startet die App, solange der Server nicht erreichbar ist, scheitern die einmaligen Abrufe still:
         // nach dem Wiederverbinden Gespräche, Spiegel-Schalter und Verlauf nachladen (sonst nur „Hauptgespräch“)
-        if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); } // 1.8.0 Warteschlange
+        if (wieder) { _holeBestaetigungen(); _nachsenden(); _faedenLaden(); _spiegelungLaden(); _gespraechNachladen(); _arbeitAbgleich(); } // 1.8.0 Warteschlange; 1.87.0 Live-Zeile
         if (wieder && push != null) { _pushAnmelden(); _telegramStummLaden(); _ablageHolen(); _unterhaltungAusSiri(); handyFokusAbgleich().then((_) => handyZustand()).then((z) { if (mounted) setState(() { audioAusgang = '${z['audio'] ?? ''}'; bewegungJetzt = '${z['bewegung'] ?? ''}'; fokusVorlesen = z['fokusVorlesen'] == true; }); _fokusAbgleich(z); }); } // Phase 5 H2; 1.54.0 Ablage; 1.54.3 Audio; 1.61.0 Fokus
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
@@ -330,7 +331,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
         if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
-        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
+        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); _arbeitAbgleich(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); _changesZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); _arbeitAbgleich(); }); } // 1.87.0 Live-Zeile: Abgleich alle 15 s // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
         if (erste) { _faedenLaden(); _kontoLaden(); _stufenLaden(); } // 1.2.0 Gespräche; 1.47.0 Kosten für den Kontoknopf
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {

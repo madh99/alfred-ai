@@ -113,6 +113,7 @@ import { InsightTracker } from './insight-tracker.js';
 import { ReflectionEngine } from './reflection-engine.js';
 import { resolveReflectionConfig } from './reflection/index.js';
 import { webMasterAus } from './identity/web-master.js'; // v1598
+import { ArbeitRegister } from './geraete/arbeit-register.js'; // v1975
 
 /**
  * v633 T3.2 — Look up a known-error Problem whose keyword footprint matches the new
@@ -9147,13 +9148,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.istOwnerGeraetGemerkt = istOwnerGeraet;
       this.pipeline.setArbeit((e) => {
         const gw = this.geraeteGateway;
+        const kanal = kanalName(`${e.von.platform}:${e.von.chatId}`, (id) => gw?.nameVon(id));
+        this.arbeitRegister.anwenden(e, kanal); // v1975 — abfragbar für App (später geöffnet) und Web
         if (!gw) return;
-        const kanal = kanalName(`${e.von.platform}:${e.von.chatId}`, (id) => gw.nameVon(id));
         void (async () => {
           let n = 0;
           for (const id of gw.verbundeneIds()) {
             if (!(await istOwnerGeraet(id))) continue;
-            if (gw.sendeAn(id, { typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden: e.faden, von: e.von.chatId, kanal, ...(e.text ? { text: e.text } : {}), ...(e.frage ? { frage: e.frage } : {}) })) n++;
+            if (gw.sendeAn(id, {
+              typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden: e.faden, von: e.von.chatId, kanal,
+              ...(e.text ? { text: e.text } : {}), ...(e.frage ? { frage: e.frage } : {}),
+              // v1975 — Live-Zeile: seit wann, Modell, bisherige Kosten, Runde
+              ...(e.seit ? { seit: e.seit } : {}), ...(e.modell ? { modell: e.modell } : {}),
+              ...(typeof e.kostenUsd === 'number' ? { kostenUsd: e.kostenUsd } : {}), ...(typeof e.runde === 'number' ? { runde: e.runde } : {}),
+            })) n++;
           }
           if (e.phase !== 'status') this.logger.info({ arbeit: e.arbeit, phase: e.phase, faden: e.faden, kanal, geraete: n }, 'v1354 Arbeit an Geräte');
         })().catch(() => { /* Komfort */ });
@@ -10879,6 +10887,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             setzen: (faden: string, a: { angeheftet?: boolean; archiviert?: boolean; projekt?: string | null }) => this.ownerFadenSetzen(faden, a), // v1497, v1499 projekt
             projekte: () => this.ownerProjekteKurz(), // v1499
             abzweigen: (quelle: string | null, bis?: string) => this.ownerFadenAbzweigen(quelle, bis), // v1500
+            arbeit: () => this.arbeitLaufend(), // v1975 — Live-Zeile im Web
             // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
             istOwner: async (webUserId: string) => {
               if (!this.ownerMasterUserId) return false;
@@ -16184,6 +16193,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             this.logger.info({ geraetId, arbeit, abgebrochen: ok }, 'v1354 Abbruch aus der App (anderer Kanal)');
             return ok;
           },
+          // v1975 — Live-Zeile: App fragt beim Verbinden und im Takt ab, was gerade läuft (nur Owner-Geräte)
+          arbeitLaufend: async (geraetId: string) => {
+            if (!(await (this.istOwnerGeraetGemerkt ?? ((id: string) => this.geraetGehoertOwner(id)))(geraetId))) return undefined;
+            return this.arbeitLaufend();
+          },
           abbrechen: (chatId: string, userId: string) => {
             const ok = this.pipeline.cancelRequest(chatId, userId);
             this.logger.info({ chatId, abgebrochen: ok }, 'v1352 Abbruch aus der App');
@@ -17965,6 +17979,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   /** v1354 — Owner-Prüfung mit 10-min-Gedächtnis (gesetzt beim Einrichten der Gespräche). */
   private istOwnerGeraetGemerkt?: (geraetId: string) => Promise<boolean>;
+  /** v1975 — laufende Anfragen der Owner-Gespräche (Live-Zeile in App und Web) */
+  private readonly arbeitRegister = new ArbeitRegister();
+  /** v1975 — was Alfred gerade macht: laufende Anfragen + Changes in Arbeit (Owner 28.11.) */
+  async arbeitLaufend(): Promise<{ anfragen: ReturnType<ArbeitRegister['liste']>; changes: Awaited<ReturnType<import('./infrastruktur/change-motor.js').ChangeMotor['uebersicht']>> }> {
+    const changes = this.changeMotor ? await this.changeMotor.uebersicht().catch(() => []) : [];
+    return { anfragen: this.arbeitRegister.liste(), changes };
+  }
 
   /** v1447 — Faden des Owners zu einer Chat-Kennung: `owner:faden:<f>` oder `sitzung:<Owner-Gerät>:<f>`; sonst undefined. */
   private async ownerFadenVon(chatId: string): Promise<string | undefined> {

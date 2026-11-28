@@ -467,6 +467,8 @@ export class HttpAdapter extends MessagingAdapter {
     projekte?: () => Promise<Array<{ id: string; name: string; aktualisiert: string; geraet?: string }>>;
     /** v1500 — Faden abzweigen (quelle null = Hauptgespräch), Verlauf bis einschließlich `bis`. */
     abzweigen?: (quelle: string | null, bis?: string) => Promise<{ faden: string; titel: string; kopiert: number } | undefined>;
+    /** v1975 — was Alfred gerade macht: laufende Anfragen der Owner-Gespräche und Changes in Arbeit */
+    arbeit?: () => Promise<{ anfragen: unknown[]; changes: unknown[] }>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
 
@@ -1184,6 +1186,8 @@ export class HttpAdapter extends MessagingAdapter {
     abbrechen?(chatId: string, userId: string): boolean;
     /** v1354 — Anfrage eines anderen Kanals (Arbeits-ID) abbrechen; undefined = kein Owner-Gerät (403). */
     arbeitAbbrechen?(geraetId: string, arbeit: string): Promise<boolean | undefined>;
+    /** v1975 — laufende Anfragen + Changes in Arbeit; undefined = kein Owner-Gerät */
+    arbeitLaufend?(geraetId: string): Promise<{ anfragen: unknown[]; changes: unknown[] } | undefined>;
     /** v1351 — Fehlermeldung der Desktop-App ins Log; false = Grenze erreicht (429). */
     appMeldung?(geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }): boolean;
     verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string, vor?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
@@ -1625,6 +1629,8 @@ export class HttpAdapter extends MessagingAdapter {
     // ── Conversation-History API (v627) ──
     } else if (url.pathname === '/api/gespraeche' && req.method === 'GET') {
       this.handleGespraeche(req, res, url, 'liste').catch(err => this.safeError(res, err)); // v1330
+    } else if (url.pathname === '/api/gespraeche/arbeit' && req.method === 'GET') {
+      this.handleGespraecheArbeit(req, res).catch(err => this.safeError(res, err)); // v1975
     } else if (url.pathname === '/api/gespraeche/verlauf' && req.method === 'GET') {
       this.handleGespraeche(req, res, url, 'verlauf').catch(err => this.safeError(res, err)); // v1330
     } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}\/abzweigen$/.test(url.pathname) && req.method === 'POST') {
@@ -2227,6 +2233,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetDatei(req, res, url).catch(err => this.safeError(res, err)); // v1505
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if (url.pathname === '/api/geraete/arbeit' && req.method === 'GET') {
+      this.handleGespraecheArbeit(req, res).catch(err => this.safeError(res, err)); // v1975
     } else if (url.pathname === '/api/geraete/abbrechen' && req.method === 'POST') {
       this.handleGeraetAbbrechen(req, res).catch(err => this.safeError(res, err)); // v1352
     } else if (url.pathname === '/api/geraete/meldung' && req.method === 'POST') {
@@ -7474,6 +7482,22 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1500 (D2) — Web: Faden des Owners abzweigen (POST /api/gespraeche/:f/abzweigen {bis?}). */
+  /** v1975 — Live-Zeile (Owner 28.11.): laufende Anfragen der Owner-Gespräche und Changes in Arbeit — Web (Owner) und Owner-Geräte */
+  private async handleGespraecheArbeit(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    let r: { anfragen: unknown[]; changes: unknown[] } | undefined;
+    if (geraet) {
+      // Gerätetoken: nur Geräte des Owners (der Fragetext ist privat)
+      r = this.geraeteCallbacks?.arbeitLaufend ? await this.geraeteCallbacks.arbeitLaufend(geraet.geraetId) : undefined;
+    } else {
+      if (!this.gespraecheFn?.arbeit) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+      r = (await this.istOwnerAnfrage(req)) ? await this.gespraecheFn.arbeit() : undefined;
+    }
+    if (!r) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ jetzt: new Date().toISOString(), ...r }));
+  }
+
   private async handleGespraecheAbzweigen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.gespraecheFn?.abzweigen) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }

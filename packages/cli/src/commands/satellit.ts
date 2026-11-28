@@ -979,9 +979,14 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           }
           // v1354 — Alfred arbeitet an einer Anfrage (auch aus Telegram): Phase, Status, Frage als JSON an die App
           if ((n as { typ: string }).typ === 'arbeit') {
-            const a = n as { arbeit?: string; phase?: string; faden?: string | null; von?: string; kanal?: string; text?: string; frage?: string; projekt?: string };
+            const a = n as { arbeit?: string; phase?: string; faden?: string | null; von?: string; kanal?: string; text?: string; frage?: string; projekt?: string; seit?: string; modell?: string; kostenUsd?: number; runde?: number };
             // v1422 — projekt mitgeben (G2): sonst zeigt die App einen Projektlauf als gewöhnliche Anfrage im Hauptgespräch
-            ereignis('arbeit', JSON.stringify({ arbeit: a.arbeit, phase: a.phase, von: a.von, kanal: a.kanal, text: a.text, frage: a.frage, ...(typeof a.projekt === 'string' ? { projekt: a.projekt } : {}) }), undefined, typeof a.faden === 'string' ? a.faden : undefined);
+            // v1975 — Live-Zeile: seit wann, Modell, bisherige Kosten, Runde
+            ereignis('arbeit', JSON.stringify({
+              arbeit: a.arbeit, phase: a.phase, von: a.von, kanal: a.kanal, text: a.text, frage: a.frage, ...(typeof a.projekt === 'string' ? { projekt: a.projekt } : {}),
+              ...(typeof a.seit === 'string' ? { seit: a.seit } : {}), ...(typeof a.modell === 'string' ? { modell: a.modell } : {}),
+              ...(typeof a.kostenUsd === 'number' ? { kostenUsd: a.kostenUsd } : {}), ...(typeof a.runde === 'number' ? { runde: a.runde } : {}),
+            }), undefined, typeof a.faden === 'string' ? a.faden : undefined);
             return;
           }
           if ((n as { typ: string }).typ === 'nachricht') {

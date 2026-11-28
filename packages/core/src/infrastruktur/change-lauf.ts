@@ -23,6 +23,8 @@ export interface ChangeLauf {
   phase: LaufPhase;
   /** Nummer des Schritts, der gerade läuft bzw. an dem angehalten wurde */
   schritt: number;
+  /** v1975 — Beginn des aktuellen Schritts (ISO) für die Live-Anzeige in App und Web */
+  schrittSeit?: string;
   start: string; ende?: string;
   ergebnisse: SchrittErgebnis[];
   rueckweg?: RueckwegErgebnis[];

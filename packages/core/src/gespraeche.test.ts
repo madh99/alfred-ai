@@ -52,6 +52,11 @@ describe('Gespräche kanalunabhängig (v1330)', () => {
     expect(gespraechsZiel({ platform: 'telegram', chatId: '5060785419', chatType: 'dm' }, { ...o, aktiverFaden: () => 'm1x2' })).toEqual(f);
     expect(gespraechsZiel({ platform: 'telegram', chatId: '5060785419', chatType: 'dm' }, { ...o, aktiverFaden: () => 'nicht ok!' })?.faden).toBeNull();
   });
+  it('v1975: API-Auftrag direkt an den Gesprächsschlüssel ist ein Owner-Gespräch (Live-Anzeige in App/Web)', () => {
+    expect(gespraechsZiel({ platform: 'api', chatId: 'owner:faden:infra-cf82f3f2', chatType: 'dm' }, o)).toEqual({ platform: 'api', chatId: 'owner:faden:infra-cf82f3f2', faden: 'infra-cf82f3f2' });
+    expect(gespraechsZiel({ platform: 'api', chatId: 'owner:faden:Nicht OK', chatType: 'dm' }, o)).toBeUndefined();
+    expect(gespraechsZiel({ platform: 'telegram', chatId: 'owner:faden:abc', chatType: 'dm' }, o)).toBeUndefined();
+  });
   it('v1336: sitzung:<id>:haupt ist ausdrücklich das Hauptgespräch, sitzung:<id> folgt dem aktiven Faden (Terminal)', () => {
     const mitFaden = { ...o, aktiverFaden: (p: string, c: string) => (p === 'api' && c === 'sitzung:abc') ? 'm1x2' : null };
     expect(gespraechsZiel({ platform: 'api', chatId: 'sitzung:abc:haupt', chatType: 'dm' }, mitFaden)?.faden).toBeNull();

@@ -134,23 +134,26 @@ export function useChat() {
   const chatId = useMemo(() => faden ? `web-faden-${faden}` : authUser?.userId ? `web-chat-${authUser.userId}` : getPersistentChatId(), [authUser, faden]);
   // v1330 — Verlauf des Gesprächs vom Server (was in Telegram oder der App lief, steht hier auch)
   const verlaufGeladenRef = useRef(false);
+  // v1975 — auch nachladen, wenn ein Lauf aus einem anderen Kanal in diesem Faden fertig wurde (Live-Zeile)
+  const nachladen = useCallback(async () => {
+    if (!client) return;
+    try {
+      const msgs = await client.fetchGespraechVerlauf(faden, 200);
+      if (msgs.length === 0 && faden) { dispatch({ type: 'CLEAR' }); return; }
+      if (msgs.length === 0) return;
+      dispatch({ type: 'CLEAR' });
+      for (const m of msgs) {
+        if (m.rolle === 'user') dispatch({ type: 'ADD_USER', text: m.text });
+        else if ((m.rolle as string) === 'system') { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: `ℹ ${m.text.split('\n')[0]}` }); dispatch({ type: 'DONE' }); } // v1336 — interne Fortsetzung als Hinweis
+        else { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: m.text }); dispatch({ type: 'DONE' }); }
+      }
+    } catch { /* kein Owner oder Server ohne Gespräche: lokaler Verlauf bleibt */ }
+  }, [client, faden]);
   useEffect(() => {
     if (!client || verlaufGeladenRef.current) return;
     verlaufGeladenRef.current = true;
-    (async () => {
-      try {
-        const msgs = await client.fetchGespraechVerlauf(faden, 200);
-        if (msgs.length === 0 && faden) { dispatch({ type: 'CLEAR' }); return; }
-        if (msgs.length === 0) return;
-        dispatch({ type: 'CLEAR' });
-        for (const m of msgs) {
-          if (m.rolle === 'user') dispatch({ type: 'ADD_USER', text: m.text });
-          else if ((m.rolle as string) === 'system') { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: `ℹ ${m.text.split('\n')[0]}` }); dispatch({ type: 'DONE' }); } // v1336 — interne Fortsetzung als Hinweis
-          else { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: m.text }); dispatch({ type: 'DONE' }); }
-        }
-      } catch { /* kein Owner oder Server ohne Gespräche: lokaler Verlauf bleibt */ }
-    })();
-  }, [client, faden]);
+    void nachladen();
+  }, [client, nachladen]);
   // v647 — Active-Conversation-ID aus localStorage (von Sidebar "Chat fortsetzen")
   const [activeConvId, setActiveConvId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -284,6 +287,6 @@ export function useChat() {
   return {
     ...state,
     sendMessage, cancel, retryLast, editLastUser, clearMessages,
-    userId, chatId,
+    userId, chatId, faden, nachladen, // v1975
   };
 }

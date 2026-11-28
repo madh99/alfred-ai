@@ -81,13 +81,15 @@ extension _Oberflaeche on _SitzungState {
     final geraet = konfig?.name ?? satellit?.name ?? '…';
     Widget abschnitt(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text(t, style: theme.textTheme.labelMedium?.copyWith(color: dim)));
     final gruppen = fadenGruppen(faeden, alle: alleFaeden, filter: fadenFilter, ausgeblendet: loeschenAusstehend.keys.toSet(), projekte: projekteKurz, offeneProjekte: projekteAlleFaeden); // 1.41.0, 1.42.0 Projekte
-    Widget fadenZeile(Map<String, dynamic> f, IconData symbol, {bool angeheftet = false}) => ListTile(
+    // 1.87.0 — Faden, in dem Alfred gerade arbeitet: Kreisel statt Symbol, „arbeitet seit …“ statt Zeitpunkt
+    FremdeArbeit? arbeitIn(Map<String, dynamic> f) { for (final a in fremdeArbeit.values) { if (a.projekt == null && a.faden == f['faden']) return a; } return null; }
+    Widget fadenZeile(Map<String, dynamic> f, IconData symbol, {bool angeheftet = false}) { final a = arbeitIn(f); return ListTile(
       dense: true, selected: server?.faden == f['faden'],
-      leading: Icon(symbol, size: 18, color: angeheftet ? theme.colorScheme.primary : null),
+      leading: a != null ? const SizedBox(width: 18, height: 18, child: Padding(padding: EdgeInsets.all(2), child: CircularProgressIndicator(strokeWidth: 2))) : Icon(symbol, size: 18, color: angeheftet ? theme.colorScheme.primary : null),
       title: Text(fadenTitelText(f), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
-      subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+      subtitle: Text(a != null ? 'arbeitet${a.seit != null ? ' seit ${dauerText(DateTime.now().difference(a.seit!))}' : ''}' : _fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: a != null ? theme.colorScheme.primary : dim)),
       trailing: _fadenMenue(f),
-      onTap: () => _fadenWechseln('${f['faden']}'));
+      onTap: () => _fadenWechseln('${f['faden']}')); }
     return Material( // 1.52.0 — Material statt Container(color): ListTiles brauchen es für Hintergrund und Tipp-Welle (Debug-Prüfung in der Handy-Schublade)
       color: theme.colorScheme.surfaceContainerLow,
       child: SizedBox(width: 270,
@@ -257,7 +259,7 @@ extension _Oberflaeche on _SitzungState {
       ), if (_mitVerlaufsleiste) Positioned(left: 2, top: 0, bottom: 0, width: 28, child: Verlaufsleiste(eintraege: leistenEintraege(verlauf), markiert: lesezeichen, aufSprung: _zuNachricht, aktuell: leisteAktuell, aufLesezeichen: (e) => _lesezeichenUmschalten(verlauf[e.index]))), // 1.45.0 D4, 1.45.2 aktuell + Karte
         if (karteOffen && archiv == null && ansicht == Ansicht.chat) Positioned(top: 8, right: 16, child: _karte(theme))])), // 1.44.0 D3
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _bestaetigungen(theme))),
-      if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _arbeitsLeiste(theme))), // 1.11.0
+      if (fremdeArbeit.isNotEmpty || laufendeChanges.isNotEmpty) Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _arbeitsLeiste(theme))), // 1.11.0; 1.87.0 Changes
       Center(child: ConstrainedBox(constraints: BoxConstraints(maxWidth: breiteChat), child: _eingabekarte(theme))),
     ])); });
   }
@@ -405,7 +407,7 @@ extension _Oberflaeche on _SitzungState {
               TextButton(onPressed: _fundstelleVerlassen, child: const Text('Zum Gespräch')),
             ])))),
             if (offen.isNotEmpty) _bestaetigungen(theme),
-            if (fremdeArbeit.isNotEmpty) _arbeitsLeiste(theme),
+            if (fremdeArbeit.isNotEmpty || laufendeChanges.isNotEmpty) _arbeitsLeiste(theme), // 1.87.0
             _eingabeHandy(theme),
           ]))),
         ]),
@@ -471,15 +473,28 @@ extension _Oberflaeche on _SitzungState {
 
   /// Eingabekarte wie in der Vorlage: Textfeld oben, darunter Anhang, Stufenwahl, Status, Mikrofon, Zuhören, Senden.
   /// 1.11.0 — Leiste über der Eingabe: Alfred arbeitet an einer Anfrage aus Telegram oder einem anderen Gerät.
+  /// 1.87.0 — dazu Laufzeit, Modell, bisherige Kosten und Runde; Changes, die der Change-Motor gerade bearbeitet.
   Widget _arbeitsLeiste(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
+    final jetzt = DateTime.now();
     return Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Column(children: [
+      for (final c in laufendeChanges.take(2)) Card(key: Key('change-live-${c.id}'), color: (c.phase == 'angehalten' ? theme.colorScheme.errorContainer : theme.colorScheme.tertiaryContainer).withValues(alpha: 0.5), margin: const EdgeInsets.only(bottom: 4), child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), child: Row(children: [
+        c.phase == 'laeuft' && c.aktiv ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : Icon(c.phase == 'angehalten' ? Icons.pause_circle_outline : Icons.hourglass_empty, size: 16),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Change ${c.id.substring(0, c.id.length < 8 ? c.id.length : 8)} · ${c.titel}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelMedium),
+          Text('${changeZeile(c, jetzt)}${c.schrittTitel != null ? ' · ${c.schrittTitel}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          if (c.phase == 'angehalten' && c.grund != null) Text(c.grund!, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error)),
+        ])),
+        TextButton(onPressed: () => _neu(() => ansicht = Ansicht.changes), child: const Text('Öffnen')),
+      ]))),
       for (final a in fremdeArbeit.values.take(3)) Card(key: Key('arbeit-${a.id}'), color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5), margin: const EdgeInsets.only(bottom: 4), child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), child: Row(children: [
         const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(a.projekt != null ? '🔨 ${a.frage}' : 'Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelMedium), // 1.16.1 G2
           Text(a.status?.isNotEmpty == true ? a.status! : (a.projekt != null ? a.kanal : a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          if (a.projekt == null && arbeitMetaZeile(a, jetzt).isNotEmpty) Text(arbeitMetaZeile(a, jetzt), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim)), // 1.87.0
         ])),
         if (a.projekt != null) TextButton(key: Key('arbeit-projekt-${a.id}'), onPressed: () => _neu(() { projekteAnfang = a.projekt; ansicht = Ansicht.projekte; }), child: const Text('Öffnen')) // 1.16.1 G2
         else if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),

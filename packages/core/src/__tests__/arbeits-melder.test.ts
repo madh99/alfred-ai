@@ -44,6 +44,24 @@ describe('arbeitsMelder', () => {
     expect(raus.map(e => e.text ?? e.phase)).toEqual(['eins', 'ende']);
   });
 
+  it('v1975: seit bei jedem Ereignis; Modell/Kosten/Runde gehen mit dem Status raus, auch ohne neuen Text (gedrosselt)', () => {
+    const { m, raus, vergeht } = aufbau();
+    m.start('Plan prüfen');
+    m.status('plant nächsten Schritt…');
+    vergeht(100);
+    m.meta({ modell: 'gpt-6.2-sol', kostenUsd: 0.123456, runde: 1 });
+    expect(raus).toHaveLength(2); // gedrosselt
+    vergeht(2000);
+    expect(raus[2]).toMatchObject({ phase: 'status', text: 'plant nächsten Schritt…', modell: 'gpt-6.2-sol', kostenUsd: 0.1235, runde: 1 });
+    m.meta({ modell: 'gpt-6.2-sol', kostenUsd: 0.123456, runde: 1 }); // unverändert: nichts
+    vergeht(3000);
+    expect(raus).toHaveLength(3);
+    m.ende();
+    expect(raus[3]).toMatchObject({ phase: 'ende', kostenUsd: 0.1235 });
+    expect(new Set(raus.map(e => e.seit)).size).toBe(1);
+    expect(raus[0]!.seit).toBe(new Date(0).toISOString());
+  });
+
   it('Fehler beim Melden stören die Anfrage nicht', () => {
     const m = arbeitsMelder({ arbeit: 'x', faden: 'f', von: { platform: 'api', chatId: 'c' } }, () => { throw new Error('Gerät weg'); });
     expect(() => { m.start('q'); m.status('s'); m.ende(); }).not.toThrow();

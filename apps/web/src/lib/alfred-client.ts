@@ -203,6 +203,14 @@ export class AlfredClient {
     return { faeden: j.faeden ?? [], projekte: j.projekte ?? [] };
   }
 
+  /** v1975 — was Alfred gerade macht (laufende Anfragen der Owner-Gespräche, Changes in Arbeit); null = nicht verfügbar */
+  async fetchArbeit(): Promise<import('@/hooks/useArbeit').ArbeitStand | null> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/arbeit`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return null;
+    const j = await res.json() as { anfragen?: unknown; changes?: unknown };
+    return { anfragen: Array.isArray(j.anfragen) ? j.anfragen as never : [], changes: Array.isArray(j.changes) ? j.changes as never : [] };
+  }
+
   async fetchGespraechVerlauf(faden: string | null, limit = 200): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>> {
     const q = `limit=${limit}${faden ? `&faden=${encodeURIComponent(faden)}` : ''}`;
     const res = await fetch(`${this.baseUrl}/api/gespraeche/verlauf?${q}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
