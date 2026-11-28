@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Plan-Prüfung: D-Bus-Werkzeuge als Prüfbefehl (v1978)
+
+- **Prüfbefehle mit D-Bus-Werkzeugen werden beim Planen abgewiesen.** Prüfbefehle laufen im Lese-Käfig, und der hat keinen D-Bus-Zugang. Betroffen sind die `*ctl`-Werkzeuge von systemd: `timedatectl`, `hostnamectl`, `loginctl`, `busctl`, `resolvectl`, `networkctl` und `localectl`.
+- Die Meldung nennt eine Lesung aus Dateien als Ersatz, z. B. `ls /run/systemd/timesync/synchronized` für die Zeitsynchronisierung.
+- Anlass: Ein NTP-Change war erfolgreich, nur seine Prüfung `timedatectl show …` scheiterte mit „Failed to connect to bus“. Der Rückweg nahm daraufhin die funktionierende Lösung samt Firewall-Regeln wieder zurück.
+
 ### Fixed — Change-Anzeige: „wartet auf Freigabe“ nur mit offener Freigabe-Frage (v1977)
 
 - **Die Change-Anzeige im Chat unterscheidet zwei Fälle:**

@@ -502,6 +502,17 @@ describe('v1677 Rückweg kopieren', () => {
   });
 });
 
+// Realfall 28.11. (22b399c8 Schritt 6): timedatectl im Käfig → „Failed to connect to bus“, Rückweg nahm die funktionierende Lösung zurück
+describe('D-Bus-Werkzeuge als Prüfbefehl', () => {
+  it('timedatectl/hostnamectl/resolvectl werden beim Planen abgewiesen, die Datei-Lesung nicht', async () => {
+    const { pruefbefehlFehler } = await import('./change-schritte.js');
+    expect(pruefbefehlFehler('timedatectl show -p NTPSynchronized --value | grep -x yes')).toMatch(/D-Bus/);
+    expect(pruefbefehlFehler('hostnamectl --static | grep -x web01')).toMatch(/D-Bus/);
+    expect(pruefbefehlFehler('resolvectl status | grep -c DNS')).toMatch(/D-Bus/);
+    expect(pruefbefehlFehler('ls /run/systemd/timesync/synchronized')).toBeUndefined();
+  });
+});
+
 // v1678 — Review 26.10. Matrix: Netzproben im Käfig, Rückweg auf den Originalpfad
 describe('v1678 Käfig-Netzproben und Rückweg aufs Original', () => {
   it('Netzprobe per python/curl/systemctl is-enabled abgewiesen, Leseliste erlaubt', async () => {
