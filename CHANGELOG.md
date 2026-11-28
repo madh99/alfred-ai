@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Change-Anzeige: „wartet auf Freigabe“ nur mit offener Freigabe-Frage (v1977)
+
+- **Die Change-Anzeige im Chat unterscheidet zwei Fälle:**
+  - Eine Freigabe-Frage ist offen. Sie passt zum aktuellen Plan und ist nicht abgelaufen. Die Anzeige nennt dann ihre Gültigkeit.
+  - Der Change ist nur bereit zur Freigabe, eine Frage ist nicht offen.
+- Ein angehaltener, korrigierter Change wird als solcher benannt.
+- Anlass: Nach einer gescheiterten Ultra-Gegenprüfung stand der Change weiter auf `submitted`. Alfred meldete dem Owner deshalb eine Freigabe, die es nicht gab.
+
 ### Fixed — Changes: bash-Prüfung, Web-Freigabe nach Korrektur, Fragen nach dem Ende (v1976)
 
 - **bash-Syntax wird beim Planen erkannt:** Befehle von `fernzugriff.ausfuehren` laufen als root unter Linux in `sudo -n sh -c`, also in dash.

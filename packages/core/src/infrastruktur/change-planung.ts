@@ -472,11 +472,29 @@ export class ChangePlanung {
   }
 }
 
+/**
+ * Realfall 28.11. (811c766d): „submitted“ wurde als „wartet auf Freigabe“ angezeigt, obwohl keine Freigabe-Frage offen war (die Frage
+ * scheiterte an der Ultra-Gegenprüfung) — Alfred meldete dem Owner eine Freigabe, die es nicht gab. Offen ist eine Frage nur, wenn
+ * freigabeAnfrage zum aktuellen Plan passt und nicht abgelaufen ist.
+ */
+export function freigabeStand(c: CmdbChangeRequest, jetzt = Date.now()): string {
+  if (c.status === 'approved') return `freigegeben ${c.freigegebenAt?.slice(0, 16).replace('T', ' ')} UTC über ${c.freigegebenUeber === 'web' ? 'Web' : 'Freigabe-Frage'}`;
+  const l = c.lauf as { korrektur?: unknown; phase?: string } | undefined;
+  const korrigiert = c.status === 'in_progress' && !!l?.korrektur && l.phase === 'angehalten' && c.freigabeFingerabdruck !== c.fingerabdruck;
+  if (c.status !== 'submitted' && !korrigiert) return c.status;
+  const a = c.freigabeAnfrage;
+  const offen = !!a && a.fingerabdruck === c.fingerabdruck && Date.parse(a.bis) >= jetzt;
+  const was = korrigiert ? 'korrigiert, angehalten — ' : '';
+  return offen
+    ? `${was}wartet auf die Freigabe des Owners (Frage offen bis ${a!.bis.slice(0, 16).replace('T', ' ')} UTC)`
+    : `${was}bereit zur Freigabe — KEINE Freigabe-Frage offen (freigabe_anfragen stellt sie; der Owner kann auch im Web freigeben)`;
+}
+
 /** Darstellung eines Changes mit Schritten (Chat). */
 export function changeAnzeige(c: CmdbChangeRequest): string {
   const s = (c.schritte ?? []) as ChangeSchritt[];
   const a = c.auswirkung as Auswirkung | undefined;
-  const fr = c.status === 'approved' ? `freigegeben ${c.freigegebenAt?.slice(0, 16).replace('T', ' ')} UTC über ${c.freigegebenUeber === 'web' ? 'Web' : 'Freigabe-Frage'}` : c.status === 'submitted' ? 'wartet auf Freigabe' : c.status;
+  const fr = freigabeStand(c);
   const z = [
     `## ${c.title}`, '',
     `**ID:** ${c.id} · **Typ:** ${c.type === 'emergency' ? 'Notfall' : 'Normal'} · **Risiko:** ${RISIKO_TEXT[c.riskLevel] ?? c.riskLevel} · **Ausfall:** ${c.ausfallMinuten ?? '?'} min · **Status:** ${fr}`,
