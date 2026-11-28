@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Changes: bash-Prüfung, Web-Freigabe nach Korrektur, Fragen nach dem Ende (v1976)
+
+- **bash-Syntax wird beim Planen erkannt:** Befehle von `fernzugriff.ausfuehren` laufen als root unter Linux in `sudo -n sh -c`, also in dash.
+  - Die Plan-Prüfung meldet bash-Eigenheiten außerhalb von Heredocs als Fehler: `pipefail`, `<<<`, `[[ … ]]`, `function`, `${var/…}`, `source` und Array-Zuweisungen. Das gilt für Schritte und Rückwege.
+  - Ausgenommen sind Windows-Zugänge und `als_root: false`.
+  - Die Fehlermeldung nennt den sicheren Umbau: das Skript in eine Datei schreiben und mit `bash` ausführen.
+  - Anlass: Ein Change hielt in Schritt 2 mit „set: Illegal option -o pipefail“ an. Auch sein Rückweg hätte im Ernstfall versagt.
+- **Web: Freigabe eines korrigierten, angehaltenen Changes:** Der Knopf „Freigeben (Plan …)“ erscheint jetzt auch für Changes, die ab dem Haltepunkt korrigiert wurden und auf die Freigabe des neuen Plans warten. Bisher erschien er nur im Status `submitted`. Der Server nahm diese Freigabe schon an.
+- **Owner-Fragen nach dem Ende eines Changes:** Am Ende jedes Laufs werden offene Fragen „Schritt N erledigt?“ zurückgezogen. Nach einem Rückweg aus der Owner-Frage blieb die Frage sonst stehen, weil das Aufräumen lief, bevor der Rückweg begann.
+
 ### Added — Live-Zeile: was Alfred gerade macht, in App und Web (v1975, App 1.87.0)
 
 - **Live-Zeile in App und Web:** Läuft eine Anfrage in einem Owner-Gespräch, zeigen App und Web:

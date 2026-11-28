@@ -12,7 +12,7 @@
  *   owner    — Handgriff oder Entscheidung des Owners mitten im Change (z. B. solange eine Skill-Aktion fehlt)
  */
 import { createHash } from 'node:crypto';
-import { befehlsklasse, normalisiereBefehl, windowsBefehlsklasse, windowsKaefigGrund, WIN_KAEFIG_CMDLETS } from '../fernzugriff/regeln.js';
+import { befehlsklasse, normalisiereBefehl, windowsBefehlsklasse, windowsKaefigGrund, WIN_KAEFIG_CMDLETS, bashEigenheit } from '../fernzugriff/regeln.js';
 import { nurMetadaten, geheimnisGrund } from '../fernzugriff/kaefig.js';
 import { pruefePfad } from '../fernzugriff/uebertragung.js';
 import { eingabeFehler, type PruefbarerSkill } from '../vorgaenge/vorschlag.js';
@@ -554,8 +554,18 @@ function zielSystemFehler(skill: unknown, parameter: unknown, wo: string, f: str
   if (ist !== soll) f.push(`${wo}: ${z.trim()} ist ${ist === 'linux' ? 'Linux' : 'Windows'} — ${skill} gehört auf einen ${soll === 'linux' ? 'Linux' : 'Windows'}-Zugang`);
 }
 
+/** Realfall 28.11. (811c766d) — fernzugriff.ausfuehren als root läuft auf Linux in `sudo -n sh -c` (dash): bash-Syntax außerhalb von
+ *  Heredocs schon beim Planen melden (Windows-Zugänge und als_root:false ausgenommen). */
+function shFehler(parameter: Record<string, unknown>, wo: string, f: string[], ctx: PruefKontext): void {
+  if (parameter.als_root === false) return;
+  const name = txt(parameter.name).toLowerCase();
+  if (name && ctx.zugangSystem?.get(name) === 'windows') return;
+  const e = bashEigenheit(String(parameter.befehl ?? ''));
+  if (e) f.push(`${wo}: Befehl nutzt bash-Syntax (${e}), läuft als root aber in sh (dash) — POSIX schreiben oder das Skript in eine Datei legen und mit bash ausführen: f=$(mktemp); cat > "$f" <<'SKRIPT' … SKRIPT; bash "$f"; rc=$?; rm -f "$f"; exit $rc (nicht per Pipe/stdin an bash, sonst lesen docker exec -T/psql -f - das Skript)`);
+}
+
 const txt = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-const zahl = (v: unknown): number | undefined => { const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN; return Number.isFinite(n) ? n : undefined; };
+const zahl =(v: unknown): number | undefined => { const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN; return Number.isFinite(n) ? n : undefined; };
 const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : undefined);
 
 /** Aktionen eines Skills aus seinem Eingabeschema (action.enum). */
@@ -825,6 +835,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
       const einordnung = aktionsArt(schritt.skill, schritt.aktion, schritt.parameter);
       schritt.einordnung = einordnung;
       if (schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren' && befehlsklasse(String(schritt.parameter.befehl ?? '')) === 'nie') f.push(`${wo}: Befehl steht auf der Nie-Liste des Fernzugriffs`);
+      if (schritt.skill === 'fernzugriff' && schritt.aktion === 'ausfuehren') shFehler(schritt.parameter, wo, f, ctx);
       // v1684 — Fernzugriff-Schritte nur mit vorhandenen Zugängen (Verweise {{…}} und neu angelegte Zugänge ausgenommen)
       if (schritt.skill === 'fernzugriff' && schritt.aktion !== 'anlegen' && ctx.zugaenge) {
         for (const k of ['name', 'quelle', 'ziel'] as const) {
@@ -895,6 +906,7 @@ export function pruefeChangePlan(roh: unknown, ctx: PruefKontext, alleSchluessel
             zielSystemFehler(rueck.skill, rueck.parameter, `${wo} (Rückweg)`, f, ctx);
             // v1677 — Realfall 26.10. (Matrix I): Rückwege mit fernzugriff.kopieren haben keinen Befehl; der leere Befehl galt als „nie“
             if (rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren' && befehlsklasse(String(rueck.parameter!.befehl ?? '')) === 'nie') f.push(`${wo} (Rückweg): Befehl steht auf der Nie-Liste`);
+            if (rueck.skill === 'fernzugriff' && rueck.aktion === 'ausfuehren') shFehler(rueck.parameter!, `${wo} (Rückweg)`, f, ctx);
             // v1678 — Review 26.10. (Matrix I4–I7): Rückweg kopierte mit loeschen:true vom Ziel zurück auf den ORIGINALPFAD der Quelle. Bricht
             // die Hin-Kopie mittendrin ab, schneidet der Rückweg das Original auf den unvollständigen Zielstand zurück. Rückkopien gehören
             // in ein eigenes Verzeichnis (Staging) oder ohne loeschen.

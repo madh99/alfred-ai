@@ -67,6 +67,14 @@ interface ChangeRequest {
   freigabeFingerabdruck?: string;
   freigegebenAt?: string;
   freigegebenUeber?: string;
+  lauf?: { phase?: string; korrektur?: unknown };
+}
+
+/** Realfall 28.11. (811c766d): ein angehaltener, ab dem Haltepunkt korrigierter Change wartet auf die Freigabe des neuen Plans (in_progress);
+ *  der Server nimmt die Web-Freigabe an (v1661), der Knopf erschien aber nur bei submitted. */
+function wartetAufFreigabe(c: ChangeRequest): boolean {
+  if (c.status === 'submitted') return true;
+  return c.status === 'in_progress' && !!c.lauf?.korrektur && c.lauf?.phase === 'angehalten' && !!c.fingerabdruck && c.freigabeFingerabdruck !== c.fingerabdruck;
 }
 
 interface ChangePruefung { typ: string; ziel?: string; port?: number; erwartet?: string; nichtEnthalten?: string; zugang?: string; container?: string; pfad?: string; befehl?: string; skill?: string; aktion?: string }
@@ -111,7 +119,7 @@ function ChangeSchritteAnsicht({ c, nachEinwand }: { c: ChangeRequest; nachEinwa
   const farbe: Record<string, string> = { lesen: 'text-gray-400', sicherung: 'text-green-400', aendern: 'text-orange-400', loeschen: 'text-red-400', pruefung: 'text-blue-400', warten: 'text-gray-400', owner: 'text-purple-400' };
   const freigabe = c.status === 'approved'
     ? `Freigegeben ${c.freigegebenAt ? fmtDate(c.freigegebenAt) : ''} über ${c.freigegebenUeber === 'web' ? 'Web' : 'Freigabe-Frage'} — Plan ${c.freigabeFingerabdruck?.slice(0, 12)}`
-    : c.status === 'submitted' ? `Wartet auf Freigabe — Plan ${c.fingerabdruck?.slice(0, 12)}` : c.status;
+    : wartetAufFreigabe(c) ? `${c.status === 'in_progress' ? 'Korrigiert, angehalten — wartet auf Freigabe' : 'Wartet auf Freigabe'} — Plan ${c.fingerabdruck?.slice(0, 12)}` : c.status;
   return (
     <div className="space-y-3">
       <div className="text-xs text-gray-400 flex gap-3 flex-wrap">
@@ -1743,7 +1751,7 @@ export function ItsmPage() {
 
               {/* Action Buttons — mit Modal für Pflichtfelder */}
               <div className="flex gap-2 flex-wrap pt-2 border-t border-[#1f1f1f]">
-                {mitSchritten && selectedChange.status === 'submitted' && (
+                {mitSchritten && wartetAufFreigabe(selectedChange) && (
                   <button onClick={() => { if (confirm(`Change „${selectedChange.title}“ mit ${selectedChange.schritte!.length} Schritten freigeben?\nDie Freigabe gilt genau für Plan ${selectedChange.fingerabdruck?.slice(0, 12)} — jede Änderung braucht eine neue Freigabe.`)) submitChangeTransition(selectedChange.id, 'approved', {}); }}
                     className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Freigeben (Plan {selectedChange.fingerabdruck?.slice(0, 8)})</button>
                 )}

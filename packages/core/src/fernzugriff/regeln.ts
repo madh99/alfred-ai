@@ -212,6 +212,45 @@ export function kuerzeMitte(text: string, max: number): string {
   return `${aZeile}\n… (${text.length - aZeile.length - zZeile.length} Zeichen in der Mitte ausgelassen) …\n${zZeile}`;
 }
 
+/** Heredoc-Inhalte entfernen (`<<X`, `<<'X'`, `<<"X"`, `<<-X` bis zur Zeile X) — dort steht Text für andere Programme (bash, python3, cat > datei). */
+export function ohneHeredocs(befehl: string): string {
+  const zeilen = befehl.replace(/\r\n/g, '\n').split('\n');
+  const aus: string[] = [];
+  const offen: Array<{ ende: string; tabs: boolean }> = [];
+  for (const z of zeilen) {
+    if (offen.length) {
+      const k = offen[0]!;
+      if ((k.tabs ? z.replace(/^\t+/, '') : z) === k.ende) offen.shift();
+      continue;
+    }
+    aus.push(z);
+    // `<<<` ist ein Here-String (kein Heredoc) und selbst bash-Syntax — nicht als Heredoc werten
+    for (const m of z.matchAll(/(?<!<)<<(-?)\s*(['"]?)([A-Za-z_][\w.-]*)\2/g)) offen.push({ ende: m[3]!, tabs: m[1] === '-' });
+  }
+  return aus.join('\n');
+}
+
+/**
+ * Realfall 28.11. (811c766d, Schritt 2: „sh: 1: set: Illegal option -o pipefail“) — als root laufen Fernzugriff-Befehle mit Steuerzeichen in
+ * `sudo -n sh -c` (fernBefehl), auf Debian/Ubuntu also in dash. bash-Syntax außerhalb von Heredocs scheitert dort erst im Lauf.
+ * Liefert die erste gefundene bash-Eigenheit (zum Melden beim Planen) oder undefined.
+ */
+export function bashEigenheit(befehl: string): string | undefined {
+  const t = ohneHeredocs(ausfuehrbarerBefehl(befehl));
+  const muster: Array<[RegExp, string]> = [
+    [/\bpipefail\b/, 'set -o pipefail'],
+    [/<<</, 'Here-String <<<'],
+    // `[[ ` mit Leerzeichen — POSIX-Klassen wie '[[:space:]]' in grep/sed/awk sind erlaubt
+    [/\[\[\s/, '[[ … ]]'],
+    [/^\s*function\s+[A-Za-z_][\w-]*/m, 'function name'],
+    [/\$\{[A-Za-z_]\w*\/\/?/, '${var/…/…}'],
+    [/^\s*source\s+\S/m, 'source (in sh: .)'],
+    [/(^|[\s;&|])[A-Za-z_]\w*=\(/m, 'Array-Zuweisung'],
+  ];
+  for (const [re, name] of muster) if (re.test(t)) return name;
+  return undefined;
+}
+
 /** Befehl, wie er per ssh läuft: als root über sudo -n (kein Passwort-Prompt), komplexe Befehle in sh -c. */
 export function fernBefehl(befehl: string, alsRoot: boolean): string {
   const b = ausfuehrbarerBefehl(befehl);

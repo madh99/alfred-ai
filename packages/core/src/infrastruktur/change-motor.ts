@@ -876,6 +876,9 @@ Weiter geht es erst, wenn du über ${x.id.slice(0, 8)} entscheidest (im Chat):
     lauf.phase = 'fertig'; lauf.ende = this.iso(); if (grund) lauf.grund = grund; delete lauf.frage;
     const bericht = laufBericht(c.title, (c.schritte ?? []) as ChangeSchritt[], lauf, status) + (discovery.length ? `\nDiscovery danach: ${discovery.join('; ')}` : '');
     const gespeichert = await this.d.itsm.motorSetze(o, c.id, { status: c.status === 'cancelled' ? undefined : status, lauf, result: bericht, linkedIncidentId: lauf.incidentId });
+    // Realfall 28.11. (811c766d): Rückweg aus der Owner-Frage zu Schritt 7 — das Aufräumen in steuern() lief, bevor der Rückweg die Phase
+    // setzte; die Frage „Schritt 7 erledigt?“ blieb nach dem Ende offen. Am Ende jedes Laufs sind alle Owner-Fragen dieses Changes veraltet.
+    await this.d.fragenAufraeumen?.().catch(() => undefined);
     if (this.d.incident && lauf.incidentId) await this.incidentZumEnde(o, c, lauf, status, bericht);
     this.log('I4 Change beendet', { id: c.id, status, dauerS: Math.round((Date.parse(lauf.ende) - Date.parse(lauf.start)) / 1000), discovery });
     const sollIst = status === 'completed' && c.vorhabenId ? await this.d.nachAbschluss?.(o, c).catch(() => undefined) : undefined;

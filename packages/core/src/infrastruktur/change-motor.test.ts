@@ -500,8 +500,21 @@ describe('I4 Ausführungsmotor', () => {
     expect(ownerFrageVeraltet(w.c, { ...p, freigabe: 'alt' })).toBe(true);
     expect(ownerFrageVeraltet(null, p)).toBe(true);
     await w.motor.steuern('o', 'chg-1', 'abbrechen');
-    expect(aufgeraeumt).toBe(2);
+    expect(aufgeraeumt).toBeGreaterThanOrEqual(2);
     expect(ownerFrageVeraltet(w.c, p)).toBe(true);
+  });
+
+  it('Realfall 28.11. (811c766d): Rückweg aus der Owner-Frage → nach dem Ende wird noch einmal aufgeräumt', async () => {
+    const plan: ChangeSchritt[] = [{ ...probe()[1]!, nr: 1 }, S({ nr: 2, art: 'owner', frage: 'Login prüfen' })];
+    const w = welt(plan);
+    const statusBeimAufraeumen: string[] = [];
+    w.deps.fragenAufraeumen = async () => { statusBeimAufraeumen.push(w.c.status); };
+    await w.motor.anstossen(); await warte(w.motor);
+    expect((w.c.lauf as ChangeLauf).phase).toBe('wartet_owner');
+    await w.motor.steuern('o', 'chg-1', 'rueckweg'); await warte(w.motor);
+    expect(w.c.status).toBe('rolled_back');
+    // das letzte Aufräumen sieht den beendeten Change (vorher lief es nur, solange er noch in_progress war)
+    expect(statusBeimAufraeumen.at(-1)).toBe('rolled_back');
   });
 
   it('v1692 Realfall 5bcddc88: angehaltenen LESENDEN Schritt überspringen; ändernde/verwendete nicht', async () => {

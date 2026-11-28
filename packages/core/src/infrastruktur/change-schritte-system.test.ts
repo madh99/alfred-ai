@@ -116,3 +116,20 @@ describe('I8e Systemprüfung: Vollständigkeit und Plan-Zugänge', () => {
     expect(fehlerSystem(r).join('\n')).toContain('Betriebssystem von rätsel01 ist nicht bekannt');
   });
 });
+
+// Realfall 28.11. (811c766d): fernzugriff.ausfuehren als root läuft in sh (dash) — bash-Syntax schon beim Planen melden
+describe('sh-Prüfung für fernzugriff.ausfuehren', () => {
+  const bash = 'set -euo pipefail\necho ok';
+  it('Linux-Zugang: Schritt und Rückweg werden gemeldet', () => {
+    const r = pruefeChangePlan(plan([aktion('fernzugriff', 'ausfuehren', { name: 'sqllnx01', befehl: bash }, { rueckweg: { skill: 'fernzugriff', aktion: 'ausfuehren', parameter: { name: 'sqllnx01', befehl: bash } } })]), ctx());
+    const sh = r.fehler.filter(x => x.includes('bash-Syntax'));
+    expect(sh).toHaveLength(2);
+    expect(sh.some(x => x.includes('(Rückweg)'))).toBe(true);
+  });
+  it('Windows-Zugang, als_root:false und POSIX bleiben frei', () => {
+    const r1 = pruefeChangePlan(plan([aktion('fernzugriff', 'ausfuehren', { name: 'sql01', befehl: bash })]), ctx());
+    const r2 = pruefeChangePlan(plan([aktion('fernzugriff', 'ausfuehren', { name: 'sqllnx01', befehl: bash, als_root: false })]), ctx());
+    const r3 = pruefeChangePlan(plan([aktion('fernzugriff', 'ausfuehren', { name: 'sqllnx01', befehl: 'set -eu\necho ok' })]), ctx());
+    for (const r of [r1, r2, r3]) expect(r.fehler.filter(x => x.includes('bash-Syntax'))).toEqual([]);
+  });
+});
